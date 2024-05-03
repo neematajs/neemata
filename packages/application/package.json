@@ -1,0 +1,32 @@
+{
+  "name": "@neemata/application",
+  "module": "index.ts",
+  "type": "module",
+  "scripts": {
+    "link": "bun link"
+  },
+  "dependencies": {
+    "pino": "^9.0.0",
+    "pino-pretty": "^11.0.0",
+    "@neemata/common": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.1.0",
+    "@sinclair/typebox": "^0.32",
+    "zod": "^3"
+  },
+  "peerDependencies": {
+    "@neemata/common": "workspace:*",
+    "typescript": "^5.0.0",
+    "@sinclair/typebox": "^0.32",
+    "zod": "^3"
+  },
+  "peerDependenciesMeta": {
+    "@sinclair/typebox": {
+      "optional": true
+    },
+    "zod": {
+      "optional": true
+    }
+  }
+}

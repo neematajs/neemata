@@ -24,7 +24,7 @@ describe.sequential('Subscription manager', () => {
   })
 
   it('should initialize', async () => {
-    app.registerSubscriptionManager(TestSubscriptionManager)
+    app.withSubscriptionManager(TestSubscriptionManager)
     expect(app.subManager).toBeInstanceOf(TestSubscriptionManager)
     expect(app.subManager).toBeDefined()
   })

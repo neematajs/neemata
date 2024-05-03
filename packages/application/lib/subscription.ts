@@ -1,5 +1,5 @@
 import { PassThrough } from 'node:stream'
-import { WorkerType } from './common'
+import { WorkerType } from './enums'
 import type { Event } from './events'
 import { BaseExtension } from './extension'
 

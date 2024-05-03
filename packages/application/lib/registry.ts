@@ -1,16 +1,16 @@
 import type { AnyGuard, AnyMiddleware, Filter, Guard, Middleware } from './api'
-import {
-  type AnyEvent,
-  type AnyModule,
-  type AnyProcedure,
-  type AnyTask,
-  type Command,
-  type ErrorClass,
-  Scope,
-} from './common'
 import { type Provider, getProviderScope } from './container'
+import { Scope } from './enums'
 import { Hooks } from './hooks'
 import type { Logger } from './logger'
+import type {
+  AnyEvent,
+  AnyModule,
+  AnyProcedure,
+  AnyTask,
+  Command,
+  ErrorClass,
+} from './types'
 
 export const APP_COMMAND = Symbol('APP_COMMAND')
 

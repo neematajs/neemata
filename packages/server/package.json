@@ -1,0 +1,20 @@
+{
+  "name": "@neemata/server",
+  "module": "index.ts",
+  "type": "module",
+  "scripts": {
+    "link": "bun link"
+  },
+  "dependencies": {
+    "@neemata/application": "workspace:*",
+    "@neemata/common": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5.0.0",
+    "@neemata/application": "workspace:*",
+    "@neemata/common": "workspace:*"
+  }
+}

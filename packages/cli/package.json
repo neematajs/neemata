@@ -1,0 +1,26 @@
+{
+  "name": "@neemata/cli",
+  "module": "index.ts",
+  "type": "module",
+  "bin": "./index.ts",
+  "scripts": {
+    "link": "bun link"
+  },
+  "dependencies": {
+    "@neemata/application": "workspace:*",
+    "@neemata/server": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5.0.0",
+    "@neemata/application": "workspace:*",
+    "@neemata/server": "workspace:*"
+  }, 
+  "peerDependenciesMeta": {
+    "@neemata/server": {
+      "optional": true
+    }
+  }
+}

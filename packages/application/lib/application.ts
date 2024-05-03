@@ -5,6 +5,7 @@ import {
   EXECUTE_PROVIDER,
   LOGGER_PROVIDER,
 } from './container'
+import { Hook, Scope, WorkerType } from './enums'
 import { EventManager } from './events'
 import type { BaseExtension } from './extension'
 import { type Logger, type LoggingOptions, createLogger } from './logger'
@@ -15,15 +16,12 @@ import {
 } from './subscription'
 import { type BaseTaskRunner, Tasks } from './tasks'
 import type { BaseTransport } from './transport'
-import {
-  type AnyModule,
-  type ClassConstructor,
-  type ExecuteFn,
-  type ExtensionApplication,
-  Hook,
-  type Merge,
-  Scope,
-  WorkerType,
+import type {
+  AnyModule,
+  ClassConstructor,
+  ExecuteFn,
+  ExtensionApplication,
+  Merge,
 } from './types'
 import { merge } from './utils/functions'
 
@@ -97,7 +95,7 @@ export class Application<
     this.api = new Api(this, this.options.api)
     this.tasks = new Tasks(this, this.options.tasks)
 
-    this.registerSubscriptionManager(BasicSubscriptionManager)
+    this.withSubscriptionManager(BasicSubscriptionManager)
   }
 
   async initialize() {
@@ -155,7 +153,7 @@ export class Application<
     return this.tasks.execute(task, ...args)
   }
 
-  registerTransport<
+  withTransport<
     T extends ClassConstructor<BaseTransport>,
     I extends InstanceType<T>,
   >(
@@ -168,7 +166,7 @@ export class Application<
     return this as unknown as Application<[...AppTransports, I], AppModules>
   }
 
-  registerExtension<
+  withExtension<
     T extends ClassConstructor<BaseExtension>,
     I extends InstanceType<T>,
   >(
@@ -181,7 +179,7 @@ export class Application<
     return this
   }
 
-  registerSubscriptionManager(
+  withSubscriptionManager(
     subManagerClass: ClassConstructor<BaseSubscriptionManager>,
   ) {
     this.subManager = this.initializeExtension(
@@ -190,7 +188,7 @@ export class Application<
     return this
   }
 
-  registerModules<T extends Record<string, AnyModule>>(modules: T) {
+  withModules<T extends Record<string, AnyModule>>(modules: T) {
     // @ts-expect-error
     this.modules = merge(this.modules, modules)
     return this as unknown as Application<AppTransports, Merge<AppModules, T>>

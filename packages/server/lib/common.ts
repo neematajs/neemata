@@ -1,5 +1,5 @@
 import EventEmitter from 'node:events'
-import { BasicSubscriptionManager, WorkerType } from '#application'
+import { BasicSubscriptionManager, WorkerType } from '@neemata/application'
 import type { ApplicationWorkerOptions } from './worker'
 
 export const bindPortMessageHandler = (port: EventEmitter) => {
@@ -43,10 +43,12 @@ const defaultWorkerOptions = {
 export const providerWorkerOptions = (
   opts: Partial<ApplicationWorkerOptions>,
 ) => {
+  //@ts-expect-error
   globalThis[WORKER_OPTIONS_KEY] = { ...defaultWorkerOptions, ...opts }
 }
 
 export const injectWorkerOptions = (): ApplicationWorkerOptions => {
+  //@ts-expect-error
   return globalThis[WORKER_OPTIONS_KEY] ?? defaultWorkerOptions
 }
 

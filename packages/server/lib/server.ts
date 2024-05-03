@@ -7,7 +7,7 @@ import {
   WorkerType,
   createLogger,
   noop,
-} from '#application'
+} from '@neemata/application'
 import { WorkerMessageType, bindPortMessageHandler } from './common'
 import type { ApplicationWorkerData } from './worker'
 
@@ -43,7 +43,7 @@ export class ApplicationServer {
 
     for (const worker of this.workers) {
       await new Promise<void>((resolve, reject) => {
-        const onError = (err) => {
+        const onError = (err: any) => {
           this.logger.fatal(err)
           this.stop()
         }

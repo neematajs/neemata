@@ -14,7 +14,7 @@ describe.sequential('Application', () => {
   beforeEach(async () => {
     app = testApp()
     await app.initialize()
-    app.registerTransport(TestTransport)
+    app.withTransport(TestTransport)
   })
 
   afterEach(async () => {
@@ -27,7 +27,7 @@ describe.sequential('Application', () => {
   })
 
   it('should register extension', () => {
-    const newApp = app.registerExtension(TestExtension)
+    const newApp = app.withExtension(TestExtension)
     expect(newApp).toBe(app)
     for (const appExtension of app.extensions) {
       expect(appExtension).toBeInstanceOf(TestExtension)
@@ -50,7 +50,7 @@ describe.sequential('Application', () => {
   })
 
   it('should register transport', () => {
-    const newApp = app.registerTransport(TestTransport)
+    const newApp = app.withTransport(TestTransport)
     expect(newApp).toBe(app)
     const appTransport = app.transports.values().next().value
     expect(appTransport).toBeInstanceOf(TestTransport)
@@ -76,7 +76,7 @@ describe.sequential('Application', () => {
   it('should initialize modules', async () => {
     const initializer = vi.fn()
     const module = new Module().withInitializer(initializer)
-    app.registerModules({ test: module })
+    app.withModules({ test: module })
     await app.initialize()
     expect(initializer).toHaveBeenCalledWith({
       container: app.container,

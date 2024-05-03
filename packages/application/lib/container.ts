@@ -1,8 +1,9 @@
-import { type AnyProvider, type ExecuteFn, type Merge, Scope } from './common'
+import { Scope } from './enums'
 import type { EventManager } from './events'
 import type { Logger } from './logger'
 import type { Registry } from './registry'
 import type { BaseTransport } from './transport'
+import type { AnyProvider, ExecuteFn, Merge } from './types'
 import { merge } from './utils/functions'
 
 const ScopeStrictness = {

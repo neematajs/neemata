@@ -1,15 +1,17 @@
-import { register } from 'node:module'
+#!/usr/bin/env bun
+
 import { resolve } from 'node:path'
 import { parseArgs } from 'node:util'
-import { config } from 'dotenv'
 import {
   APP_COMMAND,
   Application,
   WorkerType,
   defer,
   importDefault,
-} from '#application'
-import { ApplicationServer, providerWorkerOptions } from '#server'
+} from '@neemata/application'
+import { config } from 'dotenv'
+
+const NeemataServer = await import('@neemata/server').catch(() => null)
 
 const { values, positionals } = parseArgs({
   allowPositionals: true,
@@ -17,10 +19,6 @@ const { values, positionals } = parseArgs({
   options: {
     entry: {
       type: 'string',
-      multiple: false,
-    },
-    swc: {
-      type: 'boolean',
       multiple: false,
     },
     timeout: {
@@ -53,12 +51,6 @@ const entryPath = resolve(
     (typeof entry === 'string' ? entry : swc ? 'index.ts' : 'index.js'),
 )
 
-if (swc) {
-  const url = new URL('./swc-loader.mjs', import.meta.url)
-  process.env.NEEMATA_SWC = url.toString()
-  register(url)
-}
-
 let exitTimeout: Timer | undefined = undefined
 
 const exitProcess = () => {
@@ -66,7 +58,7 @@ const exitProcess = () => {
   process.exit(0)
 }
 
-const tryExit = async (cb) => {
+const tryExit = async (cb: any) => {
   if (exitTimeout) return
   exitTimeout = setTimeout(exitProcess, shutdownTimeout)
   try {
@@ -81,7 +73,11 @@ const tryExit = async (cb) => {
 const entryApp = await import(entryPath).then((module) => module.default)
 
 if (
-  !(entryApp instanceof ApplicationServer || entryApp instanceof Application)
+  NeemataServer &&
+  !(
+    entryApp instanceof NeemataServer.ApplicationServer ||
+    entryApp instanceof Application
+  )
 ) {
   throw new Error(
     'Invalid entry module. Must be an instance of Application or ApplicationServer',
@@ -93,19 +89,19 @@ const { logger } = entryApp
 process.on('uncaughtException', (error) => logger.error(error))
 process.on('unhandledRejection', (error) => logger.error(error))
 
-const loadApp = async (workerType, workerOptions = {}) => {
+const loadApp = async (workerType: WorkerType, workerOptions = {}) => {
   let app: Application
 
-  if (entryApp instanceof ApplicationServer) {
+  if (NeemataServer && entryApp instanceof NeemataServer.ApplicationServer) {
     const { applicationPath } = entryApp.options
 
-    const options: Parameters<typeof providerWorkerOptions>[0] = {
+    const options: Parameters<typeof NeemataServer.providerWorkerOptions>[0] = {
       id: 0,
       workerType,
       isServer: false,
       workerOptions,
     }
-    providerWorkerOptions(options)
+    NeemataServer.providerWorkerOptions(options)
     app = await importDefault(applicationPath)
   } else {
     app = entryApp
@@ -158,4 +154,5 @@ const commands = {
 if (command in commands === false)
   throw new Error(`Unknown CLI command: ${command}`)
 
+// @ts-expect-error
 commands[command]()
