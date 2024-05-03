@@ -1,5 +1,5 @@
 {
-  "name": "neematajs",
+  "name": "neemata",
   "type": "module",
   "scripts": {
     "check:lint": "biome lint .",
