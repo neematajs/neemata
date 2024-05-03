@@ -18,7 +18,7 @@ jobs:
       - uses: actions/setup-node@v4
       - run: npm version ${{ github.event.release.tag_name }} -ws --no-commit-hooks --no-git-tag-version --silent || true
       - run: npm pack -ws
-      - run: cp ./neemata-${{matrix.package}}-${{ github.event.release.tag_name }}.tgz neemata-${{matrix.package}}.tgz
+      - run: cp $(ls -1 | grep neemata-${{matrix.package}}) neemata-${{matrix.package}}.tgz
       - name: Release
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
