@@ -1,5 +1,5 @@
 {
-  "name": "@neemata/cli",
+  "name": "@neematajs-bun/cli",
   "module": "index.ts",
   "type": "module",
   "bin": "./index.ts",
@@ -17,10 +17,11 @@
     "typescript": "^5.0.0",
     "@neemata/application": "workspace:*",
     "@neemata/server": "workspace:*"
-  }, 
+  },
   "peerDependenciesMeta": {
     "@neemata/server": {
       "optional": true
     }
-  }
+  },
+  "version": "0.0.1"
 }

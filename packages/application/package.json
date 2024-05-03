@@ -1,5 +1,5 @@
 {
-  "name": "@neemata/application",
+  "name": "@neematajs-bun/application",
   "module": "index.ts",
   "type": "module",
   "scripts": {
@@ -28,5 +28,6 @@
     "zod": {
       "optional": true
     }
-  }
+  },
+  "version": "0.0.1"
 }
