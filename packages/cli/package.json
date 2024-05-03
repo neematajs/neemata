@@ -1,6 +1,8 @@
 {
   "name": "@neematajs-bun/cli",
-  "bin": "./index.ts",
+  "bin": {
+    "neemata": "./index.ts"
+  },
   "scripts": {
     "link": "bun link"
   },
