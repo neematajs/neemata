@@ -1,15 +1,20 @@
 {
   "name": "@neematajs-bun/common",
-  "module": "index.ts",
   "type": "module",
+  "module": "index.ts",
+  "publishConfig": {
+    "module": "./dist/index.js",
+    "types": "./index.ts"
+  },
   "scripts": {
-    "link": "bun link"
+    "link": "bun link",
+    "build": "bun ./build.ts",
+    "build:watch": "bun --watch ./build.ts"
   },
   "devDependencies": {
     "@types/bun": "latest"
   },
   "peerDependencies": {
     "typescript": "^5.0.0"
-  },
-  "version": "0.0.1"
+  }
 }

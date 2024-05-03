@@ -27,7 +27,7 @@
     "baseUrl": ".",
 
     "paths": {
-      "#common": ["packages/common/index.ts"],
+      "@neematajs-bun/common": ["packages/common/index.ts"],
       "#application": ["packages/application/index.ts"],
       "#server": ["packages/server/index.ts"]
     }

@@ -1,21 +1,20 @@
 {
   "name": "@neematajs-bun/server",
-  "module": "index.ts",
   "type": "module",
+  "module": "./index.ts",
   "scripts": {
     "link": "bun link"
   },
   "dependencies": {
-    "@neemata/application": "workspace:*",
-    "@neemata/common": "workspace:*"
+    "@neematajs-bun/application": "workspace:*",
+    "@neematajs-bun/common": "workspace:*"
   },
   "devDependencies": {
     "@types/bun": "latest"
   },
   "peerDependencies": {
     "typescript": "^5.0.0",
-    "@neemata/application": "workspace:*",
-    "@neemata/common": "workspace:*"
-  },
-  "version": "0.0.1"
+    "@neematajs-bun/application": "workspace:*",
+    "@neematajs-bun/common": "workspace:*"
+  }
 }

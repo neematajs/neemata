@@ -127,6 +127,7 @@ export class UpStream extends EventEmitter<StreamInferfaceEvents> {
       if (done) {
         return { done }
       } else {
+        // @ts-expect-error
         this.readBuffer = value
         return this._read(size)
       }

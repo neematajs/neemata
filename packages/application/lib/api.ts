@@ -1,4 +1,4 @@
-import { ApiError, ErrorCode } from '#common'
+import { ApiError, ErrorCode } from '@neematajs-bun/common'
 import type { ApplicationOptions } from './application'
 import {
   CONNECTION_PROVIDER,
@@ -348,7 +348,7 @@ export class Api {
 
     const { timeout = this.options.timeout } = procedure
 
-    const handleProcedure = async (payload) => {
+    const handleProcedure = async (payload: any) => {
       const middleware = middlewares?.next().value
       if (middleware) {
         const next = (newPayload = payload) => handleProcedure(newPayload)

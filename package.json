@@ -3,6 +3,8 @@
   "name": "neemata",
   "type": "module",
   "scripts": {
+    "build": "bun --filter '*' build",
+    "build:watch": "bun --filter '*' build:watch",
     "check:lint": "biome lint .",
     "check:fmt": "biome format .",
     "fmt": "biome check --apply ."
@@ -15,10 +17,11 @@
     "@biomejs/biome"
   ],
   "peerDependencies": {
-    "typescript": "^5.0.0"
+    "typescript": "^5.4.5"
   },
   "workspaces": ["packages/*"],
   "dependencies": {
-    "dotenv": "^16.4.5"
+    "dotenv": "^16.4.5",
+    "typescript": "^5.4.5"
   }
 }

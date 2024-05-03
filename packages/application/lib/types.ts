@@ -1,5 +1,8 @@
 import type { Readable } from 'node:stream'
-import type { Subscription as ClientSubscription, UpStream } from '#common'
+import type {
+  Subscription as ClientSubscription,
+  UpStream,
+} from '@neematajs-bun/common'
 import type { Api, Procedure } from './api'
 import type { Application } from './application'
 import type { Container, Provider } from './container'
@@ -264,7 +267,7 @@ export type ResolveApiInput<Input> = Input extends Readable
 export type ResolveApiOutput<Output> = Output extends StreamResponse
   ? {
       payload: JsonPrimitive<Output['payload']>
-      stream: import('#common').DownStream<
+      stream: import('@neematajs-bun/common').DownStream<
         Output['chunk'] extends ArrayBuffer
           ? ArrayBuffer
           : JsonPrimitive<Output['chunk']>
