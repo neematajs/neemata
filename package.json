@@ -1,0 +1,44 @@
+{
+  "name": "neematajs",
+  "type": "module",
+  "scripts": {
+    "check:lint": "biome lint .",
+    "check:fmt": "biome format .",
+    "fmt": "biome check --apply ."
+  },
+  "bin": {
+    "neemata": "./packages/cli/index.ts"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "pino": "^9.0.0",
+    "pino-pretty": "^11.0.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "1.7.1",
+    "@types/bun": "^1.1.0",
+    "@sinclair/typebox": "^0.32",
+    "zod": "^3"
+  },
+  "trustedDependencies": [
+    "@biomejs/biome"
+  ],
+  "peerDependencies": {
+    "typescript": "^5.0.0",
+    "@sinclair/typebox": "^0.32",
+    "zod": "^3"
+  },
+  "peerDependenciesMeta": {
+    "@sinclair/typebox": {
+      "optional": true
+    },
+    "zod": {
+      "optional": true
+    }
+  },
+  "exports": {
+    "./application": "./packages/application/index.ts",
+    "./server": "./packages/server/index.ts",
+    "./common": "./packages/common/index.ts"
+  }
+}
