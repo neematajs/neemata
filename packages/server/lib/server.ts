@@ -7,7 +7,7 @@ import {
   WorkerType,
   createLogger,
   noop,
-} from '@neematajs-bun/application'
+} from '@neemata/application'
 import { WorkerMessageType, bindPortMessageHandler } from './common'
 import type { ApplicationWorkerData } from './worker'
 

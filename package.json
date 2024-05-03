@@ -1,6 +1,5 @@
 {
   "private": true,
-  "name": "neemata",
   "type": "module",
   "scripts": {
     "build": "bun --filter '*' build",

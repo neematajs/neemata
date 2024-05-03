@@ -1,8 +1,5 @@
 import EventEmitter from 'node:events'
-import {
-  BasicSubscriptionManager,
-  WorkerType,
-} from '@neematajs-bun/application'
+import { BasicSubscriptionManager, WorkerType } from '@neemata/application'
 import type { ApplicationWorkerOptions } from './worker'
 
 export const bindPortMessageHandler = (port: EventEmitter) => {

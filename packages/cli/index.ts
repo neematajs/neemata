@@ -8,10 +8,10 @@ import {
   WorkerType,
   defer,
   importDefault,
-} from '@neematajs-bun/application'
+} from '@neemata/application'
 import { config } from 'dotenv'
 
-const NeemataServer = await import('@neematajs-bun/server').catch(() => null)
+const NeemataServer = await import('@neemata/server').catch(() => null)
 
 const { values, positionals } = parseArgs({
   allowPositionals: true,

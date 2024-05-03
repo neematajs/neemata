@@ -1,5 +1,5 @@
 import { PassThrough, Readable, type TransformCallback } from 'node:stream'
-import type { StreamMetadata } from '@neematajs-bun/common'
+import type { StreamMetadata } from '@neemata/common'
 
 export abstract class StreamResponse<
   Payload = any,

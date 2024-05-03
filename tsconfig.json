@@ -22,14 +22,6 @@
     // Some stricter flags (disabled by default)
     "noUnusedLocals": false,
     "noUnusedParameters": false,
-    "noPropertyAccessFromIndexSignature": false,
-
-    "baseUrl": ".",
-
-    "paths": {
-      "@neematajs-bun/common": ["packages/common/index.ts"],
-      "#application": ["packages/application/index.ts"],
-      "#server": ["packages/server/index.ts"]
-    }
+    "noPropertyAccessFromIndexSignature": false
   }
 }
