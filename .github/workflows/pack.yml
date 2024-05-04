@@ -19,7 +19,6 @@ jobs:
           echo "always-auth=true" >> ~/.npmrc
       - name: Publish
         run: |
-          echo "packages:\n  - 'packages/*'" > pnpm-workspace.yaml
           pnpm install
           bun run build
           pnpm version ${{ github.event.release.tag_name }} -ws --no-commit-hooks --no-git-tag-version --silent || true
