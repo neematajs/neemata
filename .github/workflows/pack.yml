@@ -22,5 +22,8 @@ jobs:
       - name: Set version
         run: pnpm version ${{ github.event.release.tag_name }} -ws --no-commit-hooks --no-git-tag-version --silent || true
       - name: Publish
-        run: pnpm publish --filter "*" --access public --no-git-checks
+        run: |
+          echo "packages:\n  - 'packages/*'" > pnpm-workspace.yaml
+          pnpm install
+          pnpm publish --filter "*" --access public --no-git-checks
         
