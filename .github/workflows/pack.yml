@@ -15,6 +15,10 @@ jobs:
       - uses: oven-sh/setup-bun@v1
         with:
           bun-version: latest
+      - name: Log in to npm
+        run: |
+          echo "//registry.npmjs.org/:_authToken=\${{secrets.npm_token}}" > ~/.npmrc
+          echo "always-auth=true" >> ~/.npmrc
       - name: Set version
         run: npm version ${{ github.event.release.tag_name }} -ws --no-commit-hooks --no-git-tag-version --silent || true
       - name: Build
@@ -22,4 +26,5 @@ jobs:
       - name: Publish
         run: npm publish -ws --access public --no-git-checks
         env:
-          NODE_AUTH_TOKEN: ${{secrets.NPM_TOKEN}}
+          NPM_CONFIG_TOKEN: ${{secrets.npm_token}}
+        
