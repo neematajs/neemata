@@ -13,17 +13,15 @@ jobs:
         with:
           bun-version: latest
       - run: bun install -g pnpm
-      - name: Build
-        run: bun install --frozen-lockfile && bun run build
       - name: Log in to npm
         run: |
           echo "//registry.npmjs.org/:_authToken=${{secrets.npm_token}}" > ~/.npmrc
           echo "always-auth=true" >> ~/.npmrc
-      - name: Set version
-        run: pnpm version ${{ github.event.release.tag_name }} -ws --no-commit-hooks --no-git-tag-version --silent || true
       - name: Publish
         run: |
           echo "packages:\n  - 'packages/*'" > pnpm-workspace.yaml
           pnpm install
+          bun run build
+          pnpm version ${{ github.event.release.tag_name }} -ws --no-commit-hooks --no-git-tag-version --silent || true
           pnpm publish --filter "*" --access public --no-git-checks
         
