@@ -9,22 +9,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
       - uses: oven-sh/setup-bun@v1
         with:
           bun-version: latest
+      - run: bun install -g npm
+      - name: Build
+        run: bun install --frozen-lockfile && bun run build
       - name: Log in to npm
         run: |
           echo "//registry.npmjs.org/:_authToken=\${{secrets.npm_token}}" > ~/.npmrc
           echo "always-auth=true" >> ~/.npmrc
+          cat ~/.npmrc
       - name: Set version
         run: npm version ${{ github.event.release.tag_name }} -ws --no-commit-hooks --no-git-tag-version --silent || true
-      - name: Build
-        run: bun install --frozen-lockfile && bun run build
       - name: Publish
         run: npm publish -ws --access public --no-git-checks
-        env:
-          NPM_CONFIG_TOKEN: ${{secrets.npm_token}}
         
