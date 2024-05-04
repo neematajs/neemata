@@ -4,6 +4,7 @@
   "scripts": {
     "build": "bun --filter '*' build",
     "build:watch": "bun --filter '*' build:watch",
+    "link": "bun --filter '*' link",
     "check:lint": "biome lint .",
     "check:fmt": "biome format .",
     "fmt": "biome check --apply ."

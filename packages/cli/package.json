@@ -1,5 +1,5 @@
 {
-  "name": "@neemata/cli",
+  "name": "@neematajs-bun/cli",
   "bin": {
     "neemata": "./index.ts"
   },
@@ -7,19 +7,19 @@
     "link": "bun link"
   },
   "dependencies": {
-    "@neemata/application": "workspace:*",
-    "@neemata/server": "workspace:*"
+    "@neematajs-bun/application": "workspace:*",
+    "@neematajs-bun/server": "workspace:*"
   },
   "devDependencies": {
     "@types/bun": "latest"
   },
   "peerDependencies": {
     "typescript": "^5.0.0",
-    "@neemata/application": "workspace:*",
-    "@neemata/server": "workspace:*"
+    "@neematajs-bun/application": "workspace:*",
+    "@neematajs-bun/server": "workspace:*"
   },
   "peerDependenciesMeta": {
-    "@neemata/server": {
+    "@neematajs-bun/server": {
       "optional": true
     }
   }

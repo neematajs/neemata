@@ -2,7 +2,7 @@ import type { Readable } from 'node:stream'
 import type {
   Subscription as ClientSubscription,
   UpStream,
-} from '@neemata/common'
+} from '@neematajs-bun/common'
 import type { Api, Procedure } from './api'
 import type { Application } from './application'
 import type { Container, Provider } from './container'
@@ -53,7 +53,7 @@ export type MiddlewareFn = (
 
 export type ConnectionProvider<T, C> = Provider<ConnectionFn<T, C>>
 
-export type AnyApplication = Application<any, any>
+export type AnyApplication = Application<any>
 export type AnyModule = Module<any, any, any, any>
 export type AnyProvider = Provider<any, any>
 export type AnyProcedure = Procedure<any, any, any, any, any>
@@ -267,7 +267,7 @@ export type ResolveApiInput<Input> = Input extends Readable
 export type ResolveApiOutput<Output> = Output extends StreamResponse
   ? {
       payload: JsonPrimitive<Output['payload']>
-      stream: import('@neemata/common').DownStream<
+      stream: import('@neematajs-bun/common').DownStream<
         Output['chunk'] extends ArrayBuffer
           ? ArrayBuffer
           : JsonPrimitive<Output['chunk']>

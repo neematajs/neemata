@@ -1,4 +1,4 @@
-import { ApiError, ErrorCode } from '@neemata/common'
+import { ApiError, ErrorCode } from '@neematajs-bun/common'
 import type { ApplicationOptions } from './application'
 import {
   CONNECTION_PROVIDER,

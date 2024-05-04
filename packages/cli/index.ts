@@ -8,10 +8,10 @@ import {
   WorkerType,
   defer,
   importDefault,
-} from '@neemata/application'
+} from '@neematajs-bun/application'
 import { config } from 'dotenv'
 
-const NeemataServer = await import('@neemata/server').catch(() => null)
+const NeemataServer = await import('@neematajs-bun/server').catch(() => null)
 
 const { values, positionals } = parseArgs({
   allowPositionals: true,
@@ -73,9 +73,8 @@ const tryExit = async (cb: any) => {
 const entryApp = await import(entryPath).then((module) => module.default)
 
 if (
-  NeemataServer &&
   !(
-    entryApp instanceof NeemataServer.ApplicationServer ||
+    (NeemataServer && entryApp instanceof NeemataServer.ApplicationServer) ||
     entryApp instanceof Application
   )
 ) {
@@ -104,7 +103,7 @@ const loadApp = async (workerType: WorkerType, workerOptions = {}) => {
     NeemataServer.providerWorkerOptions(options)
     app = await importDefault(applicationPath)
   } else {
-    app = entryApp
+    app = entryApp as Application
   }
 
   return app

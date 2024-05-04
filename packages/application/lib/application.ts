@@ -15,7 +15,7 @@ import {
   BasicSubscriptionManager,
 } from './subscription'
 import { type BaseTaskRunner, Tasks } from './tasks'
-import type { BaseTransport } from './transport'
+import type { BaseTransport, BaseTransportConnection } from './transport'
 import type {
   AnyModule,
   ClassConstructor,
@@ -47,15 +47,7 @@ export type ApplicationOptions = {
   logging?: LoggingOptions
 }
 
-export class Application<
-  AppTransports extends BaseTransport[] = [],
-  AppModules extends Record<string, AnyModule> = {},
-> {
-  readonly _!: {
-    transports: AppTransports
-    connection: AppTransports[number]['_']['connection']
-  }
-
+export class Application<AppModules extends Record<string, AnyModule> = {}> {
   readonly api: Api
   readonly tasks: Tasks
   readonly logger: Logger
@@ -67,10 +59,7 @@ export class Application<
   readonly modules = {} as AppModules
   readonly transports = new Set<BaseTransport>()
   readonly extensions = new Set<BaseExtension>()
-  readonly connections = new Map<
-    this['_']['connection']['id'],
-    this['_']['connection']
-  >()
+  readonly connections = new Map<string, BaseTransportConnection>()
 
   constructor(readonly options: ApplicationOptions) {
     this.logger = createLogger(
@@ -163,7 +152,7 @@ export class Application<
     const [options] = args
     const transport = this.initializeExtension(transportClass, options) as I
     this.transports.add(transport)
-    return this as unknown as Application<[...AppTransports, I], AppModules>
+    return this
   }
 
   withExtension<
@@ -191,7 +180,7 @@ export class Application<
   withModules<T extends Record<string, AnyModule>>(modules: T) {
     // @ts-expect-error
     this.modules = merge(this.modules, modules)
-    return this as unknown as Application<AppTransports, Merge<AppModules, T>>
+    return this as unknown as Application<Merge<AppModules, T>>
   }
 
   private initializeExtension<
