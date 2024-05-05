@@ -1,7 +1,11 @@
 {
-  "name": "client-ws",
-  "module": "index.ts",
+  "name": "@neematajs-bun/client-ws",
   "type": "module",
+  "module": "index.ts",
+  "publishConfig": {
+    "module": "./dist/index.js",
+    "types": "./index.ts"
+  },
   "scripts": {
     "build": "bun ./build.ts"
   },
