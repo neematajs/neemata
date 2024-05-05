@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { MessagePort } from 'node:worker_threads'
-import { BaseTaskRunner, onAbort } from '#application'
+import { BaseTaskRunner, onAbort } from '@neematajs-bun/application'
 import { WorkerMessageType, createBroadcastChannel } from './common'
 
 export class WorkerThreadsTaskRunner extends BaseTaskRunner {

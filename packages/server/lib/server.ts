@@ -14,7 +14,7 @@ import type { ApplicationWorkerData } from './worker'
 export type ApplicationServerOptions = {
   applicationPath: string | URL
   logging?: LoggingOptions
-  dev?: boolean
+  watch?: boolean
   taskWorkers: number | any[]
   apiWorkers: number | any[]
 }
@@ -28,7 +28,9 @@ export class ApplicationServer {
 
   constructor(readonly options: ApplicationServerOptions) {
     this.logger = createLogger(this.options.logging, 'Application Server')
-    if (options.dev) import(`${options.applicationPath}`).catch(noop)
+
+    // import application entrypoint to trigger restart on change in server mode
+    if (options.watch) import(`${options.applicationPath}`).catch(noop)
   }
 
   async start() {

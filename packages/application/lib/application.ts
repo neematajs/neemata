@@ -187,7 +187,7 @@ export class Application<AppModules extends Record<string, AnyModule> = {}> {
     T extends ClassConstructor<BaseExtension>,
     I extends InstanceType<T>,
   >(extensionClass: T, options?: I['_']['options']) {
-    const logger = this.logger.child({ $group: extensionClass.name })
+    const logger = this.logger.child({})
     const app: ExtensionApplication = {
       type: this.options.type,
       api: this.api,
@@ -220,9 +220,7 @@ export class Application<AppModules extends Record<string, AnyModule> = {}> {
       registry: this.registry,
       logger,
     }
-    const instance = new extensionClass(app, options)
-    logger.setBindings({ $group: instance.name })
-    return instance
+    return new extensionClass(app, options)
   }
 
   private initializeEssential() {

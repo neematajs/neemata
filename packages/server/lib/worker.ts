@@ -9,7 +9,7 @@ import {
   type BaseSubscriptionManager,
   type BaseTaskRunner,
   WorkerType,
-} from '#application'
+} from '@neematajs-bun/application'
 import {
   WorkerMessageType,
   bindPortMessageHandler,
