@@ -88,7 +88,7 @@ export class Procedure<
     output: ProcedureOutput
     middlewares: AnyMiddleware[]
     guards: AnyGuard[]
-    options: Extra
+    options: Record<string | symbol | number, any>
     timeout: number
     transports: ProcedureTransports
   }
@@ -100,7 +100,7 @@ export class Procedure<
   readonly input!: this['_']['input']
   readonly output!: this['_']['output']
   readonly parsers: { input?: BaseParser; output?: BaseParser } = {}
-  readonly options: Extra = {}
+  readonly options: Record<string | symbol | number, any> = {}
   readonly guards: this['_']['guards'] = []
   readonly middlewares: this['_']['middlewares'] = []
 
@@ -305,12 +305,19 @@ export class Api {
     }
   }
 
-  find(name: string) {
+  find(name: string, transport: BaseTransport) {
+    let procedure: Procedure
     try {
-      return this.application.registry.getByName('procedure', name)
+      procedure = this.application.registry.getByName('procedure', name)
     } catch (error) {
       throw NotFound()
     }
+
+    for (const transportClass of procedure.transports) {
+      if (transport instanceof transportClass) return procedure
+    }
+
+    throw NotFound()
   }
 
   async call(callOptions: ProcedureCallOptions) {

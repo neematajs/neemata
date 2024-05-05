@@ -32,5 +32,5 @@ export abstract class BaseTransportConnection {
     return this.sendEvent(eventName, payload)
   }
 
-  protected abstract sendEvent(eventName: string, payload: any): boolean
+  protected abstract sendEvent(eventName: string, payload: any): boolean | null
 }

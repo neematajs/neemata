@@ -17,18 +17,6 @@ export class JsonStreamResponse<
     super({ writableObjectMode: true })
   }
 
-  _transform(
-    chunk: any,
-    encoding: BufferEncoding,
-    callback: TransformCallback,
-  ): void {
-    try {
-      callback(null, JSON.stringify(chunk))
-    } catch (error: any) {
-      callback(error)
-    }
-  }
-
   write(
     chunk: Chunk,
     encodingOrCb?: BufferEncoding | ((error: Error | null | undefined) => void),
