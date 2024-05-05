@@ -7,6 +7,7 @@ import type { ApplicationWorkerOptions } from './worker'
 
 export const bindPortMessageHandler = (port: EventEmitter) => {
   port.on('message', (message) => {
+    console.log('message: ', message)
     if (message && typeof message === 'object') {
       const { type, payload } = message
       if (typeof type === 'string') {
@@ -46,12 +47,10 @@ const defaultWorkerOptions = {
 export const providerWorkerOptions = (
   opts: Partial<ApplicationWorkerOptions>,
 ) => {
-  //@ts-expect-error
   globalThis[WORKER_OPTIONS_KEY] = { ...defaultWorkerOptions, ...opts }
 }
 
 export const injectWorkerOptions = (): ApplicationWorkerOptions => {
-  //@ts-expect-error
   return globalThis[WORKER_OPTIONS_KEY] ?? defaultWorkerOptions
 }
 

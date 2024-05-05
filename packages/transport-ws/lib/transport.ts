@@ -9,9 +9,17 @@ export class WsTransport extends BaseTransport<any, WsTransportOptions> {
 
   initialize() {
     this.server = new WsServer(this)
+    this.application.logger.info(
+      'Initialized WebSockets transport: %s',
+      this.server ? 'OK' : 'FAILED',
+    )
   }
 
   async start() {
+    this.application.logger.info(
+      'Starting WebSockets server... %s',
+      this.server ? 'OK' : 'FAILED',
+    )
     await this.server.start()
   }
 

@@ -1,3 +1,4 @@
+import { once } from 'node:events'
 import { join } from 'node:path'
 import { Worker } from 'node:worker_threads'
 import {
@@ -44,6 +45,7 @@ export class ApplicationServer {
     this.createWorkers(WorkerType.Api, apiWorkers)
 
     for (const worker of this.workers) {
+      await once(worker, 'online')
       await new Promise<void>((resolve, reject) => {
         const onError = (err: any) => {
           this.logger.fatal(err)
@@ -54,7 +56,6 @@ export class ApplicationServer {
           resolve()
         })
         worker.once('error', onError)
-        worker.postMessage({ type: WorkerMessageType.Start })
       })
     }
   }

@@ -65,9 +65,12 @@ export const fromJSON = (
 export const getBody = (req: Request) => {
   // biome-ignore lint/suspicious/noShadowRestrictedNames: is okay here
   const toString = () => req.text()
-  const toJSON = () => req.json()
   const toStream = () => Readable.fromWeb(req.body!)
   const toBuffer = async () => Buffer.from(await req.arrayBuffer())
+  const toJSON = async () => {
+    const json = await toString()
+    return json ? fromJSON(json) : undefined
+  }
   return { toBuffer, toString, toJSON, toStream }
 }
 

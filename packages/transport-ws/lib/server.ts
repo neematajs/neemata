@@ -73,7 +73,7 @@ class HttpServer {
             return new Response(null, { status: 405 })
           }
 
-          const name = request.path
+          const name = request.path.slice(1)
           const procedure = this.api.find(name, this.transport)
           if (request.method === 'OPTIONS') {
             return new Response(null, {
@@ -121,6 +121,7 @@ class HttpServer {
 
   async start() {
     this.instance = Bun.serve<WsUserData>(this.serveOptions)
+    this.logger.info('Server started on %s', this.instance.url)
   }
 
   async stop() {
@@ -158,11 +159,11 @@ class HttpServer {
   }) {
     const { procedure, request, payload, headers } = options
 
-    const allowedMethods = procedure[HttpTransportMethodOption] ?? [
+    const allowedMethods = procedure.options[HttpTransportMethodOption] ?? [
       HttpTransportMethod.Post,
     ]
 
-    if (!allowedMethods.includes(request.method)) {
+    if (!allowedMethods.includes(request.method.toLocaleLowerCase())) {
       throw new ApiError(ErrorCode.NotFound)
     }
 
@@ -250,7 +251,8 @@ export class WsServer extends HttpServer {
           }
           if (this.instance.upgrade<WsUserData>(req, { data }))
             return undefined as unknown as any
-          else return new Response('Upgrade failed', { status: 500 })
+
+          return new Response('Upgrade failed', { status: 500 })
         } else {
           return httpServe.call(this.instance, req, res)
         }

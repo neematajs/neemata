@@ -220,7 +220,10 @@ export class Application<AppModules extends Record<string, AnyModule> = {}> {
       registry: this.registry,
       logger,
     }
-    return new extensionClass(app, options)
+    const instance = new extensionClass(app, options)
+    app.logger.setBindings({ $group: instance.name })
+    instance.initialize?.()
+    return instance
   }
 
   private initializeEssential() {
@@ -230,7 +233,6 @@ export class Application<AppModules extends Record<string, AnyModule> = {}> {
         if (error) this.logger.error(error)
       }),
     )
-
     this.registry.registerCommand(APP_COMMAND, 'registry', () => {
       printRegistry(this.registry)
     })

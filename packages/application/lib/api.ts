@@ -313,9 +313,8 @@ export class Api {
       throw NotFound()
     }
 
-    for (const transportClass of procedure.transports) {
-      if (transport instanceof transportClass) return procedure
-    }
+    const isAllowed = procedure.transports.has(transport.constructor as any)
+    if (isAllowed) return procedure
 
     throw NotFound()
   }

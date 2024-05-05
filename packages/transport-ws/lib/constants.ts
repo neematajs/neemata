@@ -101,3 +101,5 @@ export type HttpStatusMessage =
 export const HttpTransportMethodOption = Symbol.for(
   'neemata:HttpTransportMethodOption',
 )
+
+export const HttpPayloadGetParam = '_payload'
