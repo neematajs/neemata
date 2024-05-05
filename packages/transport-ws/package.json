@@ -1,0 +1,21 @@
+{
+  "name": "@neematajs-bun/transport-ws",
+  "module": "index.ts",
+  "type": "module",
+  "scripts": {
+    "link": "bun link"
+  },
+  "dependencies": {
+    "@neematajs-bun/application": "workspace:*",
+    "@neematajs-bun/common": "workspace:*",
+    "qs": "^6.12.1"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/qs": "^6"
+  },
+  "peerDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "packageManager": "pnpm@9.0.6"
+}
