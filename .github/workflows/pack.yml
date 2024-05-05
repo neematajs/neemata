@@ -19,8 +19,8 @@ jobs:
           echo "always-auth=true" >> ~/.npmrc
       - name: Publish
         run: |
-          pnpm install
-          bun run build
+          pnpm install --frozen-lockfile
+          pnpm run build
           pnpm version ${{ github.event.release.tag_name }} -ws --no-commit-hooks --no-git-tag-version --silent || true
           pnpm publish --filter "*" --access public --no-git-checks --tag $(bun ./scripts/publish-tag.ts ${{ github.event.release.tag_name }})
         

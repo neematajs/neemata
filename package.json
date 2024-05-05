@@ -2,9 +2,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "bun --filter '*' build",
-    "build:watch": "bun --filter '*' build:watch",
-    "link": "bun --filter '*' link",
+    "build": "pnpm -r run build",
+    "build:watch": "pnpm -r run build:watch",
+    "link": "pnpm -r run link",
     "check:lint": "biome lint .",
     "check:fmt": "biome format .",
     "fmt": "biome check --apply ."
@@ -19,8 +19,8 @@
   "peerDependencies": {
     "typescript": "^5.4.5"
   },
-  "workspaces": ["packages/*"],
   "dependencies": {
     "typescript": "^5.4.5"
-  }
+  },
+  "packageManager": "pnpm@9.0.6"
 }
