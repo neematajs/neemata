@@ -7,9 +7,8 @@
     "types": "./index.ts"
   },
   "scripts": {
-    "link": "bun link",
-    "build": "bun ./build.ts",
-    "build:watch": "bun --watch ./build.ts"
+    "build": "bun build --outdir=dist --sourcemap=external ./index.ts",
+    "build:watch": "bun run build --watch"
   },
   "devDependencies": {
     "@types/bun": "latest"

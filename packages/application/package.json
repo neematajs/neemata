@@ -2,9 +2,6 @@
   "name": "@neematajs-bun/application",
   "type": "module",
   "module": "./index.ts",
-  "scripts": {
-    "link": "bun link"
-  },
   "dependencies": {
     "pino": "^9.0.0",
     "pino-pretty": "^11.0.0",

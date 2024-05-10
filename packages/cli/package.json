@@ -3,9 +3,6 @@
   "bin": {
     "neemata": "./index.ts"
   },
-  "scripts": {
-    "link": "bun link"
-  },
   "dependencies": {
     "@neematajs-bun/application": "workspace:*",
     "@neematajs-bun/server": "workspace:*",

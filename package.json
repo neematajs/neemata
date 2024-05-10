@@ -10,16 +10,12 @@
     "fmt": "biome check --apply ."
   },
   "devDependencies": {
-    "@biomejs/biome": "1.7.1",
-    "@types/bun": "^1.1.0"
+    "@biomejs/biome": "1.7.3"
   },
   "trustedDependencies": [
     "@biomejs/biome"
   ],
   "peerDependencies": {
-    "typescript": "^5.4.5"
-  },
-  "dependencies": {
     "typescript": "^5.4.5"
   },
   "workspaces": [

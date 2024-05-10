@@ -2,9 +2,6 @@
   "name": "@neematajs-bun/server",
   "type": "module",
   "module": "./index.ts",
-  "scripts": {
-    "link": "bun link"
-  },
   "dependencies": {
     "@neematajs-bun/application": "workspace:*",
     "@neematajs-bun/common": "workspace:*"
