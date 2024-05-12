@@ -18,24 +18,46 @@ export type ModuleInitializerOptions = {
   logger: Logger
 }
 
-export type ModuleInitializer = (options: ModuleInitializerOptions) => any
+export type ModuleInitializer<Args extends any[] = []> = (
+  options: ModuleInitializerOptions,
+  ...args: Args
+) => any
 
 export class Module<
+  ModuleOptions extends any[] = [],
   ModuleProcedures extends Record<string, AnyProcedure> = {},
   ModuleTasks extends Record<string, AnyTask> = {},
   ModuleEvents extends Record<string, AnyEvent> = {},
   ModuleImports extends Record<string, AnyModule> = {},
+  O extends {
+    [K in keyof ModuleOptions]: ModuleOptions[K] | AnyProvider<ModuleOptions[K]>
+  } = {
+    [K in keyof ModuleOptions]: ModuleOptions[K] | AnyProvider<ModuleOptions[K]>
+  },
 > {
-  initializer?: ModuleInitializer
+  initializer?: ModuleInitializer<ModuleOptions>
   imports = {} as ModuleImports
   procedures = {} as ModuleProcedures
   tasks = {} as ModuleTasks
   events = {} as ModuleEvents
   commands = {} as Record<string, Command>
+  options!: O
 
-  withInitializer(initializer: ModuleInitializer) {
-    if (this.initializer) throw new Error('Initializer already set')
-    this.initializer = initializer
+  constructor(...options: O) {
+    this.options = options
+  }
+
+  withInitializer(initializer: ModuleInitializer<ModuleOptions>) {
+    if (this.initializer) {
+      const previousInitializer = this.initializer
+      this.initializer = async (...args) => {
+        await previousInitializer(...args)
+        await initializer(...args)
+      }
+    } else {
+      this.initializer = initializer
+    }
+
     return this
   }
 
@@ -44,6 +66,7 @@ export class Module<
   ) {
     this.procedures = merge(this.procedures, procedures)
     return this as unknown as Module<
+      ModuleOptions,
       Merge<ModuleProcedures, NewProcedures>,
       ModuleTasks,
       ModuleEvents,
@@ -54,6 +77,7 @@ export class Module<
   withTasks<NewTasks extends Record<string, AnyTask>>(tasks: NewTasks) {
     this.tasks = merge(this.tasks, tasks)
     return this as unknown as Module<
+      ModuleOptions,
       ModuleProcedures,
       Merge<ModuleTasks, NewTasks>,
       ModuleEvents,
@@ -64,6 +88,7 @@ export class Module<
   withEvents<NewEvents extends Record<string, AnyEvent>>(events: NewEvents) {
     this.events = merge(this.events, events)
     return this as unknown as Module<
+      ModuleOptions,
       ModuleProcedures,
       ModuleTasks,
       Merge<ModuleEvents, NewEvents>,
@@ -80,6 +105,7 @@ export class Module<
   withImports<T extends Record<string, AnyModule>>(modules: T) {
     this.imports = merge(this.imports, modules)
     return this as unknown as Module<
+      ModuleOptions,
       ModuleProcedures,
       ModuleTasks,
       ModuleEvents,
