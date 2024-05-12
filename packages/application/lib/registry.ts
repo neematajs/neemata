@@ -1,6 +1,6 @@
 import type { AnyGuard, AnyMiddleware, Filter, Guard, Middleware } from './api'
+import { Scope } from './constants'
 import { type Provider, getProviderScope } from './container'
-import { Scope } from './enums'
 import { Hooks } from './hooks'
 import type { Logger } from './logger'
 import type {

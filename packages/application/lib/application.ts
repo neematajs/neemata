@@ -1,11 +1,11 @@
 import { Api, type BaseParser } from './api'
+import { Hook, Scope, WorkerType } from './constants'
 import {
   Container,
   EVENT_MANAGER_PROVIDER,
   EXECUTE_PROVIDER,
   LOGGER_PROVIDER,
 } from './container'
-import { Hook, Scope, WorkerType } from './enums'
 import { EventManager } from './events'
 import type { BaseExtension } from './extension'
 import { type Logger, type LoggingOptions, createLogger } from './logger'

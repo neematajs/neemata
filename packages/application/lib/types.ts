@@ -5,8 +5,8 @@ import type {
 } from '@neematajs-bun/common'
 import type { Api, Procedure } from './api'
 import type { Application } from './application'
+import type { Hook, WorkerType } from './constants'
 import type { Container, Provider } from './container'
-import type { Hook, WorkerType } from './enums'
 import type { Event } from './events'
 import type { BaseExtension } from './extension'
 import type { Logger } from './logger'
@@ -54,8 +54,8 @@ export type MiddlewareFn = (
 export type ConnectionProvider<T, C> = Provider<ConnectionFn<T, C>>
 
 export type AnyApplication = Application<any>
-export type AnyModule = Module<any, any, any, any>
-export type AnyProvider = Provider<any, any>
+export type AnyModule = Module<any, any, any, any, any>
+export type AnyProvider<Value = any> = Provider<Value, any>
 export type AnyProcedure = Procedure<any, any, any, any, any>
 export type AnyTask = Task<any, any, any, any>
 export type AnyEvent = Event<any, any, any>
@@ -275,7 +275,9 @@ export type ResolveApiOutput<Output> = Output extends StreamResponse
     }
   : Output extends ServerSubscription
     ? ClientSubscription<Output['_']['event']['_']['payload']>
-    : JsonPrimitive<Output>
+    : Output extends Blob
+      ? {}
+      : JsonPrimitive<Output>
 
 /**
  * Slightly modified version of https://github.com/samchon/typia Primitive type. (TODO: make a PR maybe?)

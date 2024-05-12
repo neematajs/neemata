@@ -7,7 +7,6 @@ import type { ApplicationWorkerOptions } from './worker'
 
 export const bindPortMessageHandler = (port: EventEmitter) => {
   port.on('message', (message) => {
-    console.log('message: ', message)
     if (message && typeof message === 'object') {
       const { type, payload } = message
       if (typeof type === 'string') {

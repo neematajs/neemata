@@ -1,4 +1,5 @@
-import { Scope } from './enums'
+import { isNumericLiteral } from 'typescript'
+import { Scope } from './constants'
 import type { EventManager } from './events'
 import type { Logger } from './logger'
 import type { Registry } from './registry'
@@ -75,16 +76,6 @@ export class Provider<
   ProviderDeps extends Dependencies = {},
 > implements Depender<ProviderDeps>
 {
-  static override<T>(
-    newProvider: T,
-    original: any,
-    overrides: { [K in keyof Provider]?: any } = {},
-  ): T {
-    // @ts-expect-error
-    Object.assign(newProvider, original, overrides)
-    return newProvider
-  }
-
   static key<T>() {
     return new Provider<T>()
   }
@@ -97,53 +88,54 @@ export class Provider<
   readonly description!: string
 
   withDependencies<Deps extends Dependencies>(dependencies: Deps) {
-    const provider = new Provider<ProviderValue, Merge<ProviderDeps, Deps>>()
-    return Provider.override(provider, this, {
-      dependencies: merge(this.dependencies, dependencies),
-    })
+    // @ts-expect-error
+    return Object.assign(this, { dependencies }) as Provider<
+      ProviderValue,
+      Merge<ProviderDeps, Deps>
+    > &
+      Omit<this, keyof Provider>
   }
 
-  withScope<S extends Scope>(scope: S) {
-    const provider = new Provider<ProviderValue, ProviderDeps>()
-    return Provider.override(provider, this, { scope })
+  withScope(scope: Scope) {
+    return Object.assign(this, { scope })
   }
 
-  withFactory<
-    F extends ProviderFactoryType<ProviderValue, ProviderDeps>,
-    T extends Awaited<ReturnType<F>>,
-  >(factory: F) {
-    const provider = new Provider<T, ProviderDeps>()
-    return Provider.override(provider, this, { factory, value: undefined })
+  withFactory<F extends ProviderFactoryType<ProviderValue, ProviderDeps>>(
+    factory: F,
+  ) {
+    return Object.assign(this, { factory, value: undefined }) as Provider<
+      Awaited<ReturnType<F>>,
+      ProviderDeps
+    > &
+      Omit<this, keyof Provider>
   }
 
   withValue<T extends null extends ProviderValue ? any : ProviderValue>(
     value: T,
   ) {
-    const provider = new Provider<
-      null extends ProviderValue ? T : ProviderValue,
-      ProviderDeps
-    >()
-    return Provider.override(provider, this, {
+    return Object.assign(this, {
       value,
       factory: undefined,
       dispose: undefined,
-    })
+    }) as Provider<
+      null extends ProviderValue ? T : ProviderValue,
+      ProviderDeps
+    > &
+      Omit<this, keyof Provider>
   }
 
   withDisposal(dispose: this['dispose']) {
-    const provider = new Provider<ProviderValue, ProviderDeps>()
-    return Provider.override(provider, this, { dispose })
+    return Object.assign(this, { dispose })
   }
 
   withDescription(description: string) {
-    const provider = new Provider<ProviderValue, ProviderDeps>()
-    return Provider.override(provider, this, { description })
+    return Object.assign(this, { description })
   }
 
   optional() {
     return {
       isOptional: true as const,
-      provider: this as Provider<ProviderValue, ProviderDeps>,
+      provider: this,
     }
   }
 
@@ -174,11 +166,22 @@ export class Container {
 
   async load() {
     for (const module of this.application.registry.modules) {
-      await module.initializer?.({
-        container: this,
-        logger: this.application.logger,
-        hooks: this.application.registry.hooks,
-      })
+      const args = Array(module.options ? module.options.length : 0)
+
+      for (let i = 0; i < args.length; i++) {
+        const option = module.options[i]
+        args[i] =
+          option instanceof Provider ? await this.resolve(option) : option
+      }
+
+      await module.initializer?.(
+        {
+          container: this,
+          logger: this.application.logger,
+          hooks: this.application.registry.hooks,
+        },
+        ...args,
+      )
     }
 
     const traverse = (dependencies: Dependencies) => {

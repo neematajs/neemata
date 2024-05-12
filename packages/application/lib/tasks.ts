@@ -1,4 +1,5 @@
 import type { ApplicationOptions } from './application'
+import { Hook } from './constants'
 import {
   type Container,
   type Dependencies,
@@ -6,7 +7,6 @@ import {
   type Depender,
   TASK_SIGNAL_PROVIDER,
 } from './container'
-import { Hook } from './enums'
 import type { Registry } from './registry'
 import type { AnyTask, Merge, OmitFirstItem } from './types'
 import { createFuture, defer, merge, noop, onAbort } from './utils/functions'
