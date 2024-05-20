@@ -13,12 +13,13 @@
   "dependencies": {
     "@neematajs/application": "workspace:*",
     "@neematajs/server": "workspace:*",
-    "dotenv": "^16.4.5"
+    "dotenv": "^16.4.5",
+    "tsx": "^4.10.5"
   },
   "peerDependencies": {
-    "typescript": "^5.0.0",
     "@neematajs/application": "workspace:*",
-    "@neematajs/server": "workspace:*"
+    "@neematajs/server": "workspace:*",
+    "typescript": "^5.0.0"
   },
   "peerDependenciesMeta": {
     "@neematajs/server": {
