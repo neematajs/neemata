@@ -1,23 +1,27 @@
 {
-  "name": "@neematajs-bun/cli",
+  "name": "@neematajs/cli",
+  "version": "1.0.0",
+  "type": "module",
   "bin": {
-    "neemata": "./index.ts"
+    "neemata": "./dist/node.js",
+    "neemata-bun": "./dist/bun.js"
+  },
+  "scripts": {
+    "build": "bun build cli.ts bun.ts node.ts --outdir=dist --splitting --external=\\* --target=node",
+    "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "@neematajs-bun/application": "workspace:*",
-    "@neematajs-bun/server": "workspace:*",
+    "@neematajs/application": "workspace:*",
+    "@neematajs/server": "workspace:*",
     "dotenv": "^16.4.5"
-  },
-  "devDependencies": {
-    "@types/bun": "latest"
   },
   "peerDependencies": {
     "typescript": "^5.0.0",
-    "@neematajs-bun/application": "workspace:*",
-    "@neematajs-bun/server": "workspace:*"
+    "@neematajs/application": "workspace:*",
+    "@neematajs/server": "workspace:*"
   },
   "peerDependenciesMeta": {
-    "@neematajs-bun/server": {
+    "@neematajs/server": {
       "optional": true
     }
   }

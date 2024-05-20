@@ -1,3 +1,4 @@
+import type { BaseServerFormat } from '@neematajs/common'
 import { Api, type BaseParser } from './api'
 import { Hook, Scope, WorkerType } from './constants'
 import {
@@ -8,6 +9,7 @@ import {
 } from './container'
 import { EventManager } from './events'
 import type { BaseExtension } from './extension'
+import { Format } from './format'
 import { type Logger, type LoggingOptions, createLogger } from './logger'
 import { APP_COMMAND, Registry, printRegistry } from './registry'
 import {
@@ -29,6 +31,7 @@ export type ApplicationOptions = {
   type: WorkerType
   api: {
     timeout: number
+    formats: BaseServerFormat[]
     parsers?:
       | BaseParser
       | {
@@ -54,6 +57,7 @@ export class Application<AppModules extends Record<string, AnyModule> = {}> {
   readonly registry: Registry
   readonly container: Container
   readonly eventManager: EventManager
+  readonly format: Format
   subManager!: BaseSubscriptionManager
 
   readonly modules = {} as AppModules
@@ -69,6 +73,7 @@ export class Application<AppModules extends Record<string, AnyModule> = {}> {
 
     this.registry = new Registry(this)
     this.eventManager = new EventManager(this)
+    this.format = new Format(this.options.api.formats)
 
     // create unexposed container for internal providers, which never gets disposed
     const container = new Container(this)
@@ -183,42 +188,27 @@ export class Application<AppModules extends Record<string, AnyModule> = {}> {
     return this as unknown as Application<Merge<AppModules, T>>
   }
 
+  private get isApiWorker() {
+    return this.options.type === WorkerType.Api
+  }
+
   private initializeExtension<
     T extends ClassConstructor<BaseExtension>,
     I extends InstanceType<T>,
   >(extensionClass: T, options?: I['_']['options']) {
     const logger = this.logger.child({})
     const app: ExtensionApplication = {
+      logger,
       type: this.options.type,
       api: this.api,
-      connections: {
-        add: (connection) => {
-          this.connections.set(connection.id, connection)
-          this.registry.hooks.call(
-            Hook.OnConnection,
-            { concurrent: true },
-            connection,
-          )
-        },
-        remove: (connectionOrId) => {
-          const connection =
-            typeof connectionOrId === 'string'
-              ? this.connections.get(connectionOrId)
-              : connectionOrId
-          if (connection) {
-            this.connections.delete(connection.id)
-            this.registry.hooks.call(
-              Hook.OnDisconnection,
-              { concurrent: true },
-              connection,
-            )
-          }
-        },
-        get: (id) => this.connections.get(id),
-      },
+      format: this.format,
       container: this.container,
       registry: this.registry,
-      logger,
+      connections: {
+        add: this.addConnection.bind(this),
+        remove: this.removeConnection.bind(this),
+        get: this.getConnection.bind(this),
+      },
     }
     const instance = new extensionClass(app, options)
     app.logger.setBindings({ $group: instance.name })
@@ -238,7 +228,31 @@ export class Application<AppModules extends Record<string, AnyModule> = {}> {
     })
   }
 
-  private get isApiWorker() {
-    return this.options.type === WorkerType.Api
+  private addConnection(connection: BaseTransportConnection) {
+    this.connections.set(connection.id, connection)
+    this.registry.hooks.call(
+      Hook.OnConnection,
+      { concurrent: true },
+      connection,
+    )
+  }
+
+  private removeConnection(connectionOrId: BaseTransportConnection | string) {
+    const connection =
+      typeof connectionOrId === 'string'
+        ? this.connections.get(connectionOrId)
+        : connectionOrId
+    if (connection) {
+      this.connections.delete(connection.id)
+      this.registry.hooks.call(
+        Hook.OnDisconnection,
+        { concurrent: true },
+        connection,
+      )
+    }
+  }
+
+  private getConnection(id: string) {
+    return this.connections.get(id)
   }
 }

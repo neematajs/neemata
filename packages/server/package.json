@@ -1,17 +1,29 @@
 {
-  "name": "@neematajs-bun/server",
+  "name": "@neematajs/server",
+  "version": "1.0.0",
   "type": "module",
-  "module": "./index.ts",
-  "dependencies": {
-    "@neematajs-bun/application": "workspace:*",
-    "@neematajs-bun/common": "workspace:*"
+  "scripts": {
+    "build": "bun build index.ts $(pnpm --silent -w run entrypoints $(pwd) lib) --outdir=dist --splitting --external=\\* --sourcemap=external --target=node ",
+    "type-check": "tsc --noEmit"
   },
-  "devDependencies": {
-    "@types/bun": "latest"
+  "exports": {
+    ".": "./index.ts"
+  },
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "bun": "./index.ts",
+        "import": "./dist/index.js",
+        "types": "./index.ts"
+      }
+    }
   },
   "peerDependencies": {
-    "typescript": "^5.0.0",
-    "@neematajs-bun/application": "workspace:*",
-    "@neematajs-bun/common": "workspace:*"
+    "@neematajs/application": "workspace:*",
+    "@neematajs/common": "workspace:*"
+  },
+  "devDependencies": {
+    "@neematajs/application": "workspace:*",
+    "@neematajs/common": "workspace:*"
   }
 }

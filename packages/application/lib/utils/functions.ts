@@ -17,23 +17,23 @@ export const defer = <T extends Callback>(
     }, ms),
   )
 
-export const match = (name: string, pattern: Pattern) => {
+export const match = (value: string, pattern: Pattern) => {
   if (typeof pattern === 'function') {
-    return pattern(name)
+    return pattern(value)
   } else if (typeof pattern === 'string') {
     if (pattern === '*' || pattern === '**') {
       return true
     } else if (pattern.startsWith('*') && pattern.endsWith('*')) {
-      return name.includes(pattern.slice(1, -1))
+      return value.includes(pattern.slice(1, -1))
     } else if (pattern.endsWith('*')) {
-      return name.startsWith(pattern.slice(0, -1))
+      return value.startsWith(pattern.slice(0, -1))
     } else if (pattern.startsWith('*')) {
-      return name.endsWith(pattern.slice(1))
+      return value.endsWith(pattern.slice(1))
     } else {
-      return name === pattern
+      return value === pattern
     }
   } else {
-    return pattern.test(name)
+    return pattern.test(value)
   }
 }
 
@@ -58,7 +58,7 @@ export const range = (count: number, start = 0) => {
 }
 
 export const debounce = (cb: Callback, delay: number) => {
-  let timer: ReturnType<typeof setTimeout>
+  let timer: any
   const clear = () => timer && clearTimeout(timer)
   const fn = (...args: any[]) => {
     clear()
@@ -116,3 +116,31 @@ export const withTimeout = (
     const clearTimer = () => clearTimeout(timer)
     value.then(resolve).catch(reject).finally(clearTimer)
   })
+
+export const parseContentTypes = (types: string) => {
+  if (types === '*/*') return ['*/*']
+  return types
+    .split(',')
+    .map((t) => {
+      const [type, ...rest] = t.split(';')
+      const params = new Map(
+        rest.map((p) =>
+          p
+            .trim()
+            .split('=')
+            .slice(0, 2)
+            .map((p) => p.trim()),
+        ) as [string, string][],
+      )
+      return {
+        type,
+        q: params.has('q') ? Number.parseFloat(params.get('q')!) : 1,
+      }
+    })
+    .sort((a, b) => {
+      if (a.type === '*/*') return 1
+      if (b.type === '*/*') return -1
+      return b.q - a.q ? -1 : 1
+    })
+    .map((t) => t.type)
+}

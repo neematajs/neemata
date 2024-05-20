@@ -1,19 +1,32 @@
 {
-  "name": "@neematajs-bun/application",
+  "name": "@neematajs/application",
+  "version": "1.0.0",
   "type": "module",
-  "module": "./index.ts",
+  "exports": {
+    ".": "./index.ts"
+  },
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "bun": "./index.ts",
+        "import": "./dist/index.js",
+        "types": "./index.ts"
+      }
+    }
+  },
+  "scripts": {
+    "build": "bun build index.ts $(pnpm --silent -w run entrypoints $(pwd) lib) --outdir=dist --splitting --external=\\* --sourcemap=external --target=node",
+    "type-check": "tsc --noEmit"
+  },
   "dependencies": {
     "pino": "^9.0.0",
-    "pino-pretty": "^11.0.0",
-    "@neematajs-bun/common": "workspace:*"
+    "pino-pretty": "^11.0.0"
   },
   "devDependencies": {
-    "@types/bun": "^1.1.0",
-    "@sinclair/typebox": "^0.32",
-    "zod": "^3"
+    "@neematajs/common": "workspace:*"
   },
   "peerDependencies": {
-    "@neematajs-bun/common": "workspace:*",
+    "@neematajs/common": "workspace:*",
     "typescript": "^5.0.0",
     "@sinclair/typebox": "^0.32",
     "zod": "^3"

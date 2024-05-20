@@ -1,4 +1,4 @@
-import { ApiError, ErrorCode } from '@neematajs-bun/common'
+import { ApiError, ErrorCode } from '@neematajs/common'
 import type { ApplicationOptions } from './application'
 import {
   CONNECTION_PROVIDER,
@@ -12,6 +12,8 @@ import type { Logger } from './logger'
 import type { Registry } from './registry'
 import type { BaseTransport, BaseTransportConnection } from './transport'
 import type {
+  AnyGuard,
+  AnyMiddleware,
   AnyProcedure,
   ApiPath,
   Async,
@@ -106,15 +108,12 @@ export class Procedure<
 
   withDependencies<Deps extends Dependencies>(dependencies: Deps) {
     const procedure = new Procedure<
-      Merge<ProcedureDeps, ApplyProcedureTransport<ProcedureTransports, Deps>>,
+      ProcedureDeps & ApplyProcedureTransport<ProcedureTransports, Deps>,
       ProcedureInput,
       ProcedureOutput,
       ProcedureTransports,
       ProcedureHandlerType<
-        Merge<
-          ProcedureDeps,
-          ApplyProcedureTransport<ProcedureTransports, Deps>
-        >,
+        ProcedureDeps & ApplyProcedureTransport<ProcedureTransports, Deps>,
         ProcedureInput,
         ProcedureOutput
       >
@@ -462,13 +461,11 @@ export class Guard<Deps extends Dependencies = {}> extends Provider<
   GuardFn,
   Deps
 > {}
-export type AnyGuard = Guard<any>
 
 export class Middleware<Deps extends Dependencies = {}> extends Provider<
   MiddlewareFn,
   Deps
 > {}
-export type AnyMiddleware = Middleware<any>
 
 export class Filter<Error extends ErrorClass = ErrorClass> extends Provider<
   FilterFn<Error>

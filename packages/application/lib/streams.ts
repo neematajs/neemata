@@ -1,5 +1,5 @@
-import { PassThrough, Readable, type TransformCallback } from 'node:stream'
-import type { StreamMetadata } from '@neematajs-bun/common'
+import { PassThrough, Readable } from 'node:stream'
+import type { ServerStreamConstructor, StreamMetadata } from '@neematajs/common'
 
 export abstract class StreamResponse<
   Payload = any,
@@ -9,7 +9,7 @@ export abstract class StreamResponse<
   readonly payload!: Payload
 }
 
-export class JsonStreamResponse<
+export class EncodedStreamResponse<
   Payload = any,
   Chunk = any,
 > extends StreamResponse<Payload, Chunk> {
@@ -27,13 +27,13 @@ export class JsonStreamResponse<
   }
 
   withChunk<Chunk>() {
-    return this as unknown as JsonStreamResponse<Payload, Chunk>
+    return this as unknown as EncodedStreamResponse<Payload, Chunk>
   }
 
   withPayload<Payload>(payload: Payload) {
     // @ts-expect-error
     this.payload = payload
-    return this as unknown as JsonStreamResponse<Payload, Chunk>
+    return this as unknown as EncodedStreamResponse<Payload, Chunk>
   }
 }
 
@@ -56,7 +56,7 @@ export class Stream extends Readable {
   bytesReceived = 0
 
   constructor(
-    readonly id: string,
+    readonly id: number,
     readonly metadata: StreamMetadata,
     read?: (size: number) => void,
     highWaterMark?: number,

@@ -1,0 +1,39 @@
+{
+  "name": "neematajs",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "build": "bun build src/application.ts src/server.ts src/common.ts --outdir=dist --splitting --external=\\* --sourcemap=external --target=node",
+    "type-check": "tsc --noEmit"
+  },
+  "exports": {
+    "./application": "./src/application.ts",
+    "./server": "./src/server.ts",
+    "./common": "./src/common.ts"
+  },
+  "publishConfig": {
+    "exports": {
+      "./application": {
+        "bun": "./src/application.ts",
+        "types": "./src/application.ts",
+        "import": "./dist/application.js"
+      },
+      "./server": {
+        "bun": "./src/server.ts",
+        "types": "./src/server.ts",
+        "import": "./dist/server.js"
+      },
+      "./common": {
+        "bun": "./src/common.ts",
+        "types": "./src/common.ts",
+        "import": "./dist/common.js"
+      }
+    }
+  },
+  "dependencies": {
+    "@neematajs/common": "workspace:*",
+    "@neematajs/application": "workspace:*",
+    "@neematajs/server": "workspace:*",
+    "@neematajs/cli": "workspace:*"
+  }
+}

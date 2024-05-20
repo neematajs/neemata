@@ -1,19 +1,13 @@
-import type { Readable } from 'node:stream'
-import type {
-  Subscription as ClientSubscription,
-  UpStream,
-} from '@neematajs-bun/common'
-import type { Api, Procedure } from './api'
+import type { Api, Guard, Middleware, Procedure } from './api'
 import type { Application } from './application'
 import type { Hook, WorkerType } from './constants'
 import type { Container, Provider } from './container'
 import type { Event } from './events'
 import type { BaseExtension } from './extension'
+import type { Format } from './format'
 import type { Logger } from './logger'
 import type { Module } from './module'
 import type { Registry } from './registry'
-import type { StreamResponse } from './streams'
-import type { Subscription as ServerSubscription } from './subscription'
 import type { Task, TaskExecution } from './tasks'
 import type { BaseTransportConnection } from './transport'
 
@@ -59,6 +53,8 @@ export type AnyProvider<Value = any> = Provider<Value, any>
 export type AnyProcedure = Procedure<any, any, any, any, any>
 export type AnyTask = Task<any, any, any, any>
 export type AnyEvent = Event<any, any, any>
+export type AnyGuard = Guard<any>
+export type AnyMiddleware = Middleware<any>
 
 export type ApiPath = { procedure: AnyProcedure; name: string }
 
@@ -93,6 +89,7 @@ export type CallHook<T extends string> = (
 export interface ExtensionApplication {
   type: WorkerType
   api: Api
+  format: Format
   container: Container
   logger: Logger
   connections: {
@@ -120,7 +117,7 @@ export type UnionToIntersection<U> = (
   : never
 
 export type InferSchemaOutput<Schema> = Schema extends import('zod').ZodSchema
-  ? import('zod').TypeOf<Schema>
+  ? import('zod').output<Schema>
   : Schema extends import('@sinclair/typebox').TSchema
     ? import('@sinclair/typebox').Static<Schema>
     : unknown
@@ -130,9 +127,6 @@ export type InferSchemaInput<Schema> = Schema extends import('zod').ZodSchema
   : Schema extends import('@sinclair/typebox').TSchema
     ? import('@sinclair/typebox').Static<Schema>
     : unknown
-
-export type Primitive = string | number | boolean | null
-export type Scalars = Primitive | Primitive[]
 
 export type GlobalContext = {
   logger: Logger
@@ -184,20 +178,18 @@ type AppClientProcedures<
       ? `${Prefix extends '' ? ModuleName : `${Prefix}/${ModuleName}`}/${K}`
       : never]: Procedures[K] extends AnyProcedure
       ? {
-          input: ResolveApiInput<InferSchemaOutput<Procedures[K]['_']['input']>>
-          output: ResolveApiOutput<
-            Awaited<
-              null extends Procedures[K]['_']['output']
-                ? ReturnType<Procedures[K]['handler']>
-                : InferSchemaOutput<Procedures[K]['_']['output']>
-            >
+          input: InferSchemaOutput<Procedures[K]['_']['input']>
+          output: Awaited<
+            null extends Procedures[K]['_']['output']
+              ? ReturnType<Procedures[K]['handler']>
+              : InferSchemaOutput<Procedures[K]['_']['output']>
           >
         }
       : never
   }
 >
 
-type ApiClientEvents<
+type AppClientEvents<
   ModuleName extends string,
   Module extends AnyModule,
   Prefix extends string = '',
@@ -212,13 +204,13 @@ type ApiClientEvents<
     : UnionToIntersection<
         {
           [K in keyof Module['imports']]: {
-            [P in keyof ApiClientEvents<
+            [P in keyof AppClientEvents<
               //@ts-expect-error
               K,
               Module['imports'][K],
               ImportPrefix
               //@ts-expect-error
-            >]: ApiClientEvents<K, Module['imports'][K], ImportPrefix>[P]
+            >]: AppClientEvents<K, Module['imports'][K], ImportPrefix>[P]
           }
         }[keyof Module['imports']]
       >,
@@ -246,7 +238,7 @@ export type AppClient<App extends AnyApplication> = {
     {
       [K in keyof App['modules']]: {
         //@ts-expect-error
-        [P in keyof ApiClientEvents<K, App['modules'][K]>]: ApiClientEvents<
+        [P in keyof AppClientEvents<K, App['modules'][K]>]: AppClientEvents<
           //@ts-expect-error
           K,
           App['modules'][K]
@@ -255,163 +247,3 @@ export type AppClient<App extends AnyApplication> = {
     }[keyof App['modules']]
   >
 }
-
-export type ResolveApiInput<Input> = Input extends Readable
-  ? UpStream
-  : Input extends object
-    ? {
-        [K in keyof Input]: ResolveApiInput<Input[K]>
-      }
-    : Input
-
-export type ResolveApiOutput<Output> = Output extends StreamResponse
-  ? {
-      payload: JsonPrimitive<Output['payload']>
-      stream: import('@neematajs-bun/common').DownStream<
-        Output['chunk'] extends ArrayBuffer
-          ? ArrayBuffer
-          : JsonPrimitive<Output['chunk']>
-      >['interface']
-    }
-  : Output extends ServerSubscription
-    ? ClientSubscription<Output['_']['event']['_']['payload']>
-    : Output extends Blob
-      ? {}
-      : JsonPrimitive<Output>
-
-/**
- * Slightly modified version of https://github.com/samchon/typia Primitive type. (TODO: make a PR maybe?)
- * Excludes keys with `never` types from object, and if a function is in array,
- * then it is stringified as `null`, just like V8's implementation of JSON.stringify does.
- */
-export type JsonPrimitive<T> = Equal<T, JsonPrimitiveMain<T>> extends true
-  ? T
-  : JsonPrimitiveMain<T>
-
-type Equal<X, Y> = X extends Y ? (Y extends X ? true : false) : false
-
-type JsonPrimitiveMain<
-  Instance,
-  InArray extends boolean = false,
-> = Instance extends [never]
-  ? never // (special trick for jsonable | null) type
-  : ValueOf<Instance> extends bigint
-    ? never
-    : ValueOf<Instance> extends boolean | number | string
-      ? ValueOf<Instance>
-      : Instance extends Function
-        ? InArray extends true
-          ? null
-          : never
-        : ValueOf<Instance> extends object
-          ? Instance extends object
-            ? Instance extends NativeClass
-              ? {}
-              : Instance extends IJsonable<infer Raw>
-                ? ValueOf<Raw> extends object
-                  ? Raw extends object
-                    ? PrimitiveObject<Raw> // object would be primitified
-                    : never // cannot be
-                  : ValueOf<Raw> // atomic value
-                : PrimitiveObject<Instance> // object would be primitified
-            : never // cannot be
-          : ValueOf<Instance>
-
-type PrimitiveObject<Instance extends object> = Instance extends Array<infer T>
-  ? IsTuple<Instance> extends true
-    ? PrimitiveTuple<Instance>
-    : JsonPrimitiveMain<T, true>[]
-  : {
-      [P in keyof Instance as JsonPrimitiveMain<Instance[P]> extends never
-        ? never
-        : P]: JsonPrimitiveMain<Instance[P]>
-    }
-
-type PrimitiveTuple<T extends readonly any[]> = T extends []
-  ? []
-  : T extends [infer F]
-    ? [JsonPrimitiveMain<F, true>]
-    : T extends [infer F, ...infer Rest extends readonly any[]]
-      ? [JsonPrimitiveMain<F, true>, ...PrimitiveTuple<Rest>]
-      : T extends [(infer F)?]
-        ? [JsonPrimitiveMain<F, true>?]
-        : T extends [(infer F)?, ...infer Rest extends readonly any[]]
-          ? [JsonPrimitiveMain<F, true>?, ...PrimitiveTuple<Rest>]
-          : []
-
-type ValueOf<Instance> = IsValueOf<Instance, Boolean> extends true
-  ? boolean
-  : IsValueOf<Instance, Number> extends true
-    ? number
-    : IsValueOf<Instance, String> extends true
-      ? string
-      : Instance
-
-type NativeClass =
-  | Set<any>
-  | Map<any, any>
-  | WeakSet<any>
-  | WeakMap<any, any>
-  | Uint8Array
-  | Uint8ClampedArray
-  | Uint16Array
-  | Uint32Array
-  | BigUint64Array
-  | Int8Array
-  | Int16Array
-  | Int32Array
-  | BigInt64Array
-  | Float32Array
-  | Float64Array
-  | ArrayBuffer
-  | SharedArrayBuffer
-  | DataView
-
-type IsTuple<T extends readonly any[] | { length: number }> = [T] extends [
-  never,
-]
-  ? false
-  : T extends readonly any[]
-    ? number extends T['length']
-      ? false
-      : true
-    : false
-
-type IsValueOf<Instance, Object extends IValueOf<any>> = Instance extends Object
-  ? Object extends IValueOf<infer U>
-    ? Instance extends U
-      ? false
-      : true // not Primitive, but Object
-    : false // cannot be
-  : false
-
-interface IValueOf<T> {
-  valueOf(): T
-}
-
-interface IJsonable<T> {
-  toJSON(): T
-}
-
-// type A = {
-//   test: {
-//     some: string,
-//     another: number
-//   },
-//   test2: {
-//     some: string,
-//   }
-// }
-
-// type B = {
-//   'test/some': string,
-//   'test/another': number,
-//   'test2/some': string,
-// }
-
-// type Flatten<T> = T extends object
-//   ? {
-//       [K in keyof T as `${string & K}/${string & keyof T[K]}`]: T[K][keyof T[K]];
-//     }
-//   : never;
-// type Result = Flatten<A>

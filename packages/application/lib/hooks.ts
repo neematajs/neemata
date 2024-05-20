@@ -1,4 +1,5 @@
-import type { Callback, Hook, HooksInterface } from './common'
+import type { Hook } from './constants'
+import type { Callback, HooksInterface } from './types'
 
 export class Hooks {
   collection = new Map<string, Set<Callback>>()

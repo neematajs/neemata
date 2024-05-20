@@ -2,7 +2,7 @@ import { EventEmitter, once } from './event-emitter'
 
 export enum StreamDataType {
   Binary = 'Binary',
-  Json = 'Json',
+  Encoded = 'Encoded',
 }
 
 export type StreamMetadata = {
@@ -11,7 +11,16 @@ export type StreamMetadata = {
   filename?: string
 }
 
-export const STREAM_SERIALIZE_KEY = '__neemata:stream:'
+export type ServerStreamConstructor = new (
+  id: number,
+  metadata: StreamMetadata,
+  read?: (size: number) => void,
+  highWaterMark?: number,
+) => {
+  readonly id: number
+  readonly metadata: StreamMetadata
+  push(buffer: Uint8Array | null): boolean
+}
 
 export class AbortStreamError extends Error {}
 
@@ -64,7 +73,7 @@ type StreamInferfaceEvents = {
 export class UpStream extends EventEmitter<StreamInferfaceEvents> {
   private source: ReadableStream
   private reader?: ReadableStreamDefaultReader<Uint8Array>
-  private readBuffer?: ArrayBuffer
+  private readBuffer?: Uint8Array
 
   bytesSent = 0
   paused = false
@@ -76,8 +85,7 @@ export class UpStream extends EventEmitter<StreamInferfaceEvents> {
   ) {
     super()
 
-    // @ts-expect-error
-    this.source =
+    const _source =
       source instanceof ReadableStream
         ? source
         : source instanceof Blob
@@ -86,9 +94,10 @@ export class UpStream extends EventEmitter<StreamInferfaceEvents> {
             ? new Blob([source]).stream()
             : undefined
 
-    if (typeof this.source === 'undefined')
+    if (typeof _source === 'undefined')
       throw new Error('Stream source is not supported')
 
+    this.source = _source
     this.reader = this.source.getReader()
   }
 
@@ -127,7 +136,6 @@ export class UpStream extends EventEmitter<StreamInferfaceEvents> {
       if (done) {
         return { done }
       } else {
-        // @ts-expect-error
         this.readBuffer = value
         return this._read(size)
       }
@@ -137,9 +145,5 @@ export class UpStream extends EventEmitter<StreamInferfaceEvents> {
   _finish() {
     this.emit('end')
     this.destroy()
-  }
-
-  _serialize() {
-    return STREAM_SERIALIZE_KEY + this.id
   }
 }

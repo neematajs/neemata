@@ -36,8 +36,12 @@ export const decodeNumber = <T extends keyof BinaryTypes>(
   return view[`get${type}`](offset, littleEndian) as BinaryTypes[T]
 }
 
-export const encodeText = (text: string) => utf8encoder.encode(text)
-export const decodeText = (buffer: ArrayBuffer) => utf8decoder.decode(buffer)
+export const encodeText = (text: string) =>
+  new Uint8Array(utf8encoder.encode(text)).buffer as ArrayBuffer
+
+export const decodeText = (buffer: Parameters<typeof utf8decoder.decode>[0]) =>
+  utf8decoder.decode(buffer)
+
 export const concat = (...buffers: ArrayBuffer[]) => {
   const totalLength = buffers.reduce(
     (acc, buffer) => acc + buffer.byteLength,
@@ -49,5 +53,5 @@ export const concat = (...buffers: ArrayBuffer[]) => {
     view.set(new Uint8Array(buffer), offset)
     offset += buffer.byteLength
   }
-  return view.buffer
+  return view.buffer as ArrayBuffer
 }

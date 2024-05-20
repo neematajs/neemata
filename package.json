@@ -2,21 +2,23 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "pnpm -r run build",
-    "build:watch": "pnpm -r run build:watch",
-    "link": "pnpm -r run link",
+    "build": "pnpm run --parallel --filter \"*\" build",
+    "build:watch": "pnpm run --parallel --filter \"*\" build --watch",
+    "check:type": "pnpm run --parallel --filter \"*\" type-check",
     "check:lint": "biome lint .",
     "check:fmt": "biome format .",
-    "fmt": "biome check --apply ."
+    "check": "pnpm run check:fmt && pnpm run check:lint && pnpm run check:type",
+    "fmt": "biome check --apply .",
+    "prepare": "husky",
+    "entrypoints": "bun scripts/entrypoints.ts"
   },
-  "devDependencies": {
-    "@biomejs/biome": "1.7.3"
-  },
-  "trustedDependencies": [
-    "@biomejs/biome"
-  ],
   "peerDependencies": {
     "typescript": "^5.4.5"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "1.7.3",
+    "@types/bun": "^1.1.0",
+    "husky": "^9.0.11"
   },
   "workspaces": [
     "./packages/*"

@@ -11,3 +11,7 @@ export class Subscription<Payload = any> extends EventEmitter<{
     super()
   }
 }
+
+export interface ServerSubscription {
+  _type: 'subscription'
+}

@@ -29,8 +29,17 @@ export class ApiError extends Error {
 }
 
 export type ApiProcedureType = {
-  input?: any
-  output?: any
+  input: any
+  output: any
+}
+
+export type AppClientInterface = {
+  procedures: {
+    [key: string]: ApiProcedureType
+  }
+  events: {
+    [key: string]: any
+  }
 }
 
 export type ResolveApiProcedureType<
@@ -56,9 +65,10 @@ export type BaseClientEvents = {
   '_neemata:healthy': never
 }
 export abstract class BaseClient<
-  Procedures = never,
-  Events extends EventsType = never,
+  AppClient extends AppClientInterface = any,
   RPCOptions = never,
+  Procedures = AppClient['procedures'],
+  Events extends EventsType = AppClient['events'],
 > extends EventEmitter<Events & BaseClientEvents> {
   protected streams = {
     up: new Map<number, UpStream>(),
@@ -81,7 +91,8 @@ export abstract class BaseClient<
   abstract connect(): Promise<void>
   abstract disconnect(): Promise<void>
   abstract reconnect(): Promise<void>
-  async createStream<I extends Blob | ArrayBuffer | ReadableStream>(
+
+  async stream<I extends Blob | ArrayBuffer | ReadableStream>(
     source: I,
     metadata: Partial<StreamMetadata> = {},
   ) {

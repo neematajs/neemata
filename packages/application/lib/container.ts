@@ -91,7 +91,7 @@ export class Provider<
     // @ts-expect-error
     return Object.assign(this, { dependencies }) as Provider<
       ProviderValue,
-      Merge<ProviderDeps, Deps>
+      ProviderDeps & Deps
     > &
       Omit<this, keyof Provider>
   }

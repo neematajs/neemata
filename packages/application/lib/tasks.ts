@@ -58,8 +58,8 @@ export class Task<
 
   withDependencies<NewDeps extends Dependencies>(dependencies: NewDeps) {
     const task = new Task<
-      Merge<TaskDeps, NewDeps>,
-      Handler<Merge<TaskDeps, NewDeps>>,
+      TaskDeps & NewDeps,
+      Handler<TaskDeps & NewDeps>,
       TaskType,
       TaskArgs
     >()
