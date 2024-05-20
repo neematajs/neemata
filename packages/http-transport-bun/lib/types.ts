@@ -1,4 +1,4 @@
-import type { ServerOptions } from '@neematajs/http-server'
+import type { ServerOptions } from '@neematajs/bun-http-server'
 import type { SocketAddress, TLSOptions } from 'bun'
 import type { HttpTransportMethod } from './constants'
 

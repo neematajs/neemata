@@ -6,8 +6,8 @@ import {
   Scope,
   StreamResponse,
 } from '@neematajs/application'
+import { Server } from '@neematajs/bun-http-server'
 import { ApiError, type BaseServerFormat, ErrorCode } from '@neematajs/common'
-import { Server } from '@neematajs/http-server'
 import qs from 'qs'
 import { HttpConnection } from './connection'
 import {
@@ -211,6 +211,30 @@ export class HttpTransportServer {
     } else {
       const body = await getBody(request.req).asArrayBuffer()
       return format.decode(body)
+    }
+  }
+  private applyCors(req: Request, headers: Headers) {
+    const origin = req.headers.get('origin')
+
+    if (this.options.cors && origin) {
+      const { cors } = this.options
+      let allowed = false
+      if (typeof cors.origin === 'string')
+        allowed = cors.origin === req.headers.get('origin')
+      else if (cors.origin instanceof Bun.Glob) {
+        allowed = cors.origin.match(origin)
+      } else {
+        allowed = cors.origin(req)
+      }
+
+      if (allowed) {
+        headers.set('access-control-allow-origin', origin)
+        for (const type of ['methods', 'headers', 'credentials'] as const) {
+          if (cors[type]) {
+            headers.set(`Access-Control-Allow-${type}`, `${cors[type]}`)
+          }
+        }
+      }
     }
   }
 }
