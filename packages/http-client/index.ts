@@ -85,10 +85,10 @@ export class HttpClient<
     const { timeout = options.timeout ?? this.options.timeout, headers = {} } =
       options
 
-    return await fetch(this.getURL(`api/${procedure as string}`, 'http'), {
+    return await fetch(this.getURL(`api/${procedure as string}`), {
       signal: AbortSignal.timeout(timeout),
       method: 'POST',
-      body: JSON.stringify(payload),
+      body: this.options.format.encode(payload),
       credentials: 'include',
       cache: 'no-cache',
       headers: {
