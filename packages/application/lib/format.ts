@@ -17,7 +17,7 @@ export class Format {
 
     for (const type of types) {
       for (const [pattern, format] of this.supported) {
-        if (type === '*/*' && match(type, pattern)) return format
+        if (type === '*/*' || match(type, pattern)) return format
       }
     }
 
