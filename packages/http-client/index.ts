@@ -9,9 +9,8 @@ import {
 import qs from 'qs'
 
 export type ClientOptions = {
-  host: string
+  origin: string
   timeout: number
-  secure?: boolean
   debug?: boolean
   format: BaseClientFormat
   WebSocket?: new (...args: any[]) => WebSocket
@@ -36,7 +35,7 @@ export class HttpClient<
     while (!this.isHealthy) {
       try {
         const signal = AbortSignal.timeout(10000)
-        const url = this.getURL('healthy', 'http')
+        const url = this.getURL('healthy')
         const { ok } = await fetch(url, { signal })
         this.isHealthy = ok
       } catch (e) {}
@@ -126,15 +125,11 @@ export class HttpClient<
   ): URL {
     const [payload] = args
     const query = qs.stringify(payload)
-    return this.getURL(`api/${procedure as string}`, 'http', query)
+    return this.getURL(`api/${procedure as string}`, query)
   }
 
-  private getURL(path = '', protocol: 'ws' | 'http', params = '') {
-    const url = new URL(
-      `${this.options.secure ? protocol + 's' : protocol}://${
-        this.options.host
-      }/${path}`,
-    )
+  private getURL(path = '', params = '') {
+    const url = new URL(path, this.options.origin)
     url.search = params
     return url
   }
