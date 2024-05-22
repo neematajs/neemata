@@ -1,4 +1,4 @@
-#!/usr/bin/env bun
+#!/usr/bin/env bun --no-clear-screen
 import { run } from './cli'
 
 // workaround: bun run --bun doesn't work if dependencies

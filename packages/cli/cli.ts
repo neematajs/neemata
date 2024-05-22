@@ -1,5 +1,4 @@
 import { fork, spawnSync } from 'node:child_process'
-import { once } from 'node:events'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
