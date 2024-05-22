@@ -209,12 +209,12 @@ export class WebsocketsClient<
   }
 
   protected [MessageType.Event](buffer: ArrayBuffer) {
-    const [event, payload] = JSON.parse(decodeText(buffer))
+    const [event, payload] = this.options.format.decode(buffer)
     this.emit(event, payload)
   }
 
   protected [MessageType.Rpc](buffer: ArrayBuffer) {
-    const [callId, response, error] = JSON.parse(decodeText(buffer))
+    const [callId, response, error] = this.options.format.decode(buffer)
     const call = this.calls.get(callId)
     if (call) {
       const { resolve, reject, timer } = call
@@ -226,9 +226,8 @@ export class WebsocketsClient<
   }
 
   protected [MessageType.RpcStream](buffer: ArrayBuffer) {
-    const [callId, streamDataType, streamId, payload] = JSON.parse(
-      decodeText(buffer),
-    )
+    const [callId, streamDataType, streamId, payload] =
+      this.options.format.decode(buffer)
     const call = this.calls.get(callId)
     if (call) {
       const ac = new AbortController()
@@ -259,7 +258,7 @@ export class WebsocketsClient<
   }
 
   protected [MessageType.RpcSubscription](buffer: ArrayBuffer) {
-    const [callId, key] = JSON.parse(decodeText(buffer))
+    const [callId, key] = this.options.format.decode(buffer)
     const call = this.calls.get(callId)
     if (call) {
       const { resolve, timer } = call
@@ -336,13 +335,13 @@ export class WebsocketsClient<
   }
 
   protected [MessageType.ServerSubscriptionEmit](buffer: ArrayBuffer) {
-    const [key, payload] = JSON.parse(decodeText(buffer))
+    const [key, payload] = this.options.format.decode(buffer)
     const subscription = this.subscriptions.get(key)
     if (subscription) subscription.emit('data', payload)
   }
 
   protected [MessageType.ServerUnsubscribe](buffer: ArrayBuffer) {
-    const [key] = JSON.parse(decodeText(buffer))
+    const [key] = this.options.format.decode(buffer)
     const subscription = this.subscriptions.get(key)
     subscription?.emit('end')
     this.subscriptions.delete(key)
