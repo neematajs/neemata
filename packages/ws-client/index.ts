@@ -163,6 +163,12 @@ export class WebsocketsClient<
 
     if (!this.isConnected) await once(this, '_neemata:connect')
 
+    if (this.options.debug) {
+      console.groupCollapsed(`RPC/Request id-${callId} ${procedure as string}`)
+      console.log(payload)
+      console.groupEnd()
+    }
+
     return new Promise((resolve, reject) => {
       this.calls.set(callId, { resolve, reject, timer })
       this.send(MessageType.Rpc, data)
@@ -215,6 +221,13 @@ export class WebsocketsClient<
 
   protected [MessageType.Rpc](buffer: ArrayBuffer) {
     const [callId, response, error] = this.options.format.decode(buffer)
+    if (this.options.debug) {
+      console.groupCollapsed(
+        `RPC/Response id-${callId} ${error ? 'ERR' : 'OK'}`,
+      )
+      console.log(error ?? response)
+      console.groupEnd()
+    }
     const call = this.calls.get(callId)
     if (call) {
       const { resolve, reject, timer } = call
