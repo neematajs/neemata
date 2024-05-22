@@ -70,6 +70,11 @@ export abstract class BaseClient<
   Procedures = AppClient['procedures'],
   Events extends EventsType = AppClient['events'],
 > extends EventEmitter<Events & BaseClientEvents> {
+  _!: {
+    procedures: Procedures
+    events: Events
+  }
+
   protected streams = {
     up: new Map<number, UpStream>(),
     down: new Map<number, DownStream>(),
