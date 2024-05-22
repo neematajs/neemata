@@ -10,7 +10,9 @@
     "check": "pnpm run check:fmt && pnpm run check:lint && pnpm run check:type",
     "fmt": "biome check --apply .",
     "prepare": "husky",
-    "entrypoints": "bun scripts/entrypoints.ts"
+    "entrypoints": "bun scripts/entrypoints.ts",
+    "publish": "pnpm run build && pnpm -r publish --access public --no-git-checks",
+    "publish:dry": "pnpm run publish --dry-run"
   },
   "peerDependencies": {
     "typescript": "^5.4.5"

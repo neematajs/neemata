@@ -1,6 +1,6 @@
 {
   "name": "@neematajs/ws-client",
-  "version": "1.0.0",
+  "version": "1.0.0-alpha.1",
   "type": "module",
   "module": "index.ts",
   "publishConfig": {
@@ -15,10 +15,10 @@
     "qs": "^6.12.1"
   },
   "peerDependencies": {
-    "@neematajs/common": "workspace:~1.0.0"
+    "@neematajs/common": "workspace:~1.0.0-alpha"
   },
   "devDependencies": {
-    "@neematajs/common": "workspace:~1.0.0",
+    "@neematajs/common": "workspace:~1.0.0-alpha",
     "@types/qs": "^6"
   }
 }

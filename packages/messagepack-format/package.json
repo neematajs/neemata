@@ -1,6 +1,6 @@
 {
   "name": "@neematajs/messagepack-format",
-  "version": "1.0.0",
+  "version": "1.0.0-alpha.1",
   "exports": {
     "./client": "./src/client.ts",
     "./server": "./src/server.ts"
@@ -27,11 +27,11 @@
     "@msgpack/msgpack": "3.0.0-beta2"
   },
   "peerDependencies": {
-    "@neematajs/common": "workspace:~1.0.0",
-    "@neematajs/application": "workspace:~1.0.0"
+    "@neematajs/common": "workspace:~1.0.0-alpha",
+    "@neematajs/application": "workspace:~1.0.0-alpha"
   },
   "devDependencies": {
-    "@neematajs/common": "workspace:~1.0.0",
-    "@neematajs/application": "workspace:~1.0.0"
+    "@neematajs/common": "workspace:~1.0.0-alpha",
+    "@neematajs/application": "workspace:~1.0.0-alpha"
   }
 }

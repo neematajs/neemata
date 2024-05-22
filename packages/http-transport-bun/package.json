@@ -1,6 +1,6 @@
 {
   "name": "@neematajs/http-transport-bun",
-  "version": "1.0.0",
+  "version": "1.0.0-alpha.1",
   "module": "index.ts",
   "type": "module",
   "scripts": {
@@ -11,14 +11,14 @@
     "qs": "^6.12.1"
   },
   "peerDependencies": {
-    "@neematajs/application": "workspace:~1.0.0",
-    "@neematajs/common": "workspace:~1.0.0",
-    "@neematajs/json-format": "workspace:~1.0.0"
+    "@neematajs/application": "workspace:~1.0.0-alpha",
+    "@neematajs/common": "workspace:~1.0.0-alpha",
+    "@neematajs/json-format": "workspace:~1.0.0-alpha"
   },
   "devDependencies": {
-    "@neematajs/application": "workspace:~1.0.0",
-    "@neematajs/common": "workspace:~1.0.0",
-    "@neematajs/json-format": "workspace:~1.0.0",
+    "@neematajs/application": "workspace:~1.0.0-alpha",
+    "@neematajs/common": "workspace:~1.0.0-alpha",
+    "@neematajs/json-format": "workspace:~1.0.0-alpha",
     "@types/bun": "^1.1.0",
     "@types/qs": "^6"
   }

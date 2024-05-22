@@ -1,6 +1,6 @@
 {
   "name": "neematajs",
-  "version": "1.0.0",
+  "version": "1.0.0-alpha.1",
   "type": "module",
   "scripts": {
     "build": "bun build src/application.ts src/server.ts src/common.ts --outdir=dist --splitting --external=\\* --sourcemap=external --target=node",

@@ -1,6 +1,6 @@
 {
   "name": "@neematajs/server",
-  "version": "1.0.0",
+  "version": "1.0.0-alpha.1",
   "type": "module",
   "scripts": {
     "build": "bun build index.ts $(pnpm --silent -w run entrypoints $(pwd) lib) --outdir=dist --splitting --external=\\* --sourcemap=external --target=node ",

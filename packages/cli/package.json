@@ -1,6 +1,6 @@
 {
   "name": "@neematajs/cli",
-  "version": "1.0.0",
+  "version": "1.0.0-alpha.1",
   "type": "module",
   "bin": {
     "neemata": "./dist/node.js",
