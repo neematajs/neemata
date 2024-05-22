@@ -43,6 +43,7 @@ export class WebsocketsClient<
   private callId = 0
   private calls = new Map<number, Call>()
   private subscriptions = new Map<string, Subscription>()
+  public query = new URLSearchParams()
 
   constructor(private readonly options: ClintOptions) {
     super()
@@ -71,7 +72,11 @@ export class WebsocketsClient<
     await this.healthCheck()
 
     this.ws = new (this.options.WebSocket ?? globalThis.WebSocket)(
-      this.getURL('api', 'ws'),
+      this.getURL('api', 'ws', {
+        accept: this.options.format.mime,
+        'content-type': this.options.format.mime,
+        ...Object.fromEntries(this.query),
+      }),
     )
 
     this.ws.binaryType = 'arraybuffer'
@@ -175,13 +180,17 @@ export class WebsocketsClient<
     })
   }
 
-  private getURL(path = '', protocol: 'ws' | 'http', params = '') {
-    const base = new URL(origin)
+  private getURL(
+    path = '',
+    protocol: 'ws' | 'http',
+    params: Record<string, string> = {},
+  ) {
+    const base = new URL(this.options.origin)
     const secure = base.protocol === 'https:'
     const url = new URL(
       `${secure ? protocol + 's' : protocol}://${base.host}/${path}`,
     )
-    url.search = params
+    url.search = new URLSearchParams(params).toString()
     return url
   }
 
