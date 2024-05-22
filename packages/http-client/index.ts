@@ -24,7 +24,6 @@ export type HttpRpcOptions = {
 export class HttpClient<
   AppClient extends AppClientInterface,
 > extends BaseClient<AppClient, HttpRpcOptions> {
-  private isHealthy = false
   private attempts = 0
 
   constructor(private readonly options: ClientOptions) {
@@ -32,19 +31,16 @@ export class HttpClient<
   }
 
   async healthCheck() {
-    while (!this.isHealthy) {
+    while (true) {
       try {
         const signal = AbortSignal.timeout(10000)
         const url = this.getURL('healthy')
         const { ok } = await fetch(url, { signal })
-        this.isHealthy = ok
+        if (ok) break
       } catch (e) {}
-
-      if (!this.isHealthy) {
-        this.attempts++
-        const seconds = Math.min(this.attempts, 15)
-        await new Promise((r) => setTimeout(r, seconds * 1000))
-      }
+      this.attempts++
+      const seconds = Math.min(this.attempts, 15)
+      await new Promise((r) => setTimeout(r, seconds * 1000))
     }
   }
 
@@ -54,10 +50,7 @@ export class HttpClient<
 
   async disconnect() {}
 
-  async reconnect() {
-    await this.disconnect()
-    await this.connect()
-  }
+  async reconnect() {}
 
   async rpc<P extends keyof AppClient['procedures']>(
     procedure: P,
