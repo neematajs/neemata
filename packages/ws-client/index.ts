@@ -359,5 +359,6 @@ const transformers: Record<
 > = {
   [StreamDataType.Encoded]: (format, chunk, controller) =>
     controller.enqueue(format.decode(chunk)),
-  [StreamDataType.Binary]: (chunk, controller) => controller.enqueue(chunk),
+  [StreamDataType.Binary]: (format, chunk, controller) =>
+    controller.enqueue(chunk),
 } as const
