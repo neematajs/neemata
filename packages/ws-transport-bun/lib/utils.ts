@@ -16,7 +16,7 @@ export const sendPayload = (
   type: number,
   payload: any,
 ) => {
-  return send(ws, type, ws.data.format.encoder.decode(payload))
+  return send(ws, type, ws.data.format.encoder.encode(payload))
 }
 
 export const send = (
@@ -25,7 +25,6 @@ export const send = (
   ...buffers: ArrayBuffer[]
 ): boolean | null => {
   const result = ws.send(concat(encodeNumber(type, 'Uint8'), ...buffers), true)
-
   if (result === -1) {
     ws.data.backpressure = Promise.withResolvers()
     for (const stream of ws.data.streams.down.values()) stream.pause()
@@ -37,14 +36,11 @@ export const send = (
   }
 }
 
-export const getFormat = (req: Request, format: Format) => {
-  const contentType =
-    req.headers.get('content-type') ||
-    new URL(req.url, 'http://localhost').searchParams.get('content-type')
+export const getFormat = ({ headers, url }: Request, format: Format) => {
+  const query = new URL(url, 'http://localhost').searchParams
 
-  const acceptType =
-    req.headers.get('accept') ||
-    new URL(req.url, 'http://localhost').searchParams.get('accept')
+  const contentType = headers.get('content-type') || query.get('content-type')
+  const acceptType = headers.get('accept') || query.get('accept')
 
   const encoder = contentType ? format.supports(contentType) : defaultFormat
   if (!encoder) throw new Error('Unsupported content-type')
