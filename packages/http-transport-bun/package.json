@@ -1,13 +1,13 @@
 {
   "name": "@neematajs/http-transport-bun",
-  "version": "1.0.0-alpha.1",
+  "version": "1.0.0-alpha.2",
   "module": "index.ts",
   "type": "module",
   "scripts": {
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "@neematajs/bun-http-server": "0.0.1",
+    "@neematajs/bun-http-server": "~0.0.2",
     "qs": "^6.12.1"
   },
   "peerDependencies": {

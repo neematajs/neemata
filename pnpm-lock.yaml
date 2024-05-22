@@ -80,8 +80,8 @@ importers:
   packages/http-transport-bun:
     dependencies:
       '@neematajs/bun-http-server':
-        specifier: 0.0.1
-        version: 0.0.1(typescript@5.4.5)
+        specifier: ~0.0.2
+        version: 0.0.2(typescript@5.4.5)
       qs:
         specifier: ^6.12.1
         version: 6.12.1
@@ -164,8 +164,8 @@ importers:
   packages/ws-transport-bun:
     dependencies:
       '@neematajs/bun-http-server':
-        specifier: 0.0.1
-        version: 0.0.1(typescript@5.4.5)
+        specifier: ~0.0.2
+        version: 0.0.2(typescript@5.4.5)
     devDependencies:
       '@neematajs/application':
         specifier: workspace:~1.0.0-alpha
@@ -390,8 +390,8 @@ packages:
     resolution: {integrity: sha512-y+l1PNV0XDyY8sM3YtuMLK5vE3/hkfId+Do8pLo/OPxfxuFAUwcGz3oiiUuV46/aBpwTzZ+mRWVMtlSKbradhw==}
     engines: {node: '>= 14'}
 
-  '@neematajs/bun-http-server@0.0.1':
-    resolution: {integrity: sha512-bx5HTRT+QwkgZ+S1noLQuXhZtpGvjSgGL5U8Gki30DYabRCkZHQCwSStFMeB1m8YhmW/BVm9PFy53KUGcFeiHw==}
+  '@neematajs/bun-http-server@0.0.2':
+    resolution: {integrity: sha512-s/NCz09+32PX18kZu5FAN3uJslLM7YTftKDWBftREM0eJMHMNiAkMPh3Mt84BkVsrvU8lwIg1B/8Gkzq7Qic6g==}
     peerDependencies:
       typescript: ^5.0.0
 
@@ -752,7 +752,7 @@ snapshots:
 
   '@msgpack/msgpack@3.0.0-beta2': {}
 
-  '@neematajs/bun-http-server@0.0.1(typescript@5.4.5)':
+  '@neematajs/bun-http-server@0.0.2(typescript@5.4.5)':
     dependencies:
       typescript: 5.4.5
 
