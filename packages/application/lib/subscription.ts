@@ -2,8 +2,9 @@ import { PassThrough } from 'node:stream'
 import { WorkerType } from './constants'
 import type { Event } from './events'
 import { BaseExtension } from './extension'
+import type { AnyEvent } from './types'
 
-export class Subscription<E extends Event = Event> extends PassThrough {
+export class Subscription<E extends AnyEvent = AnyEvent> extends PassThrough {
   readonly _!: {
     event: E
   }

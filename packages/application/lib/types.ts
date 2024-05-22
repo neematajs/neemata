@@ -193,31 +193,31 @@ type AppClientEvents<
   ModuleName extends string,
   Module extends AnyModule,
   Prefix extends string = '',
+  Events extends Module['events'] = Module['events'],
   ImportPrefix extends string = Prefix extends ''
     ? ModuleName
     : `${Prefix}/${ModuleName}`,
-  Events extends Module['events'] = Module['events'],
 > = Merge<
   //@ts-expect-error
   keyof Module['imports'] extends never
-    ? { moduleName: ModuleName }
+    ? {}
     : UnionToIntersection<
         {
           [K in keyof Module['imports']]: {
             [P in keyof AppClientEvents<
-              //@ts-expect-error
+              // @ts-expect-error
               K,
               Module['imports'][K],
               ImportPrefix
-              //@ts-expect-error
-            >]: AppClientEvents<K, Module['imports'][K], ImportPrefix>[P]
+            >]: // @ts-expect-error
+            AppClientEvents<K, Module['imports'][K], ImportPrefix>[P]
           }
         }[keyof Module['imports']]
       >,
   {
     [K in keyof Events as K extends string
       ? `${Prefix extends '' ? ModuleName : `${Prefix}/${ModuleName}`}/${K}`
-      : never]: Events[K]['_']['payload']
+      : never]: Events[K] extends AnyEvent ? Events[K]['_']['payload'] : never
   }
 >
 
@@ -237,12 +237,12 @@ export type AppClient<App extends AnyApplication> = {
   events: UnionToIntersection<
     {
       [K in keyof App['modules']]: {
-        //@ts-expect-error
-        [P in keyof AppClientEvents<K, App['modules'][K]>]: AppClientEvents<
+        [P in keyof AppClientEvents<
           //@ts-expect-error
           K,
           App['modules'][K]
-        >[P]
+          //@ts-expect-error
+        >]: AppClientEvents<K, App['modules'][K]>[P]
       }
     }[keyof App['modules']]
   >

@@ -8,29 +8,22 @@ import type { AnyEvent, InferSchemaInput, InferSchemaOutput } from './types'
 
 export type EventOptionsType = Record<string, string | number>
 
-export class Event<
-  EventPayload = any,
-  EventSchema = unknown,
-  EventOptions extends EventOptionsType = {},
-> {
+export class Event<EventPayload, EventOptions extends EventOptionsType = {}> {
   readonly _!: {
-    payload: EventSchema extends unknown
-      ? EventPayload
-      : InferSchemaOutput<EventSchema>
+    payload: EventPayload
     options: EventOptions
   }
-  readonly parser!: BaseParser
-  readonly schema!: EventSchema
+  // readonly parser!: BaseParser
   readonly serializer = (options: EventOptions) => {
     const keys = Object.keys(options).sort()
     if (!keys.length) return ''
     const vals = {}
     for (const key of keys) vals[key] = options[key]
-    return createHash('sha1').update(JSON.stringify(vals)).digest('base64')
+    return createHash('sha1').update(JSON.stringify(vals)).digest('base64url')
   }
 
   withPayload<NewPayload>() {
-    const event = new Event<NewPayload, EventSchema, EventOptions>()
+    const event = new Event<NewPayload, EventOptions>()
     Object.assign(event, this)
     return event
   }
@@ -38,20 +31,8 @@ export class Event<
   withOptions<NewOptions extends Record<string, any>>(
     serializer?: (options: NewOptions) => string,
   ) {
-    const event = new Event<EventPayload, EventSchema, NewOptions>()
+    const event = new Event<EventPayload, NewOptions>()
     Object.assign(event, this, serializer ? { serializer } : {})
-    return event
-  }
-
-  withSchema<NewSchema>(schema: NewSchema) {
-    const event = new Event<EventPayload, NewSchema, EventOptions>()
-    Object.assign(event, this, { schema })
-    return event
-  }
-
-  withParser(parser: BaseParser) {
-    const event = new Event<EventPayload, EventSchema, EventOptions>()
-    Object.assign(event, this, { parser })
     return event
   }
 }
@@ -67,7 +48,7 @@ export class EventManager<
     },
   ) {}
 
-  async subscribe<E extends Event>(
+  async subscribe<E extends AnyEvent>(
     event: E,
     options: E['_']['options'],
     connection: Connection,
@@ -91,9 +72,9 @@ export class EventManager<
     return { subscription, isNew: true }
   }
 
-  async unsubscribe(
-    event: Event,
-    options: Event['_']['options'],
+  async unsubscribe<E extends AnyEvent>(
+    event: E,
+    options: E['_']['options'],
     connection: Connection,
   ) {
     const eventName = this.registry.getName('event', event)
@@ -109,11 +90,9 @@ export class EventManager<
     subscriptions.delete(eventKey)
   }
 
-  async publish<E extends Event>(
+  async publish<E extends AnyEvent>(
     event: E,
-    payload: E['schema'] extends unknown
-      ? E['_']['payload']
-      : InferSchemaInput<E['schema']>,
+    payload: E['_']['payload'],
     options: E['_']['options'],
   ) {
     const eventName = this.registry.getName('event', event)
@@ -122,7 +101,7 @@ export class EventManager<
     return this.subManager.publish(eventKey, payload)
   }
 
-  async isSubscribed<E extends Event>(
+  async isSubscribed<E extends AnyEvent>(
     event: E,
     options: E['_']['options'],
     connection: Connection,
