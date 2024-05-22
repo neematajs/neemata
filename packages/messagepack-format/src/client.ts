@@ -12,20 +12,24 @@ import {
 import { BaseClientFormat } from '@neematajs/common'
 import { STREAM_EXT_TYPE, registerJsonLikeExtension } from './common'
 
-const extensionCodec = new ExtensionCodec()
-
-const encoder = new Encoder({ extensionCodec, useBigInt64: true })
-const decoder = new Decoder({ useBigInt64: true })
+const extensionCodec = new ExtensionCodec<any>()
 
 extensionCodec.register({
   type: STREAM_EXT_TYPE,
-  encode: (value) => {
+  encode: (value, context) => {
     if (value instanceof UpStream)
-      return encode([value.id, value.metadata], { useBigInt64: true })
+      return encode([value.id, value.metadata], {
+        extensionCodec,
+        useBigInt64: true,
+        context,
+      })
     return null
   },
   decode: () => null, // client does not decode up streams
 })
+
+const encoder = new Encoder({ extensionCodec, useBigInt64: true })
+const decoder = new Decoder({ extensionCodec, useBigInt64: true })
 
 registerJsonLikeExtension(extensionCodec)
 
