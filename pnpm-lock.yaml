@@ -34,7 +34,7 @@ importers:
         version: 11.0.0
     devDependencies:
       '@neematajs/common':
-        specifier: workspace:~1.0.0
+        specifier: workspace:*
         version: link:../common
 
   packages/cli:
@@ -47,7 +47,7 @@ importers:
         version: 4.10.5
     devDependencies:
       '@neematajs/application':
-        specifier: workspace:~1.0.0
+        specifier: workspace:*
         version: link:../application
       '@neematajs/server':
         specifier: workspace:*
@@ -115,13 +115,13 @@ importers:
   packages/neematajs:
     dependencies:
       '@neematajs/application':
-        specifier: workspace:~1.0.0
+        specifier: workspace:*
         version: link:../application
       '@neematajs/cli':
         specifier: workspace:*
         version: link:../cli
       '@neematajs/common':
-        specifier: workspace:~1.0.0
+        specifier: workspace:*
         version: link:../common
       '@neematajs/server':
         specifier: workspace:*
@@ -130,10 +130,10 @@ importers:
   packages/server:
     devDependencies:
       '@neematajs/application':
-        specifier: workspace:~1.0.0
+        specifier: workspace:*
         version: link:../application
       '@neematajs/common':
-        specifier: workspace:~1.0.0
+        specifier: workspace:*
         version: link:../common
 
   packages/typebox-parser:

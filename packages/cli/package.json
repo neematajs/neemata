@@ -14,11 +14,11 @@
     "tsx": "^4.10.5"
   },
   "peerDependencies": {
-    "@neematajs/application": "workspace:~1.0.0",
+    "@neematajs/application": "workspace:*",
     "@neematajs/server": "workspace:*"
   },
   "devDependencies": {
-    "@neematajs/application": "workspace:~1.0.0",
+    "@neematajs/application": "workspace:*",
     "@neematajs/server": "workspace:*"
   }
 }
