@@ -9,14 +9,12 @@
     "@neematajs/bun-http-server": "~0.0.3"
   },
   "peerDependencies": {
-    "@neematajs/application": "workspace:*",
-    "@neematajs/messagepack-format": "workspace:*",
-    "@neematajs/common": "workspace:*"
+    "@neematajs/application": "workspace:~1.0.0",
+    "@neematajs/common": "workspace:~1.0.0"
   },
   "devDependencies": {
-    "@neematajs/application": "workspace:*",
-    "@neematajs/messagepack-format": "workspace:*",
-    "@neematajs/common": "workspace:*",
+    "@neematajs/application": "workspace:~1.0.0",
+    "@neematajs/common": "workspace:~1.0.0",
     "@types/bun": "^1.1.0"
   }
 }

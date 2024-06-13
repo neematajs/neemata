@@ -6,9 +6,8 @@ import type {
   Stream,
   Subscription,
 } from '@neematajs/application'
-import type { BaseServerFormat } from '@neematajs/common'
-
 import type { ServerOptions } from '@neematajs/bun-http-server'
+import type { BaseServerFormat } from '@neematajs/common'
 import type { ServerWebSocket, SocketAddress, TLSOptions } from 'bun'
 
 export type WsUserData = {

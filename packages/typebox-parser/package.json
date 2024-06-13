@@ -13,13 +13,13 @@
     "type-check": "tsc --noEmit"
   },
   "peerDependencies": {
-    "@neematajs/application": "workspace:*",
-    "@neematajs/common": "workspace:*",
+    "@neematajs/application": "workspace:~1.0.0",
+    "@neematajs/common": "workspace:~1.0.0",
     "@sinclair/typebox": "^0.32.0"
   },
   "devDependencies": {
-    "@neematajs/application": "workspace:*",
-    "@neematajs/common": "workspace:*",
+    "@neematajs/application": "workspace:~1.0.0",
+    "@neematajs/common": "workspace:~1.0.0",
     "@sinclair/typebox": "^0.32.0"
   }
 }

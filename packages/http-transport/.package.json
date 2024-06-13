@@ -10,13 +10,13 @@
     "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.43.0"
   },
   "peerDependencies": {
-    "@neematajs/application": "workspace:*",
-    "@neematajs/common": "workspace:*",
+    "@neematajs/application": "workspace:~1.0.0",
+    "@neematajs/common": "workspace:~1.0.0",
     "@neematajs/json-format": "workspace:*"
   },
   "devDependencies": {
-    "@neematajs/application": "workspace:*",
-    "@neematajs/common": "workspace:*",
+    "@neematajs/application": "workspace:~1.0.0",
+    "@neematajs/common": "workspace:~1.0.0",
     "@neematajs/json-format": "workspace:*",
     "@types/qs": "^6"
   }

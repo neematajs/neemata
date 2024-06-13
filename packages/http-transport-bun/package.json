@@ -10,14 +10,12 @@
     "qs": "^6.12.1"
   },
   "peerDependencies": {
-    "@neematajs/application": "workspace:*",
-    "@neematajs/common": "workspace:*",
-    "@neematajs/json-format": "workspace:*"
+    "@neematajs/application": "workspace:~1.0.0",
+    "@neematajs/common": "workspace:~1.0.0"
   },
   "devDependencies": {
-    "@neematajs/application": "workspace:*",
-    "@neematajs/common": "workspace:*",
-    "@neematajs/json-format": "workspace:*",
+    "@neematajs/application": "workspace:~1.0.0",
+    "@neematajs/common": "workspace:~1.0.0",
     "@types/bun": "^1.1.4",
     "@types/qs": "^6"
   }

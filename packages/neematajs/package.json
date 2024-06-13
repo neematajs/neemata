@@ -23,8 +23,8 @@
     }
   },
   "dependencies": {
-    "@neematajs/common": "workspace:*",
-    "@neematajs/application": "workspace:*",
+    "@neematajs/common": "workspace:~1.0.0",
+    "@neematajs/application": "workspace:~1.0.0",
     "@neematajs/server": "workspace:*",
     "@neematajs/cli": "workspace:*"
   }

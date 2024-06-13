@@ -1,15 +1,6 @@
 import type { Format } from '@neematajs/application'
-import {
-  ApiError,
-  type BaseServerFormat,
-  ErrorCode,
-  concat,
-  encodeNumber,
-} from '@neematajs/common'
-import { MessagepackFormat } from '@neematajs/messagepack-format/server'
+import { ApiError, ErrorCode, concat, encodeNumber } from '@neematajs/common'
 import type { WsTransportSocket } from './types'
-
-const defaultFormat = new MessagepackFormat()
 
 export const sendPayload = (
   ws: WsTransportSocket,
@@ -42,10 +33,10 @@ export const getFormat = ({ headers, url }: Request, format: Format) => {
   const contentType = headers.get('content-type') || query.get('content-type')
   const acceptType = headers.get('accept') || query.get('accept')
 
-  const encoder = contentType ? format.supports(contentType) : defaultFormat
+  const encoder = contentType ? format.supports(contentType) : undefined
   if (!encoder) throw new Error('Unsupported content-type')
 
-  const decoder = acceptType ? format.supports(acceptType) : defaultFormat
+  const decoder = acceptType ? format.supports(acceptType) : undefined
   if (!decoder) throw new Error('Unsupported accept')
 
   return {

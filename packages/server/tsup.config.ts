@@ -5,7 +5,7 @@ export default defineConfig({
   outDir: 'dist',
   entry: ['index.ts', 'lib/**/*.ts'],
   sourcemap: true,
-  bundle: false,
+  bundle: true,
   format: 'esm',
   target: 'node20',
   platform: 'node',

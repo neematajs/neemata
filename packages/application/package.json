@@ -1,5 +1,6 @@
 {
   "name": "@neematajs/application",
+  "version": "1.0.0",
   "type": "module",
   "exports": {
     ".": {
@@ -17,9 +18,9 @@
     "pino-pretty": "^11.0.0"
   },
   "devDependencies": {
-    "@neematajs/common": "workspace:*"
+    "@neematajs/common": "workspace:~1.0.0"
   },
   "peerDependencies": {
-    "@neematajs/common": "workspace:*"
+    "@neematajs/common": "workspace:~1.0.0"
   }
 }

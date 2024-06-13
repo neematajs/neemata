@@ -34,7 +34,7 @@ importers:
         version: 11.0.0
     devDependencies:
       '@neematajs/common':
-        specifier: workspace:*
+        specifier: workspace:~1.0.0
         version: link:../common
 
   packages/cli:
@@ -47,7 +47,7 @@ importers:
         version: 4.10.5
     devDependencies:
       '@neematajs/application':
-        specifier: workspace:*
+        specifier: workspace:~1.0.0
         version: link:../application
       '@neematajs/server':
         specifier: workspace:*
@@ -62,7 +62,7 @@ importers:
         version: 6.12.1
     devDependencies:
       '@neematajs/common':
-        specifier: workspace:~1.0.0-alpha
+        specifier: workspace:~1.0.0
         version: link:../common
       '@types/qs':
         specifier: ^6
@@ -78,14 +78,11 @@ importers:
         version: 6.12.1
     devDependencies:
       '@neematajs/application':
-        specifier: workspace:~1.0.0-alpha
+        specifier: workspace:~1.0.0
         version: link:../application
       '@neematajs/common':
-        specifier: workspace:~1.0.0-alpha
+        specifier: workspace:~1.0.0
         version: link:../common
-      '@neematajs/json-format':
-        specifier: workspace:~1.0.0-alpha
-        version: link:../json-format
       '@types/bun':
         specifier: ^1.1.4
         version: 1.1.4
@@ -96,10 +93,10 @@ importers:
   packages/json-format:
     devDependencies:
       '@neematajs/application':
-        specifier: workspace:~1.0.0-alpha.2
+        specifier: workspace:~1.0.0
         version: link:../application
       '@neematajs/common':
-        specifier: workspace:~1.0.0-alpha.2
+        specifier: workspace:~1.0.0
         version: link:../common
 
   packages/messagepack-format:
@@ -109,22 +106,22 @@ importers:
         version: 3.0.0-beta2
     devDependencies:
       '@neematajs/application':
-        specifier: workspace:~1.0.0-alpha.2
+        specifier: workspace:~1.0.0
         version: link:../application
       '@neematajs/common':
-        specifier: workspace:~1.0.0-alpha.2
+        specifier: workspace:~1.0.0
         version: link:../common
 
   packages/neematajs:
     dependencies:
       '@neematajs/application':
-        specifier: workspace:*
+        specifier: workspace:~1.0.0
         version: link:../application
       '@neematajs/cli':
         specifier: workspace:*
         version: link:../cli
       '@neematajs/common':
-        specifier: workspace:*
+        specifier: workspace:~1.0.0
         version: link:../common
       '@neematajs/server':
         specifier: workspace:*
@@ -133,19 +130,19 @@ importers:
   packages/server:
     devDependencies:
       '@neematajs/application':
-        specifier: workspace:*
+        specifier: workspace:~1.0.0
         version: link:../application
       '@neematajs/common':
-        specifier: workspace:*
+        specifier: workspace:~1.0.0
         version: link:../common
 
   packages/typebox-parser:
     devDependencies:
       '@neematajs/application':
-        specifier: workspace:~1.0.0-alpha.2
+        specifier: workspace:~1.0.0
         version: link:../application
       '@neematajs/common':
-        specifier: workspace:~1.0.0-alpha.2
+        specifier: workspace:~1.0.0
         version: link:../common
       '@sinclair/typebox':
         specifier: ^0.32.0
@@ -154,7 +151,7 @@ importers:
   packages/ws-client:
     devDependencies:
       '@neematajs/common':
-        specifier: workspace:~1.0.0-alpha
+        specifier: workspace:~1.0.0
         version: link:../common
 
   packages/ws-transport-bun:
@@ -164,14 +161,11 @@ importers:
         version: 0.0.3(typescript@5.5.1-rc)
     devDependencies:
       '@neematajs/application':
-        specifier: workspace:~1.0.0-alpha
+        specifier: workspace:~1.0.0
         version: link:../application
       '@neematajs/common':
-        specifier: workspace:~1.0.0-alpha
+        specifier: workspace:~1.0.0
         version: link:../common
-      '@neematajs/messagepack-format':
-        specifier: workspace:~1.0.0-alpha
-        version: link:../messagepack-format
       '@types/bun':
         specifier: ^1.1.0
         version: 1.1.2
@@ -183,10 +177,10 @@ importers:
         version: 3.23.0(zod@3.23.8)
     devDependencies:
       '@neematajs/application':
-        specifier: workspace:~1.0.0-alpha.2
+        specifier: workspace:~1.0.0
         version: link:../application
       '@neematajs/common':
-        specifier: workspace:~1.0.0-alpha.2
+        specifier: workspace:~1.0.0
         version: link:../common
       zod:
         specifier: ^3

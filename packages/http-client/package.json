@@ -21,10 +21,10 @@
     "qs": "^6.12.1"
   },
   "peerDependencies": {
-    "@neematajs/common": "workspace:*"
+    "@neematajs/common": "workspace:~1.0.0"
   },
   "devDependencies": {
-    "@neematajs/common": "workspace:*",
+    "@neematajs/common": "workspace:~1.0.0",
     "@types/qs": "^6"
   }
 }

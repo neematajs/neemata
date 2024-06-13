@@ -1,9 +1,6 @@
 import type { Format } from '@neematajs/application'
 import { ApiError, ErrorCode } from '@neematajs/common'
-import { JsonFormat } from '@neematajs/json-format/server'
 import type { Server } from 'bun'
-
-export const defaultFormat = new JsonFormat()
 
 export const getRequest = (req: Request, server: Server) => {
   const base = 'http://unknown'
@@ -52,12 +49,12 @@ export const getFormat = (req: Request, format: Format) => {
   const contentType = req.headers.get('content-type')
   const acceptType = req.headers.get('accept')
 
-  const encoder = contentType ? format.supports(contentType) : defaultFormat
+  const encoder = contentType ? format.supports(contentType) : undefined
 
   if (!encoder)
     throw new ApiError(ErrorCode.NotAcceptable, 'Unsupported Content type')
 
-  const decoder = acceptType ? format.supports(acceptType) : defaultFormat
+  const decoder = acceptType ? format.supports(acceptType) : undefined
   if (!decoder)
     throw new ApiError(ErrorCode.NotAcceptable, 'Unsupported Accept type')
 

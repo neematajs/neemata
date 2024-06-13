@@ -11,9 +11,9 @@
     "type-check": "tsc --noEmit"
   },
   "peerDependencies": {
-    "@neematajs/common": "workspace:*"
+    "@neematajs/common": "workspace:~1.0.0"
   },
   "devDependencies": {
-    "@neematajs/common": "workspace:*"
+    "@neematajs/common": "workspace:~1.0.0"
   }
 }

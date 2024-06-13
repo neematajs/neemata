@@ -5,7 +5,7 @@ export default defineConfig({
   outDir: 'dist',
   entry: ['src/**/*.ts'],
   sourcemap: true,
-  bundle: false,
+  bundle: true,
   format: 'esm',
   target: 'esnext',
   platform: 'neutral',
