@@ -105,7 +105,7 @@ export class Tasks {
 
       ac.signal.throwIfAborted()
 
-      if (this.options.runner)
+      if (this.options?.runner)
         return await this.options.runner.execute(ac.signal, taskName, ...args)
 
       const { dependencies, handler } = task

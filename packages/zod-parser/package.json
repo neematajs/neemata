@@ -3,31 +3,27 @@
   "version": "1.0.0-alpha.1",
   "type": "module",
   "exports": {
-    ".": "./index.ts"
-  },
-  "publishConfig": {
-    "exports": {
-      ".": {
-        "bun": "./index.ts",
-        "import": "./dist/index.js",
-        "types": "./index.ts"
-      }
+    ".": {
+      "bun": "./index.ts",
+      "default": "./dist/index.js",
+      "types": "./index.ts"
     }
   },
   "scripts": {
-    "build": "bun build index.ts --outdir=dist --splitting --external=\\* --sourcemap=external --target=node",
+    "build": "tsup",
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
     "zod-to-json-schema": "^3.23.0"
   },
   "peerDependencies": {
-    "@neematajs/application": "workspace:~1.0.0-alpha",
-    "zod": "^3.23.8"
+    "@neematajs/application": "workspace:~1.0.0-alpha.2",
+    "@neematajs/common": "workspace:~1.0.0-alpha.2",
+    "zod": "^3"
   },
   "devDependencies": {
-    "@neematajs/application": "workspace:~1.0.0-alpha",
-    "zod": "^3.23.8"
+    "@neematajs/application": "workspace:~1.0.0-alpha.2",
+    "@neematajs/common": "workspace:~1.0.0-alpha.2",
+    "zod": "^3"
   }
-  
 }

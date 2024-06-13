@@ -4,23 +4,22 @@
   "scripts": {
     "build": "pnpm run --parallel --filter \"*\" build",
     "build:watch": "pnpm run --parallel --filter \"*\" build --watch",
+    "clean": "rm -rf dist node_modules && pnpm -r exec rm -rf dist node_modules",
     "check:type": "pnpm run --parallel --filter \"*\" type-check",
     "check:lint": "biome lint .",
     "check:fmt": "biome format .",
     "check": "pnpm run check:fmt && pnpm run check:lint && pnpm run check:type",
     "fmt": "biome check --apply .",
     "prepare": "husky",
-    "entrypoints": "bun scripts/entrypoints.ts",
     "publish": "pnpm run build && pnpm -r publish --access public --no-git-checks",
     "publish:dry": "pnpm run publish --dry-run"
   },
-  "peerDependencies": {
-    "typescript": "^5.4.5"
-  },
   "devDependencies": {
     "@biomejs/biome": "1.7.3",
-    "@types/bun": "^1.1.0",
-    "husky": "^9.0.11"
+    "esbuild-plugin-file-path-extensions": "^2.1.2",
+    "husky": "^9.0.11",
+    "tsup": "^8.1.0",
+    "typescript": "5.5.1-rc"
   },
   "workspaces": [
     "./packages/*"

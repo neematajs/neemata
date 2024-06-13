@@ -3,19 +3,14 @@
   "version": "1.0.0-alpha.1",
   "type": "module",
   "exports": {
-    ".": "./index.ts"
-  },
-  "publishConfig": {
-    "exports": {
-      ".": {
-        "bun": "./index.ts",
-        "import": "./dist/index.js",
-        "types": "./index.ts"
-      }
+    ".": {
+      "bun": "./index.ts",
+      "default": "./dist/index.js",
+      "types": "./index.ts"
     }
   },
   "scripts": {
-    "build": "bun build index.ts $(pnpm --silent -w run entrypoints $(pwd) lib) --outdir=dist --splitting --external=\\* --sourcemap=external --target=node",
+    "build": "tsup",
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
@@ -26,17 +21,6 @@
     "@neematajs/common": "workspace:*"
   },
   "peerDependencies": {
-    "@neematajs/common": "workspace:*",
-    "typescript": "^5.0.0",
-    "@sinclair/typebox": "^0.32",
-    "zod": "^3"
-  },
-  "peerDependenciesMeta": {
-    "@sinclair/typebox": {
-      "optional": true
-    },
-    "zod": {
-      "optional": true
-    }
+    "@neematajs/common": "workspace:*"
   }
 }

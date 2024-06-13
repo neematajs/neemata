@@ -7,7 +7,9 @@ import {
   type AppClientInterface,
   BaseClientFormat,
   type Subscription as ClientSubscription,
+  type DownStream,
   type StreamMetadata,
+  type TypeProvider,
   UpStream,
   concat,
   decodeText,
@@ -46,7 +48,13 @@ export class JsonFormat extends BaseClientFormat {
   }
 }
 
-export type JsonFormatAppClient<T extends AppClientInterface> = {
+export interface JsonFormatTypeProvider extends TypeProvider {
+  output: this['input'] extends AppClientInterface
+    ? JsonFormatAppClient<this['input']>
+    : unknown
+}
+
+type JsonFormatAppClient<T extends AppClientInterface> = {
   procedures: {
     [P in keyof T['procedures']]: {
       output: ResolveApiOutput<T['procedures'][P]['output']>
@@ -69,7 +77,7 @@ type ResolveApiInput<Input> = Input extends ServerStream
 type ResolveApiOutput<Output> = Output extends ServerStreamResponse
   ? {
       payload: Output['payload']
-      stream: import('@neematajs/common').DownStream<
+      stream: DownStream<
         Output['chunk'] extends ArrayBuffer ? ArrayBuffer : Output['chunk']
       >['interface']
     }

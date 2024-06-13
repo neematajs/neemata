@@ -1,0 +1,24 @@
+{
+  "name": "@neematajs/http-transport",
+  "version": "1.0.0",
+  "module": "index.ts",
+  "type": "module",
+  "scripts": {
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "qs": "^6.12.1",
+    "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.43.0"
+  },
+  "peerDependencies": {
+    "@neematajs/application": "workspace:~1.0.0",
+    "@neematajs/common": "workspace:~1.0.0",
+    "@neematajs/json-format": "workspace:~1.0.0"
+  },
+  "devDependencies": {
+    "@neematajs/application": "workspace:~1.0.0",
+    "@neematajs/common": "workspace:~1.0.0",
+    "@neematajs/json-format": "workspace:~1.0.0",
+    "@types/qs": "^6"
+  }
+}

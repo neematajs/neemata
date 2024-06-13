@@ -1,4 +1,3 @@
-import { Readable } from 'node:stream'
 import type { Format } from '@neematajs/application'
 import { ApiError, ErrorCode } from '@neematajs/common'
 import { JsonFormat } from '@neematajs/json-format/server'
@@ -19,14 +18,22 @@ export const getRequest = (req: Request, server: Server) => {
     queryString: url.search,
   }
 }
+
 export type ParsedRequest = ReturnType<typeof getRequest>
+
+export const toObject = (input: Headers | URLSearchParams) => {
+  const obj: Record<string, string> = {}
+  input.forEach((value, key) => {
+    obj[key] = value
+  })
+  return obj
+}
 
 export const getBody = (req: Request) => {
   const asString = () => req.text()
-  const asStream = () => Readable.fromWeb(req.body!)
   const asArrayBuffer = () => req.arrayBuffer()
   const asBuffer = () => asArrayBuffer().then(Buffer.from)
-  return { asBuffer, asArrayBuffer, asString, asStream }
+  return { asBuffer, asArrayBuffer, asString }
 }
 
 export const InternalError = (message = 'Internal Server Error') =>
@@ -46,10 +53,13 @@ export const getFormat = (req: Request, format: Format) => {
   const acceptType = req.headers.get('accept')
 
   const encoder = contentType ? format.supports(contentType) : defaultFormat
-  if (!encoder) throw new Error('Unsupported content-type')
+
+  if (!encoder)
+    throw new ApiError(ErrorCode.NotAcceptable, 'Unsupported Content type')
 
   const decoder = acceptType ? format.supports(acceptType) : defaultFormat
-  if (!decoder) throw new Error('Unsupported accept')
+  if (!decoder)
+    throw new ApiError(ErrorCode.NotAcceptable, 'Unsupported Accept type')
 
   return {
     encoder,

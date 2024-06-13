@@ -54,6 +54,14 @@ export const getFormat = ({ headers, url }: Request, format: Format) => {
   }
 }
 
+export const toObject = (input: Headers | URLSearchParams) => {
+  const obj: Record<string, string> = {}
+  input.forEach((value, key) => {
+    obj[key] = value
+  })
+  return obj
+}
+
 export const InternalError = (message = 'Internal Server Error') =>
   new ApiError(ErrorCode.InternalServerError, message)
 

@@ -22,7 +22,7 @@ export class MessagepackFormat extends BaseServerFormat {
 
   encode(data: any): ArrayBuffer {
     const encoded = encode(data, { extensionCodec })
-    return encoded.buffer.slice(0, encoded.byteLength)
+    return encoded.buffer.slice(0, encoded.byteLength) as ArrayBuffer
   }
 
   decode(data: ArrayBuffer): any {

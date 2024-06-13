@@ -3,19 +3,14 @@
   "version": "1.0.0-alpha.1",
   "type": "module",
   "scripts": {
-    "build": "bun build index.ts $(pnpm --silent -w run entrypoints $(pwd) lib) --outdir=dist --splitting --external=\\* --sourcemap=external --target=node ",
+    "build": "tsup",
     "type-check": "tsc --noEmit"
   },
   "exports": {
-    ".": "./index.ts"
-  },
-  "publishConfig": {
-    "exports": {
-      ".": {
-        "bun": "./index.ts",
-        "import": "./dist/index.js",
-        "types": "./index.ts"
-      }
+    ".": {
+      "bun": "./index.ts",
+      "default": "./dist/index.js",
+      "types": "./index.ts"
     }
   },
   "peerDependencies": {

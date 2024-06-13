@@ -9,13 +9,13 @@
     "exports": {
       ".": {
         "bun": "./index.ts",
-        "import": "./dist/index.js",
+        "default": "./dist/index.js",
         "types": "./index.ts"
       }
     }
   },
   "scripts": {
-    "build": "bun build index.ts --outdir=dist --splitting --external=\\* --sourcemap=external --target=browser",
+    "build": "tsup",
     "type-check": "tsc --noEmit"
   },
   "dependencies": {

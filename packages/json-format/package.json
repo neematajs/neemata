@@ -1,34 +1,29 @@
 {
   "name": "@neematajs/json-format",
-  "version": "1.0.0-alpha.1",
+  "version": "1.0.0-alpha.2",
+  "type": "module",
   "exports": {
-    "./client": "./src/client.ts",
-    "./server": "./src/server.ts"
-  },
-  "publishConfig": {
-    "exports": {
-      "./client": {
-        "bun": "./src/client.ts",
-        "import": "./dist/client.js",
-        "types": "./src/client.ts"
-      },
-      "./server": {
-        "bun": "./src/server.ts",
-        "import": "./dist/server.js",
-        "types": "./src/server.ts"
-      }
+    "./client": {
+      "bun": "./src/client.ts",
+      "default": "./dist/client.js",
+      "types": "./src/client.ts"
+    },
+    "./server": {
+      "bun": "./src/server.ts",
+      "default": "./dist/server.js",
+      "types": "./src/server.ts"
     }
   },
   "scripts": {
-    "build": "bun build src/client.ts src/server.ts src/common.ts --outdir=dist --splitting --external=\\* --sourcemap=external --target=browser",
+    "build": "tsup",
     "type-check": "tsc --noEmit"
   },
   "peerDependencies": {
-    "@neematajs/common": "workspace:~1.0.0-alpha",
-    "@neematajs/application": "workspace:~1.0.0-alpha"
+    "@neematajs/common": "workspace:~1.0.0-alpha.2",
+    "@neematajs/application": "workspace:~1.0.0-alpha.2"
   },
   "devDependencies": {
-    "@neematajs/common": "workspace:~1.0.0-alpha",
-    "@neematajs/application": "workspace:~1.0.0-alpha"
+    "@neematajs/common": "workspace:~1.0.0-alpha.2",
+    "@neematajs/application": "workspace:~1.0.0-alpha.2"
   }
 }

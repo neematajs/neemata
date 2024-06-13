@@ -1,6 +1,5 @@
 import { PassThrough } from 'node:stream'
 import { WorkerType } from './constants'
-import type { Event } from './events'
 import { BaseExtension } from './extension'
 import type { AnyEvent } from './types'
 

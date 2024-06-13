@@ -1,4 +1,5 @@
 import { type Async, BaseParser } from '@neematajs/application'
+import type { TypeProvider } from '@neematajs/common'
 import { type ZodErrorMap, type ZodSchema, z } from 'zod'
 import { zodToJsonSchema } from 'zod-to-json-schema'
 
@@ -19,4 +20,8 @@ export class ZodParser extends BaseParser {
       $refStrategy: 'seen',
     })
   }
+}
+
+export interface ZodParserTypeProvider extends TypeProvider {
+  output: this['input'] extends ZodSchema ? this['input']['_output'] : never
 }

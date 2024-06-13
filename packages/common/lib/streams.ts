@@ -1,3 +1,5 @@
+/// <reference lib="dom" />
+
 import { EventEmitter, once } from './event-emitter'
 
 export enum StreamDataType {
@@ -130,6 +132,7 @@ export class UpStream extends EventEmitter<StreamInferfaceEvents> {
           : undefined
       this.bytesSent = this.bytesSent + chunk.byteLength
       this.emit('progress', this.bytesSent)
+      // @ts-ignore
       return { chunk }
     } else {
       const { done, value } = await this.reader!.read()

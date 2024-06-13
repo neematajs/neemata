@@ -1,4 +1,9 @@
-import { ApiError, ErrorCode } from '@neematajs/common'
+import {
+  ApiError,
+  type CallTypeProvider,
+  ErrorCode,
+  type TypeProvider,
+} from '@neematajs/common'
 import type { ApplicationOptions } from './application'
 import {
   CONNECTION_PROVIDER,
@@ -23,9 +28,6 @@ import type {
   Extra,
   FilterFn,
   GuardFn,
-  InferSchemaInput,
-  InferSchemaOutput,
-  Merge,
   MiddlewareContext,
   MiddlewareFn,
 } from './types'
@@ -44,12 +46,14 @@ export type ProcedureHandlerType<
   ProcedureDeps extends Dependencies,
   ProcedureInput,
   ProcedureOutput,
+  ProcedureInputTypeProvider extends TypeProvider,
+  ProcedureOutputTypeProvider extends TypeProvider,
   Response = ProcedureOutput extends never
     ? any
-    : InferSchemaInput<ProcedureOutput>,
+    : CallTypeProvider<ProcedureOutputTypeProvider, ProcedureOutput>,
 > = (
   ctx: ResolvedProcedureContext<ProcedureDeps>,
-  data: InferSchemaOutput<ProcedureInput>,
+  data: CallTypeProvider<ProcedureInputTypeProvider, ProcedureInput>,
 ) => Response
 
 export type ApplyProcedureTransport<
@@ -65,14 +69,24 @@ export type ApplyProcedureTransport<
 
 export class Procedure<
   ProcedureDeps extends Dependencies = {},
+  ProcedureTransports extends AnyTransportClass[] = [],
   ProcedureInput = unknown,
   ProcedureOutput = unknown,
-  ProcedureTransports extends AnyTransportClass[] = [],
+  ProcedureInputTypeProvider extends TypeProvider = TypeProvider,
+  ProcedureOutputTypeProvider extends TypeProvider = TypeProvider,
   ProcedureHandler extends ProcedureHandlerType<
     ProcedureDeps,
     ProcedureInput,
-    ProcedureOutput
-  > = ProcedureHandlerType<ProcedureDeps, ProcedureInput, ProcedureOutput>,
+    ProcedureOutput,
+    ProcedureInputTypeProvider,
+    ProcedureOutputTypeProvider
+  > = ProcedureHandlerType<
+    ProcedureDeps,
+    ProcedureInput,
+    ProcedureOutput,
+    ProcedureInputTypeProvider,
+    ProcedureOutputTypeProvider
+  >,
 > implements Depender<ProcedureDeps>
 {
   static override<T>(
@@ -88,6 +102,8 @@ export class Procedure<
   _!: {
     input: ProcedureInput
     output: ProcedureOutput
+    inputTypeProvider: ProcedureInputTypeProvider
+    outputTypeProvider: ProcedureOutputTypeProvider
     middlewares: AnyMiddleware[]
     guards: AnyGuard[]
     options: Record<string | symbol | number, any>
@@ -106,16 +122,35 @@ export class Procedure<
   readonly guards: this['_']['guards'] = []
   readonly middlewares: this['_']['middlewares'] = []
 
+  withTransport<T extends AnyTransportClass>(transport: T) {
+    const procedure = new Procedure<
+      ProcedureDeps,
+      [...ProcedureTransports, T],
+      ProcedureInput,
+      ProcedureOutput,
+      ProcedureInputTypeProvider,
+      ProcedureOutputTypeProvider,
+      ProcedureHandler
+    >()
+    const transports = new Set(this.transports)
+    transports.add(transport)
+    return Procedure.override(procedure, this, { transports })
+  }
+
   withDependencies<Deps extends Dependencies>(dependencies: Deps) {
     const procedure = new Procedure<
       ProcedureDeps & ApplyProcedureTransport<ProcedureTransports, Deps>,
+      ProcedureTransports,
       ProcedureInput,
       ProcedureOutput,
-      ProcedureTransports,
+      ProcedureInputTypeProvider,
+      ProcedureOutputTypeProvider,
       ProcedureHandlerType<
         ProcedureDeps & ApplyProcedureTransport<ProcedureTransports, Deps>,
         ProcedureInput,
-        ProcedureOutput
+        ProcedureOutput,
+        ProcedureInputTypeProvider,
+        ProcedureOutputTypeProvider
       >
     >()
     return Procedure.override(procedure, this, {
@@ -126,31 +161,55 @@ export class Procedure<
   withInput<Input>(input: ProcedureOptionType<ProcedureDeps, Input>) {
     const procedure = new Procedure<
       ProcedureDeps,
+      ProcedureTransports,
       Input,
       ProcedureOutput,
-      ProcedureTransports,
-      ProcedureHandlerType<ProcedureDeps, Input, ProcedureOutput>
+      ProcedureInputTypeProvider,
+      ProcedureOutputTypeProvider,
+      ProcedureHandlerType<
+        ProcedureDeps,
+        Input,
+        ProcedureOutput,
+        ProcedureInputTypeProvider,
+        ProcedureOutputTypeProvider
+      >
     >()
+
+    input = this.parsers.input?.transform?.(input) ?? input
+
     return Procedure.override(procedure, this, { input })
   }
 
   withOutput<Output>(output: Output) {
     const procedure = new Procedure<
       ProcedureDeps,
+      ProcedureTransports,
       ProcedureInput,
       Output,
-      ProcedureTransports,
-      ProcedureHandlerType<ProcedureDeps, ProcedureInput, Output>
+      ProcedureInputTypeProvider,
+      ProcedureOutputTypeProvider,
+      ProcedureHandlerType<
+        ProcedureDeps,
+        ProcedureInput,
+        Output,
+        ProcedureInputTypeProvider,
+        ProcedureOutputTypeProvider
+      >
     >()
+
+    output = this.parsers.input?.transform?.(output) ?? output
+
     return Procedure.override(procedure, this, { output })
   }
 
   withOptions(options: Extra) {
     const procedure = new Procedure<
       ProcedureDeps,
+      ProcedureTransports,
       ProcedureInput,
       ProcedureOutput,
-      ProcedureTransports,
+      ProcedureInputTypeProvider,
+      ProcedureOutputTypeProvider,
       ProcedureHandler
     >()
     return Procedure.override(procedure, this, {
@@ -162,14 +221,18 @@ export class Procedure<
     H extends ProcedureHandlerType<
       ProcedureDeps,
       ProcedureInput,
-      ProcedureOutput
+      ProcedureOutput,
+      ProcedureInputTypeProvider,
+      ProcedureOutputTypeProvider
     >,
   >(handler: H) {
     const procedure = new Procedure<
       ProcedureDeps,
+      ProcedureTransports,
       ProcedureInput,
       ProcedureOutput,
-      ProcedureTransports,
+      ProcedureInputTypeProvider,
+      ProcedureOutputTypeProvider,
       H
     >()
     return Procedure.override(procedure, this, { handler })
@@ -178,9 +241,11 @@ export class Procedure<
   withGuards(...guards: this['guards']) {
     const procedure = new Procedure<
       ProcedureDeps,
+      ProcedureTransports,
       ProcedureInput,
       ProcedureOutput,
-      ProcedureTransports,
+      ProcedureInputTypeProvider,
+      ProcedureOutputTypeProvider,
       ProcedureHandler
     >()
     return Procedure.override(procedure, this, {
@@ -191,9 +256,11 @@ export class Procedure<
   withMiddlewares(...middlewares: this['middlewares']) {
     const procedure = new Procedure<
       ProcedureDeps,
+      ProcedureTransports,
       ProcedureInput,
       ProcedureOutput,
-      ProcedureTransports,
+      ProcedureInputTypeProvider,
+      ProcedureOutputTypeProvider,
       ProcedureHandler
     >()
     return Procedure.override(procedure, this, {
@@ -206,9 +273,11 @@ export class Procedure<
       throw new Error('Timeout must be a positive number')
     const procedure = new Procedure<
       ProcedureDeps,
+      ProcedureTransports,
       ProcedureInput,
       ProcedureOutput,
-      ProcedureTransports,
+      ProcedureInputTypeProvider,
+      ProcedureOutputTypeProvider,
       ProcedureHandler
     >()
     return Procedure.override(procedure, this, { timeout })
@@ -217,9 +286,11 @@ export class Procedure<
   withParser(parser: BaseParser) {
     const procedure = new Procedure<
       ProcedureDeps,
+      ProcedureTransports,
       ProcedureInput,
       ProcedureOutput,
-      ProcedureTransports,
+      ProcedureInputTypeProvider,
+      ProcedureOutputTypeProvider,
       ProcedureHandler
     >()
     return Procedure.override(procedure, this, {
@@ -230,9 +301,11 @@ export class Procedure<
   withInputParser(parser: BaseParser) {
     const procedure = new Procedure<
       ProcedureDeps,
+      ProcedureTransports,
       ProcedureInput,
       ProcedureOutput,
-      ProcedureTransports,
+      ProcedureInputTypeProvider,
+      ProcedureOutputTypeProvider,
       ProcedureHandler
     >()
     return Procedure.override(procedure, this, {
@@ -243,9 +316,11 @@ export class Procedure<
   withOutputParser(parser: BaseParser) {
     const procedure = new Procedure<
       ProcedureDeps,
+      ProcedureTransports,
       ProcedureInput,
       ProcedureOutput,
-      ProcedureTransports,
+      ProcedureInputTypeProvider,
+      ProcedureOutputTypeProvider,
       ProcedureHandler
     >()
     return Procedure.override(procedure, this, {
@@ -253,17 +328,55 @@ export class Procedure<
     })
   }
 
-  withTransport<T extends AnyTransportClass>(transport: T) {
+  withTypeProvider<T extends TypeProvider>() {
     const procedure = new Procedure<
       ProcedureDeps,
+      ProcedureTransports,
       ProcedureInput,
       ProcedureOutput,
-      [...ProcedureTransports, T],
-      ProcedureHandler
+      T,
+      T,
+      ProcedureHandlerType<ProcedureDeps, ProcedureInput, ProcedureOutput, T, T>
     >()
-    const transports = new Set(this.transports)
-    transports.add(transport)
-    return Procedure.override(procedure, this, { transports })
+    return Procedure.override(procedure, this)
+  }
+
+  withInputTypeProvider<T extends TypeProvider>() {
+    const procedure = new Procedure<
+      ProcedureDeps,
+      ProcedureTransports,
+      ProcedureInput,
+      ProcedureOutput,
+      T,
+      ProcedureOutputTypeProvider,
+      ProcedureHandlerType<
+        ProcedureDeps,
+        ProcedureInput,
+        ProcedureOutput,
+        T,
+        ProcedureOutputTypeProvider
+      >
+    >()
+    return Procedure.override(procedure, this)
+  }
+
+  withOutputTypeProvider<T extends TypeProvider>() {
+    const procedure = new Procedure<
+      ProcedureDeps,
+      ProcedureTransports,
+      ProcedureInput,
+      ProcedureOutput,
+      ProcedureInputTypeProvider,
+      T,
+      ProcedureHandlerType<
+        ProcedureDeps,
+        ProcedureInput,
+        ProcedureOutput,
+        ProcedureInputTypeProvider,
+        T
+      >
+    >()
+    return Procedure.override(procedure, this)
   }
 }
 
@@ -280,10 +393,6 @@ const NotFound = () => new ApiError(ErrorCode.NotFound, 'Procedure not found')
 export class Api {
   connectionProvider?: ConnectionProvider<any, any>
   connectionFn?: ConnectionFn<any, any>
-  parsers: {
-    input?: BaseParser
-    output?: BaseParser
-  }
 
   constructor(
     private readonly application: {
@@ -293,16 +402,7 @@ export class Api {
       transports: Set<BaseTransport>
     },
     private readonly options: ApplicationOptions['api'],
-  ) {
-    if (options.parsers instanceof BaseParser) {
-      this.parsers = {
-        input: options.parsers,
-        output: options.parsers,
-      }
-    } else {
-      this.parsers = { ...options.parsers }
-    }
-  }
+  ) {}
 
   find(name: string, transport: BaseTransport) {
     let procedure: Procedure
@@ -402,11 +502,13 @@ export class Api {
   }
 
   private handleTransport({ procedure, transport }: ProcedureCallOptions) {
-    for (const transportClass of procedure.transports) {
-      if (transport instanceof transportClass) return
-    }
+    if (procedure.transports) {
+      for (const transportClass of procedure.transports) {
+        if (transport instanceof transportClass) return
+      }
 
-    throw NotFound()
+      throw NotFound()
+    }
   }
 
   private handleTimeout(response: any, timeout?: number) {
@@ -449,7 +551,7 @@ export class Api {
     payload: any,
     context: any,
   ) {
-    const parser = procedure.parsers[type] ?? this.parsers[type]
+    const parser = procedure.parsers[type]
     if (!parser) return payload
     const schema = procedure[type]
     if (!schema) return payload
@@ -473,6 +575,8 @@ export class Filter<Error extends ErrorClass = ErrorClass> extends Provider<
 
 export abstract class BaseParser {
   abstract parse(schema: any, data: any, ctx: any): any
+
+  transform?(schema: any): any
 
   toJsonSchema(schema: any): any {
     return {}

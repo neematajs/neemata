@@ -52,7 +52,7 @@ export type AnyModule = Module<any, any, any, any, any>
 export type AnyProvider<Value = any> = Provider<Value, any>
 export type AnyProcedure = Procedure<any, any, any, any, any>
 export type AnyTask = Task<any, any, any, any>
-export type AnyEvent = Event<any, any, any>
+export type AnyEvent = Event<any, any>
 export type AnyGuard = Guard<any>
 export type AnyMiddleware = Middleware<any>
 
@@ -116,18 +116,6 @@ export type UnionToIntersection<U> = (
   ? I
   : never
 
-export type InferSchemaOutput<Schema> = Schema extends import('zod').ZodSchema
-  ? import('zod').output<Schema>
-  : Schema extends import('@sinclair/typebox').TSchema
-    ? import('@sinclair/typebox').Static<Schema>
-    : unknown
-
-export type InferSchemaInput<Schema> = Schema extends import('zod').ZodSchema
-  ? import('zod').input<Schema>
-  : Schema extends import('@sinclair/typebox').TSchema
-    ? import('@sinclair/typebox').Static<Schema>
-    : unknown
-
 export type GlobalContext = {
   logger: Logger
 }
@@ -146,6 +134,33 @@ export type Merge<
     : K extends keyof T1
       ? T1[K]
       : never
+}
+
+export type AppClient<App extends AnyApplication> = {
+  procedures: UnionToIntersection<
+    {
+      [K in keyof App['modules']]: {
+        [P in keyof AppClientProcedures<
+          //@ts-expect-error
+          K,
+          App['modules'][K]
+          //@ts-expect-error
+        >]: AppClientProcedures<K, App['modules'][K]>[P]
+      }
+    }[keyof App['modules']]
+  >
+  events: UnionToIntersection<
+    {
+      [K in keyof App['modules']]: {
+        [P in keyof AppClientEvents<
+          //@ts-expect-error
+          K,
+          App['modules'][K]
+          //@ts-expect-error
+        >]: AppClientEvents<K, App['modules'][K]>[P]
+      }
+    }[keyof App['modules']]
+  >
 }
 
 type AppClientProcedures<
@@ -178,12 +193,8 @@ type AppClientProcedures<
       ? `${Prefix extends '' ? ModuleName : `${Prefix}/${ModuleName}`}/${K}`
       : never]: Procedures[K] extends AnyProcedure
       ? {
-          input: InferSchemaOutput<Procedures[K]['_']['input']>
-          output: Awaited<
-            null extends Procedures[K]['_']['output']
-              ? ReturnType<Procedures[K]['handler']>
-              : InferSchemaOutput<Procedures[K]['_']['output']>
-          >
+          input: Procedures[K]['_']['input']
+          output: Procedures[K]['_']['output']
         }
       : never
   }
@@ -220,30 +231,3 @@ type AppClientEvents<
       : never]: Events[K] extends AnyEvent ? Events[K]['_']['payload'] : never
   }
 >
-
-export type AppClient<App extends AnyApplication> = {
-  procedures: UnionToIntersection<
-    {
-      [K in keyof App['modules']]: {
-        [P in keyof AppClientProcedures<
-          //@ts-expect-error
-          K,
-          App['modules'][K]
-          //@ts-expect-error
-        >]: AppClientProcedures<K, App['modules'][K]>[P]
-      }
-    }[keyof App['modules']]
-  >
-  events: UnionToIntersection<
-    {
-      [K in keyof App['modules']]: {
-        [P in keyof AppClientEvents<
-          //@ts-expect-error
-          K,
-          App['modules'][K]
-          //@ts-expect-error
-        >]: AppClientEvents<K, App['modules'][K]>[P]
-      }
-    }[keyof App['modules']]
-  >
-}

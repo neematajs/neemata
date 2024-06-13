@@ -16,7 +16,13 @@ import {
   HttpTransportMethodOption,
 } from './constants'
 import type { HttpTransport } from './transport'
-import { type ParsedRequest, getBody, getFormat, getRequest } from './utils'
+import {
+  type ParsedRequest,
+  getBody,
+  getFormat,
+  getRequest,
+  toObject,
+} from './utils'
 
 export class HttpTransportServer {
   protected server!: Server<any>
@@ -43,6 +49,7 @@ export class HttpTransportServer {
         const format = getFormat(req, this.application.format)
         const request = getRequest(req, server)
         const headers = new Headers()
+
         if (format instanceof Response) return format
 
         headers.set('Content-Type', format.encoder.mime)
@@ -52,7 +59,6 @@ export class HttpTransportServer {
           const procedure = this.api.find(name, this.transport)
           const payload = await this.getPayload(request, format.decoder)
           return await this.handleHttpRequest({
-            // @ts-expect-error Bun types conflicting with Node types
             headers,
             request,
             procedure,
@@ -150,7 +156,7 @@ export class HttpTransportServer {
     const connection = new HttpConnection(
       this.application.registry,
       {
-        headers: Object.fromEntries(request.req.headers),
+        headers: toObject(request.req.headers),
         query: request.query,
         method: request.method as HttpTransportMethod,
         ip: request.ip,
@@ -187,7 +193,9 @@ export class HttpTransportServer {
           throw new ApiError(ErrorCode.InternalServerError)
         }
         result.once('end', () => this.handleContainerDisposal(container))
-        return new Response(result, { status: 200, headers })
+        // FIXME: This is not goint to work with Bun
+        // @ts-expect-error
+        return new Response(result.readable, { status: 200, headers })
       } else {
         this.handleContainerDisposal(container)
         return new Response(format.encode(result), {
@@ -211,30 +219,6 @@ export class HttpTransportServer {
     } else {
       const body = await getBody(request.req).asArrayBuffer()
       return format.decode(body)
-    }
-  }
-  private applyCors(req: Request, headers: Headers) {
-    const origin = req.headers.get('origin')
-
-    if (this.options.cors && origin) {
-      const { cors } = this.options
-      let allowed = false
-      if (typeof cors.origin === 'string')
-        allowed = cors.origin === req.headers.get('origin')
-      else if (cors.origin instanceof Bun.Glob) {
-        allowed = cors.origin.match(origin)
-      } else {
-        allowed = cors.origin(req)
-      }
-
-      if (allowed) {
-        headers.set('access-control-allow-origin', origin)
-        for (const type of ['methods', 'headers', 'credentials'] as const) {
-          if (cors[type]) {
-            headers.set(`Access-Control-Allow-${type}`, `${cors[type]}`)
-          }
-        }
-      }
     }
   }
 }

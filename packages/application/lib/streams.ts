@@ -1,5 +1,5 @@
 import { PassThrough, Readable } from 'node:stream'
-import type { ServerStreamConstructor, StreamMetadata } from '@neematajs/common'
+import type { StreamMetadata } from '@neematajs/common'
 
 export abstract class StreamResponse<
   Payload = any,

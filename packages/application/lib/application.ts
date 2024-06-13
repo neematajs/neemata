@@ -32,19 +32,12 @@ export type ApplicationOptions = {
   api: {
     timeout: number
     formats: BaseServerFormat[]
-    parsers?:
-      | BaseParser
-      | {
-          input?: BaseParser
-          output?: BaseParser
-        }
   }
-  tasks: {
+  tasks?: {
     timeout: number
     runner?: BaseTaskRunner
   }
-  events: {
-    timeout: number
+  events?: {
     parser?: BaseParser
   }
   logging?: LoggingOptions

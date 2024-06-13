@@ -8,17 +8,13 @@
     "types": "./index.ts"
   },
   "scripts": {
-    "build": "bun build ./index.ts --outdir=dist --sourcemap=external --external=\\* --target=browser",
+    "build": "tsup",
     "type-check": "tsc --noEmit"
-  },
-  "dependencies": {
-    "qs": "^6.12.1"
   },
   "peerDependencies": {
     "@neematajs/common": "workspace:~1.0.0-alpha"
   },
   "devDependencies": {
-    "@neematajs/common": "workspace:~1.0.0-alpha",
-    "@types/qs": "^6"
+    "@neematajs/common": "workspace:~1.0.0-alpha"
   }
 }

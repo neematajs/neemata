@@ -20,7 +20,7 @@ import {
 import { WsConnection } from './connection'
 import type { WsTransport } from './transport'
 import type { WsTransportSocket, WsUserData } from './types'
-import { InternalError, getFormat, send, sendPayload } from './utils'
+import { InternalError, getFormat, send, sendPayload, toObject } from './utils'
 
 export class WsTransportServer {
   protected server!: Server<WsUserData>
@@ -59,7 +59,7 @@ export class WsTransportServer {
           subscriptions: new Map(),
           transportData: {
             transport: 'websockets' as const,
-            headers: Object.fromEntries(req.headers),
+            headers: toObject(req.headers),
             query: new URLSearchParams(req.url.split('?')[1] || ''),
             ip: server.requestIP(req),
           },

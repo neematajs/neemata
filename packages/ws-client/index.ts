@@ -13,7 +13,6 @@ import {
   Subscription,
   concat,
   decodeNumber,
-  decodeText,
   encodeNumber,
   encodeText,
   once,
@@ -71,11 +70,13 @@ export class WebsocketsClient<
     this.autoreconnect = this.options.autoreconnect ?? true // reset default autoreconnect value
     await this.healthCheck()
 
+    const params = {}
+    this.query.forEach((value, key) => (params[key] = value))
     this.ws = new (this.options.WebSocket ?? globalThis.WebSocket)(
       this.getURL('api', 'ws', {
         accept: this.options.format.mime,
         'content-type': this.options.format.mime,
-        ...Object.fromEntries(this.query),
+        ...params,
       }),
     )
 

@@ -77,7 +77,7 @@ export const run = async (scriptPath: string) => {
         (typeof entry === 'string' ? entry : swc ? 'index.ts' : 'index.js'),
     )
 
-    let exitTimeout: Timer | undefined = undefined
+    let exitTimeout: any = undefined
 
     const exitProcess = () => {
       if (exitTimeout) clearTimeout(exitTimeout)

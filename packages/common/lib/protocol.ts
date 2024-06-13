@@ -3,6 +3,7 @@ export const MessageType = Object.freeze({
   Rpc: 11,
   RpcStream: 12,
   RpcSubscription: 13,
+  RpcAbort: 14,
 
   // Client streams
   ClientStreamAbort: 30,

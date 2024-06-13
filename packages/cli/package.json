@@ -7,23 +7,19 @@
     "neemata-bun": "./dist/bun.js"
   },
   "scripts": {
-    "build": "bun build cli.ts bun.ts node.ts --outdir=dist --splitting --external=\\* --target=node",
+    "build": "tsup",
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "@neematajs/application": "workspace:*",
-    "@neematajs/server": "workspace:*",
     "dotenv": "^16.4.5",
     "tsx": "^4.10.5"
-  },
+  },  
   "peerDependencies": {
     "@neematajs/application": "workspace:*",
-    "@neematajs/server": "workspace:*",
-    "typescript": "^5.0.0"
+    "@neematajs/server": "workspace:*"
   },
-  "peerDependenciesMeta": {
-    "@neematajs/server": {
-      "optional": true
-    }
+  "devDependencies": {
+    "@neematajs/application": "workspace:*",
+    "@neematajs/server": "workspace:*"
   }
 }

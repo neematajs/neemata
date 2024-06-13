@@ -117,9 +117,6 @@ export class Registry {
     if (typeof procedure.handler !== 'function')
       throw new Error('Procedure handler is not defined or is not a function')
 
-    if (!procedure.transports.size)
-      throw new Error('Procedure must have at least one transport')
-
     this.application.logger.debug('Registering procedure [%s]', name)
 
     this.procedures.set(name, procedure)

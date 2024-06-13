@@ -1,11 +1,9 @@
-import { isNumericLiteral } from 'typescript'
 import { Scope } from './constants'
 import type { EventManager } from './events'
 import type { Logger } from './logger'
 import type { Registry } from './registry'
 import type { BaseTransport } from './transport'
-import type { AnyProvider, ExecuteFn, Merge } from './types'
-import { merge } from './utils/functions'
+import type { AnyProvider, ExecuteFn } from './types'
 
 const ScopeStrictness = {
   [Scope.Global]: 0,

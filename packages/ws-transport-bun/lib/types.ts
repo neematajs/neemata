@@ -7,7 +7,8 @@ import type {
   Subscription,
 } from '@neematajs/application'
 import type { BaseServerFormat } from '@neematajs/common'
-import type { ServerOptions } from '@neematajs/http-server'
+
+import type { ServerOptions } from '@neematajs/bun-http-server'
 import type { ServerWebSocket, SocketAddress, TLSOptions } from 'bun'
 
 export type WsUserData = {

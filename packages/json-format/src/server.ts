@@ -53,8 +53,8 @@ export class JsonFormat extends BaseServerFormat {
         }
       : undefined
 
-    for (const [id, metadata] of streams) {
-      context.addStream(id, metadata)
+    for (const [id, metadata] of Object.entries(streams)) {
+      context.addStream(Number.parseInt(id), metadata as any)
     }
 
     return { length, replacer }

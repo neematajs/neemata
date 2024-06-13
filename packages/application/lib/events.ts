@@ -4,7 +4,7 @@ import type { Logger } from './logger'
 import type { Registry } from './registry'
 import { type BaseSubscriptionManager, Subscription } from './subscription'
 import type { BaseTransportConnection } from './transport'
-import type { AnyEvent, InferSchemaInput, InferSchemaOutput } from './types'
+import type { AnyEvent } from './types'
 
 export type EventOptionsType = Record<string, string | number>
 
@@ -13,7 +13,6 @@ export class Event<EventPayload, EventOptions extends EventOptionsType = {}> {
     payload: EventPayload
     options: EventOptions
   }
-  // readonly parser!: BaseParser
   readonly serializer = (options: EventOptions) => {
     const keys = Object.keys(options).sort()
     if (!keys.length) return ''

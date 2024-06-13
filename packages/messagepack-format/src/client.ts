@@ -7,6 +7,7 @@ import type {
 import {
   type AppClientInterface,
   type Subscription as ClientSubscription,
+  type TypeProvider,
   UpStream,
 } from '@neematajs/common'
 import { BaseClientFormat } from '@neematajs/common'
@@ -37,7 +38,7 @@ export class MessagepackFormat extends BaseClientFormat {
   mime = 'application/x-msgpack'
 
   encode(data: any): ArrayBuffer {
-    return encoder.encode(data).buffer
+    return encoder.encode(data).buffer as ArrayBuffer
   }
 
   decode(data: ArrayBuffer): any {
@@ -49,7 +50,13 @@ export class MessagepackFormat extends BaseClientFormat {
   }
 }
 
-export type MessagepackFormatAppClient<T extends AppClientInterface> = {
+export interface MessagepackFormatTypeProvider extends TypeProvider {
+  output: this['input'] extends AppClientInterface
+    ? MessagepackFormatAppClient<this['input']>
+    : unknown
+}
+
+type MessagepackFormatAppClient<T extends AppClientInterface> = {
   procedures: {
     [P in keyof T['procedures']]: {
       output: ResolveApiOutput<T['procedures'][P]['output']>

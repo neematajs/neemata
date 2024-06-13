@@ -1,5 +1,8 @@
+/// <reference lib="dom" />
+
 import { EventEmitter, type EventsType } from './event-emitter'
 import { type DownStream, type StreamMetadata, UpStream } from './streams'
+import type { CallTypeProvider, TypeProvider } from './types'
 
 export class ApiError extends Error {
   code: string
@@ -73,6 +76,17 @@ export abstract class BaseClient<
   _!: {
     procedures: Procedures
     events: Events
+  }
+
+  withTypeProvider<T extends TypeProvider>() {
+    return this as unknown as this &
+      BaseClient<
+        // @ts-expect-error
+        CallTypeProvider<T, AppClient>,
+        RPCOptions,
+        Procedures,
+        Events
+      >
   }
 
   protected streams = {

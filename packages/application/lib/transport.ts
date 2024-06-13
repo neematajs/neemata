@@ -1,9 +1,8 @@
 import { randomUUID } from 'node:crypto'
-
-import type { Event } from './events'
 import { BaseExtension } from './extension'
 import type { Registry } from './registry'
 import type { Subscription } from './subscription'
+import type { AnyEvent } from './types'
 
 export interface BaseTransportData {
   transport: string
@@ -27,7 +26,7 @@ export abstract class BaseTransportConnection {
     readonly subscriptions = new Map<string, Subscription>(),
   ) {}
 
-  send<E extends Event>(event: E, payload: E['_']['payload']) {
+  send<E extends AnyEvent>(event: E, payload: E['_']['payload']) {
     const eventName = this.registry.getName('event', event)
     return this.sendEvent(eventName, payload)
   }

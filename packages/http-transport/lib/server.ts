@@ -1,0 +1,215 @@
+import {
+  type AnyProcedure,
+  type Container,
+  EncodedStreamResponse,
+  type Procedure,
+  Scope,
+  StreamResponse,
+} from '@neematajs/application'
+import { ApiError, type BaseServerFormat, ErrorCode } from '@neematajs/common'
+import qs from 'qs'
+import { App, SSLApp, type TemplatedApp } from 'uWebSockets.js'
+import { HttpConnection } from './connection'
+import {
+  HttpStatusMessage,
+  HttpTransportMethod,
+  HttpTransportMethodOption,
+} from './constants'
+import type { HttpTransport } from './transport'
+import type { HttpTransportOptions } from './types'
+import { type ParsedRequest, getBody, getFormat, getRequest } from './utils'
+
+export class HttpTransportServer {
+  protected server!: TemplatedApp
+  protected cors: Exclude<HttpTransportOptions['cors'], undefined>
+
+  constructor(protected readonly transport: HttpTransport) {
+    this.cors = this.options.cors ?? {
+      origin: '*',
+      methods: ['GET', 'POST', 'OPTIONS'],
+      headers: ['Content-Type', 'Authorization'],
+      credentials: 'true',
+    }
+
+    this.server = (this.options.tls ? SSLApp : App)(this.options.tls)
+      .get('/healthy', (res) => {
+        this.applyCors(res)
+        res.writeStatus('200').writeHeader().end('OK')
+      })
+      .any('/api/*', (res, req) => {
+        res.send()
+      })
+      .request(['GET', 'POST'], '/api/**/*', async (req, server) => {
+        const format = getFormat(req, this.application.format)
+        const request = getRequest(req, server)
+        const headers = new Headers()
+        if (format instanceof Response) return format
+
+        headers.set('Content-Type', format.encoder.mime)
+
+        try {
+          const name = request.path.slice(5) // remove "/api/"
+          const procedure = this.api.find(name, this.transport)
+          const payload = await this.getPayload(request, format.decoder)
+          return await this.handleHttpRequest({
+            headers,
+            request,
+            procedure,
+            payload,
+            format: format.encoder,
+          })
+        } catch (cause) {
+          if (cause instanceof ApiError) {
+            return new Response(format.encoder.encode(cause))
+          } else {
+            if (cause instanceof Error) this.logError(cause)
+            const error = new ApiError(ErrorCode.InternalServerError)
+            return new Response(format.encoder.encode(error))
+          }
+        }
+      })
+  }
+
+  get options() {
+    return this.transport.options
+  }
+
+  get application() {
+    return this.transport.application
+  }
+
+  get api() {
+    return this.transport.application.api
+  }
+
+  get logger() {
+    return this.transport.application.logger
+  }
+
+  get format() {
+    return this.transport.application.format
+  }
+
+  async start() {
+    const url = this.server.listen()
+    this.logger.info('Server started on %s', url)
+  }
+
+  async stop() {
+    this.server.close()
+  }
+
+  protected async logError(
+    cause: Error,
+    message = 'Unknown error while processing request',
+  ) {
+    this.logger.error(message ? new Error(message, { cause }) : cause)
+  }
+
+  protected handleContainerDisposal(container: Container) {
+    container
+      .dispose()
+      .catch((cause) =>
+        this.logError(
+          cause,
+          'Container disposal error (potential memory leak)',
+        ),
+      )
+  }
+
+  protected async handleRPC(options: {
+    container: Container
+    procedure: AnyProcedure
+    payload: any
+    connection: HttpConnection
+  }) {
+    return await this.api.call({
+      ...options,
+      transport: this.transport,
+    })
+  }
+
+  protected async handleHttpRequest(options: {
+    request: ParsedRequest
+    procedure: Procedure
+    headers: Headers
+    payload: any
+    format: BaseServerFormat
+  }) {
+    const { procedure, request, payload, headers, format } = options
+
+    const allowedMethods = procedure.options[HttpTransportMethodOption] ?? [
+      HttpTransportMethod.Post,
+    ]
+
+    if (!allowedMethods.includes(request.method.toLocaleLowerCase())) {
+      throw new ApiError(ErrorCode.NotFound)
+    }
+
+    const connection = new HttpConnection(
+      this.application.registry,
+      {
+        headers: Object.fromEntries(request.req.headers),
+        query: request.query,
+        method: request.method as HttpTransportMethod,
+        ip: request.ip,
+        transport: 'http',
+      },
+      headers,
+    )
+    const container = this.application.container.createScope(Scope.Call)
+    try {
+      const result = await this.handleRPC({
+        container,
+        procedure,
+        payload,
+        connection,
+      })
+      if (result instanceof Blob) {
+        if (request.method !== 'GET') {
+          this.logger.error('Blob is only supported for GET requests')
+          throw new ApiError(ErrorCode.InternalServerError)
+        }
+        this.handleContainerDisposal(container)
+        return new Response(result, {
+          status: 200,
+          headers,
+        })
+      } else if (result instanceof StreamResponse) {
+        if (
+          request.method === 'GET' &&
+          result instanceof EncodedStreamResponse
+        ) {
+          this.logger.error(
+            'Encoded stream is only supported for POST requests',
+          )
+          throw new ApiError(ErrorCode.InternalServerError)
+        }
+        result.once('end', () => this.handleContainerDisposal(container))
+        return new Response(result, { status: 200, headers })
+      } else {
+        this.handleContainerDisposal(container)
+        return new Response(format.encode(result), {
+          status: 200,
+          headers,
+        })
+      }
+    } catch (cause: any) {
+      this.handleContainerDisposal(container)
+
+      if (cause instanceof ApiError) return new Response(format.encode(cause))
+      this.logError(cause)
+      const error = new ApiError(ErrorCode.InternalServerError)
+      return new Response(format.encode(error))
+    }
+  }
+
+  protected async getPayload(request: ParsedRequest, format: BaseServerFormat) {
+    if (request.method === 'GET') {
+      return qs.parse(request.queryString)
+    } else {
+      const body = await getBody(request.req).asArrayBuffer()
+      return format.decode(body)
+    }
+  }
+}

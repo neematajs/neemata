@@ -7,7 +7,7 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "@neematajs/bun-http-server": "~0.0.2",
+    "@neematajs/bun-http-server": "~0.0.3",
     "qs": "^6.12.1"
   },
   "peerDependencies": {
@@ -19,7 +19,7 @@
     "@neematajs/application": "workspace:~1.0.0-alpha",
     "@neematajs/common": "workspace:~1.0.0-alpha",
     "@neematajs/json-format": "workspace:~1.0.0-alpha",
-    "@types/bun": "^1.1.0",
+    "@types/bun": "^1.1.4",
     "@types/qs": "^6"
   }
 }
