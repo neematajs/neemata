@@ -1,6 +1,5 @@
 {
   "name": "@neematajs/json-format",
-  "version": "1.0.0-alpha.2",
   "type": "module",
   "exports": {
     "./client": {
@@ -19,11 +18,11 @@
     "type-check": "tsc --noEmit"
   },
   "peerDependencies": {
-    "@neematajs/common": "workspace:~1.0.0-alpha.2",
-    "@neematajs/application": "workspace:~1.0.0-alpha.2"
+    "@neematajs/common": "workspace:*",
+    "@neematajs/application": "workspace:*"
   },
   "devDependencies": {
-    "@neematajs/common": "workspace:~1.0.0-alpha.2",
-    "@neematajs/application": "workspace:~1.0.0-alpha.2"
+    "@neematajs/common": "workspace:*",
+    "@neematajs/application": "workspace:*"
   }
 }

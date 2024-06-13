@@ -1,6 +1,5 @@
 {
   "name": "@neematajs/typebox-parser",
-  "version": "1.0.0-alpha.1",
   "type": "module",
   "exports": {
     ".": {
@@ -14,13 +13,13 @@
     "type-check": "tsc --noEmit"
   },
   "peerDependencies": {
-    "@neematajs/application": "workspace:~1.0.0-alpha.2",
-    "@neematajs/common": "workspace:~1.0.0-alpha.2",
+    "@neematajs/application": "workspace:*",
+    "@neematajs/common": "workspace:*",
     "@sinclair/typebox": "^0.32.0"
   },
   "devDependencies": {
-    "@neematajs/application": "workspace:~1.0.0-alpha.2",
-    "@neematajs/common": "workspace:~1.0.0-alpha.2",
+    "@neematajs/application": "workspace:*",
+    "@neematajs/common": "workspace:*",
     "@sinclair/typebox": "^0.32.0"
   }
 }

@@ -1,6 +1,5 @@
 {
   "name": "@neematajs/cli",
-  "version": "1.0.0-alpha.1",
   "type": "module",
   "bin": {
     "neemata": "./dist/node.js",
@@ -13,7 +12,7 @@
   "dependencies": {
     "dotenv": "^16.4.5",
     "tsx": "^4.10.5"
-  },  
+  },
   "peerDependencies": {
     "@neematajs/application": "workspace:*",
     "@neematajs/server": "workspace:*"

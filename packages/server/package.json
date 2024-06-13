@@ -1,6 +1,5 @@
 {
   "name": "@neematajs/server",
-  "version": "1.0.0-alpha.1",
   "type": "module",
   "scripts": {
     "build": "tsup",

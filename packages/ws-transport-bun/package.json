@@ -1,6 +1,5 @@
 {
   "name": "@neematajs/ws-transport-bun",
-  "version": "1.0.0-alpha.2",
   "module": "index.ts",
   "type": "module",
   "scripts": {
@@ -10,14 +9,14 @@
     "@neematajs/bun-http-server": "~0.0.3"
   },
   "peerDependencies": {
-    "@neematajs/application": "workspace:~1.0.0-alpha",
-    "@neematajs/messagepack-format": "workspace:~1.0.0-alpha",
-    "@neematajs/common": "workspace:~1.0.0-alpha"
+    "@neematajs/application": "workspace:*",
+    "@neematajs/messagepack-format": "workspace:*",
+    "@neematajs/common": "workspace:*"
   },
   "devDependencies": {
-    "@neematajs/application": "workspace:~1.0.0-alpha",
-    "@neematajs/messagepack-format": "workspace:~1.0.0-alpha",
-    "@neematajs/common": "workspace:~1.0.0-alpha",
+    "@neematajs/application": "workspace:*",
+    "@neematajs/messagepack-format": "workspace:*",
+    "@neematajs/common": "workspace:*",
     "@types/bun": "^1.1.0"
   }
 }

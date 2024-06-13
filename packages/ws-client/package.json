@@ -1,6 +1,5 @@
 {
   "name": "@neematajs/ws-client",
-  "version": "1.0.0-alpha.1",
   "type": "module",
   "module": "index.ts",
   "publishConfig": {
@@ -12,9 +11,9 @@
     "type-check": "tsc --noEmit"
   },
   "peerDependencies": {
-    "@neematajs/common": "workspace:~1.0.0-alpha"
+    "@neematajs/common": "workspace:*"
   },
   "devDependencies": {
-    "@neematajs/common": "workspace:~1.0.0-alpha"
+    "@neematajs/common": "workspace:*"
   }
 }

@@ -1,6 +1,5 @@
 {
   "name": "@neematajs/http-transport",
-  "version": "1.0.0",
   "module": "index.ts",
   "type": "module",
   "scripts": {
@@ -11,14 +10,14 @@
     "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.43.0"
   },
   "peerDependencies": {
-    "@neematajs/application": "workspace:~1.0.0",
-    "@neematajs/common": "workspace:~1.0.0",
-    "@neematajs/json-format": "workspace:~1.0.0"
+    "@neematajs/application": "workspace:*",
+    "@neematajs/common": "workspace:*",
+    "@neematajs/json-format": "workspace:*"
   },
   "devDependencies": {
-    "@neematajs/application": "workspace:~1.0.0",
-    "@neematajs/common": "workspace:~1.0.0",
-    "@neematajs/json-format": "workspace:~1.0.0",
+    "@neematajs/application": "workspace:*",
+    "@neematajs/common": "workspace:*",
+    "@neematajs/json-format": "workspace:*",
     "@types/qs": "^6"
   }
 }
