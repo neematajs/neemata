@@ -40,5 +40,5 @@ jobs:
           pnpm version $(pnpm --silent publish-args version ${{ github.event.release.tag_name }}) --no-commit-hooks --no-git-tag-version --silent || true
           pnpm -r exec cp ../../README.md ./
           pnpm -r exec cp ../../LICENSE.md ./
-          pnpm publish --dry-publish --filter "*" --access public --no-git-checks --tag=$(pnpm --silent publish-args tag ${{ github.event.release.tag_name }})
+          pnpm publish --dry-run --filter "*" --access public --no-git-checks --tag=$(pnpm --silent publish-args tag ${{ github.event.release.tag_name }})
           pnpm publish --filter "*" --access public --no-git-checks --tag=$(pnpm --silent publish-args tag ${{ github.event.release.tag_name }})
