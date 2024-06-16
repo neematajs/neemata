@@ -1,0 +1,23 @@
+{
+  "name": "@neematajs/testing",
+  "type": "module",
+  "scripts": {
+    "build": "tsup",
+    "type-check": "tsc --noEmit"
+  },
+  "exports": {
+    ".": {
+      "bun": "./index.ts",
+      "default": "./dist/index.js",
+      "types": "./index.ts"
+    }
+  },
+  "peerDependencies": {
+    "@neematajs/application": "workspace:*",
+    "@neematajs/common": "workspace:*"
+  },
+  "devDependencies": {
+    "@neematajs/application": "workspace:*",
+    "@neematajs/common": "workspace:*"
+  }
+}

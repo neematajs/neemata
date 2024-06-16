@@ -1,12 +1,7 @@
 import type { BaseServerFormat } from '@neematajs/common'
 import { Api, type BaseParser } from './api'
 import { Hook, Scope, WorkerType } from './constants'
-import {
-  Container,
-  EVENT_MANAGER_PROVIDER,
-  EXECUTE_PROVIDER,
-  LOGGER_PROVIDER,
-} from './container'
+import { Container, Provider } from './container'
 import { EventManager } from './events'
 import type { BaseExtension } from './extension'
 import { Format } from './format'
@@ -33,7 +28,7 @@ export type ApplicationOptions = {
     timeout: number
     formats: BaseServerFormat[]
   }
-  tasks?: {
+  tasks: {
     timeout: number
     runner?: BaseTaskRunner
   }
@@ -44,6 +39,12 @@ export type ApplicationOptions = {
 }
 
 export class Application<AppModules extends Record<string, AnyModule> = {}> {
+  static logger = new Provider<Logger>().withDescription('Logger')
+  static execute = new Provider<ExecuteFn>().withDescription('Task execution')
+  static eventManager = new Provider<EventManager>().withDescription(
+    'Event manager',
+  )
+
   readonly api: Api
   readonly tasks: Tasks
   readonly logger: Logger
@@ -71,9 +72,9 @@ export class Application<AppModules extends Record<string, AnyModule> = {}> {
     // create unexposed container for internal providers, which never gets disposed
     const container = new Container(this)
 
-    container.provide(LOGGER_PROVIDER, this.logger)
-    container.provide(EVENT_MANAGER_PROVIDER, this.eventManager)
-    container.provide(EXECUTE_PROVIDER, this.execute.bind(this))
+    container.provide(Application.logger, this.logger)
+    container.provide(Application.eventManager, this.eventManager)
+    container.provide(Application.execute, this.execute.bind(this))
 
     // create a global container for rest of the application
     // including transports, extensions, etc.

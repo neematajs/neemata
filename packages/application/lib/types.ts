@@ -50,7 +50,7 @@ export type ConnectionProvider<T, C> = Provider<ConnectionFn<T, C>>
 export type AnyApplication = Application<any>
 export type AnyModule = Module<any, any, any, any, any>
 export type AnyProvider<Value = any> = Provider<Value, any>
-export type AnyProcedure = Procedure<any, any, any, any, any>
+export type AnyProcedure = Procedure<any, any, any, any, any, any, any>
 export type AnyTask = Task<any, any, any, any>
 export type AnyEvent = Event<any, any>
 export type AnyGuard = Guard<any>

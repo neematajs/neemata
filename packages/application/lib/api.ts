@@ -5,8 +5,8 @@ import {
   type TypeProvider,
 } from '@neematajs/common'
 import type { ApplicationOptions } from './application'
+import { Scope } from './constants'
 import {
-  CONNECTION_PROVIDER,
   type Container,
   type Dependencies,
   type DependencyContext,
@@ -60,7 +60,7 @@ export type ApplyProcedureTransport<
   T extends AnyTransportClass[],
   D extends Dependencies,
 > = {
-  [K in keyof D]: D[K] extends typeof CONNECTION_PROVIDER
+  [K in keyof D]: D[K] extends typeof Procedure.connection
     ? Provider<
         BaseTransportConnection & InstanceType<T[number]>['_']['connection']
       >
@@ -98,6 +98,14 @@ export class Procedure<
     Object.assign(newProcedure, original, overrides)
     return newProcedure
   }
+
+  static connection = new Provider<BaseTransport['_']['connection']>()
+    .withScope(Scope.Connection)
+    .withDescription('RPC connection')
+
+  static signal = new Provider<AbortSignal>()
+    .withScope(Scope.Call)
+    .withDescription('RPC abort signal')
 
   _!: {
     input: ProcedureInput
@@ -426,7 +434,7 @@ export class Api {
       name: this.application.registry.getName('procedure', procedure),
     }
 
-    container.provide(CONNECTION_PROVIDER, connection)
+    container.provide(Procedure.connection, connection)
 
     try {
       this.handleTransport(callOptions)

@@ -1,5 +1,5 @@
 {
-  "$schema": "https://biomejs.dev/schemas/1.7.3/schema.json",
+  "$schema": "https://biomejs.dev/schemas/1.8.1/schema.json",
   "files": {
     "ignore": [
       "**/dist/**",
@@ -14,7 +14,10 @@
   "linter": {
     "enabled": true,
     "rules": {
-      "complexity": { "recommended": true, "noBannedTypes": "off" },
+      "complexity": {
+        "recommended": true,
+        "noBannedTypes": "off"
+      },
       "style": {
         "recommended": true,
         "noNonNullAssertion": "off",
@@ -24,7 +27,10 @@
         "useDefaultParameterLast": "off",
         "noParameterAssign": "off"
       },
-      "suspicious": { "noExplicitAny": "off", "noAssignInExpressions": "off" },
+      "suspicious": {
+        "noExplicitAny": "off",
+        "noAssignInExpressions": "off"
+      },
       "security": {
         "recommended": true
       }
@@ -44,7 +50,7 @@
       "arrowParentheses": "always",
       "quoteStyle": "single",
       "semicolons": "asNeeded",
-      "trailingComma": "all"
+      "trailingCommas": "all"
     }
   },
   "json": {

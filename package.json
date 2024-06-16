@@ -5,20 +5,23 @@
     "build": "pnpm run --parallel --filter \"*\" build",
     "build:watch": "pnpm run --parallel --filter \"*\" build --watch",
     "clean": "rm -rf dist node_modules && pnpm -r exec rm -rf dist node_modules",
+    "test": "vitest run",
+    "test:watch": "vitest watch",
     "check:type": "pnpm run --parallel --filter \"*\" type-check",
     "check:lint": "biome lint .",
     "check:fmt": "biome format .",
     "check": "pnpm run check:fmt && pnpm run check:lint && pnpm run check:type",
-    "fmt": "biome check --apply .",
+    "fmt": "biome check --write .",
     "prepare": "husky",
     "publish-args": "node --no-warnings ./scripts/publish-args.js"
   },
   "devDependencies": {
-    "@biomejs/biome": "1.7.3",
+    "@biomejs/biome": "1.8.1",
     "esbuild-plugin-file-path-extensions": "^2.1.2",
     "husky": "^9.0.11",
     "tsup": "^8.1.0",
-    "typescript": "5.5.1-rc"
+    "typescript": "5.5.1-rc",
+    "vitest": "^1.6.0"
   },
   "workspaces": [
     "./packages/*"

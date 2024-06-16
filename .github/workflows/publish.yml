@@ -1,3 +1,5 @@
+name: Publish
+
 on:
   release:
     types: [published]
@@ -10,10 +12,10 @@ jobs:
       NPM_USERNAME: ${{ secrets.NPM_USERNAME }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Install Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
           node-version: 20
 
@@ -28,17 +30,27 @@ jobs:
       - uses: pnpm/action-setup@v2
         name: Install pnpm
         with:
-          version: 8
+          version: 9
           run_install: false
 
       - name: Install dependencies
         run: pnpm install
-
-      - name: Set version and publish
+      
+      - name: Set version
         run: |
-          pnpm run build
-          pnpm version $(pnpm --silent publish-args version ${{ github.event.release.tag_name }}) --allow-same-version --no-commit-hooks --no-git-tag-version --silent || true
+          pnpm version ${{ github.event.release.tag_name }} -ws --allow-same-version --no-commit-hooks --no-git-tag-version --silent || true
           pnpm -r exec cp ../../README.md ./
           pnpm -r exec cp ../../LICENSE.md ./
-          pnpm publish --dry-run --filter "*" --access public --no-git-checks --tag=$(pnpm --silent publish-args tag ${{ github.event.release.tag_name }})
-          pnpm publish --filter "*" --access public --no-git-checks --tag=$(pnpm --silent publish-args tag ${{ github.event.release.tag_name }})
+
+      - name: Build and test
+        run: |
+          pnpm run build
+          pnpm run check
+          pnpm run test
+
+      - name: Dry-run publish and publish
+        run: |
+          pnpm publish --dry-run --filter "*" --access public --no-git-checks --tag=$(pnpm --silent publish-tag ${{ github.event.release.tag_name }})
+          pnpm publish --filter "*" --access public --no-git-checks --tag=$(pnpm --silent publish-tag ${{ github.event.release.tag_name }})
+          
+          

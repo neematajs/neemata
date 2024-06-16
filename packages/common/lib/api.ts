@@ -58,7 +58,7 @@ export type ResolveApiProcedureType<
 export type Call = {
   resolve: (value?: any) => void
   reject: (reason?: any) => void
-  timer: ReturnType<typeof setTimeout> | null
+  timer?: ReturnType<typeof setTimeout> | null
 }
 
 export type BaseClientEvents = {

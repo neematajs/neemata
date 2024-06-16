@@ -5,7 +5,7 @@ import {
   type Dependencies,
   type DependencyContext,
   type Depender,
-  TASK_SIGNAL_PROVIDER,
+  Provider,
 } from './container'
 import type { Registry } from './registry'
 import type { AnyTask, Merge, OmitFirstItem } from './types'
@@ -48,6 +48,10 @@ export class Task<
     handler: Handler<TaskDeps>
     args: TaskArgs
   }
+
+  static signal = new Provider<AbortSignal>().withDescription(
+    'Task abort signal',
+  )
 
   readonly dependencies: TaskDeps = {} as TaskDeps
   readonly handler!: this['_']['handler']
@@ -112,7 +116,7 @@ export class Tasks {
       const container = this.application.container.createScope(
         this.application.container.scope,
       )
-      container.provide(TASK_SIGNAL_PROVIDER, ac.signal)
+      container.provide(Task.signal, ac.signal)
       const context = await container.createContext(dependencies)
       return await handler(context, ...args)
     }).then(...future.toArgs())

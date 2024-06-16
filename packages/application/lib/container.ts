@@ -4,6 +4,7 @@ import type { Logger } from './logger'
 import type { Registry } from './registry'
 import type { BaseTransport } from './transport'
 import type { AnyProvider, ExecuteFn } from './types'
+import { merge } from './utils/functions'
 
 const ScopeStrictness = {
   [Scope.Global]: 0,
@@ -74,6 +75,16 @@ export class Provider<
   ProviderDeps extends Dependencies = {},
 > implements Depender<ProviderDeps>
 {
+  private static override<T>(
+    newProvider: T,
+    original: any,
+    overrides: { [K in keyof Provider]?: any } = {},
+  ): T {
+    // @ts-expect-error
+    Object.assign(newProvider, original, overrides)
+    return newProvider
+  }
+
   static key<T>() {
     return new Provider<T>()
   }
@@ -85,49 +96,46 @@ export class Provider<
   readonly dispose?: ProviderDisposeType<ProviderValue, ProviderDeps>
   readonly description!: string
 
-  withDependencies<Deps extends Dependencies>(dependencies: Deps) {
-    // @ts-expect-error
-    return Object.assign(this, { dependencies }) as Provider<
-      ProviderValue,
-      ProviderDeps & Deps
-    > &
-      Omit<this, keyof Provider>
+  withDependencies<Deps extends Dependencies>(newDependencies: Deps) {
+    const provider = new Provider<ProviderValue, Deps>()
+    const dependencies = merge(this.dependencies, newDependencies)
+    return Provider.override(provider, this, { dependencies })
   }
 
   withScope(scope: Scope) {
-    return Object.assign(this, { scope })
+    const provider = new Provider<ProviderValue, ProviderDeps>()
+    return Provider.override(provider, this, { scope })
   }
 
   withFactory<F extends ProviderFactoryType<ProviderValue, ProviderDeps>>(
     factory: F,
   ) {
-    return Object.assign(this, { factory, value: undefined }) as Provider<
-      Awaited<ReturnType<F>>,
-      ProviderDeps
-    > &
-      Omit<this, keyof Provider>
+    const provider = new Provider<Awaited<ReturnType<F>>, ProviderDeps>()
+    return Provider.override(provider, this, { factory, value: undefined })
   }
 
   withValue<T extends null extends ProviderValue ? any : ProviderValue>(
     value: T,
   ) {
-    return Object.assign(this, {
+    const provider = new Provider<
+      null extends ProviderValue ? T : ProviderValue,
+      ProviderDeps
+    >()
+    return Provider.override(provider, this, {
       value,
       factory: undefined,
       dispose: undefined,
-    }) as Provider<
-      null extends ProviderValue ? T : ProviderValue,
-      ProviderDeps
-    > &
-      Omit<this, keyof Provider>
+    })
   }
 
   withDisposal(dispose: this['dispose']) {
-    return Object.assign(this, { dispose })
+    const provider = new Provider<ProviderValue, ProviderDeps>()
+    return Provider.override(provider, this, { dispose })
   }
 
   withDescription(description: string) {
-    return Object.assign(this, { description })
+    const provider = new Provider<ProviderValue, ProviderDeps>()
+    return Provider.override(provider, this, { description })
   }
 
   optional() {
@@ -207,7 +215,7 @@ export class Container {
   async dispose() {
     // TODO: here might need to find correct order of disposing
     // to prevent first disposal of a provider
-    // that other disposing provider depends on
+    // that other disposing providers depends on
     this.application.logger.trace('Disposing [%s] scope context...', this.scope)
     for (const [{ dispose, dependencies }, value] of this.instances) {
       if (dispose) {
@@ -302,22 +310,3 @@ export class Container {
     ]
   }
 }
-
-export const CONNECTION_PROVIDER = new Provider<
-  BaseTransport['_']['connection']
->()
-  .withScope(Scope.Connection)
-  .withDescription('RPC connection')
-
-export const EXECUTE_PROVIDER = new Provider<ExecuteFn>().withDescription(
-  'Task execution function',
-)
-
-export const EVENT_MANAGER_PROVIDER =
-  new Provider<EventManager>().withDescription('Event manager')
-
-export const TASK_SIGNAL_PROVIDER = new Provider<AbortSignal>().withDescription(
-  'Task abort signal',
-)
-
-export const LOGGER_PROVIDER = new Provider<Logger>().withDescription('Logger')

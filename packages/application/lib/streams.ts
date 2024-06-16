@@ -14,7 +14,11 @@ export class EncodedStreamResponse<
   Chunk = any,
 > extends StreamResponse<Payload, Chunk> {
   constructor() {
-    super({ writableObjectMode: true, readableObjectMode: true })
+    super({
+      writableObjectMode: true,
+      readableObjectMode: true,
+      objectMode: true,
+    })
   }
 
   write(
