@@ -2,6 +2,14 @@ import type { Hook } from './constants'
 import type { Callback, HooksInterface } from './types'
 
 export class Hooks {
+  static merge(from: Hooks, to: Hooks) {
+    for (const [name, callbacks] of from.collection) {
+      for (const callback of callbacks) {
+        to.add(name, callback)
+      }
+    }
+  }
+
   collection = new Map<string, Set<Callback>>()
 
   add(name: string, callback: Callback) {
@@ -30,14 +38,6 @@ export class Hooks {
       const hooksArr = Array.from(hooks)
       if (reverse) hooksArr.reverse()
       for (const hook of hooksArr) await hook(...args)
-    }
-  }
-
-  merge(hooks: Hooks) {
-    for (const [name, callbacks] of hooks.collection) {
-      for (const callback of callbacks) {
-        this.add(name, callback)
-      }
     }
   }
 

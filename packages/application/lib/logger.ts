@@ -50,7 +50,7 @@ export const createLogger = (options: LoggingOptions = {}, $group: string) => {
   let { destinations, pinoOptions } = options
 
   if (!destinations || !destinations?.length) {
-    destinations = [createConsoleDestination('info')]
+    destinations = [createConsolePrettyDestination('info')]
   }
 
   const lowestLevelValue = destinations!.reduce(
@@ -71,10 +71,10 @@ export const createLogger = (options: LoggingOptions = {}, $group: string) => {
       level,
     },
     pino.multistream(destinations!),
-  ).child({ $group })
+  ).child({ $group, $threadId: threadId })
 }
 
-export const createConsoleDestination = (
+export const createConsolePrettyDestination = (
   level: Level,
   sync = true,
 ): StreamEntry => ({
@@ -86,7 +86,7 @@ export const createConsoleDestination = (
     messageFormat: (log, messageKey) => {
       const group = fg(`[${log.$group}]`, 11)
       const msg = fg(log[messageKey], messageColors[log.level as number])
-      const thread = fg(`(Thread-${threadId})`, 89)
+      const thread = fg(`(Thread-${log.$threadId})`, 89)
       return `\x1b[0m${thread} ${group} ${msg}`
     },
     customPrettifiers: {

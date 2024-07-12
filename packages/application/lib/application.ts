@@ -1,5 +1,5 @@
 import type { BaseServerFormat } from '@neematajs/common'
-import { Api, type BaseParser } from './api'
+import { Api, type Filter } from './api'
 import { Hook, Scope, WorkerType } from './constants'
 import { Container, Provider } from './container'
 import { EventManager } from './events'
@@ -7,6 +7,7 @@ import type { BaseExtension } from './extension'
 import { Format } from './format'
 import { type Logger, type LoggingOptions, createLogger } from './logger'
 import { APP_COMMAND, Registry, printRegistry } from './registry'
+import type { Service } from './service'
 import {
   type BaseSubscriptionManager,
   BasicSubscriptionManager,
@@ -14,13 +15,12 @@ import {
 import { type BaseTaskRunner, Tasks } from './tasks'
 import type { BaseTransport, BaseTransportConnection } from './transport'
 import type {
-  AnyModule,
+  AnyTask,
   ClassConstructor,
+  ErrorClass,
   ExecuteFn,
   ExtensionApplication,
-  Merge,
 } from './types'
-import { merge } from './utils/functions'
 
 export type ApplicationOptions = {
   type: WorkerType
@@ -32,13 +32,11 @@ export type ApplicationOptions = {
     timeout: number
     runner?: BaseTaskRunner
   }
-  events?: {
-    parser?: BaseParser
-  }
+  events?: {}
   logging?: LoggingOptions
 }
 
-export class Application<AppModules extends Record<string, AnyModule> = {}> {
+export class Application {
   static logger = new Provider<Logger>().withDescription('Logger')
   static execute = new Provider<ExecuteFn>().withDescription('Task execution')
   static eventManager = new Provider<EventManager>().withDescription(
@@ -54,7 +52,6 @@ export class Application<AppModules extends Record<string, AnyModule> = {}> {
   readonly format: Format
   subManager!: BaseSubscriptionManager
 
-  readonly modules = {} as AppModules
   readonly transports = new Set<BaseTransport>()
   readonly extensions = new Set<BaseExtension>()
   readonly connections = new Map<string, BaseTransportConnection>()
@@ -176,10 +173,25 @@ export class Application<AppModules extends Record<string, AnyModule> = {}> {
     return this
   }
 
-  withModules<T extends Record<string, AnyModule>>(modules: T) {
-    // @ts-expect-error
-    this.modules = merge(this.modules, modules)
-    return this as unknown as Application<Merge<AppModules, T>>
+  withServices(...services: Service[]) {
+    for (const service of services) {
+      this.registry.registerService(service)
+    }
+    return this
+  }
+
+  withTasks(...tasks: AnyTask[]) {
+    for (const task of tasks) {
+      this.registry.registerTask(task)
+    }
+    return this
+  }
+
+  withFilters(...filters: [ErrorClass, Filter<any>][]) {
+    for (const [errorClass, filter] of filters) {
+      this.registry.registerFilter(errorClass, filter)
+    }
+    return this
   }
 
   private get isApiWorker() {

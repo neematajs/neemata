@@ -1,159 +1,53 @@
-import type { Filter, Guard, Middleware } from './api'
+import { type Compiled, compile } from '@neematajs/contract/compiler'
+import { ContractGuard } from '@neematajs/contract/guards'
+import type { Filter } from './api'
 import { Scope } from './constants'
 import { type Provider, getProviderScope } from './container'
 import { Hooks } from './hooks'
 import type { Logger } from './logger'
-import type {
-  AnyEvent,
-  AnyGuard,
-  AnyMiddleware,
-  AnyModule,
-  AnyProcedure,
-  AnyTask,
-  Command,
-  ErrorClass,
-} from './types'
+import type { Service } from './service'
+import type { AnyTask, Command, ErrorClass } from './types'
 
 export const APP_COMMAND = Symbol('APP_COMMAND')
 
 export class Registry {
-  readonly procedures = new Map<string, AnyProcedure>()
-  readonly tasks = new Map<string, AnyTask>()
-  readonly events = new Map<string, AnyEvent>()
   readonly commands = new Map<string | symbol, Map<string, Command>>()
   readonly filters = new Map<ErrorClass, Filter<ErrorClass>>()
-  readonly middlewares = new Set<Middleware>()
-  readonly guards = new Set<Guard>()
-  readonly modules = new Set<AnyModule>()
+  readonly services = new Map<string, Service>()
+  readonly schemas = new Map<any, Compiled>()
+  readonly tasks = new Map<string, any>()
   readonly hooks = new Hooks()
-
-  protected readonly procedureNames = new Map<AnyProcedure, string>()
-  protected readonly taskNames = new Map<AnyTask, string>()
-  protected readonly eventNames = new Map<AnyEvent, string>()
 
   constructor(
     protected readonly application: {
       logger: Logger
-      modules: Record<string, AnyModule>
     },
   ) {}
 
-  async load(modules = this.application.modules, prefix?: string) {
-    for (const [moduleName, module] of Object.entries(modules)) {
-      this.modules.add(module)
+  async load() {
+    for (const service of this.services.values()) {
+      this.registerHooks(service.hooks)
 
-      for (const [name, component] of Object.entries(module.procedures))
-        this.registerProcedure(
-          this.makeComponentName(prefix, moduleName),
-          name,
-          component as AnyProcedure,
-        )
+      const schemas = [
+        ...Object.values(service.contract.procedures).flatMap((p) => {
+          return ContractGuard.IsSubscription(p.output)
+            ? Object.values(p.output.events)
+            : [p.output]
+        }),
+        ...Object.values(service.contract.procedures).map((p) => p.input),
+        ...Object.values(service.contract.events).map((e) => e.payload),
+      ]
 
-      for (const [name, component] of Object.entries(module.tasks))
-        this.registerTask(
-          this.makeComponentName(prefix, moduleName),
-          name,
-          component as AnyTask,
-        )
-
-      for (const [name, component] of Object.entries(module.events))
-        this.registerEvent(
-          this.makeComponentName(prefix, moduleName),
-          name,
-          component as AnyEvent,
-        )
-
-      for (const [name, component] of Object.entries(module.commands))
-        this.registerCommand(
-          this.makeComponentName(prefix, moduleName),
-          name,
-          component as Command,
-        )
-
-      await this.load(
-        module.imports,
-        this.makeComponentName(prefix, moduleName),
-      )
+      for (const schema of schemas) {
+        if (!schema) continue
+        if (this.schemas.has(schema)) continue
+        this.schemas.set(schema, compile(schema))
+      }
     }
   }
 
-  getName(
-    type: 'event' | 'procedure' | 'task',
-    value: AnyEvent | AnyProcedure | AnyTask,
-  ) {
-    const names = this[`${type}Names`]
-    const name = names.get(value as any)
-    if (!name) throw new Error(`Registered [${type}] not found`)
-    return name
-  }
-
-  getByName<T extends 'event' | 'procedure' | 'task'>(
-    type: T,
-    name: string,
-  ): T extends 'event'
-    ? AnyEvent
-    : T extends 'procedure'
-      ? AnyProcedure
-      : T extends 'task'
-        ? AnyTask
-        : never {
-    const components = this[`${type}s`] as Map<string, any>
-    const value = components.get(name)
-    if (!value)
-      throw new Error(`Registered [${type}] with name [${name}] not found`)
-    return value
-  }
-
-  registerProcedure(
-    moduleName: string,
-    procedureName: string,
-    procedure: AnyProcedure,
-  ) {
-    const name = this.makeComponentName(moduleName, procedureName)
-
-    if (this.procedures.has(name))
-      throw new Error(`Procedure ${name} already registered`)
-
-    if (typeof procedure.handler !== 'function')
-      throw new Error('Procedure handler is not defined or is not a function')
-
-    this.application.logger.debug('Registering procedure [%s]', name)
-
-    this.procedures.set(name, procedure)
-    this.procedureNames.set(procedure, name)
-  }
-
-  registerTask(moduleName: string, taskName: string, task: AnyTask) {
-    const name = this.makeComponentName(moduleName, taskName)
-
-    if (this.tasks.has(name)) throw new Error(`Task ${name} already registered`)
-
-    if (typeof task.handler !== 'function')
-      throw new Error('Task handler is not defined or is not a function')
-
-    if (hasNonInvalidScopeDeps(Object.values(task.dependencies)))
-      throw new Error(scopeErrorMessage('Task dependencies'))
-
-    this.application.logger.debug('Registering task [%s]', name)
-
-    this.tasks.set(name, task)
-    this.taskNames.set(task, name)
-  }
-
-  registerEvent(moduleName: string, eventName: string, event: AnyEvent) {
-    const name = this.makeComponentName(moduleName, eventName)
-
-    if (this.events.has(name))
-      throw new Error(`Event ${name} already registered`)
-
-    this.application.logger.debug('Registering event [%s]', name)
-
-    this.events.set(name, event)
-    this.eventNames.set(event, name)
-  }
-
   registerHooks<T extends Hooks>(hooks: T) {
-    this.hooks.merge(hooks)
+    Hooks.merge(hooks, this.hooks)
   }
 
   registerCommand(
@@ -166,40 +60,42 @@ export class Registry {
     commands.set(commandName, callback)
   }
 
+  registerService(service: Service) {
+    if (this.services.has(service.contract.name))
+      throw new Error(`Service ${service.contract.name} already registered`)
+    this.services.set(service.contract.name, service)
+  }
+
+  registerTask(task: AnyTask) {
+    if (!task.name) throw new Error('Task name is not defined')
+
+    if (this.tasks.has(task.name))
+      throw new Error(`Task ${task.name} already registered`)
+
+    if (typeof task.handler !== 'function')
+      throw new Error('Task handler is not defined or is not a function')
+
+    if (hasNonInvalidScopeDeps(Object.values(task.dependencies)))
+      throw new Error(scopeErrorMessage('Task dependencies'))
+
+    this.application.logger.debug('Registering task [%s]', task.name)
+    this.tasks.set(task.name, task)
+  }
   registerFilter<T extends ErrorClass>(errorClass: T, filter: Filter<T>) {
     if (hasNonInvalidScopeDeps([filter]))
       throw new Error(scopeErrorMessage('Filters'))
+    // TODO: should this register multiple filters for the same error class?
     this.filters.set(errorClass, filter)
   }
 
-  registerMiddleware(middleware: AnyMiddleware) {
-    this.middlewares.add(middleware)
-  }
-
-  registerGuard(guard: AnyGuard) {
-    this.guards.add(guard)
-  }
-
   clear() {
-    this.procedures.clear()
-    this.tasks.clear()
-    this.events.clear()
     this.hooks.clear()
     this.commands.clear()
     this.filters.clear()
-    this.middlewares.clear()
-    this.guards.clear()
-    this.procedureNames.clear()
-    this.taskNames.clear()
-    this.eventNames.clear()
-  }
-
-  private makeComponentName(...parts: (string | undefined | null)[]) {
-    return parts.filter(Boolean).join('/')
   }
 }
 
-export const scopeErrorMessage = (name, scope = 'Global') =>
+export const scopeErrorMessage = (name, scope = Scope.Global) =>
   `${name} must be a ${scope} scope (including all nested dependencies)`
 
 export const hasNonInvalidScopeDeps = (
@@ -212,8 +108,8 @@ export const printRegistry = (registry: Registry) => {
 
   console.log('Tasks:')
   console.table(mapToTable(registry.tasks))
-  console.log('Procedures:')
-  console.table(mapToTable(registry.procedures))
-  console.log('Events:')
-  console.table(mapToTable(registry.events))
+  console.log('Services:')
+  console.table(mapToTable(registry.services))
+  // console.log('Events:')
+  // console.table(mapToTable(registry.events))
 }

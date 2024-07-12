@@ -1,26 +1,56 @@
-import { PassThrough } from 'node:stream'
+import { createHash } from 'node:crypto'
+import { EventEmitter } from 'node:events'
+import type {
+  TServiceContract,
+  TSubscriptionContract,
+} from '@neematajs/contract'
 import { WorkerType } from './constants'
 import { BaseExtension } from './extension'
-import type { AnyEvent } from './types'
 
-export class Subscription<E extends AnyEvent = AnyEvent> extends PassThrough {
+export class Subscription<
+  Contract extends TSubscriptionContract = TSubscriptionContract,
+> extends EventEmitter<
+  {
+    [K in 'abort' | 'end']: []
+  } & {
+    [K in 'neemata:event']: [
+      keyof Contract['events'],
+      Contract['static']['events'][keyof Contract['static']['events']],
+    ]
+  }
+> {
   readonly _!: {
-    event: E
+    contract: Contract
   }
 
-  constructor(
-    private readonly event: E,
-    readonly key: string,
-    readonly unsubscribe: () => Promise<any>,
+  constructor(public readonly key: string) {
+    super()
+  }
+
+  send<K extends Extract<keyof Contract['static']['events'], string>>(
+    event: K,
+    payload: Contract['static']['events'][K],
   ) {
-    super({ writableObjectMode: true, readableObjectMode: true })
+    return this.emit('neemata:event', event, payload)
   }
 }
 
 export abstract class BaseSubscriptionManager extends BaseExtension {
   abstract subscribe(subscription: Subscription): any
   abstract unsubscribe(subscription: Subscription): any
-  abstract publish(key: string, payload: any): any
+  abstract publish(key: string, event: string, payload: any): any
+
+  serialize(
+    contract: TServiceContract,
+    procedureName: string,
+    options: Record<string, string | number>,
+  ): string {
+    let value = ''
+    const keys = Object.keys(options).sort()
+    for (const key of keys) value += `${key}:${options[key]},`
+    const hash = createHash('sha1').update(value).digest('base64url')
+    return `${contract.name}/${procedureName}:${hash}`
+  }
 }
 
 export class BasicSubscriptionManager extends BaseSubscriptionManager {
@@ -44,16 +74,17 @@ export class BasicSubscriptionManager extends BaseSubscriptionManager {
     if (!subscriptions.size) this.subscriptions.delete(subscription.key)
   }
 
-  async publish(key: string, payload: any) {
-    if (this.isApiWorker) this.emit(key, payload)
+  async publish(key: string, event: string, payload: any) {
+    if (this.isApiWorker) this.emit(key, event, payload)
   }
 
-  protected emit(key: string, payload: any) {
-    this.logger.debug(payload, `Emitting event [${key}]`)
+  protected emit(key: string, event: string, payload: any) {
+    this.logger.debug(payload, `Emitting event [${key}] - ${event}`)
     const subscriptions = this.subscriptions.get(key)
-    if (!subscriptions) return
-    for (const subscription of subscriptions) {
-      subscription.write(payload)
+    if (subscriptions?.size) {
+      for (const subscription of subscriptions) {
+        subscription.send(event, payload)
+      }
     }
   }
 

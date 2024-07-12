@@ -1,35 +1,68 @@
 import { randomUUID } from 'node:crypto'
+import type { TServiceContract } from '@neematajs/contract'
 import { BaseExtension } from './extension'
 import type { Registry } from './registry'
 import type { Subscription } from './subscription'
-import type { AnyEvent } from './types'
 
 export interface BaseTransportData {
   transport: string
 }
 
 export abstract class BaseTransport<
+  Type extends string = string,
   Connection extends BaseTransportConnection = BaseTransportConnection,
   Options = unknown,
-> extends BaseExtension<Options, { connection: Connection }> {
+> extends BaseExtension<Options, { type: Type; connection: Connection }> {
+  abstract readonly type: Type
   abstract start(): any
   abstract stop(): any
 }
 
+// TODO: rethink transports/connections
 export abstract class BaseTransportConnection {
   abstract readonly transport: string
-  abstract readonly data: any
+  abstract readonly data: unknown
 
   constructor(
     protected readonly registry: Registry,
+    readonly services: Set<string> = new Set(),
     readonly id: string = randomUUID(),
     readonly subscriptions = new Map<string, Subscription>(),
   ) {}
 
-  send<E extends AnyEvent>(event: E, payload: E['_']['payload']) {
-    const eventName = this.registry.getName('event', event)
-    return this.sendEvent(eventName, payload)
+  notify<
+    C extends TServiceContract,
+    E extends Extract<keyof C['events'], string>,
+  >(
+    contract: C,
+    event: E,
+    ...args: C['events'][E]['static']['payload'] extends never
+      ? []
+      : [C['events'][E]['static']['payload']]
+  ) {
+    if (!this.services.has(contract.name)) {
+      throw new Error('Service contract not found')
+    }
+
+    if (!contract.events[event]) {
+      throw new Error('Event contract not found')
+    }
+
+    let [payload] = args
+    const compiled = this.registry.schemas.get(contract.events[event].payload)
+    if (compiled) {
+      const result = compiled.encode(payload)
+      if (!result.success) throw new Error('Failed to encode payload')
+      if (result.success) {
+        payload = result.value
+      }
+    }
+    return this.sendEvent(contract.name, event, payload)
   }
 
-  protected abstract sendEvent(eventName: string, payload: any): boolean | null
+  protected abstract sendEvent(
+    serviceName: string,
+    eventName: string,
+    payload: any,
+  ): boolean | null
 }

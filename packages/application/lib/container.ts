@@ -1,9 +1,7 @@
 import { Scope } from './constants'
-import type { EventManager } from './events'
 import type { Logger } from './logger'
 import type { Registry } from './registry'
-import type { BaseTransport } from './transport'
-import type { AnyProvider, ExecuteFn } from './types'
+import type { AnyProvider } from './types'
 import { merge } from './utils/functions'
 
 const ScopeStrictness = {
@@ -171,25 +169,6 @@ export class Container {
   ) {}
 
   async load() {
-    for (const module of this.application.registry.modules) {
-      const args = Array(module.options ? module.options.length : 0)
-
-      for (let i = 0; i < args.length; i++) {
-        const option = module.options[i]
-        args[i] =
-          option instanceof Provider ? await this.resolve(option) : option
-      }
-
-      await module.initializer?.(
-        {
-          container: this,
-          logger: this.application.logger,
-          hooks: this.application.registry.hooks,
-        },
-        ...args,
-      )
-    }
-
     const traverse = (dependencies: Dependencies) => {
       for (const key in dependencies) {
         const depender = dependencies[key]
@@ -215,9 +194,10 @@ export class Container {
   async dispose() {
     // TODO: here might need to find correct order of disposing
     // to prevent first disposal of a provider
-    // that other disposing providers depends on
+    // that other providers depends on
     this.application.logger.trace('Disposing [%s] scope context...', this.scope)
-    for (const [{ dispose, dependencies }, value] of this.instances) {
+    const instances = Array.from(this.instances.entries()).reverse()
+    for (const [{ dispose, dependencies }, value] of instances) {
       if (dispose) {
         try {
           const ctx = await this.createContext(dependencies)
@@ -305,8 +285,10 @@ export class Container {
   private getGlobals() {
     return [
       ...this.application.registry.filters.values(),
-      ...Array.from(this.application.registry.tasks.values()),
-      ...Array.from(this.application.registry.procedures.values()),
+      ...Array.from(this.application.registry.services.values()).flatMap(
+        (service) => Array.from(service.procedures.values()),
+      ),
+      ...this.application.registry.tasks.values(),
     ]
   }
 }

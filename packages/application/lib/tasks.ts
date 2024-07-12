@@ -53,12 +53,19 @@ export class Task<
     'Task abort signal',
   )
 
+  readonly name!: string
   readonly dependencies: TaskDeps = {} as TaskDeps
   readonly handler!: this['_']['handler']
   readonly parser!: (
     args: string[],
     kwargs: Record<string, any>,
   ) => TaskArgs | Readonly<TaskArgs>
+
+  withName(name: string) {
+    const task = new Task<TaskDeps, TaskHandler, TaskType, TaskArgs>()
+    Object.assign(task, this, { name })
+    return task
+  }
 
   withDependencies<NewDeps extends Dependencies>(dependencies: NewDeps) {
     const task = new Task<
@@ -105,7 +112,7 @@ export class Tasks {
     onAbort(ac.signal, future.reject)
 
     defer(async () => {
-      const taskName = this.application.registry.getName('task', task)
+      const taskName = task.name
 
       ac.signal.throwIfAborted()
 
@@ -133,8 +140,11 @@ export class Tasks {
 
   async command({ args, kwargs }) {
     const [name, ...taskArgs] = args
-    const task = this.application.registry.getByName('task', name)
-    if (!task) throw new Error('Task not found')
+    const task = this.application.registry.tasks.get(name)
+    if (!task)
+      throw new Error(
+        'Task not found. You might forgot to register with `app.withTasks(task)`',
+      )
     const { parser } = task
     const parsedArgs = parser ? parser(taskArgs, kwargs) : []
     return await this.execute(task, ...parsedArgs)

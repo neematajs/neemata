@@ -1,44 +1,14 @@
-import { createHash } from 'node:crypto'
-import type { BaseParser } from './api'
+import type {
+  TServiceContract,
+  TSubscriptionContract,
+} from '@neematajs/contract'
+import { ContractGuard } from '@neematajs/contract/guards'
 import type { Logger } from './logger'
 import type { Registry } from './registry'
 import { type BaseSubscriptionManager, Subscription } from './subscription'
 import type { BaseTransportConnection } from './transport'
-import type { AnyEvent } from './types'
 
-export type EventOptionsType = Record<string, string | number>
-
-export class Event<EventPayload, EventOptions extends EventOptionsType = {}> {
-  readonly _!: {
-    payload: EventPayload
-    options: EventOptions
-  }
-  readonly serializer = (options: EventOptions) => {
-    const keys = Object.keys(options).sort()
-    if (!keys.length) return ''
-    const vals = {}
-    for (const key of keys) vals[key] = options[key]
-    return createHash('sha1').update(JSON.stringify(vals)).digest('base64url')
-  }
-
-  withPayload<NewPayload>() {
-    const event = new Event<NewPayload, EventOptions>()
-    Object.assign(event, this)
-    return event
-  }
-
-  withOptions<NewOptions extends Record<string, any>>(
-    serializer?: (options: NewOptions) => string,
-  ) {
-    const event = new Event<EventPayload, NewOptions>()
-    Object.assign(event, this, serializer ? { serializer } : {})
-    return event
-  }
-}
-
-export class EventManager<
-  Connection extends BaseTransportConnection = BaseTransportConnection,
-> {
+export class EventManager {
   constructor(
     private readonly application: {
       registry: Registry
@@ -47,67 +17,148 @@ export class EventManager<
     },
   ) {}
 
-  async subscribe<E extends AnyEvent>(
-    event: E,
-    options: E['_']['options'],
-    connection: Connection,
-  ): Promise<{ subscription: Subscription<E>; isNew: boolean }> {
-    const eventName = this.registry.getName('event', event)
-    const eventKey = this.getKey(event, eventName, options)
+  async subscribe<
+    C extends TServiceContract,
+    P extends keyof {
+      [K in keyof C['procedures'] as C['procedures'][K]['output'] extends TSubscriptionContract
+        ? K
+        : never]: K
+    },
+    S extends
+      TSubscriptionContract = C['procedures'][P]['output'] extends TSubscriptionContract
+      ? C['procedures'][P]['output']
+      : never,
+  >(
+    contract: C,
+    procedure: Extract<P, string>,
+    options: C['procedures'][P]['output'] extends TSubscriptionContract<
+      infer Options
+    >
+      ? Options['static']
+      : never,
+    connection: BaseTransportConnection,
+  ): Promise<{
+    subscription: Subscription<S>
+    isNew: boolean
+  }> {
+    if (!connection.services.has(contract.name)) {
+      throw new Error('Service contract not found')
+    }
+
+    if (procedure in contract.procedures === false) {
+      throw new Error('Procedure not found')
+    }
+
+    if (!ContractGuard.IsSubscription(contract.procedures[procedure].output)) {
+      throw new Error('Procedure does not return a subscription contract')
+    }
+
+    const subscriptionKey = this.subManager.serialize(
+      contract,
+      procedure as string,
+      options,
+    )
     const { id, subscriptions } = connection
-    let subscription = subscriptions.get(eventKey) as
-      | Subscription<E>
-      | undefined
-    if (subscription) return { subscription, isNew: false }
+    let subscription = subscriptions.get(subscriptionKey)
+    if (subscription) return { subscription, isNew: false } as any
     this.logger.debug(
       options,
-      `Subscribing connection [${id}] to event [${eventName}] with options`,
+      `Subscribing connection [${id}] to [${subscriptionKey}] with options`,
     )
-    subscription = new Subscription(event, eventKey, () =>
-      this.unsubscribe(event, options, connection),
-    )
-    subscriptions.set(eventKey, subscription)
+    subscription = new Subscription(subscriptionKey)
+    subscriptions.set(subscriptionKey, subscription)
     await this.subManager.subscribe(subscription)
-    return { subscription, isNew: true }
+    return { subscription, isNew: true } as any
   }
 
-  async unsubscribe<E extends AnyEvent>(
-    event: E,
-    options: E['_']['options'],
-    connection: Connection,
-  ) {
-    const eventName = this.registry.getName('event', event)
-    const { id, subscriptions } = connection
-    this.logger.debug(
-      `Unsubscribing connection [${id}] from event [${eventName}]`,
+  async unsubscribe<
+    C extends TServiceContract,
+    P extends keyof {
+      [K in keyof C['procedures'] as C['procedures'][K]['output'] extends TSubscriptionContract
+        ? K
+        : never]: K
+    },
+  >(
+    contract: C,
+    procedure: Extract<P, string>,
+    options: C['procedures'][P]['output'] extends TSubscriptionContract<
+      infer Options
+    >
+      ? Options['static']
+      : never,
+    connection: BaseTransportConnection,
+  ): Promise<boolean> {
+    const subscriptionKey = this.subManager.serialize(
+      contract,
+      procedure as string,
+      options,
     )
-    const eventKey = this.getKey(event, eventName, options)
-    const subscription = subscriptions.get(eventKey)
+    return this.unsubscribeByKey(subscriptionKey, connection)
+  }
+
+  async unsubscribeByKey(
+    key: string,
+    connection: BaseTransportConnection,
+  ): Promise<boolean> {
+    const { id, subscriptions } = connection
+    this.logger.debug(`Unsubscribing connection [${id}] from event [${key}]`)
+    const subscription = subscriptions.get(key)
     if (!subscription) return false
     await this.subManager.unsubscribe(subscription)
-    subscription.end()
-    subscriptions.delete(eventKey)
+    subscription.emit('end')
+    subscriptions.delete(key)
+    return true
   }
 
-  async publish<E extends AnyEvent>(
-    event: E,
-    payload: E['_']['payload'],
-    options: E['_']['options'],
+  async publish<
+    C extends TServiceContract,
+    P extends keyof {
+      [K in keyof C['procedures'] as C['procedures'][K]['output'] extends TSubscriptionContract
+        ? K
+        : never]: K
+    },
+    S extends C['procedures'][P]['output'] extends TSubscriptionContract
+      ? C['procedures'][P]['output']
+      : never,
+    E extends keyof S['events'],
+  >(
+    contract: C,
+    procedure: Extract<P, string>,
+    options: S['static']['options'],
+    event: Extract<E, string>,
+    payload: S['events'][E]['static'],
   ) {
-    const eventName = this.registry.getName('event', event)
-    this.logger.debug(payload, `Publishing event [${eventName}]`)
-    const eventKey = this.getKey(event, eventName, options)
-    return this.subManager.publish(eventKey, payload)
+    const subscriptionKey = this.subManager.serialize(
+      contract,
+      procedure as string,
+      options,
+    )
+    this.logger.debug(payload, `Publishing event [${subscriptionKey}]`)
+    return this.subManager.publish(subscriptionKey, event, payload)
   }
 
-  async isSubscribed<E extends AnyEvent>(
-    event: E,
-    options: E['_']['options'],
-    connection: Connection,
+  async isSubscribed<
+    C extends TServiceContract,
+    P extends keyof {
+      [K in keyof C['procedures'] as C['procedures'][K]['output'] extends TSubscriptionContract
+        ? K
+        : never]: K
+    },
+    S extends C['procedures'][P]['output'] extends TSubscriptionContract
+      ? C['procedures'][P]['output']
+      : never,
+  >(
+    contract: C,
+    procedure: Extract<P, string>,
+    options: S['static']['options'],
+    connection: BaseTransportConnection,
   ) {
-    const eventName = this.registry.getName('event', event)
-    const key = this.getKey(event, eventName, options)
-    return connection.subscriptions.has(key)
+    const subscriptionKey = this.subManager.serialize(
+      contract,
+      procedure as string,
+      options,
+    )
+    return connection.subscriptions.has(subscriptionKey)
   }
 
   private get subManager() {
@@ -120,9 +171,5 @@ export class EventManager<
 
   private get registry() {
     return this.application.registry
-  }
-
-  protected getKey(event: AnyEvent, name: string, options: EventOptionsType) {
-    return `${name}:${event.serializer(options)}`
   }
 }
