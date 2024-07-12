@@ -1,9 +1,11 @@
 export const MessageType = Object.freeze({
+  // Common
   Event: 10,
   Rpc: 11,
-  RpcStream: 12,
-  RpcSubscription: 13,
+  RpcBatch: 12,
+  RpcStream: 13,
   RpcAbort: 14,
+  Subscription: 15,
 
   // Client streams
   ClientStreamAbort: 30,
@@ -22,6 +24,11 @@ export const MessageType = Object.freeze({
 
   // Server subsctiption
   ServerUnsubscribe: 54,
-  ServerSubscriptionEmit: 55,
+  ServerSubscriptionEvent: 55,
 })
 export type MessageType = (typeof MessageType)[keyof typeof MessageType]
+
+export enum TransportType {
+  WS = 'WS',
+  HTTP = 'HTTP',
+}

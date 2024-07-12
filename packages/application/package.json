@@ -18,9 +18,11 @@
     "pino-pretty": "^11.0.0"
   },
   "devDependencies": {
-    "@neematajs/common": "workspace:*"
+    "@neematajs/common": "workspace:*",
+    "@neematajs/contract": "workspace:*"
   },
   "peerDependencies": {
-    "@neematajs/common": "workspace:*"
+    "@neematajs/common": "workspace:*",
+    "@neematajs/contract": "workspace:*"
   }
 }

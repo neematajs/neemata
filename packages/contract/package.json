@@ -1,0 +1,32 @@
+{
+  "name": "@neematajs/contract",
+  "version": "1.0.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "bun": "./src/contract.ts",
+      "default": "./dist/contract.js",
+      "types": "./src/contract.ts"
+    },
+    "./compiler": {
+      "bun": "./src/compiler.ts",
+      "default": "./dist/compiler.js",
+      "types": "./src/compiler.ts"
+    },
+    "./guards": {
+      "bun": "./src/guards.ts",
+      "default": "./dist/guards.js",
+      "types": "./src/guards.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@sinclair/typebox": "^0.32.34"
+  },
+  "peerDependencies": {
+    "@neematajs/common": "workspace:*"
+  }
+}

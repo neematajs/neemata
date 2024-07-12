@@ -16,6 +16,11 @@
       "types": "./src/server.ts",
       "default": "./dist/server.js"
     },
+    "./contract": {
+      "bun": "./src/contract.ts",
+      "types": "./src/contract.ts",
+      "default": "./dist/contract.js"
+    },
     "./common": {
       "bun": "./src/common.ts",
       "types": "./src/common.ts",
@@ -26,6 +31,7 @@
     "@neematajs/common": "workspace:*",
     "@neematajs/application": "workspace:*",
     "@neematajs/server": "workspace:*",
+    "@neematajs/contract": "workspace:*",
     "@neematajs/cli": "workspace:*"
   }
 }
