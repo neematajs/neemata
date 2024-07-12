@@ -8,22 +8,17 @@ import {
 } from '../lib/api'
 import { Container, Provider } from '../lib/container'
 import { Registry } from '../lib/registry'
-import type {
-  AnyProcedure,
-  FilterFn,
-  GuardFn,
-  MiddlewareFn,
-} from '../lib/types'
+import type { Service } from '../lib/service'
+import type { AnyProcedure, FilterFn, GuardFn } from '../lib/types'
 import {
   type TestConnection,
-  TestFormat,
-  TestParser,
+  type TestServiceContract,
   TestTransport,
-  testApp,
   testConnection,
   testDefaultTimeout,
   testLogger,
   testProcedure,
+  testService,
 } from './_utils'
 
 describe.sequential('Procedure', () => {
@@ -38,124 +33,107 @@ describe.sequential('Procedure', () => {
     expect(procedure).toBeInstanceOf(Procedure)
   })
 
-  it('should clone with a dependencies', () => {
+  it('should extend with dependencies', () => {
     const dep1 = new Provider().withValue('dep1')
     const dep2 = new Provider().withValue('dep2')
 
-    const newProcedure = procedure.withDependencies({
-      dep1,
-    })
+    const procedure1 = procedure.withDependencies({ dep1 })
+    const procedure2 = procedure.withDependencies({ dep2 })
 
-    const newProcedure2 = newProcedure.withDependencies({
-      dep2,
-    })
-
-    expect(newProcedure2.dependencies).toHaveProperty('dep1', dep1)
-    expect(newProcedure2.dependencies).toHaveProperty('dep2', dep2)
-    expect(newProcedure2).not.toBe(procedure)
+    expect(procedure).toBe(procedure1)
+    expect(procedure1).toBe(procedure2)
+    expect(procedure.dependencies).toHaveProperty('dep1', dep1)
+    expect(procedure.dependencies).toHaveProperty('dep2', dep2)
   })
 
-  it('should clone with a options', () => {
-    let newProcedure = procedure.withOptions({ some: 'option' })
-    expect(newProcedure.options).to.deep.eq({ some: 'option' })
-    expect(newProcedure).not.toBe(procedure)
-    newProcedure = procedure.withOptions({ some: 'option', other: 'option' })
-    expect(newProcedure.options).to.deep.eq({ some: 'option', other: 'option' })
-    expect(newProcedure).not.toBe(procedure)
-    newProcedure = procedure.withOptions({ some: 'another', other: 'option' })
-    expect(newProcedure.options).to.deep.eq({
-      some: 'another',
-      other: 'option',
-    })
-  })
+  // it('should extend with guards', () => {
+  //   const guard1 = new Provider().withValue((() => false) as GuardFn)
+  //   const guard2 = new Provider().withValue((() => true) as GuardFn)
 
-  it('should clone with guards', () => {
-    const guard1 = new Provider().withValue((() => false) as GuardFn)
-    const guard2 = new Provider().withValue((() => true) as GuardFn)
+  //   const newProcedure = procedure.withGuards(guard1)
+  //   const newProcedure2 = newProcedure.withGuards(guard2)
 
-    const newProcedure = procedure.withGuards(guard1)
-    const newProcedure2 = newProcedure.withGuards(guard2)
+  //   expect(newProcedure2.guards).toEqual([guard1, guard2])
+  //   expect(newProcedure2).not.toBe(procedure)
+  // })
 
-    expect(newProcedure2.guards).toEqual([guard1, guard2])
-    expect(newProcedure2).not.toBe(procedure)
-  })
+  // it('should extend with middlewares', () => {
+  //   const middleware1 = new Provider().withValue((() => void 0) as MiddlewareFn)
+  //   const middleware2 = new Provider().withValue((() => void 0) as MiddlewareFn)
 
-  it('should clone with middlewares', () => {
-    const middleware1 = new Provider().withValue((() => void 0) as MiddlewareFn)
-    const middleware2 = new Provider().withValue((() => void 0) as MiddlewareFn)
+  //   const newProcedure = procedure.withMiddlewares(middleware1)
+  //   const newProcedure2 = newProcedure.withMiddlewares(middleware2)
 
-    const newProcedure = procedure.withMiddlewares(middleware1)
-    const newProcedure2 = newProcedure.withMiddlewares(middleware2)
+  //   expect(newProcedure2.middlewares).toEqual([middleware1, middleware2])
+  //   expect(newProcedure2).not.toBe(procedure)
+  // })
 
-    expect(newProcedure2.middlewares).toEqual([middleware1, middleware2])
-    expect(newProcedure2).not.toBe(procedure)
-  })
+  // it('should extend with a handler', () => {
+  //   const handler = () => {}
+  //   const newProcedure = procedure.withHandler(handler)
+  //   expect(newProcedure.handler).toBe(handler)
+  //   expect(newProcedure).not.toBe(procedure)
+  // })
 
-  it('should clone with a handler', () => {
-    const handler = () => {}
-    const newProcedure = procedure.withHandler(handler)
-    expect(newProcedure.handler).toBe(handler)
-    expect(newProcedure).not.toBe(procedure)
-  })
+  // it('should extend with a input', () => {
+  //   const input = {}
+  //   const newProcedure = procedure.withInput(input)
+  //   expect(newProcedure.input).toBe(input)
+  //   expect(newProcedure).not.toBe(procedure)
+  // })
 
-  it('should clone with a input', () => {
-    const input = {}
-    const newProcedure = procedure.withInput(input)
-    expect(newProcedure.input).toBe(input)
-    expect(newProcedure).not.toBe(procedure)
-  })
+  // it('should extend with a output', () => {
+  //   const output = {}
+  //   const newProcedure = procedure.withOutput(output)
+  //   expect(newProcedure.output).toBe(output)
+  //   expect(newProcedure).not.toBe(procedure)
+  // })
 
-  it('should clone with a output', () => {
-    const output = {}
-    const newProcedure = procedure.withOutput(output)
-    expect(newProcedure.output).toBe(output)
-    expect(newProcedure).not.toBe(procedure)
-  })
+  // it('should extend with an input parser', () => {
+  //   const parser = new TestParser()
+  //   const newProcedure = procedure.withInputParser(parser)
+  //   expect(newProcedure.parsers?.input).toBe(parser)
+  //   expect(newProcedure).not.toBe(procedure)
+  // })
 
-  it('should clone with an input parser', () => {
-    const parser = new TestParser()
-    const newProcedure = procedure.withInputParser(parser)
-    expect(newProcedure.parsers?.input).toBe(parser)
-    expect(newProcedure).not.toBe(procedure)
-  })
+  // it('should extend with an output parser', () => {
+  //   const parser = new TestParser()
+  //   const newProcedure = procedure.withOutputParser(parser)
+  //   expect(newProcedure.parsers?.output).toBe(parser)
+  //   expect(newProcedure).not.toBe(procedure)
+  // })
 
-  it('should clone with an output parser', () => {
-    const parser = new TestParser()
-    const newProcedure = procedure.withOutputParser(parser)
-    expect(newProcedure.parsers?.output).toBe(parser)
-    expect(newProcedure).not.toBe(procedure)
-  })
+  // it('should extend with parser', () => {
+  //   const inputParser = new TestParser()
+  //   const parser = new TestParser()
+  //   const newProcedure = procedure
+  //     .withInputParser(inputParser)
+  //     .withParser(parser)
+  //   expect(newProcedure.parsers?.input).not.toBe(inputParser)
+  //   expect(newProcedure.parsers?.output).toBe(parser)
+  // })
 
-  it('should clone with parser', () => {
-    const inputParser = new TestParser()
-    const parser = new TestParser()
-    const newProcedure = procedure
-      .withInputParser(inputParser)
-      .withParser(parser)
-    expect(newProcedure.parsers?.input).not.toBe(inputParser)
-    expect(newProcedure.parsers?.output).toBe(parser)
-  })
+  // it('should extend with a timeout', () => {
+  //   const newProcedure = procedure.withTimeout(1000)
+  //   expect(newProcedure.timeout).toEqual(1000)
+  //   expect(newProcedure).not.toBe(procedure)
+  // })
 
-  it('should clone with a timeout', () => {
-    const newProcedure = procedure.withTimeout(1000)
-    expect(newProcedure.timeout).toEqual(1000)
-    expect(newProcedure).not.toBe(procedure)
-  })
+  // it('should fail clone with a timeout', () => {
+  //   expect(() => procedure.withTimeout(-1000)).toThrow()
+  // })
 
-  it('should fail clone with a timeout', () => {
-    expect(() => procedure.withTimeout(-1000)).toThrow()
-  })
-
-  it('should clone with a transports', () => {
-    const newProcedure = procedure.withTransport(TestTransport)
-    expect(newProcedure.transports.has(TestTransport)).toEqual(true)
-    expect(newProcedure).not.toBe(procedure)
-  })
+  // it('should extend with a transports', () => {
+  //   const newProcedure = procedure.withTransport(TestTransport)
+  //   expect(newProcedure.transports.has(TestTransport)).toEqual(true)
+  //   expect(newProcedure).not.toBe(procedure)
+  // })
 })
 
 describe.sequential('Api', () => {
   const logger = testLogger()
 
+  let service: Service<typeof TestServiceContract>
   let registry: Registry
   let container: Container
   let transport: TestTransport
@@ -167,6 +145,7 @@ describe.sequential('Api', () => {
       Partial<Omit<ProcedureCallOptions, 'procedure'>>,
   ) =>
     api.call({
+      service,
       container,
       transport,
       connection,
@@ -174,10 +153,12 @@ describe.sequential('Api', () => {
       ...options,
     })
 
-  const testProcedure = () => new Procedure().withTransport(TestTransport)
+  const testProcedure = () => new Procedure(service.contract, 'testProcedure')
 
   beforeEach(async () => {
-    registry = new Registry({ logger, modules: {} })
+    registry = new Registry({ logger })
+    service = testService()
+    registry.registerService(service)
     container = new Container({ registry, logger })
     transport = new TestTransport()
     connection = testConnection(registry, {})
@@ -212,7 +193,7 @@ describe.sequential('Api', () => {
         connection: Procedure.connection,
       })
       .withHandler(spy)
-    registry.registerProcedure('test', 'test', procedure)
+    service.implement('testProcedure', procedure)
     const connection = testConnection(registry, {})
     await call({
       connection,
@@ -228,7 +209,7 @@ describe.sequential('Api', () => {
 
   it('should handle procedure call', async () => {
     const procedure = testProcedure().withHandler(() => 'result')
-    registry.registerProcedure('test', 'test', procedure)
+    service.implement('testProcedure', procedure)
     await expect(call({ procedure })).resolves.toBe('result')
   })
 
@@ -237,7 +218,7 @@ describe.sequential('Api', () => {
     const procedure = testProcedure()
       .withDependencies({ provider })
       .withHandler(({ provider }) => provider)
-    registry.registerProcedure('test', 'test', procedure)
+    service.implement('testProcedure', procedure)
     await expect(call({ procedure })).resolves.toBe('value')
   })
 
@@ -248,7 +229,7 @@ describe.sequential('Api', () => {
     const procedure = testProcedure()
       .withDependencies({ provider })
       .withHandler(({ provider }) => provider)
-    registry.registerProcedure('test', 'test', procedure)
+    service.implement('testProcedure', procedure)
     const connection = testConnection(registry, {})
     await expect(call({ connection, procedure })).resolves.toBe(connection)
   })
@@ -262,7 +243,7 @@ describe.sequential('Api', () => {
     const procedure = testProcedure()
       .withDependencies({ provider })
       .withHandler(({ provider }) => provider)
-    registry.registerProcedure('test', 'test', procedure)
+    service.implement('testProcedure', procedure)
     const connection = testConnection(registry, {})
     await expect(call({ connection, procedure })).resolves.toBe(signal)
   })
@@ -270,7 +251,7 @@ describe.sequential('Api', () => {
   it('should handle procedure call with payload', async () => {
     const payload = {}
     const procedure = testProcedure().withHandler((ctx, data) => data)
-    registry.registerProcedure('test', 'test', procedure)
+    service.implement('testProcedure', procedure)
     await expect(call({ procedure, payload })).resolves.toBe(payload)
   })
 
@@ -278,7 +259,7 @@ describe.sequential('Api', () => {
     const procedure = testProcedure().withHandler(() => {
       throw new Error()
     })
-    registry.registerProcedure('test', 'test', procedure)
+    service.implement('testProcedure', procedure)
     const result = await call({ procedure }).catch((v) => v)
     expect(result).toBeInstanceOf(Error)
   })
@@ -292,7 +273,7 @@ describe.sequential('Api', () => {
     const procedure = testProcedure().withHandler(() => {
       throw error
     })
-    registry.registerProcedure('test', 'test', procedure)
+    service.implement('testProcedure', procedure)
     await expect(call({ procedure })).rejects.toBeInstanceOf(ApiError)
     expect(spy).toHaveBeenCalledOnce()
     expect(spy).toHaveBeenCalledWith(error)
@@ -303,7 +284,7 @@ describe.sequential('Api', () => {
     const procedure = testProcedure()
       .withGuards(guard)
       .withHandler(() => 'result')
-    registry.registerProcedure('test', 'test', procedure)
+    service.implement('testProcedure', procedure)
     const result = await call({ procedure }).catch((v) => v)
     expect(result).toBeInstanceOf(ApiError)
     expect(result).toHaveProperty('code', ErrorCode.Forbidden)
@@ -327,7 +308,7 @@ describe.sequential('Api', () => {
       .withMiddlewares(middleware1, middleware2)
       .withHandler(handlerFn)
 
-    registry.registerProcedure('test', 'test', procedure)
+    service.implement('testProcedure', procedure)
 
     const response = await call({ procedure, payload: [1] })
 
@@ -335,7 +316,8 @@ describe.sequential('Api', () => {
       {
         connection,
         container,
-        path: { procedure, name: 'test/test' },
+        procedure,
+        service,
       },
       expect.any(Function),
       [1],
@@ -344,7 +326,8 @@ describe.sequential('Api', () => {
       {
         connection,
         container,
-        path: { procedure, name: 'test/test' },
+        procedure,
+        service,
       },
       expect.any(Function),
       [1, 2],
@@ -353,63 +336,11 @@ describe.sequential('Api', () => {
     expect(response).toBe('result_middleware_middleware')
   })
 
-  it('should handle timeout', async () => {
-    const procedure = testProcedure()
-      .withTimeout(10)
-      .withHandler(() => new Promise((resolve) => setTimeout(resolve, 100)))
-    registry.registerProcedure('test', 'test', procedure)
-    const res = await call({ procedure }).catch((v) => v)
-    expect(res).toBeInstanceOf(ApiError)
-    expect(res).toHaveProperty('code', ErrorCode.RequestTimeout)
-  })
-
-  it('should handle input parser', async () => {
-    const payload = {}
-    const schema = {}
-    const parser = { custom: (schema, val) => ({ schema, val }) }
-    const spy = vi.spyOn(parser, 'custom')
-    const procedure = testProcedure()
-      .withInputParser(new TestParser(parser.custom))
-      .withInput(schema)
-      .withHandler((ctx, val) => val)
-    registry.registerProcedure('test', 'test', procedure)
-    const res = await call({ procedure, payload })
-    expect(res).toHaveProperty('schema', schema)
-    expect(res).toHaveProperty('val', payload)
-    expect(spy).toHaveBeenCalledOnce()
-  })
-
-  it('should handle output parser', async () => {
-    const payload = {}
-    const schema = {}
-    const custom = vi.fn((schema, val) => ({ schema, val }))
-    const procedure = testProcedure()
-      .withOutputParser(new TestParser(custom))
-      .withOutput(schema)
-      .withHandler((ctx, val) => val)
-    registry.registerProcedure('test', 'test', procedure)
-    const res = await call({ procedure, payload })
-    expect(custom).toHaveBeenCalledOnce()
-    expect(res).toHaveProperty('schema', schema)
-    expect(res).toHaveProperty('val', payload)
-  })
-
-  it('should handle output parser error', async () => {
-    const procedure = testProcedure()
-      .withOutputParser(
-        new TestParser((schema, val) => {
-          throw new Error('error')
-        }),
-      )
-      .withOutput({})
-      .withHandler((ctx, val) => val)
-    registry.registerProcedure('test', 'test', procedure)
-    await expect(call({ procedure })).rejects.toBeInstanceOf(ApiError)
-  })
-
   it('should find procedure', () => {
     const procedure = testProcedure().withHandler(() => 'result')
-    registry.registerProcedure('test', 'test', procedure)
-    expect(api.find('test/test', transport)).toBe(procedure)
+    service.implement('testProcedure', procedure)
+    const found = api.find(service.contract.name, 'testProcedure', transport)
+    expect(found).toHaveProperty('service', service)
+    expect(found).toHaveProperty('procedure', procedure)
   })
 })

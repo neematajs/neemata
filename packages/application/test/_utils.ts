@@ -1,26 +1,17 @@
-import { expect } from 'vitest'
+import { expect, test } from 'vitest'
 
 import { deserialize, serialize } from 'node:v8'
 import { BaseServerFormat, type DecodeRpcContext } from '@neematajs/common'
-import { BaseParser, Procedure } from '../lib/api'
+import { Contract } from '@neematajs/contract'
+import { Procedure } from '../lib/api'
 import { Application, type ApplicationOptions } from '../lib/application'
 import { WorkerType } from '../lib/constants'
-import { Event } from '../lib/events'
 import { BaseExtension } from '../lib/extension'
 import { createLogger } from '../lib/logger'
 import type { Registry } from '../lib/registry'
+import { Service } from '../lib/service'
 import { BaseTaskRunner, Task } from '../lib/tasks'
 import { BaseTransport, BaseTransportConnection } from '../lib/transport'
-
-export class TestParser extends BaseParser {
-  constructor(private readonly custom?: (schema, val) => any) {
-    super()
-  }
-
-  parse(schema, val) {
-    return this.custom ? this.custom(schema, val) : val
-  }
-}
 
 export class TestFormat extends BaseServerFormat {
   accepts = ['test']
@@ -50,10 +41,10 @@ export class TestConnection<D> extends BaseTransportConnection {
     registry: Registry,
     readonly data: D,
   ) {
-    super(registry)
+    super(registry, new Set(['TestService']))
   }
 
-  protected sendEvent(eventName: string, payload: any): boolean {
+  protected sendEvent() {
     return false
   }
 }
@@ -74,8 +65,8 @@ export class TestExtension extends BaseExtension {
   name = 'Test extension'
 }
 
-export class TestTransport extends BaseTransport<TestConnection<any>> {
-  static readonly key = 'test'
+export class TestTransport extends BaseTransport<'test', TestConnection<any>> {
+  readonly type = 'test' as const
 
   // biome-ignore lint/complexity/noUselessConstructor:
   constructor(...args: any[]) {
@@ -124,19 +115,54 @@ export const testApp = (options: Partial<ApplicationOptions> = {}) =>
     ),
   )
 
+export const TestServiceContract = Contract.Service(
+  'TestService',
+  {
+    test: true,
+  },
+  {
+    testProcedure: Contract.Procedure(
+      Contract.Object({ test: Contract.String() }),
+      Contract.Any(),
+    ),
+    testSubscription: Contract.Procedure(
+      Contract.Object({ test: Contract.String() }),
+      Contract.Subscription(
+        Contract.Object({ testOption: Contract.String() }),
+        {
+          testEvent: Contract.String(),
+        },
+      ),
+    ),
+  },
+  {
+    testEvent: Contract.Event(Contract.String()),
+  },
+)
+
 export const testConnection = <T = {}>(registry: Registry, data?: T) => {
   return new TestConnection(registry, data ?? {})
 }
 
 export const testFormat = () => new TestFormat()
 
-export const testProcedure = () => new Procedure().withTransport(TestTransport)
+export const testProcedure = () =>
+  new Procedure(TestServiceContract, 'testProcedure')
 
-export const testTask = () => new Task()
+export const testSubscription = () =>
+  new Procedure(TestServiceContract, 'testSubscription')
 
-export const testEvent = () => new Event()
+export const testTask = () => new Task().withName('test')
 
 export const testTaskRunner = (...args) => new TestTaskRunner(...args)
+
+export const testService = ({
+  procedure = testProcedure(),
+  subscription = testSubscription(),
+} = {}) =>
+  new Service(TestServiceContract)
+    .implement('testProcedure', procedure)
+    .implement('testSubscription', subscription)
 
 export const expectCopy = (source, targer) => {
   expect(targer).not.toBe(source)

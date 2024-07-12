@@ -34,7 +34,7 @@ describe('Hooks', () => {
     const hooks2 = new Hooks()
     hooks.add('test', callback1)
     hooks2.add('test', callback2)
-    hooks.merge(hooks2)
+    Hooks.merge(hooks2, hooks)
     expect(hooks.collection.get('test')).toContain(callback1)
     expect(hooks.collection.get('test')).toContain(callback2)
   })

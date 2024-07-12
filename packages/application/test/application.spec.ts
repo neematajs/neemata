@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Application } from '../lib/application'
 import { Provider } from '../lib/container'
-import { Module } from '../lib/module'
+// import { Module } from '../lib/module'
 import { TestExtension, TestTransport, testApp } from './_utils'
 
 describe.sequential('Application', () => {
@@ -67,17 +67,5 @@ describe.sequential('Application', () => {
     expect(ctx).toHaveProperty('logger', app.logger)
     expect(ctx).toHaveProperty('execute', expect.any(Function))
     expect(ctx).toHaveProperty('eventManager', app.eventManager)
-  })
-
-  it('should initialize modules', async () => {
-    const initializer = vi.fn()
-    const module = new Module().withInitializer(initializer)
-    app.withModules({ test: module })
-    await app.initialize()
-    expect(initializer).toHaveBeenCalledWith({
-      container: app.container,
-      hooks: app.registry.hooks,
-      logger: app.logger,
-    })
   })
 })

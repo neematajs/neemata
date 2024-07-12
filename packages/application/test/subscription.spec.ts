@@ -1,32 +1,46 @@
-import { beforeEach, describe, expect, it } from 'vitest'
-import type { Application } from '../lib/application'
-import { BaseSubscriptionManager, type Subscription } from '../lib/subscription'
-import { testApp } from './_utils'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { WorkerType } from '../lib/constants'
+import {
+  BaseSubscriptionManager,
+  BasicSubscriptionManager,
+  Subscription,
+} from '../lib/subscription'
+import { testLogger } from './_utils'
 
-class TestSubscriptionManager extends BaseSubscriptionManager {
-  name = 'Test subscription manager'
-
-  async subscribe(subscription: Subscription) {}
-
-  async unsubscribe(subscription: Subscription): Promise<boolean> {
-    return true
-  }
-
-  async publish(key: string, payload: any): Promise<boolean> {
-    return true
-  }
-}
-
-describe.sequential('Subscription manager', () => {
-  let app: Application
+describe.sequential('Basic subscription manager', () => {
+  let subManager: BaseSubscriptionManager
 
   beforeEach(() => {
-    app = testApp()
+    const logger = testLogger()
+    // @ts-expect-error
+    subManager = new BasicSubscriptionManager({ logger, type: WorkerType.Api })
   })
 
   it('should initialize', async () => {
-    app.withSubscriptionManager(TestSubscriptionManager)
-    expect(app.subManager).toBeInstanceOf(TestSubscriptionManager)
-    expect(app.subManager).toBeDefined()
+    expect(subManager).toBeDefined()
+    expect(subManager).toBeInstanceOf(BaseSubscriptionManager)
+  })
+
+  it('should subscribe', async () => {
+    const subscription = new Subscription('test')
+    subManager.subscribe(subscription)
+  })
+
+  it('should unsubscribe', async () => {
+    const subscription = new Subscription('test')
+    subManager.unsubscribe(subscription)
+  })
+
+  it('should publish', async () => {
+    const subscription = new Subscription('test')
+    subManager.subscribe(subscription)
+    const spy = vi.fn()
+    subscription.on('neemata:event', spy)
+    const args = ['event', { test: 'data' }] as const
+    subManager.publish('test', ...args)
+    subManager.unsubscribe(subscription)
+    subManager.publish('test', ...args)
+    expect(spy).toHaveBeenCalledOnce()
+    expect(spy).toHaveBeenCalledWith(...args)
   })
 })

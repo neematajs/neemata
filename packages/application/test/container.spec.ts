@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Scope } from '../lib/constants'
 import { Container, Provider, getProviderScope } from '../lib/container'
 import { Registry } from '../lib/registry'
-import { testLogger, testProcedure } from './_utils'
+import type { AnyProcedure } from '../lib/types'
+import { testLogger, testProcedure, testService } from './_utils'
 
 describe.sequential('Provider', () => {
   let provider: Provider
@@ -66,7 +67,7 @@ describe.sequential('Provider', () => {
 
 describe.sequential('Container', () => {
   const logger = testLogger()
-  const registry = new Registry({ logger, modules: {} })
+  const registry = new Registry({ logger })
   let container: Container
 
   beforeEach(async () => {
@@ -222,10 +223,9 @@ describe.sequential('Container', () => {
     const provider2 = new Provider()
       .withScope(Scope.Connection)
       .withFactory(factory2)
-    const procedure = testProcedure()
-      .withDependencies({ provider1, provider2 })
-      .withHandler(() => {})
-    registry.registerProcedure('test', 'test', procedure)
+    const procedure = testProcedure().withDependencies({ provider1, provider2 })
+    const service = testService({ procedure: procedure as AnyProcedure })
+    registry.registerService(service)
     await container.load()
     expect(factory1).toHaveBeenCalledOnce()
     expect(factory2).not.toHaveBeenCalled()

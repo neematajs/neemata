@@ -1,11 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Application } from '../lib/application'
+import type { Service } from '../lib/service'
 import {
   type TestConnection,
+  type TestServiceContract,
   TestTransport,
   testApp,
   testConnection,
-  testEvent,
+  testService,
 } from './_utils'
 
 describe.sequential('Transport', () => {
@@ -58,10 +60,13 @@ describe.sequential('Transport', () => {
 
 describe.sequential('Transport connection', () => {
   let app: Application
+  let service: Service<typeof TestServiceContract>
   let transport: TestTransport
 
   beforeEach(async () => {
-    app = testApp().withTransport(TestTransport)
+    service = testService()
+    app = testApp().withServices(service).withTransport(TestTransport)
+
     await app.initialize()
     for (const t of app.transports) transport = t as TestTransport
   })
@@ -69,11 +74,13 @@ describe.sequential('Transport connection', () => {
   it('should send event', async () => {
     const connection = testConnection(app.registry)
     transport.application.connections.add(connection)
-    const event = testEvent()
-    app.registry.registerEvent('test', 'test', event)
-    const payload = { some: 'data' }
+    const payload = 'test'
     const sendSpy = vi.spyOn(connection, 'sendEvent' as any)
-    connection.send(event, payload)
-    expect(sendSpy).toHaveBeenCalledWith('test/test', payload)
+    connection.notify(service.contract, 'testEvent', payload)
+    expect(sendSpy).toHaveBeenCalledWith(
+      service.contract.name,
+      'testEvent',
+      payload,
+    )
   })
 })

@@ -1,30 +1,18 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 
+import { Kind } from '@neematajs/contract'
 import { Scope } from '../lib/constants'
 import { Provider } from '../lib/container'
-import { Module } from '../lib/module'
 import { Registry } from '../lib/registry'
 import { noop } from '../lib/utils/functions'
-import { testEvent, testLogger, testProcedure, testTask } from './_utils'
+import { testLogger, testProcedure, testService, testTask } from './_utils'
 
 describe('Registry', () => {
   const logger = testLogger()
   let registry: Registry
 
   beforeEach(() => {
-    const testModule = new Module()
-      .withProcedures({
-        test: testProcedure().withHandler(noop),
-      })
-      .withTasks({
-        test: testTask().withHandler(noop),
-      })
-      .withEvents({
-        test: testEvent(),
-      })
-      .withCommand('test', noop)
-
-    registry = new Registry({ logger, modules: { test: testModule } })
+    registry = new Registry({ logger })
   })
 
   it('should be a registry', () => {
@@ -32,69 +20,67 @@ describe('Registry', () => {
     expect(registry).toBeInstanceOf(Registry)
   })
 
-  it('should load modules', async () => {
+  it('should load', async () => {
+    const service = testService()
+    registry.services.set(service.contract.name, service)
     await registry.load()
-    expect(registry.procedures.has('test/test')).toBe(true)
-    expect(registry.tasks.has('test/test')).toBe(true)
-    expect(registry.events.has('test/test')).toBe(true)
-    const taskCommand = registry.commands.get('test')?.get('test')
-    expect(taskCommand).toBeDefined()
-    expect(taskCommand).toBeTypeOf('function')
   })
 
-  it('should register procedure', () => {
-    const procedure = testProcedure().withHandler(noop)
-    registry.registerProcedure('test', 'test', procedure)
-    expect(registry.getByName('procedure', 'test/test')).toBe(procedure)
+  it('should compile schemas', async () => {
+    const service = testService()
+    registry.services.set(service.contract.name, service)
+    await registry.load()
+    expect(registry.schemas.size).toBeGreaterThan(0)
+    for (const [schema, compiled] of registry.schemas) {
+      expect(schema[Kind]).toBeDefined()
+      expect(compiled).toMatchObject({
+        check: expect.any(Function),
+        encode: expect.any(Function),
+        decode: expect.any(Function),
+      })
+    }
+    expect(
+      registry.schemas.has(service.contract.procedures.testProcedure.input),
+    ).toBe(true)
+    expect(
+      registry.schemas.has(service.contract.procedures.testProcedure.output),
+    ).toBe(true)
   })
 
-  it('should fail register procedure without handler', () => {
-    const procedure = testProcedure()
-    expect(() =>
-      registry.registerProcedure('test', 'test', procedure),
-    ).toThrow()
+  it('should register service', () => {
+    const service = testService()
+    registry.registerService(service)
+    expect(registry.services.get(service.contract.name)).toBe(service)
   })
 
-  it('should fail register duplicate procedure', () => {
-    const procedure = testProcedure().withHandler(noop)
-    registry.registerProcedure('test', 'test', procedure)
-    expect(() =>
-      registry.registerProcedure('test', 'test', procedure),
-    ).toThrow()
+  it('should fail to register service with the same contract twice', () => {
+    const service1 = testService()
+    const service2 = testService()
+    registry.registerService(service1)
+    expect(() => registry.registerService(service2)).toThrow()
   })
 
   it('should register task', () => {
     const task = testTask().withHandler(noop)
-    registry.registerTask('test', 'test', task)
-    expect(registry.getByName('task', 'test/test')).toBe(task)
+    registry.registerTask(task)
+    expect(registry.tasks.get(task.name)).toBe(task)
   })
 
-  it('should fail register task without handler', () => {
+  it('should fail to register task without handler', () => {
     const task = testTask()
-    expect(() => registry.registerTask('test', 'test', task)).toThrow()
+    expect(() => registry.registerTask(task)).toThrow()
   })
 
-  it('should fail register duplicate task', () => {
-    const task = testTask().withHandler(noop)
-    registry.registerTask('test', 'test', task)
-    expect(() => registry.registerTask('test', 'test', task)).toThrow()
+  it('should fail to register task with the same name', () => {
+    const task1 = testTask().withHandler(noop)
+    const task2 = testTask().withHandler(noop)
+    registry.registerTask(task1)
+    expect(() => registry.registerTask(task2)).toThrow()
   })
 
   it('should fail register task with non-global dependencies', () => {
     const provider = new Provider().withScope(Scope.Connection)
     const task = testTask().withHandler(noop).withDependencies({ provider })
-    expect(() => registry.registerTask('test', 'test', task)).toThrow()
-  })
-
-  it('should register event', () => {
-    const event = testEvent()
-    registry.registerEvent('test', 'test', event)
-    expect(registry.getByName('event', 'test/test')).toBe(event)
-  })
-
-  it('should fail register duplicate event', () => {
-    const event = testEvent()
-    registry.registerEvent('test', 'test', event)
-    expect(() => registry.registerEvent('test', 'test', event)).toThrow()
+    expect(() => registry.registerTask(task)).toThrow()
   })
 })
