@@ -10,9 +10,7 @@ export class WorkerThreadsSubscriptionManager extends BasicSubscriptionManager {
 
   protected bc?: ReturnType<typeof createBroadcastChannel>
 
-  constructor(application, options) {
-    super(application, options)
-
+  initialize() {
     if (!isMainThread) {
       this.bc = createBroadcastChannel(WORKER_THREADS_SM_CHANNEL)
 
@@ -31,21 +29,22 @@ export class WorkerThreadsSubscriptionManager extends BasicSubscriptionManager {
     }
   }
 
-  async publish(key: string, payload: any) {
+  async publish(key: string, event: string, payload: any) {
     if (!isMainThread) {
       this.bc!.postMessage({
         type: WORKER_THREADS_SM_MESSAGE,
         payload: {
           key,
+          event,
           payload,
         },
       })
     }
-    super.publish(key, payload)
+    super.publish(key, event, payload)
   }
 
-  private broadcastHandler({ key, payload }) {
-    this.logger.debug(payload, `Received event [${key}]`)
-    this.emit(key, payload)
+  private broadcastHandler({ key, event, payload }) {
+    this.logger.debug(payload, `Received event [${key}] - ${event}`)
+    this.emit(key, event, payload)
   }
 }

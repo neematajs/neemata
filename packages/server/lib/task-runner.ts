@@ -13,7 +13,8 @@ export class WorkerThreadsTaskRunner extends BaseTaskRunner {
 
     const id = randomUUID()
 
-    // TODO: performance is 15-17% worse than passing events via the main thread manually.
+    // TODO: performance is 15-17% worse than passing events via
+    // the main thread manually, instead of using broadcast channel.
     // Mini bench (node v20.9.0, M1 mbp): 21-22k vs 25-26k per seconds.
     // Need to investigate this further and see if there's any way to improve it.
     const bc = createBroadcastChannel(id)
