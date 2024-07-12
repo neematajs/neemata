@@ -1,6 +1,5 @@
 import assert from 'node:assert'
 import {
-  ApiError,
   type CallTypeProvider,
   ErrorCode,
   type TypeProvider,
@@ -388,6 +387,33 @@ export class Api {
     )
     if (!compiler) return payload
     return compiler[method](payload)
+  }
+}
+
+export class ApiError extends Error {
+  code: string
+  data?: any
+
+  constructor(code: string, message?: string, data?: any) {
+    super(message)
+    this.code = code
+    this.data = data
+  }
+
+  get message() {
+    return this.code + super.message
+  }
+
+  toString() {
+    return `${this.code} ${this.message}`
+  }
+
+  toJSON() {
+    return {
+      code: this.code,
+      message: this.message,
+      data: this.data,
+    }
   }
 }
 
