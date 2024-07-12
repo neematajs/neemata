@@ -21,63 +21,6 @@ const Contract = Object.freeze(
   }),
 )
 
-export const DashboardServiceContract = Contract.Service(
-  'Dashboard',
-  { [TransportType.WS]: true, [TransportType.HTTP]: true },
-  {
-    getDashboard: Contract.Procedure(
-      Contract.Object({ a: Contract.String() }),
-      Contract.Object({ a: Contract.String() }),
-    ),
-    chat: Contract.Procedure(
-      Contract.Object({ b: Contract.String() }),
-      Contract.Subscription(Contract.Object({}), {
-        message: Contract.String(),
-        join: Contract.Object({
-          a: Contract.String(),
-        }),
-        leave: Contract.Object({
-          b: Contract.Number(),
-        }),
-      }),
-    ),
-  },
-  {
-    closePlayer: Contract.Event(Contract.Object({ a: Contract.String() })),
-  },
-  60000,
-  {
-    title: 'Dashboard service contract',
-    description: 'This is a contract for the dashboard service',
-  },
-)
-
-export const AnotherServiceContract = Contract.Service(
-  'Anotjer',
-  { [TransportType.WS]: true, [TransportType.HTTP]: true },
-  {
-    // getDashboard: Contract.Procedure(
-    //   Contract.Object({ a: Contract.String() }),
-    //   Contract.Object({ a: Contract.String() }),
-    // ),
-    // getVals: Contract.Procedure(
-    //   Contract.Object({ b: Contract.String() }),
-    //   Contract.Subscription(
-    //     Contract.Object({}),
-    //     Contract.Object({ c: Contract.String() }),
-    //   ),
-    // ),
-  },
-  {
-    closePlayer: Contract.Event(Contract.Object({ a: Contract.String() })),
-  },
-  60000,
-  {
-    title: 'Dashboard service contract',
-    description: 'This is a contract for the dashboard service',
-  },
-)
-
 export {
   Contract,
   Kind,

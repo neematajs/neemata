@@ -49,13 +49,13 @@ export abstract class BaseTransportConnection {
     }
 
     let [payload] = args
-    const compiled = this.registry.schemas.get(contract.events[event].payload)
-    if (compiled) {
-      const result = compiled.encode(payload)
-      if (!result.success) throw new Error('Failed to encode payload')
-      if (result.success) {
-        payload = result.value
+    const schema = this.registry.schemas.get(contract.events[event].payload)
+    if (schema) {
+      const result = schema.encode(payload)
+      if (!result.success) {
+        throw new Error('Failed to encode payload', { cause: result.error })
       }
+      payload = result.value
     }
     return this.sendEvent(contract.name, event, payload)
   }
