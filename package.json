@@ -13,7 +13,7 @@
     "check": "pnpm run check:fmt && pnpm run check:lint && pnpm run check:type",
     "fmt": "biome check --write .",
     "prepare": "husky",
-    "publish-args": "node --no-warnings ./scripts/publish-args.js"
+    "publish-tag": "node --no-warnings ./scripts/publish-tag.js"
   },
   "devDependencies": {
     "@biomejs/biome": "1.8.1",

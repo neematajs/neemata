@@ -1,8 +1,7 @@
 import { parseArgs } from 'node:util'
 
 const { positionals } = parseArgs({ allowPositionals: true })
-const [tagName] = positionals
-const [_, version] = tagName.split('@')
+const [version] = positionals
 let tag = 'latest'
 const tags = {
   alpha: /alpha/,
