@@ -2,17 +2,39 @@ import { PassThrough, Readable } from 'node:stream'
 import type { StreamMetadata } from '@neematajs/common'
 
 export abstract class StreamResponse<
-  Payload = any,
-  Chunk = any,
+  PayloadType,
+  Chunk,
+  Payload = unknown,
 > extends PassThrough {
-  readonly chunk!: Chunk
+  readonly _!: {
+    payload: PayloadType
+    chunk: Chunk
+  }
+
+  readonly type?: string
   readonly payload!: Payload
+
+  write(
+    chunk: Chunk,
+    // TODO: idk wtf is this
+    encodingOrCb?: BufferEncoding | ((error: Error | null | undefined) => void),
+    cb?: (error: Error | null | undefined) => void,
+  ): boolean {
+    if (typeof encodingOrCb === 'function') cb = encodingOrCb
+    return super.write(chunk, cb)
+  }
+
+  withPayload(payload: PayloadType) {
+    // @ts-expect-error
+    this.payload = payload
+    return this as unknown as StreamResponse<PayloadType, Chunk, PayloadType>
+  }
 }
 
-export class EncodedStreamResponse<
-  Payload = any,
-  Chunk = any,
-> extends StreamResponse<Payload, Chunk> {
+export class EncodedStreamResponse<Payload, Chunk> extends StreamResponse<
+  Payload,
+  Chunk
+> {
   constructor() {
     super({
       writableObjectMode: true,
@@ -20,39 +42,14 @@ export class EncodedStreamResponse<
       objectMode: true,
     })
   }
-
-  write(
-    chunk: Chunk,
-    encodingOrCb?: BufferEncoding | ((error: Error | null | undefined) => void),
-    cb?: (error: Error | null | undefined) => void,
-  ): boolean {
-    if (typeof encodingOrCb === 'function') cb = encodingOrCb
-    return super.write(chunk, undefined, cb)
-  }
-
-  withChunk<Chunk>() {
-    return this as unknown as EncodedStreamResponse<Payload, Chunk>
-  }
-
-  withPayload<Payload>(payload: Payload) {
-    // @ts-expect-error
-    this.payload = payload
-    return this as unknown as EncodedStreamResponse<Payload, Chunk>
-  }
 }
 
-export class BinaryStreamResponse<Payload = any> extends StreamResponse<
+export class BinaryStreamResponse<Payload> extends StreamResponse<
   Payload,
-  ArrayBuffer
+  string | Buffer | ArrayBuffer
 > {
   constructor(public readonly type: string) {
     super()
-  }
-
-  withPayload<Payload>(payload: Payload) {
-    // @ts-expect-error
-    this.payload = payload
-    return this as unknown as BinaryStreamResponse<Payload>
   }
 }
 

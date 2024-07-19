@@ -1,8 +1,13 @@
 import { expect, test } from 'vitest'
 
 import { deserialize, serialize } from 'node:v8'
-import { BaseServerFormat, type DecodeRpcContext } from '@neematajs/common'
-import { Contract } from '@neematajs/contract'
+import {
+  BaseServerFormat,
+  type DecodeRpcContext,
+  type Rpc,
+  StreamDataType,
+} from '@neematajs/common'
+import { Contract, Type } from '@neematajs/contract'
 import { Procedure } from '../lib/api'
 import { Application, type ApplicationOptions } from '../lib/application'
 import { WorkerType } from '../lib/constants'
@@ -25,12 +30,9 @@ export class TestFormat extends BaseServerFormat {
     return deserialize(Buffer.from(buffer))
   }
 
-  decodeRpc(
-    buffer: ArrayBuffer,
-    context: DecodeRpcContext,
-  ): { callId: number; name: string; payload: any } {
-    const [callId, name, payload] = this.decode(buffer)
-    return { callId, name, payload }
+  decodeRpc(buffer: ArrayBuffer, context: DecodeRpcContext): Rpc {
+    const [callId, service, procedure, payload] = this.decode(buffer)
+    return { callId, service, procedure, payload }
   }
 }
 
@@ -41,7 +43,7 @@ export class TestConnection<D> extends BaseTransportConnection {
     registry: Registry,
     readonly data: D,
   ) {
-    super(registry, new Set(['TestService']))
+    super(registry, ['TestService'])
   }
 
   protected sendEvent() {
@@ -122,21 +124,35 @@ export const TestServiceContract = Contract.Service(
   },
   {
     testProcedure: Contract.Procedure(
-      Contract.Object({ test: Contract.String() }),
-      Contract.Any(),
+      Type.Object({ test: Type.String() }),
+      Type.Any(),
     ),
-    testSubscription: Contract.Procedure(
-      Contract.Object({ test: Contract.String() }),
-      Contract.Subscription(
-        Contract.Object({ testOption: Contract.String() }),
-        {
-          testEvent: Contract.String(),
-        },
+    testSubscription: Contract.Subscription(
+      Type.Object({ test: Type.String() }),
+      Type.Never(),
+      Type.Object({ testOption: Type.String() }),
+      {
+        testEvent: Contract.Event(Type.String()),
+      },
+    ),
+    testBinaryStream: Contract.Procedure(
+      Type.Object({ test: Type.String() }),
+      Contract.DownStream(
+        StreamDataType.Binary,
+        Type.Object({ test: Type.String() }),
+      ),
+    ),
+    testEncodedStream: Contract.Procedure(
+      Type.Object({ test: Type.String() }),
+      Contract.DownStream(
+        StreamDataType.Encoded,
+        Type.Object({ test: Type.String() }),
+        Type.Object({ test: Type.String() }),
       ),
     ),
   },
   {
-    testEvent: Contract.Event(Contract.String()),
+    testEvent: Contract.Event(Type.String()),
   },
 )
 
@@ -147,10 +163,10 @@ export const testConnection = <T = {}>(registry: Registry, data?: T) => {
 export const testFormat = () => new TestFormat()
 
 export const testProcedure = () =>
-  new Procedure(TestServiceContract, 'testProcedure')
+  new Procedure(TestServiceContract.procedures.testProcedure)
 
 export const testSubscription = () =>
-  new Procedure(TestServiceContract, 'testSubscription')
+  new Procedure(TestServiceContract.procedures.testSubscription)
 
 export const testTask = () => new Task().withName('test')
 

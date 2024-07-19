@@ -1,15 +1,15 @@
-import type { ApplicationOptions } from './application'
-import { Hook } from './constants'
+import type { ApplicationOptions } from './application.ts'
+import { Hook } from './constants.ts'
 import {
   type Container,
   type Dependencies,
   type DependencyContext,
   type Depender,
   Provider,
-} from './container'
-import type { Registry } from './registry'
-import type { AnyTask, Merge, OmitFirstItem } from './types'
-import { createFuture, defer, merge, noop, onAbort } from './utils/functions'
+} from './container.ts'
+import type { Registry } from './registry.ts'
+import type { AnyTask, Merge, OmitFirstItem } from './types.ts'
+import { createFuture, defer, merge, noop, onAbort } from './utils/functions.ts'
 
 export type TaskExecution<Res = any> = Promise<
   { result: Res; error: never } | { result: never; error: any }

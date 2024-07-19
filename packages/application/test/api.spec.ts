@@ -1,7 +1,8 @@
-import { ApiError, ErrorCode } from '@neematajs/common'
+import { ErrorCode } from '@neematajs/common'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   Api,
+  ApiError,
   Middleware,
   Procedure,
   type ProcedureCallOptions,
@@ -9,6 +10,11 @@ import {
 import { Container, Provider } from '../lib/container'
 import { Registry } from '../lib/registry'
 import type { Service } from '../lib/service'
+import {
+  BinaryStreamResponse,
+  EncodedStreamResponse,
+  StreamResponse,
+} from '../lib/streams'
 import type { AnyProcedure, FilterFn, GuardFn } from '../lib/types'
 import {
   type TestConnection,
@@ -140,6 +146,7 @@ describe.sequential('Api', () => {
   let connection: TestConnection<any>
   let api: Api
 
+  const payload = { test: 'test' }
   const call = (
     options: Pick<ProcedureCallOptions, 'procedure'> &
       Partial<Omit<ProcedureCallOptions, 'procedure'>>,
@@ -149,11 +156,12 @@ describe.sequential('Api', () => {
       container,
       transport,
       connection,
-      payload: {},
+      payload,
       ...options,
     })
 
-  const testProcedure = () => new Procedure(service.contract, 'testProcedure')
+  const testProcedure = () =>
+    new Procedure(service.contract.procedures.testProcedure)
 
   beforeEach(async () => {
     registry = new Registry({ logger })
@@ -195,15 +203,12 @@ describe.sequential('Api', () => {
       .withHandler(spy)
     service.implement('testProcedure', procedure)
     const connection = testConnection(registry, {})
-    await call({
-      connection,
-      procedure,
-    })
+    await call({ connection, procedure })
     expect(spy).toHaveBeenCalledWith(
       {
         connection,
       },
-      expect.anything(),
+      payload,
     )
   })
 
@@ -248,11 +253,29 @@ describe.sequential('Api', () => {
     await expect(call({ connection, procedure })).resolves.toBe(signal)
   })
 
+  it('should inject encoded stream response', async () => {
+    const handlerFn = vi.fn(({ response }) => response)
+    const procedure = new Procedure(
+      service.contract.procedures.testEncodedStream,
+    )
+      .withDependencies({ response: Procedure.response })
+      .withHandler(handlerFn)
+    service.implement('testEncodedStream', procedure)
+    await call({ procedure, payload }).catch((v) => v)
+    expect(handlerFn).toBeCalledWith(
+      {
+        response: expect.any(EncodedStreamResponse),
+      },
+      expect.anything(),
+    )
+  })
+
   it('should handle procedure call with payload', async () => {
-    const payload = {}
-    const procedure = testProcedure().withHandler((ctx, data) => data)
+    const spy = vi.fn()
+    const procedure = testProcedure().withHandler(spy)
     service.implement('testProcedure', procedure)
-    await expect(call({ procedure, payload })).resolves.toBe(payload)
+    await call({ procedure, payload })
+    expect(spy).toBeCalledWith(expect.anything(), payload)
   })
 
   it('should handle procedure handler error', async () => {
@@ -291,16 +314,16 @@ describe.sequential('Api', () => {
   })
 
   it('should handle middleware', async () => {
-    const middleware1Fn = vi.fn(
-      async (ctx, next, payload) =>
-        (await next([...payload, 2])) + '_middleware',
-    )
-    const middleware2Fn = vi.fn(
-      async (ctx, next, payload) =>
-        (await next([...payload, 3])) + '_middleware',
-    )
+    const middleware1Fn = vi.fn(async (ctx, next, payload) => {
+      const result = await next({ test: `${payload.test}2` })
+      return { test: `${result.test}_middleware1` }
+    })
+    const middleware2Fn = vi.fn(async (ctx, next, payload) => {
+      const result = await next({ test: `${payload.test}3` })
+      return { test: `${result.test}_middleware2` }
+    })
 
-    const handlerFn = vi.fn(() => 'result')
+    const handlerFn = vi.fn(() => ({ test: 'result' }))
 
     const middleware1 = new Middleware().withValue(middleware1Fn)
     const middleware2 = new Middleware().withValue(middleware2Fn)
@@ -310,7 +333,7 @@ describe.sequential('Api', () => {
 
     service.implement('testProcedure', procedure)
 
-    const response = await call({ procedure, payload: [1] })
+    const response = await call({ procedure, payload: { test: '1' } })
 
     expect(middleware1Fn).toHaveBeenCalledWith(
       {
@@ -320,7 +343,7 @@ describe.sequential('Api', () => {
         service,
       },
       expect.any(Function),
-      [1],
+      { test: '1' },
     )
     expect(middleware2Fn).toHaveBeenCalledWith(
       {
@@ -330,10 +353,12 @@ describe.sequential('Api', () => {
         service,
       },
       expect.any(Function),
-      [1, 2],
+      { test: '12' },
     )
-    expect(handlerFn).toHaveBeenCalledWith(expect.anything(), [1, 2, 3])
-    expect(response).toBe('result_middleware_middleware')
+    expect(handlerFn).toHaveBeenCalledWith(expect.anything(), {
+      test: '123',
+    })
+    expect(response).toStrictEqual({ test: 'result_middleware2_middleware1' })
   })
 
   it('should find procedure', () => {

@@ -5,10 +5,11 @@ import {
   BasicSubscriptionManager,
   Subscription,
 } from '../lib/subscription'
-import { testLogger } from './_utils'
+import { TestServiceContract, testLogger } from './_utils'
 
 describe.sequential('Basic subscription manager', () => {
-  let subManager: BaseSubscriptionManager
+  let subManager: BasicSubscriptionManager
+  const contract = TestServiceContract.procedures.testSubscription
 
   beforeEach(() => {
     const logger = testLogger()
@@ -22,21 +23,21 @@ describe.sequential('Basic subscription manager', () => {
   })
 
   it('should subscribe', async () => {
-    const subscription = new Subscription('test')
+    const subscription = new Subscription(contract, 'test', () => {})
     subManager.subscribe(subscription)
   })
 
   it('should unsubscribe', async () => {
-    const subscription = new Subscription('test')
+    const subscription = new Subscription(contract, 'test', () => {})
     subManager.unsubscribe(subscription)
   })
 
   it('should publish', async () => {
-    const subscription = new Subscription('test')
+    const subscription = new Subscription(contract, 'test', () => {})
     subManager.subscribe(subscription)
     const spy = vi.fn()
-    subscription.on('neemata:event', spy)
-    const args = ['event', { test: 'data' }] as const
+    subscription.on('event', spy)
+    const args = ['testEvent', { test: 'data' }] as const
     subManager.publish('test', ...args)
     subManager.unsubscribe(subscription)
     subManager.publish('test', ...args)

@@ -1,14 +1,23 @@
+import type {
+  Decoded,
+  Encoded,
+  TBaseProcedureContract,
+  TSchema,
+} from '@neematajs/contract'
+import type { UpStream } from '@neematajs/contract'
 import type { Api, Guard, Middleware, Procedure } from './api'
 import type { Application } from './application'
 import type { Hook, WorkerType } from './constants'
 import type { Container, Provider } from './container'
+import type { EventManager } from './events'
 import type { BaseExtension } from './extension'
 import type { Format } from './format'
 import type { Logger } from './logger'
 import type { Registry } from './registry'
 import type { Service } from './service'
+import type { Stream } from './streams'
 import type { Task, TaskExecution } from './tasks'
-import type { BaseTransportConnection } from './transport'
+import type { BaseTransport, BaseTransportConnection } from './transport'
 
 export type ClassConstructor<T> = new (...args: any[]) => T
 export type Callback = (...args: any[]) => any
@@ -52,6 +61,9 @@ export type AnyProcedure = Procedure<any, any, any>
 export type AnyTask = Task<any, any, any, any>
 export type AnyGuard = Guard<any>
 export type AnyMiddleware = Middleware<any>
+export type AnyTransportClass = ClassConstructor<
+  BaseTransport<string, BaseTransportConnection, any>
+>
 
 export type MiddlewareContext = {
   connection: BaseTransportConnection
@@ -87,6 +99,7 @@ export interface ExtensionApplication {
   api: Api
   format: Format
   container: Container
+  eventManager: EventManager
   logger: Logger
   connections: {
     add: (connection: BaseTransportConnection) => void
@@ -132,98 +145,12 @@ export type Merge<
       : never
 }
 
-// export type AppClient<App extends AnyApplication> = {
-//   procedures: UnionToIntersection<
-//     {
-//       [K in keyof App['modules']]: {
-//         [P in keyof AppClientProcedures<
-//           //@ts-expect-error
-//           K,
-//           App['modules'][K]
-//           //@ts-expect-error
-//         >]: AppClientProcedures<K, App['modules'][K]>[P]
-//       }
-//     }[keyof App['modules']]
-//   >
-//   events: UnionToIntersection<
-//     {
-//       [K in keyof App['modules']]: {
-//         [P in keyof AppClientEvents<
-//           //@ts-expect-error
-//           K,
-//           App['modules'][K]
-//           //@ts-expect-error
-//         >]: AppClientEvents<K, App['modules'][K]>[P]
-//       }
-//     }[keyof App['modules']]
-//   >
-// }
+export type DecodeType<T> = T extends any[]
+  ? Array<DecodeType<T[number]>>
+  : T extends object
+    ? { [K in keyof T]: DecodeType<T[K]> }
+    : T extends UpStream
+      ? Stream
+      : T
 
-// type AppClientProcedures<
-//   ModuleName extends string,
-//   Module extends AnyModule,
-//   Prefix extends string = '',
-//   Procedures extends Module['procedures'] = Module['procedures'],
-//   ImportPrefix extends string = Prefix extends ''
-//     ? ModuleName
-//     : `${Prefix}/${ModuleName}`,
-// > = Merge<
-//   //@ts-expect-error
-//   keyof Module['imports'] extends never
-//     ? {}
-//     : UnionToIntersection<
-//         {
-//           [K in keyof Module['imports']]: {
-//             [P in keyof AppClientProcedures<
-//               // @ts-expect-error
-//               K,
-//               Module['imports'][K],
-//               ImportPrefix
-//             >]: // @ts-expect-error
-//             AppClientProcedures<K, Module['imports'][K], ImportPrefix>[P]
-//           }
-//         }[keyof Module['imports']]
-//       >,
-//   {
-//     [K in keyof Procedures as K extends string
-//       ? `${Prefix extends '' ? ModuleName : `${Prefix}/${ModuleName}`}/${K}`
-//       : never]: Procedures[K] extends AnyProcedure
-//       ? {
-//           input: Procedures[K]['_']['input']
-//           output: Procedures[K]['_']['output']
-//         }
-//       : never
-//   }
-// >
-
-// type AppClientEvents<
-//   ModuleName extends string,
-//   Module extends AnyModule,
-//   Prefix extends string = '',
-//   Events extends Module['events'] = Module['events'],
-//   ImportPrefix extends string = Prefix extends ''
-//     ? ModuleName
-//     : `${Prefix}/${ModuleName}`,
-// > = Merge<
-//   //@ts-expect-error
-//   keyof Module['imports'] extends never
-//     ? {}
-//     : UnionToIntersection<
-//         {
-//           [K in keyof Module['imports']]: {
-//             [P in keyof AppClientEvents<
-//               // @ts-expect-error
-//               K,
-//               Module['imports'][K],
-//               ImportPrefix
-//             >]: // @ts-expect-error
-//             AppClientEvents<K, Module['imports'][K], ImportPrefix>[P]
-//           }
-//         }[keyof Module['imports']]
-//       >,
-//   {
-//     [K in keyof Events as K extends string
-//       ? `${Prefix extends '' ? ModuleName : `${Prefix}/${ModuleName}`}/${K}`
-//       : never]: Events[K] extends AnyEvent ? Events[K]['_']['payload'] : never
-//   }
-// >
+export type DecodeInputSchema<T extends TSchema> = DecodeType<Decoded<T>>

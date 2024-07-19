@@ -1,4 +1,4 @@
-import type { Callback, Pattern } from '../types'
+import type { Callback, Pattern } from '../types.ts'
 
 export const merge = (...objects: object[]) => Object.assign({}, ...objects)
 

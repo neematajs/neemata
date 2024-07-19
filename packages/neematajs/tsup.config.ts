@@ -6,6 +6,7 @@ export default defineConfig({
   entry: ['src/**/*.ts'],
   sourcemap: false,
   bundle: true,
+  clean: true,
   format: 'esm',
   target: 'node20',
   platform: 'node',

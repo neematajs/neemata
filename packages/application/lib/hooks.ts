@@ -1,5 +1,5 @@
-import type { Hook } from './constants'
-import type { Callback, HooksInterface } from './types'
+import type { Hook } from './constants.ts'
+import type { Callback, HooksInterface } from './types.ts'
 
 export class Hooks {
   static merge(from: Hooks, to: Hooks) {
