@@ -1,0 +1,23 @@
+{
+  "name": "@neematajs/client",
+  "type": "module",
+  "scripts": {
+    "build": "tsup",
+    "type-check": "tsc --noEmit"
+  },
+  "exports": {
+    ".": {
+      "bun": "./index.ts",
+      "default": "./dist/index.js",
+      "types": "./index.ts"
+    }
+  },
+  "peerDependencies": {
+    "@neematajs/contract": "workspace:*",
+    "@neematajs/common": "workspace:*"
+  },
+  "devDependencies": {
+    "@neematajs/contract": "workspace:*",
+    "@neematajs/common": "workspace:*"
+  }
+}
