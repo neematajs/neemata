@@ -1,23 +1,22 @@
-import type { TransportType } from '@neematajs/common'
 import { Kind, type TSchema } from '@sinclair/typebox/type'
-import { type NeemataContractSchemaOptions, createSchema } from '../utils'
-import type { TEventContract } from './event'
-import type { TProcedureContract } from './procedure'
-import type { TSubscriptionContract } from './subscription'
+import {
+  type ContractSchemaOptions,
+  applyNames,
+  createSchema,
+} from '../utils.ts'
+import type { TEventContract } from './event.ts'
+import type { TProcedureContract } from './procedure.ts'
+import { SubscriptionKind, type TSubscriptionContract } from './subscription.ts'
 
 export const ServiceKind = 'NeemataService'
 
 export interface TServiceContract<
   Name extends string = string,
   Transports extends { [K in string]?: true } = {},
-  Procedures extends Record<string, TProcedureContract> = Record<
+  Procedures extends Record<
     string,
-    TProcedureContract
-  >,
-  // Subscriptions extends Record<string, TSubscriptionContract> = Record<
-  //   string,
-  //   TSubscriptionContract
-  // >,
+    TProcedureContract | TSubscriptionContract
+  > = Record<string, TProcedureContract | TSubscriptionContract>,
   Events extends Record<string, TEventContract> = Record<
     string,
     TEventContract
@@ -28,9 +27,9 @@ export interface TServiceContract<
     procedures: {
       [K in keyof Procedures]: Procedures[K]['static']
     }
-    // subscriptions: {
-    //   [K in keyof Subscriptions]: Subscriptions[K]['static']
-    // }
+    subscriptions: {
+      [K in keyof Procedures]: Procedures[K]['static']
+    }
     events: {
       [K in keyof Events]: Events[K]['static']
     }
@@ -39,44 +38,83 @@ export interface TServiceContract<
   type: 'neemata:service'
   name: Name
   transports: Transports
-  procedures: Procedures
-  // subscriptions: Subscriptions
-  events: Events
+  procedures: {
+    [K in Extract<
+      keyof Procedures,
+      string
+    >]: Procedures[K] extends TProcedureContract<infer Input, infer Output>
+      ? TProcedureContract<Input, Output, K, Name, Transports>
+      : Procedures[K] extends TSubscriptionContract<
+            infer Input,
+            infer Output,
+            infer Options,
+            infer Events
+          >
+        ? TSubscriptionContract<
+            Input,
+            Output,
+            Options,
+            {
+              [EK in Extract<
+                keyof Events,
+                string
+              >]: Events[EK] extends TEventContract<infer Payload>
+                ? TEventContract<Payload, EK, Name, K>
+                : never
+            },
+            K,
+            Name,
+            Transports
+          >
+        : never
+  }
+  events: {
+    [K in Extract<keyof Events, string>]: Events[K] extends TEventContract<
+      infer Payload
+    >
+      ? TEventContract<Payload, K, Name>
+      : never
+  }
   timeout?: number
 }
 
 export const ServiceContract = <
   Name extends string,
   Transports extends { [key: string]: true },
-  Procedures extends Record<string, TProcedureContract<any>>,
-  // Subscriptions extends Record<string, TSubscriptionContract<any>>,
+  Procedures extends Record<string, TProcedureContract | TSubscriptionContract>,
   Events extends Record<string, TEventContract>,
-  SOptions extends NeemataContractSchemaOptions,
 >(
   name: Name,
   transports: Transports,
   procedures: Procedures = {} as Procedures,
-  // subscriptions: Subscriptions = {} as Subscriptions,
   events: Events = {} as Events,
   timeout?: number,
-  schemaOptions: SOptions = {} as SOptions,
-) =>
-  createSchema<
-    TServiceContract<
-      Name,
-      Transports,
-      Procedures,
-      // Subscriptions,
-      Events
-    >
-  >({
+  schemaOptions: ContractSchemaOptions = {} as ContractSchemaOptions,
+) => {
+  const serviceProcedures = {}
+
+  for (const [procedureName, procedure] of Object.entries(procedures)) {
+    if (procedure[Kind] === SubscriptionKind) {
+      serviceProcedures[procedureName] = {
+        ...procedure,
+        events: applyNames(procedure.events, {
+          serviceName: name,
+          subscriptionName: procedureName,
+        }),
+      }
+    } else {
+      serviceProcedures[procedureName] = procedure
+    }
+  }
+
+  return createSchema<TServiceContract<Name, Transports, Procedures, Events>>({
     ...schemaOptions,
     [Kind]: ServiceKind,
     name: name,
     type: 'neemata:service',
-    procedures,
-    // subscriptions,
-    events,
+    procedures: applyNames(procedures, { serviceName: name }),
+    events: applyNames(events, { serviceName: name }),
     transports,
     timeout,
   })
+}

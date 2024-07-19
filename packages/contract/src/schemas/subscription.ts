@@ -1,55 +1,78 @@
-import {
-  Kind,
-  type TNumber,
-  type TObject,
-  type TSchema,
-  type TString,
-} from '@sinclair/typebox/type'
-import { type NeemataContractSchemaOptions, createSchema } from '../utils'
+import { Kind, type TSchema } from '@sinclair/typebox/type'
+import { type ContractSchemaOptions, createSchema } from '../utils.ts'
+import type { TEventContract } from './event.ts'
+import type { TBaseProcedureContract } from './procedure.ts'
 
 export const SubscriptionKind = 'NeemataSubscription'
 
-export type TSubcriptionOptions = TObject<Record<string, TNumber | TString>>
+export type TSubcriptionOptions = { static: Record<string, string | number> }
 
 export interface TSubscriptionContract<
-  // Input extends TSchema = TSchema,
+  Input extends TSchema = TSchema,
+  Output extends TSchema = TSchema,
   Options extends TSubcriptionOptions = TSubcriptionOptions,
-  Events extends Record<string, TSchema> = Record<string, TSchema>,
-> extends TSchema {
+  Events extends Record<string, TEventContract> = Record<
+    string,
+    TEventContract
+  >,
+  Name extends string | undefined = string | undefined,
+  ServiceName extends string | undefined = string | undefined,
+  Transports extends { [K in string]?: true } | undefined =
+    | { [K in string]?: true }
+    | undefined,
+> extends TBaseProcedureContract<Input, Output, Name, ServiceName, Transports> {
   [Kind]: typeof SubscriptionKind
   type: 'neemata:subscription'
   static: {
-    // input: Input['static']
+    input: Input['static']
+    output: Output['static']
     options: Options['static']
-    events: { [K in keyof Events]: Events[K]['static'] }
+    events: {
+      [K in keyof Events]: Events[K]['static']
+    }
   }
-  // input: Input
-  events: Events
   options: Options
+  events: Events
 }
 
 export const SubscriptionContract = <
-  // Input extends TSchema,
-  Options extends TSubcriptionOptions,
-  Events extends Record<string, TSchema>,
-  SOptions extends NeemataContractSchemaOptions,
+  Input extends TSchema = TSchema,
+  Output extends TSchema = TSchema,
+  Options extends TSubcriptionOptions = TSubcriptionOptions,
+  Events extends Record<string, TEventContract> = Record<
+    string,
+    TEventContract
+  >,
+  Name extends string | undefined = string | undefined,
+  ServiceName extends string | undefined = string | undefined,
+  Transports extends { [K in string]?: true } | undefined =
+    | { [K in string]?: true }
+    | undefined,
 >(
-  // input: Input,
+  input: Input,
+  output: Output,
   options: Options,
   events: Events,
-  schemaOptions: SOptions = {} as SOptions,
+  timeout?: number,
+  schemaOptions: ContractSchemaOptions = {} as ContractSchemaOptions,
 ) =>
   createSchema<
     TSubscriptionContract<
-      // Input,
+      Input,
+      Output,
       Options,
-      Events
+      Events,
+      Name,
+      ServiceName,
+      Transports
     >
   >({
     ...schemaOptions,
     [Kind]: SubscriptionKind,
     type: 'neemata:subscription',
-    // input,
+    input,
+    output,
     events,
     options,
+    timeout,
   })
