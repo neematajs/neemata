@@ -1,4 +1,4 @@
-import type { ExtensionApplication } from './types'
+import type { ExtensionApplication } from './types.ts'
 
 export abstract class BaseExtension<Options = unknown, Extra = {}> {
   constructor(

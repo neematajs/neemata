@@ -1,5 +1,5 @@
 import type { BaseServerFormat, DecodeRpcContext } from '@neematajs/common'
-import { match, parseContentTypes } from './utils/functions'
+import { match, parseContentTypes } from './utils/functions.ts'
 
 export class Format {
   supported = new Map<string, BaseServerFormat>()

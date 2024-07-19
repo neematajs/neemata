@@ -1,4 +1,4 @@
-import type { Callback } from '../types'
+import type { Callback } from '../types.ts'
 
 interface SemaphoreQueueItem {
   resolve?: Callback

@@ -18,12 +18,6 @@ describe.sequential('Streams -> Response -> Encoded', () => {
     expect(stream.payload).toBe(payload)
   })
 
-  it('should assign chunk type', () => {
-    const stream = new EncodedStreamResponse()
-    const stream2 = stream.withChunk<{ any: boolean }>()
-    expect(stream).toBe(stream2)
-  })
-
   it('should write an in object-mode', async () => {
     const stream = new EncodedStreamResponse()
     const payload = { test: true }
@@ -42,12 +36,6 @@ describe.sequential('Streams -> Response -> Binary', () => {
     const payload = 'test'
     const stream = new BinaryStreamResponse('type').withPayload(payload)
     expect(stream.payload).toBe(payload)
-  })
-
-  it('should assign chunk type', () => {
-    const stream = new EncodedStreamResponse()
-    const stream2 = stream.withChunk<{ any: boolean }>()
-    expect(stream).toBe(stream2)
   })
 
   it('should write', async () => {

@@ -1,8 +1,8 @@
-import { Scope } from './constants'
-import type { Logger } from './logger'
-import type { Registry } from './registry'
-import type { AnyProvider } from './types'
-import { merge } from './utils/functions'
+import { Scope } from './constants.ts'
+import type { Logger } from './logger.ts'
+import type { Registry } from './registry.ts'
+import type { AnyProvider } from './types.ts'
+import { merge } from './utils/functions.ts'
 
 const ScopeStrictness = {
   [Scope.Global]: 0,

@@ -3,12 +3,13 @@ import { defineConfig } from 'tsup'
 
 export default defineConfig({
   outDir: 'dist',
-  entry: ['index.ts'],
+  entry: ['index.ts', 'lib/**/*.ts'],
   sourcemap: true,
   bundle: true,
+  clean: true,
   format: 'esm',
-  target: 'node20',
-  platform: 'node',
+  target: 'esnext',
+  platform: 'neutral',
   esbuildPlugins: [
     esbuildPluginFilePathExtensions({
       esmExtension: 'js',

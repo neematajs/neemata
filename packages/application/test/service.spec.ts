@@ -49,9 +49,9 @@ describe('Service', () => {
 
   it('should implement a procedure', () => {
     const procedure = testProcedure()
-    service.implement('test', procedure)
-    expect(service.procedures.get('test')).toBe(procedure)
+    service.implement('testProcedure', procedure)
+    expect(service.procedures.get('testProcedure')).toBe(procedure)
   })
 
-  it('should add a hook', () => {})
+  // it('should add a hook', () => {})
 })

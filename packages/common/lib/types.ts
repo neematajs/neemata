@@ -1,8 +1,21 @@
-export interface TypeProvider {
-  readonly input: unknown
-  readonly output: unknown
+export type StreamMetadata = {
+  type: string
+  size: number
+  filename?: string
 }
 
-export type CallTypeProvider<T extends TypeProvider, V> = (T & {
-  input: V
-})['output']
+export type Rpc = {
+  callId: number
+  service: string
+  procedure: string
+  payload: any
+}
+
+// export interface TypeProvider {
+//   readonly input: unknown
+//   readonly output: unknown
+// }
+
+// export type CallTypeProvider<T extends TypeProvider, V> = (T & {
+//   input: V
+// })['output']

@@ -2,7 +2,7 @@ import { KindGuard, type TSchema } from '@sinclair/typebox'
 import {
   SubscriptionKind,
   type TSubscriptionContract,
-} from '../schemas/subscription'
+} from '../schemas/subscription.ts'
 
 export const IsSubscription = (
   schema: TSchema,

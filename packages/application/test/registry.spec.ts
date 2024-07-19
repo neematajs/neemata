@@ -20,16 +20,14 @@ describe('Registry', () => {
     expect(registry).toBeInstanceOf(Registry)
   })
 
-  it('should load', async () => {
+  it('should register serviec', async () => {
     const service = testService()
-    registry.services.set(service.contract.name, service)
-    await registry.load()
+    registry.registerService(service)
   })
 
   it('should compile schemas', async () => {
     const service = testService()
-    registry.services.set(service.contract.name, service)
-    await registry.load()
+    registry.registerService(service)
     expect(registry.schemas.size).toBeGreaterThan(0)
     for (const [schema, compiled] of registry.schemas) {
       expect(schema[Kind]).toBeDefined()

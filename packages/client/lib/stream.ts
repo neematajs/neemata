@@ -1,17 +1,5 @@
-/// <reference lib="dom" />
-
-import { EventEmitter, once } from './event-emitter'
-
-export enum StreamDataType {
-  Binary = 'Binary',
-  Encoded = 'Encoded',
-}
-
-export type StreamMetadata = {
-  type: string
-  size: number
-  filename?: string
-}
+import type { StreamMetadata } from '@neematajs/common'
+import { EventEmitter, onAbort, once } from './utils.ts'
 
 export type ServerStreamConstructor = new (
   id: number,
@@ -40,9 +28,8 @@ export class DownStream<Chunk = any> extends TransformStream<any, Chunk> {
     readonly ac: AbortController,
   ) {
     super({ transform })
-    this.ac.signal.addEventListener('abort', () => this.writable.close(), {
-      once: true,
-    })
+
+    onAbort(ac.signal, () => this.writable.close())
 
     this.reader = this.readable.getReader()
     this.writer = this.writable.getWriter()
@@ -64,12 +51,12 @@ export class DownStream<Chunk = any> extends TransformStream<any, Chunk> {
   }
 }
 
-type StreamInferfaceEvents = {
-  start: never
-  end: never
-  progress: number
-  error: any
-  close: never
+export type StreamInferfaceEvents = {
+  start: []
+  end: []
+  close: []
+  progress: [progres: number]
+  error: [error: any]
 }
 
 export class UpStream extends EventEmitter<StreamInferfaceEvents> {
@@ -143,10 +130,5 @@ export class UpStream extends EventEmitter<StreamInferfaceEvents> {
         return this._read(size)
       }
     }
-  }
-
-  _finish() {
-    this.emit('end')
-    this.destroy()
   }
 }

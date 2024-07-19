@@ -1,12 +1,18 @@
+import { StreamDataType } from '@neematajs/common'
+import type {
+  TProcedureContract,
+  TSchema,
+  TSubscriptionContract,
+} from '@neematajs/contract'
 import { type Compiled, compile } from '@neematajs/contract/compiler'
 import { ContractGuard } from '@neematajs/contract/guards'
-import type { Filter } from './api'
-import { Scope } from './constants'
-import { type Provider, getProviderScope } from './container'
-import { Hooks } from './hooks'
-import type { Logger } from './logger'
-import type { Service } from './service'
-import type { AnyTask, Command, ErrorClass } from './types'
+import type { Filter } from './api.ts'
+import { Scope } from './constants.ts'
+import { type Provider, getProviderScope } from './container.ts'
+import { Hooks } from './hooks.ts'
+import type { Logger } from './logger.ts'
+import type { Service } from './service.ts'
+import type { AnyTask, Command, ErrorClass } from './types.ts'
 
 export const APP_COMMAND = Symbol('APP_COMMAND')
 
@@ -23,28 +29,6 @@ export class Registry {
       logger: Logger
     },
   ) {}
-
-  async load() {
-    for (const service of this.services.values()) {
-      this.registerHooks(service.hooks)
-
-      const schemas = [
-        ...Object.values(service.contract.procedures).flatMap((p) => {
-          return ContractGuard.IsSubscription(p.output)
-            ? Object.values(p.output.events)
-            : [p.output]
-        }),
-        ...Object.values(service.contract.procedures).map((p) => p.input),
-        ...Object.values(service.contract.events).map((e) => e.payload),
-      ]
-
-      for (const schema of schemas) {
-        if (!schema) continue
-        if (this.schemas.has(schema)) continue
-        this.schemas.set(schema, compile(schema))
-      }
-    }
-  }
 
   registerHooks<T extends Hooks>(hooks: T) {
     Hooks.merge(hooks, this.hooks)
@@ -63,7 +47,40 @@ export class Registry {
   registerService(service: Service) {
     if (this.services.has(service.contract.name))
       throw new Error(`Service ${service.contract.name} already registered`)
+
+    const schemas: TSchema[] = []
+
+    for (const procedure of Object.values<
+      TSubscriptionContract | TProcedureContract
+    >(service.contract.procedures)) {
+      if (ContractGuard.IsSubscription(procedure)) {
+        for (const event of Object.values(procedure.events)) {
+          schemas.push(event.payload)
+        }
+      } else if (ContractGuard.IsDownStream(procedure.output)) {
+        schemas.push(procedure.output.payload)
+        if (procedure.output.dataType === StreamDataType.Encoded) {
+          schemas.push(procedure.output.chunk!)
+        }
+      } else {
+        schemas.push(procedure.output)
+      }
+
+      schemas.push(procedure.input)
+    }
+
+    for (const event of Object.values(service.contract.events)) {
+      schemas.push(event.payload)
+    }
+
+    for (const schema of schemas) {
+      if (!schema) continue
+      if (this.schemas.has(schema)) continue
+      this.schemas.set(schema, compile(schema))
+    }
+
     this.services.set(service.contract.name, service)
+    this.registerHooks(service.hooks)
   }
 
   registerTask(task: AnyTask) {
