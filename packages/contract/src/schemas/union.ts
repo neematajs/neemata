@@ -5,13 +5,15 @@ import {
   TypeRegistry,
 } from '@sinclair/typebox/type'
 
+const UnionEnumKind = 'UnionEnum'
+
 // Ref: https://github.com/sinclairzx81/typebox/blob/master/example/prototypes/union-enum.ts
 
 // -------------------------------------------------------------------------------------
 // TUnionEnum
 // -------------------------------------------------------------------------------------
 export interface TUnionEnum<T extends (string | number)[]> extends TSchema {
-  [Kind]: 'UnionEnum'
+  [Kind]: typeof UnionEnumKind
   static: T[number]
   enum: T
 }
@@ -33,7 +35,9 @@ export function UnionEnum<T extends (string | number)[]>(
       schema.enum.includes(value)
     )
   }
-  if (!TypeRegistry.Has('UnionEnum'))
-    TypeRegistry.Set('UnionEnum', UnionEnumCheck)
-  return { ...options, [Kind]: 'UnionEnum', enum: values } as TUnionEnum<T>
+
+  if (!TypeRegistry.Has(UnionEnumKind))
+    TypeRegistry.Set(UnionEnumKind, UnionEnumCheck)
+
+  return { ...options, [Kind]: UnionEnumKind, enum: values } as TUnionEnum<T>
 }

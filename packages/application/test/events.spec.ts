@@ -18,8 +18,7 @@ describe.sequential('Event manager', () => {
   let connection: BaseTransportConnection
 
   let options: [
-    typeof service.contract,
-    'testSubscription',
+    typeof service.contract.procedures.testSubscription,
     { testOption: 'test' },
     typeof connection,
   ]
@@ -38,8 +37,7 @@ describe.sequential('Event manager', () => {
     connection = testConnection(registry)
 
     options = [
-      service.contract,
-      'testSubscription',
+      service.contract.procedures.testSubscription,
       { testOption: 'test' },
       connection,
     ]
@@ -92,8 +90,8 @@ describe.sequential('Event manager', () => {
     const event = 'testEvent' as const
     const { subscription } = await manager.subscribe(...options)
     const spy = vi.fn()
-    subscription.on('neemata:event', spy)
-    manager.publish(options[0], options[1], options[2], event, payload)
+    subscription.on('event', spy)
+    manager.publish(options[0], options[1], event, payload)
     expect(spy).toHaveBeenCalledOnce()
     expect(spy).toHaveBeenCalledWith(event, payload)
   })

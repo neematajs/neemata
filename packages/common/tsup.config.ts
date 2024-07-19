@@ -6,6 +6,7 @@ export default defineConfig({
   entry: ['index.ts', 'lib/**/*.ts'],
   sourcemap: true,
   bundle: true,
+  clean: true,
   format: 'esm',
   target: 'esnext',
   platform: 'neutral',

@@ -6,6 +6,7 @@ export default defineConfig({
   entry: ['cli.ts', 'bun.ts', 'node.ts'],
   sourcemap: true,
   bundle: true,
+  clean: true,
   format: 'esm',
   target: 'node20',
   platform: 'node',

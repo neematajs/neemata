@@ -1,5 +1,5 @@
 {
-  "name": "@neematajs/testing",
+  "name": "@neematajs/client",
   "type": "module",
   "scripts": {
     "build": "tsup",
@@ -13,11 +13,11 @@
     }
   },
   "peerDependencies": {
-    "@neematajs/application": "workspace:*",
+    "@neematajs/contract": "workspace:*",
     "@neematajs/common": "workspace:*"
   },
   "devDependencies": {
-    "@neematajs/application": "workspace:*",
+    "@neematajs/contract": "workspace:*",
     "@neematajs/common": "workspace:*"
   }
 }

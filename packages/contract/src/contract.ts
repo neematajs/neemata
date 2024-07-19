@@ -1,32 +1,65 @@
-import { TransportType } from '@neematajs/common'
-import { JsonTypeBuilder, Kind } from '@sinclair/typebox/type'
-import { EventContract, type TEventContract } from './schemas/event'
-import { ProcedureContract, type TProcedureContract } from './schemas/procedure'
-import { ServiceContract, type TServiceContract } from './schemas/service'
+import './formats' // register ajv formats
+
+import {
+  JsonTypeBuilder,
+  Kind,
+  type StaticDecode,
+  type StaticEncode,
+  type TSchema,
+} from '@sinclair/typebox/type'
+
+import { EventContract, type TEventContract } from './schemas/event.ts'
+import {
+  ProcedureContract,
+  type TBaseProcedureContract,
+  type TProcedureContract,
+} from './schemas/procedure.ts'
+import { ServiceContract, type TServiceContract } from './schemas/service.ts'
+import {
+  type DownStream,
+  DownStreamContract,
+  type TDownStreamContract,
+  type TUpStreamContract,
+  type UpStream,
+  UpStreamContract,
+} from './schemas/streams.ts'
 import {
   SubscriptionContract,
   type TSubscriptionContract,
-} from './schemas/subscription'
-import { type TUnionEnum, UnionEnum } from './schemas/union'
+} from './schemas/subscription.ts'
+import { type TUnionEnum, UnionEnum } from './schemas/union.ts'
 
-import './formats' // register ajv formats
+const Contract = Object.freeze({
+  Procedure: ProcedureContract,
+  Event: EventContract,
+  Subscription: SubscriptionContract,
+  Service: ServiceContract,
+  UpStream: UpStreamContract,
+  DownStream: DownStreamContract,
+})
 
-const Contract = Object.freeze(
-  Object.assign(new JsonTypeBuilder(), {
-    Procedure: ProcedureContract,
-    Event: EventContract,
-    Subscription: SubscriptionContract,
-    Service: ServiceContract,
-    Union: UnionEnum,
-  }),
+const Type = Object.freeze(
+  Object.assign(new JsonTypeBuilder(), { Union: UnionEnum }),
 )
+
+type Encoded<T extends TSchema> = StaticEncode<T>
+type Decoded<T extends TSchema> = StaticDecode<T>
 
 export {
   Contract,
   Kind,
-  type TUnionEnum,
+  Type,
+  type Decoded,
+  type DownStream,
+  type Encoded,
+  type TDownStreamContract,
   type TEventContract,
   type TProcedureContract,
+  type TBaseProcedureContract,
+  type TSchema,
   type TServiceContract,
   type TSubscriptionContract,
+  type TUnionEnum,
+  type TUpStreamContract,
+  type UpStream,
 }

@@ -81,7 +81,7 @@ export const createConsolePrettyDestination = (
   level,
   stream: pretty({
     colorize: true,
-    ignore: 'hostname,$group',
+    ignore: 'hostname,$group,$threadId',
     errorLikeObjectKeys: ['err', 'error', 'cause'],
     messageFormat: (log, messageKey) => {
       const group = fg(`[${log.$group}]`, 11)

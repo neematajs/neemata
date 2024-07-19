@@ -1,26 +1,26 @@
 import type { BaseServerFormat } from '@neematajs/common'
-import { Api, type Filter } from './api'
-import { Hook, Scope, WorkerType } from './constants'
-import { Container, Provider } from './container'
-import { EventManager } from './events'
-import type { BaseExtension } from './extension'
-import { Format } from './format'
-import { type Logger, type LoggingOptions, createLogger } from './logger'
-import { APP_COMMAND, Registry, printRegistry } from './registry'
-import type { Service } from './service'
+import { Api, type Filter } from './api.ts'
+import { Hook, Scope, WorkerType } from './constants.ts'
+import { Container, Provider } from './container.ts'
+import { EventManager } from './events.ts'
+import type { BaseExtension } from './extension.ts'
+import { Format } from './format.ts'
+import { type Logger, type LoggingOptions, createLogger } from './logger.ts'
+import { APP_COMMAND, Registry, printRegistry } from './registry.ts'
+import type { Service } from './service.ts'
 import {
   type BaseSubscriptionManager,
   BasicSubscriptionManager,
-} from './subscription'
-import { type BaseTaskRunner, Tasks } from './tasks'
-import type { BaseTransport, BaseTransportConnection } from './transport'
+} from './subscription.ts'
+import { type BaseTaskRunner, Tasks } from './tasks.ts'
+import type { BaseTransport, BaseTransportConnection } from './transport.ts'
 import type {
   AnyTask,
   ClassConstructor,
   ErrorClass,
   ExecuteFn,
   ExtensionApplication,
-} from './types'
+} from './types.ts'
 
 export type ApplicationOptions = {
   type: WorkerType
@@ -86,7 +86,6 @@ export class Application {
   async initialize() {
     await this.registry.hooks.call(Hook.BeforeInitialize, { concurrent: false })
     this.initializeEssential()
-    await this.registry.load()
     await this.container.load()
     await this.registry.hooks.call(Hook.AfterInitialize, { concurrent: false })
   }
@@ -210,6 +209,7 @@ export class Application {
       format: this.format,
       container: this.container,
       registry: this.registry,
+      eventManager: this.eventManager,
       connections: {
         add: this.addConnection.bind(this),
         remove: this.removeConnection.bind(this),

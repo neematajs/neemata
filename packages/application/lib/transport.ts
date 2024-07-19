@@ -23,12 +23,16 @@ export abstract class BaseTransportConnection {
   abstract readonly transport: string
   abstract readonly data: unknown
 
+  readonly services: Set<string>
+
   constructor(
     protected readonly registry: Registry,
-    readonly services: Set<string> = new Set(),
+    services: string[],
     readonly id: string = randomUUID(),
     readonly subscriptions = new Map<string, Subscription>(),
-  ) {}
+  ) {
+    this.services = new Set(services)
+  }
 
   notify<
     C extends TServiceContract,

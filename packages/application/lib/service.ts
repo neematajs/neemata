@@ -1,16 +1,17 @@
 import assert from 'node:assert'
 import { readdir } from 'node:fs/promises'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import type { TServiceContract } from '@neematajs/contract'
-import { Procedure } from './api'
-import { Hook } from './constants'
-import { Hooks } from './hooks'
+import { Procedure } from './api.ts'
+import { Hook } from './constants.ts'
+import { Hooks } from './hooks.ts'
 import type {
   AnyGuard,
   AnyMiddleware,
   AnyProcedure,
   HooksInterface,
-} from './types'
+} from './types.ts'
 
 export class Service<Contract extends TServiceContract = TServiceContract> {
   constructor(public readonly contract: Contract) {}
@@ -22,7 +23,7 @@ export class Service<Contract extends TServiceContract = TServiceContract> {
 
   implement<
     K extends Extract<keyof Contract['procedures'], string>,
-    I extends Procedure<Contract, K, any>,
+    I extends Procedure<Contract['procedures'][K], any, any>,
   >(name: K, implementaion: I) {
     this.procedures.set(name, implementaion)
     return this
@@ -33,10 +34,12 @@ export class Service<Contract extends TServiceContract = TServiceContract> {
     return this
   }
 
-  withAutoload(directory: string) {
+  withAutoload(directory: string | URL) {
+    const dirpath =
+      directory instanceof URL ? fileURLToPath(directory) : directory
     this.hooks.add(
       Hook.BeforeInitialize,
-      autoLoader(path.resolve(directory), this),
+      autoLoader(path.resolve(dirpath), this),
     )
     return this
   }
@@ -63,25 +66,21 @@ const autoLoader = (directory: string, service: Service) => async () => {
     if (entry.name.startsWith('.')) continue
     if (ignore.some((ext) => entry.name.endsWith(ext))) continue
     if (!extensions.some((ext) => entry.name.endsWith(ext))) continue
-    const procedureName = path.parse(entry.name).name
+    const procedureName = path.parse(
+      path.join(entry.parentPath, entry.name),
+    ).name
     if (!procedureNames.includes(procedureName)) continue
-    const filepath = path.join(directory, entry.name)
-    try {
-      let implementation: any = null
-      // TODO: this might be not very reliable
-      if (typeof module === 'undefined') {
-        implementation = await import(filepath).then((m) => m.default)
-      } else {
-        implementation = require(filepath)
-      }
-      assert(implementation instanceof Procedure, 'Invalid procedure')
-      service.implement(procedureName, implementation)
-    } catch (error: any) {
-      if (error.code === 'ERR_MODULE_NOT_FOUND') continue
-      throw error
+    const filepath = path.join(entry.parentPath, entry.name)
+    let implementation: any = null
+    // TODO: this might be not very reliable
+    if (typeof module === 'undefined') {
+      implementation = await import(filepath).then((m) => m.default)
+    } else {
+      implementation = require(filepath)
     }
+    assert(implementation instanceof Procedure, 'Invalid procedure')
+    service.implement(procedureName, implementation as any)
   }
-  throw new Error(`Module ${name} not found in ${directory}`)
 }
 
 // const service = new Service(DashboardServiceContract)
@@ -115,7 +114,7 @@ const autoLoader = (directory: string, service: Service) => async () => {
 //         )
 
 //         subscription.send('join', { a: '123' })
-//         subscription.once('neemata:event', () => {})
+//         subscription.once('event', () => {})
 //         // const subscribe = new Subscription<(typeof this.contract)['output']>()
 //         return subscription
 //       }),

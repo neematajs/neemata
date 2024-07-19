@@ -27,7 +27,14 @@
       "default": "./dist/common.js"
     }
   },
-  "dependencies": {
+  "peerDependencies": {
+    "@neematajs/common": "workspace:*",
+    "@neematajs/application": "workspace:*",
+    "@neematajs/server": "workspace:*",
+    "@neematajs/contract": "workspace:*",
+    "@neematajs/cli": "workspace:*"
+  },
+  "devDependencies": {
     "@neematajs/common": "workspace:*",
     "@neematajs/application": "workspace:*",
     "@neematajs/server": "workspace:*",

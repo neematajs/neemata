@@ -1,3 +1,6 @@
+/// <reference lib="dom" />
+// TODO: get rid of lib DOM somehow...
+
 const utf8decoder = new TextDecoder()
 const utf8encoder = new TextEncoder()
 
