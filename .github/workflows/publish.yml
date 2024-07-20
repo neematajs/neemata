@@ -30,8 +30,6 @@ on:
       
 
 jobs:
-  env: 
-    version_tag: v${{ input.version}}
   test:
     strategy:
       fail-fast: true
@@ -73,6 +71,8 @@ jobs:
       - run: pnpm run test
 
   build-and-publish:
+    env: 
+      version_tag: v${{ input.version }}
     needs: [test]
     runs-on: ubuntu-latest
     env:
@@ -87,13 +87,13 @@ jobs:
             github.rest.git.createRef({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              ref: 'refs/tags/${{ env.tag }}',
+              ref: 'refs/tags/${{ env.version_tag }}',
               sha: context.sha
             })
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: refs/tags/${{ env.tag }}
+          ref: refs/tags/${{ env.version_tag }}
 
       - name: Install Node.js
         uses: actions/setup-node@v4
@@ -130,14 +130,19 @@ jobs:
       
       - name: Publish Github Release
         if: ${{ inputs.release }}
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: actions/github-script@v7
         with:
-          tag_name: ${{ env.version_tag }}
-          release_name: Neemata Core ${{ env.version_tag }}
-          draft: false
-          prerelease: ${{ inputs.pre-release }}
+          script: |
+            github.rest.repos.createRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: '${{ env.version_tag }}',
+              name: '${{ env.version_tag }}',
+              draft: false,
+              prerelease: ${{ inputs.pre-release }},
+              generate_release_notes: true
+            })
+          
       
       - name: Delete tag on failure
         if: ${{ failure() && inputs.autotag }}
