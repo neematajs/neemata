@@ -2,6 +2,8 @@ name: Publish
 
 permissions: 
   contents: write
+  actions: write
+  attestations: write
 
 on:
   workflow_dispatch:
@@ -25,6 +27,7 @@ on:
         description: 'Version to publish'
         type: string
         required: true
+      
 
 jobs:
   test:
