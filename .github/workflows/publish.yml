@@ -13,12 +13,13 @@ on:
         type: boolean
         required: true
         default: false
+      autotag:
+        description: 'Whether to create a tag'
+        type: boolean
+        required: true
+        default: true
       version:
         description: 'Version to publish'
-        type: string
-        required: true
-      tag:
-        description: 'Tag to publish'
         type: string
         required: true
 
@@ -65,24 +66,26 @@ jobs:
 
   build-and-publish:
     needs: [test]
-    strategy:
-      matrix:
-        package:
-          common
-          contract
-          client
-          application
-          server
-          cli
-          neematajs
-          
     runs-on: ubuntu-latest
     env:
       NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
       NPM_USERNAME: ${{ secrets.NPM_USERNAME }}
     steps:
+      - name: Create tag
+        if: ${{ inputs.autotag }}
+        uses: actions/github-script@v5
+        with:
+          script: |
+            github.rest.git.createRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: 'refs/tags/${{ inputs.version }}',
+              sha: context.sha
+            })
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
 
       - name: Install Node.js
         uses: actions/setup-node@v4
@@ -127,4 +130,14 @@ jobs:
           release_name: Neemata Core v${{ inputs.version }}
           draft: false
           prerelease: ${{ inputs.pre-release }}
-            
+      
+      - name: Delete tag on failure
+        if: failure() && ${{ inputs.autotag }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.git.deleteRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: 'refs/tags/${{ inputs.version }}',
+            })
