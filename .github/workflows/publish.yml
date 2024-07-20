@@ -30,6 +30,8 @@ on:
       
 
 jobs:
+  env: 
+    version_tag: v${{ input.version}}
   test:
     strategy:
       fail-fast: true
@@ -66,8 +68,8 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pnpm-store-
       - run: pnpm install
-      - run: pnpm run build
       - run: pnpm run check
+      - run: pnpm run build
       - run: pnpm run test
 
   build-and-publish:
@@ -85,13 +87,13 @@ jobs:
             github.rest.git.createRef({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              ref: 'refs/tags/${{ inputs.version }}',
+              ref: 'refs/tags/${{ env.tag }}',
               sha: context.sha
             })
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: refs/tags/${{ inputs.version }}
+          ref: refs/tags/${{ env.tag }}
 
       - name: Install Node.js
         uses: actions/setup-node@v4
@@ -132,18 +134,18 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: ${{ inputs.version }}
-          release_name: Neemata Core v${{ inputs.version }}
+          tag_name: ${{ env.version_tag }}
+          release_name: Neemata Core ${{ env.version_tag }}
           draft: false
           prerelease: ${{ inputs.pre-release }}
       
       - name: Delete tag on failure
-        if: failure() && ${{ inputs.autotag }}
+        if: ${{ failure() && inputs.autotag }}
         uses: actions/github-script@v7
         with:
           script: |
             github.rest.git.deleteRef({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              ref: 'refs/tags/${{ inputs.version }}',
+              ref: 'refs/tags/${{ env.version_tag }}',
             })
