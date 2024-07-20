@@ -8,15 +8,15 @@ import {
   StreamDataType,
 } from '@neematajs/common'
 import { Contract, Type } from '@neematajs/contract'
-import { Procedure } from '../lib/api'
-import { Application, type ApplicationOptions } from '../lib/application'
-import { WorkerType } from '../lib/constants'
-import { BaseExtension } from '../lib/extension'
-import { createLogger } from '../lib/logger'
-import type { Registry } from '../lib/registry'
-import { Service } from '../lib/service'
-import { BaseTaskRunner, Task } from '../lib/tasks'
-import { BaseTransport, BaseTransportConnection } from '../lib/transport'
+import { Procedure } from '../lib/api.ts'
+import { Application, type ApplicationOptions } from '../lib/application.ts'
+import { WorkerType } from '../lib/constants.ts'
+import { BaseExtension } from '../lib/extension.ts'
+import { createLogger } from '../lib/logger.ts'
+import type { Registry } from '../lib/registry.ts'
+import { Service } from '../lib/service.ts'
+import { BaseTaskRunner, Task } from '../lib/tasks.ts'
+import { BaseTransport, BaseTransportConnection } from '../lib/transport.ts'
 
 export class TestFormat extends BaseServerFormat {
   accepts = ['test']

@@ -20,7 +20,7 @@
     }
   },
   "scripts": {
-    "build": "tsup",
+    "build": "neemata-build -p neutral --root=./src './**/*.ts'",
     "type-check": "tsc --noEmit"
   },
   "dependencies": {

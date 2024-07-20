@@ -1,6 +1,6 @@
 import { isMainThread } from 'node:worker_threads'
 import { BasicSubscriptionManager, Hook } from '@neematajs/application'
-import { createBroadcastChannel } from './common'
+import { createBroadcastChannel } from './common.ts'
 
 export const WORKER_THREADS_SM_MESSAGE = 'wt_sm_message'
 export const WORKER_THREADS_SM_CHANNEL = 'wt_sm_channel'

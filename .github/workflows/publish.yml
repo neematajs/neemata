@@ -1,11 +1,81 @@
 name: Publish
 
 on:
-  release:
-    types: [published]
+  workflow_dispatch:
+    inputs:
+      release:
+        description: 'Whether to publish release'
+        type: boolean
+        required: true
+        default: true
+      pre-release:
+        description: 'Whether it is a pre-release'
+        type: boolean
+        required: true
+        default: false
+      version:
+        description: 'Version to publish'
+        type: string
+        required: true
+      tag:
+        description: 'Tag to publish'
+        type: string
+        required: true
 
 jobs:
+  test:
+    strategy:
+      fail-fast: true
+      matrix:
+        node:
+          - 18
+          - 20
+          - 22
+        os:
+          - ubuntu-latest
+          - macos-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Use Node.js ${{ matrix.node }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+          run_install: false
+      - name: Get pnpm store directory
+        shell: bash
+        run: |
+          echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+      - uses: actions/cache@v4
+        name: Setup pnpm cache
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+      - run: pnpm install
+      - run: pnpm run build
+      - run: pnpm run check
+      - run: pnpm run test
+
   build-and-publish:
+    needs: [test]
+    strategy:
+      matrix:
+        package:
+          common
+          contract
+          client
+          application
+          server
+          cli
+          neematajs
+          
     runs-on: ubuntu-latest
     env:
       NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -38,19 +108,23 @@ jobs:
       
       - name: Set version
         run: |
-          pnpm version ${{ github.event.release.tag_name }} -ws --allow-same-version --no-commit-hooks --no-git-tag-version --silent || true
+          pnpm version ${{ inputs.version }} -ws --allow-same-version --no-commit-hooks --no-git-tag-version --silent || true
           pnpm -r exec cp ../../README.md ./
           pnpm -r exec cp ../../LICENSE.md ./
 
-      - name: Build and test
-        run: |
-          pnpm run build
-          pnpm run check
-          pnpm run test
-
       - name: Dry-run publish and publish
         run: |
-          pnpm publish --dry-run --filter "*" --access public --no-git-checks --tag=$(pnpm --silent publish-tag ${{ github.event.release.tag_name }})
-          pnpm publish --filter "*" --access public --no-git-checks --tag=$(pnpm --silent publish-tag ${{ github.event.release.tag_name }})
-          
-          
+          pnpm publish --dry-run --filter "*" --access public --no-git-checks --tag=$(pnpm --silent publish-tag ${{ inputs.version }})
+          pnpm publish --filter "*" --access public --no-git-checks --tag=$(pnpm --silent publish-tag ${{ inputs.version }})
+      
+      - name: Publish Github Release
+        if: ${{ inputs.release }}
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ inputs.version }}
+          release_name: Neemata Core v${{ inputs.version }}
+          draft: false
+          prerelease: ${{ inputs.pre-release }}
+            

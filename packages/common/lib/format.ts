@@ -1,4 +1,4 @@
-import type { Rpc, StreamMetadata } from './types'
+import type { Rpc, StreamMetadata } from './types.ts'
 
 export interface ServerStreamConstructor {
   new (

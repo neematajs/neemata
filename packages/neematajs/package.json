@@ -2,7 +2,7 @@
   "name": "neematajs",
   "type": "module",
   "scripts": {
-    "build": "tsup",
+    "build": "neemata-build --root=./src './**/*.ts'",
     "type-check": "tsc --noEmit"
   },
   "exports": {

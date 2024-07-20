@@ -2,11 +2,11 @@ import { describe, expect, it } from 'vitest'
 
 import { JsonTypeBuilder } from '@sinclair/typebox/type'
 
-import { Contract } from '../src/contract'
-import { EventContract } from '../src/schemas/event'
-import { ProcedureContract } from '../src/schemas/procedure'
-import { ServiceContract } from '../src/schemas/service'
-import { SubscriptionContract } from '../src/schemas/subscription'
+import { Contract } from '../src/contract.ts'
+import { EventContract } from '../src/schemas/event.ts'
+import { ProcedureContract } from '../src/schemas/procedure.ts'
+import { ServiceContract } from '../src/schemas/service.ts'
+import { SubscriptionContract } from '../src/schemas/subscription.ts'
 
 describe('Contract', () => {
   it('"Contract" should be defined', () => {

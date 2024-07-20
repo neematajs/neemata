@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { WorkerType } from '../lib/constants'
+import { WorkerType } from '../lib/constants.ts'
 import {
   BaseSubscriptionManager,
   BasicSubscriptionManager,
   Subscription,
-} from '../lib/subscription'
-import { TestServiceContract, testLogger } from './_utils'
+} from '../lib/subscription.ts'
+import { TestServiceContract, testLogger } from './_utils.ts'
 
 describe.sequential('Basic subscription manager', () => {
   let subManager: BasicSubscriptionManager

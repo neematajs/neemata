@@ -1,14 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { Container, Provider } from '../lib/container'
-import { Registry } from '../lib/registry'
-import { Task, Tasks } from '../lib/tasks'
-import { createFuture, defer, noop, onAbort } from '../lib/utils/functions'
+import { Container, Provider } from '../lib/container.ts'
+import { Registry } from '../lib/registry.ts'
+import { Task, Tasks } from '../lib/tasks.ts'
+import { createFuture, defer, noop, onAbort } from '../lib/utils/functions.ts'
 import {
   testDefaultTimeout,
   testLogger,
   testTask,
   testTaskRunner,
-} from './_utils'
+} from './_utils.ts'
 
 describe.sequential('Task', () => {
   let task: Task

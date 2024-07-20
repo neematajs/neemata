@@ -10,7 +10,7 @@
     }
   },
   "scripts": {
-    "build": "tsup",
+    "build": "neemata-build -p neutral ./index.ts './lib/**/*.ts'",
     "type-check": "tsc --noEmit"
   }
 }

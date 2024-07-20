@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import type { TServiceContract } from '@neematajs/contract'
-import { BaseExtension } from './extension'
-import type { Registry } from './registry'
-import type { Subscription } from './subscription'
+import { BaseExtension } from './extension.ts'
+import type { Registry } from './registry.ts'
+import type { Subscription } from './subscription.ts'
 
 export interface BaseTransportData {
   transport: string

@@ -1,6 +1,6 @@
 import EventEmitter from 'node:events'
 import { BasicSubscriptionManager, WorkerType } from '@neematajs/application'
-import type { ApplicationWorkerOptions } from './worker'
+import type { ApplicationWorkerOptions } from './worker.ts'
 
 export const bindPortMessageHandler = (port: EventEmitter) => {
   port.on('message', (message) => {

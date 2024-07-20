@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { Scope } from '../lib/constants'
-import { Container, Provider, getProviderScope } from '../lib/container'
-import { Registry } from '../lib/registry'
-import type { AnyProcedure } from '../lib/types'
-import { testLogger, testProcedure, testService } from './_utils'
+import { Scope } from '../lib/constants.ts'
+import { Container, Provider, getProviderScope } from '../lib/container.ts'
+import { Registry } from '../lib/registry.ts'
+import type { AnyProcedure } from '../lib/types.ts'
+import { testLogger, testProcedure, testService } from './_utils.ts'
 
 describe.sequential('Provider', () => {
   let provider: Provider

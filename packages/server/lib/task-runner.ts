@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { MessagePort } from 'node:worker_threads'
 import { BaseTaskRunner, onAbort } from '@neematajs/application'
-import { WorkerMessageType, createBroadcastChannel } from './common'
+import { WorkerMessageType, createBroadcastChannel } from './common.ts'
 
 export class WorkerThreadsTaskRunner extends BaseTaskRunner {
   constructor(private readonly port: MessagePort) {
