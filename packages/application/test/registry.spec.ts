@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import { Kind } from '@neematajs/contract'
-import { Scope } from '../lib/constants'
-import { Provider } from '../lib/container'
-import { Registry } from '../lib/registry'
-import { noop } from '../lib/utils/functions'
-import { testLogger, testProcedure, testService, testTask } from './_utils'
+import { Scope } from '../lib/constants.ts'
+import { Provider } from '../lib/container.ts'
+import { Registry } from '../lib/registry.ts'
+import { noop } from '../lib/utils/functions.ts'
+import { testLogger, testProcedure, testService, testTask } from './_utils.ts'
 
 describe('Registry', () => {
   const logger = testLogger()

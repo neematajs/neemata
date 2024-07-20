@@ -1,12 +1,13 @@
 import { threadId } from 'node:worker_threads'
-import pino, {
-  stdTimeFunctions,
+import {
   type DestinationStream,
   type Level,
   type Logger as PinoLogger,
   type StreamEntry,
+  pino,
+  stdTimeFunctions,
 } from 'pino'
-import pretty from 'pino-pretty'
+import { build as pretty } from 'pino-pretty'
 
 export type Logger = PinoLogger
 export type LoggingOptions = {

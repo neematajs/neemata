@@ -1,16 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { WorkerType } from '../lib/constants'
-import { EventManager } from '../lib/events'
-import { Registry } from '../lib/registry'
-import type { Service } from '../lib/service'
-import { BasicSubscriptionManager } from '../lib/subscription'
-import type { BaseTransportConnection } from '../lib/transport'
+import { WorkerType } from '../lib/constants.ts'
+import { EventManager } from '../lib/events.ts'
+import { Registry } from '../lib/registry.ts'
+import type { Service } from '../lib/service.ts'
+import { BasicSubscriptionManager } from '../lib/subscription.ts'
+import type { BaseTransportConnection } from '../lib/transport.ts'
 import {
   type TestServiceContract,
   testConnection,
   testLogger,
   testService,
-} from './_utils'
+} from './_utils.ts'
 
 describe.sequential('Event manager', () => {
   let service: Service<typeof TestServiceContract>

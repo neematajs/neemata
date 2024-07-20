@@ -6,7 +6,7 @@
     "neemata-bun": "./dist/bun.js"
   },
   "scripts": {
-    "build": "tsup",
+    "build": "neemata-build ./cli.ts ./bun.ts ./node.ts",
     "type-check": "tsc --noEmit"
   },
   "dependencies": {

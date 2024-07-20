@@ -1,8 +1,7 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { Application } from '../lib/application'
-import { Provider } from '../lib/container'
-// import { Module } from '../lib/module'
-import { TestExtension, TestTransport, testApp } from './_utils'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { Application } from '../lib/application.ts'
+import { Provider } from '../lib/container.ts'
+import { TestExtension, TestTransport, testApp } from './_utils.ts'
 
 describe.sequential('Application', () => {
   let app: Application

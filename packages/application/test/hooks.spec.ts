@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import { Hooks } from '../lib/hooks'
+import { Hooks } from '../lib/hooks.ts'
 
 describe('Hooks', () => {
   let hooks: Hooks

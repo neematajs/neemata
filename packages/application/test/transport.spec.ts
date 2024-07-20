@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { Application } from '../lib/application'
-import type { Service } from '../lib/service'
+import type { Application } from '../lib/application.ts'
+import type { Service } from '../lib/service.ts'
 import {
   type TestConnection,
   type TestServiceContract,
@@ -8,7 +8,7 @@ import {
   testApp,
   testConnection,
   testService,
-} from './_utils'
+} from './_utils.ts'
 
 describe.sequential('Transport', () => {
   let app: Application

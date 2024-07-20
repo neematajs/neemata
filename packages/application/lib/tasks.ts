@@ -8,7 +8,7 @@ import {
   Provider,
 } from './container.ts'
 import type { Registry } from './registry.ts'
-import type { AnyTask, Merge, OmitFirstItem } from './types.ts'
+import type { AnyTask, OmitFirstItem } from './types.ts'
 import { createFuture, defer, merge, noop, onAbort } from './utils/functions.ts'
 
 export type TaskExecution<Res = any> = Promise<

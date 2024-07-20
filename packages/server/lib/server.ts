@@ -9,8 +9,8 @@ import {
   createLogger,
   noop,
 } from '@neematajs/application'
-import { WorkerMessageType, bindPortMessageHandler } from './common'
-import type { ApplicationWorkerData } from './worker'
+import { WorkerMessageType, bindPortMessageHandler } from './common.ts'
+import type { ApplicationWorkerData } from './worker.ts'
 
 export type ApplicationServerOptions = {
   applicationPath: string | URL

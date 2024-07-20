@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { Format } from '../lib/format'
-import { testFormat } from './_utils'
+import { Format } from '../lib/format.ts'
+import { testFormat } from './_utils.ts'
 
 describe.sequential('Format', () => {
   let format: Format

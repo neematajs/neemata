@@ -1,10 +1,14 @@
 import { ContractGuard } from '@neematajs/contract/guards'
 import { beforeEach, describe, expect, it } from 'vitest'
-import { Guard, Middleware } from '../lib/api'
-import { Hook } from '../lib/constants'
-import { Hooks } from '../lib/hooks'
-import { Service } from '../lib/service'
-import { type TestServiceContract, testProcedure, testService } from './_utils'
+import { Guard, Middleware } from '../lib/api.ts'
+import { Hook } from '../lib/constants.ts'
+import { Hooks } from '../lib/hooks.ts'
+import { Service } from '../lib/service.ts'
+import {
+  type TestServiceContract,
+  testProcedure,
+  testService,
+} from './_utils.ts'
 
 describe('Service', () => {
   let service: Service<typeof TestServiceContract>

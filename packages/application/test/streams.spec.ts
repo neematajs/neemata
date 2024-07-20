@@ -4,8 +4,8 @@ import {
   BinaryStreamResponse,
   EncodedStreamResponse,
   Stream,
-} from '../lib/streams'
-import { noop } from '../lib/utils/functions'
+} from '../lib/streams.ts'
+import { noop } from '../lib/utils/functions.ts'
 
 describe.sequential('Streams -> Response -> Encoded', () => {
   it('should be a duplex', () => {

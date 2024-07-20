@@ -2,7 +2,7 @@
   "name": "@neematajs/server",
   "type": "module",
   "scripts": {
-    "build": "tsup",
+    "build": "neemata-build ./index.ts './lib/**/*.ts'",
     "type-check": "tsc --noEmit"
   },
   "exports": {

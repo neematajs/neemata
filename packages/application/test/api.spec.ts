@@ -6,16 +6,16 @@ import {
   Middleware,
   Procedure,
   type ProcedureCallOptions,
-} from '../lib/api'
-import { Container, Provider } from '../lib/container'
-import { Registry } from '../lib/registry'
-import type { Service } from '../lib/service'
+} from '../lib/api.ts'
+import { Container, Provider } from '../lib/container.ts'
+import { Registry } from '../lib/registry.ts'
+import type { Service } from '../lib/service.ts'
 import {
   BinaryStreamResponse,
   EncodedStreamResponse,
   StreamResponse,
-} from '../lib/streams'
-import type { AnyProcedure, FilterFn, GuardFn } from '../lib/types'
+} from '../lib/streams.ts'
+import type { AnyProcedure, FilterFn, GuardFn } from '../lib/types.ts'
 import {
   type TestConnection,
   type TestServiceContract,
@@ -25,7 +25,7 @@ import {
   testLogger,
   testProcedure,
   testService,
-} from './_utils'
+} from './_utils.ts'
 
 describe.sequential('Procedure', () => {
   let procedure: AnyProcedure

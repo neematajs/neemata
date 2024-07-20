@@ -15,9 +15,9 @@ import {
   bindPortMessageHandler,
   createBroadcastChannel,
   providerWorkerOptions,
-} from './common'
-import { WorkerThreadsSubscriptionManager } from './subscription'
-import { WorkerThreadsTaskRunner } from './task-runner'
+} from './common.ts'
+import { WorkerThreadsSubscriptionManager } from './subscription.ts'
+import { WorkerThreadsTaskRunner } from './task-runner.ts'
 
 export type ApplicationWorkerOptions = {
   isServer: boolean
