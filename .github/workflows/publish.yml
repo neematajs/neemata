@@ -114,8 +114,8 @@ jobs:
           version: 9
           run_install: false
 
-      - name: Install dependencies
-        run: pnpm install
+      - name: Install dependencies and build
+        run: pnpm install && pnpm build
       
       - name: Set version
         run: |
@@ -125,8 +125,8 @@ jobs:
 
       - name: Dry-run publish and publish
         run: |
-          pnpm publish --dry-run --filter "*" --access public --no-git-checks --tag=$(pnpm --silent publish-tag ${{ inputs.version }})
-          pnpm publish --filter "*" --access public --no-git-checks --tag=$(pnpm --silent publish-tag ${{ inputs.version }})
+          pnpm publish --dry-run --filter "*" --access public --no-git-checks --tag=$(pnpm neemata-tag ${{ inputs.version }})
+          pnpm publish --filter "*" --access public --no-git-checks --tag=$(pnpm neemata-tag ${{ inputs.version }})
       
       - name: Publish Github Release
         if: ${{ inputs.release }}

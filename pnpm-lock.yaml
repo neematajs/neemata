@@ -12,8 +12,8 @@ importers:
         specifier: ^1.8.0
         version: 1.8.3
       '@neematajs/builder':
-        specifier: github:neematajs/builder#4496c5af26eac35ee2468d6abd06ff531d743c96
-        version: https://codeload.github.com/neematajs/builder/tar.gz/4496c5af26eac35ee2468d6abd06ff531d743c96
+        specifier: github:neematajs/builder#9b0438fa68a23a9a077d6df2725135e5bf14df9a
+        version: https://codeload.github.com/neematajs/builder/tar.gz/9b0438fa68a23a9a077d6df2725135e5bf14df9a
       '@types/node':
         specifier: ^20.14.11
         version: 20.14.11
@@ -328,8 +328,8 @@ packages:
   '@jridgewell/trace-mapping@0.3.25':
     resolution: {integrity: sha512-vNk6aEwybGtawWmy/PzwnGDOjCkLWSD2wqvjGGAgOAwCGWySYXfYoxt00IJkTF+8Lb57DwOb3Aa0o9CApepiYQ==}
 
-  '@neematajs/builder@https://codeload.github.com/neematajs/builder/tar.gz/4496c5af26eac35ee2468d6abd06ff531d743c96':
-    resolution: {tarball: https://codeload.github.com/neematajs/builder/tar.gz/4496c5af26eac35ee2468d6abd06ff531d743c96}
+  '@neematajs/builder@https://codeload.github.com/neematajs/builder/tar.gz/9b0438fa68a23a9a077d6df2725135e5bf14df9a':
+    resolution: {tarball: https://codeload.github.com/neematajs/builder/tar.gz/9b0438fa68a23a9a077d6df2725135e5bf14df9a}
     version: 1.0.0
     hasBin: true
 
@@ -1144,7 +1144,7 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.0
 
-  '@neematajs/builder@https://codeload.github.com/neematajs/builder/tar.gz/4496c5af26eac35ee2468d6abd06ff531d743c96':
+  '@neematajs/builder@https://codeload.github.com/neematajs/builder/tar.gz/9b0438fa68a23a9a077d6df2725135e5bf14df9a':
     dependencies:
       '@swc/core': 1.7.0
       glob: 11.0.0
