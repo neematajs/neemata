@@ -22,10 +22,12 @@
     "build": "neemata-build -p neutral --root=./src './**/*.ts'",
     "type-check": "tsc --noEmit"
   },
-  "dependencies": {
-    "@sinclair/typebox": "^0.32.34"
-  },
   "peerDependencies": {
+    "@sinclair/typebox": "^0.32.34",
+    "@neematajs/common": "workspace:*"
+  },
+  "devDependencies": {
+    "@sinclair/typebox": "^0.32.34",
     "@neematajs/common": "workspace:*"
   },
   "files": [

@@ -9,6 +9,7 @@ import {
 } from '@sinclair/typebox/type'
 
 import { EventContract, type TEventContract } from './schemas/event.ts'
+import { NativeEnum, type TNativeEnum } from './schemas/native-enum.ts'
 import {
   ProcedureContract,
   type TBaseProcedureContract,
@@ -27,7 +28,7 @@ import {
   SubscriptionContract,
   type TSubscriptionContract,
 } from './schemas/subscription.ts'
-import { type TUnionEnum, UnionEnum } from './schemas/union.ts'
+import { type TUnionEnum, UnionEnum } from './schemas/union-enum.ts'
 
 const Contract = Object.freeze({
   Procedure: ProcedureContract,
@@ -39,7 +40,7 @@ const Contract = Object.freeze({
 })
 
 const Type = Object.freeze(
-  Object.assign(new JsonTypeBuilder(), { Union: UnionEnum }),
+  Object.assign(new JsonTypeBuilder(), { UnionEnum, NativeEnum }),
 )
 
 type Encoded<T extends TSchema> = StaticEncode<T>
@@ -62,4 +63,5 @@ export {
   type TUnionEnum,
   type TUpStreamContract,
   type UpStream,
+  type TNativeEnum,
 }

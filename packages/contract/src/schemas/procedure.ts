@@ -36,12 +36,6 @@ export interface TProcedureContract<
     input: Input['static']
     output: Output['static']
   }
-  name: Name
-  serviceName: ServiceName
-  transports: Transports
-  input: Input
-  output: Output
-  timeout?: number
 }
 
 export const ProcedureContract = <
