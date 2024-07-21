@@ -77,7 +77,7 @@ jobs:
     env:
       NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
       NPM_USERNAME: ${{ secrets.NPM_USERNAME }}
-      version_tag: v${{ input.version }}
+      version_tag: v${{ inputs.version }}
     steps:
       - name: Create tag
         if: ${{ inputs.autotag }}
