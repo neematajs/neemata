@@ -54,6 +54,7 @@ export class Registry {
       TSubscriptionContract | TProcedureContract
     >(service.contract.procedures)) {
       if (ContractGuard.IsSubscription(procedure)) {
+        schemas.push(procedure.output)
         for (const event of Object.values(procedure.events)) {
           schemas.push(event.payload)
         }
