@@ -45,7 +45,7 @@
     "src",
     "dist",
     "tsconfig.json",
-    "LICENCE.md",
+    "LICENSE.md",
     "README.md"
   ]
 }

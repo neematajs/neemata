@@ -24,5 +24,13 @@
   "peerDependencies": {
     "@neematajs/common": "workspace:*",
     "@neematajs/contract": "workspace:*"
-  }
+  },
+  "files": [
+    "index.ts",
+    "lib",
+    "dist",
+    "tsconfig.json",
+    "LICENSE.md",
+    "README.md"
+  ]
 }
