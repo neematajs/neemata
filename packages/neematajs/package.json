@@ -40,5 +40,12 @@
     "@neematajs/server": "workspace:*",
     "@neematajs/contract": "workspace:*",
     "@neematajs/cli": "workspace:*"
-  }
+  },
+  "files": [
+    "src",
+    "dist",
+    "tsconfig.json",
+    "LICENCE.md",
+    "README.md"
+  ]
 }

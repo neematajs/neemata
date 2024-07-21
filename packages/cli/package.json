@@ -5,8 +5,15 @@
     "neemata": "./dist/node.js",
     "neemata-bun": "./dist/bun.js"
   },
+  "exports": {
+    ".": {
+      "bun": "./src/cli.ts",
+      "default": "./dist/cli.js",
+      "types": "./src/cli.ts"
+    }
+  },
   "scripts": {
-    "build": "neemata-build ./cli.ts ./bun.ts ./node.ts",
+    "build": "neemata-build --root=./src './**/*.ts'",
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
@@ -20,5 +27,12 @@
   "devDependencies": {
     "@neematajs/application": "workspace:*",
     "@neematajs/server": "workspace:*"
-  }
+  },
+  "files": [
+    "src",
+    "dist",
+    "tsconfig.json",
+    "LICENCE.md",
+    "README.md"
+  ]
 }

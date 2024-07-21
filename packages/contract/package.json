@@ -27,5 +27,12 @@
   },
   "peerDependencies": {
     "@neematajs/common": "workspace:*"
-  }
+  },
+  "files": [
+    "src",
+    "dist",
+    "tsconfig.json",
+    "LICENCE.md",
+    "README.md"
+  ]
 }

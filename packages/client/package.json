@@ -19,5 +19,13 @@
   "devDependencies": {
     "@neematajs/contract": "workspace:*",
     "@neematajs/common": "workspace:*"
-  }
+  },
+  "files": [
+    "index.ts",
+    "lib",
+    "dist",
+    "tsconfig.json",
+    "LICENCE.md",
+    "README.md"
+  ]
 }

@@ -11,5 +11,13 @@
   "scripts": {
     "build": "neemata-build -p neutral ./index.ts './lib/**/*.ts'",
     "type-check": "tsc --noEmit"
-  }
+  },
+  "files": [
+    "index.ts",
+    "lib",
+    "dist",
+    "tsconfig.json",
+    "LICENCE.md",
+    "README.md"
+  ]
 }
