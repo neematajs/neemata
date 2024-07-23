@@ -23,13 +23,13 @@ export abstract class BaseTransportConnection {
   abstract readonly transport: string
   abstract readonly data: unknown
 
+  readonly id: string = randomUUID()
+  readonly subscriptions = new Map<string, Subscription>()
   readonly services: Set<string>
 
   constructor(
     protected readonly registry: Registry,
     services: string[],
-    readonly id: string = randomUUID(),
-    readonly subscriptions = new Map<string, Subscription>(),
   ) {
     this.services = new Set(services)
   }
