@@ -151,6 +151,7 @@ export class Procedure<
     ProcedureTransports,
     ProcedureDeps
   >
+  metadata: Map<MetadataKey<any, any>, any> = new Map()
   dependencies: ProcedureDeps = {} as ProcedureDeps
   guards = new Set<AnyGuard>()
   middlewares = new Set<AnyMiddleware>()
@@ -199,7 +200,26 @@ export class Procedure<
     for (const middleware of middlewares) this.middlewares.add(middleware)
     return this
   }
+
+  withMetadata<T extends MetadataKey<any, any>>(key: T, value: T['type']) {
+    this.metadata.set(key, value)
+  }
 }
+
+export type MetadataKey<V = any, T = any> = { key: V; type: T }
+
+export const MetadataKey = <T>(key: string | object) =>
+  ({ key }) as MetadataKey<typeof key, T>
+
+export const getProcedureMetadata = <
+  T extends MetadataKey,
+  D extends T['type'] | undefined = undefined,
+>(
+  procedure: Procedure,
+  key: T,
+  defaultValue?: D,
+): D extends undefined ? T['type'] | undefined : T['type'] =>
+  procedure.metadata.get(key) ?? defaultValue
 
 export type ProcedureCallOptions = {
   service: Service
