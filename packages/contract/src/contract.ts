@@ -10,6 +10,7 @@ import {
 
 import { EventContract, type TEventContract } from './schemas/event.ts'
 import { NativeEnum, type TNativeEnum } from './schemas/native-enum.ts'
+import { Nullable } from './schemas/nullable.ts'
 import {
   ProcedureContract,
   type TBaseProcedureContract,
@@ -40,7 +41,7 @@ const Contract = Object.freeze({
 })
 
 const Type = Object.freeze(
-  Object.assign(new JsonTypeBuilder(), { UnionEnum, NativeEnum }),
+  Object.assign(new JsonTypeBuilder(), { UnionEnum, NativeEnum, Nullable }),
 )
 
 type Encoded<T extends TSchema> = StaticEncode<T>

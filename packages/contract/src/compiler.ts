@@ -1,5 +1,6 @@
-import { TypeCompiler } from '@sinclair/typebox/compiler'
+import { type TypeCheck, TypeCompiler } from '@sinclair/typebox/compiler'
 import type { TSchema } from '@sinclair/typebox/type'
+import { Value } from '@sinclair/typebox/value'
 
 export type Compiled = {
   check: (val: unknown) => boolean
@@ -11,25 +12,43 @@ export type Compiled = {
   ) => { success: true; value: unknown } | { success: false; error: any }
 }
 
-export const compile = (schema: TSchema): Compiled => {
+const compileSchema = (
+  schema: TSchema,
+): TypeCheck<TSchema> & {
+  Prepare: (value: any) => unknown
+} => {
   const compiled = TypeCompiler.Compile(schema)
+  const Prepare = (value: any) => {
+    for (const fn of [Value.Clean, Value.Default]) {
+      value = fn(schema, value)
+    }
+    return value
+  }
+  return Object.assign(compiled, { Prepare })
+}
 
-  // TODO: error handling
-  // TODO: Value.Convert?
-  // TODO: Value.Default?
+export const compile = (schema: TSchema): Compiled => {
+  const compiled = compileSchema(schema)
 
+  // TODO: custom error handling/shaping
   return {
     check: compiled.Check,
     decode: (val) => {
       try {
-        return { success: true as const, value: compiled.Decode(val) }
+        return {
+          success: true as const,
+          value: compiled.Decode(compiled.Prepare(val)),
+        }
       } catch (error) {
         return { success: false as const, error }
       }
     },
     encode: (val) => {
       try {
-        return { success: true as const, value: compiled.Encode(val) }
+        return {
+          success: true as const,
+          value: compiled.Encode(compiled.Prepare(val)),
+        }
       } catch (error) {
         return { success: false as const, error }
       }
