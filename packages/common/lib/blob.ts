@@ -42,7 +42,7 @@ export class ApiBlob implements ApiBlobInterface {
 
     if (source instanceof ReadableStream) {
       _source = source
-    } else if (source instanceof File) {
+    } else if ('File' in globalThis && source instanceof globalThis.File) {
       _source = source.stream()
       metadata.size = source.size
       metadata.filename = source.name
