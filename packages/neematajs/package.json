@@ -1,5 +1,5 @@
 {
-  "name": "neematajs",
+  "name": "nmtjs",
   "type": "module",
   "scripts": {
     "build": "neemata-build --root=./src './**/*.ts'",
