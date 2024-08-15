@@ -1,4 +1,4 @@
-import { Kind, type TSchema } from '@sinclair/typebox/type'
+import { Kind, type TSchema, TypeRegistry } from '@sinclair/typebox/type'
 import { type ContractSchemaOptions, createSchema } from '../utils.ts'
 
 export const EventKind = 'NeemataEvent'
@@ -23,10 +23,13 @@ export interface TEventContract<
 export const EventContract = <Payload extends TSchema>(
   payload: Payload,
   schemaOptions: ContractSchemaOptions = {} as ContractSchemaOptions,
-) =>
-  createSchema<TEventContract<Payload>>({
+) => {
+  if (!TypeRegistry.Has(EventKind)) TypeRegistry.Set(EventKind, () => true)
+
+  return createSchema<TEventContract<Payload>>({
     ...schemaOptions,
     [Kind]: EventKind,
     type: 'neemata:event',
     payload,
   })
+}

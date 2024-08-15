@@ -1,25 +1,32 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { WorkerType } from '../lib/constants.ts'
+import type { Application } from '../lib/application.ts'
+import { providers } from '../lib/providers.ts'
 import {
-  BaseSubscriptionManager,
-  BasicSubscriptionManager,
   Subscription,
+  type SubscriptionManager,
+  basicSubManagerPlugin,
 } from '../lib/subscription.ts'
-import { TestServiceContract, testLogger } from './_utils.ts'
+import { TestServiceContract, testApp, testLogger } from './_utils.ts'
 
 describe.sequential('Basic subscription manager', () => {
-  let subManager: BasicSubscriptionManager
+  let subManager: SubscriptionManager
+  let app: Application
   const contract = TestServiceContract.procedures.testSubscription
 
-  beforeEach(() => {
-    const logger = testLogger()
-    // @ts-expect-error
-    subManager = new BasicSubscriptionManager({ logger, type: WorkerType.Api })
+  beforeEach(async () => {
+    app = testApp().use(basicSubManagerPlugin)
+    await app.initialize()
+    subManager = await app.container.resolve(providers.subManager)
   })
 
   it('should initialize', async () => {
     expect(subManager).toBeDefined()
-    expect(subManager).toBeInstanceOf(BaseSubscriptionManager)
+    expect(subManager).toMatchObject({
+      publish: expect.any(Function),
+      subscribe: expect.any(Function),
+      unsubscribe: expect.any(Function),
+      serialize: expect.any(Function),
+    })
   })
 
   it('should subscribe', async () => {

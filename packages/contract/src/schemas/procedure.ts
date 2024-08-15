@@ -1,4 +1,4 @@
-import { Kind, type TSchema } from '@sinclair/typebox/type'
+import { Kind, type TSchema, TypeRegistry } from '@sinclair/typebox/type'
 
 import { type ContractSchemaOptions, createSchema } from '../utils.ts'
 
@@ -46,8 +46,11 @@ export const ProcedureContract = <
   output: Output,
   timeout?: number,
   schemaOptions: ContractSchemaOptions = {} as ContractSchemaOptions,
-) =>
-  createSchema<TProcedureContract<Input, Output>>({
+) => {
+  if (!TypeRegistry.Has(ProcedureKind))
+    TypeRegistry.Set(ProcedureKind, () => true)
+
+  return createSchema<TProcedureContract<Input, Output>>({
     ...schemaOptions,
     [Kind]: ProcedureKind,
     type: 'neemata:procedure',
@@ -55,3 +58,4 @@ export const ProcedureContract = <
     output,
     timeout,
   })
+}

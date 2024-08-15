@@ -1,4 +1,4 @@
-export type StreamMetadata = {
+export type ApiBlobMetadata = {
   type: string
   size: number
   filename?: string
@@ -11,11 +11,19 @@ export type Rpc = {
   payload: any
 }
 
-// export interface TypeProvider {
-//   readonly input: unknown
-//   readonly output: unknown
-// }
+export type RpcResponse = {
+  callId: number
+  error?: any
+  payload?: any
+}
 
-// export type CallTypeProvider<T extends TypeProvider, V> = (T & {
-//   input: V
-// })['output']
+export interface TypeProvider {
+  readonly input: unknown
+  readonly output: unknown
+}
+
+export type CallTypeProvider<T extends TypeProvider, V> = (T & {
+  input: V
+})['output']
+
+export type Pattern = RegExp | string | ((value: string) => boolean)

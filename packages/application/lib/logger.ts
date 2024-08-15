@@ -15,6 +15,7 @@ export type LoggingOptions = {
   pinoOptions?: any
 }
 
+// TODO: use node:util inspect
 const bg = (value, color) => `\x1b[${color}m${value}\x1b[0m`
 const fg = (value, color) => `\x1b[38;5;${color}m${value}\x1b[0m`
 

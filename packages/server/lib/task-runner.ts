@@ -1,12 +1,10 @@
 import { randomUUID } from 'node:crypto'
 import type { MessagePort } from 'node:worker_threads'
-import { BaseTaskRunner, onAbort } from '@neematajs/application'
+import { type BaseTaskExecutor, onAbort } from '@nmtjs/application'
 import { WorkerMessageType, createBroadcastChannel } from './common.ts'
 
-export class WorkerThreadsTaskRunner extends BaseTaskRunner {
-  constructor(private readonly port: MessagePort) {
-    super()
-  }
+export class WorkerThreadsTaskRunner implements BaseTaskExecutor {
+  constructor(private readonly port: MessagePort) {}
 
   execute(signal: AbortSignal, name: string, ...args: any[]) {
     if (!name) throw new Error('Task name is required')

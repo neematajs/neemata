@@ -1,21 +1,21 @@
+import { afterEach } from 'node:test'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { WorkerType } from '../lib/constants.ts'
+import type { Application } from '../lib/application.ts'
+import type { Connection } from '../lib/connection.ts'
 import { EventManager } from '../lib/events.ts'
-import { Registry } from '../lib/registry.ts'
 import type { Service } from '../lib/service.ts'
-import { BasicSubscriptionManager } from '../lib/subscription.ts'
-import type { BaseTransportConnection } from '../lib/transport.ts'
 import {
   type TestServiceContract,
+  testApp,
   testConnection,
-  testLogger,
   testService,
 } from './_utils.ts'
 
 describe.sequential('Event manager', () => {
+  let app: Application
   let service: Service<typeof TestServiceContract>
   let manager: EventManager
-  let connection: BaseTransportConnection
+  let connection: Connection
 
   let options: [
     typeof service.contract.procedures.testSubscription,
@@ -23,24 +23,23 @@ describe.sequential('Event manager', () => {
     typeof connection,
   ]
 
-  beforeEach(() => {
-    const logger = testLogger()
-    const registry = new Registry({ logger })
+  beforeEach(async () => {
     service = testService()
-    registry.registerService(service)
-    const subManager = new BasicSubscriptionManager(
-      // @ts-expect-error
-      { logger, type: WorkerType.Api },
-      undefined,
-    )
-    manager = new EventManager({ registry, subManager, logger })
-    connection = testConnection(registry)
+    app = testApp().withServices(service)
+    manager = app.eventManager
+    connection = testConnection(app.registry)
 
     options = [
       service.contract.procedures.testSubscription,
       { testOption: 'test' },
       connection,
     ]
+
+    await app.initialize()
+  })
+
+  afterEach(async () => {
+    await app.terminate()
   })
 
   it('should be an event manager', () => {

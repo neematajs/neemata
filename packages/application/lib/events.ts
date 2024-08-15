@@ -1,22 +1,33 @@
-import type { TSubscriptionContract } from '@neematajs/contract'
+import type { TSubscriptionContract } from '@nmtjs/contract'
+import type { Connection } from './connection.ts'
+import { Hook } from './constants.ts'
+import type { Container } from './container.ts'
 import type { Logger } from './logger.ts'
+import { providers } from './providers.ts'
 import type { Registry } from './registry.ts'
-import { type BaseSubscriptionManager, Subscription } from './subscription.ts'
-import type { BaseTransportConnection } from './transport.ts'
+import { Subscription, type SubscriptionManager } from './subscription.ts'
 
 export class EventManager {
+  subManager!: SubscriptionManager
+
   constructor(
     private readonly application: {
       registry: Registry
-      subManager: BaseSubscriptionManager
+      container: Container
       logger: Logger
     },
-  ) {}
+  ) {
+    this.registry.registerHook(Hook.AfterInitialize, async () => {
+      this.subManager = await this.application.container.resolve(
+        providers.subManager,
+      )
+    })
+  }
 
   async subscribe<C extends TSubscriptionContract>(
     contract: C,
     options: C['static']['options'],
-    connection: BaseTransportConnection,
+    connection: Connection,
   ): Promise<{
     subscription: Subscription<C>
     isNew: boolean
@@ -34,7 +45,7 @@ export class EventManager {
       `Subscribing connection [${id}] to [${subscriptionKey}] with options`,
     )
     const destroyFn = (error?: any) => {
-      subscription!.emit('abort', error)
+      if (error) subscription!.emit('abort', error)
       subscription!.emit('end')
       this.unsubscribeByKey(subscriptionKey, connection)
     }
@@ -47,7 +58,7 @@ export class EventManager {
   async unsubscribe<C extends TSubscriptionContract>(
     contract: C,
     options: C['static']['options'],
-    connection: BaseTransportConnection,
+    connection: Connection,
   ): Promise<boolean> {
     const subscriptionKey = this.subManager.serialize(contract, options)
     return this.unsubscribeByKey(subscriptionKey, connection)
@@ -55,7 +66,7 @@ export class EventManager {
 
   async unsubscribeByKey(
     key: string,
-    connection: BaseTransportConnection,
+    connection: Connection,
   ): Promise<boolean> {
     const { id, subscriptions } = connection
     this.logger.debug(`Unsubscribing connection [${id}] from event [${key}]`)
@@ -81,14 +92,10 @@ export class EventManager {
   async isSubscribed<C extends TSubscriptionContract>(
     contract: C,
     options: C['static']['options'],
-    connection: BaseTransportConnection,
+    connection: Connection,
   ) {
     const subscriptionKey = this.subManager.serialize(contract, options)
     return connection.subscriptions.has(subscriptionKey)
-  }
-
-  private get subManager() {
-    return this.application.subManager
   }
 
   private get logger() {

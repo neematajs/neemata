@@ -33,7 +33,8 @@ export class Hooks {
     const hooks = this.collection.get(name)
     if (!hooks) return
     if (concurrent) {
-      await Promise.all(Array.from(hooks).map((hook) => hook(...args)))
+      // TODO: add some logging maybe?
+      await Promise.allSettled(Array.from(hooks).map((hook) => hook(...args)))
     } else {
       const hooksArr = Array.from(hooks)
       if (reverse) hooksArr.reverse()

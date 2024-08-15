@@ -1,9 +1,14 @@
-import { type TypeCheck, TypeCompiler } from '@sinclair/typebox/compiler'
+import {
+  type TypeCheck,
+  TypeCompiler,
+  type ValueErrorIterator,
+} from '@sinclair/typebox/compiler'
 import type { TSchema } from '@sinclair/typebox/type'
 import { Value } from '@sinclair/typebox/value'
 
 export type Compiled = {
   check: (val: unknown) => boolean
+  errors: (val: unknown) => ValueErrorIterator
   decode: (
     val: unknown,
   ) => { success: true; value: unknown } | { success: false; error: any }
@@ -32,7 +37,8 @@ export const compile = (schema: TSchema): Compiled => {
 
   // TODO: custom error handling/shaping
   return {
-    check: compiled.Check,
+    check: compiled.Check.bind(compiled),
+    errors: compiled.Errors.bind(compiled),
     decode: (val) => {
       try {
         return {

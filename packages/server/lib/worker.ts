@@ -6,26 +6,26 @@ import {
 } from 'node:worker_threads'
 import {
   type Application,
-  type BaseSubscriptionManager,
-  type BaseTaskRunner,
+  type BaseTaskExecutor,
+  type Plugin,
   WorkerType,
-} from '@neematajs/application'
+} from '@nmtjs/application'
 import {
   WorkerMessageType,
   bindPortMessageHandler,
   createBroadcastChannel,
   providerWorkerOptions,
 } from './common.ts'
-import { WorkerThreadsSubscriptionManager } from './subscription.ts'
+import { WTSubManagerPlugin } from './subscription.ts'
 import { WorkerThreadsTaskRunner } from './task-runner.ts'
 
 export type ApplicationWorkerOptions = {
   isServer: boolean
   workerType: WorkerType
-  subscriptionManager: new (...args: any[]) => BaseSubscriptionManager
+  subscriptionManager: Plugin
   id: number
   workerOptions: any
-  tasksRunner?: BaseTaskRunner
+  tasksRunner?: BaseTaskExecutor
 }
 
 export type ApplicationWorkerData = {
@@ -55,7 +55,7 @@ export async function start(
     workerType,
     workerOptions,
     tasksRunner,
-    subscriptionManager: WorkerThreadsSubscriptionManager,
+    subscriptionManager: WTSubManagerPlugin,
     isServer: true,
   })
 
@@ -64,12 +64,12 @@ export async function start(
   process.on('uncaughtException', (err) => app.logger.error(err))
   process.on('unhandledRejection', (err) => app.logger.error(err))
 
-  await app.start()
+  await app.startup()
   parentPort.postMessage({ type: WorkerMessageType.Ready })
 
   parentPort.on(WorkerMessageType.Stop, async () => {
     try {
-      await app.stop()
+      await app.shutdown()
       process.exit(0)
     } catch (err) {
       app.logger.error(err)

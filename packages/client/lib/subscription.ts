@@ -1,4 +1,4 @@
-import type { TSubscriptionContract } from '@neematajs/contract'
+import type { TSubscriptionContract } from '@nmtjs/contract'
 import { EventEmitter } from './utils.ts'
 
 export class Subscription<

@@ -1,5 +1,5 @@
 {
-  "name": "@neematajs/server",
+  "name": "@nmtjs/server",
   "type": "module",
   "scripts": {
     "build": "neemata-build ./index.ts './lib/**/*.ts'",
@@ -13,12 +13,12 @@
     }
   },
   "peerDependencies": {
-    "@neematajs/application": "workspace:*",
-    "@neematajs/common": "workspace:*"
+    "@nmtjs/application": "workspace:*",
+    "@nmtjs/common": "workspace:*"
   },
   "devDependencies": {
-    "@neematajs/application": "workspace:*",
-    "@neematajs/common": "workspace:*"
+    "@nmtjs/application": "workspace:*",
+    "@nmtjs/common": "workspace:*"
   },
   "files": [
     "index.ts",

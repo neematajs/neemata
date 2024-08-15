@@ -1,83 +1,71 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { type Mock, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Application } from '../lib/application.ts'
+import type { Connection } from '../lib/connection.ts'
+import { Registry } from '../lib/registry.ts'
 import type { Service } from '../lib/service.ts'
 import {
-  type TestConnection,
   type TestServiceContract,
-  TestTransport,
   testApp,
   testConnection,
+  testLogger,
   testService,
+  testTransport,
 } from './_utils.ts'
 
 describe.sequential('Transport', () => {
   let app: Application
-  let transport: TestTransport
-  let connection: TestConnection<any>
+  let initSpy: Mock
+  let startupSpy: Mock
+  let shutdownSpy: Mock
 
   beforeEach(async () => {
-    app = testApp().withTransport(TestTransport)
+    initSpy = vi.fn()
+    startupSpy = vi.fn()
+    shutdownSpy = vi.fn()
+
+    app = testApp().use(testTransport(initSpy, startupSpy, shutdownSpy))
     await app.initialize()
-    for (const t of app.transports) transport = t as TestTransport
-    connection = testConnection(app.registry)
   })
 
   it('should start and stop', async () => {
-    const startSpy = vi.spyOn(transport, 'start')
-    const stopSpy = vi.spyOn(transport, 'stop')
-    await app.start()
-    expect(startSpy).toHaveBeenCalledOnce()
-    await app.stop()
-    expect(stopSpy).toHaveBeenCalledOnce()
-  })
-
-  it('should add connection', async () => {
-    transport.application.connections.add(connection)
-    expect(app.connections.size).toBe(1)
-  })
-
-  it('should remove connection', async () => {
-    transport.application.connections.add(connection)
-    expect(app.connections.size).toBe(1)
-    transport.application.connections.remove(connection)
-    expect(app.connections.size).toBe(0)
-  })
-
-  it('should remove connection by id', async () => {
-    transport.application.connections.add(connection)
-    expect(app.connections.size).toBe(1)
-    transport.application.connections.remove(connection.id)
-    expect(app.connections.size).toBe(0)
-  })
-
-  it('should get connection', async () => {
-    transport.application.connections.add(connection)
-    expect(transport.application.connections.get(connection.id)).toBe(
-      connection,
-    )
+    expect(initSpy).toHaveBeenCalledOnce()
+    await app.startup()
+    expect(startupSpy).toHaveBeenCalledOnce()
+    await app.shutdown()
+    expect(shutdownSpy).toHaveBeenCalledOnce()
   })
 })
 
-describe.sequential('Transport connection', () => {
+describe.sequential('Connection', () => {
   let app: Application
   let service: Service<typeof TestServiceContract>
-  let transport: TestTransport
+  let connection: Connection
+  let sendEventSpy: Mock
 
   beforeEach(async () => {
     service = testService()
-    app = testApp().withServices(service).withTransport(TestTransport)
-
-    await app.initialize()
-    for (const t of app.transports) transport = t as TestTransport
+    const logger = testLogger()
+    const registry = new Registry({ logger })
+    registry.registerService(service)
+    sendEventSpy = vi.fn()
+    connection = testConnection(registry, { sendEvent: sendEventSpy })
   })
 
-  it('should send event', async () => {
-    const connection = testConnection(app.registry)
-    transport.application.connections.add(connection)
+  it('should init', () => {
+    expect(connection).toBeDefined()
+    expect(connection.id).toBeTypeOf('string')
+    expect(connection.type).toBe('test')
+    expect(connection.services).toBeInstanceOf(Set)
+    expect(Array.from(connection.services)).toStrictEqual([
+      service.contract.name,
+    ])
+    expect(connection.subscriptions).toBeInstanceOf(Map)
+  })
+
+  it('should send event', () => {
     const payload = 'test'
-    const sendSpy = vi.spyOn(connection, 'sendEvent' as any)
     connection.notify(service.contract, 'testEvent', payload)
-    expect(sendSpy).toHaveBeenCalledWith(
+    expect(sendEventSpy).toHaveBeenCalledWith(
       service.contract.name,
       'testEvent',
       payload,

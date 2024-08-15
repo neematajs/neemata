@@ -1,34 +1,35 @@
 import { createHash } from 'node:crypto'
 import { EventEmitter } from 'node:events'
-import type { TSubscriptionContract } from '@neematajs/contract'
+import type { TSubscriptionContract } from '@nmtjs/contract'
 
 import { WorkerType } from './constants.ts'
-import { BaseExtension } from './extension.ts'
+import { createPlugin } from './plugin.ts'
+import { providers } from './providers.ts'
+
+type SubscriptionEvents<Contract extends TSubscriptionContract> = {
+  abort: [reason?: any]
+  end: []
+} & {
+  [K in 'event']: [
+    eventName: keyof Contract['events'],
+    payload: Contract['static']['events'][keyof Contract['static']['events']],
+  ]
+}
 
 export class Subscription<
-  SubscriptionContract extends TSubscriptionContract = TSubscriptionContract,
-> extends EventEmitter<
-  {
-    abort: [reason?: any]
-    end: []
-  } & {
-    [K in 'event']: [
-      eventName: keyof SubscriptionContract['events'],
-      payload: SubscriptionContract['static']['events'][keyof SubscriptionContract['static']['events']],
-    ]
-  }
-> {
+  Contract extends TSubscriptionContract = TSubscriptionContract,
+> extends EventEmitter<SubscriptionEvents<Contract>> {
   constructor(
-    public readonly contract: SubscriptionContract,
+    public readonly contract: Contract,
     public readonly key: string,
     public readonly destroy: () => void,
   ) {
     super()
   }
 
-  send<K extends Extract<keyof SubscriptionContract['events'], string>>(
+  send<K extends Extract<keyof Contract['events'], string>>(
     event: K,
-    payload: SubscriptionContract['events'][K]['static'],
+    payload: Contract['events'][K]['static'],
   ) {
     if (event in this.contract.events === false)
       throw new Error(`Event [${event}] is not defined in the contract`)
@@ -36,67 +37,75 @@ export class Subscription<
   }
 }
 
-export abstract class BaseSubscriptionManager extends BaseExtension {
-  abstract subscribe(subscription: Subscription): any
-  abstract unsubscribe(subscription: Subscription): any
-  abstract publish(key: string, event: string, payload: any): any
+export interface SubscriptionManager {
+  subscribe(subscription: Subscription): any
+  unsubscribe(subscription: Subscription): any
+  publish(key: string, event: string, payload: any): any
 
   serialize(
     contract: TSubscriptionContract,
     options: Record<string, string | number>,
-  ): string {
-    let value = ''
-    const keys = Object.keys(options).sort()
-    for (const key of keys) value += `${key}:${options[key]},`
-    const hash = createHash('sha1').update(value).digest('base64url')
-    return `${contract.serviceName}/${contract.name}:${hash}`
-  }
+  ): string
 }
 
-export class BasicSubscriptionManager extends BaseSubscriptionManager {
-  name = 'Basic subscription manager'
+export const serialize: SubscriptionManager['serialize'] = (
+  contract,
+  options,
+) => {
+  let value = ''
+  const keys = Object.keys(options).sort()
+  for (const key of keys) value += `${key}:${options[key]}`
+  const hash = createHash('sha1').update(value).digest('base64url')
+  return `${contract.serviceName}/${contract.name}:${hash}`
+}
 
-  protected readonly subscriptions = new Map<string, Set<Subscription<any>>>()
+export const basicSubManagerPlugin = createPlugin(
+  'BasicSubscriptionManager',
+  (app) => {
+    const { logger, type, container } = app
+    const isApiWorker = type === WorkerType.Api
+    const subscriptions = new Map<string, Set<Subscription<any>>>()
 
-  subscribe(subscription: Subscription): any {
-    let subs = this.subscriptions.get(subscription.key)
-    if (!subs) {
-      subs = new Set()
-      this.subscriptions.set(subscription.key, subs)
+    const subscribe = (subscription: Subscription) => {
+      let subs = subscriptions.get(subscription.key)
+      if (!subs) {
+        subs = new Set()
+        subscriptions.set(subscription.key, subs)
+      }
+      subs.add(subscription)
     }
-    subs.add(subscription)
-  }
 
-  unsubscribe(subscription: Subscription): any {
-    const subs = this.subscriptions.get(subscription.key)
-    if (!subs) return
-    subs.delete(subscription)
-    if (!subs.size) this.subscriptions.delete(subscription.key)
-  }
+    const unsubscribe = (subscription: Subscription) => {
+      const subs = subscriptions.get(subscription.key)
+      if (!subs) return
+      subs.delete(subscription)
+      if (!subs.size) subscriptions.delete(subscription.key)
+    }
 
-  async publish(key: string, event: string, payload: any) {
-    if (this.isApiWorker) this.emit(key, event, payload)
-  }
+    const publish = (key: string, event: string, payload: any) => {
+      if (isApiWorker) emit(key, event, payload)
+    }
 
-  protected emit(key: string, event: string, payload: any) {
-    this.logger.debug(payload, `Emitting event [${key}] - ${event}`)
-    const subs = this.subscriptions.get(key)
-    if (subs?.size) {
-      for (const sub of subs) {
-        sub.send(event, payload)
+    const emit = (key: string, event: string, payload: any) => {
+      logger.debug(payload, `Emitting event [${key}] - ${event}`)
+      const subs = subscriptions.get(key)
+      if (subs?.size) {
+        for (const sub of subs) {
+          sub.send(event, payload)
+        }
       }
     }
-  }
 
-  protected get logger() {
-    return this.application.logger
-  }
+    container.provide(providers.subManager, {
+      publish,
+      subscribe,
+      unsubscribe,
+      serialize,
+    })
+  },
+)
 
-  protected get isApiWorker() {
-    return this.application.type === WorkerType.Api
-  }
-}
-
+// This is just a little helper to provide stricter type-safety
 export class SubscriptionResponse<
   T extends Subscription,
   PayloadType extends

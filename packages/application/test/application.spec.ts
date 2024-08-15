@@ -1,15 +1,13 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Application } from '../lib/application.ts'
-import { Provider } from '../lib/container.ts'
-import { TestExtension, TestTransport, testApp } from './_utils.ts'
+import { providers } from '../lib/providers.ts'
+import { testApp, testPlugin } from './_utils.ts'
 
 describe.sequential('Application', () => {
   let app: Application
 
   beforeEach(async () => {
     app = testApp()
-    await app.initialize()
-    app.withTransport(TestTransport)
   })
 
   afterEach(async () => {
@@ -21,50 +19,41 @@ describe.sequential('Application', () => {
     expect(app).instanceOf(Application)
   })
 
-  it('should register extension', () => {
-    const newApp = app.withExtension(TestExtension)
+  it('should register plugin', async () => {
+    const spy = vi.fn()
+    const plugin = testPlugin(spy)
+    const newApp = app.use(plugin)
+
     expect(newApp).toBe(app)
-    for (const appExtension of app.extensions) {
-      expect(appExtension).toBeInstanceOf(TestExtension)
-      expect(appExtension).toHaveProperty(
-        'application',
-        expect.objectContaining({
-          type: app.options.type,
-          api: app.api,
-          connections: {
-            add: expect.any(Function),
-            get: expect.any(Function),
-            remove: expect.any(Function),
-          },
-          container: app.container,
-          registry: app.registry,
-          logger: expect.any(Object),
-        }),
-      )
-    }
+    await app.initialize()
+    expect(spy).toHaveBeenCalledOnce()
+    expect(spy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: app.options.type,
+        api: app.api,
+        format: app.format,
+        container: app.container,
+        eventManager: app.eventManager,
+        logger: expect.anything(),
+        registry: app.registry,
+        hooks: app.registry.hooks,
+        connections: {
+          add: expect.any(Function),
+          remove: expect.any(Function),
+          get: expect.any(Function),
+        },
+      }),
+      undefined,
+    )
   })
 
-  it('should register transport', () => {
-    const newApp = app.withTransport(TestTransport)
-    expect(newApp).toBe(app)
-    const appTransport = app.transports.values().next().value
-    expect(appTransport).toBeInstanceOf(TestTransport)
-  })
-
-  it('should register app context', async () => {
-    const provider = new Provider()
-      .withDependencies({
-        logger: Application.logger,
-        execute: Application.execute,
-        eventManager: Application.eventManager,
-      })
-      .withFactory((dependencies) => dependencies)
-
-    const ctx = await app.container.resolve(provider)
-
-    expect(ctx).toBeDefined()
-    expect(ctx).toHaveProperty('logger', app.logger)
-    expect(ctx).toHaveProperty('execute', expect.any(Function))
-    expect(ctx).toHaveProperty('eventManager', app.eventManager)
+  it('should register app injections', async () => {
+    expect(app.container.resolve(providers.logger)).resolves.toBe(app.logger)
+    expect(app.container.resolve(providers.execute)).resolves.toBeInstanceOf(
+      Function,
+    )
+    expect(app.container.resolve(providers.eventManager)).resolves.toBe(
+      app.eventManager,
+    )
   })
 })

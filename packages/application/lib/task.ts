@@ -28,12 +28,8 @@ type Handler<Deps extends Dependencies> = (
   ...args: any[]
 ) => any
 
-export abstract class BaseTaskRunner {
-  abstract execute(
-    signal: AbortSignal,
-    name: string,
-    ...args: any[]
-  ): Promise<any>
+export interface BaseTaskExecutor {
+  execute(signal: AbortSignal, name: string, ...args: any[]): Promise<any>
 }
 
 export class Task<
@@ -98,7 +94,7 @@ export class Task<
   }
 }
 
-export class Tasks {
+export class TaskRunner {
   constructor(
     private readonly application: { container: Container; registry: Registry },
     private readonly options: ApplicationOptions['tasks'],
@@ -116,8 +112,8 @@ export class Tasks {
 
       ac.signal.throwIfAborted()
 
-      if (this.options?.runner)
-        return await this.options.runner.execute(ac.signal, taskName, ...args)
+      if (this.options?.executor)
+        return await this.options.executor.execute(ac.signal, taskName, ...args)
 
       const { dependencies, handler } = task
       const container = this.application.container.createScope(
@@ -125,7 +121,11 @@ export class Tasks {
       )
       container.provide(Task.signal, ac.signal)
       const context = await container.createContext(dependencies)
-      return await handler(context, ...args)
+      try {
+        return await handler(context, ...args)
+      } finally {
+        container.dispose()
+      }
     }).then(...future.toArgs())
 
     this.handleTermination(future.promise, abort)
@@ -158,10 +158,11 @@ export class Tasks {
       abort()
       await result.catch(noop)
     }
-    const unregisterHook = this.application.registry.hooks.add(
+    const remove = this.application.registry.hooks.add(
       Hook.BeforeTerminate,
       abortExecution,
     )
-    result.finally(unregisterHook).catch(noop)
+
+    result.finally(remove).catch(noop)
   }
 }

@@ -25,7 +25,8 @@
         "useTemplate": "off",
         "noUselessElse": "off",
         "useDefaultParameterLast": "off",
-        "noParameterAssign": "off"
+        "noParameterAssign": "off",
+        "noUnusedTemplateLiteral": "off"
       },
       "suspicious": {
         "noExplicitAny": "off",

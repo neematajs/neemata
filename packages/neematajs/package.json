@@ -28,18 +28,18 @@
     }
   },
   "peerDependencies": {
-    "@neematajs/common": "workspace:*",
-    "@neematajs/application": "workspace:*",
-    "@neematajs/server": "workspace:*",
-    "@neematajs/contract": "workspace:*",
-    "@neematajs/cli": "workspace:*"
+    "@nmtjs/common": "workspace:*",
+    "@nmtjs/application": "workspace:*",
+    "@nmtjs/server": "workspace:*",
+    "@nmtjs/contract": "workspace:*",
+    "@nmtjs/cli": "workspace:*"
   },
   "devDependencies": {
-    "@neematajs/common": "workspace:*",
-    "@neematajs/application": "workspace:*",
-    "@neematajs/server": "workspace:*",
-    "@neematajs/contract": "workspace:*",
-    "@neematajs/cli": "workspace:*"
+    "@nmtjs/common": "workspace:*",
+    "@nmtjs/application": "workspace:*",
+    "@nmtjs/server": "workspace:*",
+    "@nmtjs/contract": "workspace:*",
+    "@nmtjs/cli": "workspace:*"
   },
   "files": [
     "src",

@@ -1,25 +1,22 @@
-import type { BaseServerFormat } from '@neematajs/common'
+import type { BaseServerFormat } from '@nmtjs/common'
 import { Api, type Filter } from './api.ts'
+import { Connection, type ConnectionOptions } from './connection.ts'
 import { Hook, Scope, WorkerType } from './constants.ts'
-import { Container, Provider } from './container.ts'
+import { Container } from './container.ts'
 import { EventManager } from './events.ts'
-import type { BaseExtension } from './extension.ts'
 import { Format } from './format.ts'
 import { type Logger, type LoggingOptions, createLogger } from './logger.ts'
+import type { Plugin } from './plugin.ts'
+import { providers } from './providers.ts'
 import { APP_COMMAND, Registry, printRegistry } from './registry.ts'
 import type { Service } from './service.ts'
-import {
-  type BaseSubscriptionManager,
-  BasicSubscriptionManager,
-} from './subscription.ts'
-import { type BaseTaskRunner, Tasks } from './tasks.ts'
-import type { BaseTransport, BaseTransportConnection } from './transport.ts'
+import { basicSubManagerPlugin } from './subscription.ts'
+import { type BaseTaskExecutor, TaskRunner } from './task.ts'
 import type {
   AnyTask,
-  ClassConstructor,
+  ApplicationContext,
   ErrorClass,
   ExecuteFn,
-  ExtensionApplication,
 } from './types.ts'
 
 export type ApplicationOptions = {
@@ -30,31 +27,23 @@ export type ApplicationOptions = {
   }
   tasks: {
     timeout: number
-    runner?: BaseTaskRunner
+    executor?: BaseTaskExecutor
   }
   events?: {}
   logging?: LoggingOptions
 }
 
 export class Application {
-  static logger = new Provider<Logger>().withDescription('Logger')
-  static execute = new Provider<ExecuteFn>().withDescription('Task execution')
-  static eventManager = new Provider<EventManager>().withDescription(
-    'Event manager',
-  )
-
   readonly api: Api
-  readonly tasks: Tasks
+  readonly tasks: TaskRunner
   readonly logger: Logger
   readonly registry: Registry
   readonly container: Container
   readonly eventManager: EventManager
   readonly format: Format
-  subManager!: BaseSubscriptionManager
 
-  readonly transports = new Set<BaseTransport>()
-  readonly extensions = new Set<BaseExtension>()
-  readonly connections = new Map<string, BaseTransportConnection>()
+  readonly plugins = new Map<Plugin, any>()
+  readonly connections = new Map<string, Connection>()
 
   constructor(readonly options: ApplicationOptions) {
     this.logger = createLogger(
@@ -69,54 +58,43 @@ export class Application {
     // create unexposed container for internal providers, which never gets disposed
     const container = new Container(this)
 
-    container.provide(Application.logger, this.logger)
-    container.provide(Application.eventManager, this.eventManager)
-    container.provide(Application.execute, this.execute.bind(this))
+    container.provide(providers.logger, this.logger)
+    container.provide(providers.eventManager, this.eventManager)
+    container.provide(providers.execute, this.execute.bind(this))
 
     // create a global container for rest of the application
     // including transports, extensions, etc.
     this.container = container.createScope(Scope.Global)
 
     this.api = new Api(this, this.options.api)
-    this.tasks = new Tasks(this, this.options.tasks)
+    this.tasks = new TaskRunner(this, this.options.tasks)
 
-    this.withSubscriptionManager(BasicSubscriptionManager)
+    this.use(basicSubManagerPlugin)
   }
 
   async initialize() {
-    await this.registry.hooks.call(Hook.BeforeInitialize, { concurrent: false })
     this.initializeEssential()
+    await this.initializePlugins()
+    await this.registry.hooks.call(Hook.BeforeInitialize, { concurrent: false })
     await this.container.load()
     await this.registry.hooks.call(Hook.AfterInitialize, { concurrent: false })
   }
 
-  async start() {
+  async startup() {
     await this.initialize()
-    await this.registry.hooks.call(Hook.BeforeStart, { concurrent: false })
+
     if (this.isApiWorker) {
-      for (const transport of this.transports) {
-        await transport
-          .start()
-          .catch((cause) =>
-            this.logger.error(new Error('Transport start error', { cause })),
-          )
-      }
+      await this.registry.hooks.call(Hook.OnStartup, { concurrent: false })
     }
-    await this.registry.hooks.call(Hook.AfterStart, { concurrent: false })
   }
 
-  async stop() {
-    await this.registry.hooks.call(Hook.BeforeStop, { concurrent: false })
+  async shutdown() {
     if (this.isApiWorker) {
-      for (const transport of this.transports) {
-        await transport
-          .stop()
-          .catch((cause) =>
-            this.logger.error(new Error('Transport stop error', { cause })),
-          )
-      }
+      await this.registry.hooks.call(Hook.OnShutdown, {
+        concurrent: false,
+        reverse: true,
+      })
     }
-    await this.registry.hooks.call(Hook.AfterStop, { concurrent: false })
     await this.terminate()
   }
 
@@ -137,38 +115,15 @@ export class Application {
     return this.tasks.execute(task, ...args)
   }
 
-  withTransport<
-    T extends ClassConstructor<BaseTransport>,
-    I extends InstanceType<T>,
-  >(
-    transportClass: T,
-    ...args: null extends I['_']['options'] ? [] : [I['_']['options']]
+  use<T extends Plugin<any>>(
+    plugin: T,
+    ...args: T extends Plugin<infer O>
+      ? null extends O
+        ? []
+        : [options: O]
+      : never
   ) {
-    const [options] = args
-    const transport = this.initializeExtension(transportClass, options) as I
-    this.transports.add(transport)
-    return this
-  }
-
-  withExtension<
-    T extends ClassConstructor<BaseExtension>,
-    I extends InstanceType<T>,
-  >(
-    extenstionClass: T,
-    ...args: null extends I['_']['options'] ? [] : [I['_']['options']]
-  ) {
-    const [options] = args
-    const extension = this.initializeExtension(extenstionClass, options) as I
-    this.extensions.add(extension)
-    return this
-  }
-
-  withSubscriptionManager(
-    subManagerClass: ClassConstructor<BaseSubscriptionManager>,
-  ) {
-    this.subManager = this.initializeExtension(
-      subManagerClass,
-    ) as BaseSubscriptionManager
+    this.plugins.set(plugin, args.at(0))
     return this
   }
 
@@ -197,31 +152,6 @@ export class Application {
     return this.options.type === WorkerType.Api
   }
 
-  private initializeExtension<
-    T extends ClassConstructor<BaseExtension>,
-    I extends InstanceType<T>,
-  >(extensionClass: T, options?: I['_']['options']) {
-    const logger = this.logger.child({})
-    const app: ExtensionApplication = {
-      logger,
-      type: this.options.type,
-      api: this.api,
-      format: this.format,
-      container: this.container,
-      registry: this.registry,
-      eventManager: this.eventManager,
-      connections: {
-        add: this.addConnection.bind(this),
-        remove: this.removeConnection.bind(this),
-        get: this.getConnection.bind(this),
-      },
-    }
-    const instance = new extensionClass(app, options)
-    app.logger.setBindings({ $group: instance.name })
-    instance.initialize?.()
-    return instance
-  }
-
   private initializeEssential() {
     const taskCommand = this.tasks.command.bind(this.tasks)
     this.registry.registerCommand(APP_COMMAND, 'task', (arg) =>
@@ -234,31 +164,61 @@ export class Application {
     })
   }
 
-  private addConnection(connection: BaseTransportConnection) {
-    this.connections.set(connection.id, connection)
-    this.registry.hooks.call(
-      Hook.OnConnection,
-      { concurrent: true },
-      connection,
-    )
+  private async initializePlugins() {
+    for (const [plugin, options] of this.plugins.entries()) {
+      const context = createExtensionContext(this)
+      context.logger.setBindings({ $group: plugin.name })
+      await plugin.init(context, options)
+    }
+  }
+}
+
+export const createExtensionContext = (
+  app: Application,
+): ApplicationContext => {
+  const logger = app.logger.child({})
+
+  const addConnection = (options: ConnectionOptions) => {
+    const connection = new Connection({ ...options }, app.registry)
+    app.connections.set(connection.id, connection)
+    app.registry.hooks.call(Hook.OnConnect, { concurrent: true }, connection)
+    return connection
   }
 
-  private removeConnection(connectionOrId: BaseTransportConnection | string) {
+  const removeConnection = (connectionOrId: Connection | string) => {
     const connection =
       typeof connectionOrId === 'string'
-        ? this.connections.get(connectionOrId)
+        ? app.connections.get(connectionOrId)
         : connectionOrId
     if (connection) {
-      this.connections.delete(connection.id)
-      this.registry.hooks.call(
-        Hook.OnDisconnection,
+      app.connections.delete(connection.id)
+      app.registry.hooks.call(
+        Hook.OnDisconnect,
         { concurrent: true },
         connection,
       )
     }
   }
 
-  private getConnection(id: string) {
-    return this.connections.get(id)
+  const getConnection = (id: string) => {
+    return app.connections.get(id)
+  }
+
+  // TODO: here might be better to come up with some interface,
+  // instead of providing components directly
+  return {
+    type: app.options.type,
+    api: app.api,
+    format: app.format,
+    container: app.container,
+    eventManager: app.eventManager,
+    logger,
+    registry: app.registry,
+    hooks: app.registry.hooks,
+    connections: {
+      add: addConnection,
+      remove: removeConnection,
+      get: getConnection,
+    },
   }
 }

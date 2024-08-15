@@ -2,7 +2,7 @@ import assert from 'node:assert'
 import { readdir } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import type { TServiceContract } from '@neematajs/contract'
+import type { TServiceContract } from '@nmtjs/contract'
 import { Procedure } from './api.ts'
 import { Hook } from './constants.ts'
 import { Hooks } from './hooks.ts'
@@ -13,7 +13,14 @@ import type {
   HooksInterface,
 } from './types.ts'
 
-export class Service<Contract extends TServiceContract = TServiceContract> {
+export class Service<
+  Contract extends TServiceContract<string, any, any, any> = TServiceContract<
+    string,
+    any,
+    any,
+    any
+  >,
+> {
   constructor(public readonly contract: Contract) {}
 
   procedures = new Map<string, AnyProcedure>()
@@ -23,7 +30,7 @@ export class Service<Contract extends TServiceContract = TServiceContract> {
 
   implement<
     K extends Extract<keyof Contract['procedures'], string>,
-    I extends Procedure<Contract['procedures'][K], any, any>,
+    I extends Procedure<Contract['procedures'][K], any>,
   >(name: K, implementaion: I) {
     this.procedures.set(name, implementaion)
     return this

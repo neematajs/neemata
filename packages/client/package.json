@@ -1,31 +1,41 @@
 {
-  "name": "@neematajs/client",
-  "type": "module",
-  "scripts": {
-    "build": "neemata-build -p neutral ./index.ts './lib/**/*.ts'",
-    "type-check": "tsc --noEmit"
-  },
-  "exports": {
-    ".": {
-      "bun": "./index.ts",
-      "default": "./dist/index.js",
-      "types": "./index.ts"
-    }
-  },
-  "peerDependencies": {
-    "@neematajs/contract": "workspace:*",
-    "@neematajs/common": "workspace:*"
-  },
-  "devDependencies": {
-    "@neematajs/contract": "workspace:*",
-    "@neematajs/common": "workspace:*"
-  },
-  "files": [
-    "index.ts",
-    "lib",
-    "dist",
-    "tsconfig.json",
-    "LICENSE.md",
-    "README.md"
-  ]
+	"name": "@nmtjs/client",
+	"type": "module",
+	"scripts": {
+		"build": "neemata-build -p neutral ./index.ts './lib/**/*.ts'",
+		"type-check": "tsc --noEmit"
+	},
+	"exports": {
+		".": {
+			"bun": "./index.ts",
+			"default": "./dist/index.js",
+			"types": "./index.ts"
+		},
+		"./runtime": {
+			"bun": "./lib/client-runtime.ts",
+			"default": "./dist/lib/client-runtime.js",
+			"types": "./lib/client-runtime.ts"
+		},
+		"./static": {
+			"bun": "./lib/client-static.ts",
+			"default": "./dist/lib/client-static.js",
+			"types": "./lib/client-static.ts"
+		}
+	},
+	"peerDependencies": {
+		"@nmtjs/contract": "workspace:*",
+		"@nmtjs/common": "workspace:*"
+	},
+	"devDependencies": {
+		"@nmtjs/contract": "workspace:*",
+		"@nmtjs/common": "workspace:*"
+	},
+	"files": [
+		"index.ts",
+		"lib",
+		"dist",
+		"tsconfig.json",
+		"LICENSE.md",
+		"README.md"
+	]
 }

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Container, Provider } from '../lib/container.ts'
 import { Registry } from '../lib/registry.ts'
-import { Task, Tasks } from '../lib/tasks.ts'
+import { Task, TaskRunner } from '../lib/task.ts'
 import { createFuture, defer, noop, onAbort } from '../lib/utils/functions.ts'
 import {
   testDefaultTimeout,
@@ -56,12 +56,15 @@ describe.sequential('Tasks', () => {
 
   let registry: Registry
   let container: Container
-  let tasks: Tasks
+  let tasks: TaskRunner
 
   beforeEach(async () => {
     registry = new Registry({ logger })
     container = new Container({ logger, registry })
-    tasks = new Tasks({ container, registry }, { timeout: testDefaultTimeout })
+    tasks = new TaskRunner(
+      { container, registry },
+      { timeout: testDefaultTimeout },
+    )
     await container.load()
   })
 
@@ -71,7 +74,7 @@ describe.sequential('Tasks', () => {
 
   it('should be a tasks', () => {
     expect(tasks).toBeDefined()
-    expect(tasks).toBeInstanceOf(Tasks)
+    expect(tasks).toBeInstanceOf(TaskRunner)
   })
 
   it('should execute a task', async () => {
@@ -153,9 +156,9 @@ describe.sequential('Tasks', () => {
   it('should execute with custom runner', async () => {
     const runnerFn = vi.fn()
     const taskRunner = testTaskRunner(runnerFn)
-    const tasks = new Tasks(
+    const tasks = new TaskRunner(
       { container, registry },
-      { timeout: testDefaultTimeout, runner: taskRunner },
+      { timeout: testDefaultTimeout, executor: taskRunner },
     )
     const task = testTask().withHandler(noop)
     registry.registerTask(task)

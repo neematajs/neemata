@@ -1,5 +1,5 @@
 import EventEmitter from 'node:events'
-import { BasicSubscriptionManager, WorkerType } from '@neematajs/application'
+import { WorkerType, basicSubManagerPlugin } from '@nmtjs/application'
 import type { ApplicationWorkerOptions } from './worker.ts'
 
 export const bindPortMessageHandler = (port: EventEmitter) => {
@@ -37,7 +37,7 @@ const defaultWorkerOptions = {
   id: 0,
   workerType: WorkerType.Api,
   isServer: false,
-  subscriptionManager: BasicSubscriptionManager,
+  subscriptionManager: basicSubManagerPlugin,
 }
 
 export const providerWorkerOptions = (

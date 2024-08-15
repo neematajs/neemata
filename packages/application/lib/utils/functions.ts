@@ -1,4 +1,5 @@
-import type { Callback, Pattern } from '../types.ts'
+import type { Pattern } from '@nmtjs/common'
+import type { Callback } from '../types.ts'
 
 export const merge = (...objects: object[]) => Object.assign({}, ...objects)
 
@@ -17,17 +18,20 @@ export const defer = <T extends Callback>(
     }, ms),
   )
 
+/**
+ * Very simple pattern matching function.
+ */
 export const match = (value: string, pattern: Pattern) => {
   if (typeof pattern === 'function') {
     return pattern(value)
   } else if (typeof pattern === 'string') {
     if (pattern === '*' || pattern === '**') {
       return true
-    } else if (pattern.startsWith('*') && pattern.endsWith('*')) {
+    } else if (pattern.at(0) === '*' && pattern.at(-1) === '*') {
       return value.includes(pattern.slice(1, -1))
-    } else if (pattern.endsWith('*')) {
+    } else if (pattern.at(-1) === '*') {
       return value.startsWith(pattern.slice(0, -1))
-    } else if (pattern.startsWith('*')) {
+    } else if (pattern.at(0) === '*') {
       return value.endsWith(pattern.slice(1))
     } else {
       return value === pattern

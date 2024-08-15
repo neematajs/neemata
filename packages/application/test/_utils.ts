@@ -1,29 +1,42 @@
-import { expect, test } from 'vitest'
+import { expect } from 'vitest'
 
 import { deserialize, serialize } from 'node:v8'
 import {
   BaseServerFormat,
   type DecodeRpcContext,
+  type EncodeRpcContext,
+  type Pattern,
   type Rpc,
-  StreamDataType,
-} from '@neematajs/common'
-import { Contract, Type } from '@neematajs/contract'
+  type RpcResponse,
+} from '@nmtjs/common'
+import { Contract, Type } from '@nmtjs/contract'
 import { Procedure } from '../lib/api.ts'
 import { Application, type ApplicationOptions } from '../lib/application.ts'
-import { WorkerType } from '../lib/constants.ts'
-import { BaseExtension } from '../lib/extension.ts'
+import { Connection, type ConnectionOptions } from '../lib/connection.ts'
+import { Hook, WorkerType } from '../lib/constants.ts'
 import { createLogger } from '../lib/logger.ts'
+import { type Plugin, createPlugin } from '../lib/plugin.ts'
 import type { Registry } from '../lib/registry.ts'
 import { Service } from '../lib/service.ts'
-import { BaseTaskRunner, Task } from '../lib/tasks.ts'
-import { BaseTransport, BaseTransportConnection } from '../lib/transport.ts'
+import { type BaseTaskExecutor, Task } from '../lib/task.ts'
 
 export class TestFormat extends BaseServerFormat {
-  accepts = ['test']
-  mime = 'test'
+  accept: Pattern[] = [
+    'test',
+    '*es*',
+    '*test',
+    'test*',
+    (t) => t === 'test',
+    /test/,
+  ]
+  contentType = 'test'
 
   encode(data: any): ArrayBuffer {
     return serialize(data).buffer as ArrayBuffer
+  }
+
+  encodeRpc(rpc: RpcResponse, context: EncodeRpcContext): ArrayBuffer {
+    return this.encode(rpc)
   }
 
   decode(buffer: ArrayBuffer): any {
@@ -36,58 +49,32 @@ export class TestFormat extends BaseServerFormat {
   }
 }
 
-export class TestConnection<D> extends BaseTransportConnection {
-  readonly transport = 'test'
-
-  constructor(
-    registry: Registry,
-    readonly data: D,
-  ) {
-    super(registry, ['TestService'])
-  }
-
-  protected sendEvent() {
-    return false
-  }
-}
-
-export class TestTaskRunner extends BaseTaskRunner {
+export class TestTaskExecutor implements BaseTaskExecutor {
   constructor(
     private readonly custom?: (task: any, ...args: any[]) => Promise<any>,
-  ) {
-    super()
-  }
+  ) {}
 
   execute(signal: AbortSignal, name: string, ...args: any[]): Promise<any> {
     return this.custom ? this.custom(name, ...args) : Promise.resolve()
   }
 }
 
-export class TestExtension extends BaseExtension {
-  name = 'Test extension'
-}
-
-export class TestTransport extends BaseTransport<'test', TestConnection<any>> {
-  readonly type = 'test' as const
-
-  // biome-ignore lint/complexity/noUselessConstructor:
-  constructor(...args: any[]) {
-    // @ts-expect-error
-    super(...args)
-  }
-
-  name = 'Test transport'
-
-  async start() {
-    return true
-  }
-
-  async stop() {
-    return true
-  }
-}
+export const testTransport = (
+  onInit = () => {},
+  onStartup = () => {},
+  onShutdown = () => {},
+) =>
+  createPlugin('TestTransport', (app) => {
+    const { hooks } = app
+    onInit()
+    hooks.add(Hook.OnStartup, onStartup)
+    hooks.add(Hook.OnShutdown, onShutdown)
+  })
 
 export const testDefaultTimeout = 1000
+
+export const testPlugin = (init: Plugin['init'] = () => {}) =>
+  createPlugin('TestPlugin', init)
 
 export const testLogger = () =>
   createLogger(
@@ -123,32 +110,22 @@ export const TestServiceContract = Contract.Service(
     test: true,
   },
   {
-    testProcedure: Contract.Procedure(
-      Type.Object({ test: Type.String() }),
-      Type.Any(),
-    ),
+    testProcedure: Contract.Procedure(Type.Any(), Type.Any()),
     testSubscription: Contract.Subscription(
-      Type.Object({ test: Type.String() }),
-      Type.Never(),
+      Type.Any(),
+      Type.Any(),
       Type.Object({ testOption: Type.String() }),
       {
         testEvent: Contract.Event(Type.String()),
       },
     ),
-    testBinaryStream: Contract.Procedure(
-      Type.Object({ test: Type.String() }),
-      Contract.DownStream(
-        StreamDataType.Binary,
-        Type.Object({ test: Type.String() }),
-      ),
+    testUptream: Contract.Procedure(
+      Type.Object({ test: Type.Blob() }),
+      Type.Any(),
     ),
-    testEncodedStream: Contract.Procedure(
-      Type.Object({ test: Type.String() }),
-      Contract.DownStream(
-        StreamDataType.Encoded,
-        Type.Object({ test: Type.String() }),
-        Type.Object({ test: Type.String() }),
-      ),
+    testDownstream: Contract.Procedure(
+      Type.Any(),
+      Type.Object({ test: Type.Blob() }),
     ),
   },
   {
@@ -156,8 +133,18 @@ export const TestServiceContract = Contract.Service(
   },
 )
 
-export const testConnection = <T = {}>(registry: Registry, data?: T) => {
-  return new TestConnection(registry, data ?? {})
+export const testConnection = (
+  registry: Registry,
+  options: Partial<ConnectionOptions> = {},
+) => {
+  return new Connection(
+    {
+      ...options,
+      type: 'test',
+      services: ['TestService'],
+    },
+    registry,
+  )
 }
 
 export const testFormat = () => new TestFormat()
@@ -170,7 +157,7 @@ export const testSubscription = () =>
 
 export const testTask = () => new Task().withName('test')
 
-export const testTaskRunner = (...args) => new TestTaskRunner(...args)
+export const testTaskRunner = (...args) => new TestTaskExecutor(...args)
 
 export const testService = ({
   procedure = testProcedure(),

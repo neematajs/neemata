@@ -12,8 +12,3 @@ export enum ErrorCode {
   ClientRequestError = 'ClientRequestError',
   ConnectionError = 'ConnectionError',
 }
-
-export enum StreamDataType {
-  Binary = 'Binary',
-  Encoded = 'Encoded',
-}

@@ -5,7 +5,7 @@ import {
   TypeRegistry,
 } from '@sinclair/typebox/type'
 
-const UnionEnumKind = 'UnionEnum'
+export const UnionEnumKind = 'UnionEnum'
 
 // Ref: https://github.com/sinclairzx81/typebox/blob/master/example/prototypes/union-enum.ts
 

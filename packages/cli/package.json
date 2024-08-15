@@ -1,15 +1,13 @@
 {
-  "name": "@neematajs/cli",
+  "name": "@nmtjs/cli",
   "type": "module",
   "bin": {
-    "neemata": "./dist/node.js",
-    "neemata-bun": "./dist/bun.js"
+    "neemata": "./dist/cli.js"
   },
   "exports": {
     ".": {
-      "bun": "./src/cli.ts",
-      "default": "./dist/cli.js",
-      "types": "./src/cli.ts"
+      "default": "./dist/run.js",
+      "types": "./src/run.ts"
     }
   },
   "scripts": {
@@ -21,12 +19,12 @@
     "tsx": "^4.10.5"
   },
   "peerDependencies": {
-    "@neematajs/application": "workspace:*",
-    "@neematajs/server": "workspace:*"
+    "@nmtjs/application": "workspace:*",
+    "@nmtjs/server": "workspace:*"
   },
   "devDependencies": {
-    "@neematajs/application": "workspace:*",
-    "@neematajs/server": "workspace:*"
+    "@nmtjs/application": "workspace:*",
+    "@nmtjs/server": "workspace:*"
   },
   "files": [
     "src",

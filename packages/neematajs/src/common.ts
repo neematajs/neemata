@@ -1,1 +1,1 @@
-export * from '@neematajs/common'
+export * from '@nmtjs/common'

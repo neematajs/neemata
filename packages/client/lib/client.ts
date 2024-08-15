@@ -1,75 +1,54 @@
-import { ErrorCode, type StreamMetadata } from '@neematajs/common'
-import type { TServiceContract } from '@neematajs/contract'
+import { type BaseClientFormat, ErrorCode } from '@nmtjs/common'
 
 import { ClientError } from './common.ts'
-import { UpStream } from './stream.ts'
 import type { ClientTransport } from './transport.ts'
-import type {
-  ClientCallOptions,
-  ClientCallers,
-  ClientServices,
-} from './types.ts'
+import type { ClientCallOptions } from './types.ts'
 import * as utils from './utils.ts'
 
-export class Client<Services extends ClientServices> {
-  #callers: ClientCallers<Services>
-  #ids = {
+export type ClientOptions = {
+  defaultTimeout: number
+  debug?: boolean
+}
+
+export abstract class Client extends utils.EventEmitter {
+  protected transport!: ClientTransport
+  protected format!: BaseClientFormat
+
+  auth?: string
+
+  private ids = {
     call: 0,
     stream: 0,
   }
 
   constructor(
-    protected readonly services: Services,
-    protected readonly options: {
-      defaultTimeout: number
-      debug?: boolean
-    },
-    protected readonly transport: ClientTransport,
+    protected readonly options: ClientOptions,
+    protected services: string[],
   ) {
+    super()
     if (!options.defaultTimeout) options.defaultTimeout = 15000
-
-    this.#callers = {} as any
-    for (const [serviceKey, serviceContract] of Object.entries(services)) {
-      // @ts-ignore
-      this.#callers[serviceKey] = {} as any
-      for (const procedureName in serviceContract.procedures) {
-        // @ts-ignore
-        this.#callers[serviceKey][procedureName] = this.#createCaller(
-          serviceContract,
-          procedureName,
-        )
-      }
-    }
   }
 
-  get call() {
-    return this.#callers
-  }
-
-  stream(
-    source: ArrayBuffer | ReadableStream | Blob,
-    metadata: Partial<StreamMetadata> = {},
+  useTransport<T extends new (...args: any[]) => ClientTransport>(
+    transportClass: T,
+    ...options: ConstructorParameters<T>
   ) {
-    const streamId = ++this.#ids.stream
-    metadata.size =
-      metadata.size ??
-      (source instanceof Blob
-        ? source.size
-        : source instanceof ArrayBuffer
-          ? source.byteLength
-          : undefined)
-    metadata.type =
-      metadata.type ?? (source instanceof Blob ? source.type : undefined)
+    this.transport = new transportClass(...options)
+    this.transport.client = Object.freeze({
+      services: this.services,
+      format: this.format,
+      auth: this.auth,
+    })
+    return this as Omit<this, 'useTransport'>
+  }
 
-    if (!metadata.size) throw new Error('Stream size is not provided')
-    if (!metadata.type) throw new Error('Stream type is not provided')
-
-    return new UpStream(streamId, metadata as StreamMetadata, source)
+  useFormat(format: BaseClientFormat) {
+    this.format = format
+    return this as Omit<this, 'useFormat'>
   }
 
   async connect() {
-    const services = Object.values(this.services).map((service) => service.name)
-    await this.transport.connect({ services })
+    await this.transport.connect()
   }
 
   async disconnect() {
@@ -81,33 +60,41 @@ export class Client<Services extends ClientServices> {
     await this.connect()
   }
 
-  #createCaller(service: TServiceContract, procedure: string) {
+  protected createCaller(
+    service: string,
+    procedure: string,
+    {
+      timeout = this.options.defaultTimeout,
+      transformInput,
+      transformOutput,
+    }: {
+      timeout?: number
+      transformInput?: (input: any) => any
+      transformOutput?: (output: any) => any
+    } = {},
+  ) {
     return async (payload: any, options: ClientCallOptions = {}) => {
       const { signal } = options
 
-      if (this.transport.type in service.transports === false)
-        throw new Error('Transport not supported')
-
-      const { timeout = this.options.defaultTimeout } = service
       const abortSignal = signal
         ? AbortSignal.any([signal, AbortSignal.timeout(timeout)])
         : AbortSignal.timeout(timeout)
 
-      const callId = ++this.#ids.call
+      const callId = ++this.ids.call
 
       if (this.options.debug) {
-        console.groupCollapsed()
-        console.log(`RPC [${callId}] ${service.name}/${procedure}`, payload)
+        console.groupCollapsed(`RPC [${callId}] ${service}/${procedure}`)
+        console.log(payload)
         console.groupEnd()
       }
 
       const callExecution = this.transport
         .rpc({
           callId,
-          service: service.name,
+          service,
           procedure,
-          payload,
-          abortSignal,
+          payload: transformInput ? transformInput(payload) : payload,
+          signal: abortSignal,
         })
         .then((result) => {
           if (result.success) return result.value
@@ -118,7 +105,7 @@ export class Client<Services extends ClientServices> {
           )
         })
 
-      const callTimeout = utils.forAbort(abortSignal).catch(() => {
+      const callTimeout = utils.forAborted(abortSignal).catch(() => {
         const error = new ClientError(ErrorCode.RequestTimeout)
         return Promise.reject(error)
       })
@@ -127,18 +114,19 @@ export class Client<Services extends ClientServices> {
         const response = await Promise.race([callTimeout, callExecution])
 
         if (this.options.debug) {
-          console.groupCollapsed()
-          console.log(`RPC [${callId}] Success`, response)
+          console.groupCollapsed(`RPC [${callId}] Success`)
+          console.log(response)
           console.groupEnd()
         }
 
-        return response
+        return transformOutput ? transformOutput(response) : response
       } catch (error) {
         if (this.options.debug) {
-          console.groupCollapsed()
-          console.log(`RPC [${callId}] Error`, error)
+          console.groupCollapsed(`RPC [${callId}] Error`)
+          console.log(error)
           console.groupEnd()
         }
+
         throw error
       }
     }

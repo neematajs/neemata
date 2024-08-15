@@ -1,24 +1,18 @@
-import { type BaseClientFormat, StreamDataType } from '@neematajs/common'
-import { DownStream } from './stream.ts'
+import type { BaseClientFormat } from '@nmtjs/common'
 import { EventEmitter, type EventMap } from './utils.ts'
-
-export type ClientTransportConnectOptions = {
-  services?: string[]
-  auth?: string
-}
 
 export type ClientTransportRpcCall = {
   service: string
   procedure: string
   callId: number
   payload: any
-  abortSignal: AbortSignal
+  signal: AbortSignal
 }
 
 export type ClientTransportRpcResult =
   | {
       success: false
-      error: { code: string; message?: string; data?: string }
+      error: { code: string; message?: string; data?: any }
     }
   | {
       success: true
@@ -32,26 +26,13 @@ export abstract class ClientTransport<
 > {
   abstract type: string
 
-  constructor(protected format: BaseClientFormat) {
-    super()
+  client!: {
+    readonly services: string[]
+    readonly format: BaseClientFormat
+    readonly auth?: string
   }
 
-  async reconnect(options?: ClientTransportConnectOptions) {
-    await this.disconnect()
-    await this.connect(options)
-  }
-
-  protected createDownStream(type: StreamDataType, ac: AbortController) {
-    const transformers = {
-      [StreamDataType.Encoded]: (chunk, controller) =>
-        controller.enqueue(this.format.decode(chunk)),
-      [StreamDataType.Binary]: (chunk, controller) => controller.enqueue(chunk),
-    }
-    const transformer = transformers[type]
-    return new DownStream(transformer, ac)
-  }
-
-  abstract connect(options?: ClientTransportConnectOptions): Promise<void>
+  abstract connect(): Promise<void>
   abstract disconnect(): Promise<void>
   abstract rpc(
     params: ClientTransportRpcCall,

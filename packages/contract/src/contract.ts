@@ -1,5 +1,3 @@
-import './formats' // register ajv formats
-
 import {
   JsonTypeBuilder,
   Kind,
@@ -7,7 +5,9 @@ import {
   type StaticEncode,
   type TSchema,
 } from '@sinclair/typebox/type'
+import { register } from './formats.ts' // register ajv formats
 
+import { BlobType, type TBlob } from './schemas/blob.ts'
 import { EventContract, type TEventContract } from './schemas/event.ts'
 import { NativeEnum, type TNativeEnum } from './schemas/native-enum.ts'
 import { Nullable } from './schemas/nullable.ts'
@@ -18,30 +18,27 @@ import {
 } from './schemas/procedure.ts'
 import { ServiceContract, type TServiceContract } from './schemas/service.ts'
 import {
-  type DownStream,
-  DownStreamContract,
-  type TDownStreamContract,
-  type TUpStreamContract,
-  type UpStream,
-  UpStreamContract,
-} from './schemas/streams.ts'
-import {
   SubscriptionContract,
   type TSubscriptionContract,
 } from './schemas/subscription.ts'
 import { type TUnionEnum, UnionEnum } from './schemas/union-enum.ts'
+
+register()
 
 const Contract = Object.freeze({
   Procedure: ProcedureContract,
   Event: EventContract,
   Subscription: SubscriptionContract,
   Service: ServiceContract,
-  UpStream: UpStreamContract,
-  DownStream: DownStreamContract,
 })
 
 const Type = Object.freeze(
-  Object.assign(new JsonTypeBuilder(), { UnionEnum, NativeEnum, Nullable }),
+  Object.assign(new JsonTypeBuilder(), {
+    UnionEnum,
+    NativeEnum,
+    Nullable,
+    Blob: BlobType,
+  }),
 )
 
 type Encoded<T extends TSchema> = StaticEncode<T>
@@ -52,9 +49,8 @@ export {
   Kind,
   Type,
   type Decoded,
-  type DownStream,
   type Encoded,
-  type TDownStreamContract,
+  type TBlob,
   type TEventContract,
   type TProcedureContract,
   type TBaseProcedureContract,
@@ -62,7 +58,5 @@ export {
   type TServiceContract,
   type TSubscriptionContract,
   type TUnionEnum,
-  type TUpStreamContract,
-  type UpStream,
   type TNativeEnum,
 }

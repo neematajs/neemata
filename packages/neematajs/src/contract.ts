@@ -1,1 +1,1 @@
-export * from '@neematajs/contract'
+export * from '@nmtjs/contract'

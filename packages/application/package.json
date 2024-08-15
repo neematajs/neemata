@@ -1,5 +1,5 @@
 {
-  "name": "@neematajs/application",
+  "name": "@nmtjs/application",
   "type": "module",
   "exports": {
     ".": {
@@ -17,13 +17,13 @@
     "pino-pretty": "^11.0.0"
   },
   "devDependencies": {
-    "@neematajs/common": "workspace:*",
-    "@neematajs/contract": "workspace:*",
-    "@types/node": "^20.14.11"
+    "@nmtjs/common": "workspace:*",
+    "@nmtjs/contract": "workspace:*",
+    "@types/node": "^18"
   },
   "peerDependencies": {
-    "@neematajs/common": "workspace:*",
-    "@neematajs/contract": "workspace:*"
+    "@nmtjs/common": "workspace:*",
+    "@nmtjs/contract": "workspace:*"
   },
   "files": [
     "index.ts",

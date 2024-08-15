@@ -1,18 +1,18 @@
-import { StreamDataType } from '@neematajs/common'
 import type {
   TProcedureContract,
   TSchema,
   TSubscriptionContract,
-} from '@neematajs/contract'
-import { type Compiled, compile } from '@neematajs/contract/compiler'
-import { ContractGuard } from '@neematajs/contract/guards'
+} from '@nmtjs/contract'
+import { type Compiled, compile } from '@nmtjs/contract/compiler'
+import { ContractGuard } from '@nmtjs/contract/guards'
+
 import type { Filter } from './api.ts'
-import { Scope } from './constants.ts'
+import { type Hook, Scope } from './constants.ts'
 import { type Provider, getProviderScope } from './container.ts'
 import { Hooks } from './hooks.ts'
 import type { Logger } from './logger.ts'
 import type { Service } from './service.ts'
-import type { AnyTask, Command, ErrorClass } from './types.ts'
+import type { AnyTask, Command, ErrorClass, HooksInterface } from './types.ts'
 
 export const APP_COMMAND = Symbol('APP_COMMAND')
 
@@ -34,13 +34,17 @@ export class Registry {
     Hooks.merge(hooks, this.hooks)
   }
 
+  registerHook<T extends Hook>(name: T, callback: HooksInterface[T]) {
+    this.hooks.add(name, callback)
+  }
+
   registerCommand(
-    moduleName: string | typeof APP_COMMAND,
+    namespace: string | typeof APP_COMMAND,
     commandName: string,
     callback: Command,
   ) {
-    let commands = this.commands.get(moduleName)
-    if (!commands) this.commands.set(moduleName, (commands = new Map()))
+    let commands = this.commands.get(namespace)
+    if (!commands) this.commands.set(namespace, (commands = new Map()))
     commands.set(commandName, callback)
   }
 
@@ -53,21 +57,14 @@ export class Registry {
     for (const procedure of Object.values<
       TSubscriptionContract | TProcedureContract
     >(service.contract.procedures)) {
+      schemas.push(procedure.input)
+      schemas.push(procedure.output)
+
       if (ContractGuard.IsSubscription(procedure)) {
-        schemas.push(procedure.output)
         for (const event of Object.values(procedure.events)) {
           schemas.push(event.payload)
         }
-      } else if (ContractGuard.IsDownStream(procedure.output)) {
-        schemas.push(procedure.output.payload)
-        if (procedure.output.dataType === StreamDataType.Encoded) {
-          schemas.push(procedure.output.chunk!)
-        }
-      } else {
-        schemas.push(procedure.output)
       }
-
-      schemas.push(procedure.input)
     }
 
     for (const event of Object.values(service.contract.events)) {
@@ -99,6 +96,7 @@ export class Registry {
     this.application.logger.debug('Registering task [%s]', task.name)
     this.tasks.set(task.name, task)
   }
+
   registerFilter<T extends ErrorClass>(errorClass: T, filter: Filter<T>) {
     if (hasNonInvalidScopeDeps([filter]))
       throw new Error(scopeErrorMessage('Filters'))

@@ -1,4 +1,4 @@
-import { ErrorCode } from '@neematajs/common'
+import { ErrorCode } from '@nmtjs/common'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   Api,
@@ -7,22 +7,17 @@ import {
   Procedure,
   type ProcedureCallOptions,
 } from '../lib/api.ts'
-import { Container, Provider } from '../lib/container.ts'
-import { Registry } from '../lib/registry.ts'
+import type { Application } from '../lib/application.ts'
+import type { Connection } from '../lib/connection.ts'
+import { type Container, Provider } from '../lib/container.ts'
+import { providers } from '../lib/providers.ts'
+import type { Registry } from '../lib/registry.ts'
 import type { Service } from '../lib/service.ts'
-import {
-  BinaryStreamResponse,
-  EncodedStreamResponse,
-  StreamResponse,
-} from '../lib/streams.ts'
 import type { AnyProcedure, FilterFn, GuardFn } from '../lib/types.ts'
 import {
-  type TestConnection,
   type TestServiceContract,
-  TestTransport,
+  testApp,
   testConnection,
-  testDefaultTimeout,
-  testLogger,
   testProcedure,
   testService,
 } from './_utils.ts'
@@ -137,13 +132,13 @@ describe.sequential('Procedure', () => {
 })
 
 describe.sequential('Api', () => {
-  const logger = testLogger()
+  const transport = 'test'
 
+  let app: Application
   let service: Service<typeof TestServiceContract>
   let registry: Registry
   let container: Container
-  let transport: TestTransport
-  let connection: TestConnection<any>
+  let connection: Connection
   let api: Api
 
   const payload = { test: 'test' }
@@ -157,6 +152,7 @@ describe.sequential('Api', () => {
       transport,
       connection,
       payload,
+      signal: new AbortController().signal,
       ...options,
     })
 
@@ -164,29 +160,21 @@ describe.sequential('Api', () => {
     new Procedure(service.contract.procedures.testProcedure)
 
   beforeEach(async () => {
-    registry = new Registry({ logger })
+    app = testApp()
+
+    registry = app.registry
+    container = app.container
+    api = app.api
+
+    connection = testConnection(registry, {})
     service = testService()
     registry.registerService(service)
-    container = new Container({ registry, logger })
-    transport = new TestTransport()
-    connection = testConnection(registry, {})
-    api = new Api(
-      {
-        container,
-        registry,
-        logger,
-        transports: new Set([transport]),
-      },
-      {
-        timeout: testDefaultTimeout,
-        formats: [],
-      },
-    )
-    await container.load()
+
+    await app.initialize()
   })
 
   afterEach(async () => {
-    await container.dispose()
+    await app.terminate()
   })
 
   it('should be an api', () => {
@@ -197,19 +185,12 @@ describe.sequential('Api', () => {
   it('should inject context', async () => {
     const spy = vi.fn()
     const procedure = testProcedure()
-      .withDependencies({
-        connection: Procedure.connection,
-      })
+      .withDependencies({ connection: providers.connection })
       .withHandler(spy)
     service.implement('testProcedure', procedure)
     const connection = testConnection(registry, {})
     await call({ connection, procedure })
-    expect(spy).toHaveBeenCalledWith(
-      {
-        connection,
-      },
-      payload,
-    )
+    expect(spy).toHaveBeenCalledWith({ connection }, payload)
   })
 
   it('should handle procedure call', async () => {
@@ -229,7 +210,7 @@ describe.sequential('Api', () => {
 
   it('should inject connection', async () => {
     const provider = new Provider()
-      .withDependencies({ connection: Procedure.connection })
+      .withDependencies({ connection: providers.connection })
       .withFactory(({ connection }) => connection)
     const procedure = testProcedure()
       .withDependencies({ provider })
@@ -241,34 +222,33 @@ describe.sequential('Api', () => {
 
   it('should inject signal', async () => {
     const signal = new AbortController().signal
-    container.provide(Procedure.signal, signal)
     const provider = new Provider()
-      .withDependencies({ signal: Procedure.signal })
+      .withDependencies({ signal: providers.signal })
       .withFactory(({ signal }) => signal)
     const procedure = testProcedure()
       .withDependencies({ provider })
       .withHandler(({ provider }) => provider)
     service.implement('testProcedure', procedure)
     const connection = testConnection(registry, {})
-    await expect(call({ connection, procedure })).resolves.toBe(signal)
+    expect(call({ connection, procedure, signal })).resolves.toBe(signal)
   })
 
-  it('should inject encoded stream response', async () => {
-    const handlerFn = vi.fn(({ response }) => response)
-    const procedure = new Procedure(
-      service.contract.procedures.testEncodedStream,
-    )
-      .withDependencies({ response: Procedure.response })
-      .withHandler(handlerFn)
-    service.implement('testEncodedStream', procedure)
-    await call({ procedure, payload }).catch((v) => v)
-    expect(handlerFn).toBeCalledWith(
-      {
-        response: expect.any(EncodedStreamResponse),
-      },
-      expect.anything(),
-    )
-  })
+  // it('should inject encoded stream response', async () => {
+  //   const handlerFn = vi.fn(({ response }) => response)
+  //   const procedure = new Procedure(
+  //     service.contract.procedures.testEncodedStream,
+  //   )
+  //     .withDependencies({ response: Procedure.response })
+  //     .withHandler(handlerFn)
+  //   service.implement('testEncodedStream', procedure)
+  //   await call({ procedure, payload }).catch((v) => v)
+  //   expect(handlerFn).toBeCalledWith(
+  //     {
+  //       response: expect.any(EncodedStreamResponse),
+  //     },
+  //     expect.anything(),
+  //   )
+  // })
 
   it('should handle procedure call with payload', async () => {
     const spy = vi.fn()

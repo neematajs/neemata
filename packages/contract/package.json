@@ -1,5 +1,5 @@
 {
-  "name": "@neematajs/contract",
+  "name": "@nmtjs/contract",
   "type": "module",
   "exports": {
     ".": {
@@ -24,11 +24,11 @@
   },
   "peerDependencies": {
     "@sinclair/typebox": "^0.32.34",
-    "@neematajs/common": "workspace:*"
+    "@nmtjs/common": "workspace:*"
   },
   "devDependencies": {
     "@sinclair/typebox": "^0.32.34",
-    "@neematajs/common": "workspace:*"
+    "@nmtjs/common": "workspace:*"
   },
   "files": [
     "src",

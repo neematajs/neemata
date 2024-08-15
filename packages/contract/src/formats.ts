@@ -179,5 +179,3 @@ function regex(str: string): boolean {
     return false
   }
 }
-
-register()

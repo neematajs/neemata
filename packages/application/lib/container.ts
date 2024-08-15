@@ -11,21 +11,6 @@ const ScopeStrictness = {
   [Scope.Transient]: 3,
 }
 
-export function getProviderScope(provider: AnyProvider) {
-  let scope = provider.scope
-  for (const dependency of Object.values(
-    provider.dependencies as Dependencies,
-  )) {
-    const provider =
-      dependency instanceof Provider ? dependency : dependency.provider
-    const dependencyScope = getProviderScope(provider)
-    if (ScopeStrictness[dependencyScope] > ScopeStrictness[scope]) {
-      scope = dependencyScope
-    }
-  }
-  return scope
-}
-
 export type Dependencies = Record<
   string,
   AnyProvider | { isOptional: true; provider: AnyProvider }
@@ -134,6 +119,10 @@ export class Provider<
   withDescription(description: string) {
     const provider = new Provider<ProviderValue, ProviderDeps>()
     return Provider.override(provider, this, { description })
+  }
+
+  $withType<T>() {
+    return this as unknown as Provider<T, ProviderDeps>
   }
 
   optional() {
@@ -291,4 +280,21 @@ export class Container {
       ...this.application.registry.tasks.values(),
     ]
   }
+}
+
+// TODO: this could be moved to Provide.withDependencies(),
+// so there's runtime overhead
+export function getProviderScope(provider: AnyProvider) {
+  let scope = provider.scope
+  for (const dependency of Object.values(
+    provider.dependencies as Dependencies,
+  )) {
+    const provider =
+      dependency instanceof Provider ? dependency : dependency.provider
+    const dependencyScope = getProviderScope(provider)
+    if (ScopeStrictness[dependencyScope] > ScopeStrictness[scope]) {
+      scope = dependencyScope
+    }
+  }
+  return scope
 }

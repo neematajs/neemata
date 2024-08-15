@@ -1,4 +1,4 @@
-import { Kind, type TSchema } from '@sinclair/typebox/type'
+import { Kind, type TSchema, TypeRegistry } from '@sinclair/typebox/type'
 import {
   type ContractSchemaOptions,
   applyNames,
@@ -39,11 +39,11 @@ export interface TServiceContract<
   name: Name
   transports: Transports
   procedures: {
-    [K in Extract<
-      keyof Procedures,
-      string
-    >]: Procedures[K] extends TProcedureContract<infer Input, infer Output>
-      ? TProcedureContract<Input, Output, K, Name, Transports>
+    [K in keyof Procedures]: Procedures[K] extends TProcedureContract<
+      infer Input,
+      infer Output
+    >
+      ? TProcedureContract<Input, Output, Extract<K, string>, Name, Transports>
       : Procedures[K] extends TSubscriptionContract<
             infer Input,
             infer Output,
@@ -55,14 +55,18 @@ export interface TServiceContract<
             Output,
             Options,
             {
-              [EK in Extract<
-                keyof Events,
-                string
-              >]: Events[EK] extends TEventContract<infer Payload>
-                ? TEventContract<Payload, EK, Name, K>
+              [EK in keyof Events]: Events[EK] extends TEventContract<
+                infer Payload
+              >
+                ? TEventContract<
+                    Payload,
+                    Extract<EK, string>,
+                    Name,
+                    Extract<K, string>
+                  >
                 : never
             },
-            K,
+            Extract<K, string>,
             Name,
             Transports
           >
@@ -91,6 +95,8 @@ export const ServiceContract = <
   timeout?: number,
   schemaOptions: ContractSchemaOptions = {} as ContractSchemaOptions,
 ) => {
+  if (!TypeRegistry.Has(ServiceKind)) TypeRegistry.Set(ServiceKind, () => true)
+
   const serviceProcedures = {}
 
   for (const [procedureName, procedure] of Object.entries(procedures)) {

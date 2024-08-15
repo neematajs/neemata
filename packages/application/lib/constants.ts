@@ -8,14 +8,12 @@ export enum Scope {
 export enum Hook {
   BeforeInitialize = 'BeforeInitialize',
   AfterInitialize = 'AfterInitialize',
-  BeforeStart = 'BeforeStart',
-  AfterStart = 'AfterStart',
-  BeforeStop = 'BeforeStop',
-  AfterStop = 'AfterStop',
+  OnStartup = 'OnStartup',
+  OnShutdown = 'OnShutdown',
   BeforeTerminate = 'BeforeTerminate',
   AfterTerminate = 'AfterTerminate',
-  OnConnection = 'OnConnection',
-  OnDisconnection = 'OnDisconnection',
+  OnConnect = 'OnConnect',
+  OnDisconnect = 'OnDisconnect',
 }
 
 export enum WorkerType {

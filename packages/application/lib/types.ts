@@ -1,27 +1,21 @@
-import type {
-  Decoded,
-  Encoded,
-  TBaseProcedureContract,
-  TSchema,
-} from '@neematajs/contract'
-import type { UpStream } from '@neematajs/contract'
+import type { ApiBlob, ApiBlobInterface } from '@nmtjs/common'
+import type { Decoded, TSchema } from '@nmtjs/contract'
 import type { Api, Guard, Middleware, Procedure } from './api.ts'
 import type { Application } from './application.ts'
+import type { Connection, ConnectionOptions } from './connection.ts'
 import type { Hook, WorkerType } from './constants.ts'
 import type { Container, Provider } from './container.ts'
 import type { EventManager } from './events.ts'
-import type { BaseExtension } from './extension.ts'
 import type { Format } from './format.ts'
+import type { Hooks } from './hooks.ts'
 import type { Logger } from './logger.ts'
 import type { Registry } from './registry.ts'
 import type { Service } from './service.ts'
-import type { Stream } from './streams.ts'
-import type { Task, TaskExecution } from './tasks.ts'
-import type { BaseTransport, BaseTransportConnection } from './transport.ts'
+import type { ServerUpStream } from './stream.ts'
+import type { Task, TaskExecution } from './task.ts'
 
 export type ClassConstructor<T> = new (...args: any[]) => T
 export type Callback = (...args: any[]) => any
-export type Pattern = RegExp | string | ((value: string) => boolean)
 export type OmitFirstItem<T extends any[]> = T extends [any, ...infer U]
   ? U
   : []
@@ -30,7 +24,7 @@ export type Extra = Record<string, any>
 export type Async<T> = T | Promise<T>
 
 export type GuardOptions = {
-  connection: BaseTransportConnection
+  connection: Connection
 }
 
 export type Command = (options: {
@@ -57,16 +51,13 @@ export type ConnectionProvider<T, C> = Provider<ConnectionFn<T, C>>
 export type AnyApplication = Application
 export type AnyService = Service<any>
 export type AnyProvider<Value = any> = Provider<Value, any>
-export type AnyProcedure = Procedure<any, any, any>
+export type AnyProcedure = Procedure<any, any>
 export type AnyTask = Task<any, any, any, any>
 export type AnyGuard = Guard<any>
 export type AnyMiddleware = Middleware<any>
-export type AnyTransportClass = ClassConstructor<
-  BaseTransport<string, BaseTransportConnection, any>
->
 
 export type MiddlewareContext = {
-  connection: BaseTransportConnection
+  connection: Connection
   container: Container
   procedure: AnyProcedure
   service: AnyService
@@ -77,14 +68,12 @@ export type Next = (payload?: any) => any
 export interface HooksInterface {
   [Hook.BeforeInitialize]: () => any
   [Hook.AfterInitialize]: () => any
-  [Hook.BeforeStart]: () => any
-  [Hook.AfterStart]: () => any
-  [Hook.BeforeStop]: () => any
-  [Hook.AfterStop]: () => any
+  [Hook.OnStartup]: () => any
+  [Hook.OnShutdown]: () => any
   [Hook.BeforeTerminate]: () => any
   [Hook.AfterTerminate]: () => any
-  [Hook.OnConnection]: (connection: BaseTransportConnection) => any
-  [Hook.OnDisconnection]: (connection: BaseTransportConnection) => any
+  [Hook.OnConnect]: (connection: Connection) => any
+  [Hook.OnDisconnect]: (connection: Connection) => any
 }
 
 export type CallHook<T extends string> = (
@@ -94,27 +83,20 @@ export type CallHook<T extends string> = (
     : any[]
 ) => Promise<void>
 
-export interface ExtensionApplication {
+export interface ApplicationContext {
   type: WorkerType
   api: Api
   format: Format
   container: Container
   eventManager: EventManager
   logger: Logger
-  connections: {
-    add: (connection: BaseTransportConnection) => void
-    remove: (connection: BaseTransportConnection | string) => void
-    get: (id: string) => BaseTransportConnection | undefined
-  }
   registry: Registry
-}
-
-export type ResolveExtensionContext<
-  Extensions extends Record<string, BaseExtension>,
-> = {
-  [K in keyof Extensions]: Extensions[K] extends BaseExtension<infer Context>
-    ? Context
-    : never
+  hooks: Hooks
+  connections: {
+    add: (options: ConnectionOptions) => Connection
+    remove: (connectionOrId: Connection | Connection['id']) => void
+    get: (id: Connection['id']) => Connection | undefined
+  }
 }
 
 export type UnionToIntersection<U> = (
@@ -134,6 +116,10 @@ export type ExecuteFn = <T extends AnyTask>(
   ...args: T['_']['args']
 ) => TaskExecution<T['_']['type']>
 
+export type StreamFn = (
+  ...args: Parameters<(typeof ApiBlob)['from']>
+) => ServerUpStream
+
 export type Merge<
   T1 extends Record<string, any>,
   T2 extends Record<string, any>,
@@ -145,12 +131,18 @@ export type Merge<
       : never
 }
 
-export type DecodeType<T> = T extends any[]
-  ? Array<DecodeType<T[number]>>
-  : T extends object
-    ? { [K in keyof T]: DecodeType<T[K]> }
-    : T extends UpStream
-      ? Stream
+export type OutputType<T> = T extends any[]
+  ? Array<OutputType<T[number]>>
+  : T extends ApiBlobInterface
+    ? ApiBlob
+    : T extends object
+      ? { [K in keyof T]: OutputType<T[K]> }
       : T
 
-export type DecodeInputSchema<T extends TSchema> = DecodeType<Decoded<T>>
+export type InputType<T> = T extends any[]
+  ? Array<InputType<T[number]>>
+  : T extends ApiBlobInterface
+    ? ServerUpStream
+    : T extends object
+      ? { [K in keyof T]: InputType<T[K]> }
+      : T

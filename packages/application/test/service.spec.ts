@@ -1,4 +1,4 @@
-import { ContractGuard } from '@neematajs/contract/guards'
+import { ContractGuard } from '@nmtjs/contract/guards'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { Guard, Middleware } from '../lib/api.ts'
 import { Hook } from '../lib/constants.ts'

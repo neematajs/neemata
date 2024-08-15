@@ -1,18 +1,18 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import { Kind } from '@neematajs/contract'
+import { Kind } from '@nmtjs/contract'
 import { Scope } from '../lib/constants.ts'
 import { Provider } from '../lib/container.ts'
 import { Registry } from '../lib/registry.ts'
 import { noop } from '../lib/utils/functions.ts'
-import { testLogger, testProcedure, testService, testTask } from './_utils.ts'
+import { testApp, testService, testTask } from './_utils.ts'
 
 describe('Registry', () => {
-  const logger = testLogger()
   let registry: Registry
 
   beforeEach(() => {
-    registry = new Registry({ logger })
+    const app = testApp()
+    registry = app.registry
   })
 
   it('should be a registry', () => {
@@ -20,9 +20,10 @@ describe('Registry', () => {
     expect(registry).toBeInstanceOf(Registry)
   })
 
-  it('should register serviec', async () => {
+  it('should register service', async () => {
     const service = testService()
     registry.registerService(service)
+    expect(registry.services.get(service.contract.name)).toBe(service)
   })
 
   it('should compile schemas', async () => {

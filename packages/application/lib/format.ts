@@ -1,22 +1,42 @@
-import type { BaseServerFormat, DecodeRpcContext } from '@neematajs/common'
+import type {
+  BaseServerDecoder,
+  BaseServerEncoder,
+  BaseServerFormat,
+  Pattern,
+} from '@nmtjs/common'
 import { match, parseContentTypes } from './utils/functions.ts'
 
 export class Format {
-  supported = new Map<string, BaseServerFormat>()
+  decoders = new Map<Pattern, BaseServerDecoder>()
+  encoders = new Map<Pattern, BaseServerEncoder>()
 
   constructor(formats: BaseServerFormat[]) {
     for (const format of formats) {
-      for (const accept of format.accepts) {
-        this.supported.set(accept, format)
+      this.encoders.set(format.contentType, format)
+      for (const acceptType of format.accept) {
+        this.decoders.set(acceptType, format)
       }
     }
   }
 
-  supports(contentType: string, throwIfUnsupported = false) {
+  supportsDecoder(contentType: string, throwIfUnsupported = false) {
+    return this.supports(this.decoders, contentType, throwIfUnsupported)
+  }
+
+  supportsEncoder(contentType: string, throwIfUnsupported = false) {
+    return this.supports(this.encoders, contentType, throwIfUnsupported)
+  }
+
+  private supports<T extends BaseServerEncoder | BaseServerDecoder>(
+    formats: Map<Pattern, T>,
+    contentType: string,
+    throwIfUnsupported,
+  ): T | null {
+    // TODO: Use node:utils.MIMEType (not implemented yet in Deno and Bun yet)
     const types = parseContentTypes(contentType)
 
     for (const type of types) {
-      for (const [pattern, format] of this.supported) {
+      for (const [pattern, format] of formats) {
         if (type === '*/*' || match(type, pattern)) return format
       }
     }
@@ -25,20 +45,5 @@ export class Format {
       throw new Error(`No supported format found: ${contentType}`)
 
     return null
-  }
-
-  decode(type: string, data: ArrayBuffer) {
-    const format = this.supports(type, true)!
-    return format.decode(data)
-  }
-
-  decodeRpc(type: string, data: ArrayBuffer, context: DecodeRpcContext) {
-    const format = this.supports(type, true)!
-    return format.decodeRpc(data, context)
-  }
-
-  encode(type: string, data: any) {
-    const format = this.supports(type, true)!
-    return format.encode(data)
   }
 }

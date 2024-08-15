@@ -1,4 +1,4 @@
-import { Kind, type TSchema } from '@sinclair/typebox/type'
+import { Kind, type TSchema, TypeRegistry } from '@sinclair/typebox/type'
 import { type ContractSchemaOptions, createSchema } from '../utils.ts'
 import type { TEventContract } from './event.ts'
 import type { TBaseProcedureContract } from './procedure.ts'
@@ -55,8 +55,11 @@ export const SubscriptionContract = <
   events: Events,
   timeout?: number,
   schemaOptions: ContractSchemaOptions = {} as ContractSchemaOptions,
-) =>
-  createSchema<
+) => {
+  if (!TypeRegistry.Has(SubscriptionKind))
+    TypeRegistry.Set(SubscriptionKind, () => true)
+
+  return createSchema<
     TSubscriptionContract<
       Input,
       Output,
@@ -76,3 +79,4 @@ export const SubscriptionContract = <
     options,
     timeout,
   })
+}

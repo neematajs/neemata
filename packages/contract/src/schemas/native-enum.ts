@@ -5,7 +5,7 @@ import {
   TypeRegistry,
 } from '@sinclair/typebox/type'
 
-const NativeEnumKind = 'NativeEnum'
+export const NativeEnumKind = 'NativeEnum'
 
 // -------------------------------------------------------------------------------------
 // TNativeEnum

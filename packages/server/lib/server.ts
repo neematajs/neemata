@@ -1,5 +1,4 @@
 import { once } from 'node:events'
-import { join } from 'node:path'
 import { Worker } from 'node:worker_threads'
 import {
   type Logger,
@@ -8,7 +7,7 @@ import {
   WorkerType,
   createLogger,
   noop,
-} from '@neematajs/application'
+} from '@nmtjs/application'
 import { WorkerMessageType, bindPortMessageHandler } from './common.ts'
 import type { ApplicationWorkerData } from './worker.ts'
 
@@ -36,7 +35,7 @@ export class ApplicationServer {
     if (watch) import(`${options.applicationPath}`).catch(noop)
   }
 
-  async start() {
+  async startup() {
     this.logger.info('Starting application server...')
     const { apiWorkers, taskWorkers } = this.options
 
@@ -51,7 +50,7 @@ export class ApplicationServer {
       await new Promise<void>((resolve, reject) => {
         const onError = (err: any) => {
           this.logger.fatal(err)
-          this.stop()
+          this.shutdown()
         }
         worker.once(WorkerMessageType.Ready, () => {
           worker.off('error', onError)
@@ -62,7 +61,7 @@ export class ApplicationServer {
     }
   }
 
-  async stop() {
+  async shutdown() {
     this.logger.info('Stopping application server...')
     this.#exiting = true
     for (const worker of this.workers) {
@@ -96,7 +95,7 @@ export class ApplicationServer {
       isServer: true,
     }
 
-    const worker = new Worker(join(__dirname, 'worker'), {
+    const worker = new Worker(new URL('./worker', import.meta.url), {
       name: type,
       execArgv,
       workerData,

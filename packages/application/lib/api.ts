@@ -1,18 +1,16 @@
-import { ErrorCode, StreamDataType } from '@neematajs/common'
+import { ErrorCode } from '@nmtjs/common'
 import type {
-  DownStream,
+  Decoded,
   TBaseProcedureContract,
-  TDownStreamContract,
   TProcedureContract,
   TSchema,
   TSubscriptionContract,
-} from '@neematajs/contract'
-import type { Compiled } from '@neematajs/contract/compiler'
-import { ContractGuard } from '@neematajs/contract/guards'
+} from '@nmtjs/contract'
+import type { Compiled } from '@nmtjs/contract/compiler'
+import { ContractGuard } from '@nmtjs/contract/guards'
 
-import { IsDownStream } from '../../contract/src/guards/streams.ts'
 import type { ApplicationOptions } from './application.ts'
-import { Scope } from './constants.ts'
+import type { Connection } from './connection.ts'
 import {
   type Container,
   type Dependencies,
@@ -21,136 +19,57 @@ import {
   Provider,
 } from './container.ts'
 import type { Logger } from './logger.ts'
+import { providers } from './providers.ts'
 import type { Registry } from './registry.ts'
 import type { Service } from './service.ts'
-import {
-  BinaryStreamResponse,
-  EncodedStreamResponse,
-  StreamResponse,
-} from './streams.ts'
-import { type Subscription, SubscriptionResponse } from './subscription.ts'
-import type { BaseTransport, BaseTransportConnection } from './transport.ts'
+import { SubscriptionResponse } from './subscription.ts'
 import type {
   AnyGuard,
   AnyMiddleware,
   AnyProcedure,
-  AnyTransportClass,
   Async,
   ConnectionFn,
   ConnectionProvider,
-  DecodeInputSchema,
   ErrorClass,
   FilterFn,
   GuardFn,
+  InputType,
   MiddlewareContext,
   MiddlewareFn,
+  OutputType,
 } from './types.ts'
 import { merge, withTimeout } from './utils/functions.ts'
 
 export type ProcedureHandlerType<
   ProcedureContract extends TBaseProcedureContract,
-  ProcedureTransports extends AnyTransportClass[],
   Deps extends Dependencies,
 > = (
-  ctx: DependencyContext<
-    ApplyProcedureTransport<ProcedureContract, ProcedureTransports, Deps>
-  >,
-  data: ProcedureContract['input']['static'] extends never
+  ctx: DependencyContext<Deps>,
+  data: Decoded<ProcedureContract['input']> extends never
     ? never
-    : DecodeInputSchema<ProcedureContract['input']>,
+    : InputType<Decoded<ProcedureContract['input']>>,
 ) => Async<
   ProcedureContract extends TProcedureContract
-    ? ProcedureContract['output']['static'] extends never
+    ? Decoded<ProcedureContract['output']> extends never
       ? void
-      : ProcedureContract['output'] extends TDownStreamContract<any, any, any>
-        ? StreamResponse<
-            ProcedureContract['output']['static']['__payload'],
-            ProcedureContract['output']['static']['__type'] extends StreamDataType.Binary
-              ? string | Buffer | ArrayBuffer
-              : ProcedureContract['output']['static']['__chunk'],
-            ProcedureContract['output']['static']['__payload']
-          >
-        : ProcedureContract['output']['static']
+      : OutputType<Decoded<ProcedureContract['output']>>
     : ProcedureContract extends TSubscriptionContract
-      ? ProcedureContract['output']['static'] extends never
+      ? Decoded<ProcedureContract['output']> extends never
         ? SubscriptionResponse<any, never, never>
         : SubscriptionResponse<
             any,
-            ProcedureContract['output']['static'],
-            ProcedureContract['output']['static']
+            OutputType<Decoded<ProcedureContract['output']>>,
+            OutputType<Decoded<ProcedureContract['output']>>
           >
       : never
 >
 
-export type ApplyProcedureTransport<
-  C extends TBaseProcedureContract,
-  T extends AnyTransportClass[],
-  D extends Dependencies,
-> = {
-  [K in keyof D]: D[K] extends typeof Procedure.connection
-    ? Provider<
-        T extends []
-          ? BaseTransportConnection
-          : BaseTransportConnection & InstanceType<T[number]>['_']['connection']
-      >
-    : D[K] extends typeof Procedure.response
-      ? Provider<
-          C['output']['static'] extends DownStream<any, infer P, infer C>
-            ? StreamResponse<P, C, P extends never ? any : unknown>
-            : undefined
-        >
-      : D[K]
-}
-
 export class Procedure<
   ProcedureContract extends TBaseProcedureContract = TBaseProcedureContract,
   ProcedureDeps extends Dependencies = {},
-  ProcedureTransports extends AnyTransportClass[] = [],
 > implements Depender<ProcedureDeps>
 {
-  static connection = new Provider<BaseTransport['_']['connection']>()
-    .withScope(Scope.Connection)
-    .withDescription('RPC connection')
-
-  static signal = new Provider<AbortSignal>()
-    .withScope(Scope.Call)
-    .withDescription('RPC abort signal')
-
-  // static options = new Provider<{
-  //   serviceContract: TServiceContract
-  //   procedureContract: TProcedureContract
-  //   procedureName: string
-  // }>()
-  //   .withScope(Scope.Global)
-  //   .withDescription('Current procedure options')
-
-  static response = new Provider<StreamResponse<any, any> | undefined>()
-    .withScope(Scope.Call)
-    .withDescription('Current procedure stream response')
-
-  static $withTransports<T extends AnyTransportClass[]>() {
-    return <
-      Contract extends TBaseProcedureContract<
-        any,
-        any,
-        string,
-        string,
-        { [K in InstanceType<T[number]>['_']['type']]: true }
-      >,
-    >(
-      contract: Contract,
-    ) => new Procedure<Contract, {}, T>(contract)
-  }
-
-  _!: {
-    transports: ProcedureTransports
-  }
-
-  handler: ProcedureHandlerType<
-    ProcedureContract,
-    ProcedureTransports,
-    ProcedureDeps
-  >
+  handler: ProcedureHandlerType<ProcedureContract, ProcedureDeps>
   metadata: Map<MetadataKey<any, any>, any> = new Map()
   dependencies: ProcedureDeps = {} as ProcedureDeps
   guards = new Set<AnyGuard>()
@@ -165,25 +84,8 @@ export class Procedure<
   }
 
   withDependencies<Deps extends Dependencies>(dependencies: Deps) {
-    for (const [key, provider] of Object.entries(dependencies)) {
-      if (provider === Procedure.response) {
-        // @ts-expect-error
-        dependencies[key] = Procedure.response.withFactory(() => {
-          if (IsDownStream(this.contract.output)) {
-            return this.contract.output.dataType === StreamDataType.Encoded
-              ? new EncodedStreamResponse()
-              : new BinaryStreamResponse(this.contract.output.contentType!)
-          }
-          return undefined
-        })
-      }
-    }
     this.dependencies = merge(this.dependencies, dependencies)
-    return this as unknown as Procedure<
-      ProcedureContract,
-      ProcedureDeps & Deps,
-      ProcedureTransports
-    >
+    return this as unknown as Procedure<ProcedureContract, ProcedureDeps & Deps>
   }
 
   withHandler(handler: this['handler']) {
@@ -206,31 +108,15 @@ export class Procedure<
   }
 }
 
-export type MetadataKey<V = any, T = any> = { key: V; type: T }
-
-export const MetadataKey = <T>(key: string | object) =>
-  ({ key }) as MetadataKey<typeof key, T>
-
-export const getProcedureMetadata = <
-  T extends MetadataKey,
-  D extends T['type'] | undefined = undefined,
->(
-  procedure: Procedure,
-  key: T,
-  defaultValue?: D,
-): D extends undefined ? T['type'] | undefined : T['type'] =>
-  procedure.metadata.get(key) ?? defaultValue
-
 export type ProcedureCallOptions = {
+  connection: Connection
   service: Service
   procedure: AnyProcedure
-  transport: BaseTransport
-  connection: BaseTransportConnection
-  payload: any
   container: Container
+  payload: any
+  signal: AbortSignal
+  transport: string
 }
-
-const NotFound = () => new ApiError(ErrorCode.NotFound, 'Procedure not found')
 
 export class Api {
   connectionProvider?: ConnectionProvider<any, any>
@@ -241,15 +127,14 @@ export class Api {
       container: Container
       registry: Registry
       logger: Logger
-      transports: Set<BaseTransport>
     },
     private readonly options: ApplicationOptions['api'],
   ) {}
 
-  find(serviceName: string, procedureName: string, transport: BaseTransport) {
+  find(serviceName: string, procedureName: string, transport: string) {
     const service = this.application.registry.services.get(serviceName)
     if (service) {
-      if (transport.type in service.contract.transports) {
+      if (service.contract.transports[transport]) {
         const procedure = service.procedures.get(procedureName)
         if (procedure) return { service, procedure }
       }
@@ -259,9 +144,10 @@ export class Api {
   }
 
   async call(callOptions: ProcedureCallOptions) {
-    const { payload, container, connection } = callOptions
+    const { payload, container, connection, signal } = callOptions
 
-    container.provide(Procedure.connection, connection)
+    container.provide(providers.connection, connection)
+    container.provide(providers.signal, signal)
 
     try {
       this.handleTransport(callOptions)
@@ -298,9 +184,7 @@ export class Api {
         await this.handleGuards(callOptions)
         const { dependencies } = procedure
         const context = await container.createContext(dependencies)
-
         const input = this.handleInput(procedure, payload)
-
         const result = await this.handleTimeout(
           procedure.handler(context, input),
           timeout,
@@ -329,7 +213,7 @@ export class Api {
 
   private handleTransport({ service, transport }: ProcedureCallOptions) {
     for (const transportType in service.contract.transports) {
-      if (transport.type === transportType) return
+      if (transport === transportType) return
     }
 
     throw NotFound()
@@ -337,8 +221,13 @@ export class Api {
 
   private handleTimeout(response: any, timeout?: number) {
     const applyTimeout = timeout && response instanceof Promise
-    const error = new ApiError(ErrorCode.RequestTimeout, 'Request Timeout')
-    return applyTimeout ? withTimeout(response, timeout, error) : response
+    return applyTimeout
+      ? withTimeout(
+          response,
+          timeout,
+          new ApiError(ErrorCode.RequestTimeout, 'Request Timeout'),
+        )
+      : response
   }
 
   private async handleGuards(callOptions: ProcedureCallOptions) {
@@ -364,7 +253,10 @@ export class Api {
       }
     }
     if (error instanceof ApiError) return error
+
+    // FIXME: this shouldn't be here
     if (process.env.TEST) return error
+
     const logError = new Error('Unhandled error', { cause: error })
     this.application.logger.error(logError)
     return new ApiError(ErrorCode.InternalServerError, 'Internal Server Error')
@@ -411,27 +303,6 @@ export class Api {
       }
 
       return response
-    } else if (ContractGuard.IsDownStream(procedure.contract.output)) {
-      if (response instanceof StreamResponse === false) {
-        throw new Error(
-          'Invalid response: should be instance of StreamResponse',
-        )
-      }
-
-      if (!ContractGuard.IsNever(procedure.contract.output.payload)) {
-        const result = this.handleSchema(
-          procedure.contract.output,
-          'encode',
-          response.payload,
-        )
-        if (!result.success) {
-          throw new Error('Failed to encode stream payload', {
-            cause: result.error,
-          })
-        }
-        response.withPayload(result.value)
-        return response
-      }
     } else if (!ContractGuard.IsNever(procedure.contract.output)) {
       const result = this.handleSchema(
         procedure.contract.output,
@@ -468,11 +339,11 @@ export class ApiError extends Error {
   }
 
   get message() {
-    return this.code + super.message
+    return `${this.code} ${super.message}`
   }
 
   toString() {
-    return `${this.code} ${this.message}`
+    return `${this.code} ${this.message}: \n${JSON.stringify(this.data, null, 2)}`
   }
 
   toJSON() {
@@ -483,6 +354,24 @@ export class ApiError extends Error {
     }
   }
 }
+
+export type MetadataKey<V = any, T = any> = { key: V; type: T }
+
+export const MetadataKey = <T>(key: string | object) =>
+  ({ key }) as MetadataKey<typeof key, T>
+
+export const getProcedureMetadata = <
+  T extends MetadataKey,
+  D extends T['type'] | undefined = undefined,
+>(
+  procedure: Procedure,
+  key: T,
+  defaultValue?: D,
+): D extends undefined ? T['type'] | undefined : T['type'] => {
+  return procedure.metadata.get(key) ?? defaultValue
+}
+
+const NotFound = () => new ApiError(ErrorCode.NotFound, 'Procedure not found')
 
 export class Guard<Deps extends Dependencies = {}> extends Provider<
   GuardFn,
