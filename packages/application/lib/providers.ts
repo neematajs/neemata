@@ -26,6 +26,10 @@ const execute = new Provider<ExecuteFn>()
   .withScope(Scope.Global)
   .withDescription('Task execution function')
 
+const workerType = new Provider<WorkerType>()
+  .withScope(Scope.Global)
+  .withDescription('Worker type')
+
 const eventManager = new Provider<EventManager>()
   .withScope(Scope.Global)
   .withDescription('Event manager')
@@ -47,4 +51,5 @@ export const providers = {
   eventManager,
   stream,
   subManager,
+  workerType,
 }

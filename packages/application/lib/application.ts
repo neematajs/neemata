@@ -59,6 +59,7 @@ export class Application {
     const container = new Container(this)
 
     container.provide(providers.logger, this.logger)
+    container.provide(providers.workerType, this.options.type)
     container.provide(providers.eventManager, this.eventManager)
     container.provide(providers.execute, this.execute.bind(this))
 
