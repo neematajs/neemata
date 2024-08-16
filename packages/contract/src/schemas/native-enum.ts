@@ -6,20 +6,12 @@ import {
 } from '@sinclair/typebox/type'
 
 export const NativeEnumKind = 'NativeEnum'
-
-// -------------------------------------------------------------------------------------
-// TNativeEnum
-// -------------------------------------------------------------------------------------
 export interface TNativeEnum<T extends Record<string, string>> extends TSchema {
   [Kind]: typeof NativeEnumKind
   static: T[keyof T][]
   enum: T[keyof T][]
 }
 
-// -------------------------------------------------------------------------------------
-// NativeEnum
-// -------------------------------------------------------------------------------------
-/** `[Experimental]` Creates a Union type with a `enum` schema representation  */
 export function NativeEnum<T extends Record<string, string>>(
   value: T,
   options: SchemaOptions = {},

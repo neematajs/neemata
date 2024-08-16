@@ -1,4 +1,6 @@
-import { type TSchema, Type } from '@sinclair/typebox/type'
+import { type SchemaOptions, type TSchema, Type } from '@sinclair/typebox/type'
 
-export const Nullable = <T extends TSchema>(schema: T) =>
-  Type.Union([schema, Type.Null()])
+export const Nullable = <T extends TSchema>(
+  schema: T,
+  options: SchemaOptions = {},
+) => Type.Union([schema, Type.Null()], options)
