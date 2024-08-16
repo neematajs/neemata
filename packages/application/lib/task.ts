@@ -8,7 +8,7 @@ import type {
 } from './container.ts'
 import { providers } from './providers.ts'
 import type { Registry } from './registry.ts'
-import type { AnyTask, OmitFirstItem } from './types.ts'
+import type { AnyTask, Async, OmitFirstItem } from './types.ts'
 import { createFuture, defer, merge, noop, onAbort } from './utils/functions.ts'
 
 export type TaskExecution<Res = any> = Promise<
@@ -51,7 +51,7 @@ export class Task<
   readonly parser!: (
     args: string[],
     kwargs: Record<string, any>,
-  ) => TaskArgs | Readonly<TaskArgs>
+  ) => Async<TaskArgs | Readonly<TaskArgs>>
 
   withName(name: string) {
     const task = new Task<TaskDeps, TaskHandler, TaskType, TaskArgs>()
@@ -139,10 +139,10 @@ export class TaskRunner {
     const task = this.application.registry.tasks.get(name)
     if (!task)
       throw new Error(
-        'Task not found. You might forgot to register with `app.withTasks(task)`',
+        'Task not found. You might forgot to register it with `app.withTasks(yourTask)`',
       )
     const { parser } = task
-    const parsedArgs = parser ? parser(taskArgs, kwargs) : []
+    const parsedArgs = parser ? await parser(taskArgs, kwargs) : []
     return await this.execute(task, ...parsedArgs)
   }
 
