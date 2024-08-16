@@ -27,14 +27,7 @@
       "default": "./dist/common.js"
     }
   },
-  "peerDependencies": {
-    "@nmtjs/common": "workspace:*",
-    "@nmtjs/application": "workspace:*",
-    "@nmtjs/server": "workspace:*",
-    "@nmtjs/contract": "workspace:*",
-    "@nmtjs/cli": "workspace:*"
-  },
-  "devDependencies": {
+  "dependencies": {
     "@nmtjs/common": "workspace:*",
     "@nmtjs/application": "workspace:*",
     "@nmtjs/server": "workspace:*",

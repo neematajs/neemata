@@ -82,8 +82,8 @@ importers:
         specifier: ^0.32.34
         version: 0.32.34
 
-  packages/neematajs:
-    devDependencies:
+  packages/nmtjs:
+    dependencies:
       '@nmtjs/application':
         specifier: workspace:*
         version: link:../application
