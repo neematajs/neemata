@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Container, Provider } from '../lib/container.ts'
+import { providers } from '../lib/providers.ts'
 import { Registry } from '../lib/registry.ts'
 import { Task, TaskRunner } from '../lib/task.ts'
 import { createFuture, defer, noop, onAbort } from '../lib/utils/functions.ts'
@@ -127,7 +128,7 @@ describe.sequential('Tasks', () => {
     const future = createFuture<void>()
     const spy = vi.fn(future.resolve)
     const task = testTask()
-      .withDependencies({ signal: Task.signal })
+      .withDependencies({ signal: providers.taskSignal })
       .withHandler(({ signal }) => new Promise(() => onAbort(signal, spy)))
 
     registry.registerTask(task)
@@ -142,7 +143,7 @@ describe.sequential('Tasks', () => {
     const future = createFuture<void>()
     const spy = vi.fn(future.resolve)
     const task = testTask()
-      .withDependencies({ signal: Task.signal })
+      .withDependencies({ signal: providers.taskSignal })
       .withHandler(({ signal }) => new Promise(() => onAbort(signal, spy)))
 
     registry.registerTask(task)

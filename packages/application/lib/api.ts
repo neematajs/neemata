@@ -147,7 +147,7 @@ export class Api {
     const { payload, container, connection, signal } = callOptions
 
     container.provide(providers.connection, connection)
-    container.provide(providers.signal, signal)
+    container.provide(providers.callSignal, signal)
 
     try {
       this.handleTransport(callOptions)

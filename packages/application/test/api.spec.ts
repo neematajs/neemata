@@ -223,7 +223,7 @@ describe.sequential('Api', () => {
   it('should inject signal', async () => {
     const signal = new AbortController().signal
     const provider = new Provider()
-      .withDependencies({ signal: providers.signal })
+      .withDependencies({ signal: providers.callSignal })
       .withFactory(({ signal }) => signal)
     const procedure = testProcedure()
       .withDependencies({ provider })

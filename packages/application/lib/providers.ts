@@ -1,5 +1,5 @@
 import type { Connection } from './connection.ts'
-import { Scope } from './constants.ts'
+import { Scope, type WorkerType } from './constants.ts'
 import { Provider } from './container.ts'
 import type { EventManager } from './events.ts'
 import type { Logger } from './logger.ts'
@@ -14,9 +14,13 @@ const connectionData = new Provider<unknown>()
   .withScope(Scope.Connection)
   .withDescription('RPC connection data')
 
-const signal = new Provider<AbortSignal>()
+const callSignal = new Provider<AbortSignal>()
   .withScope(Scope.Call)
   .withDescription('RPC abort signal')
+
+const taskSignal = new Provider<AbortSignal>()
+  .withScope(Scope.Global)
+  .withDescription('Task execution abort signal')
 
 const logger = new Provider<Logger>()
   .withScope(Scope.Global)
@@ -45,7 +49,8 @@ const subManager = new Provider<SubscriptionManager>()
 export const providers = {
   connection,
   connectionData,
-  signal,
+  callSignal,
+  taskSignal,
   logger,
   execute,
   eventManager,

@@ -1,12 +1,12 @@
 import type { ApplicationOptions } from './application.ts'
 import { Hook } from './constants.ts'
-import {
-  type Container,
-  type Dependencies,
-  type DependencyContext,
-  type Depender,
-  Provider,
+import type {
+  Container,
+  Dependencies,
+  DependencyContext,
+  Depender,
 } from './container.ts'
+import { providers } from './providers.ts'
 import type { Registry } from './registry.ts'
 import type { AnyTask, OmitFirstItem } from './types.ts'
 import { createFuture, defer, merge, noop, onAbort } from './utils/functions.ts'
@@ -44,10 +44,6 @@ export class Task<
     handler: Handler<TaskDeps>
     args: TaskArgs
   }
-
-  static signal = new Provider<AbortSignal>().withDescription(
-    'Task abort signal',
-  )
 
   readonly name!: string
   readonly dependencies: TaskDeps = {} as TaskDeps
@@ -119,7 +115,7 @@ export class TaskRunner {
       const container = this.application.container.createScope(
         this.application.container.scope,
       )
-      container.provide(Task.signal, ac.signal)
+      container.provide(providers.taskSignal, ac.signal)
       const context = await container.createContext(dependencies)
       try {
         return await handler(context, ...args)
