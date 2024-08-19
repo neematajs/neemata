@@ -28,8 +28,6 @@ import type {
   AnyMiddleware,
   AnyProcedure,
   Async,
-  ConnectionFn,
-  ConnectionProvider,
   ErrorClass,
   FilterFn,
   GuardFn,
@@ -108,7 +106,7 @@ export class Procedure<
   }
 }
 
-export type ProcedureCallOptions = {
+export type ApiCallOptions = {
   connection: Connection
   service: Service
   procedure: AnyProcedure
@@ -119,9 +117,6 @@ export type ProcedureCallOptions = {
 }
 
 export class Api {
-  connectionProvider?: ConnectionProvider<any, any>
-  connectionFn?: ConnectionFn<any, any>
-
   constructor(
     private readonly application: {
       container: Container
@@ -143,7 +138,7 @@ export class Api {
     throw NotFound()
   }
 
-  async call(callOptions: ProcedureCallOptions) {
+  async call(callOptions: ApiCallOptions) {
     const { payload, container, connection, signal } = callOptions
 
     container.provide(providers.connection, connection)
@@ -158,7 +153,7 @@ export class Api {
     }
   }
 
-  private async createProcedureHandler(callOptions: ProcedureCallOptions) {
+  private async createProcedureHandler(callOptions: ApiCallOptions) {
     const { connection, procedure, container, service } = callOptions
 
     const middlewareCtx: MiddlewareContext = {
@@ -199,7 +194,7 @@ export class Api {
     return handleProcedure
   }
 
-  private async resolveMiddlewares(callOptions: ProcedureCallOptions) {
+  private async resolveMiddlewares(callOptions: ApiCallOptions) {
     const { service, procedure, container } = callOptions
     const middlewareProviders = [
       ...service.middlewares,
@@ -211,7 +206,7 @@ export class Api {
     return middlewares[Symbol.iterator]()
   }
 
-  private handleTransport({ service, transport }: ProcedureCallOptions) {
+  private handleTransport({ service, transport }: ApiCallOptions) {
     for (const transportType in service.contract.transports) {
       if (transport === transportType) return
     }
@@ -230,7 +225,7 @@ export class Api {
       : response
   }
 
-  private async handleGuards(callOptions: ProcedureCallOptions) {
+  private async handleGuards(callOptions: ApiCallOptions) {
     const { service, procedure, container, connection } = callOptions
     const providers = [...service.guards, ...procedure.guards]
     const guards = await Promise.all(providers.map((p) => container.resolve(p)))

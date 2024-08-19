@@ -4,7 +4,7 @@ import { Provider } from './container.ts'
 import type { EventManager } from './events.ts'
 import type { Logger } from './logger.ts'
 import type { SubscriptionManager } from './subscription.ts'
-import type { ExecuteFn, StreamFn } from './types.ts'
+import type { ExecuteFn } from './types.ts'
 
 const connection = new Provider<Connection>()
   .withScope(Scope.Connection)
@@ -38,10 +38,6 @@ const eventManager = new Provider<EventManager>()
   .withScope(Scope.Global)
   .withDescription('Event manager')
 
-const stream = new Provider<StreamFn>()
-  .withScope(Scope.Connection)
-  .withDescription('Create stream function')
-
 const subManager = new Provider<SubscriptionManager>()
   .withScope(Scope.Global)
   .withDescription('Subscription manager')
@@ -54,7 +50,6 @@ export const providers = {
   logger,
   execute,
   eventManager,
-  stream,
   subManager,
   workerType,
 }

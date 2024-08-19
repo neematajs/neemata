@@ -2,10 +2,10 @@ import { ErrorCode } from '@nmtjs/common'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   Api,
+  type ApiCallOptions,
   ApiError,
   Middleware,
   Procedure,
-  type ProcedureCallOptions,
 } from '../lib/api.ts'
 import type { Application } from '../lib/application.ts'
 import type { Connection } from '../lib/connection.ts'
@@ -143,8 +143,8 @@ describe.sequential('Api', () => {
 
   const payload = { test: 'test' }
   const call = (
-    options: Pick<ProcedureCallOptions, 'procedure'> &
-      Partial<Omit<ProcedureCallOptions, 'procedure'>>,
+    options: Pick<ApiCallOptions, 'procedure'> &
+      Partial<Omit<ApiCallOptions, 'procedure'>>,
   ) =>
     api.call({
       service,

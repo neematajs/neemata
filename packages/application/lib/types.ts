@@ -1,5 +1,4 @@
 import type { ApiBlob, ApiBlobInterface } from '@nmtjs/common'
-import type { Decoded, TSchema } from '@nmtjs/contract'
 import type { Api, Guard, Middleware, Procedure } from './api.ts'
 import type { Application } from './application.ts'
 import type { Connection, ConnectionOptions } from './connection.ts'
@@ -32,8 +31,6 @@ export type Command = (options: {
   kwargs: Record<string, any>
 }) => any
 
-export type ConnectionFn<T = any, C = any> = (transportData: T) => Async<C>
-
 export type FilterFn<T extends ErrorClass = ErrorClass> = (
   error: InstanceType<T>,
 ) => Async<Error>
@@ -45,8 +42,6 @@ export type MiddlewareFn = (
   next: Next,
   payload: any,
 ) => any
-
-export type ConnectionProvider<T, C> = Provider<ConnectionFn<T, C>>
 
 export type AnyApplication = Application
 export type AnyService = Service<any>
@@ -107,18 +102,10 @@ export type UnionToIntersection<U> = (
   ? I
   : never
 
-export type GlobalContext = {
-  logger: Logger
-}
-
 export type ExecuteFn = <T extends AnyTask>(
   task: T,
   ...args: T['_']['args']
 ) => TaskExecution<T['_']['type']>
-
-export type StreamFn = (
-  ...args: Parameters<(typeof ApiBlob)['from']>
-) => ServerUpStream
 
 export type Merge<
   T1 extends Record<string, any>,
