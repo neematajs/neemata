@@ -249,9 +249,6 @@ export class Api {
     }
     if (error instanceof ApiError) return error
 
-    // FIXME: this shouldn't be here
-    if (process.env.TEST) return error
-
     const logError = new Error('Unhandled error', { cause: error })
     this.application.logger.error(logError)
     return new ApiError(ErrorCode.InternalServerError, 'Internal Server Error')
