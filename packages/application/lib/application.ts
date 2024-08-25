@@ -11,13 +11,8 @@ import { providers } from './providers.ts'
 import { APP_COMMAND, Registry, printRegistry } from './registry.ts'
 import type { Service } from './service.ts'
 import { basicSubManagerPlugin } from './subscription.ts'
-import { type BaseTaskExecutor, TaskRunner } from './task.ts'
-import type {
-  AnyTask,
-  ApplicationContext,
-  ErrorClass,
-  ExecuteFn,
-} from './types.ts'
+import { type AnyTask, type BaseTaskExecutor, TaskRunner } from './task.ts'
+import type { ApplicationContext, ErrorClass, ExecuteFn } from './types.ts'
 
 export type ApplicationOptions = {
   type: WorkerType

@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { AnyProcedure } from '../lib/api.ts'
 import { Scope } from '../lib/constants.ts'
 import { Container, Provider, getProviderScope } from '../lib/container.ts'
 import { Registry } from '../lib/registry.ts'
-import type { AnyProcedure } from '../lib/types.ts'
 import { testLogger, testProcedure, testService } from './_utils.ts'
 
 describe.sequential('Provider', () => {
@@ -17,51 +17,37 @@ describe.sequential('Provider', () => {
     expect(provider).toBeInstanceOf(Provider)
   })
 
-  it('should clone with a value', () => {
+  it('should chain with a value', () => {
     const value = () => {}
-    const newProvider = provider.withValue(value)
-    expect(newProvider.value).toBe(value)
-    expect(newProvider).not.toBe(provider)
+    provider.withValue(value)
+    expect(provider.value).toBe(value)
   })
 
-  it('should clone with a factory', () => {
+  it('should chain with a factory', () => {
     const factory = () => {}
-    const newProvider = provider.withFactory(factory)
-    expect(newProvider.factory).toBe(factory)
-    expect(newProvider).not.toBe(provider)
+    provider.withFactory(factory)
+    expect(provider.factory).toBe(factory)
   })
 
-  it('should clone with a disposal', () => {
+  it('should chain with a disposal', () => {
     const dispose = () => {}
-    const newProvider = provider.withDisposal(dispose)
-    expect(newProvider.dispose).toBe(dispose)
-    expect(newProvider).not.toBe(provider)
+    provider.withDisposal(dispose)
+    expect(provider.dispose).toBe(dispose)
   })
 
-  it('should clone with a scope', () => {
-    const newProvider = provider.withScope(Scope.Call)
-    expect(newProvider.scope).toBe(Scope.Call)
-    expect(newProvider).not.toBe(provider)
+  it('should chain with a scope', () => {
+    provider.withScope(Scope.Call)
+    expect(provider.scope).toBe(Scope.Call)
   })
 
-  it('should clone with a dependencies', () => {
+  it('should chain with a dependencies', () => {
     const dep1 = new Provider().withValue('dep1')
     const dep2 = new Provider().withValue('dep2')
 
-    const newProvider = provider.withDependencies({ dep1 })
-    const newProvider2 = newProvider.withDependencies({ dep2 })
+    provider.withDependencies({ dep1 }).withDependencies({ dep2 })
 
-    expect(newProvider2.dependencies).toHaveProperty('dep1', dep1)
-    expect(newProvider2.dependencies).toHaveProperty('dep2', dep2)
-
-    expect(newProvider2).not.toBe(newProvider)
-    expect(newProvider2).not.toBe(provider)
-  })
-
-  it('should clone with a description', () => {
-    const newProvider = provider.withDescription('description')
-    expect(newProvider.description).toBe('description')
-    expect(newProvider).not.toBe(provider)
+    expect(provider.dependencies).toHaveProperty('dep1', dep1)
+    expect(provider.dependencies).toHaveProperty('dep2', dep2)
   })
 })
 
@@ -103,19 +89,17 @@ describe.sequential('Container', () => {
   })
 
   it('should provide dependencies', async () => {
-    const dep1 = new Provider().withValue('dep1')
+    const dep1 = new Provider().withValue('dep1' as const)
     const dep2 = new Provider()
       .withDependencies({ dep1 })
       .withFactory((deps) => deps)
-    const dep3 = new Provider().withFactory(() => 'dep3')
+    const dep3 = new Provider().withFactory(() => 'dep3' as const)
     const provider = new Provider()
-      .withDependencies({ dep2, dep3, dep4: dep3.optional() })
+      .withDependencies({ dep2, dep3 })
       .withFactory((deps) => deps)
     const deps = await container.resolve(provider)
-    expect(deps).toHaveProperty('dep2')
-    expect(deps).toHaveProperty('dep3')
-    expect(deps).toHaveProperty('dep4', deps.dep3)
-    expect(deps).toHaveProperty('dep2.dep1', 'dep1')
+    expect(deps).toHaveProperty('dep2', { dep1: 'dep1' })
+    expect(deps).toHaveProperty('dep3', 'dep3')
   })
 
   it('should dispose', async () => {
@@ -223,8 +207,11 @@ describe.sequential('Container', () => {
     const provider2 = new Provider()
       .withScope(Scope.Connection)
       .withFactory(factory2)
-    const procedure = testProcedure().withDependencies({ provider1, provider2 })
-    const service = testService({ procedure: procedure as AnyProcedure })
+    const procedure = testProcedure().withDependencies({
+      provider1,
+      provider2,
+    }) satisfies AnyProcedure
+    const service = testService({ procedure })
     registry.registerService(service)
     await container.load()
     expect(factory1).toHaveBeenCalledOnce()

@@ -3,24 +3,29 @@ import { readdir } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { TServiceContract } from '@nmtjs/contract'
-import { Procedure } from './api.ts'
+import {
+  type AnyGuard,
+  type AnyMiddleware,
+  type AnyProcedure,
+  Procedure,
+} from './api.ts'
 import { Hook } from './constants.ts'
 import { Hooks } from './hooks.ts'
-import type {
-  AnyGuard,
-  AnyMiddleware,
-  AnyProcedure,
-  HooksInterface,
-} from './types.ts'
+import type { HooksInterface } from './types.ts'
 
-export class Service<
-  Contract extends TServiceContract<string, any, any, any> = TServiceContract<
-    string,
-    any,
-    any,
-    any
-  >,
+export interface ServiceLike<
+  Contract extends TServiceContract = TServiceContract,
 > {
+  contract: Contract
+  procedures: Map<string, AnyProcedure>
+  guards: Set<AnyGuard>
+  middlewares: Set<AnyMiddleware>
+  hooks: Hooks
+}
+
+export type AnyService = ServiceLike<TServiceContract>
+
+export class Service<Contract extends TServiceContract = TServiceContract> {
   constructor(public readonly contract: Contract) {}
 
   procedures = new Map<string, AnyProcedure>()
@@ -28,10 +33,10 @@ export class Service<
   middlewares = new Set<AnyMiddleware>()
   hooks = new Hooks()
 
-  implement<
-    K extends Extract<keyof Contract['procedures'], string>,
-    I extends Procedure<Contract['procedures'][K], any>,
-  >(name: K, implementaion: I) {
+  implement<K extends Extract<keyof Contract['procedures'], string>>(
+    name: K,
+    implementaion: AnyProcedure<Contract['procedures'][K]>,
+  ) {
     this.procedures.set(name, implementaion)
     return this
   }
@@ -62,7 +67,7 @@ export class Service<
   }
 }
 
-const autoLoader = (directory: string, service: Service) => async () => {
+const autoLoader = (directory: string, service: Service<any>) => async () => {
   const procedureNames = Object.keys(service.contract.procedures)
   const extensions = ['.ts', '.js', '.mts', '.mjs', '.cts', '.cjs']
   const ignore = ['.d.ts', '.d.mts', '.d.cts']

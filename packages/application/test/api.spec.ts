@@ -1,9 +1,12 @@
 import { ErrorCode } from '@nmtjs/common'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  type AnyProcedure,
   Api,
   type ApiCallOptions,
   ApiError,
+  Filter,
+  Guard,
   Middleware,
   Procedure,
 } from '../lib/api.ts'
@@ -13,7 +16,7 @@ import { type Container, Provider } from '../lib/container.ts'
 import { providers } from '../lib/providers.ts'
 import type { Registry } from '../lib/registry.ts'
 import type { Service } from '../lib/service.ts'
-import type { AnyProcedure, FilterFn, GuardFn } from '../lib/types.ts'
+// import type { AnyProcedure, FilterFn, GuardFn } from '../lib/types.ts'
 import {
   type TestServiceContract,
   testApp,
@@ -233,23 +236,6 @@ describe.sequential('Api', () => {
     expect(call({ connection, procedure, signal })).resolves.toBe(signal)
   })
 
-  // it('should inject encoded stream response', async () => {
-  //   const handlerFn = vi.fn(({ response }) => response)
-  //   const procedure = new Procedure(
-  //     service.contract.procedures.testEncodedStream,
-  //   )
-  //     .withDependencies({ response: Procedure.response })
-  //     .withHandler(handlerFn)
-  //   service.implement('testEncodedStream', procedure)
-  //   await call({ procedure, payload }).catch((v) => v)
-  //   expect(handlerFn).toBeCalledWith(
-  //     {
-  //       response: expect.any(EncodedStreamResponse),
-  //     },
-  //     expect.anything(),
-  //   )
-  // })
-
   it('should handle procedure call with payload', async () => {
     const spy = vi.fn()
     const procedure = testProcedure().withHandler(spy)
@@ -268,9 +254,11 @@ describe.sequential('Api', () => {
   })
 
   it('should handle filter', async () => {
-    const spy = vi.fn(() => new ApiError('custom'))
+    const filterProvider = {
+      catch: vi.fn(() => new ApiError('custom')),
+    }
     class CustomError extends Error {}
-    const filter = new Provider().withValue(spy as FilterFn)
+    const filter = new Filter().withValue(filterProvider)
     registry.registerFilter(CustomError, filter)
     const error = new CustomError()
     const procedure = testProcedure().withHandler(() => {
@@ -278,12 +266,15 @@ describe.sequential('Api', () => {
     })
     service.implement('testProcedure', procedure)
     await expect(call({ procedure })).rejects.toBeInstanceOf(ApiError)
-    expect(spy).toHaveBeenCalledOnce()
-    expect(spy).toHaveBeenCalledWith(error)
+    expect(filterProvider.catch).toHaveBeenCalledOnce()
+    expect(filterProvider.catch).toHaveBeenCalledWith(error)
   })
 
   it('should handle guard', async () => {
-    const guard = new Provider().withValue((() => false) as GuardFn)
+    const guardLike = {
+      can: vi.fn(() => false),
+    }
+    const guard = new Guard().withValue(guardLike)
     const procedure = testProcedure()
       .withGuards(guard)
       .withHandler(() => 'result')
@@ -294,19 +285,23 @@ describe.sequential('Api', () => {
   })
 
   it('should handle middleware', async () => {
-    const middleware1Fn = vi.fn(async (ctx, next, payload) => {
-      const result = await next({ test: `${payload.test}2` })
-      return { test: `${result.test}_middleware1` }
-    })
-    const middleware2Fn = vi.fn(async (ctx, next, payload) => {
-      const result = await next({ test: `${payload.test}3` })
-      return { test: `${result.test}_middleware2` }
-    })
+    const middleware1Like = {
+      handle: vi.fn(async (ctx, next, payload) => {
+        const result = await next({ test: `${payload.test}2` })
+        return { test: `${result.test}_middleware1` }
+      }),
+    }
+    const middleware2Like = {
+      handle: vi.fn(async (ctx, next, payload) => {
+        const result = await next({ test: `${payload.test}3` })
+        return { test: `${result.test}_middleware2` }
+      }),
+    }
 
     const handlerFn = vi.fn(() => ({ test: 'result' }))
 
-    const middleware1 = new Middleware().withValue(middleware1Fn)
-    const middleware2 = new Middleware().withValue(middleware2Fn)
+    const middleware1 = new Middleware().withValue(middleware1Like)
+    const middleware2 = new Middleware().withValue(middleware2Like)
     const procedure = testProcedure()
       .withMiddlewares(middleware1, middleware2)
       .withHandler(handlerFn)
@@ -315,7 +310,7 @@ describe.sequential('Api', () => {
 
     const response = await call({ procedure, payload: { test: '1' } })
 
-    expect(middleware1Fn).toHaveBeenCalledWith(
+    expect(middleware1Like.handle).toHaveBeenCalledWith(
       {
         connection,
         container,
@@ -325,7 +320,7 @@ describe.sequential('Api', () => {
       expect.any(Function),
       { test: '1' },
     )
-    expect(middleware2Fn).toHaveBeenCalledWith(
+    expect(middleware2Like.handle).toHaveBeenCalledWith(
       {
         connection,
         container,

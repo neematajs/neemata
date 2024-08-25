@@ -1,17 +1,15 @@
 import type { ApiBlob, ApiBlobInterface } from '@nmtjs/common'
-import type { Api, Guard, Middleware, Procedure } from './api.ts'
-import type { Application } from './application.ts'
+import type { Api } from './api.ts'
 import type { Connection, ConnectionOptions } from './connection.ts'
 import type { Hook, WorkerType } from './constants.ts'
-import type { Container, Provider } from './container.ts'
+import type { Container } from './container.ts'
 import type { EventManager } from './events.ts'
 import type { Format } from './format.ts'
 import type { Hooks } from './hooks.ts'
 import type { Logger } from './logger.ts'
 import type { Registry } from './registry.ts'
-import type { Service } from './service.ts'
 import type { ServerUpStream } from './stream.ts'
-import type { Task, TaskExecution } from './task.ts'
+import type { AnyTask, Task, TaskExecution } from './task.ts'
 
 export type ClassConstructor<T> = new (...args: any[]) => T
 export type Callback = (...args: any[]) => any
@@ -22,43 +20,10 @@ export type ErrorClass = new (...args: any[]) => Error
 export type Extra = Record<string, any>
 export type Async<T> = T | Promise<T>
 
-export type GuardOptions = {
-  connection: Connection
-}
-
 export type Command = (options: {
   args: string[]
   kwargs: Record<string, any>
 }) => any
-
-export type FilterFn<T extends ErrorClass = ErrorClass> = (
-  error: InstanceType<T>,
-) => Async<Error>
-
-export type GuardFn = (options: GuardOptions) => Async<boolean>
-
-export type MiddlewareFn = (
-  options: MiddlewareContext,
-  next: Next,
-  payload: any,
-) => any
-
-export type AnyApplication = Application
-export type AnyService = Service<any>
-export type AnyProvider<Value = any> = Provider<Value, any>
-export type AnyProcedure = Procedure<any, any>
-export type AnyTask = Task<any, any, any, any>
-export type AnyGuard = Guard<any>
-export type AnyMiddleware = Middleware<any>
-
-export type MiddlewareContext = {
-  connection: Connection
-  container: Container
-  procedure: AnyProcedure
-  service: AnyService
-}
-
-export type Next = (payload?: any) => any
 
 export interface HooksInterface {
   [Hook.BeforeInitialize]: () => any
@@ -102,10 +67,14 @@ export type UnionToIntersection<U> = (
   ? I
   : never
 
-export type ExecuteFn = <T extends AnyTask>(
+export type ExecuteFn = <
+  T extends AnyTask,
+  A extends T extends Task<any, any, infer Args> ? Args : never,
+  R extends T extends Task<any, any, any, infer Result> ? Result : never,
+>(
   task: T,
-  ...args: T['_']['args']
-) => TaskExecution<T['_']['type']>
+  ...args: A
+) => TaskExecution<R>
 
 export type Merge<
   T1 extends Record<string, any>,

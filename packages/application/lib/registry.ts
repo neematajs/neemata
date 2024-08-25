@@ -6,22 +6,28 @@ import type {
 import { type Compiled, compile } from '@nmtjs/contract/compiler'
 import { ContractGuard } from '@nmtjs/contract/guards'
 
-import type { Filter } from './api.ts'
+import type { AnyFilter, Filter } from './api.ts'
 import { type Hook, Scope } from './constants.ts'
-import { type Provider, getProviderScope } from './container.ts'
+import {
+  type AnyProvider,
+  type Depedency,
+  getDepedencencyProvider,
+  getProviderScope,
+} from './container.ts'
 import { Hooks } from './hooks.ts'
 import type { Logger } from './logger.ts'
-import type { Service } from './service.ts'
-import type { AnyTask, Command, ErrorClass, HooksInterface } from './types.ts'
+import type { AnyService } from './service.ts'
+import type { AnyTask } from './task.ts'
+import type { Command, ErrorClass, HooksInterface } from './types.ts'
 
 export const APP_COMMAND = Symbol('APP_COMMAND')
 
 export class Registry {
   readonly commands = new Map<string | symbol, Map<string, Command>>()
-  readonly filters = new Map<ErrorClass, Filter<ErrorClass>>()
-  readonly services = new Map<string, Service>()
+  readonly filters = new Map<ErrorClass, AnyFilter<ErrorClass>>()
+  readonly services = new Map<string, AnyService>()
   readonly schemas = new Map<any, Compiled>()
-  readonly tasks = new Map<string, any>()
+  readonly tasks = new Map<string, AnyTask>()
   readonly hooks = new Hooks()
 
   constructor(
@@ -48,7 +54,7 @@ export class Registry {
     commands.set(commandName, callback)
   }
 
-  registerService(service: Service) {
+  registerService(service: AnyService) {
     if (this.services.has(service.contract.name))
       throw new Error(`Service ${service.contract.name} already registered`)
 
@@ -90,7 +96,13 @@ export class Registry {
     if (typeof task.handler !== 'function')
       throw new Error('Task handler is not defined or is not a function')
 
-    if (hasNonInvalidScopeDeps(Object.values(task.dependencies)))
+    if (
+      hasNonInvalidScopeDeps(
+        Object.values<Depedency>(task.dependencies).map(
+          getDepedencencyProvider,
+        ),
+      )
+    )
       throw new Error(scopeErrorMessage('Task dependencies'))
 
     this.application.logger.debug('Registering task [%s]', task.name)
@@ -114,12 +126,14 @@ export class Registry {
 export const scopeErrorMessage = (name, scope = Scope.Global) =>
   `${name} must be a ${scope} scope (including all nested dependencies)`
 
-export const hasNonInvalidScopeDeps = (
-  providers: Provider[],
+export function hasNonInvalidScopeDeps(
+  providers: AnyProvider[],
   scope = Scope.Global,
-) => providers.some((guard) => getProviderScope(guard) !== scope)
+) {
+  return providers.some((guard) => getProviderScope(guard) !== scope)
+}
 
-export const printRegistry = (registry: Registry) => {
+export function printRegistry(registry: Registry) {
   const mapToTable = (map: Map<string, any>) => Array.from(map.keys())
 
   console.log('Tasks:')
