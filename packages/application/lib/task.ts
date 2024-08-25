@@ -8,11 +8,11 @@ import type {
 } from './container.ts'
 import { providers } from './providers.ts'
 import type { Registry } from './registry.ts'
-import type { AnyTask, Async, OmitFirstItem } from './types.ts'
+import type { Async, OmitFirstItem } from './types.ts'
 import { createFuture, defer, merge, noop, onAbort } from './utils/functions.ts'
 
-export type TaskExecution<Res = any> = Promise<
-  { result: Res; error: never } | { result: never; error: any }
+export type TaskExecution<Res = any> = PromiseLike<
+  { result: Res; error?: never } | { result?: never; error: any }
 > & {
   abort(reason?: any): void
 }
@@ -23,70 +23,76 @@ export type TasksRunner = (
   ...args: any[]
 ) => Promise<any>
 
-type Handler<Deps extends Dependencies> = (
+type TaskHandlerType<Deps extends Dependencies, A extends any[], R> = (
   ctx: DependencyContext<Deps>,
-  ...args: any[]
-) => any
+  ...args: A
+) => Async<R>
 
 export interface BaseTaskExecutor {
   execute(signal: AbortSignal, name: string, ...args: any[]): Promise<any>
 }
 
-export class Task<
+export interface TaskLike<
+  TaskName extends string = string,
   TaskDeps extends Dependencies = {},
-  TaskHandler extends Handler<TaskDeps> = Handler<TaskDeps>,
-  TaskType = unknown,
   TaskArgs extends any[] = [],
-> implements Depender<TaskDeps>
-{
-  _!: {
-    type: TaskType
-    handler: Handler<TaskDeps>
-    args: TaskArgs
-  }
-
-  readonly name!: string
-  readonly dependencies: TaskDeps = {} as TaskDeps
-  readonly handler!: this['_']['handler']
-  readonly parser!: (
+  TaskResult = unknown,
+> extends Depender<TaskDeps> {
+  name: TaskName
+  handler: TaskHandlerType<TaskDeps, TaskArgs, TaskResult>
+  parser: (
     args: string[],
     kwargs: Record<string, any>,
   ) => Async<TaskArgs | Readonly<TaskArgs>>
+}
 
-  withName(name: string) {
-    const task = new Task<TaskDeps, TaskHandler, TaskType, TaskArgs>()
-    Object.assign(task, this, { name })
-    return task
+export type AnyTask = Task<string, any, any[], any, any>
+export class Task<
+  TaskName extends string,
+  TaskDeps extends Dependencies = {},
+  TaskArgs extends any[] = [],
+  TaskResult = unknown,
+  TaskHandler extends TaskHandlerType<
+    TaskDeps,
+    TaskArgs,
+    TaskResult
+  > = TaskHandlerType<TaskDeps, TaskArgs, TaskResult>,
+> implements TaskLike<TaskName, TaskDeps, TaskArgs, TaskResult>
+{
+  readonly name: TaskName
+  dependencies: TaskDeps = {} as TaskDeps
+  handler: TaskHandler
+  parser: (args: string[], kwargs: Record<string, any>) => Async<TaskArgs>
+
+  constructor(name: TaskName) {
+    this.name = name
+    this.handler = notImplemented(this.name, 'handler') as any
+    this.parser = notImplemented(this.name, 'parser') as any
   }
 
   withDependencies<NewDeps extends Dependencies>(dependencies: NewDeps) {
-    const task = new Task<
+    this.dependencies = merge(this.dependencies, dependencies) as any
+    return this as unknown as Task<
+      TaskName,
       TaskDeps & NewDeps,
-      Handler<TaskDeps & NewDeps>,
-      TaskType,
-      TaskArgs
-    >()
-    Object.assign(task, this, {
-      dependencies: merge(this.dependencies, dependencies),
-    })
-    return task
+      TaskArgs,
+      TaskResult
+    >
   }
 
-  withHandler<NewHandler extends Handler<TaskDeps>>(handler: NewHandler) {
-    const task = new Task<
+  withHandler<T extends TaskHandlerType<TaskDeps, any[], any>>(handler: T) {
+    this.handler = handler as any
+    return this as unknown as Task<
+      TaskName,
       TaskDeps,
-      TaskHandler,
-      Awaited<ReturnType<NewHandler>>,
-      OmitFirstItem<Parameters<NewHandler>>
-    >()
-    Object.assign(task, this, { handler })
-    return task
+      OmitFirstItem<Parameters<T>>,
+      ReturnType<T> extends Async<infer R> ? R : never
+    >
   }
 
   withParser(parser: this['parser']) {
-    const task = new Task<TaskDeps, TaskHandler, TaskType, TaskArgs>()
-    Object.assign(task, this, { parser })
-    return task
+    this.parser = parser
+    return this
   }
 }
 
@@ -98,7 +104,6 @@ export class TaskRunner {
 
   execute(task: AnyTask, ...args: any[]): TaskExecution {
     const ac = new AbortController()
-    const abort = (reason?: any) => ac.abort(reason ?? new Error('Aborted'))
     const future = createFuture()
 
     onAbort(ac.signal, future.reject)
@@ -122,16 +127,16 @@ export class TaskRunner {
       } finally {
         container.dispose()
       }
-    }).then(...future.toArgs())
+    }).then(...future.asArgs)
 
-    this.handleTermination(future.promise, abort)
+    this.handleTermination(future.promise, ac)
 
     return Object.assign(
       future.promise
         .then((result) => ({ result }))
-        .catch((error = new Error('Task execution')) => ({ error })),
-      { abort },
-    ) as TaskExecution
+        .catch((error = new Error('Task execution error')) => ({ error })),
+      { abort: ac.abort.bind(ac) },
+    ) satisfies TaskExecution as TaskExecution
   }
 
   async command({ args, kwargs }) {
@@ -148,10 +153,10 @@ export class TaskRunner {
 
   private handleTermination(
     result: Promise<any>,
-    abort: (reason?: any) => void,
+    abortController: AbortController,
   ) {
     const abortExecution = async () => {
-      abort()
+      abortController.abort()
       await result.catch(noop)
     }
     const remove = this.application.registry.hooks.add(
@@ -161,4 +166,8 @@ export class TaskRunner {
 
     result.finally(remove).catch(noop)
   }
+}
+
+const notImplemented = (taskName: string, fnType: string) => () => {
+  throw new Error(`Task [${taskName}] ${fnType} is not implemented`)
 }

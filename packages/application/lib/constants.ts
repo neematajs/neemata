@@ -20,3 +20,9 @@ export enum WorkerType {
   Api = 'Api',
   Task = 'Task',
 }
+
+export const OptionalDependency: unique symbol = Symbol('OptionalDependency')
+export type OptionalDependency = typeof OptionalDependency
+
+export const IsProvider: unique symbol = Symbol('IsProvider')
+export type IsProvider = typeof IsProvider

@@ -10,7 +10,7 @@ import {
   type RpcResponse,
 } from '@nmtjs/common'
 import { Contract, Type } from '@nmtjs/contract'
-import { Procedure } from '../lib/api.ts'
+import { type AnyProcedure, Procedure } from '../lib/api.ts'
 import { Application, type ApplicationOptions } from '../lib/application.ts'
 import { Connection, type ConnectionOptions } from '../lib/connection.ts'
 import { Hook, WorkerType } from '../lib/constants.ts'
@@ -149,13 +149,14 @@ export const testConnection = (
 
 export const testFormat = () => new TestFormat()
 
-export const testProcedure = () =>
-  new Procedure(TestServiceContract.procedures.testProcedure)
+export const testProcedure = (): AnyProcedure<
+  typeof TestServiceContract.procedures.testProcedure
+> => new Procedure(TestServiceContract.procedures.testProcedure)
 
 export const testSubscription = () =>
   new Procedure(TestServiceContract.procedures.testSubscription)
 
-export const testTask = () => new Task().withName('test')
+export const testTask = () => new Task('test')
 
 export const testTaskRunner = (...args) => new TestTaskExecutor(...args)
 

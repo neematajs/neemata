@@ -11,6 +11,7 @@ import { ContractGuard } from '@nmtjs/contract/guards'
 
 import type { ApplicationOptions } from './application.ts'
 import type { Connection } from './connection.ts'
+import type { Scope } from './constants.ts'
 import {
   type Container,
   type Dependencies,
@@ -21,21 +22,9 @@ import {
 import type { Logger } from './logger.ts'
 import { providers } from './providers.ts'
 import type { Registry } from './registry.ts'
-import type { Service } from './service.ts'
+import type { AnyService, ServiceLike } from './service.ts'
 import { SubscriptionResponse } from './subscription.ts'
-import type {
-  AnyGuard,
-  AnyMiddleware,
-  AnyProcedure,
-  Async,
-  ErrorClass,
-  FilterFn,
-  GuardFn,
-  InputType,
-  MiddlewareContext,
-  MiddlewareFn,
-  OutputType,
-} from './types.ts'
+import type { Async, ErrorClass, InputType, OutputType } from './types.ts'
 import { merge, withTimeout } from './utils/functions.ts'
 
 export type ProcedureHandlerType<
@@ -62,23 +51,82 @@ export type ProcedureHandlerType<
       : never
 >
 
+export interface ProcedureLike<
+  ProcedureContract extends TBaseProcedureContract = TBaseProcedureContract,
+  ProcedureDeps extends Dependencies = Dependencies,
+> extends Depender<ProcedureDeps> {
+  contract: ProcedureContract
+  handler: ProcedureHandlerType<ProcedureContract, ProcedureDeps>
+  metadata: Map<MetadataKey<any, any>, any>
+  dependencies: ProcedureDeps
+  guards: Set<AnyGuard>
+  middlewares: Set<AnyMiddleware>
+}
+
+export interface FilterLike<T extends ErrorClass = ErrorClass> {
+  catch(error: InstanceType<T>): Async<Error>
+}
+
+export type ExecuteContext = Readonly<{
+  connection: Connection
+  container: Container
+  procedure: ProcedureLike
+  service: ServiceLike
+}>
+
+export interface GuardLike {
+  can(context: ExecuteContext): Async<boolean>
+}
+
+export type MiddlewareNext = (payload?: any) => any
+
+export interface MiddlewareLike {
+  handle(context: ExecuteContext, next: MiddlewareNext, payload: any): any
+}
+
+export type AnyGuard = Guard<any>
+export class Guard<Deps extends Dependencies = {}> extends Provider<
+  GuardLike,
+  Deps,
+  Scope.Global
+> {}
+
+export type AnyMiddleware = Middleware<any>
+export class Middleware<Deps extends Dependencies = {}> extends Provider<
+  MiddlewareLike,
+  Deps,
+  Scope.Global
+> {}
+
+export type AnyFilter<Error extends ErrorClass = ErrorClass> = Filter<
+  Error,
+  any
+>
+export class Filter<
+  Error extends ErrorClass = ErrorClass,
+  Deps extends Dependencies = {},
+> extends Provider<FilterLike<Error>, Deps, Scope.Global> {}
+
+export type AnyProcedure<Contract extends TBaseProcedureContract = any> =
+  Procedure<Contract, Dependencies, any>
+
 export class Procedure<
   ProcedureContract extends TBaseProcedureContract = TBaseProcedureContract,
   ProcedureDeps extends Dependencies = {},
-> implements Depender<ProcedureDeps>
+  ProcedureHandler extends ProcedureHandlerType<
+    ProcedureContract,
+    ProcedureDeps
+  > = ProcedureHandlerType<ProcedureContract, ProcedureDeps>,
+> implements ProcedureLike<ProcedureContract, ProcedureDeps>
 {
-  handler: ProcedureHandlerType<ProcedureContract, ProcedureDeps>
-  metadata: Map<MetadataKey<any, any>, any> = new Map()
+  handler: ProcedureHandler
   dependencies: ProcedureDeps = {} as ProcedureDeps
-  guards = new Set<AnyGuard>()
-  middlewares = new Set<AnyMiddleware>()
+  readonly metadata: Map<MetadataKey<any, any>, any> = new Map()
+  readonly middlewares = new Set<AnyMiddleware>()
+  readonly guards = new Set<AnyGuard>()
 
   constructor(public readonly contract: ProcedureContract) {
-    this.handler = () => {
-      throw new Error(
-        `Procedure handler [${contract.serviceName}/${contract.name}] is not defined`,
-      )
-    }
+    this.handler = notImplemented(contract) as unknown as ProcedureHandler
   }
 
   withDependencies<Deps extends Dependencies>(dependencies: Deps) {
@@ -103,12 +151,13 @@ export class Procedure<
 
   withMetadata<T extends MetadataKey<any, any>>(key: T, value: T['type']) {
     this.metadata.set(key, value)
+    return this
   }
 }
 
 export type ApiCallOptions = {
   connection: Connection
-  service: Service
+  service: AnyService
   procedure: AnyProcedure
   container: Container
   payload: any
@@ -156,12 +205,12 @@ export class Api {
   private async createProcedureHandler(callOptions: ApiCallOptions) {
     const { connection, procedure, container, service } = callOptions
 
-    const middlewareCtx: MiddlewareContext = {
+    const execCtx: ExecuteContext = Object.freeze({
       connection,
       container,
       service,
       procedure,
-    }
+    })
 
     const middlewares = await this.resolveMiddlewares(callOptions)
 
@@ -171,12 +220,12 @@ export class Api {
       this.options.timeout
 
     const handleProcedure = async (payload: any) => {
-      const middleware = middlewares?.next().value
+      const middleware = middlewares.next().value as MiddlewareLike | undefined
       if (middleware) {
         const next = (newPayload = payload) => handleProcedure(newPayload)
-        return middleware(middlewareCtx, next, payload)
+        return middleware.handle(execCtx, next, payload)
       } else {
-        await this.handleGuards(callOptions)
+        await this.handleGuards(callOptions, execCtx)
         const { dependencies } = procedure
         const context = await container.createContext(dependencies)
         const input = this.handleInput(procedure, payload)
@@ -184,10 +233,7 @@ export class Api {
           procedure.handler(context, input),
           timeout,
         )
-
-        const output = this.handleOutput(procedure, result)
-
-        return output
+        return this.handleOutput(procedure, result)
       }
     }
 
@@ -225,13 +271,15 @@ export class Api {
       : response
   }
 
-  private async handleGuards(callOptions: ApiCallOptions) {
+  private async handleGuards(
+    callOptions: ApiCallOptions,
+    execCtx: ExecuteContext,
+  ) {
     const { service, procedure, container, connection } = callOptions
     const providers = [...service.guards, ...procedure.guards]
     const guards = await Promise.all(providers.map((p) => container.resolve(p)))
-    const guardOptions = Object.freeze({ connection })
     for (const guard of guards) {
-      const result = await guard(guardOptions)
+      const result = await guard.can(execCtx)
       if (result === false) throw new ApiError(ErrorCode.Forbidden)
     }
   }
@@ -240,8 +288,8 @@ export class Api {
     if (this.application.registry.filters.size) {
       for (const [errorType, filter] of this.application.registry.filters) {
         if (error instanceof errorType) {
-          const filterFn = await this.application.container.resolve(filter)
-          const handledError = await filterFn(error)
+          const filterLike = await this.application.container.resolve(filter)
+          const handledError = await filterLike.catch(error)
           if (!handledError || !(handledError instanceof ApiError)) continue
           return handledError
         }
@@ -365,16 +413,8 @@ export const getProcedureMetadata = <
 
 const NotFound = () => new ApiError(ErrorCode.NotFound, 'Procedure not found')
 
-export class Guard<Deps extends Dependencies = {}> extends Provider<
-  GuardFn,
-  Deps
-> {}
-
-export class Middleware<Deps extends Dependencies = {}> extends Provider<
-  MiddlewareFn,
-  Deps
-> {}
-
-export class Filter<Error extends ErrorClass = ErrorClass> extends Provider<
-  FilterFn<Error>
-> {}
+const notImplemented = (contract: TBaseProcedureContract) => () => {
+  throw new Error(
+    `Procedure [${contract.serviceName}/${contract.name}] handler is not implemented`,
+  )
+}

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Container, Provider } from '../lib/container.ts'
 import { providers } from '../lib/providers.ts'
 import { Registry } from '../lib/registry.ts'
-import { Task, TaskRunner } from '../lib/task.ts'
+import { type AnyTask, Task, TaskRunner } from '../lib/task.ts'
 import { createFuture, defer, noop, onAbort } from '../lib/utils/functions.ts'
 import {
   testDefaultTimeout,
@@ -12,7 +12,7 @@ import {
 } from './_utils.ts'
 
 describe.sequential('Task', () => {
-  let task: Task
+  let task: AnyTask
 
   beforeEach(() => {
     task = testTask().withHandler(noop)
@@ -25,30 +25,29 @@ describe.sequential('Task', () => {
 
   it('should clone with a handler', () => {
     const handler = () => {}
-    const newTask = task.withHandler(handler)
-    expect(newTask.handler).toBe(handler)
-    expect(newTask).not.toBe(task)
+    task.withHandler(handler)
+    expect(task.handler).toBe(handler)
   })
 
   it('should clone with a parser', () => {
     const parser = (...args: any[]): any => {}
-    const newTask = task.withParser(parser)
-    expect(newTask.parser).toBe(parser)
-    expect(newTask).not.toBe(task)
+    task.withParser(parser)
+    expect(task.parser).toBe(parser)
   })
 
   it('should clone with a dependencies', () => {
     const dep1 = new Provider().withValue('dep1')
     const dep2 = new Provider().withValue('dep2')
-    const newTask = task.withDependencies({
-      dep1,
-    })
-    const newTask2 = newTask.withDependencies({
-      dep2,
-    })
-    expect(newTask2.dependencies).toHaveProperty('dep1', dep1)
-    expect(newTask2.dependencies).toHaveProperty('dep2', dep2)
-    expect(newTask2).not.toBe(task)
+    task
+      .withDependencies({
+        dep1,
+      })
+      .withDependencies({
+        dep2,
+      })
+
+    expect(task.dependencies).toHaveProperty('dep1', dep1)
+    expect(task.dependencies).toHaveProperty('dep2', dep2)
   })
 })
 
@@ -92,6 +91,7 @@ describe.sequential('Tasks', () => {
     const task = testTask()
       .withDependencies({ dep: provider })
       .withHandler((ctx) => ctx)
+
     registry.registerTask(task)
     const { result } = await tasks.execute(task)
     expect(result).toHaveProperty('dep', provider.value)

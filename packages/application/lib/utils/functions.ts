@@ -82,20 +82,15 @@ export type Future<T> = {
   resolve: (value: T) => void
   reject: (error?: any) => void
   promise: Promise<T>
-  toArgs: () => [resolve: (value: T) => void, reject: (error: any) => void]
+  asArgs: [resolve: (value: T) => void, reject: (error: any) => void]
 }
 
 // TODO: Promise.withResolvers?
 export const createFuture = <T>(): Future<T> => {
-  let resolve: Callback
-  let reject: Callback
-  const promise = new Promise<T>((res, rej) => {
-    resolve = res
-    reject = rej
-  })
-  const toArgs = () => [resolve, reject]
-  // @ts-expect-error
-  return { resolve, reject, promise, toArgs }
+  let asArgs: [resolve: (value: T) => void, reject: (error: any) => void]
+  const promise = new Promise<T>((...args) => (asArgs = args))
+  const [resolve, reject] = asArgs!
+  return { resolve, reject, promise, asArgs: asArgs! }
 }
 
 export const onAbort = <T extends Callback>(

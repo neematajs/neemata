@@ -65,11 +65,6 @@ describe('Registry', () => {
     expect(registry.tasks.get(task.name)).toBe(task)
   })
 
-  it('should fail to register task without handler', () => {
-    const task = testTask()
-    expect(() => registry.registerTask(task)).toThrow()
-  })
-
   it('should fail to register task with the same name', () => {
     const task1 = testTask().withHandler(noop)
     const task2 = testTask().withHandler(noop)

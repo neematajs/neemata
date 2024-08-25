@@ -12,7 +12,7 @@ export const ServiceKind = 'NeemataService'
 
 export interface TServiceContract<
   Name extends string = string,
-  Transports extends { [K in string]?: true } = {},
+  Transports extends { [K in string]?: true } = { [K in string]?: true },
   Procedures extends Record<
     string,
     TProcedureContract | TSubscriptionContract

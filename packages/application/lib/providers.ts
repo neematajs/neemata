@@ -6,41 +6,23 @@ import type { Logger } from './logger.ts'
 import type { SubscriptionManager } from './subscription.ts'
 import type { ExecuteFn } from './types.ts'
 
-const connection = new Provider<Connection>()
-  .withScope(Scope.Connection)
-  .withDescription('RPC connection')
+const connection = new Provider<Connection>().withScope(Scope.Connection)
 
-const connectionData = new Provider<unknown>()
-  .withScope(Scope.Connection)
-  .withDescription('RPC connection data')
+const connectionData = new Provider<unknown>().withScope(Scope.Connection)
 
-const callSignal = new Provider<AbortSignal>()
-  .withScope(Scope.Call)
-  .withDescription('RPC abort signal')
+const callSignal = new Provider<AbortSignal>().withScope(Scope.Call)
 
-const taskSignal = new Provider<AbortSignal>()
-  .withScope(Scope.Global)
-  .withDescription('Task execution abort signal')
+const taskSignal = new Provider<AbortSignal>().withScope(Scope.Global)
 
-const logger = new Provider<Logger>()
-  .withScope(Scope.Global)
-  .withDescription('Logger')
+const logger = new Provider<Logger>().withScope(Scope.Global)
 
-const execute = new Provider<ExecuteFn>()
-  .withScope(Scope.Global)
-  .withDescription('Task execution function')
+const execute = new Provider<ExecuteFn>().withScope(Scope.Global)
 
-const workerType = new Provider<WorkerType>()
-  .withScope(Scope.Global)
-  .withDescription('Worker type')
+const workerType = new Provider<WorkerType>().withScope(Scope.Global)
 
-const eventManager = new Provider<EventManager>()
-  .withScope(Scope.Global)
-  .withDescription('Event manager')
+const eventManager = new Provider<EventManager>().withScope(Scope.Global)
 
-const subManager = new Provider<SubscriptionManager>()
-  .withScope(Scope.Global)
-  .withDescription('Subscription manager')
+const subManager = new Provider<SubscriptionManager>().withScope(Scope.Global)
 
 export const providers = {
   connection,

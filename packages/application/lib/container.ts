@@ -1,7 +1,6 @@
-import { Scope } from './constants.ts'
+import { OptionalDependency, Scope } from './constants.ts'
 import type { Logger } from './logger.ts'
 import type { Registry } from './registry.ts'
-import type { AnyProvider } from './types.ts'
 import { merge } from './utils/functions.ts'
 
 const ScopeStrictness = {
@@ -11,14 +10,23 @@ const ScopeStrictness = {
   [Scope.Transient]: 3,
 }
 
-export type Dependencies = Record<
-  string,
-  AnyProvider | { isOptional: true; provider: AnyProvider }
+export type DependencyOptional = {
+  [OptionalDependency]: true
+  provider: AnyProvider
+}
+export type Depedency = DependencyOptional | AnyProvider
+
+export type Dependencies = Record<string, Depedency>
+
+export type ResolveProviderType<T extends AnyProvider> = T extends ProviderLike<
+  infer Type,
+  any,
+  any
 >
+  ? Type
+  : never
 
-export type ResolveProviderType<T extends AnyProvider> = Awaited<T['value']>
-
-export interface Depender<Deps extends Dependencies = {}> {
+export interface Depender<Deps extends Dependencies = Dependencies> {
   dependencies: Deps
 }
 
@@ -27,15 +35,9 @@ export type DependencyContext<Deps extends Dependencies> = {
     ? K
     : never]: Deps[K] extends AnyProvider ? ResolveProviderType<Deps[K]> : never
 } & {
-  [K in keyof Deps as Deps[K] extends {
-    isOptional: true
-    provider: AnyProvider
-  }
+  [K in keyof Deps as Deps[K] extends DependencyOptional
     ? K
-    : never]?: Deps[K] extends {
-    isOptional: true
-    provider: AnyProvider
-  }
+    : never]?: Deps[K] extends DependencyOptional
     ? ResolveProviderType<Deps[K]['provider']>
     : never
 }
@@ -43,93 +45,105 @@ export type DependencyContext<Deps extends Dependencies> = {
 export type ProviderFactoryType<
   ProviderType,
   ProviderDeps extends Dependencies,
-> = (injections: DependencyContext<ProviderDeps>) => ProviderType
+> = (context: DependencyContext<ProviderDeps>) => ProviderType
 
 export type ProviderDisposeType<
   ProviderType,
   ProviderDeps extends Dependencies,
 > = (
   instance: Awaited<ProviderType>,
-  ctx: DependencyContext<ProviderDeps>,
+  context: DependencyContext<ProviderDeps>,
 ) => any
 
-export class Provider<
+export interface ProviderLike<
   ProviderValue = any,
   ProviderDeps extends Dependencies = {},
-> implements Depender<ProviderDeps>
+  ProviderScope extends Scope = Scope,
+> extends Depender<ProviderDeps> {
+  value: ProviderValue
+  dependencies: ProviderDeps
+  scope: ProviderScope
+  factory: ProviderFactoryType<ProviderValue, ProviderDeps>
+  dispose?: ProviderDisposeType<ProviderValue, ProviderDeps>
+}
+
+export type AnyProvider<T = any, S extends Scope = Scope> = ProviderLike<
+  T,
+  any,
+  S
+>
+export class Provider<
+  ProviderType = unknown,
+  ProviderDeps extends Dependencies = {},
+  ProviderScope extends Scope = Scope.Global,
+> implements ProviderLike<ProviderType, ProviderDeps, ProviderScope>
 {
-  private static override<T>(
-    newProvider: T,
-    original: any,
-    overrides: { [K in keyof Provider]?: any } = {},
-  ): T {
-    // @ts-expect-error
-    Object.assign(newProvider, original, overrides)
-    return newProvider
-  }
+  value: ProviderType = void 0 as unknown as ProviderType
+  dependencies: ProviderDeps = {} as ProviderDeps
+  scope: ProviderScope = Scope.Global as ProviderScope
+  factory: ProviderFactoryType<ProviderType, ProviderDeps>
+  dispose?: ProviderDisposeType<ProviderType, ProviderDeps> = undefined
 
-  static key<T>() {
-    return new Provider<T>()
+  constructor() {
+    this.factory = notImplemented()
   }
-
-  readonly value!: ProviderValue
-  readonly dependencies: ProviderDeps = {} as ProviderDeps
-  readonly scope: Scope = Scope.Global
-  readonly factory!: ProviderFactoryType<ProviderValue, ProviderDeps>
-  readonly dispose?: ProviderDisposeType<ProviderValue, ProviderDeps>
-  readonly description!: string
 
   withDependencies<Deps extends Dependencies>(newDependencies: Deps) {
-    const provider = new Provider<ProviderValue, Deps>()
-    const dependencies = merge(this.dependencies, newDependencies)
-    return Provider.override(provider, this, { dependencies })
+    this.dependencies = merge(this.dependencies, newDependencies)
+    return this as unknown as Provider<
+      ProviderType,
+      ProviderDeps & Deps,
+      ProviderScope
+    >
   }
 
-  withScope(scope: Scope) {
-    const provider = new Provider<ProviderValue, ProviderDeps>()
-    return Provider.override(provider, this, { scope })
+  withScope<T extends Scope>(scope: T) {
+    this.scope = scope as unknown as ProviderScope
+    return this as unknown as Provider<ProviderType, ProviderDeps, T>
   }
 
-  withFactory<F extends ProviderFactoryType<ProviderValue, ProviderDeps>>(
+  withFactory<F extends ProviderFactoryType<ProviderType, ProviderDeps>>(
     factory: F,
   ) {
-    const provider = new Provider<Awaited<ReturnType<F>>, ProviderDeps>()
-    return Provider.override(provider, this, { factory, value: undefined })
+    this.value = undefined as unknown as ProviderType
+    this.factory = factory
+    return this as unknown as Provider<
+      Awaited<ReturnType<F>>,
+      ProviderDeps,
+      ProviderScope
+    >
   }
 
-  withValue<T extends null extends ProviderValue ? any : ProviderValue>(
+  withValue<T extends null extends ProviderType ? any : ProviderType>(
     value: T,
   ) {
-    const provider = new Provider<
-      null extends ProviderValue ? T : ProviderValue,
+    this.factory = undefined as unknown as ProviderFactoryType<
+      ProviderType,
       ProviderDeps
-    >()
-    return Provider.override(provider, this, {
-      value,
-      factory: undefined,
-      dispose: undefined,
-    })
+    >
+    this.dispose = undefined
+    this.value = value as unknown as ProviderType
+    return this as unknown as Provider<
+      null extends ProviderType ? T : ProviderType,
+      ProviderDeps,
+      ProviderScope
+    >
   }
 
   withDisposal(dispose: this['dispose']) {
-    const provider = new Provider<ProviderValue, ProviderDeps>()
-    return Provider.override(provider, this, { dispose })
-  }
-
-  withDescription(description: string) {
-    const provider = new Provider<ProviderValue, ProviderDeps>()
-    return Provider.override(provider, this, { description })
+    this.dispose = dispose
+    return this
   }
 
   $withType<T>() {
     return this as unknown as Provider<T, ProviderDeps>
   }
 
-  optional() {
+  asOptional() {
     return {
-      isOptional: true as const,
+      [OptionalDependency]: true,
       provider: this,
-    }
+    } as const
   }
 
   resolve(
@@ -147,6 +161,7 @@ export class Container {
   readonly instances = new Map<AnyProvider, any>()
   private readonly resolvers = new Map<AnyProvider, Promise<any>>()
   private readonly providers = new Set<AnyProvider>()
+  private readonly depender = new Map<Depender | AnyProvider, Set<Provider>>()
 
   constructor(
     private readonly application: {
@@ -160,9 +175,8 @@ export class Container {
   async load() {
     const traverse = (dependencies: Dependencies) => {
       for (const key in dependencies) {
-        const depender = dependencies[key]
-        const provider =
-          depender instanceof Provider ? depender : depender.provider
+        const dependency = dependencies[key]
+        const provider = getDepedencencyProvider(dependency)
         this.providers.add(provider)
         traverse(provider.dependencies)
       }
@@ -252,8 +266,7 @@ export class Container {
     const injections: any = {}
     const resolvers: Promise<any>[] = []
     for (const [key, dependency] of Object.entries(dependencies)) {
-      const provider =
-        dependency instanceof Provider ? dependency : dependency.provider
+      const provider = getDepedencencyProvider(dependency)
       const resolver = this.resolve(provider)
       resolvers.push(resolver.then((value) => (injections[key] = value)))
     }
@@ -271,14 +284,24 @@ export class Container {
     return declarations
   }
 
-  private getGlobals() {
-    return [
-      ...this.application.registry.filters.values(),
-      ...Array.from(this.application.registry.services.values()).flatMap(
-        (service) => Array.from(service.procedures.values()),
-      ),
-      ...this.application.registry.tasks.values(),
-    ]
+  private *getGlobals() {
+    for (const filter of this.application.registry.filters.values()) {
+      yield filter
+    }
+    for (const task of this.application.registry.tasks.values()) {
+      yield task
+    }
+    for (const service of this.application.registry.services.values()) {
+      for (const guard of service.guards.values()) {
+        yield guard
+      }
+      for (const middleware of service.middlewares.values()) {
+        yield middleware
+      }
+      for (const procedure of service.procedures.values()) {
+        yield procedure
+      }
+    }
   }
 }
 
@@ -289,12 +312,21 @@ export function getProviderScope(provider: AnyProvider) {
   for (const dependency of Object.values(
     provider.dependencies as Dependencies,
   )) {
-    const provider =
-      dependency instanceof Provider ? dependency : dependency.provider
+    const provider = getDepedencencyProvider(dependency)
     const dependencyScope = getProviderScope(provider)
     if (ScopeStrictness[dependencyScope] > ScopeStrictness[scope]) {
       scope = dependencyScope
     }
   }
   return scope
+}
+
+export function getDepedencencyProvider(
+  dependency: Depedency | DependencyOptional,
+): AnyProvider {
+  return OptionalDependency in dependency ? dependency.provider : dependency
+}
+
+const notImplemented = () => () => {
+  throw new Error(`Provider's factory is not implemented`)
 }
