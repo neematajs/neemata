@@ -2,18 +2,18 @@ import { describe, expect, it } from 'vitest'
 
 import { ValueErrorIterator } from '@sinclair/typebox/errors'
 import { compile } from '../src/compiler.ts'
-import { Type } from '../src/contract.ts'
+import { t } from '../src/index.ts'
 
 describe('Compile', () => {
-  const testSchema = Type.Object({
-    foo: Type.String(),
-    bar: Type.Number(),
+  const testSchema = t.object({
+    foo: t.string(),
+    bar: t.number(),
   })
 
   it('should compile a schema', () => {
-    const schema = Type.Object({
-      foo: Type.String(),
-      bar: Type.Number(),
+    const schema = t.object({
+      foo: t.string(),
+      bar: t.number(),
     })
 
     const compiled = compile(schema)

@@ -1,6 +1,7 @@
-import type { SchemaOptions, TSchema } from '@sinclair/typebox'
-
-export type ContractSchemaOptions = Pick<SchemaOptions, 'title' | 'description'>
+export type ContractSchemaOptions = {
+  title?: string
+  description?: string
+}
 
 export const applyNames = <T extends Record<string, { serviceName?: string }>>(
   params: T,
@@ -11,6 +12,4 @@ export const applyNames = <T extends Record<string, { serviceName?: string }>>(
   )
 }
 
-export const createSchema = <T extends TSchema>(
-  schema: Omit<T, 'static' | 'params'>,
-) => schema as T
+export const createSchema = <T>(schema: T) => schema as T

@@ -1,13 +1,11 @@
 import { ErrorCode } from '@nmtjs/common'
 import type {
-  Decoded,
   TBaseProcedureContract,
   TProcedureContract,
-  TSchema,
   TSubscriptionContract,
 } from '@nmtjs/contract'
-import type { Compiled } from '@nmtjs/contract/compiler'
-import { ContractGuard } from '@nmtjs/contract/guards'
+import { type BaseType, NeverType, type t } from '@nmtjs/type'
+import type { Compiled } from '@nmtjs/type/compiler'
 
 import type { ApplicationOptions } from './application.ts'
 import type { Connection } from './connection.ts'
@@ -32,21 +30,21 @@ export type ProcedureHandlerType<
   Deps extends Dependencies,
 > = (
   ctx: DependencyContext<Deps>,
-  data: Decoded<ProcedureContract['input']> extends never
+  data: ProcedureContract['input'] extends NeverType
     ? never
-    : InputType<Decoded<ProcedureContract['input']>>,
+    : InputType<t.infer.decoded<ProcedureContract['input']>>,
 ) => Async<
   ProcedureContract extends TProcedureContract
-    ? Decoded<ProcedureContract['output']> extends never
+    ? ProcedureContract['output'] extends NeverType
       ? void
-      : OutputType<Decoded<ProcedureContract['output']>>
+      : OutputType<t.infer.decoded<ProcedureContract['output']>>
     : ProcedureContract extends TSubscriptionContract
-      ? Decoded<ProcedureContract['output']> extends never
+      ? ProcedureContract['output'] extends NeverType
         ? SubscriptionResponse<any, never, never>
         : SubscriptionResponse<
             any,
-            OutputType<Decoded<ProcedureContract['output']>>,
-            OutputType<Decoded<ProcedureContract['output']>>
+            OutputType<t.infer.decoded<ProcedureContract['output']>>,
+            OutputType<t.infer.decoded<ProcedureContract['output']>>
           >
       : never
 >
@@ -107,11 +105,16 @@ export class Filter<
   Deps extends Dependencies = {},
 > extends Provider<FilterLike<Error>, Deps, Scope.Global> {}
 
-export type AnyProcedure<Contract extends TBaseProcedureContract = any> =
-  Procedure<Contract, Dependencies, any>
+type A = TSubscriptionContract | TProcedureContract
+
+export type AnyProcedure<Contract extends A = any> = Procedure<
+  Contract,
+  Dependencies,
+  any
+>
 
 export class Procedure<
-  ProcedureContract extends TBaseProcedureContract = TBaseProcedureContract,
+  ProcedureContract extends A = A,
   ProcedureDeps extends Dependencies = {},
   ProcedureHandler extends ProcedureHandlerType<
     ProcedureContract,
@@ -303,7 +306,7 @@ export class Api {
   }
 
   private handleInput(procedure: Procedure, payload: any) {
-    if (!ContractGuard.IsNever(procedure.contract.input)) {
+    if (procedure.contract.input instanceof NeverType === false) {
       const result = this.handleSchema(
         procedure.contract.input,
         'decode',
@@ -321,14 +324,14 @@ export class Api {
   }
 
   private handleOutput(procedure: Procedure, response: any) {
-    if (ContractGuard.IsSubscription(procedure.contract)) {
+    if (procedure.contract.type === 'neemata:subscription') {
       if (response instanceof SubscriptionResponse === false) {
         throw new Error(
           'Invalid response: should be instance of SubscriptionResponse',
         )
       }
 
-      if (!ContractGuard.IsNever(procedure.contract.output)) {
+      if (procedure.contract.output instanceof NeverType === false) {
         const result = this.handleSchema(
           procedure.contract.output,
           'encode',
@@ -343,7 +346,7 @@ export class Api {
       }
 
       return response
-    } else if (!ContractGuard.IsNever(procedure.contract.output)) {
+    } else if (procedure.contract.output instanceof NeverType === false) {
       const result = this.handleSchema(
         procedure.contract.output,
         'encode',
@@ -357,7 +360,7 @@ export class Api {
   }
 
   private handleSchema(
-    schema: TSchema,
+    schema: BaseType,
     method: 'decode' | 'encode',
     payload: any,
     context?: any,

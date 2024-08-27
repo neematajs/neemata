@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { TServiceContract } from '@nmtjs/contract'
+import type { NeverType, t } from '@nmtjs/type'
 import type { Registry } from './registry.ts'
 import type { Subscription } from './subscription.ts'
 
@@ -43,9 +44,9 @@ export class Connection<Type extends string = string> {
   >(
     contract: C,
     event: E,
-    ...args: C['events'][E]['static']['payload'] extends never
+    ...args: C['events'][E]['payload'] extends NeverType
       ? []
-      : [C['events'][E]['static']['payload']]
+      : [t.infer.decoded<C['events'][E]['payload']>]
   ) {
     if (!this.#sendEvent)
       throw new Error('This connection does not support event notification')

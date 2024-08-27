@@ -1,11 +1,21 @@
 {
-  "name": "@nmtjs/contract",
+  "name": "@nmtjs/type",
   "type": "module",
   "exports": {
     ".": {
       "bun": "./src/index.ts",
       "default": "./dist/index.js",
       "types": "./src/index.ts"
+    },
+    "./compiler": {
+      "bun": "./src/compiler.ts",
+      "default": "./dist/compiler.js",
+      "types": "./src/compiler.ts"
+    },
+    "./temporal": {
+      "bun": "./src/temporal.ts",
+      "default": "./dist/temporal.js",
+      "types": "./src/temporal.ts"
     }
   },
   "scripts": {
@@ -13,11 +23,13 @@
     "type-check": "tsc --noEmit"
   },
   "peerDependencies": {
-    "@nmtjs/type": "workspace:*",
+    "@sinclair/typebox": "^0.33.7",
+    "temporal-polyfill": "^0.2.5",
     "@nmtjs/common": "workspace:*"
   },
   "devDependencies": {
-    "@nmtjs/type": "workspace:*",
+    "@sinclair/typebox": "^0.33.7",
+    "temporal-polyfill": "^0.2.5",
     "@nmtjs/common": "workspace:*"
   },
   "files": [

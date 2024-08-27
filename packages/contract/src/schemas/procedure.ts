@@ -1,18 +1,17 @@
-import { Kind, type TSchema, TypeRegistry } from '@sinclair/typebox/type'
-
+import type { BaseType } from '@nmtjs/type'
 import { type ContractSchemaOptions, createSchema } from '../utils.ts'
 
-export const ProcedureKind = 'NeemataProcedure'
-
 export interface TBaseProcedureContract<
-  Input extends TSchema = TSchema,
-  Output extends TSchema = TSchema,
+  Type extends string = string,
+  Input extends BaseType = BaseType,
+  Output extends BaseType = BaseType,
   Name extends string | undefined = string | undefined,
   ServiceName extends string | undefined = string | undefined,
   Transports extends { [K in string]?: true } | undefined =
     | { [K in string]?: true }
     | undefined,
-> extends TSchema {
+> {
+  type: Type
   name: Name
   serviceName: ServiceName
   transports: Transports
@@ -22,40 +21,39 @@ export interface TBaseProcedureContract<
 }
 
 export interface TProcedureContract<
-  Input extends TSchema = TSchema,
-  Output extends TSchema = TSchema,
+  Input extends BaseType = BaseType,
+  Output extends BaseType = BaseType,
   Name extends string | undefined = string | undefined,
   ServiceName extends string | undefined = string | undefined,
   Transports extends { [K in string]?: true } | undefined =
     | { [K in string]?: true }
     | undefined,
-> extends TBaseProcedureContract<Input, Output, Name, ServiceName, Transports> {
-  [Kind]: typeof ProcedureKind
-  type: 'neemata:procedure'
-  static: {
-    input: Input['static']
-    output: Output['static']
-  }
-}
+> extends TBaseProcedureContract<
+    'neemata:procedure',
+    Input,
+    Output,
+    Name,
+    ServiceName,
+    Transports
+  > {}
 
 export const ProcedureContract = <
-  Input extends TSchema,
-  Output extends TSchema,
+  Input extends BaseType,
+  Output extends BaseType,
 >(
   input: Input,
   output: Output,
   timeout?: number,
   schemaOptions: ContractSchemaOptions = {} as ContractSchemaOptions,
 ) => {
-  if (!TypeRegistry.Has(ProcedureKind))
-    TypeRegistry.Set(ProcedureKind, () => true)
-
   return createSchema<TProcedureContract<Input, Output>>({
     ...schemaOptions,
-    [Kind]: ProcedureKind,
     type: 'neemata:procedure',
     input,
     output,
     timeout,
+    name: undefined,
+    serviceName: undefined,
+    transports: undefined,
   })
 }

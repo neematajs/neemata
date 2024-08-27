@@ -18,11 +18,13 @@
   },
   "devDependencies": {
     "@nmtjs/common": "workspace:*",
+    "@nmtjs/type": "workspace:*",
     "@nmtjs/contract": "workspace:*",
     "@types/node": "^18"
   },
   "peerDependencies": {
     "@nmtjs/common": "workspace:*",
+    "@nmtjs/type": "workspace:*",
     "@nmtjs/contract": "workspace:*"
   },
   "files": [

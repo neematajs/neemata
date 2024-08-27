@@ -1,4 +1,5 @@
 import type { TSubscriptionContract } from '@nmtjs/contract'
+import type { t } from '@nmtjs/type'
 import type { Connection } from './connection.ts'
 import { Hook } from './constants.ts'
 import type { Container } from './container.ts'
@@ -26,7 +27,7 @@ export class EventManager {
 
   async subscribe<C extends TSubscriptionContract>(
     contract: C,
-    options: C['static']['options'],
+    options: C['options'],
     connection: Connection,
   ): Promise<{
     subscription: Subscription<C>
@@ -57,7 +58,7 @@ export class EventManager {
 
   async unsubscribe<C extends TSubscriptionContract>(
     contract: C,
-    options: C['static']['options'],
+    options: C['options'],
     connection: Connection,
   ): Promise<boolean> {
     const subscriptionKey = this.subManager.serialize(contract, options)
@@ -80,9 +81,9 @@ export class EventManager {
 
   async publish<C extends TSubscriptionContract, E extends keyof C['events']>(
     contract: C,
-    options: C['static']['options'],
+    options: C['options'],
     event: Extract<E, string>,
-    payload: C['events'][E]['static']['payload'],
+    payload: t.infer.decoded<C['events'][E]['payload']>,
   ) {
     const subscriptionKey = this.subManager.serialize(contract, options)
     this.logger.debug(payload, `Publishing event [${subscriptionKey}]`)
@@ -91,7 +92,7 @@ export class EventManager {
 
   async isSubscribed<C extends TSubscriptionContract>(
     contract: C,
-    options: C['static']['options'],
+    options: C['options'],
     connection: Connection,
   ) {
     const subscriptionKey = this.subManager.serialize(contract, options)

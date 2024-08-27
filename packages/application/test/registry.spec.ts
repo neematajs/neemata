@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import { Kind } from '@nmtjs/contract'
 import { Scope } from '../lib/constants.ts'
 import { Provider } from '../lib/container.ts'
 import { Registry } from '../lib/registry.ts'
@@ -30,12 +29,12 @@ describe('Registry', () => {
     const service = testService()
     registry.registerService(service)
     expect(registry.schemas.size).toBeGreaterThan(0)
-    for (const [schema, compiled] of registry.schemas) {
-      expect(schema[Kind]).toBeDefined()
+    for (const [_, compiled] of registry.schemas) {
       expect(compiled).toMatchObject({
         check: expect.any(Function),
         encode: expect.any(Function),
         decode: expect.any(Function),
+        prepare: expect.any(Function),
       })
     }
     expect(

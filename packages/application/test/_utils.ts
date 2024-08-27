@@ -9,7 +9,8 @@ import {
   type Rpc,
   type RpcResponse,
 } from '@nmtjs/common'
-import { Contract, Type } from '@nmtjs/contract'
+import { c, t } from '@nmtjs/contract'
+
 import { type AnyProcedure, Procedure } from '../lib/api.ts'
 import { Application, type ApplicationOptions } from '../lib/application.ts'
 import { Connection, type ConnectionOptions } from '../lib/connection.ts'
@@ -104,32 +105,21 @@ export const testApp = (options: Partial<ApplicationOptions> = {}) =>
     ),
   )
 
-export const TestServiceContract = Contract.Service(
+export const TestServiceContract = c.service(
   'TestService',
   {
     test: true,
   },
   {
-    testProcedure: Contract.Procedure(Type.Any(), Type.Any()),
-    testSubscription: Contract.Subscription(
-      Type.Any(),
-      Type.Any(),
-      Type.Object({ testOption: Type.String() }),
-      {
-        testEvent: Contract.Event(Type.String()),
-      },
-    ),
-    testUptream: Contract.Procedure(
-      Type.Object({ test: Type.Blob() }),
-      Type.Any(),
-    ),
-    testDownstream: Contract.Procedure(
-      Type.Any(),
-      Type.Object({ test: Type.Blob() }),
-    ),
+    testProcedure: c.procedure(t.any(), t.any()),
+    testUptream: c.procedure(t.object({ test: t.blob() }), t.any()),
+    testDownstream: c.procedure(t.any(), t.object({ test: t.blob() })),
+    testSubscription: c.subscription(t.any(), t.any(), {
+      testEvent: c.event(t.string()),
+    })<{ testOption: string }>(),
   },
   {
-    testEvent: Contract.Event(Type.String()),
+    testEvent: c.event(t.string()),
   },
 )
 

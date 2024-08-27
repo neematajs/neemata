@@ -1,18 +1,18 @@
 import type {
-  Decoded,
   TEventContract,
-  TSchema,
+  TProcedureContract,
   TServiceContract,
   TSubscriptionContract,
 } from '@nmtjs/contract'
-import { type Compiled, compile } from '@nmtjs/contract/compiler'
-import { ContractGuard } from '@nmtjs/contract/guards'
+import { type BaseType, NeverType, type t } from '@nmtjs/type'
+import { type Compiled, compile } from '@nmtjs/type/compiler'
+
 import { Client, type ClientOptions } from './client.ts'
 import type { Subscription } from './subscription.ts'
 import type { ClientCallOptions, InputType, OutputType } from './types.ts'
 
 type CompiledContract<T extends TServiceContract = TServiceContract> = {
-  compiled: Map<TSchema, Compiled>
+  compiled: Map<BaseType, Compiled>
   contract: T
 }
 
@@ -21,32 +21,36 @@ type ClientServices = Record<string, CompiledContract>
 type ClientCallers<Services extends ClientServices> = {
   [K in keyof Services]: {
     [P in keyof Services[K]['contract']['procedures']]: (
-      ...args: Decoded<
-        Services[K]['contract']['procedures'][P]['input']
-      > extends never
+      ...args: Services[K]['contract']['procedures'][P]['input'] extends NeverType
         ? [options?: ClientCallOptions]
         : [
             data: InputType<
-              Decoded<Services[K]['contract']['procedures'][P]['input']>
+              t.infer.decoded<Services[K]['contract']['procedures'][P]['input']>
             >,
             options?: ClientCallOptions,
           ]
     ) => Promise<
       Services[K]['contract']['procedures'][P] extends TSubscriptionContract
         ? {
-            payload: Decoded<
-              Services[K]['contract']['procedures'][P]['output']
-            > extends never
+            payload: Services[K]['contract']['procedures'][P]['output'] extends NeverType
               ? undefined
-              : Decoded<Services[K]['contract']['procedures'][P]['output']>
-            subscription: Subscription<Services[K]['contract']['procedures'][P]>
+              : t.infer.decoded<
+                  Services[K]['contract']['procedures'][P]['output']
+                >
+            subscription: Subscription<{
+              [KE in keyof Services[K]['contract']['procedures'][P]['events']]: [
+                t.infer.decoded<
+                  Services[K]['contract']['procedures'][P]['events'][KE]['payload']
+                >,
+              ]
+            }>
           }
-        : Decoded<
-              Services[K]['contract']['procedures'][P]['static']
-            > extends never
+        : Services[K]['contract']['procedures'][P]['output'] extends NeverType
           ? void
           : OutputType<
-              Decoded<Services[K]['contract']['procedures'][P]['output']>
+              t.infer.decoded<
+                Services[K]['contract']['procedures'][P]['output']
+              >
             >
     >
   }
@@ -62,26 +66,26 @@ export class RuntimeClient<Services extends ClientServices> extends Client {
     )
 
     const callers = {} as any
-    for (const [serviceKey, serviceContract] of Object.entries(services)) {
-      if (!serviceContract.contract.transports[this.transport.type])
+    for (const [serviceKey, service] of Object.entries(services)) {
+      service.contract.procedures
+      if (!service.contract.transports[this.transport.type])
         throw new Error(
-          `Transport [${this.transport.type}] not supported for service [${serviceContract.contract.name}]`,
+          `Transport [${this.transport.type}] not supported for service [${service.contract.name}]`,
         )
 
       callers[serviceKey] = {} as any
 
-      for (const procedureName in serviceContract.contract.procedures) {
-        const { input, output } =
-          serviceContract.contract.procedures[procedureName]
+      for (const procedureName in service.contract.procedures) {
+        const { input, output } = service.contract.procedures[procedureName]
 
         callers[serviceKey][procedureName] = this.createCaller(
-          serviceContract.contract.name,
+          service.contract.name,
           procedureName,
           {
-            timeout: serviceContract.contract.timeout,
+            timeout: service.contract.timeout,
             transformInput: (data: any) => {
-              if (ContractGuard.IsNever(data)) return undefined
-              const compiled = serviceContract.compiled.get(input)!
+              if (input instanceof NeverType) return undefined
+              const compiled = service.compiled.get(input)!
               const result = compiled.encode(data)
               if (result.success) {
                 return result.value
@@ -93,8 +97,8 @@ export class RuntimeClient<Services extends ClientServices> extends Client {
               }
             },
             transformOutput: (data: any) => {
-              if (ContractGuard.IsNever(data)) return undefined
-              const compiled = serviceContract.compiled.get(output)!
+              if (output instanceof NeverType) return undefined
+              const compiled = service.compiled.get(output)!
               const result = compiled.decode(data)
               if (result.success) {
                 return result.value
@@ -120,19 +124,21 @@ export class RuntimeClient<Services extends ClientServices> extends Client {
 export const compileContract = <T extends TServiceContract>(
   contract: T,
 ): CompiledContract<T> => {
-  const compiled = new Map<TSchema, Compiled>()
-  for (const procedureContract of Object.values(contract.procedures)) {
-    const { input, output, events } = procedureContract
-    if (ContractGuard.IsSubscription(procedureContract)) {
+  const compiled = new Map<BaseType, Compiled>()
+
+  for (const procedure of Object.values(contract.procedures)) {
+    const { input, output } = procedure
+    if (procedure.type === 'neemata:subscription') {
+      const { events } = procedure
       for (const event of Object.values(events) as TEventContract[]) {
-        compiled.set(event, compile(event))
+        compiled.set(event.payload, compile(event.payload))
       }
     }
     compiled.set(input, compile(input))
     compiled.set(output, compile(output))
   }
-  for (const eventContract of Object.values(contract.events)) {
-    compiled.set(eventContract, compile(eventContract))
+  for (const event of Object.values(contract.events)) {
+    compiled.set(event.payload, compile(event.payload))
   }
 
   return {
