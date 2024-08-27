@@ -23,10 +23,12 @@
 		}
 	},
 	"peerDependencies": {
+		"@nmtjs/type": "workspace:*",
 		"@nmtjs/contract": "workspace:*",
 		"@nmtjs/common": "workspace:*"
 	},
 	"devDependencies": {
+		"@nmtjs/type": "workspace:*",
 		"@nmtjs/contract": "workspace:*",
 		"@nmtjs/common": "workspace:*"
 	},

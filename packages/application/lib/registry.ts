@@ -1,10 +1,6 @@
-import type {
-  TProcedureContract,
-  TSchema,
-  TSubscriptionContract,
-} from '@nmtjs/contract'
-import { type Compiled, compile } from '@nmtjs/contract/compiler'
-import { ContractGuard } from '@nmtjs/contract/guards'
+import type { TProcedureContract, TSubscriptionContract } from '@nmtjs/contract'
+import type { BaseType } from '@nmtjs/type'
+import { type Compiled, compile } from '@nmtjs/type/compiler'
 
 import type { AnyFilter, Filter } from './api.ts'
 import { type Hook, Scope } from './constants.ts'
@@ -58,7 +54,7 @@ export class Registry {
     if (this.services.has(service.contract.name))
       throw new Error(`Service ${service.contract.name} already registered`)
 
-    const schemas: TSchema[] = []
+    const schemas: BaseType[] = []
 
     for (const procedure of Object.values<
       TSubscriptionContract | TProcedureContract
@@ -66,7 +62,7 @@ export class Registry {
       schemas.push(procedure.input)
       schemas.push(procedure.output)
 
-      if (ContractGuard.IsSubscription(procedure)) {
+      if (procedure.type === 'neemata:subscription') {
         for (const event of Object.values(procedure.events)) {
           schemas.push(event.payload)
         }

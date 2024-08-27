@@ -1,8 +1,5 @@
-import type {
-  Encoded,
-  TServiceContract,
-  TSubscriptionContract,
-} from '@nmtjs/contract'
+import type { TServiceContract, TSubscriptionContract } from '@nmtjs/contract'
+import type { NeverType, t } from '@nmtjs/type'
 import { Client, type ClientOptions } from './client.ts'
 import type { Subscription } from './subscription.ts'
 import type { ClientCallOptions, InputType, OutputType } from './types.ts'
@@ -12,25 +9,31 @@ type ClientServices = Record<string, TServiceContract>
 type ClientCallers<Services extends ClientServices> = {
   [K in keyof Services]: {
     [P in keyof Services[K]['procedures']]: (
-      ...args: Encoded<Services[K]['procedures'][P]['input']> extends never
+      ...args: Services[K]['procedures'][P]['input'] extends NeverType
         ? [options?: ClientCallOptions]
         : [
-            data: InputType<Encoded<Services[K]['procedures'][P]['input']>>,
+            data: InputType<
+              t.infer.encoded<Services[K]['procedures'][P]['input']>
+            >,
             options?: ClientCallOptions,
           ]
     ) => Promise<
       Services[K]['procedures'][P] extends TSubscriptionContract
         ? {
-            payload: Encoded<
-              Services[K]['procedures'][P]['output']
-            > extends never
+            payload: Services[K]['procedures'][P]['output'] extends NeverType
               ? undefined
-              : Encoded<Services[K]['procedures'][P]['output']>
-            subscription: Subscription<Services[K]['procedures'][P]>
+              : t.infer.encoded<Services[K]['procedures'][P]['output']>
+            subscription: Subscription<{
+              [KE in keyof Services[K]['procedures'][P]['events']]: [
+                t.infer.encoded<
+                  Services[K]['procedures'][P]['events'][KE]['payload']
+                >,
+              ]
+            }>
           }
-        : Encoded<Services[K]['procedures'][P]['static']> extends never
+        : Services[K]['procedures'][P]['output'] extends NeverType
           ? void
-          : OutputType<Encoded<Services[K]['procedures'][P]['output']>>
+          : OutputType<t.infer.encoded<Services[K]['procedures'][P]['output']>>
     >
   }
 }

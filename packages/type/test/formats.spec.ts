@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { FormatRegistry } from '@sinclair/typebox/type'
 import { fullFormats } from '../src/formats.ts'
 
-import '../src/contract.ts'
+import '../../contract/src/index.ts'
 
 describe('Formats', () => {
   for (const name of Object.keys(fullFormats)) {

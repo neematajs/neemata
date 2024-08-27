@@ -1,4 +1,3 @@
-import { ContractGuard } from '@nmtjs/contract/guards'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { Guard, Middleware } from '../lib/api.ts'
 import { Hook } from '../lib/constants.ts'
@@ -23,7 +22,6 @@ describe('Service', () => {
 
   it('should have a contract', () => {
     expect(service.contract).toBeDefined()
-    expect(ContractGuard.IsService(service.contract)).toBe(true)
   })
 
   it('should have hooks', () => {
@@ -56,6 +54,4 @@ describe('Service', () => {
     service.implement('testProcedure', procedure)
     expect(service.procedures.get('testProcedure')).toBe(procedure)
   })
-
-  // it('should add a hook', () => {})
 })

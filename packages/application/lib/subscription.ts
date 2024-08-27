@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { EventEmitter } from 'node:events'
 import type { TSubscriptionContract } from '@nmtjs/contract'
 
+import type { t } from '@nmtjs/type'
 import { WorkerType } from './constants.ts'
 import { createPlugin } from './plugin.ts'
 import { providers } from './providers.ts'
@@ -12,7 +13,9 @@ type SubscriptionEvents<Contract extends TSubscriptionContract> = {
 } & {
   [K in 'event']: [
     eventName: keyof Contract['events'],
-    payload: Contract['static']['events'][keyof Contract['static']['events']],
+    payload: t.infer.decoded<
+      Contract['events'][keyof Contract['events']]['payload']
+    >,
   ]
 }
 
@@ -29,7 +32,7 @@ export class Subscription<
 
   send<K extends Extract<keyof Contract['events'], string>>(
     event: K,
-    payload: Contract['events'][K]['static'],
+    payload: t.infer.decoded<Contract['events'][K]['payload']>,
   ) {
     if (event in this.contract.events === false)
       throw new Error(`Event [${event}] is not defined in the contract`)
@@ -108,8 +111,9 @@ export const basicSubManagerPlugin = createPlugin(
 // This is just a little helper to provide stricter type-safety
 export class SubscriptionResponse<
   T extends Subscription,
-  PayloadType extends
-    T['contract']['output']['static'] = T['contract']['output']['static'],
+  PayloadType extends t.infer.decoded<
+    T['contract']['output']
+  > = t.infer.decoded<T['contract']['output']>,
   Payload = unknown,
 > {
   readonly _!: {

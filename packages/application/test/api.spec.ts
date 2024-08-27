@@ -16,7 +16,6 @@ import { type Container, Provider } from '../lib/container.ts'
 import { providers } from '../lib/providers.ts'
 import type { Registry } from '../lib/registry.ts'
 import type { Service } from '../lib/service.ts'
-// import type { AnyProcedure, FilterFn, GuardFn } from '../lib/types.ts'
 import {
   type TestServiceContract,
   testApp,

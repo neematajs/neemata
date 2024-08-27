@@ -1,54 +1,45 @@
-import { Kind, type TSchema, TypeRegistry } from '@sinclair/typebox/type'
 import {
   type ContractSchemaOptions,
   applyNames,
   createSchema,
 } from '../utils.ts'
 import type { TEventContract } from './event.ts'
-import type { TProcedureContract } from './procedure.ts'
-import { SubscriptionKind, type TSubscriptionContract } from './subscription.ts'
-
-export const ServiceKind = 'NeemataService'
+import type { TBaseProcedureContract, TProcedureContract } from './procedure.ts'
+import type { TSubscriptionContract } from './subscription.ts'
 
 export interface TServiceContract<
   Name extends string = string,
   Transports extends { [K in string]?: true } = { [K in string]?: true },
-  Procedures extends Record<
+  Procedures extends Record<string, TBaseProcedureContract> = Record<
     string,
     TProcedureContract | TSubscriptionContract
-  > = Record<string, TProcedureContract | TSubscriptionContract>,
+  >,
   Events extends Record<string, TEventContract> = Record<
     string,
     TEventContract
   >,
-> extends TSchema {
-  [Kind]: typeof ServiceKind
-  static: {
-    procedures: {
-      [K in keyof Procedures]: Procedures[K]['static']
-    }
-    subscriptions: {
-      [K in keyof Procedures]: Procedures[K]['static']
-    }
-    events: {
-      [K in keyof Events]: Events[K]['static']
-    }
-    transports: Transports
-  }
+> {
   type: 'neemata:service'
   name: Name
   transports: Transports
   procedures: {
     [K in keyof Procedures]: Procedures[K] extends TProcedureContract<
       infer Input,
-      infer Output
+      infer Output,
+      any,
+      any,
+      any
     >
-      ? TProcedureContract<Input, Output, Extract<K, string>, Name, Transports>
+      ? // ? true
+        TProcedureContract<Input, Output, Extract<K, string>, Name, Transports>
       : Procedures[K] extends TSubscriptionContract<
             infer Input,
             infer Output,
             infer Options,
-            infer Events
+            infer Events,
+            any,
+            any,
+            any
           >
         ? TSubscriptionContract<
             Input,
@@ -70,14 +61,14 @@ export interface TServiceContract<
             Name,
             Transports
           >
-        : never
+        : Procedures[K]
   }
   events: {
     [K in Extract<keyof Events, string>]: Events[K] extends TEventContract<
       infer Payload
     >
       ? TEventContract<Payload, K, Name>
-      : never
+      : Events[K]
   }
   timeout?: number
 }
@@ -95,12 +86,10 @@ export const ServiceContract = <
   timeout?: number,
   schemaOptions: ContractSchemaOptions = {} as ContractSchemaOptions,
 ) => {
-  if (!TypeRegistry.Has(ServiceKind)) TypeRegistry.Set(ServiceKind, () => true)
-
   const serviceProcedures = {}
 
   for (const [procedureName, procedure] of Object.entries(procedures)) {
-    if (procedure[Kind] === SubscriptionKind) {
+    if (procedure.type === 'neemata:subscription') {
       serviceProcedures[procedureName] = {
         ...procedure,
         events: applyNames(procedure.events, {
@@ -115,12 +104,33 @@ export const ServiceContract = <
 
   return createSchema<TServiceContract<Name, Transports, Procedures, Events>>({
     ...schemaOptions,
-    [Kind]: ServiceKind,
     name: name,
     type: 'neemata:service',
+    // @ts-expect-error
     procedures: applyNames(procedures, { serviceName: name }),
+    // @ts-expect-error
     events: applyNames(events, { serviceName: name }),
     transports,
     timeout,
   })
 }
+
+type A<T extends boolean> = {
+  // type: 'boolean'
+  a: T
+}
+type B<T extends number> = {
+  // type: 'number'
+  b: T
+}
+type T = Record<string, A<boolean> | B<number>>
+
+type TT<TTT extends T> = {
+  [K in keyof TTT]: TTT[K] extends A<infer T>
+    ? T
+    : TTT[K] extends B<infer T>
+      ? T
+      : never
+}
+
+type TTT = TT<{ r: A<false> }>

@@ -1,6 +1,7 @@
-import { FormatRegistry } from '@sinclair/typebox/type'
-
+// Source: https://gist.github.com/ChuckJonas/74d9cfb6ba46244ef4eaa5818c06987b
 // TODO: review all of this
+
+import { FormatRegistry } from '@sinclair/typebox/type'
 
 export const register = () => {
   for (const [name, format] of Object.entries(fullFormats)) {
