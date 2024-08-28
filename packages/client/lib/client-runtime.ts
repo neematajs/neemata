@@ -1,6 +1,5 @@
 import type {
   TEventContract,
-  TProcedureContract,
   TServiceContract,
   TSubscriptionContract,
 } from '@nmtjs/contract'
@@ -9,6 +8,7 @@ import { type Compiled, compile } from '@nmtjs/type/compiler'
 
 import { Client, type ClientOptions } from './client.ts'
 import type { Subscription } from './subscription.ts'
+import type { ClientTransport } from './transport.ts'
 import type { ClientCallOptions, InputType, OutputType } from './types.ts'
 
 type CompiledContract<T extends TServiceContract = TServiceContract> = {
@@ -59,24 +59,37 @@ type ClientCallers<Services extends ClientServices> = {
 export class RuntimeClient<Services extends ClientServices> extends Client {
   #callers: ClientCallers<Services>
 
-  constructor(services: Services, options: ClientOptions) {
+  constructor(
+    protected readonly contracts: Services,
+    options: ClientOptions,
+  ) {
     super(
       options,
-      Object.values(services).map((s) => s.contract.name),
+      Object.values(contracts).map((s) => s.contract.name),
     )
 
     const callers = {} as any
-    for (const [serviceKey, service] of Object.entries(services)) {
+    for (const [serviceKey, service] of Object.entries(contracts)) {
       service.contract.procedures
-      if (!service.contract.transports[this.transport.type])
-        throw new Error(
-          `Transport [${this.transport.type}] not supported for service [${service.contract.name}]`,
-        )
 
       callers[serviceKey] = {} as any
 
       for (const procedureName in service.contract.procedures) {
         const { input, output } = service.contract.procedures[procedureName]
+
+        function decodeOutput(data) {
+          if (output instanceof NeverType) return undefined
+          const compiled = service.compiled.get(output)!
+          const result = compiled.decode(data)
+          if (result.success) {
+            return result.value
+          } else {
+            console.dir(result.error)
+            throw new Error('Failed to decode output', {
+              cause: result.error,
+            })
+          }
+        }
 
         callers[serviceKey][procedureName] = this.createCaller(
           service.contract.name,
@@ -97,16 +110,14 @@ export class RuntimeClient<Services extends ClientServices> extends Client {
               }
             },
             transformOutput: (data: any) => {
-              if (output instanceof NeverType) return undefined
-              const compiled = service.compiled.get(output)!
-              const result = compiled.decode(data)
-              if (result.success) {
-                return result.value
+              if (
+                service.contract.procedures[procedureName].type ===
+                'neemata:subscription'
+              ) {
+                data.payload = decodeOutput(data.payload)
+                return data
               } else {
-                console.dir(result.error)
-                throw new Error('Failed to decode output', {
-                  cause: result.error,
-                })
+                return decodeOutput(data)
               }
             },
           },
@@ -118,6 +129,15 @@ export class RuntimeClient<Services extends ClientServices> extends Client {
 
   get call() {
     return this.#callers
+  }
+
+  protected checkTransport(transport: ClientTransport): void {
+    for (const { contract } of Object.values(this.contracts)) {
+      if (!contract.transports[transport.type])
+        throw new Error(
+          `Transport [${transport.type}] not supported for service [${contract.name}]`,
+        )
+    }
   }
 }
 
