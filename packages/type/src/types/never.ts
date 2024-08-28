@@ -13,18 +13,15 @@ export class NeverType<
     super(schema, nullable, optional)
   }
 
-  // @ts-expect-error
-  nullable() {
+  nullable(): NeverType<true, O> {
     throw new Error('NeverType cannot be nullable')
   }
 
-  // @ts-expect-error
-  optional() {
+  optional(): NeverType<N, true> {
     throw new Error('NeverType cannot be optional')
   }
 
-  // @ts-expect-error
-  nullish() {
+  nullish(): NeverType<true, true> {
     throw new Error('NeverType cannot be nullish')
   }
 }
