@@ -39,6 +39,7 @@ export abstract class Client extends utils.EventEmitter {
       format: this.format,
       auth: this.auth,
     })
+    this.checkTransport(this.transport)
     return this as Omit<this, 'useTransport'>
   }
 
@@ -59,6 +60,8 @@ export abstract class Client extends utils.EventEmitter {
     await this.disconnect()
     await this.connect()
   }
+
+  protected checkTransport(transport: ClientTransport) {}
 
   protected createCaller(
     service: string,

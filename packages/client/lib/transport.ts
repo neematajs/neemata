@@ -20,7 +20,7 @@ export type ClientTransportRpcResult =
     }
 
 export abstract class ClientTransport<
-  T extends EventMap = {},
+  T extends EventMap = EventMap,
 > extends EventEmitter<
   T & { event: [service: string, event: string, payload: any] }
 > {
