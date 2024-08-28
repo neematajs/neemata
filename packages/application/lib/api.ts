@@ -367,7 +367,7 @@ export class Api {
   ): ReturnType<Compiled['decode' | 'encode']> {
     const compiled = this.application.registry.schemas.get(schema)
     if (!compiled) throw new Error('Compiled schema not found')
-    return compiled[method](payload)
+    return compiled[method](compiled.prepare(payload))
   }
 }
 

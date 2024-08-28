@@ -48,7 +48,7 @@ export const compile = (schema: BaseType): Compiled => {
       try {
         return {
           success: true as const,
-          value: compiled.decode(compiled.prepare(val)),
+          value: compiled.decode(val),
         }
       } catch (error) {
         return { success: false as const, error }
@@ -58,7 +58,7 @@ export const compile = (schema: BaseType): Compiled => {
       try {
         return {
           success: true as const,
-          value: compiled.encode(compiled.prepare(val)),
+          value: compiled.encode(val),
         }
       } catch (error) {
         return { success: false as const, error }
