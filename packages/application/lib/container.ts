@@ -14,6 +14,7 @@ export type DependencyOptional = {
   [OptionalDependency]: true
   provider: AnyProvider
 }
+
 export type Depedency = DependencyOptional | AnyProvider
 
 export type Dependencies = Record<string, Depedency>
@@ -26,7 +27,7 @@ export type ResolveProviderType<T extends AnyProvider> = T extends ProviderLike<
   ? Type
   : never
 
-export interface Depender<Deps extends Dependencies = Dependencies> {
+export interface Dependant<Deps extends Dependencies = Dependencies> {
   dependencies: Deps
 }
 
@@ -59,7 +60,7 @@ export interface ProviderLike<
   ProviderValue = any,
   ProviderDeps extends Dependencies = {},
   ProviderScope extends Scope = Scope,
-> extends Depender<ProviderDeps> {
+> extends Dependant<ProviderDeps> {
   value: ProviderValue
   dependencies: ProviderDeps
   scope: ProviderScope
@@ -81,12 +82,8 @@ export class Provider<
   value: ProviderType = void 0 as unknown as ProviderType
   dependencies: ProviderDeps = {} as ProviderDeps
   scope: ProviderScope = Scope.Global as ProviderScope
-  factory: ProviderFactoryType<ProviderType, ProviderDeps>
+  factory!: ProviderFactoryType<ProviderType, ProviderDeps>
   dispose?: ProviderDisposeType<ProviderType, ProviderDeps> = undefined
-
-  constructor() {
-    this.factory = notImplemented()
-  }
 
   withDependencies<Deps extends Dependencies>(newDependencies: Deps) {
     this.dependencies = merge(this.dependencies, newDependencies)
@@ -130,20 +127,13 @@ export class Provider<
     >
   }
 
-  withDisposal(dispose: this['dispose']) {
+  withDispose(dispose: this['dispose']) {
     this.dispose = dispose
     return this
   }
 
   $withType<T>() {
     return this as unknown as Provider<T, ProviderDeps>
-  }
-
-  asOptional() {
-    return {
-      [OptionalDependency]: true,
-      provider: this,
-    } as const
   }
 
   resolve(
@@ -158,10 +148,10 @@ export class Provider<
 }
 
 export class Container {
-  readonly instances = new Map<AnyProvider, any>()
+  readonly instances = new Map<AnyProvider, { instance: any; context: any }>()
   private readonly resolvers = new Map<AnyProvider, Promise<any>>()
   private readonly providers = new Set<AnyProvider>()
-  private readonly depender = new Map<Depender | AnyProvider, Set<Provider>>()
+  private readonly dependants = new Map<AnyProvider, Set<AnyProvider>>()
 
   constructor(
     private readonly application: {
@@ -182,8 +172,8 @@ export class Container {
       }
     }
 
-    for (const depender of this.getGlobals()) {
-      traverse(depender.dependencies)
+    for (const dependant of this.getGlobals()) {
+      traverse(dependant.dependencies)
     }
 
     const providers = this.findCurrentScopeDeclarations()
@@ -195,53 +185,79 @@ export class Container {
   }
 
   async dispose() {
-    // TODO: here might need to find correct order of disposing
-    // to prevent first disposal of a provider
-    // that other providers depends on
     this.application.logger.trace('Disposing [%s] scope context...', this.scope)
-    const instances = Array.from(this.instances.entries()).reverse()
-    for (const [{ dispose, dependencies }, value] of instances) {
-      if (dispose) {
-        try {
-          const ctx = await this.createContext(dependencies)
-          await dispose(value, ctx)
-        } catch (cause) {
-          this.application.logger.error(
-            new Error('Context disposal error. Potential memory leak', {
-              cause,
-            }),
-          )
+
+    // Loop through all instances and dispose them,
+    // until there are no more instances left
+    while (this.instances.size) {
+      for (const provider of this.instances.keys()) {
+        const dependants = this.dependants.get(provider)
+        // Firstly, dispose instances that other providers don't depend on
+        if (!dependants?.size) {
+          await this.disposeProvider(provider)
+          for (const dependants of this.dependants.values()) {
+            // Clear current istances as a dependant for other providers
+            if (dependants.has(provider)) {
+              dependants.delete(provider)
+            }
+          }
         }
       }
     }
+
     this.instances.clear()
     this.providers.clear()
     this.resolvers.clear()
+    this.dependants.clear()
   }
 
-  isResolved(provider: AnyProvider): boolean {
+  has(provider: AnyProvider): boolean {
     return !!(
       this.instances.has(provider) ||
       this.resolvers.has(provider) ||
-      this.parent?.isResolved(provider)
+      this.parent?.has(provider)
     )
   }
 
-  resolve<T extends AnyProvider>(provider: T): Promise<ResolveProviderType<T>> {
+  resolve<T extends AnyProvider>(
+    provider: T,
+    dependant?: AnyProvider,
+  ): Promise<ResolveProviderType<T>> {
+    if (dependant) {
+      let dependants = this.dependants.get(provider)
+      if (!dependants) {
+        this.dependants.set(provider, (dependants = new Set()))
+      }
+      dependants.add(dependant)
+    }
+
     if (this.instances.has(provider)) {
-      return Promise.resolve(this.instances.get(provider)!)
+      return Promise.resolve(this.instances.get(provider)!.instance)
     } else if (this.resolvers.has(provider)) {
       return this.resolvers.get(provider)!
     } else {
       const { value, factory, scope, dependencies } = provider
       if (typeof value !== 'undefined') return Promise.resolve(value)
-      if (this.parent?.isResolved(provider))
-        return this.parent.resolve(provider)
-      const resolution = this.createContext(dependencies)
-        .then((ctx) => factory(ctx))
-        .then((instance) => {
+
+      if (this.parent?.has(provider)) return this.parent.resolve(provider)
+      const isOptional = checkOptional(provider)
+      const hasFactory = typeof factory !== 'undefined'
+
+      if (!hasFactory) {
+        if (isOptional) return Promise.resolve(undefined as any)
+        return Promise.reject(new Error(`Missing dependency`))
+      }
+
+      const resolution = this.createContext(dependencies, provider)
+        .then((context) =>
+          Promise.resolve(factory(context)).then((instance) => ({
+            instance,
+            context,
+          })),
+        )
+        .then(({ instance, context }) => {
           if (ScopeStrictness[this.scope] >= ScopeStrictness[scope])
-            this.instances.set(provider, instance)
+            this.instances.set(provider, { instance, context })
           if (scope !== Scope.Transient) this.resolvers.delete(provider)
           return instance
         })
@@ -250,28 +266,28 @@ export class Container {
     }
   }
 
-  async createContext<T extends Dependencies>(dependencies: T) {
-    const injections = await this.resolveDependecies(dependencies)
-    return Object.freeze(injections)
+  async createContext<T extends Dependencies>(
+    dependencies: T,
+    dependant?: AnyProvider,
+  ) {
+    const injections: Record<string, any> = {}
+    const deps = Object.entries(dependencies)
+    const resolvers: Promise<any>[] = Array(deps.length)
+    for (let i = 0; i < deps.length; i++) {
+      const [key, dependency] = deps[i]
+      const provider = getDepedencencyProvider(dependency)
+      const resolver = this.resolve(provider, dependant)
+      resolvers[i] = resolver.then((value) => (injections[key] = value))
+    }
+    await Promise.all(resolvers)
+    return Object.freeze(injections as DependencyContext<T>)
   }
 
   async provide<T extends AnyProvider>(
     provider: T,
-    value: ResolveProviderType<T>,
+    instance: ResolveProviderType<T>,
   ) {
-    this.instances.set(provider, value)
-  }
-
-  private async resolveDependecies<T extends Dependencies>(dependencies: T) {
-    const injections: any = {}
-    const resolvers: Promise<any>[] = []
-    for (const [key, dependency] of Object.entries(dependencies)) {
-      const provider = getDepedencencyProvider(dependency)
-      const resolver = this.resolve(provider)
-      resolvers.push(resolver.then((value) => (injections[key] = value)))
-    }
-    await Promise.all(resolvers)
-    return injections as DependencyContext<T>
+    this.instances.set(provider, { instance, context: undefined })
   }
 
   private findCurrentScopeDeclarations() {
@@ -303,15 +319,32 @@ export class Container {
       }
     }
   }
+
+  private async disposeProvider(provider: AnyProvider) {
+    const { dispose } = provider
+    try {
+      if (dispose) {
+        const { instance, context } = this.instances.get(provider)!
+        await dispose(instance, context)
+      }
+    } catch (cause) {
+      const error = new Error(
+        'Provider disposal error. Potential memory leak',
+        { cause },
+      )
+      this.application.logger.error(error)
+    } finally {
+      this.instances.delete(provider)
+    }
+  }
 }
 
 // TODO: this could be moved to Provide.withDependencies(),
-// so there's runtime overhead
+// so there's no runtime overhead
 export function getProviderScope(provider: AnyProvider) {
   let scope = provider.scope
-  for (const dependency of Object.values(
-    provider.dependencies as Dependencies,
-  )) {
+  const deps = Object.values(provider.dependencies as Dependencies)
+  for (const dependency of deps) {
     const provider = getDepedencencyProvider(dependency)
     const dependencyScope = getProviderScope(provider)
     if (ScopeStrictness[dependencyScope] > ScopeStrictness[scope]) {
@@ -321,12 +354,20 @@ export function getProviderScope(provider: AnyProvider) {
   return scope
 }
 
-export function getDepedencencyProvider(
-  dependency: Depedency | DependencyOptional,
-): AnyProvider {
-  return OptionalDependency in dependency ? dependency.provider : dependency
+export function getDepedencencyProvider(dependency: Depedency): AnyProvider {
+  if (OptionalDependency in dependency) {
+    return dependency.provider
+  }
+  return dependency
 }
 
-const notImplemented = () => () => {
-  throw new Error(`Provider's factory is not implemented`)
+function checkOptional(provider: Depedency) {
+  return OptionalDependency in provider
+}
+
+export function asOptional<T extends AnyProvider>(provider: T) {
+  return {
+    [OptionalDependency]: true,
+    provider,
+  } as const
 }

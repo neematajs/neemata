@@ -12,9 +12,9 @@ import type { Connection } from './connection.ts'
 import type { Scope } from './constants.ts'
 import {
   type Container,
+  type Dependant,
   type Dependencies,
   type DependencyContext,
-  type Depender,
   Provider,
 } from './container.ts'
 import type { Logger } from './logger.ts'
@@ -52,7 +52,7 @@ export type ProcedureHandlerType<
 export interface ProcedureLike<
   ProcedureContract extends TBaseProcedureContract = TBaseProcedureContract,
   ProcedureDeps extends Dependencies = Dependencies,
-> extends Depender<ProcedureDeps> {
+> extends Dependant<ProcedureDeps> {
   contract: ProcedureContract
   handler: ProcedureHandlerType<ProcedureContract, ProcedureDeps>
   metadata: Map<MetadataKey<any, any>, any>
