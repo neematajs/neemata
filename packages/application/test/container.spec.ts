@@ -1,7 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AnyProcedure } from '../lib/api.ts'
 import { Scope } from '../lib/constants.ts'
-import { Container, Provider, getProviderScope } from '../lib/container.ts'
+import {
+  Container,
+  Provider,
+  asOptional,
+  getProviderScope,
+} from '../lib/container.ts'
+import { providers } from '../lib/providers.ts'
 import { Registry } from '../lib/registry.ts'
 import { testLogger, testProcedure, testService } from './_utils.ts'
 
@@ -31,7 +37,7 @@ describe.sequential('Provider', () => {
 
   it('should chain with a disposal', () => {
     const dispose = () => {}
-    provider.withDisposal(dispose)
+    provider.withDispose(dispose)
     expect(provider.dispose).toBe(dispose)
   })
 
@@ -105,7 +111,7 @@ describe.sequential('Container', () => {
   it('should dispose', async () => {
     const provider = new Provider()
       .withFactory(() => ({}))
-      .withDisposal(() => {})
+      .withDispose(() => {})
     const spy = vi.spyOn(provider, 'dispose')
     await container.resolve(provider)
     await container.dispose()
@@ -115,14 +121,14 @@ describe.sequential('Container', () => {
   it('should be cached', async () => {
     const provider = new Provider().withFactory(() => ({}))
     const val = await container.resolve(provider)
-    expect(container.isResolved(provider)).toBe(true)
+    expect(container.has(provider)).toBe(true)
     expect(await container.resolve(provider)).toBe(val)
   })
 
   it('should handle dispose error', async () => {
     const provider = new Provider()
       .withFactory(() => {})
-      .withDisposal(() => {
+      .withDispose(() => {
         throw new Error()
       })
     await container.resolve(provider)
@@ -135,7 +141,7 @@ describe.sequential('Container', () => {
         await new Promise((resolve) => setTimeout(resolve, 1))
         return {}
       })
-      .withDisposal(() => {
+      .withDispose(() => {
         throw new Error()
       })
     const res1 = container.resolve(provider)
@@ -188,7 +194,7 @@ describe.sequential('Container', () => {
     expect(callProviderValue.globalValue).toBe(
       connectionProviderValue.globalValue,
     )
-    expect(scopeContainer.isResolved(globalProvider)).toBe(true)
+    expect(scopeContainer.has(globalProvider)).toBe(true)
   })
 
   it('should correctly resolve provider scope', async () => {
@@ -216,5 +222,50 @@ describe.sequential('Container', () => {
     await container.load()
     expect(factory1).toHaveBeenCalledOnce()
     expect(factory2).not.toHaveBeenCalled()
+  })
+
+  it('should dispose in correct order', async () => {
+    const disposeSpy = vi.fn((value) => order.push(value))
+    const order: string[] = []
+    const provider1 = new Provider()
+      .withFactory(() => '1')
+      .withDispose(disposeSpy)
+    const provider2 = new Provider()
+      .withDependencies({ provider1 })
+      .withFactory(() => '2')
+      .withDispose(disposeSpy)
+    const provider3 = new Provider()
+      .withDependencies({ provider1, provider2 })
+      .withFactory(() => '3')
+      .withDispose(disposeSpy)
+    const provider4 = new Provider()
+      .withDependencies({ provider1, provider3 })
+      .withFactory(() => '4')
+      .withDispose(disposeSpy)
+    const provider5 = new Provider()
+      .withDependencies({ provider2, provider4 })
+      .withFactory(() => '5')
+      .withDispose(disposeSpy)
+
+    await container.resolve(provider5)
+    await container.dispose()
+
+    expect(order).toStrictEqual(['5', '4', '3', '2', '1'])
+  })
+
+  it('should fail to resolve required dependency', async () => {
+    const provider = new Provider().withDependencies({
+      dep: providers.callSignal,
+    })
+    await expect(container.resolve(provider)).rejects.toThrow(
+      'Missing dependency',
+    )
+  })
+
+  it('should resolve optional dependency', async () => {
+    const provider = new Provider().withDependencies({
+      dep: asOptional(providers.callSignal),
+    })
+    await expect(container.resolve(provider)).rejects.toThrow()
   })
 })

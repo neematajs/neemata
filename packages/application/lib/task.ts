@@ -2,9 +2,9 @@ import type { ApplicationOptions } from './application.ts'
 import { Hook } from './constants.ts'
 import type {
   Container,
+  Dependant,
   Dependencies,
   DependencyContext,
-  Depender,
 } from './container.ts'
 import { providers } from './providers.ts'
 import type { Registry } from './registry.ts'
@@ -37,7 +37,7 @@ export interface TaskLike<
   TaskDeps extends Dependencies = {},
   TaskArgs extends any[] = [],
   TaskResult = unknown,
-> extends Depender<TaskDeps> {
+> extends Dependant<TaskDeps> {
   name: TaskName
   handler: TaskHandlerType<TaskDeps, TaskArgs, TaskResult>
   parser: (
