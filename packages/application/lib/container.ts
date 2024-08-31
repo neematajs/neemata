@@ -145,10 +145,6 @@ export class Injectable<
   }
 
   private resolveActualScope() {
-    // const scope = getInjectableScope(this)
-    // if (ScopeStrictness[this.scope] < ScopeStrictness[scope]) {
-    //   throw new Error(`Scope mismatch. Expected ${this.scope}, got ${scope}`)
-    // }
     this.scope = getInjectableScope(this) as any
   }
 }
@@ -322,6 +318,14 @@ export class Container {
       }
       for (const procedure of service.procedures.values()) {
         yield procedure
+
+        for (const guard of procedure.guards.values()) {
+          yield guard
+        }
+
+        for (const middleware of procedure.middlewares.values()) {
+          yield middleware
+        }
       }
     }
   }
