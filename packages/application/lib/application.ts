@@ -1,5 +1,5 @@
 import type { BaseServerFormat } from '@nmtjs/common'
-import { Api, type Filter } from './api.ts'
+import { type AnyFilter, Api } from './api.ts'
 import { Connection, type ConnectionOptions } from './connection.ts'
 import { Hook, Scope, WorkerType } from './constants.ts'
 import { Container } from './container.ts'
@@ -137,7 +137,7 @@ export class Application {
     return this
   }
 
-  withFilters(...filters: [ErrorClass, Filter<any>][]) {
+  withFilters(...filters: [ErrorClass, AnyFilter][]) {
     for (const [errorClass, filter] of filters) {
       this.registry.registerFilter(errorClass, filter)
     }

@@ -10,12 +10,13 @@ import type { Compiled } from '@nmtjs/type/compiler'
 import type { ApplicationOptions } from './application.ts'
 import type { Connection } from './connection.ts'
 import type { Scope } from './constants.ts'
-import {
-  type Container,
-  type Dependant,
-  type Dependencies,
-  type DependencyContext,
-  Injectable,
+import type {
+  AnyInjectable,
+  Container,
+  Dependant,
+  Dependencies,
+  DependencyContext,
+  // Injectable,
 } from './container.ts'
 import { injectables } from './injectables.ts'
 import type { Logger } from './logger.ts'
@@ -82,29 +83,11 @@ export interface MiddlewareLike {
   handle(context: ExecuteContext, next: MiddlewareNext, payload: any): any
 }
 
-export type AnyGuard = Guard<any>
-export class Guard<Deps extends Dependencies = {}> extends Injectable<
-  GuardLike,
-  Deps,
-  Scope.Global
-> {}
-
-export type AnyMiddleware = Middleware<any>
-export class Middleware<Deps extends Dependencies = {}> extends Injectable<
-  MiddlewareLike,
-  Deps,
-  Scope.Global
-> {}
-
-export type AnyFilter<Error extends ErrorClass = ErrorClass> = Filter<
-  Error,
-  any
+export type AnyGuard = AnyInjectable<GuardLike>
+export type AnyMiddleware = AnyInjectable<MiddlewareLike>
+export type AnyFilter<Error extends ErrorClass = ErrorClass> = AnyInjectable<
+  FilterLike<Error>
 >
-export class Filter<
-  Error extends ErrorClass = ErrorClass,
-  Deps extends Dependencies = {},
-> extends Injectable<FilterLike<Error>, Deps, Scope.Global> {}
-
 type A = TSubscriptionContract | TProcedureContract
 
 export type AnyProcedure<Contract extends A = any> = Procedure<

@@ -1,11 +1,14 @@
-// import type { CallTypeProvider, TypeProvider } from '@nmtjs/common'
-import { OptionalDependency, Scope } from './constants.ts'
-// import { injectables } from './injectables.ts'
+import {
+  FactoryInjectableKey,
+  InjectableKey,
+  LazyInjectableKey,
+  OptionalDependencyKey,
+  Scope,
+  ValueInjectableKey,
+} from './constants.ts'
 import type { Logger } from './logger.ts'
 import type { Registry } from './registry.ts'
 import type { Async } from './types.ts'
-// import type { Async } from './types.ts'
-import { merge } from './utils/functions.ts'
 
 const ScopeStrictness = {
   [Scope.Global]: 0,
@@ -15,7 +18,7 @@ const ScopeStrictness = {
 }
 
 export type DependencyOptional = {
-  [OptionalDependency]: true
+  [OptionalDependencyKey]: any
   injectable: AnyInjectable
 }
 
@@ -24,7 +27,7 @@ export type Depedency = DependencyOptional | AnyInjectable
 export type Dependencies = Record<string, Depedency>
 
 export type ResolveInjectableType<T extends AnyInjectable> =
-  T extends InjectableLike<infer Type, any, any> ? Type : never
+  T extends Injectable<infer Type, any, any> ? Type : never
 
 export interface Dependant<Deps extends Dependencies = Dependencies> {
   dependencies: Deps
@@ -63,91 +66,46 @@ export type InjectableDisposeType<
   context: DependencyContext<InjectableDeps>,
 ) => any
 
-export interface InjectableLike<
+export interface LazyInjectable<T, S extends Scope = Scope.Global>
+  extends Dependant<{}> {
+  scope: S
+  [InjectableKey]: any
+  [LazyInjectableKey]: T
+}
+
+export interface ValueInjectable<T> extends Dependant<{}> {
+  scope: Scope.Global
+  value: T
+  [InjectableKey]: any
+  [ValueInjectableKey]: any
+}
+
+export interface FactoryInjectable<
+  T,
+  D extends Dependencies = {},
+  S extends Scope = Scope.Global,
+> extends Dependant<D> {
+  scope: S
+  factory(context: DependencyContext<D>): Async<T>
+  dispose?(instance: T, context: DependencyContext<D>): any
+  [InjectableKey]: any
+  [FactoryInjectableKey]: any
+}
+
+export type Injectable<
   InjectableValue = any,
   InjectableDeps extends Dependencies = {},
   InjectableScope extends Scope = Scope,
-> extends Dependant<InjectableDeps> {
-  value: InjectableValue
-  scope: InjectableScope
-  factory: InjectableFactoryType<InjectableValue, InjectableDeps>
-  dispose?: InjectableDisposeType<InjectableValue, InjectableDeps>
-}
+> =
+  | LazyInjectable<InjectableValue, InjectableScope>
+  | ValueInjectable<InjectableValue>
+  | FactoryInjectable<InjectableValue, InjectableDeps, InjectableScope>
 
-export type AnyInjectable<T = any, S extends Scope = Scope> = InjectableLike<
+export type AnyInjectable<T = any, S extends Scope = Scope> = Injectable<
   T,
   any,
   S
 >
-export class Injectable<
-  InjectableType = unknown,
-  InjectableDeps extends Dependencies = {},
-  InjectableScope extends Scope = Scope.Global,
-> implements InjectableLike<InjectableType, InjectableDeps, InjectableScope>
-{
-  value: InjectableType = undefined as unknown as InjectableType
-  dependencies: InjectableDeps = {} as InjectableDeps
-  scope: InjectableScope = Scope.Global as InjectableScope
-  factory!: InjectableFactoryType<InjectableType, InjectableDeps>
-  dispose?: InjectableDisposeType<InjectableType, InjectableDeps> = undefined
-
-  withDependencies<Deps extends Dependencies>(newDependencies: Deps) {
-    this.dependencies = merge(this.dependencies, newDependencies)
-    this.resolveActualScope()
-    return this as unknown as Injectable<
-      InjectableType,
-      InjectableDeps & Deps,
-      InjectableScope
-    >
-  }
-
-  withScope<T extends Scope>(scope: T) {
-    this.scope = scope as unknown as InjectableScope
-    this.resolveActualScope()
-    return this as unknown as Injectable<InjectableType, InjectableDeps, T>
-  }
-
-  withFactory<F extends InjectableFactoryType<InjectableType, InjectableDeps>>(
-    factory: F,
-  ) {
-    this.value = undefined as unknown as InjectableType
-    this.factory = factory
-    return this as unknown as Injectable<
-      Awaited<ReturnType<F>>,
-      InjectableDeps,
-      InjectableScope
-    >
-  }
-
-  withValue<T extends null extends InjectableType ? any : InjectableType>(
-    value: T,
-  ) {
-    this.factory = undefined as unknown as InjectableFactoryType<
-      InjectableType,
-      InjectableDeps
-    >
-    this.dispose = undefined
-    this.value = value as unknown as InjectableType
-    return this as unknown as Injectable<
-      null extends InjectableType ? T : InjectableType,
-      InjectableDeps,
-      InjectableScope
-    >
-  }
-
-  withDispose(dispose: this['dispose']) {
-    this.dispose = dispose
-    return this
-  }
-
-  $withType<T>() {
-    return this as unknown as Injectable<T, InjectableDeps>
-  }
-
-  private resolveActualScope() {
-    this.scope = getInjectableScope(this) as any
-  }
-}
 
 export class Container {
   readonly instances = new Map<AnyInjectable, { instance: any; context: any }>()
@@ -238,21 +196,24 @@ export class Container {
     } else if (this.resolvers.has(injectable)) {
       return this.resolvers.get(injectable)!
     } else {
-      const { value, factory, scope, dependencies } = injectable
-      if (typeof value !== 'undefined') return Promise.resolve(value)
+      const { scope, dependencies } = injectable
+      if (ValueInjectableKey in injectable)
+        return Promise.resolve(injectable.value)
 
       if (this.parent?.has(injectable)) return this.parent.resolve(injectable)
-      const isOptional = checkOptional(injectable)
-      const hasFactory = typeof factory !== 'undefined'
 
-      if (!hasFactory) {
+      const isOptional = checkOptional(injectable)
+
+      const isLazy = LazyInjectableKey in injectable
+
+      if (isLazy) {
         if (isOptional) return Promise.resolve(undefined as any)
         return Promise.reject(new Error(`Missing dependency`))
       }
 
       const resolution = this.createContext(dependencies, injectable)
         .then((context) =>
-          Promise.resolve(factory(context)).then((instance) => ({
+          Promise.resolve(injectable.factory(context)).then((instance) => ({
             instance,
             context,
           })),
@@ -331,11 +292,13 @@ export class Container {
   }
 
   private async disposeInjectable(injectable: AnyInjectable) {
-    const { dispose } = injectable
     try {
-      if (dispose) {
-        const { instance, context } = this.instances.get(injectable)!
-        await dispose(instance, context)
+      if (FactoryInjectableKey in injectable) {
+        const { dispose } = injectable
+        if (dispose) {
+          const { instance, context } = this.instances.get(injectable)!
+          await dispose(instance, context)
+        }
       }
     } catch (cause) {
       const error = new Error(
@@ -365,19 +328,78 @@ export function getInjectableScope(injectable: AnyInjectable) {
 export function getDepedencencyInjectable(
   dependency: Depedency,
 ): AnyInjectable {
-  if (OptionalDependency in dependency) {
+  if (OptionalDependencyKey in dependency) {
     return dependency.injectable
   }
   return dependency
 }
 
 function checkOptional(injectable: Depedency) {
-  return OptionalDependency in injectable
+  return OptionalDependencyKey in injectable
 }
 
 export function asOptional<T extends AnyInjectable>(injectable: T) {
   return {
-    [OptionalDependency]: true,
+    [OptionalDependencyKey]: true,
     injectable,
   } as const satisfies DependencyOptional
 }
+
+export function createLazyInjectable<T, S extends Scope = Scope.Global>(
+  scope = Scope.Global as S,
+): LazyInjectable<T, S> {
+  return {
+    scope,
+    dependencies: {},
+    [InjectableKey]: true,
+    [LazyInjectableKey]: true as unknown as T,
+  } as const
+}
+
+export function createValueInjectable<T>(value: T): ValueInjectable<T> {
+  return {
+    value,
+    scope: Scope.Global,
+    dependencies: {},
+    [InjectableKey]: true,
+    [ValueInjectableKey]: true,
+  } as const
+}
+
+export function createFactoryInjectable<
+  T,
+  D extends Dependencies = {},
+  S extends Scope = Scope.Global,
+>(
+  paramsOrFactory:
+    | {
+        dependencies?: D
+        scope?: S
+        factory: InjectableFactoryType<T, D>
+        dispose?: InjectableDisposeType<T, D>
+      }
+    | InjectableFactoryType<T, D>,
+): FactoryInjectable<T, D, S> {
+  const isFactory = typeof paramsOrFactory === 'function'
+  const injectable = {
+    dependencies: (isFactory ? {} : paramsOrFactory.dependencies ?? {}) as D,
+    scope: (isFactory
+      ? Scope.Global
+      : paramsOrFactory.scope ?? Scope.Global) as S,
+    factory: isFactory ? paramsOrFactory : paramsOrFactory.factory,
+    dispose: isFactory ? undefined : paramsOrFactory.dispose,
+    [InjectableKey]: true,
+    [FactoryInjectableKey]: true,
+  }
+  const actualScope = getInjectableScope(injectable)
+  if (
+    !isFactory &&
+    paramsOrFactory.scope &&
+    ScopeStrictness[actualScope] > ScopeStrictness[paramsOrFactory.scope]
+  )
+    throw new Error('Invalid scope')
+  injectable.scope = actualScope as unknown as S
+  return injectable
+}
+
+export const options = createValueInjectable('asd' as const)
