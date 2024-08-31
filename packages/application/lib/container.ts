@@ -1,6 +1,10 @@
+// import type { CallTypeProvider, TypeProvider } from '@nmtjs/common'
 import { OptionalDependency, Scope } from './constants.ts'
+// import { injectables } from './injectables.ts'
 import type { Logger } from './logger.ts'
 import type { Registry } from './registry.ts'
+import type { Async } from './types.ts'
+// import type { Async } from './types.ts'
 import { merge } from './utils/functions.ts'
 
 const ScopeStrictness = {
@@ -12,118 +16,122 @@ const ScopeStrictness = {
 
 export type DependencyOptional = {
   [OptionalDependency]: true
-  provider: AnyProvider
+  injectable: AnyInjectable
 }
 
-export type Depedency = DependencyOptional | AnyProvider
+export type Depedency = DependencyOptional | AnyInjectable
 
 export type Dependencies = Record<string, Depedency>
 
-export type ResolveProviderType<T extends AnyProvider> = T extends ProviderLike<
-  infer Type,
-  any,
-  any
->
-  ? Type
-  : never
+export type ResolveInjectableType<T extends AnyInjectable> =
+  T extends InjectableLike<infer Type, any, any> ? Type : never
 
 export interface Dependant<Deps extends Dependencies = Dependencies> {
   dependencies: Deps
 }
 
+export type DependencyInjectable<T extends Depedency> = T extends AnyInjectable
+  ? T
+  : T extends DependencyOptional
+    ? T['injectable']
+    : never
+
 export type DependencyContext<Deps extends Dependencies> = {
-  [K in keyof Deps as Deps[K] extends AnyProvider
+  [K in keyof Deps as Deps[K] extends AnyInjectable
     ? K
-    : never]: Deps[K] extends AnyProvider ? ResolveProviderType<Deps[K]> : never
+    : never]: Deps[K] extends AnyInjectable
+    ? ResolveInjectableType<Deps[K]>
+    : never
 } & {
   [K in keyof Deps as Deps[K] extends DependencyOptional
     ? K
     : never]?: Deps[K] extends DependencyOptional
-    ? ResolveProviderType<Deps[K]['provider']>
+    ? ResolveInjectableType<Deps[K]['injectable']>
     : never
 }
 
-export type ProviderFactoryType<
-  ProviderType,
-  ProviderDeps extends Dependencies,
-> = (context: DependencyContext<ProviderDeps>) => ProviderType
+export type InjectableFactoryType<
+  InjectableType,
+  InjectableDeps extends Dependencies,
+> = (context: DependencyContext<InjectableDeps>) => Async<InjectableType>
 
-export type ProviderDisposeType<
-  ProviderType,
-  ProviderDeps extends Dependencies,
+export type InjectableDisposeType<
+  InjectableType,
+  InjectableDeps extends Dependencies,
 > = (
-  instance: Awaited<ProviderType>,
-  context: DependencyContext<ProviderDeps>,
+  instance: InjectableType,
+  context: DependencyContext<InjectableDeps>,
 ) => any
 
-export interface ProviderLike<
-  ProviderValue = any,
-  ProviderDeps extends Dependencies = {},
-  ProviderScope extends Scope = Scope,
-> extends Dependant<ProviderDeps> {
-  value: ProviderValue
-  dependencies: ProviderDeps
-  scope: ProviderScope
-  factory: ProviderFactoryType<ProviderValue, ProviderDeps>
-  dispose?: ProviderDisposeType<ProviderValue, ProviderDeps>
+export interface InjectableLike<
+  InjectableValue = any,
+  InjectableDeps extends Dependencies = {},
+  InjectableScope extends Scope = Scope,
+> extends Dependant<InjectableDeps> {
+  value: InjectableValue
+  scope: InjectableScope
+  factory: InjectableFactoryType<InjectableValue, InjectableDeps>
+  dispose?: InjectableDisposeType<InjectableValue, InjectableDeps>
 }
 
-export type AnyProvider<T = any, S extends Scope = Scope> = ProviderLike<
+export type AnyInjectable<T = any, S extends Scope = Scope> = InjectableLike<
   T,
   any,
   S
 >
-export class Provider<
-  ProviderType = unknown,
-  ProviderDeps extends Dependencies = {},
-  ProviderScope extends Scope = Scope.Global,
-> implements ProviderLike<ProviderType, ProviderDeps, ProviderScope>
+export class Injectable<
+  InjectableType = unknown,
+  InjectableDeps extends Dependencies = {},
+  InjectableScope extends Scope = Scope.Global,
+> implements InjectableLike<InjectableType, InjectableDeps, InjectableScope>
 {
-  value: ProviderType = void 0 as unknown as ProviderType
-  dependencies: ProviderDeps = {} as ProviderDeps
-  scope: ProviderScope = Scope.Global as ProviderScope
-  factory!: ProviderFactoryType<ProviderType, ProviderDeps>
-  dispose?: ProviderDisposeType<ProviderType, ProviderDeps> = undefined
+  value: InjectableType = undefined as unknown as InjectableType
+  dependencies: InjectableDeps = {} as InjectableDeps
+  scope: InjectableScope = Scope.Global as InjectableScope
+  factory!: InjectableFactoryType<InjectableType, InjectableDeps>
+  dispose?: InjectableDisposeType<InjectableType, InjectableDeps> = undefined
 
   withDependencies<Deps extends Dependencies>(newDependencies: Deps) {
     this.dependencies = merge(this.dependencies, newDependencies)
-    return this as unknown as Provider<
-      ProviderType,
-      ProviderDeps & Deps,
-      ProviderScope
+    this.resolveActualScope()
+    return this as unknown as Injectable<
+      InjectableType,
+      InjectableDeps & Deps,
+      InjectableScope
     >
   }
 
   withScope<T extends Scope>(scope: T) {
-    this.scope = scope as unknown as ProviderScope
-    return this as unknown as Provider<ProviderType, ProviderDeps, T>
+    this.scope = scope as unknown as InjectableScope
+    this.resolveActualScope()
+    return this as unknown as Injectable<InjectableType, InjectableDeps, T>
   }
 
-  withFactory<F extends ProviderFactoryType<ProviderType, ProviderDeps>>(
+  withFactory<F extends InjectableFactoryType<InjectableType, InjectableDeps>>(
     factory: F,
   ) {
-    this.value = undefined as unknown as ProviderType
+    this.value = undefined as unknown as InjectableType
     this.factory = factory
-    return this as unknown as Provider<
+    return this as unknown as Injectable<
       Awaited<ReturnType<F>>,
-      ProviderDeps,
-      ProviderScope
+      InjectableDeps,
+      InjectableScope
     >
   }
 
-  withValue<T extends null extends ProviderType ? any : ProviderType>(
+  withValue<T extends null extends InjectableType ? any : InjectableType>(
     value: T,
   ) {
-    this.factory = undefined as unknown as ProviderFactoryType<
-      ProviderType,
-      ProviderDeps
+    this.factory = undefined as unknown as InjectableFactoryType<
+      InjectableType,
+      InjectableDeps
     >
     this.dispose = undefined
-    this.value = value as unknown as ProviderType
-    return this as unknown as Provider<
-      null extends ProviderType ? T : ProviderType,
-      ProviderDeps,
-      ProviderScope
+    this.value = value as unknown as InjectableType
+    return this as unknown as Injectable<
+      null extends InjectableType ? T : InjectableType,
+      InjectableDeps,
+      InjectableScope
     >
   }
 
@@ -133,25 +141,23 @@ export class Provider<
   }
 
   $withType<T>() {
-    return this as unknown as Provider<T, ProviderDeps>
+    return this as unknown as Injectable<T, InjectableDeps>
   }
 
-  resolve(
-    ...args: keyof ProviderDeps extends never
-      ? []
-      : [DependencyContext<ProviderDeps>]
-  ) {
-    if (this.value) return this.value
-    const [ctx = {}] = args
-    return this.factory(ctx as any)
+  private resolveActualScope() {
+    // const scope = getInjectableScope(this)
+    // if (ScopeStrictness[this.scope] < ScopeStrictness[scope]) {
+    //   throw new Error(`Scope mismatch. Expected ${this.scope}, got ${scope}`)
+    // }
+    this.scope = getInjectableScope(this) as any
   }
 }
 
 export class Container {
-  readonly instances = new Map<AnyProvider, { instance: any; context: any }>()
-  private readonly resolvers = new Map<AnyProvider, Promise<any>>()
-  private readonly providers = new Set<AnyProvider>()
-  private readonly dependants = new Map<AnyProvider, Set<AnyProvider>>()
+  readonly instances = new Map<AnyInjectable, { instance: any; context: any }>()
+  private readonly resolvers = new Map<AnyInjectable, Promise<any>>()
+  private readonly injectables = new Set<AnyInjectable>()
+  private readonly dependants = new Map<AnyInjectable, Set<AnyInjectable>>()
 
   constructor(
     private readonly application: {
@@ -166,9 +172,9 @@ export class Container {
     const traverse = (dependencies: Dependencies) => {
       for (const key in dependencies) {
         const dependency = dependencies[key]
-        const provider = getDepedencencyProvider(dependency)
-        this.providers.add(provider)
-        traverse(provider.dependencies)
+        const injectable = getDepedencencyInjectable(dependency)
+        this.injectables.add(injectable)
+        traverse(injectable.dependencies)
       }
     }
 
@@ -176,8 +182,8 @@ export class Container {
       traverse(dependant.dependencies)
     }
 
-    const providers = this.findCurrentScopeDeclarations()
-    await Promise.all(providers.map((provider) => this.resolve(provider)))
+    const injectables = this.findCurrentScopeDeclarations()
+    await Promise.all(injectables.map((injectable) => this.resolve(injectable)))
   }
 
   createScope(scope: Scope) {
@@ -190,15 +196,15 @@ export class Container {
     // Loop through all instances and dispose them,
     // until there are no more instances left
     while (this.instances.size) {
-      for (const provider of this.instances.keys()) {
-        const dependants = this.dependants.get(provider)
-        // Firstly, dispose instances that other providers don't depend on
+      for (const injectable of this.instances.keys()) {
+        const dependants = this.dependants.get(injectable)
+        // Firstly, dispose instances that other injectables don't depend on
         if (!dependants?.size) {
-          await this.disposeProvider(provider)
+          await this.disposeInjectable(injectable)
           for (const dependants of this.dependants.values()) {
-            // Clear current istances as a dependant for other providers
-            if (dependants.has(provider)) {
-              dependants.delete(provider)
+            // Clear current istances as a dependant for other injectables
+            if (dependants.has(injectable)) {
+              dependants.delete(injectable)
             }
           }
         }
@@ -206,41 +212,41 @@ export class Container {
     }
 
     this.instances.clear()
-    this.providers.clear()
+    this.injectables.clear()
     this.resolvers.clear()
     this.dependants.clear()
   }
 
-  has(provider: AnyProvider): boolean {
+  has(injectable: AnyInjectable): boolean {
     return !!(
-      this.instances.has(provider) ||
-      this.resolvers.has(provider) ||
-      this.parent?.has(provider)
+      this.instances.has(injectable) ||
+      this.resolvers.has(injectable) ||
+      this.parent?.has(injectable)
     )
   }
 
-  resolve<T extends AnyProvider>(
-    provider: T,
-    dependant?: AnyProvider,
-  ): Promise<ResolveProviderType<T>> {
+  resolve<T extends AnyInjectable>(
+    injectable: T,
+    dependant?: AnyInjectable,
+  ): Promise<ResolveInjectableType<T>> {
     if (dependant) {
-      let dependants = this.dependants.get(provider)
+      let dependants = this.dependants.get(injectable)
       if (!dependants) {
-        this.dependants.set(provider, (dependants = new Set()))
+        this.dependants.set(injectable, (dependants = new Set()))
       }
       dependants.add(dependant)
     }
 
-    if (this.instances.has(provider)) {
-      return Promise.resolve(this.instances.get(provider)!.instance)
-    } else if (this.resolvers.has(provider)) {
-      return this.resolvers.get(provider)!
+    if (this.instances.has(injectable)) {
+      return Promise.resolve(this.instances.get(injectable)!.instance)
+    } else if (this.resolvers.has(injectable)) {
+      return this.resolvers.get(injectable)!
     } else {
-      const { value, factory, scope, dependencies } = provider
+      const { value, factory, scope, dependencies } = injectable
       if (typeof value !== 'undefined') return Promise.resolve(value)
 
-      if (this.parent?.has(provider)) return this.parent.resolve(provider)
-      const isOptional = checkOptional(provider)
+      if (this.parent?.has(injectable)) return this.parent.resolve(injectable)
+      const isOptional = checkOptional(injectable)
       const hasFactory = typeof factory !== 'undefined'
 
       if (!hasFactory) {
@@ -248,7 +254,7 @@ export class Container {
         return Promise.reject(new Error(`Missing dependency`))
       }
 
-      const resolution = this.createContext(dependencies, provider)
+      const resolution = this.createContext(dependencies, injectable)
         .then((context) =>
           Promise.resolve(factory(context)).then((instance) => ({
             instance,
@@ -257,44 +263,44 @@ export class Container {
         )
         .then(({ instance, context }) => {
           if (ScopeStrictness[this.scope] >= ScopeStrictness[scope])
-            this.instances.set(provider, { instance, context })
-          if (scope !== Scope.Transient) this.resolvers.delete(provider)
+            this.instances.set(injectable, { instance, context })
+          if (scope !== Scope.Transient) this.resolvers.delete(injectable)
           return instance
         })
-      if (scope !== Scope.Transient) this.resolvers.set(provider, resolution)
+      if (scope !== Scope.Transient) this.resolvers.set(injectable, resolution)
       return resolution
     }
   }
 
   async createContext<T extends Dependencies>(
     dependencies: T,
-    dependant?: AnyProvider,
+    dependant?: AnyInjectable,
   ) {
     const injections: Record<string, any> = {}
     const deps = Object.entries(dependencies)
     const resolvers: Promise<any>[] = Array(deps.length)
     for (let i = 0; i < deps.length; i++) {
       const [key, dependency] = deps[i]
-      const provider = getDepedencencyProvider(dependency)
-      const resolver = this.resolve(provider, dependant)
+      const injectable = getDepedencencyInjectable(dependency)
+      const resolver = this.resolve(injectable, dependant)
       resolvers[i] = resolver.then((value) => (injections[key] = value))
     }
     await Promise.all(resolvers)
     return Object.freeze(injections as DependencyContext<T>)
   }
 
-  async provide<T extends AnyProvider>(
-    provider: T,
-    instance: ResolveProviderType<T>,
+  async provide<T extends AnyInjectable>(
+    injectable: T,
+    instance: ResolveInjectableType<T>,
   ) {
-    this.instances.set(provider, { instance, context: undefined })
+    this.instances.set(injectable, { instance, context: undefined })
   }
 
   private findCurrentScopeDeclarations() {
-    const declarations: AnyProvider[] = []
-    for (const provider of this.providers) {
-      if (getProviderScope(provider) === this.scope) {
-        declarations.push(provider)
+    const declarations: AnyInjectable[] = []
+    for (const injectable of this.injectables) {
+      if (injectable.scope === this.scope) {
+        declarations.push(injectable)
       }
     }
     return declarations
@@ -320,33 +326,31 @@ export class Container {
     }
   }
 
-  private async disposeProvider(provider: AnyProvider) {
-    const { dispose } = provider
+  private async disposeInjectable(injectable: AnyInjectable) {
+    const { dispose } = injectable
     try {
       if (dispose) {
-        const { instance, context } = this.instances.get(provider)!
+        const { instance, context } = this.instances.get(injectable)!
         await dispose(instance, context)
       }
     } catch (cause) {
       const error = new Error(
-        'Provider disposal error. Potential memory leak',
+        'Injectable disposal error. Potential memory leak',
         { cause },
       )
       this.application.logger.error(error)
     } finally {
-      this.instances.delete(provider)
+      this.instances.delete(injectable)
     }
   }
 }
 
-// TODO: this could be moved to Provide.withDependencies(),
-// so there's no runtime overhead
-export function getProviderScope(provider: AnyProvider) {
-  let scope = provider.scope
-  const deps = Object.values(provider.dependencies as Dependencies)
+export function getInjectableScope(injectable: AnyInjectable) {
+  let scope = injectable.scope
+  const deps = Object.values(injectable.dependencies as Dependencies)
   for (const dependency of deps) {
-    const provider = getDepedencencyProvider(dependency)
-    const dependencyScope = getProviderScope(provider)
+    const injectable = getDepedencencyInjectable(dependency)
+    const dependencyScope = getInjectableScope(injectable)
     if (ScopeStrictness[dependencyScope] > ScopeStrictness[scope]) {
       scope = dependencyScope
     }
@@ -354,20 +358,22 @@ export function getProviderScope(provider: AnyProvider) {
   return scope
 }
 
-export function getDepedencencyProvider(dependency: Depedency): AnyProvider {
+export function getDepedencencyInjectable(
+  dependency: Depedency,
+): AnyInjectable {
   if (OptionalDependency in dependency) {
-    return dependency.provider
+    return dependency.injectable
   }
   return dependency
 }
 
-function checkOptional(provider: Depedency) {
-  return OptionalDependency in provider
+function checkOptional(injectable: Depedency) {
+  return OptionalDependency in injectable
 }
 
-export function asOptional<T extends AnyProvider>(provider: T) {
+export function asOptional<T extends AnyInjectable>(injectable: T) {
   return {
     [OptionalDependency]: true,
-    provider,
-  } as const
+    injectable,
+  } as const satisfies DependencyOptional
 }

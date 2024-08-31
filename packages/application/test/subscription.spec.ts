@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Application } from '../lib/application.ts'
-import { providers } from '../lib/providers.ts'
+import { injectables } from '../lib/injectables.ts'
 import {
   Subscription,
   type SubscriptionManager,
@@ -16,7 +16,7 @@ describe.sequential('Basic subscription manager', () => {
   beforeEach(async () => {
     app = testApp().use(basicSubManagerPlugin)
     await app.initialize()
-    subManager = await app.container.resolve(providers.subManager)
+    subManager = await app.container.resolve(injectables.subManager)
   })
 
   it('should initialize', async () => {

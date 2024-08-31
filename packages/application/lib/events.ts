@@ -3,8 +3,8 @@ import type { t } from '@nmtjs/type'
 import type { Connection } from './connection.ts'
 import { Hook } from './constants.ts'
 import type { Container } from './container.ts'
+import { injectables } from './injectables.ts'
 import type { Logger } from './logger.ts'
-import { providers } from './providers.ts'
 import type { Registry } from './registry.ts'
 import { Subscription, type SubscriptionManager } from './subscription.ts'
 
@@ -20,7 +20,7 @@ export class EventManager {
   ) {
     this.registry.registerHook(Hook.AfterInitialize, async () => {
       this.subManager = await this.application.container.resolve(
-        providers.subManager,
+        injectables.subManager,
       )
     })
   }

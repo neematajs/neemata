@@ -5,10 +5,10 @@ import { type Compiled, compile } from '@nmtjs/type/compiler'
 import type { AnyFilter, Filter } from './api.ts'
 import { type Hook, Scope } from './constants.ts'
 import {
-  type AnyProvider,
+  type AnyInjectable,
   type Depedency,
-  getDepedencencyProvider,
-  getProviderScope,
+  getDepedencencyInjectable,
+  getInjectableScope,
 } from './container.ts'
 import { Hooks } from './hooks.ts'
 import type { Logger } from './logger.ts'
@@ -95,7 +95,7 @@ export class Registry {
     if (
       hasNonInvalidScopeDeps(
         Object.values<Depedency>(task.dependencies).map(
-          getDepedencencyProvider,
+          getDepedencencyInjectable,
         ),
       )
     )
@@ -123,10 +123,10 @@ export const scopeErrorMessage = (name, scope = Scope.Global) =>
   `${name} must be a ${scope} scope (including all nested dependencies)`
 
 export function hasNonInvalidScopeDeps(
-  providers: AnyProvider[],
+  injectables: AnyInjectable[],
   scope = Scope.Global,
 ) {
-  return providers.some((guard) => getProviderScope(guard) !== scope)
+  return injectables.some((guard) => getInjectableScope(guard) !== scope)
 }
 
 export function printRegistry(registry: Registry) {

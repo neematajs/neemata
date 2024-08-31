@@ -8,6 +8,7 @@ import {
   type Pattern,
   type Rpc,
   type RpcResponse,
+  type TypeProvider,
 } from '@nmtjs/common'
 import { c, t } from '@nmtjs/contract'
 
@@ -20,6 +21,11 @@ import { type Plugin, createPlugin } from '../lib/plugin.ts'
 import type { Registry } from '../lib/registry.ts'
 import { Service } from '../lib/service.ts'
 import { type BaseTaskExecutor, Task } from '../lib/task.ts'
+
+export interface TestTypeProvider extends TypeProvider {
+  input: 1 | 2 | 'string'
+  output: this['input']
+}
 
 export class TestFormat extends BaseServerFormat {
   accept: Pattern[] = [

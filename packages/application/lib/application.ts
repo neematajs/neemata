@@ -5,9 +5,9 @@ import { Hook, Scope, WorkerType } from './constants.ts'
 import { Container } from './container.ts'
 import { EventManager } from './events.ts'
 import { Format } from './format.ts'
+import { injectables } from './injectables.ts'
 import { type Logger, type LoggingOptions, createLogger } from './logger.ts'
 import type { Plugin } from './plugin.ts'
-import { providers } from './providers.ts'
 import { APP_COMMAND, Registry, printRegistry } from './registry.ts'
 import type { Service } from './service.ts'
 import { basicSubManagerPlugin } from './subscription.ts'
@@ -50,13 +50,13 @@ export class Application {
     this.eventManager = new EventManager(this)
     this.format = new Format(this.options.api.formats)
 
-    // create unexposed container for internal providers, which never gets disposed
+    // create unexposed container for internal injectables, which never gets disposed
     const container = new Container(this)
 
-    container.provide(providers.logger, this.logger)
-    container.provide(providers.workerType, this.options.type)
-    container.provide(providers.eventManager, this.eventManager)
-    container.provide(providers.execute, this.execute.bind(this))
+    container.provide(injectables.logger, this.logger)
+    container.provide(injectables.workerType, this.options.type)
+    container.provide(injectables.eventManager, this.eventManager)
+    container.provide(injectables.execute, this.execute.bind(this))
 
     // create a global container for rest of the application
     // including transports, extensions, etc.

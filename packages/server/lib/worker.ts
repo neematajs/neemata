@@ -14,7 +14,7 @@ import {
   WorkerMessageType,
   bindPortMessageHandler,
   createBroadcastChannel,
-  providerWorkerOptions,
+  provideWorkerOptions,
 } from './common.ts'
 import { WTSubManagerPlugin } from './subscription.ts'
 import { WorkerThreadsTaskRunner } from './task-runner.ts'
@@ -50,7 +50,7 @@ export async function start(
       ? new WorkerThreadsTaskRunner(parentPort)
       : undefined
 
-  providerWorkerOptions({
+  provideWorkerOptions({
     id,
     workerType,
     workerOptions,

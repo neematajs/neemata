@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { Container, Provider } from '../lib/container.ts'
-import { providers } from '../lib/providers.ts'
+import { Container, Injectable } from '../lib/container.ts'
+import { injectables } from '../lib/injectables.ts'
 import { Registry } from '../lib/registry.ts'
 import { type AnyTask, Task, TaskRunner } from '../lib/task.ts'
 import { createFuture, defer, noop, onAbort } from '../lib/utils/functions.ts'
@@ -36,8 +36,8 @@ describe.sequential('Task', () => {
   })
 
   it('should clone with a dependencies', () => {
-    const dep1 = new Provider().withValue('dep1')
-    const dep2 = new Provider().withValue('dep2')
+    const dep1 = new Injectable().withValue('dep1')
+    const dep2 = new Injectable().withValue('dep2')
     task
       .withDependencies({
         dep1,
@@ -87,14 +87,14 @@ describe.sequential('Tasks', () => {
   })
 
   it('should inject context', async () => {
-    const provider = new Provider().withValue({})
+    const injectable = new Injectable().withValue({})
     const task = testTask()
-      .withDependencies({ dep: provider })
+      .withDependencies({ dep: injectable })
       .withHandler((ctx) => ctx)
 
     registry.registerTask(task)
     const { result } = await tasks.execute(task)
-    expect(result).toHaveProperty('dep', provider.value)
+    expect(result).toHaveProperty('dep', injectable.value)
   })
 
   it('should handle errors', async () => {
@@ -128,7 +128,7 @@ describe.sequential('Tasks', () => {
     const future = createFuture<void>()
     const spy = vi.fn(future.resolve)
     const task = testTask()
-      .withDependencies({ signal: providers.taskSignal })
+      .withDependencies({ signal: injectables.taskSignal })
       .withHandler(({ signal }) => new Promise(() => onAbort(signal, spy)))
 
     registry.registerTask(task)
@@ -143,7 +143,7 @@ describe.sequential('Tasks', () => {
     const future = createFuture<void>()
     const spy = vi.fn(future.resolve)
     const task = testTask()
-      .withDependencies({ signal: providers.taskSignal })
+      .withDependencies({ signal: injectables.taskSignal })
       .withHandler(({ signal }) => new Promise(() => onAbort(signal, spy)))
 
     registry.registerTask(task)

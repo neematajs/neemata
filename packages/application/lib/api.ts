@@ -15,10 +15,10 @@ import {
   type Dependant,
   type Dependencies,
   type DependencyContext,
-  Provider,
+  Injectable,
 } from './container.ts'
+import { injectables } from './injectables.ts'
 import type { Logger } from './logger.ts'
-import { providers } from './providers.ts'
 import type { Registry } from './registry.ts'
 import type { AnyService, ServiceLike } from './service.ts'
 import { SubscriptionResponse } from './subscription.ts'
@@ -83,14 +83,14 @@ export interface MiddlewareLike {
 }
 
 export type AnyGuard = Guard<any>
-export class Guard<Deps extends Dependencies = {}> extends Provider<
+export class Guard<Deps extends Dependencies = {}> extends Injectable<
   GuardLike,
   Deps,
   Scope.Global
 > {}
 
 export type AnyMiddleware = Middleware<any>
-export class Middleware<Deps extends Dependencies = {}> extends Provider<
+export class Middleware<Deps extends Dependencies = {}> extends Injectable<
   MiddlewareLike,
   Deps,
   Scope.Global
@@ -103,7 +103,7 @@ export type AnyFilter<Error extends ErrorClass = ErrorClass> = Filter<
 export class Filter<
   Error extends ErrorClass = ErrorClass,
   Deps extends Dependencies = {},
-> extends Provider<FilterLike<Error>, Deps, Scope.Global> {}
+> extends Injectable<FilterLike<Error>, Deps, Scope.Global> {}
 
 type A = TSubscriptionContract | TProcedureContract
 
@@ -193,8 +193,8 @@ export class Api {
   async call(callOptions: ApiCallOptions) {
     const { payload, container, connection, signal } = callOptions
 
-    container.provide(providers.connection, connection)
-    container.provide(providers.callSignal, signal)
+    container.provide(injectables.connection, connection)
+    container.provide(injectables.callSignal, signal)
 
     try {
       this.handleTransport(callOptions)
@@ -245,12 +245,12 @@ export class Api {
 
   private async resolveMiddlewares(callOptions: ApiCallOptions) {
     const { service, procedure, container } = callOptions
-    const middlewareProviders = [
+    const middlewareInjectables = [
       ...service.middlewares,
       ...procedure.middlewares,
     ]
     const middlewares = await Promise.all(
-      middlewareProviders.map((p) => container.resolve(p)),
+      middlewareInjectables.map((p) => container.resolve(p)),
     )
     return middlewares[Symbol.iterator]()
   }
@@ -279,8 +279,10 @@ export class Api {
     execCtx: ExecuteContext,
   ) {
     const { service, procedure, container, connection } = callOptions
-    const providers = [...service.guards, ...procedure.guards]
-    const guards = await Promise.all(providers.map((p) => container.resolve(p)))
+    const injectables = [...service.guards, ...procedure.guards]
+    const guards = await Promise.all(
+      injectables.map((p) => container.resolve(p)),
+    )
     for (const guard of guards) {
       const result = await guard.can(execCtx)
       if (result === false) throw new ApiError(ErrorCode.Forbidden)
