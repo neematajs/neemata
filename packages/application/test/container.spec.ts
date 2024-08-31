@@ -3,19 +3,71 @@ import type { AnyProcedure } from '../lib/api.ts'
 import { Scope } from '../lib/constants.ts'
 import {
   Container,
-  Provider,
+  Injectable,
   asOptional,
-  getProviderScope,
+  getInjectableScope,
 } from '../lib/container.ts'
-import { providers } from '../lib/providers.ts'
+import { injectables } from '../lib/injectables.ts'
+import { Provider, provide } from '../lib/providers.ts'
 import { Registry } from '../lib/registry.ts'
-import { testLogger, testProcedure, testService } from './_utils.ts'
+import {
+  type TestTypeProvider,
+  testLogger,
+  testProcedure,
+  testService,
+} from './_utils.ts'
 
-describe.sequential('Provider', () => {
-  let provider: Provider
+describe.sequential('Injectable', () => {
+  let injectable: Injectable
 
   beforeEach(() => {
-    provider = new Provider()
+    injectable = new Injectable()
+  })
+
+  it('should be a injectable', () => {
+    expect(injectable).toBeDefined()
+    expect(injectable).toBeInstanceOf(Injectable)
+  })
+
+  it('should chain with a value', () => {
+    const value = () => {}
+    injectable.withValue(value)
+    expect(injectable.value).toBe(value)
+  })
+
+  it('should chain with a factory', () => {
+    const factory = () => {}
+    injectable.withFactory(factory)
+    expect(injectable.factory).toBe(factory)
+  })
+
+  it('should chain with a disposal', () => {
+    const dispose = () => {}
+    injectable.withDispose(dispose)
+    expect(injectable.dispose).toBe(dispose)
+  })
+
+  it('should chain with a scope', () => {
+    injectable.withScope(Scope.Call)
+    expect(injectable.scope).toBe(Scope.Call)
+  })
+
+  it('should chain with a dependencies', () => {
+    const dep1 = new Injectable().withValue('dep1')
+    const dep2 = new Injectable().withValue('dep2')
+
+    injectable.withDependencies({ dep1 }).withDependencies({ dep2 })
+
+    expect(injectable.dependencies).toHaveProperty('dep1', dep1)
+    expect(injectable.dependencies).toHaveProperty('dep2', dep2)
+  })
+})
+
+describe.sequential('Provider', () => {
+  let provider: Provider<TestTypeProvider>
+
+  beforeEach(() => {
+    provider = new Provider<TestTypeProvider>()
   })
 
   it('should be a provider', () => {
@@ -23,14 +75,8 @@ describe.sequential('Provider', () => {
     expect(provider).toBeInstanceOf(Provider)
   })
 
-  it('should chain with a value', () => {
-    const value = () => {}
-    provider.withValue(value)
-    expect(provider.value).toBe(value)
-  })
-
   it('should chain with a factory', () => {
-    const factory = () => {}
+    const factory = () => 1 as const
     provider.withFactory(factory)
     expect(provider.factory).toBe(factory)
   })
@@ -47,8 +93,8 @@ describe.sequential('Provider', () => {
   })
 
   it('should chain with a dependencies', () => {
-    const dep1 = new Provider().withValue('dep1')
-    const dep2 = new Provider().withValue('dep2')
+    const dep1 = new Injectable().withValue('dep1')
+    const dep2 = new Injectable().withValue('dep2')
 
     provider.withDependencies({ dep1 }).withDependencies({ dep2 })
 
@@ -72,7 +118,7 @@ describe.sequential('Container', () => {
   })
 
   it('should create context', async () => {
-    const dep = new Provider().withValue('dep')
+    const dep = new Injectable().withValue('dep')
     const ctx = await container.createContext({ dep })
     expect(ctx).toHaveProperty('dep')
   })
@@ -84,59 +130,59 @@ describe.sequential('Container', () => {
 
   it('should resolve with value', async () => {
     const value = {}
-    const provider = new Provider().withValue(value)
-    await expect(container.resolve(provider)).resolves.toBe(value)
+    const injectable = new Injectable().withValue(value)
+    await expect(container.resolve(injectable)).resolves.toBe(value)
   })
 
   it('should resolve with factory', async () => {
     const value = {}
-    const provider = new Provider().withFactory(() => value)
-    await expect(container.resolve(provider)).resolves.toBe(value)
+    const injectable = new Injectable().withFactory(() => value)
+    await expect(container.resolve(injectable)).resolves.toBe(value)
   })
 
   it('should provide dependencies', async () => {
-    const dep1 = new Provider().withValue('dep1' as const)
-    const dep2 = new Provider()
+    const dep1 = new Injectable().withValue('dep1' as const)
+    const dep2 = new Injectable()
       .withDependencies({ dep1 })
       .withFactory((deps) => deps)
-    const dep3 = new Provider().withFactory(() => 'dep3' as const)
-    const provider = new Provider()
+    const dep3 = new Injectable().withFactory(() => 'dep3' as const)
+    const injectable = new Injectable()
       .withDependencies({ dep2, dep3 })
       .withFactory((deps) => deps)
-    const deps = await container.resolve(provider)
+    const deps = await container.resolve(injectable)
     expect(deps).toHaveProperty('dep2', { dep1: 'dep1' })
     expect(deps).toHaveProperty('dep3', 'dep3')
   })
 
   it('should dispose', async () => {
-    const provider = new Provider()
+    const injectable = new Injectable()
       .withFactory(() => ({}))
       .withDispose(() => {})
-    const spy = vi.spyOn(provider, 'dispose')
-    await container.resolve(provider)
+    const spy = vi.spyOn(injectable, 'dispose')
+    await container.resolve(injectable)
     await container.dispose()
     expect(spy).toHaveBeenCalledOnce()
   })
 
   it('should be cached', async () => {
-    const provider = new Provider().withFactory(() => ({}))
-    const val = await container.resolve(provider)
-    expect(container.has(provider)).toBe(true)
-    expect(await container.resolve(provider)).toBe(val)
+    const injectable = new Injectable().withFactory(() => ({}))
+    const val = await container.resolve(injectable)
+    expect(container.has(injectable)).toBe(true)
+    expect(await container.resolve(injectable)).toBe(val)
   })
 
   it('should handle dispose error', async () => {
-    const provider = new Provider()
+    const injectable = new Injectable()
       .withFactory(() => {})
       .withDispose(() => {
         throw new Error()
       })
-    await container.resolve(provider)
+    await container.resolve(injectable)
     await expect(container.dispose()).resolves.not.toThrow()
   })
 
   it('should handle concurrent resolutions', async () => {
-    const provider = new Provider()
+    const injectable = new Injectable()
       .withFactory(async () => {
         await new Promise((resolve) => setTimeout(resolve, 1))
         return {}
@@ -144,8 +190,8 @@ describe.sequential('Container', () => {
       .withDispose(() => {
         throw new Error()
       })
-    const res1 = container.resolve(provider)
-    const res2 = container.resolve(provider)
+    const res1 = container.resolve(injectable)
+    const res2 = container.resolve(injectable)
     expect(res1).toBe(res2)
   })
 
@@ -157,65 +203,68 @@ describe.sequential('Container', () => {
   })
 
   it('should resolve scopes', async () => {
-    const globalProvider = new Provider()
+    const globalInjectable = new Injectable()
       .withScope(Scope.Global)
       .withFactory(() => ({}))
 
-    const connectionProvider = new Provider()
+    const connectionInjectable = new Injectable()
       .withScope(Scope.Connection)
       .withDependencies({
-        globalValue: globalProvider,
+        globalValue: globalInjectable,
       })
       .withFactory(({ globalValue }) => {
         return { globalValue }
       })
 
-    const callProvider = new Provider()
+    const callInjectable = new Injectable()
       .withScope(Scope.Connection)
       .withDependencies({
-        connectionValue: connectionProvider,
-        globalValue: globalProvider,
+        connectionValue: connectionInjectable,
+        globalValue: globalInjectable,
       })
       .withFactory(({ globalValue, connectionValue }) => {
         return { globalValue, connectionValue }
       })
 
-    const globalProviderValue = await container.resolve(globalProvider)
+    const globalInjectableValue = await container.resolve(globalInjectable)
     const scopeContainer = container.createScope(Scope.Call)
 
-    const callProviderValue = await scopeContainer.resolve(callProvider)
+    const callInjectableValue = await scopeContainer.resolve(callInjectable)
 
-    expect(scopeContainer.instances.has(globalProvider)).toBe(false)
-    expect(scopeContainer.instances.has(connectionProvider)).toBe(true)
-    expect(callProviderValue.globalValue).toBe(globalProviderValue)
+    expect(scopeContainer.instances.has(globalInjectable)).toBe(false)
+    expect(scopeContainer.instances.has(connectionInjectable)).toBe(true)
+    expect(callInjectableValue.globalValue).toBe(globalInjectableValue)
 
-    const connectionProviderValue =
-      await scopeContainer.resolve(connectionProvider)
-    expect(callProviderValue.globalValue).toBe(
-      connectionProviderValue.globalValue,
+    const connectionInjectableValue =
+      await scopeContainer.resolve(connectionInjectable)
+    expect(callInjectableValue.globalValue).toBe(
+      connectionInjectableValue.globalValue,
     )
-    expect(scopeContainer.has(globalProvider)).toBe(true)
+    expect(scopeContainer.has(globalInjectable)).toBe(true)
   })
 
-  it('should correctly resolve provider scope', async () => {
-    const provider = new Provider().withScope(Scope.Connection)
-    const provider2 = new Provider().withScope(Scope.Call)
-    const provider3 = new Provider().withDependencies({ provider, provider2 })
-    expect(getProviderScope(provider3)).toBe(Scope.Call)
+  it('should correctly resolve injectable scope', async () => {
+    const injectable = new Injectable().withScope(Scope.Connection)
+    const injectable2 = new Injectable().withScope(Scope.Call)
+    const injectable3 = new Injectable().withDependencies({
+      injectable,
+      injectable2,
+    })
+    expect(getInjectableScope(injectable3)).toBe(Scope.Call)
   })
 
   it('should preload global dependencies', async () => {
     const factory1 = vi.fn(() => ({}))
-    const provider1 = new Provider()
+    const injectable1 = new Injectable()
       .withScope(Scope.Global)
       .withFactory(factory1)
     const factory2 = vi.fn(() => ({}))
-    const provider2 = new Provider()
+    const injectable2 = new Injectable()
       .withScope(Scope.Connection)
       .withFactory(factory2)
     const procedure = testProcedure().withDependencies({
-      provider1,
-      provider2,
+      injectable1,
+      injectable2,
     }) satisfies AnyProcedure
     const service = testService({ procedure })
     registry.registerService(service)
@@ -227,45 +276,60 @@ describe.sequential('Container', () => {
   it('should dispose in correct order', async () => {
     const disposeSpy = vi.fn((value) => order.push(value))
     const order: string[] = []
-    const provider1 = new Provider()
+    const injectable1 = new Injectable()
       .withFactory(() => '1')
       .withDispose(disposeSpy)
-    const provider2 = new Provider()
-      .withDependencies({ provider1 })
+    const injectable2 = new Injectable()
+      .withDependencies({ injectable1 })
       .withFactory(() => '2')
       .withDispose(disposeSpy)
-    const provider3 = new Provider()
-      .withDependencies({ provider1, provider2 })
+    const injectable3 = new Injectable()
+      .withDependencies({ injectable1, injectable2 })
       .withFactory(() => '3')
       .withDispose(disposeSpy)
-    const provider4 = new Provider()
-      .withDependencies({ provider1, provider3 })
+    const injectable4 = new Injectable()
+      .withDependencies({ injectable1, injectable3 })
       .withFactory(() => '4')
       .withDispose(disposeSpy)
-    const provider5 = new Provider()
-      .withDependencies({ provider2, provider4 })
+    const injectable5 = new Injectable()
+      .withDependencies({ injectable2, injectable4 })
       .withFactory(() => '5')
       .withDispose(disposeSpy)
 
-    await container.resolve(provider5)
+    await container.resolve(injectable5)
     await container.dispose()
 
     expect(order).toStrictEqual(['5', '4', '3', '2', '1'])
   })
 
   it('should fail to resolve required dependency', async () => {
-    const provider = new Provider().withDependencies({
-      dep: providers.callSignal,
+    const injectable = new Injectable().withDependencies({
+      dep: injectables.callSignal,
     })
-    await expect(container.resolve(provider)).rejects.toThrow(
+    await expect(container.resolve(injectable)).rejects.toThrow(
       'Missing dependency',
     )
   })
 
   it('should resolve optional dependency', async () => {
-    const provider = new Provider().withDependencies({
-      dep: asOptional(providers.callSignal),
+    const injectable = new Injectable().withDependencies({
+      dep: asOptional(injectables.callSignal),
     })
-    await expect(container.resolve(provider)).rejects.toThrow()
+    await expect(container.resolve(injectable)).rejects.toThrow()
+  })
+
+  it('should be able to inject a provider', async () => {
+    const options = new Injectable().withValue('string' as const)
+    const provider = new Provider<TestTypeProvider>().withFactory(
+      ({ options }) => options,
+    )
+    const provided = provide(provider, options)
+    const injectable = new Injectable()
+      .withDependencies({
+        provider: provided,
+      })
+      .withFactory(({ provider }) => provider)
+
+    await expect(container.resolve(injectable)).resolves.toBe('string')
   })
 })

@@ -11,7 +11,7 @@ import {
   defer,
   importDefault,
 } from '@nmtjs/application'
-import { ApplicationServer, providerWorkerOptions } from '@nmtjs/server'
+import { ApplicationServer, provideWorkerOptions } from '@nmtjs/server'
 import { config } from 'dotenv'
 
 export const run = async (scriptPath: string) => {
@@ -114,13 +114,13 @@ export const run = async (scriptPath: string) => {
       if (entryApp instanceof ApplicationServer) {
         const { applicationPath } = entryApp.options
 
-        const options: Parameters<typeof providerWorkerOptions>[0] = {
+        const options: Parameters<typeof provideWorkerOptions>[0] = {
           id: 0,
           workerType,
           isServer: false,
           workerOptions,
         }
-        providerWorkerOptions(options)
+        provideWorkerOptions(options)
         app = await importDefault(applicationPath)
       } else {
         app = entryApp as Application

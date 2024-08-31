@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Application } from '../lib/application.ts'
-import { providers } from '../lib/providers.ts'
+import { injectables } from '../lib/injectables.ts'
 import { testApp, testPlugin } from './_utils.ts'
 
 describe.sequential('Application', () => {
@@ -48,11 +48,11 @@ describe.sequential('Application', () => {
   })
 
   it('should register app injections', async () => {
-    expect(app.container.resolve(providers.logger)).resolves.toBe(app.logger)
-    expect(app.container.resolve(providers.execute)).resolves.toBeInstanceOf(
+    expect(app.container.resolve(injectables.logger)).resolves.toBe(app.logger)
+    expect(app.container.resolve(injectables.execute)).resolves.toBeInstanceOf(
       Function,
     )
-    expect(app.container.resolve(providers.eventManager)).resolves.toBe(
+    expect(app.container.resolve(injectables.eventManager)).resolves.toBe(
       app.eventManager,
     )
   })

@@ -40,7 +40,7 @@ const defaultWorkerOptions = {
   subscriptionManager: basicSubManagerPlugin,
 }
 
-export const providerWorkerOptions = (
+export const provideWorkerOptions = (
   opts: Partial<ApplicationWorkerOptions>,
 ) => {
   globalThis[WORKER_OPTIONS_KEY] = { ...defaultWorkerOptions, ...opts }

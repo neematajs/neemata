@@ -4,8 +4,8 @@ import type { TSubscriptionContract } from '@nmtjs/contract'
 
 import type { t } from '@nmtjs/type'
 import { WorkerType } from './constants.ts'
+import { injectables } from './injectables.ts'
 import { createPlugin } from './plugin.ts'
-import { providers } from './providers.ts'
 
 type SubscriptionEvents<Contract extends TSubscriptionContract> = {
   abort: [reason?: any]
@@ -99,7 +99,7 @@ export const basicSubManagerPlugin = createPlugin(
       }
     }
 
-    container.provide(providers.subManager, {
+    container.provide(injectables.subManager, {
       publish,
       subscribe,
       unsubscribe,

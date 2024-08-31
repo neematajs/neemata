@@ -6,7 +6,7 @@ import type {
   Dependencies,
   DependencyContext,
 } from './container.ts'
-import { providers } from './providers.ts'
+import { injectables } from './injectables.ts'
 import type { Registry } from './registry.ts'
 import type { Async, OmitFirstItem } from './types.ts'
 import { createFuture, defer, merge, noop, onAbort } from './utils/functions.ts'
@@ -120,7 +120,7 @@ export class TaskRunner {
       const container = this.application.container.createScope(
         this.application.container.scope,
       )
-      container.provide(providers.taskSignal, ac.signal)
+      container.provide(injectables.taskSignal, ac.signal)
       const context = await container.createContext(dependencies)
       try {
         return await handler(context, ...args)

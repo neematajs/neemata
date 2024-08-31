@@ -12,8 +12,9 @@ import {
 } from '../lib/api.ts'
 import type { Application } from '../lib/application.ts'
 import type { Connection } from '../lib/connection.ts'
-import { type Container, Provider } from '../lib/container.ts'
-import { providers } from '../lib/providers.ts'
+import { Scope } from '../lib/constants.ts'
+import { type Container, Injectable } from '../lib/container.ts'
+import { injectables } from '../lib/injectables.ts'
 import type { Registry } from '../lib/registry.ts'
 import type { Service } from '../lib/service.ts'
 import {
@@ -37,8 +38,8 @@ describe.sequential('Procedure', () => {
   })
 
   it('should extend with dependencies', () => {
-    const dep1 = new Provider().withValue('dep1')
-    const dep2 = new Provider().withValue('dep2')
+    const dep1 = new Injectable().withValue('dep1')
+    const dep2 = new Injectable().withValue('dep2')
 
     const procedure1 = procedure.withDependencies({ dep1 })
     const procedure2 = procedure.withDependencies({ dep2 })
@@ -49,88 +50,38 @@ describe.sequential('Procedure', () => {
     expect(procedure.dependencies).toHaveProperty('dep2', dep2)
   })
 
-  // it('should extend with guards', () => {
-  //   const guard1 = new Provider().withValue((() => false) as GuardFn)
-  //   const guard2 = new Provider().withValue((() => true) as GuardFn)
+  it('should extend with guards', () => {
+    const guard1 = new Guard().withValue({ can: () => false })
+    const guard2 = new Guard().withValue({ can: () => true })
 
-  //   const newProcedure = procedure.withGuards(guard1)
-  //   const newProcedure2 = newProcedure.withGuards(guard2)
+    const newProcedure = procedure.withGuards(guard1)
+    const newProcedure2 = newProcedure.withGuards(guard2)
 
-  //   expect(newProcedure2.guards).toEqual([guard1, guard2])
-  //   expect(newProcedure2).not.toBe(procedure)
-  // })
+    expect([...newProcedure2.guards]).toEqual([guard1, guard2])
+    expect(newProcedure2).toBe(procedure)
+  })
 
-  // it('should extend with middlewares', () => {
-  //   const middleware1 = new Provider().withValue((() => void 0) as MiddlewareFn)
-  //   const middleware2 = new Provider().withValue((() => void 0) as MiddlewareFn)
+  it('should extend with middlewares', () => {
+    const middleware1 = new Middleware().withValue({
+      handle: () => void 0,
+    })
+    const middleware2 = new Middleware().withValue({
+      handle: () => void 0,
+    })
 
-  //   const newProcedure = procedure.withMiddlewares(middleware1)
-  //   const newProcedure2 = newProcedure.withMiddlewares(middleware2)
+    const newProcedure = procedure.withMiddlewares(middleware1)
+    const newProcedure2 = newProcedure.withMiddlewares(middleware2)
 
-  //   expect(newProcedure2.middlewares).toEqual([middleware1, middleware2])
-  //   expect(newProcedure2).not.toBe(procedure)
-  // })
+    expect([...newProcedure2.middlewares]).toEqual([middleware1, middleware2])
+    expect(newProcedure2).toBe(procedure)
+  })
 
-  // it('should extend with a handler', () => {
-  //   const handler = () => {}
-  //   const newProcedure = procedure.withHandler(handler)
-  //   expect(newProcedure.handler).toBe(handler)
-  //   expect(newProcedure).not.toBe(procedure)
-  // })
-
-  // it('should extend with a input', () => {
-  //   const input = {}
-  //   const newProcedure = procedure.withInput(input)
-  //   expect(newProcedure.input).toBe(input)
-  //   expect(newProcedure).not.toBe(procedure)
-  // })
-
-  // it('should extend with a output', () => {
-  //   const output = {}
-  //   const newProcedure = procedure.withOutput(output)
-  //   expect(newProcedure.output).toBe(output)
-  //   expect(newProcedure).not.toBe(procedure)
-  // })
-
-  // it('should extend with an input parser', () => {
-  //   const parser = new TestParser()
-  //   const newProcedure = procedure.withInputParser(parser)
-  //   expect(newProcedure.parsers?.input).toBe(parser)
-  //   expect(newProcedure).not.toBe(procedure)
-  // })
-
-  // it('should extend with an output parser', () => {
-  //   const parser = new TestParser()
-  //   const newProcedure = procedure.withOutputParser(parser)
-  //   expect(newProcedure.parsers?.output).toBe(parser)
-  //   expect(newProcedure).not.toBe(procedure)
-  // })
-
-  // it('should extend with parser', () => {
-  //   const inputParser = new TestParser()
-  //   const parser = new TestParser()
-  //   const newProcedure = procedure
-  //     .withInputParser(inputParser)
-  //     .withParser(parser)
-  //   expect(newProcedure.parsers?.input).not.toBe(inputParser)
-  //   expect(newProcedure.parsers?.output).toBe(parser)
-  // })
-
-  // it('should extend with a timeout', () => {
-  //   const newProcedure = procedure.withTimeout(1000)
-  //   expect(newProcedure.timeout).toEqual(1000)
-  //   expect(newProcedure).not.toBe(procedure)
-  // })
-
-  // it('should fail clone with a timeout', () => {
-  //   expect(() => procedure.withTimeout(-1000)).toThrow()
-  // })
-
-  // it('should extend with a transports', () => {
-  //   const newProcedure = procedure.withTransport(TestTransport)
-  //   expect(newProcedure.transports.has(TestTransport)).toEqual(true)
-  //   expect(newProcedure).not.toBe(procedure)
-  // })
+  it('should extend with a handler', () => {
+    const handler = () => {}
+    const newProcedure = procedure.withHandler(handler)
+    expect(newProcedure.handler).toBe(handler)
+    expect(newProcedure).toBe(procedure)
+  })
 })
 
 describe.sequential('Api', () => {
@@ -148,15 +99,17 @@ describe.sequential('Api', () => {
     options: Pick<ApiCallOptions, 'procedure'> &
       Partial<Omit<ApiCallOptions, 'procedure'>>,
   ) =>
-    api.call({
-      service,
-      container,
-      transport,
-      connection,
-      payload,
-      signal: new AbortController().signal,
-      ...options,
-    })
+    api
+      .call({
+        service,
+        container,
+        transport,
+        connection,
+        payload,
+        signal: new AbortController().signal,
+        ...options,
+      })
+      .finally(() => container.dispose())
 
   const testProcedure = () =>
     new Procedure(service.contract.procedures.testProcedure)
@@ -165,7 +118,7 @@ describe.sequential('Api', () => {
     app = testApp()
 
     registry = app.registry
-    container = app.container
+    container = app.container.createScope(Scope.Call)
     api = app.api
 
     connection = testConnection(registry, {})
@@ -187,7 +140,7 @@ describe.sequential('Api', () => {
   it('should inject context', async () => {
     const spy = vi.fn()
     const procedure = testProcedure()
-      .withDependencies({ connection: providers.connection })
+      .withDependencies({ connection: injectables.connection })
       .withHandler(spy)
     service.implement('testProcedure', procedure)
     const connection = testConnection(registry, {})
@@ -202,21 +155,21 @@ describe.sequential('Api', () => {
   })
 
   it('should inject dependencies', async () => {
-    const provider = new Provider().withValue('value')
+    const injectable = new Injectable().withValue('value')
     const procedure = testProcedure()
-      .withDependencies({ provider })
-      .withHandler(({ provider }) => provider)
+      .withDependencies({ injectable })
+      .withHandler(({ injectable }) => injectable)
     service.implement('testProcedure', procedure)
     await expect(call({ procedure })).resolves.toBe('value')
   })
 
   it('should inject connection', async () => {
-    const provider = new Provider()
-      .withDependencies({ connection: providers.connection })
+    const injectable = new Injectable()
+      .withDependencies({ connection: injectables.connection })
       .withFactory(({ connection }) => connection)
     const procedure = testProcedure()
-      .withDependencies({ provider })
-      .withHandler(({ provider }) => provider)
+      .withDependencies({ injectable })
+      .withHandler(({ injectable }) => injectable)
     service.implement('testProcedure', procedure)
     const connection = testConnection(registry, {})
     await expect(call({ connection, procedure })).resolves.toBe(connection)
@@ -224,12 +177,12 @@ describe.sequential('Api', () => {
 
   it('should inject signal', async () => {
     const signal = new AbortController().signal
-    const provider = new Provider()
-      .withDependencies({ signal: providers.callSignal })
+    const injectable = new Injectable()
+      .withDependencies({ signal: injectables.callSignal })
       .withFactory(({ signal }) => signal)
     const procedure = testProcedure()
-      .withDependencies({ provider })
-      .withHandler(({ provider }) => provider)
+      .withDependencies({ injectable })
+      .withHandler(({ injectable }) => injectable)
     service.implement('testProcedure', procedure)
     const connection = testConnection(registry, {})
     expect(call({ connection, procedure, signal })).resolves.toBe(signal)
@@ -253,11 +206,11 @@ describe.sequential('Api', () => {
   })
 
   it('should handle filter', async () => {
-    const filterProvider = {
+    const filterInjectable = {
       catch: vi.fn(() => new ApiError('custom')),
     }
     class CustomError extends Error {}
-    const filter = new Filter().withValue(filterProvider)
+    const filter = new Filter().withValue(filterInjectable)
     registry.registerFilter(CustomError, filter)
     const error = new CustomError()
     const procedure = testProcedure().withHandler(() => {
@@ -265,8 +218,8 @@ describe.sequential('Api', () => {
     })
     service.implement('testProcedure', procedure)
     await expect(call({ procedure })).rejects.toBeInstanceOf(ApiError)
-    expect(filterProvider.catch).toHaveBeenCalledOnce()
-    expect(filterProvider.catch).toHaveBeenCalledWith(error)
+    expect(filterInjectable.catch).toHaveBeenCalledOnce()
+    expect(filterInjectable.catch).toHaveBeenCalledWith(error)
   })
 
   it('should handle guard', async () => {

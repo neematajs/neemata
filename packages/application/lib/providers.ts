@@ -1,37 +1,100 @@
-import type { Connection } from './connection.ts'
-import { Scope, type WorkerType } from './constants.ts'
-import { Provider } from './container.ts'
-import type { EventManager } from './events.ts'
-import type { Logger } from './logger.ts'
-import type { SubscriptionManager } from './subscription.ts'
-import type { ExecuteFn } from './types.ts'
+import type { CallTypeProvider, TypeProvider } from '@nmtjs/common'
+import { Scope } from './constants.ts'
+import {
+  type AnyInjectable,
+  type Dependant,
+  type Dependencies,
+  type DependencyContext,
+  Injectable,
+} from './container.ts'
+import type { Async } from './types.ts'
+import { merge } from './utils/functions.ts'
 
-const connection = new Provider<Connection>().withScope(Scope.Connection)
+type ProvidableFactoryType<
+  ProvidableTypeProvider extends TypeProvider = TypeProvider,
+  ProvidableDeps extends Dependencies = {},
+> = (
+  context: DependencyContext<ProvidableDeps> & {
+    options: ProvidableTypeProvider['input']
+  },
+) => Async<ProvidableTypeProvider['output']>
 
-const connectionData = new Provider<unknown>().withScope(Scope.Connection)
+type ProvidableDisposeType<
+  ProvidableTypeProvider extends TypeProvider = TypeProvider,
+  ProvidableDeps extends Dependencies = {},
+> = (
+  instance: ProvidableTypeProvider['output'],
+  context: DependencyContext<ProvidableDeps> & {
+    options: ProvidableTypeProvider['input']
+  },
+) => Async<void>
 
-const callSignal = new Provider<AbortSignal>().withScope(Scope.Call)
+export interface ProvidableLike<
+  ProvidableTypeProvider extends TypeProvider = TypeProvider,
+  ProvidableDeps extends Dependencies = Dependencies,
+  ProvidableScope extends Scope = Scope,
+> extends Dependant<ProvidableDeps> {
+  $type: ProvidableTypeProvider
+  scope: ProvidableScope
+  factory: ProvidableFactoryType<ProvidableTypeProvider, ProvidableDeps>
+  dispose?: ProvidableDisposeType<ProvidableTypeProvider, ProvidableDeps>
+}
 
-const taskSignal = new Provider<AbortSignal>().withScope(Scope.Global)
+export type AnyProvider = Provider<any, any, Scope>
 
-const logger = new Provider<Logger>().withScope(Scope.Global)
+export class Provider<
+  ProviderTypeProvider extends TypeProvider,
+  ProviderDeps extends Dependencies = {},
+  ProviderScope extends Scope = Scope.Global,
+> implements ProvidableLike<ProviderTypeProvider, ProviderDeps, ProviderScope>
+{
+  $type!: ProviderTypeProvider
+  dependencies: ProviderDeps = {} as ProviderDeps
+  scope: ProviderScope = Scope.Global as ProviderScope
+  factory!: ProvidableFactoryType<ProviderTypeProvider, ProviderDeps>
+  dispose?: ProvidableDisposeType<ProviderTypeProvider, ProviderDeps>
 
-const execute = new Provider<ExecuteFn>().withScope(Scope.Global)
+  withScope<T extends Scope>(scope: T) {
+    this.scope = scope as unknown as ProviderScope
+    return this as unknown as Provider<ProviderTypeProvider, ProviderDeps, T>
+  }
 
-const workerType = new Provider<WorkerType>().withScope(Scope.Global)
+  withFactory(
+    factory: ProvidableFactoryType<ProviderTypeProvider, ProviderDeps>,
+  ) {
+    this.factory = factory
+    return this
+  }
 
-const eventManager = new Provider<EventManager>().withScope(Scope.Global)
+  withDispose(
+    dispose: ProvidableDisposeType<ProviderTypeProvider, ProviderDeps>,
+  ) {
+    this.dispose = dispose
+    return this
+  }
 
-const subManager = new Provider<SubscriptionManager>().withScope(Scope.Global)
+  withDependencies<T extends Dependencies>(newDependencies: T) {
+    this.dependencies = merge(this.dependencies, newDependencies)
+    return this as unknown as Provider<
+      ProviderTypeProvider,
+      ProviderDeps & T,
+      ProviderScope
+    >
+  }
+}
 
-export const providers = {
-  connection,
-  connectionData,
-  callSignal,
-  taskSignal,
-  logger,
-  execute,
-  eventManager,
-  subManager,
-  workerType,
+export function provide<P extends AnyProvider, O extends P['$type']['input']>(
+  provider: P,
+  options: O | AnyInjectable<O>,
+): Injectable<CallTypeProvider<P['$type'], O>, P['dependencies'], P['scope']> {
+  const dependencies = { ...provider.dependencies }
+  dependencies.options =
+    options instanceof Injectable
+      ? options
+      : new Injectable().withValue(options)
+  return new Injectable()
+    .withScope(provider.scope)
+    .withDependencies(dependencies)
+    .withFactory(provider.factory as any)
+    .withDispose(provider.dispose as any)
 }
