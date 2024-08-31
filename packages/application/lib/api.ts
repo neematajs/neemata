@@ -16,7 +16,6 @@ import type {
   Dependant,
   Dependencies,
   DependencyContext,
-  // Injectable,
 } from './container.ts'
 import { injectables } from './injectables.ts'
 import type { Logger } from './logger.ts'
