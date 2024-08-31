@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { Guard, Middleware } from '../lib/api.ts'
 import { Hook } from '../lib/constants.ts'
+import { createValueInjectable } from '../lib/container.ts'
 import { Hooks } from '../lib/hooks.ts'
 import { Service } from '../lib/service.ts'
+import { noop } from '../lib/utils/functions.ts'
 import {
   type TestServiceContract,
   testProcedure,
@@ -33,14 +34,14 @@ describe('Service', () => {
 
   it('should have middlewares', () => {
     expect(service.middlewares).toBeInstanceOf(Set)
-    const middleware = new Middleware()
+    const middleware = createValueInjectable({ handle: noop })
     service.withMiddleware(middleware)
     expect(service.middlewares).toContain(middleware)
   })
 
   it('should have guards', () => {
     expect(service.guards).toBeInstanceOf(Set)
-    const guard = new Guard()
+    const guard = createValueInjectable({ can: () => false })
     service.withGuard(guard)
     expect(service.guards).toContain(guard)
   })

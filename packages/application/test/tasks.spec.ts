@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { Container, Injectable } from '../lib/container.ts'
+import { Container, createValueInjectable } from '../lib/container.ts'
 import { injectables } from '../lib/injectables.ts'
 import { Registry } from '../lib/registry.ts'
 import { type AnyTask, Task, TaskRunner } from '../lib/task.ts'
@@ -36,8 +36,8 @@ describe.sequential('Task', () => {
   })
 
   it('should clone with a dependencies', () => {
-    const dep1 = new Injectable().withValue('dep1')
-    const dep2 = new Injectable().withValue('dep2')
+    const dep1 = createValueInjectable('dep1')
+    const dep2 = createValueInjectable('dep2')
     task
       .withDependencies({
         dep1,
@@ -87,7 +87,7 @@ describe.sequential('Tasks', () => {
   })
 
   it('should inject context', async () => {
-    const injectable = new Injectable().withValue({})
+    const injectable = createValueInjectable({})
     const task = testTask()
       .withDependencies({ dep: injectable })
       .withHandler((ctx) => ctx)

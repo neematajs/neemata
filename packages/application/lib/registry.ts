@@ -2,7 +2,7 @@ import type { TProcedureContract, TSubscriptionContract } from '@nmtjs/contract'
 import type { BaseType } from '@nmtjs/type'
 import { type Compiled, compile } from '@nmtjs/type/compiler'
 
-import type { AnyFilter, Filter } from './api.ts'
+import type { AnyFilter } from './api.ts'
 import { type Hook, Scope } from './constants.ts'
 import {
   type AnyInjectable,
@@ -105,7 +105,7 @@ export class Registry {
     this.tasks.set(task.name, task)
   }
 
-  registerFilter<T extends ErrorClass>(errorClass: T, filter: Filter<T>) {
+  registerFilter<T extends ErrorClass>(errorClass: T, filter: AnyFilter<T>) {
     if (hasNonInvalidScopeDeps([filter]))
       throw new Error(scopeErrorMessage('Filters'))
     // TODO: should this register multiple filters for the same error class?

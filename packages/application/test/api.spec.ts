@@ -5,15 +5,16 @@ import {
   Api,
   type ApiCallOptions,
   ApiError,
-  Filter,
-  Guard,
-  Middleware,
   Procedure,
 } from '../lib/api.ts'
 import type { Application } from '../lib/application.ts'
 import type { Connection } from '../lib/connection.ts'
 import { Scope } from '../lib/constants.ts'
-import { type Container, Injectable } from '../lib/container.ts'
+import {
+  type Container,
+  createFactoryInjectable,
+  createValueInjectable,
+} from '../lib/container.ts'
 import { injectables } from '../lib/injectables.ts'
 import type { Registry } from '../lib/registry.ts'
 import type { Service } from '../lib/service.ts'
@@ -38,8 +39,8 @@ describe.sequential('Procedure', () => {
   })
 
   it('should extend with dependencies', () => {
-    const dep1 = new Injectable().withValue('dep1')
-    const dep2 = new Injectable().withValue('dep2')
+    const dep1 = createValueInjectable('dep1')
+    const dep2 = createValueInjectable('dep2')
 
     const procedure1 = procedure.withDependencies({ dep1 })
     const procedure2 = procedure.withDependencies({ dep2 })
@@ -51,8 +52,8 @@ describe.sequential('Procedure', () => {
   })
 
   it('should extend with guards', () => {
-    const guard1 = new Guard().withValue({ can: () => false })
-    const guard2 = new Guard().withValue({ can: () => true })
+    const guard1 = createValueInjectable({ can: () => false })
+    const guard2 = createValueInjectable({ can: () => true })
 
     const newProcedure = procedure.withGuards(guard1)
     const newProcedure2 = newProcedure.withGuards(guard2)
@@ -62,10 +63,10 @@ describe.sequential('Procedure', () => {
   })
 
   it('should extend with middlewares', () => {
-    const middleware1 = new Middleware().withValue({
+    const middleware1 = createValueInjectable({
       handle: () => void 0,
     })
-    const middleware2 = new Middleware().withValue({
+    const middleware2 = createValueInjectable({
       handle: () => void 0,
     })
 
@@ -155,7 +156,7 @@ describe.sequential('Api', () => {
   })
 
   it('should inject dependencies', async () => {
-    const injectable = new Injectable().withValue('value')
+    const injectable = createValueInjectable('value')
     const procedure = testProcedure()
       .withDependencies({ injectable })
       .withHandler(({ injectable }) => injectable)
@@ -164,9 +165,10 @@ describe.sequential('Api', () => {
   })
 
   it('should inject connection', async () => {
-    const injectable = new Injectable()
-      .withDependencies({ connection: injectables.connection })
-      .withFactory(({ connection }) => connection)
+    const injectable = createFactoryInjectable({
+      dependencies: { connection: injectables.connection },
+      factory: ({ connection }) => connection,
+    })
     const procedure = testProcedure()
       .withDependencies({ injectable })
       .withHandler(({ injectable }) => injectable)
@@ -177,9 +179,10 @@ describe.sequential('Api', () => {
 
   it('should inject signal', async () => {
     const signal = new AbortController().signal
-    const injectable = new Injectable()
-      .withDependencies({ signal: injectables.callSignal })
-      .withFactory(({ signal }) => signal)
+    const injectable = createFactoryInjectable({
+      dependencies: { signal: injectables.callSignal },
+      factory: ({ signal }) => signal,
+    })
     const procedure = testProcedure()
       .withDependencies({ injectable })
       .withHandler(({ injectable }) => injectable)
@@ -210,7 +213,7 @@ describe.sequential('Api', () => {
       catch: vi.fn(() => new ApiError('custom')),
     }
     class CustomError extends Error {}
-    const filter = new Filter().withValue(filterInjectable)
+    const filter = createValueInjectable(filterInjectable)
     registry.registerFilter(CustomError, filter)
     const error = new CustomError()
     const procedure = testProcedure().withHandler(() => {
@@ -226,7 +229,7 @@ describe.sequential('Api', () => {
     const guardLike = {
       can: vi.fn(() => false),
     }
-    const guard = new Guard().withValue(guardLike)
+    const guard = createValueInjectable(guardLike)
     const procedure = testProcedure()
       .withGuards(guard)
       .withHandler(() => 'result')
@@ -252,8 +255,8 @@ describe.sequential('Api', () => {
 
     const handlerFn = vi.fn(() => ({ test: 'result' }))
 
-    const middleware1 = new Middleware().withValue(middleware1Like)
-    const middleware2 = new Middleware().withValue(middleware2Like)
+    const middleware1 = createValueInjectable(middleware1Like)
+    const middleware2 = createValueInjectable(middleware2Like)
     const procedure = testProcedure()
       .withMiddlewares(middleware1, middleware2)
       .withHandler(handlerFn)

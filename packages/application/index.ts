@@ -1,3 +1,10 @@
+import {
+  createFactoryInjectable,
+  createLazyInjectable,
+  createValueInjectable,
+} from './lib/container.ts'
+import { createProvider } from './lib/providers.ts'
+
 export * from './lib/api.ts'
 export * from './lib/application.ts'
 export * from './lib/constants.ts'
@@ -18,3 +25,10 @@ export * from './lib/injectables.ts'
 export * from './lib/utils/functions.ts'
 export * from './lib/utils/pool.ts'
 export * from './lib/utils/semaphore.ts'
+
+export namespace n {
+  export const value = createValueInjectable
+  export const lazy = createLazyInjectable
+  export const factory = createFactoryInjectable
+  export const provider = createProvider
+}

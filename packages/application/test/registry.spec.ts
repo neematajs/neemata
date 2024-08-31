@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import { Scope } from '../lib/constants.ts'
-import { Injectable } from '../lib/container.ts'
+import { createLazyInjectable } from '../lib/container.ts'
 import { Registry } from '../lib/registry.ts'
 import { noop } from '../lib/utils/functions.ts'
 import { testApp, testService, testTask } from './_utils.ts'
@@ -72,7 +72,7 @@ describe('Registry', () => {
   })
 
   it('should fail register task with non-global dependencies', () => {
-    const injectable = new Injectable().withScope(Scope.Connection)
+    const injectable = createLazyInjectable(Scope.Connection)
     const task = testTask().withHandler(noop).withDependencies({ injectable })
     expect(() => registry.registerTask(task)).toThrow()
   })
