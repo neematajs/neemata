@@ -4,7 +4,7 @@ import {
   createValueInjectable,
 } from './lib/container.ts'
 import { createContractProcedure, createProcedure } from './lib/procedure.ts'
-import { createContractService } from './lib/service.ts'
+import { createContractService, createService } from './lib/service.ts'
 
 export * from './lib/api.ts'
 export * from './lib/application.ts'
@@ -37,6 +37,6 @@ export namespace n {
   export const service = createContractService
   export namespace contractless {
     export const procedure = createProcedure
-    export const service = createContractService
+    export const service = createService
   }
 }
