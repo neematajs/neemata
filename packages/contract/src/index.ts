@@ -11,7 +11,7 @@ import {
   SubscriptionContract,
   type TSubscriptionContract,
 } from './schemas/subscription.ts'
-import { blob } from './types/blob.ts'
+import { blob as blobType } from './types/blob.ts'
 
 export type {
   TEventContract,
@@ -26,6 +26,5 @@ export namespace c {
   export const event = EventContract
   export const subscription = SubscriptionContract
   export const service = ServiceContract
+  export const blob = blobType
 }
-
-export const t = Object.assign({}, baseT, { blob })

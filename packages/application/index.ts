@@ -3,7 +3,7 @@ import {
   createLazyInjectable,
   createValueInjectable,
 } from './lib/container.ts'
-import { createContractProcedure } from './lib/procedure.ts'
+import { createContractProcedure, createProcedure } from './lib/procedure.ts'
 import { createContractService } from './lib/service.ts'
 
 export * from './lib/api.ts'
@@ -33,4 +33,8 @@ export namespace n {
   export const factory = createFactoryInjectable
   export const procedure = createContractProcedure
   export const service = createContractService
+  export const contractless = {
+    procedure: createProcedure,
+    service: createContractService,
+  }
 }

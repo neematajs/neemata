@@ -1,11 +1,12 @@
-import { type TAny, type TTransform, Type } from '@sinclair/typebox'
+import { type TTransform, type TUnsafe, Type } from '@sinclair/typebox'
 import { BaseType } from './base.ts'
 
 export class CustomType<
   T,
+  S = T,
   N extends boolean = false,
   O extends boolean = false,
-> extends BaseType<TTransform<TAny, T>, N, O> {
+> extends BaseType<TTransform<TUnsafe<S>, T>, N, O> {
   constructor(
     protected readonly decode: (value: any) => T,
     protected readonly encode: (value: T) => any,
@@ -13,7 +14,11 @@ export class CustomType<
     optional: O = false as O,
   ) {
     super(
-      Type.Optional(Type.Transform(Type.Any()).Decode(decode).Encode(encode)),
+      Type.Optional(
+        Type.Transform(Type.Any() as unknown as TUnsafe<S>)
+          .Decode(decode)
+          .Encode(encode),
+      ),
       nullable,
       optional,
     )
@@ -21,16 +26,28 @@ export class CustomType<
 
   nullable() {
     const [_, ...args] = this._nullable()
-    return new CustomType(this.decode, this.encode, ...args)
+    return new CustomType<T, S, (typeof args)[0], (typeof args)[1]>(
+      this.decode,
+      this.encode,
+      ...args,
+    )
   }
 
   optional() {
     const [_, ...args] = this._optional()
-    return new CustomType(this.decode, this.encode, ...args)
+    return new CustomType<T, S, (typeof args)[0], (typeof args)[1]>(
+      this.decode,
+      this.encode,
+      ...args,
+    )
   }
 
   nullish() {
     const [_, ...args] = this._nullish()
-    return new CustomType(this.decode, this.encode, ...args)
+    return new CustomType<T, S, (typeof args)[0], (typeof args)[1]>(
+      this.decode,
+      this.encode,
+      ...args,
+    )
   }
 }

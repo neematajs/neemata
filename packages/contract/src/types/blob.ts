@@ -11,6 +11,8 @@ export interface BlobOptions {
 export const blob = (options: BlobOptions = {}) =>
   t.custom<ApiBlobInterface>(
     (value) => {
+      // TODO: this should be registered separately for server and client
+      // ref: https://github.com/sinclairzx81/typebox/issues/977
       if ('metadata' in value) {
         if (options.maxSize) {
           const size = (value as ApiBlobInterface).metadata.size

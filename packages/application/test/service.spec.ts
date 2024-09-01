@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest'
+
 import { Hook, ServiceKey } from '../lib/constants.ts'
 import { createValueInjectable } from '../lib/container.ts'
 import { Hooks } from '../lib/hooks.ts'
-import { createContractService } from '../lib/service.ts'
+import { createContractService, createService } from '../lib/service.ts'
 import { noop } from '../lib/utils/functions.ts'
-import { TestServiceContract, testProcedure, testService } from './_utils.ts'
+import { TestServiceContract, testProcedure } from './_utils.ts'
 
 describe('Service', () => {
   it('should create a service', () => {
@@ -55,5 +56,28 @@ describe('Service', () => {
       procedures: { testProcedure: procedure },
     })
     expect(service.procedures.get('testProcedure')).toBe(procedure)
+  })
+})
+
+describe('Service static', () => {
+  it('should create a service', () => {
+    const procedure = testProcedure(noop)
+    const service = createService({
+      name: 'test',
+      transports: { test: true },
+      procedures: { testProcedure: procedure },
+    })
+
+    expect(ServiceKey in service).toBe(true)
+    expect(service).toHaveProperty('contract', {
+      type: 'neemata:service',
+      name: 'test',
+      procedures: expect.anything(),
+      transports: { test: true },
+      events: {},
+      timeout: undefined,
+    })
+
+    expect(service.procedures.has('testProcedure')).toBe(true)
   })
 })

@@ -2,7 +2,8 @@ import assert from 'node:assert'
 import { readdir } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import type { TServiceContract } from '@nmtjs/contract'
+import { type TEventContract, type TServiceContract, c } from '@nmtjs/contract'
+import type { BaseType } from '@nmtjs/type'
 import { Hook, ProcedureKey, ServiceKey } from './constants.ts'
 import { Hooks } from './hooks.ts'
 import type { AnyGuard, AnyMiddleware, AnyProcedure } from './procedure.ts'
@@ -94,3 +95,55 @@ const createAutoLoader =
       service.procedures.set(procedureName, implementation as any)
     }
   }
+
+export function createService<
+  Name extends string,
+  Transports extends Record<string, true>,
+  Procedures extends Record<string, AnyProcedure> = {},
+  Events extends Record<string, BaseType> = {},
+>(params: {
+  name: Name
+  transports: Transports
+  procedures?: Procedures
+  events?: Events
+  guards?: AnyGuard[]
+  middlewares?: AnyMiddleware[]
+  hooks?: Record<string, Callback[]>
+}) {
+  const { name, transports, guards, hooks, middlewares } = params
+  const procedures = params.procedures ?? ({} as Procedures)
+
+  // TODO: this completely is unreadable
+  const eventsContracts = Object.fromEntries(
+    Object.entries(params.events ?? ({} as Events)).map(([name, type]) => [
+      name,
+      c.event(type),
+    ]),
+  ) as {
+    [K in keyof Events]: Events[K] extends BaseType
+      ? TEventContract<Events[K]>
+      : never
+  }
+  const proceduresContracts = Object.fromEntries(
+    Object.entries(procedures ?? {}).map(([name, procedure]) => [
+      name,
+      procedure.contract,
+    ]),
+  ) as {
+    [K in keyof Procedures]: Procedures[K] extends AnyProcedure
+      ? Procedures[K]['contract']
+      : never
+  }
+
+  const service = createContractService(
+    c.service(name, transports, proceduresContracts, eventsContracts),
+    {
+      procedures,
+      guards,
+      hooks,
+      middlewares,
+    },
+  )
+
+  return service
+}

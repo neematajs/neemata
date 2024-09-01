@@ -1,9 +1,16 @@
-import type {
-  TBaseProcedureContract,
-  TProcedureContract,
-  TSubscriptionContract,
+import {
+  type TBaseProcedureContract,
+  type TProcedureContract,
+  type TSubscriptionContract,
+  c,
 } from '@nmtjs/contract'
-import type { NeverType, t } from '@nmtjs/type'
+import {
+  type AnyType,
+  type BaseType,
+  type CustomType,
+  type NeverType,
+  t,
+} from '@nmtjs/type'
 import type {
   AnyInjectable,
   Dependant,
@@ -18,6 +25,7 @@ import type {
   ErrorClass,
   ExecuteContext,
   InputType,
+  JsonPrimitive,
   OutputType,
 } from './types.ts'
 
@@ -161,39 +169,46 @@ export function createContractProcedure<
   }
 }
 
-// export function createProcedure<
-//   R,
-//   I extends BaseType = NeverType,
-//   O extends BaseType = AnyType,
-//   D extends Dependencies = {},
-// >(params: {
-//   input?: I
-//   output?: O
-//   dependencies?: D
-//   guards?: AnyGuard[]
-//   middlewares?: AnyMiddleware[]
-//   metadata?: Metadata[]
-//   handler(
-//     ctx: DependencyContext<D>,
-//     data: I extends NeverType ? never : InputType<t.infer.decoded<I>>,
-//   ): Async<R>
-// }): Procedure<TProcedureContract<I, O>, D> {
-//   return createContractProcedure(
-//     {
-//       type: 'neemata:procedure',
-//       input: params.input ?? t.never() as unknown as I,
-//       output: params.output ?? t.any() as O,
-//       name: undefined,
-//       serviceName: undefined,
-//       transports: undefined,
-//       timeout: undefined,
-//     } satisfies TProcedureContract<I, O> as TProcedureContract<I, O>,
-//     {
-//       dependencies: params.dependencies,
-//       handler: params.handler as any,
-//       guards: params.guards,
-//       middlewares: params.middlewares,
-//       metadata: params.metadata,
-//     },
-//   )
-// }
+export function createProcedure<
+  R,
+  O extends BaseType,
+  I extends BaseType = NeverType,
+  D extends Dependencies = {},
+>(
+  paramsOrHandler:
+    | {
+        input?: I
+        output?: O
+        dependencies?: D
+        guards?: AnyGuard[]
+        middlewares?: AnyMiddleware[]
+        metadata?: Metadata[]
+        handler: (
+          ctx: DependencyContext<D>,
+          data: I extends NeverType ? never : InputType<t.infer.decoded<I>>,
+        ) => Async<null extends O ? R : t.infer.decoded<O>>
+      }
+    | ((
+        ctx: DependencyContext<D>,
+        data: I extends NeverType ? never : InputType<t.infer.decoded<I>>,
+      ) => Async<null extends O ? R : t.infer.decoded<O>>),
+) {
+  const params =
+    typeof paramsOrHandler === 'function'
+      ? { handler: paramsOrHandler }
+      : paramsOrHandler
+
+  return createContractProcedure(
+    c.procedure(params.input ?? t.never(), params.output ?? t.any()),
+    {
+      dependencies: params.dependencies,
+      handler: params.handler as any,
+      guards: params.guards,
+      middlewares: params.middlewares,
+      metadata: params.metadata,
+    },
+  ) as Procedure<
+    TProcedureContract<I, null extends R ? O : CustomType<R, JsonPrimitive<R>>>,
+    D
+  >
+}
