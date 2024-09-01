@@ -53,3 +53,6 @@ export type ProcedureMetadataKey = typeof ProcedureMetadataKey
 
 export const ServiceKey: unique symbol = Symbol('ServiceKey')
 export type ServiceKey = typeof ServiceKey
+
+export const TaskKey: unique symbol = Symbol('TaskKey')
+export type TaskKey = typeof TaskKey

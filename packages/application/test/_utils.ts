@@ -15,6 +15,7 @@ import { c, t } from '@nmtjs/contract'
 import { Application, type ApplicationOptions } from '../lib/application.ts'
 import { Connection, type ConnectionOptions } from '../lib/connection.ts'
 import { Hook, WorkerType } from '../lib/constants.ts'
+import type { Dependencies } from '../lib/container.ts'
 import { createLogger } from '../lib/logger.ts'
 import { type Plugin, createPlugin } from '../lib/plugin.ts'
 import {
@@ -23,7 +24,11 @@ import {
 } from '../lib/procedure.ts'
 import type { Registry } from '../lib/registry.ts'
 import { createContractService } from '../lib/service.ts'
-import { type BaseTaskExecutor, Task } from '../lib/task.ts'
+import {
+  type BaseTaskExecutor,
+  type CreateTaskOptions,
+  createTask,
+} from '../lib/task.ts'
 import { noop } from '../lib/utils/functions.ts'
 
 export interface TestTypeProvider extends TypeProvider {
@@ -168,7 +173,13 @@ export const testSubscription = (
     params,
   )
 
-export const testTask = () => new Task('test')
+export const testTask = <
+  TaskDeps extends Dependencies,
+  TaskArgs extends any[],
+  TaskResult,
+>(
+  options: CreateTaskOptions<TaskDeps, TaskArgs, TaskResult>,
+) => createTask('test', options)
 
 export const testTaskRunner = (...args) => new TestTaskExecutor(...args)
 

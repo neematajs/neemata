@@ -1,6 +1,6 @@
 import type { ApplicationOptions } from './application.ts'
 import { injectables } from './common.ts'
-import { Hook } from './constants.ts'
+import { Hook, TaskKey } from './constants.ts'
 import type {
   Container,
   Dependant,
@@ -28,27 +28,17 @@ type TaskHandlerType<Deps extends Dependencies, A extends any[], R> = (
   ...args: A
 ) => Async<R>
 
+type TaskParserType<TaskArgs extends any[]> = (
+  args: string[],
+  kwargs: Record<string, any>,
+) => Async<TaskArgs | Readonly<TaskArgs>>
+
 export interface BaseTaskExecutor {
   execute(signal: AbortSignal, name: string, ...args: any[]): Promise<any>
 }
 
-export interface TaskLike<
+export interface Task<
   TaskName extends string = string,
-  TaskDeps extends Dependencies = {},
-  TaskArgs extends any[] = [],
-  TaskResult = unknown,
-> extends Dependant<TaskDeps> {
-  name: TaskName
-  handler: TaskHandlerType<TaskDeps, TaskArgs, TaskResult>
-  parser: (
-    args: string[],
-    kwargs: Record<string, any>,
-  ) => Async<TaskArgs | Readonly<TaskArgs>>
-}
-
-export type AnyTask = Task<string, any, any[], any, any>
-export class Task<
-  TaskName extends string,
   TaskDeps extends Dependencies = {},
   TaskArgs extends any[] = [],
   TaskResult = unknown,
@@ -57,43 +47,44 @@ export class Task<
     TaskArgs,
     TaskResult
   > = TaskHandlerType<TaskDeps, TaskArgs, TaskResult>,
-> implements TaskLike<TaskName, TaskDeps, TaskArgs, TaskResult>
-{
-  readonly name: TaskName
-  dependencies: TaskDeps = {} as TaskDeps
+> extends Dependant<TaskDeps> {
+  name: TaskName
   handler: TaskHandler
-  parser: (args: string[], kwargs: Record<string, any>) => Async<TaskArgs>
+  parser?: TaskParserType<TaskArgs>
+  [TaskKey]: any
+}
 
-  constructor(name: TaskName) {
-    this.name = name
-    this.handler = notImplemented(this.name, 'handler') as any
-    this.parser = notImplemented(this.name, 'parser') as any
-  }
+export type AnyTask = Task<string, Dependencies, any[], any, any>
 
-  withDependencies<NewDeps extends Dependencies>(dependencies: NewDeps) {
-    this.dependencies = merge(this.dependencies, dependencies) as any
-    return this as unknown as Task<
-      TaskName,
-      TaskDeps & NewDeps,
-      TaskArgs,
-      TaskResult
-    >
-  }
+export type CreateTaskOptions<
+  TaskDeps extends Dependencies,
+  TaskArgs extends any[],
+  TaskResult,
+> =
+  | {
+      dependencies?: TaskDeps
+      handler: TaskHandlerType<TaskDeps, TaskArgs, TaskResult>
+      parser?: TaskParserType<TaskArgs>
+    }
+  | TaskHandlerType<TaskDeps, TaskArgs, TaskResult>
 
-  withHandler<T extends TaskHandlerType<TaskDeps, any[], any>>(handler: T) {
-    this.handler = handler as any
-    return this as unknown as Task<
-      TaskName,
-      TaskDeps,
-      OmitFirstItem<Parameters<T>>,
-      ReturnType<T> extends Async<infer R> ? R : never
-    >
-  }
-
-  withParser(parser: this['parser']) {
-    this.parser = parser
-    return this
-  }
+export function createTask<
+  TaskName extends string,
+  TaskDeps extends Dependencies,
+  TaskArgs extends any[],
+  TaskResult,
+>(
+  name: TaskName,
+  paramsOrHandler: CreateTaskOptions<TaskDeps, TaskArgs, TaskResult>,
+): Task<TaskName, TaskDeps, TaskArgs, TaskResult> {
+  const params =
+    typeof paramsOrHandler === 'function'
+      ? { handler: paramsOrHandler }
+      : paramsOrHandler
+  const dependencies = params.dependencies ?? ({} as TaskDeps)
+  const handler = params.handler
+  const parser = params.parser ?? notImplemented(name, 'parser')
+  return { name, dependencies, handler, parser, [TaskKey]: true }
 }
 
 export class TaskRunner {

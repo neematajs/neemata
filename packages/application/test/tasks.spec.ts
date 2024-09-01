@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { injectables } from '../lib/common.ts'
+import { TaskKey } from '../lib/constants.ts'
 import { Container, createValueInjectable } from '../lib/container.ts'
 import { Registry } from '../lib/registry.ts'
-import { type AnyTask, Task, TaskRunner } from '../lib/task.ts'
+import { type AnyTask, TaskRunner, createTask } from '../lib/task.ts'
 import { createFuture, defer, noop, onAbort } from '../lib/utils/functions.ts'
 import {
   testDefaultTimeout,
@@ -11,43 +12,39 @@ import {
   testTaskRunner,
 } from './_utils.ts'
 
-describe.sequential('Task', () => {
-  let task: AnyTask
+describe('Task', () => {
+  it('should create a task', () => {
+    const task = createTask('test', { handler: noop })
 
-  beforeEach(() => {
-    task = testTask().withHandler(noop)
+    expect(TaskKey in task).toBe(true)
+    expect(task).toHaveProperty('name', 'test')
+    expect(task).toHaveProperty('handler', noop)
+    expect(task).toHaveProperty('parser', expect.any(Function))
+    expect(task).toHaveProperty('dependencies', {})
   })
 
-  it('should be a task', () => {
-    expect(task).toBeDefined()
-    expect(task).toBeInstanceOf(Task)
-  })
-
-  it('should clone with a handler', () => {
-    const handler = () => {}
-    task.withHandler(handler)
-    expect(task.handler).toBe(handler)
-  })
-
-  it('should clone with a parser', () => {
-    const parser = (...args: any[]): any => {}
-    task.withParser(parser)
-    expect(task.parser).toBe(parser)
-  })
-
-  it('should clone with a dependencies', () => {
+  it('should create a task with dependencies', () => {
     const dep1 = createValueInjectable('dep1')
     const dep2 = createValueInjectable('dep2')
-    task
-      .withDependencies({
-        dep1,
-      })
-      .withDependencies({
-        dep2,
-      })
+    const task = createTask('test', {
+      handler: noop,
+      dependencies: { dep1, dep2 },
+    })
 
     expect(task.dependencies).toHaveProperty('dep1', dep1)
     expect(task.dependencies).toHaveProperty('dep2', dep2)
+  })
+
+  it('should create a task with parser', () => {
+    const parser = () => [] as const
+    const task = createTask('test', { handler: noop, parser })
+    expect(task.parser).toBe(parser)
+  })
+
+  it('should create a task with a handler', () => {
+    const handler = () => {}
+    const task = createTask('test', handler)
+    expect(task.handler).toBe(handler)
   })
 })
 
@@ -78,7 +75,7 @@ describe.sequential('Tasks', () => {
   })
 
   it('should execute a task', async () => {
-    const task = testTask().withHandler(() => 'value')
+    const task = testTask(() => 'value')
     registry.registerTask(task)
     const execution = tasks.execute(task)
     expect(execution).toHaveProperty('abort', expect.any(Function))
@@ -88,10 +85,10 @@ describe.sequential('Tasks', () => {
 
   it('should inject context', async () => {
     const injectable = createValueInjectable({})
-    const task = testTask()
-      .withDependencies({ dep: injectable })
-      .withHandler((ctx) => ctx)
-
+    const task = testTask({
+      dependencies: { dep: injectable },
+      handler: (ctx) => ctx,
+    })
     registry.registerTask(task)
     const { result } = await tasks.execute(task)
     expect(result).toHaveProperty('dep', injectable.value)
@@ -99,7 +96,7 @@ describe.sequential('Tasks', () => {
 
   it('should handle errors', async () => {
     const thrownError = new Error('Test')
-    const task = testTask().withHandler(() => {
+    const task = testTask(() => {
       throw thrownError
     })
 
@@ -110,15 +107,7 @@ describe.sequential('Tasks', () => {
 
   it('should inject args', async () => {
     const args = ['arg1', 'arg2']
-    const task = testTask().withHandler((ctx, ...args) => args)
-    registry.registerTask(task)
-    const { result } = await tasks.execute(task, ...args)
-    expect(result).deep.equal(args)
-  })
-
-  it('should inject args', async () => {
-    const args = ['arg1', 'arg2']
-    const task = testTask().withHandler((ctx, ...args) => args)
+    const task = testTask((ctx, ...args) => args)
     registry.registerTask(task)
     const { result } = await tasks.execute(task, ...args)
     expect(result).deep.equal(args)
@@ -127,9 +116,10 @@ describe.sequential('Tasks', () => {
   it('should handle abortion', async () => {
     const future = createFuture<void>()
     const spy = vi.fn(future.resolve)
-    const task = testTask()
-      .withDependencies({ signal: injectables.taskSignal })
-      .withHandler(({ signal }) => new Promise(() => onAbort(signal, spy)))
+    const task = testTask({
+      dependencies: { signal: injectables.taskSignal },
+      handler: ({ signal }) => new Promise(() => onAbort(signal, spy)),
+    })
 
     registry.registerTask(task)
     const execution = tasks.execute(task)
@@ -142,9 +132,10 @@ describe.sequential('Tasks', () => {
   it('should handle termination', async () => {
     const future = createFuture<void>()
     const spy = vi.fn(future.resolve)
-    const task = testTask()
-      .withDependencies({ signal: injectables.taskSignal })
-      .withHandler(({ signal }) => new Promise(() => onAbort(signal, spy)))
+    const task = testTask({
+      dependencies: { signal: injectables.taskSignal },
+      handler: ({ signal }) => new Promise(() => onAbort(signal, spy)),
+    })
 
     registry.registerTask(task)
     const execution = tasks.execute(task)
@@ -161,18 +152,19 @@ describe.sequential('Tasks', () => {
       { container, registry },
       { timeout: testDefaultTimeout, executor: taskRunner },
     )
-    const task = testTask().withHandler(noop)
+    const task = testTask(noop)
     registry.registerTask(task)
     await tasks.execute(task)
     expect(runnerFn).toHaveBeenCalledOnce()
   })
 
   it('should run command', async () => {
-    const task = testTask()
-      .withHandler((ctx, arg1: number, arg2: number) => [arg1, arg2])
-      .withParser((args, kwargs) => {
+    const task = testTask({
+      handler: (ctx, arg1: number, arg2: number) => [arg1, arg2],
+      parser: (args, kwargs) => {
         return [Number.parseInt(args[0]), kwargs.value]
-      })
+      },
+    })
 
     registry.registerTask(task)
     const { result } = await tasks.command({
