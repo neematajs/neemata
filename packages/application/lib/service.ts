@@ -14,7 +14,7 @@ export interface Service<Contract extends TServiceContract = TServiceContract> {
   guards: Set<AnyGuard>
   middlewares: Set<AnyMiddleware>
   hooks: Hooks
-  [ServiceKey]: true
+  [ServiceKey]: any
 }
 
 export type AnyService = Service
