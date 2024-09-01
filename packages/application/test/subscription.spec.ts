@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Application } from '../lib/application.ts'
-import { injectables } from '../lib/injectables.ts'
+import { injectables } from '../lib/common.ts'
 import {
   Subscription,
   type SubscriptionManager,

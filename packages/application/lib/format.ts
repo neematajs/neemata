@@ -4,6 +4,7 @@ import type {
   BaseServerFormat,
   Pattern,
 } from '@nmtjs/common'
+
 import { match, parseContentTypes } from './utils/functions.ts'
 
 export class Format {

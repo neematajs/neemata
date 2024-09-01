@@ -37,7 +37,6 @@ describe.sequential('Transport', () => {
 })
 
 describe.sequential('Connection', () => {
-  let app: Application
   let service: Service<typeof TestServiceContract>
   let connection: Connection
   let sendEventSpy: Mock

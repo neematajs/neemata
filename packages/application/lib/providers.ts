@@ -1,4 +1,5 @@
 import type { CallTypeProvider, TypeProvider } from '@nmtjs/common'
+
 import { InjectableKey, ProviderKey, Scope } from './constants.ts'
 import {
   type AnyInjectable,
@@ -68,9 +69,9 @@ export function provide<
   })
 }
 
-export function createProvider<P extends TypeProvider>() {
+export function withTypeProvider<P extends TypeProvider>() {
   return {
-    with<
+    createProvider<
       ProviderDeps extends Dependencies = {},
       ProviderScope extends Scope = Scope.Global,
     >({

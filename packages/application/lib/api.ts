@@ -1,144 +1,18 @@
 import { ErrorCode } from '@nmtjs/common'
-import type {
-  TBaseProcedureContract,
-  TProcedureContract,
-  TSubscriptionContract,
-} from '@nmtjs/contract'
-import { type BaseType, NeverType, type t } from '@nmtjs/type'
+import { type BaseType, NeverType } from '@nmtjs/type'
 import type { Compiled } from '@nmtjs/type/compiler'
 
 import type { ApplicationOptions } from './application.ts'
+import { injectables } from './common.ts'
 import type { Connection } from './connection.ts'
-import type { Scope } from './constants.ts'
-import type {
-  AnyInjectable,
-  Container,
-  Dependant,
-  Dependencies,
-  DependencyContext,
-} from './container.ts'
-import { injectables } from './injectables.ts'
+import type { Container } from './container.ts'
 import type { Logger } from './logger.ts'
+import type { AnyProcedure, MiddlewareLike } from './procedure.ts'
 import type { Registry } from './registry.ts'
-import type { AnyService, ServiceLike } from './service.ts'
+import type { AnyService } from './service.ts'
 import { SubscriptionResponse } from './subscription.ts'
-import type { Async, ErrorClass, InputType, OutputType } from './types.ts'
-import { merge, withTimeout } from './utils/functions.ts'
-
-export type ProcedureHandlerType<
-  ProcedureContract extends TBaseProcedureContract,
-  Deps extends Dependencies,
-> = (
-  ctx: DependencyContext<Deps>,
-  data: ProcedureContract['input'] extends NeverType
-    ? never
-    : InputType<t.infer.decoded<ProcedureContract['input']>>,
-) => Async<
-  ProcedureContract extends TProcedureContract
-    ? ProcedureContract['output'] extends NeverType
-      ? void
-      : OutputType<t.infer.decoded<ProcedureContract['output']>>
-    : ProcedureContract extends TSubscriptionContract
-      ? ProcedureContract['output'] extends NeverType
-        ? SubscriptionResponse<any, never, never>
-        : SubscriptionResponse<
-            any,
-            OutputType<t.infer.decoded<ProcedureContract['output']>>,
-            OutputType<t.infer.decoded<ProcedureContract['output']>>
-          >
-      : never
->
-
-export interface ProcedureLike<
-  ProcedureContract extends TBaseProcedureContract = TBaseProcedureContract,
-  ProcedureDeps extends Dependencies = Dependencies,
-> extends Dependant<ProcedureDeps> {
-  contract: ProcedureContract
-  handler: ProcedureHandlerType<ProcedureContract, ProcedureDeps>
-  metadata: Map<MetadataKey<any, any>, any>
-  dependencies: ProcedureDeps
-  guards: Set<AnyGuard>
-  middlewares: Set<AnyMiddleware>
-}
-
-export interface FilterLike<T extends ErrorClass = ErrorClass> {
-  catch(error: InstanceType<T>): Async<Error>
-}
-
-export type ExecuteContext = Readonly<{
-  connection: Connection
-  container: Container
-  procedure: ProcedureLike
-  service: ServiceLike
-}>
-
-export interface GuardLike {
-  can(context: ExecuteContext): Async<boolean>
-}
-
-export type MiddlewareNext = (payload?: any) => any
-
-export interface MiddlewareLike {
-  handle(context: ExecuteContext, next: MiddlewareNext, payload: any): any
-}
-
-export type AnyGuard = AnyInjectable<GuardLike>
-export type AnyMiddleware = AnyInjectable<MiddlewareLike>
-export type AnyFilter<Error extends ErrorClass = ErrorClass> = AnyInjectable<
-  FilterLike<Error>
->
-type A = TSubscriptionContract | TProcedureContract
-
-export type AnyProcedure<Contract extends A = any> = Procedure<
-  Contract,
-  Dependencies,
-  any
->
-
-export class Procedure<
-  ProcedureContract extends A = A,
-  ProcedureDeps extends Dependencies = {},
-  ProcedureHandler extends ProcedureHandlerType<
-    ProcedureContract,
-    ProcedureDeps
-  > = ProcedureHandlerType<ProcedureContract, ProcedureDeps>,
-> implements ProcedureLike<ProcedureContract, ProcedureDeps>
-{
-  handler: ProcedureHandler
-  dependencies: ProcedureDeps = {} as ProcedureDeps
-  readonly metadata: Map<MetadataKey<any, any>, any> = new Map()
-  readonly middlewares = new Set<AnyMiddleware>()
-  readonly guards = new Set<AnyGuard>()
-
-  constructor(public readonly contract: ProcedureContract) {
-    this.handler = notImplemented(contract) as unknown as ProcedureHandler
-  }
-
-  withDependencies<Deps extends Dependencies>(dependencies: Deps) {
-    this.dependencies = merge(this.dependencies, dependencies)
-    return this as unknown as Procedure<ProcedureContract, ProcedureDeps & Deps>
-  }
-
-  withHandler(handler: this['handler']) {
-    this.handler = handler
-    return this
-  }
-
-  withGuards(...guards: AnyGuard[]) {
-    for (const guard of guards) this.guards.add(guard)
-    return this
-  }
-
-  withMiddlewares(...middlewares: AnyMiddleware[]) {
-    for (const middleware of middlewares) this.middlewares.add(middleware)
-    return this
-  }
-
-  withMetadata<T extends MetadataKey<any, any>>(key: T, value: T['type']) {
-    this.metadata.set(key, value)
-    return this
-  }
-}
+import type { ExecuteContext } from './types.ts'
+import { withTimeout } from './utils/functions.ts'
 
 export type ApiCallOptions = {
   connection: Connection
@@ -289,7 +163,7 @@ export class Api {
     return new ApiError(ErrorCode.InternalServerError, 'Internal Server Error')
   }
 
-  private handleInput(procedure: Procedure, payload: any) {
+  private handleInput(procedure: AnyProcedure, payload: any) {
     if (procedure.contract.input instanceof NeverType === false) {
       const result = this.handleSchema(
         procedure.contract.input,
@@ -307,7 +181,7 @@ export class Api {
     }
   }
 
-  private handleOutput(procedure: Procedure, response: any) {
+  private handleOutput(procedure: AnyProcedure, response: any) {
     if (procedure.contract.type === 'neemata:subscription') {
       if (response instanceof SubscriptionResponse === false) {
         throw new Error(
@@ -382,26 +256,4 @@ export class ApiError extends Error {
   }
 }
 
-export type MetadataKey<V = any, T = any> = { key: V; type: T }
-
-export const MetadataKey = <T>(key: string | object) =>
-  ({ key }) as MetadataKey<typeof key, T>
-
-export const getProcedureMetadata = <
-  T extends MetadataKey,
-  D extends T['type'] | undefined = undefined,
->(
-  procedure: Procedure,
-  key: T,
-  defaultValue?: D,
-): D extends undefined ? T['type'] | undefined : T['type'] => {
-  return procedure.metadata.get(key) ?? defaultValue
-}
-
 const NotFound = () => new ApiError(ErrorCode.NotFound, 'Procedure not found')
-
-const notImplemented = (contract: TBaseProcedureContract) => () => {
-  throw new Error(
-    `Procedure [${contract.serviceName}/${contract.name}] handler is not implemented`,
-  )
-}

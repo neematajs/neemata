@@ -42,3 +42,14 @@ export type FactoryInjectableKey = typeof FactoryInjectableKey
 
 export const ProviderKey: unique symbol = Symbol('ProviderKey')
 export type ProviderKey = typeof ProviderKey
+
+export const ProcedureKey: unique symbol = Symbol('ProcedureKey')
+export type ProcedureKey = typeof ProcedureKey
+
+export const ProcedureMetadataKey: unique symbol = Symbol(
+  'ProcedureMetadataKey',
+)
+export type ProcedureMetadataKey = typeof ProcedureMetadataKey
+
+export const ServiceKey: unique symbol = Symbol('ServiceKey')
+export type ServiceKey = typeof ServiceKey

@@ -2,7 +2,6 @@ import type { TProcedureContract, TSubscriptionContract } from '@nmtjs/contract'
 import type { BaseType } from '@nmtjs/type'
 import { type Compiled, compile } from '@nmtjs/type/compiler'
 
-import type { AnyFilter } from './api.ts'
 import { type Hook, Scope } from './constants.ts'
 import {
   type AnyInjectable,
@@ -12,6 +11,7 @@ import {
 } from './container.ts'
 import { Hooks } from './hooks.ts'
 import type { Logger } from './logger.ts'
+import type { AnyFilter } from './procedure.ts'
 import type { AnyService } from './service.ts'
 import type { AnyTask } from './task.ts'
 import type { Command, ErrorClass, HooksInterface } from './types.ts'

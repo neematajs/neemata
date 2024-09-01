@@ -1,68 +1,72 @@
 import { ErrorCode } from '@nmtjs/common'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import {
-  type AnyProcedure,
-  Api,
-  type ApiCallOptions,
-  ApiError,
-  Procedure,
-} from '../lib/api.ts'
+import { Api, type ApiCallOptions, ApiError } from '../lib/api.ts'
 import type { Application } from '../lib/application.ts'
+import { injectables } from '../lib/common.ts'
 import type { Connection } from '../lib/connection.ts'
-import { Scope } from '../lib/constants.ts'
+import { ProcedureKey, Scope } from '../lib/constants.ts'
 import {
   type Container,
   createFactoryInjectable,
   createValueInjectable,
 } from '../lib/container.ts'
-import { injectables } from '../lib/injectables.ts'
+import {
+  createContractProcedure,
+  createProcedureMetadataKey,
+  getProcedureMetadata,
+} from '../lib/procedure.ts'
 import type { Registry } from '../lib/registry.ts'
 import type { Service } from '../lib/service.ts'
+import { noop } from '../lib/utils/functions.ts'
 import {
-  type TestServiceContract,
+  TestServiceContract,
   testApp,
   testConnection,
   testProcedure,
   testService,
 } from './_utils.ts'
 
-describe.sequential('Procedure', () => {
-  let procedure: AnyProcedure
+describe('Procedure', () => {
+  const procedureContract = TestServiceContract.procedures.testProcedure
+  it('should create a procedure', () => {
+    const handler = () => {}
+    const procedure = createContractProcedure(procedureContract, handler)
 
-  beforeEach(() => {
-    procedure = testProcedure()
+    expect(ProcedureKey in procedure).toBe(true)
+    expect(procedure).toHaveProperty('contract', procedureContract)
+    expect(procedure).toHaveProperty('handler', handler)
+    expect(procedure).toHaveProperty('dependencies', {})
+    expect(procedure).toHaveProperty('guards', expect.any(Set))
+    expect(procedure).toHaveProperty('middlewares', expect.any(Set))
+    expect(procedure).toHaveProperty('metadata', expect.any(Map))
   })
 
-  it('should be a procedure', () => {
-    expect(procedure).toBeDefined()
-    expect(procedure).toBeInstanceOf(Procedure)
-  })
-
-  it('should extend with dependencies', () => {
+  it('should create a procedure with dependencies', () => {
     const dep1 = createValueInjectable('dep1')
     const dep2 = createValueInjectable('dep2')
 
-    const procedure1 = procedure.withDependencies({ dep1 })
-    const procedure2 = procedure.withDependencies({ dep2 })
+    const procedure = createContractProcedure(procedureContract, {
+      handler: noop,
+      dependencies: { dep1, dep2 },
+    })
 
-    expect(procedure).toBe(procedure1)
-    expect(procedure1).toBe(procedure2)
     expect(procedure.dependencies).toHaveProperty('dep1', dep1)
     expect(procedure.dependencies).toHaveProperty('dep2', dep2)
   })
 
-  it('should extend with guards', () => {
+  it('should create a procedure with guards', () => {
     const guard1 = createValueInjectable({ can: () => false })
     const guard2 = createValueInjectable({ can: () => true })
 
-    const newProcedure = procedure.withGuards(guard1)
-    const newProcedure2 = newProcedure.withGuards(guard2)
+    const procedure = createContractProcedure(procedureContract, {
+      handler: noop,
+      guards: [guard1, guard2],
+    })
 
-    expect([...newProcedure2.guards]).toEqual([guard1, guard2])
-    expect(newProcedure2).toBe(procedure)
+    expect([...procedure.guards]).toStrictEqual([guard1, guard2])
   })
 
-  it('should extend with middlewares', () => {
+  it('should create a procedure with middlewares', () => {
     const middleware1 = createValueInjectable({
       handle: () => void 0,
     })
@@ -70,18 +74,29 @@ describe.sequential('Procedure', () => {
       handle: () => void 0,
     })
 
-    const newProcedure = procedure.withMiddlewares(middleware1)
-    const newProcedure2 = newProcedure.withMiddlewares(middleware2)
+    const procedure = createContractProcedure(procedureContract, {
+      handler: noop,
+      middlewares: [middleware1, middleware2],
+    })
 
-    expect([...newProcedure2.middlewares]).toEqual([middleware1, middleware2])
-    expect(newProcedure2).toBe(procedure)
+    expect([...procedure.middlewares]).toStrictEqual([middleware1, middleware2])
   })
 
-  it('should extend with a handler', () => {
-    const handler = () => {}
-    const newProcedure = procedure.withHandler(handler)
-    expect(newProcedure.handler).toBe(handler)
-    expect(newProcedure).toBe(procedure)
+  it('should create a procedure with metadata', () => {
+    const metadataKey = createProcedureMetadataKey<string>('test')
+    const procedure = createContractProcedure(procedureContract, {
+      handler: noop,
+      metadata: [metadataKey.as('some')],
+    })
+
+    expect(getProcedureMetadata(procedure, metadataKey)).toBe('some')
+  })
+
+  it('should create a procedure with handler', () => {
+    const handler = () => 'result'
+    const procedure = createContractProcedure(procedureContract, handler)
+
+    expect(procedure.handler).toBe(handler)
   })
 })
 
@@ -112,9 +127,6 @@ describe.sequential('Api', () => {
       })
       .finally(() => container.dispose())
 
-  const testProcedure = () =>
-    new Procedure(service.contract.procedures.testProcedure)
-
   beforeEach(async () => {
     app = testApp()
 
@@ -123,10 +135,6 @@ describe.sequential('Api', () => {
     api = app.api
 
     connection = testConnection(registry, {})
-    service = testService()
-    registry.registerService(service)
-
-    await app.initialize()
   })
 
   afterEach(async () => {
@@ -140,27 +148,36 @@ describe.sequential('Api', () => {
 
   it('should inject context', async () => {
     const spy = vi.fn()
-    const procedure = testProcedure()
-      .withDependencies({ connection: injectables.connection })
-      .withHandler(spy)
-    service.implement('testProcedure', procedure)
+    const procedure = testProcedure({
+      dependencies: { connection: injectables.connection },
+      handler: spy,
+    })
+    service = testService({ procedure })
+    registry.registerService(service)
+    await app.initialize()
+
     const connection = testConnection(registry, {})
     await call({ connection, procedure })
     expect(spy).toHaveBeenCalledWith({ connection }, payload)
   })
 
   it('should handle procedure call', async () => {
-    const procedure = testProcedure().withHandler(() => 'result')
-    service.implement('testProcedure', procedure)
+    const procedure = testProcedure(() => 'result')
+    service = testService({ procedure })
+    registry.registerService(service)
+    await app.initialize()
     await expect(call({ procedure })).resolves.toBe('result')
   })
 
   it('should inject dependencies', async () => {
     const injectable = createValueInjectable('value')
-    const procedure = testProcedure()
-      .withDependencies({ injectable })
-      .withHandler(({ injectable }) => injectable)
-    service.implement('testProcedure', procedure)
+    const procedure = testProcedure({
+      dependencies: { injectable },
+      handler: ({ injectable }) => injectable,
+    })
+    service = testService({ procedure })
+    registry.registerService(service)
+    await app.initialize()
     await expect(call({ procedure })).resolves.toBe('value')
   })
 
@@ -169,10 +186,13 @@ describe.sequential('Api', () => {
       dependencies: { connection: injectables.connection },
       factory: ({ connection }) => connection,
     })
-    const procedure = testProcedure()
-      .withDependencies({ injectable })
-      .withHandler(({ injectable }) => injectable)
-    service.implement('testProcedure', procedure)
+    const procedure = testProcedure({
+      dependencies: { injectable },
+      handler: ({ injectable }) => injectable,
+    })
+    service = testService({ procedure })
+    registry.registerService(service)
+    await app.initialize()
     const connection = testConnection(registry, {})
     await expect(call({ connection, procedure })).resolves.toBe(connection)
   })
@@ -183,27 +203,34 @@ describe.sequential('Api', () => {
       dependencies: { signal: injectables.callSignal },
       factory: ({ signal }) => signal,
     })
-    const procedure = testProcedure()
-      .withDependencies({ injectable })
-      .withHandler(({ injectable }) => injectable)
-    service.implement('testProcedure', procedure)
+    const procedure = testProcedure({
+      dependencies: { injectable },
+      handler: ({ injectable }) => injectable,
+    })
+    service = testService({ procedure })
+    registry.registerService(service)
+    await app.initialize()
     const connection = testConnection(registry, {})
     expect(call({ connection, procedure, signal })).resolves.toBe(signal)
   })
 
   it('should handle procedure call with payload', async () => {
     const spy = vi.fn()
-    const procedure = testProcedure().withHandler(spy)
-    service.implement('testProcedure', procedure)
+    const procedure = testProcedure(spy)
+    service = testService({ procedure })
+    registry.registerService(service)
+    await app.initialize()
     await call({ procedure, payload })
     expect(spy).toBeCalledWith(expect.anything(), payload)
   })
 
   it('should handle procedure handler error', async () => {
-    const procedure = testProcedure().withHandler(() => {
+    const procedure = testProcedure(() => {
       throw new Error()
     })
-    service.implement('testProcedure', procedure)
+    service = testService({ procedure })
+    registry.registerService(service)
+    await app.initialize()
     const result = await call({ procedure }).catch((v) => v)
     expect(result).toBeInstanceOf(Error)
   })
@@ -216,10 +243,12 @@ describe.sequential('Api', () => {
     const filter = createValueInjectable(filterInjectable)
     registry.registerFilter(CustomError, filter)
     const error = new CustomError()
-    const procedure = testProcedure().withHandler(() => {
+    const procedure = testProcedure(() => {
       throw error
     })
-    service.implement('testProcedure', procedure)
+    service = testService({ procedure })
+    registry.registerService(service)
+    await app.initialize()
     await expect(call({ procedure })).rejects.toBeInstanceOf(ApiError)
     expect(filterInjectable.catch).toHaveBeenCalledOnce()
     expect(filterInjectable.catch).toHaveBeenCalledWith(error)
@@ -230,10 +259,13 @@ describe.sequential('Api', () => {
       can: vi.fn(() => false),
     }
     const guard = createValueInjectable(guardLike)
-    const procedure = testProcedure()
-      .withGuards(guard)
-      .withHandler(() => 'result')
-    service.implement('testProcedure', procedure)
+    const procedure = testProcedure({
+      guards: [guard],
+      handler: () => 'result',
+    })
+    service = testService({ procedure })
+    registry.registerService(service)
+    await app.initialize()
     const result = await call({ procedure }).catch((v) => v)
     expect(result).toBeInstanceOf(ApiError)
     expect(result).toHaveProperty('code', ErrorCode.Forbidden)
@@ -257,11 +289,14 @@ describe.sequential('Api', () => {
 
     const middleware1 = createValueInjectable(middleware1Like)
     const middleware2 = createValueInjectable(middleware2Like)
-    const procedure = testProcedure()
-      .withMiddlewares(middleware1, middleware2)
-      .withHandler(handlerFn)
+    const procedure = testProcedure({
+      middlewares: [middleware1, middleware2],
+      handler: handlerFn,
+    })
 
-    service.implement('testProcedure', procedure)
+    service = testService({ procedure })
+    registry.registerService(service)
+    await app.initialize()
 
     const response = await call({ procedure, payload: { test: '1' } })
 
@@ -291,9 +326,11 @@ describe.sequential('Api', () => {
     expect(response).toStrictEqual({ test: 'result_middleware2_middleware1' })
   })
 
-  it('should find procedure', () => {
-    const procedure = testProcedure().withHandler(() => 'result')
-    service.implement('testProcedure', procedure)
+  it('should find procedure', async () => {
+    const procedure = testProcedure(() => 'result')
+    service = testService({ procedure })
+    registry.registerService(service)
+    await app.initialize()
     const found = api.find(service.contract.name, 'testProcedure', transport)
     expect(found).toHaveProperty('service', service)
     expect(found).toHaveProperty('procedure', procedure)

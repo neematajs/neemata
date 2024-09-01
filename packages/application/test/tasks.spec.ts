@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { injectables } from '../lib/common.ts'
 import { Container, createValueInjectable } from '../lib/container.ts'
-import { injectables } from '../lib/injectables.ts'
 import { Registry } from '../lib/registry.ts'
 import { type AnyTask, Task, TaskRunner } from '../lib/task.ts'
 import { createFuture, defer, noop, onAbort } from '../lib/utils/functions.ts'

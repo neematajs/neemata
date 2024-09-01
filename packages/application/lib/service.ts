@@ -3,67 +3,70 @@ import { readdir } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { TServiceContract } from '@nmtjs/contract'
-import {
-  type AnyGuard,
-  type AnyMiddleware,
-  type AnyProcedure,
-  Procedure,
-} from './api.ts'
-import { Hook } from './constants.ts'
+import { Hook, ProcedureKey, ServiceKey } from './constants.ts'
 import { Hooks } from './hooks.ts'
-import type { HooksInterface } from './types.ts'
+import type { AnyGuard, AnyMiddleware, AnyProcedure } from './procedure.ts'
+import type { Callback } from './types.ts'
 
-export interface ServiceLike<
-  Contract extends TServiceContract = TServiceContract,
-> {
+export interface Service<Contract extends TServiceContract = TServiceContract> {
   contract: Contract
   procedures: Map<string, AnyProcedure>
   guards: Set<AnyGuard>
   middlewares: Set<AnyMiddleware>
   hooks: Hooks
+  [ServiceKey]: true
 }
 
-export type AnyService = ServiceLike<TServiceContract>
+export type AnyService = Service
 
-export class Service<Contract extends TServiceContract = TServiceContract> {
-  constructor(public readonly contract: Contract) {}
+export function createContractService<
+  Contract extends TServiceContract = TServiceContract,
+>(
+  contract: Contract,
+  params: {
+    procedures?: Record<string, AnyProcedure>
+    guards?: AnyGuard[]
+    middlewares?: AnyMiddleware[]
+    hooks?: Record<string, Callback[]>
+    autoload?: string | URL
+  },
+): Service<Contract> {
+  const guards = new Set(params.guards ?? [])
+  const middlewares = new Set(params.middlewares ?? [])
+  const procedures = new Map(Object.entries(params.procedures ?? {}))
+  const hooks = new Hooks()
 
-  procedures = new Map<string, AnyProcedure>()
-  guards = new Set<AnyGuard>()
-  middlewares = new Set<AnyMiddleware>()
-  hooks = new Hooks()
-
-  implement<K extends Extract<keyof Contract['procedures'], string>>(
-    name: K,
-    implementaion: AnyProcedure<Contract['procedures'][K]>,
-  ) {
-    this.procedures.set(name, implementaion)
-    return this
+  for (const [hookName, callbacks] of Object.entries(params.hooks ?? {})) {
+    for (const hook of callbacks) {
+      hooks.add(hookName, hook)
+    }
   }
 
-  withHook<T extends Hook>(hook: T, handler: HooksInterface[T]) {
-    this.hooks.add(hook, handler)
-    return this
-  }
-
-  withAutoload(directory: string | URL) {
+  if (params.autoload) {
     const dirpath =
-      directory instanceof URL ? fileURLToPath(directory) : directory
-    this.hooks.add(
+      params.autoload instanceof URL
+        ? fileURLToPath(params.autoload)
+        : params.autoload
+    hooks.add(
       Hook.BeforeInitialize,
-      autoLoader(path.resolve(dirpath), this),
+      autoLoader(path.resolve(dirpath), {
+        contract,
+        procedures,
+        guards,
+        middlewares,
+        hooks,
+        [ServiceKey]: true,
+      }),
     )
-    return this
   }
 
-  withGuard(guard: AnyGuard) {
-    this.guards.add(guard)
-    return this
-  }
-
-  withMiddleware(middleware: AnyMiddleware) {
-    this.middlewares.add(middleware)
-    return this
+  return {
+    contract,
+    procedures,
+    guards,
+    middlewares,
+    hooks,
+    [ServiceKey]: true,
   }
 }
 
@@ -90,7 +93,7 @@ const autoLoader = (directory: string, service: Service<any>) => async () => {
     } else {
       implementation = require(filepath)
     }
-    assert(implementation instanceof Procedure, 'Invalid procedure')
-    service.implement(procedureName, implementation as any)
+    assert(ProcedureKey in implementation, 'Invalid procedure')
+    service.procedures.set(procedureName, implementation as any)
   }
 }

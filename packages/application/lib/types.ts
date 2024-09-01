@@ -1,4 +1,5 @@
 import type { ApiBlob, ApiBlobInterface } from '@nmtjs/common'
+
 import type { Api } from './api.ts'
 import type { Connection, ConnectionOptions } from './connection.ts'
 import type { Hook, WorkerType } from './constants.ts'
@@ -7,7 +8,9 @@ import type { EventManager } from './events.ts'
 import type { Format } from './format.ts'
 import type { Hooks } from './hooks.ts'
 import type { Logger } from './logger.ts'
+import type { AnyProcedure } from './procedure.ts'
 import type { Registry } from './registry.ts'
+import type { AnyService } from './service.ts'
 import type { ServerUpStream } from './stream.ts'
 import type { AnyTask, Task, TaskExecution } from './task.ts'
 
@@ -58,6 +61,13 @@ export interface ApplicationContext {
     get: (id: Connection['id']) => Connection | undefined
   }
 }
+
+export type ExecuteContext = Readonly<{
+  connection: Connection
+  container: Container
+  procedure: AnyProcedure
+  service: AnyService
+}>
 
 export type UnionToIntersection<U> = (
   U extends any
