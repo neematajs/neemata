@@ -42,25 +42,7 @@ export function createContractService<
     }
   }
 
-  if (params.autoload) {
-    const dirpath =
-      params.autoload instanceof URL
-        ? fileURLToPath(params.autoload)
-        : params.autoload
-    hooks.add(
-      Hook.BeforeInitialize,
-      autoLoader(path.resolve(dirpath), {
-        contract,
-        procedures,
-        guards,
-        middlewares,
-        hooks,
-        [ServiceKey]: true,
-      }),
-    )
-  }
-
-  return {
+  const service = {
     contract,
     procedures,
     guards,
@@ -68,32 +50,46 @@ export function createContractService<
     hooks,
     [ServiceKey]: true,
   }
-}
 
-const autoLoader = (directory: string, service: Service<any>) => async () => {
-  const procedureNames = Object.keys(service.contract.procedures)
-  const extensions = ['.ts', '.js', '.mts', '.mjs', '.cts', '.cjs']
-  const ignore = ['.d.ts', '.d.mts', '.d.cts']
-  const entries = await readdir(directory, { withFileTypes: true })
-
-  for (const entry of entries) {
-    if (entry.isDirectory()) continue
-    if (entry.name.startsWith('.')) continue
-    if (ignore.some((ext) => entry.name.endsWith(ext))) continue
-    if (!extensions.some((ext) => entry.name.endsWith(ext))) continue
-    const procedureName = path.parse(
-      path.join(entry.parentPath, entry.name),
-    ).name
-    if (!procedureNames.includes(procedureName)) continue
-    const filepath = path.join(entry.parentPath, entry.name)
-    let implementation: any = null
-    // TODO: this might be not very reliable
-    if (typeof module === 'undefined') {
-      implementation = await import(filepath).then((m) => m.default)
-    } else {
-      implementation = require(filepath)
-    }
-    assert(ProcedureKey in implementation, 'Invalid procedure')
-    service.procedures.set(procedureName, implementation as any)
+  if (params.autoload) {
+    const dirpath =
+      params.autoload instanceof URL
+        ? fileURLToPath(params.autoload)
+        : params.autoload
+    hooks.add(
+      Hook.BeforeInitialize,
+      createAutoLoader(path.resolve(dirpath), service),
+    )
   }
+
+  return service
 }
+
+const createAutoLoader =
+  (directory: string, service: AnyService) => async () => {
+    const procedureNames = Object.keys(service.contract.procedures)
+    const extensions = ['.ts', '.js', '.mts', '.mjs', '.cts', '.cjs']
+    const ignore = ['.d.ts', '.d.mts', '.d.cts']
+    const entries = await readdir(directory, { withFileTypes: true })
+
+    for (const entry of entries) {
+      if (entry.isDirectory()) continue
+      if (entry.name.startsWith('.')) continue
+      if (ignore.some((ext) => entry.name.endsWith(ext))) continue
+      if (!extensions.some((ext) => entry.name.endsWith(ext))) continue
+      const procedureName = path.parse(
+        path.join(entry.parentPath, entry.name),
+      ).name
+      if (!procedureNames.includes(procedureName)) continue
+      const filepath = path.join(entry.parentPath, entry.name)
+      let implementation: any = null
+    // TODO: this might be not very reliable
+      if (typeof module === 'undefined') {
+        implementation = await import(filepath).then((m) => m.default)
+      } else {
+        implementation = require(filepath)
+      }
+      assert(ProcedureKey in implementation, 'Invalid procedure')
+      service.procedures.set(procedureName, implementation as any)
+    }
+  }
