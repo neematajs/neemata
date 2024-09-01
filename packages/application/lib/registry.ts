@@ -84,13 +84,8 @@ export class Registry {
   }
 
   registerTask(task: AnyTask) {
-    if (!task.name) throw new Error('Task name is not defined')
-
     if (this.tasks.has(task.name))
       throw new Error(`Task ${task.name} already registered`)
-
-    if (typeof task.handler !== 'function')
-      throw new Error('Task handler is not defined or is not a function')
 
     if (
       hasNonInvalidScopeDeps(

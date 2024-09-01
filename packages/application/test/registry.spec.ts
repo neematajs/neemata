@@ -59,21 +59,21 @@ describe('Registry', () => {
   })
 
   it('should register task', () => {
-    const task = testTask().withHandler(noop)
+    const task = testTask(noop)
     registry.registerTask(task)
     expect(registry.tasks.get(task.name)).toBe(task)
   })
 
   it('should fail to register task with the same name', () => {
-    const task1 = testTask().withHandler(noop)
-    const task2 = testTask().withHandler(noop)
+    const task1 = testTask(noop)
+    const task2 = testTask(noop)
     registry.registerTask(task1)
     expect(() => registry.registerTask(task2)).toThrow()
   })
 
   it('should fail register task with non-global dependencies', () => {
     const injectable = createLazyInjectable(Scope.Connection)
-    const task = testTask().withHandler(noop).withDependencies({ injectable })
+    const task = testTask({ dependencies: { injectable }, handler: noop })
     expect(() => registry.registerTask(task)).toThrow()
   })
 })
