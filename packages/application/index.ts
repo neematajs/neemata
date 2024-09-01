@@ -10,6 +10,8 @@ export * from './lib/api.ts'
 export * from './lib/application.ts'
 export * from './lib/constants.ts'
 export * from './lib/container.ts'
+export * from './lib/procedure.ts'
+export * from './lib/provider.ts'
 export * from './lib/events.ts'
 export * from './lib/plugin.ts'
 export * from './lib/format.ts'
@@ -33,8 +35,8 @@ export namespace n {
   export const factory = createFactoryInjectable
   export const procedure = createContractProcedure
   export const service = createContractService
-  export const contractless = {
-    procedure: createProcedure,
-    service: createContractService,
+  export namespace contractless {
+    export const procedure = createProcedure
+    export const service = createContractService
   }
 }

@@ -15,7 +15,7 @@ import {
   createValueInjectable,
   getInjectableScope,
 } from '../lib/container.ts'
-import { provide, withTypeProvider } from '../lib/providers.ts'
+import { provide, withTypeProvider } from '../lib/provider.ts'
 import { Registry } from '../lib/registry.ts'
 import { noop } from '../lib/utils/functions.ts'
 import {
