@@ -10,7 +10,8 @@ import {
   type RpcResponse,
   type TypeProvider,
 } from '@nmtjs/common'
-import { c, t } from '@nmtjs/contract'
+import { c } from '@nmtjs/contract'
+import { t } from '@nmtjs/type'
 
 import { Application, type ApplicationOptions } from '../lib/application.ts'
 import { Connection, type ConnectionOptions } from '../lib/connection.ts'
@@ -127,8 +128,8 @@ export const TestServiceContract = c.service(
   },
   {
     testProcedure: c.procedure(t.any(), t.any()),
-    testUptream: c.procedure(t.object({ test: t.blob() }), t.any()),
-    testDownstream: c.procedure(t.any(), t.object({ test: t.blob() })),
+    testUptream: c.procedure(t.object({ test: c.blob() }), t.any()),
+    testDownstream: c.procedure(t.any(), t.object({ test: c.blob() })),
     testSubscription: c.subscription(t.any(), t.any(), {
       testEvent: c.event(t.string()),
     })<{ testOption: string }>(),
