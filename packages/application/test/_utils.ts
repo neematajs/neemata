@@ -12,15 +12,19 @@ import {
 } from '@nmtjs/common'
 import { c, t } from '@nmtjs/contract'
 
-import { type AnyProcedure, Procedure } from '../lib/api.ts'
 import { Application, type ApplicationOptions } from '../lib/application.ts'
 import { Connection, type ConnectionOptions } from '../lib/connection.ts'
 import { Hook, WorkerType } from '../lib/constants.ts'
 import { createLogger } from '../lib/logger.ts'
 import { type Plugin, createPlugin } from '../lib/plugin.ts'
+import {
+  type CreateProcedureParams,
+  createContractProcedure,
+} from '../lib/procedure.ts'
 import type { Registry } from '../lib/registry.ts'
-import { Service } from '../lib/service.ts'
+import { createContractService } from '../lib/service.ts'
 import { type BaseTaskExecutor, Task } from '../lib/task.ts'
+import { noop } from '../lib/utils/functions.ts'
 
 export interface TestTypeProvider extends TypeProvider {
   input: 1 | 2 | 'string'
@@ -145,24 +149,39 @@ export const testConnection = (
 
 export const testFormat = () => new TestFormat()
 
-export const testProcedure = (): AnyProcedure<
-  typeof TestServiceContract.procedures.testProcedure
-> => new Procedure(TestServiceContract.procedures.testProcedure)
+export const testProcedure = (
+  params: CreateProcedureParams<
+    typeof TestServiceContract.procedures.testProcedure,
+    any
+  >,
+) =>
+  createContractProcedure(TestServiceContract.procedures.testProcedure, params)
 
-export const testSubscription = () =>
-  new Procedure(TestServiceContract.procedures.testSubscription)
+export const testSubscription = (
+  params: CreateProcedureParams<
+    typeof TestServiceContract.procedures.testSubscription,
+    any
+  >,
+) =>
+  createContractProcedure(
+    TestServiceContract.procedures.testSubscription,
+    params,
+  )
 
 export const testTask = () => new Task('test')
 
 export const testTaskRunner = (...args) => new TestTaskExecutor(...args)
 
 export const testService = ({
-  procedure = testProcedure(),
-  subscription = testSubscription(),
+  procedure = testProcedure(noop),
+  subscription = testSubscription(noop as any),
 } = {}) =>
-  new Service(TestServiceContract)
-    .implement('testProcedure', procedure)
-    .implement('testSubscription', subscription)
+  createContractService(TestServiceContract, {
+    procedures: {
+      testProcedure: procedure,
+      testSubscription: subscription,
+    },
+  })
 
 export const expectCopy = (source, targer) => {
   expect(targer).not.toBe(source)

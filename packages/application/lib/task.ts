@@ -1,4 +1,5 @@
 import type { ApplicationOptions } from './application.ts'
+import { injectables } from './common.ts'
 import { Hook } from './constants.ts'
 import type {
   Container,
@@ -6,7 +7,6 @@ import type {
   Dependencies,
   DependencyContext,
 } from './container.ts'
-import { injectables } from './injectables.ts'
 import type { Registry } from './registry.ts'
 import type { Async, OmitFirstItem } from './types.ts'
 import { createFuture, defer, merge, noop, onAbort } from './utils/functions.ts'

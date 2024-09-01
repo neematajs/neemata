@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { AnyProcedure } from '../lib/api.ts'
+import { injectables } from '../lib/common.ts'
 import {
   FactoryInjectableKey,
   InjectableKey,
@@ -15,8 +15,7 @@ import {
   createValueInjectable,
   getInjectableScope,
 } from '../lib/container.ts'
-import { injectables } from '../lib/injectables.ts'
-import { createProvider, provide } from '../lib/providers.ts'
+import { provide, withTypeProvider } from '../lib/providers.ts'
 import { Registry } from '../lib/registry.ts'
 import { noop } from '../lib/utils/functions.ts'
 import {
@@ -83,7 +82,9 @@ describe.sequential('Provider', () => {
   const factory = () => 1 as const
 
   it('should create a provider', () => {
-    const provider = createProvider<TestTypeProvider>().with({ factory })
+    const provider = withTypeProvider<TestTypeProvider>().createProvider({
+      factory,
+    })
     expect(LazyInjectableKey in provider.options).toBe(true)
     expect(provider.factory).toBe(factory)
     expect(provider.dependencies).toStrictEqual({ options: provider.options })
@@ -93,7 +94,7 @@ describe.sequential('Provider', () => {
 
   it('should create a provider with dispose', () => {
     const dispose = () => {}
-    const provider = createProvider<TestTypeProvider>().with({
+    const provider = withTypeProvider<TestTypeProvider>().createProvider({
       factory,
       dispose,
     })
@@ -101,7 +102,7 @@ describe.sequential('Provider', () => {
   })
 
   it('should create a provider with scope', () => {
-    const provider = createProvider<TestTypeProvider>().with({
+    const provider = withTypeProvider<TestTypeProvider>().createProvider({
       factory,
       scope: Scope.Call,
     })
@@ -111,7 +112,7 @@ describe.sequential('Provider', () => {
   it('should create a provider with dependencies', () => {
     const dep1 = createLazyInjectable()
     const dep2 = createLazyInjectable()
-    const provider = createProvider<TestTypeProvider>().with({
+    const provider = withTypeProvider<TestTypeProvider>().createProvider({
       factory,
       dependencies: { dep1, dep2 },
     })
@@ -123,7 +124,7 @@ describe.sequential('Provider', () => {
   it('should fail to create a provider with "options" dependency', () => {
     const dep1 = createLazyInjectable()
     expect(() =>
-      createProvider<TestTypeProvider>().with({
+      withTypeProvider<TestTypeProvider>().createProvider({
         factory,
         dependencies: { options: dep1 },
       }),
@@ -293,10 +294,13 @@ describe.sequential('Container', () => {
       scope: Scope.Connection,
       factory: factory2,
     })
-    const procedure = testProcedure().withDependencies({
-      injectable1,
-      injectable2,
-    }) satisfies AnyProcedure
+    const procedure = testProcedure({
+      handler: noop,
+      dependencies: {
+        injectable1,
+        injectable2,
+      },
+    })
     const service = testService({ procedure })
     registry.registerService(service)
     await container.load()
@@ -362,7 +366,7 @@ describe.sequential('Container', () => {
 
   it('should be able to inject a provider', async () => {
     const options = createValueInjectable('string' as const)
-    const provider = createProvider<TestTypeProvider>().with({
+    const provider = withTypeProvider<TestTypeProvider>().createProvider({
       factory: ({ options }) => options,
     })
     const provided = provide(provider, options)

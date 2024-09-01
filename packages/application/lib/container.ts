@@ -208,7 +208,8 @@ export class Container {
 
       if (isLazy) {
         if (isOptional) return Promise.resolve(undefined as any)
-        return Promise.reject(new Error(`Missing dependency`))
+        // TODO: this is not very informative
+        return Promise.reject(new Error('Missing dependency'))
       }
 
       const resolution = this.createContext(dependencies, injectable)

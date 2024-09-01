@@ -1,10 +1,10 @@
 import { createHash } from 'node:crypto'
 import { EventEmitter } from 'node:events'
 import type { TSubscriptionContract } from '@nmtjs/contract'
-
 import type { t } from '@nmtjs/type'
+
+import { injectables } from './common.ts'
 import { WorkerType } from './constants.ts'
-import { injectables } from './injectables.ts'
 import { createPlugin } from './plugin.ts'
 
 type SubscriptionEvents<Contract extends TSubscriptionContract> = {

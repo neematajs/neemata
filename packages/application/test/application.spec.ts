@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Application } from '../lib/application.ts'
-import { injectables } from '../lib/injectables.ts'
+import { injectables } from '../lib/common.ts'
 import { testApp, testPlugin } from './_utils.ts'
 
 describe.sequential('Application', () => {
