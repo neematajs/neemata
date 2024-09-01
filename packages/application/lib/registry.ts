@@ -104,6 +104,7 @@ export class Registry {
     if (hasNonInvalidScopeDeps([filter]))
       throw new Error(scopeErrorMessage('Filters'))
     // TODO: should this register multiple filters for the same error class?
+    // probably not, right?
     this.filters.set(errorClass, filter)
   }
 
@@ -125,12 +126,11 @@ export function hasNonInvalidScopeDeps(
 }
 
 export function printRegistry(registry: Registry) {
+  // TODO: visualize the registry in a more readable way
   const mapToTable = (map: Map<string, any>) => Array.from(map.keys())
 
   console.log('Tasks:')
   console.table(mapToTable(registry.tasks))
   console.log('Services:')
   console.table(mapToTable(registry.services))
-  // console.log('Events:')
-  // console.table(mapToTable(registry.events))
 }

@@ -83,7 +83,8 @@ const createAutoLoader =
       if (!procedureNames.includes(procedureName)) continue
       const filepath = path.join(entry.parentPath, entry.name)
       let implementation: any = null
-    // TODO: this might be not very reliable
+      // TODO: this might be not very reliable way
+      // to distinguish between ESM and CJS modules
       if (typeof module === 'undefined') {
         implementation = await import(filepath).then((m) => m.default)
       } else {
