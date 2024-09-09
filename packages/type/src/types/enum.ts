@@ -1,3 +1,4 @@
+import type { SchemaOptions } from '@sinclair/typebox'
 import type { TNativeEnum } from '../schemas/native-enum.ts'
 import { NativeEnum } from '../schemas/native-enum.ts'
 import { type TUnionEnum, UnionEnum } from '../schemas/union-enum.ts'
@@ -7,28 +8,56 @@ export class NativeEnumType<
   T extends { [K in string]: K } = { [K in string]: K },
   N extends boolean = false,
   O extends boolean = false,
-> extends BaseType<TNativeEnum<T>, N, O> {
+  D extends boolean = false,
+> extends BaseType<TNativeEnum<T>, N, O, D> {
   constructor(
     readonly values: T,
-    nullable: N = false as N,
-    optional: O = false as O,
+    options: SchemaOptions = {},
+    isNullable: N = false as N,
+    isOptional: O = false as O,
+    hasDefault: D = false as D,
   ) {
-    super(NativeEnum(values), nullable, optional)
+    super(options, isNullable, isOptional, hasDefault)
+  }
+
+  protected _constructSchema(options: SchemaOptions): TNativeEnum<T> {
+    return NativeEnum(this.values, options)
   }
 
   nullable() {
-    const [_, ...args] = this._nullable()
-    return new NativeEnumType(this.values, ...args)
+    return new NativeEnumType(this.values, ...this._with({ isNullable: true }))
   }
 
   optional() {
-    const [_, ...args] = this._optional()
-    return new NativeEnumType(this.values, ...args)
+    return new NativeEnumType(this.values, ...this._with({ isOptional: true }))
   }
 
   nullish() {
-    const [_, ...args] = this._nullish()
-    return new NativeEnumType(this.values, ...args)
+    return new NativeEnumType(
+      this.values,
+      ...this._with({ isNullable: true, isOptional: true }),
+    )
+  }
+
+  default(value: keyof T) {
+    return new NativeEnumType(
+      this.values,
+      ...this._with({ options: { default: value }, hasDefault: true }),
+    )
+  }
+
+  description(description: string) {
+    return new NativeEnumType(
+      this.values,
+      ...this._with({ options: { description } }),
+    )
+  }
+
+  examples(...examples: (keyof T)[]) {
+    return new NativeEnumType(
+      this.values,
+      ...this._with({ options: { examples } }),
+    )
   }
 }
 
@@ -36,27 +65,55 @@ export class EnumType<
   T extends (string | number)[],
   N extends boolean = false,
   O extends boolean = false,
-> extends BaseType<TUnionEnum<T>, N, O> {
+  D extends boolean = false,
+> extends BaseType<TUnionEnum<T>, N, O, D> {
   constructor(
-    readonly values: [...T],
-    nullable: N = false as N,
-    optional: O = false as O,
+    protected readonly values: [...T],
+    options: SchemaOptions = {},
+    isNullable: N = false as N,
+    isOptional: O = false as O,
+    hasDefault: D = false as D,
   ) {
-    super(UnionEnum(values), nullable, optional)
+    super(options, isNullable, isOptional, hasDefault, values)
+  }
+
+  protected _constructSchema(
+    options: SchemaOptions,
+    values: [...T],
+  ): TUnionEnum<T> {
+    return UnionEnum(values, options)
   }
 
   nullable() {
-    const [_, ...args] = this._nullable()
-    return new EnumType(this.values, ...args)
+    return new EnumType(this.values, ...this._with({ isNullable: true }))
   }
 
   optional() {
-    const [_, ...args] = this._optional()
-    return new EnumType(this.values, ...args)
+    return new EnumType(this.values, ...this._with({ isOptional: true }))
   }
 
   nullish() {
-    const [_, ...args] = this._nullish()
-    return new EnumType(this.values, ...args)
+    return new EnumType(
+      this.values,
+      ...this._with({ isNullable: true, isOptional: true }),
+    )
+  }
+
+  default(value: T[number]) {
+    return new EnumType(
+      this.values,
+      ...this._with({ options: { default: value }, hasDefault: true }),
+    )
+  }
+
+  description(description: string) {
+    return new EnumType(
+      this.values,
+      ...this._with({ options: { description } }),
+    )
+  }
+
+  examples(...examples: [T[number], ...T[number][]]) {
+    return new EnumType(this.values, ...this._with({ options: { examples } }))
   }
 }

@@ -21,7 +21,7 @@
     "@nmtjs/builder": "github:neematajs/builder#a9139aa321ebf2054ce2f7d26e40a346338be149",
     "@types/node": "^20",
     "husky": "^9.0.0",
-    "typescript": "^5.5.0",
+    "typescript": "^5.5.4",
     "vitest": "^2.0.0"
   },
   "workspaces": [

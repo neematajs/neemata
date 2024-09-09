@@ -7,7 +7,7 @@ import { injectables } from './common.ts'
 import type { Connection } from './connection.ts'
 import type { Container } from './container.ts'
 import type { Logger } from './logger.ts'
-import type { AnyProcedure, MiddlewareLike } from './procedure.ts'
+import type { AnyBaseProcedure, MiddlewareLike } from './procedure.ts'
 import type { Registry } from './registry.ts'
 import type { AnyService } from './service.ts'
 import { SubscriptionResponse } from './subscription.ts'
@@ -17,7 +17,7 @@ import { withTimeout } from './utils/functions.ts'
 export type ApiCallOptions = {
   connection: Connection
   service: AnyService
-  procedure: AnyProcedure
+  procedure: AnyBaseProcedure
   container: Container
   payload: any
   signal: AbortSignal
@@ -47,9 +47,8 @@ export class Api {
   }
 
   async call(callOptions: ApiCallOptions) {
-    const { payload, container, connection, signal } = callOptions
+    const { payload, container, signal } = callOptions
 
-    container.provide(injectables.connection, connection)
     container.provide(injectables.callSignal, signal)
 
     try {
@@ -156,6 +155,7 @@ export class Api {
         }
       }
     }
+
     if (error instanceof ApiError) return error
 
     const logError = new Error('Unhandled error', { cause: error })
@@ -163,7 +163,7 @@ export class Api {
     return new ApiError(ErrorCode.InternalServerError, 'Internal Server Error')
   }
 
-  private handleInput(procedure: AnyProcedure, payload: any) {
+  private handleInput(procedure: AnyBaseProcedure, payload: any) {
     if (procedure.contract.input instanceof NeverType === false) {
       const result = this.handleSchema(
         procedure.contract.input,
@@ -181,7 +181,7 @@ export class Api {
     }
   }
 
-  private handleOutput(procedure: AnyProcedure, response: any) {
+  private handleOutput(procedure: AnyBaseProcedure, response: any) {
     if (procedure.contract.type === 'neemata:subscription') {
       if (response instanceof SubscriptionResponse === false) {
         throw new Error(
