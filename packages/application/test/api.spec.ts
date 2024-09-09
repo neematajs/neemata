@@ -29,7 +29,6 @@ describe.sequential('Api', () => {
   let container: Container
   let connection: Connection
   let api: Api
-  const connectionData = {}
 
   const payload = { test: 'test' }
   const call = (
@@ -44,7 +43,6 @@ describe.sequential('Api', () => {
         connection,
         payload,
         signal: new AbortController().signal,
-        connectionData,
         ...options,
       })
       .finally(() => container.dispose())

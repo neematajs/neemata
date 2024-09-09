@@ -16,7 +16,6 @@ import { withTimeout } from './utils/functions.ts'
 
 export type ApiCallOptions = {
   connection: Connection
-  connectionData: any
   service: AnyService
   procedure: AnyBaseProcedure
   container: Container
@@ -48,11 +47,8 @@ export class Api {
   }
 
   async call(callOptions: ApiCallOptions) {
-    const { payload, container, connection, connectionData, signal } =
-      callOptions
+    const { payload, container, signal } = callOptions
 
-    container.provide(injectables.connection, connection)
-    container.provide(injectables.connectionData, connectionData)
     container.provide(injectables.callSignal, signal)
 
     try {
