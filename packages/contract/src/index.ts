@@ -1,4 +1,3 @@
-import { t as baseT } from '@nmtjs/type'
 import { EventContract, type TEventContract } from './schemas/event.ts'
 
 import {
@@ -8,6 +7,7 @@ import {
 } from './schemas/procedure.ts'
 import { ServiceContract, type TServiceContract } from './schemas/service.ts'
 import {
+  type SubcriptionOptions,
   SubscriptionContract,
   type TSubscriptionContract,
 } from './schemas/subscription.ts'
@@ -19,6 +19,7 @@ export type {
   TBaseProcedureContract,
   TServiceContract,
   TSubscriptionContract,
+  SubcriptionOptions,
 }
 
 export namespace c {
