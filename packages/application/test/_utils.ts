@@ -130,9 +130,11 @@ export const TestServiceContract = c.service(
     testProcedure: c.procedure(t.any(), t.any()),
     testUptream: c.procedure(t.object({ test: c.blob() }), t.any()),
     testDownstream: c.procedure(t.any(), t.object({ test: c.blob() })),
-    testSubscription: c.subscription(t.any(), t.any(), {
-      testEvent: c.event(t.string()),
-    })<{ testOption: string }>(),
+    testSubscription: c
+      .subscription(t.any(), t.any(), {
+        testEvent: c.event(t.string()),
+      })
+      .$withOptions<{ testOption: string }>(),
   },
   {
     testEvent: c.event(t.string()),

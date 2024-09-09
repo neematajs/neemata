@@ -46,6 +46,11 @@ export type ProviderKey = typeof ProviderKey
 export const ProcedureKey: unique symbol = Symbol('ProcedureKey')
 export type ProcedureKey = typeof ProcedureKey
 
+export const ProcedureSubscriptionKey: unique symbol = Symbol(
+  'ProcedureSubscriptionKey',
+)
+export type ProcedureSubscriptionKey = typeof ProcedureSubscriptionKey
+
 export const ProcedureMetadataKey: unique symbol = Symbol(
   'ProcedureMetadataKey',
 )
@@ -56,3 +61,8 @@ export type ServiceKey = typeof ServiceKey
 
 export const TaskKey: unique symbol = Symbol('TaskKey')
 export type TaskKey = typeof TaskKey
+
+export const SubscriptionResponseKey: unique symbol = Symbol(
+  'SubscriptionResponseKey',
+)
+export type SubscriptionResponseKey = typeof SubscriptionResponseKey
