@@ -1,9 +1,9 @@
 import type { TLiteralValue } from '@sinclair/typebox'
 import { ArrayType } from './types/array.ts'
-import type { BaseType, staticType } from './types/base.ts'
+import type { BaseType } from './types/base.ts'
 import { BooleanType } from './types/boolean.ts'
 import { CustomType } from './types/custom.ts'
-import { DateTimeType, DateType } from './types/datetime.ts'
+import { DateType } from './types/datetime.ts'
 import { EnumType, NativeEnumType } from './types/enum.ts'
 import { LiteralType } from './types/literal.ts'
 import { IntegerType, NumberType } from './types/number.ts'
@@ -11,6 +11,7 @@ import { ObjectType } from './types/object.ts'
 import { StringType } from './types/string.ts'
 import { IntersactionType, UnionType } from './types/union.ts'
 
+import type { typeStatic } from './constants.ts'
 // register ajv formats
 import { register } from './formats.ts'
 import { AnyType } from './types/any.ts'
@@ -29,7 +30,6 @@ export {
   ArrayType,
   BooleanType,
   CustomType,
-  DateTimeType,
   DateType,
   EnumType,
   LiteralType,
@@ -45,8 +45,8 @@ export {
 
 export namespace t {
   export namespace infer {
-    export type decoded<T extends BaseType> = T[staticType]['decoded']
-    export type encoded<T extends BaseType> = T[staticType]['encoded']
+    export type decoded<T extends BaseType> = T[typeStatic]['decoded']
+    export type encoded<T extends BaseType> = T[typeStatic]['encoded']
   }
   export const never = () => new NeverType()
   export const boolean = () => new BooleanType()
@@ -60,7 +60,6 @@ export namespace t {
   export const arrayEnum = <T extends (string | number)[]>(enumLike: [...T]) =>
     new EnumType(enumLike)
   export const date = () => new DateType()
-  export const datetime = () => new DateTimeType()
   export const array = <T extends BaseType>(element: T) =>
     new ArrayType(element)
   export const object = <T extends Record<string, BaseType>>(properties: T) =>
