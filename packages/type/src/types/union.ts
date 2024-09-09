@@ -1,13 +1,6 @@
-import {
-  type SchemaOptions,
-  type TIntersect,
-  type TUnion,
-  Type,
-  // type UnionToTuple,
-} from '@sinclair/typebox'
-import type { typeStatic } from '../constants.ts'
+import { type TIntersect, type TUnion, Type } from '@sinclair/typebox'
 import type { UnionToTuple } from '../utils.ts'
-import { BaseType, getTypeSchema } from './base.ts'
+import { BaseType, typeFinalSchema } from './base.ts'
 
 export class UnionType<
   T extends [BaseType, BaseType, ...BaseType[]] = [
@@ -17,64 +10,33 @@ export class UnionType<
   ],
   N extends boolean = false,
   O extends boolean = false,
-  D extends boolean = false,
-> extends BaseType<
-  //@ts-expect-error
-  TUnion<UnionToTuple<T[number][typeStatic]['schema']>>,
-  N,
-  O,
-  D
-> {
+  // @ts-expect-error
+> extends BaseType<TUnion<UnionToTuple<T[number][typeFinal]>>, N, O> {
   constructor(
     readonly types: T,
-    options: SchemaOptions = {},
-    isNullable: N = false as N,
-    isOptional: O = false as O,
-    hasDefault: D = false as D,
+    nullable: N = false as N,
+    optional: O = false as O,
   ) {
-    super(options, isNullable, isOptional, hasDefault)
-  }
-
-  protected _constructSchema(
-    options: SchemaOptions,
-    //@ts-expect-error
-  ): TUnion<UnionToTuple<T[number][typeStatic]['schema']>> {
-    return Type.Union(this.types.map(getTypeSchema), options) as any
+    super(
+      Type.Union(types.map((t) => t[typeFinalSchema])) as any,
+      nullable,
+      optional,
+    )
   }
 
   nullable() {
-    return new UnionType(this.types, ...this._with({ isNullable: true }))
+    const [_, ...args] = this._nullable()
+    return new UnionType(this.types, ...args)
   }
 
   optional() {
-    return new UnionType(this.types, ...this._with({ isOptional: true }))
+    const [_, ...args] = this._optional()
+    return new UnionType(this.types, ...args)
   }
 
   nullish() {
-    return new UnionType(
-      this.types,
-      ...this._with({ isNullable: true, isOptional: true }),
-    )
-  }
-
-  default(value: this[typeStatic]['encoded']) {
-    return new UnionType(
-      this.types,
-      ...this._with({ options: { default: value }, hasDefault: true }),
-    )
-  }
-
-  description(description: string) {
-    return new UnionType(
-      this.types,
-      ...this._with({ options: { description } }),
-    )
-  }
-
-  examples(
-    ...examples: [this[typeStatic]['encoded'], ...this[typeStatic]['encoded'][]]
-  ) {
-    return new UnionType(this.types, ...this._with({ options: { examples } }))
+    const [_, ...args] = this._nullish()
+    return new UnionType(this.types, ...args)
   }
 }
 
@@ -86,66 +48,32 @@ export class IntersactionType<
   ],
   N extends boolean = false,
   O extends boolean = false,
-  D extends boolean = false,
-> extends BaseType<
   // @ts-expect-error
-  TIntersect<UnionToTuple<T[number][typeStatic]['schema']>>,
-  N,
-  O,
-  D
-> {
+> extends BaseType<TIntersect<UnionToTuple<T[number][typeFinal]>>, N, O> {
   constructor(
     readonly types: T,
-    options: SchemaOptions = {},
-    isNullable: N = false as N,
-    isOptional: O = false as O,
-    hasDefault: D = false as D,
+    nullable: N = false as N,
+    optional: O = false as O,
   ) {
-    super(options, isNullable, isOptional, hasDefault)
-  }
-
-  protected _constructSchema(
-    options: SchemaOptions,
-    // @ts-expect-error
-  ): TIntersect<UnionToTuple<T[number][typeStatic]['schema']>> {
-    return Type.Intersect(this.types.map(getTypeSchema), options) as any
+    super(
+      Type.Intersect(types.map((t) => t[typeFinalSchema])) as any,
+      nullable,
+      optional,
+    )
   }
 
   nullable() {
-    return new IntersactionType(this.types, ...this._with({ isNullable: true }))
+    const [_, ...args] = this._nullable()
+    return new IntersactionType(this.types, ...args)
   }
 
   optional() {
-    return new IntersactionType(this.types, ...this._with({ isOptional: true }))
+    const [_, ...args] = this._optional()
+    return new IntersactionType(this.types, ...args)
   }
 
   nullish() {
-    return new IntersactionType(
-      this.types,
-      ...this._with({ isNullable: true, isOptional: true }),
-    )
-  }
-
-  default(value: this[typeStatic]['encoded']) {
-    return new IntersactionType(
-      this.types,
-      ...this._with({ options: { default: value }, hasDefault: true }),
-    )
-  }
-
-  description(description: string) {
-    return new IntersactionType(
-      this.types,
-      ...this._with({ options: { description } }),
-    )
-  }
-
-  examples(
-    ...values: [this[typeStatic]['encoded'], ...this[typeStatic]['encoded'][]]
-  ) {
-    return new IntersactionType(
-      this.types,
-      ...this._with({ options: { examples: values } }),
-    )
+    const [_, ...args] = this._nullish()
+    return new IntersactionType(this.types, ...args)
   }
 }

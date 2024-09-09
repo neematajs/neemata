@@ -1,75 +1,67 @@
-import { type StringOptions, type TString, Type } from '@sinclair/typebox'
+import { type TString, Type } from '@sinclair/typebox'
 import { BaseType } from './base.ts'
 
 export class StringType<
   N extends boolean = false,
   O extends boolean = false,
-  D extends boolean = false,
-> extends BaseType<TString, N, O, D, StringOptions> {
+> extends BaseType<TString, N, O> {
   constructor(
-    options: StringOptions = {},
-    isNullable: N = false as N,
-    isOptional: O = false as O,
-    hasDefault: D = false as D,
+    schema = Type.String(),
+    nullable: N = false as N,
+    optional: O = false as O,
   ) {
-    super(options, isNullable, isOptional, hasDefault)
-  }
-
-  protected _constructSchema(options: StringOptions): TString {
-    return Type.String(options)
+    super(schema, nullable, optional)
   }
 
   nullable() {
-    return new StringType(...this._with({ isNullable: true }))
+    return new StringType(...this._nullable())
   }
 
   optional() {
-    return new StringType(...this._with({ isOptional: true }))
+    return new StringType(...this._optional())
   }
 
   nullish() {
-    return new StringType(...this._with({ isNullable: true, isOptional: true }))
-  }
-
-  default(value: string) {
-    return new StringType(
-      ...this._with({ options: { default: value }, hasDefault: true }),
-    )
-  }
-
-  description(description: string) {
-    return new StringType(...this._with({ options: { description } }))
-  }
-
-  examples(...examples: string[]) {
-    return new StringType(...this._with({ options: { examples } }))
+    return new StringType(...this._nullish())
   }
 
   format(format: TString['format']) {
-    return new StringType(...this._with({ options: { format } }))
+    return new StringType(
+      {
+        ...this._schema,
+        format,
+      },
+      ...this._isNullableOptional,
+    )
   }
 
   max(value: number) {
     return new StringType(
-      ...this._with({
-        options: { maxLength: value },
-      }),
+      {
+        ...this._schema,
+        maxLength: value,
+      },
+      ...this._isNullableOptional,
     )
   }
 
   min(value: number) {
     return new StringType(
-      ...this._with({
-        options: { minLength: value },
-      }),
+      {
+        ...this._schema,
+        minLength: value,
+      },
+      ...this._isNullableOptional,
     )
   }
 
   pattern(pattern: string) {
     return new StringType(
-      ...this._with({
-        options: { pattern },
-      }),
+      {
+        ...this._schema,
+        pattern,
+      },
+      ...this._isNullableOptional,
     )
   }
 

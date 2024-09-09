@@ -32,7 +32,7 @@ export type ApplicationOptions = {
 
 export class Application {
   readonly api: Api
-  readonly taskRunner: TaskRunner
+  readonly tasks: TaskRunner
   readonly logger: Logger
   readonly registry: Registry
   readonly container: Container
@@ -65,7 +65,7 @@ export class Application {
     this.container = container.createScope(Scope.Global)
 
     this.api = new Api(this, this.options.api)
-    this.taskRunner = new TaskRunner(this, this.options.tasks)
+    this.tasks = new TaskRunner(this, this.options.tasks)
 
     this.use(basicSubManagerPlugin)
   }
@@ -110,12 +110,12 @@ export class Application {
   }
 
   execute: ExecuteFn = (task, ...args: any[]) => {
-    return this.taskRunner.execute(task, ...args)
+    return this.tasks.execute(task, ...args)
   }
 
-  use<T extends Plugin<void, any>>(
+  use<T extends Plugin<any>>(
     plugin: T,
-    ...args: T extends Plugin<any, infer O>
+    ...args: T extends Plugin<infer O>
       ? null extends O
         ? []
         : [options: O]
@@ -151,7 +151,7 @@ export class Application {
   }
 
   private initializeEssential() {
-    const taskCommand = this.taskRunner.command.bind(this.taskRunner)
+    const taskCommand = this.tasks.command.bind(this.tasks)
     this.registry.registerCommand(APP_COMMAND, 'task', (arg) =>
       taskCommand(arg).then(({ error }) => {
         if (error) this.logger.error(error)
@@ -164,14 +164,16 @@ export class Application {
 
   private async initializePlugins() {
     for (const [plugin, options] of this.plugins.entries()) {
-      const context = createPluginContext(this)
+      const context = createExtensionContext(this)
       context.logger.setBindings({ $group: plugin.name })
       await plugin.init(context, options)
     }
   }
 }
 
-export const createPluginContext = (app: Application): ApplicationContext => {
+export const createExtensionContext = (
+  app: Application,
+): ApplicationContext => {
   const logger = app.logger.child({})
 
   const addConnection = (options: ConnectionOptions) => {

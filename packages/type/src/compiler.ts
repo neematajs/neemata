@@ -3,7 +3,7 @@ import {
   type ValueErrorIterator,
 } from '@sinclair/typebox/compiler'
 import { Value } from '@sinclair/typebox/value'
-import { type BaseType, getTypeSchema } from './types/base.ts'
+import { type BaseType, typeFinalSchema } from './types/base.ts'
 
 export type Compiled = {
   check: (val: unknown) => boolean
@@ -19,7 +19,7 @@ export type Compiled = {
 }
 
 const compileType = (type: BaseType) => {
-  const schema = getTypeSchema(type)
+  const schema = type[typeFinalSchema]
   const compiled = TypeCompiler.Compile(schema)
   const prepare = (value: any) => {
     for (const fn of [Value.Clean, Value.Default]) {

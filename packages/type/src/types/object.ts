@@ -1,97 +1,55 @@
-import {
-  type ObjectOptions,
-  type StaticEncode,
-  type TObject,
-  Type,
-} from '@sinclair/typebox'
-import type { typeStatic } from '../constants.ts'
+import { type TObject, Type } from '@sinclair/typebox'
 import type { UnionToTupleString } from '../utils.ts'
-import { BaseType, getTypeSchema } from './base.ts'
+import { BaseType, typeFinalSchema } from './base.ts'
 import { EnumType } from './enum.ts'
 
 export class ObjectType<
   T extends Record<string, BaseType> = Record<string, BaseType>,
   N extends boolean = false,
   O extends boolean = false,
-  D extends boolean = false,
-> extends BaseType<
-  TObject<{ [K in keyof T]: T[K][typeStatic]['schema'] }>,
-  N,
-  O,
-  D
-> {
+> extends BaseType<TObject<{ [K in keyof T]: T[K][typeFinalSchema] }>, N, O> {
   constructor(
-    protected readonly properties: T = {} as T,
-    options: ObjectOptions = {},
-    isNullable: N = false as N,
-    isOptional: O = false as O,
-    hasDefault: D = false as D,
+    readonly properties: T = {} as T,
+    nullable: N = false as N,
+    optional: O = false as O,
   ) {
-    super(options, isNullable, isOptional, hasDefault, properties)
-  }
-
-  protected _constructSchema(
-    options: ObjectOptions,
-    properties: T,
-  ): TObject<{ [K in keyof T]: T[K][typeStatic]['schema'] }> {
-    const schemaProperties = {} as {
-      [K in keyof T]: T[K][typeStatic]['schema']
-    }
-
-    for (const [key, value] of Object.entries(properties)) {
-      // @ts-expect-error
-      schemaProperties[key] = getTypeSchema(value)
-    }
-    return Type.Object(schemaProperties, options)
+    const schemaProperties = Object.fromEntries(
+      Object.entries(properties).map(([key, value]) => [
+        key,
+        value[typeFinalSchema],
+      ]),
+    )
+    super(
+      Type.Object(
+        schemaProperties as { [K in keyof T]: T[K][typeFinalSchema] },
+      ),
+      nullable,
+      optional,
+    )
   }
 
   nullable() {
-    return new ObjectType(this.properties, ...this._with({ isNullable: true }))
+    const [_, ...args] = this._nullable()
+    return new ObjectType(this.properties, ...args)
   }
 
   optional() {
-    return new ObjectType(this.properties, ...this._with({ isOptional: true }))
+    const [_, ...args] = this._optional()
+    return new ObjectType(this.properties, ...args)
   }
 
   nullish() {
-    return new ObjectType(
-      this.properties,
-      ...this._with({ isNullable: true, isOptional: true }),
-    )
-  }
-
-  default(value: this[typeStatic]['encoded']) {
-    return new ObjectType(
-      this.properties,
-      ...this._with({ options: { default: value }, hasDefault: true }),
-    )
-  }
-
-  description(description: string) {
-    return new ObjectType(
-      this.properties,
-      ...this._with({ options: { description } }),
-    )
-  }
-
-  examples(
-    ...examples: [this[typeStatic]['encoded'], ...this[typeStatic]['encoded'][]]
-  ) {
-    return new ObjectType(
-      this.properties,
-      ...this._with({ options: { examples } }),
-    )
+    const [_, ...args] = this._nullish()
+    return new ObjectType(this.properties, ...args)
   }
 
   pick<P extends { [K in keyof T]?: true }>(pick: P) {
     const properties = Object.fromEntries(
       Object.entries(this.properties).filter(([key]) => pick[key]),
     )
-    const [_, ...args] = this._with()
     return new ObjectType(
       properties as Pick<T, Extract<keyof P, keyof T>>,
-      {},
-      ...args,
+      ...this._isNullableOptional,
     )
   }
 
@@ -99,37 +57,24 @@ export class ObjectType<
     const properties = Object.fromEntries(
       Object.entries(this.properties).filter(([key]) => !omit[key]),
     )
-    const [_, ...args] = this._with()
     return new ObjectType(
       properties as Omit<T, Extract<keyof P, keyof T>>,
-      {},
-      ...args,
+      ...this._isNullableOptional,
     )
   }
 
   extend<P extends Record<string, BaseType>>(properties: P) {
-    const [_, ...args] = this._with()
-    return new ObjectType({ ...this.properties, ...properties }, {}, ...args)
-  }
-
-  merge<T extends ObjectType>(object: T) {
-    const [_, ...args] = this._with()
     return new ObjectType(
-      { ...this.properties, ...object.properties },
-      {},
-      ...args,
+      { ...this.properties, ...properties },
+      ...this._isNullableOptional,
     )
   }
 
-  partial() {
-    const properties: { [K in keyof T]: ReturnType<T[K]['optional']> } =
-      {} as any
-    for (const [key, value] of Object.entries(this.properties)) {
-      // @ts-expect-error
-      properties[key] = value.optional()
-    }
-    const [_, ...args] = this._with()
-    return new ObjectType(properties, {}, ...args)
+  merge<T extends ObjectType>(object: T) {
+    return new ObjectType(
+      { ...this.properties, ...object.properties },
+      ...this._isNullableOptional,
+    )
   }
 
   keyof(): EnumType<UnionToTupleString<keyof T>> {

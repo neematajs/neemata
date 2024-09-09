@@ -6,12 +6,12 @@ import { type TEventContract, type TServiceContract, c } from '@nmtjs/contract'
 import type { BaseType } from '@nmtjs/type'
 import { Hook, ProcedureKey, ServiceKey } from './constants.ts'
 import { Hooks } from './hooks.ts'
-import type { AnyBaseProcedure, AnyGuard, AnyMiddleware } from './procedure.ts'
+import type { AnyGuard, AnyMiddleware, AnyProcedure } from './procedure.ts'
 import type { Callback } from './types.ts'
 
 export interface Service<Contract extends TServiceContract = TServiceContract> {
   contract: Contract
-  procedures: Map<string, AnyBaseProcedure>
+  procedures: Map<string, AnyProcedure>
   guards: Set<AnyGuard>
   middlewares: Set<AnyMiddleware>
   hooks: Hooks
@@ -25,7 +25,7 @@ export function createContractService<
 >(
   contract: Contract,
   params: {
-    procedures?: Record<string, AnyBaseProcedure>
+    procedures?: Record<string, AnyProcedure>
     guards?: AnyGuard[]
     middlewares?: AnyMiddleware[]
     hooks?: Record<string, Callback[]>
@@ -99,7 +99,7 @@ const createAutoLoader =
 export function createService<
   Name extends string,
   Transports extends Record<string, true>,
-  Procedures extends Record<string, AnyBaseProcedure> = {},
+  Procedures extends Record<string, AnyProcedure> = {},
   Events extends Record<string, BaseType> = {},
 >(params: {
   name: Name
@@ -130,7 +130,7 @@ export function createService<
       procedure.contract,
     ]),
   ) as {
-    [K in keyof Procedures]: Procedures[K] extends AnyBaseProcedure
+    [K in keyof Procedures]: Procedures[K] extends AnyProcedure
       ? Procedures[K]['contract']
       : never
   }

@@ -8,14 +8,14 @@ import type { EventManager } from './events.ts'
 import type { Format } from './format.ts'
 import type { Hooks } from './hooks.ts'
 import type { Logger } from './logger.ts'
-import type { AnyBaseProcedure } from './procedure.ts'
+import type { AnyProcedure } from './procedure.ts'
 import type { Registry } from './registry.ts'
 import type { AnyService } from './service.ts'
 import type { ServerUpStream } from './stream.ts'
 import type { AnyTask, Task, TaskExecution } from './task.ts'
 
 export type ClassConstructor<T> = new (...args: any[]) => T
-export type Callback<T extends any[] = any[]> = (...args: T) => any
+export type Callback = (...args: any[]) => any
 export type OmitFirstItem<T extends any[]> = T extends [any, ...infer U]
   ? U
   : []
@@ -65,7 +65,7 @@ export interface ApplicationContext {
 export type ExecuteContext = Readonly<{
   connection: Connection
   container: Container
-  procedure: AnyBaseProcedure
+  procedure: AnyProcedure
   service: AnyService
 }>
 
@@ -99,23 +99,19 @@ export type Merge<
 
 export type OutputType<T> = T extends any[]
   ? Array<OutputType<T[number]>>
-  : T extends Date
-    ? T
-    : T extends ApiBlobInterface
-      ? ServerUpStream
-      : T extends object
-        ? { [K in keyof T]: OutputType<T[K]> }
-        : T
+  : T extends ApiBlobInterface
+    ? ApiBlob
+    : T extends object
+      ? { [K in keyof T]: OutputType<T[K]> }
+      : T
 
 export type InputType<T> = T extends any[]
   ? Array<InputType<T[number]>>
-  : T extends Date
-    ? T
-    : T extends ApiBlobInterface
-      ? ServerUpStream
-      : T extends object
-        ? { [K in keyof T]: InputType<T[K]> }
-        : T
+  : T extends ApiBlobInterface
+    ? ServerUpStream
+    : T extends object
+      ? { [K in keyof T]: InputType<T[K]> }
+      : T
 
 /**
  * Slightly modified version of https://github.com/samchon/typia Primitive type. (TODO: make a PR maybe?)
@@ -177,11 +173,11 @@ type PrimitiveTuple<T extends readonly any[]> = T extends []
           ? [JsonPrimitiveMain<F, true>?, ...PrimitiveTuple<Rest>]
           : []
 
-type ValueOf<Instance> = IsValueOf<Instance, boolean> extends true
+type ValueOf<Instance> = IsValueOf<Instance, Boolean> extends true
   ? boolean
-  : IsValueOf<Instance, number> extends true
+  : IsValueOf<Instance, Number> extends true
     ? number
-    : IsValueOf<Instance, string> extends true
+    : IsValueOf<Instance, String> extends true
       ? string
       : Instance
 
