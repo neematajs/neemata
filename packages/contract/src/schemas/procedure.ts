@@ -45,8 +45,8 @@ export const ProcedureContract = <
   output: Output,
   timeout?: number,
   schemaOptions: ContractSchemaOptions = {} as ContractSchemaOptions,
-): TProcedureContract<Input, Output> => {
-  return {
+) => {
+  return createSchema<TProcedureContract<Input, Output>>({
     ...schemaOptions,
     type: 'neemata:procedure',
     input,
@@ -55,5 +55,5 @@ export const ProcedureContract = <
     name: undefined,
     serviceName: undefined,
     transports: undefined,
-  }
+  })
 }

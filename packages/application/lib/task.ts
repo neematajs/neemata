@@ -8,8 +8,8 @@ import type {
   DependencyContext,
 } from './container.ts'
 import type { Registry } from './registry.ts'
-import type { Async } from './types.ts'
-import { createFuture, defer, noop, onAbort } from './utils/functions.ts'
+import type { Async, OmitFirstItem } from './types.ts'
+import { createFuture, defer, merge, noop, onAbort } from './utils/functions.ts'
 
 export type TaskExecution<Res = any> = PromiseLike<
   { result: Res; error?: never } | { result?: never; error: any }

@@ -1,4 +1,4 @@
-import { t as baseT } from './index.ts'
+import type { t } from './index.ts'
 import {
   DurationType,
   PlainDateTimeType,
@@ -9,7 +9,7 @@ import {
   ZonedDateTimeType,
 } from './types/temporal.ts'
 
-function extend<T extends typeof baseT>(value: T) {
+export function extend<T extends typeof t>(value: T) {
   return Object.assign({}, value, {
     temporal: {
       plainDate: () => new PlainDateType(),
@@ -22,8 +22,6 @@ function extend<T extends typeof baseT>(value: T) {
     },
   })
 }
-
-export const t = extend(baseT)
 
 export {
   DurationType,
