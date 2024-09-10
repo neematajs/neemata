@@ -3,12 +3,12 @@ import { type ContractSchemaOptions, createSchema } from '../utils.ts'
 import type { TEventContract } from './event.ts'
 import type { TBaseProcedureContract } from './procedure.ts'
 
-export type TSubcriptionOptions = Record<string, string | number>
+export type SubcriptionOptions = Record<string, string | number>
 
 export interface TSubscriptionContract<
   Input extends BaseType = BaseType,
   Output extends BaseType = BaseType,
-  Options extends TSubcriptionOptions = TSubcriptionOptions,
+  Options extends SubcriptionOptions = SubcriptionOptions,
   Events extends Record<string, TEventContract> = Record<
     string,
     TEventContract
@@ -44,17 +44,19 @@ export const SubscriptionContract = <
   timeout?: number,
   schemaOptions: ContractSchemaOptions = {} as ContractSchemaOptions,
 ) => {
-  return <Options extends TSubcriptionOptions>() =>
-    createSchema<TSubscriptionContract<Input, Output, Options, Events>>({
-      ...schemaOptions,
-      type: 'neemata:subscription',
-      input,
-      output,
-      events,
-      timeout,
-      options: undefined as unknown as Options,
-      name: undefined,
-      serviceName: undefined,
-      transports: undefined,
-    })
+  return {
+    $withOptions: <Options extends SubcriptionOptions>() =>
+      createSchema<TSubscriptionContract<Input, Output, Options, Events>>({
+        ...schemaOptions,
+        type: 'neemata:subscription',
+        input,
+        output,
+        events,
+        timeout,
+        options: undefined as unknown as Options,
+        name: undefined,
+        serviceName: undefined,
+        transports: undefined,
+      }),
+  }
 }

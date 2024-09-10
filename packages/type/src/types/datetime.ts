@@ -1,60 +1,65 @@
-import { type TString, type TTransform, Type } from '@sinclair/typebox'
+import {
+  type SchemaOptions,
+  type StringOptions,
+  type TString,
+  type TTransform,
+  Type,
+} from '@sinclair/typebox'
 import { BaseType } from './base.ts'
+
+const decode = (value: any): Date => new Date(value)
+const encode = (value: Date): any => value.toISOString()
 
 export class DateType<
   N extends boolean = false,
   O extends boolean = false,
-> extends BaseType<TTransform<TString, Date>, N, O> {
+  D extends boolean = false,
+> extends BaseType<TTransform<TString, Date>, N, O, D, StringOptions> {
   constructor(
-    schema: TTransform<TString, Date> = Type.Transform(
-      Type.String({ format: 'date' }),
-    )
-      .Decode((value) => new Date(value))
-      .Encode((value) => value.toJSON()),
-    nullable: N = false as N,
-    optional: O = false as O,
+    options: SchemaOptions = {},
+    isNullable: N = false as N,
+    isOptional: O = false as O,
+    hasDefault: D = false as D,
   ) {
-    super(schema, nullable, optional)
+    super(options, isNullable, isOptional, hasDefault)
+  }
+
+  protected _constructSchema(
+    options: StringOptions,
+  ): TTransform<TString, Date> {
+    return Type.Transform(Type.String({ ...options, format: 'date-time' }))
+      .Decode(decode)
+      .Encode(encode)
   }
 
   nullable() {
-    return new DateType(...this._nullable())
+    return new DateType(...this._with({ isNullable: true }))
   }
 
   optional() {
-    return new DateType(...this._optional())
+    return new DateType(...this._with({ isOptional: true }))
   }
 
   nullish() {
-    return new DateType(...this._nullish())
+    return new DateType(...this._with({ isNullable: true, isOptional: true }))
   }
-}
 
-export class DateTimeType<
-  N extends boolean = false,
-  O extends boolean = false,
-> extends BaseType<TTransform<TString, Date>, N, O> {
-  constructor(
-    schema: TTransform<TString, Date> = Type.Transform(
-      Type.String({ format: 'date-time' }),
+  default(value: Date) {
+    return new DateType(
+      ...this._with({
+        options: { default: encode(value) },
+        hasDefault: true,
+      }),
     )
-      .Decode((value) => new Date(value))
-      .Encode((value) => value.toJSON()),
-    nullable: N = false as N,
-    optional: O = false as O,
-  ) {
-    super(schema, nullable, optional)
   }
 
-  nullable() {
-    return new DateTimeType(...this._nullable())
+  description(value: string) {
+    return new DateType(...this._with({ options: { description: value } }))
   }
 
-  optional() {
-    return new DateTimeType(...this._optional())
-  }
-
-  nullish() {
-    return new DateTimeType(...this._nullish())
+  examples(...values: [Date, ...Date[]]) {
+    return new DateType(
+      ...this._with({ options: { examples: values.map(encode) } }),
+    )
   }
 }

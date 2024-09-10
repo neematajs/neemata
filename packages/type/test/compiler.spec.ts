@@ -4,7 +4,7 @@ import { ValueErrorIterator } from '@sinclair/typebox/errors'
 import { compile } from '../src/compiler.ts'
 import { t } from '../src/index.ts'
 
-describe('Compile', () => {
+describe('Compiler', () => {
   const testSchema = t.object({
     foo: t.string(),
     bar: t.number(),
