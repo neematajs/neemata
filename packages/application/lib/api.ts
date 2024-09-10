@@ -63,6 +63,8 @@ export class Api {
   private async createProcedureHandler(callOptions: ApiCallOptions) {
     const { connection, procedure, container, service } = callOptions
 
+    container.provide(injectables.connection, connection)
+
     const execCtx: ExecuteContext = Object.freeze({
       connection,
       container,
