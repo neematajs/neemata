@@ -17,9 +17,9 @@ const ScopeStrictness = {
   [Scope.Transient]: 3,
 }
 
-export type DependencyOptional = {
+export type DependencyOptional<T extends AnyInjectable = AnyInjectable> = {
   [OptionalDependencyKey]: any
-  injectable: AnyInjectable
+  injectable: T
 }
 
 export type Depedency = DependencyOptional | AnyInjectable
@@ -343,7 +343,7 @@ export function asOptional<T extends AnyInjectable>(injectable: T) {
   return {
     [OptionalDependencyKey]: true,
     injectable,
-  } as const satisfies DependencyOptional
+  } as DependencyOptional<T>
 }
 
 export function createLazyInjectable<T, S extends Scope = Scope.Global>(
@@ -402,5 +402,3 @@ export function createFactoryInjectable<
   injectable.scope = actualScope as unknown as S
   return injectable
 }
-
-export const options = createValueInjectable('asd' as const)
