@@ -123,8 +123,7 @@ jobs:
               repo: context.repo.repo,
               ref: 'refs/tags/${{ env.version_tag }}',
               sha: context.sha
-            })
-            github.rest.repos.createRelease({
+            }).then(() => github.rest.repos.createRelease({
               owner: context.repo.owner,
               repo: context.repo.repo,
               tag_name: '${{ env.version_tag }}',
@@ -132,4 +131,4 @@ jobs:
               draft: false,
               prerelease: ${{ inputs.pre-release }},
               generate_release_notes: true
-            })
+            }))
