@@ -27,7 +27,7 @@ export class ApplicationServer {
 
   constructor(
     readonly options: ApplicationServerOptions,
-    watch = process.execArgv.includes('--watch'),
+    watch = process.env.NEEMATA_WATCH,
   ) {
     this.logger = createLogger(this.options.logging, 'Application Server')
 

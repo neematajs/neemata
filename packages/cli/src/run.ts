@@ -56,8 +56,11 @@ export const run = async (scriptPath: string) => {
   if (watch) {
     const args = process.argv.slice(2).filter((arg) => arg !== '--watch')
     fork(fileURLToPath(scriptPath), args, {
-      execArgv: process.execArgv,
-      env: process.env,
+      execArgv: [...process.execArgv, '--watch'],
+      env: {
+        ...process.env,
+        NEEMATA_WATCH: '1',
+      },
       stdio: 'inherit',
     })
   } else {
