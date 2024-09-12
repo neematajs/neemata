@@ -9,6 +9,7 @@ import {
   $createSubscription,
   createContractSubscription,
 } from './lib/subscription-procedure.ts'
+import { createTask } from './lib/task.ts'
 
 export * from './lib/api.ts'
 export * from './lib/application.ts'
@@ -37,6 +38,7 @@ export namespace n {
   export const value = createValueInjectable
   export const lazy = createLazyInjectable
   export const factory = createFactoryInjectable
+  export const task = createTask
   export const procedure = createContractProcedure
   export const service = createContractService
   export const subscription = createContractSubscription
