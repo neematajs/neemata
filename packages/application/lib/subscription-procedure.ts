@@ -5,9 +5,9 @@ import {
   c,
 } from '@nmtjs/contract'
 import { type BaseType, type CustomType, type NeverType, t } from '@nmtjs/type'
-import type { Dependencies, DependencyContext } from './container.ts'
 
 import { ProcedureSubscriptionKey } from './constants.ts'
+import type { Dependencies, DependencyContext } from './container.ts'
 import {
   type AnyGuard,
   type AnyMiddleware,

@@ -98,7 +98,7 @@ const createAutoLoader =
 
 export function createService<
   Name extends string,
-  Transports extends Record<string, true>,
+  Transports extends { [K in string]: true },
   Procedures extends Record<string, AnyBaseProcedure> = {},
   Events extends Record<string, BaseType> = {},
 >(params: {
@@ -109,30 +109,30 @@ export function createService<
   guards?: AnyGuard[]
   middlewares?: AnyMiddleware[]
   hooks?: Record<string, Callback[]>
-}) {
+}): Service<
+  TServiceContract<
+    Name,
+    Transports,
+    {
+      [K in keyof Procedures]: Procedures[K]['contract']
+    },
+    {
+      [K in keyof Events]: TEventContract<Events[K]>
+    }
+  >
+> {
   const { name, transports, guards, hooks, middlewares } = params
   const procedures = params.procedures ?? ({} as Procedures)
+  const events = params.events ?? ({} as Events)
 
-  // TODO: this completely is unreadable
-  const eventsContracts = Object.fromEntries(
-    Object.entries(params.events ?? ({} as Events)).map(([name, type]) => [
-      name,
-      c.event(type),
-    ]),
-  ) as {
-    [K in keyof Events]: Events[K] extends BaseType
-      ? TEventContract<Events[K]>
-      : never
+  const eventsContracts: any = {}
+  for (const [name, type] of Object.entries(events)) {
+    eventsContracts[name] = c.event(type)
   }
-  const proceduresContracts = Object.fromEntries(
-    Object.entries(procedures ?? {}).map(([name, procedure]) => [
-      name,
-      procedure.contract,
-    ]),
-  ) as {
-    [K in keyof Procedures]: Procedures[K] extends AnyBaseProcedure
-      ? Procedures[K]['contract']
-      : never
+
+  const proceduresContracts: any = {}
+  for (const [name, procedure] of Object.entries(procedures)) {
+    proceduresContracts[name] = procedure.contract
   }
 
   const service = createContractService(

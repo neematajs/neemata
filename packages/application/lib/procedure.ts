@@ -51,8 +51,9 @@ export interface BaseProcedure<
   middlewares: Set<AnyMiddleware>
 }
 
-export type AnyBaseProcedure<Contract extends TBaseProcedureContract = any> =
-  Procedure<Contract, Dependencies>
+export type AnyBaseProcedure<
+  Contract extends TBaseProcedureContract = TBaseProcedureContract,
+> = BaseProcedure<Contract, Dependencies>
 
 export type ProcedureHandlerType<
   Input extends BaseType,

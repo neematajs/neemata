@@ -56,14 +56,14 @@ export class Registry {
 
     const schemas: BaseType[] = []
 
-    for (const procedure of Object.values<
-      TSubscriptionContract | TProcedureContract
-    >(service.contract.procedures)) {
+    for (const procedure of Object.values(service.contract.procedures)) {
       schemas.push(procedure.input)
       schemas.push(procedure.output)
 
       if (procedure.type === 'neemata:subscription') {
-        for (const event of Object.values(procedure.events)) {
+        for (const event of Object.values(
+          (procedure as TSubscriptionContract).events,
+        )) {
           schemas.push(event.payload)
         }
       }

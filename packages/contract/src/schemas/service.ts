@@ -12,7 +12,7 @@ export interface TServiceContract<
   Transports extends { [K in string]?: true } = { [K in string]?: true },
   Procedures extends Record<string, TBaseProcedureContract> = Record<
     string,
-    TProcedureContract | TSubscriptionContract
+    TBaseProcedureContract
   >,
   Events extends Record<string, TEventContract> = Record<
     string,
@@ -76,7 +76,10 @@ export interface TServiceContract<
 export const ServiceContract = <
   Name extends string,
   Transports extends { [key: string]: true },
-  Procedures extends Record<string, TProcedureContract | TSubscriptionContract>,
+  Procedures extends Record<
+    string,
+    TBaseProcedureContract | TProcedureContract | TSubscriptionContract
+  >,
   Events extends Record<string, TEventContract>,
 >(
   name: Name,
@@ -92,7 +95,7 @@ export const ServiceContract = <
     if (procedure.type === 'neemata:subscription') {
       serviceProcedures[procedureName] = {
         ...procedure,
-        events: applyNames(procedure.events, {
+        events: applyNames((procedure as TSubscriptionContract).events, {
           serviceName: name,
           subscriptionName: procedureName,
         }),
@@ -114,23 +117,3 @@ export const ServiceContract = <
     timeout,
   })
 }
-
-type A<T extends boolean> = {
-  // type: 'boolean'
-  a: T
-}
-type B<T extends number> = {
-  // type: 'number'
-  b: T
-}
-type T = Record<string, A<boolean> | B<number>>
-
-type TT<TTT extends T> = {
-  [K in keyof TTT]: TTT[K] extends A<infer T>
-    ? T
-    : TTT[K] extends B<infer T>
-      ? T
-      : never
-}
-
-type TTT = TT<{ r: A<false> }>

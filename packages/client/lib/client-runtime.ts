@@ -149,7 +149,7 @@ export const compileContract = <T extends TServiceContract>(
   for (const procedure of Object.values(contract.procedures)) {
     const { input, output } = procedure
     if (procedure.type === 'neemata:subscription') {
-      const { events } = procedure
+      const { events } = procedure as TSubscriptionContract
       for (const event of Object.values(events) as TEventContract[]) {
         compiled.set(event.payload, compile(event.payload))
       }
