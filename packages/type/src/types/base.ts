@@ -37,13 +37,17 @@ export abstract class BaseType<
   ): Schema
 
   [typeStatic]!: {
-    schema: Resolve<Schema, IsNullable, IsOptional>
+    schema: Resolve<
+      Schema,
+      IsNullable,
+      HasDefault extends true ? false : IsOptional
+    >
     isOptional: IsOptional
     isNullable: IsNullable
     hasDefault: HasDefault
     encoded: StaticEncode<Resolve<Schema, IsNullable, IsOptional>>
     decoded: StaticDecode<
-      Resolve<Schema, IsNullable, HasDefault extends false ? false : IsOptional>
+      Resolve<Schema, IsNullable, HasDefault extends true ? false : IsOptional>
     >
   }
 
