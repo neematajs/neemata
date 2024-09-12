@@ -6,7 +6,7 @@ import { CustomType } from './types/custom.ts'
 import { DateType } from './types/datetime.ts'
 import { EnumType, NativeEnumType } from './types/enum.ts'
 import { LiteralType } from './types/literal.ts'
-import { IntegerType, NumberType } from './types/number.ts'
+import { BigIntType, IntegerType, NumberType } from './types/number.ts'
 import { ObjectType } from './types/object.ts'
 import { StringType } from './types/string.ts'
 import { IntersactionType, UnionType } from './types/union.ts'
@@ -53,6 +53,7 @@ export namespace t {
   export const string = () => new StringType()
   export const number = () => new NumberType()
   export const integer = () => new IntegerType()
+  export const bitint = () => new BigIntType()
   export const literal = <T extends TLiteralValue>(value: T) =>
     new LiteralType(value)
   export const nativeEnum = <T extends { [K in string]: K }>(enumLike: T) =>

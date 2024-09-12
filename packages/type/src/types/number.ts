@@ -1,9 +1,13 @@
 import {
   type IntegerOptions,
   type NumberOptions,
+  type StringOptions,
   type TInteger,
   type TNumber,
+  type TString,
+  type TTransform,
   Type,
+  TypeBoxError,
 } from '@sinclair/typebox'
 import { BaseType } from './base.ts'
 
@@ -153,6 +157,95 @@ export class IntegerType<
         options: {
           minimum: value,
           ...(exclusive ? {} : { exclusiveMinimum: value }),
+        },
+      }),
+    )
+  }
+}
+
+export class BigIntType<
+  N extends boolean = false,
+  O extends boolean = false,
+  D extends boolean = false,
+> extends BaseType<TTransform<TString, bigint>, N, O, D, StringOptions> {
+  constructor(
+    options: StringOptions = {},
+    isNullable: N = false as N,
+    isOptional: O = false as O,
+    hasDefault: D = false as D,
+  ) {
+    super(options, isNullable, isOptional, hasDefault)
+  }
+
+  protected _constructSchema(options: StringOptions) {
+    return Type.Transform(Type.String({ ...options, pattern: '^\\d$' }))
+      .Decode((v: string) => {
+        try {
+          return BigInt(v)
+        } catch (error) {
+          throw new TypeBoxError('Invalid bigint value')
+        }
+      })
+      .Encode(this.encode)
+  }
+
+  protected encode = (value: bigint): string => {
+    return value.toString()
+  }
+
+  nullable() {
+    return new BigIntType(...this._with({ isNullable: true }))
+  }
+
+  optional() {
+    return new BigIntType(...this._with({ isOptional: true }))
+  }
+
+  nullish() {
+    return new BigIntType(...this._with({ isNullable: true, isOptional: true }))
+  }
+
+  default(value: bigint) {
+    return new BigIntType(
+      ...this._with({ options: { default: value }, hasDefault: true }),
+    )
+  }
+
+  description(description: string) {
+    return new BigIntType(...this._with({ options: { description } }))
+  }
+
+  examples(...examples: [bigint, ...bigint[]]) {
+    return new BigIntType(
+      ...this._with({ options: { examples: examples.map(this.encode) } }),
+    )
+  }
+
+  positive() {
+    return this.min(0n, true)
+  }
+
+  negative() {
+    return this.max(0n, true)
+  }
+
+  max(value: bigint, exclusive?: true) {
+    return new BigIntType(
+      ...this._with({
+        options: {
+          maximum: this.encode(value),
+          ...(exclusive ? {} : { exclusiveMaximum: this.encode(value) }),
+        },
+      }),
+    )
+  }
+
+  min(value: bigint, exclusive?: true) {
+    return new BigIntType(
+      ...this._with({
+        options: {
+          minimum: `${value}`,
+          ...(exclusive ? {} : { exclusiveMinimum: `${value}` }),
         },
       }),
     )
