@@ -6,9 +6,9 @@ import { CustomType } from './types/custom.ts'
 import { DateType } from './types/datetime.ts'
 import {
   type AnyEnumType,
-  type AnyNativeEnumType,
+  type AnyObjectEnumType,
   EnumType,
-  NativeEnumType,
+  ObjectEnumType,
 } from './types/enum.ts'
 import { type AnyLiteralType, LiteralType } from './types/literal.ts'
 import { BigIntType, IntegerType, NumberType } from './types/number.ts'
@@ -66,8 +66,8 @@ export namespace t {
   export const bitint = () => new BigIntType()
   export const literal = <T extends TLiteralValue>(value: T) =>
     new LiteralType(value)
-  export const nativeEnum = <T extends { [K in string]: K }>(enumLike: T) =>
-    new NativeEnumType(enumLike)
+  export const objectEnum = <T extends { [K in string]: K }>(enumLike: T) =>
+    new ObjectEnumType(enumLike)
   export const arrayEnum = <T extends (string | number)[]>(enumLike: [...T]) =>
     new EnumType(enumLike)
   export const date = () => new DateType()
@@ -79,7 +79,7 @@ export namespace t {
     K extends
       | AnyLiteralType
       | AnyEnumType
-      | AnyNativeEnumType
+      | AnyObjectEnumType
       | AnyStringType
       | AnyUnionType,
     E extends BaseType,
