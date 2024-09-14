@@ -4,9 +4,9 @@ import { NativeEnum } from '../schemas/native-enum.ts'
 import { type TUnionEnum, UnionEnum } from '../schemas/union-enum.ts'
 import { BaseType } from './base.ts'
 
-export type AnyNativeEnumType<T extends { [K in string]: K } = any> =
-  NativeEnumType<T, boolean, boolean, boolean>
-export class NativeEnumType<
+export type AnyObjectEnumType<T extends { [K in string]: K } = any> =
+  ObjectEnumType<T, boolean, boolean, boolean>
+export class ObjectEnumType<
   T extends { [K in string]: K },
   N extends boolean = false,
   O extends boolean = false,
@@ -27,36 +27,36 @@ export class NativeEnumType<
   }
 
   nullable() {
-    return new NativeEnumType(this.values, ...this._with({ isNullable: true }))
+    return new ObjectEnumType(this.values, ...this._with({ isNullable: true }))
   }
 
   optional() {
-    return new NativeEnumType(this.values, ...this._with({ isOptional: true }))
+    return new ObjectEnumType(this.values, ...this._with({ isOptional: true }))
   }
 
   nullish() {
-    return new NativeEnumType(
+    return new ObjectEnumType(
       this.values,
       ...this._with({ isNullable: true, isOptional: true }),
     )
   }
 
   default(value: keyof T) {
-    return new NativeEnumType(
+    return new ObjectEnumType(
       this.values,
       ...this._with({ options: { default: value }, hasDefault: true }),
     )
   }
 
   description(description: string) {
-    return new NativeEnumType(
+    return new ObjectEnumType(
       this.values,
       ...this._with({ options: { description } }),
     )
   }
 
   examples(...examples: (keyof T)[]) {
-    return new NativeEnumType(
+    return new ObjectEnumType(
       this.values,
       ...this._with({ options: { examples } }),
     )

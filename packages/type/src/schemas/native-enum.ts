@@ -8,7 +8,7 @@ import {
 export const NativeEnumKind = 'NativeEnum'
 export interface TNativeEnum<T extends Record<string, string>> extends TSchema {
   [Kind]: typeof NativeEnumKind
-  static: T[keyof T][]
+  static: T[keyof T]
   enum: T[keyof T][]
 }
 

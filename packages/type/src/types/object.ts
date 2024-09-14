@@ -7,7 +7,7 @@ import {
 import type { typeStatic } from '../constants.ts'
 import type { UnionToTupleString } from '../utils.ts'
 import { BaseType, getTypeSchema } from './base.ts'
-import { type AnyEnumType, type AnyNativeEnumType, EnumType } from './enum.ts'
+import { type AnyEnumType, type AnyObjectEnumType, EnumType } from './enum.ts'
 import type { AnyLiteralType } from './literal.ts'
 import type { AnyStringType } from './string.ts'
 import type { AnyUnionType } from './union.ts'
@@ -144,7 +144,7 @@ export class RecordType<
   K extends
     | AnyLiteralType
     | AnyEnumType
-    | AnyNativeEnumType
+    | AnyObjectEnumType
     | AnyStringType
     | AnyUnionType,
   E extends BaseType,
