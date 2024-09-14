@@ -25,6 +25,11 @@
       "bun": "./src/common.ts",
       "types": "./src/common.ts",
       "default": "./dist/common.js"
+    },
+    "./type": {
+      "bun": "./src/type.ts",
+      "types": "./src/type.ts",
+      "default": "./dist/type.js"
     }
   },
   "dependencies": {
@@ -32,7 +37,8 @@
     "@nmtjs/application": "workspace:*",
     "@nmtjs/server": "workspace:*",
     "@nmtjs/contract": "workspace:*",
-    "@nmtjs/cli": "workspace:*"
+    "@nmtjs/cli": "workspace:*",
+    "@nmtjs/type": "workspace:*"
   },
   "files": [
     "src",
