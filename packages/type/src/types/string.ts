@@ -1,6 +1,7 @@
 import { type StringOptions, type TString, Type } from '@sinclair/typebox'
 import { BaseType } from './base.ts'
 
+export type AnyStringType = StringType<boolean, boolean, boolean>
 export class StringType<
   N extends boolean = false,
   O extends boolean = false,

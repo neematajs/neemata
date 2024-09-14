@@ -4,18 +4,28 @@ import type { BaseType } from './types/base.ts'
 import { BooleanType } from './types/boolean.ts'
 import { CustomType } from './types/custom.ts'
 import { DateType } from './types/datetime.ts'
-import { EnumType, NativeEnumType } from './types/enum.ts'
-import { LiteralType } from './types/literal.ts'
+import {
+  type AnyEnumType,
+  type AnyNativeEnumType,
+  EnumType,
+  NativeEnumType,
+} from './types/enum.ts'
+import { type AnyLiteralType, LiteralType } from './types/literal.ts'
 import { BigIntType, IntegerType, NumberType } from './types/number.ts'
-import { ObjectType } from './types/object.ts'
-import { StringType } from './types/string.ts'
-import { IntersactionType, UnionType } from './types/union.ts'
+import { ObjectType, RecordType } from './types/object.ts'
+import { type AnyStringType, StringType } from './types/string.ts'
+import {
+  type AnyUnionType,
+  IntersactionType,
+  UnionType,
+} from './types/union.ts'
 
 import type { typeStatic } from './constants.ts'
-// register ajv formats
-import { register } from './formats.ts'
 import { AnyType } from './types/any.ts'
 import { NeverType } from './types/never.ts'
+
+// register ajv formats
+import { register } from './formats.ts'
 register()
 
 export * from './schemas/native-enum.ts'
@@ -65,6 +75,18 @@ export namespace t {
     new ArrayType(element)
   export const object = <T extends Record<string, BaseType>>(properties: T) =>
     new ObjectType(properties)
+  export const record = <
+    K extends
+      | AnyLiteralType
+      | AnyEnumType
+      | AnyNativeEnumType
+      | AnyStringType
+      | AnyUnionType,
+    E extends BaseType,
+  >(
+    key: K,
+    value: E,
+  ) => new RecordType(key, value)
   export const any = () => new AnyType()
   export const or = <T extends [BaseType, BaseType, ...BaseType[]]>(
     ...types: T

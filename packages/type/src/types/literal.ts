@@ -1,4 +1,5 @@
 import {
+  Extends,
   type SchemaOptions,
   type TLiteral,
   type TLiteralValue,
@@ -6,8 +7,14 @@ import {
 } from '@sinclair/typebox'
 import { BaseType } from './base.ts'
 
+export type AnyLiteralType<T extends TLiteralValue = any> = LiteralType<
+  T,
+  boolean,
+  boolean,
+  boolean
+>
 export class LiteralType<
-  T extends TLiteralValue = TLiteralValue,
+  T extends TLiteralValue,
   N extends boolean = false,
   O extends boolean = false,
   D extends boolean = false,
