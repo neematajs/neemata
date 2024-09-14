@@ -1,1 +1,1 @@
-export * from '@nmtjs/type'
+export { t } from '@nmtjs/type/temporal'
