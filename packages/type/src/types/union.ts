@@ -3,12 +3,18 @@ import {
   type TIntersect,
   type TUnion,
   Type,
-  // type UnionToTuple,
 } from '@sinclair/typebox'
 import type { typeStatic } from '../constants.ts'
 import type { UnionToTuple } from '../utils.ts'
 import { BaseType, getTypeSchema } from './base.ts'
 
+export type AnyUnionType<
+  T extends [BaseType, BaseType, ...BaseType[]] = [
+    BaseType,
+    BaseType,
+    ...BaseType[],
+  ],
+> = UnionType<T, boolean, boolean, boolean>
 export class UnionType<
   T extends [BaseType, BaseType, ...BaseType[]] = [
     BaseType,

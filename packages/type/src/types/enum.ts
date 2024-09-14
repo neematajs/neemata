@@ -4,8 +4,10 @@ import { NativeEnum } from '../schemas/native-enum.ts'
 import { type TUnionEnum, UnionEnum } from '../schemas/union-enum.ts'
 import { BaseType } from './base.ts'
 
+export type AnyNativeEnumType<T extends { [K in string]: K } = any> =
+  NativeEnumType<T, boolean, boolean, boolean>
 export class NativeEnumType<
-  T extends { [K in string]: K } = { [K in string]: K },
+  T extends { [K in string]: K },
   N extends boolean = false,
   O extends boolean = false,
   D extends boolean = false,
@@ -61,8 +63,9 @@ export class NativeEnumType<
   }
 }
 
+export type AnyEnumType = EnumType<any[], boolean, boolean, boolean>
 export class EnumType<
-  T extends (string | number)[],
+  T extends (string | number)[] = (string | number)[],
   N extends boolean = false,
   O extends boolean = false,
   D extends boolean = false,
