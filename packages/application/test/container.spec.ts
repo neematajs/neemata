@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { injectables } from '../lib/common.ts'
+import { builtin } from '../lib/common.ts'
 import {
   FactoryInjectableKey,
   InjectableKey,
@@ -358,7 +358,7 @@ describe.sequential('Container', () => {
 
   it('should resolve optional dependency', async () => {
     const injectable = createFactoryInjectable({
-      dependencies: { dep: asOptional(injectables.callSignal) },
+      dependencies: { dep: asOptional(builtin.callSignal) },
       factory: noop,
     })
     await expect(container.resolve(injectable)).rejects.toThrow()

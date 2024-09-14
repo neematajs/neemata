@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import test from 'node:test'
 import { t } from '@nmtjs/type'
-import { injectables } from '../lib/common.ts'
+import { builtin } from '../lib/common.ts'
 import { ProcedureKey, ProcedureSubscriptionKey } from '../lib/constants.ts'
 import { createValueInjectable } from '../lib/container.ts'
 import {
@@ -111,8 +111,8 @@ describe('Procedure static', () => {
         testEvent: t.string(),
       },
       dependencies: {
-        eventManager: injectables.eventManager,
-        connection: injectables.connection,
+        eventManager: builtin.eventManager,
+        connection: builtin.connection,
         dep1,
         dep2,
       },

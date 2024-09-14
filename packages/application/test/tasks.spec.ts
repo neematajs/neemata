@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { injectables } from '../lib/common.ts'
+import { builtin } from '../lib/common.ts'
 import { TaskKey } from '../lib/constants.ts'
 import { Container, createValueInjectable } from '../lib/container.ts'
 import { Registry } from '../lib/registry.ts'
@@ -117,7 +117,7 @@ describe.sequential('Tasks', () => {
     const future = createFuture<void>()
     const spy = vi.fn(future.resolve)
     const task = testTask({
-      dependencies: { signal: injectables.taskSignal },
+      dependencies: { signal: builtin.taskSignal },
       handler: ({ signal }) => new Promise(() => onAbort(signal, spy)),
     })
 
@@ -133,7 +133,7 @@ describe.sequential('Tasks', () => {
     const future = createFuture<void>()
     const spy = vi.fn(future.resolve)
     const task = testTask({
-      dependencies: { signal: injectables.taskSignal },
+      dependencies: { signal: builtin.taskSignal },
       handler: ({ signal }) => new Promise(() => onAbort(signal, spy)),
     })
 
