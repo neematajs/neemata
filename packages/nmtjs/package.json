@@ -6,30 +6,10 @@
     "type-check": "tsc --noEmit"
   },
   "exports": {
-    "./application": {
-      "bun": "./src/application.ts",
-      "types": "./src/application.ts",
-      "default": "./dist/application.js"
-    },
-    "./server": {
-      "bun": "./src/server.ts",
-      "types": "./src/server.ts",
-      "default": "./dist/server.js"
-    },
-    "./contract": {
-      "bun": "./src/contract.ts",
-      "types": "./src/contract.ts",
-      "default": "./dist/contract.js"
-    },
-    "./common": {
-      "bun": "./src/common.ts",
-      "types": "./src/common.ts",
-      "default": "./dist/common.js"
-    },
-    "./type": {
-      "bun": "./src/type.ts",
-      "types": "./src/type.ts",
-      "default": "./dist/type.js"
+    ".": {
+      "bun": "./src/index.ts",
+      "types": "./src/index.ts",
+      "default": "./dist/index.js"
     }
   },
   "dependencies": {

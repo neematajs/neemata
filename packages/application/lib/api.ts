@@ -3,7 +3,7 @@ import { type BaseType, NeverType } from '@nmtjs/type'
 import type { Compiled } from '@nmtjs/type/compiler'
 
 import type { ApplicationOptions } from './application.ts'
-import { injectables } from './common.ts'
+import { builtin } from './common.ts'
 import type { Connection } from './connection.ts'
 import type { Container } from './container.ts'
 import type { Logger } from './logger.ts'
@@ -49,7 +49,7 @@ export class Api {
   async call(callOptions: ApiCallOptions) {
     const { payload, container, signal } = callOptions
 
-    container.provide(injectables.callSignal, signal)
+    container.provide(builtin.callSignal, signal)
 
     try {
       this.handleTransport(callOptions)
@@ -63,7 +63,7 @@ export class Api {
   private async createProcedureHandler(callOptions: ApiCallOptions) {
     const { connection, procedure, container, service } = callOptions
 
-    container.provide(injectables.connection, connection)
+    container.provide(builtin.connection, connection)
 
     const execCtx: ExecuteContext = Object.freeze({
       connection,

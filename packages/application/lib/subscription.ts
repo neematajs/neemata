@@ -3,7 +3,7 @@ import { EventEmitter } from 'node:events'
 import type { TSubscriptionContract } from '@nmtjs/contract'
 import type { t } from '@nmtjs/type'
 
-import { injectables } from './common.ts'
+import { builtin } from './common.ts'
 import { WorkerType } from './constants.ts'
 import { createPlugin } from './plugin.ts'
 
@@ -99,7 +99,7 @@ export const basicSubManagerPlugin = createPlugin(
       }
     }
 
-    container.provide(injectables.subManager, {
+    container.provide(builtin.subManager, {
       publish,
       subscribe,
       unsubscribe,

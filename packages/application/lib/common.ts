@@ -20,7 +20,7 @@ const workerType = createLazyInjectable<WorkerType>(Scope.Global)
 const eventManager = createLazyInjectable<EventManager>(Scope.Global)
 const subManager = createLazyInjectable<SubscriptionManager>(Scope.Global)
 
-export const injectables = {
+export const builtin = {
   connection,
   connectionData,
   callSignal,
@@ -31,3 +31,5 @@ export const injectables = {
   subManager,
   workerType,
 }
+
+export const injectables = builtin

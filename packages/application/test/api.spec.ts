@@ -2,7 +2,7 @@ import { ErrorCode } from '@nmtjs/common'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Api, type ApiCallOptions, ApiError } from '../lib/api.ts'
 import type { Application } from '../lib/application.ts'
-import { injectables } from '../lib/common.ts'
+import { builtin } from '../lib/common.ts'
 import type { Connection } from '../lib/connection.ts'
 import { Scope } from '../lib/constants.ts'
 import {
@@ -69,7 +69,7 @@ describe.sequential('Api', () => {
   it('should inject context', async () => {
     const spy = vi.fn()
     const procedure = testProcedure({
-      dependencies: { connection: injectables.connection },
+      dependencies: { connection: builtin.connection },
       handler: spy,
     })
     service = testService({ procedure })
@@ -103,7 +103,7 @@ describe.sequential('Api', () => {
 
   it('should inject connection', async () => {
     const injectable = createFactoryInjectable({
-      dependencies: { connection: injectables.connection },
+      dependencies: { connection: builtin.connection },
       factory: ({ connection }) => connection,
     })
     const procedure = testProcedure({
@@ -120,7 +120,7 @@ describe.sequential('Api', () => {
   it('should inject signal', async () => {
     const signal = new AbortController().signal
     const injectable = createFactoryInjectable({
-      dependencies: { signal: injectables.callSignal },
+      dependencies: { signal: builtin.callSignal },
       factory: ({ signal }) => signal,
     })
     const procedure = testProcedure({

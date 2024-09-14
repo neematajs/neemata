@@ -1,7 +1,7 @@
 import type { TSubscriptionContract } from '@nmtjs/contract'
 import type { t } from '@nmtjs/type'
 
-import { injectables } from './common.ts'
+import { builtin } from './common.ts'
 import type { Connection } from './connection.ts'
 import { Hook } from './constants.ts'
 import type { Container } from './container.ts'
@@ -21,7 +21,7 @@ export class EventManager {
   ) {
     this.registry.registerHook(Hook.AfterInitialize, async () => {
       this.subManager = await this.application.container.resolve(
-        injectables.subManager,
+        builtin.subManager,
       )
     })
   }

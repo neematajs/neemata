@@ -3,8 +3,8 @@ import {
   Hook,
   type Subscription,
   WorkerType,
+  builtin,
   createPlugin,
-  injectables,
   serialize,
 } from '@nmtjs/application'
 import { createBroadcastChannel } from './common.ts'
@@ -76,7 +76,7 @@ export const WTSubManagerPlugin = createPlugin('WTPubManager', async (app) => {
     hooks.add(Hook.OnShutdown, () => bc!.close())
   }
 
-  container.provide(injectables.subManager, {
+  container.provide(builtin.subManager, {
     publish,
     subscribe,
     unsubscribe,

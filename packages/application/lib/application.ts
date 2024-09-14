@@ -1,7 +1,7 @@
 import type { BaseServerFormat } from '@nmtjs/common'
 
 import { Api } from './api.ts'
-import { injectables } from './common.ts'
+import { builtin } from './common.ts'
 import { Connection, type ConnectionOptions } from './connection.ts'
 import { Hook, Scope, WorkerType } from './constants.ts'
 import { Container } from './container.ts'
@@ -55,10 +55,10 @@ export class Application {
     // create unexposed container for internal injectables, which never gets disposed
     const container = new Container(this)
 
-    container.provide(injectables.logger, this.logger)
-    container.provide(injectables.workerType, this.options.type)
-    container.provide(injectables.eventManager, this.eventManager)
-    container.provide(injectables.execute, this.execute.bind(this))
+    container.provide(builtin.logger, this.logger)
+    container.provide(builtin.workerType, this.options.type)
+    container.provide(builtin.eventManager, this.eventManager)
+    container.provide(builtin.execute, this.execute.bind(this))
 
     // create a global container for rest of the application
     // including transports, extensions, etc.
