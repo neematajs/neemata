@@ -102,6 +102,9 @@ importers:
       '@nmtjs/server':
         specifier: workspace:*
         version: link:../server
+      '@nmtjs/type':
+        specifier: workspace:*
+        version: link:../type
 
   packages/server:
     devDependencies:
