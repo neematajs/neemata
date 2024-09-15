@@ -23,12 +23,25 @@ type ClientCallers<Services extends ClientServices> = {
     [P in keyof Services[K]['contract']['procedures']]: (
       ...args: Services[K]['contract']['procedures'][P]['input'] extends NeverType
         ? [options?: ClientCallOptions]
-        : [
-            data: InputType<
-              t.infer.decoded<Services[K]['contract']['procedures'][P]['input']>
-            >,
-            options?: ClientCallOptions,
-          ]
+        : t.infer.staticType<
+              Services[K]['contract']['procedures'][P]['input']
+            >['isOptional'] extends true
+          ? [
+              data?: InputType<
+                t.infer.decoded<
+                  Services[K]['contract']['procedures'][P]['input']
+                >
+              >,
+              options?: ClientCallOptions,
+            ]
+          : [
+              data: InputType<
+                t.infer.decoded<
+                  Services[K]['contract']['procedures'][P]['input']
+                >
+              >,
+              options?: ClientCallOptions,
+            ]
     ) => Promise<
       Services[K]['contract']['procedures'][P] extends TSubscriptionContract
         ? {
