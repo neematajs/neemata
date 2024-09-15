@@ -13,17 +13,20 @@ export class ObjectEnumType<
   D extends boolean = false,
 > extends BaseType<TNativeEnum<T>, N, O, D> {
   constructor(
-    readonly values: T,
+    protected readonly values: T,
     options: SchemaOptions = {},
     isNullable: N = false as N,
     isOptional: O = false as O,
     hasDefault: D = false as D,
   ) {
-    super(options, isNullable, isOptional, hasDefault)
+    super(options, isNullable, isOptional, hasDefault, values)
   }
 
-  protected _constructSchema(options: SchemaOptions): TNativeEnum<T> {
-    return NativeEnum(this.values, options)
+  protected _constructSchema(
+    options: SchemaOptions,
+    values: T,
+  ): TNativeEnum<T> {
+    return NativeEnum(values, options)
   }
 
   nullable() {

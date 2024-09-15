@@ -32,20 +32,21 @@ export class UnionType<
   D
 > {
   constructor(
-    readonly types: T,
+    protected readonly types: T,
     options: SchemaOptions = {},
     isNullable: N = false as N,
     isOptional: O = false as O,
     hasDefault: D = false as D,
   ) {
-    super(options, isNullable, isOptional, hasDefault)
+    super(options, isNullable, isOptional, hasDefault, types)
   }
 
   protected _constructSchema(
     options: SchemaOptions,
+    types: T,
     //@ts-expect-error
   ): TUnion<UnionToTuple<T[number][typeStatic]['schema']>> {
-    return Type.Union(this.types.map(getTypeSchema), options) as any
+    return Type.Union(types.map(getTypeSchema), options) as any
   }
 
   nullable() {
@@ -101,20 +102,21 @@ export class IntersactionType<
   D
 > {
   constructor(
-    readonly types: T,
+    protected readonly types: T,
     options: SchemaOptions = {},
     isNullable: N = false as N,
     isOptional: O = false as O,
     hasDefault: D = false as D,
   ) {
-    super(options, isNullable, isOptional, hasDefault)
+    super(options, isNullable, isOptional, hasDefault, types)
   }
 
   protected _constructSchema(
     options: SchemaOptions,
+    types: T,
     // @ts-expect-error
   ): TIntersect<UnionToTuple<T[number][typeStatic]['schema']>> {
-    return Type.Intersect(this.types.map(getTypeSchema), options) as any
+    return Type.Intersect(types.map(getTypeSchema), options) as any
   }
 
   nullable() {
