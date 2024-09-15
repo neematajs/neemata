@@ -55,8 +55,9 @@ export {
 
 export namespace t {
   export namespace infer {
-    export type decoded<T extends BaseType> = T[typeStatic]['decoded']
-    export type encoded<T extends BaseType> = T[typeStatic]['encoded']
+    export type staticType<T extends BaseType> = T[typeStatic]
+    export type decoded<T extends BaseType> = staticType<T>['decoded']
+    export type encoded<T extends BaseType> = staticType<T>['encoded']
   }
   export const never = () => new NeverType()
   export const boolean = () => new BooleanType()

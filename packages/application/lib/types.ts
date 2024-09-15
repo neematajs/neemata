@@ -1,4 +1,4 @@
-import type { ApiBlob, ApiBlobInterface } from '@nmtjs/common'
+import type { ApiBlobInterface } from '@nmtjs/common'
 
 import type { Api } from './api.ts'
 import type { Connection, ConnectionOptions } from './connection.ts'
@@ -160,7 +160,9 @@ type PrimitiveObject<Instance extends object> = Instance extends Array<infer T>
     ? PrimitiveTuple<Instance>
     : JsonPrimitiveMain<T, true>[]
   : {
-      [P in keyof Instance as JsonPrimitiveMain<Instance[P]> extends never
+      -readonly [P in keyof Instance as JsonPrimitiveMain<
+        Instance[P]
+      > extends never
         ? never
         : P]: JsonPrimitiveMain<Instance[P]>
     }
