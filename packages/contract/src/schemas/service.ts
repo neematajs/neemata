@@ -110,7 +110,7 @@ export const ServiceContract = <
     name: name,
     type: 'neemata:service',
     // @ts-expect-error
-    procedures: applyNames(procedures, { serviceName: name }),
+    procedures: applyNames(serviceProcedures, { serviceName: name }),
     // @ts-expect-error
     events: applyNames(events, { serviceName: name }),
     transports,

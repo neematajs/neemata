@@ -5,12 +5,13 @@ import {
 } from '@nmtjs/contract'
 import { type BaseType, type CustomType, type NeverType, t } from '@nmtjs/type'
 
-import { ProcedureKey, ProcedureMetadataKey } from './constants.ts'
-import type {
-  AnyInjectable,
-  Dependant,
-  Dependencies,
-  DependencyContext,
+import { ProcedureKey, ProcedureMetadataKey, type Scope } from './constants.ts'
+import {
+  type AnyInjectable,
+  type Dependant,
+  type Dependencies,
+  type DependencyContext,
+  createFactoryInjectable,
 } from './container.ts'
 import type {
   Async,
@@ -231,3 +232,24 @@ export function createProcedure<
     },
   )
 }
+
+export const createMiddleware = <
+  D extends Dependencies = {},
+  S extends Scope = Scope.Global,
+>(
+  ...args: Parameters<typeof createFactoryInjectable<MiddlewareLike, D, S>>
+) => createFactoryInjectable(...args)
+
+export const createGuard = <
+  D extends Dependencies = {},
+  S extends Scope = Scope.Global,
+>(
+  ...args: Parameters<typeof createFactoryInjectable<GuardLike, D, S>>
+) => createFactoryInjectable(...args)
+
+export const createFilter = <
+  D extends Dependencies = {},
+  S extends Scope = Scope.Global,
+>(
+  ...args: Parameters<typeof createFactoryInjectable<FilterLike, D, S>>
+) => createFactoryInjectable(...args)
