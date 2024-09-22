@@ -69,7 +69,7 @@ export function provide<
   })
 }
 
-export function withTypeProvider<P extends TypeProvider>() {
+export function $createProvider<P extends TypeProvider>() {
   return {
     createProvider<
       ProviderDeps extends Dependencies = {},
@@ -84,11 +84,11 @@ export function withTypeProvider<P extends TypeProvider>() {
       scope?: ProviderScope
       factory: ProvidableFactoryType<
         P,
-        ProviderDeps & { options: LazyInjectable<P['input']> }
+        ProviderDeps & { readonly options: LazyInjectable<P['input']> }
       >
       dispose?: ProvidableDisposeType<
         P,
-        ProviderDeps & { options: LazyInjectable<P['input']> }
+        ProviderDeps & { readonly options: LazyInjectable<P['input']> }
       >
     }): Provider<P, ProviderDeps, ProviderScope> {
       const options = createLazyInjectable<P['input']>()

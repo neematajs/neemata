@@ -8,17 +8,31 @@ import type { ExecuteFn } from './types.ts'
 
 const connection = createLazyInjectable<Connection, Scope.Connection>(
   Scope.Connection,
+  'RPC connection',
 )
 const connectionData = createLazyInjectable<unknown, Scope.Connection>(
   Scope.Connection,
+  "RPC connection's data",
 )
-const callSignal = createLazyInjectable<AbortSignal, Scope.Call>(Scope.Call)
-const taskSignal = createLazyInjectable<AbortSignal>(Scope.Global)
-const logger = createLazyInjectable<Logger>(Scope.Global)
-const execute = createLazyInjectable<ExecuteFn>(Scope.Global)
-const workerType = createLazyInjectable<WorkerType>(Scope.Global)
-const eventManager = createLazyInjectable<EventManager>(Scope.Global)
-const subManager = createLazyInjectable<SubscriptionManager>(Scope.Global)
+const callSignal = createLazyInjectable<AbortSignal, Scope.Call>(
+  Scope.Call,
+  'RPC abort signal',
+)
+const taskSignal = createLazyInjectable<AbortSignal>(Scope.Global, '')
+const logger = createLazyInjectable<Logger>(Scope.Global, 'Logger')
+const execute = createLazyInjectable<ExecuteFn>(Scope.Global, 'Task executor')
+const workerType = createLazyInjectable<WorkerType>(
+  Scope.Global,
+  'Application worker type',
+)
+const eventManager = createLazyInjectable<EventManager>(
+  Scope.Global,
+  'Event manager',
+)
+const subManager = createLazyInjectable<SubscriptionManager>(
+  Scope.Global,
+  'Subscription manager',
+)
 
 export const builtin = {
   connection,
