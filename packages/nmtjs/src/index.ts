@@ -1,5 +1,61 @@
+import { Application, asOptional } from '@nmtjs/application'
+import {
+  createFactoryInjectable,
+  createLazyInjectable,
+  createValueInjectable,
+} from '@nmtjs/application'
+import {
+  createContractProcedure,
+  createFilter,
+  createGuard,
+  createMiddleware,
+  createProcedure,
+} from '@nmtjs/application'
+import { $createProvider, provide as _provide } from '@nmtjs/application'
+import { createContractService, createService } from '@nmtjs/application'
+import {
+  $createSubscription,
+  createContractSubscription,
+} from '@nmtjs/application'
+import { createTask } from '@nmtjs/application'
+import { ApplicationServer } from '@nmtjs/server'
+
+export namespace n {
+  export const app = (...args: ConstructorParameters<typeof Application>) =>
+    new Application(...args)
+
+  export const server = (
+    ...args: ConstructorParameters<typeof ApplicationServer>
+  ) => new ApplicationServer(...args)
+
+  export const provide = _provide
+  export const optional = asOptional
+  export const value = createValueInjectable
+  export const lazy = createLazyInjectable
+  export const factory = createFactoryInjectable
+  export const task = createTask
+  export const procedure = createContractProcedure
+  export const service = createContractService
+  export const subscription = createContractSubscription
+  export const middleware = createMiddleware
+  export const guard = createGuard
+  export const filter = createFilter
+
+  export const $provider = $createProvider
+
+  export namespace contractless {
+    export const procedure = createProcedure
+    export const service = createService
+    export const $subscription = $createSubscription
+  }
+}
+
+export const neemata = n
+
+export { c } from '@nmtjs/contract'
+export { t } from '@nmtjs/type'
+
 export {
-  n,
   builtin,
   type GuardLike,
   type MiddlewareLike,
@@ -8,14 +64,9 @@ export {
   WorkerType,
   Hook,
   Scope,
-  asOptional,
-  Application,
 } from '@nmtjs/application'
-export { c } from '@nmtjs/contract'
-export { t } from '@nmtjs/type'
 export { ErrorCode, TransportType, type ApiBlobMetadata } from '@nmtjs/common'
 export {
-  ApplicationServer,
   injectWorkerOptions,
   provideWorkerOptions,
   WTSubManagerPlugin,

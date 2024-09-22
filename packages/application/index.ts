@@ -1,16 +1,3 @@
-import {
-  createFactoryInjectable,
-  createLazyInjectable,
-  createValueInjectable,
-} from './lib/container.ts'
-import { createContractProcedure, createProcedure } from './lib/procedure.ts'
-import { createContractService, createService } from './lib/service.ts'
-import {
-  $createSubscription,
-  createContractSubscription,
-} from './lib/subscription-procedure.ts'
-import { createTask } from './lib/task.ts'
-
 export * from './lib/api.ts'
 export * from './lib/application.ts'
 export * from './lib/constants.ts'
@@ -26,6 +13,7 @@ export * from './lib/logger.ts'
 export * from './lib/registry.ts'
 export * from './lib/stream.ts'
 export * from './lib/subscription.ts'
+export * from './lib/subscription-procedure.ts'
 export * from './lib/task.ts'
 export * from './lib/connection.ts'
 export * from './lib/types.ts'
@@ -33,18 +21,3 @@ export * from './lib/common.ts'
 export * from './lib/utils/functions.ts'
 export * from './lib/utils/pool.ts'
 export * from './lib/utils/semaphore.ts'
-
-export namespace n {
-  export const value = createValueInjectable
-  export const lazy = createLazyInjectable
-  export const factory = createFactoryInjectable
-  export const task = createTask
-  export const procedure = createContractProcedure
-  export const service = createContractService
-  export const subscription = createContractSubscription
-  export namespace contractless {
-    export const procedure = createProcedure
-    export const service = createService
-    export const $subscription = $createSubscription
-  }
-}
