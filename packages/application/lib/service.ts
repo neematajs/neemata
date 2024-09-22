@@ -135,15 +135,27 @@ export function createService<
     proceduresContracts[name] = procedure.contract
   }
 
-  const service = createContractService(
-    c.service(name, transports, proceduresContracts, eventsContracts),
-    {
-      procedures,
-      guards,
-      hooks,
-      middlewares,
-    },
+  const contract = c.service(
+    name,
+    transports,
+    proceduresContracts,
+    eventsContracts,
   )
+
+  for (const [name, procedureContract] of Object.entries(contract.procedures)) {
+    // @ts-expect-error
+    procedures[name] = {
+      ...procedures[name],
+      contract: procedureContract,
+    }
+  }
+
+  const service = createContractService(contract, {
+    procedures,
+    guards,
+    hooks,
+    middlewares,
+  })
 
   return service
 }
