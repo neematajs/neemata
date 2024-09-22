@@ -5,6 +5,7 @@ import type { Compiled } from '@nmtjs/type/compiler'
 import type { ApplicationOptions } from './application.ts'
 import { builtin } from './common.ts'
 import type { Connection } from './connection.ts'
+import { Scope } from './constants.ts'
 import type { Container } from './container.ts'
 import type { Logger } from './logger.ts'
 import type { AnyBaseProcedure, MiddlewareLike } from './procedure.ts'
@@ -47,9 +48,13 @@ export class Api {
   }
 
   async call(callOptions: ApiCallOptions) {
-    const { payload, container, signal } = callOptions
+    const { payload, container, signal, connection } = callOptions
+
+    if (container.scope !== Scope.Call)
+      throw new Error('Invalid container scope, expected to be Scope.Call')
 
     container.provide(builtin.callSignal, signal)
+    container.provide(builtin.connection, connection)
 
     try {
       this.handleTransport(callOptions)
@@ -62,8 +67,6 @@ export class Api {
 
   private async createProcedureHandler(callOptions: ApiCallOptions) {
     const { connection, procedure, container, service } = callOptions
-
-    container.provide(builtin.connection, connection)
 
     const execCtx: ExecuteContext = Object.freeze({
       connection,
@@ -113,11 +116,9 @@ export class Api {
   }
 
   private handleTransport({ service, transport }: ApiCallOptions) {
-    for (const transportType in service.contract.transports) {
-      if (transport === transportType) return
+    if (service.contract.transports[transport] !== true) {
+      throw NotFound()
     }
-
-    throw NotFound()
   }
 
   private handleTimeout(response: any, timeout?: number) {

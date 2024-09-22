@@ -143,3 +143,7 @@ export const parseContentTypes = (types: string) => {
     })
     .map((t) => t.type)
 }
+
+export function tryCaptureStackTrace() {
+  return new Error().stack?.split('\n').slice(3).join('\n') ?? undefined
+}

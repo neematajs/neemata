@@ -15,7 +15,7 @@ import {
   createValueInjectable,
   getInjectableScope,
 } from '../lib/container.ts'
-import { provide, withTypeProvider } from '../lib/provider.ts'
+import { $createProvider, provide } from '../lib/provider.ts'
 import { Registry } from '../lib/registry.ts'
 import { noop } from '../lib/utils/functions.ts'
 import {
@@ -25,7 +25,7 @@ import {
   testService,
 } from './_utils.ts'
 
-describe.sequential('Injectable', () => {
+describe('Injectable', () => {
   it('should create a lazy injectable', () => {
     const injectable = createLazyInjectable()
     expect(injectable.dependencies).toStrictEqual({})
@@ -78,11 +78,11 @@ describe.sequential('Injectable', () => {
   })
 })
 
-describe.sequential('Provider', () => {
+describe('Provider', () => {
   const factory = () => 1 as const
 
   it('should create a provider', () => {
-    const provider = withTypeProvider<TestTypeProvider>().createProvider({
+    const provider = $createProvider<TestTypeProvider>().createProvider({
       factory,
     })
     expect(LazyInjectableKey in provider.options).toBe(true)
@@ -94,7 +94,7 @@ describe.sequential('Provider', () => {
 
   it('should create a provider with dispose', () => {
     const dispose = () => {}
-    const provider = withTypeProvider<TestTypeProvider>().createProvider({
+    const provider = $createProvider<TestTypeProvider>().createProvider({
       factory,
       dispose,
     })
@@ -102,7 +102,7 @@ describe.sequential('Provider', () => {
   })
 
   it('should create a provider with scope', () => {
-    const provider = withTypeProvider<TestTypeProvider>().createProvider({
+    const provider = $createProvider<TestTypeProvider>().createProvider({
       factory,
       scope: Scope.Call,
     })
@@ -112,7 +112,7 @@ describe.sequential('Provider', () => {
   it('should create a provider with dependencies', () => {
     const dep1 = createLazyInjectable()
     const dep2 = createLazyInjectable()
-    const provider = withTypeProvider<TestTypeProvider>().createProvider({
+    const provider = $createProvider<TestTypeProvider>().createProvider({
       factory,
       dependencies: { dep1, dep2 },
     })
@@ -124,7 +124,7 @@ describe.sequential('Provider', () => {
   it('should fail to create a provider with "options" dependency', () => {
     const dep1 = createLazyInjectable()
     expect(() =>
-      withTypeProvider<TestTypeProvider>().createProvider({
+      $createProvider<TestTypeProvider>().createProvider({
         factory,
         dependencies: { options: dep1 },
       }),
@@ -132,7 +132,7 @@ describe.sequential('Provider', () => {
   })
 })
 
-describe.sequential('Container', () => {
+describe('Container', () => {
   const logger = testLogger()
   const registry = new Registry({ logger })
   let container: Container
@@ -244,36 +244,48 @@ describe.sequential('Container', () => {
   })
 
   it('should resolve scopes', async () => {
-    const globalInjectable = createFactoryInjectable({
-      scope: Scope.Global,
-      factory: () => ({}),
-    })
+    const globalInjectableValue = {}
+    const globalInjectable = createFactoryInjectable(
+      () => globalInjectableValue,
+      'global',
+    )
 
-    const connectionInjectable = createFactoryInjectable({
-      dependencies: { globalValue: globalInjectable },
-      scope: Scope.Connection,
-      factory: (deps) => deps,
-    })
-
-    const callInjectable = createFactoryInjectable({
-      dependencies: {
-        globalValue: globalInjectable,
-        connectionValue: connectionInjectable,
+    const connectionInjectable = createFactoryInjectable(
+      {
+        dependencies: { globalValue: globalInjectable },
+        scope: Scope.Connection,
+        factory: (deps) => deps,
       },
-      scope: Scope.Call,
-      factory: ({ globalValue, connectionValue }) => {
-        return { globalValue, connectionValue }
-      },
-    })
+      'connection',
+    )
 
-    const globalInjectableValue = await container.resolve(globalInjectable)
+    const callInjectable = createFactoryInjectable(
+      {
+        dependencies: {
+          globalValue: globalInjectable,
+          connectionValue: connectionInjectable,
+        },
+        scope: Scope.Call,
+        factory: ({ globalValue, connectionValue }) => {
+          return { globalValue, connectionValue }
+        },
+      },
+      'call',
+    )
+
     const scopeContainer = container.createScope(Scope.Call)
-
     const callInjectableValue = await scopeContainer.resolve(callInjectable)
 
-    expect(scopeContainer.instances.has(globalInjectable)).toBe(false)
-    expect(scopeContainer.instances.has(connectionInjectable)).toBe(true)
+    expect(container.has(globalInjectable)).toBe(true)
+    expect(container.hasCurrent(globalInjectable)).toBe(true)
+
     expect(callInjectableValue.globalValue).toBe(globalInjectableValue)
+
+    expect((scopeContainer as any).parent).toBe(container)
+    expect(scopeContainer.hasCurrent(globalInjectable)).toBe(false)
+    expect(scopeContainer.has(globalInjectable)).toBe(true)
+    expect(scopeContainer.hasCurrent(connectionInjectable)).toBe(true)
+    expect(scopeContainer.has(connectionInjectable)).toBe(true)
 
     const connectionInjectableValue =
       await scopeContainer.resolve(connectionInjectable)
@@ -281,6 +293,7 @@ describe.sequential('Container', () => {
       connectionInjectableValue.globalValue,
     )
     expect(scopeContainer.has(globalInjectable)).toBe(true)
+    await scopeContainer.dispose()
   })
 
   it('should preload global dependencies', async () => {
@@ -311,36 +324,59 @@ describe.sequential('Container', () => {
   it('should dispose in correct order', async () => {
     const disposeSpy = vi.fn((value) => order.push(value))
     const order: string[] = []
-    const injectable1 = createFactoryInjectable({
-      factory: () => '1',
-      dispose: disposeSpy,
-    })
-    const injectable2 = createFactoryInjectable({
-      dependencies: { injectable1 },
-      factory: () => '2',
-      dispose: disposeSpy,
-    })
 
-    const injectable3 = createFactoryInjectable({
-      dependencies: { injectable1, injectable2 },
-      factory: () => '3',
-      dispose: disposeSpy,
-    })
+    const testGlobalContainer = container.createScope(Scope.Global)
 
-    const injectable4 = createFactoryInjectable({
-      dependencies: { injectable1, injectable3 },
-      factory: () => '4',
-      dispose: disposeSpy,
-    })
+    const injectable1 = createFactoryInjectable(
+      {
+        factory: () => '1',
+        dispose: disposeSpy,
+      },
+      'inj1',
+    )
 
-    const injectable5 = createFactoryInjectable({
-      dependencies: { injectable2, injectable4 },
-      factory: () => '5',
-      dispose: disposeSpy,
-    })
+    const injectable2 = createFactoryInjectable(
+      {
+        dependencies: { injectable1 },
+        factory: () => '2',
+        dispose: disposeSpy,
+      },
+      'inj2',
+    )
 
-    await container.resolve(injectable5)
-    await container.dispose()
+    const injectable3 = createFactoryInjectable(
+      {
+        dependencies: { injectable1, injectable2 },
+        factory: () => '3',
+        dispose: disposeSpy,
+      },
+      'inj3',
+    )
+
+    const injectable4 = createFactoryInjectable(
+      {
+        scope: Scope.Connection,
+        dependencies: { injectable1, injectable3 },
+        factory: () => '4',
+        dispose: disposeSpy,
+      },
+      'inj4',
+    )
+
+    const injectable5 = createFactoryInjectable(
+      {
+        dependencies: { injectable2, injectable4 },
+        factory: () => '5',
+        dispose: disposeSpy,
+      },
+      'inj5',
+    )
+    const testConnectionContainer = testGlobalContainer.createScope(
+      Scope.Connection,
+    )
+    await testConnectionContainer.resolve(injectable5)
+    await testConnectionContainer.dispose()
+    await testGlobalContainer.dispose()
 
     expect(order).toStrictEqual(['5', '4', '3', '2', '1'])
   })
@@ -352,7 +388,7 @@ describe.sequential('Container', () => {
       factory: noop,
     })
     await expect(container.resolve(injectable)).rejects.toThrow(
-      'Missing dependency',
+      'No instance provided for an injectable',
     )
   })
 
@@ -366,7 +402,7 @@ describe.sequential('Container', () => {
 
   it('should be able to inject a provider', async () => {
     const options = createValueInjectable('string' as const)
-    const provider = withTypeProvider<TestTypeProvider>().createProvider({
+    const provider = $createProvider<TestTypeProvider>().createProvider({
       factory: ({ options }) => options,
     })
     const provided = provide(provider, options)

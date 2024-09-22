@@ -9,6 +9,7 @@ import {
 import type { Logger } from './logger.ts'
 import type { Registry } from './registry.ts'
 import type { Async } from './types.ts'
+import { tryCaptureStackTrace } from './utils/functions.ts'
 
 const ScopeStrictness = {
   [Scope.Global]: 0,
@@ -31,6 +32,8 @@ export type ResolveInjectableType<T extends AnyInjectable> =
 
 export interface Dependant<Deps extends Dependencies = Dependencies> {
   dependencies: Deps
+  label?: string
+  stack?: string
 }
 
 export type DependencyInjectable<T extends Depedency> = T extends AnyInjectable
@@ -40,13 +43,13 @@ export type DependencyInjectable<T extends Depedency> = T extends AnyInjectable
     : never
 
 export type DependencyContext<Deps extends Dependencies> = {
-  [K in keyof Deps as Deps[K] extends AnyInjectable
+  readonly [K in keyof Deps as Deps[K] extends AnyInjectable
     ? K
     : never]: Deps[K] extends AnyInjectable
     ? ResolveInjectableType<Deps[K]>
     : never
 } & {
-  [K in keyof Deps as Deps[K] extends DependencyOptional
+  readonly [K in keyof Deps as Deps[K] extends DependencyOptional
     ? K
     : never]?: Deps[K] extends DependencyOptional
     ? ResolveInjectableType<Deps[K]['injectable']>
@@ -118,9 +121,13 @@ export class Container {
       registry: Registry
       logger: Logger
     },
-    public readonly scope: Scope = Scope.Global,
+    public readonly scope: Exclude<Scope, Scope.Transient> = Scope.Global,
     private readonly parent?: Container,
-  ) {}
+  ) {
+    if ((scope as any) === Scope.Transient) {
+      throw new Error('Invalid scope')
+    }
+  }
 
   async load() {
     const traverse = (dependencies: Dependencies) => {
@@ -140,7 +147,7 @@ export class Container {
     await Promise.all(injectables.map((injectable) => this.resolve(injectable)))
   }
 
-  createScope(scope: Scope) {
+  createScope(scope: Exclude<Scope, Scope.Transient>) {
     return new Container(this.application, scope, this)
   }
 
@@ -150,6 +157,7 @@ export class Container {
     // Loop through all instances and dispose them,
     // until there are no more instances left
     while (this.instances.size) {
+      await new Promise((resolve) => setTimeout(resolve, 1))
       for (const injectable of this.instances.keys()) {
         const dependants = this.dependants.get(injectable)
         // Firstly, dispose instances that other injectables don't depend on
@@ -172,65 +180,39 @@ export class Container {
   }
 
   has(injectable: AnyInjectable): boolean {
-    return !!(
-      this.instances.has(injectable) ||
-      this.resolvers.has(injectable) ||
-      this.parent?.has(injectable)
+    return (
+      this.hasCurrent(injectable) || (this.parent?.has(injectable) ?? false)
     )
   }
 
-  resolve<T extends AnyInjectable>(
-    injectable: T,
-    dependant?: AnyInjectable,
-  ): Promise<ResolveInjectableType<T>> {
-    if (dependant) {
-      let dependants = this.dependants.get(injectable)
-      if (!dependants) {
-        this.dependants.set(injectable, (dependants = new Set()))
-      }
-      dependants.add(dependant)
-    }
-
-    if (this.instances.has(injectable)) {
-      return Promise.resolve(this.instances.get(injectable)!.instance)
-    } else if (this.resolvers.has(injectable)) {
-      return this.resolvers.get(injectable)!
-    } else {
-      const { scope, dependencies } = injectable
-      if (ValueInjectableKey in injectable)
-        return Promise.resolve(injectable.value)
-
-      if (this.parent?.has(injectable)) return this.parent.resolve(injectable)
-
-      const isOptional = checkOptional(injectable)
-
-      const isLazy = LazyInjectableKey in injectable
-
-      if (isLazy) {
-        if (isOptional) return Promise.resolve(undefined as any)
-        // TODO: this is not very informative
-        return Promise.reject(new Error('Missing dependency'))
-      }
-
-      const resolution = this.createContext(dependencies, injectable)
-        .then((context) =>
-          Promise.resolve(injectable.factory(context)).then((instance) => ({
-            instance,
-            context,
-          })),
-        )
-        .then(({ instance, context }) => {
-          if (ScopeStrictness[this.scope] >= ScopeStrictness[scope])
-            this.instances.set(injectable, { instance, context })
-          if (scope !== Scope.Transient) this.resolvers.delete(injectable)
-          return instance
-        })
-      if (scope !== Scope.Transient) this.resolvers.set(injectable, resolution)
-      return resolution
-    }
+  /**
+   * @internal
+   */
+  hasCurrent(injectable: AnyInjectable) {
+    return this.instances.has(injectable) || this.resolvers.has(injectable)
   }
 
-  async createContext<T extends Dependencies>(
+  get<T extends AnyInjectable>(injectable: T): ResolveInjectableType<T> {
+    if (this.instances.has(injectable)) {
+      return this.instances.get(injectable)!.instance
+    }
+
+    if (this.parent?.has(injectable)) {
+      return this.parent.get(injectable)
+    }
+
+    throw new Error('No instance found')
+  }
+
+  resolve<T extends AnyInjectable>(injectable: T) {
+    return this.resolveInjectable(injectable)
+  }
+
+  async createContext<T extends Dependencies>(dependencies: T) {
+    return this.createInjectableContext(dependencies)
+  }
+
+  private async createInjectableContext<T extends Dependencies>(
     dependencies: T,
     dependant?: AnyInjectable,
   ) {
@@ -240,18 +222,25 @@ export class Container {
     for (let i = 0; i < deps.length; i++) {
       const [key, dependency] = deps[i]
       const injectable = getDepedencencyInjectable(dependency)
-      const resolver = this.resolve(injectable, dependant)
+      const resolver = this.resolveInjectable(injectable, dependant)
       resolvers[i] = resolver.then((value) => (injections[key] = value))
     }
     await Promise.all(resolvers)
-    return Object.freeze(injections as DependencyContext<T>)
+    return Object.freeze(injections) as DependencyContext<T>
   }
 
   async provide<T extends AnyInjectable>(
     injectable: T,
     instance: ResolveInjectableType<T>,
   ) {
+    if (compareScope(injectable.scope, '>', this.scope)) {
+      throw new Error('Invalid scope') // TODO: more informative error
+    }
     this.instances.set(injectable, { instance, context: undefined })
+  }
+
+  satisfy(injectable: AnyInjectable) {
+    return compareScope(injectable.scope, '<=', this.scope)
   }
 
   private findCurrentScopeDeclarations() {
@@ -292,6 +281,74 @@ export class Container {
     }
   }
 
+  private resolveInjectable<T extends AnyInjectable>(
+    injectable: T,
+    dependant?: AnyInjectable,
+    // cache = true,
+  ): Promise<ResolveInjectableType<T>> {
+    if (dependant && compareScope(dependant.scope, '<', injectable.scope)) {
+      throw new Error('Invalid scope: dependant is looser than injectable') // TODO: more informative error
+    }
+
+    if (injectableUtils.isValue(injectable)) {
+      return Promise.resolve(injectable.value)
+    } else if (
+      this.parent?.has(injectable) ||
+      (this.parent?.satisfy(injectable) &&
+        compareScope(this.parent.scope, '<', this.scope))
+    ) {
+      return this.parent.resolveInjectable(injectable, dependant)
+    } else {
+      const { scope, dependencies, stack, label } = injectable
+
+      if (dependant && compareScope(scope, '=', dependant.scope)) {
+        let dependants = this.dependants.get(injectable)
+        if (!dependants) {
+          this.dependants.set(injectable, (dependants = new Set()))
+        }
+        dependants.add(dependant)
+      }
+
+      if (this.instances.has(injectable)) {
+        return Promise.resolve(this.instances.get(injectable)!.instance)
+      } else if (this.resolvers.has(injectable)) {
+        return this.resolvers.get(injectable)!
+      } else {
+        const isOptional = injectableUtils.isOptional(injectable)
+        const isLazy = injectableUtils.isLazy(injectable)
+
+        if (isLazy) {
+          if (isOptional) return Promise.resolve(undefined as any)
+          return Promise.reject(
+            new Error(
+              `No instance provided for ${label || 'an'} injectable:\n${stack}`,
+            ),
+          )
+        }
+
+        const resolution = this.createInjectableContext(
+          dependencies,
+          injectable,
+        )
+          .then((context) =>
+            Promise.resolve(injectable.factory(context)).then((instance) => ({
+              instance,
+              context,
+            })),
+          )
+          .then(({ instance, context }) => {
+            if (compareScope(this.scope, '>=', scope))
+              this.instances.set(injectable, { instance, context })
+            if (scope !== Scope.Transient) this.resolvers.delete(injectable)
+            return instance
+          })
+        if (scope !== Scope.Transient)
+          this.resolvers.set(injectable, resolution)
+        return resolution
+      }
+    }
+  }
+
   private async disposeInjectable(injectable: AnyInjectable) {
     try {
       if (FactoryInjectableKey in injectable) {
@@ -313,13 +370,46 @@ export class Container {
   }
 }
 
+function compareScope(
+  left: Scope,
+  operator: '>' | '<' | '>=' | '<=' | '=' | '!=',
+  right: Scope,
+) {
+  const leftScope = ScopeStrictness[left]
+  const rightScope = ScopeStrictness[right]
+  switch (operator) {
+    case '=':
+      return leftScope === rightScope
+    case '!=':
+      return leftScope !== rightScope
+    case '>':
+      return leftScope > rightScope
+    case '<':
+      return leftScope < rightScope
+    case '>=':
+      return leftScope >= rightScope
+    case '<=':
+      return leftScope <= rightScope
+    default:
+      throw new Error('Invalid operator')
+  }
+}
+
+const injectableUtils = {
+  isLazy: (injectable: AnyInjectable) => LazyInjectableKey in injectable,
+  isFactory: (injectable: AnyInjectable) => FactoryInjectableKey in injectable,
+  isValue: (injectable: AnyInjectable) => ValueInjectableKey in injectable,
+  isOptional: (injectable: AnyInjectable) =>
+    OptionalDependencyKey in injectable,
+}
+
 export function getInjectableScope(injectable: AnyInjectable) {
   let scope = injectable.scope
   const deps = Object.values(injectable.dependencies as Dependencies)
   for (const dependency of deps) {
     const injectable = getDepedencencyInjectable(dependency)
     const dependencyScope = getInjectableScope(injectable)
-    if (ScopeStrictness[dependencyScope] > ScopeStrictness[scope]) {
+    if (compareScope(dependencyScope, '>', scope)) {
       scope = dependencyScope
     }
   }
@@ -335,10 +425,6 @@ export function getDepedencencyInjectable(
   return dependency
 }
 
-function checkOptional(injectable: Depedency) {
-  return OptionalDependencyKey in injectable
-}
-
 export function asOptional<T extends AnyInjectable>(injectable: T) {
   return {
     [OptionalDependencyKey]: true,
@@ -348,23 +434,31 @@ export function asOptional<T extends AnyInjectable>(injectable: T) {
 
 export function createLazyInjectable<T, S extends Scope = Scope.Global>(
   scope = Scope.Global as S,
+  label?: string,
 ): LazyInjectable<T, S> {
-  return {
+  return Object.freeze({
     scope,
     dependencies: {},
+    label,
+    stack: tryCaptureStackTrace(),
     [InjectableKey]: true,
     [LazyInjectableKey]: true as unknown as T,
-  } as const
+  })
 }
 
-export function createValueInjectable<T>(value: T): ValueInjectable<T> {
-  return {
+export function createValueInjectable<T>(
+  value: T,
+  label?: string,
+): ValueInjectable<T> {
+  return Object.freeze({
     value,
     scope: Scope.Global,
     dependencies: {},
+    label,
+    stack: tryCaptureStackTrace(),
     [InjectableKey]: true,
     [ValueInjectableKey]: true,
-  } as const
+  })
 }
 
 export function createFactoryInjectable<
@@ -380,25 +474,33 @@ export function createFactoryInjectable<
         dispose?: InjectableDisposeType<T, D>
       }
     | InjectableFactoryType<T, D>,
+  label?: string,
 ): FactoryInjectable<T, D, S> {
   const isFactory = typeof paramsOrFactory === 'function'
+  const params = isFactory
+    ? {
+        factory: paramsOrFactory,
+      }
+    : paramsOrFactory
   const injectable = {
-    dependencies: (isFactory ? {} : paramsOrFactory.dependencies ?? {}) as D,
-    scope: (isFactory
-      ? Scope.Global
-      : paramsOrFactory.scope ?? Scope.Global) as S,
-    factory: isFactory ? paramsOrFactory : paramsOrFactory.factory,
-    dispose: isFactory ? undefined : paramsOrFactory.dispose,
+    dependencies: (params.dependencies ?? {}) as D,
+    scope: (params.scope ?? Scope.Global) as S,
+    factory: params.factory,
+    dispose: params.dispose,
+    label,
+    stack: tryCaptureStackTrace(),
     [InjectableKey]: true,
     [FactoryInjectableKey]: true,
   }
   const actualScope = getInjectableScope(injectable)
   if (
     !isFactory &&
-    paramsOrFactory.scope &&
-    ScopeStrictness[actualScope] > ScopeStrictness[paramsOrFactory.scope]
+    params.scope &&
+    ScopeStrictness[actualScope] > ScopeStrictness[params.scope]
   )
-    throw new Error('Invalid scope')
+    throw new Error(
+      `Invalid scope ${params.scope} for factory injectable: dependencies have stricter scope - ${actualScope}`,
+    )
   injectable.scope = actualScope as unknown as S
-  return injectable
+  return Object.freeze(injectable)
 }
