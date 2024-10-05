@@ -60,7 +60,10 @@ export class Application {
     this.internalContainer.provide(builtin.workerType, this.options.type)
     this.internalContainer.provide(builtin.eventManager, this.eventManager)
     this.internalContainer.provide(builtin.execute, this.execute.bind(this))
-    this.internalContainer.provide(builtin.taskSignal, new AbortSignal()) // this will be replaced in task execution
+    this.internalContainer.provide(
+      builtin.taskSignal,
+      new AbortController().signal,
+    ) // this will be replaced in task execution
 
     // create a global container for rest of the application
     // including transports, extensions, etc.
