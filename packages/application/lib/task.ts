@@ -1,6 +1,6 @@
 import type { ApplicationOptions } from './application.ts'
 import { builtin } from './common.ts'
-import { Hook, TaskKey } from './constants.ts'
+import { Hook, Scope, TaskKey } from './constants.ts'
 import type {
   Container,
   Dependant,
@@ -83,7 +83,7 @@ export function createTask<
       : paramsOrHandler
   const dependencies = params.dependencies ?? ({} as TaskDeps)
   const handler = params.handler
-  const parser = params.parser ?? notImplemented(name, 'parser')
+  const parser = params.parser
   return { name, dependencies, handler, parser, [TaskKey]: true }
 }
 
@@ -108,9 +108,7 @@ export class TaskRunner {
         return await this.options.executor.execute(ac.signal, taskName, ...args)
 
       const { dependencies, handler } = task
-      const container = this.application.container.createScope(
-        this.application.container.scope,
-      )
+      const container = this.application.container.createScope(Scope.Global)
       container.provide(builtin.taskSignal, ac.signal)
       const context = await container.createContext(dependencies)
       try {
@@ -157,8 +155,4 @@ export class TaskRunner {
 
     result.finally(remove).catch(noop)
   }
-}
-
-const notImplemented = (taskName: string, fnType: string) => () => {
-  throw new Error(`Task [${taskName}] ${fnType} is not implemented`)
 }
