@@ -14,7 +14,7 @@ import {
 
 describe('Task', () => {
   it('should create a task', () => {
-    const task = createTask('test', { handler: noop })
+    const task = createTask('test', { handler: noop, parser: () => [] })
 
     expect(TaskKey in task).toBe(true)
     expect(task).toHaveProperty('name', 'test')
