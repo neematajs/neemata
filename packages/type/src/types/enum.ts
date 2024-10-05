@@ -13,7 +13,7 @@ export class ObjectEnumType<
   D extends boolean = false,
 > extends BaseType<TNativeEnum<T>, N, O, D> {
   constructor(
-    protected readonly values: T,
+    readonly values: T,
     options: SchemaOptions = {},
     isNullable: N = false as N,
     isOptional: O = false as O,
@@ -74,7 +74,7 @@ export class EnumType<
   D extends boolean = false,
 > extends BaseType<TUnionEnum<T>, N, O, D> {
   constructor(
-    protected readonly values: [...T],
+    readonly values: [...T],
     options: SchemaOptions = {},
     isNullable: N = false as N,
     isOptional: O = false as O,
