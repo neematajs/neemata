@@ -35,6 +35,7 @@ export class Application {
   readonly taskRunner: TaskRunner
   readonly logger: Logger
   readonly registry: Registry
+  readonly internalContainer: Container
   readonly container: Container
   readonly eventManager: EventManager
   readonly format: Format
@@ -52,17 +53,21 @@ export class Application {
     this.eventManager = new EventManager(this)
     this.format = new Format(this.options.api.formats)
 
-    // create unexposed container for internal injectables, which never gets disposed
-    const container = new Container(this)
+    // create unexposed container for builtin injectables, which never gets disposed
+    this.internalContainer = new Container(this)
 
-    container.provide(builtin.logger, this.logger)
-    container.provide(builtin.workerType, this.options.type)
-    container.provide(builtin.eventManager, this.eventManager)
-    container.provide(builtin.execute, this.execute.bind(this))
+    this.internalContainer.provide(builtin.logger, this.logger)
+    this.internalContainer.provide(builtin.workerType, this.options.type)
+    this.internalContainer.provide(builtin.eventManager, this.eventManager)
+    this.internalContainer.provide(builtin.execute, this.execute.bind(this))
+    this.internalContainer.provide(
+      builtin.taskSignal,
+      new AbortController().signal,
+    ) // this will be replaced in task execution
 
     // create a global container for rest of the application
     // including transports, extensions, etc.
-    this.container = container.createScope(Scope.Global)
+    this.container = this.internalContainer.createScope(Scope.Global)
 
     this.api = new Api(this, this.options.api)
     this.taskRunner = new TaskRunner(this, this.options.tasks)
