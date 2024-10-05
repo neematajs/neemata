@@ -10,10 +10,12 @@ export type Compiled = {
   errors: (val: unknown) => ValueErrorIterator
   prepare: (val: unknown) => unknown
   convert: (val: unknown) => unknown
-  decode: (
+  decode: (val: unknown) => unknown
+  encode: (val: unknown) => unknown
+  decodeSafe: (
     val: unknown,
   ) => { success: true; value: unknown } | { success: false; error: any }
-  encode: (
+  encodeSafe: (
     val: unknown,
   ) => { success: true; value: unknown } | { success: false; error: any }
 }
@@ -44,7 +46,9 @@ export const compile = (schema: BaseType): Compiled => {
   // TODO: custom error handling/shaping
   return {
     ...compiled,
-    decode: (val) => {
+    decode: (val) => compiled.decode(compiled.prepare(val)),
+    encode: (val) => compiled.encode(compiled.prepare(val)),
+    decodeSafe: (val) => {
       try {
         return {
           success: true as const,
@@ -54,7 +58,7 @@ export const compile = (schema: BaseType): Compiled => {
         return { success: false as const, error }
       }
     },
-    encode: (val) => {
+    encodeSafe: (val) => {
       try {
         return {
           success: true as const,

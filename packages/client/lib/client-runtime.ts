@@ -93,7 +93,7 @@ export class RuntimeClient<Services extends ClientServices> extends Client {
         function decodeOutput(data) {
           if (output instanceof NeverType) return undefined
           const compiled = service.compiled.get(output)!
-          const result = compiled.decode(data)
+          const result = compiled.decodeSafe(data)
           if (result.success) {
             return result.value
           } else {
@@ -112,7 +112,7 @@ export class RuntimeClient<Services extends ClientServices> extends Client {
             transformInput: (data: any) => {
               if (input instanceof NeverType) return undefined
               const compiled = service.compiled.get(input)!
-              const result = compiled.encode(data)
+              const result = compiled.encodeSafe(data)
               if (result.success) {
                 return result.value
               } else {

@@ -44,16 +44,63 @@ describe('Compiler', () => {
     expect(firstError).toHaveProperty('message', expect.any(String))
   })
 
-  it('should decode successfully', () => {
+  it('should decodeSafe successfully', () => {
     const compiled = compile(testSchema)
-    const result = compiled.decode({ foo: 'test', bar: 42, extra: 'skipped' })
+    const result = compiled.decodeSafe({
+      foo: 'test',
+      bar: 42,
+      extra: 'skipped',
+    })
     expect(result.success).toBe(true)
     expect(result.success && result.value).toEqual({ foo: 'test', bar: 42 })
   })
 
-  it('should fail to decode', () => {
+  it('should decode successfully', () => {
     const compiled = compile(testSchema)
     const result = compiled.decode({
+      foo: 'test',
+      bar: 42,
+      extra: 'skipped',
+    })
+    expect(result).toEqual({ foo: 'test', bar: 42 })
+  })
+
+  it('should fail to decodeSafe', () => {
+    const compiled = compile(testSchema)
+    const result = compiled.decodeSafe({
+      foo: 'test',
+      bar: '42',
+      extra: 'skipped',
+    })
+    expect(result.success).toBe(false)
+    expect(!result.success && result.error).toEqual(expect.any(Error))
+  })
+
+  it('should fail to decode', () => {
+    const compiled = compile(testSchema)
+    expect(
+      compiled.decode.bind(null, {
+        foo: 'test',
+        bar: '42',
+        extra: 'skipped',
+      }),
+    ).toThrow(expect.any(Error))
+  })
+
+  it('should encodeSafe successfully', () => {
+    const compiled = compile(testSchema)
+    const result = compiled.encodeSafe({
+      foo: 'test',
+      bar: 42,
+      extra: 'skipped',
+    })
+    expect(result.success).toBe(true)
+    expect(result.success && result.value).toEqual({ foo: 'test', bar: 42 })
+  })
+
+  it('should fail to encodeSafe', () => {
+    const compiled = compile(testSchema)
+    const result = compiled.encodeSafe({
       foo: 'test',
       bar: '42',
       extra: 'skipped',
@@ -64,19 +111,22 @@ describe('Compiler', () => {
 
   it('should encode successfully', () => {
     const compiled = compile(testSchema)
-    const result = compiled.encode({ foo: 'test', bar: 42, extra: 'skipped' })
-    expect(result.success).toBe(true)
-    expect(result.success && result.value).toEqual({ foo: 'test', bar: 42 })
+    const result = compiled.encode({
+      foo: 'test',
+      bar: 42,
+      extra: 'skipped',
+    })
+    expect(result).toEqual({ foo: 'test', bar: 42 })
   })
 
   it('should fail to encode', () => {
     const compiled = compile(testSchema)
-    const result = compiled.encode({
-      foo: 'test',
-      bar: '42',
-      extra: 'skipped',
-    })
-    expect(result.success).toBe(false)
-    expect(!result.success && result.error).toEqual(expect.any(Error))
+    expect(
+      compiled.encode.bind(null, {
+        foo: 'test',
+        bar: '42',
+        extra: 'skipped',
+      }),
+    ).toThrow(expect.any(Error))
   })
 })
