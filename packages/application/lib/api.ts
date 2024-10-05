@@ -225,10 +225,10 @@ export class Api {
     method: 'decode' | 'encode',
     payload: any,
     context?: any,
-  ): ReturnType<Compiled['decode' | 'encode']> {
+  ): ReturnType<Compiled['decodeSafe' | 'encodeSafe']> {
     const compiled = this.application.registry.schemas.get(schema)
     if (!compiled) throw new Error('Compiled schema not found')
-    return compiled[method](payload)
+    return compiled[`${method}Safe`](payload)
   }
 }
 

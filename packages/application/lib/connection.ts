@@ -65,7 +65,7 @@ export class Connection<Type extends string = string> {
     const schema = this.#registry.schemas.get(contract.events[event].payload)
 
     if (schema) {
-      const result = schema.encode(payload)
+      const result = schema.encodeSafe(payload)
       if (!result.success) {
         throw new Error('Failed to encode payload', { cause: result.error })
       }
