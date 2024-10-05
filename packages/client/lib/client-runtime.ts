@@ -16,61 +16,65 @@ type CompiledContract<T extends TServiceContract = TServiceContract> = {
   contract: T
 }
 
-type ClientServices = Record<string, CompiledContract>
-
-type ClientCallers<Services extends ClientServices> = {
+type ClientServicesResolved<Services extends ClientServices> = {
   [K in keyof Services]: {
-    [P in keyof Services[K]['contract']['procedures']]: (
-      ...args: Services[K]['contract']['procedures'][P]['input'] extends NeverType
-        ? [options?: ClientCallOptions]
-        : t.infer.staticType<
-              Services[K]['contract']['procedures'][P]['input']
-            >['isOptional'] extends true
-          ? [
-              data?: InputType<
-                t.infer.decoded<
-                  Services[K]['contract']['procedures'][P]['input']
-                >
-              >,
-              options?: ClientCallOptions,
-            ]
-          : [
-              data: InputType<
-                t.infer.decoded<
-                  Services[K]['contract']['procedures'][P]['input']
-                >
-              >,
-              options?: ClientCallOptions,
-            ]
-    ) => Promise<
-      Services[K]['contract']['procedures'][P] extends TSubscriptionContract
+    [P in keyof Services[K]['contract']['procedures']]: {
+      contract: Services[K]['contract']['procedures'][P]
+      input: InputType<
+        t.infer.decoded<Services[K]['contract']['procedures'][P]['input']>
+      >
+      output: OutputType<
+        t.infer.decoded<Services[K]['contract']['procedures'][P]['output']>
+      >
+      events: Services[K]['contract']['procedures'][P] extends TSubscriptionContract
         ? {
-            payload: Services[K]['contract']['procedures'][P]['output'] extends NeverType
-              ? undefined
-              : t.infer.decoded<
-                  Services[K]['contract']['procedures'][P]['output']
-                >
-            subscription: Subscription<{
-              [KE in keyof Services[K]['contract']['procedures'][P]['events']]: [
+            [KE in keyof Services[K]['contract']['procedures'][P]['events']]: {
+              payload: OutputType<
                 t.infer.decoded<
                   Services[K]['contract']['procedures'][P]['events'][KE]['payload']
-                >,
+                >
+              >
+            }
+          }
+        : {}
+    }
+  }
+}
+
+type ClientServices = Record<string, CompiledContract>
+
+type ClientCallers<Services extends ClientServicesResolved<ClientServices>> = {
+  [K in keyof Services]: {
+    [P in keyof Services[K]]: (
+      ...args: Services[K][P]['input'] extends NeverType
+        ? [options?: ClientCallOptions]
+        : t.infer.staticType<
+              Services[K][P]['contract']['input']
+            >['isOptional'] extends true
+          ? [data?: Services[K][P]['input'], options?: ClientCallOptions]
+          : [data: Services[K][P]['input'], options?: ClientCallOptions]
+    ) => Promise<
+      Services[K][P] extends TSubscriptionContract
+        ? {
+            payload: Services[K][P]['output'] extends never
+              ? undefined
+              : Services[K][P]['output']
+            subscription: Subscription<{
+              [KE in keyof Services[K][P]['events']]: [
+                t.infer.decoded<Services[K][P]['events'][KE]['payload']>,
               ]
             }>
           }
-        : Services[K]['contract']['procedures'][P]['output'] extends NeverType
+        : Services[K][P]['output'] extends never
           ? void
-          : OutputType<
-              t.infer.decoded<
-                Services[K]['contract']['procedures'][P]['output']
-              >
-            >
+          : Services[K][P]['output']
     >
   }
 }
 
 export class RuntimeClient<Services extends ClientServices> extends Client {
-  #callers: ClientCallers<Services>
+  $types!: ClientServicesResolved<Services>
+  #callers: ClientCallers<this['$types']>
 
   constructor(
     protected readonly contracts: Services,
