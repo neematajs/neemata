@@ -1,5 +1,6 @@
 import { type BaseClientFormat, ErrorCode } from '@nmtjs/common'
 
+import type { TServiceContract } from '@nmtjs/contract'
 import { ClientError } from './common.ts'
 import type { ClientTransport } from './transport.ts'
 import type { ClientCallOptions } from './types.ts'
@@ -9,6 +10,8 @@ export type ClientOptions = {
   defaultTimeout: number
   debug?: boolean
 }
+
+export type ClientServices = Record<string, TServiceContract>
 
 export abstract class Client extends utils.EventEmitter {
   protected transport!: ClientTransport
