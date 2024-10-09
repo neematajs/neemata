@@ -30,6 +30,7 @@ import {
   type CreateTaskOptions,
   createTask,
 } from '../lib/task.ts'
+import { createTransport } from '../lib/transport.ts'
 import { noop } from '../lib/utils/functions.ts'
 
 export interface TestTypeProvider extends TypeProvider {
@@ -78,14 +79,15 @@ export class TestTaskExecutor implements BaseTaskExecutor {
 
 export const testTransport = (
   onInit = () => {},
-  onStartup = () => {},
-  onShutdown = () => {},
+  onStartup = async () => {},
+  onShutdown = async () => {},
 ) =>
-  createPlugin('TestTransport', (app) => {
-    const { hooks } = app
+  createTransport('TestTransport', (app) => {
     onInit()
-    hooks.add(Hook.OnStartup, onStartup)
-    hooks.add(Hook.OnShutdown, onShutdown)
+    return {
+      start: onStartup,
+      stop: onShutdown,
+    }
   })
 
 export const testDefaultTimeout = 1000

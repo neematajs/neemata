@@ -18,7 +18,10 @@ const callSignal = createLazyInjectable<AbortSignal, Scope.Call>(
   Scope.Call,
   'RPC abort signal',
 )
-const taskSignal = createLazyInjectable<AbortSignal>(Scope.Global, '')
+const taskSignal = createLazyInjectable<AbortSignal>(
+  Scope.Global,
+  'Task abort signal',
+)
 const logger = createLazyInjectable<Logger>(Scope.Global, 'Logger')
 const execute = createLazyInjectable<ExecuteFn>(Scope.Global, 'Task executor')
 const workerType = createLazyInjectable<WorkerType>(

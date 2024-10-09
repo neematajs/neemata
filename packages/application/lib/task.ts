@@ -1,6 +1,6 @@
 import type { ApplicationOptions } from './application.ts'
 import { builtin } from './common.ts'
-import { Hook, Scope, TaskKey } from './constants.ts'
+import { Hook, Scope, kTask } from './constants.ts'
 import type {
   Container,
   Dependant,
@@ -51,7 +51,7 @@ export interface Task<
   name: TaskName
   handler: TaskHandler
   parser?: TaskParserType<TaskArgs>
-  [TaskKey]: any
+  [kTask]: any
 }
 
 export type AnyTask = Task<string, Dependencies, any[], any, any>
@@ -84,7 +84,7 @@ export function createTask<
   const dependencies = params.dependencies ?? ({} as TaskDeps)
   const handler = params.handler
   const parser = params.parser
-  return { name, dependencies, handler, parser, [TaskKey]: true }
+  return { name, dependencies, handler, parser, [kTask]: true }
 }
 
 export class TaskRunner {

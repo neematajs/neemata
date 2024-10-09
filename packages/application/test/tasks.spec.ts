@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { builtin } from '../lib/common.ts'
-import { TaskKey } from '../lib/constants.ts'
+import { kTask } from '../lib/constants.ts'
 import { Container, createValueInjectable } from '../lib/container.ts'
 import { Registry } from '../lib/registry.ts'
 import { type AnyTask, TaskRunner, createTask } from '../lib/task.ts'
@@ -16,7 +16,7 @@ describe('Task', () => {
   it('should create a task', () => {
     const task = createTask('test', { handler: noop, parser: () => [] })
 
-    expect(TaskKey in task).toBe(true)
+    expect(kTask in task).toBe(true)
     expect(task).toHaveProperty('name', 'test')
     expect(task).toHaveProperty('handler', noop)
     expect(task).toHaveProperty('parser', expect.any(Function))

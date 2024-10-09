@@ -15,24 +15,23 @@ import {
 describe.sequential('Transport', () => {
   let app: Application
   let initSpy: Mock
-  let startupSpy: Mock
-  let shutdownSpy: Mock
+  let startSpy: Mock
+  let stopSpy: Mock
 
   beforeEach(async () => {
     initSpy = vi.fn()
-    startupSpy = vi.fn()
-    shutdownSpy = vi.fn()
+    startSpy = vi.fn()
+    stopSpy = vi.fn()
 
-    app = testApp().use(testTransport(initSpy, startupSpy, shutdownSpy))
-    await app.initialize()
+    app = testApp().use(testTransport(initSpy, startSpy, stopSpy))
   })
 
   it('should start and stop', async () => {
+    await app.start()
     expect(initSpy).toHaveBeenCalledOnce()
-    await app.startup()
-    expect(startupSpy).toHaveBeenCalledOnce()
-    await app.shutdown()
-    expect(shutdownSpy).toHaveBeenCalledOnce()
+    expect(startSpy).toHaveBeenCalledOnce()
+    await app.stop()
+    expect(stopSpy).toHaveBeenCalledOnce()
   })
 })
 

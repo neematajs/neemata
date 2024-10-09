@@ -6,7 +6,7 @@ import {
 } from '@nmtjs/contract'
 import { type BaseType, type CustomType, type NeverType, t } from '@nmtjs/type'
 
-import { ProcedureSubscriptionKey } from './constants.ts'
+import { kProcedureSubscription } from './constants.ts'
 import type { Dependencies, DependencyContext } from './container.ts'
 import {
   type AnyGuard,
@@ -50,7 +50,7 @@ export interface SubscriptionProcedure<
     >,
     ProcedureDeps
   >
-  [ProcedureSubscriptionKey]: any
+  [kProcedureSubscription]: any
 }
 
 export function createContractSubscription<
@@ -87,7 +87,7 @@ export function createContractSubscription<
 
   return Object.assign(procedure, {
     handler,
-    [ProcedureSubscriptionKey]: true,
+    [kProcedureSubscription]: true,
   }) as any
 }
 

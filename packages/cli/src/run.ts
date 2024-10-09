@@ -135,10 +135,10 @@ export const run = async (scriptPath: string) => {
     const commands = {
       async start() {
         const { entryApp, tryExit } = await loadEntry()
-        const terminate = () => tryExit(() => entryApp.shutdown())
+        const terminate = () => tryExit(() => entryApp.stop())
         process.on('SIGTERM', terminate)
         process.on('SIGINT', terminate)
-        await entryApp.startup()
+        await entryApp.start()
       },
       async execute() {
         const { entryApp, tryExit } = await loadEntry()
@@ -154,7 +154,7 @@ export const run = async (scriptPath: string) => {
           extension = undefined
         }
 
-        const terminate = () => tryExit(() => defer(() => app.shutdown()))
+        const terminate = () => tryExit(() => defer(() => app.stop()))
 
         process.on('SIGTERM', terminate)
         process.on('SIGINT', terminate)

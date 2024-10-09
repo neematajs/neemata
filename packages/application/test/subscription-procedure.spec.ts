@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import test from 'node:test'
 import { t } from '@nmtjs/type'
 import { builtin } from '../lib/common.ts'
-import { ProcedureKey, ProcedureSubscriptionKey } from '../lib/constants.ts'
+import { kProcedure, kProcedureSubscription } from '../lib/constants.ts'
 import { createValueInjectable } from '../lib/container.ts'
 import {
   createContractProcedure,
@@ -29,7 +29,7 @@ describe('Subsctiption procedure', () => {
       handler as any,
     )
 
-    expect(ProcedureSubscriptionKey in procedure).toBe(true)
+    expect(kProcedureSubscription in procedure).toBe(true)
     expect(procedure).toHaveProperty('contract', procedureContract)
     expect(procedure).toHaveProperty('handler', handler)
     expect(procedure).toHaveProperty('dependencies', {})
@@ -126,7 +126,7 @@ describe('Procedure static', () => {
       },
     })
 
-    expect(ProcedureSubscriptionKey in procedure).toBe(true)
+    expect(kProcedureSubscription in procedure).toBe(true)
     expect(procedure).toHaveProperty('contract', {
       type: 'neemata:subscription',
       events: {

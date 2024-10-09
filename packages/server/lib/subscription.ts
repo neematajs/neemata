@@ -68,12 +68,12 @@ export const WTSubManagerPlugin = createPlugin('WTPubManager', async (app) => {
     bc = createBroadcastChannel(WORKER_THREADS_SM_CHANNEL)
 
     if (isApiWorker) {
-      hooks.add(Hook.OnStartup, () => {
+      hooks.add(Hook.AfterStart, () => {
         bc!.on(WORKER_THREADS_SM_MESSAGE, broadcastHandler.bind(this))
       })
     }
 
-    hooks.add(Hook.OnShutdown, () => bc!.close())
+    hooks.add(Hook.BeforeStop, () => bc!.close())
   }
 
   container.provide(builtin.subManager, {

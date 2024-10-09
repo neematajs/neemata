@@ -31,8 +31,10 @@ export type Command = (options: {
 export interface HooksInterface {
   [Hook.BeforeInitialize]: () => any
   [Hook.AfterInitialize]: () => any
-  [Hook.OnStartup]: () => any
-  [Hook.OnShutdown]: () => any
+  [Hook.BeforeStart]: () => any
+  [Hook.AfterStart]: () => any
+  [Hook.BeforeStop]: () => any
+  [Hook.AfterStop]: () => any
   [Hook.BeforeTerminate]: () => any
   [Hook.AfterTerminate]: () => any
   [Hook.OnConnect]: (connection: Connection) => any

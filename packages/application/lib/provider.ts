@@ -1,6 +1,6 @@
 import type { CallTypeProvider, TypeProvider } from '@nmtjs/common'
 
-import { InjectableKey, ProviderKey, Scope } from './constants.ts'
+import { Scope, kInjectable, kProvider } from './constants.ts'
 import {
   type AnyInjectable,
   type Dependant,
@@ -42,25 +42,22 @@ export interface Provider<
   scope: ProvidableScope
   factory: ProvidableFactoryType<ProvidableTypeProvider, ProvidableDeps>
   dispose?: ProvidableDisposeType<ProvidableTypeProvider, ProvidableDeps>
-  [ProviderKey]: ProvidableTypeProvider
+  [kProvider]: ProvidableTypeProvider
 }
 
 export type AnyProvider = Provider<any, any, Scope>
 
-export function provide<
-  P extends AnyProvider,
-  O extends P[ProviderKey]['input'],
->(
+export function provide<P extends AnyProvider, O extends P[kProvider]['input']>(
   provider: P,
   options: O | AnyInjectable<O>,
 ): Injectable<
-  CallTypeProvider<P[ProviderKey], O>,
+  CallTypeProvider<P[kProvider], O>,
   P['dependencies'],
   P['scope']
 > {
   const dependencies = { ...provider.dependencies }
   dependencies.options =
-    InjectableKey in options ? options : createValueInjectable(options)
+    kInjectable in options ? options : createValueInjectable(options)
   return createFactoryInjectable({
     dependencies,
     scope: provider.scope,
@@ -102,7 +99,7 @@ export function $createProvider<P extends TypeProvider>() {
         dependencies: { ...dependencies, options },
         factory: factory as any,
         dispose: dispose as any,
-        [ProviderKey]: true as unknown as P,
+        [kProvider]: true as unknown as P,
       }
     },
   }
