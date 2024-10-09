@@ -62,7 +62,7 @@ export interface ApplicationContext {
   }
 }
 
-export type ExecuteContext = Readonly<{
+export type CallContext = Readonly<{
   connection: Connection
   container: Container
   procedure: AnyBaseProcedure
