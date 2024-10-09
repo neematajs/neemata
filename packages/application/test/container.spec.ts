@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { builtin } from '../lib/common.ts'
 import {
-  FactoryInjectableKey,
-  InjectableKey,
-  LazyInjectableKey,
   Scope,
-  ValueInjectableKey,
+  kFactoryInjectable,
+  kInjectable,
+  kLazyInjectable,
+  kValueInjectable,
 } from '../lib/constants.ts'
 import {
   Container,
@@ -30,8 +30,8 @@ describe('Injectable', () => {
     const injectable = createLazyInjectable()
     expect(injectable.dependencies).toStrictEqual({})
     expect(injectable.scope).toBe(Scope.Global)
-    expect(InjectableKey in injectable).toBe(true)
-    expect(LazyInjectableKey in injectable).toBe(true)
+    expect(kInjectable in injectable).toBe(true)
+    expect(kLazyInjectable in injectable).toBe(true)
   })
 
   it('should create a lazy injectable with a scope', () => {
@@ -45,8 +45,8 @@ describe('Injectable', () => {
     expect(injectable.value).toBe(value)
     expect(injectable.dependencies).toStrictEqual({})
     expect(injectable.scope).toBe(Scope.Global)
-    expect(InjectableKey in injectable).toBe(true)
-    expect(ValueInjectableKey in injectable).toBe(true)
+    expect(kInjectable in injectable).toBe(true)
+    expect(kValueInjectable in injectable).toBe(true)
   })
 
   it('should create a factory injectable', () => {
@@ -54,8 +54,8 @@ describe('Injectable', () => {
     expect(injectable.factory).toBe(noop)
     expect(injectable.dependencies).toStrictEqual({})
     expect(injectable.scope).toBe(Scope.Global)
-    expect(InjectableKey in injectable).toBe(true)
-    expect(FactoryInjectableKey in injectable).toBe(true)
+    expect(kInjectable in injectable).toBe(true)
+    expect(kFactoryInjectable in injectable).toBe(true)
   })
 
   it('should create a factory injectable with scope', () => {
@@ -85,7 +85,7 @@ describe('Provider', () => {
     const provider = $createProvider<TestTypeProvider>().createProvider({
       factory,
     })
-    expect(LazyInjectableKey in provider.options).toBe(true)
+    expect(kLazyInjectable in provider.options).toBe(true)
     expect(provider.factory).toBe(factory)
     expect(provider.dependencies).toStrictEqual({ options: provider.options })
     expect(provider.scope).toBe(Scope.Global)

@@ -8,8 +8,10 @@ export enum Scope {
 export enum Hook {
   BeforeInitialize = 'BeforeInitialize',
   AfterInitialize = 'AfterInitialize',
-  OnStartup = 'OnStartup',
-  OnShutdown = 'OnShutdown',
+  BeforeStart = 'BeforeStart',
+  AfterStart = 'AfterStart',
+  BeforeStop = 'BeforeStart',
+  AfterStop = 'AfterStart',
   BeforeTerminate = 'BeforeTerminate',
   AfterTerminate = 'AfterTerminate',
   OnConnect = 'OnConnect',
@@ -21,52 +23,60 @@ export enum WorkerType {
   Task = 'Task',
 }
 
-export const OptionalDependencyKey: unique symbol = Symbol.for(
+export const kOptionalDependency: unique symbol = Symbol.for(
   'neemata:OptionalDependencyKey',
 )
-export type OptionalDependencyKey = typeof OptionalDependencyKey
+export type kOptionalDependency = typeof kOptionalDependency
 
-export const InjectableKey: unique symbol = Symbol.for('neemata:InjectableKey')
-export type InjectableKey = typeof InjectableKey
+export const kInjectable: unique symbol = Symbol.for('neemata:InjectableKey')
+export type kInjectable = typeof kInjectable
 
-export const LazyInjectableKey: unique symbol = Symbol.for(
+export const kLazyInjectable: unique symbol = Symbol.for(
   'neemata:LazyInjectableKey',
 )
-export type LazyInjectableKey = typeof LazyInjectableKey
+export type kLazyInjectable = typeof kLazyInjectable
 
-export const ValueInjectableKey: unique symbol = Symbol.for(
+export const kValueInjectable: unique symbol = Symbol.for(
   'neemata:ValueInjectableKey',
 )
-export type ValueInjectableKey = typeof ValueInjectableKey
+export type kValueInjectable = typeof kValueInjectable
 
-export const FactoryInjectableKey: unique symbol = Symbol.for(
+export const kFactoryInjectable: unique symbol = Symbol.for(
   'neemata:FactoryInjectableKey',
 )
-export type FactoryInjectableKey = typeof FactoryInjectableKey
+export type kFactoryInjectable = typeof kFactoryInjectable
 
-export const ProviderKey: unique symbol = Symbol.for('neemata:ProviderKey')
-export type ProviderKey = typeof ProviderKey
+export const kProvider: unique symbol = Symbol.for('neemata:ProviderKey')
+export type kProvider = typeof kProvider
 
-export const ProcedureKey: unique symbol = Symbol.for('neemata:ProcedureKey')
-export type ProcedureKey = typeof ProcedureKey
+export const kProcedure: unique symbol = Symbol.for('neemata:ProcedureKey')
+export type kProcedure = typeof kProcedure
 
-export const ProcedureSubscriptionKey: unique symbol = Symbol.for(
+export const kProcedureSubscription: unique symbol = Symbol.for(
   'neemata:ProcedureSubscriptionKey',
 )
-export type ProcedureSubscriptionKey = typeof ProcedureSubscriptionKey
+export type kProcedureSubscription = typeof kProcedureSubscription
 
-export const ProcedureMetadataKey: unique symbol = Symbol.for(
+export const kProcedureMetadata: unique symbol = Symbol.for(
   'neemata:ProcedureMetadataKey',
 )
-export type ProcedureMetadataKey = typeof ProcedureMetadataKey
+export type kProcedureMetadata = typeof kProcedureMetadata
 
-export const ServiceKey: unique symbol = Symbol.for('neemata:ServiceKey')
-export type ServiceKey = typeof ServiceKey
+export const kService: unique symbol = Symbol.for('neemata:ServiceKey')
+export type kService = typeof kService
 
-export const TaskKey: unique symbol = Symbol.for('neemata:TaskKey')
-export type TaskKey = typeof TaskKey
+export const kTask: unique symbol = Symbol.for('neemata:TaskKey')
+export type kTask = typeof kTask
 
-export const SubscriptionResponseKey: unique symbol = Symbol.for(
+export const kSubscriptionResponse: unique symbol = Symbol.for(
   'neemata:SubscriptionResponseKey',
 )
-export type SubscriptionResponseKey = typeof SubscriptionResponseKey
+export type kSubscriptionResponse = typeof kSubscriptionResponse
+
+export const kPlugin: unique symbol = Symbol.for('neemata:PluginKey')
+export type kPlugin = typeof kPlugin
+
+export const kTransportPlugin: unique symbol = Symbol.for(
+  'neemata:TransportPluginKey',
+)
+export type kTransportPlugin = typeof kTransportPlugin

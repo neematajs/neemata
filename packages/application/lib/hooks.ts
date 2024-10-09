@@ -32,11 +32,10 @@ export class Hooks {
     const { concurrent = true, reverse = false } = options ?? {}
     const hooks = this.collection.get(name)
     if (!hooks) return
+    const hooksArr = Array.from(hooks)
     if (concurrent) {
-      // TODO: add some logging maybe?
-      await Promise.allSettled(Array.from(hooks).map((hook) => hook(...args)))
+      await Promise.all(hooksArr.map((hook) => hook(...args)))
     } else {
-      const hooksArr = Array.from(hooks)
       if (reverse) hooksArr.reverse()
       for (const hook of hooksArr) await hook(...args)
     }
@@ -46,3 +45,6 @@ export class Hooks {
     this.collection.clear()
   }
 }
+
+export const createErrForHook = (hook: Hook | (object & string)) =>
+  `Error during [${hook}] hook`

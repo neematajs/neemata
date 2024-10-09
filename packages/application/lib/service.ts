@@ -4,7 +4,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { type TEventContract, type TServiceContract, c } from '@nmtjs/contract'
 import type { BaseType } from '@nmtjs/type'
-import { Hook, ProcedureKey, ServiceKey } from './constants.ts'
+import { Hook, kProcedure, kService } from './constants.ts'
 import { Hooks } from './hooks.ts'
 import type { AnyBaseProcedure, AnyGuard, AnyMiddleware } from './procedure.ts'
 import type { Callback } from './types.ts'
@@ -15,7 +15,7 @@ export interface Service<Contract extends TServiceContract = TServiceContract> {
   guards: Set<AnyGuard>
   middlewares: Set<AnyMiddleware>
   hooks: Hooks
-  [ServiceKey]: any
+  [kService]: any
 }
 
 export type AnyService = Service
@@ -49,7 +49,7 @@ export function createContractService<
     guards,
     middlewares,
     hooks,
-    [ServiceKey]: true,
+    [kService]: true,
   }
 
   if (params.autoload) {
@@ -91,7 +91,7 @@ const createAutoLoader =
       } else {
         implementation = require(filepath)
       }
-      assert(ProcedureKey in implementation, 'Invalid procedure')
+      assert(kProcedure in implementation, 'Invalid procedure')
       service.procedures.set(procedureName, implementation as any)
     }
   }

@@ -64,12 +64,12 @@ export async function start(
   process.on('uncaughtException', (err) => app.logger.error(err))
   process.on('unhandledRejection', (err) => app.logger.error(err))
 
-  await app.startup()
+  await app.start()
   parentPort.postMessage({ type: WorkerMessageType.Ready })
 
   parentPort.on(WorkerMessageType.Stop, async () => {
     try {
-      await app.shutdown()
+      await app.stop()
       process.exit(0)
     } catch (err) {
       app.logger.error(err)

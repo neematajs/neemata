@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { kPlugin } from '../lib/constants.ts'
 import { type Plugin, createPlugin } from '../lib/plugin.ts'
 
 describe('Plugin', () => {
@@ -9,6 +10,7 @@ describe('Plugin', () => {
     expect(plugin).toMatchObject<Plugin>({
       name: pluginName,
       init: expect.any(Function),
+      [kPlugin]: expect.anything(),
     })
   })
 })

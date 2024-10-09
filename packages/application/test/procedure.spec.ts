@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { t } from '@nmtjs/type'
-import { ProcedureKey } from '../lib/constants.ts'
+import { kProcedure } from '../lib/constants.ts'
 import { createValueInjectable } from '../lib/container.ts'
 import {
   createContractProcedure,
@@ -18,7 +18,7 @@ describe('Procedure', () => {
     const handler = () => {}
     const procedure = createContractProcedure(procedureContract, handler)
 
-    expect(ProcedureKey in procedure).toBe(true)
+    expect(kProcedure in procedure).toBe(true)
     expect(procedure).toHaveProperty('contract', procedureContract)
     expect(procedure).toHaveProperty('handler', handler)
     expect(procedure).toHaveProperty('dependencies', {})
@@ -105,7 +105,7 @@ describe('Procedure static', () => {
       },
     })
 
-    expect(ProcedureKey in procedure).toBe(true)
+    expect(kProcedure in procedure).toBe(true)
     expect(procedure).toHaveProperty('contract', {
       type: 'neemata:procedure',
       input,

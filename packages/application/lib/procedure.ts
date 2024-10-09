@@ -5,7 +5,7 @@ import {
 } from '@nmtjs/contract'
 import { type BaseType, type CustomType, type NeverType, t } from '@nmtjs/type'
 
-import { ProcedureKey, ProcedureMetadataKey, type Scope } from './constants.ts'
+import { type Scope, kProcedure, kProcedureMetadata } from './constants.ts'
 import {
   type AnyInjectable,
   type Dependant,
@@ -76,7 +76,7 @@ export interface Procedure<
     ProcedureContract['output'],
     ProcedureDeps
   >
-  [ProcedureKey]: any
+  [kProcedure]: any
 }
 export type AnyProcedure<Contract extends TBaseProcedureContract = any> =
   Procedure<Contract, Dependencies>
@@ -87,13 +87,13 @@ export type Metadata<T = any> = {
 }
 
 export type MetadataKey<T = any> = {
-  [ProcedureMetadataKey]: string
+  [kProcedureMetadata]: string
   as(value: T): Metadata<T>
 }
 
 export const createProcedureMetadataKey = <T>(key: string): MetadataKey<T> => {
   const metadataKey = {
-    [ProcedureMetadataKey]: key,
+    [kProcedureMetadata]: key,
     as(value: T) {
       return { key: metadataKey, value }
     },
@@ -110,7 +110,7 @@ export const getProcedureMetadata = <
   key: T,
   defaultValue?: D,
 ): D extends undefined ? T | undefined : T => {
-  return procedure.metadata.get(key[ProcedureMetadataKey]) ?? defaultValue
+  return procedure.metadata.get(key[kProcedureMetadata]) ?? defaultValue
 }
 
 export type CreateProcedureParams<
@@ -152,7 +152,7 @@ export function _createBaseProcedure<
   const guards = new Set(params.guards ?? [])
 
   for (const meta of params.metadata ?? []) {
-    const key = meta.key[ProcedureMetadataKey]
+    const key = meta.key[kProcedureMetadata]
     metadata.set(key, meta.value)
   }
 
@@ -179,7 +179,7 @@ export function createContractProcedure<
 
   return Object.assign(_createBaseProcedure(contract, params), {
     handler,
-    [ProcedureKey]: true,
+    [kProcedure]: true,
   })
 }
 

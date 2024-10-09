@@ -35,7 +35,7 @@ export class ApplicationServer {
     if (watch) import(`${options.applicationPath}`).catch(noop)
   }
 
-  async startup() {
+  async start() {
     this.logger.info('Starting application server...')
     const { apiWorkers, taskWorkers } = this.options
 
@@ -50,7 +50,7 @@ export class ApplicationServer {
       await new Promise<void>((resolve, reject) => {
         const onError = (err: any) => {
           this.logger.fatal(err)
-          this.shutdown()
+          this.stop()
         }
         worker.once(WorkerMessageType.Ready, () => {
           worker.off('error', onError)
@@ -61,7 +61,7 @@ export class ApplicationServer {
     }
   }
 
-  async shutdown() {
+  async stop() {
     this.logger.info('Stopping application server...')
     this.#exiting = true
     for (const worker of this.workers) {

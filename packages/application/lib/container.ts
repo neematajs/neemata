@@ -1,10 +1,10 @@
 import {
-  FactoryInjectableKey,
-  InjectableKey,
-  LazyInjectableKey,
-  OptionalDependencyKey,
   Scope,
-  ValueInjectableKey,
+  kFactoryInjectable,
+  kInjectable,
+  kLazyInjectable,
+  kOptionalDependency,
+  kValueInjectable,
 } from './constants.ts'
 import type { Logger } from './logger.ts'
 import type { Registry } from './registry.ts'
@@ -19,7 +19,7 @@ const ScopeStrictness = {
 }
 
 export type DependencyOptional<T extends AnyInjectable = AnyInjectable> = {
-  [OptionalDependencyKey]: any
+  [kOptionalDependency]: any
   injectable: T
 }
 
@@ -72,15 +72,15 @@ export type InjectableDisposeType<
 export interface LazyInjectable<T, S extends Scope = Scope.Global>
   extends Dependant<{}> {
   scope: S
-  [InjectableKey]: any
-  [LazyInjectableKey]: T
+  [kInjectable]: any
+  [kLazyInjectable]: T
 }
 
 export interface ValueInjectable<T> extends Dependant<{}> {
   scope: Scope.Global
   value: T
-  [InjectableKey]: any
-  [ValueInjectableKey]: any
+  [kInjectable]: any
+  [kValueInjectable]: any
 }
 
 export interface FactoryInjectable<
@@ -91,8 +91,8 @@ export interface FactoryInjectable<
   scope: S
   factory(context: DependencyContext<D>): Async<T>
   dispose?(instance: T, context: DependencyContext<D>): any
-  [InjectableKey]: any
-  [FactoryInjectableKey]: any
+  [kInjectable]: any
+  [kFactoryInjectable]: any
 }
 
 export type Injectable<
@@ -351,7 +351,7 @@ export class Container {
 
   private async disposeInjectable(injectable: AnyInjectable) {
     try {
-      if (FactoryInjectableKey in injectable) {
+      if (kFactoryInjectable in injectable) {
         const { dispose } = injectable
         if (dispose) {
           const { instance, context } = this.instances.get(injectable)!
@@ -396,11 +396,10 @@ function compareScope(
 }
 
 const injectableUtils = {
-  isLazy: (injectable: AnyInjectable) => LazyInjectableKey in injectable,
-  isFactory: (injectable: AnyInjectable) => FactoryInjectableKey in injectable,
-  isValue: (injectable: AnyInjectable) => ValueInjectableKey in injectable,
-  isOptional: (injectable: AnyInjectable) =>
-    OptionalDependencyKey in injectable,
+  isLazy: (injectable: AnyInjectable) => kLazyInjectable in injectable,
+  isFactory: (injectable: AnyInjectable) => kFactoryInjectable in injectable,
+  isValue: (injectable: AnyInjectable) => kValueInjectable in injectable,
+  isOptional: (injectable: AnyInjectable) => kOptionalDependency in injectable,
 }
 
 export function getInjectableScope(injectable: AnyInjectable) {
@@ -419,7 +418,7 @@ export function getInjectableScope(injectable: AnyInjectable) {
 export function getDepedencencyInjectable(
   dependency: Depedency,
 ): AnyInjectable {
-  if (OptionalDependencyKey in dependency) {
+  if (kOptionalDependency in dependency) {
     return dependency.injectable
   }
   return dependency
@@ -427,7 +426,7 @@ export function getDepedencencyInjectable(
 
 export function asOptional<T extends AnyInjectable>(injectable: T) {
   return {
-    [OptionalDependencyKey]: true,
+    [kOptionalDependency]: true,
     injectable,
   } as DependencyOptional<T>
 }
@@ -441,8 +440,8 @@ export function createLazyInjectable<T, S extends Scope = Scope.Global>(
     dependencies: {},
     label,
     stack: tryCaptureStackTrace(),
-    [InjectableKey]: true,
-    [LazyInjectableKey]: true as unknown as T,
+    [kInjectable]: true,
+    [kLazyInjectable]: true as unknown as T,
   })
 }
 
@@ -456,8 +455,8 @@ export function createValueInjectable<T>(
     dependencies: {},
     label,
     stack: tryCaptureStackTrace(),
-    [InjectableKey]: true,
-    [ValueInjectableKey]: true,
+    [kInjectable]: true,
+    [kValueInjectable]: true,
   })
 }
 
@@ -489,8 +488,8 @@ export function createFactoryInjectable<
     dispose: params.dispose,
     label,
     stack: tryCaptureStackTrace(),
-    [InjectableKey]: true,
-    [FactoryInjectableKey]: true,
+    [kInjectable]: true,
+    [kFactoryInjectable]: true,
   }
   const actualScope = getInjectableScope(injectable)
   if (
