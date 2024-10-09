@@ -15,8 +15,8 @@ import {
 } from './container.ts'
 import type {
   Async,
+  CallContext,
   ErrorClass,
-  ExecuteContext,
   InputType,
   JsonPrimitive,
   OutputType,
@@ -29,14 +29,14 @@ export type AnyFilter<Error extends ErrorClass = ErrorClass> = AnyInjectable<
   FilterLike<Error>
 >
 export interface GuardLike {
-  can(context: ExecuteContext): Async<boolean>
+  can(context: CallContext): Async<boolean>
 }
 export type AnyGuard = AnyInjectable<GuardLike>
 
 export type MiddlewareNext = (payload?: any) => any
 
 export interface MiddlewareLike {
-  handle(context: ExecuteContext, next: MiddlewareNext, payload: any): any
+  handle(context: CallContext, next: MiddlewareNext, payload: any): any
 }
 export type AnyMiddleware = AnyInjectable<MiddlewareLike>
 

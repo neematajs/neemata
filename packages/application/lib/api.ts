@@ -12,7 +12,7 @@ import type { AnyBaseProcedure, MiddlewareLike } from './procedure.ts'
 import type { Registry } from './registry.ts'
 import type { AnyService } from './service.ts'
 import { SubscriptionResponse } from './subscription.ts'
-import type { ExecuteContext } from './types.ts'
+import type { CallContext } from './types.ts'
 import { withTimeout } from './utils/functions.ts'
 
 export type ApiCallOptions = {
@@ -68,7 +68,7 @@ export class Api {
   private async createProcedureHandler(callOptions: ApiCallOptions) {
     const { connection, procedure, container, service } = callOptions
 
-    const execCtx: ExecuteContext = Object.freeze({
+    const execCtx: CallContext = Object.freeze({
       connection,
       container,
       service,
@@ -122,7 +122,7 @@ export class Api {
   }
 
   private handleTimeout(response: any, timeout?: number) {
-    const applyTimeout = timeout && response instanceof Promise
+    const applyTimeout = timeout && timeout > 0 && response instanceof Promise
     return applyTimeout
       ? withTimeout(
           response,
@@ -134,15 +134,15 @@ export class Api {
 
   private async handleGuards(
     callOptions: ApiCallOptions,
-    execCtx: ExecuteContext,
+    callCtx: CallContext,
   ) {
-    const { service, procedure, container, connection } = callOptions
+    const { service, procedure, container } = callOptions
     const injectables = [...service.guards, ...procedure.guards]
     const guards = await Promise.all(
       injectables.map((p) => container.resolve(p)),
     )
     for (const guard of guards) {
-      const result = await guard.can(execCtx)
+      const result = await guard.can(callCtx)
       if (result === false) throw new ApiError(ErrorCode.Forbidden)
     }
   }
@@ -168,19 +168,18 @@ export class Api {
 
   private handleInput(procedure: AnyBaseProcedure, payload: any) {
     if (procedure.contract.input instanceof NeverType === false) {
-      const result = this.handleSchema(
-        procedure.contract.input,
-        'decode',
-        payload,
-      )
+      const schema = this.getSchema(procedure.contract.input)
+      const prepared = schema.prepare(payload)
 
-      if (result.success) return result.value
+      if (!schema.check(prepared)) {
+        throw new ApiError(
+          ErrorCode.ValidationError,
+          'Invalid input',
+          Array.from(schema.errors(prepared)),
+        )
+      }
 
-      throw new ApiError(
-        ErrorCode.ValidationError,
-        'Invalid input',
-        result.error,
-      )
+      return schema.decode(prepared)
     }
   }
 
@@ -193,42 +192,27 @@ export class Api {
       }
 
       if (procedure.contract.output instanceof NeverType === false) {
-        const result = this.handleSchema(
-          procedure.contract.output,
-          'encode',
-          response.payload,
-        )
-        if (!result.success) {
-          throw new Error('Failed to encode subscription payload', {
-            cause: result.error,
-          })
-        }
-        response.withPayload(result.value)
+        const schema = this.getSchema(procedure.contract.output)
+        const prepared = schema.prepare(response)
+        const result = schema.encodeSafe(prepared)
+        if (result.success) return response.withPayload(result.value)
+        throw new Error('Failed to encode response', { cause: result.error })
       }
 
       return response
     } else if (procedure.contract.output instanceof NeverType === false) {
-      const result = this.handleSchema(
-        procedure.contract.output,
-        'encode',
-        response,
-      )
-      if (!result.success) {
-        throw new Error('Failed to encode response', { cause: result.error })
-      }
-      return result.value
+      const schema = this.getSchema(procedure.contract.output)
+      const prepared = schema.prepare(response)
+      const result = schema.encodeSafe(prepared)
+      if (result.success) return result.value
+      throw new Error('Failed to encode response', { cause: result.error })
     }
   }
 
-  private handleSchema(
-    schema: BaseType,
-    method: 'decode' | 'encode',
-    payload: any,
-    context?: any,
-  ): ReturnType<Compiled['decodeSafe' | 'encodeSafe']> {
+  private getSchema(schema: BaseType) {
     const compiled = this.application.registry.schemas.get(schema)
     if (!compiled) throw new Error('Compiled schema not found')
-    return compiled[`${method}Safe`](payload)
+    return compiled
   }
 }
 
