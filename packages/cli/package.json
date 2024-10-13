@@ -15,15 +15,9 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
+    "@nmtjs/application": "workspace:*",
+    "@nmtjs/server": "workspace:*",
     "dotenv": "^16.4.5"
-  },
-  "peerDependencies": {
-    "@nmtjs/application": "workspace:*",
-    "@nmtjs/server": "workspace:*"
-  },
-  "devDependencies": {
-    "@nmtjs/application": "workspace:*",
-    "@nmtjs/server": "workspace:*"
   },
   "files": [
     "src",
