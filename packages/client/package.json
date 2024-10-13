@@ -22,12 +22,7 @@
 			"types": "./lib/client-static.ts"
 		}
 	},
-	"peerDependencies": {
-		"@nmtjs/type": "workspace:*",
-		"@nmtjs/contract": "workspace:*",
-		"@nmtjs/common": "workspace:*"
-	},
-	"devDependencies": {
+	"dependencies": {
 		"@nmtjs/type": "workspace:*",
 		"@nmtjs/contract": "workspace:*",
 		"@nmtjs/common": "workspace:*"

@@ -12,11 +12,7 @@
       "types": "./index.ts"
     }
   },
-  "peerDependencies": {
-    "@nmtjs/application": "workspace:*",
-    "@nmtjs/common": "workspace:*"
-  },
-  "devDependencies": {
+  "dependencies": {
     "@nmtjs/application": "workspace:*",
     "@nmtjs/common": "workspace:*"
   },

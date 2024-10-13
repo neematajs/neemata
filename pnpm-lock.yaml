@@ -29,13 +29,6 @@ importers:
 
   packages/application:
     dependencies:
-      pino:
-        specifier: ^9.0.0
-        version: 9.3.1
-      pino-pretty:
-        specifier: ^11.0.0
-        version: 11.2.1
-    devDependencies:
       '@nmtjs/common':
         specifier: workspace:*
         version: link:../common
@@ -45,25 +38,31 @@ importers:
       '@nmtjs/type':
         specifier: workspace:*
         version: link:../type
+      pino:
+        specifier: ^9.0.0
+        version: 9.3.1
+      pino-pretty:
+        specifier: ^11.0.0
+        version: 11.2.1
+    devDependencies:
       '@types/node':
         specifier: ^18
         version: 18.19.44
 
   packages/cli:
     dependencies:
-      dotenv:
-        specifier: ^16.4.5
-        version: 16.4.5
-    devDependencies:
       '@nmtjs/application':
         specifier: workspace:*
         version: link:../application
       '@nmtjs/server':
         specifier: workspace:*
         version: link:../server
+      dotenv:
+        specifier: ^16.4.5
+        version: 16.4.5
 
   packages/client:
-    devDependencies:
+    dependencies:
       '@nmtjs/common':
         specifier: workspace:*
         version: link:../common
@@ -77,7 +76,7 @@ importers:
   packages/common: {}
 
   packages/contract:
-    devDependencies:
+    dependencies:
       '@nmtjs/common':
         specifier: workspace:*
         version: link:../common
@@ -107,7 +106,7 @@ importers:
         version: link:../type
 
   packages/server:
-    devDependencies:
+    dependencies:
       '@nmtjs/application':
         specifier: workspace:*
         version: link:../application

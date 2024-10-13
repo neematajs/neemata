@@ -12,11 +12,7 @@
     "build": "neemata-build -p neutral --root=./src './**/*.ts'",
     "type-check": "tsc --noEmit"
   },
-  "peerDependencies": {
-    "@nmtjs/type": "workspace:*",
-    "@nmtjs/common": "workspace:*"
-  },
-  "devDependencies": {
+  "dependencies": {
     "@nmtjs/type": "workspace:*",
     "@nmtjs/common": "workspace:*"
   },
