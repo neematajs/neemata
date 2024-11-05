@@ -2,18 +2,12 @@ import {
   type ObjectOptions,
   type TObject,
   type TRecord,
-  type TSchema,
   Type,
 } from '@sinclair/typebox'
 import type { typeStatic } from '../constants.ts'
 import type { UnionToTupleString } from '../utils.ts'
 import { BaseType, getTypeSchema } from './base.ts'
-import {
-  type AnyEnumType,
-  type AnyObjectEnumType,
-  EnumType,
-  ObjectEnumType,
-} from './enum.ts'
+import { type AnyEnumType, type AnyObjectEnumType, EnumType } from './enum.ts'
 import type { AnyLiteralType } from './literal.ts'
 import type { AnyStringType } from './string.ts'
 import type { AnyUnionType } from './union.ts'
@@ -176,20 +170,8 @@ export class RecordType<
   }
 
   protected _constructSchema(options: ObjectOptions, key: K, element: E) {
-    let keySchema: TSchema
-
-    if (key instanceof EnumType) {
-      keySchema = Type.Union(key.values.map((value) => Type.Literal(value)))
-    } else if (key instanceof ObjectEnumType) {
-      keySchema = Type.Union(
-        Object.values(key.values).map((value) => Type.Literal(value as string)),
-      )
-    } else {
-      keySchema = getTypeSchema(key)
-    }
-
     return Type.Record(
-      keySchema,
+      getTypeSchema(key),
       getTypeSchema(element),
       options,
     ) as unknown as TRecord<K[typeStatic]['schema'], E[typeStatic]['schema']>
