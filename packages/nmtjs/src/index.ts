@@ -11,7 +11,6 @@ import {
   createMiddleware,
   createProcedure,
 } from '@nmtjs/application'
-import { $createProvider, provide as _provide } from '@nmtjs/application'
 import { createContractService, createService } from '@nmtjs/application'
 import {
   $createSubscription,
@@ -28,7 +27,6 @@ export namespace n {
     ...args: ConstructorParameters<typeof ApplicationServer>
   ) => new ApplicationServer(...args)
 
-  export const provide = _provide
   export const optional = asOptional
   export const value = createValueInjectable
   export const lazy = createLazyInjectable
@@ -40,8 +38,6 @@ export namespace n {
   export const middleware = createMiddleware
   export const guard = createGuard
   export const filter = createFilter
-
-  export const $provider = $createProvider
 
   export namespace contractless {
     export const procedure = createProcedure

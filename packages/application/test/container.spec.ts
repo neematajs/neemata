@@ -15,15 +15,9 @@ import {
   createValueInjectable,
   getInjectableScope,
 } from '../lib/container.ts'
-import { $createProvider, provide } from '../lib/provider.ts'
 import { Registry } from '../lib/registry.ts'
 import { noop } from '../lib/utils/functions.ts'
-import {
-  type TestTypeProvider,
-  testLogger,
-  testProcedure,
-  testService,
-} from './_utils.ts'
+import { testLogger, testProcedure, testService } from './_utils.ts'
 
 describe('Injectable', () => {
   it('should create a lazy injectable', () => {
@@ -75,60 +69,6 @@ describe('Injectable', () => {
     })
     expect(injectable.dependencies).toHaveProperty('dep1', dep1)
     expect(injectable.dependencies).toHaveProperty('dep2', dep2)
-  })
-})
-
-describe('Provider', () => {
-  const factory = () => 1 as const
-
-  it('should create a provider', () => {
-    const provider = $createProvider<TestTypeProvider>().createProvider({
-      factory,
-    })
-    expect(kLazyInjectable in provider.options).toBe(true)
-    expect(provider.factory).toBe(factory)
-    expect(provider.dependencies).toStrictEqual({ options: provider.options })
-    expect(provider.scope).toBe(Scope.Global)
-    expect(provider.dispose).toBeUndefined()
-  })
-
-  it('should create a provider with dispose', () => {
-    const dispose = () => {}
-    const provider = $createProvider<TestTypeProvider>().createProvider({
-      factory,
-      dispose,
-    })
-    expect(provider.dispose).toBe(dispose)
-  })
-
-  it('should create a provider with scope', () => {
-    const provider = $createProvider<TestTypeProvider>().createProvider({
-      factory,
-      scope: Scope.Call,
-    })
-    expect(provider.scope).toBe(Scope.Call)
-  })
-
-  it('should create a provider with dependencies', () => {
-    const dep1 = createLazyInjectable()
-    const dep2 = createLazyInjectable()
-    const provider = $createProvider<TestTypeProvider>().createProvider({
-      factory,
-      dependencies: { dep1, dep2 },
-    })
-    expect(provider.dependencies).toHaveProperty('options', provider.options)
-    expect(provider.dependencies).toHaveProperty('dep1', dep1)
-    expect(provider.dependencies).toHaveProperty('dep2', dep2)
-  })
-
-  it('should fail to create a provider with "options" dependency', () => {
-    const dep1 = createLazyInjectable()
-    expect(() =>
-      $createProvider<TestTypeProvider>().createProvider({
-        factory,
-        dependencies: { options: dep1 },
-      }),
-    ).toThrow('"options" is a reserved key for a provider dependencies')
   })
 })
 
@@ -398,19 +338,5 @@ describe('Container', () => {
       factory: noop,
     })
     await expect(container.resolve(injectable)).rejects.toThrow()
-  })
-
-  it('should be able to inject a provider', async () => {
-    const options = createValueInjectable('string' as const)
-    const provider = $createProvider<TestTypeProvider>().createProvider({
-      factory: ({ options }) => options,
-    })
-    const provided = provide(provider, options)
-    const injectable = createFactoryInjectable({
-      dependencies: { provider: provided },
-      factory: ({ provider }) => provider,
-    })
-
-    await expect(container.resolve(injectable)).resolves.toBe('string')
   })
 })

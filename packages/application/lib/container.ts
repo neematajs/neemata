@@ -290,7 +290,7 @@ export class Container {
       throw new Error('Invalid scope: dependant is looser than injectable') // TODO: more informative error
     }
 
-    if (injectableUtils.isValue(injectable)) {
+    if (checkIsValueInjectable(injectable)) {
       return Promise.resolve(injectable.value)
     } else if (
       this.parent?.has(injectable) ||
@@ -314,16 +314,18 @@ export class Container {
       } else if (this.resolvers.has(injectable)) {
         return this.resolvers.get(injectable)!
       } else {
-        const isOptional = injectableUtils.isOptional(injectable)
-        const isLazy = injectableUtils.isLazy(injectable)
+        const isLazy = checkIsLazyInjectable(injectable)
 
         if (isLazy) {
+          const isOptional = checkIsOptional(injectable)
           if (isOptional) return Promise.resolve(undefined as any)
           return Promise.reject(
             new Error(
               `No instance provided for ${label || 'an'} injectable:\n${stack}`,
             ),
           )
+        } else if (!checkIsFactoryInjectable(injectable)) {
+          throw new Error('Invalid injectable')
         }
 
         const resolution = this.createInjectableContext(
@@ -395,12 +397,21 @@ function compareScope(
   }
 }
 
-const injectableUtils = {
-  isLazy: (injectable: AnyInjectable) => kLazyInjectable in injectable,
-  isFactory: (injectable: AnyInjectable) => kFactoryInjectable in injectable,
-  isValue: (injectable: AnyInjectable) => kValueInjectable in injectable,
-  isOptional: (injectable: AnyInjectable) => kOptionalDependency in injectable,
-}
+export const checkIsLazyInjectable = (
+  injectable: any,
+): injectable is LazyInjectable<any> => kLazyInjectable in injectable
+export const checkIsFactoryInjectable = (
+  injectable: any,
+): injectable is FactoryInjectable<any> => kFactoryInjectable in injectable
+export const checkIsValueInjectable = (
+  injectable: any,
+): injectable is ValueInjectable<any> => kValueInjectable in injectable
+export const checkIsInjectable = (
+  injectable: any,
+): injectable is AnyInjectable<any> => kInjectable in injectable
+export const checkIsOptional = (
+  injectable: any,
+): injectable is DependencyOptional<any> => kOptionalDependency in injectable
 
 export function getInjectableScope(injectable: AnyInjectable) {
   let scope = injectable.scope
