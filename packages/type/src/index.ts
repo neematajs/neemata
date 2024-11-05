@@ -1,4 +1,4 @@
-import type { TLiteralValue } from '@sinclair/typebox'
+import type { TLiteralValue } from '@sinclair/typebox/type'
 import { ArrayType } from './types/array.ts'
 import type { BaseType } from './types/base.ts'
 import { BooleanType } from './types/boolean.ts'
@@ -28,8 +28,6 @@ import { NeverType } from './types/never.ts'
 import { register } from './formats.ts'
 register()
 
-export * from './schemas/native-enum.ts'
-export * from './schemas/union-enum.ts'
 export * from './schemas/nullable.ts'
 export {
   BaseType,

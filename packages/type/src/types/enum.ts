@@ -1,7 +1,4 @@
-import type { SchemaOptions } from '@sinclair/typebox'
-import type { TNativeEnum } from '../schemas/native-enum.ts'
-import { NativeEnum } from '../schemas/native-enum.ts'
-import { type TUnionEnum, UnionEnum } from '../schemas/union-enum.ts'
+import { Enum, type SchemaOptions, type TEnum } from '@sinclair/typebox'
 import { BaseType } from './base.ts'
 
 export type AnyObjectEnumType<T extends { [K in string]: K } = any> =
@@ -11,9 +8,9 @@ export class ObjectEnumType<
   N extends boolean = false,
   O extends boolean = false,
   D extends boolean = false,
-> extends BaseType<TNativeEnum<T>, N, O, D> {
+> extends BaseType<TEnum<T>, N, O, D> {
   constructor(
-    readonly values: T,
+    private readonly values: T,
     options: SchemaOptions = {},
     isNullable: N = false as N,
     isOptional: O = false as O,
@@ -22,11 +19,8 @@ export class ObjectEnumType<
     super(options, isNullable, isOptional, hasDefault, values)
   }
 
-  protected _constructSchema(
-    options: SchemaOptions,
-    values: T,
-  ): TNativeEnum<T> {
-    return NativeEnum(values, options)
+  protected _constructSchema(options: SchemaOptions, values: T): TEnum<T> {
+    return Enum(values, options)
   }
 
   nullable() {
@@ -66,15 +60,15 @@ export class ObjectEnumType<
   }
 }
 
-export type AnyEnumType = EnumType<any[], boolean, boolean, boolean>
+export type AnyEnumType = EnumType<any, boolean, boolean, boolean>
 export class EnumType<
   T extends (string | number)[] = (string | number)[],
   N extends boolean = false,
   O extends boolean = false,
   D extends boolean = false,
-> extends BaseType<TUnionEnum<T>, N, O, D> {
+> extends BaseType<TEnum<Record<string, T[number]>>, N, O, D> {
   constructor(
-    readonly values: [...T],
+    private readonly values: [...T],
     options: SchemaOptions = {},
     isNullable: N = false as N,
     isOptional: O = false as O,
@@ -86,8 +80,8 @@ export class EnumType<
   protected _constructSchema(
     options: SchemaOptions,
     values: [...T],
-  ): TUnionEnum<T> {
-    return UnionEnum(values, options)
+  ): TEnum<Record<string, T[number]>> {
+    return Enum(Object.fromEntries(values.map((k) => [k, k])), options)
   }
 
   nullable() {
