@@ -1,15 +1,19 @@
 import { Application, asOptional } from '@nmtjs/application'
 import {
+  builtin as _builtin,
   createFactoryInjectable,
   createLazyInjectable,
   createValueInjectable,
 } from '@nmtjs/application'
 import {
+  createConsolePrettyDestination,
   createContractProcedure,
   createFilter,
   createGuard,
   createMiddleware,
+  createPlugin,
   createProcedure,
+  createTransport,
 } from '@nmtjs/application'
 import { createContractService, createService } from '@nmtjs/application'
 import {
@@ -38,6 +42,12 @@ export namespace n {
   export const middleware = createMiddleware
   export const guard = createGuard
   export const filter = createFilter
+  export const builtin = _builtin
+  export const transport = createTransport
+  export const plugin = createPlugin
+  export const logging = {
+    console: createConsolePrettyDestination,
+  }
 
   export namespace contractless {
     export const procedure = createProcedure
@@ -56,6 +66,7 @@ export {
   type GuardLike,
   type MiddlewareLike,
   type FilterLike,
+  type AnyInjectable,
   ApiError,
   WorkerType,
   Hook,
