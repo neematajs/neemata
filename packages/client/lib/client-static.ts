@@ -73,6 +73,10 @@ export class StaticClient<Services extends ClientServices> extends Client {
     for (const [serviceKey, serviceName] of Object.entries(services)) {
       callers[serviceKey] = new Proxy(Object(), {
         get: (target, prop, receiver) => {
+          // `await client.call.serviceName` or `await client.call.serviceName.procedureName`
+          // without explicitly calling a function implicitly calls .then() on target
+          // FIXME: this basically makes "then" a reserved word
+          if (prop === 'then') return target
           return this.createCaller(serviceName, prop as string)
         },
       })
