@@ -1,6 +1,5 @@
 import { ErrorCode } from '@nmtjs/common'
 import { type BaseType, NeverType } from '@nmtjs/type'
-import type { Compiled } from '@nmtjs/type/compiler'
 
 import type { ApplicationOptions } from './application.ts'
 import { builtin } from './common.ts'
@@ -78,8 +77,8 @@ export class Api {
     const middlewares = await this.resolveMiddlewares(callOptions)
 
     const timeout =
-      service.contract.timeout ||
       procedure.contract.timeout ||
+      service.contract.timeout ||
       this.options.timeout
 
     const handleProcedure = async (payload: any) => {
