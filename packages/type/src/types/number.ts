@@ -68,7 +68,7 @@ export class NumberType<
       ...this._with({
         options: {
           maximum: value,
-          ...(exclusive ? {} : { exclusiveMaximum: value }),
+          ...(!exclusive ? {} : { exclusiveMaximum: value }),
         },
       }),
     )
@@ -79,7 +79,7 @@ export class NumberType<
       ...this._with({
         options: {
           minimum: value,
-          ...(exclusive ? {} : { exclusiveMinimum: value }),
+          ...(!exclusive ? {} : { exclusiveMinimum: value }),
         },
       }),
     )
@@ -145,7 +145,7 @@ export class IntegerType<
       ...this._with({
         options: {
           maximum: value,
-          ...(exclusive ? {} : { exclusiveMaximum: value }),
+          ...(!exclusive ? {} : { exclusiveMaximum: value }),
         },
       }),
     )
@@ -156,7 +156,7 @@ export class IntegerType<
       ...this._with({
         options: {
           minimum: value,
-          ...(exclusive ? {} : { exclusiveMinimum: value }),
+          ...(!exclusive ? {} : { exclusiveMinimum: value }),
         },
       }),
     )
@@ -234,7 +234,7 @@ export class BigIntType<
       ...this._with({
         options: {
           maximum: this.encode(value),
-          ...(exclusive ? {} : { exclusiveMaximum: this.encode(value) }),
+          ...(!exclusive ? {} : { exclusiveMaximum: this.encode(value) }),
         },
       }),
     )
@@ -245,7 +245,7 @@ export class BigIntType<
       ...this._with({
         options: {
           minimum: `${value}`,
-          ...(exclusive ? {} : { exclusiveMinimum: `${value}` }),
+          ...(!exclusive ? {} : { exclusiveMinimum: `${value}` }),
         },
       }),
     )
