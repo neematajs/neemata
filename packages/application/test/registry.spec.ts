@@ -34,7 +34,7 @@ describe('Registry', () => {
         check: expect.any(Function),
         encode: expect.any(Function),
         decode: expect.any(Function),
-        prepare: expect.any(Function),
+        parse: expect.any(Function),
       })
     }
     expect(

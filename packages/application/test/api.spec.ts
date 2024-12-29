@@ -114,7 +114,9 @@ describe.sequential('Api', () => {
     registry.registerService(service)
     await app.initialize()
     const connection = testConnection(registry, {})
-    await expect(call({ connection, procedure })).resolves.toBe(connection)
+    const spy = vi.spyOn(procedure, 'handler')
+    await call({ connection, procedure })
+    expect(spy).toReturnWith(connection)
   })
 
   it('should inject signal', async () => {
@@ -131,7 +133,9 @@ describe.sequential('Api', () => {
     registry.registerService(service)
     await app.initialize()
     const connection = testConnection(registry, {})
-    expect(call({ connection, procedure, signal })).resolves.toBe(signal)
+    const spy = vi.spyOn(procedure, 'handler')
+    await call({ connection, procedure, signal })
+    expect(spy).toReturnWith(signal)
   })
 
   it('should handle procedure call with payload', async () => {

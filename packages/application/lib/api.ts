@@ -168,7 +168,7 @@ export class Api {
   private handleInput(procedure: AnyBaseProcedure, payload: any) {
     if (procedure.contract.input instanceof NeverType === false) {
       const schema = this.getSchema(procedure.contract.input)
-      const prepared = schema.prepare(payload)
+      const prepared = schema.parse(payload)
 
       if (!schema.check(prepared)) {
         throw new ApiError(
@@ -192,7 +192,7 @@ export class Api {
 
       if (procedure.contract.output instanceof NeverType === false) {
         const schema = this.getSchema(procedure.contract.output)
-        const prepared = schema.prepare(response)
+        const prepared = schema.parse(response)
         const result = schema.encodeSafe(prepared)
         if (result.success) return response.withPayload(result.value)
         throw new Error('Failed to encode response', { cause: result.error })
@@ -201,7 +201,7 @@ export class Api {
       return response
     } else if (procedure.contract.output instanceof NeverType === false) {
       const schema = this.getSchema(procedure.contract.output)
-      const prepared = schema.prepare(response)
+      const prepared = schema.parse(response)
       const result = schema.encodeSafe(prepared)
       if (result.success) return result.value
       throw new Error('Failed to encode response', { cause: result.error })
