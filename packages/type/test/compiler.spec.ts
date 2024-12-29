@@ -146,21 +146,12 @@ describe('Runtime', () => {
     expect(firstError).toHaveProperty('message', expect.any(String))
   })
 
-  it('should prepare successfully', () => {
-    const result = runtime.prepare(testSchema, {
+  it('should parse successfully', () => {
+    const result = runtime.parse(testSchema, {
       foo: 'test',
       skipped: true,
-    })
-
-    expect(result).toEqual({ foo: 'test', bar: 42 })
-  })
-
-  it('should convert successfully', () => {
-    const result = runtime.convert(testSchema, {
-      foo: 'test',
       bar: '42',
     })
-
     expect(result).toEqual({ foo: 'test', bar: 42 })
   })
 

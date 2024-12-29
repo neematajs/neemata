@@ -10,8 +10,7 @@ import { type BaseType, getTypeSchema } from './types/base.ts'
 export type Compiled<T extends BaseType = BaseType> = {
   check: (val: unknown) => boolean
   errors: (val: unknown) => ValueErrorIterator
-  prepare: (val: unknown) => unknown
-  convert: (val: unknown) => unknown
+  parse: (val: unknown) => unknown
   decode: (val: unknown) => T[typeStatic]['decoded']
   encode: (val: unknown) => T[typeStatic]['encoded']
   decodeSafe: (
@@ -26,12 +25,12 @@ export type Compiled<T extends BaseType = BaseType> = {
     | { success: false; error: any }
 }
 
-function _prepare(schema: TSchema, value: any) {
-  return Value.Default(schema, Value.Clean(schema, value))
-}
-
-function _convert(schema: TSchema, value: any) {
-  return Value.Convert(schema, value)
+function _parse(schema: TSchema, value: any) {
+  // Clone -> Clean -> Default -> Convert
+  return Value.Convert(
+    schema,
+    Value.Default(schema, Value.Clean(schema, Value.Clone(value))),
+  )
 }
 
 function compileType(type: BaseType) {
@@ -42,19 +41,15 @@ function compileType(type: BaseType) {
     errors: compiled.Errors.bind(compiled),
     decode: compiled.Decode.bind(compiled),
     encode: compiled.Encode.bind(compiled),
-    prepare: _prepare.bind(null, schema),
-    convert: _convert.bind(null, schema),
+    parse: _parse.bind(null, schema),
   }
 }
 
 export function compile<T extends BaseType>(schema: T): Compiled<T> {
   const compiled = compileType(schema)
 
-  // TODO: custom error handling/shaping
   return {
     ...compiled,
-    decode: (val) => compiled.decode(val),
-    encode: (val) => compiled.encode(val),
     decodeSafe: (val) => {
       try {
         return {
@@ -79,12 +74,8 @@ export function compile<T extends BaseType>(schema: T): Compiled<T> {
 }
 
 export namespace runtime {
-  export function prepare(type: BaseType, value: any) {
-    return _prepare(getTypeSchema(type), value)
-  }
-
-  export function convert(type: BaseType, value: any) {
-    return _convert(getTypeSchema(type), value)
+  export function parse(type: BaseType, value: any) {
+    return _parse(getTypeSchema(type), value)
   }
 
   export function errors(type: BaseType, value: any): ValueErrorIterator {
