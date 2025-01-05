@@ -15,7 +15,7 @@ export const WORKER_THREADS_SM_CHANNEL = 'wt_sm_channel'
 export const WTSubManagerPlugin = createPlugin('WTPubManager', async (app) => {
   const { logger, type, container, hooks } = app
   const isApiWorker = type === WorkerType.Api
-  const subscriptions = new Map<string, Set<Subscription<any>>>()
+  const subscriptions = new Map<string, Set<Subscription>>()
 
   let bc: ReturnType<typeof createBroadcastChannel> | undefined = undefined
 

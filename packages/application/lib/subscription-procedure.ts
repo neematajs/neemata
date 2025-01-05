@@ -27,7 +27,7 @@ export type SubscriptionHandlerType<
   ctx: DependencyContext<Deps>,
   data: Input,
   contract: Contract,
-) => Async<SubscriptionResponse<Subscription<Contract>>>
+) => Async<SubscriptionResponse<Contract>>
 
 export interface SubscriptionProcedure<
   ProcedureContract extends TSubscriptionContract = TSubscriptionContract,
@@ -39,7 +39,7 @@ export interface SubscriptionProcedure<
       : InputType<t.infer.decoded<ProcedureContract['input']>>,
     ProcedureContract['output'] extends NeverType
       ? never
-      : InputType<t.infer.decoded<ProcedureContract['output']>>,
+      : OutputType<t.infer.input.decoded<ProcedureContract['output']>>,
     TSubscriptionContract<
       ProcedureContract['input'],
       ProcedureContract['output'],
@@ -66,14 +66,14 @@ export function createContractSubscription<
         metadata?: Metadata[]
         handler: SubscriptionHandlerType<
           InputType<t.infer.decoded<ProcedureContract['input']>>,
-          OutputType<t.infer.decoded<ProcedureContract['output']>>,
+          OutputType<t.infer.input.decoded<ProcedureContract['output']>>,
           TSubscriptionContract,
           ProcedureDeps
         >
       }
     | SubscriptionHandlerType<
         InputType<t.infer.decoded<ProcedureContract['input']>>,
-        OutputType<t.infer.decoded<ProcedureContract['output']>>,
+        OutputType<t.infer.input.decoded<ProcedureContract['output']>>,
         TSubscriptionContract,
         ProcedureDeps
       >,
@@ -123,14 +123,14 @@ export function $createSubscription<T extends SubcriptionOptions>() {
           events?: E
           handler: SubscriptionHandlerType<
             I extends BaseType ? InputType<t.infer.decoded<I>> : never,
-            O extends BaseType ? OutputType<t.infer.decoded<O>> : R,
+            O extends BaseType ? OutputType<t.infer.input.decoded<O>> : R,
             TSubscriptionContract<CI, CO, T, CE>,
             D
           >
         }
       | SubscriptionHandlerType<
           I extends BaseType ? InputType<t.infer.decoded<I>> : never,
-          O extends BaseType ? OutputType<t.infer.decoded<O>> : R,
+          O extends BaseType ? OutputType<t.infer.input.decoded<O>> : R,
           TSubscriptionContract<CI, CO, T, CE>,
           D
         >,
@@ -152,13 +152,9 @@ export function $createSubscription<T extends SubcriptionOptions>() {
     }
 
     const contract = c
-      .subscription(
-        (input ?? t.never()) as any,
-        (output ?? t.any()) as any,
-        contractEvents,
-      )
+      .subscription(input ?? t.never(), output ?? t.any(), contractEvents)
       .$withOptions<T>()
 
-    return createContractSubscription(contract, params as any)
+    return createContractSubscription(contract, params as any) as any
   }
 }

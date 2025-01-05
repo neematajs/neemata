@@ -1,229 +1,88 @@
 import {
   type ObjectOptions,
   type TObject,
-  type TRecord,
+  type TRecordOrObject,
+  type TSchema,
   Type,
 } from '@sinclair/typebox'
-import type { typeStatic } from '../constants.ts'
-import type { UnionToTupleString } from '../utils.ts'
-import { BaseType, getTypeSchema } from './base.ts'
-import { type AnyEnumType, type AnyObjectEnumType, EnumType } from './enum.ts'
-import type { AnyLiteralType } from './literal.ts'
-import type { AnyStringType } from './string.ts'
-import type { AnyUnionType } from './union.ts'
+import { BaseType, type BaseTypeAny } from './base.ts'
+import type { EnumType, ObjectEnumType } from './enum.ts'
+import type { LiteralType } from './literal.ts'
+import type { StringType } from './string.ts'
 
+export type ObjectTypeProps = { [k: string]: BaseTypeAny<any> }
 export class ObjectType<
-  T extends Record<string, BaseType>,
-  N extends boolean = false,
-  O extends boolean = false,
-  D extends boolean = false,
+  T extends ObjectTypeProps = ObjectTypeProps,
 > extends BaseType<
-  TObject<{ [K in keyof T]: T[K][typeStatic]['schema'] }>,
-  N,
-  O,
-  D
+  TObject<{ [K in keyof T]: T[K]['schema'] }>,
+  { properties: T }
 > {
-  constructor(
-    protected readonly properties: T = {} as T,
-    options: ObjectOptions = {},
-    isNullable: N = false as N,
-    isOptional: O = false as O,
-    hasDefault: D = false as D,
-  ) {
-    super(options, isNullable, isOptional, hasDefault, properties)
+  declare _: {
+    encoded: {
+      input: TObject<{ [K in keyof T]: T[K]['_']['encoded']['input'] }>
+      output: TObject<{ [K in keyof T]: T[K]['_']['encoded']['output'] }>
+    }
+    decoded: {
+      input: TObject<{ [K in keyof T]: T[K]['_']['decoded']['input'] }>
+      output: TObject<{ [K in keyof T]: T[K]['_']['decoded']['output'] }>
+    }
   }
 
-  protected _constructSchema(
-    options: ObjectOptions,
+  static factory<T extends ObjectTypeProps = ObjectTypeProps>(
     properties: T,
-  ): TObject<{ [K in keyof T]: T[K][typeStatic]['schema'] }> {
-    const schemaProperties = {} as {
-      [K in keyof T]: T[K][typeStatic]['schema']
-    }
-
-    for (const [key, value] of Object.entries(properties)) {
-      // @ts-expect-error
-      schemaProperties[key] = getTypeSchema(value)
-    }
-    return Type.Object(schemaProperties, options)
-  }
-
-  nullable() {
-    return new ObjectType(this.properties, ...this._with({ isNullable: true }))
-  }
-
-  optional() {
-    return new ObjectType(this.properties, ...this._with({ isOptional: true }))
-  }
-
-  nullish() {
-    return new ObjectType(
-      this.properties,
-      ...this._with({ isNullable: true, isOptional: true }),
-    )
-  }
-
-  default(value: this[typeStatic]['encoded']) {
-    return new ObjectType(
-      this.properties,
-      ...this._with({ options: { default: value }, hasDefault: true }),
-    )
-  }
-
-  description(description: string) {
-    return new ObjectType(
-      this.properties,
-      ...this._with({ options: { description } }),
-    )
-  }
-
-  examples(
-    ...examples: [this[typeStatic]['encoded'], ...this[typeStatic]['encoded'][]]
+    options: ObjectOptions = {},
   ) {
-    return new ObjectType(
-      this.properties,
-      ...this._with({ options: { examples } }),
-    )
-  }
-
-  pick<P extends { [K in keyof T]?: true }>(pick: P) {
-    const properties = Object.fromEntries(
-      Object.entries(this.properties).filter(([key]) => pick[key]),
-    )
-    const [_, ...args] = this._with()
-    return new ObjectType(
-      properties as Pick<T, Extract<keyof P, keyof T>>,
-      {},
-      ...args,
-    )
-  }
-
-  omit<P extends { [K in keyof T]?: true }>(omit: P) {
-    const properties = Object.fromEntries(
-      Object.entries(this.properties).filter(([key]) => !omit[key]),
-    )
-    const [_, ...args] = this._with()
-    return new ObjectType(
-      properties as Omit<T, Extract<keyof P, keyof T>>,
-      {},
-      ...args,
-    )
-  }
-
-  extend<P extends Record<string, BaseType>>(properties: P) {
-    const [_, ...args] = this._with()
-    return new ObjectType({ ...this.properties, ...properties }, {}, ...args)
-  }
-
-  merge<T extends ObjectType<Record<string, BaseType>>>(object: T) {
-    const [_, ...args] = this._with()
-    return new ObjectType(
-      { ...this.properties, ...object.properties },
-      {},
-      ...args,
-    )
-  }
-
-  partial() {
-    const properties: { [K in keyof T]: ReturnType<T[K]['optional']> } =
-      {} as any
-    for (const [key, value] of Object.entries(this.properties)) {
-      // @ts-expect-error
-      properties[key] = value.optional()
+    const schemaProperties = {} as {
+      [K in keyof T]: T[K]['schema']
     }
-    const [_, ...args] = this._with()
-    return new ObjectType(properties, {}, ...args)
-  }
 
-  keyof(): EnumType<UnionToTupleString<keyof T>> {
-    return new EnumType(Object.keys(this.properties) as any)
+    for (const key in properties) {
+      schemaProperties[key] = properties[key].schema
+    }
+
+    return new ObjectType<T>(Type.Object(schemaProperties, options) as any, {
+      properties,
+    })
   }
 }
 
 export class RecordType<
-  K extends
-    | AnyLiteralType
-    | AnyEnumType
-    | AnyObjectEnumType
-    | AnyStringType
-    | AnyUnionType,
+  K extends LiteralType | EnumType | ObjectEnumType | StringType,
   E extends BaseType,
-  N extends boolean = false,
-  O extends boolean = false,
-  D extends boolean = false,
-> extends BaseType<
-  TRecord<K[typeStatic]['schema'], E[typeStatic]['schema']>,
-  N,
-  O,
-  D,
-  ObjectOptions
-> {
-  constructor(
-    protected readonly key: K,
-    protected readonly element: E,
-    options: ObjectOptions = {},
-    isNullable: N = false as N,
-    isOptional: O = false as O,
-    hasDefault: D = false as D,
-  ) {
-    super(options, isNullable, isOptional, hasDefault, key, element)
+> extends BaseType<TRecordOrObject<K['schema'], E['schema']>> {
+  _!: {
+    encoded: {
+      input: TRecordOrObject<
+        K['_']['encoded']['input'],
+        E['_']['encoded']['input']
+      >
+      output: TRecordOrObject<
+        K['_']['encoded']['output'],
+        E['_']['encoded']['output']
+      >
+    }
+    decoded: {
+      input: TRecordOrObject<
+        K['_']['decoded']['input'],
+        E['_']['decoded']['input']
+      >
+      output: TRecordOrObject<
+        K['_']['decoded']['output'],
+        E['_']['decoded']['output']
+      >
+    }
   }
 
-  protected _constructSchema(options: ObjectOptions, key: K, element: E) {
-    return Type.Record(
-      getTypeSchema(key),
-      getTypeSchema(element),
-      options,
-    ) as unknown as TRecord<K[typeStatic]['schema'], E[typeStatic]['schema']>
-  }
-
-  nullable() {
-    return new RecordType(
-      this.key,
-      this.element,
-      ...this._with({ isNullable: true }),
-    )
-  }
-
-  optional() {
-    return new RecordType(
-      this.key,
-      this.element,
-      ...this._with({ isOptional: true }),
-    )
-  }
-
-  nullish() {
-    return new RecordType(
-      this.key,
-      this.element,
-      ...this._with({ isNullable: true, isOptional: true }),
-    )
-  }
-
-  default(value: this[typeStatic]['encoded']) {
-    return new RecordType(
-      this.key,
-      this.element,
-      ...this._with({ options: { default: value }, hasDefault: true }),
-    )
-  }
-
-  description(description: string) {
-    return new RecordType(
-      this.key,
-      this.element,
-      ...this._with({ options: { description } }),
-    )
-  }
-
-  examples(
-    ...examples: [this[typeStatic]['encoded'], ...this[typeStatic]['encoded'][]]
-  ) {
-    return new RecordType(
-      this.key,
-      this.element,
-      ...this._with({ options: { examples } }),
+  static factory<
+    K extends
+      | LiteralType<any>
+      | EnumType<any>
+      | ObjectEnumType<any>
+      | StringType,
+    E extends BaseType,
+  >(key: K, element: E, options: ObjectOptions = {}) {
+    return new RecordType<K, E>(
+      Type.Record(key.schema, element.schema, options) as any,
     )
   }
 }

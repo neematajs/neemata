@@ -1,38 +1,35 @@
-import type { TLiteralValue } from '@sinclair/typebox/type'
+import type {
+  StaticDecode,
+  StaticEncode,
+  TLiteralValue,
+} from '@sinclair/typebox/type'
+import { AnyType } from './types/any.ts'
 import { ArrayType } from './types/array.ts'
-import type { BaseType } from './types/base.ts'
+import type {
+  BaseType,
+  BaseTypeAny,
+  OptionalType,
+  Static,
+} from './types/base.ts'
 import { BooleanType } from './types/boolean.ts'
 import { CustomType } from './types/custom.ts'
-import { DateType } from './types/datetime.ts'
-import {
-  type AnyEnumType,
-  type AnyObjectEnumType,
-  EnumType,
-  ObjectEnumType,
-} from './types/enum.ts'
-import { type AnyLiteralType, LiteralType } from './types/literal.ts'
-import { BigIntType, IntegerType, NumberType } from './types/number.ts'
-import { ObjectType, RecordType } from './types/object.ts'
-import { type AnyStringType, StringType } from './types/string.ts'
-import {
-  type AnyUnionType,
-  IntersactionType,
-  UnionType,
-} from './types/union.ts'
-
-import type { typeStatic } from './constants.ts'
-import { AnyType } from './types/any.ts'
+import { DateType } from './types/date.ts'
+import { EnumType, ObjectEnumType } from './types/enum.ts'
+import { LiteralType } from './types/literal.ts'
 import { NeverType } from './types/never.ts'
+import { BigIntType, IntegerType, NumberType } from './types/number.ts'
+import { ObjectType, type ObjectTypeProps, RecordType } from './types/object.ts'
+import { StringType } from './types/string.ts'
+import { IntersactionType, UnionType } from './types/union.ts'
 
 // register ajv formats
 import { register } from './formats.ts'
+import type { Merge, UnionToTupleString } from './utils.ts'
+
 register()
 
 export * from './schemas/nullable.ts'
-export {
-  BaseType,
-  getTypeSchema,
-} from './types/base.ts'
+export { BaseType, type BaseTypeAny } from './types/base.ts'
 export { type TSchema } from '@sinclair/typebox'
 export {
   ArrayType,
@@ -53,48 +50,129 @@ export {
 
 export namespace t {
   export namespace infer {
-    export type staticType<T extends BaseType> = T[typeStatic]
-    export type decoded<T extends BaseType> = staticType<T>['decoded']
-    export type encoded<T extends BaseType> = staticType<T>['encoded']
+    export type decoded<T extends BaseTypeAny> = StaticDecode<
+      T['_']['decoded']['output']
+    >
+    export type encoded<T extends BaseTypeAny> = StaticEncode<
+      T['_']['encoded']['output']
+    >
+    export namespace input {
+      export type decoded<T extends BaseTypeAny> = StaticDecode<
+        T['_']['decoded']['input']
+      >
+      export type encoded<T extends BaseTypeAny> = StaticEncode<
+        T['_']['encoded']['input']
+      >
+    }
   }
-  export const never = () => new NeverType()
-  export const boolean = () => new BooleanType()
-  export const string = () => new StringType()
-  export const number = () => new NumberType()
-  export const integer = () => new IntegerType()
-  export const bitint = () => new BigIntType()
-  export const literal = <T extends TLiteralValue>(value: T) =>
-    new LiteralType(value)
-  export const objectEnum = <T extends { [K in string]: K }>(enumLike: T) =>
-    new ObjectEnumType(enumLike)
-  export const arrayEnum = <T extends (string | number)[]>(enumLike: [...T]) =>
-    new EnumType(enumLike)
-  export const date = () => new DateType()
-  export const array = <T extends BaseType>(element: T) =>
-    new ArrayType(element)
-  export const object = <T extends Record<string, BaseType>>(properties: T) =>
-    new ObjectType(properties)
-  export const record = <
-    K extends
-      | AnyLiteralType
-      | AnyEnumType
-      | AnyObjectEnumType
-      | AnyStringType
-      | AnyUnionType,
-    E extends BaseType,
+
+  export const never = NeverType.factory
+  export const boolean = BooleanType.factory
+  export const string = StringType.factory
+  export const number = NumberType.factory
+  export const integer = IntegerType.factory
+  export const bitint = BigIntType.factory
+  export const literal = LiteralType.factory
+  export const objectEnum = ObjectEnumType.factory
+  export const arrayEnum = EnumType.factory
+  export const date = DateType.factory
+  export const array = ArrayType.factory
+  export const object = ObjectType.factory
+  export const record = RecordType.factory
+  export const any = AnyType.factory
+  export const or = UnionType.factory
+  export const and = IntersactionType.factory
+  export const custom = CustomType.factory
+
+  export const keyof = <T extends ObjectType>(
+    type: T,
+  ): EnumType<
+    UnionToTupleString<T extends ObjectType<infer Props> ? keyof Props : never>
+  > => {
+    return arrayEnum(Object.keys(type.props.properties) as any)
+  }
+
+  export const pick = <
+    T extends ObjectType,
+    P extends { [K in keyof T['props']['properties']]?: true },
   >(
-    key: K,
-    value: E,
-  ) => new RecordType(key, value)
-  export const any = () => new AnyType()
-  export const or = <T extends [BaseType, BaseType, ...BaseType[]]>(
-    ...types: T
-  ) => new UnionType(types)
-  export const and = <T extends [BaseType, BaseType, ...BaseType[]]>(
-    ...types: T
-  ) => new IntersactionType(types)
-  export const custom = <T>(
-    decode: (value: any) => T,
-    encode: (value: T) => any,
-  ) => new CustomType<T>(decode, encode)
+    source: T,
+    pick: P,
+  ): ObjectType<{
+    [K in keyof T['props']['properties'] as K extends keyof P
+      ? K
+      : never]: T['props']['properties'][K]
+  }> => {
+    const properties = Object.fromEntries(
+      Object.entries(source.props.properties).filter(([key]) => pick[key]),
+    )
+    return ObjectType.factory(properties) as any
+  }
+
+  export const omit = <
+    T extends ObjectType,
+    P extends { [K in keyof T]?: true },
+  >(
+    source: T,
+    omit: P,
+  ): ObjectType<{
+    [K in keyof T['props']['properties'] as K extends keyof P
+      ? never
+      : K]: T['props']['properties'][K]
+  }> => {
+    const properties = Object.fromEntries(
+      Object.entries(source.props.properties).filter(([key]) => !omit[key]),
+    )
+    return ObjectType.factory(properties) as any
+  }
+
+  export const extend = <T extends ObjectType, P extends ObjectTypeProps>(
+    object1: T,
+    properties: P,
+  ): ObjectType<{
+    [K in keyof T['props']['properties'] | keyof P]: K extends keyof P
+      ? P[K]
+      : K extends keyof T['props']['properties']
+        ? T['props']['properties'][K]
+        : never
+  }> => {
+    return ObjectType.factory({
+      ...object1.props.properties,
+      ...properties,
+    }) as any
+  }
+
+  export const merge = <T1 extends ObjectType, T2 extends ObjectType>(
+    object1: T1,
+    object2: T2,
+  ): ObjectType<{
+    [K in
+      | keyof T1['props']['properties']
+      | keyof T2['props']['properties']]: K extends keyof T2['props']['properties']
+      ? T2['props']['properties'][K]
+      : K extends keyof T1['props']['properties']
+        ? T1['props']['properties'][K]
+        : never
+  }> => {
+    return ObjectType.factory({
+      ...object1.props.properties,
+      ...object2.props.properties,
+    }) as any
+  }
+
+  export const partial = <T extends ObjectType>(
+    object: T,
+  ): ObjectType<{
+    [K in keyof T['props']['properties']]: OptionalType<
+      T['props']['properties'][K]
+    >
+  }> => {
+    const properties = {} as any
+
+    for (const [key, value] of Object.entries(object.props.properties)) {
+      properties[key] = value.optional()
+    }
+
+    return ObjectType.factory(properties, {}) as any
+  }
 }

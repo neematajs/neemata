@@ -1,3 +1,4 @@
+import { Temporal } from 'temporal-polyfill'
 import {
   DurationType,
   PlainDateTimeType,
@@ -8,13 +9,13 @@ import {
   ZonedDateTimeType,
 } from './types/temporal.ts'
 
-export const plainDate = () => new PlainDateType()
-export const plainDatetime = () => new PlainDateTimeType()
-export const plainTime = () => new PlainTimeType()
-export const zonedDatetime = () => new ZonedDateTimeType()
-export const duration = () => new DurationType()
-export const plainYearMonth = () => new PlainYearMonthType()
-export const plainMonthDay = () => new PlainMonthDayType()
+export const plainDate = PlainDateType.factory
+export const plainDatetime = PlainDateTimeType.factory
+export const plainTime = PlainTimeType.factory
+export const zonedDatetime = ZonedDateTimeType.factory
+export const duration = DurationType.factory
+export const plainYearMonth = PlainYearMonthType.factory
+export const plainMonthDay = PlainMonthDayType.factory
 
 export {
   DurationType,

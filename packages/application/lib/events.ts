@@ -51,7 +51,11 @@ export class EventManager {
       subscription!.emit('end')
       this.unsubscribeByKey(subscriptionKey, connection)
     }
-    subscription = new Subscription(contract, subscriptionKey, destroyFn)
+    subscription = new Subscription<TSubscriptionContract>(
+      contract,
+      subscriptionKey,
+      destroyFn,
+    )
     subscriptions.set(subscriptionKey, subscription)
     await this.subManager.subscribe(subscription)
     return { subscription, isNew: true } as any

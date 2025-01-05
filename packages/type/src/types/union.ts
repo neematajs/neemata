@@ -1,159 +1,57 @@
 import {
-  type SchemaOptions,
   type TIntersect,
   type TUnion,
   Type,
+  type UnionToTuple,
 } from '@sinclair/typebox'
-import type { typeStatic } from '../constants.ts'
-import type { UnionToTuple } from '../utils.ts'
-import { BaseType, getTypeSchema } from './base.ts'
+import {
+  DiscriminatedUnion,
+  type TDiscriminatedUnion,
+} from '../schemas/discriminated-union.ts'
+import { BaseType, type BaseTypeAny } from './base.ts'
+import type { LiteralType } from './literal.ts'
+import type { ObjectType, ObjectTypeProps } from './object.ts'
 
-export type AnyUnionType<
-  T extends [BaseType, BaseType, ...BaseType[]] = [
-    BaseType,
-    BaseType,
-    ...BaseType[],
-  ],
-> = UnionType<T, boolean, boolean, boolean>
 export class UnionType<
-  T extends [BaseType, BaseType, ...BaseType[]] = [
-    BaseType,
-    BaseType,
-    ...BaseType[],
-  ],
-  N extends boolean = false,
-  O extends boolean = false,
-  D extends boolean = false,
-> extends BaseType<
-  //@ts-expect-error
-  TUnion<UnionToTuple<T[number][typeStatic]['schema']>>,
-  N,
-  O,
-  D
-> {
-  constructor(
-    protected readonly types: T,
-    options: SchemaOptions = {},
-    isNullable: N = false as N,
-    isOptional: O = false as O,
-    hasDefault: D = false as D,
+  T extends readonly BaseType[] = readonly BaseType[],
+> extends BaseType<TUnion<UnionToTuple<T[number]['schema']>>> {
+  _!: {
+    encoded: {
+      input: TUnion<UnionToTuple<T[number]['_']['encoded']['input']>>
+      output: TUnion<UnionToTuple<T[number]['_']['encoded']['output']>>
+    }
+    decoded: {
+      input: TUnion<UnionToTuple<T[number]['_']['decoded']['input']>>
+      output: TUnion<UnionToTuple<T[number]['_']['decoded']['output']>>
+    }
+  }
+
+  static factory<T extends readonly BaseType[] = readonly BaseType[]>(
+    ...types: T
   ) {
-    super(options, isNullable, isOptional, hasDefault, types)
-  }
-
-  protected _constructSchema(
-    options: SchemaOptions,
-    types: T,
-    //@ts-expect-error
-  ): TUnion<UnionToTuple<T[number][typeStatic]['schema']>> {
-    return Type.Union(types.map(getTypeSchema), options) as any
-  }
-
-  nullable() {
-    return new UnionType(this.types, ...this._with({ isNullable: true }))
-  }
-
-  optional() {
-    return new UnionType(this.types, ...this._with({ isOptional: true }))
-  }
-
-  nullish() {
-    return new UnionType(
-      this.types,
-      ...this._with({ isNullable: true, isOptional: true }),
-    )
-  }
-
-  default(value: this[typeStatic]['encoded']) {
-    return new UnionType(
-      this.types,
-      ...this._with({ options: { default: value }, hasDefault: true }),
-    )
-  }
-
-  description(description: string) {
-    return new UnionType(
-      this.types,
-      ...this._with({ options: { description } }),
-    )
-  }
-
-  examples(
-    ...examples: [this[typeStatic]['encoded'], ...this[typeStatic]['encoded'][]]
-  ) {
-    return new UnionType(this.types, ...this._with({ options: { examples } }))
+    return new UnionType<T>(Type.Union(types.map((t) => t.schema)) as any)
   }
 }
 
 export class IntersactionType<
-  T extends [BaseType, BaseType, ...BaseType[]] = [
-    BaseType,
-    BaseType,
-    ...BaseType[],
-  ],
-  N extends boolean = false,
-  O extends boolean = false,
-  D extends boolean = false,
-> extends BaseType<
-  // @ts-expect-error
-  TIntersect<UnionToTuple<T[number][typeStatic]['schema']>>,
-  N,
-  O,
-  D
-> {
-  constructor(
-    protected readonly types: T,
-    options: SchemaOptions = {},
-    isNullable: N = false as N,
-    isOptional: O = false as O,
-    hasDefault: D = false as D,
+  T extends readonly BaseType[] = readonly BaseType[],
+> extends BaseType<TIntersect<UnionToTuple<T[number]['schema']>>> {
+  _!: {
+    encoded: {
+      input: TIntersect<UnionToTuple<T[number]['_']['encoded']['input']>>
+      output: TIntersect<UnionToTuple<T[number]['_']['encoded']['output']>>
+    }
+    decoded: {
+      input: TIntersect<UnionToTuple<T[number]['_']['decoded']['input']>>
+      output: TIntersect<UnionToTuple<T[number]['_']['decoded']['output']>>
+    }
+  }
+
+  static factory<T extends readonly BaseType[] = readonly BaseType[]>(
+    ...types: T
   ) {
-    super(options, isNullable, isOptional, hasDefault, types)
-  }
-
-  protected _constructSchema(
-    options: SchemaOptions,
-    types: T,
-    // @ts-expect-error
-  ): TIntersect<UnionToTuple<T[number][typeStatic]['schema']>> {
-    return Type.Intersect(types.map(getTypeSchema), options) as any
-  }
-
-  nullable() {
-    return new IntersactionType(this.types, ...this._with({ isNullable: true }))
-  }
-
-  optional() {
-    return new IntersactionType(this.types, ...this._with({ isOptional: true }))
-  }
-
-  nullish() {
-    return new IntersactionType(
-      this.types,
-      ...this._with({ isNullable: true, isOptional: true }),
-    )
-  }
-
-  default(value: this[typeStatic]['encoded']) {
-    return new IntersactionType(
-      this.types,
-      ...this._with({ options: { default: value }, hasDefault: true }),
-    )
-  }
-
-  description(description: string) {
-    return new IntersactionType(
-      this.types,
-      ...this._with({ options: { description } }),
-    )
-  }
-
-  examples(
-    ...values: [this[typeStatic]['encoded'], ...this[typeStatic]['encoded'][]]
-  ) {
-    return new IntersactionType(
-      this.types,
-      ...this._with({ options: { examples: values } }),
+    return new IntersactionType<T>(
+      Type.Intersect(types.map((t) => t.schema)) as any,
     )
   }
 }

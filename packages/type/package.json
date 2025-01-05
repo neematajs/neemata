@@ -23,14 +23,14 @@
     "type-check": "tsc --noEmit"
   },
   "peerDependencies": {
+    "@nmtjs/common": "workspace:*",
     "@sinclair/typebox": "^0.34.13",
-    "temporal-polyfill": "^0.2.5",
-    "@nmtjs/common": "workspace:*"
+    "temporal-polyfill": "^0.2.5"
   },
   "devDependencies": {
+    "@nmtjs/common": "workspace:*",
     "@sinclair/typebox": "^0.34.13",
-    "temporal-polyfill": "^0.2.5",
-    "@nmtjs/common": "workspace:*"
+    "temporal-polyfill": "^0.2.5"
   },
   "files": [
     "src",

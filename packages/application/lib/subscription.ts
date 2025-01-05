@@ -41,8 +41,8 @@ export class Subscription<
 }
 
 export interface SubscriptionManager {
-  subscribe(subscription: Subscription): any
-  unsubscribe(subscription: Subscription): any
+  subscribe(subscription: Subscription<any>): any
+  unsubscribe(subscription: Subscription<any>): any
   publish(key: string, event: string, payload: any): any
 
   serialize(
@@ -67,7 +67,7 @@ export const basicSubManagerPlugin = createPlugin(
   (app) => {
     const { logger, type, container } = app
     const isApiWorker = type === WorkerType.Api
-    const subscriptions = new Map<string, Set<Subscription<any>>>()
+    const subscriptions = new Map<string, Set<Subscription>>()
 
     const subscribe = (subscription: Subscription) => {
       let subs = subscriptions.get(subscription.key)
@@ -110,10 +110,10 @@ export const basicSubManagerPlugin = createPlugin(
 
 // This is just a little helper to provide stricter type-safety
 export class SubscriptionResponse<
-  T extends Subscription,
-  PayloadType extends t.infer.decoded<
-    T['contract']['output']
-  > = t.infer.decoded<T['contract']['output']>,
+  T extends TSubscriptionContract,
+  PayloadType extends t.infer.input.decoded<
+    T['output']
+  > = t.infer.input.decoded<T['output']>,
   Payload = unknown,
 > {
   readonly _!: {
@@ -125,8 +125,7 @@ export class SubscriptionResponse<
   constructor(public readonly subscription: T) {}
 
   withPayload(payload: PayloadType) {
-    // @ts-expect-error
-    this.payload = payload
+    this.payload = payload as any
     return this as unknown as SubscriptionResponse<T, PayloadType, PayloadType>
   }
 }

@@ -1,10 +1,10 @@
-import type { BaseType } from '@nmtjs/type'
+import type { BaseTypeAny } from '@nmtjs/type'
 import { type ContractSchemaOptions, createSchema } from '../utils.ts'
 
 export interface TBaseProcedureContract<
   Type extends string = string,
-  Input extends BaseType = BaseType,
-  Output extends BaseType = BaseType,
+  Input extends BaseTypeAny = BaseTypeAny,
+  Output extends BaseTypeAny = BaseTypeAny,
   Name extends string | undefined = string | undefined,
   ServiceName extends string | undefined = string | undefined,
   Transports extends { [K in string]?: true } | undefined =
@@ -21,8 +21,8 @@ export interface TBaseProcedureContract<
 }
 
 export interface TProcedureContract<
-  Input extends BaseType = BaseType,
-  Output extends BaseType = BaseType,
+  Input extends BaseTypeAny = BaseTypeAny,
+  Output extends BaseTypeAny = BaseTypeAny,
   Name extends string | undefined = string | undefined,
   ServiceName extends string | undefined = string | undefined,
   Transports extends { [K in string]?: true } | undefined =
@@ -38,8 +38,8 @@ export interface TProcedureContract<
   > {}
 
 export const ProcedureContract = <
-  Input extends BaseType,
-  Output extends BaseType,
+  Input extends BaseTypeAny,
+  Output extends BaseTypeAny,
 >(
   input: Input,
   output: Output,

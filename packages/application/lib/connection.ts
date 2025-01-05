@@ -47,7 +47,7 @@ export class Connection<Type extends string = string> {
     event: E,
     ...args: C['events'][E]['payload'] extends NeverType
       ? []
-      : [t.infer.decoded<C['events'][E]['payload']>]
+      : [payload: t.infer.decoded<C['events'][E]['payload']>]
   ) {
     if (!this.#sendEvent)
       throw new Error('This connection does not support event notification')
