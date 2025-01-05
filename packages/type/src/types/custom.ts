@@ -12,7 +12,7 @@ export type CustomTypeEncode<T> = (value: T) => any
 export abstract class TransformType<T, S = TAny> extends BaseType<
   TTransform<TUnsafe<S>, T>
 > {
-  _!: ConstantType<this['schema']>
+  declare _: ConstantType<this['schema']>
 }
 
 export class CustomType<T, S = TAny> extends TransformType<T, S> {

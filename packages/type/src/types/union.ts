@@ -15,7 +15,7 @@ import type { ObjectType, ObjectTypeProps } from './object.ts'
 export class UnionType<
   T extends readonly BaseType[] = readonly BaseType[],
 > extends BaseType<TUnion<UnionToTuple<T[number]['schema']>>> {
-  _!: {
+  declare _: {
     encoded: {
       input: TUnion<UnionToTuple<T[number]['_']['encoded']['input']>>
       output: TUnion<UnionToTuple<T[number]['_']['encoded']['output']>>
@@ -36,7 +36,7 @@ export class UnionType<
 export class IntersactionType<
   T extends readonly BaseType[] = readonly BaseType[],
 > extends BaseType<TIntersect<UnionToTuple<T[number]['schema']>>> {
-  _!: {
+  declare _: {
     encoded: {
       input: TIntersect<UnionToTuple<T[number]['_']['encoded']['input']>>
       output: TIntersect<UnionToTuple<T[number]['_']['encoded']['output']>>
@@ -77,7 +77,7 @@ export class DiscriminatedUnionType<
     options: T
   }
 > {
-  _!: {
+  declare _: {
     encoded: {
       input: TDiscriminatedUnion<
         K,
@@ -112,7 +112,7 @@ export class DiscriminatedUnionType<
     ],
   >(key: K, ...options: T) {
     return new DiscriminatedUnionType<K, T>(
-      DiscriminatedUnion(key, options.map((t) => t.schema) as any),
+      DiscriminatedUnion(key, options.map((t) => t.final) as any),
       { key, options },
     )
   }
