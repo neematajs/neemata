@@ -10,7 +10,7 @@ type ClientServicesResolved<Services extends ClientServices> = {
   [K in keyof Services]: {
     [P in keyof Services[K]['procedures']]: {
       contract: Services[K]['procedures'][P]
-      input: InputType<t.infer.encoded<Services[K]['procedures'][P]['input']>>
+      input: t.infer.input.encoded<Services[K]['procedures'][P]['input']>
       output: OutputType<
         t.infer.encoded<Services[K]['procedures'][P]['output']>
       >

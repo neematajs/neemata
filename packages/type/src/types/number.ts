@@ -1,7 +1,11 @@
 import {
+  type BigIntOptions,
   type IntegerOptions,
   type NumberOptions,
+  type Static,
+  type StaticDecode,
   type StringOptions,
+  type TBigInt,
   type TInteger,
   type TNumber,
   type TString,
@@ -9,50 +13,14 @@ import {
   Type,
   TypeBoxError,
 } from '@sinclair/typebox'
-import { BaseType } from './base.ts'
+import { BaseType, type ConstantType } from './base.ts'
+import { CustomType, TransformType } from './custom.ts'
 
-export class NumberType<
-  N extends boolean = false,
-  O extends boolean = false,
-  D extends boolean = false,
-> extends BaseType<TNumber, N, O, D, NumberOptions> {
-  constructor(
-    protected readonly options: NumberOptions = {},
-    isNullable: N = false as N,
-    isOptional: O = false as O,
-    hasDefault: D = false as D,
-  ) {
-    super(options, isNullable, isOptional, hasDefault)
-  }
+export class NumberType extends BaseType<TNumber, { options: NumberOptions }> {
+  _!: ConstantType<this['schema']>
 
-  protected _constructSchema(options: NumberOptions): TNumber {
-    return Type.Number(options)
-  }
-
-  nullable() {
-    return new NumberType(...this._with({ isNullable: true }))
-  }
-
-  optional() {
-    return new NumberType(...this._with({ isOptional: true }))
-  }
-
-  nullish() {
-    return new NumberType(...this._with({ isNullable: true, isOptional: true }))
-  }
-
-  default(value: number) {
-    return new NumberType(
-      ...this._with({ options: { default: value }, hasDefault: true }),
-    )
-  }
-
-  description(description: string) {
-    return new NumberType(...this._with({ options: { description } }))
-  }
-
-  examples(...examples: [number, ...number[]]) {
-    return new NumberType(...this._with({ options: { examples } }))
+  static factory(options: NumberOptions = {}) {
+    return new NumberType(Type.Number(options), { options })
   }
 
   positive() {
@@ -64,72 +32,30 @@ export class NumberType<
   }
 
   max(value: number, exclusive?: true) {
-    return new NumberType(
-      ...this._with({
-        options: {
-          maximum: value,
-          ...(!exclusive ? {} : { exclusiveMaximum: value }),
-        },
-      }),
-    )
+    return NumberType.factory({
+      ...this.props.options,
+      maximum: value,
+      ...(!exclusive ? {} : { exclusiveMaximum: value }),
+    })
   }
 
   min(value: number, exclusive?: true) {
-    return new NumberType(
-      ...this._with({
-        options: {
-          minimum: value,
-          ...(!exclusive ? {} : { exclusiveMinimum: value }),
-        },
-      }),
-    )
+    return NumberType.factory({
+      ...this.props.options,
+      minimum: value,
+      ...(!exclusive ? {} : { exclusiveMinimum: value }),
+    })
   }
 }
 
-export class IntegerType<
-  N extends boolean = false,
-  O extends boolean = false,
-  D extends boolean = false,
-> extends BaseType<TInteger, N, O, D, IntegerOptions> {
-  constructor(
-    options: IntegerOptions = {},
-    isNullable: N = false as N,
-    isOptional: O = false as O,
-    hasDefault: D = false as D,
-  ) {
-    super(options, isNullable, isOptional, hasDefault)
-  }
+export class IntegerType extends BaseType<
+  TInteger,
+  { options: IntegerOptions }
+> {
+  _!: ConstantType<this['schema']>
 
-  protected _constructSchema(options: IntegerOptions): TInteger {
-    return Type.Integer(options)
-  }
-
-  nullable() {
-    return new IntegerType(...this._with({ isNullable: true }))
-  }
-
-  optional() {
-    return new IntegerType(...this._with({ isOptional: true }))
-  }
-
-  nullish() {
-    return new IntegerType(
-      ...this._with({ isNullable: true, isOptional: true }),
-    )
-  }
-
-  default(value: number) {
-    return new IntegerType(
-      ...this._with({ options: { default: value }, hasDefault: true }),
-    )
-  }
-
-  description(description: string) {
-    return new IntegerType(...this._with({ options: { description } }))
-  }
-
-  examples(...examples: [number, ...number[]]) {
-    return new IntegerType(...this._with({ options: { examples } }))
+  static factory(options: IntegerOptions = {}) {
+    return new IntegerType(Type.Integer(options), { options })
   }
 
   positive() {
@@ -141,84 +67,28 @@ export class IntegerType<
   }
 
   max(value: number, exclusive?: true) {
-    return new IntegerType(
-      ...this._with({
-        options: {
-          maximum: value,
-          ...(!exclusive ? {} : { exclusiveMaximum: value }),
-        },
-      }),
-    )
+    return IntegerType.factory({
+      ...this.props.options,
+      maximum: value,
+      ...(!exclusive ? {} : { exclusiveMaximum: value }),
+    })
   }
 
   min(value: number, exclusive?: true) {
-    return new IntegerType(
-      ...this._with({
-        options: {
-          minimum: value,
-          ...(!exclusive ? {} : { exclusiveMinimum: value }),
-        },
-      }),
-    )
+    return IntegerType.factory({
+      ...this.props.options,
+      minimum: value,
+      ...(!exclusive ? {} : { exclusiveMinimum: value }),
+    })
   }
 }
 
-export class BigIntType<
-  N extends boolean = false,
-  O extends boolean = false,
-  D extends boolean = false,
-> extends BaseType<TTransform<TString, bigint>, N, O, D, StringOptions> {
-  constructor(
-    options: StringOptions = {},
-    isNullable: N = false as N,
-    isOptional: O = false as O,
-    hasDefault: D = false as D,
-  ) {
-    super(options, isNullable, isOptional, hasDefault)
-  }
+// TODO: this is not json schema compatible
+export class BigIntType extends BaseType<TBigInt, { options: BigIntOptions }> {
+  _!: ConstantType<this['schema']>
 
-  protected _constructSchema(options: StringOptions) {
-    return Type.Transform(Type.String({ ...options, pattern: '^\\d$' }))
-      .Decode((v: string) => {
-        try {
-          return BigInt(v)
-        } catch (error) {
-          throw new TypeBoxError('Invalid bigint value')
-        }
-      })
-      .Encode(this.encode)
-  }
-
-  protected encode = (value: bigint): string => {
-    return value.toString()
-  }
-
-  nullable() {
-    return new BigIntType(...this._with({ isNullable: true }))
-  }
-
-  optional() {
-    return new BigIntType(...this._with({ isOptional: true }))
-  }
-
-  nullish() {
-    return new BigIntType(...this._with({ isNullable: true, isOptional: true }))
-  }
-
-  default(value: bigint) {
-    return new BigIntType(
-      ...this._with({ options: { default: value }, hasDefault: true }),
-    )
-  }
-
-  description(description: string) {
-    return new BigIntType(...this._with({ options: { description } }))
-  }
-
-  examples(...examples: [bigint, ...bigint[]]) {
-    return new BigIntType(
-      ...this._with({ options: { examples: examples.map(this.encode) } }),
-    )
+  static factory(options: BigIntOptions = {}) {
+    return new BigIntType(Type.BigInt(options), { options })
   }
 
   positive() {
@@ -230,24 +100,18 @@ export class BigIntType<
   }
 
   max(value: bigint, exclusive?: true) {
-    return new BigIntType(
-      ...this._with({
-        options: {
-          maximum: this.encode(value),
-          ...(!exclusive ? {} : { exclusiveMaximum: this.encode(value) }),
-        },
-      }),
-    )
+    return BigIntType.factory({
+      ...this.props.options,
+      maximum: value,
+      ...(!exclusive ? {} : { exclusiveMaximum: value }),
+    })
   }
 
   min(value: bigint, exclusive?: true) {
-    return new BigIntType(
-      ...this._with({
-        options: {
-          minimum: `${value}`,
-          ...(!exclusive ? {} : { exclusiveMinimum: `${value}` }),
-        },
-      }),
-    )
+    return BigIntType.factory({
+      ...this.props.options,
+      minimum: value,
+      ...(!exclusive ? {} : { exclusiveMinimum: value }),
+    })
   }
 }

@@ -64,7 +64,7 @@ export type ProcedureHandlerType<
   ctx: DependencyContext<Deps>,
   data: Input extends NeverType ? never : InputType<t.infer.decoded<Input>>,
 ) => Async<
-  Output extends NeverType ? void : OutputType<t.infer.decoded<Output>>
+  Output extends NeverType ? void : OutputType<t.infer.input.decoded<Output>>
 >
 
 export interface Procedure<

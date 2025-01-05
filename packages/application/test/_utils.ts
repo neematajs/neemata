@@ -15,7 +15,7 @@ import { t } from '@nmtjs/type'
 
 import { Application, type ApplicationOptions } from '../lib/application.ts'
 import { Connection, type ConnectionOptions } from '../lib/connection.ts'
-import { Hook, WorkerType } from '../lib/constants.ts'
+import { WorkerType } from '../lib/constants.ts'
 import type { Dependencies } from '../lib/container.ts'
 import { createLogger } from '../lib/logger.ts'
 import { type Plugin, createPlugin } from '../lib/plugin.ts'
@@ -58,7 +58,7 @@ export class TestFormat extends BaseServerFormat {
   }
 
   decode(buffer: ArrayBuffer): any {
-    return deserialize(Buffer.from(buffer))
+    return deserialize(Buffer.from(buffer) as any)
   }
 
   decodeRpc(buffer: ArrayBuffer, context: DecodeRpcContext): Rpc {

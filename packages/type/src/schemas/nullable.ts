@@ -1,7 +1,9 @@
 import {
   type SchemaOptions,
   type TNull,
+  type TOptional,
   type TSchema,
+  type TUndefined,
   type TUnion,
   Type,
 } from '@sinclair/typebox/type'
@@ -11,22 +13,14 @@ export const Nullable = <T extends TSchema>(
   schema: T,
   options: SchemaOptions = {},
 ) => {
-  const {
-    default: _default,
-    description,
-    examples,
-    readOnly,
-    title,
-    writeOnly,
-  } = schema
+  const { default: _default } = schema
 
   return Type.Union([schema, Type.Null()], {
     default: _default,
-    description,
-    examples,
-    readOnly,
-    title,
-    writeOnly,
     ...options,
   })
 }
+
+export type TOptionalUndefined<T extends TSchema> = TOptional<
+  TUnion<[T, TUndefined]>
+>

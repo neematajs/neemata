@@ -1,97 +1,49 @@
-import { type ArrayOptions, type TArray, Type } from '@sinclair/typebox'
-import type { typeStatic } from '../constants.ts'
-import { BaseType, getTypeSchema } from './base.ts'
+import {
+  type ArrayOptions,
+  type StaticDecode,
+  type TArray,
+  Type,
+} from '@sinclair/typebox'
+import { BaseType } from './base.ts'
 
-export class ArrayType<
-  T extends BaseType = BaseType,
-  N extends boolean = false,
-  O extends boolean = false,
-  D extends boolean = false,
-> extends BaseType<TArray<T[typeStatic]['schema']>, N, O, D, ArrayOptions> {
-  constructor(
-    readonly element: T,
-    options: ArrayOptions = {},
-    isNullable: N = false as N,
-    isOptional: O = false as O,
-    hasDefault: D = false as D,
-  ) {
-    super(options, isNullable, isOptional, hasDefault, element)
+export class ArrayType<T extends BaseType = BaseType> extends BaseType<
+  TArray<T['schema']>,
+  { element: T; options: ArrayOptions }
+> {
+  _!: {
+    encoded: {
+      input: TArray<T['_']['encoded']['input']>
+      output: TArray<T['_']['encoded']['output']>
+    }
+    decoded: {
+      input: TArray<T['_']['decoded']['input']>
+      output: TArray<T['_']['decoded']['output']>
+    }
   }
 
-  protected _constructSchema(
-    options: ArrayOptions,
-    element: T,
-  ): TArray<T[typeStatic]['schema']> {
-    return Type.Array(getTypeSchema(element), options)
-  }
-
-  nullable() {
-    return new ArrayType(this.element, ...this._with({ isNullable: true }))
-  }
-
-  optional() {
-    return new ArrayType(this.element, ...this._with({ isOptional: true }))
-  }
-
-  nullish() {
-    return new ArrayType(
-      this.element,
-      ...this._with({ isNullable: true, isOptional: true }),
-    )
-  }
-
-  default(value: this[typeStatic]['encoded']) {
-    return new ArrayType(
-      this.element,
-      ...this._with({
-        options: { default: value },
-        hasDefault: true,
-      }),
-    )
-  }
-
-  description(description: string) {
-    return new ArrayType(
-      this.element,
-      ...this._with({ options: { description } }),
-    )
-  }
-
-  examples(
-    ...examples: [this[typeStatic]['encoded'], ...this[typeStatic]['encoded'][]]
-  ) {
-    return new ArrayType(
-      this.element,
-      ...this._with({
-        options: { example: examples[0], examples },
-      }),
-    )
+  static factory<T extends BaseType>(element: T, options: ArrayOptions = {}) {
+    return new ArrayType<T>(Type.Array(element.schema, options))
   }
 
   min(value: number) {
-    return new ArrayType(
-      this.element,
-      ...this._with({
-        options: { minItems: value },
-      }),
-    )
+    return ArrayType.factory(this.props.element, {
+      ...this.props.options,
+      minItems: value,
+    })
   }
 
   max(value: number) {
-    return new ArrayType(
-      this.element,
-      ...this._with({
-        options: { maxItems: value },
-      }),
-    )
+    return ArrayType.factory(this.props.element, {
+      ...this.props.options,
+      maxItems: value,
+    })
   }
 
   length(value: number) {
-    return new ArrayType(
-      this.element,
-      ...this._with({
-        options: { minItems: value, maxItems: value },
-      }),
-    )
+    return ArrayType.factory(this.props.element, {
+      ...this.props.options,
+      minItems: value,
+      maxItems: value,
+    })
   }
 }

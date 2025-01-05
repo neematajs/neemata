@@ -14,3 +14,11 @@ export type UnionToTuple<T, Tuple extends unknown[] = []> = [T] extends [never]
 export type CastToStringTuple<T> = T extends [string, ...string[]] ? T : never
 
 export type UnionToTupleString<T> = CastToStringTuple<UnionToTuple<T>>
+
+export type Merge<T, U> = {
+  [K in keyof T | keyof U]: K extends keyof U
+    ? U[K]
+    : K extends keyof T
+      ? T[K]
+      : never
+}

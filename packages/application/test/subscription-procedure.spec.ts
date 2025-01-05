@@ -122,7 +122,7 @@ describe('Procedure static', () => {
           {},
           ctx.connection,
         )
-        return new SubscriptionResponse(subscription)
+        return new SubscriptionResponse(subscription as any)
       },
     })
 

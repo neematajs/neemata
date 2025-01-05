@@ -1,77 +1,41 @@
 import { type StringOptions, type TString, Type } from '@sinclair/typebox'
-import { BaseType } from './base.ts'
+import { BaseType, type ConstantType, type TypeParams } from './base.ts'
 
-export type AnyStringType = StringType<boolean, boolean, boolean>
-export class StringType<
-  N extends boolean = false,
-  O extends boolean = false,
-  D extends boolean = false,
-> extends BaseType<TString, N, O, D, StringOptions> {
-  constructor(
-    options: StringOptions = {},
-    isNullable: N = false as N,
-    isOptional: O = false as O,
-    hasDefault: D = false as D,
-  ) {
-    super(options, isNullable, isOptional, hasDefault)
-  }
+export class StringType extends BaseType<TString, { options: StringOptions }> {
+  _!: ConstantType<TString>
 
-  protected _constructSchema(options: StringOptions): TString {
-    return Type.String(options)
-  }
-
-  nullable() {
-    return new StringType(...this._with({ isNullable: true }))
-  }
-
-  optional() {
-    return new StringType(...this._with({ isOptional: true }))
-  }
-
-  nullish() {
-    return new StringType(...this._with({ isNullable: true, isOptional: true }))
-  }
-
-  default(value: string) {
-    return new StringType(
-      ...this._with({ options: { default: value }, hasDefault: true }),
-    )
-  }
-
-  description(description: string) {
-    return new StringType(...this._with({ options: { description } }))
-  }
-
-  examples(...examples: string[]) {
-    return new StringType(...this._with({ options: { examples } }))
-  }
-
-  format(format: TString['format']) {
-    return new StringType(...this._with({ options: { format } }))
+  static factory(options: StringOptions = {}) {
+    return new StringType(Type.String(options), { options })
   }
 
   max(value: number) {
-    return new StringType(
-      ...this._with({
-        options: { maxLength: value },
-      }),
-    )
+    return StringType.factory({
+      ...this.props.options,
+      maxLength: value,
+    })
   }
 
   min(value: number) {
-    return new StringType(
-      ...this._with({
-        options: { minLength: value },
-      }),
-    )
+    return StringType.factory({
+      ...this.props.options,
+      minLength: value,
+    })
+  }
+
+  format(format: TString['format']) {
+    return StringType.factory({
+      ...this.props.options,
+      pattern: undefined,
+      format,
+    })
   }
 
   pattern(pattern: string) {
-    return new StringType(
-      ...this._with({
-        options: { pattern },
-      }),
-    )
+    return StringType.factory({
+      ...this.props.options,
+      format: undefined,
+      pattern,
+    })
   }
 
   email() {

@@ -10,7 +10,7 @@ describe('Record type', () => {
   })
 
   it('should correctly resolve key as objectEnum', () => {
-    const objectEnum = t.objectEnum({ a: 'a' })
+    const objectEnum = t.objectEnum({ a: 'a' as const })
     const recondType = t.record(objectEnum, t.any())
     expect(runtime.check(recondType, { a: 'test' })).toBe(true)
   })

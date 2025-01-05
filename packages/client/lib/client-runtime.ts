@@ -48,9 +48,9 @@ type ClientCallers<Services extends ClientServicesResolved<ClientServices>> = {
     [P in keyof Services[K]]: (
       ...args: Services[K][P]['input'] extends NeverType
         ? [options?: ClientCallOptions]
-        : t.infer.staticType<
+        : t.infer.input.decoded<
               Services[K][P]['contract']['input']
-            >['isOptional'] extends true
+            > extends undefined
           ? [data?: Services[K][P]['input'], options?: ClientCallOptions]
           : [data: Services[K][P]['input'], options?: ClientCallOptions]
     ) => Promise<
@@ -58,7 +58,7 @@ type ClientCallers<Services extends ClientServicesResolved<ClientServices>> = {
         ? {
             payload: Services[K][P]['output'] extends never
               ? undefined
-              : Services[K][P]['output']
+              : t.infer.decoded<Services[K][P]['output']>
             subscription: Subscription<{
               [KE in keyof Services[K][P]['events']]: [
                 t.infer.decoded<Services[K][P]['events'][KE]['payload']>,
