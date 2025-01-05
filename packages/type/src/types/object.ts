@@ -37,7 +37,7 @@ export class ObjectType<
     }
 
     for (const key in properties) {
-      schemaProperties[key] = properties[key].schema
+      schemaProperties[key] = properties[key].final
     }
 
     return new ObjectType<T>(Type.Object(schemaProperties, options) as any, {
@@ -50,7 +50,7 @@ export class RecordType<
   K extends LiteralType | EnumType | ObjectEnumType | StringType,
   E extends BaseType,
 > extends BaseType<TRecordOrObject<K['schema'], E['schema']>> {
-  _!: {
+  declare _: {
     encoded: {
       input: TRecordOrObject<
         K['_']['encoded']['input'],

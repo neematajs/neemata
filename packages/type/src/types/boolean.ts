@@ -7,7 +7,7 @@ import {
 import { BaseType, type ConstantType } from './base.ts'
 
 export class BooleanType extends BaseType<TBoolean> {
-  _!: ConstantType<this['schema']>
+  declare _: ConstantType<this['schema']>
 
   static factory() {
     return new BooleanType(Type.Boolean())

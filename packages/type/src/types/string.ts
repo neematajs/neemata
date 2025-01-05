@@ -2,7 +2,7 @@ import { type StringOptions, type TString, Type } from '@sinclair/typebox'
 import { BaseType, type ConstantType, type TypeParams } from './base.ts'
 
 export class StringType extends BaseType<TString, { options: StringOptions }> {
-  _!: ConstantType<TString>
+  declare _: ConstantType<TString>
 
   static factory(options: StringOptions = {}) {
     return new StringType(Type.String(options), { options })

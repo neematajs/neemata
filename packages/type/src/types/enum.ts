@@ -10,7 +10,7 @@ import { BaseType, type ConstantType } from './base.ts'
 export class ObjectEnumType<
   T extends { [K in string]: K } = { [K in string]: K },
 > extends BaseType<TEnum<T>> {
-  _!: ConstantType<this['schema']>
+  declare _: ConstantType<this['schema']>
 
   static factory<T extends { [K in string]: K }>(values: T) {
     return new ObjectEnumType<T>(Type.Enum(values as any))
@@ -20,7 +20,7 @@ export class ObjectEnumType<
 export class EnumType<
   T extends (string | number)[] = (string | number)[],
 > extends BaseType<TEnum<Record<string, T[number]>>> {
-  _!: ConstantType<this['schema']>
+  declare _: ConstantType<this['schema']>
 
   static factory<T extends (string | number)[]>(values: [...T]) {
     return new EnumType<T>(

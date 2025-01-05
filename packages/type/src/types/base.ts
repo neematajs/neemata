@@ -86,7 +86,12 @@ export abstract class BaseType<
     const { hasDefault = false, nullable = false, optional = false } = params
     this.schema = schema
     this.final = schema
-    if (nullable) this.final = Nullable(this.final) as any
+
+    if (nullable)
+      this.final = Nullable({
+        ...this.final,
+        default: this.final.default ?? null,
+      }) as any
     if (optional || hasDefault) this.final = Optional(this.final) as any
 
     this.props = props

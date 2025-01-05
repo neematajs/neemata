@@ -17,7 +17,7 @@ import { BaseType, type ConstantType } from './base.ts'
 import { CustomType, TransformType } from './custom.ts'
 
 export class NumberType extends BaseType<TNumber, { options: NumberOptions }> {
-  _!: ConstantType<this['schema']>
+  declare _: ConstantType<this['schema']>
 
   static factory(options: NumberOptions = {}) {
     return new NumberType(Type.Number(options), { options })
@@ -52,7 +52,7 @@ export class IntegerType extends BaseType<
   TInteger,
   { options: IntegerOptions }
 > {
-  _!: ConstantType<this['schema']>
+  declare _: ConstantType<this['schema']>
 
   static factory(options: IntegerOptions = {}) {
     return new IntegerType(Type.Integer(options), { options })
@@ -85,7 +85,7 @@ export class IntegerType extends BaseType<
 
 // TODO: this is not json schema compatible
 export class BigIntType extends BaseType<TBigInt, { options: BigIntOptions }> {
-  _!: ConstantType<this['schema']>
+  declare _: ConstantType<this['schema']>
 
   static factory(options: BigIntOptions = {}) {
     return new BigIntType(Type.BigInt(options), { options })
