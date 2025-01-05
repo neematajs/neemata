@@ -55,3 +55,65 @@ export class IntersactionType<
     )
   }
 }
+
+export type DiscriminatedUnionOptionType<K extends string> = ObjectType<
+  ObjectTypeProps & { [_ in K]: BaseTypeAny }
+>
+
+export class DiscriminatedUnionType<
+  K extends string,
+  T extends readonly [
+    DiscriminatedUnionOptionType<K>,
+    ...DiscriminatedUnionOptionType<K>[],
+  ],
+> extends BaseType<
+  TDiscriminatedUnion<
+    K,
+    //@ts-expect-error
+    UnionToTuple<T[number]['schema']>
+  >,
+  {
+    key: K
+    options: T
+  }
+> {
+  _!: {
+    encoded: {
+      input: TDiscriminatedUnion<
+        K,
+        //@ts-expect-error
+        UnionToTuple<T[number]['_']['encoded']['input']>
+      >
+      output: TDiscriminatedUnion<
+        K,
+        //@ts-expect-error
+        UnionToTuple<T[number]['_']['encoded']['output']>
+      >
+    }
+    decoded: {
+      input: TDiscriminatedUnion<
+        K,
+        //@ts-expect-error
+        UnionToTuple<T[number]['_']['decoded']['input']>
+      >
+      output: TDiscriminatedUnion<
+        K,
+        //@ts-expect-error
+        UnionToTuple<T[number]['_']['decoded']['output']>
+      >
+    }
+  }
+
+  static factory<
+    K extends string,
+    T extends readonly [
+      DiscriminatedUnionOptionType<K>,
+      ...DiscriminatedUnionOptionType<K>[],
+    ],
+  >(key: K, ...options: T) {
+    return new DiscriminatedUnionType<K, T>(
+      DiscriminatedUnion(key, options.map((t) => t.schema) as any),
+      { key, options },
+    )
+  }
+}

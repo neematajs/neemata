@@ -20,12 +20,15 @@ import { NeverType } from './types/never.ts'
 import { BigIntType, IntegerType, NumberType } from './types/number.ts'
 import { ObjectType, type ObjectTypeProps, RecordType } from './types/object.ts'
 import { StringType } from './types/string.ts'
-import { IntersactionType, UnionType } from './types/union.ts'
+import {
+  DiscriminatedUnionType,
+  IntersactionType,
+  UnionType,
+} from './types/union.ts'
+import type { UnionToTupleString } from './utils.ts'
 
 // register ajv formats
 import { register } from './formats.ts'
-import type { Merge, UnionToTupleString } from './utils.ts'
-
 register()
 
 export * from './schemas/nullable.ts'
@@ -82,6 +85,7 @@ export namespace t {
   export const any = AnyType.factory
   export const or = UnionType.factory
   export const and = IntersactionType.factory
+  export const discriminatedUnion = DiscriminatedUnionType.factory
   export const custom = CustomType.factory
 
   export const keyof = <T extends ObjectType>(
