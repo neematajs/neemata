@@ -168,17 +168,16 @@ export class Api {
   private handleInput(procedure: AnyBaseProcedure, payload: any) {
     if (procedure.contract.input instanceof NeverType === false) {
       const schema = this.getSchema(procedure.contract.input)
-      const prepared = schema.parse(payload)
 
-      if (!schema.check(prepared)) {
+      if (!schema.check(payload)) {
         throw new ApiError(
           ErrorCode.ValidationError,
           'Invalid input',
-          Array.from(schema.errors(prepared)),
+          schema.errors(payload),
         )
       }
 
-      return schema.decode(prepared)
+      return schema.decode(schema.parse(payload))
     }
   }
 

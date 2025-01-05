@@ -1,4 +1,4 @@
-import type { BaseTypeAny } from '@nmtjs/type'
+import type { BaseType } from '@nmtjs/type'
 import { type ContractSchemaOptions, createSchema } from '../utils.ts'
 import type { TEventContract } from './event.ts'
 import type { TBaseProcedureContract } from './procedure.ts'
@@ -6,8 +6,8 @@ import type { TBaseProcedureContract } from './procedure.ts'
 export type SubcriptionOptions = Record<string, string | number>
 
 export interface TSubscriptionContract<
-  Input extends BaseTypeAny = BaseTypeAny,
-  Output extends BaseTypeAny = BaseTypeAny,
+  Input extends BaseType = BaseType,
+  Output extends BaseType = BaseType,
   Options extends SubcriptionOptions = SubcriptionOptions,
   Events extends Record<string, TEventContract> = Record<
     string,
@@ -31,8 +31,8 @@ export interface TSubscriptionContract<
 }
 
 export const SubscriptionContract = <
-  Input extends BaseTypeAny = BaseTypeAny,
-  Output extends BaseTypeAny = BaseTypeAny,
+  Input extends BaseType = BaseType,
+  Output extends BaseType = BaseType,
   Events extends Record<string, TEventContract> = Record<
     string,
     TEventContract
