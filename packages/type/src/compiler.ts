@@ -158,28 +158,28 @@ export function compile<T extends BaseType>(schema: T): Compiled<T> {
 
 export namespace runtime {
   export function parse(type: BaseType, value: any) {
-    return _parse(type.schema, value)
+    return _parse(type.final, value)
   }
 
   export function errors(type: BaseType, value: any): ValidationError[] {
-    return _errors(Value.Errors(type.schema, value))
+    return _errors(Value.Errors(type.final, value))
   }
 
   export function check(type: BaseType, value: any): boolean {
-    return Value.Check(type.schema, value)
+    return Value.Check(type.final, value)
   }
 
   export function decode<T extends BaseType>(
     type: T,
     value: any,
   ): t.infer.decoded<T> {
-    return TransformDecode(type.schema, [], value)
+    return TransformDecode(type.final, [], value)
   }
 
   export function encode<T extends BaseType>(
     type: T,
     value: any,
   ): t.infer.encoded<T> {
-    return TransformEncode(type.schema, [], value)
+    return TransformEncode(type.final, [], value)
   }
 }
