@@ -4,7 +4,13 @@ import {
   type TSubscriptionContract,
   c,
 } from '@nmtjs/contract'
-import { type BaseType, type CustomType, type NeverType, t } from '@nmtjs/type'
+import {
+  type BaseType,
+  type BaseTypeAny,
+  type CustomType,
+  type NeverType,
+  t,
+} from '@nmtjs/type'
 
 import { kProcedureSubscription } from './constants.ts'
 import type { Dependencies, DependencyContext } from './container.ts'
@@ -15,10 +21,10 @@ import {
   type Metadata,
   _createBaseProcedure,
 } from './procedure.ts'
-import type { Subscription, SubscriptionResponse } from './subscription.ts'
 import type { Async, InputType, JsonPrimitive, OutputType } from './types.ts'
 
 export type SubscriptionHandlerType<
+  Return,
   Input,
   Output,
   Contract extends TSubscriptionContract,
@@ -27,13 +33,14 @@ export type SubscriptionHandlerType<
   ctx: DependencyContext<Deps>,
   data: Input,
   contract: Contract,
-) => Async<SubscriptionResponse<Contract>>
+) => Async<Output extends never ? Return : Output>
 
 export interface SubscriptionProcedure<
   ProcedureContract extends TSubscriptionContract = TSubscriptionContract,
   ProcedureDeps extends Dependencies = Dependencies,
 > extends BaseProcedure<ProcedureContract, ProcedureDeps> {
   handler: SubscriptionHandlerType<
+    unknown,
     ProcedureContract['input'] extends NeverType
       ? never
       : InputType<t.infer.decoded<ProcedureContract['input']>>,
@@ -65,6 +72,7 @@ export function createContractSubscription<
         middlewares?: AnyMiddleware[]
         metadata?: Metadata[]
         handler: SubscriptionHandlerType<
+          unknown,
           InputType<t.infer.decoded<ProcedureContract['input']>>,
           OutputType<t.infer.input.decoded<ProcedureContract['output']>>,
           TSubscriptionContract,
@@ -72,6 +80,7 @@ export function createContractSubscription<
         >
       }
     | SubscriptionHandlerType<
+        unknown,
         InputType<t.infer.decoded<ProcedureContract['input']>>,
         OutputType<t.infer.input.decoded<ProcedureContract['output']>>,
         TSubscriptionContract,
@@ -94,55 +103,39 @@ export function createContractSubscription<
 export function $createSubscription<T extends SubcriptionOptions>() {
   return <
     R,
-    I extends BaseType | undefined = undefined,
-    O extends BaseType | undefined = undefined,
-    E extends Record<string, BaseType> = {},
+    I extends BaseTypeAny | undefined = undefined,
+    O extends BaseTypeAny | undefined = undefined,
+    E extends Record<string, BaseTypeAny> = {},
     D extends Dependencies = {},
-    CI extends I extends BaseType ? I : NeverType = I extends BaseType
-      ? I
-      : NeverType,
-    CO extends O extends BaseType
-      ? O
-      : CustomType<R, JsonPrimitive<R>> = O extends BaseType
-      ? O
-      : CustomType<R, JsonPrimitive<R>>,
+    CI extends BaseTypeAny = I extends undefined ? NeverType : I,
+    CO extends BaseTypeAny = O extends undefined ? CustomType<R> : O,
     CE extends {
       [K in keyof E]: TEventContract<E[K]>
     } = {
       [K in keyof E]: TEventContract<E[K]>
     },
-  >(
-    paramsOrHandler:
-      | {
-          input?: I
-          output?: O
-          dependencies?: D
-          guards?: AnyGuard[]
-          middlewares?: AnyMiddleware[]
-          metadata?: Metadata[]
-          events?: E
-          handler: SubscriptionHandlerType<
-            I extends BaseType ? InputType<t.infer.decoded<I>> : never,
-            O extends BaseType ? OutputType<t.infer.input.decoded<O>> : R,
-            TSubscriptionContract<CI, CO, T, CE>,
-            D
-          >
-        }
-      | SubscriptionHandlerType<
-          I extends BaseType ? InputType<t.infer.decoded<I>> : never,
-          O extends BaseType ? OutputType<t.infer.input.decoded<O>> : R,
-          TSubscriptionContract<CI, CO, T, CE>,
-          D
-        >,
-  ): SubscriptionProcedure<TSubscriptionContract<CI, CO, T, CE>, D> => {
+  >(paramsOrHandler: {
+    input?: I
+    output?: O
+    dependencies?: D
+    guards?: AnyGuard[]
+    middlewares?: AnyMiddleware[]
+    metadata?: Metadata[]
+    events: E
+    handler: SubscriptionHandlerType<
+      R,
+      I extends BaseType ? InputType<t.infer.decoded<I>> : never,
+      OutputType<O extends BaseType ? t.infer.input.decoded<O> : R>,
+      TSubscriptionContract<CI, CO, T, CE>,
+      D
+    >
+  }): SubscriptionProcedure<
+    TSubscriptionContract<CI, O extends undefined ? CustomType<R> : O, T, CE>,
+    D
+  > => {
     const { input, output, events, ...params } =
       typeof paramsOrHandler === 'function'
-        ? {
-            handler: paramsOrHandler,
-            input: undefined,
-            output: undefined,
-            events: undefined,
-          }
+        ? { handler: paramsOrHandler }
         : paramsOrHandler
 
     const contractEvents: any = {}

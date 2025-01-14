@@ -88,7 +88,7 @@ export class EventManager {
     contract: C,
     options: C['options'],
     event: Extract<E, string>,
-    payload: t.infer.decoded<C['events'][E]['payload']>,
+    payload: t.infer.input.decoded<C['events'][E]['payload']>,
   ) {
     const subscriptionKey = this.subManager.serialize(contract, options)
     this.logger.debug(payload, `Publishing event [${subscriptionKey}]`)

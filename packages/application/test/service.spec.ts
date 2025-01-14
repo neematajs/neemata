@@ -69,7 +69,7 @@ describe('Service static', () => {
     })
 
     expect(kService in service).toBe(true)
-    expect(service).toHaveProperty('contract', {
+    expect(service.contract).toMatchObject({
       type: 'neemata:service',
       name: 'test',
       procedures: expect.anything(),

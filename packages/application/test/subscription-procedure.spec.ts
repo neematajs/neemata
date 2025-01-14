@@ -15,7 +15,6 @@ import {
   $createSubscription,
   createContractSubscription,
 } from '../lib/subscription-procedure.ts'
-import { SubscriptionResponse } from '../lib/subscription.ts'
 import { noop } from '../lib/utils/functions.ts'
 import { TestServiceContract } from './_utils.ts'
 
@@ -104,7 +103,8 @@ describe('Procedure static', () => {
     const dep1 = createValueInjectable('dep1' as const)
     const dep2 = createValueInjectable('dep2')
 
-    const procedure = $createSubscription<{}>()({
+    const createProcedure = $createSubscription<{}>()
+    const procedure = createProcedure({
       input,
       output,
       events: {
@@ -122,12 +122,13 @@ describe('Procedure static', () => {
           {},
           ctx.connection,
         )
-        return new SubscriptionResponse(subscription as any)
+        subscription.send('testEvent', 'test')
+        return { a: ctx.dep1 }
       },
     })
 
     expect(kProcedureSubscription in procedure).toBe(true)
-    expect(procedure).toHaveProperty('contract', {
+    expect(procedure.contract).toMatchObject({
       type: 'neemata:subscription',
       events: {
         testEvent: expect.anything(),

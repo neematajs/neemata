@@ -1,4 +1,5 @@
 import type { BaseType } from '@nmtjs/type'
+import { Kind } from '../constants.ts'
 import { type ContractSchemaOptions, createSchema } from '../utils.ts'
 
 export const EventKind = 'NeemataEvent'
@@ -9,6 +10,7 @@ export interface TEventContract<
   ServiceName extends string | undefined = string | undefined,
   SubscriptionName extends string | undefined = string | undefined,
 > {
+  [Kind]: typeof EventKind
   type: 'neemata:event'
   name: Name
   serviceName: ServiceName
@@ -22,10 +24,15 @@ export const EventContract = <Payload extends BaseType>(
 ) => {
   return createSchema<TEventContract<Payload>>({
     ...schemaOptions,
+    [Kind]: EventKind,
     type: 'neemata:event',
     payload,
     name: undefined,
     serviceName: undefined,
     subscriptionName: undefined,
   })
+}
+
+export function IsEventContract(value: any): value is TEventContract {
+  return Kind in value && value[Kind] === EventKind
 }

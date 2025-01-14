@@ -1,4 +1,5 @@
 import type { BaseType } from '@nmtjs/type'
+import { Kind } from '../constants.ts'
 import { type ContractSchemaOptions, createSchema } from '../utils.ts'
 
 export interface TBaseProcedureContract<
@@ -11,6 +12,7 @@ export interface TBaseProcedureContract<
     | { [K in string]?: true }
     | undefined,
 > {
+  [Kind]: string
   type: Type
   name: Name
   serviceName: ServiceName
@@ -19,6 +21,8 @@ export interface TBaseProcedureContract<
   output: Output
   timeout?: number
 }
+
+export const ProcedureKind = 'NeemataProcedure'
 
 export interface TProcedureContract<
   Input extends BaseType = BaseType,
@@ -35,7 +39,9 @@ export interface TProcedureContract<
     Name,
     ServiceName,
     Transports
-  > {}
+  > {
+  [Kind]: typeof ProcedureKind
+}
 
 export const ProcedureContract = <
   Input extends BaseType,
@@ -45,9 +51,10 @@ export const ProcedureContract = <
   output: Output,
   timeout?: number,
   schemaOptions: ContractSchemaOptions = {} as ContractSchemaOptions,
-): TProcedureContract<Input, Output> => {
-  return {
+) => {
+  return createSchema<TProcedureContract<Input, Output>>({
     ...schemaOptions,
+    [Kind]: ProcedureKind,
     type: 'neemata:procedure',
     input,
     output,
@@ -55,5 +62,11 @@ export const ProcedureContract = <
     name: undefined,
     serviceName: undefined,
     transports: undefined,
-  }
+  })
+}
+
+export function IsProcedureContract(
+  contract: any,
+): contract is TProcedureContract {
+  return Kind in contract && contract[Kind] === ProcedureKind
 }

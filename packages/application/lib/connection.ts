@@ -47,7 +47,7 @@ export class Connection<Type extends string = string> {
     event: E,
     ...args: C['events'][E]['payload'] extends NeverType
       ? []
-      : [payload: t.infer.decoded<C['events'][E]['payload']>]
+      : [payload: t.infer.input.decoded<C['events'][E]['payload']>]
   ) {
     if (!this.#sendEvent)
       throw new Error('This connection does not support event notification')
@@ -69,7 +69,11 @@ export class Connection<Type extends string = string> {
       if (!result.success) {
         throw new Error('Failed to encode payload', { cause: result.error })
       }
-      payload = result.value
+      if (schema.check(result.value)) {
+        payload = result.value as any
+      } else {
+        throw new Error('Invalid event payload')
+      }
     }
 
     return this.#sendEvent(contract.name, event, payload)
