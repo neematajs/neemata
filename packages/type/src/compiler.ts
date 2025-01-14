@@ -8,6 +8,7 @@ import {
   TransformEncode,
   Value,
 } from '@sinclair/typebox/value'
+import { register } from './formats.ts'
 import type { t } from './index.ts'
 import { IsDiscriminatedUnion } from './schemas/discriminated-union.ts'
 import type { BaseType } from './types/base.ts'
@@ -18,8 +19,11 @@ type ValidationError = {
   value: unknown
 }
 
+// register ajv formats
+register()
+
 export type Compiled<T extends BaseType = BaseType> = {
-  check: (val: unknown) => boolean
+  check: (val: unknown) => val is t.infer.input.encoded<T>
   errors: (val: unknown) => ValidationError[]
   parse: (val: unknown) => unknown
   /**
@@ -50,11 +54,8 @@ export type Compiled<T extends BaseType = BaseType> = {
 
 // FIXME: this one is very slow
 function _parse(schema: TSchema, value: any) {
-  // Clone -> Clean -> Default -> Convert
-  return Value.Convert(
-    schema,
-    Value.Default(schema, Value.Clean(schema, Value.Clone(value))),
-  )
+  // Clone -> Clean -> Convert
+  return Value.Convert(schema, Value.Clean(schema, Value.Clone(value)))
 }
 
 function _errors(errors: ValueErrorIterator) {
@@ -109,7 +110,7 @@ function _errors(errors: ValueErrorIterator) {
 }
 
 function compileType(type: BaseType) {
-  const { final: schema } = type
+  const { schema } = type
   const compiled = TypeCompiler.Compile(schema)
   const errors = (value) => {
     return _errors(compiled.Errors(value))
@@ -157,29 +158,32 @@ export function compile<T extends BaseType>(schema: T): Compiled<T> {
 }
 
 export namespace runtime {
-  export function parse(type: BaseType, value: any) {
-    return _parse(type.final, value)
+  export function parse(type: BaseType, value: unknown) {
+    return _parse(type.schema, value)
   }
 
-  export function errors(type: BaseType, value: any): ValidationError[] {
-    return _errors(Value.Errors(type.final, value))
+  export function errors(type: BaseType, value: unknown): ValidationError[] {
+    return _errors(Value.Errors(type.schema, value))
   }
 
-  export function check(type: BaseType, value: any): boolean {
-    return Value.Check(type.final, value)
+  export function check<T extends BaseType>(
+    type: T,
+    value: unknown,
+  ): value is t.infer.input.encoded<T> {
+    return Value.Check(type.schema, value)
   }
 
   export function decode<T extends BaseType>(
     type: T,
-    value: any,
+    value: unknown,
   ): t.infer.decoded<T> {
-    return TransformDecode(type.final, [], value)
+    return TransformDecode(type.schema, [], value)
   }
 
   export function encode<T extends BaseType>(
     type: T,
-    value: any,
+    value: unknown,
   ): t.infer.encoded<T> {
-    return TransformEncode(type.final, [], value)
+    return TransformEncode(type.schema, [], value)
   }
 }

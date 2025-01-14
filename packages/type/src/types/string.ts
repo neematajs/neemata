@@ -1,9 +1,12 @@
 import { type StringOptions, type TString, Type } from '@sinclair/typebox'
-import { BaseType, type ConstantType, type TypeParams } from './base.ts'
+import type { StaticOutputDecode } from '../inference.ts'
+import { BaseType } from './base.ts'
 
-export class StringType extends BaseType<TString, { options: StringOptions }> {
-  declare _: ConstantType<TString>
-
+export class StringType extends BaseType<
+  TString,
+  { options: StringOptions },
+  string
+> {
   static factory(options: StringOptions = {}) {
     return new StringType(Type.String(options), { options })
   }

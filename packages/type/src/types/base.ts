@@ -1,16 +1,6 @@
-import {
-  Optional,
-  type SchemaOptions,
-  type StaticDecode,
-  type StaticEncode,
-  type TSchema,
-} from '@sinclair/typebox'
-import {
-  Nullable,
-  type TNullable,
-  type TOptionalUndefined,
-} from '../schemas/nullable.ts'
-import type { Merge } from '../utils.ts'
+import { Optional, type TOptional, type TSchema } from '@sinclair/typebox'
+import { Default, type TDefault } from '../schemas/default.ts'
+import { Nullable, type TNullable } from '../schemas/nullable.ts'
 
 export type TypeProps = Record<string, any>
 
@@ -28,85 +18,42 @@ export type DefaultTypeParams = {
   encode?: TypeParams['encode']
 }
 
-export type BaseTypeAny<T extends TSchema = TSchema> = BaseType<T, any, any>
-
-type ResolveNullable<
-  T extends TSchema,
-  P extends TypeParams,
-> = P['nullable'] extends true
-  ? T extends TNullable<infer S>
-    ? TNullable<S>
-    : TNullable<T>
-  : T
-
-type ResolveOptional<
-  T extends TSchema,
-  P extends TypeParams,
-> = P['optional'] extends true
-  ? T extends TOptionalUndefined<infer S>
-    ? TOptionalUndefined<S>
-    : TOptionalUndefined<T>
-  : T
-
-type ResolveDefault<
-  T extends TSchema,
-  P extends TypeParams,
-> = P['hasDefault'] extends true
-  ? T extends TOptionalUndefined<infer U>
-    ? U
-    : T
-  : T
+export type BaseTypeAny<T extends TSchema = TSchema> = BaseType<
+  T,
+  TypeProps,
+  any
+>
 
 export abstract class BaseType<
   Schema extends TSchema = TSchema,
   Props extends TypeProps = TypeProps,
-  Params extends TypeParams = DefaultTypeParams,
+  ValueType = unknown,
 > {
-  abstract _: {
-    encoded: {
-      input: TSchema
-      output: TSchema
-    }
-    decoded: {
-      input: TSchema
-      output: TSchema
-    }
-  }
-
   readonly schema: Schema
-  readonly final: TSchema
   readonly props: Props
-  readonly params: Params
+  readonly params: TypeParams
 
   constructor(
     schema: Schema,
     props: Props = {} as Props,
-    params: Params = {} as Params,
+    params: TypeParams = {} as TypeParams,
   ) {
     const { hasDefault = false, nullable = false, optional = false } = params
     this.schema = schema
-    this.final = schema
-
-    if (nullable)
-      this.final = Nullable({
-        ...this.final,
-        default: this.final.default ?? null,
-      }) as any
-    if (optional || hasDefault) this.final = Optional(this.final) as any
 
     this.props = props
     this.params = {
       hasDefault,
       nullable,
       optional,
-    } as Params
+    } as TypeParams
   }
 
-  optional(): OptionalType<this> {
+  optional(): OptionalType<BaseType<Schema, Props>, ValueType> {
     return OptionalType.factory(this) as any
   }
 
-  nullable(): NullableType<this> {
+  nullable(): NullableType<BaseType<Schema, Props>, ValueType> {
     return NullableType.factory(this) as any
   }
 
@@ -114,16 +61,14 @@ export abstract class BaseType<
     return this.nullable().optional()
   }
 
-  default(
-    value: StaticDecode<this['_']['decoded']['output']>,
-  ): DefaultType<this> {
+  default(value: ValueType): DefaultType<BaseType<Schema, Props>, ValueType> {
     return DefaultType.factory(
       this,
       this.params.encode?.(value) ?? value,
     ) as any
   }
 
-  description(description: string): this {
+  description(description: string): BaseType<Schema, Props, ValueType> {
     const ThisConstructor = this.constructor as any
     return new ThisConstructor(
       {
@@ -135,7 +80,7 @@ export abstract class BaseType<
     ) as any
   }
 
-  examples(...examples: any[]): this {
+  examples(...examples: ValueType[]): BaseType<Schema, Props, ValueType> {
     const ThisConstructor = this.constructor as any
     return new ThisConstructor(
       {
@@ -148,89 +93,45 @@ export abstract class BaseType<
   }
 }
 
-export type ConstantType<T extends TSchema> = {
-  encoded: {
-    input: T
-    output: T
-  }
-  decoded: {
-    input: T
-    output: T
-  }
-}
-
-export type Static<
-  T extends BaseTypeAny,
-  P extends TypeProps,
-  Params extends Merge<T['params'], P> = Merge<T['params'], P>,
-> = {
-  encoded: {
-    input: ResolveOptional<
-      ResolveNullable<T['_']['encoded']['input'], Params>,
-      Params
-    >
-    output: ResolveDefault<
-      ResolveOptional<
-        ResolveNullable<T['_']['encoded']['output'], Params>,
-        Params
-      >,
-      Params
-    >
-  }
-  decoded: {
-    input: ResolveOptional<
-      ResolveNullable<T['_']['decoded']['input'], Params>,
-      Params
-    >
-    output: ResolveDefault<
-      ResolveOptional<
-        ResolveNullable<T['_']['decoded']['output'], Params>,
-        Params
-      >,
-      Params
-    >
-  }
-}
-
 export class OptionalType<
-  Type extends BaseTypeAny<any>,
-  Params extends TypeParams = DefaultTypeParams,
-> extends BaseType<Type['schema'], { inner: Type }, Params> {
-  _!: Static<Type, Params>
-
-  static factory<T extends BaseTypeAny<any>>(type: T) {
-    return new OptionalType<T, Merge<T['params'], { optional: true }>>(
-      type.schema,
-      { inner: type },
-      { ...type.params, optional: true } as any,
-    )
+  Type extends BaseTypeAny = BaseTypeAny,
+  ValueType = unknown,
+> extends BaseType<TOptional<Type['schema']>, { inner: Type }, ValueType> {
+  static factory<T extends BaseTypeAny>(type: T) {
+    return new OptionalType<T>(Optional(type.schema) as any, { inner: type }, {
+      ...type.params,
+      optional: true,
+    } as any)
   }
 }
 
 export class NullableType<
-  Type extends BaseTypeAny<any>,
-  Params extends TypeParams = DefaultTypeParams,
-> extends BaseType<Type['schema'], { inner: Type }, Params> {
-  _!: Static<Type, Params>
-
+  Type extends BaseTypeAny<any> = BaseTypeAny<any>,
+  ValueType = unknown,
+> extends BaseType<
+  TNullable<Type['schema']>,
+  { inner: Type },
+  ValueType | null
+> {
   static factory<T extends BaseTypeAny<any>>(type: T) {
-    return new NullableType<T, Merge<T['params'], { nullable: true }>>(
-      type.schema,
-      { inner: type },
-      { ...type.params, nullable: true } as any,
-    )
+    return new NullableType<T>(Nullable(type.schema), { inner: type }, {
+      ...type.params,
+      nullable: true,
+    } as any)
   }
 }
 
 export class DefaultType<
-  Type extends BaseTypeAny<any>,
-  Params extends TypeParams = DefaultTypeParams,
-> extends BaseType<Type['schema'], { inner: Type }, Params> {
-  _!: Static<Type, Params>
-
+  Type extends BaseTypeAny = BaseTypeAny,
+  ValueType = unknown,
+> extends BaseType<
+  TDefault<TOptional<Type['schema']>>,
+  { inner: Type },
+  ValueType
+> {
   static factory<T extends BaseTypeAny<any>>(type: T, defaultValue: any) {
-    return new DefaultType<T, Merge<T['params'], { hasDefault: true }>>(
-      { ...type.schema, default: defaultValue },
+    return new DefaultType<T>(
+      Default(Optional(type.schema), defaultValue) as any,
       { inner: type },
       { ...type.params, hasDefault: true } as any,
     )

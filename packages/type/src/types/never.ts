@@ -1,9 +1,7 @@
 import { type TNever, Type } from '@sinclair/typebox'
-import { BaseType, type ConstantType } from './base.ts'
+import { BaseType } from './base.ts'
 
-export class NeverType extends BaseType<TNever> {
-  declare _: ConstantType<this['schema']>
-
+export class NeverType extends BaseType<TNever, {}, never> {
   static factory() {
     return new NeverType(Type.Never())
   }

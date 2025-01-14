@@ -25,7 +25,7 @@ export function IsDiscriminatedUnion(
   )
 }
 
-type DiscriminatedUnionProperties<K extends string = string> = {
+export type DiscriminatedUnionProperties<K extends string = string> = {
   [OK in K]: TLiteral<any>
 } & {
   [OK in TPropertyKey]: any

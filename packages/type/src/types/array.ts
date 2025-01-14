@@ -10,19 +10,8 @@ export class ArrayType<T extends BaseType = BaseType> extends BaseType<
   TArray<T['schema']>,
   { element: T; options: ArrayOptions }
 > {
-  declare _: {
-    encoded: {
-      input: TArray<T['_']['encoded']['input']>
-      output: TArray<T['_']['encoded']['output']>
-    }
-    decoded: {
-      input: TArray<T['_']['decoded']['input']>
-      output: TArray<T['_']['decoded']['output']>
-    }
-  }
-
   static factory<T extends BaseType>(element: T, options: ArrayOptions = {}) {
-    return new ArrayType<T>(Type.Array(element.final, options))
+    return new ArrayType<T>(Type.Array(element.schema, options))
   }
 
   min(value: number) {

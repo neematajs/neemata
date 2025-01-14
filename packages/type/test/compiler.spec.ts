@@ -126,3 +126,118 @@ describe('Runtime', () => {
     expect(result).toEqual({ foo: 'test', bar: 42 })
   })
 })
+
+describe('Complex schema', () => {
+  it('should work', () => {
+    const schema = t.object({
+      prop1: t.string(),
+      prop2: t.number(),
+      prop3: t.boolean(),
+      prop4: t.array(
+        t.object({
+          prop1: t.literal('a'),
+          prop2: t.date(),
+          prop3: t.record(t.string(), t.number()),
+        }),
+      ),
+      prop5: t.object({
+        prop1: t.string(),
+        prop2: t.integer(),
+        prop3: t.arrayEnum(['a', 'b', 'c']),
+        prop4: t.objectEnum({
+          a: 'A',
+          b: 'B',
+          c: 'C',
+        } as const),
+      }),
+      prop6: t.object.merge(
+        t.object({ prop1: t.string() }),
+        t.object({ prop2: t.number() }),
+      ),
+      prop7: t.object.extend(t.object({ prop1: t.string() }), {
+        prop2: t.number(),
+      }),
+      prop8: t.object.omit(t.object({ prop1: t.string(), prop2: t.number() }), {
+        prop2: true,
+      }),
+      prop9: t.object.partial(
+        t.object({ prop1: t.string(), prop2: t.number() }),
+      ),
+      prop10: t.object.pick(
+        t.object({ prop1: t.string(), prop2: t.number() }),
+        { prop1: true },
+      ),
+      prop11: t.object.keyof(
+        t.object({ prop1: t.string(), prop2: t.number() }),
+      ),
+      prop12: t.or(
+        t.object({ prop1: t.string() }),
+        t.object({ prop2: t.number() }),
+      ),
+      prop13: t.and(
+        t.object({ prop1: t.string() }),
+        t.object({ prop2: t.number() }),
+      ),
+      prop14: t.discriminatedUnion(
+        'type',
+        t.object({ type: t.literal('a'), prop1: t.string() }),
+        t.object({ type: t.literal('b'), prop2: t.number() }),
+      ),
+    })
+
+    const value: any = {
+      prop1: 'string',
+      prop2: 42,
+      prop3: true,
+      prop4: [
+        {
+          prop1: 'a',
+          prop2: '2021-01-01',
+          prop3: {
+            key1: 42,
+            key2: 42,
+          },
+        },
+      ],
+      prop5: {
+        prop1: 'string',
+        prop2: 42,
+        prop3: 'a',
+        prop4: 'A',
+      },
+      prop6: {
+        prop1: 'string',
+        prop2: 42,
+      },
+      prop7: {
+        prop1: 'string',
+        prop2: 42,
+      },
+      prop8: {
+        prop1: 'string',
+      },
+      prop9: {
+        prop1: 'string',
+      },
+      prop10: {
+        prop1: 'string',
+      },
+      prop11: 'prop1',
+      prop12: {
+        prop1: 'string',
+      },
+      prop13: {
+        prop1: 'string',
+        prop2: 42,
+      },
+      prop14: {
+        type: 'a',
+        prop1: 'string',
+      },
+    }
+
+    const result = runtime.check(schema, value)
+
+    expect(result).toBe(true)
+  })
+})
