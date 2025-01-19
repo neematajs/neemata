@@ -21,7 +21,7 @@ import {
   type Metadata,
   _createBaseProcedure,
 } from './procedure.ts'
-import type { Async, InputType, JsonPrimitive, OutputType } from './types.ts'
+import type { Async, InputType, OutputType } from './types.ts'
 
 export type SubscriptionHandlerType<
   Return,

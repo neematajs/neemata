@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { runtime } from '../../src/compiler.ts'
 import { t } from '../../src/index.ts'
+import * as runtime from '../../src/runtime.ts'
 
 describe('Record type', () => {
   it('should correctly resolve key as arrayEnum', () => {

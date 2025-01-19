@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 
-import { compile, runtime } from '../src/compiler.ts'
+import { compile } from '../src/compiler.ts'
 import { t } from '../src/index.ts'
+import * as runtime from '../src/runtime.ts'
 
 describe('Compiled', () => {
   const testSchema = t.object({

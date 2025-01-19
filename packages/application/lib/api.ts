@@ -169,15 +169,15 @@ export class Api {
     if (procedure.contract.input instanceof NeverType === false) {
       const schema = this.getSchema(procedure.contract.input)
 
-      if (!schema.check(payload)) {
+      try {
+        return schema.decode(schema.applyDefaults(schema.parse(payload)))
+      } catch (error) {
         throw new ApiError(
           ErrorCode.ValidationError,
-          'Invalid input',
+          'Input validation error',
           schema.errors(payload),
         )
       }
-
-      return schema.decode(schema.parse(payload))
     }
   }
 
@@ -185,13 +185,13 @@ export class Api {
     if (IsSubscriptionContract(procedure.contract)) {
       if (procedure.contract.output instanceof NeverType === false) {
         const schema = this.getSchema(procedure.contract.output)
-        return schema.parse(schema.encode(response))
+        return schema.applyDefaults(schema.parse(schema.encode(response)))
       }
 
       return response
     } else if (procedure.contract.output instanceof NeverType === false) {
       const schema = this.getSchema(procedure.contract.output)
-      return schema.parse(schema.encode(response))
+      return schema.applyDefaults(schema.parse(schema.encode(response)))
     }
   }
 

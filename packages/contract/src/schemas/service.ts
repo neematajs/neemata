@@ -113,10 +113,8 @@ export const ServiceContract = <
     [Kind]: ServiceKind,
     name: name,
     type: 'neemata:service',
-    // @ts-expect-error
-    procedures: applyNames(serviceProcedures, { serviceName: name }),
-    // @ts-expect-error
-    events: applyNames(events, { serviceName: name }),
+    procedures: applyNames(serviceProcedures, { serviceName: name }) as any,
+    events: applyNames(events, { serviceName: name }) as any,
     transports,
     timeout,
   })

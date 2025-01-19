@@ -60,25 +60,13 @@ export type ProcedureHandlerType<
   Input extends BaseType,
   Output extends BaseType,
   Deps extends Dependencies,
-> = ProcedureHandlerType2<
-  Input extends NeverType ? never : InputType<t.infer.decoded<Input>>,
-  Output extends NeverType ? void : OutputType<t.infer.input.decoded<Output>>,
-  DependencyContext<Deps>,
-  TBaseProcedureContract
+> = (
+  ctx: DependencyContext<Deps>,
+  data: Input extends NeverType ? never : InputType<t.infer.decoded<Input>>,
+  contract: TBaseProcedureContract,
+) => Async<
+  Output extends NeverType ? void : OutputType<t.infer.input.decoded<Output>>
 >
-// (
-//   ctx: DependencyContext<Deps>,
-//   data: Input extends NeverType ? never : InputType<t.infer.decoded<Input>>,
-// ) => Async<
-//   Output extends NeverType ? void : OutputType<t.infer.input.decoded<Output>>
-// >
-
-export type ProcedureHandlerType2<
-  Input,
-  Output,
-  Context,
-  Contract extends TBaseProcedureContract,
-> = (ctx: Context, data: Input, contract: Contract) => Async<Output>
 
 export interface Procedure<
   ProcedureContract extends TBaseProcedureContract = TBaseProcedureContract,
