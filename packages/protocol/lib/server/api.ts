@@ -13,9 +13,7 @@ export type ProtocolApiCallOptions = {
 
 export type ProtocolAnyIterable<T> =
   | (() => AsyncGenerator<T>)
-  // | (() => Generator<T>)
   | AsyncIterable<T>
-// | Iterable<T>
 
 export interface ProtocolApiCallBaseResult {
   output: unknown
@@ -28,6 +26,7 @@ export interface ProtocolApiCallSubscriptionResult
 export interface ProtocolApiCallIterableResult
   extends ProtocolApiCallBaseResult {
   iterable: ProtocolAnyIterable<unknown>
+  onFinish?: () => void
 }
 
 export type ProtocolApiCallResult =

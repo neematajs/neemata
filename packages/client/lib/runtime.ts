@@ -117,10 +117,16 @@ export class RuntimeClient<
 
   constructor(
     contract: APIContract,
-    transport: ProtocolTransport,
-    format: BaseClientFormat,
+    options: {
+      transport: ProtocolTransport
+      format: BaseClientFormat
+      timeout?: number
+    },
   ) {
-    super(transport, format, new RuntimeContractTransformer(contract))
+    super({
+      ...options,
+      transformer: new RuntimeContractTransformer(contract),
+    })
 
     const callers = {} as any
 

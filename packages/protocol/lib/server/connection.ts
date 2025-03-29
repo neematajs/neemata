@@ -1,21 +1,9 @@
 import { randomUUID } from 'node:crypto'
-// import type { TAnyEventContract } from '@nmtjs/contract'
 import type { InteractivePromise } from '@nmtjs/common'
 import type { Container } from '@nmtjs/core'
 import type { ProtocolApiCallResult } from './api.ts'
 import type { BaseServerDecoder, BaseServerEncoder } from './format.ts'
 import type { ProtocolClientStream, ProtocolServerStream } from './stream.ts'
-
-// export type NotifyFn = <T extends TAnyEventContract>(
-//   connection: Connection,
-//   contract: T,
-//   payload: t.infer.input.decoded<T['payload']>,
-// ) => Promise<boolean>
-
-// export type ConnectionNotifyFn = (
-//   contract: TAnyEventContract,
-//   payload: unknown,
-// ) => Promise<boolean>
 
 export type ConnectionOptions<Data = unknown> = {
   id?: string
@@ -41,6 +29,7 @@ export class ConnectionContext {
   calls = new Map<number, ConnectionCall<ProtocolApiCallResult>>()
   clientStreams = new Map<number, ProtocolClientStream>()
   serverStreams = new Map<number, ProtocolServerStream>()
+  rpcStreams = new Map<number, AbortController>()
   container: Container
   format: {
     encoder: BaseServerEncoder

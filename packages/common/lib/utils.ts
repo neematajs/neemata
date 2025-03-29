@@ -118,3 +118,13 @@ export function isAsyncGeneratorFunction(
 export function throwError(message: string, ErrorClass = Error): never {
   throw new ErrorClass(message)
 }
+
+export function once(target: EventTarget, event: string) {
+  return new Promise<void>((resolve) => {
+    target.addEventListener(event, () => resolve(), { once: true })
+  })
+}
+
+export function onceAborted(signal: AbortSignal) {
+  return once(signal, 'abort')
+}

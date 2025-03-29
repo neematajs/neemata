@@ -99,7 +99,9 @@ describe('Procedure', () => {
               yield element
             }
           },
-          { test: 'value' },
+          {
+            output: { test: 'value' },
+          },
         )
       },
     })
@@ -184,7 +186,9 @@ describe('Procedure static', () => {
               yield element
             }
           },
-          { test: 'value' },
+          {
+            output: { test: 'value' },
+          },
         )
       },
     })

@@ -22,7 +22,7 @@ export class ProtocolClientBlobStream extends TransformStream<
         if (chunk instanceof ArrayBuffer) {
           controller.enqueue(chunk)
         } else if (chunk instanceof Uint8Array) {
-          controller.enqueue(chunk.buffer)
+          controller.enqueue(chunk.buffer as unknown as ArrayBuffer)
         } else if (typeof chunk === 'string') {
           controller.enqueue(encodeText(chunk))
         } else {
@@ -61,13 +61,20 @@ export class ProtocolClientBlobStream extends TransformStream<
   }
 
   async end() {
-    if (!this.writable.locked && (await this.writable.getWriter().closed)) {
-      await this.writable.close()
-    }
+    if (!this.writable.locked) await this.writable.close()
+    else await this.writable.abort(new Error('Stream closed'))
   }
 }
 
-export class ProtocolServerStream<T = any> extends TransformStream<any, T> {
+export interface ProtocolServerStreamInterface<T = any> {
+  [Symbol.asyncIterator](): AsyncGenerator<T>
+  abort(error?: Error): void
+}
+
+export class ProtocolServerStream<T = any>
+  extends TransformStream<any, T>
+  implements ProtocolServerStreamInterface<T>
+{
   #writer: WritableStreamDefaultWriter
 
   constructor(start?: Callback) {

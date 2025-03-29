@@ -100,7 +100,8 @@ export class ProtocolConnections {
 
     this.#collection.delete(connectionId)
 
-    const { calls, serverStreams, clientStreams, container } = context
+    const { calls, serverStreams, clientStreams, rpcStreams, container } =
+      context
 
     for (const call of calls.values()) {
       call.reject(new Error('Connection closed'))
@@ -112,6 +113,10 @@ export class ProtocolConnections {
 
     for (const stream of serverStreams.values()) {
       stream.destroy(new Error('Connection closed'))
+    }
+
+    for (const stream of rpcStreams.values()) {
+      stream.abort(new Error('Connection closed'))
     }
 
     try {
@@ -229,7 +234,7 @@ export class Protocol {
     this.serverStreams = new ProtocolServerStreams(this.connections)
   }
 
-  async call(
+  async rpc(
     connectionId: string,
     rpc: ProtocolRPC,
     params: { signal?: AbortSignal } = {},
@@ -314,11 +319,14 @@ export class Protocol {
           responseEncoded,
         )
         try {
+          const ab = new AbortController()
+          context.rpcStreams.set(callId, ab)
           const iterable =
             typeof response.iterable === 'function'
               ? response.iterable()
               : response.iterable
           for await (const chunk of iterable) {
+            if (ab.signal.aborted) break
             const chunkEncoded = format.encoder.encode(chunk)
             transport.send(
               connection,
@@ -333,6 +341,9 @@ export class Protocol {
             ServerMessageType.RpcStreamAbort,
             callIdEncoded,
           )
+        } finally {
+          context.rpcStreams.delete(callId)
+          response.onFinish && defer(response.onFinish)
         }
       } else {
         transport.send(
@@ -377,7 +388,7 @@ export class Protocol {
     }
   }
 
-  async callRaw(
+  async rpcRaw(
     connectionId: string,
     buffer: ArrayBuffer,
     params: { signal?: AbortSignal } = {},
@@ -402,18 +413,30 @@ export class Protocol {
       },
     })
 
-    return await this.call(connectionId, rpc, params)
+    return await this.rpc(connectionId, rpc, params)
   }
 
-  callAbort(connectionId: string, callId: number) {
+  rpcAbort(connectionId: string, callId: number) {
     const { context } = this.connections.get(connectionId)
     const call = context.calls.get(callId) ?? throwError('Call not found')
     call.abort()
   }
 
-  callAbortRaw(connectionId: string, buffer: ArrayBuffer) {
+  rpcAbortRaw(connectionId: string, buffer: ArrayBuffer) {
     const callId = decodeNumber(buffer, 'Uint32')
-    return this.callAbort(connectionId, callId)
+    return this.rpcAbort(connectionId, callId)
+  }
+
+  rpcStreamAbort(connectionId: string, callId: number) {
+    const { context } = this.connections.get(connectionId)
+    const ab =
+      context.rpcStreams.get(callId) ?? throwError('Call stream not found')
+    ab.abort()
+  }
+
+  rpcStreamAbortRaw(connectionId: string, buffer: ArrayBuffer) {
+    const callId = decodeNumber(buffer, 'Uint32')
+    return this.rpcStreamAbort(connectionId, callId)
   }
 
   notify(connectionId: string, event, payload) {

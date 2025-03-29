@@ -23,26 +23,31 @@ export class StaticClient<
 
   #callers: ClientCallers<ResolvedAPIContract>
 
-  constructor(transport: ProtocolTransport, format: BaseClientFormat) {
-    super(transport, format)
+  constructor(options: {
+    transport: ProtocolTransport
+    format: BaseClientFormat
+    timeout?: number
+  }) {
+    super(options)
 
     this.#callers = new Proxy(Object(), {
-      get: (target, namespaceProp, receiver) => {
+      get: (target, namespace) => {
         // `await client.call.namespaceName` or `await client.call.namespaceName.procedureName`
         // without explicitly calling a function implicitly calls .then() on target
         // FIXME: this basically makes "then" a reserved word
-        if (namespaceProp === 'then') return target
+        if (namespace === 'then') return target
         return new Proxy(Object(), {
-          get: (target, procedureProp, receiver) => {
+          get: (target, procedure) => {
             // `await client.call.namespaceName` or `await client.call.namespaceName.procedureName`
             // without explicitly calling a function implicitly calls .then() on target
             // FIXME: this basically makes "then" a reserved word
-            if (procedureProp === 'then') return target
+            if (procedure === 'then') return target
             return (payload, options) =>
               this._call(
-                namespaceProp as string,
-                procedureProp as string,
+                namespace as string,
+                procedure as string,
                 payload,
+                options,
               )
           },
         })

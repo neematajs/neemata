@@ -1,6 +1,9 @@
 import type { CallTypeProvider, TypeProvider } from '@nmtjs/common'
 import type { TAnyAPIContract } from '@nmtjs/contract'
-import type { ProtocolServerStream } from '@nmtjs/protocol/client'
+import type {
+  ProtocolBaseClientCallOptions,
+  ProtocolServerStreamInterface,
+} from '@nmtjs/protocol/client'
 import type { InputType, OutputType } from '@nmtjs/protocol/common'
 import type { BaseTypeAny, NeverType, t } from '@nmtjs/type'
 
@@ -31,20 +34,20 @@ export type ResolveAPIContract<
           ? OutputType<
               CallTypeProvider<T, C['namespaces'][N]['procedures'][P]['output']>
             >
-          : [
-              result: OutputType<
+          : {
+              response: OutputType<
                 CallTypeProvider<
                   T,
                   C['namespaces'][N]['procedures'][P]['output']
                 >
-              >,
-              stream: ProtocolServerStream<
+              >
+              stream: ProtocolServerStreamInterface<
                 CallTypeProvider<
                   T,
                   C['namespaces'][N]['procedures'][P]['stream']
                 >
-              >,
-            ]
+              >
+            }
       }
     }
     events: {
@@ -65,25 +68,21 @@ export type ResolveClientEvents<
   }
 }
 
-export type ClientCallOptions = {
-  signal?: AbortSignal
-}
-
 export type ClientCallers<Resolved extends ResolveAPIContract> = {
   [N in keyof Resolved]: {
     [P in keyof Resolved[N]['procedures']]: (
       ...args: Resolved[N]['procedures'][P]['input'] extends NeverType
-        ? [options?: ClientCallOptions]
+        ? [options?: ProtocolBaseClientCallOptions]
         : t.infer.input.encoded<
               Resolved[N]['procedures'][P]['contract']['input']
             > extends undefined
           ? [
               data?: Resolved[N]['procedures'][P]['input'],
-              options?: ClientCallOptions,
+              options?: ProtocolBaseClientCallOptions,
             ]
           : [
               data: Resolved[N]['procedures'][P]['input'],
-              options?: ClientCallOptions,
+              options?: ProtocolBaseClientCallOptions,
             ]
     ) => Promise<Resolved[N]['procedures'][P]['output']>
   }
