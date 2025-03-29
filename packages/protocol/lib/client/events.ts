@@ -2,19 +2,6 @@ import type { Callback } from '@nmtjs/common'
 
 export type EventMap = { [K: string]: any[] }
 
-export function untilAborted(signal: AbortSignal) {
-  return new Promise((_, reject) => {
-    const handler = () => reject(new Error('aborted'))
-    const options = { once: true }
-    signal.addEventListener('abort', handler, options)
-  })
-}
-
-export function onAbort(signal: AbortSignal, listener: () => void) {
-  signal.addEventListener('abort', listener, { once: true })
-  return () => signal.removeEventListener('abort', listener)
-}
-
 /**
  * Very simple node-like event emitter wrapper around EventTarget
  *
@@ -27,6 +14,10 @@ export class EventEmitter<
     string
   >,
 > {
+  static once(ee: EventEmitter, event: string) {
+    return new Promise((resolve) => ee.once(event, resolve))
+  }
+
   #target = new EventTarget()
   #listeners = new Map<Callback, Callback>()
 
@@ -61,6 +52,3 @@ export class EventEmitter<
     return this.#target.dispatchEvent(new CustomEvent(event, { detail: args }))
   }
 }
-
-export const once = (ee: EventEmitter, event: string) =>
-  new Promise((resolve) => ee.once(event, resolve))

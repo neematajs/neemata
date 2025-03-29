@@ -22,36 +22,32 @@ import {
   ProtocolServerStream,
 } from '@nmtjs/protocol/server'
 import type { ApplicationOptions } from './application.ts'
-import { kIterableResponse } from './constants.ts'
 import type { AnyNamespace } from './namespace.ts'
-import type { AnyBaseProcedure } from './procedure.ts'
+import { type AnyBaseProcedure, isIterableResponse } from './procedure.ts'
 import type { ApplicationRegistry } from './registry.ts'
 import type { ApiCallContext, Async, ErrorClass } from './types.ts'
 
 const cloneOptions = {
   exclude: new Set([ProtocolServerStream, ProtocolClientStream, ProtocolBlob]),
 }
-export interface FilterLike<T extends ErrorClass = ErrorClass> {
+export type FilterLike<T extends ErrorClass = ErrorClass> = {
   catch(error: InstanceType<T>): Async<Error>
-  [k: string]: any
 }
 
 export type AnyFilter<Error extends ErrorClass = ErrorClass> = AnyInjectable<
   FilterLike<Error>
 >
 
-export interface GuardLike {
+export type GuardLike = {
   can(context: ApiCallContext): Async<boolean>
-  [k: string]: any
 }
 
 export type AnyGuard = AnyInjectable<GuardLike>
 
 export type MiddlewareNext = (payload?: any) => any
 
-export interface MiddlewareLike {
+export type MiddlewareLike = {
   handle(context: ApiCallContext, next: MiddlewareNext, payload: any): any
-  [k: string]: any
 }
 
 export type AnyMiddleware = AnyInjectable<MiddlewareLike>
@@ -239,7 +235,6 @@ export class Api implements ProtocolApi {
     callCtx: ApiCallContext,
     guards: Iterable<GuardLike>,
   ) {
-    console.dir(guards)
     for (const guard of guards) {
       const result = await guard.can(callCtx)
       if (result === false) throw new ApplicationApiError(ErrorCode.Forbidden)
@@ -285,7 +280,7 @@ export class Api implements ProtocolApi {
   }
 
   private handleIterableOutput(procedure: AnyBaseProcedure, response: any) {
-    if (!response[kIterableResponse])
+    if (!isIterableResponse(response))
       throw new Error('Invalid response. Use `createIterableResponse` helper')
     const iterable = response.iterable
     if (procedure.contract.output instanceof NeverType === false) {

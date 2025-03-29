@@ -173,6 +173,7 @@ export interface RPCStreamResponse<Y = unknown, O = unknown> {
   [kIterableResponse]: true
   iterable: ProtocolAnyIterable<Y>
   output: O
+  onFinish?: () => void
 }
 
 export function isIterableResponse(value: any): value is RPCStreamResponse {
@@ -181,12 +182,19 @@ export function isIterableResponse(value: any): value is RPCStreamResponse {
 
 export function createStreamResponse<Y, O>(
   iterable: ProtocolAnyIterable<Y>,
-  output: O = undefined as O,
+  {
+    onFinish,
+    output = undefined as O,
+  }: {
+    output?: O
+    onFinish?: () => void
+  },
 ): RPCStreamResponse<Y, O> {
   return {
     [kIterableResponse]: true as const,
     iterable,
     output,
+    onFinish,
   }
 }
 
