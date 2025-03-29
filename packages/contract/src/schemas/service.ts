@@ -1,3 +1,4 @@
+import { Kind } from '../constants.ts'
 import {
   type ContractSchemaOptions,
   applyNames,
@@ -7,6 +8,7 @@ import type { TEventContract } from './event.ts'
 import type { TBaseProcedureContract, TProcedureContract } from './procedure.ts'
 import type { TSubscriptionContract } from './subscription.ts'
 
+export const ServiceKind = 'NeemataService'
 export interface TServiceContract<
   Name extends string = string,
   Transports extends { [K in string]?: true } = { [K in string]?: true },
@@ -19,6 +21,7 @@ export interface TServiceContract<
     TEventContract
   >,
 > {
+  [Kind]: typeof ServiceKind
   type: 'neemata:service'
   name: Name
   transports: Transports
@@ -107,13 +110,16 @@ export const ServiceContract = <
 
   return createSchema<TServiceContract<Name, Transports, Procedures, Events>>({
     ...schemaOptions,
+    [Kind]: ServiceKind,
     name: name,
     type: 'neemata:service',
-    // @ts-expect-error
-    procedures: applyNames(serviceProcedures, { serviceName: name }),
-    // @ts-expect-error
-    events: applyNames(events, { serviceName: name }),
+    procedures: applyNames(serviceProcedures, { serviceName: name }) as any,
+    events: applyNames(events, { serviceName: name }) as any,
     transports,
     timeout,
   })
+}
+
+export function IsServiceContract(value: any): value is TServiceContract {
+  return Kind in value && value[Kind] === ServiceKind
 }

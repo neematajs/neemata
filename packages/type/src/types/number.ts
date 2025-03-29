@@ -2,23 +2,18 @@ import {
   type BigIntOptions,
   type IntegerOptions,
   type NumberOptions,
-  type Static,
-  type StaticDecode,
-  type StringOptions,
   type TBigInt,
   type TInteger,
   type TNumber,
-  type TString,
-  type TTransform,
   Type,
-  TypeBoxError,
 } from '@sinclair/typebox'
-import { BaseType, type ConstantType } from './base.ts'
-import { CustomType, TransformType } from './custom.ts'
+import { BaseType } from './base.ts'
 
-export class NumberType extends BaseType<TNumber, { options: NumberOptions }> {
-  declare _: ConstantType<this['schema']>
-
+export class NumberType extends BaseType<
+  TNumber,
+  { options: NumberOptions },
+  number
+> {
   static factory(options: NumberOptions = {}) {
     return new NumberType(Type.Number(options), { options })
   }
@@ -50,10 +45,9 @@ export class NumberType extends BaseType<TNumber, { options: NumberOptions }> {
 
 export class IntegerType extends BaseType<
   TInteger,
-  { options: IntegerOptions }
+  { options: IntegerOptions },
+  number
 > {
-  declare _: ConstantType<this['schema']>
-
   static factory(options: IntegerOptions = {}) {
     return new IntegerType(Type.Integer(options), { options })
   }
@@ -84,11 +78,17 @@ export class IntegerType extends BaseType<
 }
 
 // TODO: this is not json schema compatible
-export class BigIntType extends BaseType<TBigInt, { options: BigIntOptions }> {
-  declare _: ConstantType<this['schema']>
-
+export class BigIntType extends BaseType<
+  TBigInt,
+  { options: BigIntOptions },
+  bigint
+> {
   static factory(options: BigIntOptions = {}) {
-    return new BigIntType(Type.BigInt(options), { options })
+    return new BigIntType(
+      Type.BigInt(options),
+      { options },
+      { encode: (value) => `${value}` },
+    )
   }
 
   positive() {

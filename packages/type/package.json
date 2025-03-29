@@ -12,6 +12,11 @@
       "default": "./dist/compiler.js",
       "types": "./src/compiler.ts"
     },
+    "./runtime": {
+      "bun": "./src/runtime.ts",
+      "default": "./dist/runtime.js",
+      "types": "./src/runtime.ts"
+    },
     "./temporal": {
       "bun": "./src/temporal.ts",
       "default": "./dist/temporal.js",

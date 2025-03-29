@@ -1,6 +1,7 @@
 import { ErrorCode } from '@nmtjs/common'
 import { type BaseType, NeverType } from '@nmtjs/type'
 
+import { IsSubscriptionContract } from '@nmtjs/contract'
 import type { ApplicationOptions } from './application.ts'
 import { builtin } from './common.ts'
 import type { Connection } from './connection.ts'
@@ -10,7 +11,6 @@ import type { Logger } from './logger.ts'
 import type { AnyBaseProcedure, MiddlewareLike } from './procedure.ts'
 import type { Registry } from './registry.ts'
 import type { AnyService } from './service.ts'
-import { SubscriptionResponse } from './subscription.ts'
 import type { CallContext } from './types.ts'
 import { withTimeout } from './utils/functions.ts'
 
@@ -169,41 +169,29 @@ export class Api {
     if (procedure.contract.input instanceof NeverType === false) {
       const schema = this.getSchema(procedure.contract.input)
 
-      if (!schema.check(payload)) {
+      try {
+        return schema.decode(schema.applyDefaults(schema.parse(payload)))
+      } catch (error) {
         throw new ApiError(
           ErrorCode.ValidationError,
-          'Invalid input',
+          'Input validation error',
           schema.errors(payload),
         )
       }
-
-      return schema.decode(schema.parse(payload))
     }
   }
 
   private handleOutput(procedure: AnyBaseProcedure, response: any) {
-    if (procedure.contract.type === 'neemata:subscription') {
-      if (response instanceof SubscriptionResponse === false) {
-        throw new Error(
-          'Invalid response: should be instance of SubscriptionResponse',
-        )
-      }
-
+    if (IsSubscriptionContract(procedure.contract)) {
       if (procedure.contract.output instanceof NeverType === false) {
         const schema = this.getSchema(procedure.contract.output)
-        const prepared = schema.parse(response)
-        const result = schema.encodeSafe(prepared)
-        if (result.success) return response.withPayload(result.value)
-        throw new Error('Failed to encode response', { cause: result.error })
+        return schema.applyDefaults(schema.parse(schema.encode(response)))
       }
 
       return response
     } else if (procedure.contract.output instanceof NeverType === false) {
       const schema = this.getSchema(procedure.contract.output)
-      const prepared = schema.parse(response)
-      const result = schema.encodeSafe(prepared)
-      if (result.success) return result.value
-      throw new Error('Failed to encode response', { cause: result.error })
+      return schema.applyDefaults(schema.parse(schema.encode(response)))
     }
   }
 

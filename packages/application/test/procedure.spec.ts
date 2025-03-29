@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { t } from '@nmtjs/type'
+import { AnyType, NeverType, t } from '@nmtjs/type'
 import { kProcedure } from '../lib/constants.ts'
 import { createValueInjectable } from '../lib/container.ts'
 import {
@@ -106,10 +106,36 @@ describe('Procedure static', () => {
     })
 
     expect(kProcedure in procedure).toBe(true)
-    expect(procedure).toHaveProperty('contract', {
+    expect(procedure.contract).toMatchObject({
       type: 'neemata:procedure',
       input,
       output,
+      name: undefined,
+      serviceName: undefined,
+      transports: undefined,
+      timeout: undefined,
+    })
+  })
+
+  it('should create a procedure without input and output schema', () => {
+    const dep1 = createValueInjectable('dep1' as const)
+    const dep2 = createValueInjectable('dep2')
+
+    const procedure = createProcedure({
+      dependencies: {
+        dep1,
+        dep2,
+      },
+      handler(ctx, data) {
+        return { a: ctx.dep1 }
+      },
+    })
+
+    expect(kProcedure in procedure).toBe(true)
+    expect(procedure.contract).toMatchObject({
+      type: 'neemata:procedure',
+      input: expect.any(NeverType),
+      output: expect.any(AnyType),
       name: undefined,
       serviceName: undefined,
       transports: undefined,

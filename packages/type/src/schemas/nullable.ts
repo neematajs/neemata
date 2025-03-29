@@ -1,9 +1,7 @@
 import {
   type SchemaOptions,
   type TNull,
-  type TOptional,
   type TSchema,
-  type TUndefined,
   type TUnion,
   Type,
 } from '@sinclair/typebox/type'
@@ -20,7 +18,3 @@ export const Nullable = <T extends TSchema>(
     ...options,
   })
 }
-
-export type TOptionalUndefined<T extends TSchema> = TOptional<
-  TUnion<[T, TUndefined]>
->

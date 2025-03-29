@@ -13,7 +13,7 @@ type SubscriptionEvents<Contract extends TSubscriptionContract> = {
 } & {
   [K in 'event']: [
     eventName: keyof Contract['events'],
-    payload: t.infer.decoded<
+    payload: t.infer.input.decoded<
       Contract['events'][keyof Contract['events']]['payload']
     >,
   ]
@@ -32,7 +32,7 @@ export class Subscription<
 
   send<K extends Extract<keyof Contract['events'], string>>(
     event: K,
-    payload: t.infer.decoded<Contract['events'][K]['payload']>,
+    payload: t.infer.input.decoded<Contract['events'][K]['payload']>,
   ) {
     if (event in this.contract.events === false)
       throw new Error(`Event [${event}] is not defined in the contract`)
@@ -107,25 +107,3 @@ export const basicSubManagerPlugin = createPlugin(
     })
   },
 )
-
-// This is just a little helper to provide stricter type-safety
-export class SubscriptionResponse<
-  T extends TSubscriptionContract,
-  PayloadType extends t.infer.input.decoded<
-    T['output']
-  > = t.infer.input.decoded<T['output']>,
-  Payload = unknown,
-> {
-  readonly _!: {
-    payload: PayloadType
-  }
-
-  payload!: Payload
-
-  constructor(public readonly subscription: T) {}
-
-  withPayload(payload: PayloadType) {
-    this.payload = payload as any
-    return this as unknown as SubscriptionResponse<T, PayloadType, PayloadType>
-  }
-}

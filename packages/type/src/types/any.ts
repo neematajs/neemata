@@ -1,9 +1,7 @@
 import { type TAny, Type } from '@sinclair/typebox'
-import { BaseType, type ConstantType } from './base.ts'
+import { BaseType } from './base.ts'
 
-export class AnyType extends BaseType<TAny> {
-  declare _: ConstantType<this['schema']>
-
+export class AnyType extends BaseType<TAny, {}, any> {
   static factory() {
     return new AnyType(Type.Any())
   }
