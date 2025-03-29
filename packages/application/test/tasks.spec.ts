@@ -1,10 +1,10 @@
+import { createPromise, defer, noopFn, onAbort } from '@nmtjs/common'
+import { Container, createValueInjectable } from '@nmtjs/core'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { builtin } from '../lib/common.ts'
 import { kTask } from '../lib/constants.ts'
-import { Container, createValueInjectable } from '../lib/container.ts'
-import { Registry } from '../lib/registry.ts'
-import { type AnyTask, TaskRunner, createTask } from '../lib/task.ts'
-import { createFuture, defer, noop, onAbort } from '../lib/utils/functions.ts'
+import { AppInjectables } from '../lib/injectables.ts'
+import { ApplicationRegistry } from '../lib/registry.ts'
+import { TasksRunner, createTask } from '../lib/task.ts'
 import {
   testDefaultTimeout,
   testLogger,
@@ -14,11 +14,11 @@ import {
 
 describe('Task', () => {
   it('should create a task', () => {
-    const task = createTask('test', { handler: noop, parser: () => [] })
+    const task = createTask('test', { handler: noopFn, parser: () => [] })
 
     expect(kTask in task).toBe(true)
     expect(task).toHaveProperty('name', 'test')
-    expect(task).toHaveProperty('handler', noop)
+    expect(task).toHaveProperty('handler', noopFn)
     expect(task).toHaveProperty('parser', expect.any(Function))
     expect(task).toHaveProperty('dependencies', {})
   })
@@ -27,7 +27,7 @@ describe('Task', () => {
     const dep1 = createValueInjectable('dep1')
     const dep2 = createValueInjectable('dep2')
     const task = createTask('test', {
-      handler: noop,
+      handler: noopFn,
       dependencies: { dep1, dep2 },
     })
 
@@ -37,7 +37,7 @@ describe('Task', () => {
 
   it('should create a task with parser', () => {
     const parser = () => [] as const
-    const task = createTask('test', { handler: noop, parser })
+    const task = createTask('test', { handler: noopFn, parser })
     expect(task.parser).toBe(parser)
   })
 
@@ -51,14 +51,14 @@ describe('Task', () => {
 describe.sequential('Tasks', () => {
   const logger = testLogger()
 
-  let registry: Registry
+  let registry: ApplicationRegistry
   let container: Container
-  let tasks: TaskRunner
+  let tasks: TasksRunner
 
   beforeEach(async () => {
-    registry = new Registry({ logger })
+    registry = new ApplicationRegistry({ logger })
     container = new Container({ logger, registry })
-    tasks = new TaskRunner(
+    tasks = new TasksRunner(
       { container, registry },
       { timeout: testDefaultTimeout },
     )
@@ -71,7 +71,7 @@ describe.sequential('Tasks', () => {
 
   it('should be a tasks', () => {
     expect(tasks).toBeDefined()
-    expect(tasks).toBeInstanceOf(TaskRunner)
+    expect(tasks).toBeInstanceOf(TasksRunner)
   })
 
   it('should execute a task', async () => {
@@ -114,10 +114,10 @@ describe.sequential('Tasks', () => {
   })
 
   it('should handle abortion', async () => {
-    const future = createFuture<void>()
+    const future = createPromise<void>()
     const spy = vi.fn(future.resolve)
     const task = testTask({
-      dependencies: { signal: builtin.taskSignal },
+      dependencies: { signal: AppInjectables.taskAbortSignal },
       handler: ({ signal }) => new Promise(() => onAbort(signal, spy)),
     })
 
@@ -130,10 +130,10 @@ describe.sequential('Tasks', () => {
   })
 
   it('should handle termination', async () => {
-    const future = createFuture<void>()
+    const future = createPromise<void>()
     const spy = vi.fn(future.resolve)
     const task = testTask({
-      dependencies: { signal: builtin.taskSignal },
+      dependencies: { signal: AppInjectables.taskAbortSignal },
       handler: ({ signal }) => new Promise(() => onAbort(signal, spy)),
     })
 
@@ -148,11 +148,11 @@ describe.sequential('Tasks', () => {
   it('should execute with custom runner', async () => {
     const runnerFn = vi.fn()
     const taskRunner = testTaskRunner(runnerFn)
-    const tasks = new TaskRunner(
+    const tasks = new TasksRunner(
       { container, registry },
       { timeout: testDefaultTimeout, executor: taskRunner },
     )
-    const task = testTask(noop)
+    const task = testTask(noopFn)
     registry.registerTask(task)
     await tasks.execute(task)
     expect(runnerFn).toHaveBeenCalledOnce()

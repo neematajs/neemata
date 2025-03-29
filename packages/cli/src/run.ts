@@ -7,11 +7,11 @@ import { parseArgs } from 'node:util'
 import {
   APP_COMMAND,
   Application,
+  type ApplicationWorkerOptions,
   WorkerType,
-  defer,
-  importDefault,
 } from '@nmtjs/application'
-import { ApplicationServer, provideWorkerOptions } from '@nmtjs/server'
+import { defer } from '@nmtjs/common'
+import { ApplicationServer } from '@nmtjs/server'
 import { config } from 'dotenv'
 
 export const run = async (scriptPath: string) => {
@@ -24,6 +24,11 @@ export const run = async (scriptPath: string) => {
         multiple: false,
       },
       watch: {
+        type: 'boolean',
+        multiple: false,
+        default: false,
+      },
+      ts: {
         type: 'boolean',
         multiple: false,
         default: false,
@@ -41,7 +46,7 @@ export const run = async (scriptPath: string) => {
   })
 
   const [command, ...args] = positionals
-  const { env: envPaths, watch, entry, swc, timeout, ...kwargs } = values
+  const { env: envPaths, ts, watch, entry, swc, timeout, ...kwargs } = values
 
   const shutdownTimeout =
     (typeof timeout === 'string' ? Number.parseInt(timeout) : undefined) || 1000
@@ -53,13 +58,22 @@ export const run = async (scriptPath: string) => {
     }
   }
 
-  if (watch) {
-    const args = process.argv.slice(2).filter((arg) => arg !== '--watch')
+  if (watch || ts) {
+    const args = process.argv
+      .slice(2)
+      .filter((arg) => !['--watch', '--ts'].includes(arg))
+    const execArgs = [...process.execArgv]
+    if (ts)
+      execArgs.push(
+        '--experimental-strip-types',
+        '--experimental-transform-types',
+      )
+    if (watch) execArgs.push('--watch')
     fork(fileURLToPath(scriptPath), args, {
-      execArgv: [...process.execArgv, '--watch'],
+      execArgv: execArgs,
       env: {
         ...process.env,
-        NEEMATA_WATCH: '1',
+        NEEMATA_WATCH: watch ? 'true' : undefined,
       },
       stdio: 'inherit',
     })
@@ -89,7 +103,23 @@ export const run = async (scriptPath: string) => {
         }
       }
 
-      const entryApp = await import(entryPath).then((module) => module.default)
+      const entryAppFn = await import(entryPath).then(
+        (module) => module.default,
+      )
+
+      if (typeof entryAppFn !== 'function') {
+        throw new Error(
+          'Invalid entry module. Must be a function that returns an instance of Application or ApplicationServer',
+        )
+      }
+
+      const options: ApplicationWorkerOptions = {
+        id: 0,
+        workerType: WorkerType.Api,
+        isServer: false,
+        workerOptions: undefined,
+      }
+      const entryApp = await entryAppFn(options)
       const isCorrectInstance =
         entryApp instanceof ApplicationServer || entryApp instanceof Application
 
@@ -116,15 +146,25 @@ export const run = async (scriptPath: string) => {
 
       if (entryApp instanceof ApplicationServer) {
         const { applicationPath } = entryApp.options
-
-        const options: Parameters<typeof provideWorkerOptions>[0] = {
+        const path =
+          typeof applicationPath === 'string'
+            ? resolve(applicationPath)
+            : fileURLToPath(applicationPath)
+        const options: ApplicationWorkerOptions = {
           id: 0,
           workerType,
           isServer: false,
           workerOptions,
         }
-        provideWorkerOptions(options)
-        app = await importDefault(applicationPath)
+
+        const factory = await import(path).then((module) => module.default)
+        if (typeof factory !== 'function') {
+          throw new Error(
+            'Invalid application module. Must be a function that returns an instance of Application',
+          )
+        }
+
+        app = await factory(options)
       } else {
         app = entryApp as Application
       }

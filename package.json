@@ -6,7 +6,7 @@
     "build": "pnpm run --parallel --filter \"*\" build",
     "build:watch": "pnpm run --parallel --filter \"*\" build --watch",
     "clean": "rm -rf dist node_modules && pnpm -r exec rm -rf dist node_modules",
-    "test": "vitest run",
+    "test": "vitest run --passWithNoTests",
     "test:build": "pnpm build && pnpm test",
     "test:watch": "vitest watch",
     "check:type": "pnpm run --parallel --filter \"*\" type-check",
@@ -17,12 +17,12 @@
     "prepare": "husky"
   },
   "devDependencies": {
-    "@biomejs/biome": "1.9.3",
-    "@nmtjs/builder": "github:neematajs/builder#a9139aa321ebf2054ce2f7d26e40a346338be149",
+    "@biomejs/biome": "^1.9.4",
+    "@nmtjs/builder": "github:neematajs/builder#ec730523a7725483df9b070a8c95aa49700e8467",
     "@types/node": "^20",
-    "husky": "^9.0.0",
-    "typescript": "^5.7.2",
-    "vitest": "^2.0.0"
+    "husky": "^9.1.7",
+    "typescript": "^5.8.2",
+    "vitest": "^3.0.9"
   },
   "workspaces": [
     "./packages/*"

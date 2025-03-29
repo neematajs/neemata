@@ -1,43 +1,36 @@
-import type { TProcedureContract, TSubscriptionContract } from '@nmtjs/contract'
 import type { BaseType } from '@nmtjs/type'
-import { type Compiled, compile } from '@nmtjs/type/compiler'
+import { compile } from '@nmtjs/type/compiler'
 
-import { type Hook, Scope } from './constants.ts'
 import {
   type AnyInjectable,
   type Depedency,
+  type Logger,
+  Scope,
   getDepedencencyInjectable,
   getInjectableScope,
-} from './container.ts'
-import { Hooks } from './hooks.ts'
-import type { Logger } from './logger.ts'
-import type { AnyFilter } from './procedure.ts'
-import type { AnyService } from './service.ts'
+} from '@nmtjs/core'
+import { ProtocolRegistry } from '@nmtjs/protocol/server'
+import type { AnyFilter, AnyGuard, AnyMiddleware } from './api.ts'
+import type { AnyNamespace } from './namespace.ts'
 import type { AnyTask } from './task.ts'
-import type { Command, ErrorClass, HooksInterface } from './types.ts'
+import type { Command, ErrorClass } from './types.ts'
 
 export const APP_COMMAND = Symbol('APP_COMMAND')
 
-export class Registry {
+export class ApplicationRegistry extends ProtocolRegistry {
   readonly commands = new Map<string | symbol, Map<string, Command>>()
   readonly filters = new Map<ErrorClass, AnyFilter<ErrorClass>>()
-  readonly services = new Map<string, AnyService>()
-  readonly schemas = new Map<any, Compiled>()
+  readonly namespaces = new Map<string, AnyNamespace>()
+  readonly middlewares = new Set<AnyMiddleware>()
+  readonly guards = new Set<AnyGuard>()
   readonly tasks = new Map<string, AnyTask>()
-  readonly hooks = new Hooks()
 
   constructor(
     protected readonly application: {
       logger: Logger
     },
-  ) {}
-
-  registerHooks<T extends Hooks>(hooks: T) {
-    Hooks.merge(hooks, this.hooks)
-  }
-
-  registerHook<T extends Hook>(name: T, callback: HooksInterface[T]) {
-    this.hooks.add(name, callback)
+  ) {
+    super(application)
   }
 
   registerCommand(
@@ -50,37 +43,36 @@ export class Registry {
     commands.set(commandName, callback)
   }
 
-  registerService(service: AnyService) {
-    if (this.services.has(service.contract.name))
-      throw new Error(`Service ${service.contract.name} already registered`)
+  registerNamespace(namespace: AnyNamespace) {
+    if (typeof namespace.contract.name === 'undefined') {
+      throw new Error('Namespace name is required')
+    }
 
-    const schemas: BaseType[] = []
+    if (this.namespaces.has(namespace.contract.name))
+      throw new Error(
+        `Namespaces ${namespace.contract.name} already registered`,
+      )
 
-    for (const procedure of Object.values(service.contract.procedures)) {
-      schemas.push(procedure.input)
-      schemas.push(procedure.output)
+    for (const contract of Object.values(namespace.contract.procedures)) {
+      this.registerType(contract.input)
+      this.registerType(contract.output)
+      this.registerType(contract.stream)
+    }
 
-      if (procedure.type === 'neemata:subscription') {
-        for (const event of Object.values(
-          (procedure as TSubscriptionContract).events,
-        )) {
-          schemas.push(event.payload)
-        }
+    for (const contract of Object.values(namespace.contract.subscriptions)) {
+      this.registerType(contract.input)
+      this.registerType(contract.output)
+      for (const eventContact of Object.values(contract.events)) {
+        this.registerType(eventContact.payload)
       }
     }
 
-    for (const event of Object.values(service.contract.events)) {
-      schemas.push(event.payload)
+    for (const event of Object.values(namespace.contract.events)) {
+      this.registerType(event.payload)
     }
 
-    for (const schema of schemas) {
-      if (!schema) continue
-      if (this.schemas.has(schema)) continue
-      this.schemas.set(schema, compile(schema))
-    }
-
-    this.services.set(service.contract.name, service)
-    this.registerHooks(service.hooks)
+    this.namespaces.set(namespace.contract.name, namespace)
+    this.registerHooks(namespace.hooks)
   }
 
   registerTask(task: AnyTask) {
@@ -108,10 +100,27 @@ export class Registry {
     this.filters.set(errorClass, filter)
   }
 
+  registerMiddleware(middleware: AnyMiddleware) {
+    if (hasNonInvalidScopeDeps([middleware]))
+      throw new Error(scopeErrorMessage('Middleware'))
+    this.middlewares.add(middleware)
+  }
+
+  registerGuard(guard: AnyGuard) {
+    if (hasNonInvalidScopeDeps([guard]))
+      throw new Error(scopeErrorMessage('Guard'))
+    this.guards.add(guard)
+  }
+
   clear() {
-    this.hooks.clear()
+    super.clear()
+
     this.commands.clear()
     this.filters.clear()
+    this.tasks.clear()
+    this.namespaces.clear()
+    this.middlewares.clear()
+    this.guards.clear()
   }
 }
 
@@ -125,12 +134,12 @@ export function hasNonInvalidScopeDeps(
   return injectables.some((guard) => getInjectableScope(guard) !== scope)
 }
 
-export function printRegistry(registry: Registry) {
+export function printRegistry(registry: ApplicationRegistry) {
   // TODO: visualize the registry in a more readable way
   const mapToTable = (map: Map<string, any>) => Array.from(map.keys())
 
   console.log('Tasks:')
   console.table(mapToTable(registry.tasks))
-  console.log('Services:')
-  console.table(mapToTable(registry.services))
+  console.log('Namespaces:')
+  console.table(mapToTable(registry.namespaces))
 }

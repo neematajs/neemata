@@ -1,27 +1,23 @@
+import { createPromise, defer, noopFn, onAbort } from '@nmtjs/common'
+import {
+  type Container,
+  type Dependant,
+  type Dependencies,
+  type DependencyContext,
+  Hook,
+  Scope,
+} from '@nmtjs/core'
 import type { ApplicationOptions } from './application.ts'
-import { builtin } from './common.ts'
-import { Hook, Scope, kTask } from './constants.ts'
-import type {
-  Container,
-  Dependant,
-  Dependencies,
-  DependencyContext,
-} from './container.ts'
-import type { Registry } from './registry.ts'
+import { kTask } from './constants.ts'
+import { AppInjectables } from './injectables.ts'
+import type { ApplicationRegistry } from './registry.ts'
 import type { Async } from './types.ts'
-import { createFuture, defer, noop, onAbort } from './utils/functions.ts'
 
 export type TaskExecution<Res = any> = PromiseLike<
   { result: Res; error?: never } | { result?: never; error: any }
 > & {
   abort(reason?: any): void
 }
-
-export type TasksRunner = (
-  signal: AbortSignal,
-  name: string,
-  ...args: any[]
-) => Promise<any>
 
 type TaskHandlerType<Deps extends Dependencies, A extends any[], R> = (
   ctx: DependencyContext<Deps>,
@@ -87,17 +83,20 @@ export function createTask<
   return { name, dependencies, handler, parser, [kTask]: true }
 }
 
-export class TaskRunner {
+export class TasksRunner {
   constructor(
-    private readonly application: { container: Container; registry: Registry },
+    private readonly application: {
+      container: Container
+      registry: ApplicationRegistry
+    },
     private readonly options: ApplicationOptions['tasks'],
   ) {}
 
   execute(task: AnyTask, ...args: any[]): TaskExecution {
     const ac = new AbortController()
-    const future = createFuture()
+    const result = createPromise()
 
-    onAbort(ac.signal, future.reject)
+    onAbort(ac.signal, result.reject)
 
     defer(async () => {
       const taskName = task.name
@@ -108,20 +107,22 @@ export class TaskRunner {
         return await this.options.executor.execute(ac.signal, taskName, ...args)
 
       const { dependencies, handler } = task
-      const container = this.application.container.createScope(Scope.Global)
-      container.provide(builtin.taskSignal, ac.signal)
+      const container = this.application.container.fork(Scope.Global)
+      container.provide(AppInjectables.taskAbortSignal, ac.signal)
       const context = await container.createContext(dependencies)
+      ac.signal.throwIfAborted()
+
       try {
         return await handler(context, ...args)
       } finally {
         container.dispose()
       }
-    }).then(...future.asArgs)
+    }).then(...result.toArgs())
 
-    this.handleTermination(future.promise, ac)
+    this.handleTermination(result.promise, ac)
 
     return Object.assign(
-      future.promise
+      result.promise
         .then((result) => ({ result }))
         .catch((error = new Error('Task execution error')) => ({ error })),
       { abort: ac.abort.bind(ac) },
@@ -146,13 +147,13 @@ export class TaskRunner {
   ) {
     const abortExecution = async () => {
       abortController.abort()
-      await result.catch(noop)
+      await result.catch(noopFn)
     }
     const remove = this.application.registry.hooks.add(
       Hook.BeforeTerminate,
       abortExecution,
     )
 
-    result.finally(remove).catch(noop)
+    result.finally(remove).catch(noopFn)
   }
 }

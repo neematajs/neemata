@@ -1,27 +1,35 @@
-import type { BaseServerFormat } from '@nmtjs/common'
-
-import { Api } from './api.ts'
-import { builtin } from './common.ts'
-import { Connection, type ConnectionOptions } from './connection.ts'
 import {
+  type BasePlugin,
+  Container,
   Hook,
+  type Logger,
+  type LoggingOptions,
+  type Plugin,
   Scope,
-  WorkerType,
+  createLogger,
   kPlugin,
-  kTransportPlugin,
-} from './constants.ts'
-import { Container } from './container.ts'
-import { EventManager } from './events.ts'
-import { Format } from './format.ts'
-import { type Logger, type LoggingOptions, createLogger } from './logger.ts'
-import type { BasePlugin, Plugin } from './plugin.ts'
-import type { AnyFilter } from './procedure.ts'
-import { APP_COMMAND, Registry, printRegistry } from './registry.ts'
-import type { Service } from './service.ts'
-import { basicSubManagerPlugin } from './subscription.ts'
-import { type AnyTask, type BaseTaskExecutor, TaskRunner } from './task.ts'
-import type { TransportPlugin, TransportType } from './transport.ts'
-import type { ErrorClass, ExecuteFn } from './types.ts'
+} from '@nmtjs/core'
+import { CoreInjectables } from '@nmtjs/core'
+import {
+  type BaseServerFormat,
+  type Connection,
+  Format,
+  Protocol,
+  type Transport,
+  type TransportPlugin,
+  isTransportPlugin,
+} from '@nmtjs/protocol/server'
+import { type AnyFilter, Api } from './api.ts'
+import { WorkerType } from './enums.ts'
+import { AppInjectables } from './injectables.ts'
+import type { AnyNamespace, Namespace } from './namespace.ts'
+import { APP_COMMAND, ApplicationRegistry, printRegistry } from './registry.ts'
+import { type AnyTask, type BaseTaskExecutor, TasksRunner } from './task.ts'
+import type {
+  ApplicationPluginContext,
+  ErrorClass,
+  ExecuteFn,
+} from './types.ts'
 
 export type ApplicationOptions = {
   type: WorkerType
@@ -37,20 +45,30 @@ export type ApplicationOptions = {
   logging?: LoggingOptions
 }
 
+type UseFn = <T extends BasePlugin<any, any, ApplicationPluginContext>>(
+  plugin: T,
+  ...args: T extends BasePlugin<any, infer O, ApplicationPluginContext>
+    ? null extends O
+      ? []
+      : [options: O]
+    : never
+) => Application
+
 export class Application {
   readonly api: Api
-  readonly taskRunner: TaskRunner
+  readonly taskRunner: TasksRunner
   readonly logger: Logger
-  readonly registry: Registry
-  private readonly internalContainer: Container
+  readonly registry: ApplicationRegistry
+  protected readonly _container: Container
   readonly container: Container
-  readonly eventManager: EventManager
+  // readonly eventManager: EventManager
   readonly format: Format
-
-  private readonly plugins: Array<[Plugin, any]> = []
-  private readonly transportPlugins: Array<[TransportPlugin, any]> = []
-  private readonly transports = new Set<TransportType>()
-  private readonly connections = new Map<string, Connection>()
+  readonly protocol: Protocol
+  readonly plugins: Array<[Plugin<any, any, ApplicationPluginContext>, any]> =
+    []
+  readonly transportPlugins: Array<[TransportPlugin, any]> = []
+  readonly transports = new Set<Transport>()
+  readonly connections = new Map<string, Connection>()
 
   constructor(readonly options: ApplicationOptions) {
     this.logger = createLogger(
@@ -58,32 +76,28 @@ export class Application {
       `${this.options.type}Worker`,
     )
 
-    this.registry = new Registry(this)
-    this.eventManager = new EventManager(this)
+    this.registry = new ApplicationRegistry(this)
     this.format = new Format(this.options.api.formats)
 
-    // create unexposed container for builtin injectables, which never gets disposed
-    this.internalContainer = new Container(this)
+    // create unexposed container for global injectables, which never gets disposed
+    this._container = new Container(this)
+    this._container.provide(CoreInjectables.logger, this.logger)
+    this._container.provide(AppInjectables.workerType, this.options.type)
+    this._container.provide(AppInjectables.execute, this.execute.bind(this))
 
-    this.internalContainer.provide(builtin.logger, this.logger)
-    this.internalContainer.provide(builtin.workerType, this.options.type)
-    this.internalContainer.provide(builtin.eventManager, this.eventManager)
-    this.internalContainer.provide(builtin.execute, this.execute.bind(this))
-
-    // this will be replaced in task execution
-    this.internalContainer.provide(
-      builtin.taskSignal,
+    // this will be overriden in task execution
+    this._container.provide(
+      AppInjectables.taskAbortSignal,
       new AbortController().signal,
     )
 
     // create a global container for rest of the application
     // including transports and plugins
-    this.container = this.internalContainer.createScope(Scope.Global)
+    this.container = this._container.fork(Scope.Global)
 
     this.api = new Api(this, this.options.api)
-    this.taskRunner = new TaskRunner(this, this.options.tasks)
-
-    this.use(basicSubManagerPlugin)
+    this.protocol = new Protocol(this)
+    this.taskRunner = new TasksRunner(this, this.options.tasks)
   }
 
   async initialize() {
@@ -93,6 +107,7 @@ export class Application {
     await this.registry.hooks.call(Hook.BeforeInitialize, { concurrent: false })
     await this.container.load()
     await this.registry.hooks.call(Hook.AfterInitialize, { concurrent: false })
+    this.registry.compile()
   }
 
   async start() {
@@ -143,23 +158,16 @@ export class Application {
     return this.taskRunner.execute(task, ...args)
   }
 
-  use<T extends BasePlugin>(
-    plugin: T,
-    ...args: T extends BasePlugin<any, infer O>
-      ? null extends O
-        ? []
-        : [options: O]
-      : never
-  ) {
+  use: UseFn = (
+    plugin: BasePlugin<any, any, ApplicationPluginContext>,
+    ...args: any[]
+  ) => {
     const options = args.at(0)
 
-    if (kPlugin in plugin) {
+    if (isTransportPlugin(plugin)) {
+      this.transportPlugins.push([plugin, options])
+    } else if (kPlugin in plugin) {
       this.plugins.push([plugin, options])
-    } else if (kTransportPlugin in plugin) {
-      this.transportPlugins.push([
-        plugin as unknown as TransportPlugin,
-        options,
-      ])
     } else {
       throw new Error('Invalid plugin')
     }
@@ -167,9 +175,9 @@ export class Application {
     return this
   }
 
-  withServices(...services: Service[]) {
-    for (const service of services) {
-      this.registry.registerService(service)
+  withNamespaces(...namespaces: AnyNamespace[]) {
+    for (const namespace of namespaces) {
+      this.registry.registerNamespace(namespace)
     }
     return this
   }
@@ -221,55 +229,20 @@ export class Application {
     }
   }
 
-  protected createContext() {
-    const logger = this.logger.child({})
-
-    const addConnection = (options: ConnectionOptions) => {
-      const connection = new Connection({ ...options }, this.registry)
-      this.connections.set(connection.id, connection)
-      this.registry.hooks.call(
-        Hook.OnConnect,
-        { concurrent: false },
-        connection,
-      )
-      return connection
-    }
-
-    const removeConnection = (connectionOrId: Connection | string) => {
-      const connection =
-        typeof connectionOrId === 'string'
-          ? this.connections.get(connectionOrId)
-          : connectionOrId
-      if (connection) {
-        this.registry.hooks.call(
-          Hook.OnDisconnect,
-          { concurrent: true },
-          connection,
-        )
-        this.connections.delete(connection.id)
-      }
-    }
-
-    const getConnection = (id: string) => {
-      return this.connections.get(id)
-    }
-
+  protected createContext($group?: string): ApplicationPluginContext {
+    const logger = this.logger.child({ $group })
     // TODO: here might be better to come up with some interface,
-    // instead of providing components directly
-    return {
+    // instead of exposing components directly
+    return Object.freeze({
       type: this.options.type,
       api: this.api,
       format: this.format,
       container: this.container,
-      eventManager: this.eventManager,
+      // eventManager: this.eventManager,
       logger,
       registry: this.registry,
       hooks: this.registry.hooks,
-      connections: {
-        get: getConnection,
-        add: addConnection,
-        remove: removeConnection,
-      },
-    }
+      protocol: this.protocol,
+    })
   }
 }

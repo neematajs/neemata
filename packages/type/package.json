@@ -27,12 +27,7 @@
     "build": "neemata-build -p neutral --root=./src './**/*.ts'",
     "type-check": "tsc --noEmit"
   },
-  "peerDependencies": {
-    "@nmtjs/common": "workspace:*",
-    "@sinclair/typebox": "^0.34.13",
-    "temporal-polyfill": "^0.2.5"
-  },
-  "devDependencies": {
+  "dependencies": {
     "@nmtjs/common": "workspace:*",
     "@sinclair/typebox": "^0.34.13",
     "temporal-polyfill": "^0.2.5"

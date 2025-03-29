@@ -16,11 +16,11 @@
     "@nmtjs/common": "workspace:*",
     "@nmtjs/type": "workspace:*",
     "@nmtjs/contract": "workspace:*",
-    "pino": "^9.0.0",
-    "pino-pretty": "^11.0.0"
+    "@nmtjs/core": "workspace:*",
+    "@nmtjs/protocol": "workspace:*"
   },
   "devDependencies": {
-    "@types/node": "^18"
+    "@types/node": "^20"
   },
   "files": [
     "index.ts",

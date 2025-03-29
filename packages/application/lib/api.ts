@@ -1,111 +1,206 @@
-import { ErrorCode } from '@nmtjs/common'
 import { type BaseType, NeverType } from '@nmtjs/type'
 
-import { IsSubscriptionContract } from '@nmtjs/contract'
+import assert from 'node:assert'
+import { inspect } from 'node:util'
+import { withTimeout } from '@nmtjs/common'
+import { IsProcedureContract, IsSubscriptionContract } from '@nmtjs/contract'
+import { type AnyInjectable, type Container, Scope } from '@nmtjs/core'
+import {
+  type Dependencies,
+  type Logger,
+  createFactoryInjectable,
+} from '@nmtjs/core'
+import { ErrorCode, ProtocolBlob } from '@nmtjs/protocol/common'
+import {
+  type Connection,
+  type ProtocolApi,
+  type ProtocolApiCallOptions,
+  type ProtocolApiCallResult,
+  ProtocolClientStream,
+  ProtocolError,
+  ProtocolInjectables,
+  ProtocolServerStream,
+} from '@nmtjs/protocol/server'
 import type { ApplicationOptions } from './application.ts'
-import { builtin } from './common.ts'
-import type { Connection } from './connection.ts'
-import { Scope } from './constants.ts'
-import type { Container } from './container.ts'
-import type { Logger } from './logger.ts'
-import type { AnyBaseProcedure, MiddlewareLike } from './procedure.ts'
-import type { Registry } from './registry.ts'
-import type { AnyService } from './service.ts'
-import type { CallContext } from './types.ts'
-import { withTimeout } from './utils/functions.ts'
+import { kIterableResponse } from './constants.ts'
+import type { AnyNamespace } from './namespace.ts'
+import type { AnyBaseProcedure } from './procedure.ts'
+import type { ApplicationRegistry } from './registry.ts'
+import type { ApiCallContext, Async, ErrorClass } from './types.ts'
 
-export type ApiCallOptions = {
+const cloneOptions = {
+  exclude: new Set([ProtocolServerStream, ProtocolClientStream, ProtocolBlob]),
+}
+export interface FilterLike<T extends ErrorClass = ErrorClass> {
+  catch(error: InstanceType<T>): Async<Error>
+  [k: string]: any
+}
+
+export type AnyFilter<Error extends ErrorClass = ErrorClass> = AnyInjectable<
+  FilterLike<Error>
+>
+
+export interface GuardLike {
+  can(context: ApiCallContext): Async<boolean>
+  [k: string]: any
+}
+
+export type AnyGuard = AnyInjectable<GuardLike>
+
+export type MiddlewareNext = (payload?: any) => any
+
+export interface MiddlewareLike {
+  handle(context: ApiCallContext, next: MiddlewareNext, payload: any): any
+  [k: string]: any
+}
+
+export type AnyMiddleware = AnyInjectable<MiddlewareLike>
+
+export type ApplicationApiCallOptions<
+  T extends AnyBaseProcedure = AnyBaseProcedure,
+> = {
   connection: Connection
-  service: AnyService
-  procedure: AnyBaseProcedure
+  namespace: AnyNamespace
+  procedure: T
   container: Container
   payload: any
   signal: AbortSignal
-  transport: string
 }
 
-export class Api {
+export class Api implements ProtocolApi {
   constructor(
     private readonly application: {
       container: Container
-      registry: Registry
+      registry: ApplicationRegistry
       logger: Logger
     },
     private readonly options: ApplicationOptions['api'],
   ) {}
 
-  find(serviceName: string, procedureName: string, transport: string) {
-    const service = this.application.registry.services.get(serviceName)
-    if (service) {
-      if (service.contract.transports[transport]) {
-        const procedure = service.procedures.get(procedureName)
-        if (procedure) return { service, procedure }
-      }
+  /**
+   * @throws {ApplicationApiError}
+   */
+  find(namespaceName: string, procedureName: string) {
+    const namespace = this.application.registry.namespaces.get(namespaceName)
+    if (namespace) {
+      const procedure = namespace.procedures.get(procedureName)
+      if (procedure) return { namespace, procedure }
     }
-
     throw NotFound()
   }
 
-  async call(callOptions: ApiCallOptions) {
-    const { payload, container, signal, connection } = callOptions
+  async call(options: ProtocolApiCallOptions): Promise<ProtocolApiCallResult> {
+    const { payload, container, signal, connection } = options
 
-    if (container.scope !== Scope.Call)
-      throw new Error('Invalid container scope, expected to be Scope.Call')
+    const { namespace, procedure } = this.find(
+      options.namespace,
+      options.procedure,
+    )
 
-    container.provide(builtin.callSignal, signal)
-    container.provide(builtin.connection, connection)
+    const callOptions = {
+      payload,
+      container,
+      signal,
+      connection,
+      namespace,
+      procedure,
+    }
+
+    assert(
+      container.scope === Scope.Call,
+      'Invalid container scope, expected to be Scope.Call',
+    )
+
+    const timeout =
+      procedure.contract.timeout ||
+      namespace.contract.timeout ||
+      this.options.timeout
+
+    const timeoutController = new AbortController()
+    const timeoutSignal =
+      timeout && timeout > 0
+        ? AbortSignal.any([
+            AbortSignal.timeout(timeout),
+            timeoutController.signal,
+          ])
+        : timeoutController.signal
+
+    container.provide(ProtocolInjectables.rpcAbortSignal, timeoutSignal)
+    container.provide(ProtocolInjectables.rpcClientAbortSignal, signal)
+    container.provide(ProtocolInjectables.connection, connection)
+
+    const isSubscription = IsSubscriptionContract(procedure.contract)
+    const isIterableProcedure =
+      IsProcedureContract(procedure.contract) &&
+      procedure.contract.stream instanceof NeverType === false
 
     try {
-      this.handleTransport(callOptions)
-      const handler = await this.createProcedureHandler(callOptions)
-      return await handler(payload)
+      const handler = await this.createProcedureHandler(
+        callOptions,
+        timeout,
+        timeoutController,
+      )
+      const result = await handler(payload)
+      if (isSubscription) {
+        // return this.handleSubscriptionOutput(callOptions, result)
+        throw new Error('Unimplemented')
+      } else if (isIterableProcedure) {
+        return this.handleIterableOutput(procedure, result)
+      } else {
+        return this.handleOutput(procedure, result)
+      }
     } catch (error) {
+      const logError = new Error('Unhandled error', { cause: error })
+      this.application.logger.error(logError)
       throw await this.handleFilters(error)
     }
   }
 
-  private async createProcedureHandler(callOptions: ApiCallOptions) {
-    const { connection, procedure, container, service } = callOptions
+  private async createProcedureHandler(
+    callOptions: ApplicationApiCallOptions,
+    timeout: number,
+    timeoutController: AbortController,
+  ) {
+    const { connection, procedure, container, namespace } = callOptions
 
-    const execCtx: CallContext = Object.freeze({
+    const callCtx: ApiCallContext = Object.freeze({
       connection,
       container,
-      service,
+      namespace,
       procedure,
     })
 
     const middlewares = await this.resolveMiddlewares(callOptions)
 
-    const timeout =
-      procedure.contract.timeout ||
-      service.contract.timeout ||
-      this.options.timeout
-
     const handleProcedure = async (payload: any) => {
       const middleware = middlewares.next().value as MiddlewareLike | undefined
       if (middleware) {
-        const next = (newPayload = payload) => handleProcedure(newPayload)
-        return middleware.handle(execCtx, next, payload)
+        const next = (...args: any[]) =>
+          handleProcedure(args.length === 0 ? payload : args[0])
+        return middleware.handle(callCtx, next, payload)
       } else {
-        await this.handleGuards(callOptions, execCtx)
+        const guards = await this.resolveGuards(callOptions)
+        await this.handleGuards(callOptions, callCtx, guards)
         const { dependencies } = procedure
         const context = await container.createContext(dependencies)
         const input = this.handleInput(procedure, payload)
         const result = await this.handleTimeout(
           procedure.handler(context, input),
           timeout,
+          timeoutController,
         )
-        return this.handleOutput(procedure, result)
+        return result
       }
     }
 
     return handleProcedure
   }
 
-  private async resolveMiddlewares(callOptions: ApiCallOptions) {
-    const { service, procedure, container } = callOptions
+  private async resolveMiddlewares(callOptions: ApplicationApiCallOptions) {
+    const { namespace, procedure, container } = callOptions
     const middlewareInjectables = [
-      ...service.middlewares,
+      ...this.application.registry.middlewares,
+      ...namespace.middlewares,
       ...procedure.middlewares,
     ]
     const middlewares = await Promise.all(
@@ -114,35 +209,40 @@ export class Api {
     return middlewares[Symbol.iterator]()
   }
 
-  private handleTransport({ service, transport }: ApiCallOptions) {
-    if (service.contract.transports[transport] !== true) {
-      throw NotFound()
-    }
+  private async resolveGuards(callOptions: ApplicationApiCallOptions) {
+    const { namespace, procedure, container } = callOptions
+    const injectables = [
+      ...this.application.registry.guards,
+      ...namespace.guards,
+      ...procedure.guards,
+    ]
+    return await Promise.all(injectables.map((p) => container.resolve(p)))
   }
 
-  private handleTimeout(response: any, timeout?: number) {
-    const applyTimeout = timeout && timeout > 0 && response instanceof Promise
-    return applyTimeout
-      ? withTimeout(
-          response,
-          timeout,
-          new ApiError(ErrorCode.RequestTimeout, 'Request Timeout'),
-        )
-      : response
+  private handleTimeout(
+    response: any,
+    timeout: number,
+    controller: AbortController,
+  ): unknown {
+    const applyTimeout = response instanceof Promise && timeout && timeout > 0
+    if (!applyTimeout) return response
+    return withTimeout(
+      response,
+      timeout,
+      new ApplicationApiError(ErrorCode.RequestTimeout, 'Request Timeout'),
+      controller,
+    )
   }
 
   private async handleGuards(
-    callOptions: ApiCallOptions,
-    callCtx: CallContext,
+    callOptions: ApplicationApiCallOptions,
+    callCtx: ApiCallContext,
+    guards: Iterable<GuardLike>,
   ) {
-    const { service, procedure, container } = callOptions
-    const injectables = [...service.guards, ...procedure.guards]
-    const guards = await Promise.all(
-      injectables.map((p) => container.resolve(p)),
-    )
+    console.dir(guards)
     for (const guard of guards) {
       const result = await guard.can(callCtx)
-      if (result === false) throw new ApiError(ErrorCode.Forbidden)
+      if (result === false) throw new ApplicationApiError(ErrorCode.Forbidden)
     }
   }
 
@@ -152,81 +252,106 @@ export class Api {
         if (error instanceof errorType) {
           const filterLike = await this.application.container.resolve(filter)
           const handledError = await filterLike.catch(error)
-          if (!handledError || !(handledError instanceof ApiError)) continue
+          if (!handledError || !(handledError instanceof ApplicationApiError))
+            continue
           return handledError
         }
       }
     }
 
-    if (error instanceof ApiError) return error
+    if (error instanceof ApplicationApiError) return error
 
-    const logError = new Error('Unhandled error', { cause: error })
-    this.application.logger.error(logError)
-    return new ApiError(ErrorCode.InternalServerError, 'Internal Server Error')
+    return new ApplicationApiError(
+      ErrorCode.InternalServerError,
+      'Internal Server Error',
+    )
   }
 
   private handleInput(procedure: AnyBaseProcedure, payload: any) {
     if (procedure.contract.input instanceof NeverType === false) {
-      const schema = this.getSchema(procedure.contract.input)
-
+      const type = this.getType(procedure.contract.input)
       try {
-        return schema.decode(schema.applyDefaults(schema.parse(payload)))
+        return type.decode(
+          type.applyDefaults(type.parse(payload, cloneOptions)),
+        )
       } catch (error) {
-        throw new ApiError(
+        throw new ApplicationApiError(
           ErrorCode.ValidationError,
           'Input validation error',
-          schema.errors(payload),
+          type.errors(payload),
         )
       }
     }
   }
 
-  private handleOutput(procedure: AnyBaseProcedure, response: any) {
-    if (IsSubscriptionContract(procedure.contract)) {
-      if (procedure.contract.output instanceof NeverType === false) {
-        const schema = this.getSchema(procedure.contract.output)
-        return schema.applyDefaults(schema.parse(schema.encode(response)))
+  private handleIterableOutput(procedure: AnyBaseProcedure, response: any) {
+    if (!response[kIterableResponse])
+      throw new Error('Invalid response. Use `createIterableResponse` helper')
+    const iterable = response.iterable
+    if (procedure.contract.output instanceof NeverType === false) {
+      const type = this.getType(procedure.contract.output)
+      return {
+        output: type.applyDefaults(
+          type.parse(type.encode(response), cloneOptions),
+        ),
+        iterable,
       }
-
-      return response
-    } else if (procedure.contract.output instanceof NeverType === false) {
-      const schema = this.getSchema(procedure.contract.output)
-      return schema.applyDefaults(schema.parse(schema.encode(response)))
     }
+    return { output: undefined, iterable }
   }
 
-  private getSchema(schema: BaseType) {
-    const compiled = this.application.registry.schemas.get(schema)
-    if (!compiled) throw new Error('Compiled schema not found')
+  private handleOutput(procedure: AnyBaseProcedure, response: any) {
+    if (procedure.contract.output instanceof NeverType === false) {
+      const type = this.getType(procedure.contract.output)
+      return {
+        output: type.applyDefaults(
+          type.parse(type.encode(response), cloneOptions),
+        ),
+      }
+    }
+    return { output: undefined }
+  }
+
+  private handleSubscriptionOutput(
+    callOptions: ApplicationApiCallOptions,
+    response: any,
+  ) {
+    throw new Error('Not implemented')
+  }
+
+  private getType(type: BaseType) {
+    const compiled = this.application.registry.compiled.get(type)
+    if (!compiled) throw new Error('Compiled type not found')
     return compiled
   }
 }
 
-export class ApiError extends Error {
-  code: string
-  data?: any
-
-  constructor(code: string, message?: string, data?: any) {
-    super(message)
-    this.code = code
-    this.data = data
-  }
-
-  get message() {
-    return `${this.code} ${super.message}`
-  }
-
+export class ApplicationApiError extends ProtocolError {
   toString() {
-    return `${this.code} ${this.message}: \n${JSON.stringify(this.data, null, 2)}`
-  }
-
-  toJSON() {
-    return {
-      code: this.code,
-      message: this.message,
-      data: this.data,
-    }
+    return `${this.code} ${this.message}: \n${inspect(this.data, true, 10, false)}`
   }
 }
 
-const NotFound = () => new ApiError(ErrorCode.NotFound, 'Procedure not found')
+const NotFound = () =>
+  new ApplicationApiError(ErrorCode.NotFound, 'Procedure not found')
+
+export const createMiddleware = <
+  D extends Dependencies = {},
+  S extends Scope = Scope.Global,
+>(
+  ...args: Parameters<typeof createFactoryInjectable<MiddlewareLike, D, S>>
+) => createFactoryInjectable(...args)
+
+export const createGuard = <
+  D extends Dependencies = {},
+  S extends Scope = Scope.Global,
+>(
+  ...args: Parameters<typeof createFactoryInjectable<GuardLike, D, S>>
+) => createFactoryInjectable(...args)
+
+export const createFilter = <
+  D extends Dependencies = {},
+  S extends Scope = Scope.Global,
+>(
+  ...args: Parameters<typeof createFactoryInjectable<FilterLike, D, S>>
+) => createFactoryInjectable(...args)
