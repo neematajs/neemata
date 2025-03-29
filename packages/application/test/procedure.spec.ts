@@ -2,18 +2,21 @@ import { describe, expect, it } from 'vitest'
 
 import { AnyType, NeverType, t } from '@nmtjs/type'
 import { kProcedure } from '../lib/constants.ts'
-import { createValueInjectable } from '../lib/container.ts'
 import {
   createContractProcedure,
   createProcedure,
   createProcedureMetadataKey,
+  createStreamResponse,
   getProcedureMetadata,
 } from '../lib/procedure.ts'
-import { noop } from '../lib/utils/functions.ts'
-import { TestServiceContract } from './_utils.ts'
+
+import { noopFn } from '@nmtjs/common'
+import { createValueInjectable } from '@nmtjs/core'
+import { TestNamespaceContract } from './_utils.ts'
 
 describe('Procedure', () => {
-  const procedureContract = TestServiceContract.procedures.testProcedure
+  const procedureContract = TestNamespaceContract.procedures.testProcedure
+
   it('should create a procedure', () => {
     const handler = () => {}
     const procedure = createContractProcedure(procedureContract, handler)
@@ -32,7 +35,7 @@ describe('Procedure', () => {
     const dep2 = createValueInjectable('dep2')
 
     const procedure = createContractProcedure(procedureContract, {
-      handler: noop,
+      handler: noopFn,
       dependencies: { dep1, dep2 },
     })
 
@@ -45,7 +48,7 @@ describe('Procedure', () => {
     const guard2 = createValueInjectable({ can: () => true })
 
     const procedure = createContractProcedure(procedureContract, {
-      handler: noop,
+      handler: noopFn,
       guards: [guard1, guard2],
     })
 
@@ -61,7 +64,7 @@ describe('Procedure', () => {
     })
 
     const procedure = createContractProcedure(procedureContract, {
-      handler: noop,
+      handler: noopFn,
       middlewares: [middleware1, middleware2],
     })
 
@@ -71,7 +74,7 @@ describe('Procedure', () => {
   it('should create a procedure with metadata', () => {
     const metadataKey = createProcedureMetadataKey<string>('test')
     const procedure = createContractProcedure(procedureContract, {
-      handler: noop,
+      handler: noopFn,
       metadata: [metadataKey.as('some')],
     })
 
@@ -83,6 +86,34 @@ describe('Procedure', () => {
     const procedure = createContractProcedure(procedureContract, handler)
 
     expect(procedure.handler).toBe(handler)
+  })
+
+  it('should create a procedure with iterable response', async () => {
+    const stream = t.number()
+    const procedure = createProcedure({
+      stream,
+      handler: async () => {
+        return createStreamResponse(
+          async function* () {
+            for await (const element of [1]) {
+              yield element
+            }
+          },
+          { test: 'value' },
+        )
+      },
+    })
+
+    expect(kProcedure in procedure).toBe(true)
+    expect(procedure.contract).toMatchObject({
+      type: 'neemata:procedure',
+      input: expect.any(NeverType),
+      output: expect.any(AnyType),
+      stream,
+      name: undefined,
+      namespace: undefined,
+      timeout: undefined,
+    })
   })
 })
 
@@ -110,9 +141,9 @@ describe('Procedure static', () => {
       type: 'neemata:procedure',
       input,
       output,
+      stream: expect.any(NeverType),
       name: undefined,
-      serviceName: undefined,
-      transports: undefined,
+      namespace: undefined,
       timeout: undefined,
     })
   })
@@ -136,9 +167,36 @@ describe('Procedure static', () => {
       type: 'neemata:procedure',
       input: expect.any(NeverType),
       output: expect.any(AnyType),
+      stream: expect.any(NeverType),
       name: undefined,
-      serviceName: undefined,
-      transports: undefined,
+      namespace: undefined,
+      timeout: undefined,
+    })
+  })
+
+  it('should create a procedure with iterable response without contract', async () => {
+    const procedure = createProcedure({
+      stream: true,
+      handler: async () => {
+        return createStreamResponse(
+          async function* () {
+            for await (const element of [1]) {
+              yield element
+            }
+          },
+          { test: 'value' },
+        )
+      },
+    })
+
+    expect(kProcedure in procedure).toBe(true)
+    expect(procedure.contract).toMatchObject({
+      type: 'neemata:procedure',
+      input: expect.any(NeverType),
+      output: expect.any(AnyType),
+      stream: expect.any(AnyType),
+      name: undefined,
+      namespace: undefined,
       timeout: undefined,
     })
   })

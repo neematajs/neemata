@@ -30,11 +30,10 @@ import {
   IntersactionType,
   UnionType,
 } from './types/union.ts'
-import type { UnionToTupleString } from './utils.ts'
 
 export * from './schemas/nullable.ts'
 export { BaseType, type BaseTypeAny } from './types/base.ts'
-export { type TSchema } from '@sinclair/typebox'
+export type { TSchema } from '@sinclair/typebox'
 export {
   ArrayType,
   BooleanType,
@@ -52,7 +51,7 @@ export {
   NeverType,
 }
 
-export namespace t {
+export namespace type {
   export namespace infer {
     export type decoded<T extends BaseTypeAny<any>> = StaticOutputDecode<
       T['schema']
@@ -96,3 +95,5 @@ export namespace t {
     pick,
   })
 }
+
+export { type as t }

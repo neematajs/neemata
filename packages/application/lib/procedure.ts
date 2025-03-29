@@ -1,48 +1,23 @@
 import {
-  type TBaseProcedureContract,
+  type TAnyBaseProcedureContract,
+  type TAnyProcedureContract,
   type TProcedureContract,
   c,
 } from '@nmtjs/contract'
+import type { Dependant, Dependencies, DependencyContext } from '@nmtjs/core'
+import type { ProtocolAnyIterable } from '@nmtjs/protocol/server'
 import { type BaseType, type CustomType, type NeverType, t } from '@nmtjs/type'
-
-import { type Scope, kProcedure, kProcedureMetadata } from './constants.ts'
+import type { AnyGuard, AnyMiddleware } from './api.ts'
 import {
-  type AnyInjectable,
-  type Dependant,
-  type Dependencies,
-  type DependencyContext,
-  createFactoryInjectable,
-} from './container.ts'
-import type {
-  Async,
-  CallContext,
-  ErrorClass,
-  InputType,
-  JsonPrimitive,
-  OutputType,
-} from './types.ts'
-
-export interface FilterLike<T extends ErrorClass = ErrorClass> {
-  catch(error: InstanceType<T>): Async<Error>
-}
-export type AnyFilter<Error extends ErrorClass = ErrorClass> = AnyInjectable<
-  FilterLike<Error>
->
-export interface GuardLike {
-  can(context: CallContext): Async<boolean>
-}
-export type AnyGuard = AnyInjectable<GuardLike>
-
-export type MiddlewareNext = (payload?: any) => any
-
-export interface MiddlewareLike {
-  handle(context: CallContext, next: MiddlewareNext, payload: any): any
-}
-export type AnyMiddleware = AnyInjectable<MiddlewareLike>
+  kIterableResponse,
+  kProcedure,
+  kProcedureMetadata,
+} from './constants.ts'
+import type { Async, InputType, JsonPrimitive, OutputType } from './types.ts'
 
 export interface BaseProcedure<
-  ProcedureContract extends TBaseProcedureContract = TBaseProcedureContract,
-  ProcedureDeps extends Dependencies = Dependencies,
+  ProcedureContract extends TAnyBaseProcedureContract,
+  ProcedureDeps extends Dependencies,
 > extends Dependant<ProcedureDeps> {
   contract: ProcedureContract
   handler: (...args: any[]) => any
@@ -53,24 +28,18 @@ export interface BaseProcedure<
 }
 
 export type AnyBaseProcedure<
-  Contract extends TBaseProcedureContract = TBaseProcedureContract,
+  Contract extends TAnyBaseProcedureContract = TAnyBaseProcedureContract,
 > = BaseProcedure<Contract, Dependencies>
 
-export type ProcedureHandlerType<
-  Input extends BaseType,
-  Output extends BaseType,
-  Deps extends Dependencies,
-> = (
+export type ProcedureHandlerType<Input, Output, Deps extends Dependencies> = (
   ctx: DependencyContext<Deps>,
-  data: Input extends NeverType ? never : InputType<t.infer.decoded<Input>>,
-  contract: TBaseProcedureContract,
-) => Async<
-  Output extends NeverType ? void : OutputType<t.infer.input.decoded<Output>>
->
+  data: Input,
+  contract: TAnyBaseProcedureContract,
+) => Async<Output>
 
 export interface Procedure<
-  ProcedureContract extends TBaseProcedureContract = TBaseProcedureContract,
-  ProcedureDeps extends Dependencies = Dependencies,
+  ProcedureContract extends TAnyProcedureContract,
+  ProcedureDeps extends Dependencies,
 > extends BaseProcedure<ProcedureContract, ProcedureDeps> {
   handler: ProcedureHandlerType<
     ProcedureContract['input'],
@@ -79,8 +48,10 @@ export interface Procedure<
   >
   [kProcedure]: any
 }
-export type AnyProcedure<Contract extends TBaseProcedureContract = any> =
-  Procedure<Contract, Dependencies>
+
+export type AnyProcedure<
+  Contract extends TAnyProcedureContract = TAnyProcedureContract,
+> = Procedure<Contract, Dependencies>
 
 export type Metadata<T = any> = {
   key: MetadataKey<T>
@@ -115,28 +86,42 @@ export const getProcedureMetadata = <
 }
 
 export type CreateProcedureParams<
-  ProcedureContract extends TBaseProcedureContract,
+  ProcedureContract extends TAnyProcedureContract,
   ProcedureDeps extends Dependencies,
 > =
   | {
+      dependencies?: ProcedureDeps
+      guards?: AnyGuard[]
+      middlewares?: AnyMiddleware[]
+      metadata?: Metadata[]
       handler: ProcedureHandlerType<
-        ProcedureContract['input'],
-        ProcedureContract['output'],
+        InputType<t.infer.decoded<ProcedureContract['input']>>,
+        ProcedureContract['stream'] extends NeverType
+          ? OutputType<t.infer.input.decoded<ProcedureContract['output']>>
+          : RPCStreamResponse<
+              t.infer.input.decoded<
+                Exclude<ProcedureContract['stream'], undefined | boolean>
+              >,
+              OutputType<t.infer.input.decoded<ProcedureContract['output']>>
+            >,
         ProcedureDeps
       >
-      dependencies?: ProcedureDeps
-      middlewares?: AnyMiddleware[]
-      guards?: AnyGuard[]
-      metadata?: Metadata[]
     }
   | ProcedureHandlerType<
-      ProcedureContract['input'],
-      ProcedureContract['output'],
+      InputType<t.infer.decoded<ProcedureContract['input']>>,
+      ProcedureContract['stream'] extends NeverType
+        ? OutputType<t.infer.input.decoded<ProcedureContract['output']>>
+        : RPCStreamResponse<
+            t.infer.input.decoded<
+              Exclude<ProcedureContract['stream'], undefined | boolean>
+            >,
+            OutputType<t.infer.input.decoded<ProcedureContract['output']>>
+          >,
       ProcedureDeps
     >
 
 export function _createBaseProcedure<
-  ProcedureContract extends TBaseProcedureContract,
+  ProcedureContract extends TAnyBaseProcedureContract,
   ProcedureDeps extends Dependencies,
 >(
   contract: ProcedureContract,
@@ -167,7 +152,7 @@ export function _createBaseProcedure<
 }
 
 export function createContractProcedure<
-  ProcedureContract extends TBaseProcedureContract,
+  ProcedureContract extends TAnyProcedureContract,
   ProcedureDeps extends Dependencies,
 >(
   contract: ProcedureContract,
@@ -184,35 +169,90 @@ export function createContractProcedure<
   })
 }
 
+export interface RPCStreamResponse<Y = unknown, O = unknown> {
+  [kIterableResponse]: true
+  iterable: ProtocolAnyIterable<Y>
+  output: O
+}
+
+export function isIterableResponse(value: any): value is RPCStreamResponse {
+  return value && value[kIterableResponse] === true
+}
+
+export function createStreamResponse<Y, O>(
+  iterable: ProtocolAnyIterable<Y>,
+  output: O = undefined as O,
+): RPCStreamResponse<Y, O> {
+  return {
+    [kIterableResponse]: true as const,
+    iterable,
+    output,
+  }
+}
+
 export function createProcedure<
-  R,
-  I extends BaseType | undefined = undefined,
-  O extends BaseType | undefined = undefined,
-  D extends Dependencies = {},
+  Return,
+  Stream,
+  TInput extends BaseType | undefined = undefined,
+  TOutput extends BaseType | undefined = undefined,
+  TStream extends BaseType | true | undefined = undefined,
+  Deps extends Dependencies = {},
 >(
   paramsOrHandler:
     | {
-        input?: I
-        output?: O
-        dependencies?: D
+        input?: TInput
+        output?: TOutput
+        stream?: TStream
+        dependencies?: Deps
         guards?: AnyGuard[]
         middlewares?: AnyMiddleware[]
         metadata?: Metadata[]
-        handler: (
-          ctx: DependencyContext<D>,
-          data: I extends BaseType ? InputType<t.infer.decoded<I>> : never,
-        ) => Async<O extends BaseType ? t.infer.input.decoded<O> : R>
+        handler: ProcedureHandlerType<
+          TInput extends BaseType ? InputType<t.infer.decoded<TInput>> : never,
+          TStream extends undefined
+            ? TOutput extends BaseType
+              ? t.infer.input.decoded<TOutput>
+              : Return
+            : TOutput extends BaseType
+              ? RPCStreamResponse<
+                  TStream extends true
+                    ? Stream
+                    : t.infer.input.decoded<
+                        Exclude<TStream, undefined | boolean>
+                      >,
+                  t.infer.input.decoded<TOutput>
+                >
+              : RPCStreamResponse<
+                  TStream extends true
+                    ? Stream
+                    : t.infer.input.decoded<
+                        Exclude<TStream, undefined | boolean>
+                      >,
+                  Return
+                >,
+          Deps
+        >
       }
-    | ((
-        ctx: DependencyContext<D>,
-        data: I extends BaseType ? InputType<t.infer.decoded<I>> : never,
-      ) => Async<O extends BaseType ? t.infer.input.decoded<O> : R>),
+    | ProcedureHandlerType<
+        TInput extends BaseType ? InputType<t.infer.decoded<TInput>> : never,
+        TStream extends undefined
+          ? TOutput extends BaseType
+            ? never
+            : Return
+          : never,
+        Deps
+      >,
 ): Procedure<
   TProcedureContract<
-    I extends BaseType ? I : NeverType,
-    O extends BaseType ? O : CustomType<JsonPrimitive<R>>
+    TInput extends BaseType ? TInput : NeverType,
+    TOutput extends BaseType ? TOutput : CustomType<JsonPrimitive<Return>>,
+    TStream extends BaseType
+      ? TStream
+      : TStream extends true
+        ? CustomType<JsonPrimitive<Stream>>
+        : NeverType
   >,
-  D
+  Deps
 > {
   const params =
     typeof paramsOrHandler === 'function'
@@ -220,10 +260,15 @@ export function createProcedure<
       : paramsOrHandler
 
   return createContractProcedure(
-    c.procedure(
-      (params.input ?? t.never()) as any,
-      (params.output ?? t.any()) as any,
-    ),
+    c.procedure({
+      input: (params.input ?? t.never()) as any,
+      output: (params.output ?? t.any()) as any,
+      stream: (typeof params.stream === 'undefined'
+        ? t.never()
+        : params.stream === true
+          ? t.any()
+          : params.stream) as any,
+    }),
     {
       dependencies: params.dependencies,
       handler: params.handler as any,
@@ -231,26 +276,5 @@ export function createProcedure<
       middlewares: params.middlewares,
       metadata: params.metadata,
     },
-  )
+  ) as any
 }
-
-export const createMiddleware = <
-  D extends Dependencies = {},
-  S extends Scope = Scope.Global,
->(
-  ...args: Parameters<typeof createFactoryInjectable<MiddlewareLike, D, S>>
-) => createFactoryInjectable(...args)
-
-export const createGuard = <
-  D extends Dependencies = {},
-  S extends Scope = Scope.Global,
->(
-  ...args: Parameters<typeof createFactoryInjectable<GuardLike, D, S>>
-) => createFactoryInjectable(...args)
-
-export const createFilter = <
-  D extends Dependencies = {},
-  S extends Scope = Scope.Global,
->(
-  ...args: Parameters<typeof createFactoryInjectable<FilterLike, D, S>>
-) => createFactoryInjectable(...args)

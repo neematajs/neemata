@@ -2,30 +2,31 @@
 	"name": "@nmtjs/client",
 	"type": "module",
 	"scripts": {
-		"build": "neemata-build -p neutral ./index.ts './lib/**/*.ts'",
+		"build": "neemata-build -p neutral --root=./lib './**/*.ts'",
 		"type-check": "tsc --noEmit"
 	},
 	"exports": {
 		".": {
-			"bun": "./index.ts",
-			"default": "./dist/index.js",
-			"types": "./index.ts"
+			"bun": "./lib/common.ts",
+			"default": "./dist/common.js",
+			"types": "./lib/common.ts"
 		},
 		"./runtime": {
-			"bun": "./lib/client-runtime.ts",
-			"default": "./dist/lib/client-runtime.js",
-			"types": "./lib/client-runtime.ts"
+			"bun": "./lib/runtime.ts",
+			"default": "./dist/runtime.js",
+			"types": "./lib/runtime.ts"
 		},
 		"./static": {
-			"bun": "./lib/client-static.ts",
-			"default": "./dist/lib/client-static.js",
-			"types": "./lib/client-static.ts"
+			"bun": "./lib/static.ts",
+			"default": "./dist/static.js",
+			"types": "./lib/static.ts"
 		}
 	},
 	"dependencies": {
 		"@nmtjs/type": "workspace:*",
 		"@nmtjs/contract": "workspace:*",
-		"@nmtjs/common": "workspace:*"
+		"@nmtjs/common": "workspace:*",
+		"@nmtjs/protocol": "workspace:*"
 	},
 	"files": [
 		"index.ts",

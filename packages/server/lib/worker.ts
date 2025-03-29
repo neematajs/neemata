@@ -5,28 +5,16 @@ import {
   workerData,
 } from 'node:worker_threads'
 import {
-  type Application,
-  type BaseTaskExecutor,
-  type Plugin,
+  Application,
+  type ApplicationWorkerOptions,
   WorkerType,
 } from '@nmtjs/application'
 import {
   WorkerMessageType,
   bindPortMessageHandler,
   createBroadcastChannel,
-  provideWorkerOptions,
 } from './common.ts'
-import { WTSubManagerPlugin } from './subscription.ts'
 import { WorkerThreadsTaskRunner } from './task-runner.ts'
-
-export type ApplicationWorkerOptions = {
-  isServer: boolean
-  workerType: WorkerType
-  subscriptionManager: Plugin
-  id: number
-  workerOptions: any
-  tasksRunner?: BaseTaskExecutor
-}
 
 export type ApplicationWorkerData = {
   applicationPath: string
@@ -50,16 +38,19 @@ export async function start(
       ? new WorkerThreadsTaskRunner(parentPort)
       : undefined
 
-  provideWorkerOptions({
+  const factory = await import(applicationPath).then((m) => m.default)
+  if (typeof factory !== 'function')
+    throw new Error('Invalid application factory')
+
+  const app: Application = await factory({
     id,
     workerType,
     workerOptions,
     tasksRunner,
-    subscriptionManager: WTSubManagerPlugin,
     isServer: true,
   })
-
-  const app: Application = await import(applicationPath).then((m) => m.default)
+  if (app instanceof Application === false)
+    throw new Error('Invalid application factory')
 
   process.on('uncaughtException', (err) => app.logger.error(err))
   process.on('unhandledRejection', (err) => app.logger.error(err))

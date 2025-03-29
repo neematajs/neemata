@@ -14,7 +14,8 @@
   },
   "dependencies": {
     "@nmtjs/application": "workspace:*",
-    "@nmtjs/common": "workspace:*"
+    "@nmtjs/common": "workspace:*",
+    "@nmtjs/core": "workspace:*"
   },
   "files": [
     "index.ts",

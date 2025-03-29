@@ -1,0 +1,38 @@
+{
+  "name": "@nmtjs/protocol",
+  "type": "module",
+  "scripts": {
+    "build": "neemata-build --root=./lib './**/*.ts'",
+    "type-check": "tsc --noEmit"
+  },
+  "exports": {
+    "./common": {
+      "bun": "./lib/common/index.ts",
+      "default": "./dist/common/index.js",
+      "types": "./lib/common/index.ts"
+    },
+    "./server": {
+      "bun": "./lib/server/index.ts",
+      "default": "./dist/server/index.js",
+      "types": "./lib/server/index.ts"
+    },
+    "./client": {
+      "bun": "./lib/client/index.ts",
+      "default": "./dist/client/index.js",
+      "types": "./lib/client/index.ts"
+    }
+  },
+  "dependencies": {
+    "@nmtjs/common": "workspace:*",
+    "@nmtjs/type": "workspace:*",
+    "@nmtjs/core": "workspace:*"
+  },
+  "files": [
+    "index.ts",
+    "lib",
+    "dist",
+    "tsconfig.json",
+    "LICENSE.md",
+    "README.md"
+  ]
+}

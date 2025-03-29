@@ -1,6 +1,5 @@
 import EventEmitter from 'node:events'
-import { WorkerType, basicSubManagerPlugin } from '@nmtjs/application'
-import type { ApplicationWorkerOptions } from './worker.ts'
+import { type ApplicationWorkerOptions, WorkerType } from '@nmtjs/application'
 
 export const bindPortMessageHandler = (port: EventEmitter) => {
   port.on('message', (message) => {
@@ -29,25 +28,6 @@ export const createBroadcastChannel = (name: string) => {
   const postMessage = (message: any) => channel.postMessage(message)
 
   return Object.assign(emitter, { close, postMessage })
-}
-
-const WORKER_OPTIONS_KEY = Symbol('neemata:workerOptions')
-
-const defaultWorkerOptions = {
-  id: 0,
-  workerType: WorkerType.Api,
-  isServer: false,
-  subscriptionManager: basicSubManagerPlugin,
-}
-
-export const provideWorkerOptions = (
-  opts: Partial<ApplicationWorkerOptions>,
-) => {
-  globalThis[WORKER_OPTIONS_KEY] = { ...defaultWorkerOptions, ...opts }
-}
-
-export const injectWorkerOptions = (): ApplicationWorkerOptions => {
-  return globalThis[WORKER_OPTIONS_KEY] ?? defaultWorkerOptions
 }
 
 export enum WorkerMessageType {

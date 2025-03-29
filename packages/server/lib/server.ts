@@ -1,13 +1,11 @@
 import { once } from 'node:events'
 import { Worker } from 'node:worker_threads'
-import {
-  type Logger,
-  type LoggingOptions,
-  Pool,
-  WorkerType,
-  createLogger,
-  noop,
-} from '@nmtjs/application'
+import { WorkerType } from '@nmtjs/application'
+import { noopFn } from '@nmtjs/common'
+import type { LoggingOptions } from '@nmtjs/core'
+import type { Logger } from '@nmtjs/core'
+import { Pool } from '@nmtjs/core'
+import { createLogger } from '@nmtjs/core'
 import { WorkerMessageType, bindPortMessageHandler } from './common.ts'
 import type { ApplicationWorkerData } from './worker.ts'
 
@@ -32,7 +30,7 @@ export class ApplicationServer {
     this.logger = createLogger(this.options.logging, 'Application Server')
 
     // import application entrypoint to trigger restart on change in server mode
-    if (watch) import(`${options.applicationPath}`).catch(noop)
+    if (watch) import(`${options.applicationPath}`).catch(noopFn)
   }
 
   async start() {

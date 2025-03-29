@@ -1,3 +1,4 @@
+import type { ClassConstructor } from '@nmtjs/common'
 import type { TSchema } from '@sinclair/typebox'
 import type { ValueErrorIterator } from '@sinclair/typebox/compiler'
 import {
@@ -11,11 +12,17 @@ import type {
   StaticOutputDecode,
   StaticOutputEncode,
 } from './inference.ts'
+import { Clone } from './parse.ts'
 import { IsDiscriminatedUnion } from './schemas/discriminated-union.ts'
 import type { BaseType } from './types/base.ts'
 
 // register ajv formats
 register()
+
+export type CloneOptions = {
+  clone?: boolean
+  exclude?: Set<any>
+}
 
 export type ValidationError = {
   path: string
@@ -30,8 +37,14 @@ export function _applyDefaults(schema: TSchema, value: any) {
 
 // TODO: this one is very slow
 // Clone -> Clean -> Convert
-export function _parse(schema: TSchema, value: any, clone = true) {
-  if (clone) value = Value.Clone(value)
+export function _parse(
+  schema: TSchema,
+  value: any,
+  cloneOptions?: CloneOptions,
+) {
+  if (cloneOptions?.clone !== false) {
+    value = Clone(value, cloneOptions?.exclude)
+  }
   return Value.Clean(schema, Value.Convert(schema, value))
 }
 
@@ -90,8 +103,12 @@ export function applyDefaults(type: BaseType, value: unknown) {
   return _applyDefaults(type.schema, value)
 }
 
-export function parse(type: BaseType, value: unknown, clone?: boolean) {
-  return _parse(type.schema, value, clone)
+export function parse(
+  type: BaseType,
+  value: unknown,
+  cloneOptions?: CloneOptions,
+) {
+  return _parse(type.schema, value, cloneOptions)
 }
 
 export function errors(type: BaseType, value: unknown): ValidationError[] {

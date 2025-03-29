@@ -1,71 +1,32 @@
 import { expect } from 'vitest'
 
-import { deserialize, serialize } from 'node:v8'
-import {
-  BaseServerFormat,
-  type DecodeRpcContext,
-  type EncodeRpcContext,
-  type Pattern,
-  type Rpc,
-  type RpcResponse,
-  type TypeProvider,
-} from '@nmtjs/common'
 import { c } from '@nmtjs/contract'
 import { t } from '@nmtjs/type'
 
+import { noopFn } from '@nmtjs/common'
+import {
+  type Dependencies,
+  type Plugin,
+  createLogger,
+  createPlugin,
+} from '@nmtjs/core'
+import {
+  Connection,
+  type ConnectionOptions,
+  createTransport,
+} from '@nmtjs/protocol/server'
 import { Application, type ApplicationOptions } from '../lib/application.ts'
-import { Connection, type ConnectionOptions } from '../lib/connection.ts'
-import { WorkerType } from '../lib/constants.ts'
-import type { Dependencies } from '../lib/container.ts'
-import { createLogger } from '../lib/logger.ts'
-import { type Plugin, createPlugin } from '../lib/plugin.ts'
+import { WorkerType } from '../lib/enums.ts'
+import { createContractNamespace } from '../lib/namespace.ts'
 import {
   type CreateProcedureParams,
   createContractProcedure,
 } from '../lib/procedure.ts'
-import type { Registry } from '../lib/registry.ts'
-import { createContractService } from '../lib/service.ts'
 import {
   type BaseTaskExecutor,
   type CreateTaskOptions,
   createTask,
 } from '../lib/task.ts'
-import { createTransport } from '../lib/transport.ts'
-import { noop } from '../lib/utils/functions.ts'
-
-export interface TestTypeProvider extends TypeProvider {
-  input: 1 | 2 | 'string'
-  output: this['input']
-}
-
-export class TestFormat extends BaseServerFormat {
-  accept: Pattern[] = [
-    'test',
-    '*es*',
-    '*test',
-    'test*',
-    (t) => t === 'test',
-    /test/,
-  ]
-  contentType = 'test'
-
-  encode(data: any): ArrayBuffer {
-    return serialize(data).buffer as ArrayBuffer
-  }
-
-  encodeRpc(rpc: RpcResponse, context: EncodeRpcContext): ArrayBuffer {
-    return this.encode(rpc)
-  }
-
-  decode(buffer: ArrayBuffer): any {
-    return deserialize(Buffer.from(buffer) as any)
-  }
-
-  decodeRpc(buffer: ArrayBuffer, context: DecodeRpcContext): Rpc {
-    const [callId, service, procedure, payload] = this.decode(buffer)
-    return { callId, service, procedure, payload }
-  }
-}
 
 export class TestTaskExecutor implements BaseTaskExecutor {
   constructor(
@@ -81,12 +42,14 @@ export const testTransport = (
   onInit = () => {},
   onStartup = async () => {},
   onShutdown = async () => {},
+  onSend = async () => {},
 ) =>
   createTransport('TestTransport', (app) => {
     onInit()
     return {
       start: onStartup,
       stop: onShutdown,
+      send: onSend,
     }
   })
 
@@ -123,60 +86,69 @@ export const testApp = (options: Partial<ApplicationOptions> = {}) =>
     ),
   )
 
-export const TestServiceContract = c.service(
-  'TestService',
-  {
-    test: true,
+export const TestNamespaceContract = c.namespace({
+  procedures: {
+    testProcedure: c.procedure({
+      input: t.any(),
+      output: t.any(),
+    }),
+    testUptream: c.procedure({
+      input: t.object({ test: c.blob() }),
+      output: t.any(),
+      stream: t.never(),
+    }),
+    testDownstream: c.procedure({
+      input: t.any(),
+      output: t.object({ test: c.blob() }),
+      stream: t.never(),
+    }),
   },
-  {
-    testProcedure: c.procedure(t.any(), t.any()),
-    testUptream: c.procedure(t.object({ test: c.blob() }), t.any()),
-    testDownstream: c.procedure(t.any(), t.object({ test: c.blob() })),
+  subscriptions: {
     testSubscription: c
-      .subscription(t.any(), t.any(), {
-        testEvent: c.event(t.string()),
+      .subscription({
+        input: t.any(),
+        output: t.any(),
+        events: {
+          testEvent: c.event({
+            payload: t.string(),
+          }),
+        },
       })
       .$withOptions<{ testOption: string }>(),
   },
-  {
-    testEvent: c.event(t.string()),
+  events: {
+    testEvent: c.event({
+      payload: t.string(),
+    }),
   },
-)
+  name: 'TestNamespace',
+})
 
-export const testConnection = (
-  registry: Registry,
-  options: Partial<ConnectionOptions> = {},
-) => {
-  return new Connection(
-    {
-      ...options,
-      type: 'test',
-      services: ['TestService'],
-    },
-    registry,
-  )
+export const testConnection = (options: ConnectionOptions = { data: {} }) => {
+  return new Connection(options)
 }
-
-export const testFormat = () => new TestFormat()
 
 export const testProcedure = (
   params: CreateProcedureParams<
-    typeof TestServiceContract.procedures.testProcedure,
-    any
-  >,
-) =>
-  createContractProcedure(TestServiceContract.procedures.testProcedure, params)
-
-export const testSubscription = (
-  params: CreateProcedureParams<
-    typeof TestServiceContract.procedures.testSubscription,
+    typeof TestNamespaceContract.procedures.testProcedure,
     any
   >,
 ) =>
   createContractProcedure(
-    TestServiceContract.procedures.testSubscription,
+    TestNamespaceContract.procedures.testProcedure,
     params,
   )
+
+// export const testSubscription = (
+//   params: CreateProcedureParams<
+//     typeof TestNamespaceContract.subscriptions.testSubscription,
+//     any
+//   >,
+// ) =>
+//   createContractProcedure(
+//     TestNamespaceContract.subscriptions.testSubscription,
+//     params,
+//   ) as any
 
 export const testTask = <
   TaskDeps extends Dependencies,
@@ -188,14 +160,16 @@ export const testTask = <
 
 export const testTaskRunner = (...args) => new TestTaskExecutor(...args)
 
-export const testService = ({
-  procedure = testProcedure(noop),
-  subscription = testSubscription(noop as any),
+export const testNamepsace = ({
+  procedure = testProcedure(noopFn),
+  // subscription = testSubscription(noop as any),
 } = {}) =>
-  createContractService(TestServiceContract, {
+  createContractNamespace(TestNamespaceContract, {
     procedures: {
       testProcedure: procedure,
-      testSubscription: subscription,
+    },
+    subscriptions: {
+      // testSubscription: subscription,
     },
   })
 

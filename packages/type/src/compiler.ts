@@ -6,6 +6,7 @@ import type {
   StaticOutputEncode,
 } from './inference.ts'
 import {
+  type CloneOptions,
   type ValidationError,
   _applyDefaults,
   _parse,
@@ -16,7 +17,7 @@ import type { BaseType } from './types/base.ts'
 export type Compiled<T extends BaseType = BaseType> = {
   check: (val: unknown) => val is StaticInputEncode<T['schema']>
   errors: (val: unknown) => ValidationError[]
-  parse: (val: unknown, clone?: boolean) => unknown
+  parse: (val: unknown, cloneOptions?: CloneOptions) => unknown
   applyDefaults: (val: unknown) => unknown
   /**
    * Requires to `check` before calling
@@ -50,8 +51,8 @@ function compileType(type: BaseType) {
 
   const check = (value: unknown) => compiled.Check(value)
   const applyDefaults = (value: unknown) => _applyDefaults(schema, value)
-  const parse = (value: unknown, clone?: boolean) =>
-    _parse(schema, value, clone)
+  const parse = (value: unknown, cloneOptions?: CloneOptions) =>
+    _parse(schema, value, cloneOptions)
   const errors = (value: unknown) => _traversErrors(compiled.Errors(value))
   const decode = TransformDecode.bind(null, schema, compiled.References())
   const encode = TransformEncode.bind(null, schema, compiled.References())
@@ -66,8 +67,8 @@ function compileType(type: BaseType) {
   }
 }
 
-export function compile<T extends BaseType>(schema: T): Compiled<T> {
-  const compiled = compileType(schema)
+export function compile<T extends BaseType>(type: T): Compiled<T> {
+  const compiled = compileType(type)
 
   function decodeSafe(val: unknown) {
     try {

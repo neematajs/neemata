@@ -1,9 +1,12 @@
-export class ClientError extends Error {
-  constructor(
-    public code: string,
-    message?: string,
-    public data?: any,
-  ) {
-    super(message)
-  }
-}
+import { ProtocolError } from '@nmtjs/protocol/client'
+
+export * from './types.ts'
+
+export class ClientError extends ProtocolError {}
+
+export {
+  ProtocolBlob,
+  ErrorCode,
+  TransportType,
+  type ProtocolBlobMetadata,
+} from '@nmtjs/protocol/common'

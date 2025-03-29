@@ -14,7 +14,7 @@
   },
   "dependencies": {
     "@nmtjs/type": "workspace:*",
-    "@nmtjs/common": "workspace:*"
+    "@nmtjs/protocol": "workspace:*"
   },
   "files": [
     "src",

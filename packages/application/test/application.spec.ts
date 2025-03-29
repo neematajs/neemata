@@ -1,6 +1,7 @@
+import { CoreInjectables } from '@nmtjs/core'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Application } from '../lib/application.ts'
-import { builtin } from '../lib/common.ts'
+import { AppInjectables } from '../lib/injectables.ts'
 import { testApp, testPlugin } from './_utils.ts'
 
 describe.sequential('Application', () => {
@@ -33,27 +34,26 @@ describe.sequential('Application', () => {
         api: app.api,
         format: app.format,
         container: app.container,
-        eventManager: app.eventManager,
         logger: expect.anything(),
         registry: app.registry,
         hooks: app.registry.hooks,
-        connections: {
-          add: expect.any(Function),
-          remove: expect.any(Function),
-          get: expect.any(Function),
-        },
+        protocol: app.protocol,
+        // connections: {
+        //   add: expect.any(Function),
+        //   remove: expect.any(Function),
+        //   get: expect.any(Function),
+        // },
       }),
       undefined,
     )
   })
 
   it('should register app injections', async () => {
-    expect(app.container.resolve(builtin.logger)).resolves.toBe(app.logger)
-    expect(app.container.resolve(builtin.execute)).resolves.toBeInstanceOf(
-      Function,
+    await expect(app.container.resolve(CoreInjectables.logger)).resolves.toBe(
+      app.logger,
     )
-    expect(app.container.resolve(builtin.eventManager)).resolves.toBe(
-      app.eventManager,
-    )
+    await expect(
+      app.container.resolve(AppInjectables.execute),
+    ).resolves.toBeInstanceOf(Function)
   })
 })

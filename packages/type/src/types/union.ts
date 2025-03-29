@@ -13,7 +13,6 @@ import {
   type TDiscriminatedUnion,
 } from '../schemas/discriminated-union.ts'
 import { BaseType, type BaseTypeAny } from './base.ts'
-import type { LiteralType } from './literal.ts'
 import type { ObjectType, ObjectTypeProps } from './object.ts'
 
 export class UnionType<

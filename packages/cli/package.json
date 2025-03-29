@@ -16,6 +16,8 @@
   },
   "dependencies": {
     "@nmtjs/application": "workspace:*",
+    "@nmtjs/common": "workspace:*",
+    "@nmtjs/core": "workspace:*",
     "@nmtjs/server": "workspace:*",
     "dotenv": "^16.4.5"
   },
