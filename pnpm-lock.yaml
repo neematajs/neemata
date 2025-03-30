@@ -46,8 +46,8 @@ importers:
         version: link:../type
     devDependencies:
       '@types/node':
-        specifier: ^20
-        version: 20.14.14
+        specifier: ^18
+        version: 18.19.84
 
   packages/cli:
     dependencies:

@@ -31,7 +31,6 @@
     "index.ts",
     "lib",
     "dist",
-    "tsconfig.json",
     "LICENSE.md",
     "README.md"
   ]
