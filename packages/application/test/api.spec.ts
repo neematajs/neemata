@@ -7,11 +7,7 @@ import {
 import { ErrorCode } from '@nmtjs/protocol/common'
 import { type Connection, ProtocolInjectables } from '@nmtjs/protocol/server'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import {
-  Api,
-  type ApplicationApiCallOptions,
-  ApplicationApiError,
-} from '../lib/api.ts'
+import { Api, ApiError, type ApplicationApiCallOptions } from '../lib/api.ts'
 import type { Application } from '../lib/application.ts'
 import type { Namespace } from '../lib/namespace.ts'
 import type { ApplicationRegistry } from '../lib/registry.ts'
@@ -165,7 +161,7 @@ describe.sequential('Api', () => {
 
   it('should handle filter', async () => {
     const filterInjectable = {
-      catch: vi.fn(() => new ApplicationApiError('custom')),
+      catch: vi.fn(() => new ApiError('custom')),
     }
     class CustomError extends Error {}
     const filter = createValueInjectable(filterInjectable)
@@ -177,9 +173,7 @@ describe.sequential('Api', () => {
     namespace = testNamepsace({ procedure })
     registry.registerNamespace(namespace)
     await app.initialize()
-    await expect(call({ procedure })).rejects.toBeInstanceOf(
-      ApplicationApiError,
-    )
+    await expect(call({ procedure })).rejects.toBeInstanceOf(ApiError)
     expect(filterInjectable.catch).toHaveBeenCalledOnce()
     expect(filterInjectable.catch).toHaveBeenCalledWith(error)
   })
@@ -197,7 +191,7 @@ describe.sequential('Api', () => {
     registry.registerNamespace(namespace)
     await app.initialize()
     const result = await call({ procedure }).catch((v) => v)
-    expect(result).toBeInstanceOf(ApplicationApiError)
+    expect(result).toBeInstanceOf(ApiError)
     expect(result).toHaveProperty('code', ErrorCode.Forbidden)
   })
 

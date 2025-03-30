@@ -10,9 +10,9 @@ import {
   Container,
   createFactoryInjectable,
   createLazyInjectable,
+  createOptionalInjectable,
   createValueInjectable,
   getInjectableScope,
-  markOptional,
 } from '../lib/container.ts'
 import { Scope } from '../lib/enums.ts'
 import { CoreInjectables } from '../lib/injectables.ts'
@@ -334,7 +334,7 @@ describe('Container', () => {
 
   it('should resolve optional dependency', async () => {
     const injectable = createFactoryInjectable({
-      dependencies: { dep: markOptional(CoreInjectables.logger) },
+      dependencies: { dep: createOptionalInjectable(CoreInjectables.logger) },
       factory: noopFn,
     })
     await expect(container.resolve(injectable)).rejects.toThrow()

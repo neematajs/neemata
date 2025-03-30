@@ -1,7 +1,7 @@
 import {
+  ApiError,
   AppInjectables,
   Application,
-  ApplicationApiError,
   createContractNamespace,
   createContractProcedure,
   createFilter,
@@ -19,11 +19,11 @@ import {
 import { CoreInjectables } from '@nmtjs/core'
 import { createLazyInjectable } from '@nmtjs/core'
 import { createValueInjectable } from '@nmtjs/core'
-import { markOptional } from '@nmtjs/core'
+import { createOptionalInjectable } from '@nmtjs/core'
 import { ProtocolInjectables, createTransport } from '@nmtjs/protocol/server'
 import { ApplicationServer } from '@nmtjs/server'
 
-export namespace n {
+export namespace neemata {
   export const app = (...args: ConstructorParameters<typeof Application>) =>
     new Application(...args)
 
@@ -31,7 +31,7 @@ export namespace n {
     ...args: ConstructorParameters<typeof ApplicationServer>
   ) => new ApplicationServer(...args)
 
-  export const optional = markOptional
+  export const optional = createOptionalInjectable
   export const value = createValueInjectable
   export const lazy = createLazyInjectable
   export const factory = createFactoryInjectable
@@ -58,15 +58,15 @@ export namespace n {
   }
 }
 
-export const neemata = n
-
-export const ApiError = ApplicationApiError
+export { neemata as n }
 
 export { c, contract } from '@nmtjs/contract'
 export { t, type } from '@nmtjs/type'
 
+export { Scope, type AnyInjectable, type Logger, Hook } from '@nmtjs/core'
 export {
-  ApplicationApiError,
+  ApiError,
+  type ApplicationWorkerOptions,
   type GuardLike,
   type MiddlewareLike,
   type FilterLike,

@@ -6,7 +6,7 @@ import type {
 } from './inference.ts'
 import { AnyType } from './types/any.ts'
 import { ArrayType } from './types/array.ts'
-import type { BaseTypeAny, OptionalType } from './types/base.ts'
+import type { BaseTypeAny } from './types/base.ts'
 import { BooleanType } from './types/boolean.ts'
 import { CustomType } from './types/custom.ts'
 import { DateType } from './types/date.ts'

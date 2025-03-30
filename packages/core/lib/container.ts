@@ -401,7 +401,9 @@ export function getDepedencencyInjectable(
   return dependency
 }
 
-export function markOptional<T extends AnyInjectable>(injectable: T) {
+export function createOptionalInjectable<T extends AnyInjectable>(
+  injectable: T,
+) {
   return {
     [kOptionalDependency]: true,
     injectable,
