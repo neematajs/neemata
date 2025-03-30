@@ -1,6 +1,6 @@
 import {
-  type MessagePort,
   isMainThread,
+  type MessagePort,
   parentPort,
   workerData,
 } from 'node:worker_threads'
@@ -10,9 +10,9 @@ import {
   WorkerType,
 } from '@nmtjs/application'
 import {
-  WorkerMessageType,
   bindPortMessageHandler,
   createBroadcastChannel,
+  WorkerMessageType,
 } from './common.ts'
 import { WorkerThreadsTaskRunner } from './task-runner.ts'
 

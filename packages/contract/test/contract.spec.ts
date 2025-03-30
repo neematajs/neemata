@@ -1,7 +1,6 @@
-import { describe, expect, it } from 'vitest'
-
 import { NeverType, t } from '@nmtjs/type'
-import { NamespaceContract, c } from '../src/index.ts'
+import { describe, expect, it } from 'vitest'
+import { c, NamespaceContract } from '../src/index.ts'
 import { APIContract } from '../src/schemas/api.ts'
 import { EventContract } from '../src/schemas/event.ts'
 import { ProcedureContract } from '../src/schemas/procedure.ts'

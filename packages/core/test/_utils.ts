@@ -1,6 +1,6 @@
 import { expect } from 'vitest'
 import { createLogger } from '../lib/logger.ts'
-import { type Plugin, createPlugin } from '../lib/plugin.ts'
+import { createPlugin, type Plugin } from '../lib/plugin.ts'
 
 export const testPlugin = (init: Plugin['init'] = () => {}) =>
   createPlugin('TestPlugin', init)

@@ -1,8 +1,8 @@
 import {
   type Container,
-  Scope,
   createFactoryInjectable,
   createValueInjectable,
+  Scope,
 } from '@nmtjs/core'
 import { ErrorCode } from '@nmtjs/protocol/common'
 import { type Connection, ProtocolInjectables } from '@nmtjs/protocol/server'

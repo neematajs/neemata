@@ -15,14 +15,14 @@ import { LiteralType } from './types/literal.ts'
 import { NeverType } from './types/never.ts'
 import { BigIntType, IntegerType, NumberType } from './types/number.ts'
 import {
-  ObjectType,
-  RecordType,
   extend,
   keyof,
   merge,
+  ObjectType,
   omit,
   partial,
   pick,
+  RecordType,
 } from './types/object.ts'
 import { StringType } from './types/string.ts'
 import {
@@ -31,9 +31,9 @@ import {
   UnionType,
 } from './types/union.ts'
 
+export type { TSchema } from '@sinclair/typebox'
 export * from './schemas/nullable.ts'
 export { BaseType, type BaseTypeAny } from './types/base.ts'
-export type { TSchema } from '@sinclair/typebox'
 export {
   ArrayType,
   BooleanType,

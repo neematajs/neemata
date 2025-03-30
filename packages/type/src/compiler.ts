@@ -6,11 +6,11 @@ import type {
   StaticOutputEncode,
 } from './inference.ts'
 import {
-  type CloneOptions,
-  type ValidationError,
   _applyDefaults,
   _parse,
   _traversErrors,
+  type CloneOptions,
+  type ValidationError,
 } from './runtime.ts'
 import type { BaseType } from './types/base.ts'
 

@@ -1,13 +1,10 @@
-import type { BaseType } from '@nmtjs/type'
-import { compile } from '@nmtjs/type/compiler'
-
 import {
   type AnyInjectable,
   type Depedency,
-  type Logger,
-  Scope,
   getDepedencencyInjectable,
   getInjectableScope,
+  type Logger,
+  Scope,
 } from '@nmtjs/core'
 import { ProtocolRegistry } from '@nmtjs/protocol/server'
 import type { AnyFilter, AnyGuard, AnyMiddleware } from './api.ts'

@@ -1,6 +1,6 @@
 import {
-  type InteractivePromise,
   createPromise,
+  type InteractivePromise,
   onceAborted,
 } from '@nmtjs/common'
 import { concat, decodeNumber, encodeNumber } from '../common/binary.ts'

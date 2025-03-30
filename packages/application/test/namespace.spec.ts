@@ -1,12 +1,11 @@
-import { describe, expect, it } from 'vitest'
-
 import { noopFn } from '@nmtjs/common'
 import {
+  createValueInjectable,
   Hook,
   Hooks,
-  createValueInjectable,
   kHookCollection,
 } from '@nmtjs/core'
+import { describe, expect, it } from 'vitest'
 import { kNamespace } from '../lib/constants.ts'
 import { createContractNamespace, createNamespace } from '../lib/namespace.ts'
 import { TestNamespaceContract, testProcedure } from './_utils.ts'

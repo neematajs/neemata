@@ -1,8 +1,8 @@
 import {
+  c,
   type TAnyBaseProcedureContract,
   type TAnyProcedureContract,
   type TProcedureContract,
-  c,
 } from '@nmtjs/contract'
 import type { Dependant, Dependencies, DependencyContext } from '@nmtjs/core'
 import type { ProtocolAnyIterable } from '@nmtjs/protocol/server'

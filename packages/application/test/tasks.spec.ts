@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { kTask } from '../lib/constants.ts'
 import { AppInjectables } from '../lib/injectables.ts'
 import { ApplicationRegistry } from '../lib/registry.ts'
-import { TasksRunner, createTask } from '../lib/task.ts'
+import { createTask, TasksRunner } from '../lib/task.ts'
 import {
   testDefaultTimeout,
   testLogger,

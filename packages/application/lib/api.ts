@@ -1,14 +1,12 @@
-import { type BaseType, NeverType } from '@nmtjs/type'
-
 import assert from 'node:assert'
 import { inspect } from 'node:util'
 import { withTimeout } from '@nmtjs/common'
 import { IsProcedureContract, IsSubscriptionContract } from '@nmtjs/contract'
 import { type AnyInjectable, type Container, Scope } from '@nmtjs/core'
 import {
+  createFactoryInjectable,
   type Dependencies,
   type Logger,
-  createFactoryInjectable,
 } from '@nmtjs/core'
 import { ErrorCode, ProtocolBlob } from '@nmtjs/protocol/common'
 import {
@@ -21,6 +19,7 @@ import {
   ProtocolInjectables,
   ProtocolServerStream,
 } from '@nmtjs/protocol/server'
+import { type BaseType, NeverType } from '@nmtjs/type'
 import type { ApplicationOptions } from './application.ts'
 import type { AnyNamespace } from './namespace.ts'
 import { type AnyBaseProcedure, isIterableResponse } from './procedure.ts'

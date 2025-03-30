@@ -19,7 +19,6 @@
     "@nmtjs/application": "workspace:*",
     "@nmtjs/server": "workspace:*",
     "@nmtjs/contract": "workspace:*",
-    "@nmtjs/cli": "workspace:*",
     "@nmtjs/type": "workspace:*"
   },
   "files": [

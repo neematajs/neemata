@@ -17,9 +17,9 @@
     "prepare": "husky"
   },
   "devDependencies": {
-    "@biomejs/biome": "^1.9.4",
+    "@biomejs/biome": "2.0.0-beta.1",
     "@nmtjs/builder": "github:neematajs/builder#ec730523a7725483df9b070a8c95aa49700e8467",
-    "@types/node": "^20",
+    "@types/node": "^18.0.0",
     "husky": "^9.1.7",
     "typescript": "^5.8.2",
     "vitest": "^3.0.9"
