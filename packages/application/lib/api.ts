@@ -74,7 +74,7 @@ export class Api implements ProtocolApi {
   ) {}
 
   /**
-   * @throws {ApplicationApiError}
+   * @throws {ApiError}
    */
   find(namespaceName: string, procedureName: string) {
     const namespace = this.application.registry.namespaces.get(namespaceName)
@@ -225,7 +225,7 @@ export class Api implements ProtocolApi {
     return withTimeout(
       response,
       timeout,
-      new ApplicationApiError(ErrorCode.RequestTimeout, 'Request Timeout'),
+      new ApiError(ErrorCode.RequestTimeout, 'Request Timeout'),
       controller,
     )
   }
@@ -237,7 +237,7 @@ export class Api implements ProtocolApi {
   ) {
     for (const guard of guards) {
       const result = await guard.can(callCtx)
-      if (result === false) throw new ApplicationApiError(ErrorCode.Forbidden)
+      if (result === false) throw new ApiError(ErrorCode.Forbidden)
     }
   }
 
@@ -247,19 +247,15 @@ export class Api implements ProtocolApi {
         if (error instanceof errorType) {
           const filterLike = await this.application.container.resolve(filter)
           const handledError = await filterLike.catch(error)
-          if (!handledError || !(handledError instanceof ApplicationApiError))
-            continue
+          if (!handledError || !(handledError instanceof ApiError)) continue
           return handledError
         }
       }
     }
 
-    if (error instanceof ApplicationApiError) return error
+    if (error instanceof ApiError) return error
 
-    return new ApplicationApiError(
-      ErrorCode.InternalServerError,
-      'Internal Server Error',
-    )
+    return new ApiError(ErrorCode.InternalServerError, 'Internal Server Error')
   }
 
   private handleInput(procedure: AnyBaseProcedure, payload: any) {
@@ -270,7 +266,7 @@ export class Api implements ProtocolApi {
           type.applyDefaults(type.parse(payload, cloneOptions)),
         )
       } catch (error) {
-        throw new ApplicationApiError(
+        throw new ApiError(
           ErrorCode.ValidationError,
           'Input validation error',
           type.errors(payload),
@@ -321,14 +317,13 @@ export class Api implements ProtocolApi {
   }
 }
 
-export class ApplicationApiError extends ProtocolError {
+export class ApiError extends ProtocolError {
   toString() {
     return `${this.code} ${this.message}: \n${inspect(this.data, true, 10, false)}`
   }
 }
 
-const NotFound = () =>
-  new ApplicationApiError(ErrorCode.NotFound, 'Procedure not found')
+const NotFound = () => new ApiError(ErrorCode.NotFound, 'Procedure not found')
 
 export const createMiddleware = <
   D extends Dependencies = {},
