@@ -1,7 +1,7 @@
 import {
-  Scope,
   createFactoryInjectable,
   createLazyInjectable,
+  Scope,
 } from '@nmtjs/core'
 
 const connection = createLazyInjectable<unknown, Scope.Connection>(

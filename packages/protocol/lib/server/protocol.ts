@@ -14,7 +14,7 @@ import type { Format } from './format.ts'
 import type { ProtocolRegistry } from './registry.ts'
 import { ProtocolClientStream, ProtocolServerStream } from './stream.ts'
 import type { Transport } from './transport.ts'
-import { type ResolveFormatParams, getFormat } from './utils.ts'
+import { getFormat, type ResolveFormatParams } from './utils.ts'
 
 export class ProtocolError extends Error {
   code: string

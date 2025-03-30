@@ -1,12 +1,13 @@
 {
-  "$schema": "https://biomejs.dev/schemas/1.9.3/schema.json",
+  "$schema": "https://biomejs.dev/schemas/2.0.0-beta.1/schema.json",
   "files": {
-    "ignore": [
-      "**/dist/**",
-      "**/node_modules/**",
-      "**/coverage/**",
-      "**/package.json",
-      "**/.vscode/**"
+    "includes": [
+      "**",
+      "!**/dist/**",
+      "!**/node_modules/**",
+      "!**/coverage/**",
+      "!**/package.json",
+      "!**/.vscode/**"
     ]
   },
   "vcs": {
@@ -14,16 +15,16 @@
     "clientKind": "git",
     "useIgnoreFile": true
   },
-  "organizeImports": {
-    "enabled": true
+  "assist": {
+    "actions": {
+      "source": {
+        "organizeImports": "on"
+      }
+    }
   },
   "linter": {
     "enabled": true,
     "rules": {
-      "complexity": {
-        "recommended": true,
-        "noBannedTypes": "off"
-      },
       "style": {
         "recommended": true,
         "noNonNullAssertion": "off",
@@ -32,7 +33,26 @@
         "noUselessElse": "off",
         "useDefaultParameterLast": "off",
         "noParameterAssign": "off",
-        "noUnusedTemplateLiteral": "off"
+        "noUnusedTemplateLiteral": "off",
+        "useLiteralEnumMembers": "error",
+        "noCommaOperator": "error",
+        "useNodejsImportProtocol": "error",
+        "useAsConstAssertion": "error",
+        "useNumericLiterals": "error",
+        "useEnumInitializers": "error",
+        "useSelfClosingElements": "error",
+        "useConst": "error",
+        "useSingleVarDeclarator": "error",
+        "useNumberNamespace": "error",
+        "useExponentiationOperator": "error",
+        "noArguments": "error",
+        "useImportType": "error",
+        "useExportType": "error",
+        "useShorthandFunctionType": "error"
+      },
+      "complexity": {
+        "recommended": true,
+        "noBannedTypes": "off"
       },
       "suspicious": {
         "noExplicitAny": "off",

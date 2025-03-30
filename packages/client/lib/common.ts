@@ -5,8 +5,8 @@ export * from './types.ts'
 export class ClientError extends ProtocolError {}
 
 export {
-  ProtocolBlob,
   ErrorCode,
-  TransportType,
+  ProtocolBlob,
   type ProtocolBlobMetadata,
+  TransportType,
 } from '@nmtjs/protocol/common'

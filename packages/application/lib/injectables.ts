@@ -1,4 +1,4 @@
-import { Scope, createLazyInjectable } from '@nmtjs/core'
+import { createLazyInjectable, Scope } from '@nmtjs/core'
 import type { WorkerType } from './enums.ts'
 import type { ExecuteFn } from './types.ts'
 

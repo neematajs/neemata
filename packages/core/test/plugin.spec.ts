@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { kPlugin } from '../lib/constants.ts'
-import { type Plugin, createPlugin } from '../lib/plugin.ts'
+import { createPlugin, type Plugin } from '../lib/plugin.ts'
 
 describe('Plugin', () => {
   it('should create plugin', () => {

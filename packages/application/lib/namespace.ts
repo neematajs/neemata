@@ -2,10 +2,10 @@ import { readdir } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
+  c,
   type TAnyNamespaceContract,
   type TEventContract,
   type TNamespaceContract,
-  c,
 } from '@nmtjs/contract'
 import { Hook, Hooks } from '@nmtjs/core'
 import type { BaseType } from '@nmtjs/type'

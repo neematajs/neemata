@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { MessagePort } from 'node:worker_threads'
 import type { BaseTaskExecutor } from '@nmtjs/application'
 import { onAbort } from '@nmtjs/common'
-import { WorkerMessageType, createBroadcastChannel } from './common.ts'
+import { createBroadcastChannel, WorkerMessageType } from './common.ts'
 
 export class WorkerThreadsTaskRunner implements BaseTaskExecutor {
   constructor(private readonly port: MessagePort) {}

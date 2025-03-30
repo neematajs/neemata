@@ -3,8 +3,8 @@ import {
   type DestinationStream,
   type Level,
   type Logger as PinoLogger,
-  type StreamEntry,
   pino,
+  type StreamEntry,
   stdTimeFunctions,
 } from 'pino'
 import { build as pretty } from 'pino-pretty'

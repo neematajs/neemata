@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest'
-
+import { noopFn } from '@nmtjs/common'
+import { createValueInjectable } from '@nmtjs/core'
 import { AnyType, NeverType, t } from '@nmtjs/type'
+import { describe, expect, it } from 'vitest'
 import { kProcedure } from '../lib/constants.ts'
 import {
   createContractProcedure,
@@ -9,9 +10,6 @@ import {
   createStreamResponse,
   getProcedureMetadata,
 } from '../lib/procedure.ts'
-
-import { noopFn } from '@nmtjs/common'
-import { createValueInjectable } from '@nmtjs/core'
 import { TestNamespaceContract } from './_utils.ts'
 
 describe('Procedure', () => {

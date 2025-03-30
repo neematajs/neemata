@@ -1,5 +1,5 @@
-import type { TProperties, TSchema } from '@sinclair/typebox'
 import type * as Types from '@sinclair/typebox'
+import type { TProperties, TSchema } from '@sinclair/typebox'
 import type { TDefault } from './schemas/default.ts'
 
 export type StaticInputEncode<Type extends TSchema> =

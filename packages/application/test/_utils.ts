@@ -1,20 +1,19 @@
-import { expect } from 'vitest'
+import { noopFn } from '@nmtjs/common'
 
 import { c } from '@nmtjs/contract'
-import { t } from '@nmtjs/type'
-
-import { noopFn } from '@nmtjs/common'
 import {
-  type Dependencies,
-  type Plugin,
   createLogger,
   createPlugin,
+  type Dependencies,
+  type Plugin,
 } from '@nmtjs/core'
 import {
   Connection,
   type ConnectionOptions,
   createTransport,
 } from '@nmtjs/protocol/server'
+import { t } from '@nmtjs/type'
+import { expect } from 'vitest'
 import { Application, type ApplicationOptions } from '../lib/application.ts'
 import { WorkerType } from '../lib/enums.ts'
 import { createContractNamespace } from '../lib/namespace.ts'

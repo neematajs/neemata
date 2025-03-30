@@ -6,7 +6,7 @@ import type { LoggingOptions } from '@nmtjs/core'
 import type { Logger } from '@nmtjs/core'
 import { Pool } from '@nmtjs/core'
 import { createLogger } from '@nmtjs/core'
-import { WorkerMessageType, bindPortMessageHandler } from './common.ts'
+import { bindPortMessageHandler, WorkerMessageType } from './common.ts'
 import type { ApplicationWorkerData } from './worker.ts'
 
 export type ApplicationServerOptions = {

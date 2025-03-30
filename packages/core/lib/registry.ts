@@ -4,7 +4,7 @@ import {
   getInjectableScope,
 } from './container.ts'
 import { type Hook, Scope } from './enums.ts'
-import { type HookType, Hooks } from './hooks.ts'
+import { Hooks, type HookType } from './hooks.ts'
 import type { Logger } from './logger.ts'
 
 export class Registry {

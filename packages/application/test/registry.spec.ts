@@ -1,7 +1,6 @@
-import { beforeEach, describe, expect, it } from 'vitest'
-
 import { noopFn } from '@nmtjs/common'
-import { Scope, createLazyInjectable } from '@nmtjs/core'
+import { createLazyInjectable, Scope } from '@nmtjs/core'
+import { beforeEach, describe, expect, it } from 'vitest'
 import { ApplicationRegistry } from '../lib/registry.ts'
 import { testApp, testNamepsace, testTask } from './_utils.ts'
 
