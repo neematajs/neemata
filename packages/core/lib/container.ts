@@ -61,6 +61,8 @@ export type InjectableFactoryType<
   InjectableDeps extends Dependencies,
 > = (context: DependencyContext<InjectableDeps>) => Async<InjectableType>
 
+export type InjectablePickType<Input, Output> = (injectable: Input) => Output
+
 export type InjectableDisposeType<
   InjectableType,
   InjectableDeps extends Dependencies,
@@ -87,10 +89,12 @@ export interface FactoryInjectable<
   T,
   D extends Dependencies = {},
   S extends Scope = Scope.Global,
+  P = T,
 > extends Dependant<D> {
   scope: S
-  factory(context: DependencyContext<D>): Async<T>
-  dispose?(instance: T, context: DependencyContext<D>): any
+  factory: InjectableFactoryType<P, D>
+  pick: InjectablePickType<P, T>
+  dispose?: InjectableDisposeType<P, D>
   [kInjectable]: any
   [kFactoryInjectable]: any
 }
@@ -111,7 +115,10 @@ export type AnyInjectable<T = any, S extends Scope = Scope> = Injectable<
 >
 
 export class Container {
-  readonly instances = new Map<AnyInjectable, { instance: any; context: any }>()
+  readonly instances = new Map<
+    AnyInjectable,
+    { instance: any; picked: any; context: any }
+  >()
   private readonly resolvers = new Map<AnyInjectable, Promise<any>>()
   private readonly injectables = new Set<AnyInjectable>()
   private readonly dependants = new Map<AnyInjectable, Set<AnyInjectable>>()
@@ -233,7 +240,11 @@ export class Container {
     if (compareScope(injectable.scope, '>', this.scope)) {
       throw new Error('Invalid scope') // TODO: more informative error
     }
-    this.instances.set(injectable, { instance, context: undefined })
+    this.instances.set(injectable, {
+      instance,
+      picked: instance,
+      context: undefined,
+    })
   }
 
   satisfies(injectable: AnyInjectable) {
@@ -276,7 +287,7 @@ export class Container {
       }
 
       if (this.instances.has(injectable)) {
-        return Promise.resolve(this.instances.get(injectable)!.instance)
+        return Promise.resolve(this.instances.get(injectable)!.picked)
       } else if (this.resolvers.has(injectable)) {
         return this.resolvers.get(injectable)!
       } else {
@@ -305,10 +316,11 @@ export class Container {
             })),
           )
           .then(({ instance, context }) => {
+            const picked = injectable.pick(instance)
             if (compareScope(this.scope, '>=', scope))
-              this.instances.set(injectable, { instance, context })
+              this.instances.set(injectable, { instance, picked, context })
             if (scope !== Scope.Transient) this.resolvers.delete(injectable)
-            return instance
+            return picked
           })
         if (scope !== Scope.Transient)
           this.resolvers.set(injectable, resolution)
@@ -443,28 +455,27 @@ export function createFactoryInjectable<
   T,
   D extends Dependencies = {},
   S extends Scope = Scope.Global,
+  P = T,
 >(
   paramsOrFactory:
     | {
         dependencies?: D
         scope?: S
-        factory: InjectableFactoryType<T, D>
-        dispose?: InjectableDisposeType<T, D>
+        pick?: InjectablePickType<P, T>
+        factory: InjectableFactoryType<P, D>
+        dispose?: InjectableDisposeType<P, D>
       }
-    | InjectableFactoryType<T, D>,
+    | InjectableFactoryType<P, D>,
   label?: string,
-): FactoryInjectable<T, D, S> {
+): FactoryInjectable<null extends T ? P : T, D, S, P> {
   const isFactory = typeof paramsOrFactory === 'function'
-  const params = isFactory
-    ? {
-        factory: paramsOrFactory,
-      }
-    : paramsOrFactory
+  const params = isFactory ? { factory: paramsOrFactory } : paramsOrFactory
   const injectable = {
     dependencies: (params.dependencies ?? {}) as D,
     scope: (params.scope ?? Scope.Global) as S,
     factory: params.factory,
     dispose: params.dispose,
+    pick: params.pick ?? ((instance: P) => instance as unknown as T),
     label,
     stack: tryCaptureStackTrace(),
     [kInjectable]: true,
@@ -480,5 +491,5 @@ export function createFactoryInjectable<
       `Invalid scope ${params.scope} for factory injectable: dependencies have stricter scope - ${actualScope}`,
     )
   injectable.scope = actualScope as unknown as S
-  return Object.freeze(injectable)
+  return Object.freeze(injectable) as any
 }

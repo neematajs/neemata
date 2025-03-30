@@ -38,11 +38,6 @@ describe.sequential('Application', () => {
         registry: app.registry,
         hooks: app.registry.hooks,
         protocol: app.protocol,
-        // connections: {
-        //   add: expect.any(Function),
-        //   remove: expect.any(Function),
-        //   get: expect.any(Function),
-        // },
       }),
       undefined,
     )
