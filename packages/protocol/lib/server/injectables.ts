@@ -3,13 +3,14 @@ import {
   createLazyInjectable,
   Scope,
 } from '@nmtjs/core'
+import type { Connection } from './connection.ts'
 
-const connection = createLazyInjectable<unknown, Scope.Connection>(
+const connection = createLazyInjectable<Connection, Scope.Connection>(
   Scope.Connection,
   'RPC connection',
 )
 
-const connectionData = createLazyInjectable<unknown, Scope.Connection>(
+const connectionData = createLazyInjectable<any, Scope.Connection>(
   Scope.Connection,
   "RPC connection's data",
 )

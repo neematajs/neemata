@@ -20,13 +20,12 @@
     "@nmtjs/protocol": "workspace:*"
   },
   "devDependencies": {
-    "@types/node": "^20"
+    "@types/node": "^18"
   },
   "files": [
     "index.ts",
     "lib",
     "dist",
-    "tsconfig.json",
     "LICENSE.md",
     "README.md"
   ]
