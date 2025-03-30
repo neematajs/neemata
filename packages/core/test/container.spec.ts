@@ -138,6 +138,10 @@ describe('Container', () => {
 
   it('should be cached', async () => {
     const injectable = createFactoryInjectable(() => ({}))
+    const injectable2 = createFactoryInjectable({
+      factory: () => ['1', 2] as const,
+      pick: (instance) => instance[0],
+    })
     const val = await container.resolve(injectable)
     expect(container.contains(injectable)).toBe(true)
     expect(await container.resolve(injectable)).toBe(val)
