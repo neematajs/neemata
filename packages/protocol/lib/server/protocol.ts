@@ -104,7 +104,7 @@ export class ProtocolConnections {
       context
 
     for (const call of calls.values()) {
-      call.reject(new Error('Connection closed'))
+      call.abort(new Error('Connection closed'))
     }
 
     for (const stream of clientStreams.values()) {

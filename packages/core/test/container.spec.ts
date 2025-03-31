@@ -52,6 +52,17 @@ describe('Injectable', () => {
     expect(kFactoryInjectable in injectable).toBe(true)
   })
 
+  it('should create a factory injectable with pick', () => {
+    const spy = vi.fn()
+    const injectable = createFactoryInjectable({ factory: noopFn, pick: spy })
+    expect(injectable.pick).toBe(spy)
+    expect(injectable.factory).toBe(noopFn)
+    expect(injectable.dependencies).toStrictEqual({})
+    expect(injectable.scope).toBe(Scope.Global)
+    expect(kInjectable in injectable).toBe(true)
+    expect(kFactoryInjectable in injectable).toBe(true)
+  })
+
   it('should create a factory injectable with scope', () => {
     const injectable = createFactoryInjectable({
       factory: noopFn,
@@ -185,6 +196,17 @@ describe('Container', () => {
       factory: noopFn,
     })
     expect(getInjectableScope(injectable3)).toBe(Scope.Call)
+  })
+
+  it('should correctly resolve injectable pick', async () => {
+    const v1 = {}
+    const v2 = { v1 }
+    const injectable = createFactoryInjectable({
+      factory: () => v2,
+      pick: ({ v1 }) => v1,
+    })
+
+    await expect(container.resolve(injectable)).resolves.toBe(v1)
   })
 
   it('should resolve scopes', async () => {
