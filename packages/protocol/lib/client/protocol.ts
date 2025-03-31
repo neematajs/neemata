@@ -85,6 +85,15 @@ export class ProtocolClientStreams {
     stream.end()
     this.remove(streamId)
   }
+
+  clear(error?: Error) {
+    if (error) {
+      for (const stream of this.#collection.values()) {
+        stream.abort(error)
+      }
+    }
+    this.#collection.clear()
+  }
 }
 
 export class ProtocolServerStreams {
@@ -127,12 +136,26 @@ export class ProtocolServerStreams {
     stream.end()
     this.remove(streamId)
   }
+
+  clear(error?: Error) {
+    if (error) {
+      for (const stream of this.#collection.values()) {
+        stream.abort(error)
+      }
+    }
+    this.#collection.clear()
+  }
 }
 
 export interface ProtocolTransport
-  extends EventEmitter<{
-    [K in `${ServerMessageType}`]: [ArrayBuffer]
-  }> {
+  extends EventEmitter<
+    {
+      [K in `${ServerMessageType}`]: [ArrayBuffer]
+    } & {
+      connected: []
+      disconnected: []
+    }
+  > {
   connect(
     auth: any,
     contentType: BaseClientFormat['contentType'],
@@ -354,6 +377,8 @@ export abstract class ProtocolBaseClient<
         }
       },
     )
+
+    this.#transport.on('disconnected', () => {})
   }
 
   async connect(auth: any) {
@@ -361,6 +386,7 @@ export abstract class ProtocolBaseClient<
   }
 
   async disconnect() {
+    this.#clear()
     return await this.#transport.disconnect()
   }
 
@@ -371,6 +397,20 @@ export abstract class ProtocolBaseClient<
       buffer.byteLength,
     )
     return await this.#transport.send(messageType, buffer)
+  }
+
+  async #clear() {
+    const error = new ProtocolError(
+      ErrorCode.ConnectionError,
+      'Connection closed',
+    )
+    for (const call of this.#calls.values()) call.reject(error)
+    this.#calls.clear()
+    this.#serverStreams.clear(error)
+    this.#clientStreams.clear(error)
+    this.#rpcStreams.clear(error)
+    this.#callId = 0
+    this.#streamId = 0
   }
 
   protected async _call(

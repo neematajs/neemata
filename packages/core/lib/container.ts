@@ -106,7 +106,7 @@ export type Injectable<
 > =
   | LazyInjectable<InjectableValue, InjectableScope>
   | ValueInjectable<InjectableValue>
-  | FactoryInjectable<InjectableValue, InjectableDeps, InjectableScope>
+  | FactoryInjectable<InjectableValue, InjectableDeps, InjectableScope, any>
 
 export type AnyInjectable<T = any, S extends Scope = Scope> = Injectable<
   T,
@@ -264,7 +264,8 @@ export class Container {
     dependant?: AnyInjectable,
   ): Promise<ResolveInjectableType<T>> {
     if (dependant && compareScope(dependant.scope, '<', injectable.scope)) {
-      throw new Error('Invalid scope: dependant is looser than injectable') // TODO: more informative error
+      // TODO: more informative error
+      throw new Error('Invalid scope: dependant is looser than injectable')
     }
 
     if (checkIsValueInjectable(injectable)) {
