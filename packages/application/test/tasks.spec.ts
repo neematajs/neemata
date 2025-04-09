@@ -1,10 +1,10 @@
 import { createPromise, defer, noopFn, onAbort } from '@nmtjs/common'
 import { Container, createValueInjectable } from '@nmtjs/core'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { kTask } from '../lib/constants.ts'
-import { AppInjectables } from '../lib/injectables.ts'
-import { ApplicationRegistry } from '../lib/registry.ts'
-import { createTask, TasksRunner } from '../lib/task.ts'
+import { kTask } from '../src/constants.ts'
+import { AppInjectables } from '../src/injectables.ts'
+import { ApplicationRegistry } from '../src/registry.ts'
+import { createTask, TasksRunner } from '../src/task.ts'
 import {
   testDefaultTimeout,
   testLogger,
