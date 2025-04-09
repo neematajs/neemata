@@ -7,9 +7,8 @@
   },
   "exports": {
     ".": {
-      "bun": "./src/index.ts",
       "types": "./src/index.ts",
-      "default": "./dist/index.js"
+      "import": "./dist/index.js"
     }
   },
   "dependencies": {
@@ -19,7 +18,10 @@
     "@nmtjs/application": "workspace:*",
     "@nmtjs/server": "workspace:*",
     "@nmtjs/contract": "workspace:*",
-    "@nmtjs/type": "workspace:*"
+    "@nmtjs/type": "workspace:*",
+    "@nmtjs/json-format": "workspace:*",
+    "@nmtjs/ws-transport": "workspace:*",
+    "@nmtjs/cli": "workspace:*"
   },
   "files": [
     "src",

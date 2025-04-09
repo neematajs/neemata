@@ -1,7 +1,7 @@
 import { noopFn } from '@nmtjs/common'
 import { createLazyInjectable, Scope } from '@nmtjs/core'
 import { beforeEach, describe, expect, it } from 'vitest'
-import { ApplicationRegistry } from '../lib/registry.ts'
+import { ApplicationRegistry } from '../src/registry.ts'
 import { testApp, testNamepsace, testTask } from './_utils.ts'
 
 describe('ApplicationRegistry', () => {

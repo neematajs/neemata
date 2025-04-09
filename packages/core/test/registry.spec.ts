@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import type { Logger } from '../lib/logger.ts'
-import { Registry } from '../lib/registry.ts'
+import type { Logger } from '../src/logger.ts'
+import { Registry } from '../src/registry.ts'
 import { testLogger } from './_utils.ts'
 
 describe('Registry', () => {

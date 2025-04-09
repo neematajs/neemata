@@ -1,0 +1,32 @@
+{
+  "name": "@nmtjs/ws-transport",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "neemata-build --root ./src './**/*.ts'",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.51.0",
+    "@nmtjs/core": "workspace:*",
+    "@nmtjs/protocol": "workspace:*",
+    "@nmtjs/common": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^18.0.0"
+  },
+  "engines": {
+    "node": ">=18.9.0"
+  },
+  "files": [
+    "src",
+    "dist",
+    "LICENSE.md",
+    "README.md"
+  ]
+}

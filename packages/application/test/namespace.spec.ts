@@ -6,8 +6,8 @@ import {
   kHookCollection,
 } from '@nmtjs/core'
 import { describe, expect, it } from 'vitest'
-import { kNamespace } from '../lib/constants.ts'
-import { createContractNamespace, createNamespace } from '../lib/namespace.ts'
+import { kNamespace } from '../src/constants.ts'
+import { createContractNamespace, createNamespace } from '../src/namespace.ts'
 import { TestNamespaceContract, testProcedure } from './_utils.ts'
 
 describe('Namespace', () => {

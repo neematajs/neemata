@@ -67,7 +67,15 @@ export {
   type MiddlewareLike,
   WorkerType,
 } from '@nmtjs/application'
-export { c, contract } from '@nmtjs/contract'
+export {
+  c,
+  contract,
+  type TAPIContract,
+  type TEventContract,
+  type TNamespaceContract,
+  type TProcedureContract,
+  type TSubscriptionContract,
+} from '@nmtjs/contract'
 
 export { type AnyInjectable, Hook, type Logger, Scope } from '@nmtjs/core'
 export {

@@ -1,11 +1,11 @@
-import { noopFn } from '@nmtjs/common'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { noopFn } from '../../common/src/index.ts'
 import {
   kFactoryInjectable,
   kInjectable,
   kLazyInjectable,
   kValueInjectable,
-} from '../lib/constants.ts'
+} from '../src/constants.ts'
 import {
   Container,
   createFactoryInjectable,
@@ -13,10 +13,10 @@ import {
   createOptionalInjectable,
   createValueInjectable,
   getInjectableScope,
-} from '../lib/container.ts'
-import { Scope } from '../lib/enums.ts'
-import { CoreInjectables } from '../lib/injectables.ts'
-import { Registry } from '../lib/registry.ts'
+} from '../src/container.ts'
+import { Scope } from '../src/enums.ts'
+import { CoreInjectables } from '../src/injectables.ts'
+import { Registry } from '../src/registry.ts'
 import { testLogger } from './_utils.ts'
 
 describe('Injectable', () => {

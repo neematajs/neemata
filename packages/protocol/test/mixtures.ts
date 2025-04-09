@@ -5,8 +5,8 @@ import type {
   EncodeRPCContext,
   ProtocolRPC,
   ProtocolRPCResponse,
-} from '../lib/common/types.ts'
-import { BaseServerFormat } from '../lib/server/format.ts'
+} from '../src/common/types.ts'
+import { BaseServerFormat } from '../src/server/format.ts'
 
 export class TestFormat extends BaseServerFormat {
   accept: Pattern[] = [

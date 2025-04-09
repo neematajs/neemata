@@ -3,13 +3,12 @@
   "type": "module",
   "exports": {
     ".": {
-      "bun": "./src/index.ts",
-      "default": "./dist/index.js",
+      "import": "./dist/index.js",
       "types": "./src/index.ts"
     }
   },
   "scripts": {
-    "build": "neemata-build -p neutral --root=./src './**/*.ts'",
+    "build": "neemata-build --root=./src './**/*.ts'",
     "type-check": "tsc --noEmit"
   },
   "dependencies": {

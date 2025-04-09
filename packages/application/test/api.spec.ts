@@ -7,10 +7,10 @@ import {
 import { ErrorCode } from '@nmtjs/protocol/common'
 import { type Connection, ProtocolInjectables } from '@nmtjs/protocol/server'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { Api, ApiError, type ApplicationApiCallOptions } from '../lib/api.ts'
-import type { Application } from '../lib/application.ts'
-import type { Namespace } from '../lib/namespace.ts'
-import type { ApplicationRegistry } from '../lib/registry.ts'
+import { Api, ApiError, type ApplicationApiCallOptions } from '../src/api.ts'
+import type { Application } from '../src/application.ts'
+import type { Namespace } from '../src/namespace.ts'
+import type { ApplicationRegistry } from '../src/registry.ts'
 
 import {
   type TestNamespaceContract,

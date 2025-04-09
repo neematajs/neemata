@@ -1,0 +1,28 @@
+{
+  "name": "@nmtjs/json-format",
+  "type": "module",
+  "scripts": {
+    "build": "neemata-build --root=./src './**/*.ts'",
+    "type-check": "tsc --noEmit"
+  },
+  "exports": {
+    "./client": {
+      "import": "./dist/client.js",
+      "types": "./src/client.ts"
+    },
+    "./server": {
+      "import": "./dist/server.js",
+      "types": "./src/server.ts"
+    }
+  },
+  "dependencies": {
+    "@nmtjs/common": "workspace:*",
+    "@nmtjs/protocol": "workspace:*"
+  },
+  "files": [
+    "src",
+    "dist",
+    "LICENSE.md",
+    "README.md"
+  ]
+}

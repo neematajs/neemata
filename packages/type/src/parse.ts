@@ -2,6 +2,8 @@
 // Iterators
 // --------------------------------------------------------------------------
 
+import type { ClassConstructor } from '../../common/src/index.ts'
+
 /** Returns true if this value is an async iterator */
 export function IsAsyncIterator(value) {
   return IsObject(value) && Symbol.asyncIterator in value
@@ -168,7 +170,14 @@ export function IsValueType(value) {
     IsUndefined(value)
   )
 }
-
+function IsExcluded(value: any, exclude: Set<any>) {
+  for (const klass of exclude) {
+    if (value instanceof klass) {
+      return true
+    }
+  }
+  return false
+}
 // ------------------------------------------------------------------
 // Clonable
 // ------------------------------------------------------------------
@@ -200,11 +209,13 @@ function FromDate(value) {
 function FromValue(value) {
   return value
 }
+
 // ------------------------------------------------------------------
 // Clone
 // ------------------------------------------------------------------
 /** Returns a clone of the given value */
 export function Clone(value, exclude?: Set<any>) {
+  if (exclude && IsExcluded(value, exclude)) return value
   if (IsArray(value)) return FromArray(value, exclude)
   if (IsDate(value)) return FromDate(value)
   if (IsTypedArray(value)) return FromTypedArray(value)
@@ -212,6 +223,5 @@ export function Clone(value, exclude?: Set<any>) {
   if (IsSet(value)) return FromSet(value, exclude)
   if (IsObject(value)) return FromObject(value, exclude)
   if (IsValueType(value)) return FromValue(value)
-  if (exclude?.has(value.constructor)) return value
   throw new Error('Cannot clone value')
 }

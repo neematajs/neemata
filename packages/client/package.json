@@ -2,24 +2,21 @@
   "name": "@nmtjs/client",
   "type": "module",
   "scripts": {
-    "build": "neemata-build -p neutral --root=./lib './**/*.ts'",
+    "build": "neemata-build --root=./src './**/*.ts'",
     "type-check": "tsc --noEmit"
   },
   "exports": {
     ".": {
-      "bun": "./lib/common.ts",
-      "default": "./dist/common.js",
-      "types": "./lib/common.ts"
+      "import": "./dist/common.js",
+      "types": "./src/common.ts"
     },
     "./runtime": {
-      "bun": "./lib/runtime.ts",
-      "default": "./dist/runtime.js",
-      "types": "./lib/runtime.ts"
+      "import": "./dist/runtime.js",
+      "types": "./src/runtime.ts"
     },
     "./static": {
-      "bun": "./lib/static.ts",
-      "default": "./dist/static.js",
-      "types": "./lib/static.ts"
+      "import": "./dist/static.js",
+      "types": "./src/static.ts"
     }
   },
   "dependencies": {
@@ -29,8 +26,7 @@
     "@nmtjs/protocol": "workspace:*"
   },
   "files": [
-    "index.ts",
-    "lib",
+    "src",
     "dist",
     "LICENSE.md",
     "README.md"
