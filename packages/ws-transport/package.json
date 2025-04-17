@@ -12,13 +12,13 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.51.0",
+    "@nmtjs/common": "workspace:*",
     "@nmtjs/core": "workspace:*",
     "@nmtjs/protocol": "workspace:*",
-    "@nmtjs/common": "workspace:*"
+    "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.51.0"
   },
   "devDependencies": {
-    "@types/node": "^18.0.0"
+    "@types/node": "^18.19.86"
   },
   "engines": {
     "node": ">=18.9.0"

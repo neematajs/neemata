@@ -14,11 +14,11 @@
   "dependencies": {
     "@nmtjs/common": "workspace:*",
     "@nmtjs/type": "workspace:*",
-    "pino": "^9.0.0",
-    "pino-pretty": "^11.0.0"
+    "pino": "^9.6.0",
+    "pino-pretty": "^11.3.0"
   },
   "devDependencies": {
-    "@types/node": "^20"
+    "@types/node": "^20.17.30"
   },
   "files": [
     "src",
