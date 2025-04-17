@@ -1,4 +1,4 @@
-import { type Callback, defer } from '../../../common/src/index.ts'
+import { type Callback, defer } from '@nmtjs/common'
 import { concat, encodeText } from '../common/binary.ts'
 import type { ProtocolBlobMetadata } from '../common/blob.ts'
 

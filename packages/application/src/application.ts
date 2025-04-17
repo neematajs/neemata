@@ -107,7 +107,6 @@ export class Application {
     await this.registry.hooks.call(Hook.BeforeInitialize, { concurrent: false })
     await this.container.load()
     await this.registry.hooks.call(Hook.AfterInitialize, { concurrent: false })
-    this.registry.compile()
   }
 
   async start() {

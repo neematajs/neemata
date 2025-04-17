@@ -1,54 +1,62 @@
 import {
-  type TIntersect,
-  type TObject,
-  type TSchema,
-  type TUnion,
-  Type,
-  type UnionToTuple,
-} from '@sinclair/typebox'
-import type { StaticInputDecode } from '../inference.ts'
-import {
-  DiscriminatedUnion,
-  type DiscriminatedUnionProperties,
-  type TDiscriminatedUnion,
-} from '../schemas/discriminated-union.ts'
+  type core,
+  discriminatedUnion,
+  intersection,
+  union,
+  type ZodMiniDiscriminatedUnion,
+  type ZodMiniIntersection,
+  type ZodMiniUnion,
+} from '@zod/mini'
 import { BaseType, type BaseTypeAny } from './base.ts'
+import type { LiteralType } from './literal.ts'
 import type { ObjectType, ObjectTypeProps } from './object.ts'
 
 export class UnionType<
   T extends readonly BaseType[] = readonly BaseType[],
-  S extends TSchema[] = UnionToTuple<T[number]['schema']>,
-> extends BaseType<TUnion<S>, { options: T }, StaticInputDecode<TUnion<S>>> {
-  static factory<
-    T extends readonly BaseType[] = readonly BaseType[],
-    S extends TSchema[] = UnionToTuple<T[number]['schema']>,
-  >(...options: T) {
-    return new UnionType<T, S>(
-      Type.Union(options.map((t) => t.schema)) as any,
-      {
-        options,
-      },
-    )
+> extends BaseType<
+  ZodMiniUnion<core.utils.Flatten<T[number]['encodedZodType'][]>>,
+  ZodMiniUnion<core.utils.Flatten<T[number]['decodedZodType'][]>>,
+  { options: T }
+> {
+  static factory<T extends readonly BaseType[] = readonly BaseType[]>(
+    ...options: T
+  ) {
+    return new UnionType<T>({
+      encodedZodType: union(options.map((t) => t.encodedZodType)),
+      decodedZodType: union(options.map((t) => t.decodedZodType)),
+      props: { options },
+    })
   }
 }
 
 export class IntersactionType<
-  T extends readonly BaseType[] = readonly BaseType[],
-  S extends TSchema[] = UnionToTuple<T[number]['schema']>,
+  T extends readonly [BaseType, BaseType] = readonly [BaseType, BaseType],
 > extends BaseType<
-  TIntersect<S>,
-  { options: T },
-  StaticInputDecode<TIntersect<S>>
+  ZodMiniIntersection<T[0]['encodedZodType'], T[1]['encodedZodType']>,
+  ZodMiniIntersection<T[0]['decodedZodType'], T[1]['decodedZodType']>,
+  { options: T }
 > {
   static factory<
-    T extends readonly BaseType[] = readonly BaseType[],
-    S extends TSchema[] = UnionToTuple<T[number]['schema']>,
+    T extends readonly [BaseType, BaseType] = readonly [BaseType, BaseType],
   >(...options: T) {
-    return new IntersactionType<T, S>(
-      Type.Intersect(options.map((t) => t.schema)) as any,
-      { options },
-    )
+    return new IntersactionType<T>({
+      encodedZodType: intersection(
+        options[0].encodedZodType,
+        options[1].encodedZodType,
+      ),
+      decodedZodType: intersection(
+        options[0].decodedZodType,
+        options[1].decodedZodType,
+      ),
+      props: { options },
+    })
   }
+}
+
+export type DiscriminatedUnionProperties<K extends string = string> = {
+  [OK in K]: LiteralType<string>
+} & {
+  [OK in string]: any
 }
 
 export type DiscriminatedUnionOptionType<K extends string> = ObjectType<
@@ -59,26 +67,27 @@ export class DiscriminatedUnionType<
   K extends string = string,
   T extends
     readonly DiscriminatedUnionOptionType<K>[] = DiscriminatedUnionOptionType<K>[],
-  S extends TObject<DiscriminatedUnionProperties<K>>[] = [],
 > extends BaseType<
-  TDiscriminatedUnion<K, S>,
+  ZodMiniDiscriminatedUnion<core.utils.Flatten<T[number]['encodedZodType'][]>>,
+  ZodMiniDiscriminatedUnion<core.utils.Flatten<T[number]['decodedZodType'][]>>,
   {
     key: K
     options: T
-  },
-  StaticInputDecode<TDiscriminatedUnion<K, S>>
+  }
 > {
   static factory<
-    K extends string,
-    T extends readonly DiscriminatedUnionOptionType<K>[],
-    //@ts-expect-error
-    S extends TObject<DiscriminatedUnionProperties<K>>[] = UnionToTuple<
-      T[number]['schema']
-    >,
+    K extends string = string,
+    T extends
+      readonly DiscriminatedUnionOptionType<K>[] = DiscriminatedUnionOptionType<K>[],
   >(key: K, ...options: T) {
-    return new DiscriminatedUnionType<K, T, S>(
-      DiscriminatedUnion(key, options.map((t) => t.schema) as any),
-      { key, options },
-    )
+    return new DiscriminatedUnionType<K, T>({
+      encodedZodType: discriminatedUnion(
+        options.map((t) => t.encodedZodType) as any,
+      ),
+      decodedZodType: discriminatedUnion(
+        options.map((t) => t.decodedZodType) as any,
+      ),
+      props: { key, options },
+    })
   }
 }

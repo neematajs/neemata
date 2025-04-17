@@ -50,24 +50,6 @@ export class ApplicationRegistry extends ProtocolRegistry {
         `Namespaces ${namespace.contract.name} already registered`,
       )
 
-    for (const contract of Object.values(namespace.contract.procedures)) {
-      this.registerType(contract.input)
-      this.registerType(contract.output)
-      this.registerType(contract.stream)
-    }
-
-    for (const contract of Object.values(namespace.contract.subscriptions)) {
-      this.registerType(contract.input)
-      this.registerType(contract.output)
-      for (const eventContact of Object.values(contract.events)) {
-        this.registerType(eventContact.payload)
-      }
-    }
-
-    for (const event of Object.values(namespace.contract.events)) {
-      this.registerType(event.payload)
-    }
-
     this.namespaces.set(namespace.contract.name, namespace)
     this.registerHooks(namespace.hooks)
   }

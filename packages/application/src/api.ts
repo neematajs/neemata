@@ -19,16 +19,13 @@ import {
   ProtocolInjectables,
   ProtocolServerStream,
 } from '@nmtjs/protocol/server'
-import { type BaseType, NeverType } from '@nmtjs/type'
+import { type BaseType, NeemataTypeError, NeverType } from '@nmtjs/type'
 import type { ApplicationOptions } from './application.ts'
 import type { AnyNamespace } from './namespace.ts'
 import { type AnyBaseProcedure, isIterableResponse } from './procedure.ts'
 import type { ApplicationRegistry } from './registry.ts'
 import type { ApiCallContext, Async, ErrorClass } from './types.ts'
 
-const cloneOptions = {
-  exclude: new Set([ProtocolServerStream, ProtocolClientStream, ProtocolBlob]),
-}
 export type FilterLike<T extends ErrorClass = ErrorClass> = {
   catch(error: InstanceType<T>): Async<Error>
 }
@@ -259,17 +256,17 @@ export class Api implements ProtocolApi {
 
   private handleInput(procedure: AnyBaseProcedure, payload: any) {
     if (procedure.contract.input instanceof NeverType === false) {
-      const type = this.getType(procedure.contract.input)
+      const type = procedure.contract.input
       try {
-        return type.decode(
-          type.applyDefaults(type.parse(payload, cloneOptions)),
-        )
+        return type.decode(payload)
       } catch (error) {
-        throw new ApiError(
-          ErrorCode.ValidationError,
-          'Input validation error',
-          type.errors(payload),
-        )
+        if (error instanceof NeemataTypeError)
+          throw new ApiError(
+            ErrorCode.ValidationError,
+            'Input validation error',
+            error.issues,
+          )
+        throw error
       }
     }
   }
@@ -279,11 +276,9 @@ export class Api implements ProtocolApi {
       throw new Error('Invalid response. Use `createIterableResponse` helper')
     const iterable = response.iterable
     if (procedure.contract.output instanceof NeverType === false) {
-      const type = this.getType(procedure.contract.output)
+      const type = procedure.contract.output
       return {
-        output: type.applyDefaults(
-          type.parse(type.encode(response), cloneOptions),
-        ),
+        output: type.encode(response),
         iterable,
       }
     }
@@ -292,11 +287,9 @@ export class Api implements ProtocolApi {
 
   private handleOutput(procedure: AnyBaseProcedure, response: any) {
     if (procedure.contract.output instanceof NeverType === false) {
-      const type = this.getType(procedure.contract.output)
+      const type = procedure.contract.output
       return {
-        output: type.applyDefaults(
-          type.parse(type.encode(response), cloneOptions),
-        ),
+        output: type.encode(response),
       }
     }
     return { output: undefined }
@@ -307,12 +300,6 @@ export class Api implements ProtocolApi {
     response: any,
   ) {
     throw new Error('Not implemented')
-  }
-
-  private getType(type: BaseType) {
-    const compiled = this.application.registry.compiled.get(type)
-    if (!compiled) throw new Error('Compiled type not found')
-    return compiled
   }
 }
 

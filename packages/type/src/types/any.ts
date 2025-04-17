@@ -1,8 +1,10 @@
-import { type TAny, Type } from '@sinclair/typebox'
+import { any, type ZodMiniAny } from '@zod/mini'
 import { BaseType } from './base.ts'
 
-export class AnyType extends BaseType<TAny, {}, any> {
+export class AnyType extends BaseType<ZodMiniAny> {
   static factory() {
-    return new AnyType(Type.Any())
+    return new AnyType({
+      encodedZodType: any(),
+    })
   }
 }

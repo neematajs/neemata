@@ -1,8 +1,6 @@
 import type { ProtocolBlobInterface } from '@nmtjs/protocol/common'
 import { t } from '@nmtjs/type'
 
-export const BlobKind = 'ProtocolBlob'
-
 export interface BlobOptions {
   maxSize?: number
   contentType?: string

@@ -1,8 +1,10 @@
-import { type TNever, Type } from '@sinclair/typebox'
+import { never, type ZodMiniNever } from '@zod/mini'
 import { BaseType } from './base.ts'
 
-export class NeverType extends BaseType<TNever, {}, never> {
+export class NeverType extends BaseType<ZodMiniNever> {
   static factory() {
-    return new NeverType(Type.Never())
+    return new NeverType({
+      encodedZodType: never(),
+    })
   }
 }

@@ -1,38 +1,40 @@
 import {
-  type ArrayOptions,
-  type StaticDecode,
-  type TArray,
-  Type,
-} from '@sinclair/typebox'
+  array,
+  type core,
+  length,
+  maxLength,
+  minLength,
+  type ZodMiniArray,
+} from '@zod/mini'
 import { BaseType } from './base.ts'
 
+type Check = core.CheckFn<any[]> | core.$ZodCheck<any[]>
+
 export class ArrayType<T extends BaseType = BaseType> extends BaseType<
-  TArray<T['schema']>,
-  { element: T; options: ArrayOptions }
+  ZodMiniArray<T['encodedZodType']>,
+  ZodMiniArray<T['decodedZodType']>,
+  { element: T; checks: Check[] }
 > {
-  static factory<T extends BaseType>(element: T, options: ArrayOptions = {}) {
-    return new ArrayType<T>(Type.Array(element.schema, options))
+  static factory<T extends BaseType>(element: T, ...checks: Check[]) {
+    return new ArrayType<T>({
+      encodedZodType: array(element.encodedZodType).check(...checks),
+      decodedZodType: array(element.decodedZodType).check(...checks),
+      props: { element, checks },
+    })
   }
 
   min(value: number) {
-    return ArrayType.factory(this.props.element, {
-      ...this.props.options,
-      minItems: value,
-    })
+    const check = minLength(value)
+    return ArrayType.factory<T>(this.props.element, ...this.props.checks, check)
   }
 
   max(value: number) {
-    return ArrayType.factory(this.props.element, {
-      ...this.props.options,
-      maxItems: value,
-    })
+    const check = maxLength(value)
+    return ArrayType.factory<T>(this.props.element, ...this.props.checks, check)
   }
 
   length(value: number) {
-    return ArrayType.factory(this.props.element, {
-      ...this.props.options,
-      minItems: value,
-      maxItems: value,
-    })
+    const check = length(value)
+    return ArrayType.factory<T>(this.props.element, ...this.props.checks, check)
   }
 }

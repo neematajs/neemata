@@ -12,8 +12,8 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "@nmtjs/type": "workspace:*",
-    "@nmtjs/protocol": "workspace:*"
+    "@nmtjs/protocol": "workspace:*",
+    "@nmtjs/type": "workspace:*"
   },
   "files": [
     "src",

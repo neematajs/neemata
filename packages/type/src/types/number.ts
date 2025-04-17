@@ -1,117 +1,55 @@
 import {
-  type BigIntOptions,
-  type IntegerOptions,
-  type NumberOptions,
-  type TBigInt,
-  type TInteger,
-  type TNumber,
-  Type,
-} from '@sinclair/typebox'
+  type core,
+  gt,
+  gte,
+  int,
+  lt,
+  lte,
+  number,
+  type ZodMiniNumber,
+} from '@zod/mini'
 import { BaseType } from './base.ts'
 
+type Check = core.CheckFn<number> | core.$ZodCheck<number>
+
 export class NumberType extends BaseType<
-  TNumber,
-  { options: NumberOptions },
-  number
+  ZodMiniNumber<number>,
+  ZodMiniNumber<number>,
+  { checks: Check[] }
 > {
-  static factory(options: NumberOptions = {}) {
-    return new NumberType(Type.Number(options), { options })
+  static factory(...checks: Check[]) {
+    return new NumberType({
+      encodedZodType: number().check(...checks),
+    })
   }
 
   positive() {
-    return this.min(0, true)
+    return NumberType.factory(...this.props.checks, gte(0))
   }
 
   negative() {
-    return this.max(0, true)
+    return NumberType.factory(...this.props.checks, lte(0))
   }
 
-  max(value: number, exclusive?: true) {
-    return NumberType.factory({
-      ...this.props.options,
-      maximum: value,
-      ...(!exclusive ? {} : { exclusiveMaximum: value }),
-    })
+  lt(value: number) {
+    return NumberType.factory(...this.props.checks, lt(value))
   }
 
-  min(value: number, exclusive?: true) {
-    return NumberType.factory({
-      ...this.props.options,
-      minimum: value,
-      ...(!exclusive ? {} : { exclusiveMinimum: value }),
-    })
+  lte(value: number) {
+    return NumberType.factory(...this.props.checks, lte(value))
+  }
+
+  gte(value: number) {
+    return NumberType.factory(...this.props.checks, gte(value))
+  }
+
+  gt(value: number) {
+    return NumberType.factory(...this.props.checks, gt(value))
   }
 }
 
-export class IntegerType extends BaseType<
-  TInteger,
-  { options: IntegerOptions },
-  number
-> {
-  static factory(options: IntegerOptions = {}) {
-    return new IntegerType(Type.Integer(options), { options })
-  }
-
-  positive() {
-    return this.min(0, true)
-  }
-
-  negative() {
-    return this.max(0, true)
-  }
-
-  max(value: number, exclusive?: true) {
-    return IntegerType.factory({
-      ...this.props.options,
-      maximum: value,
-      ...(!exclusive ? {} : { exclusiveMaximum: value }),
-    })
-  }
-
-  min(value: number, exclusive?: true) {
-    return IntegerType.factory({
-      ...this.props.options,
-      minimum: value,
-      ...(!exclusive ? {} : { exclusiveMinimum: value }),
-    })
-  }
-}
-
-// TODO: this is not json schema compatible
-export class BigIntType extends BaseType<
-  TBigInt,
-  { options: BigIntOptions },
-  bigint
-> {
-  static factory(options: BigIntOptions = {}) {
-    return new BigIntType(
-      Type.BigInt(options),
-      { options },
-      { encode: (value) => `${value}` },
-    )
-  }
-
-  positive() {
-    return this.min(0n, true)
-  }
-
-  negative() {
-    return this.max(0n, true)
-  }
-
-  max(value: bigint, exclusive?: true) {
-    return BigIntType.factory({
-      ...this.props.options,
-      maximum: value,
-      ...(!exclusive ? {} : { exclusiveMaximum: value }),
-    })
-  }
-
-  min(value: bigint, exclusive?: true) {
-    return BigIntType.factory({
-      ...this.props.options,
-      minimum: value,
-      ...(!exclusive ? {} : { exclusiveMinimum: value }),
-    })
+export class IntegerType extends NumberType {
+  static factory(...checks: Check[]) {
+    return NumberType.factory(...checks, int())
   }
 }

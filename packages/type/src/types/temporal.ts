@@ -1,4 +1,9 @@
-import { type TString, Type } from '@sinclair/typebox'
+import {
+  custom,
+  string,
+  type ZodMiniCustom,
+  type ZodMiniString,
+} from '@zod/mini'
 import { Temporal } from 'temporal-polyfill'
 import { CustomType, TransformType } from './custom.ts'
 
@@ -29,102 +34,137 @@ const createTemporalTransformer = <T extends Types>(
   } as TemporalTransformer<T>
 }
 
-export class PlainDateType extends TransformType<Temporal.PlainDate, TString> {
-  static readonly transformer = createTemporalTransformer('PlainDate')
+export class PlainDateType extends TransformType<
+  Temporal.PlainDate,
+  ZodMiniString
+> {
+  static transformer = createTemporalTransformer('PlainDate')
 
   static factory() {
-    return CustomType.factory(
+    return CustomType.factory<
+      Temporal.PlainDate,
+      ZodMiniString,
+      ZodMiniCustom<Temporal.PlainDate, Temporal.PlainDate>
+    >(
       PlainDateType.transformer.decode,
       PlainDateType.transformer.encode,
-      Type.String(),
+      string(),
     )
   }
 }
 
 export class PlainDateTimeType extends TransformType<
   Temporal.PlainDateTime,
-  TString
+  ZodMiniString
 > {
-  static readonly transformer = createTemporalTransformer('PlainDateTime')
-  protected _encode = PlainDateTimeType.transformer.encode
+  static transformer = createTemporalTransformer('PlainDateTime')
 
   static factory() {
-    return CustomType.factory(
+    return CustomType.factory<
+      Temporal.PlainDateTime,
+      ZodMiniString,
+      ZodMiniCustom<Temporal.PlainDateTime, Temporal.PlainDateTime>
+    >(
       PlainDateTimeType.transformer.decode,
       PlainDateTimeType.transformer.encode,
-      Type.String(),
+      string(),
     )
   }
 }
 
 export class ZonedDateTimeType extends TransformType<
   Temporal.ZonedDateTime,
-  TString
+  ZodMiniString
 > {
-  static readonly transformer = createTemporalTransformer(
-    'ZonedDateTime',
-    (value) => Temporal.Instant.from(value).toZonedDateTimeISO('UTC'),
+  static transformer = createTemporalTransformer('ZonedDateTime', (value) =>
+    Temporal.Instant.from(value).toZonedDateTimeISO('UTC'),
   )
 
   static factory() {
-    return CustomType.factory(
+    return CustomType.factory<
+      Temporal.ZonedDateTime,
+      ZodMiniString,
+      ZodMiniCustom<Temporal.ZonedDateTime, Temporal.ZonedDateTime>
+    >(
       ZonedDateTimeType.transformer.decode,
       ZonedDateTimeType.transformer.encode,
-      Type.String(),
+      string(),
     )
   }
 }
 
-export class PlainTimeType extends TransformType<Temporal.PlainTime, TString> {
-  static readonly transformer = createTemporalTransformer('PlainTime')
+export class PlainTimeType extends TransformType<
+  Temporal.PlainTime,
+  ZodMiniString
+> {
+  static transformer = createTemporalTransformer('PlainTime')
 
   static factory() {
-    return CustomType.factory(
+    return CustomType.factory<
+      Temporal.PlainTime,
+      ZodMiniString,
+      ZodMiniCustom<Temporal.PlainTime, Temporal.PlainTime>
+    >(
       PlainTimeType.transformer.decode,
       PlainTimeType.transformer.encode,
-      Type.String(),
+      string(),
     )
   }
 }
 
-export class DurationType extends TransformType<Temporal.Duration, TString> {
-  static readonly transformer = createTemporalTransformer('Duration')
+export class DurationType extends TransformType<
+  Temporal.Duration,
+  ZodMiniString
+> {
+  static transformer = createTemporalTransformer('Duration')
 
   static factory() {
-    return CustomType.factory(
+    return CustomType.factory<
+      Temporal.Duration,
+      ZodMiniString,
+      ZodMiniCustom<Temporal.Duration, Temporal.Duration>
+    >(
       DurationType.transformer.decode,
       DurationType.transformer.encode,
-      Type.String(),
+      string(),
     )
   }
 }
 
 export class PlainYearMonthType extends TransformType<
   Temporal.PlainYearMonth,
-  TString
+  ZodMiniString
 > {
-  static readonly transformer = createTemporalTransformer('PlainYearMonth')
+  static transformer = createTemporalTransformer('PlainYearMonth')
 
   static factory() {
-    return CustomType.factory(
+    return CustomType.factory<
+      Temporal.PlainYearMonth,
+      ZodMiniString,
+      ZodMiniCustom<Temporal.PlainYearMonth, Temporal.PlainYearMonth>
+    >(
       PlainYearMonthType.transformer.decode,
       PlainYearMonthType.transformer.encode,
-      Type.String(),
+      string(),
     )
   }
 }
 
 export class PlainMonthDayType extends TransformType<
   Temporal.PlainMonthDay,
-  TString
+  ZodMiniString
 > {
-  static readonly transformer = createTemporalTransformer('PlainMonthDay')
+  static transformer = createTemporalTransformer('PlainMonthDay')
 
   static factory() {
-    return CustomType.factory(
+    return CustomType.factory<
+      Temporal.PlainMonthDay,
+      ZodMiniString,
+      ZodMiniCustom<Temporal.PlainMonthDay, Temporal.PlainMonthDay>
+    >(
       PlainMonthDayType.transformer.decode,
       PlainMonthDayType.transformer.encode,
-      Type.String(),
+      string(),
     )
   }
 }

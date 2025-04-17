@@ -1,5 +1,5 @@
+import type { Async } from '@nmtjs/common'
 import type { BasePlugin, PluginContext } from '@nmtjs/core'
-import type { Async } from '../../../common/src/index.ts'
 import type { ServerMessageType } from '../common/enums.ts'
 import type { Connection } from './connection.ts'
 import { kTransportPlugin } from './constants.ts'

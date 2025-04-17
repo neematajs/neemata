@@ -1,4 +1,4 @@
-import type { Callback } from '../../../common/src/index.ts'
+import type { Callback } from '@nmtjs/common'
 
 export type EventMap = { [K: string]: any[] }
 
