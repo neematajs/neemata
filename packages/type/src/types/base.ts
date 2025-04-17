@@ -1,139 +1,206 @@
-import { Optional, type TOptional, type TSchema } from '@sinclair/typebox'
-import { Default, type TDefault } from '../schemas/default.ts'
-import { Nullable, type TNullable } from '../schemas/nullable.ts'
+import {
+  _default,
+  core,
+  nullable,
+  optional,
+  registry,
+  type ZodMiniAny,
+  type ZodMiniArray,
+  type ZodMiniBoolean,
+  type ZodMiniDefault,
+  type ZodMiniEnum,
+  type ZodMiniInterface,
+  type ZodMiniIntersection,
+  type ZodMiniLiteral,
+  type ZodMiniNever,
+  type ZodMiniNullable,
+  type ZodMiniNumber,
+  type ZodMiniObject,
+  type ZodMiniOptional,
+  type ZodMiniPipe,
+  type ZodMiniRecord,
+  type ZodMiniString,
+  type ZodMiniType,
+  type ZodMiniUnion,
+} from '@zod/mini'
+
+export type PrimitiveValueType = string | number | boolean | null
+
+export type SimpleZodType =
+  | ZodMiniNever
+  | ZodMiniDefault
+  | ZodMiniNullable
+  | ZodMiniOptional
+  | ZodMiniString
+  | ZodMiniObject
+  | ZodMiniAny
+  | ZodMiniArray
+  | ZodMiniBoolean
+  | ZodMiniNumber
+  | ZodMiniEnum<any>
+  | ZodMiniLiteral<PrimitiveValueType>
+  | ZodMiniUnion
+  | ZodMiniIntersection
+  | ZodMiniInterface
+  | ZodMiniRecord
+  | ZodMiniPipe
+
+export type ZodType = SimpleZodType | ZodMiniType
 
 export type TypeProps = Record<string, any>
 
+export type TypeMetadata<T = any> = {
+  id?: string
+  description?: string
+  examples?: T[]
+  title?: string
+}
+
 export type TypeParams = {
-  optional?: boolean
-  nullable?: boolean
-  hasDefault?: boolean
   encode?: (value: any) => any
+  metadata?: TypeMetadata
 }
 
 export type DefaultTypeParams = {
-  optional: false
-  nullable: false
-  hasDefault: false
   encode?: TypeParams['encode']
+  metadata?: TypeMetadata
 }
 
-export type BaseTypeAny<T extends TSchema = TSchema> = BaseType<
-  T,
-  TypeProps,
-  any
->
+export type BaseTypeAny<
+  EncodedZodType extends SimpleZodType = SimpleZodType,
+  DecodedZodType extends ZodType = ZodMiniType,
+> = BaseType<EncodedZodType, DecodedZodType, TypeProps>
+
+export const typesRegistry = registry<TypeMetadata>()
+
+export const NeemataTypeError = core.$ZodError
+export type NeemataTypeError = core.$ZodError
 
 export abstract class BaseType<
-  Schema extends TSchema = TSchema,
+  EncodedZodType extends SimpleZodType = SimpleZodType,
+  DecodedZodType extends ZodType = EncodedZodType,
   Props extends TypeProps = TypeProps,
-  ValueType = unknown,
 > {
-  readonly schema: Schema
+  readonly encodedZodType: EncodedZodType
+  readonly decodedZodType: DecodedZodType
   readonly props: Props
   readonly params: TypeParams
 
-  constructor(
-    schema: Schema,
-    props: Props = {} as Props,
-    params: TypeParams = {} as TypeParams,
-  ) {
-    const { hasDefault = false, nullable = false, optional = false } = params
-    this.schema = schema
+  constructor({
+    encodedZodType,
+    decodedZodType = encodedZodType as unknown as DecodedZodType,
+    props = {} as Props,
+    params = {} as TypeParams,
+  }: {
+    encodedZodType: EncodedZodType
+    decodedZodType?: DecodedZodType
+    props?: Props
+    params?: TypeParams
+  }) {
+    this.encodedZodType = encodedZodType
+    this.decodedZodType = decodedZodType
 
     this.props = props
-    this.params = {
-      hasDefault,
-      nullable,
-      optional,
-    } as TypeParams
+    this.params = params
   }
 
-  optional(): OptionalType<BaseType<Schema, Props>, ValueType> {
-    return OptionalType.factory(this) as any
+  optional(): OptionalType<this> {
+    return OptionalType.factory(this)
   }
 
-  nullable(): NullableType<BaseType<Schema, Props>, ValueType> {
-    return NullableType.factory(this) as any
+  nullable(): NullableType<this> {
+    return NullableType.factory(this)
   }
 
   nullish() {
     return this.nullable().optional()
   }
 
-  default(value: ValueType): DefaultType<BaseType<Schema, Props>, ValueType> {
-    return DefaultType.factory(
-      this,
-      this.params.encode?.(value) ?? value,
-    ) as any
+  default(value: this['encodedZodType']['_zod']['input']): DefaultType<this> {
+    return DefaultType.factory(this, value)
   }
 
-  description(description: string): BaseType<Schema, Props, ValueType> {
-    const ThisConstructor = this.constructor as any
-    return new ThisConstructor(
-      {
-        ...this.schema,
-        description,
-      },
-      this.props,
-      this.params,
-    ) as any
+  title(title: string): this {
+    return this.meta({ title })
   }
 
-  examples(...examples: ValueType[]): BaseType<Schema, Props, ValueType> {
-    const ThisConstructor = this.constructor as any
-    return new ThisConstructor(
-      {
-        ...this.schema,
-        examples,
-      },
-      this.props,
-      this.params,
-    ) as any
+  description(description: string): this {
+    return this.meta({ description })
+  }
+
+  examples(...examples: this['decodedZodType']['_zod']['input'][]): this {
+    return this.meta({
+      examples: this.params.encode
+        ? examples.map(this.params.encode)
+        : examples,
+    })
+  }
+
+  meta(newMetadata: TypeMetadata): this {
+    const metadata = typesRegistry.get(this.encodedZodType) ?? {}
+    Object.assign(metadata, newMetadata)
+    typesRegistry.add(this.encodedZodType, metadata)
+    return this
+  }
+
+  encode(
+    data: this['encodedZodType']['_zod']['input'],
+  ): this['encodedZodType']['_zod']['output'] {
+    return this.encodedZodType.parse(data, { reportInput: true })
+  }
+
+  decode(
+    data: this['decodedZodType']['_zod']['input'],
+  ): this['decodedZodType']['_zod']['output'] {
+    return this.decodedZodType.parse(data, { reportInput: true })
   }
 }
 
 export class OptionalType<
   Type extends BaseTypeAny = BaseTypeAny,
-  ValueType = unknown,
-> extends BaseType<TOptional<Type['schema']>, { inner: Type }, ValueType> {
+> extends BaseType<
+  ZodMiniOptional<Type['encodedZodType']>,
+  ZodMiniOptional<Type['decodedZodType']>,
+  { inner: Type }
+> {
   static factory<T extends BaseTypeAny>(type: T) {
-    return new OptionalType<T>(Optional(type.schema) as any, { inner: type }, {
-      ...type.params,
-      optional: true,
-    } as any)
+    return new OptionalType<T>({
+      encodedZodType: optional(type.encodedZodType) as any,
+      props: { inner: type },
+    })
   }
 }
 
 export class NullableType<
   Type extends BaseTypeAny<any> = BaseTypeAny<any>,
-  ValueType = unknown,
 > extends BaseType<
-  TNullable<Type['schema']>,
-  { inner: Type },
-  ValueType | null
+  ZodMiniNullable<Type['encodedZodType']>,
+  ZodMiniNullable<Type['decodedZodType']>,
+  { inner: Type }
 > {
   static factory<T extends BaseTypeAny<any>>(type: T) {
-    return new NullableType<T>(Nullable(type.schema), { inner: type }, {
-      ...type.params,
-      nullable: true,
-    } as any)
+    return new NullableType<T>({
+      encodedZodType: nullable(type.encodedZodType),
+      props: { inner: type },
+    })
   }
 }
 
 export class DefaultType<
   Type extends BaseTypeAny = BaseTypeAny,
-  ValueType = unknown,
 > extends BaseType<
-  TDefault<TOptional<Type['schema']>>,
-  { inner: Type },
-  ValueType
+  ZodMiniDefault<Type['encodedZodType']>,
+  ZodMiniDefault<Type['decodedZodType']>,
+  { inner: Type }
 > {
   static factory<T extends BaseTypeAny<any>>(type: T, defaultValue: any) {
-    return new DefaultType<T>(
-      Default(Optional(type.schema), defaultValue) as any,
-      { inner: type },
-      { ...type.params, hasDefault: true } as any,
-    )
+    return new DefaultType<T>({
+      encodedZodType: _default(
+        type.encodedZodType,
+        type.params.encode?.(defaultValue) ?? defaultValue,
+      ) as any,
+      decodedZodType: _default(type.decodedZodType, defaultValue) as any,
+      props: { inner: type },
+    })
   }
 }

@@ -1,8 +1,10 @@
-import { type TBoolean, Type } from '@sinclair/typebox'
+import { boolean, type ZodMiniBoolean } from '@zod/mini'
 import { BaseType } from './base.ts'
 
-export class BooleanType extends BaseType<TBoolean, {}, boolean> {
+export class BooleanType extends BaseType<ZodMiniBoolean<boolean>> {
   static factory() {
-    return new BooleanType(Type.Boolean())
+    return new BooleanType({
+      encodedZodType: boolean(),
+    })
   }
 }

@@ -1,19 +1,17 @@
-import type {
-  StaticInputDecode,
-  StaticInputEncode,
-  StaticOutputDecode,
-  StaticOutputEncode,
-} from './inference.ts'
 import { AnyType } from './types/any.ts'
 import { ArrayType } from './types/array.ts'
 import type { BaseTypeAny } from './types/base.ts'
 import { BooleanType } from './types/boolean.ts'
 import { CustomType } from './types/custom.ts'
 import { DateType } from './types/date.ts'
-import { EnumType, ObjectEnumType } from './types/enum.ts'
+import { EnumType } from './types/enum.ts'
 import { LiteralType } from './types/literal.ts'
 import { NeverType } from './types/never.ts'
-import { BigIntType, IntegerType, NumberType } from './types/number.ts'
+import {
+  // BigIntType,
+  IntegerType,
+  NumberType,
+} from './types/number.ts'
 import {
   extend,
   keyof,
@@ -31,8 +29,7 @@ import {
   UnionType,
 } from './types/union.ts'
 
-export type { TSchema } from '@sinclair/typebox'
-export * from './schemas/nullable.ts'
+export { NeemataTypeError } from './types/base.ts'
 export { BaseType, type BaseTypeAny } from './types/base.ts'
 export {
   ArrayType,
@@ -49,23 +46,24 @@ export {
   UnionType,
   AnyType,
   NeverType,
+  DiscriminatedUnionType,
+  RecordType,
 }
 
 export namespace type {
   export namespace infer {
-    export type decoded<T extends BaseTypeAny<any>> = StaticOutputDecode<
-      T['schema']
-    >
-    export type encoded<T extends BaseTypeAny<any>> = StaticOutputEncode<
-      T['schema']
-    >
+    export type decoded<T extends BaseTypeAny<any>> =
+      T['decodedZodType']['_zod']['output']
+
+    export type encoded<T extends BaseTypeAny<any>> =
+      T['encodedZodType']['_zod']['output']
+
     export namespace input {
-      export type decoded<T extends BaseTypeAny<any>> = StaticInputDecode<
-        T['schema']
-      >
-      export type encoded<T extends BaseTypeAny<any>> = StaticInputEncode<
-        T['schema']
-      >
+      export type decoded<T extends BaseTypeAny<any>> =
+        T['decodedZodType']['_zod']['input']
+
+      export type encoded<T extends BaseTypeAny<any>> =
+        T['encodedZodType']['_zod']['input']
     }
   }
 
@@ -74,16 +72,17 @@ export namespace type {
   export const string = StringType.factory
   export const number = NumberType.factory
   export const integer = IntegerType.factory
-  export const bitint = BigIntType.factory
+  // export const bitint = BigIntType.factory
   export const literal = LiteralType.factory
-  export const objectEnum = ObjectEnumType.factory
-  export const arrayEnum = EnumType.factory
+  export const enumeration = EnumType.factory
   export const date = DateType.factory
   export const array = ArrayType.factory
   export const record = RecordType.factory
   export const any = AnyType.factory
   export const or = UnionType.factory
   export const and = IntersactionType.factory
+  export const union = UnionType.factory
+  export const intersaction = IntersactionType.factory
   export const discriminatedUnion = DiscriminatedUnionType.factory
   export const custom = CustomType.factory
   export const object = Object.assign(ObjectType.factory.bind(ObjectType), {

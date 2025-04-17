@@ -1,64 +1,73 @@
 import {
-  type ObjectOptions,
-  type TObject,
-  type TRecordOrObject,
-  type TSchema,
-  Type,
-} from '@sinclair/typebox'
-import type { StaticInputDecode } from '../inference.ts'
-import type { UnionToTupleString } from '../utils.ts'
+  type core,
+  object,
+  record,
+  type ZodMiniObject,
+  type ZodMiniRecord,
+} from '@zod/mini'
+
 import { BaseType, type BaseTypeAny, type OptionalType } from './base.ts'
-import { EnumType, type ObjectEnumType } from './enum.ts'
+import { EnumType } from './enum.ts'
 import type { LiteralType } from './literal.ts'
 import type { StringType } from './string.ts'
 
 export type ObjectTypeProps = { [k: string]: BaseTypeAny }
 export type AnyObjectType = ObjectType<ObjectTypeProps>
 export class ObjectType<T extends ObjectTypeProps = {}> extends BaseType<
-  TObject<{ [K in keyof T]: T[K]['schema'] }>,
-  { properties: T },
-  StaticInputDecode<TObject<{ [K in keyof T]: T[K]['schema'] }>>
+  ZodMiniObject<{ [K in keyof T]: T[K]['encodedZodType'] }>,
+  ZodMiniObject<{ [K in keyof T]: T[K]['decodedZodType'] }>,
+  { properties: T }
 > {
-  static factory<T extends ObjectTypeProps = {}>(
-    properties: T,
-    options: ObjectOptions = {},
-  ) {
-    const schemaProperties = {} as {
-      [K in keyof T]: T[K]['schema']
+  static factory<T extends ObjectTypeProps = {}>(properties: T) {
+    const encodeProperties = {} as {
+      [K in keyof T]: T[K]['encodedZodType']
+    }
+    const decodeProperties = {} as {
+      [K in keyof T]: T[K]['decodedZodType']
     }
 
     for (const key in properties) {
-      schemaProperties[key] = properties[key].schema
+      encodeProperties[key] = properties[key].encodedZodType
+      decodeProperties[key] = properties[key].decodedZodType
     }
 
-    return new ObjectType<T>(Type.Object(schemaProperties, options) as any, {
-      properties,
+    return new ObjectType<T>({
+      encodedZodType: object(encodeProperties),
+      decodedZodType: object(decodeProperties),
+      props: { properties },
     })
   }
 }
 
 export class RecordType<
-  K extends LiteralType | EnumType | ObjectEnumType | StringType,
+  K extends LiteralType<string | number> | EnumType | StringType,
   E extends BaseType,
-> extends BaseType<TRecordOrObject<K['schema'], E['schema']>> {
+> extends BaseType<
+  ZodMiniRecord<K['encodedZodType'], E['encodedZodType']>,
+  ZodMiniRecord<K['decodedZodType'], E['decodedZodType']>
+> {
   static factory<
-    K extends
-      | LiteralType<any>
-      | EnumType<any>
-      | ObjectEnumType<any>
-      | StringType,
+    K extends LiteralType<string | number> | EnumType | StringType,
     E extends BaseType,
-  >(key: K, element: E, options: ObjectOptions = {}) {
-    return new RecordType<K, E>(
-      Type.Record(key.schema, element.schema, options) as any,
-    )
+  >(key: K, element: E) {
+    return new RecordType<K, E>({
+      encodedZodType: record(
+        (key as any).encodedZodType,
+        element.encodedZodType,
+      ),
+      decodedZodType: record(
+        (key as any).decodedZodType,
+        element.decodedZodType,
+      ),
+      props: { key, element },
+    })
   }
 }
 
 export function keyof<T extends ObjectType>(
   type: T,
 ): EnumType<
-  UnionToTupleString<T extends ObjectType<infer Props> ? keyof Props : never>
+  core.utils.ToEnum<Extract<keyof T['props']['properties'], string>>
 > {
   return EnumType.factory(Object.keys(type.props.properties) as any)
 }
@@ -139,9 +148,7 @@ export function partial<
 >(
   object: T,
 ): ObjectType<{
-  [K in keyof P]: P[K] extends BaseType<any, any, infer T>
-    ? OptionalType<P[K], T>
-    : never
+  [K in keyof P]: OptionalType<P[K]>
 }> {
   const properties = {} as any
 
@@ -149,5 +156,5 @@ export function partial<
     properties[key] = value.optional()
   }
 
-  return ObjectType.factory(properties, {}) as any
+  return ObjectType.factory(properties)
 }

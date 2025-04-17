@@ -2,7 +2,7 @@ import {
   createPromise,
   type InteractivePromise,
   onceAborted,
-} from '../../../common/src/index.ts'
+} from '@nmtjs/common'
 import { concat, decodeNumber, encodeNumber } from '../common/binary.ts'
 import type { ProtocolBlobMetadata } from '../common/blob.ts'
 import {

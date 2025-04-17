@@ -13,13 +13,13 @@
   },
   "dependencies": {
     "@nmtjs/common": "workspace:*",
-    "@nmtjs/type": "workspace:*",
     "@nmtjs/contract": "workspace:*",
     "@nmtjs/core": "workspace:*",
-    "@nmtjs/protocol": "workspace:*"
+    "@nmtjs/protocol": "workspace:*",
+    "@nmtjs/type": "workspace:*"
   },
   "devDependencies": {
-    "@types/node": "^18"
+    "@types/node": "^18.19.86"
   },
   "files": [
     "src",

@@ -1,63 +1,65 @@
-import { type StringOptions, type TString, Type } from '@sinclair/typebox'
-import type { StaticOutputDecode } from '../inference.ts'
+import {
+  type core,
+  email,
+  ipv4,
+  ipv6,
+  maxLength,
+  minLength,
+  regex,
+  string,
+  url,
+  uuid,
+  type ZodMiniString,
+} from '@zod/mini'
+
 import { BaseType } from './base.ts'
 
+type Check = core.CheckFn<string> | core.$ZodCheck<string>
+
 export class StringType extends BaseType<
-  TString,
-  { options: StringOptions },
-  string
+  ZodMiniString<string>,
+  ZodMiniString<string>,
+  { checks: Check[] }
 > {
-  static factory(options: StringOptions = {}) {
-    return new StringType(Type.String(options), { options })
+  static factory(...checks: Check[]) {
+    return new StringType({
+      encodedZodType: string().check(...checks),
+      props: { checks },
+    })
   }
 
   max(value: number) {
-    return StringType.factory({
-      ...this.props.options,
-      maxLength: value,
-    })
+    return StringType.factory(...this.props.checks, maxLength(value))
   }
 
   min(value: number) {
-    return StringType.factory({
-      ...this.props.options,
-      minLength: value,
-    })
+    return StringType.factory(...this.props.checks, minLength(value))
   }
 
-  format(format: TString['format']) {
-    return StringType.factory({
-      ...this.props.options,
-      pattern: undefined,
-      format,
-    })
+  pattern(pattern: string | RegExp) {
+    return StringType.factory(
+      ...this.props.checks,
+      regex(typeof pattern === 'string' ? new RegExp(pattern) : pattern),
+    )
   }
 
-  pattern(pattern: string) {
-    return StringType.factory({
-      ...this.props.options,
-      format: undefined,
-      pattern,
-    })
+  email(options?: core.$ZodEmailParams) {
+    return StringType.factory(...this.props.checks, email(options))
   }
 
-  email() {
-    return this.format('email')
+  url(options?: core.$ZodURLParams) {
+    return StringType.factory(...this.props.checks, url(options))
   }
 
-  url() {
-    return this.format('uri')
+  ipv4(options?: core.$ZodIPv4Params) {
+    return StringType.factory(...this.props.checks, ipv4(options))
   }
 
-  ipv4() {
-    return this.format('ipv4')
+  ipv6(options?: core.$ZodIPv6Params) {
+    return StringType.factory(...this.props.checks, ipv6(options))
   }
 
-  ipv6() {
-    return this.format('ipv6')
-  }
-
-  uuid() {
-    return this.format('uuid')
+  uuid(options?: core.$ZodUUIDParams) {
+    return StringType.factory(...this.props.checks, uuid(options))
   }
 }

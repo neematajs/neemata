@@ -23,12 +23,6 @@ describe('ApplicationRegistry', () => {
     expect(registry.namespaces.get(namespace.contract.name)).toBe(namespace)
   })
 
-  it('should register namespace', () => {
-    const namespace = testNamepsace()
-    registry.registerNamespace(namespace)
-    expect(registry.namespaces.get(namespace.contract.name)).toBe(namespace)
-  })
-
   it('should fail to register service with the same contract twice', () => {
     const service1 = testNamepsace()
     const service2 = testNamepsace()
