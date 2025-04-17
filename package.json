@@ -3,13 +3,13 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "pnpm run --parallel --filter \"*\" build",
-    "build:watch": "pnpm run --parallel --filter \"*\" build --watch",
+    "build": "pnpm run --parallel -r build",
+    "dev": "pnpm run --parallel -r build --watch",
     "clean": "rm -rf dist node_modules && pnpm -r exec rm -rf dist node_modules",
     "test": "vitest run --passWithNoTests",
     "test:build": "pnpm build && pnpm test",
     "test:watch": "vitest watch",
-    "check:type": "pnpm run --parallel --filter \"*\" type-check",
+    "check:type": "pnpm run --parallel -r type-check",
     "check:lint": "biome lint .",
     "check:fmt": "biome format .",
     "check": "pnpm run check:fmt && pnpm run check:lint && pnpm run check:type",
@@ -18,7 +18,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.0.0-beta.1",
-    "@nmtjs/builder": "github:neematajs/builder#ec730523a7725483df9b070a8c95aa49700e8467",
+    "@nmtjs/builder": "github:neematajs/builder#a4202eb673b0b8281f7045fc856a0cbd0346d49b",
     "@types/node": "^18.0.0",
     "husky": "^9.1.7",
     "typescript": "^5.8.2",
@@ -27,5 +27,5 @@
   "workspaces": [
     "./packages/*"
   ],
-  "packageManager": "pnpm@9.5.0"
+  "packageManager": "pnpm@10.7.0"
 }

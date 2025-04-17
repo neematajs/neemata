@@ -2,14 +2,13 @@
   "name": "@nmtjs/server",
   "type": "module",
   "scripts": {
-    "build": "neemata-build ./index.ts './lib/**/*.ts'",
+    "build": "neemata-build --root=./src './**/*.ts'",
     "type-check": "tsc --noEmit"
   },
   "exports": {
     ".": {
-      "bun": "./index.ts",
-      "default": "./dist/index.js",
-      "types": "./index.ts"
+      "import": "./dist/index.js",
+      "types": "./src/index.ts"
     }
   },
   "dependencies": {
@@ -18,8 +17,7 @@
     "@nmtjs/core": "workspace:*"
   },
   "files": [
-    "index.ts",
-    "lib",
+    "src",
     "dist",
     "LICENSE.md",
     "README.md"

@@ -1,4 +1,3 @@
-import type { ClassConstructor } from '@nmtjs/common'
 import type { TSchema } from '@sinclair/typebox'
 import type { ValueErrorIterator } from '@sinclair/typebox/compiler'
 import {
@@ -6,6 +5,7 @@ import {
   TransformEncode,
   Value,
 } from '@sinclair/typebox/value'
+import type { ClassConstructor } from '../../common/src/index.ts'
 import { register } from './formats.ts'
 import type {
   StaticInputEncode,

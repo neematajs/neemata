@@ -3,28 +3,24 @@
   "type": "module",
   "exports": {
     ".": {
-      "bun": "./src/index.ts",
-      "default": "./dist/index.js",
+      "import": "./dist/index.js",
       "types": "./src/index.ts"
     },
     "./compiler": {
-      "bun": "./src/compiler.ts",
-      "default": "./dist/compiler.js",
+      "import": "./dist/compiler.js",
       "types": "./src/compiler.ts"
     },
     "./runtime": {
-      "bun": "./src/runtime.ts",
-      "default": "./dist/runtime.js",
+      "import": "./dist/runtime.js",
       "types": "./src/runtime.ts"
     },
     "./temporal": {
-      "bun": "./src/temporal.ts",
-      "default": "./dist/temporal.js",
+      "import": "./dist/temporal.js",
       "types": "./src/temporal.ts"
     }
   },
   "scripts": {
-    "build": "neemata-build -p neutral --root=./src './**/*.ts'",
+    "build": "neemata-build --root=./src './**/*.ts'",
     "type-check": "tsc --noEmit"
   },
   "dependencies": {

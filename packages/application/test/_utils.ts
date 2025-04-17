@@ -14,18 +14,18 @@ import {
 } from '@nmtjs/protocol/server'
 import { t } from '@nmtjs/type'
 import { expect } from 'vitest'
-import { Application, type ApplicationOptions } from '../lib/application.ts'
-import { WorkerType } from '../lib/enums.ts'
-import { createContractNamespace } from '../lib/namespace.ts'
+import { Application, type ApplicationOptions } from '../src/application.ts'
+import { WorkerType } from '../src/enums.ts'
+import { createContractNamespace } from '../src/namespace.ts'
 import {
   type CreateProcedureParams,
   createContractProcedure,
-} from '../lib/procedure.ts'
+} from '../src/procedure.ts'
 import {
   type BaseTaskExecutor,
   type CreateTaskOptions,
   createTask,
-} from '../lib/task.ts'
+} from '../src/task.ts'
 
 export class TestTaskExecutor implements BaseTaskExecutor {
   constructor(

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import { kHookCollection } from '../lib/constants.ts'
-import { Hooks } from '../lib/hooks.ts'
+import { kHookCollection } from '../src/constants.ts'
+import { Hooks } from '../src/hooks.ts'
 
 describe('Hooks', () => {
   let hooks: Hooks

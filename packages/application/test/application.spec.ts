@@ -1,7 +1,7 @@
 import { CoreInjectables } from '@nmtjs/core'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { Application } from '../lib/application.ts'
-import { AppInjectables } from '../lib/injectables.ts'
+import { Application } from '../src/application.ts'
+import { AppInjectables } from '../src/injectables.ts'
 import { testApp, testPlugin } from './_utils.ts'
 
 describe.sequential('Application', () => {
