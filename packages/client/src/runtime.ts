@@ -12,7 +12,8 @@ import type {
   ClientCallers,
   ResolveAPIContract,
   ResolveClientEvents,
-  RuntimeContractTypeProvider,
+  RuntimeInputContractTypeProvider,
+  RuntimeOutputContractTypeProvider,
 } from './types.ts'
 
 export class RuntimeContractTransformer extends ProtocolBaseTransformer {
@@ -66,8 +67,13 @@ export class RuntimeClient<
   APIContract extends TAnyAPIContract,
   ResolvedAPIContract extends ResolveAPIContract<
     APIContract,
-    RuntimeContractTypeProvider
-  > = ResolveAPIContract<APIContract, RuntimeContractTypeProvider>,
+    RuntimeInputContractTypeProvider,
+    RuntimeOutputContractTypeProvider
+  > = ResolveAPIContract<
+    APIContract,
+    RuntimeInputContractTypeProvider,
+    RuntimeOutputContractTypeProvider
+  >,
 > extends ProtocolBaseClient<ResolveClientEvents<ResolvedAPIContract>> {
   _!: ResolvedAPIContract
   #callers = {} as ClientCallers<ResolvedAPIContract>
