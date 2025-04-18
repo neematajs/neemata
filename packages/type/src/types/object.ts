@@ -2,6 +2,7 @@ import {
   type core,
   object,
   record,
+  strictObject,
   type ZodMiniObject,
   type ZodMiniRecord,
 } from '@zod/mini'
@@ -14,8 +15,8 @@ import type { StringType } from './string.ts'
 export type ObjectTypeProps = { [k: string]: BaseTypeAny }
 export type AnyObjectType = ObjectType<ObjectTypeProps>
 export class ObjectType<T extends ObjectTypeProps = {}> extends BaseType<
-  ZodMiniObject<{ [K in keyof T]: T[K]['encodedZodType'] }>,
-  ZodMiniObject<{ [K in keyof T]: T[K]['decodedZodType'] }>,
+  ZodMiniObject<{ [K in keyof T]: T[K]['encodedZodType'] }, {}>,
+  ZodMiniObject<{ [K in keyof T]: T[K]['decodedZodType'] }, {}>,
   { properties: T }
 > {
   static factory<T extends ObjectTypeProps = {}>(properties: T) {
@@ -32,8 +33,8 @@ export class ObjectType<T extends ObjectTypeProps = {}> extends BaseType<
     }
 
     return new ObjectType<T>({
-      encodedZodType: object(encodeProperties),
-      decodedZodType: object(decodeProperties),
+      encodedZodType: strictObject(encodeProperties),
+      decodedZodType: strictObject(decodeProperties),
       props: { properties },
     })
   }

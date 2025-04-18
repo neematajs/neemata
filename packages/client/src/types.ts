@@ -7,13 +7,25 @@ import type {
 import type { InputType, OutputType } from '@nmtjs/protocol/common'
 import type { BaseTypeAny, NeverType, t } from '@nmtjs/type'
 
-export interface StaticContractTypeProvider extends TypeProvider {
+export interface StaticInputContractTypeProvider extends TypeProvider {
+  output: this['input'] extends BaseTypeAny
+    ? t.infer.input.encoded<this['input']>
+    : never
+}
+
+export interface RuntimeInputContractTypeProvider extends TypeProvider {
   output: this['input'] extends BaseTypeAny
     ? t.infer.input.decoded<this['input']>
     : never
 }
 
-export interface RuntimeContractTypeProvider extends TypeProvider {
+export interface StaticOutputContractTypeProvider extends TypeProvider {
+  output: this['input'] extends BaseTypeAny
+    ? t.infer.decoded<this['input']>
+    : never
+}
+
+export interface RuntimeOutputContractTypeProvider extends TypeProvider {
   output: this['input'] extends BaseTypeAny
     ? t.infer.decoded<this['input']>
     : never
@@ -21,29 +33,36 @@ export interface RuntimeContractTypeProvider extends TypeProvider {
 
 export type ResolveAPIContract<
   C extends TAnyAPIContract = TAnyAPIContract,
-  T extends TypeProvider = TypeProvider,
+  InputTypeProvider extends TypeProvider = TypeProvider,
+  OutputTypeProvider extends TypeProvider = TypeProvider,
 > = {
   [N in keyof C['namespaces'] as C['namespaces'][N]['name']]: {
     procedures: {
       [P in keyof C['namespaces'][N]['procedures'] as C['namespaces'][N]['procedures'][P]['name']]: {
         contract: C['namespaces'][N]['procedures'][P]
         input: InputType<
-          CallTypeProvider<T, C['namespaces'][N]['procedures'][P]['input']>
+          CallTypeProvider<
+            InputTypeProvider,
+            C['namespaces'][N]['procedures'][P]['input']
+          >
         >
         output: C['namespaces'][N]['procedures'][P]['stream'] extends NeverType
           ? OutputType<
-              CallTypeProvider<T, C['namespaces'][N]['procedures'][P]['output']>
+              CallTypeProvider<
+                OutputTypeProvider,
+                C['namespaces'][N]['procedures'][P]['output']
+              >
             >
           : {
               response: OutputType<
                 CallTypeProvider<
-                  T,
+                  OutputTypeProvider,
                   C['namespaces'][N]['procedures'][P]['output']
                 >
               >
               stream: ProtocolServerStreamInterface<
                 CallTypeProvider<
-                  T,
+                  OutputTypeProvider,
                   C['namespaces'][N]['procedures'][P]['stream']
                 >
               >
@@ -53,7 +72,10 @@ export type ResolveAPIContract<
     events: {
       [KE in keyof C['namespaces'][N]['events'] as C['namespaces'][N]['events'][KE]['name']]: {
         payload: OutputType<
-          CallTypeProvider<T, C['namespaces'][N]['events'][KE]['payload']>
+          CallTypeProvider<
+            OutputTypeProvider,
+            C['namespaces'][N]['events'][KE]['payload']
+          >
         >
       }
     }

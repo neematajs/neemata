@@ -9,15 +9,21 @@ import type {
   ClientCallers,
   ResolveAPIContract,
   ResolveClientEvents,
-  StaticContractTypeProvider,
+  StaticInputContractTypeProvider,
+  StaticOutputContractTypeProvider,
 } from './types.ts'
 
 export class StaticClient<
   APIContract extends TAnyAPIContract,
   ResolvedAPIContract extends ResolveAPIContract<
     APIContract,
-    StaticContractTypeProvider
-  > = ResolveAPIContract<APIContract, StaticContractTypeProvider>,
+    StaticInputContractTypeProvider,
+    StaticOutputContractTypeProvider
+  > = ResolveAPIContract<
+    APIContract,
+    StaticInputContractTypeProvider,
+    StaticOutputContractTypeProvider
+  >,
 > extends ProtocolBaseClient<ResolveClientEvents<ResolvedAPIContract>> {
   _!: ResolvedAPIContract
 
