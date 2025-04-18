@@ -52,17 +52,17 @@ export {
 
 export namespace type {
   export namespace infer {
-    export type decoded<T extends BaseTypeAny<any>> =
+    export type decoded<T extends BaseTypeAny> =
       T['decodedZodType']['_zod']['output']
 
-    export type encoded<T extends BaseTypeAny<any>> =
+    export type encoded<T extends BaseTypeAny> =
       T['encodedZodType']['_zod']['output']
 
     export namespace input {
-      export type decoded<T extends BaseTypeAny<any>> =
+      export type decoded<T extends BaseTypeAny> =
         T['decodedZodType']['_zod']['input']
 
-      export type encoded<T extends BaseTypeAny<any>> =
+      export type encoded<T extends BaseTypeAny> =
         T['encodedZodType']['_zod']['input']
     }
   }
@@ -96,3 +96,5 @@ export namespace type {
 }
 
 export { type as t }
+
+export { prettifyError, treeifyError } from '@zod/mini'

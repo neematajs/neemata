@@ -8,18 +8,16 @@ import {
   type Dependencies,
   type Logger,
 } from '@nmtjs/core'
-import { ErrorCode, ProtocolBlob } from '@nmtjs/protocol/common'
+import { ErrorCode } from '@nmtjs/protocol/common'
 import {
   type Connection,
   type ProtocolApi,
   type ProtocolApiCallOptions,
   type ProtocolApiCallResult,
-  ProtocolClientStream,
   ProtocolError,
   ProtocolInjectables,
-  ProtocolServerStream,
 } from '@nmtjs/protocol/server'
-import { type BaseType, NeemataTypeError, NeverType } from '@nmtjs/type'
+import { NeemataTypeError, NeverType, prettifyError } from '@nmtjs/type'
 import type { ApplicationOptions } from './application.ts'
 import type { AnyNamespace } from './namespace.ts'
 import { type AnyBaseProcedure, isIterableResponse } from './procedure.ts'
@@ -263,7 +261,7 @@ export class Api implements ProtocolApi {
         if (error instanceof NeemataTypeError)
           throw new ApiError(
             ErrorCode.ValidationError,
-            'Input validation error',
+            `Input validation error: \n${prettifyError(error)}`,
             error.issues,
           )
         throw error
