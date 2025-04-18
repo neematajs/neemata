@@ -2,7 +2,6 @@ import {
   type core,
   object,
   record,
-  strictObject,
   type ZodMiniObject,
   type ZodMiniRecord,
 } from '@zod/mini'
