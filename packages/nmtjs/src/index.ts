@@ -35,8 +35,8 @@ export namespace neemata {
   export const lazy = createLazyInjectable
   export const factory = createFactoryInjectable
   export const task = createTask
-  export const procedure = createContractProcedure
-  export const namespace = createContractNamespace
+  export const procedure = createProcedure
+  export const namespace = createNamespace
   export const middleware = createMiddleware
   export const guard = createGuard
   export const filter = createFilter
@@ -51,9 +51,9 @@ export namespace neemata {
     console: createConsolePrettyDestination,
   }
 
-  export namespace contractless {
-    export const procedure = createProcedure
-    export const namespace = createNamespace
+  export namespace contract {
+    export const procedure = createContractProcedure
+    export const namespace = createContractNamespace
   }
 }
 

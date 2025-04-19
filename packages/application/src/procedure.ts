@@ -6,7 +6,13 @@ import {
 } from '@nmtjs/contract'
 import type { Dependant, Dependencies, DependencyContext } from '@nmtjs/core'
 import type { ProtocolAnyIterable } from '@nmtjs/protocol/server'
-import { type BaseType, type CustomType, type NeverType, t } from '@nmtjs/type'
+import {
+  type BaseType,
+  type CustomType,
+  type NeverType,
+  t,
+  type zod,
+} from '@nmtjs/type'
 import type { AnyGuard, AnyMiddleware } from './api.ts'
 import {
   kIterableResponse,
@@ -42,8 +48,15 @@ export interface Procedure<
   ProcedureDeps extends Dependencies,
 > extends BaseProcedure<ProcedureContract, ProcedureDeps> {
   handler: ProcedureHandlerType<
-    ProcedureContract['input'],
-    ProcedureContract['output'],
+    InputType<t.infer.decoded.output<ProcedureContract['input']>>,
+    ProcedureContract['stream'] extends NeverType
+      ? OutputType<t.infer.decoded.input<ProcedureContract['output']>>
+      : RPCStreamResponse<
+          t.infer.decoded.input<
+            Exclude<ProcedureContract['stream'], undefined | boolean>
+          >,
+          OutputType<t.infer.decoded.input<ProcedureContract['output']>>
+        >,
     ProcedureDeps
   >
   [kProcedure]: any
@@ -95,27 +108,27 @@ export type CreateProcedureParams<
       middlewares?: AnyMiddleware[]
       metadata?: Metadata[]
       handler: ProcedureHandlerType<
-        InputType<t.infer.decoded<ProcedureContract['input']>>,
+        InputType<t.infer.decoded.output<ProcedureContract['input']>>,
         ProcedureContract['stream'] extends NeverType
-          ? OutputType<t.infer.input.decoded<ProcedureContract['output']>>
+          ? OutputType<t.infer.decoded.input<ProcedureContract['output']>>
           : RPCStreamResponse<
-              t.infer.input.decoded<
+              t.infer.decoded.input<
                 Exclude<ProcedureContract['stream'], undefined | boolean>
               >,
-              OutputType<t.infer.input.decoded<ProcedureContract['output']>>
+              OutputType<t.infer.decoded.input<ProcedureContract['output']>>
             >,
         ProcedureDeps
       >
     }
   | ProcedureHandlerType<
-      InputType<t.infer.decoded<ProcedureContract['input']>>,
+      InputType<t.infer.decoded.output<ProcedureContract['input']>>,
       ProcedureContract['stream'] extends NeverType
-        ? OutputType<t.infer.input.decoded<ProcedureContract['output']>>
+        ? OutputType<t.infer.decoded.input<ProcedureContract['output']>>
         : RPCStreamResponse<
-            t.infer.input.decoded<
+            t.infer.decoded.input<
               Exclude<ProcedureContract['stream'], undefined | boolean>
             >,
-            OutputType<t.infer.input.decoded<ProcedureContract['output']>>
+            OutputType<t.infer.decoded.input<ProcedureContract['output']>>
           >,
       ProcedureDeps
     >
@@ -216,24 +229,26 @@ export function createProcedure<
         middlewares?: AnyMiddleware[]
         metadata?: Metadata[]
         handler: ProcedureHandlerType<
-          TInput extends BaseType ? InputType<t.infer.decoded<TInput>> : never,
+          TInput extends BaseType
+            ? InputType<t.infer.decoded.output<TInput>>
+            : never,
           TStream extends undefined
             ? TOutput extends BaseType
-              ? t.infer.input.decoded<TOutput>
+              ? t.infer.decoded.input<TOutput>
               : Return
             : TOutput extends BaseType
               ? RPCStreamResponse<
                   TStream extends true
                     ? Stream
-                    : t.infer.input.decoded<
+                    : t.infer.decoded.input<
                         Exclude<TStream, undefined | boolean>
                       >,
-                  t.infer.input.decoded<TOutput>
+                  t.infer.decoded.input<TOutput>
                 >
               : RPCStreamResponse<
                   TStream extends true
                     ? Stream
-                    : t.infer.input.decoded<
+                    : t.infer.decoded.input<
                         Exclude<TStream, undefined | boolean>
                       >,
                   Return
@@ -242,7 +257,9 @@ export function createProcedure<
         >
       }
     | ProcedureHandlerType<
-        TInput extends BaseType ? InputType<t.infer.decoded<TInput>> : never,
+        TInput extends BaseType
+          ? InputType<t.infer.decoded.output<TInput>>
+          : never,
         TStream extends undefined
           ? TOutput extends BaseType
             ? never
@@ -253,7 +270,12 @@ export function createProcedure<
 ): Procedure<
   TProcedureContract<
     TInput extends BaseType ? TInput : NeverType,
-    TOutput extends BaseType ? TOutput : CustomType<JsonPrimitive<Return>>,
+    TOutput extends BaseType
+      ? TOutput
+      : CustomType<
+          JsonPrimitive<Return>,
+          zod.ZodMiniCustom<JsonPrimitive<Return>, JsonPrimitive<Return>>
+        >,
     TStream extends BaseType
       ? TStream
       : TStream extends true

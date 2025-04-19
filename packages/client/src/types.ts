@@ -9,25 +9,25 @@ import type { BaseTypeAny, NeverType, t } from '@nmtjs/type'
 
 export interface StaticInputContractTypeProvider extends TypeProvider {
   output: this['input'] extends BaseTypeAny
-    ? t.infer.input.encoded<this['input']>
+    ? t.infer.encoded.input<this['input']>
     : never
 }
 
 export interface RuntimeInputContractTypeProvider extends TypeProvider {
   output: this['input'] extends BaseTypeAny
-    ? t.infer.input.decoded<this['input']>
+    ? t.infer.decoded.input<this['input']>
     : never
 }
 
 export interface StaticOutputContractTypeProvider extends TypeProvider {
   output: this['input'] extends BaseTypeAny
-    ? t.infer.decoded<this['input']>
+    ? t.infer.encoded.output<this['input']>
     : never
 }
 
 export interface RuntimeOutputContractTypeProvider extends TypeProvider {
   output: this['input'] extends BaseTypeAny
-    ? t.infer.decoded<this['input']>
+    ? t.infer.decoded.output<this['input']>
     : never
 }
 
@@ -95,7 +95,7 @@ export type ClientCallers<Resolved extends ResolveAPIContract> = {
     [P in keyof Resolved[N]['procedures']]: (
       ...args: Resolved[N]['procedures'][P]['input'] extends NeverType
         ? [options?: ProtocolBaseClientCallOptions]
-        : t.infer.input.encoded<
+        : t.infer.encoded.input<
               Resolved[N]['procedures'][P]['contract']['input']
             > extends undefined
           ? [

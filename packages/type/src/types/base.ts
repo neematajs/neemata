@@ -7,6 +7,7 @@ import {
   type ZodMiniAny,
   type ZodMiniArray,
   type ZodMiniBoolean,
+  type ZodMiniCustom,
   type ZodMiniDefault,
   type ZodMiniEnum,
   type ZodMiniInterface,
@@ -26,7 +27,7 @@ import {
 
 export type PrimitiveValueType = string | number | boolean | null
 
-export type SimpleZodType =
+export type PrimitiveZodType =
   | ZodMiniNever
   | ZodMiniDefault
   | ZodMiniNullable
@@ -43,7 +44,8 @@ export type SimpleZodType =
   | ZodMiniIntersection
   | ZodMiniInterface
   | ZodMiniRecord
-  | ZodMiniPipe
+
+export type SimpleZodType = ZodMiniType
 
 export type ZodType = SimpleZodType | ZodMiniType
 
