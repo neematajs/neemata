@@ -2,6 +2,7 @@ import {
   type core,
   object,
   record,
+  strictObject,
   type ZodMiniObject,
   type ZodMiniRecord,
 } from '@zod/mini'
@@ -32,8 +33,8 @@ export class ObjectType<T extends ObjectTypeProps = {}> extends BaseType<
     }
 
     return new ObjectType<T>({
-      encodedZodType: object(encodeProperties),
-      decodedZodType: object(decodeProperties),
+      encodedZodType: strictObject(encodeProperties),
+      decodedZodType: strictObject(decodeProperties),
       props: { properties },
     })
   }
