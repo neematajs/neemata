@@ -59,6 +59,7 @@ export type TypeMetadata<T = any> = {
 export type TypeParams = {
   encode?: (value: any) => any
   metadata?: TypeMetadata
+  checks: Array<core.CheckFn<any> | core.$ZodCheck<any>>
 }
 
 export type DefaultTypeParams = {
@@ -90,18 +91,18 @@ export abstract class BaseType<
     encodedZodType,
     decodedZodType = encodedZodType as unknown as DecodedZodType,
     props = {} as Props,
-    params = {} as TypeParams,
+    params = {} as Partial<TypeParams>,
   }: {
     encodedZodType: EncodedZodType
     decodedZodType?: DecodedZodType
     props?: Props
-    params?: TypeParams
+    params?: Partial<TypeParams>
   }) {
     this.encodedZodType = encodedZodType
     this.decodedZodType = decodedZodType
 
     this.props = props
-    this.params = params
+    this.params = Object.assign({ checks: [] }, params)
   }
 
   optional(): OptionalType<this> {

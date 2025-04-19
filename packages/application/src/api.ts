@@ -17,7 +17,7 @@ import {
   ProtocolError,
   ProtocolInjectables,
 } from '@nmtjs/protocol/server'
-import { NeemataTypeError, NeverType, prettifyError } from '@nmtjs/type'
+import { NeemataTypeError, NeverType, zod } from '@nmtjs/type'
 import type { ApplicationOptions } from './application.ts'
 import type { AnyNamespace } from './namespace.ts'
 import { type AnyBaseProcedure, isIterableResponse } from './procedure.ts'
@@ -261,7 +261,7 @@ export class Api implements ProtocolApi {
         if (error instanceof NeemataTypeError)
           throw new ApiError(
             ErrorCode.ValidationError,
-            `Input validation error: \n${prettifyError(error)}`,
+            `Input validation error: \n${zod.prettifyError(error)}`,
             error.issues,
           )
         throw error

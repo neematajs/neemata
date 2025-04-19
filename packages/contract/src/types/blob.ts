@@ -1,5 +1,5 @@
 import type { ProtocolBlobInterface } from '@nmtjs/protocol/common'
-import { t } from '@nmtjs/type'
+import { t, zod } from '@nmtjs/type'
 
 export interface BlobOptions {
   maxSize?: number
@@ -7,8 +7,8 @@ export interface BlobOptions {
 }
 
 export const BlobType = (options: BlobOptions = {}) =>
-  t.custom<ProtocolBlobInterface>(
-    (value) => {
+  t.custom<ProtocolBlobInterface>({
+    decode: (value) => {
       // TODO: this should be registered separately for server and client
       // ref: https://github.com/sinclairzx81/typebox/issues/977
       if ('metadata' in value) {
@@ -21,5 +21,6 @@ export const BlobType = (options: BlobOptions = {}) =>
       }
       return value
     },
-    (value) => value,
-  )
+    encode: (value) => value,
+    type: zod.any(),
+  })
