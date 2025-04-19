@@ -51,18 +51,18 @@ export {
 
 export namespace type {
   export namespace infer {
-    export type decoded<T extends BaseTypeAny> =
-      T['decodedZodType']['_zod']['output']
-
-    export type encoded<T extends BaseTypeAny> =
-      T['encodedZodType']['_zod']['output']
-
-    export namespace input {
-      export type decoded<T extends BaseTypeAny> =
+    export namespace decoded {
+      export type input<T extends BaseTypeAny> =
         T['decodedZodType']['_zod']['input']
+      export type output<T extends BaseTypeAny> =
+        T['decodedZodType']['_zod']['output']
+    }
 
-      export type encoded<T extends BaseTypeAny> =
+    export namespace encoded {
+      export type input<T extends BaseTypeAny> =
         T['encodedZodType']['_zod']['input']
+      export type output<T extends BaseTypeAny> =
+        T['encodedZodType']['_zod']['output']
     }
   }
 

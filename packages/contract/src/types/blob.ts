@@ -22,5 +22,4 @@ export const BlobType = (options: BlobOptions = {}) =>
       return value
     },
     encode: (value) => value,
-    type: zod.any(),
   })
