@@ -33,8 +33,8 @@ export class ObjectType<T extends ObjectTypeProps = {}> extends BaseType<
     }
 
     return new ObjectType<T>({
-      encodedZodType: strictObject(encodeProperties),
-      decodedZodType: strictObject(decodeProperties),
+      encodedZodType: object(encodeProperties),
+      decodedZodType: object(decodeProperties),
       props: { properties },
     })
   }

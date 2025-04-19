@@ -1,3 +1,4 @@
+import * as zod from '@zod/mini'
 import { AnyType } from './types/any.ts'
 import { ArrayType } from './types/array.ts'
 import type { BaseTypeAny } from './types/base.ts'
@@ -7,11 +8,7 @@ import { DateType } from './types/date.ts'
 import { EnumType } from './types/enum.ts'
 import { LiteralType } from './types/literal.ts'
 import { NeverType } from './types/never.ts'
-import {
-  // BigIntType,
-  IntegerType,
-  NumberType,
-} from './types/number.ts'
+import { BigIntType, IntegerType, NumberType } from './types/number.ts'
 import {
   extend,
   keyof,
@@ -28,6 +25,8 @@ import {
   IntersactionType,
   UnionType,
 } from './types/union.ts'
+
+zod.config(zod.core.locales.en())
 
 export { NeemataTypeError } from './types/base.ts'
 export { BaseType, type BaseTypeAny } from './types/base.ts'
@@ -72,7 +71,7 @@ export namespace type {
   export const string = StringType.factory
   export const number = NumberType.factory
   export const integer = IntegerType.factory
-  // export const bitint = BigIntType.factory
+  export const bitint = BigIntType.factory
   export const literal = LiteralType.factory
   export const enumeration = EnumType.factory
   export const date = DateType.factory
@@ -95,6 +94,4 @@ export namespace type {
   })
 }
 
-export { type as t }
-
-export { prettifyError, treeifyError } from '@zod/mini'
+export { type as t, zod }

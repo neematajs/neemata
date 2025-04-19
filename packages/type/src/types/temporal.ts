@@ -1,9 +1,4 @@
-import {
-  custom,
-  string,
-  type ZodMiniCustom,
-  type ZodMiniString,
-} from '@zod/mini'
+import { iso, regex, string, type ZodMiniString } from '@zod/mini'
 import { Temporal } from 'temporal-polyfill'
 import { CustomType, TransformType } from './custom.ts'
 
@@ -34,137 +29,118 @@ const createTemporalTransformer = <T extends Types>(
   } as TemporalTransformer<T>
 }
 
+type EncodedType = ZodMiniString<string>
+
 export class PlainDateType extends TransformType<
   Temporal.PlainDate,
-  ZodMiniString
+  EncodedType
 > {
   static transformer = createTemporalTransformer('PlainDate')
 
   static factory() {
-    return CustomType.factory<
-      Temporal.PlainDate,
-      ZodMiniString,
-      ZodMiniCustom<Temporal.PlainDate, Temporal.PlainDate>
-    >(
-      PlainDateType.transformer.decode,
-      PlainDateType.transformer.encode,
-      string(),
-    )
+    return CustomType.factory<Temporal.PlainDate, EncodedType>({
+      decode: PlainDateType.transformer.decode,
+      encode: PlainDateType.transformer.encode,
+      type: iso.date(),
+      error: 'Invalid date format',
+    })
   }
 }
 
 export class PlainDateTimeType extends TransformType<
   Temporal.PlainDateTime,
-  ZodMiniString
+  EncodedType
 > {
   static transformer = createTemporalTransformer('PlainDateTime')
 
   static factory() {
-    return CustomType.factory<
-      Temporal.PlainDateTime,
-      ZodMiniString,
-      ZodMiniCustom<Temporal.PlainDateTime, Temporal.PlainDateTime>
-    >(
-      PlainDateTimeType.transformer.decode,
-      PlainDateTimeType.transformer.encode,
-      string(),
-    )
+    return CustomType.factory<Temporal.PlainDateTime, EncodedType>({
+      decode: PlainDateTimeType.transformer.decode,
+      encode: PlainDateTimeType.transformer.encode,
+      type: iso.datetime({ local: true }),
+      error: 'Invalid datetime format',
+    })
   }
 }
 
 export class ZonedDateTimeType extends TransformType<
   Temporal.ZonedDateTime,
-  ZodMiniString
+  EncodedType
 > {
   static transformer = createTemporalTransformer('ZonedDateTime', (value) =>
     Temporal.Instant.from(value).toZonedDateTimeISO('UTC'),
   )
 
   static factory() {
-    return CustomType.factory<
-      Temporal.ZonedDateTime,
-      ZodMiniString,
-      ZodMiniCustom<Temporal.ZonedDateTime, Temporal.ZonedDateTime>
-    >(
-      ZonedDateTimeType.transformer.decode,
-      ZonedDateTimeType.transformer.encode,
-      string(),
-    )
+    return CustomType.factory<Temporal.ZonedDateTime, EncodedType>({
+      decode: ZonedDateTimeType.transformer.decode,
+      encode: ZonedDateTimeType.transformer.encode,
+      type: iso.datetime({ local: true }),
+      error: 'Invalid datetime format',
+    })
   }
 }
 
 export class PlainTimeType extends TransformType<
   Temporal.PlainTime,
-  ZodMiniString
+  EncodedType
 > {
   static transformer = createTemporalTransformer('PlainTime')
 
   static factory() {
-    return CustomType.factory<
-      Temporal.PlainTime,
-      ZodMiniString,
-      ZodMiniCustom<Temporal.PlainTime, Temporal.PlainTime>
-    >(
-      PlainTimeType.transformer.decode,
-      PlainTimeType.transformer.encode,
-      string(),
-    )
+    return CustomType.factory<Temporal.PlainTime, EncodedType>({
+      decode: PlainTimeType.transformer.decode,
+      encode: PlainTimeType.transformer.encode,
+      type: iso.time(),
+      error: 'Invalid time format',
+    })
   }
 }
 
 export class DurationType extends TransformType<
   Temporal.Duration,
-  ZodMiniString
+  EncodedType
 > {
   static transformer = createTemporalTransformer('Duration')
 
   static factory() {
-    return CustomType.factory<
-      Temporal.Duration,
-      ZodMiniString,
-      ZodMiniCustom<Temporal.Duration, Temporal.Duration>
-    >(
-      DurationType.transformer.decode,
-      DurationType.transformer.encode,
-      string(),
-    )
+    return CustomType.factory<Temporal.Duration, EncodedType>({
+      decode: DurationType.transformer.decode,
+      encode: DurationType.transformer.encode,
+      type: iso.duration(),
+      error: 'Invalid duration format',
+    })
   }
 }
 
 export class PlainYearMonthType extends TransformType<
   Temporal.PlainYearMonth,
-  ZodMiniString
+  EncodedType
 > {
   static transformer = createTemporalTransformer('PlainYearMonth')
 
   static factory() {
-    return CustomType.factory<
-      Temporal.PlainYearMonth,
-      ZodMiniString,
-      ZodMiniCustom<Temporal.PlainYearMonth, Temporal.PlainYearMonth>
-    >(
-      PlainYearMonthType.transformer.decode,
-      PlainYearMonthType.transformer.encode,
-      string(),
-    )
+    return CustomType.factory<Temporal.PlainYearMonth, EncodedType>({
+      decode: PlainYearMonthType.transformer.decode,
+      encode: PlainYearMonthType.transformer.encode,
+      type: string().check(regex(/^\d{4}-\d{2}$/)),
+      error: 'Invalid year-month format',
+    })
   }
 }
 
 export class PlainMonthDayType extends TransformType<
   Temporal.PlainMonthDay,
-  ZodMiniString
+  EncodedType
 > {
   static transformer = createTemporalTransformer('PlainMonthDay')
 
   static factory() {
-    return CustomType.factory<
-      Temporal.PlainMonthDay,
-      ZodMiniString,
-      ZodMiniCustom<Temporal.PlainMonthDay, Temporal.PlainMonthDay>
-    >(
-      PlainMonthDayType.transformer.decode,
-      PlainMonthDayType.transformer.encode,
-      string(),
-    )
+    return CustomType.factory<Temporal.PlainMonthDay, EncodedType>({
+      decode: PlainMonthDayType.transformer.decode,
+      encode: PlainMonthDayType.transformer.encode,
+      type: string().check(regex(/^\d{2}-\d{2}$/)),
+      error: 'Invalid month-day format',
+    })
   }
 }

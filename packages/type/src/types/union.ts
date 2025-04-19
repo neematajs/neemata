@@ -39,15 +39,10 @@ export class IntersactionType<
   static factory<
     T extends readonly [BaseType, BaseType] = readonly [BaseType, BaseType],
   >(...options: T) {
+    const [first, second] = options
     return new IntersactionType<T>({
-      encodedZodType: intersection(
-        options[0].encodedZodType,
-        options[1].encodedZodType,
-      ),
-      decodedZodType: intersection(
-        options[0].decodedZodType,
-        options[1].decodedZodType,
-      ),
+      encodedZodType: intersection(first.encodedZodType, second.encodedZodType),
+      decodedZodType: intersection(first.decodedZodType, second.decodedZodType),
       props: { options },
     })
   }
