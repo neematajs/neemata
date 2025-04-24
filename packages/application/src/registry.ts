@@ -1,6 +1,7 @@
 import {
   type AnyInjectable,
   type Depedency,
+  type Dependant,
   getDepedencencyInjectable,
   getInjectableScope,
   type Logger,
@@ -89,6 +90,40 @@ export class ApplicationRegistry extends ProtocolRegistry {
     if (hasNonInvalidScopeDeps([guard]))
       throw new Error(scopeErrorMessage('Guard'))
     this.guards.add(guard)
+  }
+
+  *getDependants(): Generator<Dependant> {
+    yield* super.getDependants()
+
+    for (const filter of this.filters.values()) {
+      yield filter
+    }
+
+    for (const middleware of this.middlewares.values()) {
+      yield middleware
+    }
+
+    for (const guard of this.guards.values()) {
+      yield guard
+    }
+
+    for (const task of this.tasks.values()) {
+      yield task
+    }
+
+    for (const namespace of this.namespaces.values()) {
+      for (const procedure of namespace.procedures.values()) {
+        yield procedure
+      }
+
+      for (const guard of namespace.guards.values()) {
+        yield guard
+      }
+
+      for (const middleware of namespace.middlewares.values()) {
+        yield middleware
+      }
+    }
   }
 
   clear() {
