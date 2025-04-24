@@ -95,9 +95,9 @@ export type ClientCallers<Resolved extends ResolveAPIContract> = {
     [P in keyof Resolved[N]['procedures']]: (
       ...args: Resolved[N]['procedures'][P]['input'] extends NeverType
         ? [options?: ProtocolBaseClientCallOptions]
-        : t.infer.encoded.input<
+        : undefined extends t.infer.encoded.input<
               Resolved[N]['procedures'][P]['contract']['input']
-            > extends undefined
+            >
           ? [
               data?: Resolved[N]['procedures'][P]['input'],
               options?: ProtocolBaseClientCallOptions,
