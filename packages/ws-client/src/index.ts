@@ -2,6 +2,7 @@ import {
   type BaseClientFormat,
   EventEmitter,
   type ProtocolTransport,
+  type ProtocolTransportEventMap,
 } from '@nmtjs/protocol/client'
 import {
   type ClientMessageType,
@@ -32,7 +33,7 @@ export type WebSocketClientTransportOptions = {
 }
 
 export class WebSocketClientTransport
-  extends EventEmitter
+  extends EventEmitter<ProtocolTransportEventMap>
   implements ProtocolTransport
 {
   #webSocket: WebSocket | null = null

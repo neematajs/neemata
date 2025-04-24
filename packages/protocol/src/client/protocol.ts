@@ -146,15 +146,15 @@ export class ProtocolServerStreams {
   }
 }
 
+export type ProtocolTransportEventMap = {
+  [K in `${ServerMessageType}`]: [ArrayBuffer]
+} & {
+  connected: []
+  disconnected: []
+}
+
 export interface ProtocolTransport
-  extends EventEmitter<
-    {
-      [K in `${ServerMessageType}`]: [ArrayBuffer]
-    } & {
-      connected: []
-      disconnected: []
-    }
-  > {
+  extends EventEmitter<ProtocolTransportEventMap> {
   connect(
     auth: any,
     contentType: BaseClientFormat['contentType'],

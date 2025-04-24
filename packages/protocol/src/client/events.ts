@@ -14,7 +14,10 @@ export class EventEmitter<
     string
   >,
 > {
-  static once(ee: EventEmitter, event: string) {
+  static once<
+    T extends EventEmitter,
+    E extends T extends EventEmitter<any, infer Event> ? Event : never,
+  >(ee: T, event: E) {
     return new Promise((resolve) => ee.once(event, resolve))
   }
 
