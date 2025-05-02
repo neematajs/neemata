@@ -20,6 +20,7 @@ import {
   RecordType,
 } from './types/object.ts'
 import { StringType } from './types/string.ts'
+import { TupleType } from './types/tuple.ts'
 import {
   DiscriminatedUnionType,
   IntersactionType,
@@ -74,6 +75,7 @@ export namespace type {
   export const bitint = BigIntType.factory
   export const literal = LiteralType.factory
   export const enumeration = EnumType.factory
+  export const tuple = TupleType.factory
   export const date = DateType.factory
   export const array = ArrayType.factory
   export const record = RecordType.factory
