@@ -22,7 +22,7 @@ import {
 import { type AnyFilter, Api } from './api.ts'
 import { WorkerType } from './enums.ts'
 import { AppInjectables } from './injectables.ts'
-import type { AnyNamespace, Namespace } from './namespace.ts'
+import type { AnyNamespace } from './namespace.ts'
 import { APP_COMMAND, ApplicationRegistry, printRegistry } from './registry.ts'
 import { type AnyTask, type BaseTaskExecutor, TasksRunner } from './task.ts'
 import type {

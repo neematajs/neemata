@@ -110,11 +110,7 @@ export interface BaseClassInjectable<
   D extends Dependencies = {},
   S extends Scope = Scope.Global,
 > extends Dependant<D> {
-  new (
-    ...args: any[]
-  ): T & {
-    $context: DependencyContext<D>
-  }
+  new (...args: any[]): T
   scope: S
   [kInjectable]: any
   [kClassInjectable]: any
@@ -206,12 +202,13 @@ export function createOptionalInjectable<T extends AnyInjectable>(
 export function createLazyInjectable<T, S extends Scope = Scope.Global>(
   scope = Scope.Global as S,
   label?: string,
+  stackTraceDepth = 0,
 ): LazyInjectable<T, S> {
   return Object.freeze({
     scope,
     dependencies: {},
     label,
-    stack: tryCaptureStackTrace(),
+    stack: tryCaptureStackTrace(stackTraceDepth),
     [kInjectable]: true,
     [kLazyInjectable]: true as unknown as T,
   })
@@ -220,13 +217,14 @@ export function createLazyInjectable<T, S extends Scope = Scope.Global>(
 export function createValueInjectable<T>(
   value: T,
   label?: string,
+  stackTraceDepth = 0,
 ): ValueInjectable<T> {
   return Object.freeze({
     value,
     scope: Scope.Global,
     dependencies: {},
     label,
-    stack: tryCaptureStackTrace(),
+    stack: tryCaptureStackTrace(stackTraceDepth),
     [kInjectable]: true,
     [kValueInjectable]: true,
   })
@@ -248,6 +246,7 @@ export function createFactoryInjectable<
       }
     | InjectableFactoryType<P, D>,
   label?: string,
+  stackTraceDepth = 0,
 ): FactoryInjectable<null extends T ? P : T, D, S, P> {
   const isFactory = typeof paramsOrFactory === 'function'
   const params = isFactory ? { factory: paramsOrFactory } : paramsOrFactory
@@ -258,7 +257,7 @@ export function createFactoryInjectable<
     dispose: params.dispose,
     pick: params.pick ?? ((instance: P) => instance as unknown as T),
     label,
-    stack: tryCaptureStackTrace(),
+    stack: tryCaptureStackTrace(stackTraceDepth),
     [kInjectable]: true,
     [kFactoryInjectable]: true,
   }
@@ -281,12 +280,12 @@ export const createClassInjectable = <
 >(
   dependencies: D = {} as D,
   scope: S = Scope.Global as S,
+  stackTraceDepth = 0,
 ): ClassInjectable<ClassInstance<typeof klass>, D, S> => {
-  const stack = tryCaptureStackTrace()
   const klass = class {
     static dependencies = dependencies
     static scope = scope
-    static stack = stack
+    static stack = tryCaptureStackTrace(stackTraceDepth + 2)
     static [kInjectable] = true
     static [kClassInjectable] = true
 
@@ -300,11 +299,10 @@ export const createClassInjectable = <
     protected async $onCreate() {}
     protected async $onDispose() {}
   }
-
   return klass
 }
 
-export function createExtenableClassInjectable<
+export function createExtendableClassInjectable<
   B extends ClassConstructor<any>,
   D extends Dependencies = {},
   S extends Scope = Scope.Global,
@@ -312,9 +310,10 @@ export function createExtenableClassInjectable<
   baseClass: B,
   dependencies: D = {} as D,
   scope: S = Scope.Global as S,
+  stackTraceDepth = 0,
 ): B extends ClassInjectable<any>
   ? ClassInjectable<ClassInstance<B>, D, S>
-  : ClassInjectable<ClassInstance<B>, D, S, ClassConstructorArgs<B>> {
+  : ClassInjectable<ClassInstance<B>, D, S, ClassConstructorArgs<B, []>> {
   if (isClassInjectable(baseClass)) {
     dependencies = Object.assign({}, baseClass.dependencies, dependencies)
     if (compareScope(scope, '<', baseClass.scope)) {
@@ -323,13 +322,11 @@ export function createExtenableClassInjectable<
       )
     }
   }
-
-  const stack = tryCaptureStackTrace()
   // @ts-expect-error
   return class extends baseClass {
     static dependencies = dependencies
     static scope = scope
-    static stack = stack
+    static stack = tryCaptureStackTrace(stackTraceDepth)
     static [kInjectable] = true
     static [kClassInjectable] = true
 
@@ -358,6 +355,58 @@ export function createExtenableClassInjectable<
       await super.$onDispose?.()
     }
   }
+}
+
+export type DependenciesSubstitution<T extends Dependencies> = {
+  [K in keyof T]?: T[K] extends AnyInjectable<infer Type>
+    ? AnyInjectable<Type> | DependenciesSubstitution<T[K]['dependencies']>
+    : never
+}
+
+export function substitute<
+  T extends
+    | FactoryInjectable<any, any, Scope>
+    | BaseClassInjectable<any, any, Scope>,
+>(
+  injectable: T,
+  substitution: DependenciesSubstitution<T['dependencies']>,
+  stackTraceDepth = 0,
+): T {
+  const dependencies = { ...injectable.dependencies }
+  const depth = stackTraceDepth + 1
+  for (const key in substitution) {
+    const value = substitution[key]!
+    if (key in dependencies) {
+      const original = dependencies[key]
+      if (isInjectable(value)) {
+        dependencies[key] = value
+      } else if (isClassInjectable(original) || isFactoryInjectable(original)) {
+        dependencies[key] = substitute(original, value, depth)
+      }
+    }
+  }
+
+  if (isClassInjectable(injectable)) {
+    // @ts-expect-error
+    return createExtendableClassInjectable(
+      injectable,
+      dependencies,
+      injectable.scope,
+      depth,
+    )
+  } else if (isFactoryInjectable(injectable)) {
+    // @ts-expect-error
+    return createFactoryInjectable(
+      {
+        ...injectable,
+        dependencies,
+      },
+      injectable.label,
+      depth,
+    )
+  }
+
+  throw new Error('Invalid injectable type')
 }
 
 export function compareScope(

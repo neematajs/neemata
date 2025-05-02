@@ -12,12 +12,13 @@ import { Scope } from '../src/enums.ts'
 import {
   CoreInjectables,
   createClassInjectable,
-  createExtenableClassInjectable,
+  createExtendableClassInjectable,
   createFactoryInjectable,
   createLazyInjectable,
   createOptionalInjectable,
   createValueInjectable,
   getInjectableScope,
+  substitute,
 } from '../src/injectables.ts'
 import { Registry } from '../src/registry.ts'
 import { testLogger } from './_utils.ts'
@@ -96,7 +97,7 @@ describe('Injectable', () => {
 
   it('should create an extendable class injectable', () => {
     class SomeClass {}
-    class Injectable extends createExtenableClassInjectable(SomeClass) {}
+    class Injectable extends createExtendableClassInjectable(SomeClass) {}
     expect(Injectable).toBeDefined()
     expect(Injectable.dependencies).toStrictEqual({})
     expect(Injectable.scope).toBe(Scope.Global)
@@ -118,7 +119,7 @@ describe('Injectable', () => {
     const scope = Scope.Global
     const scope2 = Scope.Connection
     class injectable extends createClassInjectable({ dep1 }, scope) {}
-    class injectable2 extends createExtenableClassInjectable(
+    class injectable2 extends createExtendableClassInjectable(
       injectable,
       { dep2 },
       scope2,
@@ -137,8 +138,49 @@ describe('Injectable', () => {
     createLazyInjectable(Scope.Connection)
     class injectable extends createClassInjectable({}, Scope.Connection) {}
     expect(() =>
-      createExtenableClassInjectable(injectable, {}, Scope.Global),
+      createExtendableClassInjectable(injectable, {}, Scope.Global),
     ).toThrow('Invalid scope for injectable')
+  })
+
+  it('should substitue dependencies', () => {
+    const originalValue = 'original'
+    const substitutedValue = 'substituted'
+
+    const dep1 = createValueInjectable(originalValue)
+
+    const inj1 = createFactoryInjectable({
+      dependencies: { dep1 },
+      factory: () => {},
+    })
+
+    const inj2 = createFactoryInjectable({
+      dependencies: { dep2: inj1 },
+      factory: () => {},
+    })
+
+    class inj3 extends createClassInjectable({ inj1, inj2 }) {}
+
+    const inj4 = substitute(inj3, {
+      inj1: { dep1: createValueInjectable(substitutedValue) },
+      inj2: { dep2: { dep1: createValueInjectable(substitutedValue) } },
+    })
+
+    expect(inj4).not.toBe(inj3)
+
+    expect(inj4.dependencies.inj1.dependencies.dep1.value).toBe(
+      substitutedValue,
+    )
+    expect(
+      inj4.dependencies.inj2.dependencies.dep2.dependencies.dep1.value,
+    ).toBe(substitutedValue)
+
+    const inj5 = substitute(inj2, {
+      dep2: { dep1: createValueInjectable(substitutedValue) },
+    })
+    expect(inj5).not.toBe(inj2)
+    expect(inj5.dependencies.dep2.dependencies.dep1.value).toBe(
+      substitutedValue,
+    )
   })
 })
 

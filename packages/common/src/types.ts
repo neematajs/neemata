@@ -9,11 +9,11 @@ export type CallTypeProvider<T extends TypeProvider, V> = (T & {
 
 export type ClassConstructor<T> = new (...args: any[]) => T
 export type ClassInstance<T> = T extends ClassConstructor<infer U> ? U : never
-export type ClassConstructorArgs<T> = T extends new (
+export type ClassConstructorArgs<T, A = never> = T extends new (
   ...args: infer U
 ) => any
   ? U
-  : []
+  : A
 
 export type Callback<T extends any[] = any[], R = any> = (...args: T) => R
 export type OmitFirstItem<T extends any[]> = T extends [any, ...infer U]
