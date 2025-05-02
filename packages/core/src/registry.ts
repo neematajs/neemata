@@ -1,10 +1,10 @@
+import { type Hook, Scope } from './enums.ts'
+import { Hooks, type HookType } from './hooks.ts'
 import {
   type AnyInjectable,
   type Dependant,
   getInjectableScope,
-} from './container.ts'
-import { type Hook, Scope } from './enums.ts'
-import { Hooks, type HookType } from './hooks.ts'
+} from './injectables.ts'
 import type { Logger } from './logger.ts'
 
 export class Registry {
