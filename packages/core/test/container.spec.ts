@@ -1,21 +1,24 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { noopFn } from '../../common/src/index.ts'
 import {
+  kClassInjectable,
   kFactoryInjectable,
   kInjectable,
   kLazyInjectable,
   kValueInjectable,
 } from '../src/constants.ts'
+import { Container } from '../src/container.ts'
+import { Scope } from '../src/enums.ts'
 import {
-  Container,
+  CoreInjectables,
+  createClassInjectable,
+  createExtenableClassInjectable,
   createFactoryInjectable,
   createLazyInjectable,
   createOptionalInjectable,
   createValueInjectable,
   getInjectableScope,
-} from '../src/container.ts'
-import { Scope } from '../src/enums.ts'
-import { CoreInjectables } from '../src/injectables.ts'
+} from '../src/injectables.ts'
 import { Registry } from '../src/registry.ts'
 import { testLogger } from './_utils.ts'
 
@@ -81,6 +84,62 @@ describe('Injectable', () => {
     expect(injectable.dependencies).toHaveProperty('dep1', dep1)
     expect(injectable.dependencies).toHaveProperty('dep2', dep2)
   })
+
+  it('should create a class injectable', () => {
+    class Injectable extends createClassInjectable() {}
+    expect(Injectable).toBeDefined()
+    expect(Injectable.dependencies).toStrictEqual({})
+    expect(Injectable.scope).toBe(Scope.Global)
+    expect(kInjectable in Injectable).toBe(true)
+    expect(kClassInjectable in Injectable).toBe(true)
+  })
+
+  it('should create an extendable class injectable', () => {
+    class SomeClass {}
+    class Injectable extends createExtenableClassInjectable(SomeClass) {}
+    expect(Injectable).toBeDefined()
+    expect(Injectable.dependencies).toStrictEqual({})
+    expect(Injectable.scope).toBe(Scope.Global)
+    expect(kInjectable in Injectable).toBe(true)
+    expect(kClassInjectable in Injectable).toBe(true)
+  })
+
+  it('should create a class injectable with dependencies', () => {
+    const dep1 = createLazyInjectable()
+    const dep2 = createLazyInjectable()
+    class injectable extends createClassInjectable({ dep1, dep2 }) {}
+    expect(injectable.dependencies).toHaveProperty('dep1', dep1)
+    expect(injectable.dependencies).toHaveProperty('dep2', dep2)
+  })
+
+  it('should create an extendable class injectable from another class injectable', () => {
+    const dep1 = createLazyInjectable()
+    const dep2 = createLazyInjectable()
+    const scope = Scope.Global
+    const scope2 = Scope.Connection
+    class injectable extends createClassInjectable({ dep1 }, scope) {}
+    class injectable2 extends createExtenableClassInjectable(
+      injectable,
+      { dep2 },
+      scope2,
+    ) {}
+    expect(injectable2).toBeDefined()
+    expect(injectable2.dependencies).toStrictEqual({
+      dep1,
+      dep2,
+    })
+    expect(injectable2.scope).toBe(Scope.Connection)
+    expect(kInjectable in injectable2).toBe(true)
+    expect(kClassInjectable in injectable2).toBe(true)
+  })
+
+  it('should fail to create an extandable class injectable', () => {
+    createLazyInjectable(Scope.Connection)
+    class injectable extends createClassInjectable({}, Scope.Connection) {}
+    expect(() =>
+      createExtenableClassInjectable(injectable, {}, Scope.Global),
+    ).toThrow('Invalid scope for injectable')
+  })
 })
 
 describe('Container', () => {
@@ -120,7 +179,7 @@ describe('Container', () => {
     await expect(container.resolve(injectable)).resolves.toBe(value)
   })
 
-  it('should resolve dependencies', async () => {
+  it('should resolve factory dependencies', async () => {
     const dep1 = createValueInjectable('dep1' as const)
     const dep2 = createFactoryInjectable({
       dependencies: { dep1 },
@@ -136,7 +195,7 @@ describe('Container', () => {
     expect(deps).toHaveProperty('dep3', 'dep3')
   })
 
-  it('should dispose', async () => {
+  it('should dispose factory injectable', async () => {
     const spy = vi.fn()
     const injectable = createFactoryInjectable({
       factory: () => ({}),
@@ -147,18 +206,14 @@ describe('Container', () => {
     expect(spy).toHaveBeenCalledOnce()
   })
 
-  it('should be cached', async () => {
+  it('should cache factory injectable', async () => {
     const injectable = createFactoryInjectable(() => ({}))
-    const injectable2 = createFactoryInjectable({
-      factory: () => ['1', 2] as const,
-      pick: (instance) => instance[0],
-    })
     const val = await container.resolve(injectable)
     expect(container.contains(injectable)).toBe(true)
     expect(await container.resolve(injectable)).toBe(val)
   })
 
-  it('should handle dispose error', async () => {
+  it('should handle factory injectable dispose error', async () => {
     const injectable = createFactoryInjectable({
       factory: () => ({}),
       dispose: () => {
@@ -167,6 +222,43 @@ describe('Container', () => {
     })
     await container.resolve(injectable)
     await expect(container.dispose()).resolves.not.toThrow()
+  })
+
+  it('should resolve with class', async () => {
+    class injectable extends createClassInjectable() {}
+    const instance = await container.resolve(injectable)
+    expect(instance).toBeDefined()
+    expect(instance).toBeInstanceOf(injectable)
+  })
+
+  it('should resolve class dependencies', async () => {
+    const dep1 = createValueInjectable('dep1' as const)
+    const dep2 = createFactoryInjectable({
+      dependencies: { dep1 },
+      factory: (deps) => deps,
+    })
+    const dep3 = createFactoryInjectable(() => 'dep3' as const)
+    class injectable extends createClassInjectable({ dep2, dep3 }) {}
+    const { $context: deps } = await container.resolve(injectable)
+    expect(deps).toHaveProperty('dep2', { dep1: 'dep1' })
+    expect(deps).toHaveProperty('dep3', 'dep3')
+  })
+
+  it('should call class injectable hooks', async () => {
+    const createSpy = vi.fn()
+    const disposeSpy = vi.fn()
+    class injectable extends createClassInjectable() {
+      protected async $onCreate() {
+        createSpy()
+      }
+      protected async $onDispose() {
+        disposeSpy()
+      }
+    }
+    await container.resolve(injectable)
+    await container.dispose()
+    expect(createSpy).toHaveBeenCalledOnce()
+    expect(disposeSpy).toHaveBeenCalledOnce()
   })
 
   it('should handle concurrent resolutions', async () => {
