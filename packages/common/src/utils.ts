@@ -95,8 +95,13 @@ export function withTimeout(
   })
 }
 
-export function tryCaptureStackTrace() {
-  return new Error().stack?.split('\n').slice(3).join('\n') ?? undefined
+export function tryCaptureStackTrace(depth = 0) {
+  return (
+    new Error().stack
+      ?.split('\n')
+      .slice(3 + depth)
+      .join('\n') ?? undefined
+  )
 }
 
 export function isGeneratorFunction(value: any): value is GeneratorFunction {

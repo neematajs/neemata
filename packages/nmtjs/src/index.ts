@@ -12,7 +12,9 @@ import {
 } from '@nmtjs/application'
 import {
   CoreInjectables,
+  createClassInjectable,
   createConsolePrettyDestination,
+  createExtendableClassInjectable,
   createFactoryInjectable,
   createLazyInjectable,
   createOptionalInjectable,
@@ -34,6 +36,8 @@ export namespace neemata {
   export const value = createValueInjectable
   export const lazy = createLazyInjectable
   export const factory = createFactoryInjectable
+  export const klass = createClassInjectable
+  export const extend = createExtendableClassInjectable
   export const task = createTask
   export const procedure = createProcedure
   export const namespace = createNamespace
@@ -67,6 +71,7 @@ export {
   type MiddlewareLike,
   WorkerType,
 } from '@nmtjs/application'
+
 export {
   c,
   contract,
@@ -78,6 +83,7 @@ export {
 } from '@nmtjs/contract'
 
 export { type AnyInjectable, Hook, type Logger, Scope } from '@nmtjs/core'
+
 export {
   ErrorCode,
   ProtocolBlob,
