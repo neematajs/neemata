@@ -15,6 +15,7 @@ describe('Simple type', () => {
       b: 'B',
       c: 'C',
     } as const),
+    prop9: t.tuple([t.string(), t.number()]),
   })
 
   it('should decode', () => {
@@ -27,6 +28,7 @@ describe('Simple type', () => {
       prop6: 'a' as const,
       prop7: 'a' as const,
       prop8: 'A' as const,
+      prop9: ['string', 42],
     }
 
     schema.decode(value)
@@ -42,6 +44,7 @@ describe('Simple type', () => {
       prop6: 'a' as const,
       prop7: 'a' as const,
       prop8: 'A' as const,
+      prop9: ['string', 42],
     }
 
     schema.encode(value)
