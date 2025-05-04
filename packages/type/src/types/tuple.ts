@@ -1,30 +1,54 @@
-import { type core, tuple, type ZodMiniTuple } from '@zod/mini'
+import { tuple, type ZodMiniTuple } from '@zod/mini'
 import { BaseType } from './base.ts'
 
-type Check = core.CheckFn<any[]> | core.$ZodCheck<any[]>
-
 export class TupleType<
-  T extends readonly BaseType[] = readonly BaseType[],
+  T extends readonly [BaseType, ...BaseType[]] = readonly [
+    BaseType,
+    ...BaseType[],
+  ],
+  R extends BaseType | null = BaseType | null,
 > extends BaseType<
-  ZodMiniTuple<core.utils.Flatten<T[number]['encodedZodType'][]>>,
-  ZodMiniTuple<core.utils.Flatten<T[number]['decodedZodType'][]>>,
-  { elements: T }
+  R extends BaseType
+    ? ZodMiniTuple<
+        {
+          [K in keyof T]: T[K]['encodedZodType']
+        },
+        R['encodedZodType']
+      >
+    : ZodMiniTuple<
+        {
+          [K in keyof T]: T[K]['encodedZodType']
+        },
+        null
+      >,
+  R extends BaseType
+    ? ZodMiniTuple<
+        {
+          [K in keyof T]: T[K]['decodedZodType']
+        },
+        R['decodedZodType']
+      >
+    : ZodMiniTuple<
+        {
+          [K in keyof T]: T[K]['decodedZodType']
+        },
+        null
+      >,
+  { elements: T; rest?: R }
 > {
-  static factory<T extends readonly BaseType[]>(
-    elements: T,
-    ...checks: Check[]
-  ) {
-    return new TupleType<T>({
-      //@ts-expect-error
-      encodedZodType: tuple(elements.map((el) => el.encodedZodType)).check(
-        ...checks,
-      ),
-      //@ts-expect-error
-      decodedZodType: tuple(elements.map((el) => el.decodedZodType)).check(
-        ...checks,
-      ),
-      params: { checks },
-      props: { elements },
+  static factory<
+    T extends readonly [BaseType, ...BaseType[]],
+    R extends BaseType | null = null,
+  >(elements: T, rest: R = null as R) {
+    const encoded = elements.map((el) => el.encodedZodType)
+    const decoded = elements.map((el) => el.decodedZodType)
+
+    return new TupleType<T, R>({
+      // @ts-expect-error
+      encodedZodType: tuple(encoded, rest?.encodedZodType),
+      // @ts-expect-error
+      decodedZodType: tuple(decoded, rest?.decodedZodType),
+      props: { elements, rest },
     })
   }
 }
