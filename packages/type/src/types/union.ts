@@ -12,15 +12,21 @@ import type { LiteralType } from './literal.ts'
 import type { ObjectType, ObjectTypeProps } from './object.ts'
 
 export class UnionType<
-  T extends readonly BaseType[] = readonly BaseType[],
+  T extends readonly [BaseType, ...BaseType[]] = readonly [
+    BaseType,
+    ...BaseType[],
+  ],
 > extends BaseType<
-  ZodMiniUnion<core.utils.Flatten<T[number]['encodedZodType'][]>>,
-  ZodMiniUnion<core.utils.Flatten<T[number]['decodedZodType'][]>>,
+  ZodMiniUnion<core.util.Flatten<T[number]['encodedZodType'][]>>,
+  ZodMiniUnion<core.util.Flatten<T[number]['decodedZodType'][]>>,
   { options: T }
 > {
-  static factory<T extends readonly BaseType[] = readonly BaseType[]>(
-    ...options: T
-  ) {
+  static factory<
+    T extends readonly [BaseType, ...BaseType[]] = readonly [
+      BaseType,
+      ...BaseType[],
+    ],
+  >(...options: T) {
     return new UnionType<T>({
       encodedZodType: union(options.map((t) => t.encodedZodType)),
       decodedZodType: union(options.map((t) => t.decodedZodType)),
@@ -63,8 +69,8 @@ export class DiscriminatedUnionType<
   T extends
     readonly DiscriminatedUnionOptionType<K>[] = DiscriminatedUnionOptionType<K>[],
 > extends BaseType<
-  ZodMiniDiscriminatedUnion<core.utils.Flatten<T[number]['encodedZodType'][]>>,
-  ZodMiniDiscriminatedUnion<core.utils.Flatten<T[number]['decodedZodType'][]>>,
+  ZodMiniDiscriminatedUnion<T[number]['encodedZodType'][]>,
+  ZodMiniDiscriminatedUnion<T[number]['decodedZodType'][]>,
   {
     key: K
     options: T

@@ -32,6 +32,7 @@ zod.config(zod.core.locales.en())
 export { NeemataTypeError } from './types/base.ts'
 export { BaseType, type BaseTypeAny } from './types/base.ts'
 export {
+  AnyType,
   ArrayType,
   BooleanType,
   CustomType,
@@ -44,7 +45,7 @@ export {
   StringType,
   IntersactionType,
   UnionType,
-  AnyType,
+  TupleType,
   NeverType,
   DiscriminatedUnionType,
   RecordType,
@@ -66,34 +67,35 @@ export namespace type {
         T['encodedZodType']['_zod']['output']
     }
   }
-
-  export const never = NeverType.factory
-  export const boolean = BooleanType.factory
-  export const string = StringType.factory
-  export const number = NumberType.factory
-  export const integer = IntegerType.factory
-  export const bitint = BigIntType.factory
-  export const literal = LiteralType.factory
-  export const enumeration = EnumType.factory
-  export const tuple = TupleType.factory
-  export const date = DateType.factory
-  export const array = ArrayType.factory
-  export const record = RecordType.factory
-  export const any = AnyType.factory
-  export const or = UnionType.factory
-  export const and = IntersactionType.factory
-  export const union = UnionType.factory
-  export const intersaction = IntersactionType.factory
-  export const discriminatedUnion = DiscriminatedUnionType.factory
-  export const custom = CustomType.factory
-  export const object = Object.assign(ObjectType.factory.bind(ObjectType), {
-    keyof,
-    partial,
-    merge,
-    omit,
-    extend,
-    pick,
-  })
 }
 
 export { type as t, zod }
+
+export const type = {
+  never: NeverType.factory,
+  boolean: BooleanType.factory,
+  string: StringType.factory,
+  number: NumberType.factory,
+  integer: IntegerType.factory,
+  bigint: BigIntType.factory,
+  literal: LiteralType.factory,
+  enum: EnumType.factory,
+  tuple: TupleType.factory,
+  date: DateType.factory,
+  array: ArrayType.factory,
+  record: RecordType.factory,
+  any: AnyType.factory,
+  or: UnionType.factory,
+  and: IntersactionType.factory,
+  union: UnionType.factory,
+  intersaction: IntersactionType.factory,
+  discriminatedUnion: DiscriminatedUnionType.factory,
+  custom: CustomType.factory,
+  object: ObjectType.factory,
+  keyof,
+  partial,
+  merge,
+  omit,
+  extend,
+  pick,
+}

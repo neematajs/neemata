@@ -24,41 +24,44 @@ import {
 import { createTransport, ProtocolInjectables } from '@nmtjs/protocol/server'
 import { ApplicationServer } from '@nmtjs/server'
 
-export namespace neemata {
-  export const app = (...args: ConstructorParameters<typeof Application>) =>
-    new Application(...args)
+export const neemata = {
+  app: (...args: ConstructorParameters<typeof Application>) =>
+    new Application(...args),
 
-  export const server = (
-    ...args: ConstructorParameters<typeof ApplicationServer>
-  ) => new ApplicationServer(...args)
+  server: (...args: ConstructorParameters<typeof ApplicationServer>) =>
+    new ApplicationServer(...args),
 
-  export const optional = createOptionalInjectable
-  export const value = createValueInjectable
-  export const lazy = createLazyInjectable
-  export const factory = createFactoryInjectable
-  export const klass = createClassInjectable
-  export const extend = createExtendableClassInjectable
-  export const task = createTask
-  export const procedure = createProcedure
-  export const namespace = createNamespace
-  export const middleware = createMiddleware
-  export const guard = createGuard
-  export const filter = createFilter
-  export const injectables = {
+  optional: createOptionalInjectable,
+  value: createValueInjectable,
+  lazy: createLazyInjectable,
+  factory: createFactoryInjectable,
+  class: createClassInjectable,
+  extendClass: createExtendableClassInjectable,
+  task: createTask,
+  procedure: createProcedure,
+  namespace: createNamespace,
+  middleware: createMiddleware,
+  guard: createGuard,
+  filter: createFilter,
+
+  contract: {
+    procedure: createContractProcedure,
+    namespace: createContractNamespace,
+  },
+
+  injectables: {
     ...CoreInjectables,
     ...ProtocolInjectables,
     ...AppInjectables,
-  }
-  export const transport = createTransport
-  export const plugin = createPlugin
-  export const logging = {
-    console: createConsolePrettyDestination,
-  }
+  },
 
-  export namespace contract {
-    export const procedure = createContractProcedure
-    export const namespace = createContractNamespace
-  }
+  transport: createTransport,
+
+  plugin: createPlugin,
+
+  logging: {
+    console: createConsolePrettyDestination,
+  },
 }
 
 export { neemata as n }
@@ -91,4 +94,4 @@ export {
   TransportType,
 } from '@nmtjs/protocol/common'
 
-export { t, type } from '@nmtjs/type'
+export * from '@nmtjs/type'
