@@ -23,6 +23,10 @@ export type ErrorClass = new (...args: any[]) => Error
 export type Extra = Record<string, any>
 export type Async<T> = T | Promise<T>
 
+export type ArrayMap<T extends readonly any[], K extends keyof T[number]> = {
+  [I in keyof T]: T[I][K]
+}
+
 export type UnionToIntersection<U> = (
   U extends any
     ? (k: U) => void

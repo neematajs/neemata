@@ -1,3 +1,4 @@
+import type { ArrayMap } from '@nmtjs/common'
 import {
   type core,
   discriminatedUnion,
@@ -17,8 +18,8 @@ export class UnionType<
     ...BaseType[],
   ],
 > extends BaseType<
-  ZodMiniUnion<core.util.Flatten<T[number]['encodedZodType'][]>>,
-  ZodMiniUnion<core.util.Flatten<T[number]['decodedZodType'][]>>,
+  ZodMiniUnion<ArrayMap<T, 'encodedZodType'>>,
+  ZodMiniUnion<ArrayMap<T, 'decodedZodType'>>,
   { options: T }
 > {
   static factory<
@@ -27,9 +28,17 @@ export class UnionType<
       ...BaseType[],
     ],
   >(...options: T) {
+    const encoded = options.map((t) => t.encodedZodType) as ArrayMap<
+      T,
+      'encodedZodType'
+    >
+    const decoded = options.map((t) => t.decodedZodType) as ArrayMap<
+      T,
+      'decodedZodType'
+    >
     return new UnionType<T>({
-      encodedZodType: union(options.map((t) => t.encodedZodType)),
-      decodedZodType: union(options.map((t) => t.decodedZodType)),
+      encodedZodType: union(encoded),
+      decodedZodType: union(decoded),
       props: { options },
     })
   }
@@ -69,8 +78,8 @@ export class DiscriminatedUnionType<
   T extends
     readonly DiscriminatedUnionOptionType<K>[] = DiscriminatedUnionOptionType<K>[],
 > extends BaseType<
-  ZodMiniDiscriminatedUnion<T[number]['encodedZodType'][]>,
-  ZodMiniDiscriminatedUnion<T[number]['decodedZodType'][]>,
+  ZodMiniDiscriminatedUnion<ArrayMap<T, 'encodedZodType'>>,
+  ZodMiniDiscriminatedUnion<ArrayMap<T, 'decodedZodType'>>,
   {
     key: K
     options: T
@@ -81,13 +90,19 @@ export class DiscriminatedUnionType<
     T extends
       readonly DiscriminatedUnionOptionType<K>[] = DiscriminatedUnionOptionType<K>[],
   >(key: K, ...options: T) {
+    const encoded = options.map((t) => t.encodedZodType) as ArrayMap<
+      T,
+      'encodedZodType'
+    >
+    const decoded = options.map((t) => t.decodedZodType) as ArrayMap<
+      T,
+      'decodedZodType'
+    >
     return new DiscriminatedUnionType<K, T>({
-      encodedZodType: discriminatedUnion(
-        options.map((t) => t.encodedZodType) as any,
-      ),
-      decodedZodType: discriminatedUnion(
-        options.map((t) => t.decodedZodType) as any,
-      ),
+      // @ts-expect-error
+      encodedZodType: discriminatedUnion(encoded),
+      // @ts-expect-error
+      decodedZodType: discriminatedUnion(decoded),
       props: { key, options },
     })
   }
