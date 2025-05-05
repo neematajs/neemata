@@ -69,6 +69,7 @@ export { neemata as n }
 export {
   ApiError,
   type ApplicationWorkerOptions,
+  type ExtractApplicationAPIContract,
   type FilterLike,
   type GuardLike,
   type MiddlewareLike,
