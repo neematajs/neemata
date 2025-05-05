@@ -57,25 +57,21 @@ export type ExecuteFn = <
   ...args: A
 ) => TaskExecution<R>
 
-export type OutputType<T> = T extends any[]
-  ? Array<OutputType<T[number]>>
-  : T extends Date
-    ? T
-    : T extends ProtocolBlobInterface
-      ? ProtocolBlob
-      : T extends object
-        ? { [K in keyof T]: OutputType<T[K]> }
-        : T
+export type OutputType<T> = T extends Date
+  ? T
+  : T extends ProtocolBlobInterface
+    ? ProtocolBlob
+    : T extends object
+      ? { [K in keyof T]: OutputType<T[K]> }
+      : T
 
-export type InputType<T> = T extends any[]
-  ? Array<InputType<T[number]>>
-  : T extends Date
-    ? T
-    : T extends ProtocolBlobInterface
-      ? ProtocolClientStream
-      : T extends object
-        ? { [K in keyof T]: InputType<T[K]> }
-        : T
+export type InputType<T> = T extends Date
+  ? T
+  : T extends ProtocolBlobInterface
+    ? ProtocolClientStream
+    : T extends object
+      ? { [K in keyof T]: InputType<T[K]> }
+      : T
 
 export type ApplicationWorkerOptions = {
   isServer: boolean
