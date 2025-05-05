@@ -1,3 +1,4 @@
+import type { TAnyAPIContract } from '@nmtjs/contract'
 import {
   type BasePlugin,
   Container,
@@ -54,7 +55,10 @@ type UseFn = <T extends BasePlugin<any, any, ApplicationPluginContext>>(
     : never
 ) => Application
 
-export class Application {
+export class Application<
+  T extends readonly [...AnyNamespace[]] = readonly [...AnyNamespace[]],
+> {
+  readonly _!: { namespaces: T }
   readonly api: Api
   readonly taskRunner: TasksRunner
   readonly logger: Logger
@@ -174,11 +178,13 @@ export class Application {
     return this
   }
 
-  withNamespaces(...namespaces: AnyNamespace[]) {
+  withNamespaces<N extends readonly [...AnyNamespace[]]>(
+    ...namespaces: N
+  ): Application<[...T, ...N]> {
     for (const namespace of namespaces) {
       this.registry.registerNamespace(namespace)
     }
-    return this
+    return this as any
   }
 
   withTasks(...tasks: AnyTask[]) {

@@ -5,6 +5,7 @@ import {
   type TProcedureContract,
 } from '@nmtjs/contract'
 import type { Dependant, Dependencies, DependencyContext } from '@nmtjs/core'
+import type { InputType, OutputType } from '@nmtjs/protocol/common'
 import type { ProtocolAnyIterable } from '@nmtjs/protocol/server'
 import {
   type BaseType,
@@ -19,7 +20,7 @@ import {
   kProcedure,
   kProcedureMetadata,
 } from './constants.ts'
-import type { Async, InputType, JsonPrimitive, OutputType } from './types.ts'
+import type { Async, JsonPrimitive } from './types.ts'
 
 export interface BaseProcedure<
   ProcedureContract extends TAnyBaseProcedureContract,

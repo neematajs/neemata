@@ -1,15 +1,9 @@
+import type { UnionToIntersection } from '@nmtjs/common'
+import type { TAPIContract } from '@nmtjs/contract'
 import type { Container, Hooks, Logger } from '@nmtjs/core'
-import type {
-  ProtocolBlob,
-  ProtocolBlobInterface,
-} from '@nmtjs/protocol/common'
-import type {
-  Connection,
-  Format,
-  Protocol,
-  ProtocolClientStream,
-} from '@nmtjs/protocol/server'
+import type { Connection, Format, Protocol } from '@nmtjs/protocol/server'
 import type { Api } from './api.ts'
+import type { Application } from './application.ts'
 import type { WorkerType } from './enums.ts'
 import type { AnyNamespace } from './namespace.ts'
 import type { AnyBaseProcedure } from './procedure.ts'
@@ -57,22 +51,6 @@ export type ExecuteFn = <
   ...args: A
 ) => TaskExecution<R>
 
-export type OutputType<T> = T extends Date
-  ? T
-  : T extends ProtocolBlobInterface
-    ? ProtocolBlob
-    : T extends object
-      ? { [K in keyof T]: OutputType<T[K]> }
-      : T
-
-export type InputType<T> = T extends Date
-  ? T
-  : T extends ProtocolBlobInterface
-    ? ProtocolClientStream
-    : T extends object
-      ? { [K in keyof T]: InputType<T[K]> }
-      : T
-
 export type ApplicationWorkerOptions = {
   isServer: boolean
   workerType: WorkerType
@@ -81,6 +59,22 @@ export type ApplicationWorkerOptions = {
   tasksRunner?: BaseTaskExecutor
 }
 
+export type ExtractApplicationAPIContract<T extends Application> =
+  T extends Application<infer Namespaces extends readonly [...AnyNamespace[]]>
+    ? TAPIContract<
+        // @ts-expect-error
+        UnionToIntersection<
+          {
+            [K in keyof Namespaces]: {
+              [C in Extract<
+                Namespaces[K]['contract']['name'],
+                string
+              >]: Namespaces[K]['contract']
+            }
+          }[number]
+        >
+      >
+    : never
 /**
  * Slightly modified version of https://github.com/samchon/typia Primitive type. (TODO: make a PR maybe?)
  * Excludes keys with `never` types from object, and if a function is in array,
