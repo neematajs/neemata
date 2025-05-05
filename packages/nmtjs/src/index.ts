@@ -72,12 +72,19 @@ export {
   type FilterLike,
   type GuardLike,
   type MiddlewareLike,
+  type Namespace,
+  type Procedure,
   WorkerType,
 } from '@nmtjs/application'
 
 export {
   c,
   contract,
+  type TAnyAPIContract,
+  type TAnyEventContract,
+  type TAnyNamespaceContract,
+  type TAnyProcedureContract,
+  type TAnySubscriptionContract,
   type TAPIContract,
   type TEventContract,
   type TNamespaceContract,
