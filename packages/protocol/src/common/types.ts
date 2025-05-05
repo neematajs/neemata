@@ -47,18 +47,14 @@ export interface BaseClientEncoder {
   encodeRPC(rpc: ProtocolRPC, context: EncodeRPCContext): ArrayBuffer
 }
 
-export type InputType<T> = T extends any[]
-  ? InputType<T[number]>[]
-  : T extends ProtocolBlobInterface
-    ? ProtocolBlob
-    : T extends object
-      ? { [K in keyof T]: InputType<T[K]> }
-      : T
+export type InputType<T> = T extends ProtocolBlobInterface
+  ? ProtocolBlob
+  : T extends object
+    ? { [K in keyof T]: InputType<T[K]> }
+    : T
 
-export type OutputType<T> = T extends any[]
-  ? OutputType<T[number]>[]
-  : T extends ProtocolBlobInterface
-    ? ProtocolServerBlobStream
-    : T extends object
-      ? { [K in keyof T]: OutputType<T[K]> }
-      : T
+export type OutputType<T> = T extends ProtocolBlobInterface
+  ? ProtocolServerBlobStream
+  : T extends object
+    ? { [K in keyof T]: OutputType<T[K]> }
+    : T
