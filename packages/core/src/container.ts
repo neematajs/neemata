@@ -242,7 +242,7 @@ export class Container {
               if (compareScope(this.scope, '>=', scope))
                 this.instances.set(injectable, {
                   instance,
-                  picked: undefined,
+                  picked: instance,
                   context: undefined,
                 })
               if (scope !== Scope.Transient) this.resolvers.delete(injectable)
