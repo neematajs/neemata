@@ -19,7 +19,13 @@
       "types": "./src/static.ts"
     }
   },
-  "dependencies": {
+  "peerDependencies": {
+    "@nmtjs/type": "workspace:*",
+    "@nmtjs/contract": "workspace:*",
+    "@nmtjs/common": "workspace:*",
+    "@nmtjs/protocol": "workspace:*"
+  },
+  "devDependencies": {
     "@nmtjs/type": "workspace:*",
     "@nmtjs/contract": "workspace:*",
     "@nmtjs/common": "workspace:*",

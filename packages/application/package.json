@@ -11,7 +11,7 @@
     "build": "neemata-build --root=./src './**/*.ts'",
     "type-check": "tsc --noEmit"
   },
-  "dependencies": {
+  "peerDependencies": {
     "@nmtjs/common": "workspace:*",
     "@nmtjs/contract": "workspace:*",
     "@nmtjs/core": "workspace:*",
@@ -19,7 +19,12 @@
     "@nmtjs/type": "workspace:*"
   },
   "devDependencies": {
-    "@types/node": "^18.19.86"
+    "@types/node": "^18",
+    "@nmtjs/common": "workspace:*",
+    "@nmtjs/contract": "workspace:*",
+    "@nmtjs/core": "workspace:*",
+    "@nmtjs/protocol": "workspace:*",
+    "@nmtjs/type": "workspace:*"
   },
   "files": [
     "src",

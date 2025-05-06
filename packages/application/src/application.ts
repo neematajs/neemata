@@ -4,7 +4,7 @@ import {
   Container,
   createLogger,
   Hook,
-  kPlugin,
+  isPlugin,
   type Logger,
   type LoggingOptions,
   type Plugin,
@@ -46,18 +46,20 @@ export type ApplicationOptions = {
   logging?: LoggingOptions
 }
 
-type UseFn = <T extends BasePlugin<any, any, ApplicationPluginContext>>(
+type UseFn<N extends readonly [...AnyNamespace[]]> = <
+  T extends BasePlugin<any, any, ApplicationPluginContext>,
+>(
   plugin: T,
   ...args: T extends BasePlugin<any, infer O, ApplicationPluginContext>
     ? null extends O
       ? []
       : [options: O]
     : never
-) => Application
+) => Application<N>
 
-export class Application<
-  T extends readonly [...AnyNamespace[]] = readonly [...AnyNamespace[]],
-> {
+export type AnyApplication = Application<readonly [...AnyNamespace[]]>
+
+export class Application<T extends readonly [...AnyNamespace[]] = readonly []> {
   readonly _!: { namespaces: T }
   readonly api: Api
   readonly taskRunner: TasksRunner
@@ -161,7 +163,7 @@ export class Application<
     return this.taskRunner.execute(task, ...args)
   }
 
-  use: UseFn = (
+  use: UseFn<T> = (
     plugin: BasePlugin<any, any, ApplicationPluginContext>,
     ...args: any[]
   ) => {
@@ -169,7 +171,7 @@ export class Application<
 
     if (isTransportPlugin(plugin)) {
       this.transportPlugins.push([plugin, options])
-    } else if (kPlugin in plugin) {
+    } else if (isPlugin(plugin)) {
       this.plugins.push([plugin, options])
     } else {
       throw new Error('Invalid plugin')
@@ -250,4 +252,10 @@ export class Application<
       protocol: this.protocol,
     })
   }
+}
+
+export function createApplication(
+  ...args: ConstructorParameters<typeof Application>
+) {
+  return new Application(...args)
 }

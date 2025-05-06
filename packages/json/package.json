@@ -19,6 +19,10 @@
     "@nmtjs/common": "workspace:*",
     "@nmtjs/protocol": "workspace:*"
   },
+  "peerDependencies": {
+    "@nmtjs/common": "workspace:*",
+    "@nmtjs/protocol": "workspace:*"
+  },
   "files": [
     "src",
     "dist",

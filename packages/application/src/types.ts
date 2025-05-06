@@ -3,7 +3,7 @@ import type { TAPIContract } from '@nmtjs/contract'
 import type { Container, Hooks, Logger } from '@nmtjs/core'
 import type { Connection, Format, Protocol } from '@nmtjs/protocol/server'
 import type { Api } from './api.ts'
-import type { Application } from './application.ts'
+import type { AnyApplication, Application } from './application.ts'
 import type { WorkerType } from './enums.ts'
 import type { AnyNamespace } from './namespace.ts'
 import type { AnyBaseProcedure } from './procedure.ts'
@@ -59,7 +59,7 @@ export type ApplicationWorkerOptions = {
   tasksRunner?: BaseTaskExecutor
 }
 
-export type ExtractApplicationAPIContract<T extends Application> =
+export type ExtractApplicationAPIContract<T extends AnyApplication> =
   T extends Application<infer Namespaces extends readonly [...AnyNamespace[]]>
     ? TAPIContract<
         // @ts-expect-error

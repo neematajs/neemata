@@ -4,6 +4,7 @@ import {
   type HttpResponse,
   SSLApp,
   type TemplatedApp,
+  us_socket_local_port,
 } from 'uWebSockets.js'
 import { randomUUID } from 'node:crypto'
 import { createPromise } from '@nmtjs/common'
@@ -165,19 +166,30 @@ export class WsTransportServer implements Transport<WsConnectionData> {
 
   async start() {
     return new Promise<void>((resolve, reject) => {
-      const hostname = this.options.hostname ?? '127.0.0.1'
-      this.server.listen(hostname, this.options.port!, (socket) => {
-        if (socket) {
-          this.logger.info(
-            'Server started on %s:%s',
-            hostname,
-            this.options.port!,
-          )
-          resolve()
-        } else {
-          reject(new Error('Failed to start server'))
-        }
-      })
+      const { hostname = '127.0.0.1', port = 0, unix } = this.options
+      if (unix) {
+        this.server.listen_unix((socket) => {
+          if (socket) {
+            this.logger.info('Server started on unix://%s', unix)
+            resolve()
+          } else {
+            reject(new Error('Failed to start WebSockets server'))
+          }
+        }, unix)
+      } else {
+        this.server.listen(hostname, port, (socket) => {
+          if (socket) {
+            this.logger.info(
+              'WebSocket Server started on %s:%s',
+              hostname,
+              us_socket_local_port(socket),
+            )
+            resolve()
+          } else {
+            reject(new Error('Failed to start WebSockets server'))
+          }
+        })
+      }
     })
   }
 

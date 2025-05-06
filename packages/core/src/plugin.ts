@@ -23,3 +23,5 @@ export const createPlugin = <Options = unknown, Type = void>(
   name: string,
   init: Plugin<Type, Options>['init'],
 ): Plugin<Type, Options> => ({ name, init, [kPlugin]: true })
+
+export const isPlugin = (value: any): value is Plugin => kPlugin in value

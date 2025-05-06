@@ -139,3 +139,9 @@ export class ApplicationServer {
     return worker
   }
 }
+
+export function createServer(
+  ...args: ConstructorParameters<typeof ApplicationServer>
+) {
+  return new ApplicationServer(...args)
+}

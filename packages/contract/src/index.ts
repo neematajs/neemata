@@ -21,3 +21,5 @@ export namespace contract {
 }
 
 export { contract as c }
+
+export default contract

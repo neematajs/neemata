@@ -24,6 +24,11 @@
     "@nmtjs/type": "workspace:*",
     "@nmtjs/core": "workspace:*"
   },
+  "peerDependencies": {
+    "@nmtjs/common": "workspace:*",
+    "@nmtjs/type": "workspace:*",
+    "@nmtjs/core": "workspace:*"
+  },
   "files": [
     "src",
     "dist",
