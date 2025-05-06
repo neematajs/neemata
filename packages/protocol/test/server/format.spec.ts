@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { BaseServerFormat, Format } from '../../src/server/format.ts'
 import { testFormat } from '../mixtures.ts'
 
-describe.sequential('Format', () => {
+describe('Format', () => {
   let serverFormat: BaseServerFormat
   let format: Format
 

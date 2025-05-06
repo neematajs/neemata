@@ -206,7 +206,7 @@ describe('Container', () => {
 
   it('should be a container', () => {
     expect(container).toBeDefined()
-    expect(container).instanceOf(Container)
+    expect(container instanceof Container).toBe(true)
   })
 
   it('should resolve with value', async () => {
@@ -263,7 +263,8 @@ describe('Container', () => {
       },
     })
     await container.resolve(injectable)
-    await expect(container.dispose()).resolves.not.toThrow()
+    const result = await container.dispose().catch((err) => err)
+    expect(typeof result === 'undefined').toBe(true)
   })
 
   it('should resolve with class', async () => {

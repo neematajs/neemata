@@ -4,7 +4,7 @@ import { Application } from '../src/application.ts'
 import { AppInjectables } from '../src/injectables.ts'
 import { testApp, testPlugin } from './_utils.ts'
 
-describe.sequential('Application', () => {
+describe('Application', () => {
   let app: Application
 
   beforeEach(async () => {
@@ -17,7 +17,7 @@ describe.sequential('Application', () => {
 
   it('should be an application', () => {
     expect(app).toBeDefined()
-    expect(app).instanceOf(Application)
+    expect(app instanceof Application).toBe(true)
   })
 
   it('should register plugin', async () => {
@@ -44,11 +44,9 @@ describe.sequential('Application', () => {
   })
 
   it('should register app injections', async () => {
-    await expect(app.container.resolve(CoreInjectables.logger)).resolves.toBe(
-      app.logger,
-    )
-    await expect(
-      app.container.resolve(AppInjectables.execute),
-    ).resolves.toBeInstanceOf(Function)
+    const logger = await app.container.resolve(CoreInjectables.logger)
+    expect(logger).toBe(app.logger)
+    const execute = await app.container.resolve(AppInjectables.execute)
+    expect(typeof execute === 'function').toBe(true)
   })
 })

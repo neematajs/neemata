@@ -32,7 +32,7 @@ describe('Exports', () => {
   })
 })
 
-describe('Contracts', { sequential: true }, () => {
+describe('Contracts', () => {
   const inputType = t.any()
   const outputType = t.any()
   const eventType = t.any()
