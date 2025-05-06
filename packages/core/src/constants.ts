@@ -38,4 +38,3 @@ export type kHookCollection = typeof kHookCollection
 
 export const kPlugin: unique symbol = Symbol.for('neemata:PluginKey')
 export type kPlugin = typeof kPlugin
-export const isPlugin = (value: any): value is Plugin => kPlugin in value

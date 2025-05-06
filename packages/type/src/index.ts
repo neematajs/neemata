@@ -69,8 +69,6 @@ export namespace type {
   }
 }
 
-export { type as t, zod }
-
 export const type = {
   never: NeverType.factory,
   boolean: BooleanType.factory,
@@ -99,3 +97,5 @@ export const type = {
   extend,
   pick,
 }
+export { type as t, zod }
+export default type

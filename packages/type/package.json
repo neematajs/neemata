@@ -16,9 +16,14 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "@nmtjs/common": "workspace:*",
     "@zod/mini": "4.0.0-beta.20250503T014749",
     "temporal-polyfill": "^0.3.0"
+  },
+  "peerDependencies": {
+    "@nmtjs/common": "workspace:*"
+  },
+  "devDependencies": {
+    "@nmtjs/common": "workspace:*"
   },
   "files": [
     "src",

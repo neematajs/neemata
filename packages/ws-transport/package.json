@@ -12,16 +12,21 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "@nmtjs/common": "workspace:*",
-    "@nmtjs/core": "workspace:*",
-    "@nmtjs/protocol": "workspace:*",
     "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.51.0"
   },
+  "peerDependencies": {
+    "@nmtjs/common": "workspace:*",
+    "@nmtjs/core": "workspace:*",
+    "@nmtjs/protocol": "workspace:*"
+  },
   "devDependencies": {
-    "@types/node": "^18.19.86"
+    "@types/node": "^18",
+    "@nmtjs/client": "workspace:*",
+    "@nmtjs/common": "workspace:*",
+    "@nmtjs/protocol": "workspace:*"
   },
   "engines": {
-    "node": ">=18.9.0"
+    "node": ">=18"
   },
   "files": [
     "src",
