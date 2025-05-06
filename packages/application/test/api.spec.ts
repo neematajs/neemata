@@ -21,7 +21,7 @@ import {
   testTransport,
 } from './_utils.ts'
 
-describe.sequential('Api', () => {
+describe('Api', () => {
   const transportPlugin = testTransport()
 
   let app: Application
@@ -118,9 +118,8 @@ describe.sequential('Api', () => {
     registry.registerNamespace(namespace)
     await app.initialize()
     const connection = testConnection()
-    const spy = vi.spyOn(procedure, 'handler')
-    await call({ connection, procedure })
-    expect(spy).toReturnWith(connection)
+    const { output } = await call({ connection, procedure })
+    expect(output).toBe(connection)
   })
 
   it('should inject signal', async () => {
@@ -133,9 +132,8 @@ describe.sequential('Api', () => {
     registry.registerNamespace(namespace)
     await app.initialize()
     const connection = testConnection()
-    const spy = vi.spyOn(procedure, 'handler')
-    await call({ connection, procedure, signal })
-    expect(spy).toReturnWith(signal)
+    const { output } = await call({ connection, procedure, signal })
+    expect(output).toBe(signal)
   })
 
   it('should handle procedure call with payload', async () => {

@@ -48,7 +48,7 @@ describe('Task', () => {
   })
 })
 
-describe.sequential('Tasks', () => {
+describe('Tasks', () => {
   const logger = testLogger()
 
   let registry: ApplicationRegistry
@@ -110,7 +110,7 @@ describe.sequential('Tasks', () => {
     const task = testTask((ctx, ...args) => args)
     registry.registerTask(task)
     const { result } = await tasks.execute(task, ...args)
-    expect(result).deep.equal(args)
+    expect(result).toMatchObject(args)
   })
 
   it('should handle abortion', async () => {

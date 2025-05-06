@@ -1,11 +1,11 @@
 name: Test
 
-on: 
+on:
   pull_request:
   workflow_dispatch:
 
 jobs:
-  lint: 
+  lint:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -33,7 +33,7 @@ jobs:
       - run: pnpm install
       - run: pnpm check:lint
 
-  typecheck: 
+  typecheck:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -61,7 +61,7 @@ jobs:
       - run: pnpm install
       - run: pnpm check:type
 
-  test:
+  test-node:
     needs: [typecheck]
     strategy:
       fail-fast: true
@@ -100,3 +100,41 @@ jobs:
       - run: pnpm install
       - run: pnpm run build
       - run: pnpm run test
+
+  test-bun:
+    needs: [typecheck]
+    strategy:
+      fail-fast: true
+      matrix:
+        bun:
+          - 1.2
+        os:
+          - ubuntu-latest
+          - macos-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Use Bun ${{ matrix.node }}
+        uses: oven-sh/setup-bun@v2
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+          run_install: false
+      - name: Get pnpm store directory
+        shell: bash
+        run: |
+          echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+      - uses: actions/cache@v4
+        name: Setup pnpm cache
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+      - run: pnpm install
+      - run: bun run build
+      - run: bun test

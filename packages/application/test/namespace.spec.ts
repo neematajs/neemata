@@ -27,7 +27,9 @@ describe('Namespace', () => {
         [Hook.AfterInitialize]: [handler],
       },
     })
-    expect(namespace.hooks[kHookCollection].get('test')).toContain(handler)
+    expect(
+      namespace.hooks[kHookCollection].get(Hook.AfterInitialize)?.has(handler),
+    ).toBe(true)
   })
 
   it('should create a namespace with autoload', () => {
