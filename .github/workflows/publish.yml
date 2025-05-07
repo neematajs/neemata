@@ -49,9 +49,8 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
       - name: Install pnpm
-        uses: pnpm/action-setup@v3
+        uses: pnpm/action-setup@v4
         with:
-          version: 9
           run_install: false
       - name: Get pnpm store directory
         shell: bash
@@ -93,10 +92,9 @@ jobs:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_USERNAME: ${{ secrets.NPM_USERNAME }}
 
-      - uses: pnpm/action-setup@v2
+      - uses: pnpm/action-setup@v4
         name: Install pnpm
         with:
-          version: 9
           run_install: false
 
       - name: Install dependencies and build
