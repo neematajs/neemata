@@ -1,11 +1,11 @@
 name: Test
 
-on: 
+on:
   pull_request:
   workflow_dispatch:
 
 jobs:
-  lint: 
+  lint:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -15,9 +15,8 @@ jobs:
         with:
           node-version: 22
       - name: Install pnpm
-        uses: pnpm/action-setup@v3
+        uses: pnpm/action-setup@v4
         with:
-          version: 9
           run_install: false
       - name: Get pnpm store directory
         shell: bash
@@ -33,7 +32,7 @@ jobs:
       - run: pnpm install
       - run: pnpm check:lint
 
-  typecheck: 
+  typecheck:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -43,9 +42,8 @@ jobs:
         with:
           node-version: 22
       - name: Install pnpm
-        uses: pnpm/action-setup@v3
+        uses: pnpm/action-setup@v4
         with:
-          version: 9
           run_install: false
       - name: Get pnpm store directory
         shell: bash
@@ -82,9 +80,8 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
       - name: Install pnpm
-        uses: pnpm/action-setup@v3
+        uses: pnpm/action-setup@v4
         with:
-          version: 9
           run_install: false
       - name: Get pnpm store directory
         shell: bash
