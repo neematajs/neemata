@@ -1,4 +1,4 @@
-import { type DecodeRPCContext, encodeText } from '@nmtjs/protocol/common'
+import { type DecodeRPCContext, encodeText } from '@nmtjs/protocol'
 import { describe, expect, it, vi } from 'vitest'
 import { serializeStreamId } from '../src/common.ts'
 import { JsonFormat as ServerJsonFormat } from '../src/server.ts'

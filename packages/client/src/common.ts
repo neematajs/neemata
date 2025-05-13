@@ -23,7 +23,7 @@ export {
   ProtocolBlob,
   type ProtocolBlobMetadata,
   TransportType,
-} from '@nmtjs/protocol/common'
+} from '@nmtjs/protocol'
 
 export abstract class BaseClient<
   APIContract extends TAnyAPIContract = TAnyAPIContract,

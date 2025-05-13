@@ -1,10 +1,10 @@
+import { ClientMessageType, concat, encodeNumber } from '@nmtjs/protocol'
 import {
   type Protocol,
   type ProtocolBaseClientCallOptions,
   type ProtocolBaseTransformer,
   ProtocolTransport,
 } from '@nmtjs/protocol/client'
-import { ClientMessageType, concat, encodeNumber } from '@nmtjs/protocol/common'
 
 export type WebSocketClientTransportOptions = {
   /**

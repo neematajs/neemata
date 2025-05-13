@@ -1,4 +1,4 @@
-import type { ProtocolBlobInterface } from '@nmtjs/protocol/common'
+import type { ProtocolBlobInterface } from '@nmtjs/protocol'
 import { t } from '@nmtjs/type'
 
 export interface BlobOptions {
