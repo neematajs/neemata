@@ -62,9 +62,10 @@ export const run = async (scriptPath: string) => {
     const args = process.argv
       .slice(2)
       .filter((arg) => !['--watch', '--ts'].includes(arg))
-    const execArgs = [...process.execArgv]
+    const execArgs = [...process.execArgv, '--watch-preserve-output']
     if (ts)
       execArgs.push(
+        '--enable-source-maps',
         '--experimental-strip-types',
         '--experimental-transform-types',
       )
