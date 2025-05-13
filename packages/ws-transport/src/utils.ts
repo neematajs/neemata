@@ -1,4 +1,5 @@
-import type { HttpRequest } from 'uWebSockets.js'
+import type { HttpRequest, HttpResponse } from 'uWebSockets.js'
+import { PassThrough, type Readable } from 'node:stream'
 import { createPromise } from '@nmtjs/common'
 import { concat, ErrorCode, encodeNumber } from '@nmtjs/protocol/common'
 import { ProtocolError } from '@nmtjs/protocol/server'
@@ -36,31 +37,80 @@ export const toRecord = (input: {
   return obj
 }
 
-type RequestData = {
+export type RequestData = Readonly<{
   url: string
   origin: URL | null
   method: string
-  headers: Map<string, string>
+  headers: Headers
+  querystring: string
   query: URLSearchParams
-}
+  remoteAddress: string
+  proxiedRemoteAddress: string
+}>
 
-export const getRequestData = (req: HttpRequest): RequestData => {
+export const getRequestData = (
+  req: HttpRequest,
+  res: HttpResponse,
+): RequestData => {
   const url = req.getUrl()
   const method = req.getMethod()
-  const headers = new Map()
-  req.forEach((key, value) => headers.set(key, value))
-  const query = new URLSearchParams(req.getQuery())
-  const origin = headers.has('origin')
-    ? new URL(url, headers.get('origin'))
-    : null
+  const headers = new Headers()
+  const querystring = req.getQuery()
+  const query = new URLSearchParams(querystring)
+  const origin = headers.get('origin')
+  const proxiedRemoteAddress = res.getProxiedRemoteAddressAsText()
+  const remoteAddress = res.getRemoteAddressAsText()
 
-  return {
+  req.forEach((key, value) => headers.append(key, value))
+
+  return Object.freeze({
     url,
-    origin,
+    origin: origin ? new URL(url, origin) : null,
     method,
     headers,
+    querystring,
     query,
+    remoteAddress: Buffer.from(remoteAddress).toString(),
+    proxiedRemoteAddress: Buffer.from(proxiedRemoteAddress).toString(),
+  })
+}
+
+export function getRequestBody(res: HttpResponse) {
+  const stream = new PassThrough()
+  res.onData((chunk, isLast) => {
+    stream.write(Buffer.from(chunk))
+    if (isLast) stream.end()
+  })
+  res.onAborted(() => stream.destroy())
+  return stream
+}
+
+export function setHeaders(res: HttpResponse, headers: Headers) {
+  headers.forEach((value, key) => {
+    if (key === 'set-cookie') return
+    res.writeHeader(key, value)
+  })
+  const cookies = headers.getSetCookie()
+  if (cookies) {
+    for (const cookie of cookies) {
+      res.writeHeader('set-cookie', cookie)
+    }
   }
+}
+
+export function readableToArrayBuffer(stream: Readable): Promise<ArrayBuffer> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = []
+    stream.on('data', (chunk) => {
+      chunks.push(chunk)
+    })
+    stream.on('end', () => {
+      resolve(Buffer.concat(chunks).buffer)
+    })
+    stream.on('error', (error) => {
+      reject(error)
+    })
+  })
 }
 
 export const InternalError = (message = 'Internal Server Error') =>

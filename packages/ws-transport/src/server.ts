@@ -21,13 +21,14 @@ import {
 } from '@nmtjs/protocol/server'
 import { WsTransportInjectables } from './injectables.ts'
 import type {
+  WsConnectionData,
   WsTransportOptions,
   WsTransportSocket,
   WsUserData,
 } from './types.ts'
 import { getRequestData, send } from './utils.ts'
 
-export type WsConnectionData = {}
+const DEFAULT_ALLOWED_METHODS = ['post'] as ('get' | 'post')[]
 
 export class WsTransportServer implements Transport<WsConnectionData> {
   protected server!: TemplatedApp
@@ -53,79 +54,71 @@ export class WsTransportServer implements Transport<WsConnectionData> {
       .ws<WsUserData>('/api', {
         sendPingsAutomatically: true,
         maxPayloadLength: this.options.maxPayloadLength,
-        upgrade: (res, req, context) => {
-          const requestData = getRequestData(req)
+        upgrade: async (res, req, socketContext) => {
+          const ac = new AbortController()
 
+          res.onAborted(ac.abort.bind(ac))
+
+          const requestData = getRequestData(req, res)
           const contentType =
-            requestData.headers.get('content-type') ||
-            requestData.query.get('content-type')
-
+            requestData.query.get('content-type') ||
+            requestData.headers.get('content-type')
           const acceptType =
-            requestData.headers.get('accept') || requestData.query.get('accept')
+            requestData.query.get('accept') || requestData.headers.get('accept')
 
-          const data: WsUserData = {
-            id: randomUUID(),
-            request: {
-              query: requestData.query,
-              headers: requestData.headers,
-              proxiedRemoteAddress: Buffer.from(
-                res.getProxiedRemoteAddressAsText(),
-              ).toString(),
-              remoteAddress: Buffer.from(
-                res.getRemoteAddressAsText(),
-              ).toString(),
-              contentType,
-              acceptType,
-            },
-            opening: createPromise(),
-            backpressure: null,
-            context: {} as any,
-          }
+          const connectionId = randomUUID()
 
-          res.upgrade(
-            data,
-            req.getHeader('sec-websocket-key'),
-            req.getHeader('sec-websocket-protocol'),
-            req.getHeader('sec-websocket-extensions'),
-            context,
-          )
-        },
-        open: async (ws: WsTransportSocket) => {
-          const { id, context, request, opening } = ws.getUserData()
-          this.clients.set(id, ws)
-          this.logger.debug('Connection %s opened', id)
           try {
-            const { context: _context, connection } =
-              await this.context.protocol.connections.add(
-                this,
-                { id, data: {} },
-                {
-                  acceptType: request.acceptType,
-                  contentType: request.contentType,
-                },
-              )
-            Object.assign(context, _context)
-            context.container.provide(
-              ProtocolInjectables.connection,
-              connection,
+            const { context } = await this.protocol.addConnection(
+              this,
+              { id: connectionId, data: { type: 'ws' } },
+              { acceptType, contentType },
             )
             context.container.provide(
               WsTransportInjectables.connectionData,
-              request,
+              requestData,
             )
-            opening.resolve()
+            if (!ac.signal.aborted) {
+              res.cork(() => {
+                res.upgrade(
+                  {
+                    id: connectionId,
+                    request: requestData,
+                    contentType,
+                    acceptType,
+                    backpressure: null,
+                    context,
+                  } as WsUserData,
+                  req.getHeader('sec-websocket-key'),
+                  req.getHeader('sec-websocket-protocol'),
+                  req.getHeader('sec-websocket-extensions'),
+                  socketContext,
+                )
+              })
+            }
           } catch (error) {
-            opening.reject(error)
+            this.logger.debug(
+              new Error('Failed to upgrade connection', { cause: error }),
+            )
+            if (!ac.signal.aborted) {
+              res.cork(() => {
+                res.writeStatus('500 Internal Server Error')
+                res.endWithoutBody()
+              })
+            }
           }
         },
+        open: (ws: WsTransportSocket) => {
+          const { id } = ws.getUserData()
+          this.logger.debug('Connection %s opened', id)
+          this.clients.set(id, ws)
+        },
         message: async (ws: WsTransportSocket, buffer) => {
-          const { opening } = ws.getUserData()
           const messageType = decodeNumber(buffer, 'Uint8')
           if (messageType in this === false) {
             ws.end(1011, 'Unknown message type')
           } else {
             try {
-              await opening.promise
               await this[messageType](
                 ws,
                 buffer.slice(Uint8Array.BYTES_PER_ELEMENT),
@@ -150,7 +143,7 @@ export class WsTransportServer implements Transport<WsConnectionData> {
             Buffer.from(message).toString(),
           )
           this.clients.delete(id)
-          await this.protocol.connections.remove(id)
+          await this.protocol.removeConnection(id)
         },
       })
   }
@@ -206,16 +199,30 @@ export class WsTransportServer implements Transport<WsConnectionData> {
   }
 
   protected async logError(
-    cause: Error,
+    cause: any,
     message = 'Unknown error while processing request',
   ) {
     this.logger.error(new Error(message, { cause }))
   }
 
   protected applyCors(res: HttpResponse, req: HttpRequest) {
-    // TODO: this should be configurable
+    if (this.options.cors === false) return
+
     const origin = req.getHeader('origin')
     if (!origin) return
+
+    let allowed = false
+
+    if (this.options.cors === undefined || this.options.cors === true) {
+      allowed = true
+    } else if (Array.isArray(this.options.cors)) {
+      allowed = this.options.cors.includes(origin)
+    } else {
+      allowed = this.options.cors(origin)
+    }
+
+    if (!allowed) return
+
     res.writeHeader('Access-Control-Allow-Origin', origin)
     res.writeHeader('Access-Control-Allow-Headers', 'Content-Type')
     res.writeHeader('Access-Control-Allow-Methods', 'GET, POST')
@@ -252,7 +259,7 @@ export class WsTransportServer implements Transport<WsConnectionData> {
   ) {
     const { id } = ws.getUserData()
     const streamId = decodeNumber(buffer, 'Uint32')
-    this.protocol.clientStreams.push(
+    this.protocol.pushClientStream(
       id,
       streamId,
       buffer.slice(Uint32Array.BYTES_PER_ELEMENT),
@@ -265,7 +272,7 @@ export class WsTransportServer implements Transport<WsConnectionData> {
   ) {
     const { id } = ws.getUserData()
     const streamId = decodeNumber(buffer, 'Uint32')
-    this.protocol.clientStreams.end(id, streamId)
+    this.protocol.endClientStream(id, streamId)
   }
 
   protected [ClientMessageType.ClientStreamAbort](
@@ -274,7 +281,7 @@ export class WsTransportServer implements Transport<WsConnectionData> {
   ) {
     const { id } = ws.getUserData()
     const streamId = decodeNumber(buffer, 'Uint32')
-    this.protocol.clientStreams.abort(id, streamId)
+    this.protocol.abortClientStream(id, streamId)
   }
 
   protected [ClientMessageType.ServerStreamPull](
@@ -283,7 +290,7 @@ export class WsTransportServer implements Transport<WsConnectionData> {
   ) {
     const { id } = ws.getUserData()
     const streamId = decodeNumber(buffer, 'Uint32')
-    this.protocol.serverStreams.pull(id, streamId)
+    this.protocol.pullServerStream(id, streamId)
   }
 
   protected [ClientMessageType.ServerStreamAbort](
@@ -292,6 +299,6 @@ export class WsTransportServer implements Transport<WsConnectionData> {
   ) {
     const { id } = ws.getUserData()
     const streamId = decodeNumber(buffer, 'Uint32')
-    this.protocol.serverStreams.abort(id, streamId)
+    this.protocol.abortServerStream(id, streamId)
   }
 }

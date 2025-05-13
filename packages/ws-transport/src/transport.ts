@@ -1,6 +1,6 @@
 import { createTransport } from '@nmtjs/protocol/server'
-import { type WsConnectionData, WsTransportServer } from './server.ts'
-import type { WsTransportOptions } from './types.ts'
+import { WsTransportServer } from './server.ts'
+import type { WsConnectionData, WsTransportOptions } from './types.ts'
 
 export const WsTransport = createTransport<
   WsConnectionData,
