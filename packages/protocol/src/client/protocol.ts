@@ -1,7 +1,7 @@
 import {
   createPromise,
   type InteractivePromise,
-  onceAborted,
+  type OneOf,
 } from '@nmtjs/common'
 import { concat, decodeNumber, encodeNumber } from '../common/binary.ts'
 import type { ProtocolBlobMetadata } from '../common/blob.ts'
@@ -10,7 +10,11 @@ import {
   ErrorCode,
   ServerMessageType,
 } from '../common/enums.ts'
-import type { ProtocolRPC } from '../common/types.ts'
+import type {
+  BaseProtocolError,
+  ProtocolRPC,
+  ProtocolRPCResponse,
+} from '../common/types.ts'
 import { EventEmitter } from './events.ts'
 import type { BaseClientFormat } from './format.ts'
 import {
@@ -19,7 +23,7 @@ import {
   ProtocolServerStream,
 } from './stream.ts'
 
-export class ProtocolError extends Error {
+export class ProtocolError extends Error implements BaseProtocolError {
   code: string
   data?: any
 
@@ -69,9 +73,9 @@ export class ProtocolClientStreams {
     this.#collection.delete(streamId)
   }
 
-  abort(streamId: number) {
+  abort(streamId: number, error?: Error) {
     const stream = this.get(streamId)
-    stream.abort()
+    stream.abort(error)
     this.remove(streamId)
   }
 
@@ -95,8 +99,10 @@ export class ProtocolClientStreams {
   }
 }
 
-export class ProtocolServerStreams {
-  readonly #collection = new Map<number, ProtocolServerStream>()
+export class ProtocolServerStreams<
+  T extends ProtocolServerStream = ProtocolServerStream,
+> {
+  readonly #collection = new Map<number, T>()
 
   has(streamId: number) {
     return this.#collection.has(streamId)
@@ -108,7 +114,7 @@ export class ProtocolServerStreams {
     return stream
   }
 
-  add(streamId: number, stream: ProtocolServerStream) {
+  add(streamId: number, stream: T) {
     this.#collection.set(streamId, stream)
     return stream
   }
@@ -153,14 +159,29 @@ export type ProtocolTransportEventMap = {
   disconnected: []
 }
 
-export interface ProtocolTransport
-  extends EventEmitter<ProtocolTransportEventMap> {
-  connect(
+export interface ProtocolSendMetadata {
+  callId?: number
+  streamId?: number
+}
+
+export abstract class ProtocolTransport {
+  abstract connect(
     auth: any,
-    contentType: BaseClientFormat['contentType'],
+    transformer: ProtocolBaseTransformer,
   ): Promise<void>
-  disconnect(): Promise<void>
-  send(messageType: ClientMessageType, buffer: ArrayBuffer): Promise<void>
+  abstract disconnect(): Promise<void>
+  abstract call(
+    namespace: string,
+    procedure: string,
+    payload: any,
+    options: ProtocolBaseClientCallOptions,
+    transformer: ProtocolBaseTransformer,
+  ): Promise<ProtocolClientCall>
+  abstract send(
+    messageType: ClientMessageType,
+    buffer: ArrayBuffer,
+    metadata: ProtocolSendMetadata,
+  ): Promise<void>
 }
 
 export class ProtocolBaseTransformer {
@@ -179,7 +200,7 @@ export class ProtocolBaseTransformer {
 }
 
 export type ProtocolClientCall = InteractivePromise<any> &
-  Pick<ProtocolRPC, 'namespace' | 'procedure'>
+  Pick<ProtocolRPC, 'namespace' | 'procedure'> & { signal: AbortSignal }
 
 export type ProtocolBaseClientOptions = {
   transport: ProtocolTransport
@@ -190,11 +211,14 @@ export type ProtocolBaseClientOptions = {
 
 export type ProtocolBaseClientCallOptions = {
   signal?: AbortSignal
-  timeout?: number
+  timeout: number
 }
 
-export abstract class ProtocolBaseClient<
-  T extends Record<string, Record<string, any>>,
+export class BaseProtocol<
+  T extends Record<string, Record<string, any>> = Record<
+    string,
+    Record<string, any>
+  >,
 > extends EventEmitter<
   {
     [N in keyof T]: {
@@ -204,318 +228,401 @@ export abstract class ProtocolBaseClient<
     }
   }[keyof T]
 > {
-  readonly #clientStreams: ProtocolClientStreams
-  readonly #serverStreams: ProtocolServerStreams
-  readonly #rpcStreams: ProtocolServerStreams
-  readonly #rpcStreamData = new Map<
-    number,
-    Pick<ProtocolRPC, 'namespace' | 'procedure'>
-  >()
-  readonly #calls = new Map<number, ProtocolClientCall>()
+  protected readonly clientStreams: ProtocolClientStreams =
+    new ProtocolClientStreams()
+  protected readonly serverStreams: ProtocolServerStreams<ProtocolServerBlobStream> =
+    new ProtocolServerStreams()
+  protected readonly rpcStreams: ProtocolServerStreams =
+    new ProtocolServerStreams()
+  protected readonly calls = new Map<number, ProtocolClientCall>()
+  protected callId = 0
+  protected streamId = 0
 
-  readonly #transport: ProtocolTransport
-  readonly #format: BaseClientFormat
-  readonly transformer: ProtocolBaseTransformer = new ProtocolBaseTransformer()
-  readonly #timeout: number
-
-  #callId = 0
-  #streamId = 0
-
-  constructor(options: ProtocolBaseClientOptions) {
+  constructor(public readonly format: BaseClientFormat) {
     super()
+  }
 
-    this.#transport = options.transport
-    this.#format = options.format
-    this.#timeout = options.timeout ?? 60000
+  get contentType() {
+    return this.format.contentType
+  }
 
-    this.#clientStreams = new ProtocolClientStreams()
-    this.#serverStreams = new ProtocolServerStreams()
-    this.#rpcStreams = new ProtocolServerStreams()
-
-    this.#transport.on(`${ServerMessageType.Event}`, (buffer) => {
-      const [namespace, event, payload] = this.#format.decode(buffer)
-      const name = `${namespace}/${event}`
-      const transformed = this.transformer.decodeEvent(
-        namespace,
-        event,
-        payload,
+  handleCallResponse(
+    callId: number,
+    call: ProtocolClientCall,
+    response: OneOf<
+      [{ error: BaseProtocolError }, { result: any; stream?: any }]
+    >,
+    transformer: ProtocolBaseTransformer,
+  ) {
+    if (response.error) {
+      call.reject(
+        new ProtocolError(
+          response.error.code,
+          response.error.message,
+          response.error.data,
+        ),
       )
-      this.emit(name, transformed)
-    })
-
-    this.#transport.on(`${ServerMessageType.RpcResponse}`, (buffer) => {
-      const { call, error, payload } = this.#handleResponse(buffer)
-      if (error) call.reject(error)
-      else call.resolve(payload)
-    })
-
-    this.#transport.on(`${ServerMessageType.RpcStreamResponse}`, (buffer) => {
-      const { call, response, payload, error } = this.#handleResponse(buffer)
-      if (error) return call.reject(error)
-      console.log('Creating RPC stream', response)
-      const stream = new ProtocolServerStream()
-      this.#rpcStreams.add(response.callId, stream)
-      this.#rpcStreamData.set(response.callId, {
-        namespace: call.namespace,
-        procedure: call.procedure,
-      })
-      call.resolve({ payload, stream })
-    })
-
-    this.#transport.on(
-      `${ServerMessageType.RpcStreamChunk}`,
-      async (buffer) => {
-        const callId = decodeNumber(buffer, 'Uint32')
-        console.log('RPC stream chunk', callId)
-
-        const chunk = buffer.slice(Uint32Array.BYTES_PER_ELEMENT)
-        if (chunk.byteLength === 0) {
-          this.#rpcStreams.end(callId)
-          this.#rpcStreamData.delete(callId)
-        } else {
-          const call = this.#rpcStreamData.get(callId)
-          console.log('RPC stream call', call)
-          if (call) {
-            const payload = this.#format.decode(chunk)
-            console.log('RPC stream payload', payload)
-            try {
-              const transformed = this.transformer.decodeRPCChunk(
-                call.namespace,
-                call.procedure,
-                payload,
-              )
-              await this.#rpcStreams.push(callId, transformed)
-            } catch (error) {
-              this.#send(
-                ClientMessageType.RpcStreamAbort,
-                encodeNumber(callId, 'Uint32'),
-              )
-              this.#rpcStreams.remove(callId)
-              this.#rpcStreamData.delete(callId)
-            }
-          }
-        }
-      },
-    )
-
-    this.#transport.on(`${ServerMessageType.RpcStreamAbort}`, (buffer) => {
-      const callId = decodeNumber(buffer, 'Uint32')
-      console.log('RPC stream abort', callId)
-      const call = this.#calls.get(callId)
-      if (call) {
-        this.#serverStreams.end(callId)
-        this.#rpcStreams.abort(callId)
-      }
-    })
-
-    this.#transport.on(
-      `${ServerMessageType.ServerStreamPush}`,
-      async (buffer) => {
-        const streamId = decodeNumber(buffer, 'Uint32')
-        const chunk = buffer.slice(Uint32Array.BYTES_PER_ELEMENT)
-        console.log('Server stream push', streamId, chunk.byteLength)
-        try {
-          await this.#serverStreams.push(streamId, chunk)
-          this.#send(
-            ClientMessageType.ServerStreamPull,
-            encodeNumber(streamId, 'Uint32'),
-          )
-        } catch (error) {
-          this.#send(
-            ClientMessageType.ServerStreamAbort,
-            encodeNumber(streamId, 'Uint32'),
-          )
-          this.#serverStreams.remove(streamId)
-        }
-      },
-    )
-
-    this.#transport.on(`${ServerMessageType.ServerStreamEnd}`, (buffer) => {
-      const streamId = decodeNumber(buffer, 'Uint32')
-      console.log('Server stream end', streamId)
-      this.#serverStreams.end(streamId)
-    })
-
-    this.#transport.on(`${ServerMessageType.ServerStreamAbort}`, (buffer) => {
-      const streamId = decodeNumber(buffer, 'Uint32')
-      console.log('Server stream abort', streamId)
-      this.#serverStreams.abort(streamId)
-    })
-
-    this.#transport.on(`${ServerMessageType.ClientStreamAbort}`, (buffer) => {
-      const streamId = decodeNumber(buffer, 'Uint32')
-      console.log('Client stream abort', streamId)
-      this.#clientStreams.abort(streamId)
-    })
-
-    this.#transport.on(
-      `${ServerMessageType.ClientStreamPull}`,
-      async (buffer) => {
-        const streamId = decodeNumber(buffer, 'Uint32')
-        console.log('Client stream pull', streamId)
-        const size = decodeNumber(
-          buffer,
-          'Uint32',
-          Uint32Array.BYTES_PER_ELEMENT,
+    } else {
+      try {
+        const transformed = transformer.decodeRPC(
+          call.namespace,
+          call.procedure,
+          response.result,
         )
-        const streamIdEncoded = encodeNumber(streamId, 'Uint32')
-        try {
-          const chunk = await this.#clientStreams.pull(streamId, size)
-          if (chunk) {
-            this.#send(
-              ClientMessageType.ClientStreamPush,
-              concat(streamIdEncoded, chunk),
-            )
-          } else {
-            this.#send(ClientMessageType.ClientStreamEnd, streamIdEncoded)
-            this.#clientStreams.end(streamId)
-          }
-        } catch (error) {
-          console.error(error)
-          this.#send(ClientMessageType.ClientStreamAbort, streamIdEncoded)
-        }
-      },
+        if (response.stream)
+          call.resolve({ result: transformed, stream: response.stream })
+        else call.resolve(transformed)
+      } catch (error) {
+        call.reject(
+          new ProtocolError(
+            ErrorCode.ClientRequestError,
+            'Unable to decode response',
+            error,
+          ),
+        )
+      }
+    }
+    this.calls.delete(callId)
+  }
+
+  handleRpcResponse(
+    { callId, error, result, streams }: ProtocolRPCResponse,
+    transformer: ProtocolBaseTransformer,
+    stream?: ProtocolServerStream,
+  ) {
+    const call = this.calls.get(callId)
+    if (!call) throw new Error('Call not found')
+    for (const key in streams) {
+      const stream = streams[key]
+      this.serverStreams.add(stream.id, stream)
+    }
+    this.handleCallResponse(
+      callId,
+      call,
+      error ? { error } : { result, stream },
+      transformer,
     )
-
-    this.#transport.on('disconnected', () => {
-      this.#clear()
-    })
+    return call
   }
 
-  async connect(auth: any) {
-    return await this.#transport.connect(auth, this.#format.contentType)
+  handleRpcStreamResponse(
+    response: ProtocolRPCResponse,
+    stream: ProtocolServerStream,
+    transformer: ProtocolBaseTransformer,
+  ) {
+    const call = this.handleRpcResponse(response, transformer, stream)
+    this.rpcStreams.add(response.callId, stream)
+    return call
   }
 
-  async disconnect() {
-    this.#clear()
-    return await this.#transport.disconnect()
-  }
-
-  async #send(messageType: ClientMessageType, buffer: ArrayBuffer) {
-    console.log(
-      'Client transport send',
-      ClientMessageType[messageType],
-      buffer.byteLength,
-    )
-    return await this.#transport.send(messageType, buffer)
-  }
-
-  async #clear() {
-    const error = new ProtocolError(
-      ErrorCode.ConnectionError,
-      'Connection closed',
-    )
-    for (const call of this.#calls.values()) call.reject(error)
-    this.#calls.clear()
-    this.#serverStreams.clear(error)
-    this.#clientStreams.clear(error)
-    this.#rpcStreams.clear(error)
-    this.#callId = 0
-    this.#streamId = 0
-  }
-
-  protected async _call(
+  createCall(
     namespace: string,
     procedure: string,
-    payload: any,
-    options: ProtocolBaseClientCallOptions = {},
+    options: ProtocolBaseClientCallOptions,
   ) {
-    const timeoutSignal = AbortSignal.timeout(options.timeout || this.#timeout)
+    const timeoutSignal = AbortSignal.timeout(options.timeout)
     const signal = options.signal
       ? AbortSignal.any([options.signal, timeoutSignal])
       : timeoutSignal
 
-    const callId = ++this.#callId
     const call = Object.assign(createPromise(), {
       namespace,
       procedure,
+      signal,
     })
-    const buffer = this.#format.encodeRPC(
+
+    timeoutSignal.addEventListener(
+      'abort',
+      () => {
+        const error = new ProtocolError(
+          ErrorCode.RequestTimeout,
+          'Request timeout',
+        )
+        call.reject(error)
+      },
+      { once: true },
+    )
+
+    return call
+  }
+
+  createRpc(
+    namespace: string,
+    procedure: string,
+    payload: any,
+    options: ProtocolBaseClientCallOptions,
+    transformer: ProtocolBaseTransformer,
+  ) {
+    const callId = ++this.callId
+    const call = this.createCall(namespace, procedure, options)
+    const { buffer, streams } = this.format.encodeRPC(
       {
         callId,
         namespace,
         procedure,
-        payload: this.transformer.encodeRPC(namespace, procedure, payload),
+        payload: transformer.encodeRPC(namespace, procedure, payload),
       },
       {
         addStream: (blob) => {
-          const streamId = ++this.#streamId
-          const stream = this.#clientStreams.add(
-            blob.source,
-            streamId,
-            blob.metadata,
-          )
-          return stream
+          const streamId = ++this.streamId
+          return this.clientStreams.add(blob.source, streamId, blob.metadata)
         },
         getStream: (id) => {
-          const stream = this.#clientStreams.get(id)
+          const stream = this.clientStreams.get(id)
           return stream
         },
       },
     )
 
-    this.#transport.send(ClientMessageType.Rpc, buffer).catch(console.error)
+    this.calls.set(callId, call)
 
-    this.#calls.set(callId, call)
-
-    const onAborted = onceAborted(signal).then(() => {
-      if (this.#calls.has(callId)) {
-        this.#send(ClientMessageType.RpcAbort, encodeNumber(callId, 'Uint32'))
-      }
-      throw new ProtocolError(ErrorCode.RequestTimeout, 'Request timeout')
-    })
-
-    return Promise.race([call.promise, onAborted])
+    return { callId, call, streams, buffer }
   }
 
-  #handleResponse(buffer: ArrayBuffer) {
-    const callStreams: ProtocolServerBlobStream[] = []
-    const response = this.#format.decodeRPC(buffer, {
-      addStream: (id, metadata) => {
-        console.log('Client transport blob stream', id, metadata)
-        const stream = new ProtocolServerBlobStream(id, metadata, () => {
-          this.#send(
-            ClientMessageType.ServerStreamPull,
-            encodeNumber(id, 'Uint32'),
-          )
+  pushRpcStream(callId: number, chunk: any) {
+    this.rpcStreams.push(callId, chunk)
+  }
+
+  endRpcStream(callId: number) {
+    this.rpcStreams.end(callId)
+  }
+
+  abortRpcStream(callId: number) {
+    this.rpcStreams.abort(callId)
+  }
+
+  removeClientStream(streamId: number) {
+    this.clientStreams.remove(streamId)
+  }
+
+  pullClientStream(streamId: number, size: number) {
+    return this.clientStreams.pull(streamId, size)
+  }
+
+  endClientStream(streamId: number) {
+    this.clientStreams.end(streamId)
+  }
+
+  abortClientStream(streamId: number, error?: Error) {
+    this.clientStreams.abort(streamId, error)
+  }
+
+  addServerStream(stream: ProtocolServerBlobStream) {
+    this.serverStreams.add(stream.id, stream)
+  }
+
+  removeServerStream(streamId: number) {
+    this.serverStreams.remove(streamId)
+  }
+
+  pushServerStream(streamId: number, chunk: ArrayBuffer) {
+    return this.serverStreams.push(streamId, chunk)
+  }
+
+  endServerStream(streamId: number) {
+    this.serverStreams.end(streamId)
+  }
+
+  abortServerStream(streamId: number, error?: Error) {
+    this.serverStreams.abort(streamId)
+  }
+
+  emitEvent(
+    namespace: string,
+    event: string,
+    payload: string,
+    transformer: ProtocolBaseTransformer,
+  ) {
+    const transformed = transformer.decodeEvent(namespace, event, payload)
+    this.emit(`${namespace}/${event}`, transformed)
+  }
+}
+
+export class Protocol<
+  T extends Record<string, Record<string, any>> = Record<
+    string,
+    Record<string, any>
+  >,
+> extends BaseProtocol<T> {
+  handleServerMessage(
+    buffer: ArrayBuffer,
+    transport: ProtocolTransport,
+    transformer: ProtocolBaseTransformer,
+  ) {
+    const type = decodeNumber(buffer, 'Uint8')
+    const messageBuffer = buffer.slice(Uint8Array.BYTES_PER_ELEMENT)
+    if (type in ServerMessageType) {
+      const messageType = type as ServerMessageType
+      if (typeof ServerMessageType[messageType] !== 'undefined') {
+        this[messageType](messageBuffer, transport, transformer)
+      } else {
+        throw new Error(`Unknown message type: ${messageType}`)
+      }
+    }
+  }
+
+  protected [ServerMessageType.Event](
+    buffer: ArrayBuffer,
+    transport: ProtocolTransport,
+    transformer: ProtocolBaseTransformer,
+  ) {
+    const [namespace, event, payload] = this.format.decode(buffer)
+    this.emitEvent(namespace, event, payload, transformer)
+  }
+
+  protected [ServerMessageType.RpcResponse](
+    buffer: ArrayBuffer,
+    transport: ProtocolTransport,
+    transformer: ProtocolBaseTransformer,
+  ) {
+    const response = this.format.decodeRPC(buffer, {
+      addStream: (id, callId, metadata) => {
+        return new ProtocolServerBlobStream(id, metadata, {
+          start: () => {
+            transport.send(
+              ClientMessageType.ServerStreamPull,
+              encodeNumber(id, 'Uint32'),
+              { callId, streamId: id },
+            )
+          },
         })
-        callStreams.push(stream)
-        this.#serverStreams.add(id, stream)
-        return stream
       },
       getStream: (id) => {
-        return this.#serverStreams.get(id)
+        return this.serverStreams.get(id)
+      },
+    })
+    this.handleRpcResponse(response, transformer)
+  }
+
+  protected [ServerMessageType.RpcStreamResponse](
+    buffer: ArrayBuffer,
+    transport: ProtocolTransport,
+    transformer: ProtocolBaseTransformer,
+  ) {
+    const response = this.format.decodeRPC(buffer, {
+      addStream: (id, callId, metadata) => {
+        return new ProtocolServerBlobStream(id, metadata, {
+          start: () => {
+            transport.send(
+              ClientMessageType.ServerStreamPull,
+              encodeNumber(id, 'Uint32'),
+              { callId, streamId: id },
+            )
+          },
+        })
+      },
+      getStream: (id) => {
+        return this.serverStreams.get(id)
       },
     })
 
-    console.log('Client transport response', response)
-
-    const call = this.#calls.get(response.callId)
-
-    if (call) {
-      this.#calls.delete(response.callId)
-
-      if (response.error) {
-        const error = new ProtocolError(
-          response.error.code,
-          response.error.message,
-          response.error.data,
-        )
-        return { call, response, error }
-      } else {
-        const payload = this.transformer.decodeRPC(
+    const stream = new ProtocolServerStream({
+      transform: (chunk, controller) => {
+        const transformed = transformer.decodeRPCChunk(
           call.namespace,
           call.procedure,
-          response.payload,
+          chunk,
         )
-        return { call, response, payload }
+        controller.enqueue(transformed)
+      },
+    })
+
+    const call = this.handleRpcStreamResponse(response, stream, transformer)
+  }
+
+  protected [ServerMessageType.RpcStreamChunk](
+    buffer: ArrayBuffer,
+    transport: ProtocolTransport,
+    transformer: ProtocolBaseTransformer,
+  ) {
+    const callId = decodeNumber(buffer, 'Uint32')
+    const chunk = buffer.slice(Uint32Array.BYTES_PER_ELEMENT)
+    const payload = this.format.decode(chunk)
+    this.pushRpcStream(callId, payload)
+  }
+
+  protected [ServerMessageType.RpcStreamEnd](
+    buffer: ArrayBuffer,
+    transport: ProtocolTransport,
+    transformer: ProtocolBaseTransformer,
+  ) {
+    const callId = decodeNumber(buffer, 'Uint32')
+    this.endRpcStream(callId)
+  }
+
+  protected [ServerMessageType.RpcStreamAbort](
+    buffer: ArrayBuffer,
+    transport: ProtocolTransport,
+    transformer: ProtocolBaseTransformer,
+  ) {
+    const callId = decodeNumber(buffer, 'Uint32')
+    this.abortRpcStream(callId)
+  }
+
+  protected [ServerMessageType.ServerStreamPush](
+    buffer: ArrayBuffer,
+    transport: ProtocolTransport,
+    transformer: ProtocolBaseTransformer,
+  ) {
+    const streamId = decodeNumber(buffer, 'Uint32')
+    const chunk = buffer.slice(Uint32Array.BYTES_PER_ELEMENT)
+    this.pushServerStream(streamId, chunk)
+    transport.send(
+      ClientMessageType.ServerStreamPull,
+      encodeNumber(streamId, 'Uint32'),
+      { streamId },
+    )
+  }
+
+  protected [ServerMessageType.ServerStreamEnd](
+    buffer: ArrayBuffer,
+    transport: ProtocolTransport,
+    transformer: ProtocolBaseTransformer,
+  ) {
+    const streamId = decodeNumber(buffer, 'Uint32')
+    this.endServerStream(streamId)
+  }
+
+  protected [ServerMessageType.ServerStreamAbort](
+    buffer: ArrayBuffer,
+    transport: ProtocolTransport,
+    transformer: ProtocolBaseTransformer,
+  ) {
+    const streamId = decodeNumber(buffer, 'Uint32')
+    this.abortServerStream(streamId)
+  }
+
+  protected [ServerMessageType.ClientStreamPull](
+    buffer: ArrayBuffer,
+    transport: ProtocolTransport,
+    transformer: ProtocolBaseTransformer,
+  ) {
+    const streamId = decodeNumber(buffer, 'Uint32')
+    const size = decodeNumber(buffer, 'Uint32', Uint32Array.BYTES_PER_ELEMENT)
+    this.pullClientStream(streamId, size).then((chunk) => {
+      if (chunk) {
+        transport.send(
+          ClientMessageType.ClientStreamPush,
+          concat(encodeNumber(streamId, 'Uint32'), chunk),
+          { streamId },
+        )
+      } else {
+        transport.send(
+          ClientMessageType.ClientStreamEnd,
+          encodeNumber(streamId, 'Uint32'),
+          { streamId },
+        )
+        this.endClientStream(streamId)
       }
-    }
+    })
+  }
 
-    for (const stream of callStreams) {
-      this.#serverStreams.abort(stream.id)
-    }
-
-    throw new Error('Call not found')
+  protected [ServerMessageType.ClientStreamAbort](
+    buffer: ArrayBuffer,
+    transport: ProtocolTransport,
+    transformer: ProtocolBaseTransformer,
+  ) {
+    const streamId = decodeNumber(buffer, 'Uint32')
+    this.abortClientStream(streamId)
   }
 }

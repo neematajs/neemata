@@ -1,8 +1,10 @@
+import { ProtocolClientBlobStream } from '@nmtjs/protocol/client'
 import {
   decodeText,
   type EncodeRPCContext,
   encodeText,
   ProtocolBlob,
+  type ProtocolBlobMetadata,
 } from '@nmtjs/protocol/common'
 import { describe, expect, it, vi } from 'vitest'
 import { JsonFormat } from '../src/client.ts'
@@ -41,31 +43,33 @@ describe('Client', () => {
         }),
       },
     }
-    let stream: { streamId: number; blob: ProtocolBlob } | undefined
+    let stream:
+      | { id: number; metadata: ProtocolBlobMetadata; blob: ProtocolBlob }
+      | undefined
     const ctx = {
       addStream: vi.fn((blob: ProtocolBlob) => {
-        return { id: streamId, metadata: blob.metadata }
+        stream = { id: streamId, metadata: blob.metadata, blob }
+        return stream
       }),
       getStream: vi.fn(() => stream),
     } satisfies EncodeRPCContext
-    const buffer = format.encodeRPC(rpc, ctx)
-    expect(buffer).toBeInstanceOf(ArrayBuffer)
+    const { buffer, streams } = format.encodeRPC(rpc, ctx)
 
-    const [callId, namespace, procedure, streams, formatPayload] = JSON.parse(
+    expect(buffer).toBeInstanceOf(ArrayBuffer)
+    expect(streams[streamId]).toBe(stream)
+
+    const [callId, namespace, procedure, streamsMetadata, payload] = JSON.parse(
       decodeText(buffer),
     )
 
     expect(callId).toBe(rpc.callId)
     expect(namespace).toBe(rpc.namespace)
     expect(procedure).toBe(rpc.procedure)
-    expect(streams).toHaveProperty(
-      streamId.toString(),
-      rpc.payload.stream.metadata,
-    )
-    expect(formatPayload).toBeTypeOf('string')
+    expect(streamsMetadata[streamId]).toMatchObject(rpc.payload.stream.metadata)
+    expect(payload).toBeTypeOf('string')
 
-    const payload = JSON.parse(formatPayload)
-    expect(payload).toStrictEqual({
+    const result = JSON.parse(payload)
+    expect(result).toStrictEqual({
       foo: 'bar',
       stream: serializeStreamId(streamId),
     })

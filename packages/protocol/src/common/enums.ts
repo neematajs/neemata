@@ -16,11 +16,13 @@ export enum ServerMessageType {
   RpcResponse = 10,
   RpcStreamResponse = 11,
   RpcStreamChunk = 12,
-  RpcStreamAbort = 13,
+  RpcStreamEnd = 13,
+  RpcStreamAbort = 14,
 
   ServerStreamPush = 20,
   ServerStreamEnd = 21,
   ServerStreamAbort = 22,
+
   ClientStreamAbort = 23,
   ClientStreamPull = 24,
 }

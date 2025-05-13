@@ -1,12 +1,11 @@
 import { noopFn } from '@nmtjs/common'
-import { createValueInjectable } from '@nmtjs/core'
+import { createMetadataKey, createValueInjectable } from '@nmtjs/core'
 import { AnyType, NeverType, t } from '@nmtjs/type'
 import { describe, expect, it } from 'vitest'
 import { kProcedure } from '../src/constants.ts'
 import {
   createContractProcedure,
   createProcedure,
-  createProcedureMetadataKey,
   createStreamResponse,
   getProcedureMetadata,
 } from '../src/procedure.ts'
@@ -70,13 +69,13 @@ describe('Procedure', () => {
   })
 
   it('should create a procedure with metadata', () => {
-    const metadataKey = createProcedureMetadataKey<string>('test')
+    const metadataKey = createMetadataKey<string>('test')
     const procedure = createContractProcedure(procedureContract, {
       handler: noopFn,
       metadata: [metadataKey.as('some')],
     })
 
-    expect(getProcedureMetadata(procedure, metadataKey)).toBe('some')
+    expect(procedure.metadata.get(metadataKey)).toBe('some')
   })
 
   it('should create a procedure with handler', () => {

@@ -5,15 +5,22 @@ export type ResolveFormatParams = {
   acceptType?: string | null
 }
 
+export class UnsupportedFormatError extends Error {}
+
+export class UnsupportedContentTypeError extends UnsupportedFormatError {}
+
+export class UnsupportedAcceptTypeError extends UnsupportedFormatError {}
+
 export const getFormat = (
   format: Format,
   { acceptType, contentType }: ResolveFormatParams,
 ) => {
   const encoder = contentType ? format.supportsEncoder(contentType) : undefined
-  if (!encoder) throw new Error('Unsupported content-type')
+  if (!encoder)
+    throw new UnsupportedContentTypeError('Unsupported Content-Type')
 
   const decoder = acceptType ? format.supportsDecoder(acceptType) : undefined
-  if (!decoder) throw new Error('Unsupported accept')
+  if (!decoder) throw new UnsupportedAcceptTypeError('Unsupported Accept-Type')
 
   return {
     encoder,

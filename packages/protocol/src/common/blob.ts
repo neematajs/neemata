@@ -1,24 +1,31 @@
+export const BlobKey: unique symbol = Symbol.for('neemata:BlobKey')
+export type BlobKey = typeof BlobKey
+
 export type ProtocolBlobMetadata = {
   type: string
-  size: number
+  size?: number
   filename?: string
 }
 
 export interface ProtocolBlobInterface {
   readonly metadata: ProtocolBlobMetadata
+  readonly [BlobKey]: true
 }
 
 export class ProtocolBlob implements ProtocolBlobInterface {
+  readonly [BlobKey] = true
+
   public readonly metadata: ProtocolBlobMetadata
   public readonly source: any
 
   constructor(
     source: any,
-    size = -1,
+    size?: number,
     type = 'application/octet-stream',
     filename?: string,
   ) {
-    if (size < -1 || size === 0) throw new Error('Blob size is invalid')
+    if (typeof size !== 'undefined' && size <= 0)
+      throw new Error('Blob size is invalid')
 
     this.source = source
     this.metadata = {

@@ -4,6 +4,7 @@ import {
   custom,
   overwrite,
   pipe,
+  refine,
   type ZodMiniPipe,
   type ZodMiniType,
 } from '@zod/mini'
@@ -52,10 +53,19 @@ export class CustomType<
     type?: EncodedType
   }) {
     return new CustomType<Type, EncodedType, DecodedType>({
-      encodedZodType: pipe(custom().check(overwrite(encode)), type),
+      encodedZodType: pipe(
+        custom().check(
+          refine((val) => typeof val !== 'undefined', { error, abort: true }),
+          overwrite(encode),
+        ),
+        type,
+      ),
       decodedZodType: pipe(
         type,
-        custom(undefined, { error }).check(overwrite(decode)),
+        custom().check(
+          refine((val) => typeof val !== 'undefined', { error, abort: true }),
+          overwrite(decode),
+        ),
       ),
       params: { encode },
     })

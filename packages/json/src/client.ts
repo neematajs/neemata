@@ -1,4 +1,8 @@
-import { BaseClientFormat } from '@nmtjs/protocol/client'
+import {
+  BaseClientFormat,
+  type ProtocolClientBlobStream,
+  type ProtocolServerBlobStream,
+} from '@nmtjs/protocol/client'
 import {
   type DecodeRPCContext,
   decodeText,
@@ -20,19 +24,28 @@ export class JsonFormat extends BaseClientFormat {
     return encodeText(JSON.stringify(data))
   }
 
-  encodeRPC(rpc: ProtocolRPC, context: EncodeRPCContext): ArrayBuffer {
+  encodeRPC(rpc: ProtocolRPC, context: EncodeRPCContext) {
     const { callId, namespace, procedure } = rpc
-    const streams: Record<number, ProtocolBlobMetadata> = {}
+    const streamsMetadata: Record<number, ProtocolBlobMetadata> = {}
+    const streams: Record<number, ProtocolClientBlobStream> = {}
     const replacer = (key: string, value: any) => {
       if (value instanceof ProtocolBlob) {
         const stream = context.addStream(value)
-        streams[stream.id] = stream.metadata
+        streamsMetadata[stream.id] = stream.metadata
+        streams[stream.id] = stream
         return serializeStreamId(stream.id)
       }
       return value
     }
     const payload = JSON.stringify(rpc.payload, replacer)
-    return this.encode([callId, namespace, procedure, streams, payload])
+    const buffer = this.encode([
+      callId,
+      namespace,
+      procedure,
+      streamsMetadata,
+      payload,
+    ])
+    return { buffer, streams }
   }
 
   decode(data: ArrayBuffer): any {
@@ -40,19 +53,25 @@ export class JsonFormat extends BaseClientFormat {
   }
 
   decodeRPC(buffer: ArrayBuffer, context: DecodeRPCContext) {
-    const [callId, error, streams, formatPayload] = this.decode(buffer)
-    if (error) return { callId, error, payload: null }
+    const streams: Record<number, ProtocolServerBlobStream> = {}
+    const [callId, error, streamsMetadata, payload] = this.decode(buffer)
+    if (error) return { callId, error }
     else {
       const replacer = (key: string, value: any) => {
         if (typeof value === 'string' && isStreamId(value)) {
           const id = deserializeStreamId(value)
-          const metadata = streams[id]
-          return context.addStream(id, metadata)
+          const metadata = streamsMetadata[id]
+          const stream = context.addStream(id, callId, metadata)
+          streams[id] = stream
+          return stream
         }
         return value
       }
-      const payload = formatPayload ? JSON.parse(formatPayload, replacer) : null
-      return { callId, error: null, payload }
+      const result =
+        typeof payload === 'undefined'
+          ? undefined
+          : JSON.parse(payload, replacer)
+      return { callId, result, streams }
     }
   }
 }
@@ -69,7 +88,9 @@ export class StandardJsonFormat extends BaseClientFormat {
 
   encodeRPC(rpc: ProtocolRPC) {
     const { callId, namespace, procedure, payload } = rpc
-    return this.encode([callId, namespace, procedure, payload])
+    const streams: Record<number, ProtocolClientBlobStream> = {}
+    const buffer = this.encode([callId, namespace, procedure, payload])
+    return { buffer, streams }
   }
 
   decode(data: ArrayBuffer) {
@@ -77,7 +98,9 @@ export class StandardJsonFormat extends BaseClientFormat {
   }
 
   decodeRPC(buffer: ArrayBuffer) {
-    const [callId, error, payload] = this.decode(buffer)
-    return { callId, error, payload }
+    const streams: Record<number, ProtocolServerBlobStream> = {}
+    const [callId, error, result] = this.decode(buffer)
+    if (error) return { callId, error }
+    else return { callId, result, streams }
   }
 }
