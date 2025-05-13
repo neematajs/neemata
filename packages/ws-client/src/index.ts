@@ -1,16 +1,10 @@
 import {
-  type BaseClientFormat,
-  EventEmitter,
-  type ProtocolTransport,
-  type ProtocolTransportEventMap,
+  type Protocol,
+  type ProtocolBaseClientCallOptions,
+  type ProtocolBaseTransformer,
+  ProtocolTransport,
 } from '@nmtjs/protocol/client'
-import {
-  type ClientMessageType,
-  concat,
-  decodeNumber,
-  encodeNumber,
-  ServerMessageType,
-} from '@nmtjs/protocol/common'
+import { ClientMessageType, concat, encodeNumber } from '@nmtjs/protocol/common'
 
 export type WebSocketClientTransportOptions = {
   /**
@@ -32,26 +26,23 @@ export type WebSocketClientTransportOptions = {
   debug?: boolean
 }
 
-export class WebSocketClientTransport
-  extends EventEmitter<ProtocolTransportEventMap>
-  implements ProtocolTransport
-{
-  #webSocket: WebSocket | null = null
-  #connecting: Promise<void> | null = null
+export class WebSocketClientTransport extends ProtocolTransport {
+  protected webSocket: WebSocket | null = null
+  protected connecting: Promise<void> | null = null
 
-  constructor(private readonly options: WebSocketClientTransportOptions) {
+  constructor(
+    protected readonly protocol: Protocol,
+    protected readonly options: WebSocketClientTransportOptions,
+  ) {
     super()
   }
 
-  connect(
-    auth: string | undefined = undefined,
-    contentType: BaseClientFormat['contentType'],
-  ): Promise<void> {
-    const wsUrl = new URL(this.options.origin)
-    wsUrl.protocol = wsUrl.protocol === 'https:' ? 'wss:' : 'ws:'
-    wsUrl.pathname = '/api'
-    wsUrl.searchParams.set('content-type', contentType)
-    wsUrl.searchParams.set('accept', contentType)
+  connect(auth: any, transformer: ProtocolBaseTransformer): Promise<void> {
+    const wsUrl = new URL('/api', this.options.origin)
+    if (this.protocol.contentType) {
+      wsUrl.searchParams.set('content-type', this.protocol.contentType)
+      wsUrl.searchParams.set('accept', this.protocol.contentType)
+    }
     if (auth) wsUrl.searchParams.set('auth', auth)
 
     const ws =
@@ -60,20 +51,16 @@ export class WebSocketClientTransport
     ws.binaryType = 'arraybuffer'
 
     ws.addEventListener('message', ({ data }) => {
-      const buffer: ArrayBuffer = data
-      const type = decodeNumber(buffer, 'Uint8')
-      if (type in ServerMessageType) {
-        this.emit(`${type}`, buffer.slice(Uint8Array.BYTES_PER_ELEMENT))
-      }
+      this.protocol.handleServerMessage(data as ArrayBuffer, this, transformer)
     })
 
-    this.#webSocket = ws
+    this.webSocket = ws
 
-    this.#connecting = new Promise((resolve, reject) => {
+    this.connecting = new Promise((resolve, reject) => {
       ws.addEventListener(
         'open',
         () => {
-          this.emit('connected')
+          this.protocol.emit('connected')
           resolve()
         },
         { once: true },
@@ -81,38 +68,58 @@ export class WebSocketClientTransport
 
       ws.addEventListener(
         'error',
-        (event) => reject(new Error('WebSocket error', { cause: event })),
+        (event) => {
+          reject(new Error('WebSocket error', { cause: event }))
+        },
         { once: true },
       )
 
       ws.addEventListener(
         'close',
         (event) => {
-          this.emit('disconnected')
-          this.#webSocket = null
+          this.protocol.emit('disconnected')
+          this.webSocket = null
           if (this.options.autoreconnect === true) {
-            setTimeout(() => this.connect(auth, contentType), 1000)
+            setTimeout(this.connect.bind(this), 1000)
           }
         },
         { once: true },
       )
     })
 
-    return this.#connecting
+    return this.connecting
   }
 
   async disconnect(): Promise<void> {
-    if (this.#webSocket === null) return
-    this.#webSocket!.close()
-    return _once(this.#webSocket, 'close')
+    if (this.webSocket === null) return
+    this.webSocket!.close()
+    return _once(this.webSocket, 'close')
+  }
+
+  async call(
+    namespace: string,
+    procedure: string,
+    payload: any,
+    options: ProtocolBaseClientCallOptions,
+    transformer: ProtocolBaseTransformer,
+  ) {
+    const { call, buffer } = this.protocol.createRpc(
+      namespace,
+      procedure,
+      payload,
+      options,
+      transformer,
+    )
+    await this.send(ClientMessageType.Rpc, buffer)
+    return call
   }
 
   async send(
     messageType: ClientMessageType,
     buffer: ArrayBuffer,
   ): Promise<void> {
-    if (this.#connecting) await this.#connecting
-    this.#webSocket!.send(concat(encodeNumber(messageType, 'Uint8'), buffer))
+    if (this.connecting) await this.connecting
+    this.webSocket!.send(concat(encodeNumber(messageType, 'Uint8'), buffer))
   }
 }
 

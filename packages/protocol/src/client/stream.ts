@@ -1,4 +1,4 @@
-import { type Callback, defer } from '@nmtjs/common'
+import { type Callback, defer, noopFn } from '@nmtjs/common'
 import { concat, encodeText } from '../common/binary.ts'
 import type { ProtocolBlobMetadata } from '../common/blob.ts'
 
@@ -75,32 +75,25 @@ export class ProtocolServerStream<T = any>
   extends TransformStream<any, T>
   implements ProtocolServerStreamInterface<T>
 {
-  #writer: WritableStreamDefaultWriter
-
-  constructor(start?: Callback) {
-    super({ start })
-    this.#writer = this.writable.getWriter()
-  }
-
   async *[Symbol.asyncIterator]() {
     const reader = this.readable.getReader()
     while (true) {
       const { done, value } = await reader.read()
       if (!done) yield value
-      else return void 0
+      else break
     }
   }
 
   async push(chunk: T) {
-    await this.#writer.write(chunk)
+    await this.writable.getWriter().write(chunk)
   }
 
   async end() {
-    await this.#writer.close()
+    await this.writable.getWriter().close()
   }
 
   abort(error = new Error('Stream aborted')) {
-    this.#writer.abort(error)
+    this.writable.getWriter().abort(error)
   }
 }
 
@@ -108,8 +101,8 @@ export class ProtocolServerBlobStream extends ProtocolServerStream<ArrayBuffer> 
   constructor(
     readonly id: number,
     readonly metadata: ProtocolBlobMetadata,
-    start: Callback,
+    options?: Transformer<any, ArrayBuffer>,
   ) {
-    super(start)
+    super(options)
   }
 }

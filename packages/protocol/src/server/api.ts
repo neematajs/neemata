@@ -1,4 +1,9 @@
-import type { Container } from '@nmtjs/core'
+import type {
+  Container,
+  Metadata,
+  MetadataKey,
+  MetadataStore,
+} from '@nmtjs/core'
 import type { Hook } from '@nmtjs/core'
 import type { Connection } from './connection.ts'
 
@@ -9,6 +14,7 @@ export type ProtocolApiCallOptions = {
   container: Container
   payload: any
   signal: AbortSignal
+  metadata?: (metadata: MetadataStore) => void
 }
 
 export type ProtocolAnyIterable<T> =
@@ -33,6 +39,14 @@ export type ProtocolApiCallResult =
   | ProtocolApiCallBaseResult
   | ProtocolApiCallSubscriptionResult
   | ProtocolApiCallIterableResult
+
+export const isIterableResult = (
+  result: ProtocolApiCallResult,
+): result is ProtocolApiCallIterableResult => 'iterable' in result
+
+export const isSubscriptionResult = (
+  result: ProtocolApiCallResult,
+): result is ProtocolApiCallSubscriptionResult => 'subscription' in result
 
 export interface ProtocolApi {
   call(options: ProtocolApiCallOptions): Promise<ProtocolApiCallResult>

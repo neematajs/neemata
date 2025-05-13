@@ -1,9 +1,13 @@
-import type { ProtocolServerBlobStream } from '../client/stream.ts'
-import type {
-  ProtocolBlob,
-  ProtocolBlobInterface,
-  ProtocolBlobMetadata,
-} from './blob.ts'
+import type { OneOf } from '@nmtjs/common'
+import type { ProtocolBlob, ProtocolBlobMetadata } from './blob.ts'
+
+type Stream = any
+
+export interface BaseProtocolError {
+  code: string
+  message: string
+  data?: any
+}
 
 export type ProtocolRPC = {
   callId: number
@@ -12,49 +16,26 @@ export type ProtocolRPC = {
   payload: any
 }
 
-export type ProtocolRPCResponse =
-  | {
+export type ProtocolRPCResponse<T = Stream> = OneOf<
+  [
+    {
       callId: number
-      error: any
-      payload?: never
-    }
-  | {
+      error: BaseProtocolError
+    },
+    {
       callId: number
-      payload: any
-      error?: never
-    }
+      result: any
+      streams: Record<number, T>
+    },
+  ]
+>
 
-export interface EncodeRPCContext {
-  getStream: (id: number) => any
-  addStream: (blob: ProtocolBlob) => {
-    id: number
-    metadata: ProtocolBlobMetadata
-  }
+export interface EncodeRPCContext<T = Stream> {
+  getStream: (id: number) => T
+  addStream: (blob: ProtocolBlob) => T
 }
 
-export interface DecodeRPCContext {
-  getStream: (id: number) => any
-  addStream: (id: number, metadata: ProtocolBlobMetadata) => any
+export interface DecodeRPCContext<T = Stream> {
+  getStream: (id: number, callId: number) => T
+  addStream: (id: number, callId: number, metadata: ProtocolBlobMetadata) => T
 }
-
-export interface BaseClientDecoder {
-  decode(buffer: ArrayBuffer): any
-  decodeRPC(buffer: ArrayBuffer, context: DecodeRPCContext): ProtocolRPCResponse
-}
-
-export interface BaseClientEncoder {
-  encode(data: any): ArrayBuffer
-  encodeRPC(rpc: ProtocolRPC, context: EncodeRPCContext): ArrayBuffer
-}
-
-export type InputType<T> = T extends ProtocolBlobInterface
-  ? ProtocolBlob
-  : T extends object
-    ? { [K in keyof T]: InputType<T[K]> }
-    : T
-
-export type OutputType<T> = T extends ProtocolBlobInterface
-  ? ProtocolServerBlobStream
-  : T extends object
-    ? { [K in keyof T]: OutputType<T[K]> }
-    : T

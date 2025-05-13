@@ -1,19 +1,16 @@
 import type { AppOptions, WebSocket } from 'uWebSockets.js'
 import type { Connection, ConnectionContext } from '@nmtjs/protocol/server'
 import type { InteractivePromise } from '../../common/src/index.ts'
+import type { RequestData } from './utils.ts'
+
+export type WsConnectionData = { type: 'ws' | 'http' }
 
 export type WsUserData = {
   id: Connection['id']
-  opening: InteractivePromise<void>
   backpressure: InteractivePromise<void> | null
-  request: {
-    headers: Map<string, string>
-    query: URLSearchParams
-    remoteAddress: string
-    proxiedRemoteAddress: string
-    acceptType: string | null
-    contentType: string | null
-  }
+  request: RequestData
+  acceptType: string | null
+  contentType: string | null
   context: ConnectionContext
 }
 
@@ -24,6 +21,7 @@ export type WsTransportOptions = {
   hostname?: string
   unix?: string
   tls?: AppOptions
+  cors?: boolean | string[] | ((origin: string) => boolean)
   maxPayloadLength?: number
   maxStreamChunkLength?: number
 }

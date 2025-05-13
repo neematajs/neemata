@@ -1,10 +1,11 @@
-import type { CallTypeProvider, TypeProvider } from '@nmtjs/common'
+import type { CallTypeProvider, OneOf, TypeProvider } from '@nmtjs/common'
 import type { TAnyAPIContract } from '@nmtjs/contract'
 import type {
   ProtocolBaseClientCallOptions,
+  ProtocolError,
   ProtocolServerStreamInterface,
 } from '@nmtjs/protocol/client'
-import type { InputType, OutputType } from '@nmtjs/protocol/common'
+import type { InputType, OutputType } from '@nmtjs/protocol/client'
 import type { BaseTypeAny, NeverType, t } from '@nmtjs/type'
 
 export interface StaticInputContractTypeProvider extends TypeProvider {
@@ -54,7 +55,7 @@ export type ResolveAPIContract<
               >
             >
           : {
-              response: OutputType<
+              result: OutputType<
                 CallTypeProvider<
                   OutputTypeProvider,
                   C['namespaces'][N]['procedures'][P]['output']
@@ -86,26 +87,43 @@ export type ResolveClientEvents<
   C extends ResolveAPIContract = ResolveAPIContract,
 > = {
   [N in keyof C]: {
-    [KE in keyof C[N]['events']]: C[N]['events'][KE]['payload']
+    [KE in keyof C[N]['events'] as `${Extract<N, string>}/${Extract<KE, string>}`]: [
+      C[N]['events'][KE]['payload'],
+    ]
   }
-}
+}[keyof C]
 
-export type ClientCallers<Resolved extends ResolveAPIContract> = {
+export type ClientCallers<
+  Resolved extends ResolveAPIContract,
+  SafeCall extends boolean,
+> = {
   [N in keyof Resolved]: {
     [P in keyof Resolved[N]['procedures']]: (
       ...args: Resolved[N]['procedures'][P]['input'] extends NeverType
-        ? [options?: ProtocolBaseClientCallOptions]
+        ? [data?: undefined, options?: Partial<ProtocolBaseClientCallOptions>]
         : undefined extends t.infer.encoded.input<
               Resolved[N]['procedures'][P]['contract']['input']
             >
           ? [
               data?: Resolved[N]['procedures'][P]['input'],
-              options?: ProtocolBaseClientCallOptions,
+              options?: Partial<ProtocolBaseClientCallOptions>,
             ]
           : [
               data: Resolved[N]['procedures'][P]['input'],
-              options?: ProtocolBaseClientCallOptions,
+              options?: Partial<ProtocolBaseClientCallOptions>,
             ]
-    ) => Promise<Resolved[N]['procedures'][P]['output']>
+    ) => SafeCall extends true
+      ? Promise<
+          OneOf<
+            [
+              {
+                error?: undefined
+                output: Resolved[N]['procedures'][P]['output']
+              },
+              { error: ProtocolError; output?: undefined },
+            ]
+          >
+        >
+      : Promise<Resolved[N]['procedures'][P]['output']>
   }
 }

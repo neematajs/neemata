@@ -22,7 +22,7 @@ export class JsonFormat extends BaseServerFormat {
 
   encodeRPC(rpc: ProtocolRPCResponse, context: EncodeRPCContext): ArrayBuffer {
     const { callId, error } = rpc
-    if (error) return this.encode([callId, error, null])
+    if (error) return this.encode([callId, error])
     else {
       const streams: any = {}
       const replacer = (key: string, value: any) => {
@@ -33,8 +33,13 @@ export class JsonFormat extends BaseServerFormat {
         }
         return value
       }
-      const payload = JSON.stringify(rpc.payload, replacer)
-      return this.encode([callId, null, streams, payload])
+      const isUndefined = typeof rpc.result === 'undefined'
+      const payload = JSON.stringify(rpc.result, replacer)
+      return this.encode(
+        isUndefined
+          ? [callId, null, streams]
+          : [callId, null, streams, payload],
+      )
     }
   }
 
@@ -50,7 +55,7 @@ export class JsonFormat extends BaseServerFormat {
       if (typeof value === 'string' && isStreamId(value)) {
         const id = deserializeStreamId(value)
         const metadata = streams[id]
-        return context.addStream(id, metadata)
+        return context.addStream(id, callId, metadata)
       }
       return value
     }
@@ -81,7 +86,7 @@ export class StandardJsonFormat extends BaseServerFormat {
     const { callId, error } = rpc
     if (error) return this.encode([callId, error, null])
     else {
-      return this.encode([callId, null, rpc.payload])
+      return this.encode([callId, null, rpc.result])
     }
   }
 

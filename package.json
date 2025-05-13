@@ -18,7 +18,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.0.0-beta.1",
-    "@nmtjs/builder": "github:neematajs/builder#a4202eb673b0b8281f7045fc856a0cbd0346d49b",
+    "@nmtjs/builder": "github:neematajs/builder#574ee80e0697ffc94d052bf0502357967b0f952d",
     "@types/node": "^18.19.86",
     "husky": "^9.1.7",
     "typescript": "^5.8.3",

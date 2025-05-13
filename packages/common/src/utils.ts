@@ -50,19 +50,19 @@ export function debounce(cb: Callback, delay: number) {
 }
 
 // TODO: Promise.withResolvers?
-export type InteractivePromise<T = any> = {
+export interface InteractivePromise<T = any> {
   promise: Promise<T>
   resolve: (value: T) => void
   reject: (error: any) => void
-  toArgs: () => [resolve: (value: T) => void, reject: (error: any) => void]
+  toArgs: () => [resolve: this['resolve'], reject: this['reject']]
 }
-
+// TODO: Promise.withResolvers?
 export function createPromise<T>(): InteractivePromise<T> {
   let resolve: InteractivePromise<T>['resolve']
   let reject: InteractivePromise<T>['reject']
-  const promise = new Promise<T>((...args) => {
-    resolve = args[0]
-    reject = args[1]
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res
+    reject = rej
   })
   // @ts-expect-error
   return { resolve, reject, promise, toArgs: () => [resolve, reject] }

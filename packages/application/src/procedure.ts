@@ -4,9 +4,21 @@ import {
   type TAnyProcedureContract,
   type TProcedureContract,
 } from '@nmtjs/contract'
-import type { Dependant, Dependencies, DependencyContext } from '@nmtjs/core'
-import type { InputType, OutputType } from '@nmtjs/protocol/common'
-import type { ProtocolAnyIterable } from '@nmtjs/protocol/server'
+import {
+  type Dependant,
+  type Dependencies,
+  type DependencyContext,
+  kMetadata,
+  type Metadata,
+  type MetadataKey,
+  MetadataStore,
+} from '@nmtjs/core'
+import type {
+  InputType,
+  OutputType,
+  ProtocolAnyIterable,
+  ProtocolApiCallIterableResult,
+} from '@nmtjs/protocol/server'
 import {
   type BaseType,
   type CustomType,
@@ -15,11 +27,7 @@ import {
   type zod,
 } from '@nmtjs/type'
 import type { AnyGuard, AnyMiddleware } from './api.ts'
-import {
-  kIterableResponse,
-  kProcedure,
-  kProcedureMetadata,
-} from './constants.ts'
+import { kIterableResponse, kProcedure } from './constants.ts'
 import type { Async, JsonPrimitive } from './types.ts'
 
 export interface BaseProcedure<
@@ -28,7 +36,7 @@ export interface BaseProcedure<
 > extends Dependant<ProcedureDeps> {
   contract: ProcedureContract
   handler: (...args: any[]) => any
-  metadata: Map<string, any>
+  metadata: Map<MetadataKey, any>
   dependencies: ProcedureDeps
   guards: Set<AnyGuard>
   middlewares: Set<AnyMiddleware>
@@ -67,26 +75,6 @@ export type AnyProcedure<
   Contract extends TAnyProcedureContract = TAnyProcedureContract,
 > = Procedure<Contract, Dependencies>
 
-export type Metadata<T = any> = {
-  key: MetadataKey<T>
-  value: T
-}
-
-export type MetadataKey<T = any> = {
-  [kProcedureMetadata]: string
-  as(value: T): Metadata<T>
-}
-
-export const createProcedureMetadataKey = <T>(key: string): MetadataKey<T> => {
-  const metadataKey = {
-    [kProcedureMetadata]: key,
-    as(value: T) {
-      return { key: metadataKey, value }
-    },
-  }
-  return metadataKey
-}
-
 export const getProcedureMetadata = <
   K extends MetadataKey,
   T extends K extends MetadataKey<infer Type> ? Type : never,
@@ -96,7 +84,7 @@ export const getProcedureMetadata = <
   key: T,
   defaultValue?: D,
 ): D extends undefined ? T | undefined : T => {
-  return procedure.metadata.get(key[kProcedureMetadata]) ?? defaultValue
+  return procedure.metadata.get(key[kMetadata]) ?? defaultValue
 }
 
 export type CreateProcedureParams<
@@ -147,13 +135,12 @@ export function _createBaseProcedure<
   },
 ) {
   const dependencies = params.dependencies ?? ({} as ProcedureDeps)
-  const metadata = new Map()
+  const metadata = new MetadataStore()
   const middlewares = new Set(params.middlewares ?? [])
   const guards = new Set(params.guards ?? [])
 
   for (const meta of params.metadata ?? []) {
-    const key = meta.key[kProcedureMetadata]
-    metadata.set(key, meta.value)
+    metadata.set(meta.key, meta.value)
   }
 
   return {
@@ -183,7 +170,8 @@ export function createContractProcedure<
   })
 }
 
-export interface RPCStreamResponse<Y = unknown, O = unknown> {
+export interface RPCStreamResponse<Y = unknown, O = unknown>
+  extends ProtocolApiCallIterableResult {
   [kIterableResponse]: true
   iterable: ProtocolAnyIterable<Y>
   output: O
@@ -302,10 +290,10 @@ export function createProcedure<
     }),
     {
       dependencies: params.dependencies,
-      handler: params.handler as any,
+      handler: params.handler,
       guards: params.guards,
       middlewares: params.middlewares,
       metadata: params.metadata,
     },
-  ) as any
+  )
 }

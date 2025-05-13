@@ -20,13 +20,9 @@ export class Connection<Data = unknown> {
   }
 }
 
-export type ConnectionCall<T = unknown> = InteractivePromise<T> & {
-  abort: AbortController['abort']
-}
-
 export class ConnectionContext {
   streamId = 1
-  calls = new Map<number, ConnectionCall<ProtocolApiCallResult>>()
+  calls = new Map<number, AbortController>()
   clientStreams = new Map<number, ProtocolClientStream>()
   serverStreams = new Map<number, ProtocolServerStream>()
   rpcStreams = new Map<number, AbortController>()

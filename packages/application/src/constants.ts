@@ -6,11 +6,6 @@ export const kSubscription: unique symbol = Symbol.for(
 )
 export type kSubscription = typeof kSubscription
 
-export const kProcedureMetadata: unique symbol = Symbol.for(
-  'neemata:ProcedureMetadataKey',
-)
-export type kProcedureMetadata = typeof kProcedureMetadata
-
 export const kNamespace: unique symbol = Symbol.for('neemata:NamespaceKey')
 export type kNamespace = typeof kNamespace
 

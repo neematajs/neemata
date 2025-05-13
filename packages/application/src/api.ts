@@ -87,6 +87,8 @@ export class Api implements ProtocolApi {
       options.procedure,
     )
 
+    options.metadata?.(procedure.metadata)
+
     const callOptions = {
       payload,
       container,
@@ -140,9 +142,16 @@ export class Api implements ProtocolApi {
         return this.handleOutput(procedure, result)
       }
     } catch (error) {
-      const logError = new Error('Unhandled error', { cause: error })
-      this.application.logger.error(logError)
-      throw await this.handleFilters(error)
+      const handled = await this.handleFilters(error)
+      if (handled === error && error instanceof ProtocolError === false) {
+        const logError = new Error('Unhandled error', { cause: error })
+        this.application.logger.error(logError)
+        throw new ApiError(
+          ErrorCode.InternalServerError,
+          'Internal Server Error',
+        )
+      }
+      throw handled
     }
   }
 
@@ -247,9 +256,7 @@ export class Api implements ProtocolApi {
       }
     }
 
-    if (error instanceof ApiError) return error
-
-    return new ApiError(ErrorCode.InternalServerError, 'Internal Server Error')
+    return error
   }
 
   private handleInput(procedure: AnyBaseProcedure, payload: any) {
@@ -276,7 +283,7 @@ export class Api implements ProtocolApi {
     if (procedure.contract.output instanceof NeverType === false) {
       const type = procedure.contract.output
       return {
-        output: type.encode(response),
+        output: type.encode(response.output),
         iterable,
       }
     }

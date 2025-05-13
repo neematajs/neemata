@@ -1,52 +1,39 @@
 import type { TAnyAPIContract } from '@nmtjs/contract'
-import type { BaseClientFormat } from '@nmtjs/protocol/client'
-import {
-  ProtocolBaseClient,
-  ProtocolBaseTransformer,
-  type ProtocolTransport,
-} from '@nmtjs/protocol/client'
+import { ProtocolBaseTransformer } from '@nmtjs/protocol/client'
 import { ErrorCode } from '@nmtjs/protocol/common'
-import { type BaseTypeAny, NeemataTypeError, NeverType } from '@nmtjs/type'
-import { ClientError } from './common.ts'
-import type {
-  ClientCallers,
-  ResolveAPIContract,
-  ResolveClientEvents,
-  RuntimeInputContractTypeProvider,
-  RuntimeOutputContractTypeProvider,
-} from './types.ts'
+import { NeemataTypeError, NeverType } from '@nmtjs/type'
+import { BaseClient, ClientError } from './common.ts'
 
 export class RuntimeContractTransformer extends ProtocolBaseTransformer {
-  #contract: TAnyAPIContract
+  protected contract: TAnyAPIContract
 
   constructor(contract: TAnyAPIContract) {
     super()
 
-    this.#contract = contract
+    this.contract = contract
   }
 
   decodeEvent(namespace: string, event: string, payload: any) {
-    const type = this.#contract.namespaces[namespace].events[event].payload
+    const type = this.contract.namespaces[namespace].events[event].payload
     return type.decode(payload)
   }
 
   decodeRPC(namespace: string, procedure: string, payload: any) {
     const type =
-      this.#contract.namespaces[namespace].procedures[procedure].output
+      this.contract.namespaces[namespace].procedures[procedure].output
     if (type instanceof NeverType) return undefined
     return type.decode(payload)
   }
 
   decodeRPCChunk(namespace: string, procedure: string, payload: any) {
     const type =
-      this.#contract.namespaces[namespace].procedures[procedure].stream
+      this.contract.namespaces[namespace].procedures[procedure].stream
     if (type instanceof NeverType) return undefined
     return type.decode(payload)
   }
 
   encodeRPC(namespace: string, procedure: string, payload: any) {
-    const type =
-      this.#contract.namespaces[namespace].procedures[procedure].input
+    const type = this.contract.namespaces[namespace].procedures[procedure].input
     if (type instanceof NeverType) return undefined
     try {
       return type.encode(payload)
@@ -65,55 +52,31 @@ export class RuntimeContractTransformer extends ProtocolBaseTransformer {
 
 export class RuntimeClient<
   APIContract extends TAnyAPIContract,
-  ResolvedAPIContract extends ResolveAPIContract<
-    APIContract,
-    RuntimeInputContractTypeProvider,
-    RuntimeOutputContractTypeProvider
-  > = ResolveAPIContract<
-    APIContract,
-    RuntimeInputContractTypeProvider,
-    RuntimeOutputContractTypeProvider
-  >,
-> extends ProtocolBaseClient<ResolveClientEvents<ResolvedAPIContract>> {
-  _!: ResolvedAPIContract
-  #callers = {} as ClientCallers<ResolvedAPIContract>
+  SafeCall extends boolean,
+> extends BaseClient<APIContract, SafeCall> {
+  protected transformer: RuntimeContractTransformer
 
   constructor(
-    contract: APIContract,
-    options: {
-      transport: ProtocolTransport
-      format: BaseClientFormat
-      timeout?: number
-    },
+    public contract: APIContract,
+    ...args: ConstructorParameters<typeof BaseClient<APIContract, SafeCall>>
   ) {
-    super({
-      ...options,
-      transformer: new RuntimeContractTransformer(contract),
-    })
+    super(...args)
 
-    const callers = {} as any
+    this.transformer = new RuntimeContractTransformer(this.contract)
 
-    for (const [namespaceKey, namespace] of Object.entries(
-      contract.namespaces,
-    )) {
-      namespace.procedures
+    const namespaces = Object.entries(this.contract.namespaces)
+    for (const [namespaceKey, namespace] of namespaces) {
+      this.callers[namespaceKey] = {} as any
 
-      callers[namespaceKey] = {} as any
+      const procedures = Object.entries(namespace.procedures)
 
-      for (const [procedureKey, procedure] of Object.entries(
-        namespace.procedures,
-      )) {
-        callers[namespaceKey][procedureKey] = (payload, options) =>
+      for (const [procedureKey, procedure] of procedures) {
+        this.callers[namespaceKey][procedureKey] = (payload, options) =>
           this._call(namespace.name, procedure.name, payload, {
-            timeout: namespace.timeout,
+            timeout: procedure.timeout || namespace.timeout || options.timeout,
             ...options,
           })
       }
     }
-    this.#callers = callers
-  }
-
-  get call() {
-    return this.#callers
   }
 }

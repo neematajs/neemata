@@ -1,3 +1,4 @@
+import type { OneOf } from '@nmtjs/common'
 import { match, type Pattern } from '@nmtjs/core'
 import type {
   DecodeRPCContext,
@@ -5,17 +6,26 @@ import type {
   ProtocolRPC,
   ProtocolRPCResponse,
 } from '../common/types.ts'
+import type { ProtocolClientStream, ProtocolServerStream } from './stream.ts'
 
 export interface BaseServerDecoder {
   accept: Pattern[]
   decode(buffer: ArrayBuffer): any
-  decodeRPC(buffer: ArrayBuffer, context: DecodeRPCContext): ProtocolRPC
+  decodeRPC(
+    buffer: ArrayBuffer,
+    context: DecodeRPCContext<ProtocolClientStream>,
+  ): ProtocolRPC
 }
 
 export interface BaseServerEncoder {
   contentType: string
   encode(data: any): ArrayBuffer
-  encodeRPC(rpc: ProtocolRPCResponse, context: EncodeRPCContext): ArrayBuffer
+  encodeRPC(
+    rpc: OneOf<
+      [{ callId: number; error: any }, { callId: number; result: any }]
+    >,
+    context: EncodeRPCContext<ProtocolServerStream>,
+  ): ArrayBuffer
 }
 
 export abstract class BaseServerFormat
@@ -27,12 +37,12 @@ export abstract class BaseServerFormat
   abstract encode(data: any): ArrayBuffer
   abstract encodeRPC(
     rpc: ProtocolRPCResponse,
-    context: EncodeRPCContext,
+    context: EncodeRPCContext<ProtocolServerStream>,
   ): ArrayBuffer
   abstract decode(buffer: ArrayBuffer): any
   abstract decodeRPC(
     buffer: ArrayBuffer,
-    context: DecodeRPCContext,
+    context: DecodeRPCContext<ProtocolClientStream>,
   ): ProtocolRPC
 }
 

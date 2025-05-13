@@ -1,42 +1,21 @@
 import type { TAnyAPIContract } from '@nmtjs/contract'
-import {
-  type BaseClientFormat,
-  ProtocolBaseClient,
-  type ProtocolTransport,
-} from '@nmtjs/protocol/client'
-
-import type {
-  ClientCallers,
-  ResolveAPIContract,
-  ResolveClientEvents,
-  StaticInputContractTypeProvider,
-  StaticOutputContractTypeProvider,
-} from './types.ts'
+import { ProtocolBaseTransformer } from '@nmtjs/protocol/client'
+import { BaseClient } from './common.ts'
 
 export class StaticClient<
   APIContract extends TAnyAPIContract,
-  ResolvedAPIContract extends ResolveAPIContract<
-    APIContract,
-    StaticInputContractTypeProvider,
-    StaticOutputContractTypeProvider
-  > = ResolveAPIContract<
-    APIContract,
-    StaticInputContractTypeProvider,
-    StaticOutputContractTypeProvider
-  >,
-> extends ProtocolBaseClient<ResolveClientEvents<ResolvedAPIContract>> {
-  _!: ResolvedAPIContract
+  SafeCall extends boolean = false,
+> extends BaseClient<APIContract, SafeCall> {
+  protected transformer: ProtocolBaseTransformer
 
-  #callers: ClientCallers<ResolvedAPIContract>
+  constructor(
+    ...args: ConstructorParameters<typeof BaseClient<APIContract, SafeCall>>
+  ) {
+    super(...args)
 
-  constructor(options: {
-    transport: ProtocolTransport
-    format: BaseClientFormat
-    timeout?: number
-  }) {
-    super(options)
+    this.transformer = new ProtocolBaseTransformer()
 
-    this.#callers = new Proxy(Object(), {
+    this.callers = new Proxy(Object(), {
       get: (target, namespace) => {
         // `await client.call.namespaceName` or `await client.call.namespaceName.procedureName`
         // without explicitly calling a function implicitly calls .then() on target
@@ -49,19 +28,13 @@ export class StaticClient<
             // FIXME: this basically makes "then" a reserved word
             if (procedure === 'then') return target
             return (payload, options) =>
-              this._call(
-                namespace as string,
-                procedure as string,
-                payload,
-                options,
-              )
+              this._call(namespace as string, procedure as string, payload, {
+                ...options,
+                timeout: options?.timeout ?? this.options.timeout,
+              })
           },
         })
       },
     })
-  }
-
-  get call() {
-    return this.#callers
   }
 }
