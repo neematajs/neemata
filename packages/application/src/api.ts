@@ -8,7 +8,7 @@ import {
   type Dependencies,
   type Logger,
 } from '@nmtjs/core'
-import { ErrorCode } from '@nmtjs/protocol/common'
+import { ErrorCode } from '@nmtjs/protocol'
 import {
   type Connection,
   type ProtocolApi,

@@ -14,7 +14,7 @@ import {
   type ClientMessageType,
   ErrorCode,
   ProtocolBlob,
-} from '@nmtjs/protocol/common'
+} from '@nmtjs/protocol'
 
 export type HttpClientTransportOptions = {
   /**

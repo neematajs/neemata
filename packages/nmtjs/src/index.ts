@@ -53,19 +53,11 @@ export const neemata = {
   filter: createFilter,
 }
 
-export * as application from '@nmtjs/application'
 export { ApiError, WorkerType } from '@nmtjs/application'
-export * as contract from '@nmtjs/contract'
 export { c } from '@nmtjs/contract'
-export * as core from '@nmtjs/core'
 export { Hook, Scope } from '@nmtjs/core'
-export * as jsonFormat from '@nmtjs/json-format/server'
-export { ErrorCode, ProtocolBlob, TransportType } from '@nmtjs/protocol/common'
-export * as server from '@nmtjs/server'
-export * as type from '@nmtjs/type'
+export { ErrorCode, ProtocolBlob, TransportType } from '@nmtjs/protocol'
 export { t } from '@nmtjs/type'
-export * as temporal from '@nmtjs/type/temporal'
-export * as wsTransport from '@nmtjs/ws-transport'
 
 export { neemata as n }
 export default neemata

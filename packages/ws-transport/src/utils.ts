@@ -1,7 +1,7 @@
 import type { HttpRequest, HttpResponse } from 'uWebSockets.js'
 import { PassThrough, type Readable } from 'node:stream'
 import { createPromise } from '@nmtjs/common'
-import { concat, ErrorCode, encodeNumber } from '@nmtjs/protocol/common'
+import { concat, ErrorCode, encodeNumber } from '@nmtjs/protocol'
 import { ProtocolError } from '@nmtjs/protocol/server'
 import type { WsTransportSocket } from './types.ts'
 

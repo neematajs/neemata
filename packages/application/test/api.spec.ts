@@ -4,7 +4,7 @@ import {
   createValueInjectable,
   Scope,
 } from '@nmtjs/core'
-import { ErrorCode } from '@nmtjs/protocol/common'
+import { ErrorCode } from '@nmtjs/protocol'
 import { type Connection, ProtocolInjectables } from '@nmtjs/protocol/server'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Api, ApiError, type ApplicationApiCallOptions } from '../src/api.ts'

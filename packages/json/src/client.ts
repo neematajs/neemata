@@ -1,9 +1,4 @@
 import {
-  BaseClientFormat,
-  type ProtocolClientBlobStream,
-  type ProtocolServerBlobStream,
-} from '@nmtjs/protocol/client'
-import {
   type DecodeRPCContext,
   decodeText,
   type EncodeRPCContext,
@@ -11,7 +6,12 @@ import {
   ProtocolBlob,
   type ProtocolBlobMetadata,
   type ProtocolRPC,
-} from '@nmtjs/protocol/common'
+} from '@nmtjs/protocol'
+import {
+  BaseClientFormat,
+  type ProtocolClientBlobStream,
+  type ProtocolServerBlobStream,
+} from '@nmtjs/protocol/client'
 import { deserializeStreamId, isStreamId, serializeStreamId } from './common.ts'
 
 /**

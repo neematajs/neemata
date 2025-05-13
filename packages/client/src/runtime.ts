@@ -1,6 +1,6 @@
 import type { TAnyAPIContract } from '@nmtjs/contract'
+import { ErrorCode } from '@nmtjs/protocol'
 import { ProtocolBaseTransformer } from '@nmtjs/protocol/client'
-import { ErrorCode } from '@nmtjs/protocol/common'
 import { NeemataTypeError, NeverType } from '@nmtjs/type'
 import { BaseClient, ClientError } from './common.ts'
 

@@ -9,6 +9,54 @@
     ".": {
       "types": "./src/index.ts",
       "import": "./dist/index.js"
+    },
+    "./common": {
+      "types": "./src/common.ts",
+      "import": "./dist/common.js"
+    },
+    "./type": {
+      "types": "./src/type.ts",
+      "import": "./dist/type.js"
+    },
+    "./contract": {
+      "types": "./src/contract.ts",
+      "import": "./dist/contract.js"
+    },
+    "./core": {
+      "types": "./src/core.ts",
+      "import": "./dist/core.js"
+    },
+    "./protocol": {
+      "types": "./src/protocol.ts",
+      "import": "./dist/protocol.js"
+    },
+    "./protocol/client": {
+      "types": "./src/protocol-client.ts",
+      "import": "./dist/protocol-client.js"
+    },
+    "./protocol/server": {
+      "types": "./src/protocol-server.ts",
+      "import": "./dist/protocol-server.js"
+    },
+    "./json-format": {
+      "types": "./src/json-format.ts",
+      "import": "./dist/json-format.js"
+    },
+    "./ws-transport": {
+      "types": "./src/ws-transport.ts",
+      "import": "./dist/ws-transport.js"
+    },
+    "./application": {
+      "types": "./src/application.ts",
+      "import": "./dist/application.js"
+    },
+    "./server": {
+      "types": "./src/server.ts",
+      "import": "./dist/server.js"
+    },
+    "./cli": {
+      "types": "./src/cli.ts",
+      "import": "./dist/cli.js"
     }
   },
   "dependencies": {

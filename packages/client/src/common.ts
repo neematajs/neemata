@@ -16,14 +16,14 @@ import type {
 
 export * from './types.ts'
 
-export class ClientError extends ProtocolError {}
-
 export {
   ErrorCode,
   ProtocolBlob,
   type ProtocolBlobMetadata,
   TransportType,
-} from '@nmtjs/protocol/common'
+} from '@nmtjs/protocol'
+
+export class ClientError extends ProtocolError {}
 
 export abstract class BaseClient<
   APIContract extends TAnyAPIContract = TAnyAPIContract,

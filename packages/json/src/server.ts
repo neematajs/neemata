@@ -5,7 +5,7 @@ import {
   encodeText,
   ProtocolBlob,
   type ProtocolRPCResponse,
-} from '@nmtjs/protocol/common'
+} from '@nmtjs/protocol'
 import { BaseServerFormat } from '@nmtjs/protocol/server'
 import { deserializeStreamId, isStreamId, serializeStreamId } from './common.ts'
 

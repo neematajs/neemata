@@ -16,7 +16,7 @@ import {
   ErrorCode,
   ProtocolBlob,
   type ServerMessageType,
-} from '@nmtjs/protocol/common'
+} from '@nmtjs/protocol'
 import {
   Connection,
   getFormat,
