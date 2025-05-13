@@ -111,6 +111,18 @@ importers:
         specifier: ^13.0.0
         version: 13.0.0
 
+  packages/http-client:
+    dependencies:
+      '@nmtjs/client':
+        specifier: workspace:*
+        version: link:../client
+      '@nmtjs/common':
+        specifier: workspace:*
+        version: link:../common
+      '@nmtjs/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+
   packages/json:
     dependencies:
       '@nmtjs/common':

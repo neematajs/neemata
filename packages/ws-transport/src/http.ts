@@ -1,5 +1,5 @@
 import { createMetadataKey } from '@nmtjs/core'
-import { ErrorCode } from '@nmtjs/protocol/common'
+import { ErrorCode } from '@nmtjs/protocol'
 
 export enum HttpCode {
   Continue = 100,
