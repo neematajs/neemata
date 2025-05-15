@@ -1,6 +1,6 @@
 import assert from 'node:assert'
 import { inspect } from 'node:util'
-import { withTimeout } from '@nmtjs/common'
+import { withTimeout, type Async, type ErrorClass } from '@nmtjs/common'
 import { IsProcedureContract, IsSubscriptionContract } from '@nmtjs/contract'
 import { type AnyInjectable, type Container, Scope } from '@nmtjs/core'
 import {
@@ -22,7 +22,7 @@ import type { ApplicationOptions } from './application.ts'
 import type { AnyNamespace } from './namespace.ts'
 import { type AnyBaseProcedure, isIterableResponse } from './procedure.ts'
 import type { ApplicationRegistry } from './registry.ts'
-import type { ApiCallContext, Async, ErrorClass } from './types.ts'
+import type { ApiCallContext } from './types.ts'
 
 export type FilterLike<T extends ErrorClass = ErrorClass> = {
   catch(error: InstanceType<T>): Async<Error>

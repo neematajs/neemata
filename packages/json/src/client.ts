@@ -37,14 +37,15 @@ export class JsonFormat extends BaseClientFormat {
       }
       return value
     }
-    const payload = JSON.stringify(rpc.payload, replacer)
-    const buffer = this.encode([
-      callId,
-      namespace,
-      procedure,
-      streamsMetadata,
-      payload,
-    ])
+    const payload =
+      typeof rpc.payload === 'undefined'
+        ? undefined
+        : JSON.stringify(rpc.payload, replacer)
+
+    const buffer =
+      typeof payload === 'undefined'
+        ? this.encode([callId, namespace, procedure, streamsMetadata])
+        : this.encode([callId, namespace, procedure, streamsMetadata, payload])
     return { buffer, streams }
   }
 

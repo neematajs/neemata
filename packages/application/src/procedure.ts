@@ -28,7 +28,8 @@ import {
 } from '@nmtjs/type'
 import type { AnyGuard, AnyMiddleware } from './api.ts'
 import { kIterableResponse, kProcedure } from './constants.ts'
-import type { Async, JsonPrimitive } from './types.ts'
+import type { JsonPrimitive } from './types.ts'
+import type { Async } from '@nmtjs/common'
 
 export interface BaseProcedure<
   ProcedureContract extends TAnyBaseProcedureContract,

@@ -1,4 +1,10 @@
-import { createPromise, defer, noopFn, onAbort } from '@nmtjs/common'
+import {
+  createPromise,
+  defer,
+  noopFn,
+  onAbort,
+  type Async,
+} from '@nmtjs/common'
 import {
   type Container,
   type Dependant,
@@ -11,7 +17,6 @@ import type { ApplicationOptions } from './application.ts'
 import { kTask } from './constants.ts'
 import { AppInjectables } from './injectables.ts'
 import type { ApplicationRegistry } from './registry.ts'
-import type { Async } from './types.ts'
 
 export type TaskExecution<Res = any> = PromiseLike<
   { result: Res; error?: never } | { result?: never; error: any }

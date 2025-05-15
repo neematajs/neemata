@@ -10,15 +10,6 @@ import type { AnyBaseProcedure } from './procedure.ts'
 import type { ApplicationRegistry } from './registry.ts'
 import type { AnyTask, BaseTaskExecutor, Task, TaskExecution } from './task.ts'
 
-export type ClassConstructor<T> = new (...args: any[]) => T
-export type Callback<T extends any[] = any[]> = (...args: T) => any
-export type OmitFirstItem<T extends any[]> = T extends [any, ...infer U]
-  ? U
-  : []
-export type ErrorClass = new (...args: any[]) => Error
-export type Extra = Record<string, any>
-export type Async<T> = T | Promise<T>
-
 export type Command = (options: {
   args: string[]
   kwargs: Record<string, any>

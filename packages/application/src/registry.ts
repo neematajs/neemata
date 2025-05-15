@@ -11,7 +11,8 @@ import { ProtocolRegistry } from '@nmtjs/protocol/server'
 import type { AnyFilter, AnyGuard, AnyMiddleware } from './api.ts'
 import type { AnyNamespace } from './namespace.ts'
 import type { AnyTask } from './task.ts'
-import type { Command, ErrorClass } from './types.ts'
+import type { Command } from './types.ts'
+import type { ErrorClass } from '@nmtjs/common'
 
 export const APP_COMMAND = Symbol('APP_COMMAND')
 

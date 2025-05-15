@@ -343,8 +343,8 @@ export function createExtendableClassInjectable<
         super($context)
       } else {
         super(...baseClassArgs)
-        this.$context = $context
       }
+      this.$context = $context
     }
 
     protected async $onCreate() {

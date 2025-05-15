@@ -60,7 +60,10 @@ export class JsonFormat extends BaseServerFormat {
       return value
     }
 
-    const payload = formatPayload ? JSON.parse(formatPayload, replacer) : null
+    const payload =
+      typeof formatPayload === 'undefined'
+        ? undefined
+        : JSON.parse(formatPayload, replacer)
 
     return {
       callId,
