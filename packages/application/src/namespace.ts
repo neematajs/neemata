@@ -12,7 +12,7 @@ import type { BaseType } from '@nmtjs/type'
 import type { AnyGuard, AnyMiddleware } from './api.ts'
 import { kNamespace, kProcedure, kSubscription } from './constants.ts'
 import type { AnyBaseProcedure } from './procedure.ts'
-import type { Callback } from './types.ts'
+import type { Callback } from '@nmtjs/common'
 
 export interface Namespace<Contract extends TAnyNamespaceContract> {
   contract: Contract

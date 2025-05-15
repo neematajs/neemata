@@ -26,11 +26,8 @@ import { AppInjectables } from './injectables.ts'
 import type { AnyNamespace } from './namespace.ts'
 import { APP_COMMAND, ApplicationRegistry, printRegistry } from './registry.ts'
 import { type AnyTask, type BaseTaskExecutor, TasksRunner } from './task.ts'
-import type {
-  ApplicationPluginContext,
-  ErrorClass,
-  ExecuteFn,
-} from './types.ts'
+import type { ApplicationPluginContext, ExecuteFn } from './types.ts'
+import type { ErrorClass } from '@nmtjs/common'
 
 export type ApplicationOptions = {
   type: WorkerType
