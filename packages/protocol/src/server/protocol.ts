@@ -97,13 +97,14 @@ export class ProtocolConnections {
       await this.initialize(connection)
       this.#collection.set(connection.id, { connection, context, transport })
       return { connection, context }
-    } finally {
+    } catch (error) {
       container.dispose().catch((error) => {
         this.application.logger.error(
           { error, connection },
           'Error during disposing connection',
         )
       })
+      throw error
     }
   }
 
