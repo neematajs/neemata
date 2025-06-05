@@ -1,14 +1,13 @@
 import {
   type AnyInjectable,
   Container,
-  compareScope,
   createLazyInjectable,
   Hook,
   type Logger,
   Registry,
   Scope,
 } from '@nmtjs/core'
-import { beforeEach, describe, expect, it, type Mock, should, vi } from 'vitest'
+import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest'
 import { testLogger } from '../../../core/test/_utils.ts'
 import { ServerMessageType } from '../../src/common/enums.ts'
 import type {

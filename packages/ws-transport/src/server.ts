@@ -272,7 +272,7 @@ export class WsTransportServer implements Transport<WsConnectionData> {
         contentType: isBlob ? '*/*' : contentType,
       })
 
-      let payload: any = undefined
+      let payload: any
 
       if (body) {
         if (isBlob) {
@@ -341,7 +341,6 @@ export class WsTransportServer implements Transport<WsConnectionData> {
           })
 
           stream.on('data', (chunk) => {
-            console.log({ chunk })
             if (ac.signal.aborted) return
             const buf = Buffer.from(chunk)
             const ab = buf.buffer.slice(

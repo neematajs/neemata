@@ -231,7 +231,6 @@ export class ProtocolServerStreams {
   }
 
   pull(connectionId: string, streamId: number) {
-    console.log('Pulling stream', streamId)
     const stream = this.get(connectionId, streamId)
     stream.resume()
   }
@@ -364,7 +363,6 @@ export class Protocol {
               )
             })
             stream.on('end', () => {
-              console.log('Stream ended')
               transport.send(
                 connection,
                 ServerMessageType.ServerStreamEnd,

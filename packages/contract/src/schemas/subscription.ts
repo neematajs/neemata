@@ -1,4 +1,4 @@
-import { type BaseType, type NeverType, t } from '@nmtjs/type'
+import { type BaseType, t } from '@nmtjs/type'
 import { Kind } from '../constants.ts'
 import { type ContractSchemaOptions, createSchema } from '../utils.ts'
 import type { TAnyEventContract, TEventContract } from './event.ts'
@@ -18,8 +18,8 @@ export type TAnySubscriptionContract = TSubscriptionContract<
 >
 
 export interface TSubscriptionContract<
-  Input extends BaseType = NeverType,
-  Output extends BaseType = NeverType,
+  Input extends BaseType = t.NeverType,
+  Output extends BaseType = t.NeverType,
   Options extends SubcriptionOptions = {},
   Events extends Record<string, unknown> = {},
   Name extends string | undefined = undefined,
@@ -46,8 +46,8 @@ export interface TSubscriptionContract<
 }
 
 export const SubscriptionContract = <
-  Input extends BaseType = NeverType,
-  Output extends BaseType = NeverType,
+  Input extends BaseType = t.NeverType,
+  Output extends BaseType = t.NeverType,
   Events extends Record<string, unknown> = {},
   Name extends string | undefined = undefined,
 >(options?: {

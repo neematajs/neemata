@@ -1,9 +1,9 @@
 import {
+  type Async,
   createPromise,
   defer,
   noopFn,
   onAbort,
-  type Async,
 } from '@nmtjs/common'
 import {
   type Container,

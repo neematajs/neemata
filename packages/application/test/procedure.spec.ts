@@ -1,13 +1,12 @@
 import { noopFn } from '@nmtjs/common'
 import { createMetadataKey, createValueInjectable } from '@nmtjs/core'
-import { AnyType, NeverType, t } from '@nmtjs/type'
+import { type } from '@nmtjs/type'
 import { describe, expect, it } from 'vitest'
 import { kProcedure } from '../src/constants.ts'
 import {
   createContractProcedure,
   createProcedure,
   createStreamResponse,
-  getProcedureMetadata,
 } from '../src/procedure.ts'
 import { TestNamespaceContract } from './_utils.ts'
 
@@ -86,7 +85,7 @@ describe('Procedure', () => {
   })
 
   it('should create a procedure with iterable response', async () => {
-    const stream = t.number()
+    const stream = type.number()
     const procedure = createProcedure({
       stream,
       handler: async () => {
@@ -106,8 +105,8 @@ describe('Procedure', () => {
     expect(kProcedure in procedure).toBe(true)
     expect(procedure.contract).toMatchObject({
       type: 'neemata:procedure',
-      input: expect.any(NeverType),
-      output: expect.any(AnyType),
+      input: expect.any(type.NeverType),
+      output: expect.any(type.AnyType),
       stream,
       name: undefined,
       namespace: undefined,
@@ -118,8 +117,8 @@ describe('Procedure', () => {
 
 describe('Procedure static', () => {
   it('should create a procedure', () => {
-    const input = t.string()
-    const output = t.object({ a: t.literal('dep1') })
+    const input = type.string()
+    const output = type.object({ a: type.literal('dep1') })
     const dep1 = createValueInjectable('dep1' as const)
     const dep2 = createValueInjectable('dep2')
 
@@ -140,7 +139,7 @@ describe('Procedure static', () => {
       type: 'neemata:procedure',
       input,
       output,
-      stream: expect.any(NeverType),
+      stream: expect.any(type.NeverType),
       name: undefined,
       namespace: undefined,
       timeout: undefined,
@@ -164,9 +163,9 @@ describe('Procedure static', () => {
     expect(kProcedure in procedure).toBe(true)
     expect(procedure.contract).toMatchObject({
       type: 'neemata:procedure',
-      input: expect.any(NeverType),
-      output: expect.any(AnyType),
-      stream: expect.any(NeverType),
+      input: expect.any(type.NeverType),
+      output: expect.any(type.AnyType),
+      stream: expect.any(type.NeverType),
       name: undefined,
       namespace: undefined,
       timeout: undefined,
@@ -193,9 +192,9 @@ describe('Procedure static', () => {
     expect(kProcedure in procedure).toBe(true)
     expect(procedure.contract).toMatchObject({
       type: 'neemata:procedure',
-      input: expect.any(NeverType),
-      output: expect.any(AnyType),
-      stream: expect.any(AnyType),
+      input: expect.any(type.NeverType),
+      output: expect.any(type.AnyType),
+      stream: expect.any(type.AnyType),
       name: undefined,
       namespace: undefined,
       timeout: undefined,

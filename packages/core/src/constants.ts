@@ -1,5 +1,3 @@
-import type { Plugin } from './plugin.ts'
-
 export const kOptionalDependency: unique symbol = Symbol.for(
   'neemata:OptionalDependencyKey',
 )

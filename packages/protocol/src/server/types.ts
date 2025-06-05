@@ -1,4 +1,3 @@
-import type { ProtocolServerBlobStream } from '../client/stream.ts'
 import type { ProtocolBlob, ProtocolBlobInterface } from '../common/blob.ts'
 import type { ProtocolClientStream } from './stream.ts'
 

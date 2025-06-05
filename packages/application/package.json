@@ -12,6 +12,7 @@
     "type-check": "tsc --noEmit"
   },
   "peerDependencies": {
+    "zod": "^3.25.0",
     "@nmtjs/common": "workspace:*",
     "@nmtjs/contract": "workspace:*",
     "@nmtjs/core": "workspace:*",
@@ -19,6 +20,7 @@
     "@nmtjs/type": "workspace:*"
   },
   "devDependencies": {
+    "zod": "^3.25.0",
     "@types/node": "^18",
     "@nmtjs/common": "workspace:*",
     "@nmtjs/contract": "workspace:*",

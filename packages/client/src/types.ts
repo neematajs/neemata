@@ -1,12 +1,13 @@
 import type { CallTypeProvider, OneOf, TypeProvider } from '@nmtjs/common'
 import type { TAnyAPIContract } from '@nmtjs/contract'
 import type {
+  InputType,
+  OutputType,
   ProtocolBaseClientCallOptions,
   ProtocolError,
   ProtocolServerStreamInterface,
 } from '@nmtjs/protocol/client'
-import type { InputType, OutputType } from '@nmtjs/protocol/client'
-import type { BaseTypeAny, NeverType, t } from '@nmtjs/type'
+import type { BaseTypeAny, t } from '@nmtjs/type'
 
 export interface StaticInputContractTypeProvider extends TypeProvider {
   output: this['input'] extends BaseTypeAny
@@ -47,7 +48,7 @@ export type ResolveAPIContract<
             C['namespaces'][N]['procedures'][P]['input']
           >
         >
-        output: C['namespaces'][N]['procedures'][P]['stream'] extends NeverType
+        output: C['namespaces'][N]['procedures'][P]['stream'] extends t.NeverType
           ? OutputType<
               CallTypeProvider<
                 OutputTypeProvider,
@@ -99,7 +100,7 @@ export type ClientCallers<
 > = {
   [N in keyof Resolved]: {
     [P in keyof Resolved[N]['procedures']]: (
-      ...args: Resolved[N]['procedures'][P]['input'] extends NeverType
+      ...args: Resolved[N]['procedures'][P]['input'] extends t.NeverType
         ? [data?: undefined, options?: Partial<ProtocolBaseClientCallOptions>]
         : undefined extends t.infer.encoded.input<
               Resolved[N]['procedures'][P]['contract']['input']

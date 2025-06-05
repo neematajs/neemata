@@ -1,18 +1,22 @@
-import { iso, union, type ZodMiniUnion } from '@zod/mini'
+import * as zod from 'zod/v4-mini'
 import { CustomType, TransformType } from './custom.ts'
 
 export class DateType extends TransformType<
   Date,
-  ZodMiniUnion<[iso.ZodMiniISODate, iso.ZodMiniISODateTime]>
+  zod.ZodMiniUnion<[zod.iso.ZodMiniISODate, zod.iso.ZodMiniISODateTime]>
 > {
   static factory() {
     return CustomType.factory<
       Date,
-      ZodMiniUnion<Array<iso.ZodMiniISODate | iso.ZodMiniISODateTime>>
+      zod.ZodMiniUnion<
+        Array<zod.iso.ZodMiniISODate | zod.iso.ZodMiniISODateTime>
+      >
     >({
       decode: (value: string): Date => new Date(value),
       encode: (value: Date): string => value.toISOString(),
-      type: union([iso.datetime(), iso.date()]),
+      type: zod.union([zod.iso.datetime(), zod.iso.date()]),
     })
   }
 }
+
+export const date = DateType.factory

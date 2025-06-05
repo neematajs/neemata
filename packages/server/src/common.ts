@@ -1,5 +1,4 @@
 import EventEmitter from 'node:events'
-import { type ApplicationWorkerOptions, WorkerType } from '@nmtjs/application'
 
 export const bindPortMessageHandler = (port: EventEmitter) => {
   port.on('message', (message) => {

@@ -1,45 +1,39 @@
-import {
-  any,
-  type core,
-  custom,
-  overwrite,
-  pipe,
-  refine,
-  type ZodMiniPipe,
-  type ZodMiniType,
-} from '@zod/mini'
+import * as zod from 'zod/v4-mini'
 import { BaseType, type SimpleZodType, type ZodType } from './base.ts'
 
 export type CustomTransformFn<I, O> = (value: I) => O
 export abstract class TransformType<
   Type,
-  EncodedType extends SimpleZodType = ZodMiniType<Type, Type>,
-  DecodedType extends ZodType = ZodMiniType<Type, Type>,
+  EncodedType extends SimpleZodType = zod.ZodMiniType<Type, Type>,
+  DecodedType extends ZodType = zod.ZodMiniType<Type, Type>,
 > extends BaseType<
-  ZodMiniPipe<
-    ZodMiniType<DecodedType['_zod']['output'], DecodedType['_zod']['input']>,
+  zod.ZodMiniPipe<
+    zod.ZodMiniType<
+      DecodedType['_zod']['output'],
+      DecodedType['_zod']['input']
+    >,
     EncodedType
   >,
-  ZodMiniPipe<
+  zod.ZodMiniPipe<
     EncodedType,
-    ZodMiniType<EncodedType['_zod']['output'], EncodedType['_zod']['input']>
+    zod.ZodMiniType<EncodedType['_zod']['output'], EncodedType['_zod']['input']>
   >
 > {}
 
 export class CustomType<
   Type,
-  EncodedType extends SimpleZodType = ZodMiniType<Type, Type>,
-  DecodedType extends ZodType = ZodMiniType<Type, Type>,
+  EncodedType extends SimpleZodType = zod.ZodMiniType<Type, Type>,
+  DecodedType extends ZodType = zod.ZodMiniType<Type, Type>,
 > extends TransformType<Type, EncodedType, DecodedType> {
   static factory<
     Type,
-    EncodedType extends SimpleZodType = ZodMiniType<Type, Type>,
-    DecodedType extends ZodType = ZodMiniType<Type, Type>,
+    EncodedType extends SimpleZodType = zod.ZodMiniType<Type, Type>,
+    DecodedType extends ZodType = zod.ZodMiniType<Type, Type>,
   >({
     decode,
     encode,
     error,
-    type = any() as unknown as EncodedType,
+    type = zod.any() as unknown as EncodedType,
   }: {
     decode: CustomTransformFn<
       EncodedType['_zod']['input'],
@@ -49,25 +43,37 @@ export class CustomType<
       DecodedType['_zod']['input'],
       EncodedType['_zod']['output']
     >
-    error?: string | core.$ZodErrorMap<core.$ZodIssueBase>
+    error?: string | zod.core.$ZodErrorMap<zod.core.$ZodIssueBase>
     type?: EncodedType
   }) {
     return new CustomType<Type, EncodedType, DecodedType>({
-      encodedZodType: pipe(
-        custom().check(
-          refine((val) => typeof val !== 'undefined', { error, abort: true }),
-          overwrite(encode),
+      encodedZodType: zod.pipe(
+        zod.custom().check(
+          zod.refine((val) => typeof val !== 'undefined', {
+            error,
+            abort: true,
+          }),
+          zod.overwrite(encode),
         ),
         type,
       ),
-      decodedZodType: pipe(
+      // @ts-expect-error
+      decodedZodType: zod.pipe(
         type,
-        custom().check(
-          refine((val) => typeof val !== 'undefined', { error, abort: true }),
-          overwrite(decode),
-        ),
+        // @ts-expect-error
+        zod
+          .custom()
+          .check(
+            zod.refine((val) => typeof val !== 'undefined', {
+              error,
+              abort: true,
+            }),
+            zod.overwrite(decode),
+          ),
       ),
       params: { encode },
     })
   }
 }
+
+export const custom = CustomType.factory

@@ -1,7 +1,7 @@
 import type { TAnyAPIContract } from '@nmtjs/contract'
 import { ErrorCode } from '@nmtjs/protocol'
 import { ProtocolBaseTransformer } from '@nmtjs/protocol/client'
-import { NeemataTypeError, NeverType } from '@nmtjs/type'
+import { NeemataTypeError, t } from '@nmtjs/type'
 import { BaseClient, ClientError } from './common.ts'
 
 export class RuntimeContractTransformer extends ProtocolBaseTransformer {
@@ -21,20 +21,20 @@ export class RuntimeContractTransformer extends ProtocolBaseTransformer {
   decodeRPC(namespace: string, procedure: string, payload: any) {
     const type =
       this.contract.namespaces[namespace].procedures[procedure].output
-    if (type instanceof NeverType) return undefined
+    if (type instanceof type.NeverType) return undefined
     return type.decode(payload)
   }
 
   decodeRPCChunk(namespace: string, procedure: string, payload: any) {
     const type =
       this.contract.namespaces[namespace].procedures[procedure].stream
-    if (type instanceof NeverType) return undefined
+    if (type instanceof t.NeverType) return undefined
     return type.decode(payload)
   }
 
   encodeRPC(namespace: string, procedure: string, payload: any) {
     const type = this.contract.namespaces[namespace].procedures[procedure].input
-    if (type instanceof NeverType) return undefined
+    if (type instanceof t.NeverType) return undefined
     try {
       return type.encode(payload)
     } catch (error) {
