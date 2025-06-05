@@ -1,31 +1,24 @@
-import {
-  array,
-  type core,
-  length,
-  maxLength,
-  minLength,
-  type ZodMiniArray,
-} from '@zod/mini'
+import * as zod from 'zod/v4-mini'
 import { BaseType } from './base.ts'
 
-type Check = core.CheckFn<any[]> | core.$ZodCheck<any[]>
+type Check = zod.core.CheckFn<any[]> | zod.core.$ZodCheck<any[]>
 
 export class ArrayType<T extends BaseType = BaseType> extends BaseType<
-  ZodMiniArray<T['encodedZodType']>,
-  ZodMiniArray<T['decodedZodType']>,
+  zod.ZodMiniArray<T['encodedZodType']>,
+  zod.ZodMiniArray<T['decodedZodType']>,
   { element: T }
 > {
   static factory<T extends BaseType>(element: T, ...checks: Check[]) {
     return new ArrayType<T>({
-      encodedZodType: array(element.encodedZodType).check(...checks),
-      decodedZodType: array(element.decodedZodType).check(...checks),
+      encodedZodType: zod.array(element.encodedZodType).check(...checks),
+      decodedZodType: zod.array(element.decodedZodType).check(...checks),
       params: { checks },
       props: { element },
     })
   }
 
   min(value: number) {
-    const check = minLength(value)
+    const check = zod.minLength(value)
     return ArrayType.factory<T>(
       this.props.element,
       ...this.params.checks,
@@ -34,7 +27,7 @@ export class ArrayType<T extends BaseType = BaseType> extends BaseType<
   }
 
   max(value: number) {
-    const check = maxLength(value)
+    const check = zod.maxLength(value)
     return ArrayType.factory<T>(
       this.props.element,
       ...this.params.checks,
@@ -43,7 +36,7 @@ export class ArrayType<T extends BaseType = BaseType> extends BaseType<
   }
 
   length(value: number) {
-    const check = length(value)
+    const check = zod.length(value)
     return ArrayType.factory<T>(
       this.props.element,
       ...this.params.checks,
@@ -51,3 +44,5 @@ export class ArrayType<T extends BaseType = BaseType> extends BaseType<
     )
   }
 }
+
+export const array = ArrayType.factory

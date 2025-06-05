@@ -1,5 +1,5 @@
 import type { ArrayMap } from '@nmtjs/common'
-import { tuple, type ZodMiniTuple } from '@zod/mini'
+import * as zod from 'zod/v4-mini'
 import { BaseType } from './base.ts'
 
 export class TupleType<
@@ -10,11 +10,11 @@ export class TupleType<
   R extends BaseType | null = BaseType | null,
 > extends BaseType<
   R extends BaseType
-    ? ZodMiniTuple<ArrayMap<T, 'encodedZodType'>, R['encodedZodType']>
-    : ZodMiniTuple<ArrayMap<T, 'encodedZodType'>, null>,
+    ? zod.ZodMiniTuple<ArrayMap<T, 'encodedZodType'>, R['encodedZodType']>
+    : zod.ZodMiniTuple<ArrayMap<T, 'encodedZodType'>, null>,
   R extends BaseType
-    ? ZodMiniTuple<ArrayMap<T, 'decodedZodType'>, R['decodedZodType']>
-    : ZodMiniTuple<ArrayMap<T, 'decodedZodType'>, null>,
+    ? zod.ZodMiniTuple<ArrayMap<T, 'decodedZodType'>, R['decodedZodType']>
+    : zod.ZodMiniTuple<ArrayMap<T, 'decodedZodType'>, null>,
   { elements: T; rest?: R }
 > {
   static factory<
@@ -25,10 +25,12 @@ export class TupleType<
     const decoded = elements.map((el) => el.decodedZodType)
     return new TupleType<T, R>({
       // @ts-expect-error
-      encodedZodType: tuple(encoded, rest?.encodedZodType),
+      encodedZodType: zod.tuple(encoded, rest?.encodedZodType),
       // @ts-expect-error
-      decodedZodType: tuple(decoded, rest?.decodedZodType),
+      decodedZodType: zod.tuple(decoded, rest?.decodedZodType),
       props: { elements, rest },
     })
   }
 }
+
+export const tuple = TupleType.factory

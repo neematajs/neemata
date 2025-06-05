@@ -17,12 +17,12 @@
     "prepare": "husky"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.0.0-beta.1",
+    "@biomejs/biome": "2.0.0-beta.5",
     "@nmtjs/builder": "github:neematajs/builder#574ee80e0697ffc94d052bf0502357967b0f952d",
     "@types/node": "^18.19.86",
     "husky": "^9.1.7",
     "typescript": "^5.8.3",
-    "vitest": "^3.1.1"
+    "vitest": "^3.2.1"
   },
   "workspaces": [
     "./packages/*"

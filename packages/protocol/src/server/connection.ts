@@ -1,7 +1,5 @@
 import { randomUUID } from 'node:crypto'
 import type { Container } from '@nmtjs/core'
-import type { InteractivePromise } from '../../../common/src/index.ts'
-import type { ProtocolApiCallResult } from './api.ts'
 import type { BaseServerDecoder, BaseServerEncoder } from './format.ts'
 import type { ProtocolClientStream, ProtocolServerStream } from './stream.ts'
 

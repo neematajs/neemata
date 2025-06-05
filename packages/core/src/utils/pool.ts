@@ -67,7 +67,7 @@ export class Pool<T = unknown> {
         this.#queue.push(waiting)
       })
     }
-    let item: T | undefined = undefined
+    let item: T | undefined
     let free = false
     do {
       item = this.#items[this.#current]

@@ -1,12 +1,14 @@
 import assert from 'node:assert'
 import { inspect } from 'node:util'
-import { withTimeout, type Async, type ErrorClass } from '@nmtjs/common'
+import { type Async, type ErrorClass, withTimeout } from '@nmtjs/common'
 import { IsProcedureContract, IsSubscriptionContract } from '@nmtjs/contract'
-import { type AnyInjectable, type Container, Scope } from '@nmtjs/core'
 import {
+  type AnyInjectable,
+  type Container,
   createFactoryInjectable,
   type Dependencies,
   type Logger,
+  Scope,
 } from '@nmtjs/core'
 import { ErrorCode } from '@nmtjs/protocol'
 import {
@@ -17,7 +19,8 @@ import {
   ProtocolError,
   ProtocolInjectables,
 } from '@nmtjs/protocol/server'
-import { NeemataTypeError, NeverType, zod } from '@nmtjs/type'
+import { NeemataTypeError, type } from '@nmtjs/type'
+import { prettifyError } from 'zod/v4-mini'
 import type { ApplicationOptions } from './application.ts'
 import type { AnyNamespace } from './namespace.ts'
 import { type AnyBaseProcedure, isIterableResponse } from './procedure.ts'
@@ -124,7 +127,7 @@ export class Api implements ProtocolApi {
     const isSubscription = IsSubscriptionContract(procedure.contract)
     const isIterableProcedure =
       IsProcedureContract(procedure.contract) &&
-      procedure.contract.stream instanceof NeverType === false
+      procedure.contract.stream instanceof type.NeverType === false
 
     try {
       const handler = await this.createProcedureHandler(
@@ -260,7 +263,7 @@ export class Api implements ProtocolApi {
   }
 
   private handleInput(procedure: AnyBaseProcedure, payload: any) {
-    if (procedure.contract.input instanceof NeverType === false) {
+    if (procedure.contract.input instanceof type.NeverType === false) {
       const type = procedure.contract.input
       try {
         return type.decode(payload)
@@ -268,7 +271,7 @@ export class Api implements ProtocolApi {
         if (error instanceof NeemataTypeError)
           throw new ApiError(
             ErrorCode.ValidationError,
-            `Input validation error: \n${zod.prettifyError(error)}`,
+            `Input validation error: \n${prettifyError(error)}`,
             error.issues,
           )
         throw error
@@ -280,7 +283,7 @@ export class Api implements ProtocolApi {
     if (!isIterableResponse(response))
       throw new Error('Invalid response. Use `createIterableResponse` helper')
     const iterable = response.iterable
-    if (procedure.contract.output instanceof NeverType === false) {
+    if (procedure.contract.output instanceof type.NeverType === false) {
       const type = procedure.contract.output
       return {
         output: type.encode(response.output),
@@ -291,7 +294,7 @@ export class Api implements ProtocolApi {
   }
 
   private handleOutput(procedure: AnyBaseProcedure, response: any) {
-    if (procedure.contract.output instanceof NeverType === false) {
+    if (procedure.contract.output instanceof type.NeverType === false) {
       const type = procedure.contract.output
       return {
         output: type.encode(response),

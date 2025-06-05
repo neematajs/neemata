@@ -290,7 +290,7 @@ export const createClassInjectable = <
     static [kClassInjectable] = true
 
     static get label() {
-      // biome-ignore lint/complexity/noThisInStatic:
+      // biome-ignore lint/complexity/noThisInStatic: ok
       return this.name
     }
 
@@ -331,7 +331,7 @@ export function createExtendableClassInjectable<
     static [kClassInjectable] = true
 
     static get label() {
-      // biome-ignore lint/complexity/noThisInStatic:
+      // biome-ignore lint/complexity/noThisInStatic: ok
       return this.name
     }
 

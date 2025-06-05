@@ -14,14 +14,13 @@ import type {
   RuntimeOutputContractTypeProvider,
 } from './types.ts'
 
-export * from './types.ts'
-
 export {
   ErrorCode,
   ProtocolBlob,
   type ProtocolBlobMetadata,
   TransportType,
 } from '@nmtjs/protocol'
+export * from './types.ts'
 
 export class ClientError extends ProtocolError {}
 

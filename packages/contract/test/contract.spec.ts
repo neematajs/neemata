@@ -1,4 +1,4 @@
-import { NeverType, t } from '@nmtjs/type'
+import { t } from '@nmtjs/type'
 import { describe, expect, it } from 'vitest'
 import { c, NamespaceContract } from '../src/index.ts'
 import { APIContract } from '../src/schemas/api.ts'
@@ -99,7 +99,7 @@ describe('Contracts', { sequential: true }, () => {
     ).toHaveProperty('output', outputType)
     expect(
       api.namespaces.testNamespace.procedures.testProcedure,
-    ).toHaveProperty('stream', expect.any(NeverType))
+    ).toHaveProperty('stream', expect.any(t.NeverType))
     expect(
       api.namespaces.testNamespace.procedures.testProcedure,
     ).toHaveProperty('name', 'testProcedure')

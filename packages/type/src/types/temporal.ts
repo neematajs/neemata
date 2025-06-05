@@ -1,5 +1,5 @@
-import { iso, regex, string, type ZodMiniString } from '@zod/mini'
 import { Temporal } from 'temporal-polyfill'
+import { iso, regex, string, type ZodMiniString } from 'zod/v4-mini'
 import { CustomType, TransformType } from './custom.ts'
 
 type Types = Exclude<
@@ -144,3 +144,11 @@ export class PlainMonthDayType extends TransformType<
     })
   }
 }
+
+export const plainDate = PlainDateType.factory
+export const plainDatetime = PlainDateTimeType.factory
+export const plainTime = PlainTimeType.factory
+export const zonedDatetime = ZonedDateTimeType.factory
+export const duration = DurationType.factory
+export const plainYearMonth = PlainYearMonthType.factory
+export const plainMonthDay = PlainMonthDayType.factory

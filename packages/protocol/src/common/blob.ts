@@ -43,7 +43,7 @@ export class ProtocolBlob implements ProtocolBlobInterface {
       filename?: string
     } = {},
   ) {
-    let _source: any = undefined
+    let _source: any
 
     if (source instanceof globalThis.ReadableStream) {
       _source = source

@@ -76,7 +76,7 @@ export class WebSocketClientTransport extends ProtocolTransport {
 
       ws.addEventListener(
         'close',
-        (event) => {
+        () => {
           this.protocol.emit('disconnected')
           this.webSocket = null
           if (this.options.autoreconnect === true) {

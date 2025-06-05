@@ -1,10 +1,4 @@
-import type {
-  Container,
-  Metadata,
-  MetadataKey,
-  MetadataStore,
-} from '@nmtjs/core'
-import type { Hook } from '@nmtjs/core'
+import type { Container, Hook, MetadataStore } from '@nmtjs/core'
 import type { Connection } from './connection.ts'
 
 export type ProtocolApiCallOptions = {

@@ -1,4 +1,4 @@
-import { type BaseType, type NeverType, t } from '@nmtjs/type'
+import { type BaseType, t } from '@nmtjs/type'
 import { Kind } from '../constants.ts'
 import { type ContractSchemaOptions, createSchema } from '../utils.ts'
 
@@ -37,9 +37,9 @@ export type TAnyProcedureContract = TProcedureContract<
 >
 
 export interface TProcedureContract<
-  Input extends BaseType = NeverType,
-  Output extends BaseType = NeverType,
-  Stream extends BaseType = NeverType,
+  Input extends BaseType = t.NeverType,
+  Output extends BaseType = t.NeverType,
+  Stream extends BaseType = t.NeverType,
   Name extends string | undefined = undefined,
   Namespace extends string | undefined = undefined,
 > extends TBaseProcedureContract<
@@ -54,9 +54,9 @@ export interface TProcedureContract<
 }
 
 export const ProcedureContract = <
-  Input extends BaseType = NeverType,
-  Output extends BaseType = NeverType,
-  Stream extends BaseType = NeverType,
+  Input extends BaseType = t.NeverType,
+  Output extends BaseType = t.NeverType,
+  Stream extends BaseType = t.NeverType,
   Name extends string | undefined = undefined,
 >(options: {
   input?: Input

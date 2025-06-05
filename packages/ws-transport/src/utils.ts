@@ -22,7 +22,7 @@ export const send = (
       return null
     }
     return true
-  } catch (error) {
+  } catch {
     return null
   }
 }

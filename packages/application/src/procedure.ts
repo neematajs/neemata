@@ -1,3 +1,4 @@
+import type { Async } from '@nmtjs/common'
 import {
   c,
   type TAnyBaseProcedureContract,
@@ -19,17 +20,11 @@ import type {
   ProtocolAnyIterable,
   ProtocolApiCallIterableResult,
 } from '@nmtjs/protocol/server'
-import {
-  type BaseType,
-  type CustomType,
-  type NeverType,
-  t,
-  type zod,
-} from '@nmtjs/type'
+import { type BaseType, t } from '@nmtjs/type'
+import type * as zod from 'zod/v4-mini'
 import type { AnyGuard, AnyMiddleware } from './api.ts'
 import { kIterableResponse, kProcedure } from './constants.ts'
 import type { JsonPrimitive } from './types.ts'
-import type { Async } from '@nmtjs/common'
 
 export interface BaseProcedure<
   ProcedureContract extends TAnyBaseProcedureContract,
@@ -59,7 +54,7 @@ export interface Procedure<
 > extends BaseProcedure<ProcedureContract, ProcedureDeps> {
   handler: ProcedureHandlerType<
     InputType<t.infer.decoded.output<ProcedureContract['input']>>,
-    ProcedureContract['stream'] extends NeverType
+    ProcedureContract['stream'] extends t.NeverType
       ? OutputType<t.infer.decoded.input<ProcedureContract['output']>>
       : RPCStreamResponse<
           t.infer.decoded.input<
@@ -99,7 +94,7 @@ export type CreateProcedureParams<
       metadata?: Metadata[]
       handler: ProcedureHandlerType<
         InputType<t.infer.decoded.output<ProcedureContract['input']>>,
-        ProcedureContract['stream'] extends NeverType
+        ProcedureContract['stream'] extends t.NeverType
           ? OutputType<t.infer.decoded.input<ProcedureContract['output']>>
           : RPCStreamResponse<
               t.infer.decoded.input<
@@ -112,7 +107,7 @@ export type CreateProcedureParams<
     }
   | ProcedureHandlerType<
       InputType<t.infer.decoded.output<ProcedureContract['input']>>,
-      ProcedureContract['stream'] extends NeverType
+      ProcedureContract['stream'] extends t.NeverType
         ? OutputType<t.infer.decoded.input<ProcedureContract['output']>>
         : RPCStreamResponse<
             t.infer.decoded.input<
@@ -259,18 +254,18 @@ export function createProcedure<
       >,
 ): Procedure<
   TProcedureContract<
-    TInput extends BaseType ? TInput : NeverType,
+    TInput extends BaseType ? TInput : t.NeverType,
     TOutput extends BaseType
       ? TOutput
-      : CustomType<
+      : t.CustomType<
           JsonPrimitive<Return>,
           zod.ZodMiniCustom<JsonPrimitive<Return>, JsonPrimitive<Return>>
         >,
     TStream extends BaseType
       ? TStream
       : TStream extends true
-        ? CustomType<JsonPrimitive<Stream>>
-        : NeverType
+        ? t.CustomType<JsonPrimitive<Stream>>
+        : t.NeverType
   >,
   Deps
 > {

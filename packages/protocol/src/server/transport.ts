@@ -1,4 +1,3 @@
-import type { Async } from '@nmtjs/common'
 import type { BasePlugin, PluginContext } from '@nmtjs/core'
 import type { ServerMessageType } from '../common/enums.ts'
 import type { Connection } from './connection.ts'

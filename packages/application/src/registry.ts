@@ -1,3 +1,4 @@
+import type { ErrorClass } from '@nmtjs/common'
 import {
   type AnyInjectable,
   type Depedency,
@@ -12,7 +13,6 @@ import type { AnyFilter, AnyGuard, AnyMiddleware } from './api.ts'
 import type { AnyNamespace } from './namespace.ts'
 import type { AnyTask } from './task.ts'
 import type { Command } from './types.ts'
-import type { ErrorClass } from '@nmtjs/common'
 
 export const APP_COMMAND = Symbol('APP_COMMAND')
 

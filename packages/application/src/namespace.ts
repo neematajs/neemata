@@ -1,6 +1,7 @@
 import { readdir } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import type { Callback } from '@nmtjs/common'
 import {
   c,
   type TAnyNamespaceContract,
@@ -12,7 +13,6 @@ import type { BaseType } from '@nmtjs/type'
 import type { AnyGuard, AnyMiddleware } from './api.ts'
 import { kNamespace, kProcedure, kSubscription } from './constants.ts'
 import type { AnyBaseProcedure } from './procedure.ts'
-import type { Callback } from '@nmtjs/common'
 
 export interface Namespace<Contract extends TAnyNamespaceContract> {
   contract: Contract
