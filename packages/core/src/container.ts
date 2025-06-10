@@ -287,7 +287,9 @@ export function createInjectFunction(container: Container) {
     injectable: T,
     context: InlineInjectionDependencies<T>,
   ) => {
-    const dependencies: Dependencies = {}
+    const dependencies: Dependencies = {
+      ...injectable.dependencies,
+    }
 
     for (const key in context) {
       const dep = context[key]
@@ -309,7 +311,7 @@ export function createInjectFunction(container: Container) {
 }
 
 type InlineInjectionDependencies<T extends AnyInjectable> = {
-  [K in keyof T['dependencies']]:
+  [K in keyof T['dependencies']]?:
     | ResolveInjectableType<T['dependencies'][K]>
     | AnyInjectable<ResolveInjectableType<T['dependencies'][K]>>
 }
