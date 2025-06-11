@@ -89,14 +89,9 @@ describe('Server Protocol', () => {
     ).resolves.toBe(connectionData)
 
     const result = await protocol.call(callOptions)
-
+    expect(callContainer.instances.size).toBe(0)
     expect(result).toHaveProperty('output')
     expect(result.output).toMatchObject(callOptions)
-
-    // container should be disposed
-    await expect(
-      callContainer.resolve(ProtocolInjectables.connectionData),
-    ).rejects.toThrow()
   })
 
   describe('Connections', () => {

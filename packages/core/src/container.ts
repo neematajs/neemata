@@ -26,6 +26,7 @@ export class Container {
   private readonly resolvers = new Map<AnyInjectable, Promise<any>>()
   private readonly injectables = new Set<AnyInjectable>()
   private readonly dependants = new Map<AnyInjectable, Set<AnyInjectable>>()
+  private disposing = false
 
   constructor(
     private readonly application: {
@@ -66,28 +67,23 @@ export class Container {
   async dispose() {
     this.application.logger.trace('Disposing [%s] scope context...', this.scope)
 
-    // Loop through all instances and dispose them,
-    // until there are no more instances left
-    while (this.instances.size) {
-      for (const injectable of this.instances.keys()) {
-        const dependants = this.dependants.get(injectable)
-        // Firstly, dispose instances that other injectables don't depend on
-        if (!dependants?.size) {
-          await this.disposeInjectable(injectable)
-          for (const dependants of this.dependants.values()) {
-            // Clear current istances as a dependant for other injectables
-            if (dependants.has(injectable)) {
-              dependants.delete(injectable)
-            }
-          }
-        }
-      }
+    // Prevent new resolutions during disposal
+    this.disposing = true
+
+    // Get proper disposal order using topological sort
+    const disposalOrder = this.getDisposalOrder()
+
+    // Dispose in the correct order
+    for (const injectable of disposalOrder) {
+      await this.disposeInjectable(injectable)
     }
 
     this.instances.clear()
     this.injectables.clear()
     this.resolvers.clear()
     this.dependants.clear()
+
+    this.disposing = false
   }
 
   containsWithinSelf(injectable: AnyInjectable) {
@@ -168,6 +164,10 @@ export class Container {
     injectable: T,
     dependant?: AnyInjectable,
   ): Promise<ResolveInjectableType<T>> {
+    if (this.disposing) {
+      throw new Error('Cannot resolve during disposal')
+    }
+
     if (dependant && compareScope(dependant.scope, '<', injectable.scope)) {
       // TODO: more informative error
       throw new Error('Invalid scope: dependant is looser than injectable')
@@ -184,7 +184,7 @@ export class Container {
     } else {
       const { scope, dependencies, stack, label } = injectable
 
-      if (dependant && compareScope(scope, '=', dependant.scope)) {
+      if (dependant) {
         let dependants = this.dependants.get(injectable)
         if (!dependants) {
           this.dependants.set(injectable, (dependants = new Set()))
@@ -207,55 +207,106 @@ export class Container {
               `No instance provided for ${label || 'an'} injectable:\n${stack}`,
             ),
           )
-        } else if (isFactoryInjectable(injectable)) {
-          const resolution = this.createInjectableContext(
-            dependencies,
-            injectable,
-          )
-            .then((context) =>
-              Promise.resolve(injectable.factory(context)).then((instance) => ({
-                instance,
-                context,
-              })),
-            )
-            .then(({ instance, context }) => {
-              const picked = injectable.pick(instance)
-              if (compareScope(this.scope, '>=', scope))
-                this.instances.set(injectable, { instance, picked, context })
-              if (scope !== Scope.Transient) this.resolvers.delete(injectable)
-              return picked
-            })
-          if (scope !== Scope.Transient)
-            this.resolvers.set(injectable, resolution)
-          return resolution
-        } else if (isClassInjectable(injectable)) {
-          const resolution = this.createInjectableContext(
-            dependencies,
-            injectable,
-          )
-            .then((context) => {
-              const instance = new injectable(context)
-              return instance.$onCreate().then(() => instance)
-            })
-            .then((instance) => {
-              // const picked = injectable.pick(instance)
-              if (compareScope(this.scope, '>=', scope))
-                this.instances.set(injectable, {
-                  instance,
-                  picked: instance,
-                  context: undefined,
-                })
-              if (scope !== Scope.Transient) this.resolvers.delete(injectable)
-              return instance
-            })
-          if (scope !== Scope.Transient)
-            this.resolvers.set(injectable, resolution)
-          return resolution
         } else {
-          throw new Error('Invalid injectable type')
+          const resolution = this.createResolution(
+            injectable,
+            dependencies,
+            scope,
+          )
+          if (scope !== Scope.Transient) {
+            this.resolvers.set(injectable, resolution)
+          }
+          return resolution
         }
       }
     }
+  }
+
+  private async createResolution<T extends AnyInjectable>(
+    injectable: T,
+    dependencies: Dependencies,
+    scope: Scope,
+  ): Promise<ResolveInjectableType<T>> {
+    try {
+      if (isFactoryInjectable(injectable)) {
+        const context = await this.createInjectableContext(
+          dependencies,
+          injectable,
+        )
+        const instance = await Promise.resolve(injectable.factory(context))
+        const picked = injectable.pick(instance)
+
+        if (compareScope(this.scope, '>=', scope)) {
+          this.instances.set(injectable, { instance, picked, context })
+        }
+
+        if (scope !== Scope.Transient) {
+          this.resolvers.delete(injectable)
+        }
+
+        return picked
+      } else if (isClassInjectable(injectable)) {
+        const context = await this.createInjectableContext(
+          dependencies,
+          injectable,
+        )
+        const instance = new injectable(context)
+        await instance.$onCreate()
+
+        if (compareScope(this.scope, '>=', scope)) {
+          this.instances.set(injectable, {
+            instance,
+            picked: instance,
+            context: undefined,
+          })
+        }
+
+        if (scope !== Scope.Transient) {
+          this.resolvers.delete(injectable)
+        }
+
+        return instance
+      } else {
+        throw new Error('Invalid injectable type')
+      }
+    } catch (error) {
+      // Clean up on failure to prevent memory leaks
+      if (scope !== Scope.Transient) {
+        this.resolvers.delete(injectable)
+      }
+      this.instances.delete(injectable)
+      throw error
+    }
+  }
+
+  private getDisposalOrder(): AnyInjectable[] {
+    const visited = new Set<AnyInjectable>()
+    const result: AnyInjectable[] = []
+
+    const visit = (injectable: AnyInjectable) => {
+      if (visited.has(injectable)) return
+      visited.add(injectable)
+
+      const dependants = this.dependants.get(injectable)
+      if (dependants) {
+        for (const dependant of dependants) {
+          if (this.instances.has(dependant)) {
+            visit(dependant)
+          }
+        }
+      }
+
+      // Only add to result if this container owns the instance
+      if (this.instances.has(injectable)) {
+        result.push(injectable)
+      }
+    }
+
+    for (const injectable of this.instances.keys()) {
+      visit(injectable)
+    }
+
+    return result
   }
 
   private async disposeInjectable(injectable: AnyInjectable) {
