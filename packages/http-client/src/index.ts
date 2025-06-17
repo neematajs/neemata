@@ -125,9 +125,12 @@ export class HttpClientTransport
 
   async connect(auth: any) {
     this.#auth = auth
+    this.emit('connected')
   }
 
-  async disconnect() {}
+  async disconnect() {
+    this.emit('disconnected')
+  }
 
   async send(
     messageType: ClientMessageType,

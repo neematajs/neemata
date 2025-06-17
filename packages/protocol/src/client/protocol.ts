@@ -153,8 +153,6 @@ export class ProtocolServerStreams<
 }
 
 export type ProtocolTransportEventMap = {
-  [K in `${ServerMessageType}`]: [ArrayBuffer]
-} & {
   connected: []
   disconnected: []
 }
@@ -164,7 +162,7 @@ export interface ProtocolSendMetadata {
   streamId?: number
 }
 
-export abstract class ProtocolTransport {
+export abstract class ProtocolTransport extends EventEmitter<ProtocolTransportEventMap> {
   abstract connect(
     auth: any,
     transformer: ProtocolBaseTransformer,
