@@ -13,11 +13,6 @@ export type WebSocketClientTransportOptions = {
    */
   origin: string
   /**
-   * Whether to autoreconnect on close
-   * @default true
-   */
-  autoreconnect?: boolean
-  /**
    * Custom WebSocket class
    * @default globalThis.WebSocket
    */
@@ -29,15 +24,21 @@ export type WebSocketClientTransportOptions = {
 export class WebSocketClientTransport extends ProtocolTransport {
   protected webSocket: WebSocket | null = null
   protected connecting: Promise<void> | null = null
+  protected options: WebSocketClientTransportOptions
 
   constructor(
     protected readonly protocol: Protocol,
-    protected readonly options: WebSocketClientTransportOptions,
+    options: WebSocketClientTransportOptions,
   ) {
     super()
+    this.options = {
+      debug: false,
+      ...options,
+    }
   }
 
   connect(auth: any, transformer: ProtocolBaseTransformer): Promise<void> {
+    // this.auth = auth
     const wsUrl = new URL('/api', this.options.origin)
     if (this.protocol.contentType) {
       wsUrl.searchParams.set('content-type', this.protocol.contentType)
@@ -54,13 +55,22 @@ export class WebSocketClientTransport extends ProtocolTransport {
       this.protocol.handleServerMessage(data as ArrayBuffer, this, transformer)
     })
 
+    ws.addEventListener(
+      'close',
+      (error) => {
+        if (error.reason !== 'user') this.emit('disconnected')
+        this.webSocket = null
+      },
+      { once: true },
+    )
+
     this.webSocket = ws
 
     this.connecting = new Promise((resolve, reject) => {
       ws.addEventListener(
         'open',
         () => {
-          this.protocol.emit('connected')
+          this.emit('connected')
           resolve()
         },
         { once: true },
@@ -73,18 +83,6 @@ export class WebSocketClientTransport extends ProtocolTransport {
         },
         { once: true },
       )
-
-      ws.addEventListener(
-        'close',
-        () => {
-          this.protocol.emit('disconnected')
-          this.webSocket = null
-          if (this.options.autoreconnect === true) {
-            setTimeout(this.connect.bind(this), 1000)
-          }
-        },
-        { once: true },
-      )
     })
 
     return this.connecting
@@ -92,7 +90,7 @@ export class WebSocketClientTransport extends ProtocolTransport {
 
   async disconnect(): Promise<void> {
     if (this.webSocket === null) return
-    this.webSocket!.close()
+    this.webSocket!.close(undefined, 'user')
     return _once(this.webSocket, 'close')
   }
 

@@ -46,16 +46,25 @@ export abstract class BaseClient<
   }
 
   protected abstract transformer: ProtocolBaseTransformer
+  protected callers!: ClientCallers<this['_']['api'], this['_']['safe']>
   protected auth: any
 
   constructor(
     protected transport: ProtocolTransport,
-    protected options: { timeout: number; safe?: SafeCall },
+    protected options: {
+      timeout: number
+      autoreconnect?: boolean
+      safe?: SafeCall
+    },
   ) {
     super()
-  }
 
-  protected callers = {} as ClientCallers<this['_']['api'], this['_']['safe']>
+    if (this.options.autoreconnect) {
+      this.transport.on('disconnected', () =>
+        setTimeout(this.connect.bind(this), 1000),
+      )
+    }
+  }
 
   protected async _call(
     namespace: string,
