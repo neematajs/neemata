@@ -13,7 +13,7 @@ import {
   kOptionalDependency,
   kValueInjectable,
 } from './constants.ts'
-import type { InjectFn } from './container.ts'
+import type { DisposeFn, InjectFn } from './container.ts'
 import { Scope } from './enums.ts'
 import type { Logger } from './logger.ts'
 
@@ -437,4 +437,5 @@ export function compareScope(
 export const CoreInjectables = {
   logger: createLazyInjectable<Logger>(Scope.Global, 'Logger'),
   inject: createLazyInjectable<InjectFn>(Scope.Global, 'Inject function'),
+  dispose: createLazyInjectable<DisposeFn>(Scope.Global, 'Dispose function'),
 }

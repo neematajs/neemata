@@ -89,7 +89,7 @@ describe('Server Protocol', () => {
     ).resolves.toBe(connectionData)
 
     const result = await protocol.call(callOptions)
-    expect(callContainer.instances.size).toBe(0)
+    expect(callContainer.instances.size).toBe(2)
     expect(result).toHaveProperty('output')
     expect(result.output).toMatchObject(callOptions)
   })

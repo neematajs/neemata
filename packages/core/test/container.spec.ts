@@ -1023,6 +1023,7 @@ describe('Container', () => {
       // Child container should include:
       // 1. childDep (our test dependency)
       // 2. CoreInjectables.inject (provided to every container)
+      // 3. CoreInjectables.dispose (provided to every container)
       // It should NOT include parentDep (that belongs to parent container)
       expect(
         childDisposalOrder.filter((dep: any) => dep === childDep),
@@ -1030,7 +1031,7 @@ describe('Container', () => {
       expect(
         childDisposalOrder.filter((dep: any) => dep === parentDep),
       ).toHaveLength(0)
-      expect(childDisposalOrder).toHaveLength(2) // childDep + inject function
+      expect(childDisposalOrder).toHaveLength(3) // childDep + inject function
     })
   })
 
