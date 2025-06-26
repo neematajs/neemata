@@ -105,7 +105,7 @@ export class Container {
 
   get<T extends AnyInjectable>(injectable: T): ResolveInjectableType<T> {
     if (this.instances.has(injectable)) {
-      return this.instances.get(injectable)!.instance
+      return this.instances.get(injectable)!.picked
     }
 
     if (this.parent?.contains(injectable)) {
@@ -275,8 +275,8 @@ export class Container {
     }
   }
 
-  private async createInjectFunction() {
-    return <T extends AnyInjectable>(
+  private createInjectFunction() {
+    const inject = <T extends AnyInjectable>(
       injectable: T,
       context: InlineInjectionDependencies<T>,
     ) => {
@@ -305,11 +305,26 @@ export class Container {
             scope: Scope.Transient,
           }
 
-      return this.resolve(newInjectable)
+      return this.resolve(newInjectable) as Promise<ResolveInjectableType<T>>
     }
+
+    const explicit = async <T extends AnyInjectable>(
+      injectable: T,
+      context: InlineInjectionDependencies<T>,
+    ) => {
+      const instance = await inject(injectable, context)
+      const dispose = this.createDisposeFunction()
+      return Object.assign(instance, {
+        [Symbol.asyncDispose]: async () => {
+          await dispose(injectable, instance)
+        },
+      })
+    }
+
+    return Object.assign(inject, { explicit })
   }
 
-  private async createDisposeFunction() {
+  private createDisposeFunction() {
     return async <T extends AnyInjectable>(
       injectable: T,
       instance?: ResolveInjectableType<T>,

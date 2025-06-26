@@ -1324,4 +1324,280 @@ describe('Container', () => {
       expect(firstConnDisposal).toBeLessThan(firstGlobalDisposal)
     })
   })
+
+  describe('Transient Injectable Disposal with WeakMap', () => {
+    it('should store transient context in WeakMap and dispose properly', async () => {
+      const disposeSpy = vi.fn()
+      const factorySpy = vi.fn(() => ({ value: 'test' }))
+
+      const transientInjectable = createFactoryInjectable({
+        scope: Scope.Transient,
+        factory: factorySpy,
+        dispose: disposeSpy,
+      })
+
+      // Get the inject function from the container
+      const inject = container.get(CoreInjectables.inject)
+      const dispose = container.get(CoreInjectables.dispose)
+
+      // Create a transient instance
+      const instance1 = await inject(transientInjectable, {})
+      const instance2 = await inject(transientInjectable, {})
+
+      expect(factorySpy).toHaveBeenCalledTimes(2)
+      expect(instance1).not.toBe(instance2) // Different instances
+      expect(disposeSpy).not.toHaveBeenCalled()
+
+      // Dispose first instance
+      await dispose(transientInjectable, instance1)
+      expect(disposeSpy).toHaveBeenCalledTimes(1)
+      expect(disposeSpy).toHaveBeenCalledWith(instance1, expect.any(Object))
+
+      // Dispose second instance
+      await dispose(transientInjectable, instance2)
+      expect(disposeSpy).toHaveBeenCalledTimes(2)
+      expect(disposeSpy).toHaveBeenCalledWith(instance2, expect.any(Object))
+    })
+
+    it('should require instance parameter for transient disposal', async () => {
+      const transientInjectable = createFactoryInjectable({
+        scope: Scope.Transient,
+        factory: () => ({ value: 'test' }),
+      })
+
+      const dispose = container.get(CoreInjectables.dispose)
+
+      // Should throw when trying to dispose transient without instance
+      await expect(dispose(transientInjectable)).rejects.toThrow(
+        'Instance is required for transient injectable disposal',
+      )
+    })
+
+    it('should handle disposal of transient with dependencies', async () => {
+      const dependencyDisposeSpy = vi.fn()
+      const transientDisposeSpy = vi.fn()
+
+      const dependency = createFactoryInjectable({
+        factory: () => ({ name: 'dependency' }),
+        dispose: dependencyDisposeSpy,
+      })
+
+      const transientInjectable = createFactoryInjectable({
+        scope: Scope.Transient,
+        dependencies: { dependency },
+        factory: (deps) => ({ value: 'transient', dep: deps.dependency }),
+        dispose: transientDisposeSpy,
+      })
+
+      // Resolve dependency first
+      await container.resolve(dependency)
+
+      const inject = container.get(CoreInjectables.inject)
+      const dispose = container.get(CoreInjectables.dispose)
+
+      // Create transient instance
+      const instance = await inject(transientInjectable, {})
+
+      // Dispose transient instance
+      await dispose(transientInjectable, instance)
+
+      // Only transient dispose should be called, not its dependencies
+      expect(transientDisposeSpy).toHaveBeenCalledTimes(1)
+      expect(dependencyDisposeSpy).not.toHaveBeenCalled()
+
+      // Dependency should still be available
+      expect(container.contains(dependency)).toBe(true)
+    })
+
+    it('should handle transient class injectable disposal', async () => {
+      const disposeSpy = vi.fn()
+
+      class TransientService extends createClassInjectable({}) {
+        async $onCreate() {}
+
+        async $onDispose() {
+          disposeSpy()
+        }
+      }
+
+      const transientClassInjectable = createExtendableClassInjectable(
+        TransientService,
+        {},
+        Scope.Transient,
+      )
+
+      const inject = container.get(CoreInjectables.inject)
+      const dispose = container.get(CoreInjectables.dispose)
+
+      const instance = await inject(transientClassInjectable, {})
+      expect(instance).toBeInstanceOf(TransientService)
+
+      await dispose(transientClassInjectable, instance)
+      expect(disposeSpy).toHaveBeenCalledTimes(1)
+    })
+
+    it('should not dispose transient instance if not in WeakMap', async () => {
+      const disposeSpy = vi.fn()
+
+      const transientInjectable = createFactoryInjectable({
+        scope: Scope.Transient,
+        factory: () => ({ value: 'test' }),
+        dispose: disposeSpy,
+      })
+
+      const inject = container.get(CoreInjectables.inject)
+      const dispose = container.get(CoreInjectables.dispose)
+
+      const instance = await inject(transientInjectable, {})
+
+      // Manually remove from WeakMap (simulating GC or other cleanup)
+      const transients = (container as any).transients
+      transients.delete(instance)
+
+      // Should not call dispose if not in WeakMap
+      await dispose(transientInjectable, instance)
+      expect(disposeSpy).not.toHaveBeenCalled()
+    })
+
+    it('should handle transient injection with context overrides', async () => {
+      const baseDepDisposeSpy = vi.fn()
+      const overrideDepDisposeSpy = vi.fn()
+      const transientDisposeSpy = vi.fn()
+
+      const baseDep = createFactoryInjectable({
+        factory: () => ({ type: 'base' }),
+        dispose: baseDepDisposeSpy,
+      })
+
+      const overrideDep = createFactoryInjectable({
+        factory: () => ({ type: 'override' }),
+        dispose: overrideDepDisposeSpy,
+      })
+
+      const transientInjectable = createFactoryInjectable({
+        scope: Scope.Transient,
+        dependencies: { dep: baseDep },
+        factory: (deps) => ({ value: 'transient', dependency: deps.dep }),
+        dispose: (instance, context) => {
+          transientDisposeSpy(instance, context)
+        },
+      })
+
+      await container.resolve(baseDep)
+
+      const inject = container.get(CoreInjectables.inject)
+      const dispose = container.get(CoreInjectables.dispose)
+
+      // Inject with override
+      const instance = await inject(transientInjectable, {
+        dep: overrideDep,
+      })
+
+      expect(instance.dependency.type).toBe('override')
+
+      // Dispose the transient
+      await dispose(transientInjectable, instance)
+
+      // Verify disposal was called with correct context
+      expect(transientDisposeSpy).toHaveBeenCalledTimes(1)
+      const [disposedInstance, context] = transientDisposeSpy.mock.calls[0]
+      expect(disposedInstance).toBe(instance)
+      expect(context.dep.type).toBe('override')
+
+      // Neither base nor override deps should be disposed automatically
+      expect(baseDepDisposeSpy).not.toHaveBeenCalled()
+      expect(overrideDepDisposeSpy).not.toHaveBeenCalled()
+    })
+
+    it('should handle WeakMap automatic cleanup after garbage collection', async () => {
+      // Skip test if global.gc is not available
+      if (!global.gc) {
+        console.warn(
+          'Skipping GC test: global.gc() not available. Run with --expose-gc flag.',
+        )
+        return
+      }
+
+      const disposeSpy = vi.fn()
+
+      const transientInjectable = createFactoryInjectable({
+        scope: Scope.Transient,
+        factory: () => ({ value: 'test' }),
+        dispose: disposeSpy,
+      })
+
+      const inject = container.get(CoreInjectables.inject)
+      const transients = (container as any).transients
+
+      // Create instances in a function scope that can be GC'd
+      const createInstances = async () => {
+        const instance1 = await inject(transientInjectable, {})
+        const instance2 = await inject(transientInjectable, {})
+
+        // Verify instances are in WeakMap
+        expect(transients.has(instance1)).toBe(true)
+        expect(transients.has(instance2)).toBe(true)
+
+        return [instance1, instance2]
+      }
+
+      const instances = await createInstances()
+
+      // Clear all references to instances
+      instances.length = 0
+
+      // Force multiple garbage collection cycles
+      for (let i = 0; i < 5; i++) {
+        global.gc()
+        // Small delay to allow GC to complete
+        await new Promise((resolve) => setTimeout(resolve, 1))
+      }
+
+      // Create a new instance to trigger any potential cleanup
+      const newInstance = await inject(transientInjectable, {})
+
+      // The WeakMap should have cleaned up the old instances automatically
+      // We can't directly check WeakMap size, but we can verify the new instance is tracked
+      expect(transients.has(newInstance)).toBe(true)
+
+      // Clean up the new instance
+      const dispose = container.get(CoreInjectables.dispose)
+      await dispose(transientInjectable, newInstance)
+      expect(disposeSpy).toHaveBeenCalledTimes(1)
+    })
+
+    it('should handle multiple transient instances with different contexts', async () => {
+      const disposeSpy = vi.fn()
+
+      const dep1 = createValueInjectable('dep1')
+      const dep2 = createValueInjectable('dep2')
+
+      const transientInjectable = createFactoryInjectable({
+        scope: Scope.Transient,
+        dependencies: { dep: dep1 },
+        factory: (deps) => ({ value: 'transient', dependency: deps.dep }),
+        dispose: (instance, context) => {
+          disposeSpy(instance.dependency, context.dep)
+        },
+      })
+
+      const inject = container.get(CoreInjectables.inject)
+      const dispose = container.get(CoreInjectables.dispose)
+
+      // Create instances with different contexts
+      const instance1 = await inject(transientInjectable, {})
+      const instance2 = await inject(transientInjectable, { dep: dep2 })
+
+      expect(instance1.dependency).toBe('dep1')
+      expect(instance2.dependency).toBe('dep2')
+
+      // Dispose both instances
+      await dispose(transientInjectable, instance1)
+      await dispose(transientInjectable, instance2)
+
+      expect(disposeSpy).toHaveBeenCalledTimes(2)
+      expect(disposeSpy).toHaveBeenNthCalledWith(1, 'dep1', 'dep1')
+      expect(disposeSpy).toHaveBeenNthCalledWith(2, 'dep2', 'dep2')
+    })
+  })
 })
