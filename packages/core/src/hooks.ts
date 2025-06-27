@@ -1,6 +1,7 @@
 import type { Callback } from '../../common/src/index.ts'
 import { kHookCollection } from './constants.ts'
 import type { Hook } from './enums.ts'
+
 // import type { HookType } from './types.ts'
 
 export interface HookType {

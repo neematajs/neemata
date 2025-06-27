@@ -31,15 +31,19 @@ type CallSpy = Mock<
 describe('Server Protocol', () => {
   const dummyTransport = { send: vi.fn() }
   const api: { call: CallSpy } = { call: vi.fn() }
+  const logger = testLogger()
+
+  const format = testFormat()
+  const defaultInjectablesNumbers = new Container({
+    registry: new Registry({ logger }),
+    logger,
+  }).instances.size
   let registry: Registry
-  let logger: Logger
   let container: Container
   let protocol: Protocol
-  const format = testFormat()
 
   beforeEach(() => {
     api.call = vi.fn()
-    logger = testLogger()
     registry = new Registry({ logger })
     container = new Container({
       logger,
@@ -89,7 +93,7 @@ describe('Server Protocol', () => {
     ).resolves.toBe(connectionData)
 
     const result = await protocol.call(callOptions)
-    expect(callContainer.instances.size).toBe(2)
+    expect(callContainer.instances.size).toBe(defaultInjectablesNumbers + 1)
     expect(result).toHaveProperty('output')
     expect(result.output).toMatchObject(callOptions)
   })

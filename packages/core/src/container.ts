@@ -1,4 +1,5 @@
 import assert from 'node:assert'
+import { tryCaptureStackTrace } from '@nmtjs/common'
 import { Scope } from './enums.ts'
 import {
   type AnyInjectable,
@@ -20,22 +21,23 @@ import {
 import type { Logger } from './logger.ts'
 import type { Registry } from './registry.ts'
 
+type InstanceWrapper = { private: any; public: any; context: any }
+
+type ContainerOptions = {
+  registry: Registry
+  logger: Logger
+}
+
 export class Container {
-  readonly instances = new Map<
-    AnyInjectable,
-    { instance: any; picked?: any; context?: any }
-  >()
+  readonly instances = new Map<AnyInjectable, InstanceWrapper[]>()
   private readonly resolvers = new Map<AnyInjectable, Promise<any>>()
   private readonly injectables = new Set<AnyInjectable>()
   private readonly dependants = new Map<AnyInjectable, Set<AnyInjectable>>()
-  private readonly transients = new WeakMap<any, any>()
+  // private readonly transients = new Map<any, any>()
   private disposing = false
 
   constructor(
-    private readonly application: {
-      registry: Registry
-      logger: Logger
-    },
+    private readonly application: ContainerOptions,
     public readonly scope: Exclude<Scope, Scope.Transient> = Scope.Global,
     private readonly parent?: Container,
   ) {
@@ -44,6 +46,7 @@ export class Container {
     }
     this.provide(CoreInjectables.inject, this.createInjectFunction())
     this.provide(CoreInjectables.dispose, this.createDisposeFunction())
+    this.provide(CoreInjectables.registry, application.registry)
   }
 
   async load() {
@@ -80,7 +83,7 @@ export class Container {
     // Dispose in the correct order
     for (const injectable of disposalOrder) {
       if (this.instances.has(injectable)) {
-        await this.disposeInjectable(injectable)
+        await this.disposeInjectableInstances(injectable)
       }
     }
 
@@ -104,8 +107,12 @@ export class Container {
   }
 
   get<T extends AnyInjectable>(injectable: T): ResolveInjectableType<T> {
+    if (injectable.scope === Scope.Transient) {
+      throw new Error('Cannot get transient injectable directly')
+    }
+
     if (this.instances.has(injectable)) {
-      return this.instances.get(injectable)!.picked
+      return this.instances.get(injectable)!.at(0)!.public
     }
 
     if (this.parent?.contains(injectable)) {
@@ -147,11 +154,14 @@ export class Container {
     if (compareScope(injectable.scope, '>', this.scope)) {
       throw new Error('Invalid scope') // TODO: more informative error
     }
-    this.instances.set(injectable, {
-      instance,
-      picked: instance,
-      context: undefined,
-    })
+
+    this.instances.set(injectable, [
+      {
+        private: instance,
+        public: instance,
+        context: undefined,
+      },
+    ])
   }
 
   satisfies(injectable: AnyInjectable) {
@@ -198,9 +208,11 @@ export class Container {
         dependants.add(dependant)
       }
 
-      if (this.instances.has(injectable)) {
-        return Promise.resolve(this.instances.get(injectable)!.picked)
-      } else if (this.resolvers.has(injectable)) {
+      const isTransient = injectable.scope === Scope.Transient
+
+      if (!isTransient && this.instances.has(injectable)) {
+        return Promise.resolve(this.instances.get(injectable)!.at(0)!.public)
+      } else if (!isTransient && this.resolvers.has(injectable)) {
         return this.resolvers.get(injectable)!
       } else {
         const isLazy = isLazyInjectable(injectable)
@@ -214,7 +226,9 @@ export class Container {
             ),
           )
         } else {
-          const resolution = this.createResolution(injectable)
+          const resolution = this.createResolution(injectable).finally(() => {
+            this.resolvers.delete(injectable)
+          })
           if (injectable.scope !== Scope.Transient) {
             this.resolvers.set(injectable, resolution)
           }
@@ -227,52 +241,35 @@ export class Container {
   private async createResolution<T extends AnyInjectable>(
     injectable: T,
   ): Promise<ResolveInjectableType<T>> {
-    const { scope, dependencies } = injectable
-    try {
-      let result: any
-      const context = await this.createInjectableContext(
-        dependencies,
-        injectable,
-      )
-      if (isFactoryInjectable(injectable)) {
-        const instance = await Promise.resolve(injectable.factory(context))
-        const picked = injectable.pick(instance)
-
-        if (compareScope(this.scope, '>=', scope)) {
-          this.instances.set(injectable, { instance, picked, context })
-        }
-
-        result = picked
-      } else if (isClassInjectable(injectable)) {
-        const instance = new injectable(context)
-        await instance.$onCreate()
-
-        if (compareScope(this.scope, '>=', scope)) {
-          this.instances.set(injectable, {
-            instance,
-            picked: instance,
-            context,
-          })
-        }
-
-        result = instance
-      } else {
-        throw new Error('Invalid injectable type')
-      }
-
-      if (scope === Scope.Transient) {
-        this.transients.set(result, context)
-      }
-
-      return result
-    } catch (error) {
-      this.instances.delete(injectable)
-      throw error
-    } finally {
-      if (scope !== Scope.Transient) {
-        this.resolvers.delete(injectable)
-      }
+    const { dependencies } = injectable
+    const context = await this.createInjectableContext(dependencies, injectable)
+    const wrapper = {
+      private: null as any,
+      public: null as ResolveInjectableType<T>,
+      context,
     }
+    if (isFactoryInjectable(injectable)) {
+      wrapper.private = await Promise.resolve(
+        injectable.factory(wrapper.context),
+      )
+      wrapper.public = injectable.pick(wrapper.private)
+    } else if (isClassInjectable(injectable)) {
+      wrapper.private = new injectable(context)
+      wrapper.public = wrapper.private
+      await wrapper.private.$onCreate()
+    } else {
+      throw new Error('Invalid injectable type')
+    }
+
+    let instances = this.instances.get(injectable)
+
+    if (!instances) {
+      instances = []
+      this.instances.set(injectable, instances)
+    }
+    instances.push(wrapper)
+
+    return wrapper.public
   }
 
   private createInjectFunction() {
@@ -298,11 +295,13 @@ export class Container {
             injectable,
             dependencies,
             Scope.Transient,
+            1,
           )
         : {
             ...injectable,
             dependencies,
             scope: Scope.Transient,
+            stack: tryCaptureStackTrace(1),
           }
 
       return this.resolve(newInjectable) as Promise<ResolveInjectableType<T>>
@@ -312,6 +311,11 @@ export class Container {
       injectable: T,
       context: InlineInjectionDependencies<T>,
     ) => {
+      if ('asyncDispose' in Symbol === false) {
+        throw new Error(
+          'Symbol.asyncDispose is not supported in this environment',
+        )
+      }
       const instance = await inject(injectable, context)
       const dispose = this.createDisposeFunction()
       return Object.assign(instance, {
@@ -325,25 +329,32 @@ export class Container {
   }
 
   private createDisposeFunction() {
-    return async <T extends AnyInjectable>(
-      injectable: T,
-      instance?: ResolveInjectableType<T>,
-    ) => {
+    return async <T extends AnyInjectable>(injectable: T, instance?: any) => {
       if (injectable.scope === Scope.Transient) {
         assert(
           instance,
           'Instance is required for transient injectable disposal',
         )
-        if (this.transients.has(instance)) {
-          const context = this.transients.get(instance)!
-          try {
-            await this.disposeInjectableInstance(injectable, instance, context)
-          } finally {
-            this.transients.delete(instance)
+        const wrappers = this.instances.get(injectable)
+        if (wrappers) {
+          for (const wrapper of wrappers) {
+            if (wrapper.public === instance) {
+              await this.disposeInjectableInstance(
+                injectable,
+                wrapper.private,
+                wrapper.context,
+              )
+              const index = wrappers.indexOf(wrapper)
+              wrappers.splice(index, 1)
+            }
+          }
+
+          if (wrappers.length === 0) {
+            this.instances.delete(injectable)
           }
         }
       } else {
-        await this.disposeInjectable(injectable)
+        await this.disposeInjectableInstances(injectable)
       }
     }
   }
@@ -378,11 +389,19 @@ export class Container {
     return result
   }
 
-  private async disposeInjectable(injectable: AnyInjectable) {
+  private async disposeInjectableInstances(injectable: AnyInjectable) {
     try {
       if (this.instances.has(injectable)) {
-        const { instance, context } = this.instances.get(injectable)!
-        await this.disposeInjectableInstance(injectable, instance, context)
+        const wrappers = this.instances.get(injectable)!
+        await Promise.all(
+          wrappers.map((wrapper) =>
+            this.disposeInjectableInstance(
+              injectable,
+              wrapper.private,
+              wrapper.context,
+            ),
+          ),
+        )
       }
     } catch (cause) {
       const error = new Error(
@@ -402,9 +421,7 @@ export class Container {
   ) {
     if (isFactoryInjectable(injectable)) {
       const { dispose } = injectable
-      if (dispose) {
-        await dispose(instance, context)
-      }
+      if (dispose) await dispose(instance, context)
     } else if (isClassInjectable(injectable)) {
       await instance.$onDispose()
     }
