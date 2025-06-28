@@ -90,7 +90,7 @@ export class WsTransportServer implements Transport<WsConnectionData> {
             requestData.query.get('accept') || requestData.headers.get('accept')
 
           const connectionId = randomUUID()
-
+          const controller = new AbortController()
           try {
             const { context } = await this.protocol.addConnection(
               this,
@@ -101,6 +101,11 @@ export class WsTransportServer implements Transport<WsConnectionData> {
               WsTransportInjectables.connectionData,
               requestData,
             )
+            context.container.provide(
+              ProtocolInjectables.connectionAbortSignal,
+              controller.signal,
+            )
+
             if (!ac.signal.aborted) {
               res.cork(() => {
                 res.upgrade(
@@ -111,6 +116,7 @@ export class WsTransportServer implements Transport<WsConnectionData> {
                     acceptType,
                     backpressure: null,
                     context,
+                    controller,
                   } as WsUserData,
                   req.getHeader('sec-websocket-key'),
                   req.getHeader('sec-websocket-protocol'),
@@ -157,8 +163,8 @@ export class WsTransportServer implements Transport<WsConnectionData> {
           data.backpressure = null
         },
         close: async (ws: WsTransportSocket, code, message) => {
-          const { id } = ws.getUserData()
-
+          const { id, controller } = ws.getUserData()
+          controller.abort()
           this.logger.debug(
             'Connection %s closed with code %s: %s',
             id,
@@ -219,9 +225,9 @@ export class WsTransportServer implements Transport<WsConnectionData> {
   protected async httpHandler(res: HttpResponse, req: HttpRequest) {
     this.applyCors(res, req)
 
-    const ac = new AbortController()
+    const controller = new AbortController()
 
-    res.onAborted(ac.abort.bind(ac))
+    res.onAborted(controller.abort.bind(controller))
 
     const method = req.getMethod() as 'get' | 'post'
     const namespace = req.getParameter('namespace')
@@ -232,7 +238,7 @@ export class WsTransportServer implements Transport<WsConnectionData> {
       const status = HttpCode.NotFound
       const text = HttpStatusText[status]
       return void res.cork(() => {
-        if (ac.signal.aborted) return
+        if (controller.signal.aborted) return
         res.writeStatus(`${status} ${text}`)
         res.endWithoutBody()
       })
@@ -250,6 +256,10 @@ export class WsTransportServer implements Transport<WsConnectionData> {
     const responseHeaders = new Headers()
     const container = this.context.container.fork(Scope.Call)
     container.provide(ProtocolInjectables.connection, connection)
+    container.provide(
+      ProtocolInjectables.connectionAbortSignal,
+      controller.signal,
+    )
     container.provide(WsTransportInjectables.connectionData, requestData)
     container.provide(
       WsTransportInjectables.httpResponseHeaders,
@@ -299,12 +309,12 @@ export class WsTransportServer implements Transport<WsConnectionData> {
         payload,
         metadata,
         container,
-        signal: ac.signal,
+        signal: controller.signal,
       })
 
       if (isIterableResult(result) || isSubscriptionResult(result)) {
         res.cork(() => {
-          if (ac.signal.aborted) return
+          if (controller.signal.aborted) return
           const status = HttpCode.NotImplemented
           const text = HttpStatusText[status]
           res.writeStatus(`${status} ${text}`)
@@ -328,7 +338,7 @@ export class WsTransportServer implements Transport<WsConnectionData> {
           }
 
           res.cork(() => {
-            if (ac.signal.aborted) return
+            if (controller.signal.aborted) return
             responseHeaders.set('X-Neemata-Blob', 'true')
             responseHeaders.set('Content-Type', type)
             if (metadata.size)
@@ -336,12 +346,12 @@ export class WsTransportServer implements Transport<WsConnectionData> {
             setHeaders(res, responseHeaders)
           })
 
-          ac.signal.addEventListener('abort', () => stream.destroy(), {
+          controller.signal.addEventListener('abort', () => stream.destroy(), {
             once: true,
           })
 
           stream.on('data', (chunk) => {
-            if (ac.signal.aborted) return
+            if (controller.signal.aborted) return
             const buf = Buffer.from(chunk)
             const ab = buf.buffer.slice(
               buf.byteOffset,
@@ -364,7 +374,7 @@ export class WsTransportServer implements Transport<WsConnectionData> {
           }
         } else {
           res.cork(() => {
-            if (ac.signal.aborted) return
+            if (controller.signal.aborted) return
             const status = HttpCode.OK
             const text = HttpStatusText[status]
             const buffer = format.encoder.encode(output)
@@ -376,10 +386,10 @@ export class WsTransportServer implements Transport<WsConnectionData> {
         }
       }
     } catch (error) {
-      if (ac.signal.aborted) return
+      if (controller.signal.aborted) return
       if (error instanceof UnsupportedFormatError) {
         res.cork(() => {
-          if (ac.signal.aborted) return
+          if (controller.signal.aborted) return
           const status =
             error instanceof UnsupportedContentTypeError
               ? HttpCode.UnsupportedMediaType
@@ -390,7 +400,7 @@ export class WsTransportServer implements Transport<WsConnectionData> {
         })
       } else if (error instanceof ProtocolError) {
         res.cork(() => {
-          if (ac.signal.aborted) return
+          if (controller.signal.aborted) return
           const status =
             error.code in HttpCodeMap
               ? HttpCodeMap[error.code]
@@ -402,7 +412,7 @@ export class WsTransportServer implements Transport<WsConnectionData> {
       } else {
         this.logError(error, 'Unknown error while processing request')
         res.cork(() => {
-          if (ac.signal.aborted) return
+          if (controller.signal.aborted) return
           const status = HttpCode.InternalServerError
           const text = HttpStatusText[status]
           const payload = format!.encoder.encode(

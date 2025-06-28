@@ -12,6 +12,7 @@ export type WsUserData = {
   acceptType: string | null
   contentType: string | null
   context: ConnectionContext
+  controller: AbortController
 }
 
 export type WsTransportSocket = WebSocket<WsUserData>

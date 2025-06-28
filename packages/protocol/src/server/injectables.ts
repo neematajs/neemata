@@ -15,10 +15,10 @@ const connectionData = createLazyInjectable<any, Scope.Connection>(
   "RPC connection's data",
 )
 
-const transportStopSignal = createLazyInjectable<AbortSignal>(
-  Scope.Global,
-  'Transport stop signal',
-)
+const connectionAbortSignal = createLazyInjectable<
+  AbortSignal,
+  Scope.Connection
+>(Scope.Connection, 'Connection abort signal')
 
 const rpcClientAbortSignal = createLazyInjectable<AbortSignal, Scope.Call>(
   Scope.Call,
@@ -35,7 +35,7 @@ const rpcAbortSignal = createFactoryInjectable(
     dependencies: {
       rpcTimeoutSignal,
       rpcClientAbortSignal,
-      transportStopSignal,
+      connectionAbortSignal,
     },
     factory: (ctx) => AbortSignal.any(Object.values(ctx)),
   },
@@ -45,7 +45,7 @@ const rpcAbortSignal = createFactoryInjectable(
 export const ProtocolInjectables = {
   connection,
   connectionData,
-  transportStopSignal,
+  connectionAbortSignal,
   rpcClientAbortSignal,
   rpcTimeoutSignal,
   rpcAbortSignal,
