@@ -99,7 +99,7 @@ export function tryCaptureStackTrace(depth = 0) {
   return (
     new Error().stack
       ?.split('\n')
-      .slice(3 + depth)
+      .slice(4 + depth)
       .join('\n') ?? undefined
   )
 }

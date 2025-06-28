@@ -135,11 +135,10 @@ describe('Injectable', () => {
   })
 
   it('should fail to create an extandable class injectable', () => {
-    createLazyInjectable(Scope.Connection)
     class injectable extends createClassInjectable({}, Scope.Connection) {}
     expect(() =>
       createExtendableClassInjectable(injectable, {}, Scope.Global),
-    ).toThrow('Invalid scope for injectable')
+    ).toThrow('Invalid scope')
   })
 
   it('should substitue dependencies', () => {
@@ -187,6 +186,8 @@ describe('Injectable', () => {
 describe('Container', () => {
   const logger = testLogger()
   const registry = new Registry({ logger })
+  const defaultInjectionsNumber = new Container({ registry, logger }).instances
+    .size
   let container: Container
 
   beforeEach(async () => {
@@ -1023,6 +1024,8 @@ describe('Container', () => {
       // Child container should include:
       // 1. childDep (our test dependency)
       // 2. CoreInjectables.inject (provided to every container)
+      // 3. CoreInjectables.dispose (provided to every container)
+      // 4. CoreInjectables.registry (provided to every container)
       // It should NOT include parentDep (that belongs to parent container)
       expect(
         childDisposalOrder.filter((dep: any) => dep === childDep),
@@ -1030,7 +1033,7 @@ describe('Container', () => {
       expect(
         childDisposalOrder.filter((dep: any) => dep === parentDep),
       ).toHaveLength(0)
-      expect(childDisposalOrder).toHaveLength(2) // childDep + inject function
+      expect(childDisposalOrder).toHaveLength(defaultInjectionsNumber + 1) // childDep + inject function
     })
   })
 
@@ -1321,6 +1324,331 @@ describe('Container', () => {
 
       expect(firstCallDisposal).toBeLessThan(firstConnDisposal)
       expect(firstConnDisposal).toBeLessThan(firstGlobalDisposal)
+    })
+  })
+
+  describe('Transient Injectable Disposal', () => {
+    it('should create new instance for each resolution of transient injectable', async () => {
+      const factorySpy = vi.fn(() => ({ id: Math.random() }))
+      const transientInjectable = createFactoryInjectable({
+        factory: factorySpy,
+        scope: Scope.Transient,
+      })
+
+      const instance1 = await container.resolve(transientInjectable)
+      const instance2 = await container.resolve(transientInjectable)
+      const instance3 = await container.resolve(transientInjectable)
+
+      // Each resolution should create a new instance
+      expect(instance1).not.toBe(instance2)
+      expect(instance2).not.toBe(instance3)
+      expect(instance1).not.toBe(instance3)
+
+      // Factory should be called for each resolution
+      expect(factorySpy).toHaveBeenCalledTimes(3)
+
+      // Each instance should have different IDs
+      expect(instance1.id).not.toBe(instance2.id)
+      expect(instance2.id).not.toBe(instance3.id)
+    })
+
+    it('should not cache transient injectable instances for reuse', async () => {
+      const factorySpy = vi.fn(() => ({}))
+      const transientInjectable = createFactoryInjectable({
+        factory: factorySpy,
+        scope: Scope.Transient,
+      })
+
+      const instance1 = await container.resolve(transientInjectable)
+      const instance2 = await container.resolve(transientInjectable)
+
+      // Each resolution should create a new instance
+      expect(instance1).not.toBe(instance2)
+      expect(factorySpy).toHaveBeenCalledTimes(2)
+
+      // Transient injectables are stored for disposal tracking but not reused
+      expect(container.contains(transientInjectable)).toBe(true)
+      expect(container.containsWithinSelf(transientInjectable)).toBe(true)
+    })
+
+    it('should dispose transient injectable instances individually', async () => {
+      const disposeSpy = vi.fn()
+      const transientInjectable = createFactoryInjectable({
+        factory: () => ({ value: Math.random() }),
+        dispose: disposeSpy,
+        scope: Scope.Transient,
+      })
+
+      // Resolve multiple instances
+      const instance1 = await container.resolve(transientInjectable)
+      const instance2 = await container.resolve(transientInjectable)
+      const instance3 = await container.resolve(transientInjectable)
+
+      // Get the dispose function from the container
+      const disposeFunction = await container.resolve(CoreInjectables.dispose)
+
+      // Dispose individual instances
+      await disposeFunction(transientInjectable, instance1)
+      expect(disposeSpy).toHaveBeenCalledTimes(1)
+      expect(disposeSpy).toHaveBeenCalledWith(instance1, expect.any(Object))
+
+      await disposeFunction(transientInjectable, instance2)
+      expect(disposeSpy).toHaveBeenCalledTimes(2)
+      expect(disposeSpy).toHaveBeenCalledWith(instance2, expect.any(Object))
+
+      // Disposing the same instance again should not call dispose again
+      await disposeFunction(transientInjectable, instance1)
+      expect(disposeSpy).toHaveBeenCalledTimes(2)
+
+      // Dispose the third instance
+      await disposeFunction(transientInjectable, instance3)
+      expect(disposeSpy).toHaveBeenCalledTimes(3)
+      expect(disposeSpy).toHaveBeenCalledWith(instance3, expect.any(Object))
+    })
+
+    it('should handle transient injectables with dependencies', async () => {
+      const globalDep = createFactoryInjectable({
+        factory: () => ({ value: 'global' }),
+        scope: Scope.Global,
+      })
+
+      const transientInjectable = createFactoryInjectable({
+        dependencies: { globalDep },
+        factory: ({ globalDep }) => ({
+          id: Math.random(),
+          globalValue: globalDep,
+        }),
+        scope: Scope.Transient,
+      })
+
+      const instance1 = await container.resolve(transientInjectable)
+      const instance2 = await container.resolve(transientInjectable)
+
+      // Each transient instance should be different
+      expect(instance1).not.toBe(instance2)
+      expect(instance1.id).not.toBe(instance2.id)
+
+      // But they should share the same global dependency
+      expect(instance1.globalValue.value).toBe('global')
+      expect(instance2.globalValue.value).toBe('global')
+      expect(instance1.globalValue).toBe(instance2.globalValue)
+
+      // Global dependency should be cached
+      expect(container.contains(globalDep)).toBe(true)
+    })
+
+    it('should handle transient class injectables', async () => {
+      const createSpy = vi.fn()
+      const disposeSpy = vi.fn()
+
+      class TransientService extends createClassInjectable(
+        {},
+        Scope.Transient,
+      ) {
+        public readonly id = Math.random()
+
+        protected async $onCreate() {
+          createSpy(this.id)
+        }
+
+        protected async $onDispose() {
+          disposeSpy(this.id)
+        }
+      }
+
+      const instance1 = await container.resolve(TransientService)
+      const instance2 = await container.resolve(TransientService)
+
+      // Each resolution should create a new instance
+      expect(instance1).not.toBe(instance2)
+      expect(instance1.id).not.toBe(instance2.id)
+
+      // onCreate should be called for each instance
+      expect(createSpy).toHaveBeenCalledTimes(2)
+      expect(createSpy).toHaveBeenCalledWith(instance1.id)
+      expect(createSpy).toHaveBeenCalledWith(instance2.id)
+
+      // Get the dispose function and dispose instances
+      const disposeFunction = await container.resolve(CoreInjectables.dispose)
+
+      await disposeFunction(TransientService, instance1)
+      expect(disposeSpy).toHaveBeenCalledTimes(1)
+      expect(disposeSpy).toHaveBeenCalledWith(instance1.id)
+
+      await disposeFunction(TransientService, instance2)
+      expect(disposeSpy).toHaveBeenCalledTimes(2)
+      expect(disposeSpy).toHaveBeenCalledWith(instance2.id)
+    })
+
+    it('should dispose transient injectables during container disposal', async () => {
+      const disposeSpy = vi.fn()
+      const transientInjectable = createFactoryInjectable({
+        factory: () => ({ value: 'transient' }),
+        dispose: disposeSpy,
+        scope: Scope.Transient,
+      })
+
+      // Resolve some transient instances
+      await container.resolve(transientInjectable)
+      await container.resolve(transientInjectable)
+
+      // Dispose the entire container
+      await container.dispose()
+
+      // Transient instances should be disposed when container is disposed
+      expect(disposeSpy).toHaveBeenCalledTimes(2)
+    })
+
+    it('should handle transient injectable with pick function', async () => {
+      const transientInjectable = createFactoryInjectable({
+        factory: () => ({
+          internal: { secret: 'hidden' },
+          publicData: { value: Math.random() },
+        }),
+        pick: ({ publicData }) => publicData,
+        scope: Scope.Transient,
+      })
+
+      const instance1 = await container.resolve(transientInjectable)
+      const instance2 = await container.resolve(transientInjectable)
+
+      // Should return only the picked part
+      expect(instance1).toHaveProperty('value')
+      expect(instance1).not.toHaveProperty('internal')
+
+      expect(instance2).toHaveProperty('value')
+      expect(instance2).not.toHaveProperty('internal')
+
+      // Each instance should be different
+      expect(instance1).not.toBe(instance2)
+      expect(instance1.value).not.toBe(instance2.value)
+    })
+
+    it('should handle disposal errors in transient injectables', async () => {
+      const errorMessage = 'Disposal failed'
+      const transientInjectable = createFactoryInjectable({
+        factory: () => ({ value: 'test' }),
+        dispose: () => {
+          throw new Error(errorMessage)
+        },
+        scope: Scope.Transient,
+      })
+
+      const instance = await container.resolve(transientInjectable)
+      const disposeFunction = await container.resolve(CoreInjectables.dispose)
+
+      // Disposal error should propagate (unlike container disposal which catches errors)
+      await expect(
+        disposeFunction(transientInjectable, instance),
+      ).rejects.toThrow(errorMessage)
+    })
+
+    it('should work with complex dependency graphs involving transient injectables', async () => {
+      const sharedDep = createFactoryInjectable({
+        factory: () => ({ shared: 'value' }),
+        scope: Scope.Global,
+      })
+
+      const transientDep = createFactoryInjectable({
+        dependencies: { sharedDep },
+        factory: ({ sharedDep }) => ({
+          transientId: Math.random(),
+          shared: sharedDep.shared,
+        }),
+        scope: Scope.Transient,
+      })
+
+      const finalInjectable = createFactoryInjectable({
+        dependencies: { sharedDep, transientDep },
+        factory: ({ sharedDep, transientDep }) => ({
+          final: true,
+          shared: sharedDep.shared,
+          transient: transientDep.transientId,
+        }),
+        scope: Scope.Global,
+      })
+
+      const result1 = await container.resolve(finalInjectable)
+      const result2 = await container.resolve(finalInjectable)
+
+      // Final injectable should be cached (Global scope)
+      expect(result1).toBe(result2)
+
+      // But if we resolve transientDep directly, we should get new instances
+      const directTransient1 = await container.resolve(transientDep)
+      const directTransient2 = await container.resolve(transientDep)
+
+      expect(directTransient1).not.toBe(directTransient2)
+      expect(directTransient1.transientId).not.toBe(
+        directTransient2.transientId,
+      )
+      expect(directTransient1.shared).toBe(directTransient2.shared)
+    })
+
+    it('should cache global injectable even when it depends on transient injectable', async () => {
+      const transientFactorySpy = vi.fn(() => ({
+        transientId: Math.random(),
+        value: 'transient',
+      }))
+
+      const globalFactorySpy = vi.fn(({ transientDep }) => ({
+        globalId: Math.random(),
+        value: 'global',
+        transientSnapshot: transientDep.transientId,
+      }))
+
+      const transientDep = createFactoryInjectable({
+        factory: transientFactorySpy,
+        scope: Scope.Transient,
+      })
+
+      const globalInjectable = createFactoryInjectable({
+        dependencies: { transientDep },
+        factory: globalFactorySpy,
+        scope: Scope.Global,
+      })
+
+      // Resolve the global injectable multiple times
+      const instance1 = await container.resolve(globalInjectable)
+      const instance2 = await container.resolve(globalInjectable)
+      const instance3 = await container.resolve(globalInjectable)
+
+      // Global injectable should be cached - same instance returned
+      expect(instance1).toBe(instance2)
+      expect(instance2).toBe(instance3)
+      expect(instance1.globalId).toBe(instance2.globalId)
+      expect(instance1.globalId).toBe(instance3.globalId)
+
+      // Global factory should only be called once
+      expect(globalFactorySpy).toHaveBeenCalledTimes(1)
+
+      // Transient factory should only be called once for the global injectable's creation
+      expect(transientFactorySpy).toHaveBeenCalledTimes(1)
+
+      // All instances should have the same transient snapshot
+      expect(instance1.transientSnapshot).toBe(instance2.transientSnapshot)
+      expect(instance1.transientSnapshot).toBe(instance3.transientSnapshot)
+
+      // Global injectable should be cached in container
+      expect(container.contains(globalInjectable)).toBe(true)
+      expect(container.containsWithinSelf(globalInjectable)).toBe(true)
+
+      // If we resolve the transient dependency directly, it should create new instances
+      const directTransient1 = await container.resolve(transientDep)
+      const directTransient2 = await container.resolve(transientDep)
+
+      expect(directTransient1).not.toBe(directTransient2)
+      expect(directTransient1.transientId).not.toBe(
+        directTransient2.transientId,
+      )
+
+      // Transient factory should now have been called 3 times total (1 for global + 2 direct)
+      expect(transientFactorySpy).toHaveBeenCalledTimes(3)
+
+      // Global injectable should still be the same instance
+      const instance4 = await container.resolve(globalInjectable)
+      expect(instance4).toBe(instance1)
+      expect(globalFactorySpy).toHaveBeenCalledTimes(1) // Still only called once
     })
   })
 })

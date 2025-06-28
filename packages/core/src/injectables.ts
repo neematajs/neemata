@@ -1,5 +1,6 @@
 import {
   type Async,
+  type Callback,
   type ClassConstructor,
   type ClassConstructorArgs,
   type ClassInstance,
@@ -8,20 +9,23 @@ import {
 import {
   kClassInjectable,
   kFactoryInjectable,
+  kHookCollection,
   kInjectable,
   kLazyInjectable,
   kOptionalDependency,
   kValueInjectable,
 } from './constants.ts'
-import type { InjectFn } from './container.ts'
-import { Scope } from './enums.ts'
+import type { DisposeFn, InjectFn } from './container.ts'
+import { type Hook, Scope } from './enums.ts'
+import { Hooks, type HookType } from './hooks.ts'
 import type { Logger } from './logger.ts'
+import type { Registry } from './registry.ts'
 
 const ScopeStrictness = {
-  [Scope.Global]: 0,
-  [Scope.Connection]: 1,
-  [Scope.Call]: 2,
-  [Scope.Transient]: 3,
+  [Scope.Transient]: Number.NaN, // this should make it always fail to compare with other scopes
+  [Scope.Global]: 1,
+  [Scope.Connection]: 2,
+  [Scope.Call]: 3,
 }
 
 export type DependencyOptional<T extends AnyInjectable = AnyInjectable> = {
@@ -152,29 +156,39 @@ export type AnyInjectable<T = any, S extends Scope = Scope> = Injectable<
 export const isLazyInjectable = (
   injectable: any,
 ): injectable is LazyInjectable<any> => kLazyInjectable in injectable
+
 export const isFactoryInjectable = (
   injectable: any,
 ): injectable is FactoryInjectable<any> => kFactoryInjectable in injectable
+
 export const isClassInjectable = (
   injectable: any,
 ): injectable is ClassInjectable<any> => kClassInjectable in injectable
+
 export const isValueInjectable = (
   injectable: any,
 ): injectable is ValueInjectable<any> => kValueInjectable in injectable
+
 export const isInjectable = (
   injectable: any,
 ): injectable is AnyInjectable<any> => kInjectable in injectable
+
 export const isOptionalInjectable = (
   injectable: any,
 ): injectable is DependencyOptional<any> => kOptionalDependency in injectable
 
 export function getInjectableScope(injectable: AnyInjectable) {
   let scope = injectable.scope
-  const deps = Object.values(injectable.dependencies as Dependencies)
-  for (const dependency of deps) {
+  const deps = injectable.dependencies as Dependencies
+  for (const key in deps) {
+    const dependency = deps[key]
     const injectable = getDepedencencyInjectable(dependency)
     const dependencyScope = getInjectableScope(injectable)
-    if (compareScope(dependencyScope, '>', scope)) {
+    if (
+      dependencyScope !== Scope.Transient &&
+      scope !== Scope.Transient &&
+      compareScope(dependencyScope, '>', scope)
+    ) {
       scope = dependencyScope
     }
   }
@@ -193,10 +207,10 @@ export function getDepedencencyInjectable(
 export function createOptionalInjectable<T extends AnyInjectable>(
   injectable: T,
 ) {
-  return {
+  return Object.freeze({
     [kOptionalDependency]: true,
     injectable,
-  } as DependencyOptional<T>
+  }) as DependencyOptional<T>
 }
 
 export function createLazyInjectable<T, S extends Scope = Scope.Global>(
@@ -261,16 +275,10 @@ export function createFactoryInjectable<
     [kInjectable]: true,
     [kFactoryInjectable]: true,
   }
-  const actualScope = getInjectableScope(injectable)
-  if (
-    !isFactory &&
-    params.scope &&
-    ScopeStrictness[actualScope] > ScopeStrictness[params.scope]
-  )
-    throw new Error(
-      `Invalid scope ${params.scope} for factory injectable: dependencies have stricter scope - ${actualScope}`,
-    )
-  injectable.scope = actualScope as unknown as S
+  injectable.scope = resolveInjectableScope(
+    typeof params.scope === 'undefined',
+    injectable,
+  ) as S
   return Object.freeze(injectable) as any
 }
 
@@ -279,12 +287,12 @@ export const createClassInjectable = <
   S extends Scope = Scope.Global,
 >(
   dependencies: D = {} as D,
-  scope: S = Scope.Global as S,
+  scope?: S,
   stackTraceDepth = 0,
-): ClassInjectable<ClassInstance<typeof klass>, D, S> => {
-  const klass = class {
+): ClassInjectable<ClassInstance<typeof InjectableClass>, D, S> => {
+  const InjectableClass = class {
     static dependencies = dependencies
-    static scope = scope
+    static scope = (scope ?? Scope.Global) as S
     static stack = tryCaptureStackTrace(stackTraceDepth + 2)
     static [kInjectable] = true
     static [kClassInjectable] = true
@@ -299,7 +307,13 @@ export const createClassInjectable = <
     protected async $onCreate() {}
     protected async $onDispose() {}
   }
-  return klass
+
+  InjectableClass.scope = resolveInjectableScope(
+    typeof scope === 'undefined',
+    InjectableClass,
+  ) as S
+
+  return InjectableClass
 }
 
 export function createExtendableClassInjectable<
@@ -309,23 +323,25 @@ export function createExtendableClassInjectable<
 >(
   baseClass: B,
   dependencies: D = {} as D,
-  scope: S = Scope.Global as S,
+  scope?: S,
   stackTraceDepth = 0,
 ): B extends ClassInjectable<any>
   ? ClassInjectable<ClassInstance<B>, D, S>
   : ClassInjectable<ClassInstance<B>, D, S, ClassConstructorArgs<B, []>> {
   if (isClassInjectable(baseClass)) {
-    dependencies = Object.assign({}, baseClass.dependencies, dependencies)
-    if (compareScope(scope, '<', baseClass.scope)) {
+    if (scope && compareScope(baseClass.scope, '>', scope)) {
       throw new Error(
-        'Invalid scope for injectable: base class has stricter scope',
+        `Invalid scope ${scope} for an extendable class injectable: base class have stricter scope - ${baseClass.scope}`,
       )
+    } else {
+      scope = scope ?? (baseClass.scope as S)
     }
+    dependencies = Object.assign({}, baseClass.dependencies, dependencies)
   }
-  // @ts-expect-error
-  return class extends baseClass {
+
+  const InjectableClass = class extends baseClass {
     static dependencies = dependencies
-    static scope = scope
+    static scope = (scope ?? Scope.Global) as S
     static stack = tryCaptureStackTrace(stackTraceDepth)
     static [kInjectable] = true
     static [kClassInjectable] = true
@@ -355,6 +371,14 @@ export function createExtendableClassInjectable<
       await super.$onDispose?.()
     }
   }
+
+  InjectableClass.scope = resolveInjectableScope(
+    typeof scope === 'undefined',
+    InjectableClass,
+  ) as S
+
+  // @ts-expect-error
+  return InjectableClass
 }
 
 export type DependenciesSubstitution<T extends Dependencies> = {
@@ -434,7 +458,51 @@ export function compareScope(
   }
 }
 
+const logger = createLazyInjectable<Logger>(Scope.Global, 'Logger')
+const registry = createLazyInjectable<Registry>(Scope.Global, 'Registry')
+const inject = createLazyInjectable<InjectFn>(Scope.Global, 'Inject function')
+const dispose = createLazyInjectable<DisposeFn>(
+  Scope.Global,
+  'Dispose function',
+)
+const hook = createFactoryInjectable({
+  scope: Scope.Transient,
+  dependencies: { registry },
+  factory: ({ registry }) => {
+    const hooks = new Hooks()
+    const on = <T extends Hook>(name: T, callback: HookType[T]) => {
+      hooks.add(name, callback as Callback)
+      return registry.hooks.add(name, callback)
+    }
+    return { hooks, on }
+  },
+  pick: ({ on }) => on,
+  dispose: ({ hooks }, { registry }) => {
+    for (const [hook, callbacks] of hooks[kHookCollection].entries()) {
+      for (const callback of callbacks) {
+        registry.hooks.remove(hook, callback)
+      }
+    }
+    hooks.clear()
+  },
+})
+
+function resolveInjectableScope(
+  isDefaultScope: boolean,
+  injectable: AnyInjectable,
+) {
+  const actualScope = getInjectableScope(injectable)
+  if (!isDefaultScope && compareScope(actualScope, '>', injectable.scope))
+    throw new Error(
+      `Invalid scope ${injectable.scope} for an injectable: dependencies have stricter scope - ${actualScope}`,
+    )
+  return actualScope
+}
+
 export const CoreInjectables = {
-  logger: createLazyInjectable<Logger>(Scope.Global, 'Logger'),
-  inject: createLazyInjectable<InjectFn>(Scope.Global, 'Inject function'),
+  logger,
+  registry,
+  inject,
+  dispose,
+  hook,
 }

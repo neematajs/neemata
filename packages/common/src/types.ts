@@ -7,9 +7,14 @@ export type CallTypeProvider<T extends TypeProvider, V> = (T & {
   input: V
 })['output']
 
-export type ClassConstructor<T = any, A extends any[] = any[]> = abstract new (
-  ...args: A
-) => T
+export type ClassConstructor<T = any, A extends any[] = any[]> =
+  | (abstract new (
+      ...args: A
+    ) => T)
+  | (new (
+      ...args: A
+    ) => T)
+
 export type ClassInstance<T> = T extends ClassConstructor<infer U> ? U : never
 export type ClassConstructorArgs<T, A = never> = T extends ClassConstructor<
   any,

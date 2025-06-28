@@ -1,5 +1,5 @@
 {
-  "$schema": "https://biomejs.dev/schemas/2.0.0-beta.5/schema.json",
+  "$schema": "https://biomejs.dev/schemas/2.0.5/schema.json",
   "files": {
     "includes": [
       "**",
@@ -34,7 +34,6 @@
         "noParameterAssign": "off",
         "noUnusedTemplateLiteral": "off",
         "useLiteralEnumMembers": "error",
-        "noCommaOperator": "error",
         "useNodejsImportProtocol": "error",
         "useAsConstAssertion": "error",
         "useEnumInitializers": "error",
@@ -43,14 +42,15 @@
         "useSingleVarDeclarator": "error",
         "useNumberNamespace": "error",
         "useExponentiationOperator": "error",
-        "noArguments": "error",
         "useImportType": "error",
         "useExportType": "error",
         "useShorthandFunctionType": "error"
       },
       "complexity": {
         "recommended": true,
-        "noBannedTypes": "off"
+        "noBannedTypes": "off",
+        "noCommaOperator": "error",
+        "noArguments": "error"
       },
       "suspicious": {
         "noExplicitAny": "off",
