@@ -388,28 +388,38 @@ export class Protocol {
           { callId },
         )
         try {
-          const ab = new AbortController()
-          context.rpcStreams.set(callId, ab)
+          const controller = new AbortController()
+          context.rpcStreams.set(callId, controller)
           const iterable =
             typeof response.iterable === 'function'
-              ? response.iterable()
+              ? response.iterable(controller.signal)
               : response.iterable
-          for await (const chunk of iterable) {
-            ab.signal.throwIfAborted()
-            const chunkEncoded = format.encoder.encode(chunk)
+          try {
+            for await (const chunk of iterable) {
+              controller.signal.throwIfAborted()
+              const chunkEncoded = format.encoder.encode(chunk)
+              transport.send(
+                connection,
+                ServerMessageType.RpcStreamChunk,
+                concat(callIdEncoded, chunkEncoded),
+                { callId },
+              )
+            }
             transport.send(
               connection,
-              ServerMessageType.RpcStreamChunk,
-              concat(callIdEncoded, chunkEncoded),
+              ServerMessageType.RpcStreamEnd,
+              callIdEncoded,
               { callId },
             )
+          } catch (error) {
+            // do not re-throw AbortError errors, they are expected
+            if (
+              error instanceof Error === false ||
+              error.name !== 'AbortError'
+            ) {
+              throw error
+            }
           }
-          transport.send(
-            connection,
-            ServerMessageType.RpcStreamEnd,
-            callIdEncoded,
-            { callId },
-          )
         } catch (error) {
           this.application.logger.error(error)
           transport.send(
