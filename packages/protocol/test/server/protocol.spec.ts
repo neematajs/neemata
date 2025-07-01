@@ -3,7 +3,6 @@ import {
   Container,
   createLazyInjectable,
   Hook,
-  type Logger,
   Registry,
   Scope,
 } from '@nmtjs/core'
