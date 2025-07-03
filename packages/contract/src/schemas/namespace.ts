@@ -2,23 +2,23 @@ import { Kind } from '../constants.ts'
 import { type ContractSchemaOptions, createSchema } from '../utils.ts'
 import type { TAnyEventContract, TEventContract } from './event.ts'
 import type { TAnyProcedureContract, TProcedureContract } from './procedure.ts'
-import type {
-  TAnySubscriptionContract,
-  TSubscriptionContract,
-} from './subscription.ts'
+// import type {
+//   TAnySubscriptionContract,
+//   TSubscriptionContract,
+// } from './subscription.ts'
 
 export const NamespaceKind = 'NeemataNamespace'
 
 export type TAnyNamespaceContract = TNamespaceContract<
   Record<string, any>,
-  Record<string, any>,
+  // Record<string, any>,
   Record<string, any>,
   string | undefined
 >
 
 export interface TNamespaceContract<
   Procedures extends Record<string, unknown> = {},
-  Subscriptions extends Record<string, unknown> = {},
+  // Subscriptions extends Record<string, unknown> = {},
   Events extends Record<string, unknown> = {},
   Name extends string | undefined = undefined,
 > {
@@ -37,25 +37,25 @@ export interface TNamespaceContract<
       : never
   }
   subscriptions: {
-    [K in keyof Subscriptions]: Subscriptions[K] extends TAnySubscriptionContract
-      ? TSubscriptionContract<
-          Subscriptions[K]['input'],
-          Subscriptions[K]['output'],
-          Subscriptions[K]['options'],
-          {
-            [E in keyof Subscriptions[K]['events']]: Subscriptions[K]['events'][E] extends TAnyEventContract
-              ? TEventContract<
-                  Subscriptions[K]['events'][E]['payload'],
-                  Extract<E, string>,
-                  Extract<K, string>,
-                  Name
-                >
-              : never
-          },
-          Extract<K, string>,
-          Name
-        >
-      : never
+    // [K in keyof Subscriptions]: Subscriptions[K] extends TAnySubscriptionContract
+    //   ? TSubscriptionContract<
+    //       Subscriptions[K]['input'],
+    //       Subscriptions[K]['output'],
+    //       Subscriptions[K]['options'],
+    //       {
+    //         [E in keyof Subscriptions[K]['events']]: Subscriptions[K]['events'][E] extends TAnyEventContract
+    //           ? TEventContract<
+    //               Subscriptions[K]['events'][E]['payload'],
+    //               Extract<E, string>,
+    //               Extract<K, string>,
+    //               Name
+    //             >
+    //           : never
+    //       },
+    //       Extract<K, string>,
+    //       Name
+    //     >
+    //   : never
   }
   events: {
     [K in keyof Events]: Events[K] extends TAnyEventContract
@@ -132,14 +132,20 @@ export const NamespaceContract = <
   }
 
   return createSchema<
-    TNamespaceContract<Procedures, Subscriptions, Events, Name>
+    TNamespaceContract<
+      Procedures,
+      // Subscriptions,
+      Events,
+      Name
+    >
   >({
     ...schemaOptions,
     [Kind]: NamespaceKind,
     type: 'neemata:namespace',
     name: name as Name,
     procedures: _procedures,
-    subscriptions: _subscriptions,
+    // subscriptions: _subscriptions,
+    subscriptions: {},
     events: _events,
     timeout,
   })

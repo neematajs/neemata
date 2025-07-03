@@ -103,17 +103,17 @@ export const TestNamespaceContract = c.namespace({
     }),
   },
   subscriptions: {
-    testSubscription: c
-      .subscription({
-        input: t.any(),
-        output: t.any(),
-        events: {
-          testEvent: c.event({
-            payload: t.string(),
-          }),
-        },
-      })
-      .$withOptions<{ testOption: string }>(),
+    // testSubscription: c
+    //   .subscription({
+    //     input: t.any(),
+    //     output: t.any(),
+    //     events: {
+    //       testEvent: c.event({
+    //         payload: t.string(),
+    //       }),
+    //     },
+    //   })
+    //   .$withOptions<{ testOption: string }>(),
   },
   events: {
     testEvent: c.event({

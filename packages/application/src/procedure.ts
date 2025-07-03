@@ -1,7 +1,6 @@
 import type { Async } from '@nmtjs/common'
 import {
   c,
-  type TAnyBaseProcedureContract,
   type TAnyProcedureContract,
   type TProcedureContract,
 } from '@nmtjs/contract'
@@ -27,7 +26,7 @@ import { kIterableResponse, kProcedure } from './constants.ts'
 import type { JsonPrimitive } from './types.ts'
 
 export interface BaseProcedure<
-  ProcedureContract extends TAnyBaseProcedureContract,
+  ProcedureContract extends TAnyProcedureContract,
   ProcedureDeps extends Dependencies,
 > extends Dependant<ProcedureDeps> {
   contract: ProcedureContract
@@ -39,13 +38,13 @@ export interface BaseProcedure<
 }
 
 export type AnyBaseProcedure<
-  Contract extends TAnyBaseProcedureContract = TAnyBaseProcedureContract,
+  Contract extends TAnyProcedureContract = TAnyProcedureContract,
 > = BaseProcedure<Contract, Dependencies>
 
 export type ProcedureHandlerType<Input, Output, Deps extends Dependencies> = (
   ctx: DependencyContext<Deps>,
   data: Input,
-  contract: TAnyBaseProcedureContract,
+  contract: TAnyProcedureContract,
 ) => Async<Output>
 
 export interface Procedure<
@@ -119,7 +118,7 @@ export type CreateProcedureParams<
     >
 
 export function _createBaseProcedure<
-  ProcedureContract extends TAnyBaseProcedureContract,
+  ProcedureContract extends TAnyProcedureContract,
   ProcedureDeps extends Dependencies,
 >(
   contract: ProcedureContract,
