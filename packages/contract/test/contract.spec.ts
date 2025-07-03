@@ -47,17 +47,17 @@ describe('Contracts', { sequential: true }, () => {
           }),
         },
         subscriptions: {
-          testSubscription: c
-            .subscription({
-              input: inputType,
-              output: outputType,
-              events: {
-                testSubscriptionEvent: c.event({
-                  payload: eventType,
-                }),
-              },
-            })
-            .$withOptions<{ test: string }>(),
+          // testSubscription: c
+          //   .subscription({
+          //     input: inputType,
+          //     output: outputType,
+          //     events: {
+          //       testSubscriptionEvent: c.event({
+          //         payload: eventType,
+          //       }),
+          //     },
+          //   })
+          //   .$withOptions<{ test: string }>(),
         },
         events: {
           testNamespaceEvent: c.event({
@@ -108,56 +108,56 @@ describe('Contracts', { sequential: true }, () => {
     ).toHaveProperty('namespace', 'testNamespace')
   })
 
-  it('should create a Subscription contract', () => {
-    expect(
-      api.namespaces.testNamespace.subscriptions.testSubscription,
-    ).toBeDefined()
-    expect(
-      api.namespaces.testNamespace.subscriptions.testSubscription,
-    ).toHaveProperty('type', 'neemata:subscription')
-    expect(
-      api.namespaces.testNamespace.subscriptions.testSubscription,
-    ).toHaveProperty('input', inputType)
-    expect(
-      api.namespaces.testNamespace.subscriptions.testSubscription,
-    ).toHaveProperty('output', outputType)
-    expect(
-      api.namespaces.testNamespace.subscriptions.testSubscription,
-    ).toHaveProperty('name', 'testSubscription')
-    expect(
-      api.namespaces.testNamespace.subscriptions.testSubscription,
-    ).toHaveProperty('namespace', 'testNamespace')
-    expect(
-      api.namespaces.testNamespace.subscriptions.testSubscription,
-    ).toHaveProperty('events')
-  })
+  // it('should create a Subscription contract', () => {
+  //   expect(
+  //     api.namespaces.testNamespace.subscriptions.testSubscription,
+  //   ).toBeDefined()
+  //   expect(
+  //     api.namespaces.testNamespace.subscriptions.testSubscription,
+  //   ).toHaveProperty('type', 'neemata:subscription')
+  //   expect(
+  //     api.namespaces.testNamespace.subscriptions.testSubscription,
+  //   ).toHaveProperty('input', inputType)
+  //   expect(
+  //     api.namespaces.testNamespace.subscriptions.testSubscription,
+  //   ).toHaveProperty('output', outputType)
+  //   expect(
+  //     api.namespaces.testNamespace.subscriptions.testSubscription,
+  //   ).toHaveProperty('name', 'testSubscription')
+  //   expect(
+  //     api.namespaces.testNamespace.subscriptions.testSubscription,
+  //   ).toHaveProperty('namespace', 'testNamespace')
+  //   expect(
+  //     api.namespaces.testNamespace.subscriptions.testSubscription,
+  //   ).toHaveProperty('events')
+  // })
 
-  it('should create a Subscription Event contract', () => {
-    expect(
-      api.namespaces.testNamespace.subscriptions.testSubscription.events
-        .testSubscriptionEvent,
-    ).toBeDefined()
-    expect(
-      api.namespaces.testNamespace.subscriptions.testSubscription.events
-        .testSubscriptionEvent,
-    ).toHaveProperty('type', 'neemata:event')
-    expect(
-      api.namespaces.testNamespace.subscriptions.testSubscription.events
-        .testSubscriptionEvent,
-    ).toHaveProperty('payload', eventType)
-    expect(
-      api.namespaces.testNamespace.subscriptions.testSubscription.events
-        .testSubscriptionEvent,
-    ).toHaveProperty('name', 'testSubscriptionEvent')
-    expect(
-      api.namespaces.testNamespace.subscriptions.testSubscription.events
-        .testSubscriptionEvent,
-    ).toHaveProperty('subscription', 'testSubscription')
-    expect(
-      api.namespaces.testNamespace.subscriptions.testSubscription.events
-        .testSubscriptionEvent,
-    ).toHaveProperty('namespace', 'testNamespace')
-  })
+  // it('should create a Subscription Event contract', () => {
+  //   expect(
+  //     api.namespaces.testNamespace.subscriptions.testSubscription.events
+  //       .testSubscriptionEvent,
+  //   ).toBeDefined()
+  //   expect(
+  //     api.namespaces.testNamespace.subscriptions.testSubscription.events
+  //       .testSubscriptionEvent,
+  //   ).toHaveProperty('type', 'neemata:event')
+  //   expect(
+  //     api.namespaces.testNamespace.subscriptions.testSubscription.events
+  //       .testSubscriptionEvent,
+  //   ).toHaveProperty('payload', eventType)
+  //   expect(
+  //     api.namespaces.testNamespace.subscriptions.testSubscription.events
+  //       .testSubscriptionEvent,
+  //   ).toHaveProperty('name', 'testSubscriptionEvent')
+  //   expect(
+  //     api.namespaces.testNamespace.subscriptions.testSubscription.events
+  //       .testSubscriptionEvent,
+  //   ).toHaveProperty('subscription', 'testSubscription')
+  //   expect(
+  //     api.namespaces.testNamespace.subscriptions.testSubscription.events
+  //       .testSubscriptionEvent,
+  //   ).toHaveProperty('namespace', 'testNamespace')
+  // })
 
   it('should create a Namespace Event contract', () => {
     expect(api.namespaces.testNamespace.events.testNamespaceEvent).toBeDefined()

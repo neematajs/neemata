@@ -2,32 +2,6 @@ import { type BaseType, t } from '@nmtjs/type'
 import { Kind } from '../constants.ts'
 import { type ContractSchemaOptions, createSchema } from '../utils.ts'
 
-export type TAnyBaseProcedureContract = TBaseProcedureContract<
-  string,
-  BaseType,
-  BaseType,
-  string | undefined,
-  string | undefined
->
-
-export interface TBaseProcedureContract<
-  Type extends string,
-  Input extends BaseType,
-  Output extends BaseType,
-  Name extends string | undefined = undefined,
-  Namespace extends string | undefined = undefined,
-> {
-  [Kind]: string
-  type: Type
-  name: Name
-  namespace: Namespace
-  input: Input
-  output: Output
-  timeout?: number
-}
-
-export const ProcedureKind = 'NeemataProcedure'
-
 export type TAnyProcedureContract = TProcedureContract<
   BaseType,
   BaseType,
@@ -36,20 +10,22 @@ export type TAnyProcedureContract = TProcedureContract<
   string | undefined
 >
 
+export const ProcedureKind = 'NeemataProcedure'
+
 export interface TProcedureContract<
   Input extends BaseType = t.NeverType,
   Output extends BaseType = t.NeverType,
   Stream extends BaseType = t.NeverType,
   Name extends string | undefined = undefined,
   Namespace extends string | undefined = undefined,
-> extends TBaseProcedureContract<
-    'neemata:procedure',
-    Input,
-    Output,
-    Name,
-    Namespace
-  > {
+> {
   [Kind]: typeof ProcedureKind
+  type: 'neemata:procedure'
+  name: Name
+  namespace: Namespace
+  input: Input
+  output: Output
+  timeout?: number
   stream: Stream
 }
 

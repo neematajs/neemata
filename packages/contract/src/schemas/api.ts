@@ -13,7 +13,7 @@ export interface TAPIContract<Namespaces extends Record<string, unknown> = {}> {
     [K in keyof Namespaces]: Namespaces[K] extends TAnyNamespaceContract
       ? TNamespaceContract<
           Namespaces[K]['procedures'],
-          Namespaces[K]['subscriptions'],
+          // Namespaces[K]['subscriptions'],
           Namespaces[K]['events'],
           Extract<K, string>
         >

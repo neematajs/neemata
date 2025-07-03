@@ -126,9 +126,9 @@ export function createNamespace<
     {
       [K in keyof Procedures]: Procedures[K]['contract']
     },
-    {
-      // [K in keyof Subscriptions]: Subscriptions[K]['contract']
-    },
+    // {
+    // [K in keyof Subscriptions]: Subscriptions[K]['contract']
+    // },
     {
       [K in Extract<keyof Events, string>]: TEventContract<Events[K], K, Name>
     },
