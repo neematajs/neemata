@@ -1,6 +1,7 @@
 import assert from 'node:assert'
 import { createHash } from 'node:crypto'
 import { PassThrough, Readable } from 'node:stream'
+import { isAbortError } from '@nmtjs/common'
 import type {
   SubcriptionOptions,
   TAnyEventContract,
@@ -166,7 +167,7 @@ export class PubSub {
             }
           },
           (error) => {
-            if (error instanceof Error && error.name === 'AbortError') {
+            if (isAbortError(error)) {
               this.push(null)
             } else {
               this.destroy(error)
@@ -257,7 +258,7 @@ export class SimplePubSubAdapter implements PubSubAdapter {
         yield { channel, payload: data }
       }
     } catch (error) {
-      if (error instanceof Error && error.name === 'AbortError') return
+      if (isAbortError(error)) return
       throw error
     } finally {
       this.channels.delete(channel)
