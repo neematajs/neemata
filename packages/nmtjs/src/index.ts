@@ -57,6 +57,7 @@ export { ApiError, WorkerType } from '@nmtjs/application'
 export { c } from '@nmtjs/contract'
 export { Hook, Scope } from '@nmtjs/core'
 export { ErrorCode, ProtocolBlob, TransportType } from '@nmtjs/protocol'
+export { createStreamResponse } from '@nmtjs/protocol/server'
 export { t } from '@nmtjs/type'
 
 export { neemata as n }
