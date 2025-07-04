@@ -8,8 +8,7 @@ export type SubcriptionOptions = Record<string, string | number | boolean>
 
 export type TAnySubscriptionContract = TSubscriptionContract<
   SubcriptionOptions,
-  Record<string, unknown>,
-  string | undefined,
+  Record<string, TAnyEventContract>,
   string | undefined
 >
 
@@ -17,21 +16,14 @@ export interface TSubscriptionContract<
   Options extends SubcriptionOptions = {},
   Events extends Record<string, unknown> = {},
   Name extends string | undefined = undefined,
-  Namespace extends string | undefined = undefined,
 > {
   [Kind]: typeof SubscriptionKind
   type: 'neemata:subscription'
   name: Name
-  namespace: Namespace
   options: Options
   events: {
     [K in keyof Events]: Events[K] extends TAnyEventContract
-      ? TEventContract<
-          Events[K]['payload'],
-          Extract<K, string>,
-          Name,
-          Namespace
-        >
+      ? TEventContract<Events[K]['payload'], Extract<K, string>, Name>
       : never
   }
 }
@@ -45,11 +37,10 @@ export const SubscriptionContract = <
   name?: Name
 }) => {
   const { events = {} as Events, schemaOptions = {}, name } = options ?? {}
-
   const _events = {} as any
   for (const key in events) {
     const event = events[key]
-    _events[key] = Object.assign({}, event, { subscription: name })
+    _events[key] = Object.assign({}, event, { name: key, subscription: name })
   }
   return {
     $withOptions: <Options extends SubcriptionOptions>() =>
@@ -59,7 +50,6 @@ export const SubscriptionContract = <
         type: 'neemata:subscription',
         events: _events,
         name: name as Name,
-        namespace: undefined,
         options: undefined as unknown as Options,
       }),
   }

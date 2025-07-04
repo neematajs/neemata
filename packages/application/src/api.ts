@@ -13,6 +13,7 @@ import {
 import { ErrorCode } from '@nmtjs/protocol'
 import {
   type Connection,
+  isIterableResult,
   type ProtocolApi,
   type ProtocolApiCallOptions,
   type ProtocolApiCallResult,
@@ -23,7 +24,7 @@ import { NeemataTypeError, type } from '@nmtjs/type'
 import { prettifyError } from 'zod/v4-mini'
 import type { ApplicationOptions } from './application.ts'
 import type { AnyNamespace } from './namespace.ts'
-import { type AnyBaseProcedure, isIterableResponse } from './procedure.ts'
+import type { AnyProcedure } from './procedure.ts'
 import type { ApplicationRegistry } from './registry.ts'
 import type { ApiCallContext } from './types.ts'
 
@@ -49,9 +50,7 @@ export type MiddlewareLike = {
 
 export type AnyMiddleware = AnyInjectable<MiddlewareLike>
 
-export type ApplicationApiCallOptions<
-  T extends AnyBaseProcedure = AnyBaseProcedure,
-> = {
+export type ApplicationApiCallOptions<T extends AnyProcedure = AnyProcedure> = {
   connection: Connection
   namespace: AnyNamespace
   procedure: T
@@ -262,7 +261,7 @@ export class Api implements ProtocolApi {
     return error
   }
 
-  private handleInput(procedure: AnyBaseProcedure, payload: any) {
+  private handleInput(procedure: AnyProcedure, payload: any) {
     if (procedure.contract.input instanceof type.NeverType === false) {
       const type = procedure.contract.input
       try {
@@ -279,8 +278,8 @@ export class Api implements ProtocolApi {
     }
   }
 
-  private handleIterableOutput(procedure: AnyBaseProcedure, response: any) {
-    if (!isIterableResponse(response))
+  private handleIterableOutput(procedure: AnyProcedure, response: any) {
+    if (!isIterableResult(response))
       throw new Error('Invalid response. Use `createIterableResponse` helper')
     const iterable = response.iterable
     if (procedure.contract.output instanceof type.NeverType === false) {
@@ -293,7 +292,7 @@ export class Api implements ProtocolApi {
     return { output: undefined, iterable }
   }
 
-  private handleOutput(procedure: AnyBaseProcedure, response: any) {
+  private handleOutput(procedure: AnyProcedure, response: any) {
     if (procedure.contract.output instanceof type.NeverType === false) {
       const type = procedure.contract.output
       return {

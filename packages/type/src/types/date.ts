@@ -8,13 +8,11 @@ export class DateType extends TransformType<
   static factory() {
     return CustomType.factory<
       Date,
-      zod.ZodMiniUnion<
-        Array<zod.iso.ZodMiniISODate | zod.iso.ZodMiniISODateTime>
-      >
+      zod.ZodMiniUnion<[zod.iso.ZodMiniISODate, zod.iso.ZodMiniISODateTime]>
     >({
       decode: (value: string): Date => new Date(value),
       encode: (value: Date): string => value.toISOString(),
-      type: zod.union([zod.iso.datetime(), zod.iso.date()]),
+      type: zod.union([zod.iso.date(), zod.iso.datetime()]),
     })
   }
 }

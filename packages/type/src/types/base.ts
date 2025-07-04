@@ -105,7 +105,7 @@ export abstract class BaseType<
     return this.meta({ description })
   }
 
-  examples(...examples: this['decodedZodType']['_zod']['input'][]): this {
+  examples(...examples: this['encodedZodType']['_zod']['input'][]): this {
     return this.meta({
       examples: this.params.encode
         ? examples.map(this.params.encode)

@@ -21,11 +21,12 @@ import {
   type CreateProcedureParams,
   createContractProcedure,
 } from '../src/procedure.ts'
+import { SimplePubSubAdapter } from '../src/pubsub.ts'
 import {
   type BaseTaskExecutor,
   type CreateTaskOptions,
   createTask,
-} from '../src/task.ts'
+} from '../src/tasks.ts'
 
 export class TestTaskExecutor implements BaseTaskExecutor {
   constructor(
@@ -80,7 +81,10 @@ export const testApp = (options: Partial<ApplicationOptions> = {}) =>
         logging: {
           pinoOptions: { enabled: false },
         },
-      },
+        pubsub: {
+          adapter: new SimplePubSubAdapter(),
+        },
+      } as ApplicationOptions,
       options,
     ),
   )
@@ -101,19 +105,6 @@ export const TestNamespaceContract = c.namespace({
       output: t.object({ test: c.blob() }),
       stream: t.never(),
     }),
-  },
-  subscriptions: {
-    // testSubscription: c
-    //   .subscription({
-    //     input: t.any(),
-    //     output: t.any(),
-    //     events: {
-    //       testEvent: c.event({
-    //         payload: t.string(),
-    //       }),
-    //     },
-    //   })
-    //   .$withOptions<{ testOption: string }>(),
   },
   events: {
     testEvent: c.event({
@@ -138,17 +129,6 @@ export const testProcedure = (
     params,
   )
 
-// export const testSubscription = (
-//   params: CreateProcedureParams<
-//     typeof TestNamespaceContract.subscriptions.testSubscription,
-//     any
-//   >,
-// ) =>
-//   createContractProcedure(
-//     TestNamespaceContract.subscriptions.testSubscription,
-//     params,
-//   ) as any
-
 export const testTask = <
   TaskDeps extends Dependencies,
   TaskArgs extends any[],
@@ -166,9 +146,6 @@ export const testNamepsace = ({
   createContractNamespace(TestNamespaceContract, {
     procedures: {
       testProcedure: procedure,
-    },
-    subscriptions: {
-      // testSubscription: subscription,
     },
   })
 

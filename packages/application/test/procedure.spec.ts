@@ -1,13 +1,10 @@
 import { noopFn } from '@nmtjs/common'
 import { createMetadataKey, createValueInjectable } from '@nmtjs/core'
+import { createStreamResponse } from '@nmtjs/protocol/server'
 import { type } from '@nmtjs/type'
 import { describe, expect, it } from 'vitest'
 import { kProcedure } from '../src/constants.ts'
-import {
-  createContractProcedure,
-  createProcedure,
-  createStreamResponse,
-} from '../src/procedure.ts'
+import { createContractProcedure, createProcedure } from '../src/procedure.ts'
 import { TestNamespaceContract } from './_utils.ts'
 
 describe('Procedure', () => {

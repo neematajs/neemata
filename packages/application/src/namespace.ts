@@ -11,13 +11,12 @@ import {
 import { Hook, Hooks } from '@nmtjs/core'
 import type { BaseType } from '@nmtjs/type'
 import type { AnyGuard, AnyMiddleware } from './api.ts'
-import { kNamespace, kProcedure, kSubscription } from './constants.ts'
-import type { AnyBaseProcedure } from './procedure.ts'
+import { kNamespace, kProcedure } from './constants.ts'
+import type { AnyProcedure } from './procedure.ts'
 
 export interface Namespace<Contract extends TAnyNamespaceContract> {
   contract: Contract
-  procedures: Map<string, AnyBaseProcedure>
-  subscriptions: Map<string, AnyBaseProcedure>
+  procedures: Map<string, AnyProcedure>
   guards: Set<AnyGuard>
   middlewares: Set<AnyMiddleware>
   hooks: Hooks
@@ -29,8 +28,7 @@ export type AnyNamespace = Namespace<TAnyNamespaceContract>
 export function createContractNamespace<Contract extends TAnyNamespaceContract>(
   contract: Contract,
   params: {
-    procedures?: Record<string, AnyBaseProcedure>
-    subscriptions?: Record<string, AnyBaseProcedure>
+    procedures?: Record<string, AnyProcedure>
     guards?: AnyGuard[]
     middlewares?: AnyMiddleware[]
     hooks?: Record<string, Callback[]>
@@ -40,7 +38,6 @@ export function createContractNamespace<Contract extends TAnyNamespaceContract>(
   const guards = new Set(params.guards ?? [])
   const middlewares = new Set(params.middlewares ?? [])
   const procedures = new Map(Object.entries(params.procedures ?? {}))
-  const subscriptions = new Map(Object.entries(params.subscriptions ?? {}))
   const hooks = new Hooks()
 
   for (const [hookName, callbacks] of Object.entries(params.hooks ?? {})) {
@@ -52,7 +49,6 @@ export function createContractNamespace<Contract extends TAnyNamespaceContract>(
   const namespace = {
     contract,
     procedures,
-    subscriptions,
     guards,
     middlewares,
     hooks,
@@ -99,8 +95,6 @@ const createAutoLoader =
 
       if (kProcedure in implementation) {
         namespace.procedures.set(procedureName, implementation as any)
-      } else if (kSubscription in implementation) {
-        namespace.subscriptions.set(procedureName, implementation as any)
       } else {
         throw new Error(`Invalid procedure or subscription export: ${filepath}`)
       }
@@ -109,13 +103,11 @@ const createAutoLoader =
 
 export function createNamespace<
   Name extends string,
-  Procedures extends Record<string, AnyBaseProcedure> = {},
-  Subscriptions extends Record<string, AnyBaseProcedure> = {},
+  Procedures extends Record<string, AnyProcedure> = {},
   Events extends Record<string, BaseType> = {},
 >(params: {
   name: Name
   procedures?: Procedures
-  subscriptions?: Subscriptions
   events?: Events
   guards?: AnyGuard[]
   middlewares?: AnyMiddleware[]
@@ -126,9 +118,6 @@ export function createNamespace<
     {
       [K in keyof Procedures]: Procedures[K]['contract']
     },
-    // {
-    // [K in keyof Subscriptions]: Subscriptions[K]['contract']
-    // },
     {
       [K in Extract<keyof Events, string>]: TEventContract<Events[K], K, Name>
     },
@@ -137,7 +126,6 @@ export function createNamespace<
 > {
   const { name, guards, hooks, middlewares, timeout } = params
   const procedures = params.procedures ?? ({} as Procedures)
-  const subscriptions = params.subscriptions ?? ({} as Subscriptions)
   const events = params.events ?? ({} as Events)
 
   const eventsContracts: any = {}
@@ -150,14 +138,8 @@ export function createNamespace<
     proceduresContracts[name] = procedure.contract
   }
 
-  const subscriptionsContracts: any = {}
-  for (const [name, subscription] of Object.entries(subscriptions)) {
-    subscriptionsContracts[name] = subscription.contract
-  }
-
   const contract = c.namespace({
     procedures: proceduresContracts,
-    subscriptions: subscriptionsContracts,
     events: eventsContracts,
     timeout,
     name,

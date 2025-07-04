@@ -16,13 +16,12 @@ import {
 import type {
   InputType,
   OutputType,
-  ProtocolAnyIterable,
   ProtocolApiCallIterableResult,
 } from '@nmtjs/protocol/server'
 import { type BaseType, t } from '@nmtjs/type'
 import type * as zod from 'zod/v4-mini'
 import type { AnyGuard, AnyMiddleware } from './api.ts'
-import { kIterableResponse, kProcedure } from './constants.ts'
+import { kProcedure } from './constants.ts'
 import type { JsonPrimitive } from './types.ts'
 
 export interface BaseProcedure<
@@ -37,14 +36,9 @@ export interface BaseProcedure<
   middlewares: Set<AnyMiddleware>
 }
 
-export type AnyBaseProcedure<
-  Contract extends TAnyProcedureContract = TAnyProcedureContract,
-> = BaseProcedure<Contract, Dependencies>
-
 export type ProcedureHandlerType<Input, Output, Deps extends Dependencies> = (
   ctx: DependencyContext<Deps>,
   data: Input,
-  contract: TAnyProcedureContract,
 ) => Async<Output>
 
 export interface Procedure<
@@ -55,7 +49,7 @@ export interface Procedure<
     InputType<t.infer.decoded.output<ProcedureContract['input']>>,
     ProcedureContract['stream'] extends t.NeverType
       ? OutputType<t.infer.decoded.input<ProcedureContract['output']>>
-      : RPCStreamResponse<
+      : ProtocolApiCallIterableResult<
           t.infer.decoded.input<
             Exclude<ProcedureContract['stream'], undefined | boolean>
           >,
@@ -75,7 +69,7 @@ export const getProcedureMetadata = <
   T extends K extends MetadataKey<infer Type> ? Type : never,
   D extends T | undefined = undefined,
 >(
-  procedure: AnyBaseProcedure,
+  procedure: AnyProcedure,
   key: T,
   defaultValue?: D,
 ): D extends undefined ? T | undefined : T => {
@@ -95,7 +89,7 @@ export type CreateProcedureParams<
         InputType<t.infer.decoded.output<ProcedureContract['input']>>,
         ProcedureContract['stream'] extends t.NeverType
           ? OutputType<t.infer.decoded.input<ProcedureContract['output']>>
-          : RPCStreamResponse<
+          : ProtocolApiCallIterableResult<
               t.infer.decoded.input<
                 Exclude<ProcedureContract['stream'], undefined | boolean>
               >,
@@ -108,7 +102,7 @@ export type CreateProcedureParams<
       InputType<t.infer.decoded.output<ProcedureContract['input']>>,
       ProcedureContract['stream'] extends t.NeverType
         ? OutputType<t.infer.decoded.input<ProcedureContract['output']>>
-        : RPCStreamResponse<
+        : ProtocolApiCallIterableResult<
             t.infer.decoded.input<
               Exclude<ProcedureContract['stream'], undefined | boolean>
             >,
@@ -165,36 +159,6 @@ export function createContractProcedure<
   })
 }
 
-export interface RPCStreamResponse<Y = unknown, O = unknown>
-  extends ProtocolApiCallIterableResult {
-  [kIterableResponse]: true
-  iterable: ProtocolAnyIterable<Y>
-  output: O
-  onFinish?: () => void
-}
-
-export function isIterableResponse(value: any): value is RPCStreamResponse {
-  return value && value[kIterableResponse] === true
-}
-
-export function createStreamResponse<Y, O>(
-  iterable: ProtocolAnyIterable<Y>,
-  {
-    onFinish,
-    output = undefined as O,
-  }: {
-    output?: O
-    onFinish?: () => void
-  },
-): RPCStreamResponse<Y, O> {
-  return {
-    [kIterableResponse]: true as const,
-    iterable,
-    output,
-    onFinish,
-  }
-}
-
 export function createProcedure<
   Return,
   Stream,
@@ -221,7 +185,7 @@ export function createProcedure<
               ? t.infer.decoded.input<TOutput>
               : Return
             : TOutput extends BaseType
-              ? RPCStreamResponse<
+              ? ProtocolApiCallIterableResult<
                   TStream extends true
                     ? Stream
                     : t.infer.decoded.input<
@@ -229,7 +193,7 @@ export function createProcedure<
                       >,
                   t.infer.decoded.input<TOutput>
                 >
-              : RPCStreamResponse<
+              : ProtocolApiCallIterableResult<
                   TStream extends true
                     ? Stream
                     : t.infer.decoded.input<
