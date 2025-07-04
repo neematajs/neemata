@@ -13,7 +13,6 @@ import {
   Hook,
   Scope,
 } from '@nmtjs/core'
-import type { ApplicationOptions } from './application.ts'
 import { kTask } from './constants.ts'
 import { AppInjectables } from './injectables.ts'
 import type { ApplicationRegistry } from './registry.ts'
@@ -88,13 +87,18 @@ export function createTask<
   return { name, dependencies, handler, parser, [kTask]: true }
 }
 
+export type TasksOptions = {
+  timeout: number
+  executor?: BaseTaskExecutor
+}
+
 export class Tasks {
   constructor(
     private readonly application: {
       container: Container
       registry: ApplicationRegistry
     },
-    private readonly options: ApplicationOptions['tasks'],
+    private readonly options: TasksOptions,
   ) {}
 
   execute(task: AnyTask, ...args: any[]): TaskExecution {

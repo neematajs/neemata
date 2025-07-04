@@ -21,7 +21,6 @@ import {
   type CreateProcedureParams,
   createContractProcedure,
 } from '../src/procedure.ts'
-import { SimplePubSubAdapter } from '../src/pubsub.ts'
 import {
   type BaseTaskExecutor,
   type CreateTaskOptions,
@@ -81,9 +80,7 @@ export const testApp = (options: Partial<ApplicationOptions> = {}) =>
         logging: {
           pinoOptions: { enabled: false },
         },
-        pubsub: {
-          adapter: new SimplePubSubAdapter(),
-        },
+        pubsub: {},
       } as ApplicationOptions,
       options,
     ),

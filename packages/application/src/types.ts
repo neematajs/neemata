@@ -1,7 +1,12 @@
 import type { UnionToIntersection } from '@nmtjs/common'
 import type { TAPIContract } from '@nmtjs/contract'
-import type { Container, Hooks, Logger } from '@nmtjs/core'
-import type { Connection, Format, Protocol } from '@nmtjs/protocol/server'
+import type { Container, Hooks, Logger, LoggingOptions } from '@nmtjs/core'
+import type {
+  BaseServerFormat,
+  Connection,
+  Format,
+  Protocol,
+} from '@nmtjs/protocol/server'
 import type { Api } from './api.ts'
 import type { AnyApplication, Application } from './application.ts'
 import type { WorkerType } from './enums.ts'

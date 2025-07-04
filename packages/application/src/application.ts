@@ -12,7 +12,6 @@ import {
   Scope,
 } from '@nmtjs/core'
 import {
-  type BaseServerFormat,
   type Connection,
   Format,
   isTransportPlugin,
@@ -20,31 +19,14 @@ import {
   type Transport,
   type TransportPlugin,
 } from '@nmtjs/protocol/server'
-import { type AnyFilter, Api } from './api.ts'
+import { type AnyFilter, Api, type ApiOptions } from './api.ts'
 import { WorkerType } from './enums.ts'
 import { AppInjectables } from './injectables.ts'
 import type { AnyNamespace } from './namespace.ts'
-import { PubSub, type PubSubAdapter } from './pubsub.ts'
+import { PubSub, type PubSubOptions } from './pubsub.ts'
 import { APP_COMMAND, ApplicationRegistry, printRegistry } from './registry.ts'
-import { type AnyTask, type BaseTaskExecutor, Tasks } from './tasks.ts'
+import { type AnyTask, Tasks, type TasksOptions } from './tasks.ts'
 import type { ApplicationPluginContext, ExecuteFn } from './types.ts'
-
-export type ApplicationOptions = {
-  type: WorkerType
-  api: {
-    timeout: number
-    formats: BaseServerFormat[]
-  }
-  tasks: {
-    timeout: number
-    executor?: BaseTaskExecutor
-  }
-  pubsub?: {
-    adapter: PubSubAdapter
-  }
-  events?: {}
-  logging?: LoggingOptions
-}
 
 type UseFn<N extends readonly [...AnyNamespace[]]> = <
   T extends BasePlugin<any, any, ApplicationPluginContext>,
@@ -58,6 +40,14 @@ type UseFn<N extends readonly [...AnyNamespace[]]> = <
 ) => Application<N>
 
 export type AnyApplication = Application<readonly [...AnyNamespace[]]>
+
+export type ApplicationOptions = {
+  type: WorkerType
+  api: ApiOptions
+  tasks: TasksOptions
+  pubsub: PubSubOptions
+  logging?: LoggingOptions
+}
 
 export class Application<T extends readonly [...AnyNamespace[]] = readonly []> {
   readonly _!: { namespaces: T }
@@ -83,7 +73,7 @@ export class Application<T extends readonly [...AnyNamespace[]] = readonly []> {
     )
 
     this.registry = new ApplicationRegistry(this)
-    this.pubsub = new PubSub(this, this.options.pubsub)
+
     this.format = new Format(this.options.api.formats)
 
     // create unexposed container for global injectables, which never gets disposed
@@ -103,8 +93,10 @@ export class Application<T extends readonly [...AnyNamespace[]] = readonly []> {
     this.container = this._container.fork(Scope.Global)
 
     this.api = new Api(this, this.options.api)
-    this.protocol = new Protocol(this)
     this.tasks = new Tasks(this, this.options.tasks)
+    this.pubsub = new PubSub(this, this.options.pubsub)
+
+    this.protocol = new Protocol(this)
   }
 
   async initialize() {

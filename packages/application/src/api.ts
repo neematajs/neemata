@@ -12,6 +12,7 @@ import {
 } from '@nmtjs/core'
 import { ErrorCode } from '@nmtjs/protocol'
 import {
+  type BaseServerFormat,
   type Connection,
   isIterableResult,
   type ProtocolApi,
@@ -22,7 +23,6 @@ import {
 } from '@nmtjs/protocol/server'
 import { NeemataTypeError, type } from '@nmtjs/type'
 import { prettifyError } from 'zod/v4-mini'
-import type { ApplicationOptions } from './application.ts'
 import type { AnyNamespace } from './namespace.ts'
 import type { AnyProcedure } from './procedure.ts'
 import type { ApplicationRegistry } from './registry.ts'
@@ -59,6 +59,11 @@ export type ApplicationApiCallOptions<T extends AnyProcedure = AnyProcedure> = {
   signal: AbortSignal
 }
 
+export type ApiOptions = {
+  timeout: number
+  formats: BaseServerFormat[]
+}
+
 export class Api implements ProtocolApi {
   constructor(
     private readonly application: {
@@ -66,7 +71,7 @@ export class Api implements ProtocolApi {
       registry: ApplicationRegistry
       logger: Logger
     },
-    private readonly options: ApplicationOptions['api'],
+    private readonly options: ApiOptions,
   ) {}
 
   /**

@@ -7,8 +7,9 @@ import type {
   TAnyEventContract,
   TAnySubscriptionContract,
 } from '@nmtjs/contract'
-import { Hook, type Logger } from '@nmtjs/core'
+import { type Container, createPlugin, Hook, type Logger } from '@nmtjs/core'
 import type { t } from '@nmtjs/type'
+import { AppInjectables } from './injectables.ts'
 import type { ApplicationRegistry } from './registry.ts'
 
 export type PubSubAdapterEvent = { channel: string; payload: any }
@@ -28,29 +29,36 @@ export type PubSubChannel = {
   eventKey: string
 }
 
+export type PubSubOptions = {}
+
 export class PubSub {
   readonly subscriptions = new Map<string, PubSubChannel>()
+  protected adapter: PubSubAdapter | undefined
 
   constructor(
     protected readonly application: {
       logger: Logger
+      container: Container
       registry: ApplicationRegistry
     },
-    protected readonly options?: {
-      adapter: PubSubAdapter
-    },
+    protected readonly options: PubSubOptions,
   ) {
-    if (!this.options?.adapter) {
-      this.application.logger.warn(
-        'PubSub adapter is not configured, attempting to subscribe to events will fail',
-      )
-    } else {
-      this.application.registry.registerHook(Hook.BeforeTerminate, async () => {
-        for (const { stream } of this.subscriptions.values()) {
-          stream.destroy()
-        }
-      })
-    }
+    this.adapter = this.getAdapter()
+
+    this.application.registry.registerHook(Hook.AfterInitialize, () => {
+      this.adapter = this.getAdapter()
+      if (!this.adapter) {
+        this.application.logger.warn(
+          'PubSub adapter is not configured. Attemps to subscribe or publish will fail',
+        )
+      }
+    })
+
+    this.application.registry.registerHook(Hook.BeforeTerminate, async () => {
+      for (const { stream } of this.subscriptions.values()) {
+        stream.destroy()
+      }
+    })
   }
 
   subscribe<
@@ -82,7 +90,7 @@ export class PubSub {
           }[keyof Events]
     >
   } {
-    assert(this.options?.adapter, 'PubSub adapter is not configured')
+    assert(this.adapter, 'PubSub adapter is not configured')
 
     const eventKeys =
       Object.keys(events).length === 0
@@ -97,7 +105,7 @@ export class PubSub {
       if (this.subscriptions.has(channel)) {
         streams[index] = this.subscriptions.get(channel)!.stream
       } else {
-        const iterable = this.options.adapter.subscribe(channel, signal)
+        const iterable = this.adapter.subscribe(channel, signal)
         const stream = this.createEventStream(iterable)
         stream.on('close', () => this.subscriptions.delete(channel))
         streams[index] = stream
@@ -123,7 +131,8 @@ export class PubSub {
     options: S['options'],
     data: t.infer.decoded.input<E['payload']>,
   ): Promise<boolean> {
-    assert(this.options?.adapter, 'PubSub adapter is not configured')
+    assert(this.adapter, 'PubSub adapter is not configured')
+
     const channel = getChannelName(subscription, event.name, options)
     const subscriptionChannel = this.subscriptions.get(channel)
 
@@ -133,12 +142,20 @@ export class PubSub {
 
     try {
       const payload = subscriptionChannel.event.payload.encode(data)
-      return this.options.adapter.publish(channel, payload)
+      return this.adapter.publish(channel, payload)
     } catch (error: any) {
       this.application.logger.error(
         `Failed to publish event "${event.name}" on channel "${channel}": ${error.message}`,
       )
       return Promise.reject(error)
+    }
+  }
+
+  private getAdapter(): PubSubAdapter | undefined {
+    try {
+      return this.application.container.get(AppInjectables.pubsubAdapter)
+    } catch {
+      return undefined
     }
   }
 
@@ -230,7 +247,7 @@ function mergeEventStreams(
   return destination
 }
 
-export class SimplePubSubAdapter implements PubSubAdapter {
+class DefaultPubSubAdapter implements PubSubAdapter {
   private readonly channels = new Map<string, PassThrough>()
 
   async publish(channel: string, payload: any): Promise<boolean> {
@@ -265,3 +282,10 @@ export class SimplePubSubAdapter implements PubSubAdapter {
     }
   }
 }
+
+export const DefaultPubSubAdapterPlugin = createPlugin(
+  'DefaultPubSubAdapter',
+  ({ container }) => {
+    container.provide(AppInjectables.pubsubAdapter, new DefaultPubSubAdapter())
+  },
+)

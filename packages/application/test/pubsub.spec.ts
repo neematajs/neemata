@@ -1,8 +1,9 @@
 import { defer } from '@nmtjs/common'
 import { c } from '@nmtjs/contract'
-import { Hook } from '@nmtjs/core'
+import { Container, Hook } from '@nmtjs/core'
 import { t } from '@nmtjs/type'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { AppInjectables } from '../src/injectables.ts'
 import {
   PubSub,
   type PubSubAdapter,
@@ -76,18 +77,25 @@ class MockPubSubAdapter implements PubSubAdapter {
 describe('PubSub', () => {
   const logger = testLogger()
   let registry: ApplicationRegistry
-  let adapter: MockPubSubAdapter
+  let container: Container
   let pubsub: PubSub
+  let adapter: MockPubSubAdapter
 
   beforeEach(async () => {
     adapter = new MockPubSubAdapter()
     registry = new ApplicationRegistry({
       logger,
     })
+    container = new Container({
+      logger,
+      registry,
+    })
+    container.provide(AppInjectables.pubsubAdapter, adapter)
     pubsub = new PubSub(
       {
         logger,
         registry,
+        container,
       },
       {
         adapter,
@@ -97,21 +105,6 @@ describe('PubSub', () => {
 
   afterEach(async () => {
     await registry.hooks.call(Hook.BeforeTerminate, {})
-  })
-
-  it('should throw when no adapter is configured', async () => {
-    const pubsubWithoutAdapter = new PubSub({
-      logger,
-      registry,
-    })
-
-    expect(() =>
-      pubsubWithoutAdapter.subscribe(
-        TestSubscriptionContract1,
-        { testEvent: true },
-        { userId: 'user1' },
-      ),
-    ).toThrow('PubSub adapter is not configured')
   })
 
   it('should subscribe to specific events', async () => {
