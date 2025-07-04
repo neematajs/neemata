@@ -1,5 +1,6 @@
 import type { Container, Hook, MetadataStore } from '@nmtjs/core'
 import type { Connection } from './connection.ts'
+import { kIterableResponse } from './constants.ts'
 
 export type ProtocolApiCallOptions = {
   connection: Connection
@@ -15,35 +16,47 @@ export type ProtocolAnyIterable<T> =
   | ((signal: AbortSignal) => AsyncGenerator<T>)
   | AsyncIterable<T>
 
-export interface ProtocolApiCallBaseResult {
-  output: unknown
-}
-export interface ProtocolApiCallSubscriptionResult
-  extends ProtocolApiCallBaseResult {
-  subscription: never
+export interface ProtocolApiCallBaseResult<T = unknown> {
+  output: T
 }
 
-export interface ProtocolApiCallIterableResult
-  extends ProtocolApiCallBaseResult {
-  iterable: ProtocolAnyIterable<unknown>
+export interface ProtocolApiCallIterableResult<Y = unknown, O = unknown>
+  extends ProtocolApiCallBaseResult<O> {
+  [kIterableResponse]: true
+  iterable: ProtocolAnyIterable<Y>
   onFinish?: () => void
 }
 
 export type ProtocolApiCallResult =
   | ProtocolApiCallBaseResult
-  | ProtocolApiCallSubscriptionResult
   | ProtocolApiCallIterableResult
-
-export const isIterableResult = (
-  result: ProtocolApiCallResult,
-): result is ProtocolApiCallIterableResult => 'iterable' in result
-
-export const isSubscriptionResult = (
-  result: ProtocolApiCallResult,
-): result is ProtocolApiCallSubscriptionResult => 'subscription' in result
 
 export interface ProtocolApi {
   call(options: ProtocolApiCallOptions): Promise<ProtocolApiCallResult>
+}
+
+export function isIterableResult(
+  value: any,
+): value is ProtocolApiCallIterableResult {
+  return value && value[kIterableResponse] === true
+}
+
+export function createStreamResponse<Y, O>(
+  iterable: ProtocolAnyIterable<Y>,
+  {
+    onFinish,
+    output = undefined as O,
+  }: {
+    output?: O
+    onFinish?: () => void
+  },
+): ProtocolApiCallIterableResult<Y, O> {
+  return {
+    [kIterableResponse]: true as const,
+    iterable,
+    output,
+    onFinish,
+  }
 }
 
 declare module '@nmtjs/core' {

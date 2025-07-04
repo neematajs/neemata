@@ -88,7 +88,7 @@ export function createTask<
   return { name, dependencies, handler, parser, [kTask]: true }
 }
 
-export class TasksRunner {
+export class Tasks {
   constructor(
     private readonly application: {
       container: Container

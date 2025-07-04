@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { kTask } from '../src/constants.ts'
 import { AppInjectables } from '../src/injectables.ts'
 import { ApplicationRegistry } from '../src/registry.ts'
-import { createTask, TasksRunner } from '../src/task.ts'
+import { createTask, Tasks } from '../src/tasks.ts'
 import {
   testDefaultTimeout,
   testLogger,
@@ -48,20 +48,17 @@ describe('Task', () => {
   })
 })
 
-describe.sequential('Tasks', () => {
+describe('Tasks', () => {
   const logger = testLogger()
 
   let registry: ApplicationRegistry
   let container: Container
-  let tasks: TasksRunner
+  let tasks: Tasks
 
   beforeEach(async () => {
     registry = new ApplicationRegistry({ logger })
     container = new Container({ logger, registry })
-    tasks = new TasksRunner(
-      { container, registry },
-      { timeout: testDefaultTimeout },
-    )
+    tasks = new Tasks({ container, registry }, { timeout: testDefaultTimeout })
     await container.load()
   })
 
@@ -71,7 +68,7 @@ describe.sequential('Tasks', () => {
 
   it('should be a tasks', () => {
     expect(tasks).toBeDefined()
-    expect(tasks).toBeInstanceOf(TasksRunner)
+    expect(tasks).toBeInstanceOf(Tasks)
   })
 
   it('should execute a task', async () => {
@@ -148,7 +145,7 @@ describe.sequential('Tasks', () => {
   it('should execute with custom runner', async () => {
     const runnerFn = vi.fn()
     const taskRunner = testTaskRunner(runnerFn)
-    const tasks = new TasksRunner(
+    const tasks = new Tasks(
       { container, registry },
       { timeout: testDefaultTimeout, executor: taskRunner },
     )

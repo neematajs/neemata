@@ -16,7 +16,7 @@ export abstract class TransformType<
   >,
   zod.ZodMiniPipe<
     EncodedType,
-    zod.ZodMiniType<EncodedType['_zod']['output'], EncodedType['_zod']['input']>
+    zod.ZodMiniType<DecodedType['_zod']['output'], DecodedType['_zod']['input']>
   >
 > {}
 

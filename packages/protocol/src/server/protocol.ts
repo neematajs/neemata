@@ -378,9 +378,7 @@ export class Protocol {
         },
       )
 
-      if ('subscription' in response) {
-        throwError('Unimplemented')
-      } else if (isIterableResult(response)) {
+      if (isIterableResult(response)) {
         transport.send(
           connection,
           ServerMessageType.RpcStreamResponse,

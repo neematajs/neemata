@@ -6,9 +6,9 @@ import type { Api } from './api.ts'
 import type { AnyApplication, Application } from './application.ts'
 import type { WorkerType } from './enums.ts'
 import type { AnyNamespace } from './namespace.ts'
-import type { AnyBaseProcedure } from './procedure.ts'
+import type { AnyProcedure } from './procedure.ts'
 import type { ApplicationRegistry } from './registry.ts'
-import type { AnyTask, BaseTaskExecutor, Task, TaskExecution } from './task.ts'
+import type { AnyTask, BaseTaskExecutor, Task, TaskExecution } from './tasks.ts'
 
 export type Command = (options: {
   args: string[]
@@ -30,7 +30,7 @@ export type ApiCallContext = Readonly<{
   connection: Connection
   container: Container
   namespace: AnyNamespace
-  procedure: AnyBaseProcedure
+  procedure: AnyProcedure
 }>
 
 export type ExecuteFn = <

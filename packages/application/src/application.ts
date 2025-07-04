@@ -24,8 +24,9 @@ import { type AnyFilter, Api } from './api.ts'
 import { WorkerType } from './enums.ts'
 import { AppInjectables } from './injectables.ts'
 import type { AnyNamespace } from './namespace.ts'
+import { PubSub, type PubSubAdapter } from './pubsub.ts'
 import { APP_COMMAND, ApplicationRegistry, printRegistry } from './registry.ts'
-import { type AnyTask, type BaseTaskExecutor, TasksRunner } from './task.ts'
+import { type AnyTask, type BaseTaskExecutor, Tasks } from './tasks.ts'
 import type { ApplicationPluginContext, ExecuteFn } from './types.ts'
 
 export type ApplicationOptions = {
@@ -37,6 +38,9 @@ export type ApplicationOptions = {
   tasks: {
     timeout: number
     executor?: BaseTaskExecutor
+  }
+  pubsub?: {
+    adapter: PubSubAdapter
   }
   events?: {}
   logging?: LoggingOptions
@@ -57,13 +61,13 @@ export type AnyApplication = Application<readonly [...AnyNamespace[]]>
 
 export class Application<T extends readonly [...AnyNamespace[]] = readonly []> {
   readonly _!: { namespaces: T }
+  protected readonly _container: Container
   readonly api: Api
-  readonly taskRunner: TasksRunner
+  readonly tasks: Tasks
   readonly logger: Logger
   readonly registry: ApplicationRegistry
-  protected readonly _container: Container
+  readonly pubsub: PubSub
   readonly container: Container
-  // readonly eventManager: EventManager
   readonly format: Format
   readonly protocol: Protocol
   readonly plugins: Array<[Plugin<any, any, ApplicationPluginContext>, any]> =
@@ -79,6 +83,7 @@ export class Application<T extends readonly [...AnyNamespace[]] = readonly []> {
     )
 
     this.registry = new ApplicationRegistry(this)
+    this.pubsub = new PubSub(this, this.options.pubsub)
     this.format = new Format(this.options.api.formats)
 
     // create unexposed container for global injectables, which never gets disposed
@@ -99,7 +104,7 @@ export class Application<T extends readonly [...AnyNamespace[]] = readonly []> {
 
     this.api = new Api(this, this.options.api)
     this.protocol = new Protocol(this)
-    this.taskRunner = new TasksRunner(this, this.options.tasks)
+    this.tasks = new Tasks(this, this.options.tasks)
   }
 
   async initialize() {
@@ -156,7 +161,7 @@ export class Application<T extends readonly [...AnyNamespace[]] = readonly []> {
   }
 
   execute: ExecuteFn = (task, ...args: any[]) => {
-    return this.taskRunner.execute(task, ...args)
+    return this.tasks.execute(task, ...args)
   }
 
   use: UseFn<T> = (
@@ -204,7 +209,7 @@ export class Application<T extends readonly [...AnyNamespace[]] = readonly []> {
   }
 
   protected initializeEssential() {
-    const taskCommand = this.taskRunner.command.bind(this.taskRunner)
+    const taskCommand = this.tasks.command.bind(this.tasks)
     this.registry.registerCommand(APP_COMMAND, 'task', (arg) =>
       taskCommand(arg).then(({ error }) => {
         if (error) this.logger.error(error)
@@ -237,12 +242,12 @@ export class Application<T extends readonly [...AnyNamespace[]] = readonly []> {
     // TODO: here might be better to come up with some interface,
     // instead of exposing components directly
     return Object.freeze({
+      logger,
       type: this.options.type,
       api: this.api,
+      pubsub: this.pubsub,
       format: this.format,
       container: this.container,
-      // eventManager: this.eventManager,
-      logger,
       registry: this.registry,
       hooks: this.registry.hooks,
       protocol: this.protocol,

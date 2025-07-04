@@ -21,7 +21,6 @@ import {
   Connection,
   getFormat,
   isIterableResult,
-  isSubscriptionResult,
   type ProtocolApiCallOptions,
   ProtocolClientStream,
   ProtocolError,
@@ -312,7 +311,7 @@ export class WsTransportServer implements Transport<WsConnectionData> {
         signal: controller.signal,
       })
 
-      if (isIterableResult(result) || isSubscriptionResult(result)) {
+      if (isIterableResult(result)) {
         res.cork(() => {
           if (controller.signal.aborted) return
           const status = HttpCode.NotImplemented
