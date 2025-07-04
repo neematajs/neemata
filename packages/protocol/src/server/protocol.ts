@@ -1,4 +1,4 @@
-import { type Callback, defer, throwError } from '@nmtjs/common'
+import { type Callback, defer, isAbortError, throwError } from '@nmtjs/common'
 import {
   type AnyInjectable,
   type Container,
@@ -411,10 +411,7 @@ export class Protocol {
             )
           } catch (error) {
             // do not re-throw AbortError errors, they are expected
-            if (
-              error instanceof Error === false ||
-              error.name !== 'AbortError'
-            ) {
+            if (!isAbortError(error)) {
               throw error
             }
           }

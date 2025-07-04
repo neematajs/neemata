@@ -133,3 +133,10 @@ export function once(target: EventTarget, event: string) {
 export function onceAborted(signal: AbortSignal) {
   return once(signal, 'abort')
 }
+
+export function isAbortError(error: any): boolean {
+  return (
+    error instanceof DOMException &&
+    (error.name === 'AbortError' || error.code === DOMException.ABORT_ERR)
+  )
+}
