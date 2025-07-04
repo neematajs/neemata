@@ -13,7 +13,7 @@ export type ProtocolApiCallOptions = {
 }
 
 export type ProtocolAnyIterable<T> =
-  | ((signal: AbortSignal) => AsyncGenerator<T>)
+  | ((signal: AbortSignal) => AsyncIterable<T>)
   | AsyncIterable<T>
 
 export interface ProtocolApiCallBaseResult<T = unknown> {
