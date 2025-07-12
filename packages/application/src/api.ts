@@ -14,8 +14,10 @@ import { ErrorCode } from '@nmtjs/protocol'
 import {
   type BaseServerFormat,
   type Connection,
+  createStreamResponse,
   isIterableResult,
   type ProtocolApi,
+  type ProtocolApiCallIterableResult,
   type ProtocolApiCallOptions,
   type ProtocolApiCallResult,
   ProtocolError,
@@ -306,18 +308,19 @@ export class ApplicationApi implements ProtocolApi {
     }
   }
 
-  private handleIterableOutput(procedure: AnyProcedure, response: any) {
+  private handleIterableOutput(
+    procedure: AnyProcedure,
+    response: any,
+  ): ProtocolApiCallIterableResult {
     if (!isIterableResult(response))
       throw new Error('Invalid response. Use `createIterableResponse` helper')
     const iterable = response.iterable
     if (procedure.contract.output instanceof type.NeverType === false) {
       const type = procedure.contract.output
-      return {
-        output: type.encode(response.output),
-        iterable,
-      }
+      const output = type.encode(response.output)
+      return createStreamResponse(iterable, output, response.onFinish)
     }
-    return { output: undefined, iterable }
+    return createStreamResponse(iterable, undefined, response.onFinish)
   }
 
   private handleOutput(procedure: AnyProcedure, response: any) {

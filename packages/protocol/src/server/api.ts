@@ -36,7 +36,7 @@ export interface ProtocolApi {
 }
 
 export function isIterableResult(
-  value: any,
+  value: ProtocolApiCallResult,
 ): value is ProtocolApiCallIterableResult {
   return value && value[kIterableResponse] === true
 }
