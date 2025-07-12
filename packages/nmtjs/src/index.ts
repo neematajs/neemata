@@ -3,11 +3,13 @@ import {
   createApplication,
   createContractNamespace,
   createContractProcedure,
+  createContractRouter,
   createFilter,
   createGuard,
   createMiddleware,
   createNamespace,
   createProcedure,
+  createRouter,
   createTask,
 } from '@nmtjs/application'
 import {
@@ -44,6 +46,8 @@ export const neemata = {
   class: createClassInjectable,
   extendClass: createExtendableClassInjectable,
   task: createTask,
+  router: createRouter,
+  contractRouter: createContractRouter,
   namespace: createNamespace,
   contractNamespace: createContractNamespace,
   procedure: createProcedure,
