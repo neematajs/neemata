@@ -181,12 +181,14 @@ export class Container {
     dependant?: AnyInjectable,
   ): Promise<ResolveInjectableType<T>> {
     if (this.disposing) {
-      throw new Error('Cannot resolve during disposal')
+      return Promise.reject(new Error('Cannot resolve during disposal'))
     }
 
     if (dependant && compareScope(dependant.scope, '<', injectable.scope)) {
       // TODO: more informative error
-      throw new Error('Invalid scope: dependant is looser than injectable')
+      return Promise.reject(
+        new Error('Invalid scope: dependant is looser than injectable'),
+      )
     }
 
     if (isValueInjectable(injectable)) {

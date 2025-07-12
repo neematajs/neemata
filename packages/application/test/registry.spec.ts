@@ -2,6 +2,7 @@ import { noopFn } from '@nmtjs/common'
 import { createLazyInjectable, Scope } from '@nmtjs/core'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { ApplicationRegistry } from '../src/registry.ts'
+import { createRouter } from '../src/router.ts'
 import { testApp, testNamepsace, testTask } from './_utils.ts'
 
 describe('ApplicationRegistry', () => {
@@ -17,17 +18,20 @@ describe('ApplicationRegistry', () => {
     expect(registry).toBeInstanceOf(ApplicationRegistry)
   })
 
-  it('should register namespace', async () => {
+  it('should register router', async () => {
     const namespace = testNamepsace()
-    registry.registerNamespace(namespace)
+    const router = createRouter({ namespace })
+    registry.registerRouter(router)
     expect(registry.namespaces.get(namespace.contract.name)).toBe(namespace)
   })
 
   it('should fail to register service with the same contract twice', () => {
-    const service1 = testNamepsace()
-    const service2 = testNamepsace()
-    registry.registerNamespace(service1)
-    expect(() => registry.registerNamespace(service2)).toThrow()
+    const namespace1 = testNamepsace()
+    const namespace2 = testNamepsace()
+    const router1 = createRouter({ namespace: namespace1 })
+    const router2 = createRouter({ namespace: namespace2 })
+    registry.registerRouter(router1)
+    expect(() => registry.registerRouter(router2)).toThrow()
   })
 
   it('should register task', () => {

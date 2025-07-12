@@ -155,27 +155,27 @@ export type AnyInjectable<T = any, S extends Scope = Scope> = Injectable<
 
 export const isLazyInjectable = (
   injectable: any,
-): injectable is LazyInjectable<any> => kLazyInjectable in injectable
+): injectable is LazyInjectable<any> => injectable[kLazyInjectable]
 
 export const isFactoryInjectable = (
   injectable: any,
-): injectable is FactoryInjectable<any> => kFactoryInjectable in injectable
+): injectable is FactoryInjectable<any> => injectable[kFactoryInjectable]
 
 export const isClassInjectable = (
   injectable: any,
-): injectable is ClassInjectable<any> => kClassInjectable in injectable
+): injectable is ClassInjectable<any> => injectable[kClassInjectable]
 
 export const isValueInjectable = (
   injectable: any,
-): injectable is ValueInjectable<any> => kValueInjectable in injectable
+): injectable is ValueInjectable<any> => injectable[kValueInjectable]
 
 export const isInjectable = (
   injectable: any,
-): injectable is AnyInjectable<any> => kInjectable in injectable
+): injectable is AnyInjectable<any> => injectable[kInjectable]
 
 export const isOptionalInjectable = (
   injectable: any,
-): injectable is DependencyOptional<any> => kOptionalDependency in injectable
+): injectable is DependencyOptional<any> => injectable[kOptionalDependency]
 
 export function getInjectableScope(injectable: AnyInjectable) {
   let scope = injectable.scope

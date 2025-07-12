@@ -1,12 +1,12 @@
-import type { TAPIContract } from '@nmtjs/contract'
 import type { Container, Hooks, Logger } from '@nmtjs/core'
 import type { Connection, Format, Protocol } from '@nmtjs/protocol/server'
-import type { Api } from './api.ts'
-import type { AnyApplication, Application } from './application.ts'
+import type { ApplicationApi } from './api.ts'
+import type { Application } from './application.ts'
 import type { WorkerType } from './enums.ts'
 import type { AnyNamespace } from './namespace.ts'
 import type { AnyProcedure } from './procedure.ts'
 import type { ApplicationRegistry } from './registry.ts'
+import type { AnyRouter } from './router.ts'
 import type { AnyTask, BaseTaskExecutor, Task, TaskExecution } from './tasks.ts'
 
 export type Command = (options: {
@@ -16,7 +16,7 @@ export type Command = (options: {
 
 export interface ApplicationPluginContext {
   readonly type: WorkerType
-  readonly api: Api
+  readonly api: ApplicationApi
   readonly format: Format
   readonly container: Container
   readonly logger: Logger
@@ -49,9 +49,9 @@ export type ApplicationWorkerOptions = {
   tasksRunner?: BaseTaskExecutor
 }
 
-export type ExtractApplicationAPIContract<T extends AnyApplication> =
-  T extends Application<infer ApiContract extends TAPIContract>
-    ? ApiContract
+export type ExtractApplicationAPIContract<T extends Application> =
+  T extends Application<infer Router extends AnyRouter>
+    ? Router['contract']
     : never
 /**
  * Slightly modified version of https://github.com/samchon/typia Primitive type. (TODO: make a PR maybe?)

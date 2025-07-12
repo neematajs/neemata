@@ -199,15 +199,20 @@ describe('Container', () => {
     await container.dispose()
   })
 
+  it('should be a container', () => {
+    expect(container).toBeDefined()
+    expect(container).instanceOf(Container)
+  })
+
+  it('should provide injectables by default', async () => {
+    expect(container.get(CoreInjectables.inject)).toBeTypeOf('function')
+    expect(container.get(CoreInjectables.dispose)).toBeTypeOf('function')
+  })
+
   it('should create context', async () => {
     const dep = createValueInjectable('dep')
     const ctx = await container.createContext({ dep })
     expect(ctx).toHaveProperty('dep')
-  })
-
-  it('should be a container', () => {
-    expect(container).toBeDefined()
-    expect(container).instanceOf(Container)
   })
 
   it('should resolve with value', async () => {
@@ -501,6 +506,29 @@ describe('Container', () => {
     await expect(container.resolve(injectable)).rejects.toThrow()
   })
 
+  it('should inject and dispose', async () => {
+    const inject = container.get(CoreInjectables.inject)
+    const dispose = container.get(CoreInjectables.dispose)
+    const value = {}
+    const injectable = createFactoryInjectable({
+      dependencies: { dep: createValueInjectable<'dep' | 'ped'>('dep') },
+      factory: async (deps) => {
+        expect(deps.dep).toBe('ped')
+        return value
+      },
+    })
+    await expect(inject(injectable, { dep: 'ped' })).resolves.toBe(value)
+    await expect(
+      inject(injectable, { dep: createValueInjectable<'dep' | 'ped'>('ped') }),
+    ).resolves.toBe(value)
+
+    await expect(dispose(injectable)).resolves.toBeUndefined()
+
+    await expect(inject.explicit(injectable, { dep: 'ped' })).resolves.toBe(
+      value,
+    )
+  })
+
   describe('Race Condition Prevention', () => {
     it('should prevent race conditions during concurrent resolution', async () => {
       let factoryCallCount = 0
@@ -655,7 +683,7 @@ describe('Container', () => {
       const disposalPromise = container.dispose()
 
       // Try to resolve during disposal - should fail
-      expect(() => container.resolve(injectable)).toThrow(
+      await expect(container.resolve(injectable)).rejects.toThrow(
         'Cannot resolve during disposal',
       )
 

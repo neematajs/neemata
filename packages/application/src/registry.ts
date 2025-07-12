@@ -11,6 +11,7 @@ import {
 import { ProtocolRegistry } from '@nmtjs/protocol/server'
 import type { AnyFilter, AnyGuard, AnyMiddleware } from './api.ts'
 import type { AnyNamespace } from './namespace.ts'
+import type { AnyRouter } from './router.ts'
 import type { AnyTask } from './tasks.ts'
 import type { Command } from './types.ts'
 
@@ -42,18 +43,20 @@ export class ApplicationRegistry extends ProtocolRegistry {
     commands.set(commandName, callback)
   }
 
-  registerNamespace(namespace: AnyNamespace) {
-    if (typeof namespace.contract.name === 'undefined') {
-      throw new Error('Namespace name is required')
+  registerRouter(router: AnyRouter) {
+    for (const namespace of Object.values(router.namespaces)) {
+      if (typeof namespace.contract.name === 'undefined') {
+        throw new Error('Namespace name is required')
+      }
+
+      if (this.namespaces.has(namespace.contract.name))
+        throw new Error(
+          `Namespaces ${namespace.contract.name} already registered`,
+        )
+
+      this.namespaces.set(namespace.contract.name, namespace)
+      this.registerHooks(namespace.hooks)
     }
-
-    if (this.namespaces.has(namespace.contract.name))
-      throw new Error(
-        `Namespaces ${namespace.contract.name} already registered`,
-      )
-
-    this.namespaces.set(namespace.contract.name, namespace)
-    this.registerHooks(namespace.hooks)
   }
 
   registerTask(task: AnyTask) {

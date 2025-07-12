@@ -2,6 +2,7 @@ import { CoreInjectables } from '@nmtjs/core'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Application } from '../src/application.ts'
 import { AppInjectables } from '../src/injectables.ts'
+import { PubSub } from '../src/pubsub.ts'
 import { testApp, testPlugin } from './_utils.ts'
 
 describe.sequential('Application', () => {
@@ -50,5 +51,13 @@ describe.sequential('Application', () => {
     await expect(
       app.container.resolve(AppInjectables.execute),
     ).resolves.toBeInstanceOf(Function)
+
+    await expect(
+      app.container.resolve(AppInjectables.pubsub),
+    ).resolves.toBeInstanceOf(PubSub)
+
+    await expect(
+      app.container.resolve(AppInjectables.pubsubAdapter),
+    ).rejects.toThrow()
   })
 })
