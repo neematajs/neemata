@@ -1,5 +1,5 @@
 import type { CallTypeProvider, OneOf, TypeProvider } from '@nmtjs/common'
-import type { TAnyAPIContract } from '@nmtjs/contract'
+import type { TAnyAPIContract, TAnyProcedureContract } from '@nmtjs/contract'
 import type {
   InputType,
   OutputType,
@@ -33,14 +33,34 @@ export interface RuntimeOutputContractTypeProvider extends TypeProvider {
     : never
 }
 
+export type AnyResolvedAPIContract = Record<
+  string,
+  {
+    procedures: Record<
+      string,
+      {
+        contract: TAnyProcedureContract
+        input: any
+        output: any
+      }
+    >
+    events: Record<
+      string,
+      {
+        payload: any
+      }
+    >
+  }
+>
+
 export type ResolveAPIContract<
   C extends TAnyAPIContract = TAnyAPIContract,
   InputTypeProvider extends TypeProvider = TypeProvider,
   OutputTypeProvider extends TypeProvider = TypeProvider,
 > = {
-  [N in keyof C['namespaces'] as C['namespaces'][N]['name']]: {
+  [N in keyof C['namespaces']]: {
     procedures: {
-      [P in keyof C['namespaces'][N]['procedures'] as C['namespaces'][N]['procedures'][P]['name']]: {
+      [P in keyof C['namespaces'][N]['procedures']]: {
         contract: C['namespaces'][N]['procedures'][P]
         input: InputType<
           CallTypeProvider<
@@ -48,7 +68,9 @@ export type ResolveAPIContract<
             C['namespaces'][N]['procedures'][P]['input']
           >
         >
-        output: C['namespaces'][N]['procedures'][P]['stream'] extends t.NeverType
+        output: C['namespaces'][N]['procedures'][P]['stream'] extends
+          | undefined
+          | t.NeverType
           ? OutputType<
               CallTypeProvider<
                 OutputTypeProvider,
@@ -72,7 +94,7 @@ export type ResolveAPIContract<
       }
     }
     events: {
-      [KE in keyof C['namespaces'][N]['events'] as C['namespaces'][N]['events'][KE]['name']]: {
+      [KE in keyof C['namespaces'][N]['events']]: {
         payload: OutputType<
           CallTypeProvider<
             OutputTypeProvider,
@@ -85,17 +107,17 @@ export type ResolveAPIContract<
 }
 
 export type ResolveClientEvents<
-  C extends ResolveAPIContract = ResolveAPIContract,
+  C extends AnyResolvedAPIContract = AnyResolvedAPIContract,
 > = {
   [N in keyof C]: {
-    [KE in keyof C[N]['events'] as `${Extract<N, string>}/${Extract<KE, string>}`]: [
-      C[N]['events'][KE]['payload'],
+    [E in keyof C[N]['events'] as `${Extract<N, string>}/${Extract<E, string>}`]: [
+      C[N]['events'][E]['payload'],
     ]
   }
 }[keyof C]
 
 export type ClientCallers<
-  Resolved extends ResolveAPIContract,
+  Resolved extends AnyResolvedAPIContract,
   SafeCall extends boolean,
 > = {
   [N in keyof Resolved]: {
@@ -118,10 +140,9 @@ export type ClientCallers<
           OneOf<
             [
               {
-                error?: undefined
                 output: Resolved[N]['procedures'][P]['output']
               },
-              { error: ProtocolError; output?: undefined },
+              { error: ProtocolError },
             ]
           >
         >

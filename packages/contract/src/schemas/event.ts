@@ -2,7 +2,7 @@ import { type BaseType, t } from '@nmtjs/type'
 import { Kind } from '../constants.ts'
 import { type ContractSchemaOptions, createSchema } from '../utils.ts'
 
-export const EventKind = 'NeemataEvent'
+export const EventKind = Symbol('NeemataEvent')
 
 export type TAnyEventContract = TEventContract<
   BaseType,
@@ -17,12 +17,12 @@ export interface TEventContract<
   Subscription extends string | undefined = undefined,
   Namespace extends string | undefined = undefined,
 > {
-  [Kind]: typeof EventKind
-  type: 'neemata:event'
-  name: Name
-  subscription: Subscription
-  namespace: Namespace
-  payload: Payload
+  readonly [Kind]: typeof EventKind
+  readonly type: 'neemata:event'
+  readonly name: Name
+  readonly subscription: Subscription
+  readonly namespace: Namespace
+  readonly payload: Payload
 }
 
 export const EventContract = <

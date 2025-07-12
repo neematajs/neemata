@@ -12,4 +12,4 @@ export const applyNames = <T extends Record<string, { serviceName?: string }>>(
   )
 }
 
-export const createSchema = <T>(schema: T) => schema as T
+export const createSchema = <T>(schema: T) => Object.freeze(schema) as T

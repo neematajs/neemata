@@ -92,16 +92,6 @@ export const TestNamespaceContract = c.namespace({
       input: t.any(),
       output: t.any(),
     }),
-    testUptream: c.procedure({
-      input: t.object({ test: c.blob() }),
-      output: t.any(),
-      stream: t.never(),
-    }),
-    testDownstream: c.procedure({
-      input: t.any(),
-      output: t.object({ test: c.blob() }),
-      stream: t.never(),
-    }),
   },
   events: {
     testEvent: c.event({

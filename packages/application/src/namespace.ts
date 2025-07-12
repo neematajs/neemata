@@ -7,6 +7,7 @@ import {
   type TAnyNamespaceContract,
   type TEventContract,
   type TNamespaceContract,
+  type TProcedureContract,
 } from '@nmtjs/contract'
 import { Hook, Hooks } from '@nmtjs/core'
 import type { BaseType } from '@nmtjs/type'
@@ -28,16 +29,28 @@ export type AnyNamespace = Namespace<TAnyNamespaceContract>
 export function createContractNamespace<Contract extends TAnyNamespaceContract>(
   contract: Contract,
   params: {
-    procedures?: Record<string, AnyProcedure>
+    procedures?: {
+      [K in keyof Contract['procedures']]: AnyProcedure<
+        TProcedureContract<
+          Contract['procedures'][K]['input'],
+          Contract['procedures'][K]['output'],
+          Contract['procedures'][K]['stream'],
+          string | undefined,
+          string | undefined
+        >
+      >
+    }
     guards?: AnyGuard[]
     middlewares?: AnyMiddleware[]
     hooks?: Record<string, Callback[]>
     autoload?: string | URL
-  },
+  } = {},
 ): Namespace<Contract> {
   const guards = new Set(params.guards ?? [])
   const middlewares = new Set(params.middlewares ?? [])
-  const procedures = new Map(Object.entries(params.procedures ?? {}))
+  const procedures = new Map<string, AnyProcedure>(
+    Object.entries(params.procedures ?? {}),
+  )
   const hooks = new Hooks()
 
   for (const [hookName, callbacks] of Object.entries(params.hooks ?? {})) {
@@ -46,7 +59,7 @@ export function createContractNamespace<Contract extends TAnyNamespaceContract>(
     }
   }
 
-  const namespace = {
+  const namespace: Namespace<Contract> = {
     contract,
     procedures,
     guards,
@@ -102,40 +115,49 @@ const createAutoLoader =
   }
 
 export function createNamespace<
-  Name extends string,
-  Procedures extends Record<string, AnyProcedure> = {},
-  Events extends Record<string, BaseType> = {},
->(params: {
-  name: Name
-  procedures?: Procedures
-  events?: Events
-  guards?: AnyGuard[]
-  middlewares?: AnyMiddleware[]
-  hooks?: Record<string, Callback[]>
-  timeout?: number
-}): Namespace<
+  const Options extends {
+    name: string
+    procedures?: Record<string, AnyProcedure<any>>
+    events?: Record<string, BaseType>
+    guards?: AnyGuard[]
+    middlewares?: AnyMiddleware[]
+    hooks?: Record<string, Callback[]>
+    timeout?: number
+  },
+>(
+  params: Options,
+): Namespace<
   TNamespaceContract<
-    {
-      [K in keyof Procedures]: Procedures[K]['contract']
-    },
-    {
-      [K in Extract<keyof Events, string>]: TEventContract<Events[K], K, Name>
-    },
-    Name
+    Options['procedures'] extends Record<string, AnyProcedure>
+      ? {
+          [K in keyof Options['procedures']]: Options['procedures'][K]['contract']
+        }
+      : {},
+    Options['events'] extends Record<string, BaseType>
+      ? {
+          [K in keyof Options['events']]: TEventContract<
+            Options['events'][K],
+            Extract<K, string>,
+            undefined,
+            Options['name']
+          >
+        }
+      : {},
+    Options['name']
   >
 > {
   const { name, guards, hooks, middlewares, timeout } = params
-  const procedures = params.procedures ?? ({} as Procedures)
-  const events = params.events ?? ({} as Events)
-
-  const eventsContracts: any = {}
-  for (const [name, type] of Object.entries(events)) {
-    eventsContracts[name] = c.event({ payload: type })
-  }
+  const procedures = params.procedures ?? ({} as Record<string, AnyProcedure>)
+  const events = params.events ?? ({} as Record<string, BaseType>)
 
   const proceduresContracts: any = {}
   for (const [name, procedure] of Object.entries(procedures)) {
     proceduresContracts[name] = procedure.contract
+  }
+
+  const eventsContracts: any = {}
+  for (const [name, type] of Object.entries(events)) {
+    eventsContracts[name] = c.event({ payload: type })
   }
 
   const contract = c.namespace({
@@ -146,7 +168,6 @@ export function createNamespace<
   })
 
   for (const [name, procedureContract] of Object.entries(contract.procedures)) {
-    // @ts-expect-error
     procedures[name] = {
       ...procedures[name],
       contract: procedureContract,
@@ -154,7 +175,7 @@ export function createNamespace<
   }
 
   const namespace = createContractNamespace(contract, {
-    procedures,
+    procedures: procedures as any,
     guards,
     hooks,
     middlewares,

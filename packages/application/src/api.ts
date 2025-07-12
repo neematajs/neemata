@@ -1,7 +1,11 @@
 import assert from 'node:assert'
 import { inspect } from 'node:util'
 import { type Async, type ErrorClass, withTimeout } from '@nmtjs/common'
-import { IsProcedureContract, IsSubscriptionContract } from '@nmtjs/contract'
+import {
+  c,
+  IsStreamProcedureContract,
+  type TAPIContract,
+} from '@nmtjs/contract'
 import {
   type AnyInjectable,
   type Container,
@@ -128,10 +132,7 @@ export class Api implements ProtocolApi {
     container.provide(ProtocolInjectables.rpcClientAbortSignal, signal)
     container.provide(ProtocolInjectables.connection, connection)
 
-    const isSubscription = IsSubscriptionContract(procedure.contract)
-    const isIterableProcedure =
-      IsProcedureContract(procedure.contract) &&
-      procedure.contract.stream instanceof type.NeverType === false
+    const isIterableProcedure = IsStreamProcedureContract(procedure.contract)
 
     try {
       const handler = await this.createProcedureHandler(
@@ -140,10 +141,7 @@ export class Api implements ProtocolApi {
         timeoutController,
       )
       const result = await handler(payload)
-      if (isSubscription) {
-        // return this.handleSubscriptionOutput(callOptions, result)
-        throw new Error('Unimplemented')
-      } else if (isIterableProcedure) {
+      if (isIterableProcedure) {
         return this.handleIterableOutput(procedure, result)
       } else {
         return this.handleOutput(procedure, result)
@@ -306,13 +304,6 @@ export class Api implements ProtocolApi {
     }
     return { output: undefined }
   }
-
-  private handleSubscriptionOutput(
-    callOptions: ApplicationApiCallOptions,
-    response: any,
-  ) {
-    throw new Error('Not implemented')
-  }
 }
 
 export class ApiError extends ProtocolError {
@@ -343,3 +334,32 @@ export const createFilter = <
 >(
   ...args: Parameters<typeof createFactoryInjectable<FilterLike, D, S>>
 ) => createFactoryInjectable(...args)
+
+export function createAPIContract<
+  Namespaces extends readonly [...AnyNamespace[]],
+>(
+  namespaces: Namespaces,
+  options: {
+    timeout?: number
+  },
+): TAPIContract<
+  {
+    [K in keyof Namespaces]: Namespaces[K]['contract']['name'] extends string
+      ? {
+          [KK in Namespaces[K]['contract']['name']]: Namespaces[K]['contract']
+        }
+      : {}
+  }[keyof Namespaces]
+> {
+  const _namespaces = {} as any
+
+  for (const key in namespaces) {
+    const namespace = namespaces[key]
+    _namespaces[key] = namespace.contract
+  }
+
+  return c.api({
+    namespaces: _namespaces,
+    timeout: options.timeout,
+  })
+}

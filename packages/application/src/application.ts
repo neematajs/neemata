@@ -1,4 +1,5 @@
 import type { ErrorClass } from '@nmtjs/common'
+import type { TAnyAPIContract } from '@nmtjs/contract'
 import {
   type BasePlugin,
   Container,
@@ -22,13 +23,12 @@ import {
 import { type AnyFilter, Api, type ApiOptions } from './api.ts'
 import { WorkerType } from './enums.ts'
 import { AppInjectables } from './injectables.ts'
-import type { AnyNamespace } from './namespace.ts'
 import { PubSub, type PubSubOptions } from './pubsub.ts'
 import { APP_COMMAND, ApplicationRegistry, printRegistry } from './registry.ts'
 import { type AnyTask, Tasks, type TasksOptions } from './tasks.ts'
 import type { ApplicationPluginContext, ExecuteFn } from './types.ts'
 
-type UseFn<N extends readonly [...AnyNamespace[]]> = <
+type UseFn<N extends TAnyAPIContract> = <
   T extends BasePlugin<any, any, ApplicationPluginContext>,
 >(
   plugin: T,
@@ -39,7 +39,7 @@ type UseFn<N extends readonly [...AnyNamespace[]]> = <
     : never
 ) => Application<N>
 
-export type AnyApplication = Application<readonly [...AnyNamespace[]]>
+export type AnyApplication = Application
 
 export type ApplicationOptions = {
   type: WorkerType
@@ -49,8 +49,8 @@ export type ApplicationOptions = {
   logging?: LoggingOptions
 }
 
-export class Application<T extends readonly [...AnyNamespace[]] = readonly []> {
-  readonly _!: { namespaces: T }
+export class Application<T extends TAnyAPIContract = TAnyAPIContract> {
+  readonly _!: { api: T }
   protected readonly _container: Container
   readonly api: Api
   readonly tasks: Tasks
@@ -173,14 +173,14 @@ export class Application<T extends readonly [...AnyNamespace[]] = readonly []> {
     return this
   }
 
-  withNamespaces<N extends readonly [...AnyNamespace[]]>(
-    ...namespaces: N
-  ): Application<[...T, ...N]> {
-    for (const namespace of namespaces) {
-      this.registry.registerNamespace(namespace)
-    }
-    return this as any
-  }
+  // withApi<T extends TAnyAPIContract>(
+  //   contract: T
+  // ): Application {
+  //   for (const namespace of namespaces) {
+  //     this.registry.registerNamespace(namespace)
+  //   }
+  //   return this as any
+  // }
 
   withTasks(...tasks: AnyTask[]) {
     for (const task of tasks) {
