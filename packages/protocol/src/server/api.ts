@@ -43,13 +43,8 @@ export function isIterableResult(
 
 export function createStreamResponse<Y, O>(
   iterable: ProtocolAnyIterable<Y>,
-  {
-    onFinish,
-    output = undefined as O,
-  }: {
-    output?: O
-    onFinish?: () => void
-  },
+  output = undefined as O,
+  onFinish?: () => void,
 ): ProtocolApiCallIterableResult<Y, O> {
   return {
     [kIterableResponse]: true as const,

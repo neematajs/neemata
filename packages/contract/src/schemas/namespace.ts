@@ -3,90 +3,110 @@ import { type ContractSchemaOptions, createSchema } from '../utils.ts'
 import type { TAnyEventContract, TEventContract } from './event.ts'
 import type { TAnyProcedureContract, TProcedureContract } from './procedure.ts'
 
-export const NamespaceKind = 'NeemataNamespace'
+export const NamespaceKind = Symbol('NeemataNamespace')
 
-export type TAnyNamespaceContract = TNamespaceContract<
-  Record<string, any>,
-  Record<string, any>,
+export type TAnyNamespaceContract<
+  Procedures extends Record<string, TAnyProcedureContract> = Record<
+    string,
+    TAnyProcedureContract
+  >,
+> = TNamespaceContract<
+  Procedures,
+  Record<string, TAnyEventContract>,
   string | undefined
 >
 
 export interface TNamespaceContract<
-  Procedures extends Record<string, unknown> = {},
-  Events extends Record<string, unknown> = {},
+  Procedures extends Record<string, TAnyProcedureContract> = {},
+  Events extends Record<string, TAnyEventContract> = {},
   Name extends string | undefined = undefined,
 > {
-  [Kind]: typeof NamespaceKind
-  type: 'neemata:namespace'
-  name: Name
-  procedures: {
-    [K in keyof Procedures]: Procedures[K] extends TAnyProcedureContract
-      ? TProcedureContract<
-          Procedures[K]['input'],
-          Procedures[K]['output'],
-          Procedures[K]['stream'],
-          Extract<K, string>,
-          Name
-        >
-      : never
+  readonly [Kind]: typeof NamespaceKind
+  readonly type: 'neemata:namespace'
+  readonly name: Name
+  readonly procedures: {
+    [K in keyof Procedures]: TProcedureContract<
+      Procedures[K]['input'],
+      Procedures[K]['output'],
+      Procedures[K]['stream'],
+      Extract<K, string>,
+      Name
+    >
   }
-  events: {
-    [K in keyof Events]: Events[K] extends TAnyEventContract
-      ? TEventContract<
-          Events[K]['payload'],
-          Extract<K, string>,
-          undefined,
-          Name
-        >
-      : never
+  readonly events: {
+    [K in keyof Events]: TEventContract<
+      Events[K]['payload'],
+      Extract<K, string>,
+      undefined,
+      Name
+    >
   }
-  timeout?: number
+  readonly timeout?: number
 }
 
 export const NamespaceContract = <
-  Procedures extends Record<string, unknown> = {},
-  Events extends Record<string, unknown> = {},
-  Name extends string | undefined = undefined,
->(options?: {
-  procedures?: Procedures
-  events?: Events
-  name?: Name
-  timeout?: number
-  schemaOptions?: ContractSchemaOptions
-}) => {
-  const {
-    procedures = {} as Procedures,
-    events = {} as Events,
-    name,
-    timeout,
-    schemaOptions = {} as ContractSchemaOptions,
-  } = options ?? {}
-  const _events = {} as any
+  const Options extends {
+    procedures: Record<string, TAnyProcedureContract>
+    events: Record<string, TAnyEventContract>
+    name?: string
+    timeout?: number
+    schemaOptions?: ContractSchemaOptions
+  },
+>(
+  options: Options,
+) => {
+  const { name, timeout, schemaOptions = {} as ContractSchemaOptions } = options
+  const events: Record<string, any> = {}
 
-  for (const eventKey in events) {
-    const event = events[eventKey]
-    _events[eventKey] = Object.assign({}, event, {
-      name: eventKey,
-      namespace: options?.name,
+  for (const name in options.events) {
+    const event = options.events[name]
+    events[name] = createSchema<
+      TEventContract<
+        (typeof event)['payload'],
+        Extract<typeof name, string>,
+        undefined,
+        Options['name'] extends string ? Options['name'] : undefined
+      >
+    >({
+      ...event,
+      subscription: undefined,
+      name: name as any,
+      namespace: options?.name as any,
     })
   }
 
-  const _procedures = {} as any
-  for (const procedureKey in procedures) {
-    const procedure: any = procedures[procedureKey]
-    _procedures[procedureKey] = Object.assign({}, procedure, {
-      name: procedureKey,
-      namespace: options?.name,
+  const procedures: Record<string, any> = {}
+
+  for (const name in options.procedures) {
+    const procedure: any = options.procedures[name]
+    procedures[name] = createSchema<
+      TProcedureContract<
+        (typeof procedure)['input'],
+        (typeof procedure)['output'],
+        (typeof procedure)['stream'],
+        Extract<typeof name, string>,
+        Options['name'] extends string ? Options['name'] : undefined
+      >
+    >({
+      ...procedure,
+      name: name as any,
+      namespace: options?.name as any,
     })
   }
 
-  return createSchema<TNamespaceContract<Procedures, Events, Name>>({
+  return createSchema<
+    TNamespaceContract<
+      Options['procedures'],
+      Options['events'],
+      Options['name'] extends string ? Options['name'] : undefined
+    >
+  >({
     ...schemaOptions,
     [Kind]: NamespaceKind,
     type: 'neemata:namespace',
-    name: name as Name,
-    procedures: _procedures,
-    events: _events,
+    name: name as any,
+    procedures: procedures as any,
+    events: events as any,
     timeout,
   })
 }

@@ -122,7 +122,7 @@ export class PubSub {
     return mergeEventStreams(streams, signal)
   }
 
-  publish<
+  async publish<
     S extends TAnySubscriptionContract,
     E extends S['events'][keyof S['events']],
   >(
@@ -134,15 +134,10 @@ export class PubSub {
     assert(this.adapter, 'PubSub adapter is not configured')
 
     const channel = getChannelName(subscription, event.name, options)
-    const subscriptionChannel = this.subscriptions.get(channel)
-
-    if (!subscriptionChannel) {
-      return Promise.resolve(false)
-    }
 
     try {
-      const payload = subscriptionChannel.event.payload.encode(data)
-      return this.adapter.publish(channel, payload)
+      const payload = event.payload.encode(data)
+      return await this.adapter.publish(channel, payload)
     } catch (error: any) {
       this.application.logger.error(
         `Failed to publish event "${event.name}" on channel "${channel}": ${error.message}`,
@@ -205,13 +200,13 @@ function getChannelName<
   E extends keyof T['events'],
 >(contract: T, eventKey: E, options: T['options']) {
   const event = (contract.events as any)[eventKey] as TAnyEventContract
-  const key = serializerOptions(options)
+  const key = options ? serializerOptions(options) : ''
   assert(contract.name, 'Subscription contract must have a name')
   assert(event.name, 'Event contract must have a name')
   return concat(contract.name, event.name, key)
 }
 
-function serializerOptions(options: SubcriptionOptions): string {
+function serializerOptions(options: Exclude<SubcriptionOptions, null>): string {
   const hash = createHash('sha1')
   const serialized = Object.entries(options)
     .sort((a, b) => a[0].localeCompare(b[0]))

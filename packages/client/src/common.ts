@@ -27,26 +27,23 @@ export class ClientError extends ProtocolError {}
 export abstract class BaseClient<
   APIContract extends TAnyAPIContract = TAnyAPIContract,
   SafeCall extends boolean = false,
-> extends EventEmitter<
-  ResolveClientEvents<
-    ResolveAPIContract<
-      APIContract,
-      RuntimeInputContractTypeProvider,
-      RuntimeOutputContractTypeProvider
-    >
-  >
-> {
+  API extends ResolveAPIContract<
+    APIContract,
+    RuntimeInputContractTypeProvider,
+    RuntimeOutputContractTypeProvider
+  > = ResolveAPIContract<
+    APIContract,
+    RuntimeInputContractTypeProvider,
+    RuntimeOutputContractTypeProvider
+  >,
+> extends EventEmitter<ResolveClientEvents<API>> {
   _!: {
-    api: ResolveAPIContract<
-      APIContract,
-      RuntimeInputContractTypeProvider,
-      RuntimeOutputContractTypeProvider
-    >
+    api: API
     safe: SafeCall
   }
 
   protected abstract transformer: ProtocolBaseTransformer
-  protected callers!: ClientCallers<this['_']['api'], this['_']['safe']>
+  protected callers!: ClientCallers<API, SafeCall>
   protected auth: any
 
   constructor(

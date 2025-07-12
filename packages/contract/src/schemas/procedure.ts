@@ -5,60 +5,66 @@ import { type ContractSchemaOptions, createSchema } from '../utils.ts'
 export type TAnyProcedureContract = TProcedureContract<
   BaseType,
   BaseType,
-  BaseType,
+  BaseType | undefined,
   string | undefined,
   string | undefined
 >
 
-export const ProcedureKind = 'NeemataProcedure'
+export const ProcedureKind = Symbol('NeemataProcedure')
 
 export interface TProcedureContract<
-  Input extends BaseType = t.NeverType,
-  Output extends BaseType = t.NeverType,
-  Stream extends BaseType = t.NeverType,
+  Input extends BaseType,
+  Output extends BaseType,
+  Stream extends BaseType | undefined,
   Name extends string | undefined = undefined,
   Namespace extends string | undefined = undefined,
 > {
-  [Kind]: typeof ProcedureKind
-  type: 'neemata:procedure'
-  name: Name
-  namespace: Namespace
-  input: Input
-  output: Output
-  timeout?: number
-  stream: Stream
+  readonly [Kind]: typeof ProcedureKind
+  readonly type: 'neemata:procedure'
+  readonly name: Name
+  readonly namespace: Namespace
+  readonly input: Input
+  readonly output: Output
+  readonly stream: Stream
+  readonly timeout?: number
 }
 
 export const ProcedureContract = <
-  Input extends BaseType = t.NeverType,
-  Output extends BaseType = t.NeverType,
-  Stream extends BaseType = t.NeverType,
-  Name extends string | undefined = undefined,
->(options: {
-  input?: Input
-  output?: Output
-  stream?: Stream
-  timeout?: number
-  schemaOptions?: ContractSchemaOptions
-  name?: Name
-}) => {
+  const Options extends {
+    input?: BaseType
+    output?: BaseType
+    stream?: BaseType | undefined
+    timeout?: number
+    schemaOptions?: ContractSchemaOptions
+    name?: string
+  },
+>(
+  options: Options,
+) => {
   const {
-    input = t.never() as unknown as Input,
-    output = t.never() as unknown as Output,
-    stream = t.never() as unknown as Stream,
+    input = t.never() as any,
+    output = t.never() as any,
+    stream = undefined as any,
+    name = undefined as any,
     timeout,
     schemaOptions = {},
-    name,
   } = options
-  return createSchema<TProcedureContract<Input, Output, Stream, Name>>({
+  return createSchema<
+    TProcedureContract<
+      Options['input'] extends BaseType ? Options['input'] : t.NeverType,
+      Options['output'] extends BaseType ? Options['output'] : t.NeverType,
+      Options['stream'] extends BaseType ? Options['stream'] : undefined,
+      Options['name'] extends string ? Options['name'] : undefined
+    >
+  >({
     ...schemaOptions,
     [Kind]: ProcedureKind,
     type: 'neemata:procedure',
     input,
     output,
     stream,
+    name,
     timeout,
-    name: name as Name,
     namespace: undefined,
   })
 }
@@ -67,4 +73,10 @@ export function IsProcedureContract(
   contract: any,
 ): contract is TAnyProcedureContract {
   return Kind in contract && contract[Kind] === ProcedureKind
+}
+
+export function IsStreamProcedureContract(
+  contract: any,
+): contract is TAnyProcedureContract {
+  return IsProcedureContract(contract) && typeof contract.stream !== 'undefined'
 }

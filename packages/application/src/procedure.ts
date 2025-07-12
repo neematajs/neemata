@@ -34,6 +34,7 @@ export interface BaseProcedure<
   dependencies: ProcedureDeps
   guards: Set<AnyGuard>
   middlewares: Set<AnyMiddleware>
+  [kProcedure]: any
 }
 
 export type ProcedureHandlerType<Input, Output, Deps extends Dependencies> = (
@@ -57,12 +58,11 @@ export interface Procedure<
         >,
     ProcedureDeps
   >
-  [kProcedure]: any
 }
 
 export type AnyProcedure<
   Contract extends TAnyProcedureContract = TAnyProcedureContract,
-> = Procedure<Contract, Dependencies>
+> = BaseProcedure<Contract, Dependencies>
 
 export const getProcedureMetadata = <
   K extends MetadataKey,
@@ -87,7 +87,7 @@ export type CreateProcedureParams<
       metadata?: Metadata[]
       handler: ProcedureHandlerType<
         InputType<t.infer.decoded.output<ProcedureContract['input']>>,
-        ProcedureContract['stream'] extends t.NeverType
+        ProcedureContract['stream'] extends undefined
           ? OutputType<t.infer.decoded.input<ProcedureContract['output']>>
           : ProtocolApiCallIterableResult<
               t.infer.decoded.input<
@@ -100,7 +100,7 @@ export type CreateProcedureParams<
     }
   | ProcedureHandlerType<
       InputType<t.infer.decoded.output<ProcedureContract['input']>>,
-      ProcedureContract['stream'] extends t.NeverType
+      ProcedureContract['stream'] extends undefined
         ? OutputType<t.infer.decoded.input<ProcedureContract['output']>>
         : ProtocolApiCallIterableResult<
             t.infer.decoded.input<
@@ -147,7 +147,7 @@ export function createContractProcedure<
 >(
   contract: ProcedureContract,
   paramsOrHandler: CreateProcedureParams<ProcedureContract, ProcedureDeps>,
-) {
+): Procedure<ProcedureContract, ProcedureDeps> {
   const { handler, ...params } =
     typeof paramsOrHandler === 'function'
       ? { handler: paramsOrHandler }
@@ -156,7 +156,7 @@ export function createContractProcedure<
   return Object.assign(_createBaseProcedure(contract, params), {
     handler,
     [kProcedure]: true,
-  })
+  }) as any
 }
 
 export function createProcedure<
@@ -180,27 +180,18 @@ export function createProcedure<
           TInput extends BaseType
             ? InputType<t.infer.decoded.output<TInput>>
             : never,
-          TStream extends undefined
-            ? TOutput extends BaseType
-              ? t.infer.decoded.input<TOutput>
-              : Return
+          TStream extends BaseType | true
+            ? ProtocolApiCallIterableResult<
+                TStream extends BaseType
+                  ? t.infer.decoded.input<TStream>
+                  : Stream,
+                TOutput extends BaseType
+                  ? t.infer.decoded.input<TOutput>
+                  : Return
+              >
             : TOutput extends BaseType
-              ? ProtocolApiCallIterableResult<
-                  TStream extends true
-                    ? Stream
-                    : t.infer.decoded.input<
-                        Exclude<TStream, undefined | boolean>
-                      >,
-                  t.infer.decoded.input<TOutput>
-                >
-              : ProtocolApiCallIterableResult<
-                  TStream extends true
-                    ? Stream
-                    : t.infer.decoded.input<
-                        Exclude<TStream, undefined | boolean>
-                      >,
-                  Return
-                >,
+              ? t.infer.decoded.input<TOutput>
+              : Return,
           Deps
         >
       }
@@ -208,51 +199,51 @@ export function createProcedure<
         TInput extends BaseType
           ? InputType<t.infer.decoded.output<TInput>>
           : never,
-        TStream extends undefined
-          ? TOutput extends BaseType
-            ? never
-            : Return
-          : never,
+        Return,
         Deps
       >,
 ): Procedure<
   TProcedureContract<
-    TInput extends BaseType ? TInput : t.NeverType,
-    TOutput extends BaseType
-      ? TOutput
-      : t.CustomType<
+    TInput extends undefined ? t.NeverType : TInput,
+    TOutput extends undefined
+      ? t.CustomType<
           JsonPrimitive<Return>,
           zod.ZodMiniCustom<JsonPrimitive<Return>, JsonPrimitive<Return>>
-        >,
-    TStream extends BaseType
-      ? TStream
-      : TStream extends true
-        ? t.CustomType<JsonPrimitive<Stream>>
-        : t.NeverType
+        >
+      : TOutput,
+    TStream extends undefined
+      ? undefined
+      : TStream extends BaseType
+        ? TStream
+        : t.CustomType<JsonPrimitive<Stream>>
   >,
   Deps
 > {
-  const params =
-    typeof paramsOrHandler === 'function'
-      ? { handler: paramsOrHandler }
-      : paramsOrHandler
+  const {
+    input = t.never() as any,
+    output = t.any() as any,
+    stream = undefined as any,
+    dependencies = {} as Deps,
+    guards = [],
+    middlewares = [],
+    metadata = [],
+    handler,
+  } = typeof paramsOrHandler === 'function'
+    ? { handler: paramsOrHandler }
+    : paramsOrHandler
 
   return createContractProcedure(
     c.procedure({
-      input: (params.input ?? t.never()) as any,
-      output: (params.output ?? t.any()) as any,
-      stream: (typeof params.stream === 'undefined'
-        ? t.never()
-        : params.stream === true
-          ? t.any()
-          : params.stream) as any,
+      input,
+      output,
+      stream: stream === true ? t.any() : stream,
     }),
     {
-      dependencies: params.dependencies,
-      handler: params.handler,
-      guards: params.guards,
-      middlewares: params.middlewares,
-      metadata: params.metadata,
+      dependencies,
+      handler,
+      guards,
+      middlewares,
+      metadata,
     },
   )
 }

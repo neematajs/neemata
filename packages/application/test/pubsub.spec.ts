@@ -2,7 +2,7 @@ import { defer } from '@nmtjs/common'
 import { c } from '@nmtjs/contract'
 import { Container, Hook } from '@nmtjs/core'
 import { t } from '@nmtjs/type'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { AppInjectables } from '../src/injectables.ts'
 import {
   PubSub,
@@ -13,39 +13,39 @@ import { ApplicationRegistry } from '../src/registry.ts'
 import { testLogger } from './_utils.ts'
 
 // Test contracts
-const TestSubscriptionContract1 = c
-  .subscription({
-    name: 'TestSubscription1',
-    events: {
-      testEvent: c.event({
-        payload: t.object({
-          message: t.string(),
-          timestamp: t.number(),
-        }),
+const TestSubscriptionContract1 = c.subscription.withOptions<{
+  userId: string
+}>()({
+  name: 'TestSubscription1',
+  events: {
+    testEvent: c.event({
+      payload: t.object({
+        message: t.string(),
+        timestamp: t.number(),
       }),
-      anotherEvent: c.event({
-        payload: t.string(),
-      }),
-    },
-  })
-  .$withOptions<{ userId: string }>()
+    }),
+    anotherEvent: c.event({
+      payload: t.string(),
+    }),
+  },
+})
 
-const TestSubscriptionContract2 = c
-  .subscription({
-    name: 'TestSubscription2',
-    events: {
-      testEvent: c.event({
-        payload: t.object({
-          message: t.string(),
-          timestamp: t.number(),
-        }),
+const TestSubscriptionContract2 = c.subscription.withOptions<{
+  userId: string
+}>()({
+  name: 'TestSubscription2',
+  events: {
+    testEvent: c.event({
+      payload: t.object({
+        message: t.string(),
+        timestamp: t.number(),
       }),
-      transformEvent: c.event({
-        payload: t.date(),
-      }),
-    },
-  })
-  .$withOptions<{ userId: string }>()
+    }),
+    transformEvent: c.event({
+      payload: t.date(),
+    }),
+  },
+})
 
 // Mock adapter for testing
 class MockPubSubAdapter implements PubSubAdapter {

@@ -1,86 +1,96 @@
 import { Kind } from '../constants.ts'
 import { type ContractSchemaOptions, createSchema } from '../utils.ts'
+import type { TEventContract } from './event.ts'
 import type { TAnyNamespaceContract, TNamespaceContract } from './namespace.ts'
+import type { TProcedureContract } from './procedure.ts'
 
-export const APIKind = 'NeemataAPI'
+export const APIKind = Symbol('NeemataAPI')
 
-export type TAnyAPIContract = TAPIContract<Record<string, any>>
+export type TAnyAPIContract = TAPIContract<
+  Record<string, TAnyNamespaceContract>
+>
 
-export interface TAPIContract<Namespaces extends Record<string, unknown> = {}> {
-  [Kind]: typeof APIKind
-  type: 'neemata:api'
-  namespaces: {
-    [K in keyof Namespaces]: Namespaces[K] extends TAnyNamespaceContract
-      ? TNamespaceContract<
-          Namespaces[K]['procedures'],
-          // Namespaces[K]['subscriptions'],
-          Namespaces[K]['events'],
-          Extract<K, string>
-        >
-      : never
+export interface TAPIContract<
+  Namespaces extends Record<string, TAnyNamespaceContract> = {},
+> {
+  readonly [Kind]: typeof APIKind
+  readonly type: 'neemata:api'
+  readonly namespaces: {
+    [K in keyof Namespaces]: TNamespaceContract<
+      Namespaces[K]['procedures'],
+      Namespaces[K]['events'],
+      Extract<K, string>
+    >
   }
-  timeout?: number
+  readonly timeout?: number
 }
 
 export const APIContract = <
-  Namespaces extends Record<string, unknown> = {},
->(options?: {
-  namespaces?: Namespaces
-  timeout?: number
-  schemaOptions?: ContractSchemaOptions
-}) => {
-  const { namespaces = {}, timeout = 1000, schemaOptions = {} } = options || {}
+  const Options extends {
+    namespaces: Record<string, TAnyNamespaceContract>
+    timeout?: number
+    schemaOptions?: ContractSchemaOptions
+  },
+>(
+  options: Options,
+) => {
+  const { timeout, schemaOptions } = options
 
   const _namespaces = {} as any
 
-  for (const namespaceKey in namespaces) {
-    const namespace = namespaces[namespaceKey]
+  for (const namespaceKey in options.namespaces) {
+    const namespace = options.namespaces[namespaceKey]
     const _procedures = {} as any
     for (const procedureKey in namespace.procedures) {
       const procedure = namespace.procedures[procedureKey]
-      _procedures[procedureKey] = Object.assign({}, procedure, {
+      _procedures[procedureKey] = createSchema<
+        TProcedureContract<
+          (typeof procedure)['input'],
+          (typeof procedure)['output'],
+          (typeof procedure)['stream'],
+          Extract<typeof procedureKey, string>,
+          Extract<typeof namespaceKey, string>
+        >
+      >({
+        ...procedure,
         name: procedureKey,
         namespace: namespaceKey,
-      })
-    }
-
-    const _subscriptions = {} as any
-    for (const subscriptionKey in namespace.subscriptions) {
-      const subscription = namespace.subscriptions[subscriptionKey]
-      const _events = {} as any
-      for (const eventKey in subscription.events) {
-        const event = subscription.events[eventKey]
-        _events[eventKey] = Object.assign({}, event, {
-          name: eventKey,
-          namespace: namespaceKey,
-          subscription: subscriptionKey,
-        })
-      }
-      _subscriptions[subscriptionKey] = Object.assign({}, subscription, {
-        name: subscriptionKey,
-        namespace: namespaceKey,
-        events: _events,
       })
     }
 
     const _events = {} as any
     for (const eventKey in namespace.events) {
       const event = namespace.events[eventKey]
-      _events[eventKey] = Object.assign({}, event, {
+      _events[eventKey] = createSchema<
+        TEventContract<
+          (typeof event)['payload'],
+          Extract<typeof eventKey, string>,
+          undefined,
+          Extract<typeof namespaceKey, string>
+        >
+      >({
+        ...event,
+        subscription: undefined,
         name: eventKey,
         namespace: namespaceKey,
       })
     }
 
-    _namespaces[namespaceKey] = Object.assign({}, namespace, {
-      name: namespaceKey,
+    _namespaces[namespaceKey] = createSchema<
+      TNamespaceContract<
+        typeof _procedures,
+        typeof _events,
+        Extract<typeof namespaceKey, string>
+      >
+    >({
+      ...namespace,
       procedures: _procedures,
-      subscriptions: _subscriptions,
       events: _events,
+      name: namespaceKey,
     })
   }
 
-  return createSchema<TAPIContract<Namespaces>>({
+  return createSchema<TAPIContract<Options['namespaces']>>({
     ...schemaOptions,
     [Kind]: APIKind,
     type: 'neemata:api',

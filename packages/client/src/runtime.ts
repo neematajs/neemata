@@ -21,14 +21,14 @@ export class RuntimeContractTransformer extends ProtocolBaseTransformer {
   decodeRPC(namespace: string, procedure: string, payload: any) {
     const type =
       this.contract.namespaces[namespace].procedures[procedure].output
-    if (type instanceof type.NeverType) return undefined
+    if (type instanceof t.NeverType) return undefined
     return type.decode(payload)
   }
 
   decodeRPCChunk(namespace: string, procedure: string, payload: any) {
     const type =
       this.contract.namespaces[namespace].procedures[procedure].stream
-    if (type instanceof t.NeverType) return undefined
+    if (!type || type instanceof t.NeverType) return undefined
     return type.decode(payload)
   }
 
@@ -63,20 +63,21 @@ export class RuntimeClient<
     super(...args)
 
     this.transformer = new RuntimeContractTransformer(this.contract)
-
+    const callers: any = {}
     const namespaces = Object.entries(this.contract.namespaces)
     for (const [namespaceKey, namespace] of namespaces) {
-      this.callers[namespaceKey] = {} as any
+      callers[namespaceKey] = {} as any
 
       const procedures = Object.entries(namespace.procedures)
 
       for (const [procedureKey, procedure] of procedures) {
-        this.callers[namespaceKey][procedureKey] = (payload, options) =>
+        callers[namespaceKey][procedureKey] = (payload, options) =>
           this._call(namespace.name, procedure.name, payload, {
             timeout: procedure.timeout || namespace.timeout || options.timeout,
             ...options,
           })
       }
     }
+    this.callers = callers
   }
 }
