@@ -7,11 +7,15 @@ import {
 import { ErrorCode } from '@nmtjs/protocol'
 import { type Connection, ProtocolInjectables } from '@nmtjs/protocol/server'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { Api, ApiError, type ApplicationApiCallOptions } from '../src/api.ts'
+import {
+  ApiError,
+  ApplicationApi,
+  type ApplicationApiCallOptions,
+} from '../src/api.ts'
 import type { Application } from '../src/application.ts'
 import type { Namespace } from '../src/namespace.ts'
 import type { ApplicationRegistry } from '../src/registry.ts'
-
+import { createRouter } from '../src/router.ts'
 import {
   type TestNamespaceContract,
   testApp,
@@ -29,7 +33,7 @@ describe.sequential('Api', () => {
   let registry: ApplicationRegistry
   let container: Container
   let connection: Connection
-  let api: Api
+  let api: ApplicationApi
 
   const payload = { test: 'test' }
   const call = (
@@ -63,7 +67,7 @@ describe.sequential('Api', () => {
 
   it('should be an api', () => {
     expect(api).toBeDefined()
-    expect(api).toBeInstanceOf(Api)
+    expect(api).toBeInstanceOf(ApplicationApi)
   })
 
   it('should inject context', async () => {
@@ -73,7 +77,7 @@ describe.sequential('Api', () => {
       handler: spy,
     })
     namespace = testNamepsace({ procedure })
-    registry.registerNamespace(namespace)
+    registry.registerRouter(createRouter({ namespace }))
     await app.initialize()
 
     const connection = testConnection()
@@ -84,7 +88,7 @@ describe.sequential('Api', () => {
   it('should handle procedure call', async () => {
     const procedure = testProcedure(() => 'result')
     namespace = testNamepsace({ procedure })
-    registry.registerNamespace(namespace)
+    registry.registerRouter(createRouter({ namespace }))
     await app.initialize()
     await expect(call({ procedure })).resolves.toMatchObject({
       output: 'result',
@@ -98,7 +102,7 @@ describe.sequential('Api', () => {
       handler: ({ injectable }) => injectable,
     })
     namespace = testNamepsace({ procedure })
-    registry.registerNamespace(namespace)
+    registry.registerRouter(createRouter({ namespace }))
     await app.initialize()
     await expect(call({ procedure })).resolves.toMatchObject({
       output: 'value',
@@ -115,7 +119,7 @@ describe.sequential('Api', () => {
       handler: ({ injectable }) => injectable,
     })
     namespace = testNamepsace({ procedure })
-    registry.registerNamespace(namespace)
+    registry.registerRouter(createRouter({ namespace }))
     await app.initialize()
     const connection = testConnection()
     const spy = vi.spyOn(procedure, 'handler')
@@ -130,7 +134,7 @@ describe.sequential('Api', () => {
       handler: ({ injectable }) => injectable,
     })
     namespace = testNamepsace({ procedure })
-    registry.registerNamespace(namespace)
+    registry.registerRouter(createRouter({ namespace }))
     await app.initialize()
     const connection = testConnection()
     const spy = vi.spyOn(procedure, 'handler')
@@ -142,7 +146,7 @@ describe.sequential('Api', () => {
     const spy = vi.fn()
     const procedure = testProcedure(spy)
     namespace = testNamepsace({ procedure })
-    registry.registerNamespace(namespace)
+    registry.registerRouter(createRouter({ namespace }))
     await app.initialize()
     await call({ procedure, payload })
     expect(spy).toBeCalledWith(expect.anything(), payload)
@@ -153,7 +157,7 @@ describe.sequential('Api', () => {
       throw new Error()
     })
     namespace = testNamepsace({ procedure })
-    registry.registerNamespace(namespace)
+    registry.registerRouter(createRouter({ namespace }))
     await app.initialize()
     const result = await call({ procedure }).catch((v) => v)
     expect(result).toBeInstanceOf(Error)
@@ -171,7 +175,7 @@ describe.sequential('Api', () => {
       throw error
     })
     namespace = testNamepsace({ procedure })
-    registry.registerNamespace(namespace)
+    registry.registerRouter(createRouter({ namespace }))
     await app.initialize()
     await expect(call({ procedure })).rejects.toBeInstanceOf(ApiError)
     expect(filterInjectable.catch).toHaveBeenCalledOnce()
@@ -188,7 +192,7 @@ describe.sequential('Api', () => {
       handler: () => 'result',
     })
     namespace = testNamepsace({ procedure })
-    registry.registerNamespace(namespace)
+    registry.registerRouter(createRouter({ namespace }))
     await app.initialize()
     const result = await call({ procedure }).catch((v) => v)
     expect(result).toBeInstanceOf(ApiError)
@@ -219,7 +223,7 @@ describe.sequential('Api', () => {
     })
 
     namespace = testNamepsace({ procedure })
-    registry.registerNamespace(namespace)
+    registry.registerRouter(createRouter({ namespace }))
     await app.initialize()
 
     const response = await call({ procedure, payload: { test: '1' } })
@@ -255,7 +259,7 @@ describe.sequential('Api', () => {
   it('should find procedure', async () => {
     const procedure = testProcedure(() => 'result')
     namespace = testNamepsace({ procedure })
-    registry.registerNamespace(namespace)
+    registry.registerRouter(createRouter({ namespace }))
     await app.initialize()
     const found = api.find(namespace.contract.name, 'testProcedure')
     expect(found).toHaveProperty('namespace', namespace)

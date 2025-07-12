@@ -6,5 +6,6 @@ export default defineConfig({
     env: {
       NODE_OPTIONS: '--expose-gc',
     },
+    open: false,
   },
 })

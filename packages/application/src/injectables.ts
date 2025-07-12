@@ -11,13 +11,10 @@ const taskAbortSignal = createLazyInjectable<AbortSignal>(
   Scope.Global,
   'Task abort signal',
 )
-const pubsub = createLazyInjectable<PubSub>(
-  Scope.Global,
-  'Subscription manager',
-)
+const pubsub = createLazyInjectable<PubSub>(Scope.Global, 'Pubsub')
 const pubsubAdapter = createLazyInjectable<PubSubAdapter>(
   Scope.Global,
-  'Subscription manager adapter',
+  'Pubsub adapter',
 )
 const execute = createLazyInjectable<ExecuteFn>(Scope.Global, 'Task executor')
 const workerType = createLazyInjectable<WorkerType>(

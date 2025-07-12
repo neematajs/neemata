@@ -1,11 +1,7 @@
 import assert from 'node:assert'
 import { inspect } from 'node:util'
 import { type Async, type ErrorClass, withTimeout } from '@nmtjs/common'
-import {
-  c,
-  IsStreamProcedureContract,
-  type TAPIContract,
-} from '@nmtjs/contract'
+import { IsStreamProcedureContract } from '@nmtjs/contract'
 import {
   type AnyInjectable,
   type Container,
@@ -68,7 +64,36 @@ export type ApiOptions = {
   formats: BaseServerFormat[]
 }
 
-export class Api implements ProtocolApi {
+export class ApiError extends ProtocolError {
+  toString() {
+    return `${this.code} ${this.message}: \n${inspect(this.data, true, 10, false)}`
+  }
+}
+
+const NotFound = () => new ApiError(ErrorCode.NotFound, 'Procedure not found')
+
+export const createMiddleware = <
+  D extends Dependencies = {},
+  S extends Scope = Scope.Global,
+>(
+  ...args: Parameters<typeof createFactoryInjectable<MiddlewareLike, D, S>>
+) => createFactoryInjectable(...args)
+
+export const createGuard = <
+  D extends Dependencies = {},
+  S extends Scope = Scope.Global,
+>(
+  ...args: Parameters<typeof createFactoryInjectable<GuardLike, D, S>>
+) => createFactoryInjectable(...args)
+
+export const createFilter = <
+  D extends Dependencies = {},
+  S extends Scope = Scope.Global,
+>(
+  ...args: Parameters<typeof createFactoryInjectable<FilterLike, D, S>>
+) => createFactoryInjectable(...args)
+
+export class ApplicationApi implements ProtocolApi {
   constructor(
     private readonly application: {
       container: Container
@@ -304,62 +329,4 @@ export class Api implements ProtocolApi {
     }
     return { output: undefined }
   }
-}
-
-export class ApiError extends ProtocolError {
-  toString() {
-    return `${this.code} ${this.message}: \n${inspect(this.data, true, 10, false)}`
-  }
-}
-
-const NotFound = () => new ApiError(ErrorCode.NotFound, 'Procedure not found')
-
-export const createMiddleware = <
-  D extends Dependencies = {},
-  S extends Scope = Scope.Global,
->(
-  ...args: Parameters<typeof createFactoryInjectable<MiddlewareLike, D, S>>
-) => createFactoryInjectable(...args)
-
-export const createGuard = <
-  D extends Dependencies = {},
-  S extends Scope = Scope.Global,
->(
-  ...args: Parameters<typeof createFactoryInjectable<GuardLike, D, S>>
-) => createFactoryInjectable(...args)
-
-export const createFilter = <
-  D extends Dependencies = {},
-  S extends Scope = Scope.Global,
->(
-  ...args: Parameters<typeof createFactoryInjectable<FilterLike, D, S>>
-) => createFactoryInjectable(...args)
-
-export function createAPIContract<
-  Namespaces extends readonly [...AnyNamespace[]],
->(
-  namespaces: Namespaces,
-  options: {
-    timeout?: number
-  },
-): TAPIContract<
-  {
-    [K in keyof Namespaces]: Namespaces[K]['contract']['name'] extends string
-      ? {
-          [KK in Namespaces[K]['contract']['name']]: Namespaces[K]['contract']
-        }
-      : {}
-  }[keyof Namespaces]
-> {
-  const _namespaces = {} as any
-
-  for (const key in namespaces) {
-    const namespace = namespaces[key]
-    _namespaces[key] = namespace.contract
-  }
-
-  return c.api({
-    namespaces: _namespaces,
-    timeout: options.timeout,
-  })
 }

@@ -1,5 +1,4 @@
 import type { ErrorClass } from '@nmtjs/common'
-import type { TAnyAPIContract } from '@nmtjs/contract'
 import {
   type BasePlugin,
   Container,
@@ -20,15 +19,16 @@ import {
   type Transport,
   type TransportPlugin,
 } from '@nmtjs/protocol/server'
-import { type AnyFilter, Api, type ApiOptions } from './api.ts'
+import { type AnyFilter, type ApiOptions, ApplicationApi } from './api.ts'
 import { WorkerType } from './enums.ts'
 import { AppInjectables } from './injectables.ts'
 import { PubSub, type PubSubOptions } from './pubsub.ts'
 import { APP_COMMAND, ApplicationRegistry, printRegistry } from './registry.ts'
+import type { AnyRouter } from './router.ts'
 import { type AnyTask, Tasks, type TasksOptions } from './tasks.ts'
 import type { ApplicationPluginContext, ExecuteFn } from './types.ts'
 
-type UseFn<N extends TAnyAPIContract> = <
+type UseFn<R extends AnyRouter> = <
   T extends BasePlugin<any, any, ApplicationPluginContext>,
 >(
   plugin: T,
@@ -37,9 +37,7 @@ type UseFn<N extends TAnyAPIContract> = <
       ? []
       : [options: O]
     : never
-) => Application<N>
-
-export type AnyApplication = Application
+) => Application<R>
 
 export type ApplicationOptions = {
   type: WorkerType
@@ -49,10 +47,10 @@ export type ApplicationOptions = {
   logging?: LoggingOptions
 }
 
-export class Application<T extends TAnyAPIContract = TAnyAPIContract> {
-  readonly _!: { api: T }
+export class Application<T extends AnyRouter = AnyRouter> {
+  readonly _!: { router: T }
   protected readonly _container: Container
-  readonly api: Api
+  readonly api: ApplicationApi
   readonly tasks: Tasks
   readonly logger: Logger
   readonly registry: ApplicationRegistry
@@ -92,11 +90,13 @@ export class Application<T extends TAnyAPIContract = TAnyAPIContract> {
     // including transports and plugins
     this.container = this._container.fork(Scope.Global)
 
-    this.api = new Api(this, this.options.api)
+    this.api = new ApplicationApi(this, this.options.api)
     this.tasks = new Tasks(this, this.options.tasks)
     this.pubsub = new PubSub(this, this.options.pubsub)
 
     this.protocol = new Protocol(this)
+
+    this._container.provide(AppInjectables.pubsub, this.pubsub)
   }
 
   async initialize() {
@@ -173,14 +173,10 @@ export class Application<T extends TAnyAPIContract = TAnyAPIContract> {
     return this
   }
 
-  // withApi<T extends TAnyAPIContract>(
-  //   contract: T
-  // ): Application {
-  //   for (const namespace of namespaces) {
-  //     this.registry.registerNamespace(namespace)
-  //   }
-  //   return this as any
-  // }
+  withRouter<T extends AnyRouter>(router: T): Application<T> {
+    this.registry.registerRouter(router)
+    return this as any
+  }
 
   withTasks(...tasks: AnyTask[]) {
     for (const task of tasks) {
