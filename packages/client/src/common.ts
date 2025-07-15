@@ -47,8 +47,8 @@ export abstract class BaseClient<
   protected auth: any
 
   constructor(
-    protected transport: ProtocolTransport,
-    protected options: {
+    readonly transport: ProtocolTransport,
+    readonly options: {
       timeout: number
       autoreconnect?: boolean
       safe?: SafeCall

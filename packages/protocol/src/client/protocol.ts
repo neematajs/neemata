@@ -162,7 +162,15 @@ export interface ProtocolSendMetadata {
   streamId?: number
 }
 
+export enum ProtocolTransportStatus {
+  CONNECTED = 'CONNECTED',
+  DISCONNECTED = 'DISCONNECTED',
+  CONNECTING = 'CONNECTING',
+}
+
 export abstract class ProtocolTransport extends EventEmitter<ProtocolTransportEventMap> {
+  status: ProtocolTransportStatus = ProtocolTransportStatus.DISCONNECTED
+
   abstract connect(
     auth: any,
     transformer: ProtocolBaseTransformer,

@@ -14,6 +14,7 @@ import {
   ProtocolServerBlobStream,
   type ProtocolTransport,
   type ProtocolTransportEventMap,
+  ProtocolTransportStatus,
 } from '@nmtjs/protocol/client'
 
 export type HttpClientTransportOptions = {
@@ -30,6 +31,7 @@ export class HttpClientTransport
   implements ProtocolTransport
 {
   #auth: string | null = null
+  status: ProtocolTransportStatus = ProtocolTransportStatus.CONNECTED
 
   constructor(
     protected readonly protocol: BaseProtocol,
