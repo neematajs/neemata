@@ -119,10 +119,10 @@ export class ProtocolConnections {
 
     this.#collection.delete(connectionId)
 
-    const { calls, serverStreams, clientStreams, rpcStreams, container } =
+    const { rpcs, serverStreams, clientStreams, rpcStreams, container } =
       context
 
-    for (const call of calls.values()) {
+    for (const call of rpcs.values()) {
       call.abort(new Error('Connection closed'))
     }
 
@@ -300,14 +300,14 @@ export class Protocol {
   ) {
     const { connection, context, transport } =
       this.#connections.get(connectionId)
-    const { calls, format } = context
+    const { rpcs, format } = context
     const { callId, namespace, procedure, payload } = rpc
     const abortController = new AbortController()
     const signal = params.signal
       ? AbortSignal.any([params.signal, abortController.signal])
       : abortController.signal
 
-    calls.set(callId, abortController)
+    rpcs.set(callId, abortController)
 
     const callIdEncoded = encodeNumber(callId, 'Uint32')
     const container = context.container.fork(Scope.Call)
@@ -453,7 +453,7 @@ export class Protocol {
         callId,
       })
     } finally {
-      calls.delete(callId)
+      rpcs.delete(callId)
       container.dispose().catch((error) => {
         this.application.logger.error(
           { error, connection },
@@ -502,7 +502,7 @@ export class Protocol {
 
   rpcAbort(connectionId: string, callId: number) {
     const { context } = this.#connections.get(connectionId)
-    const call = context.calls.get(callId) ?? throwError('Call not found')
+    const call = context.rpcs.get(callId) ?? throwError('Call not found')
     call.abort()
   }
 
