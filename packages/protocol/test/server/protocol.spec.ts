@@ -120,7 +120,7 @@ describe('Server Protocol', () => {
       expect(connection.data).toBe(connectionData)
       expect(context).toBeInstanceOf(ConnectionContext)
       expect(context.container).toBeInstanceOf(Container)
-      expect(context.calls).toBeInstanceOf(Map)
+      expect(context.rpcs).toBeInstanceOf(Map)
       expect(context.clientStreams).toBeInstanceOf(Map)
       expect(context.serverStreams).toBeInstanceOf(Map)
       expect(context.rpcStreams).toBeInstanceOf(Map)
@@ -247,7 +247,7 @@ describe('Server Protocol', () => {
         { metadata, signal: ac.signal, provides },
       )
 
-      expect(context.calls.get(callId)).toBeInstanceOf(AbortController)
+      expect(context.rpcs.get(callId)).toBeInstanceOf(AbortController)
       expect(context.clientStreams.size).toBe(0)
       expect(context.serverStreams.size).toBe(0)
       expect(context.rpcStreams.size).toBe(0)
@@ -256,7 +256,7 @@ describe('Server Protocol', () => {
       await expect(result).resolves.not.toThrow()
 
       // should clean up the call
-      expect(context.calls.get(callId)).toBeUndefined()
+      expect(context.rpcs.get(callId)).toBeUndefined()
 
       const apiCallOptions = api.call.mock.calls[0][0]
       const apiCallResult = await api.call.mock.results[0].value

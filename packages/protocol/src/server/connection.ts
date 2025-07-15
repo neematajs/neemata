@@ -20,7 +20,7 @@ export class Connection<Data = unknown> {
 
 export class ConnectionContext {
   streamId = 1
-  calls = new Map<number, AbortController>()
+  rpcs = new Map<number, AbortController>()
   clientStreams = new Map<number, ProtocolClientStream>()
   serverStreams = new Map<number, ProtocolServerStream>()
   rpcStreams = new Map<number, AbortController>()
