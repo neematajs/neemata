@@ -4,6 +4,7 @@ import {
   type ProtocolBaseClientCallOptions,
   type ProtocolBaseTransformer,
   ProtocolTransport,
+  ProtocolTransportStatus,
 } from '@nmtjs/protocol/client'
 
 export type WebSocketClientTransportOptions = {
@@ -51,6 +52,8 @@ export class WebSocketClientTransport extends ProtocolTransport {
 
     ws.binaryType = 'arraybuffer'
 
+    this.status = ProtocolTransportStatus.CONNECTING
+
     ws.addEventListener('message', ({ data }) => {
       this.protocol.handleServerMessage(data as ArrayBuffer, this, transformer)
     })
@@ -59,6 +62,7 @@ export class WebSocketClientTransport extends ProtocolTransport {
       'close',
       (event) => {
         console.dir(event)
+        this.status = ProtocolTransportStatus.DISCONNECTED
         if (event.code !== 1000) this.emit('disconnected')
         this.webSocket = null
       },
@@ -71,6 +75,7 @@ export class WebSocketClientTransport extends ProtocolTransport {
       ws.addEventListener(
         'open',
         () => {
+          this.status = ProtocolTransportStatus.CONNECTED
           this.emit('connected')
           resolve()
         },
