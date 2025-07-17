@@ -390,7 +390,7 @@ export class Protocol {
           context.rpcStreams.set(callId, controller)
           const iterable =
             typeof response.iterable === 'function'
-              ? response.iterable(controller.signal)
+              ? await response.iterable(controller.signal)
               : response.iterable
           try {
             for await (const chunk of iterable) {

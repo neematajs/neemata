@@ -1,3 +1,4 @@
+import type { Async } from '@nmtjs/common'
 import type { Container, Hook, MetadataStore } from '@nmtjs/core'
 import type { Connection } from './connection.ts'
 import { kIterableResponse } from './constants.ts'
@@ -13,7 +14,7 @@ export type ProtocolApiCallOptions = {
 }
 
 export type ProtocolAnyIterable<T> =
-  | ((signal: AbortSignal) => AsyncIterable<T>)
+  | ((signal: AbortSignal) => Async<AsyncIterable<T>>)
   | AsyncIterable<T>
 
 export interface ProtocolApiCallBaseResult<T = unknown> {
