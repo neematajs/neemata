@@ -6,7 +6,9 @@ export interface BlobOptions {
   contentType?: string
 }
 
-export const BlobType = (options: BlobOptions = {}) =>
+export const BlobType = (
+  options: BlobOptions = {},
+): t.CustomType<ProtocolBlobInterface> =>
   t.custom<ProtocolBlobInterface>({
     decode: (value) => {
       // TODO: here should be some validation logic to check if the value is an actual blob

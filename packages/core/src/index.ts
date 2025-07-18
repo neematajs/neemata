@@ -1,3 +1,7 @@
+// biome-ignore lint/correctness/noUnusedImports: TSC wants it
+// biome-ignore assist/source/organizeImports: TSC wants it
+import {} from 'pino'
+
 export * from './constants.ts'
 export * from './container.ts'
 export * from './enums.ts'

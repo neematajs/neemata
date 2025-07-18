@@ -3,16 +3,32 @@
   "type": "module",
   "exports": {
     ".": {
+      "types": "./src/index.ts",
       "import": "./dist/index.js",
-      "types": "./src/index.ts"
+      "module-sync": "./dist/index.js"
     },
     "./temporal": {
+      "types": "./src/temporal.ts",
       "import": "./dist/temporal.js",
-      "types": "./src/temporal.ts"
+      "module-sync": "./dist/temporal.js"
+    }
+  },
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js",
+        "module-sync": "./dist/index.js"
+      },
+      "./temporal": {
+        "types": "./dist/temporal.d.ts",
+        "import": "./dist/temporal.js",
+        "module-sync": "./dist/temporal.js"
+      }
     }
   },
   "scripts": {
-    "build": "neemata-build --root=./src './**/*.ts'",
+    "build": "tsc",
     "type-check": "tsc --noEmit"
   },
   "peerDependencies": {

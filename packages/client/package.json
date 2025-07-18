@@ -2,21 +2,43 @@
   "name": "@nmtjs/client",
   "type": "module",
   "scripts": {
-    "build": "neemata-build --root=./src './**/*.ts'",
+    "build": "tsc",
     "type-check": "tsc --noEmit"
   },
   "exports": {
     ".": {
+      "types": "./src/common.ts",
       "import": "./dist/common.js",
-      "types": "./src/common.ts"
+      "module-sync": "./dist/common.js"
     },
     "./runtime": {
+      "types": "./src/runtime.ts",
       "import": "./dist/runtime.js",
-      "types": "./src/runtime.ts"
+      "module-sync": "./dist/runtime.js"
     },
     "./static": {
+      "types": "./src/static.ts",
       "import": "./dist/static.js",
-      "types": "./src/static.ts"
+      "module-sync": "./dist/static.js"
+    }
+  },
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./dist/common.d.ts",
+        "import": "./dist/common.js",
+        "module-sync": "./dist/common.js"
+      },
+      "./runtime": {
+        "types": "./dist/runtime.d.ts",
+        "import": "./dist/runtime.js",
+        "module-sync": "./dist/runtime.js"
+      },
+      "./static": {
+        "types": "./dist/static.d.ts",
+        "import": "./dist/static.js",
+        "module-sync": "./dist/static.js"
+      }
     }
   },
   "peerDependencies": {

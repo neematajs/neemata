@@ -1,6 +1,6 @@
 import type { AppOptions, WebSocket } from 'uWebSockets.js'
+import type { InteractivePromise } from '@nmtjs/common'
 import type { Connection, ConnectionContext } from '@nmtjs/protocol/server'
-import type { InteractivePromise } from '../../common/src/index.ts'
 import type { RequestData } from './utils.ts'
 
 export type WsConnectionData = { type: 'ws' | 'http' }

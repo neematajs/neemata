@@ -7,7 +7,6 @@ import {
   Scope,
 } from '@nmtjs/core'
 import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest'
-import { testLogger } from '../../../core/test/_utils.ts'
 import { ServerMessageType } from '../../src/common/enums.ts'
 import type {
   ProtocolApiCallOptions,
@@ -21,7 +20,7 @@ import {
   UnsupportedAcceptTypeError,
   UnsupportedContentTypeError,
 } from '../../src/server/utils.ts'
-import { testFormat } from '../mixtures.ts'
+import { testFormat, testLogger } from '../_utils.ts'
 
 type CallSpy = Mock<
   (args: ProtocolApiCallOptions) => Promise<ProtocolApiCallResult>

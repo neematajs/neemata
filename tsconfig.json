@@ -8,11 +8,12 @@
     "allowJs": true,
 
     // Bundler mode
-    "moduleResolution": "NodeNext",
+    "moduleResolution": "nodenext",
+    "rewriteRelativeImportExtensions": true,
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
-    "noEmit": true,
     "noImplicitAny": false,
+    "declaration": false,
 
     // Best practices
     "strict": true,
@@ -24,5 +25,5 @@
     "noUnusedParameters": false,
     "noPropertyAccessFromIndexSignature": false
   },
-  "exclude": ["**/dist/**"]
+  "exclude": ["**/dist/**", "**/coverage/**"]
 }

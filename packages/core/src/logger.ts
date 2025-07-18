@@ -9,6 +9,7 @@ import {
 } from 'pino'
 import { build as pretty } from 'pino-pretty'
 
+export type { StreamEntry } from 'pino'
 export type Logger = PinoLogger
 export type LoggingOptions = {
   destinations?: Array<DestinationStream | StreamEntry<Level>>

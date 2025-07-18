@@ -1,4 +1,4 @@
-import type { Async } from '../../common/src/index.ts'
+import type { Async } from '@nmtjs/common'
 import { kPlugin } from './constants.ts'
 import type { PluginContext } from './types.ts'
 
