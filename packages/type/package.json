@@ -42,7 +42,6 @@
     "@nmtjs/common": "workspace:*"
   },
   "files": [
-    "src",
     "dist",
     "LICENSE.md",
     "README.md"

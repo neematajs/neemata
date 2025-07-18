@@ -40,7 +40,6 @@
     "@nmtjs/protocol": "workspace:*"
   },
   "files": [
-    "src",
     "dist",
     "LICENSE.md",
     "README.md"

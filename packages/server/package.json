@@ -32,7 +32,6 @@
     "@nmtjs/core": "workspace:*"
   },
   "files": [
-    "src",
     "dist",
     "LICENSE.md",
     "README.md"

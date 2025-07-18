@@ -39,7 +39,6 @@
     "node": ">=20"
   },
   "files": [
-    "src",
     "dist",
     "LICENSE.md",
     "README.md"

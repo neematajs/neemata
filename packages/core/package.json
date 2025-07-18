@@ -35,7 +35,6 @@
     "pino-pretty": "^13.0.0"
   },
   "files": [
-    "src",
     "dist",
     "LICENSE.md",
     "README.md"
