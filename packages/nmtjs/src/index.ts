@@ -1,3 +1,7 @@
+// biome-ignore lint/correctness/noUnusedImports: TSC wants it
+// biome-ignore assist/source/organizeImports: TSC wants it
+import type { kClassInjectable, kInjectable } from '@nmtjs/core'
+
 import {
   AppInjectables,
   createApplication,
@@ -37,7 +41,9 @@ export const neemata = {
   transport: createTransport,
   plugin: createPlugin,
   logging: {
-    console: createConsolePrettyDestination,
+    console:
+      // TODO: TSC wants it
+      createConsolePrettyDestination as typeof createConsolePrettyDestination,
   },
   optional: createOptionalInjectable,
   value: createValueInjectable,

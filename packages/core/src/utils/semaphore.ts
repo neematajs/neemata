@@ -1,4 +1,4 @@
-import type { Callback } from '../../../common/src/index.ts'
+import type { Callback } from '@nmtjs/common'
 
 interface SemaphoreQueueItem {
   resolve?: Callback

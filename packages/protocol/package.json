@@ -2,21 +2,43 @@
   "name": "@nmtjs/protocol",
   "type": "module",
   "scripts": {
-    "build": "neemata-build --root=./src './**/*.ts'",
+    "build": "tsc",
     "type-check": "tsc --noEmit"
   },
   "exports": {
     ".": {
       "types": "./src/common/index.ts",
-      "import": "./dist/common/index.js"
+      "import": "./dist/common/index.js",
+      "module-sync": "./dist/common/index.js"
     },
     "./server": {
       "types": "./src/server/index.ts",
-      "import": "./dist/server/index.js"
+      "import": "./dist/server/index.js",
+      "module-sync": "./dist/server/index.js"
     },
     "./client": {
       "types": "./src/client/index.ts",
-      "import": "./dist/client/index.js"
+      "import": "./dist/client/index.js",
+      "module-sync": "./dist/client/index.js"
+    }
+  },
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./dist/common/index.d.ts",
+        "import": "./dist/common/index.js",
+        "module-sync": "./dist/common/index.js"
+      },
+      "./server": {
+        "types": "./dist/server/index.d.ts",
+        "import": "./dist/server/index.js",
+        "module-sync": "./dist/server/index.js"
+      },
+      "./client": {
+        "types": "./dist/client/index.d.ts",
+        "import": "./dist/client/index.js",
+        "module-sync": "./dist/client/index.js"
+      }
     }
   },
   "dependencies": {

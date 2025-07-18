@@ -304,8 +304,8 @@ export const createClassInjectable = <
 
     constructor(public $context: DependencyContext<D>) {}
 
-    protected async $onCreate() {}
-    protected async $onDispose() {}
+    async $onCreate() {}
+    async $onDispose() {}
   }
 
   InjectableClass.scope = resolveInjectableScope(

@@ -6,12 +6,22 @@
   },
   "exports": {
     ".": {
+      "types": "./src/run.ts",
       "import": "./dist/run.js",
-      "types": "./src/run.ts"
+      "module-sync": "./dist/run.js"
+    }
+  },
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./dist/run.d.ts",
+        "import": "./dist/run.js",
+        "module-sync": "./dist/run.js"
+      }
     }
   },
   "scripts": {
-    "build": "neemata-build --root=./src './**/*.ts'",
+    "build": "tsc",
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
