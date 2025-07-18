@@ -154,7 +154,6 @@
     "@nmtjs/cli": "workspace:*"
   },
   "files": [
-    "src",
     "dist",
     "LICENSE.md",
     "README.md"

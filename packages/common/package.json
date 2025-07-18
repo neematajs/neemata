@@ -22,7 +22,6 @@
     "type-check": "tsc --noEmit"
   },
   "files": [
-    "src",
     "dist",
     "LICENSE.md",
     "README.md"
