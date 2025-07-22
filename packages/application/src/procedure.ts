@@ -176,6 +176,7 @@ export function createProcedure<
         guards?: AnyGuard[]
         middlewares?: AnyMiddleware[]
         metadata?: Metadata[]
+        timeout?: number
         handler: ProcedureHandlerType<
           TInput extends BaseType
             ? InputType<t.infer.decoded.output<TInput>>
@@ -228,6 +229,7 @@ export function createProcedure<
     middlewares = [],
     metadata = [],
     handler,
+    timeout,
   } = typeof paramsOrHandler === 'function'
     ? { handler: paramsOrHandler }
     : paramsOrHandler
@@ -237,6 +239,7 @@ export function createProcedure<
       input,
       output,
       stream: stream === true ? t.any() : stream,
+      timeout,
     }),
     {
       dependencies,

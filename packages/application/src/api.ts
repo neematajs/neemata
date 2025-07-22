@@ -155,19 +155,19 @@ export class ApplicationApi implements ProtocolApi {
           ])
         : timeoutController.signal
 
-    container.provide(ProtocolInjectables.rpcAbortSignal, timeoutSignal)
+    container.provide(ProtocolInjectables.rpcTimeoutSignal, timeoutSignal)
     container.provide(ProtocolInjectables.rpcClientAbortSignal, signal)
     container.provide(ProtocolInjectables.connection, connection)
 
     const isIterableProcedure = IsStreamProcedureContract(procedure.contract)
 
     try {
-      const handler = await this.createProcedureHandler(
-        callOptions,
+      const handler = await this.createProcedureHandler(callOptions)
+      const result = await this.handleTimeout(
+        handler(payload),
         timeout,
         timeoutController,
       )
-      const result = await handler(payload)
       if (isIterableProcedure) {
         return this.handleIterableOutput(procedure, result)
       } else {
@@ -187,11 +187,7 @@ export class ApplicationApi implements ProtocolApi {
     }
   }
 
-  private async createProcedureHandler(
-    callOptions: ApplicationApiCallOptions,
-    timeout: number,
-    timeoutController: AbortController,
-  ) {
+  private async createProcedureHandler(callOptions: ApplicationApiCallOptions) {
     const { connection, procedure, container, namespace } = callOptions
 
     const callCtx: ApiCallContext = Object.freeze({
@@ -215,11 +211,7 @@ export class ApplicationApi implements ProtocolApi {
         const { dependencies } = procedure
         const context = await container.createContext(dependencies)
         const input = this.handleInput(procedure, payload)
-        const result = await this.handleTimeout(
-          procedure.handler(context, input),
-          timeout,
-          timeoutController,
-        )
+        const result = await procedure.handler(context, input)
         return result
       }
     }
