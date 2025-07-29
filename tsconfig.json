@@ -1,13 +1,11 @@
 {
   "compilerOptions": {
-    // Enable latest features
     "lib": ["ES2023"],
     "target": "ES2023",
-    "module": "NodeNext",
+    "module": "nodenext",
     "moduleDetection": "force",
     "allowJs": true,
 
-    // Bundler mode
     "moduleResolution": "nodenext",
     "rewriteRelativeImportExtensions": true,
     "allowImportingTsExtensions": true,
@@ -15,12 +13,10 @@
     "noImplicitAny": false,
     "declaration": false,
 
-    // Best practices
     "strict": true,
     "skipLibCheck": true,
     "noFallthroughCasesInSwitch": true,
 
-    // Some stricter flags (disabled by default)
     "noUnusedLocals": false,
     "noUnusedParameters": false,
     "noPropertyAccessFromIndexSignature": false
