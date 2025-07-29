@@ -605,22 +605,31 @@ export class Protocol<
   ) {
     const streamId = decodeNumber(buffer, 'Uint32')
     const size = decodeNumber(buffer, 'Uint32', Uint32Array.BYTES_PER_ELEMENT)
-    this.pullClientStream(streamId, size).then((chunk) => {
-      if (chunk) {
+    this.pullClientStream(streamId, size).then(
+      (chunk) => {
+        if (chunk) {
+          transport.send(
+            ClientMessageType.ClientStreamPush,
+            concat(encodeNumber(streamId, 'Uint32'), chunk),
+            { streamId },
+          )
+        } else {
+          transport.send(
+            ClientMessageType.ClientStreamEnd,
+            encodeNumber(streamId, 'Uint32'),
+            { streamId },
+          )
+          this.endClientStream(streamId)
+        }
+      },
+      () => {
         transport.send(
-          ClientMessageType.ClientStreamPush,
-          concat(encodeNumber(streamId, 'Uint32'), chunk),
-          { streamId },
-        )
-      } else {
-        transport.send(
-          ClientMessageType.ClientStreamEnd,
+          ClientMessageType.ClientStreamAbort,
           encodeNumber(streamId, 'Uint32'),
           { streamId },
         )
-        this.endClientStream(streamId)
-      }
-    })
+      },
+    )
   }
 
   protected [ServerMessageType.ClientStreamAbort](
