@@ -61,9 +61,11 @@ export class WebSocketClientTransport extends ProtocolTransport {
     ws.addEventListener(
       'close',
       (event) => {
-        console.dir(event)
+        console.log(
+          `WebSocket closed — Code: ${event.code}; Reason: ${event.reason}`,
+        )
         this.status = ProtocolTransportStatus.DISCONNECTED
-        if (event.code !== 1000) this.emit('disconnected')
+        this.emit('disconnected')
         this.webSocket = null
       },
       { once: true },
