@@ -1,3 +1,4 @@
+import { noopFn } from '@nmtjs/common'
 import type { TAnyAPIContract } from '@nmtjs/contract'
 import {
   EventEmitter,
@@ -24,6 +25,8 @@ export * from './types.ts'
 
 export class ClientError extends ProtocolError {}
 
+const DEFAULT_RECONNECT_TIMEOUT = 1000
+
 export abstract class BaseClient<
   APIContract extends TAnyAPIContract = TAnyAPIContract,
   SafeCall extends boolean = false,
@@ -45,6 +48,7 @@ export abstract class BaseClient<
   protected abstract transformer: ProtocolBaseTransformer
   protected callers!: ClientCallers<API, SafeCall>
   protected auth: any
+  protected reconnectTimeout: number = DEFAULT_RECONNECT_TIMEOUT
 
   constructor(
     readonly transport: ProtocolTransport,
@@ -57,9 +61,26 @@ export abstract class BaseClient<
     super()
 
     if (this.options.autoreconnect) {
-      this.transport.on('disconnected', () =>
-        setTimeout(this.connect.bind(this), 1000),
-      )
+      this.transport.on('disconnected', async (reason) => {
+        if (reason === 'server') {
+          this.connect()
+        } else if (reason === 'error') {
+          const timeout = new Promise((resolve) =>
+            setTimeout(resolve, this.reconnectTimeout),
+          )
+          const connected = new Promise((_, reject) =>
+            this.transport.once('connected', reject),
+          )
+          this.reconnectTimeout += DEFAULT_RECONNECT_TIMEOUT
+          await Promise.race([timeout, connected]).then(
+            this.connect.bind(this),
+            noopFn,
+          )
+        }
+      })
+      this.transport.on('connected', () => {
+        this.reconnectTimeout = DEFAULT_RECONNECT_TIMEOUT
+      })
     }
   }
 

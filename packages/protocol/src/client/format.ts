@@ -1,10 +1,7 @@
 import type {
-  // BaseClientDecoder,
-  // BaseClientEncoder,
   DecodeRPCContext,
   EncodeRPCContext,
   ProtocolRPC,
-  // ProtocolRPCEncode,
   ProtocolRPCResponse,
 } from '../common/types.ts'
 import type {

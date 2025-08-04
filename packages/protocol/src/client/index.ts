@@ -1,6 +1,5 @@
 export * from './events.ts'
 export * from './format.ts'
 export * from './protocol.ts'
-// export * from './protocolv1.ts'
 export * from './stream.ts'
 export * from './types.ts'

@@ -154,7 +154,7 @@ export class ProtocolServerStreams<
 
 export type ProtocolTransportEventMap = {
   connected: []
-  disconnected: []
+  disconnected: [reason: 'server' | 'client' | 'error']
 }
 
 export interface ProtocolSendMetadata {
@@ -440,7 +440,11 @@ export class BaseProtocol<
     transformer: ProtocolBaseTransformer,
   ) {
     const transformed = transformer.decodeEvent(namespace, event, payload)
-    this.emit(`${namespace}/${event}`, transformed)
+    this.emit(
+      `${namespace}/${event}`,
+      //@ts-expect-error
+      transformed,
+    )
   }
 }
 

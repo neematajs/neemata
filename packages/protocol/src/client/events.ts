@@ -2,14 +2,13 @@ import type { Callback } from '@nmtjs/common'
 
 export type EventMap = { [K: string]: any[] }
 
+// TODO: add errors and promise rejections handling
 /**
  * Very simple node-like event emitter wrapper around EventTarget
- *
- * @todo add errors and promise rejections handling
  */
 export class EventEmitter<
   Events extends EventMap = EventMap,
-  EventNames extends Extract<keyof Events, string> = Extract<
+  EventName extends Extract<keyof Events, string> = Extract<
     keyof Events,
     string
   >,
@@ -24,18 +23,18 @@ export class EventEmitter<
   #target = new EventTarget()
   #listeners = new Map<Callback, Callback>()
 
-  on<E extends EventNames>(
+  on<E extends EventName>(
     event: E | (Object & string),
     listener: (...args: Events[E]) => void,
     options?: AddEventListenerOptions,
   ) {
     const wrapper = (event) => listener(...event.detail)
     this.#listeners.set(listener, wrapper)
-    this.#target.addEventListener(event, wrapper, options)
+    this.#target.addEventListener(event, wrapper, { ...options, once: false })
     return () => this.#target.removeEventListener(event, wrapper)
   }
 
-  once<E extends EventNames>(
+  once<E extends EventName>(
     event: E | (Object & string),
     listener: (...args: Events[E]) => void,
     options?: AddEventListenerOptions,
@@ -43,14 +42,14 @@ export class EventEmitter<
     return this.on(event, listener, { ...options, once: true })
   }
 
-  off(event: EventNames | (Object & string), listener: Callback) {
+  off(event: EventName | (Object & string), listener: Callback) {
     const wrapper = this.#listeners.get(listener)
     if (wrapper) this.#target.removeEventListener(event, wrapper)
   }
 
-  emit<E extends EventNames | (Object & string)>(
+  emit<E extends EventName | (Object & string)>(
     event: E,
-    ...args: E extends EventEmitter ? Events[E] : any[]
+    ...args: E extends EventName ? Events[E] : any[]
   ) {
     return this.#target.dispatchEvent(new CustomEvent(event, { detail: args }))
   }
