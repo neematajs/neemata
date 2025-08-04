@@ -17,7 +17,7 @@ import { kTask } from './constants.ts'
 import { AppInjectables } from './injectables.ts'
 import type { ApplicationRegistry } from './registry.ts'
 
-export type TaskExecution<Res = any> = PromiseLike<
+export type TaskExecution<Res = any> = Promise<
   { result: Res; error?: never } | { result?: never; error: any }
 > & {
   abort(reason?: any): void
@@ -135,7 +135,7 @@ export class Tasks {
         .then((result) => ({ result }))
         .catch((error = new Error('Task execution error')) => ({ error })),
       { abort: ac.abort.bind(ac) },
-    ) satisfies TaskExecution as TaskExecution
+    ) satisfies TaskExecution
   }
 
   async command({ args, kwargs }) {
