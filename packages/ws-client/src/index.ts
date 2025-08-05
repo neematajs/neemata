@@ -61,11 +61,15 @@ export class WebSocketClientTransport extends ProtocolTransport {
     ws.addEventListener(
       'close',
       (event) => {
-        console.log(
-          `WebSocket closed — Code: ${event.code}; Reason: ${event.reason}`,
-        )
         this.status = ProtocolTransportStatus.DISCONNECTED
-        this.emit('disconnected')
+        this.emit(
+          'disconnected',
+          event.code === 1000
+            ? event.reason === 'client'
+              ? 'client'
+              : 'server'
+            : 'error',
+        )
         this.webSocket = null
       },
       { once: true },
@@ -98,7 +102,7 @@ export class WebSocketClientTransport extends ProtocolTransport {
 
   async disconnect(): Promise<void> {
     if (this.webSocket === null) return
-    this.webSocket!.close(1000, 'user')
+    this.webSocket!.close(1000, 'client')
     return _once(this.webSocket, 'close')
   }
 

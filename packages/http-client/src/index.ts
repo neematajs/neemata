@@ -131,7 +131,7 @@ export class HttpClientTransport
   }
 
   async disconnect() {
-    this.emit('disconnected')
+    this.emit('disconnected', 'client')
   }
 
   async send(
