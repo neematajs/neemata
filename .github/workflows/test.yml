@@ -96,7 +96,7 @@ jobs:
             ${{ runner.os }}-pnpm-store-
       - run: pnpm install
       - run: pnpm run build
-      - run: pnpm run test
+      - run: pnpm run test:unit
 
   integration-test-node:
     needs: [lint, typecheck]
