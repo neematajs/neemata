@@ -63,7 +63,8 @@ function adapterFactory(params: WsAdapterParams<'node'>): WsAdapterServer {
             body,
             controller.signal,
           )
-        } catch {
+        } catch (err) {
+          params.logger.error({ err }, 'Error in fetch handler')
           response = InternalServerErrorHttpResponse()
         }
       }

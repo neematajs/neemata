@@ -547,6 +547,7 @@ export class WsTransportServer implements Transport<WsConnectionData> {
     const hooks = this.createWsHooks()
     const opts: WsAdapterParams = {
       ...this.options,
+      logger: this.logger.child({ $group: 'WsServer' }),
       apiPath: '/api',
       wsHooks: hooks,
       fetchHandler: this.httpHandler.bind(this),

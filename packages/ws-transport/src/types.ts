@@ -1,4 +1,5 @@
 import type { Async, OneOf } from '@nmtjs/common'
+import type { Logger } from '@nmtjs/core'
 import type { Connection, ConnectionContext } from '@nmtjs/protocol/server'
 import type { Hooks } from 'crossws'
 
@@ -125,6 +126,7 @@ export type WsAdapterParams<
     body: ReadableStream | null,
     signal: AbortSignal,
   ) => Async<Response>
+  logger: Logger
   cors?: WsTransportCorsOptions
   tls?: WsTransportTlsOptions
   runtime?: WsTransportRuntimes[R]

@@ -63,10 +63,11 @@ function adapterFactory(params: WsAdapterParams<'deno'>): WsAdapterServer {
         handler: async (request: Request, info: any) => {
           const url = new URL(request.url)
           if (url.pathname.startsWith(params.apiPath)) {
-            if (request.headers.get('upgrade') === 'websocket') {
-              return adapter.handleUpgrade(request, info as any)
-            }
             try {
+              if (request.headers.get('upgrade') === 'websocket') {
+                return await adapter.handleUpgrade(request, info as any)
+              }
+
               const { headers, method, body } = request
               return await params.fetchHandler(
                 {
@@ -77,7 +78,8 @@ function adapterFactory(params: WsAdapterParams<'deno'>): WsAdapterServer {
                 body,
                 request.signal,
               )
-            } catch {
+            } catch (err) {
+              params.logger.error({ err }, 'Error in fetch handler')
               return InternalServerErrorHttpResponse()
             }
           }

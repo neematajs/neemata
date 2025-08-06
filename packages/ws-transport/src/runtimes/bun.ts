@@ -39,10 +39,10 @@ function adapterFactory(params: WsAdapterParams<'bun'>): WsAdapterServer {
       async fetch(request, server) {
         const url = new URL(request.url)
         if (url.pathname.startsWith(params.apiPath)) {
-          if (request.headers.get('upgrade') === 'websocket') {
-            return adapter.handleUpgrade(request, server)
-          }
           try {
+            if (request.headers.get('upgrade') === 'websocket') {
+              return await adapter.handleUpgrade(request, server)
+            }
             const { body, headers, method } = request
             return await params.fetchHandler(
               {
@@ -53,7 +53,8 @@ function adapterFactory(params: WsAdapterParams<'bun'>): WsAdapterServer {
               body,
               request.signal,
             )
-          } catch {
+          } catch (err) {
+            params.logger.error({ err }, 'Error in fetch handler')
             return InternalServerErrorHttpResponse()
           }
         }
