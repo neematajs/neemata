@@ -104,7 +104,7 @@ jobs:
       fail-fast: true
       matrix:
         node:
-          - 20
+          - latest
         os:
           - ubuntu-latest
           - macos-latest
@@ -135,15 +135,13 @@ jobs:
       - run: pnpm run build
       - run: pnpm run test:runtime:node
 
-
-
   integration-test-bun:
     needs: [lint, typecheck]
     strategy:
       fail-fast: true
       matrix:
         bun:
-          - 1.2.x
+          - latest
         os:
           - ubuntu-latest
           - macos-latest
@@ -174,15 +172,13 @@ jobs:
       - run: pnpm run build
       - run: pnpm run test:runtime:bun
 
-
-
   integration-test-deno:
     needs: [lint, typecheck]
     strategy:
       fail-fast: true
       matrix:
         deno:
-          - 2.4
+          - latest
         os:
           - ubuntu-latest
           - macos-latest
