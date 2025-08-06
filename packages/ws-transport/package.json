@@ -6,6 +6,18 @@
       "types": "./src/index.ts",
       "import": "./dist/index.js",
       "module-sync": "./dist/index.js"
+    },
+    "./runtime/bun": {
+      "types": "./src/runtimes/bun.ts",
+      "import": "./dist/runtimes/bun.js"
+    },
+    "./runtime/deno": {
+      "types": "./src/runtimes/deno.ts",
+      "import": "./dist/runtimes/deno.js"
+    },
+    "./runtime/node": {
+      "types": "./src/runtimes/node.ts",
+      "import": "./dist/runtimes/node.js"
     }
   },
   "publishConfig": {
@@ -14,7 +26,10 @@
         "types": "./dist/index.d.ts",
         "import": "./dist/index.js",
         "module-sync": "./dist/index.js"
-      }
+      },
+      "./runtime/bun": "./dist/runtimes/bun.js",
+      "./runtime/deno": "./dist/runtimes/deno.js",
+      "./runtime/node": "./dist/runtimes/node.js"
     }
   },
   "scripts": {
@@ -22,21 +37,41 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
+    "crossws": "0.4.1"
+  },
+  "devDependencies": {
+    "@nmtjs/client": "workspace:*",
+    "@nmtjs/common": "workspace:*",
+    "@nmtjs/protocol": "workspace:*",
     "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.52.0"
   },
   "peerDependencies": {
     "@nmtjs/common": "workspace:*",
     "@nmtjs/core": "workspace:*",
-    "@nmtjs/protocol": "workspace:*"
-  },
-  "devDependencies": {
+    "@nmtjs/protocol": "workspace:*",
+    "@types/bun": "^1.2.19",
+    "@types/deno": "^2.3.0",
     "@types/node": "^20",
-    "@nmtjs/client": "workspace:*",
-    "@nmtjs/common": "workspace:*",
-    "@nmtjs/protocol": "workspace:*"
+    "uWebSockets.js": "^20.52.0"
+  },
+  "peerDependenciesMeta": {
+    "@types/bun": {
+      "optional": true
+    },
+    "@types/deno": {
+      "optional": true
+    },
+    "@types/node": {
+      "optional": true
+    },
+    "uWebSockets.js": {
+      "optional": true
+    }
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=20",
+    "bun": ">=1.2.19",
+    "deno": ">=2.3.0"
   },
   "files": [
     "dist",

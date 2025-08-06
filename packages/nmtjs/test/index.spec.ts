@@ -1,41 +1,51 @@
 import { describe, expect, it } from 'vitest'
 
-//
-
-import nmtjs from 'nmtjs'
-
-//
-
-import * as application from 'nmtjs/application'
-import * as cli from 'nmtjs/cli'
-import * as common from 'nmtjs/common'
-import contractDefault, * as contract from 'nmtjs/contract'
-import * as core from 'nmtjs/core'
-import * as jsonFormat from 'nmtjs/json-format'
-import * as protocol from 'nmtjs/protocol'
-import * as protocolClient from 'nmtjs/protocol/client'
-import * as protocolServer from 'nmtjs/protocol/server'
-import * as server from 'nmtjs/server'
-import typeDefault, * as type from 'nmtjs/type'
-import * as wsTransport from 'nmtjs/ws-transport'
-
-//
-
-import * as _application from '@nmtjs/application'
-import * as _cli from '@nmtjs/cli'
-import * as _common from '@nmtjs/common'
-import _contractDefault, * as _contract from '@nmtjs/contract'
-import * as _core from '@nmtjs/core'
-import * as _jsonFormat from '@nmtjs/json-format/server'
-import * as _protocol from '@nmtjs/protocol'
-import * as _protocolClient from '@nmtjs/protocol/client'
-import * as _protocolServer from '@nmtjs/protocol/server'
-import * as _server from '@nmtjs/server'
-import _typeDefault, * as _type from '@nmtjs/type'
-import * as _wsTransport from '@nmtjs/ws-transport'
-
 describe('nmtjs', () => {
-  it('should re-export packages', () => {
+  it('should re-export packages', async () => {
+    const nmtjs = await import('nmtjs')
+
+    const application = await import('nmtjs/application')
+    const cli = await import('nmtjs/cli')
+    const common = await import('nmtjs/common')
+    const contract = await import('nmtjs/contract')
+    const contractDefault = (await import('nmtjs/contract')).default
+    const core = await import('nmtjs/core')
+    const jsonFormat = await import('nmtjs/json-format')
+    const protocol = await import('nmtjs/protocol')
+    const protocolClient = await import('nmtjs/protocol/client')
+    const protocolServer = await import('nmtjs/protocol/server')
+    const server = await import('nmtjs/server')
+    const type = await import('nmtjs/type')
+    const typeDefault = (await import('nmtjs/type')).default
+    const wsTransport = await import('nmtjs/ws-transport')
+    const wsTransportRuntimeNode = await import('nmtjs/ws-transport/node')
+    const wsTransportRuntimeDeno = await import('nmtjs/ws-transport/deno')
+    const wsTransportRuntimeBun = await import('nmtjs/ws-transport/bun')
+
+    const _application = await import('@nmtjs/application')
+    const _cli = await import('@nmtjs/cli')
+    const _common = await import('@nmtjs/common')
+    const _contract = await import('@nmtjs/contract')
+    const _contractDefault = (await import('@nmtjs/contract')).default
+    const _core = await import('@nmtjs/core')
+    const _jsonFormat = await import('@nmtjs/json-format/server')
+    const _protocol = await import('@nmtjs/protocol')
+    const _protocolClient = await import('@nmtjs/protocol/client')
+    const _protocolServer = await import('@nmtjs/protocol/server')
+    const _server = await import('@nmtjs/server')
+    const _type = await import('@nmtjs/type')
+    const _typeDefault = (await import('@nmtjs/type')).default
+    const _wsTransport = await import('@nmtjs/ws-transport')
+    const _wsTransportRuntimeNode = await import(
+      '@nmtjs/ws-transport/runtime/node'
+    )
+    const _wsTransportRuntimeDeno = await import(
+      '@nmtjs/ws-transport/runtime/deno'
+    )
+    const _wsTransportRuntimeBun = await import(
+      '@nmtjs/ws-transport/runtime/bun'
+    )
+
     expect(nmtjs).toBeDefined()
     expect(common).toBeDefined()
     expect(type).toBeDefined()
@@ -66,5 +76,8 @@ describe('nmtjs', () => {
     expect(_type).toStrictEqual(type)
     expect(_typeDefault).toStrictEqual(typeDefault)
     expect(_wsTransport).toStrictEqual(wsTransport)
+    expect(_wsTransportRuntimeNode).toStrictEqual(wsTransportRuntimeNode)
+    expect(_wsTransportRuntimeDeno).toStrictEqual(wsTransportRuntimeDeno)
+    expect(_wsTransportRuntimeBun).toStrictEqual(wsTransportRuntimeBun)
   })
 })

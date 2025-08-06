@@ -1,3 +1,2 @@
-import importDefault from '@nmtjs/contract'
-export default importDefault
 export * from '@nmtjs/contract'
+export { default } from '@nmtjs/contract'
