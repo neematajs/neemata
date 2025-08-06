@@ -255,6 +255,9 @@ importers:
       '@types/bun':
         specifier: ^1.2.19
         version: 1.2.19(@types/react@19.1.9)
+      neemata-test-generic:
+        specifier: workspace:*
+        version: link:../generic
       nmtjs:
         specifier: workspace:*
         version: link:../../packages/nmtjs
@@ -267,6 +270,9 @@ importers:
       '@std/testing':
         specifier: npm:@jsr/std__testing@^1.0.15
         version: '@jsr/std__testing@1.0.15'
+      neemata-test-generic:
+        specifier: workspace:*
+        version: link:../generic
       nmtjs:
         specifier: workspace:*
         version: link:../../packages/nmtjs
@@ -278,11 +284,32 @@ importers:
         specifier: ^20
         version: 20.19.1
 
+  testing/generic:
+    dependencies:
+      '@nmtjs/client':
+        specifier: workspace:*
+        version: link:../../packages/client
+      '@nmtjs/http-client':
+        specifier: workspace:*
+        version: link:../../packages/http-client
+      '@nmtjs/json-format':
+        specifier: workspace:*
+        version: link:../../packages/json
+      '@nmtjs/ws-client':
+        specifier: workspace:*
+        version: link:../../packages/ws-client
+      nmtjs:
+        specifier: workspace:*
+        version: link:../../packages/nmtjs
+
   testing/node:
     dependencies:
       '@types/node':
         specifier: ^20
         version: 20.19.1
+      neemata-test-generic:
+        specifier: workspace:*
+        version: link:../generic
       nmtjs:
         specifier: workspace:*
         version: link:../../packages/nmtjs

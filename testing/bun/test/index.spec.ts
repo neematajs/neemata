@@ -1,71 +1,49 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
-import { n, t, WorkerType } from 'nmtjs'
+import {
+  createTestingApplication,
+  createTestMessage,
+  TEST_CONFIG,
+  TEST_HEADERS,
+  TEST_ROUTES,
+} from 'neemata-test-generic'
 import type { Application } from 'nmtjs/application'
-import { JsonFormat } from 'nmtjs/json-format'
 import { WsTransport } from 'nmtjs/ws-transport/bun'
 
 describe('Bun', () => {
   let app: Application
 
   beforeAll(async () => {
-    const namespace = n.namespace({
-      name: 'test',
-      procedures: {
-        test: n.procedure({
-          input: t.any(),
-          handler: (_, input) => {
-            return input
-          },
-        }),
-      },
+    app = createTestingApplication().use(WsTransport, {
+      listen: { unix: TEST_CONFIG.SOCKET_PATH },
     })
-
-    const router = n.router({ test: namespace })
-
-    app = n
-      .app({
-        type: WorkerType.Api,
-        api: {
-          formats: [new JsonFormat()],
-          timeout: 10000,
-        },
-        pubsub: {},
-        tasks: { timeout: 10000 },
-        logging: {
-          pinoOptions: { enabled: true },
-          destinations: [n.logging.console('error')],
-        },
-      })
-      .use(WsTransport, { listen: { unix: './test.sock' } })
-      .withRouter(router)
-
     await app.start()
   })
 
   it('should check status', async () => {
-    const response = await fetch('http://localhost/healthy', {
-      unix: './test.sock',
+    const response = await fetch(`http://localhost${TEST_ROUTES.HEALTH}`, {
+      unix: TEST_CONFIG.SOCKET_PATH,
     })
     expect(response.status).toBe(200)
     expect(response.text()).resolves.toBe('OK')
   })
 
   it('should handle http', async () => {
-    const response = await fetch('http://localhost/api/test/test', {
-      unix: './test.sock',
+    const testMessage = createTestMessage('Bun')
+    const response = await fetch(`http://localhost${TEST_ROUTES.API_TEST}`, {
+      unix: TEST_CONFIG.SOCKET_PATH,
       method: 'POST',
-      body: JSON.stringify({ message: 'Hello, Bun!' }),
+      body: JSON.stringify(testMessage),
       headers: {
-        'Content-Type': 'application/x-neemata-json',
-        Accept: 'application/x-neemata-json',
+        'Content-Type': TEST_HEADERS.CONTENT_TYPE,
+        Accept: TEST_HEADERS.ACCEPT,
       },
     })
     expect(response.status).toBe(200)
-    expect(response.json()).resolves.toEqual({ message: 'Hello, Bun!' })
+    expect(response.json()).resolves.toEqual(testMessage)
   })
 
   afterAll(async () => {
     await app?.stop()
-    await Bun.file('./test.sock').delete()
+    await Bun.file(TEST_CONFIG.SOCKET_PATH).delete()
   })
 })

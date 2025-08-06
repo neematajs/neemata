@@ -8,6 +8,7 @@
   "dependencies": {
     "@std/assert": "npm:@jsr/std__assert@^1.0.13",
     "@std/testing": "npm:@jsr/std__testing@^1.0.15",
+    "neemata-test-generic": "workspace:*",
     "nmtjs": "workspace:*"
   },
   "devDependencies": {

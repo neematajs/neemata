@@ -104,7 +104,9 @@ jobs:
       fail-fast: true
       matrix:
         node:
-          - latest
+          - 20
+          - 22
+          - 24
         os:
           - ubuntu-latest
           - macos-latest

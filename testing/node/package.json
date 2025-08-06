@@ -7,8 +7,9 @@
   },
   "dependencies": {
     "@types/node": "^20",
-    "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.52.0",
+    "neemata-test-generic": "workspace:*",
     "nmtjs": "workspace:*",
+    "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.52.0",
     "undici": "7.13.0"
   }
 }

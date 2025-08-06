@@ -1,8 +1,13 @@
 import { assertEquals } from '@std/assert'
 import { afterAll, beforeAll, describe, it } from '@std/testing/bdd'
-import { n, t, WorkerType } from 'nmtjs'
+import {
+  createTestingApplication,
+  createTestMessage,
+  TEST_CONFIG,
+  TEST_HEADERS,
+  TEST_ROUTES,
+} from 'neemata-test-generic'
 import type { Application } from 'nmtjs/application'
-import { JsonFormat } from 'nmtjs/json-format'
 import { WsTransport } from 'nmtjs/ws-transport/deno'
 
 describe('Deno', () => {
@@ -12,47 +17,19 @@ describe('Deno', () => {
     proxy: {
       // @ts-expect-error
       transport: 'unix',
-      path: './test.sock',
+      path: TEST_CONFIG.SOCKET_PATH,
     },
   })
 
   beforeAll(async () => {
-    const namespace = n.namespace({
-      name: 'test',
-      procedures: {
-        test: n.procedure({
-          input: t.any(),
-          handler: (_, input) => {
-            return input
-          },
-        }),
-      },
+    app = createTestingApplication().use(WsTransport, {
+      listen: { unix: TEST_CONFIG.SOCKET_PATH },
     })
-
-    const router = n.router({ test: namespace })
-
-    app = n
-      .app({
-        type: WorkerType.Api,
-        api: {
-          formats: [new JsonFormat()],
-          timeout: 10000,
-        },
-        pubsub: {},
-        tasks: { timeout: 10000 },
-        logging: {
-          pinoOptions: { enabled: true },
-          destinations: [n.logging.console('error')],
-        },
-      })
-      .use(WsTransport, { listen: { unix: './test.sock' } })
-      .withRouter(router)
-
     await app.start()
   })
 
   it('should check status', async () => {
-    const response = await fetch('http://localhost/healthy', {
+    const response = await fetch(`http://localhost${TEST_ROUTES.HEALTH}`, {
       //@ts-expect-error
       client,
     })
@@ -61,22 +38,23 @@ describe('Deno', () => {
   })
 
   it('should handle http', async () => {
-    const response = await fetch('http://localhost/api/test/test', {
+    const testMessage = createTestMessage('Deno')
+    const response = await fetch(`http://localhost${TEST_ROUTES.API_TEST}`, {
       //@ts-expect-error
       client,
       method: 'POST',
-      body: JSON.stringify({ message: 'Hello, Deno!' }),
+      body: JSON.stringify(testMessage),
       headers: {
-        'Content-Type': 'application/x-neemata-json',
-        Accept: 'application/x-neemata-json',
+        'Content-Type': TEST_HEADERS.CONTENT_TYPE,
+        Accept: TEST_HEADERS.ACCEPT,
       },
     })
     assertEquals(response.status, 200)
-    assertEquals(await response.json(), { message: 'Hello, Deno!' })
+    assertEquals(await response.json(), testMessage)
   })
 
   afterAll(async () => {
     await app?.stop()
-    Deno.removeSync('./test.sock')
+    Deno.removeSync(TEST_CONFIG.SOCKET_PATH)
   })
 })

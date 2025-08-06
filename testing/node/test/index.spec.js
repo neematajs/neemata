@@ -1,8 +1,13 @@
 import assert from 'node:assert'
 import { rmSync } from 'node:fs'
 import { after, before, describe, it } from 'node:test'
-import { n, t, WorkerType } from 'nmtjs'
-import { JsonFormat } from 'nmtjs/json-format'
+import {
+  createTestingApplication,
+  createTestMessage,
+  TEST_CONFIG,
+  TEST_HEADERS,
+  TEST_ROUTES,
+} from 'neemata-test-generic'
 import { WsTransport } from 'nmtjs/ws-transport/node'
 import { Agent, request } from 'undici'
 
@@ -11,45 +16,19 @@ describe('Node.js', () => {
    * @type {import('nmtjs/application').Application}
    */
   let app
-  const dispatcher = new Agent({ connect: { socketPath: './test.sock' } })
+  const dispatcher = new Agent({
+    connect: { socketPath: TEST_CONFIG.SOCKET_PATH },
+  })
 
   before(async () => {
-    const namespace = n.namespace({
-      name: 'test',
-      procedures: {
-        test: n.procedure({
-          input: t.any(),
-          handler: (_, input) => {
-            return input
-          },
-        }),
-      },
+    app = createTestingApplication().use(WsTransport, {
+      listen: { unix: TEST_CONFIG.SOCKET_PATH },
     })
-
-    const router = n.router({ test: namespace })
-
-    app = n
-      .app({
-        type: WorkerType.Api,
-        api: {
-          formats: [new JsonFormat()],
-          timeout: 10000,
-        },
-        pubsub: {},
-        tasks: { timeout: 10000 },
-        logging: {
-          pinoOptions: { enabled: true },
-          destinations: [n.logging.console('error')],
-        },
-      })
-      .use(WsTransport, { listen: { unix: './test.sock' } })
-      .withRouter(router)
-
     await app.start()
   })
 
   it('should check status', async () => {
-    const response = await request('http://localhost/healthy', {
+    const response = await request(`http://localhost${TEST_ROUTES.HEALTH}`, {
       dispatcher,
     })
     assert.strictEqual(response.statusCode, 200)
@@ -57,23 +36,22 @@ describe('Node.js', () => {
   })
 
   it('should handle http', async () => {
-    const response = await request('http://localhost/api/test/test', {
+    const testMessage = createTestMessage('Node')
+    const response = await request(`http://localhost${TEST_ROUTES.API_TEST}`, {
       dispatcher,
       method: 'POST',
-      body: JSON.stringify({ message: 'Hello, Node!' }),
+      body: JSON.stringify(testMessage),
       headers: {
-        'Content-Type': 'application/x-neemata-json',
-        Accept: 'application/x-neemata-json',
+        'Content-Type': TEST_HEADERS.CONTENT_TYPE,
+        Accept: TEST_HEADERS.ACCEPT,
       },
     })
-    assert.deepStrictEqual(await response.body.json(), {
-      message: 'Hello, Node!',
-    })
+    assert.deepStrictEqual(await response.body.json(), testMessage)
     assert.strictEqual(response.statusCode, 200)
   })
 
   after(async () => {
     await app?.stop()
-    rmSync('./test.sock', { force: true })
+    rmSync(TEST_CONFIG.SOCKET_PATH, { force: true })
   })
 })
