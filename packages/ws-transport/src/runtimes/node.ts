@@ -11,6 +11,7 @@ import type {
 import {
   InternalServerErrorHttpResponse,
   NotFoundHttpResponse,
+  StatusResponse,
 } from '../utils.ts'
 
 function adapterFactory(params: WsAdapterParams<'node'>): WsAdapterServer {
@@ -29,6 +30,15 @@ function adapterFactory(params: WsAdapterParams<'node'>): WsAdapterServer {
       ...params.runtime?.ws,
       ...adapter.websocket,
     })
+    .get('/healthy', async (res) => {
+      res.onAborted(() => {})
+      const response = StatusResponse()
+      res.cork(async () => {
+        res
+          .writeStatus(`${response.status} ${response.statusText}`)
+          .end(await response.arrayBuffer())
+      })
+    })
     .any('/*', async (res, req) => {
       const controller = new AbortController()
       res.onAborted(() => controller.abort())
@@ -40,7 +50,8 @@ function adapterFactory(params: WsAdapterParams<'node'>): WsAdapterServer {
       req.forEach((k, v) => headers.append(k, v))
 
       const host = headers.get('host') || 'localhost'
-      const proto = headers.get('x-forwarded-proto') || 'http'
+      const proto =
+        headers.get('x-forwarded-proto') || params.tls ? 'https' : 'http'
       const url = new URL(req.getUrl(), `${proto}://${host}`)
 
       if (url.pathname.startsWith(params.apiPath)) {
@@ -48,7 +59,7 @@ function adapterFactory(params: WsAdapterParams<'node'>): WsAdapterServer {
           const body = new ReadableStream({
             start(controller) {
               res.onData((chunk, isLast) => {
-                if (chunk) controller.enqueue(chunk.slice(0))
+                if (chunk) controller.enqueue(Buffer.from(chunk.slice(0)))
                 if (isLast) controller.close()
               })
               res.onAborted(() => controller.error())

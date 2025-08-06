@@ -28,3 +28,5 @@ export const InternalServerErrorHttpResponse = () =>
       'Content-Type': 'text/plain',
     },
   })
+
+export const StatusResponse = () => new Response('OK', { status: 200 })

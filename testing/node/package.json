@@ -1,0 +1,14 @@
+{
+  "name": "neemata-test-node",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/*.spec.js"
+  },
+  "dependencies": {
+    "@types/node": "^20",
+    "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.52.0",
+    "nmtjs": "workspace:*",
+    "undici": "7.13.0"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "name": "neemata-test-bun",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@types/bun": "^1.2.19",
+    "nmtjs": "workspace:*"
+  }
+}

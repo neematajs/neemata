@@ -135,5 +135,5 @@ export function onceAborted(signal: AbortSignal) {
 }
 
 export function isAbortError(error: any): boolean {
-  return error.name === 'AbortError' || error.code === DOMException.ABORT_ERR
+  return error.name === 'AbortError' && error.code === 20
 }

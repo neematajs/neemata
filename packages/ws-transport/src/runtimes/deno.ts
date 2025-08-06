@@ -10,6 +10,7 @@ import type {
 import {
   InternalServerErrorHttpResponse,
   NotFoundHttpResponse,
+  StatusResponse,
 } from '../utils.ts'
 
 type DenoServer = ReturnType<typeof globalThis.Deno.serve>
@@ -67,7 +68,6 @@ function adapterFactory(params: WsAdapterParams<'deno'>): WsAdapterServer {
               if (request.headers.get('upgrade') === 'websocket') {
                 return await adapter.handleUpgrade(request, info as any)
               }
-
               const { headers, method, body } = request
               return await params.fetchHandler(
                 {
@@ -82,11 +82,15 @@ function adapterFactory(params: WsAdapterParams<'deno'>): WsAdapterServer {
               params.logger.error({ err }, 'Error in fetch handler')
               return InternalServerErrorHttpResponse()
             }
+          } else if (url.pathname === '/healthy') {
+            return StatusResponse()
           }
           return NotFoundHttpResponse()
         },
         onListen(addr: DenoAddr) {
-          resolve({ server, addr })
+          setTimeout(() => {
+            resolve({ server, addr })
+          }, 1)
         },
       })
     })
