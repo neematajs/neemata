@@ -7,15 +7,15 @@
       "import": "./dist/index.js",
       "module-sync": "./dist/index.js"
     },
-    "./runtime/bun": {
+    "./bun": {
       "types": "./src/runtimes/bun.ts",
       "import": "./dist/runtimes/bun.js"
     },
-    "./runtime/deno": {
+    "./deno": {
       "types": "./src/runtimes/deno.ts",
       "import": "./dist/runtimes/deno.js"
     },
-    "./runtime/node": {
+    "./node": {
       "types": "./src/runtimes/node.ts",
       "import": "./dist/runtimes/node.js"
     }
@@ -27,9 +27,9 @@
         "import": "./dist/index.js",
         "module-sync": "./dist/index.js"
       },
-      "./runtime/bun": "./dist/runtimes/bun.js",
-      "./runtime/deno": "./dist/runtimes/deno.js",
-      "./runtime/node": "./dist/runtimes/node.js"
+      "./bun": "./dist/runtimes/bun.js",
+      "./deno": "./dist/runtimes/deno.js",
+      "./node": "./dist/runtimes/node.js"
     }
   },
   "scripts": {

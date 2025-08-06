@@ -1,1 +1,1 @@
-export * from '@nmtjs/ws-transport/runtime/bun'
+export * from '@nmtjs/ws-transport/bun'

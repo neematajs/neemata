@@ -18,9 +18,9 @@ describe('nmtjs', () => {
     const type = await import('nmtjs/type')
     const typeDefault = (await import('nmtjs/type')).default
     const wsTransport = await import('nmtjs/ws-transport')
-    const wsTransportRuntimeNode = await import('nmtjs/ws-transport/node')
-    const wsTransportRuntimeDeno = await import('nmtjs/ws-transport/deno')
-    const wsTransportRuntimeBun = await import('nmtjs/ws-transport/bun')
+    const wsTransporterNode = await import('nmtjs/ws-transport/node')
+    const wsTransporterDeno = await import('nmtjs/ws-transport/deno')
+    const wsTransporterBun = await import('nmtjs/ws-transport/bun')
 
     const _application = await import('@nmtjs/application')
     const _cli = await import('@nmtjs/cli')
@@ -36,15 +36,9 @@ describe('nmtjs', () => {
     const _type = await import('@nmtjs/type')
     const _typeDefault = (await import('@nmtjs/type')).default
     const _wsTransport = await import('@nmtjs/ws-transport')
-    const _wsTransportRuntimeNode = await import(
-      '@nmtjs/ws-transport/runtime/node'
-    )
-    const _wsTransportRuntimeDeno = await import(
-      '@nmtjs/ws-transport/runtime/deno'
-    )
-    const _wsTransportRuntimeBun = await import(
-      '@nmtjs/ws-transport/runtime/bun'
-    )
+    const _wsTransporterNode = await import('@nmtjs/ws-transport/node')
+    const _wsTransporterDeno = await import('@nmtjs/ws-transport/deno')
+    const _wsTransporterBun = await import('@nmtjs/ws-transport/bun')
 
     expect(nmtjs).toBeDefined()
     expect(common).toBeDefined()
@@ -76,8 +70,8 @@ describe('nmtjs', () => {
     expect(_type).toStrictEqual(type)
     expect(_typeDefault).toStrictEqual(typeDefault)
     expect(_wsTransport).toStrictEqual(wsTransport)
-    expect(_wsTransportRuntimeNode).toStrictEqual(wsTransportRuntimeNode)
-    expect(_wsTransportRuntimeDeno).toStrictEqual(wsTransportRuntimeDeno)
-    expect(_wsTransportRuntimeBun).toStrictEqual(wsTransportRuntimeBun)
+    expect(_wsTransporterNode).toStrictEqual(wsTransporterNode)
+    expect(_wsTransporterDeno).toStrictEqual(wsTransporterDeno)
+    expect(_wsTransporterBun).toStrictEqual(wsTransporterBun)
   })
 })
