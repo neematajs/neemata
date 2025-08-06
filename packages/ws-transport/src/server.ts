@@ -1,19 +1,12 @@
-import {
-  App,
-  type HttpRequest,
-  type HttpResponse,
-  SSLApp,
-  type TemplatedApp,
-  us_socket_local_port,
-} from 'uWebSockets.js'
 import { randomUUID } from 'node:crypto'
-import { once } from 'node:events'
 import { Duplex, Readable } from 'node:stream'
 import { Scope } from '@nmtjs/core'
 import {
   ClientMessageType,
+  concat,
   decodeNumber,
   ErrorCode,
+  encodeNumber,
   ProtocolBlob,
   type ServerMessageType,
 } from '@nmtjs/protocol'
@@ -30,6 +23,7 @@ import {
   UnsupportedContentTypeError,
   UnsupportedFormatError,
 } from '@nmtjs/protocol/server'
+import { defineHooks, type Peer } from 'crossws'
 import {
   AllowedHttpMethod,
   HttpCode,
@@ -38,144 +32,68 @@ import {
 } from './http.ts'
 import { WsTransportInjectables } from './injectables.ts'
 import type {
+  WsAdapterParams,
+  WsAdapterServer,
+  WsAdapterServerFactory,
   WsConnectionData,
+  WsTransportCorsCustomParams,
+  WsTransportCorsOptions,
   WsTransportOptions,
-  WsTransportSocket,
-  WsUserData,
+  WsTransportServerRequest,
 } from './types.ts'
-import {
-  getRequestBody,
-  getRequestData,
-  readableToArrayBuffer,
-  send,
-  setHeaders,
-} from './utils.ts'
+import { InternalServerErrorHttpResponse } from './utils.ts'
 
-const DEFAULT_ALLOWED_METHODS = ['post'] as ('get' | 'post')[]
+const NEEMATA_BLOB_HEADER = 'X-Neemata-Blob'
+const DEFAULT_ALLOWED_METHODS = Object.freeze(['post']) as ('get' | 'post')[]
+const DEFAULT_CORS_PARAMS = Object.freeze({
+  allowCredentials: 'true',
+  allowMethods: ['GET', 'POST'],
+  allowHeaders: ['Content-Type', 'Accept'],
+  maxAge: undefined,
+  requestMethod: undefined,
+  exposeHeaders: [],
+  requestHeaders: [],
+}) satisfies WsTransportCorsCustomParams
+const CORS_HEADERS_MAP: Record<
+  keyof WsTransportCorsCustomParams | 'origin',
+  string
+> = {
+  origin: 'Access-Control-Allow-Origin',
+  allowMethods: 'Access-Control-Allow-Methods',
+  allowHeaders: 'Access-Control-Allow-Headers',
+  allowCredentials: 'Access-Control-Allow-Credentials',
+  maxAge: 'Access-Control-Max-Age',
+  exposeHeaders: 'Access-Control-Expose-Headers',
+  requestHeaders: 'Access-Control-Request-Headers',
+  requestMethod: 'Access-Control-Request-Method',
+}
 
 export class WsTransportServer implements Transport<WsConnectionData> {
-  protected server!: TemplatedApp
-  protected clients: Map<string, WsTransportSocket> = new Map()
+  #server: WsAdapterServer
+  #corsOptions?:
+    | null
+    | true
+    | string[]
+    | WsTransportCorsOptions
+    | ((origin: string) => boolean | WsTransportCorsOptions)
+
+  clients = new Map<string, Peer>()
 
   constructor(
+    protected readonly adapterFactory: WsAdapterServerFactory<any>,
     protected readonly context: TransportPluginContext,
     protected readonly options: WsTransportOptions,
   ) {
-    this.server = this.options.tls ? SSLApp(options.tls!) : App()
-    this.server
-      .options('/*', (res, req) => {
-        this.applyCors(res, req)
-        res.writeStatus('200 OK')
-        res.endWithoutBody()
-      })
-      .get('/healthy', (res, req) => {
-        this.applyCors(res, req)
-        res.writeHeader('Content-Type', 'text/plain')
-        res.end('OK')
-      })
-      .ws<WsUserData>('/api', {
-        sendPingsAutomatically: true,
-        maxPayloadLength: this.options.maxPayloadLength,
-        upgrade: async (res, req, socketContext) => {
-          const ac = new AbortController()
+    this.#server = this.createServer()
+    this.#corsOptions = this.options.cors
+  }
 
-          res.onAborted(ac.abort.bind(ac))
+  async start() {
+    await this.#server.start()
+  }
 
-          const requestData = getRequestData(req, res)
-          const contentType =
-            requestData.query.get('content-type') ||
-            requestData.headers.get('content-type')
-          const acceptType =
-            requestData.query.get('accept') || requestData.headers.get('accept')
-
-          const connectionId = randomUUID()
-          const controller = new AbortController()
-          try {
-            const { context } = await this.protocol.addConnection(
-              this,
-              { id: connectionId, data: { type: 'ws' } },
-              { acceptType, contentType },
-            )
-            context.container.provide(
-              WsTransportInjectables.connectionData,
-              requestData,
-            )
-            context.container.provide(
-              ProtocolInjectables.connectionAbortSignal,
-              controller.signal,
-            )
-
-            if (!ac.signal.aborted) {
-              res.cork(() => {
-                res.upgrade(
-                  {
-                    id: connectionId,
-                    request: requestData,
-                    contentType,
-                    acceptType,
-                    backpressure: null,
-                    context,
-                    controller,
-                  } as WsUserData,
-                  req.getHeader('sec-websocket-key'),
-                  req.getHeader('sec-websocket-protocol'),
-                  req.getHeader('sec-websocket-extensions'),
-                  socketContext,
-                )
-              })
-            }
-          } catch (error) {
-            this.logger.debug(
-              new Error('Failed to upgrade connection', { cause: error }),
-            )
-            if (!ac.signal.aborted) {
-              res.cork(() => {
-                res.writeStatus('500 Internal Server Error')
-                res.endWithoutBody()
-              })
-            }
-          }
-        },
-        open: (ws: WsTransportSocket) => {
-          const { id } = ws.getUserData()
-          this.logger.debug('Connection %s opened', id)
-          this.clients.set(id, ws)
-        },
-        message: async (ws: WsTransportSocket, buffer) => {
-          const messageType = decodeNumber(buffer, 'Uint8')
-          if (messageType in this === false) {
-            ws.end(1011, 'Unknown message type')
-          } else {
-            try {
-              await this[messageType](
-                ws,
-                buffer.slice(Uint8Array.BYTES_PER_ELEMENT),
-              )
-            } catch (error: any) {
-              this.logError(error, 'Error while processing message')
-            }
-          }
-        },
-        drain: (ws: WsTransportSocket) => {
-          const data = ws.getUserData()
-          data.backpressure?.resolve()
-          data.backpressure = null
-        },
-        close: async (ws: WsTransportSocket, code, message) => {
-          const { id, controller } = ws.getUserData()
-          controller.abort()
-          this.logger.debug(
-            'Connection %s closed with code %s: %s',
-            id,
-            code,
-            Buffer.from(message).toString(),
-          )
-          this.clients.delete(id)
-          await this.protocol.removeConnection(id)
-        },
-      })
-      .get('/api/:namespace/:procedure', this.httpHandler.bind(this))
-      .post('/api/:namespace/:procedure', this.httpHandler.bind(this))
+  async stop() {
+    await this.#server.stop()
   }
 
   send(
@@ -183,121 +101,97 @@ export class WsTransportServer implements Transport<WsConnectionData> {
     messageType: ServerMessageType,
     buffer: ArrayBuffer,
   ) {
-    const ws = this.clients.get(connection.id)
-    if (ws) send(ws, messageType, buffer)
+    const peer = this.clients.get(connection.id)
+    peer?.send(concat(encodeNumber(messageType, 'Uint8'), buffer))
   }
 
-  async start() {
-    return new Promise<void>((resolve, reject) => {
-      const { hostname = '127.0.0.1', port = 0, unix } = this.options
-      if (unix) {
-        this.server.listen_unix((socket) => {
-          if (socket) {
-            this.logger.info('Server started on unix://%s', unix)
-            resolve()
-          } else {
-            reject(new Error('Failed to start WebSockets server'))
-          }
-        }, unix)
-      } else {
-        this.server.listen(hostname, port, (socket) => {
-          if (socket) {
-            this.logger.info(
-              'WebSocket Server started on %s:%s',
-              hostname,
-              us_socket_local_port(socket),
-            )
-            resolve()
-          } else {
-            reject(new Error('Failed to start WebSockets server'))
-          }
-        })
-      }
-    })
-  }
+  async httpHandler(
+    request: WsTransportServerRequest,
+    body: ReadableStream | null,
+    requestSignal: AbortSignal,
+  ): Promise<Response> {
+    const url = new URL(request.url)
+    const pathParts = url.pathname.split('/').filter(Boolean)
 
-  async stop() {
-    this.server.close()
-  }
-
-  // TODO: decompose this mess
-  protected async httpHandler(res: HttpResponse, req: HttpRequest) {
-    this.applyCors(res, req)
-
-    const controller = new AbortController()
-
-    res.onAborted(controller.abort.bind(controller))
-
-    const method = req.getMethod() as 'get' | 'post'
-    const namespace = req.getParameter('namespace')
-    const procedure = req.getParameter('procedure')
-    const requestData = getRequestData(req, res)
-
-    if (!namespace || !procedure) {
-      const status = HttpCode.NotFound
-      const text = HttpStatusText[status]
-      return void res.cork(() => {
-        if (controller.signal.aborted) return
-        res.writeStatus(`${status} ${text}`)
-        res.endWithoutBody()
+    // Expect /api/{namespace}/{procedure}
+    if (pathParts.length < 3 || pathParts[0] !== 'api') {
+      return new Response('Not Found', {
+        status: HttpCode.NotFound,
+        statusText: HttpStatusText[HttpCode.NotFound],
       })
     }
 
-    const isBlob = requestData.headers.get('x-neemata-blob') === 'true'
+    const namespace = pathParts[1]
+    const procedure = pathParts[2]
+    const method = request.method.toLowerCase()
 
-    const contentType = requestData.headers.get('content-type')
-    const acceptType = requestData.headers.get('accept')
-    const connectionId = randomUUID()
-    const connection = new Connection<WsConnectionData>({
-      id: connectionId,
-      data: { type: 'http' },
-    })
+    const origin = request.headers.get('origin')
     const responseHeaders = new Headers()
-    const container = this.context.container.fork(Scope.Call)
-    container.provide(ProtocolInjectables.connection, connection)
-    container.provide(
-      ProtocolInjectables.connectionAbortSignal,
-      controller.signal,
-    )
-    container.provide(WsTransportInjectables.connectionData, requestData)
-    container.provide(
-      WsTransportInjectables.httpResponseHeaders,
-      responseHeaders,
-    )
+    if (origin) this.applyCors(origin, request, responseHeaders)
 
-    const body = method === 'post' ? getRequestBody(res) : undefined
-
-    const metadata: ProtocolApiCallOptions['metadata'] = (metadata) => {
-      const allowHttpMethod =
-        metadata.get(AllowedHttpMethod) ?? DEFAULT_ALLOWED_METHODS
-      if (!allowHttpMethod.includes(method)) {
-        throw new ProtocolError(ErrorCode.NotFound)
-      }
+    // Handle preflight requests
+    if (method === 'options') {
+      return new Response(null, {
+        status: HttpCode.OK,
+        headers: responseHeaders,
+      })
     }
-    let format: ReturnType<typeof getFormat>
+
+    const controller = new AbortController()
+    const signal = AbortSignal.any([requestSignal, controller.signal])
+    const isBlob = request.headers.get(NEEMATA_BLOB_HEADER) === 'true'
+    const contentType = request.headers.get('content-type')
+    const acceptType = request.headers.get('accept')
+    const connectionId = randomUUID()
+
     try {
-      format = getFormat(this.context.format, {
+      // Create temporary connection for HTTP request
+      const connection = new Connection<WsConnectionData>({
+        id: connectionId,
+        data: { type: 'http' },
+      })
+
+      const container = this.context.container.fork(Scope.Call)
+      container.provide(ProtocolInjectables.connection, connection)
+      container.provide(ProtocolInjectables.connectionAbortSignal, signal)
+
+      // Set up HTTP-specific injectables
+      container.provide(WsTransportInjectables.connectionData, request)
+      container.provide(
+        WsTransportInjectables.httpResponseHeaders,
+        responseHeaders,
+      )
+
+      // Get format for encoding/decoding
+      const format = getFormat(this.context.format, {
         acceptType,
         contentType: isBlob ? '*/*' : contentType,
       })
 
+      // Parse request body if present
       let payload: any
-
-      if (body) {
+      if (method === 'post' && body) {
+        const bodyStream = Readable.fromWeb(body as any)
         if (isBlob) {
           const type = contentType || 'application/octet-stream'
-          const contentLength = requestData.headers.get('content-length')
+          const contentLength = request.headers.get('content-length')
           const size = contentLength
             ? Number.parseInt(contentLength)
             : undefined
-          const stream = new ProtocolClientStream(-1, { size, type })
-          body.pipe(stream)
-          payload = stream
+          payload = new ProtocolClientStream(-1, { size, type })
+          bodyStream.pipe(payload)
         } else {
-          const buffer = await readableToArrayBuffer(body)
-          if (buffer.byteLength > 0) {
-            payload = format.decoder.decode(buffer)
-          }
+          const buffer = Buffer.concat(await bodyStream.toArray()).buffer
+          payload =
+            buffer.byteLength > 0 ? format.decoder.decode(buffer) : undefined
+        }
+      }
+
+      const metadata: ProtocolApiCallOptions['metadata'] = (metadata) => {
+        const allowHttpMethod =
+          metadata.get(AllowedHttpMethod) ?? DEFAULT_ALLOWED_METHODS
+        if (!allowHttpMethod.includes(method as any)) {
+          throw new ProtocolError(ErrorCode.NotFound)
         }
       }
 
@@ -308,126 +202,163 @@ export class WsTransportServer implements Transport<WsConnectionData> {
         payload,
         metadata,
         container,
-        signal: controller.signal,
+        signal,
       })
 
+      // Handle streaming results
       if (isIterableResult(result)) {
-        res.cork(() => {
-          if (controller.signal.aborted) return
-          const status = HttpCode.NotImplemented
-          const text = HttpStatusText[status]
-          res.writeStatus(`${status} ${text}`)
-          res.end()
+        controller.abort('Transport does not support streaming results')
+        // TODO: might be better to fail early by checking procedure's contract
+        // without actually calling it
+        return new Response('Not Implemented', {
+          status: HttpCode.NotImplemented,
+          statusText: HttpStatusText[HttpCode.NotImplemented],
+          headers: responseHeaders,
         })
-      } else {
-        const { output } = result
+      }
 
-        if (output instanceof ProtocolBlob) {
-          const { source, metadata } = output
-          const { type } = metadata
+      const { output } = result
 
-          let stream: Readable
+      // Handle blob responses
+      if (output instanceof ProtocolBlob) {
+        const { source, metadata } = output
+        const { type } = metadata
 
-          if (source instanceof ReadableStream) {
-            stream = Readable.fromWeb(source as any)
-          } else if (source instanceof Readable || source instanceof Duplex) {
-            stream = Readable.from(source)
-          } else {
-            throw new Error('Invalid stream source')
-          }
+        responseHeaders.set(NEEMATA_BLOB_HEADER, 'true')
+        responseHeaders.set('Content-Type', type)
+        if (metadata.size) {
+          responseHeaders.set('Content-Length', metadata.size.toString())
+        }
 
-          res.cork(() => {
-            if (controller.signal.aborted) return
-            responseHeaders.set('X-Neemata-Blob', 'true')
-            responseHeaders.set('Content-Type', type)
-            if (metadata.size)
-              res.writeHeader('Content-Length', metadata.size.toString())
-            setHeaders(res, responseHeaders)
-          })
+        // Convert source to ReadableStream
+        let stream: ReadableStream
 
-          controller.signal.addEventListener('abort', () => stream.destroy(), {
-            once: true,
-          })
-
-          stream.on('data', (chunk) => {
-            if (controller.signal.aborted) return
-            const buf = Buffer.from(chunk)
-            const ab = buf.buffer.slice(
-              buf.byteOffset,
-              buf.byteOffset + buf.byteLength,
-            )
-            const ok = res.write(ab)
-            if (!ok) {
-              stream.pause()
-              res.onWritable(() => {
-                stream.resume()
-                return true
-              })
-            }
-          })
-          await once(stream, 'end')
-          if (stream.readableAborted) {
-            res.end(undefined, true)
-          } else {
-            res.end()
-          }
+        if (source instanceof ReadableStream) {
+          stream = source
+        } else if (source instanceof Readable || source instanceof Duplex) {
+          stream = Readable.toWeb(source) as unknown as ReadableStream
         } else {
-          res.cork(() => {
-            if (controller.signal.aborted) return
-            const status = HttpCode.OK
-            const text = HttpStatusText[status]
-            const buffer = format.encoder.encode(output)
-            res.writeStatus(`${status} ${text}`)
-            responseHeaders.set('Content-Type', format.encoder.contentType)
-            setHeaders(res, responseHeaders)
-            res.end(buffer)
-          })
+          throw new Error('Invalid stream source')
+        }
+
+        return new Response(stream, {
+          status: HttpCode.OK,
+          statusText: HttpStatusText[HttpCode.OK],
+          headers: responseHeaders,
+        })
+      }
+
+      // Handle regular responses
+      const buffer = format.encoder.encode(output)
+      responseHeaders.set('Content-Type', format.encoder.contentType)
+
+      return new Response(buffer, {
+        status: HttpCode.OK,
+        statusText: HttpStatusText[HttpCode.OK],
+        headers: responseHeaders,
+      })
+    } catch (error) {
+      if (error instanceof UnsupportedFormatError) {
+        const status =
+          error instanceof UnsupportedContentTypeError
+            ? HttpCode.UnsupportedMediaType
+            : HttpCode.NotAcceptable
+        const text = HttpStatusText[status]
+
+        return new Response(text, {
+          status,
+          statusText: text,
+          headers: responseHeaders,
+        })
+      }
+
+      if (error instanceof ProtocolError) {
+        const status =
+          error.code in HttpCodeMap
+            ? HttpCodeMap[error.code]
+            : HttpCode.InternalServerError
+        const text = HttpStatusText[status]
+
+        const format = getFormat(this.context.format, {
+          acceptType,
+          contentType: isBlob ? '*/*' : contentType,
+        })
+
+        const payload = format.encoder.encode(error)
+        responseHeaders.set('Content-Type', format.encoder.contentType)
+
+        return new Response(payload, {
+          status,
+          statusText: text,
+          headers: responseHeaders,
+        })
+      }
+
+      // Unknown error
+      this.logError(error, 'Unknown error while processing HTTP request')
+
+      const format = getFormat(this.context.format, {
+        acceptType,
+        contentType: isBlob ? '*/*' : contentType,
+      })
+
+      const payload = format.encoder.encode(
+        new ProtocolError(
+          ErrorCode.InternalServerError,
+          'Internal Server Error',
+        ),
+      )
+      responseHeaders.set('Content-Type', format.encoder.contentType)
+
+      return new Response(payload, {
+        status: HttpCode.InternalServerError,
+        statusText: HttpStatusText[HttpCode.InternalServerError],
+        headers: responseHeaders,
+      })
+    }
+  }
+
+  private applyCors(
+    origin: string,
+    request: WsTransportServerRequest,
+    headers: Headers,
+  ) {
+    if (!this.#corsOptions) return
+
+    let params: WsTransportCorsCustomParams | null = null
+
+    if (this.options.cors === true) {
+      params = { ...DEFAULT_CORS_PARAMS }
+    } else if (
+      Array.isArray(this.options.cors) &&
+      this.options.cors.includes(origin)
+    ) {
+      params = { ...DEFAULT_CORS_PARAMS }
+    } else if (typeof this.options.cors === 'function') {
+      const result = this.options.cors(origin, request)
+      if (typeof result === 'boolean') {
+        if (result) {
+          params = { ...DEFAULT_CORS_PARAMS }
+        }
+      } else if (typeof result === 'object') {
+        params = { ...DEFAULT_CORS_PARAMS }
+        for (const key in DEFAULT_CORS_PARAMS) {
+          params[key] = result[key]
         }
       }
-    } catch (error) {
-      if (controller.signal.aborted) return
-      if (error instanceof UnsupportedFormatError) {
-        res.cork(() => {
-          if (controller.signal.aborted) return
-          const status =
-            error instanceof UnsupportedContentTypeError
-              ? HttpCode.UnsupportedMediaType
-              : HttpCode.NotAcceptable
-          const text = HttpStatusText[status]
-          res.writeStatus(`${status} ${text}`)
-          res.end()
-        })
-      } else if (error instanceof ProtocolError) {
-        res.cork(() => {
-          if (controller.signal.aborted) return
-          const status =
-            error.code in HttpCodeMap
-              ? HttpCodeMap[error.code]
-              : HttpCode.InternalServerError
-          const text = HttpStatusText[status]
-          res.writeStatus(`${status} ${text}`)
-          res.end(format!.encoder.encode(error))
-        })
-      } else {
-        this.logError(error, 'Unknown error while processing request')
-        res.cork(() => {
-          if (controller.signal.aborted) return
-          const status = HttpCode.InternalServerError
-          const text = HttpStatusText[status]
-          const payload = format!.encoder.encode(
-            new ProtocolError(
-              ErrorCode.InternalServerError,
-              'Internal Server Error',
-            ),
-          )
-          res.writeStatus(`${status} ${text}`)
-          res.end(payload)
-        })
+    }
+
+    if (params === null) return
+
+    headers.set(CORS_HEADERS_MAP.origin, origin)
+
+    for (const key in params) {
+      const header = CORS_HEADERS_MAP[key]
+      if (header) {
+        let value = params[key]
+        if (Array.isArray(value)) value = value.filter(Boolean).join(', ')
+        if (value) headers.set(header, value)
       }
-    } finally {
-      container.dispose().catch((error) => {
-        this.logError(error, 'Error while disposing call container')
-      })
     }
   }
 
@@ -446,100 +377,181 @@ export class WsTransportServer implements Transport<WsConnectionData> {
     this.logger.error(new Error(message, { cause }))
   }
 
-  protected applyCors(res: HttpResponse, req: HttpRequest) {
-    if (this.options.cors === false) return
-
-    const origin = req.getHeader('origin')
-    if (!origin) return
-
-    let allowed = false
-
-    if (this.options.cors === undefined || this.options.cors === true) {
-      allowed = true
-    } else if (Array.isArray(this.options.cors)) {
-      allowed = this.options.cors.includes(origin)
-    } else {
-      allowed = this.options.cors(origin)
-    }
-
-    if (!allowed) return
-
-    res.writeHeader('Access-Control-Allow-Origin', origin)
-    res.writeHeader('Access-Control-Allow-Headers', 'Content-Type')
-    res.writeHeader('Access-Control-Allow-Methods', 'GET, POST')
-    res.writeHeader('Access-Control-Allow-Credentials', 'true')
-  }
-
   protected [ClientMessageType.Rpc](
-    ws: WsTransportSocket,
+    peer: Peer,
     buffer: ArrayBuffer,
+    connectionId: string,
   ) {
-    const { id } = ws.getUserData()
-    this.protocol.rpcRaw(id, buffer)
+    this.protocol.rpcRaw(connectionId, buffer)
   }
 
   protected [ClientMessageType.RpcAbort](
-    ws: WsTransportSocket,
+    peer: Peer,
     buffer: ArrayBuffer,
+    connectionId: string,
   ) {
-    const { id } = ws.getUserData()
-    this.protocol.rpcAbortRaw(id, buffer)
+    this.protocol.rpcAbortRaw(connectionId, buffer)
   }
 
   protected [ClientMessageType.RpcStreamAbort](
-    ws: WsTransportSocket,
+    peer: Peer,
     buffer: ArrayBuffer,
+    connectionId: string,
   ) {
-    const { id } = ws.getUserData()
-    this.protocol.rpcStreamAbortRaw(id, buffer)
+    this.protocol.rpcStreamAbortRaw(connectionId, buffer)
   }
 
   protected [ClientMessageType.ClientStreamPush](
-    ws: WsTransportSocket,
+    peer: Peer,
     buffer: ArrayBuffer,
+    connectionId: string,
   ) {
-    const { id } = ws.getUserData()
     const streamId = decodeNumber(buffer, 'Uint32')
     this.protocol.pushClientStream(
-      id,
+      connectionId,
       streamId,
       buffer.slice(Uint32Array.BYTES_PER_ELEMENT),
     )
   }
 
   protected [ClientMessageType.ClientStreamEnd](
-    ws: WsTransportSocket,
+    peer: Peer,
     buffer: ArrayBuffer,
+    connectionId: string,
   ) {
-    const { id } = ws.getUserData()
     const streamId = decodeNumber(buffer, 'Uint32')
-    this.protocol.endClientStream(id, streamId)
+    this.protocol.endClientStream(connectionId, streamId)
   }
 
   protected [ClientMessageType.ClientStreamAbort](
-    ws: WsTransportSocket,
+    peer: Peer,
     buffer: ArrayBuffer,
+    connectionId: string,
   ) {
-    const { id } = ws.getUserData()
     const streamId = decodeNumber(buffer, 'Uint32')
-    this.protocol.abortClientStream(id, streamId)
+    this.protocol.abortClientStream(connectionId, streamId)
   }
 
   protected [ClientMessageType.ServerStreamPull](
-    ws: WsTransportSocket,
+    peer: Peer,
     buffer: ArrayBuffer,
+    connectionId: string,
   ) {
-    const { id } = ws.getUserData()
     const streamId = decodeNumber(buffer, 'Uint32')
-    this.protocol.pullServerStream(id, streamId)
+    this.protocol.pullServerStream(connectionId, streamId)
   }
 
   protected [ClientMessageType.ServerStreamAbort](
-    ws: WsTransportSocket,
+    peer: Peer,
     buffer: ArrayBuffer,
+    connectionId: string,
   ) {
-    const { id } = ws.getUserData()
     const streamId = decodeNumber(buffer, 'Uint32')
-    this.protocol.abortServerStream(id, streamId)
+    this.protocol.abortServerStream(connectionId, streamId)
+  }
+
+  private createWsHooks() {
+    return defineHooks({
+      upgrade: async (req) => {
+        const url = new URL(req.url)
+        const request: WsTransportServerRequest = {
+          url,
+          headers: req.headers,
+          method: req.method,
+        }
+        const contentType =
+          url.searchParams.get('content-type') ||
+          req.headers.get('content-type')
+        const acceptType =
+          url.searchParams.get('accept') || req.headers.get('accept')
+
+        const connectionId = randomUUID()
+        const controller = new AbortController()
+
+        try {
+          const { context } = await this.protocol.addConnection(
+            this,
+            { id: connectionId, data: { type: 'ws' } },
+            { acceptType, contentType },
+          )
+          context.container.provide(
+            WsTransportInjectables.connectionData,
+            request,
+          )
+          context.container.provide(
+            ProtocolInjectables.connectionAbortSignal,
+            controller.signal,
+          )
+          return {
+            context: {
+              id: connectionId,
+              contentType,
+              acceptType,
+              controller,
+              context,
+              request,
+            },
+          }
+        } catch (error) {
+          this.logger.error(
+            new Error('Failed to upgrade connection', { cause: error }),
+          )
+          return InternalServerErrorHttpResponse()
+        }
+      },
+      open: (peer) => {
+        const { id } = peer.context
+        this.logger.debug('Connection %s opened', id)
+        this.clients.set(id, peer)
+      },
+      message: async (peer, message) => {
+        const buffer = message.uint8Array().buffer as ArrayBuffer
+        const messageType = decodeNumber(buffer, 'Uint8')
+        if (messageType in this === false) {
+          peer.close(1011, 'Unknown message type')
+        } else {
+          try {
+            await (this as any)[messageType](
+              peer,
+              buffer.slice(Uint8Array.BYTES_PER_ELEMENT),
+              peer.context.id,
+            )
+          } catch (error: any) {
+            this.logError(error, 'Error while processing message')
+          }
+        }
+      },
+      error: (peer, error) => {
+        this.logger.error(
+          new Error(`WebSocket error ${peer.context.id}`, {
+            cause: error,
+          }),
+        )
+      },
+      close: async (peer, details) => {
+        const { id, controller } = peer.context
+        controller.abort()
+        this.logger.debug(
+          'Connection %s closed with code %s: %s',
+          peer.context.id,
+          details.code,
+          details.reason,
+        )
+        this.clients.delete(id)
+        await this.protocol.removeConnection(id)
+      },
+    })
+  }
+
+  private createServer() {
+    const hooks = this.createWsHooks()
+    const opts: WsAdapterParams = {
+      ...this.options,
+      logger: this.logger.child({ $group: 'WsServer' }),
+      apiPath: '/api',
+      wsHooks: hooks,
+      fetchHandler: this.httpHandler.bind(this),
+    }
+    return this.adapterFactory(opts)
   }
 }

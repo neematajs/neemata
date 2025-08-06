@@ -32,16 +32,16 @@
     }
   },
   "dependencies": {
-    "@nmtjs/common": "workspace:*",
-    "@nmtjs/core": "workspace:*",
-    "@nmtjs/protocol": "workspace:*",
     "@nmtjs/application": "workspace:*",
-    "@nmtjs/server": "workspace:*",
+    "@nmtjs/cli": "workspace:*",
+    "@nmtjs/common": "workspace:*",
     "@nmtjs/contract": "workspace:*",
-    "@nmtjs/type": "workspace:*",
+    "@nmtjs/core": "workspace:*",
     "@nmtjs/json-format": "workspace:*",
-    "@nmtjs/ws-transport": "workspace:*",
-    "@nmtjs/cli": "workspace:*"
+    "@nmtjs/protocol": "workspace:*",
+    "@nmtjs/server": "workspace:*",
+    "@nmtjs/type": "workspace:*",
+    "@nmtjs/ws-transport": "workspace:*"
   },
   "files": [
     "dist",

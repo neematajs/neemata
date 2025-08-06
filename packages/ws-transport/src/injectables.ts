@@ -1,9 +1,9 @@
 import { createLazyInjectable, type LazyInjectable, Scope } from '@nmtjs/core'
 import { ProtocolInjectables } from '@nmtjs/protocol/server'
-import type { WsUserData } from './types.ts'
+import type { WsTransportServerRequest } from './types.ts'
 
 const connectionData = ProtocolInjectables.connectionData as LazyInjectable<
-  WsUserData['request'],
+  WsTransportServerRequest,
   Scope.Connection
 >
 
