@@ -35,26 +35,33 @@ function adapterFactory(params: WsAdapterParams<'node'>): WsAdapterServer {
 
       let response = NotFoundHttpResponse()
 
-      if (req.getUrl().startsWith(params.apiPath)) {
-        const headers = new Headers()
-        req.forEach((k, v) => headers.append(k, v))
-        const body = new ReadableStream({
-          start(controller) {
-            res.onData((chunk, isLast) => {
-              if (chunk) controller.enqueue(chunk.slice(0))
-              if (isLast) controller.close()
-            })
-            res.onAborted(() => controller.error())
-          },
-        })
+      const headers = new Headers()
+      const method = req.getMethod()
+      req.forEach((k, v) => headers.append(k, v))
+
+      const host = headers.get('host') || 'localhost'
+      const proto = headers.get('x-forwarded-proto') || 'http'
+      const url = new URL(req.getUrl(), `${proto}://${host}`)
+
+      if (url.pathname.startsWith(params.apiPath)) {
         try {
+          const body = new ReadableStream({
+            start(controller) {
+              res.onData((chunk, isLast) => {
+                if (chunk) controller.enqueue(chunk.slice(0))
+                if (isLast) controller.close()
+              })
+              res.onAborted(() => controller.error())
+            },
+          })
           response = await params.fetchHandler(
-            new Request(req.getUrl(), {
-              method: req.getMethod(),
+            {
+              url,
+              method,
               headers,
-              body,
-              signal: controller.signal,
-            }),
+            },
+            body,
+            controller.signal,
           )
         } catch {
           response = InternalServerErrorHttpResponse()
@@ -89,27 +96,25 @@ function adapterFactory(params: WsAdapterParams<'node'>): WsAdapterServer {
 
   return {
     start: () =>
-      new Promise<void>((resolve, reject) => {
+      new Promise<string>((resolve, reject) => {
         if (params.listen.unix) {
           server.listen_unix((socket) => {
             if (socket) {
-              resolve()
+              resolve('unix://' + params.listen.unix)
             } else {
               reject(new Error('Failed to start WebSockets server'))
             }
           }, params.listen.unix)
         } else if (typeof params.listen.port === 'number') {
-          server.listen(
-            params.listen.hostname || '127.0.0.1',
-            params.listen.port,
-            (socket) => {
-              if (socket) {
-                resolve()
-              } else {
-                reject(new Error('Failed to start WebSockets server'))
-              }
-            },
-          )
+          const proto = params.tls ? 'https' : 'http'
+          const hostname = params.listen.hostname || '127.0.0.1'
+          server.listen(hostname, params.listen.port, (socket) => {
+            if (socket) {
+              resolve(`${proto}://${hostname}:${params.listen.port}`)
+            } else {
+              reject(new Error('Failed to start WebSockets server'))
+            }
+          })
         } else {
           reject(new Error('Invalid listen parameters'))
         }

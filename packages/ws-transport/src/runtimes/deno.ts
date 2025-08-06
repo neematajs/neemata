@@ -13,6 +13,24 @@ import {
 } from '../utils.ts'
 
 type DenoServer = ReturnType<typeof globalThis.Deno.serve>
+interface DenoNetAddr {
+  transport: 'tcp' | 'udp'
+  hostname: string
+  port: number
+}
+
+interface DenoUnixAddr {
+  transport: 'unix' | 'unixpacket'
+  path: string
+}
+
+interface DenoVsockAddr {
+  transport: 'vsock'
+  cid: number
+  port: number
+}
+
+type DenoAddr = DenoNetAddr | DenoUnixAddr | DenoVsockAddr
 
 function adapterFactory(params: WsAdapterParams<'deno'>): WsAdapterServer {
   const adapter = createAdapter({ hooks: params.wsHooks })
@@ -38,7 +56,7 @@ function adapterFactory(params: WsAdapterParams<'deno'>): WsAdapterServer {
         : undefined,
     }
 
-    return new Promise<DenoServer>((resolve) => {
+    return new Promise<{ server: DenoServer; addr: DenoAddr }>((resolve) => {
       const server = globalThis.Deno.serve({
         ...params.runtime?.server,
         ...options,
@@ -49,15 +67,24 @@ function adapterFactory(params: WsAdapterParams<'deno'>): WsAdapterServer {
               return adapter.handleUpgrade(request, info as any)
             }
             try {
-              return await params.fetchHandler(request)
+              const { headers, method, body } = request
+              return await params.fetchHandler(
+                {
+                  url,
+                  method,
+                  headers,
+                },
+                body,
+                request.signal,
+              )
             } catch {
               return InternalServerErrorHttpResponse()
             }
           }
           return NotFoundHttpResponse()
         },
-        onListen(localAddr) {
-          resolve(server)
+        onListen(addr: DenoAddr) {
+          resolve({ server, addr })
         },
       })
     })
@@ -65,7 +92,22 @@ function adapterFactory(params: WsAdapterParams<'deno'>): WsAdapterServer {
 
   return {
     start: async () => {
-      server = await createServer()
+      const { server: _server, addr } = await createServer()
+      server = _server
+      switch (addr.transport) {
+        case 'unix':
+        case 'unixpacket':
+          return `unix://${addr.path}`
+        case 'tcp':
+        case 'udp': {
+          const proto = params.tls ? 'https' : 'http'
+          return `${proto}://${addr.hostname}:${addr.port}`
+        }
+        case 'vsock':
+          return `vsock://${addr.cid}:${addr.port}`
+        default:
+          throw new Error(`Unsupported address transport`)
+      }
     },
     stop: async () => {
       if (server) {

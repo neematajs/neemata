@@ -39,12 +39,13 @@ import type {
   WsTransportCorsCustomParams,
   WsTransportCorsOptions,
   WsTransportOptions,
+  WsTransportServerRequest,
 } from './types.ts'
 import { InternalServerErrorHttpResponse } from './utils.ts'
 
 const NEEMATA_BLOB_HEADER = 'X-Neemata-Blob'
-const DEFAULT_ALLOWED_METHODS = ['post'] as ('get' | 'post')[]
-const DEFAULT_CORS_PARAMS = {
+const DEFAULT_ALLOWED_METHODS = Object.freeze(['post']) as ('get' | 'post')[]
+const DEFAULT_CORS_PARAMS = Object.freeze({
   allowCredentials: 'true',
   allowMethods: ['GET', 'POST'],
   allowHeaders: ['Content-Type', 'Accept'],
@@ -52,7 +53,7 @@ const DEFAULT_CORS_PARAMS = {
   requestMethod: undefined,
   exposeHeaders: [],
   requestHeaders: [],
-} satisfies WsTransportCorsCustomParams
+}) satisfies WsTransportCorsCustomParams
 const CORS_HEADERS_MAP: Record<
   keyof WsTransportCorsCustomParams | 'origin',
   string
@@ -87,12 +88,12 @@ export class WsTransportServer implements Transport<WsConnectionData> {
     this.#corsOptions = this.options.cors
   }
 
-  start() {
-    return this.#server.start()
+  async start() {
+    await this.#server.start()
   }
 
-  stop() {
-    return this.#server.stop()
+  async stop() {
+    await this.#server.stop()
   }
 
   send(
@@ -104,7 +105,11 @@ export class WsTransportServer implements Transport<WsConnectionData> {
     peer?.send(concat(encodeNumber(messageType, 'Uint8'), buffer))
   }
 
-  async httpHandler(request: Request): Promise<Response> {
+  async httpHandler(
+    request: WsTransportServerRequest,
+    body: ReadableStream | null,
+    requestSignal: AbortSignal,
+  ): Promise<Response> {
     const url = new URL(request.url)
     const pathParts = url.pathname.split('/').filter(Boolean)
 
@@ -133,6 +138,7 @@ export class WsTransportServer implements Transport<WsConnectionData> {
     }
 
     const controller = new AbortController()
+    const signal = AbortSignal.any([requestSignal, controller.signal])
     const isBlob = request.headers.get(NEEMATA_BLOB_HEADER) === 'true'
     const contentType = request.headers.get('content-type')
     const acceptType = request.headers.get('accept')
@@ -147,10 +153,7 @@ export class WsTransportServer implements Transport<WsConnectionData> {
 
       const container = this.context.container.fork(Scope.Call)
       container.provide(ProtocolInjectables.connection, connection)
-      container.provide(
-        ProtocolInjectables.connectionAbortSignal,
-        controller.signal,
-      )
+      container.provide(ProtocolInjectables.connectionAbortSignal, signal)
 
       // Set up HTTP-specific injectables
       container.provide(WsTransportInjectables.connectionData, request)
@@ -167,7 +170,8 @@ export class WsTransportServer implements Transport<WsConnectionData> {
 
       // Parse request body if present
       let payload: any
-      if (method === 'post' && request.body) {
+      if (method === 'post' && body) {
+        const bodyStream = Readable.fromWeb(body as any)
         if (isBlob) {
           const type = contentType || 'application/octet-stream'
           const contentLength = request.headers.get('content-length')
@@ -175,9 +179,9 @@ export class WsTransportServer implements Transport<WsConnectionData> {
             ? Number.parseInt(contentLength)
             : undefined
           payload = new ProtocolClientStream(-1, { size, type })
-          Readable.fromWeb(request.body as any).pipe(payload)
+          bodyStream.pipe(payload)
         } else {
-          const buffer = await request.arrayBuffer()
+          const buffer = Buffer.concat(await bodyStream.toArray()).buffer
           payload =
             buffer.byteLength > 0 ? format.decoder.decode(buffer) : undefined
         }
@@ -198,7 +202,7 @@ export class WsTransportServer implements Transport<WsConnectionData> {
         payload,
         metadata,
         container,
-        signal: controller.signal,
+        signal,
       })
 
       // Handle streaming results
@@ -254,13 +258,6 @@ export class WsTransportServer implements Transport<WsConnectionData> {
         headers: responseHeaders,
       })
     } catch (error) {
-      if (controller.signal.aborted) {
-        return new Response('Request Timeout', {
-          status: HttpCode.RequestTimeout,
-          statusText: HttpStatusText[HttpCode.RequestTimeout],
-        })
-      }
-
       if (error instanceof UnsupportedFormatError) {
         const status =
           error instanceof UnsupportedContentTypeError
@@ -321,34 +318,38 @@ export class WsTransportServer implements Transport<WsConnectionData> {
     }
   }
 
-  private applyCors(origin: string, request: Request, headers: Headers) {
+  private applyCors(
+    origin: string,
+    request: WsTransportServerRequest,
+    headers: Headers,
+  ) {
     if (!this.#corsOptions) return
 
     let params: WsTransportCorsCustomParams | null = null
 
     if (this.options.cors === true) {
-      params = DEFAULT_CORS_PARAMS
+      params = { ...DEFAULT_CORS_PARAMS }
     } else if (
       Array.isArray(this.options.cors) &&
       this.options.cors.includes(origin)
     ) {
-      params = DEFAULT_CORS_PARAMS
+      params = { ...DEFAULT_CORS_PARAMS }
     } else if (typeof this.options.cors === 'function') {
       const result = this.options.cors(origin, request)
       if (typeof result === 'boolean') {
         if (result) {
-          params = DEFAULT_CORS_PARAMS
+          params = { ...DEFAULT_CORS_PARAMS }
         }
       } else if (typeof result === 'object') {
-        params = DEFAULT_CORS_PARAMS
-        for (const key in result) {
+        params = { ...DEFAULT_CORS_PARAMS }
+        for (const key in DEFAULT_CORS_PARAMS) {
           params[key] = result[key]
         }
       }
     }
 
     if (params === null) return
-
+    ;``
     headers.set(CORS_HEADERS_MAP.origin, origin)
 
     for (const key in params) {
@@ -451,13 +452,18 @@ export class WsTransportServer implements Transport<WsConnectionData> {
 
   private createWsHooks() {
     return defineHooks({
-      upgrade: async (request) => {
-        const url = new URL(request.url)
+      upgrade: async (req) => {
+        const url = new URL(req.url)
+        const request: WsTransportServerRequest = {
+          url,
+          headers: req.headers,
+          method: req.method,
+        }
         const contentType =
           url.searchParams.get('content-type') ||
-          request.headers.get('content-type')
+          req.headers.get('content-type')
         const acceptType =
-          url.searchParams.get('accept') || request.headers.get('accept')
+          url.searchParams.get('accept') || req.headers.get('accept')
 
         const connectionId = randomUUID()
         const controller = new AbortController()

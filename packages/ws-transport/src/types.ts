@@ -4,6 +4,12 @@ import type { Hooks } from 'crossws'
 
 export type WsConnectionData = { type: 'ws' | 'http' }
 
+export type WsTransportServerRequest = {
+  url: URL
+  method: string
+  headers: Headers
+}
+
 declare module 'crossws' {
   interface PeerContext {
     id: Connection['id']
@@ -11,7 +17,7 @@ declare module 'crossws' {
     contentType: string | null
     context: ConnectionContext
     controller: AbortController
-    request: Request
+    request: WsTransportServerRequest
   }
 }
 
@@ -40,7 +46,7 @@ export type WsTransportCorsOptions =
   | WsTransportCorsCustomParams
   | ((
       origin: string,
-      request: Request,
+      request: WsTransportServerRequest,
     ) => boolean | WsTransportCorsCustomParams)
 
 export type WsTransportListenOptions = OneOf<
@@ -114,7 +120,11 @@ export type WsAdapterParams<
   listen: WsTransportListenOptions
   apiPath: string
   wsHooks: Hooks
-  fetchHandler: (request: Request) => Async<Response>
+  fetchHandler: (
+    request: WsTransportServerRequest,
+    body: ReadableStream | null,
+    signal: AbortSignal,
+  ) => Async<Response>
   cors?: WsTransportCorsOptions
   tls?: WsTransportTlsOptions
   runtime?: WsTransportRuntimes[R]
@@ -122,7 +132,7 @@ export type WsAdapterParams<
 
 export interface WsAdapterServer {
   stop: () => Async<any>
-  start: () => Async<any>
+  start: () => Async<string>
 }
 
 export type WsAdapterServerFactory<
