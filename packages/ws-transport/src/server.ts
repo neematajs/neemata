@@ -349,7 +349,7 @@ export class WsTransportServer implements Transport<WsConnectionData> {
     }
 
     if (params === null) return
-    ;``
+
     headers.set(CORS_HEADERS_MAP.origin, origin)
 
     for (const key in params) {
