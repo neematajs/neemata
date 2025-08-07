@@ -2,6 +2,7 @@ import { threadId } from 'node:worker_threads'
 import {
   type DestinationStream,
   type Level,
+  type LoggerOptions,
   type Logger as PinoLogger,
   pino,
   type StreamEntry,
@@ -13,7 +14,7 @@ export type { StreamEntry } from 'pino'
 export type Logger = PinoLogger
 export type LoggingOptions = {
   destinations?: Array<DestinationStream | StreamEntry<Level>>
-  pinoOptions?: any
+  pinoOptions?: LoggerOptions
 }
 
 // TODO: use node:util inspect

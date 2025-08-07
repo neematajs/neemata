@@ -5,6 +5,7 @@
     "module": "nodenext",
     "moduleDetection": "force",
     "allowJs": true,
+    "noEmit": true,
 
     "moduleResolution": "nodenext",
     "rewriteRelativeImportExtensions": true,

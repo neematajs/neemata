@@ -10,6 +10,7 @@ import type {
 import {
   InternalServerErrorHttpResponse,
   NotFoundHttpResponse,
+  StatusResponse,
 } from '../utils.ts'
 
 function adapterFactory(params: WsAdapterParams<'bun'>): WsAdapterServer {
@@ -20,6 +21,7 @@ function adapterFactory(params: WsAdapterParams<'bun'>): WsAdapterServer {
   function createServer() {
     return globalThis.Bun.serve({
       ...params.runtime?.server,
+
       unix: params.listen.unix,
       port: params.listen.port,
       hostname: params.listen.hostname,
@@ -35,7 +37,10 @@ function adapterFactory(params: WsAdapterParams<'bun'>): WsAdapterServer {
         ...params.runtime?.ws,
         ...adapter.websocket,
       },
-
+      routes: {
+        ...params.runtime?.server?.routes,
+        '/healthy': StatusResponse(),
+      },
       async fetch(request, server) {
         const url = new URL(request.url)
         if (url.pathname.startsWith(params.apiPath)) {

@@ -250,6 +250,76 @@ importers:
         specifier: github:uNetworking/uWebSockets.js#v20.52.0
         version: https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/cfc9a40d8132a34881813cec3d5f8e3a185b3ce3
 
+  testing/bun:
+    dependencies:
+      '@types/bun':
+        specifier: ^1.2.19
+        version: 1.2.19(@types/react@19.1.9)
+      neemata-test-generic:
+        specifier: workspace:*
+        version: link:../generic
+      nmtjs:
+        specifier: workspace:*
+        version: link:../../packages/nmtjs
+
+  testing/deno:
+    dependencies:
+      '@std/assert':
+        specifier: npm:@jsr/std__assert@^1.0.13
+        version: '@jsr/std__assert@1.0.13'
+      '@std/testing':
+        specifier: npm:@jsr/std__testing@^1.0.15
+        version: '@jsr/std__testing@1.0.15'
+      neemata-test-generic:
+        specifier: workspace:*
+        version: link:../generic
+      nmtjs:
+        specifier: workspace:*
+        version: link:../../packages/nmtjs
+    devDependencies:
+      '@types/deno':
+        specifier: ^2.3.0
+        version: 2.3.0
+      '@types/node':
+        specifier: ^20
+        version: 20.19.1
+
+  testing/generic:
+    dependencies:
+      '@nmtjs/client':
+        specifier: workspace:*
+        version: link:../../packages/client
+      '@nmtjs/http-client':
+        specifier: workspace:*
+        version: link:../../packages/http-client
+      '@nmtjs/json-format':
+        specifier: workspace:*
+        version: link:../../packages/json
+      '@nmtjs/ws-client':
+        specifier: workspace:*
+        version: link:../../packages/ws-client
+      nmtjs:
+        specifier: workspace:*
+        version: link:../../packages/nmtjs
+
+  testing/node:
+    dependencies:
+      '@types/node':
+        specifier: ^20
+        version: 20.19.1
+      neemata-test-generic:
+        specifier: workspace:*
+        version: link:../generic
+      nmtjs:
+        specifier: workspace:*
+        version: link:../../packages/nmtjs
+      uWebSockets.js:
+        specifier: github:uNetworking/uWebSockets.js#v20.52.0
+        version: https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/cfc9a40d8132a34881813cec3d5f8e3a185b3ce3
+      undici:
+        specifier: 7.13.0
+        version: 7.13.0
+
 packages:
 
   '@ampproject/remapping@2.3.0':
@@ -500,6 +570,27 @@ packages:
 
   '@jridgewell/trace-mapping@0.3.29':
     resolution: {integrity: sha512-uw6guiW/gcAGPDhLmd77/6lW8QLeiV5RUTsAX46Db6oLhGaVj4lhnPwb184s1bkc8kdVg/+h988dro8GRDpmYQ==}
+
+  '@jsr/std__assert@1.0.13':
+    resolution: {integrity: sha512-rZ44REoi2/p+gqu8OfkcNeaTOSiG1kD6v8gyA0YjkXsOkDsiGw9g8h7JuGC/OD7GgOVgTEY+9Cih49Y18rkrCQ==, tarball: https://npm.jsr.io/~/11/@jsr/std__assert/1.0.13.tgz}
+
+  '@jsr/std__async@1.0.14':
+    resolution: {integrity: sha512-aIG8W3TOmW+lKdAJA5w56qASu9EiUmBXbhW6eAlSEUBid+KVESGqQygFFg+awt/c8K+qobVM6M/u3SbIy0NyUQ==, tarball: https://npm.jsr.io/~/11/@jsr/std__async/1.0.14.tgz}
+
+  '@jsr/std__data-structures@1.0.9':
+    resolution: {integrity: sha512-+mT4Nll6fx+CPNqrlC+huhIOYNSMS+KUdJ4B8NujiQrh/bq++ds5PXpEsfV5EPR+YuWcuDGG0P1DE+Rednd7Wg==, tarball: https://npm.jsr.io/~/11/@jsr/std__data-structures/1.0.9.tgz}
+
+  '@jsr/std__fs@1.0.19':
+    resolution: {integrity: sha512-TEjyE8g+46jPlu7dJHLrwc8NMGl8zfG+JjWxyNQyDbxP0RtqZ4JmYZfR9vy4RWYWJQbLpw6Kbt2n+K/2zAO/JA==, tarball: https://npm.jsr.io/~/11/@jsr/std__fs/1.0.19.tgz}
+
+  '@jsr/std__internal@1.0.10':
+    resolution: {integrity: sha512-fmD6yKep/sMnB2yPQU/REZG7Z4N9SZwcUBNnceo4QkXk67l3JEfxHoROQ/YHeVSOmq6x55Ra6nuMjz2ib3nj3g==, tarball: https://npm.jsr.io/~/11/@jsr/std__internal/1.0.10.tgz}
+
+  '@jsr/std__path@1.1.1':
+    resolution: {integrity: sha512-+x5LgcNUSpMzOZIRmFSjqrMTCxHlgXjWzK8ZFr7lwgHfWZxoVXeis3MFQlkR5mN5uQ61Y1P30Li1PU0yx9uluA==, tarball: https://npm.jsr.io/~/11/@jsr/std__path/1.1.1.tgz}
+
+  '@jsr/std__testing@1.0.15':
+    resolution: {integrity: sha512-NgQuXxTEG4ecbh2fzYbkJWJoBgPXwbv6bdsrAYSOeLpX2d+TROEzpErbWQXHi/yxZy/FNn9IF548ZDAqMZxi/g==, tarball: https://npm.jsr.io/~/11/@jsr/std__testing/1.0.15.tgz}
 
   '@pkgjs/parseargs@0.11.0':
     resolution: {integrity: sha512-+1VkjdD0QBLPodGrJUeqarH8VAIvQODIbwh9XpP5Syisf7YoQgsJKPNFoqqLQlu+VQ/tVSshMR6loPMn8U+dPg==}
@@ -1123,6 +1214,10 @@ packages:
   undici-types@6.21.0:
     resolution: {integrity: sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ==}
 
+  undici@7.13.0:
+    resolution: {integrity: sha512-l+zSMssRqrzDcb3fjMkjjLGmuiiK2pMIcV++mJaAc9vhjSGpvM7h43QgP+OAMb1GImHmbPyG2tBXeuyG5iY4gA==}
+    engines: {node: '>=20.18.1'}
+
   vite-node@3.2.4:
     resolution: {integrity: sha512-EbKSKh+bh1E1IFxeO0pg1n4dvoOTt0UDiXMd/qn++r98+jPO1xtJilvXldeuQ8giIB5IkpjCgMleHMNEsGH6pg==}
     engines: {node: ^18.0.0 || ^20.0.0 || >=22.0.0}
@@ -1376,6 +1471,36 @@ snapshots:
     dependencies:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.0
+
+  '@jsr/std__assert@1.0.13':
+    dependencies:
+      '@jsr/std__internal': 1.0.10
+
+  '@jsr/std__async@1.0.14': {}
+
+  '@jsr/std__data-structures@1.0.9':
+    dependencies:
+      '@jsr/std__assert': 1.0.13
+
+  '@jsr/std__fs@1.0.19':
+    dependencies:
+      '@jsr/std__internal': 1.0.10
+      '@jsr/std__path': 1.1.1
+
+  '@jsr/std__internal@1.0.10': {}
+
+  '@jsr/std__path@1.1.1':
+    dependencies:
+      '@jsr/std__internal': 1.0.10
+
+  '@jsr/std__testing@1.0.15':
+    dependencies:
+      '@jsr/std__assert': 1.0.13
+      '@jsr/std__async': 1.0.14
+      '@jsr/std__data-structures': 1.0.9
+      '@jsr/std__fs': 1.0.19
+      '@jsr/std__internal': 1.0.10
+      '@jsr/std__path': 1.1.1
 
   '@pkgjs/parseargs@0.11.0':
     optional: true
@@ -1979,6 +2104,8 @@ snapshots:
   uWebSockets.js@https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/cfc9a40d8132a34881813cec3d5f8e3a185b3ce3: {}
 
   undici-types@6.21.0: {}
+
+  undici@7.13.0: {}
 
   vite-node@3.2.4(@types/node@20.19.1):
     dependencies:

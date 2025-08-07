@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer'
 import { randomUUID } from 'node:crypto'
 import { Duplex, Readable } from 'node:stream'
 import { Scope } from '@nmtjs/core'
@@ -181,9 +182,16 @@ export class WsTransportServer implements Transport<WsConnectionData> {
           payload = new ProtocolClientStream(-1, { size, type })
           bodyStream.pipe(payload)
         } else {
-          const buffer = Buffer.concat(await bodyStream.toArray()).buffer
+          const buffer = Buffer.concat(await bodyStream.toArray())
           payload =
-            buffer.byteLength > 0 ? format.decoder.decode(buffer) : undefined
+            buffer.byteLength > 0
+              ? format.decoder.decode(
+                  buffer.buffer.slice(
+                    buffer.byteOffset,
+                    buffer.byteOffset + buffer.byteLength,
+                  ),
+                )
+              : undefined
         }
       }
 
