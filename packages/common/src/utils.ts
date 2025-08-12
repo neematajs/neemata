@@ -134,6 +134,12 @@ export function onceAborted(signal: AbortSignal) {
   return once(signal, 'abort')
 }
 
-export function isAbortError(error: any): boolean {
-  return error.name === 'AbortError' && error.code === 20
+export function isAbortError(error) {
+  return (
+    (error instanceof Error &&
+      error.name === 'AbortError' &&
+      'code' in error &&
+      (error.code === 20 || error.code === 'ABORT_ERR')) ||
+    (error instanceof Event && error.type === 'abort')
+  )
 }
