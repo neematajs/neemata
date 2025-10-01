@@ -1,30 +1,34 @@
 import assert from 'node:assert'
 import { inspect } from 'node:util'
-import { type Async, type ErrorClass, withTimeout } from '@nmtjs/common'
-import { IsStreamProcedureContract } from '@nmtjs/contract'
-import {
-  type AnyInjectable,
-  type Container,
-  createFactoryInjectable,
-  type Dependencies,
-  type Logger,
-  Scope,
+
+import type { Async, ErrorClass } from '@nmtjs/common'
+import type {
+  AnyInjectable,
+  Container,
+  Dependencies,
+  Logger,
 } from '@nmtjs/core'
+import type {
+  BaseServerFormat,
+  Connection,
+  ProtocolApi,
+  ProtocolApiCallIterableResult,
+  ProtocolApiCallOptions,
+  ProtocolApiCallResult,
+} from '@nmtjs/protocol/server'
+import { withTimeout } from '@nmtjs/common'
+import { IsStreamProcedureContract } from '@nmtjs/contract'
+import { createFactoryInjectable, Scope } from '@nmtjs/core'
 import { ErrorCode } from '@nmtjs/protocol'
 import {
-  type BaseServerFormat,
-  type Connection,
   createStreamResponse,
   isIterableResult,
-  type ProtocolApi,
-  type ProtocolApiCallIterableResult,
-  type ProtocolApiCallOptions,
-  type ProtocolApiCallResult,
   ProtocolError,
   ProtocolInjectables,
 } from '@nmtjs/protocol/server'
 import { NeemataTypeError, type } from '@nmtjs/type'
-import { prettifyError } from 'zod/v4-mini'
+import { prettifyError } from 'zod/mini'
+
 import type { AnyNamespace } from './namespace.ts'
 import type { AnyProcedure } from './procedure.ts'
 import type { ApplicationRegistry } from './registry.ts'
@@ -38,9 +42,7 @@ export type AnyFilter<Error extends ErrorClass = ErrorClass> = AnyInjectable<
   FilterLike<Error>
 >
 
-export type GuardLike = {
-  can(context: ApiCallContext): Async<boolean>
-}
+export type GuardLike = { can(context: ApiCallContext): Async<boolean> }
 
 export type AnyGuard = AnyInjectable<GuardLike>
 
@@ -61,10 +63,7 @@ export type ApplicationApiCallOptions<T extends AnyProcedure = AnyProcedure> = {
   signal: AbortSignal
 }
 
-export type ApiOptions = {
-  timeout: number
-  formats: BaseServerFormat[]
-}
+export type ApiOptions = { timeout: number; formats: BaseServerFormat[] }
 
 export class ApiError extends ProtocolError {
   toString() {
@@ -318,9 +317,7 @@ export class ApplicationApi implements ProtocolApi {
   private handleOutput(procedure: AnyProcedure, response: any) {
     if (procedure.contract.output instanceof type.NeverType === false) {
       const type = procedure.contract.output
-      return {
-        output: type.encode(response),
-      }
+      return { output: type.encode(response) }
     }
     return { output: undefined }
   }

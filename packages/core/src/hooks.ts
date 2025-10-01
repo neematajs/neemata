@@ -1,6 +1,7 @@
 import type { Callback } from '@nmtjs/common'
-import { kHookCollection } from './constants.ts'
+
 import type { Hook } from './enums.ts'
+import { kHookCollection } from './constants.ts'
 
 export interface HookType {
   [key: string]: (...args: any[]) => any

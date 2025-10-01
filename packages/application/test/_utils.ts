@@ -1,31 +1,20 @@
+import type { Dependencies, Plugin } from '@nmtjs/core'
+import type { ConnectionOptions } from '@nmtjs/protocol/server'
 import { noopFn } from '@nmtjs/common'
-
 import { c } from '@nmtjs/contract'
-import {
-  createLogger,
-  createPlugin,
-  type Dependencies,
-  type Plugin,
-} from '@nmtjs/core'
-import {
-  Connection,
-  type ConnectionOptions,
-  createTransport,
-} from '@nmtjs/protocol/server'
+import { createLogger, createPlugin } from '@nmtjs/core'
+import { Connection, createTransport } from '@nmtjs/protocol/server'
 import { t } from '@nmtjs/type'
 import { expect } from 'vitest'
-import { Application, type ApplicationOptions } from '../src/application.ts'
+
+import type { ApplicationOptions } from '../src/application.ts'
+import type { CreateProcedureParams } from '../src/procedure.ts'
+import type { BaseTaskExecutor, CreateTaskOptions } from '../src/tasks.ts'
+import { Application } from '../src/application.ts'
 import { WorkerType } from '../src/enums.ts'
 import { createContractNamespace } from '../src/namespace.ts'
-import {
-  type CreateProcedureParams,
-  createContractProcedure,
-} from '../src/procedure.ts'
-import {
-  type BaseTaskExecutor,
-  type CreateTaskOptions,
-  createTask,
-} from '../src/tasks.ts'
+import { createContractProcedure } from '../src/procedure.ts'
+import { createTask } from '../src/tasks.ts'
 
 export class TestTaskExecutor implements BaseTaskExecutor {
   constructor(
@@ -45,11 +34,7 @@ export const testTransport = (
 ) =>
   createTransport('TestTransport', (app) => {
     onInit()
-    return {
-      start: onStartup,
-      stop: onShutdown,
-      send: onSend,
-    }
+    return { start: onStartup, stop: onShutdown, send: onSend }
   })
 
 export const testDefaultTimeout = 1000
@@ -58,28 +43,16 @@ export const testPlugin = (init: Plugin['init'] = () => {}) =>
   createPlugin('TestPlugin', init)
 
 export const testLogger = () =>
-  createLogger(
-    {
-      pinoOptions: { enabled: false },
-    },
-    'test',
-  )
+  createLogger({ pinoOptions: { enabled: false } }, 'test')
 
 export const testApp = (options: Partial<ApplicationOptions> = {}) =>
   new Application(
     Object.assign(
       {
         type: WorkerType.Api,
-        api: {
-          timeout: testDefaultTimeout,
-          formats: [],
-        },
-        tasks: {
-          timeout: testDefaultTimeout,
-        },
-        logging: {
-          pinoOptions: { enabled: false },
-        },
+        api: { timeout: testDefaultTimeout, formats: [] },
+        tasks: { timeout: testDefaultTimeout },
+        logging: { pinoOptions: { enabled: false } },
         pubsub: {},
       } as ApplicationOptions,
       options,
@@ -88,16 +61,9 @@ export const testApp = (options: Partial<ApplicationOptions> = {}) =>
 
 export const TestNamespaceContract = c.namespace({
   procedures: {
-    testProcedure: c.procedure({
-      input: t.any(),
-      output: t.any(),
-    }),
+    testProcedure: c.procedure({ input: t.any(), output: t.any() }),
   },
-  events: {
-    testEvent: c.event({
-      payload: t.string(),
-    }),
-  },
+  events: { testEvent: c.event({ payload: t.string() }) },
   name: 'TestNamespace',
 })
 
@@ -131,9 +97,7 @@ export const testNamepsace = ({
   // subscription = testSubscription(noop as any),
 } = {}) =>
   createContractNamespace(TestNamespaceContract, {
-    procedures: {
-      testProcedure: procedure,
-    },
+    procedures: { testProcedure: procedure },
   })
 
 export const expectCopy = (source, targer) => {

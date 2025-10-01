@@ -1,5 +1,7 @@
-import * as zod from 'zod/v4-mini'
-import { BaseType, type PrimitiveValueType } from './base.ts'
+import * as zod from 'zod/mini'
+
+import type { PrimitiveValueType } from './base.ts'
+import { BaseType } from './base.ts'
 
 export class LiteralType<
   T extends PrimitiveValueType = PrimitiveValueType,

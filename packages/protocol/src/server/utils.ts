@@ -22,8 +22,5 @@ export const getFormat = (
   const decoder = acceptType ? format.supportsDecoder(acceptType) : undefined
   if (!decoder) throw new UnsupportedAcceptTypeError('Unsupported Accept-Type')
 
-  return {
-    encoder,
-    decoder,
-  }
+  return { encoder, decoder }
 }

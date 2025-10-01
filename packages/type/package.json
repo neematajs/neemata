@@ -7,6 +7,11 @@
       "import": "./dist/index.js",
       "module-sync": "./dist/index.js"
     },
+    "./*": {
+      "types": "./src/types/*.ts",
+      "import": "./dist/types/*.js",
+      "module-sync": "./dist/types/*.js"
+    },
     "./temporal": {
       "types": "./src/temporal.ts",
       "import": "./dist/temporal.js",
@@ -19,6 +24,11 @@
         "types": "./dist/index.d.ts",
         "import": "./dist/index.js",
         "module-sync": "./dist/index.js"
+      },
+      "./*": {
+        "types": "./dist/types/*.d.ts",
+        "import": "./dist/types/*.js",
+        "module-sync": "./dist/types/*.js"
       },
       "./temporal": {
         "types": "./dist/temporal.d.ts",
@@ -33,12 +43,12 @@
   },
   "peerDependencies": {
     "temporal-polyfill": "^0.3.0",
-    "zod": "^3.25.0",
+    "zod": "catalog:",
     "@nmtjs/common": "workspace:*"
   },
   "devDependencies": {
     "temporal-polyfill": "^0.3.0",
-    "zod": "^3.25.0",
+    "zod": "catalog:",
     "@nmtjs/common": "workspace:*"
   },
   "files": [

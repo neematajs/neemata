@@ -38,18 +38,9 @@ export type AnyResolvedAPIContract = Record<
   {
     procedures: Record<
       string,
-      {
-        contract: TAnyProcedureContract
-        input: any
-        output: any
-      }
+      { contract: TAnyProcedureContract; input: any; output: any }
     >
-    events: Record<
-      string,
-      {
-        payload: any
-      }
-    >
+    events: Record<string, { payload: any }>
   }
 >
 
@@ -139,9 +130,7 @@ export type ClientCallers<
       ? Promise<
           OneOf<
             [
-              {
-                output: Resolved[N]['procedures'][P]['output']
-              },
+              { output: Resolved[N]['procedures'][P]['output'] },
               { error: ProtocolError },
             ]
           >

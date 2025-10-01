@@ -1,8 +1,10 @@
+import type {
+  Protocol,
+  ProtocolBaseClientCallOptions,
+  ProtocolBaseTransformer,
+} from '@nmtjs/protocol/client'
 import { ClientMessageType, concat, encodeNumber } from '@nmtjs/protocol'
 import {
-  type Protocol,
-  type ProtocolBaseClientCallOptions,
-  type ProtocolBaseTransformer,
   ProtocolTransport,
   ProtocolTransportStatus,
 } from '@nmtjs/protocol/client'
@@ -32,10 +34,7 @@ export class WebSocketClientTransport extends ProtocolTransport {
     options: WebSocketClientTransportOptions,
   ) {
     super()
-    this.options = {
-      debug: false,
-      ...options,
-    }
+    this.options = { debug: false, ...options }
   }
 
   connect(auth: any, transformer: ProtocolBaseTransformer): Promise<void> {

@@ -1,27 +1,20 @@
-import {
-  type Async,
-  createPromise,
-  defer,
-  noopFn,
-  onAbort,
-} from '@nmtjs/common'
-import {
-  type Container,
-  type Dependant,
-  type Dependencies,
-  type DependencyContext,
-  Hook,
-  Scope,
+import type { Async } from '@nmtjs/common'
+import type {
+  Container,
+  Dependant,
+  Dependencies,
+  DependencyContext,
 } from '@nmtjs/core'
+import { createPromise, defer, noopFn, onAbort } from '@nmtjs/common'
+import { Hook, Scope } from '@nmtjs/core'
+
+import type { ApplicationRegistry } from './registry.ts'
 import { kTask } from './constants.ts'
 import { AppInjectables } from './injectables.ts'
-import type { ApplicationRegistry } from './registry.ts'
 
 export type TaskExecution<Res = any> = PromiseLike<
   { result: Res; error?: never } | { result?: never; error: any }
-> & {
-  abort(reason?: any): void
-}
+> & { abort(reason?: any): void }
 
 type TaskHandlerType<Deps extends Dependencies, A extends any[], R> = (
   ctx: DependencyContext<Deps>,
@@ -87,10 +80,7 @@ export function createTask<
   return { name, dependencies, handler, parser, [kTask]: true }
 }
 
-export type TasksOptions = {
-  timeout: number
-  executor?: BaseTaskExecutor
-}
+export type TasksOptions = { timeout: number; executor?: BaseTaskExecutor }
 
 export class Tasks {
   constructor(

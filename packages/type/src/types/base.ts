@@ -1,4 +1,4 @@
-import * as zod from 'zod/v4-mini'
+import * as zod from 'zod/mini'
 
 export type PrimitiveValueType = string | number | boolean | null
 

@@ -1,5 +1,7 @@
-import { PassThrough, Readable, type ReadableOptions } from 'node:stream'
+import type { ReadableOptions } from 'node:stream'
+import { PassThrough, Readable } from 'node:stream'
 import { ReadableStream } from 'node:stream/web'
+
 import type { ProtocolBlob, ProtocolBlobMetadata } from '../common/blob.ts'
 
 export class ProtocolClientStream extends PassThrough {

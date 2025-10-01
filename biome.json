@@ -1,23 +1,50 @@
 {
-  "$schema": "https://biomejs.dev/schemas/2.1.2/schema.json",
-  "files": {
-    "includes": [
-      "**",
-      "!**/dist/**",
-      "!**/node_modules/**",
-      "!**/coverage/**",
-      "!**/.vscode/**"
-    ]
-  },
+  "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
   "vcs": {
     "enabled": true,
     "clientKind": "git",
     "useIgnoreFile": true
   },
+  "files": {
+    "includes": ["**"]
+  },
   "assist": {
     "actions": {
       "source": {
-        "organizeImports": "on"
+        "organizeImports": {
+          "level": "on",
+          "options": {
+            "groups": [
+              {
+                "type": true,
+                "source": [":NODE:"]
+              },
+              {
+                "type": false,
+                "source": [":NODE:"]
+              },
+              ":BLANK_LINE:",
+              {
+                "type": true,
+                "source": [":PACKAGE:"]
+              },
+              {
+                "type": false,
+                "source": [":PACKAGE:"]
+              },
+              ":BLANK_LINE:",
+              {
+                "type": true,
+                "source": [":PATH:"]
+              },
+              {
+                "type": false,
+                "source": [":PATH:"]
+              },
+              ":BLANK_LINE:"
+            ]
+          }
+        }
       }
     }
   },
@@ -42,7 +69,12 @@
         "useSingleVarDeclarator": "error",
         "useNumberNamespace": "error",
         "useExponentiationOperator": "error",
-        "useImportType": "error",
+        "useImportType": {
+          "level": "error",
+          "options": {
+            "style": "separatedType"
+          }
+        },
         "useExportType": "error",
         "useShorthandFunctionType": "error"
       },
@@ -55,7 +87,8 @@
       },
       "suspicious": {
         "noExplicitAny": "off",
-        "noAssignInExpressions": "off"
+        "noAssignInExpressions": "off",
+        "useIterableCallbackReturn": "off"
       },
       "security": {
         "recommended": true
@@ -79,7 +112,8 @@
       "arrowParentheses": "always",
       "quoteStyle": "single",
       "semicolons": "asNeeded",
-      "trailingCommas": "all"
+      "trailingCommas": "all",
+      "expand": "never"
     }
   },
   "json": {

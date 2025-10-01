@@ -1,13 +1,21 @@
-import {
-  type Async,
-  type Callback,
-  type ClassConstructor,
-  type ClassConstructorArgs,
-  type ClassInstance,
-  tryCaptureStackTrace,
+import type {
+  Async,
+  Callback,
+  ClassConstructor,
+  ClassConstructorArgs,
+  ClassInstance,
 } from '@nmtjs/common'
+import { tryCaptureStackTrace } from '@nmtjs/common'
+
+import type { DisposeFn, InjectFn } from './container.ts'
+import type { Hook } from './enums.ts'
+import type { HookType } from './hooks.ts'
+import type { Logger } from './logger.ts'
+import type { Registry } from './registry.ts'
 import {
   kClassInjectable,
+  kClassInjectableCreate,
+  kClassInjectableDispose,
   kFactoryInjectable,
   kHookCollection,
   kInjectable,
@@ -15,11 +23,8 @@ import {
   kOptionalDependency,
   kValueInjectable,
 } from './constants.ts'
-import type { DisposeFn, InjectFn } from './container.ts'
-import { type Hook, Scope } from './enums.ts'
-import { Hooks, type HookType } from './hooks.ts'
-import type { Logger } from './logger.ts'
-import type { Registry } from './registry.ts'
+import { Scope } from './enums.ts'
+import { Hooks } from './hooks.ts'
 
 const ScopeStrictness = {
   [Scope.Transient]: Number.NaN, // this should make it always fail to compare with other scopes
@@ -129,9 +134,7 @@ export interface ClassInjectable<
   new (
     $context: DependencyContext<D>,
     ...args: A
-  ): T & {
-    $context: DependencyContext<D>
-  }
+  ): T & { $context: DependencyContext<D> }
   scope: S
   [kInjectable]: any
   [kClassInjectable]: any
@@ -304,8 +307,8 @@ export const createClassInjectable = <
 
     constructor(public $context: DependencyContext<D>) {}
 
-    async $onCreate() {}
-    async $onDispose() {}
+    async [kClassInjectableCreate]() {}
+    async [kClassInjectableDispose]() {}
   }
 
   InjectableClass.scope = resolveInjectableScope(
@@ -421,10 +424,7 @@ export function substitute<
   } else if (isFactoryInjectable(injectable)) {
     // @ts-expect-error
     return createFactoryInjectable(
-      {
-        ...injectable,
-        dependencies,
-      },
+      { ...injectable, dependencies },
       injectable.label,
       depth,
     )
@@ -499,10 +499,4 @@ function resolveInjectableScope(
   return actualScope
 }
 
-export const CoreInjectables = {
-  logger,
-  registry,
-  inject,
-  dispose,
-  hook,
-}
+export const CoreInjectables = { logger, registry, inject, dispose, hook }

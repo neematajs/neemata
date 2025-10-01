@@ -1,5 +1,5 @@
-import { noopFn } from '@nmtjs/common'
 import type { TProcedureContract } from '@nmtjs/contract'
+import { noopFn } from '@nmtjs/common'
 import {
   createValueInjectable,
   Hook,
@@ -8,6 +8,7 @@ import {
 } from '@nmtjs/core'
 import type from '@nmtjs/type'
 import { describe, expect, expectTypeOf, it } from 'vitest'
+
 import { kNamespace } from '../src/constants.ts'
 import { createContractNamespace, createNamespace } from '../src/namespace.ts'
 import { createProcedure } from '../src/procedure.ts'
@@ -27,9 +28,7 @@ describe('Namespace', () => {
     it('should create a namespace with hooks', () => {
       const handler = () => {}
       const namespace = createContractNamespace(TestNamespaceContract, {
-        hooks: {
-          [Hook.AfterInitialize]: [handler],
-        },
+        hooks: { [Hook.AfterInitialize]: [handler] },
       })
       expect(namespace.hooks[kHookCollection].get('test')).toContain(handler)
     })

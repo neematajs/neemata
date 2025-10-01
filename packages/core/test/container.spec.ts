@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
 import { noopFn } from '../../common/src/index.ts'
 import {
   kClassInjectable,
+  kClassInjectableCreate,
+  kClassInjectableDispose,
   kFactoryInjectable,
   kInjectable,
   kLazyInjectable,
@@ -125,10 +128,7 @@ describe('Injectable', () => {
       scope2,
     ) {}
     expect(injectable2).toBeDefined()
-    expect(injectable2.dependencies).toStrictEqual({
-      dep1,
-      dep2,
-    })
+    expect(injectable2.dependencies).toStrictEqual({ dep1, dep2 })
     expect(injectable2.scope).toBe(Scope.Connection)
     expect(kInjectable in injectable2).toBe(true)
     expect(kClassInjectable in injectable2).toBe(true)
@@ -296,10 +296,10 @@ describe('Container', () => {
     const createSpy = vi.fn()
     const disposeSpy = vi.fn()
     class injectable extends createClassInjectable() {
-      protected async $onCreate() {
+      async [kClassInjectableCreate]() {
         createSpy()
       }
-      protected async $onDispose() {
+      async [kClassInjectableDispose]() {
         disposeSpy()
       }
     }
@@ -436,10 +436,7 @@ describe('Container', () => {
     const testGlobalContainer = container.fork(Scope.Global)
 
     const injectable1 = createFactoryInjectable(
-      {
-        factory: () => '1',
-        dispose: disposeSpy,
-      },
+      { factory: () => '1', dispose: disposeSpy },
       'inj1',
     )
 
@@ -675,9 +672,7 @@ describe('Container', () => {
 
   describe('Disposal Lock', () => {
     it('should prevent new resolutions during disposal', async () => {
-      const injectable = createFactoryInjectable({
-        factory: () => 'test',
-      })
+      const injectable = createFactoryInjectable({ factory: () => 'test' })
 
       // Start disposal (but don't await it yet)
       const disposalPromise = container.dispose()
@@ -692,9 +687,7 @@ describe('Container', () => {
     })
 
     it('should allow resolution in new container after disposal', async () => {
-      const injectable = createFactoryInjectable({
-        factory: () => 'test',
-      })
+      const injectable = createFactoryInjectable({ factory: () => 'test' })
 
       await container.dispose()
 
@@ -1017,10 +1010,7 @@ describe('Container', () => {
 
     it('should not include parent dependencies in disposal order calculation', async () => {
       const parentDep = createFactoryInjectable(
-        {
-          factory: () => 'parent',
-          scope: Scope.Global,
-        },
+        { factory: () => 'parent', scope: Scope.Global },
         'parentDep',
       )
 
@@ -1104,9 +1094,7 @@ describe('Container', () => {
           dependencies: { config },
           factory: ({ config }) => {
             creationOrder.push('logger')
-            return {
-              log: (msg: string) => {},
-            }
+            return { log: (msg: string) => {} }
           },
           dispose: () => {
             disposalOrder.push('logger')
@@ -1156,11 +1144,7 @@ describe('Container', () => {
           dependencies: { session, logger },
           factory: ({ session, logger }) => {
             creationOrder.push('connectionMetrics')
-            return {
-              sessionId: session.id,
-              startTime: Date.now(),
-              requests: 0,
-            }
+            return { sessionId: session.id, startTime: Date.now(), requests: 0 }
           },
           dispose: (instance) => {
             disposalOrder.push('connectionMetrics')
@@ -1475,11 +1459,11 @@ describe('Container', () => {
       ) {
         public readonly id = Math.random()
 
-        protected async $onCreate() {
+        async [kClassInjectableCreate]() {
           createSpy(this.id)
         }
 
-        protected async $onDispose() {
+        async [kClassInjectableDispose]() {
           disposeSpy(this.id)
         }
       }

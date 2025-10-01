@@ -3,12 +3,10 @@ import { c } from '@nmtjs/contract'
 import { Container, Hook } from '@nmtjs/core'
 import { t } from '@nmtjs/type'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+
+import type { PubSubAdapter, PubSubAdapterEvent } from '../src/pubsub.ts'
 import { AppInjectables } from '../src/injectables.ts'
-import {
-  PubSub,
-  type PubSubAdapter,
-  type PubSubAdapterEvent,
-} from '../src/pubsub.ts'
+import { PubSub } from '../src/pubsub.ts'
 import { ApplicationRegistry } from '../src/registry.ts'
 import { testLogger } from './_utils.ts'
 
@@ -19,14 +17,9 @@ const TestSubscriptionContract1 = c.subscription.withOptions<{
   name: 'TestSubscription1',
   events: {
     testEvent: c.event({
-      payload: t.object({
-        message: t.string(),
-        timestamp: t.number(),
-      }),
+      payload: t.object({ message: t.string(), timestamp: t.number() }),
     }),
-    anotherEvent: c.event({
-      payload: t.string(),
-    }),
+    anotherEvent: c.event({ payload: t.string() }),
   },
 })
 
@@ -36,14 +29,9 @@ const TestSubscriptionContract2 = c.subscription.withOptions<{
   name: 'TestSubscription2',
   events: {
     testEvent: c.event({
-      payload: t.object({
-        message: t.string(),
-        timestamp: t.number(),
-      }),
+      payload: t.object({ message: t.string(), timestamp: t.number() }),
     }),
-    transformEvent: c.event({
-      payload: t.date(),
-    }),
+    transformEvent: c.event({ payload: t.date() }),
   },
 })
 
@@ -83,24 +71,10 @@ describe('PubSub', () => {
 
   beforeEach(async () => {
     adapter = new MockPubSubAdapter()
-    registry = new ApplicationRegistry({
-      logger,
-    })
-    container = new Container({
-      logger,
-      registry,
-    })
+    registry = new ApplicationRegistry({ logger })
+    container = new Container({ logger, registry })
     container.provide(AppInjectables.pubsubAdapter, adapter)
-    pubsub = new PubSub(
-      {
-        logger,
-        registry,
-        container,
-      },
-      {
-        adapter,
-      },
-    )
+    pubsub = new PubSub({ logger, registry, container }, { adapter })
   })
 
   afterEach(async () => {
@@ -110,18 +84,12 @@ describe('PubSub', () => {
   it('should subscribe to specific events', async () => {
     const testData = {
       event: 'testEvent',
-      data: {
-        message: 'Hello World',
-        timestamp: Date.now(),
-      },
+      data: { message: 'Hello World', timestamp: Date.now() },
     }
 
     // Create a generator that yields test data
     async function* mockGenerator(channel: string) {
-      yield {
-        channel,
-        payload: testData.data,
-      }
+      yield { channel, payload: testData.data }
     }
 
     adapter.setSubscribeGenerator(mockGenerator)
@@ -138,23 +106,14 @@ describe('PubSub', () => {
   })
 
   it('should handle multiple events in subscription', async () => {
-    const testData = {
-      event: 'anotherEvent',
-      data: 'Hello Again',
-    }
+    const testData = { event: 'anotherEvent', data: 'Hello Again' }
 
     // Create a generator that yields test data
     async function* mockGenerator(channel: string) {
       await new Promise((resolve) => setTimeout(resolve, 100))
-      yield {
-        channel,
-        payload: testData.data,
-      }
+      yield { channel, payload: testData.data }
       await new Promise((resolve) => setTimeout(resolve, 100))
-      yield {
-        channel,
-        payload: testData.data,
-      }
+      yield { channel, payload: testData.data }
     }
 
     // type a = t.infer.decoded.input<typeof TestSubscriptionContract2.events.transformEvent.payload>
@@ -183,18 +142,12 @@ describe('PubSub', () => {
   it('should publish events', async () => {
     const testData = {
       event: 'testEvent',
-      data: {
-        message: 'Hello World',
-        timestamp: Date.now(),
-      },
+      data: { message: 'Hello World', timestamp: Date.now() },
     }
 
     // Create a generator that yields test data
     async function* mockGenerator(channel: string) {
-      yield {
-        channel,
-        payload: testData.data,
-      }
+      yield { channel, payload: testData.data }
     }
 
     adapter.setSubscribeGenerator(mockGenerator)
@@ -222,29 +175,17 @@ describe('PubSub', () => {
   it('should handle multiple subscriptions', async () => {
     const testData1 = {
       event: 'testEvent',
-      data: {
-        message: 'Hello World',
-        timestamp: Date.now(),
-      },
+      data: { message: 'Hello World', timestamp: Date.now() },
     }
 
-    const testData2 = {
-      event: 'transformEvent',
-      data: new Date(),
-    }
+    const testData2 = { event: 'transformEvent', data: new Date() }
 
     // Create a generator that yields test data
     async function* mockGenerator(channel: string) {
       if (channel.startsWith(TestSubscriptionContract1.name)) {
-        yield {
-          channel,
-          payload: testData1.data,
-        }
+        yield { channel, payload: testData1.data }
       } else if (channel.startsWith(TestSubscriptionContract2.name)) {
-        yield {
-          channel,
-          payload: testData2.data.toISOString(),
-        }
+        yield { channel, payload: testData2.data.toISOString() }
       }
     }
 

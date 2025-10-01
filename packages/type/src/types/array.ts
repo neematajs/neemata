@@ -1,4 +1,5 @@
-import * as zod from 'zod/v4-mini'
+import * as zod from 'zod/mini'
+
 import { BaseType } from './base.ts'
 
 type Check = zod.core.CheckFn<any[]> | zod.core.$ZodCheck<any[]>

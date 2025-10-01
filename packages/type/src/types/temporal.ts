@@ -1,5 +1,7 @@
+import type { ZodMiniString } from 'zod/mini'
 import { Temporal } from 'temporal-polyfill'
-import { iso, regex, string, type ZodMiniString } from 'zod/v4-mini'
+import { iso, regex, string } from 'zod/mini'
+
 import { CustomType, TransformType } from './custom.ts'
 
 type Types = Exclude<
@@ -23,10 +25,7 @@ const createTemporalTransformer = <T extends Types>(
       timeZoneName: 'never',
     })
 
-  return {
-    decode,
-    encode,
-  } as TemporalTransformer<T>
+  return { decode, encode } as TemporalTransformer<T>
 }
 
 type EncodedType = ZodMiniString<string>

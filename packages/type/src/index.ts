@@ -1,4 +1,5 @@
-import * as zod from 'zod/v4-mini'
+import * as zod from 'zod/mini'
+
 import * as type from './types/type.ts'
 
 zod.config(zod.core.locales.en())

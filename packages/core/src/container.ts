@@ -1,14 +1,22 @@
 import assert from 'node:assert'
+
 import { tryCaptureStackTrace } from '@nmtjs/common'
+
+import type {
+  AnyInjectable,
+  Dependencies,
+  DependencyContext,
+  ResolveInjectableType,
+} from './injectables.ts'
+import type { Logger } from './logger.ts'
+import type { Registry } from './registry.ts'
+import { kClassInjectableCreate, kClassInjectableDispose } from './constants.ts'
 import { Scope } from './enums.ts'
 import {
-  type AnyInjectable,
   CoreInjectables,
   compareScope,
   createExtendableClassInjectable,
   createValueInjectable,
-  type Dependencies,
-  type DependencyContext,
   getDepedencencyInjectable,
   isClassInjectable,
   isFactoryInjectable,
@@ -16,17 +24,11 @@ import {
   isLazyInjectable,
   isOptionalInjectable,
   isValueInjectable,
-  type ResolveInjectableType,
 } from './injectables.ts'
-import type { Logger } from './logger.ts'
-import type { Registry } from './registry.ts'
 
 type InstanceWrapper = { private: any; public: any; context: any }
 
-type ContainerOptions = {
-  registry: Registry
-  logger: Logger
-}
+type ContainerOptions = { registry: Registry; logger: Logger }
 
 export class Container {
   readonly instances = new Map<AnyInjectable, InstanceWrapper[]>()
@@ -156,11 +158,7 @@ export class Container {
     }
 
     this.instances.set(injectable, [
-      {
-        private: instance,
-        public: instance,
-        context: undefined,
-      },
+      { private: instance, public: instance, context: undefined },
     ])
   }
 
@@ -258,7 +256,7 @@ export class Container {
     } else if (isClassInjectable(injectable)) {
       wrapper.private = new injectable(context)
       wrapper.public = wrapper.private
-      await wrapper.private.$onCreate()
+      await wrapper.private[kClassInjectableCreate]()
     } else {
       throw new Error('Invalid injectable type')
     }
@@ -279,9 +277,7 @@ export class Container {
       injectable: T,
       context: InlineInjectionDependencies<T>,
     ) => {
-      const dependencies: Dependencies = {
-        ...injectable.dependencies,
-      }
+      const dependencies: Dependencies = { ...injectable.dependencies }
 
       for (const key in context) {
         const dep = context[key]
@@ -425,7 +421,7 @@ export class Container {
       const { dispose } = injectable
       if (dispose) await dispose(instance, context)
     } else if (isClassInjectable(injectable)) {
-      await instance.$onDispose()
+      await instance[kClassInjectableDispose]()
     }
   }
 }

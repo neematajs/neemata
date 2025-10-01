@@ -1,5 +1,6 @@
 import type { TAnyAPIContract } from '@nmtjs/contract'
 import { ProtocolBaseTransformer } from '@nmtjs/protocol/client'
+
 import { BaseClient } from './common.ts'
 
 export class StaticClient<

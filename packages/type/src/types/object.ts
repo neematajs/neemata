@@ -1,9 +1,10 @@
-import * as zod from 'zod/v4-mini'
+import * as zod from 'zod/mini'
 
-import { BaseType, type BaseTypeAny, type OptionalType } from './base.ts'
-import { EnumType } from './enum.ts'
+import type { BaseTypeAny, OptionalType } from './base.ts'
 import type { LiteralType } from './literal.ts'
 import type { StringType } from './string.ts'
+import { BaseType } from './base.ts'
+import { EnumType } from './enum.ts'
 
 export type ObjectTypeProps = { [k: string]: BaseTypeAny }
 export type AnyObjectType = ObjectType<ObjectTypeProps>

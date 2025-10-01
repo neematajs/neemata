@@ -1,9 +1,6 @@
 import { kMetadata } from './constants.ts'
 
-export type Metadata<T = any> = {
-  key: MetadataKey<T>
-  value: T
-}
+export type Metadata<T = any> = { key: MetadataKey<T>; value: T }
 
 export type MetadataKey<T = any> = {
   [kMetadata]: string

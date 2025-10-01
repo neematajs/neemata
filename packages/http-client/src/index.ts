@@ -1,19 +1,18 @@
+import type { ClientMessageType } from '@nmtjs/protocol'
+import type {
+  BaseProtocol,
+  ProtocolBaseClientCallOptions,
+  ProtocolBaseTransformer,
+  ProtocolClientCall,
+  ProtocolSendMetadata,
+  ProtocolTransport,
+  ProtocolTransportEventMap,
+} from '@nmtjs/protocol/client'
 import { ClientError } from '@nmtjs/client'
+import { ErrorCode, ProtocolBlob } from '@nmtjs/protocol'
 import {
-  type ClientMessageType,
-  ErrorCode,
-  ProtocolBlob,
-} from '@nmtjs/protocol'
-import {
-  type BaseProtocol,
   EventEmitter,
-  type ProtocolBaseClientCallOptions,
-  type ProtocolBaseTransformer,
-  type ProtocolClientCall,
-  type ProtocolSendMetadata,
   ProtocolServerBlobStream,
-  type ProtocolTransport,
-  type ProtocolTransportEventMap,
   ProtocolTransportStatus,
 } from '@nmtjs/protocol/client'
 
@@ -87,10 +86,7 @@ export class HttpClientTransport
             : undefined
           const type =
             response.headers.get('content-type') || 'application/octet-stream'
-          const stream = new ProtocolServerBlobStream(-1, {
-            size,
-            type,
-          })
+          const stream = new ProtocolServerBlobStream(-1, { size, type })
           response.body?.pipeThrough(stream)
           return stream
         } else {

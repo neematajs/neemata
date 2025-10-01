@@ -1,11 +1,12 @@
 import type { BasePlugin, PluginContext } from '@nmtjs/core'
+
 import type { ServerMessageType } from '../common/enums.ts'
 import type { Connection } from './connection.ts'
-import { kTransportPlugin } from './constants.ts'
 import type { Format } from './format.ts'
 import type { Protocol } from './protocol.ts'
 import type { ProtocolRegistry } from './registry.ts'
 import type { ProtocolSendMetadata } from './types.ts'
+import { kTransportPlugin } from './constants.ts'
 
 export interface Transport<T = unknown> {
   start: () => Promise<void>

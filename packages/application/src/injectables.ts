@@ -1,4 +1,5 @@
 import { createLazyInjectable, Scope } from '@nmtjs/core'
+
 import type { WorkerType } from './enums.ts'
 import type { PubSub, PubSubAdapter } from './pubsub.ts'
 import type { ExecuteFn } from './types.ts'

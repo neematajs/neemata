@@ -1,6 +1,14 @@
 import { Buffer } from 'node:buffer'
 import { randomUUID } from 'node:crypto'
 import { Duplex, Readable } from 'node:stream'
+
+import type { ServerMessageType } from '@nmtjs/protocol'
+import type {
+  ProtocolApiCallOptions,
+  Transport,
+  TransportPluginContext,
+} from '@nmtjs/protocol/server'
+import type { Peer } from 'crossws'
 import { Scope } from '@nmtjs/core'
 import {
   ClientMessageType,
@@ -9,29 +17,19 @@ import {
   ErrorCode,
   encodeNumber,
   ProtocolBlob,
-  type ServerMessageType,
 } from '@nmtjs/protocol'
 import {
   Connection,
   getFormat,
   isIterableResult,
-  type ProtocolApiCallOptions,
   ProtocolClientStream,
   ProtocolError,
   ProtocolInjectables,
-  type Transport,
-  type TransportPluginContext,
   UnsupportedContentTypeError,
   UnsupportedFormatError,
 } from '@nmtjs/protocol/server'
-import { defineHooks, type Peer } from 'crossws'
-import {
-  AllowedHttpMethod,
-  HttpCode,
-  HttpCodeMap,
-  HttpStatusText,
-} from './http.ts'
-import { WsTransportInjectables } from './injectables.ts'
+import { defineHooks } from 'crossws'
+
 import type {
   WsAdapterParams,
   WsAdapterServer,
@@ -42,6 +40,13 @@ import type {
   WsTransportOptions,
   WsTransportServerRequest,
 } from './types.ts'
+import {
+  AllowedHttpMethod,
+  HttpCode,
+  HttpCodeMap,
+  HttpStatusText,
+} from './http.ts'
+import { WsTransportInjectables } from './injectables.ts'
 import { InternalServerErrorHttpResponse } from './utils.ts'
 
 const NEEMATA_BLOB_HEADER = 'X-Neemata-Blob'
@@ -531,9 +536,7 @@ export class WsTransportServer implements Transport<WsConnectionData> {
       },
       error: (peer, error) => {
         this.logger.error(
-          new Error(`WebSocket error ${peer.context.id}`, {
-            cause: error,
-          }),
+          new Error(`WebSocket error ${peer.context.id}`, { cause: error }),
         )
       },
       close: async (peer, details) => {

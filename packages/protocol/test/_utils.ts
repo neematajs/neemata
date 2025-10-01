@@ -1,5 +1,8 @@
 import { deserialize, serialize } from 'node:v8'
-import { createLogger, type Pattern } from '@nmtjs/core'
+
+import type { Pattern } from '@nmtjs/core'
+import { createLogger } from '@nmtjs/core'
+
 import type {
   DecodeRPCContext,
   EncodeRPCContext,
@@ -38,11 +41,6 @@ export class TestFormat extends BaseServerFormat {
 }
 
 export const testLogger = () =>
-  createLogger(
-    {
-      pinoOptions: { enabled: false },
-    },
-    'test',
-  )
+  createLogger({ pinoOptions: { enabled: false } }, 'test')
 
 export const testFormat = () => new TestFormat()

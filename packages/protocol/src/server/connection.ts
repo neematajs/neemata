@@ -1,12 +1,11 @@
 import { randomUUID } from 'node:crypto'
+
 import type { Container } from '@nmtjs/core'
+
 import type { BaseServerDecoder, BaseServerEncoder } from './format.ts'
 import type { ProtocolClientStream, ProtocolServerStream } from './stream.ts'
 
-export type ConnectionOptions<Data = unknown> = {
-  id?: string
-  data: Data
-}
+export type ConnectionOptions<Data = unknown> = { id?: string; data: Data }
 
 export class Connection<Data = unknown> {
   readonly id: string
@@ -25,10 +24,7 @@ export class ConnectionContext {
   serverStreams = new Map<number, ProtocolServerStream>()
   rpcStreams = new Map<number, AbortController>()
   container: Container
-  format: {
-    encoder: BaseServerEncoder
-    decoder: BaseServerDecoder
-  }
+  format: { encoder: BaseServerEncoder; decoder: BaseServerDecoder }
 
   constructor(
     container: ConnectionContext['container'],

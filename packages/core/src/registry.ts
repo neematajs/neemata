@@ -1,20 +1,15 @@
-import { type Hook, Scope } from './enums.ts'
-import { Hooks, type HookType } from './hooks.ts'
-import {
-  type AnyInjectable,
-  type Dependant,
-  getInjectableScope,
-} from './injectables.ts'
+import type { Hook } from './enums.ts'
+import type { HookType } from './hooks.ts'
+import type { AnyInjectable, Dependant } from './injectables.ts'
 import type { Logger } from './logger.ts'
+import { Scope } from './enums.ts'
+import { Hooks } from './hooks.ts'
+import { getInjectableScope } from './injectables.ts'
 
 export class Registry {
   readonly hooks = new Hooks()
 
-  constructor(
-    protected readonly application: {
-      logger: Logger
-    },
-  ) {}
+  constructor(protected readonly application: { logger: Logger }) {}
 
   registerHooks<T extends Hooks>(hooks: T) {
     Hooks.merge(hooks, this.hooks)

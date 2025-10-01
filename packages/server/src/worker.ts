@@ -1,14 +1,9 @@
-import {
-  isMainThread,
-  type MessagePort,
-  parentPort,
-  workerData,
-} from 'node:worker_threads'
-import {
-  Application,
-  type ApplicationWorkerOptions,
-  WorkerType,
-} from '@nmtjs/application'
+import type { MessagePort } from 'node:worker_threads'
+import { isMainThread, parentPort, workerData } from 'node:worker_threads'
+
+import type { ApplicationWorkerOptions } from '@nmtjs/application'
+import { Application, WorkerType } from '@nmtjs/application'
+
 import {
   bindPortMessageHandler,
   createBroadcastChannel,

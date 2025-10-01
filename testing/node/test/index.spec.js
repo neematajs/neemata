@@ -1,6 +1,7 @@
 import assert from 'node:assert'
 import { rmSync } from 'node:fs'
 import { after, before, describe, it } from 'node:test'
+
 import {
   createTestingApplication,
   createTestMessage,

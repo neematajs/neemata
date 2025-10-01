@@ -1,12 +1,13 @@
 import { createTransport } from '@nmtjs/protocol/server'
 import createAdapter from 'crossws/adapters/bun'
-import { WsTransportServer } from '../server.ts'
+
 import type {
   WsAdapterParams,
   WsAdapterServer,
   WsConnectionData,
   WsTransportOptions,
 } from '../types.ts'
+import { WsTransportServer } from '../server.ts'
 import {
   InternalServerErrorHttpResponse,
   NotFoundHttpResponse,
@@ -33,10 +34,7 @@ function adapterFactory(params: WsAdapterParams<'bun'>): WsAdapterServer {
             passphrase: params.tls.passphrase,
           }
         : undefined,
-      websocket: {
-        ...params.runtime?.ws,
-        ...adapter.websocket,
-      },
+      websocket: { ...params.runtime?.ws, ...adapter.websocket },
       routes: {
         ...params.runtime?.server?.routes,
         '/healthy': StatusResponse(),
@@ -50,11 +48,7 @@ function adapterFactory(params: WsAdapterParams<'bun'>): WsAdapterServer {
             }
             const { body, headers, method } = request
             return await params.fetchHandler(
-              {
-                url,
-                method,
-                headers,
-              },
+              { url, method, headers },
               body,
               request.signal,
             )

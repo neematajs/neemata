@@ -1,4 +1,5 @@
-import * as zod from 'zod/v4-mini'
+import * as zod from 'zod/mini'
+
 import { CustomType, TransformType } from './custom.ts'
 
 export class DateType extends TransformType<

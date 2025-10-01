@@ -1,31 +1,23 @@
-import { type Callback, defer, isAbortError, throwError } from '@nmtjs/common'
-import {
-  type AnyInjectable,
-  type Container,
-  Hook,
-  type Logger,
-  Scope,
-} from '@nmtjs/core'
-import { concat, decodeNumber, encodeNumber } from '../common/binary.ts'
+import type { Callback } from '@nmtjs/common'
+import type { AnyInjectable, Container, Logger } from '@nmtjs/core'
+import { defer, isAbortError, throwError } from '@nmtjs/common'
+import { Hook, Scope } from '@nmtjs/core'
+
 import type { ProtocolBlob, ProtocolBlobMetadata } from '../common/blob.ts'
-import { ErrorCode, ServerMessageType } from '../common/enums.ts'
 import type { ProtocolRPC } from '../common/types.ts'
-import {
-  isIterableResult,
-  type ProtocolApi,
-  type ProtocolApiCallOptions,
-} from './api.ts'
-import {
-  Connection,
-  ConnectionContext,
-  type ConnectionOptions,
-} from './connection.ts'
+import type { ProtocolApi, ProtocolApiCallOptions } from './api.ts'
+import type { ConnectionOptions } from './connection.ts'
 import type { Format } from './format.ts'
-import { ProtocolInjectables } from './injectables.ts'
 import type { ProtocolRegistry } from './registry.ts'
-import { ProtocolClientStream, ProtocolServerStream } from './stream.ts'
 import type { Transport } from './transport.ts'
-import { getFormat, type ResolveFormatParams } from './utils.ts'
+import type { ResolveFormatParams } from './utils.ts'
+import { concat, decodeNumber, encodeNumber } from '../common/binary.ts'
+import { ErrorCode, ServerMessageType } from '../common/enums.ts'
+import { isIterableResult } from './api.ts'
+import { Connection, ConnectionContext } from './connection.ts'
+import { ProtocolInjectables } from './injectables.ts'
+import { ProtocolClientStream, ProtocolServerStream } from './stream.ts'
+import { getFormat } from './utils.ts'
 
 export class ProtocolError extends Error {
   code: string
@@ -46,17 +38,11 @@ export class ProtocolError extends Error {
   }
 
   toJSON() {
-    return {
-      code: this.code,
-      message: this.message,
-      data: this.data,
-    }
+    return { code: this.code, message: this.message, data: this.data }
   }
 }
 
-export type ProtocolConnectionTransport = {
-  send: Transport<any>['send']
-}
+export type ProtocolConnectionTransport = { send: Transport<any>['send'] }
 
 export class ProtocolConnections {
   readonly #collection = new Map<
@@ -330,10 +316,7 @@ export class Protocol {
       })
 
       const responseEncoded = format.encoder.encodeRPC(
-        {
-          callId,
-          result: response.output,
-        },
+        { callId, result: response.output },
         {
           addStream: (blob) => {
             const streamId = context.streamId++

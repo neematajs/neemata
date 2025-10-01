@@ -1,7 +1,8 @@
-import { Kind } from '../constants.ts'
-import { type ContractSchemaOptions, createSchema } from '../utils.ts'
+import type { ContractSchemaOptions } from '../utils.ts'
 import type { TAnyEventContract, TEventContract } from './event.ts'
 import type { TAnyProcedureContract, TProcedureContract } from './procedure.ts'
+import { Kind } from '../constants.ts'
+import { createSchema } from '../utils.ts'
 
 export const NamespaceKind = Symbol('NeemataNamespace')
 
@@ -87,11 +88,7 @@ export const NamespaceContract = <
         Extract<typeof name, string>,
         Options['name'] extends string ? Options['name'] : undefined
       >
-    >({
-      ...procedure,
-      name: name as any,
-      namespace: options?.name as any,
-    })
+    >({ ...procedure, name: name as any, namespace: options?.name as any })
   }
 
   return createSchema<
