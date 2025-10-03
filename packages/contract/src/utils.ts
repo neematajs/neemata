@@ -1,7 +1,4 @@
-export type ContractSchemaOptions = {
-  title?: string
-  description?: string
-}
+export type ContractSchemaOptions = { title?: string; description?: string }
 
 export const applyNames = <T extends Record<string, { serviceName?: string }>>(
   params: T,

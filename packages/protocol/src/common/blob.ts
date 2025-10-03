@@ -28,20 +28,12 @@ export class ProtocolBlob implements ProtocolBlobInterface {
       throw new Error('Blob size is invalid')
 
     this.source = source
-    this.metadata = {
-      size,
-      type,
-      filename,
-    }
+    this.metadata = { size, type, filename }
   }
 
   static from(
     source: any,
-    metadata: {
-      size?: number
-      type?: string
-      filename?: string
-    } = {},
+    metadata: { size?: number; type?: string; filename?: string } = {},
   ) {
     let _source: any
 

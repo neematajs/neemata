@@ -1,5 +1,6 @@
 import type { Async } from '@nmtjs/common'
 import type { Container, Hook, MetadataStore } from '@nmtjs/core'
+
 import type { Connection } from './connection.ts'
 import { kIterableResponse } from './constants.ts'
 
@@ -47,12 +48,7 @@ export function createStreamResponse<Y, O>(
   output = undefined as O,
   onFinish?: () => void,
 ): ProtocolApiCallIterableResult<Y, O> {
-  return {
-    [kIterableResponse]: true as const,
-    iterable,
-    output,
-    onFinish,
-  }
+  return { [kIterableResponse]: true as const, iterable, output, onFinish }
 }
 
 declare module '@nmtjs/core' {

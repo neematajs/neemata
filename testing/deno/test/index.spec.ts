@@ -1,3 +1,4 @@
+import type { Application } from 'nmtjs/application'
 import { assertEquals } from '@std/assert'
 import { afterAll, beforeAll, describe, it } from '@std/testing/bdd'
 import {
@@ -7,7 +8,6 @@ import {
   TEST_HEADERS,
   TEST_ROUTES,
 } from 'neemata-test-generic'
-import type { Application } from 'nmtjs/application'
 import { WsTransport } from 'nmtjs/ws-transport/deno'
 
 describe('Deno', () => {

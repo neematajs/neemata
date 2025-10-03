@@ -1,23 +1,22 @@
+import type { Container } from '@nmtjs/core'
+import type { Connection } from '@nmtjs/protocol/server'
 import {
-  type Container,
   createFactoryInjectable,
   createValueInjectable,
   Scope,
 } from '@nmtjs/core'
 import { ErrorCode } from '@nmtjs/protocol'
-import { type Connection, ProtocolInjectables } from '@nmtjs/protocol/server'
+import { ProtocolInjectables } from '@nmtjs/protocol/server'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import {
-  ApiError,
-  ApplicationApi,
-  type ApplicationApiCallOptions,
-} from '../src/api.ts'
+
+import type { ApplicationApiCallOptions } from '../src/api.ts'
 import type { Application } from '../src/application.ts'
 import type { Namespace } from '../src/namespace.ts'
 import type { ApplicationRegistry } from '../src/registry.ts'
+import type { TestNamespaceContract } from './_utils.ts'
+import { ApiError, ApplicationApi } from '../src/api.ts'
 import { createRouter } from '../src/router.ts'
 import {
-  type TestNamespaceContract,
   testApp,
   testConnection,
   testNamepsace,
@@ -164,9 +163,7 @@ describe.sequential('Api', () => {
   })
 
   it('should handle filter', async () => {
-    const filterInjectable = {
-      catch: vi.fn(() => new ApiError('custom')),
-    }
+    const filterInjectable = { catch: vi.fn(() => new ApiError('custom')) }
     class CustomError extends Error {}
     const filter = createValueInjectable(filterInjectable)
     registry.registerFilter(CustomError, filter)
@@ -183,9 +180,7 @@ describe.sequential('Api', () => {
   })
 
   it('should handle guard', async () => {
-    const guardLike = {
-      can: vi.fn(() => false),
-    }
+    const guardLike = { can: vi.fn(() => false) }
     const guard = createValueInjectable(guardLike)
     const procedure = testProcedure({
       guards: [guard],
@@ -229,28 +224,16 @@ describe.sequential('Api', () => {
     const response = await call({ procedure, payload: { test: '1' } })
 
     expect(middleware1Like.handle).toHaveBeenCalledWith(
-      {
-        connection,
-        container,
-        procedure,
-        namespace,
-      },
+      { connection, container, procedure, namespace },
       expect.any(Function),
       { test: '1' },
     )
     expect(middleware2Like.handle).toHaveBeenCalledWith(
-      {
-        connection,
-        container,
-        procedure,
-        namespace,
-      },
+      { connection, container, procedure, namespace },
       expect.any(Function),
       { test: '12' },
     )
-    expect(handlerFn).toHaveBeenCalledWith(expect.anything(), {
-      test: '123',
-    })
+    expect(handlerFn).toHaveBeenCalledWith(expect.anything(), { test: '123' })
     expect(response.output).toStrictEqual({
       test: 'result_middleware2_middleware1',
     })

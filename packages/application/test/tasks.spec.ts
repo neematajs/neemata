@@ -1,6 +1,7 @@
 import { createPromise, defer, noopFn, onAbort } from '@nmtjs/common'
 import { Container, createValueInjectable } from '@nmtjs/core'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
 import { kTask } from '../src/constants.ts'
 import { AppInjectables } from '../src/injectables.ts'
 import { ApplicationRegistry } from '../src/registry.ts'

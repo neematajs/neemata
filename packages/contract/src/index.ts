@@ -1,6 +1,3 @@
-// biome-ignore lint/correctness/noUnusedImports: TSC wants it
-import t from '@nmtjs/type'
-
 import { APIContract } from './schemas/api.ts'
 import { EventContract } from './schemas/event.ts'
 import { NamespaceContract } from './schemas/namespace.ts'

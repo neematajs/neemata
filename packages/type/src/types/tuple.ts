@@ -1,5 +1,6 @@
 import type { ArrayMap } from '@nmtjs/common'
-import * as zod from 'zod/v4-mini'
+import * as zod from 'zod/mini'
+
 import { BaseType } from './base.ts'
 
 export class TupleType<

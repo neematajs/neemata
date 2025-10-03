@@ -1,13 +1,13 @@
 import { threadId } from 'node:worker_threads'
-import {
-  type DestinationStream,
-  type Level,
-  type LoggerOptions,
-  type Logger as PinoLogger,
-  pino,
-  type StreamEntry,
-  stdTimeFunctions,
+
+import type {
+  DestinationStream,
+  Level,
+  LoggerOptions,
+  Logger as PinoLogger,
+  StreamEntry,
 } from 'pino'
+import { pino, stdTimeFunctions } from 'pino'
 import { build as pretty } from 'pino-pretty'
 
 export type { StreamEntry } from 'pino'
@@ -69,11 +69,7 @@ export const createLogger = (options: LoggingOptions = {}, $group: string) => {
   )
   const level = pino.levels.labels[lowestLevelValue]
   return pino(
-    {
-      timestamp: stdTimeFunctions.isoTime,
-      ...pinoOptions,
-      level,
-    },
+    { timestamp: stdTimeFunctions.isoTime, ...pinoOptions, level },
     pino.multistream(destinations!),
   ).child({ $group, $threadId: threadId })
 }

@@ -1,8 +1,9 @@
-import { Kind } from '../constants.ts'
-import { type ContractSchemaOptions, createSchema } from '../utils.ts'
+import type { ContractSchemaOptions } from '../utils.ts'
 import type { TEventContract } from './event.ts'
 import type { TAnyNamespaceContract, TNamespaceContract } from './namespace.ts'
 import type { TProcedureContract } from './procedure.ts'
+import { Kind } from '../constants.ts'
+import { createSchema } from '../utils.ts'
 
 export const APIKind = Symbol('NeemataAPI')
 
@@ -51,11 +52,7 @@ export const APIContract = <
           Extract<typeof procedureKey, string>,
           Extract<typeof namespaceKey, string>
         >
-      >({
-        ...procedure,
-        name: procedureKey,
-        namespace: namespaceKey,
-      })
+      >({ ...procedure, name: procedureKey, namespace: namespaceKey })
     }
 
     const _events = {} as any

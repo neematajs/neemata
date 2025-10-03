@@ -1,14 +1,12 @@
 import type { ErrorClass } from '@nmtjs/common'
+import type { AnyInjectable, Depedency, Dependant, Logger } from '@nmtjs/core'
 import {
-  type AnyInjectable,
-  type Depedency,
-  type Dependant,
   getDepedencencyInjectable,
   getInjectableScope,
-  type Logger,
   Scope,
 } from '@nmtjs/core'
 import { ProtocolRegistry } from '@nmtjs/protocol/server'
+
 import type { AnyFilter, AnyGuard, AnyMiddleware } from './api.ts'
 import type { AnyNamespace } from './namespace.ts'
 import type { AnyRouter } from './router.ts'
@@ -25,11 +23,7 @@ export class ApplicationRegistry extends ProtocolRegistry {
   readonly guards = new Set<AnyGuard>()
   readonly tasks = new Map<string, AnyTask>()
 
-  constructor(
-    protected readonly application: {
-      logger: Logger
-    },
-  ) {
+  constructor(protected readonly application: { logger: Logger }) {
     super(application)
   }
 

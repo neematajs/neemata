@@ -4,12 +4,9 @@ import { fork } from 'node:child_process'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
-import {
-  APP_COMMAND,
-  Application,
-  type ApplicationWorkerOptions,
-  WorkerType,
-} from '@nmtjs/application'
+
+import type { ApplicationWorkerOptions } from '@nmtjs/application'
+import { APP_COMMAND, Application, WorkerType } from '@nmtjs/application'
 import { defer } from '@nmtjs/common'
 import { ApplicationServer } from '@nmtjs/server'
 import { config } from 'dotenv'
@@ -19,29 +16,11 @@ export const run = async (scriptPath: string) => {
     allowPositionals: true,
     strict: false,
     options: {
-      entry: {
-        type: 'string',
-        multiple: false,
-      },
-      watch: {
-        type: 'boolean',
-        multiple: false,
-        default: false,
-      },
-      ts: {
-        type: 'boolean',
-        multiple: false,
-        default: false,
-      },
-      timeout: {
-        type: 'string',
-        multiple: false,
-      },
-      env: {
-        type: 'string',
-        multiple: true,
-        default: [],
-      },
+      entry: { type: 'string', multiple: false },
+      watch: { type: 'boolean', multiple: false, default: false },
+      ts: { type: 'boolean', multiple: false, default: false },
+      timeout: { type: 'string', multiple: false },
+      env: { type: 'string', multiple: true, default: [] },
     },
   })
 
@@ -72,10 +51,7 @@ export const run = async (scriptPath: string) => {
     if (watch) execArgs.push('--watch')
     fork(fileURLToPath(scriptPath), args, {
       execArgv: execArgs,
-      env: {
-        ...process.env,
-        NEEMATA_WATCH: watch ? 'true' : undefined,
-      },
+      env: { ...process.env, NEEMATA_WATCH: watch ? 'true' : undefined },
       stdio: 'inherit',
     })
   } else {
@@ -191,7 +167,7 @@ export const run = async (scriptPath: string) => {
 
         if (!commandName) {
           commandName = extension
-          // @ts-ignore
+          // @ts-expect-error
           extension = undefined
         }
 

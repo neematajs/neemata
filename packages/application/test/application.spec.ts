@@ -1,5 +1,6 @@
 import { CoreInjectables } from '@nmtjs/core'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
 import { Application } from '../src/application.ts'
 import { AppInjectables } from '../src/injectables.ts'
 import { PubSub } from '../src/pubsub.ts'

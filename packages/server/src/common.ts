@@ -16,7 +16,6 @@ export const createBroadcastChannel = (name: string) => {
   const emitter = new EventEmitter()
   channel.onmessageerror = console.error
   channel.onmessage = (message) => {
-    // @ts-ignore
     emitter.emit('message', message.data)
   }
   bindPortMessageHandler(emitter)

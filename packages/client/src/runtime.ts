@@ -2,6 +2,7 @@ import type { TAnyAPIContract } from '@nmtjs/contract'
 import { ErrorCode } from '@nmtjs/protocol'
 import { ProtocolBaseTransformer } from '@nmtjs/protocol/client'
 import { NeemataTypeError, t } from '@nmtjs/type'
+
 import { BaseClient, ClientError } from './common.ts'
 
 export class RuntimeContractTransformer extends ProtocolBaseTransformer {

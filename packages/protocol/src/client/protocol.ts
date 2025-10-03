@@ -1,22 +1,20 @@
-import {
-  createPromise,
-  type InteractivePromise,
-  type OneOf,
-} from '@nmtjs/common'
-import { concat, decodeNumber, encodeNumber } from '../common/binary.ts'
+import type { InteractivePromise, OneOf } from '@nmtjs/common'
+import { createPromise } from '@nmtjs/common'
+
 import type { ProtocolBlobMetadata } from '../common/blob.ts'
-import {
-  ClientMessageType,
-  ErrorCode,
-  ServerMessageType,
-} from '../common/enums.ts'
 import type {
   BaseProtocolError,
   ProtocolRPC,
   ProtocolRPCResponse,
 } from '../common/types.ts'
-import { EventEmitter } from './events.ts'
 import type { BaseClientFormat } from './format.ts'
+import { concat, decodeNumber, encodeNumber } from '../common/binary.ts'
+import {
+  ClientMessageType,
+  ErrorCode,
+  ServerMessageType,
+} from '../common/enums.ts'
+import { EventEmitter } from './events.ts'
 import {
   ProtocolClientBlobStream,
   ProtocolServerBlobStream,
@@ -42,11 +40,7 @@ export class ProtocolError extends Error implements BaseProtocolError {
   }
 
   toJSON() {
-    return {
-      code: this.code,
-      message: this.message,
-      data: this.data,
-    }
+    return { code: this.code, message: this.message, data: this.data }
   }
 }
 

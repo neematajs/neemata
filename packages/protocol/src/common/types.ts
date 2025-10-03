@@ -1,4 +1,5 @@
 import type { OneOf } from '@nmtjs/common'
+
 import type { ProtocolBlob, ProtocolBlobMetadata } from './blob.ts'
 
 type Stream = any
@@ -18,15 +19,8 @@ export type ProtocolRPC = {
 
 export type ProtocolRPCResponse<T = Stream> = OneOf<
   [
-    {
-      callId: number
-      error: BaseProtocolError
-    },
-    {
-      callId: number
-      result: any
-      streams: Record<number, T>
-    },
+    { callId: number; error: BaseProtocolError },
+    { callId: number; result: any; streams: Record<number, T> },
   ]
 >
 

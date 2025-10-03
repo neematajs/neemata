@@ -1,12 +1,11 @@
-import {
-  type DecodeRPCContext,
-  decodeText,
-  type EncodeRPCContext,
-  encodeText,
-  ProtocolBlob,
-  type ProtocolRPCResponse,
+import type {
+  DecodeRPCContext,
+  EncodeRPCContext,
+  ProtocolRPCResponse,
 } from '@nmtjs/protocol'
+import { decodeText, encodeText, ProtocolBlob } from '@nmtjs/protocol'
 import { BaseServerFormat } from '@nmtjs/protocol/server'
+
 import { deserializeStreamId, isStreamId, serializeStreamId } from './common.ts'
 
 /**
@@ -65,12 +64,7 @@ export class JsonFormat extends BaseServerFormat {
         ? undefined
         : JSON.parse(formatPayload, replacer)
 
-    return {
-      callId,
-      namespace,
-      procedure,
-      payload,
-    }
+    return { callId, namespace, procedure, payload }
   }
 }
 

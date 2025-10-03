@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
+import type { Application } from 'nmtjs/application'
 import {
   createTestingApplication,
   createTestMessage,
@@ -6,8 +6,9 @@ import {
   TEST_HEADERS,
   TEST_ROUTES,
 } from 'neemata-test-generic'
-import type { Application } from 'nmtjs/application'
 import { WsTransport } from 'nmtjs/ws-transport/bun'
+
+import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
 
 describe('Bun', () => {
   let app: Application

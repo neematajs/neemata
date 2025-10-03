@@ -1,12 +1,12 @@
-import { noopFn } from '@nmtjs/common'
 import type { TAnyAPIContract } from '@nmtjs/contract'
-import {
-  EventEmitter,
-  type ProtocolBaseClientCallOptions,
-  type ProtocolBaseTransformer,
-  ProtocolError,
-  type ProtocolTransport,
+import type {
+  ProtocolBaseClientCallOptions,
+  ProtocolBaseTransformer,
+  ProtocolTransport,
 } from '@nmtjs/protocol/client'
+import { noopFn } from '@nmtjs/common'
+import { EventEmitter, ProtocolError } from '@nmtjs/protocol/client'
+
 import type {
   ClientCallers,
   ResolveAPIContract,
@@ -21,6 +21,7 @@ export {
   type ProtocolBlobMetadata,
   TransportType,
 } from '@nmtjs/protocol'
+
 export * from './types.ts'
 
 export class ClientError extends ProtocolError {}
@@ -40,10 +41,7 @@ export abstract class BaseClient<
     RuntimeOutputContractTypeProvider
   >,
 > extends EventEmitter<ResolveClientEvents<API>> {
-  _!: {
-    api: API
-    safe: SafeCall
-  }
+  _!: { api: API; safe: SafeCall }
 
   protected abstract transformer: ProtocolBaseTransformer
   protected callers!: ClientCallers<API, SafeCall>

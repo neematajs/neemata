@@ -1,6 +1,7 @@
-import { Kind } from '../constants.ts'
-import { type ContractSchemaOptions, createSchema } from '../utils.ts'
+import type { ContractSchemaOptions } from '../utils.ts'
 import type { TAnyEventContract, TEventContract } from './event.ts'
+import { Kind } from '../constants.ts'
+import { createSchema } from '../utils.ts'
 
 export const SubscriptionKind = Symbol('NeemataSubscription')
 
@@ -52,12 +53,7 @@ const _SubscriptionContract = <
         undefined,
         Options['name'] extends string ? Options['name'] : undefined
       >
-    >({
-      ...event,
-      name: key,
-      namespace: undefined,
-      subscription: name as any,
-    })
+    >({ ...event, name: key, namespace: undefined, subscription: name as any })
   }
   return createSchema<
     TSubscriptionContract<

@@ -1,11 +1,7 @@
-import {
-  decodeText,
-  type EncodeRPCContext,
-  encodeText,
-  ProtocolBlob,
-  type ProtocolBlobMetadata,
-} from '@nmtjs/protocol'
+import type { EncodeRPCContext, ProtocolBlobMetadata } from '@nmtjs/protocol'
+import { decodeText, encodeText, ProtocolBlob } from '@nmtjs/protocol'
 import { describe, expect, it, vi } from 'vitest'
+
 import { JsonFormat } from '../src/client.ts'
 import { serializeStreamId } from '../src/common.ts'
 

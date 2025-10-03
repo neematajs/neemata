@@ -1,19 +1,21 @@
 import { readdir } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+
 import type { Callback } from '@nmtjs/common'
-import {
-  c,
-  type TAnyNamespaceContract,
-  type TEventContract,
-  type TNamespaceContract,
-  type TProcedureContract,
+import type {
+  TAnyNamespaceContract,
+  TEventContract,
+  TNamespaceContract,
+  TProcedureContract,
 } from '@nmtjs/contract'
-import { Hook, Hooks } from '@nmtjs/core'
 import type { BaseType } from '@nmtjs/type'
+import { c } from '@nmtjs/contract'
+import { Hook, Hooks } from '@nmtjs/core'
+
 import type { AnyGuard, AnyMiddleware } from './api.ts'
-import { kNamespace, kProcedure } from './constants.ts'
 import type { AnyProcedure } from './procedure.ts'
+import { kNamespace, kProcedure } from './constants.ts'
 
 export interface Namespace<Contract extends TAnyNamespaceContract> {
   contract: Contract
@@ -168,10 +170,7 @@ export function createNamespace<
   })
 
   for (const [name, procedureContract] of Object.entries(contract.procedures)) {
-    procedures[name] = {
-      ...procedures[name],
-      contract: procedureContract,
-    }
+    procedures[name] = { ...procedures[name], contract: procedureContract }
   }
 
   const namespace = createContractNamespace(contract, {

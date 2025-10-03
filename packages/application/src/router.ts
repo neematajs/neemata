@@ -1,9 +1,10 @@
-import {
-  c,
-  type TAnyAPIContract,
-  type TAPIContract,
-  type TNamespaceContract,
+import type {
+  TAnyAPIContract,
+  TAPIContract,
+  TNamespaceContract,
 } from '@nmtjs/contract'
+import { c } from '@nmtjs/contract'
+
 import type { AnyNamespace, Namespace } from './namespace.ts'
 
 export type AnyRouter = Router<TAnyAPIContract>
@@ -34,11 +35,7 @@ export function createContractRouter<Contract extends TAnyAPIContract>(
     >
   },
 ): Router<Contract> {
-  return {
-    contract,
-    namespaces,
-    timeout: contract.timeout,
-  }
+  return { contract, namespaces, timeout: contract.timeout }
 }
 
 export function createRouter<Namespaces extends Record<string, AnyNamespace>>(

@@ -1,11 +1,13 @@
 import { once } from 'node:events'
 import { Worker } from 'node:worker_threads'
+
+import type { Logger, LoggingOptions } from '@nmtjs/core'
 import { WorkerType } from '@nmtjs/application'
 import { noopFn } from '@nmtjs/common'
-import type { Logger, LoggingOptions } from '@nmtjs/core'
 import { createLogger, Pool } from '@nmtjs/core'
-import { bindPortMessageHandler, WorkerMessageType } from './common.ts'
+
 import type { ApplicationWorkerData } from './worker.ts'
+import { bindPortMessageHandler, WorkerMessageType } from './common.ts'
 
 export type ApplicationServerOptions = {
   applicationPath: string | URL
@@ -125,10 +127,7 @@ export class ApplicationServer {
     if (!isTaskWorker) {
       worker.on(WorkerMessageType.ExecuteInvoke, async (payload) => {
         const worker = await this.taskRunners.next()
-        worker.postMessage({
-          type: WorkerMessageType.ExecuteInvoke,
-          payload,
-        })
+        worker.postMessage({ type: WorkerMessageType.ExecuteInvoke, payload })
       })
     } else {
       this.taskRunners.add(worker)

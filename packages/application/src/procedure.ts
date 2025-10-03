@@ -1,28 +1,26 @@
 import type { Async } from '@nmtjs/common'
-import {
-  c,
-  type TAnyProcedureContract,
-  type TProcedureContract,
-} from '@nmtjs/contract'
-import {
-  type Dependant,
-  type Dependencies,
-  type DependencyContext,
-  kMetadata,
-  type Metadata,
-  type MetadataKey,
-  MetadataStore,
+import type { TAnyProcedureContract, TProcedureContract } from '@nmtjs/contract'
+import type {
+  Dependant,
+  Dependencies,
+  DependencyContext,
+  Metadata,
+  MetadataKey,
 } from '@nmtjs/core'
 import type {
   InputType,
   OutputType,
   ProtocolApiCallIterableResult,
 } from '@nmtjs/protocol/server'
-import { type BaseType, t } from '@nmtjs/type'
-import type * as zod from 'zod/v4-mini'
+import type { BaseType } from '@nmtjs/type'
+import type * as zod from 'zod/mini'
+import { c } from '@nmtjs/contract'
+import { kMetadata, MetadataStore } from '@nmtjs/core'
+import { t } from '@nmtjs/type'
+
 import type { AnyGuard, AnyMiddleware } from './api.ts'
-import { kProcedure } from './constants.ts'
 import type { JsonPrimitive } from './types.ts'
+import { kProcedure } from './constants.ts'
 
 export interface BaseProcedure<
   ProcedureContract extends TAnyProcedureContract,
@@ -132,13 +130,7 @@ export function _createBaseProcedure<
     metadata.set(meta.key, meta.value)
   }
 
-  return {
-    contract,
-    dependencies,
-    middlewares,
-    guards,
-    metadata,
-  }
+  return { contract, dependencies, middlewares, guards, metadata }
 }
 
 export function createContractProcedure<
@@ -241,12 +233,6 @@ export function createProcedure<
       stream: stream === true ? t.any() : stream,
       timeout,
     }),
-    {
-      dependencies,
-      handler,
-      guards,
-      middlewares,
-      metadata,
-    },
+    { dependencies, handler, guards, middlewares, metadata },
   )
 }

@@ -3,6 +3,7 @@ import {
   createLazyInjectable,
   Scope,
 } from '@nmtjs/core'
+
 import type { Connection } from './connection.ts'
 
 const connection = createLazyInjectable<Connection, Scope.Connection>(

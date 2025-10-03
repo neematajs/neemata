@@ -90,9 +90,7 @@ export type WsTransportRuntimeNode = {
   >
 }
 
-export type WsTransportRuntimeDeno = {
-  server?: {}
-}
+export type WsTransportRuntimeDeno = { server?: {} }
 
 export type WsTransportRuntimes = {
   bun: WsTransportRuntimeBun

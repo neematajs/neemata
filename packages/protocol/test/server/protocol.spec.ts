@@ -1,17 +1,19 @@
+import type { AnyInjectable } from '@nmtjs/core'
+import type { Mock } from 'vitest'
 import {
-  type AnyInjectable,
   Container,
   createLazyInjectable,
   Hook,
   Registry,
   Scope,
 } from '@nmtjs/core'
-import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest'
-import { ServerMessageType } from '../../src/common/enums.ts'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
 import type {
   ProtocolApiCallOptions,
   ProtocolApiCallResult,
 } from '../../src/server/api.ts'
+import { ServerMessageType } from '../../src/common/enums.ts'
 import { Connection, ConnectionContext } from '../../src/server/connection.ts'
 import { Format } from '../../src/server/format.ts'
 import { ProtocolInjectables } from '../../src/server/injectables.ts'
@@ -43,10 +45,7 @@ describe('Server Protocol', () => {
   beforeEach(() => {
     api.call = vi.fn()
     registry = new Registry({ logger })
-    container = new Container({
-      logger,
-      registry,
-    })
+    container = new Container({ logger, registry })
     protocol = new Protocol({
       api,
       container,
@@ -107,10 +106,7 @@ describe('Server Protocol', () => {
 
       const { connection, context } = await protocol.addConnection(
         dummyTransport,
-        {
-          id: connectionId,
-          data: connectionData,
-        },
+        { id: connectionId, data: connectionData },
         { acceptType: format.contentType, contentType: format.contentType },
       )
 
@@ -136,10 +132,7 @@ describe('Server Protocol', () => {
       const connectionData = {}
       const added = await protocol.addConnection(
         dummyTransport,
-        {
-          id: connectionId,
-          data: connectionData,
-        },
+        { id: connectionId, data: connectionData },
         { acceptType: format.contentType, contentType: format.contentType },
       )
 
@@ -161,10 +154,7 @@ describe('Server Protocol', () => {
 
       await protocol.addConnection(
         dummyTransport,
-        {
-          id: connectionId,
-          data: connectionData,
-        },
+        { id: connectionId, data: connectionData },
         { acceptType: format.contentType, contentType: format.contentType },
       )
 
@@ -181,10 +171,7 @@ describe('Server Protocol', () => {
       await expect(
         protocol.addConnection(
           dummyTransport,
-          {
-            id: connectionId,
-            data: connectionData,
-          },
+          { id: connectionId, data: connectionData },
           { acceptType: 'unknown/unknown', contentType: format.contentType },
         ),
       ).rejects.toThrowError(UnsupportedAcceptTypeError)
@@ -192,10 +179,7 @@ describe('Server Protocol', () => {
       await expect(
         protocol.addConnection(
           dummyTransport,
-          {
-            id: connectionId,
-            data: connectionData,
-          },
+          { id: connectionId, data: connectionData },
           { acceptType: format.contentType, contentType: 'unknown/unknown' },
         ),
       ).rejects.toThrowError(UnsupportedContentTypeError)
@@ -211,10 +195,7 @@ describe('Server Protocol', () => {
     beforeEach(async () => {
       const added = await protocol.addConnection(
         dummyTransport,
-        {
-          id: connectionId,
-          data: connectionData,
-        },
+        { id: connectionId, data: connectionData },
         { acceptType: format.contentType, contentType: format.contentType },
       )
       connection = added.connection
@@ -237,12 +218,7 @@ describe('Server Protocol', () => {
 
       const result = protocol.rpc(
         connectionId,
-        {
-          callId,
-          payload,
-          namespace,
-          procedure,
-        },
+        { callId, payload, namespace, procedure },
         { metadata, signal: ac.signal, provides },
       )
 
@@ -275,10 +251,7 @@ describe('Server Protocol', () => {
       expect(apiCallOptions.container.scope).toBe(Scope.Call)
 
       const expectedBuffer = context.format.encoder.encodeRPC(
-        {
-          callId,
-          result: apiCallResult.output,
-        },
+        { callId, result: apiCallResult.output },
         // @ts-expect-error
         { addStream() {}, getStream() {} },
       )

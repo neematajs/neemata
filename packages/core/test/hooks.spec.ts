@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
+
 import { kHookCollection } from '../src/constants.ts'
 import { Container } from '../src/container.ts'
 import { Hook } from '../src/enums.ts'
@@ -61,9 +62,7 @@ describe('Hooks injectables', () => {
   test('should properly handle inline hooks', async () => {
     const hookSpy = vi.fn()
     const injectable = createFactoryInjectable({
-      dependencies: {
-        hook: CoreInjectables.hook,
-      },
+      dependencies: { hook: CoreInjectables.hook },
       factory: ({ hook }) => {
         hook(Hook.OnDisconnect, hookSpy)
       },

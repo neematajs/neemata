@@ -1,5 +1,7 @@
-import { type DecodeRPCContext, encodeText } from '@nmtjs/protocol'
+import type { DecodeRPCContext } from '@nmtjs/protocol'
+import { encodeText } from '@nmtjs/protocol'
 import { describe, expect, it, vi } from 'vitest'
+
 import { serializeStreamId } from '../src/common.ts'
 import { JsonFormat as ServerJsonFormat } from '../src/server.ts'
 
@@ -27,9 +29,7 @@ describe('Server', () => {
       callId: 1,
       namespace: 'namespace',
       procedure: 'procedure',
-      streams: {
-        [streamId]: { size: 1, type: 'test', filename: 'file.txt' },
-      },
+      streams: { [streamId]: { size: 1, type: 'test', filename: 'file.txt' } },
       payload: JSON.stringify({
         foo: 'bar',
         stream: serializeStreamId(streamId),
@@ -58,10 +58,7 @@ describe('Server', () => {
     expect(rpc).toHaveProperty('callId', input.callId)
     expect(rpc).toHaveProperty('namespace', input.namespace)
     expect(rpc).toHaveProperty('procedure', input.procedure)
-    expect(rpc).toHaveProperty('payload', {
-      foo: 'bar',
-      stream: stream!,
-    })
+    expect(rpc).toHaveProperty('payload', { foo: 'bar', stream: stream! })
   })
 
   // TODO: test encoding rpc

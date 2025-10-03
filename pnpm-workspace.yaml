@@ -3,3 +3,5 @@ packages:
   - testing/*
 onlyBuiltDependencies:
   - esbuild
+catalog:
+  zod: ^4.0.0

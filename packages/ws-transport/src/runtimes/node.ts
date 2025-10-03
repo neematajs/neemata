@@ -1,18 +1,20 @@
-import { App, SSLApp } from 'uWebSockets.js'
 import { createTransport } from '@nmtjs/protocol/server'
 import createAdapter from 'crossws/adapters/uws'
-import { WsTransportServer } from '../server.ts'
+
 import type {
   WsAdapterParams,
   WsAdapterServer,
   WsConnectionData,
   WsTransportOptions,
 } from '../types.ts'
+import { WsTransportServer } from '../server.ts'
 import {
   InternalServerErrorHttpResponse,
   NotFoundHttpResponse,
   StatusResponse,
 } from '../utils.ts'
+
+import { App, SSLApp } from 'uWebSockets.js'
 
 function adapterFactory(params: WsAdapterParams<'node'>): WsAdapterServer {
   const adapter = createAdapter({ hooks: params.wsHooks })
@@ -26,10 +28,7 @@ function adapterFactory(params: WsAdapterParams<'node'>): WsAdapterServer {
     : App()
 
   server
-    .ws(params.apiPath, {
-      ...params.runtime?.ws,
-      ...adapter.websocket,
-    })
+    .ws(params.apiPath, { ...params.runtime?.ws, ...adapter.websocket })
     .get('/healthy', async (res) => {
       res.onAborted(() => {})
       const response = StatusResponse()
@@ -66,11 +65,7 @@ function adapterFactory(params: WsAdapterParams<'node'>): WsAdapterServer {
             },
           })
           response = await params.fetchHandler(
-            {
-              url,
-              method,
-              headers,
-            },
+            { url, method, headers },
             body,
             controller.signal,
           )

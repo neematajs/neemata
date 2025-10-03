@@ -1,6 +1,7 @@
 import type { Async } from '@nmtjs/common'
-import { kPlugin } from './constants.ts'
+
 import type { PluginContext } from './types.ts'
+import { kPlugin } from './constants.ts'
 
 export interface BasePlugin<
   Type = any,

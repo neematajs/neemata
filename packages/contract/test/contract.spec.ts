@@ -1,17 +1,15 @@
 import { t } from '@nmtjs/type'
 import { describe, expect, expectTypeOf, it } from 'vitest'
+
+import type { TEventContract } from '../src/schemas/event.ts'
+import type { TProcedureContract } from '../src/schemas/procedure.ts'
 import { c, IsNamespaceContract, NamespaceContract } from '../src/index.ts'
 import { APIContract, IsAPIContract } from '../src/schemas/api.ts'
-import {
-  EventContract,
-  IsEventContract,
-  type TEventContract,
-} from '../src/schemas/event.ts'
+import { EventContract, IsEventContract } from '../src/schemas/event.ts'
 import {
   IsProcedureContract,
   IsStreamProcedureContract,
   ProcedureContract,
-  type TProcedureContract,
 } from '../src/schemas/procedure.ts'
 import {
   IsSubscriptionContract,
@@ -48,9 +46,7 @@ describe('Contract — Event', { sequential: true }, () => {
   describe('Runtime', () => {
     it('should create an Event contract', () => {
       const eventType = t.any()
-      const event = c.event({
-        payload: eventType,
-      })
+      const event = c.event({ payload: eventType })
 
       expect(event).toBeDefined()
       expect(event).toHaveProperty('type', 'neemata:event')
@@ -60,19 +56,14 @@ describe('Contract — Event', { sequential: true }, () => {
 
   describe('Typings', () => {
     it('should correctly resolve Event contract types', () => {
-      const unnamedEvent = c.event({
-        payload: t.string(),
-      })
+      const unnamedEvent = c.event({ payload: t.string() })
 
       expectTypeOf(unnamedEvent.name).toEqualTypeOf<undefined>()
       expectTypeOf(unnamedEvent.payload).toEqualTypeOf<t.StringType>()
 
       const namedEvent = c.event({
         name: 'testEvent',
-        payload: t.object({
-          id: t.number(),
-          value: t.string(),
-        }),
+        payload: t.object({ id: t.number(), value: t.string() }),
       })
       expectTypeOf(namedEvent.name).toEqualTypeOf<'testEvent'>()
       expectTypeOf(namedEvent.payload).toEqualTypeOf<
@@ -85,9 +76,7 @@ describe('Contract — Event', { sequential: true }, () => {
 describe('Contract — Subscription', { sequential: true }, () => {
   describe('Runtime', () => {
     it('should create a Subscription contract', () => {
-      const testEvent = c.event({
-        payload: t.any(),
-      })
+      const testEvent = c.event({ payload: t.any() })
 
       const subscription = c.subscription({
         name: 'testSubscription',
@@ -112,13 +101,9 @@ describe('Contract — Subscription', { sequential: true }, () => {
     })
 
     it('should create a Subscription contract with options', () => {
-      const testEvent = c.event({
-        payload: t.any(),
-      })
+      const testEvent = c.event({ payload: t.any() })
 
-      const subscription = c.subscription.withOptions<{
-        test: string
-      }>()({
+      const subscription = c.subscription.withOptions<{ test: string }>()({
         name: 'testSubscription',
         events: { testEvent },
       })
@@ -146,14 +131,9 @@ describe('Contract — Subscription', { sequential: true }, () => {
       const subscription1 = c.subscription({
         name: 'testSubscription',
         events: {
-          event1: c.event({
-            payload: t.string(),
-          }),
+          event1: c.event({ payload: t.string() }),
           event2: c.event({
-            payload: t.object({
-              id: t.number(),
-              value: t.string(),
-            }),
+            payload: t.object({ id: t.number(), value: t.string() }),
           }),
         },
       })
@@ -174,20 +154,12 @@ describe('Contract — Subscription', { sequential: true }, () => {
     })
 
     it('should correctly resolve Subscription contract types with options', () => {
-      const subscription2 = c.subscription.withOptions<{
-        test: string
-      }>()({
+      const subscription2 = c.subscription.withOptions<{ test: string }>()({
         name: 'testSubscription',
-        events: {
-          event1: c.event({
-            payload: t.string(),
-          }),
-        },
+        events: { event1: c.event({ payload: t.string() }) },
       })
 
-      expectTypeOf(subscription2.options).toEqualTypeOf<{
-        test: string
-      }>()
+      expectTypeOf(subscription2.options).toEqualTypeOf<{ test: string }>()
     })
   })
 })
@@ -236,18 +208,11 @@ describe('Contract — Procedure', { sequential: true }, () => {
         output: t.string(),
       })
 
-      const namedProcedure = c.procedure({
-        name: 'testProcedure',
-      })
+      const namedProcedure = c.procedure({ name: 'testProcedure' })
 
       const streamProcedure = c.procedure({
-        input: t.object({
-          name: t.string(),
-          age: t.number(),
-        }),
-        output: t.object({
-          greeting: t.string(),
-        }),
+        input: t.object({ name: t.string(), age: t.number() }),
+        output: t.object({ greeting: t.string() }),
         stream: t.string(),
       })
 
@@ -280,22 +245,14 @@ describe('Contract — Namespace', { sequential: true }, () => {
       const outputType = t.any()
       const eventType = t.any()
 
-      const event = c.event({
-        payload: eventType,
-      })
+      const event = c.event({ payload: eventType })
 
-      const procedure = c.procedure({
-        input: inputType,
-        output: outputType,
-      })
+      const procedure = c.procedure({ input: inputType, output: outputType })
 
       const namespace = c.namespace({
         procedures: {
           variableProcedure: procedure,
-          inlineProcedure: c.procedure({
-            input: t.any(),
-            output: t.any(),
-          }),
+          inlineProcedure: c.procedure({ input: t.any(), output: t.any() }),
           inlineProcedureWithStream: c.procedure({
             input: t.any(),
             output: t.any(),
@@ -304,9 +261,7 @@ describe('Contract — Namespace', { sequential: true }, () => {
         },
         events: {
           variableEvent: event,
-          inlineEvent: c.event({
-            payload: t.any(),
-          }),
+          inlineEvent: c.event({ payload: t.any() }),
         },
       })
 
@@ -338,19 +293,12 @@ describe('Contract — Namespace', { sequential: true }, () => {
         input: t.string(),
         output: t.string(),
       })
-      const testEvent = c.event({
-        payload: t.object({
-          message: t.string(),
-        }),
-      })
+      const testEvent = c.event({ payload: t.object({ message: t.string() }) })
       const namespaceContract = c.namespace({
         name: 'testNamespace',
         procedures: {
           simpleProcedure,
-          inlineProcedure: c.procedure({
-            input: t.any(),
-            output: t.any(),
-          }),
+          inlineProcedure: c.procedure({ input: t.any(), output: t.any() }),
           inlineProcedureWithStream: c.procedure({
             input: t.any(),
             output: t.any(),
@@ -359,11 +307,7 @@ describe('Contract — Namespace', { sequential: true }, () => {
         },
         events: {
           testEvent: testEvent,
-          inlineEvent: c.event({
-            payload: t.object({
-              data: t.string(),
-            }),
-          }),
+          inlineEvent: c.event({ payload: t.object({ data: t.string() }) }),
         },
       })
 
@@ -436,11 +380,7 @@ describe('Contract — API', { sequential: true }, () => {
                 output: outputType,
               }),
             },
-            events: {
-              testNamespaceEvent: c.event({
-                payload: eventType,
-              }),
-            },
+            events: { testNamespaceEvent: c.event({ payload: eventType }) },
           }),
         },
       })
@@ -465,9 +405,7 @@ describe('Contract — API', { sequential: true }, () => {
             },
             events: {
               testEvent: c.event({
-                payload: t.object({
-                  message: t.string(),
-                }),
+                payload: t.object({ message: t.string() }),
               }),
             },
           }),

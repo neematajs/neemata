@@ -1,5 +1,5 @@
-import { n, t, WorkerType } from 'nmtjs'
 import type { Application } from 'nmtjs/application'
+import { n, t, WorkerType } from 'nmtjs'
 import { JsonFormat } from 'nmtjs/json-format'
 
 export const createTestingApplication = (): Application => {
@@ -20,10 +20,7 @@ export const createTestingApplication = (): Application => {
   const app = n
     .app({
       type: WorkerType.Api,
-      api: {
-        formats: [new JsonFormat()],
-        timeout: 10000,
-      },
+      api: { formats: [new JsonFormat()], timeout: 10000 },
       pubsub: {},
       tasks: { timeout: 10000 },
       logging: {

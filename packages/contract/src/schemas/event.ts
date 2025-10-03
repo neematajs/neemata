@@ -1,6 +1,9 @@
-import { type BaseType, t } from '@nmtjs/type'
+import type { BaseType } from '@nmtjs/type'
+import { t } from '@nmtjs/type'
+
+import type { ContractSchemaOptions } from '../utils.ts'
 import { Kind } from '../constants.ts'
-import { type ContractSchemaOptions, createSchema } from '../utils.ts'
+import { createSchema } from '../utils.ts'
 
 export const EventKind = Symbol('NeemataEvent')
 

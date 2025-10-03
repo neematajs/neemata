@@ -16,17 +16,13 @@ export const RequestTimeoutError = (message = 'Request Timeout') =>
 export const NotFoundHttpResponse = () =>
   new Response('Not Found', {
     status: 404,
-    headers: {
-      'Content-Type': 'text/plain',
-    },
+    headers: { 'Content-Type': 'text/plain' },
   })
 
 export const InternalServerErrorHttpResponse = () =>
   new Response('Internal Server Error', {
     status: 500,
-    headers: {
-      'Content-Type': 'text/plain',
-    },
+    headers: { 'Content-Type': 'text/plain' },
   })
 
 export const StatusResponse = () => new Response('OK', { status: 200 })

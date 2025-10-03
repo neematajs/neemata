@@ -1,6 +1,11 @@
 // biome-ignore lint/correctness/noUnusedImports: TSC wants it
 // biome-ignore assist/source/organizeImports: TSC wants it
-import type { kClassInjectable, kInjectable } from '@nmtjs/core'
+import type {
+  kClassInjectable,
+  kClassInjectableCreate,
+  kClassInjectableDispose,
+  kInjectable,
+} from '@nmtjs/core/constants'
 
 import {
   AppInjectables,

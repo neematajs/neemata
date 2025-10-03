@@ -1,8 +1,10 @@
 import type { ArrayMap } from '@nmtjs/common'
-import * as zod from 'zod/v4-mini'
-import { BaseType, type BaseTypeAny } from './base.ts'
+import * as zod from 'zod/mini'
+
+import type { BaseTypeAny } from './base.ts'
 import type { LiteralType } from './literal.ts'
 import type { ObjectType, ObjectTypeProps } from './object.ts'
+import { BaseType } from './base.ts'
 
 export class UnionType<
   T extends readonly [BaseType, ...BaseType[]] = readonly [
@@ -78,10 +80,7 @@ export class DiscriminatedUnionType<
 > extends BaseType<
   zod.ZodMiniDiscriminatedUnion<ArrayMap<T, 'encodedZodType'>>,
   zod.ZodMiniDiscriminatedUnion<ArrayMap<T, 'decodedZodType'>>,
-  {
-    key: K
-    options: T
-  }
+  { key: K; options: T }
 > {
   static factory<
     K extends string = string,

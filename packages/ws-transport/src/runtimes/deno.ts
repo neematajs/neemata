@@ -1,12 +1,13 @@
 import { createTransport } from '@nmtjs/protocol/server'
 import createAdapter from 'crossws/adapters/deno'
-import { WsTransportServer } from '../server.ts'
+
 import type {
   WsAdapterParams,
   WsAdapterServer,
   WsConnectionData,
   WsTransportOptions,
 } from '../types.ts'
+import { WsTransportServer } from '../server.ts'
 import {
   InternalServerErrorHttpResponse,
   NotFoundHttpResponse,
@@ -70,11 +71,7 @@ function adapterFactory(params: WsAdapterParams<'deno'>): WsAdapterServer {
               }
               const { headers, method, body } = request
               return await params.fetchHandler(
-                {
-                  url,
-                  method,
-                  headers,
-                },
+                { url, method, headers },
                 body,
                 request.signal,
               )

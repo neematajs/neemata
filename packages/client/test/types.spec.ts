@@ -1,16 +1,17 @@
 import type { OneOf } from '@nmtjs/common'
-import { c } from '@nmtjs/contract'
 import type { ClientMessageType } from '@nmtjs/protocol'
-import {
-  type ProtocolBaseClientCallOptions,
-  type ProtocolBaseTransformer,
-  type ProtocolError,
-  type ProtocolSendMetadata,
-  type ProtocolServerStreamInterface,
-  ProtocolTransport,
+import type {
+  ProtocolBaseClientCallOptions,
+  ProtocolBaseTransformer,
+  ProtocolError,
+  ProtocolSendMetadata,
+  ProtocolServerStreamInterface,
 } from '@nmtjs/protocol/client'
+import { c } from '@nmtjs/contract'
+import { ProtocolTransport } from '@nmtjs/protocol/client'
 import { t } from '@nmtjs/type'
 import { describe, expectTypeOf, it } from 'vitest'
+
 import { RuntimeClient } from '../src/runtime.ts'
 
 class MockTransport extends ProtocolTransport {
@@ -30,10 +31,7 @@ class MockTransport extends ProtocolTransport {
 }
 
 describe('Types', () => {
-  const simpleProcedure = c.procedure({
-    input: t.string(),
-    output: t.string(),
-  })
+  const simpleProcedure = c.procedure({ input: t.string(), output: t.string() })
 
   const streamProcedure = c.procedure({
     input: t.string(),
@@ -44,22 +42,13 @@ describe('Types', () => {
   const namespace = c.namespace({
     procedures: {
       simple: simpleProcedure,
-      simpleInline: c.procedure({
-        input: t.string(),
-        output: t.string(),
-      }),
+      simpleInline: c.procedure({ input: t.string(), output: t.string() }),
       stream: streamProcedure,
     },
-    events: {
-      test: c.event({
-        payload: t.string(),
-      }),
-    },
+    events: { test: c.event({ payload: t.string() }) },
   })
 
-  const api = c.api({
-    namespaces: { test: namespace },
-  })
+  const api = c.api({ namespaces: { test: namespace } })
 
   describe('Unsafe client', () => {
     const client = new RuntimeClient(api, new MockTransport(), {

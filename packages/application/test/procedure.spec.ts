@@ -3,6 +3,7 @@ import { createMetadataKey, createValueInjectable } from '@nmtjs/core'
 import { createStreamResponse } from '@nmtjs/protocol/server'
 import { type } from '@nmtjs/type'
 import { describe, expect, expectTypeOf, it } from 'vitest'
+
 import { kProcedure } from '../src/constants.ts'
 import { createContractProcedure, createProcedure } from '../src/procedure.ts'
 import { TestNamespaceContract } from './_utils.ts'
@@ -51,12 +52,8 @@ describe('Procedure', () => {
   })
 
   it('should create a procedure with middlewares', () => {
-    const middleware1 = createValueInjectable({
-      handle: () => void 0,
-    })
-    const middleware2 = createValueInjectable({
-      handle: () => void 0,
-    })
+    const middleware1 = createValueInjectable({ handle: () => void 0 })
+    const middleware2 = createValueInjectable({ handle: () => void 0 })
 
     const procedure = createContractProcedure(procedureContract, {
       handler: noopFn,
@@ -94,9 +91,7 @@ describe('Procedure', () => {
               yield element
             }
           },
-          {
-            output: { test: 'value' },
-          },
+          { output: { test: 'value' } },
         )
       },
     })
@@ -124,10 +119,7 @@ describe('Procedure static', () => {
     const procedure = createProcedure({
       input,
       output,
-      dependencies: {
-        dep1,
-        dep2,
-      },
+      dependencies: { dep1, dep2 },
       handler(ctx, data) {
         return { a: ctx.dep1 }
       },
@@ -150,10 +142,7 @@ describe('Procedure static', () => {
     const dep2 = createValueInjectable('dep2')
 
     const procedure = createProcedure({
-      dependencies: {
-        dep1,
-        dep2,
-      },
+      dependencies: { dep1, dep2 },
       handler(ctx, data) {
         return { a: ctx.dep1 }
       },
@@ -200,13 +189,9 @@ describe('Procedure static', () => {
     expectTypeOf(procedure.contract.input).toEqualTypeOf<type.NeverType>()
     expectTypeOf(
       procedure.contract.output.decodedZodType._zod.input,
-    ).toEqualTypeOf<{
-      test: 'test'
-    }>()
+    ).toEqualTypeOf<{ test: 'test' }>()
     expectTypeOf(
       procedure.contract.output.encodedZodType._zod.output,
-    ).toEqualTypeOf<{
-      test: 'test'
-    }>()
+    ).toEqualTypeOf<{ test: 'test' }>()
   })
 })

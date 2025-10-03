@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+
 import { t } from '../src/index.ts'
 
 describe('Simple type', () => {
@@ -10,11 +11,7 @@ describe('Simple type', () => {
     prop5: t.integer(),
     prop6: t.literal('a'),
     prop7: t.enum(['a', 'b', 'c'] as const),
-    prop8: t.enum({
-      a: 'A',
-      b: 'B',
-      c: 'C',
-    } as const),
+    prop8: t.enum({ a: 'A', b: 'B', c: 'C' } as const),
     prop9: t.tuple([t.string(), t.number()]),
   })
 
@@ -60,13 +57,7 @@ describe('Simple type with defaults', () => {
     prop5: t.integer().default(42),
     prop6: t.literal('a').default('a'),
     prop7: t.enum(['a', 'b', 'c'] as const).default('a'),
-    prop8: t
-      .enum({
-        a: 'A',
-        b: 'B',
-        c: 'C',
-      } as const)
-      .default('A'),
+    prop8: t.enum({ a: 'A', b: 'B', c: 'C' } as const).default('A'),
     prop9: t
       .array(
         t
@@ -136,19 +127,13 @@ describe('Complex type', () => {
       prop1: t.string(),
       prop2: t.integer(),
       prop3: t.enum(['a', 'b', 'c'] as const),
-      prop4: t.enum({
-        a: 'A',
-        b: 'B',
-        c: 'C',
-      } as const),
+      prop4: t.enum({ a: 'A', b: 'B', c: 'C' } as const),
     }),
     prop6: t.merge(
       t.object({ prop1: t.string() }),
       t.object({ prop2: t.number() }),
     ),
-    prop7: t.extend(t.object({ prop1: t.string() }), {
-      prop2: t.number(),
-    }),
+    prop7: t.extend(t.object({ prop1: t.string() }), { prop2: t.number() }),
     prop8: t.omit(t.object({ prop1: t.string(), prop2: t.number() }), {
       prop2: true,
     }),
@@ -181,10 +166,7 @@ describe('Complex type', () => {
         {
           prop1: 'a' as const,
           prop2: '2021-01-01',
-          prop3: {
-            key1: 42,
-            key2: 42,
-          },
+          prop3: { key1: 42, key2: 42 },
         },
       ],
       prop5: {
@@ -193,35 +175,15 @@ describe('Complex type', () => {
         prop3: 'a' as const,
         prop4: 'A' as const,
       },
-      prop6: {
-        prop1: 'string',
-        prop2: 42,
-      },
-      prop7: {
-        prop1: 'string',
-        prop2: 42,
-      },
-      prop8: {
-        prop1: 'string',
-      },
-      prop9: {
-        prop1: 'string',
-      },
-      prop10: {
-        prop1: 'string',
-      },
+      prop6: { prop1: 'string', prop2: 42 },
+      prop7: { prop1: 'string', prop2: 42 },
+      prop8: { prop1: 'string' },
+      prop9: { prop1: 'string' },
+      prop10: { prop1: 'string' },
       prop11: 'prop1' as const,
-      prop12: {
-        prop1: 'string',
-      },
-      prop13: {
-        prop1: 'string',
-        prop2: 42,
-      },
-      prop14: {
-        type: 'a' as const,
-        prop1: 'string',
-      },
+      prop12: { prop1: 'string' },
+      prop13: { prop1: 'string', prop2: 42 },
+      prop14: { type: 'a' as const, prop1: 'string' },
     }
 
     schema.decode(value)
@@ -236,10 +198,7 @@ describe('Complex type', () => {
         {
           prop1: 'a' as const,
           prop2: new Date('2021-01-01'),
-          prop3: {
-            key1: 42,
-            key2: 42,
-          },
+          prop3: { key1: 42, key2: 42 },
         },
       ],
       prop5: {
@@ -248,35 +207,15 @@ describe('Complex type', () => {
         prop3: 'a' as const,
         prop4: 'A' as const,
       },
-      prop6: {
-        prop1: 'string',
-        prop2: 42,
-      },
-      prop7: {
-        prop1: 'string',
-        prop2: 42,
-      },
-      prop8: {
-        prop1: 'string',
-      },
-      prop9: {
-        prop1: 'string',
-      },
-      prop10: {
-        prop1: 'string',
-      },
+      prop6: { prop1: 'string', prop2: 42 },
+      prop7: { prop1: 'string', prop2: 42 },
+      prop8: { prop1: 'string' },
+      prop9: { prop1: 'string' },
+      prop10: { prop1: 'string' },
       prop11: 'prop1' as const,
-      prop12: {
-        prop1: 'string',
-      },
-      prop13: {
-        prop1: 'string',
-        prop2: 42,
-      },
-      prop14: {
-        type: 'a' as const,
-        prop1: 'string',
-      },
+      prop12: { prop1: 'string' },
+      prop13: { prop1: 'string', prop2: 42 },
+      prop14: { type: 'a' as const, prop1: 'string' },
     }
 
     schema.encode(value)

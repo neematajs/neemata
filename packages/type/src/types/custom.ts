@@ -1,5 +1,7 @@
-import * as zod from 'zod/v4-mini'
-import { BaseType, type SimpleZodType, type ZodType } from './base.ts'
+import * as zod from 'zod/mini'
+
+import type { SimpleZodType, ZodType } from './base.ts'
+import { BaseType } from './base.ts'
 
 export type CustomTransformFn<I, O> = (value: I) => O
 export abstract class TransformType<

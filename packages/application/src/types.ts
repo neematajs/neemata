@@ -1,5 +1,6 @@
 import type { Container, Hooks, Logger } from '@nmtjs/core'
 import type { Connection, Format, Protocol } from '@nmtjs/protocol/server'
+
 import type { ApplicationApi } from './api.ts'
 import type { Application } from './application.ts'
 import type { WorkerType } from './enums.ts'
