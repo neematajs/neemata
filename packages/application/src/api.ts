@@ -29,9 +29,9 @@ import {
 import { NeemataTypeError, type } from '@nmtjs/type'
 import { prettifyError } from 'zod/mini'
 
-import type { AnyNamespace } from './namespace.ts'
 import type { AnyProcedure } from './procedure.ts'
 import type { ApplicationRegistry } from './registry.ts'
+import type { AnyRouter } from './router.ts'
 import type { ApiCallContext } from './types.ts'
 
 export type FilterLike<T extends ErrorClass = ErrorClass> = {
@@ -54,14 +54,15 @@ export type MiddlewareLike = {
 
 export type AnyMiddleware = AnyInjectable<MiddlewareLike>
 
-export type ApplicationApiCallOptions<T extends AnyProcedure = AnyProcedure> = {
-  connection: Connection
-  namespace: AnyNamespace
-  procedure: T
-  container: Container
-  payload: any
-  signal: AbortSignal
-}
+export type ApplicationApiCallOptions<T extends AnyProcedure = AnyProcedure> =
+  Readonly<{
+    connection: Connection
+    path: AnyRouter[]
+    procedure: T
+    container: Container
+    payload: any
+    signal: AbortSignal
+  }>
 
 export type ApiOptions = { timeout: number; formats: BaseServerFormat[] }
 
@@ -104,46 +105,34 @@ export class ApplicationApi implements ProtocolApi {
     private readonly options: ApiOptions,
   ) {}
 
-  /**
-   * @throws {ApiError}
-   */
-  find(namespaceName: string, procedureName: string) {
-    const namespace = this.application.registry.namespaces.get(namespaceName)
-    if (namespace) {
-      const procedure = namespace.procedures.get(procedureName)
-      if (procedure) return { namespace, procedure }
-    }
+  find(procedureName: string) {
+    const result = this.application.registry.procedures.get(procedureName)
+    if (result) return result
     throw NotFound()
   }
 
   async call(options: ProtocolApiCallOptions): Promise<ProtocolApiCallResult> {
     const { payload, container, signal, connection } = options
 
-    const { namespace, procedure } = this.find(
-      options.namespace,
-      options.procedure,
-    )
+    const { procedure, path } = this.find(options.procedure)
 
-    options.metadata?.(procedure.metadata)
+    options.validateMetadata?.(procedure.metadata)
 
-    const callOptions = {
+    const callOptions = Object.freeze({
       payload,
       container,
       signal,
       connection,
-      namespace,
       procedure,
-    }
+      path,
+    })
 
     assert(
       container.scope === Scope.Call,
       'Invalid container scope, expected to be Scope.Call',
     )
 
-    const timeout =
-      procedure.contract.timeout ||
-      namespace.contract.timeout ||
-      this.options.timeout
+    const timeout = procedure.contract.timeout || this.options.timeout
 
     const timeoutController = new AbortController()
     const timeoutSignal =
@@ -187,12 +176,12 @@ export class ApplicationApi implements ProtocolApi {
   }
 
   private async createProcedureHandler(callOptions: ApplicationApiCallOptions) {
-    const { connection, procedure, container, namespace } = callOptions
+    const { connection, procedure, container, path } = callOptions
 
     const callCtx: ApiCallContext = Object.freeze({
       connection,
       container,
-      namespace,
+      path,
       procedure,
     })
 
@@ -219,10 +208,10 @@ export class ApplicationApi implements ProtocolApi {
   }
 
   private async resolveMiddlewares(callOptions: ApplicationApiCallOptions) {
-    const { namespace, procedure, container } = callOptions
+    const { path, procedure, container } = callOptions
     const middlewareInjectables = [
       ...this.application.registry.middlewares,
-      ...namespace.middlewares,
+      ...path.flatMap((router) => [...router.middlewares]),
       ...procedure.middlewares,
     ]
     const middlewares = await Promise.all(
@@ -232,10 +221,10 @@ export class ApplicationApi implements ProtocolApi {
   }
 
   private async resolveGuards(callOptions: ApplicationApiCallOptions) {
-    const { namespace, procedure, container } = callOptions
+    const { path, procedure, container } = callOptions
     const injectables = [
       ...this.application.registry.guards,
-      ...namespace.guards,
+      ...path.flatMap((router) => [...router.guards]),
       ...procedure.guards,
     ]
     return await Promise.all(injectables.map((p) => container.resolve(p)))
@@ -257,7 +246,7 @@ export class ApplicationApi implements ProtocolApi {
   }
 
   private async handleGuards(
-    callOptions: ApplicationApiCallOptions,
+    _callOptions: ApplicationApiCallOptions,
     callCtx: ApiCallContext,
     guards: Iterable<GuardLike>,
   ) {

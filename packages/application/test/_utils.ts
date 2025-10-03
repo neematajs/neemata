@@ -12,8 +12,8 @@ import type { CreateProcedureParams } from '../src/procedure.ts'
 import type { BaseTaskExecutor, CreateTaskOptions } from '../src/tasks.ts'
 import { Application } from '../src/application.ts'
 import { WorkerType } from '../src/enums.ts'
-import { createContractNamespace } from '../src/namespace.ts'
 import { createContractProcedure } from '../src/procedure.ts'
+import { createContractRouter } from '../src/router.ts'
 import { createTask } from '../src/tasks.ts'
 
 export class TestTaskExecutor implements BaseTaskExecutor {
@@ -21,7 +21,7 @@ export class TestTaskExecutor implements BaseTaskExecutor {
     private readonly custom?: (task: any, ...args: any[]) => Promise<any>,
   ) {}
 
-  execute(signal: AbortSignal, name: string, ...args: any[]): Promise<any> {
+  execute(_signal: AbortSignal, name: string, ...args: any[]): Promise<any> {
     return this.custom ? this.custom(name, ...args) : Promise.resolve()
   }
 }
@@ -32,7 +32,7 @@ export const testTransport = (
   onShutdown = async () => {},
   onSend = async () => {},
 ) =>
-  createTransport('TestTransport', (app) => {
+  createTransport('TestTransport', () => {
     onInit()
     return { start: onStartup, stop: onShutdown, send: onSend }
   })
@@ -59,12 +59,10 @@ export const testApp = (options: Partial<ApplicationOptions> = {}) =>
     ),
   )
 
-export const TestNamespaceContract = c.namespace({
-  procedures: {
-    testProcedure: c.procedure({ input: t.any(), output: t.any() }),
-  },
+export const TestRouterContract = c.router({
+  routes: { testProcedure: c.procedure({ input: t.any(), output: t.any() }) },
   events: { testEvent: c.event({ payload: t.string() }) },
-  name: 'TestNamespace',
+  name: 'TestRouter',
 })
 
 export const testConnection = (options: ConnectionOptions = { data: {} }) => {
@@ -73,14 +71,10 @@ export const testConnection = (options: ConnectionOptions = { data: {} }) => {
 
 export const testProcedure = (
   params: CreateProcedureParams<
-    typeof TestNamespaceContract.procedures.testProcedure,
+    typeof TestRouterContract.routes.testProcedure,
     any
   >,
-) =>
-  createContractProcedure(
-    TestNamespaceContract.procedures.testProcedure,
-    params,
-  )
+) => createContractProcedure(TestRouterContract.routes.testProcedure, params)
 
 export const testTask = <
   TaskDeps extends Dependencies,
@@ -92,12 +86,11 @@ export const testTask = <
 
 export const testTaskRunner = (...args) => new TestTaskExecutor(...args)
 
-export const testNamepsace = ({
-  procedure = testProcedure(noopFn),
-  // subscription = testSubscription(noop as any),
-} = {}) =>
-  createContractNamespace(TestNamespaceContract, {
-    procedures: { testProcedure: procedure },
+export const testRouter = (option?: {
+  routes: { testProcedure: ReturnType<typeof testProcedure> }
+}) =>
+  createContractRouter(TestRouterContract, {
+    routes: { testProcedure: testProcedure(noopFn), ...option?.routes },
   })
 
 export const expectCopy = (source, targer) => {

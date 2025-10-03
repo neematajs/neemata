@@ -66,10 +66,9 @@ describe('Server Protocol', () => {
     const connectionId = '1'
     const connectionData = {}
     const payload = {}
-    const namespace = 'test'
     const procedure = 'test'
     const ac = new AbortController()
-    const metadata = vi.fn()
+    const validateMetadata = vi.fn()
     const connection = new Connection({
       id: connectionId,
       data: connectionData,
@@ -79,11 +78,10 @@ describe('Server Protocol', () => {
     const callOptions = {
       connection,
       container: callContainer,
-      namespace,
       procedure,
       payload,
       signal: ac.signal,
-      metadata,
+      validateMetadata,
     }
     await expect(
       callContainer.resolve(ProtocolInjectables.connectionData),
@@ -209,17 +207,16 @@ describe('Server Protocol', () => {
 
       const callId = 1
       const payload = {}
-      const namespace = 'test'
       const procedure = 'test'
-      const metadata = vi.fn()
+      const validateMetadata = vi.fn()
       const ac = new AbortController()
       const testInjectable = createLazyInjectable<{}>()
       const provides: [AnyInjectable, any][] = [[testInjectable, {}]]
 
       const result = protocol.rpc(
         connectionId,
-        { callId, payload, namespace, procedure },
-        { metadata, signal: ac.signal, provides },
+        { callId, payload, procedure },
+        { validateMetadata, signal: ac.signal, provides },
       )
 
       expect(context.rpcs.get(callId)).toBeInstanceOf(AbortController)
@@ -239,11 +236,10 @@ describe('Server Protocol', () => {
       expect(apiCallOptions).toEqual({
         connection,
         container: expect.any(Container),
-        namespace,
         procedure,
         payload,
         signal: expect.any(AbortSignal),
-        metadata,
+        validateMetadata,
       })
 
       // should fork a new container with Call scope

@@ -1,7 +1,7 @@
 import type { ContractSchemaOptions } from '../utils.ts'
 import type { TAnyEventContract, TEventContract } from './event.ts'
 import { Kind } from '../constants.ts'
-import { createSchema } from '../utils.ts'
+import { concatFullName, createSchema } from '../utils.ts'
 
 export const SubscriptionKind = Symbol('NeemataSubscription')
 
@@ -27,7 +27,13 @@ export interface TSubscriptionContract<
   readonly options: Options
   readonly events: {
     [K in keyof Events]: Events[K] extends TAnyEventContract
-      ? TEventContract<Events[K]['payload'], Extract<K, string>, Name>
+      ? TEventContract<
+          Events[K]['payload'],
+          Name extends string
+            ? `${Name}/${Extract<K, string>}`
+            : Extract<K, string>,
+          Options
+        >
       : never
   }
 }
@@ -46,27 +52,17 @@ const _SubscriptionContract = <
   const _events = {} as any
   for (const key in options.events) {
     const event = options.events[key]
-    _events[key] = createSchema<
-      TEventContract<
-        (typeof event)['payload'],
-        Extract<typeof key, string>,
-        undefined,
-        Options['name'] extends string ? Options['name'] : undefined
-      >
-    >({ ...event, name: key, namespace: undefined, subscription: name as any })
+    const fullName = concatFullName(name, key)
+    _events[key] = createSchema({ ...event, name: fullName })
   }
   return createSchema<
-    TSubscriptionContract<
-      SubOpt,
-      Options['events'],
-      Options['name'] extends string ? Options['name'] : undefined
-    >
+    TSubscriptionContract<SubOpt, Options['events'], Options['name']>
   >({
     ...schemaOptions,
     [Kind]: SubscriptionKind,
     type: 'neemata:subscription',
     events: _events,
-    name: name as any,
+    name: name,
     options: undefined as unknown as SubOpt,
   })
 }

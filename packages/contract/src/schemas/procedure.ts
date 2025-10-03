@@ -10,7 +10,6 @@ export type TAnyProcedureContract = TProcedureContract<
   BaseType,
   BaseType,
   BaseType | undefined,
-  string | undefined,
   string | undefined
 >
 
@@ -21,12 +20,10 @@ export interface TProcedureContract<
   Output extends BaseType,
   Stream extends BaseType | undefined,
   Name extends string | undefined = undefined,
-  Namespace extends string | undefined = undefined,
 > {
   readonly [Kind]: typeof ProcedureKind
   readonly type: 'neemata:procedure'
   readonly name: Name
-  readonly namespace: Namespace
   readonly input: Input
   readonly output: Output
   readonly stream: Stream
@@ -67,7 +64,6 @@ export const ProcedureContract = <
     stream,
     name,
     timeout,
-    namespace: undefined,
   })
 }
 

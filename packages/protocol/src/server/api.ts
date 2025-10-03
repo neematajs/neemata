@@ -6,12 +6,11 @@ import { kIterableResponse } from './constants.ts'
 
 export type ProtocolApiCallOptions = {
   connection: Connection
-  namespace: string
   procedure: string
   container: Container
   payload: any
   signal: AbortSignal
-  metadata?: (metadata: MetadataStore) => void
+  validateMetadata?: (metadata: MetadataStore) => void
 }
 
 export type ProtocolAnyIterable<T> =

@@ -40,13 +40,12 @@ export class HttpClientTransport
   }
 
   async call(
-    namespace: string,
     procedure: string,
     payload: any,
     options: ProtocolBaseClientCallOptions,
     transformer: ProtocolBaseTransformer,
   ): Promise<ProtocolClientCall> {
-    const call = this.protocol.createCall(namespace, procedure, options)
+    const call = this.protocol.createCall(procedure, options)
 
     const headers = new Headers()
 
@@ -58,20 +57,15 @@ export class HttpClientTransport
     const isBlob = payload instanceof ProtocolBlob
     if (isBlob) headers.set('x-neemata-blob', 'true')
 
-    const response = fetch(
-      `${this.options.origin}/api/${namespace}/${procedure}`,
-      {
-        method: 'POST',
-        headers,
-        credentials: 'include',
-        body: isBlob
-          ? payload.source
-          : transformer.encodeRPC(namespace, procedure, payload),
-        signal: call.signal,
-        // @ts-expect-error
-        duplex: 'half',
-      },
-    )
+    const response = fetch(`${this.options.origin}/api/${procedure}`, {
+      method: 'POST',
+      headers,
+      credentials: 'include',
+      body: isBlob ? payload.source : transformer.encodeRPC(procedure, payload),
+      signal: call.signal,
+      // @ts-expect-error
+      duplex: 'half',
+    })
 
     response
       .catch((error) =>
@@ -94,7 +88,7 @@ export class HttpClientTransport
           return body.then((buffer) => {
             if (response.ok) {
               const decoded = this.protocol.format.decode(buffer)
-              return transformer.decodeRPC(namespace, procedure, decoded)
+              return transformer.decodeRPC(procedure, decoded)
             } else {
               if (buffer.byteLength === 0) {
                 const error = new ClientError(
@@ -131,9 +125,9 @@ export class HttpClientTransport
   }
 
   async send(
-    messageType: ClientMessageType,
-    buffer: ArrayBuffer,
-    metadata: ProtocolSendMetadata,
+    _messageType: ClientMessageType,
+    _buffer: ArrayBuffer,
+    _metadata: ProtocolSendMetadata,
   ) {
     throw new Error('Not supported')
   }

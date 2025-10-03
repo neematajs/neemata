@@ -3,9 +3,9 @@ import { n, t, WorkerType } from 'nmtjs'
 import { JsonFormat } from 'nmtjs/json-format'
 
 export const createTestingApplication = (): Application => {
-  const namespace = n.namespace({
+  const router = n.router({
     name: 'test',
-    procedures: {
+    routes: {
       test: n.procedure({
         input: t.any(),
         handler: (_, input) => {
@@ -14,8 +14,6 @@ export const createTestingApplication = (): Application => {
       }),
     },
   })
-
-  const router = n.router({ test: namespace })
 
   const app = n
     .app({

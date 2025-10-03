@@ -26,7 +26,7 @@ export class TestFormat extends BaseServerFormat {
     return serialize(data).buffer as ArrayBuffer
   }
 
-  encodeRPC(rpc: ProtocolRPCResponse, context: EncodeRPCContext): ArrayBuffer {
+  encodeRPC(rpc: ProtocolRPCResponse, _context: EncodeRPCContext): ArrayBuffer {
     return this.encode(rpc)
   }
 
@@ -34,9 +34,9 @@ export class TestFormat extends BaseServerFormat {
     return deserialize(Buffer.from(buffer) as any)
   }
 
-  decodeRPC(buffer: ArrayBuffer, context: DecodeRPCContext): ProtocolRPC {
-    const [callId, namespace, procedure, payload] = this.decode(buffer)
-    return { callId, namespace, procedure, payload }
+  decodeRPC(buffer: ArrayBuffer, _context: DecodeRPCContext): ProtocolRPC {
+    const [callId, procedure, payload] = this.decode(buffer)
+    return { callId, procedure, payload }
   }
 }
 

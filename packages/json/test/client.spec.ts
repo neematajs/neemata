@@ -27,7 +27,6 @@ describe('Client', () => {
     const streamId = 0
     const rpc = {
       callId: 1,
-      namespace: 'namespace',
       procedure: 'procedure',
       payload: {
         foo: 'bar',
@@ -53,12 +52,11 @@ describe('Client', () => {
     expect(buffer).toBeInstanceOf(ArrayBuffer)
     expect(streams[streamId]).toBe(stream)
 
-    const [callId, namespace, procedure, streamsMetadata, payload] = JSON.parse(
+    const [callId, procedure, streamsMetadata, payload] = JSON.parse(
       decodeText(buffer),
     )
 
     expect(callId).toBe(rpc.callId)
-    expect(namespace).toBe(rpc.namespace)
     expect(procedure).toBe(rpc.procedure)
     expect(streamsMetadata[streamId]).toMatchObject(rpc.payload.stream.metadata)
     expect(payload).toBeTypeOf('string')

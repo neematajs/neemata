@@ -236,3 +236,6 @@ export function createProcedure<
     { dependencies, handler, guards, middlewares, metadata },
   )
 }
+
+export const isProcedure = (value: any): value is AnyProcedure =>
+  Boolean(value?.[kProcedure])

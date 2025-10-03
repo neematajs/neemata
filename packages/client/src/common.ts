@@ -1,3 +1,4 @@
+import type { TypeProvider } from '@nmtjs/common'
 import type { TAnyAPIContract } from '@nmtjs/contract'
 import type {
   ProtocolBaseClientCallOptions,
@@ -5,15 +6,9 @@ import type {
   ProtocolTransport,
 } from '@nmtjs/protocol/client'
 import { noopFn } from '@nmtjs/common'
-import { EventEmitter, ProtocolError } from '@nmtjs/protocol/client'
+import { ProtocolError } from '@nmtjs/protocol/client'
 
-import type {
-  ClientCallers,
-  ResolveAPIContract,
-  ResolveClientEvents,
-  RuntimeInputContractTypeProvider,
-  RuntimeOutputContractTypeProvider,
-} from './types.ts'
+import type { ClientCallers, ResolveAPIRouterRoutes } from './types.ts'
 
 export {
   ErrorCode,
@@ -31,21 +26,29 @@ const DEFAULT_RECONNECT_TIMEOUT = 1000
 export abstract class BaseClient<
   APIContract extends TAnyAPIContract = TAnyAPIContract,
   SafeCall extends boolean = false,
-  API extends ResolveAPIContract<
-    APIContract,
-    RuntimeInputContractTypeProvider,
-    RuntimeOutputContractTypeProvider
-  > = ResolveAPIContract<
-    APIContract,
-    RuntimeInputContractTypeProvider,
-    RuntimeOutputContractTypeProvider
-  >,
-> extends EventEmitter<ResolveClientEvents<API>> {
-  _!: { api: API; safe: SafeCall }
+  InputTypeProvider extends TypeProvider = TypeProvider,
+  OutputTypeProvider extends TypeProvider = TypeProvider,
+  Routes extends {
+    contract: APIContract['router']
+    routes: ResolveAPIRouterRoutes<
+      APIContract['router'],
+      InputTypeProvider,
+      OutputTypeProvider
+    >
+  } = {
+    contract: APIContract['router']
+    routes: ResolveAPIRouterRoutes<
+      APIContract['router'],
+      InputTypeProvider,
+      OutputTypeProvider
+    >
+  },
+> {
+  _!: { api: Routes; safe: SafeCall }
 
   protected abstract transformer: ProtocolBaseTransformer
-  protected callers!: ClientCallers<API, SafeCall>
-  protected auth: any
+  protected callers!: ClientCallers<Routes, SafeCall>
+  auth: any
   protected reconnectTimeout: number = DEFAULT_RECONNECT_TIMEOUT
 
   constructor(
@@ -56,8 +59,6 @@ export abstract class BaseClient<
       safe?: SafeCall
     },
   ) {
-    super()
-
     if (this.options.autoreconnect) {
       this.transport.on('disconnected', async (reason) => {
         if (reason === 'server') {
@@ -83,13 +84,11 @@ export abstract class BaseClient<
   }
 
   protected async _call(
-    namespace: string,
     procedure: string,
     payload: any,
     options: ProtocolBaseClientCallOptions,
   ) {
     const call = await this.transport.call(
-      namespace,
       procedure,
       payload,
       options,

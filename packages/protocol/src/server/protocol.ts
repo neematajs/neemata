@@ -231,7 +231,7 @@ export class ProtocolServerStreams {
 export type ProtocolRPCOptions = {
   signal?: AbortSignal
   provides?: [AnyInjectable, any][]
-  metadata?: ProtocolApiCallOptions['metadata']
+  validateMetadata?: ProtocolApiCallOptions['validateMetadata']
 }
 
 export class Protocol {
@@ -287,7 +287,7 @@ export class Protocol {
     const { connection, context, transport } =
       this.#connections.get(connectionId)
     const { rpcs, format } = context
-    const { callId, namespace, procedure, payload } = rpc
+    const { callId, procedure, payload } = rpc
     const abortController = new AbortController()
     const signal = params.signal
       ? AbortSignal.any([params.signal, abortController.signal])
@@ -308,11 +308,10 @@ export class Protocol {
       const response = await this.call({
         connection,
         container,
-        namespace,
         payload,
         procedure,
         signal,
-        metadata: params.metadata,
+        validateMetadata: params.validateMetadata,
       })
 
       const responseEncoded = format.encoder.encodeRPC(
@@ -337,7 +336,7 @@ export class Protocol {
                 { callId, streamId },
               )
             })
-            stream.on('error', (err) => {
+            stream.on('error', () => {
               transport.send(
                 connection,
                 ServerMessageType.ServerStreamAbort,
@@ -422,10 +421,10 @@ export class Protocol {
       const payload = format.encoder.encodeRPC(
         { callId, error },
         {
-          addStream(blob) {
+          addStream() {
             throwError('Cannot handle stream for error response')
           },
-          getStream(id) {
+          getStream() {
             throwError('Cannot handle stream for error response')
           },
         },
@@ -506,7 +505,7 @@ export class Protocol {
     return this.rpcStreamAbort(connectionId, callId)
   }
 
-  notify(connectionId: string, event, payload) {
+  notify() {
     throw Error('Unimplemented')
   }
 
