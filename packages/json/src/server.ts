@@ -6,6 +6,11 @@ import type {
 import { decodeText, encodeText, ProtocolBlob } from '@nmtjs/protocol'
 import { BaseServerFormat } from '@nmtjs/protocol/server'
 
+import type {
+  ClientEncodedRPC,
+  ServerEncodedRPC,
+  StreamsMetadata,
+} from './common.ts'
 import { deserializeStreamId, isStreamId, serializeStreamId } from './common.ts'
 
 /**
@@ -21,10 +26,10 @@ export class JsonFormat extends BaseServerFormat {
 
   encodeRPC(rpc: ProtocolRPCResponse, context: EncodeRPCContext): ArrayBuffer {
     const { callId, error } = rpc
-    if (error) return this.encode([callId, error])
+    if (error) return this.encode([callId, error] satisfies ServerEncodedRPC)
     else {
-      const streams: any = {}
-      const replacer = (key: string, value: any) => {
+      const streams: StreamsMetadata = {}
+      const replacer = (_key: string, value: any) => {
         if (value instanceof ProtocolBlob) {
           const stream = context.addStream(value)
           streams[stream.id] = stream.metadata
@@ -36,21 +41,21 @@ export class JsonFormat extends BaseServerFormat {
       const payload = JSON.stringify(rpc.result, replacer)
       return this.encode(
         isUndefined
-          ? [callId, null, streams]
-          : [callId, null, streams, payload],
+          ? ([callId, null, streams] satisfies ServerEncodedRPC)
+          : ([callId, null, streams, payload] satisfies ServerEncodedRPC),
       )
     }
   }
 
-  decode(data: ArrayBuffer): any {
+  decode(data: ArrayBuffer) {
     return JSON.parse(decodeText(data))
   }
 
   decodeRPC(buffer: ArrayBuffer, context: DecodeRPCContext) {
-    const [callId, namespace, procedure, streams, formatPayload] =
+    const [callId, procedure, streams, formatPayload]: ClientEncodedRPC =
       this.decode(buffer)
 
-    const replacer = (key: string, value: any) => {
+    const replacer = (_key: string, value: any) => {
       if (typeof value === 'string' && isStreamId(value)) {
         const id = deserializeStreamId(value)
         const metadata = streams[id]
@@ -64,7 +69,7 @@ export class JsonFormat extends BaseServerFormat {
         ? undefined
         : JSON.parse(formatPayload, replacer)
 
-    return { callId, namespace, procedure, payload }
+    return { callId, procedure, payload }
   }
 }
 
@@ -92,7 +97,7 @@ export class StandardJsonFormat extends BaseServerFormat {
   }
 
   decodeRPC(buffer: ArrayBuffer) {
-    const [callId, namespace, procedure, payload] = this.decode(buffer)
-    return { callId, namespace, procedure, payload }
+    const [callId, procedure, payload]: ClientEncodedRPC = this.decode(buffer)
+    return { callId, procedure, payload }
   }
 }

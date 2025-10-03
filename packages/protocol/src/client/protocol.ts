@@ -2,11 +2,7 @@ import type { InteractivePromise, OneOf } from '@nmtjs/common'
 import { createPromise } from '@nmtjs/common'
 
 import type { ProtocolBlobMetadata } from '../common/blob.ts'
-import type {
-  BaseProtocolError,
-  ProtocolRPC,
-  ProtocolRPCResponse,
-} from '../common/types.ts'
+import type { BaseProtocolError, ProtocolRPCResponse } from '../common/types.ts'
 import type { BaseClientFormat } from './format.ts'
 import { concat, decodeNumber, encodeNumber } from '../common/binary.ts'
 import {
@@ -171,7 +167,6 @@ export abstract class ProtocolTransport extends EventEmitter<ProtocolTransportEv
   ): Promise<void>
   abstract disconnect(): Promise<void>
   abstract call(
-    namespace: string,
     procedure: string,
     payload: any,
     options: ProtocolBaseClientCallOptions,
@@ -185,22 +180,24 @@ export abstract class ProtocolTransport extends EventEmitter<ProtocolTransportEv
 }
 
 export class ProtocolBaseTransformer {
-  encodeRPC(namespace: string, procedure: string, payload: any) {
+  encodeRPC(_procedure: string, payload: any) {
     return payload
   }
-  decodeRPC(namespace: string, procedure: string, payload: any) {
+  decodeRPC(_procedure: string, payload: any) {
     return payload
   }
-  decodeRPCChunk(namespace: string, procedure: string, payload: any) {
+  decodeRPCChunk(_procedure: string, payload: any) {
     return payload
   }
-  decodeEvent(namespace: string, event: string, payload: any) {
+  decodeEvent(_event: string, payload: any) {
     return payload
   }
 }
 
-export type ProtocolClientCall = InteractivePromise<any> &
-  Pick<ProtocolRPC, 'namespace' | 'procedure'> & { signal: AbortSignal }
+export type ProtocolClientCall = InteractivePromise<any> & {
+  procedure: string
+  signal: AbortSignal
+}
 
 export type ProtocolBaseClientOptions = {
   transport: ProtocolTransport
@@ -265,7 +262,6 @@ export class BaseProtocol<
     } else {
       try {
         const transformed = transformer.decodeRPC(
-          call.namespace,
           call.procedure,
           response.result,
         )
@@ -315,21 +311,13 @@ export class BaseProtocol<
     return call
   }
 
-  createCall(
-    namespace: string,
-    procedure: string,
-    options: ProtocolBaseClientCallOptions,
-  ) {
+  createCall(procedure: string, options: ProtocolBaseClientCallOptions) {
     const timeoutSignal = AbortSignal.timeout(options.timeout)
     const signal = options.signal
       ? AbortSignal.any([options.signal, timeoutSignal])
       : timeoutSignal
 
-    const call = Object.assign(createPromise(), {
-      namespace,
-      procedure,
-      signal,
-    })
+    const call = Object.assign(createPromise(), { procedure, signal })
 
     timeoutSignal.addEventListener(
       'abort',
@@ -347,21 +335,15 @@ export class BaseProtocol<
   }
 
   createRpc(
-    namespace: string,
     procedure: string,
     payload: any,
     options: ProtocolBaseClientCallOptions,
     transformer: ProtocolBaseTransformer,
   ) {
     const callId = ++this.callId
-    const call = this.createCall(namespace, procedure, options)
+    const call = this.createCall(procedure, options)
     const { buffer, streams } = this.format.encodeRPC(
-      {
-        callId,
-        namespace,
-        procedure,
-        payload: transformer.encodeRPC(namespace, procedure, payload),
-      },
+      { callId, procedure, payload: transformer.encodeRPC(procedure, payload) },
       {
         addStream: (blob) => {
           const streamId = ++this.streamId
@@ -423,19 +405,18 @@ export class BaseProtocol<
     this.serverStreams.end(streamId)
   }
 
-  abortServerStream(streamId: number, error?: Error) {
+  abortServerStream(streamId: number, _error?: Error) {
     this.serverStreams.abort(streamId)
   }
 
   emitEvent(
-    namespace: string,
     event: string,
     payload: string,
     transformer: ProtocolBaseTransformer,
   ) {
-    const transformed = transformer.decodeEvent(namespace, event, payload)
+    const transformed = transformer.decodeEvent(event, payload)
     this.emit(
-      `${namespace}/${event}`,
+      event,
       //@ts-expect-error
       transformed,
     )
@@ -467,11 +448,11 @@ export class Protocol<
 
   protected [ServerMessageType.Event](
     buffer: ArrayBuffer,
-    transport: ProtocolTransport,
+    _transport: ProtocolTransport,
     transformer: ProtocolBaseTransformer,
   ) {
-    const [namespace, event, payload] = this.format.decode(buffer)
-    this.emitEvent(namespace, event, payload, transformer)
+    const [event, payload] = this.format.decode(buffer)
+    this.emitEvent(event, payload, transformer)
   }
 
   protected [ServerMessageType.RpcResponse](
@@ -522,11 +503,7 @@ export class Protocol<
 
     const stream = new ProtocolServerStream({
       transform: (chunk, controller) => {
-        const transformed = transformer.decodeRPCChunk(
-          call.namespace,
-          call.procedure,
-          chunk,
-        )
+        const transformed = transformer.decodeRPCChunk(call.procedure, chunk)
         controller.enqueue(transformed)
       },
     })
@@ -536,8 +513,8 @@ export class Protocol<
 
   protected [ServerMessageType.RpcStreamChunk](
     buffer: ArrayBuffer,
-    transport: ProtocolTransport,
-    transformer: ProtocolBaseTransformer,
+    _transport: ProtocolTransport,
+    _transformer: ProtocolBaseTransformer,
   ) {
     const callId = decodeNumber(buffer, 'Uint32')
     const chunk = buffer.slice(Uint32Array.BYTES_PER_ELEMENT)
@@ -547,8 +524,8 @@ export class Protocol<
 
   protected [ServerMessageType.RpcStreamEnd](
     buffer: ArrayBuffer,
-    transport: ProtocolTransport,
-    transformer: ProtocolBaseTransformer,
+    _transport: ProtocolTransport,
+    _transformer: ProtocolBaseTransformer,
   ) {
     const callId = decodeNumber(buffer, 'Uint32')
     this.endRpcStream(callId)
@@ -556,8 +533,8 @@ export class Protocol<
 
   protected [ServerMessageType.RpcStreamAbort](
     buffer: ArrayBuffer,
-    transport: ProtocolTransport,
-    transformer: ProtocolBaseTransformer,
+    _transport: ProtocolTransport,
+    _transformer: ProtocolBaseTransformer,
   ) {
     const callId = decodeNumber(buffer, 'Uint32')
     this.abortRpcStream(callId)
@@ -566,7 +543,7 @@ export class Protocol<
   protected [ServerMessageType.ServerStreamPush](
     buffer: ArrayBuffer,
     transport: ProtocolTransport,
-    transformer: ProtocolBaseTransformer,
+    _transformer: ProtocolBaseTransformer,
   ) {
     const streamId = decodeNumber(buffer, 'Uint32')
     const chunk = buffer.slice(Uint32Array.BYTES_PER_ELEMENT)
@@ -580,8 +557,8 @@ export class Protocol<
 
   protected [ServerMessageType.ServerStreamEnd](
     buffer: ArrayBuffer,
-    transport: ProtocolTransport,
-    transformer: ProtocolBaseTransformer,
+    _transport: ProtocolTransport,
+    _transformer: ProtocolBaseTransformer,
   ) {
     const streamId = decodeNumber(buffer, 'Uint32')
     this.endServerStream(streamId)
@@ -589,8 +566,8 @@ export class Protocol<
 
   protected [ServerMessageType.ServerStreamAbort](
     buffer: ArrayBuffer,
-    transport: ProtocolTransport,
-    transformer: ProtocolBaseTransformer,
+    _transport: ProtocolTransport,
+    _transformer: ProtocolBaseTransformer,
   ) {
     const streamId = decodeNumber(buffer, 'Uint32')
     this.abortServerStream(streamId)
@@ -599,7 +576,7 @@ export class Protocol<
   protected [ServerMessageType.ClientStreamPull](
     buffer: ArrayBuffer,
     transport: ProtocolTransport,
-    transformer: ProtocolBaseTransformer,
+    _transformer: ProtocolBaseTransformer,
   ) {
     const streamId = decodeNumber(buffer, 'Uint32')
     const size = decodeNumber(buffer, 'Uint32', Uint32Array.BYTES_PER_ELEMENT)
@@ -632,8 +609,8 @@ export class Protocol<
 
   protected [ServerMessageType.ClientStreamAbort](
     buffer: ArrayBuffer,
-    transport: ProtocolTransport,
-    transformer: ProtocolBaseTransformer,
+    _transport: ProtocolTransport,
+    _transformer: ProtocolBaseTransformer,
   ) {
     const streamId = decodeNumber(buffer, 'Uint32')
     this.abortClientStream(streamId)

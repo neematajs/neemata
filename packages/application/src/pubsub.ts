@@ -29,7 +29,6 @@ export type PubSubChannel = {
   stream: Readable
   subscription: TAnySubscriptionContract
   event: TAnyEventContract
-  eventKey: string
 }
 
 export type PubSubOptions = {}
@@ -103,8 +102,8 @@ export class PubSub {
     const streams = Array(eventKeys.length)
 
     for (const index in eventKeys) {
-      const eventKey = eventKeys[index]
-      const channel = getChannelName(subscription, eventKey, options)
+      const event = subscription.events[eventKeys[index]]
+      const channel = getChannelName(event, options)
       if (this.subscriptions.has(channel)) {
         streams[index] = this.subscriptions.get(channel)!.stream
       } else {
@@ -112,13 +111,7 @@ export class PubSub {
         const stream = this.createEventStream(iterable)
         stream.on('close', () => this.subscriptions.delete(channel))
         streams[index] = stream
-        const event = subscription.events[eventKey] as TAnyEventContract
-        this.subscriptions.set(channel, {
-          subscription,
-          event,
-          stream,
-          eventKey,
-        })
+        this.subscriptions.set(channel, { subscription, event, stream })
       }
     }
 
@@ -129,14 +122,13 @@ export class PubSub {
     S extends TAnySubscriptionContract,
     E extends S['events'][keyof S['events']],
   >(
-    subscription: S,
     event: E,
     options: S['options'],
     data: t.infer.decoded.input<E['payload']>,
   ): Promise<boolean> {
     assert(this.adapter, 'PubSub adapter is not configured')
 
-    const channel = getChannelName(subscription, event.name, options)
+    const channel = getChannelName(event, options)
 
     try {
       const payload = event.payload.encode(data)
@@ -198,15 +190,13 @@ function concat(...args: any) {
   return args.filter(Boolean).join('/')
 }
 
-function getChannelName<
-  T extends TAnySubscriptionContract,
-  E extends keyof T['events'],
->(contract: T, eventKey: E, options: T['options']) {
-  const event = (contract.events as any)[eventKey] as TAnyEventContract
+function getChannelName<T extends TAnyEventContract>(
+  contract: T,
+  options: T['options'],
+) {
   const key = options ? serializerOptions(options) : ''
-  assert(contract.name, 'Subscription contract must have a name')
-  assert(event.name, 'Event contract must have a name')
-  return concat(contract.name, event.name, key)
+  assert(contract.name, 'Event contract must have a name')
+  return concat(contract.name, key)
 }
 
 function serializerOptions(options: Exclude<SubcriptionOptions, null>): string {

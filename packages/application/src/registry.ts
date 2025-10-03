@@ -8,20 +8,26 @@ import {
 import { ProtocolRegistry } from '@nmtjs/protocol/server'
 
 import type { AnyFilter, AnyGuard, AnyMiddleware } from './api.ts'
-import type { AnyNamespace } from './namespace.ts'
+import type { AnyProcedure } from './procedure.ts'
 import type { AnyRouter } from './router.ts'
 import type { AnyTask } from './tasks.ts'
 import type { Command } from './types.ts'
+import { isProcedure } from './procedure.ts'
+import { isRouter } from './router.ts'
 
 export const APP_COMMAND = Symbol('APP_COMMAND')
 
 export class ApplicationRegistry extends ProtocolRegistry {
   readonly commands = new Map<string | symbol, Map<string, Command>>()
   readonly filters = new Map<ErrorClass, AnyFilter<ErrorClass>>()
-  readonly namespaces = new Map<string, AnyNamespace>()
   readonly middlewares = new Set<AnyMiddleware>()
   readonly guards = new Set<AnyGuard>()
   readonly tasks = new Map<string, AnyTask>()
+  readonly procedures = new Map<
+    string,
+    { procedure: AnyProcedure; path: AnyRouter[] }
+  >()
+  readonly routers = new Map<string, AnyRouter>()
 
   constructor(protected readonly application: { logger: Logger }) {
     super(application)
@@ -37,19 +43,24 @@ export class ApplicationRegistry extends ProtocolRegistry {
     commands.set(commandName, callback)
   }
 
-  registerRouter(router: AnyRouter) {
-    for (const namespace of Object.values(router.namespaces)) {
-      if (typeof namespace.contract.name === 'undefined') {
-        throw new Error('Namespace name is required')
+  registerRouter(router: AnyRouter, path: AnyRouter[] = []) {
+    for (const route of Object.values(router.routes)) {
+      if (isRouter(route)) {
+        if (this.routers.has(route.contract.name!)) {
+          throw new Error(`Router ${route.contract.name} already registered`)
+        }
+        this.registerHooks(route.hooks)
+        this.routers.set(route.contract.name!, route)
+        this.registerRouter(route, [...path, router])
+      } else if (isProcedure(route)) {
+        if (this.procedures.has(route.contract.name!)) {
+          throw new Error(`Procedure ${route.contract.name} already registered`)
+        }
+        this.procedures.set(route.contract.name!, {
+          procedure: route,
+          path: [...path, router],
+        })
       }
-
-      if (this.namespaces.has(namespace.contract.name))
-        throw new Error(
-          `Namespaces ${namespace.contract.name} already registered`,
-        )
-
-      this.namespaces.set(namespace.contract.name, namespace)
-      this.registerHooks(namespace.hooks)
     }
   }
 
@@ -93,46 +104,32 @@ export class ApplicationRegistry extends ProtocolRegistry {
   *getDependants(): Generator<Dependant> {
     yield* super.getDependants()
 
-    for (const filter of this.filters.values()) {
-      yield filter
+    yield* this.filters.values()
+    yield* this.middlewares.values()
+    yield* this.guards.values()
+    yield* this.tasks.values()
+
+    for (const { procedure } of this.procedures.values()) {
+      yield* procedure.guards.values()
+      yield* procedure.middlewares.values()
+      yield procedure
     }
 
-    for (const middleware of this.middlewares.values()) {
-      yield middleware
-    }
-
-    for (const guard of this.guards.values()) {
-      yield guard
-    }
-
-    for (const task of this.tasks.values()) {
-      yield task
-    }
-
-    for (const namespace of this.namespaces.values()) {
-      for (const procedure of namespace.procedures.values()) {
-        yield procedure
-      }
-
-      for (const guard of namespace.guards.values()) {
-        yield guard
-      }
-
-      for (const middleware of namespace.middlewares.values()) {
-        yield middleware
-      }
+    for (const router of this.routers.values()) {
+      yield* router.guards.values()
+      yield* router.middlewares.values()
     }
   }
 
   clear() {
     super.clear()
-
     this.commands.clear()
     this.filters.clear()
     this.tasks.clear()
-    this.namespaces.clear()
     this.middlewares.clear()
     this.guards.clear()
+    this.routers.clear()
+    this.procedures.clear()
   }
 }
 
@@ -152,6 +149,6 @@ export function printRegistry(registry: ApplicationRegistry) {
 
   console.log('Tasks:')
   console.table(mapToTable(registry.tasks))
-  console.log('Namespaces:')
-  console.table(mapToTable(registry.namespaces))
+  // console.log('Namespaces:')
+  // console.table(mapToTable(registry.namespaces))
 }

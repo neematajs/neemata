@@ -27,7 +27,6 @@ describe('Server', () => {
     const streamId = 1
     const input = {
       callId: 1,
-      namespace: 'namespace',
       procedure: 'procedure',
       streams: { [streamId]: { size: 1, type: 'test', filename: 'file.txt' } },
       payload: JSON.stringify({
@@ -46,7 +45,6 @@ describe('Server', () => {
       encodeText(
         JSON.stringify([
           input.callId,
-          input.namespace,
           input.procedure,
           input.streams,
           input.payload,
@@ -56,7 +54,6 @@ describe('Server', () => {
     )
 
     expect(rpc).toHaveProperty('callId', input.callId)
-    expect(rpc).toHaveProperty('namespace', input.namespace)
     expect(rpc).toHaveProperty('procedure', input.procedure)
     expect(rpc).toHaveProperty('payload', { foo: 'bar', stream: stream! })
   })

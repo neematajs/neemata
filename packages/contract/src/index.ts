@@ -1,21 +1,21 @@
 import { APIContract } from './schemas/api.ts'
 import { EventContract } from './schemas/event.ts'
-import { NamespaceContract } from './schemas/namespace.ts'
 import { ProcedureContract } from './schemas/procedure.ts'
+import { RouterContract } from './schemas/router.ts'
 import { SubscriptionContract } from './schemas/subscription.ts'
 import { BlobType } from './types/blob.ts'
 
 export * from './schemas/api.ts'
 export * from './schemas/event.ts'
-export * from './schemas/namespace.ts'
 export * from './schemas/procedure.ts'
+export * from './schemas/router.ts'
 export * from './schemas/subscription.ts'
 
 export namespace contract {
   export const procedure = ProcedureContract
   export const event = EventContract
   export const subscription = SubscriptionContract
-  export const namespace = NamespaceContract
+  export const router = RouterContract
   export const api = APIContract
   export const blob = BlobType
 }

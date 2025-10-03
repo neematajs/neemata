@@ -1,9 +1,10 @@
 import { t } from '@nmtjs/type'
 import { describe, expect, expectTypeOf, it } from 'vitest'
 
+import type { TRouterContract } from '../src/index.ts'
 import type { TEventContract } from '../src/schemas/event.ts'
 import type { TProcedureContract } from '../src/schemas/procedure.ts'
-import { c, IsNamespaceContract, NamespaceContract } from '../src/index.ts'
+import { c, IsRouterContract, RouterContract } from '../src/index.ts'
 import { APIContract, IsAPIContract } from '../src/schemas/api.ts'
 import { EventContract, IsEventContract } from '../src/schemas/event.ts'
 import {
@@ -25,8 +26,8 @@ describe('Exports', () => {
     expect(c).toHaveProperty('api', APIContract)
   })
 
-  it('should export Namespace contract', () => {
-    expect(c).toHaveProperty('namespace', NamespaceContract)
+  it('should export Router contract', () => {
+    expect(c).toHaveProperty('router', RouterContract)
   })
 
   it('should export Procedure contract', () => {
@@ -91,10 +92,9 @@ describe('Contract — Subscription', { sequential: true }, () => {
         'type',
         'neemata:event',
       )
-      expect(subscription.events.testEvent).toHaveProperty('name', 'testEvent')
       expect(subscription.events.testEvent).toHaveProperty(
-        'subscription',
-        'testSubscription',
+        'name',
+        'testSubscription/testEvent',
       )
       expect(IsSubscriptionContract(subscription)).toBe(true)
       expect(IsEventContract(subscription.events.testEvent)).toBe(true)
@@ -116,10 +116,9 @@ describe('Contract — Subscription', { sequential: true }, () => {
         'type',
         'neemata:event',
       )
-      expect(subscription.events.testEvent).toHaveProperty('name', 'testEvent')
       expect(subscription.events.testEvent).toHaveProperty(
-        'subscription',
-        'testSubscription',
+        'name',
+        'testSubscription/testEvent',
       )
       expect(IsSubscriptionContract(subscription)).toBe(true)
       expect(IsEventContract(subscription.events.testEvent)).toBe(true)
@@ -141,14 +140,13 @@ describe('Contract — Subscription', { sequential: true }, () => {
       expectTypeOf(subscription1.options).toEqualTypeOf<null>()
       expectTypeOf(subscription1.name).toEqualTypeOf<'testSubscription'>()
       expectTypeOf(subscription1.events.event1).toEqualTypeOf<
-        TEventContract<t.StringType, 'event1', 'testSubscription', undefined>
+        TEventContract<t.StringType, 'testSubscription/event1', null>
       >()
       expectTypeOf(subscription1.events.event2).toEqualTypeOf<
         TEventContract<
           t.ObjectType<{ id: t.NumberType; value: t.StringType }>,
-          'event2',
-          'testSubscription',
-          undefined
+          'testSubscription/event2',
+          null
         >
       >()
     })
@@ -238,9 +236,9 @@ describe('Contract — Procedure', { sequential: true }, () => {
   })
 })
 
-describe('Contract — Namespace', { sequential: true }, () => {
+describe('Contract — Router', { sequential: true }, () => {
   describe('Runtime', () => {
-    it('should create a Namespace contract', () => {
+    it('should create a Router contract', () => {
       const inputType = t.any()
       const outputType = t.any()
       const eventType = t.any()
@@ -249,8 +247,16 @@ describe('Contract — Namespace', { sequential: true }, () => {
 
       const procedure = c.procedure({ input: inputType, output: outputType })
 
-      const namespace = c.namespace({
-        procedures: {
+      const nestedRouter = c.router({
+        routes: {
+          nestedProcedure: c.procedure({ input: t.any(), output: t.any() }),
+        },
+        events: { nestedEvent: c.event({ payload: t.any() }) },
+        name: 'nested',
+      })
+
+      const router = c.router({
+        routes: {
           variableProcedure: procedure,
           inlineProcedure: c.procedure({ input: t.any(), output: t.any() }),
           inlineProcedureWithStream: c.procedure({
@@ -258,6 +264,7 @@ describe('Contract — Namespace', { sequential: true }, () => {
             output: t.any(),
             stream: t.any(),
           }),
+          nested: nestedRouter,
         },
         events: {
           variableEvent: event,
@@ -265,38 +272,39 @@ describe('Contract — Namespace', { sequential: true }, () => {
         },
       })
 
-      expect(namespace).toBeDefined()
-      expect(namespace).toHaveProperty('name', undefined)
-      expect(namespace).toHaveProperty('type', 'neemata:namespace')
-      expect(namespace).toHaveProperty('procedures')
-      expect(namespace).toHaveProperty('events')
+      expect(router).toBeDefined()
+      expect(router).toHaveProperty('name', undefined)
+      expect(router).toHaveProperty('type', 'neemata:router')
+      expect(router).toHaveProperty('routes')
 
-      expect(IsNamespaceContract(namespace)).toBe(true)
-      expect(IsEventContract(namespace.events.inlineEvent)).toBe(true)
-      expect(IsEventContract(namespace.events.variableEvent)).toBe(true)
+      expect(IsRouterContract(router)).toBe(true)
 
-      expect(IsProcedureContract(namespace.procedures.inlineProcedure)).toBe(
+      expect(IsProcedureContract(router.routes.inlineProcedure)).toBe(true)
+      expect(IsProcedureContract(router.routes.inlineProcedureWithStream)).toBe(
         true,
       )
-      expect(
-        IsProcedureContract(namespace.procedures.inlineProcedureWithStream),
-      ).toBe(true)
-      expect(IsProcedureContract(namespace.procedures.variableProcedure)).toBe(
-        true,
-      )
+      expect(IsProcedureContract(router.routes.variableProcedure)).toBe(true)
+      expect(IsRouterContract(router.routes.nested)).toBe(true)
     })
   })
 
   describe('Typings', () => {
-    it('should correctly resolve Namespace contract types', () => {
+    it('should correctly resolve Router contract types', () => {
       const simpleProcedure = c.procedure({
         input: t.string(),
         output: t.string(),
       })
       const testEvent = c.event({ payload: t.object({ message: t.string() }) })
-      const namespaceContract = c.namespace({
-        name: 'testNamespace',
-        procedures: {
+
+      const nestedRouter = c.router({
+        routes: {
+          nestedProcedure: c.procedure({ input: t.any(), output: t.any() }),
+        },
+        events: { nestedEvent: c.event({ payload: t.any() }) },
+      })
+
+      const routerContract = c.router({
+        routes: {
           simpleProcedure,
           inlineProcedure: c.procedure({ input: t.any(), output: t.any() }),
           inlineProcedureWithStream: c.procedure({
@@ -304,6 +312,7 @@ describe('Contract — Namespace', { sequential: true }, () => {
             output: t.any(),
             stream: t.string(),
           }),
+          nested: nestedRouter,
         },
         events: {
           testEvent: testEvent,
@@ -311,53 +320,41 @@ describe('Contract — Namespace', { sequential: true }, () => {
         },
       })
 
-      expectTypeOf(namespaceContract.name).toEqualTypeOf<'testNamespace'>()
-      expectTypeOf(namespaceContract.procedures.simpleProcedure).toEqualTypeOf<
+      expectTypeOf(routerContract.name).toEqualTypeOf<undefined>()
+      expectTypeOf(routerContract.routes.simpleProcedure).toEqualTypeOf<
         TProcedureContract<
           t.StringType,
           t.StringType,
           undefined,
-          'simpleProcedure',
-          'testNamespace'
+          'simpleProcedure'
         >
       >()
-      expectTypeOf(namespaceContract.procedures.inlineProcedure).toEqualTypeOf<
-        TProcedureContract<
-          t.AnyType,
-          t.AnyType,
-          undefined,
-          'inlineProcedure',
-          'testNamespace'
-        >
+      expectTypeOf(routerContract.routes.inlineProcedure).toEqualTypeOf<
+        TProcedureContract<t.AnyType, t.AnyType, undefined, 'inlineProcedure'>
       >()
 
       expectTypeOf(
-        namespaceContract.procedures.inlineProcedureWithStream,
+        routerContract.routes.inlineProcedureWithStream,
       ).toEqualTypeOf<
         TProcedureContract<
           t.AnyType,
           t.AnyType,
           t.StringType,
-          'inlineProcedureWithStream',
-          'testNamespace'
+          'inlineProcedureWithStream'
         >
       >()
 
-      expectTypeOf(namespaceContract.events.testEvent).toEqualTypeOf<
-        TEventContract<
-          t.ObjectType<{ message: t.StringType }>,
-          'testEvent',
-          undefined,
-          'testNamespace'
-        >
-      >()
-
-      expectTypeOf(namespaceContract.events.inlineEvent).toEqualTypeOf<
-        TEventContract<
-          t.ObjectType<{ data: t.StringType }>,
-          'inlineEvent',
-          undefined,
-          'testNamespace'
+      expectTypeOf(routerContract.routes.nested).toEqualTypeOf<
+        TRouterContract<
+          {
+            readonly nestedProcedure: TProcedureContract<
+              t.AnyType,
+              t.AnyType,
+              undefined,
+              'nested/nestedProcedure'
+            >
+          },
+          'nested'
         >
       >()
     })
@@ -369,25 +366,23 @@ describe('Contract — API', { sequential: true }, () => {
     it('should create an API contract', () => {
       const inputType = t.any()
       const outputType = t.any()
-      const eventType = t.any()
 
       const api = c.api({
-        namespaces: {
-          testNamespace: c.namespace({
-            procedures: {
-              testProcedure: c.procedure({
-                input: inputType,
-                output: outputType,
-              }),
-            },
-            events: { testNamespaceEvent: c.event({ payload: eventType }) },
-          }),
-        },
+        router: c.router({
+          routes: {
+            testProcedure: c.procedure({
+              input: inputType,
+              output: outputType,
+            }),
+          },
+
+          name: 'root',
+        }),
       })
 
       expect(api).toBeDefined()
       expect(api).toHaveProperty('type', 'neemata:api')
-      expect(api).toHaveProperty('namespaces')
+      expect(api).toHaveProperty('router')
       expect(IsAPIContract(api)).toBe(true)
     })
   })
@@ -395,27 +390,35 @@ describe('Contract — API', { sequential: true }, () => {
   describe('Typings', () => {
     it('should correctly resolve API contract types', () => {
       const api = c.api({
-        namespaces: {
-          testNamespace: c.namespace({
-            procedures: {
-              testProcedure: c.procedure({
-                input: t.string(),
-                output: t.string(),
-              }),
-            },
-            events: {
-              testEvent: c.event({
-                payload: t.object({ message: t.string() }),
-              }),
-            },
-          }),
-        },
+        router: c.router({
+          routes: {
+            testProcedure: c.procedure({
+              input: t.string(),
+              output: t.string(),
+            }),
+          },
+          name: 'test',
+        }),
       })
 
-      // These type checks verify the API contract structure
-      expect(api).toHaveProperty('namespaces')
-      expect(api.namespaces.testNamespace).toHaveProperty('procedures')
-      expect(api.namespaces.testNamespace).toHaveProperty('events')
+      expect(api).toHaveProperty('router')
+      expect(api.router).toHaveProperty('routes')
+      expect(api.router.routes.testProcedure).toBeDefined()
+      expect(api.router.routes.testProcedure.name).toBe('test/testProcedure')
+      expectTypeOf(api.router.name).toEqualTypeOf<'test'>()
+      expectTypeOf(api.router).toEqualTypeOf<
+        TRouterContract<
+          {
+            readonly testProcedure: TProcedureContract<
+              t.StringType,
+              t.StringType,
+              undefined,
+              'test/testProcedure'
+            >
+          },
+          'test'
+        >
+      >()
     })
   })
 })

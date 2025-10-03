@@ -106,14 +106,12 @@ export class WebSocketClientTransport extends ProtocolTransport {
   }
 
   async call(
-    namespace: string,
     procedure: string,
     payload: any,
     options: ProtocolBaseClientCallOptions,
     transformer: ProtocolBaseTransformer,
   ) {
     const { call, buffer } = this.protocol.createRpc(
-      namespace,
       procedure,
       payload,
       options,

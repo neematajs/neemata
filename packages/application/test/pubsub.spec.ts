@@ -41,13 +41,13 @@ class MockPubSubAdapter implements PubSubAdapter {
     | ((channel: string) => AsyncGenerator<PubSubAdapterEvent, void, unknown>)
     | null = null
 
-  async publish(channel: string, payload: any): Promise<boolean> {
+  async publish(_channel: string, _payload: any): Promise<boolean> {
     return true
   }
 
   async *subscribe(
     channel: string,
-    signal?: AbortSignal,
+    _signal?: AbortSignal,
   ): AsyncGenerator<{ channel: string; payload: any }> {
     if (this.subscribeGen) {
       yield* this.subscribeGen(channel)
@@ -83,7 +83,7 @@ describe('PubSub', () => {
 
   it('should subscribe to specific events', async () => {
     const testData = {
-      event: 'testEvent',
+      event: 'TestSubscription1/testEvent',
       data: { message: 'Hello World', timestamp: Date.now() },
     }
 
@@ -106,7 +106,10 @@ describe('PubSub', () => {
   })
 
   it('should handle multiple events in subscription', async () => {
-    const testData = { event: 'anotherEvent', data: 'Hello Again' }
+    const testData = {
+      event: 'TestSubscription1/anotherEvent',
+      data: 'Hello Again',
+    }
 
     // Create a generator that yields test data
     async function* mockGenerator(channel: string) {
@@ -141,7 +144,7 @@ describe('PubSub', () => {
 
   it('should publish events', async () => {
     const testData = {
-      event: 'testEvent',
+      event: 'TestSubscription1/testEvent',
       data: { message: 'Hello World', timestamp: Date.now() },
     }
 
@@ -159,7 +162,6 @@ describe('PubSub', () => {
     )
 
     const publishResult = await pubsub.publish(
-      TestSubscriptionContract1,
       TestSubscriptionContract1.events.testEvent,
       { userId: 'user1' },
       testData.data,
@@ -174,11 +176,14 @@ describe('PubSub', () => {
 
   it('should handle multiple subscriptions', async () => {
     const testData1 = {
-      event: 'testEvent',
+      event: 'TestSubscription1/testEvent',
       data: { message: 'Hello World', timestamp: Date.now() },
     }
 
-    const testData2 = { event: 'transformEvent', data: new Date() }
+    const testData2 = {
+      event: 'TestSubscription2/transformEvent',
+      data: new Date(),
+    }
 
     // Create a generator that yields test data
     async function* mockGenerator(channel: string) {
@@ -250,33 +255,29 @@ describe('PubSub', () => {
 
     const result = defer(async () => {
       for await (const { event, data } of subscription1) {
-        expect(event).toBe('testEvent')
+        expect(event).toBe('TestSubscription1/testEvent')
         expect(data).toHaveProperty('message')
         expect(data).toHaveProperty('timestamp')
         count1++
       }
 
       for await (const { event, data } of subscription2) {
-        expect(event).toBe('testEvent')
+        expect(event).toBe('TestSubscription1/testEvent')
         expect(data).toHaveProperty('message')
         expect(data).toHaveProperty('timestamp')
         count2++
       }
     }, 1)
 
-    pubsub.publish(
-      TestSubscriptionContract1,
-      TestSubscriptionContract1.events.testEvent,
-      options1,
-      { message: 'Hello World', timestamp: Date.now() },
-    )
+    pubsub.publish(TestSubscriptionContract1.events.testEvent, options1, {
+      message: 'Hello World',
+      timestamp: Date.now(),
+    })
 
-    pubsub.publish(
-      TestSubscriptionContract1,
-      TestSubscriptionContract1.events.testEvent,
-      options2,
-      { message: 'Hello Again', timestamp: Date.now() },
-    )
+    pubsub.publish(TestSubscriptionContract1.events.testEvent, options2, {
+      message: 'Hello Again',
+      timestamp: Date.now(),
+    })
 
     await expect(result).resolves.not.toThrow()
 

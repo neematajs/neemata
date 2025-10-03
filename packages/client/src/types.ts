@@ -1,5 +1,9 @@
 import type { CallTypeProvider, OneOf, TypeProvider } from '@nmtjs/common'
-import type { TAnyAPIContract, TAnyProcedureContract } from '@nmtjs/contract'
+import type {
+  TAnyAPIContract,
+  TAnyProcedureContract,
+  TAnyRouterContract,
+} from '@nmtjs/contract'
 import type {
   InputType,
   OutputType,
@@ -33,108 +37,93 @@ export interface RuntimeOutputContractTypeProvider extends TypeProvider {
     : never
 }
 
+export type AnyResolvedAPIContractProcedure = {
+  contract: TAnyProcedureContract
+  input: any
+  output: any
+}
+
+export type AnyResolvedAPIContractRouter = {
+  contract: TAnyRouterContract
+  routes: Record<
+    string,
+    AnyResolvedAPIContractRouter | AnyResolvedAPIContractProcedure
+  >
+}
+
 export type AnyResolvedAPIContract = Record<
   string,
-  {
-    procedures: Record<
-      string,
-      { contract: TAnyProcedureContract; input: any; output: any }
-    >
-    events: Record<string, { payload: any }>
-  }
+  Record<string, AnyResolvedAPIContractProcedure | AnyResolvedAPIContractRouter>
 >
+
+export type ResolveAPIRouterRoutes<
+  T extends TAnyRouterContract,
+  InputTypeProvider extends TypeProvider = TypeProvider,
+  OutputTypeProvider extends TypeProvider = TypeProvider,
+> = {
+  [K in keyof T['routes']]: T['routes'][K] extends TAnyRouterContract
+    ? {
+        contract: T['routes'][K]
+        routes: ResolveAPIRouterRoutes<
+          T['routes'][K],
+          InputTypeProvider,
+          OutputTypeProvider
+        >
+      }
+    : T['routes'][K] extends TAnyProcedureContract
+      ? {
+          contract: T['routes'][K]
+          input: InputType<
+            CallTypeProvider<InputTypeProvider, T['routes'][K]['input']>
+          >
+          output: T['routes'][K]['stream'] extends undefined | t.NeverType
+            ? OutputType<
+                CallTypeProvider<OutputTypeProvider, T['routes'][K]['output']>
+              >
+            : {
+                result: OutputType<
+                  CallTypeProvider<OutputTypeProvider, T['routes'][K]['output']>
+                >
+                stream: ProtocolServerStreamInterface<
+                  CallTypeProvider<OutputTypeProvider, T['routes'][K]['stream']>
+                >
+              }
+        }
+      : never
+}
 
 export type ResolveAPIContract<
   C extends TAnyAPIContract = TAnyAPIContract,
   InputTypeProvider extends TypeProvider = TypeProvider,
   OutputTypeProvider extends TypeProvider = TypeProvider,
-> = {
-  [N in keyof C['namespaces']]: {
-    procedures: {
-      [P in keyof C['namespaces'][N]['procedures']]: {
-        contract: C['namespaces'][N]['procedures'][P]
-        input: InputType<
-          CallTypeProvider<
-            InputTypeProvider,
-            C['namespaces'][N]['procedures'][P]['input']
-          >
-        >
-        output: C['namespaces'][N]['procedures'][P]['stream'] extends
-          | undefined
-          | t.NeverType
-          ? OutputType<
-              CallTypeProvider<
-                OutputTypeProvider,
-                C['namespaces'][N]['procedures'][P]['output']
-              >
-            >
-          : {
-              result: OutputType<
-                CallTypeProvider<
-                  OutputTypeProvider,
-                  C['namespaces'][N]['procedures'][P]['output']
-                >
-              >
-              stream: ProtocolServerStreamInterface<
-                CallTypeProvider<
-                  OutputTypeProvider,
-                  C['namespaces'][N]['procedures'][P]['stream']
-                >
-              >
-            }
-      }
-    }
-    events: {
-      [KE in keyof C['namespaces'][N]['events']]: {
-        payload: OutputType<
-          CallTypeProvider<
-            OutputTypeProvider,
-            C['namespaces'][N]['events'][KE]['payload']
-          >
-        >
-      }
-    }
-  }
-}
+> = ResolveAPIRouterRoutes<C['router'], InputTypeProvider, OutputTypeProvider>
 
-export type ResolveClientEvents<
-  C extends AnyResolvedAPIContract = AnyResolvedAPIContract,
-> = {
-  [N in keyof C]: {
-    [E in keyof C[N]['events'] as `${Extract<N, string>}/${Extract<E, string>}`]: [
-      C[N]['events'][E]['payload'],
-    ]
-  }
-}[keyof C]
+export type ClientCaller<
+  Procedure extends AnyResolvedAPIContractProcedure,
+  SafeCall extends boolean,
+> = (
+  ...args: Procedure['input'] extends t.NeverType
+    ? [data?: undefined, options?: Partial<ProtocolBaseClientCallOptions>]
+    : undefined extends t.infer.encoded.input<Procedure['contract']['input']>
+      ? [
+          data?: Procedure['input'],
+          options?: Partial<ProtocolBaseClientCallOptions>,
+        ]
+      : [
+          data: Procedure['input'],
+          options?: Partial<ProtocolBaseClientCallOptions>,
+        ]
+) => SafeCall extends true
+  ? Promise<OneOf<[{ output: Procedure['output'] }, { error: ProtocolError }]>>
+  : Promise<Procedure['output']>
 
 export type ClientCallers<
-  Resolved extends AnyResolvedAPIContract,
+  Resolved extends AnyResolvedAPIContractRouter,
   SafeCall extends boolean,
 > = {
-  [N in keyof Resolved]: {
-    [P in keyof Resolved[N]['procedures']]: (
-      ...args: Resolved[N]['procedures'][P]['input'] extends t.NeverType
-        ? [data?: undefined, options?: Partial<ProtocolBaseClientCallOptions>]
-        : undefined extends t.infer.encoded.input<
-              Resolved[N]['procedures'][P]['contract']['input']
-            >
-          ? [
-              data?: Resolved[N]['procedures'][P]['input'],
-              options?: Partial<ProtocolBaseClientCallOptions>,
-            ]
-          : [
-              data: Resolved[N]['procedures'][P]['input'],
-              options?: Partial<ProtocolBaseClientCallOptions>,
-            ]
-    ) => SafeCall extends true
-      ? Promise<
-          OneOf<
-            [
-              { output: Resolved[N]['procedures'][P]['output'] },
-              { error: ProtocolError },
-            ]
-          >
-        >
-      : Promise<Resolved[N]['procedures'][P]['output']>
-  }
+  [K in keyof Resolved['routes']]: Resolved['routes'][K] extends AnyResolvedAPIContractProcedure
+    ? ClientCaller<Resolved['routes'][K], SafeCall>
+    : Resolved['routes'][K] extends AnyResolvedAPIContractRouter
+      ? ClientCallers<Resolved['routes'][K], SafeCall>
+      : never
 }

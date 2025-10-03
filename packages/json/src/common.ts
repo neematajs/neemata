@@ -1,3 +1,5 @@
+import type { BaseProtocolError, ProtocolBlobMetadata } from '@nmtjs/protocol'
+
 // TODO: is this a good way to serialize streams within json?
 const STREAM_SERIALIZE_KEY = '%neemata:stream:%\f'
 
@@ -17,3 +19,16 @@ export const isStreamId = (value: any) => {
     value.startsWith(STREAM_SERIALIZE_KEY)
   )
 }
+
+export type StreamsMetadata = Record<number, ProtocolBlobMetadata>
+
+export type ClientEncodedRPC = [
+  callId: number,
+  procedure: string,
+  streams: StreamsMetadata,
+  payload?: any,
+]
+
+export type ServerEncodedRPC =
+  | [callId: number, error: BaseProtocolError]
+  | [callId: number, error: null, streams: StreamsMetadata, payload?: any]

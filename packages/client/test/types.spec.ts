@@ -16,17 +16,17 @@ import { RuntimeClient } from '../src/runtime.ts'
 
 class MockTransport extends ProtocolTransport {
   async connect(
-    auth: any,
-    transformer: ProtocolBaseTransformer,
+    _auth: any,
+    _transformer: ProtocolBaseTransformer,
   ): Promise<void> {}
   async disconnect(): Promise<void> {}
-  async call(namespace: string, procedure: string, payload: any): Promise<any> {
+  async call(_procedure: string, payload: any): Promise<any> {
     return payload
   }
   async send(
-    messageType: ClientMessageType,
-    buffer: ArrayBuffer,
-    metadata: ProtocolSendMetadata,
+    _messageType: ClientMessageType,
+    _buffer: ArrayBuffer,
+    _metadata: ProtocolSendMetadata,
   ): Promise<void> {}
 }
 
@@ -39,16 +39,22 @@ describe('Types', () => {
     stream: t.string(),
   })
 
-  const namespace = c.namespace({
-    procedures: {
+  const nestedRouter1 = c.router({ routes: { simple: simpleProcedure } })
+
+  const nestedRouter2 = c.router({
+    routes: { simple: simpleProcedure, nestedRouter1 },
+  })
+
+  const router = c.router({
+    routes: {
       simple: simpleProcedure,
       simpleInline: c.procedure({ input: t.string(), output: t.string() }),
       stream: streamProcedure,
+      nested: nestedRouter2,
     },
-    events: { test: c.event({ payload: t.string() }) },
   })
 
-  const api = c.api({ namespaces: { test: namespace } })
+  const api = c.api({ router })
 
   describe('Unsafe client', () => {
     const client = new RuntimeClient(api, new MockTransport(), {
@@ -57,11 +63,19 @@ describe('Types', () => {
     })
 
     it('should properly resolve types', () => {
+      expectTypeOf(client._?.api.routes.simple.input).toEqualTypeOf<string>()
+      expectTypeOf(client._?.api.routes.simple.output).toEqualTypeOf<string>()
       expectTypeOf(
-        client._?.api.test.procedures.simple.input,
+        client._?.api.routes.nested.routes.simple.input,
       ).toEqualTypeOf<string>()
       expectTypeOf(
-        client._?.api.test.procedures.simple.output,
+        client._?.api.routes.nested.routes.simple.output,
+      ).toEqualTypeOf<string>()
+      expectTypeOf(
+        client._?.api.routes.nested.routes.nestedRouter1.routes.simple.input,
+      ).toEqualTypeOf<string>()
+      expectTypeOf(
+        client._?.api.routes.nested.routes.nestedRouter1.routes.simple.output,
       ).toEqualTypeOf<string>()
     })
 
@@ -71,9 +85,9 @@ describe('Types', () => {
         options?: Partial<ProtocolBaseClientCallOptions> | undefined,
       ) => Promise<string>
 
-      expectTypeOf(client.call.test.simple).toEqualTypeOf<Response>()
-      expectTypeOf(client.call.test.simpleInline).toEqualTypeOf<Response>()
-      expectTypeOf(client.call.test.stream).toEqualTypeOf<
+      expectTypeOf(client.call.simple).toEqualTypeOf<Response>()
+      expectTypeOf(client.call.simpleInline).toEqualTypeOf<Response>()
+      expectTypeOf(client.call.stream).toEqualTypeOf<
         (
           data: string,
           options?: Partial<ProtocolBaseClientCallOptions> | undefined,
@@ -82,6 +96,10 @@ describe('Types', () => {
           stream: ProtocolServerStreamInterface<string>
         }>
       >()
+      expectTypeOf(client.call.nested.simple).toEqualTypeOf<Response>()
+      expectTypeOf(
+        client.call.nested.nestedRouter1.simple,
+      ).toEqualTypeOf<Response>()
     })
   })
 
@@ -92,12 +110,8 @@ describe('Types', () => {
     })
 
     it('should properly resolve types', () => {
-      expectTypeOf(
-        client._?.api.test.procedures.simple.input,
-      ).toEqualTypeOf<string>()
-      expectTypeOf(
-        client._?.api.test.procedures.simple.output,
-      ).toEqualTypeOf<string>()
+      expectTypeOf(client._?.api.routes.simple.input).toEqualTypeOf<string>()
+      expectTypeOf(client._?.api.routes.simple.output).toEqualTypeOf<string>()
     })
 
     it('should properly resolve call types', () => {
@@ -106,9 +120,9 @@ describe('Types', () => {
         options?: Partial<ProtocolBaseClientCallOptions> | undefined,
       ) => Promise<OneOf<[{ output: string }, { error: ProtocolError }]>>
 
-      expectTypeOf(client.call.test.simple).toEqualTypeOf<Response>()
-      expectTypeOf(client.call.test.simpleInline).toEqualTypeOf<Response>()
-      expectTypeOf(client.call.test.stream).toEqualTypeOf<
+      expectTypeOf(client.call.simple).toEqualTypeOf<Response>()
+      expectTypeOf(client.call.simpleInline).toEqualTypeOf<Response>()
+      expectTypeOf(client.call.stream).toEqualTypeOf<
         (
           data: string,
           options?: Partial<ProtocolBaseClientCallOptions> | undefined,
@@ -126,6 +140,10 @@ describe('Types', () => {
           >
         >
       >()
+      expectTypeOf(client.call.nested.simple).toEqualTypeOf<Response>()
+      expectTypeOf(
+        client.call.nested.nestedRouter1.simple,
+      ).toEqualTypeOf<Response>()
     })
   })
 })

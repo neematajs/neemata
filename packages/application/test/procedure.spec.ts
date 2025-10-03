@@ -6,10 +6,10 @@ import { describe, expect, expectTypeOf, it } from 'vitest'
 
 import { kProcedure } from '../src/constants.ts'
 import { createContractProcedure, createProcedure } from '../src/procedure.ts'
-import { TestNamespaceContract } from './_utils.ts'
+import { TestRouterContract } from './_utils.ts'
 
 describe('Procedure', () => {
-  const procedureContract = TestNamespaceContract.procedures.testProcedure
+  const procedureContract = TestRouterContract.routes.testProcedure
 
   it('should create a procedure', () => {
     const handler = () => {}
@@ -103,7 +103,6 @@ describe('Procedure', () => {
       output: expect.any(type.AnyType),
       stream,
       name: undefined,
-      namespace: undefined,
       timeout: undefined,
     })
   })
@@ -120,7 +119,7 @@ describe('Procedure static', () => {
       input,
       output,
       dependencies: { dep1, dep2 },
-      handler(ctx, data) {
+      handler(ctx) {
         return { a: ctx.dep1 }
       },
     })
@@ -132,7 +131,6 @@ describe('Procedure static', () => {
       output,
       stream: undefined,
       name: undefined,
-      namespace: undefined,
       timeout: undefined,
     })
   })
@@ -143,7 +141,7 @@ describe('Procedure static', () => {
 
     const procedure = createProcedure({
       dependencies: { dep1, dep2 },
-      handler(ctx, data) {
+      handler(ctx) {
         return { a: ctx.dep1 }
       },
     })
@@ -155,7 +153,6 @@ describe('Procedure static', () => {
       output: expect.any(type.AnyType),
       stream: undefined,
       name: undefined,
-      namespace: undefined,
       timeout: undefined,
     })
   })
@@ -182,7 +179,6 @@ describe('Procedure static', () => {
       output: expect.any(type.AnyType),
       stream: expect.any(type.AnyType),
       name: undefined,
-      namespace: undefined,
       timeout: undefined,
     })
 

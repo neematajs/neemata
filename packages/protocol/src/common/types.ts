@@ -10,12 +10,7 @@ export interface BaseProtocolError {
   data?: any
 }
 
-export type ProtocolRPC = {
-  callId: number
-  namespace: string
-  procedure: string
-  payload: any
-}
+export type ProtocolRPC = { callId: number; procedure: string; payload: any }
 
 export type ProtocolRPCResponse<T = Stream> = OneOf<
   [

@@ -10,3 +10,7 @@ export const applyNames = <T extends Record<string, { serviceName?: string }>>(
 }
 
 export const createSchema = <T>(schema: T) => Object.freeze(schema) as T
+
+export const concatFullName = (parent: string | undefined, name: string) => {
+  return parent ? `${parent}/${name}` : name
+}

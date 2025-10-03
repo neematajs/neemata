@@ -117,20 +117,19 @@ export class WsTransportServer implements Transport<WsConnectionData> {
     requestSignal: AbortSignal,
   ): Promise<Response> {
     const url = new URL(request.url)
-    const pathParts = url.pathname.split('/').filter(Boolean)
 
-    // Expect /api/{namespace}/{procedure}
-    if (pathParts.length < 3 || pathParts[0] !== 'api') {
+    const prefix = '/api/'
+
+    // Expect /api/{procedure}
+    if (!url.pathname.startsWith(prefix)) {
       return new Response('Not Found', {
         status: HttpCode.NotFound,
         statusText: HttpStatusText[HttpCode.NotFound],
       })
     }
 
-    const namespace = pathParts[1]
-    const procedure = pathParts[2]
+    const procedure = url.pathname.slice(prefix.length)
     const method = request.method.toLowerCase()
-
     const origin = request.headers.get('origin')
     const responseHeaders = new Headers()
     if (origin) this.applyCors(origin, request, responseHeaders)
@@ -200,7 +199,9 @@ export class WsTransportServer implements Transport<WsConnectionData> {
         }
       }
 
-      const metadata: ProtocolApiCallOptions['metadata'] = (metadata) => {
+      const metadata: ProtocolApiCallOptions['validateMetadata'] = (
+        metadata,
+      ) => {
         const allowHttpMethod =
           metadata.get(AllowedHttpMethod) ?? DEFAULT_ALLOWED_METHODS
         if (!allowHttpMethod.includes(method as any)) {
@@ -210,10 +211,9 @@ export class WsTransportServer implements Transport<WsConnectionData> {
 
       const result = await this.protocol.call({
         connection,
-        namespace,
         procedure,
         payload,
-        metadata,
+        validateMetadata: metadata,
         container,
         signal,
       })
@@ -390,16 +390,11 @@ export class WsTransportServer implements Transport<WsConnectionData> {
     this.logger.error(new Error(message, { cause }))
   }
 
-  protected [ClientMessageType.Rpc](
-    peer: Peer,
-    buffer: ArrayBuffer,
-    connectionId: string,
-  ) {
+  protected [ClientMessageType.Rpc](buffer: ArrayBuffer, connectionId: string) {
     this.protocol.rpcRaw(connectionId, buffer)
   }
 
   protected [ClientMessageType.RpcAbort](
-    peer: Peer,
     buffer: ArrayBuffer,
     connectionId: string,
   ) {
@@ -407,7 +402,6 @@ export class WsTransportServer implements Transport<WsConnectionData> {
   }
 
   protected [ClientMessageType.RpcStreamAbort](
-    peer: Peer,
     buffer: ArrayBuffer,
     connectionId: string,
   ) {
@@ -415,7 +409,6 @@ export class WsTransportServer implements Transport<WsConnectionData> {
   }
 
   protected [ClientMessageType.ClientStreamPush](
-    peer: Peer,
     buffer: ArrayBuffer,
     connectionId: string,
   ) {
@@ -428,7 +421,6 @@ export class WsTransportServer implements Transport<WsConnectionData> {
   }
 
   protected [ClientMessageType.ClientStreamEnd](
-    peer: Peer,
     buffer: ArrayBuffer,
     connectionId: string,
   ) {
@@ -437,7 +429,6 @@ export class WsTransportServer implements Transport<WsConnectionData> {
   }
 
   protected [ClientMessageType.ClientStreamAbort](
-    peer: Peer,
     buffer: ArrayBuffer,
     connectionId: string,
   ) {
@@ -446,7 +437,6 @@ export class WsTransportServer implements Transport<WsConnectionData> {
   }
 
   protected [ClientMessageType.ServerStreamPull](
-    peer: Peer,
     buffer: ArrayBuffer,
     connectionId: string,
   ) {
@@ -455,7 +445,6 @@ export class WsTransportServer implements Transport<WsConnectionData> {
   }
 
   protected [ClientMessageType.ServerStreamAbort](
-    peer: Peer,
     buffer: ArrayBuffer,
     connectionId: string,
   ) {

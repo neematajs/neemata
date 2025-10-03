@@ -4,7 +4,6 @@ import type { Connection, Format, Protocol } from '@nmtjs/protocol/server'
 import type { ApplicationApi } from './api.ts'
 import type { Application } from './application.ts'
 import type { WorkerType } from './enums.ts'
-import type { AnyNamespace } from './namespace.ts'
 import type { AnyProcedure } from './procedure.ts'
 import type { ApplicationRegistry } from './registry.ts'
 import type { AnyRouter } from './router.ts'
@@ -29,7 +28,7 @@ export interface ApplicationPluginContext {
 export type ApiCallContext = Readonly<{
   connection: Connection
   container: Container
-  namespace: AnyNamespace
+  path: AnyRouter[]
   procedure: AnyProcedure
 }>
 

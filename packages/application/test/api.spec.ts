@@ -11,16 +11,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ApplicationApiCallOptions } from '../src/api.ts'
 import type { Application } from '../src/application.ts'
-import type { Namespace } from '../src/namespace.ts'
 import type { ApplicationRegistry } from '../src/registry.ts'
-import type { TestNamespaceContract } from './_utils.ts'
+import type { Router } from '../src/router.ts'
+import type { TestRouterContract } from './_utils.ts'
 import { ApiError, ApplicationApi } from '../src/api.ts'
 import { createRouter } from '../src/router.ts'
 import {
   testApp,
   testConnection,
-  testNamepsace,
   testProcedure,
+  testRouter,
   testTransport,
 } from './_utils.ts'
 
@@ -28,7 +28,7 @@ describe.sequential('Api', () => {
   const transportPlugin = testTransport()
 
   let app: Application
-  let namespace: Namespace<typeof TestNamespaceContract>
+  let router: Router<typeof TestRouterContract>
   let registry: ApplicationRegistry
   let container: Container
   let connection: Connection
@@ -46,7 +46,6 @@ describe.sequential('Api', () => {
         payload,
         signal: new AbortController().signal,
         ...options,
-        namespace: namespace.contract.name,
         procedure: options.procedure.contract.name!,
       })
       .finally(() => container.dispose())
@@ -75,8 +74,8 @@ describe.sequential('Api', () => {
       dependencies: { connection: ProtocolInjectables.connection },
       handler: spy,
     })
-    namespace = testNamepsace({ procedure })
-    registry.registerRouter(createRouter({ namespace }))
+    router = testRouter({ routes: { testProcedure: procedure } })
+    registry.registerRouter(router)
     await app.initialize()
 
     const connection = testConnection()
@@ -86,8 +85,8 @@ describe.sequential('Api', () => {
 
   it('should handle procedure call', async () => {
     const procedure = testProcedure(() => 'result')
-    namespace = testNamepsace({ procedure })
-    registry.registerRouter(createRouter({ namespace }))
+    router = testRouter({ routes: { testProcedure: procedure } })
+    registry.registerRouter(router)
     await app.initialize()
     await expect(call({ procedure })).resolves.toMatchObject({
       output: 'result',
@@ -100,8 +99,9 @@ describe.sequential('Api', () => {
       dependencies: { injectable },
       handler: ({ injectable }) => injectable,
     })
-    namespace = testNamepsace({ procedure })
-    registry.registerRouter(createRouter({ namespace }))
+
+    router = testRouter({ routes: { testProcedure: procedure } })
+    registry.registerRouter(router)
     await app.initialize()
     await expect(call({ procedure })).resolves.toMatchObject({
       output: 'value',
@@ -117,8 +117,8 @@ describe.sequential('Api', () => {
       dependencies: { injectable },
       handler: ({ injectable }) => injectable,
     })
-    namespace = testNamepsace({ procedure })
-    registry.registerRouter(createRouter({ namespace }))
+    router = testRouter({ routes: { testProcedure: procedure } })
+    registry.registerRouter(router)
     await app.initialize()
     const connection = testConnection()
     const spy = vi.spyOn(procedure, 'handler')
@@ -132,8 +132,8 @@ describe.sequential('Api', () => {
       dependencies: { injectable: ProtocolInjectables.rpcClientAbortSignal },
       handler: ({ injectable }) => injectable,
     })
-    namespace = testNamepsace({ procedure })
-    registry.registerRouter(createRouter({ namespace }))
+    router = testRouter({ routes: { testProcedure: procedure } })
+    registry.registerRouter(router)
     await app.initialize()
     const connection = testConnection()
     const spy = vi.spyOn(procedure, 'handler')
@@ -144,8 +144,8 @@ describe.sequential('Api', () => {
   it('should handle procedure call with payload', async () => {
     const spy = vi.fn()
     const procedure = testProcedure(spy)
-    namespace = testNamepsace({ procedure })
-    registry.registerRouter(createRouter({ namespace }))
+    router = testRouter({ routes: { testProcedure: procedure } })
+    registry.registerRouter(router)
     await app.initialize()
     await call({ procedure, payload })
     expect(spy).toBeCalledWith(expect.anything(), payload)
@@ -155,8 +155,8 @@ describe.sequential('Api', () => {
     const procedure = testProcedure(() => {
       throw new Error()
     })
-    namespace = testNamepsace({ procedure })
-    registry.registerRouter(createRouter({ namespace }))
+    router = testRouter({ routes: { testProcedure: procedure } })
+    registry.registerRouter(router)
     await app.initialize()
     const result = await call({ procedure }).catch((v) => v)
     expect(result).toBeInstanceOf(Error)
@@ -171,8 +171,8 @@ describe.sequential('Api', () => {
     const procedure = testProcedure(() => {
       throw error
     })
-    namespace = testNamepsace({ procedure })
-    registry.registerRouter(createRouter({ namespace }))
+    router = testRouter({ routes: { testProcedure: procedure } })
+    registry.registerRouter(router)
     await app.initialize()
     await expect(call({ procedure })).rejects.toBeInstanceOf(ApiError)
     expect(filterInjectable.catch).toHaveBeenCalledOnce()
@@ -186,8 +186,9 @@ describe.sequential('Api', () => {
       guards: [guard],
       handler: () => 'result',
     })
-    namespace = testNamepsace({ procedure })
-    registry.registerRouter(createRouter({ namespace }))
+
+    router = testRouter({ routes: { testProcedure: procedure } })
+    registry.registerRouter(router)
     await app.initialize()
     const result = await call({ procedure }).catch((v) => v)
     expect(result).toBeInstanceOf(ApiError)
@@ -196,13 +197,13 @@ describe.sequential('Api', () => {
 
   it('should handle middleware', async () => {
     const middleware1Like = {
-      handle: vi.fn(async (ctx, next, payload) => {
+      handle: vi.fn(async (_ctx, next, payload) => {
         const result = await next({ test: `${payload.test}2` })
         return { test: `${result.test}_middleware1` }
       }),
     }
     const middleware2Like = {
-      handle: vi.fn(async (ctx, next, payload) => {
+      handle: vi.fn(async (_ctx, next, payload) => {
         const result = await next({ test: `${payload.test}3` })
         return { test: `${result.test}_middleware2` }
       }),
@@ -216,20 +217,22 @@ describe.sequential('Api', () => {
       middlewares: [middleware1, middleware2],
       handler: handlerFn,
     })
-
-    namespace = testNamepsace({ procedure })
-    registry.registerRouter(createRouter({ namespace }))
+    router = testRouter({ routes: { testProcedure: procedure } })
+    registry.registerRouter(router)
     await app.initialize()
 
-    const response = await call({ procedure, payload: { test: '1' } })
+    const response = await call({
+      procedure: router.routes.testProcedure,
+      payload: { test: '1' },
+    })
 
     expect(middleware1Like.handle).toHaveBeenCalledWith(
-      { connection, container, procedure, namespace },
+      { connection, container, procedure, path: [router] },
       expect.any(Function),
       { test: '1' },
     )
     expect(middleware2Like.handle).toHaveBeenCalledWith(
-      { connection, container, procedure, namespace },
+      { connection, container, procedure, path: [router] },
       expect.any(Function),
       { test: '12' },
     )
@@ -241,11 +244,11 @@ describe.sequential('Api', () => {
 
   it('should find procedure', async () => {
     const procedure = testProcedure(() => 'result')
-    namespace = testNamepsace({ procedure })
-    registry.registerRouter(createRouter({ namespace }))
+    const router = createRouter({ routes: { testProcedure: procedure } })
+    registry.registerRouter(router)
     await app.initialize()
-    const found = api.find(namespace.contract.name, 'testProcedure')
-    expect(found).toHaveProperty('namespace', namespace)
-    expect(found).toHaveProperty('procedure', procedure)
+    const found = api.find('testProcedure')
+    expect(found).toHaveProperty('path', [router])
+    expect(found).toHaveProperty('procedure', router.routes.testProcedure)
   })
 })
