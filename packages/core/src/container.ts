@@ -426,7 +426,9 @@ export class Container {
       const { dispose } = injectable
       if (dispose) await dispose(instance, context)
     } else if (isClassInjectable(injectable)) {
-      await instance[kClassInjectableDispose]()
+      await (instance as ClassInstance<ClassInjectable<unknown>>)[
+        kClassInjectableDispose
+      ]?.()
     }
   }
 }
