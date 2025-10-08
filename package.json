@@ -5,7 +5,7 @@
   "scripts": {
     "clean-build": "pnpm run --parallel -r build --build --clean --declaration --sourceMap",
     "build": "pnpm run clean-build && pnpm run --parallel -r build --declaration",
-    "dev": "pnpm run clean-build && pnpm run --parallel -r build --watch --sourceMap --preserveWatchOutput",
+    "dev": "pnpm run clean-build && pnpm run --parallel -r build --watch --declaration --sourceMap --preserveWatchOutput",
     "clean": "rm -rf dist node_modules && pnpm -r exec rm -rf dist node_modules",
     "test": "pnpm build && pnpm test:unit && pnpm test:runtime",
     "test:unit": "vitest run --passWithNoTests",

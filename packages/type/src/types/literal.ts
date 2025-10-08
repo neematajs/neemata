@@ -1,14 +1,15 @@
-import * as zod from 'zod/mini'
+import type { ZodMiniLiteral } from 'zod/mini'
+import { literal as zodLiteral } from 'zod/mini'
 
 import type { PrimitiveValueType } from './base.ts'
 import { BaseType } from './base.ts'
 
 export class LiteralType<
   T extends PrimitiveValueType = PrimitiveValueType,
-> extends BaseType<zod.ZodMiniLiteral<T>, zod.ZodMiniLiteral<T>, { value: T }> {
+> extends BaseType<ZodMiniLiteral<T>, ZodMiniLiteral<T>, { value: T }> {
   static factory<T extends PrimitiveValueType>(value: T) {
     return new LiteralType<T>({
-      encodedZodType: zod.literal(value),
+      encodeZodType: zodLiteral(value),
       props: { value },
     })
   }

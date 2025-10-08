@@ -1,17 +1,18 @@
-import * as zod from 'zod/mini'
+import type { core, ZodMiniEnum } from 'zod/mini'
+import { enum as zodEnum } from 'zod/mini'
 
 import { BaseType } from './base.ts'
 
 export class EnumType<
-  T extends zod.core.util.EnumLike = zod.core.util.EnumLike,
-> extends BaseType<zod.ZodMiniEnum<T>, zod.ZodMiniEnum<T>, { values: T }> {
-  static factory<T extends zod.core.util.EnumLike>(values: T): EnumType<T>
+  T extends core.util.EnumLike = core.util.EnumLike,
+> extends BaseType<ZodMiniEnum<T>, ZodMiniEnum<T>, { values: T }> {
+  static factory<T extends core.util.EnumLike>(values: T): EnumType<T>
   static factory<T extends string[]>(
     values: T,
-  ): EnumType<zod.core.util.ToEnum<T[number]>>
-  static factory<T extends zod.core.util.EnumLike | string[]>(values: T) {
+  ): EnumType<core.util.ToEnum<T[number]>>
+  static factory<T extends core.util.EnumLike | string[]>(values: T) {
     return new EnumType({
-      encodedZodType: zod.enum(values as any),
+      encodeZodType: zodEnum(values as any),
       props: { values },
     })
   }

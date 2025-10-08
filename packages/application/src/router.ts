@@ -5,7 +5,7 @@ import type {
   TProcedureContract,
   TRouterContract,
 } from '@nmtjs/contract'
-import { c } from '@nmtjs/contract'
+import { c, IsRouterContract } from '@nmtjs/contract'
 import { Hooks } from '@nmtjs/core'
 
 import type { AnyGuard, AnyMiddleware } from './api.ts'
@@ -71,8 +71,7 @@ export function createRouter<
   >
 > {
   const { name, guards, hooks, middlewares, timeout } = params
-  const routes =
-    params.routes ?? ({} as Record<string, AnyProcedure<any> | AnyRouter>)
+  const routes: Record<string, any> = params.routes || {}
 
   const routesContracts: any = {}
   for (const [name, route] of Object.entries(routes)) {
@@ -81,21 +80,15 @@ export function createRouter<
 
   const contract = c.router({ routes: routesContracts, timeout, name })
 
-  for (const [name, routeContract] of Object.entries(contract.routes)) {
-    // TODO: fix this
-    // @ts-expect-error
-    routes[name] = { timeout, ...routes[name], contract: routeContract }
-  }
+  assignRouteContracts(routes, contract)
 
-  const router = createContractRouter(contract, {
+  return createContractRouter(contract, {
     routes: routes as any,
     guards,
     hooks,
     middlewares,
     timeout,
   })
-
-  return router as any
 }
 
 export function createContractRouter<Contract extends TAnyRouterContract>(
@@ -138,3 +131,14 @@ export function createContractRouter<Contract extends TAnyRouterContract>(
 
 export const isRouter = (value: any): value is AnyRouter =>
   Boolean(value?.[kRouter])
+
+function assignRouteContracts(
+  routes: Record<string, any>,
+  contract: TAnyRouterContract,
+) {
+  for (const [key, routeContract] of Object.entries(contract.routes)) {
+    routes[key] = { ...routes[key], contract: routeContract }
+    if (IsRouterContract(routeContract))
+      assignRouteContracts(routes[key].routes, routeContract)
+  }
+}

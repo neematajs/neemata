@@ -1,4 +1,5 @@
 import type { ErrorClass } from '@nmtjs/common'
+import type { TAnyProcedureContract, TAnyRouterContract } from '@nmtjs/contract'
 import type { AnyInjectable, Depedency, Dependant, Logger } from '@nmtjs/core'
 import {
   getDepedencencyInjectable,
@@ -43,23 +44,26 @@ export class ApplicationRegistry extends ProtocolRegistry {
     commands.set(commandName, callback)
   }
 
-  registerRouter(router: AnyRouter, path: AnyRouter[] = []) {
+  registerRouter(
+    router: AnyRouter,
+
+    path: AnyRouter[] = [],
+  ) {
     for (const route of Object.values(router.routes)) {
       if (isRouter(route)) {
-        if (this.routers.has(route.contract.name!)) {
-          throw new Error(`Router ${route.contract.name} already registered`)
+        const name = route.contract.name!
+        if (this.routers.has(name)) {
+          throw new Error(`Router ${name} already registered`)
         }
         this.registerHooks(route.hooks)
-        this.routers.set(route.contract.name!, route)
+        this.routers.set(name!, route)
         this.registerRouter(route, [...path, router])
       } else if (isProcedure(route)) {
-        if (this.procedures.has(route.contract.name!)) {
-          throw new Error(`Procedure ${route.contract.name} already registered`)
+        const name = route.contract.name!
+        if (this.procedures.has(name)) {
+          throw new Error(`Procedure ${name} already registered`)
         }
-        this.procedures.set(route.contract.name!, {
-          procedure: route,
-          path: [...path, router],
-        })
+        this.procedures.set(name, { procedure: route, path: [...path, router] })
       }
     }
   }
@@ -149,6 +153,13 @@ export function printRegistry(registry: ApplicationRegistry) {
 
   console.log('Tasks:')
   console.table(mapToTable(registry.tasks))
-  // console.log('Namespaces:')
-  // console.table(mapToTable(registry.namespaces))
+  console.log('Procedures:')
+  console.table(mapToTable(registry.procedures))
+  console.log('Routers:')
+  console.table(mapToTable(registry.routers))
+  console.log('Commands:')
+  for (const [namespace, commands] of registry.commands) {
+    console.log(` Namespace: ${String(namespace)}`)
+    console.table(mapToTable(commands))
+  }
 }

@@ -1,10 +1,11 @@
-import * as zod from 'zod/mini'
+import type { ZodMiniNever } from 'zod/mini'
+import { never as zodNever } from 'zod/mini'
 
 import { BaseType } from './base.ts'
 
-export class NeverType extends BaseType<zod.ZodMiniNever> {
+export class NeverType extends BaseType<ZodMiniNever> {
   static factory() {
-    return new NeverType({ encodedZodType: zod.never() })
+    return new NeverType({ encodeZodType: zodNever() })
   }
 }
 

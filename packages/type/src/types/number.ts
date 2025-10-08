@@ -1,61 +1,68 @@
-import * as zod from 'zod/mini'
+import type { core, ZodMiniNumber, ZodMiniString } from 'zod/mini'
+import {
+  gt,
+  gte,
+  int,
+  lt,
+  lte,
+  regex,
+  number as zodNumber,
+  string as zodString,
+} from 'zod/mini'
 
 import { BaseType } from './base.ts'
 import { CustomType, TransformType } from './custom.ts'
 
-type Check = zod.core.CheckFn<number> | zod.core.$ZodCheck<number>
+type Check = core.CheckFn<number> | core.$ZodCheck<number>
 
 export class NumberType extends BaseType<
-  zod.ZodMiniNumber<number>,
-  zod.ZodMiniNumber<number>
+  ZodMiniNumber<number>,
+  ZodMiniNumber<number>
 > {
   static factory(...checks: Check[]) {
     return new NumberType({
-      encodedZodType: zod.number().check(...checks),
+      encodeZodType: zodNumber().check(...checks),
       params: { checks },
     })
   }
 
   positive() {
-    return NumberType.factory(...this.params.checks, zod.gte(0))
+    return NumberType.factory(...this.params.checks, gte(0))
   }
 
   negative() {
-    return NumberType.factory(...this.params.checks, zod.lte(0))
+    return NumberType.factory(...this.params.checks, lte(0))
   }
 
   lt(value: number) {
-    return NumberType.factory(...this.params.checks, zod.lt(value))
+    return NumberType.factory(...this.params.checks, lt(value))
   }
 
   lte(value: number) {
-    return NumberType.factory(...this.params.checks, zod.lte(value))
+    return NumberType.factory(...this.params.checks, lte(value))
   }
 
   gte(value: number) {
-    return NumberType.factory(...this.params.checks, zod.gte(value))
+    return NumberType.factory(...this.params.checks, gte(value))
   }
 
   gt(value: number) {
-    return NumberType.factory(...this.params.checks, zod.gt(value))
+    return NumberType.factory(...this.params.checks, gt(value))
   }
 }
 
 export class IntegerType extends NumberType {
   static factory(...checks: Check[]) {
-    return NumberType.factory(...checks, zod.int())
+    return NumberType.factory(...checks, int())
   }
 }
 
-export class BigIntType extends TransformType<
-  bigint,
-  zod.ZodMiniString<string>
-> {
+export class BigIntType extends TransformType<bigint, ZodMiniString<string>> {
   static factory() {
-    return CustomType.factory<bigint, zod.ZodMiniString<string>>({
+    return CustomType.factory<bigint, ZodMiniString<string>>({
       decode: (value) => BigInt(value),
       encode: (value) => value.toString(),
-      type: zod.string().check(zod.regex(/^-?\d+$/)),
+      type: zodString().check(regex(/^-?\d+$/)),
       error: 'Invalid bigint format',
     })
   }

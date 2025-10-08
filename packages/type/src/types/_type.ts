@@ -15,17 +15,17 @@ export * from './tuple.ts'
 export * from './union.ts'
 
 export namespace infer {
-  export namespace decoded {
+  export namespace decode {
     export type input<T extends BaseTypeAny> =
-      T['decodedZodType']['_zod']['input']
+      T['decodeZodType']['_zod']['input']
     export type output<T extends BaseTypeAny> =
-      T['decodedZodType']['_zod']['output']
+      T['decodeZodType']['_zod']['output']
   }
 
-  export namespace encoded {
+  export namespace encode {
     export type input<T extends BaseTypeAny> =
-      T['encodedZodType']['_zod']['input']
+      T['encodeZodType']['_zod']['input']
     export type output<T extends BaseTypeAny> =
-      T['encodedZodType']['_zod']['output']
+      T['encodeZodType']['_zod']['output']
   }
 }

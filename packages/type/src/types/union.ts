@@ -1,5 +1,14 @@
 import type { ArrayMap } from '@nmtjs/common'
-import * as zod from 'zod/mini'
+import type {
+  ZodMiniDiscriminatedUnion,
+  ZodMiniIntersection,
+  ZodMiniUnion,
+} from 'zod/mini'
+import {
+  discriminatedUnion as zodDiscriminatedUnion,
+  intersection as zodIntersection,
+  union as zodUnion,
+} from 'zod/mini'
 
 import type { BaseTypeAny } from './base.ts'
 import type { LiteralType } from './literal.ts'
@@ -12,8 +21,8 @@ export class UnionType<
     ...BaseType[],
   ],
 > extends BaseType<
-  zod.ZodMiniUnion<ArrayMap<T, 'encodedZodType'>>,
-  zod.ZodMiniUnion<ArrayMap<T, 'decodedZodType'>>,
+  ZodMiniUnion<ArrayMap<T, 'encodeZodType'>>,
+  ZodMiniUnion<ArrayMap<T, 'decodeZodType'>>,
   { options: T }
 > {
   static factory<
@@ -22,17 +31,17 @@ export class UnionType<
       ...BaseType[],
     ],
   >(...options: T) {
-    const encoded = options.map((t) => t.encodedZodType) as ArrayMap<
+    const encode = options.map((t) => t.encodeZodType) as ArrayMap<
       T,
-      'encodedZodType'
+      'encodeZodType'
     >
-    const decoded = options.map((t) => t.decodedZodType) as ArrayMap<
+    const decode = options.map((t) => t.decodeZodType) as ArrayMap<
       T,
-      'decodedZodType'
+      'decodeZodType'
     >
     return new UnionType<T>({
-      encodedZodType: zod.union(encoded),
-      decodedZodType: zod.union(decoded),
+      encodeZodType: zodUnion(encode),
+      decodeZodType: zodUnion(decode),
       props: { options },
     })
   }
@@ -41,8 +50,8 @@ export class UnionType<
 export class IntersactionType<
   T extends readonly [BaseType, BaseType] = readonly [BaseType, BaseType],
 > extends BaseType<
-  zod.ZodMiniIntersection<T[0]['encodedZodType'], T[1]['encodedZodType']>,
-  zod.ZodMiniIntersection<T[0]['decodedZodType'], T[1]['decodedZodType']>,
+  ZodMiniIntersection<T[0]['encodeZodType'], T[1]['encodeZodType']>,
+  ZodMiniIntersection<T[0]['decodeZodType'], T[1]['decodeZodType']>,
   { options: T }
 > {
   static factory<
@@ -50,14 +59,8 @@ export class IntersactionType<
   >(...options: T) {
     const [first, second] = options
     return new IntersactionType<T>({
-      encodedZodType: zod.intersection(
-        first.encodedZodType,
-        second.encodedZodType,
-      ),
-      decodedZodType: zod.intersection(
-        first.decodedZodType,
-        second.decodedZodType,
-      ),
+      encodeZodType: zodIntersection(first.encodeZodType, second.encodeZodType),
+      decodeZodType: zodIntersection(first.decodeZodType, second.decodeZodType),
       props: { options },
     })
   }
@@ -78,8 +81,8 @@ export class DiscriminatedUnionType<
   T extends
     readonly DiscriminatedUnionOptionType<K>[] = DiscriminatedUnionOptionType<K>[],
 > extends BaseType<
-  zod.ZodMiniDiscriminatedUnion<ArrayMap<T, 'encodedZodType'>>,
-  zod.ZodMiniDiscriminatedUnion<ArrayMap<T, 'decodedZodType'>>,
+  ZodMiniDiscriminatedUnion<ArrayMap<T, 'encodeZodType'>>,
+  ZodMiniDiscriminatedUnion<ArrayMap<T, 'decodeZodType'>>,
   { key: K; options: T }
 > {
   static factory<
@@ -87,19 +90,19 @@ export class DiscriminatedUnionType<
     T extends
       readonly DiscriminatedUnionOptionType<K>[] = DiscriminatedUnionOptionType<K>[],
   >(key: K, ...options: T) {
-    const encoded = options.map((t) => t.encodedZodType) as ArrayMap<
+    const encode = options.map((t) => t.encodeZodType) as ArrayMap<
       T,
-      'encodedZodType'
+      'encodeZodType'
     >
-    const decoded = options.map((t) => t.decodedZodType) as ArrayMap<
+    const decode = options.map((t) => t.decodeZodType) as ArrayMap<
       T,
-      'decodedZodType'
+      'decodeZodType'
     >
     return new DiscriminatedUnionType<K, T>({
       // @ts-expect-error
-      encodedZodType: zod.discriminatedUnion(key, encoded),
+      encodeZodType: zodDiscriminatedUnion(key, encode),
       // @ts-expect-error
-      decodedZodType: zod.discriminatedUnion(key, decoded),
+      decodeZodType: zodDiscriminatedUnion(key, decode),
       props: { key, options },
     })
   }
