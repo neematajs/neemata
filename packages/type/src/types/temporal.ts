@@ -28,16 +28,16 @@ const createTemporalTransformer = <T extends Types>(
   return { decode, encode } as TemporalTransformer<T>
 }
 
-type EncodedType = ZodMiniString<string>
+type EncodeType = ZodMiniString<string>
 
 export class PlainDateType extends TransformType<
   Temporal.PlainDate,
-  EncodedType
+  EncodeType
 > {
   static transformer = createTemporalTransformer('PlainDate')
 
   static factory() {
-    return CustomType.factory<Temporal.PlainDate, EncodedType>({
+    return CustomType.factory<Temporal.PlainDate, EncodeType>({
       decode: PlainDateType.transformer.decode,
       encode: PlainDateType.transformer.encode,
       type: iso.date(),
@@ -48,12 +48,12 @@ export class PlainDateType extends TransformType<
 
 export class PlainDateTimeType extends TransformType<
   Temporal.PlainDateTime,
-  EncodedType
+  EncodeType
 > {
   static transformer = createTemporalTransformer('PlainDateTime')
 
   static factory() {
-    return CustomType.factory<Temporal.PlainDateTime, EncodedType>({
+    return CustomType.factory<Temporal.PlainDateTime, EncodeType>({
       decode: PlainDateTimeType.transformer.decode,
       encode: PlainDateTimeType.transformer.encode,
       type: iso.datetime({ local: true }),
@@ -64,14 +64,14 @@ export class PlainDateTimeType extends TransformType<
 
 export class ZonedDateTimeType extends TransformType<
   Temporal.ZonedDateTime,
-  EncodedType
+  EncodeType
 > {
   static transformer = createTemporalTransformer('ZonedDateTime', (value) =>
     Temporal.Instant.from(value).toZonedDateTimeISO('UTC'),
   )
 
   static factory() {
-    return CustomType.factory<Temporal.ZonedDateTime, EncodedType>({
+    return CustomType.factory<Temporal.ZonedDateTime, EncodeType>({
       decode: ZonedDateTimeType.transformer.decode,
       encode: ZonedDateTimeType.transformer.encode,
       type: iso.datetime({ local: true }),
@@ -82,12 +82,12 @@ export class ZonedDateTimeType extends TransformType<
 
 export class PlainTimeType extends TransformType<
   Temporal.PlainTime,
-  EncodedType
+  EncodeType
 > {
   static transformer = createTemporalTransformer('PlainTime')
 
   static factory() {
-    return CustomType.factory<Temporal.PlainTime, EncodedType>({
+    return CustomType.factory<Temporal.PlainTime, EncodeType>({
       decode: PlainTimeType.transformer.decode,
       encode: PlainTimeType.transformer.encode,
       type: iso.time(),
@@ -96,14 +96,11 @@ export class PlainTimeType extends TransformType<
   }
 }
 
-export class DurationType extends TransformType<
-  Temporal.Duration,
-  EncodedType
-> {
+export class DurationType extends TransformType<Temporal.Duration, EncodeType> {
   static transformer = createTemporalTransformer('Duration')
 
   static factory() {
-    return CustomType.factory<Temporal.Duration, EncodedType>({
+    return CustomType.factory<Temporal.Duration, EncodeType>({
       decode: DurationType.transformer.decode,
       encode: DurationType.transformer.encode,
       type: iso.duration(),
@@ -114,12 +111,12 @@ export class DurationType extends TransformType<
 
 export class PlainYearMonthType extends TransformType<
   Temporal.PlainYearMonth,
-  EncodedType
+  EncodeType
 > {
   static transformer = createTemporalTransformer('PlainYearMonth')
 
   static factory() {
-    return CustomType.factory<Temporal.PlainYearMonth, EncodedType>({
+    return CustomType.factory<Temporal.PlainYearMonth, EncodeType>({
       decode: PlainYearMonthType.transformer.decode,
       encode: PlainYearMonthType.transformer.encode,
       type: string().check(regex(/^\d{4}-\d{2}$/)),
@@ -130,12 +127,12 @@ export class PlainYearMonthType extends TransformType<
 
 export class PlainMonthDayType extends TransformType<
   Temporal.PlainMonthDay,
-  EncodedType
+  EncodeType
 > {
   static transformer = createTemporalTransformer('PlainMonthDay')
 
   static factory() {
-    return CustomType.factory<Temporal.PlainMonthDay, EncodedType>({
+    return CustomType.factory<Temporal.PlainMonthDay, EncodeType>({
       decode: PlainMonthDayType.transformer.decode,
       encode: PlainMonthDayType.transformer.encode,
       type: string().check(regex(/^\d{2}-\d{2}$/)),

@@ -184,10 +184,10 @@ describe('Procedure static', () => {
 
     expectTypeOf(procedure.contract.input).toEqualTypeOf<type.NeverType>()
     expectTypeOf(
-      procedure.contract.output.decodedZodType._zod.input,
+      procedure.contract.output.decodeZodType._zod.input,
     ).toEqualTypeOf<{ test: 'test' }>()
     expectTypeOf(
-      procedure.contract.output.encodedZodType._zod.output,
+      procedure.contract.output.encodeZodType._zod.output,
     ).toEqualTypeOf<{ test: 'test' }>()
   })
 })

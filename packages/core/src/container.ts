@@ -1,9 +1,11 @@
 import assert from 'node:assert'
 
+import type { ClassInstance } from '@nmtjs/common'
 import { tryCaptureStackTrace } from '@nmtjs/common'
 
 import type {
   AnyInjectable,
+  ClassInjectable,
   Dependencies,
   DependencyContext,
   ResolveInjectableType,
@@ -254,9 +256,12 @@ export class Container {
       )
       wrapper.public = injectable.pick(wrapper.private)
     } else if (isClassInjectable(injectable)) {
-      wrapper.private = new injectable(context)
+      const instance: ClassInstance<ClassInjectable<unknown>> = new injectable(
+        context,
+      )
+      wrapper.private = instance
       wrapper.public = wrapper.private
-      await wrapper.private[kClassInjectableCreate]()
+      await instance[kClassInjectableCreate]?.call(instance)
     } else {
       throw new Error('Invalid injectable type')
     }

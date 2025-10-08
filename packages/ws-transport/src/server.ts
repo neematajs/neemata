@@ -513,8 +513,7 @@ export class WsTransportServer implements Transport<WsConnectionData> {
           peer.close(1011, 'Unknown message type')
         } else {
           try {
-            await (this as any)[messageType](
-              peer,
+            await this[messageType](
               buffer.slice(Uint8Array.BYTES_PER_ELEMENT),
               peer.context.id,
             )

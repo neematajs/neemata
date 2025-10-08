@@ -134,7 +134,11 @@ export interface ClassInjectable<
   new (
     $context: DependencyContext<D>,
     ...args: A
-  ): T & { $context: DependencyContext<D> }
+  ): T & {
+    $context: DependencyContext<D>
+    [kClassInjectableCreate]?: () => Promise<void>
+    [kClassInjectableDispose]?: () => Promise<void>
+  }
   scope: S
   [kInjectable]: any
   [kClassInjectable]: any

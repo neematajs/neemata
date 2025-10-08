@@ -79,14 +79,14 @@ export class PubSub {
         ? {
             [K in keyof Contract['events']]: {
               event: K
-              data: t.infer.decoded.output<Contract['events'][K]['payload']>
+              data: t.infer.decode.output<Contract['events'][K]['payload']>
             }
           }[keyof Contract['events']]
         : {
             [K in keyof Events]: K extends keyof Contract['events']
               ? {
                   event: K
-                  data: t.infer.decoded.output<Contract['events'][K]['payload']>
+                  data: t.infer.decode.output<Contract['events'][K]['payload']>
                 }
               : never
           }[keyof Events]
@@ -124,7 +124,7 @@ export class PubSub {
   >(
     event: E,
     options: S['options'],
-    data: t.infer.decoded.input<E['payload']>,
+    data: t.infer.decode.input<E['payload']>,
   ): Promise<boolean> {
     assert(this.adapter, 'PubSub adapter is not configured')
 

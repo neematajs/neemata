@@ -5,8 +5,6 @@ import type {
   TAnyRouterContract,
 } from '@nmtjs/contract'
 import type {
-  InputType,
-  OutputType,
   ProtocolBaseClientCallOptions,
   ProtocolError,
   ProtocolServerStreamInterface,
@@ -15,25 +13,25 @@ import type { BaseTypeAny, t } from '@nmtjs/type'
 
 export interface StaticInputContractTypeProvider extends TypeProvider {
   output: this['input'] extends BaseTypeAny
-    ? t.infer.encoded.input<this['input']>
+    ? t.infer.decode.input<this['input']>
     : never
 }
 
 export interface RuntimeInputContractTypeProvider extends TypeProvider {
   output: this['input'] extends BaseTypeAny
-    ? t.infer.decoded.input<this['input']>
+    ? t.infer.encode.input<this['input']>
     : never
 }
 
 export interface StaticOutputContractTypeProvider extends TypeProvider {
   output: this['input'] extends BaseTypeAny
-    ? t.infer.encoded.output<this['input']>
+    ? t.infer.encode.output<this['input']>
     : never
 }
 
 export interface RuntimeOutputContractTypeProvider extends TypeProvider {
   output: this['input'] extends BaseTypeAny
-    ? t.infer.decoded.output<this['input']>
+    ? t.infer.decode.output<this['input']>
     : never
 }
 
@@ -73,17 +71,16 @@ export type ResolveAPIRouterRoutes<
     : T['routes'][K] extends TAnyProcedureContract
       ? {
           contract: T['routes'][K]
-          input: InputType<
-            CallTypeProvider<InputTypeProvider, T['routes'][K]['input']>
-          >
+          input: CallTypeProvider<InputTypeProvider, T['routes'][K]['input']>
+
           output: T['routes'][K]['stream'] extends undefined | t.NeverType
-            ? OutputType<
-                CallTypeProvider<OutputTypeProvider, T['routes'][K]['output']>
-              >
+            ? CallTypeProvider<OutputTypeProvider, T['routes'][K]['output']>
             : {
-                result: OutputType<
-                  CallTypeProvider<OutputTypeProvider, T['routes'][K]['output']>
+                result: CallTypeProvider<
+                  OutputTypeProvider,
+                  T['routes'][K]['output']
                 >
+
                 stream: ProtocolServerStreamInterface<
                   CallTypeProvider<OutputTypeProvider, T['routes'][K]['stream']>
                 >
@@ -104,7 +101,7 @@ export type ClientCaller<
 > = (
   ...args: Procedure['input'] extends t.NeverType
     ? [data?: undefined, options?: Partial<ProtocolBaseClientCallOptions>]
-    : undefined extends t.infer.encoded.input<Procedure['contract']['input']>
+    : undefined extends t.infer.encode.input<Procedure['contract']['input']>
       ? [
           data?: Procedure['input'],
           options?: Partial<ProtocolBaseClientCallOptions>,

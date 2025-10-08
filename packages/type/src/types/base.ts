@@ -1,27 +1,45 @@
-import * as zod from 'zod/mini'
+import type {
+  ZodMiniAny,
+  ZodMiniArray,
+  ZodMiniBoolean,
+  ZodMiniDefault,
+  ZodMiniEnum,
+  ZodMiniIntersection,
+  ZodMiniLiteral,
+  ZodMiniNever,
+  ZodMiniNullable,
+  ZodMiniNumber,
+  ZodMiniObject,
+  ZodMiniOptional,
+  ZodMiniRecord,
+  ZodMiniString,
+  ZodMiniType,
+  ZodMiniUnion,
+} from 'zod/mini'
+import { _default, core, nullable, optional, registry } from 'zod/mini'
 
 export type PrimitiveValueType = string | number | boolean | null
 
 export type PrimitiveZodType =
-  | zod.ZodMiniNever
-  | zod.ZodMiniDefault
-  | zod.ZodMiniNullable
-  | zod.ZodMiniOptional
-  | zod.ZodMiniString
-  | zod.ZodMiniObject
-  | zod.ZodMiniAny
-  | zod.ZodMiniArray
-  | zod.ZodMiniBoolean
-  | zod.ZodMiniNumber
-  | zod.ZodMiniEnum<any>
-  | zod.ZodMiniLiteral<PrimitiveValueType>
-  | zod.ZodMiniUnion
-  | zod.ZodMiniIntersection
-  | zod.ZodMiniRecord
+  | ZodMiniNever
+  | ZodMiniDefault
+  | ZodMiniNullable
+  | ZodMiniOptional
+  | ZodMiniString
+  | ZodMiniObject
+  | ZodMiniAny
+  | ZodMiniArray
+  | ZodMiniBoolean
+  | ZodMiniNumber
+  | ZodMiniEnum<any>
+  | ZodMiniLiteral<PrimitiveValueType>
+  | ZodMiniUnion
+  | ZodMiniIntersection
+  | ZodMiniRecord
 
-export type SimpleZodType = zod.ZodMiniType
+export type SimpleZodType = ZodMiniType
 
-export type ZodType = SimpleZodType | zod.ZodMiniType
+export type ZodType = SimpleZodType | ZodMiniType
 
 export type TypeProps = Record<string, any>
 
@@ -35,7 +53,7 @@ export type TypeMetadata<T = any> = {
 export type TypeParams = {
   encode?: (value: any) => any
   metadata?: TypeMetadata
-  checks: Array<zod.core.CheckFn<any> | zod.core.$ZodCheck<any>>
+  checks: Array<core.CheckFn<any> | core.$ZodCheck<any>>
 }
 
 export type DefaultTypeParams = {
@@ -45,37 +63,37 @@ export type DefaultTypeParams = {
 
 export type BaseTypeAny<
   EncodedZodType extends SimpleZodType = SimpleZodType,
-  DecodedZodType extends ZodType = zod.ZodMiniType,
+  DecodedZodType extends ZodType = ZodMiniType,
 > = BaseType<EncodedZodType, DecodedZodType, TypeProps>
 
-export const typesRegistry = zod.registry<TypeMetadata>()
+export const typesRegistry = registry<TypeMetadata>()
 
-export const NeemataTypeError = zod.core.$ZodError
-export type NeemataTypeError = zod.core.$ZodError
+export const NeemataTypeError = core.$ZodError
+export type NeemataTypeError = core.$ZodError
 
 export abstract class BaseType<
-  EncodedZodType extends SimpleZodType = SimpleZodType,
-  DecodedZodType extends ZodType = EncodedZodType,
+  EncodeZodType extends SimpleZodType = SimpleZodType,
+  DecodeZodType extends ZodType = EncodeZodType,
   Props extends TypeProps = TypeProps,
 > {
-  readonly encodedZodType: EncodedZodType
-  readonly decodedZodType: DecodedZodType
+  readonly encodeZodType: EncodeZodType
+  readonly decodeZodType: DecodeZodType
   readonly props: Props
   readonly params: TypeParams
 
   constructor({
-    encodedZodType,
-    decodedZodType = encodedZodType as unknown as DecodedZodType,
+    encodeZodType,
+    decodeZodType = encodeZodType as unknown as DecodeZodType,
     props = {} as Props,
     params = {} as Partial<TypeParams>,
   }: {
-    encodedZodType: EncodedZodType
-    decodedZodType?: DecodedZodType
+    encodeZodType: EncodeZodType
+    decodeZodType?: DecodeZodType
     props?: Props
     params?: Partial<TypeParams>
   }) {
-    this.encodedZodType = encodedZodType
-    this.decodedZodType = decodedZodType
+    this.encodeZodType = encodeZodType
+    this.decodeZodType = decodeZodType
 
     this.props = props
     this.params = Object.assign({ checks: [] }, params)
@@ -93,7 +111,7 @@ export abstract class BaseType<
     return this.nullable().optional()
   }
 
-  default(value: this['encodedZodType']['_zod']['input']): DefaultType<this> {
+  default(value: this['encodeZodType']['_zod']['input']): DefaultType<this> {
     return DefaultType.factory(this, value)
   }
 
@@ -105,7 +123,7 @@ export abstract class BaseType<
     return this.meta({ description })
   }
 
-  examples(...examples: this['encodedZodType']['_zod']['input'][]): this {
+  examples(...examples: this['encodeZodType']['_zod']['input'][]): this {
     return this.meta({
       examples: this.params.encode
         ? examples.map(this.params.encode)
@@ -114,35 +132,38 @@ export abstract class BaseType<
   }
 
   meta(newMetadata: TypeMetadata): this {
-    const metadata = typesRegistry.get(this.encodedZodType) ?? {}
+    const metadata = typesRegistry.get(this.encodeZodType) ?? {}
     Object.assign(metadata, newMetadata)
-    typesRegistry.add(this.encodedZodType, metadata)
+    typesRegistry.add(this.encodeZodType, metadata)
     return this
   }
 
   encode(
-    data: this['encodedZodType']['_zod']['input'],
-  ): this['encodedZodType']['_zod']['output'] {
-    return this.encodedZodType.parse(data, { reportInput: true })
+    data: this['encodeZodType']['_zod']['input'],
+    context: core.ParseContext<core.$ZodIssue> = {},
+  ): this['encodeZodType']['_zod']['output'] {
+    return this.encodeZodType.parse(data, { reportInput: true, ...context })
   }
 
   decode(
-    data: this['decodedZodType']['_zod']['input'],
-  ): this['decodedZodType']['_zod']['output'] {
-    return this.decodedZodType.parse(data, { reportInput: true })
+    data: this['decodeZodType']['_zod']['input'],
+    context: core.ParseContext<core.$ZodIssue> = {},
+  ): this['decodeZodType']['_zod']['output'] {
+    return this.decodeZodType.parse(data, { reportInput: true, ...context })
   }
 }
 
 export class OptionalType<
   Type extends BaseTypeAny = BaseTypeAny,
 > extends BaseType<
-  zod.ZodMiniOptional<Type['encodedZodType']>,
-  zod.ZodMiniOptional<Type['decodedZodType']>,
+  ZodMiniOptional<Type['encodeZodType']>,
+  ZodMiniOptional<Type['decodeZodType']>,
   { inner: Type }
 > {
   static factory<T extends BaseTypeAny>(type: T) {
     return new OptionalType<T>({
-      encodedZodType: zod.optional(type.encodedZodType) as any,
+      encodeZodType: optional(type.encodeZodType),
+      decodeZodType: optional(type.decodeZodType),
       props: { inner: type },
     })
   }
@@ -151,13 +172,14 @@ export class OptionalType<
 export class NullableType<
   Type extends BaseTypeAny<any> = BaseTypeAny<any>,
 > extends BaseType<
-  zod.ZodMiniNullable<Type['encodedZodType']>,
-  zod.ZodMiniNullable<Type['decodedZodType']>,
+  ZodMiniNullable<Type['encodeZodType']>,
+  ZodMiniNullable<Type['decodeZodType']>,
   { inner: Type }
 > {
   static factory<T extends BaseTypeAny<any>>(type: T) {
     return new NullableType<T>({
-      encodedZodType: zod.nullable(type.encodedZodType),
+      encodeZodType: nullable(type.encodeZodType),
+      decodeZodType: nullable(type.decodeZodType),
       props: { inner: type },
     })
   }
@@ -166,17 +188,17 @@ export class NullableType<
 export class DefaultType<
   Type extends BaseTypeAny = BaseTypeAny,
 > extends BaseType<
-  zod.ZodMiniDefault<Type['encodedZodType']>,
-  zod.ZodMiniDefault<Type['decodedZodType']>,
+  ZodMiniDefault<Type['encodeZodType']>,
+  ZodMiniDefault<Type['decodeZodType']>,
   { inner: Type }
 > {
   static factory<T extends BaseTypeAny<any>>(type: T, defaultValue: any) {
     return new DefaultType<T>({
-      encodedZodType: zod._default(
-        type.encodedZodType,
+      encodeZodType: _default(
+        type.encodeZodType,
         type.params.encode?.(defaultValue) ?? defaultValue,
-      ) as any,
-      decodedZodType: zod._default(type.decodedZodType, defaultValue) as any,
+      ),
+      decodeZodType: _default(type.decodeZodType, defaultValue),
       props: { inner: type },
     })
   }
