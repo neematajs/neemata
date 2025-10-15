@@ -56,7 +56,11 @@ export class HttpClientTransport extends ProtocolTransport<HttpClientTransportOp
       method: 'POST',
       headers,
       credentials: 'include',
-      body: isBlob ? payload.source : transformer.encodeRPC(procedure, payload),
+      body: isBlob
+        ? payload.source
+        : this.protocol.format.encode(
+            transformer.encodeRPC(procedure, payload),
+          ),
       signal: call.signal,
       // @ts-expect-error
       duplex: 'half',
