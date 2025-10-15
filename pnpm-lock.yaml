@@ -202,6 +202,10 @@ importers:
         version: link:../core
 
   packages/type:
+    dependencies:
+      temporal-spec:
+        specifier: ^0.3.0
+        version: 0.3.0
     devDependencies:
       '@nmtjs/common':
         specifier: workspace:*

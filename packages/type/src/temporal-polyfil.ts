@@ -1,4 +1,4 @@
-import 'temporal-spec/global'
+import { Temporal } from 'temporal-polyfill'
 
 import {
   DurationType,

@@ -1,6 +1,11 @@
 {
   "name": "@nmtjs/type",
   "type": "module",
+  "files": [
+    "dist",
+    "LICENSE.md",
+    "README.md"
+  ],
   "exports": {
     ".": {
       "types": "./src/index.ts",
@@ -16,6 +21,11 @@
       "types": "./src/temporal.ts",
       "import": "./dist/temporal.js",
       "module-sync": "./dist/temporal.js"
+    },
+    "./temporal-polyfill": {
+      "types": "./src/temporal-polyfill.ts",
+      "import": "./dist/temporal-polyfill.js",
+      "module-sync": "./dist/temporal-polyfill.js"
     }
   },
   "publishConfig": {
@@ -34,6 +44,11 @@
         "types": "./dist/temporal.d.ts",
         "import": "./dist/temporal.js",
         "module-sync": "./dist/temporal.js"
+      },
+      "./temporal-polyfill": {
+        "types": "./dist/temporal-polyfill.d.ts",
+        "import": "./dist/temporal-polyfill.js",
+        "module-sync": "./dist/temporal-polyfill.js"
       }
     }
   },
@@ -41,19 +56,22 @@
     "build": "tsc",
     "type-check": "tsc --noEmit"
   },
+  "dependencies": {
+    "temporal-spec": "^0.3.0"
+  },
   "peerDependencies": {
+    "@nmtjs/common": "workspace:*",
     "temporal-polyfill": "^0.3.0",
-    "zod": "catalog:",
-    "@nmtjs/common": "workspace:*"
+    "zod": "catalog:"
   },
   "devDependencies": {
+    "@nmtjs/common": "workspace:*",
     "temporal-polyfill": "^0.3.0",
-    "zod": "catalog:",
-    "@nmtjs/common": "workspace:*"
+    "zod": "catalog:"
   },
-  "files": [
-    "dist",
-    "LICENSE.md",
-    "README.md"
-  ]
+  "peerDependenciesMeta": {
+    "temporal-polyfill": {
+      "optional": true
+    }
+  }
 }
