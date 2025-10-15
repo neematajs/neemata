@@ -23,6 +23,12 @@ export class ClientError extends ProtocolError {}
 
 const DEFAULT_RECONNECT_TIMEOUT = 1000
 
+export interface BaseClientOptions<SafeCall extends boolean = false> {
+  timeout: number
+  autoreconnect?: boolean
+  safe?: SafeCall
+}
+
 export abstract class BaseClient<
   APIContract extends TAnyAPIContract = TAnyAPIContract,
   SafeCall extends boolean = false,
@@ -53,11 +59,7 @@ export abstract class BaseClient<
 
   constructor(
     readonly transport: ProtocolTransport,
-    readonly options: {
-      timeout: number
-      autoreconnect?: boolean
-      safe?: SafeCall
-    },
+    readonly options: BaseClientOptions<SafeCall>,
   ) {
     if (this.options.autoreconnect) {
       this.transport.on('disconnected', async (reason) => {

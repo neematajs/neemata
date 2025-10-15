@@ -158,8 +158,14 @@ export enum ProtocolTransportStatus {
   CONNECTING = 'CONNECTING',
 }
 
-export abstract class ProtocolTransport extends EventEmitter<ProtocolTransportEventMap> {
+export abstract class ProtocolTransport<
+  Options = unknown,
+> extends EventEmitter<ProtocolTransportEventMap> {
   status: ProtocolTransportStatus = ProtocolTransportStatus.DISCONNECTED
+
+  constructor(protected options?: Options) {
+    super()
+  }
 
   abstract connect(
     auth: any,

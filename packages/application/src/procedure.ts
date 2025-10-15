@@ -47,12 +47,12 @@ export interface Procedure<
   handler: ProcedureHandlerType<
     InputType<t.infer.decode.output<ProcedureContract['input']>>,
     ProcedureContract['stream'] extends t.NeverType
-      ? OutputType<t.infer.decode.input<ProcedureContract['output']>>
+      ? OutputType<t.infer.encode.input<ProcedureContract['output']>>
       : ProtocolApiCallIterableResult<
-          t.infer.decode.input<
+          t.infer.encode.input<
             Exclude<ProcedureContract['stream'], undefined | boolean>
           >,
-          OutputType<t.infer.decode.input<ProcedureContract['output']>>
+          OutputType<t.infer.encode.input<ProcedureContract['output']>>
         >,
     ProcedureDeps
   >
@@ -86,12 +86,12 @@ export type CreateProcedureParams<
       handler: ProcedureHandlerType<
         InputType<t.infer.decode.output<ProcedureContract['input']>>,
         ProcedureContract['stream'] extends undefined
-          ? OutputType<t.infer.decode.input<ProcedureContract['output']>>
+          ? OutputType<t.infer.encode.input<ProcedureContract['output']>>
           : ProtocolApiCallIterableResult<
-              t.infer.decode.input<
+              t.infer.encode.input<
                 Exclude<ProcedureContract['stream'], undefined | boolean>
               >,
-              OutputType<t.infer.decode.input<ProcedureContract['output']>>
+              OutputType<t.infer.encode.input<ProcedureContract['output']>>
             >,
         ProcedureDeps
       >
@@ -176,14 +176,14 @@ export function createProcedure<
           TStream extends BaseType | true
             ? ProtocolApiCallIterableResult<
                 TStream extends BaseType
-                  ? t.infer.decode.input<TStream>
+                  ? t.infer.encode.input<TStream>
                   : Stream,
                 TOutput extends BaseType
-                  ? t.infer.decode.input<TOutput>
+                  ? t.infer.encode.input<TOutput>
                   : Return
               >
             : TOutput extends BaseType
-              ? t.infer.decode.input<TOutput>
+              ? t.infer.encode.input<TOutput>
               : Return,
           Deps
         >
