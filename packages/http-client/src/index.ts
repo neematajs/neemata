@@ -5,14 +5,12 @@ import type {
   ProtocolBaseTransformer,
   ProtocolClientCall,
   ProtocolSendMetadata,
-  ProtocolTransport,
-  ProtocolTransportEventMap,
 } from '@nmtjs/protocol/client'
 import { ClientError } from '@nmtjs/client'
 import { ErrorCode, ProtocolBlob } from '@nmtjs/protocol'
 import {
-  EventEmitter,
   ProtocolServerBlobStream,
+  ProtocolTransport,
   ProtocolTransportStatus,
 } from '@nmtjs/protocol/client'
 
@@ -25,16 +23,13 @@ export type HttpClientTransportOptions = {
   debug?: boolean
 }
 
-export class HttpClientTransport
-  extends EventEmitter<ProtocolTransportEventMap>
-  implements ProtocolTransport
-{
+export class HttpClientTransport extends ProtocolTransport<HttpClientTransportOptions> {
   #auth: string | null = null
   status: ProtocolTransportStatus = ProtocolTransportStatus.CONNECTED
 
   constructor(
     protected readonly protocol: BaseProtocol,
-    private readonly options: HttpClientTransportOptions,
+    protected readonly options: HttpClientTransportOptions,
   ) {
     super()
   }
@@ -76,7 +71,7 @@ export class HttpClientTransport
         if (isBlob) {
           const contentLength = response.headers.get('content-length')
           const size = contentLength
-            ? Number.parseInt(contentLength) || undefined
+            ? Number.parseInt(contentLength, 10) || undefined
             : undefined
           const type =
             response.headers.get('content-type') || 'application/octet-stream'

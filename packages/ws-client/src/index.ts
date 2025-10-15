@@ -24,7 +24,7 @@ export type WebSocketClientTransportOptions = {
   debug?: boolean
 }
 
-export class WebSocketClientTransport extends ProtocolTransport {
+export class WebSocketClientTransport extends ProtocolTransport<WebSocketClientTransportOptions> {
   protected webSocket: WebSocket | null = null
   protected connecting: Promise<void> | null = null
   protected options: WebSocketClientTransportOptions
