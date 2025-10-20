@@ -1,4 +1,4 @@
-import { Temporal } from 'temporal-polyfill'
+import 'temporal-spec/global'
 
 import {
   DurationType,
@@ -8,7 +8,7 @@ import {
   PlainTimeType,
   PlainYearMonthType,
   ZonedDateTimeType,
-} from './types/temporal.ts'
+} from '../types/temporal.ts'
 
 export const plainDate = PlainDateType.factory.bind(PlainDateType, Temporal)
 export const plainDatetime = PlainDateTimeType.factory.bind(

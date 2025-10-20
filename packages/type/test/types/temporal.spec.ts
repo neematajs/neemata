@@ -1,7 +1,7 @@
 import { Temporal } from 'temporal-polyfill'
 import { describe, expect, it } from 'vitest'
 
-import * as t from '../../src/temporal-polyfil.ts'
+import * as t from '../../src/temporal/polyfill.ts'
 
 describe('TemporalType - PlainDate', () => {
   const plainDateType = t.plainDate()
