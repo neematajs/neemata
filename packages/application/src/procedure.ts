@@ -9,7 +9,6 @@ import type {
 } from '@nmtjs/core'
 import type {
   InputType,
-  OutputType,
   ProtocolApiCallIterableResult,
 } from '@nmtjs/protocol/server'
 import type { BaseType } from '@nmtjs/type'
@@ -45,14 +44,14 @@ export interface Procedure<
   ProcedureDeps extends Dependencies,
 > extends BaseProcedure<ProcedureContract, ProcedureDeps> {
   handler: ProcedureHandlerType<
-    InputType<t.infer.decode.output<ProcedureContract['input']>>,
+    InputType<t.infer.decodeRaw.output<ProcedureContract['input']>>,
     ProcedureContract['stream'] extends t.NeverType
-      ? OutputType<t.infer.encode.input<ProcedureContract['output']>>
+      ? t.infer.encode.input<ProcedureContract['output']>
       : ProtocolApiCallIterableResult<
           t.infer.encode.input<
             Exclude<ProcedureContract['stream'], undefined | boolean>
           >,
-          OutputType<t.infer.encode.input<ProcedureContract['output']>>
+          t.infer.encode.input<ProcedureContract['output']>
         >,
     ProcedureDeps
   >
@@ -84,27 +83,27 @@ export type CreateProcedureParams<
       middlewares?: AnyMiddleware[]
       metadata?: Metadata[]
       handler: ProcedureHandlerType<
-        InputType<t.infer.decode.output<ProcedureContract['input']>>,
+        InputType<t.infer.decodeRaw.output<ProcedureContract['input']>>,
         ProcedureContract['stream'] extends undefined
-          ? OutputType<t.infer.encode.input<ProcedureContract['output']>>
+          ? t.infer.encode.input<ProcedureContract['output']>
           : ProtocolApiCallIterableResult<
               t.infer.encode.input<
                 Exclude<ProcedureContract['stream'], undefined | boolean>
               >,
-              OutputType<t.infer.encode.input<ProcedureContract['output']>>
+              t.infer.encode.input<ProcedureContract['output']>
             >,
         ProcedureDeps
       >
     }
   | ProcedureHandlerType<
-      InputType<t.infer.decode.output<ProcedureContract['input']>>,
+      InputType<t.infer.decodeRaw.output<ProcedureContract['input']>>,
       ProcedureContract['stream'] extends undefined
-        ? OutputType<t.infer.decode.input<ProcedureContract['output']>>
+        ? t.infer.decode.input<ProcedureContract['output']>
         : ProtocolApiCallIterableResult<
             t.infer.decode.input<
               Exclude<ProcedureContract['stream'], undefined | boolean>
             >,
-            OutputType<t.infer.decode.input<ProcedureContract['output']>>
+            t.infer.decode.input<ProcedureContract['output']>
           >,
       ProcedureDeps
     >
@@ -171,7 +170,7 @@ export function createProcedure<
         timeout?: number
         handler: ProcedureHandlerType<
           TInput extends BaseType
-            ? InputType<t.infer.decode.output<TInput>>
+            ? InputType<t.infer.decodeRaw.output<TInput>>
             : never,
           TStream extends BaseType | true
             ? ProtocolApiCallIterableResult<
@@ -190,7 +189,7 @@ export function createProcedure<
       }
     | ProcedureHandlerType<
         TInput extends BaseType
-          ? InputType<t.infer.decode.output<TInput>>
+          ? InputType<t.infer.decodeRaw.output<TInput>>
           : never,
         Return,
         Deps

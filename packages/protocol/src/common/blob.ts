@@ -3,8 +3,8 @@ export type BlobKey = typeof BlobKey
 
 export type ProtocolBlobMetadata = {
   type: string
-  size?: number
-  filename?: string
+  size?: number | undefined
+  filename?: string | undefined
 }
 
 export interface ProtocolBlobInterface {

@@ -4,12 +4,21 @@ import type {
   TAnyProcedureContract,
   TAnyRouterContract,
 } from '@nmtjs/contract'
+import type { ProtocolBlobInterface } from '@nmtjs/protocol'
 import type {
   ProtocolBaseClientCallOptions,
   ProtocolError,
+  ProtocolServerBlobStream,
   ProtocolServerStreamInterface,
 } from '@nmtjs/protocol/client'
 import type { BaseTypeAny, t } from '@nmtjs/type'
+import type { PlainType } from '@nmtjs/type/_plain'
+
+export type ClientOutputType<T> = T extends ProtocolBlobInterface
+  ? ProtocolServerBlobStream
+  : T extends { [PlainType]?: true }
+    ? { [K in keyof Omit<T, PlainType>]: ClientOutputType<T[K]> }
+    : T
 
 export interface StaticInputContractTypeProvider extends TypeProvider {
   output: this['input'] extends BaseTypeAny
@@ -25,13 +34,13 @@ export interface RuntimeInputContractTypeProvider extends TypeProvider {
 
 export interface StaticOutputContractTypeProvider extends TypeProvider {
   output: this['input'] extends BaseTypeAny
-    ? t.infer.encode.output<this['input']>
+    ? ClientOutputType<t.infer.encodeRaw.output<this['input']>>
     : never
 }
 
 export interface RuntimeOutputContractTypeProvider extends TypeProvider {
   output: this['input'] extends BaseTypeAny
-    ? t.infer.decode.output<this['input']>
+    ? ClientOutputType<t.infer.decodeRaw.output<this['input']>>
     : never
 }
 

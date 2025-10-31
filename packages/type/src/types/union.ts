@@ -10,6 +10,7 @@ import {
   union as zodUnion,
 } from 'zod/mini'
 
+import type { ZodPlainType } from './_plain.ts'
 import type { BaseTypeAny } from './base.ts'
 import type { LiteralType } from './literal.ts'
 import type { ObjectType, ObjectTypeProps } from './object.ts'
@@ -23,7 +24,9 @@ export class UnionType<
 > extends BaseType<
   ZodMiniUnion<ArrayMap<T, 'encodeZodType'>>,
   ZodMiniUnion<ArrayMap<T, 'decodeZodType'>>,
-  { options: T }
+  { options: T },
+  ZodPlainType<ZodMiniUnion<ArrayMap<T, 'encodeZodType'>>>,
+  ZodPlainType<ZodMiniUnion<ArrayMap<T, 'decodeZodType'>>>
 > {
   static factory<
     T extends readonly [BaseType, ...BaseType[]] = readonly [
@@ -83,7 +86,9 @@ export class DiscriminatedUnionType<
 > extends BaseType<
   ZodMiniDiscriminatedUnion<ArrayMap<T, 'encodeZodType'>>,
   ZodMiniDiscriminatedUnion<ArrayMap<T, 'decodeZodType'>>,
-  { key: K; options: T }
+  { key: K; options: T },
+  ZodPlainType<ZodMiniDiscriminatedUnion<ArrayMap<T, 'encodeZodType'>>>,
+  ZodPlainType<ZodMiniDiscriminatedUnion<ArrayMap<T, 'decodeZodType'>>>
 > {
   static factory<
     K extends string = string,

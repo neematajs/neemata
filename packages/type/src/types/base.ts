@@ -75,9 +75,13 @@ export abstract class BaseType<
   EncodeZodType extends SimpleZodType = SimpleZodType,
   DecodeZodType extends ZodType = EncodeZodType,
   Props extends TypeProps = TypeProps,
+  RawEncodeZodType extends SimpleZodType = EncodeZodType,
+  RawDecodeZodType extends ZodType = DecodeZodType,
 > {
   readonly encodeZodType: EncodeZodType
   readonly decodeZodType: DecodeZodType
+  readonly encodeRawZodType!: RawEncodeZodType
+  readonly decodeRawZodType!: RawDecodeZodType
   readonly props: Props
   readonly params: TypeParams
 
