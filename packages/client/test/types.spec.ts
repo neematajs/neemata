@@ -1,10 +1,13 @@
 import type { OneOf } from '@nmtjs/common'
-import type { ClientMessageType } from '@nmtjs/protocol'
+import type { ClientMessageType, ProtocolBlobInterface } from '@nmtjs/protocol'
 import type {
   ProtocolBaseClientCallOptions,
   ProtocolBaseTransformer,
+  ProtocolClientBlobStream,
   ProtocolError,
   ProtocolSendMetadata,
+  ProtocolServerBlobStream,
+  ProtocolServerStream,
   ProtocolServerStreamInterface,
 } from '@nmtjs/protocol/client'
 import { c } from '@nmtjs/contract'
@@ -32,6 +35,24 @@ class MockTransport extends ProtocolTransport {
 
 describe('Types', () => {
   const simpleProcedure = c.procedure({ input: t.string(), output: t.string() })
+  const simpleBlobProcedure = c.procedure({
+    input: t.object({ blob: c.blob() }),
+    output: t.object({ blob: c.blob() }),
+  })
+  const simpleProcedureWithCustomType = c.procedure({
+    input: t.object({
+      date: t.date(),
+      record: t.record(t.string(), t.date()),
+      array: t.array(t.date()),
+      tuple: t.tuple([t.date()]),
+    }),
+    output: t.object({
+      date: t.date(),
+      record: t.record(t.string(), t.date()),
+      array: t.array(t.date()),
+      tuple: t.tuple([t.date()]),
+    }),
+  })
 
   const streamProcedure = c.procedure({
     input: t.string(),
@@ -51,6 +72,8 @@ describe('Types', () => {
       simpleInline: c.procedure({ input: t.string(), output: t.string() }),
       stream: streamProcedure,
       nested: nestedRouter2,
+      simpleBlob: simpleBlobProcedure,
+      simpleCustomType: simpleProcedureWithCustomType,
     },
   })
 
@@ -77,6 +100,24 @@ describe('Types', () => {
       expectTypeOf(
         client._?.api.routes.nested.routes.nestedRouter1.routes.simple.output,
       ).toEqualTypeOf<string>()
+      expectTypeOf(client._?.api.routes.simpleBlob.input).toEqualTypeOf<{
+        blob: ProtocolBlobInterface
+      }>()
+      expectTypeOf(client._?.api.routes.simpleBlob.output).toEqualTypeOf<{
+        blob: ProtocolServerBlobStream
+      }>()
+      expectTypeOf(client._?.api.routes.simpleCustomType.input).toEqualTypeOf<{
+        date: Date
+        record: Record<string, Date>
+        array: Date[]
+        tuple: [Date]
+      }>()
+      expectTypeOf(client._?.api.routes.simpleCustomType.output).toEqualTypeOf<{
+        date: Date
+        record: Record<string, Date>
+        array: Date[]
+        tuple: [Date]
+      }>()
     })
 
     it('should properly resolve call types', () => {

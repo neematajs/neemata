@@ -28,4 +28,18 @@ export namespace infer {
     export type output<T extends BaseTypeAny> =
       T['encodeZodType']['_zod']['output']
   }
+
+  export namespace decodeRaw {
+    export type input<T extends BaseTypeAny> =
+      T['decodeRawZodType']['_zod']['input']
+    export type output<T extends BaseTypeAny> =
+      T['decodeRawZodType']['_zod']['output']
+  }
+
+  export namespace encodeRaw {
+    export type input<T extends BaseTypeAny> =
+      T['encodeRawZodType']['_zod']['input']
+    export type output<T extends BaseTypeAny> =
+      T['encodeRawZodType']['_zod']['output']
+  }
 }

@@ -1,12 +1,18 @@
 import { defer } from '@nmtjs/common'
 
-import type { ProtocolBlobMetadata } from '../common/blob.ts'
+import type {
+  ProtocolBlobInterface,
+  ProtocolBlobMetadata,
+} from '../common/blob.ts'
 import { concat, encodeText } from '../common/binary.ts'
+import { BlobKey } from '../common/blob.ts'
 
-export class ProtocolClientBlobStream extends TransformStream<
-  any,
-  ArrayBuffer
-> {
+export class ProtocolClientBlobStream
+  extends TransformStream<any, ArrayBuffer>
+  implements ProtocolBlobInterface
+{
+  readonly [BlobKey] = true
+
   #queue: ArrayBuffer
   #reader: ReadableStreamDefaultReader
 
@@ -106,7 +112,12 @@ export class ProtocolServerStream<T = any>
   }
 }
 
-export class ProtocolServerBlobStream extends ProtocolServerStream<ArrayBuffer> {
+export class ProtocolServerBlobStream
+  extends ProtocolServerStream<ArrayBuffer>
+  implements ProtocolBlobInterface
+{
+  readonly [BlobKey] = true
+
   constructor(
     readonly id: number,
     readonly metadata: ProtocolBlobMetadata,

@@ -1,9 +1,11 @@
 import type { core, ZodMiniObject, ZodMiniRecord } from 'zod/mini'
 import { object as zodObject, record as zodRecord } from 'zod/mini'
 
+import type { ZodPlainType } from './_plain.ts'
 import type { BaseTypeAny, OptionalType } from './base.ts'
 import type { LiteralType } from './literal.ts'
 import type { StringType } from './string.ts'
+import { zodPlainType } from './_plain.ts'
 import { BaseType } from './base.ts'
 import { EnumType } from './enum.ts'
 
@@ -12,7 +14,13 @@ export type AnyObjectType = ObjectType<ObjectTypeProps>
 export class ObjectType<T extends ObjectTypeProps = {}> extends BaseType<
   ZodMiniObject<{ [K in keyof T]: T[K]['encodeZodType'] }, core.$strict>,
   ZodMiniObject<{ [K in keyof T]: T[K]['decodeZodType'] }, core.$strict>,
-  { properties: T }
+  { properties: T },
+  ZodPlainType<
+    ZodMiniObject<{ [K in keyof T]: T[K]['encodeZodType'] }, core.$strict>
+  >,
+  ZodPlainType<
+    ZodMiniObject<{ [K in keyof T]: T[K]['decodeZodType'] }, core.$strict>
+  >
 > {
   static factory<T extends ObjectTypeProps = {}>(properties: T) {
     const encodeProperties = {} as {
@@ -40,15 +48,22 @@ export class RecordType<
   E extends BaseType,
 > extends BaseType<
   ZodMiniRecord<K['encodeZodType'], E['encodeZodType']>,
-  ZodMiniRecord<K['decodeZodType'], E['decodeZodType']>
+  ZodMiniRecord<K['decodeZodType'], E['decodeZodType']>,
+  { key: K; element: E },
+  ZodPlainType<ZodMiniRecord<K['encodeZodType'], E['encodeZodType']>>,
+  ZodPlainType<ZodMiniRecord<K['decodeZodType'], E['decodeZodType']>>
 > {
   static factory<
     K extends LiteralType<string | number> | EnumType | StringType,
     E extends BaseType,
   >(key: K, element: E) {
     return new RecordType<K, E>({
-      encodeZodType: zodRecord(key.encodeZodType, element.encodeZodType),
-      decodeZodType: zodRecord(key.decodeZodType, element.decodeZodType),
+      encodeZodType: zodPlainType(
+        zodRecord(key.encodeZodType, element.encodeZodType),
+      ),
+      decodeZodType: zodPlainType(
+        zodRecord(key.decodeZodType, element.decodeZodType),
+      ),
       props: { key, element },
     })
   }

@@ -1,9 +1,17 @@
+import type { ProtocolBlobInterface } from '@nmtjs/protocol'
+import type {
+  ProtocolApiCallIterableResult,
+  ProtocolClientStream,
+} from '@nmtjs/protocol/server'
 import { noopFn } from '@nmtjs/common'
+import contract from '@nmtjs/contract'
 import { createMetadataKey, createValueInjectable } from '@nmtjs/core'
+import { ProtocolBlob } from '@nmtjs/protocol'
 import { createStreamResponse } from '@nmtjs/protocol/server'
-import { type } from '@nmtjs/type'
+import { BaseType, type } from '@nmtjs/type'
 import { describe, expect, expectTypeOf, it } from 'vitest'
 
+import type { ProcedureHandlerType } from '../src/procedure.ts'
 import { kProcedure } from '../src/constants.ts'
 import { createContractProcedure, createProcedure } from '../src/procedure.ts'
 import { TestRouterContract } from './_utils.ts'
@@ -105,6 +113,34 @@ describe('Procedure', () => {
       name: undefined,
       timeout: undefined,
     })
+  })
+
+  it('should create a procedure with blob input/output', async () => {
+    const blob = contract.blob()
+    const procedure = createProcedure({
+      input: type.object({ file: blob }),
+      output: type.object({ file: blob }),
+      handler: async (_, { file }) => {
+        return { file: ProtocolBlob.from(file) }
+      },
+    })
+
+    expect(kProcedure in procedure).toBe(true)
+    expect(procedure.contract).toMatchObject({
+      type: 'neemata:procedure',
+      input: expect.any(BaseType),
+      output: expect.any(BaseType),
+      name: undefined,
+      timeout: undefined,
+    })
+
+    expectTypeOf(procedure.handler).toEqualTypeOf<
+      ProcedureHandlerType<
+        { file: ProtocolClientStream },
+        ProtocolApiCallIterableResult<never, { file: ProtocolBlobInterface }>,
+        {}
+      >
+    >()
   })
 })
 
