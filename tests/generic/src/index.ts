@@ -18,13 +18,14 @@ export const createTestingApplication = (): Application => {
   const app = n
     .app({
       type: WorkerType.Api,
-      api: { formats: [new JsonFormat()], timeout: 10000 },
+      api: { timeout: 10000 },
       pubsub: {},
       tasks: { timeout: 10000 },
       logging: {
         pinoOptions: { enabled: true },
         destinations: [n.logging.console('error')],
       },
+      protocol: { formats: [new JsonFormat()] },
     })
     .withRouter(router)
 

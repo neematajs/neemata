@@ -1,10 +1,13 @@
+import type { AnyFilter, AnyRouter, ApiOptions } from '@nmtjs/api'
 import type { ErrorClass } from '@nmtjs/common'
 import type { BasePlugin, Logger, LoggingOptions, Plugin } from '@nmtjs/core'
 import type {
+  BaseServerFormat,
   Connection,
   Transport,
   TransportPlugin,
 } from '@nmtjs/protocol/server'
+import { Api } from '@nmtjs/api'
 import {
   Container,
   CoreInjectables,
@@ -13,18 +16,19 @@ import {
   isPlugin,
   Scope,
 } from '@nmtjs/core'
-import { Format, isTransportPlugin, Protocol } from '@nmtjs/protocol/server'
+import {
+  isTransportPlugin,
+  Protocol,
+  ProtocolFormat,
+} from '@nmtjs/protocol/server'
 
-import type { AnyFilter, ApiOptions } from './api.ts'
 import type { PubSubOptions } from './pubsub.ts'
-import type { AnyRouter } from './router.ts'
 import type { AnyTask, TasksOptions } from './tasks.ts'
 import type { ApplicationPluginContext, ExecuteFn } from './types.ts'
-import { ApplicationApi } from './api.ts'
 import { WorkerType } from './enums.ts'
 import { AppInjectables } from './injectables.ts'
 import { PubSub } from './pubsub.ts'
-import { APP_COMMAND, ApplicationRegistry, printRegistry } from './registry.ts'
+import { APP_COMMAND, ApplicationRegistry } from './registry.ts'
 import { Tasks } from './tasks.ts'
 
 type UseFn<R extends AnyRouter> = <
@@ -43,19 +47,23 @@ export type ApplicationOptions = {
   api: ApiOptions
   tasks: TasksOptions
   pubsub: PubSubOptions
-  logging?: LoggingOptions
+  logging: LoggingOptions
+  protocol: {
+    formats: BaseServerFormat[]
+    persistConnections?: { timeout: number }
+  }
 }
 
 export class Application<T extends AnyRouter = AnyRouter> {
   readonly _!: { router: T }
   protected readonly _container: Container
-  readonly api: ApplicationApi
+  readonly api: Api
   readonly tasks: Tasks
   readonly logger: Logger
   readonly registry: ApplicationRegistry
   readonly pubsub: PubSub
   readonly container: Container
-  readonly format: Format
+  readonly format: ProtocolFormat
   readonly protocol: Protocol
   readonly plugins: Array<[Plugin<any, any, ApplicationPluginContext>, any]> =
     []
@@ -71,7 +79,7 @@ export class Application<T extends AnyRouter = AnyRouter> {
 
     this.registry = new ApplicationRegistry(this)
 
-    this.format = new Format(this.options.api.formats)
+    this.format = new ProtocolFormat(this.options.protocol.formats)
 
     // create unexposed container for global injectables, which never gets disposed
     this._container = new Container(this)
@@ -89,11 +97,11 @@ export class Application<T extends AnyRouter = AnyRouter> {
     // including transports and plugins
     this.container = this._container.fork(Scope.Global)
 
-    this.api = new ApplicationApi(this, this.options.api)
+    this.api = new Api(this, this.options.api)
     this.tasks = new Tasks(this, this.options.tasks)
     this.pubsub = new PubSub(this, this.options.pubsub)
 
-    this.protocol = new Protocol(this)
+    this.protocol = new Protocol(this, options.protocol)
 
     this._container.provide(AppInjectables.pubsub, this.pubsub)
   }
@@ -202,9 +210,6 @@ export class Application<T extends AnyRouter = AnyRouter> {
         if (error) this.logger.error(error)
       }),
     )
-    this.registry.registerCommand(APP_COMMAND, 'registry', () => {
-      printRegistry(this.registry)
-    })
   }
 
   protected async initializeTransports() {

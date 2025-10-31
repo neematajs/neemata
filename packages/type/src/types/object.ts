@@ -69,7 +69,7 @@ export class RecordType<
   }
 }
 
-export function keyof<T extends ObjectType>(
+export function keyof<T extends AnyObjectType>(
   type: T,
 ): EnumType<core.util.ToEnum<Extract<keyof T['props']['properties'], string>>> {
   return EnumType.factory(Object.keys(type.props.properties) as any)

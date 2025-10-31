@@ -1,4 +1,4 @@
-import type { Format } from './format.ts'
+import type { ProtocolFormat } from './format.ts'
 
 export type ResolveFormatParams = {
   contentType?: string | null
@@ -12,7 +12,7 @@ export class UnsupportedContentTypeError extends UnsupportedFormatError {}
 export class UnsupportedAcceptTypeError extends UnsupportedFormatError {}
 
 export const getFormat = (
-  format: Format,
+  format: ProtocolFormat,
   { acceptType, contentType }: ResolveFormatParams,
 ) => {
   const encoder = contentType ? format.supportsEncoder(contentType) : undefined

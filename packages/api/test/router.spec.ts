@@ -42,15 +42,6 @@ describe('Router', () => {
       expect(router.hooks[kHookCollection].get('test')).toContain(handler)
     })
 
-    // it('should create a router with autoload', () => {
-    //   const router = createContractRouter(TestRouterContract, {
-    //     autoload: new URL('file:///'),
-    //   })
-    //   expect(
-    //     router.hooks[kHookCollection].get(Hook.BeforeInitialize)?.size,
-    //   ).toBe(1)
-    // })
-
     it('should create a router with guards', () => {
       const guard = createValueInjectable({ can: () => false })
       const router = createContractRouter(TestRouterContract, {
