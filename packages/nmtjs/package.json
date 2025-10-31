@@ -32,6 +32,7 @@
     }
   },
   "dependencies": {
+    "@nmtjs/api": "workspace:*",
     "@nmtjs/application": "workspace:*",
     "@nmtjs/cli": "workspace:*",
     "@nmtjs/common": "workspace:*",

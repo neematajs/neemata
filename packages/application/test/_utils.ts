@@ -1,5 +1,7 @@
+import type { CreateProcedureParams } from '@nmtjs/api'
 import type { Dependencies, Plugin } from '@nmtjs/core'
 import type { ConnectionOptions } from '@nmtjs/protocol/server'
+import { createContractProcedure, createContractRouter } from '@nmtjs/api'
 import { noopFn } from '@nmtjs/common'
 import { c } from '@nmtjs/contract'
 import { createLogger, createPlugin } from '@nmtjs/core'
@@ -8,12 +10,9 @@ import { t } from '@nmtjs/type'
 import { expect } from 'vitest'
 
 import type { ApplicationOptions } from '../src/application.ts'
-import type { CreateProcedureParams } from '../src/procedure.ts'
 import type { BaseTaskExecutor, CreateTaskOptions } from '../src/tasks.ts'
 import { Application } from '../src/application.ts'
 import { WorkerType } from '../src/enums.ts'
-import { createContractProcedure } from '../src/procedure.ts'
-import { createContractRouter } from '../src/router.ts'
 import { createTask } from '../src/tasks.ts'
 
 export class TestTaskExecutor implements BaseTaskExecutor {
@@ -50,10 +49,11 @@ export const testApp = (options: Partial<ApplicationOptions> = {}) =>
     Object.assign(
       {
         type: WorkerType.Api,
-        api: { timeout: testDefaultTimeout, formats: [] },
+        api: { timeout: testDefaultTimeout },
         tasks: { timeout: testDefaultTimeout },
         logging: { pinoOptions: { enabled: false } },
         pubsub: {},
+        protocol: { formats: [] },
       } as ApplicationOptions,
       options,
     ),

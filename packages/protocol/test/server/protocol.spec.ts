@@ -15,7 +15,7 @@ import type {
 } from '../../src/server/api.ts'
 import { ServerMessageType } from '../../src/common/enums.ts'
 import { Connection, ConnectionContext } from '../../src/server/connection.ts'
-import { Format } from '../../src/server/format.ts'
+import { ProtocolFormat } from '../../src/server/format.ts'
 import { ProtocolInjectables } from '../../src/server/injectables.ts'
 import { Protocol } from '../../src/server/protocol.ts'
 import {
@@ -51,7 +51,7 @@ describe('Server Protocol', () => {
       container,
       registry,
       logger,
-      format: new Format([format]),
+      format: new ProtocolFormat([format]),
     })
   })
 

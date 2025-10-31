@@ -1,71 +1,68 @@
 import type { Container } from '@nmtjs/core'
 import type { Connection } from '@nmtjs/protocol/server'
-import {
-  createFactoryInjectable,
-  createValueInjectable,
-  Scope,
-} from '@nmtjs/core'
+import { createFactoryInjectable, createValueInjectable } from '@nmtjs/core'
 import { ErrorCode } from '@nmtjs/protocol'
 import { ProtocolInjectables } from '@nmtjs/protocol/server'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { ApplicationApiCallOptions } from '../src/api.ts'
-import type { Application } from '../src/application.ts'
-import type { ApplicationRegistry } from '../src/registry.ts'
+import type { ApiCallOptions } from '../src/api.ts'
+import type { ApiRegistry } from '../src/registry.ts'
 import type { Router } from '../src/router.ts'
-import type { TestRouterContract } from './_utils.ts'
-import { ApiError, ApplicationApi } from '../src/api.ts'
+import type { TestApiRuntime, TestRouterContract } from './_utils.ts'
+import { Api, ApiError } from '../src/api.ts'
 import { createRouter } from '../src/router.ts'
 import {
-  testApp,
+  testApiRuntime,
   testConnection,
   testProcedure,
   testRouter,
-  testTransport,
 } from './_utils.ts'
 
 describe.sequential('Api', () => {
-  const transportPlugin = testTransport()
-
-  let app: Application
-  let router: Router<typeof TestRouterContract>
-  let registry: ApplicationRegistry
-  let container: Container
-  let connection: Connection
-  let api: ApplicationApi
-
   const payload = { test: 'test' }
+
+  let runtime: TestApiRuntime
+  let api: Api
+  let registry: ApiRegistry
+  let router: Router<typeof TestRouterContract>
+  let connection: Connection
+  let container: Container
+
   const call = (
-    options: Pick<ApplicationApiCallOptions, 'procedure'> &
-      Partial<Omit<ApplicationApiCallOptions, 'procedure'>>,
-  ) =>
-    api
+    options: Pick<ApiCallOptions, 'procedure'> &
+      Partial<Omit<ApiCallOptions, 'procedure'>>,
+  ) => {
+    const activeContainer = container
+    return api
       .call({
-        container,
+        container: activeContainer,
         connection,
         payload,
         signal: new AbortController().signal,
         ...options,
         procedure: options.procedure.contract.name!,
       })
-      .finally(() => container.dispose())
+      .finally(async () => {
+        await activeContainer.dispose()
+      })
+  }
 
-  beforeEach(async () => {
-    app = testApp().use(transportPlugin)
-    registry = app.registry
-    container = app.container.fork(Scope.Call)
-    api = app.api
-
+  beforeEach(() => {
+    runtime = testApiRuntime()
+    api = runtime.api
+    registry = runtime.registry
+    container = runtime.createCallContainer()
     connection = testConnection({ data: {} })
   })
 
   afterEach(async () => {
-    await app.terminate()
+    await container.dispose()
+    await runtime.dispose()
   })
 
   it('should be an api', () => {
     expect(api).toBeDefined()
-    expect(api).toBeInstanceOf(ApplicationApi)
+    expect(api).toBeInstanceOf(Api)
   })
 
   it('should inject context', async () => {
@@ -76,7 +73,7 @@ describe.sequential('Api', () => {
     })
     router = testRouter({ routes: { testProcedure: procedure } })
     registry.registerRouter(router)
-    await app.initialize()
+    await runtime.initialize()
 
     const connection = testConnection()
     await call({ connection, procedure })
@@ -87,7 +84,7 @@ describe.sequential('Api', () => {
     const procedure = testProcedure(() => 'result')
     router = testRouter({ routes: { testProcedure: procedure } })
     registry.registerRouter(router)
-    await app.initialize()
+    await runtime.initialize()
     await expect(call({ procedure })).resolves.toMatchObject({
       output: 'result',
     })
@@ -102,7 +99,7 @@ describe.sequential('Api', () => {
 
     router = testRouter({ routes: { testProcedure: procedure } })
     registry.registerRouter(router)
-    await app.initialize()
+    await runtime.initialize()
     await expect(call({ procedure })).resolves.toMatchObject({
       output: 'value',
     })
@@ -119,7 +116,7 @@ describe.sequential('Api', () => {
     })
     router = testRouter({ routes: { testProcedure: procedure } })
     registry.registerRouter(router)
-    await app.initialize()
+    await runtime.initialize()
     const connection = testConnection()
     const spy = vi.spyOn(procedure, 'handler')
     await call({ connection, procedure })
@@ -134,7 +131,7 @@ describe.sequential('Api', () => {
     })
     router = testRouter({ routes: { testProcedure: procedure } })
     registry.registerRouter(router)
-    await app.initialize()
+    await runtime.initialize()
     const connection = testConnection()
     const spy = vi.spyOn(procedure, 'handler')
     await call({ connection, procedure, signal })
@@ -146,7 +143,7 @@ describe.sequential('Api', () => {
     const procedure = testProcedure(spy)
     router = testRouter({ routes: { testProcedure: procedure } })
     registry.registerRouter(router)
-    await app.initialize()
+    await runtime.initialize()
     await call({ procedure, payload })
     expect(spy).toBeCalledWith(expect.anything(), payload)
   })
@@ -157,7 +154,7 @@ describe.sequential('Api', () => {
     })
     router = testRouter({ routes: { testProcedure: procedure } })
     registry.registerRouter(router)
-    await app.initialize()
+    await runtime.initialize()
     const result = await call({ procedure }).catch((v) => v)
     expect(result).toBeInstanceOf(Error)
   })
@@ -173,7 +170,7 @@ describe.sequential('Api', () => {
     })
     router = testRouter({ routes: { testProcedure: procedure } })
     registry.registerRouter(router)
-    await app.initialize()
+    await runtime.initialize()
     await expect(call({ procedure })).rejects.toBeInstanceOf(ApiError)
     expect(filterInjectable.catch).toHaveBeenCalledOnce()
     expect(filterInjectable.catch).toHaveBeenCalledWith(error)
@@ -189,7 +186,7 @@ describe.sequential('Api', () => {
 
     router = testRouter({ routes: { testProcedure: procedure } })
     registry.registerRouter(router)
-    await app.initialize()
+    await runtime.initialize()
     const result = await call({ procedure }).catch((v) => v)
     expect(result).toBeInstanceOf(ApiError)
     expect(result).toHaveProperty('code', ErrorCode.Forbidden)
@@ -219,7 +216,7 @@ describe.sequential('Api', () => {
     })
     router = testRouter({ routes: { testProcedure: procedure } })
     registry.registerRouter(router)
-    await app.initialize()
+    await runtime.initialize()
 
     const response = await call({
       procedure: router.routes.testProcedure,
@@ -246,7 +243,7 @@ describe.sequential('Api', () => {
     const procedure = testProcedure(() => 'result')
     const router = createRouter({ routes: { testProcedure: procedure } })
     registry.registerRouter(router)
-    await app.initialize()
+    await runtime.initialize()
     const found = api.find('testProcedure')
     expect(found).toHaveProperty('path', [router])
     expect(found).toHaveProperty('procedure', router.routes.testProcedure)

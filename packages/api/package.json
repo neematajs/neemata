@@ -1,5 +1,5 @@
 {
-  "name": "@nmtjs/application",
+  "name": "@nmtjs/api",
   "type": "module",
   "exports": {
     ".": {
@@ -23,7 +23,6 @@
   },
   "peerDependencies": {
     "zod": "catalog:",
-    "@nmtjs/api": "workspace:*",
     "@nmtjs/common": "workspace:*",
     "@nmtjs/contract": "workspace:*",
     "@nmtjs/core": "workspace:*",
@@ -33,7 +32,6 @@
   "devDependencies": {
     "zod": "catalog:",
     "@types/node": "^20",
-    "@nmtjs/api": "workspace:*",
     "@nmtjs/common": "workspace:*",
     "@nmtjs/contract": "workspace:*",
     "@nmtjs/core": "workspace:*",

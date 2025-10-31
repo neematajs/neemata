@@ -7,7 +7,7 @@ import type { ProtocolBlob, ProtocolBlobMetadata } from '../common/blob.ts'
 import type { ProtocolRPC } from '../common/types.ts'
 import type { ProtocolApi, ProtocolApiCallOptions } from './api.ts'
 import type { ConnectionOptions } from './connection.ts'
-import type { Format } from './format.ts'
+import type { ProtocolFormat } from './format.ts'
 import type { ProtocolRegistry } from './registry.ts'
 import type { Transport } from './transport.ts'
 import type { ResolveFormatParams } from './utils.ts'
@@ -58,7 +58,7 @@ export class ProtocolConnections {
     private readonly application: {
       logger: Logger
       registry: ProtocolRegistry
-      format: Format
+      format: ProtocolFormat
       container: Container
     },
   ) {}
@@ -242,11 +242,12 @@ export class Protocol {
   constructor(
     protected readonly application: {
       logger: Logger
-      format: Format
+      format: ProtocolFormat
       container: Container
       registry: ProtocolRegistry
       api: ProtocolApi
     },
+    protected readonly options?: { persistConnections?: { timeout: number } },
   ) {
     this.#connections = new ProtocolConnections(this.application)
     this.#clientStreams = new ProtocolClientStreams(this.#connections)

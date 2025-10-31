@@ -2,7 +2,7 @@ import type { BasePlugin, PluginContext } from '@nmtjs/core'
 
 import type { ServerMessageType } from '../common/enums.ts'
 import type { Connection } from './connection.ts'
-import type { Format } from './format.ts'
+import type { ProtocolFormat } from './format.ts'
 import type { Protocol } from './protocol.ts'
 import type { ProtocolRegistry } from './registry.ts'
 import type { ProtocolSendMetadata } from './types.ts'
@@ -22,7 +22,7 @@ export interface Transport<T = unknown> {
 export interface TransportPluginContext extends PluginContext {
   protocol: Protocol
   registry: ProtocolRegistry
-  format: Format
+  format: ProtocolFormat
 }
 
 export interface TransportPlugin<Type = unknown, Options = unknown>

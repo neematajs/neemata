@@ -76,7 +76,7 @@ export const parseContentTypes = (types: string) => {
     .map((t) => t.type)
 }
 
-export class Format {
+export class ProtocolFormat {
   decoders = new Map<Pattern, BaseServerDecoder>()
   encoders = new Map<Pattern, BaseServerEncoder>()
 

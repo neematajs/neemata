@@ -36,8 +36,35 @@ importers:
         specifier: 3.2.4
         version: 3.2.4(@types/node@20.19.1)(@vitest/ui@3.2.4)
 
+  packages/api:
+    devDependencies:
+      '@nmtjs/common':
+        specifier: workspace:*
+        version: link:../common
+      '@nmtjs/contract':
+        specifier: workspace:*
+        version: link:../contract
+      '@nmtjs/core':
+        specifier: workspace:*
+        version: link:../core
+      '@nmtjs/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+      '@nmtjs/type':
+        specifier: workspace:*
+        version: link:../type
+      '@types/node':
+        specifier: ^20
+        version: 20.19.1
+      zod:
+        specifier: 'catalog:'
+        version: 4.0.17
+
   packages/application:
     devDependencies:
+      '@nmtjs/api':
+        specifier: workspace:*
+        version: link:../api
       '@nmtjs/common':
         specifier: workspace:*
         version: link:../common
@@ -146,6 +173,9 @@ importers:
 
   packages/nmtjs:
     dependencies:
+      '@nmtjs/api':
+        specifier: workspace:*
+        version: link:../api
       '@nmtjs/application':
         specifier: workspace:*
         version: link:../application
@@ -260,7 +290,7 @@ importers:
         specifier: github:uNetworking/uWebSockets.js#v20.52.0
         version: https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/cfc9a40d8132a34881813cec3d5f8e3a185b3ce3
 
-  testing/bun:
+  tests/bun:
     dependencies:
       '@types/bun':
         specifier: ^1.2.19
@@ -272,7 +302,7 @@ importers:
         specifier: workspace:*
         version: link:../../packages/nmtjs
 
-  testing/deno:
+  tests/deno:
     dependencies:
       '@std/assert':
         specifier: npm:@jsr/std__assert@^1.0.13
@@ -294,7 +324,7 @@ importers:
         specifier: ^20
         version: 20.19.1
 
-  testing/generic:
+  tests/generic:
     dependencies:
       '@nmtjs/client':
         specifier: workspace:*
@@ -312,7 +342,7 @@ importers:
         specifier: workspace:*
         version: link:../../packages/nmtjs
 
-  testing/node:
+  tests/node:
     dependencies:
       '@types/node':
         specifier: ^20

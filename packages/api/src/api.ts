@@ -9,7 +9,6 @@ import type {
   Logger,
 } from '@nmtjs/core'
 import type {
-  BaseServerFormat,
   Connection,
   ProtocolApi,
   ProtocolApiCallIterableResult,
@@ -30,7 +29,7 @@ import { NeemataTypeError, type } from '@nmtjs/type'
 import { prettifyError } from 'zod/mini'
 
 import type { AnyProcedure } from './procedure.ts'
-import type { ApplicationRegistry } from './registry.ts'
+import type { ApiRegistry } from './registry.ts'
 import type { AnyRouter } from './router.ts'
 import type { ApiCallContext } from './types.ts'
 
@@ -54,17 +53,16 @@ export type MiddlewareLike = {
 
 export type AnyMiddleware = AnyInjectable<MiddlewareLike>
 
-export type ApplicationApiCallOptions<T extends AnyProcedure = AnyProcedure> =
-  Readonly<{
-    connection: Connection
-    path: AnyRouter[]
-    procedure: T
-    container: Container
-    payload: any
-    signal: AbortSignal
-  }>
+export type ApiCallOptions<T extends AnyProcedure = AnyProcedure> = Readonly<{
+  connection: Connection
+  path: AnyRouter[]
+  procedure: T
+  container: Container
+  payload: any
+  signal: AbortSignal
+}>
 
-export type ApiOptions = { timeout: number; formats: BaseServerFormat[] }
+export type ApiOptions = { timeout: number }
 
 export class ApiError extends ProtocolError {
   toString() {
@@ -95,18 +93,18 @@ export const createFilter = <
   ...args: Parameters<typeof createFactoryInjectable<FilterLike, D, S>>
 ) => createFactoryInjectable(...args)
 
-export class ApplicationApi implements ProtocolApi {
+export class Api implements ProtocolApi {
   constructor(
-    private readonly application: {
+    private readonly runtime: {
       container: Container
-      registry: ApplicationRegistry
+      registry: ApiRegistry
       logger: Logger
     },
     private readonly options: ApiOptions,
   ) {}
 
   find(procedureName: string) {
-    const result = this.application.registry.procedures.get(procedureName)
+    const result = this.runtime.registry.procedures.get(procedureName)
     if (result) return result
     throw NotFound()
   }
@@ -165,7 +163,7 @@ export class ApplicationApi implements ProtocolApi {
       const handled = await this.handleFilters(error)
       if (handled === error && error instanceof ProtocolError === false) {
         const logError = new Error('Unhandled error', { cause: error })
-        this.application.logger.error(logError)
+        this.runtime.logger.error(logError)
         throw new ApiError(
           ErrorCode.InternalServerError,
           'Internal Server Error',
@@ -175,7 +173,7 @@ export class ApplicationApi implements ProtocolApi {
     }
   }
 
-  private async createProcedureHandler(callOptions: ApplicationApiCallOptions) {
+  private async createProcedureHandler(callOptions: ApiCallOptions) {
     const { connection, procedure, container, path } = callOptions
 
     const callCtx: ApiCallContext = Object.freeze({
@@ -207,10 +205,10 @@ export class ApplicationApi implements ProtocolApi {
     return handleProcedure
   }
 
-  private async resolveMiddlewares(callOptions: ApplicationApiCallOptions) {
+  private async resolveMiddlewares(callOptions: ApiCallOptions) {
     const { path, procedure, container } = callOptions
     const middlewareInjectables = [
-      ...this.application.registry.middlewares,
+      ...this.runtime.registry.middlewares,
       ...path.flatMap((router) => [...router.middlewares]),
       ...procedure.middlewares,
     ]
@@ -220,10 +218,10 @@ export class ApplicationApi implements ProtocolApi {
     return middlewares[Symbol.iterator]()
   }
 
-  private async resolveGuards(callOptions: ApplicationApiCallOptions) {
+  private async resolveGuards(callOptions: ApiCallOptions) {
     const { path, procedure, container } = callOptions
     const injectables = [
-      ...this.application.registry.guards,
+      ...this.runtime.registry.guards,
       ...path.flatMap((router) => [...router.guards]),
       ...procedure.guards,
     ]
@@ -246,7 +244,7 @@ export class ApplicationApi implements ProtocolApi {
   }
 
   private async handleGuards(
-    _callOptions: ApplicationApiCallOptions,
+    _callOptions: ApiCallOptions,
     callCtx: ApiCallContext,
     guards: Iterable<GuardLike>,
   ) {
@@ -257,10 +255,10 @@ export class ApplicationApi implements ProtocolApi {
   }
 
   private async handleFilters(error: any) {
-    if (this.application.registry.filters.size) {
-      for (const [errorType, filter] of this.application.registry.filters) {
+    if (this.runtime.registry.filters.size) {
+      for (const [errorType, filter] of this.runtime.registry.filters) {
         if (error instanceof errorType) {
-          const filterLike = await this.application.container.resolve(filter)
+          const filterLike = await this.runtime.container.resolve(filter)
           const handledError = await filterLike.catch(error)
           if (!handledError || !(handledError instanceof ApiError)) continue
           return handledError
