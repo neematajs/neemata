@@ -65,15 +65,14 @@
     "@nmtjs/gateway": "workspace:*",
     "@nmtjs/runtime": "workspace:*",
     "@nmtjs/type": "workspace:*",
-    "@nmtjs/ws-transport": "workspace:*"
+    "@nmtjs/ws-transport": "workspace:*",
+    "dotenv": "^17.2.3",
+    "citty": "^0.1.6",
+    "vite": "npm:rolldown-vite@7.2.5"
   },
   "files": [
     "dist",
     "LICENSE.md",
     "README.md"
-  ],
-  "devDependencies": {
-    "citty": "^0.1.6",
-    "vite": "npm:rolldown-vite@7.2.5"
-  }
+  ]
 }

@@ -1,4 +1,4 @@
-import type { ApplicationWorker } from '@nmtjs/server/worker'
+import type { ApplicationWorker } from '@nmtjs/runtime/worker'
 import { typeToString } from '@nmtjs/type'
 import { defineCommand } from 'citty'
 

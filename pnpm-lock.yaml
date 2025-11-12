@@ -209,10 +209,12 @@ importers:
       '@nmtjs/ws-transport':
         specifier: workspace:*
         version: link:../ws-transport
-    devDependencies:
       citty:
         specifier: ^0.1.6
         version: 0.1.6
+      dotenv:
+        specifier: ^17.2.3
+        version: 17.2.3
       vite:
         specifier: npm:rolldown-vite@7.2.5
         version: rolldown-vite@7.2.5(@types/node@20.19.1)(esbuild@0.25.5)(jiti@2.6.1)
@@ -1066,6 +1068,10 @@ packages:
   detect-libc@2.1.2:
     resolution: {integrity: sha512-Btj2BOOO83o3WyH59e8MgXsxEQVcarkUOpEYrubB0urwnN10yQ364rsiByU11nZlqWYZm05i/of7io4mzihBtQ==}
     engines: {node: '>=8'}
+
+  dotenv@17.2.3:
+    resolution: {integrity: sha512-JVUnt+DUIzu87TABbhPmNfVdBDt18BLOWjMUFJMSi/Qqg7NTYtabbvSNJGOJ7afbRuv9D/lngizHtP7QyLQ+9w==}
+    engines: {node: '>=12'}
 
   end-of-stream@1.4.4:
     resolution: {integrity: sha512-+uw1inIHVPQoaVuHzRyXd21icM+cnt4CzD5rW+NC1wjOUSTOs+Te7FOv7AhN7vS9x/oIyhLP5PR1H+phQAHu5Q==}
@@ -2069,6 +2075,8 @@ snapshots:
   denque@2.1.0: {}
 
   detect-libc@2.1.2: {}
+
+  dotenv@17.2.3: {}
 
   end-of-stream@1.4.4:
     dependencies:

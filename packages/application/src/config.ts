@@ -53,7 +53,7 @@ export interface ApplicationConfig<
   logging: LoggingOptions
   // protocol: ProtocolOptions
   // transports: Transports
-  plugins: Plugins
+  // plugins: Plugins
   filters: ApplicationConfigFilter[]
   hooks: AnyHook[]
   lifecycleHooks: LifecycleHooks['_']['config']
@@ -87,7 +87,7 @@ export function resolveApplicationConfig<
     api = { timeout: 60000 } as T['api'],
     // protocol = { formats: [] } as T['protocol'],
     // jobs = [] as T['jobs'],
-    plugins = [] as T['plugins'],
+    // plugins = [] as T['plugins'],
     // transports = [] as T['transports'],
     // commands = { options: { timeout: 120_000 }, commands: [] } as T['commands'],
     filters = [] as T['filters'],
@@ -107,7 +107,7 @@ export function resolveApplicationConfig<
     router,
     // commands,
     // jobs,
-    plugins,
+    // plugins,
     // transports,
     filters,
     logging,
