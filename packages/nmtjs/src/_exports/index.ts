@@ -9,8 +9,11 @@ import type {
 
 import {
   AppInjectables,
+  createCommand,
   createApplication,
-  createTask,
+  createJob,
+  createStep,
+  createApplicationPlugin,
 } from '@nmtjs/application'
 import {
   createContractProcedure,
@@ -27,24 +30,23 @@ import {
   createConsolePrettyDestination,
   createExtendableClassInjectable,
   createFactoryInjectable,
+  createHook,
   createLazyInjectable,
   createOptionalInjectable,
-  createPlugin,
   createValueInjectable,
 } from '@nmtjs/core'
 import { createTransport, ProtocolInjectables } from '@nmtjs/protocol/server'
-import { createServer } from '@nmtjs/server'
 
 export const neemata = {
   app: createApplication,
-  server: createServer,
+  // server: createServer,
   injectables: {
     ...CoreInjectables,
     ...ProtocolInjectables,
     ...AppInjectables,
   },
   transport: createTransport,
-  plugin: createPlugin,
+  plugin: createApplicationPlugin,
   logging: {
     console:
       // TODO: TSC wants it
@@ -56,7 +58,7 @@ export const neemata = {
   factory: createFactoryInjectable,
   class: createClassInjectable,
   extendClass: createExtendableClassInjectable,
-  task: createTask,
+  command: createCommand,
   router: createRouter,
   contractRouter: createContractRouter,
   procedure: createProcedure,
@@ -64,12 +66,20 @@ export const neemata = {
   middleware: createMiddleware,
   guard: createGuard,
   filter: createFilter,
+  job: createJob,
+  step: createStep,
+  hook: createHook,
 }
 
 export { ApiError } from '@nmtjs/api'
-export { WorkerType } from '@nmtjs/application'
+export {
+  ApplicationType,
+  ApplicationWorkerType,
+  LifecycleHook,
+  defineApplication,
+} from '@nmtjs/application'
 export { c } from '@nmtjs/contract'
-export { Hook, Scope } from '@nmtjs/core'
+export { Scope } from '@nmtjs/core'
 export { ErrorCode, ProtocolBlob, TransportType } from '@nmtjs/protocol'
 export { createStreamResponse } from '@nmtjs/protocol/server'
 export { t } from '@nmtjs/type'

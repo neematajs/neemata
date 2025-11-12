@@ -21,24 +21,27 @@
     "build": "tsc",
     "type-check": "tsc --noEmit"
   },
+  "dependencies": {
+    "hookable": "6.0.0-rc.1"
+  },
   "peerDependencies": {
-    "zod": "catalog:",
     "@nmtjs/api": "workspace:*",
     "@nmtjs/common": "workspace:*",
     "@nmtjs/contract": "workspace:*",
     "@nmtjs/core": "workspace:*",
     "@nmtjs/protocol": "workspace:*",
-    "@nmtjs/type": "workspace:*"
+    "@nmtjs/type": "workspace:*",
+    "zod": "catalog:"
   },
   "devDependencies": {
-    "zod": "catalog:",
-    "@types/node": "^20",
     "@nmtjs/api": "workspace:*",
     "@nmtjs/common": "workspace:*",
     "@nmtjs/contract": "workspace:*",
     "@nmtjs/core": "workspace:*",
     "@nmtjs/protocol": "workspace:*",
-    "@nmtjs/type": "workspace:*"
+    "@nmtjs/type": "workspace:*",
+    "@types/node": "^20",
+    "zod": "catalog:"
   },
   "files": [
     "dist",

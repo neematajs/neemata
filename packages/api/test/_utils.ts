@@ -68,7 +68,7 @@ export const testApiRuntime = (
       if (!container.contains(CoreInjectables.logger)) {
         await container.provide(CoreInjectables.logger, logger)
       }
-      await container.load()
+      await container.initialize()
     },
     async dispose() {
       await container.dispose()

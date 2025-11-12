@@ -1,6 +1,5 @@
 import type {
   Async,
-  Callback,
   ClassConstructor,
   ClassConstructorArgs,
   ClassInstance,
@@ -8,8 +7,6 @@ import type {
 import { tryCaptureStackTrace } from '@nmtjs/common'
 
 import type { DisposeFn, InjectFn } from './container.ts'
-import type { Hook } from './enums.ts'
-import type { HookType } from './hooks.ts'
 import type { Logger } from './logger.ts'
 import type { Registry } from './registry.ts'
 import {
@@ -17,14 +14,12 @@ import {
   kClassInjectableCreate,
   kClassInjectableDispose,
   kFactoryInjectable,
-  kHookCollection,
   kInjectable,
   kLazyInjectable,
   kOptionalDependency,
   kValueInjectable,
 } from './constants.ts'
 import { Scope } from './enums.ts'
-import { Hooks } from './hooks.ts'
 
 const ScopeStrictness = {
   [Scope.Transient]: Number.NaN, // this should make it always fail to compare with other scopes
@@ -462,34 +457,25 @@ export function compareScope(
   }
 }
 
-const logger = createLazyInjectable<Logger>(Scope.Global, 'Logger')
+const logger = Object.assign(
+  (label: string) =>
+    createFactoryInjectable({
+      dependencies: { logger },
+      scope: Scope.Global,
+      factory: ({ logger }) => logger.child({ $label: label }),
+    }),
+  createLazyInjectable<Logger>(Scope.Global, 'Logger'),
+) as unknown as ((
+  label: string,
+) => FactoryInjectable<Logger, { logger: LazyInjectable<Logger> }>) &
+  LazyInjectable<Logger>
+
 const registry = createLazyInjectable<Registry>(Scope.Global, 'Registry')
 const inject = createLazyInjectable<InjectFn>(Scope.Global, 'Inject function')
 const dispose = createLazyInjectable<DisposeFn>(
   Scope.Global,
   'Dispose function',
 )
-const hook = createFactoryInjectable({
-  scope: Scope.Transient,
-  dependencies: { registry },
-  factory: ({ registry }) => {
-    const hooks = new Hooks()
-    const on = <T extends Hook>(name: T, callback: HookType[T]) => {
-      hooks.add(name, callback as Callback)
-      return registry.hooks.add(name, callback)
-    }
-    return { hooks, on }
-  },
-  pick: ({ on }) => on,
-  dispose: ({ hooks }, { registry }) => {
-    for (const [hook, callbacks] of hooks[kHookCollection].entries()) {
-      for (const callback of callbacks) {
-        registry.hooks.remove(hook, callback)
-      }
-    }
-    hooks.clear()
-  },
-})
 
 function resolveInjectableScope(
   isDefaultScope: boolean,
@@ -503,4 +489,4 @@ function resolveInjectableScope(
   return actualScope
 }
 
-export const CoreInjectables = { logger, registry, inject, dispose, hook }
+export const CoreInjectables = { logger, registry, inject, dispose }

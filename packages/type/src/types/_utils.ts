@@ -1,5 +1,7 @@
 import type { core, ZodMiniType } from 'zod/mini'
 
+import type { BaseType } from './base.ts'
+
 export const PlainType: unique symbol = Symbol('PlainType')
 export type PlainType = typeof PlainType
 
@@ -15,3 +17,8 @@ export type ZodPlainType<T extends ZodMiniType<any, any, any>> = T &
 
 export const zodPlainType = <T extends ZodMiniType<any, any, any>>(type: T) =>
   type as ZodPlainType<T>
+
+export type AnyCompatibleType<Encoded = any, Decoded = any> = BaseType<
+  ZodMiniType<any, Decoded>,
+  ZodMiniType<any, Encoded>
+>

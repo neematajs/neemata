@@ -5,36 +5,58 @@
     "build": "tsc",
     "type-check": "tsc --noEmit"
   },
+  "bin": {
+    "neemata": "./dist/cli.js"
+  },
   "exports": {
     ".": {
-      "types": "./src/index.ts",
-      "import": "./dist/index.js",
-      "module-sync": "./dist/index.js"
+      "types": "./src/_exports/index.ts",
+      "import": "./dist/_exports/index.js",
+      "module-sync": "./dist/_exports/index.js"
+    },
+    "./config": {
+      "types": "./src/config.ts",
+      "import": "./dist/config.js",
+      "module-sync": "./dist/config.js"
+    },
+    "./runtime": {
+      "types": "./src/runtime/*.ts",
+      "import": "./dist/runtime/*.js",
+      "module-sync": "./dist/runtime/*.js"
     },
     "./*": {
-      "types": "./src/*.ts",
-      "import": "./dist/*.js",
-      "module-sync": "./dist/*.js"
+      "types": "./src/_exports/*.ts",
+      "import": "./dist/_exports/*.js",
+      "module-sync": "./dist/_exports/*.js"
     }
   },
   "publishConfig": {
     "exports": {
       ".": {
-        "types": "./dist/index.d.ts",
-        "import": "./dist/index.js",
-        "module-sync": "./dist/index.js"
+        "types": "./dist/_exports/index.d.ts",
+        "import": "./dist/_exports/index.js",
+        "module-sync": "./dist/_exports/index.js"
+      },
+      "./config": {
+        "types": "./dist/config.d.ts",
+        "import": "./dist/config.js",
+        "module-sync": "./dist/config.js"
+      },
+      "./runtime": {
+        "types": "./dist/runtime/*.d.ts",
+        "import": "./dist/runtime/*.js",
+        "module-sync": "./dist/runtime/*.js"
       },
       "./*": {
-        "types": "./dist/*.d.ts",
-        "import": "./dist/*.js",
-        "module-sync": "./dist/*.js"
+        "types": "./dist/_exports/*.d.ts",
+        "import": "./dist/_exports/*.js",
+        "module-sync": "./dist/_exports/*.js"
       }
     }
   },
   "dependencies": {
     "@nmtjs/api": "workspace:*",
     "@nmtjs/application": "workspace:*",
-    "@nmtjs/cli": "workspace:*",
     "@nmtjs/common": "workspace:*",
     "@nmtjs/contract": "workspace:*",
     "@nmtjs/core": "workspace:*",
@@ -48,5 +70,9 @@
     "dist",
     "LICENSE.md",
     "README.md"
-  ]
+  ],
+  "devDependencies": {
+    "citty": "^0.1.6",
+    "rolldown-vite": "^7.2.2"
+  }
 }

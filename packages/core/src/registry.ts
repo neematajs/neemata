@@ -1,25 +1,29 @@
-import type { Hook } from './enums.ts'
-import type { HookType } from './hooks.ts'
+import type { AnyHook, Hook } from '@nmtjs/core'
+
 import type { AnyInjectable, Dependant } from './injectables.ts'
 import type { Logger } from './logger.ts'
 import { Scope } from './enums.ts'
-import { Hooks } from './hooks.ts'
 import { getInjectableScope } from './injectables.ts'
 
 export class Registry {
-  readonly hooks = new Hooks()
+  readonly hooks = new Map<string, Hook[]>()
 
   constructor(protected readonly application: { logger: Logger }) {}
 
-  registerHooks<T extends Hooks>(hooks: T) {
-    Hooks.merge(hooks, this.hooks)
+  registerHook(hook: AnyHook) {
+    let hooks = this.hooks.get(hook.name)
+    if (!hooks) {
+      hooks = []
+      this.hooks.set(hook.name, hooks)
+    }
+    hooks.push(hook)
   }
 
-  registerHook<T extends Hook>(name: T, callback: HookType[T]) {
-    this.hooks.add(name, callback)
+  *getDependants(): Generator<Dependant> {
+    for (const hooks of this.hooks.values()) {
+      yield* hooks
+    }
   }
-
-  *getDependants(): Generator<Dependant> {}
 
   clear() {
     this.hooks.clear()

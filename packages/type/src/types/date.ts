@@ -15,6 +15,7 @@ export class DateType extends TransformType<
       decode: (value) => new Date(value),
       encode: (value) => value.toISOString(),
       type: union([iso.date(), iso.datetime()]),
+      prototype: DateType.prototype,
     })
   }
 }

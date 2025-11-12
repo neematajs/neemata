@@ -1,13 +1,13 @@
 import type { Callback } from '@nmtjs/common'
-import type { AnyInjectable, Container, Logger } from '@nmtjs/core'
+import type { AnyInjectable, Container, Hooks, Logger } from '@nmtjs/core'
 import { defer, isAbortError, throwError } from '@nmtjs/common'
-import { Hook, Scope } from '@nmtjs/core'
+import { Scope } from '@nmtjs/core'
 
 import type { ProtocolBlob, ProtocolBlobMetadata } from '../common/blob.ts'
 import type { ProtocolRPC } from '../common/types.ts'
 import type { ProtocolApi, ProtocolApiCallOptions } from './api.ts'
 import type { ConnectionOptions } from './connection.ts'
-import type { ProtocolFormat } from './format.ts'
+import type { BaseServerFormat } from './format.ts'
 import type { ProtocolRegistry } from './registry.ts'
 import type { Transport } from './transport.ts'
 import type { ResolveFormatParams } from './utils.ts'
@@ -15,6 +15,8 @@ import { concat, decodeNumber, encodeNumber } from '../common/binary.ts'
 import { ErrorCode, ServerMessageType } from '../common/enums.ts'
 import { isIterableResult } from './api.ts'
 import { Connection, ConnectionContext } from './connection.ts'
+import { ProtocolHook } from './enums.ts'
+import { ProtocolFormat } from './format.ts'
 import { ProtocolInjectables } from './injectables.ts'
 import { ProtocolClientStream, ProtocolServerStream } from './stream.ts'
 import { getFormat } from './utils.ts'
@@ -56,6 +58,7 @@ export class ProtocolConnections {
 
   constructor(
     private readonly application: {
+      hooks: Hooks
       logger: Logger
       registry: ProtocolRegistry
       format: ProtocolFormat
@@ -97,11 +100,7 @@ export class ProtocolConnections {
   async remove(connectionId: string) {
     const { connection, context } = this.get(connectionId)
 
-    this.application.registry.hooks.call(
-      Hook.OnDisconnect,
-      { concurrent: true },
-      connection,
-    )
+    this.application.hooks.callConcurrent(ProtocolHook.Disconnect, connection)
 
     this.#collection.delete(connectionId)
 
@@ -135,10 +134,19 @@ export class ProtocolConnections {
   }
 
   async initialize(connection: Connection) {
-    await this.application.registry.hooks.call(
-      Hook.OnConnect,
-      { concurrent: false },
+    await this.application.hooks.callConcurrent(
+      ProtocolHook.Connect,
       connection,
+    )
+  }
+
+  /**
+   * Dispose all connection containers on protocol reload
+   */
+  async reload() {
+    const connections = Array.from(this.#collection.values())
+    return await Promise.all(
+      connections.map(({ context }) => context.container.dispose()),
     )
   }
 }
@@ -234,22 +242,32 @@ export type ProtocolRPCOptions = {
   validateMetadata?: ProtocolApiCallOptions['validateMetadata']
 }
 
+export type ProtocolOptions = {
+  formats: BaseServerFormat[]
+  persistConnections?: { timeout: number }
+}
+
 export class Protocol {
+  format: ProtocolFormat
   #connections: ProtocolConnections
   #clientStreams: ProtocolClientStreams
   #serverStreams: ProtocolServerStreams
 
   constructor(
     protected readonly application: {
+      hooks: Hooks
       logger: Logger
-      format: ProtocolFormat
       container: Container
       registry: ProtocolRegistry
       api: ProtocolApi
     },
-    protected readonly options?: { persistConnections?: { timeout: number } },
+    protected readonly options?: ProtocolOptions,
   ) {
-    this.#connections = new ProtocolConnections(this.application)
+    this.format = new ProtocolFormat(options?.formats || [])
+    this.#connections = new ProtocolConnections({
+      ...application,
+      format: this.format,
+    })
     this.#clientStreams = new ProtocolClientStreams(this.#connections)
     this.#serverStreams = new ProtocolServerStreams(this.#connections)
   }
@@ -580,5 +598,9 @@ export class Protocol {
 
   abortServerStream(connectionId: string, streamId: number, error?: Error) {
     return this.#serverStreams.abort(connectionId, streamId, error)
+  }
+
+  async reload() {
+    await this.#connections.reload()
   }
 }

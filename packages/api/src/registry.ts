@@ -1,13 +1,14 @@
 import type { ErrorClass } from '@nmtjs/common'
-import type { AnyInjectable, Dependant, Logger } from '@nmtjs/core'
+import type { AnyInjectable, Dependant } from '@nmtjs/core'
 import { getInjectableScope, Scope } from '@nmtjs/core'
 import { ProtocolRegistry } from '@nmtjs/protocol/server'
 
 import type { AnyFilter, AnyGuard, AnyMiddleware } from './api.ts'
 import type { AnyProcedure } from './procedure.ts'
 import type { AnyRouter } from './router.ts'
+import { kRootRouter } from './constants.ts'
 import { isProcedure } from './procedure.ts'
-import { isRouter } from './router.ts'
+import { isRootRouter, isRouter } from './router.ts'
 
 export class ApiRegistry extends ProtocolRegistry {
   readonly filters = new Map<ErrorClass, AnyFilter<ErrorClass>>()
@@ -17,20 +18,34 @@ export class ApiRegistry extends ProtocolRegistry {
     string,
     { procedure: AnyProcedure; path: AnyRouter[] }
   >()
-  readonly routers = new Map<string, AnyRouter>()
+  readonly routers = new Map<string | kRootRouter, AnyRouter>()
+
+  registerRootRouter(router: AnyRouter) {
+    if (this.routers.has(kRootRouter)) {
+      throw new Error('Root router already registered')
+    }
+
+    if (!isRootRouter(router)) {
+      throw new Error('Root router must be a root router')
+    }
+
+    this.routers.set(kRootRouter, router)
+    this.registerRouter(router, [])
+  }
 
   registerRouter(router: AnyRouter, path: AnyRouter[] = []) {
     for (const route of Object.values(router.routes)) {
       if (isRouter(route)) {
-        const name = route.contract.name!
+        const name = path.length === 0 ? kRootRouter : route.contract.name
+        if (!name) throw new Error('Nested routers must have a name')
         if (this.routers.has(name)) {
-          throw new Error(`Router ${name} already registered`)
+          throw new Error(`Router ${String(name)} already registered`)
         }
-        this.registerHooks(route.hooks)
-        this.routers.set(name!, route)
+        this.routers.set(name, route)
         this.registerRouter(route, [...path, router])
       } else if (isProcedure(route)) {
-        const name = route.contract.name!
+        const name = route.contract.name
+        if (!name) throw new Error('Procedures must have a name')
         if (this.procedures.has(name)) {
           throw new Error(`Procedure ${name} already registered`)
         }

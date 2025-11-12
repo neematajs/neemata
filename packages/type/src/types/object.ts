@@ -1,25 +1,29 @@
 import type { core, ZodMiniObject, ZodMiniRecord } from 'zod/mini'
-import { object as zodObject, record as zodRecord } from 'zod/mini'
+import {
+  looseObject as zodLooseObject,
+  object as zodObject,
+  record as zodRecord,
+} from 'zod/mini'
 
-import type { ZodPlainType } from './_plain.ts'
+import type { ZodPlainType } from './_utils.ts'
 import type { BaseTypeAny, OptionalType } from './base.ts'
 import type { LiteralType } from './literal.ts'
 import type { StringType } from './string.ts'
-import { zodPlainType } from './_plain.ts'
+import { zodPlainType } from './_utils.ts'
 import { BaseType } from './base.ts'
 import { EnumType } from './enum.ts'
 
 export type ObjectTypeProps = { [k: string]: BaseTypeAny }
-export type AnyObjectType = ObjectType<ObjectTypeProps>
+
 export class ObjectType<T extends ObjectTypeProps = {}> extends BaseType<
-  ZodMiniObject<{ [K in keyof T]: T[K]['encodeZodType'] }, core.$strict>,
-  ZodMiniObject<{ [K in keyof T]: T[K]['decodeZodType'] }, core.$strict>,
+  ZodMiniObject<{ [K in keyof T]: T[K]['encodeZodType'] }, core.$strip>,
+  ZodMiniObject<{ [K in keyof T]: T[K]['decodeZodType'] }, core.$strip>,
   { properties: T },
   ZodPlainType<
-    ZodMiniObject<{ [K in keyof T]: T[K]['encodeZodType'] }, core.$strict>
+    ZodMiniObject<{ [K in keyof T]: T[K]['encodeZodType'] }, core.$strip>
   >,
   ZodPlainType<
-    ZodMiniObject<{ [K in keyof T]: T[K]['decodeZodType'] }, core.$strict>
+    ZodMiniObject<{ [K in keyof T]: T[K]['decodeZodType'] }, core.$strip>
   >
 > {
   static factory<T extends ObjectTypeProps = {}>(properties: T) {
@@ -42,6 +46,46 @@ export class ObjectType<T extends ObjectTypeProps = {}> extends BaseType<
     })
   }
 }
+
+export class LooseObjectType<T extends ObjectTypeProps = {}> extends BaseType<
+  ZodMiniObject<{ [K in keyof T]: T[K]['encodeZodType'] }, core.$loose>,
+  ZodMiniObject<{ [K in keyof T]: T[K]['decodeZodType'] }, core.$loose>,
+  { properties: T },
+  ZodPlainType<
+    ZodMiniObject<{ [K in keyof T]: T[K]['encodeZodType'] }, core.$loose>
+  >,
+  ZodPlainType<
+    ZodMiniObject<{ [K in keyof T]: T[K]['decodeZodType'] }, core.$loose>
+  >
+> {
+  static factory<T extends ObjectTypeProps = {}>(properties: T) {
+    const encodeProperties = {} as {
+      [K in keyof T]: T[K]['encodeZodType']
+    }
+    const decodeProperties = {} as {
+      [K in keyof T]: T[K]['decodeZodType']
+    }
+
+    for (const key in properties) {
+      encodeProperties[key] = properties[key].encodeZodType
+      decodeProperties[key] = properties[key].decodeZodType
+    }
+
+    return new LooseObjectType<T>({
+      encodeZodType: zodLooseObject(encodeProperties),
+      decodeZodType: zodLooseObject(decodeProperties),
+      props: { properties },
+    })
+  }
+}
+
+export type ObjectLikeType<T extends ObjectTypeProps> =
+  | ObjectType<T>
+  | LooseObjectType<T>
+
+export type AnyObjectType = ObjectType<ObjectTypeProps>
+export type AnyLooseObjectType = LooseObjectType<ObjectTypeProps>
+export type AnyObjectLikeType<> = AnyObjectType | AnyLooseObjectType
 
 export class RecordType<
   K extends LiteralType<string | number> | EnumType | StringType,
@@ -69,68 +113,77 @@ export class RecordType<
   }
 }
 
-export function keyof<T extends AnyObjectType>(
-  type: T,
-): EnumType<core.util.ToEnum<Extract<keyof T['props']['properties'], string>>> {
+export type KeyofType<T extends AnyObjectLikeType> = EnumType<
+  core.util.ToEnum<Extract<keyof T['props']['properties'], string>>
+>
+
+export function keyof<T extends AnyObjectLikeType>(type: T): KeyofType<T> {
   return EnumType.factory(Object.keys(type.props.properties) as any)
 }
 
-export function pick<
-  T extends AnyObjectType,
+export type PickObjectType<
+  T extends AnyObjectLikeType,
   P extends { [K in keyof T['props']['properties']]?: true },
->(
-  source: T,
-  pick: P,
-): ObjectType<{
+> = ObjectType<{
   [K in keyof P]: P[K] extends true
     ? K extends keyof T['props']['properties']
       ? T['props']['properties'][K]
       : never
     : never
-}> {
+}>
+export function pick<
+  T extends AnyObjectLikeType,
+  P extends { [K in keyof T['props']['properties']]?: true },
+>(source: T, pick: P): PickObjectType<T, P> {
   const properties = Object.fromEntries(
     Object.entries(source.props.properties).filter(([key]) => pick[key]),
   )
   return ObjectType.factory(properties) as any
 }
 
-export function omit<
-  T extends AnyObjectType,
+export type OmitObjectType<
+  T extends AnyObjectLikeType,
   P extends { [K in keyof T['props']['properties']]?: true },
->(
-  source: T,
-  omit: P,
-): ObjectType<{
+> = ObjectType<{
   [K in keyof T['props']['properties'] as K extends keyof P
     ? never
     : K]: T['props']['properties'][K]
-}> {
+}>
+export function omit<
+  T extends AnyObjectLikeType,
+  P extends { [K in keyof T['props']['properties']]?: true },
+>(source: T, omit: P): OmitObjectType<T, P> {
   const properties = Object.fromEntries(
     Object.entries(source.props.properties).filter(([key]) => !omit[key]),
   )
   return ObjectType.factory(properties) as any
 }
 
-export function extend<T extends AnyObjectType, P extends ObjectTypeProps>(
-  object1: T,
-  properties: P,
-): ObjectType<{
+export type ExtendObjectType<
+  T extends AnyObjectLikeType,
+  P extends ObjectTypeProps,
+> = ObjectType<{
   [K in keyof T['props']['properties'] | keyof P]: K extends keyof P
     ? P[K]
     : K extends keyof T['props']['properties']
       ? T['props']['properties'][K]
       : never
-}> {
+}>
+
+export function extend<T extends AnyObjectLikeType, P extends ObjectTypeProps>(
+  object1: T,
+  properties: P,
+): ExtendObjectType<T, P> {
   return ObjectType.factory({
     ...object1.props.properties,
     ...properties,
   }) as any
 }
 
-export function merge<T1 extends AnyObjectType, T2 extends AnyObjectType>(
-  object1: T1,
-  object2: T2,
-): ObjectType<{
+export type MergeObjectTypes<
+  T1 extends AnyObjectLikeType,
+  T2 extends AnyObjectLikeType,
+> = ObjectType<{
   [K in
     | keyof T1['props']['properties']
     | keyof T2['props']['properties']]: K extends keyof T2['props']['properties']
@@ -138,21 +191,26 @@ export function merge<T1 extends AnyObjectType, T2 extends AnyObjectType>(
     : K extends keyof T1['props']['properties']
       ? T1['props']['properties'][K]
       : never
-}> {
+}>
+
+export function merge<
+  T1 extends AnyObjectLikeType,
+  T2 extends AnyObjectLikeType,
+>(object1: T1, object2: T2): MergeObjectTypes<T1, T2> {
   return ObjectType.factory({
     ...object1.props.properties,
     ...object2.props.properties,
   }) as any
 }
 
-export function partial<
-  T extends AnyObjectType,
-  P extends T extends ObjectType<infer Props> ? Props : never,
->(
+export type PartialObjectType<T extends AnyObjectLikeType> = ObjectType<{
+  [K in keyof T['props']['properties']]: OptionalType<
+    T['props']['properties'][K]
+  >
+}>
+export function partial<T extends AnyObjectLikeType>(
   object: T,
-): ObjectType<{
-  [K in keyof P]: OptionalType<P[K]>
-}> {
+): PartialObjectType<T> {
   const properties = {} as any
 
   for (const [key, value] of Object.entries(object.props.properties)) {
@@ -163,4 +221,5 @@ export function partial<
 }
 
 export const object = ObjectType.factory
+export const looseObject = LooseObjectType.factory
 export const record = RecordType.factory

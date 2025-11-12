@@ -96,12 +96,19 @@ export function withTimeout(
 }
 
 export function tryCaptureStackTrace(depth = 0) {
-  return (
-    new Error().stack
-      ?.split('\n')
-      .slice(4 + depth)
-      .join('\n') ?? undefined
-  )
+  const traceLines = new Error().stack?.split('\n')
+  if (traceLines) {
+    for (const traceLine of traceLines) {
+      const trimmed = traceLine.trim()
+
+      if (trimmed.startsWith('at eval (') && trimmed.endsWith(')')) {
+        const trace = trimmed.slice(9, -1)
+        // console.dir({ traceLines, trace })
+        return trace
+      }
+    }
+  }
+  return undefined
 }
 
 export function isGeneratorFunction(value: any): value is GeneratorFunction {

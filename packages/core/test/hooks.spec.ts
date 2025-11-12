@@ -1,84 +1,92 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { kHookCollection } from '../src/constants.ts'
 import { Container } from '../src/container.ts'
-import { Hook } from '../src/enums.ts'
+import { createHook } from '../src/hook.ts'
 import { Hooks } from '../src/hooks.ts'
-import { CoreInjectables, createFactoryInjectable } from '../src/injectables.ts'
 import { Registry } from '../src/registry.ts'
 import { testLogger } from './_utils.ts'
 
 describe('Hooks', () => {
+  let registry: Registry
+  let container: Container
   let hooks: Hooks
 
   beforeEach(() => {
-    hooks = new Hooks()
+    const logger = testLogger()
+    registry = new Registry({ logger })
+    container = new Container({ registry, logger })
+    hooks = new Hooks({ container, registry })
   })
 
-  test('should add a hook', () => {
-    const callback = vi.fn()
-    hooks.add('test', callback)
-    expect(hooks[kHookCollection].get('test')).toContain(callback)
+  it('does nothing when no hooks are registered for the given name', async () => {
+    await expect(hooks.call('missing', [])).resolves.toBeUndefined()
   })
 
-  test('should remove a hook', () => {
-    const callback = vi.fn()
-    hooks.add('test', callback)
-    hooks.remove('test', callback)
-    expect(hooks[kHookCollection].get('test')).not.toContain(callback)
-  })
+  it('executes registered hooks sequentially by default', async () => {
+    const order: string[] = []
 
-  test('should call a hook', async () => {
-    const callback = vi.fn()
-    hooks.add('test', callback)
-    await hooks.call('test', { concurrent: true })
-    expect(callback).toHaveBeenCalled()
-  })
-
-  test('should merge hooks', () => {
-    const callback1 = vi.fn()
-    const callback2 = vi.fn()
-    const hooks2 = new Hooks()
-    hooks.add('test', callback1)
-    hooks2.add('test', callback2)
-    Hooks.merge(hooks2, hooks)
-    expect(hooks[kHookCollection].get('test')).toContain(callback1)
-    expect(hooks[kHookCollection].get('test')).toContain(callback2)
-  })
-
-  test('should clear hooks', () => {
-    const callback = vi.fn()
-    hooks.add('test', callback)
-    hooks.clear()
-    expect(hooks[kHookCollection].get('test')).toBeUndefined()
-  })
-})
-
-describe('Hooks injectables', () => {
-  const logger = testLogger()
-  const registry = new Registry({ logger })
-  const container = new Container({ registry, logger })
-
-  test('should properly handle inline hooks', async () => {
-    const hookSpy = vi.fn()
-    const injectable = createFactoryInjectable({
-      dependencies: { hook: CoreInjectables.hook },
-      factory: ({ hook }) => {
-        hook(Hook.OnDisconnect, hookSpy)
-      },
+    const firstHook = createHook({
+      name: 'test',
+      handler: vi.fn(async () => {
+        order.push('first')
+      }),
+    })
+    const secondHook = createHook({
+      name: 'test',
+      handler: vi.fn(async () => {
+        order.push('second')
+      }),
     })
 
-    await container.resolve(injectable)
+    registry.registerHook(firstHook)
+    registry.registerHook(secondHook)
 
-    expect(registry.hooks[kHookCollection].get(Hook.OnDisconnect)?.size).toBe(1)
-    const connection = {}
-    registry.hooks.call(Hook.OnDisconnect, {}, connection)
-    expect(hookSpy).toHaveBeenCalledWith(connection)
+    await hooks.call('test')
 
-    await container.dispose()
+    expect(order).toEqual(['first', 'second'])
+    expect(firstHook.handler).toHaveBeenCalledWith({})
+    expect(secondHook.handler).toHaveBeenCalledWith({})
+  })
 
-    expect(registry.hooks[kHookCollection].get(Hook.OnDisconnect)?.size).toBe(0)
-    registry.hooks.call(Hook.OnDisconnect, {}, connection)
-    expect(hookSpy).toHaveBeenCalledTimes(1)
+  it('respects reverse order when specified', async () => {
+    const order: string[] = []
+    const firstHook = createHook({
+      name: 'test',
+      handler: vi.fn(async () => {
+        order.push('first')
+      }),
+    })
+    const secondHook = createHook({
+      name: 'test',
+      handler: vi.fn(async () => {
+        order.push('second')
+      }),
+    })
+
+    registry.registerHook(firstHook)
+    registry.registerHook(secondHook)
+
+    await hooks.call('test')
+
+    expect(order).toEqual(['first', 'second'])
+  })
+
+  it('returns handler results when running concurrently', async () => {
+    const firstHook = createHook({
+      name: 'test',
+      handler: vi.fn(async () => 'first-result'),
+    })
+    const secondHook = createHook({
+      name: 'test',
+      handler: vi.fn(async () => 'second-result'),
+    })
+    registry.registerHook(firstHook)
+    registry.registerHook(secondHook)
+
+    const args = ['payload']
+    await hooks.call('test', ...args)
+
+    expect(firstHook.handler).toHaveBeenCalledWith({}, ...args)
+    expect(secondHook.handler).toHaveBeenCalledWith({}, ...args)
   })
 })

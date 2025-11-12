@@ -1,254 +1,354 @@
-import type { AnyFilter, AnyRouter, ApiOptions } from '@nmtjs/api'
-import type { ErrorClass } from '@nmtjs/common'
-import type { BasePlugin, Logger, LoggingOptions, Plugin } from '@nmtjs/core'
 import type {
-  BaseServerFormat,
-  Connection,
-  Transport,
-  TransportPlugin,
-} from '@nmtjs/protocol/server'
-import { Api } from '@nmtjs/api'
+  AnyRouter,
+  ExtractRouterContracts,
+  MergeRoutersRoutesContracts,
+} from '@nmtjs/api'
+import type { TAnyRouterContract } from '@nmtjs/contract'
+import type { Logger } from '@nmtjs/core'
+import type { Transport } from '@nmtjs/protocol/server'
+import { Api, createRootRouter } from '@nmtjs/api'
 import {
   Container,
   CoreInjectables,
   createLogger,
-  Hook,
-  isPlugin,
+  Hooks,
   Scope,
 } from '@nmtjs/core'
-import {
-  isTransportPlugin,
-  Protocol,
-  ProtocolFormat,
-} from '@nmtjs/protocol/server'
+import { Protocol, ProtocolFormat } from '@nmtjs/protocol/server'
 
-import type { PubSubOptions } from './pubsub.ts'
-import type { AnyTask, TasksOptions } from './tasks.ts'
-import type { ApplicationPluginContext, ExecuteFn } from './types.ts'
-import { WorkerType } from './enums.ts'
+import type { ApplicationConfig } from './config.ts'
+import type {
+  ApplicationPluginContext,
+  ApplicationPluginType,
+} from './plugins.ts'
+import type { ExtractOptionsPluginsRouters } from './types.ts'
+import { Commands } from './commands.ts'
+import { ApplicationType, LifecycleHook } from './enums.ts'
 import { AppInjectables } from './injectables.ts'
+import { JobRunner } from './job-runner.ts'
+import { LifecycleHooks } from './lifecycle-hooks.ts'
 import { PubSub } from './pubsub.ts'
-import { APP_COMMAND, ApplicationRegistry } from './registry.ts'
-import { Tasks } from './tasks.ts'
+import { ApplicationRegistry } from './registry.ts'
 
-type UseFn<R extends AnyRouter> = <
-  T extends BasePlugin<any, any, ApplicationPluginContext>,
->(
-  plugin: T,
-  ...args: T extends BasePlugin<any, infer O, ApplicationPluginContext>
-    ? null extends O
-      ? []
-      : [options: O]
-    : never
-) => Application<R>
-
-export type ApplicationOptions = {
-  type: WorkerType
-  api: ApiOptions
-  tasks: TasksOptions
-  pubsub: PubSubOptions
-  logging: LoggingOptions
-  protocol: {
-    formats: BaseServerFormat[]
-    persistConnections?: { timeout: number }
+export class Application<Config extends ApplicationConfig = ApplicationConfig> {
+  readonly _!: {
+    router: TAnyRouterContract<
+      MergeRoutersRoutesContracts<
+        Config['router'] extends AnyRouter
+          ? [
+              Config['router']['contract'],
+              ...ExtractRouterContracts<
+                ExtractOptionsPluginsRouters<Config['plugins']>
+              >,
+            ]
+          : ExtractRouterContracts<
+              ExtractOptionsPluginsRouters<Config['plugins']>
+            >
+      >
+    >
+    options: Config
   }
-}
-
-export class Application<T extends AnyRouter = AnyRouter> {
-  readonly _!: { router: T }
-  protected readonly _container: Container
+  protected readonly internalContainer: Container
   readonly api: Api
-  readonly tasks: Tasks
+  readonly commands: Commands
   readonly logger: Logger
   readonly registry: ApplicationRegistry
   readonly pubsub: PubSub
   readonly container: Container
   readonly format: ProtocolFormat
   readonly protocol: Protocol
-  readonly plugins: Array<[Plugin<any, any, ApplicationPluginContext>, any]> =
-    []
-  readonly transportPlugins: Array<[TransportPlugin, any]> = []
-  readonly transports = new Set<Transport>()
-  readonly connections = new Map<string, Connection>()
+  readonly hooks: Hooks
+  readonly lifecycleHooks: LifecycleHooks
+  readonly jobRunner: JobRunner
 
-  constructor(readonly options: ApplicationOptions) {
-    this.logger = createLogger(
-      this.options.logging,
-      `${this.options.type}Worker`,
-    )
+  readonly transports: Transport[] = []
+  readonly plugins: ApplicationPluginType[] = []
 
-    this.registry = new ApplicationRegistry(this)
+  constructor(
+    public type: ApplicationType,
+    public config: Config,
+  ) {
+    this.logger = createLogger(this.config.logging, `${this.type}Worker`)
 
-    this.format = new ProtocolFormat(this.options.protocol.formats)
+    this.lifecycleHooks = new LifecycleHooks()
+    this.registry = new ApplicationRegistry({ logger: this.logger })
+
+    this.format = new ProtocolFormat(this.config.protocol.formats)
 
     // create unexposed container for global injectables, which never gets disposed
-    this._container = new Container(this)
-    this._container.provide(CoreInjectables.logger, this.logger)
-    this._container.provide(AppInjectables.workerType, this.options.type)
-    this._container.provide(AppInjectables.execute, this.execute.bind(this))
-
-    // this will be overriden in task execution
-    this._container.provide(
-      AppInjectables.taskAbortSignal,
-      new AbortController().signal,
-    )
+    this.internalContainer = new Container({
+      logger: this.logger,
+      registry: this.registry,
+    })
+    this.internalContainer.provide(CoreInjectables.logger, this.logger)
+    this.internalContainer.provide(AppInjectables.workerType, this.type)
 
     // create a global container for rest of the application
     // including transports and plugins
-    this.container = this._container.fork(Scope.Global)
+    this.container = this.internalContainer.fork(Scope.Global)
+    this.jobRunner = new JobRunner({
+      container: this.container,
+      logger: this.logger,
+      registry: this.registry,
+      lifecycleHooks: this.lifecycleHooks,
+    })
+    this.hooks = new Hooks({
+      container: this.container,
+      registry: this.registry,
+    })
+    this.api = new Api(
+      {
+        container: this.container,
+        logger: this.logger,
+        registry: this.registry,
+      },
+      this.config.api,
+    )
+    this.commands = new Commands(
+      {
+        container: this.container,
+        lifecycleHooks: this.lifecycleHooks,
+        registry: this.registry,
+      },
+      this.config.commands.options,
+    )
+    this.pubsub = new PubSub(
+      {
+        container: this.container,
+        lifecycleHooks: this.lifecycleHooks,
+        logger: this.logger,
+        registry: this.registry,
+      },
+      this.config.pubsub,
+    )
+    this.protocol = new Protocol(
+      {
+        api: this.api,
+        container: this.container,
+        hooks: this.hooks,
+        logger: this.logger,
+        registry: this.registry,
+      },
+      config.protocol,
+    )
 
-    this.api = new Api(this, this.options.api)
-    this.tasks = new Tasks(this, this.options.tasks)
-    this.pubsub = new PubSub(this, this.options.pubsub)
-
-    this.protocol = new Protocol(this, options.protocol)
-
-    this._container.provide(AppInjectables.pubsub, this.pubsub)
+    this.internalContainer.provide(
+      AppInjectables.executeCommand,
+      this.commands.execute.bind(this.commands),
+    )
+    this.internalContainer.provide(
+      AppInjectables.runJob,
+      this.jobRunner.runJob.bind(this.commands),
+    )
+    this.internalContainer.provide(AppInjectables.pubsub, this.pubsub)
   }
 
   async initialize() {
-    this.initializeEssential()
+    this.logger.trace('Initializing plugins...')
     await this.initializePlugins()
-    await this.initializeTransports()
-    await this.registry.hooks.call(Hook.BeforeInitialize, { concurrent: false })
-    await this.container.load()
-    await this.registry.hooks.call(Hook.AfterInitialize, { concurrent: false })
+
+    if (this.isApiWorker) {
+      this.logger.trace('Initializing transports...')
+      await this.initializeTransports()
+    }
+
+    await this.lifecycleHooks.callHook(LifecycleHook.InitializeBefore, this)
+
+    this.logger.trace('Initializing essentials...')
+    this.initializeCore()
+
+    this.logger.trace('Initializing container...')
+    await this.lifecycleHooks.callHook(
+      LifecycleHook.ContainerInitializeBefore,
+      this.container,
+      this,
+    )
+    await this.container.initialize()
+    await this.lifecycleHooks.callHook(
+      LifecycleHook.ContainerInitializeAfter,
+      this.container,
+      this,
+    )
+
+    await this.lifecycleHooks.callHook(LifecycleHook.InitializeAfter, this)
   }
 
   async start() {
+    this.logger.trace('Starting application...')
     await this.initialize()
-
+    await this.lifecycleHooks.callHook(LifecycleHook.StartBefore, this)
     if (this.isApiWorker) {
-      await this.registry.hooks.call(Hook.BeforeStart, { concurrent: false })
+      this.logger.trace('Starting transports...')
       for (const transport of this.transports) await transport.start()
-      await this.registry.hooks.call(Hook.AfterStart, { concurrent: false })
     }
+    await this.lifecycleHooks.callHook(LifecycleHook.StartAfter, this)
+    this.logger.trace('Startup finished')
   }
 
   async stop() {
+    this.logger.trace('Stopping application...')
+    await this.lifecycleHooks.callHook(LifecycleHook.StopBefore, this)
     if (this.isApiWorker) {
-      await this.registry.hooks.call(Hook.BeforeStop, {
-        concurrent: false,
-        reverse: true,
-      })
-
+      this.logger.trace('Stopping transports...')
       for (const transport of this.transports) await transport.stop()
-
-      await this.registry.hooks.call(Hook.AfterStop, {
-        concurrent: false,
-        reverse: true,
-      })
     }
-    await this.terminate()
+    await this.lifecycleHooks.callHook(LifecycleHook.StopAfter, this)
+    await this.dispose()
+    this.logger.trace('Application succesfully stopped')
   }
 
-  async terminate() {
-    await this.registry.hooks.call(Hook.BeforeTerminate, {
-      concurrent: false,
-      reverse: true,
-    })
+  async dispose() {
+    this.logger.trace('Disposing application...')
+    await this.lifecycleHooks.callHook(LifecycleHook.DisposeBefore, this)
 
+    this.logger.trace('Disposing container...')
+    await this.lifecycleHooks.callHook(
+      LifecycleHook.ContainerDisposeBefore,
+      this.container,
+      this,
+    )
     await this.container.dispose()
+    await this.lifecycleHooks.callHook(
+      LifecycleHook.ContainerDisposeAfter,
+      this.container,
+      this,
+    )
 
-    await this.registry.hooks.call(Hook.AfterTerminate, {
-      concurrent: false,
-      reverse: true,
-    })
+    await this.disposePlugins()
 
-    this.transports.clear()
+    this.logger.trace('Clearing registry...')
     this.registry.clear()
+    this.transports.length = 0
+    this.plugins.length = 0
+
+    await this.lifecycleHooks.callHook(LifecycleHook.DisposeAfter, this)
+    this.logger.trace('Application disposed')
   }
 
-  execute: ExecuteFn = (task, ...args: any[]) => {
-    return this.tasks.execute(task, ...args)
+  async reload() {
+    this.registry.clear()
+    this.lifecycleHooks.removeAllHooks()
+    this.initializeCore()
+    await this.protocol.reload()
   }
 
-  use: UseFn<T> = (
-    plugin: BasePlugin<any, any, ApplicationPluginContext>,
-    ...args: any[]
-  ) => {
-    const options = args.at(0)
-
-    if (isTransportPlugin(plugin)) {
-      this.transportPlugins.push([plugin, options])
-    } else if (isPlugin(plugin)) {
-      this.plugins.push([plugin, options])
-    } else {
-      throw new Error('Invalid plugin')
+  initializeCore() {
+    this.lifecycleHooks.addHooks(this.config.lifecycleHooks)
+    const appRouter = this.config.router
+    const routers = this.plugins
+      .map((p) => p.router)
+      .filter(Boolean) as AnyRouter[]
+    if (appRouter) routers.push(appRouter)
+    const rootRouter = createRootRouter(...routers)
+    this.registry.registerRootRouter(rootRouter)
+    for (const filter of this.config.filters) {
+      this.registry.registerFilter(filter[0], filter[1])
     }
-
-    return this
-  }
-
-  withRouter<T extends AnyRouter>(router: T): Application<T> {
-    this.registry.registerRouter(router)
-    return this as any
-  }
-
-  withTasks(...tasks: AnyTask[]) {
-    for (const task of tasks) {
-      this.registry.registerTask(task)
+    for (const job of this.config.jobs) {
+      this.registry.registerJob(job)
     }
-    return this
-  }
-
-  withFilters(...filters: [ErrorClass, AnyFilter][]) {
-    for (const [errorClass, filter] of filters) {
-      this.registry.registerFilter(errorClass, filter)
+    for (const command of this.config.commands.commands) {
+      this.registry.registerCommand(command)
     }
-    return this
+    for (const hook of this.config.hooks) {
+      this.registry.registerHook(hook)
+    }
   }
 
   protected get isApiWorker() {
-    return this.options.type === WorkerType.Api
-  }
-
-  protected initializeEssential() {
-    const taskCommand = this.tasks.command.bind(this.tasks)
-    this.registry.registerCommand(APP_COMMAND, 'task', (arg) =>
-      taskCommand(arg).then(({ error }) => {
-        if (error) this.logger.error(error)
-      }),
-    )
+    return this.type === ApplicationType.Api
   }
 
   protected async initializeTransports() {
-    for (const [plugin, options] of this.transportPlugins) {
-      const context = this.createContext()
-      context.logger.setBindings({ $group: plugin.name })
-      const transport = await plugin.init(context, options)
-      this.transports.add(transport)
+    for (const { transport, options } of this.config.transports) {
+      await this.lifecycleHooks.callHook(
+        LifecycleHook.TransportInitializeBefore,
+        transport,
+        this,
+      )
+      const context = this.createContext(transport.name)
+      const instance = await transport.factory(context, options)
+      this.transports.push(instance)
+      await this.lifecycleHooks.callHook(
+        LifecycleHook.TransportInitializeAfter,
+        transport,
+        instance,
+        this,
+      )
     }
   }
 
   protected async initializePlugins() {
-    for (const [plugin, options] of this.plugins) {
-      const context = this.createContext()
-      context.logger.setBindings({ $group: plugin.name })
-      await plugin.init(context, options)
+    for (const { plugin, options } of this.config.plugins) {
+      await this.lifecycleHooks.callHook(
+        LifecycleHook.PluginInitializeBefore,
+        plugin,
+        this,
+      )
+      const context = this.createContext(plugin.name)
+      let instance = await plugin.factory(context, options)
+      instance = instance || {}
+      if (instance.hooks) this.lifecycleHooks.addHooks(instance.hooks)
+      if (instance.provide) {
+        for (const [key, value] of instance.provide) {
+          this.container.provide(key, value)
+        }
+      }
+      this.plugins.push(instance)
+      await this.lifecycleHooks.callHook(
+        LifecycleHook.PluginInitializeAfter,
+        plugin,
+        instance,
+        this,
+      )
     }
   }
 
-  protected createContext($group?: string): ApplicationPluginContext {
-    const logger = this.logger.child({ $group })
+  protected async disposePlugins() {
+    this.logger.trace('Disposing plugins...')
+    for (let i = 0; i < this.config.plugins.length; i++) {
+      const { plugin } = this.config.plugins[i]
+      const instance = this.plugins[i]
+      await this.lifecycleHooks.callHook(
+        LifecycleHook.PluginDisposeBefore,
+        plugin,
+        instance,
+        this,
+      )
+      if (instance.hooks) this.lifecycleHooks.removeHooks(instance.hooks)
+      if (instance.router)
+        this.registry.routers.delete(instance.router.contract.name!)
+      await this.lifecycleHooks.callHook(
+        LifecycleHook.PluginDisposeAfter,
+        plugin,
+        instance,
+        this,
+      )
+    }
+  }
+
+  protected createContext($lable?: string): ApplicationPluginContext {
+    const logger = this.logger.child({ $lable })
     // TODO: here might be better to come up with some interface,
     // instead of exposing components directly
     return Object.freeze({
       logger,
-      type: this.options.type,
+      type: this.type,
       api: this.api,
       pubsub: this.pubsub,
       format: this.format,
       container: this.container,
       registry: this.registry,
-      hooks: this.registry.hooks,
+      hooks: this.hooks,
       protocol: this.protocol,
+      lifecycleHooks: this.lifecycleHooks,
     })
   }
 }
 
-export function createApplication(
-  ...args: ConstructorParameters<typeof Application>
-) {
-  return new Application(...args)
+export function createApplication<Config extends ApplicationConfig>(
+  type: ApplicationType,
+  config: Config,
+): Application<Config> {
+  return new Application(type, config)
 }

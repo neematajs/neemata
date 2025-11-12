@@ -22,7 +22,7 @@ describe('Node.js', () => {
   })
 
   before(async () => {
-    app = createTestingApplication().use(WsTransport, {
+    app = createTestingApplication(WsTransport, {
       listen: { unix: TEST_CONFIG.SOCKET_PATH },
     })
     await app.start()

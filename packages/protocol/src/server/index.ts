@@ -1,6 +1,7 @@
 export * from './api.ts'
 export * from './connection.ts'
 export * from './constants.ts'
+export * from './enums.ts'
 export * from './format.ts'
 export * from './injectables.ts'
 export * from './protocol.ts'

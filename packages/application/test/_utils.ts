@@ -1,29 +1,29 @@
 import type { CreateProcedureParams } from '@nmtjs/api'
-import type { Dependencies, Plugin } from '@nmtjs/core'
+import type { Dependencies } from '@nmtjs/core'
 import type { ConnectionOptions } from '@nmtjs/protocol/server'
+import type { ArrayType } from '@nmtjs/type/array'
+import type { ObjectType } from '@nmtjs/type/object'
+import type { StringType } from '@nmtjs/type/string'
 import { createContractProcedure, createContractRouter } from '@nmtjs/api'
 import { noopFn } from '@nmtjs/common'
 import { c } from '@nmtjs/contract'
-import { createLogger, createPlugin } from '@nmtjs/core'
+import { createLogger } from '@nmtjs/core'
 import { Connection, createTransport } from '@nmtjs/protocol/server'
 import { t } from '@nmtjs/type'
 import { expect } from 'vitest'
 
-import type { ApplicationOptions } from '../src/application.ts'
-import type { BaseTaskExecutor, CreateTaskOptions } from '../src/tasks.ts'
+import type {
+  CommandArgsType,
+  CommandKwargsType,
+  CreateCommandOptions,
+} from '../src/commands.ts'
+import type { ApplicationConfig } from '../src/config.ts'
+import type { ApplicationPlugin } from '../src/plugins.ts'
 import { Application } from '../src/application.ts'
-import { WorkerType } from '../src/enums.ts'
-import { createTask } from '../src/tasks.ts'
-
-export class TestTaskExecutor implements BaseTaskExecutor {
-  constructor(
-    private readonly custom?: (task: any, ...args: any[]) => Promise<any>,
-  ) {}
-
-  execute(_signal: AbortSignal, name: string, ...args: any[]): Promise<any> {
-    return this.custom ? this.custom(name, ...args) : Promise.resolve()
-  }
-}
+import { createCommand } from '../src/commands.ts'
+import { defineApplication, resolveApplicationConfig } from '../src/config.ts'
+import { ApplicationType } from '../src/enums.ts'
+import { createApplicationPlugin } from '../src/plugins.ts'
 
 export const testTransport = (
   onInit = () => {},
@@ -38,31 +38,38 @@ export const testTransport = (
 
 export const testDefaultTimeout = 1000
 
-export const testPlugin = (init: Plugin['init'] = () => {}) =>
-  createPlugin('TestPlugin', init)
+export const testPlugin = (
+  factory: ApplicationPlugin['factory'] = () => ({}),
+) => createApplicationPlugin('TestPlugin', factory)
 
 export const testLogger = () =>
   createLogger({ pinoOptions: { enabled: false } }, 'test')
 
-export const testApp = (options: Partial<ApplicationOptions> = {}) =>
+export const testApp = (options: Partial<ApplicationConfig> = {}) =>
   new Application(
-    Object.assign(
-      {
-        type: WorkerType.Api,
+    ApplicationType.Api,
+    resolveApplicationConfig(
+      defineApplication(() => ({
         api: { timeout: testDefaultTimeout },
         tasks: { timeout: testDefaultTimeout },
         logging: { pinoOptions: { enabled: false } },
         pubsub: {},
         protocol: { formats: [] },
-      } as ApplicationOptions,
-      options,
+        commands: { commands: [], options: { timeout: testDefaultTimeout } },
+        filters: [],
+        jobs: [],
+        plugins: [],
+        transports: [],
+        router: testRouter(),
+        ...options,
+      })),
+      ApplicationType.Api,
     ),
   )
 
 export const TestRouterContract = c.router({
   routes: { testProcedure: c.procedure({ input: t.any(), output: t.any() }) },
   events: { testEvent: c.event({ payload: t.string() }) },
-  name: 'TestRouter',
 })
 
 export const testConnection = (options: ConnectionOptions = { data: {} }) => {
@@ -76,15 +83,24 @@ export const testProcedure = (
   >,
 ) => createContractProcedure(TestRouterContract.routes.testProcedure, params)
 
-export const testTask = <
-  TaskDeps extends Dependencies,
-  TaskArgs extends any[],
-  TaskResult,
+export const testCommand = <
+  CommandDeps extends Dependencies,
+  CommandResult,
+  CommandArgs extends CommandArgsType = ArrayType<StringType>,
+  CommandKwargs extends CommandKwargsType = ObjectType<{}>,
 >(
-  options: CreateTaskOptions<TaskDeps, TaskArgs, TaskResult>,
-) => createTask('test', options)
-
-export const testTaskRunner = (...args) => new TestTaskExecutor(...args)
+  options: CreateCommandOptions<
+    CommandResult,
+    CommandDeps,
+    CommandArgs,
+    CommandKwargs
+  >,
+) =>
+  createCommand('test', {
+    // @ts-expect-error
+    handler: noopFn,
+    ...options,
+  })
 
 export const testRouter = (option?: {
   routes: { testProcedure: ReturnType<typeof testProcedure> }

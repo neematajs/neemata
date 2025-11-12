@@ -1,28 +1,16 @@
 import type { Async } from '@nmtjs/common'
 
-import type { PluginContext } from './types.ts'
 import { kPlugin } from './constants.ts'
 
-export interface BasePlugin<
-  Type = any,
-  Options = unknown,
-  Context extends PluginContext = PluginContext,
-> {
+export interface Plugin<Type = void, Options = unknown, Context = unknown> {
   name: string
-  init: (context: Context, options: Options) => Async<Type>
-}
-
-export interface Plugin<
-  Type = void,
-  Options = unknown,
-  Context extends PluginContext = PluginContext,
-> extends BasePlugin<Type, Options, Context> {
+  factory: (context: Context, options: Options) => Async<Type>
   [kPlugin]: any
 }
 
-export const createPlugin = <Options = unknown, Type = void>(
+export const createPlugin = <Type = void, Options = unknown, Context = unknown>(
   name: string,
-  init: Plugin<Type, Options>['init'],
-): Plugin<Type, Options> => ({ name, init, [kPlugin]: true })
+  factory: Plugin<Type, Options, Context>['factory'],
+): Plugin<Type, Options, Context> => ({ name, factory, [kPlugin]: true })
 
 export const isPlugin = (value: any): value is Plugin => kPlugin in value

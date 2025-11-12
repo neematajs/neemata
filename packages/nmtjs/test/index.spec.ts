@@ -5,7 +5,6 @@ describe('nmtjs', () => {
     const nmtjs = await import('nmtjs')
 
     const application = await import('nmtjs/application')
-    const cli = await import('nmtjs/cli')
     const common = await import('nmtjs/common')
     const contract = await import('nmtjs/contract')
     const contractDefault = (await import('nmtjs/contract')).default
@@ -22,23 +21,22 @@ describe('nmtjs', () => {
     const wsTransporterDeno = await import('nmtjs/ws-transport/deno')
     const wsTransporterBun = await import('nmtjs/ws-transport/bun')
 
-    const _application = await import('@nmtjs/application')
-    const _cli = await import('@nmtjs/cli')
-    const _common = await import('@nmtjs/common')
-    const _contract = await import('@nmtjs/contract')
-    const _contractDefault = (await import('@nmtjs/contract')).default
-    const _core = await import('@nmtjs/core')
-    const _jsonFormat = await import('@nmtjs/json-format/server')
-    const _protocol = await import('@nmtjs/protocol')
-    const _protocolClient = await import('@nmtjs/protocol/client')
-    const _protocolServer = await import('@nmtjs/protocol/server')
-    const _server = await import('@nmtjs/server')
-    const _type = await import('@nmtjs/type')
-    const _typeDefault = (await import('@nmtjs/type')).default
-    const _wsTransport = await import('@nmtjs/ws-transport')
-    const _wsTransporterNode = await import('@nmtjs/ws-transport/node')
-    const _wsTransporterDeno = await import('@nmtjs/ws-transport/deno')
-    const _wsTransporterBun = await import('@nmtjs/ws-transport/bun')
+    const _application = await import('nmtjs/application')
+    const _common = await import('nmtjs/common')
+    const _contract = await import('nmtjs/contract')
+    const _contractDefault = (await import('nmtjs/contract')).default
+    const _core = await import('nmtjs/core')
+    const _jsonFormat = await import('nmtjs/json-format')
+    const _protocol = await import('nmtjs/protocol')
+    const _protocolClient = await import('nmtjs/protocol/client')
+    const _protocolServer = await import('nmtjs/protocol/server')
+    const _server = await import('nmtjs/server')
+    const _type = await import('nmtjs/type')
+    const _typeDefault = (await import('nmtjs/type')).default
+    const _wsTransport = await import('nmtjs/ws-transport')
+    const _wsTransporterNode = await import('nmtjs/ws-transport/node')
+    const _wsTransporterDeno = await import('nmtjs/ws-transport/deno')
+    const _wsTransporterBun = await import('nmtjs/ws-transport/bun')
 
     expect(nmtjs).toBeDefined()
     expect(common).toBeDefined()
@@ -54,10 +52,8 @@ describe('nmtjs', () => {
     expect(server).toBeDefined()
     expect(wsTransport).toBeDefined()
     expect(jsonFormat).toBeDefined()
-    expect(cli).toBeDefined()
 
     expect(_application).toStrictEqual(application)
-    expect(_cli).toStrictEqual(cli)
     expect(_common).toStrictEqual(common)
     expect(_contractDefault).toStrictEqual(contractDefault)
     expect(_contract).toStrictEqual(contract)

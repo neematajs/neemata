@@ -11,7 +11,8 @@ export type TAnyRouterContract<
     string,
     TRouteContract
   >,
-> = TRouterContract<RouteContracts, string | undefined>
+  RouterName extends string | undefined = string | undefined,
+> = TRouterContract<RouteContracts, RouterName>
 
 export type TRouteContract =
   | TAnyProcedureContract

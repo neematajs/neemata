@@ -5,6 +5,7 @@
 export * from './constants.ts'
 export * from './container.ts'
 export * from './enums.ts'
+export * from './hook.ts'
 export * from './hooks.ts'
 export * from './injectables.ts'
 export * from './logger.ts'

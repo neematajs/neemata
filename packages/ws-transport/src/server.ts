@@ -168,7 +168,7 @@ export class WsTransportServer implements Transport<WsConnectionData> {
       )
 
       // Get format for encoding/decoding
-      const format = getFormat(this.context.format, {
+      const format = getFormat(this.context.protocol.format, {
         acceptType,
         contentType: isBlob ? '*/*' : contentType,
       })
@@ -292,7 +292,7 @@ export class WsTransportServer implements Transport<WsConnectionData> {
             : HttpCode.InternalServerError
         const text = HttpStatusText[status]
 
-        const format = getFormat(this.context.format, {
+        const format = getFormat(this.context.protocol.format, {
           acceptType,
           contentType: isBlob ? '*/*' : contentType,
         })
@@ -310,7 +310,7 @@ export class WsTransportServer implements Transport<WsConnectionData> {
       // Unknown error
       this.logError(error, 'Unknown error while processing HTTP request')
 
-      const format = getFormat(this.context.format, {
+      const format = getFormat(this.context.protocol.format, {
         acceptType,
         contentType: isBlob ? '*/*' : contentType,
       })
@@ -546,7 +546,7 @@ export class WsTransportServer implements Transport<WsConnectionData> {
     const hooks = this.createWsHooks()
     const opts: WsAdapterParams = {
       ...this.options,
-      logger: this.logger.child({ $group: 'WsServer' }),
+      logger: this.logger.child({ $lable: 'WsServer' }),
       apiPath: '/api',
       wsHooks: hooks,
       fetchHandler: this.httpHandler.bind(this),

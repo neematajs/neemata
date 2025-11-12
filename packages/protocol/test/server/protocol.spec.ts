@@ -2,8 +2,9 @@ import type { AnyInjectable } from '@nmtjs/core'
 import type { Mock } from 'vitest'
 import {
   Container,
+  createHook,
   createLazyInjectable,
-  Hook,
+  Hooks,
   Registry,
   Scope,
 } from '@nmtjs/core'
@@ -15,6 +16,7 @@ import type {
 } from '../../src/server/api.ts'
 import { ServerMessageType } from '../../src/common/enums.ts'
 import { Connection, ConnectionContext } from '../../src/server/connection.ts'
+import { ProtocolHook } from '../../src/server/enums.ts'
 import { ProtocolFormat } from '../../src/server/format.ts'
 import { ProtocolInjectables } from '../../src/server/injectables.ts'
 import { Protocol } from '../../src/server/protocol.ts'
@@ -46,13 +48,16 @@ describe('Server Protocol', () => {
     api.call = vi.fn()
     registry = new Registry({ logger })
     container = new Container({ logger, registry })
-    protocol = new Protocol({
-      api,
-      container,
-      registry,
-      logger,
-      format: new ProtocolFormat([format]),
-    })
+    protocol = new Protocol(
+      {
+        hooks: new Hooks({ registry, container }),
+        api,
+        container,
+        registry,
+        logger,
+      },
+      { formats: [format] },
+    )
   })
 
   it('should be created', () => {
@@ -98,9 +103,12 @@ describe('Server Protocol', () => {
       const connectionId = '1'
       const connectionData = {}
 
-      const onConnectionHook = vi.fn()
+      const onConnectionHook = createHook({
+        name: ProtocolHook.Connect,
+        handler: vi.fn(),
+      })
 
-      registry.registerHook(Hook.OnConnect, onConnectionHook)
+      registry.registerHook(onConnectionHook)
 
       const { connection, context } = await protocol.addConnection(
         dummyTransport,
@@ -122,7 +130,7 @@ describe('Server Protocol', () => {
       expect(context.format).toHaveProperty('decoder')
 
       // to call OnConnect hooks
-      expect(onConnectionHook).toHaveBeenCalledOnce()
+      expect(onConnectionHook.handler).toHaveBeenCalledOnce()
     })
 
     it('should succeed to get a connection', async () => {
@@ -146,9 +154,12 @@ describe('Server Protocol', () => {
     it('should succeed to remove a connection', async () => {
       const connectionId = '1'
       const connectionData = {}
-      const onDisconnectionHook = vi.fn()
+      const onDisconnectionHook = createHook({
+        name: ProtocolHook.Disconnect,
+        handler: vi.fn(),
+      })
 
-      registry.registerHook(Hook.OnDisconnect, onDisconnectionHook)
+      registry.registerHook(onDisconnectionHook)
 
       await protocol.addConnection(
         dummyTransport,
@@ -159,7 +170,7 @@ describe('Server Protocol', () => {
       await expect(
         protocol.removeConnection(connectionId),
       ).resolves.not.toThrow()
-      expect(onDisconnectionHook).toHaveBeenCalledOnce()
+      expect(onDisconnectionHook.handler).toHaveBeenCalledOnce()
     })
 
     it('should fail to a connection with unsupported format', async () => {

@@ -1,8 +1,8 @@
-import type { BasePlugin, PluginContext } from '@nmtjs/core'
+import type { Container, Logger, Plugin } from '@nmtjs/core'
+import { createPlugin } from '@nmtjs/core'
 
 import type { ServerMessageType } from '../common/enums.ts'
 import type { Connection } from './connection.ts'
-import type { ProtocolFormat } from './format.ts'
 import type { Protocol } from './protocol.ts'
 import type { ProtocolRegistry } from './registry.ts'
 import type { ProtocolSendMetadata } from './types.ts'
@@ -19,22 +19,30 @@ export interface Transport<T = unknown> {
   ) => any
 }
 
-export interface TransportPluginContext extends PluginContext {
+export interface TransportPluginContext {
+  container: Container
   protocol: Protocol
   registry: ProtocolRegistry
-  format: ProtocolFormat
+  logger: Logger
 }
 
+export type AnyTransportPlugin = TransportPlugin<any, any>
 export interface TransportPlugin<Type = unknown, Options = unknown>
-  extends BasePlugin<Transport<Type>, Options, TransportPluginContext> {
+  extends Plugin<Transport<Type>, Options, TransportPluginContext> {
   [kTransportPlugin]: any
 }
 
 export const createTransport = <Type = unknown, Options = unknown>(
   name: string,
-  init: TransportPlugin<Type, Options>['init'],
-): TransportPlugin<Type, Options> => ({ name, init, [kTransportPlugin]: true })
+  factory: TransportPlugin<Type, Options>['factory'],
+): TransportPlugin<Type, Options> => {
+  const plugin = createPlugin<Transport<Type>, Options, TransportPluginContext>(
+    name,
+    factory,
+  )
+  return Object.assign(plugin, { [kTransportPlugin]: true })
+}
 
 export const isTransportPlugin = (
-  plugin: BasePlugin<any, any, any>,
+  plugin: Plugin<any, any, any>,
 ): plugin is TransportPlugin => kTransportPlugin in plugin

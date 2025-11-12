@@ -1,11 +1,13 @@
 import { defer } from '@nmtjs/common'
 import { c } from '@nmtjs/contract'
-import { Container, Hook } from '@nmtjs/core'
+import { Container } from '@nmtjs/core'
 import { t } from '@nmtjs/type'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import type { PubSubAdapter, PubSubAdapterEvent } from '../src/pubsub.ts'
+import { LifecycleHook } from '../src/enums.ts'
 import { AppInjectables } from '../src/injectables.ts'
+import { LifecycleHooks } from '../src/lifecycle-hooks.ts'
 import { PubSub } from '../src/pubsub.ts'
 import { ApplicationRegistry } from '../src/registry.ts'
 import { testLogger } from './_utils.ts'
@@ -68,17 +70,23 @@ describe('PubSub', () => {
   let container: Container
   let pubsub: PubSub
   let adapter: MockPubSubAdapter
+  let lifecycleHooks: LifecycleHooks
 
   beforeEach(async () => {
     adapter = new MockPubSubAdapter()
+
     registry = new ApplicationRegistry({ logger })
     container = new Container({ logger, registry })
+    lifecycleHooks = new LifecycleHooks()
     container.provide(AppInjectables.pubsubAdapter, adapter)
-    pubsub = new PubSub({ logger, registry, container }, { adapter })
+    pubsub = new PubSub(
+      { logger, registry, container, lifecycleHooks },
+      { adapter },
+    )
   })
 
   afterEach(async () => {
-    await registry.hooks.call(Hook.BeforeTerminate, {})
+    await lifecycleHooks.callHook(LifecycleHook.DisposeBefore)
   })
 
   it('should subscribe to specific events', async () => {
@@ -119,7 +127,6 @@ describe('PubSub', () => {
       yield { channel, payload: testData.data }
     }
 
-    // type a = t.infer.decoded.input<typeof TestSubscriptionContract2.events.transformEvent.payload>
     adapter.setSubscribeGenerator(mockGenerator)
 
     const subscription = pubsub.subscribe(

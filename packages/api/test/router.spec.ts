@@ -1,12 +1,7 @@
 import type { TProcedureContract } from '@nmtjs/contract'
 import { noopFn } from '@nmtjs/common'
-import {
-  createValueInjectable,
-  Hook,
-  Hooks,
-  kHookCollection,
-} from '@nmtjs/core'
-import type from '@nmtjs/type'
+import { createValueInjectable } from '@nmtjs/core'
+import { t } from '@nmtjs/type'
 import { describe, expect, expectTypeOf, it } from 'vitest'
 
 import { kRouter } from '../src/constants.ts'
@@ -26,20 +21,10 @@ describe('Router', () => {
     it('should create a router', () => {
       const router = createContractRouter(TestRouterContract, { routes })
       expect(router).toHaveProperty('contract', TestRouterContract)
-      expect(router).toHaveProperty('hooks', expect.any(Hooks))
       expect(router).toHaveProperty('middlewares', expect.any(Set))
       expect(router).toHaveProperty('guards', expect.any(Set))
       expect(router).toHaveProperty('routes', expect.any(Object))
       expect(router.routes).toHaveProperty('testProcedure', expect.any(Object))
-    })
-
-    it('should create a router with hooks', () => {
-      const handler = () => {}
-      const router = createContractRouter(TestRouterContract, {
-        routes,
-        hooks: { [Hook.AfterInitialize]: [handler] },
-      })
-      expect(router.hooks[kHookCollection].get('test')).toContain(handler)
     })
 
     it('should create a router with guards', () => {
@@ -103,8 +88,8 @@ describe('router static', () => {
   describe('Typings', () => {
     it('should create a router with correct types', () => {
       const variableProcedure = createProcedure({
-        input: type.any(),
-        output: type.any(),
+        input: t.any(),
+        output: t.any(),
         handler: () => {},
       })
 
@@ -113,8 +98,8 @@ describe('router static', () => {
         routes: {
           variableProcedure,
           inlineProcedure: createProcedure({
-            input: type.any(),
-            output: type.any(),
+            input: t.any(),
+            output: t.any(),
             handler: () => {},
           }),
         },
@@ -122,8 +107,8 @@ describe('router static', () => {
 
       expectTypeOf(router.contract.routes.variableProcedure).toEqualTypeOf<
         TProcedureContract<
-          type.AnyType,
-          type.AnyType,
+          t.AnyType,
+          t.AnyType,
           undefined,
           'test/variableProcedure'
         >
@@ -131,8 +116,8 @@ describe('router static', () => {
 
       expectTypeOf(router.contract.routes.inlineProcedure).toEqualTypeOf<
         TProcedureContract<
-          type.AnyType,
-          type.AnyType,
+          t.AnyType,
+          t.AnyType,
           undefined,
           'test/inlineProcedure'
         >

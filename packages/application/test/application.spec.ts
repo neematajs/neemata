@@ -1,3 +1,4 @@
+import { kRootRouter } from '@nmtjs/api'
 import { CoreInjectables } from '@nmtjs/core'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -14,7 +15,7 @@ describe.sequential('Application', () => {
   })
 
   afterEach(async () => {
-    await app.terminate()
+    await app.dispose()
   })
 
   it('should be an application', () => {
@@ -23,22 +24,21 @@ describe.sequential('Application', () => {
   })
 
   it('should register plugin', async () => {
-    const spy = vi.fn()
+    const spy = vi.fn(() => ({}))
     const plugin = testPlugin(spy)
-    const newApp = app.use(plugin)
+    app = testApp({ plugins: [{ plugin, options: undefined }] })
 
-    expect(newApp).toBe(app)
     await app.initialize()
     expect(spy).toHaveBeenCalledOnce()
     expect(spy).toHaveBeenCalledWith(
       expect.objectContaining({
-        type: app.options.type,
+        type: app.type,
         api: app.api,
         format: app.format,
         container: app.container,
         logger: expect.anything(),
         registry: app.registry,
-        hooks: app.registry.hooks,
+        hooks: app.hooks,
         protocol: app.protocol,
       }),
       undefined,
@@ -49,8 +49,9 @@ describe.sequential('Application', () => {
     await expect(app.container.resolve(CoreInjectables.logger)).resolves.toBe(
       app.logger,
     )
+
     await expect(
-      app.container.resolve(AppInjectables.execute),
+      app.container.resolve(AppInjectables.executeCommand),
     ).resolves.toBeInstanceOf(Function)
 
     await expect(
@@ -60,5 +61,12 @@ describe.sequential('Application', () => {
     await expect(
       app.container.resolve(AppInjectables.pubsubAdapter),
     ).rejects.toThrow()
+  })
+
+  it("should register app's root router", async () => {
+    await app.initialize()
+    const rootRouter = app.registry.routers.get(kRootRouter)
+    expect(rootRouter).toBeDefined()
+    expect(rootRouter!.routes).toMatchObject(app.config.router!.routes)
   })
 })

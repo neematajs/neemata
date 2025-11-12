@@ -11,7 +11,7 @@ describe('Plugin', () => {
 
     expect(plugin).toMatchObject<Plugin>({
       name: pluginName,
-      init: expect.any(Function),
+      factory: expect.any(Function),
       [kPlugin]: expect.anything(),
     })
   })

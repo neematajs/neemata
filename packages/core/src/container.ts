@@ -37,7 +37,6 @@ export class Container {
   private readonly resolvers = new Map<AnyInjectable, Promise<any>>()
   private readonly injectables = new Set<AnyInjectable>()
   private readonly dependants = new Map<AnyInjectable, Set<AnyInjectable>>()
-  // private readonly transients = new Map<any, any>()
   private disposing = false
 
   constructor(
@@ -48,12 +47,13 @@ export class Container {
     if ((scope as any) === Scope.Transient) {
       throw new Error('Invalid scope')
     }
+    this.provide(CoreInjectables.logger, this.application.logger)
     this.provide(CoreInjectables.inject, this.createInjectFunction())
     this.provide(CoreInjectables.dispose, this.createDisposeFunction())
     this.provide(CoreInjectables.registry, application.registry)
   }
 
-  async load() {
+  async initialize() {
     const traverse = (dependencies: Dependencies) => {
       for (const key in dependencies) {
         const dependency = dependencies[key]
@@ -68,7 +68,11 @@ export class Container {
     }
 
     const injectables = Array.from(this.findCurrentScopeInjectables())
-    await Promise.all(injectables.map((injectable) => this.resolve(injectable)))
+    const measurements: PerformanceMeasure[] = []
+    await Promise.all(
+      injectables.map((injectable) => this.resolve(injectable, measurements)),
+    )
+    return measurements
   }
 
   fork(scope: Exclude<Scope, Scope.Transient>) {
@@ -126,8 +130,16 @@ export class Container {
     throw new Error('No instance found')
   }
 
-  resolve<T extends AnyInjectable>(injectable: T) {
-    return this.resolveInjectable(injectable)
+  resolve<T extends AnyInjectable>(
+    injectable: T,
+    measurements?: PerformanceMeasure[],
+  ) {
+    return this.resolveInjectable(
+      injectable,
+      undefined,
+      undefined,
+      measurements,
+    )
   }
 
   async createContext<T extends Dependencies>(dependencies: T) {
@@ -137,14 +149,21 @@ export class Container {
   private async createInjectableContext<T extends Dependencies>(
     dependencies: T,
     dependant?: AnyInjectable,
+    measurements?: PerformanceMeasure[],
   ) {
     const injections: Record<string, any> = {}
     const deps = Object.entries(dependencies)
     const resolvers: Promise<any>[] = Array(deps.length)
     for (let i = 0; i < deps.length; i++) {
       const [key, dependency] = deps[i]
+      const isOptional = isOptionalInjectable(dependency)
       const injectable = getDepedencencyInjectable(dependency)
-      const resolver = this.resolveInjectable(injectable, dependant)
+      const resolver = this.resolveInjectable(
+        injectable,
+        dependant,
+        isOptional,
+        measurements,
+      )
       resolvers[i] = resolver.then((value) => (injections[key] = value))
     }
     await Promise.all(resolvers)
@@ -179,6 +198,8 @@ export class Container {
   private resolveInjectable<T extends AnyInjectable>(
     injectable: T,
     dependant?: AnyInjectable,
+    isOptional?: boolean,
+    measurements?: PerformanceMeasure[],
   ): Promise<ResolveInjectableType<T>> {
     if (this.disposing) {
       return Promise.reject(new Error('Cannot resolve during disposal'))
@@ -198,7 +219,12 @@ export class Container {
       (this.parent?.satisfies(injectable) &&
         compareScope(this.parent.scope, '<', this.scope))
     ) {
-      return this.parent.resolveInjectable(injectable, dependant)
+      return this.parent.resolveInjectable(
+        injectable,
+        dependant,
+        undefined,
+        measurements,
+      )
     } else {
       const { stack, label } = injectable
 
@@ -218,9 +244,7 @@ export class Container {
         return this.resolvers.get(injectable)!
       } else {
         const isLazy = isLazyInjectable(injectable)
-
         if (isLazy) {
-          const isOptional = isOptionalInjectable(injectable)
           if (isOptional) return Promise.resolve(undefined as any)
           return Promise.reject(
             new Error(
@@ -228,8 +252,16 @@ export class Container {
             ),
           )
         } else {
-          const resolution = this.createResolution(injectable).finally(() => {
+          const measure = measurements
+            ? performance.measure(injectable.label || injectable.stack || '')
+            : null
+          const resolution = this.createResolution(
+            injectable,
+            measurements,
+          ).finally(() => {
             this.resolvers.delete(injectable)
+
+            if (measurements && measure) measurements.push(measure)
           })
           if (injectable.scope !== Scope.Transient) {
             this.resolvers.set(injectable, resolution)
@@ -242,9 +274,14 @@ export class Container {
 
   private async createResolution<T extends AnyInjectable>(
     injectable: T,
+    measurements?: PerformanceMeasure[],
   ): Promise<ResolveInjectableType<T>> {
     const { dependencies } = injectable
-    const context = await this.createInjectableContext(dependencies, injectable)
+    const context = await this.createInjectableContext(
+      dependencies,
+      injectable,
+      measurements,
+    )
     const wrapper = {
       private: null as any,
       public: null as ResolveInjectableType<T>,
@@ -392,7 +429,7 @@ export class Container {
     return result
   }
 
-  private async disposeInjectableInstances(injectable: AnyInjectable) {
+  async disposeInjectableInstances(injectable: AnyInjectable) {
     try {
       if (this.instances.has(injectable)) {
         const wrappers = this.instances.get(injectable)!
@@ -417,7 +454,7 @@ export class Container {
     }
   }
 
-  private async disposeInjectableInstance(
+  async disposeInjectableInstance(
     injectable: AnyInjectable,
     instance: any,
     context: any,

@@ -1,33 +1,36 @@
 import { createLazyInjectable, Scope } from '@nmtjs/core'
 
-import type { WorkerType } from './enums.ts'
+import type { Commands } from './commands.ts'
+import type { ApplicationType } from './enums.ts'
+import type { JobRunner } from './job-runner.ts'
 import type { PubSub, PubSubAdapter } from './pubsub.ts'
-import type { ExecuteFn } from './types.ts'
 
 const appShutdownSignal = createLazyInjectable<AbortSignal>(
   Scope.Global,
   'Application shutdown signal',
-)
-const taskAbortSignal = createLazyInjectable<AbortSignal>(
-  Scope.Global,
-  'Task abort signal',
 )
 const pubsub = createLazyInjectable<PubSub>(Scope.Global, 'Pubsub')
 const pubsubAdapter = createLazyInjectable<PubSubAdapter>(
   Scope.Global,
   'Pubsub adapter',
 )
-const execute = createLazyInjectable<ExecuteFn>(Scope.Global, 'Task executor')
-const workerType = createLazyInjectable<WorkerType>(
+const executeCommand = createLazyInjectable<Commands['execute']>(
+  Scope.Global,
+  'Execute application command',
+)
+const runJob = createLazyInjectable<JobRunner['runJob']>(
+  Scope.Global,
+  'Run job',
+)
+const workerType = createLazyInjectable<ApplicationType>(
   Scope.Global,
   'Application worker type',
 )
-
 export const AppInjectables = {
   appShutdownSignal,
-  taskAbortSignal,
   workerType,
-  execute,
+  executeCommand,
+  runJob,
   pubsub,
   pubsubAdapter,
 }

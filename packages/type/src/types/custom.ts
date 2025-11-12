@@ -28,6 +28,7 @@ export class CustomType<
     encode,
     error,
     type = any() as unknown as EncodeType,
+    prototype,
   }: {
     decode: CustomTransformFn<
       EncodeType['_zod']['input'],
@@ -39,8 +40,9 @@ export class CustomType<
     >
     error?: string | core.$ZodErrorMap<core.$ZodIssueBase>
     type?: EncodeType
+    prototype?: object
   }) {
-    return new CustomType<Type, EncodeType, DecodeType>({
+    const instance = new CustomType<Type, EncodeType, DecodeType>({
       encodeZodType: pipe(
         zodCustom().check(
           refine((val) => typeof val !== 'undefined', { error, abort: true }),
@@ -58,6 +60,10 @@ export class CustomType<
       ),
       params: { encode },
     })
+
+    if (prototype) Object.setPrototypeOf(instance, prototype)
+
+    return instance
   }
 }
 

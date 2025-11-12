@@ -14,6 +14,8 @@ import type {
   ProtocolApiCallIterableResult,
   ProtocolApiCallOptions,
   ProtocolApiCallResult,
+  Transport,
+  TransportPlugin,
 } from '@nmtjs/protocol/server'
 import { withTimeout } from '@nmtjs/common'
 import { IsStreamProcedureContract } from '@nmtjs/contract'
@@ -94,6 +96,10 @@ export const createFilter = <
 ) => createFactoryInjectable(...args)
 
 export class Api implements ProtocolApi {
+  readonly definitions: Array<[TransportPlugin, any]> = []
+  readonly transports = new Set<Transport>()
+  readonly connections = new Map<string, Connection>()
+
   constructor(
     private readonly runtime: {
       container: Container

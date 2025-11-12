@@ -43,13 +43,14 @@
   },
   "dependencies": {
     "@nmtjs/common": "workspace:*",
+    "@nmtjs/core": "workspace:*",
     "@nmtjs/type": "workspace:*",
-    "@nmtjs/core": "workspace:*"
+    "hookable": "6.0.0-rc.1"
   },
   "peerDependencies": {
     "@nmtjs/common": "workspace:*",
-    "@nmtjs/type": "workspace:*",
-    "@nmtjs/core": "workspace:*"
+    "@nmtjs/core": "workspace:*",
+    "@nmtjs/type": "workspace:*"
   },
   "files": [
     "dist",

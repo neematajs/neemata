@@ -50,11 +50,14 @@ const levelLabels = {
   [Number.POSITIVE_INFINITY]: 'SILENT',
 }
 
-export const createLogger = (options: LoggingOptions = {}, $group: string) => {
+export const createLogger = (options: LoggingOptions = {}, $lable: string) => {
   let { destinations, pinoOptions } = options
 
   if (!destinations || !destinations?.length) {
-    destinations = [createConsolePrettyDestination('info')]
+    destinations = [
+      //@ts-expect-error
+      createConsolePrettyDestination(options.pinoOptions?.level || 'info'),
+    ]
   }
 
   const lowestLevelValue = destinations!.reduce(
@@ -71,7 +74,7 @@ export const createLogger = (options: LoggingOptions = {}, $group: string) => {
   return pino(
     { timestamp: stdTimeFunctions.isoTime, ...pinoOptions, level },
     pino.multistream(destinations!),
-  ).child({ $group, $threadId: threadId })
+  ).child({ $lable, $threadId: threadId })
 }
 
 export const createConsolePrettyDestination = (
@@ -81,10 +84,10 @@ export const createConsolePrettyDestination = (
   level,
   stream: pretty({
     colorize: true,
-    ignore: 'hostname,$group,$threadId',
+    ignore: 'hostname,$lable,$threadId',
     errorLikeObjectKeys: ['err', 'error', 'cause'],
     messageFormat: (log, messageKey) => {
-      const group = fg(`[${log.$group}]`, 11)
+      const group = fg(`[${log.$lable}]`, 11)
       const msg = fg(log[messageKey], messageColors[log.level as number])
       const thread = fg(`(Thread-${log.$threadId})`, 89)
       return `\x1b[0m${thread} ${group} ${msg}`

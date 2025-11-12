@@ -3,23 +3,27 @@ import type {
   TAnyProcedureContract,
   TAnyRouterContract,
   TProcedureContract,
+  TRouteContract,
   TRouterContract,
 } from '@nmtjs/contract'
 import { c, IsRouterContract } from '@nmtjs/contract'
-import { Hooks } from '@nmtjs/core'
 
 import type { AnyGuard, AnyMiddleware } from './api.ts'
 import type { AnyProcedure } from './procedure.ts'
-import { kRouter } from './constants.ts'
+import { kRootRouter, kRouter } from './constants.ts'
 
 export interface AnyRouter {
   contract: TAnyRouterContract
   routes: Record<string, AnyProcedure<any> | AnyRouter>
   guards: Set<AnyGuard>
   middlewares: Set<AnyMiddleware>
-  hooks: Hooks
   timeout?: number
   [kRouter]: any
+}
+
+export interface AnyRootRouter extends AnyRouter {
+  [kRootRouter]: any
+  contract: TAnyRouterContract<Record<string, TRouteContract>, undefined>
 }
 
 export interface Router<Contract extends TAnyRouterContract> extends AnyRouter {
@@ -40,9 +44,51 @@ export interface Router<Contract extends TAnyRouterContract> extends AnyRouter {
   }
   guards: Set<AnyGuard>
   middlewares: Set<AnyMiddleware>
-  hooks: Hooks
   timeout?: number
   [kRouter]: any
+}
+
+export interface RootRouter<
+  Contract extends TAnyRouterContract<
+    Record<string, TRouteContract>,
+    undefined
+  >,
+> extends Router<Contract> {
+  [kRootRouter]: any
+}
+
+export type MergeRoutersRoutesContracts<
+  Routers extends readonly TAnyRouterContract[],
+> = Routers extends [
+  infer First extends TAnyRouterContract,
+  ...infer Rest extends TAnyRouterContract[],
+]
+  ? {
+      [K in keyof First['routes']]: First['routes'][K]
+    } & MergeRoutersRoutesContracts<Rest>
+  : {}
+
+export type ExtractRouterContracts<
+  Routers extends readonly { contract: TAnyRouterContract }[],
+> = Routers extends [
+  infer First extends { contract: TAnyRouterContract },
+  ...infer Rest extends { contract: TAnyRouterContract }[],
+]
+  ? [First['contract'], ...ExtractRouterContracts<Rest>]
+  : []
+
+export function createRootRouter<Routers extends readonly AnyRouter[]>(
+  ...routers: Routers
+): RootRouter<
+  TRouterContract<
+    MergeRoutersRoutesContracts<ExtractRouterContracts<Routers>>,
+    undefined
+  >
+> {
+  const routes: Record<string, any> = {}
+  for (const router of routers) Object.assign(routes, router.routes)
+  const router = createRouter({ name: undefined, routes: routes })
+  return Object.freeze({ ...router, [kRootRouter]: true }) as any
 }
 
 export function createRouter<
@@ -70,7 +116,7 @@ export function createRouter<
     null extends Options['name'] ? undefined : Options['name']
   >
 > {
-  const { name, guards, hooks, middlewares, timeout } = params
+  const { name, guards, middlewares, timeout } = params
   const routes: Record<string, any> = params.routes || {}
 
   const routesContracts: any = {}
@@ -85,7 +131,6 @@ export function createRouter<
   return createContractRouter(contract, {
     routes: routes as any,
     guards,
-    hooks,
     middlewares,
     timeout,
   })
@@ -101,29 +146,19 @@ export function createContractRouter<Contract extends TAnyRouterContract>(
           ? AnyProcedure<Contract['routes'][K]>
           : never
     }
-
     guards?: AnyGuard[]
     middlewares?: AnyMiddleware[]
-    hooks?: Record<string, Callback[]>
     timeout?: number
   },
 ): Router<Contract> {
   const guards = new Set(params.guards ?? [])
   const middlewares = new Set(params.middlewares ?? [])
-  const hooks = new Hooks()
-
-  for (const [hookName, callbacks] of Object.entries(params.hooks ?? {})) {
-    for (const hook of callbacks) {
-      hooks.add(hookName, hook)
-    }
-  }
 
   return {
     contract,
     routes: params.routes,
     guards,
     middlewares,
-    hooks,
     timeout: params.timeout,
     [kRouter]: true,
   }
@@ -131,6 +166,9 @@ export function createContractRouter<Contract extends TAnyRouterContract>(
 
 export const isRouter = (value: any): value is AnyRouter =>
   Boolean(value?.[kRouter])
+
+export const isRootRouter = (value: any): value is AnyRootRouter =>
+  Boolean(value?.[kRootRouter])
 
 function assignRouteContracts(
   routes: Record<string, any>,

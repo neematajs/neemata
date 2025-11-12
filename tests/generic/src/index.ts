@@ -1,10 +1,14 @@
 import type { Application } from 'nmtjs/application'
-import { n, t, WorkerType } from 'nmtjs'
+import type { TransportPlugin } from 'nmtjs/protocol/server'
+import { ApplicationType, defineApplication, n, t } from 'nmtjs'
+import { resolveApplicationConfig } from 'nmtjs/application'
 import { JsonFormat } from 'nmtjs/json-format'
 
-export const createTestingApplication = (): Application => {
+export const createTestingApplication = (
+  transport: TransportPlugin<any, any>,
+  transportOptions: unknown,
+): Application => {
   const router = n.router({
-    name: 'test',
     routes: {
       test: n.procedure({
         input: t.any(),
@@ -15,19 +19,23 @@ export const createTestingApplication = (): Application => {
     },
   })
 
-  const app = n
-    .app({
-      type: WorkerType.Api,
-      api: { timeout: 10000 },
-      pubsub: {},
-      tasks: { timeout: 10000 },
-      logging: {
-        pinoOptions: { enabled: true },
-        destinations: [n.logging.console('error')],
-      },
-      protocol: { formats: [new JsonFormat()] },
-    })
-    .withRouter(router)
+  const app = n.app(
+    ApplicationType.Api,
+    resolveApplicationConfig(
+      defineApplication(() => ({
+        api: { timeout: 10000 },
+        logging: {
+          pinoOptions: { enabled: true },
+          destinations: [n.logging.console('error')],
+        },
+        protocol: { formats: [new JsonFormat()] },
+        transports: [{ transport, options: transportOptions }],
+        router,
+      })),
+      ApplicationType.Api,
+      {},
+    ),
+  )
 
   return app
 }
@@ -44,7 +52,7 @@ export const createTestMessage = (runtime: string): TestMessage => ({
 
 export const TEST_ROUTES = {
   HEALTH: '/healthy',
-  API_TEST: '/api/test/test',
+  API_TEST: '/api/test',
 } as const
 
 export const TEST_HEADERS = {

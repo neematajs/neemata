@@ -2,18 +2,23 @@ import assert from 'node:assert'
 import { createHash } from 'node:crypto'
 import { PassThrough, Readable } from 'node:stream'
 
+import type { Router } from '@nmtjs/api'
 import type {
   SubcriptionOptions,
   TAnyEventContract,
   TAnySubscriptionContract,
+  TRouterContract,
 } from '@nmtjs/contract'
 import type { Container, Logger } from '@nmtjs/core'
 import type { t } from '@nmtjs/type'
+import { createRouter } from '@nmtjs/api'
 import { isAbortError } from '@nmtjs/common'
-import { createPlugin, Hook } from '@nmtjs/core'
 
+import type { LifecycleHooks } from './lifecycle-hooks.ts'
 import type { ApplicationRegistry } from './registry.ts'
+import { LifecycleHook } from './enums.ts'
 import { AppInjectables } from './injectables.ts'
+import { createApplicationPlugin } from './plugins.ts'
 
 export type PubSubAdapterEvent = { channel: string; payload: any }
 
@@ -42,12 +47,13 @@ export class PubSub {
       logger: Logger
       container: Container
       registry: ApplicationRegistry
+      lifecycleHooks: LifecycleHooks
     },
     protected readonly options: PubSubOptions,
   ) {
     this.adapter = this.getAdapter()
 
-    this.application.registry.registerHook(Hook.AfterInitialize, () => {
+    this.application.lifecycleHooks.hook(LifecycleHook.InitializeAfter, () => {
       this.adapter = this.getAdapter()
       if (!this.adapter) {
         this.application.logger.warn(
@@ -56,11 +62,14 @@ export class PubSub {
       }
     })
 
-    this.application.registry.registerHook(Hook.BeforeTerminate, async () => {
-      for (const { stream } of this.subscriptions.values()) {
-        stream.destroy()
-      }
-    })
+    this.application.lifecycleHooks.hook(
+      LifecycleHook.DisposeBefore,
+      async () => {
+        for (const { stream } of this.subscriptions.values()) {
+          stream.destroy()
+        }
+      },
+    )
   }
 
   subscribe<
@@ -271,9 +280,12 @@ class DefaultPubSubAdapter implements PubSubAdapter {
   }
 }
 
-export const DefaultPubSubAdapterPlugin = createPlugin(
-  'DefaultPubSubAdapter',
-  ({ container }) => {
-    container.provide(AppInjectables.pubsubAdapter, new DefaultPubSubAdapter())
-  },
-)
+export const DefaultPubSubAdapterPlugin = createApplicationPlugin<
+  void,
+  Router<TRouterContract<{}, 'test'>>
+>('DefaultPubSubAdapter', () => {
+  return {
+    router: createRouter({ name: 'test', routes: {} }),
+    provide: [[AppInjectables.pubsubAdapter, new DefaultPubSubAdapter()]],
+  }
+})

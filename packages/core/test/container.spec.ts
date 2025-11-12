@@ -192,7 +192,7 @@ describe('Container', () => {
 
   beforeEach(async () => {
     container = new Container({ registry, logger })
-    await container.load()
+    await container.initialize()
   })
 
   afterEach(async () => {
@@ -205,8 +205,12 @@ describe('Container', () => {
   })
 
   it('should provide injectables by default', async () => {
+    expect(container.get(CoreInjectables.registry)).toBeInstanceOf(Registry)
+    expect(container.get(CoreInjectables.logger)).toBe(logger)
     expect(container.get(CoreInjectables.inject)).toBeTypeOf('function')
     expect(container.get(CoreInjectables.dispose)).toBeTypeOf('function')
+    const labledLogger = await container.resolve(CoreInjectables.logger('test'))
+    expect(labledLogger.bindings()).toHaveProperty('$label', 'test')
   })
 
   it('should create context', async () => {
@@ -296,9 +300,11 @@ describe('Container', () => {
     const createSpy = vi.fn()
     const disposeSpy = vi.fn()
     class injectable extends createClassInjectable() {
+      //@ts-expect-error
       async [kClassInjectableCreate]() {
         createSpy()
       }
+      //@ts-expect-error
       async [kClassInjectableDispose]() {
         disposeSpy()
       }
@@ -312,7 +318,7 @@ describe('Container', () => {
   it('should handle concurrent resolutions', async () => {
     const injectable = createFactoryInjectable({
       factory: async () => {
-        await new Promise((resolve) => setTimeout(resolve, 1))
+        await new Promise((resolve) => setTimeout(resolve, 2))
         return {}
       },
     })
@@ -423,7 +429,7 @@ describe('Container', () => {
       yield dependant
     })
 
-    await container.load()
+    await container.initialize()
 
     expect(factory1).toHaveBeenCalledOnce()
     expect(factory2).not.toHaveBeenCalled()
@@ -496,11 +502,12 @@ describe('Container', () => {
   })
 
   it('should resolve optional dependency', async () => {
+    const lazyInjectable = createLazyInjectable()
     const injectable = createFactoryInjectable({
-      dependencies: { dep: createOptionalInjectable(CoreInjectables.logger) },
+      dependencies: { dep: createOptionalInjectable(lazyInjectable) },
       factory: noopFn,
     })
-    await expect(container.resolve(injectable)).rejects.toThrow()
+    await expect(container.resolve(injectable)).resolves.toBeUndefined()
   })
 
   it('should inject and dispose', async () => {
@@ -693,7 +700,7 @@ describe('Container', () => {
 
       // Create new container - should work fine
       const newContainer = new Container({ registry, logger })
-      await newContainer.load()
+      await newContainer.initialize()
 
       await expect(newContainer.resolve(injectable)).resolves.toBe('test')
 
@@ -1459,10 +1466,12 @@ describe('Container', () => {
       ) {
         public readonly id = Math.random()
 
+        //@ts-expect-error
         async [kClassInjectableCreate]() {
           createSpy(this.id)
         }
 
+        //@ts-expect-error
         async [kClassInjectableDispose]() {
           disposeSpy(this.id)
         }

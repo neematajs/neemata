@@ -39,13 +39,11 @@ export type kClassInjectableDispose = typeof kClassInjectableDispose
 export const kProvider: unique symbol = Symbol.for('neemata:ProviderKey')
 export type kProvider = typeof kProvider
 
-export const kHookCollection: unique symbol = Symbol.for(
-  'neemata:HookCollectionKey',
-)
-export type kHookCollection = typeof kHookCollection
-
 export const kPlugin: unique symbol = Symbol.for('neemata:PluginKey')
 export type kPlugin = typeof kPlugin
 
 export const kMetadata: unique symbol = Symbol.for('neemata:MetadataKey')
 export type kMetadata = typeof kMetadata
+
+export const kHook: unique symbol = Symbol.for('neemata:HookKey')
+export type kHook = typeof kHook
