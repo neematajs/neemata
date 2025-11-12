@@ -9,7 +9,7 @@
 
 ## High-Level Architecture
 - **Runtime Orchestrator**: New `Runtime` in `packages/runtime` that owns app loading, container lifecycles, plugin execution, gateway composition, command/job execution, and lifecycle hooks. The runtime maintains a root container for global injectables, forks children per app instance, and constructs the single gateway via `packages/gateway`.
-- **Application Layer**: `Application` class delegates to runtime, exposing only minimal setup helpers for backwards compatibility. Most logic moves out (transports, job runner, commands).
+- **Application Layer**: `Application` shrinks into a service descriptor (router + filters + lifecycle hooks) that delegates execution concerns to the runtime while keeping only minimal wrappers for compatibility.
 - **Gateway**: Single runtime-managed instance. Runtime supplies transport descriptors, identity resolver, and per-app routing metadata. Maintains existing host APIs for dev/prod entrypoints.
 - **Workers/Server**: Worker pool and job processing infrastructure (`runtime/src/server.ts`, `runtime/src/worker.ts`) consume runtime orchestrator APIs instead of touching application internals directly.
 - **Configuration**: Runtime config becomes the authoritative schema describing applications, transports, workers, and queue/scheduler setup. Application config adapts or proxies to the runtime schema during transition.
@@ -37,6 +37,7 @@
 - [ ] Strip transport/job/command startup logic from `packages/application/src/application.ts`, delegating to runtime service.
 - [ ] Keep container, registry, plugin initialization as thin wrappers or adaptors; expose runtime handles (`pubsub`, `hooks`, etc.) via dependency injection as needed.
 - [ ] Adjust `application/src/index.ts` exports to re-export runtime components where appropriate and remove deprecated symbols.
+- [ ] Rework application config/types to reflect "service" semantics (router, filters, lifecycle hooks) and clarify documentation.
 
 ### 5. Gateway Integration
 - [ ] Define runtime-owned gateway bootstrap that instantiates the single `Gateway` with transport descriptors from config.
