@@ -1,3 +1,9 @@
+const TSErrorSymbol: unique symbol = Symbol('TSError')
+
+export type TSError<T extends string = string> = `Error: ${T}` & {
+  [TSErrorSymbol]: true
+}
+
 export interface TypeProvider {
   readonly input: unknown
   readonly output: unknown

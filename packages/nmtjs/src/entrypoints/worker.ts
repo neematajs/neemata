@@ -62,14 +62,6 @@ export default async function run(
     'workerType' | 'type' | 'applicationWorkerData'
   >,
 ) {
-  // process.on('uncaughtException', (error) => {
-  //   console.error(error)
-  // })
-
-  // process.on('unhandledRejection', (error) => {
-  //   console.error(error)
-  // })
-
   let configFactory: ApplicationConfigFactory
 
   function resolveConfig(configFactory: ApplicationConfigFactory) {

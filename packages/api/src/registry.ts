@@ -1,7 +1,6 @@
 import type { ErrorClass } from '@nmtjs/common'
 import type { AnyInjectable, Dependant } from '@nmtjs/core'
-import { getInjectableScope, Scope } from '@nmtjs/core'
-import { ProtocolRegistry } from '@nmtjs/protocol/server'
+import { getInjectableScope, Registry, Scope } from '@nmtjs/core'
 
 import type { AnyFilter, AnyGuard, AnyMiddleware } from './api.ts'
 import type { AnyProcedure } from './procedure.ts'
@@ -10,7 +9,7 @@ import { kRootRouter } from './constants.ts'
 import { isProcedure } from './procedure.ts'
 import { isRootRouter, isRouter } from './router.ts'
 
-export class ApiRegistry extends ProtocolRegistry {
+export class ApiRegistry extends Registry {
   readonly filters = new Map<ErrorClass, AnyFilter<ErrorClass>>()
   readonly middlewares = new Set<AnyMiddleware>()
   readonly guards = new Set<AnyGuard>()

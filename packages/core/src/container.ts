@@ -1,26 +1,21 @@
 import assert from 'node:assert'
 
-import type { ClassInstance } from '@nmtjs/common'
 import { tryCaptureStackTrace } from '@nmtjs/common'
 
 import type {
   AnyInjectable,
-  ClassInjectable,
   Dependencies,
   DependencyContext,
   ResolveInjectableType,
 } from './injectables.ts'
 import type { Logger } from './logger.ts'
 import type { Registry } from './registry.ts'
-import { kClassInjectableCreate, kClassInjectableDispose } from './constants.ts'
 import { Scope } from './enums.ts'
 import {
   CoreInjectables,
   compareScope,
-  createExtendableClassInjectable,
   createValueInjectable,
   getDepedencencyInjectable,
-  isClassInjectable,
   isFactoryInjectable,
   isInjectable,
   isLazyInjectable,
@@ -88,11 +83,18 @@ export class Container {
     // Get proper disposal order using topological sort
     const disposalOrder = this.getDisposalOrder()
 
-    // Dispose in the correct order
-    for (const injectable of disposalOrder) {
-      if (this.instances.has(injectable)) {
-        await this.disposeInjectableInstances(injectable)
+    try {
+      // Dispose in the correct order
+      for (const injectable of disposalOrder) {
+        if (this.instances.has(injectable)) {
+          await this.disposeInjectableInstances(injectable)
+        }
       }
+    } catch (error) {
+      this.application.logger.fatal(
+        { error },
+        'Potential memory leak: error during container disposal',
+      )
     }
 
     this.instances.clear()
@@ -292,13 +294,6 @@ export class Container {
         injectable.factory(wrapper.context),
       )
       wrapper.public = injectable.pick(wrapper.private)
-    } else if (isClassInjectable(injectable)) {
-      const instance: ClassInstance<ClassInjectable<unknown>> = new injectable(
-        context,
-      )
-      wrapper.private = instance
-      wrapper.public = wrapper.private
-      await instance[kClassInjectableCreate]?.call(instance)
     } else {
       throw new Error('Invalid injectable type')
     }
@@ -330,19 +325,12 @@ export class Container {
         }
       }
 
-      const newInjectable = isClassInjectable(injectable)
-        ? createExtendableClassInjectable(
-            injectable,
-            dependencies,
-            Scope.Transient,
-            1,
-          )
-        : {
-            ...injectable,
-            dependencies,
-            scope: Scope.Transient,
-            stack: tryCaptureStackTrace(1),
-          }
+      const newInjectable = {
+        ...injectable,
+        dependencies,
+        scope: Scope.Transient,
+        stack: tryCaptureStackTrace(1),
+      }
 
       return this.resolve(newInjectable) as Promise<ResolveInjectableType<T>>
     }
@@ -462,10 +450,6 @@ export class Container {
     if (isFactoryInjectable(injectable)) {
       const { dispose } = injectable
       if (dispose) await dispose(instance, context)
-    } else if (isClassInjectable(injectable)) {
-      await (instance as ClassInstance<ClassInjectable<unknown>>)[
-        kClassInjectableDispose
-      ]?.()
     }
   }
 }

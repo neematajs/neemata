@@ -14,7 +14,7 @@ import {
   Hooks,
   Scope,
 } from '@nmtjs/core'
-import { Protocol, ProtocolFormat } from '@nmtjs/protocol/server'
+import { Protocol, ProtocolFormats } from '@nmtjs/protocol/server'
 
 import type { ApplicationConfig } from './config.ts'
 import type {
@@ -50,18 +50,18 @@ export class Application<Config extends ApplicationConfig = ApplicationConfig> {
   }
   protected readonly internalContainer: Container
   readonly api: Api
-  readonly commands: Commands
+  // readonly commands: Commands
   readonly logger: Logger
   readonly registry: ApplicationRegistry
   readonly pubsub: PubSub
   readonly container: Container
-  readonly format: ProtocolFormat
-  readonly protocol: Protocol
+  // readonly format: ProtocolFormats
+  // readonly protocol: Protocol
   readonly hooks: Hooks
   readonly lifecycleHooks: LifecycleHooks
-  readonly jobRunner: JobRunner
+  // readonly jobRunner: JobRunner
 
-  readonly transports: Transport[] = []
+  // readonly transports: Transport[] = []
   readonly plugins: ApplicationPluginType[] = []
 
   constructor(
@@ -73,7 +73,7 @@ export class Application<Config extends ApplicationConfig = ApplicationConfig> {
     this.lifecycleHooks = new LifecycleHooks()
     this.registry = new ApplicationRegistry({ logger: this.logger })
 
-    this.format = new ProtocolFormat(this.config.protocol.formats)
+    // this.format = new ProtocolFormats(this.config.protocol.formats)
 
     // create unexposed container for global injectables, which never gets disposed
     this.internalContainer = new Container({
@@ -86,12 +86,12 @@ export class Application<Config extends ApplicationConfig = ApplicationConfig> {
     // create a global container for rest of the application
     // including transports and plugins
     this.container = this.internalContainer.fork(Scope.Global)
-    this.jobRunner = new JobRunner({
-      container: this.container,
-      logger: this.logger,
-      registry: this.registry,
-      lifecycleHooks: this.lifecycleHooks,
-    })
+    // this.jobRunner = new JobRunner({
+    //   container: this.container,
+    //   logger: this.logger,
+    //   registry: this.registry,
+    //   lifecycleHooks: this.lifecycleHooks,
+    // })
     this.hooks = new Hooks({
       container: this.container,
       registry: this.registry,
@@ -104,14 +104,14 @@ export class Application<Config extends ApplicationConfig = ApplicationConfig> {
       },
       this.config.api,
     )
-    this.commands = new Commands(
-      {
-        container: this.container,
-        lifecycleHooks: this.lifecycleHooks,
-        registry: this.registry,
-      },
-      this.config.commands.options,
-    )
+    // this.commands = new Commands(
+    //   {
+    //     container: this.container,
+    //     lifecycleHooks: this.lifecycleHooks,
+    //     registry: this.registry,
+    //   },
+    //   this.config.commands.options,
+    // )
     this.pubsub = new PubSub(
       {
         container: this.container,
@@ -121,25 +121,25 @@ export class Application<Config extends ApplicationConfig = ApplicationConfig> {
       },
       this.config.pubsub,
     )
-    this.protocol = new Protocol(
-      {
-        api: this.api,
-        container: this.container,
-        hooks: this.hooks,
-        logger: this.logger,
-        registry: this.registry,
-      },
-      config.protocol,
-    )
+    // this.protocol = new Protocol(
+    //   {
+    //     api: this.api,
+    //     container: this.container,
+    //     hooks: this.hooks,
+    //     logger: this.logger,
+    //     registry: this.registry,
+    //   },
+    //   config.protocol,
+    // )
 
-    this.internalContainer.provide(
-      AppInjectables.executeCommand,
-      this.commands.execute.bind(this.commands),
-    )
-    this.internalContainer.provide(
-      AppInjectables.runJob,
-      this.jobRunner.runJob.bind(this.commands),
-    )
+    // this.internalContainer.provide(
+    //   AppInjectables.executeCommand,
+    //   this.commands.execute.bind(this.commands),
+    // )
+    // this.internalContainer.provide(
+    //   AppInjectables.runJob,
+    //   this.jobRunner.runJob.bind(this.commands),
+    // )
     this.internalContainer.provide(AppInjectables.pubsub, this.pubsub)
   }
 

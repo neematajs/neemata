@@ -6,7 +6,7 @@ import type {
   Logger,
   Plugin,
 } from '@nmtjs/core'
-import type { Protocol, ProtocolFormat } from '@nmtjs/protocol/server'
+import type { Protocol, ProtocolFormats } from '@nmtjs/protocol/server'
 import { createPlugin } from '@nmtjs/core'
 
 import type { ApplicationType } from './enums.ts'
@@ -16,7 +16,7 @@ import type { ApplicationRegistry } from './registry.ts'
 export interface ApplicationPluginContext {
   readonly type: ApplicationType
   readonly api: Api
-  readonly format: ProtocolFormat
+  readonly format: ProtocolFormats
   readonly container: Container
   readonly logger: Logger
   readonly registry: ApplicationRegistry

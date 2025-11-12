@@ -94,13 +94,11 @@ export const testCommand = <
     CommandDeps,
     CommandArgs,
     CommandKwargs
-  >,
-) =>
-  createCommand('test', {
+  > = {
     // @ts-expect-error
     handler: noopFn,
-    ...options,
-  })
+  },
+) => createCommand('test', { ...options })
 
 export const testRouter = (option?: {
   routes: { testProcedure: ReturnType<typeof testProcedure> }

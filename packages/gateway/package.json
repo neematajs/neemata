@@ -1,0 +1,42 @@
+{
+  "name": "@nmtjs/gateway",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "type-check": "tsc --noEmit"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/common/index.ts",
+      "import": "./dist/common/index.js",
+      "module-sync": "./dist/common/index.js"
+    }
+  },
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./dist/common/index.d.ts",
+        "import": "./dist/common/index.js",
+        "module-sync": "./dist/common/index.js"
+      }
+    }
+  },
+  "dependencies": {
+    "@nmtjs/common": "workspace:*",
+    "@nmtjs/core": "workspace:*",
+    "@nmtjs/type": "workspace:*",
+    "@nmtjs/protocol": "workspace:*",
+    "hookable": "6.0.0-rc.1"
+  },
+  "peerDependencies": {
+    "@nmtjs/common": "workspace:*",
+    "@nmtjs/core": "workspace:*",
+    "@nmtjs/type": "workspace:*",
+    "@nmtjs/protocol": "workspace:*"
+  },
+  "files": [
+    "dist",
+    "LICENSE.md",
+    "README.md"
+  ]
+}

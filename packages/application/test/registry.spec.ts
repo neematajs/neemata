@@ -52,7 +52,10 @@ describe('ApplicationRegistry', () => {
 
   it('should fail to register a task with non-global dependencies', () => {
     const injectable = createLazyInjectable(Scope.Connection)
-    const task = testCommand({ dependencies: { injectable } })
+    const task = testCommand({
+      dependencies: { injectable },
+      handler: () => {},
+    })
     expect(() => registry.registerCommand(task)).toThrow()
   })
 })

@@ -169,7 +169,7 @@ export class WsTransportServer implements Transport<WsConnectionData> {
 
       // Get format for encoding/decoding
       const format = getFormat(this.context.protocol.format, {
-        acceptType,
+        accept: acceptType,
         contentType: isBlob ? '*/*' : contentType,
       })
 
@@ -293,7 +293,7 @@ export class WsTransportServer implements Transport<WsConnectionData> {
         const text = HttpStatusText[status]
 
         const format = getFormat(this.context.protocol.format, {
-          acceptType,
+          accept: acceptType,
           contentType: isBlob ? '*/*' : contentType,
         })
 
@@ -311,7 +311,7 @@ export class WsTransportServer implements Transport<WsConnectionData> {
       this.logError(error, 'Unknown error while processing HTTP request')
 
       const format = getFormat(this.context.protocol.format, {
-        acceptType,
+        accept: acceptType,
         contentType: isBlob ? '*/*' : contentType,
       })
 

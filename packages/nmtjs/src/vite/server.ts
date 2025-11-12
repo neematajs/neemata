@@ -1,5 +1,5 @@
-import type { UserConfig } from 'rolldown-vite'
-import { createServer as createViteServer } from 'rolldown-vite'
+import type { UserConfig } from 'vite'
+import { createServer as createViteServer } from 'vite'
 
 import type { ViteConfigOptions } from './config.ts'
 

@@ -6,8 +6,8 @@ import {
   Scope,
 } from '@nmtjs/core'
 
+import type { AnyJob } from '../../runtime/src/jobs/job.ts'
 import type { AnyCommand } from './commands.ts'
-import type { AnyJob } from './jobs.ts'
 
 export class ApplicationRegistry extends ApiRegistry {
   readonly commands = new Map<string, AnyCommand>()

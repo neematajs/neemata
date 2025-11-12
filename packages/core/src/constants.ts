@@ -21,21 +21,6 @@ export const kFactoryInjectable: unique symbol = Symbol.for(
 )
 export type kFactoryInjectable = typeof kFactoryInjectable
 
-export const kClassInjectable: unique symbol = Symbol.for(
-  'neemata:ClassInjectableKey',
-)
-export type kClassInjectable = typeof kClassInjectable
-
-export const kClassInjectableCreate: unique symbol = Symbol.for(
-  'neemata:ClassInjectableCreateKey',
-)
-export type kClassInjectableCreate = typeof kClassInjectableCreate
-
-export const kClassInjectableDispose: unique symbol = Symbol.for(
-  'neemata:ClassInjectableDisposeKey',
-)
-export type kClassInjectableDispose = typeof kClassInjectableDispose
-
 export const kProvider: unique symbol = Symbol.for('neemata:ProviderKey')
 export type kProvider = typeof kProvider
 

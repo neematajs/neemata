@@ -23,7 +23,7 @@ import { createFactoryInjectable, Scope } from '@nmtjs/core'
 import { ErrorCode } from '@nmtjs/protocol'
 import {
   createStreamResponse,
-  isIterableResult,
+  isIterable,
   ProtocolError,
   ProtocolInjectables,
 } from '@nmtjs/protocol/server'
@@ -296,7 +296,7 @@ export class Api implements ProtocolApi {
     procedure: AnyProcedure,
     response: any,
   ): ProtocolApiCallIterableResult {
-    if (!isIterableResult(response))
+    if (!isIterable(response))
       throw new Error('Invalid response. Use `createIterableResponse` helper')
     const iterable = response.iterable
     if (procedure.contract.output instanceof type.NeverType === false) {

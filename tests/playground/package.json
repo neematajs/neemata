@@ -6,15 +6,13 @@
     "start": "neemata dev"
   },
   "dependencies": {
-    "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.52.0"
+    "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.56.0"
   },
   "devDependencies": {
     "@nmtjs/client": "workspace:^",
     "@nmtjs/json-format": "workspace:^",
     "@nmtjs/protocol": "workspace:^",
     "@nmtjs/ws-client": "workspace:^",
-    "@vitejs/plugin-vue": "^6.0.1",
-    "nmtjs": "workspace:*",
-    "vue": "^3.5.24"
+    "nmtjs": "workspace:*"
   }
 }

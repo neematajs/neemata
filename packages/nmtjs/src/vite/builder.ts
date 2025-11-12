@@ -1,7 +1,7 @@
 import { isBuiltin } from 'node:module'
 import { resolve } from 'node:path'
 
-import { build as viteBuild } from 'rolldown-vite'
+import { build as viteBuild } from 'vite'
 
 import type { NeemataConfig } from '../config.ts'
 import type { ViteConfigOptions } from './config.ts'
@@ -88,12 +88,12 @@ export async function createBuilder(
                 { name: 'pino', test: /node_modules[\\/]pino/, priority: 2 },
                 {
                   name: '@nmtjs-server',
-                  test: /(node_modules[\\/](@nmtjs[\\/]server))|(packages[\\/]server)/,
+                  test: /node_modules[\\/](@nmtjs[\\/]server)/,
                   priority: 2,
                 },
                 {
                   name: '@nmtjs-common',
-                  test: /(node_modules[\\/]@nmtjs[\\/](?=[^server|nmtjs]))|(packages[\\/](?=[^server|nmtjs]))/,
+                  test: /node_modules[\\/]@nmtjs[\\/](?=[^server|nmtjs])/,
                   priority: 1,
                 },
                 { name: 'vendor', test: /node_modules/, priority: 0 },
@@ -102,6 +102,7 @@ export async function createBuilder(
             minify: neemataConfig.build.minify,
           },
         },
+
         chunkSizeWarningLimit: 10_000,
       },
     })

@@ -7,9 +7,9 @@ import type {
 } from '@nmtjs/protocol/server'
 import { createConsolePrettyDestination } from '@nmtjs/core'
 
+import type { AnyJob } from '../../runtime/src/jobs/job.ts'
 import type { AnyCommand, CommandsOptions } from './commands.ts'
 import type { ApplicationType } from './enums.ts'
-import type { AnyJob } from './jobs.ts'
 import type { LifecycleHooks } from './lifecycle-hooks.ts'
 import type { AnyApplicationPlugin } from './plugins.ts'
 import type { PubSubOptions } from './pubsub.ts'
@@ -47,12 +47,12 @@ export interface ApplicationConfig<
   [kApplicationConfig]: any
   router: Router
   api: ApiOptions
-  commands: ApplicationConfigCommands
-  jobs: AnyJob[]
+  // commands: ApplicationConfigCommands
+  // jobs: AnyJob[]
   pubsub: PubSubOptions
   logging: LoggingOptions
-  protocol: ProtocolOptions
-  transports: Transports
+  // protocol: ProtocolOptions
+  // transports: Transports
   plugins: Plugins
   filters: ApplicationConfigFilter[]
   hooks: AnyHook[]
@@ -85,11 +85,11 @@ export function resolveApplicationConfig<
   const {
     router,
     api = { timeout: 60000 } as T['api'],
-    protocol = { formats: [] } as T['protocol'],
-    jobs = [] as T['jobs'],
+    // protocol = { formats: [] } as T['protocol'],
+    // jobs = [] as T['jobs'],
     plugins = [] as T['plugins'],
-    transports = [] as T['transports'],
-    commands = { options: { timeout: 120_000 }, commands: [] } as T['commands'],
+    // transports = [] as T['transports'],
+    // commands = { options: { timeout: 120_000 }, commands: [] } as T['commands'],
     filters = [] as T['filters'],
     hooks = [] as T['hooks'],
     logging = {
@@ -103,12 +103,12 @@ export function resolveApplicationConfig<
   return Object.freeze({
     [kApplicationConfig]: true,
     api,
-    protocol,
+    // protocol,
     router,
-    commands,
-    jobs,
+    // commands,
+    // jobs,
     plugins,
-    transports,
+    // transports,
     filters,
     logging,
     hooks,

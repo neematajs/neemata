@@ -12,22 +12,22 @@ import type { ProtocolClientStream, ProtocolServerStream } from './stream.ts'
 
 export interface BaseServerDecoder {
   accept: Pattern[]
-  decode(buffer: ArrayBuffer): any
+  decode(buffer: Buffer): any
   decodeRPC(
-    buffer: ArrayBuffer,
+    buffer: Buffer,
     context: DecodeRPCContext<ProtocolClientStream>,
   ): ProtocolRPC
 }
 
 export interface BaseServerEncoder {
   contentType: string
-  encode(data: any): ArrayBuffer
+  encode(data: any): Buffer
   encodeRPC(
     rpc: OneOf<
       [{ callId: number; error: any }, { callId: number; result: any }]
     >,
     context: EncodeRPCContext<ProtocolServerStream>,
-  ): ArrayBuffer
+  ): Buffer
 }
 
 export abstract class BaseServerFormat
@@ -36,14 +36,14 @@ export abstract class BaseServerFormat
   abstract accept: Pattern[]
   abstract contentType: string
 
-  abstract encode(data: any): ArrayBuffer
+  abstract encode(data: any): Buffer
   abstract encodeRPC(
     rpc: ProtocolRPCResponse,
     context: EncodeRPCContext<ProtocolServerStream>,
-  ): ArrayBuffer
-  abstract decode(buffer: ArrayBuffer): any
+  ): Buffer
+  abstract decode(buffer: Buffer): any
   abstract decodeRPC(
-    buffer: ArrayBuffer,
+    buffer: Buffer,
     context: DecodeRPCContext<ProtocolClientStream>,
   ): ProtocolRPC
 }
@@ -76,7 +76,7 @@ export const parseContentTypes = (types: string) => {
     .map((t) => t.type)
 }
 
-export class ProtocolFormat {
+export class ProtocolFormats {
   decoders = new Map<Pattern, BaseServerDecoder>()
   encoders = new Map<Pattern, BaseServerEncoder>()
 

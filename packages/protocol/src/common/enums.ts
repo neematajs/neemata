@@ -1,11 +1,15 @@
+export enum ProtocolVersion {
+  v1 = 1,
+}
+
 export enum ClientMessageType {
   Rpc = 10,
   RpcAbort = 11,
-  RpcStreamAbort = 12,
 
   ClientStreamPush = 20,
   ClientStreamEnd = 21,
   ClientStreamAbort = 22,
+
   ServerStreamAbort = 23,
   ServerStreamPull = 24,
 }
@@ -27,7 +31,7 @@ export enum ServerMessageType {
   ClientStreamPull = 24,
 }
 
-export enum TransportType {
+export enum ConnectionType {
   Bidirectional = 'Bidirectional',
   Unidirectional = 'Unidirectional',
 }

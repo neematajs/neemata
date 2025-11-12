@@ -1,6 +1,6 @@
 import type { MessagePort } from 'node:worker_threads'
 import { fileURLToPath } from 'node:url'
-import { workerData as _workerData } from 'node:worker_threads'
+import { workerData as _workerData, parentPort } from 'node:worker_threads'
 
 import type { ApplicationType, ApplicationWorkerType } from '@nmtjs/application'
 import type { ServerPortMessage, ThreadPortMessage } from '@nmtjs/server'
@@ -18,6 +18,14 @@ export type RunWorkerOptions = {
 const workerData = _workerData as RunWorkerOptions
 
 const workerPath = fileURLToPath(import.meta.resolve('./worker'))
+
+process.on('uncaughtException', (error) => {
+  console.error(error)
+})
+
+process.on('unhandledRejection', (error) => {
+  console.error(error)
+})
 
 async function main() {
   let workerModule: typeof import('./worker.ts')
@@ -54,6 +62,8 @@ workerData.port.on('message', async (msg: ThreadPortMessage) => {
       break
     }
     case 'stop': {
+      workerData.port.removeAllListeners()
+      workerData.port.unref()
       await worker.stop()
       process.exit(0)
     }

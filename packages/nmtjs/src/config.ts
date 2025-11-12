@@ -1,4 +1,4 @@
-import type { Plugin as VitePlugin } from 'rolldown-vite'
+import type { Plugin as VitePlugin } from 'vite'
 
 export type ExtrernalDependency = string | RegExp
 

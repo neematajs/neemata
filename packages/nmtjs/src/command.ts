@@ -2,13 +2,11 @@ import type { ApplicationWorker } from '@nmtjs/server/worker'
 import { typeToString } from '@nmtjs/type'
 import { defineCommand } from 'citty'
 
-export default (worker: ApplicationWorker) => {
-  // const cleanup = () => worker.stop()
-  return defineCommand({
+export default (worker: ApplicationWorker) =>
+  defineCommand({
     meta: { description: 'Application CLI' },
     subCommands: {
       list: defineCommand({
-        // cleanup,
         async run(ctx) {
           worker.app.initializeCore()
           const commands = Array.from(worker.app.registry.commands).map(
@@ -22,7 +20,6 @@ export default (worker: ApplicationWorker) => {
         },
       }),
       execute: defineCommand({
-        // cleanup,
         async run(ctx) {
           const { _: positionals, ...kwargs } = ctx.args
           const [commandName, ...args] = positionals
@@ -31,4 +28,3 @@ export default (worker: ApplicationWorker) => {
       }),
     },
   })
-}
