@@ -7,6 +7,7 @@ import type { NeemataConfig } from '../config.ts'
 import type { ViteConfigOptions } from './config.ts'
 // import pkgJson from '../../package.json' with { type: 'json' }
 import { createConfig } from './config.ts'
+import { VitePlugins } from './plugins.ts'
 
 export async function createBuilder(
   configOptions: ViteConfigOptions,
@@ -25,7 +26,7 @@ export async function createBuilder(
       clearScreen: false,
       resolve: { alias: config.alias },
       ssr: { noExternal: true },
-      plugins: neemataConfig.plugins,
+      plugins: [...VitePlugins, ...neemataConfig.plugins],
       build: {
         lib: { entry: config.entries, formats: ['es'] },
         ssr: true,
@@ -68,10 +69,7 @@ export async function createBuilder(
           },
           output: {
             entryFileNames: '[name].js',
-            chunkFileNames: (chunk) =>
-              chunk.name === 'piscina'
-                ? '[name]-[hash].js'
-                : 'chunks/[name]-[hash].js',
+            chunkFileNames: '[name]-[hash].js',
             advancedChunks: {
               groups: [
                 {

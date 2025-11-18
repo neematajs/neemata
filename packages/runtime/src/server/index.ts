@@ -2,14 +2,15 @@ import assert from 'node:assert'
 import EventEmitter from 'node:events'
 
 import type { Logger } from '@nmtjs/core'
-import { ApplicationType, ApplicationWorkerType } from '@nmtjs/application'
+// import { ApplicationType, ApplicationWorkerType } from '@nmtjs/application'
 import { createLogger } from '@nmtjs/core'
 import { Worker as QueueWorker, UnrecoverableError } from 'bullmq'
 import { Redis } from 'ioredis'
 
-import type { ServerConfig } from './config.ts'
+import type { ServerConfig } from '../config/index.ts'
+// import type { ServerConfig } from './config.ts'
+import { JobsScheduler } from '../scheduler/index.ts'
 import { Pool } from './pool.ts'
-import { JobsScheduler } from './scheduler.ts'
 
 export class ApplicationServer extends EventEmitter {
   logger: Logger

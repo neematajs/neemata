@@ -1,0 +1,29 @@
+{
+  "name": "@nmtjs/proxy",
+  "type": "module",
+  "scripts": {
+    "postinstall": "$npm_execpath build",
+    "build": "napi build --release --esm"
+  },
+  "exports": {
+    ".": "./index.js",
+    "./neemata-proxy.node": "./neemata-proxy.node"
+  },
+  "publishConfig": {
+    "exports": {
+      ".": "./index.js",
+      "./neemata-proxy.node": "./neemata-proxy.node"
+    }
+  },
+  "napi": {
+    "binaryName": "neemata-proxy"
+  },
+  "dependencies": {
+    "@napi-rs/cli": "^3.4.1"
+  },
+  "files": [
+    "dist",
+    "LICENSE.md",
+    "README.md"
+  ]
+}

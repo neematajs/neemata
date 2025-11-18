@@ -6,69 +6,53 @@
     "type-check": "tsc --noEmit"
   },
   "bin": {
-    "neemata": "./dist/cli.js"
+    "neemata": "./src/cli.ts"
   },
   "exports": {
-    ".": {
-      "types": "./src/_exports/index.ts",
-      "import": "./dist/_exports/index.js",
-      "module-sync": "./dist/_exports/index.js"
-    },
-    "./config": {
-      "types": "./src/config.ts",
-      "import": "./dist/config.js",
-      "module-sync": "./dist/config.js"
-    },
-    "./runtime": {
-      "types": "./src/runtime/*.ts",
-      "import": "./dist/runtime/*.js",
-      "module-sync": "./dist/runtime/*.js"
-    },
-    "./*": {
-      "types": "./src/_exports/*.ts",
-      "import": "./dist/_exports/*.js",
-      "module-sync": "./dist/_exports/*.js"
-    }
+    ".": "./src/_exports/index.ts",
+    "./config": "./src/config.ts",
+    "./*": "./src/_exports/*.ts"
   },
   "publishConfig": {
+    "bin": {
+      "neemata": "./dist/cli.js"
+    },
     "exports": {
-      ".": {
-        "types": "./dist/_exports/index.d.ts",
-        "import": "./dist/_exports/index.js",
-        "module-sync": "./dist/_exports/index.js"
-      },
-      "./config": {
-        "types": "./dist/config.d.ts",
-        "import": "./dist/config.js",
-        "module-sync": "./dist/config.js"
-      },
-      "./runtime": {
-        "types": "./dist/runtime/*.d.ts",
-        "import": "./dist/runtime/*.js",
-        "module-sync": "./dist/runtime/*.js"
-      },
-      "./*": {
-        "types": "./dist/_exports/*.d.ts",
-        "import": "./dist/_exports/*.js",
-        "module-sync": "./dist/_exports/*.js"
-      }
+      ".": "./dist/_exports/index.js",
+      "./config": "./dist/config.js",
+      "./*": "./dist/_exports/*.js"
     }
   },
   "dependencies": {
-    "@nmtjs/api": "workspace:*",
-    "@nmtjs/application": "workspace:*",
     "@nmtjs/common": "workspace:*",
     "@nmtjs/contract": "workspace:*",
     "@nmtjs/core": "workspace:*",
+    "@nmtjs/gateway": "workspace:*",
     "@nmtjs/json-format": "workspace:*",
     "@nmtjs/protocol": "workspace:*",
-    "@nmtjs/gateway": "workspace:*",
     "@nmtjs/runtime": "workspace:*",
     "@nmtjs/type": "workspace:*",
     "@nmtjs/ws-transport": "workspace:*",
-    "dotenv": "^17.2.3",
     "citty": "^0.1.6",
-    "vite": "npm:rolldown-vite@7.2.5"
+    "dedent": "^1.7.0",
+    "dotenv": "^17.2.3",
+    "esrap": "^2.1.2",
+    "oxc-parser": "^0.97.0",
+    "oxc-resolver": "^11.13.2",
+    "oxc-transform": "^0.97.0",
+    "vite": "npm:rolldown-vite@7.2.5",
+    "vite-plugin-static-copy": "^3.1.4"
+  },
+  "devDependencies": {
+    "@nmtjs/proxy": "workspace:*"
+  },
+  "peerDependencies": {
+    "@nmtjs/proxy": "workspace:*"
+  },
+  "peerDependenciesMeta": {
+    "@nmtjs/proxy": {
+      "optional": true
+    }
   },
   "files": [
     "dist",

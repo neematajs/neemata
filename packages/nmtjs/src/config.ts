@@ -10,6 +10,10 @@ export interface NeemataConfig {
   /**
    * Path to application entry point
    */
+  applications: { [appName: string]: string }
+  /**
+   * Path to application entry point
+   */
   applicationPath: string
   /**
    * Path to server entry point

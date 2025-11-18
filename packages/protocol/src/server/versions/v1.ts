@@ -12,24 +12,19 @@ export class ProtocolVersion1 extends ProtocolVersionInterface {
       case ClientMessageType.Rpc: {
         const rpc = context.decoder.decodeRPC(buffer, {
           addStream: (streamId, callId, metadata) => {
-            return context.clientStreams.add(
-              context.connectionId,
-              streamId,
-              metadata,
-              (size) => {
-                context.transport.send?.(
-                  context.connectionId,
-                  this.encodeMessage(
-                    context,
-                    ServerMessageType.ClientStreamPull,
-                    { size, streamId },
-                  ),
-                )
-              },
-            )
+            return context.clientStreams.add(streamId, metadata, (size) => {
+              context.transport.send?.(
+                context.connectionId,
+                this.encodeMessage(
+                  context,
+                  ServerMessageType.ClientStreamPull,
+                  { size, streamId },
+                ),
+              )
+            })
           },
           getStream: (id) => {
-            return context.clientStreams.get(context.connectionId, id)
+            return context.clientStreams.get(id)
           },
         })
         return { type: messageType, rpc }

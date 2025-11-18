@@ -6,19 +6,11 @@
     "type-check": "tsc --noEmit"
   },
   "exports": {
-    ".": {
-      "types": "./src/common/index.ts",
-      "import": "./dist/common/index.js",
-      "module-sync": "./dist/common/index.js"
-    }
+    ".": "./src/index.ts"
   },
   "publishConfig": {
     "exports": {
-      ".": {
-        "types": "./dist/common/index.d.ts",
-        "import": "./dist/common/index.js",
-        "module-sync": "./dist/common/index.js"
-      }
+      ".": "./dist/index.js"
     }
   },
   "dependencies": {

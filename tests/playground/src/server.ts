@@ -1,20 +1,24 @@
-import { ApplicationWorkerType, n, t } from 'nmtjs'
-import { createSchedulerJobEntry, defineServer } from 'nmtjs/server'
+import type { TransportV2 } from 'nmtjs/gateway'
+import { defineServer } from 'nmtjs/runtime'
+
+import { App } from 'uWebSockets.js'
+
+const wsTransport = App as unknown as TransportV2
 
 export default defineServer({
   deploymentId: import.meta.env.PROD ? 'production-deployment' : undefined,
   logger: { pinoOptions: { level: 'trace' } },
-  workers: {
-    Api: [1],
-    Io: { threadsNumber: 0, jobsPerWorker: 100 },
-    Compute: { threadsNumber: 0, jobsPerWorker: 1 },
-  },
+  applications: { test: { threads: [1], transports: { ws: wsTransport } } },
   redis: {
     host: '127.0.0.1',
     port: 6379,
     db: 0,
     maxRetriesPerRequest: null,
     lazyConnect: true,
+  },
+  jobs: {
+    jobs: [],
+    queues: { Io: { threads: 1, jobs: 100 }, Compute: { threads: 1, jobs: 2 } },
   },
   scheduler: {
     entries: [

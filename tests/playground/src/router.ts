@@ -1,5 +1,5 @@
-import { n } from 'nmtjs'
+// import { n } from 'nmtjs'
 
-import procedure from './procedure.ts'
+// import procedure from './procedure.ts'
 
-export default n.router({ routes: { test: procedure } })
+// export default n.router({ routes: { test: procedure } })

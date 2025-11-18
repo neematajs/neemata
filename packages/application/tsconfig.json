@@ -5,5 +5,9 @@
     "outDir": "./dist",
     "rootDir": "./src"
   },
-  "include": ["src/**/*", "../runtime/src/jobs/job.ts"]
+  "include": [
+    "src/**/*",
+    "../runtime/src/jobs/job.ts",
+    "../core/src/hooks/lifecycle-hooks.ts"
+  ]
 }

@@ -7,10 +7,10 @@ import type {
 } from '@nmtjs/protocol/server'
 import { createConsolePrettyDestination } from '@nmtjs/core'
 
+import type { LifecycleHooks } from '../../core/src/hooks/lifecycle-hooks.ts'
 import type { AnyJob } from '../../runtime/src/jobs/job.ts'
 import type { AnyCommand, CommandsOptions } from './commands.ts'
 import type { ApplicationType } from './enums.ts'
-import type { LifecycleHooks } from './lifecycle-hooks.ts'
 import type { AnyApplicationPlugin } from './plugins.ts'
 import type { PubSubOptions } from './pubsub.ts'
 import { kApplicationConfig } from './constants.ts'

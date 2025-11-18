@@ -1,3 +1,3 @@
 export type Pattern = RegExp | string | ((value: string) => boolean)
 
-export interface HookTypes extends Record<string, any[]> {}
+export type HookTypes = Record<string, (...args: any[]) => void>

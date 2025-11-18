@@ -6,39 +6,15 @@
     "type-check": "tsc --noEmit"
   },
   "exports": {
-    ".": {
-      "types": "./src/common.ts",
-      "import": "./dist/common.js",
-      "module-sync": "./dist/common.js"
-    },
-    "./runtime": {
-      "types": "./src/runtime.ts",
-      "import": "./dist/runtime.js",
-      "module-sync": "./dist/runtime.js"
-    },
-    "./static": {
-      "types": "./src/static.ts",
-      "import": "./dist/static.js",
-      "module-sync": "./dist/static.js"
-    }
+    ".": "./src/common.ts",
+    "./runtime": "./src/runtime.ts",
+    "./static": "./src/static.ts"
   },
   "publishConfig": {
     "exports": {
-      ".": {
-        "types": "./dist/common.d.ts",
-        "import": "./dist/common.js",
-        "module-sync": "./dist/common.js"
-      },
-      "./runtime": {
-        "types": "./dist/runtime.d.ts",
-        "import": "./dist/runtime.js",
-        "module-sync": "./dist/runtime.js"
-      },
-      "./static": {
-        "types": "./dist/static.d.ts",
-        "import": "./dist/static.js",
-        "module-sync": "./dist/static.js"
-      }
+      ".": "./dist/common.js",
+      "./runtime": "./dist/runtime.js",
+      "./static": "./dist/static.js"
     }
   },
   "peerDependencies": {

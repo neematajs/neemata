@@ -1,8 +1,11 @@
-import type { AnyJob } from '@nmtjs/application'
+// import type { AnyJob } from '@nmtjs/application'
 import type { BaseType, t } from '@nmtjs/type'
 import type { Redis } from 'ioredis'
-import { ApplicationWorkerType } from '@nmtjs/application'
+// import { ApplicationWorkerType } from '@nmtjs/application'
 import { Queue } from 'bullmq'
+
+import type { AnyJob } from '../jobs/job.ts'
+import { JobWorkerQueue } from '../enums.ts'
 
 const queueDeploymentLock = 'scheduler-deployment-lock'
 
@@ -37,7 +40,7 @@ export class JobsScheduler {
         )
       : 'OK'
     const isLocked = lock === 'OK'
-    const queues = [ApplicationWorkerType.Io, ApplicationWorkerType.Compute]
+    const queues = Object.values(JobWorkerQueue)
     for (const queueName of queues) {
       const queue = new Queue(queueName, { connection: queueConnection })
       await queue.waitUntilReady()

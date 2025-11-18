@@ -85,7 +85,7 @@ export type ObjectLikeType<T extends ObjectTypeProps> =
 
 export type AnyObjectType = ObjectType<ObjectTypeProps>
 export type AnyLooseObjectType = LooseObjectType<ObjectTypeProps>
-export type AnyObjectLikeType<> = AnyObjectType | AnyLooseObjectType
+export type AnyObjectLikeType = AnyObjectType | AnyLooseObjectType
 
 export class RecordType<
   K extends LiteralType<string | number> | EnumType | StringType,

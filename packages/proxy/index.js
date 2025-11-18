@@ -1,0 +1,5 @@
+import { createRequire } from 'node:module'
+
+const require = createRequire(import.meta.url)
+const { NeemataProxy } = require('./neemata-proxy.node')
+export { NeemataProxy }

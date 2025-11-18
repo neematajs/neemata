@@ -1,17 +1,11 @@
-import type {
-  AnyRouter,
-  ExtractRouterContracts,
-  MergeRoutersRoutesContracts,
-} from '@nmtjs/api'
-import type { TAnyRouterContract } from '@nmtjs/contract'
 import type { Logger } from '@nmtjs/core'
 import type { Transport } from '@nmtjs/protocol/server'
 import { Api, createRootRouter } from '@nmtjs/api'
 import {
+  ApplicationHooks,
   Container,
   CoreInjectables,
   createLogger,
-  Hooks,
   Scope,
 } from '@nmtjs/core'
 import { Protocol, ProtocolFormats } from '@nmtjs/protocol/server'
@@ -21,33 +15,15 @@ import type {
   ApplicationPluginContext,
   ApplicationPluginType,
 } from './plugins.ts'
-import type { ExtractOptionsPluginsRouters } from './types.ts'
+import { LifecycleHooks } from '../../core/src/hooks/lifecycle-hooks.ts'
 import { Commands } from './commands.ts'
 import { ApplicationType, LifecycleHook } from './enums.ts'
 import { AppInjectables } from './injectables.ts'
 import { JobRunner } from './job-runner.ts'
-import { LifecycleHooks } from './lifecycle-hooks.ts'
 import { PubSub } from './pubsub.ts'
 import { ApplicationRegistry } from './registry.ts'
 
 export class Application<Config extends ApplicationConfig = ApplicationConfig> {
-  readonly _!: {
-    router: TAnyRouterContract<
-      MergeRoutersRoutesContracts<
-        Config['router'] extends AnyRouter
-          ? [
-              Config['router']['contract'],
-              ...ExtractRouterContracts<
-                ExtractOptionsPluginsRouters<Config['plugins']>
-              >,
-            ]
-          : ExtractRouterContracts<
-              ExtractOptionsPluginsRouters<Config['plugins']>
-            >
-      >
-    >
-    options: Config
-  }
   protected readonly internalContainer: Container
   readonly api: Api
   // readonly commands: Commands
@@ -57,7 +33,7 @@ export class Application<Config extends ApplicationConfig = ApplicationConfig> {
   readonly container: Container
   // readonly format: ProtocolFormats
   // readonly protocol: Protocol
-  readonly hooks: Hooks
+  readonly hooks: ApplicationHooks
   readonly lifecycleHooks: LifecycleHooks
   // readonly jobRunner: JobRunner
 
@@ -92,7 +68,7 @@ export class Application<Config extends ApplicationConfig = ApplicationConfig> {
     //   registry: this.registry,
     //   lifecycleHooks: this.lifecycleHooks,
     // })
-    this.hooks = new Hooks({
+    this.hooks = new ApplicationHooks({
       container: this.container,
       registry: this.registry,
     })

@@ -1,7 +1,7 @@
 import type { MessagePort } from 'node:worker_threads'
 
 import type { Async } from '@nmtjs/common'
-import type { Injection } from '@nmtjs/core'
+import type { Injection, LazyInjectable } from '@nmtjs/core'
 import type { ConnectionType, ProtocolRPC } from '@nmtjs/protocol'
 
 import type { GatewayConnection } from './connection.ts'
@@ -78,7 +78,11 @@ export interface TransportV2Worker<
 export interface TransportV2<
   Type extends ConnectionType = ConnectionType,
   Options = unknown,
+  Injections extends { [key: string]: LazyInjectable<any> } = {
+    [key: string]: LazyInjectable<any>
+  },
 > {
+  injections?: Injections
   worker: TransportV2Worker<Type, Options>
   main?: TransportV2Main
 }

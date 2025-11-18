@@ -1,27 +1,25 @@
 import assert from 'node:assert'
-import EventEmitter from 'node:events'
 
 import type { Application, ApplicationWorkerType } from '@nmtjs/application'
 import type { RedisOptions } from 'ioredis'
-import { LifecycleHook } from '@nmtjs/application'
+import { createPromise } from '@nmtjs/common'
 import { Queue } from 'bullmq'
 import { Redis } from 'ioredis'
 
-import type { JobTaskResult, WorkerJobTask } from './types.ts'
-import { ApplicationWorkerJobRunner } from './jobs/runner.ts'
+import type { JobTaskResult, WorkerJobTask } from '../types.ts'
+import { ApplicationWorkerJobRunner } from '../jobs/runner.ts'
 
-export class ApplicationWorker extends EventEmitter<{ start: []; stop: [] }> {
+export class ApplicationWorkerRuntime {
   jobRunner?: ApplicationWorkerJobRunner
   redisClient?: Redis
-  isTerminating = false
+  isTerminating: Promise<void> | null = null
+  isStarting: Promise<void> | null = null
 
   constructor(
     readonly type: ApplicationWorkerType,
     readonly app: Application,
     readonly redisOptions?: RedisOptions,
   ) {
-    super()
-
     if (redisOptions) {
       this.redisClient = new Redis(redisOptions)
       this.jobRunner = new ApplicationWorkerJobRunner({
@@ -37,15 +35,24 @@ export class ApplicationWorker extends EventEmitter<{ start: []; stop: [] }> {
   }
 
   async start() {
-    await this.app.start()
-    this.emit('start')
+    if (this.isStarting) return this.isStarting
+    const { promise, reject, resolve } = createPromise<void>()
+    this.isStarting = promise
+    try {
+      await this.isTerminating
+      await this.app.start()
+      resolve()
+    } catch (error) {
+      reject(error)
+    } finally {
+      this.isStarting = null
+    }
   }
 
   async stop() {
-    if (this.isTerminating) return
-    this.isTerminating = true
-    await this.app.stop()
-    this.emit('stop')
+    if (this.isTerminating) return this.isTerminating
+    this.isTerminating = this.app.stop()
+    return this.isTerminating
   }
 
   async runCommand(

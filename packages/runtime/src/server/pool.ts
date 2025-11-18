@@ -8,7 +8,7 @@ import type {
   ServerPortMessage,
   ThreadPortMessage,
   WorkerJobTask,
-} from './types.ts'
+} from '../types.ts'
 
 export type ThreadState =
   | 'starting'

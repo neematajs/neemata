@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url'
 import { workerData as _workerData, parentPort } from 'node:worker_threads'
 
 import type { ApplicationType, ApplicationWorkerType } from '@nmtjs/application'
-import type { ServerPortMessage, ThreadPortMessage } from '@nmtjs/server'
+import type { ServerPortMessage, ThreadPortMessage } from '@nmtjs/runtime'
 
 import type { ViteConfigOptions } from '../vite/config.ts'
 

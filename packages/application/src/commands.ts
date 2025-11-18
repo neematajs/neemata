@@ -13,7 +13,7 @@ import { tryCaptureStackTrace } from '@nmtjs/common'
 import { Scope } from '@nmtjs/core'
 import { t } from '@nmtjs/type'
 
-import type { LifecycleHooks } from './lifecycle-hooks.ts'
+import type { LifecycleHooks } from '../../core/src/hooks/lifecycle-hooks.ts'
 import type { ApplicationRegistry } from './registry.ts'
 import { kCommand } from './constants.ts'
 import { LifecycleHook } from './enums.ts'

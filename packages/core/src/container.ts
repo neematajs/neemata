@@ -42,30 +42,30 @@ export class Container {
     if ((scope as any) === Scope.Transient) {
       throw new Error('Invalid scope')
     }
-    this.provide(CoreInjectables.logger, this.application.logger)
     this.provide(CoreInjectables.inject, this.createInjectFunction())
     this.provide(CoreInjectables.dispose, this.createDisposeFunction())
-    this.provide(CoreInjectables.registry, application.registry)
   }
 
-  async initialize() {
-    const traverse = (dependencies: Dependencies) => {
-      for (const key in dependencies) {
-        const dependency = dependencies[key]
-        const injectable = getDepedencencyInjectable(dependency)
-        this.injectables.add(injectable)
-        traverse(injectable.dependencies)
-      }
-    }
+  async initialize(injectables: Iterable<AnyInjectable>) {
+    // const traverse = (dependencies: Dependencies) => {
+    //   for (const key in dependencies) {
+    //     const dependency = dependencies[key]
+    //     const injectable = getDepedencencyInjectable(dependency)
+    //     this.injectables.add(injectable)
+    //     traverse(injectable.dependencies)
+    //   }
+    // }
 
-    for (const dependant of this.application.registry.getDependants()) {
-      traverse(dependant.dependencies)
-    }
+    // for (const dependant of this.application.registry.getDependants()) {
+    //   traverse(dependant.dependencies)
+    // }
 
-    const injectables = Array.from(this.findCurrentScopeInjectables())
+    // const injectables = Array.from(this.findCurrentScopeInjectables())
     const measurements: PerformanceMeasure[] = []
     await Promise.all(
-      injectables.map((injectable) => this.resolve(injectable, measurements)),
+      [...injectables].map((injectable) =>
+        this.resolve(injectable, measurements),
+      ),
     )
     return measurements
   }

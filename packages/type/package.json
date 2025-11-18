@@ -7,49 +7,17 @@
     "README.md"
   ],
   "exports": {
-    ".": {
-      "types": "./src/index.ts",
-      "import": "./dist/index.js",
-      "module-sync": "./dist/index.js"
-    },
-    "./*": {
-      "types": "./src/types/*.ts",
-      "import": "./dist/types/*.js",
-      "module-sync": "./dist/types/*.js"
-    },
-    "./temporal": {
-      "types": "./src/temporal/global.ts",
-      "import": "./dist/temporal/global.js",
-      "module-sync": "./dist/temporal/global.js"
-    },
-    "./temporal-polyfill": {
-      "types": "./src/temporal/polyfill.ts",
-      "import": "./dist/temporal/polyfill.js",
-      "module-sync": "./dist/temporal/polyfill.js"
-    }
+    ".": "./src/index.ts",
+    "./*": "./src/types/*.ts",
+    "./temporal": "./src/temporal/global.ts",
+    "./temporal-polyfill": "./src/temporal/polyfill.ts"
   },
   "publishConfig": {
     "exports": {
-      ".": {
-        "types": "./dist/index.d.ts",
-        "import": "./dist/index.js",
-        "module-sync": "./dist/index.js"
-      },
-      "./*": {
-        "types": "./dist/types/*.d.ts",
-        "import": "./dist/types/*.js",
-        "module-sync": "./dist/types/*.js"
-      },
-      "./temporal": {
-        "types": "./dist/temporal/global.d.ts",
-        "import": "./dist/temporal/global.js",
-        "module-sync": "./dist/temporal/global.js"
-      },
-      "./temporal-polyfill": {
-        "types": "./dist/temporal/polyfill.d.ts",
-        "import": "./dist/temporal/polyfill.js",
-        "module-sync": "./dist/temporal/polyfill.js"
-      }
+      ".": "./dist/index.js",
+      "./*": "./dist/types/*.js",
+      "./temporal": "./dist/temporal/global.js",
+      "./temporal-polyfill": "./dist/temporal/polyfill.js"
     }
   },
   "scripts": {

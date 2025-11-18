@@ -1,7 +1,7 @@
 import { fileURLToPath } from 'node:url'
 
-import type { ServerConfig } from '@nmtjs/server'
-import { ApplicationServer, isServerConfig } from '@nmtjs/server'
+import type { ServerConfig } from '@nmtjs/runtime'
+import { ApplicationServer, isServerConfig } from '@nmtjs/runtime'
 
 declare global {
   const VITE_CONFIG: string

@@ -4,15 +4,17 @@ import type {
   ApplicationConfig,
   ApplicationConfigFactory,
 } from '@nmtjs/application'
-import type { ServerConfig } from '@nmtjs/server'
-import {
-  Application,
-  ApplicationWorkerType,
-  resolveApplicationConfig,
-} from '@nmtjs/application'
+import type { NeemataProxy, ServerConfig } from '@nmtjs/runtime'
+// import {
+//   Application,
+//   ApplicationWorkerType,
+//   resolveApplicationConfig,
+// } from '@nmtjs/application'
 import { createValueInjectable } from '@nmtjs/core'
-import { JobManagerPlugin } from '@nmtjs/server'
-import { ApplicationWorker } from '@nmtjs/server/worker'
+
+// import { JobManagerPlugin } from '@nmtjs/runtime'
+
+// import { ApplicationWorker } from '@nmtjs/runtime/worker'
 
 import type { RunWorkerOptions } from './thread.ts'
 
@@ -121,3 +123,5 @@ export default async function run(
       : serverConfig.redis,
   )
 }
+
+const a = new NeemataProxy()
