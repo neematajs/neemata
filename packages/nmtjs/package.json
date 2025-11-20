@@ -33,6 +33,7 @@
     "@nmtjs/runtime": "workspace:*",
     "@nmtjs/type": "workspace:*",
     "@nmtjs/ws-transport": "workspace:*",
+    "@nmtjs/http-transport": "workspace:*",
     "citty": "^0.1.6",
     "dedent": "^1.7.0",
     "dotenv": "^17.2.3",

@@ -17,6 +17,12 @@ export function createServer(options: ViteConfigOptions, config: UserConfig) {
           VITE_CONFIG: JSON.stringify(
             JSON.stringify({ options, mode: config.mode }),
           ),
+          APPLICATIONS_CONFIG: JSON.stringify(
+            JSON.stringify(
+              config.
+            )
+            
+          )
         },
       },
     },

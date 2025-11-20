@@ -4,7 +4,8 @@ import type { ServerConfig } from '@nmtjs/runtime'
 import { ApplicationServer, isServerConfig } from '@nmtjs/runtime'
 
 declare global {
-  const VITE_CONFIG: string
+  const __VITE_CONFIG__: string
+  const __APPLICATIONS_CONFIG__: string
 }
 
 let config: ServerConfig
@@ -33,7 +34,8 @@ config = await import(
 
 if (!isServerConfig(config)) throw new InvalidServerConfigError()
 
-const vite = VITE_CONFIG || undefined
+const vite = __VITE_CONFIG__ || undefined
+const applicationsConfig = __APPLICATIONS_CONFIG__
 
 const server = new ApplicationServer(config, {
   path: fileURLToPath(import.meta.resolve('./thread')),

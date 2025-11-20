@@ -35,7 +35,15 @@ export function pick<
   K extends {
     [KK in keyof T as T[KK] extends (...args: any[]) => any ? never : KK]?: true
   },
->(obj: T, keys: K): Pick<T, keyof K extends keyof T ? keyof K : never> {
+>(
+  obj: T,
+  keys: K,
+): Pick<
+  T,
+  keyof {
+    [KK in keyof K as K[KK] extends true ? KK : never]: K[KK]
+  }
+> {
   const result = {} as any
   for (const key in keys) {
     if (key in obj) {

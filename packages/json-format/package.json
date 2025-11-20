@@ -1,0 +1,31 @@
+{
+  "name": "@nmtjs/json-format",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "type-check": "tsc --noEmit"
+  },
+  "exports": {
+    "./client": "./src/client.ts",
+    "./server": "./src/server.ts"
+  },
+  "publishConfig": {
+    "exports": {
+      "./client": "./dist/client.js",
+      "./server": "./dist/server.js"
+    }
+  },
+  "dependencies": {
+    "@nmtjs/common": "workspace:*",
+    "@nmtjs/protocol": "workspace:*"
+  },
+  "peerDependencies": {
+    "@nmtjs/common": "workspace:*",
+    "@nmtjs/protocol": "workspace:*"
+  },
+  "files": [
+    "dist",
+    "LICENSE.md",
+    "README.md"
+  ]
+}

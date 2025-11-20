@@ -1,10 +1,8 @@
-// import type { AnyJob } from '@nmtjs/application'
-import type { BaseType, t } from '@nmtjs/type'
-import type { Redis } from 'ioredis'
-// import { ApplicationWorkerType } from '@nmtjs/application'
+import type { RedisClient } from 'bullmq'
 import { Queue } from 'bullmq'
 
 import type { AnyJob } from '../jobs/job.ts'
+import type { Store } from '../types.ts'
 import { JobWorkerQueue } from '../enums.ts'
 
 const queueDeploymentLock = 'scheduler-deployment-lock'
@@ -18,11 +16,11 @@ export interface JobsSchedulerEntry<T extends AnyJob = AnyJob> {
 export type JobsSchedulerOptions = { entries: JobsSchedulerEntry[] }
 
 export class JobsScheduler {
-  protected queueConnection: Redis
+  protected queueConnection: Store
   queues: Queue[] = []
 
   constructor(
-    protected connection: Redis,
+    protected connection: Store,
     protected deploymentId: string | undefined,
     protected entries: JobsSchedulerEntry[] = [],
   ) {
@@ -32,17 +30,19 @@ export class JobsScheduler {
   async initialize() {
     const { connection, deploymentId, entries, queueConnection } = this
     await queueConnection.connect()
-    const lock = deploymentId
+    const acquired = deploymentId
       ? await connection.set(
           `${queueDeploymentLock}:${deploymentId}`,
           '1',
           'NX',
         )
       : 'OK'
-    const isLocked = lock === 'OK'
+    const isLocked = acquired === 'OK'
     const queues = Object.values(JobWorkerQueue)
     for (const queueName of queues) {
-      const queue = new Queue(queueName, { connection: queueConnection })
+      const queue = new Queue(queueName, {
+        connection: queueConnection as RedisClient,
+      })
       await queue.waitUntilReady()
       if (isLocked) {
         await queue.pause()

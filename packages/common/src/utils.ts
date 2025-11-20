@@ -6,6 +6,10 @@ export function merge<T extends any[]>(...objects: T) {
   return Object.assign({}, ...objects)
 }
 
+export function unique<T>(array: Iterable<T>): Iterable<T> {
+  return new Set(array).values()
+}
+
 export function defer<T extends Callback>(
   cb: T,
   ms = 1,
@@ -82,17 +86,11 @@ export function withTimeout(
   value: Promise<any>,
   timeout: number,
   timeoutError: Error,
-  controller?: AbortController,
 ) {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(reject, timeout, timeoutError)
-    const clearTimer = () => clearTimeout(timer)
-    const rejectWithTimeout = (error: any) => {
-      reject(error)
-      controller?.abort(error)
-    }
-    value.then(resolve).catch(rejectWithTimeout).finally(clearTimer)
-  })
+  return Promise.race([
+    value,
+    new Promise((_, reject) => setTimeout(reject, timeout, timeoutError)),
+  ])
 }
 
 export function tryCaptureStackTrace(depth = 0) {
@@ -125,6 +123,9 @@ export function isAsyncGeneratorFunction(
     typeof value === 'function' &&
     value.constructor.name === 'AsyncGeneratorFunction'
   )
+}
+export function isAsyncIterable(value: any): value is AsyncIterable<unknown> {
+  return value && Symbol.asyncIterator in value
 }
 
 export function throwError(message: string, ErrorClass = Error): never {

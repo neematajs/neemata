@@ -3,7 +3,6 @@ import { tryCaptureStackTrace } from '@nmtjs/common'
 
 import type { DisposeFn, InjectFn } from './container.ts'
 import type { Logger } from './logger.ts'
-import type { Registry } from './registry.ts'
 import {
   kFactoryInjectable,
   kInjectable,
@@ -76,6 +75,7 @@ export type InjectableDisposeType<
 export interface LazyInjectable<T, S extends Scope = Scope.Global>
   extends Dependant<{}> {
   scope: S
+  $withType<O extends T>(): LazyInjectable<O, S>
   [kInjectable]: any
   [kLazyInjectable]: T
 }
@@ -174,14 +174,16 @@ export function createLazyInjectable<T, S extends Scope = Scope.Global>(
   label?: string,
   stackTraceDepth = 0,
 ): LazyInjectable<T, S> {
-  return Object.freeze({
+  const injectable = Object.freeze({
     scope,
     dependencies: {},
     label,
     stack: tryCaptureStackTrace(stackTraceDepth),
+    $withType: () => injectable as any,
     [kInjectable]: true,
     [kLazyInjectable]: true as unknown as T,
   })
+  return injectable
 }
 
 export function createValueInjectable<T>(
@@ -313,7 +315,6 @@ const logger = Object.assign(
 ) => FactoryInjectable<Logger, { logger: LazyInjectable<Logger> }>) &
   LazyInjectable<Logger>
 
-const registry = createLazyInjectable<Registry>(Scope.Global, 'Registry')
 const inject = createLazyInjectable<InjectFn>(Scope.Global, 'Inject function')
 const dispose = createLazyInjectable<DisposeFn>(
   Scope.Global,
@@ -332,16 +333,20 @@ function resolveInjectableScope(
   return actualScope
 }
 
-export const CoreInjectables = { logger, registry, inject, dispose }
+export const CoreInjectables = { logger, inject, dispose }
 
-export type Injection<T extends LazyInjectable<any> = LazyInjectable<any>> = {
+export type Injection<
+  T extends LazyInjectable<any, any> = LazyInjectable<any, any>,
+> = {
   token: T
-  value: T extends LazyInjectable<infer R> ? R : never
+  value: T extends LazyInjectable<infer R, Scope> ? R | AnyInjectable<R> : never
 }
 
-export const provide = <T extends LazyInjectable<any>>(
+export const provide = <T extends LazyInjectable<any, any>>(
   token: T,
-  value: T extends LazyInjectable<infer R> ? R : never,
+  value: T extends LazyInjectable<infer R, Scope>
+    ? R | AnyInjectable<R>
+    : never,
 ): Injection<T> => {
   return { token: token, value }
 }

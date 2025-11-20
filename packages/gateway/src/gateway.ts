@@ -1,16 +1,10 @@
-import type { MessagePort } from 'node:worker_threads'
 import assert from 'node:assert'
+import { randomUUID } from 'node:crypto'
 
-import type {
-  AnyInjectable,
-  Container,
-  Hooks,
-  Injection,
-  Logger,
-} from '@nmtjs/core'
+import type { Container, Hooks, Injection, Logger } from '@nmtjs/core'
 import type { ProtocolRPC } from '@nmtjs/protocol'
 import type { ProtocolFormats } from '@nmtjs/protocol/server'
-import { isAbortError } from '@nmtjs/common'
+import { isAbortError, unique } from '@nmtjs/common'
 import { Scope } from '@nmtjs/core'
 import {
   ClientMessageType,
@@ -24,79 +18,69 @@ import {
   versions,
 } from '@nmtjs/protocol/server'
 
-import type { ProtocolApi, ProtocolApiCallOptions } from './api.ts'
+import type { GatewayApi, GatewayApiCallOptions } from './api.ts'
 import type { GatewayConnection } from './connection.ts'
 import type { TransportV2Worker, TransportV2WorkerHooks } from './transport.ts'
-import type { ConnectionIndentityResolver } from './types.ts'
+import type { ConnectionIdentityResolver } from './types.ts'
 import type { MessageContext } from './utils.ts'
 import { isIterable } from './api.ts'
 import { GatewayConnections } from './connections.ts'
+import * as injectables from './injectables.ts'
 
 export interface GatewayOptions {
-  identityResolver: AnyInjectable<ConnectionIndentityResolver, Scope.Connection>
-  transports: {
-    [key: string]: {
-      port?: MessagePort
-      worker: TransportV2Worker
-      options: any
-    }
-  }
+  logger: Logger
+  container: Container
+  hooks: Hooks
+  formats: ProtocolFormats
+  api: GatewayApi
+  identityResolver: ConnectionIdentityResolver
+  transports: { [key: string]: TransportV2Worker }
 }
 
 export class Gateway {
   connections: GatewayConnections
 
-  constructor(
-    protected runtime: {
-      logger: Logger
-      container: Container
-      hooks: Hooks
-      formats: ProtocolFormats
-      api: ProtocolApi
-    },
-    protected options: GatewayOptions,
-  ) {
+  constructor(protected options: GatewayOptions) {
     this.connections = new GatewayConnections({
-      logger: this.runtime.logger,
-      container: this.runtime.container,
-      hooks: this.runtime.hooks,
-      formats: this.runtime.formats,
+      logger: this.options.logger,
+      container: this.options.container,
+      hooks: this.options.hooks,
+      formats: this.options.formats,
     })
   }
 
   async start() {
+    const hosts: string[] = []
     for (const key in this.options.transports) {
-      const { worker, options, port } = this.options.transports[key]
-      const host = await worker.start({
+      const transport = this.options.transports[key]
+      const host = await transport.start({
         onConnect: this.onConnect(key),
         onDisconnect: this.onDisconnect(key),
         onMessage: this.onMessage(key),
         onRpc: this.onRpc,
-        options,
-        port,
       })
-      this.runtime.logger.info(`Transport [${key}] started on [${host}]`)
+      this.options.logger.info(`Transport [${key}] started on [${host}]`)
+      hosts.push(host)
     }
+    return unique(hosts)
   }
 
   async stop() {
     for (const key in this.options.transports) {
-      const { options, worker, port } = this.options.transports[key]
-      await worker.stop({
+      const transport = this.options.transports[key]
+      await transport.stop({
         onConnect: this.onConnect(key),
         onDisconnect: this.onDisconnect(key),
         onMessage: this.onMessage(key),
         onRpc: this.onRpc,
-        options,
-        port,
       })
-      this.runtime.logger.info(`Transport [${key}] stopped`)
+      this.options.logger.info(`Transport [${key}] stopped`)
     }
   }
 
   send(transport: string, connectionId: string, data: ArrayBuffer) {
     if (transport in this.options.transports) {
-      const send = this.options.transports[transport].worker.send
+      const send = this.options.transports[transport].send
       if (send) return send(connectionId, data)
     }
   }
@@ -113,7 +97,7 @@ export class Gateway {
       encoder: connection.encoder,
       rpcs: connection.rpcs,
       protocol: connection.protocol,
-      transport: this.options.transports[transport].worker,
+      transport: this.options.transports[transport],
       container: connection.container,
       streamId: connection.getStreamId,
     }
@@ -123,20 +107,31 @@ export class Gateway {
     return async (options, ...injections) => {
       const protocol = versions[options.protocolVersion]
       if (!protocol) throw new Error('Unsupported protocol version')
-      const container = this.runtime.container.fork(Scope.Connection)
-      for (const { token, value } of injections) {
-        container.provide(token, value)
-      }
-      const resolver = await container.resolve(this.options.identityResolver)
-      const identity = await resolver()
-      const { id } = await this.connections.open({
+      const id = randomUUID()
+
+      const container = this.options.container.fork(Scope.Connection)
+      for (const i of injections) container.provide(i.token, i.value)
+
+      container.provide(injectables.connectionData, options.data)
+      container.provide(injectables.connectionId, id)
+
+      const identity = await container.resolve(this.options.identityResolver)
+      const { connection, signals } = await this.connections.open({
+        id,
         container,
         identity,
         transport,
         protocol,
         options,
       })
-      return { connectionId: id }
+
+      container.provide(injectables.connection, connection)
+      container.provide(
+        injectables.connectionAbortSignal,
+        signals.disconnect.signal,
+      )
+
+      return connection
     }
   }
 
@@ -157,7 +152,7 @@ export class Gateway {
 
       switch (message.type) {
         case ClientMessageType.Rpc: {
-          await this.handleRpc(context, message.rpc, injections)
+          await this.handleRpc(connection, context, message.rpc, injections)
           break
         }
         case ClientMessageType.RpcAbort: {
@@ -201,8 +196,10 @@ export class Gateway {
     for (const { token, value } of injections) {
       container.provide(token, value)
     }
+
     try {
       return await this.callApi({
+        connection,
         container,
         payload: rpc.payload,
         procedure: rpc.procedure,
@@ -214,12 +211,12 @@ export class Gateway {
     }
   }
 
-  protected async callApi(options: ProtocolApiCallOptions) {
+  protected async callApi(options: GatewayApiCallOptions) {
     try {
-      return await this.runtime.api.call(options)
+      return await this.options.api.call(options)
     } catch (error) {
       if (error instanceof ProtocolError === false) {
-        this.runtime.logger.error({ error }, 'Error during RPC call')
+        this.options.logger.error({ error }, 'Error during RPC call')
         throw new ProtocolError(
           ErrorCode.InternalServerError,
           'Internal server error',
@@ -230,6 +227,7 @@ export class Gateway {
   }
 
   protected async handleRpc(
+    connection: GatewayConnection,
     context: MessageContext,
     rpc: ProtocolRPC,
     injections: Injection[],
@@ -259,11 +257,11 @@ export class Gateway {
 
     try {
       const response = await this.callApi({
+        connection,
         container,
         payload,
         procedure,
         signal,
-        // validateMetadata: params.validateMetadata,
       })
 
       if (isIterable(response)) {
@@ -301,7 +299,7 @@ export class Gateway {
             }
           }
         } catch (error) {
-          this.runtime.logger.error(error)
+          this.options.logger.error(error)
           transport.send?.(
             connectionId,
             protocol.encodeMessage(context, ServerMessageType.RpcStreamAbort, {

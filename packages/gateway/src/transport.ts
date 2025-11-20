@@ -1,9 +1,10 @@
-import type { MessagePort } from 'node:worker_threads'
-
 import type { Async } from '@nmtjs/common'
-import type { Injection, LazyInjectable } from '@nmtjs/core'
-import type { ConnectionType, ProtocolRPC } from '@nmtjs/protocol'
+import type { Injection, LazyInjectable, Scope } from '@nmtjs/core'
+import type { ProtocolRPC } from '@nmtjs/protocol'
+import { createLazyInjectable, provide } from '@nmtjs/core'
+import { ConnectionType, ProtocolVersion } from '@nmtjs/protocol'
 
+import type { GatewayApiCallOptions } from './api.ts'
 import type { GatewayConnection } from './connection.ts'
 
 export interface TransportConnectionV2 {
@@ -14,12 +15,13 @@ export interface TransportConnectionV2 {
 export interface TransportV2OnConnectOptions<
   Type extends ConnectionType = ConnectionType,
 > {
-  protocolVersion: 1
-  accept: string | null
-  contentType: string | null
   type: Type extends ConnectionType.Bidirectional
     ? Type
     : ConnectionType.Unidirectional
+  protocolVersion: ProtocolVersion
+  accept: string | null
+  contentType: string | null
+  data: unknown
 }
 
 export interface TransportV2OnDisconnectOptions {
@@ -37,7 +39,7 @@ export type TransportV2WorkerHooks<
   onConnect: (
     options: TransportV2OnConnectOptions<Type>,
     ...injections: Injection[]
-  ) => Promise<{ connectionId: string }>
+  ) => Promise<GatewayConnection>
   onDisconnect: (options: TransportV2OnDisconnectOptions) => Promise<void>
   onMessage: (
     options: TransportV2OnMessageOptions,
@@ -45,31 +47,23 @@ export type TransportV2WorkerHooks<
   ) => Promise<void>
   onRpc: (
     connection: GatewayConnection,
-    rpc: ProtocolRPC,
+    rpc: ProtocolRPC & { metadata?: GatewayApiCallOptions['metadata'] },
     signal: AbortSignal,
     ...injections: Injection[]
   ) => Promise<unknown>
 }
 
-export interface TransportV2Main {
-  start: (port: MessagePort) => Async<void>
-  stop: () => Async<void>
-}
-
-export interface TransportV2WorkerOptions<
+export interface TransportV2WorkerStartOptions<
   Type extends ConnectionType = ConnectionType,
-  Options = unknown,
 > extends TransportV2WorkerHooks<Type> {
-  options: Options
-  port?: MessagePort
+  // for extra props in the future
 }
 
 export interface TransportV2Worker<
   Type extends ConnectionType = ConnectionType,
-  Options = unknown,
 > {
-  start: (options: TransportV2WorkerOptions<Type, Options>) => Async<string>
-  stop: (options: TransportV2WorkerOptions<Type, Options>) => Async<void>
+  start: (hooks: TransportV2WorkerHooks<Type>) => Async<string>
+  stop: (hooks: TransportV2WorkerHooks<Type>) => Async<void>
   send?: Type extends 'unidirectional'
     ? never
     : (connectionId: string, buffer: ArrayBuffer) => boolean | null
@@ -77,36 +71,51 @@ export interface TransportV2Worker<
 
 export interface TransportV2<
   Type extends ConnectionType = ConnectionType,
-  Options = unknown,
-  Injections extends { [key: string]: LazyInjectable<any> } = {
-    [key: string]: LazyInjectable<any>
-  },
+  TransportOptions = any,
+  Injections extends {
+    [key: string]: LazyInjectable<any, Scope.Connection | Scope.Call>
+  } = { [key: string]: LazyInjectable<any, Scope.Connection | Scope.Call> },
+  Proxyable extends boolean = boolean,
 > {
-  injections?: Injections
-  worker: TransportV2Worker<Type, Options>
-  main?: TransportV2Main
+  proxyable: Proxyable
+  injectables?: Injections
+  factory: (options: TransportOptions) => TransportV2Worker<Type>
 }
 
-// export function createTransportV2Worker(): TransportV2Worker<
-//   'bidirectional',
-//   { hah: '' }
-// > {
-//   return {
-//     async start({ onConnect, onDisconnect, onMessage, options }) {
-//       const { connectionId } = await onConnect(
-//         { type: 'bidirectional', accept: null, contentType: null },
-//         provide(createLazyInjectable<[1]>(), [1]),
-//         provide(createLazyInjectable<[1]>(), [1]),
-//         provide(createLazyInjectable<[1]>(), [1]),
-//       )
+export function createTransportV2Worker(): TransportV2<
+  ConnectionType.Bidirectional,
+  { hah: '' },
+  {},
+  true
+> {
+  return {
+    proxyable: true,
+    injectables: {},
+    factory: (options) => {
+      return {
+        async start({ onConnect, onDisconnect, onMessage }) {
+          const { id } = await onConnect(
+            {
+              data: null,
+              type: ConnectionType.Bidirectional,
+              accept: null,
+              contentType: null,
+              protocolVersion: ProtocolVersion.v1,
+            },
+            provide(createLazyInjectable<[1]>(), [1]),
+            provide(createLazyInjectable<[1]>(), [1]),
+            provide(createLazyInjectable<[1]>(), [1]),
+          )
 
-//       const result = await onMessage({ connectionId, data: new ArrayBuffer(8) })
+          await onMessage({ connectionId: id, data: new ArrayBuffer(8) })
 
-//       return ''
-//     },
-//     stop() {},
-//     send(connectionId: string, buffer: ArrayBuffer) {
-//       return true
-//     },
-//   }
-// }
+          return ''
+        },
+        stop() {},
+        send(connectionId: string, buffer: ArrayBuffer) {
+          return true
+        },
+      }
+    },
+  }
+}

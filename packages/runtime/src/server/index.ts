@@ -1,141 +1,144 @@
 import assert from 'node:assert'
 import EventEmitter from 'node:events'
+import { MessageChannel } from 'node:worker_threads'
 
 import type { Logger } from '@nmtjs/core'
-// import { ApplicationType, ApplicationWorkerType } from '@nmtjs/application'
+import type { NeemataProxy } from '@nmtjs/proxy'
+import type { RedisClient } from 'bullmq'
 import { createLogger } from '@nmtjs/core'
 import { Worker as QueueWorker, UnrecoverableError } from 'bullmq'
-import { Redis } from 'ioredis'
 
-import type { ServerConfig } from '../config/index.ts'
-// import type { ServerConfig } from './config.ts'
+import type { Store } from '../types.ts'
+import type { ServerApplicationConfig, ServerConfig } from './config.ts'
+import { JobWorkerQueue } from '../enums.ts'
 import { JobsScheduler } from '../scheduler/index.ts'
+import { createStoreClient } from '../store/index.ts'
 import { Pool } from './pool.ts'
+
+export type ApplicationServerRunOptions = {
+  applications: string[]
+  scheduler: boolean
+  jobs: boolean
+}
 
 export class ApplicationServer extends EventEmitter {
   logger: Logger
-  redis?: Redis
-  scheduler?: JobsScheduler
-
-  apiWorkers!: Pool
-  computeWorkers!: Pool
-  ioWorkers!: Pool
+  pools: {
+    applications?: Pool
+    [JobWorkerQueue.Io]?: Pool
+    [JobWorkerQueue.Compute]?: Pool
+  } = {}
+  transports: { [key: string]: { [key: string]: any } } = {}
   queueWorkers = new Set<QueueWorker>()
-
-  #exiting: Promise<any> | null = null
+  proxy?: NeemataProxy
+  store?: Store
+  scheduler?: JobsScheduler
 
   constructor(
     readonly config: ServerConfig,
+    readonly applications: Record<string, string>,
     readonly workerConfig: { path: string; workerData?: any },
+    readonly runOptions: ApplicationServerRunOptions = {
+      applications: Object.keys(config.applications),
+      scheduler: true,
+      jobs: true,
+    },
   ) {
     super()
     this.logger = createLogger(config.logger, 'Application Server')
-    let redis: Redis | undefined
-    let scheduler: JobsScheduler | undefined
-    if (config.redis) {
-      redis = new Redis({ ...config.redis, lazyConnect: true })
-      scheduler = new JobsScheduler(
-        redis,
-        config.deploymentId,
-        config!.scheduler?.entries ?? [],
-      )
-    }
-    this.redis = redis
-    this.scheduler = scheduler
   }
 
   async start() {
     const { config, logger } = this
     logger.info('Starting application server...')
 
-    await this.redis?.connect()
-    await this.scheduler?.initialize()
+    if (this.runOptions.scheduler && config.jobs?.scheduler && config.store) {
+      const store = await createStoreClient(config.store)
+      const scheduler = new JobsScheduler(
+        store,
+        config.deploymentId,
+        config!.jobs?.scheduler?.entries ?? [],
+      )
+      this.store = store
+      this.scheduler = scheduler
+    }
 
-    const apiWorkersNum = Array.isArray(
-      config.workers[ApplicationWorkerType.Api],
-    )
-      ? config.workers[ApplicationWorkerType.Api].length
-      : config.workers[ApplicationWorkerType.Api]
-
-    logger.debug('Spinning api workers...')
-    this.apiWorkers = new Pool({
+    this.pools.applications = new Pool({
       filename: this.workerConfig.path,
-      name: 'api',
-      threadsNumber: apiWorkersNum,
-      workerData: {
-        ...this.workerConfig.workerData,
-        type: ApplicationType.Api,
-        workerType: ApplicationWorkerType.Api,
-      },
-      extraWorkerData: Array.isArray(config.workers[ApplicationWorkerType.Api])
-        ? (index: number) => {
-            return {
-              applicationWorkerData:
-                config.workers[ApplicationWorkerType.Api][index],
-            }
-          }
-        : undefined,
+      workerData: { ...this.workerConfig.workerData },
     })
 
-    logger.debug('Spinning compute workers...')
-    const computeWorkersConfig = config.workers[ApplicationWorkerType.Compute]
-    this.computeWorkers = new Pool({
-      filename: this.workerConfig.path,
-      name: 'compute',
-      threadsNumber: computeWorkersConfig.threadsNumber,
-      workerData: {
-        ...this.workerConfig.workerData,
-        type: ApplicationType.Job,
-        workerType: ApplicationWorkerType.Compute,
-      },
-    })
+    const proxyUpstreams: Record<string, string[]> = {}
 
-    logger.debug('Spinning io workers...')
-    const ioWorkersConfig = config.workers[ApplicationWorkerType.Io]
-    this.ioWorkers = new Pool({
-      filename: this.workerConfig.path,
-      name: 'io',
-      threadsNumber: ioWorkersConfig.threadsNumber,
-      workerData: {
-        ...this.workerConfig.workerData,
-        type: ApplicationType.Job,
-        workerType: ApplicationWorkerType.Io,
-      },
-    })
+    for (const applicationName in this.config.applications) {
+      if (!this.runOptions.applications.includes(applicationName)) continue
+      const applicationPath = this.applications[applicationName]
+      const applicationConfig = this.config.applications[
+        applicationName
+      ] as ServerApplicationConfig
+      const threadsConfig = Array.isArray(applicationConfig.threads)
+        ? applicationConfig.threads
+        : new Array(applicationConfig.threads).fill(undefined)
+      this.logger.info(
+        `Spinning [${threadsConfig.length}] workers for [${applicationName}] application...`,
+      )
 
-    await Promise.all([
-      this.apiWorkers.start(),
-      this.computeWorkers.start(),
-      this.ioWorkers.start(),
-    ])
+      for (let i = 0; i < threadsConfig.length; i++) {
+        const thread = this.pools.applications.add({
+          index: i,
+          name: `application-${applicationName}`,
+          workerData: {
+            applicationName,
+            applicationPath,
+            transportsData: threadsConfig[i],
+          },
+        })
 
-    if (this.scheduler) {
-      for (const queue of this.scheduler.queues) {
-        if (
-          queue.name !== ApplicationWorkerType.Io &&
-          queue.name !== ApplicationWorkerType.Compute
+        if (this.config.proxy) {
+          thread.on('ready', ({ hosts }) => {
+            proxyUpstreams[applicationName] ??= []
+            proxyUpstreams[applicationName].push(...hosts)
+          })
+        }
+      }
+    }
+
+    if (config.jobs && this.runOptions.jobs) {
+      for (const jobWorkerQueue of Object.values(JobWorkerQueue)) {
+        logger.debug('Spinning compute workers...')
+
+        const poolConfig = config.jobs.queues[jobWorkerQueue]
+
+        this.logger.info(
+          `Spinning [${poolConfig.threads}] workers for [${jobWorkerQueue}] queue...`,
         )
-          continue
 
-        const config = this.config.workers[queue.name]
-        if (config.threadsNumber <= 0) continue
+        const pool = new Pool({
+          filename: this.workerConfig.path,
+          workerData: { ...this.workerConfig.workerData },
+        })
 
-        const pool =
-          queue.name === ApplicationWorkerType.Io
-            ? this.ioWorkers
-            : this.computeWorkers
+        this.pools[jobWorkerQueue] = pool
+
+        for (let i = 0; i < poolConfig.threads; i++) {
+          this.pools[jobWorkerQueue]!.add({
+            index: i,
+            name: `job-worker-${jobWorkerQueue.toLowerCase()}`,
+            workerData: { jobWorkerQueue },
+          })
+        }
 
         const bullWorkerOptions = {
-          concurrency: Math.floor(config.jobsPerWorker * config.threadsNumber),
+          concurrency: Math.floor(poolConfig.jobs * poolConfig.threads),
           // TODO: these should be configurable
           lockDuration: 10000,
         }
         logger.info(
           bullWorkerOptions,
-          `Starting processing jobs from [${queue.name}] queue with [${config.threadsNumber}] workers...`,
+          `Start processing [${bullWorkerOptions.concurrency}] workers for [${jobWorkerQueue}] queue...`,
         )
         const queueWorker = new QueueWorker(
-          queue.name,
+          jobWorkerQueue,
           async (job) => {
             const jobLogger = this.logger.child({
               jobId: job.id,
@@ -162,24 +165,61 @@ export class ApplicationServer extends EventEmitter {
                 )
             }
           },
-          { ...bullWorkerOptions, connection: this.redis! },
+          {
+            ...bullWorkerOptions,
+            connection: this.store! as RedisClient,
+            autorun: false,
+          },
         )
         this.queueWorkers.add(queueWorker)
       }
     }
+
+    await Promise.all([
+      ...Object.values(this.pools)
+        .filter(Boolean)
+        .map((pool) => pool!.start()),
+    ])
+
+    if (this.config.proxy) {
+      const { NeemataProxy } = await import('@nmtjs/proxy')
+      this.logger.info('Starting proxy server...')
+
+      this.proxy = new NeemataProxy(
+        Object.fromEntries(
+          Object.entries(proxyUpstreams).map((app, upstreams) => [
+            app,
+            { upstreams },
+          ]),
+        ),
+        {
+          healthCheckIntervalSecs: 10,
+          listen: `${this.config.proxy.hostname}:${this.config.proxy.port}`,
+          threads: this.config.proxy.threads || 1,
+        },
+      )
+      this.proxy.run()
+    }
+
+    this.logger.info('Application server started')
   }
 
   async stop() {
     this.logger.info('Stopping application server...')
+
+    this.logger.info('Stopping proxy...')
+    this.proxy?.shutdown()
+
     this.logger.info('Stopping queue workers...')
+
     await Promise.allSettled(
       Array.from(this.queueWorkers).map((worker) => worker.close()),
     )
-    const pools = [this.apiWorkers, this.computeWorkers, this.ioWorkers]
+    const pools = Object.values(this.pools).filter(Boolean) as Pool[]
     this.logger.info('Stopping pools workers...')
     await Promise.allSettled(pools.map((pool) => pool.stop()))
     this.logger.info('Stopping redis...')
-    this.redis?.disconnect(false)
+    this.store?.disconnect(false)
     this.emit('stop')
   }
 }

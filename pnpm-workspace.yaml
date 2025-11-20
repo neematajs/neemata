@@ -3,7 +3,7 @@ packages:
   - tests/*
 
 catalog:
-  zod: ^4.0.0
+  zod: ^4.1.0
 
 onlyBuiltDependencies:
   - esbuild

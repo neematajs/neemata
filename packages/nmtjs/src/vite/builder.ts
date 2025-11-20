@@ -7,7 +7,7 @@ import type { NeemataConfig } from '../config.ts'
 import type { ViteConfigOptions } from './config.ts'
 // import pkgJson from '../../package.json' with { type: 'json' }
 import { createConfig } from './config.ts'
-import { VitePlugins } from './plugins.ts'
+import { buildPlugins } from './plugins.ts'
 
 export async function createBuilder(
   configOptions: ViteConfigOptions,
@@ -21,12 +21,14 @@ export async function createBuilder(
 
     // techinically it's possible to do the same with rolldown directly,
     // but vite handles a lot of things, like defines substitutions, etc.
+    // also, since during dev the code is processed via vite anyway,
+    // using vite for build as well ensures consistency between dev and prod
     return await viteBuild({
       appType: 'custom',
       clearScreen: false,
       resolve: { alias: config.alias },
       ssr: { noExternal: true },
-      plugins: [...VitePlugins, ...neemataConfig.plugins],
+      plugins: [...buildPlugins, ...neemataConfig.plugins],
       build: {
         lib: { entry: config.entries, formats: ['es'] },
         ssr: true,
@@ -85,13 +87,13 @@ export async function createBuilder(
                 { name: 'zod', test: /node_modules[\\/]zod/, priority: 2 },
                 { name: 'pino', test: /node_modules[\\/]pino/, priority: 2 },
                 {
-                  name: '@nmtjs-server',
-                  test: /node_modules[\\/](@nmtjs[\\/]server)/,
+                  name: '@nmtjs-runtime',
+                  test: /node_modules[\\/](@nmtjs[\\/]runtime)/,
                   priority: 2,
                 },
                 {
                   name: '@nmtjs-common',
-                  test: /node_modules[\\/]@nmtjs[\\/](?=[^server|nmtjs])/,
+                  test: /node_modules[\\/]@nmtjs[\\/](?=[^runtime|nmtjs])/,
                   priority: 1,
                 },
                 { name: 'vendor', test: /node_modules/, priority: 0 },
@@ -100,7 +102,6 @@ export async function createBuilder(
             minify: neemataConfig.build.minify,
           },
         },
-
         chunkSizeWarningLimit: 10_000,
       },
     })

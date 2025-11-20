@@ -1,20 +1,24 @@
-import type { Container } from '@nmtjs/core'
+import type { Container, MetadataStore } from '@nmtjs/core'
 
-export type ProtocolApiCallOptions = {
+import type { GatewayConnection } from './connection.ts'
+
+export type GatewayApiCallOptions = {
+  connection: GatewayConnection
   procedure: string
   container: Container
   payload: any
   signal: AbortSignal
+  metadata?: (store: MetadataStore) => void
 }
 
-export type ProtocolApiCallResult = unknown
+export type GatewayApiCallResult = unknown
 
-export interface ProtocolApi {
-  call(options: ProtocolApiCallOptions): Promise<ProtocolApiCallResult>
+export interface GatewayApi {
+  call(options: GatewayApiCallOptions): Promise<GatewayApiCallResult>
 }
 
 export function isIterable(
-  value: ProtocolApiCallResult,
+  value: GatewayApiCallResult,
 ): value is AsyncIterable<unknown> | Iterable<unknown> {
   return Boolean(
     value &&

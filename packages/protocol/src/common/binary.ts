@@ -39,8 +39,7 @@ export const decodeNumber = <T extends keyof BinaryTypes>(
   return view[`get${type}`](offset, littleEndian) as BinaryTypes[T]
 }
 
-export const encodeText = (text: string) =>
-  new Uint8Array(utf8encoder.encode(text)).buffer as ArrayBuffer
+export const encodeText = (text: string) => utf8encoder.encode(text).buffer
 
 export const decodeText = (buffer: Parameters<typeof utf8decoder.decode>[0]) =>
   utf8decoder.decode(buffer)

@@ -137,33 +137,33 @@ const mainCommand = defineCommand({
         await once(process, 'beforeExit')
       },
     }),
-    command: defineCommand({
-      async run(ctx) {
-        const runner = await createRunner(
-          viteConfigOptions,
-          'production',
-          config,
-        )
-        const workerModule = await runner.import<
-          typeof import('./entrypoints/worker.ts')
-        >(import.meta.resolve('./entrypoints/worker.js'))
-        const commandModule = await runner.import<
-          typeof import('./command.ts')
-        >(import.meta.resolve('./command.js'))
-        const worker = await workerModule.default({
-          applicationWorkerData: undefined,
-          type: ApplicationType.Command,
-          workerType: ApplicationWorkerType.Command,
-        })
-        await runMain(commandModule.default(worker), { rawArgs: ctx.rawArgs })
-      },
-    }),
     build: defineCommand({
       async run(ctx) {
         const builder = await createBuilder(viteConfigOptions, config)
         await builder.build()
       },
     }),
+    // command: defineCommand({
+    //   async run(ctx) {
+    //     const runner = await createRunner(
+    //       viteConfigOptions,
+    //       'production',
+    //       config,
+    //     )
+    //     const workerModule = await runner.import<
+    //       typeof import('./entrypoints/worker.ts')
+    //     >(import.meta.resolve('./entrypoints/worker.js'))
+    //     const commandModule = await runner.import<
+    //       typeof import('./command.ts')
+    //     >(import.meta.resolve('./command.js'))
+    //     const worker = await workerModule.default({
+    //       applicationWorkerData: undefined,
+    //       type: ApplicationType.Command,
+    //       workerType: ApplicationWorkerType.Command,
+    //     })
+    //     await runMain(commandModule.default(worker), { rawArgs: ctx.rawArgs })
+    //   },
+    // }),
   },
 })
 

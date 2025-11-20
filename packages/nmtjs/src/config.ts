@@ -10,11 +10,12 @@ export interface NeemataConfig {
   /**
    * Path to application entry point
    */
-  applications: { [appName: string]: string }
-  /**
-   * Path to application entry point
-   */
-  applicationPath: string
+  applications: {
+    /**
+     * Application name
+     */
+    [appName: string]: string
+  }
   /**
    * Path to server entry point
    */
@@ -50,13 +51,14 @@ export function defineConfig(
   config: DeepPartial<NeemataConfig> = {},
 ): NeemataConfig {
   return {
-    applicationPath: './src/application.ts',
     serverPath: './src/server.ts',
     externalDependencies: 'prod',
     timeout: 10000,
     env: [],
     plugins: [],
     ...config,
+    // @ts-expect-error
+    applications: config.applications || {},
     build: { outDir: './dist', minify: true, ...config.build },
   }
 }

@@ -6,14 +6,15 @@ import type {
   ProtocolVersionInterface,
 } from '@nmtjs/protocol/server'
 import { throwError } from '@nmtjs/common'
+import { getFormat } from '@nmtjs/protocol/server'
 
 import type { TransportV2OnConnectOptions } from './transport.ts'
 import { GatewayConnection } from './connection.ts'
 import { GatewayHook } from './enums.ts'
-import { getFormat } from './utils.ts'
 
 export class GatewayConnections {
-  readonly #collection = new Map<string, GatewayConnection>()
+  readonly connections = new Map<string, GatewayConnection>()
+  readonly signals = new Map<string, { disconnect: AbortController }>()
 
   constructor(
     private readonly application: {
@@ -25,25 +26,26 @@ export class GatewayConnections {
   ) {}
 
   get(connectionId: string) {
-    const connection = this.#collection.get(connectionId)
+    const connection = this.connections.get(connectionId)
     if (!connection) throwError('Connection not found')
     return connection
   }
 
   async open({
+    id,
     container,
     identity,
     options,
     transport,
     protocol,
   }: {
+    id: string
     transport: string
     identity: string
     container: Container
     protocol: ProtocolVersionInterface
     options: TransportV2OnConnectOptions
   }) {
-    const id = randomUUID()
     const { accept, contentType, type } = options
     const { decoder, encoder } = getFormat(this.application.formats, {
       accept,
@@ -59,10 +61,12 @@ export class GatewayConnections {
       encoder,
       decoder,
     })
+    const signals = { disconnect: new AbortController() }
+    this.signals.set(id, signals)
     try {
-      this.#collection.set(id, connection)
+      this.connections.set(id, connection)
       await this.initialize(connection)
-      return connection
+      return { connection, signals }
     } catch (error) {
       container.dispose()
       // TODO: proper error handling/logging
@@ -72,29 +76,43 @@ export class GatewayConnections {
 
   async close(connectionId: string) {
     const connection = this.get(connectionId)
+    const signals = this.signals.get(connectionId)
 
-    this.application.hooks.callConcurrent(GatewayHook.Disconnect, connection)
+    const reason = new Error('Connection closed')
 
-    this.#collection.delete(connectionId)
+    await this.application.hooks.callHookParallel(
+      GatewayHook.Disconnect,
+      connection,
+    )
+
+    if (signals) {
+      signals.disconnect.abort(reason)
+      this.signals.delete(connectionId)
+    }
+
+    this.connections.delete(connectionId)
 
     const { rpcs, serverStreams, clientStreams, container } = connection
 
     for (const call of rpcs.values()) {
-      call.abort(new Error('Connection closed'))
+      call.abort(reason)
     }
 
     for (const stream of clientStreams.values()) {
-      stream.destroy(new Error('Connection closed'))
+      stream.destroy(reason)
     }
 
     for (const stream of serverStreams.values()) {
-      stream.destroy(new Error('Connection closed'))
+      stream.destroy(reason)
     }
 
     await container.dispose()
   }
 
   async initialize(connection: GatewayConnection) {
-    await this.application.hooks.callConcurrent(GatewayHook.Connect, connection)
+    await this.application.hooks.callHookParallel(
+      GatewayHook.Connect,
+      connection,
+    )
   }
 }

@@ -9,7 +9,6 @@ import type {
   ResolveInjectableType,
 } from './injectables.ts'
 import type { Logger } from './logger.ts'
-import type { Registry } from './registry.ts'
 import { Scope } from './enums.ts'
 import {
   CoreInjectables,
@@ -25,7 +24,7 @@ import {
 
 type InstanceWrapper = { private: any; public: any; context: any }
 
-type ContainerOptions = { registry: Registry; logger: Logger }
+type ContainerOptions = { logger: Logger }
 
 export class Container {
   readonly instances = new Map<AnyInjectable, InstanceWrapper[]>()
@@ -35,7 +34,7 @@ export class Container {
   private disposing = false
 
   constructor(
-    private readonly application: ContainerOptions,
+    private readonly runtime: ContainerOptions,
     public readonly scope: Exclude<Scope, Scope.Transient> = Scope.Global,
     private readonly parent?: Container,
   ) {
@@ -71,11 +70,11 @@ export class Container {
   }
 
   fork(scope: Exclude<Scope, Scope.Transient>) {
-    return new Container(this.application, scope, this)
+    return new Container(this.runtime, scope, this)
   }
 
   async dispose() {
-    this.application.logger.trace('Disposing [%s] scope context...', this.scope)
+    this.runtime.logger.trace('Disposing [%s] scope context...', this.scope)
 
     // Prevent new resolutions during disposal
     this.disposing = true
@@ -91,7 +90,7 @@ export class Container {
         }
       }
     } catch (error) {
-      this.application.logger.fatal(
+      this.runtime.logger.fatal(
         { error },
         'Potential memory leak: error during container disposal',
       )
@@ -174,27 +173,23 @@ export class Container {
 
   async provide<T extends AnyInjectable>(
     injectable: T,
-    instance: ResolveInjectableType<T>,
+    value: ResolveInjectableType<T> | AnyInjectable<ResolveInjectableType<T>>,
   ) {
     if (compareScope(injectable.scope, '>', this.scope)) {
       throw new Error('Invalid scope') // TODO: more informative error
     }
 
-    this.instances.set(injectable, [
-      { private: instance, public: instance, context: undefined },
-    ])
+    if (isInjectable(value)) {
+      await this.resolve(value)
+    } else {
+      this.instances.set(injectable, [
+        { private: value, public: value, context: undefined },
+      ])
+    }
   }
 
   satisfies(injectable: AnyInjectable) {
     return compareScope(injectable.scope, '<=', this.scope)
-  }
-
-  private *findCurrentScopeInjectables() {
-    for (const injectable of this.injectables) {
-      if (injectable.scope === this.scope) {
-        yield injectable
-      }
-    }
   }
 
   private resolveInjectable<T extends AnyInjectable>(
@@ -436,7 +431,7 @@ export class Container {
         'Injectable disposal error. Potential memory leak',
         { cause },
       )
-      this.application.logger.error(error)
+      this.runtime.logger.error(error)
     } finally {
       this.instances.delete(injectable)
     }

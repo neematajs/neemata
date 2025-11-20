@@ -1,7 +1,7 @@
 import { fileURLToPath } from 'node:url'
 
 export type ViteConfigOptions = {
-  applicationEntryPath: string
+  applicationEntryPaths: Record<string, string>
   serverEntryPath: string
   entrypointServerPath: string
   entrypointWorkerPath: string
@@ -20,19 +20,22 @@ export const baseViteConfigOptions = {
 } satisfies Partial<ViteConfigOptions>
 
 export function createConfig(options: ViteConfigOptions) {
-  return {
-    alias: {
-      '#application': options.applicationEntryPath,
-      '#server': options.serverEntryPath,
-      '#entrypoint.server': options.entrypointServerPath,
-      '#entrypoint.worker': options.entrypointWorkerPath,
-    },
-    entries: {
-      application: options.applicationEntryPath,
-      server: options.serverEntryPath,
-      main: options.entrypointServerPath,
-      worker: options.entrypointWorkerPath,
-      cli: options.entrypointCLIPath,
-    },
+  const alias = {
+    '#server': options.serverEntryPath,
+    '#entrypoint.server': options.entrypointServerPath,
+    '#entrypoint.worker': options.entrypointWorkerPath,
   }
+  const entries = {
+    server: options.serverEntryPath,
+    main: options.entrypointServerPath,
+    worker: options.entrypointWorkerPath,
+    cli: options.entrypointCLIPath,
+  }
+
+  for (const [name, path] of Object.entries(options.applicationEntryPaths)) {
+    entries[`application.${name}`] = path
+    alias[`#application.${name}`] = path
+  }
+
+  return { alias, entries }
 }

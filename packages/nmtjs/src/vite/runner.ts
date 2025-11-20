@@ -5,7 +5,7 @@ import { createServerModuleRunner } from 'vite'
 import type { NeemataConfig } from '../config.ts'
 import type { ViteConfigOptions } from './config.ts'
 import { createConfig } from './config.ts'
-import { VitePlugins } from './plugins.ts'
+import { buildPlugins } from './plugins.ts'
 import { createServer } from './server.ts'
 
 export async function createRunner(
@@ -19,7 +19,7 @@ export async function createRunner(
     clearScreen: false,
     resolve: { alias: config.alias },
     mode,
-    plugins: [...VitePlugins, ...neemataConfig.plugins],
+    plugins: [...buildPlugins, ...neemataConfig.plugins],
   })
   const environment = server.environments.server
   const runner = createServerModuleRunner(environment, {

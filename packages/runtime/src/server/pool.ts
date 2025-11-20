@@ -5,8 +5,8 @@ import { MessageChannel, Worker } from 'node:worker_threads'
 
 import type {
   JobTaskResult,
-  ServerPortMessage,
-  ThreadPortMessage,
+  ServerPortMessageTypes,
+  ThreadPortMessageTypes,
   WorkerJobTask,
 } from '../types.ts'
 
@@ -20,11 +20,13 @@ export type ThreadState =
 export class Thread extends EventEmitter<
   {
     error: [error: Error]
-    ready: [undefined]
-    task: [{ id: string; data: JobTaskResult }]
+    ready: [ThreadPortMessageTypes['ready']]
+    task: [ThreadPortMessageTypes['task']]
     terminate: []
   } & {
-    [K in `task-${string}`]: [data: unknown]
+    [K in `task-${ThreadPortMessageTypes['task']['id']}`]: [
+      ThreadPortMessageTypes['task']['task'],
+    ]
   }
 > {
   worker: Worker
@@ -37,13 +39,21 @@ export class Thread extends EventEmitter<
   ) {
     super()
     this.worker = new Worker(workerPath, workerOptions)
-    this.port.on('message', (msg: ServerPortMessage) => {
-      this.emit(msg.type, msg.data)
-      if (msg.type === 'task') {
-        const { data } = msg
-        this.emit(`task-${data.id}`, data.data)
+
+    const handler = <T extends keyof ThreadPortMessageTypes>(
+      type: T,
+      data: ThreadPortMessageTypes[T],
+    ) => {
+      // @ts-expect-error
+      this.emit(type, data)
+      if (type === 'task') {
+        const { id, task } = data as ThreadPortMessageTypes['task']
+        this.emit(`task-${id}`, task)
       }
-    })
+    }
+
+    // @ts-expect-error
+    this.port.on('message', handler)
   }
 
   async start() {
@@ -82,7 +92,7 @@ export class Thread extends EventEmitter<
         const exit = once(this.worker, 'exit', { signal }).finally(() => {
           console.log('here')
         })
-        this.send({ type: 'stop' })
+        this.send('stop')
         try {
           await exit
         } catch (err) {
@@ -100,12 +110,17 @@ export class Thread extends EventEmitter<
 
   async run(task: WorkerJobTask) {
     const id = randomUUID()
-    this.send({ type: 'task', data: { id, data: task } })
+    this.send('task', { id, task })
     return await once(this, `task-${id}`)
   }
 
-  async send(msg: ThreadPortMessage) {
-    this.port.postMessage(msg)
+  async send<T extends keyof ServerPortMessageTypes>(
+    type: T,
+    ...[data]: ServerPortMessageTypes[T] extends undefined
+      ? []
+      : [data: ServerPortMessageTypes[T]]
+  ) {
+    this.port.postMessage({ type, data })
   }
 }
 
@@ -113,25 +128,18 @@ export class Pool extends EventEmitter<{
   workerReady: [worker: Worker]
   workerTaskResult: [worker: Worker]
 }> {
-  protected readonly threadsPool: Thread[]
+  protected readonly threadsPool: Thread[] = []
   protected runIndex = 0
 
-  constructor(
-    readonly options: {
-      filename: string
-      name: string
-      threadsNumber: number
-      workerData?: any
-      extraWorkerData?: (index: number) => any
-    },
-  ) {
+  constructor(readonly options: { filename: string; workerData?: any }) {
     super()
-    this.threadsPool = Array.from({ length: options.threadsNumber })
+  }
+
+  add(options: { index: number; name: string; workerData?: any }) {
+    return this.createThread(options)
   }
 
   async start() {
-    const { threadsNumber } = this.options
-    for (let i = 0; i < threadsNumber; i++) this.createThread(i)
     await Promise.all(this.threadsPool.map((thread) => thread.start()))
   }
 
@@ -149,25 +157,29 @@ export class Pool extends EventEmitter<{
     return result
   }
 
-  protected createThread(index: number) {
+  protected createThread(
+    options: { index: number; name: string; workerData?: any },
+    index?: number,
+  ) {
     const { port1, port2 } = new MessageChannel()
-    const extraWorkerData = this.options.extraWorkerData
-      ? this.options.extraWorkerData(index)
-      : {}
     const thread = new Thread(port1, this.options.filename, {
       workerData: {
         ...this.options.workerData,
-        ...extraWorkerData,
+        ...options.workerData,
         port: port2,
       },
-      name: `${this.options.name}-${index + 1}`,
+      name: `${options.name}-${options.index + 1}`,
       transferList: [port2],
     })
-    this.threadsPool[index] = thread
+    if (index !== undefined) {
+      this.threadsPool[index] = thread
+    } else {
+      index = this.threadsPool.push(thread) - 1
+    }
     thread.once('error', (error) => {
-      // ;(error.name = 'Worker Thread Error').length
       thread.worker.terminate()
-      this.createThread(index)
+      this.createThread(options)
     })
+    return thread
   }
 }

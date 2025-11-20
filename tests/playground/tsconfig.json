@@ -5,5 +5,5 @@
     "allowJs": true,
     "types": ["vite/client"]
   },
-  "include": ["./.neemata/types.d.ts", "./src/**/*.ts"]
+  "include": ["./src/**/*.ts", "./.neemata/types.d.ts"]
 }

@@ -6,32 +6,37 @@ import {
 
 import type { GatewayConnection } from './connection.ts'
 
-const connection = createLazyInjectable<GatewayConnection, Scope.Connection>(
-  Scope.Connection,
-  'Gateway connection',
-)
+export const connection = createLazyInjectable<
+  GatewayConnection,
+  Scope.Connection
+>(Scope.Connection, 'Gateway connection')
 
-const connectionData = createLazyInjectable<any, Scope.Connection>(
+export const connectionId = createLazyInjectable<
+  GatewayConnection['id'],
+  Scope.Connection
+>(Scope.Connection, 'Gateway connection id')
+
+export const connectionData = createLazyInjectable<unknown, Scope.Connection>(
   Scope.Connection,
   "Gateway connection's data",
 )
 
-const connectionAbortSignal = createLazyInjectable<
+export const connectionAbortSignal = createLazyInjectable<
   AbortSignal,
   Scope.Connection
 >(Scope.Connection, 'Connection abort signal')
 
-const rpcClientAbortSignal = createLazyInjectable<AbortSignal, Scope.Call>(
-  Scope.Call,
-  'RPC client abort signal',
-)
+export const rpcClientAbortSignal = createLazyInjectable<
+  AbortSignal,
+  Scope.Call
+>(Scope.Call, 'RPC client abort signal')
 
-const rpcTimeoutSignal = createLazyInjectable<AbortSignal, Scope.Call>(
+export const rpcTimeoutSignal = createLazyInjectable<AbortSignal, Scope.Call>(
   Scope.Call,
   'RPC timeout signal',
 )
 
-const rpcAbortSignal = createFactoryInjectable(
+export const rpcAbortSignal = createFactoryInjectable(
   {
     dependencies: {
       rpcTimeoutSignal,
@@ -42,12 +47,3 @@ const rpcAbortSignal = createFactoryInjectable(
   },
   'Any RPC abort signal',
 )
-
-export const ProtocolInjectables = {
-  connection,
-  connectionData,
-  connectionAbortSignal,
-  rpcClientAbortSignal,
-  rpcTimeoutSignal,
-  rpcAbortSignal,
-} as const
