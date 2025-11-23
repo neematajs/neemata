@@ -34,12 +34,19 @@ config = await import(
 
 if (!isServerConfig(config)) throw new InvalidServerConfigError()
 
-const vite = __VITE_CONFIG__ || undefined
+const vite = __VITE_CONFIG__ ? JSON.parse(__VITE_CONFIG__) : undefined
 const applicationsConfig = __APPLICATIONS_CONFIG__
+  ? JSON.parse(__APPLICATIONS_CONFIG__)
+  : {}
 
-const server = new ApplicationServer(config, {
-  path: fileURLToPath(import.meta.resolve('./thread')),
-  workerData: { vite: vite && JSON.parse(vite) },
+for (const key in applicationsConfig) {
+  applicationsConfig[key] = import.meta.resolve(applicationsConfig[key])
+}
+
+const ext = new URL(import.meta.url).pathname.endsWith('.ts') ? '.ts' : '.js'
+const server = new ApplicationServer(config, applicationsConfig, {
+  path: fileURLToPath(import.meta.resolve(`./thread${ext}`)),
+  workerData: { vite },
 })
 
 let isTerminating = false
@@ -58,3 +65,19 @@ process.on('uncaughtException', (error) => console.error(error))
 process.on('unhandledRejection', (error) => console.error(error))
 
 server.start()
+
+// const { format } = Intl.NumberFormat('en', {
+//   notation: 'compact',
+//   maximumFractionDigits: 2,
+//   unit: 'byte',
+// })
+// const printMem = () => {
+//   globalThis.gc?.()
+//   // print memory usage every 10 seconds
+//   const memoryUsage = process.memoryUsage()
+//   console.log(
+//     `Memory Usage: RSS=${format(memoryUsage.rss)}, HeapTotal=${format(memoryUsage.heapTotal)}, HeapUsed=${format(memoryUsage.heapUsed)}, External=${format(memoryUsage.external)}, ArrayBuffers=${format(memoryUsage.arrayBuffers)}`,
+//   )
+// }
+// printMem()
+// setInterval(printMem, 5000)

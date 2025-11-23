@@ -101,7 +101,6 @@ export function tryCaptureStackTrace(depth = 0) {
 
       if (trimmed.startsWith('at eval (') && trimmed.endsWith(')')) {
         const trace = trimmed.slice(9, -1)
-        // console.dir({ traceLines, trace })
         return trace
       }
     }
@@ -125,7 +124,7 @@ export function isAsyncGeneratorFunction(
   )
 }
 export function isAsyncIterable(value: any): value is AsyncIterable<unknown> {
-  return value && Symbol.asyncIterator in value
+  return value && typeof value === 'object' && Symbol.asyncIterator in value
 }
 
 export function throwError(message: string, ErrorClass = Error): never {

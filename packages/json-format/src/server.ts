@@ -81,6 +81,7 @@ export class StandardJsonFormat extends BaseServerFormat {
   accept = ['application/json', 'application/vnd.api+json']
 
   encode(data: any) {
+    if (data === undefined) return Buffer.alloc(0)
     return Buffer.from(JSON.stringify(data), 'utf-8')
   }
 

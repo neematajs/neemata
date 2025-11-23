@@ -4,9 +4,15 @@ import { StoreType } from '../../../packages/runtime/src/enums.ts'
 
 export default defineServer({
   deploymentId: import.meta.env.PROD ? 'production-deployment' : undefined,
-  logger: { pinoOptions: { level: 'trace' } },
+  logger: { pinoOptions: { level: 'info' } },
   applications: {
-    test: { threads: [{ http: { listen: { hostname: '0.0.0.0', port: 0 } } }] },
+    test: {
+      threads: [
+        { http: { listen: { hostname: '0.0.0.0', port: 0 } } },
+        // { http: { listen: { hostname: '0.0.0.0', port: 0 } } },
+        // { http: { listen: { hostname: '0.0.0.0', port: 0 } } },
+      ],
+    },
   },
   store: {
     type: StoreType.Redis,
@@ -18,10 +24,12 @@ export default defineServer({
       lazyConnect: true,
     },
   },
-  jobs: {
-    jobs: [],
-    queues: { Io: { threads: 1, jobs: 100 }, Compute: { threads: 1, jobs: 2 } },
-  },
+  proxy: { hostname: '0.0.0.0', port: 8080, threads: 1 },
+
+  // jobs: {
+  //   jobs: [],
+  //   queues: { Io: { threads: 0, jobs: 100 }, Compute: { threads: 1, jobs: 2 } },
+  // },
 
   // scheduler: {
   //   entries: [

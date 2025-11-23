@@ -1,6 +1,5 @@
 import assert from 'node:assert'
 import EventEmitter from 'node:events'
-import { MessageChannel } from 'node:worker_threads'
 
 import type { Logger } from '@nmtjs/core'
 import type { NeemataProxy } from '@nmtjs/proxy'
@@ -45,7 +44,7 @@ export class ApplicationServer extends EventEmitter {
     },
   ) {
     super()
-    this.logger = createLogger(config.logger, 'Application Server')
+    this.logger = createLogger(config.logger, 'Server')
   }
 
   async start() {
@@ -88,16 +87,23 @@ export class ApplicationServer extends EventEmitter {
           index: i,
           name: `application-${applicationName}`,
           workerData: {
-            applicationName,
-            applicationPath,
-            transportsData: threadsConfig[i],
+            runtime: {
+              type: 'application',
+              name: applicationName,
+              path: applicationPath,
+              transportsData: threadsConfig[i],
+            },
           },
         })
 
         if (this.config.proxy) {
           thread.on('ready', ({ hosts }) => {
             proxyUpstreams[applicationName] ??= []
-            proxyUpstreams[applicationName].push(...hosts)
+            for (const host of hosts) {
+              const url = new URL(host)
+              if (url.hostname === '0.0.0.0') url.hostname = '127.0.0.1'
+              proxyUpstreams[applicationName].push(`${url}`)
+            }
           })
         }
       }
@@ -124,7 +130,7 @@ export class ApplicationServer extends EventEmitter {
           this.pools[jobWorkerQueue]!.add({
             index: i,
             name: `job-worker-${jobWorkerQueue.toLowerCase()}`,
-            workerData: { jobWorkerQueue },
+            workerData: { runtime: { type: 'jobs', jobWorkerQueue } },
           })
         }
 
@@ -150,6 +156,7 @@ export class ApplicationServer extends EventEmitter {
             const runResult = await pool.run({
               jobId: job.id!,
               jobName: job.name,
+              data: job.data,
             })
             jobLogger.debug(runResult, 'Job processed')
             switch (runResult.type) {
@@ -183,21 +190,22 @@ export class ApplicationServer extends EventEmitter {
 
     if (this.config.proxy) {
       const { NeemataProxy } = await import('@nmtjs/proxy')
-      this.logger.info('Starting proxy server...')
-
-      this.proxy = new NeemataProxy(
-        Object.fromEntries(
-          Object.entries(proxyUpstreams).map((app, upstreams) => [
-            app,
-            { upstreams },
-          ]),
-        ),
-        {
-          healthCheckIntervalSecs: 10,
-          listen: `${this.config.proxy.hostname}:${this.config.proxy.port}`,
-          threads: this.config.proxy.threads || 1,
-        },
+      const upstreams = Object.fromEntries(
+        Object.entries(proxyUpstreams).map(([app, upstreams]) => [
+          app,
+          { upstreams },
+        ]),
       )
+      this.logger.info(
+        { ...this.config.proxy, upstreams },
+        'Starting proxy server...',
+      )
+
+      this.proxy = new NeemataProxy(upstreams, {
+        healthCheckIntervalSecs: 10,
+        listen: `${this.config.proxy.hostname}:${this.config.proxy.port}`,
+        threads: this.config.proxy.threads || 1,
+      })
       this.proxy.run()
     }
 
@@ -207,19 +215,25 @@ export class ApplicationServer extends EventEmitter {
   async stop() {
     this.logger.info('Stopping application server...')
 
-    this.logger.info('Stopping proxy...')
-    this.proxy?.shutdown()
+    if (this.proxy) {
+      this.logger.info('Stopping proxy...')
+      this.proxy.shutdown()
+    }
 
-    this.logger.info('Stopping queue workers...')
-
-    await Promise.allSettled(
-      Array.from(this.queueWorkers).map((worker) => worker.close()),
-    )
+    if (this.queueWorkers.size) {
+      this.logger.info('Stopping queue workers...')
+      await Promise.allSettled(
+        Array.from(this.queueWorkers).map((worker) => worker.close()),
+      )
+    }
     const pools = Object.values(this.pools).filter(Boolean) as Pool[]
     this.logger.info('Stopping pools workers...')
     await Promise.allSettled(pools.map((pool) => pool.stop()))
-    this.logger.info('Stopping redis...')
-    this.store?.disconnect(false)
+    if (this.store) {
+      this.logger.info('Stopping redis...')
+      this.store.disconnect(false)
+    }
     this.emit('stop')
+    this.logger.info('Application server stopped')
   }
 }

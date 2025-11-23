@@ -3,7 +3,8 @@
   "type": "module",
   "scripts": {
     "postinstall": "$npm_execpath build",
-    "build": "napi build --release --esm"
+    "build": "napi build --release --esm",
+    "build:debug": "napi build --esm"
   },
   "exports": {
     ".": "./index.js",

@@ -80,18 +80,8 @@ export function defineServer(
   options: Omit<ServerConfig, kServerConfig> &
     Partial<Omit<ServerConfig, 'applications' | 'store' | 'logger'>>,
 ): ServerConfig {
-  const {
-    deploymentId,
-    logger,
-    commands,
-    proxy,
-    store,
-    applications,
-    jobs = {
-      jobs: [],
-      queues: { Io: { threads: 0, jobs: 0 }, Compute: { threads: 0, jobs: 0 } },
-    },
-  } = options
+  const { deploymentId, logger, commands, proxy, store, applications, jobs } =
+    options
   return Object.freeze({
     [kServerConfig]: true,
     deploymentId,

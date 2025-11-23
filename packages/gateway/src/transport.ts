@@ -1,6 +1,7 @@
 import type { Async } from '@nmtjs/common'
 import type { Injection, LazyInjectable, Scope } from '@nmtjs/core'
 import type { ProtocolRPC } from '@nmtjs/protocol'
+import type { ProtocolFormats } from '@nmtjs/protocol/server'
 import { createLazyInjectable, provide } from '@nmtjs/core'
 import { ConnectionType, ProtocolVersion } from '@nmtjs/protocol'
 
@@ -33,13 +34,14 @@ export interface TransportV2OnMessageOptions {
   data: ArrayBuffer
 }
 
-export type TransportV2WorkerHooks<
+export type TransportV2WorkerParams<
   Type extends ConnectionType = ConnectionType,
 > = {
+  formats: ProtocolFormats
   onConnect: (
     options: TransportV2OnConnectOptions<Type>,
     ...injections: Injection[]
-  ) => Promise<GatewayConnection>
+  ) => Promise<GatewayConnection & AsyncDisposable>
   onDisconnect: (options: TransportV2OnDisconnectOptions) => Promise<void>
   onMessage: (
     options: TransportV2OnMessageOptions,
@@ -55,15 +57,15 @@ export type TransportV2WorkerHooks<
 
 export interface TransportV2WorkerStartOptions<
   Type extends ConnectionType = ConnectionType,
-> extends TransportV2WorkerHooks<Type> {
+> extends TransportV2WorkerParams<Type> {
   // for extra props in the future
 }
 
 export interface TransportV2Worker<
   Type extends ConnectionType = ConnectionType,
 > {
-  start: (hooks: TransportV2WorkerHooks<Type>) => Async<string>
-  stop: (hooks: TransportV2WorkerHooks<Type>) => Async<void>
+  start: (params: TransportV2WorkerParams<Type>) => Async<string>
+  stop: (params: Pick<TransportV2WorkerParams<Type>, 'formats'>) => Async<void>
   send?: Type extends 'unidirectional'
     ? never
     : (connectionId: string, buffer: ArrayBuffer) => boolean | null

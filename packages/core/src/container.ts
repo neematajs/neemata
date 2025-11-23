@@ -6,6 +6,7 @@ import type {
   AnyInjectable,
   Dependencies,
   DependencyContext,
+  Injection,
   ResolveInjectableType,
 } from './injectables.ts'
 import type { Logger } from './logger.ts'
@@ -20,6 +21,7 @@ import {
   isLazyInjectable,
   isOptionalInjectable,
   isValueInjectable,
+  provide,
 } from './injectables.ts'
 
 type InstanceWrapper = { private: any; public: any; context: any }
@@ -73,6 +75,9 @@ export class Container {
     return new Container(this.runtime, scope, this)
   }
 
+  async [Symbol.asyncDispose]() {
+    await this.dispose()
+  }
   async dispose() {
     this.runtime.logger.trace('Disposing [%s] scope context...', this.scope)
 
@@ -147,6 +152,81 @@ export class Container {
     return this.createInjectableContext(dependencies)
   }
 
+  async provide<T extends Injection[]>(injections: T)
+  async provide<T extends AnyInjectable>(
+    injectable: T,
+    value: ResolveInjectableType<T> | AnyInjectable<ResolveInjectableType<T>>,
+  )
+  async provide<T extends AnyInjectable | Injection[]>(
+    injectable: T,
+    ...[value]: T extends AnyInjectable
+      ? [
+          value:
+            | ResolveInjectableType<T>
+            | AnyInjectable<ResolveInjectableType<T>>,
+        ]
+      : []
+  ) {
+    const _toinject = Array.isArray(injectable)
+      ? injectable
+      : [provide(injectable, value)]
+    await Promise.all(
+      _toinject.map(async ({ token, value }) => {
+        if (compareScope(token.scope, '>', this.scope)) {
+          // TODO: more informative error
+          throw new Error('Invalid scope')
+        }
+        if (isInjectable(value)) {
+          await this.resolve(value)
+        } else {
+          this.instances.set(value, [
+            { private: value, public: value, context: undefined },
+          ])
+        }
+      }),
+    )
+  }
+
+  satisfies(injectable: AnyInjectable) {
+    return compareScope(injectable.scope, '<=', this.scope)
+  }
+
+  async disposeInjectableInstances(injectable: AnyInjectable) {
+    try {
+      if (this.instances.has(injectable)) {
+        const wrappers = this.instances.get(injectable)!
+        await Promise.all(
+          wrappers.map((wrapper) =>
+            this.disposeInjectableInstance(
+              injectable,
+              wrapper.private,
+              wrapper.context,
+            ),
+          ),
+        )
+      }
+    } catch (cause) {
+      const error = new Error(
+        'Injectable disposal error. Potential memory leak',
+        { cause },
+      )
+      this.runtime.logger.error(error)
+    } finally {
+      this.instances.delete(injectable)
+    }
+  }
+
+  async disposeInjectableInstance(
+    injectable: AnyInjectable,
+    instance: any,
+    context: any,
+  ) {
+    if (isFactoryInjectable(injectable)) {
+      const { dispose } = injectable
+      if (dispose) await dispose(instance, context)
+    }
+  }
+
   private async createInjectableContext<T extends Dependencies>(
     dependencies: T,
     dependant?: AnyInjectable,
@@ -169,27 +249,6 @@ export class Container {
     }
     await Promise.all(resolvers)
     return Object.freeze(injections) as DependencyContext<T>
-  }
-
-  async provide<T extends AnyInjectable>(
-    injectable: T,
-    value: ResolveInjectableType<T> | AnyInjectable<ResolveInjectableType<T>>,
-  ) {
-    if (compareScope(injectable.scope, '>', this.scope)) {
-      throw new Error('Invalid scope') // TODO: more informative error
-    }
-
-    if (isInjectable(value)) {
-      await this.resolve(value)
-    } else {
-      this.instances.set(injectable, [
-        { private: value, public: value, context: undefined },
-      ])
-    }
-  }
-
-  satisfies(injectable: AnyInjectable) {
-    return compareScope(injectable.scope, '<=', this.scope)
   }
 
   private resolveInjectable<T extends AnyInjectable>(
@@ -410,42 +469,6 @@ export class Container {
     }
 
     return result
-  }
-
-  async disposeInjectableInstances(injectable: AnyInjectable) {
-    try {
-      if (this.instances.has(injectable)) {
-        const wrappers = this.instances.get(injectable)!
-        await Promise.all(
-          wrappers.map((wrapper) =>
-            this.disposeInjectableInstance(
-              injectable,
-              wrapper.private,
-              wrapper.context,
-            ),
-          ),
-        )
-      }
-    } catch (cause) {
-      const error = new Error(
-        'Injectable disposal error. Potential memory leak',
-        { cause },
-      )
-      this.runtime.logger.error(error)
-    } finally {
-      this.instances.delete(injectable)
-    }
-  }
-
-  async disposeInjectableInstance(
-    injectable: AnyInjectable,
-    instance: any,
-    context: any,
-  ) {
-    if (isFactoryInjectable(injectable)) {
-      const { dispose } = injectable
-      if (dispose) await dispose(instance, context)
-    }
   }
 }
 

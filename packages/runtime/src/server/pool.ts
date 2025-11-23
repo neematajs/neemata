@@ -6,6 +6,7 @@ import { MessageChannel, Worker } from 'node:worker_threads'
 import type {
   JobTaskResult,
   ServerPortMessageTypes,
+  ThreadPortMessage,
   ThreadPortMessageTypes,
   WorkerJobTask,
 } from '../types.ts'
@@ -38,13 +39,13 @@ export class Thread extends EventEmitter<
     workerOptions: WorkerOptions,
   ) {
     super()
-    this.worker = new Worker(workerPath, workerOptions)
+    this.worker = new Worker(workerPath, {
+      ...workerOptions,
+      execArgv: ['--inspect=0'],
+    })
 
-    const handler = <T extends keyof ThreadPortMessageTypes>(
-      type: T,
-      data: ThreadPortMessageTypes[T],
-    ) => {
-      // @ts-expect-error
+    const handler = (msg: ThreadPortMessage) => {
+      const { type, data } = msg
       this.emit(type, data)
       if (type === 'task') {
         const { id, task } = data as ThreadPortMessageTypes['task']
@@ -52,7 +53,6 @@ export class Thread extends EventEmitter<
       }
     }
 
-    // @ts-expect-error
     this.port.on('message', handler)
   }
 

@@ -19,7 +19,7 @@ export class ApplicationRuntime extends BaseRuntime {
   api: ApplicationApi
 
   constructor(public options: ApplicationRuntimeOptions) {
-    super()
+    super(options)
     this.applicationHooks = new ApplicationHooks()
     this.api = new ApplicationApi({
       container: this.container,

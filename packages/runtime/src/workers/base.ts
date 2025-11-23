@@ -20,6 +20,7 @@ export abstract class BaseWorkerRuntime extends BaseRuntime {
   }
 
   protected async _initialize(): Promise<void> {
+    await this.jobManager.initialize()
     this.container.provide(injectables.StoreConfig, this.config.store)
     this.container.provide(
       injectables.PubSubPublish,
@@ -33,5 +34,9 @@ export abstract class BaseWorkerRuntime extends BaseRuntime {
       injectables.JobManager,
       this.jobManager.publicInstance,
     )
+  }
+
+  protected async _dispose(): Promise<void> {
+    await this.jobManager.terminate()
   }
 }

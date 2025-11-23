@@ -28,7 +28,10 @@ export class ApplicationWorkerRuntime extends BaseWorkerRuntime {
     readonly config: ServerConfig,
     readonly runtimeOptions: ApplicationWorkerRuntimeOptions,
   ) {
-    super(config, { logger: config.logger })
+    super(config, {
+      logger: config.logger,
+      name: `Worker ${runtimeOptions.name}`,
+    })
   }
 
   async start() {
@@ -42,7 +45,7 @@ export class ApplicationWorkerRuntime extends BaseWorkerRuntime {
   }
 
   protected async _initialize(): Promise<void> {
-    await this._initialize()
+    await super._initialize()
 
     const module = await import(this.runtimeOptions.path)
     const appConfig = module.default as ApplicationConfig
@@ -51,6 +54,7 @@ export class ApplicationWorkerRuntime extends BaseWorkerRuntime {
       `Invalid application config exported from [${this.runtimeOptions.path}]`,
     )
     this.application = new ApplicationRuntime({
+      name: `Application ${this.runtimeOptions.name}`,
       container: this.container,
       logger: this.config.logger,
       plugins: appConfig.plugins,
@@ -77,8 +81,8 @@ export class ApplicationWorkerRuntime extends BaseWorkerRuntime {
       hooks: this.hooks,
       api: this.application.api,
       formats: new ProtocolFormats([
-        new JsonFormat(),
         new StandardJsonFormat(),
+        new JsonFormat(),
       ]),
       transports: this.transports,
       identityResolver:
@@ -92,7 +96,7 @@ export class ApplicationWorkerRuntime extends BaseWorkerRuntime {
 
   protected async _dispose(): Promise<void> {
     await this.application.dispose()
-    await this._dispose()
+    await super._dispose()
   }
 
   protected *_dependents(): Generator<Dependant> {}

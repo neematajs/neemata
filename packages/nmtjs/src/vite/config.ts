@@ -1,40 +1,40 @@
 import { fileURLToPath } from 'node:url'
 
 export type ViteConfigOptions = {
-  applicationEntryPaths: Record<string, string>
+  applicationImports: Record<string, { path: string; specifier: string }>
   serverEntryPath: string
-  entrypointServerPath: string
+  entrypointMainPath: string
   entrypointWorkerPath: string
-  entrypointCLIPath: string
+  entrypointThreadPath: string
+  // entrypointCLIPath: string
   configPath: string
 }
 
+const ext = new URL(import.meta.url).pathname.endsWith('.ts') ? '.ts' : '.js'
 export const baseViteConfigOptions = {
-  entrypointServerPath: fileURLToPath(
-    import.meta.resolve('../entrypoints/server'),
+  entrypointMainPath: fileURLToPath(
+    import.meta.resolve(`../entrypoints/main${ext}`),
   ),
   entrypointWorkerPath: fileURLToPath(
-    import.meta.resolve('../entrypoints/worker'),
+    import.meta.resolve(`../entrypoints/worker${ext}`),
   ),
-  entrypointCLIPath: fileURLToPath(import.meta.resolve('../entrypoints/cli')),
+  entrypointThreadPath: fileURLToPath(
+    import.meta.resolve(`../entrypoints/thread${ext}`),
+  ),
+  // entrypointCLIPath: fileURLToPath(import.meta.resolve('../entrypoints/cli')),
 } satisfies Partial<ViteConfigOptions>
 
 export function createConfig(options: ViteConfigOptions) {
-  const alias = {
-    '#server': options.serverEntryPath,
-    '#entrypoint.server': options.entrypointServerPath,
-    '#entrypoint.worker': options.entrypointWorkerPath,
-  }
+  const alias = { '#server': options.serverEntryPath }
   const entries = {
     server: options.serverEntryPath,
-    main: options.entrypointServerPath,
+    main: options.entrypointMainPath,
     worker: options.entrypointWorkerPath,
-    cli: options.entrypointCLIPath,
+    thread: options.entrypointThreadPath,
   }
 
-  for (const [name, path] of Object.entries(options.applicationEntryPaths)) {
+  for (const [name, { path }] of Object.entries(options.applicationImports)) {
     entries[`application.${name}`] = path
-    alias[`#application.${name}`] = path
   }
 
   return { alias, entries }

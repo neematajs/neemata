@@ -24,7 +24,7 @@
   "devDependencies": {
     "@nmtjs/common": "workspace:*",
     "@nmtjs/type": "workspace:*",
-    "@types/node": "^20",
+    "@types/node": "^24",
     "pino": "^9.6.0",
     "pino-pretty": "^13.0.0"
   },

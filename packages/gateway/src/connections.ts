@@ -90,8 +90,6 @@ export class GatewayConnections {
       this.signals.delete(connectionId)
     }
 
-    this.connections.delete(connectionId)
-
     const { rpcs, serverStreams, clientStreams, container } = connection
 
     for (const call of rpcs.values()) {
@@ -106,7 +104,15 @@ export class GatewayConnections {
       stream.destroy(reason)
     }
 
+    this.connections.delete(connectionId)
+
     await container.dispose()
+  }
+
+  async closeAll() {
+    await Promise.all(
+      Array.from(this.connections.keys()).map((id) => this.close(id)),
+    )
   }
 
   async initialize(connection: GatewayConnection) {

@@ -2,6 +2,7 @@
 
 use async_trait::async_trait;
 
+use log::{error, info};
 use napi::{
     Status,
     threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode},
@@ -69,7 +70,7 @@ impl ProxyHttp for LB {
                 Ok(peer)
             }
             Err(e) => {
-                eprintln!("Failed to get JS callback result: {:?}", e.reason);
+                error!("Failed to get JS callback result: {:?}", e.reason);
                 Err(Error::create(
                     ErrorType::ConnectError,
                     ErrorSource::Internal,
@@ -104,7 +105,7 @@ impl MyProxy {
         peer_callback: ThreadsafeFunction<String, String>,
     ) -> napi::Result<Self> {
         // print options for debugging
-        println!(
+        info!(
             "starting proxy with upstreams={:?}, hostname={}, port={}, threads={:?}",
             options.upstreams, options.hostname, options.port, options.threads
         );

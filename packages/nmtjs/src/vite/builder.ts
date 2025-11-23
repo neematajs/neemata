@@ -64,14 +64,23 @@ export async function createBuilder(
           },
           transform: {
             define: {
-              VITE_CONFIG: '""',
+              __VITE_CONFIG__: '""',
+              __APPLICATIONS_CONFIG__: JSON.stringify(
+                JSON.stringify(
+                  Object.fromEntries(
+                    Object.keys(configOptions.applicationImports).map(
+                      (appName) => [appName, `./application.${appName}.js`],
+                    ),
+                  ),
+                ),
+              ),
               __dirname: 'new URL(".", import.meta.url).pathname',
               __filename: 'new URL(import.meta.url).pathname',
             },
           },
           output: {
             entryFileNames: '[name].js',
-            chunkFileNames: '[name]-[hash].js',
+            chunkFileNames: 'chunks/[name]-[hash].js',
             advancedChunks: {
               groups: [
                 {

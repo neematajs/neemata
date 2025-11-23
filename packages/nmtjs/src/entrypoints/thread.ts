@@ -1,26 +1,23 @@
 import type { MessagePort } from 'node:worker_threads'
 import { fileURLToPath } from 'node:url'
-import { workerData as _workerData, parentPort } from 'node:worker_threads'
+import { workerData as _workerData } from 'node:worker_threads'
 
-import type {
-  ServerPortMessageTypes,
-  ThreadPortMessage,
-  ThreadPortMessageTypes,
-} from '@nmtjs/runtime'
+import type { ThreadPortMessage } from '@nmtjs/runtime'
 
 import type { ViteConfigOptions } from '../vite/config.ts'
 
 export type RunWorkerOptions = {
   port: MessagePort
   runtime:
-    | { type: 'application'; name: string; path: string }
-    | { type: 'jobs' }
+    | { type: 'application'; name: string; path: string; transportsData: any }
+    | { type: 'jobs'; jobWorkerQueue: string }
   vite?: { options: ViteConfigOptions; mode: 'development' | 'production' }
 }
 
 const workerData = _workerData as RunWorkerOptions
 
-const workerPath = fileURLToPath(import.meta.resolve('./worker'))
+const ext = new URL(import.meta.url).pathname.endsWith('.ts') ? '.ts' : '.js'
+const workerPath = fileURLToPath(import.meta.resolve(`./worker${ext}`))
 
 process.on('uncaughtException', (error) => {
   console.error(error)
@@ -53,32 +50,19 @@ async function main() {
   return workerModule.default(workerData)
 }
 
-workerData.port.on(
-  'message',
-  async (msg: {
-    type: keyof ThreadPortMessageTypes
-    data: ThreadPortMessageTypes[keyof ThreadPortMessageTypes]
-  }) => {
-    switch (msg.type) {
-      case 'task': {
-        const { id, data } = msg.const
-        result = await worker.runJob(data)
-        workerData.port.postMessage({
-          type: 'task',
-          data: { id, data: result },
-        } satisfies ServerPortMessageTypes)
-        break
-      }
-      case 'stop': {
-        workerData.port.removeAllListeners()
-        workerData.port.unref()
-        await worker.stop()
-        process.exit(0)
-      }
-    }
-  },
-)
+const runtime = await main()
+if (!runtime) throw new Error('Failed to initialize runtime')
 
-const worker = await main()
-await worker.start()
-workerData.port.postMessage({ type: 'ready' } satisfies ThreadPortMessage)
+const hosts = await runtime.start()
+
+workerData.port.postMessage({
+  type: 'ready',
+  data: { hosts: Array.from(hosts || []) },
+} satisfies ThreadPortMessage)
+
+workerData.port.on('message', async (msg) => {
+  if (msg.type === 'stop') {
+    await runtime.stop()
+    process.exit(0)
+  }
+})

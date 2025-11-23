@@ -1,0 +1,78 @@
+import type { MessagePort } from 'node:worker_threads'
+
+import type { ServerConfig } from '../server/config.ts'
+import { JobRunner } from '../jobs/runner.ts'
+import { BaseWorkerRuntime } from './base.ts'
+
+export interface JobWorkerRuntimeOptions {
+  queueName: string
+  port: MessagePort
+}
+
+export class JobWorkerRuntime extends BaseWorkerRuntime {
+  jobRunner!: JobRunner
+
+  constructor(
+    readonly config: ServerConfig,
+    readonly runtimeOptions: JobWorkerRuntimeOptions,
+  ) {
+    super(config, {
+      logger: config.logger,
+      name: `Job Worker ${runtimeOptions.queueName}`,
+    })
+  }
+
+  async start() {
+    await this.initialize()
+  }
+
+  async stop() {
+    await this.dispose()
+  }
+
+  protected async _initialize(): Promise<void> {
+    await super._initialize()
+    this.jobRunner = new JobRunner({
+      logger: this.logger,
+      container: this.container,
+      lifecycleHooks: this.hooks,
+    })
+
+    this.runtimeOptions.port.on('message', async (msg) => {
+      if (msg.type === 'task') {
+        const { id, task } = msg.data
+        try {
+          const job = this.config.jobs?.jobs.find(
+            (j) => j.name === task.jobName,
+          )
+          if (!job) {
+            this.runtimeOptions.port.postMessage({
+              type: 'task',
+              data: { id, task: { type: 'job_not_found' } },
+            })
+            return
+          }
+          const result = await this.jobRunner.runJob(job, task.data)
+          this.runtimeOptions.port.postMessage({
+            type: 'task',
+            data: { id, task: { type: 'success', result } },
+          })
+        } catch (error) {
+          this.runtimeOptions.port.postMessage({
+            type: 'task',
+            data: { id, task: { type: 'error', error } },
+          })
+        }
+      }
+    })
+  }
+
+  protected async _dispose(): Promise<void> {
+    this.runtimeOptions.port.removeAllListeners('message')
+    await super._dispose()
+  }
+
+  protected *_dependents() {
+    // No dependents for now
+  }
+}

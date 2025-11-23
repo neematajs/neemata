@@ -14,15 +14,18 @@ export function createServer(options: ViteConfigOptions, config: UserConfig) {
         consumer: 'server',
         dev: {},
         define: {
-          VITE_CONFIG: JSON.stringify(
+          __VITE_CONFIG__: JSON.stringify(
             JSON.stringify({ options, mode: config.mode }),
           ),
-          APPLICATIONS_CONFIG: JSON.stringify(
+          __APPLICATIONS_CONFIG__: JSON.stringify(
             JSON.stringify(
-              config.
-            )
-            
-          )
+              Object.fromEntries(
+                Object.entries(options.applicationImports).map(
+                  ([appName, { path }]) => [appName, path],
+                ),
+              ),
+            ),
+          ),
         },
       },
     },

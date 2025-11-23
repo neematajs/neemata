@@ -61,7 +61,9 @@ export class ApplicationApi implements GatewayApi {
     { procedure: AnyProcedure; path: AnyRouter[] }
   >()
 
-  constructor(private readonly options: ApiOptions) {}
+  constructor(private readonly options: ApiOptions) {
+    this.registerRootRouter(options.router)
+  }
 
   find(procedureName: string) {
     const result = this.procedures.get(procedureName)
@@ -112,7 +114,7 @@ export class ApplicationApi implements GatewayApi {
       const handled = await this.handleFilters(callOptions, error)
       if (handled === error && error instanceof ProtocolError === false) {
         const logError = new Error('Unhandled error', { cause: error })
-        this.options.logger.error(logError)
+        this.options.logger.debug(logError)
         throw new ApiError(
           ErrorCode.InternalServerError,
           'Internal Server Error',
@@ -246,9 +248,9 @@ export class ApplicationApi implements GatewayApi {
   private handleOutput(procedure: AnyProcedure, response: any) {
     if (procedure.contract.output instanceof type.NeverType === false) {
       const type = procedure.contract.output
-      return { output: type.encode(response) }
+      return type.encode(response)
     }
-    return { output: undefined }
+    return undefined
   }
 
   protected registerRootRouter(router: AnyRouter) {

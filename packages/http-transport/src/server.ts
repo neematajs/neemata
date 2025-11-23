@@ -4,10 +4,10 @@ import { Duplex, Readable } from 'node:stream'
 import type {
   GatewayApiCallOptions,
   TransportV2Worker,
-  TransportV2WorkerHooks,
+  TransportV2WorkerParams,
 } from '@nmtjs/gateway'
 import type { Peer } from 'crossws'
-import { isAsyncIterable } from '@nmtjs/common'
+import { isAsyncIterable, noopFn } from '@nmtjs/common'
 import { provide } from '@nmtjs/core'
 import {
   ConnectionType,
@@ -82,7 +82,7 @@ export class HttpTransportServer
     | HttpTransportCorsOptions
     | ((origin: string) => boolean | HttpTransportCorsOptions)
 
-  hooks!: TransportV2WorkerHooks<ConnectionType.Unidirectional>
+  params!: TransportV2WorkerParams<ConnectionType.Unidirectional>
   clients = new Map<string, Peer>()
 
   constructor(
@@ -93,8 +93,8 @@ export class HttpTransportServer
     this.#corsOptions = this.options.cors
   }
 
-  async start(hooks: TransportV2WorkerHooks<ConnectionType.Unidirectional>) {
-    this.hooks = hooks
+  async start(hooks: TransportV2WorkerParams<ConnectionType.Unidirectional>) {
+    this.params = hooks
     return await this.#server.start()
   }
 
@@ -117,18 +117,7 @@ export class HttpTransportServer
     requestSignal: AbortSignal,
   ): Promise<Response> {
     const url = new URL(request.url)
-
-    // const prefix = '/api/'
-
-    // Expect /api/{procedure}
-    // if (!url.pathname.startsWith(prefix)) {
-    //   return new Response('Not Found', {
-    //     status: HttpStatus.NotFound,
-    //     statusText: HttpStatusText[HttpStatus.NotFound],
-    //   })
-    // }
-
-    const procedure = url.pathname
+    const procedure = url.pathname.slice(1) // remove leading '/'
     const method = request.method.toLowerCase()
     const origin = request.headers.get('origin')
     const responseHeaders = new Headers()
@@ -144,11 +133,12 @@ export class HttpTransportServer
 
     const controller = new AbortController()
     const signal = AbortSignal.any([requestSignal, controller.signal])
+    const canHaveBody = method !== 'get'
     const isBlob = request.headers.get(NEEMATA_BLOB_HEADER) === 'true'
     const contentType = request.headers.get('content-type')
-    const accept = request.headers.get('accept')
+    const accept = request.headers.get('accept') || '*/*'
 
-    const connection = await this.hooks.onConnect({
+    await using connection = await this.params.onConnect({
       accept,
       contentType: isBlob ? '*/*' : contentType,
       data: request,
@@ -159,9 +149,11 @@ export class HttpTransportServer
     try {
       // Parse request body if present
       let payload: any
-      if (method === 'post' && body) {
+      if (canHaveBody && body) {
         const bodyStream = Readable.fromWeb(body as any)
-        if (isBlob) {
+        const cannotDecode =
+          !contentType || !this.params.formats.supportsDecoder(contentType)
+        if (isBlob || cannotDecode) {
           const type = contentType || 'application/octet-stream'
           const contentLength = request.headers.get('content-length')
           const size = contentLength
@@ -171,10 +163,9 @@ export class HttpTransportServer
           bodyStream.pipe(payload)
         } else {
           const buffer = Buffer.concat(await bodyStream.toArray())
-          payload =
-            buffer.byteLength > 0
-              ? connection.decoder.decode(buffer)
-              : undefined
+          if (buffer.byteLength > 0) {
+            payload = connection.decoder.decode(buffer)
+          }
         }
       }
 
@@ -186,10 +177,10 @@ export class HttpTransportServer
         }
       }
 
-      const result = await this.hooks.onRpc(
+      const result = await this.params.onRpc(
         connection,
         {
-          callId: 0, // since the connection is temporary, only one call exists per connection
+          callId: 0, // since the connection is closed after the call, only one call exists per connection
           payload,
           procedure,
           metadata,
@@ -227,11 +218,10 @@ export class HttpTransportServer
         })
       } else if (isAsyncIterable(result)) {
         // TODO: implement iterable responses over SSE
-
         // Handle streaming results
         controller.abort('Transport does not support streaming results')
         // TODO: might be better to fail early by checking procedure's contract
-        // without actually calling it
+        // whether it supports streaming without actually calling it
         return new Response('Not Implemented', {
           status: HttpStatus.NotImplemented,
           statusText: HttpStatusText[HttpStatus.NotImplemented],
@@ -270,12 +260,6 @@ export class HttpTransportServer
             ? HttpCodeMap[error.code]
             : HttpStatus.InternalServerError
         const text = HttpStatusText[status]
-
-        // const format = getFormat(this.protocol.format, {
-        //   accept: accept,
-        //   contentType: isBlob ? '*/*' : contentType,
-        // })
-
         const payload = connection.encoder.encode(error)
         responseHeaders.set('Content-Type', connection.encoder.contentType)
 
@@ -289,11 +273,7 @@ export class HttpTransportServer
 
       // Unknown error
       // this.logError(error, 'Unknown error while processing HTTP request')
-
-      // const format = getFormat(this.context.protocol.format, {
-      //   accept: accept,
-      //   contentType: isBlob ? '*/*' : contentType,
-      // })
+      console.error(error)
 
       const payload = connection.encoder.encode(
         new ProtocolError(

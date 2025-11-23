@@ -88,7 +88,7 @@ if (globalThis.Bun) {
       console.log('Received request on any route')
       res.endWithoutBody()
     })
-    .post('*', async (res) => {
+    .post('/*', async (res) => {
       const ab = new AbortController()
       res.onAborted(() => ab.abort())
       const body = await data(res)
@@ -105,17 +105,17 @@ if (globalThis.Bun) {
     })
 }
 
-function fmMem(val) {
-  return (val / 1024 / 1024).toFixed(0) + ' MB'
-}
+// function fmMem(val) {
+//   return (val / 1024 / 1024).toFixed(0) + ' MB'
+// }
 
-setInterval(() => {
-  const { arrayBuffers, external, heapTotal, heapUsed, rss } =
-    process.memoryUsage()
-  globalThis.gc?.()
-  // pretty print memory usage
-  console.log(
-    // `RSS: ${(rss / 1024 / 1024).toFixed(0)} MB, HT: ${(heapTotal / 1024 / 1024).toFixed(0)} MB, HU: ${(heapUsed / 1024 / 1024).toFixed(0)} MB, E: ${(external / 1024 / 1024).toFixed(0)} MB, AB: ${(arrayBuffers / 1024 / 1024).toFixed(0)} MB`,
-    `RSS: ${fmMem(rss)}, HeapT: ${fmMem(heapTotal)}, HeapU: ${fmMem(heapUsed)}, Ext: ${fmMem(external)}, ArrBufs: ${fmMem(arrayBuffers)}`,
-  )
-}, 5000)
+// setInterval(() => {
+//   const { arrayBuffers, external, heapTotal, heapUsed, rss } =
+//     process.memoryUsage()
+//   globalThis.gc?.()
+//   // pretty print memory usage
+//   console.log(
+//     // `RSS: ${(rss / 1024 / 1024).toFixed(0)} MB, HT: ${(heapTotal / 1024 / 1024).toFixed(0)} MB, HU: ${(heapUsed / 1024 / 1024).toFixed(0)} MB, E: ${(external / 1024 / 1024).toFixed(0)} MB, AB: ${(arrayBuffers / 1024 / 1024).toFixed(0)} MB`,
+//     `RSS: ${fmMem(rss)}, HeapT: ${fmMem(heapTotal)}, HeapU: ${fmMem(heapUsed)}, Ext: ${fmMem(external)}, ArrBufs: ${fmMem(arrayBuffers)}`,
+//   )
+// }, 5000)

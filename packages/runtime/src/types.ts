@@ -18,11 +18,17 @@ export type ThreadPortMessageTypes = {
 }
 
 export type ServerPortMessage = {
-  [K in keyof ServerPortMessageTypes]: { type: K } & ServerPortMessageTypes[K]
+  [K in keyof ServerPortMessageTypes]: {
+    type: K
+    data: ServerPortMessageTypes[K]
+  }
 }[keyof ServerPortMessageTypes]
 
 export type ThreadPortMessage = {
-  [K in keyof ThreadPortMessageTypes]: { type: K } & ThreadPortMessageTypes[K]
+  [K in keyof ThreadPortMessageTypes]: {
+    type: K
+    data: ThreadPortMessageTypes[K]
+  }
 }[keyof ThreadPortMessageTypes]
 
 export interface WorkerTask {
@@ -30,7 +36,7 @@ export interface WorkerTask {
   payload?: any
 }
 
-export type WorkerJobTask = { jobId: string; jobName: string }
+export type WorkerJobTask = { jobId: string; jobName: string; data: any }
 
 export type JobTaskResult = {
   [K in keyof JobTaskResultTypes]: { type: K } & JobTaskResultTypes[K]

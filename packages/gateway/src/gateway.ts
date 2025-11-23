@@ -6,21 +6,16 @@ import type { ProtocolRPC } from '@nmtjs/protocol'
 import type { ProtocolFormats } from '@nmtjs/protocol/server'
 import { isAbortError, unique } from '@nmtjs/common'
 import { Scope } from '@nmtjs/core'
-import {
-  ClientMessageType,
-  ErrorCode,
-  ServerMessageType,
-} from '@nmtjs/protocol'
+import { ClientMessageType, ServerMessageType } from '@nmtjs/protocol'
 import {
   ProtocolClientStreams,
-  ProtocolError,
   ProtocolServerStreams,
   versions,
 } from '@nmtjs/protocol/server'
 
-import type { GatewayApi, GatewayApiCallOptions } from './api.ts'
+import type { GatewayApi } from './api.ts'
 import type { GatewayConnection } from './connection.ts'
-import type { TransportV2Worker, TransportV2WorkerHooks } from './transport.ts'
+import type { TransportV2Worker, TransportV2WorkerParams } from './transport.ts'
 import type { ConnectionIdentityResolver } from './types.ts'
 import type { MessageContext } from './utils.ts'
 import { isIterable } from './api.ts'
@@ -54,6 +49,7 @@ export class Gateway {
     for (const key in this.options.transports) {
       const transport = this.options.transports[key]
       const host = await transport.start({
+        formats: this.options.formats,
         onConnect: this.onConnect(key),
         onDisconnect: this.onDisconnect(key),
         onMessage: this.onMessage(key),
@@ -66,14 +62,10 @@ export class Gateway {
   }
 
   async stop() {
+    await this.connections.closeAll()
     for (const key in this.options.transports) {
       const transport = this.options.transports[key]
-      await transport.stop({
-        onConnect: this.onConnect(key),
-        onDisconnect: this.onDisconnect(key),
-        onMessage: this.onMessage(key),
-        onRpc: this.onRpc,
-      })
+      await transport.stop({ formats: this.options.formats })
       this.options.logger.info(`Transport [${key}] stopped`)
     }
   }
@@ -103,7 +95,7 @@ export class Gateway {
     }
   }
 
-  protected onConnect(transport: string): TransportV2WorkerHooks['onConnect'] {
+  protected onConnect(transport: string): TransportV2WorkerParams['onConnect'] {
     return async (options, ...injections) => {
       const protocol = versions[options.protocolVersion]
       if (!protocol) throw new Error('Unsupported protocol version')
@@ -131,19 +123,23 @@ export class Gateway {
         signals.disconnect.signal,
       )
 
-      return connection
+      return Object.assign(connection, {
+        [Symbol.asyncDispose]: async () => {
+          await this.onDisconnect(transport)({ connectionId: connection.id })
+        },
+      })
     }
   }
 
   protected onDisconnect(
     transport: string,
-  ): TransportV2WorkerHooks['onDisconnect'] {
+  ): TransportV2WorkerParams['onDisconnect'] {
     return async ({ connectionId }) => {
       await this.connections.close(connectionId)
     }
   }
 
-  protected onMessage(transport: string): TransportV2WorkerHooks['onMessage'] {
+  protected onMessage(transport: string): TransportV2WorkerParams['onMessage'] {
     return async ({ connectionId, data }, ...injections) => {
       const connection = this.connections.get(connectionId)
       assert(connection, 'Connection not found')
@@ -180,12 +176,14 @@ export class Gateway {
           context.serverStreams.pull(message.streamId)
           break
         }
-        default:
+        default: {
+          throw new Error('Unknown message type')
+        }
       }
     }
   }
 
-  protected onRpc: TransportV2WorkerHooks['onRpc'] = async (
+  protected onRpc: TransportV2WorkerParams['onRpc'] = async (
     connection,
     rpc,
     signal,
@@ -196,9 +194,8 @@ export class Gateway {
     for (const { token, value } of injections) {
       container.provide(token, value)
     }
-
     try {
-      return await this.callApi({
+      return await this.options.api.call({
         connection,
         container,
         payload: rpc.payload,
@@ -207,21 +204,6 @@ export class Gateway {
       })
     } catch (error) {
       container.dispose()
-      throw error
-    }
-  }
-
-  protected async callApi(options: GatewayApiCallOptions) {
-    try {
-      return await this.options.api.call(options)
-    } catch (error) {
-      if (error instanceof ProtocolError === false) {
-        this.options.logger.error({ error }, 'Error during RPC call')
-        throw new ProtocolError(
-          ErrorCode.InternalServerError,
-          'Internal server error',
-        )
-      }
       throw error
     }
   }
@@ -244,19 +226,15 @@ export class Gateway {
     const { callId, procedure, payload } = rpc
     const controller = new AbortController()
     rpcs.set(rpc.callId, controller)
-
     signal = signal
       ? AbortSignal.any([signal, controller.signal])
       : controller.signal
 
-    const container = connectionContainer.fork(Scope.Call)
-
-    for (const { token, value } of injections) {
-      container.provide(token, value)
-    }
-
+    await using container = connectionContainer.fork(Scope.Call)
     try {
-      const response = await this.callApi({
+      await container.provide(injections)
+
+      const response = await this.options.api.call({
         connection,
         container,
         payload,
@@ -328,7 +306,6 @@ export class Gateway {
       )
     } finally {
       rpcs.delete(callId)
-      container.dispose()
     }
   }
 }

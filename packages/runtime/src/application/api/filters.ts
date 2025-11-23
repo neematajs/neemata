@@ -4,14 +4,14 @@ import type { Dependant, Dependencies, DependencyContext } from '@nmtjs/core'
 import { kFilter } from './constants.ts'
 
 export interface Filter<
-  Error extends ErrorClass = ErrorClass,
+  FilterError extends ErrorClass = ErrorClass,
   Deps extends Dependencies = Dependencies,
 > extends Dependant<Deps> {
   [kFilter]: true
-  errorClass: Error
+  errorClass: FilterError
   catch: (
     ctx: DependencyContext<Deps>,
-    error: InstanceType<Error>,
+    error: InstanceType<FilterError>,
   ) => Async<Error>
 }
 
@@ -21,13 +21,13 @@ export type AnyFilter<Error extends ErrorClass = ErrorClass> = Filter<
 >
 
 export function createFilter<
-  Error extends ErrorClass,
+  FilterError extends ErrorClass,
   Deps extends Dependencies = {},
 >(params: {
-  errorClass: Error
+  errorClass: FilterError
   dependencies?: Deps
-  catch: Filter<Error, Deps>['catch']
-}): Filter<Error, Deps> {
+  catch: Filter<FilterError, Deps>['catch']
+}): Filter<FilterError, Deps> {
   const { errorClass, catch: handler, dependencies = {} as Deps } = params
 
   return Object.freeze({
@@ -35,5 +35,5 @@ export function createFilter<
     dependencies,
     catch: handler,
     [kFilter]: true,
-  }) as Filter<Error, Deps>
+  }) as Filter<FilterError, Deps>
 }

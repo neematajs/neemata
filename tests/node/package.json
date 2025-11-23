@@ -6,7 +6,7 @@
     "test": "node --test test/*.spec.js"
   },
   "dependencies": {
-    "@types/node": "^20",
+    "@types/node": "^24",
     "neemata-test-generic": "workspace:*",
     "nmtjs": "workspace:*",
     "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.52.0",

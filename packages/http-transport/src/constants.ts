@@ -147,4 +147,6 @@ export const HttpCodeMap = {
 }
 
 export const AllowedHttpMethod =
-  createMetadataKey<Array<'get' | 'post'>>('http:method')
+  createMetadataKey<Array<'get' | 'post' | 'put' | 'delete' | 'patch'>>(
+    'http:method',
+  )

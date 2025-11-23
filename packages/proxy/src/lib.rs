@@ -1,8 +1,8 @@
 #![deny(clippy::all)]
 
 mod config;
-mod gateway;
+mod proxy;
 mod router;
 
-pub use config::{ApplicationConfig, GatewayOptions};
-pub use gateway::NeemataProxy;
+pub use config::{ApplicationConfig, ProxyOptions};
+pub use proxy::NeemataProxy;

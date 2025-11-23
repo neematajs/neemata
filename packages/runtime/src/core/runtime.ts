@@ -21,6 +21,7 @@ export type BaseRuntimeOptions = {
   logger?: LoggingOptions
   container?: Container
   plugins?: RuntimePlugin[]
+  name?: string
 }
 
 export abstract class BaseRuntime {
@@ -29,7 +30,7 @@ export abstract class BaseRuntime {
   hooks: LifecycleHooks
 
   constructor(public options: BaseRuntimeOptions = {}) {
-    this.logger = createLogger(options.logger, 'Runtime')
+    this.logger = createLogger(options.logger, options.name || 'Runtime')
     this.container = options.container
       ? options.container.fork(Scope.Global)
       : new Container({ logger: this.logger })
@@ -40,9 +41,9 @@ export abstract class BaseRuntime {
   protected abstract _dispose(): Promise<void>
   protected abstract _dependents(): Generator<Dependant>
 
-  protected async _reload(options: this['options']): Promise<void> {
+  async reload(options?: this['options']): Promise<void> {
     await this._dispose()
-    this.options = options
+    if (options) this.options = options
     await this._initialize()
   }
 

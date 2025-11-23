@@ -336,17 +336,15 @@ function resolveInjectableScope(
 export const CoreInjectables = { logger, inject, dispose }
 
 export type Injection<
-  T extends LazyInjectable<any, any> = LazyInjectable<any, any>,
+  T extends AnyInjectable<any, any> = AnyInjectable<any, any>,
 > = {
   token: T
-  value: T extends LazyInjectable<infer R, Scope> ? R | AnyInjectable<R> : never
+  value: T extends AnyInjectable<infer R, Scope> ? R | AnyInjectable<R> : never
 }
 
-export const provide = <T extends LazyInjectable<any, any>>(
+export const provide = <T extends AnyInjectable<any, any>>(
   token: T,
-  value: T extends LazyInjectable<infer R, Scope>
-    ? R | AnyInjectable<R>
-    : never,
+  value: T extends AnyInjectable<infer R, Scope> ? R | AnyInjectable<R> : never,
 ): Injection<T> => {
-  return { token: token, value }
+  return { token, value }
 }

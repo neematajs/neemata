@@ -1,3 +1,6 @@
+import {} from 'node:dns'
+import { setTimeout } from 'node:timers/promises'
+
 import type { TransportV2 } from '@nmtjs/gateway'
 import type { ConnectionType } from '@nmtjs/protocol'
 
@@ -14,7 +17,7 @@ import {
   StatusResponse,
 } from '../utils.ts'
 
-import { App, SSLApp } from 'uWebSockets.js'
+import { App, SSLApp, us_socket_local_port } from 'uWebSockets.js'
 
 function adapterFactory(params: HttpAdapterParams<'node'>): HttpAdapterServer {
   const server = params.tls
@@ -37,7 +40,11 @@ function adapterFactory(params: HttpAdapterParams<'node'>): HttpAdapterServer {
     })
     .any('/*', async (res, req) => {
       const controller = new AbortController()
-      res.onAborted(() => controller.abort())
+      res.onAborted(() => {
+        console.dir('Request aborted by client')
+        res.aborted = true
+        controller.abort()
+      })
 
       let response = NotFoundHttpResponse()
 
@@ -57,6 +64,7 @@ function adapterFactory(params: HttpAdapterParams<'node'>): HttpAdapterServer {
               if (chunk) {
                 const copy = Buffer.allocUnsafe(chunk.byteLength)
                 copy.set(new Uint8Array(chunk))
+                controller.enqueue(copy)
               }
               if (isLast) controller.close()
             })
@@ -74,9 +82,10 @@ function adapterFactory(params: HttpAdapterParams<'node'>): HttpAdapterServer {
         // params.logger.error({ err }, 'Error in fetch handler')
         response = InternalServerErrorHttpResponse()
       }
-      if (controller.signal.aborted) return undefined
+      if (res.aborted) return undefined
       else {
         res.cork(() => {
+          if (res.aborted) return undefined
           res.writeStatus(
             `${response.status.toString()} ${response.statusText}`,
           )
@@ -87,16 +96,16 @@ function adapterFactory(params: HttpAdapterParams<'node'>): HttpAdapterServer {
             const reader = response.body.getReader()
             let chunk = await reader.read()
             do {
-              if (controller.signal.aborted) break
+              if (res.aborted) break
               if (chunk.value) res.write(chunk.value)
               chunk = await reader.read()
             } while (!chunk.done)
-            res.end()
+            if (!res.aborted) res.end()
           } catch {
-            res.close()
+            if (!res.aborted) res.close()
           }
         } else {
-          res.end()
+          if (!res.aborted) res.end()
         }
       }
     })
@@ -116,9 +125,10 @@ function adapterFactory(params: HttpAdapterParams<'node'>): HttpAdapterServer {
         } else if (typeof params.listen.port === 'number') {
           const proto = params.tls ? 'https' : 'http'
           const hostname = params.listen.hostname || '127.0.0.1'
+
           server.listen(hostname, params.listen.port, (socket) => {
             if (socket) {
-              resolve(`${proto}://${hostname}:${params.listen.port}`)
+              resolve(`${proto}://${hostname}:${us_socket_local_port(socket)}`)
             } else {
               reject(new Error('Failed to start WebSockets server'))
             }

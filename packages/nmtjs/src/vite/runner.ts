@@ -1,5 +1,3 @@
-import { threadId } from 'node:worker_threads'
-
 import { createServerModuleRunner } from 'vite'
 
 import type { NeemataConfig } from '../config.ts'

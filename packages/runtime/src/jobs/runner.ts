@@ -96,7 +96,6 @@ export class JobRunner<
           options.signal,
         )
       } catch (error) {
-        console.dir({ stepIndex, data, result })
         throw new Error(`Error during step [${stepIndex}]`, {
           cause: error as Error,
         })
