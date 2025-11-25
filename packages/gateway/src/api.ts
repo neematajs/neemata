@@ -17,12 +17,10 @@ export interface GatewayApi {
   call(options: GatewayApiCallOptions): Promise<GatewayApiCallResult>
 }
 
-export function isIterable(
+export function isAsyncIterable(
   value: GatewayApiCallResult,
 ): value is AsyncIterable<unknown> | Iterable<unknown> {
   return Boolean(
-    value &&
-      typeof value === 'object' &&
-      (Symbol.asyncIterator in value || Symbol.iterator in value),
+    value && typeof value === 'object' && Symbol.asyncIterator in value,
   )
 }

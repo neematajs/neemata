@@ -66,18 +66,18 @@ process.on('unhandledRejection', (error) => console.error(error))
 
 server.start()
 
-// const { format } = Intl.NumberFormat('en', {
-//   notation: 'compact',
-//   maximumFractionDigits: 2,
-//   unit: 'byte',
-// })
-// const printMem = () => {
-//   globalThis.gc?.()
-//   // print memory usage every 10 seconds
-//   const memoryUsage = process.memoryUsage()
-//   console.log(
-//     `Memory Usage: RSS=${format(memoryUsage.rss)}, HeapTotal=${format(memoryUsage.heapTotal)}, HeapUsed=${format(memoryUsage.heapUsed)}, External=${format(memoryUsage.external)}, ArrayBuffers=${format(memoryUsage.arrayBuffers)}`,
-//   )
-// }
-// printMem()
-// setInterval(printMem, 5000)
+const { format } = Intl.NumberFormat('en', {
+  notation: 'compact',
+  maximumFractionDigits: 2,
+  unit: 'byte',
+})
+const printMem = () => {
+  globalThis.gc?.()
+  // print memory usage every 10 seconds
+  const memoryUsage = process.memoryUsage()
+  console.log(
+    `Memory Usage: RSS=${format(memoryUsage.rss)}, HeapTotal=${format(memoryUsage.heapTotal)}, HeapUsed=${format(memoryUsage.heapUsed)}, External=${format(memoryUsage.external)}, ArrayBuffers=${format(memoryUsage.arrayBuffers)}`,
+  )
+}
+printMem()
+setInterval(printMem, 5000)

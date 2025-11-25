@@ -1,4 +1,5 @@
 import type { HookTypes } from '@nmtjs/core'
+import type { ProxyableTransportType } from '@nmtjs/gateway'
 import type { Redis, RedisOptions } from 'ioredis'
 import type { Redis as Valkey, RedisOptions as ValkeyOptions } from 'iovalkey'
 
@@ -12,7 +13,7 @@ export type ServerPortMessageTypes = {
 }
 
 export type ThreadPortMessageTypes = {
-  ready: { hosts: string[] }
+  ready: { hosts?: { type: ProxyableTransportType; url: string }[] }
   error: { error: Error }
   task: { id: string; task: WorkerJobTask }
 }

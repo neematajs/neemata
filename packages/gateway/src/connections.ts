@@ -1,5 +1,3 @@
-import { randomUUID } from 'node:crypto'
-
 import type { Container, Hooks, Logger } from '@nmtjs/core'
 import type {
   ProtocolFormats,
@@ -11,6 +9,7 @@ import { getFormat } from '@nmtjs/protocol/server'
 import type { TransportV2OnConnectOptions } from './transport.ts'
 import { GatewayConnection } from './connection.ts'
 import { GatewayHook } from './enums.ts'
+import * as injectables from './injectables.ts'
 
 export class GatewayConnections {
   readonly connections = new Map<string, GatewayConnection>()
@@ -63,15 +62,13 @@ export class GatewayConnections {
     })
     const signals = { disconnect: new AbortController() }
     this.signals.set(id, signals)
-    try {
-      this.connections.set(id, connection)
-      await this.initialize(connection)
-      return { connection, signals }
-    } catch (error) {
-      container.dispose()
-      // TODO: proper error handling/logging
-      throw error
-    }
+    await container.provide(
+      injectables.connectionAbortSignal,
+      signals.disconnect.signal,
+    )
+    this.connections.set(id, connection)
+    await this.initialize(connection)
+    return connection
   }
 
   async close(connectionId: string) {

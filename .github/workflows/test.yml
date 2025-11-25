@@ -10,10 +10,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Use Node.js 22
+      - name: Use Node.js 24
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
       - name: Install pnpm
         uses: pnpm/action-setup@v4
         with:
@@ -37,10 +37,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Use Node.js 22
+      - name: Use Node.js 25
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
       - name: Install pnpm
         uses: pnpm/action-setup@v4
         with:
@@ -65,8 +65,6 @@ jobs:
       fail-fast: true
       matrix:
         node:
-          - 20
-          - 22
           - 24
         os:
           - ubuntu-latest
@@ -79,6 +77,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
       - name: Install pnpm
         uses: pnpm/action-setup@v4
         with:
@@ -94,6 +93,14 @@ jobs:
           key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
           restore-keys: |
             ${{ runner.os }}-pnpm-store-
+      - name: Setup cargo cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
       - run: pnpm install
       - run: pnpm run build
       - run: pnpm run test:unit
@@ -104,8 +111,6 @@ jobs:
       fail-fast: true
       matrix:
         node:
-          - 20
-          - 22
           - 24
         os:
           - ubuntu-latest
@@ -118,6 +123,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
       - name: Install pnpm
         uses: pnpm/action-setup@v4
         with:
@@ -133,6 +139,14 @@ jobs:
           key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
           restore-keys: |
             ${{ runner.os }}-pnpm-store-
+      - name: Setup cargo cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
       - run: pnpm install
       - run: pnpm run build
       - run: pnpm run test:runtime:node
@@ -155,6 +169,7 @@ jobs:
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: ${{ matrix.bun }}
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
       - name: Install pnpm
         uses: pnpm/action-setup@v4
         with:
@@ -170,6 +185,14 @@ jobs:
           key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
           restore-keys: |
             ${{ runner.os }}-pnpm-store-
+      - name: Setup cargo cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
       - run: pnpm install
       - run: pnpm run build
       - run: pnpm run test:runtime:bun
@@ -192,6 +215,7 @@ jobs:
         uses: denoland/setup-deno@v2
         with:
           deno-version: ${{ matrix.deno }}
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
       - name: Install pnpm
         uses: pnpm/action-setup@v4
         with:
@@ -207,6 +231,14 @@ jobs:
           key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
           restore-keys: |
             ${{ runner.os }}-pnpm-store-
+      - name: Setup cargo cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
       - run: pnpm install
       - run: pnpm run build
       - run: pnpm run test:runtime:deno

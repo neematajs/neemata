@@ -53,11 +53,11 @@ async function main() {
 const runtime = await main()
 if (!runtime) throw new Error('Failed to initialize runtime')
 
-const hosts = await runtime.start()
+const hosts = (await runtime.start()) ?? undefined
 
 workerData.port.postMessage({
   type: 'ready',
-  data: { hosts: Array.from(hosts || []) },
+  data: { hosts },
 } satisfies ThreadPortMessage)
 
 workerData.port.on('message', async (msg) => {

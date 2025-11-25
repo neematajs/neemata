@@ -1,20 +1,21 @@
-import { createTransport } from '@nmtjs/protocol/server'
+import type { TransportV2 } from '@nmtjs/gateway'
+import type { ConnectionType } from '@nmtjs/protocol'
+import { ProxyableTransportType } from '@nmtjs/gateway'
 import createAdapter from 'crossws/adapters/uws'
 
 import type {
   WsAdapterParams,
   WsAdapterServer,
-  WsConnectionData,
   WsTransportOptions,
 } from '../types.ts'
-import { WsTransportServer } from '../server.ts'
-import {
-  InternalServerErrorHttpResponse,
-  NotFoundHttpResponse,
-  StatusResponse,
-} from '../utils.ts'
+import * as injectables from '../injectables.ts'
+import { createWSTransportWorker } from '../server.ts'
+import { StatusResponse } from '../utils.ts'
 
-import { App, SSLApp } from 'uWebSockets.js'
+import { App, SSLApp, us_socket_local_port } from 'uWebSockets.js'
+
+const statusResponse = StatusResponse()
+const statusResponseBuffer = await statusResponse.arrayBuffer()
 
 function adapterFactory(params: WsAdapterParams<'node'>): WsAdapterServer {
   const adapter = createAdapter({ hooks: params.wsHooks })
@@ -28,96 +29,32 @@ function adapterFactory(params: WsAdapterParams<'node'>): WsAdapterServer {
     : App()
 
   server
-    .ws(params.apiPath, { ...params.runtime?.ws, ...adapter.websocket })
-    .get('/healthy', async (res) => {
-      res.onAborted(() => {})
-      const response = StatusResponse()
-      res.cork(async () => {
+    .ws('/*', { ...params.runtime?.ws, ...adapter.websocket })
+    .get('/healthy', (res) => {
+      res.cork(() => {
         res
-          .writeStatus(`${response.status} ${response.statusText}`)
-          .end(await response.arrayBuffer())
+          .writeStatus(`${statusResponse.status} ${statusResponse.statusText}`)
+          .end(statusResponseBuffer)
       })
-    })
-    .any('/*', async (res, req) => {
-      const controller = new AbortController()
-      res.onAborted(() => controller.abort())
-
-      let response = NotFoundHttpResponse()
-
-      const headers = new Headers()
-      const method = req.getMethod()
-      req.forEach((k, v) => headers.append(k, v))
-
-      const host = headers.get('host') || 'localhost'
-      const proto =
-        headers.get('x-forwarded-proto') || params.tls ? 'https' : 'http'
-      const url = new URL(req.getUrl(), `${proto}://${host}`)
-
-      if (url.pathname.startsWith(params.apiPath)) {
-        try {
-          const body = new ReadableStream({
-            start(controller) {
-              res.onData((chunk, isLast) => {
-                if (chunk) controller.enqueue(Buffer.from(chunk.slice(0)))
-                if (isLast) controller.close()
-              })
-              res.onAborted(() => controller.error())
-            },
-          })
-          response = await params.fetchHandler(
-            { url, method, headers },
-            body,
-            controller.signal,
-          )
-        } catch (err) {
-          params.logger.error({ err }, 'Error in fetch handler')
-          response = InternalServerErrorHttpResponse()
-        }
-      }
-      if (controller.signal.aborted) return undefined
-      else {
-        res.cork(() => {
-          res.writeStatus(
-            `${response.status.toString()} ${response.statusText}`,
-          )
-          response.headers.forEach((v, k) => res.writeHeader(k, v))
-        })
-        if (response.body) {
-          try {
-            const reader = response.body.getReader()
-            let chunk = await reader.read()
-            do {
-              if (controller.signal.aborted) break
-              if (chunk.value) res.write(chunk.value)
-              chunk = await reader.read()
-            } while (!chunk.done)
-            res.end()
-          } catch {
-            res.close()
-          }
-        } else {
-          res.end()
-        }
-      }
     })
 
   return {
     start: () =>
       new Promise<string>((resolve, reject) => {
+        const proto = params.tls ? 'https' : 'http'
         if (params.listen.unix) {
           server.listen_unix((socket) => {
             if (socket) {
-              resolve('unix://' + params.listen.unix)
+              resolve(`${proto}+unix://` + params.listen.unix)
             } else {
               reject(new Error('Failed to start WebSockets server'))
             }
           }, params.listen.unix)
         } else if (typeof params.listen.port === 'number') {
-          const proto = params.tls ? 'https' : 'http'
           const hostname = params.listen.hostname || '127.0.0.1'
           server.listen(hostname, params.listen.port, (socket) => {
             if (socket) {
-              resolve(`${proto}://${hostname}:${params.listen.port}`)
+              resolve(`${proto}://${hostname}:${us_socket_local_port(socket)}`)
             } else {
               reject(new Error('Failed to start WebSockets server'))
             }
@@ -132,9 +69,15 @@ function adapterFactory(params: WsAdapterParams<'node'>): WsAdapterServer {
   }
 }
 
-export const WsTransport = createTransport<
-  WsConnectionData,
-  WsTransportOptions<'node'>
->('WsTransport', (context, options) => {
-  return new WsTransportServer(adapterFactory, context, options)
-})
+export const WsTransport: TransportV2<
+  ConnectionType.Bidirectional,
+  WsTransportOptions<'node'>,
+  typeof injectables,
+  ProxyableTransportType.WebSocket
+> = {
+  proxyable: ProxyableTransportType.WebSocket,
+  injectables,
+  factory(options) {
+    return createWSTransportWorker(adapterFactory, options)
+  },
+}

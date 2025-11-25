@@ -1,9 +1,16 @@
-import type { DecodeRPCContext } from '@nmtjs/protocol'
-import { encodeText } from '@nmtjs/protocol'
+import { Buffer } from 'node:buffer'
+
+import type { DecodeRPCContext, EncodeRPCContext } from '@nmtjs/protocol'
+import { encodeText, ProtocolBlob } from '@nmtjs/protocol'
 import { describe, expect, it, vi } from 'vitest'
 
 import { serializeStreamId } from '../src/common.ts'
 import { JsonFormat as ServerJsonFormat } from '../src/server.ts'
+
+const asUint8Array = (view: ArrayBufferView) =>
+  view instanceof Uint8Array
+    ? view
+    : new Uint8Array(view.buffer, view.byteOffset, view.byteLength)
 
 describe('Server', () => {
   const format = new ServerJsonFormat()
@@ -11,29 +18,39 @@ describe('Server', () => {
   it('should encode', () => {
     const data = { foo: 'bar' }
     const buffer = format.encode(data)
-    expect(buffer).toBeInstanceOf(ArrayBuffer)
-    expect(new Uint8Array(buffer)).toEqual(
-      new Uint8Array(encodeText(JSON.stringify(data))),
+    expect(ArrayBuffer.isView(buffer)).toBe(true)
+    expect(Array.from(asUint8Array(buffer))).toEqual(
+      Array.from(encodeText(JSON.stringify(data))),
     )
   })
 
   it('should decode', () => {
     const data = { foo: 'bar' }
-    const buffer = encodeText(JSON.stringify(data))
+    const buffer = Buffer.from(encodeText(JSON.stringify(data)))
     expect(format.decode(buffer)).toEqual(data)
+  })
+
+  it('should encode rpc', () => {
+    const blob = ProtocolBlob.from(new ArrayBuffer(1), {
+      type: 'test/type',
+      size: 1,
+    })
+    const ctx = {
+      addStream: vi.fn(() => ({ id: 1, metadata: blob.metadata })),
+      getStream: vi.fn(),
+    } satisfies EncodeRPCContext
+
+    const buffer = format.encodeRPC({ payload: blob }, ctx)
+    const [streams, payload] = JSON.parse(
+      Buffer.from(asUint8Array(buffer)).toString('utf-8'),
+    )
+
+    expect(streams).toEqual({ 1: blob.metadata })
+    expect(JSON.parse(payload)).toEqual({ payload: serializeStreamId(1) })
   })
 
   it('should decode rpc', () => {
     const streamId = 1
-    const input = {
-      callId: 1,
-      procedure: 'procedure',
-      streams: { [streamId]: { size: 1, type: 'test', filename: 'file.txt' } },
-      payload: JSON.stringify({
-        foo: 'bar',
-        stream: serializeStreamId(streamId),
-      }),
-    }
     let stream: { id: number; metadata: any } | undefined
 
     const ctx = {
@@ -41,22 +58,18 @@ describe('Server', () => {
       getStream: vi.fn(() => stream),
     } satisfies DecodeRPCContext
 
-    const rpc = format.decodeRPC(
-      encodeText(
-        JSON.stringify([
-          input.callId,
-          input.procedure,
-          input.streams,
-          input.payload,
-        ]),
-      ),
-      ctx,
-    )
+    const encoded = format.encode([
+      { [streamId]: { size: 1, type: 'test', filename: 'file.txt' } },
+      JSON.stringify({ foo: 'bar', stream: serializeStreamId(streamId) }),
+    ])
 
-    expect(rpc).toHaveProperty('callId', input.callId)
-    expect(rpc).toHaveProperty('procedure', input.procedure)
-    expect(rpc).toHaveProperty('payload', { foo: 'bar', stream: stream! })
+    const payload = format.decodeRPC(encoded, ctx)
+
+    expect(payload).toEqual({ foo: 'bar', stream })
+    expect(ctx.addStream).toHaveBeenCalledWith(streamId, {
+      size: 1,
+      type: 'test',
+      filename: 'file.txt',
+    })
   })
-
-  // TODO: test encoding rpc
 })

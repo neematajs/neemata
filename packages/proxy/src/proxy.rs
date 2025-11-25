@@ -38,7 +38,7 @@ impl NeemataProxy {
         server_conf.graceful_shutdown_timeout_seconds =
             Some(DEFAULT_GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS);
         server_conf.threads = config.threads.unwrap_or(1) as usize;
-        server_conf.work_stealing = false;
+        server_conf.work_stealing = true;
 
         let mut server = Server::new_with_opt_and_conf(server_opts, server_conf);
 

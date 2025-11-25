@@ -1,7 +1,13 @@
-import type { ServerMessageType } from '../common/enums.ts'
+import type {
+  ClientMessageType,
+  ProtocolVersion,
+  ServerMessageType,
+} from '../common/enums.ts'
+import type { BaseProtocolError } from '../common/types.ts'
 import type { MessageContext } from './utils.ts'
+import { concat } from '../common/binary.ts'
 
-export class ProtocolError extends Error {
+export class ProtocolError extends Error implements BaseProtocolError {
   code: string
   data?: any
 
@@ -25,29 +31,30 @@ export class ProtocolError extends Error {
 }
 
 export abstract class ProtocolVersionInterface {
-  abstract decodeMessage(context: MessageContext, buffer: Buffer): any
+  abstract version: ProtocolVersion
+  abstract decodeMessage(
+    context: MessageContext,
+    buffer: ArrayBufferView,
+  ): {
+    [K in keyof ClientMessageTypePayload]: {
+      type: K
+    } & ClientMessageTypePayload[K]
+  }[keyof ClientMessageTypePayload]
   abstract encodeMessage<T extends ServerMessageType = ServerMessageType>(
     context: MessageContext,
     messageType: T,
     payload: ServerMessageTypePayload[T],
-  ): any
+  ): ArrayBufferView
 
-  protected encode(...chunks: (ArrayBuffer | Buffer)[]): ArrayBuffer {
-    const buffer = Buffer.concat(
-      chunks.map((chunk) =>
-        chunk instanceof ArrayBuffer ? Buffer.from(chunk) : chunk,
-      ),
-    )
-    // TODO: here we copy the buffer, but is it necessary?
-    return buffer.buffer.slice(
-      buffer.byteOffset,
-      buffer.byteOffset + buffer.byteLength,
-    )
+  protected encode(
+    ...chunks: (ArrayBuffer | ArrayBufferView)[]
+  ): ArrayBufferView {
+    return concat(...chunks)
   }
 }
 
 export type ServerMessageTypePayload = {
-  [ServerMessageType.Event]: { event: string; data: any }
+  // [ServerMessageType.Event]: { event: string; data: any }
   [ServerMessageType.RpcResponse]: {
     callId: number
     result: any
@@ -55,11 +62,29 @@ export type ServerMessageTypePayload = {
   }
   [ServerMessageType.RpcStreamAbort]: { callId: number }
   [ServerMessageType.RpcStreamEnd]: { callId: number }
-  [ServerMessageType.RpcStreamChunk]: { callId: number; chunk: Buffer }
+  [ServerMessageType.RpcStreamChunk]: { callId: number; chunk: ArrayBufferView }
   [ServerMessageType.RpcStreamResponse]: { callId: number }
   [ServerMessageType.ClientStreamAbort]: { streamId: number }
   [ServerMessageType.ClientStreamPull]: { streamId: number; size: number }
   [ServerMessageType.ServerStreamAbort]: { streamId: number }
   [ServerMessageType.ServerStreamEnd]: { streamId: number }
-  [ServerMessageType.ServerStreamPush]: { streamId: number; chunk: Buffer }
+  [ServerMessageType.ServerStreamPush]: {
+    streamId: number
+    chunk: ArrayBufferView
+  }
+}
+
+export type ClientMessageTypePayload = {
+  [ClientMessageType.Rpc]: {
+    rpc: { callId: number; procedure: string; payload: any }
+  }
+  [ClientMessageType.RpcAbort]: { callId: number }
+  [ClientMessageType.ClientStreamPush]: {
+    streamId: number
+    chunk: ArrayBufferView
+  }
+  [ClientMessageType.ClientStreamEnd]: { streamId: number }
+  [ClientMessageType.ClientStreamAbort]: { streamId: number; reason?: string }
+  [ClientMessageType.ServerStreamPull]: { streamId: number; size: number }
+  [ClientMessageType.ServerStreamAbort]: { streamId: number; reason?: string }
 }

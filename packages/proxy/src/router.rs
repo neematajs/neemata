@@ -1,10 +1,11 @@
-use crate::config::ProxyConfig;
+use crate::config::{ProxyConfig, UpstreamKind};
 use async_trait::async_trait;
 use http::{Uri, uri::PathAndQuery};
-use log::info;
+use log::{debug, info};
 use napi::Error as NapiError;
 use napi::bindgen_prelude::Result as NapiResult;
 use pingora::{
+    http::ResponseHeader,
     prelude::*,
     services::background::{GenBackgroundService, background_service},
 };
@@ -24,13 +25,58 @@ pub struct ClusterEntry {
 }
 
 pub struct Router {
-    clusters: HashMap<String, ClusterEntry>,
+    clusters: HashMap<String, HashMap<UpstreamKind, ClusterEntry>>,
     upstreams_tls: HashMap<SocketAddr, bool>,
+}
+
+#[derive(Default)]
+pub struct RouterCtx {
+    app_info: AppInfoState,
+}
+
+struct AppInfo {
+    name: String,
+    kind: UpstreamKind,
+}
+
+enum AppInfoState {
+    Unknown,
+    Missing,
+    Found(AppInfo),
+}
+
+impl Default for AppInfoState {
+    fn default() -> Self {
+        Self::Unknown
+    }
+}
+
+impl RouterCtx {
+    fn app_info(&mut self, session: &Session) -> Option<&AppInfo> {
+        if matches!(self.app_info, AppInfoState::Unknown) {
+            self.app_info = match extract_app_name(session) {
+                Some(name) => AppInfoState::Found(AppInfo {
+                    name: name.to_string(),
+                    kind: if session.is_upgrade_req() {
+                        UpstreamKind::Websocket
+                    } else {
+                        UpstreamKind::Http
+                    },
+                }),
+                None => AppInfoState::Missing,
+            };
+        }
+
+        match &self.app_info {
+            AppInfoState::Found(info) => Some(info),
+            _ => None,
+        }
+    }
 }
 
 impl Router {
     fn new(
-        clusters: HashMap<String, ClusterEntry>,
+        clusters: HashMap<String, HashMap<UpstreamKind, ClusterEntry>>,
         upstreams_tls: HashMap<SocketAddr, bool>,
     ) -> Self {
         Self {
@@ -39,26 +85,37 @@ impl Router {
         }
     }
 
-    fn cluster_for<'a>(&'a self, session: &Session) -> Option<&'a ClusterEntry> {
-        if let Some(name) = extract_app_name(session) {
-            if let Some(entry) = self.clusters.get(name) {
-                return Some(entry);
-            }
-        }
-
-        None
+    fn cluster_for<'a>(&'a self, app_info: &AppInfo) -> Option<&'a ClusterEntry> {
+        self.clusters
+            .get(&app_info.name)
+            .and_then(|entries| entries.get(&app_info.kind))
     }
 }
 
 #[async_trait]
 impl ProxyHttp for Router {
-    type CTX = ();
+    type CTX = RouterCtx;
 
-    fn new_ctx(&self) {}
+    fn new_ctx(&self) -> Self::CTX {
+        RouterCtx::default()
+    }
 
-    async fn upstream_peer(&self, session: &mut Session, _ctx: &mut ()) -> Result<Box<HttpPeer>> {
+    async fn upstream_peer(
+        &self,
+        session: &mut Session,
+        ctx: &mut RouterCtx,
+    ) -> Result<Box<HttpPeer>> {
         const NO_CLUSTER: ImmutStr = ImmutStr::Static("no matching application for request");
-        let cluster = self.cluster_for(session).ok_or_else(|| {
+
+        let app_info = ctx.app_info(session).ok_or_else(|| {
+            Error::create(
+                ErrorType::ConnectError,
+                ErrorSource::Internal,
+                Some(NO_CLUSTER),
+                None,
+            )
+        })?;
+        let cluster = self.cluster_for(app_info).ok_or_else(|| {
             Error::create(
                 ErrorType::ConnectError,
                 ErrorSource::Internal,
@@ -108,11 +165,12 @@ impl ProxyHttp for Router {
         &self,
         session: &mut Session,
         upstream_request: &mut RequestHeader,
-        _ctx: &mut Self::CTX,
+        ctx: &mut Self::CTX,
     ) -> Result<()> {
-        let Some(name) = extract_app_name(session) else {
+        let Some(app_info) = ctx.app_info(session) else {
             return Ok(());
         };
+        let name = app_info.name.as_str();
 
         let path = upstream_request.uri.path();
         let path_bytes = path.as_bytes();
@@ -159,8 +217,25 @@ impl ProxyHttp for Router {
                     )
                 })?;
 
+                debug!(
+                    "Rewriting upstream URI from {} to {}",
+                    upstream_request.uri, new_uri
+                );
                 upstream_request.set_uri(new_uri);
             }
+        }
+        Ok(())
+    }
+
+    async fn response_filter(
+        &self,
+        _session: &mut Session,
+        _upstream_response: &mut ResponseHeader,
+        _ctx: &mut Self::CTX,
+    ) -> Result<()> {
+        const REMOVE_HEADERS: [&str; 1] = ["uWebSockets"];
+        for header in REMOVE_HEADERS {
+            _upstream_response.remove_header(header);
         }
         Ok(())
     }
@@ -177,29 +252,45 @@ pub fn build_router(config: &ProxyConfig) -> NapiResult<RouterAssembly> {
     let mut upstreams_tls = HashMap::new();
 
     for (name, definition) in &config.apps {
-        let mut resolved_addrs = Vec::new();
-        for upstream in &definition.upstreams {
-            let addrs = upstream.address.to_socket_addrs().map_err(|e| {
-                NapiError::from_reason(format!("failed to resolve '{}': {}", upstream.address, e))
-            })?;
-            for addr in addrs {
-                resolved_addrs.push(addr);
-                upstreams_tls.insert(addr, upstream.secure);
+        let mut app_clusters = HashMap::new();
+
+        for (&kind, upstreams) in &definition.upstreams {
+            let mut resolved_addrs = Vec::new();
+            for upstream in upstreams {
+                let addrs = upstream.address.to_socket_addrs().map_err(|e| {
+                    NapiError::from_reason(format!(
+                        "failed to resolve '{}': {}",
+                        upstream.address, e
+                    ))
+                })?;
+                for addr in addrs {
+                    resolved_addrs.push(addr);
+                    upstreams_tls.insert(addr, upstream.secure);
+                }
+            }
+
+            if resolved_addrs.is_empty() {
+                continue;
+            }
+
+            let cluster_name = format!("{}:{}", name, kind.as_str());
+            let (balancer, service) =
+                build_cluster_service(&cluster_name, resolved_addrs, config.health_check_interval)?;
+
+            app_clusters.insert(
+                kind,
+                ClusterEntry {
+                    balancer,
+                    sni: definition.sni.clone(),
+                },
+            );
+            if let Some(service) = service {
+                services.push(service);
             }
         }
 
-        let (balancer, service) =
-            build_cluster_service(name, resolved_addrs, config.health_check_interval)?;
-
-        clusters.insert(
-            name.clone(),
-            ClusterEntry {
-                balancer,
-                sni: definition.sni.clone(),
-            },
-        );
-        if let Some(service) = service {
-            services.push(service);
+        if !app_clusters.is_empty() {
+            clusters.insert(name.clone(), app_clusters);
         }
     }
 

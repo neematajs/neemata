@@ -1,7 +1,12 @@
 import assert from 'node:assert'
 
 import type { Dependant } from '@nmtjs/core'
-import type { TransportV2, TransportV2Worker } from '@nmtjs/gateway'
+import type {
+  GatewayOptions,
+  ProxyableTransportType,
+  TransportV2,
+  TransportV2Worker,
+} from '@nmtjs/gateway'
 import { createFactoryInjectable } from '@nmtjs/core'
 import { connectionId, Gateway } from '@nmtjs/gateway'
 import { JsonFormat, StandardJsonFormat } from '@nmtjs/json-format/server'
@@ -22,7 +27,7 @@ export interface ApplicationWorkerRuntimeOptions {
 export class ApplicationWorkerRuntime extends BaseWorkerRuntime {
   application!: ApplicationRuntime
   gateway!: Gateway
-  transports!: { [key: string]: TransportV2Worker }
+  transports!: GatewayOptions['transports']
 
   constructor(
     readonly config: ServerConfig,
@@ -71,8 +76,8 @@ export class ApplicationWorkerRuntime extends BaseWorkerRuntime {
 
     for (const key in this.runtimeOptions.transports) {
       const options = this.runtimeOptions.transports[key]
-      const { factory } = appConfig.transports[key] as TransportV2
-      Object.assign(this.transports, { [key]: factory(options) })
+      const { factory, proxyable } = appConfig.transports[key] as TransportV2
+      this.transports[key] = { transport: await factory(options), proxyable }
     }
 
     this.gateway = new Gateway({

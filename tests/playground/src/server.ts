@@ -8,9 +8,14 @@ export default defineServer({
   applications: {
     test: {
       threads: [
-        { http: { listen: { hostname: '0.0.0.0', port: 0 } } },
-        // { http: { listen: { hostname: '0.0.0.0', port: 0 } } },
-        // { http: { listen: { hostname: '0.0.0.0', port: 0 } } },
+        {
+          http: { listen: { hostname: '0.0.0.0', port: 0 } },
+          ws: { listen: { hostname: '0.0.0.0', port: 0 } },
+        },
+        {
+          http: { listen: { hostname: '0.0.0.0', port: 0 } },
+          ws: { listen: { hostname: '0.0.0.0', port: 0 } },
+        },
       ],
     },
   },

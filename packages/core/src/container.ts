@@ -48,26 +48,29 @@ export class Container {
   }
 
   async initialize(injectables: Iterable<AnyInjectable>) {
-    // const traverse = (dependencies: Dependencies) => {
-    //   for (const key in dependencies) {
-    //     const dependency = dependencies[key]
-    //     const injectable = getDepedencencyInjectable(dependency)
-    //     this.injectables.add(injectable)
-    //     traverse(injectable.dependencies)
-    //   }
-    // }
-
-    // for (const dependant of this.application.registry.getDependants()) {
-    //   traverse(dependant.dependencies)
-    // }
-
-    // const injectables = Array.from(this.findCurrentScopeInjectables())
     const measurements: PerformanceMeasure[] = []
+
+    const traverse = (dependencies: Dependencies) => {
+      for (const key in dependencies) {
+        const dependency = dependencies[key]
+        const injectable = getDepedencencyInjectable(dependency)
+        if (injectable.scope === this.scope) {
+          this.injectables.add(injectable)
+        }
+        traverse(injectable.dependencies)
+      }
+    }
+
+    for (const dependant of injectables) {
+      traverse(dependant.dependencies)
+    }
+
     await Promise.all(
-      [...injectables].map((injectable) =>
+      [...this.injectables].map((injectable) =>
         this.resolve(injectable, measurements),
       ),
     )
+
     return measurements
   }
 
@@ -167,22 +170,19 @@ export class Container {
         ]
       : []
   ) {
-    const _toinject = Array.isArray(injectable)
+    const injections = Array.isArray(injectable)
       ? injectable
       : [provide(injectable, value)]
     await Promise.all(
-      _toinject.map(async ({ token, value }) => {
+      injections.map(async ({ token, value }) => {
         if (compareScope(token.scope, '>', this.scope)) {
           // TODO: more informative error
           throw new Error('Invalid scope')
         }
-        if (isInjectable(value)) {
-          await this.resolve(value)
-        } else {
-          this.instances.set(value, [
-            { private: value, public: value, context: undefined },
-          ])
-        }
+        const _value = isInjectable(value) ? await this.resolve(value) : value
+        this.instances.set(token, [
+          { private: _value, public: _value, context: undefined },
+        ])
       }),
     )
   }

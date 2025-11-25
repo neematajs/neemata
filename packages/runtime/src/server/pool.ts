@@ -46,7 +46,7 @@ export class Thread extends EventEmitter<
 
     const handler = (msg: ThreadPortMessage) => {
       const { type, data } = msg
-      this.emit(type, data)
+      this.emit(type, data as any)
       if (type === 'task') {
         const { id, task } = data as ThreadPortMessageTypes['task']
         this.emit(`task-${id}`, task)

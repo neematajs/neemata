@@ -11,7 +11,7 @@ import type {
 import { withTimeout } from '@nmtjs/common'
 import { IsStreamProcedureContract } from '@nmtjs/contract'
 import { Scope } from '@nmtjs/core'
-import { isIterable } from '@nmtjs/gateway'
+import { isAsyncIterable } from '@nmtjs/gateway'
 import { ErrorCode } from '@nmtjs/protocol'
 import { ProtocolError } from '@nmtjs/protocol/server'
 import { NeemataTypeError, type } from '@nmtjs/type'
@@ -231,7 +231,7 @@ export class ApplicationApi implements GatewayApi {
   }
 
   private async *handleIterableOutput(procedure: AnyProcedure, response: any) {
-    if (!isIterable(response)) throw new Error('Response is not iterable')
+    if (!isAsyncIterable(response)) throw new Error('Response is not iterable')
     const chunkType = procedure.contract.output
     if (chunkType instanceof type.NeverType)
       throw new Error('Stream procedure must have a defined output type')

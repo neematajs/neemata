@@ -1,33 +1,25 @@
-import type { OneOf } from '@nmtjs/common'
 import type { Pattern } from '@nmtjs/core'
 import { match } from '@nmtjs/core'
 
-import type {
-  DecodeRPCContext,
-  EncodeRPCContext,
-  ProtocolRPC,
-  ProtocolRPCResponse,
-} from '../common/types.ts'
+import type { DecodeRPCContext, EncodeRPCContext } from '../common/types.ts'
 import type { ProtocolClientStream, ProtocolServerStream } from './stream.ts'
 
 export interface BaseServerDecoder {
   accept: Pattern[]
-  decode(buffer: Buffer): any
+  decode(buffer: ArrayBufferView): unknown
   decodeRPC(
-    buffer: Buffer,
+    buffer: ArrayBufferView,
     context: DecodeRPCContext<ProtocolClientStream>,
-  ): ProtocolRPC
+  ): unknown
 }
 
 export interface BaseServerEncoder {
   contentType: string
-  encode(data: any): Buffer
+  encode(data: unknown): ArrayBufferView
   encodeRPC(
-    rpc: OneOf<
-      [{ callId: number; error: any }, { callId: number; result: any }]
-    >,
+    data: unknown,
     context: EncodeRPCContext<ProtocolServerStream>,
-  ): Buffer
+  ): ArrayBufferView
 }
 
 export abstract class BaseServerFormat
@@ -36,42 +28,44 @@ export abstract class BaseServerFormat
   abstract accept: Pattern[]
   abstract contentType: string
 
-  abstract encode(data: any): Buffer
+  abstract encode(data: unknown): ArrayBufferView
   abstract encodeRPC(
-    rpc: ProtocolRPCResponse,
+    data: unknown,
     context: EncodeRPCContext<ProtocolServerStream>,
-  ): Buffer
-  abstract decode(buffer: Buffer): any
+  ): ArrayBufferView
+  abstract decode(buffer: ArrayBufferView): any
   abstract decodeRPC(
-    buffer: Buffer,
+    buffer: ArrayBufferView,
     context: DecodeRPCContext<ProtocolClientStream>,
-  ): ProtocolRPC
+  ): unknown
 }
 
 export const parseContentTypes = (types: string) => {
-  if (types === '*/*') return ['*/*']
-  return types
+  const normalized = types.trim()
+  if (normalized === '*/*') return ['*/*']
+  return normalized
     .split(',')
+    .map((t) => t.trim())
     .map((t) => {
-      const [type, ...rest] = t.split(';')
+      const [rawType, ...rest] = t.split(';')
       const params = new Map(
         rest.map((p) =>
           p
             .trim()
             .split('=')
             .slice(0, 2)
-            .map((p) => p.trim()),
+            .map((part) => part.trim()),
         ) as [string, string][],
       )
       return {
-        type,
+        type: rawType.trim(),
         q: params.has('q') ? Number.parseFloat(params.get('q')!) : 1,
       }
     })
     .sort((a, b) => {
       if (a.type === '*/*') return 1
       if (b.type === '*/*') return -1
-      return b.q - a.q ? -1 : 1
+      return b.q - a.q
     })
     .map((t) => t.type)
 }

@@ -23,9 +23,9 @@ export class ProtocolClientStreams {
     return stream
   }
 
-  push(streamId: number, chunk: ArrayBuffer) {
+  push(streamId: number, chunk: ArrayBufferView) {
     const stream = this.get(streamId)
-    stream.write(Buffer.from(chunk))
+    stream.write(chunk)
   }
 
   end(streamId: number) {
@@ -34,9 +34,9 @@ export class ProtocolClientStreams {
     this.remove(streamId)
   }
 
-  abort(streamId: number, error = new Error('Aborted')) {
+  abort(streamId: number, error = 'Aborted') {
     const stream = this.get(streamId)
-    stream.destroy(error)
+    stream.destroy(new Error(error))
     this.remove(streamId)
   }
 }
@@ -65,9 +65,9 @@ export class ProtocolServerStreams {
     stream.resume()
   }
 
-  abort(streamId: number, error = new Error('Aborted')) {
+  abort(streamId: number, error = 'Aborted') {
     const stream = this.get(streamId)
-    stream.destroy(error)
+    stream.destroy(new Error(error))
     this.remove(streamId)
   }
 }

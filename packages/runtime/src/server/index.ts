@@ -2,6 +2,7 @@ import assert from 'node:assert'
 import EventEmitter from 'node:events'
 
 import type { Logger } from '@nmtjs/core'
+import type { ProxyableTransportType } from '@nmtjs/gateway'
 import type { NeemataProxy } from '@nmtjs/proxy'
 import type { RedisClient } from 'bullmq'
 import { createLogger } from '@nmtjs/core'
@@ -67,7 +68,10 @@ export class ApplicationServer extends EventEmitter {
       workerData: { ...this.workerConfig.workerData },
     })
 
-    const proxyUpstreams: Record<string, string[]> = {}
+    const proxyUpstreams: Record<
+      string,
+      { type: ProxyableTransportType; url: string }[]
+    > = {}
 
     for (const applicationName in this.config.applications) {
       if (!this.runOptions.applications.includes(applicationName)) continue
@@ -98,11 +102,16 @@ export class ApplicationServer extends EventEmitter {
 
         if (this.config.proxy) {
           thread.on('ready', ({ hosts }) => {
-            proxyUpstreams[applicationName] ??= []
-            for (const host of hosts) {
-              const url = new URL(host)
-              if (url.hostname === '0.0.0.0') url.hostname = '127.0.0.1'
-              proxyUpstreams[applicationName].push(`${url}`)
+            if (hosts) {
+              proxyUpstreams[applicationName] ??= []
+              for (const host of hosts) {
+                const url = new URL(host.url)
+                if (url.hostname === '0.0.0.0') url.hostname = '127.0.0.1'
+                proxyUpstreams[applicationName].push({
+                  type: host.type,
+                  url: url.toString(),
+                })
+              }
             }
           })
         }

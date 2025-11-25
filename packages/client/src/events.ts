@@ -4,7 +4,7 @@ export type EventMap = { [K: string]: any[] }
 
 // TODO: add errors and promise rejections handling
 /**
- * Very simple node-like event emitter wrapper around EventTarget
+ * Thin node-like event emitter wrapper around EventTarget
  */
 export class EventEmitter<
   Events extends EventMap = EventMap,
@@ -53,4 +53,18 @@ export class EventEmitter<
   ) {
     return this.#target.dispatchEvent(new CustomEvent(event, { detail: args }))
   }
+}
+
+export const once = <
+  T extends EventEmitter,
+  EventMap extends T extends EventEmitter<infer E, any> ? E : never,
+  EventName extends T extends EventEmitter<any, infer N> ? N : never,
+>(
+  ee: T,
+  event: EventName,
+  signal?: AbortSignal,
+) => {
+  return new Promise<EventMap[EventName]>((resolve) => {
+    ee.once(event, resolve, { signal })
+  })
 }

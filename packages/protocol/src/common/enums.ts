@@ -15,7 +15,7 @@ export enum ClientMessageType {
 }
 
 export enum ServerMessageType {
-  Event = 1,
+  // Event = 1,
 
   RpcResponse = 10,
   RpcStreamResponse = 11,

@@ -3,6 +3,7 @@ import { setTimeout } from 'node:timers/promises'
 
 import type { TransportV2 } from '@nmtjs/gateway'
 import type { ConnectionType } from '@nmtjs/protocol'
+import { ProxyableTransportType } from '@nmtjs/gateway'
 
 import type {
   HttpAdapterParams,
@@ -147,9 +148,9 @@ export const HttpTransport: TransportV2<
   ConnectionType.Unidirectional,
   HttpTransportOptions<'node'>,
   typeof injectables,
-  true
+  ProxyableTransportType.HTTP
 > = {
-  proxyable: true,
+  proxyable: ProxyableTransportType.HTTP,
   injectables,
   factory(options) {
     return createHTTPTransportWorker(adapterFactory, options)

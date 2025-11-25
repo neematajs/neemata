@@ -2,19 +2,20 @@
   "name": "@nmtjs/client",
   "type": "module",
   "scripts": {
-    "build": "tsc",
+    "clean-build": "tsc --build --clean",
+    "build": "tsc --build --declaration --sourceMap",
     "type-check": "tsc --noEmit"
   },
   "exports": {
-    ".": "./src/common.ts",
-    "./runtime": "./src/runtime.ts",
-    "./static": "./src/static.ts"
+    ".": "./src/index.ts",
+    "./runtime": "./src/clients/runtime.ts",
+    "./static": "./src/clients/static.ts"
   },
   "publishConfig": {
     "exports": {
-      ".": "./dist/common.js",
-      "./runtime": "./dist/runtime.js",
-      "./static": "./dist/static.js"
+      ".": "./dist/index.js",
+      "./runtime": "./dist/clients/runtime.js",
+      "./static": "./dist/clients/static.js"
     }
   },
   "peerDependencies": {

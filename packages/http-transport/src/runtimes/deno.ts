@@ -1,5 +1,6 @@
 import type { TransportV2 } from '@nmtjs/gateway'
 import type { ConnectionType } from '@nmtjs/protocol'
+import { ProxyableTransportType } from '@nmtjs/gateway'
 
 import type {
   DenoServer,
@@ -128,9 +129,9 @@ export const HttpTransport: TransportV2<
   ConnectionType.Unidirectional,
   HttpTransportOptions<'deno'>,
   typeof injectables,
-  true
+  ProxyableTransportType.HTTP
 > = {
-  proxyable: true,
+  proxyable: ProxyableTransportType.HTTP,
   injectables,
   factory(options) {
     return createHTTPTransportWorker(adapterFactory, options)

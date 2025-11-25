@@ -1,0 +1,10 @@
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    url: http://prometheus:9090 # Use the service name defined in docker-compose.yml
+    isDefault: true
+    access: proxy
+    editable: true # Set to false if you don't want users to edit it in the UI

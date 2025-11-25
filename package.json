@@ -3,8 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "clean-build": "pnpm run --parallel -r build --build --clean --declaration --sourceMap",
-    "build": "pnpm run clean-build && pnpm run --parallel -r build --declaration",
+    "clean-build": "pnpm run --parallel -r clean-build",
+    "build": "pnpm run clean-build && pnpm run --parallel -r build",
     "dev": "pnpm run clean-build && pnpm run --parallel -r build --watch --declaration --sourceMap --preserveWatchOutput",
     "clean": "rm -rf dist node_modules && pnpm -r exec rm -rf dist node_modules",
     "test": "pnpm build && pnpm test:unit && pnpm test:runtime",
@@ -19,7 +19,7 @@
     "check:lint": "biome lint --diagnostic-level=error .",
     "check:fmt": "biome format --diagnostic-level=error .",
     "check": "pnpm run check:fmt && pnpm run check:lint && pnpm run check:type",
-    "fmt": "biome check --diagnostic-level=error --write .",
+    "fmt": "biome check --diagnostic-level=error --write . && pnpm --filter proxy fmt",
     "prepare": "husky"
   },
   "devDependencies": {

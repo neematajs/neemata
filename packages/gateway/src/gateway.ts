@@ -4,8 +4,8 @@ import { randomUUID } from 'node:crypto'
 import type { Container, Hooks, Injection, Logger } from '@nmtjs/core'
 import type { ProtocolRPC } from '@nmtjs/protocol'
 import type { ProtocolFormats } from '@nmtjs/protocol/server'
-import { isAbortError, unique } from '@nmtjs/common'
-import { Scope } from '@nmtjs/core'
+import { isAbortError } from '@nmtjs/common'
+import { provide, Scope } from '@nmtjs/core'
 import { ClientMessageType, ServerMessageType } from '@nmtjs/protocol'
 import {
   ProtocolClientStreams,
@@ -15,10 +15,11 @@ import {
 
 import type { GatewayApi } from './api.ts'
 import type { GatewayConnection } from './connection.ts'
+import type { ProxyableTransportType } from './enums.ts'
 import type { TransportV2Worker, TransportV2WorkerParams } from './transport.ts'
 import type { ConnectionIdentityResolver } from './types.ts'
 import type { MessageContext } from './utils.ts'
-import { isIterable } from './api.ts'
+import { isAsyncIterable } from './api.ts'
 import { GatewayConnections } from './connections.ts'
 import * as injectables from './injectables.ts'
 
@@ -29,7 +30,12 @@ export interface GatewayOptions {
   formats: ProtocolFormats
   api: GatewayApi
   identityResolver: ConnectionIdentityResolver
-  transports: { [key: string]: TransportV2Worker }
+  transports: {
+    [key: string]: {
+      transport: TransportV2Worker
+      proxyable?: ProxyableTransportType
+    }
+  }
 }
 
 export class Gateway {
@@ -45,34 +51,34 @@ export class Gateway {
   }
 
   async start() {
-    const hosts: string[] = []
+    const hosts: { url: string; type: ProxyableTransportType }[] = []
     for (const key in this.options.transports) {
-      const transport = this.options.transports[key]
-      const host = await transport.start({
+      const { transport, proxyable } = this.options.transports[key]
+      const url = await transport.start({
         formats: this.options.formats,
         onConnect: this.onConnect(key),
         onDisconnect: this.onDisconnect(key),
         onMessage: this.onMessage(key),
-        onRpc: this.onRpc,
+        onRpc: this.onRpc(key),
       })
-      this.options.logger.info(`Transport [${key}] started on [${host}]`)
-      hosts.push(host)
+      this.options.logger.info(`Transport [${key}] started on [${url}]`)
+      if (proxyable) hosts.push({ url, type: proxyable })
     }
-    return unique(hosts)
+    return hosts
   }
 
   async stop() {
     await this.connections.closeAll()
     for (const key in this.options.transports) {
-      const transport = this.options.transports[key]
+      const { transport } = this.options.transports[key]
       await transport.stop({ formats: this.options.formats })
       this.options.logger.info(`Transport [${key}] stopped`)
     }
   }
 
-  send(transport: string, connectionId: string, data: ArrayBuffer) {
+  send(transport: string, connectionId: string, data: ArrayBufferView) {
     if (transport in this.options.transports) {
-      const send = this.options.transports[transport].send
+      const send = this.options.transports[transport].transport.send
       if (send) return send(connectionId, data)
     }
   }
@@ -89,7 +95,7 @@ export class Gateway {
       encoder: connection.encoder,
       rpcs: connection.rpcs,
       protocol: connection.protocol,
-      transport: this.options.transports[transport],
+      transport: this.options.transports[transport].transport,
       container: connection.container,
       streamId: connection.getStreamId,
     }
@@ -100,34 +106,35 @@ export class Gateway {
       const protocol = versions[options.protocolVersion]
       if (!protocol) throw new Error('Unsupported protocol version')
       const id = randomUUID()
-
       const container = this.options.container.fork(Scope.Connection)
-      for (const i of injections) container.provide(i.token, i.value)
+      try {
+        await container.provide([
+          provide(injectables.connectionData, options.data),
+          provide(injectables.connectionId, id),
+        ])
+        await container.provide(injections)
 
-      container.provide(injectables.connectionData, options.data)
-      container.provide(injectables.connectionId, id)
+        const identity = await container.resolve(this.options.identityResolver)
+        const connection = await this.connections.open({
+          id,
+          container,
+          identity,
+          transport,
+          protocol,
+          options,
+        })
 
-      const identity = await container.resolve(this.options.identityResolver)
-      const { connection, signals } = await this.connections.open({
-        id,
-        container,
-        identity,
-        transport,
-        protocol,
-        options,
-      })
+        await container.provide(injectables.connection, connection)
 
-      container.provide(injectables.connection, connection)
-      container.provide(
-        injectables.connectionAbortSignal,
-        signals.disconnect.signal,
-      )
-
-      return Object.assign(connection, {
-        [Symbol.asyncDispose]: async () => {
-          await this.onDisconnect(transport)({ connectionId: connection.id })
-        },
-      })
+        return Object.assign(connection, {
+          [Symbol.asyncDispose]: async () => {
+            await this.onDisconnect(transport)({ connectionId: connection.id })
+          },
+        })
+      } catch (error) {
+        container.dispose()
+        throw error
+      }
     }
   }
 
@@ -145,7 +152,7 @@ export class Gateway {
       assert(connection, 'Connection not found')
       const context = this.createMessageContext(connection, transport)
       const message = context.protocol.decodeMessage(context, Buffer.from(data))
-
+      // console.dir(message)
       switch (message.type) {
         case ClientMessageType.Rpc: {
           await this.handleRpc(connection, context, message.rpc, injections)
@@ -183,28 +190,25 @@ export class Gateway {
     }
   }
 
-  protected onRpc: TransportV2WorkerParams['onRpc'] = async (
-    connection,
-    rpc,
-    signal,
-    ...injections
-  ) => {
-    const context = this.createMessageContext(connection, connection.transport)
-    const container = context.container.fork(Scope.Call)
-    for (const { token, value } of injections) {
-      container.provide(token, value)
-    }
-    try {
+  protected onRpc(transport: string): TransportV2WorkerParams['onRpc'] {
+    return async (connection, rpc, signal, ...injections) => {
+      const context = this.createMessageContext(
+        connection,
+        connection.transport,
+      )
+      await using container = context.container.fork(Scope.Call)
+      const controller = new AbortController()
+      signal.addEventListener('abort', controller.abort, { once: true })
+      connection.rpcs.set(rpc.callId, controller)
+      await container.provide(injections)
       return await this.options.api.call({
         connection,
         container,
         payload: rpc.payload,
         procedure: rpc.procedure,
-        signal,
+        metadata: rpc.metadata,
+        signal: controller.signal,
       })
-    } catch (error) {
-      container.dispose()
-      throw error
     }
   }
 
@@ -242,7 +246,7 @@ export class Gateway {
         signal,
       })
 
-      if (isIterable(response)) {
+      if (isAsyncIterable(response)) {
         transport.send?.(
           connectionId,
           protocol.encodeMessage(context, ServerMessageType.RpcStreamResponse, {

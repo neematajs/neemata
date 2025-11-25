@@ -22,19 +22,22 @@ export class TestFormat extends BaseServerFormat {
   ]
   contentType = 'test'
 
-  encode(data: any): ArrayBuffer {
-    return serialize(data).buffer as ArrayBuffer
+  encode(data: any): ArrayBufferView {
+    return serialize(data) as ArrayBufferView
   }
 
-  encodeRPC(rpc: ProtocolRPCResponse, _context: EncodeRPCContext): ArrayBuffer {
+  encodeRPC(
+    rpc: ProtocolRPCResponse,
+    _context: EncodeRPCContext,
+  ): ArrayBufferView {
     return this.encode(rpc)
   }
 
-  decode(buffer: ArrayBuffer): any {
-    return deserialize(Buffer.from(buffer) as any)
+  decode(buffer: ArrayBufferView): any {
+    return deserialize(Buffer.from(buffer.buffer))
   }
 
-  decodeRPC(buffer: ArrayBuffer, _context: DecodeRPCContext): ProtocolRPC {
+  decodeRPC(buffer: ArrayBufferView, _context: DecodeRPCContext): ProtocolRPC {
     const [callId, procedure, payload] = this.decode(buffer)
     return { callId, procedure, payload }
   }

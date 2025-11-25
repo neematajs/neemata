@@ -1,18 +1,14 @@
 import type { CallTypeProvider, OneOf, TypeProvider } from '@nmtjs/common'
-import type {
-  TAnyAPIContract,
-  TAnyProcedureContract,
-  TAnyRouterContract,
-} from '@nmtjs/contract'
+import type { TAnyProcedureContract, TAnyRouterContract } from '@nmtjs/contract'
 import type { ProtocolBlobInterface } from '@nmtjs/protocol'
 import type {
-  ProtocolBaseClientCallOptions,
   ProtocolError,
   ProtocolServerBlobStream,
   ProtocolServerStreamInterface,
 } from '@nmtjs/protocol/client'
-import type { BaseTypeAny, t } from '@nmtjs/type'
-import type { PlainType } from '@nmtjs/type/_plain'
+import type { BaseTypeAny, PlainType, t } from '@nmtjs/type'
+
+export type ClientCallOptions = { timeout?: number; signal?: AbortSignal }
 
 export type ClientOutputType<T> = T extends ProtocolBlobInterface
   ? ProtocolServerBlobStream
@@ -84,43 +80,30 @@ export type ResolveAPIRouterRoutes<
 
           output: T['routes'][K]['stream'] extends undefined | t.NeverType
             ? CallTypeProvider<OutputTypeProvider, T['routes'][K]['output']>
-            : {
-                result: CallTypeProvider<
-                  OutputTypeProvider,
-                  T['routes'][K]['output']
-                >
-
-                stream: ProtocolServerStreamInterface<
-                  CallTypeProvider<OutputTypeProvider, T['routes'][K]['stream']>
-                >
-              }
+            : ProtocolServerStreamInterface<
+                CallTypeProvider<OutputTypeProvider, T['routes'][K]['output']>
+              >
         }
       : never
 }
 
 export type ResolveAPIContract<
-  C extends TAnyAPIContract = TAnyAPIContract,
+  C extends TAnyRouterContract = TAnyRouterContract,
   InputTypeProvider extends TypeProvider = TypeProvider,
   OutputTypeProvider extends TypeProvider = TypeProvider,
-> = ResolveAPIRouterRoutes<C['router'], InputTypeProvider, OutputTypeProvider>
+> = ResolveAPIRouterRoutes<C, InputTypeProvider, OutputTypeProvider>
 
 export type ClientCaller<
   Procedure extends AnyResolvedAPIContractProcedure,
   SafeCall extends boolean,
 > = (
   ...args: Procedure['input'] extends t.NeverType
-    ? [data?: undefined, options?: Partial<ProtocolBaseClientCallOptions>]
+    ? [data?: undefined, options?: Partial<ClientCallOptions>]
     : undefined extends t.infer.encode.input<Procedure['contract']['input']>
-      ? [
-          data?: Procedure['input'],
-          options?: Partial<ProtocolBaseClientCallOptions>,
-        ]
-      : [
-          data: Procedure['input'],
-          options?: Partial<ProtocolBaseClientCallOptions>,
-        ]
+      ? [data?: Procedure['input'], options?: Partial<ClientCallOptions>]
+      : [data: Procedure['input'], options?: Partial<ClientCallOptions>]
 ) => SafeCall extends true
-  ? Promise<OneOf<[{ output: Procedure['output'] }, { error: ProtocolError }]>>
+  ? Promise<OneOf<[{ result: Procedure['output'] }, { error: ProtocolError }]>>
   : Promise<Procedure['output']>
 
 export type ClientCallers<

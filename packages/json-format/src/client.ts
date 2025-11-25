@@ -1,8 +1,4 @@
-import type {
-  DecodeRPCContext,
-  EncodeRPCContext,
-  ProtocolRPC,
-} from '@nmtjs/protocol'
+import type { DecodeRPCContext, EncodeRPCContext } from '@nmtjs/protocol'
 import type {
   ProtocolClientBlobStream,
   ProtocolServerBlobStream,
@@ -23,12 +19,11 @@ import { deserializeStreamId, isStreamId, serializeStreamId } from './common.ts'
 export class JsonFormat extends BaseClientFormat {
   contentType = 'application/x-neemata-json'
 
-  encode(data: any): ArrayBuffer {
+  encode(data: any): ArrayBufferView {
     return encodeText(JSON.stringify(data))
   }
 
-  encodeRPC(rpc: ProtocolRPC, context: EncodeRPCContext) {
-    const { callId, procedure } = rpc
+  encodeRPC(data: unknown, context: EncodeRPCContext) {
     const streamsMetadata: StreamsMetadata = {}
     const streams: Record<number, ProtocolClientBlobStream> = {}
     const replacer = (_key: string, value: any) => {
@@ -41,52 +36,35 @@ export class JsonFormat extends BaseClientFormat {
       return value
     }
     const payload =
-      typeof rpc.payload === 'undefined'
-        ? undefined
-        : JSON.stringify(rpc.payload, replacer)
+      typeof data === 'undefined' ? undefined : JSON.stringify(data, replacer)
 
     const buffer =
       typeof payload === 'undefined'
-        ? this.encode([
-            callId,
-            procedure,
-            streamsMetadata,
-          ] satisfies ClientEncodedRPC)
-        : this.encode([
-            callId,
-            procedure,
-            streamsMetadata,
-            payload,
-          ] satisfies ClientEncodedRPC)
+        ? this.encode([streamsMetadata] satisfies ClientEncodedRPC)
+        : this.encode([streamsMetadata, payload] satisfies ClientEncodedRPC)
     return { buffer, streams }
   }
 
-  decode(data: ArrayBuffer): any {
+  decode(data: ArrayBufferView): any {
     return JSON.parse(decodeText(data))
   }
 
-  decodeRPC(buffer: ArrayBuffer, context: DecodeRPCContext) {
+  decodeRPC(buffer: ArrayBufferView, context: DecodeRPCContext) {
     const streams: Record<number, ProtocolServerBlobStream> = {}
-    const [callId, error, streamsMetadata, payload]: ServerEncodedRPC =
-      this.decode(buffer)
-    if (error) return { callId, error }
-    else {
-      const replacer = (_key: string, value: any) => {
-        if (typeof value === 'string' && isStreamId(value)) {
-          const id = deserializeStreamId(value)
-          const metadata = streamsMetadata[id]
-          const stream = context.addStream(id, callId, metadata)
-          streams[id] = stream
-          return stream
-        }
-        return value
+    const [streamsMetadata, payload]: ServerEncodedRPC = this.decode(buffer)
+    const replacer = (_key: string, value: any) => {
+      if (typeof value === 'string' && isStreamId(value)) {
+        const id = deserializeStreamId(value)
+        const metadata = streamsMetadata[id]
+        const stream = context.addStream(id, metadata)
+        streams[id] = stream
+        return stream
       }
-      const result =
-        typeof payload === 'undefined'
-          ? undefined
-          : JSON.parse(payload, replacer)
-      return { callId, result, streams }
+      return value
     }
+    const decoded =
+      typeof payload === 'undefined' ? undefined : JSON.parse(payload, replacer)
+    return decoded
   }
 }
 
@@ -100,21 +78,19 @@ export class StandardJsonFormat extends BaseClientFormat {
     return encodeText(JSON.stringify(data))
   }
 
-  encodeRPC(rpc: ProtocolRPC) {
-    const { callId, procedure, payload } = rpc
+  encodeRPC(data: unknown) {
     const streams: Record<number, ProtocolClientBlobStream> = {}
-    const buffer = this.encode([callId, procedure, payload])
+    const buffer = this.encode([{}, data] satisfies ClientEncodedRPC)
     return { buffer, streams }
   }
 
-  decode(data: ArrayBuffer) {
+  decode(data: ArrayBufferView) {
     return JSON.parse(decodeText(data))
   }
 
-  decodeRPC(buffer: ArrayBuffer) {
+  decodeRPC(buffer: ArrayBufferView) {
     const streams: Record<number, ProtocolServerBlobStream> = {}
-    const [callId, error, result]: ServerEncodedRPC = this.decode(buffer)
-    if (error) return { callId, error }
-    else return { callId, result, streams }
+    const [_, result]: ServerEncodedRPC = this.decode(buffer)
+    return { result, streams }
   }
 }

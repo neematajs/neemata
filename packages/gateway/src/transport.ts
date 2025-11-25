@@ -1,12 +1,15 @@
 import type { Async } from '@nmtjs/common'
 import type { Injection, LazyInjectable, Scope } from '@nmtjs/core'
-import type { ProtocolRPC } from '@nmtjs/protocol'
+import type {
+  ConnectionType,
+  ProtocolRPC,
+  ProtocolVersion,
+} from '@nmtjs/protocol'
 import type { ProtocolFormats } from '@nmtjs/protocol/server'
-import { createLazyInjectable, provide } from '@nmtjs/core'
-import { ConnectionType, ProtocolVersion } from '@nmtjs/protocol'
 
 import type { GatewayApiCallOptions } from './api.ts'
 import type { GatewayConnection } from './connection.ts'
+import type { ProxyableTransportType } from './enums.ts'
 
 export interface TransportConnectionV2 {
   connectionId: string
@@ -68,7 +71,7 @@ export interface TransportV2Worker<
   stop: (params: Pick<TransportV2WorkerParams<Type>, 'formats'>) => Async<void>
   send?: Type extends 'unidirectional'
     ? never
-    : (connectionId: string, buffer: ArrayBuffer) => boolean | null
+    : (connectionId: string, buffer: ArrayBufferView) => boolean | null
 }
 
 export interface TransportV2<
@@ -77,47 +80,11 @@ export interface TransportV2<
   Injections extends {
     [key: string]: LazyInjectable<any, Scope.Connection | Scope.Call>
   } = { [key: string]: LazyInjectable<any, Scope.Connection | Scope.Call> },
-  Proxyable extends boolean = boolean,
+  Proxyable extends ProxyableTransportType | undefined =
+    | ProxyableTransportType
+    | undefined,
 > {
   proxyable: Proxyable
   injectables?: Injections
-  factory: (options: TransportOptions) => TransportV2Worker<Type>
-}
-
-export function createTransportV2Worker(): TransportV2<
-  ConnectionType.Bidirectional,
-  { hah: '' },
-  {},
-  true
-> {
-  return {
-    proxyable: true,
-    injectables: {},
-    factory: (options) => {
-      return {
-        async start({ onConnect, onDisconnect, onMessage }) {
-          const { id } = await onConnect(
-            {
-              data: null,
-              type: ConnectionType.Bidirectional,
-              accept: null,
-              contentType: null,
-              protocolVersion: ProtocolVersion.v1,
-            },
-            provide(createLazyInjectable<[1]>(), [1]),
-            provide(createLazyInjectable<[1]>(), [1]),
-            provide(createLazyInjectable<[1]>(), [1]),
-          )
-
-          await onMessage({ connectionId: id, data: new ArrayBuffer(8) })
-
-          return ''
-        },
-        stop() {},
-        send(connectionId: string, buffer: ArrayBuffer) {
-          return true
-        },
-      }
-    },
-  }
+  factory: (options: TransportOptions) => Async<TransportV2Worker<Type>>
 }

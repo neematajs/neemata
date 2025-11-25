@@ -43,7 +43,7 @@ export interface Procedure<
   handler: ProcedureHandlerType<
     InputType<t.infer.decodeRaw.output<ProcedureContract['input']>>,
     ProcedureContract['stream'] extends true
-      ? AsyncIterable<Exclude<ProcedureContract['output'], undefined | boolean>>
+      ? AsyncIterable<t.infer.encode.input<ProcedureContract['output']>>
       : t.infer.encode.input<ProcedureContract['output']>,
     ProcedureDeps
   >
@@ -191,9 +191,10 @@ export function createProcedure<
     ? { handler: paramsOrHandler }
     : paramsOrHandler
 
+  // @ts-expect-error
   return createContractProcedure(
     c.procedure({ input, output, stream, timeout }),
-    { dependencies, handler, guards, middlewares, metadata },
+    { dependencies, handler: handler as any, guards, middlewares, metadata },
   )
 }
 

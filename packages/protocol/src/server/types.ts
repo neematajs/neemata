@@ -1,4 +1,4 @@
-import type { PlainType } from '@nmtjs/type/_plain'
+import type { PlainType } from '@nmtjs/type'
 
 import type { ProtocolBlobInterface } from '../common/blob.ts'
 import type { ProtocolClientStream } from './stream.ts'

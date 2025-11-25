@@ -3,18 +3,13 @@
   "type": "module",
   "scripts": {
     "postinstall": "$npm_execpath build",
-    "build": "napi build --release --esm",
-    "build:debug": "napi build --esm"
+    "clean-build": "true",
+    "fmt": "cargo fmt",
+    "build": "$npm_execpath build:debug --release",
+    "build:debug": "napi build --esm --js index.js --platform --output-dir ./dist"
   },
   "exports": {
-    ".": "./index.js",
-    "./neemata-proxy.node": "./neemata-proxy.node"
-  },
-  "publishConfig": {
-    "exports": {
-      ".": "./index.js",
-      "./neemata-proxy.node": "./neemata-proxy.node"
-    }
+    ".": "./dist/index.js"
   },
   "napi": {
     "binaryName": "neemata-proxy"

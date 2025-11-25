@@ -24,27 +24,23 @@ export class JsonFormat extends BaseServerFormat {
     return Buffer.from(JSON.stringify(data), 'utf-8')
   }
 
-  encodeRPC(rpc: ProtocolRPCResponse, context: EncodeRPCContext) {
-    const { callId, error } = rpc
-    if (error) return this.encode([callId, error] satisfies ServerEncodedRPC)
-    else {
-      const streams: StreamsMetadata = {}
-      const replacer = (_key: string, value: any) => {
-        if (value instanceof ProtocolBlob) {
-          const stream = context.addStream(value)
-          streams[stream.id] = stream.metadata
-          return serializeStreamId(stream.id)
-        }
-        return value
+  encodeRPC(data: unknown, context: EncodeRPCContext) {
+    const streams: StreamsMetadata = {}
+    const replacer = (_key: string, value: any) => {
+      if (value instanceof ProtocolBlob) {
+        const stream = context.addStream(value)
+        streams[stream.id] = stream.metadata
+        return serializeStreamId(stream.id)
       }
-      const isUndefined = typeof rpc.result === 'undefined'
-      const payload = JSON.stringify(rpc.result, replacer)
-      return this.encode(
-        isUndefined
-          ? ([callId, null, streams] satisfies ServerEncodedRPC)
-          : ([callId, null, streams, payload] satisfies ServerEncodedRPC),
-      )
+      return value
     }
+    const isUndefined = typeof data === 'undefined'
+    const payload = JSON.stringify(data, replacer)
+    return this.encode(
+      isUndefined
+        ? ([streams] satisfies ServerEncodedRPC)
+        : ([streams, payload] satisfies ServerEncodedRPC),
+    )
   }
 
   decode(data: Buffer) {
@@ -52,24 +48,23 @@ export class JsonFormat extends BaseServerFormat {
   }
 
   decodeRPC(buffer: Buffer, context: DecodeRPCContext) {
-    const [callId, procedure, streams, formatPayload]: ClientEncodedRPC =
-      this.decode(buffer)
+    const [streams, formatPayload]: ClientEncodedRPC = this.decode(buffer)
 
     const replacer = (_key: string, value: any) => {
       if (typeof value === 'string' && isStreamId(value)) {
         const id = deserializeStreamId(value)
         const metadata = streams[id]
-        return context.addStream(id, callId, metadata)
+        return context.addStream(id, metadata)
       }
       return value
     }
 
-    const payload =
+    const decoded =
       typeof formatPayload === 'undefined'
         ? undefined
         : JSON.parse(formatPayload, replacer)
 
-    return { callId, procedure, payload }
+    return decoded
   }
 }
 
@@ -80,17 +75,13 @@ export class StandardJsonFormat extends BaseServerFormat {
   contentType = 'application/json'
   accept = ['application/json', 'application/vnd.api+json']
 
-  encode(data: any) {
+  encode(data: unknown) {
     if (data === undefined) return Buffer.alloc(0)
     return Buffer.from(JSON.stringify(data), 'utf-8')
   }
 
-  encodeRPC(rpc: ProtocolRPCResponse) {
-    const { callId, error } = rpc
-    if (error) return this.encode([callId, error, null])
-    else {
-      return this.encode([callId, null, rpc.result])
-    }
+  encodeRPC(data: unknown) {
+    return this.encode(data)
   }
 
   decode(buffer: Buffer) {
@@ -98,7 +89,6 @@ export class StandardJsonFormat extends BaseServerFormat {
   }
 
   decodeRPC(buffer: Buffer) {
-    const [callId, procedure, payload]: ClientEncodedRPC = this.decode(buffer)
-    return { callId, procedure, payload }
+    return this.decode(buffer)
   }
 }

@@ -18,7 +18,7 @@ export const ProcedureKind = Symbol('NeemataProcedure')
 export interface TProcedureContract<
   Input extends BaseType,
   Output extends BaseType,
-  Stream extends true | undefined,
+  Stream extends true | undefined = undefined,
   Name extends string | undefined = undefined,
 > {
   readonly [Kind]: typeof ProcedureKind
@@ -44,7 +44,7 @@ export const ProcedureContract = <
 ): TProcedureContract<
   Options['input'] extends BaseType ? Options['input'] : NeverType,
   Options['output'] extends BaseType ? Options['output'] : NeverType,
-  Options['stream'],
+  Options['stream'] extends true ? true : undefined,
   Options['name'] extends string ? Options['name'] : undefined
 > => {
   const {

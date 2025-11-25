@@ -1,9 +1,18 @@
-import type { EncodeRPCContext, ProtocolBlobMetadata } from '@nmtjs/protocol'
+import type {
+  DecodeRPCContext,
+  EncodeRPCContext,
+  ProtocolBlobMetadata,
+} from '@nmtjs/protocol'
 import { decodeText, encodeText, ProtocolBlob } from '@nmtjs/protocol'
 import { describe, expect, it, vi } from 'vitest'
 
 import { JsonFormat } from '../src/client.ts'
 import { serializeStreamId } from '../src/common.ts'
+
+const asUint8Array = (view: ArrayBufferView) =>
+  view instanceof Uint8Array
+    ? view
+    : new Uint8Array(view.buffer, view.byteOffset, view.byteLength)
 
 describe('Client', () => {
   const format = new JsonFormat()
@@ -11,9 +20,9 @@ describe('Client', () => {
   it('should encode', () => {
     const data = { foo: 'bar' }
     const buffer = format.encode(data)
-    expect(buffer).toBeInstanceOf(ArrayBuffer)
-    expect(new Uint8Array(buffer)).toEqual(
-      new Uint8Array(encodeText(JSON.stringify(data))),
+    expect(ArrayBuffer.isView(buffer)).toBe(true)
+    expect(Array.from(asUint8Array(buffer))).toEqual(
+      Array.from(encodeText(JSON.stringify(data))),
     )
   })
 
@@ -25,17 +34,13 @@ describe('Client', () => {
 
   it('should encode rpc', () => {
     const streamId = 0
-    const rpc = {
-      callId: 1,
-      procedure: 'procedure',
-      payload: {
-        foo: 'bar',
-        stream: ProtocolBlob.from(new ArrayBuffer(1), {
-          size: 1,
-          type: 'test',
-          filename: 'file.txt',
-        }),
-      },
+    const payload = {
+      foo: 'bar',
+      stream: ProtocolBlob.from(new ArrayBuffer(1), {
+        size: 1,
+        type: 'test',
+        filename: 'file.txt',
+      }),
     }
     let stream:
       | { id: number; metadata: ProtocolBlobMetadata; blob: ProtocolBlob }
@@ -47,26 +52,38 @@ describe('Client', () => {
       }),
       getStream: vi.fn(() => stream),
     } satisfies EncodeRPCContext
-    const { buffer, streams } = format.encodeRPC(rpc, ctx)
+    const { buffer, streams } = format.encodeRPC(payload, ctx)
 
-    expect(buffer).toBeInstanceOf(ArrayBuffer)
+    expect(ArrayBuffer.isView(buffer)).toBe(true)
     expect(streams[streamId]).toBe(stream)
 
-    const [callId, procedure, streamsMetadata, payload] = JSON.parse(
-      decodeText(buffer),
-    )
+    const [streamsMetadata, encodedPayload] = JSON.parse(decodeText(buffer))
 
-    expect(callId).toBe(rpc.callId)
-    expect(procedure).toBe(rpc.procedure)
-    expect(streamsMetadata[streamId]).toMatchObject(rpc.payload.stream.metadata)
-    expect(payload).toBeTypeOf('string')
+    expect(streamsMetadata[streamId]).toMatchObject(stream!.metadata)
+    expect(encodedPayload).toBeTypeOf('string')
 
-    const result = JSON.parse(payload)
+    const result = JSON.parse(encodedPayload)
     expect(result).toStrictEqual({
       foo: 'bar',
       stream: serializeStreamId(streamId),
     })
   })
 
-  // TODO: test decoding rpc
+  it('should decode rpc', () => {
+    const streamId = 2
+    const stream = { id: streamId, type: 'test' }
+    const ctx = {
+      addStream: vi.fn(() => stream),
+      getStream: vi.fn(() => stream),
+    } satisfies DecodeRPCContext
+
+    const encoded = format.encode([
+      { [streamId]: { type: 'test' } },
+      JSON.stringify({ foo: 'bar', stream: serializeStreamId(streamId) }),
+    ])
+
+    const decoded = format.decodeRPC(encoded, ctx)
+    expect(decoded).toEqual({ foo: 'bar', stream })
+    expect(ctx.addStream).toHaveBeenCalledWith(streamId, { type: 'test' })
+  })
 })

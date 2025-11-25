@@ -1,133 +1,120 @@
-import type { ClientMessageType } from '@nmtjs/protocol'
 import type {
-  BaseProtocol,
-  ProtocolBaseClientCallOptions,
-  ProtocolBaseTransformer,
-  ProtocolClientCall,
-  ProtocolSendMetadata,
-} from '@nmtjs/protocol/client'
-import { ClientError } from '@nmtjs/client'
-import { ErrorCode, ProtocolBlob } from '@nmtjs/protocol'
-import {
-  ProtocolServerBlobStream,
-  ProtocolTransport,
-  ProtocolTransportStatus,
-} from '@nmtjs/protocol/client'
+  ClientTransport,
+  ClientTransportInstance,
+  ClientTransportRpcParams,
+} from '@nmtjs/client'
+import type { ProtocolVersion } from '@nmtjs/protocol'
+import type { BaseClientFormat } from '@nmtjs/protocol/client'
+import { ConnectionType, ProtocolBlob } from '@nmtjs/protocol'
+
+// import { ConnectionType } from '../../protocol/src/common/enums.ts'
 
 export type HttpClientTransportOptions = {
   /**
    * The origin of the server
    * @example 'http://localhost:3000'
    */
-  origin: string
+  url: string
   debug?: boolean
 }
 
-export class HttpClientTransport extends ProtocolTransport<HttpClientTransportOptions> {
-  #auth: string | null = null
-  status: ProtocolTransportStatus = ProtocolTransportStatus.CONNECTED
+const addStream = () => {
+  throw new Error('HTTP transport does not support streams')
+}
+const getStream = () => {
+  throw new Error('HTTP transport does not support streams')
+}
 
+export class HttpTransportClient
+  implements ClientTransportInstance<ConnectionType.Unidirectional>
+{
   constructor(
-    protected readonly protocol: BaseProtocol,
-    protected readonly options: HttpClientTransportOptions,
+    protected readonly format: BaseClientFormat,
+    protected readonly protocol: ProtocolVersion,
+    protected options: HttpClientTransportOptions,
   ) {
-    super()
+    this.options = { debug: false, ...options }
   }
 
   async call(
-    procedure: string,
-    payload: any,
-    options: ProtocolBaseClientCallOptions,
-    transformer: ProtocolBaseTransformer,
-  ): Promise<ProtocolClientCall> {
-    const call = this.protocol.createCall(procedure, options)
+    params: ClientTransportRpcParams,
+    rpc: { callId: number; procedure: string; payload: unknown },
+    signal: AbortSignal,
+  ) {
+    const { procedure, payload } = rpc
+    const requestHeaders = new Headers()
 
-    const headers = new Headers()
+    if (params.auth) requestHeaders.set('Authorization', params.auth)
+    const base = params.application
+      ? `/${params.application}/${procedure}`
+      : `/${procedure}`
+    const url = new URL(base, this.options.url)
 
-    headers.set('Content-Type', this.protocol.contentType)
-    headers.set('Accept', this.protocol.contentType)
+    let body: any
 
-    if (this.#auth) headers.set('Authorization', this.#auth)
+    if (payload instanceof ProtocolBlob) {
+      requestHeaders.set('Content-Type', payload.metadata.type)
+    } else {
+      requestHeaders.set('Content-Type', params.format.contentType)
 
-    const isBlob = payload instanceof ProtocolBlob
-    if (isBlob) headers.set('x-neemata-blob', 'true')
+      const { buffer, streams } = params.format.encodeRPC(payload, {
+        addStream,
+        getStream,
+      })
 
-    const response = fetch(`${this.options.origin}/api/${procedure}`, {
+      if (Object.keys(streams).length > 0) {
+        throw new Error('HTTP transport does not encoded streams')
+      }
+
+      body = buffer
+    }
+
+    const response = await fetch(url.toString(), {
+      body,
       method: 'POST',
-      headers,
-      credentials: 'include',
-      body: isBlob
-        ? payload.source
-        : this.protocol.format.encode(
-            transformer.encodeRPC(procedure, payload),
-          ),
-      signal: call.signal,
-      // @ts-expect-error
-      duplex: 'half',
+      headers: requestHeaders,
+      signal,
     })
 
-    response
-      .catch((error) =>
-        Promise.reject(new Error('Network error', { cause: error })),
-      )
-      .then((response) => {
-        const isBlob = response.headers.get('x-neemata-blob') === 'true'
-        if (isBlob) {
-          const contentLength = response.headers.get('content-length')
-          const size = contentLength
-            ? Number.parseInt(contentLength, 10) || undefined
-            : undefined
-          const type =
-            response.headers.get('content-type') || 'application/octet-stream'
-          const stream = new ProtocolServerBlobStream(-1, { size, type })
-          response.body?.pipeThrough(stream)
-          return stream
-        } else {
-          const body = response.arrayBuffer()
-          return body.then((buffer) => {
-            if (response.ok) {
-              const decoded = this.protocol.format.decode(buffer)
-              return transformer.decodeRPC(procedure, decoded)
-            } else {
-              if (buffer.byteLength === 0) {
-                const error = new ClientError(
-                  ErrorCode.InternalServerError,
-                  `Empty response with ${response.status} status code`,
-                )
-                return Promise.reject(error)
-              } else {
-                const payload = this.protocol.format.decode(buffer)
-                const error = new ClientError(
-                  payload.code,
-                  payload.message,
-                  payload.data,
-                )
-                return Promise.reject(error)
-              }
-            }
-          })
+    if (response.ok) {
+      const isBlob =
+        response.headers.get('content-type') !== params.format.contentType
+
+      // TODO: implement rpc streams via SSE
+
+      if (isBlob) {
+        const contentLength = response.headers.get('content-length')
+        const size = contentLength
+          ? Number.parseInt(contentLength, 10) || undefined
+          : undefined
+        const type =
+          response.headers.get('content-type') || 'application/octet-stream'
+        const disposition = response.headers.get('content-disposition')
+        let filename: string | undefined
+        if (disposition) {
+          const match = disposition.match(/filename="?([^"]+)"?/)
+          if (match) filename = match[1]
+          return new ProtocolBlob(response.body, size, type, filename)
         }
-      })
-      .then(call.resolve)
-      .catch(call.reject)
-
-    return call
-  }
-
-  async connect(auth: any) {
-    this.#auth = auth
-    this.emit('connected')
-  }
-
-  async disconnect() {
-    this.emit('disconnected', 'client')
-  }
-
-  async send(
-    _messageType: ClientMessageType,
-    _buffer: ArrayBuffer,
-    _metadata: ProtocolSendMetadata,
-  ) {
-    throw new Error('Not supported')
+      } else {
+        const decoded = params.format.decodeRPC(await response.bytes(), {
+          addStream,
+          getStream,
+        })
+        return decoded
+      }
+    }
   }
 }
+
+export type HttpTransport = ClientTransport<
+  ConnectionType.Unidirectional,
+  HttpClientTransportOptions
+>
+
+export default (<HttpTransport>{
+  type: ConnectionType.Unidirectional,
+  factory(params, options) {
+    return new HttpTransportClient(params.format, params.protocol, options)
+  },
+})

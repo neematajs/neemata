@@ -10,12 +10,15 @@
     }
   },
   "scripts": {
-    "build": "tsc",
+    "clean-build": "tsc --build --clean",
+    "build": "tsc --build --declaration --sourceMap",
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
     "@nmtjs/client": "workspace:*",
-    "@nmtjs/common": "workspace:*",
+    "@nmtjs/common": "workspace:*"
+  },
+  "devDependencies": {
     "@nmtjs/protocol": "workspace:*"
   },
   "peerDependencies": {

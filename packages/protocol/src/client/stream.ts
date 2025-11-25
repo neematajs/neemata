@@ -1,4 +1,5 @@
-import { defer } from '@nmtjs/common'
+import type { Future } from '@nmtjs/common'
+import { createPromise, defer, MAX_UINT16 } from '@nmtjs/common'
 
 import type {
   ProtocolBlobInterface,
@@ -8,12 +9,12 @@ import { concat, encodeText } from '../common/binary.ts'
 import { BlobKey } from '../common/blob.ts'
 
 export class ProtocolClientBlobStream
-  extends TransformStream<any, ArrayBuffer>
+  extends TransformStream<any, ArrayBufferView>
   implements ProtocolBlobInterface
 {
   readonly [BlobKey] = true
 
-  #queue: ArrayBuffer
+  #queue: Uint8Array
   #reader: ReadableStreamDefaultReader
 
   constructor(
@@ -27,9 +28,9 @@ export class ProtocolClientBlobStream
       },
       transform: (chunk, controller) => {
         if (chunk instanceof ArrayBuffer) {
-          controller.enqueue(chunk)
+          controller.enqueue(new Uint8Array(chunk))
         } else if (chunk instanceof Uint8Array) {
-          controller.enqueue(chunk.buffer as unknown as ArrayBuffer)
+          controller.enqueue(chunk)
         } else if (typeof chunk === 'string') {
           controller.enqueue(encodeText(chunk))
         } else {
@@ -40,7 +41,7 @@ export class ProtocolClientBlobStream
       },
     })
 
-    this.#queue = new ArrayBuffer(0)
+    this.#queue = new Uint8Array(0)
     this.#reader = this.readable.getReader()
   }
 
@@ -50,16 +51,16 @@ export class ProtocolClientBlobStream
       if (done) {
         if (this.#queue.byteLength > 0) {
           const chunk = this.#queue
-          this.#queue = new ArrayBuffer(0)
+          this.#queue = new Uint8Array(0)
           return chunk
         }
         return null
       }
-      const buffer = value as ArrayBuffer
+      const buffer = value
       this.#queue = concat(this.#queue, buffer)
     }
-    const chunk = this.#queue.slice(0, size)
-    this.#queue = this.#queue.slice(size)
+    const chunk = this.#queue.subarray(0, size)
+    this.#queue = this.#queue.subarray(size)
     return chunk
   }
 
@@ -76,6 +77,8 @@ export class ProtocolClientBlobStream
 export interface ProtocolServerStreamInterface<T = any> {
   [Symbol.asyncIterator](): AsyncGenerator<T>
   abort(error?: Error): void
+  end(): void
+  push(chunk: T): void
 }
 
 export class ProtocolServerStream<T = any>
@@ -99,30 +102,67 @@ export class ProtocolServerStream<T = any>
     }
   }
 
-  async push(chunk: T) {
-    await this.#writer.write(chunk)
+  push(chunk: T) {
+    this.#writer.write(chunk)
   }
 
-  async end() {
-    await this.#writer.close()
+  end() {
+    this.#writer.close()
   }
 
-  async abort(error = new Error('Stream aborted')) {
-    await this.#writer.abort(error)
+  abort(error = new Error('Stream aborted')) {
+    this.#writer.abort(error)
   }
 }
 
 export class ProtocolServerBlobStream
-  extends ProtocolServerStream<ArrayBuffer>
-  implements ProtocolBlobInterface
+  extends ReadableStream<ArrayBufferView>
+  implements
+    ProtocolBlobInterface,
+    ProtocolServerStreamInterface<ArrayBufferView>
 {
   readonly [BlobKey] = true
+
+  #chunk: Future<ArrayBufferView | null>
 
   constructor(
     readonly id: number,
     readonly metadata: ProtocolBlobMetadata,
-    options?: Transformer<any, ArrayBuffer>,
+    pull: (size: number) => void,
   ) {
-    super(options)
+    super({
+      pull: async (controller) => {
+        pull(controller.desiredSize || MAX_UINT16)
+        const chunk = await this.#chunk.promise
+        if (chunk === null) {
+          controller.close()
+        } else {
+          controller.enqueue(chunk)
+          this.#chunk = createPromise<ArrayBufferView | null>()
+        }
+      },
+    })
+    this.#chunk = createPromise<ArrayBufferView | null>()
+  }
+
+  async *[Symbol.asyncIterator]() {
+    const reader = this.getReader()
+    while (true) {
+      const { done, value } = await reader.read()
+      if (!done) yield value
+      else break
+    }
+  }
+
+  push(chunk: ArrayBufferView) {
+    this.#chunk.resolve(chunk)
+  }
+
+  end() {
+    this.#chunk.resolve(null)
+  }
+
+  abort(error = new Error('Stream aborted')) {
+    this.#chunk.reject(error)
   }
 }

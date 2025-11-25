@@ -1,6 +1,7 @@
 packages:
   - packages/*
-  - tests/*
+  - tests/playground
+  - tests/playground-app-1
 
 catalog:
   zod: ^4.1.0

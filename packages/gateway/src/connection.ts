@@ -7,6 +7,7 @@ import type {
   ProtocolServerStream,
   ProtocolVersionInterface,
 } from '@nmtjs/protocol/server'
+import { MAX_UINT32 } from '@nmtjs/common'
 
 export class GatewayConnection {
   readonly id: string
@@ -45,7 +46,7 @@ export class GatewayConnection {
   }
 
   readonly getStreamId = () => {
-    if (this.#streamId >= Number.MAX_SAFE_INTEGER) {
+    if (this.#streamId >= MAX_UINT32) {
       this.#streamId = 1
     }
     return this.#streamId++

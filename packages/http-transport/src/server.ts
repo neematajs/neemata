@@ -7,7 +7,7 @@ import type {
   TransportV2WorkerParams,
 } from '@nmtjs/gateway'
 import type { Peer } from 'crossws'
-import { isAsyncIterable, noopFn } from '@nmtjs/common'
+import { isAsyncIterable } from '@nmtjs/common'
 import { provide } from '@nmtjs/core'
 import {
   ConnectionType,

@@ -2,7 +2,8 @@
   "name": "@nmtjs/protocol",
   "type": "module",
   "scripts": {
-    "build": "tsc",
+    "clean-build": "tsc --build --clean",
+    "build": "tsc --build --declaration --sourceMap",
     "type-check": "tsc --noEmit"
   },
   "exports": {
@@ -21,12 +22,14 @@
     "@nmtjs/common": "workspace:*",
     "@nmtjs/core": "workspace:*",
     "@nmtjs/type": "workspace:*",
+    "@nmtjs/contract": "workspace:*",
     "hookable": "6.0.0-rc.1"
   },
   "peerDependencies": {
     "@nmtjs/common": "workspace:*",
     "@nmtjs/core": "workspace:*",
-    "@nmtjs/type": "workspace:*"
+    "@nmtjs/type": "workspace:*",
+    "@nmtjs/contract": "workspace:*"
   },
   "files": [
     "dist",

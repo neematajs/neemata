@@ -43,7 +43,7 @@ export type MessageContext = {
   serverStreams: ProtocolServerStreams
   clientStreams: ProtocolClientStreams
   transport: {
-    send?: (connectionId: string, buffer: ArrayBuffer) => boolean | null
+    send?: (connectionId: string, buffer: ArrayBufferView) => boolean | null
   }
   container: Container
 }

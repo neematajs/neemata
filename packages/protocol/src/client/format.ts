@@ -1,7 +1,6 @@
 import type {
   DecodeRPCContext,
   EncodeRPCContext,
-  ProtocolRPC,
   ProtocolRPCResponse,
 } from '../common/types.ts'
 import type {
@@ -10,22 +9,22 @@ import type {
 } from './stream.ts'
 
 export type ProtocolRPCEncode = {
-  buffer: ArrayBuffer
+  buffer: ArrayBufferView
   streams: Record<number, ProtocolClientBlobStream>
 }
 
 export interface BaseClientDecoder {
-  decode(buffer: ArrayBuffer): any
+  decode(buffer: ArrayBufferView): unknown
   decodeRPC(
-    buffer: ArrayBuffer,
+    buffer: ArrayBufferView,
     context: DecodeRPCContext<ProtocolServerBlobStream>,
   ): ProtocolRPCResponse<ProtocolServerBlobStream>
 }
 
 export interface BaseClientEncoder {
-  encode(data: any): ArrayBuffer
+  encode(data: unknown): ArrayBufferView
   encodeRPC(
-    rpc: ProtocolRPC,
+    data: unknown,
     context: EncodeRPCContext<ProtocolClientBlobStream>,
   ): ProtocolRPCEncode
 }
@@ -35,14 +34,14 @@ export abstract class BaseClientFormat
 {
   abstract contentType: string
 
-  abstract encode(data: any): ArrayBuffer
+  abstract encode(data: unknown): ArrayBufferView
   abstract encodeRPC(
-    rpc: ProtocolRPC,
+    data: unknown,
     context: EncodeRPCContext<ProtocolClientBlobStream>,
   ): ProtocolRPCEncode
-  abstract decode(buffer: ArrayBuffer): any
+  abstract decode(buffer: ArrayBufferView): unknown
   abstract decodeRPC(
-    buffer: ArrayBuffer,
+    buffer: ArrayBufferView,
     context: DecodeRPCContext<ProtocolServerBlobStream>,
   ): ProtocolRPCResponse<ProtocolServerBlobStream>
 }

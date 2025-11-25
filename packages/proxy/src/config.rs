@@ -4,8 +4,15 @@ use std::{collections::HashMap, time::Duration};
 use url::Url;
 
 #[napi(object)]
+pub struct ApplicationUpstreamConfig {
+    pub url: String,
+    #[napi(ts_type = "'http' | 'websocket'")]
+    pub r#type: String,
+}
+
+#[napi(object)]
 pub struct ApplicationConfig {
-    pub upstreams: Vec<String>,
+    pub upstreams: Vec<ApplicationUpstreamConfig>,
     pub sni: Option<String>,
     pub enable_tls: Option<bool>,
 }
@@ -18,13 +25,28 @@ pub struct ProxyOptions {
     pub health_check_interval_secs: Option<u32>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub enum UpstreamKind {
+    Http,
+    Websocket,
+}
+
+impl UpstreamKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Http => "http",
+            Self::Websocket => "websocket",
+        }
+    }
+}
+
 pub struct AppUpstream {
     pub secure: bool,
     pub address: String,
 }
 
 pub struct AppDefinition {
-    pub upstreams: Vec<AppUpstream>,
+    pub upstreams: HashMap<UpstreamKind, Vec<AppUpstream>>,
     pub sni: Option<String>,
 }
 
@@ -55,56 +77,59 @@ impl ProxyConfig {
                 )));
             }
 
-            let _upstreams = config
-                .upstreams
-                .into_iter()
-                .map(|value| value.trim().to_string())
-                .filter(|value| !value.is_empty())
-                .map(|value| {
-                    let parsed = Url::parse(&value);
-                    if parsed.is_err() {
+            let mut upstreams = HashMap::new();
+
+            for upstream in config.upstreams {
+                let trimmed = upstream.url.trim().to_string();
+                if trimmed.is_empty() {
+                    return Err(Error::from_reason(format!(
+                        "upstream URL cannot be empty in application '{name}'"
+                    )));
+                }
+
+                let parsed = Url::parse(&trimmed).map_err(|_| {
+                    Error::from_reason(format!(
+                        "invalid URL '{trimmed}' in upstreams for application '{name}'"
+                    ))
+                })?;
+
+                let secure = match parsed.scheme() {
+                    "https" | "wss" | "https+unix" | "wss+unix" => true,
+                    "http" | "ws" | "http+unix" | "ws+unix" => false,
+                    other => {
                         return Err(Error::from_reason(format!(
-                            "invalid URL '{value}' in upstreams for application '{name}'"
+                            "unsupported URL scheme '{other}' in upstream '{trimmed}'"
                         )));
                     }
-                    let url = parsed.unwrap();
-                    let secure = match url.scheme() {
-                        "https" | "wss" => true,
-                        "http" | "ws" => false,
-                        other => {
-                            return Err(Error::from_reason(format!(
-                                "unsupported URL scheme '{other}' in upstream '{value}'"
-                            )));
-                        }
-                    };
-                    Ok(AppUpstream {
+                };
+
+                let upstream_type = match upstream.r#type.as_str() {
+                    "http" => UpstreamKind::Http,
+                    "websocket" => UpstreamKind::Websocket,
+                    other => {
+                        return Err(Error::from_reason(format!(
+                            "unsupported upstream type '{other}' for application '{name}'"
+                        )));
+                    }
+                };
+
+                upstreams
+                    .entry(upstream_type)
+                    .or_insert_with(Vec::new)
+                    .push(AppUpstream {
                         secure,
                         address: format!(
                             "{}:{}",
-                            url.host_str().unwrap(),
-                            url.port_or_known_default().unwrap(),
+                            parsed.host_str().unwrap(),
+                            parsed.port_or_known_default().unwrap(),
                         ),
-                    })
-                })
-                // .filter(|value| value.is_ok())
-                .collect::<Vec<_>>();
+                    });
+            }
 
-            if _upstreams.is_empty() {
+            if upstreams.is_empty() {
                 return Err(Error::from_reason(format!(
                     "application '{name}' produced no valid upstreams"
                 )));
-            }
-
-            let mut upstreams = Vec::new();
-
-            for upstream in _upstreams {
-                if upstream.is_err() {
-                    return Err(Error::from_reason(format!(
-                        "upstream address cannot be empty in application '{name}'"
-                    )));
-                } else if upstream.is_ok() {
-                    upstreams.push(upstream.unwrap());
-                }
             }
 
             let definition = AppDefinition {
