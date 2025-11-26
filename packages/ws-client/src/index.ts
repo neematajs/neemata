@@ -1,4 +1,8 @@
-import type { ClientTransport, ClientTransportStartParams } from '@nmtjs/client'
+import type {
+  ClientCallOptions,
+  ClientTransportFactory,
+  ClientTransportStartParams,
+} from '@nmtjs/client'
 import type { ProtocolVersion } from '@nmtjs/protocol'
 import type { BaseClientFormat } from '@nmtjs/protocol/client'
 import { once } from '@nmtjs/common'
@@ -10,16 +14,18 @@ export type WsClientTransportOptions = {
    * @example 'ws://localhost:3000'
    */
   url: string
+  debug?: boolean
+
   /**
    * Custom WebSocket class
    * @default globalThis.WebSocket
    */
-  wsFactory?: (url: URL) => WebSocket
-
-  debug?: boolean
+  WebSocket?: typeof WebSocket
 }
 
 export class WsTransportClient {
+  type: ConnectionType.Bidirectional = ConnectionType.Bidirectional
+
   protected webSocket: WebSocket | null = null
   protected connecting: Promise<void> | null = null
 
@@ -47,8 +53,8 @@ export class WsTransportClient {
       url.searchParams.set('auth', params.auth)
     }
 
-    const ws = this.options.wsFactory
-      ? this.options.wsFactory(url)
+    const ws = this.options.WebSocket
+      ? new this.options.WebSocket(url)
       : new WebSocket(url.toString())
 
     ws.binaryType = 'arraybuffer'
@@ -83,21 +89,18 @@ export class WsTransportClient {
     return closing
   }
 
-  async send(message: ArrayBufferView, signal: AbortSignal) {
+  async send(message: ArrayBufferView, options: ClientCallOptions) {
     if (this.webSocket === null) throw new Error('WebSocket is not connected')
     await this.connecting
-    if (!signal.aborted) this.webSocket!.send(message)
+    if (!options.signal?.aborted) this.webSocket!.send(message)
   }
 }
 
-type WsTransport = ClientTransport<
+export type WsTransportFactory = ClientTransportFactory<
   ConnectionType.Bidirectional,
-  WsClientTransportOptions
+  WsClientTransportOptions,
+  WsTransportClient
 >
 
-export default (<WsTransport>{
-  type: ConnectionType.Bidirectional,
-  factory(params, options) {
-    return new WsTransportClient(params.format, params.protocol, options)
-  },
-})
+export const WsTransportFactory: WsTransportFactory = (params, options) =>
+  new WsTransportClient(params.format, params.protocol, options)

@@ -1,11 +1,11 @@
-import type { Future } from '@nmtjs/common'
-import { createPromise, defer, MAX_UINT16 } from '@nmtjs/common'
+import type { DuplexStreamSink } from '@nmtjs/common'
+import { DuplexStream, defer } from '@nmtjs/common'
 
 import type {
   ProtocolBlobInterface,
   ProtocolBlobMetadata,
 } from '../common/blob.ts'
-import { concat, encodeText } from '../common/binary.ts'
+import { concat, decodeText, encodeText } from '../common/binary.ts'
 import { BlobKey } from '../common/blob.ts'
 
 export class ProtocolClientBlobStream
@@ -74,25 +74,9 @@ export class ProtocolClientBlobStream
   }
 }
 
-export interface ProtocolServerStreamInterface<T = any> {
-  [Symbol.asyncIterator](): AsyncGenerator<T>
-  abort(error?: Error): void
-  end(): void
-  push(chunk: T): void
-}
-
-export class ProtocolServerStream<T = any>
-  extends TransformStream<any, T>
-  implements ProtocolServerStreamInterface<T>
-{
-  #writer: WritableStreamDefaultWriter
-
-  constructor(options?: Transformer<any, T>) {
-    super(options)
-
-    this.#writer = this.writable.getWriter()
-  }
-
+export abstract class ProtocolServerStreamInterface<
+  O = unknown,
+> extends DuplexStream<O, ArrayBufferView> {
   async *[Symbol.asyncIterator]() {
     const reader = this.readable.getReader()
     while (true) {
@@ -100,69 +84,82 @@ export class ProtocolServerStream<T = any>
       if (!done) yield value
       else break
     }
-  }
-
-  push(chunk: T) {
-    this.#writer.write(chunk)
-  }
-
-  end() {
-    this.#writer.close()
-  }
-
-  abort(error = new Error('Stream aborted')) {
-    this.#writer.abort(error)
+    reader.releaseLock()
   }
 }
 
+export class ProtocolServerStream<T = unknown>
+  extends ProtocolServerStreamInterface<T>
+  implements ProtocolServerStreamInterface<T> {}
+
 export class ProtocolServerBlobStream
-  extends ReadableStream<ArrayBufferView>
-  implements
-    ProtocolBlobInterface,
-    ProtocolServerStreamInterface<ArrayBufferView>
+  extends ProtocolServerStreamInterface<ArrayBufferView>
+  implements ProtocolBlobInterface, Blob
 {
   readonly [BlobKey] = true
 
-  #chunk: Future<ArrayBufferView | null>
-
   constructor(
-    readonly id: number,
     readonly metadata: ProtocolBlobMetadata,
-    pull: (size: number) => void,
+    options?: DuplexStreamSink<ArrayBufferView, ArrayBufferView>,
   ) {
-    super({
-      pull: async (controller) => {
-        pull(controller.desiredSize || MAX_UINT16)
-        const chunk = await this.#chunk.promise
-        if (chunk === null) {
-          controller.close()
-        } else {
-          controller.enqueue(chunk)
-          this.#chunk = createPromise<ArrayBufferView | null>()
-        }
+    super(options)
+  }
+
+  get size() {
+    return this.metadata.size || Number.NaN
+  }
+
+  get type() {
+    return this.metadata.type || 'application/octet-stream'
+  }
+
+  async text() {
+    const chunks: ArrayBufferView[] = []
+    for await (const chunk of this) chunks.push(chunk)
+    return decodeText(concat(...chunks))
+  }
+
+  async bytes() {
+    const chunks: ArrayBufferView[] = []
+    for await (const chunk of this) chunks.push(chunk)
+    return concat(...chunks)
+  }
+
+  async arrayBuffer() {
+    const bytes = await this.bytes()
+    return bytes.buffer
+  }
+
+  async json<T = unknown>() {
+    const text = await this.text()
+    return JSON.parse(text) as T
+  }
+
+  stream() {
+    const transform = new TransformStream<ArrayBufferView, Uint8Array>({
+      transform: (chunk, controller) => {
+        controller.enqueue(
+          chunk instanceof Uint8Array
+            ? chunk
+            : new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength),
+        )
       },
     })
-    this.#chunk = createPromise<ArrayBufferView | null>()
+    this.readable.pipeThrough(transform)
+    return transform.readable as ReadableStream<Uint8Array<ArrayBuffer>>
   }
 
-  async *[Symbol.asyncIterator]() {
-    const reader = this.getReader()
-    while (true) {
-      const { done, value } = await reader.read()
-      if (!done) yield value
-      else break
-    }
+  /**
+   * Throws an error
+   */
+  async formData(): Promise<FormData> {
+    throw new Error('Method not implemented.')
   }
 
-  push(chunk: ArrayBufferView) {
-    this.#chunk.resolve(chunk)
-  }
-
-  end() {
-    this.#chunk.resolve(null)
-  }
-
-  abort(error = new Error('Stream aborted')) {
-    this.#chunk.reject(error)
+  /**
+   * Throws an error
+   */
+  slice(): Blob {
+    throw new Error('Unable to slice')
   }
 }

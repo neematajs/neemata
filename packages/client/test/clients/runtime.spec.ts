@@ -21,7 +21,7 @@ describe('Runtime client behaviour', () => {
       client.on('connected', handler)
 
       await client.connect()
-      expect(transport.factory).toHaveBeenCalledWith(
+      expect(transport).toHaveBeenCalledWith(
         { format, protocol: ProtocolVersion.v1 },
         undefined,
       )
@@ -109,7 +109,7 @@ describe('Runtime client behaviour', () => {
           procedure: 'status',
           payload: { ping: true },
         }),
-        expect.any(AbortSignal),
+        expect.objectContaining({ signal: undefined }),
       )
     })
   })

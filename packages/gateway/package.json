@@ -2,9 +2,10 @@
   "name": "@nmtjs/gateway",
   "type": "module",
   "scripts": {
-    "clean-build": "tsc --build --clean",
-    "build": "tsc --build --declaration --sourceMap",
-    "type-check": "tsc --noEmit"
+    "clean-build": "rm -rf ./dist",
+    "build": "tsgo",
+    "dev": "tsgo --watch",
+    "type-check": "tsgo --noEmit"
   },
   "exports": {
     ".": "./src/index.ts"

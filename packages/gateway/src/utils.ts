@@ -8,7 +8,7 @@ import type {
 } from '@nmtjs/protocol/server'
 
 import type { GatewayConnection } from './connection.ts'
-import type { TransportV2Worker } from './transport.ts'
+import type { TransportWorker } from './transport.ts'
 
 export type MessageContext = {
   protocol: ProtocolVersionInterface
@@ -19,6 +19,6 @@ export type MessageContext = {
   rpcs: GatewayConnection['rpcs']
   serverStreams: ProtocolServerStreams
   clientStreams: ProtocolClientStreams
-  transport: TransportV2Worker
+  transport: TransportWorker
   container: Container
 }

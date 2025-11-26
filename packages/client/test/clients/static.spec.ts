@@ -24,7 +24,7 @@ describe('StaticClient', () => {
       expect(spy).toHaveBeenCalledWith(
         'users/list',
         { take: 1 },
-        controller.signal,
+        expect.objectContaining({ signal: controller.signal }),
       )
       expect(result).toEqual({ ok: true })
     })
@@ -66,7 +66,7 @@ describe('StaticClient', () => {
       expect(call).toHaveBeenCalledWith(
         expect.objectContaining({ format }),
         expect.objectContaining({ procedure: 'users/list' }),
-        expect.any(AbortSignal),
+        expect.objectContaining({ signal: undefined }),
       )
       expect(result).toEqual({ ok: true })
     })

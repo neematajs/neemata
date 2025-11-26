@@ -22,9 +22,11 @@ import { vi } from 'vitest'
 
 import type { BaseClientOptions } from '../src/common.ts'
 import type {
+  ClientCallResponse,
   ClientTransport,
-  ClientTransportInstance,
+  ClientTransportFactory,
 } from '../src/transport.ts'
+import type { ClientCallOptions } from '../src/types.ts'
 import { StaticClient } from '../src/clients/static.ts'
 import { BaseClient } from '../src/common.ts'
 import { BaseClientTransformer } from '../src/transformers.ts'
@@ -100,11 +102,37 @@ export class RuntimeTestFormat extends BaseClientFormat {
 
 export class TestRuntimeClient<
   SafeCall extends boolean = false,
-> extends BaseClient<ClientTransport<any, any>, any, SafeCall> {
+> extends BaseClient<ClientTransportFactory<any, any>, any, SafeCall> {
   protected transformer = new BaseClientTransformer()
 
+  get call() {
+    return this.createProxy(Object.create(null), false) as any
+  }
+
+  get stream() {
+    return this.createProxy(Object.create(null), true) as any
+  }
+
+  protected createProxy<T>(
+    target: Record<string, unknown>,
+    isStream: boolean,
+    path: string[] = [],
+  ) {
+    return new Proxy(target, {
+      get: (obj, prop) => {
+        if (prop === 'then') return obj
+        const newPath = [...path, String(prop)]
+        const caller = (
+          payload?: unknown,
+          options?: Partial<ClientCallOptions>,
+        ) => this._call(newPath.join('/'), payload, options)
+        return this.createProxy(caller as any, isStream, newPath)
+      },
+    }) as T
+  }
+
   callProcedure(procedure: string, payload?: unknown, signal?: AbortSignal) {
-    return this._call(procedure, payload, signal)
+    return this._call(procedure, payload, { signal })
   }
 
   emitMessage(buffer: ArrayBufferView) {
@@ -118,16 +146,14 @@ export class TestRuntimeClient<
 
 export const createStaticBidirectionalClient = () => {
   const format = new DummyFormat()
-  const transportInstance: ClientTransportInstance<ConnectionType.Bidirectional> =
-    {
-      connect: vi.fn(async () => {}),
-      disconnect: vi.fn(async () => {}),
-      send: vi.fn(async () => {}),
-    }
-  const transport: ClientTransport<ConnectionType.Bidirectional, void> = {
+  const transportInstance: ClientTransport<ConnectionType.Bidirectional> = {
     type: ConnectionType.Bidirectional,
-    factory: vi.fn(async () => transportInstance),
+    disconnect: vi.fn(async () => {}),
+    connect: vi.fn(async () => {}),
+    send: vi.fn(async () => {}),
   }
+  const transport: ClientTransportFactory<ConnectionType.Bidirectional, void> =
+    vi.fn(() => transportInstance)
   const options: BaseClientOptions<any, false> = {
     contract: staticContract as any,
     protocol: ProtocolVersion.v1,
@@ -139,13 +165,18 @@ export const createStaticBidirectionalClient = () => {
 
 export const createStaticUnidirectionalClient = () => {
   const format = new DummyFormat()
-  const call = vi.fn(async () => ({ result: { ok: true } }))
-  const transportInstance: ClientTransportInstance<ConnectionType.Unidirectional> =
-    { call }
-  const transport: ClientTransport<ConnectionType.Unidirectional, void> = {
+  const call = vi.fn(async () =>
+    Promise.resolve({
+      type: 'rpc' as const,
+      result: { ok: true } as any,
+    } as ClientCallResponse),
+  )
+  const transportInstance: ClientTransport<ConnectionType.Unidirectional> = {
     type: ConnectionType.Unidirectional,
-    factory: vi.fn(async () => transportInstance),
+    call,
   }
+  const transport: ClientTransportFactory<ConnectionType.Unidirectional, void> =
+    vi.fn(() => transportInstance)
   const options: BaseClientOptions<any, false> = {
     contract: staticContract as any,
     protocol: ProtocolVersion.v1,
@@ -158,16 +189,15 @@ export const createStaticUnidirectionalClient = () => {
 export const createRuntimeBidirectionalSetup = () => {
   const format = new RuntimeTestFormat()
   let connectParams:
-    | Parameters<
-        ClientTransportInstance<ConnectionType.Bidirectional>['connect']
-      >[0]
+    | Parameters<ClientTransport<ConnectionType.Bidirectional>['connect']>[0]
     | null = null
 
   const sendMock = vi.fn<
-    (message: ArrayBufferView, signal: AbortSignal) => Promise<void>
+    (message: ArrayBufferView, options: ClientCallOptions) => Promise<void>
   >(async () => {})
 
-  const instance: ClientTransportInstance<ConnectionType.Bidirectional> = {
+  const instance: ClientTransport<ConnectionType.Bidirectional> = {
+    type: ConnectionType.Bidirectional,
     connect: vi.fn(async (params) => {
       connectParams = params
     }),
@@ -175,10 +205,8 @@ export const createRuntimeBidirectionalSetup = () => {
     send: sendMock,
   }
 
-  const transport: ClientTransport<ConnectionType.Bidirectional, void> = {
-    type: ConnectionType.Bidirectional,
-    factory: vi.fn(async () => instance),
-  }
+  const transport: ClientTransportFactory<ConnectionType.Bidirectional, void> =
+    vi.fn(() => instance)
 
   const options: BaseClientOptions<any, false> = {
     contract: { routes: {} } as any,
@@ -200,14 +228,18 @@ export const createRuntimeBidirectionalSetup = () => {
 
 export const createRuntimeUnidirectionalClient = () => {
   const format = new RuntimeTestFormat()
-  const call = vi.fn(async () => ({ result: { ok: true } }))
-  const instance: ClientTransportInstance<ConnectionType.Unidirectional> = {
+  const call = vi.fn(async () =>
+    Promise.resolve({
+      type: 'rpc' as const,
+      result: { ok: true } as any,
+    } as ClientCallResponse),
+  )
+  const instance: ClientTransport<ConnectionType.Unidirectional> = {
+    type: ConnectionType.Unidirectional,
     call,
   }
-  const transport: ClientTransport<ConnectionType.Unidirectional, void> = {
-    type: ConnectionType.Unidirectional,
-    factory: vi.fn(async () => instance),
-  }
+  const transport: ClientTransportFactory<ConnectionType.Unidirectional, void> =
+    vi.fn(() => instance)
   const options: BaseClientOptions<any, false> = {
     contract: { routes: {} } as any,
     protocol: ProtocolVersion.v1,
@@ -218,14 +250,18 @@ export const createRuntimeUnidirectionalClient = () => {
 }
 
 export const createUnidirectionalTransportMock = () => {
-  const call = vi.fn(async () => ({ result: undefined }))
-  const instance: ClientTransportInstance<ConnectionType.Unidirectional> = {
+  const call = vi.fn(async () =>
+    Promise.resolve({
+      type: 'rpc' as const,
+      result: undefined as any,
+    } as ClientCallResponse),
+  )
+  const instance: ClientTransport<ConnectionType.Unidirectional> = {
+    type: ConnectionType.Unidirectional,
     call,
   }
-  const transport: ClientTransport<ConnectionType.Unidirectional, void> = {
-    type: ConnectionType.Unidirectional,
-    factory: vi.fn(async () => instance),
-  }
+  const transport: ClientTransportFactory<ConnectionType.Unidirectional, void> =
+    vi.fn(() => instance)
   return { transport, instance, call }
 }
 

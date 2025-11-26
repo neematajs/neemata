@@ -1,7 +1,7 @@
 import {} from 'node:dns'
 import { setTimeout } from 'node:timers/promises'
 
-import type { TransportV2 } from '@nmtjs/gateway'
+import type { Transport } from '@nmtjs/gateway'
 import type { ConnectionType } from '@nmtjs/protocol'
 import { ProxyableTransportType } from '@nmtjs/gateway'
 
@@ -144,7 +144,7 @@ function adapterFactory(params: HttpAdapterParams<'node'>): HttpAdapterServer {
   }
 }
 
-export const HttpTransport: TransportV2<
+export const HttpTransport: Transport<
   ConnectionType.Unidirectional,
   HttpTransportOptions<'node'>,
   typeof injectables,

@@ -8,7 +8,17 @@ import type {
 } from '@nmtjs/protocol/client'
 import type { BaseTypeAny, PlainType, t } from '@nmtjs/type'
 
-export type ClientCallOptions = { timeout?: number; signal?: AbortSignal }
+export const ResolvedType: unique symbol = Symbol('ResolvedType')
+export type ResolvedType = typeof ResolvedType
+
+export type ClientCallOptions = {
+  timeout?: number
+  signal?: AbortSignal
+  /**
+   * @internal
+   */
+  _stream_response?: boolean
+}
 
 export type ClientOutputType<T> = T extends ProtocolBlobInterface
   ? ProtocolServerBlobStream
@@ -40,61 +50,55 @@ export interface RuntimeOutputContractTypeProvider extends TypeProvider {
     : never
 }
 
-export type AnyResolvedAPIContractProcedure = {
+export type AnyResolvedContractProcedure = {
+  [ResolvedType]: 'procedure'
   contract: TAnyProcedureContract
+  stream: boolean
   input: any
   output: any
 }
 
-export type AnyResolvedAPIContractRouter = {
-  contract: TAnyRouterContract
-  routes: Record<
-    string,
-    AnyResolvedAPIContractRouter | AnyResolvedAPIContractProcedure
-  >
+export type AnyResolvedContractRouter = {
+  [ResolvedType]: 'router'
+  [key: string]:
+    | AnyResolvedContractProcedure
+    | { [ResolvedType]: 'router'; [key: string]: AnyResolvedContractProcedure }
 }
-
-export type AnyResolvedAPIContract = Record<
-  string,
-  Record<string, AnyResolvedAPIContractProcedure | AnyResolvedAPIContractRouter>
->
 
 export type ResolveAPIRouterRoutes<
   T extends TAnyRouterContract,
   InputTypeProvider extends TypeProvider = TypeProvider,
   OutputTypeProvider extends TypeProvider = TypeProvider,
-> = {
-  [K in keyof T['routes']]: T['routes'][K] extends TAnyRouterContract
+> = { [ResolvedType]: 'router' } & {
+  [K in keyof T['routes']]: T['routes'][K] extends TAnyProcedureContract
     ? {
+        [ResolvedType]: 'procedure'
         contract: T['routes'][K]
-        routes: ResolveAPIRouterRoutes<
+        stream: T['routes'][K]['stream'] extends true ? true : false
+        input: CallTypeProvider<InputTypeProvider, T['routes'][K]['input']>
+        output: T['routes'][K]['stream'] extends true
+          ? ProtocolServerStreamInterface<
+              CallTypeProvider<OutputTypeProvider, T['routes'][K]['output']>
+            >
+          : CallTypeProvider<OutputTypeProvider, T['routes'][K]['output']>
+      }
+    : T['routes'][K] extends TAnyRouterContract
+      ? ResolveAPIRouterRoutes<
           T['routes'][K],
           InputTypeProvider,
           OutputTypeProvider
         >
-      }
-    : T['routes'][K] extends TAnyProcedureContract
-      ? {
-          contract: T['routes'][K]
-          input: CallTypeProvider<InputTypeProvider, T['routes'][K]['input']>
-
-          output: T['routes'][K]['stream'] extends undefined | t.NeverType
-            ? CallTypeProvider<OutputTypeProvider, T['routes'][K]['output']>
-            : ProtocolServerStreamInterface<
-                CallTypeProvider<OutputTypeProvider, T['routes'][K]['output']>
-              >
-        }
       : never
 }
 
-export type ResolveAPIContract<
+export type ResolveContract<
   C extends TAnyRouterContract = TAnyRouterContract,
   InputTypeProvider extends TypeProvider = TypeProvider,
   OutputTypeProvider extends TypeProvider = TypeProvider,
 > = ResolveAPIRouterRoutes<C, InputTypeProvider, OutputTypeProvider>
 
 export type ClientCaller<
-  Procedure extends AnyResolvedAPIContractProcedure,
+  Procedure extends AnyResolvedContractProcedure,
   SafeCall extends boolean,
 > = (
   ...args: Procedure['input'] extends t.NeverType
@@ -106,13 +110,36 @@ export type ClientCaller<
   ? Promise<OneOf<[{ result: Procedure['output'] }, { error: ProtocolError }]>>
   : Promise<Procedure['output']>
 
-export type ClientCallers<
-  Resolved extends AnyResolvedAPIContractRouter,
-  SafeCall extends boolean,
-> = {
-  [K in keyof Resolved['routes']]: Resolved['routes'][K] extends AnyResolvedAPIContractProcedure
-    ? ClientCaller<Resolved['routes'][K], SafeCall>
-    : Resolved['routes'][K] extends AnyResolvedAPIContractRouter
-      ? ClientCallers<Resolved['routes'][K], SafeCall>
-      : never
+type OmitType<T extends object, E> = {
+  [K in keyof T as T[K] extends E ? never : K]: T[K]
 }
+
+// export type FilterResolvedContractRouter<
+//   Resolved extends AnyResolvedContractRouter,
+//   Stream extends boolean,
+// > = {
+//   [K in keyof Resolved]: Resolved[K] extends AnyResolvedContractProcedure
+//     ? Resolved[K]['stream'] extends Stream
+//       ? Resolved[K]
+//       : never
+//     : Resolved[K] extends AnyResolvedContractRouter
+//       ? FilterResolvedContractRouter<Resolved[K], Stream>
+//       : never
+// }
+
+export type ClientCallers<
+  Resolved extends AnyResolvedContractRouter,
+  SafeCall extends boolean,
+  Stream extends boolean,
+> = OmitType<
+  {
+    [K in keyof Resolved]: Resolved[K] extends AnyResolvedContractProcedure
+      ? Stream extends (Resolved[K]['stream'] extends true ? true : false)
+        ? ClientCaller<Resolved[K], SafeCall>
+        : never
+      : Resolved[K] extends AnyResolvedContractRouter
+        ? ClientCallers<Resolved[K], SafeCall, Stream>
+        : never
+  },
+  never
+>

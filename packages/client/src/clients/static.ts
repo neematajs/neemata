@@ -1,7 +1,7 @@
 import type { TAnyRouterContract } from '@nmtjs/contract'
 
 import type { BaseClientOptions } from '../common.ts'
-import type { ClientTransport } from '../transport.ts'
+import type { ClientTransportFactory } from '../transport.ts'
 import type {
   ClientCallers,
   ClientCallOptions,
@@ -12,7 +12,10 @@ import { BaseClient } from '../common.ts'
 import { BaseClientTransformer } from '../transformers.ts'
 
 export class StaticClient<
-  Transport extends ClientTransport<any, any> = ClientTransport<any, any>,
+  Transport extends ClientTransportFactory<any, any> = ClientTransportFactory<
+    any,
+    any
+  >,
   RouterContract extends TAnyRouterContract = TAnyRouterContract,
   SafeCall extends boolean = false,
 > extends BaseClient<
@@ -23,28 +26,42 @@ export class StaticClient<
   StaticOutputContractTypeProvider
 > {
   protected transformer: BaseClientTransformer
-  #callProxy!: ClientCallers<this['_']['routes'], SafeCall>
 
   constructor(
     options: BaseClientOptions<RouterContract, SafeCall>,
     transport: Transport,
-    transportOptions: Transport extends ClientTransport<any, infer Options>
+    transportOptions: Transport extends ClientTransportFactory<
+      any,
+      infer Options
+    >
       ? Options
       : never,
   ) {
     super(options, transport, transportOptions)
     this.transformer = new BaseClientTransformer()
-    this.#callProxy = this.createProxy(Object.create(null))
   }
 
   override get call() {
-    return this.#callProxy
+    return this.createProxy(Object.create(null), false) as ClientCallers<
+      this['_']['routes'],
+      SafeCall,
+      false
+    >
   }
 
-  protected createProxy(
+  override get stream() {
+    return this.createProxy(Object.create(null), true) as ClientCallers<
+      this['_']['routes'],
+      SafeCall,
+      true
+    >
+  }
+
+  protected createProxy<T>(
     target: Record<string, unknown>,
+    isStream: boolean,
     path: string[] = [],
-  ): ClientCallers<this['_']['routes'], SafeCall> {
+  ) {
     return new Proxy(target, {
       get: (obj, prop) => {
         if (prop === 'then') return obj
@@ -52,9 +69,9 @@ export class StaticClient<
         const caller = (
           payload?: unknown,
           options?: Partial<ClientCallOptions>,
-        ) => this._call(newPath.join('/'), payload, options?.signal)
-        return this.createProxy(caller as any, newPath)
+        ) => this._call(newPath.join('/'), payload, options)
+        return this.createProxy(caller as any, isStream, newPath)
       },
-    }) as ClientCallers<this['_']['routes'], SafeCall>
+    }) as T
   }
 }

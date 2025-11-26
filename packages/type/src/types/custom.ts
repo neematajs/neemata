@@ -41,7 +41,7 @@ export class CustomType<
     error?: string | core.$ZodErrorMap<core.$ZodIssueBase>
     type?: EncodeType
     prototype?: object
-  }) {
+  }): CustomType<Type, EncodeType, DecodeType> {
     const instance = new CustomType<Type, EncodeType, DecodeType>({
       encodeZodType: pipe(
         zodCustom().check(

@@ -3,11 +3,11 @@ import { Duplex, Readable } from 'node:stream'
 
 import type {
   GatewayApiCallOptions,
-  TransportV2Worker,
-  TransportV2WorkerParams,
+  TransportWorker,
+  TransportWorkerParams,
 } from '@nmtjs/gateway'
 import type { Peer } from 'crossws'
-import { isAsyncIterable } from '@nmtjs/common'
+import { isAbortError, isAsyncIterable } from '@nmtjs/common'
 import { provide } from '@nmtjs/core'
 import {
   ConnectionType,
@@ -44,7 +44,13 @@ const DEFAULT_ALLOWED_METHODS = Object.freeze(['post']) as ('get' | 'post')[]
 const DEFAULT_CORS_PARAMS = Object.freeze({
   allowCredentials: 'true',
   allowMethods: ['GET', 'POST'],
-  allowHeaders: ['Content-Type', 'Accept'],
+  allowHeaders: [
+    'Content-Type',
+    'Content-Disposition',
+    'Content-Length',
+    'Accept',
+    'Transfer-Encoding',
+  ],
   maxAge: undefined,
   requestMethod: undefined,
   exposeHeaders: [],
@@ -67,12 +73,12 @@ const CORS_HEADERS_MAP: Record<
 export function createHTTPTransportWorker(
   adapterFactory: HttpAdapterServerFactory<any>,
   options: HttpTransportOptions,
-): TransportV2Worker<ConnectionType.Unidirectional> {
+): TransportWorker<ConnectionType.Unidirectional> {
   return new HttpTransportServer(adapterFactory, options)
 }
 
 export class HttpTransportServer
-  implements TransportV2Worker<ConnectionType.Unidirectional>
+  implements TransportWorker<ConnectionType.Unidirectional>
 {
   #server: HttpAdapterServer
   #corsOptions?:
@@ -82,7 +88,7 @@ export class HttpTransportServer
     | HttpTransportCorsOptions
     | ((origin: string) => boolean | HttpTransportCorsOptions)
 
-  params!: TransportV2WorkerParams<ConnectionType.Unidirectional>
+  params!: TransportWorkerParams<ConnectionType.Unidirectional>
   clients = new Map<string, Peer>()
 
   constructor(
@@ -93,7 +99,7 @@ export class HttpTransportServer
     this.#corsOptions = this.options.cors
   }
 
-  async start(hooks: TransportV2WorkerParams<ConnectionType.Unidirectional>) {
+  async start(hooks: TransportWorkerParams<ConnectionType.Unidirectional>) {
     this.params = hooks
     return await this.#server.start()
   }
@@ -101,15 +107,6 @@ export class HttpTransportServer
   async stop() {
     await this.#server.stop()
   }
-
-  // send(
-  //   connection: Connection<WsConnectionData>,
-  //   messageType: ServerMessageType,
-  //   buffer: ArrayBuffer,
-  // ) {
-  //   const peer = this.clients.get(connection.id)
-  //   peer?.send(concat(encodeNumber(messageType, 'Uint8'), buffer))
-  // }
 
   async httpHandler(
     request: HttpTransportServerRequest,
@@ -217,28 +214,44 @@ export class HttpTransportServer
           headers: responseHeaders,
         })
       } else if (isAsyncIterable(result)) {
-        // TODO: implement iterable responses over SSE
-        // Handle streaming results
-        controller.abort('Transport does not support streaming results')
-        // TODO: might be better to fail early by checking procedure's contract
-        // whether it supports streaming without actually calling it
-        return new Response('Not Implemented', {
-          status: HttpStatus.NotImplemented,
-          statusText: HttpStatusText[HttpStatus.NotImplemented],
+        responseHeaders.set('Content-Type', connection.encoder.contentType)
+        responseHeaders.set('Transfer-Encoding', 'chunked')
+        const stream = new ReadableStream({
+          async start(controller) {
+            try {
+              for await (const chunk of result) {
+                const encoded = connection.encoder.encode(chunk)
+                const base64 = Buffer.from(
+                  encoded.buffer,
+                  encoded.byteOffset,
+                  encoded.byteLength,
+                ).toString('base64')
+                controller.enqueue(`data: ${base64}\n\n`)
+              }
+              controller.close()
+            } catch (error) {
+              if (isAbortError(error)) controller.close()
+              else controller.error(error)
+            }
+          },
+        })
+        return new Response(stream, {
+          status: HttpStatus.OK,
+          statusText: HttpStatusText[HttpStatus.OK],
+          headers: responseHeaders,
+        })
+      } else {
+        // Handle regular responses
+        const buffer = connection.encoder.encode(result)
+        responseHeaders.set('Content-Type', connection.encoder.contentType)
+
+        // @ts-expect-error
+        return new Response(buffer, {
+          status: HttpStatus.OK,
+          statusText: HttpStatusText[HttpStatus.OK],
           headers: responseHeaders,
         })
       }
-
-      // Handle regular responses
-      const buffer = connection.encoder.encode(result)
-      responseHeaders.set('Content-Type', connection.encoder.contentType)
-
-      // @ts-expect-error
-      return new Response(buffer, {
-        status: HttpStatus.OK,
-        statusText: HttpStatusText[HttpStatus.OK],
-        headers: responseHeaders,
-      })
     } catch (error) {
       if (error instanceof UnsupportedFormatError) {
         const status =

@@ -4,8 +4,8 @@ import type { Dependant } from '@nmtjs/core'
 import type {
   GatewayOptions,
   ProxyableTransportType,
-  TransportV2,
-  TransportV2Worker,
+  Transport,
+  TransportWorker,
 } from '@nmtjs/gateway'
 import { createFactoryInjectable } from '@nmtjs/core'
 import { connectionId, Gateway } from '@nmtjs/gateway'
@@ -76,7 +76,7 @@ export class ApplicationWorkerRuntime extends BaseWorkerRuntime {
 
     for (const key in this.runtimeOptions.transports) {
       const options = this.runtimeOptions.transports[key]
-      const { factory, proxyable } = appConfig.transports[key] as TransportV2
+      const { factory, proxyable } = appConfig.transports[key] as Transport
       this.transports[key] = { transport: await factory(options), proxyable }
     }
 

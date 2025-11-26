@@ -12,7 +12,7 @@
   "scripts": {
     "clean-build": "tsc --build --clean",
     "build": "tsc --build --declaration --sourceMap",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsgo --noEmit"
   },
   "files": [
     "dist",

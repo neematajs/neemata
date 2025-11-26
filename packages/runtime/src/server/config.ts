@@ -1,6 +1,6 @@
 import type { TSError } from '@nmtjs/common'
 import type { LoggingOptions } from '@nmtjs/core'
-import type { TransportV2 } from '@nmtjs/gateway'
+import type { Transport } from '@nmtjs/gateway'
 import type { Applications, StoreTypeOptions } from '@nmtjs/runtime/types'
 
 import type { ApplicationConfig } from '../application/config.ts'
@@ -29,7 +29,7 @@ export type ServerApplicationConfig<T = ApplicationConfig> =
   T extends ApplicationConfig<any, infer Transports>
     ? {
         threads: {
-          [K in keyof Transports]: Transports[K] extends TransportV2<
+          [K in keyof Transports]: Transports[K] extends Transport<
             any,
             infer Options
           >

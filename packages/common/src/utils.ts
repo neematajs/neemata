@@ -61,7 +61,7 @@ export interface Future<T = any> {
   toArgs: () => [resolve: this['resolve'], reject: this['reject']]
 }
 // TODO: Promise.withResolvers?
-export function createPromise<T>(): Future<T> {
+export function createFuture<T>(): Future<T> {
   let resolve: Future<T>['resolve']
   let reject: Future<T>['reject']
   const promise = new Promise<T>((res, rej) => {

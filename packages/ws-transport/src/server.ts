@@ -1,4 +1,4 @@
-import type { TransportV2Worker, TransportV2WorkerParams } from '@nmtjs/gateway'
+import type { TransportWorker, TransportWorkerParams } from '@nmtjs/gateway'
 import type { Hooks, Peer } from 'crossws'
 import { ConnectionType, ProtocolVersion } from '@nmtjs/protocol'
 import { defineHooks } from 'crossws'
@@ -18,15 +18,15 @@ import {
 export function createWSTransportWorker(
   adapterFactory: WsAdapterServerFactory<any>,
   options: WsTransportOptions,
-): TransportV2Worker<ConnectionType.Bidirectional> {
+): TransportWorker<ConnectionType.Bidirectional> {
   return new WsTransportServer(adapterFactory, options)
 }
 
 export class WsTransportServer
-  implements TransportV2Worker<ConnectionType.Bidirectional>
+  implements TransportWorker<ConnectionType.Bidirectional>
 {
   #server: WsAdapterServer
-  params!: TransportV2WorkerParams<ConnectionType.Bidirectional>
+  params!: TransportWorkerParams<ConnectionType.Bidirectional>
   clients = new Map<string, Peer>()
 
   constructor(
@@ -37,7 +37,7 @@ export class WsTransportServer
   }
 
   async start(
-    hooks: TransportV2WorkerParams<ConnectionType.Bidirectional>,
+    hooks: TransportWorkerParams<ConnectionType.Bidirectional>,
   ): Promise<string> {
     this.params = hooks
     return await this.#server.start()

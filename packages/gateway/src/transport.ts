@@ -11,12 +11,12 @@ import type { GatewayApiCallOptions } from './api.ts'
 import type { GatewayConnection } from './connection.ts'
 import type { ProxyableTransportType } from './enums.ts'
 
-export interface TransportConnectionV2 {
+export interface TransportConnection {
   connectionId: string
   type: ConnectionType
 }
 
-export interface TransportV2OnConnectOptions<
+export interface TransportOnConnectOptions<
   Type extends ConnectionType = ConnectionType,
 > {
   type: Type extends ConnectionType.Bidirectional
@@ -28,26 +28,26 @@ export interface TransportV2OnConnectOptions<
   data: unknown
 }
 
-export interface TransportV2OnDisconnectOptions {
+export interface TransportOnDisconnectOptions {
   connectionId: string
 }
 
-export interface TransportV2OnMessageOptions {
+export interface TransportOnMessageOptions {
   connectionId: string
   data: ArrayBuffer
 }
 
-export type TransportV2WorkerParams<
+export type TransportWorkerParams<
   Type extends ConnectionType = ConnectionType,
 > = {
   formats: ProtocolFormats
   onConnect: (
-    options: TransportV2OnConnectOptions<Type>,
+    options: TransportOnConnectOptions<Type>,
     ...injections: Injection[]
   ) => Promise<GatewayConnection & AsyncDisposable>
-  onDisconnect: (options: TransportV2OnDisconnectOptions) => Promise<void>
+  onDisconnect: (options: TransportOnDisconnectOptions) => Promise<void>
   onMessage: (
-    options: TransportV2OnMessageOptions,
+    options: TransportOnMessageOptions,
     ...injections: Injection[]
   ) => Promise<void>
   onRpc: (
@@ -58,23 +58,21 @@ export type TransportV2WorkerParams<
   ) => Promise<unknown>
 }
 
-export interface TransportV2WorkerStartOptions<
+export interface TransportWorkerStartOptions<
   Type extends ConnectionType = ConnectionType,
-> extends TransportV2WorkerParams<Type> {
+> extends TransportWorkerParams<Type> {
   // for extra props in the future
 }
 
-export interface TransportV2Worker<
-  Type extends ConnectionType = ConnectionType,
-> {
-  start: (params: TransportV2WorkerParams<Type>) => Async<string>
-  stop: (params: Pick<TransportV2WorkerParams<Type>, 'formats'>) => Async<void>
+export interface TransportWorker<Type extends ConnectionType = ConnectionType> {
+  start: (params: TransportWorkerParams<Type>) => Async<string>
+  stop: (params: Pick<TransportWorkerParams<Type>, 'formats'>) => Async<void>
   send?: Type extends 'unidirectional'
     ? never
     : (connectionId: string, buffer: ArrayBufferView) => boolean | null
 }
 
-export interface TransportV2<
+export interface Transport<
   Type extends ConnectionType = ConnectionType,
   TransportOptions = any,
   Injections extends {
@@ -86,5 +84,5 @@ export interface TransportV2<
 > {
   proxyable: Proxyable
   injectables?: Injections
-  factory: (options: TransportOptions) => Async<TransportV2Worker<Type>>
+  factory: (options: TransportOptions) => Async<TransportWorker<Type>>
 }

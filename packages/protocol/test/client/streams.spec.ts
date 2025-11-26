@@ -8,7 +8,7 @@ import {
 import { ClientStreams, ServerStreams } from '../../src/client/streams.ts'
 
 const encoder = new TextEncoder()
-const decoder = new TextDecoder()
+const decoder = new TextADecoder()
 
 const readableFrom = (chunks: string[]) =>
   new ReadableStream<Uint8Array>({
@@ -59,7 +59,7 @@ describe('ProtocolServerStream', () => {
 describe('ProtocolServerBlobStream', () => {
   it('requests chunks via provided pull handler', async () => {
     let blobStream: ProtocolServerBlobStream
-    const pull = vi.fn((size: number) => {
+    const pull = vi.fn((size: number | null) => {
       expect(size).toBeGreaterThan(0)
       if (pull.mock.calls.length === 1) {
         blobStream.push(encoder.encode('chunk'))
@@ -68,9 +68,9 @@ describe('ProtocolServerBlobStream', () => {
       }
     })
 
-    blobStream = new ProtocolServerBlobStream(1, { type: 'text/plain' }, pull)
+    blobStream = new ProtocolServerBlobStream({ type: 'text/plain' }, { pull })
 
-    const reader = blobStream.getReader()
+    const reader = blobStream.readable.getReader()
     const first = await reader.read()
     expect(first.done).toBe(false)
     expect(decoder.decode(first.value!)).toBe('chunk')

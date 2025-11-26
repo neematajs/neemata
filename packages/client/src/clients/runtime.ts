@@ -6,7 +6,7 @@ import type {
 import { IsProcedureContract, IsRouterContract } from '@nmtjs/contract'
 
 import type { BaseClientOptions } from '../common.ts'
-import type { ClientTransport } from '../transport.ts'
+import type { ClientTransportFactory } from '../transport.ts'
 import type {
   ClientCallers,
   ClientCallOptions,
@@ -46,7 +46,10 @@ export class RuntimeContractTransformer {
 }
 
 export class RuntimeClient<
-  Transport extends ClientTransport<any, any> = ClientTransport<any, any>,
+  Transport extends ClientTransportFactory<any, any> = ClientTransportFactory<
+    any,
+    any
+  >,
   RouterContract extends TAnyRouterContract = TAnyRouterContract,
   SafeCall extends boolean = false,
 > extends BaseClient<
@@ -58,12 +61,15 @@ export class RuntimeClient<
 > {
   protected transformer: RuntimeContractTransformer
   protected procedures = new Map<string, TAnyProcedureContract>()
-  #callers!: ClientCallers<this['_']['routes'], SafeCall>
+  #_callers!: ClientCallers<this['_']['routes'], SafeCall, boolean>
 
   constructor(
     options: BaseClientOptions<RouterContract, SafeCall>,
     transport: Transport,
-    transportOptions: Transport extends ClientTransport<any, infer Options>
+    transportOptions: Transport extends ClientTransportFactory<
+      any,
+      infer Options
+    >
       ? Options
       : never,
   ) {
@@ -71,11 +77,15 @@ export class RuntimeClient<
 
     this.resolveProcedures(this.options.contract)
     this.transformer = new RuntimeContractTransformer(this.options.contract)
-    this.#callers = this.buildCallers()
+    this.#_callers = this.buildCallers()
   }
 
   override get call() {
-    return this.#callers
+    return this.#_callers as ClientCallers<this['_']['routes'], SafeCall, false>
+  }
+
+  override get stream() {
+    return this.#_callers as ClientCallers<this['_']['routes'], SafeCall, true>
   }
 
   protected resolveProcedures(router: TAnyRouterContract, path: string[] = []) {
@@ -89,10 +99,14 @@ export class RuntimeClient<
     }
   }
 
-  protected buildCallers(): ClientCallers<this['_']['routes'], SafeCall> {
+  protected buildCallers(): ClientCallers<
+    this['_']['routes'],
+    SafeCall,
+    boolean
+  > {
     const callers: Record<string, any> = Object.create(null)
 
-    for (const [name] of this.procedures) {
+    for (const [name, { stream }] of this.procedures) {
       const parts = name.split('/')
       let current = callers
       for (let i = 0; i < parts.length; i++) {
@@ -101,7 +115,11 @@ export class RuntimeClient<
           current[part] = (
             payload?: unknown,
             options?: Partial<ClientCallOptions>,
-          ) => this._call(name, payload, options?.signal)
+          ) =>
+            this._call(name, payload, {
+              ...options,
+              _stream_response: !!stream,
+            })
         } else {
           current[part] = current[part] ?? Object.create(null)
           current = current[part]
@@ -109,6 +127,6 @@ export class RuntimeClient<
       }
     }
 
-    return callers as ClientCallers<this['_']['routes'], SafeCall>
+    return callers as ClientCallers<this['_']['routes'], SafeCall, boolean>
   }
 }

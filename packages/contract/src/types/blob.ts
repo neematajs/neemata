@@ -1,5 +1,9 @@
+// biome-ignore lint/correctness/noUnusedImports: TSGO wants it
+// biome-ignore assist/source/organizeImports: TSGO wants it
+import type * as _ from 'zod/mini'
+
 import type { ProtocolBlobInterface } from '@nmtjs/protocol'
-import { t } from '@nmtjs/type'
+import { CustomType } from '@nmtjs/type/custom'
 
 export interface BlobOptions {
   maxSize?: number
@@ -8,8 +12,8 @@ export interface BlobOptions {
 
 export const BlobType = (
   options: BlobOptions = {},
-): t.CustomType<ProtocolBlobInterface> =>
-  t.custom<ProtocolBlobInterface>({
+): CustomType<ProtocolBlobInterface> =>
+  CustomType.factory({
     decode: (value) => {
       // TODO: here should be some validation logic to check if the value is an actual blob
       if ('metadata' in value) {

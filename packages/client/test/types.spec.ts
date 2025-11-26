@@ -87,23 +87,24 @@ describe('Types', () => {
 
   describe('Unsafe client', () => {
     type UnsafeClient = ReturnType<typeof createUnsafeClient>
-    type UnsafeRoutes = UnsafeClient['_']['routes']['routes']
+    type UnsafeRoutes = UnsafeClient['_']['routes']
     type UnsafeCallers = UnsafeClient['call']
+    type UnsafeStreamers = UnsafeClient['stream']
 
     it('should properly resolve types', () => {
       expectTypeOf<UnsafeRoutes['simple']['input']>().toEqualTypeOf<string>()
       expectTypeOf<UnsafeRoutes['simple']['output']>().toEqualTypeOf<string>()
       expectTypeOf<
-        UnsafeRoutes['nested']['routes']['simple']['input']
+        UnsafeRoutes['nested']['simple']['input']
       >().toEqualTypeOf<string>()
       expectTypeOf<
-        UnsafeRoutes['nested']['routes']['simple']['output']
+        UnsafeRoutes['nested']['simple']['output']
       >().toEqualTypeOf<string>()
       expectTypeOf<
-        UnsafeRoutes['nested']['routes']['nestedRouter1']['routes']['simple']['input']
+        UnsafeRoutes['nested']['nestedRouter1']['simple']['input']
       >().toEqualTypeOf<string>()
       expectTypeOf<
-        UnsafeRoutes['nested']['routes']['nestedRouter1']['routes']['simple']['output']
+        UnsafeRoutes['nested']['nestedRouter1']['simple']['output']
       >().toEqualTypeOf<string>()
       expectTypeOf<UnsafeRoutes['simpleBlob']['input']>().toEqualTypeOf<{
         blob: ProtocolBlobInterface
@@ -133,7 +134,7 @@ describe('Types', () => {
 
       expectTypeOf<UnsafeCallers['simple']>().toEqualTypeOf<Response>()
       expectTypeOf<UnsafeCallers['simpleInline']>().toEqualTypeOf<Response>()
-      expectTypeOf<UnsafeCallers['stream']>().toEqualTypeOf<
+      expectTypeOf<UnsafeStreamers['stream']>().toEqualTypeOf<
         (
           data: string,
           options?: Partial<ClientCallOptions> | undefined,
@@ -150,8 +151,9 @@ describe('Types', () => {
 
   describe('Safe client', () => {
     type SafeClient = ReturnType<typeof createSafeClient>
-    type SafeRoutes = SafeClient['_']['routes']['routes']
+    type SafeRoutes = SafeClient['_']['routes']
     type SafeCallers = SafeClient['call']
+    type SafeStreamers = SafeClient['stream']
 
     it('should properly resolve types', () => {
       expectTypeOf<SafeRoutes['simple']['input']>().toEqualTypeOf<string>()
@@ -166,7 +168,7 @@ describe('Types', () => {
 
       expectTypeOf<SafeCallers['simple']>().toEqualTypeOf<Response>()
       expectTypeOf<SafeCallers['simpleInline']>().toEqualTypeOf<Response>()
-      expectTypeOf<SafeCallers['stream']>().toEqualTypeOf<
+      expectTypeOf<SafeStreamers['stream']>().toEqualTypeOf<
         (
           data: string,
           options?: Partial<ClientCallOptions> | undefined,

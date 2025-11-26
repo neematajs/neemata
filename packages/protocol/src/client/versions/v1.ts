@@ -37,19 +37,17 @@ export class ProtocolVersion1 extends ProtocolVersionInterface {
         } else {
           const result = context.decoder.decodeRPC(dataPayload, {
             addStream: (streamId, metadata) => {
-              const stream = new ProtocolServerBlobStream(
-                streamId,
-                metadata,
-                (size) => {
-                  context.transport.send?.(
+              const stream = new ProtocolServerBlobStream(metadata, {
+                pull: (size) => {
+                  context.transport.send(
                     this.encodeMessage(
                       context,
                       ClientMessageType.ServerStreamPull,
-                      { streamId, size },
+                      { streamId, size: size || 65535 /* 64kb */ },
                     ),
                   )
                 },
-              )
+              })
               context.serverStreams.add(streamId, stream)
               return stream
             },

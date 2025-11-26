@@ -1,3 +1,4 @@
+import type { ModuleRunner } from 'vite/module-runner'
 import { createServerModuleRunner } from 'vite'
 
 import type { NeemataConfig } from '../config.ts'
@@ -10,7 +11,7 @@ export async function createRunner(
   options: ViteConfigOptions,
   mode: 'development' | 'production',
   neemataConfig: NeemataConfig,
-) {
+): Promise<ModuleRunner> {
   const config = createConfig(options)
   const server = await createServer(options, {
     appType: 'custom',

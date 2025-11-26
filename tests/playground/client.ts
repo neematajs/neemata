@@ -1,4 +1,3 @@
-import { setTimeout as delay } from 'node:timers/promises'
 import {
   isMainThread,
   parentPort,
@@ -8,10 +7,9 @@ import {
 
 import type app from 'neemata-test-playground-app-1'
 import { StaticClient } from '@nmtjs/client/static'
-import HttTransportClient from '@nmtjs/http-client'
 import { JsonFormat } from '@nmtjs/json-format/client'
 import { ProtocolVersion } from '@nmtjs/protocol'
-import WsTransportClient from '@nmtjs/ws-client'
+import { WsTransportFactory } from '@nmtjs/ws-client'
 import * as promClient from 'prom-client'
 
 const WORKER_COUNT = 2
@@ -142,7 +140,7 @@ function buildClient() {
       contract: undefined as unknown as (typeof app)['router']['contract'],
       application: 'test',
     },
-    WsTransportClient,
+    WsTransportFactory,
     { url: RPC_ENDPOINT },
   )
 }

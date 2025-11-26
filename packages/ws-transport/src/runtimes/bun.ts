@@ -1,4 +1,4 @@
-import type { TransportV2 } from '@nmtjs/gateway'
+import type { Transport } from '@nmtjs/gateway'
 import type { ConnectionType } from '@nmtjs/protocol'
 import { ProxyableTransportType } from '@nmtjs/gateway'
 import createAdapter from 'crossws/adapters/bun'
@@ -57,7 +57,7 @@ function adapterFactory(params: WsAdapterParams<'bun'>): WsAdapterServer {
   return {
     start: async () => {
       server = createServer()
-      return server.url.href
+      return server!.url.href
     },
     stop: async () => {
       if (server) {
@@ -68,7 +68,7 @@ function adapterFactory(params: WsAdapterParams<'bun'>): WsAdapterServer {
   }
 }
 
-export const WsTransport: TransportV2<
+export const WsTransport: Transport<
   ConnectionType.Bidirectional,
   WsTransportOptions<'bun'>,
   typeof injectables,

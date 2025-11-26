@@ -16,7 +16,7 @@ import {
 import type { GatewayApi } from './api.ts'
 import type { GatewayConnection } from './connection.ts'
 import type { ProxyableTransportType } from './enums.ts'
-import type { TransportV2Worker, TransportV2WorkerParams } from './transport.ts'
+import type { TransportWorker, TransportWorkerParams } from './transport.ts'
 import type { ConnectionIdentityResolver } from './types.ts'
 import type { MessageContext } from './utils.ts'
 import { isAsyncIterable } from './api.ts'
@@ -32,7 +32,7 @@ export interface GatewayOptions {
   identityResolver: ConnectionIdentityResolver
   transports: {
     [key: string]: {
-      transport: TransportV2Worker
+      transport: TransportWorker
       proxyable?: ProxyableTransportType
     }
   }
@@ -101,7 +101,7 @@ export class Gateway {
     }
   }
 
-  protected onConnect(transport: string): TransportV2WorkerParams['onConnect'] {
+  protected onConnect(transport: string): TransportWorkerParams['onConnect'] {
     return async (options, ...injections) => {
       const protocol = versions[options.protocolVersion]
       if (!protocol) throw new Error('Unsupported protocol version')
@@ -140,13 +140,13 @@ export class Gateway {
 
   protected onDisconnect(
     transport: string,
-  ): TransportV2WorkerParams['onDisconnect'] {
+  ): TransportWorkerParams['onDisconnect'] {
     return async ({ connectionId }) => {
       await this.connections.close(connectionId)
     }
   }
 
-  protected onMessage(transport: string): TransportV2WorkerParams['onMessage'] {
+  protected onMessage(transport: string): TransportWorkerParams['onMessage'] {
     return async ({ connectionId, data }, ...injections) => {
       const connection = this.connections.get(connectionId)
       assert(connection, 'Connection not found')
@@ -190,7 +190,7 @@ export class Gateway {
     }
   }
 
-  protected onRpc(transport: string): TransportV2WorkerParams['onRpc'] {
+  protected onRpc(transport: string): TransportWorkerParams['onRpc'] {
     return async (connection, rpc, signal, ...injections) => {
       const context = this.createMessageContext(
         connection,

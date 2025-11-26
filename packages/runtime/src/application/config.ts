@@ -1,4 +1,4 @@
-import type { ConnectionIdentityResolver, TransportV2 } from '@nmtjs/gateway'
+import type { ConnectionIdentityResolver, Transport } from '@nmtjs/gateway'
 
 import type { LifecycleHooks } from '../core/hooks.ts'
 import type { RuntimePlugin } from '../core/plugin.ts'
@@ -14,7 +14,7 @@ export type AnyApplicationConfig = ApplicationConfig<AnyRootRouter>
 
 export interface ApplicationConfig<
   Router extends AnyRootRouter = AnyRootRouter,
-  Transports extends Record<string, TransportV2> = Record<string, TransportV2>,
+  Transports extends Record<string, Transport> = Record<string, Transport>,
 > {
   [kApplicationConfig]: any
   router: Router
@@ -31,7 +31,7 @@ export interface ApplicationConfig<
 
 export function defineApplication<
   R extends AnyRootRouter,
-  T extends Record<string, TransportV2> = Record<string, TransportV2>,
+  T extends Record<string, Transport> = Record<string, Transport>,
 >(
   options: Pick<ApplicationConfig<R, T>, 'router'> &
     Partial<Omit<ApplicationConfig<R, T>, 'router'>>,

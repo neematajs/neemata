@@ -7,7 +7,7 @@ export class DateType extends TransformType<
   Date,
   ZodMiniUnion<[iso.ZodMiniISODate, iso.ZodMiniISODateTime]>
 > {
-  static factory() {
+  static factory(): DateType {
     return CustomType.factory<
       Date,
       ZodMiniUnion<[iso.ZodMiniISODate, iso.ZodMiniISODateTime]>

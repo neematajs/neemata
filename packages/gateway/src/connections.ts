@@ -6,7 +6,7 @@ import type {
 import { throwError } from '@nmtjs/common'
 import { getFormat } from '@nmtjs/protocol/server'
 
-import type { TransportV2OnConnectOptions } from './transport.ts'
+import type { TransportOnConnectOptions } from './transport.ts'
 import { GatewayConnection } from './connection.ts'
 import { GatewayHook } from './enums.ts'
 import * as injectables from './injectables.ts'
@@ -43,7 +43,7 @@ export class GatewayConnections {
     identity: string
     container: Container
     protocol: ProtocolVersionInterface
-    options: TransportV2OnConnectOptions
+    options: TransportOnConnectOptions
   }) {
     const { accept, contentType, type } = options
     const { decoder, encoder } = getFormat(this.application.formats, {
