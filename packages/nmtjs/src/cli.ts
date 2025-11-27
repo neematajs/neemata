@@ -63,7 +63,7 @@ const mainCommand = defineCommand({
           `Failed to resolve application path for ${appName}: no path found`,
         )
       const specifier =
-        resolution.packageJsonPath === currentPkg.packageJsonPath
+        resolution.packageJsonPath === currentPkg.path
           ? relative(resolve('.neemata'), resolution.path)
           : appSpecifier
       applicationImports[appName] = { path: resolution.path, specifier }

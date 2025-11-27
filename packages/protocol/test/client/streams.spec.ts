@@ -8,7 +8,7 @@ import {
 import { ClientStreams, ServerStreams } from '../../src/client/streams.ts'
 
 const encoder = new TextEncoder()
-const decoder = new TextADecoder()
+const decoder = new TextDecoder()
 
 const readableFrom = (chunks: string[]) =>
   new ReadableStream<Uint8Array>({

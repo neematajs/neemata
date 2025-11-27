@@ -9,10 +9,13 @@ import { resolver } from '../resolver.ts'
 const targets: Target[] = []
 
 try {
-  const { packageJsonPath } = resolver.sync(process.cwd(), '@nmtjs/proxy')
-  if (packageJsonPath) {
+  const { path } = resolver.sync(process.cwd(), '@nmtjs/proxy')
+  if (path) {
     targets.push({
-      src: join(dirname(packageJsonPath), 'neemata-proxy.node'),
+      src: join(
+        dirname(path),
+        `neemata-proxy.${process.platform}-${process.arch}.node`,
+      ),
       dest: './chunks/',
     })
   }
