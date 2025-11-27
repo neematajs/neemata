@@ -1,7 +1,11 @@
 import type { Pattern } from '@nmtjs/core'
 import { match } from '@nmtjs/core'
 
-import type { DecodeRPCContext, EncodeRPCContext } from '../common/types.ts'
+import type {
+  DecodeRPCContext,
+  EncodeRPCContext,
+  ProtocolRPCPayload,
+} from '../common/types.ts'
 import type { ProtocolClientStream, ProtocolServerStream } from './stream.ts'
 
 export interface BaseServerDecoder {
@@ -9,8 +13,8 @@ export interface BaseServerDecoder {
   decode(buffer: ArrayBufferView): unknown
   decodeRPC(
     buffer: ArrayBufferView,
-    context: DecodeRPCContext<ProtocolClientStream>,
-  ): unknown
+    context: DecodeRPCContext<() => ProtocolClientStream>,
+  ): ProtocolRPCPayload
 }
 
 export interface BaseServerEncoder {
@@ -36,8 +40,8 @@ export abstract class BaseServerFormat
   abstract decode(buffer: ArrayBufferView): any
   abstract decodeRPC(
     buffer: ArrayBufferView,
-    context: DecodeRPCContext<ProtocolClientStream>,
-  ): unknown
+    context: DecodeRPCContext<() => ProtocolClientStream>,
+  ): ProtocolRPCPayload
 }
 
 export const parseContentTypes = (types: string) => {

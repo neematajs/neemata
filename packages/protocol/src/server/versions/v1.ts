@@ -3,6 +3,7 @@ import type { MessageContext } from '../utils.ts'
 import { encodeNumber } from '../../common/binary.ts'
 import {
   ClientMessageType,
+  Lengths,
   ProtocolVersion,
   ServerMessageType,
 } from '../../common/enums.ts'
@@ -12,63 +13,59 @@ export class ProtocolVersion1 extends ProtocolVersionInterface {
   version = ProtocolVersion.v1
   decodeMessage(context: MessageContext, buffer: Buffer) {
     const messageType = buffer.readUint8(0)
-    const payload = buffer.subarray(Uint8Array.BYTES_PER_ELEMENT)
+    const messagePayload = buffer.subarray(Lengths.MessageType)
     switch (messageType) {
       case ClientMessageType.Rpc: {
-        const callId = payload.readUint32LE(0)
-        const procedureLength = payload.readUInt16LE(
-          Uint32Array.BYTES_PER_ELEMENT,
-        )
-        const procedureOffset =
-          Uint32Array.BYTES_PER_ELEMENT + Uint16Array.BYTES_PER_ELEMENT
-        const procedure = payload.toString(
+        const callId = messagePayload.readUint32LE(0)
+        const procedureLength = messagePayload.readUInt16LE(Lengths.CallId)
+        const procedureOffset = Lengths.CallId + Lengths.Procedure
+        const procedure = messagePayload.toString(
           'utf-8',
           procedureOffset,
           procedureOffset + procedureLength,
         )
-        const formatPayload = payload.subarray(
+        const formatPayload = messagePayload.subarray(
           procedureOffset + procedureLength,
         )
-        const rpcPayload = context.decoder.decodeRPC(formatPayload, {
+        const payload = context.decoder.decodeRPC(formatPayload, {
           addStream: (streamId, metadata) => {
-            return context.clientStreams.add(streamId, metadata, (size) => {
-              context.transport.send?.(
-                context.connectionId,
-                this.encodeMessage(
-                  context,
-                  ServerMessageType.ClientStreamPull,
-                  { size, streamId },
-                ),
-              )
+            return context.addClientStream({
+              callId,
+              streamId,
+              metadata,
+              pull: (size) => {
+                context.transport.send?.(
+                  context.connectionId,
+                  this.encodeMessage(
+                    context,
+                    ServerMessageType.ClientStreamPull,
+                    { size, streamId },
+                  ),
+                )
+              },
             })
           },
-          getStream: (id) => {
-            return context.clientStreams.get(id)
-          },
         })
-        return {
-          type: messageType,
-          rpc: { callId, procedure, payload: rpcPayload },
-        }
+        return { type: messageType, rpc: { callId, procedure, payload } }
       }
       case ClientMessageType.RpcAbort: {
-        return { type: messageType, callId: payload.readUInt32LE(0) }
+        return { type: messageType, callId: messagePayload.readUInt32LE(0) }
       }
       case ClientMessageType.ServerStreamAbort: {
-        return { type: messageType, streamId: payload.readUInt32LE(0) }
+        return { type: messageType, streamId: messagePayload.readUInt32LE(0) }
       }
       case ClientMessageType.ServerStreamPull: {
-        const streamId = payload.readUInt32LE(0)
-        const size = payload.readUInt32LE(Uint32Array.BYTES_PER_ELEMENT)
+        const streamId = messagePayload.readUInt32LE(0)
+        const size = messagePayload.readUInt32LE(Lengths.StreamId)
         return { type: messageType, streamId, size }
       }
       case ClientMessageType.ClientStreamAbort:
       case ClientMessageType.ClientStreamEnd: {
-        return { type: messageType, streamId: payload.readUInt32LE(0) }
+        return { type: messageType, streamId: messagePayload.readUInt32LE(0) }
       }
       case ClientMessageType.ClientStreamPush: {
-        const streamId = payload.readUInt32LE(0)
-        const chunk = payload.subarray(Uint32Array.BYTES_PER_ELEMENT)
+        const streamId = messagePayload.readUInt32LE(0)
+        const chunk = messagePayload.subarray(Lengths.StreamId)
         return { type: messageType, streamId, chunk }
       }
 
@@ -103,7 +100,11 @@ export class ProtocolVersion1 extends ProtocolVersionInterface {
             : context.encoder.encodeRPC(result, {
                 addStream: (blob) => {
                   const streamId = context.streamId()
-                  const stream = context.serverStreams.add(streamId, blob)
+                  const stream = context.addServerStream({
+                    callId,
+                    streamId,
+                    blob,
+                  })
                   stream.on('data', (chunk) => {
                     stream.pause()
                     const buf = Buffer.from(chunk)
@@ -144,9 +145,6 @@ export class ProtocolVersion1 extends ProtocolVersionInterface {
                     )
                   })
                   return stream
-                },
-                getStream: (id) => {
-                  return context.serverStreams.get(id)
                 },
               }),
         )

@@ -2,8 +2,11 @@ import assert from 'node:assert'
 import { randomUUID } from 'node:crypto'
 
 import type { Container, Hooks, Injection, Logger } from '@nmtjs/core'
-import type { ProtocolRPC } from '@nmtjs/protocol'
-import type { ProtocolFormats } from '@nmtjs/protocol/server'
+import type { ProtocolRPCPayload } from '@nmtjs/protocol'
+import type {
+  ProtocolFormats,
+  MessageContext as ProtocolMessageContext,
+} from '@nmtjs/protocol/server'
 import { isAbortError } from '@nmtjs/common'
 import { provide, Scope } from '@nmtjs/core'
 import { ClientMessageType, ServerMessageType } from '@nmtjs/protocol'
@@ -17,8 +20,10 @@ import type { GatewayApi } from './api.ts'
 import type { GatewayConnection } from './connection.ts'
 import type { ProxyableTransportType } from './enums.ts'
 import type { TransportWorker, TransportWorkerParams } from './transport.ts'
-import type { ConnectionIdentityResolver } from './types.ts'
-import type { MessageContext } from './utils.ts'
+import type {
+  ConnectionIdentityResolver,
+  GatewayMessageContext,
+} from './types.ts'
 import { isAsyncIterable } from './api.ts'
 import { GatewayConnections } from './connections.ts'
 import * as injectables from './injectables.ts'
@@ -83,22 +88,52 @@ export class Gateway {
     }
   }
 
-  protected createMessageContext(
+  protected createRpcMessageContext(
     connection: GatewayConnection,
-    transport: string,
-  ): MessageContext {
+    messageContext: ReturnType<typeof this.createProtocolMessageContext>,
+    callId: number,
+  ): GatewayMessageContext {
+    const { rpcs, container } = connection
+    const rpc = rpcs.get(callId)!
+    return { ...messageContext, callId, container, rpc }
+  }
+
+  protected createProtocolMessageContext(
+    connection: GatewayConnection,
+    transportKey: string,
+  ) {
+    const clientStreams = new ProtocolClientStreams(connection.clientStreams)
+    const serverStreams = new ProtocolServerStreams(connection.serverStreams)
+    const transport = this.options.transports[transportKey].transport
+    const { id: connectionId, protocol, rpcs, decoder, encoder } = connection
+
     return {
-      clientStreams: new ProtocolClientStreams(connection.clientStreams),
-      serverStreams: new ProtocolServerStreams(connection.serverStreams),
-      connectionId: connection.id,
-      decoder: connection.decoder,
-      encoder: connection.encoder,
-      rpcs: connection.rpcs,
-      protocol: connection.protocol,
-      transport: this.options.transports[transport].transport,
-      container: connection.container,
+      clientStreams,
+      serverStreams,
+      connectionId,
+      protocol,
+      encoder,
+      decoder,
+      transport,
       streamId: connection.getStreamId,
-    }
+      addClientStream({ streamId, callId, metadata, pull }) {
+        const stream = clientStreams.add(streamId, metadata, pull)
+        const rpc = rpcs.get(callId)
+        if (rpc) rpc.clientStreams.add(streamId)
+        return () => {
+          if (rpc) {
+            rpc.clientStreams.delete(streamId)
+          }
+          return stream
+        }
+      },
+      addServerStream({ blob, callId, streamId }) {
+        const stream = serverStreams.add(streamId, blob)
+        const rpc = connection.rpcs.get(callId)
+        if (rpc) rpc.serverStreams.add(streamId)
+        return stream
+      },
+    } satisfies ProtocolMessageContext & { [key: string]: unknown }
   }
 
   protected onConnect(transport: string): TransportWorkerParams['onConnect'] {
@@ -150,37 +185,57 @@ export class Gateway {
     return async ({ connectionId, data }, ...injections) => {
       const connection = this.connections.get(connectionId)
       assert(connection, 'Connection not found')
-      const context = this.createMessageContext(connection, transport)
-      const message = context.protocol.decodeMessage(context, Buffer.from(data))
-      // console.dir(message)
+      const messageContext = this.createProtocolMessageContext(
+        connection,
+        transport,
+      )
+      const message = messageContext.protocol.decodeMessage(
+        messageContext,
+        Buffer.from(data),
+      )
       switch (message.type) {
         case ClientMessageType.Rpc: {
-          await this.handleRpc(connection, context, message.rpc, injections)
+          const rpcContext = this.createRpcMessageContext(
+            connection,
+            messageContext,
+            message.rpc.callId,
+          )
+          try {
+            await this.handleRpc(
+              connection,
+              rpcContext,
+              message.rpc,
+              injections,
+            )
+          } finally {
+            for (const element of rpcContext.rpc.clientStreams) {
+            }
+          }
           break
         }
         case ClientMessageType.RpcAbort: {
-          const controller = connection.rpcs.get(message.callId)
-          if (controller) controller.abort()
+          const rpc = connection.rpcs.get(message.callId)
+          if (rpc) rpc.controller.abort()
           break
         }
         case ClientMessageType.ClientStreamAbort: {
-          context.clientStreams.abort(message.streamId, message.reason)
+          messageContext.clientStreams.abort(message.streamId, message.reason)
           break
         }
         case ClientMessageType.ClientStreamPush: {
-          context.clientStreams.push(message.streamId, message.chunk)
+          messageContext.clientStreams.push(message.streamId, message.chunk)
           break
         }
         case ClientMessageType.ClientStreamEnd: {
-          context.clientStreams.end(message.streamId)
+          messageContext.clientStreams.end(message.streamId)
           break
         }
         case ClientMessageType.ServerStreamAbort: {
-          context.serverStreams.abort(message.streamId, message.reason)
+          messageContext.serverStreams.abort(message.streamId, message.reason)
           break
         }
         case ClientMessageType.ServerStreamPull: {
-          context.serverStreams.pull(message.streamId)
+          messageContext.serverStreams.pull(message.streamId)
           break
         }
         default: {
@@ -199,7 +254,11 @@ export class Gateway {
       await using container = context.container.fork(Scope.Call)
       const controller = new AbortController()
       signal.addEventListener('abort', controller.abort, { once: true })
-      connection.rpcs.set(rpc.callId, controller)
+      connection.rpcs.set(rpc.callId, {
+        controller,
+        clientStreams: new Set(),
+        serverStreams: new Set(),
+      })
       await container.provide(injections)
       return await this.options.api.call({
         connection,
@@ -214,8 +273,8 @@ export class Gateway {
 
   protected async handleRpc(
     connection: GatewayConnection,
-    context: MessageContext,
-    rpc: ProtocolRPC,
+    context: GatewayMessageContext,
+    rpc: ProtocolRPCPayload,
     injections: Injection[],
     signal?: AbortSignal,
   ): Promise<void> {
@@ -229,7 +288,11 @@ export class Gateway {
     } = context
     const { callId, procedure, payload } = rpc
     const controller = new AbortController()
-    rpcs.set(rpc.callId, controller)
+    rpcs.set(rpc.callId, {
+      controller,
+      clientStreams: new Set(),
+      serverStreams: new Set(),
+    })
     signal = signal
       ? AbortSignal.any([signal, controller.signal])
       : controller.signal

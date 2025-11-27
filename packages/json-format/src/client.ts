@@ -1,8 +1,5 @@
 import type { DecodeRPCContext, EncodeRPCContext } from '@nmtjs/protocol'
-import type {
-  ProtocolClientBlobStream,
-  ProtocolServerBlobStream,
-} from '@nmtjs/protocol/client'
+import type { ProtocolServerBlobStream } from '@nmtjs/protocol/client'
 import { decodeText, encodeText, ProtocolBlob } from '@nmtjs/protocol'
 import { BaseClientFormat } from '@nmtjs/protocol/client'
 
@@ -24,13 +21,12 @@ export class JsonFormat extends BaseClientFormat {
   }
 
   encodeRPC(data: unknown, context: EncodeRPCContext) {
-    const streamsMetadata: StreamsMetadata = {}
-    const streams: Record<number, ProtocolClientBlobStream> = {}
+    // const streamsMetadata: StreamsMetadata = {}
+    const streams: StreamsMetadata = {}
     const replacer = (_key: string, value: any) => {
       if (value instanceof ProtocolBlob) {
         const stream = context.addStream(value)
-        streamsMetadata[stream.id] = stream.metadata
-        streams[stream.id] = stream
+        streams[stream.id] = stream.metadata
         return serializeStreamId(stream.id)
       }
       return value
@@ -40,9 +36,10 @@ export class JsonFormat extends BaseClientFormat {
 
     const buffer =
       typeof payload === 'undefined'
-        ? this.encode([streamsMetadata] satisfies ClientEncodedRPC)
-        : this.encode([streamsMetadata, payload] satisfies ClientEncodedRPC)
-    return { buffer, streams }
+        ? this.encode([streams] satisfies ClientEncodedRPC)
+        : this.encode([streams, payload] satisfies ClientEncodedRPC)
+
+    return buffer
   }
 
   decode(data: ArrayBufferView): any {
@@ -64,6 +61,7 @@ export class JsonFormat extends BaseClientFormat {
     }
     const decoded =
       typeof payload === 'undefined' ? undefined : JSON.parse(payload, replacer)
+
     return decoded
   }
 }
@@ -79,9 +77,8 @@ export class StandardJsonFormat extends BaseClientFormat {
   }
 
   encodeRPC(data: unknown) {
-    const streams: Record<number, ProtocolClientBlobStream> = {}
-    const buffer = this.encode([{}, data] satisfies ClientEncodedRPC)
-    return { buffer, streams }
+    const buffer = this.encode(data)
+    return buffer
   }
 
   decode(data: ArrayBufferView) {
@@ -89,8 +86,6 @@ export class StandardJsonFormat extends BaseClientFormat {
   }
 
   decodeRPC(buffer: ArrayBufferView) {
-    const streams: Record<number, ProtocolServerBlobStream> = {}
-    const [_, result]: ServerEncodedRPC = this.decode(buffer)
-    return { result, streams }
+    return this.decode(buffer)
   }
 }

@@ -8,14 +8,26 @@ import {
 import type app from 'neemata-test-playground-app-1'
 import { StaticClient } from '@nmtjs/client/static'
 import { JsonFormat } from '@nmtjs/json-format/client'
-import { ProtocolVersion } from '@nmtjs/protocol'
+import { ProtocolBlob, ProtocolVersion } from '@nmtjs/protocol'
 import { WsTransportFactory } from '@nmtjs/ws-client'
 import * as promClient from 'prom-client'
 
-const WORKER_COUNT = 2
-const CLIENTS_PER_WORKER = 10
+import bigJson from './test/stubs/big.json' with { type: 'json' }
+import mediumJson from './test/stubs/medium.json' with { type: 'json' }
+import smallJson from './test/stubs/small.json' with { type: 'json' }
+import tinyJson from './test/stubs/tiny.json' with { type: 'json' }
+
+const payloads = {
+  tiny: tinyJson,
+  small: smallJson,
+  medium: mediumJson,
+  big: bigJson,
+}
+
+const WORKER_COUNT = 1
+const CLIENTS_PER_WORKER = 3
 const RPC_ENDPOINT = 'http://127.0.0.1:8080'
-const LATENCY_BATCH_SIZE = 1000
+const LATENCY_BATCH_SIZE = 100
 
 type WorkerConfig = { workerId: number; clientsPerWorker: number }
 
@@ -44,6 +56,13 @@ if (isMainThread) {
 
   await runMainThread(register, histogram, requestCounter)
 } else {
+  process.on('unhandledRejection', (reason) => {
+    console.error('Unhandled Rejection in worker:', reason)
+  })
+  process.on('uncaughtException', (error) => {
+    console.error('Uncaught Exception in worker:', error)
+  })
+
   await runWorker(workerData as WorkerConfig)
 }
 
@@ -156,7 +175,7 @@ async function clientLoop(
   while (true) {
     const start = process.hrtime.bigint()
     try {
-      await client.call.strict({ test: new Date().toISOString() })
+      await client.call.blob({ blob: ProtocolBlob.from('Hello, Neemata!') })
       const end = process.hrtime.bigint()
       recordLatency(Number(end - start) / 1_000_000_000)
     } catch (error) {

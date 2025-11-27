@@ -20,11 +20,11 @@ const ext = new URL(import.meta.url).pathname.endsWith('.ts') ? '.ts' : '.js'
 const workerPath = fileURLToPath(import.meta.resolve(`./worker${ext}`))
 
 process.on('uncaughtException', (error) => {
-  console.error(error)
+  console.error(new Error('Uncaught Exception:', { cause: error }))
 })
 
 process.on('unhandledRejection', (error) => {
-  console.error(error)
+  console.error(new Error('Unhandled Promise Rejection:', { cause: error }))
 })
 
 async function main() {

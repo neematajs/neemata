@@ -14,20 +14,7 @@ try {
     targets.push({
       src: join(
         dirname(path),
-        `neemata-proxy.${process.platform}-${process.arch}.node`,
-      ),
-      dest: './chunks/',
-    })
-  }
-} catch {}
-
-try {
-  const { packageJsonPath } = resolver.sync(process.cwd(), 'uWebSockets.js')
-  if (packageJsonPath) {
-    targets.push({
-      src: join(
-        dirname(packageJsonPath),
-        `uws_${process.platform}_${process.arch}_${process.versions.modules}.node`,
+        `neemata-proxy.${process.platform}-${process.arch}*.node`,
       ),
       dest: './chunks/',
     })

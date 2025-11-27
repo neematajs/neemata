@@ -3,9 +3,9 @@ import { defineConfig } from 'nmtjs/config'
 export default defineConfig({
   applications: {
     test: 'neemata-test-playground-app-1',
-    test2: './src/applications/test/index.ts',
+    // test2: './src/applications/test/index.ts',
   },
-  externalDependencies: [],
+  externalDependencies: 'prod',
   build: { minify: false },
   plugins: [],
 })

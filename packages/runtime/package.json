@@ -29,6 +29,7 @@
   "devDependencies": {
     "@nmtjs/common": "workspace:*",
     "@nmtjs/core": "workspace:*",
+    "@nmtjs/contract": "workspace:*",
     "@nmtjs/gateway": "workspace:*",
     "@nmtjs/json-format": "workspace:*",
     "@nmtjs/protocol": "workspace:*",
@@ -42,6 +43,7 @@
   "peerDependencies": {
     "@nmtjs/common": "workspace:*",
     "@nmtjs/core": "workspace:*",
+    "@nmtjs/contract": "workspace:*",
     "@nmtjs/gateway": "workspace:*",
     "@nmtjs/json-format": "workspace:*",
     "@nmtjs/protocol": "workspace:*",

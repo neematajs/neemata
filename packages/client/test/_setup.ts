@@ -66,11 +66,11 @@ export class DummyFormat extends BaseClientFormat {
   }
 
   encodeRPC() {
-    return { buffer: new Uint8Array(), streams: {} }
+    return new Uint8Array()
   }
 
   decodeRPC() {
-    return { result: undefined, streams: {} }
+    return { payload: undefined, streams: {} }
   }
 }
 
@@ -89,7 +89,7 @@ export class RuntimeTestFormat extends BaseClientFormat {
     data: unknown,
     _context: EncodeRPCContext<ProtocolClientBlobStream>,
   ) {
-    return { buffer: this.encode(data), streams: {} }
+    return this.encode(data)
   }
 
   decodeRPC(
@@ -270,9 +270,7 @@ export const encodeRpcResponse = (
   callId: number,
   result: unknown,
 ) => {
-  const encoded = toUint8(
-    format.encodeRPC(result, { addStream: vi.fn(), getStream: vi.fn() }).buffer,
-  )
+  const encoded = toUint8(format.encodeRPC(result, { addStream: vi.fn() }))
   const frame = Buffer.alloc(6 + encoded.byteLength)
   frame.writeUint8(ServerMessageType.RpcResponse, 0)
   frame.writeUint32LE(callId, 1)

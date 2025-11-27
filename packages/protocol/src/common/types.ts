@@ -8,23 +8,17 @@ export interface BaseProtocolError {
   data?: any
 }
 
-export type ProtocolRPC = {
-  callId: number
-  procedure: string
-  payload: unknown
-}
+export type ProtocolRPCPayload = unknown
 
 export type ProtocolRPCResponse<T = Stream> = {
-  result: any
+  payload: any
   streams: Record<number, T>
 }
 
 export interface EncodeRPCContext<T = Stream> {
-  getStream: (id: number) => T
   addStream: (blob: ProtocolBlob) => T
 }
 
 export interface DecodeRPCContext<T = Stream> {
-  getStream: (id: number) => T
   addStream: (id: number, metadata: ProtocolBlobMetadata) => T
 }

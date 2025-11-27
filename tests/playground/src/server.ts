@@ -6,18 +6,19 @@ export default defineServer({
   deploymentId: import.meta.env.PROD ? 'production-deployment' : undefined,
   logger: { pinoOptions: { level: 'info' } },
   applications: {
-    test2: { threads: [{ ws: { listen: { hostname: '0.0.0.0', port: 0 } } }] },
+    // test2: { threads: [{ ws: { listen: { hostname: '0.0.0.0', port: 0 } } }] },
     test: {
-      threads: [
-        {
-          http: { listen: { hostname: '0.0.0.0', port: 0 } },
-          ws: { listen: { hostname: '0.0.0.0', port: 0 } },
+      threads: Array.from({ length: 6 }, () => ({
+        ws: {
+          listen: { hostname: '0.0.0.0', port: 0 },
+          runtime: {
+            ws: {
+              /* 10 MB */
+              maxPayloadLength: 10 * 1024 ** 2,
+            },
+          },
         },
-        {
-          http: { listen: { hostname: '0.0.0.0', port: 0 } },
-          ws: { listen: { hostname: '0.0.0.0', port: 0 } },
-        },
-      ],
+      })),
     },
   },
   store: {

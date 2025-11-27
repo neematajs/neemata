@@ -1,12 +1,11 @@
-import type { Container } from '@nmtjs/core'
-
+import type { ProtocolBlob, ProtocolBlobMetadata } from '../common/blob.ts'
 import type {
   BaseServerDecoder,
   BaseServerEncoder,
   ProtocolFormats,
 } from './format.ts'
 import type { ProtocolVersionInterface } from './protocol.ts'
-import type { ProtocolClientStreams, ProtocolServerStreams } from './streams.ts'
+import type { ProtocolClientStream, ProtocolServerStream } from './stream.ts'
 
 export type ResolveFormatParams = {
   contentType?: string | null
@@ -39,11 +38,18 @@ export type MessageContext = {
   streamId: () => number
   decoder: BaseServerDecoder
   encoder: BaseServerEncoder
-  rpcs: Map<number, AbortController>
-  serverStreams: ProtocolServerStreams
-  clientStreams: ProtocolClientStreams
+  addClientStream: (options: {
+    streamId: number
+    callId: number
+    metadata: ProtocolBlobMetadata
+    pull: (size: number) => any
+  }) => () => ProtocolClientStream
+  addServerStream: (options: {
+    streamId: number
+    callId: number
+    blob: ProtocolBlob
+  }) => ProtocolServerStream
   transport: {
     send?: (connectionId: string, buffer: ArrayBufferView) => boolean | null
   }
-  container: Container
 }

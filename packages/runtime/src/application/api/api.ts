@@ -14,7 +14,7 @@ import { Scope } from '@nmtjs/core'
 import { isAsyncIterable } from '@nmtjs/gateway'
 import { ErrorCode } from '@nmtjs/protocol'
 import { ProtocolError } from '@nmtjs/protocol/server'
-import { NeemataTypeError, type } from '@nmtjs/type'
+import { NeemataTypeError, registerDefaultLocale, type } from '@nmtjs/type'
 import { prettifyError } from 'zod/mini'
 
 import type { AnyFilter } from './filters.ts'
@@ -26,6 +26,8 @@ import type { ApiCallContext } from './types.ts'
 import { kRootRouter } from './constants.ts'
 import { isProcedure } from './procedure.ts'
 import { isRootRouter, isRouter } from './router.ts'
+
+registerDefaultLocale()
 
 export type ApiCallOptions<T extends AnyProcedure = AnyProcedure> = Readonly<{
   connection: GatewayConnection
@@ -93,11 +95,6 @@ export class ApplicationApi implements GatewayApi {
     )
 
     const timeout = procedure.contract.timeout ?? this.options.timeout
-
-    // container.provide(ProtocolInjectables.rpcTimeoutSignal, timeoutSignal)
-    // container.provide(ProtocolInjectables.rpcClientAbortSignal, signal)
-    // container.provide(ProtocolInjectables.connection, connection)
-
     const isIterableProcedure = IsStreamProcedureContract(procedure.contract)
 
     try {

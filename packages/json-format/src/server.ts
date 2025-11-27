@@ -1,8 +1,4 @@
-import type {
-  DecodeRPCContext,
-  EncodeRPCContext,
-  ProtocolRPCResponse,
-} from '@nmtjs/protocol'
+import type { DecodeRPCContext, EncodeRPCContext } from '@nmtjs/protocol'
 import { ProtocolBlob } from '@nmtjs/protocol'
 import { BaseServerFormat } from '@nmtjs/protocol/server'
 

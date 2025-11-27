@@ -1,6 +1,6 @@
 import type { Future, TypeProvider } from '@nmtjs/common'
 import type { TAnyRouterContract } from '@nmtjs/contract'
-import type { BaseProtocolError, ProtocolVersion } from '@nmtjs/protocol'
+import type { ProtocolVersion } from '@nmtjs/protocol'
 import type {
   BaseClientFormat,
   MessageContext,
@@ -12,7 +12,6 @@ import {
   ClientMessageType,
   ConnectionType,
   ErrorCode,
-  ProtocolBlob,
   ServerMessageType,
 } from '@nmtjs/protocol'
 import {
@@ -25,11 +24,7 @@ import {
 } from '@nmtjs/protocol/client'
 
 import type { BaseClientTransformer } from './transformers.ts'
-import type {
-  ClientCallResponse,
-  ClientTransport,
-  ClientTransportFactory,
-} from './transport.ts'
+import type { ClientCallResponse, ClientTransportFactory } from './transport.ts'
 import type {
   ClientCallers,
   ClientCallOptions,

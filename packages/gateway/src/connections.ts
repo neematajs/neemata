@@ -75,7 +75,7 @@ export class GatewayConnections {
     const connection = this.get(connectionId)
     const signals = this.signals.get(connectionId)
 
-    const reason = new Error('Connection closed')
+    const reason = 'Connection closed'
 
     await this.application.hooks.callHookParallel(
       GatewayHook.Disconnect,
@@ -83,22 +83,22 @@ export class GatewayConnections {
     )
 
     if (signals) {
-      signals.disconnect.abort(reason)
+      signals.disconnect.abort(new Error(reason))
       this.signals.delete(connectionId)
     }
 
     const { rpcs, serverStreams, clientStreams, container } = connection
 
-    for (const call of rpcs.values()) {
-      call.abort(reason)
+    for (const { controller } of rpcs.values()) {
+      controller.abort(new Error(reason))
     }
 
     for (const stream of clientStreams.values()) {
-      stream.destroy(reason)
+      stream.destroy(new Error(reason))
     }
 
     for (const stream of serverStreams.values()) {
-      stream.destroy(reason)
+      stream.destroy(new Error(reason))
     }
 
     this.connections.delete(connectionId)

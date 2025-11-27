@@ -8,10 +8,7 @@ import type {
   ProtocolServerBlobStream,
 } from './stream.ts'
 
-export type ProtocolRPCEncode = {
-  buffer: ArrayBufferView
-  streams: Record<number, ProtocolClientBlobStream>
-}
+export type ProtocolRPCEncode = ArrayBufferView
 
 export interface BaseClientDecoder {
   decode(buffer: ArrayBufferView): unknown

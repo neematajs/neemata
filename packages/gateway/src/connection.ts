@@ -9,6 +9,8 @@ import type {
 } from '@nmtjs/protocol/server'
 import { MAX_UINT32 } from '@nmtjs/common'
 
+import type { GatewayConnectionRpc } from './types.ts'
+
 export class GatewayConnection {
   readonly id: string
   readonly type: ConnectionType
@@ -19,7 +21,7 @@ export class GatewayConnection {
   readonly encoder: BaseServerEncoder
   readonly decoder: BaseServerDecoder
 
-  readonly rpcs = new Map<number, AbortController>()
+  readonly rpcs = new Map<number, GatewayConnectionRpc>()
   readonly clientStreams = new Map<number, ProtocolClientStream>()
   readonly serverStreams = new Map<number, ProtocolServerStream>()
 

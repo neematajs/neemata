@@ -76,7 +76,7 @@ export type ServerMessageTypePayload = {
 
 export type ClientMessageTypePayload = {
   [ClientMessageType.Rpc]: {
-    rpc: { callId: number; procedure: string; payload: any }
+    rpc: { callId: number; procedure: string; payload: unknown }
   }
   [ClientMessageType.RpcAbort]: { callId: number }
   [ClientMessageType.ClientStreamPush]: {

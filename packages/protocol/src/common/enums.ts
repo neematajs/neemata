@@ -50,3 +50,12 @@ export enum ErrorCode {
   ClientRequestError = 'ClientRequestError',
   ConnectionError = 'ConnectionError',
 }
+
+export enum Lengths {
+  MessageType = 8,
+  MessageError = 8,
+  Procedure = 16,
+  CallId = 32,
+  StreamId = 32,
+  ChunkSize = 32,
+}

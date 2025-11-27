@@ -1,8 +1,7 @@
 import { setInterval } from 'node:timers/promises'
 
-import { c } from '@nmtjs/contract'
-import { ProtocolBlob } from '@nmtjs/protocol'
-import { HttpTransport } from 'nmtjs/http-transport/node'
+import { c } from 'nmtjs/contract'
+import { createFactoryInjectable, Scope } from 'nmtjs/core'
 import {
   createFilter,
   createProcedure,
@@ -13,8 +12,34 @@ import {
 import { t } from 'nmtjs/type'
 import { WsTransport } from 'nmtjs/ws-transport/node'
 
+const someAsyncThing = createFactoryInjectable({
+  scope: Scope.Call,
+  factory: async () => {
+    const buffer = Buffer.alloc(1024)
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    return buffer
+  },
+})
+
 const simpleProcedure = createProcedure({
-  input: t.any(),
+  input: t.array(
+    t.object({
+      id: t.string(),
+      version: t.number(),
+      name: t.string(),
+      language: t.string(),
+      bio: t.string().max(500),
+    }),
+  ),
+  output: t.array(
+    t.object({
+      id: t.string(),
+      version: t.number(),
+      name: t.string(),
+      language: t.string(),
+    }),
+  ),
+  dependencies: { someAsyncThing },
   handler: (_, input) => input,
 })
 
@@ -26,9 +51,9 @@ const strictProcedure = createProcedure({
 
 const blobProcedure = createProcedure({
   input: t.object({ blob: c.blob() }),
-  output: t.object({ blob: c.blob() }),
+  output: t.object({}),
   handler: async (_, input) => {
-    return { blob: ProtocolBlob.from(input.blob) }
+    return {}
   },
 })
 
@@ -54,7 +79,7 @@ export default defineApplication({
       },
     }),
   ),
-  transports: { http: HttpTransport, ws: WsTransport },
+  transports: { ws: WsTransport },
   filters: [
     createFilter({
       errorClass: Error,

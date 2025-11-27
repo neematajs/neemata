@@ -51,9 +51,6 @@ export class ProtocolVersion1 extends ProtocolVersionInterface {
               context.serverStreams.add(streamId, stream)
               return stream
             },
-            getStream: (id) => {
-              return context.serverStreams.get(id) as ProtocolServerBlobStream
-            },
           })
           return { type: messageType, callId, result }
         }
@@ -141,10 +138,7 @@ export class ProtocolVersion1 extends ProtocolVersionInterface {
                 blob.metadata,
               )
             },
-            getStream: (id) => {
-              return context.clientStreams.get(id)
-            },
-          }).buffer,
+          }),
         )
       }
       case ClientMessageType.RpcAbort: {
