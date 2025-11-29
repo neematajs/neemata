@@ -17,7 +17,7 @@ import mediumJson from './test/stubs/medium.json' with { type: 'json' }
 import smallJson from './test/stubs/small.json' with { type: 'json' }
 import tinyJson from './test/stubs/tiny.json' with { type: 'json' }
 
-const payloads = {
+const _payloads = {
   tiny: tinyJson,
   small: smallJson,
   medium: mediumJson,
@@ -25,7 +25,7 @@ const payloads = {
 }
 
 const WORKER_COUNT = 1
-const CLIENTS_PER_WORKER = 3
+const CLIENTS_PER_WORKER = 1
 const RPC_ENDPOINT = 'http://127.0.0.1:8080'
 const LATENCY_BATCH_SIZE = 100
 
@@ -79,6 +79,7 @@ async function runMainThread(
       headers: { 'Content-Type': 'text/plain; version=0.0.4' },
       body: metrics,
     })
+    // console.log('Metrics pushed to Pushgateway:', req.statusText, metrics)
     if (!req.ok) {
       console.error('Failed to push metrics to Pushgateway:', req.statusText)
     }
@@ -175,15 +176,19 @@ async function clientLoop(
   while (true) {
     const start = process.hrtime.bigint()
     try {
-      await client.call.blob({ blob: ProtocolBlob.from('Hello, Neemata!') })
+      await client.call.blob({
+        blob: ProtocolBlob.from('Hello, Neemata!'.repeat(10000)),
+      })
+      await new Promise(() => {})
       const end = process.hrtime.bigint()
       recordLatency(Number(end - start) / 1_000_000_000)
     } catch (error) {
+      console.error(error)
       parentPort?.postMessage({
         type: 'error',
         workerId,
         clientId,
-        message: (error as Error).message,
+        message: (error as Error).message ?? error,
       })
     }
   }

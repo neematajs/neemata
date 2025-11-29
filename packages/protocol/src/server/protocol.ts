@@ -60,13 +60,13 @@ export type ServerMessageTypePayload = {
     result: any
     error: any | null
   }
-  [ServerMessageType.RpcStreamAbort]: { callId: number }
+  [ServerMessageType.RpcStreamAbort]: { callId: number; reason?: string }
   [ServerMessageType.RpcStreamEnd]: { callId: number }
   [ServerMessageType.RpcStreamChunk]: { callId: number; chunk: ArrayBufferView }
   [ServerMessageType.RpcStreamResponse]: { callId: number }
-  [ServerMessageType.ClientStreamAbort]: { streamId: number }
+  [ServerMessageType.ClientStreamAbort]: { streamId: number; reason?: string }
   [ServerMessageType.ClientStreamPull]: { streamId: number; size: number }
-  [ServerMessageType.ServerStreamAbort]: { streamId: number }
+  [ServerMessageType.ServerStreamAbort]: { streamId: number; reason?: string }
   [ServerMessageType.ServerStreamEnd]: { streamId: number }
   [ServerMessageType.ServerStreamPush]: {
     streamId: number
@@ -78,7 +78,7 @@ export type ClientMessageTypePayload = {
   [ClientMessageType.Rpc]: {
     rpc: { callId: number; procedure: string; payload: unknown }
   }
-  [ClientMessageType.RpcAbort]: { callId: number }
+  [ClientMessageType.RpcAbort]: { callId: number; reason?: string }
   [ClientMessageType.ClientStreamPush]: {
     streamId: number
     chunk: ArrayBufferView

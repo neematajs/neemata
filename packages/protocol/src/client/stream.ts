@@ -65,12 +65,11 @@ export class ProtocolClientBlobStream
   }
 
   abort(error = new Error('Stream aborted')) {
-    this.#reader.cancel(error)
-    this.source.cancel(error)
+    return this.#reader.cancel(error)
   }
 
   end() {
-    return this.source.cancel('Stream ended')
+    return this.#reader.cancel('Stream ended')
   }
 }
 

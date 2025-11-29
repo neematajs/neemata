@@ -1,3 +1,5 @@
+import { isAsyncIterable } from '@nmtjs/common'
+
 export const BlobKey: unique symbol = Symbol.for('neemata:BlobKey')
 export type BlobKey = typeof BlobKey
 
@@ -41,22 +43,44 @@ export class ProtocolBlob implements ProtocolBlobInterface {
       _source = source
     } else if ('File' in globalThis && source instanceof globalThis.File) {
       _source = source.stream()
-      metadata.size = source.size
-      metadata.filename = source.name
+      metadata.size ??= source.size
+      metadata.filename ??= source.name
     } else if (source instanceof globalThis.Blob) {
       _source = source.stream()
-      metadata.size = source.size
+      metadata.size ??= source.size
+      metadata.type ??= source.type
     } else if (typeof source === 'string') {
       const blob = new Blob([source])
       _source = blob.stream()
-      metadata.size = blob.size
-      metadata.type = metadata.type || 'text/plain'
+      metadata.size ??= blob.size
+      metadata.type ??= 'text/plain'
     } else if (source instanceof globalThis.ArrayBuffer) {
       const blob = new Blob([source])
       _source = blob.stream()
-      metadata.size = blob.size
+      metadata.size ??= blob.size
+    } else if (isAsyncIterable(source)) {
+      const ac = new AbortController()
+      _source = new ReadableStream({
+        async start(controller) {
+          try {
+            for await (const chunk of source) {
+              if (ac.signal.aborted) break
+              controller.enqueue(chunk)
+            }
+            controller.close()
+          } catch (error) {
+            controller.error(error)
+          }
+        },
+        cancel() {
+          ac.abort()
+        },
+      })
     } else {
-      _source = source
+      throw new Error(
+        'Unsupported blob source type. It should be one of: ' +
+          'ReadableStream, Blob, File, string, ArrayBuffer, AsyncIterable',
+      )
     }
 
     return new ProtocolBlob(

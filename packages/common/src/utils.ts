@@ -1,4 +1,4 @@
-import type { Callback } from './types.ts'
+import type { Callback, Pattern } from './types.ts'
 
 export const noopFn = () => {}
 
@@ -149,4 +149,27 @@ export function isAbortError(error) {
       (error.code === 20 || error.code === 'ABORT_ERR')) ||
     (error instanceof Event && error.type === 'abort')
   )
+}
+
+/**
+ * Very simple pattern matching function.
+ */
+export function match(value: string, pattern: Pattern) {
+  if (typeof pattern === 'function') {
+    return pattern(value)
+  } else if (typeof pattern === 'string') {
+    if (pattern === '*' || pattern === '**') {
+      return true
+    } else if (pattern.at(0) === '*' && pattern.at(-1) === '*') {
+      return value.includes(pattern.slice(1, -1))
+    } else if (pattern.at(-1) === '*') {
+      return value.startsWith(pattern.slice(0, -1))
+    } else if (pattern.at(0) === '*') {
+      return value.endsWith(pattern.slice(1))
+    } else {
+      return value === pattern
+    }
+  } else {
+    return pattern.test(value)
+  }
 }

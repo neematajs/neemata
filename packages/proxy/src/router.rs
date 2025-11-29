@@ -1,4 +1,4 @@
-use crate::config::{ProxyConfig, UpstreamKind};
+use crate::config::{AppUpstream, ProxyConfig, UpstreamKind};
 use async_trait::async_trait;
 use http::{Uri, uri::PathAndQuery};
 use log::{debug, info};
@@ -6,13 +6,15 @@ use napi::Error as NapiError;
 use napi::bindgen_prelude::Result as NapiResult;
 use pingora::{
     http::ResponseHeader,
+    lb::{Backend, Backends, discovery::Static},
     prelude::*,
+    protocols::l4::socket::SocketAddr as PingoraSocketAddr,
     services::background::{GenBackgroundService, background_service},
 };
 use pingora_load_balancing::health_check::TcpHealthCheck;
 use std::{
-    collections::HashMap,
-    net::{SocketAddr, ToSocketAddrs},
+    collections::{BTreeSet, HashMap},
+    net::ToSocketAddrs,
     sync::Arc,
     time::Duration,
 };
@@ -26,7 +28,7 @@ pub struct ClusterEntry {
 
 pub struct Router {
     clusters: HashMap<String, HashMap<UpstreamKind, ClusterEntry>>,
-    upstreams_tls: HashMap<SocketAddr, bool>,
+    upstreams_tls: HashMap<String, bool>,
 }
 
 #[derive(Default)]
@@ -77,7 +79,7 @@ impl RouterCtx {
 impl Router {
     fn new(
         clusters: HashMap<String, HashMap<UpstreamKind, ClusterEntry>>,
-        upstreams_tls: HashMap<SocketAddr, bool>,
+        upstreams_tls: HashMap<String, bool>,
     ) -> Self {
         Self {
             clusters,
@@ -147,18 +149,33 @@ impl ProxyHttp for Router {
             })
             .unwrap_or_default();
 
-        let upstream_addr = upstream.addr.as_inet().ok_or_else(|| {
-            Error::create(
-                ErrorType::InternalError,
-                ErrorSource::Internal,
-                Some(ImmutStr::Static("upstream address is not inet")),
-                None,
-            )
-        })?;
-        let enable_tls = *self.upstreams_tls.get(upstream_addr).unwrap_or(&false);
+        let enable_tls = *self
+            .upstreams_tls
+            .get(&upstream.addr.to_string())
+            .unwrap_or(&false);
 
-        let peer = Box::new(HttpPeer::new(upstream, enable_tls, sni));
-        Ok(peer)
+        match upstream.addr {
+            PingoraSocketAddr::Inet(_) => Ok(Box::new(HttpPeer::new(upstream, enable_tls, sni))),
+            PingoraSocketAddr::Unix(addr) => {
+                let path = addr.as_pathname().and_then(|p| p.to_str()).ok_or_else(|| {
+                    Error::create(
+                        ErrorType::InternalError,
+                        ErrorSource::Internal,
+                        Some(ImmutStr::Static("invalid unix socket path")),
+                        None,
+                    )
+                })?;
+                let peer = HttpPeer::new_uds(path, enable_tls, sni).map_err(|e| {
+                    Error::create(
+                        ErrorType::InternalError,
+                        ErrorSource::Internal,
+                        Some(ImmutStr::Static("failed to create uds peer")),
+                        Some(Box::new(e)),
+                    )
+                })?;
+                Ok(Box::new(peer))
+            }
+        }
     }
 
     async fn upstream_request_filter(
@@ -170,6 +187,33 @@ impl ProxyHttp for Router {
         let Some(app_info) = ctx.app_info(session) else {
             return Ok(());
         };
+
+        if let Some(client_addr) = session.client_addr() {
+            if let Some(inet) = client_addr.as_inet() {
+                let client_ip = inet.ip().to_string();
+                let new_val =
+                    if let Some(existing) = upstream_request.headers.get("x-forwarded-for") {
+                        if let Ok(existing_str) = existing.to_str() {
+                            format!("{}, {}", existing_str, client_ip)
+                        } else {
+                            client_ip
+                        }
+                    } else {
+                        client_ip
+                    };
+                upstream_request
+                    .insert_header("x-forwarded-for", new_val)
+                    .map_err(|e| {
+                        Error::create(
+                            ErrorType::InternalError,
+                            ErrorSource::Internal,
+                            Some(ImmutStr::Static("failed to set x-forwarded-for")),
+                            Some(Box::new(e)),
+                        )
+                    })?;
+            }
+        }
+
         let name = app_info.name.as_str();
 
         let path = upstream_request.uri.path();
@@ -257,15 +301,38 @@ pub fn build_router(config: &ProxyConfig) -> NapiResult<RouterAssembly> {
         for (&kind, upstreams) in &definition.upstreams {
             let mut resolved_addrs = Vec::new();
             for upstream in upstreams {
-                let addrs = upstream.address.to_socket_addrs().map_err(|e| {
-                    NapiError::from_reason(format!(
-                        "failed to resolve '{}': {}",
-                        upstream.address, e
-                    ))
-                })?;
-                for addr in addrs {
-                    resolved_addrs.push(addr);
-                    upstreams_tls.insert(addr, upstream.secure);
+                match upstream {
+                    AppUpstream::Port {
+                        secure,
+                        hostname,
+                        port,
+                        ..
+                    } => {
+                        let addr_str = format!("{}:{}", hostname, port);
+                        let addrs = addr_str.to_socket_addrs().map_err(|e| {
+                            NapiError::from_reason(format!(
+                                "failed to resolve '{}': {}",
+                                addr_str, e
+                            ))
+                        })?;
+                        for addr in addrs {
+                            let p_addr = PingoraSocketAddr::Inet(addr);
+                            resolved_addrs.push(p_addr.clone());
+                            upstreams_tls.insert(p_addr.to_string(), *secure);
+                        }
+                    }
+                    AppUpstream::Unix { secure, path } => {
+                        let p_addr = PingoraSocketAddr::Unix(
+                            std::os::unix::net::SocketAddr::from_pathname(path).map_err(|e| {
+                                NapiError::from_reason(format!(
+                                    "failed to resolve unix socket '{}': {}",
+                                    path, e
+                                ))
+                            })?,
+                        );
+                        resolved_addrs.push(p_addr.clone());
+                        upstreams_tls.insert(p_addr.to_string(), *secure);
+                    }
                 }
             }
 
@@ -303,18 +370,29 @@ pub fn build_router(config: &ProxyConfig) -> NapiResult<RouterAssembly> {
 
 fn build_cluster_service(
     name: &str,
-    upstreams: Vec<SocketAddr>,
+    upstreams: Vec<PingoraSocketAddr>,
     health_interval: Option<Duration>,
 ) -> NapiResult<(Arc<Cluster>, Option<GenBackgroundService<Cluster>>)> {
     info!(
         "Building cluster for app '{name}' with upstreams: {:?}",
         upstreams
     );
-    let mut balancer = LoadBalancer::try_from_iter(upstreams).map_err(|err| {
-        NapiError::from_reason(format!(
-            "failed to build load balancer for '{name}': {err:?}"
-        ))
-    })?;
+    let backends_vec: Vec<Backend> = upstreams
+        .into_iter()
+        .map(|addr| {
+            let addr_str = addr.to_string();
+            Backend::new(&addr_str).map_err(|e| {
+                NapiError::from_reason(format!(
+                    "failed to create backend for '{}': {}",
+                    addr_str, e
+                ))
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let backends_set: BTreeSet<Backend> = backends_vec.into_iter().collect();
+    let discovery = Static::new(backends_set);
+    let backends = Backends::new(discovery);
+    let mut balancer = LoadBalancer::from_backends(backends);
 
     if let Some(interval) = health_interval {
         balancer.set_health_check(TcpHealthCheck::new());

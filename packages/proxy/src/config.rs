@@ -22,7 +22,7 @@ pub struct ProxyOptions {
     pub listen: Option<String>,
     pub tls: Option<bool>,
     pub threads: Option<u16>,
-    pub health_check_interval_secs: Option<u32>,
+    pub health_check_interval: Option<u32>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
@@ -40,9 +40,18 @@ impl UpstreamKind {
     }
 }
 
-pub struct AppUpstream {
-    pub secure: bool,
-    pub address: String,
+#[derive(Debug, Clone)]
+pub enum AppUpstream {
+    Port {
+        secure: bool,
+        address: String,
+        port: u16,
+        hostname: String,
+    },
+    Unix {
+        secure: bool,
+        path: String,
+    },
 }
 
 pub struct AppDefinition {
@@ -113,17 +122,34 @@ impl ProxyConfig {
                     }
                 };
 
+                let upstream = if parsed.scheme().ends_with("+unix") {
+                    AppUpstream::Unix {
+                        secure,
+                        path: parsed.path().to_string(),
+                    }
+                } else {
+                    let host = parsed.host_str().ok_or_else(|| {
+                        Error::from_reason(format!(
+                            "missing host in upstream URL '{trimmed}' for application '{name}'"
+                        ))
+                    })?;
+                    let port = parsed.port_or_known_default().ok_or_else(|| {
+                        Error::from_reason(format!(
+                            "missing port in upstream URL '{trimmed}' for application '{name}'"
+                        ))
+                    })?;
+                    AppUpstream::Port {
+                        secure,
+                        address: parsed.to_string(),
+                        port,
+                        hostname: host.to_string(),
+                    }
+                };
+
                 upstreams
                     .entry(upstream_type)
                     .or_insert_with(Vec::new)
-                    .push(AppUpstream {
-                        secure,
-                        address: format!(
-                            "{}:{}",
-                            parsed.host_str().unwrap(),
-                            parsed.port_or_known_default().unwrap(),
-                        ),
-                    });
+                    .push(upstream);
             }
 
             if upstreams.is_empty() {
@@ -143,7 +169,7 @@ impl ProxyConfig {
         let options = options.unwrap_or_default();
 
         let health_check_interval = options
-            .health_check_interval_secs
+            .health_check_interval
             .map(|secs| Duration::from_secs(secs as u64));
 
         Ok(Self {
@@ -166,7 +192,7 @@ impl Default for ProxyOptions {
             listen: None,
             threads: None,
             tls: None,
-            health_check_interval_secs: Some(30),
+            health_check_interval: Some(30),
         }
     }
 }

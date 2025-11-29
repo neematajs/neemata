@@ -50,12 +50,11 @@ describe('Client', () => {
         stream = { id: streamId, metadata: blob.metadata, blob }
         return stream
       }),
-      getStream: vi.fn(() => stream),
     } satisfies EncodeRPCContext
-    const { buffer, streams } = format.encodeRPC(payload, ctx)
+    const buffer = format.encodeRPC(payload, ctx)
 
     expect(ArrayBuffer.isView(buffer)).toBe(true)
-    expect(streams[streamId]).toBe(stream)
+    expect(ctx.addStream).toHaveBeenCalledTimes(1)
 
     const [streamsMetadata, encodedPayload] = JSON.parse(decodeText(buffer))
 
@@ -72,10 +71,7 @@ describe('Client', () => {
   it('should decode rpc', () => {
     const streamId = 2
     const stream = { id: streamId, type: 'test' }
-    const ctx = {
-      addStream: vi.fn(() => stream),
-      getStream: vi.fn(() => stream),
-    } satisfies DecodeRPCContext
+    const ctx = { addStream: vi.fn(() => stream) } satisfies DecodeRPCContext
 
     const encoded = format.encode([
       { [streamId]: { type: 'test' } },

@@ -40,10 +40,10 @@ export {
 
 export * from './types.ts'
 
-const uniAddStream = () => {
+const _uniAddStream = () => {
   throw new Error('Unidirectional transports do not support streams')
 }
-const uniGetStream = () => {
+const _uniGetStream = () => {
   throw new Error('Unidirectional transports do not support streams')
 }
 
@@ -161,16 +161,35 @@ export abstract class BaseClient<
 
   async connect() {
     if (this.#transport.type === ConnectionType.Bidirectional) {
-      this.#messageContext = {
-        transport: {
-          send: (buffer) => {
-            this.#send(buffer).catch(noopFn)
-          },
+      const protocol = this.#protocol
+      const serverStreams = this.#serverStreams
+      const transport = {
+        send: (buffer) => {
+          this.#send(buffer).catch(noopFn)
         },
+      }
+      this.#messageContext = {
+        transport,
         encoder: this.options.format,
         decoder: this.options.format,
-        clientStreams: this.#clientStreams,
-        serverStreams: this.#serverStreams,
+        addClientStream: (streamId, blob) => {
+          return this.#clientStreams.add(blob.source, streamId, blob.metadata)
+        },
+        addServerStream(streamId, metadata) {
+          const stream = new ProtocolServerBlobStream(metadata, {
+            pull: (size) => {
+              transport.send(
+                protocol.encodeMessage(
+                  this,
+                  ClientMessageType.ServerStreamPull,
+                  { streamId, size: size || 65535 /* 64kb */ },
+                ),
+              )
+            },
+          })
+          serverStreams.add(streamId, stream)
+          return stream
+        },
         streamId: this.#getStreamId.bind(this),
       }
       return this.#transport.connect({
@@ -292,7 +311,7 @@ export abstract class BaseClient<
   protected async onMessage(buffer: ArrayBufferView) {
     if (!this.#messageContext) return
     const message = this.#protocol.decodeMessage(this.#messageContext, buffer)
-    // console.dir(message)
+    console.dir(message)
     switch (message.type) {
       case ServerMessageType.RpcResponse:
         this.#handleRPCResponseMessage(message)

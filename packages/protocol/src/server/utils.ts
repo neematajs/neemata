@@ -42,7 +42,7 @@ export type MessageContext = {
     streamId: number
     callId: number
     metadata: ProtocolBlobMetadata
-    pull: (size: number) => any
+    // pull: (size: number) => any
   }) => () => ProtocolClientStream
   addServerStream: (options: {
     streamId: number

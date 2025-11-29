@@ -1,5 +1,6 @@
 import { setInterval } from 'node:timers/promises'
 
+import { ProtocolBlob } from '@nmtjs/protocol'
 import { c } from 'nmtjs/contract'
 import { createFactoryInjectable, Scope } from 'nmtjs/core'
 import {
@@ -51,9 +52,10 @@ const strictProcedure = createProcedure({
 
 const blobProcedure = createProcedure({
   input: t.object({ blob: c.blob() }),
-  output: t.object({}),
+  output: c.blob(),
   handler: async (_, input) => {
-    return {}
+    const clientBlob = input.blob()
+    return ProtocolBlob.from(clientBlob, clientBlob.metadata)
   },
 })
 

@@ -1,15 +1,11 @@
 import type { Async } from '@nmtjs/common'
 import type { Injection, LazyInjectable, Scope } from '@nmtjs/core'
-import type {
-  ConnectionType,
-  ProtocolRPCPayload,
-  ProtocolVersion,
-} from '@nmtjs/protocol'
+import type { ConnectionType, ProtocolVersion } from '@nmtjs/protocol'
 import type { ProtocolFormats } from '@nmtjs/protocol/server'
 
-import type { GatewayApiCallOptions } from './api.ts'
 import type { GatewayConnection } from './connection.ts'
 import type { ProxyableTransportType } from './enums.ts'
+import type { GatewayRpc } from './types.ts'
 
 export interface TransportConnection {
   connectionId: string
@@ -52,7 +48,7 @@ export type TransportWorkerParams<
   ) => Promise<void>
   onRpc: (
     connection: GatewayConnection,
-    rpc: ProtocolRPCPayload & { metadata?: GatewayApiCallOptions['metadata'] },
+    rpc: GatewayRpc,
     signal: AbortSignal,
     ...injections: Injection[]
   ) => Promise<unknown>

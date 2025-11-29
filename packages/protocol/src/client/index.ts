@@ -1,7 +1,6 @@
 export * from './format.ts'
 export * from './protocol.ts'
 export * from './stream.ts'
-export * from './streams.ts'
 
 import { ProtocolVersion } from '../common/enums.ts'
 import { ProtocolVersion1 } from './versions/v1.ts'

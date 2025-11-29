@@ -76,3 +76,5 @@ type MergeTypes<TypesArray extends any[], Res = {}> = TypesArray extends [
   : Res
 
 type OnlyFirst<F, S> = F & { [Key in keyof Omit<S, keyof F>]?: never }
+
+export type Pattern = RegExp | string | ((value: string) => boolean)

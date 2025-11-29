@@ -1,9 +1,7 @@
 import type { AnyInjectable, Container, Scope } from '@nmtjs/core'
-import type {
-  ProtocolClientStreams,
-  MessageContext as ProtocolMessageContext,
-  ProtocolServerStreams,
-} from '@nmtjs/protocol/server'
+import type { MessageContext as ProtocolMessageContext } from '@nmtjs/protocol/server'
+
+import type { GatewayApiCallOptions } from './api.ts'
 
 export type ConnectionIdentity = string
 export type ConnectionIdentityResolver = AnyInjectable<
@@ -11,16 +9,15 @@ export type ConnectionIdentityResolver = AnyInjectable<
   Scope.Global
 >
 
-export type GatewayConnectionRpc = {
-  controller: AbortController
-  clientStreams: Set<number>
-  serverStreams: Set<number>
+export interface GatewayRpc {
+  callId: number
+  procedure: string
+  payload: unknown
+  metadata?: GatewayApiCallOptions['metadata']
 }
 
-export interface GatewayMessageContext extends ProtocolMessageContext {
-  callId: number
-  rpc: GatewayConnectionRpc
-  serverStreams: ProtocolServerStreams
-  clientStreams: ProtocolClientStreams
+export interface GatewayRpcContext extends ProtocolMessageContext, GatewayRpc {
   container: Container
+  signal: AbortSignal
+  [Symbol.asyncDispose](): Promise<void>
 }

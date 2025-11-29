@@ -4,7 +4,6 @@ import EventEmitter, { once } from 'node:events'
 import { MessageChannel, Worker } from 'node:worker_threads'
 
 import type {
-  JobTaskResult,
   ServerPortMessageTypes,
   ThreadPortMessage,
   ThreadPortMessageTypes,
@@ -41,7 +40,7 @@ export class Thread extends EventEmitter<
     super()
     this.worker = new Worker(workerPath, {
       ...workerOptions,
-      execArgv: ['--inspect=0'],
+      execArgv: process.execArgv,
     })
 
     const handler = (msg: ThreadPortMessage) => {

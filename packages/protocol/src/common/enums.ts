@@ -51,11 +51,11 @@ export enum ErrorCode {
   ConnectionError = 'ConnectionError',
 }
 
-export enum Lengths {
-  MessageType = 8,
-  MessageError = 8,
-  Procedure = 16,
-  CallId = 32,
-  StreamId = 32,
-  ChunkSize = 32,
+export enum MessageByteLength {
+  MessageType = 1,
+  MessageError = 1,
+  ProcedureLength = 2,
+  CallId = 4,
+  StreamId = 4,
+  ChunkSize = 4,
 }

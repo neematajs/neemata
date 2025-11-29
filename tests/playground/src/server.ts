@@ -4,11 +4,11 @@ import { StoreType } from '../../../packages/runtime/src/enums.ts'
 
 export default defineServer({
   deploymentId: import.meta.env.PROD ? 'production-deployment' : undefined,
-  logger: { pinoOptions: { level: 'info' } },
+  logger: { pinoOptions: { level: 'trace' } },
   applications: {
     // test2: { threads: [{ ws: { listen: { hostname: '0.0.0.0', port: 0 } } }] },
     test: {
-      threads: Array.from({ length: 6 }, () => ({
+      threads: Array.from({ length: 1 }, () => ({
         ws: {
           listen: { hostname: '0.0.0.0', port: 0 },
           runtime: {

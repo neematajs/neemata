@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 
+import { ClientStreams, ServerStreams } from '../../../client/src/streams.ts'
 import {
   ProtocolClientBlobStream,
   ProtocolServerBlobStream,
   ProtocolServerStream,
 } from '../../src/client/stream.ts'
-import { ClientStreams, ServerStreams } from '../../src/client/streams.ts'
 
 const encoder = new TextEncoder()
 const decoder = new TextDecoder()

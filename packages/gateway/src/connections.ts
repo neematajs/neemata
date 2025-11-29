@@ -6,6 +6,10 @@ import type {
 import { throwError } from '@nmtjs/common'
 import { getFormat } from '@nmtjs/protocol/server'
 
+import type {
+  GatewayConnectionClientStreams,
+  GatewayConnectionServerStreams,
+} from './connection.ts'
 import type { TransportOnConnectOptions } from './transport.ts'
 import { GatewayConnection } from './connection.ts'
 import { GatewayHook } from './enums.ts'
@@ -37,6 +41,8 @@ export class GatewayConnections {
     options,
     transport,
     protocol,
+    clientStreams,
+    serverStreams,
   }: {
     id: string
     transport: string
@@ -44,6 +50,8 @@ export class GatewayConnections {
     container: Container
     protocol: ProtocolVersionInterface
     options: TransportOnConnectOptions
+    clientStreams: GatewayConnectionClientStreams
+    serverStreams: GatewayConnectionServerStreams
   }) {
     const { accept, contentType, type } = options
     const { decoder, encoder } = getFormat(this.application.formats, {
@@ -59,6 +67,8 @@ export class GatewayConnections {
       container,
       encoder,
       decoder,
+      clientStreams,
+      serverStreams,
     })
     const signals = { disconnect: new AbortController() }
     this.signals.set(id, signals)
@@ -89,17 +99,9 @@ export class GatewayConnections {
 
     const { rpcs, serverStreams, clientStreams, container } = connection
 
-    for (const { controller } of rpcs.values()) {
-      controller.abort(new Error(reason))
-    }
-
-    for (const stream of clientStreams.values()) {
-      stream.destroy(new Error(reason))
-    }
-
-    for (const stream of serverStreams.values()) {
-      stream.destroy(new Error(reason))
-    }
+    rpcs.close(reason)
+    clientStreams.close(reason)
+    serverStreams.close(reason)
 
     this.connections.delete(connectionId)
 

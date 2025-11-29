@@ -1,6 +1,6 @@
 import { deserialize, serialize } from 'node:v8'
 
-import type { Pattern } from '@nmtjs/core'
+import type { Pattern } from '@nmtjs/common'
 import { createLogger } from '@nmtjs/core'
 
 import type {

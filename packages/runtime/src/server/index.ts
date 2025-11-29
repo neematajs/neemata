@@ -2,10 +2,10 @@ import assert from 'node:assert'
 import EventEmitter from 'node:events'
 
 import type { Logger } from '@nmtjs/core'
-import type { ProxyableTransportType } from '@nmtjs/gateway'
 import type { NeemataProxy } from '@nmtjs/proxy'
 import type { RedisClient } from 'bullmq'
 import { createLogger } from '@nmtjs/core'
+import { ProxyableTransportType } from '@nmtjs/gateway'
 import { Worker as QueueWorker, UnrecoverableError } from 'bullmq'
 
 import type { Store } from '../types.ts'
@@ -70,7 +70,7 @@ export class ApplicationServer extends EventEmitter {
 
     const proxyUpstreams: Record<
       string,
-      { type: ProxyableTransportType; url: string }[]
+      { type: 'http' | 'websocket'; url: string }[]
     > = {}
 
     for (const applicationName in this.config.applications) {
@@ -108,7 +108,10 @@ export class ApplicationServer extends EventEmitter {
                 const url = new URL(host.url)
                 if (url.hostname === '0.0.0.0') url.hostname = '127.0.0.1'
                 proxyUpstreams[applicationName].push({
-                  type: host.type,
+                  type: {
+                    [ProxyableTransportType.HTTP]: 'http' as const,
+                    [ProxyableTransportType.WebSocket]: 'websocket' as const,
+                  }[host.type],
                   url: url.toString(),
                 })
               }
@@ -211,9 +214,9 @@ export class ApplicationServer extends EventEmitter {
       )
 
       this.proxy = new NeemataProxy(upstreams, {
-        healthCheckIntervalSecs: 10,
+        healthCheckInterval: 60,
         listen: `${this.config.proxy.hostname}:${this.config.proxy.port}`,
-        threads: this.config.proxy.threads || 1,
+        threads: this.config.proxy.threads,
       })
       this.proxy.run()
     }

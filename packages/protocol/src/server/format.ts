@@ -1,5 +1,5 @@
-import type { Pattern } from '@nmtjs/core'
-import { match } from '@nmtjs/core'
+import type { Pattern } from '@nmtjs/common'
+import { match } from '@nmtjs/common'
 
 import type {
   DecodeRPCContext,

@@ -1,3 +1,4 @@
+import type { ProtocolBlob, ProtocolBlobMetadata } from '../common/blob.ts'
 import type {
   ClientMessageType,
   ProtocolVersion,
@@ -5,21 +6,30 @@ import type {
 } from '../common/enums.ts'
 import type { BaseProtocolError } from '../common/types.ts'
 import type { BaseClientDecoder, BaseClientEncoder } from './format.ts'
-import type { ClientStreams, ServerStreams } from './streams.ts'
+import type {
+  ProtocolClientBlobStream,
+  ProtocolServerBlobStream,
+} from './stream.ts'
 import { concat } from '../common/binary.ts'
 
 export type MessageContext = {
   decoder: BaseClientDecoder
   encoder: BaseClientEncoder
-  clientStreams: ClientStreams
-  serverStreams: ServerStreams
+  addClientStream: (
+    streamId: number,
+    blob: ProtocolBlob,
+  ) => ProtocolClientBlobStream
+  addServerStream: (
+    streamId: number,
+    metadata: ProtocolBlobMetadata,
+  ) => ProtocolServerBlobStream
   transport: { send: (buffer: ArrayBufferView) => void }
   streamId: () => number
 }
 
 export type ClientMessageTypePayload = {
   [ClientMessageType.Rpc]: { callId: number; procedure: string; payload: any }
-  [ClientMessageType.RpcAbort]: { callId: number }
+  [ClientMessageType.RpcAbort]: { callId: number; reason?: string }
   [ClientMessageType.ClientStreamPush]: {
     streamId: number
     chunk: ArrayBufferView

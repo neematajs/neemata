@@ -23,17 +23,34 @@ describe('ProtocolVersion1 - decodeMessage', () => {
 
   beforeEach(() => {
     version = new ProtocolVersion1()
+    const clientStreams = {
+      add: vi.fn(
+        (_streamId: number, _metadata: any, _pull: Function) => ({}) as any,
+      ),
+      get: vi.fn((_streamId: number) => ({}) as any),
+    }
+    const serverStreams = {
+      add: vi.fn((_streamId: number, _blob: any) => ({}) as any),
+      get: vi.fn((_streamId: number) => ({}) as any),
+    }
     context = {
       connectionId: 'conn',
       streamId: vi.fn(),
       decoder: { decodeRPC: vi.fn() },
       encoder: { encode: vi.fn(), encodeRPC: vi.fn() },
       rpcs: new Map(),
-      serverStreams: { add: vi.fn(), get: vi.fn() },
-      clientStreams: { add: vi.fn(), get: vi.fn() },
+      serverStreams,
+      clientStreams,
       transport: { send: vi.fn() },
       container: {},
       protocol: version,
+      addClientStream: vi.fn(({ streamId, metadata, pull }) => {
+        const stream = (clientStreams.add as any)(streamId, metadata, pull)
+        return () => stream
+      }),
+      addServerStream: vi.fn(({ streamId, blob }) => {
+        return (serverStreams.add as any)(streamId, blob)
+      }),
     }
   })
 
@@ -46,7 +63,6 @@ describe('ProtocolVersion1 - decodeMessage', () => {
     context.decoder.decodeRPC.mockImplementation((buffer, ctx) => {
       rpcContext = ctx
       ctx.addStream(55, { type: 'blob/test' })
-      ctx.getStream(55)
       return { ok: Buffer.from(buffer).toString('hex') }
     })
     context.clientStreams.add.mockReturnValue({})
@@ -79,11 +95,7 @@ describe('ProtocolVersion1 - decodeMessage', () => {
     expect(sent[0]).toBe(ServerMessageType.ClientStreamPull)
     expect(sent.readUInt32LE(1)).toBe(55)
     expect(sent.readUInt32LE(5)).toBe(1024)
-    expect(context.clientStreams.get).toHaveBeenCalledWith(55)
-    expect(rpcContext).toMatchObject({
-      addStream: expect.any(Function),
-      getStream: expect.any(Function),
-    })
+    expect(rpcContext).toMatchObject({ addStream: expect.any(Function) })
   })
 
   it('decodes RpcAbort payload', () => {
@@ -180,21 +192,31 @@ describe('ProtocolVersion1 - encodeMessage', () => {
       pause: vi.fn(),
     }
 
+    const clientStreams = { add: vi.fn(), get: vi.fn() }
+    const serverStreams = {
+      add: vi.fn(() => streamMock),
+      get: vi.fn(() => streamMock),
+    }
+
     context = {
       connectionId: 'conn',
       streamId: vi.fn().mockReturnValue(123),
       decoder: { decodeRPC: vi.fn() },
       encoder: { encode: vi.fn(), encodeRPC: vi.fn() },
       rpcs: new Map(),
-      serverStreams: {
-        add: vi.fn(() => streamMock),
-        get: vi.fn(() => streamMock),
-      },
-      clientStreams: { add: vi.fn(), get: vi.fn() },
+      serverStreams,
+      clientStreams,
       transport: { send: vi.fn() },
       container: {},
       protocol: version,
       __streamHandlers: streamHandlers,
+      addClientStream: vi.fn(({ streamId, metadata, pull }) => {
+        const stream = (clientStreams.add as any)(streamId, metadata, pull)
+        return () => stream
+      }),
+      addServerStream: vi.fn(({ streamId, blob }) => {
+        return (serverStreams.add as any)(streamId, blob)
+      }),
     }
   })
 
@@ -203,7 +225,6 @@ describe('ProtocolVersion1 - encodeMessage', () => {
   it('encodes RPC response success path', () => {
     context.encoder.encodeRPC.mockImplementation((_result, rpcContext) => {
       rpcContext.addStream({ metadata: { type: 'test' }, source: {} } as any)
-      rpcContext.getStream(123)
       return Buffer.from([0xaa])
     })
 

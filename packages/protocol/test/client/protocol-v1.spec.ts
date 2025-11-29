@@ -38,7 +38,6 @@ describe('ProtocolVersion1 (client) - decodeMessage', () => {
     context.serverStreams.get.mockReturnValue({})
     context.decoder.decodeRPC.mockImplementation((_payload, rpcContext) => {
       rpcContext.addStream(42, { type: 'blob/test' })
-      rpcContext.getStream(42)
       return { ok: true }
     })
 
@@ -215,8 +214,7 @@ describe('ProtocolVersion1 (client) - encodeMessage', () => {
     context.clientStreams.get.mockReturnValue(blob)
     context.encoder.encodeRPC.mockImplementation((_payload, rpcContext) => {
       rpcContext.addStream(blob)
-      rpcContext.getStream(77)
-      return { buffer: Uint8Array.from([0xcc]), streams: {} }
+      return Uint8Array.from([0xcc])
     })
 
     const buffer = toBuffer(

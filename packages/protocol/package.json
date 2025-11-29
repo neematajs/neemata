@@ -21,10 +21,12 @@
   },
   "dependencies": {
     "@nmtjs/common": "workspace:*",
-    "@nmtjs/core": "workspace:*",
     "@nmtjs/type": "workspace:*",
     "@nmtjs/contract": "workspace:*",
     "hookable": "6.0.0-rc.1"
+  },
+  "devDependencies": {
+    "@nmtjs/core": "workspace:*"
   },
   "peerDependencies": {
     "@nmtjs/common": "workspace:*",

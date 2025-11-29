@@ -1,8 +1,7 @@
+// export * from './streams.ts'
 export * from './format.ts'
 export * from './protocol.ts'
 export * from './stream.ts'
-export * from './stream.ts'
-export * from './streams.ts'
 export * from './types.ts'
 export * from './utils.ts'
 

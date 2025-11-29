@@ -1,9 +1,9 @@
 import type { ServerMessageTypePayload } from '../protocol.ts'
 import type { MessageContext } from '../utils.ts'
-import { encodeNumber } from '../../common/binary.ts'
+import { encodeNumber, encodeText } from '../../common/binary.ts'
 import {
   ClientMessageType,
-  Lengths,
+  MessageByteLength,
   ProtocolVersion,
   ServerMessageType,
 } from '../../common/enums.ts'
@@ -13,12 +13,15 @@ export class ProtocolVersion1 extends ProtocolVersionInterface {
   version = ProtocolVersion.v1
   decodeMessage(context: MessageContext, buffer: Buffer) {
     const messageType = buffer.readUint8(0)
-    const messagePayload = buffer.subarray(Lengths.MessageType)
+    const messagePayload = buffer.subarray(MessageByteLength.MessageType)
     switch (messageType) {
       case ClientMessageType.Rpc: {
         const callId = messagePayload.readUint32LE(0)
-        const procedureLength = messagePayload.readUInt16LE(Lengths.CallId)
-        const procedureOffset = Lengths.CallId + Lengths.Procedure
+        const procedureLength = messagePayload.readUInt16LE(
+          MessageByteLength.CallId,
+        )
+        const procedureOffset =
+          MessageByteLength.CallId + MessageByteLength.ProcedureLength
         const procedure = messagePayload.toString(
           'utf-8',
           procedureOffset,
@@ -33,39 +36,63 @@ export class ProtocolVersion1 extends ProtocolVersionInterface {
               callId,
               streamId,
               metadata,
-              pull: (size) => {
-                context.transport.send?.(
-                  context.connectionId,
-                  this.encodeMessage(
-                    context,
-                    ServerMessageType.ClientStreamPull,
-                    { size, streamId },
-                  ),
-                )
-              },
+              // pull: (size) => {
+              //   context.transport.send?.(
+              //     context.connectionId,
+              //     this.encodeMessage(
+              //       context,
+              //       ServerMessageType.ClientStreamPull,
+              //       { size, streamId },
+              //     ),
+              //   )
+              // },
             })
           },
         })
         return { type: messageType, rpc: { callId, procedure, payload } }
       }
       case ClientMessageType.RpcAbort: {
-        return { type: messageType, callId: messagePayload.readUInt32LE(0) }
+        const callId = messagePayload.readUInt32LE(0)
+        const reasonPayload = messagePayload.subarray(MessageByteLength.CallId)
+        const reason =
+          reasonPayload.byteLength > 0
+            ? (context.decoder.decode(reasonPayload) as string)
+            : undefined
+        return { type: messageType, callId, reason }
       }
       case ClientMessageType.ServerStreamAbort: {
-        return { type: messageType, streamId: messagePayload.readUInt32LE(0) }
+        const streamId = messagePayload.readUInt32LE(0)
+        const reasonPayload = messagePayload.subarray(
+          MessageByteLength.StreamId,
+        )
+        const reason =
+          reasonPayload.byteLength > 0
+            ? (context.decoder.decode(reasonPayload) as string)
+            : undefined
+        return { type: messageType, streamId, reason }
       }
       case ClientMessageType.ServerStreamPull: {
         const streamId = messagePayload.readUInt32LE(0)
-        const size = messagePayload.readUInt32LE(Lengths.StreamId)
+        const size = messagePayload.readUInt32LE(MessageByteLength.StreamId)
         return { type: messageType, streamId, size }
       }
-      case ClientMessageType.ClientStreamAbort:
+      case ClientMessageType.ClientStreamAbort: {
+        const streamId = messagePayload.readUInt32LE(0)
+        const reasonPayload = messagePayload.subarray(
+          MessageByteLength.StreamId,
+        )
+        const reason =
+          reasonPayload.byteLength > 0
+            ? (context.decoder.decode(reasonPayload) as string)
+            : undefined
+        return { type: messageType, streamId, reason }
+      }
       case ClientMessageType.ClientStreamEnd: {
         return { type: messageType, streamId: messagePayload.readUInt32LE(0) }
       }
       case ClientMessageType.ClientStreamPush: {
         const streamId = messagePayload.readUInt32LE(0)
-        const chunk = messagePayload.subarray(Lengths.StreamId)
+        const chunk = messagePayload.subarray(MessageByteLength.StreamId)
         return { type: messageType, streamId, chunk }
       }
 
@@ -100,51 +127,7 @@ export class ProtocolVersion1 extends ProtocolVersionInterface {
             : context.encoder.encodeRPC(result, {
                 addStream: (blob) => {
                   const streamId = context.streamId()
-                  const stream = context.addServerStream({
-                    callId,
-                    streamId,
-                    blob,
-                  })
-                  stream.on('data', (chunk) => {
-                    stream.pause()
-                    const buf = Buffer.from(chunk)
-                    context.transport.send?.(
-                      context.connectionId,
-                      this.encode(
-                        encodeNumber(
-                          ServerMessageType.ServerStreamPush,
-                          'Uint8',
-                        ),
-                        encodeNumber(streamId, 'Uint32'),
-                        buf,
-                      ),
-                    )
-                  })
-                  stream.on('error', () => {
-                    context.transport.send?.(
-                      context.connectionId,
-                      this.encode(
-                        encodeNumber(
-                          ServerMessageType.ServerStreamAbort,
-                          'Uint8',
-                        ),
-                        encodeNumber(streamId, 'Uint32'),
-                      ),
-                    )
-                  })
-                  stream.on('end', () => {
-                    context.transport.send?.(
-                      context.connectionId,
-                      this.encode(
-                        encodeNumber(
-                          ServerMessageType.ServerStreamEnd,
-                          'Uint8',
-                        ),
-                        encodeNumber(streamId, 'Uint32'),
-                      ),
-                    )
-                  })
-                  return stream
+                  return context.addServerStream({ callId, streamId, blob })
                 },
               }),
         )
@@ -175,11 +158,12 @@ export class ProtocolVersion1 extends ProtocolVersionInterface {
         )
       }
       case ServerMessageType.RpcStreamAbort: {
-        const { callId } =
+        const { callId, reason } =
           payload as ServerMessageTypePayload[ServerMessageType.RpcStreamAbort]
         return this.encode(
           encodeNumber(messageType, 'Uint8'),
           encodeNumber(callId, 'Uint32'),
+          reason ? encodeText(reason) : Buffer.alloc(0),
         )
       }
       case ServerMessageType.ClientStreamPull: {
@@ -192,11 +176,12 @@ export class ProtocolVersion1 extends ProtocolVersionInterface {
         )
       }
       case ServerMessageType.ClientStreamAbort: {
-        const { streamId } =
+        const { streamId, reason } =
           payload as ServerMessageTypePayload[ServerMessageType.ClientStreamAbort]
         return this.encode(
           encodeNumber(messageType, 'Uint8'),
           encodeNumber(streamId, 'Uint32'),
+          reason ? encodeText(reason) : Buffer.alloc(0),
         )
       }
       case ServerMessageType.ServerStreamPush: {
@@ -217,11 +202,12 @@ export class ProtocolVersion1 extends ProtocolVersionInterface {
         )
       }
       case ServerMessageType.ServerStreamAbort: {
-        const { streamId } =
+        const { streamId, reason } =
           payload as ServerMessageTypePayload[ServerMessageType.ServerStreamAbort]
         return this.encode(
           encodeNumber(messageType, 'Uint8'),
           encodeNumber(streamId, 'Uint32'),
+          reason ? encodeText(reason) : Buffer.alloc(0),
         )
       }
 
