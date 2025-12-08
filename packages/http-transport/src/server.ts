@@ -6,8 +6,7 @@ import type {
   TransportWorker,
   TransportWorkerParams,
 } from '@nmtjs/gateway'
-import type { Peer } from 'crossws'
-import { isAbortError, isAsyncIterable } from '@nmtjs/common'
+import { anyAbortSignal, isAbortError, isAsyncIterable } from '@nmtjs/common'
 import { provide } from '@nmtjs/core'
 import {
   ConnectionType,
@@ -89,7 +88,6 @@ export class HttpTransportServer
     | ((origin: string) => boolean | HttpTransportCorsOptions)
 
   params!: TransportWorkerParams<ConnectionType.Unidirectional>
-  clients = new Map<string, Peer>()
 
   constructor(
     protected readonly adapterFactory: HttpAdapterServerFactory<any>,
@@ -129,7 +127,7 @@ export class HttpTransportServer
     }
 
     const controller = new AbortController()
-    const signal = AbortSignal.any([requestSignal, controller.signal])
+    const signal = anyAbortSignal(requestSignal, controller.signal)
     const canHaveBody = method !== 'get'
     const isBlob = request.headers.get(NEEMATA_BLOB_HEADER) === 'true'
     const contentType = request.headers.get('content-type')
@@ -163,6 +161,11 @@ export class HttpTransportServer
           if (buffer.byteLength > 0) {
             payload = connection.decoder.decode(buffer)
           }
+        }
+      } else {
+        const querystring = url.searchParams.get('payload')
+        if (querystring) {
+          payload = JSON.parse(querystring)
         }
       }
 
@@ -253,6 +256,7 @@ export class HttpTransportServer
         })
       }
     } catch (error) {
+      console.error(error)
       if (error instanceof UnsupportedFormatError) {
         const status =
           error instanceof UnsupportedContentTypeError

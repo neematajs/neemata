@@ -55,7 +55,7 @@ export class JobsScheduler {
           if (job.options.queue !== queueName) continue
           await queue.add(job.name, data, {
             repeat: { pattern: cron },
-            attempts: job.options.attemts,
+            attempts: job.options.attempts,
             backoff: job.options.backoff,
           })
         }

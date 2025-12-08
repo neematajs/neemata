@@ -10,6 +10,8 @@ import type {
   WorkerJobTask,
 } from '../types.ts'
 
+const omitExecArgv = ['--expose-gc']
+
 export type ThreadState =
   | 'starting'
   | 'error'
@@ -40,7 +42,7 @@ export class Thread extends EventEmitter<
     super()
     this.worker = new Worker(workerPath, {
       ...workerOptions,
-      execArgv: process.execArgv,
+      execArgv: process.execArgv.filter((f) => !omitExecArgv.includes(f)),
     })
 
     const handler = (msg: ThreadPortMessage) => {
@@ -62,6 +64,7 @@ export class Thread extends EventEmitter<
       case 'starting':
         throw new Error('Cannot start worker thread in current state')
       case 'pending': {
+        // TODO: make timeout configurable
         const signal = AbortSignal.timeout(15000)
         try {
           await once(this, 'ready', { signal })
@@ -83,15 +86,15 @@ export class Thread extends EventEmitter<
       case 'error':
       case 'terminating':
       case 'starting':
-        throw new Error('Cannot stop worker thread in error state')
+        throw new Error('Cannot stop worker thread in this state')
       case 'ready':
       case 'pending': {
         this.state = 'terminating'
+        // TODO: make timeout configurable
         const signal = AbortSignal.timeout(10000)
-        const exit = once(this.worker, 'exit', { signal }).finally(() => {
-          console.log('here')
-        })
+        const exit = once(this.worker, 'exit', { signal })
         this.send('stop')
+        this.port.close()
         try {
           await exit
         } catch (err) {
@@ -99,9 +102,7 @@ export class Thread extends EventEmitter<
           console.warn(
             `Worker thread ${this.worker.threadId} did not terminate in time, terminating forcefully...`,
           )
-          this.worker.terminate()
-        } finally {
-          console.log('finally here')
+          await this.worker.terminate()
         }
       }
     }
@@ -127,10 +128,16 @@ export class Pool extends EventEmitter<{
   workerReady: [worker: Worker]
   workerTaskResult: [worker: Worker]
 }> {
-  protected readonly threadsPool: Thread[] = []
+  protected readonly threads: Thread[] = []
   protected runIndex = 0
 
-  constructor(readonly options: { filename: string; workerData?: any }) {
+  constructor(
+    readonly options: {
+      filename: string
+      workerData?: any
+      worker?: (worker: Worker) => any
+    },
+  ) {
     super()
   }
 
@@ -139,18 +146,18 @@ export class Pool extends EventEmitter<{
   }
 
   async start() {
-    await Promise.all(this.threadsPool.map((thread) => thread.start()))
+    await Promise.all(this.threads.map((thread) => thread.start()))
   }
 
   async stop() {
-    await Promise.all(this.threadsPool.map((thread) => thread.stop()))
+    await Promise.all(this.threads.map((thread) => thread.stop()))
   }
 
   async run(task: WorkerJobTask) {
-    if (this.runIndex >= this.threadsPool.length) {
+    if (this.runIndex >= this.threads.length) {
       this.runIndex = 0
     }
-    const thread = this.threadsPool[this.runIndex]
+    const thread = this.threads[this.runIndex]
     this.runIndex++
     const [result] = await thread.run(task)
     return result
@@ -171,10 +178,11 @@ export class Pool extends EventEmitter<{
       transferList: [port2],
     })
     if (index !== undefined) {
-      this.threadsPool[index] = thread
+      this.threads[index] = thread
     } else {
-      index = this.threadsPool.push(thread) - 1
+      index = this.threads.push(thread) - 1
     }
+    this.options.worker?.(thread.worker)
     thread.once('error', (error) => {
       thread.worker.terminate()
       this.createThread(options)

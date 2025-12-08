@@ -5,13 +5,14 @@ export enum ProtocolVersion {
 export enum ClientMessageType {
   Rpc = 10,
   RpcAbort = 11,
+  RpcPull = 12,
 
   ClientStreamPush = 20,
   ClientStreamEnd = 21,
   ClientStreamAbort = 22,
 
-  ServerStreamAbort = 23,
-  ServerStreamPull = 24,
+  ServerStreamAbort = 33,
+  ServerStreamPull = 34,
 }
 
 export enum ServerMessageType {
@@ -27,8 +28,8 @@ export enum ServerMessageType {
   ServerStreamEnd = 21,
   ServerStreamAbort = 22,
 
-  ClientStreamAbort = 23,
-  ClientStreamPull = 24,
+  ClientStreamAbort = 33,
+  ClientStreamPull = 34,
 }
 
 export enum ConnectionType {

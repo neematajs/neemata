@@ -5,7 +5,7 @@ import type {
 } from '@nmtjs/contract'
 import { IsProcedureContract, IsRouterContract } from '@nmtjs/contract'
 
-import type { BaseClientOptions } from '../common.ts'
+import type { BaseClientOptions } from '../core.ts'
 import type { ClientTransportFactory } from '../transport.ts'
 import type {
   ClientCallers,
@@ -13,7 +13,7 @@ import type {
   RuntimeInputContractTypeProvider,
   RuntimeOutputContractTypeProvider,
 } from '../types.ts'
-import { BaseClient } from '../common.ts'
+import { BaseClient } from '../core.ts'
 
 export class RuntimeContractTransformer {
   #procedures = new Map<string, TAnyProcedureContract>()
@@ -59,9 +59,10 @@ export class RuntimeClient<
   RuntimeInputContractTypeProvider,
   RuntimeOutputContractTypeProvider
 > {
-  protected transformer: RuntimeContractTransformer
-  protected procedures = new Map<string, TAnyProcedureContract>()
-  #_callers!: ClientCallers<this['_']['routes'], SafeCall, boolean>
+  protected readonly transformer: RuntimeContractTransformer
+
+  readonly #procedures = new Map<string, TAnyProcedureContract>()
+  readonly #callers!: ClientCallers<this['_']['routes'], SafeCall, boolean>
 
   constructor(
     options: BaseClientOptions<RouterContract, SafeCall>,
@@ -77,15 +78,15 @@ export class RuntimeClient<
 
     this.resolveProcedures(this.options.contract)
     this.transformer = new RuntimeContractTransformer(this.options.contract)
-    this.#_callers = this.buildCallers()
+    this.#callers = this.buildCallers()
   }
 
   override get call() {
-    return this.#_callers as ClientCallers<this['_']['routes'], SafeCall, false>
+    return this.#callers as ClientCallers<this['_']['routes'], SafeCall, false>
   }
 
   override get stream() {
-    return this.#_callers as ClientCallers<this['_']['routes'], SafeCall, true>
+    return this.#callers as ClientCallers<this['_']['routes'], SafeCall, true>
   }
 
   protected resolveProcedures(router: TAnyRouterContract, path: string[] = []) {
@@ -94,7 +95,7 @@ export class RuntimeClient<
         this.resolveProcedures(route, [...path, key])
       } else if (IsProcedureContract(route)) {
         const fullName = [...path, key].join('/')
-        this.procedures.set(fullName, route)
+        this.#procedures.set(fullName, route)
       }
     }
   }
@@ -106,7 +107,7 @@ export class RuntimeClient<
   > {
     const callers: Record<string, any> = Object.create(null)
 
-    for (const [name, { stream }] of this.procedures) {
+    for (const [name, { stream }] of this.#procedures) {
       const parts = name.split('/')
       let current = callers
       for (let i = 0; i < parts.length; i++) {

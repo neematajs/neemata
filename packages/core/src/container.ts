@@ -1,3 +1,4 @@
+import type { PerformanceMeasure } from 'node:perf_hooks'
 import assert from 'node:assert'
 
 import { tryCaptureStackTrace } from '@nmtjs/common'
@@ -78,9 +79,18 @@ export class Container {
     return new Container(this.runtime, scope, this)
   }
 
+  find(scope: Exclude<Scope, Scope.Transient>): Container | undefined {
+    if (this.scope === scope) {
+      return this
+    } else {
+      return this.parent?.find(scope)
+    }
+  }
+
   async [Symbol.asyncDispose]() {
     await this.dispose()
   }
+
   async dispose() {
     this.runtime.logger.trace('Disposing [%s] scope context...', this.scope)
 
@@ -367,7 +377,12 @@ export class Container {
     const inject = <T extends AnyInjectable>(
       injectable: T,
       context: InlineInjectionDependencies<T>,
+      scope: Exclude<Scope, Scope.Transient> = this.scope,
     ) => {
+      const container = this.find(scope)
+      if (!container)
+        throw new Error('No container found for the specified scope')
+
       const dependencies: Dependencies = { ...injectable.dependencies }
 
       for (const key in context) {
@@ -386,25 +401,35 @@ export class Container {
         stack: tryCaptureStackTrace(1),
       }
 
-      return this.resolve(newInjectable) as Promise<ResolveInjectableType<T>>
+      return container.resolve(newInjectable) as Promise<
+        ResolveInjectableType<T>
+      >
     }
 
     const explicit = async <T extends AnyInjectable>(
       injectable: T,
       context: InlineInjectionDependencies<T>,
+      scope: Exclude<Scope, Scope.Transient> = this.scope,
     ) => {
       if ('asyncDispose' in Symbol === false) {
         throw new Error(
           'Symbol.asyncDispose is not supported in this environment',
         )
       }
+
+      const container = this.find(scope)
+      if (!container)
+        throw new Error('No container found for the specified scope')
+
       const instance = await inject(injectable, context)
-      const dispose = this.createDisposeFunction()
-      return Object.assign(instance, {
+      const dispose = container.createDisposeFunction()
+
+      return {
+        instance,
         [Symbol.asyncDispose]: async () => {
           await dispose(injectable, instance)
         },
-      })
+      }
     }
 
     return Object.assign(inject, { explicit })

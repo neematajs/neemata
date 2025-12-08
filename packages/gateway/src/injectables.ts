@@ -1,10 +1,18 @@
+import type { Readable } from 'node:stream'
+
+import type {
+  ProtocolBlobInterface,
+  ProtocolBlobMetadata,
+} from '@nmtjs/protocol'
+import { anyAbortSignal } from '@nmtjs/common'
 import {
   createFactoryInjectable,
   createLazyInjectable,
+  createOptionalInjectable,
   Scope,
 } from '@nmtjs/core'
 
-import type { GatewayConnection } from './connection.ts'
+import type { GatewayConnection } from './connections.ts'
 
 export const connection = createLazyInjectable<
   GatewayConnection,
@@ -31,19 +39,39 @@ export const rpcClientAbortSignal = createLazyInjectable<
   Scope.Call
 >(Scope.Call, 'RPC client abort signal')
 
-export const rpcTimeoutSignal = createLazyInjectable<AbortSignal, Scope.Call>(
-  Scope.Call,
-  'RPC timeout signal',
-)
+export const rpcStreamAbortSignal = createLazyInjectable<
+  AbortSignal,
+  Scope.Call
+>(Scope.Call, 'RPC stream abort signal')
 
 export const rpcAbortSignal = createFactoryInjectable(
   {
     dependencies: {
-      rpcTimeoutSignal,
       rpcClientAbortSignal,
       connectionAbortSignal,
+      rpcStreamAbortSignal: createOptionalInjectable(rpcStreamAbortSignal),
     },
-    factory: (ctx) => AbortSignal.any(Object.values(ctx)),
+    factory: (ctx) =>
+      anyAbortSignal(
+        ctx.rpcClientAbortSignal,
+        ctx.connectionAbortSignal,
+        ctx.rpcStreamAbortSignal,
+      ),
   },
   'Any RPC abort signal',
 )
+
+export const createBlob = createLazyInjectable<
+  (
+    source:
+      | Readable
+      | globalThis.ReadableStream
+      | File
+      | Blob
+      | string
+      | ArrayBuffer
+      | Uint8Array,
+    metadata?: ProtocolBlobMetadata,
+  ) => ProtocolBlobInterface,
+  Scope.Call
+>(Scope.Call, 'Create RPC blob')

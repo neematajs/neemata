@@ -76,6 +76,7 @@ export interface LazyInjectable<T, S extends Scope = Scope.Global>
   extends Dependant<{}> {
   scope: S
   $withType<O extends T>(): LazyInjectable<O, S>
+  optional(): DependencyOptional<LazyInjectable<T, S>>
   [kInjectable]: any
   [kLazyInjectable]: T
 }
@@ -97,6 +98,7 @@ export interface FactoryInjectable<
   factory: InjectableFactoryType<P, D>
   pick: InjectablePickType<P, T>
   dispose?: InjectableDisposeType<P, D>
+  optional(): DependencyOptional<FactoryInjectable<T, D, S, P>>
   [kInjectable]: any
   [kFactoryInjectable]: any
 }
@@ -179,6 +181,7 @@ export function createLazyInjectable<T, S extends Scope = Scope.Global>(
     dependencies: {},
     label,
     stack: tryCaptureStackTrace(stackTraceDepth),
+    optional: () => createOptionalInjectable(injectable),
     $withType: () => injectable as any,
     [kInjectable]: true,
     [kLazyInjectable]: true as unknown as T,
@@ -230,6 +233,7 @@ export function createFactoryInjectable<
     pick: params.pick ?? ((instance: P) => instance as unknown as T),
     label,
     stack: tryCaptureStackTrace(stackTraceDepth),
+    optional: () => createOptionalInjectable(injectable),
     [kInjectable]: true,
     [kFactoryInjectable]: true,
   }

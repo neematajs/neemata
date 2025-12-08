@@ -1,91 +1,123 @@
-import type { DecodeRPCContext, EncodeRPCContext } from '@nmtjs/protocol'
-import type { ProtocolServerBlobStream } from '@nmtjs/protocol/client'
-import { decodeText, encodeText, ProtocolBlob } from '@nmtjs/protocol'
+// ./ <reference lib="dom" />
+
+import type { DecodeRPCContext, EncodeRPCStreams } from '@nmtjs/protocol'
+import type {
+  EncodeRPCContext,
+  ProtocolClientBlobStream,
+  ProtocolServerBlobStream,
+} from '@nmtjs/protocol/client'
+import {
+  concat,
+  decodeNumber,
+  decodeText,
+  encodeNumber,
+  encodeText,
+  ProtocolBlob,
+} from '@nmtjs/protocol'
 import { BaseClientFormat } from '@nmtjs/protocol/client'
 
-import type {
-  ClientEncodedRPC,
-  ServerEncodedRPC,
-  StreamsMetadata,
-} from './common.ts'
 import { deserializeStreamId, isStreamId, serializeStreamId } from './common.ts'
 
 /**
  * Custom JSON encoding format with support for Neemata streams.
  */
 export class JsonFormat extends BaseClientFormat {
-  contentType = 'application/x-neemata-json'
+  contentType = 'application/json'
 
-  encode(data: any): ArrayBufferView {
-    return encodeText(JSON.stringify(data))
+  encode(
+    data: any,
+    _replacer?: (key: string, value: any) => any,
+  ): ArrayBufferView {
+    return encodeText(JSON.stringify(data, _replacer))
   }
 
-  encodeRPC(data: unknown, context: EncodeRPCContext) {
-    // const streamsMetadata: StreamsMetadata = {}
-    const streams: StreamsMetadata = {}
-    const replacer = (_key: string, value: any) => {
+  encodeRPC(
+    data: unknown,
+    context: EncodeRPCContext<ProtocolClientBlobStream>,
+  ) {
+    const buffers: (ArrayBufferView | ArrayBuffer)[] = []
+    const streams: EncodeRPCStreams = {}
+    let hasStreams = false
+
+    let payloadBuffer: ArrayBufferView | undefined
+    let streamsBuffer: ArrayBufferView
+
+    function _replacer(_key: string, value: any) {
       if (value instanceof ProtocolBlob) {
+        hasStreams = true
         const stream = context.addStream(value)
         streams[stream.id] = stream.metadata
         return serializeStreamId(stream.id)
       }
       return value
     }
-    const payload =
-      typeof data === 'undefined' ? undefined : JSON.stringify(data, replacer)
 
-    const buffer =
-      typeof payload === 'undefined'
-        ? this.encode([streams] satisfies ClientEncodedRPC)
-        : this.encode([streams, payload] satisfies ClientEncodedRPC)
+    if (typeof data !== 'undefined') {
+      payloadBuffer = this.encode(data, _replacer)
+    }
 
-    return buffer
+    if (hasStreams) {
+      streamsBuffer = this.encode(streams)
+      buffers.push(
+        encodeNumber(streamsBuffer.byteLength, 'Uint32'),
+        streamsBuffer,
+      )
+    } else {
+      buffers.push(encodeNumber(0, 'Uint32'))
+    }
+
+    if (typeof payloadBuffer !== 'undefined') {
+      buffers.push(payloadBuffer)
+    }
+
+    return concat(...buffers)
   }
 
-  decode(data: ArrayBufferView): any {
-    return JSON.parse(decodeText(data))
+  decode(
+    data: ArrayBufferView,
+    _reviver?: (key: string, value: any) => any,
+  ): any {
+    return JSON.parse(decodeText(data), _reviver)
   }
 
-  decodeRPC(buffer: ArrayBufferView, context: DecodeRPCContext) {
-    const streams: Record<number, ProtocolServerBlobStream> = {}
-    const [streamsMetadata, payload]: ServerEncodedRPC = this.decode(buffer)
+  decodeRPC(
+    _buffer: ArrayBufferView,
+    context: DecodeRPCContext<
+      (options?: { signal?: AbortSignal }) => ProtocolServerBlobStream
+    >,
+  ) {
+    const buffer = new Uint8Array(
+      _buffer.buffer,
+      _buffer.byteOffset,
+      _buffer.byteLength,
+    )
+    const streamsLength = Number(decodeNumber(buffer, 'Uint32'))
+    const hasStreams = streamsLength > 0
+    const payloadBuffer = buffer.subarray(
+      Uint32Array.BYTES_PER_ELEMENT + streamsLength,
+    )
+    const hasPayload = payloadBuffer.byteLength > 0
+
+    const streams = hasStreams
+      ? (this.decode(
+          buffer.subarray(
+            Uint32Array.BYTES_PER_ELEMENT,
+            Uint32Array.BYTES_PER_ELEMENT + streamsLength,
+          ),
+        ) as EncodeRPCStreams)
+      : {}
+
     const replacer = (_key: string, value: any) => {
       if (typeof value === 'string' && isStreamId(value)) {
         const id = deserializeStreamId(value)
-        const metadata = streamsMetadata[id]
-        const stream = context.addStream(id, metadata)
-        streams[id] = stream
-        return stream
+        const metadata = streams[id]
+        return context.addStream(id, metadata)
       }
       return value
     }
-    const decoded =
-      typeof payload === 'undefined' ? undefined : JSON.parse(payload, replacer)
 
-    return decoded
-  }
-}
-
-/**
- * Standard JSON encoding format with no Neemata streams support.
- */
-export class StandardJsonFormat extends BaseClientFormat {
-  contentType = 'application/json'
-
-  encode(data: any) {
-    return encodeText(JSON.stringify(data))
-  }
-
-  encodeRPC(data: unknown) {
-    const buffer = this.encode(data)
-    return buffer
-  }
-
-  decode(data: ArrayBufferView) {
-    return JSON.parse(decodeText(data))
-  }
-
-  decodeRPC(buffer: ArrayBufferView) {
-    return this.decode(buffer)
+    if (typeof hasPayload === 'undefined') return undefined
+    else if (hasStreams) return this.decode(payloadBuffer, replacer)
+    else return this.decode(payloadBuffer)
   }
 }

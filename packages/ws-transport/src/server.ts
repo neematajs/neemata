@@ -142,9 +142,7 @@ export class WsTransportServer
       close: async (peer) => {
         this.clients.delete(peer.context.connectionId)
         try {
-          await this.params.onDisconnect({
-            connectionId: peer.context.connectionId,
-          })
+          await this.params.onDisconnect(peer.context.connectionId)
         } catch (error) {
           console.error(
             `Failed to dispose WebSocket connection ${peer.context.connectionId}`,

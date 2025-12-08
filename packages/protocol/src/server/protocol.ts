@@ -3,8 +3,8 @@ import type {
   ProtocolVersion,
   ServerMessageType,
 } from '../common/enums.ts'
-import type { BaseProtocolError } from '../common/types.ts'
-import type { MessageContext } from './utils.ts'
+import type { BaseProtocolError, EncodeRPCStreams } from '../common/types.ts'
+import type { MessageContext } from './types.ts'
 import { concat } from '../common/binary.ts'
 
 export class ProtocolError extends Error implements BaseProtocolError {
@@ -58,6 +58,7 @@ export type ServerMessageTypePayload = {
   [ServerMessageType.RpcResponse]: {
     callId: number
     result: any
+    streams: EncodeRPCStreams
     error: any | null
   }
   [ServerMessageType.RpcStreamAbort]: { callId: number; reason?: string }
@@ -76,8 +77,14 @@ export type ServerMessageTypePayload = {
 
 export type ClientMessageTypePayload = {
   [ClientMessageType.Rpc]: {
-    rpc: { callId: number; procedure: string; payload: unknown }
+    rpc: {
+      callId: number
+      procedure: string
+      payload: unknown
+      streams?: EncodeRPCStreams
+    }
   }
+  [ClientMessageType.RpcPull]: { callId: number }
   [ClientMessageType.RpcAbort]: { callId: number; reason?: string }
   [ClientMessageType.ClientStreamPush]: {
     streamId: number

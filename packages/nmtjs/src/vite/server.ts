@@ -1,18 +1,20 @@
-import type { UserConfig } from 'vite'
+import type { DevEnvironmentOptions, UserConfig } from 'vite'
 import { createServer as createViteServer } from 'vite'
 
 import type { ViteConfigOptions } from './config.ts'
 
-export function createServer(options: ViteConfigOptions, config: UserConfig) {
+export function createServer(
+  options: ViteConfigOptions,
+  config: UserConfig,
+  dev: DevEnvironmentOptions = {},
+) {
   return createViteServer({
     ...config,
     server: { middlewareMode: true, ws: false },
-    logLevel: 'error',
-
     environments: {
-      server: {
+      neemata: {
         consumer: 'server',
-        dev: {},
+        dev,
         define: {
           __VITE_CONFIG__: JSON.stringify(
             JSON.stringify({ options, mode: config.mode }),

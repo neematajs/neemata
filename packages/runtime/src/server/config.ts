@@ -5,7 +5,7 @@ import type { Applications, StoreTypeOptions } from '@nmtjs/runtime/types'
 
 import type { ApplicationConfig } from '../application/config.ts'
 import type { JobWorkerQueue, StoreType } from '../enums.ts'
-import type { Job } from '../jobs/job.ts'
+import type { AnyJob, Job } from '../jobs/job.ts'
 import type { PubSubAdapterType } from '../pubsub/index.ts'
 import type { JobsSchedulerOptions } from '../scheduler/index.ts'
 import { kServerConfig } from '../constants.ts'
@@ -64,7 +64,8 @@ export interface ServerConfig {
     tls?: { key: string; cert: string }
   }
   jobs?: {
-    jobs: Job[]
+    ui?: { hostname?: string; port?: number }
+    jobs: AnyJob[]
     queues: {
       [JobWorkerQueue.Io]: ServerPoolOptions
       [JobWorkerQueue.Compute]: ServerPoolOptions

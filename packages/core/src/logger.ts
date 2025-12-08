@@ -1,21 +1,21 @@
 import { threadId } from 'node:worker_threads'
 
-import type {
-  DestinationStream,
-  Level,
-  LoggerOptions,
-  Logger as PinoLogger,
-  StreamEntry,
-} from 'pino'
+import type * as pinoType from 'pino'
 import { pino, stdTimeFunctions } from 'pino'
 import { build as pretty } from 'pino-pretty'
 
 export type { StreamEntry } from 'pino'
-export type Logger = PinoLogger
+export type Logger = pinoType.Logger
+export type LoggerOptions = pinoType.LoggerOptions
+export type LoggerChildOptions = pinoType.ChildLoggerOptions
 export type LoggingOptions = {
-  destinations?: Array<DestinationStream | StreamEntry<Level>>
+  destinations?: Array<
+    pinoType.DestinationStream | pinoType.StreamEntry<pinoType.Level>
+  >
   pinoOptions?: LoggerOptions
 }
+
+import { errWithCause } from 'pino-std-serializers'
 
 // TODO: use node:util inspect
 const bg = (value, color) => `\x1b[${color}m${value}\x1b[0m`
@@ -55,8 +55,9 @@ export const createLogger = (options: LoggingOptions = {}, $lable: string) => {
 
   if (!destinations || !destinations?.length) {
     destinations = [
-      //@ts-expect-error
-      createConsolePrettyDestination(options.pinoOptions?.level || 'info'),
+      createConsolePrettyDestination(
+        (options.pinoOptions?.level || 'info') as pinoType.Level,
+      ),
     ]
   }
 
@@ -71,16 +72,18 @@ export const createLogger = (options: LoggingOptions = {}, $lable: string) => {
     Number.POSITIVE_INFINITY,
   )
   const level = pino.levels.labels[lowestLevelValue]
+  const serializers = { ...pinoOptions?.serializers, err: errWithCause }
+
   return pino(
-    { timestamp: stdTimeFunctions.isoTime, ...pinoOptions, level },
+    { timestamp: stdTimeFunctions.isoTime, ...pinoOptions, level, serializers },
     pino.multistream(destinations!),
   ).child({ $lable, $threadId: threadId })
 }
 
 export const createConsolePrettyDestination = (
-  level: Level,
+  level: pinoType.Level,
   sync = true,
-): StreamEntry => ({
+): pinoType.StreamEntry => ({
   level,
   stream: pretty({
     colorize: true,

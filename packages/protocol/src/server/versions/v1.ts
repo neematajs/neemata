@@ -1,6 +1,6 @@
 import type { ServerMessageTypePayload } from '../protocol.ts'
-import type { MessageContext } from '../utils.ts'
-import { encodeNumber, encodeText } from '../../common/binary.ts'
+import type { MessageContext } from '../types.ts'
+import { decodeText, encodeNumber, encodeText } from '../../common/binary.ts'
 import {
   ClientMessageType,
   MessageByteLength,
@@ -32,32 +32,21 @@ export class ProtocolVersion1 extends ProtocolVersionInterface {
         )
         const payload = context.decoder.decodeRPC(formatPayload, {
           addStream: (streamId, metadata) => {
-            return context.addClientStream({
-              callId,
-              streamId,
-              metadata,
-              // pull: (size) => {
-              //   context.transport.send?.(
-              //     context.connectionId,
-              //     this.encodeMessage(
-              //       context,
-              //       ServerMessageType.ClientStreamPull,
-              //       { size, streamId },
-              //     ),
-              //   )
-              // },
-            })
+            return context.addClientStream({ callId, streamId, metadata })
           },
         })
+
         return { type: messageType, rpc: { callId, procedure, payload } }
+      }
+      case ClientMessageType.RpcPull: {
+        const callId = messagePayload.readUInt32LE(0)
+        return { type: messageType, callId }
       }
       case ClientMessageType.RpcAbort: {
         const callId = messagePayload.readUInt32LE(0)
         const reasonPayload = messagePayload.subarray(MessageByteLength.CallId)
         const reason =
-          reasonPayload.byteLength > 0
-            ? (context.decoder.decode(reasonPayload) as string)
-            : undefined
+          reasonPayload.byteLength > 0 ? decodeText(reasonPayload) : undefined
         return { type: messageType, callId, reason }
       }
       case ClientMessageType.ServerStreamAbort: {
@@ -66,9 +55,7 @@ export class ProtocolVersion1 extends ProtocolVersionInterface {
           MessageByteLength.StreamId,
         )
         const reason =
-          reasonPayload.byteLength > 0
-            ? (context.decoder.decode(reasonPayload) as string)
-            : undefined
+          reasonPayload.byteLength > 0 ? decodeText(reasonPayload) : undefined
         return { type: messageType, streamId, reason }
       }
       case ClientMessageType.ServerStreamPull: {
@@ -82,9 +69,7 @@ export class ProtocolVersion1 extends ProtocolVersionInterface {
           MessageByteLength.StreamId,
         )
         const reason =
-          reasonPayload.byteLength > 0
-            ? (context.decoder.decode(reasonPayload) as string)
-            : undefined
+          reasonPayload.byteLength > 0 ? decodeText(reasonPayload) : undefined
         return { type: messageType, streamId, reason }
       }
       case ClientMessageType.ClientStreamEnd: {
@@ -116,7 +101,7 @@ export class ProtocolVersion1 extends ProtocolVersionInterface {
       //   )
       // }
       case ServerMessageType.RpcResponse: {
-        const { callId, result, error } =
+        const { callId, result, streams, error } =
           payload as ServerMessageTypePayload[ServerMessageType.RpcResponse]
         return this.encode(
           encodeNumber(messageType, 'Uint8'),
@@ -124,12 +109,7 @@ export class ProtocolVersion1 extends ProtocolVersionInterface {
           encodeNumber(error ? 1 : 0, 'Uint8'),
           error
             ? context.encoder.encode(error)
-            : context.encoder.encodeRPC(result, {
-                addStream: (blob) => {
-                  const streamId = context.streamId()
-                  return context.addServerStream({ callId, streamId, blob })
-                },
-              }),
+            : context.encoder.encodeRPC(result, streams),
         )
       }
       case ServerMessageType.RpcStreamResponse: {

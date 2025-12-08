@@ -1,20 +1,11 @@
-import assert from 'node:assert'
-
 import type { Dependant } from '@nmtjs/core'
-import type {
-  GatewayOptions,
-  ProxyableTransportType,
-  Transport,
-  TransportWorker,
-} from '@nmtjs/gateway'
-import { createFactoryInjectable } from '@nmtjs/core'
-import { connectionId, Gateway } from '@nmtjs/gateway'
-import { JsonFormat, StandardJsonFormat } from '@nmtjs/json-format/server'
+import type { GatewayOptions, Transport } from '@nmtjs/gateway'
+import { Gateway } from '@nmtjs/gateway'
+import { JsonFormat } from '@nmtjs/json-format/server'
 import { ProtocolFormats } from '@nmtjs/protocol/server'
 
 import type { ApplicationConfig } from '../application/config.ts'
 import type { ServerConfig } from '../server/config.ts'
-import { isApplicationConfig } from '../application/config.ts'
 import { ApplicationRuntime } from '../application/runtime.ts'
 import { BaseWorkerRuntime } from './base.ts'
 
@@ -32,6 +23,7 @@ export class ApplicationWorkerRuntime extends BaseWorkerRuntime {
   constructor(
     readonly config: ServerConfig,
     readonly runtimeOptions: ApplicationWorkerRuntimeOptions,
+    protected appConfig: ApplicationConfig,
   ) {
     super(config, {
       logger: config.logger,
@@ -41,6 +33,25 @@ export class ApplicationWorkerRuntime extends BaseWorkerRuntime {
 
   async start() {
     await this.initialize()
+
+    this.transports = {}
+
+    for (const key in this.runtimeOptions.transports) {
+      const options = this.runtimeOptions.transports[key]
+      const { factory, proxyable } = this.appConfig.transports[key] as Transport
+      this.transports[key] = { transport: await factory(options), proxyable }
+    }
+
+    this.gateway = new Gateway({
+      logger: this.logger,
+      container: this.container,
+      hooks: this.hooks,
+      formats: new ProtocolFormats([new JsonFormat()]),
+      transports: this.transports,
+      api: this.application.api,
+      identity: this.appConfig.identity,
+    })
+
     return await this.gateway.start()
   }
 
@@ -49,54 +60,31 @@ export class ApplicationWorkerRuntime extends BaseWorkerRuntime {
     await this.dispose()
   }
 
+  async reload(appConfig: ApplicationConfig): Promise<void> {
+    await this.dispose()
+    this.appConfig = appConfig
+    await this.initialize()
+    this.gateway.options.api = this.application.api
+    this.gateway.options.identity =
+      this.appConfig.identity ?? this.gateway.options.identity
+    await this.gateway.reload()
+  }
+
   protected async _initialize(): Promise<void> {
     await super._initialize()
-
-    const module = await import(this.runtimeOptions.path)
-    const appConfig = module.default as ApplicationConfig
-    assert(
-      isApplicationConfig(appConfig),
-      `Invalid application config exported from [${this.runtimeOptions.path}]`,
-    )
     this.application = new ApplicationRuntime({
       name: `Application ${this.runtimeOptions.name}`,
       container: this.container,
       logger: this.config.logger,
-      plugins: appConfig.plugins,
-      api: appConfig.api,
-      router: appConfig.router,
-      filters: appConfig.filters,
-      guards: appConfig.guards,
-      middlewares: appConfig.middlewares,
-      hooks: appConfig.hooks,
+      plugins: this.appConfig.plugins,
+      api: this.appConfig.api,
+      router: this.appConfig.router,
+      filters: this.appConfig.filters,
+      guards: this.appConfig.guards,
+      middlewares: this.appConfig.middlewares,
+      hooks: this.appConfig.hooks,
     })
-    this.application.initialize()
-
-    this.transports = {}
-
-    for (const key in this.runtimeOptions.transports) {
-      const options = this.runtimeOptions.transports[key]
-      const { factory, proxyable } = appConfig.transports[key] as Transport
-      this.transports[key] = { transport: await factory(options), proxyable }
-    }
-
-    this.gateway = new Gateway({
-      logger: this.logger,
-      container: this.container,
-      hooks: this.hooks,
-      api: this.application.api,
-      formats: new ProtocolFormats([
-        new StandardJsonFormat(),
-        new JsonFormat(),
-      ]),
-      transports: this.transports,
-      identityResolver:
-        appConfig.identityResolver ??
-        createFactoryInjectable({
-          dependencies: { connectionId },
-          factory: ({ connectionId }) => connectionId,
-        }),
-    })
+    await this.application.initialize()
   }
 
   protected async _dispose(): Promise<void> {

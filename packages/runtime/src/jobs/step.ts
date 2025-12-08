@@ -1,3 +1,4 @@
+import type { Async } from '@nmtjs/common'
 import type { Dependant, Dependencies, DependencyContext } from '@nmtjs/core'
 import type { AnyObjectLikeType, ObjectType } from '@nmtjs/type/object'
 import { tryCaptureStackTrace } from '@nmtjs/common'
@@ -16,7 +17,7 @@ export type JobStepHandler<
   context: DependencyContext<Deps>,
   input: t.infer.decode.output<Input>,
   signal: AbortSignal,
-) => Promise<null extends Return ? t.infer.encode.input<Output> : Return>
+) => Async<null extends Return ? t.infer.encode.input<Output> : Return>
 
 export interface JobStep<
   Input extends AnyObjectLikeType = AnyObjectLikeType,

@@ -2,6 +2,7 @@ import { Buffer } from 'node:buffer'
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import type { MessageContext } from '../../src/client/protocol.ts'
 import { ProtocolVersion1 } from '../../src/client/versions/v1.ts'
 import { ClientMessageType, ServerMessageType } from '../../src/common/enums.ts'
 
@@ -16,27 +17,40 @@ const buildMessage = (type: number, payload: Buffer) =>
 
 const toBuffer = (view: ArrayBufferView) => Buffer.from(view as Uint8Array)
 
+function createMockContext(): MessageContext {
+  return {
+    decoder: { decode: vi.fn(), decodeRPC: vi.fn() },
+    encoder: { encode: vi.fn(), encodeRPC: vi.fn() },
+    addClientStream: vi.fn((blob) => ({
+      id: 0,
+      metadata: blob.metadata,
+      source: blob.source,
+    })),
+    addServerStream: vi.fn((_streamId, metadata) => ({
+      id: _streamId,
+      metadata,
+    })),
+    transport: { send: vi.fn() },
+    streamId: vi.fn().mockReturnValue(1),
+  } as unknown as MessageContext
+}
+
 describe('ProtocolVersion1 (client) - decodeMessage', () => {
   let version: ProtocolVersion1
-  let context: any
+  let context: MessageContext
 
   beforeEach(() => {
     version = new ProtocolVersion1()
-    context = {
-      decoder: { decode: vi.fn(), decodeRPC: vi.fn() },
-      encoder: { encode: vi.fn(), encodeRPC: vi.fn() },
-      clientStreams: { add: vi.fn(), get: vi.fn() },
-      serverStreams: { add: vi.fn((_, stream) => stream), get: vi.fn() },
-      transport: { send: vi.fn() },
-      streamId: vi.fn().mockReturnValue(1),
-    }
+    context = createMockContext()
   })
 
   it('decodes RPC success payload and registers blob streams', () => {
     const callId = 5
     const rpcPayload = Buffer.from([0xaa])
-    context.serverStreams.get.mockReturnValue({})
-    context.decoder.decodeRPC.mockImplementation((_payload, rpcContext) => {
+    const decoder = context.decoder as unknown as {
+      decodeRPC: ReturnType<typeof vi.fn>
+    }
+    decoder.decodeRPC.mockImplementation((_payload, rpcContext) => {
       rpcContext.addStream(42, { type: 'blob/test' })
       return { ok: true }
     })
@@ -52,21 +66,23 @@ describe('ProtocolVersion1 (client) - decodeMessage', () => {
       callId,
       result: { ok: true },
     })
-    expect(context.decoder.decodeRPC).toHaveBeenCalledWith(
+    expect(decoder.decodeRPC).toHaveBeenCalledWith(
       rpcPayload,
       expect.objectContaining({ addStream: expect.any(Function) }),
     )
-    expect(context.serverStreams.add).toHaveBeenCalledWith(
-      42,
-      expect.objectContaining({ metadata: { type: 'blob/test' } }),
-    )
+    expect(context.addServerStream).toHaveBeenCalledWith(42, {
+      type: 'blob/test',
+    })
   })
 
   it('decodes RPC error payload', () => {
     const callId = 7
     const errorPayload = Buffer.from([0xbb])
     const error = { code: 'ERR', message: 'boom' }
-    context.decoder.decode.mockReturnValue(error)
+    const decoder = context.decoder as unknown as {
+      decode: ReturnType<typeof vi.fn>
+    }
+    decoder.decode.mockReturnValue(error)
 
     const buffer = buildMessage(
       ServerMessageType.RpcResponse,
@@ -78,7 +94,7 @@ describe('ProtocolVersion1 (client) - decodeMessage', () => {
       callId,
       error,
     })
-    expect(context.decoder.decode).toHaveBeenCalledWith(errorPayload)
+    expect(decoder.decode).toHaveBeenCalledWith(errorPayload)
   })
 
   it('decodes RPC stream response with optional error', () => {
@@ -94,7 +110,10 @@ describe('ProtocolVersion1 (client) - decodeMessage', () => {
     })
 
     const errorPayload = Buffer.from([0xdd])
-    context.decoder.decode.mockReturnValue({ code: 'E', message: 'fail' })
+    const decoder = context.decoder as unknown as {
+      decode: ReturnType<typeof vi.fn>
+    }
+    decoder.decode.mockReturnValue({ code: 'E', message: 'fail' })
     const errorMessage = buildMessage(
       ServerMessageType.RpcStreamResponse,
       Buffer.concat([encodeUInt32(callId), errorPayload]),
@@ -130,7 +149,11 @@ describe('ProtocolVersion1 (client) - decodeMessage', () => {
         context,
         buildMessage(ServerMessageType.RpcStreamAbort, encodeUInt32(3)),
       ),
-    ).toEqual({ type: ServerMessageType.RpcStreamAbort, callId: 3 })
+    ).toEqual({
+      type: ServerMessageType.RpcStreamAbort,
+      callId: 3,
+      reason: undefined,
+    })
   })
 
   it('decodes client/server stream control messages', () => {
@@ -149,7 +172,11 @@ describe('ProtocolVersion1 (client) - decodeMessage', () => {
         context,
         buildMessage(ServerMessageType.ClientStreamAbort, encodeUInt32(10)),
       ),
-    ).toEqual({ type: ServerMessageType.ClientStreamAbort, streamId: 10 })
+    ).toEqual({
+      type: ServerMessageType.ClientStreamAbort,
+      streamId: 10,
+      reason: undefined,
+    })
 
     const pushChunk = Buffer.from('payload')
     expect(
@@ -171,14 +198,22 @@ describe('ProtocolVersion1 (client) - decodeMessage', () => {
         context,
         buildMessage(ServerMessageType.ServerStreamEnd, encodeUInt32(21)),
       ),
-    ).toEqual({ type: ServerMessageType.ServerStreamEnd, streamId: 21 })
+    ).toEqual({
+      type: ServerMessageType.ServerStreamEnd,
+      streamId: 21,
+      reason: undefined,
+    })
 
     expect(
       version.decodeMessage(
         context,
         buildMessage(ServerMessageType.ServerStreamAbort, encodeUInt32(22)),
       ),
-    ).toEqual({ type: ServerMessageType.ServerStreamAbort, streamId: 22 })
+    ).toEqual({
+      type: ServerMessageType.ServerStreamAbort,
+      streamId: 22,
+      reason: undefined,
+    })
   })
 
   it('throws on unsupported message type', () => {
@@ -191,31 +226,19 @@ describe('ProtocolVersion1 (client) - decodeMessage', () => {
 
 describe('ProtocolVersion1 (client) - encodeMessage', () => {
   let version: ProtocolVersion1
-  let context: any
+  let context: MessageContext
 
   beforeEach(() => {
     version = new ProtocolVersion1()
-    context = {
-      decoder: { decode: vi.fn(), decodeRPC: vi.fn() },
-      encoder: { encode: vi.fn(), encodeRPC: vi.fn() },
-      clientStreams: { add: vi.fn(), get: vi.fn() },
-      serverStreams: { add: vi.fn(), get: vi.fn() },
-      transport: { send: vi.fn() },
-      streamId: vi.fn().mockReturnValue(77),
-    }
+    context = createMockContext()
+    ;(context.streamId as ReturnType<typeof vi.fn>).mockReturnValue(77)
   })
 
-  it('encodes RPC call payload and registers client streams', () => {
-    const blob = {
-      metadata: { type: 'blob/test' },
-      source: new ReadableStream({ start: (controller) => controller.close() }),
+  it('encodes RPC call payload with streams', () => {
+    const encoder = context.encoder as unknown as {
+      encodeRPC: ReturnType<typeof vi.fn>
     }
-    context.clientStreams.add.mockReturnValue(blob)
-    context.clientStreams.get.mockReturnValue(blob)
-    context.encoder.encodeRPC.mockImplementation((_payload, rpcContext) => {
-      rpcContext.addStream(blob)
-      return Uint8Array.from([0xcc])
-    })
+    encoder.encodeRPC.mockReturnValue(Uint8Array.from([0xcc]))
 
     const buffer = toBuffer(
       version.encodeMessage(context, ClientMessageType.Rpc, {
@@ -235,11 +258,9 @@ describe('ProtocolVersion1 (client) - encodeMessage', () => {
     expect(buffer.subarray(7 + procedureBytes.length)).toEqual(
       Buffer.from([0xcc]),
     )
-    expect(context.encoder.encodeRPC).toHaveBeenCalledTimes(1)
-    expect(context.clientStreams.add).toHaveBeenCalledWith(
-      blob.source,
-      77,
-      blob.metadata,
+    expect(encoder.encodeRPC).toHaveBeenCalledWith(
+      { take: 10 },
+      { addStream: expect.any(Function) },
     )
   })
 

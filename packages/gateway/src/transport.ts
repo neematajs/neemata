@@ -3,7 +3,7 @@ import type { Injection, LazyInjectable, Scope } from '@nmtjs/core'
 import type { ConnectionType, ProtocolVersion } from '@nmtjs/protocol'
 import type { ProtocolFormats } from '@nmtjs/protocol/server'
 
-import type { GatewayConnection } from './connection.ts'
+import type { GatewayConnection } from './connections.ts'
 import type { ProxyableTransportType } from './enums.ts'
 import type { GatewayRpc } from './types.ts'
 
@@ -24,10 +24,6 @@ export interface TransportOnConnectOptions<
   data: unknown
 }
 
-export interface TransportOnDisconnectOptions {
-  connectionId: string
-}
-
 export interface TransportOnMessageOptions {
   connectionId: string
   data: ArrayBuffer
@@ -41,7 +37,7 @@ export type TransportWorkerParams<
     options: TransportOnConnectOptions<Type>,
     ...injections: Injection[]
   ) => Promise<GatewayConnection & AsyncDisposable>
-  onDisconnect: (options: TransportOnDisconnectOptions) => Promise<void>
+  onDisconnect: (connectionId: GatewayConnection['id']) => Promise<void>
   onMessage: (
     options: TransportOnMessageOptions,
     ...injections: Injection[]

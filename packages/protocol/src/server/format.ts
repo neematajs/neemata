@@ -3,10 +3,10 @@ import { match } from '@nmtjs/common'
 
 import type {
   DecodeRPCContext,
-  EncodeRPCContext,
+  EncodeRPCStreams,
   ProtocolRPCPayload,
 } from '../common/types.ts'
-import type { ProtocolClientStream, ProtocolServerStream } from './stream.ts'
+import type { ProtocolClientStream } from './stream.ts'
 
 export interface BaseServerDecoder {
   accept: Pattern[]
@@ -20,10 +20,8 @@ export interface BaseServerDecoder {
 export interface BaseServerEncoder {
   contentType: string
   encode(data: unknown): ArrayBufferView
-  encodeRPC(
-    data: unknown,
-    context: EncodeRPCContext<ProtocolServerStream>,
-  ): ArrayBufferView
+  encodeRPC(data: unknown, streams: EncodeRPCStreams): ArrayBufferView
+  encodeBlob(streamId: number): unknown
 }
 
 export abstract class BaseServerFormat
@@ -33,10 +31,8 @@ export abstract class BaseServerFormat
   abstract contentType: string
 
   abstract encode(data: unknown): ArrayBufferView
-  abstract encodeRPC(
-    data: unknown,
-    context: EncodeRPCContext<ProtocolServerStream>,
-  ): ArrayBufferView
+  abstract encodeRPC(data: unknown, streams: EncodeRPCStreams): ArrayBufferView
+  abstract encodeBlob(streamId: number): unknown
   abstract decode(buffer: ArrayBufferView): any
   abstract decodeRPC(
     buffer: ArrayBufferView,

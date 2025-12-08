@@ -39,10 +39,12 @@ export class ApplicationRuntime extends BaseRuntime {
         await hook.handler(ctx, ...args)
       })
     }
+    this.api.initialize()
   }
 
   protected async _dispose() {
     this.applicationHooks.removeAllHooks()
+    this.api.dispose()
   }
 
   protected *_dependents() {

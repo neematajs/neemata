@@ -1,48 +1,84 @@
-import type { DuplexStreamSink } from '@nmtjs/common'
-import { DuplexStream, defer } from '@nmtjs/common'
+import type { Callback, DuplexStreamOptions } from '@nmtjs/common'
+import { DuplexStream } from '@nmtjs/common'
 
 import type {
   ProtocolBlobInterface,
   ProtocolBlobMetadata,
 } from '../common/blob.ts'
 import { concat, decodeText, encodeText } from '../common/binary.ts'
-import { BlobKey } from '../common/blob.ts'
+import { kBlobKey } from '../common/constants.ts'
 
 export class ProtocolClientBlobStream
-  extends TransformStream<any, ArrayBufferView>
+  extends DuplexStream<any, ArrayBufferView>
   implements ProtocolBlobInterface
 {
-  readonly [BlobKey] = true
+  readonly [kBlobKey] = true
 
   #queue: Uint8Array
   #reader: ReadableStreamDefaultReader
+  #sourceReader: ReadableStreamDefaultReader | null = null
 
   constructor(
     readonly source: ReadableStream,
     readonly id: number,
     readonly metadata: ProtocolBlobMetadata,
   ) {
+    let sourceReader: ReadableStreamDefaultReader | null = null
     super({
       start: () => {
-        defer(() => source.pipeThrough(this))
+        sourceReader = source.getReader()
       },
-      transform: (chunk, controller) => {
+      pull: async (controller) => {
+        const { done, value } = await sourceReader!.read()
+        if (done) {
+          controller.close()
+          return
+        }
+        const chunk = value
+        controller.enqueue(
+          chunk instanceof Uint8Array
+            ? chunk
+            : new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength),
+        )
+      },
+      transform: (chunk) => {
         if (chunk instanceof ArrayBuffer) {
-          controller.enqueue(new Uint8Array(chunk))
+          return new Uint8Array(chunk)
         } else if (chunk instanceof Uint8Array) {
-          controller.enqueue(chunk)
+          return chunk
         } else if (typeof chunk === 'string') {
-          controller.enqueue(encodeText(chunk))
+          return encodeText(chunk)
         } else {
           throw new Error(
             'Invalid chunk data type. Expected ArrayBuffer, Uint8Array, or string.',
           )
         }
       },
+      cancel: (reason) => {
+        // Use reader.cancel() if reader exists (stream is locked), otherwise source.cancel()
+        if (sourceReader) {
+          sourceReader.cancel(reason)
+        } else {
+          source.cancel(reason)
+        }
+      },
     })
 
     this.#queue = new Uint8Array(0)
     this.#reader = this.readable.getReader()
+    this.#sourceReader = sourceReader
+  }
+
+  async abort(reason = 'Stream aborted') {
+    await this.#reader.cancel(reason)
+    this.#reader.releaseLock()
+    this.#sourceReader?.releaseLock()
+  }
+
+  async end() {
+    // Release the reader lock when the stream is finished
+    this.#reader.releaseLock()
+    this.#sourceReader?.releaseLock()
   }
 
   async read(size: number) {
@@ -63,14 +99,6 @@ export class ProtocolClientBlobStream
     this.#queue = this.#queue.subarray(size)
     return chunk
   }
-
-  abort(error = new Error('Stream aborted')) {
-    return this.#reader.cancel(error)
-  }
-
-  end() {
-    return this.#reader.cancel('Stream ended')
-  }
 }
 
 export abstract class ProtocolServerStreamInterface<
@@ -78,12 +106,15 @@ export abstract class ProtocolServerStreamInterface<
 > extends DuplexStream<O, ArrayBufferView> {
   async *[Symbol.asyncIterator]() {
     const reader = this.readable.getReader()
-    while (true) {
-      const { done, value } = await reader.read()
-      if (!done) yield value
-      else break
+    try {
+      while (true) {
+        const { done, value } = await reader.read()
+        if (!done) yield value
+        else break
+      }
+    } finally {
+      reader.releaseLock()
     }
-    reader.releaseLock()
   }
 }
 
@@ -91,15 +122,42 @@ export class ProtocolServerStream<T = unknown>
   extends ProtocolServerStreamInterface<T>
   implements ProtocolServerStreamInterface<T> {}
 
+export class ProtocolServerRPCStream<
+  T = unknown,
+> extends ProtocolServerStream<T> {
+  createAsyncIterable(onDone: Callback) {
+    return {
+      [Symbol.asyncIterator]: () => {
+        const iterator = this[Symbol.asyncIterator]()
+        return {
+          async next() {
+            const result = await iterator.next()
+            if (result.done) onDone()
+            return result
+          },
+          async return(value) {
+            onDone()
+            return iterator.return?.(value) ?? { done: true, value }
+          },
+          async throw(error) {
+            onDone()
+            return iterator.throw?.(error) ?? Promise.reject(error)
+          },
+        }
+      },
+    }
+  }
+}
+
 export class ProtocolServerBlobStream
   extends ProtocolServerStreamInterface<ArrayBufferView>
   implements ProtocolBlobInterface, Blob
 {
-  readonly [BlobKey] = true
+  readonly [kBlobKey] = true
 
   constructor(
     readonly metadata: ProtocolBlobMetadata,
-    options?: DuplexStreamSink<ArrayBufferView, ArrayBufferView>,
+    options?: DuplexStreamOptions<ArrayBufferView, ArrayBufferView>,
   ) {
     super(options)
   }

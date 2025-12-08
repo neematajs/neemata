@@ -1,50 +1,67 @@
-import type { DecodeRPCContext, EncodeRPCContext } from '@nmtjs/protocol'
-import { ProtocolBlob } from '@nmtjs/protocol'
+import type { DecodeRPCContext, EncodeRPCStreams } from '@nmtjs/protocol'
+import type { ProtocolClientStream } from '@nmtjs/protocol/server'
+import { concat, decodeNumber, encodeNumber } from '@nmtjs/protocol'
 import { BaseServerFormat } from '@nmtjs/protocol/server'
 
-import type {
-  ClientEncodedRPC,
-  ServerEncodedRPC,
-  StreamsMetadata,
-} from './common.ts'
 import { deserializeStreamId, isStreamId, serializeStreamId } from './common.ts'
 
-/**
- * Custom JSON encoding format with Neemata streams support.
- */
 export class JsonFormat extends BaseServerFormat {
-  contentType = 'application/x-neemata-json'
-  accept = ['application/x-neemata-json']
+  contentType = 'application/json'
+  accept = ['application/json']
 
   encode(data: any) {
-    return Buffer.from(JSON.stringify(data), 'utf-8')
+    return data ? Buffer.from(JSON.stringify(data), 'utf-8') : Buffer.alloc(0)
   }
 
-  encodeRPC(data: unknown, context: EncodeRPCContext) {
-    const streams: StreamsMetadata = {}
-    const replacer = (_key: string, value: any) => {
-      if (value instanceof ProtocolBlob) {
-        const stream = context.addStream(value)
-        streams[stream.id] = stream.metadata
-        return serializeStreamId(stream.id)
-      }
-      return value
+  encodeBlob(streamId: number) {
+    return serializeStreamId(streamId)
+  }
+
+  encodeRPC(data: unknown, streams: EncodeRPCStreams) {
+    const buffers: (ArrayBufferView | ArrayBuffer)[] = []
+    const hasStreams = Object.keys(streams).length > 0
+    if (hasStreams) {
+      const encodedStreams = this.encode(streams)
+      buffers.push(
+        encodeNumber(encodedStreams.byteLength, 'Uint32'),
+        encodedStreams,
+      )
+    } else {
+      buffers.push(encodeNumber(0, 'Uint32'))
     }
-    const isUndefined = typeof data === 'undefined'
-    const payload = JSON.stringify(data, replacer)
-    return this.encode(
-      isUndefined
-        ? ([streams] satisfies ServerEncodedRPC)
-        : ([streams, payload] satisfies ServerEncodedRPC),
+
+    if (typeof data !== 'undefined') {
+      buffers.push(this.encode(data))
+    }
+
+    return concat(...buffers)
+  }
+
+  decode(data: Buffer, _reviver?: (key: string, value: any) => any) {
+    return JSON.parse(data.toString('utf-8'), _reviver)
+  }
+
+  decodeRPC(
+    buffer: Buffer,
+    context: DecodeRPCContext<() => ProtocolClientStream>,
+  ) {
+    const streamsLength = Number(decodeNumber(buffer, 'Uint32'))
+    const hasStreams = streamsLength > 0
+    const payloadBuffer = buffer.subarray(
+      Uint32Array.BYTES_PER_ELEMENT + streamsLength,
     )
-  }
+    const hasPayload = payloadBuffer.byteLength > 0
 
-  decode(data: Buffer) {
-    return JSON.parse(data.toString('utf-8'))
-  }
+    let streams: EncodeRPCStreams = {}
 
-  decodeRPC(buffer: Buffer, context: DecodeRPCContext) {
-    const [streams, formatPayload]: ClientEncodedRPC = this.decode(buffer)
+    if (hasStreams) {
+      streams = this.decode(
+        buffer.subarray(
+          Uint32Array.BYTES_PER_ELEMENT,
+          Uint32Array.BYTES_PER_ELEMENT + streamsLength,
+        ),
+      )
+    }
 
     const replacer = (_key: string, value: any) => {
       if (typeof value === 'string' && isStreamId(value)) {
@@ -55,36 +72,8 @@ export class JsonFormat extends BaseServerFormat {
       return value
     }
 
-    const decoded =
-      typeof formatPayload === 'undefined'
-        ? undefined
-        : JSON.parse(formatPayload, replacer)
-
-    return decoded
-  }
-}
-
-/**
- * Standard JSON encoding format with no Neemata streams support.
- */
-export class StandardJsonFormat extends BaseServerFormat {
-  contentType = 'application/json'
-  accept = ['application/json', 'application/vnd.api+json']
-
-  encode(data: unknown) {
-    if (data === undefined) return Buffer.alloc(0)
-    return Buffer.from(JSON.stringify(data), 'utf-8')
-  }
-
-  encodeRPC(data: unknown) {
-    return this.encode(data)
-  }
-
-  decode(buffer: Buffer) {
-    return JSON.parse(buffer.toString('utf-8'))
-  }
-
-  decodeRPC(buffer: Buffer) {
-    return this.decode(buffer)
+    if (!hasPayload) return undefined
+    else if (hasStreams) return this.decode(payloadBuffer, replacer)
+    else return this.decode(payloadBuffer)
   }
 }

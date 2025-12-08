@@ -43,7 +43,7 @@ export async function createBuilder(
             if (neemataConfig.externalDependencies === 'all') return true
             if (
               isBuiltin(id) ||
-              id.includes('vite/runner') ||
+              id.includes('vite/server') ||
               id.endsWith('.node')
             )
               return true

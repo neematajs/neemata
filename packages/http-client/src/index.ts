@@ -1,20 +1,24 @@
 import type {
-  ClientCallOptions,
   ClientTransport,
   ClientTransportFactory,
+  ClientTransportMessageOptions,
   ClientTransportRpcParams,
 } from '@nmtjs/client'
 import type { ProtocolVersion } from '@nmtjs/protocol'
 import type { BaseClientFormat } from '@nmtjs/protocol/client'
 import { createFuture } from '@nmtjs/common'
 import { ConnectionType, ProtocolBlob } from '@nmtjs/protocol'
-import { ProtocolError } from '@nmtjs/protocol/client'
 
 type DecodeBase64Function = (data: string) => ArrayBufferView
 
-const createDecodeBase64 = (customFn?: DecodeBase64Function) => {
+const createDecodeBase64 = (
+  customFn?: DecodeBase64Function,
+): DecodeBase64Function => {
   return (string: string) => {
-    if (typeof Uint8Array.fromBase64 === 'function') {
+    if (
+      'fromBase64' in Uint8Array &&
+      typeof Uint8Array.fromBase64 === 'function'
+    ) {
       return Uint8Array.fromBase64(string)
     } else if (typeof atob === 'function') {
       return Uint8Array.from(atob(string), (c) => c.charCodeAt(0))
@@ -54,16 +58,25 @@ export class HttpTransportClient
     this.decodeBase64 = createDecodeBase64(options.decodeBase64)
   }
 
-  url({ procedure, application }: { application?: string; procedure: string }) {
+  url({
+    procedure,
+    application,
+    payload,
+  }: {
+    procedure: string
+    application?: string
+    payload?: unknown
+  }) {
     const base = application ? `/${application}/${procedure}` : `/${procedure}`
     const url = new URL(base, this.options.url)
+    if (payload) url.searchParams.set('payload', JSON.stringify(payload))
     return url
   }
 
   async call(
     client: ClientTransportRpcParams,
     rpc: { callId: number; procedure: string; payload: unknown },
-    options: ClientCallOptions,
+    options: ClientTransportMessageOptions,
   ) {
     const { procedure, payload } = rpc
     const requestHeaders = new Headers()

@@ -42,7 +42,6 @@ function adapterFactory(params: HttpAdapterParams<'node'>): HttpAdapterServer {
     .any('/*', async (res, req) => {
       const controller = new AbortController()
       res.onAborted(() => {
-        console.dir('Request aborted by client')
         res.aborted = true
         controller.abort()
       })

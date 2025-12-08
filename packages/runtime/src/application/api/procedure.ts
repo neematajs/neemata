@@ -28,6 +28,7 @@ export interface BaseProcedure<
   dependencies: ProcedureDeps
   guards: Set<AnyGuard>
   middlewares: Set<AnyMiddleware>
+  streamTimeout?: number
   [kProcedure]: any
 }
 
@@ -62,6 +63,7 @@ export type CreateProcedureParams<
       guards?: AnyGuard[]
       middlewares?: AnyMiddleware[]
       metadata?: Metadata[]
+      streamTimeout?: number
       handler: ProcedureHandlerType<
         InputType<t.infer.decodeRaw.output<ProcedureContract['input']>>,
         ProcedureContract['stream'] extends undefined
@@ -92,18 +94,31 @@ export function _createBaseProcedure<
     middlewares?: AnyMiddleware[]
     guards?: AnyGuard[]
     metadata?: Metadata[]
+    streamTimeout?: number
   },
 ) {
   const dependencies = params.dependencies ?? ({} as ProcedureDeps)
   const metadata = new MetadataStore()
   const middlewares = new Set(params.middlewares ?? [])
   const guards = new Set(params.guards ?? [])
+  const streamTimeout = params.streamTimeout
+
+  if (typeof streamTimeout !== 'undefined' && streamTimeout <= 0) {
+    throw new Error('Stream timeout must be a positive integer')
+  }
 
   for (const meta of params.metadata ?? []) {
     metadata.set(meta.key, meta.value)
   }
 
-  return { contract, dependencies, middlewares, guards, metadata }
+  return {
+    contract,
+    dependencies,
+    middlewares,
+    guards,
+    metadata,
+    streamTimeout,
+  }
 }
 
 export function createContractProcedure<
@@ -128,13 +143,18 @@ export function createProcedure<
   Return,
   TInput extends BaseType | undefined = undefined,
   TOutput extends BaseType | undefined = undefined,
-  TStream extends true | undefined = undefined,
+  TStream extends true | number | undefined = undefined,
   Deps extends Dependencies = {},
 >(
   paramsOrHandler:
     | {
         input?: TInput
         output?: TOutput
+        /**
+         * Whether the procedure is a stream procedure.
+         * If set to `true`, the procedure handler should return an `AsyncIterable` of output items.
+         * If set to a number, it specifies an explicit stream timeout in milliseconds.
+         */
         stream?: TStream
         dependencies?: Deps
         guards?: AnyGuard[]
@@ -145,7 +165,7 @@ export function createProcedure<
           TInput extends BaseType
             ? InputType<t.infer.decodeRaw.output<TInput>>
             : never,
-          TStream extends true
+          TStream extends true | number
             ? AsyncIterable<
                 TOutput extends BaseType
                   ? t.infer.encode.input<TOutput>
@@ -173,7 +193,7 @@ export function createProcedure<
           zod.ZodMiniCustom<JsonPrimitive<Return>, JsonPrimitive<Return>>
         >
       : TOutput,
-    TStream extends true ? true : undefined
+    TStream extends true | number ? true : undefined
   >,
   Deps
 > {
@@ -194,7 +214,14 @@ export function createProcedure<
   // @ts-expect-error
   return createContractProcedure(
     c.procedure({ input, output, stream, timeout }),
-    { dependencies, handler: handler as any, guards, middlewares, metadata },
+    {
+      dependencies,
+      handler: handler as any,
+      guards,
+      middlewares,
+      metadata,
+      streamTimeout: typeof stream === 'number' ? stream : undefined,
+    },
   )
 }
 

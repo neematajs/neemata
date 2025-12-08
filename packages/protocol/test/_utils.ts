@@ -5,7 +5,7 @@ import { createLogger } from '@nmtjs/core'
 
 import type {
   DecodeRPCContext,
-  EncodeRPCContext,
+  EncodeRPCStreams,
   ProtocolRPC,
   ProtocolRPCResponse,
 } from '../src/common/types.ts'
@@ -28,7 +28,7 @@ export class TestFormat extends BaseServerFormat {
 
   encodeRPC(
     rpc: ProtocolRPCResponse,
-    _context: EncodeRPCContext,
+    _context: EncodeRPCStreams,
   ): ArrayBufferView {
     return this.encode(rpc)
   }

@@ -1,44 +1,51 @@
-import type { Job, RedisClient } from 'bullmq'
+import type { Job, JobType, RedisClient } from 'bullmq'
 import { pick } from '@nmtjs/core'
 import { Queue, QueueEvents } from 'bullmq'
 
 import type { ServerStoreConfig } from '../server/config.ts'
 import type { Store } from '../types.ts'
-import type { AnyJob } from './job.ts'
+import type { AnyJob, JobBackoffOptions } from './job.ts'
 import { JobWorkerQueue } from '../enums.ts'
 import { createStoreClient } from '../store/index.ts'
 
-export class QueueJobResult<T extends AnyJob> {
-  constructor(
-    protected job: T,
-    protected bullJob: Job<T['_']['input'], T['_']['output'], T['name']>,
-    protected events: QueueEvents,
-  ) {}
+type QueueJobResultOptions<T extends AnyJob = AnyJob> = {
+  job: T
+  bullJob: Job<T['_']['input'], T['_']['output'], T['name']>
+  events: QueueEvents
+}
+
+export class QueueJobResult<T extends AnyJob = AnyJob> {
+  #options: QueueJobResultOptions<T>
+
+  constructor(options: QueueJobResultOptions<T>) {
+    this.#options = options
+  }
 
   async waitResult() {
-    return await this.bullJob.waitUntilFinished(this.events)
+    return await this.#options.bullJob.waitUntilFinished(this.#options.events)
   }
 }
 
+export type JobListItem<T extends AnyJob = AnyJob> = Pick<
+  Job<T['_']['input'], T['_']['output'], T['name']>,
+  | 'id'
+  | 'queueName'
+  | 'priority'
+  | 'progress'
+  | 'name'
+  | 'data'
+  | 'returnvalue'
+  | 'attemptsMade'
+  | 'processedOn'
+  | 'finishedOn'
+  | 'failedReason'
+>
+
 export interface JobManagerInstance {
-  listAllJobs(): Promise<
-    Array<
-      Pick<
-        Job,
-        | 'id'
-        | 'queueName'
-        | 'priority'
-        | 'progress'
-        | 'name'
-        | 'data'
-        | 'returnvalue'
-        | 'attemptsMade'
-        | 'processedOn'
-        | 'finishedOn'
-        | 'failedReason'
-      >
-    >
-  >
+  listJobs<T extends AnyJob>(
+    job: T,
+    options?: { page?: number; limit?: number; state?: JobType[] },
+  ): Promise<JobListItem<T>[]>
   queueJob<T extends AnyJob>(
     job: T,
     data: T['_']['input'],
@@ -55,7 +62,8 @@ export class JobManager {
 
   get publicInstance(): JobManagerInstance {
     return {
-      listAllJobs: this.listAllJobs.bind(this),
+      // @ts-expect-error
+      listJobs: this.listJobs.bind(this),
       queueJob: this.queueJob.bind(this),
     }
   }
@@ -72,10 +80,11 @@ export class JobManager {
         queue: new Queue(queueName, { connection: this.store as RedisClient }),
         events: new QueueEvents(queueName, {
           connection: this.store as RedisClient,
-          autorun: false,
+          autorun: true,
         }),
       }
     }
+
     await Promise.all([
       this[JobWorkerQueue.Io].queue.waitUntilReady(),
       this[JobWorkerQueue.Io].events.waitUntilReady(),
@@ -94,43 +103,75 @@ export class JobManager {
     this.store.disconnect(false)
   }
 
-  async listAllJobs() {
-    const jobs = await Promise.all([
-      this[JobWorkerQueue.Io].queue.getJobs(),
-      this[JobWorkerQueue.Compute].queue.getJobs(),
-    ])
-
-    return jobs
-      .flat()
-      .map((job) =>
-        pick(job, {
-          id: true,
-          queueName: true,
-          priority: true,
-          progress: true,
-          name: true,
-          data: true,
-          returnvalue: true,
-          attemptsMade: true,
-          processedOn: true,
-          finishedOn: true,
-          failedReason: true,
-        }),
-      )
+  async listJobs<T extends AnyJob>(
+    job: T,
+    {
+      limit = 20,
+      page = 1,
+      state = [],
+    }: { page?: number; limit?: number; state?: JobType[] },
+  ) {
+    const { queue } = this[job.options.queue]
+    const jobsCount = await queue.getJobCountByTypes(...state)
+    const totalPages = Math.ceil(jobsCount / limit)
+    if (page > totalPages) return []
+    const jobs = await queue.getJobs(
+      state,
+      (page - 1) * limit,
+      page * limit - 1,
+    )
+    return jobs.map((job) => this._mapJob(job))
   }
 
   async queueJob<T extends AnyJob>(
     job: T,
     data: T['_']['input'],
-    options?: { jobId?: string; priority?: number },
+    {
+      forceMissingWorkers = false,
+      jobId,
+      priority,
+      attempts = job.options.attempts,
+      backoff = job.options.backoff,
+      delay,
+    }: {
+      jobId?: string
+      priority?: number
+      forceMissingWorkers?: boolean
+      attempts?: number
+      backoff?: JobBackoffOptions
+      delay?: number
+    },
   ) {
     const { queue, events } = this[job.options.queue]
+    if (!forceMissingWorkers) {
+      if ((await queue.getWorkersCount()) === 0) {
+        throw new Error(`No workers available for [${job.options.queue}] queue`)
+      }
+    }
     const bullJob = await queue.add(job.name as any, data as any, {
-      attempts: job.options.attemts,
-      backoff: job.options.backoff,
-      jobId: options?.jobId,
-      priority: options?.priority,
+      attempts,
+      backoff,
+      jobId,
+      priority,
+      delay,
     })
-    return new QueueJobResult(job, bullJob, events)
+
+    return new QueueJobResult({ job, bullJob, events })
+  }
+
+  protected async _mapJob(bullJob: Job) {
+    return pick(bullJob, {
+      id: true,
+      queueName: true,
+      priority: true,
+      progress: true,
+      name: true,
+      data: true,
+      returnvalue: true,
+      attemptsMade: true,
+      processedOn: true,
+      finishedOn: true,
+      failedReason: true,
+    })
   }
 }

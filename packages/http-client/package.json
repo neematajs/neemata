@@ -19,9 +19,9 @@
   },
   "scripts": {
     "clean-build": "rm -rf ./dist",
-    "build": "tsgo",
-    "dev": "tsgo --watch",
-    "type-check": "tsgo --noEmit"
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "type-check": "tsc --noEmit"
   },
   "dependencies": {
     "@nmtjs/client": "workspace:*",

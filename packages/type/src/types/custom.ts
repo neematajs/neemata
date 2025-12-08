@@ -1,5 +1,13 @@
+import type { Async } from '@nmtjs/common'
 import type { core, ZodMiniType } from 'zod/mini'
-import { any, overwrite, pipe, refine, custom as zodCustom } from 'zod/mini'
+import {
+  any,
+  overwrite,
+  pipe,
+  refine,
+  superRefine,
+  custom as zodCustom,
+} from 'zod/mini'
 
 import type { SimpleZodType, ZodType } from './base.ts'
 import { BaseType } from './base.ts'
@@ -26,6 +34,7 @@ export class CustomType<
   >({
     decode,
     encode,
+    validation,
     error,
     type = any() as unknown as EncodeType,
     prototype,
@@ -38,15 +47,42 @@ export class CustomType<
       DecodeType['_zod']['input'],
       EncodeType['_zod']['output']
     >
+    validation?:
+      | ((
+          value: EncodeType['_zod']['input'] | DecodeType['_zod']['output'],
+
+          payload: core.$RefinementCtx<
+            EncodeType['_zod']['output'] | DecodeType['_zod']['output']
+          >,
+        ) => Async<void>)
+      | {
+          encode?: (
+            value: EncodeType['_zod']['input'],
+            payload: core.$RefinementCtx<EncodeType['_zod']['output']>,
+          ) => Async<void>
+          decode?: (
+            value: DecodeType['_zod']['output'],
+            payload: core.$RefinementCtx<DecodeType['_zod']['output']>,
+          ) => Async<void>
+        }
     error?: string | core.$ZodErrorMap<core.$ZodIssueBase>
     type?: EncodeType
     prototype?: object
   }): CustomType<Type, EncodeType, DecodeType> {
+    const _validation = validation
+      ? typeof validation === 'function'
+        ? { encode: validation, decode: validation }
+        : validation
+      : undefined
+
     const instance = new CustomType<Type, EncodeType, DecodeType>({
       encodeZodType: pipe(
         zodCustom().check(
-          refine((val) => typeof val !== 'undefined', { error, abort: true }),
-          overwrite(encode),
+          ...[
+            refine((val) => typeof val !== 'undefined', { abort: true }),
+            _validation?.encode ? superRefine(_validation.encode) : undefined,
+            overwrite(encode),
+          ].filter((v) => !!v),
         ),
         type,
       ),
@@ -54,8 +90,11 @@ export class CustomType<
         type,
         // @ts-expect-error
         zodCustom().check(
-          refine((val) => typeof val !== 'undefined', { error, abort: true }),
-          overwrite(decode),
+          ...[
+            refine((val) => typeof val !== 'undefined', { abort: true }),
+            overwrite(decode),
+            _validation?.decode ? superRefine(_validation.decode) : undefined,
+          ].filter((v) => !!v),
         ),
       ),
       params: { encode },

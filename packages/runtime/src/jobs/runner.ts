@@ -111,8 +111,6 @@ export class JobRunner<
         stepResults,
         options,
       })
-
-      console.log({ job: job.name, step: stepIndex, stepResult, result })
     }
     if (output) result = output.decode(result)
     return result

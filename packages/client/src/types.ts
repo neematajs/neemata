@@ -21,7 +21,7 @@ export type ClientCallOptions = {
 }
 
 export type ClientOutputType<T> = T extends ProtocolBlobInterface
-  ? ProtocolServerBlobStream
+  ? (options?: { signal?: AbortSignal }) => ProtocolServerBlobStream
   : T extends { [PlainType]?: true }
     ? { [K in keyof Omit<T, PlainType>]: ClientOutputType<T[K]> }
     : T
@@ -77,7 +77,7 @@ export type ResolveAPIRouterRoutes<
         stream: T['routes'][K]['stream'] extends true ? true : false
         input: CallTypeProvider<InputTypeProvider, T['routes'][K]['input']>
         output: T['routes'][K]['stream'] extends true
-          ? ProtocolServerStreamInterface<
+          ? AsyncIterable<
               CallTypeProvider<OutputTypeProvider, T['routes'][K]['output']>
             >
           : CallTypeProvider<OutputTypeProvider, T['routes'][K]['output']>

@@ -1,4 +1,4 @@
-import type { ConnectionIdentityResolver, Transport } from '@nmtjs/gateway'
+import type { ConnectionIdentity, Transport } from '@nmtjs/gateway'
 
 import type { LifecycleHooks } from '../core/hooks.ts'
 import type { RuntimePlugin } from '../core/plugin.ts'
@@ -20,7 +20,7 @@ export interface ApplicationConfig<
   router: Router
   api: Pick<ApiOptions, 'timeout'>
   transports: Transports
-  identityResolver?: ConnectionIdentityResolver
+  identity?: ConnectionIdentity
   plugins: RuntimePlugin[]
   filters: AnyFilter[]
   middlewares: AnyMiddleware[]
@@ -46,7 +46,7 @@ export function defineApplication<
     filters = [] as ApplicationConfig['filters'],
     hooks = [] as ApplicationConfig['hooks'],
     lifecycleHooks = {},
-    identityResolver,
+    identity: identityResolver,
   } = options
 
   return Object.freeze({
@@ -60,7 +60,7 @@ export function defineApplication<
     middlewares,
     hooks,
     lifecycleHooks,
-    identityResolver,
+    identity: identityResolver,
   } satisfies AnyApplicationConfig) as ApplicationConfig<R, T>
 }
 

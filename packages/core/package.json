@@ -13,9 +13,9 @@
   },
   "scripts": {
     "clean-build": "rm -rf ./dist",
-    "build": "tsgo",
-    "dev": "tsgo --watch",
-    "type-check": "tsgo --noEmit"
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "type-check": "tsc --noEmit"
   },
   "peerDependencies": {
     "@nmtjs/common": "workspace:*",
@@ -36,6 +36,7 @@
     "README.md"
   ],
   "dependencies": {
-    "hookable": "6.0.0-rc.1"
+    "hookable": "6.0.0-rc.1",
+    "pino-std-serializers": "^7.0.0"
   }
 }

@@ -1,6 +1,6 @@
 import type { Container, MetadataStore } from '@nmtjs/core'
 
-import type { GatewayConnection } from './connection.ts'
+import type { GatewayConnection } from './connections.ts'
 
 export type GatewayApiCallOptions = {
   connection: GatewayConnection

@@ -7,7 +7,6 @@ export async function generateTypings(
   applicationImports: Record<string, { path: string; specifier: string }>,
 ) {
   await mkdir('.neemata', { recursive: true }).catch(() => {})
-
   await writeFile(
     resolve('.neemata', 'types.d.ts'),
     dedent`

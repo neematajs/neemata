@@ -1,16 +1,19 @@
+import type { Worker } from 'node:worker_threads'
 import assert from 'node:assert'
 import EventEmitter from 'node:events'
 
 import type { Logger } from '@nmtjs/core'
 import type { NeemataProxy } from '@nmtjs/proxy'
 import type { RedisClient } from 'bullmq'
+import type { FastifyInstance } from 'fastify'
 import { createLogger } from '@nmtjs/core'
 import { ProxyableTransportType } from '@nmtjs/gateway'
-import { Worker as QueueWorker, UnrecoverableError } from 'bullmq'
+import { Queue, Worker as QueueWorker, UnrecoverableError } from 'bullmq'
 
 import type { Store } from '../types.ts'
 import type { ServerApplicationConfig, ServerConfig } from './config.ts'
 import { JobWorkerQueue } from '../enums.ts'
+import { createJobsUI } from '../jobs/ui.ts'
 import { JobsScheduler } from '../scheduler/index.ts'
 import { createStoreClient } from '../store/index.ts'
 import { Pool } from './pool.ts'
@@ -33,11 +36,16 @@ export class ApplicationServer extends EventEmitter {
   proxy?: NeemataProxy
   store?: Store
   scheduler?: JobsScheduler
+  jobsUi?: FastifyInstance
 
   constructor(
     readonly config: ServerConfig,
     readonly applications: Record<string, string>,
-    readonly workerConfig: { path: string; workerData?: any },
+    readonly workerConfig: {
+      path: string
+      workerData?: any
+      worker?: (worker: Worker) => any
+    },
     readonly runOptions: ApplicationServerRunOptions = {
       applications: Object.keys(config.applications),
       scheduler: true,
@@ -52,19 +60,24 @@ export class ApplicationServer extends EventEmitter {
     const { config, logger } = this
     logger.info('Starting application server...')
 
-    if (this.runOptions.scheduler && config.jobs?.scheduler && config.store) {
+    if (config.store) {
       const store = await createStoreClient(config.store)
+      this.store = store
+    }
+
+    if (this.runOptions.scheduler && config.jobs?.scheduler && this.store) {
       const scheduler = new JobsScheduler(
-        store,
+        this.store,
         config.deploymentId,
         config!.jobs?.scheduler?.entries ?? [],
       )
-      this.store = store
+
       this.scheduler = scheduler
     }
 
     this.pools.applications = new Pool({
       filename: this.workerConfig.path,
+      worker: this.workerConfig.worker,
       workerData: { ...this.workerConfig.workerData },
     })
 
@@ -122,6 +135,18 @@ export class ApplicationServer extends EventEmitter {
     }
 
     if (config.jobs && this.runOptions.jobs) {
+      if (config.jobs.ui) {
+        const queues = Object.values(JobWorkerQueue).map(
+          (q) => new Queue(q, { connection: this.store! as RedisClient }),
+        )
+        this.jobsUi = createJobsUI(queues)
+        const address = await this.jobsUi.listen({
+          host: config.jobs.ui.hostname,
+          port: config.jobs.ui.port,
+        })
+        logger.info('Jobs UI listening on %s', address)
+      }
+
       for (const jobWorkerQueue of Object.values(JobWorkerQueue)) {
         logger.debug('Spinning compute workers...')
 
@@ -133,6 +158,7 @@ export class ApplicationServer extends EventEmitter {
 
         const pool = new Pool({
           filename: this.workerConfig.path,
+          worker: this.workerConfig.worker,
           workerData: { ...this.workerConfig.workerData },
         })
 
@@ -151,9 +177,9 @@ export class ApplicationServer extends EventEmitter {
           // TODO: these should be configurable
           lockDuration: 10000,
         }
-        logger.info(
+        logger.debug(
           bullWorkerOptions,
-          `Start processing [${bullWorkerOptions.concurrency}] workers for [${jobWorkerQueue}] queue...`,
+          `Start processing [${bullWorkerOptions.concurrency}] jobs for [${jobWorkerQueue}] queue...`,
         )
         const queueWorker = new QueueWorker(
           jobWorkerQueue,
@@ -200,7 +226,11 @@ export class ApplicationServer extends EventEmitter {
         .map((pool) => pool!.start()),
     ])
 
-    if (this.config.proxy) {
+    for (const worker of this.queueWorkers) {
+      worker.run()
+    }
+
+    if (this.config.proxy && Object.keys(proxyUpstreams).length > 0) {
       const { NeemataProxy } = await import('@nmtjs/proxy')
       const upstreams = Object.fromEntries(
         Object.entries(proxyUpstreams).map(([app, upstreams]) => [
@@ -221,31 +251,35 @@ export class ApplicationServer extends EventEmitter {
       this.proxy.run()
     }
 
-    this.logger.info('Application server started')
+    this.logger.debug('Application server started')
   }
 
   async stop() {
-    this.logger.info('Stopping application server...')
+    this.logger.debug('Stopping application server...')
 
     if (this.proxy) {
-      this.logger.info('Stopping proxy...')
+      this.logger.debug('Stopping proxy...')
       this.proxy.shutdown()
     }
 
     if (this.queueWorkers.size) {
-      this.logger.info('Stopping queue workers...')
+      this.logger.debug('Stopping queue workers...')
       await Promise.allSettled(
         Array.from(this.queueWorkers).map((worker) => worker.close()),
       )
     }
+    if (this.jobsUi) {
+      this.logger.debug('Stopping Jobs UI...')
+      await this.jobsUi.close()
+    }
     const pools = Object.values(this.pools).filter(Boolean) as Pool[]
-    this.logger.info('Stopping pools workers...')
+    this.logger.debug('Stopping pools workers...')
     await Promise.allSettled(pools.map((pool) => pool.stop()))
     if (this.store) {
-      this.logger.info('Stopping redis...')
+      this.logger.debug('Closing store...')
       this.store.disconnect(false)
     }
     this.emit('stop')
-    this.logger.info('Application server stopped')
+    this.logger.debug('Application server stopped')
   }
 }

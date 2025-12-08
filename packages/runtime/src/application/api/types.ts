@@ -11,9 +11,8 @@ export type ApiCallContext = Readonly<{
   procedure: AnyProcedure
 }>
 
-export type JsonPrimitive<T> = Equal<T, JsonPrimitiveMain<T>> extends true
-  ? T
-  : JsonPrimitiveMain<T>
+export type JsonPrimitive<T> =
+  Equal<T, JsonPrimitiveMain<T>> extends true ? T : JsonPrimitiveMain<T>
 
 type Equal<X, Y> = X extends Y ? (Y extends X ? true : false) : false
 
@@ -44,17 +43,18 @@ type JsonPrimitiveMain<
             : never
           : ValueOf<Instance>
 
-type PrimitiveObject<Instance extends object> = Instance extends Array<infer T>
-  ? IsTuple<Instance> extends true
-    ? PrimitiveTuple<Instance>
-    : JsonPrimitiveMain<T, true>[]
-  : {
-      -readonly [P in keyof Instance as JsonPrimitiveMain<
-        Instance[P]
-      > extends never
-        ? never
-        : P]: JsonPrimitiveMain<Instance[P]>
-    }
+type PrimitiveObject<Instance extends object> =
+  Instance extends Array<infer T>
+    ? IsTuple<Instance> extends true
+      ? PrimitiveTuple<Instance>
+      : JsonPrimitiveMain<T, true>[]
+    : {
+        -readonly [P in keyof Instance as JsonPrimitiveMain<
+          Instance[P]
+        > extends never
+          ? never
+          : P]: JsonPrimitiveMain<Instance[P]>
+      }
 
 type PrimitiveTuple<T extends readonly any[]> = T extends []
   ? []
@@ -68,13 +68,14 @@ type PrimitiveTuple<T extends readonly any[]> = T extends []
           ? [JsonPrimitiveMain<F, true>?, ...PrimitiveTuple<Rest>]
           : []
 
-type ValueOf<Instance> = IsValueOf<Instance, boolean> extends true
-  ? boolean
-  : IsValueOf<Instance, number> extends true
-    ? number
-    : IsValueOf<Instance, string> extends true
-      ? string
-      : Instance
+type ValueOf<Instance> =
+  IsValueOf<Instance, boolean> extends true
+    ? boolean
+    : IsValueOf<Instance, number> extends true
+      ? number
+      : IsValueOf<Instance, string> extends true
+        ? string
+        : Instance
 
 type NativeClass =
   | Set<any>

@@ -14,7 +14,9 @@ import { resolver } from './resolver.ts'
 import { generateTypings } from './typings.ts'
 import { createBuilder } from './vite/builder.ts'
 import { baseViteConfigOptions } from './vite/config.ts'
-import { createRunner } from './vite/runner.ts'
+import { createMainServer } from './vite/servers/main.ts'
+
+// import { createMainRunner } from './vite/runner.ts'
 
 const commonArgs = {
   config: {
@@ -84,17 +86,18 @@ const mainCommand = defineCommand({
     }),
     dev: defineCommand({
       async run(ctx) {
-        const runner = await createRunner(
+        const { runner } = await createMainServer(
           viteConfigOptions,
           'development',
           config,
         )
         await runner.import(viteConfigOptions.entrypointMainPath)
+        await once(process, 'beforeExit')
       },
     }),
     preview: defineCommand({
       async run(ctx) {
-        const runner = await createRunner(
+        const { runner } = await createMainServer(
           viteConfigOptions,
           'production',
           config,

@@ -1,6 +1,6 @@
 import type { TAnyRouterContract } from '@nmtjs/contract'
 
-import type { BaseClientOptions } from '../common.ts'
+import type { BaseClientOptions } from '../core.ts'
 import type { ClientTransportFactory } from '../transport.ts'
 import type {
   ClientCallers,
@@ -8,7 +8,7 @@ import type {
   StaticInputContractTypeProvider,
   StaticOutputContractTypeProvider,
 } from '../types.ts'
-import { BaseClient } from '../common.ts'
+import { BaseClient } from '../core.ts'
 import { BaseClientTransformer } from '../transformers.ts'
 
 export class StaticClient<
@@ -25,7 +25,7 @@ export class StaticClient<
   StaticInputContractTypeProvider,
   StaticOutputContractTypeProvider
 > {
-  protected transformer: BaseClientTransformer
+  protected readonly transformer: BaseClientTransformer
 
   constructor(
     options: BaseClientOptions<RouterContract, SafeCall>,

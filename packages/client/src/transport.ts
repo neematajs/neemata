@@ -1,4 +1,3 @@
-import type { OneOf } from '@nmtjs/common'
 import type {
   ConnectionType,
   ProtocolBlobMetadata,
@@ -6,7 +5,10 @@ import type {
 } from '@nmtjs/protocol'
 import type { BaseClientFormat } from '@nmtjs/protocol/client'
 
-import type { ClientCallOptions } from './types.ts'
+export type ClientTransportMessageOptions = {
+  signal?: AbortSignal
+  _stream_response?: boolean
+}
 
 export interface ClientTransportStartParams {
   auth?: string
@@ -39,7 +41,7 @@ export type ClientTransport<T extends ConnectionType = ConnectionType> =
         disconnect(): Promise<void>
         send(
           message: ArrayBufferView,
-          options: ClientCallOptions,
+          options: ClientTransportMessageOptions,
         ): Promise<void>
       }
     : {
@@ -53,7 +55,7 @@ export type ClientTransport<T extends ConnectionType = ConnectionType> =
             application?: string
           },
           rpc: { callId: number; procedure: string; payload: any },
-          options: ClientCallOptions,
+          options: ClientTransportMessageOptions,
         ): Promise<ClientCallResponse>
       }
 

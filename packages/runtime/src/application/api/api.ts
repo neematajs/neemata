@@ -11,7 +11,7 @@ import type {
 import { withTimeout } from '@nmtjs/common'
 import { IsStreamProcedureContract } from '@nmtjs/contract'
 import { Scope } from '@nmtjs/core'
-import { isAsyncIterable } from '@nmtjs/gateway'
+import { isAsyncIterable, rpcStreamAbortSignal } from '@nmtjs/gateway'
 import { ErrorCode } from '@nmtjs/protocol'
 import { ProtocolError } from '@nmtjs/protocol/server'
 import { NeemataTypeError, registerDefaultLocale, type } from '@nmtjs/type'
@@ -63,8 +63,15 @@ export class ApplicationApi implements GatewayApi {
     { procedure: AnyProcedure; path: AnyRouter[] }
   >()
 
-  constructor(private readonly options: ApiOptions) {
-    this.registerRootRouter(options.router)
+  constructor(private readonly options: ApiOptions) {}
+
+  initialize() {
+    this.registerRootRouter(this.options.router)
+  }
+
+  dispose() {
+    this.routers.clear()
+    this.procedures.clear()
   }
 
   find(procedureName: string) {
@@ -96,6 +103,13 @@ export class ApplicationApi implements GatewayApi {
 
     const timeout = procedure.contract.timeout ?? this.options.timeout
     const isIterableProcedure = IsStreamProcedureContract(procedure.contract)
+    const streamTimeoutSignal = procedure.streamTimeout
+      ? AbortSignal.timeout(procedure.streamTimeout)
+      : undefined
+
+    if (streamTimeoutSignal) {
+      container.provide(rpcStreamAbortSignal, streamTimeoutSignal)
+    }
 
     try {
       const handle = await this.createProcedureHandler(callOptions)
@@ -227,18 +241,26 @@ export class ApplicationApi implements GatewayApi {
     }
   }
 
-  private async *handleIterableOutput(procedure: AnyProcedure, response: any) {
-    if (!isAsyncIterable(response)) throw new Error('Response is not iterable')
+  private handleIterableOutput(procedure: AnyProcedure, response: any) {
+    if (!isAsyncIterable(response))
+      throw new Error('Response is an async iterable')
     const chunkType = procedure.contract.output
     if (chunkType instanceof type.NeverType)
       throw new Error('Stream procedure must have a defined output type')
-    if (chunkType instanceof type.AnyType === false) {
-      for await (const chunk of response) {
-        const encoded = chunkType.encode(chunk)
-        yield encoded
+
+    return async function* (onDone?: () => void) {
+      try {
+        if (chunkType instanceof type.AnyType === false) {
+          for await (const chunk of response) {
+            const encoded = chunkType.encode(chunk)
+            yield encoded
+          }
+        } else {
+          yield* response
+        }
+      } finally {
+        onDone?.()
       }
-    } else {
-      yield* response
     }
   }
 

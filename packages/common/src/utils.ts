@@ -58,7 +58,6 @@ export interface Future<T = any> {
   promise: Promise<T>
   resolve: (value: T) => void
   reject: (error: any) => void
-  toArgs: () => [resolve: this['resolve'], reject: this['reject']]
 }
 // TODO: Promise.withResolvers?
 export function createFuture<T>(): Future<T> {
@@ -69,7 +68,7 @@ export function createFuture<T>(): Future<T> {
     reject = rej
   })
   // @ts-expect-error
-  return { resolve, reject, promise, toArgs: () => [resolve, reject] }
+  return { resolve, reject, promise }
 }
 
 export function onAbort<T extends Callback>(

@@ -11,6 +11,7 @@ export type ViteConfigOptions = {
 }
 
 const ext = new URL(import.meta.url).pathname.endsWith('.ts') ? '.ts' : '.js'
+
 export const baseViteConfigOptions = {
   entrypointMainPath: fileURLToPath(
     import.meta.resolve(`../entrypoints/main${ext}`),
@@ -29,8 +30,8 @@ export function createConfig(options: ViteConfigOptions) {
   const entries = {
     server: options.serverEntryPath,
     main: options.entrypointMainPath,
-    worker: options.entrypointWorkerPath,
     thread: options.entrypointThreadPath,
+    worker: options.entrypointWorkerPath,
   }
 
   for (const [name, { path }] of Object.entries(options.applicationImports)) {

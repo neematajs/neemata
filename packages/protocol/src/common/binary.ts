@@ -61,3 +61,10 @@ export const concat = (...buffers: (ArrayBuffer | ArrayBufferView)[]) => {
   }
   return view
 }
+
+export const UTF8Transform = () =>
+  new TransformStream<string, Uint8Array>({
+    transform(chunk, controller) {
+      controller.enqueue(encodeText(chunk))
+    },
+  })

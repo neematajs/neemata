@@ -32,6 +32,7 @@ export class JobWorkerRuntime extends BaseWorkerRuntime {
 
   protected async _initialize(): Promise<void> {
     await super._initialize()
+
     this.jobRunner = new JobRunner({
       logger: this.logger,
       container: this.container,
@@ -73,6 +74,10 @@ export class JobWorkerRuntime extends BaseWorkerRuntime {
   }
 
   protected *_dependents() {
-    // No dependents for now
+    if (this.config?.jobs) {
+      for (const job of this.config.jobs.jobs) {
+        yield* job.steps
+      }
+    }
   }
 }

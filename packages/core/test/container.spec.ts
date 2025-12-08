@@ -428,9 +428,9 @@ describe('Container', () => {
 
     await expect(dispose(injectable)).resolves.toBeUndefined()
 
-    await expect(inject.explicit(injectable, { dep: 'ped' })).resolves.toBe(
-      value,
-    )
+    await expect(
+      inject.explicit(injectable, { dep: 'ped' }),
+    ).resolves.toHaveProperty('instance', value)
   })
 
   describe('Race Condition Prevention', () => {

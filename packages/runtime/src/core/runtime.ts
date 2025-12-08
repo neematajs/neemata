@@ -41,36 +41,35 @@ export abstract class BaseRuntime {
   protected abstract _dispose(): Promise<void>
   protected abstract _dependents(): Generator<Dependant>
 
-  async reload(options?: this['options']): Promise<void> {
+  async reload(...args: any[]): Promise<void> {
     await this._dispose()
-    if (options) this.options = options
     await this._initialize()
   }
 
   async initialize() {
-    this.logger.info('Initializing a runtime...')
+    this.logger.debug('Initializing a runtime...')
     await this._initializePlugins()
     await this._initializeContainer()
     await this.hooks.callHook(LifecycleHook.BeforeInitialize, this)
     await this._initialize()
     await this.hooks.callHook(LifecycleHook.AfterInitialize, this)
-    this.logger.info('Runtime initialized')
+    this.logger.debug('Runtime initialized')
   }
 
   async dispose() {
-    this.logger.info('Disposing a runtime...')
+    this.logger.debug('Disposing a runtime...')
     await this.hooks.callHook(LifecycleHook.BeforeDispose, this)
     await this._dispose()
     await this.hooks.callHook(LifecycleHook.AfterDispose, this)
     await this._disposeContainer()
     await this._disposePlugins()
-    this.logger.info('Runtime disposed')
+    this.logger.debug('Runtime disposed')
   }
 
   protected async _initializePlugins() {
     if (!this.options.plugins?.length) return
     for (const { name, hooks, injections } of this.options.plugins) {
-      this.logger.info(`Initializing plugin [${name}]...`)
+      this.logger.debug(`Initializing plugin [${name}]...`)
       if (injections) {
         for (const injection of injections) {
           await this.container.provide(injection.token, injection.value)
@@ -83,7 +82,7 @@ export abstract class BaseRuntime {
   protected async _disposePlugins() {
     if (!this.options.plugins?.length) return
     for (const { name, hooks, injections } of this.options.plugins) {
-      this.logger.info(`Disposing plugin [${name}]...`)
+      this.logger.debug(`Disposing plugin [${name}]...`)
       if (hooks) this.hooks.removeHooks(hooks)
       if (injections) {
         for (const injection of injections) {

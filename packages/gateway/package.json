@@ -3,9 +3,9 @@
   "type": "module",
   "scripts": {
     "clean-build": "rm -rf ./dist",
-    "build": "tsgo",
-    "dev": "tsgo --watch",
-    "type-check": "tsgo --noEmit"
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "type-check": "tsc --noEmit"
   },
   "exports": {
     ".": "./src/index.ts"
@@ -27,6 +27,9 @@
     "@nmtjs/core": "workspace:*",
     "@nmtjs/type": "workspace:*",
     "@nmtjs/protocol": "workspace:*"
+  },
+  "devDependencies": {
+    "@nmtjs/_tests": "workspace:*"
   },
   "files": [
     "dist",

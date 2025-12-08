@@ -1,38 +1,48 @@
+import { workerData } from 'node:worker_threads'
+
 import type { ServerConfig } from '@nmtjs/runtime'
-import { ApplicationWorkerRuntime, JobWorkerRuntime } from '@nmtjs/runtime'
+import {
+  ApplicationWorkerRuntime,
+  isApplicationConfig,
+  JobWorkerRuntime,
+} from '@nmtjs/runtime'
 
 import type { RunWorkerOptions } from './thread.ts'
 
-export default async function run(options: RunWorkerOptions) {
+export async function run(options: RunWorkerOptions['runtime']) {
   const serverConfig: ServerConfig = await import(
     // @ts-expect-error
     '#server'
   ).then((m) => m.default)
-
-  if (options.runtime.type === 'application') {
-    const { name, path, transportsData } = options.runtime
-    const runtime = new ApplicationWorkerRuntime(serverConfig, {
-      name,
-      path,
-      transports: transportsData,
-    })
-
-    if (import.meta.env.DEV && import.meta.hot) {
-      import.meta.hot.accept(path, async (module) => {
-        if (module) {
-          runtime.logger.info('Configuration changed, performing reload...')
-          await runtime.reload()
-        }
-      })
+  if (options.type === 'application') {
+    globalThis._hotAccept = (module: any) => {
+      if (module) {
+        if (!isApplicationConfig(module.default))
+          throw new Error('Invalid application config')
+        runtime.reload(module.default)
+      }
     }
 
+    const { name, path, transportsData } = options
+    const appConfig = await import(
+      /* @vite-ignore */
+      path
+    ).then((m) => m.default)
+
+    const runtime = new ApplicationWorkerRuntime(
+      serverConfig,
+      { name, path, transports: transportsData },
+      appConfig,
+    )
     return runtime
-  } else if (options.runtime.type === 'jobs') {
-    const { jobWorkerQueue } = options.runtime
+  } else if (options.type === 'jobs') {
+    const { jobWorkerQueue } = options
     const runtime = new JobWorkerRuntime(serverConfig, {
       queueName: jobWorkerQueue,
-      port: options.port,
+      port: workerData.port,
     })
     return runtime
+  } else {
+    throw new Error(`Unknown runtime type: ${(workerData.runtime as any).type}`)
   }
 }

@@ -31,10 +31,16 @@ export type AnyJob = Job<
   AnyObjectLikeType | undefined
 >
 
+export type JobBackoffOptions = {
+  type: 'fixed' | 'exponential'
+  delay: number
+  jitter?: number
+}
+
 export interface JobOptions {
   queue: JobWorkerQueue
-  attemts?: number
-  backoff?: { type: 'fixed' | 'exponential'; delay: number; jitter?: number }
+  attempts?: number
+  backoff?: JobBackoffOptions
 }
 
 export class Job<

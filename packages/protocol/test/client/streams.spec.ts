@@ -10,6 +10,13 @@ import {
 const encoder = new TextEncoder()
 const decoder = new TextDecoder()
 
+const writeAndClose = async <T>(writable: WritableStream<T>, chunks: T[]) => {
+  const writer = writable.getWriter()
+  for (const chunk of chunks) await writer.write(chunk)
+  await writer.close()
+  writer.releaseLock()
+}
+
 const readableFrom = (chunks: string[]) =>
   new ReadableStream<Uint8Array>({
     start(controller) {
@@ -47,9 +54,10 @@ describe('ProtocolServerStream', () => {
       return chunks
     })()
 
-    stream.push(encoder.encode('foo'))
-    stream.push(encoder.encode('bar'))
-    stream.end()
+    await writeAndClose(stream.writable, [
+      encoder.encode('foo'),
+      encoder.encode('bar'),
+    ])
 
     const result = await collect
     expect(result.map((chunk) => decoder.decode(chunk))).toEqual(['foo', 'bar'])
@@ -58,17 +66,23 @@ describe('ProtocolServerStream', () => {
 
 describe('ProtocolServerBlobStream', () => {
   it('requests chunks via provided pull handler', async () => {
-    let blobStream: ProtocolServerBlobStream
-    const pull = vi.fn((size: number | null) => {
+    let writer: WritableStreamDefaultWriter | null = null
+    const pull = vi.fn(async (controller: ReadableStreamDefaultController) => {
+      const size = controller.desiredSize
       expect(size).toBeGreaterThan(0)
       if (pull.mock.calls.length === 1) {
-        blobStream.push(encoder.encode('chunk'))
+        await writer!.write(encoder.encode('chunk'))
       } else {
-        blobStream.end()
+        await writer!.close()
+        writer!.releaseLock()
       }
     })
 
-    blobStream = new ProtocolServerBlobStream({ type: 'text/plain' }, { pull })
+    const blobStream = new ProtocolServerBlobStream(
+      { type: 'text/plain' },
+      { pull },
+    )
+    writer = blobStream.writable.getWriter()
 
     const reader = blobStream.readable.getReader()
     const first = await reader.read()
@@ -96,14 +110,14 @@ describe('ClientStreams collection', () => {
     expect(() => registry.get(10)).toThrow('Stream not found')
   })
 
-  it('aborts streams and clears registry', () => {
+  it('aborts streams and clears registry', async () => {
     const registry = new ClientStreams()
     registry.add(readableFrom(['data']), 1, { type: 'text/plain' })
-    registry.abort(1, new Error('abort'))
+    await registry.abort(1, new Error('abort'))
     expect(() => registry.get(1)).toThrow('Stream not found')
 
     registry.add(readableFrom(['data']), 2, { type: 'text/plain' })
-    registry.clear(new Error('clear'))
+    await registry.clear(new Error('clear'))
     expect(() => registry.get(2)).toThrow('Stream not found')
   })
 })
@@ -111,30 +125,36 @@ describe('ClientStreams collection', () => {
 describe('ServerStreams collection', () => {
   it('pushes, ends, and removes streams', async () => {
     const registry = new ServerStreams()
-    const stream = { push: vi.fn(), end: vi.fn(), abort: vi.fn() }
-    registry.add(5, stream as any)
+    const stream = new ProtocolServerStream()
+    registry.add(5, stream)
+
+    // Collect chunks in background
+    const collect = (async () => {
+      const chunks: Uint8Array[] = []
+      for await (const chunk of stream) chunks.push(chunk as Uint8Array)
+      return chunks
+    })()
 
     await registry.push(5, encoder.encode('chunk'))
-    expect(stream.push).toHaveBeenCalled()
+    await registry.end(5)
 
-    registry.end(5)
-    expect(stream.end).toHaveBeenCalled()
+    const result = await collect
+    expect(result.map((c) => decoder.decode(c))).toEqual(['chunk'])
     expect(() => registry.get(5)).toThrow('Stream not found')
   })
 
-  it('aborts and clears all streams', () => {
+  it('aborts and clears all streams', async () => {
     const registry = new ServerStreams()
-    const streamA = { push: vi.fn(), end: vi.fn(), abort: vi.fn() }
-    const streamB = { push: vi.fn(), end: vi.fn(), abort: vi.fn() }
-    registry.add(1, streamA as any)
-    registry.add(2, streamB as any)
+    const streamA = new ProtocolServerStream()
+    const streamB = new ProtocolServerStream()
+    registry.add(1, streamA)
+    registry.add(2, streamB)
 
-    registry.abort(1)
-    expect(streamA.abort).toHaveBeenCalled()
+    await registry.abort(1)
+    expect(() => registry.get(1)).toThrow('Stream not found')
 
     const clearError = new Error('clear')
-    registry.clear(clearError)
-    expect(streamB.abort).toHaveBeenCalledWith(clearError)
+    await registry.clear(clearError)
     expect(() => registry.get(2)).toThrow('Stream not found')
   })
 })
