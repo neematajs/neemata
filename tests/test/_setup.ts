@@ -358,6 +358,7 @@ export async function createTestSetup<TRouter extends AnyRootRouter>(
     middlewares,
     filters,
   })
+  api.initialize()
 
   const gateway = new Gateway({
     logger,
@@ -365,7 +366,7 @@ export async function createTestSetup<TRouter extends AnyRootRouter>(
     hooks,
     formats: new ProtocolFormats([serverFormat]),
     api,
-    identityResolver,
+    identity: identityResolver,
     transports: { 'event-emitter': { transport: serverTransport } },
   })
 

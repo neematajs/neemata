@@ -327,6 +327,8 @@ export class Container {
           ).finally(() => {
             this.resolvers.delete(injectable)
 
+            // biome-ignore lint: false
+            // @ts-ignore
             if (measurements && measure) measurements.push(measure)
           })
           if (injectable.scope !== Scope.Transient) {

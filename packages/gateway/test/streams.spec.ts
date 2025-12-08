@@ -6,12 +6,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { StreamTimeout } from '../src/enums.ts'
 import { BlobStreamsManager } from '../src/streams.ts'
 
+const TEST_TIMEOUTS = {
+  [StreamTimeout.Pull]: 5000,
+  [StreamTimeout.Consume]: 5000,
+  [StreamTimeout.Finish]: 10000,
+}
+
 describe('BlobStreamsManager', () => {
   let manager: BlobStreamsManager
 
   beforeEach(() => {
     vi.useFakeTimers()
-    manager = new BlobStreamsManager()
+    manager = new BlobStreamsManager({ timeouts: TEST_TIMEOUTS })
   })
 
   afterEach(() => {
@@ -20,7 +26,7 @@ describe('BlobStreamsManager', () => {
 
   describe('constructor', () => {
     it('should use default timeout durations', () => {
-      const mgr = new BlobStreamsManager()
+      const mgr = new BlobStreamsManager({ timeouts: TEST_TIMEOUTS })
       // We can't directly check private fields, but we can verify behavior
       expect(mgr).toBeInstanceOf(BlobStreamsManager)
     })
@@ -577,7 +583,7 @@ describe('BlobStreamsManager', () => {
   describe('Custom Timeouts', () => {
     it('should use custom pull timeout', () => {
       const customManager = new BlobStreamsManager({
-        timeouts: { [StreamTimeout.Pull]: 1000 },
+        timeouts: { ...TEST_TIMEOUTS, [StreamTimeout.Pull]: 1000 },
       })
 
       const stream = customManager.createClientStream(
@@ -602,7 +608,7 @@ describe('BlobStreamsManager', () => {
 
     it('should use custom consume timeout', () => {
       const customManager = new BlobStreamsManager({
-        timeouts: { [StreamTimeout.Consume]: 2000 },
+        timeouts: { ...TEST_TIMEOUTS, [StreamTimeout.Consume]: 2000 },
       })
 
       const stream = customManager.createClientStream(

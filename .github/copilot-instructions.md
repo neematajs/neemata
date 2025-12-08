@@ -136,12 +136,13 @@ Two distinct streaming mechanisms exist in the framework:
 ### Commands
 
 ```bash
-pnpm build         # Build all packages
-pnpm test          # Build + unit tests + runtime tests
-pnpm test:unit     # Unit tests only (vitest)
-pnpm test:watch    # Watch mode
-pnpm check         # Format + lint + type-check (required before commit)
-pnpm fmt           # Auto-fix with Biome
+pnpm build               # Build all packages
+pnpm test                # Build + unit tests + runtime tests
+pnpm test:unit           # Unit tests only (vitest)
+pnpm test:integration    # Integration tests only
+pnpm test:watch          # Watch mode
+pnpm check               # Format + lint + type-check (required before commit)
+pnpm fmt                 # Auto-fix with Biome
 ```
 
 ### Code Style
