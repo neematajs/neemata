@@ -85,7 +85,9 @@ export class JobWorkerRuntime extends BaseWorkerRuntime {
   protected *_dependents() {
     if (this.config?.jobs) {
       for (const job of this.config.jobs.jobs) {
-        yield* job.steps
+        if (!job.returnHandler)
+          throw new Error(`Job ${job.name} is missing return handler.`)
+        yield job
       }
     }
   }

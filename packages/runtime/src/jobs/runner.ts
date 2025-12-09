@@ -1,11 +1,8 @@
 import type { Container, Logger, LoggingOptions } from '@nmtjs/core'
-import type { t } from '@nmtjs/type'
 import type { Job } from 'bullmq'
-import { NeverType } from '@nmtjs/type/never'
 
 import type { LifecycleHooks } from '../core/hooks.ts'
-import type { AnyJob } from './job.ts'
-import type { AnyJobStep } from './step.ts'
+import type { AnyJob, AnyJobStep } from './job.ts'
 
 export type JobRunnerOptions = { logging?: LoggingOptions }
 
@@ -65,6 +62,8 @@ export class JobRunner<
     const { input, output, steps } = job
     let result: Record<string, unknown> = { ...options.result }
     if (input) data = input.decode(data)
+    const context = await this.container.createContext(job.dependencies)
+    const jobContext = await job.context?.(context, data)
     const stepResults = Array.from({ length: steps.length })
     for (
       let stepIndex = 0;
@@ -90,11 +89,8 @@ export class JobRunner<
       })
       let stepResult: unknown
       try {
-        stepResult = await this.runStep(
-          step,
-          stepIndex === 0 ? data : result,
-          options.signal,
-        )
+        const result = await step.handler(context, jobContext, options.signal)
+        stepResult = result ?? {}
       } catch (error) {
         throw new Error(`Error during step [${stepIndex}]`, {
           cause: error as Error,
@@ -112,31 +108,45 @@ export class JobRunner<
         options,
       })
     }
-    if (output) result = output.decode(result)
-    return result
+    result = await job.returnHandler!(result)
+    return output.decode(result)
   }
 
-  async runStep<T extends AnyJobStep>(
-    step: T,
-    data: t.infer.decode.input<T['input']>,
+  async runStep(
+    step: AnyJobStep,
+    context: any,
+    jobContext: any,
     signal: AbortSignal,
   ) {
-    const { dependencies, handler, input, output } = step
-    if (input instanceof NeverType === false) {
-      data = input.decode(data)
-    }
-    const context = await this.container.createContext(dependencies)
-    const result = await handler(context, data, signal)
-    return output.decode(result)
+    const { handler } = step
+    return handler(context, jobContext, signal)
   }
 
   protected async beforeStep(
     params: JobRunnerRunBeforeStepParams<RunOptions>,
-  ): Promise<void> {}
+  ): Promise<void> {
+    this.logger.debug(
+      {
+        job: params.job.name,
+        step: params.step.label || params.stepIndex + 1,
+        stepIndex: params.stepIndex,
+      },
+      'Executing job step',
+    )
+  }
 
   protected async afterStep(
     params: JobRunnerRunAfterStepParams<RunOptions>,
-  ): Promise<void> {}
+  ): Promise<void> {
+    this.logger.debug(
+      {
+        job: params.job.name,
+        step: params.step.label || params.stepIndex + 1,
+        stepIndex: params.stepIndex,
+      },
+      'Completed job step',
+    )
+  }
 }
 
 export class ApplicationWorkerJobRunner extends JobRunner<

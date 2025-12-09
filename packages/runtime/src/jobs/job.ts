@@ -1,34 +1,40 @@
-import type { TSError } from '@nmtjs/common'
-import type { Dependencies } from '@nmtjs/core'
-import type {
-  AnyObjectLikeType,
-  MergeObjectTypes,
-  ObjectType,
-} from '@nmtjs/type/object'
+import type { Async, TSError } from '@nmtjs/common'
+import type { Dependencies, DependencyContext } from '@nmtjs/core'
+import type { AnyObjectLikeType } from '@nmtjs/type/object'
 import { tryCaptureStackTrace } from '@nmtjs/common'
+import { createLazyInjectable } from '@nmtjs/core'
 import { t } from '@nmtjs/type'
 
-import type { JobWorkerQueue } from '../enums.ts'
-import type { AnyJobStep, JobStep } from './step.ts'
-import { kJobKey } from '../constants.ts'
+import { kJobKey, kJobStepKey } from '../constants.ts'
+import { JobWorkerQueue } from '../enums.ts'
 
-type DefaultObjectType = ObjectType<{}>
+export type AnyJobStep = JobStep<any, any, any>
 
-export type ExtractStepsOutput<Steps extends AnyJobStep[]> = Steps extends [
-  infer First extends AnyJobStep,
-  ...infer Rest extends AnyJobStep[],
-]
-  ? First extends JobStep<any, infer OutputType extends AnyObjectLikeType, any>
-    ? MergeObjectTypes<OutputType, ExtractStepsOutput<Rest>>
-    : DefaultObjectType
-  : DefaultObjectType
+export type JobStepHandler<Ctx, Deps extends Dependencies, Return> = (
+  context: DependencyContext<Deps>,
+  jobContext: Ctx,
+  signal: AbortSignal,
+) => Async<Return>
+
+export interface JobStep<
+  Ctx = unknown,
+  Deps extends Dependencies = Dependencies,
+  Return = unknown,
+> {
+  [kJobStepKey]: any
+  handler: JobStepHandler<Ctx, Deps, Return>
+  label?: string
+}
 
 export type AnyJob = Job<
   string,
-  AnyJobStep[],
+  any,
+  any,
+  [AnyJobStep, ...AnyJobStep[]],
   Record<string, unknown>,
-  AnyObjectLikeType | undefined,
-  AnyObjectLikeType | undefined
+  AnyObjectLikeType,
+  AnyObjectLikeType,
+  true
 >
 
 export type JobBackoffOptions = {
@@ -37,25 +43,33 @@ export type JobBackoffOptions = {
   jitter?: number
 }
 
-export interface JobOptions {
+export interface JobOptions<
+  Input extends AnyObjectLikeType,
+  Output extends AnyObjectLikeType,
+  Ctx = undefined,
+  Deps extends Dependencies = {},
+> {
   queue: JobWorkerQueue
+  input: Input
+  output: Output
+  dependencies?: Deps
+  context?: (
+    ctx: DependencyContext<Deps>,
+    input: t.infer.decode.output<Input>,
+  ) => Async<Ctx>
   attempts?: number
   backoff?: JobBackoffOptions
 }
 
 export class Job<
   Name extends string = string,
+  Ctx = undefined,
+  Deps extends Dependencies = {},
   Steps extends AnyJobStep[] = [],
   Result extends Record<string, unknown> = {},
-  Input extends AnyObjectLikeType | undefined = Steps extends [
-    infer First extends AnyJobStep,
-    ...any,
-  ]
-    ? First['input']
-    : undefined,
-  Output extends AnyObjectLikeType | undefined = Steps extends []
-    ? undefined
-    : ExtractStepsOutput<Steps>,
+  Input extends AnyObjectLikeType = AnyObjectLikeType,
+  Output extends AnyObjectLikeType = AnyObjectLikeType,
+  HasReturn extends boolean = false,
 > {
   _!: {
     output: Result
@@ -63,67 +77,98 @@ export class Job<
   };
   [kJobKey] = true
   steps: Steps = [] as unknown as Steps
-  input: Input = undefined as unknown as Input
+  input: Input
   output: Output = undefined as unknown as Output
+  dependencies: Deps
+  context: (
+    ctx: DependencyContext<Deps>,
+    input: t.infer.decode.output<Input>,
+  ) => Async<Ctx>
+  returnHandler?: (result: Result) => Async<t.infer.encode.input<Output>>
 
   constructor(
     public name: Name,
-    public options: JobOptions,
+    public options: JobOptions<Input, Output, Ctx, Deps>,
     public stack?: string,
-  ) {}
-
-  add<
-    StepInput extends AnyObjectLikeType,
-    StepOutput extends AnyObjectLikeType,
-    Deps extends Dependencies = {},
-  >(
-    step: JobStep<
-      StepInput,
-      StepOutput,
-      Deps,
-      StepInput extends AnyObjectLikeType
-        ? Output extends AnyObjectLikeType
-          ? Result extends t.infer.decode.output<StepInput>
-            ? t.infer.encode.input<StepOutput>
-            : TSError<`Previously accumulated job's result does not satisfies current step's input`>
-          : t.infer.encode.input<StepOutput>
-        : void
-    >,
   ) {
-    this.steps.push(step)
-    this.addOutput(step.output as AnyObjectLikeType)
-    if (this.input === undefined) {
-      this.input = step.input as unknown as Input
-    }
-
-    return this as unknown as Job<
-      Name,
-      [
-        ...Steps,
-        JobStep<
-          StepInput extends undefined ? DefaultObjectType : StepInput,
-          StepOutput extends undefined ? DefaultObjectType : StepOutput,
-          Deps
-        >,
-      ],
-      Result &
-        t.infer.decode.output<
-          StepOutput extends undefined ? DefaultObjectType : StepOutput
-        >
-    >
+    this.dependencies = (options.dependencies || {}) as Deps
+    this.input = options.input
+    this.output = options.output
+    this.context = options.context as typeof this.context
   }
 
-  protected addOutput(output: AnyObjectLikeType) {
-    this.output = (
-      this.output ? t.merge(this.output, output) : output
-    ) as Output
+  add<StepOutput>(
+    handler: HasReturn extends true
+      ? TSError<'Cannot add more steps after return() has been called.'>
+      : JobStepHandler<Ctx, Deps, StepOutput>,
+    label?: string,
+  ): Job<
+    Name,
+    Ctx,
+    Deps,
+    [...Steps, JobStep<Ctx, Deps, StepOutput>],
+    Result & StepOutput,
+    Input,
+    Output,
+    false
+  > {
+    if (this.returnHandler || typeof handler !== 'function')
+      throw new Error('Cannot add more steps after return() has been called.')
+    this.steps.push(createStep({ handler, label }))
+    return this as any
+  }
+
+  return(
+    handler: HasReturn extends true
+      ? TSError<'return() has already been called.'>
+      : (result: Result) => Async<t.infer.encode.input<Output>>,
+  ) {
+    if (this.returnHandler || typeof handler !== 'function')
+      throw new Error('return() has already been called.')
+    this.returnHandler = handler
   }
 }
 
-export function createJob<Name extends string>(
-  name: Name,
-  options: JobOptions,
-) {
+export function createStep<
+  Ctx = unknown,
+  Deps extends Dependencies = {},
+  Return = unknown,
+>(step: {
+  label?: string
+  handler: JobStepHandler<Ctx, Deps, Return>
+}): JobStep<Ctx, Deps, Return> {
+  return Object.freeze({
+    [kJobStepKey]: true,
+    stack: tryCaptureStackTrace(),
+    ...step,
+  })
+}
+
+export function createJob<
+  Name extends string,
+  Input extends AnyObjectLikeType,
+  Output extends AnyObjectLikeType,
+  Ctx,
+  Deps extends Dependencies,
+>(name: Name, options: JobOptions<Input, Output, Ctx, Deps>) {
   const stack = tryCaptureStackTrace()
   return new Job(name, options, stack)
 }
+
+createJob('a', {
+  queue: JobWorkerQueue.Compute,
+  input: t.object({ a: t.string() }),
+  output: t.object({ b: t.number() }),
+  dependencies: { a: createLazyInjectable<'a'>() },
+  context: (ctx) => {
+    return ctx.a
+  },
+})
+  .add(async ({ a }, b) => {
+    return { b: 2 }
+  })
+  .add(async (ctx, b) => {})
+  .add(async (ctx, b) => {})
+  .return((result) => {
+    return { b: result.b }
+  })
