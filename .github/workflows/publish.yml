@@ -74,7 +74,7 @@ jobs:
 
       - name: Set version
         run: |
-          pnpm version ${{ inputs.version }} -ws --allow-same-version --no-commit-hooks --no-git-tag-version --silent || true
+          pnpm -r exec pnpm version --allow-same-version --no-commit-hooks --no-git-tag-version --silent ${{ inputs.version }}
           pnpm --filter !_tests -r exec cp ../../README.md ./
           pnpm --filter !_tests -r exec cp ../../LICENSE.md ./
 
