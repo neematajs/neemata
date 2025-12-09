@@ -235,7 +235,16 @@ export class ApplicationServer extends EventEmitter {
     }
 
     if (this.config.proxy && Object.keys(proxyUpstreams).length > 0) {
-      const { NeemataProxy } = await import('@nmtjs/proxy')
+      let NeemataProxy: typeof import('@nmtjs/proxy').NeemataProxy
+      try {
+        const module = await import('@nmtjs/proxy')
+        NeemataProxy = module.NeemataProxy
+      } catch (cause) {
+        throw new Error(
+          'Failed to import @nmtjs/proxy. Please install it as a dependency to use the proxy feature.',
+          { cause },
+        )
+      }
       const upstreams = Object.fromEntries(
         Object.entries(proxyUpstreams).map(([app, upstreams]) => [
           app,

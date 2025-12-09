@@ -39,141 +39,6 @@ importers:
         specifier: 4.0.14
         version: 4.0.14(@opentelemetry/api@1.9.0)(@types/node@24.10.1)(@vitest/ui@4.0.14)(jiti@2.6.1)(lightningcss@1.30.2)
 
-  _dev/bun:
-    dependencies:
-      '@types/bun':
-        specifier: ^1.2.19
-        version: 1.3.2(@types/react@19.1.9)
-      neemata-test-generic:
-        specifier: workspace:*
-        version: link:../generic
-      nmtjs:
-        specifier: workspace:*
-        version: link:../../packages/nmtjs
-
-  _dev/deno:
-    dependencies:
-      '@std/assert':
-        specifier: npm:@jsr/std__assert@^1.0.13
-        version: '@jsr/std__assert@1.0.16'
-      '@std/testing':
-        specifier: npm:@jsr/std__testing@^1.0.15
-        version: '@jsr/std__testing@1.0.16'
-      neemata-test-generic:
-        specifier: workspace:*
-        version: link:../generic
-      nmtjs:
-        specifier: workspace:*
-        version: link:../../packages/nmtjs
-    devDependencies:
-      '@types/deno':
-        specifier: ^2.3.0
-        version: 2.3.0
-      '@types/node':
-        specifier: ^24
-        version: 24.10.1
-
-  _dev/generic:
-    dependencies:
-      '@nmtjs/client':
-        specifier: workspace:*
-        version: link:../../packages/client
-      '@nmtjs/http-client':
-        specifier: workspace:*
-        version: link:../../packages/http-client
-      '@nmtjs/json-format':
-        specifier: workspace:*
-        version: link:../../packages/json-format
-      '@nmtjs/ws-client':
-        specifier: workspace:*
-        version: link:../../packages/ws-client
-      nmtjs:
-        specifier: workspace:*
-        version: link:../../packages/nmtjs
-
-  _dev/node:
-    dependencies:
-      '@types/node':
-        specifier: ^24
-        version: 24.10.1
-      neemata-test-generic:
-        specifier: workspace:*
-        version: link:../generic
-      nmtjs:
-        specifier: workspace:*
-        version: link:../../packages/nmtjs
-      uWebSockets.js:
-        specifier: github:uNetworking/uWebSockets.js#v20.52.0
-        version: https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/cfc9a40d8132a34881813cec3d5f8e3a185b3ce3
-      undici:
-        specifier: 7.13.0
-        version: 7.13.0
-
-  _dev/playground:
-    dependencies:
-      uWebSockets.js:
-        specifier: github:uNetworking/uWebSockets.js#v20.56.0
-        version: https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/d04e707a1292928d50163ff7545e45c3e84c5ec3
-    devDependencies:
-      '@nmtjs/client':
-        specifier: workspace:*
-        version: link:../../packages/client
-      '@nmtjs/json-format':
-        specifier: workspace:*
-        version: link:../../packages/json-format
-      '@nmtjs/protocol':
-        specifier: workspace:*
-        version: link:../../packages/protocol
-      '@nmtjs/proxy':
-        specifier: workspace:*
-        version: link:../../packages/proxy
-      '@nmtjs/ws-client':
-        specifier: workspace:*
-        version: link:../../packages/ws-client
-      '@types/k6':
-        specifier: ^1.4.0
-        version: 1.4.0
-      k6:
-        specifier: ^0.0.0
-        version: 0.0.0
-      neemata-test-playground-app-1:
-        specifier: 'workspace:'
-        version: link:../playground-app-1
-      nmtjs:
-        specifier: workspace:*
-        version: link:../../packages/nmtjs
-      prom-client:
-        specifier: ^15.1.3
-        version: 15.1.3
-      vite:
-        specifier: ^7.2.2
-        version: 7.2.2(@types/node@24.10.1)(jiti@2.6.1)(lightningcss@1.30.2)
-
-  _dev/playground-app-1:
-    dependencies:
-      uWebSockets.js:
-        specifier: github:uNetworking/uWebSockets.js#v20.56.0
-        version: https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/d04e707a1292928d50163ff7545e45c3e84c5ec3
-    devDependencies:
-      '@nmtjs/client':
-        specifier: workspace:^
-        version: link:../../packages/client
-      '@nmtjs/json-format':
-        specifier: workspace:^
-        version: link:../../packages/json-format
-      '@nmtjs/protocol':
-        specifier: workspace:^
-        version: link:../../packages/protocol
-      '@nmtjs/ws-client':
-        specifier: workspace:^
-        version: link:../../packages/ws-client
-      nmtjs:
-        specifier: workspace:*
-        version: link:../../packages/nmtjs
-      vite:
-        specifier: ^7.2.2
-        version: 7.2.2(@types/node@24.10.1)(jiti@2.6.1)(lightningcss@1.30.2)
-
   packages/client:
     devDependencies:
       '@nmtjs/_tests':
@@ -992,27 +857,6 @@ packages:
 
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
-
-  '@jsr/std__assert@1.0.16':
-    resolution: {integrity: sha512-bX9ih0nR1kQ12/cnQRCQU0ppTCV7MFkP0qjyWxJRoDI8RC5cpTAmLFH/KcFgxmdN4flKkRbub8VtLuyKq+4OxA==, tarball: https://npm.jsr.io/~/11/@jsr/std__assert/1.0.16.tgz}
-
-  '@jsr/std__async@1.0.15':
-    resolution: {integrity: sha512-GW6tMWwF79kKKVths4SWcju1cFykhcE+jiV6/k2IOW45611ji+Yomm0MZuW7JR4Oug+GXF0POrsAiSqL8k/9PQ==, tarball: https://npm.jsr.io/~/11/@jsr/std__async/1.0.15.tgz}
-
-  '@jsr/std__data-structures@1.0.9':
-    resolution: {integrity: sha512-+mT4Nll6fx+CPNqrlC+huhIOYNSMS+KUdJ4B8NujiQrh/bq++ds5PXpEsfV5EPR+YuWcuDGG0P1DE+Rednd7Wg==, tarball: https://npm.jsr.io/~/11/@jsr/std__data-structures/1.0.9.tgz}
-
-  '@jsr/std__fs@1.0.20':
-    resolution: {integrity: sha512-wBw/Y+EfWVgZq6qlqD8M84q0kSuPwLmjnXy97KGfdrkorvzTZCs5AbHElsed/Yi90PuH39tvNhLCHeRGObUwPA==, tarball: https://npm.jsr.io/~/11/@jsr/std__fs/1.0.20.tgz}
-
-  '@jsr/std__internal@1.0.12':
-    resolution: {integrity: sha512-6xReMW9p+paJgqoFRpOE2nogJFvzPfaLHLIlyADYjKMUcwDyjKZxryIbgcU+gxiTygn8yCjld1HoI0ET4/iZeA==, tarball: https://npm.jsr.io/~/11/@jsr/std__internal/1.0.12.tgz}
-
-  '@jsr/std__path@1.1.3':
-    resolution: {integrity: sha512-7HAc3nOGizbIunNCUQ4mrF7XY/SpAEIlq5pBR0sOzkcLB7520baEqnOmXTFiIUTp/umKE5ArEegMM1F39N51Rg==, tarball: https://npm.jsr.io/~/11/@jsr/std__path/1.1.3.tgz}
-
-  '@jsr/std__testing@1.0.16':
-    resolution: {integrity: sha512-suPk2iMICErQVuRcNj7HweRbFYsBLjqnrI0NgNEXzBAJYv8lA+/87IXMgv/rvyqSABHn3X4ciynFZgpyPCI32A==, tarball: https://npm.jsr.io/~/11/@jsr/std__testing/1.0.16.tgz}
 
   '@lukeed/ms@2.0.2':
     resolution: {integrity: sha512-9I2Zn6+NJLfaGoz9jN3lpwDgAYvfGeNYdbAIjJOqzs4Tpc+VU3Jqq4IofSUBKajiDS8k9fZIg18/z13mpk1bsA==}
@@ -1845,9 +1689,6 @@ packages:
   '@types/estree@1.0.8':
     resolution: {integrity: sha512-dWHzHa2WqEXI/O1E9OjrocMTKJl2mSrEolh1Iomrv6U+JuNwaHXsXx9bLu5gG7BUWFIN0skIQJQ/L1rIex4X6w==}
 
-  '@types/k6@1.4.0':
-    resolution: {integrity: sha512-2tgKVnzNXZTZT1TDAGLY/3cuvHPZLyOF751N7M8T2dBgWzInzUVZYjGn9zVW01S1yNLqAr1az9gctyJHTW6GRQ==}
-
   '@types/node@24.10.1':
     resolution: {integrity: sha512-GNWcUTRBgIRJD5zj+Tq0fKOJ5XZajIiBroOF0yvj2bSU1WvNdYS/dn9UxwsujGW4JX06dnHyjV2y9rRaybH0iQ==}
 
@@ -1956,9 +1797,6 @@ packages:
   binary-extensions@2.3.0:
     resolution: {integrity: sha512-Ceh+7ox5qe7LJuLHoY0feh3pHuUDHAcRUeyL2VYghZwfpkNIy/+8Ocg0a3UuSoYzavmylwuLWQOf3hl0jjMMIw==}
     engines: {node: '>=8'}
-
-  bintrees@1.0.2:
-    resolution: {integrity: sha512-VOMgTMwjAaUG580SXn3LacVgjurrbMme7ZZNYGSSV7mmtY6QQRh0Eg3pwIcntQ77DErK1L0NxkbetjcoXzVwKw==}
 
   brace-expansion@2.0.2:
     resolution: {integrity: sha512-Jt0vHyM+jmUBqojB7E1NIYadt0vI0Qxjxd2TErW94wDz+E2LAm5vKMXXwg6ZZBTHPuUlDgQHKXvjGBdfcF1ZDQ==}
@@ -2323,9 +2161,6 @@ packages:
   json-schema-traverse@1.0.0:
     resolution: {integrity: sha512-NM8/P9n3XjXhIZn1lLhkFaACTOURQXjWhV4BA/RnOv8xvgqtqpAX9IO4mRQxSx1Rlo4tqzeqb0sOlruaOy3dug==}
 
-  k6@0.0.0:
-    resolution: {integrity: sha512-GAQSWayS2+LjbH5bkRi+pMPYyP1JSp7o+4j58ANZ762N/RH/SdlAT3CHHztnn8s/xgg8kYNM24Gd2IPo9b5W+g==}
-
   light-my-request@6.6.0:
     resolution: {integrity: sha512-CHYbu8RtboSIoVsHZ6Ye4cj4Aw/yg2oAFimlF7mNvfDV192LR7nDiKtSIfCuLT7KokPSTn/9kfVLm5OGN0A28A==}
 
@@ -2549,10 +2384,6 @@ packages:
 
   process-warning@5.0.0:
     resolution: {integrity: sha512-a39t9ApHNx2L4+HBnQKqxxHNs1r7KF+Intd8Q/g1bUh6q0WIp9voPXJ/x0j+ZL45KF1pJd9+q2jLIRMfvEshkA==}
-
-  prom-client@15.1.3:
-    resolution: {integrity: sha512-6ZiOBfCywsD4k1BN9IX0uZhF+tJkV8q8llP64G5Hajs4JOeVLPCwpPVcpXy3BwYiUGgyJzsJJQeOIv7+hDSq8g==}
-    engines: {node: ^16 || ^18 || >=20}
 
   pump@3.0.2:
     resolution: {integrity: sha512-tUPXtzlGM8FE3P0ZL6DVs/3P58k9nk8/jZeQCurTJylQA8qFYzHFfhBJkuqyE0FifOsQ0uKWekiZ5g8wtr28cw==}
@@ -2791,9 +2622,6 @@ packages:
     resolution: {integrity: sha512-qpCAvRl9stuOHveKsn7HncJRvv501qIacKzQlO/+Lwxc9+0q2wLyv4Dfvt80/DPn2pqOBsJdDiogXGR9+OvwRw==}
     engines: {node: '>=8'}
 
-  tdigest@0.1.2:
-    resolution: {integrity: sha512-+G0LLgjjo9BZX2MfdvPfH+MKLCrxlXSYec5DaPYP1fe6Iyhf0/fSmJ0bFiZ1F8BT6cGXl2LpltQptzjXKWEkKA==}
-
   temporal-polyfill@0.3.0:
     resolution: {integrity: sha512-qNsTkX9K8hi+FHDfHmf22e/OGuXmfBm9RqNismxBrnSmZVJKegQ+HYYXT+R7Ha8F/YSm2Y34vmzD4cxMu2u95g==}
 
@@ -2844,20 +2672,12 @@ packages:
     engines: {node: '>=14.17'}
     hasBin: true
 
-  uWebSockets.js@https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/cfc9a40d8132a34881813cec3d5f8e3a185b3ce3:
-    resolution: {tarball: https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/cfc9a40d8132a34881813cec3d5f8e3a185b3ce3}
-    version: 20.52.0
-
   uWebSockets.js@https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/d04e707a1292928d50163ff7545e45c3e84c5ec3:
     resolution: {tarball: https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/d04e707a1292928d50163ff7545e45c3e84c5ec3}
     version: 20.56.0
 
   undici-types@7.16.0:
     resolution: {integrity: sha512-Zz+aZWSj8LE6zoxD+xrjh4VfkIG8Ya6LvYkZqtUQGJPZjYl53ypCaUwWqo7eI0x66KBGeRo+mlBEkMSeSZ38Nw==}
-
-  undici@7.13.0:
-    resolution: {integrity: sha512-l+zSMssRqrzDcb3fjMkjjLGmuiiK2pMIcV++mJaAc9vhjSGpvM7h43QgP+OAMb1GImHmbPyG2tBXeuyG5iY4gA==}
-    engines: {node: '>=20.18.1'}
 
   universal-user-agent@7.0.3:
     resolution: {integrity: sha512-TmnEAEAsBJVZM/AADELsK76llnwcf9vMKuPz8JflO1frO8Lchitr0fNaN9d+Ap0BjKtqWqd/J17qeDnXh8CL2A==}
@@ -3349,36 +3169,6 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
 
-  '@jsr/std__assert@1.0.16':
-    dependencies:
-      '@jsr/std__internal': 1.0.12
-
-  '@jsr/std__async@1.0.15': {}
-
-  '@jsr/std__data-structures@1.0.9':
-    dependencies:
-      '@jsr/std__assert': 1.0.16
-
-  '@jsr/std__fs@1.0.20':
-    dependencies:
-      '@jsr/std__internal': 1.0.12
-      '@jsr/std__path': 1.1.3
-
-  '@jsr/std__internal@1.0.12': {}
-
-  '@jsr/std__path@1.1.3':
-    dependencies:
-      '@jsr/std__internal': 1.0.12
-
-  '@jsr/std__testing@1.0.16':
-    dependencies:
-      '@jsr/std__assert': 1.0.16
-      '@jsr/std__async': 1.0.15
-      '@jsr/std__data-structures': 1.0.9
-      '@jsr/std__fs': 1.0.20
-      '@jsr/std__internal': 1.0.12
-      '@jsr/std__path': 1.1.3
-
   '@lukeed/ms@2.0.2': {}
 
   '@msgpackr-extract/msgpackr-extract-darwin-arm64@3.0.3':
@@ -3713,7 +3503,8 @@ snapshots:
     dependencies:
       '@octokit/openapi-types': 27.0.0
 
-  '@opentelemetry/api@1.9.0': {}
+  '@opentelemetry/api@1.9.0':
+    optional: true
 
   '@oxc-project/runtime@0.101.0': {}
 
@@ -3960,8 +3751,6 @@ snapshots:
 
   '@types/estree@1.0.8': {}
 
-  '@types/k6@1.4.0': {}
-
   '@types/node@24.10.1':
     dependencies:
       undici-types: 7.16.0
@@ -4087,8 +3876,6 @@ snapshots:
   before-after-hook@4.0.0: {}
 
   binary-extensions@2.3.0: {}
-
-  bintrees@1.0.2: {}
 
   brace-expansion@2.0.2:
     dependencies:
@@ -4464,8 +4251,6 @@ snapshots:
 
   json-schema-traverse@1.0.0: {}
 
-  k6@0.0.0: {}
-
   light-my-request@6.6.0:
     dependencies:
       cookie: 1.1.1
@@ -4701,11 +4486,6 @@ snapshots:
 
   process-warning@5.0.0: {}
 
-  prom-client@15.1.3:
-    dependencies:
-      '@opentelemetry/api': 1.9.0
-      tdigest: 0.1.2
-
   pump@3.0.2:
     dependencies:
       end-of-stream: 1.4.4
@@ -4915,10 +4695,6 @@ snapshots:
     dependencies:
       has-flag: 4.0.0
 
-  tdigest@0.1.2:
-    dependencies:
-      bintrees: 1.0.2
-
   temporal-polyfill@0.3.0:
     dependencies:
       temporal-spec: 0.3.0
@@ -4956,13 +4732,9 @@ snapshots:
 
   typescript@5.9.3: {}
 
-  uWebSockets.js@https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/cfc9a40d8132a34881813cec3d5f8e3a185b3ce3: {}
-
   uWebSockets.js@https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/d04e707a1292928d50163ff7545e45c3e84c5ec3: {}
 
   undici-types@7.16.0: {}
-
-  undici@7.13.0: {}
 
   universal-user-agent@7.0.3: {}
 

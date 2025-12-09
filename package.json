@@ -5,7 +5,6 @@
   "scripts": {
     "clean-build": "pnpm run --parallel -r clean-build",
     "build": "pnpm run clean-build && pnpm run --parallel -r build",
-    "build:publish": "pnpm run --filter !proxy --parallel -r build",
     "dev": "pnpm run clean-build && pnpm run --parallel -r dev",
     "clean": "rm -rf dist node_modules && pnpm -r exec rm -rf dist node_modules",
     "test": "pnpm build && pnpm test:unit && pnpm test:integration",

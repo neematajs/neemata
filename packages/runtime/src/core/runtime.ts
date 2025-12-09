@@ -10,12 +10,10 @@ import {
   getDepedencencyInjectable,
   Scope,
 } from '@nmtjs/core'
-import { NeemataProxy } from '@nmtjs/proxy'
 
 import type { RuntimePlugin } from './plugin.ts'
 import { LifecycleHook } from '../enums.ts'
 import { LifecycleHooks } from './hooks.ts'
-export { NeemataProxy }
 
 export type BaseRuntimeOptions = {
   logger?: LoggingOptions
