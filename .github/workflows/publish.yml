@@ -80,8 +80,8 @@ jobs:
 
       - name: Dry-run publish and publish
         run: |
-          pnpm publish --dry-run --filter "*" --access public --no-git-checks --tag=$(pnpm neemata-tag ${{ inputs.version }})
-          pnpm publish --filter "*" --access public --no-git-checks --tag=$(pnpm neemata-tag ${{ inputs.version }})
+          pnpm publish --dry-run --filter "*" --access public --no-git-checks --tag=$(node scripts/tag.js ${{ inputs.version }})
+          pnpm publish --filter "*" --access public --no-git-checks --tag=$(node scripts/tag.js ${{ inputs.version }})
 
       - name: Publish Github Release
         if: ${{ inputs.release }}
