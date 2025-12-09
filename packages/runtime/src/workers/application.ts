@@ -155,7 +155,6 @@ export class ApplicationWorkerRuntime extends BaseWorkerRuntime {
       throw new Error('Root router must be a root router')
     }
 
-    this.routers.set(kRootRouter, router)
     this.registerRouter(router, [])
 
     for (const filter of filters) this.filters.add(filter)
