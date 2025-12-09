@@ -117,7 +117,9 @@ dist
 #Added by cargo
 
 /target
-Cargo.lock
+
+# Keep
+# Cargo.lock
 
 *.node
 .pnp.*
