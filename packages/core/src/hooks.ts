@@ -6,7 +6,13 @@ import type { HookTypes } from './types.ts'
 export class Hooks<T extends HookTypes = HookTypes> extends Hookable<T> {
   _!: { config: NestedHooks<T> }
 
-  createSignal<T extends keyof T>(hook: T) {
+  createSignal<T extends keyof T>(
+    hook: T,
+  ): {
+    controller: AbortController
+    signal: AbortSignal
+    unregister: () => void
+  } {
     const controller = new AbortController()
     const unregister = this.hookOnce(
       String(hook),

@@ -31,6 +31,45 @@ export type PubSubChannel = {
   event: TAnyEventContract
 }
 
+export type PubSubSubscribe = <
+  Contract extends TAnySubscriptionContract,
+  Events extends {
+    [K in keyof Contract['events']]?: true
+  },
+>(
+  subscription: Contract,
+  events: Events,
+  options: Contract['options'],
+  signal?: AbortSignal,
+) => Omit<Readable, typeof Symbol.asyncIterator> & {
+  [Symbol.asyncIterator]: () => AsyncIterator<
+    {} extends Events
+      ? {
+          [K in keyof Contract['events']]: {
+            event: K
+            data: t.infer.decode.output<Contract['events'][K]['payload']>
+          }
+        }[keyof Contract['events']]
+      : {
+          [K in keyof Events]: K extends keyof Contract['events']
+            ? {
+                event: K
+                data: t.infer.decode.output<Contract['events'][K]['payload']>
+              }
+            : never
+        }[keyof Events]
+  >
+}
+
+export type PubSubPublish = <
+  S extends TAnySubscriptionContract,
+  E extends S['events'][keyof S['events']],
+>(
+  event: E,
+  options: S['options'],
+  data: t.infer.decode.input<E['payload']>,
+) => Promise<boolean>
+
 export type PubSubManagerOptions = { logger: Logger; container: Container }
 
 export class PubSubManager {
@@ -42,35 +81,7 @@ export class PubSubManager {
     return this.options.container.get(pubSubAdapter)
   }
 
-  subscribe<
-    Contract extends TAnySubscriptionContract,
-    Events extends {
-      [K in keyof Contract['events']]?: true
-    },
-  >(
-    subscription: Contract,
-    events: Events,
-    options: Contract['options'],
-    signal?: AbortSignal,
-  ): Omit<Readable, typeof Symbol.asyncIterator> & {
-    [Symbol.asyncIterator]: () => AsyncIterator<
-      {} extends Events
-        ? {
-            [K in keyof Contract['events']]: {
-              event: K
-              data: t.infer.decode.output<Contract['events'][K]['payload']>
-            }
-          }[keyof Contract['events']]
-        : {
-            [K in keyof Events]: K extends keyof Contract['events']
-              ? {
-                  event: K
-                  data: t.infer.decode.output<Contract['events'][K]['payload']>
-                }
-              : never
-          }[keyof Events]
-    >
-  } {
+  subscribe: PubSubSubscribe = (subscription, events, options, signal) => {
     assert(this.adapter, 'PubSub adapter is not configured')
 
     const eventKeys =
@@ -97,14 +108,7 @@ export class PubSubManager {
     return mergeEventStreams(streams, signal)
   }
 
-  async publish<
-    S extends TAnySubscriptionContract,
-    E extends S['events'][keyof S['events']],
-  >(
-    event: E,
-    options: S['options'],
-    data: t.infer.decode.input<E['payload']>,
-  ): Promise<boolean> {
+  publish: PubSubPublish = async (event, options, data) => {
     assert(this.adapter, 'PubSub adapter is not configured')
 
     const channel = getChannelName(event, options)

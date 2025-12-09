@@ -22,7 +22,7 @@
   },
   "scripts": {
     "clean-build": "rm -rf ./dist",
-    "build": "tsc",
+    "build": "tsc --declaration --sourcemap",
     "dev": "tsc --watch",
     "type-check": "tsc --noEmit"
   },

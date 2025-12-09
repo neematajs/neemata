@@ -10,8 +10,8 @@
     }
   },
   "scripts": {
-    "clean-build": "tsc --build --clean",
-    "build": "tsc --build --declaration --sourceMap",
+    "clean-build": "rm -rf ./dist",
+    "build": "tsc --declaration --sourceMap",
     "type-check": "tsc --noEmit"
   },
   "files": [

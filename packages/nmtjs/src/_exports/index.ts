@@ -28,7 +28,7 @@ export const neemata = {
   injectables: {
     ...CoreInjectables,
     ...GatewayInjectables,
-    ...RuntimeInjectables,
+    ...(RuntimeInjectables as typeof RuntimeInjectables),
   },
   transport: createTransport,
   plugin: createPlugin,

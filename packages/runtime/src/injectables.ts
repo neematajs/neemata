@@ -1,7 +1,11 @@
 import { createLazyInjectable, Scope } from '@nmtjs/core'
 
 import type { JobManagerInstance } from './jobs/manager.ts'
-import type { PubSubAdapterType, PubSubManager } from './pubsub/manager.ts'
+import type {
+  PubSubAdapterType,
+  PubSubPublish,
+  PubSubSubscribe,
+} from './pubsub/manager.ts'
 import type { ServerStoreConfig } from './server/config.ts'
 
 export const pubSubAdapter = createLazyInjectable<PubSubAdapterType>(
@@ -9,12 +13,12 @@ export const pubSubAdapter = createLazyInjectable<PubSubAdapterType>(
   'PubSubAdapter',
 )
 
-export const pubSubPublish = createLazyInjectable<PubSubManager['publish']>(
+export const pubSubPublish = createLazyInjectable<PubSubPublish>(
   Scope.Global,
   'PubSubPublish',
 )
 
-export const pubSubSubscribe = createLazyInjectable<PubSubManager['subscribe']>(
+export const pubSubSubscribe = createLazyInjectable<PubSubSubscribe>(
   Scope.Global,
   'PubSubSubscribe',
 )
