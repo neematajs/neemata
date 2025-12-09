@@ -14,3 +14,9 @@ export enum LifecycleHook {
   BeforeDispose = 'lifecycle:beforeDispose',
   AfterDispose = 'lifecycle:afterDispose',
 }
+
+export enum WorkerType {
+  Application = 'Application',
+  Job = 'Job',
+  Command = 'Command',
+}

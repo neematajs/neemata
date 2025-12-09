@@ -21,6 +21,7 @@ import {
   isRouter,
   kRootRouter,
 } from '../application/index.ts'
+import { WorkerType } from '../enums.ts'
 import { BaseWorkerRuntime } from './base.ts'
 
 export interface ApplicationWorkerRuntimeOptions {
@@ -46,11 +47,15 @@ export class ApplicationWorkerRuntime extends BaseWorkerRuntime {
     readonly runtimeOptions: ApplicationWorkerRuntimeOptions,
     protected appConfig: ApplicationConfig,
   ) {
-    super(config, {
-      logger: config.logger,
-      name: `Worker ${runtimeOptions.name}`,
-      plugins: appConfig.plugins,
-    })
+    super(
+      config,
+      {
+        logger: config.logger,
+        name: `Worker ${runtimeOptions.name}`,
+        plugins: appConfig.plugins,
+      },
+      WorkerType.Application,
+    )
 
     this.applicationHooks = new ApplicationHooks()
 

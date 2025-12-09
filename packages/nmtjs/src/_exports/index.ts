@@ -64,7 +64,14 @@ export {
 } from '@nmtjs/gateway'
 export { ConnectionType, ErrorCode, ProtocolBlob } from '@nmtjs/protocol'
 export { t } from '@nmtjs/type'
-export { ApiError, defineApplication, LifecycleHook } from 'nmtjs/runtime'
+export {
+  ApiError,
+  defineApplication,
+  JobWorkerQueue,
+  LifecycleHook,
+  StoreType,
+  WorkerType,
+} from 'nmtjs/runtime'
 
 export { neemata as n }
 export default neemata

@@ -10,7 +10,7 @@ export interface Guard<Deps extends Dependencies = Dependencies>
   can: (ctx: DependencyContext<Deps>, call: ApiCallContext) => Async<boolean>
 }
 
-export type AnyGuard = Guard<Dependencies>
+export type AnyGuard = Guard<any>
 
 export function createGuard<Deps extends Dependencies = {}>(
   paramsOrHandler:

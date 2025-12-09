@@ -1,5 +1,6 @@
 import { createLazyInjectable, Scope } from '@nmtjs/core'
 
+import type { JobWorkerQueue, WorkerType } from './enums.ts'
 import type { JobManagerInstance } from './jobs/manager.ts'
 import type {
   PubSubAdapterType,
@@ -33,10 +34,22 @@ export const storeConfig = createLazyInjectable<ServerStoreConfig>(
   'StoreConfig',
 )
 
+export const workerType = createLazyInjectable<WorkerType>(
+  Scope.Global,
+  'WorkerType',
+)
+
+export const jobWorkerQueue = createLazyInjectable<JobWorkerQueue>(
+  Scope.Global,
+  'JobWorkerQueue',
+)
+
 export const RuntimeInjectables = {
   pubSubAdapter,
   pubSubPublish,
   pubSubSubscribe,
   jobManager,
   storeConfig,
+  workerType,
+  jobWorkerQueue,
 }

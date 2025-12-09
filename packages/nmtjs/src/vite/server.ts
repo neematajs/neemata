@@ -11,6 +11,7 @@ export function createServer(
   return createViteServer({
     ...config,
     server: { middlewareMode: true, ws: false },
+    resolve: { tsconfigPaths: true, ...config.resolve },
     environments: {
       neemata: {
         consumer: 'server',

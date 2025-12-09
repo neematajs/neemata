@@ -17,7 +17,7 @@ export interface Middleware<Deps extends Dependencies = Dependencies>
   ) => Async<any>
 }
 
-export type AnyMiddleware = Middleware<Dependencies>
+export type AnyMiddleware = Middleware<any>
 
 export function createMiddleware<Deps extends Dependencies = {}>(
   paramsOrHandler:

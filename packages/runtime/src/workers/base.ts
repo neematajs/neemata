@@ -1,6 +1,7 @@
 import { provide } from '@nmtjs/core'
 
 import type { BaseRuntimeOptions } from '../core/runtime.ts'
+import type { WorkerType } from '../enums.ts'
 import type { ServerConfig } from '../server/config.ts'
 import { BaseRuntime } from '../core/runtime.ts'
 import * as injectables from '../injectables.ts'
@@ -14,6 +15,7 @@ export abstract class BaseWorkerRuntime extends BaseRuntime {
   constructor(
     readonly config: ServerConfig,
     options: BaseRuntimeOptions,
+    readonly workerType: WorkerType,
   ) {
     super(options)
 
@@ -27,6 +29,7 @@ export abstract class BaseWorkerRuntime extends BaseRuntime {
   protected async _initialize(): Promise<void> {
     await this.jobManager.initialize()
     await this.container.provide([
+      provide(injectables.workerType, this.workerType),
       provide(injectables.storeConfig, this.config.store),
       provide(injectables.pubSubPublish, this.pubsub.publish.bind(this.pubsub)),
       provide(

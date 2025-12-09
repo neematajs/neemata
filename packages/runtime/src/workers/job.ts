@@ -1,6 +1,9 @@
 import type { MessagePort } from 'node:worker_threads'
 
+import type { JobWorkerQueue } from '../enums.ts'
 import type { ServerConfig } from '../server/config.ts'
+import { WorkerType } from '../enums.ts'
+import { jobWorkerQueue } from '../injectables.ts'
 import { JobRunner } from '../jobs/runner.ts'
 import { BaseWorkerRuntime } from './base.ts'
 
@@ -16,10 +19,11 @@ export class JobWorkerRuntime extends BaseWorkerRuntime {
     readonly config: ServerConfig,
     readonly runtimeOptions: JobWorkerRuntimeOptions,
   ) {
-    super(config, {
-      logger: config.logger,
-      name: `Job Worker ${runtimeOptions.queueName}`,
-    })
+    super(
+      config,
+      { logger: config.logger, name: `Job Worker ${runtimeOptions.queueName}` },
+      WorkerType.Job,
+    )
   }
 
   async start() {
@@ -32,6 +36,11 @@ export class JobWorkerRuntime extends BaseWorkerRuntime {
 
   protected async _initialize(): Promise<void> {
     await super._initialize()
+
+    await this.container.provide(
+      jobWorkerQueue,
+      this.runtimeOptions.queueName as JobWorkerQueue,
+    )
 
     this.jobRunner = new JobRunner({
       logger: this.logger,

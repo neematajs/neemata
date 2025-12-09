@@ -17,7 +17,7 @@ export interface Filter<
 
 export type AnyFilter<Error extends ErrorClass = ErrorClass> = Filter<
   Error,
-  Dependencies
+  any
 >
 
 export function createFilter<
