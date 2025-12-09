@@ -3,7 +3,6 @@ import {
   createConsolePrettyDestination,
   createFactoryInjectable,
   createLazyInjectable,
-  createOptionalInjectable,
   createValueInjectable,
 } from '@nmtjs/core'
 import { createTransport, GatewayInjectables } from '@nmtjs/gateway'
@@ -17,6 +16,7 @@ import {
   createMiddleware,
   createPlugin,
   createProcedure,
+  createRootRouter,
   createRouter,
   createStep,
   defineApplication,
@@ -39,10 +39,10 @@ export const neemata = {
       // TODO: TSC wants it
       createConsolePrettyDestination as typeof createConsolePrettyDestination,
   },
-  optional: createOptionalInjectable,
   value: createValueInjectable,
   lazy: createLazyInjectable,
   factory: createFactoryInjectable,
+  rootRouter: createRootRouter,
   router: createRouter,
   contractRouter: createContractRouter,
   procedure: createProcedure,
@@ -57,7 +57,12 @@ export const neemata = {
 
 export { c } from '@nmtjs/contract'
 export { Scope } from '@nmtjs/core'
-export { ErrorCode, ProtocolBlob } from '@nmtjs/protocol'
+export {
+  type ConnectionIdentityType,
+  GatewayHook,
+  ProxyableTransportType,
+} from '@nmtjs/gateway'
+export { ConnectionType, ErrorCode, ProtocolBlob } from '@nmtjs/protocol'
 export { t } from '@nmtjs/type'
 export { ApiError, defineApplication, LifecycleHook } from 'nmtjs/runtime'
 
