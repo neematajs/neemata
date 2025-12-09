@@ -31,9 +31,11 @@ impl NeemataProxy {
         let config = ProxyConfig::from_inputs(apps, options)?;
 
         let mut server_conf = ServerConf::default();
-        let mut server_opts = Opt::default();
+        let server_opts = Opt {
+            daemon: false,
+            ..Default::default()
+        };
 
-        server_opts.daemon = false;
         server_conf.grace_period_seconds = Some(DEFAULT_GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS - 1);
         server_conf.graceful_shutdown_timeout_seconds =
             Some(DEFAULT_GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS);
@@ -51,6 +53,7 @@ impl NeemataProxy {
 
         if config.tls {
             // TODO: support TLS options
+            panic!("TLS is not supported yet");
         } else {
             proxy_service.add_tcp(config.listener());
         }
@@ -83,8 +86,9 @@ impl NeemataProxy {
         self.shutdown_tx = Some(tx);
 
         let handle = thread::spawn(move || {
-            let mut args = RunArgs::default();
-            args.shutdown_signal = Box::new(JsShutdownWatch::new(rx));
+            let args = RunArgs {
+                shutdown_signal: Box::new(JsShutdownWatch::new(rx)),
+            };
             server.run(args);
         });
 

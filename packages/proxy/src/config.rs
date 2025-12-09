@@ -44,6 +44,7 @@ impl UpstreamKind {
 pub enum AppUpstream {
     Port {
         secure: bool,
+        #[allow(dead_code)]
         address: String,
         port: u16,
         hostname: String,

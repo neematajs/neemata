@@ -18,33 +18,9 @@ jobs:
         uses: pnpm/action-setup@v4
         with:
           run_install: false
-      - name: Get pnpm store directory
-        shell: bash
-        run: |
-          echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
-      - uses: actions/cache@v4
-        name: Setup pnpm cache
-        with:
-          path: ${{ env.STORE_PATH }}
-          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-pnpm-store-
-      - run: pnpm install
-      - run: pnpm check:lint
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
 
-  typecheck:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Use Node.js 25
-        uses: actions/setup-node@v4
-        with:
-          node-version: 24
-      - name: Install pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          run_install: false
       - name: Get pnpm store directory
         shell: bash
         run: |
@@ -56,11 +32,19 @@ jobs:
           key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
           restore-keys: |
             ${{ runner.os }}-pnpm-store-
+      - name: Setup cargo cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
       - run: pnpm install
-      - run: pnpm check:type
+      - run: pnpm check
 
   tests:
-    needs: [lint, typecheck]
+    needs: [lint]
     strategy:
       fail-fast: true
       matrix:

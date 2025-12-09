@@ -41,16 +41,12 @@ struct AppInfo {
     kind: UpstreamKind,
 }
 
+#[derive(Default)]
 enum AppInfoState {
+    #[default]
     Unknown,
     Missing,
     Found(AppInfo),
-}
-
-impl Default for AppInfoState {
-    fn default() -> Self {
-        Self::Unknown
-    }
 }
 
 impl RouterCtx {
@@ -188,30 +184,29 @@ impl ProxyHttp for Router {
             return Ok(());
         };
 
-        if let Some(client_addr) = session.client_addr() {
-            if let Some(inet) = client_addr.as_inet() {
-                let client_ip = inet.ip().to_string();
-                let new_val =
-                    if let Some(existing) = upstream_request.headers.get("x-forwarded-for") {
-                        if let Ok(existing_str) = existing.to_str() {
-                            format!("{}, {}", existing_str, client_ip)
-                        } else {
-                            client_ip
-                        }
-                    } else {
-                        client_ip
-                    };
-                upstream_request
-                    .insert_header("x-forwarded-for", new_val)
-                    .map_err(|e| {
-                        Error::create(
-                            ErrorType::InternalError,
-                            ErrorSource::Internal,
-                            Some(ImmutStr::Static("failed to set x-forwarded-for")),
-                            Some(Box::new(e)),
-                        )
-                    })?;
-            }
+        if let Some(client_addr) = session.client_addr()
+            && let Some(inet) = client_addr.as_inet()
+        {
+            let client_ip = inet.ip().to_string();
+            let new_val = if let Some(existing) = upstream_request.headers.get("x-forwarded-for") {
+                if let Ok(existing_str) = existing.to_str() {
+                    format!("{}, {}", existing_str, client_ip)
+                } else {
+                    client_ip
+                }
+            } else {
+                client_ip
+            };
+            upstream_request
+                .insert_header("x-forwarded-for", new_val)
+                .map_err(|e| {
+                    Error::create(
+                        ErrorType::InternalError,
+                        ErrorSource::Internal,
+                        Some(ImmutStr::Static("failed to set x-forwarded-for")),
+                        Some(Box::new(e)),
+                    )
+                })?;
         }
 
         let name = app_info.name.as_str();

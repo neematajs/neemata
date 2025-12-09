@@ -5,6 +5,7 @@
     "postinstall": "$npm_execpath build",
     "clean-build": "true",
     "fmt": "cargo fmt",
+    "lint": "cargo clippy",
     "build": "$npm_execpath build:debug --release",
     "build:debug": "napi build --esm --js index.js --platform --output-dir ./dist"
   },

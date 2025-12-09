@@ -17,7 +17,7 @@
     "test:runtime:node": "pnpm --filter neemata-test-node run test",
     "test:runtime:deno": "pnpm --filter neemata-test-deno run test",
     "check:type": "pnpm run --parallel -r type-check",
-    "check:lint": "biome lint --diagnostic-level=error .",
+    "check:lint": "biome lint --diagnostic-level=error . && pnpm --filter proxy lint",
     "check:fmt": "biome format --diagnostic-level=error .",
     "check": "pnpm run check:fmt && pnpm run check:lint && pnpm run check:type",
     "fmt": "biome check --diagnostic-level=error --write . && pnpm --filter proxy fmt",
