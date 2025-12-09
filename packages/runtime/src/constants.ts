@@ -6,6 +6,3 @@ export type kCommand = typeof kCommand
 
 export const kJobKey: unique symbol = Symbol('neemat:JobKey')
 export type kJobKey = typeof kJobKey
-
-export const kJobStepKey: unique symbol = Symbol('neemat:JobStepKey')
-export type kJobStepKey = typeof kJobStepKey

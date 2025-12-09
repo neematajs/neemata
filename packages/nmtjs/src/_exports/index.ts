@@ -18,7 +18,6 @@ import {
   createProcedure,
   createRootRouter,
   createRouter,
-  createStep,
   defineApplication,
   defineServer,
   RuntimeInjectables,
@@ -51,7 +50,6 @@ export const neemata = {
   guard: createGuard,
   filter: createFilter,
   job: createJob,
-  step: createStep,
   hook: createHook,
 }
 

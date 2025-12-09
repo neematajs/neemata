@@ -1,12 +1,11 @@
 import type { Async, TSError } from '@nmtjs/common'
 import type { Dependencies, DependencyContext } from '@nmtjs/core'
+import type { t } from '@nmtjs/type'
 import type { AnyObjectLikeType } from '@nmtjs/type/object'
 import { tryCaptureStackTrace } from '@nmtjs/common'
-import { createLazyInjectable } from '@nmtjs/core'
-import { t } from '@nmtjs/type'
 
-import { kJobKey, kJobStepKey } from '../constants.ts'
-import { JobWorkerQueue } from '../enums.ts'
+import type { JobWorkerQueue } from '../enums.ts'
+import { kJobKey } from '../constants.ts'
 
 export type AnyJobStep = JobStep<any, any, any>
 
@@ -21,7 +20,6 @@ export interface JobStep<
   Deps extends Dependencies = Dependencies,
   Return = unknown,
 > {
-  [kJobStepKey]: any
   handler: JobStepHandler<Ctx, Deps, Return>
   label?: string
 }
@@ -114,7 +112,7 @@ export class Job<
   > {
     if (this.returnHandler || typeof handler !== 'function')
       throw new Error('Cannot add more steps after return() has been called.')
-    this.steps.push(createStep({ handler, label }))
+    this.steps.push({ handler, label })
     return this as any
   }
 
@@ -129,21 +127,6 @@ export class Job<
   }
 }
 
-export function createStep<
-  Ctx = unknown,
-  Deps extends Dependencies = {},
-  Return = unknown,
->(step: {
-  label?: string
-  handler: JobStepHandler<Ctx, Deps, Return>
-}): JobStep<Ctx, Deps, Return> {
-  return Object.freeze({
-    [kJobStepKey]: true,
-    stack: tryCaptureStackTrace(),
-    ...step,
-  })
-}
-
 export function createJob<
   Name extends string,
   Input extends AnyObjectLikeType,
@@ -154,21 +137,3 @@ export function createJob<
   const stack = tryCaptureStackTrace()
   return new Job(name, options, stack)
 }
-
-createJob('a', {
-  queue: JobWorkerQueue.Compute,
-  input: t.object({ a: t.string() }),
-  output: t.object({ b: t.number() }),
-  dependencies: { a: createLazyInjectable<'a'>() },
-  context: (ctx) => {
-    return ctx.a
-  },
-})
-  .add(async ({ a }, b) => {
-    return { b: 2 }
-  })
-  .add(async (ctx, b) => {})
-  .add(async (ctx, b) => {})
-  .return((result) => {
-    return { b: result.b }
-  })
