@@ -58,7 +58,7 @@ jobs:
           run_install: false
 
       - name: Install dependencies and build
-        run: pnpm install && pnpm build:publish
+        run: pnpm install --filter \!proxy && pnpm build:publish
 
       - name: Set version
         run: |

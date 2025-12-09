@@ -1,5 +1,5 @@
 {
-  "name": "neemata-core",
+  "name": "neemata",
   "private": true,
   "type": "module",
   "scripts": {
