@@ -34,6 +34,7 @@
   },
   "files": [
     "dist",
+    "src",
     "LICENSE.md",
     "README.md"
   ]

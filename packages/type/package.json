@@ -3,6 +3,7 @@
   "type": "module",
   "files": [
     "dist",
+    "src",
     "LICENSE.md",
     "README.md"
   ],
