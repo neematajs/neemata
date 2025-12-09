@@ -113,7 +113,16 @@ export class Job<
     if (this.returnHandler || typeof handler !== 'function')
       throw new Error('Cannot add more steps after return() has been called.')
     this.steps.push({ handler, label })
-    return this as any
+    return this as unknown as Job<
+      Name,
+      Ctx,
+      Deps,
+      [...Steps, JobStep<Ctx, Deps, StepOutput>],
+      Result & StepOutput,
+      Input,
+      Output,
+      false
+    >
   }
 
   return(
@@ -124,6 +133,16 @@ export class Job<
     if (this.returnHandler || typeof handler !== 'function')
       throw new Error('return() has already been called.')
     this.returnHandler = handler
+    return this as unknown as Job<
+      Name,
+      Ctx,
+      Deps,
+      Steps,
+      Result,
+      Input,
+      Output,
+      true
+    >
   }
 }
 
@@ -132,7 +151,7 @@ export function createJob<
   Input extends AnyObjectLikeType,
   Output extends AnyObjectLikeType,
   Ctx,
-  Deps extends Dependencies,
+  Deps extends Dependencies = {},
 >(name: Name, options: JobOptions<Input, Output, Ctx, Deps>) {
   const stack = tryCaptureStackTrace()
   return new Job(name, options, stack)
