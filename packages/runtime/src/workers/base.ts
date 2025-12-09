@@ -1,39 +1,40 @@
+import { provide } from '@nmtjs/core'
+
 import type { BaseRuntimeOptions } from '../core/runtime.ts'
 import type { ServerConfig } from '../server/config.ts'
 import { BaseRuntime } from '../core/runtime.ts'
 import * as injectables from '../injectables.ts'
 import { JobManager } from '../jobs/manager.ts'
-import { PubSub } from '../pubsub/index.ts'
+import { PubSubManager } from '../pubsub/manager.ts'
 
 export abstract class BaseWorkerRuntime extends BaseRuntime {
-  pubsub: PubSub
+  pubsub: PubSubManager
   jobManager: JobManager
 
   constructor(
     readonly config: ServerConfig,
-    readonly options: BaseRuntimeOptions,
+    options: BaseRuntimeOptions,
   ) {
     super(options)
 
-    this.pubsub = new PubSub({ logger: this.logger, container: this.container })
+    this.pubsub = new PubSubManager({
+      logger: this.logger,
+      container: this.container,
+    })
     this.jobManager = new JobManager(this.config.store)
   }
 
   protected async _initialize(): Promise<void> {
     await this.jobManager.initialize()
-    this.container.provide(injectables.StoreConfig, this.config.store)
-    this.container.provide(
-      injectables.PubSubPublish,
-      this.pubsub.publish.bind(this.pubsub),
-    )
-    this.container.provide(
-      injectables.PubSubSubscribe,
-      this.pubsub.subscribe.bind(this.pubsub),
-    )
-    this.container.provide(
-      injectables.JobManager,
-      this.jobManager.publicInstance,
-    )
+    await this.container.provide([
+      provide(injectables.storeConfig, this.config.store),
+      provide(injectables.pubSubPublish, this.pubsub.publish.bind(this.pubsub)),
+      provide(
+        injectables.pubSubSubscribe,
+        this.pubsub.subscribe.bind(this.pubsub),
+      ),
+      provide(injectables.jobManager, this.jobManager.publicInstance),
+    ])
   }
 
   protected async _dispose(): Promise<void> {

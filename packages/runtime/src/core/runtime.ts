@@ -28,13 +28,15 @@ export abstract class BaseRuntime {
   logger: Logger
   container: Container
   hooks: LifecycleHooks
+  plugins: RuntimePlugin[]
 
-  constructor(public options: BaseRuntimeOptions = {}) {
+  constructor(options: BaseRuntimeOptions = {}) {
     this.logger = createLogger(options.logger, options.name || 'Runtime')
     this.container = options.container
       ? options.container.fork(Scope.Global)
       : new Container({ logger: this.logger })
     this.hooks = new LifecycleHooks()
+    this.plugins = options.plugins || []
   }
 
   protected abstract _initialize(): Promise<void>
@@ -67,8 +69,8 @@ export abstract class BaseRuntime {
   }
 
   protected async _initializePlugins() {
-    if (!this.options.plugins?.length) return
-    for (const { name, hooks, injections } of this.options.plugins) {
+    if (!this.plugins?.length) return
+    for (const { name, hooks, injections } of this.plugins) {
       this.logger.debug(`Initializing plugin [${name}]...`)
       if (injections) {
         for (const injection of injections) {
@@ -80,8 +82,8 @@ export abstract class BaseRuntime {
   }
 
   protected async _disposePlugins() {
-    if (!this.options.plugins?.length) return
-    for (const { name, hooks, injections } of this.options.plugins) {
+    if (!this.plugins?.length) return
+    for (const { name, hooks, injections } of this.plugins) {
       this.logger.debug(`Disposing plugin [${name}]...`)
       if (hooks) this.hooks.removeHooks(hooks)
       if (injections) {

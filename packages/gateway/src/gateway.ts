@@ -1,4 +1,3 @@
-import { deepEqual } from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { isTypedArray } from 'node:util/types'
 

@@ -11,7 +11,7 @@ import type { Container, Logger } from '@nmtjs/core'
 import type { t } from '@nmtjs/type'
 import { isAbortError } from '@nmtjs/common'
 
-import { PubSubAdapter } from '../injectables.ts'
+import { pubSubAdapter } from '../injectables.ts'
 
 export type PubSubAdapterEvent = { channel: string; payload: any }
 
@@ -31,15 +31,15 @@ export type PubSubChannel = {
   event: TAnyEventContract
 }
 
-export type PubSubOptions = { logger: Logger; container: Container }
+export type PubSubManagerOptions = { logger: Logger; container: Container }
 
-export class PubSub {
+export class PubSubManager {
   readonly subscriptions = new Map<string, PubSubChannel>()
 
-  constructor(protected readonly options: PubSubOptions) {}
+  constructor(protected readonly options: PubSubManagerOptions) {}
 
   protected get adapter() {
-    return this.options.container.get(PubSubAdapter)
+    return this.options.container.get(pubSubAdapter)
   }
 
   subscribe<

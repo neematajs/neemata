@@ -97,15 +97,15 @@ function adapterFactory(params: HttpAdapterParams<'node'>): HttpAdapterServer {
             let chunk = await reader.read()
             do {
               if (res.aborted) break
-              if (chunk.value) res.write(chunk.value)
+              if (chunk.value) res.cork(() => res.write(chunk.value!))
               chunk = await reader.read()
             } while (!chunk.done)
-            if (!res.aborted) res.end()
+            if (!res.aborted) res.cork(() => res.end())
           } catch {
-            if (!res.aborted) res.close()
+            if (!res.aborted) res.cork(() => res.close())
           }
         } else {
-          if (!res.aborted) res.end()
+          if (!res.aborted) res.cork(() => res.end())
         }
       }
     })

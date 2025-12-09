@@ -7,3 +7,7 @@ export interface RuntimePlugin {
   hooks?: LifecycleHooks['_']['config']
   injections?: Injection[]
 }
+
+export function createPlugin<T extends RuntimePlugin>(plugin: T): T {
+  return plugin
+}

@@ -44,7 +44,7 @@ if (_vite) {
     /* @vite-ignore */
     _vite.options.configPath
   ).then((m) => m.default as import('../config.ts').NeemataConfig)
-  const _viteServerEvents = new EventEmitter<{ worker: [Worker] }>()
+  _viteServerEvents = new EventEmitter<{ worker: [Worker] }>()
   _viteWorkerServer = await createWorkerServer(
     _vite.options,
     _vite.mode,

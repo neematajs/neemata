@@ -1,7 +1,3 @@
-// biome-ignore lint/correctness/noUnusedImports: TSGO wants it
-// biome-ignore assist/source/organizeImports: TSGO wants it
-import type * as _ from 'zod/mini'
-
 import { EventContract } from './schemas/event.ts'
 import { ProcedureContract } from './schemas/procedure.ts'
 import { RouterContract } from './schemas/router.ts'

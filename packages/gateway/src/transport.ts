@@ -78,3 +78,18 @@ export interface Transport<
   injectables?: Injections
   factory: (options: TransportOptions) => Async<TransportWorker<Type>>
 }
+
+export function createTransport<
+  Type extends ConnectionType = ConnectionType,
+  TransportOptions = any,
+  Injections extends {
+    [key: string]: LazyInjectable<any, Scope.Connection | Scope.Call>
+  } = { [key: string]: LazyInjectable<any, Scope.Connection | Scope.Call> },
+  Proxyable extends ProxyableTransportType | undefined =
+    | ProxyableTransportType
+    | undefined,
+>(
+  config: Transport<Type, TransportOptions, Injections, Proxyable>,
+): Transport<Type, TransportOptions, Injections, Proxyable> {
+  return config
+}

@@ -54,6 +54,10 @@ export class ApplicationServer extends EventEmitter {
   ) {
     super()
     this.logger = createLogger(config.logger, 'Server')
+    this.logger.trace(
+      { applications, workerConfig, runOptions },
+      'ApplicationServer initialized',
+    )
   }
 
   async start() {

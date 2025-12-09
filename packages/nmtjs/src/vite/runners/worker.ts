@@ -38,7 +38,7 @@ export function createModuleRunner(
     send(data) {
       channel.postMessage(data)
     },
-    timeout: 2000,
+    timeout: 5000,
   }
 
   const runner = new ModuleRunner(

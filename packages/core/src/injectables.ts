@@ -346,9 +346,14 @@ export type Injection<
   value: T extends AnyInjectable<infer R, Scope> ? R | AnyInjectable<R> : never
 }
 
-export const provide = <T extends AnyInjectable<any, any>>(
+export const provide = <
+  T extends AnyInjectable<any, any>,
+  V extends T extends AnyInjectable<infer R, Scope>
+    ? R | AnyInjectable<R>
+    : never,
+>(
   token: T,
-  value: T extends AnyInjectable<infer R, Scope> ? R | AnyInjectable<R> : never,
+  value: V,
 ): Injection<T> => {
   return { token, value }
 }

@@ -21,11 +21,8 @@ import type { AnyFilter } from './filters.ts'
 import type { AnyGuard } from './guards.ts'
 import type { AnyMiddleware } from './middlewares.ts'
 import type { AnyProcedure } from './procedure.ts'
-import type { AnyRootRouter, AnyRouter } from './router.ts'
+import type { AnyRouter } from './router.ts'
 import type { ApiCallContext } from './types.ts'
-import { kRootRouter } from './constants.ts'
-import { isProcedure } from './procedure.ts'
-import { isRootRouter, isRouter } from './router.ts'
 
 registerDefaultLocale()
 
@@ -42,10 +39,10 @@ export type ApiOptions = {
   timeout?: number
   container: Container
   logger: Logger
-  router: AnyRootRouter
-  guards: AnyGuard[]
-  middlewares: AnyMiddleware[]
-  filters: AnyFilter[]
+  procedures: Map<string, { procedure: AnyProcedure; path: AnyRouter[] }>
+  guards: Set<AnyGuard>
+  middlewares: Set<AnyMiddleware>
+  filters: Set<AnyFilter>
 }
 
 export class ApiError extends ProtocolError {
@@ -57,25 +54,10 @@ export class ApiError extends ProtocolError {
 const NotFound = () => new ApiError(ErrorCode.NotFound, 'Procedure not found')
 
 export class ApplicationApi implements GatewayApi {
-  readonly routers = new Map<string | kRootRouter, AnyRouter>()
-  readonly procedures = new Map<
-    string,
-    { procedure: AnyProcedure; path: AnyRouter[] }
-  >()
-
-  constructor(private readonly options: ApiOptions) {}
-
-  initialize() {
-    this.registerRootRouter(this.options.router)
-  }
-
-  dispose() {
-    this.routers.clear()
-    this.procedures.clear()
-  }
+  constructor(public options: ApiOptions) {}
 
   find(procedureName: string) {
-    const result = this.procedures.get(procedureName)
+    const result = this.options.procedures.get(procedureName)
     if (result) return result
     throw NotFound()
   }
@@ -210,7 +192,7 @@ export class ApplicationApi implements GatewayApi {
   }
 
   private async handleFilters({ container }: ApiCallOptions, error: any) {
-    if (this.options.filters.length) {
+    if (this.options.filters.size) {
       for (const filter of this.options.filters) {
         if (error instanceof filter.errorClass) {
           const ctx = await container.createContext(filter.dependencies)
@@ -270,39 +252,5 @@ export class ApplicationApi implements GatewayApi {
       return type.encode(response)
     }
     return undefined
-  }
-
-  protected registerRootRouter(router: AnyRouter) {
-    if (this.routers.has(kRootRouter)) {
-      throw new Error('Root router already registered')
-    }
-
-    if (!isRootRouter(router)) {
-      throw new Error('Root router must be a root router')
-    }
-
-    this.routers.set(kRootRouter, router)
-    this.registerRouter(router, [])
-  }
-
-  protected registerRouter(router: AnyRouter, path: AnyRouter[] = []) {
-    for (const route of Object.values(router.routes)) {
-      if (isRouter(route)) {
-        const name = path.length === 0 ? kRootRouter : route.contract.name
-        if (!name) throw new Error('Nested routers must have a name')
-        if (this.routers.has(name)) {
-          throw new Error(`Router ${String(name)} already registered`)
-        }
-        this.routers.set(name, route)
-        this.registerRouter(route, [...path, router])
-      } else if (isProcedure(route)) {
-        const name = route.contract.name
-        if (!name) throw new Error('Procedures must have a name')
-        if (this.procedures.has(name)) {
-          throw new Error(`Procedure ${name} already registered`)
-        }
-        this.procedures.set(name, { procedure: route, path: [...path, router] })
-      }
-    }
   }
 }

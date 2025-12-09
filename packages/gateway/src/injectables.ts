@@ -75,3 +75,14 @@ export const createBlob = createLazyInjectable<
   ) => ProtocolBlobInterface,
   Scope.Call
 >(Scope.Call, 'Create RPC blob')
+
+export const GatewayInjectables = {
+  connection,
+  connectionId,
+  connectionData,
+  connectionAbortSignal,
+  rpcClientAbortSignal,
+  rpcStreamAbortSignal,
+  rpcAbortSignal,
+  createBlob,
+}

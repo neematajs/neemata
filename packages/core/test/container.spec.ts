@@ -1495,10 +1495,10 @@ describe('Container', () => {
       expect(instance1.globalId).toBe(instance2.globalId)
       expect(instance1.globalId).toBe(instance3.globalId)
 
-      // Global factory should only be called once
+      // Global factory should be called once
       expect(globalFactorySpy).toHaveBeenCalledTimes(1)
 
-      // Transient factory should only be called once for the global injectable's creation
+      // Transient factory should be called once for the global injectable's creation
       expect(transientFactorySpy).toHaveBeenCalledTimes(1)
 
       // All instances should have the same transient snapshot
@@ -1525,6 +1525,44 @@ describe('Container', () => {
       const instance4 = await container.resolve(globalInjectable)
       expect(instance4).toBe(instance1)
       expect(globalFactorySpy).toHaveBeenCalledTimes(1) // Still only called once
+    })
+  })
+
+  describe('Provide with Injectables', () => {
+    it('should resolve and dispose factory injectable provided as value', async () => {
+      const disposeSpy = vi.fn()
+      const value = { foo: 'bar' }
+      const factoryInjectable = createFactoryInjectable({
+        factory: () => value,
+        dispose: disposeSpy,
+      })
+      const token = createLazyInjectable()
+
+      await container.provide(token, factoryInjectable)
+
+      expect(container.get(token)).toBe(value)
+
+      await container.dispose()
+
+      expect(disposeSpy).toHaveBeenCalledWith(value, {})
+    })
+
+    it('should resolve and dispose factory injectable provided as value (array syntax)', async () => {
+      const disposeSpy = vi.fn()
+      const value = { foo: 'bar' }
+      const factoryInjectable = createFactoryInjectable({
+        factory: () => value,
+        dispose: disposeSpy,
+      })
+      const token = createLazyInjectable()
+
+      await container.provide([{ token, value: factoryInjectable }])
+
+      expect(container.get(token)).toBe(value)
+
+      await container.dispose()
+
+      expect(disposeSpy).toHaveBeenCalledWith(value, {})
     })
   })
 })

@@ -11,7 +11,7 @@ import type {
   TransportWorker,
   TransportWorkerParams,
 } from '@nmtjs/gateway'
-import type { AnyRootRouter } from '@nmtjs/runtime'
+import type { AnyProcedure, AnyRootRouter, AnyRouter } from '@nmtjs/runtime'
 import {
   createTestClientFormat,
   createTestLogger,
@@ -22,7 +22,12 @@ import { Container, createLazyInjectable, Hooks } from '@nmtjs/core'
 import { Gateway } from '@nmtjs/gateway'
 import { ConnectionType, ProtocolVersion } from '@nmtjs/protocol'
 import { ProtocolFormats } from '@nmtjs/protocol/server'
-import { ApplicationApi } from '@nmtjs/runtime'
+import {
+  ApplicationApi,
+  isProcedure,
+  isRouter,
+  kRootRouter,
+} from '@nmtjs/runtime'
 
 // =============================================================================
 // EventEmitter Transport Channel
@@ -307,6 +312,40 @@ export interface TestSetupOptions<TRouter extends AnyRootRouter> {
 //   counterValue = 0
 // }
 
+function flattenRouter(router: AnyRouter) {
+  const procedures = new Map<
+    string,
+    { procedure: AnyProcedure; path: AnyRouter[] }
+  >()
+  const routers = new Map<string | kRootRouter, AnyRouter>()
+
+  const registerRouter = (router: AnyRouter, path: AnyRouter[] = []) => {
+    for (const route of Object.values(router.routes)) {
+      if (isRouter(route)) {
+        const name = path.length === 0 ? kRootRouter : route.contract.name
+        if (!name) throw new Error('Nested routers must have a name')
+        if (routers.has(name)) {
+          throw new Error(`Router ${String(name)} already registered`)
+        }
+        routers.set(name, route)
+        registerRouter(route, [...path, router])
+      } else if (isProcedure(route)) {
+        const name = route.contract.name
+        if (!name) throw new Error('Procedures must have a name')
+        if (procedures.has(name)) {
+          throw new Error(`Procedure ${name} already registered`)
+        }
+        procedures.set(name, { procedure: route, path: [...path, router] })
+      }
+    }
+  }
+
+  routers.set(kRootRouter, router)
+  registerRouter(router, [])
+
+  return procedures
+}
+
 /**
  * Creates a test setup with connected client and gateway.
  *
@@ -353,12 +392,11 @@ export async function createTestSetup<TRouter extends AnyRootRouter>(
   const api = new ApplicationApi({
     logger,
     container,
-    router,
-    guards,
-    middlewares,
-    filters,
+    procedures: flattenRouter(router),
+    guards: new Set(guards),
+    middlewares: new Set(middlewares),
+    filters: new Set(filters),
   })
-  api.initialize()
 
   const gateway = new Gateway({
     logger,

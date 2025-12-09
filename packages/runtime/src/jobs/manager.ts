@@ -14,6 +14,15 @@ type QueueJobResultOptions<T extends AnyJob = AnyJob> = {
   events: QueueEvents
 }
 
+type QueueJobAddOptions = {
+  jobId?: string
+  priority?: number
+  forceMissingWorkers?: boolean
+  attempts?: number
+  backoff?: JobBackoffOptions
+  delay?: number
+}
+
 export class QueueJobResult<T extends AnyJob = AnyJob> {
   #options: QueueJobResultOptions<T>
 
@@ -49,7 +58,7 @@ export interface JobManagerInstance {
   queueJob<T extends AnyJob>(
     job: T,
     data: T['_']['input'],
-    options?: { jobId?: string; priority?: number },
+    options?: QueueJobAddOptions,
   ): Promise<QueueJobResult<T>>
 }
 
@@ -133,14 +142,7 @@ export class JobManager {
       attempts = job.options.attempts,
       backoff = job.options.backoff,
       delay,
-    }: {
-      jobId?: string
-      priority?: number
-      forceMissingWorkers?: boolean
-      attempts?: number
-      backoff?: JobBackoffOptions
-      delay?: number
-    },
+    }: QueueJobAddOptions = {},
   ) {
     const { queue, events } = this[job.options.queue]
     if (!forceMissingWorkers) {

@@ -5,8 +5,8 @@ import type { Applications, StoreTypeOptions } from '@nmtjs/runtime/types'
 
 import type { ApplicationConfig } from '../application/config.ts'
 import type { JobWorkerQueue, StoreType } from '../enums.ts'
-import type { AnyJob, Job } from '../jobs/job.ts'
-import type { PubSubAdapterType } from '../pubsub/index.ts'
+import type { AnyJob } from '../jobs/job.ts'
+import type { PubSubAdapterType } from '../pubsub/manager.ts'
 import type { JobsSchedulerOptions } from '../scheduler/index.ts'
 import { kServerConfig } from '../constants.ts'
 

@@ -1,11 +1,13 @@
 import EventEmitter, { on } from 'node:events'
 
 import { isAbortError } from '@nmtjs/common'
+import { createFactoryInjectable, provide } from '@nmtjs/core'
 
 import type { RuntimePlugin } from '../core/plugin.ts'
 import type { Store } from '../types.ts'
-import type { PubSubAdapterEvent, PubSubAdapterType } from './index.ts'
-import { PubSubAdapter, StoreConfig } from '../injectables.ts'
+import type { PubSubAdapterEvent, PubSubAdapterType } from './manager.ts'
+import { pubSubAdapter, storeConfig } from '../injectables.ts'
+import { createStoreClient } from '../store/index.ts'
 
 export class RedisPubSubAdapter implements PubSubAdapterType {
   protected readonly events = new EventEmitter()
@@ -83,15 +85,23 @@ export const RedisPubSubAdapterPlugin = (): RuntimePlugin => {
   return {
     name: 'pubsub-redis-adapter',
     hooks: {
-      'lifecycle:beforeInitialize': async (ctx) => {
-        const store = await ctx.container.resolve(StoreConfig)
-        const adapter = new RedisPubSubAdapter(store)
-        await adapter.initialize()
-        ctx.container.provide(PubSubAdapter, adapter)
-      },
-      'lifecycle:afterDispose': async (ctx) => {
-        const adapter = await ctx.container.resolve(PubSubAdapter)
-        if (adapter) await adapter.dispose()
+      'lifecycle:afterInitialize': async (ctx) => {
+        await ctx.container.provide([
+          provide(
+            pubSubAdapter,
+            createFactoryInjectable({
+              dependencies: { config: storeConfig },
+              factory: async ({ config }) => {
+                const connection = await createStoreClient(config)
+                const adapter = new RedisPubSubAdapter(connection)
+                await adapter.initialize()
+                return { adapter, connection }
+              },
+              pick: ({ adapter }) => adapter,
+              dispose: ({ connection }) => connection.quit(),
+            }),
+          ),
+        ])
       },
     },
   }
