@@ -19,7 +19,10 @@
     "@napi-rs/cli": "^3.4.1"
   },
   "files": [
-    "dist",
+    "src",
+    "build.rs",
+    "Cargo.toml",
+    "Cargo.lock",
     "LICENSE.md",
     "README.md"
   ]
