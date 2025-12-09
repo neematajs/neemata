@@ -20,11 +20,13 @@ import {
   createRouter,
   createStep,
   defineApplication,
+  defineServer,
   RuntimeInjectables,
 } from '@nmtjs/runtime'
 
 export const neemata = {
   app: defineApplication,
+  server: defineServer,
   injectables: {
     ...CoreInjectables,
     ...GatewayInjectables,
