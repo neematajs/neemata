@@ -44,21 +44,13 @@ jobs:
         with:
           node-version: 24
 
-      - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-
-      - name: Log in to npm
-        run: |
-          echo "//registry.npmjs.org/:_authToken=\${NPM_TOKEN}" > ~/.npmrc
-          echo "Logged in to npm as ${NPM_USERNAME}"
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NPM_USERNAME: ${{ secrets.NPM_USERNAME }}
-
       - uses: pnpm/action-setup@v4
         name: Install pnpm
         with:
           run_install: false
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
 
       - name: Setup cargo cache
         uses: actions/cache@v4
@@ -72,11 +64,19 @@ jobs:
       - name: Install dependencies and build
         run: pnpm install && pnpm build
 
+      - name: Log in to npm
+        run: |
+          echo "//registry.npmjs.org/:_authToken=\${NPM_TOKEN}" > ~/.npmrc
+          echo "Logged in to npm as ${NPM_USERNAME}"
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_USERNAME: ${{ secrets.NPM_USERNAME }}
+
       - name: Set version
         run: |
           pnpm version ${{ inputs.version }} -ws --allow-same-version --no-commit-hooks --no-git-tag-version --silent || true
-          pnpm -r exec cp ../../README.md ./
-          pnpm -r exec cp ../../LICENSE.md ./
+          pnpm --filter !_tests -r exec cp ../../README.md ./
+          pnpm --filter !_tests -r exec cp ../../LICENSE.md ./
 
       - name: Dry-run publish and publish
         run: |
