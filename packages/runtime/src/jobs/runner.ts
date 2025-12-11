@@ -55,18 +55,20 @@ export class JobRunner<
   async runJob<T extends AnyJob>(
     job: T,
     data: any,
-    options = {
-      signal: new AbortController().signal,
-      result: {},
-      stepResults: [] as RunOptions['stepResults'],
-      currentStepIndex: 0,
-    } as RunOptions,
+    _options?: Partial<RunOptions>,
   ): Promise<T['_']['output']> {
+    const {
+      signal: _signal,
+      result: _result = {},
+      stepResults: _stepResults = [] as RunOptions['stepResults'],
+      currentStepIndex = 0,
+    } = _options ?? {}
+
     const { input, output, steps } = job
-    let result: Record<string, unknown> = { ...options.result }
+    let result: Record<string, unknown> = { ..._result }
     if (input) data = input.decode(data)
     const signal = anyAbortSignal(
-      options.signal,
+      _signal,
       this.runtime.lifecycleHooks.createSignal(LifecycleHook.BeforeDispose)
         .signal,
     )
@@ -76,16 +78,20 @@ export class JobRunner<
     const context = { ..._context, $context: jobContext }
     const stepResults = Array.from({ length: steps.length })
 
-    for (
-      let stepIndex = 0;
-      stepIndex < options.stepResults.length;
-      stepIndex++
-    ) {
-      stepResults[stepIndex] = options.stepResults[stepIndex]
+    //@ts-expect-error
+    const options: RunOptions = {
+      signal,
+      result,
+      stepResults,
+      currentStepIndex: currentStepIndex,
+    } satisfies JobRunnerRunOptions
+
+    for (let stepIndex = 0; stepIndex < _stepResults.length; stepIndex++) {
+      stepResults[stepIndex] = _stepResults[stepIndex]
     }
 
     for (
-      let stepIndex = options.currentStepIndex;
+      let stepIndex = currentStepIndex;
       stepIndex < steps.length;
       stepIndex++
     ) {

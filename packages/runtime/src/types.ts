@@ -15,7 +15,7 @@ export type ServerPortMessageTypes = {
 export type ThreadPortMessageTypes = {
   ready: { hosts?: { type: ProxyableTransportType; url: string }[] }
   error: { error: Error }
-  task: { id: string; task: WorkerJobTask }
+  task: { id: string; task: JobTaskResult }
 }
 
 export type ServerPortMessage = {
@@ -45,7 +45,8 @@ export type JobTaskResult = {
 
 export type JobTaskResultTypes = {
   success: { result?: unknown }
-  error: { error: Error }
+  error: { error: any }
+  unrecoverable_error: { error: any }
   job_not_found: {}
   queue_job_not_found: {}
 }

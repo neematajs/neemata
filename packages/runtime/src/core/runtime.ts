@@ -25,7 +25,7 @@ export type BaseRuntimeOptions = {
 export abstract class BaseRuntime {
   logger: Logger
   container: Container
-  hooks: LifecycleHooks
+  lifecycleHooks: LifecycleHooks
   plugins: RuntimePlugin[]
 
   constructor(options: BaseRuntimeOptions = {}) {
@@ -33,7 +33,7 @@ export abstract class BaseRuntime {
     this.container = options.container
       ? options.container.fork(Scope.Global)
       : new Container({ logger: this.logger })
-    this.hooks = new LifecycleHooks()
+    this.lifecycleHooks = new LifecycleHooks()
     this.plugins = options.plugins || []
   }
 
@@ -50,17 +50,17 @@ export abstract class BaseRuntime {
     this.logger.debug('Initializing a runtime...')
     await this._initializePlugins()
     await this._initializeContainer()
-    await this.hooks.callHook(LifecycleHook.BeforeInitialize, this)
+    await this.lifecycleHooks.callHook(LifecycleHook.BeforeInitialize, this)
     await this._initialize()
-    await this.hooks.callHook(LifecycleHook.AfterInitialize, this)
+    await this.lifecycleHooks.callHook(LifecycleHook.AfterInitialize, this)
     this.logger.debug('Runtime initialized')
   }
 
   async dispose() {
     this.logger.debug('Disposing a runtime...')
-    await this.hooks.callHook(LifecycleHook.BeforeDispose, this)
+    await this.lifecycleHooks.callHook(LifecycleHook.BeforeDispose, this)
     await this._dispose()
-    await this.hooks.callHook(LifecycleHook.AfterDispose, this)
+    await this.lifecycleHooks.callHook(LifecycleHook.AfterDispose, this)
     await this._disposeContainer()
     await this._disposePlugins()
     this.logger.debug('Runtime disposed')
@@ -75,7 +75,7 @@ export abstract class BaseRuntime {
           await this.container.provide(injection.token, injection.value)
         }
       }
-      if (hooks) this.hooks.addHooks(hooks)
+      if (hooks) this.lifecycleHooks.addHooks(hooks)
     }
   }
 
@@ -83,7 +83,7 @@ export abstract class BaseRuntime {
     if (!this.plugins?.length) return
     for (const { name, hooks, injections } of this.plugins) {
       this.logger.debug(`Disposing plugin [${name}]...`)
-      if (hooks) this.hooks.removeHooks(hooks)
+      if (hooks) this.lifecycleHooks.removeHooks(hooks)
       if (injections) {
         for (const injection of injections) {
           await this.container.disposeInjectableInstances(injection.token)

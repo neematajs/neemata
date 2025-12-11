@@ -4,6 +4,7 @@ import EventEmitter, { once } from 'node:events'
 import { MessageChannel, Worker } from 'node:worker_threads'
 
 import type {
+  JobTaskResult,
   ServerPortMessageTypes,
   ThreadPortMessage,
   ThreadPortMessageTypes,
@@ -108,10 +109,11 @@ export class Thread extends EventEmitter<
     }
   }
 
-  async run(task: WorkerJobTask) {
+  async run(task: WorkerJobTask): Promise<JobTaskResult> {
     const id = randomUUID()
     this.send('task', { id, task })
-    return await once(this, `task-${id}`)
+    const [result] = await once(this, `task-${id}`)
+    return result
   }
 
   async send<T extends keyof ServerPortMessageTypes>(
@@ -153,14 +155,13 @@ export class Pool extends EventEmitter<{
     await Promise.all(this.threads.map((thread) => thread.stop()))
   }
 
-  async run(task: WorkerJobTask) {
+  async run(task: WorkerJobTask): Promise<JobTaskResult> {
     if (this.runIndex >= this.threads.length) {
       this.runIndex = 0
     }
     const thread = this.threads[this.runIndex]
     this.runIndex++
-    const [result] = await thread.run(task)
-    return result
+    return await thread.run(task)
   }
 
   protected createThread(

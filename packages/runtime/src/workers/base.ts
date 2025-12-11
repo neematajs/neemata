@@ -28,6 +28,7 @@ export abstract class BaseWorkerRuntime extends BaseRuntime {
 
   async initialize(): Promise<void> {
     await this.container.provide([
+      provide(CoreInjectables.logger, this.logger),
       provide(injectables.workerType, this.workerType),
       provide(injectables.storeConfig, this.config.store),
       provide(injectables.pubSubPublish, this.pubsub.publish.bind(this.pubsub)),
@@ -36,7 +37,6 @@ export abstract class BaseWorkerRuntime extends BaseRuntime {
         this.pubsub.subscribe.bind(this.pubsub),
       ),
       provide(injectables.jobManager, this.jobManager.publicInstance),
-      provide(CoreInjectables.logger, this.logger),
     ])
     await super.initialize()
   }

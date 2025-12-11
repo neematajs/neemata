@@ -84,7 +84,7 @@ export class ApplicationWorkerRuntime extends BaseWorkerRuntime {
     this.gateway = new Gateway({
       logger: this.logger,
       container: this.container,
-      hooks: this.hooks,
+      hooks: this.lifecycleHooks,
       formats: new ProtocolFormats([new JsonFormat()]),
       transports: this.transports,
       api: this.api,
@@ -92,14 +92,14 @@ export class ApplicationWorkerRuntime extends BaseWorkerRuntime {
     })
 
     return await this.gateway.start().finally(async () => {
-      await this.hooks.callHook(LifecycleHook.Start)
+      await this.lifecycleHooks.callHook(LifecycleHook.Start)
     })
   }
 
   async stop() {
     await this.gateway.stop()
     await this.dispose()
-    await this.hooks.callHook(LifecycleHook.Stop)
+    await this.lifecycleHooks.callHook(LifecycleHook.Stop)
   }
 
   async reload(appConfig: ApplicationConfig): Promise<void> {
@@ -114,7 +114,7 @@ export class ApplicationWorkerRuntime extends BaseWorkerRuntime {
 
   async initialize(): Promise<void> {
     this.registerApi()
-    this.hooks.addHooks(this.appConfig.lifecycleHooks)
+    this.lifecycleHooks.addHooks(this.appConfig.lifecycleHooks)
     await super.initialize()
   }
 
@@ -132,7 +132,7 @@ export class ApplicationWorkerRuntime extends BaseWorkerRuntime {
   protected async _dispose(): Promise<void> {
     this.applicationHooks.removeAllHooks()
     await super._dispose()
-    this.hooks.addHooks(this.appConfig.lifecycleHooks)
+    this.lifecycleHooks.addHooks(this.appConfig.lifecycleHooks)
     this.filters.clear()
     this.middlewares.clear()
     this.guards.clear()

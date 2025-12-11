@@ -206,12 +206,15 @@ export class ApplicationServer extends EventEmitter {
                 return runResult.result
               case 'job_not_found':
               case 'queue_job_not_found':
-                throw new UnrecoverableError(`Job not found: ${runResult.type}`)
-              case 'error':
-                throw (
-                  runResult.error ||
-                  new Error(`Job failed with type: ${runResult.type}`)
+                throw new UnrecoverableError('Job not found')
+              case 'unrecoverable_error':
+                throw new UnrecoverableError(
+                  runResult.error?.message ||
+                    runResult.error ||
+                    'Unrecoverable error occurred',
                 )
+              case 'error':
+                throw new Error(`Job failed`, { cause: runResult.error })
             }
           },
           {

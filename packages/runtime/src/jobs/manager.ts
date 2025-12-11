@@ -1,6 +1,14 @@
-import type { Job, JobType, RedisClient } from 'bullmq'
+import { randomUUID } from 'node:crypto'
+
+import type { Job, JobType, QueueEventsListener, RedisClient } from 'bullmq'
+import { createFuture } from '@nmtjs/common'
 import { pick } from '@nmtjs/core'
-import { Queue, QueueEvents } from 'bullmq'
+import {
+  Queue,
+  QueueEvents,
+  QueueEventsProducer,
+  UnrecoverableError,
+} from 'bullmq'
 
 import type { ServerStoreConfig } from '../server/config.ts'
 import type { Store } from '../types.ts'
@@ -20,6 +28,7 @@ type QueueJobAddOptions = {
   forceMissingWorkers?: boolean
   attempts?: number
   backoff?: JobBackoffOptions
+  oneoff?: boolean
   delay?: number
 }
 
@@ -28,6 +37,14 @@ export class QueueJobResult<T extends AnyJob = AnyJob> {
 
   constructor(options: QueueJobResultOptions<T>) {
     this.#options = options
+  }
+
+  get id() {
+    return this.#options.bullJob.id
+  }
+
+  get name() {
+    return this.#options.bullJob.name
   }
 
   async waitResult() {
@@ -63,10 +80,22 @@ export interface JobManagerInstance {
   ): Promise<QueueJobResult<T>>
 }
 
+export type CustomJobsEvents = QueueEventsListener & {
+  [K in `cancel:${string}`]: (args: {}, id: string) => void
+}
+
 export class JobManager {
   protected store!: Store
-  protected [JobWorkerQueue.Io]!: { queue: Queue; events: QueueEvents }
-  protected [JobWorkerQueue.Compute]!: { queue: Queue; events: QueueEvents }
+  protected [JobWorkerQueue.Io]!: {
+    queue: Queue
+    events: QueueEvents
+    custom: QueueEventsProducer
+  }
+  protected [JobWorkerQueue.Compute]!: {
+    queue: Queue
+    events: QueueEvents
+    custom: QueueEventsProducer
+  }
 
   constructor(protected storeConfig: ServerStoreConfig) {}
 
@@ -92,14 +121,19 @@ export class JobManager {
           connection: this.store as RedisClient,
           autorun: true,
         }),
+        custom: new QueueEventsProducer(queueName, {
+          connection: this.store as RedisClient,
+        }),
       }
     }
 
     await Promise.all([
       this[JobWorkerQueue.Io].queue.waitUntilReady(),
       this[JobWorkerQueue.Io].events.waitUntilReady(),
+      this[JobWorkerQueue.Io].custom.waitUntilReady(),
       this[JobWorkerQueue.Compute].queue.waitUntilReady(),
       this[JobWorkerQueue.Compute].events.waitUntilReady(),
+      this[JobWorkerQueue.Compute].custom.waitUntilReady(),
     ])
   }
 
@@ -107,8 +141,10 @@ export class JobManager {
     await Promise.allSettled([
       this[JobWorkerQueue.Io].queue.close(),
       this[JobWorkerQueue.Io].events.close(),
+      this[JobWorkerQueue.Io].custom.close(),
       this[JobWorkerQueue.Compute].queue.close(),
       this[JobWorkerQueue.Compute].events.close(),
+      this[JobWorkerQueue.Compute].custom.close(),
     ])
     this.store.disconnect(false)
   }
@@ -145,14 +181,16 @@ export class JobManager {
     data: T['_']['input'],
     {
       forceMissingWorkers = false,
-      jobId,
+      jobId = randomUUID(),
       priority,
       attempts = job.options.attempts,
       backoff = job.options.backoff,
+      oneoff = job.options.oneoff ?? true,
       delay,
     }: QueueJobAddOptions = {},
   ) {
     const { queue, events } = this[job.options.queue]
+
     if (!forceMissingWorkers) {
       if ((await queue.getWorkersCount()) === 0) {
         throw new Error(`No workers available for [${job.options.queue}] queue`)
@@ -164,9 +202,43 @@ export class JobManager {
       jobId,
       priority,
       delay,
+      removeOnComplete: oneoff,
+      removeOnFail: oneoff,
     })
 
     return new QueueJobResult({ job, bullJob, events })
+  }
+
+  async cancel(job: AnyJob, id: string) {
+    const { custom, queue } = this[job.options.queue]
+    const bullJob = await queue.getJob(id)
+    if (!bullJob) throw new Error(`Job with id [${id}] not found`)
+    if (bullJob.finishedOn) return
+    if ((await bullJob.getState()) === 'waiting') {
+      return await bullJob.remove()
+    }
+    if ((await bullJob.getState()) === 'active') {
+      await custom.publishEvent({ eventName: `cancel:${id}` })
+    }
+  }
+
+  cancellationSignal(job: AnyJob, id: string) {
+    const { events } = this[job.options.queue]
+    const controller = new AbortController()
+    const handler = () => {
+      controller.abort(new UnrecoverableError('Job cancelled'))
+    }
+    events.on<CustomJobsEvents>(`cancel:${id}`, handler)
+    const signal = controller.signal
+    return Object.assign(signal, {
+      [Symbol.dispose]: () => {
+        events.off<CustomJobsEvents>(`cancel:${id}`, handler)
+      },
+    })
+  }
+
+  getQueue(job: AnyJob) {
+    return this[job.options.queue]
   }
 
   protected async _mapJob(bullJob: Job) {

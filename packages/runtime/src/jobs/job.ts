@@ -83,6 +83,7 @@ export interface JobOptions<
   context?: JobContext<Ctx, Deps, Input>
   attempts?: number
   backoff?: JobBackoffOptions
+  oneoff?: boolean
 }
 
 export class Job<
