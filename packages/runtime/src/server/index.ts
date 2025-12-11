@@ -278,19 +278,22 @@ export class ApplicationServer extends EventEmitter {
       this.proxy.shutdown()
     }
 
+    if (this.jobsUi) {
+      this.logger.debug('Stopping Jobs UI...')
+      await this.jobsUi.close()
+    }
+
+    const pools = Object.values(this.pools).filter(Boolean) as Pool[]
+    this.logger.debug('Stopping pools workers...')
+    await Promise.allSettled(pools.map((pool) => pool.stop()))
+
     if (this.queueWorkers.size) {
       this.logger.debug('Stopping queue workers...')
       await Promise.allSettled(
         Array.from(this.queueWorkers).map((worker) => worker.close()),
       )
     }
-    if (this.jobsUi) {
-      this.logger.debug('Stopping Jobs UI...')
-      await this.jobsUi.close()
-    }
-    const pools = Object.values(this.pools).filter(Boolean) as Pool[]
-    this.logger.debug('Stopping pools workers...')
-    await Promise.allSettled(pools.map((pool) => pool.stop()))
+
     if (this.store) {
       this.logger.debug('Closing store...')
       this.store.disconnect(false)

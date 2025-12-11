@@ -114,7 +114,9 @@ export class JobRunner<
         const _stepResult = await step.handler(context, _result, signal)
         stepResult = _stepResult ?? {}
       } catch (cause) {
-        throw new Error(`Error during step [${stepIndex}]`, { cause })
+        const error = new Error(`Error during step [${stepIndex}]`, { cause })
+        this.logger.error(error)
+        throw error
       }
       stepResults[stepIndex] = stepResult
       Object.assign(result, stepResult)
