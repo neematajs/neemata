@@ -13,6 +13,8 @@ export enum LifecycleHook {
   AfterInitialize = 'lifecycle:afterInitialize',
   BeforeDispose = 'lifecycle:beforeDispose',
   AfterDispose = 'lifecycle:afterDispose',
+  Stop = 'lifecycle:stop',
+  Start = 'lifecycle:start',
 }
 
 export enum WorkerType {

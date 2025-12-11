@@ -72,7 +72,7 @@ export class WsTransportClient {
         reject(new Error('WebSocket error', { cause: event }))
       })
       ws.addEventListener('close', (event) => {
-        params.onDisconnect(event.reason)
+        params.onDisconnect('server')
         this.webSocket = null
       })
     })

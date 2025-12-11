@@ -2,7 +2,7 @@ import type { MessagePort } from 'node:worker_threads'
 
 import type { JobWorkerQueue } from '../enums.ts'
 import type { ServerConfig } from '../server/config.ts'
-import { WorkerType } from '../enums.ts'
+import { LifecycleHook, WorkerType } from '../enums.ts'
 import { jobWorkerQueue } from '../injectables.ts'
 import { JobRunner } from '../jobs/runner.ts'
 import { BaseWorkerRuntime } from './base.ts'
@@ -28,19 +28,24 @@ export class JobWorkerRuntime extends BaseWorkerRuntime {
 
   async start() {
     await this.initialize()
+    await this.hooks.callHook(LifecycleHook.Start)
   }
 
   async stop() {
+    await this.hooks.callHook(LifecycleHook.Stop)
     await this.dispose()
   }
 
-  protected async _initialize(): Promise<void> {
-    await super._initialize()
-
+  async initialize(): Promise<void> {
     await this.container.provide(
       jobWorkerQueue,
       this.runtimeOptions.queueName as JobWorkerQueue,
     )
+    await super.initialize()
+  }
+
+  protected async _initialize(): Promise<void> {
+    await super._initialize()
 
     this.jobRunner = new JobRunner({
       logger: this.logger,

@@ -1,5 +1,9 @@
 import type { Async, TSError } from '@nmtjs/common'
-import type { Dependencies, DependencyContext } from '@nmtjs/core'
+import type {
+  AnyInjectable,
+  Dependencies,
+  DependencyContext,
+} from '@nmtjs/core'
 import type { t } from '@nmtjs/type'
 import type { AnyObjectLikeType } from '@nmtjs/type/object'
 import { tryCaptureStackTrace } from '@nmtjs/common'
@@ -9,18 +13,43 @@ import { kJobKey } from '../constants.ts'
 
 export type AnyJobStep = JobStep<any, any, any>
 
-export type JobStepHandler<Ctx, Deps extends Dependencies, Return> = (
+export type JobStepHandler<Result, Deps extends Dependencies, Return> = (
   context: DependencyContext<Deps>,
-  jobContext: Ctx,
+  result: Readonly<Result>,
   signal: AbortSignal,
 ) => Async<Return>
 
+export type JobStepCondition<Result, Deps extends Dependencies> = (
+  context: DependencyContext<Deps>,
+  result: Readonly<Result>,
+) => Async<boolean>
+
+export type JobReturn<
+  Result,
+  Deps extends Dependencies,
+  Output extends AnyObjectLikeType,
+  Return = t.infer.encode.input<Output>,
+> = (
+  context: DependencyContext<Deps>,
+  result: Readonly<Result>,
+) => Async<Return>
+
+export type JobContext<
+  Ctx,
+  Deps extends Dependencies,
+  Input extends AnyObjectLikeType,
+> = (
+  ctx: DependencyContext<Deps>,
+  input: t.infer.decode.output<Input>,
+) => Async<Ctx>
+
 export interface JobStep<
-  Ctx = unknown,
+  Result = unknown,
   Deps extends Dependencies = Dependencies,
   Return = unknown,
 > {
-  handler: JobStepHandler<Ctx, Deps, Return>
+  handler: JobStepHandler<Result, Deps, Return>
+  condition?: JobStepCondition<Result, Deps>
   label?: string
 }
 
@@ -29,9 +58,9 @@ export type AnyJob = Job<
   any,
   any,
   [AnyJobStep, ...AnyJobStep[]],
-  Record<string, unknown>,
-  AnyObjectLikeType,
-  AnyObjectLikeType,
+  any,
+  any,
+  any,
   true
 >
 
@@ -44,17 +73,14 @@ export type JobBackoffOptions = {
 export interface JobOptions<
   Input extends AnyObjectLikeType,
   Output extends AnyObjectLikeType,
-  Ctx = undefined,
-  Deps extends Dependencies = {},
+  Ctx,
+  Deps extends Dependencies,
 > {
   queue: JobWorkerQueue
   input: Input
   output: Output
   dependencies?: Deps
-  context?: (
-    ctx: DependencyContext<Deps>,
-    input: t.infer.decode.output<Input>,
-  ) => Async<Ctx>
+  context?: JobContext<Ctx, Deps, Input>
   attempts?: number
   backoff?: JobBackoffOptions
 }
@@ -68,21 +94,20 @@ export class Job<
   Input extends AnyObjectLikeType = AnyObjectLikeType,
   Output extends AnyObjectLikeType = AnyObjectLikeType,
   HasReturn extends boolean = false,
+  StepDeps extends Dependencies = Deps & { $context: AnyInjectable<Ctx> },
 > {
   _!: {
-    output: Result
-    input: Input extends AnyObjectLikeType ? t.infer.encode.input<Input> : never
+    result: Result
+    input: t.infer.decode.output<Input>
+    output: t.infer.encode.input<Output>
   };
   [kJobKey] = true
   steps: Steps = [] as unknown as Steps
   input: Input
   output: Output = undefined as unknown as Output
   dependencies: Deps
-  context: (
-    ctx: DependencyContext<Deps>,
-    input: t.infer.decode.output<Input>,
-  ) => Async<Ctx>
-  returnHandler?: (result: Result) => Async<t.infer.encode.input<Output>>
+  context: JobContext<Ctx, Deps, Input>
+  returnHandler?: JobReturn<Result, Deps, Output>
 
   constructor(
     public name: Name,
@@ -95,41 +120,44 @@ export class Job<
     this.context = options.context as typeof this.context
   }
 
-  add<StepOutput>(
+  add<
+    StepOutput,
+    StepCondition extends JobStepCondition<Result, StepDeps> | undefined,
+  >(options: {
     handler: HasReturn extends true
       ? TSError<'Cannot add more steps after return() has been called.'>
-      : JobStepHandler<Ctx, Deps, StepOutput>,
-    label?: string,
-  ): Job<
+      : JobStepHandler<Result, StepDeps, StepOutput>
+    condition?: StepCondition
+    label?: string
+  }): Job<
     Name,
     Ctx,
-    Deps,
-    [...Steps, JobStep<Ctx, Deps, StepOutput>],
-    Result & StepOutput,
+    StepDeps,
+    [...Steps, JobStep<Result, StepDeps, StepOutput>],
+    Result &
+      ((StepCondition extends undefined ? false : true) extends true
+        ? Partial<StepOutput>
+        : StepOutput),
     Input,
     Output,
     false
   > {
+    const { handler, condition, label } = options
+
     if (this.returnHandler || typeof handler !== 'function')
       throw new Error('Cannot add more steps after return() has been called.')
-    this.steps.push({ handler, label })
-    return this as unknown as Job<
-      Name,
-      Ctx,
-      Deps,
-      [...Steps, JobStep<Ctx, Deps, StepOutput>],
-      Result & StepOutput,
-      Input,
-      Output,
-      false
-    >
+    this.steps.push({ handler, label, condition })
+    return this as any
   }
 
   return(
-    handler: HasReturn extends true
-      ? TSError<'return() has already been called.'>
-      : (result: Result) => Async<t.infer.encode.input<Output>>,
+    ...[handler]: HasReturn extends true
+      ? [TSError<'return() has already been called.'>]
+      : Result extends t.infer.encode.input<Output>
+        ? [handler?: JobReturn<Result, Deps, Output>]
+        : [handler: JobReturn<Result, Deps, Output>]
   ) {
+    handler ??= (result) => result
     if (this.returnHandler || typeof handler !== 'function')
       throw new Error('return() has already been called.')
     this.returnHandler = handler

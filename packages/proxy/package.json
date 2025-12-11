@@ -3,7 +3,6 @@
   "type": "module",
   "scripts": {
     "postinstall": "$npm_execpath build",
-    "clean-build": "rm -rf ./target",
     "fmt": "cargo fmt",
     "lint": "cargo clippy",
     "build": "$npm_execpath build:debug --release",

@@ -21,7 +21,7 @@ import {
   isRouter,
   kRootRouter,
 } from '../application/index.ts'
-import { WorkerType } from '../enums.ts'
+import { LifecycleHook, WorkerType } from '../enums.ts'
 import { BaseWorkerRuntime } from './base.ts'
 
 export interface ApplicationWorkerRuntimeOptions {
@@ -91,12 +91,15 @@ export class ApplicationWorkerRuntime extends BaseWorkerRuntime {
       identity: this.appConfig.identity,
     })
 
-    return await this.gateway.start()
+    return await this.gateway.start().finally(async () => {
+      await this.hooks.callHook(LifecycleHook.Start)
+    })
   }
 
   async stop() {
     await this.gateway.stop()
     await this.dispose()
+    await this.hooks.callHook(LifecycleHook.Stop)
   }
 
   async reload(appConfig: ApplicationConfig): Promise<void> {
@@ -109,9 +112,13 @@ export class ApplicationWorkerRuntime extends BaseWorkerRuntime {
     await this.gateway.reload()
   }
 
-  protected async _initialize(): Promise<void> {
+  async initialize(): Promise<void> {
     this.registerApi()
+    this.hooks.addHooks(this.appConfig.lifecycleHooks)
+    await super.initialize()
+  }
 
+  protected async _initialize(): Promise<void> {
     await super._initialize()
 
     for (const hook of this.appConfig.hooks) {
@@ -125,6 +132,7 @@ export class ApplicationWorkerRuntime extends BaseWorkerRuntime {
   protected async _dispose(): Promise<void> {
     this.applicationHooks.removeAllHooks()
     await super._dispose()
+    this.hooks.addHooks(this.appConfig.lifecycleHooks)
     this.filters.clear()
     this.middlewares.clear()
     this.guards.clear()
@@ -155,6 +163,7 @@ export class ApplicationWorkerRuntime extends BaseWorkerRuntime {
       throw new Error('Root router must be a root router')
     }
 
+    this.routers.set(kRootRouter, router)
     this.registerRouter(router, [])
 
     for (const filter of filters) this.filters.add(filter)
@@ -165,7 +174,7 @@ export class ApplicationWorkerRuntime extends BaseWorkerRuntime {
   protected registerRouter(router: AnyRouter, path: AnyRouter[] = []) {
     for (const route of Object.values(router.routes)) {
       if (isRouter(route)) {
-        const name = path.length === 0 ? kRootRouter : route.contract.name
+        const name = route.contract.name
         if (!name) throw new Error('Nested routers must have a name')
         if (this.routers.has(name)) {
           throw new Error(`Router ${String(name)} already registered`)

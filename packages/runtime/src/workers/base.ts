@@ -1,4 +1,4 @@
-import { provide } from '@nmtjs/core'
+import { CoreInjectables, provide } from '@nmtjs/core'
 
 import type { BaseRuntimeOptions } from '../core/runtime.ts'
 import type { WorkerType } from '../enums.ts'
@@ -26,8 +26,7 @@ export abstract class BaseWorkerRuntime extends BaseRuntime {
     this.jobManager = new JobManager(this.config.store)
   }
 
-  protected async _initialize(): Promise<void> {
-    await this.jobManager.initialize()
+  async initialize(): Promise<void> {
     await this.container.provide([
       provide(injectables.workerType, this.workerType),
       provide(injectables.storeConfig, this.config.store),
@@ -37,7 +36,13 @@ export abstract class BaseWorkerRuntime extends BaseRuntime {
         this.pubsub.subscribe.bind(this.pubsub),
       ),
       provide(injectables.jobManager, this.jobManager.publicInstance),
+      provide(CoreInjectables.logger, this.logger),
     ])
+    await super.initialize()
+  }
+
+  protected async _initialize(): Promise<void> {
+    await this.jobManager.initialize()
   }
 
   protected async _dispose(): Promise<void> {

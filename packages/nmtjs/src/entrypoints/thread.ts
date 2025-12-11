@@ -26,8 +26,8 @@ process.on('unhandledRejection', (error) => {
   console.error(new Error('Unhandled Promise Rejection:', { cause: error }))
 })
 
-process.on('beforeExit', (code) => {
-  runner?.close()
+process.on('exit', async (code) => {
+  await runner?.close()
 })
 
 let runner: ModuleRunner
@@ -50,6 +50,10 @@ try {
   }
 
   const runtime = await workerModule.run(workerData.runtime)
+
+  process.on('exit', async () => {
+    await runtime.stop()
+  })
 
   workerData.port.on('message', async (msg) => {
     if (msg.type === 'stop') {

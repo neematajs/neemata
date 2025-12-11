@@ -112,6 +112,8 @@ export abstract class BaseClient<
   protected streamId = 0
   protected cab: AbortController | null = null
   protected reconnectTimeout = DEFAULT_RECONNECT_TIMEOUT
+  protected connecting: Promise<void> | null = null
+  protected state: 'connected' | 'disconnected' = 'disconnected'
 
   #auth: any
 
@@ -141,23 +143,16 @@ export abstract class BaseClient<
       this.options.autoreconnect
     ) {
       this.on('disconnected', async (reason) => {
-        if (reason === 'server') {
-          this.connect()
-        } else if (reason === 'error') {
+        while (this.state === 'disconnected') {
           const timeout = new Promise((resolve) =>
             setTimeout(resolve, this.reconnectTimeout),
-          )
-          const connected = new Promise((_, reject) =>
-            this.once('connected', reject),
           )
           this.reconnectTimeout = Math.min(
             this.reconnectTimeout * 2,
             DEFAULT_MAX_RECONNECT_TIMEOUT,
           )
-          await Promise.race([timeout, connected]).then(
-            this.connect.bind(this),
-            noopFn,
-          )
+          await timeout
+          await this.connect().catch(noopFn)
         }
       })
 
@@ -167,7 +162,7 @@ export abstract class BaseClient<
 
       if (globalThis.window) {
         globalThis.window.addEventListener('pageshow', () => {
-          if (!this.cab) this.connect()
+          if (this.state === 'disconnected') this.connect()
         })
       }
     }
@@ -181,71 +176,85 @@ export abstract class BaseClient<
     this.#auth = value
   }
 
-  async connect() {
-    if (this.transport.type === ConnectionType.Bidirectional) {
-      this.cab = new AbortController()
-      const protocol = this.protocol
-      const serverStreams = this.serverStreams
+  connect() {
+    if (this.state === 'connected') return Promise.resolve()
+    if (this.connecting) return this.connecting
 
-      const transport = {
-        send: (buffer) => {
-          this.#send(buffer).catch(noopFn)
-        },
+    const _connect = async () => {
+      if (this.transport.type === ConnectionType.Bidirectional) {
+        this.cab = new AbortController()
+        const protocol = this.protocol
+        const serverStreams = this.serverStreams
+        const transport = {
+          send: (buffer) => {
+            this.#send(buffer).catch(noopFn)
+          },
+        }
+        this.messageContext = {
+          transport,
+          encoder: this.options.format,
+          decoder: this.options.format,
+          addClientStream: (blob) => {
+            const streamId = this.#getStreamId()
+            return this.clientStreams.add(blob.source, streamId, blob.metadata)
+          },
+          addServerStream(streamId, metadata) {
+            const stream = new ProtocolServerBlobStream(metadata, {
+              pull: (controller) => {
+                transport.send(
+                  protocol.encodeMessage(
+                    this,
+                    ClientMessageType.ServerStreamPull,
+                    { streamId, size: 65535 /* 64kb by default */ },
+                  ),
+                )
+              },
+              close: () => {
+                serverStreams.remove(streamId)
+              },
+              readableStrategy: { highWaterMark: 0 },
+            })
+            serverStreams.add(streamId, stream)
+            return ({ signal }: { signal?: AbortSignal } = {}) => {
+              if (signal)
+                signal.addEventListener(
+                  'abort',
+                  () => {
+                    transport.send(
+                      protocol.encodeMessage(
+                        this,
+                        ClientMessageType.ServerStreamAbort,
+                        { streamId },
+                      ),
+                    )
+                    serverStreams.abort(streamId)
+                  },
+                  { once: true },
+                )
+              return stream
+            }
+          },
+          streamId: this.#getStreamId.bind(this),
+        }
+        return this.transport.connect({
+          auth: this.auth,
+          application: this.options.application,
+          onMessage: this.onMessage.bind(this),
+          onConnect: this.onConnect.bind(this),
+          onDisconnect: this.onDisconnect.bind(this),
+        })
       }
-      this.messageContext = {
-        transport,
-        encoder: this.options.format,
-        decoder: this.options.format,
-        addClientStream: (blob) => {
-          const streamId = this.#getStreamId()
-          return this.clientStreams.add(blob.source, streamId, blob.metadata)
-        },
-        addServerStream(streamId, metadata) {
-          const stream = new ProtocolServerBlobStream(metadata, {
-            pull: (controller) => {
-              transport.send(
-                protocol.encodeMessage(
-                  this,
-                  ClientMessageType.ServerStreamPull,
-                  { streamId, size: 65535 /* 64kb by default */ },
-                ),
-              )
-            },
-            close: () => {
-              serverStreams.remove(streamId)
-            },
-            readableStrategy: { highWaterMark: 0 },
-          })
-          serverStreams.add(streamId, stream)
-          return ({ signal }: { signal?: AbortSignal } = {}) => {
-            if (signal)
-              signal.addEventListener(
-                'abort',
-                () => {
-                  transport.send(
-                    protocol.encodeMessage(
-                      this,
-                      ClientMessageType.ServerStreamAbort,
-                      { streamId },
-                    ),
-                  )
-                  serverStreams.abort(streamId)
-                },
-                { once: true },
-              )
-            return stream
-          }
-        },
-        streamId: this.#getStreamId.bind(this),
-      }
-      return this.transport.connect({
-        auth: this.auth,
-        application: this.options.application,
-        onMessage: this.onMessage.bind(this),
-        onConnect: this.onConnect.bind(this),
-        onDisconnect: this.onDisconnect.bind(this),
-      })
     }
+
+    this.connecting = _connect()
+      .then(() => {
+        this.state = 'connected'
+      })
+      .finally(() => {
+        this.connecting = null
+      })
+
+    return this.connecting
   }
 
   async disconnect() {
@@ -377,10 +386,12 @@ export abstract class BaseClient<
   }
 
   protected async onConnect() {
+    this.state = 'connected'
     this.emit('connected')
   }
 
   protected async onDisconnect(reason: 'client' | 'server' | (string & {})) {
+    this.state = 'disconnected'
     this.emit('disconnected', reason)
     this.clientStreams.clear(reason)
     this.serverStreams.clear(reason)

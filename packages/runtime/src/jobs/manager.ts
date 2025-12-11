@@ -51,11 +51,12 @@ export type JobListItem<T extends AnyJob = AnyJob> = Pick<
 >
 
 export interface JobManagerInstance {
-  listJobs<T extends AnyJob>(
+  list<T extends AnyJob>(
     job: T,
     options?: { page?: number; limit?: number; state?: JobType[] },
   ): Promise<JobListItem<T>[]>
-  queueJob<T extends AnyJob>(
+  get<T extends AnyJob>(job: T, id: string): Promise<JobListItem<T> | null>
+  add<T extends AnyJob>(
     job: T,
     data: T['_']['input'],
     options?: QueueJobAddOptions,
@@ -72,8 +73,8 @@ export class JobManager {
   get publicInstance(): JobManagerInstance {
     return {
       // @ts-expect-error
-      listJobs: this.listJobs.bind(this),
-      queueJob: this.queueJob.bind(this),
+      list: this.list.bind(this),
+      add: this.add.bind(this),
     }
   }
 
@@ -112,7 +113,7 @@ export class JobManager {
     this.store.disconnect(false)
   }
 
-  async listJobs<T extends AnyJob>(
+  async list<T extends AnyJob>(
     job: T,
     {
       limit = 20,
@@ -132,7 +133,14 @@ export class JobManager {
     return jobs.map((job) => this._mapJob(job))
   }
 
-  async queueJob<T extends AnyJob>(
+  async get<T extends AnyJob>(job: T, id: string) {
+    const { queue } = this[job.options.queue]
+    const bullJob = await queue.getJob(id)
+    if (!bullJob) return null
+    return this._mapJob(bullJob)
+  }
+
+  async add<T extends AnyJob>(
     job: T,
     data: T['_']['input'],
     {

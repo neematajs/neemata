@@ -1,8 +1,11 @@
 import type { Container, Logger, LoggingOptions } from '@nmtjs/core'
 import type { Job } from 'bullmq'
+import { anyAbortSignal } from '@nmtjs/common'
+import { Scope } from '@nmtjs/core'
 
 import type { LifecycleHooks } from '../core/hooks.ts'
 import type { AnyJob, AnyJobStep } from './job.ts'
+import { LifecycleHook } from '../enums.ts'
 
 export type JobRunnerOptions = { logging?: LoggingOptions }
 
@@ -62,9 +65,17 @@ export class JobRunner<
     const { input, output, steps } = job
     let result: Record<string, unknown> = { ...options.result }
     if (input) data = input.decode(data)
-    const context = await this.container.createContext(job.dependencies)
-    const jobContext = await job.context?.(context, data)
+    const signal = anyAbortSignal(
+      options.signal,
+      this.runtime.lifecycleHooks.createSignal(LifecycleHook.BeforeDispose)
+        .signal,
+    )
+    await using container = this.container.fork(Scope.Global)
+    const _context = await container.createContext(job.dependencies)
+    const jobContext = Object.freeze(await job.context?.(_context, data))
+    const context = { ..._context, $context: jobContext }
     const stepResults = Array.from({ length: steps.length })
+
     for (
       let stepIndex = 0;
       stepIndex < options.stepResults.length;
@@ -79,6 +90,11 @@ export class JobRunner<
       stepIndex++
     ) {
       const step = steps[stepIndex]
+      const _result = Object.freeze(Object.assign({}, result))
+      const condition = step.condition
+        ? await step.condition(context, _result)
+        : true
+      if (!condition) continue
       await this.beforeStep({
         job,
         step,
@@ -89,12 +105,10 @@ export class JobRunner<
       })
       let stepResult: unknown
       try {
-        const result = await step.handler(context, jobContext, options.signal)
-        stepResult = result ?? {}
-      } catch (error) {
-        throw new Error(`Error during step [${stepIndex}]`, {
-          cause: error as Error,
-        })
+        const _stepResult = await step.handler(context, _result, signal)
+        stepResult = _stepResult ?? {}
+      } catch (cause) {
+        throw new Error(`Error during step [${stepIndex}]`, { cause })
       }
       stepResults[stepIndex] = stepResult
       Object.assign(result, stepResult)
@@ -108,18 +122,13 @@ export class JobRunner<
         options,
       })
     }
-    result = await job.returnHandler!(result)
-    return output.decode(result)
-  }
 
-  async runStep(
-    step: AnyJobStep,
-    context: any,
-    jobContext: any,
-    signal: AbortSignal,
-  ) {
-    const { handler } = step
-    return handler(context, jobContext, signal)
+    result = await job.returnHandler!(
+      context,
+      Object.freeze(Object.assign({}, result)),
+    )
+
+    return output.decode(result)
   }
 
   protected async beforeStep(
