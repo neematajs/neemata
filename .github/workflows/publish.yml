@@ -42,7 +42,27 @@ jobs:
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
+
+      - uses: pnpm/action-setup@v4
+        name: Install pnpm
+        with:
+          run_install: false
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Setup cargo cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            packages/proxy/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install dependencies and build
+        run: pnpm install && pnpm build
 
       - name: Log in to npm
         run: |
@@ -52,24 +72,16 @@ jobs:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_USERNAME: ${{ secrets.NPM_USERNAME }}
 
-      - uses: pnpm/action-setup@v4
-        name: Install pnpm
-        with:
-          run_install: false
-
-      - name: Install dependencies and build
-        run: pnpm install && pnpm build
-
       - name: Set version
         run: |
-          pnpm version ${{ inputs.version }} -ws --allow-same-version --no-commit-hooks --no-git-tag-version --silent || true
-          pnpm -r exec cp ../../README.md ./
-          pnpm -r exec cp ../../LICENSE.md ./
+          pnpm -r exec pnpm version --allow-same-version --no-commit-hooks --no-git-tag-version --silent ${{ inputs.version }}
+          pnpm --filter !_tests -r exec cp ../../README.md ./
+          pnpm --filter !_tests -r exec cp ../../LICENSE.md ./
 
       - name: Dry-run publish and publish
         run: |
-          pnpm publish --dry-run --filter "*" --access public --no-git-checks --tag=$(pnpm neemata-tag ${{ inputs.version }})
-          pnpm publish --filter "*" --access public --no-git-checks --tag=$(pnpm neemata-tag ${{ inputs.version }})
+          pnpm publish --dry-run --filter "*" --access public --no-git-checks --tag=$(node scripts/tag.js ${{ inputs.version }})
+          pnpm publish --filter "*" --access public --no-git-checks --tag=$(node scripts/tag.js ${{ inputs.version }})
 
       - name: Publish Github Release
         if: ${{ inputs.release }}

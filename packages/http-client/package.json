@@ -18,7 +18,9 @@
     }
   },
   "scripts": {
-    "build": "tsc",
+    "clean-build": "rm -rf ./dist",
+    "build": "tsc --declaration --sourcemap",
+    "dev": "tsc --watch",
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
@@ -33,6 +35,7 @@
   },
   "files": [
     "dist",
+    "src",
     "LICENSE.md",
     "README.md"
   ]

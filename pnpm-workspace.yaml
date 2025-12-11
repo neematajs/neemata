@@ -1,7 +1,10 @@
 packages:
   - packages/*
-  - tests/*
+  - tests
+
+catalog:
+  zod: ^4.1.0
+
 onlyBuiltDependencies:
   - esbuild
-catalog:
-  zod: ^4.0.0
+  - msgpackr-extract

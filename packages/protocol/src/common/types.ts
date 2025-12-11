@@ -1,6 +1,4 @@
-import type { OneOf } from '@nmtjs/common'
-
-import type { ProtocolBlob, ProtocolBlobMetadata } from './blob.ts'
+import type { ProtocolBlobMetadata } from './blob.ts'
 
 type Stream = any
 
@@ -10,21 +8,11 @@ export interface BaseProtocolError {
   data?: any
 }
 
-export type ProtocolRPC = { callId: number; procedure: string; payload: any }
+export type ProtocolRPCPayload = unknown
+export type ProtocolRPCResponse = unknown
 
-export type ProtocolRPCResponse<T = Stream> = OneOf<
-  [
-    { callId: number; error: BaseProtocolError },
-    { callId: number; result: any; streams: Record<number, T> },
-  ]
->
-
-export interface EncodeRPCContext<T = Stream> {
-  getStream: (id: number) => T
-  addStream: (blob: ProtocolBlob) => T
-}
+export type EncodeRPCStreams = Record<number, ProtocolBlobMetadata>
 
 export interface DecodeRPCContext<T = Stream> {
-  getStream: (id: number, callId: number) => T
-  addStream: (id: number, callId: number, metadata: ProtocolBlobMetadata) => T
+  addStream: (id: number, metadata: ProtocolBlobMetadata) => T
 }
