@@ -2,10 +2,9 @@ import type { Worker } from 'node:worker_threads'
 import EventEmitter from 'node:events'
 import { fileURLToPath } from 'node:url'
 
+import type { ServerConfig } from 'nmtjs/runtime'
 import type { ViteDevServer } from 'vite'
-
-import type { ServerConfig } from '../runtime/index.ts'
-import { ApplicationServer, isServerConfig } from '../runtime/index.ts'
+import { ApplicationServer, isServerConfig } from 'nmtjs/runtime'
 
 declare global {
   const __VITE_CONFIG__: string

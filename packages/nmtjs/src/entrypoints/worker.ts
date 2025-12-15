@@ -1,12 +1,13 @@
 import { workerData } from 'node:worker_threads'
 
-import type { ServerConfig } from '../runtime/index.ts'
-import type { RunWorkerOptions } from './thread.ts'
+import type { ServerConfig } from 'nmtjs/runtime'
 import {
   ApplicationWorkerRuntime,
   isApplicationConfig,
   JobWorkerRuntime,
-} from '../runtime/index.ts'
+} from 'nmtjs/runtime'
+
+import type { RunWorkerOptions } from './thread.ts'
 
 export async function run(options: RunWorkerOptions['runtime']) {
   const serverConfig: ServerConfig = await import(
