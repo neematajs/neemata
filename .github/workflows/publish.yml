@@ -75,8 +75,8 @@ jobs:
       - name: Set version
         run: |
           pnpm -r exec pnpm version --allow-same-version --no-commit-hooks --no-git-tag-version --silent ${{ inputs.version }}
-          pnpm --filter !_tests -r exec cp ../../README.md ./
-          pnpm --filter !_tests -r exec cp ../../LICENSE.md ./
+          pnpm --filter !_tests --filter !playground -r exec cp ../../README.md ./
+          pnpm --filter !_tests --filter !playground -r exec cp ../../LICENSE.md ./
 
       - name: Dry-run publish and publish
         run: |
