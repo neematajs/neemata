@@ -1,7 +1,10 @@
 import { fileURLToPath } from 'node:url'
 
 export type ViteConfigOptions = {
-  applicationImports: Record<string, { path: string; specifier: string }>
+  applicationImports: Record<
+    string,
+    { path: string; specifier: string; type: 'neemata' | 'custom' }
+  >
   serverEntryPath: string
   entrypointMainPath: string
   entrypointWorkerPath: string

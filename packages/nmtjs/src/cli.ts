@@ -30,7 +30,10 @@ const commonArgs = {
 
 let config: NeemataConfig
 let viteConfigOptions: ViteConfigOptions
-let applicationImports: Record<string, { path: string; specifier: string }>
+let applicationImports: Record<
+  string,
+  { path: string; specifier: string; type: 'neemata' | 'custom' }
+>
 
 const mainCommand = defineCommand({
   meta: { description: 'Neemata CLI' },
@@ -54,7 +57,9 @@ const mainCommand = defineCommand({
     applicationImports = {}
     const currentPkg = resolver.sync(process.cwd(), './package.json')
 
-    for (const [appName, appSpecifier] of Object.entries(config.applications)) {
+    for (const [appName, { specifier: appSpecifier, type }] of Object.entries(
+      config.applications,
+    )) {
       const resolution = resolver.sync(process.cwd(), appSpecifier)
       if (resolution.error)
         throw new Error(
@@ -68,7 +73,7 @@ const mainCommand = defineCommand({
         resolution.packageJsonPath === currentPkg.path
           ? relative(resolve('.neemata'), resolution.path)
           : appSpecifier
-      applicationImports[appName] = { path: resolution.path, specifier }
+      applicationImports[appName] = { path: resolution.path, specifier, type }
     }
 
     viteConfigOptions = {

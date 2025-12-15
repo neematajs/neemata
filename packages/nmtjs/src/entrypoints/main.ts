@@ -2,9 +2,10 @@ import type { Worker } from 'node:worker_threads'
 import EventEmitter from 'node:events'
 import { fileURLToPath } from 'node:url'
 
-import type { ServerConfig } from '@nmtjs/runtime'
 import type { ViteDevServer } from 'vite'
-import { ApplicationServer, isServerConfig } from '@nmtjs/runtime'
+
+import type { ServerConfig } from '../runtime/index.ts'
+import { ApplicationServer, isServerConfig } from '../runtime/index.ts'
 
 declare global {
   const __VITE_CONFIG__: string
@@ -22,9 +23,10 @@ class InvalidServerConfigError extends Error {
 
 const _ext = new URL(import.meta.url).pathname.endsWith('.ts') ? '.ts' : '.js'
 const _vite = __VITE_CONFIG__ ? JSON.parse(__VITE_CONFIG__) : undefined
-const applicationsConfig = __APPLICATIONS_CONFIG__
-  ? JSON.parse(__APPLICATIONS_CONFIG__)
-  : {}
+const applicationsConfig: Record<
+  string,
+  { type: 'neemata' | 'custom'; specifier: string }
+> = __APPLICATIONS_CONFIG__ ? JSON.parse(__APPLICATIONS_CONFIG__) : {}
 
 let _viteServerEvents: EventEmitter<{ worker: [Worker] }> | undefined
 let _viteWorkerServer: ViteDevServer | undefined

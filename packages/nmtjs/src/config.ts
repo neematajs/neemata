@@ -14,7 +14,7 @@ export interface NeemataConfig {
     /**
      * Application name
      */
-    [appName: string]: string
+    [appName: string]: { type: 'neemata' | 'custom'; specifier: string }
   }
   /**
    * Path to server entry point

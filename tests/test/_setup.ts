@@ -11,7 +11,7 @@ import type {
   TransportWorker,
   TransportWorkerParams,
 } from '@nmtjs/gateway'
-import type { AnyProcedure, AnyRootRouter, AnyRouter } from '@nmtjs/runtime'
+import type { AnyProcedure, AnyRootRouter, AnyRouter } from 'nmtjs/runtime'
 import {
   createTestClientFormat,
   createTestLogger,
@@ -27,7 +27,7 @@ import {
   isProcedure,
   isRouter,
   kRootRouter,
-} from '@nmtjs/runtime'
+} from 'nmtjs/runtime'
 
 // =============================================================================
 // EventEmitter Transport Channel
@@ -465,11 +465,11 @@ export {
   ProtocolVersion,
 } from '@nmtjs/protocol'
 export { ProtocolError, ProtocolFormats } from '@nmtjs/protocol/server'
+export { t } from '@nmtjs/type'
 export {
   ApiError,
   ApplicationApi,
   createProcedure,
   createRootRouter,
   createRouter,
-} from '@nmtjs/runtime'
-export { t } from '@nmtjs/type'
+} from 'nmtjs/runtime'

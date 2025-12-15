@@ -4,7 +4,10 @@ import { resolve } from 'node:path'
 import dedent from 'dedent'
 
 export async function generateTypings(
-  applicationImports: Record<string, { path: string; specifier: string }>,
+  applicationImports: Record<
+    string,
+    { path: string; specifier: string; type: 'neemata' | 'custom' }
+  >,
 ) {
   await mkdir('.neemata', { recursive: true }).catch(() => {})
   await writeFile(
@@ -16,8 +19,8 @@ export async function generateTypings(
       interface Applications {
         ${Object.entries(applicationImports)
           .map(
-            ([appName, { specifier }]) =>
-              `'${appName}': typeof import('${specifier}').default`,
+            ([appName, { specifier, type }]) =>
+              `'${appName}': { type: '${type}'; definition: typeof import('${specifier}').default`,
           )
           .join('\n')}
       }

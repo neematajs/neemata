@@ -1231,6 +1231,7 @@ dependencies = [
 name = "neemata-proxy"
 version = "0.1.0"
 dependencies = [
+ "arc-swap",
  "async-trait",
  "env_logger",
  "http",
@@ -1241,6 +1242,7 @@ dependencies = [
  "pingora",
  "pingora-load-balancing",
  "tokio",
+ "tokio-util",
  "url",
 ]
 

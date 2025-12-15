@@ -18,9 +18,9 @@
     "@nmtjs/http-transport": "workspace:*",
     "@nmtjs/json-format": "workspace:*",
     "@nmtjs/protocol": "workspace:*",
-    "@nmtjs/runtime": "workspace:*",
     "@nmtjs/type": "workspace:*",
     "@nmtjs/ws-client": "workspace:*",
-    "@nmtjs/ws-transport": "workspace:*"
+    "@nmtjs/ws-transport": "workspace:*",
+    "nmtjs": "workspace:*"
   }
 }

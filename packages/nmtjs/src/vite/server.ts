@@ -24,7 +24,10 @@ export function createServer(
             JSON.stringify(
               Object.fromEntries(
                 Object.entries(options.applicationImports).map(
-                  ([appName, { path }]) => [appName, path],
+                  ([appName, { path, type }]) => [
+                    appName,
+                    { specifier: path, type },
+                  ],
                 ),
               ),
             ),

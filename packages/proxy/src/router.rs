@@ -1,406 +1,513 @@
-use crate::config::{AppUpstream, ProxyConfig, UpstreamKind};
-use async_trait::async_trait;
-use http::{Uri, uri::PathAndQuery};
-use log::{debug, info};
-use napi::Error as NapiError;
-use napi::bindgen_prelude::Result as NapiResult;
-use pingora::{
-    http::ResponseHeader,
-    lb::{Backend, Backends, discovery::Static},
-    prelude::*,
-    protocols::l4::socket::SocketAddr as PingoraSocketAddr,
-    services::background::{GenBackgroundService, background_service},
-};
-use pingora_load_balancing::health_check::TcpHealthCheck;
-use std::{
-    collections::{BTreeSet, HashMap},
-    net::ToSocketAddrs,
-    sync::Arc,
-    time::Duration,
-};
+use std::borrow::Cow;
+use std::collections::HashMap;
+use std::sync::Arc;
 
-pub type Cluster = LoadBalancer<RoundRobin>;
+use arc_swap::ArcSwap;
+use http::header;
+use http::{StatusCode, Uri};
+use pingora::http::RequestHeader;
+use pingora::http::ResponseHeader;
+use pingora::lb::{LoadBalancer, selection::RoundRobin};
+use pingora::modules::http::HttpModules;
+use pingora::proxy::{ProxyHttp, Session};
+use pingora::upstreams::peer::HttpPeer;
+use pingora::{Error, ErrorType, Result};
 
-pub struct ClusterEntry {
-    pub balancer: Arc<Cluster>,
-    pub sni: Option<String>,
+#[derive(Clone, Default)]
+pub struct RouterConfig {
+    pub subdomain_routes: HashMap<String, String>,
+    pub path_routes: HashMap<String, String>,
+    pub default_app: Option<String>,
+    pub apps: HashMap<String, AppPools>,
 }
 
+#[derive(Clone)]
+pub struct AppPools {
+    pub http1: Option<PoolConfig>,
+    pub http2: Option<PoolConfig>,
+}
+
+#[derive(Clone)]
+pub struct PoolConfig {
+    pub lb: Arc<LoadBalancer<RoundRobin>>,
+    pub secure: bool,
+    pub verify_hostname: String,
+}
+
+/// Pre-resolved pool information cached in context to avoid repeated lookups.
+#[derive(Clone)]
+pub struct ResolvedPool {
+    pub lb: Arc<LoadBalancer<RoundRobin>>,
+    pub secure: bool,
+    pub verify_hostname: String,
+    pub is_http2: bool,
+}
+
+#[allow(dead_code)]
 pub struct Router {
-    clusters: HashMap<String, HashMap<UpstreamKind, ClusterEntry>>,
-    upstreams_tls: HashMap<String, bool>,
-}
-
-#[derive(Default)]
-pub struct RouterCtx {
-    app_info: AppInfoState,
-}
-
-struct AppInfo {
-    name: String,
-    kind: UpstreamKind,
-}
-
-#[derive(Default)]
-enum AppInfoState {
-    #[default]
-    Unknown,
-    Missing,
-    Found(AppInfo),
-}
-
-impl RouterCtx {
-    fn app_info(&mut self, session: &Session) -> Option<&AppInfo> {
-        if matches!(self.app_info, AppInfoState::Unknown) {
-            self.app_info = match extract_app_name(session) {
-                Some(name) => AppInfoState::Found(AppInfo {
-                    name: name.to_string(),
-                    kind: if session.is_upgrade_req() {
-                        UpstreamKind::Websocket
-                    } else {
-                        UpstreamKind::Http
-                    },
-                }),
-                None => AppInfoState::Missing,
-            };
-        }
-
-        match &self.app_info {
-            AppInfoState::Found(info) => Some(info),
-            _ => None,
-        }
-    }
+    config: ArcSwap<RouterConfig>,
 }
 
 impl Router {
-    fn new(
-        clusters: HashMap<String, HashMap<UpstreamKind, ClusterEntry>>,
-        upstreams_tls: HashMap<String, bool>,
-    ) -> Self {
+    #[allow(dead_code)]
+    pub fn new(config: RouterConfig) -> Self {
         Self {
-            clusters,
-            upstreams_tls,
+            config: ArcSwap::from_pointee(config),
         }
     }
 
-    fn cluster_for<'a>(&'a self, app_info: &AppInfo) -> Option<&'a ClusterEntry> {
-        self.clusters
-            .get(&app_info.name)
-            .and_then(|entries| entries.get(&app_info.kind))
+    #[allow(dead_code)]
+    pub fn update(&self, config: RouterConfig) {
+        self.config.store(Arc::new(config));
     }
 }
 
-#[async_trait]
-impl ProxyHttp for Router {
+#[derive(Clone)]
+pub struct SharedRouter(pub Arc<Router>);
+
+#[derive(Clone, Default)]
+pub struct RouterCtx {
+    pub app_name: Option<String>,
+    pub path_rewrite_segment: Option<String>,
+    pub is_upgrade: bool,
+    /// Cached pool resolution from request_filter to avoid re-lookup in upstream_peer.
+    pub resolved_pool: Option<ResolvedPool>,
+}
+
+impl SharedRouter {
+    pub fn new(router: Arc<Router>) -> Self {
+        Self(router)
+    }
+}
+
+#[async_trait::async_trait]
+impl ProxyHttp for SharedRouter {
     type CTX = RouterCtx;
 
     fn new_ctx(&self) -> Self::CTX {
         RouterCtx::default()
     }
 
-    async fn upstream_peer(
-        &self,
-        session: &mut Session,
-        ctx: &mut RouterCtx,
-    ) -> Result<Box<HttpPeer>> {
-        const NO_CLUSTER: ImmutStr = ImmutStr::Static("no matching application for request");
+    fn init_downstream_modules(&self, modules: &mut HttpModules) {
+        // Keep Pingora's default behavior (disabled compression) explicit here so we
+        // have a clear extension point for adding static downstream modules later.
+        modules
+            .add_module(pingora::modules::http::compression::ResponseCompressionBuilder::enable(0));
+    }
 
-        let app_info = ctx.app_info(session).ok_or_else(|| {
-            Error::create(
-                ErrorType::ConnectError,
-                ErrorSource::Internal,
-                Some(NO_CLUSTER),
-                None,
-            )
-        })?;
-        let cluster = self.cluster_for(app_info).ok_or_else(|| {
-            Error::create(
-                ErrorType::ConnectError,
-                ErrorSource::Internal,
-                Some(NO_CLUSTER),
-                None,
-            )
-        })?;
-        const NO_UPSTREAM: ImmutStr = ImmutStr::Static("no available upstream for application");
-        let upstream = cluster.balancer.select(b"", 256).ok_or_else(|| {
-            Error::create(
-                ErrorType::ConnectError,
-                ErrorSource::Internal,
-                Some(NO_UPSTREAM),
-                None,
-            )
-        })?;
+    async fn request_filter(&self, session: &mut Session, ctx: &mut Self::CTX) -> Result<bool> {
+        let config = self.0.config.load();
 
-        let sni = cluster
-            .sni
-            .clone()
-            .or_else(|| session.req_header().uri.host().map(|h| h.to_string()))
-            .or_else(|| {
-                session
-                    .req_header()
-                    .headers
-                    .get("host")
-                    .and_then(|v| v.to_str().ok())
-                    .map(|v| v.split(':').next().unwrap_or(v).to_string())
-            })
-            .unwrap_or_default();
+        // TODO(vNext): Deterministic downstream error mapping.
+        // Today, a number of routing/upstream-selection failures bubble up as Pingora internal errors,
+        // which typically become HTTP 500 responses but without a fully controlled body/headers.
+        // Decide and implement a single, explicit downstream error policy for at least:
+        // - no application matched (no subdomain/path/default)
+        // - matched app has no pools configured
+        // - no pools available for request type (e.g. upgrade requires http1)
+        // - no healthy upstreams available
+        // Acceptance: response status/body/headers are stable across versions and covered by tests.
 
-        let enable_tls = *self
-            .upstreams_tls
-            .get(&upstream.addr.to_string())
-            .unwrap_or(&false);
+        let host = extract_host(session);
+        let path_first_segment = extract_first_path_segment(session);
+        let is_upgrade = is_upgrade_request(session);
 
-        match upstream.addr {
-            PingoraSocketAddr::Inet(_) => Ok(Box::new(HttpPeer::new(upstream, enable_tls, sni))),
-            PingoraSocketAddr::Unix(addr) => {
-                let path = addr.as_pathname().and_then(|p| p.to_str()).ok_or_else(|| {
-                    Error::create(
-                        ErrorType::InternalError,
-                        ErrorSource::Internal,
-                        Some(ImmutStr::Static("invalid unix socket path")),
-                        None,
-                    )
-                })?;
-                let peer = HttpPeer::new_uds(path, enable_tls, sni).map_err(|e| {
-                    Error::create(
-                        ErrorType::InternalError,
-                        ErrorSource::Internal,
-                        Some(ImmutStr::Static("failed to create uds peer")),
-                        Some(Box::new(e)),
-                    )
-                })?;
-                Ok(Box::new(peer))
+        let mut app_name: Option<String> = None;
+        let mut rewrite_segment: Option<String> = None;
+
+        if let Some(host) = host.as_deref() {
+            app_name = config.subdomain_routes.get(host).cloned();
+        }
+
+        if app_name.is_none()
+            && let Some(seg) = path_first_segment
+            && let Some(app) = config.path_routes.get(seg).cloned()
+        {
+            app_name = Some(app);
+            rewrite_segment = Some(seg.to_string());
+        }
+
+        if app_name.is_none() {
+            app_name = config.default_app.clone();
+        }
+
+        ctx.app_name = app_name;
+        ctx.path_rewrite_segment = rewrite_segment;
+        ctx.is_upgrade = is_upgrade;
+
+        // Pre-resolve the pool to avoid repeated HashMap lookups in upstream_peer.
+        if let Some(ref app_name) = ctx.app_name
+            && let Some(pools) = config.apps.get(app_name)
+        {
+            let (pool, is_http2) = if is_upgrade {
+                (pools.http1.as_ref(), false)
+            } else if let Some(p) = pools.http2.as_ref() {
+                (Some(p), true)
+            } else {
+                (pools.http1.as_ref(), false)
+            };
+
+            if let Some(pool) = pool {
+                ctx.resolved_pool = Some(ResolvedPool {
+                    lb: Arc::clone(&pool.lb),
+                    secure: pool.secure,
+                    verify_hostname: pool.verify_hostname.clone(),
+                    is_http2,
+                });
             }
         }
+
+        // Deterministic behavior: Upgrade/WebSocket must go to an HTTP/1 pool.
+        // If no HTTP/1 pool exists for the matched app, respond with a consistent error.
+        if ctx.is_upgrade
+            && let Some(app_name) = ctx.app_name.as_deref()
+            && let Some(pools) = config.apps.get(app_name)
+            && pools.http1.is_none()
+        {
+            let mut resp = ResponseHeader::build(StatusCode::INTERNAL_SERVER_ERROR, Some(2))?;
+            let _ = resp.insert_header(header::CONTENT_LENGTH, 0);
+            session.write_response_header(Box::new(resp), true).await?;
+            return Ok(true);
+        }
+
+        Ok(false)
+    }
+
+    async fn upstream_peer(
+        &self,
+        _session: &mut Session,
+        ctx: &mut Self::CTX,
+    ) -> Result<Box<HttpPeer>> {
+        // Use pre-resolved pool from request_filter when available.
+        let Some(resolved) = ctx.resolved_pool.as_ref() else {
+            // Fallback: no pool was resolved (no app matched or no pools configured)
+            return Err(Error::explain(
+                ErrorType::InternalError,
+                "no upstream pool resolved",
+            ));
+        };
+
+        let Some(backend) = resolved.lb.select(b"", 8) else {
+            return Err(Error::explain(
+                ErrorType::InternalError,
+                "no healthy upstreams available",
+            ));
+        };
+
+        let mut peer = HttpPeer::new(
+            backend.addr.clone(),
+            resolved.secure,
+            resolved.verify_hostname.clone(),
+        );
+        // For plaintext HTTP/2 upstreams (h2c), Pingora needs the peer's min HTTP version to be 2,
+        // otherwise it will assume HTTP/1.1 when no ALPN is present.
+        if resolved.is_http2 {
+            peer.options.set_http_version(2, 2);
+        } else {
+            peer.options.set_http_version(1, 1);
+        }
+
+        Ok(Box::new(peer))
     }
 
     async fn upstream_request_filter(
         &self,
-        session: &mut Session,
+        _session: &mut Session,
         upstream_request: &mut RequestHeader,
         ctx: &mut Self::CTX,
     ) -> Result<()> {
-        let Some(app_info) = ctx.app_info(session) else {
+        let Some(seg) = ctx.path_rewrite_segment.as_deref() else {
             return Ok(());
         };
 
-        if let Some(client_addr) = session.client_addr()
-            && let Some(inet) = client_addr.as_inet()
-        {
-            let client_ip = inet.ip().to_string();
-            let new_val = if let Some(existing) = upstream_request.headers.get("x-forwarded-for") {
-                if let Ok(existing_str) = existing.to_str() {
-                    format!("{}, {}", existing_str, client_ip)
-                } else {
-                    client_ip
-                }
-            } else {
-                client_ip
-            };
-            upstream_request
-                .insert_header("x-forwarded-for", new_val)
-                .map_err(|e| {
-                    Error::create(
-                        ErrorType::InternalError,
-                        ErrorSource::Internal,
-                        Some(ImmutStr::Static("failed to set x-forwarded-for")),
-                        Some(Box::new(e)),
-                    )
-                })?;
-        }
+        let Some(path_and_query) = upstream_request.uri.path_and_query().map(|pq| pq.as_str())
+        else {
+            return Ok(());
+        };
 
-        let name = app_info.name.as_str();
+        let Some(new_path_and_query) = strip_first_path_segment(path_and_query, seg) else {
+            return Ok(());
+        };
 
-        let path = upstream_request.uri.path();
-        let path_bytes = path.as_bytes();
-        let mut start_idx = 0;
-        while start_idx < path_bytes.len() && path_bytes[start_idx] == b'/' {
-            start_idx += 1;
-        }
+        let uri = Uri::builder()
+            .path_and_query(new_path_and_query.as_ref())
+            .build()
+            .map_err(|e| {
+                Error::because(
+                    ErrorType::InternalError,
+                    "failed to rewrite upstream uri",
+                    e,
+                )
+            })?;
 
-        if path[start_idx..].starts_with(name) {
-            let end_idx = start_idx + name.len();
-            if end_idx == path.len() || path_bytes[end_idx] == b'/' {
-                let mut new_path = &path[end_idx..];
-                if new_path.is_empty() {
-                    new_path = "/";
-                }
-
-                let mut parts = upstream_request.uri.clone().into_parts();
-                let path_and_query = if let Some(query) = upstream_request.uri.query() {
-                    let mut s = String::with_capacity(new_path.len() + 1 + query.len());
-                    s.push_str(new_path);
-                    s.push('?');
-                    s.push_str(query);
-                    s
-                } else {
-                    new_path.to_string()
-                };
-
-                let pq = path_and_query.parse::<PathAndQuery>().map_err(|e| {
-                    Error::create(
-                        ErrorType::InternalError,
-                        ErrorSource::Internal,
-                        Some(ImmutStr::Static("invalid path")),
-                        Some(Box::new(e)),
-                    )
-                })?;
-
-                parts.path_and_query = Some(pq);
-                let new_uri = Uri::from_parts(parts).map_err(|e| {
-                    Error::create(
-                        ErrorType::InternalError,
-                        ErrorSource::Internal,
-                        Some(ImmutStr::Static("invalid uri")),
-                        Some(Box::new(e)),
-                    )
-                })?;
-
-                debug!(
-                    "Rewriting upstream URI from {} to {}",
-                    upstream_request.uri, new_uri
-                );
-                upstream_request.set_uri(new_uri);
-            }
-        }
-        Ok(())
-    }
-
-    async fn response_filter(
-        &self,
-        _session: &mut Session,
-        _upstream_response: &mut ResponseHeader,
-        _ctx: &mut Self::CTX,
-    ) -> Result<()> {
-        const REMOVE_HEADERS: [&str; 1] = ["uWebSockets"];
-        for header in REMOVE_HEADERS {
-            _upstream_response.remove_header(header);
-        }
+        upstream_request.set_uri(uri);
         Ok(())
     }
 }
 
-pub struct RouterAssembly {
-    pub router: Router,
-    pub background_services: Vec<GenBackgroundService<Cluster>>,
+fn is_upgrade_request(session: &Session) -> bool {
+    // WebSocket/Upgrade is an HTTP/1.1 mechanism.
+    // Keep it simple: treat presence of `Upgrade` header as an upgrade request.
+    session.req_header().headers.get(header::UPGRADE).is_some()
 }
 
-pub fn build_router(config: &ProxyConfig) -> NapiResult<RouterAssembly> {
-    let mut services = Vec::with_capacity(config.apps.len());
-    let mut clusters = HashMap::with_capacity(config.apps.len());
-    let mut upstreams_tls = HashMap::new();
-
-    for (name, definition) in &config.apps {
-        let mut app_clusters = HashMap::new();
-
-        for (&kind, upstreams) in &definition.upstreams {
-            let mut resolved_addrs = Vec::new();
-            for upstream in upstreams {
-                match upstream {
-                    AppUpstream::Port {
-                        secure,
-                        hostname,
-                        port,
-                        ..
-                    } => {
-                        let addr_str = format!("{}:{}", hostname, port);
-                        let addrs = addr_str.to_socket_addrs().map_err(|e| {
-                            NapiError::from_reason(format!(
-                                "failed to resolve '{}': {}",
-                                addr_str, e
-                            ))
-                        })?;
-                        for addr in addrs {
-                            let p_addr = PingoraSocketAddr::Inet(addr);
-                            resolved_addrs.push(p_addr.clone());
-                            upstreams_tls.insert(p_addr.to_string(), *secure);
-                        }
-                    }
-                    AppUpstream::Unix { secure, path } => {
-                        let p_addr = PingoraSocketAddr::Unix(
-                            std::os::unix::net::SocketAddr::from_pathname(path).map_err(|e| {
-                                NapiError::from_reason(format!(
-                                    "failed to resolve unix socket '{}': {}",
-                                    path, e
-                                ))
-                            })?,
-                        );
-                        resolved_addrs.push(p_addr.clone());
-                        upstreams_tls.insert(p_addr.to_string(), *secure);
-                    }
-                }
-            }
-
-            if resolved_addrs.is_empty() {
-                continue;
-            }
-
-            let cluster_name = format!("{}:{}", name, kind.as_str());
-            let (balancer, service) =
-                build_cluster_service(&cluster_name, resolved_addrs, config.health_check_interval)?;
-
-            app_clusters.insert(
-                kind,
-                ClusterEntry {
-                    balancer,
-                    sni: definition.sni.clone(),
-                },
-            );
-            if let Some(service) = service {
-                services.push(service);
-            }
-        }
-
-        if !app_clusters.is_empty() {
-            clusters.insert(name.clone(), app_clusters);
-        }
-    }
-
-    let router = Router::new(clusters, upstreams_tls);
-    Ok(RouterAssembly {
-        router,
-        background_services: services,
-    })
-}
-
-fn build_cluster_service(
-    name: &str,
-    upstreams: Vec<PingoraSocketAddr>,
-    health_interval: Option<Duration>,
-) -> NapiResult<(Arc<Cluster>, Option<GenBackgroundService<Cluster>>)> {
-    info!(
-        "Building cluster for app '{name}' with upstreams: {:?}",
-        upstreams
-    );
-    let backends_vec: Vec<Backend> = upstreams
-        .into_iter()
-        .map(|addr| {
-            let addr_str = addr.to_string();
-            Backend::new(&addr_str).map_err(|e| {
-                NapiError::from_reason(format!(
-                    "failed to create backend for '{}': {}",
-                    addr_str, e
-                ))
-            })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let backends_set: BTreeSet<Backend> = backends_vec.into_iter().collect();
-    let discovery = Static::new(backends_set);
-    let backends = Backends::new(discovery);
-    let mut balancer = LoadBalancer::from_backends(backends);
-
-    if let Some(interval) = health_interval {
-        balancer.set_health_check(TcpHealthCheck::new());
-        balancer.health_check_frequency = Some(interval);
-        let service = background_service("cluster health check", balancer);
-        Ok((service.task(), Some(service)))
-    } else {
-        Ok((Arc::new(balancer), None))
-    }
-}
-
-fn extract_app_name(session: &Session) -> Option<&str> {
+fn extract_first_path_segment(session: &Session) -> Option<&str> {
     let path = session.req_header().uri.path();
-    let without_slash = path.trim_start_matches('/');
-    without_slash.split('/').find(|segment| !segment.is_empty())
+    let mut parts = path.split('/').filter(|p| !p.is_empty());
+    parts.next()
+}
+
+fn extract_host(session: &Session) -> Option<Cow<'_, str>> {
+    let headers = &session.req_header().headers;
+
+    let host_str = headers
+        .get(header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .or_else(|| {
+            headers
+                .get(http::HeaderName::from_static(":authority"))
+                .and_then(|v| v.to_str().ok())
+        })?;
+
+    let host_without_port = strip_port_str(host_str);
+
+    // Only allocate if lowercase conversion is needed
+    if host_without_port.chars().any(|c| c.is_ascii_uppercase()) {
+        Some(Cow::Owned(host_without_port.to_ascii_lowercase()))
+    } else {
+        Some(Cow::Borrowed(host_without_port))
+    }
+}
+
+fn strip_first_path_segment<'a>(path_and_query: &'a str, segment: &str) -> Option<Cow<'a, str>> {
+    let (path, query) = match path_and_query.split_once('?') {
+        Some((p, q)) => (p, Some(q)),
+        None => (path_and_query, None),
+    };
+
+    let prefix_len = segment.len() + 1; // "/{segment}".len()
+
+    // Check if path matches "/{segment}" exactly or starts with "/{segment}/"
+    if !path.starts_with('/') || path.len() < prefix_len {
+        return None;
+    }
+
+    let after_slash = &path[1..];
+    if !after_slash.starts_with(segment) {
+        return None;
+    }
+
+    // Check boundary: must be exact match or followed by '/'
+    let remainder = &path[prefix_len..];
+    let rewritten_path = if remainder.is_empty() {
+        // path == "/{segment}"
+        "/"
+    } else if remainder.starts_with('/') {
+        // path starts with "/{segment}/"
+        remainder
+    } else {
+        // path is like "/{segment}xyz" - not a boundary match
+        return None;
+    };
+
+    // If no query string, we can return a borrowed slice
+    match query {
+        None => Some(Cow::Borrowed(rewritten_path)),
+        Some(q) => {
+            // Must allocate to concatenate path + "?" + query
+            let mut out = String::with_capacity(rewritten_path.len() + 1 + q.len());
+            out.push_str(rewritten_path);
+            out.push('?');
+            out.push_str(q);
+            Some(Cow::Owned(out))
+        }
+    }
+}
+
+/// Strip port from host string, returning a slice (zero allocation).
+fn strip_port_str(host: &str) -> &str {
+    // "example.com:3000" => "example.com"
+    // "[::1]:3000" => "[::1]"
+    if let Some(stripped) = host.strip_prefix('[') {
+        // IPv6 address: find closing bracket
+        if let Some(end) = stripped.find(']') {
+            return &host[..end + 2]; // Include brackets: "[" + content + "]"
+        }
+        return host;
+    }
+
+    match host.rsplit_once(':') {
+        Some((h, port)) if !h.is_empty() && port.chars().all(|c| c.is_ascii_digit()) => h,
+        _ => host,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::strip_first_path_segment;
+
+    #[test]
+    fn path_rewrite_strips_exact_segment() {
+        assert_eq!(
+            strip_first_path_segment("/auth", "auth").as_deref(),
+            Some("/")
+        );
+        assert_eq!(
+            strip_first_path_segment("/auth/", "auth").as_deref(),
+            Some("/")
+        );
+        assert_eq!(
+            strip_first_path_segment("/auth/login", "auth").as_deref(),
+            Some("/login")
+        );
+    }
+
+    #[test]
+    fn path_rewrite_preserves_query_string() {
+        assert_eq!(
+            strip_first_path_segment("/auth/login?x=1", "auth").as_deref(),
+            Some("/login?x=1")
+        );
+    }
+
+    #[test]
+    fn path_rewrite_is_boundary_aware() {
+        assert_eq!(strip_first_path_segment("/authz", "auth"), None);
+        assert_eq!(strip_first_path_segment("/authz/login", "auth"), None);
+        assert_eq!(strip_first_path_segment("/a", "auth"), None);
+    }
+
+    #[test]
+    fn strip_port_handles_ipv4() {
+        use super::strip_port_str;
+        assert_eq!(strip_port_str("example.com:3000"), "example.com");
+        assert_eq!(strip_port_str("example.com"), "example.com");
+        assert_eq!(strip_port_str("127.0.0.1:8080"), "127.0.0.1");
+    }
+
+    #[test]
+    fn strip_port_handles_ipv6() {
+        use super::strip_port_str;
+        assert_eq!(strip_port_str("[::1]:3000"), "[::1]");
+        assert_eq!(strip_port_str("[::1]"), "[::1]");
+        assert_eq!(strip_port_str("[2001:db8::1]:443"), "[2001:db8::1]");
+    }
+
+    #[test]
+    fn strip_port_edge_cases() {
+        use super::strip_port_str;
+        // Empty string
+        assert_eq!(strip_port_str(""), "");
+        // Trailing colon - empty "port" is all digits (vacuously true), so strips
+        assert_eq!(strip_port_str("host:"), "host");
+        // Non-numeric port (should not strip)
+        assert_eq!(strip_port_str("host:abc"), "host:abc");
+        // Multiple colons without brackets (last segment is port-like)
+        assert_eq!(strip_port_str("a:b:80"), "a:b");
+        // Only port number - empty host, does not strip
+        assert_eq!(strip_port_str(":8080"), ":8080");
+        // Malformed IPv6 (no closing bracket)
+        assert_eq!(strip_port_str("[::1"), "[::1");
+        // IPv6 with trailing content after bracket
+        assert_eq!(strip_port_str("[::1]abc"), "[::1]");
+    }
+
+    #[test]
+    fn path_rewrite_edge_cases() {
+        // Root path - no segment to strip
+        assert_eq!(strip_first_path_segment("/", "auth"), None);
+        // Empty segment name
+        assert_eq!(strip_first_path_segment("/auth", ""), None);
+        // Deeply nested paths
+        assert_eq!(
+            strip_first_path_segment("/auth/a/b/c/d", "auth").as_deref(),
+            Some("/a/b/c/d")
+        );
+        // Query string only on root segment
+        assert_eq!(
+            strip_first_path_segment("/auth?redirect=home", "auth").as_deref(),
+            Some("/?redirect=home")
+        );
+        // Multiple query parameters
+        assert_eq!(
+            strip_first_path_segment("/auth/login?a=1&b=2&c=3", "auth").as_deref(),
+            Some("/login?a=1&b=2&c=3")
+        );
+        // Path with encoded characters
+        assert_eq!(
+            strip_first_path_segment("/auth/path%20with%20spaces", "auth").as_deref(),
+            Some("/path%20with%20spaces")
+        );
+        // Segment with special chars (if segment itself has special chars)
+        assert_eq!(
+            strip_first_path_segment("/auth-service/login", "auth-service").as_deref(),
+            Some("/login")
+        );
+    }
+
+    #[test]
+    fn path_rewrite_returns_borrowed_when_no_query() {
+        use std::borrow::Cow;
+        // Without query string, should return Cow::Borrowed
+        let result = strip_first_path_segment("/auth/login", "auth");
+        assert!(matches!(result, Some(Cow::Borrowed(_))));
+
+        // With query string, must allocate (Cow::Owned)
+        let result = strip_first_path_segment("/auth/login?x=1", "auth");
+        assert!(matches!(result, Some(Cow::Owned(_))));
+    }
+
+    #[test]
+    fn path_rewrite_no_match_cases() {
+        // Completely different segment
+        assert_eq!(strip_first_path_segment("/users/login", "auth"), None);
+        // Segment is prefix but not at boundary
+        assert_eq!(strip_first_path_segment("/authorization", "auth"), None);
+        // Case sensitive - should not match
+        assert_eq!(strip_first_path_segment("/Auth/login", "auth"), None);
+        assert_eq!(strip_first_path_segment("/AUTH/login", "auth"), None);
+        // Missing leading slash
+        assert_eq!(strip_first_path_segment("auth/login", "auth"), None);
+    }
+
+    #[test]
+    fn lowercase_host_helper() {
+        use super::strip_port_str;
+        use std::borrow::Cow;
+
+        // Helper to test the lowercase Cow logic (extracted from extract_host)
+        fn normalize_host(host: &str) -> Cow<'_, str> {
+            let host_without_port = strip_port_str(host);
+            if host_without_port.chars().any(|c| c.is_ascii_uppercase()) {
+                Cow::Owned(host_without_port.to_ascii_lowercase())
+            } else {
+                Cow::Borrowed(host_without_port)
+            }
+        }
+
+        // Already lowercase - should borrow
+        let result = normalize_host("example.com");
+        assert!(matches!(result, Cow::Borrowed(_)));
+        assert_eq!(result, "example.com");
+
+        // Uppercase - should allocate and lowercase
+        let result = normalize_host("Example.COM");
+        assert!(matches!(result, Cow::Owned(_)));
+        assert_eq!(result, "example.com");
+
+        // Mixed case with port
+        let result = normalize_host("Example.com:8080");
+        assert!(matches!(result, Cow::Owned(_)));
+        assert_eq!(result, "example.com");
+
+        // Lowercase with port - should borrow
+        let result = normalize_host("example.com:8080");
+        assert!(matches!(result, Cow::Borrowed(_)));
+        assert_eq!(result, "example.com");
+
+        // IPv6 uppercase (rare but possible)
+        let result = normalize_host("[::1]:8080");
+        assert!(matches!(result, Cow::Borrowed(_)));
+        assert_eq!(result, "[::1]");
+    }
 }

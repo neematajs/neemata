@@ -6,7 +6,8 @@
     "fmt": "cargo fmt",
     "lint": "cargo clippy",
     "build": "$npm_execpath build:debug --release",
-    "build:debug": "napi build --esm --js index.js --platform --output-dir ./dist"
+    "build:debug": "napi build --esm --js index.js --platform --output-dir ./dist",
+    "test": "cargo test && vitest run"
   },
   "exports": {
     ".": "./dist/index.js"
@@ -16,6 +17,13 @@
   },
   "dependencies": {
     "@napi-rs/cli": "^3.4.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0",
+    "@types/ws": "^8.18.1",
+    "ws": "^8.18.3"
   },
   "files": [
     "src",

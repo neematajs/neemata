@@ -68,8 +68,11 @@ export async function createBuilder(
               __APPLICATIONS_CONFIG__: JSON.stringify(
                 JSON.stringify(
                   Object.fromEntries(
-                    Object.keys(configOptions.applicationImports).map(
-                      (appName) => [appName, `./application.${appName}.js`],
+                    Object.entries(configOptions.applicationImports).map(
+                      ([appName, { type }]) => [
+                        appName,
+                        { type, specifier: `./application.${appName}.js` },
+                      ],
                     ),
                   ),
                 ),

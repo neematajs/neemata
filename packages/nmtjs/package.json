@@ -13,7 +13,8 @@
   "exports": {
     ".": "./src/_exports/index.ts",
     "./config": "./src/config.ts",
-    "./*": "./src/_exports/*.ts"
+    "./runtime": "./src/runtime/index.ts",
+    "./runtime/types": "./src/runtime/types.ts"
   },
   "publishConfig": {
     "bin": {
@@ -26,28 +27,37 @@
     }
   },
   "dependencies": {
+    "@bull-board/api": "6.15.0",
+    "@bull-board/h3": "6.15.0",
+    "@bull-board/ui": "6.15.0",
     "@nmtjs/common": "workspace:*",
     "@nmtjs/contract": "workspace:*",
     "@nmtjs/core": "workspace:*",
     "@nmtjs/gateway": "workspace:*",
     "@nmtjs/json-format": "workspace:*",
     "@nmtjs/protocol": "workspace:*",
-    "@nmtjs/runtime": "workspace:*",
     "@nmtjs/type": "workspace:*",
     "@nmtjs/ws-transport": "workspace:*",
     "@nmtjs/http-transport": "workspace:*",
+    "bullmq": "5.63.0",
     "citty": "^0.1.6",
     "dedent": "^1.7.0",
     "dotenv": "^17.2.3",
+    "ejs": "3.1.10",
+    "h3": "1.15.4",
+    "ioredis": "^5.8.2",
+    "iovalkey": "^0.3.3",
     "oxc-resolver": "^11.13.2",
-    "vite": "npm:rolldown-vite@7.2.10",
-    "vite-plugin-static-copy": "^3.1.4"
+    "vite": "catalog:",
+    "vite-plugin-static-copy": "3.1.4"
   },
   "devDependencies": {
-    "@nmtjs/proxy": "workspace:*"
+    "@nmtjs/proxy": "workspace:*",
+    "zod": "catalog:"
   },
   "peerDependencies": {
-    "@nmtjs/proxy": "workspace:*"
+    "@nmtjs/proxy": "workspace:*",
+    "zod": "catalog:"
   },
   "peerDependenciesMeta": {
     "@nmtjs/proxy": {
