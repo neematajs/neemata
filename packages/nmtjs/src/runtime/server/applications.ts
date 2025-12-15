@@ -3,9 +3,14 @@ import { EventEmitter } from 'node:events'
 import type { Logger } from '@nmtjs/core'
 import type { ProxyableTransportType } from '@nmtjs/gateway'
 
+import type { ThreadPortMessageTypes, WorkerThreadError } from '../types.ts'
 import type { ServerApplicationConfig, ServerConfig } from './config.ts'
 import type { Thread } from './pool.ts'
-import type { ApplicationServerWorkerConfig } from './server.ts'
+import type {
+  ApplicationServerWorkerConfig,
+  ApplicationWorkerErrorEvent,
+  ApplicationWorkerReadyEvent,
+} from './server.ts'
 import { Pool } from './pool.ts'
 
 export type ApplicationProxyUpstream = {
@@ -48,6 +53,10 @@ export class ApplicationServerApplications extends EventEmitter<{
     })
   }
 
+  get appsNames() {
+    return this.params.applications
+  }
+
   async start() {
     const { logger, applications, applicationsConfig, serverConfig } =
       this.params
@@ -88,29 +97,45 @@ export class ApplicationServerApplications extends EventEmitter<{
         })
 
         thread.on('ready', ({ hosts }) => {
-          if (!hosts?.length) return
+          this.removeThreadUpstreams(thread)
 
           const keys: Array<{ application: string; key: string }> = []
+          const sanitizedHosts: ThreadPortMessageTypes['ready']['hosts'] = []
 
-          for (const host of hosts) {
-            const url = new URL(host.url)
-            // Convert 0.0.0.0 to 127.0.0.1 for local proxy access
-            if (url.hostname === '0.0.0.0') url.hostname = '127.0.0.1'
+          if (hosts?.length) {
+            for (const host of hosts) {
+              const url = new URL(host.url)
+              if (url.hostname === '0.0.0.0') url.hostname = '127.0.0.1'
 
-            const upstream: ApplicationProxyUpstream = {
-              type: host.type,
-              url: url.toString(),
+              const normalizedUrl = url.toString()
+              sanitizedHosts.push({ type: host.type, url: normalizedUrl })
+
+              const upstream: ApplicationProxyUpstream = {
+                type: host.type,
+                url: normalizedUrl,
+              }
+
+              const key = `${upstream.type}:${upstream.url}`
+              keys.push({ application: applicationName, key })
+              this.addUpstream(applicationName, key, upstream)
             }
-
-            const key = `${upstream.type}:${upstream.url}`
-            keys.push({ application: applicationName, key })
-            this.addUpstream(applicationName, key, upstream)
           }
 
           this.upstreamsByThread.set(thread, keys)
+
+          this.emitWorkerReady({
+            application: applicationName,
+            threadId: thread.worker.threadId,
+            hosts: sanitizedHosts.length ? sanitizedHosts : undefined,
+          })
         })
 
-        thread.once('error', () => {
+        thread.on('error', (error: WorkerThreadError) => {
+          this.emitWorkerError({
+            application: applicationName,
+            threadId: thread.worker.threadId,
+            error,
+          })
           this.removeThreadUpstreams(thread)
         })
 
@@ -167,5 +192,19 @@ export class ApplicationServerApplications extends EventEmitter<{
         this.upstreams.delete(application)
       }
     }
+  }
+
+  protected emitWorkerReady(event: ApplicationWorkerReadyEvent) {
+    this.params.workerConfig.events?.emit('worker-ready', event)
+  }
+
+  protected emitWorkerError(event: ApplicationWorkerErrorEvent) {
+    this.params.logger.error(
+      new Error(
+        `Worker [${event.application}] thread ${event.threadId} error`,
+        { cause: event.error },
+      ),
+    )
+    this.params.workerConfig.events?.emit('worker-error', event)
   }
 }

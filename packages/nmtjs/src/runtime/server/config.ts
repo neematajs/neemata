@@ -1,6 +1,7 @@
 import type { TSError } from '@nmtjs/common'
 import type { LoggingOptions } from '@nmtjs/core'
 import type { Transport } from '@nmtjs/gateway'
+import type { ApplicationOptions, PortUpstreamOptions } from '@nmtjs/proxy'
 import type { Applications } from 'nmtjs/runtime/types'
 
 import type { ApplicationConfig } from '../application/config.ts'
@@ -64,6 +65,9 @@ export interface ServerConfig {
   proxy?: {
     port: number
     hostname: string
+    applications: {
+      [K in keyof Applications]?: Omit<ApplicationOptions, 'name'>
+    }
     threads?: number
     healthChecks?: { interval?: number }
     tls?: { key: string; cert: string }

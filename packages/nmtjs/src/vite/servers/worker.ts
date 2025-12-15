@@ -17,11 +17,17 @@ import { buildPlugins } from '../plugins.ts'
 import { createBroadcastChannel } from '../runners/worker.ts'
 import { createServer } from '../server.ts'
 
+export type WorkerServerEventMap = {
+  worker: [Worker]
+  'worker-error': [unknown]
+  'worker-ready': [unknown]
+}
+
 export async function createWorkerServer(
   options: ViteConfigOptions,
   mode: 'development' | 'production',
   neemataConfig: NeemataConfig,
-  events: EventEmitter<{ worker: [Worker] }>,
+  events: EventEmitter<WorkerServerEventMap>,
 ): Promise<ViteDevServer> {
   const config = createConfig(options)
   const applicationEntries = Object.values(options.applicationImports).map(
@@ -93,6 +99,36 @@ export async function createWorkerServer(
             handlers.delete(event)
           },
         }
+
+        let lastError: any
+
+        events.on('worker-error', (payload: any) => {
+          lastError = payload?.error ?? payload
+          const error =
+            lastError instanceof Error
+              ? lastError
+              : new Error(String(lastError))
+          const message = {
+            type: 'error',
+            err: {
+              message: error.message,
+              stack: error.stack ?? '',
+              plugin: 'neemata:worker',
+            },
+          } satisfies HotPayload
+          for (const client of clients.values()) {
+            client.send(message)
+          }
+        })
+
+        events.on('worker-ready', () => {
+          if (!lastError) return
+          lastError = undefined
+          const message: HotPayload = { type: 'full-reload' }
+          for (const client of clients.values()) {
+            client.send(message)
+          }
+        })
 
         const environment = new DevEnvironment(name, config, {
           hot: mode === 'development',

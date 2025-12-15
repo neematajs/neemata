@@ -2,9 +2,15 @@ import type { Worker } from 'node:worker_threads'
 import EventEmitter from 'node:events'
 import { fileURLToPath } from 'node:url'
 
-import type { ServerConfig } from 'nmtjs/runtime'
+import type {
+  ApplicationWorkerErrorEvent,
+  ApplicationWorkerReadyEvent,
+  ServerConfig,
+} from 'nmtjs/runtime'
 import type { ViteDevServer } from 'vite'
 import { ApplicationServer, isServerConfig } from 'nmtjs/runtime'
+
+import type { WorkerServerEventMap as BaseWorkerServerEventMap } from '../vite/servers/worker.ts'
 
 declare global {
   const __VITE_CONFIG__: string
@@ -27,15 +33,22 @@ const applicationsConfig: Record<
   { type: 'neemata' | 'custom'; specifier: string }
 > = __APPLICATIONS_CONFIG__ ? JSON.parse(__APPLICATIONS_CONFIG__) : {}
 
-let _viteServerEvents: EventEmitter<{ worker: [Worker] }> | undefined
+type WorkerEventMap = BaseWorkerServerEventMap & {
+  'worker-error': [ApplicationWorkerErrorEvent]
+  'worker-ready': [ApplicationWorkerReadyEvent]
+}
+
+let _viteServerEvents: EventEmitter<WorkerEventMap> | undefined
 let _viteWorkerServer: ViteDevServer | undefined
 
-let server: ApplicationServer
+let server: ApplicationServer | undefined
+let hasActiveWorkerError = false
+const isDev = _vite?.mode === 'development'
 
 if (import.meta.env.DEV && import.meta.hot) {
   import.meta.hot.accept('#server', async (module) => {
-    await server.stop()
-    await createServer(module?.default)
+    await shutdownServer()
+    await bootWithHandling(module?.default)
   })
 }
 
@@ -45,7 +58,9 @@ if (_vite) {
     /* @vite-ignore */
     _vite.options.configPath
   ).then((m) => m.default as import('../config.ts').NeemataConfig)
-  _viteServerEvents = new EventEmitter<{ worker: [Worker] }>()
+  _viteServerEvents = new EventEmitter<WorkerEventMap>()
+  _viteServerEvents.on('worker-error', handleWorkerError)
+  _viteServerEvents.on('worker-ready', handleWorkerReady)
   _viteWorkerServer = await createWorkerServer(
     _vite.options,
     _vite.mode,
@@ -54,18 +69,41 @@ if (_vite) {
   )
 }
 
-async function createServer(config: ServerConfig) {
-  if (!isServerConfig(config)) throw new InvalidServerConfigError()
-  server = new ApplicationServer(config, applicationsConfig, {
+async function bootServer(configValue: ServerConfig | undefined) {
+  if (!isServerConfig(configValue)) throw new InvalidServerConfigError()
+  const workerConfig = {
     path: fileURLToPath(import.meta.resolve(`./thread${_ext}`)),
     workerData: { vite: _vite?.mode },
     worker: _viteServerEvents
-      ? (worker) => {
+      ? (worker: Worker) => {
           _viteServerEvents.emit('worker', worker)
         }
       : undefined,
-  })
-  await server.start()
+    events: _viteServerEvents,
+  }
+  const appServer = new ApplicationServer(
+    configValue,
+    applicationsConfig,
+    workerConfig,
+  )
+
+  try {
+    await appServer.start()
+    server = appServer
+    clearWorkerErrorOverlay()
+  } catch (error) {
+    await appServer.stop().catch(() => {})
+    throw error
+  }
+}
+
+async function bootWithHandling(configValue: ServerConfig | undefined) {
+  try {
+    await bootServer(configValue)
+  } catch (error) {
+    handleStartupError(error)
+    if (!isDev) throw error
+  }
 }
 
 let isTerminating = false
@@ -73,7 +111,7 @@ let isTerminating = false
 async function handleTermination() {
   if (isTerminating) return
   isTerminating = true
-  await server?.stop()
+  await shutdownServer()
   _viteWorkerServer?.close()
   process.exit(0)
 }
@@ -82,17 +120,66 @@ function handleUnexpectedError(error: Error) {
   console.error(new Error('Unexpected Error:', { cause: error }))
 }
 
+async function shutdownServer() {
+  if (!server) return
+  try {
+    await server.stop()
+  } catch (error) {
+    console.error(
+      new Error('Failed to stop application server', { cause: error as Error }),
+    )
+  } finally {
+    server = undefined
+  }
+}
+
+function handleWorkerError(event: ApplicationWorkerErrorEvent) {
+  hasActiveWorkerError = true
+  console.error(
+    new Error(`Worker ${event.application} thread ${event.threadId} error`, {
+      cause: event.error,
+    }),
+  )
+}
+
+function handleWorkerReady(_: ApplicationWorkerReadyEvent) {
+  clearWorkerErrorOverlay()
+}
+
+function handleStartupError(error: unknown) {
+  const normalized = error instanceof Error ? error : new Error(String(error))
+  if (_viteServerEvents) {
+    _viteServerEvents.emit('worker-error', {
+      application: 'server',
+      threadId: -1,
+      error: normalized,
+    } as ApplicationWorkerErrorEvent)
+  } else {
+    hasActiveWorkerError = true
+    console.error(
+      new Error('Failed to start application server', { cause: normalized }),
+    )
+  }
+}
+
+function clearWorkerErrorOverlay() {
+  if (!hasActiveWorkerError) return
+  hasActiveWorkerError = false
+}
+
 process.once('SIGTERM', handleTermination)
 process.once('SIGINT', handleTermination)
 process.on('uncaughtException', handleUnexpectedError)
 process.on('unhandledRejection', handleUnexpectedError)
 
-await createServer(
+await bootWithHandling(
   await import(
     // @ts-expect-error
     '#server'
   ).then((m) => m.default),
-)
+).catch(() => {
+  if (!isDev) process.exit(1)
+})
 
 const { format } = Intl.NumberFormat('en', {
   notation: 'compact',
@@ -108,5 +195,6 @@ const printMem = () => {
     `Memory Usage: RSS=${format(memoryUsage.rss)}, HeapTotal=${format(memoryUsage.heapTotal)}, HeapUsed=${format(memoryUsage.heapUsed)}, External=${format(memoryUsage.external)}, ArrayBuffers=${format(memoryUsage.arrayBuffers)}`,
   )
 }
+void printMem
 // printMem()
 // setInterval(printMem, 5000)

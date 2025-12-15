@@ -1,9 +1,14 @@
+import type EventEmitter from 'node:events'
 import type { Worker } from 'node:worker_threads'
 
 import type { Logger } from '@nmtjs/core'
 import { createLogger } from '@nmtjs/core'
 
-import type { Store } from '../types.ts'
+import type {
+  Store,
+  ThreadPortMessageTypes,
+  WorkerThreadError,
+} from '../types.ts'
 import type { ServerConfig } from './config.ts'
 import { createStoreClient } from '../store/index.ts'
 import { ApplicationServerApplications } from './applications.ts'
@@ -16,10 +21,27 @@ export type ApplicationServerRunOptions = {
   jobs: boolean
 }
 
+export type ApplicationWorkerReadyEvent = {
+  application: string
+  threadId: number
+  hosts?: ThreadPortMessageTypes['ready']['hosts']
+}
+
+export type ApplicationWorkerErrorEvent = {
+  application: string
+  threadId: number
+  error: WorkerThreadError
+}
+
 export type ApplicationServerWorkerConfig = {
   path: string
   workerData?: any
   worker?: (worker: Worker) => any
+  events?: EventEmitter<{
+    worker: [Worker]
+    'worker-ready': [ApplicationWorkerReadyEvent]
+    'worker-error': [ApplicationWorkerErrorEvent]
+  }>
 }
 
 export class ApplicationServer {

@@ -7,6 +7,21 @@ import type { ApplicationConfig } from './application/config.ts'
 import type { BaseRuntime } from './core/runtime.ts'
 import type { LifecycleHook, StoreType } from './enums.ts'
 
+export type WorkerThreadErrorOrigin = 'bootstrap' | 'start' | 'runtime'
+
+export type ThreadErrorMessage = {
+  message: string
+  name?: string
+  stack?: string
+  origin: WorkerThreadErrorOrigin
+  fatal: boolean
+}
+
+export type WorkerThreadError = Error & {
+  origin?: WorkerThreadErrorOrigin
+  fatal?: boolean
+}
+
 export type ServerPortMessageTypes = {
   stop: undefined
   task: { id: string; task: WorkerJobTask }
@@ -14,7 +29,7 @@ export type ServerPortMessageTypes = {
 
 export type ThreadPortMessageTypes = {
   ready: { hosts?: { type: ProxyableTransportType; url: string }[] }
-  error: { error: Error }
+  error: ThreadErrorMessage
   task: { id: string; task: JobTaskResult }
 }
 

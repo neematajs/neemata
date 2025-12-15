@@ -27,6 +27,7 @@ pub struct ApplicationOptions {
 
 #[napi(object)]
 pub struct RoutingOptions {
+    #[napi(ts_type = " 'subdomain' | 'path' ")]
     pub r#type: Option<String>,
     pub name: Option<String>,
     pub default: Option<bool>,

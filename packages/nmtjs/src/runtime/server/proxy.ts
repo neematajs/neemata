@@ -49,7 +49,13 @@ export class ApplicationServerProxy {
       tls: config.tls
         ? { keyPath: config.tls.key, certPath: config.tls.cert }
         : undefined,
-      applications: [],
+      applications: Object.entries(config.applications)
+        .filter(([_, options]) => options !== undefined)
+        .map(([app, options]) => ({
+          name: app,
+          routing: options!.routing,
+          sni: options!.sni,
+        })),
     })
 
     this.onAdd = (application, upstream) => {

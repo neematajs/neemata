@@ -6,9 +6,11 @@ import { MessageChannel, Worker } from 'node:worker_threads'
 import type {
   JobTaskResult,
   ServerPortMessageTypes,
+  ThreadErrorMessage,
   ThreadPortMessage,
   ThreadPortMessageTypes,
   WorkerJobTask,
+  WorkerThreadError,
 } from '../types.ts'
 
 const omitExecArgv = ['--expose-gc']
@@ -22,7 +24,7 @@ export type ThreadState =
 
 export class Thread extends EventEmitter<
   {
-    error: [error: Error]
+    error: [error: WorkerThreadError]
     ready: [ThreadPortMessageTypes['ready']]
     task: [ThreadPortMessageTypes['task']]
     terminate: []
@@ -34,6 +36,8 @@ export class Thread extends EventEmitter<
 > {
   worker: Worker
   state: ThreadState = 'pending'
+  protected readyMessage?: ThreadPortMessageTypes['ready']
+  protected startPromise?: Promise<void>
 
   constructor(
     readonly port: MessagePort,
@@ -46,40 +50,99 @@ export class Thread extends EventEmitter<
       execArgv: process.execArgv.filter((f) => !omitExecArgv.includes(f)),
     })
 
-    const handler = (msg: ThreadPortMessage) => {
+    this.port.on('message', (msg: ThreadPortMessage) => {
       const { type, data } = msg
-      this.emit(type, data as any)
-      if (type === 'task') {
-        const { id, task } = data as ThreadPortMessageTypes['task']
-        this.emit(`task-${id}`, task)
+      switch (type) {
+        case 'ready': {
+          this.state = 'ready'
+          this.readyMessage = data
+          this.emit('ready', data)
+          break
+        }
+        case 'error': {
+          const error = createWorkerThreadError(data as ThreadErrorMessage)
+          this.state = 'error'
+          this.emit('error', error)
+          break
+        }
+        case 'task': {
+          this.emit('task', data as ThreadPortMessageTypes['task'])
+          const { id, task } = data as ThreadPortMessageTypes['task']
+          this.emit(`task-${id}`, task)
+          break
+        }
       }
-    }
+    })
 
-    this.port.on('message', handler)
+    this.worker.once('exit', (code) => {
+      if (this.state === 'terminating') return
+      const error = createWorkerThreadError(
+        {
+          message: `Worker thread ${this.worker.threadId} exited unexpectedly with code ${code}`,
+          name: 'WorkerThreadExitError',
+          origin: 'runtime',
+          fatal: code !== 0,
+        },
+        false,
+      )
+      this.state = 'error'
+      this.emit('error', error)
+    })
   }
 
   async start() {
+    if (this.state === 'ready') return
+    if (this.startPromise) return this.startPromise
     switch (this.state) {
       case 'error':
       case 'terminating':
       case 'starting':
         throw new Error('Cannot start worker thread in current state')
-      case 'pending': {
-        // TODO: make timeout configurable
-        const signal = AbortSignal.timeout(15000)
-        try {
-          await once(this, 'ready', { signal })
-        } catch (err) {
-          const error = new Error(
-            'Worker thread did not become ready in time',
-            { cause: err },
-          )
-          this.emit('error', error)
-          this.stop()
-          throw error
-        }
-      }
+      case 'pending':
+        break
     }
+    this.state = 'starting'
+    this.startPromise = new Promise<void>((resolve, reject) => {
+      let settled = false
+      let timer: NodeJS.Timeout
+      const cleanup = () => {
+        if (settled) return
+        settled = true
+        if (timer) clearTimeout(timer)
+        this.off('ready', handleReady)
+        this.off('error', handleError)
+        this.startPromise = undefined
+      }
+      const handleReady = () => {
+        cleanup()
+        resolve()
+      }
+      const handleError = (error: WorkerThreadError) => {
+        cleanup()
+        reject(error)
+      }
+
+      this.once('ready', handleReady)
+      this.once('error', handleError)
+
+      timer = setTimeout(() => {
+        const error = createWorkerThreadError(
+          {
+            message: 'Worker thread did not become ready in time',
+            name: 'WorkerStartupTimeoutError',
+            origin: 'start',
+            fatal: true,
+          },
+          false,
+        )
+        cleanup()
+        this.state = 'error'
+        this.emit('error', error)
+        reject(error)
+      }, 15000)
+    })
+    await this.startPromise
+    this.startPromise = undefined
   }
 
   async stop() {
@@ -124,6 +187,20 @@ export class Thread extends EventEmitter<
   ) {
     this.port.postMessage({ type, data })
   }
+}
+
+function createWorkerThreadError(
+  message: ThreadErrorMessage,
+  includeStack = true,
+): WorkerThreadError {
+  const error = new Error(message.message) as WorkerThreadError
+  if (message.name) error.name = message.name
+  if (includeStack && message.stack) {
+    error.stack = message.stack
+  }
+  error.origin = message.origin
+  error.fatal = message.fatal
+  return error
 }
 
 export class Pool extends EventEmitter<{
