@@ -11,7 +11,7 @@
     "neemata": "./src/cli.ts"
   },
   "exports": {
-    ".": "./src/_exports/index.ts",
+    ".": "./src/index.ts",
     "./config": "./src/config.ts",
     "./runtime": "./src/runtime/index.ts",
     "./runtime/types": "./src/runtime/types.ts"
@@ -21,9 +21,10 @@
       "neemata": "./dist/cli.js"
     },
     "exports": {
-      ".": "./dist/_exports/index.js",
+      ".": "./dist/index.js",
       "./config": "./dist/config.js",
-      "./*": "./dist/_exports/*.js"
+      "./runtime": "./dist/runtime/index.js",
+      "./runtime/types": "./dist/runtime/types.js"
     }
   },
   "dependencies": {
