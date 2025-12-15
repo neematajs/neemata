@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events'
 
 import type { Logger } from '@nmtjs/core'
-import { ProxyableTransportType } from '@nmtjs/gateway'
+import type { ProxyableTransportType } from '@nmtjs/gateway'
 
 import type { ServerApplicationConfig, ServerConfig } from './config.ts'
 import type { Thread } from './pool.ts'
@@ -9,7 +9,7 @@ import type { ApplicationServerWorkerConfig } from './server.ts'
 import { Pool } from './pool.ts'
 
 export type ApplicationProxyUpstream = {
-  type: 'http' | 'websocket'
+  type: ProxyableTransportType
   url: string
 }
 
@@ -98,10 +98,7 @@ export class ApplicationServerApplications extends EventEmitter<{
             if (url.hostname === '0.0.0.0') url.hostname = '127.0.0.1'
 
             const upstream: ApplicationProxyUpstream = {
-              type: {
-                [ProxyableTransportType.HTTP]: 'http' as const,
-                [ProxyableTransportType.WebSocket]: 'websocket' as const,
-              }[host.type],
+              type: host.type,
               url: url.toString(),
             }
 

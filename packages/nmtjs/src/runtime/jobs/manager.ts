@@ -18,7 +18,7 @@ import { createStoreClient } from '../store/index.ts'
  * Get the dedicated BullMQ queue name for a job
  */
 export function getJobQueueName(job: AnyJob): string {
-  return `job:${job.name}`
+  return `job.${job.name}`
 }
 
 type QueueJobResultOptions<T extends AnyJob = AnyJob> = {

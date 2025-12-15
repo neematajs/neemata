@@ -1,8 +1,30 @@
 import type { Logger } from '@nmtjs/core'
 import { Proxy as NeemataProxy } from '@nmtjs/proxy'
 
-import type { ApplicationServerApplications } from './applications.ts'
+import type {
+  ApplicationProxyUpstream,
+  ApplicationServerApplications,
+} from './applications.ts'
 import type { ServerConfig } from './config.ts'
+
+/**
+ * Transform ApplicationProxyUpstream to the format expected by Rust proxy.
+ */
+function toProxyUpstream(upstream: ApplicationProxyUpstream) {
+  const url = new URL(upstream.url)
+  const isWebSocket = url.protocol === 'wss:' || url.protocol === 'ws:'
+  const secure = url.protocol === 'https:' || url.protocol === 'wss:'
+  const port = url.port ? Number.parseInt(url.port, 10) : secure ? 443 : 80
+
+  return {
+    type: 'port',
+    // WebSocket requires HTTP/1.1 for upgrade
+    transport: isWebSocket ? 'http' : upstream.type,
+    secure,
+    hostname: url.hostname,
+    port,
+  }
+}
 
 export class ApplicationServerProxy {
   proxyServer: NeemataProxy
@@ -31,31 +53,33 @@ export class ApplicationServerProxy {
     })
 
     this.onAdd = (application, upstream) => {
+      const proxyUpstream = toProxyUpstream(upstream)
       this.params.logger.debug(
-        { application, upstream },
+        { application, upstream: proxyUpstream },
         'Adding upstream to proxy',
       )
       void this.proxyServer
-        .addUpstream(application, upstream)
+        .addUpstream(application, proxyUpstream)
         .catch((error) => {
           this.params.logger.warn(
-            { error, application, upstream },
+            { error, application, upstream: proxyUpstream },
             'Failed to add upstream to proxy',
           )
         })
     }
 
     this.onRemove = (application, upstream) => {
+      const proxyUpstream = toProxyUpstream(upstream)
       this.params.logger.debug(
-        { application, upstream },
+        { application, upstream: proxyUpstream },
         'Removing upstream from proxy',
       )
 
       void this.proxyServer
-        .removeUpstream(application, upstream)
+        .removeUpstream(application, proxyUpstream)
         .catch((error) => {
           this.params.logger.warn(
-            { error, application, upstream },
+            { error, application, upstream: proxyUpstream },
             'Failed to remove upstream from proxy',
           )
         })

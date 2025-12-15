@@ -4,8 +4,8 @@ export enum GatewayHook {
 }
 
 export enum ProxyableTransportType {
-  WebSocket = 'WebSocket',
-  HTTP = 'HTTP',
+  HTTP = 'http',
+  HTTP2 = 'http2',
 }
 
 export enum StreamTimeout {

@@ -73,9 +73,9 @@ export const WsTransport: Transport<
   ConnectionType.Bidirectional,
   WsTransportOptions<'node'>,
   typeof injectables,
-  ProxyableTransportType.WebSocket
+  ProxyableTransportType.HTTP
 > = {
-  proxyable: ProxyableTransportType.WebSocket,
+  proxyable: ProxyableTransportType.HTTP,
   injectables,
   factory(options) {
     return createWSTransportWorker(adapterFactory, options)
