@@ -1,4 +1,4 @@
-import { EventEmitter } from 'node:stream'
+import { EventEmitter } from 'node:events'
 
 import type { Logger } from '@nmtjs/core'
 import { ProxyableTransportType } from '@nmtjs/gateway'

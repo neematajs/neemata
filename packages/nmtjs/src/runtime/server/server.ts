@@ -41,7 +41,7 @@ export class ApplicationServer {
     readonly runOptions: ApplicationServerRunOptions = {
       applications: Object.keys(config.applications),
       scheduler: false,
-      jobs: true,
+      jobs: Boolean(config.jobs?.jobs?.length),
     },
   ) {
     this.logger = createLogger(config.logger, 'Server')
@@ -55,9 +55,11 @@ export class ApplicationServer {
     const { config, logger } = this
     logger.info('Starting application server...')
 
-    this.store = await createStoreClient(config.store)
-    await this.store.connect()
-    logger.debug('Store connected')
+    if (config.store) {
+      this.store = await createStoreClient(config.store)
+      await this.store.connect()
+      logger.debug('Store connected')
+    }
 
     this.applications = new ApplicationServerApplications({
       logger: this.logger,
@@ -68,6 +70,12 @@ export class ApplicationServer {
     })
 
     if (this.runOptions.jobs) {
+      if (!this.store) {
+        throw new Error(
+          'Jobs feature requires a store configuration. ' +
+            'Please configure `store` in your server config or disable jobs.',
+        )
+      }
       this.jobRunners = new ApplicationServerJobs({
         logger: this.logger,
         workerConfig: this.workerConfig,

@@ -13,14 +13,14 @@ export async function generateTypings(
   await writeFile(
     resolve('.neemata', 'types.d.ts'),
     dedent`
-    /// <reference types="@nmtjs/runtime/types" />
+    /// <reference types="nmtjs/runtime/types" />
 
-    declare module '@nmtjs/runtime/types' {
+    declare module 'nmtjs/runtime/types' {
       interface Applications {
         ${Object.entries(applicationImports)
           .map(
             ([appName, { specifier, type }]) =>
-              `'${appName}': { type: '${type}'; definition: typeof import('${specifier}').default`,
+              `'${appName}': { type: '${type}'; definition: typeof import('${specifier}').default }`,
           )
           .join('\n')}
       }

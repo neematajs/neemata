@@ -1,13 +1,14 @@
 import type { TSError } from '@nmtjs/common'
 import type { LoggingOptions } from '@nmtjs/core'
 import type { Transport } from '@nmtjs/gateway'
+import type { Applications } from 'nmtjs/runtime/types'
 
 import type { ApplicationConfig } from '../application/config.ts'
 import type { JobWorkerPool, StoreType } from '../enums.ts'
 import type { AnyJob } from '../jobs/job.ts'
 import type { PubSubAdapterType } from '../pubsub/manager.ts'
 import type { JobsSchedulerOptions } from '../scheduler/index.ts'
-import type { Applications, StoreTypeOptions } from '../types.ts'
+import type { StoreTypeOptions } from '../types.ts'
 import { kServerConfig } from '../constants.ts'
 
 export type ServerPoolOptions = {
@@ -37,7 +38,7 @@ export type ServerApplicationConfig<T = ApplicationConfig> =
             : never
         }[]
       }
-    : TSError<'Invalid application path'>
+    : any
 
 export interface ServerConfig {
   [kServerConfig]: any
@@ -47,9 +48,9 @@ export interface ServerConfig {
       ? ServerApplicationConfig<
           (Applications[K] & { type: 'neemata' })['definition']
         >
-      : Applications[K]['definition']
+      : ServerApplicationConfig<any>
   }
-  store: ServerStoreConfig
+  store?: ServerStoreConfig
   /**
    * Proxy configuration. Enabling this will start a reverse proxy server that handles TLS, routing,
    * load balancing, and health checks for your applications.

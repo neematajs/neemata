@@ -1,3 +1,4 @@
+import type { Injection } from '@nmtjs/core'
 import { CoreInjectables, provide } from '@nmtjs/core'
 
 import type { BaseRuntimeOptions } from '../core/runtime.ts'
@@ -10,7 +11,7 @@ import { PubSubManager } from '../pubsub/manager.ts'
 
 export abstract class BaseWorkerRuntime extends BaseRuntime {
   pubsub: PubSubManager
-  jobManager: JobManager
+  jobManager?: JobManager
 
   constructor(
     readonly config: ServerConfig,
@@ -23,32 +24,45 @@ export abstract class BaseWorkerRuntime extends BaseRuntime {
       logger: this.logger,
       container: this.container,
     })
-    this.jobManager = new JobManager(
-      this.config.store,
-      this.config.jobs?.jobs ?? [],
-    )
+
+    if (this.config.store) {
+      this.jobManager = new JobManager(
+        this.config.store,
+        this.config.jobs?.jobs ?? [],
+      )
+    }
   }
 
   async initialize(): Promise<void> {
-    await this.container.provide([
+    const injections: Injection[] = [
       provide(CoreInjectables.logger, this.logger),
       provide(injectables.workerType, this.workerType),
-      provide(injectables.storeConfig, this.config.store),
       provide(injectables.pubSubPublish, this.pubsub.publish.bind(this.pubsub)),
       provide(
         injectables.pubSubSubscribe,
         this.pubsub.subscribe.bind(this.pubsub),
       ),
-      provide(injectables.jobManager, this.jobManager.publicInstance),
-    ])
+    ]
+
+    if (this.config.store) {
+      injections.push(provide(injectables.storeConfig, this.config.store))
+    }
+
+    if (this.jobManager) {
+      injections.push(
+        provide(injectables.jobManager, this.jobManager.publicInstance),
+      )
+    }
+
+    await this.container.provide(injections)
     await super.initialize()
   }
 
   protected async _initialize(): Promise<void> {
-    await this.jobManager.initialize()
+    await this.jobManager?.initialize()
   }
 
   protected async _dispose(): Promise<void> {
-    await this.jobManager.terminate()
+    await this.jobManager?.terminate()
   }
 }

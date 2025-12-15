@@ -24,7 +24,9 @@
       ".": "./dist/index.js",
       "./config": "./dist/config.js",
       "./runtime": "./dist/runtime/index.js",
-      "./runtime/types": "./dist/runtime/types.js"
+      "./runtime/types": {
+        "types": "./dist/runtime/types.d.ts"
+      }
     }
   },
   "dependencies": {

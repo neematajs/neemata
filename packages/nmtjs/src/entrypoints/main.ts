@@ -15,7 +15,7 @@ declare global {
 class InvalidServerConfigError extends Error {
   constructor() {
     super(
-      `Server config file does not have a default export, or it not a valid application. Please, make sure the application is defined using defineApplication().`,
+      `Server config file does not have a default export, or it is not a valid server config. Please, make sure the server config is defined using defineServer().`,
     )
     this.name = 'InvalidServerConfigError'
   }

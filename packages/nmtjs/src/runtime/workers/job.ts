@@ -71,7 +71,7 @@ export class JobWorkerRuntime extends BaseWorkerRuntime {
             return
           }
 
-          using cancellationSignal = this.jobManager.cancellationSignal(
+          using cancellationSignal = this.jobManager!.cancellationSignal(
             job,
             task.jobId,
           )
