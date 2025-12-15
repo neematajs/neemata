@@ -6,7 +6,7 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": ["**", "!tests/playground/test"]
+    "includes": ["**"]
   },
   "assist": {
     "actions": {
