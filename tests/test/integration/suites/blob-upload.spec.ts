@@ -164,7 +164,7 @@ const abortOnUploadProcedure = createProcedure({
   },
 })
 
-const router = createRootRouter(
+const router = createRootRouter([
   createRouter({
     routes: {
       upload: uploadProcedure,
@@ -177,7 +177,7 @@ const router = createRootRouter(
       abortOnUpload: abortOnUploadProcedure,
     },
   }),
-)
+] as const)
 
 // =============================================================================
 // Tests

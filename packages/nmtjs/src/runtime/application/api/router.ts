@@ -6,6 +6,7 @@ import type {
   TRouteContract,
   TRouterContract,
 } from '@nmtjs/contract'
+import type { AnyType } from '@nmtjs/type/any'
 import { c, IsRouterContract } from '@nmtjs/contract'
 
 import type { AnyGuard } from './guards.ts'
@@ -25,6 +26,7 @@ export interface AnyRouter {
 export interface AnyRootRouter extends AnyRouter {
   [kRootRouter]: any
   contract: TAnyRouterContract<Record<string, TRouteContract>, undefined>
+  default?: AnyProcedure<any>
 }
 
 export interface Router<Contract extends TAnyRouterContract> extends AnyRouter {
@@ -56,6 +58,7 @@ export interface RootRouter<
   >,
 > extends Router<Contract> {
   [kRootRouter]: any
+  default?: AnyProcedure<any>
 }
 
 export type MergeRoutersRoutesContracts<
@@ -79,17 +82,24 @@ export type ExtractRouterContracts<
   : []
 
 export function createRootRouter<Routers extends readonly AnyRouter[]>(
-  ...routers: Routers
+  routers: Routers,
+  defaultProcedure?: AnyProcedure<
+    TProcedureContract<AnyType, AnyType, true | undefined, string | undefined>
+  >,
 ): RootRouter<
   TRouterContract<
-    MergeRoutersRoutesContracts<ExtractRouterContracts<Routers>>,
+    MergeRoutersRoutesContracts<ExtractRouterContracts<[...Routers]>>,
     undefined
   >
 > {
   const routes: Record<string, any> = {}
   for (const router of routers) Object.assign(routes, router.routes)
   const router = createRouter({ name: undefined, routes: routes })
-  return Object.freeze({ ...router, [kRootRouter]: true }) as any
+  return Object.freeze({
+    ...router,
+    default: defaultProcedure,
+    [kRootRouter]: true,
+  }) as any
 }
 
 export function createRouter<

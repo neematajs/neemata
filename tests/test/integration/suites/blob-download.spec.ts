@@ -182,7 +182,7 @@ const downloadChunkedProcedure = createProcedure({
   },
 })
 
-const router = createRootRouter(
+const router = createRootRouter([
   createRouter({
     routes: {
       download: downloadProcedure,
@@ -194,7 +194,7 @@ const router = createRootRouter(
       downloadChunked: downloadChunkedProcedure,
     },
   }),
-)
+] as const)
 
 // =============================================================================
 // Tests

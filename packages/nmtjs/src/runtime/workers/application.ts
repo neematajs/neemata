@@ -11,6 +11,7 @@ import type {
   AnyMiddleware,
   AnyProcedure,
   AnyRouter,
+  kDefaultProcedure as kDefaultProcedureKey,
 } from '../application/index.ts'
 import type { ServerConfig } from '../server/config.ts'
 import { ApplicationApi } from '../application/api/api.ts'
@@ -19,6 +20,7 @@ import {
   isProcedure,
   isRootRouter,
   isRouter,
+  kDefaultProcedure,
   kRootRouter,
 } from '../application/index.ts'
 import { LifecycleHook, WorkerType } from '../enums.ts'
@@ -37,7 +39,10 @@ export class ApplicationWorkerRuntime extends BaseWorkerRuntime {
   transports!: GatewayOptions['transports']
 
   routers = new Map<string | kRootRouter, AnyRouter>()
-  procedures = new Map<string, { procedure: AnyProcedure; path: AnyRouter[] }>()
+  procedures = new Map<
+    string | kDefaultProcedureKey,
+    { procedure: AnyProcedure; path: AnyRouter[] }
+  >()
   filters = new Set<AnyFilter>()
   middlewares = new Set<AnyMiddleware>()
   guards = new Set<AnyGuard>()
@@ -165,6 +170,16 @@ export class ApplicationWorkerRuntime extends BaseWorkerRuntime {
 
     this.routers.set(kRootRouter, router)
     this.registerRouter(router, [])
+
+    if (router.default) {
+      if (!isProcedure(router.default)) {
+        throw new Error('Root router default must be a procedure')
+      }
+      this.procedures.set(kDefaultProcedure, {
+        procedure: router.default,
+        path: [router],
+      })
+    }
 
     for (const filter of filters) this.filters.add(filter)
     for (const middleware of middlewares) this.middlewares.add(middleware)

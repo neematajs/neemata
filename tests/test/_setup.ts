@@ -26,8 +26,11 @@ import {
   ApplicationApi,
   isProcedure,
   isRouter,
+  kDefaultProcedure,
   kRootRouter,
 } from 'nmtjs/runtime'
+
+const kUnknownProcedureForDefaultTest = '__tests__/unknown-procedure'
 
 // =============================================================================
 // EventEmitter Transport Channel
@@ -235,6 +238,10 @@ export class TestClient<
   RouterContract extends TAnyRouterContract = TAnyRouterContract,
   SafeCall extends boolean = false,
 > extends StaticClient<Transport, RouterContract, SafeCall> {
+  callUnknownProcedureForDefaultTest(payload?: unknown, options?: any) {
+    return this._call(kUnknownProcedureForDefaultTest, payload, options)
+  }
+
   /**
    * Get the number of pending calls in the internal calls map.
    * Should be 0 after all calls complete.
@@ -312,9 +319,9 @@ export interface TestSetupOptions<TRouter extends AnyRootRouter> {
 //   counterValue = 0
 // }
 
-function flattenRouter(router: AnyRouter) {
+function flattenRouter(router: AnyRootRouter) {
   const procedures = new Map<
-    string,
+    string | typeof kDefaultProcedure,
     { procedure: AnyProcedure; path: AnyRouter[] }
   >()
   const routers = new Map<string | kRootRouter, AnyRouter>()
@@ -343,6 +350,15 @@ function flattenRouter(router: AnyRouter) {
   routers.set(kRootRouter, router)
   registerRouter(router, [])
 
+  if (router.default) {
+    if (!isProcedure(router.default))
+      throw new Error('Root router default must be a procedure')
+    procedures.set(kDefaultProcedure, {
+      procedure: router.default,
+      path: [router],
+    })
+  }
+
   return procedures
 }
 
@@ -357,9 +373,9 @@ function flattenRouter(router: AnyRouter) {
  *
  * @example Custom router
  * ```ts
- * const myRouter = createRootRouter(createRouter({
+ * const myRouter = createRootRouter({ routers: [createRouter({
  *   routes: { myProc: createProcedure({ ... }) }
- * }))
+ * })] })
  * const setup = await createTestSetup({ router: myRouter })
  * const result = await setup.client.call.myProc({ ... })
  * ```

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import type { TestSetup } from '../../_setup.ts'
 import {
@@ -52,9 +52,9 @@ const streamErrorProcedure = createProcedure({
 })
 
 // Tracks when the server stops iterating (for abort tests)
-let serverIterationStopped = false
+let _serverIterationStopped = false
 let serverIterationCleanedUp = false
-let serverIterationError: Error | null = null
+let _serverIterationError: Error | null = null
 
 const streamWithTrackingProcedure = createProcedure({
   dependencies: { signal: rpcAbortSignal },
@@ -62,20 +62,20 @@ const streamWithTrackingProcedure = createProcedure({
   output: t.object({ index: t.number() }),
   stream: true,
   async *handler({ signal }, { count, delay }) {
-    serverIterationStopped = false
+    _serverIterationStopped = false
     serverIterationCleanedUp = false
-    serverIterationError = null
+    _serverIterationError = null
     try {
       for (let i = 0; i < count; i++) {
         if (signal.aborted) {
-          serverIterationStopped = true
+          _serverIterationStopped = true
           break
         }
         await new Promise((resolve) => setTimeout(resolve, delay))
         yield { index: i }
       }
     } catch (error) {
-      serverIterationError = error as Error
+      _serverIterationError = error as Error
       throw error
     } finally {
       serverIterationCleanedUp = true
@@ -83,7 +83,7 @@ const streamWithTrackingProcedure = createProcedure({
   },
 })
 
-const router = createRootRouter(
+const router = createRootRouter([
   createRouter({
     routes: {
       stream: streamProcedure,
@@ -92,7 +92,7 @@ const router = createRootRouter(
       streamWithTracking: streamWithTrackingProcedure,
     },
   }),
-)
+] as const)
 
 // =============================================================================
 // Tests
@@ -405,7 +405,7 @@ describe('RPC Streaming', () => {
       const stream = await setup.client.stream.stream({ count: 5 })
       const startTime = Date.now()
 
-      for await (const chunk of stream) {
+      for await (const _chunk of stream) {
         chunkTimes.push(Date.now() - startTime)
         // Simulate slow client processing
         await new Promise((resolve) => setTimeout(resolve, 10))

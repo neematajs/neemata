@@ -17,12 +17,14 @@ import { ProtocolError } from '@nmtjs/protocol/server'
 import { NeemataTypeError, registerDefaultLocale, type } from '@nmtjs/type'
 import { prettifyError } from 'zod/mini'
 
+import type { kDefaultProcedure as kDefaultProcedureKey } from './constants.ts'
 import type { AnyFilter } from './filters.ts'
 import type { AnyGuard } from './guards.ts'
 import type { AnyMiddleware } from './middlewares.ts'
 import type { AnyProcedure } from './procedure.ts'
 import type { AnyRouter } from './router.ts'
 import type { ApiCallContext } from './types.ts'
+import { kDefaultProcedure } from './constants.ts'
 
 registerDefaultLocale()
 
@@ -39,7 +41,10 @@ export type ApiOptions = {
   timeout?: number
   container: Container
   logger: Logger
-  procedures: Map<string, { procedure: AnyProcedure; path: AnyRouter[] }>
+  procedures: Map<
+    string | kDefaultProcedureKey,
+    { procedure: AnyProcedure; path: AnyRouter[] }
+  >
   guards: Set<AnyGuard>
   middlewares: Set<AnyMiddleware>
   filters: Set<AnyFilter>
@@ -57,8 +62,12 @@ export class ApplicationApi implements GatewayApi {
   constructor(public options: ApiOptions) {}
 
   find(procedureName: string) {
-    const result = this.options.procedures.get(procedureName)
-    if (result) return result
+    const procedure = this.options.procedures.get(procedureName)
+    if (procedure) return procedure
+
+    const fallback = this.options.procedures.get(kDefaultProcedure)
+    if (fallback) return fallback
+
     throw NotFound()
   }
 

@@ -33,9 +33,9 @@ const streamProcedure = createProcedure({
   },
 })
 
-const router = createRootRouter(
+const router = createRootRouter([
   createRouter({ routes: { fast: fastProcedure, stream: streamProcedure } }),
-)
+] as const)
 
 // =============================================================================
 // Tests

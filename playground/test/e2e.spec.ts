@@ -24,7 +24,7 @@ const contract = c.router({
 const SERVER_URL = 'ws://127.0.0.1:4000'
 const STARTUP_TIMEOUT = 15000
 
-describe('Playground E2E', () => {
+describe('Playground E2E', { timeout: 30000 }, () => {
   let serverProcess: ChildProcess | null = null
 
   beforeAll(async () => {

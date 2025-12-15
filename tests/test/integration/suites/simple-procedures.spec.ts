@@ -17,6 +17,17 @@ import {
 // Procedures for Simple RPC Tests
 // =============================================================================
 
+let defaultProcedureHits = 0
+
+const defaultProcedure = createProcedure({
+  input: t.any(),
+  output: t.any(),
+  handler: async () => {
+    defaultProcedureHits += 1
+    return { defaulted: true as const }
+  },
+})
+
 const echoProcedure = createProcedure({
   input: t.object({ message: t.string() }),
   output: t.object({ echoed: t.string() }),
@@ -144,7 +155,7 @@ const abortableProcedure = createProcedure({
 })
 
 // Track whether aborted signal was received by handler
-let abortableWithStateSignalState: { wasAborted: boolean; reason?: string } = {
+let _abortableWithStateSignalState: { wasAborted: boolean; reason?: string } = {
   wasAborted: false,
 }
 const abortableWithStateProcedure = createProcedure({
@@ -154,7 +165,7 @@ const abortableWithStateProcedure = createProcedure({
   handler: async ({ signal }, input) => {
     // Wait for the specified delay to allow abort to propagate
     await new Promise((resolve) => setTimeout(resolve, input.delayMs))
-    abortableWithStateSignalState = {
+    _abortableWithStateSignalState = {
       wasAborted: signal.aborted,
       reason: signal.reason?.toString(),
     }
@@ -172,24 +183,27 @@ const failingWithProtocolErrorProcedure = createProcedure({
 })
 
 const router = createRootRouter(
-  createRouter({
-    routes: {
-      echo: echoProcedure,
-      counter: counterProcedure,
-      double: doubleProcedure,
-      nullPayload: nullPayloadProcedure,
-      complex: complexProcedure,
-      arrays: arraysProcedure,
-      emptyPayload: emptyPayloadProcedure,
-      failing: failingProcedure,
-      failingWithCode: failingWithCodeProcedure,
-      failingWithProtocolError: failingWithProtocolErrorProcedure,
-      slow: slowProcedure,
-      fast: fastProcedure,
-      abortable: abortableProcedure,
-      abortableWithState: abortableWithStateProcedure,
-    },
-  }),
+  [
+    createRouter({
+      routes: {
+        echo: echoProcedure,
+        counter: counterProcedure,
+        double: doubleProcedure,
+        nullPayload: nullPayloadProcedure,
+        complex: complexProcedure,
+        arrays: arraysProcedure,
+        emptyPayload: emptyPayloadProcedure,
+        failing: failingProcedure,
+        failingWithCode: failingWithCodeProcedure,
+        failingWithProtocolError: failingWithProtocolErrorProcedure,
+        slow: slowProcedure,
+        fast: fastProcedure,
+        abortable: abortableProcedure,
+        abortableWithState: abortableWithStateProcedure,
+      },
+    }),
+  ] as const,
+  defaultProcedure,
 )
 
 // =============================================================================
@@ -204,6 +218,7 @@ describe('Simple RPC Calls', () => {
 
   beforeEach(async () => {
     counterValue = 0
+    defaultProcedureHits = 0
     setup = await createTestSetup({ router })
   })
 
@@ -212,6 +227,28 @@ describe('Simple RPC Calls', () => {
   })
 
   describe('Basic Operations', () => {
+    it('should route unknown procedure to root default', async () => {
+      const result = await setup.client.callUnknownProcedureForDefaultTest({})
+      expect(result).toEqual({ defaulted: true })
+      expect(defaultProcedureHits).toBe(1)
+
+      await waitForCleanup()
+      expect(setup.gateway.rpcs.rpcs.size).toBe(0)
+      expect(setup.gateway.rpcs.streams.size).toBe(0)
+      expect(setup.client.pendingCallsCount).toBe(0)
+    })
+
+    it('should not use default for known procedures', async () => {
+      const result = await setup.client.call.echo({ message: 'hello' })
+      expect(result).toEqual({ echoed: 'hello' })
+      expect(defaultProcedureHits).toBe(0)
+
+      await waitForCleanup()
+      expect(setup.gateway.rpcs.rpcs.size).toBe(0)
+      expect(setup.gateway.rpcs.streams.size).toBe(0)
+      expect(setup.client.pendingCallsCount).toBe(0)
+    })
+
     it('should complete a simple RPC call', async () => {
       const result = await setup.client.call.echo({ message: 'hello' })
       expect(result).toEqual({ echoed: 'hello' })
@@ -494,7 +531,7 @@ describe('Simple RPC Calls', () => {
 
     it('should have aborted signal state in handler after client abort', async () => {
       // Reset the state tracker
-      abortableWithStateSignalState = { wasAborted: false }
+      _abortableWithStateSignalState = { wasAborted: false }
 
       const controller = new AbortController()
 

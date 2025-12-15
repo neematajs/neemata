@@ -31,9 +31,9 @@ const slowProcedure = createProcedure({
   },
 })
 
-const router = createRootRouter(
+const router = createRootRouter([
   createRouter({ routes: { echo: echoProcedure, slow: slowProcedure } }),
-)
+] as const)
 
 // =============================================================================
 // Tests
