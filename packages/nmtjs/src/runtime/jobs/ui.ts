@@ -1,8 +1,10 @@
+import { createServer } from 'node:http'
+
 import type { Queue } from 'bullmq'
 import { createBullBoard } from '@bull-board/api'
 import { BullMQAdapter } from '@bull-board/api/bullMQAdapter'
 import { H3Adapter } from '@bull-board/h3'
-import { createApp, createRouter } from 'h3'
+import { createApp, createRouter, toNodeListener } from 'h3'
 
 export function createJobsUI(queues: Queue[]) {
   const app = createApp()
@@ -15,5 +17,7 @@ export function createJobsUI(queues: Queue[]) {
   })
   app.use(router)
   app.use(serverAdapter.registerHandlers())
-  return app
+  return createServer(toNodeListener(app))
 }
+
+export type JobsUI = ReturnType<typeof createJobsUI>

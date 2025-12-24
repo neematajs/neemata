@@ -42,7 +42,7 @@ const NEEMATA_BLOB_HEADER = 'X-Neemata-Blob'
 const DEFAULT_ALLOWED_METHODS = Object.freeze(['post']) as ('get' | 'post')[]
 const DEFAULT_CORS_PARAMS = Object.freeze({
   allowCredentials: 'true',
-  allowMethods: ['GET', 'POST'],
+  allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowHeaders: [
     'Content-Type',
     'Content-Disposition',
@@ -54,7 +54,7 @@ const DEFAULT_CORS_PARAMS = Object.freeze({
   requestMethod: undefined,
   exposeHeaders: [],
   requestHeaders: [],
-}) satisfies HttpTransportCorsCustomParams
+}) satisfies Omit<HttpTransportCorsCustomParams, 'origin'>
 const CORS_HEADERS_MAP: Record<
   keyof HttpTransportCorsCustomParams | 'origin',
   string
@@ -134,8 +134,8 @@ export class HttpTransportServer
     const accept = request.headers.get('accept') || '*/*'
 
     await using connection = await this.params.onConnect({
-      accept,
-      contentType: isBlob ? '*/*' : contentType,
+      accept: canHaveBody ? accept : '*/*',
+      contentType: isBlob || !contentType ? '*/*' : contentType,
       data: request,
       protocolVersion: ProtocolVersion.v1,
       type: ConnectionType.Unidirectional,
@@ -189,8 +189,18 @@ export class HttpTransportServer
         provide(injections.httpResponseHeaders, responseHeaders),
       )
 
-      // Handle blob responses
-      if (result instanceof ProtocolBlob) {
+      if (result instanceof Response) {
+        const { status, statusText, headers, body } = result
+        headers.forEach((value, key) => {
+          responseHeaders.set(key, value)
+        })
+
+        return new Response(body, {
+          status,
+          statusText,
+          headers: responseHeaders,
+        })
+      } else if (result instanceof ProtocolBlob) {
         const { source, metadata } = result
         const { type } = metadata
 
@@ -316,17 +326,26 @@ export class HttpTransportServer
   ) {
     if (!this.#corsOptions) return
 
-    let params: HttpTransportCorsCustomParams | null = null
+    let params: Omit<HttpTransportCorsCustomParams, 'origin'> | null = null
 
-    if (this.options.cors === true) {
+    if (this.#corsOptions === true) {
       params = { ...DEFAULT_CORS_PARAMS }
-    } else if (
-      Array.isArray(this.options.cors) &&
-      this.options.cors.includes(origin)
-    ) {
-      params = { ...DEFAULT_CORS_PARAMS }
-    } else if (typeof this.options.cors === 'function') {
-      const result = this.options.cors(origin, request)
+    } else if (Array.isArray(this.#corsOptions)) {
+      if (this.#corsOptions.includes(origin)) {
+        params = { ...DEFAULT_CORS_PARAMS }
+      }
+    } else if (typeof this.#corsOptions === 'object') {
+      if (
+        this.#corsOptions.origin === true ||
+        this.#corsOptions.origin.includes(origin)
+      ) {
+        params = { ...DEFAULT_CORS_PARAMS }
+        for (const key in DEFAULT_CORS_PARAMS) {
+          params[key] = this.#corsOptions[key]
+        }
+      }
+    } else if (typeof this.#corsOptions === 'function') {
+      const result = this.#corsOptions(origin, request)
       if (typeof result === 'boolean') {
         if (result) {
           params = { ...DEFAULT_CORS_PARAMS }

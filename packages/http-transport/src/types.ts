@@ -16,6 +16,7 @@ export type HttpTransportOptions<
 }
 
 export type HttpTransportCorsCustomParams = {
+  origin: true | string[]
   allowMethods?: string[]
   allowHeaders?: string[]
   allowCredentials?: string

@@ -101,7 +101,10 @@ export class Job<
   Input extends AnyObjectLikeType = AnyObjectLikeType,
   Output extends AnyObjectLikeType = AnyObjectLikeType,
   HasReturn extends boolean = false,
-  StepDeps extends Dependencies = Deps & { $context: AnyInjectable<Ctx> },
+  StepDeps extends Dependencies = Deps & {
+    $context: AnyInjectable<Ctx>
+    $input: t.infer.decode.output<Input>
+  },
 > {
   _!: {
     result: Result

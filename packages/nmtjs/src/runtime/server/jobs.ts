@@ -1,14 +1,15 @@
 import type { Logger } from '@nmtjs/core'
 import type { RedisClient } from 'bullmq'
-import type { App } from 'h3'
-import { UnrecoverableError, Worker } from 'bullmq'
+import { Queue, UnrecoverableError, Worker } from 'bullmq'
 
 import type { AnyJob } from '../jobs/job.ts'
+import type { JobsUI } from '../jobs/ui.ts'
 import type { JobTaskResult, Store, WorkerJobTask } from '../types.ts'
 import type { ServerConfig } from './config.ts'
 import type { ApplicationServerWorkerConfig } from './server.ts'
 import { JobWorkerPool } from '../enums.ts'
 import { getJobQueueName } from '../jobs/manager.ts'
+import { createJobsUI } from '../jobs/ui.ts'
 import { Pool } from './pool.ts'
 
 export class JobRunnersPool extends Pool {
@@ -34,7 +35,8 @@ export class ApplicationServerJobs {
    * BullMQ workers - one per job (dedicated queues)
    */
   queueWorkers = new Set<Worker>()
-  ui?: App
+  ui?: JobsUI
+  protected uiQueues: Queue[] = []
 
   jobs: Set<AnyJob>
 
@@ -68,6 +70,34 @@ export class ApplicationServerJobs {
     if (!jobsConfig) {
       logger.debug('Jobs are not configured, skipping')
       return
+    }
+
+    if (jobsConfig.ui) {
+      const hostname = jobsConfig.ui.hostname ?? '127.0.0.1'
+      const port = jobsConfig.ui.port ?? 3000
+
+      this.uiQueues = [...this.jobs].map(
+        (job) =>
+          new Queue(getJobQueueName(job), {
+            connection: store as unknown as RedisClient,
+          }),
+      )
+
+      this.ui = createJobsUI(this.uiQueues)
+
+      await new Promise<void>((resolve, reject) => {
+        if (!this.ui) return reject(new Error('Jobs UI server is missing'))
+        this.ui.once('error', reject)
+        this.ui.listen(port, hostname, resolve)
+      })
+
+      const address = this.ui.address()
+      const resolved =
+        address && typeof address !== 'string'
+          ? { hostname: address.address, port: address.port }
+          : { hostname, port }
+
+      logger.info({ ...resolved }, 'Jobs UI started')
     }
 
     // Step 1: Initialize shared resource pools (Io, Compute)
@@ -176,6 +206,26 @@ export class ApplicationServerJobs {
 
   async stop() {
     const { logger } = this.params
+
+    if (this.ui) {
+      await new Promise<void>((resolve) => {
+        this.ui?.close(() => resolve())
+      }).catch((error) => {
+        logger.warn({ error }, 'Failed to stop Jobs UI server')
+      })
+    }
+
+    await Promise.all(
+      this.uiQueues.map(async (queue) => {
+        try {
+          await queue.close()
+        } catch (error) {
+          logger.warn({ error }, 'Failed to close Jobs UI queue')
+        }
+      }),
+    )
+    this.uiQueues = []
+    this.ui = undefined
 
     // Stop accepting new jobs first.
     await Promise.all(

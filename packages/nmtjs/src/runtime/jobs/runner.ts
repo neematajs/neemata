@@ -75,7 +75,7 @@ export class JobRunner<
     await using container = this.container.fork(Scope.Global)
     const _context = await container.createContext(job.dependencies)
     const jobContext = Object.freeze(await job.context?.(_context, data))
-    const context = { ..._context, $context: jobContext }
+    const context = { ..._context, $context: jobContext, $input: data }
     const stepResults = Array.from({ length: steps.length })
 
     //@ts-expect-error

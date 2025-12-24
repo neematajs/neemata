@@ -137,7 +137,7 @@ export class ApplicationWorkerRuntime extends BaseWorkerRuntime {
   protected async _dispose(): Promise<void> {
     this.applicationHooks.removeAllHooks()
     await super._dispose()
-    this.lifecycleHooks.addHooks(this.appConfig.lifecycleHooks)
+    this.lifecycleHooks.removeHooks(this.appConfig.lifecycleHooks)
     this.filters.clear()
     this.middlewares.clear()
     this.guards.clear()

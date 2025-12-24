@@ -56,7 +56,7 @@ function adapterFactory(params: HttpAdapterParams<'node'>): HttpAdapterServer {
       const proto =
         headers.get('x-forwarded-proto') || params.tls ? 'https' : 'http'
       const url = new URL(req.getUrl(), `${proto}://${host}`)
-
+      url.search = req.getQuery() ? `?${req.getQuery()}` : ''
       try {
         const body = new ReadableStream({
           start(controller) {
