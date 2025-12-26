@@ -28,7 +28,7 @@ export abstract class BaseWorkerRuntime extends BaseRuntime {
     if (this.config.store) {
       this.jobManager = new JobManager(
         this.config.store,
-        this.config.jobs?.jobs ?? [],
+        this.config.jobs ? Array.from(this.config.jobs.jobs.values()) : [],
       )
     }
   }

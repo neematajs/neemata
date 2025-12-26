@@ -38,7 +38,7 @@ export class ApplicationServerJobs {
   ui?: JobsUI
   protected uiQueues: Queue[] = []
 
-  jobs: Set<AnyJob>
+  jobs: Map<string, AnyJob>
 
   /**
    * Shared resource pools by pool type (Io, Compute).
@@ -54,13 +54,9 @@ export class ApplicationServerJobs {
       store: Store
     },
   ) {
-    this.jobs = new Set()
-    for (const element of params.serverConfig.jobs?.jobs ?? []) {
-      this.jobs.add(element)
-    }
-    for (const element of params.serverConfig.jobs?.scheduler?.entries ?? []) {
-      this.jobs.add(element.job)
-    }
+    this.jobs = params.serverConfig.jobs
+      ? params.serverConfig.jobs.jobs
+      : new Map()
   }
 
   async start() {
@@ -76,7 +72,7 @@ export class ApplicationServerJobs {
       const hostname = jobsConfig.ui.hostname ?? '127.0.0.1'
       const port = jobsConfig.ui.port ?? 3000
 
-      this.uiQueues = [...this.jobs].map(
+      this.uiQueues = [...this.jobs.values()].map(
         (job) =>
           new Queue(getJobQueueName(job), {
             connection: store as unknown as RedisClient,
@@ -137,12 +133,12 @@ export class ApplicationServerJobs {
     // Step 2: Create a dedicated BullMQ Worker for each job
     // Calculate how many jobs use each pool for fair concurrency distribution
     const jobsPerPool = new Map<JobWorkerPool, number>()
-    for (const job of this.jobs) {
+    for (const job of this.jobs.values()) {
       const count = jobsPerPool.get(job.options.pool) ?? 0
       jobsPerPool.set(job.options.pool, count + 1)
     }
 
-    for (const job of this.jobs) {
+    for (const job of this.jobs.values()) {
       const queueName = getJobQueueName(job)
       const poolType = job.options.pool
       const pool = this.pools.get(poolType)
