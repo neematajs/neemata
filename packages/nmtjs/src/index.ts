@@ -1,47 +1,37 @@
-// biome-ignore lint/correctness/noUnusedImports: TSC wants it
-// biome-ignore assist/source/organizeImports: TSC wants it
-import type {
-  kClassInjectable,
-  kClassInjectableCreate,
-  kClassInjectableDispose,
-  kInjectable,
-} from '@nmtjs/core/constants'
-
 import {
-  AppInjectables,
-  createApplication,
-  createTask,
-} from '@nmtjs/application'
+  CoreInjectables,
+  createConsolePrettyDestination,
+  createFactoryInjectable,
+  createLazyInjectable,
+  createValueInjectable,
+} from '@nmtjs/core'
+import { createTransport, GatewayInjectables } from '@nmtjs/gateway'
+
 import {
   createContractProcedure,
   createContractRouter,
   createFilter,
   createGuard,
+  createHook,
+  createJob,
   createMiddleware,
-  createProcedure,
-  createRouter,
-} from '@nmtjs/api'
-import {
-  CoreInjectables,
-  createClassInjectable,
-  createConsolePrettyDestination,
-  createExtendableClassInjectable,
-  createFactoryInjectable,
-  createLazyInjectable,
-  createOptionalInjectable,
   createPlugin,
-  createValueInjectable,
-} from '@nmtjs/core'
-import { createTransport, ProtocolInjectables } from '@nmtjs/protocol/server'
-import { createServer } from '@nmtjs/server'
+  createProcedure,
+  createRootRouter,
+  createRouter,
+  createStep,
+  defineApplication,
+  defineServer,
+  RuntimeInjectables,
+} from './runtime/index.ts'
 
 export const neemata = {
-  app: createApplication,
-  server: createServer,
+  app: defineApplication,
+  server: defineServer,
   injectables: {
     ...CoreInjectables,
-    ...ProtocolInjectables,
-    ...AppInjectables,
+    ...GatewayInjectables,
+    ...(RuntimeInjectables as typeof RuntimeInjectables),
   },
   transport: createTransport,
   plugin: createPlugin,
@@ -50,13 +40,10 @@ export const neemata = {
       // TODO: TSC wants it
       createConsolePrettyDestination as typeof createConsolePrettyDestination,
   },
-  optional: createOptionalInjectable,
   value: createValueInjectable,
   lazy: createLazyInjectable,
   factory: createFactoryInjectable,
-  class: createClassInjectable,
-  extendClass: createExtendableClassInjectable,
-  task: createTask,
+  rootRouter: createRootRouter,
   router: createRouter,
   contractRouter: createContractRouter,
   procedure: createProcedure,
@@ -64,15 +51,29 @@ export const neemata = {
   middleware: createMiddleware,
   guard: createGuard,
   filter: createFilter,
+  job: createJob,
+  step: createStep,
+  hook: createHook,
 }
 
-export { ApiError } from '@nmtjs/api'
-export { WorkerType } from '@nmtjs/application'
 export { c } from '@nmtjs/contract'
-export { Hook, Scope } from '@nmtjs/core'
-export { ErrorCode, ProtocolBlob, TransportType } from '@nmtjs/protocol'
-export { createStreamResponse } from '@nmtjs/protocol/server'
+export { Scope } from '@nmtjs/core'
+export {
+  type ConnectionIdentityType,
+  GatewayHook,
+  ProxyableTransportType,
+} from '@nmtjs/gateway'
+export { ConnectionType, ErrorCode, ProtocolBlob } from '@nmtjs/protocol'
 export { t } from '@nmtjs/type'
+
+export {
+  ApiError,
+  defineApplication,
+  JobWorkerPool,
+  LifecycleHook,
+  StoreType,
+  WorkerType,
+} from './runtime/index.ts'
 
 export { neemata as n }
 export default neemata

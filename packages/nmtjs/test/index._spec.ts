@@ -1,0 +1,77 @@
+// import { describe, expect, it } from 'vitest'
+
+import { describe } from 'vitest'
+
+// describe('nmtjs', () => {
+//   it('should re-export packages', async () => {
+//     const nmtjs = await import('nmtjs')
+
+//     const application = await import('nmtjs/application')
+//     const common = await import('nmtjs/common')
+//     const contract = await import('nmtjs/contract')
+//     const contractDefault = (await import('nmtjs/contract')).default
+//     const core = await import('nmtjs/core')
+//     const jsonFormat = await import('nmtjs/json-format')
+//     const protocol = await import('nmtjs/protocol')
+//     const protocolClient = await import('nmtjs/protocol/client')
+//     const protocolServer = await import('nmtjs/protocol/server')
+//     const server = await import('nmtjs/server')
+//     const type = await import('nmtjs/type')
+//     const typeDefault = (await import('nmtjs/type')).default
+//     const wsTransport = await import('nmtjs/ws-transport')
+//     const wsTransporterNode = await import('nmtjs/ws-transport/node')
+//     const wsTransporterDeno = await import('nmtjs/ws-transport/deno')
+//     const wsTransporterBun = await import('nmtjs/ws-transport/bun')
+
+//     const _application = await import('nmtjs/application')
+//     const _common = await import('nmtjs/common')
+//     const _contract = await import('nmtjs/contract')
+//     const _contractDefault = (await import('nmtjs/contract')).default
+//     const _core = await import('nmtjs/core')
+//     const _jsonFormat = await import('nmtjs/json-format')
+//     const _protocol = await import('nmtjs/protocol')
+//     const _protocolClient = await import('nmtjs/protocol/client')
+//     const _protocolServer = await import('nmtjs/protocol/server')
+//     const _server = await import('nmtjs/server')
+//     const _type = await import('nmtjs/type')
+//     const _typeDefault = (await import('nmtjs/type')).default
+//     const _wsTransport = await import('nmtjs/ws-transport')
+//     const _wsTransporterNode = await import('nmtjs/ws-transport/node')
+//     const _wsTransporterDeno = await import('nmtjs/ws-transport/deno')
+//     const _wsTransporterBun = await import('nmtjs/ws-transport/bun')
+
+//     expect(nmtjs).toBeDefined()
+//     expect(common).toBeDefined()
+//     expect(type).toBeDefined()
+//     expect(typeDefault).toBeDefined()
+//     expect(contract).toBeDefined()
+//     expect(contractDefault).toBeDefined()
+//     expect(core).toBeDefined()
+//     expect(protocol).toBeDefined()
+//     expect(protocolServer).toBeDefined()
+//     expect(protocolClient).toBeDefined()
+//     expect(application).toBeDefined()
+//     expect(server).toBeDefined()
+//     expect(wsTransport).toBeDefined()
+//     expect(jsonFormat).toBeDefined()
+
+//     expect(_application).toStrictEqual(application)
+//     expect(_common).toStrictEqual(common)
+//     expect(_contractDefault).toStrictEqual(contractDefault)
+//     expect(_contract).toStrictEqual(contract)
+//     expect(_core).toStrictEqual(core)
+//     expect(_jsonFormat).toStrictEqual(jsonFormat)
+//     expect(_protocol).toStrictEqual(protocol)
+//     expect(_protocolClient).toStrictEqual(protocolClient)
+//     expect(_protocolServer).toStrictEqual(protocolServer)
+//     expect(_server).toStrictEqual(server)
+//     expect(_type).toStrictEqual(type)
+//     expect(_typeDefault).toStrictEqual(typeDefault)
+//     expect(_wsTransport).toStrictEqual(wsTransport)
+//     expect(_wsTransporterNode).toStrictEqual(wsTransporterNode)
+//     expect(_wsTransporterDeno).toStrictEqual(wsTransporterDeno)
+//     expect(_wsTransporterBun).toStrictEqual(wsTransporterBun)
+//   })
+// })
+
+describe('nmtjs', () => {})

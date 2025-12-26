@@ -9,7 +9,7 @@ import { createSchema } from '../utils.ts'
 export type TAnyProcedureContract = TProcedureContract<
   BaseType,
   BaseType,
-  BaseType | undefined,
+  true | undefined,
   string | undefined
 >
 
@@ -18,7 +18,7 @@ export const ProcedureKind = Symbol('NeemataProcedure')
 export interface TProcedureContract<
   Input extends BaseType,
   Output extends BaseType,
-  Stream extends BaseType | undefined,
+  Stream extends true | undefined = undefined,
   Name extends string | undefined = undefined,
 > {
   readonly [Kind]: typeof ProcedureKind
@@ -34,7 +34,7 @@ export const ProcedureContract = <
   const Options extends {
     input?: BaseType
     output?: BaseType
-    stream?: BaseType | undefined
+    stream?: true | undefined
     timeout?: number
     schemaOptions?: ContractSchemaOptions
     name?: string
@@ -44,7 +44,7 @@ export const ProcedureContract = <
 ): TProcedureContract<
   Options['input'] extends BaseType ? Options['input'] : NeverType,
   Options['output'] extends BaseType ? Options['output'] : NeverType,
-  Options['stream'] extends BaseType ? Options['stream'] : undefined,
+  Options['stream'] extends true ? true : undefined,
   Options['name'] extends string ? Options['name'] : undefined
 > => {
   const {

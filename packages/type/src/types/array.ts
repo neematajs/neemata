@@ -1,7 +1,7 @@
 import type { core, ZodMiniArray } from 'zod/mini'
 import { length, maxLength, minLength, array as zodArray } from 'zod/mini'
 
-import type { ZodPlainType } from './_plain.ts'
+import type { ZodPlainType } from './_utils.ts'
 import { BaseType } from './base.ts'
 
 type Check = core.CheckFn<any[]> | core.$ZodCheck<any[]>

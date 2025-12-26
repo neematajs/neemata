@@ -5,12 +5,23 @@ import { ReadableStream } from 'node:stream/web'
 import type { ProtocolBlob, ProtocolBlobMetadata } from '../common/blob.ts'
 
 export class ProtocolClientStream extends PassThrough {
+  readonly #read?: ReadableOptions['read']
+
   constructor(
     public readonly id: number,
     public readonly metadata: ProtocolBlobMetadata,
     options?: ReadableOptions,
   ) {
-    super(options)
+    const { read, ...rest } = options ?? {}
+    super(rest)
+    this.#read = read
+  }
+
+  override _read(size: number): void {
+    if (this.#read) {
+      this.#read.call(this, size)
+    }
+    super._read(size)
   }
 }
 

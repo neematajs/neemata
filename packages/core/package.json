@@ -2,33 +2,19 @@
   "name": "@nmtjs/core",
   "type": "module",
   "exports": {
-    ".": {
-      "types": "./src/index.ts",
-      "import": "./dist/index.js",
-      "module-sync": "./dist/index.js"
-    },
-    "./constants": {
-      "types": "./src/constants.ts",
-      "import": "./dist/constants.js",
-      "module-sync": "./dist/constants.js"
-    }
+    ".": "./src/index.ts",
+    "./constants": "./src/constants.ts"
   },
   "publishConfig": {
     "exports": {
-      ".": {
-        "types": "./dist/index.d.ts",
-        "import": "./dist/index.js",
-        "module-sync": "./dist/index.js"
-      },
-      "./constants": {
-        "types": "./dist/constants.d.ts",
-        "import": "./dist/constants.js",
-        "module-sync": "./dist/constants.js"
-      }
+      ".": "./dist/index.js",
+      "./constants": "./dist/constants.js"
     }
   },
   "scripts": {
-    "build": "tsc",
+    "clean-build": "rm -rf ./dist",
+    "build": "tsc --declaration --sourcemap",
+    "dev": "tsc --watch",
     "type-check": "tsc --noEmit"
   },
   "peerDependencies": {
@@ -38,15 +24,20 @@
     "pino-pretty": "^13.0.0"
   },
   "devDependencies": {
-    "@types/node": "^20",
     "@nmtjs/common": "workspace:*",
     "@nmtjs/type": "workspace:*",
+    "@types/node": "^24",
     "pino": "^9.6.0",
     "pino-pretty": "^13.0.0"
   },
   "files": [
     "dist",
+    "src",
     "LICENSE.md",
     "README.md"
-  ]
+  ],
+  "dependencies": {
+    "hookable": "6.0.0-rc.1",
+    "pino-std-serializers": "^7.0.0"
+  }
 }

@@ -34,7 +34,7 @@ export class PlainDateType extends TransformType<
   Temporal.PlainDate,
   EncodeType
 > {
-  static factory(implementation: typeof Temporal) {
+  static factory(implementation: typeof Temporal): PlainDateType {
     const transformer = createTemporalTransformer(implementation, 'PlainDate')
     return CustomType.factory<Temporal.PlainDate, EncodeType>({
       decode: transformer.decode,
@@ -49,7 +49,7 @@ export class PlainDateTimeType extends TransformType<
   Temporal.PlainDateTime,
   EncodeType
 > {
-  static factory(implementation: typeof Temporal) {
+  static factory(implementation: typeof Temporal): PlainDateTimeType {
     const transformer = createTemporalTransformer(
       implementation,
       'PlainDateTime',
@@ -67,7 +67,7 @@ export class ZonedDateTimeType extends TransformType<
   Temporal.ZonedDateTime,
   EncodeType
 > {
-  static factory(implementation: typeof Temporal) {
+  static factory(implementation: typeof Temporal): ZonedDateTimeType {
     const transformer = createTemporalTransformer(
       implementation,
       'ZonedDateTime',
@@ -95,7 +95,7 @@ export class PlainTimeType extends TransformType<
   Temporal.PlainTime,
   EncodeType
 > {
-  static factory(implementation: typeof Temporal) {
+  static factory(implementation: typeof Temporal): PlainTimeType {
     const transformer = createTemporalTransformer(implementation, 'PlainTime')
     return CustomType.factory<Temporal.PlainTime, EncodeType>({
       decode: transformer.decode,
@@ -107,7 +107,7 @@ export class PlainTimeType extends TransformType<
 }
 
 export class DurationType extends TransformType<Temporal.Duration, EncodeType> {
-  static factory(implementation: typeof Temporal) {
+  static factory(implementation: typeof Temporal): DurationType {
     const transformer = createTemporalTransformer(implementation, 'Duration')
     return CustomType.factory<Temporal.Duration, EncodeType>({
       decode: transformer.decode,
@@ -122,7 +122,7 @@ export class PlainYearMonthType extends TransformType<
   Temporal.PlainYearMonth,
   EncodeType
 > {
-  static factory(implementation: typeof Temporal) {
+  static factory(implementation: typeof Temporal): PlainYearMonthType {
     const transformer = createTemporalTransformer(
       implementation,
       'PlainYearMonth',
@@ -140,7 +140,7 @@ export class PlainMonthDayType extends TransformType<
   Temporal.PlainMonthDay,
   EncodeType
 > {
-  static factory(implementation: typeof Temporal) {
+  static factory(implementation: typeof Temporal): PlainMonthDayType {
     const transformer = createTemporalTransformer(
       implementation,
       'PlainMonthDay',
