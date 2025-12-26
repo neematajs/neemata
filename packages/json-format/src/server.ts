@@ -10,7 +10,9 @@ export class JsonFormat extends BaseServerFormat {
   accept = ['application/json']
 
   encode(data: any) {
-    return data ? Buffer.from(JSON.stringify(data), 'utf-8') : Buffer.alloc(0)
+    return typeof data !== 'undefined'
+      ? Buffer.from(JSON.stringify(data), 'utf-8')
+      : Buffer.alloc(0)
   }
 
   encodeBlob(streamId: number) {

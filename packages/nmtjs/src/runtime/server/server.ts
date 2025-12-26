@@ -63,7 +63,7 @@ export class ApplicationServer {
     readonly runOptions: ApplicationServerRunOptions = {
       applications: Object.keys(config.applications),
       scheduler: false,
-      jobs: Boolean(config.jobs?.jobs?.length),
+      jobs: Boolean(config.jobs?.jobs.size),
     },
   ) {
     this.logger = createLogger(config.logger, 'Server')

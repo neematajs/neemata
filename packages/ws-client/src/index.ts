@@ -61,19 +61,21 @@ export class WsTransportClient {
 
     this.connecting = new Promise((resolve, reject) => {
       ws.addEventListener('open', () => {
-        params.onConnect()
         this.connecting = null
+        params.onConnect()
         resolve()
       })
       ws.addEventListener('message', (event) => {
         params.onMessage(new Uint8Array(event.data as ArrayBuffer))
       })
       ws.addEventListener('error', (event) => {
+        this.connecting = null
         reject(new Error('WebSocket error', { cause: event }))
       })
       ws.addEventListener('close', (event) => {
-        params.onDisconnect('server')
         this.webSocket = null
+        this.connecting = null
+        params.onDisconnect('server')
       })
     })
 

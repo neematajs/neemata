@@ -115,5 +115,121 @@ describe('JsonFormat', () => {
       expect(clientDecoded).toHaveProperty('foo', 'bar')
       expect(clientAddStreamFn).toHaveBeenCalledWith(0, data.blob.metadata)
     })
+
+    it('should handle undefined payloads in client → server direction', () => {
+      // Client encodes undefined, server decodes
+      const clientEncoded = clientFormat.encodeRPC(undefined, {
+        addStream: vi.fn(),
+      })
+      const serverDecoded = serverFormat.decodeRPC(
+        Buffer.from(
+          clientEncoded.buffer,
+          clientEncoded.byteOffset,
+          clientEncoded.byteLength,
+        ),
+        { addStream: vi.fn() },
+      )
+
+      expect(serverDecoded).toBeUndefined()
+    })
+
+    it('should handle undefined payloads in server → client direction', () => {
+      // Server encodes undefined, client decodes
+      const serverEncoded = serverFormat.encodeRPC(undefined, {})
+      const clientDecoded = clientFormat.decodeRPC(
+        Buffer.from(
+          serverEncoded.buffer,
+          serverEncoded.byteOffset,
+          serverEncoded.byteLength,
+        ),
+        { addStream: vi.fn() },
+      )
+
+      expect(clientDecoded).toBeUndefined()
+    })
+
+    it('should handle null payloads in both directions', () => {
+      // Client encodes null, server decodes
+      const clientEncoded = clientFormat.encodeRPC(null, { addStream: vi.fn() })
+      const serverDecoded = serverFormat.decodeRPC(
+        Buffer.from(
+          clientEncoded.buffer,
+          clientEncoded.byteOffset,
+          clientEncoded.byteLength,
+        ),
+        { addStream: vi.fn() },
+      )
+      expect(serverDecoded).toBe(null)
+
+      // Server encodes null, client decodes
+      const serverEncoded = serverFormat.encodeRPC(null, {})
+      const clientDecoded = clientFormat.decodeRPC(
+        Buffer.from(
+          serverEncoded.buffer,
+          serverEncoded.byteOffset,
+          serverEncoded.byteLength,
+        ),
+        { addStream: vi.fn() },
+      )
+      expect(clientDecoded).toBe(null)
+    })
+
+    it('should handle undefined properties in objects', () => {
+      const data = { foo: 'bar', undef: undefined, nul: null }
+
+      // Client → Server
+      const clientEncoded = clientFormat.encodeRPC(data, { addStream: vi.fn() })
+      const serverDecoded = serverFormat.decodeRPC(
+        Buffer.from(
+          clientEncoded.buffer,
+          clientEncoded.byteOffset,
+          clientEncoded.byteLength,
+        ),
+        { addStream: vi.fn() },
+      )
+      // JSON.stringify removes undefined properties
+      expect(serverDecoded).toEqual({ foo: 'bar', nul: null })
+
+      // Server → Client
+      const serverEncoded = serverFormat.encodeRPC(data, {})
+      const clientDecoded = clientFormat.decodeRPC(
+        Buffer.from(
+          serverEncoded.buffer,
+          serverEncoded.byteOffset,
+          serverEncoded.byteLength,
+        ),
+        { addStream: vi.fn() },
+      )
+      expect(clientDecoded).toEqual({ foo: 'bar', nul: null })
+    })
+
+    it('should handle undefined values in arrays', () => {
+      const data = ['a', undefined, null, 'b']
+
+      // Client → Server
+      const clientEncoded = clientFormat.encodeRPC(data, { addStream: vi.fn() })
+      const serverDecoded = serverFormat.decodeRPC(
+        Buffer.from(
+          clientEncoded.buffer,
+          clientEncoded.byteOffset,
+          clientEncoded.byteLength,
+        ),
+        { addStream: vi.fn() },
+      )
+      // JSON.stringify converts undefined in arrays to null
+      expect(serverDecoded).toEqual(['a', null, null, 'b'])
+
+      // Server → Client
+      const serverEncoded = serverFormat.encodeRPC(data, {})
+      const clientDecoded = clientFormat.decodeRPC(
+        Buffer.from(
+          serverEncoded.buffer,
+          serverEncoded.byteOffset,
+          serverEncoded.byteLength,
+        ),
+        { addStream: vi.fn() },
+      )
+      expect(clientDecoded).toEqual(['a', null, null, 'b'])
+    })
   })
 })

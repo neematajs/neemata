@@ -41,8 +41,21 @@ export type ServerApplicationConfig<T = ApplicationConfig> =
       }
     : any
 
-export interface ServerConfig {
-  [kServerConfig]: any
+export type ServerJobsConfig = {
+  pools: {
+    [JobWorkerPool.Io]: ServerPoolOptions
+    [JobWorkerPool.Compute]: ServerPoolOptions
+  }
+  jobs?: AnyJob[]
+  /**
+   * @deprecated Scheduler is currently being refactored and is not available.
+   * Using this option will throw an error at startup.
+   */
+  scheduler?: JobsSchedulerOptions
+  ui?: { hostname?: string; port?: number }
+}
+
+export interface ServerConfigInit {
   logger: LoggingOptions
   applications: {
     [K in keyof Applications]: Applications[K]['type'] extends 'neemata'
@@ -72,30 +85,61 @@ export interface ServerConfig {
     healthChecks?: { interval?: number }
     tls?: { key: string; cert: string }
   }
-  jobs?: {
-    ui?: { hostname?: string; port?: number }
-    jobs: AnyJob[]
-    pools: {
-      [JobWorkerPool.Io]: ServerPoolOptions
-      [JobWorkerPool.Compute]: ServerPoolOptions
-    }
-    /**
-     * @deprecated Scheduler is currently being refactored and is not available.
-     * Using this option will throw an error at startup.
-     */
-    scheduler?: JobsSchedulerOptions
-  }
+  jobs?: ServerJobsConfig
   commands?: {}
   pubsub?: { adapter: PubSubAdapterType }
   deploymentId?: string
 }
 
-export function defineServer(
-  options: Omit<ServerConfig, kServerConfig> &
-    Partial<Omit<ServerConfig, 'applications' | 'store' | 'logger'>>,
-): ServerConfig {
-  const { deploymentId, logger, commands, proxy, store, applications, jobs } =
+export interface ServerConfig {
+  [kServerConfig]: true
+  logger: ServerConfigInit['logger']
+  applications: ServerConfigInit['applications']
+  store: ServerConfigInit['store']
+  /**
+   * Proxy configuration. Enabling this will start a reverse proxy server that handles TLS, routing,
+   * load balancing, and health checks for your applications.
+   *
+   * The applications will be accessible via `<hostname>:<port>/<application-name>/**`
+   *
+   * Requires adding `@nmtjs/proxy` package to your dependencies
+   * and [`cargo`](https://doc.rust-lang.org/cargo/getting-started/installation.html) alongside with
+   * [`rustc`](https://www.rust-lang.org/tools/install) to be available globally for building native modules.
+   */
+  proxy: ServerConfigInit['proxy']
+  jobs?: {
+    pools: ServerJobsConfig['pools']
+    jobs: Map<string, AnyJob>
+    /**
+     * @deprecated Scheduler is currently being refactored and is not available.
+     * Using this option will throw an error at startup.
+     */
+    scheduler?: JobsSchedulerOptions
+    ui?: ServerJobsConfig['ui']
+  }
+  commands?: {}
+  pubsub: ServerConfigInit['pubsub']
+  deploymentId: ServerConfigInit['deploymentId']
+}
+
+export function defineServer(options: ServerConfigInit): ServerConfig {
+  const { deploymentId, logger, commands, proxy, store, applications, pubsub } =
     options
+
+  let jobs: ServerConfig['jobs'] | undefined
+  if (options.jobs) {
+    const map = new Map<string, AnyJob>()
+    for (const job of options.jobs.jobs ?? []) map.set(job.name, job)
+    for (const { job } of options.jobs.scheduler?.entries ?? [])
+      map.set(job.name, job)
+    jobs = {
+      pools: options.jobs.pools,
+      jobs: map,
+      scheduler: options.jobs.scheduler,
+      ui: options.jobs.ui,
+    }
+  }
+
   return Object.freeze({
     [kServerConfig]: true,
     deploymentId,
@@ -104,6 +148,7 @@ export function defineServer(
     proxy,
     store,
     applications,
+    pubsub,
     jobs,
   } as const)
 }

@@ -40,6 +40,17 @@ export class JobWorkerRuntime extends BaseWorkerRuntime {
   }
 
   async initialize(): Promise<void> {
+    // Validate all jobs are complete before accepting work
+    if (this.config.jobs) {
+      for (const job of this.config.jobs.jobs.values()) {
+        if (!job.returnHandler) {
+          throw new Error(
+            `Job "${job.name}" is incomplete. Jobs must call .return() to be finalized before use.`,
+          )
+        }
+      }
+    }
+
     await this.container.provide(
       jobWorkerPool,
       this.runtimeOptions.poolName as JobWorkerPool,
@@ -60,9 +71,7 @@ export class JobWorkerRuntime extends BaseWorkerRuntime {
       if (msg.type === 'task') {
         const { id, task } = msg.data
         try {
-          const job = this.config.jobs?.jobs.find(
-            (j) => j.name === task.jobName,
-          )
+          const job = this.config.jobs?.jobs.get(task.jobName)
           if (!job) {
             this.runtimeOptions.port.postMessage({
               type: 'task',
@@ -129,11 +138,10 @@ export class JobWorkerRuntime extends BaseWorkerRuntime {
   }
 
   protected *_dependents() {
-    if (this.config?.jobs) {
-      for (const job of this.config.jobs.jobs) {
-        if (!job.returnHandler)
-          throw new Error(`Job ${job.name} is missing return handler.`)
+    if (this.config.jobs) {
+      for (const job of this.config.jobs.jobs.values()) {
         yield job
+        yield* job.steps
       }
     }
   }

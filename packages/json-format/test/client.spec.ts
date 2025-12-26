@@ -138,5 +138,92 @@ describe('JsonFormat', () => {
         expect(decodeCtx.addStream).toHaveBeenCalledWith(streamId, metadata)
       })
     })
+
+    describe('undefined value handling', () => {
+      it('should encode undefined data in encodeRPC', () => {
+        const encodeCtx: EncodeRPCContext = { addStream: vi.fn() }
+
+        const buffer = format.encodeRPC(undefined, encodeCtx)
+
+        // Should have 4 bytes for streams length (0) and no payload
+        expect(buffer.byteLength).toBe(4)
+
+        const decodeCtx = { addStream: vi.fn() } as DecodeRPCContext<any>
+        const decoded = format.decodeRPC(buffer, decodeCtx)
+
+        expect(decoded).toBeUndefined()
+      })
+
+      it('should encode null data in encodeRPC', () => {
+        const encodeCtx: EncodeRPCContext = { addStream: vi.fn() }
+
+        const buffer = format.encodeRPC(null, encodeCtx)
+
+        const decodeCtx = { addStream: vi.fn() } as DecodeRPCContext<any>
+        const decoded = format.decodeRPC(buffer, decodeCtx)
+
+        expect(decoded).toBe(null)
+      })
+
+      it('should handle undefined values in objects', () => {
+        const payload = { foo: 'bar', undef: undefined, nul: null }
+        const encodeCtx: EncodeRPCContext = { addStream: vi.fn() }
+
+        const buffer = format.encodeRPC(payload, encodeCtx)
+
+        const decodeCtx = { addStream: vi.fn() } as DecodeRPCContext<any>
+        const decoded = format.decodeRPC(buffer, decodeCtx)
+
+        // JSON.stringify removes undefined properties
+        expect(decoded).toEqual({ foo: 'bar', nul: null })
+      })
+
+      it('should handle undefined values in arrays', () => {
+        const payload = ['a', undefined, null, 'b']
+        const encodeCtx: EncodeRPCContext = { addStream: vi.fn() }
+
+        const buffer = format.encodeRPC(payload, encodeCtx)
+
+        const decodeCtx = { addStream: vi.fn() } as DecodeRPCContext<any>
+        const decoded = format.decodeRPC(buffer, decodeCtx)
+
+        // JSON.stringify converts undefined in arrays to null
+        expect(decoded).toEqual(['a', null, null, 'b'])
+      })
+
+      it('should round-trip 0, false, and empty string', () => {
+        const payload = { zero: 0, false: false, empty: '' }
+        const encodeCtx: EncodeRPCContext = { addStream: vi.fn() }
+
+        const buffer = format.encodeRPC(payload, encodeCtx)
+
+        const decodeCtx = { addStream: vi.fn() } as DecodeRPCContext<any>
+        const decoded = format.decodeRPC(buffer, decodeCtx)
+
+        expect(decoded).toEqual(payload)
+      })
+
+      it('should handle undefined with streams present', () => {
+        const blob = ProtocolBlob.from(new Uint8Array([1, 2, 3]), {
+          type: 'test',
+        })
+        const payload = { stream: blob, undef: undefined }
+
+        const encodeCtx: EncodeRPCContext = {
+          addStream: vi.fn(() => ({ id: 0, metadata: blob.metadata })),
+        }
+
+        const buffer = format.encodeRPC(payload, encodeCtx)
+
+        const mockStream = { id: 0, metadata: blob.metadata }
+        const decodeCtx = {
+          addStream: vi.fn(() => mockStream),
+        } as DecodeRPCContext<any>
+        const decoded = format.decodeRPC(buffer, decodeCtx)
+
+        // undefined should be removed by JSON.stringify
+        expect(decoded).toEqual({ stream: mockStream })
+      })
+    })
   })
 })

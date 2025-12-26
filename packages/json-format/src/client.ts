@@ -116,7 +116,7 @@ export class JsonFormat extends BaseClientFormat {
       return value
     }
 
-    if (typeof hasPayload === 'undefined') return undefined
+    if (!hasPayload) return undefined
     else if (hasStreams) return this.decode(payloadBuffer, replacer)
     else return this.decode(payloadBuffer)
   }

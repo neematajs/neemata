@@ -19,8 +19,7 @@ describe('Server JsonFormat', () => {
         expect(buffer.toString()).toBe(JSON.stringify(data))
       })
 
-      it('should encode falsy values to empty buffer', () => {
-        expect(format.encode(null).byteLength).toBe(0)
+      it('should encode undefined to empty buffer', () => {
         expect(format.encode(undefined).byteLength).toBe(0)
       })
     })
@@ -143,6 +142,117 @@ describe('Server JsonFormat', () => {
 
         expect(decoded).toEqual({ foo: 'bar', stream: mockConsumer })
         expect(ctx.addStream).toHaveBeenCalledWith(streamId, metadata)
+      })
+    })
+
+    describe('undefined value handling', () => {
+      it('should encode undefined as empty buffer', () => {
+        const buffer = format.encode(undefined)
+        expect(buffer.byteLength).toBe(0)
+      })
+
+      it('should encode null as JSON string "null"', () => {
+        const buffer = format.encode(null)
+        expect(buffer.toString()).toBe('null')
+        expect(format.decode(buffer)).toBe(null)
+      })
+
+      it('should encode undefined data in encodeRPC', () => {
+        const streams: EncodeRPCStreams = {}
+
+        const buffer = Buffer.from(
+          format.encodeRPC(undefined, streams) as Uint8Array,
+        )
+
+        // Should have 4 bytes for streams length (0) and no payload
+        expect(buffer.byteLength).toBe(4)
+
+        const ctx = { addStream: vi.fn() } as DecodeRPCContext<any>
+        const decoded = format.decodeRPC(buffer, ctx)
+
+        expect(decoded).toBeUndefined()
+      })
+
+      it('should encode null data in encodeRPC', () => {
+        const streams: EncodeRPCStreams = {}
+
+        const buffer = Buffer.from(
+          format.encodeRPC(null, streams) as Uint8Array,
+        )
+
+        const ctx = { addStream: vi.fn() } as DecodeRPCContext<any>
+        const decoded = format.decodeRPC(buffer, ctx)
+
+        expect(decoded).toBe(null)
+      })
+
+      it('should handle undefined values in objects', () => {
+        const payload = { foo: 'bar', undef: undefined, nul: null }
+        const streams: EncodeRPCStreams = {}
+
+        const buffer = Buffer.from(
+          format.encodeRPC(payload, streams) as Uint8Array,
+        )
+
+        const ctx = { addStream: vi.fn() } as DecodeRPCContext<any>
+        const decoded = format.decodeRPC(buffer, ctx)
+
+        // JSON.stringify removes undefined properties
+        expect(decoded).toEqual({ foo: 'bar', nul: null })
+      })
+
+      it('should handle undefined values in arrays', () => {
+        const payload = ['a', undefined, null, 'b']
+        const streams: EncodeRPCStreams = {}
+
+        const buffer = Buffer.from(
+          format.encodeRPC(payload, streams) as Uint8Array,
+        )
+
+        const ctx = { addStream: vi.fn() } as DecodeRPCContext<any>
+        const decoded = format.decodeRPC(buffer, ctx)
+
+        // JSON.stringify converts undefined in arrays to null
+        expect(decoded).toEqual(['a', null, null, 'b'])
+      })
+
+      it('should round-trip 0, false, and empty string', () => {
+        const payload = { zero: 0, false: false, empty: '' }
+        const streams: EncodeRPCStreams = {}
+
+        const buffer = Buffer.from(
+          format.encodeRPC(payload, streams) as Uint8Array,
+        )
+
+        const ctx = { addStream: vi.fn() } as DecodeRPCContext<any>
+        const decoded = format.decodeRPC(buffer, ctx)
+
+        expect(decoded).toEqual(payload)
+      })
+
+      it('should handle undefined with streams present', () => {
+        const streamId = 1
+        const metadata = { type: 'test' }
+        const payload = {
+          stream: ProtocolBlob.from('data', metadata, () =>
+            format.encodeBlob(streamId),
+          ),
+          undef: undefined,
+        }
+        const streams: EncodeRPCStreams = { [streamId]: metadata }
+
+        const buffer = Buffer.from(
+          format.encodeRPC(payload, streams) as Uint8Array,
+        )
+
+        const mockConsumer = vi.fn()
+        const ctx = {
+          addStream: vi.fn(() => mockConsumer),
+        } as DecodeRPCContext<any>
+        const decoded = format.decodeRPC(buffer, ctx)
+
+        // undefined should be removed by JSON.stringify
+        expect(decoded).toEqual({ stream: mockConsumer })
       })
     })
   })
