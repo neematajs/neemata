@@ -1,10 +1,10 @@
 // TODO: add proper queueing/backpressure strategy support
 
-import type { Async } from './types.ts'
+import type { MaybePromise } from './types.ts'
 
 export interface DuplexStreamOptions<O = unknown, I = O> {
   start?: (controller: ReadableStreamDefaultController<O>) => void
-  pull?: (controller: ReadableStreamDefaultController<O>) => Async<void>
+  pull?: (controller: ReadableStreamDefaultController<O>) => MaybePromise<void>
   cancel?: (reason: unknown) => void
   transform?: (chunk: I) => O
   close?: () => void

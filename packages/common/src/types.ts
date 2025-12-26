@@ -1,8 +1,10 @@
 const TSErrorSymbol: unique symbol = Symbol('TSError')
 
-export type TSError<T extends string = string> = `Error: ${T}` & {
-  [TSErrorSymbol]: true
-}
+export type TSError<
+  ErrorMessage extends string = string,
+  // biome-ignore lint/correctness/noUnusedVariables: this is used to tag the type
+  TagType = never,
+> = `TS Error: ${ErrorMessage}` & { [TSErrorSymbol]: true }
 
 export interface TypeProvider {
   readonly input: unknown
@@ -35,7 +37,7 @@ export type OmitFirstItem<T extends any[]> = T extends [any, ...infer U]
   : []
 export type ErrorClass = new (...args: any[]) => Error
 export type Extra = Record<string, any>
-export type Async<T> = T | Promise<T>
+export type MaybePromise<T> = T | Promise<T>
 
 export type ArrayMap<T extends readonly any[], K extends keyof T[number]> = {
   [I in keyof T]: T[I][K]

@@ -1,4 +1,4 @@
-import type { Async, OneOf } from '@nmtjs/common'
+import type { MaybePromise, OneOf } from '@nmtjs/common'
 import type { Hooks } from 'crossws'
 
 export type WsTransportServerRequest = {
@@ -114,8 +114,8 @@ export type WsAdapterParams<
 }
 
 export interface WsAdapterServer {
-  stop: () => Async<any>
-  start: () => Async<string>
+  stop: () => MaybePromise<any>
+  start: () => MaybePromise<string>
 }
 
 export type WsAdapterServerFactory<

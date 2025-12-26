@@ -1,4 +1,4 @@
-import type { Async, OneOf } from '@nmtjs/common'
+import type { MaybePromise, OneOf } from '@nmtjs/common'
 
 export type HttpTransportServerRequest = {
   url: URL
@@ -80,7 +80,7 @@ export type HttpAdapterParams<
     request: HttpTransportServerRequest,
     body: ReadableStream | null,
     signal: AbortSignal,
-  ) => Async<Response>
+  ) => MaybePromise<Response>
   cors?: HttpTransportCorsOptions
   tls?: HttpTransportTlsOptions
   runtime?: HttpTransportRuntimes[R]
@@ -94,8 +94,8 @@ export interface HttpAdapterServer {
     node?: import('uWebSockets.js').TemplatedApp
     deno?: DenoServer
   }
-  stop: () => Async<any>
-  start: () => Async<string>
+  stop: () => MaybePromise<any>
+  start: () => MaybePromise<string>
 }
 
 export type HttpAdapterServerFactory<

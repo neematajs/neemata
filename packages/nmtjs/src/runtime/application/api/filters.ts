@@ -1,4 +1,4 @@
-import type { Async, ErrorClass } from '@nmtjs/common'
+import type { ErrorClass, MaybePromise } from '@nmtjs/common'
 import type { Dependant, Dependencies, DependencyContext } from '@nmtjs/core'
 
 import { kFilter } from './constants.ts'
@@ -12,7 +12,7 @@ export interface Filter<
   catch: (
     ctx: DependencyContext<Deps>,
     error: InstanceType<FilterError>,
-  ) => Async<Error>
+  ) => MaybePromise<Error>
 }
 
 export type AnyFilter<Error extends ErrorClass = ErrorClass> = Filter<

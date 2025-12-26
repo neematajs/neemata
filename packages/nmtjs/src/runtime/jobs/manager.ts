@@ -18,12 +18,12 @@ import { createStoreClient } from '../store/index.ts'
  * Get the dedicated BullMQ queue name for a job
  */
 export function getJobQueueName(job: AnyJob): string {
-  return `job.${job.name}`
+  return `job.${job.options.name}`
 }
 
 type QueueJobResultOptions<T extends AnyJob = AnyJob> = {
   job: T
-  bullJob: Job<T['_']['input'], T['_']['output'], T['name']>
+  bullJob: Job<T['_']['input'], T['_']['output'], T['options']['name']>
   events: QueueEvents
 }
 
@@ -49,7 +49,7 @@ export class QueueJobResult<T extends AnyJob = AnyJob> {
   }
 
   get name() {
-    return this.#options.bullJob.name
+    return this.#options.job.options.name
   }
 
   async waitResult() {
@@ -58,7 +58,7 @@ export class QueueJobResult<T extends AnyJob = AnyJob> {
 }
 
 export type JobListItem<T extends AnyJob = AnyJob> = Pick<
-  Job<T['_']['input'], T['_']['output'], T['name']>,
+  Job<T['_']['input'], T['_']['output'], T['options']['name']>,
   | 'id'
   | 'queueName'
   | 'priority'
@@ -138,7 +138,7 @@ export class JobManager {
           connection: this.store as RedisClient,
         }),
       }
-      this.jobQueues.set(job.name, entry)
+      this.jobQueues.set(job.options.name, entry)
     }
 
     // Wait for all queues to be ready
@@ -163,9 +163,9 @@ export class JobManager {
   }
 
   protected getJobQueue(job: AnyJob): JobQueueEntry {
-    const entry = this.jobQueues.get(job.name)
+    const entry = this.jobQueues.get(job.options.name)
     if (!entry) {
-      throw new Error(`Job queue for [${job.name}] not found`)
+      throw new Error(`Job queue for [${job.options.name}] not found`)
     }
     return entry
   }
@@ -220,7 +220,7 @@ export class JobManager {
         )
       }
     }
-    const bullJob = await queue.add(job.name as any, data as any, {
+    const bullJob = await queue.add(job.options.name as any, data as any, {
       attempts,
       backoff,
       jobId,

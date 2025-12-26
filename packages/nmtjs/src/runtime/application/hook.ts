@@ -1,4 +1,4 @@
-import type { Async } from '@nmtjs/common'
+import type { MaybePromise } from '@nmtjs/common'
 import type {
   Dependant,
   Dependencies,
@@ -19,7 +19,7 @@ export interface Hook<
   handler: (
     ctx: DependencyContext<Deps>,
     ...args: H extends keyof T ? Parameters<T[H]> : unknown[]
-  ) => Async<any>
+  ) => MaybePromise<any>
 }
 
 export function createHook<

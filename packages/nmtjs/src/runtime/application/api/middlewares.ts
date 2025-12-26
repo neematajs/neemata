@@ -1,4 +1,4 @@
-import type { Async } from '@nmtjs/common'
+import type { MaybePromise } from '@nmtjs/common'
 import type { Dependant, Dependencies, DependencyContext } from '@nmtjs/core'
 
 import type { ApiCallContext } from './types.ts'
@@ -14,7 +14,7 @@ export interface Middleware<Deps extends Dependencies = Dependencies>
     call: ApiCallContext,
     next: MiddlewareNext,
     payload: any,
-  ) => Async<any>
+  ) => MaybePromise<any>
 }
 
 export type AnyMiddleware = Middleware<any>

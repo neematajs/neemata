@@ -2,10 +2,13 @@ import type { Container, Logger, LoggingOptions } from '@nmtjs/core'
 import type { Job } from 'bullmq'
 import { anyAbortSignal } from '@nmtjs/common'
 import { Scope } from '@nmtjs/core'
+import { UnrecoverableError } from 'bullmq'
 
 import type { LifecycleHooks } from '../core/hooks.ts'
-import type { AnyJob, AnyJobStep } from './job.ts'
+import type { AnyJob } from './job.ts'
+import type { AnyJobStep } from './step.ts'
 import { LifecycleHook } from '../enums.ts'
+import { abortSignal } from '../injectables.ts'
 
 export type JobRunnerOptions = { logging?: LoggingOptions }
 
@@ -45,7 +48,7 @@ export class JobRunner<
       lifecycleHooks: LifecycleHooks
     },
   ) {
-    this.logger = runtime.logger.child({ $lable: JobRunner.name })
+    this.logger = runtime.logger.child({ $group: JobRunner.name })
   }
 
   get container() {
@@ -65,18 +68,24 @@ export class JobRunner<
     } = _options ?? {}
 
     const { input, output, steps } = job
-    let result: Record<string, unknown> = { ..._result }
-    if (input) data = input.decode(data)
+
+    const result: Record<string, unknown> = { ..._result }
+    const decodedInput = input.decode(data)
+
     const signal = anyAbortSignal(
       _signal,
       this.runtime.lifecycleHooks.createSignal(LifecycleHook.BeforeDispose)
         .signal,
     )
     await using container = this.container.fork(Scope.Global)
-    const _context = await container.createContext(job.dependencies)
-    const jobContext = Object.freeze(await job.context?.(_context, data))
-    const context = { ..._context, $context: jobContext, $input: data }
-    const stepResults = Array.from({ length: steps.length })
+    await container.provide(abortSignal, signal)
+
+    const jobDependencyContext = await container.createContext(job.dependencies)
+    const jobData = job.options.data
+      ? await job.options.data(jobDependencyContext, decodedInput)
+      : undefined
+
+    const stepResults = Array.from({ length: steps.length }) as unknown[]
 
     //@ts-expect-error
     const options: RunOptions = {
@@ -95,12 +104,36 @@ export class JobRunner<
       stepIndex < steps.length;
       stepIndex++
     ) {
+      if (signal.aborted) {
+        const reason = (signal as unknown as { reason?: unknown }).reason
+        if (reason instanceof UnrecoverableError) throw reason
+        throw new UnrecoverableError('Job cancelled')
+      }
+
       const step = steps[stepIndex]
-      const _result = Object.freeze(Object.assign({}, result))
-      const condition = step.condition
-        ? await step.condition(context, _result)
-        : true
-      if (!condition) continue
+      const resultSnapshot = Object.freeze(Object.assign({}, result))
+
+      const condition = job.conditions.get(stepIndex)
+      if (condition) {
+        const shouldRun = await condition({
+          context: jobDependencyContext as any,
+          data: jobData,
+          input: decodedInput as any,
+          result: resultSnapshot as any,
+        })
+        if (!shouldRun) {
+          stepResults[stepIndex] = null
+          continue
+        }
+      }
+
+      const stepContext = await container.createContext({
+        ...job.dependencies,
+        ...step.dependencies,
+      })
+
+      const stepInput = step.input.decode(resultSnapshot as any)
+
       await this.beforeStep({
         job,
         step,
@@ -109,34 +142,77 @@ export class JobRunner<
         options,
         stepResults,
       })
-      let stepResult: unknown
+
       try {
-        const _stepResult = await step.handler(context, _result, signal)
-        stepResult = _stepResult ?? {}
-      } catch (cause) {
-        const error = new Error(`Error during step [${stepIndex}]`, { cause })
-        this.logger.error(error)
-        throw error
+        await job.beforeEachHandler?.({
+          context: jobDependencyContext as any,
+          data: jobData,
+          input: decodedInput as any,
+          result: resultSnapshot as any,
+          step,
+          stepIndex,
+        })
+
+        const handlerReturn = await step.handler(
+          stepContext as any,
+          stepInput as any,
+          jobData,
+        )
+
+        const produced = step.output.encode((handlerReturn ?? {}) as any)
+
+        stepResults[stepIndex] = produced
+        Object.assign(result, produced)
+
+        await job.afterEachHandler?.({
+          context: jobDependencyContext as any,
+          data: jobData,
+          input: decodedInput as any,
+          result: Object.freeze(Object.assign({}, result)) as any,
+          step,
+          stepIndex,
+        })
+
+        await this.afterStep({
+          job,
+          step,
+          stepIndex,
+          result,
+          stepResult: produced,
+          stepResults,
+          options,
+        })
+      } catch (error) {
+        const allowRetry = await job.onErrorHandler?.({
+          context: jobDependencyContext as any,
+          data: jobData,
+          input: decodedInput as any,
+          result: resultSnapshot as any,
+          step,
+          stepIndex,
+          error,
+        })
+
+        if (allowRetry === false) {
+          throw new UnrecoverableError('Job failed (unrecoverable)')
+        }
+
+        const wrapped = new Error(`Error during step [${stepIndex}]`, {
+          cause: error,
+        })
+        this.logger.error(wrapped)
+        throw wrapped
       }
-      stepResults[stepIndex] = stepResult
-      Object.assign(result, stepResult)
-      await this.afterStep({
-        job,
-        step,
-        stepIndex,
-        result,
-        stepResult,
-        stepResults,
-        options,
-      })
     }
 
-    result = await job.returnHandler!(
-      context,
-      Object.freeze(Object.assign({}, result)),
-    )
+    const finalPayload = await job.returnHandler!({
+      context: jobDependencyContext as any,
+      data: jobData,
+      input: decodedInput as any,
+      result: Object.freeze(Object.assign({}, result)) as any,
+    })
 
-    return output.decode(result)
+    return output.encode(finalPayload as any)
   }
 
   protected async beforeStep(
@@ -184,14 +260,21 @@ export class ApplicationWorkerJobRunner extends JobRunner<
       JobRunnerRunOptions & { queueJob: Job }
     >,
   ): Promise<void> {
-    const { step, options, result, stepResults, stepIndex } = params
+    const {
+      step,
+      result,
+      stepResults,
+      stepIndex,
+      options: { queueJob },
+    } = params
     const nextStepIndex = stepIndex + 1
     await Promise.all([
-      options.queueJob.log('Completed step ' + (step.label || nextStepIndex)),
-      options.queueJob.updateProgress({
+      queueJob.log('Completed step ' + (step.label || nextStepIndex)),
+      queueJob.updateProgress({
+        stepIndex: nextStepIndex,
+        stepLabel: step.label,
         result,
         stepResults,
-        stepIndex: nextStepIndex,
       }),
     ])
   }

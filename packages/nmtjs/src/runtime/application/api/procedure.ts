@@ -1,4 +1,4 @@
-import type { Async } from '@nmtjs/common'
+import type { MaybePromise } from '@nmtjs/common'
 import type { TAnyProcedureContract, TProcedureContract } from '@nmtjs/contract'
 import type {
   Dependant,
@@ -35,7 +35,7 @@ export interface BaseProcedure<
 export type ProcedureHandlerType<Input, Output, Deps extends Dependencies> = (
   ctx: DependencyContext<Deps>,
   data: Input,
-) => Async<Output>
+) => MaybePromise<Output>
 
 export interface Procedure<
   ProcedureContract extends TAnyProcedureContract,

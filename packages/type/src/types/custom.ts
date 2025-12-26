@@ -1,4 +1,4 @@
-import type { Async } from '@nmtjs/common'
+import type { MaybePromise } from '@nmtjs/common'
 import type { core, ZodMiniType } from 'zod/mini'
 import {
   any,
@@ -54,16 +54,16 @@ export class CustomType<
           payload: core.$RefinementCtx<
             EncodeType['_zod']['output'] | DecodeType['_zod']['output']
           >,
-        ) => Async<void>)
+        ) => MaybePromise<void>)
       | {
           encode?: (
             value: EncodeType['_zod']['input'],
             payload: core.$RefinementCtx<EncodeType['_zod']['output']>,
-          ) => Async<void>
+          ) => MaybePromise<void>
           decode?: (
             value: DecodeType['_zod']['output'],
             payload: core.$RefinementCtx<DecodeType['_zod']['output']>,
-          ) => Async<void>
+          ) => MaybePromise<void>
         }
     error?: string | core.$ZodErrorMap<core.$ZodIssueBase>
     type?: EncodeType

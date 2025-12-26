@@ -4,7 +4,6 @@ import type { ProtocolBlobInterface } from '@nmtjs/protocol'
 import type {
   ProtocolError,
   ProtocolServerBlobStream,
-  ProtocolServerStreamInterface,
 } from '@nmtjs/protocol/client'
 import type { BaseTypeAny, PlainType, t } from '@nmtjs/type'
 
@@ -60,9 +59,7 @@ export type AnyResolvedContractProcedure = {
 
 export type AnyResolvedContractRouter = {
   [ResolvedType]: 'router'
-  [key: string]:
-    | AnyResolvedContractProcedure
-    | { [ResolvedType]: 'router'; [key: string]: AnyResolvedContractProcedure }
+  [key: string]: AnyResolvedContractProcedure | AnyResolvedContractRouter
 }
 
 export type ResolveAPIRouterRoutes<
@@ -113,19 +110,6 @@ export type ClientCaller<
 type OmitType<T extends object, E> = {
   [K in keyof T as T[K] extends E ? never : K]: T[K]
 }
-
-// export type FilterResolvedContractRouter<
-//   Resolved extends AnyResolvedContractRouter,
-//   Stream extends boolean,
-// > = {
-//   [K in keyof Resolved]: Resolved[K] extends AnyResolvedContractProcedure
-//     ? Resolved[K]['stream'] extends Stream
-//       ? Resolved[K]
-//       : never
-//     : Resolved[K] extends AnyResolvedContractRouter
-//       ? FilterResolvedContractRouter<Resolved[K], Stream>
-//       : never
-// }
 
 export type ClientCallers<
   Resolved extends AnyResolvedContractRouter,

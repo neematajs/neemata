@@ -44,6 +44,11 @@ export const jobWorkerPool = createLazyInjectable<JobWorkerPool>(
   'JobWorkerPool',
 )
 
+export const abortSignal = createLazyInjectable<AbortSignal>(
+  Scope.Global,
+  'AbortSignal',
+)
+
 export const RuntimeInjectables = {
   pubSubAdapter,
   pubSubPublish,
@@ -52,4 +57,5 @@ export const RuntimeInjectables = {
   storeConfig,
   workerType,
   jobWorkerPool,
+  abortSignal,
 }

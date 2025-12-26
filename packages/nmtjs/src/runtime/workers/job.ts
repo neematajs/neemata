@@ -7,7 +7,7 @@ import type { ServerConfig } from '../server/config.ts'
 import type { ServerPortMessage, ThreadPortMessage } from '../types.ts'
 import { LifecycleHook, WorkerType } from '../enums.ts'
 import { jobWorkerPool } from '../injectables.ts'
-import { JobRunner } from '../jobs/runner.ts'
+import { ApplicationWorkerJobRunner } from '../jobs/runner.ts'
 import { BaseWorkerRuntime } from './base.ts'
 
 export interface JobWorkerRuntimeOptions {
@@ -16,7 +16,7 @@ export interface JobWorkerRuntimeOptions {
 }
 
 export class JobWorkerRuntime extends BaseWorkerRuntime {
-  jobRunner!: JobRunner
+  jobRunner!: ApplicationWorkerJobRunner
 
   constructor(
     readonly config: ServerConfig,
@@ -50,7 +50,7 @@ export class JobWorkerRuntime extends BaseWorkerRuntime {
   protected async _initialize(): Promise<void> {
     await super._initialize()
 
-    this.jobRunner = new JobRunner({
+    this.jobRunner = new ApplicationWorkerJobRunner({
       logger: this.logger,
       container: this.container,
       lifecycleHooks: this.lifecycleHooks,
@@ -75,8 +75,29 @@ export class JobWorkerRuntime extends BaseWorkerRuntime {
             job,
             task.jobId,
           )
+          const queue = this.jobManager!.getQueue(job).queue
+          const bullJob = await queue.getJob(task.jobId)
+          if (!bullJob) {
+            throw new UnrecoverableError(
+              `Job ${task.jobId} not found in queue (may have been removed)`,
+            )
+          }
+
+          // Load checkpoint from BullMQ progress for resume support
+          const progress = bullJob.progress as
+            | {
+                stepIndex: number
+                result: Record<string, unknown>
+                stepResults: unknown[]
+              }
+            | undefined
+
           const result = await this.jobRunner.runJob(job, task.data, {
             signal: cancellationSignal,
+            queueJob: bullJob,
+            result: progress?.result,
+            stepResults: progress?.stepResults,
+            currentStepIndex: progress?.stepIndex ?? 0,
           })
           this.runtimeOptions.port.postMessage({
             type: 'task',

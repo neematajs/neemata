@@ -1,4 +1,4 @@
-import type { Async } from '@nmtjs/common'
+import type { MaybePromise } from '@nmtjs/common'
 import { tryCaptureStackTrace } from '@nmtjs/common'
 
 import type { DisposeFn, InjectFn } from './container.ts'
@@ -60,7 +60,7 @@ export type DependencyContext<Deps extends Dependencies> = {
 export type InjectableFactoryType<
   InjectableType,
   InjectableDeps extends Dependencies,
-> = (context: DependencyContext<InjectableDeps>) => Async<InjectableType>
+> = (context: DependencyContext<InjectableDeps>) => MaybePromise<InjectableType>
 
 export type InjectablePickType<Input, Output> = (injectable: Input) => Output
 

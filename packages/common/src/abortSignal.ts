@@ -12,7 +12,7 @@ export function anyAbortSignal(
   const filtered = signals.filter(Boolean) as AbortSignal[]
 
   if (filtered.length === 0) {
-    return new AbortController().signal
+    throw new Error('No AbortSignals provided')
   }
 
   if (filtered.length === 1) {

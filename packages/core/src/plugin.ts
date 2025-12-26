@@ -1,10 +1,10 @@
-import type { Async } from '@nmtjs/common'
+import type { MaybePromise } from '@nmtjs/common'
 
 import { kPlugin } from './constants.ts'
 
 export interface Plugin<Type = void, Context = unknown> {
   name: string
-  factory: (context: Context) => Async<Type>
+  factory: (context: Context) => MaybePromise<Type>
   [kPlugin]: any
 }
 

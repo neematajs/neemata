@@ -1,4 +1,4 @@
-import type { Async } from '@nmtjs/common'
+import type { MaybePromise } from '@nmtjs/common'
 import type { Injection, LazyInjectable, Scope } from '@nmtjs/core'
 import type { ConnectionType, ProtocolVersion } from '@nmtjs/protocol'
 import type { ProtocolFormats } from '@nmtjs/protocol/server'
@@ -57,8 +57,10 @@ export interface TransportWorkerStartOptions<
 }
 
 export interface TransportWorker<Type extends ConnectionType = ConnectionType> {
-  start: (params: TransportWorkerParams<Type>) => Async<string>
-  stop: (params: Pick<TransportWorkerParams<Type>, 'formats'>) => Async<void>
+  start: (params: TransportWorkerParams<Type>) => MaybePromise<string>
+  stop: (
+    params: Pick<TransportWorkerParams<Type>, 'formats'>,
+  ) => MaybePromise<void>
   send?: Type extends 'unidirectional'
     ? never
     : (connectionId: string, buffer: ArrayBufferView) => boolean | null
@@ -76,7 +78,7 @@ export interface Transport<
 > {
   proxyable: Proxyable
   injectables?: Injections
-  factory: (options: TransportOptions) => Async<TransportWorker<Type>>
+  factory: (options: TransportOptions) => MaybePromise<TransportWorker<Type>>
 }
 
 export function createTransport<
