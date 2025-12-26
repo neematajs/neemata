@@ -6,13 +6,7 @@ import { t } from '@nmtjs/type'
 
 import { kJobStepKey } from '../constants.ts'
 
-export type AnyJobStep = JobStep<
-  AnyObjectLikeType,
-  AnyObjectLikeType,
-  any,
-  any,
-  any
->
+export type AnyJobStep = JobStep<any, any, any, any, any>
 
 export type JobStepHandler<
   Deps extends Dependencies,

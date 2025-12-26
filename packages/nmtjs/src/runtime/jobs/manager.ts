@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 
 import type { Job, JobType, QueueEventsListener, RedisClient } from 'bullmq'
 import { pick } from '@nmtjs/core'
+import { t } from '@nmtjs/type'
 import {
   Queue,
   QueueEvents,
@@ -12,7 +13,10 @@ import {
 import type { ServerStoreConfig } from '../server/config.ts'
 import type { Store } from '../types.ts'
 import type { AnyJob, JobBackoffOptions } from './job.ts'
+import { JobWorkerPool } from '../enums.ts'
 import { createStoreClient } from '../store/index.ts'
+import { createJob } from './job.ts'
+import { createStep } from './step.ts'
 
 /**
  * Get the dedicated BullMQ queue name for a job
@@ -118,6 +122,7 @@ export class JobManager {
       // @ts-expect-error
       list: this.list.bind(this),
       add: this.add.bind(this),
+      get: this.get.bind(this),
     }
   }
 
@@ -193,6 +198,7 @@ export class JobManager {
 
   async get<T extends AnyJob>(job: T, id: string) {
     const { queue } = this.getJobQueue(job)
+    job.steps
     const bullJob = await queue.getJob(id)
     if (!bullJob) return null
     return this._mapJob(bullJob)

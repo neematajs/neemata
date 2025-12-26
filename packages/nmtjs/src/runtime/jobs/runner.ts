@@ -8,7 +8,7 @@ import type { LifecycleHooks } from '../core/hooks.ts'
 import type { AnyJob } from './job.ts'
 import type { AnyJobStep } from './step.ts'
 import { LifecycleHook } from '../enums.ts'
-import { abortSignal } from '../injectables.ts'
+import { jobAbortSignal } from '../injectables.ts'
 
 export type JobRunnerOptions = { logging?: LoggingOptions }
 
@@ -78,7 +78,7 @@ export class JobRunner<
         .signal,
     )
     await using container = this.container.fork(Scope.Global)
-    await container.provide(abortSignal, signal)
+    await container.provide(jobAbortSignal, signal)
 
     const jobDependencyContext = await container.createContext(job.dependencies)
     const jobData = job.options.data

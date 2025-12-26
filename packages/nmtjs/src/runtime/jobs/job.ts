@@ -11,23 +11,25 @@ import { isJobStep } from './step.ts'
 
 type DefaultObjectType = ObjectType<{}>
 
-export type AnyJobOptions = JobOptions<
-  string,
-  AnyObjectLikeType,
-  AnyObjectLikeType,
-  any,
-  any
->
-export type AnyJob = Job<
-  string,
-  any,
-  any,
-  AnyObjectLikeType,
-  AnyObjectLikeType,
-  AnyJobStep[],
-  Record<string, unknown>,
-  true
->
+type DefaultResultType = Record<string, any>
+
+export type AnyJobOptions = JobOptions<string, any, any, any, any>
+
+export interface AnyJob {
+  _: { data: any; result: any; input: any; output: any }
+  [kJobKey]: true
+  options: AnyJobOptions
+  steps: readonly AnyJobStep[]
+  conditions: Map<number, JobCondition<any, any, any, any>>
+  name: string
+  dependencies: Dependencies
+  input: AnyObjectLikeType
+  output: AnyObjectLikeType
+  afterEachHandler?: JobAfterEachHandler<any, any, any, any>
+  beforeEachHandler?: JobBeforeEachHandler<any, any, any, any>
+  onErrorHandler?: JobOnErrorHandler<any, any, any, any>
+  returnHandler?: JobReturnHandler<any, any, any, any, any>
+}
 
 export type JobBackoffOptions = {
   type: 'fixed' | 'exponential'
@@ -37,7 +39,7 @@ export type JobBackoffOptions = {
 
 export type JobCondition<
   Deps extends Dependencies = {},
-  Result extends Record<string, unknown> = {},
+  Result extends DefaultResultType = {},
   Data = any,
   Input extends AnyObjectLikeType = AnyObjectLikeType,
 > = (params: {
@@ -49,7 +51,7 @@ export type JobCondition<
 
 export type JobReturnHandler<
   Deps extends Dependencies,
-  Result extends Record<string, unknown>,
+  Result extends DefaultResultType,
   Input extends AnyObjectLikeType,
   Output extends AnyObjectLikeType,
   Data,
@@ -71,7 +73,7 @@ export type JobDataHandler<
 
 export type JobAfterEachHandler<
   Deps extends Dependencies,
-  Result extends Record<string, unknown>,
+  Result extends DefaultResultType,
   Input extends AnyObjectLikeType,
   Data,
 > = (params: {
@@ -85,7 +87,7 @@ export type JobAfterEachHandler<
 
 export type JobBeforeEachHandler<
   Deps extends Dependencies,
-  Result extends Record<string, unknown>,
+  Result extends DefaultResultType,
   Input extends AnyObjectLikeType,
   Data,
 > = (params: {
@@ -99,7 +101,7 @@ export type JobBeforeEachHandler<
 
 export type JobOnErrorHandler<
   Deps extends Dependencies,
-  Result extends Record<string, unknown>,
+  Result extends DefaultResultType,
   Input extends AnyObjectLikeType,
   Data,
 > = (params: {
@@ -137,32 +139,40 @@ export interface JobOptions<
 }
 
 export class Job<
-  out Name extends string = string,
+  in out Name extends string = string,
   in out Deps extends Dependencies = {},
   in out Data = any,
   in out Input extends AnyObjectLikeType = DefaultObjectType,
   in out Output extends AnyObjectLikeType = DefaultObjectType,
-  in out Steps extends AnyJobStep[] = [],
-  in out Result extends Record<string, unknown> &
-    t.infer.decode.output<Input> = t.infer.decode.output<Input>,
+  out Steps extends [...AnyJobStep[]] = [],
+  in out Result extends DefaultResultType = {},
   out Return extends boolean = false,
-> {
+> implements AnyJob
+{
   _!: {
     data: Data
-    result: Result
+    result: Result & t.infer.decode.output<Input>
     input: t.infer.decode.output<Input>
     output: t.infer.decode.output<Output>
   };
-  [kJobKey] = true
+  [kJobKey] = true as const
   steps: Steps = [] as unknown as Steps
-  conditions: Map<
-    number,
-    JobCondition<Deps, Result, this['_']['data'], Input>
-  > = new Map()
-  returnHandler?: JobReturnHandler<Deps, Result, Input, Output, Data>
-  afterEachHandler?: JobAfterEachHandler<Deps, Result, Input, Data>
-  beforeEachHandler?: JobBeforeEachHandler<Deps, Result, Input, Data>
-  onErrorHandler?: JobOnErrorHandler<Deps, Result, Input, Data>
+  conditions: Map<number, JobCondition<any, any, any, any>> = new Map()
+  returnHandler?: JobReturnHandler<
+    Deps,
+    this['_']['result'],
+    Input,
+    Output,
+    Data
+  >
+  afterEachHandler?: JobAfterEachHandler<Deps, this['_']['result'], Input, Data>
+  beforeEachHandler?: JobBeforeEachHandler<
+    Deps,
+    this['_']['result'],
+    Input,
+    Data
+  >
+  onErrorHandler?: JobOnErrorHandler<Deps, this['_']['result'], Input, Data>
 
   constructor(
     public options: JobOptions<Name, Input, Output, Deps, Data>,
@@ -189,6 +199,7 @@ export class Job<
     StepInput extends AnyObjectLikeType,
     StepOutput extends AnyObjectLikeType,
     StepDeps extends Dependencies,
+    StepResult,
     Condition extends
       | JobCondition<Deps, Result, this['_']['data'], Input>
       | undefined,
@@ -199,11 +210,11 @@ export class Job<
             StepInput,
             StepOutput,
             StepDeps,
-            Result extends t.infer.decode.output<StepInput>
+            this['_']['result'] extends t.infer.decode.output<StepInput>
               ? t.infer.decode.output<StepOutput>
               : TSError<
                   'Accumulated job result does not satisfy current step input:',
-                  Result
+                  this['_']['result']
                 >,
             this['_']['data']
           >,
@@ -222,7 +233,7 @@ export class Job<
       Data,
       Input,
       Output,
-      [...Steps, JobStep<StepInput, StepOutput, any, any, any>],
+      [...Steps, JobStep<StepInput, StepOutput, StepDeps, StepResult, any>],
       Result &
         (undefined extends Condition
           ? t.infer.decode.output<
@@ -239,8 +250,8 @@ export class Job<
   return(
     ...[handler]: Return extends false
       ? Result extends t.infer.encode.input<Output>
-        ? [JobReturnHandler<Deps, Result, Input, Output, Data>?]
-        : [JobReturnHandler<Deps, Result, Input, Output, Data>]
+        ? [JobReturnHandler<Deps, this['_']['result'], Input, Output, Data>?]
+        : [JobReturnHandler<Deps, this['_']['result'], Input, Output, Data>]
       : [TSError<'Job already has a return statement'>]
   ) {
     if (typeof handler === 'function') {
@@ -262,7 +273,7 @@ export class Job<
 
   afterEach(
     handler: Return extends true
-      ? JobAfterEachHandler<Deps, Result, Input, Data>
+      ? JobAfterEachHandler<Deps, this['_']['result'], Input, Data>
       : TSError<'Job must have a return statement to use afterEach'>,
   ) {
     this.afterEachHandler = handler as any
@@ -271,7 +282,7 @@ export class Job<
 
   beforeEach(
     handler: Return extends true
-      ? JobBeforeEachHandler<Deps, Result, Input, Data>
+      ? JobBeforeEachHandler<Deps, this['_']['result'], Input, Data>
       : TSError<'Job must have a return statement to use beforeEach'>,
   ) {
     this.beforeEachHandler = handler as any
@@ -280,7 +291,7 @@ export class Job<
 
   onError(
     handler: Return extends true
-      ? JobOnErrorHandler<Deps, Result, Input, Data>
+      ? JobOnErrorHandler<Deps, this['_']['result'], Input, Data>
       : TSError<'Job must have a return statement to use onError'>,
   ) {
     this.onErrorHandler = handler as any
