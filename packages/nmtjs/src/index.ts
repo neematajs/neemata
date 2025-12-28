@@ -14,6 +14,7 @@ import {
   createGuard,
   createHook,
   createJob,
+  createJobsRouter,
   createMiddleware,
   createPlugin,
   createProcedure,
@@ -22,6 +23,7 @@ import {
   createStep,
   defineApplication,
   defineServer,
+  jobOperation,
   RuntimeInjectables,
 } from './runtime/index.ts'
 
@@ -54,6 +56,7 @@ export const neemata = {
   job: createJob,
   step: createStep,
   hook: createHook,
+  jobRouter: Object.assign(createJobsRouter, { operation: jobOperation }),
 }
 
 export { c } from '@nmtjs/contract'

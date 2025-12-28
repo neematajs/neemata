@@ -4,19 +4,17 @@ import type { Queue } from 'bullmq'
 import { createBullBoard } from '@bull-board/api'
 import { BullMQAdapter } from '@bull-board/api/bullMQAdapter'
 import { H3Adapter } from '@bull-board/h3'
-import { createApp, createRouter, toNodeListener } from 'h3'
+import { createApp, toNodeListener } from 'h3'
 
 export function createJobsUI(queues: Queue[]) {
   const app = createApp()
-  const router = createRouter()
   const serverAdapter = new H3Adapter()
-  serverAdapter.setBasePath('/')
   createBullBoard({
-    queues: queues.map((q) => new BullMQAdapter(q)),
+    queues: queues.map((q) => new BullMQAdapter(q, { readOnlyMode: true })),
     serverAdapter,
   })
+  const router = serverAdapter.registerHandlers()
   app.use(router)
-  app.use(serverAdapter.registerHandlers())
   return createServer(toNodeListener(app))
 }
 

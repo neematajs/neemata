@@ -1,8 +1,14 @@
+import assert from 'node:assert'
 import { randomUUID } from 'node:crypto'
 
-import type { Job, JobType, QueueEventsListener, RedisClient } from 'bullmq'
+import type {
+  Job,
+  JobState,
+  JobType,
+  QueueEventsListener,
+  RedisClient,
+} from 'bullmq'
 import { pick } from '@nmtjs/core'
-import { t } from '@nmtjs/type'
 import {
   Queue,
   QueueEvents,
@@ -13,10 +19,7 @@ import {
 import type { ServerStoreConfig } from '../server/config.ts'
 import type { Store } from '../types.ts'
 import type { AnyJob, JobBackoffOptions } from './job.ts'
-import { JobWorkerPool } from '../enums.ts'
 import { createStoreClient } from '../store/index.ts'
-import { createJob } from './job.ts'
-import { createStep } from './step.ts'
 
 /**
  * Get the dedicated BullMQ queue name for a job
@@ -61,9 +64,8 @@ export class QueueJobResult<T extends AnyJob = AnyJob> {
   }
 }
 
-export type JobListItem<T extends AnyJob = AnyJob> = Pick<
+export type JobItem<T extends AnyJob = AnyJob> = Pick<
   Job<T['_']['input'], T['_']['output'], T['options']['name']>,
-  | 'id'
   | 'queueName'
   | 'priority'
   | 'progress'
@@ -74,25 +76,33 @@ export type JobListItem<T extends AnyJob = AnyJob> = Pick<
   | 'processedOn'
   | 'finishedOn'
   | 'failedReason'
->
+  | 'stacktrace'
+> & { id: string; status: JobState | 'unknown' }
 
 export interface JobManagerInstance {
   list<T extends AnyJob>(
     job: T,
-    options?: { page?: number; limit?: number; state?: JobType[] },
+    options?: { page?: number; limit?: number; state?: JobState[] },
   ): Promise<{
-    items: JobListItem<T>[]
+    items: JobItem<T>[]
     page: number
     limit: number
     pages: number
     total: number
   }>
-  get<T extends AnyJob>(job: T, id: string): Promise<JobListItem<T> | null>
+  get<T extends AnyJob>(job: T, id: string): Promise<JobItem<T> | null>
   add<T extends AnyJob>(
     job: T,
     data: T['_']['input'],
     options?: QueueJobAddOptions,
   ): Promise<QueueJobResult<T>>
+  retry(
+    job: AnyJob,
+    id: string,
+    options?: { clearState?: boolean },
+  ): Promise<void>
+  remove(job: AnyJob, id: string): Promise<void>
+  cancel(job: AnyJob, id: string): Promise<void>
 }
 
 export type CustomJobsEvents = QueueEventsListener & {
@@ -123,6 +133,9 @@ export class JobManager {
       list: this.list.bind(this),
       add: this.add.bind(this),
       get: this.get.bind(this),
+      retry: this.retry.bind(this),
+      remove: this.remove.bind(this),
+      cancel: this.cancel.bind(this),
     }
   }
 
@@ -192,16 +205,15 @@ export class JobManager {
       (page - 1) * limit,
       page * limit - 1,
     )
-    const items = jobs.map((job) => this._mapJob(job))
+    const items = await Promise.all(jobs.map((job) => this._mapJob(job)))
     return { items, page, limit, pages: totalPages, total: jobsCount }
   }
 
   async get<T extends AnyJob>(job: T, id: string) {
     const { queue } = this.getJobQueue(job)
-    job.steps
     const bullJob = await queue.getJob(id)
     if (!bullJob) return null
-    return this._mapJob(bullJob)
+    return await this._mapJob(bullJob)
   }
 
   async add<T extends AnyJob>(
@@ -239,6 +251,30 @@ export class JobManager {
     return new QueueJobResult({ job, bullJob, events })
   }
 
+  async retry(job: AnyJob, id: string, options?: { clearState?: boolean }) {
+    const { queue } = this.getJobQueue(job)
+    const bullJob = await queue.getJob(id)
+    if (!bullJob) throw new Error(`Job with id [${id}] not found`)
+
+    const state = await bullJob.getState()
+    // For completed jobs, clear state by default so it reruns from scratch
+    // For failed jobs, keep state by default so it resumes from checkpoint
+    const shouldClearState = options?.clearState ?? state === 'completed'
+
+    if (shouldClearState) {
+      await bullJob.updateProgress({})
+    }
+
+    await bullJob.retry()
+  }
+
+  async remove(job: AnyJob, id: string) {
+    const { queue } = this.getJobQueue(job)
+    const bullJob = await queue.getJob(id)
+    if (!bullJob) throw new Error(`Job with id [${id}] not found`)
+    await bullJob.remove()
+  }
+
   async cancel(job: AnyJob, id: string) {
     const { custom, queue } = this.getJobQueue(job)
     const bullJob = await queue.getJob(id)
@@ -271,19 +307,26 @@ export class JobManager {
     return this.getJobQueue(job)
   }
 
-  protected _mapJob(bullJob: Job) {
-    return pick(bullJob, {
-      id: true,
-      queueName: true,
-      priority: true,
-      progress: true,
-      name: true,
-      data: true,
-      returnvalue: true,
-      attemptsMade: true,
-      processedOn: true,
-      finishedOn: true,
-      failedReason: true,
-    })
+  protected async _mapJob(bullJob: Job): Promise<JobItem> {
+    const status = await bullJob.getState()
+    const id = bullJob.id
+    assert(typeof id === 'string', 'Expected job id to be a string')
+    return {
+      ...pick(bullJob, {
+        queueName: true,
+        priority: true,
+        progress: true,
+        name: true,
+        data: true,
+        returnvalue: true,
+        attemptsMade: true,
+        processedOn: true,
+        finishedOn: true,
+        failedReason: true,
+        stacktrace: true,
+      }),
+      id,
+      status,
+    }
   }
 }

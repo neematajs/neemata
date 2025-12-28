@@ -3,6 +3,7 @@ import type { MessagePort } from 'node:worker_threads'
 import { UnrecoverableError } from 'bullmq'
 
 import type { JobWorkerPool } from '../enums.ts'
+import type { StepResultEntry } from '../jobs/runner.ts'
 import type { ServerConfig } from '../server/config.ts'
 import type { ServerPortMessage, ThreadPortMessage } from '../types.ts'
 import { LifecycleHook, WorkerType } from '../enums.ts'
@@ -93,20 +94,22 @@ export class JobWorkerRuntime extends BaseWorkerRuntime {
           }
 
           // Load checkpoint from BullMQ progress for resume support
-          const progress = bullJob.progress as
+          const checkpoint = bullJob.progress as
             | {
                 stepIndex: number
                 result: Record<string, unknown>
-                stepResults: unknown[]
+                stepResults: StepResultEntry[]
+                progress: Record<string, unknown>
               }
             | undefined
 
           const result = await this.jobRunner.runJob(job, task.data, {
             signal: cancellationSignal,
             queueJob: bullJob,
-            result: progress?.result,
-            stepResults: progress?.stepResults,
-            currentStepIndex: progress?.stepIndex ?? 0,
+            result: checkpoint?.result,
+            stepResults: checkpoint?.stepResults,
+            currentStepIndex: checkpoint?.stepIndex ?? 0,
+            progress: checkpoint?.progress,
           })
           this.runtimeOptions.port.postMessage({
             type: 'task',
@@ -141,7 +144,9 @@ export class JobWorkerRuntime extends BaseWorkerRuntime {
     if (this.config.jobs) {
       for (const job of this.config.jobs.jobs.values()) {
         yield job
-        yield* job.steps
+        // we explicitly DO NOT WANT to yield steps here, so per-job container
+        // resolves them independently each time — creates more isolation
+        // yield* job.steps
       }
     }
   }

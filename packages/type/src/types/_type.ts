@@ -2,6 +2,14 @@ import type { BaseTypeAny } from './base.ts'
 
 export * from './any.ts'
 export * from './array.ts'
+export {
+  BaseType,
+  type BaseTypeAny,
+  DefaultType,
+  NeemataTypeError,
+  NullableType,
+  OptionalType,
+} from './base.ts'
 export * from './boolean.ts'
 export * from './custom.ts'
 export * from './date.ts'

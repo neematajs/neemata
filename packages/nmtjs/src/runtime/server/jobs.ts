@@ -184,6 +184,7 @@ export class ApplicationServerJobs {
             case 'queue_job_not_found':
               throw new UnrecoverableError(result.type)
             case 'error':
+              console.error(result.error)
               throw result.error
             default:
               throw new UnrecoverableError('Unknown job task result')
