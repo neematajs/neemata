@@ -79,6 +79,10 @@ export type JobItem<T extends AnyJob = AnyJob> = Pick<
   | 'stacktrace'
 > & { id: string; status: JobState | 'unknown' }
 
+export type JobStepInfo = { label?: string; conditional: boolean }
+
+export type JobInfo = { name: string; steps: JobStepInfo[] }
+
 export interface JobManagerInstance {
   list<T extends AnyJob>(
     job: T,
@@ -91,6 +95,7 @@ export interface JobManagerInstance {
     total: number
   }>
   get<T extends AnyJob>(job: T, id: string): Promise<JobItem<T> | null>
+  getInfo(job: AnyJob): JobInfo
   add<T extends AnyJob>(
     job: T,
     data: T['_']['input'],
@@ -133,6 +138,7 @@ export class JobManager {
       list: this.list.bind(this),
       add: this.add.bind(this),
       get: this.get.bind(this),
+      getInfo: this.getInfo.bind(this),
       retry: this.retry.bind(this),
       remove: this.remove.bind(this),
       cancel: this.cancel.bind(this),
@@ -186,6 +192,16 @@ export class JobManager {
       throw new Error(`Job queue for [${job.options.name}] not found`)
     }
     return entry
+  }
+
+  getInfo(job: AnyJob): JobInfo {
+    return {
+      name: job.options.name,
+      steps: job.steps.map((step, index) => ({
+        label: step.label,
+        conditional: job.conditions.has(index),
+      })),
+    }
   }
 
   async list<T extends AnyJob>(

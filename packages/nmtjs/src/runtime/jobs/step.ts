@@ -28,6 +28,7 @@ export interface JobStep<
   Data = any,
 > extends Dependant {
   [kJobStepKey]: any
+  label?: string
   input: Input
   output: Output
   dependencies: Deps

@@ -37,6 +37,10 @@ export type ListOperationConfig<Deps extends Dependencies = {}> =
 export type GetOperationConfig<Deps extends Dependencies = {}> =
   BaseOperationConfig<Deps>
 
+/** Info operation config (read-only, no hooks) */
+export type InfoOperationConfig<Deps extends Dependencies = {}> =
+  BaseOperationConfig<Deps>
+
 /** Add queue options */
 export type AddQueueOptions = {
   priority?: number
@@ -103,6 +107,7 @@ export type CancelOperationConfig<Deps extends Dependencies = {}> =
 
 /** All operations for a job (false = disabled) */
 export type JobOperations<T extends AnyJob = AnyJob> = {
+  info?: InfoOperationConfig<any> | false
   list?: ListOperationConfig<any> | false
   get?: GetOperationConfig<any> | false
   add?: AddOperationConfig<T, any> | false
@@ -113,6 +118,7 @@ export type JobOperations<T extends AnyJob = AnyJob> = {
 
 /** Default operations config */
 export type DefaultOperations = {
+  info?: InfoOperationConfig<any> | false
   list?: ListOperationConfig<any> | false
   get?: GetOperationConfig<any> | false
   add?: AddOperationConfig<AnyJob, any> | false
@@ -144,7 +150,7 @@ type JobItemSchemaType<T extends AnyJob> = t.ObjectType<{
   progress: t.AnyType
   name: t.StringType
   data: T['input']
-  returnvalue: OptionalType<T['output']>
+  returnvalue: OptionalType<NullableType<T['output']>>
   attemptsMade: t.NumberType
   processedOn: OptionalType<t.NumberType>
   finishedOn: OptionalType<t.NumberType>
@@ -165,6 +171,9 @@ type ListOutputSchemaType<T extends AnyJob> = t.ObjectType<{
 /** Type-level representation of createGetOutputSchema output */
 type GetOutputSchemaType<T extends AnyJob> = NullableType<JobItemSchemaType<T>>
 
+/** Type-level representation of infoOutputSchema */
+type InfoOutputSchemaType = typeof infoOutputSchema
+
 /** Type-level representation of createAddInputSchema output */
 type AddInputSchemaType<T extends AnyJob> = t.ObjectType<{
   data: T['input']
@@ -175,6 +184,7 @@ type AddInputSchemaType<T extends AnyJob> = t.ObjectType<{
 
 /** Operations contract for a single job - now properly typed per job */
 type JobOperationsProcedures<T extends AnyJob> = {
+  info: TProcedureContract<NeverType, InfoOutputSchemaType>
   list: TProcedureContract<typeof listInputSchema, ListOutputSchemaType<T>>
   get: TProcedureContract<typeof getInputSchema, GetOutputSchemaType<T>>
   add: TProcedureContract<AddInputSchemaType<T>, typeof addOutputSchema>
@@ -224,6 +234,14 @@ const retryInputSchema = t.object({
 /** Input schema for cancel/remove operations */
 const idInputSchema = t.object({ id: t.string() })
 
+/** Output schema for info operation */
+const infoOutputSchema = t.object({
+  name: t.string(),
+  steps: t.array(
+    t.object({ label: t.string().optional(), conditional: t.boolean() }),
+  ),
+})
+
 /** JobItem schema for list/get responses - typed per job */
 function createJobItemSchema<T extends AnyJob>(job: T): JobItemSchemaType<T> {
   return t.object({
@@ -233,7 +251,7 @@ function createJobItemSchema<T extends AnyJob>(job: T): JobItemSchemaType<T> {
     progress: t.any(),
     name: t.string(),
     data: job.input,
-    returnvalue: job.output.optional(),
+    returnvalue: job.output.nullish(),
     attemptsMade: t.number(),
     processedOn: t.number().optional(),
     finishedOn: t.number().optional(),
@@ -350,6 +368,33 @@ export function jobOperation<
 type JobManagerDeps = {
   jobManager: typeof jobManager
   logger: typeof CoreInjectables.logger
+}
+
+function createInfoProcedure(
+  job: AnyJob,
+  config: InfoOperationConfig<any> = {},
+  shared: { guards?: AnyGuard[]; middlewares?: AnyMiddleware[] },
+): AnyProcedure {
+  const allGuards = [...(shared.guards ?? []), ...(config.guards ?? [])]
+  const allMiddlewares = [
+    ...(shared.middlewares ?? []),
+    ...(config.middlewares ?? []),
+  ]
+
+  const deps: JobManagerDeps = { jobManager, logger: CoreInjectables.logger }
+
+  return createProcedure({
+    output: infoOutputSchema,
+    dependencies: { ...deps, ...(config.dependencies ?? {}) },
+    guards: allGuards,
+    middlewares: allMiddlewares,
+    metadata: config.metadata,
+    timeout: config.timeout,
+    handler: (ctx: DependencyContext<JobManagerDeps>) => {
+      ctx.logger.trace({ jobName: job.options.name }, 'Getting job info')
+      return ctx.jobManager.getInfo(job)
+    },
+  })
 }
 
 function createListProcedure(
@@ -677,7 +722,15 @@ function mergeOperations(
 ): JobOperations {
   const result: JobOperations = {}
 
-  const ops = ['list', 'get', 'add', 'retry', 'cancel', 'remove'] as const
+  const ops = [
+    'info',
+    'list',
+    'get',
+    'add',
+    'retry',
+    'cancel',
+    'remove',
+  ] as const
 
   for (const op of ops) {
     const override = overrides[op]
@@ -778,6 +831,14 @@ export function createJobsRouter<const Jobs extends Record<string, AnyJob>>(
     const jobRoutes: Record<string, AnyProcedure> = {}
 
     // Generate each enabled operation
+    if (operations.info !== false) {
+      jobRoutes.info = createInfoProcedure(
+        job,
+        operations.info as InfoOperationConfig,
+        shared,
+      )
+    }
+
     if (operations.list !== false) {
       jobRoutes.list = createListProcedure(
         job,
