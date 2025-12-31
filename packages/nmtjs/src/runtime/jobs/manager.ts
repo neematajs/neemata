@@ -8,7 +8,6 @@ import type {
   QueueEventsListener,
   RedisClient,
 } from 'bullmq'
-import { pick } from '@nmtjs/core'
 import {
   Queue,
   QueueEvents,
@@ -19,6 +18,7 @@ import {
 import type { ServerStoreConfig } from '../server/config.ts'
 import type { Store } from '../types.ts'
 import type { AnyJob, JobBackoffOptions } from './job.ts'
+import type { JobDefinitionInfo, JobProgressCheckpoint } from './types.ts'
 import { createStoreClient } from '../store/index.ts'
 
 /**
@@ -64,38 +64,29 @@ export class QueueJobResult<T extends AnyJob = AnyJob> {
   }
 }
 
-export type JobItem<T extends AnyJob = AnyJob> = Pick<
-  Job<T['_']['input'], T['_']['output'], T['options']['name']>,
-  | 'queueName'
-  | 'priority'
-  | 'progress'
-  | 'name'
-  | 'data'
-  | 'returnvalue'
-  | 'attemptsMade'
-  | 'processedOn'
-  | 'finishedOn'
-  | 'failedReason'
-  | 'stacktrace'
-> & { id: string; status: JobState | 'unknown' }
+export type { JobDefinitionInfo, JobItem, JobStepInfo } from './types.ts'
 
-export type JobStepInfo = { label?: string; conditional: boolean }
+import type { JobItem, JobStatus } from './types.ts'
 
-export type JobInfo = { name: string; steps: JobStepInfo[] }
+/** Job item type with generic job typing for internal use */
+export type JobItemOf<T extends AnyJob = AnyJob> = JobItem<
+  T['_']['input'],
+  T['_']['output']
+>
 
 export interface JobManagerInstance {
   list<T extends AnyJob>(
     job: T,
-    options?: { page?: number; limit?: number; state?: JobState[] },
+    options?: { page?: number; limit?: number; status?: JobStatus[] },
   ): Promise<{
-    items: JobItem<T>[]
+    items: JobItemOf<T>[]
     page: number
     limit: number
     pages: number
     total: number
   }>
-  get<T extends AnyJob>(job: T, id: string): Promise<JobItem<T> | null>
-  getInfo(job: AnyJob): JobInfo
+  get<T extends AnyJob>(job: T, id: string): Promise<JobItemOf<T> | null>
+  getInfo(job: AnyJob): JobDefinitionInfo
   add<T extends AnyJob>(
     job: T,
     data: T['_']['input'],
@@ -194,7 +185,7 @@ export class JobManager {
     return entry
   }
 
-  getInfo(job: AnyJob): JobInfo {
+  getInfo(job: AnyJob): JobDefinitionInfo {
     return {
       name: job.options.name,
       steps: job.steps.map((step, index) => ({
@@ -209,15 +200,17 @@ export class JobManager {
     {
       limit = 20,
       page = 1,
-      state = [],
-    }: { page?: number; limit?: number; state?: JobType[] },
+      status = [],
+    }: { page?: number; limit?: number; status?: JobStatus[] },
   ) {
     const { queue } = this.getJobQueue(job)
-    const jobsCount = await queue.getJobCountByTypes(...state)
+    // Convert vendor-agnostic status to BullMQ JobType for querying
+    const bullJobTypes = status.flatMap((s) => this._mapStatusToJobType(s))
+    const jobsCount = await queue.getJobCountByTypes(...bullJobTypes)
     const totalPages = Math.ceil(jobsCount / limit)
     if (page > totalPages) return []
     const jobs = await queue.getJobs(
-      state,
+      bullJobTypes,
       (page - 1) * limit,
       page * limit - 1,
     )
@@ -323,26 +316,77 @@ export class JobManager {
     return this.getJobQueue(job)
   }
 
-  protected async _mapJob(bullJob: Job): Promise<JobItem> {
-    const status = await bullJob.getState()
+  protected async _mapJob(bullJob: Job): Promise<JobItemOf> {
+    const bullState = await bullJob.getState()
     const id = bullJob.id
     assert(typeof id === 'string', 'Expected job id to be a string')
+
+    // Map BullMQ state to vendor-agnostic status
+    const status = this._mapStatus(bullState)
+
+    // Extract progress only if it's a valid checkpoint object
+    const progress =
+      typeof bullJob.progress === 'object' &&
+      bullJob.progress !== null &&
+      'stepIndex' in bullJob.progress
+        ? (bullJob.progress as JobProgressCheckpoint)
+        : undefined
+
     return {
-      ...pick(bullJob, {
-        queueName: true,
-        priority: true,
-        progress: true,
-        name: true,
-        data: true,
-        returnvalue: true,
-        attemptsMade: true,
-        processedOn: true,
-        finishedOn: true,
-        failedReason: true,
-        stacktrace: true,
-      }),
       id,
+      name: bullJob.name,
+      queue: bullJob.queueName,
+      data: bullJob.data,
+      output: bullJob.returnvalue,
       status,
+      priority: bullJob.priority,
+      progress,
+      attempts: bullJob.attemptsMade,
+      startedAt: bullJob.processedOn,
+      completedAt: bullJob.finishedOn,
+      error: bullJob.failedReason,
+      stacktrace: bullJob.stacktrace,
+    }
+  }
+
+  /** Map BullMQ JobState to vendor-agnostic JobStatus */
+  protected _mapStatus(state: JobState | 'unknown'): JobStatus {
+    switch (state) {
+      case 'waiting':
+      case 'prioritized':
+      case 'waiting-children':
+        return 'pending'
+      case 'active':
+        return 'active'
+      case 'completed':
+        return 'completed'
+      case 'failed':
+        return 'failed'
+      case 'delayed':
+        return 'delayed'
+      default:
+        return 'unknown'
+    }
+  }
+
+  /** Map vendor-agnostic JobStatus to BullMQ JobType for queries */
+  protected _mapStatusToJobType(status: JobStatus): JobType[] {
+    switch (status) {
+      case 'pending':
+        return ['waiting', 'prioritized', 'waiting-children']
+      case 'active':
+        return ['active']
+      case 'completed':
+        return ['completed']
+      case 'failed':
+        return ['failed']
+      case 'delayed':
+        return ['delayed']
+      case 'cancelled':
+        return [] // BullMQ doesn't have a cancelled state
+      case 'unknown':
+      default:
+        return []
     }
   }
 }

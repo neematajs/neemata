@@ -203,6 +203,8 @@ export class ApplicationServerJobs {
 
   async stop() {
     const { logger } = this.params
+    // TODO: make configurable
+    const closeTimeout = 10_000 // 10 seconds timeout for graceful close
 
     if (this.ui) {
       await new Promise<void>((resolve) => {
@@ -211,6 +213,32 @@ export class ApplicationServerJobs {
         logger.warn({ error }, 'Failed to stop Jobs UI server')
       })
     }
+
+    // Stop accepting new jobs first.
+    await Promise.all(
+      [...this.queueWorkers].map(async (worker) => {
+        try {
+          // Try graceful close with timeout
+          const closePromise = worker.close()
+          const timeoutPromise = new Promise<'timeout'>((resolve) =>
+            setTimeout(() => resolve('timeout'), closeTimeout),
+          )
+
+          const result = await Promise.race([closePromise, timeoutPromise])
+
+          if (result === 'timeout') {
+            logger.warn(
+              { worker: worker.name },
+              'Worker close timed out, forcing close',
+            )
+            await worker.close(true)
+          }
+        } catch (error) {
+          logger.warn({ error }, 'Failed to close BullMQ worker')
+        }
+      }),
+    )
+    this.queueWorkers.clear()
 
     await Promise.all(
       this.uiQueues.map(async (queue) => {
@@ -223,18 +251,6 @@ export class ApplicationServerJobs {
     )
     this.uiQueues = []
     this.ui = undefined
-
-    // Stop accepting new jobs first.
-    await Promise.all(
-      [...this.queueWorkers].map(async (worker) => {
-        try {
-          await worker.close()
-        } catch (error) {
-          logger.warn({ error }, 'Failed to close BullMQ worker')
-        }
-      }),
-    )
-    this.queueWorkers.clear()
 
     await Promise.all(
       Array.from(this.pools.values()).map(async (pool) => {

@@ -2,6 +2,7 @@ import { createLazyInjectable, Scope } from '@nmtjs/core'
 
 import type { JobWorkerPool, WorkerType } from './enums.ts'
 import type { JobManagerInstance } from './jobs/manager.ts'
+import type { JobExecutionContext, SaveJobProgress } from './jobs/types.ts'
 import type {
   PubSubAdapterType,
   PubSubPublish,
@@ -49,6 +50,16 @@ export const jobAbortSignal = createLazyInjectable<AbortSignal>(
   'JobAbortSignal',
 )
 
+export const saveJobProgress = createLazyInjectable<SaveJobProgress>(
+  Scope.Global,
+  'SaveJobProgress',
+)
+
+export const currentJobInfo = createLazyInjectable<JobExecutionContext>(
+  Scope.Global,
+  'CurrentJobInfo',
+)
+
 export const RuntimeInjectables = {
   pubSubAdapter,
   pubSubPublish,
@@ -58,4 +69,6 @@ export const RuntimeInjectables = {
   workerType,
   jobWorkerPool,
   jobAbortSignal,
+  saveJobProgress,
+  currentJobInfo,
 }

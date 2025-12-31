@@ -3,7 +3,6 @@ import type { TProcedureContract, TRouterContract } from '@nmtjs/contract'
 import type { Dependencies, DependencyContext, Metadata } from '@nmtjs/core'
 import type { NullableType, OptionalType } from '@nmtjs/type'
 import type { NeverType } from '@nmtjs/type/never'
-import type { JobState } from 'bullmq'
 import { CoreInjectables } from '@nmtjs/core'
 import { t } from '@nmtjs/type'
 
@@ -12,6 +11,7 @@ import type { AnyMiddleware } from '../application/api/middlewares.ts'
 import type { AnyProcedure } from '../application/api/procedure.ts'
 import type { AnyRouter, Router } from '../application/api/router.ts'
 import type { AnyJob } from './job.ts'
+import type { JobStatus } from './types.ts'
 import { createProcedure } from '../application/api/procedure.ts'
 import { createRouter } from '../application/api/router.ts'
 import { jobManager } from '../injectables.ts'
@@ -142,21 +142,35 @@ export type CreateJobsRouterOptions<Jobs extends Record<string, AnyJob>> = {
 // Router Contract Types
 // ============================================================================
 
+/** Type-level schema for JobProgressCheckpoint - typed per job */
+type JobProgressCheckpointSchemaType<T extends AnyJob> = t.ObjectType<{
+  stepIndex: t.NumberType
+  stepLabel: OptionalType<t.StringType>
+  result: t.RecordType<t.StringType, t.AnyType>
+  stepResults: t.ArrayType<
+    t.ObjectType<{
+      data: NullableType<t.RecordType<t.StringType, t.AnyType>>
+      duration: t.NumberType
+    }>
+  >
+  progress: T['progress']
+}>
+
 /** Type-level representation of createJobItemSchema output */
 type JobItemSchemaType<T extends AnyJob> = t.ObjectType<{
   id: t.StringType
-  queueName: t.StringType
-  priority: OptionalType<t.NumberType>
-  progress: t.AnyType
   name: t.StringType
+  queue: t.StringType
   data: T['input']
-  returnvalue: OptionalType<NullableType<T['output']>>
-  attemptsMade: t.NumberType
-  processedOn: OptionalType<t.NumberType>
-  finishedOn: OptionalType<t.NumberType>
-  failedReason: OptionalType<t.StringType>
-  stacktrace: OptionalType<t.ArrayType<t.StringType>>
+  output: OptionalType<NullableType<T['output']>>
   status: t.StringType
+  priority: OptionalType<t.NumberType>
+  progress: OptionalType<JobProgressCheckpointSchemaType<T>>
+  attempts: t.NumberType
+  startedAt: OptionalType<t.NumberType>
+  completedAt: OptionalType<t.NumberType>
+  error: OptionalType<t.StringType>
+  stacktrace: OptionalType<t.ArrayType<t.StringType>>
 }>
 
 /** Type-level representation of createListOutputSchema output */
@@ -216,7 +230,7 @@ export type JobsRouter<Jobs extends Record<string, AnyJob>> = Router<
 const listInputSchema = t.object({
   page: t.number().optional(),
   limit: t.number().optional(),
-  state: t.array(t.string()).optional(),
+  status: t.array(t.string()).optional(),
 })
 
 /** Input schema for get operation */
@@ -242,22 +256,41 @@ const infoOutputSchema = t.object({
   ),
 })
 
+/** Schema for step result entry */
+const stepResultEntrySchema = t.object({
+  data: t.record(t.string(), t.any()).nullable(),
+  duration: t.number(),
+})
+
+/** Creates JobProgressCheckpoint schema for a specific job */
+function createJobProgressCheckpointSchema<T extends AnyJob>(
+  job: T,
+): JobProgressCheckpointSchemaType<T> {
+  return t.object({
+    stepIndex: t.number(),
+    stepLabel: t.string().optional(),
+    result: t.record(t.string(), t.any()),
+    stepResults: t.array(stepResultEntrySchema),
+    progress: job.progress,
+  })
+}
+
 /** JobItem schema for list/get responses - typed per job */
 function createJobItemSchema<T extends AnyJob>(job: T): JobItemSchemaType<T> {
   return t.object({
     id: t.string(),
-    queueName: t.string(),
-    priority: t.number().optional(),
-    progress: t.any(),
     name: t.string(),
+    queue: t.string(),
     data: job.input,
-    returnvalue: job.output.nullish(),
-    attemptsMade: t.number(),
-    processedOn: t.number().optional(),
-    finishedOn: t.number().optional(),
-    failedReason: t.string().optional(),
-    stacktrace: t.array(t.string()).optional(),
+    output: job.output.nullish(),
     status: t.string(),
+    priority: t.number().optional(),
+    progress: createJobProgressCheckpointSchema(job).optional(),
+    attempts: t.number(),
+    startedAt: t.number().optional(),
+    completedAt: t.number().optional(),
+    error: t.string().optional(),
+    stacktrace: t.array(t.string()).optional(),
   })
 }
 
@@ -424,14 +457,14 @@ function createListProcedure(
           jobName: job.options.name,
           page: input.page,
           limit: input.limit,
-          state: input.state,
+          status: input.status,
         },
         'Listing jobs',
       )
       const result = await ctx.jobManager.list(job, {
         page: input.page,
         limit: input.limit,
-        state: input.state as JobState[],
+        status: input.status as JobStatus[],
       })
       ctx.logger.debug(
         { jobName: job.options.name, total: result.total, pages: result.pages },
