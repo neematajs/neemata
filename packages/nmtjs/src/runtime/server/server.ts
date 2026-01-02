@@ -1,49 +1,64 @@
-import type EventEmitter from 'node:events'
-import type { Worker } from 'node:worker_threads'
-
 import type { Logger } from '@nmtjs/core'
 import { createLogger } from '@nmtjs/core'
 
-import type {
-  Store,
-  ThreadPortMessageTypes,
-  WorkerThreadError,
-} from '../types.ts'
+import type { Store } from '../types.ts'
 import type { ServerConfig } from './config.ts'
+import type { ErrorPolicy } from './error-policy.ts'
+import type { ManagedWorkerConfig } from './managed-worker.ts'
+import type {
+  ApplicationServerRunOptions,
+  ApplicationServerWorkerConfig,
+} from './types.ts'
+import type {
+  ManagedWorkerFactory,
+  WorkerPoolConfig,
+  WorkerPoolFactory,
+} from './worker-pool.ts'
 import { createStoreClient } from '../store/index.ts'
 import { ApplicationServerApplications } from './applications.ts'
+import { DevErrorPolicy } from './error-policy.ts'
 import { ApplicationServerJobs } from './jobs.ts'
+import { ManagedWorker } from './managed-worker.ts'
 import { ApplicationServerProxy } from './proxy.ts'
+import { WorkerPool } from './worker-pool.ts'
 
-export type ApplicationServerRunOptions = {
-  applications: string[]
-  scheduler: boolean
-  jobs: boolean
-}
+// Re-export types for backwards compatibility
+export type {
+  ApplicationServerRunOptions,
+  ApplicationServerWorkerConfig,
+} from './types.ts'
 
-export type ApplicationWorkerReadyEvent = {
-  application: string
-  threadId: number
-  hosts?: ThreadPortMessageTypes['ready']['hosts']
-}
+/**
+ * Default factory for creating ManagedWorker instances.
+ */
+export const defaultWorkerFactory: ManagedWorkerFactory = (
+  config: ManagedWorkerConfig,
+  policy: ErrorPolicy,
+  logger: Logger,
+) => new ManagedWorker(config, policy, logger)
 
-export type ApplicationWorkerErrorEvent = {
-  application: string
-  threadId: number
-  error: WorkerThreadError
-}
+/**
+ * Default factory for creating WorkerPool instances.
+ */
+export const defaultPoolFactory: WorkerPoolFactory = (
+  config: WorkerPoolConfig,
+  policy: ErrorPolicy,
+  workerFactory: ManagedWorkerFactory,
+  logger: Logger,
+) => new WorkerPool(config, policy, workerFactory, logger)
 
-export type ApplicationServerWorkerConfig = {
-  path: string
-  workerData?: any
-  worker?: (worker: Worker) => any
-  events?: EventEmitter<{
-    worker: [Worker]
-    'worker-ready': [ApplicationWorkerReadyEvent]
-    'worker-error': [ApplicationWorkerErrorEvent]
-  }>
-}
-
+/**
+ * ApplicationServer is the main server orchestrator.
+ *
+ * It manages:
+ * - Application worker pools
+ * - Job runner pools
+ * - Reverse proxy
+ * - Store connections
+ *
+ * The server integrates with ErrorPolicy for proper error handling
+ * and uses ManagedWorker for worker lifecycle management.
+ */
 export class ApplicationServer {
   logger: Logger
 
@@ -65,6 +80,9 @@ export class ApplicationServer {
       scheduler: false,
       jobs: Boolean(config.jobs?.jobs.size),
     },
+    readonly errorPolicy: ErrorPolicy = DevErrorPolicy,
+    readonly workerFactory: ManagedWorkerFactory = defaultWorkerFactory,
+    readonly poolFactory: WorkerPoolFactory = defaultPoolFactory,
   ) {
     this.logger = createLogger(config.logger, 'Server')
     this.logger.trace(
@@ -74,7 +92,7 @@ export class ApplicationServer {
   }
 
   async start() {
-    const { config, logger } = this
+    const { config, logger, errorPolicy, workerFactory, poolFactory } = this
     logger.info('Starting application server...')
 
     if (config.store) {
@@ -89,6 +107,9 @@ export class ApplicationServer {
       serverConfig: this.config,
       applicationsConfig: this.applicationsConfig,
       applications: this.runOptions.applications,
+      errorPolicy,
+      workerFactory,
+      poolFactory,
     })
 
     if (this.runOptions.jobs) {
@@ -103,6 +124,9 @@ export class ApplicationServer {
         workerConfig: this.workerConfig,
         serverConfig: this.config,
         store: this.store,
+        errorPolicy,
+        workerFactory,
+        poolFactory,
       })
     }
 
@@ -151,5 +175,14 @@ export class ApplicationServer {
     }
 
     this.logger.info('Application server stopped')
+  }
+
+  /**
+   * Restart failed workers across all pools.
+   * Called when HMR update comes in and workers may have failed.
+   * @returns Number of workers that were restarted
+   */
+  async restartFailedWorkers(): Promise<number> {
+    return (await this.applications?.restartFailedWorkers()) ?? 0
   }
 }

@@ -1,35 +1,51 @@
-import { EventEmitter } from 'node:events'
+import EventEmitter from 'node:events'
 
 import type { Logger } from '@nmtjs/core'
 import type { ProxyableTransportType } from '@nmtjs/gateway'
 
 import type { ThreadPortMessageTypes, WorkerThreadError } from '../types.ts'
 import type { ServerApplicationConfig, ServerConfig } from './config.ts'
-import type { Thread } from './pool.ts'
+import type { ErrorPolicy } from './error-policy.ts'
+import type { ManagedWorker } from './managed-worker.ts'
+import type { ApplicationServerWorkerConfig } from './types.ts'
 import type {
-  ApplicationServerWorkerConfig,
-  ApplicationWorkerErrorEvent,
-  ApplicationWorkerReadyEvent,
-} from './server.ts'
-import { Pool } from './pool.ts'
+  ManagedWorkerFactory,
+  WorkerPool,
+  WorkerPoolConfig,
+  WorkerPoolFactory,
+} from './worker-pool.ts'
+import { WorkerType } from '../enums.ts'
 
 export type ApplicationProxyUpstream = {
   type: ProxyableTransportType
   url: string
 }
 
+/**
+ * ApplicationServerApplications manages all application worker pools.
+ *
+ * Changes from the old Pool-based implementation:
+ * - Uses WorkerPool for each application (isolated failure domains)
+ * - Uses ManagedWorker for restart logic and state tracking
+ * - Integrates with ErrorPolicy for restart decisions
+ * - Proper health tracking per application
+ */
 export class ApplicationServerApplications extends EventEmitter<{
   add: [application: string, upstream: ApplicationProxyUpstream]
   remove: [application: string, upstream: ApplicationProxyUpstream]
 }> {
-  pool: Pool
+  /** Worker pools per application */
+  private pools = new Map<string, WorkerPool>()
 
+  /** Upstreams for proxy routing */
   protected readonly upstreams = new Map<
     string,
     Map<string, { upstream: ApplicationProxyUpstream; count: number }>
   >()
-  protected readonly upstreamsByThread = new WeakMap<
-    Thread,
+
+  /** Track upstreams by worker for cleanup */
+  protected readonly upstreamsByWorker = new WeakMap<
+    ManagedWorker,
     Array<{ application: string; key: string }>
   >()
 
@@ -43,23 +59,32 @@ export class ApplicationServerApplications extends EventEmitter<{
         { type: 'neemata' | 'custom'; specifier: string }
       >
       serverConfig: ServerConfig
+      errorPolicy: ErrorPolicy
+      workerFactory: ManagedWorkerFactory
+      poolFactory: WorkerPoolFactory
     },
   ) {
     super()
-    this.pool = new Pool({
-      path: this.params.workerConfig.path,
-      worker: this.params.workerConfig.worker,
-      workerData: { ...this.params.workerConfig.workerData },
-    })
   }
 
   get appsNames() {
     return this.params.applications
   }
 
+  /**
+   * Start all application workers.
+   */
   async start() {
-    const { logger, applications, applicationsConfig, serverConfig } =
-      this.params
+    const {
+      logger,
+      applications,
+      applicationsConfig,
+      serverConfig,
+      workerConfig,
+      errorPolicy,
+      workerFactory,
+      poolFactory,
+    } = this.params
 
     for (const applicationName of applications) {
       const applicationPath = applicationsConfig[applicationName]
@@ -82,22 +107,33 @@ export class ApplicationServerApplications extends EventEmitter<{
         `Spinning [${threadsConfig.length}] workers for [${applicationName}] application...`,
       )
 
-      for (let i = 0; i < threadsConfig.length; i++) {
-        const thread = this.pool.add({
-          index: i,
-          name: `application-${applicationName}`,
-          workerData: {
-            runtime: {
-              type: 'application',
-              name: applicationName,
-              path: applicationPath.specifier,
-              transportsData: threadsConfig[i],
-            },
-          },
-        })
+      // Create a WorkerPool for this application
+      const poolConfig: WorkerPoolConfig = {
+        name: `application-${applicationName}`,
+        workerType: WorkerType.Application,
+        path: workerConfig.path,
+        workerData: { ...workerConfig.workerData },
+        onWorker: workerConfig.worker,
+      }
 
-        thread.on('ready', ({ hosts }) => {
-          this.removeThreadUpstreams(thread)
+      const pool = poolFactory(poolConfig, errorPolicy, workerFactory, logger)
+
+      // Add workers to the pool
+      for (let i = 0; i < threadsConfig.length; i++) {
+        const workerData = {
+          runtime: {
+            type: 'application',
+            name: applicationName,
+            path: applicationPath.specifier,
+            transportsData: threadsConfig[i],
+          },
+        }
+
+        const worker = pool.add(workerData, i)
+
+        // Handle worker ready - update upstreams
+        worker.on('ready', (hosts) => {
+          this.removeWorkerUpstreams(worker)
 
           const keys: Array<{ application: string; key: string }> = []
           const sanitizedHosts: ThreadPortMessageTypes['ready']['hosts'] = []
@@ -121,37 +157,60 @@ export class ApplicationServerApplications extends EventEmitter<{
             }
           }
 
-          this.upstreamsByThread.set(thread, keys)
-
-          this.emitWorkerReady({
-            application: applicationName,
-            threadId: thread.worker.threadId,
-            hosts: sanitizedHosts.length ? sanitizedHosts : undefined,
-          })
+          this.upstreamsByWorker.set(worker, keys)
         })
 
-        thread.on('error', (error: WorkerThreadError) => {
-          this.emitWorkerError({
-            application: applicationName,
-            threadId: thread.worker.threadId,
-            error,
-          })
-          this.removeThreadUpstreams(thread)
+        // Handle worker error - clean up upstreams
+        worker.on('error', (_error: WorkerThreadError) => {
+          this.removeWorkerUpstreams(worker)
         })
 
-        thread.worker.once('exit', () => {
-          this.removeThreadUpstreams(thread)
+        // Handle worker state changes for upstream cleanup
+        worker.on('state-change', (from, to) => {
+          if (to === 'stopping' || to === 'stopped' || to === 'error') {
+            this.removeWorkerUpstreams(worker)
+          }
         })
       }
+
+      this.pools.set(applicationName, pool)
     }
 
-    await this.pool.start()
+    // Start all pools
+    await Promise.all([...this.pools.values()].map((p) => p.startAll()))
   }
 
+  /**
+   * Stop all application workers.
+   */
   async stop() {
-    await this.pool.stop()
+    await Promise.all([...this.pools.values()].map((p) => p.stopAll()))
+    this.pools.clear()
   }
 
+  /**
+   * Restart failed workers across all pools.
+   * Called when HMR update comes in and workers may have failed.
+   * @returns Number of workers that were restarted
+   */
+  async restartFailedWorkers(): Promise<number> {
+    let total = 0
+    for (const pool of this.pools.values()) {
+      total += await pool.restartFailedWorkers()
+    }
+    return total
+  }
+
+  /**
+   * Get pool for an application.
+   */
+  getPool(applicationName: string): WorkerPool | undefined {
+    return this.pools.get(applicationName)
+  }
+
+  /**
+   * Add an upstream for proxy routing.
+   */
   protected addUpstream(
     application: string,
     key: string,
@@ -173,10 +232,13 @@ export class ApplicationServerApplications extends EventEmitter<{
     current.count++
   }
 
-  protected removeThreadUpstreams(thread: Thread) {
-    const keys = this.upstreamsByThread.get(thread)
+  /**
+   * Remove upstreams associated with a worker.
+   */
+  protected removeWorkerUpstreams(worker: ManagedWorker) {
+    const keys = this.upstreamsByWorker.get(worker)
     if (!keys) return
-    this.upstreamsByThread.delete(thread)
+    this.upstreamsByWorker.delete(worker)
 
     for (const { application, key } of keys) {
       const appUpstreams = this.upstreams.get(application)
@@ -192,19 +254,5 @@ export class ApplicationServerApplications extends EventEmitter<{
         this.upstreams.delete(application)
       }
     }
-  }
-
-  protected emitWorkerReady(event: ApplicationWorkerReadyEvent) {
-    this.params.workerConfig.events?.emit('worker-ready', event)
-  }
-
-  protected emitWorkerError(event: ApplicationWorkerErrorEvent) {
-    this.params.logger.error(
-      new Error(
-        `Worker [${event.application}] thread ${event.threadId} error`,
-        { cause: event.error },
-      ),
-    )
-    this.params.workerConfig.events?.emit('worker-error', event)
   }
 }

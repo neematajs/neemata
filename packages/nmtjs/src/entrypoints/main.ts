@@ -2,15 +2,21 @@ import type { Worker } from 'node:worker_threads'
 import EventEmitter from 'node:events'
 import { fileURLToPath } from 'node:url'
 
-import type {
-  ApplicationWorkerErrorEvent,
-  ApplicationWorkerReadyEvent,
-  ServerConfig,
-} from 'nmtjs/runtime'
+import type { ServerConfig } from 'nmtjs/runtime'
 import type { ViteDevServer } from 'vite'
-import { ApplicationServer, isServerConfig } from 'nmtjs/runtime'
+import { createLogger } from '@nmtjs/core'
+import {
+  ApplicationServer,
+  defaultPoolFactory,
+  defaultWorkerFactory,
+  isServerConfig,
+} from 'nmtjs/runtime'
 
-import type { WorkerServerEventMap as BaseWorkerServerEventMap } from '../vite/servers/worker.ts'
+import type { WorkerServerEventMap } from '../vite/servers/worker.ts'
+import { createRuntimeEnvironment } from '../runtime/server/environment.ts'
+import { getErrorPolicy } from '../runtime/server/error-policy.ts'
+import { HMRCoordinator } from '../runtime/server/hmr-coordinator.ts'
+import { ServerLifecycle } from '../runtime/server/lifecycle.ts'
 
 declare global {
   const __VITE_CONFIG__: string
@@ -33,35 +39,85 @@ const applicationsConfig: Record<
   { type: 'neemata' | 'custom'; specifier: string }
 > = __APPLICATIONS_CONFIG__ ? JSON.parse(__APPLICATIONS_CONFIG__) : {}
 
-type WorkerEventMap = BaseWorkerServerEventMap & {
-  'worker-error': [ApplicationWorkerErrorEvent]
-  'worker-ready': [ApplicationWorkerReadyEvent]
+// Runtime environment setup
+const mode = _vite?.mode === 'development' ? 'development' : 'production'
+const isDev = mode === 'development'
+const errorPolicy = getErrorPolicy(mode)
+
+// Logger for main process (created lazily with config-based level)
+let logger: ReturnType<typeof createLogger>
+
+function getLogger(): ReturnType<typeof createLogger> {
+  if (!logger) {
+    // Use server config's logger options if available, otherwise default based on mode
+    const loggerOptions = currentServerConfig?.logger ?? {
+      pinoOptions: { level: isDev ? 'debug' : 'info' },
+    }
+    logger = createLogger(loggerOptions, 'Main')
+  }
+  return logger
 }
 
-let _viteServerEvents: EventEmitter<WorkerEventMap> | undefined
-let _viteWorkerServer: ViteDevServer | undefined
+// Vite server and events (dev only)
+let _viteServerEvents: EventEmitter<WorkerServerEventMap> | undefined
+let _viteServer: ViteDevServer | undefined
 
-let server: ApplicationServer | undefined
-let hasActiveWorkerError = false
-const isDev = _vite?.mode === 'development'
+// Server lifecycle management
+let lifecycle: ServerLifecycle | undefined
+let hmrCoordinator: HMRCoordinator | undefined
 
-if (import.meta.env.DEV && import.meta.hot) {
-  import.meta.hot.accept('#server', async (module) => {
-    await shutdownServer()
-    await bootWithHandling(module?.default)
-  })
+// Current server config (updated on HMR)
+let currentServerConfig: ServerConfig | undefined
+
+// Track termination state
+let isTerminating = false
+
+/**
+ * Create the ApplicationServer instance using currentServerConfig.
+ */
+function createServer(): ApplicationServer {
+  if (!currentServerConfig) {
+    throw new Error('Server config not initialized')
+  }
+
+  const workerConfig = {
+    path: fileURLToPath(import.meta.resolve(`./thread${_ext}`)),
+    workerData: { vite: _vite?.mode },
+    worker: _viteServerEvents
+      ? (worker: Worker) => {
+          _viteServerEvents!.emit('worker', worker)
+        }
+      : undefined,
+    events: _viteServerEvents,
+  }
+
+  return new ApplicationServer(
+    currentServerConfig,
+    applicationsConfig,
+    workerConfig,
+    undefined, // runOptions
+    errorPolicy,
+    defaultWorkerFactory,
+    defaultPoolFactory,
+  )
 }
 
-if (_vite) {
-  const { createWorkerServer } = await import('../vite/servers/worker.ts')
+/**
+ * Initialize Vite dev server (dev mode only).
+ */
+async function initializeVite() {
+  if (!_vite) return
+
+  const { createViteServer } = await import('../vite/servers/worker.ts')
   const neemataConfig = await import(
     /* @vite-ignore */
     _vite.options.configPath
   ).then((m) => m.default as import('../config.ts').NeemataConfig)
-  _viteServerEvents = new EventEmitter<WorkerEventMap>()
-  _viteServerEvents.on('worker-error', handleWorkerError)
-  _viteServerEvents.on('worker-ready', handleWorkerReady)
-  _viteWorkerServer = await createWorkerServer(
+
+  _viteServerEvents = new EventEmitter<WorkerServerEventMap>()
+  _viteServerEvents.on('hmr-update', handleHMRUpdate)
+
+  _viteServer = await createViteServer(
     _vite.options,
     _vite.mode,
     neemataConfig,
@@ -69,132 +125,170 @@ if (_vite) {
   )
 }
 
-async function bootServer(configValue: ServerConfig | undefined) {
+/**
+ * Initialize the server lifecycle (called once at startup).
+ */
+function initializeLifecycle(configValue: ServerConfig) {
   if (!isServerConfig(configValue)) throw new InvalidServerConfigError()
-  const workerConfig = {
-    path: fileURLToPath(import.meta.resolve(`./thread${_ext}`)),
-    workerData: { vite: _vite?.mode },
-    worker: _viteServerEvents
-      ? (worker: Worker) => {
-          _viteServerEvents.emit('worker', worker)
-        }
-      : undefined,
-    events: _viteServerEvents,
+
+  // Store initial config
+  currentServerConfig = configValue
+
+  // Create runtime environment
+  const env = createRuntimeEnvironment(mode, {
+    vite: _viteServer ?? undefined,
+    hmr: undefined, // hmrCoordinator created after lifecycle
+  })
+
+  // Create lifecycle (singleton)
+  lifecycle = new ServerLifecycle(env, createServer, getLogger())
+
+  // Create HMR coordinator (dev only, singleton)
+  if (isDev) {
+    hmrCoordinator = new HMRCoordinator(lifecycle, getLogger())
   }
-  const appServer = new ApplicationServer(
-    configValue,
-    applicationsConfig,
-    workerConfig,
+
+  // Listen for lifecycle errors (once)
+  lifecycle.on('error', (error, handled) => {
+    if (!handled) {
+      getLogger().error({ error }, 'Unhandled lifecycle error')
+    }
+  })
+}
+
+/**
+ * Set up HMR acceptance for server config changes.
+ */
+function setupHMR() {
+  if (!import.meta.env.DEV || !import.meta.hot) return
+
+  import.meta.hot.accept('#server', async (module) => {
+    if (!module) return
+    if (!isServerConfig(module.default)) throw new InvalidServerConfigError()
+
+    // Update the config (createServer will use this on next reload)
+    currentServerConfig = module.default
+
+    // Use HMR coordinator to handle the reload
+    if (hmrCoordinator) {
+      try {
+        await hmrCoordinator.scheduleReload()
+      } catch (cause) {
+        console.error(new Error('Error during HMR reload:', { cause }))
+      }
+    }
+  })
+}
+
+/**
+ * Handle HMR update event.
+ * When an application file is updated and there are failed workers, restart them.
+ */
+async function handleHMRUpdate(_event: { file: string }) {
+  // If server is in failed state, try to start it
+  if (lifecycle?.currentState === 'failed') {
+    try {
+      await lifecycle.start()
+    } catch {
+      // Error will be handled by lifecycle
+    }
+    return
+  }
+
+  // If server is running, restart any failed workers
+  const server = lifecycle?.getServer()
+  if (server) {
+    try {
+      const restarted = await server.restartFailedWorkers()
+      if (restarted > 0) {
+        getLogger().info(
+          { count: restarted },
+          'Restarted failed workers after HMR update',
+        )
+      }
+    } catch (error) {
+      getLogger().error({ error }, 'Failed to restart workers after HMR update')
+    }
+  }
+}
+
+/**
+ * Handle startup error.
+ */
+function handleStartupError(error: unknown) {
+  const normalized = error instanceof Error ? error : new Error(String(error))
+  getLogger().error(
+    new Error('Failed to start application server', { cause: normalized }),
   )
-
-  try {
-    await appServer.start()
-    server = appServer
-    clearWorkerErrorOverlay()
-  } catch (error) {
-    await appServer.stop().catch(() => {})
-    throw error
-  }
 }
 
-async function bootWithHandling(configValue: ServerConfig | undefined) {
-  try {
-    await bootServer(configValue)
-  } catch (error) {
-    handleStartupError(error)
-    if (!isDev) throw error
-  }
-}
-
-let isTerminating = false
-
+/**
+ * Handle process termination signals.
+ */
 async function handleTermination() {
   if (isTerminating) return
   isTerminating = true
-  await shutdownServer()
-  _viteWorkerServer?.close()
+
+  getLogger().info('Shutting down...')
+
+  try {
+    await lifecycle?.stop()
+  } catch (error) {
+    getLogger().error(
+      new Error('Failed to stop server', { cause: error as Error }),
+    )
+  }
+
+  _viteServer?.close()
   process.exit(0)
 }
 
+/**
+ * Handle unexpected errors.
+ */
 function handleUnexpectedError(error: Error) {
-  console.error(new Error('Unexpected Error:', { cause: error }))
+  getLogger().error(new Error('Unexpected Error:', { cause: error }))
 }
 
-async function shutdownServer() {
-  if (!server) return
-  try {
-    await server.stop()
-  } catch (error) {
-    console.error(
-      new Error('Failed to stop application server', { cause: error as Error }),
-    )
-  } finally {
-    server = undefined
-  }
-}
+/**
+ * Main entry point.
+ */
+async function main() {
+  // Set up process handlers
+  process.once('SIGTERM', handleTermination)
+  process.once('SIGINT', handleTermination)
+  process.on('uncaughtException', handleUnexpectedError)
+  process.on('unhandledRejection', handleUnexpectedError)
 
-function handleWorkerError(event: ApplicationWorkerErrorEvent) {
-  hasActiveWorkerError = true
-  console.error(
-    new Error(`Worker ${event.application} thread ${event.threadId} error`, {
-      cause: event.error,
-    }),
-  )
-}
+  // Initialize Vite (dev mode only)
+  await initializeVite()
 
-function handleWorkerReady(_: ApplicationWorkerReadyEvent) {
-  clearWorkerErrorOverlay()
-}
-
-function handleStartupError(error: unknown) {
-  const normalized = error instanceof Error ? error : new Error(String(error))
-  if (_viteServerEvents) {
-    _viteServerEvents.emit('worker-error', {
-      application: 'server',
-      threadId: -1,
-      error: normalized,
-    } as ApplicationWorkerErrorEvent)
-  } else {
-    hasActiveWorkerError = true
-    console.error(
-      new Error('Failed to start application server', { cause: normalized }),
-    )
-  }
-}
-
-function clearWorkerErrorOverlay() {
-  if (!hasActiveWorkerError) return
-  hasActiveWorkerError = false
-}
-
-process.once('SIGTERM', handleTermination)
-process.once('SIGINT', handleTermination)
-process.on('uncaughtException', handleUnexpectedError)
-process.on('unhandledRejection', handleUnexpectedError)
-
-await bootWithHandling(
-  await import(
+  // Load server config
+  const serverConfig = await import(
     // @ts-expect-error
     '#server'
-  ).then((m) => m.default),
-).catch(() => {
-  if (!isDev) process.exit(1)
-})
+  ).then((m) => m.default)
 
-const { format } = Intl.NumberFormat('en', {
-  notation: 'compact',
-  maximumFractionDigits: 2,
-  unit: 'byte',
-})
+  // Initialize lifecycle (sync, creates singletons)
+  initializeLifecycle(serverConfig)
 
-const printMem = () => {
-  globalThis.gc?.()
-  // print memory usage every 10 seconds
-  const memoryUsage = process.memoryUsage()
-  console.log(
-    `Memory Usage: RSS=${format(memoryUsage.rss)}, HeapTotal=${format(memoryUsage.heapTotal)}, HeapUsed=${format(memoryUsage.heapUsed)}, External=${format(memoryUsage.external)}, ArrayBuffers=${format(memoryUsage.arrayBuffers)}`,
-  )
+  // Set up HMR
+  setupHMR()
+
+  // Start the server
+  try {
+    await lifecycle!.start()
+  } catch (error) {
+    handleStartupError(error)
+    if (!isDev) {
+      process.exit(1)
+    }
+  }
 }
-void printMem
-// printMem()
-// setInterval(printMem, 5000)
+
+main().catch((error) => {
+  getLogger().fatal({ error }, 'Fatal error during startup')
+  if (!isDev) {
+    process.exit(1)
+  }
+})

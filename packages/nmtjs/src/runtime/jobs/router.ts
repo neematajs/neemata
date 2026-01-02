@@ -148,10 +148,12 @@ type JobProgressCheckpointSchemaType<T extends AnyJob> = t.ObjectType<{
   stepLabel: OptionalType<t.StringType>
   result: t.RecordType<t.StringType, t.AnyType>
   stepResults: t.ArrayType<
-    t.ObjectType<{
-      data: NullableType<t.RecordType<t.StringType, t.AnyType>>
-      duration: t.NumberType
-    }>
+    NullableType<
+      t.ObjectType<{
+        data: NullableType<t.RecordType<t.StringType, t.AnyType>>
+        duration: t.NumberType
+      }>
+    >
   >
   progress: T['progress']
 }>
@@ -257,10 +259,12 @@ const infoOutputSchema = t.object({
 })
 
 /** Schema for step result entry */
-const stepResultEntrySchema = t.object({
-  data: t.record(t.string(), t.any()).nullable(),
-  duration: t.number(),
-})
+const stepResultEntrySchema = t
+  .object({
+    data: t.record(t.string(), t.any()).nullable(),
+    duration: t.number(),
+  })
+  .nullable()
 
 /** Creates JobProgressCheckpoint schema for a specific job */
 function createJobProgressCheckpointSchema<T extends AnyJob>(

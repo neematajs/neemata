@@ -6,6 +6,7 @@ import type {
   HotChannelClient,
   HotChannelListener,
   HotPayload,
+  Plugin,
   ViteDevServer,
 } from 'vite'
 import { DevEnvironment } from 'vite'
@@ -19,11 +20,11 @@ import { createServer } from '../server.ts'
 
 export type WorkerServerEventMap = {
   worker: [Worker]
-  'worker-error': [unknown]
-  'worker-ready': [unknown]
+  /** Emitted when an HMR update occurs for an application file (useful for restarting dead workers) */
+  'hmr-update': [{ file: string }]
 }
 
-export async function createWorkerServer(
+export async function createViteServer(
   options: ViteConfigOptions,
   mode: 'development' | 'production',
   neemataConfig: NeemataConfig,
@@ -34,7 +35,9 @@ export async function createWorkerServer(
     (v) => v.path,
   )
 
-  const _injectHmr = `\n\nif(import.meta.hot) { import.meta.hot.accept(globalThis._hotAccept) }`
+  // Use a wrapper that calls _hotAccept dynamically, so it works even if _hotAccept
+  // is registered after the module is initially loaded
+  const _injectHmr = `\n\nif(import.meta.hot) { import.meta.hot.accept((module) => globalThis._hotAccept?.(module)) }`
 
   const server = await createServer(
     options,
@@ -46,18 +49,25 @@ export async function createWorkerServer(
       plugins: [
         ...buildPlugins,
         ...neemataConfig.plugins,
-        mode === 'development'
+        ...(mode === 'development'
           ? [
               {
                 name: 'neemata-worker-application-hmr',
-                transform(code, id, options) {
+                transform(code, id, _options) {
                   if (applicationEntries.includes(id)) {
                     return code + _injectHmr
                   }
                 },
-              },
+                handleHotUpdate(ctx) {
+                  // Emit event when application entry files change
+                  // This allows restarting failed workers after code fixes
+                  if (ctx.file && applicationEntries.includes(ctx.file)) {
+                    events.emit('hmr-update', { file: ctx.file })
+                  }
+                },
+              } satisfies Plugin,
             ]
-          : [],
+          : []),
       ],
     },
     {
@@ -100,42 +110,10 @@ export async function createWorkerServer(
           },
         }
 
-        let lastError: any
-
-        events.on('worker-error', (payload: any) => {
-          lastError = payload?.error ?? payload
-          const error =
-            lastError instanceof Error
-              ? lastError
-              : new Error(String(lastError))
-          const message = {
-            type: 'error',
-            err: {
-              message: error.message,
-              stack: error.stack ?? '',
-              plugin: 'neemata:worker',
-            },
-          } satisfies HotPayload
-          for (const client of clients.values()) {
-            client.send(message)
-          }
-        })
-
-        events.on('worker-ready', () => {
-          if (!lastError) return
-          lastError = undefined
-          const message: HotPayload = { type: 'full-reload' }
-          for (const client of clients.values()) {
-            client.send(message)
-          }
-        })
-
-        const environment = new DevEnvironment(name, config, {
+        return new DevEnvironment(name, config, {
           hot: mode === 'development',
           transport,
         })
-
-        return environment
       },
     },
   )

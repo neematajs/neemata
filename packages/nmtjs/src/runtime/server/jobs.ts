@@ -4,32 +4,29 @@ import { Queue, UnrecoverableError, Worker } from 'bullmq'
 
 import type { AnyJob } from '../jobs/job.ts'
 import type { JobsUI } from '../jobs/ui.ts'
-import type { JobTaskResult, Store, WorkerJobTask } from '../types.ts'
+import type { Store, WorkerJobTask } from '../types.ts'
 import type { ServerConfig } from './config.ts'
-import type { ApplicationServerWorkerConfig } from './server.ts'
-import { JobWorkerPool } from '../enums.ts'
+import type { ErrorPolicy } from './error-policy.ts'
+import type { ApplicationServerWorkerConfig } from './types.ts'
+import type {
+  ManagedWorkerFactory,
+  WorkerPoolConfig,
+  WorkerPoolFactory,
+} from './worker-pool.ts'
+import { JobWorkerPool, WorkerType } from '../enums.ts'
 import { getJobQueueName } from '../jobs/manager.ts'
 import { createJobsUI } from '../jobs/ui.ts'
-import { Pool } from './pool.ts'
+import { JobRunnersPool } from './worker-pool.ts'
 
-export class JobRunnersPool extends Pool {
-  protected runIndex = 0
-
-  async run(task: WorkerJobTask): Promise<JobTaskResult> {
-    if (this.threads.length === 0) {
-      throw new Error('No job runner threads available')
-    }
-
-    if (this.runIndex >= this.threads.length) {
-      this.runIndex = 0
-    }
-
-    const thread = this.threads[this.runIndex]!
-    this.runIndex++
-    return await thread.run(task)
-  }
-}
-
+/**
+ * ApplicationServerJobs manages job worker pools and BullMQ queue workers.
+ *
+ * Changes from the old Pool-based implementation:
+ * - Uses JobRunnersPool (extends WorkerPool) for worker management
+ * - Uses ManagedWorker for restart logic and state tracking
+ * - Integrates with ErrorPolicy for restart decisions
+ * - Proper health tracking per job pool type
+ */
 export class ApplicationServerJobs {
   /**
    * BullMQ workers - one per job (dedicated queues)
@@ -52,6 +49,9 @@ export class ApplicationServerJobs {
       serverConfig: ServerConfig
       workerConfig: ApplicationServerWorkerConfig
       store: Store
+      errorPolicy: ErrorPolicy
+      workerFactory: ManagedWorkerFactory
+      poolFactory: WorkerPoolFactory
     },
   ) {
     this.jobs = params.serverConfig.jobs
@@ -60,7 +60,14 @@ export class ApplicationServerJobs {
   }
 
   async start() {
-    const { logger, serverConfig, workerConfig, store } = this.params
+    const {
+      logger,
+      serverConfig,
+      workerConfig,
+      store,
+      errorPolicy,
+      workerFactory,
+    } = this.params
     const jobsConfig = serverConfig.jobs
 
     if (!jobsConfig) {
@@ -103,21 +110,28 @@ export class ApplicationServerJobs {
       const poolConfig = jobsConfig.pools[poolType]
       if (!poolConfig) continue
 
-      const pool = new JobRunnersPool({
+      // Create a JobRunnersPool for this pool type
+      const config: WorkerPoolConfig = {
+        name: `job-pool-${poolType}`,
+        workerType: WorkerType.Job,
         path: workerConfig.path,
-        worker: workerConfig.worker,
         workerData: { ...workerConfig.workerData },
-      })
-
-      for (let i = 0; i < poolConfig.threads; i++) {
-        pool.add({
-          index: i,
-          name: `job-pool-${poolType}`,
-          workerData: { runtime: { type: 'jobs', jobWorkerPool: poolType } },
-        })
+        onWorker: workerConfig.worker,
       }
 
-      await pool.start()
+      const pool = new JobRunnersPool(
+        config,
+        errorPolicy,
+        workerFactory,
+        logger,
+      )
+
+      // Add workers to the pool
+      for (let i = 0; i < poolConfig.threads; i++) {
+        pool.add({ runtime: { type: 'jobs', jobWorkerPool: poolType } }, i)
+      }
+
+      await pool.startAll()
       this.pools.set(poolType, pool)
 
       logger.info(
@@ -255,12 +269,19 @@ export class ApplicationServerJobs {
     await Promise.all(
       Array.from(this.pools.values()).map(async (pool) => {
         try {
-          await pool.stop()
+          await pool.stopAll()
         } catch (error) {
           logger.warn({ error }, 'Failed to stop job pool')
         }
       }),
     )
     this.pools.clear()
+  }
+
+  /**
+   * Get a job pool by type.
+   */
+  getPool(poolType: JobWorkerPool): JobRunnersPool | undefined {
+    return this.pools.get(poolType)
   }
 }

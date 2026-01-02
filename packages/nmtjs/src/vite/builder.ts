@@ -5,7 +5,6 @@ import { build as viteBuild } from 'vite'
 
 import type { NeemataConfig } from '../config.ts'
 import type { ViteConfigOptions } from './config.ts'
-// import pkgJson from '../../package.json' with { type: 'json' }
 import { createConfig } from './config.ts'
 import { buildPlugins } from './plugins.ts'
 
@@ -32,7 +31,7 @@ export async function createBuilder(
       build: {
         lib: { entry: config.entries, formats: ['es'] },
         ssr: true,
-        target: 'node20',
+        target: 'node24',
         sourcemap: true,
         outDir: resolve(neemataConfig.build.outDir),
         minify: neemataConfig.build.minify,
@@ -43,7 +42,8 @@ export async function createBuilder(
             if (neemataConfig.externalDependencies === 'all') return true
             if (
               isBuiltin(id) ||
-              id.includes('vite/server') ||
+              id.includes('nmtjs/src/vite/servers') ||
+              id.includes('nmtjs/src/vite/runners') ||
               id.endsWith('.node')
             )
               return true
@@ -77,40 +77,11 @@ export async function createBuilder(
                   ),
                 ),
               ),
-              __dirname: 'new URL(".", import.meta.url).pathname',
-              __filename: 'new URL(import.meta.url).pathname',
             },
           },
           output: {
             entryFileNames: '[name].js',
             chunkFileNames: 'chunks/[name]-[hash].js',
-            advancedChunks: {
-              groups: [
-                {
-                  name: 'ioredis',
-                  test: /node_modules[\\/](@ioredis|ioredis|redis)/,
-                  priority: 4,
-                },
-                {
-                  name: 'bullmq',
-                  test: /node_modules[\\/]bullmq/,
-                  priority: 2,
-                },
-                { name: 'zod', test: /node_modules[\\/]zod/, priority: 2 },
-                { name: 'pino', test: /node_modules[\\/]pino/, priority: 2 },
-                {
-                  name: '@nmtjs-runtime',
-                  test: /node_modules[\\/](@nmtjs[\\/]runtime)/,
-                  priority: 2,
-                },
-                {
-                  name: '@nmtjs-common',
-                  test: /node_modules[\\/]@nmtjs[\\/](?=[^runtime|nmtjs])/,
-                  priority: 1,
-                },
-                { name: 'vendor', test: /node_modules/, priority: 0 },
-              ],
-            },
             minify: neemataConfig.build.minify,
           },
         },

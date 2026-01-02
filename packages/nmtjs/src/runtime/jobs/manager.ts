@@ -125,7 +125,6 @@ export class JobManager {
 
   get publicInstance(): JobManagerInstance {
     return {
-      // @ts-expect-error
       list: this.list.bind(this),
       add: this.add.bind(this),
       get: this.get.bind(this),
@@ -208,7 +207,8 @@ export class JobManager {
     const bullJobTypes = status.flatMap((s) => this._mapStatusToJobType(s))
     const jobsCount = await queue.getJobCountByTypes(...bullJobTypes)
     const totalPages = Math.ceil(jobsCount / limit)
-    if (page > totalPages) return []
+    if (page > totalPages)
+      return { items: [], page, limit, pages: totalPages, total: jobsCount }
     const jobs = await queue.getJobs(
       bullJobTypes,
       (page - 1) * limit,
