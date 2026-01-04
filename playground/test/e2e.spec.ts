@@ -289,7 +289,7 @@ describe('Playground E2E - Dev Mode', { timeout: 60000 }, () => {
     'should hot reload when procedure file changes',
     { retry: 3 },
     async () => {
-      let client = createClient(SERVER_URL)
+      const client = createClient(SERVER_URL)
 
       await client.connect()
 
@@ -304,38 +304,8 @@ describe('Playground E2E - Dev Mode', { timeout: 60000 }, () => {
           `{ message: 'pong-hmr' }`,
         )
         await writeFile(PING_PROCEDURE_PATH, modifiedContent, 'utf-8')
-
-        // Wait for HMR to complete and retry with reconnection if needed
-        // HMR may restart the server, requiring the client to reconnect
-        let result2: { message: string } | undefined
-        const maxAttempts = 20
-        const retryDelay = 500
-
-        for (let attempt = 0; attempt < maxAttempts; attempt++) {
-          await setTimeout(retryDelay)
-
-          try {
-            result2 = await client.call.ping({})
-            if (result2.message === 'pong-hmr') {
-              break // HMR completed successfully
-            }
-          } catch {
-            // Connection may have been dropped during HMR, try reconnecting
-            try {
-              await client.disconnect()
-            } catch {
-              // Ignore disconnect errors
-            }
-            // Create a fresh client and connect
-            client = createClient(SERVER_URL)
-            try {
-              await client.connect()
-            } catch {
-              // Server may still be restarting
-            }
-          }
-        }
-
+        await setTimeout(1000)
+        const result2 = await client.call.ping({})
         expect(result2).toEqual({ message: 'pong-hmr' })
       } finally {
         try {
