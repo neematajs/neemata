@@ -25,6 +25,9 @@
       "path": "./packages/json-format/tsconfig.build.json"
     },
     {
+      "path": "./packages/msgpack-format/tsconfig.build.json"
+    },
+    {
       "path": "./packages/nmtjs/tsconfig.build.json"
     },
     {
