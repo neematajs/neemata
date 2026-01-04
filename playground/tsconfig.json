@@ -1,9 +1,8 @@
 {
   "extends": "../tsconfig.json",
   "compilerOptions": {
-    "baseUrl": ".",
-    "outDir": "./dist",
     "noEmit": true
   },
-  "include": ["./src/**/*.ts", "./neemata.config.ts", "./.neemata/types.d.ts"]
+  "files": ["./.neemata/types.d.ts"],
+  "include": ["./src/**/*.ts", "./neemata.config.ts"]
 }

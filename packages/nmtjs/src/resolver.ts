@@ -11,6 +11,6 @@ try {
 
 export const resolver = new ResolverFactory({
   tsconfig: 'auto',
-  extensions: ['.ts', '.js', '.mjs', '.mts', '.json', '.node'],
+  extensions: ['.ts', '.js', '.mjs', '.mts', '.json', '.node', '.wasm'],
   fallback,
 })

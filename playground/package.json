@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "prepare": "neemata prepare",
+    "postinstall": "$npm_execpath prepare",
     "dev": "neemata dev",
     "build": "neemata build",
     "preview": "neemata preview",

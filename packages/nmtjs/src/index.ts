@@ -33,15 +33,11 @@ export const neemata = {
   injectables: {
     ...CoreInjectables,
     ...GatewayInjectables,
-    ...(RuntimeInjectables as typeof RuntimeInjectables),
+    ...RuntimeInjectables,
   },
   transport: createTransport,
   plugin: createPlugin,
-  logging: {
-    console:
-      // TODO: TSC wants it
-      createConsolePrettyDestination as typeof createConsolePrettyDestination,
-  },
+  logging: { console: createConsolePrettyDestination },
   value: createValueInjectable,
   lazy: createLazyInjectable,
   factory: createFactoryInjectable,

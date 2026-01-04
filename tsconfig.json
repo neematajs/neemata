@@ -2,7 +2,7 @@
   "extends": "@tsconfig/node24/tsconfig.json",
   "compilerOptions": {
     "moduleResolution": "nodenext",
-    "allowJs": true,
+    "allowJs": false,
     "noEmit": true,
     "rewriteRelativeImportExtensions": true,
     "allowImportingTsExtensions": true,

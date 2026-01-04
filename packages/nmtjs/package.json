@@ -2,10 +2,7 @@
   "name": "nmtjs",
   "type": "module",
   "scripts": {
-    "clean-build": "rm -rf ./dist",
-    "build": "tsc --declaration --sourcemap",
-    "dev": "tsc --watch",
-    "type-check": "tsc --noEmit"
+    "clean-build": "rm -rf ./dist"
   },
   "bin": {
     "neemata": "./src/cli.ts"
@@ -56,6 +53,7 @@
   },
   "devDependencies": {
     "@nmtjs/proxy": "workspace:*",
+    "pino": "^9.6.0",
     "zod": "catalog:"
   },
   "peerDependencies": {

@@ -29,11 +29,89 @@ const PING_PROCEDURE_PATH = resolve(
 )
 
 async function startServer(
-  command: 'dev' | 'preview',
+  command: 'dev' | 'preview' | 'build',
   options: { timeout?: number } = {},
 ): Promise<ChildProcess> {
   const { timeout = 15000 } = options
 
+  // If build command, run build first then start the built server
+  if (command === 'build') {
+    await new Promise<void>((resolve, reject) => {
+      const buildProcess = spawn('pnpm', ['build'], {
+        cwd: CWD,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: { ...process.env, FORCE_COLOR: '0' },
+      })
+
+      let buildOutput = ''
+      buildProcess.stdout?.on('data', (data) => {
+        buildOutput += data.toString()
+      })
+      buildProcess.stderr?.on('data', (data) => {
+        buildOutput += data.toString()
+      })
+
+      buildProcess.on('error', reject)
+      buildProcess.on('exit', (code) => {
+        if (code === 0) {
+          resolve()
+        } else {
+          reject(new Error(`Build failed with code ${code}\n${buildOutput}`))
+        }
+      })
+    })
+
+    // Start the built server
+    const serverProcess = spawn('node', ['dist/main.js'], {
+      cwd: CWD,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, FORCE_COLOR: '0' },
+    })
+
+    await new Promise<void>((resolve, reject) => {
+      const timeoutId = globalThis.setTimeout(() => {
+        reject(new Error('Server startup timeout (build)'))
+      }, timeout)
+
+      const checkReady = (data: Buffer) => {
+        const output = data.toString()
+        if (
+          output.includes('started') ||
+          output.includes('listening') ||
+          output.includes('4000')
+        ) {
+          globalThis.clearTimeout(timeoutId)
+          resolve()
+        }
+      }
+
+      serverProcess.stdout?.on('data', checkReady)
+      serverProcess.stderr?.on('data', (data) => {
+        checkReady(data)
+        const output = data.toString()
+        if (output.includes('ERROR') || output.includes('Error')) {
+          console.error('Server error:', output)
+        }
+      })
+
+      serverProcess.on('error', (err) => {
+        globalThis.clearTimeout(timeoutId)
+        reject(err)
+      })
+
+      serverProcess.on('exit', (code) => {
+        if (code !== 0 && code !== null) {
+          globalThis.clearTimeout(timeoutId)
+          reject(new Error(`Server exited with code ${code}`))
+        }
+      })
+    })
+
+    await setTimeout(500)
+    return serverProcess
+  }
+
+  // For dev and preview commands
   const serverProcess = spawn('pnpm', [command], {
     cwd: CWD,
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -269,3 +347,70 @@ describe('Playground E2E - Dev Mode', { timeout: 60000 }, () => {
     }
   })
 })
+
+describe(
+  'Playground E2E - Production Build',
+  { timeout: 45000, concurrent: false },
+  () => {
+    let serverProcess: ChildProcess | null = null
+
+    beforeAll(async () => {
+      serverProcess = await startServer('build', { timeout: 25000 })
+    }, 30000)
+
+    afterAll(async () => {
+      if (serverProcess) {
+        await stopServer(serverProcess)
+      }
+    })
+
+    it('should connect to the built server and call ping procedure', async () => {
+      const client = createClient(SERVER_URL)
+
+      await client.connect()
+
+      try {
+        const result = await client.call.ping({})
+        expect(result).toEqual({ message: 'pong' })
+      } finally {
+        await client.disconnect()
+      }
+    })
+
+    it('should handle multiple sequential calls on built server', async () => {
+      const client = createClient(SERVER_URL)
+
+      await client.connect()
+
+      try {
+        const results = await Promise.all([
+          client.call.ping({}),
+          client.call.ping({}),
+          client.call.ping({}),
+        ])
+
+        for (const result of results) {
+          expect(result).toEqual({ message: 'pong' })
+        }
+      } finally {
+        await client.disconnect()
+      }
+    })
+
+    it('should reconnect after disconnect on built server', async () => {
+      const client = createClient(SERVER_URL)
+
+      // First connection
+      await client.connect()
+      const result1 = await client.call.ping({})
+      expect(result1).toEqual({ message: 'pong' })
+      await client.disconnect()
+
+      // Second connection
+      await client.connect()
+      const result2 = await client.call.ping({})
+      expect(result2).toEqual({ message: 'pong' })
+      await client.disconnect()
+    })
+  },
+)

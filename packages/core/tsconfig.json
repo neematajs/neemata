@@ -1,9 +1,8 @@
 {
   "extends": "../../tsconfig.json",
   "compilerOptions": {
-    "noEmit": false,
-    "outDir": "./dist",
-    "rootDir": "./src"
+    "rootDir": "./src",
+    "types": ["pino"]
   },
   "include": ["src/**/*"]
 }

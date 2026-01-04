@@ -91,10 +91,15 @@ export const createLogger = (options: LoggingOptions = {}, $lable: string) => {
   ).child({ $lable, $threadId: threadId })
 }
 
-export const createConsolePrettyDestination = (
+export type CreateConsolePrettyDestination = (
   level: pinoType.Level,
+  sync?: boolean,
+) => pinoType.StreamEntry
+
+export const createConsolePrettyDestination: CreateConsolePrettyDestination = (
+  level,
   sync = true,
-): pinoType.StreamEntry => ({
+) => ({
   level,
   stream: pretty({
     colorize: true,

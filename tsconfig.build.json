@@ -1,0 +1,47 @@
+{
+  "references": [
+    {
+      "path": "./packages/client/tsconfig.build.json"
+    },
+    {
+      "path": "./packages/common/tsconfig.build.json"
+    },
+    {
+      "path": "./packages/contract/tsconfig.build.json"
+    },
+    {
+      "path": "./packages/core/tsconfig.build.json"
+    },
+    {
+      "path": "./packages/gateway/tsconfig.build.json"
+    },
+    {
+      "path": "./packages/http-client/tsconfig.build.json"
+    },
+    {
+      "path": "./packages/http-transport/tsconfig.build.json"
+    },
+    {
+      "path": "./packages/json-format/tsconfig.build.json"
+    },
+    {
+      "path": "./packages/nmtjs/tsconfig.build.json"
+    },
+    {
+      "path": "./packages/protocol/tsconfig.build.json"
+    },
+    {
+      "path": "./packages/type/tsconfig.build.json"
+    },
+    {
+      "path": "./packages/ws-client/tsconfig.build.json"
+    },
+    {
+      "path": "./packages/ws-transport/tsconfig.build.json"
+    },
+    {
+      "path": "./playground/tsconfig.json"
+    }
+  ],
+  "include": []
+}
