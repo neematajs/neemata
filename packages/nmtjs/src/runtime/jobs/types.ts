@@ -26,7 +26,11 @@ export interface JobDefinitionInfo {
 export interface StepResultEntry {
   /** Output data produced by the step, or null if skipped */
   data: Record<string, unknown> | null
-  /** Duration in milliseconds */
+  /** Timestamp when step started (ms since epoch) */
+  startedAt: number
+  /** Timestamp when step completed (ms since epoch) */
+  completedAt: number
+  /** Duration in milliseconds (completedAt - startedAt) */
   duration: number
 }
 

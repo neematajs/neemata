@@ -72,7 +72,18 @@ export const createLogger = (options: LoggingOptions = {}, $lable: string) => {
     Number.POSITIVE_INFINITY,
   )
   const level = pino.levels.labels[lowestLevelValue]
-  const serializers = { ...pinoOptions?.serializers, err: errWithCause }
+  const serializers = {
+    headers: (value: any) => {
+      if (value instanceof Headers) {
+        const obj = {}
+        value.forEach((v, k) => (obj[k] = v))
+        return obj
+      }
+      return value
+    },
+    ...pinoOptions?.serializers,
+    err: errWithCause,
+  }
 
   return pino(
     { timestamp: stdTimeFunctions.isoTime, ...pinoOptions, level, serializers },

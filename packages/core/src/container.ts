@@ -22,7 +22,7 @@ import {
   isLazyInjectable,
   isOptionalInjectable,
   isValueInjectable,
-  provide,
+  provision,
 } from './injectables.ts'
 
 type InstanceWrapper = { private: any; public: any; context: any }
@@ -34,6 +34,7 @@ export class Container {
   private readonly resolvers = new Map<AnyInjectable, Promise<any>>()
   private readonly injectables = new Set<AnyInjectable>()
   private readonly dependants = new Map<AnyInjectable, Set<AnyInjectable>>()
+  private readonly provisions = new Map<AnyInjectable, any>()
   private disposing = false
 
   constructor(
@@ -123,7 +124,11 @@ export class Container {
   }
 
   containsWithinSelf(injectable: AnyInjectable) {
-    return this.instances.has(injectable) || this.resolvers.has(injectable)
+    return (
+      this.provisions.has(injectable) ||
+      this.instances.has(injectable) ||
+      this.resolvers.has(injectable)
+    )
   }
 
   contains(injectable: AnyInjectable): boolean {
@@ -136,6 +141,10 @@ export class Container {
   get<T extends AnyInjectable>(injectable: T): ResolveInjectableType<T> {
     if (injectable.scope === Scope.Transient) {
       throw new Error('Cannot get transient injectable directly')
+    }
+
+    if (this.provisions.has(injectable)) {
+      return this.provisions.get(injectable)
     }
 
     if (this.instances.has(injectable)) {
@@ -165,12 +174,12 @@ export class Container {
     return this.createInjectableContext(dependencies)
   }
 
-  async provide<T extends Injection[]>(injections: T)
-  async provide<T extends AnyInjectable>(
+  provide<T extends Injection[]>(injections: T): void
+  provide<T extends AnyInjectable>(
     injectable: T,
     value: ResolveInjectableType<T> | AnyInjectable<ResolveInjectableType<T>>,
-  )
-  async provide<T extends AnyInjectable | Injection[]>(
+  ): void
+  provide<T extends AnyInjectable | Injection[]>(
     injectable: T,
     ...[value]: T extends AnyInjectable
       ? [
@@ -182,19 +191,20 @@ export class Container {
   ) {
     const injections = Array.isArray(injectable)
       ? injectable
-      : [provide(injectable, value)]
-    await Promise.all(
-      injections.map(async ({ token, value }) => {
-        if (compareScope(token.scope, '>', this.scope)) {
-          // TODO: more informative error
-          throw new Error('Invalid scope')
-        }
-        const _value = isInjectable(value) ? await this.resolve(value) : value
-        this.instances.set(token, [
-          { private: _value, public: _value, context: undefined },
-        ])
-      }),
-    )
+      : [provision(injectable, value)]
+    for (const { token, value } of injections) {
+      if (compareScope(token.scope, '>', this.scope)) {
+        // TODO: more informative error
+        throw new Error('Invalid scope')
+      }
+      this.provisions.set(token, value)
+    }
+  }
+
+  withhold(...injectables: AnyInjectable[]) {
+    for (const injectable of injectables) {
+      this.provisions.delete(injectable)
+    }
   }
 
   satisfies(injectable: AnyInjectable) {
@@ -278,7 +288,19 @@ export class Container {
       )
     }
 
-    if (isValueInjectable(injectable)) {
+    if (this.provisions.has(injectable)) {
+      const provided = this.provisions.get(injectable)
+      if (isInjectable(provided)) {
+        return this.resolveInjectable(
+          provided,
+          dependant,
+          isOptional,
+          measurements,
+        )
+      } else {
+        return Promise.resolve(provided)
+      }
+    } else if (isValueInjectable(injectable)) {
       return Promise.resolve(injectable.value)
     } else if (
       this.parent?.contains(injectable) ||

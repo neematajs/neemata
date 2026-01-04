@@ -2,17 +2,17 @@ import type { Worker } from 'node:worker_threads'
 import EventEmitter from 'node:events'
 import { fileURLToPath } from 'node:url'
 
-import type { ServerConfig } from 'nmtjs/runtime'
 import type { ViteDevServer } from 'vite'
 import { createLogger } from '@nmtjs/core'
+
+import type { ServerConfig } from '../runtime/index.ts'
+import type { WorkerServerEventMap } from '../vite/servers/worker.ts'
 import {
   ApplicationServer,
   defaultPoolFactory,
   defaultWorkerFactory,
   isServerConfig,
-} from 'nmtjs/runtime'
-
-import type { WorkerServerEventMap } from '../vite/servers/worker.ts'
+} from '../runtime/index.ts'
 import { createRuntimeEnvironment } from '../runtime/server/environment.ts'
 import { getErrorPolicy } from '../runtime/server/error-policy.ts'
 import { HMRCoordinator } from '../runtime/server/hmr-coordinator.ts'

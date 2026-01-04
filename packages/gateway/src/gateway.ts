@@ -14,7 +14,7 @@ import type {
   MessageContext as ProtocolMessageContext,
 } from '@nmtjs/protocol/server'
 import { anyAbortSignal, isAbortError } from '@nmtjs/common'
-import { createFactoryInjectable, provide, Scope } from '@nmtjs/core'
+import { createFactoryInjectable, provision, Scope } from '@nmtjs/core'
 import {
   ClientMessageType,
   isBlobInterface,
@@ -279,11 +279,11 @@ export class Gateway {
       const container = this.options.container.fork(Scope.Connection)
 
       try {
-        await container.provide([
-          provide(injectables.connectionData, options.data),
-          provide(injectables.connectionId, id),
+        container.provide([
+          provision(injectables.connectionData, options.data),
+          provision(injectables.connectionId, id),
         ])
-        await container.provide(injections)
+        container.provide(injections)
 
         const identity = await container.resolve(this.options.identity)
 
@@ -292,6 +292,8 @@ export class Gateway {
           accept,
           contentType,
         })
+
+        const abortController = new AbortController()
 
         const connection: GatewayConnection = {
           id,
@@ -302,14 +304,14 @@ export class Gateway {
           container,
           encoder,
           decoder,
-          abortController: new AbortController(),
+          abortController,
         }
 
         this.connections.add(connection)
 
-        await container.provide(
+        container.provide(
           injectables.connectionAbortSignal,
-          connection.abortController.signal,
+          abortController.signal,
         )
 
         logger.debug(
@@ -375,7 +377,7 @@ export class Gateway {
             try {
               await rpcContext.container.provide([
                 ...injections,
-                provide(
+                provision(
                   injectables.createBlob,
                   this.createBlobFunction(rpcContext),
                 ),
@@ -454,8 +456,11 @@ export class Gateway {
       try {
         await rpcContext.container.provide([
           ...injections,
-          provide(injectables.rpcAbortSignal, signal),
-          provide(injectables.createBlob, this.createBlobFunction(rpcContext)),
+          provision(injectables.rpcAbortSignal, signal),
+          provision(
+            injectables.createBlob,
+            this.createBlobFunction(rpcContext),
+          ),
         ])
 
         const result = await this.options.api.call({
@@ -498,7 +503,7 @@ export class Gateway {
       encoder,
     } = context
     try {
-      await container.provide(injectables.rpcAbortSignal, signal)
+      container.provide(injectables.rpcAbortSignal, signal)
       const response = await this.options.api.call({
         connection: connection as any,
         container,

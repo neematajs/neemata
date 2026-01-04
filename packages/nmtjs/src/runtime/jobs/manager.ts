@@ -111,6 +111,32 @@ type JobQueueEntry = {
   custom: QueueEventsProducer
 }
 
+/**
+ * TODO: Consider implementing an abstract SQL storage layer for job queries.
+ *
+ * Current limitations with BullMQ direct queries:
+ * - Pagination is per-type, requires complex offset calculations
+ * - Limited filtering/sorting capabilities
+ * - No full-text search on job data
+ *
+ * Proposed architecture:
+ * 1. Shared SQLite file (WAL mode) across all workers on the same machine
+ * 2. Each worker subscribes to BullMQ events and syncs to SQLite
+ * 3. List/filter/sort queries run against SQLite with proper SQL semantics
+ * 4. Mutations (add, retry, cancel, remove) still go through BullMQ directly
+ *
+ * Benefits:
+ * - Proper SQL pagination, filtering, sorting
+ * - Abstract storage layer could support different queue backends (not just BullMQ)
+ * - No per-process memory duplication (shared file)
+ * - Complex queries: date ranges, priority ranges, full-text search
+ *
+ * Implementation notes:
+ * - Use better-sqlite3 (sync, fast for in-memory/WAL)
+ * - Subscribe to QueueEvents BEFORE initial sync to buffer events
+ * - Handle race conditions: initial load + event replay
+ * - Consider leader election for sync to reduce write contention
+ */
 export class JobManager {
   protected store!: Store
   /**
@@ -200,20 +226,56 @@ export class JobManager {
       limit = 20,
       page = 1,
       status = [],
-    }: { page?: number; limit?: number; status?: JobStatus[] },
+    }: { page?: number; limit?: number; status?: JobStatus[] } = {},
   ) {
     const { queue } = this.getJobQueue(job)
     // Convert vendor-agnostic status to BullMQ JobType for querying
-    const bullJobTypes = status.flatMap((s) => this._mapStatusToJobType(s))
-    const jobsCount = await queue.getJobCountByTypes(...bullJobTypes)
+    const bullJobTypes = status.length
+      ? status.flatMap((s) => this._mapStatusToJobType(s))
+      : []
+
+    // Get counts per type to calculate proper offsets
+    const typeCounts = await queue.getJobCounts(...bullJobTypes)
+    const jobsCount = Object.values(typeCounts).reduce((a, b) => a + b, 0)
     const totalPages = Math.ceil(jobsCount / limit)
     if (page > totalPages)
       return { items: [], page, limit, pages: totalPages, total: jobsCount }
-    const jobs = await queue.getJobs(
-      bullJobTypes,
-      (page - 1) * limit,
-      page * limit - 1,
-    )
+
+    // Calculate which types we need to fetch from and with what offsets
+    const globalStart = (page - 1) * limit
+    const globalEnd = globalStart + limit
+
+    // Determine the ordered types (use bullJobTypes if specified, otherwise use typeCounts keys)
+    const orderedTypes =
+      bullJobTypes.length > 0
+        ? bullJobTypes
+        : (Object.keys(typeCounts) as JobType[])
+
+    // Calculate cumulative offsets and fetch jobs from each type as needed
+    let cumulative = 0
+    const jobPromises: Promise<Job[]>[] = []
+
+    for (const type of orderedTypes) {
+      const typeCount = typeCounts[type] ?? 0
+      const typeStart = cumulative
+      const typeEnd = cumulative + typeCount
+
+      // Check if this type overlaps with our desired range
+      if (typeEnd > globalStart && typeStart < globalEnd) {
+        // Calculate local start/end within this type
+        const localStart = Math.max(0, globalStart - typeStart)
+        const localEnd = Math.min(typeCount, globalEnd - typeStart) - 1
+
+        if (localEnd >= localStart) {
+          jobPromises.push(queue.getJobs([type], localStart, localEnd))
+        }
+      }
+
+      cumulative += typeCount
+    }
+
+    const jobArrays = await Promise.all(jobPromises)
+    const jobs = jobArrays.flat().slice(0, limit)
     const items = await Promise.all(jobs.map((job) => this._mapJob(job)))
     return { items, page, limit, pages: totalPages, total: jobsCount }
   }

@@ -7,7 +7,7 @@ import type {
   TransportWorkerParams,
 } from '@nmtjs/gateway'
 import { anyAbortSignal, isAbortError, isAsyncIterable } from '@nmtjs/common'
-import { provide } from '@nmtjs/core'
+import { provision } from '@nmtjs/core'
 import {
   ConnectionType,
   ErrorCode,
@@ -186,7 +186,7 @@ export class HttpTransportServer
           metadata,
         },
         signal,
-        provide(injections.httpResponseHeaders, responseHeaders),
+        provision(injections.httpResponseHeaders, responseHeaders),
       )
 
       if (result instanceof Response) {

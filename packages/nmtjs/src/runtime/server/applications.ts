@@ -103,7 +103,7 @@ export class ApplicationServerApplications extends EventEmitter<{
         ? applicationConfig.threads
         : new Array(applicationConfig.threads).fill(undefined)
 
-      logger.info(
+      logger.debug(
         `Spinning [${threadsConfig.length}] workers for [${applicationName}] application...`,
       )
 

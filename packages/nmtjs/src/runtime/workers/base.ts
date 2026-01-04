@@ -1,13 +1,13 @@
 import type { Injection } from '@nmtjs/core'
-import { CoreInjectables, provide } from '@nmtjs/core'
+import { CoreInjectables, provision } from '@nmtjs/core'
 
-import type { BaseRuntimeOptions } from '../core/runtime.ts'
 import type { WorkerType } from '../enums.ts'
+import type { BaseRuntimeOptions } from '../runtime.ts'
 import type { ServerConfig } from '../server/config.ts'
-import { BaseRuntime } from '../core/runtime.ts'
 import * as injectables from '../injectables.ts'
 import { JobManager } from '../jobs/manager.ts'
 import { PubSubManager } from '../pubsub/manager.ts'
+import { BaseRuntime } from '../runtime.ts'
 
 export abstract class BaseWorkerRuntime extends BaseRuntime {
   pubsub: PubSubManager
@@ -35,22 +35,25 @@ export abstract class BaseWorkerRuntime extends BaseRuntime {
 
   async initialize(): Promise<void> {
     const injections: Injection[] = [
-      provide(CoreInjectables.logger, this.logger),
-      provide(injectables.workerType, this.workerType),
-      provide(injectables.pubSubPublish, this.pubsub.publish.bind(this.pubsub)),
-      provide(
+      provision(CoreInjectables.logger, this.logger),
+      provision(injectables.workerType, this.workerType),
+      provision(
+        injectables.pubSubPublish,
+        this.pubsub.publish.bind(this.pubsub),
+      ),
+      provision(
         injectables.pubSubSubscribe,
         this.pubsub.subscribe.bind(this.pubsub),
       ),
     ]
 
     if (this.config.store) {
-      injections.push(provide(injectables.storeConfig, this.config.store))
+      injections.push(provision(injectables.storeConfig, this.config.store))
     }
 
     if (this.jobManager) {
       injections.push(
-        provide(injectables.jobManager, this.jobManager.publicInstance),
+        provision(injectables.jobManager, this.jobManager.publicInstance),
       )
     }
 

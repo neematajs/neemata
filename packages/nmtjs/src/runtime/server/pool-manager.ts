@@ -119,7 +119,7 @@ export class PoolManager extends EventEmitter<PoolManagerEvents> {
   async startAll(): Promise<void> {
     this.logger.debug({ count: this.pools.size }, 'Starting all pools')
     await Promise.all([...this.pools.values()].map((p) => p.startAll()))
-    this.logger.info({ count: this.pools.size }, 'All pools started')
+    this.logger.debug({ count: this.pools.size }, 'All pools started')
   }
 
   /**
@@ -129,7 +129,7 @@ export class PoolManager extends EventEmitter<PoolManagerEvents> {
     this.logger.debug({ count: this.pools.size }, 'Stopping all pools')
     await Promise.all([...this.pools.values()].map((p) => p.stopAll()))
     this.pools.clear()
-    this.logger.info('All pools stopped')
+    this.logger.debug('All pools stopped')
   }
 
   /**

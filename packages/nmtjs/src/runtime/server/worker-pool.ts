@@ -151,7 +151,7 @@ export class WorkerPool extends EventEmitter<WorkerPoolEvents> {
   async startAll(): Promise<void> {
     this.logger.debug({ count: this.workers.length }, 'Starting all workers')
     await Promise.all(this.workers.map((w) => w.start()))
-    this.logger.info({ count: this.workers.length }, 'All workers started')
+    this.logger.debug({ count: this.workers.length }, 'All workers started')
   }
 
   /**
@@ -163,7 +163,7 @@ export class WorkerPool extends EventEmitter<WorkerPoolEvents> {
     const failedWorkers = this.workers.filter((w) => w.currentState === 'error')
     if (failedWorkers.length === 0) return 0
 
-    this.logger.info(
+    this.logger.debug(
       { count: failedWorkers.length },
       'Restarting failed workers after HMR update',
     )
@@ -196,7 +196,7 @@ export class WorkerPool extends EventEmitter<WorkerPoolEvents> {
     // Remove all listeners from the pool itself
     this.removeAllListeners()
 
-    this.logger.info('All workers stopped and cleaned up')
+    this.logger.debug('All workers stopped and cleaned up')
   }
 
   /**
@@ -236,7 +236,7 @@ export class WorkerPool extends EventEmitter<WorkerPoolEvents> {
     if (newHealth !== this.health) {
       const oldHealth = this.health
       this.health = newHealth
-      this.logger.info(
+      this.logger.trace(
         { from: oldHealth, to: newHealth, ready: readyCount, total },
         'Pool health changed',
       )

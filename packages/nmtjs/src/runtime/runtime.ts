@@ -12,7 +12,7 @@ import {
 } from '@nmtjs/core'
 
 import type { RuntimePlugin } from './plugin.ts'
-import { LifecycleHook } from '../enums.ts'
+import { LifecycleHook } from './enums.ts'
 import { LifecycleHooks } from './hooks.ts'
 
 export type BaseRuntimeOptions = {

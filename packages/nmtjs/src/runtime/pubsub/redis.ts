@@ -1,9 +1,9 @@
 import EventEmitter, { on } from 'node:events'
 
 import { isAbortError } from '@nmtjs/common'
-import { createFactoryInjectable, provide } from '@nmtjs/core'
+import { createFactoryInjectable, provision } from '@nmtjs/core'
 
-import type { RuntimePlugin } from '../core/plugin.ts'
+import type { RuntimePlugin } from '../plugin.ts'
 import type { Store } from '../types.ts'
 import type { PubSubAdapterEvent, PubSubAdapterType } from './manager.ts'
 import { pubSubAdapter, storeConfig } from '../injectables.ts'
@@ -87,7 +87,7 @@ export const RedisPubSubAdapterPlugin = (): RuntimePlugin => {
     hooks: {
       'lifecycle:afterInitialize': async (ctx) => {
         await ctx.container.provide([
-          provide(
+          provision(
             pubSubAdapter,
             createFactoryInjectable({
               dependencies: { config: storeConfig },

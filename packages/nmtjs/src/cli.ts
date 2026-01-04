@@ -10,13 +10,11 @@ import { config as dotenv } from 'dotenv'
 
 import type { NeemataConfig } from './config.ts'
 import type { ViteConfigOptions } from './vite/config.ts'
+import { generateTypings } from './codegen.ts'
 import { resolver } from './resolver.ts'
-import { generateTypings } from './typings.ts'
 import { createBuilder } from './vite/builder.ts'
 import { baseViteConfigOptions } from './vite/config.ts'
 import { createMainServer } from './vite/servers/main.ts'
-
-// import { createMainRunner } from './vite/runner.ts'
 
 const commonArgs = {
   config: {
@@ -53,7 +51,6 @@ const mainCommand = defineCommand({
       }
     }
 
-    // const applicationEntryPaths: Record<string, string> = {}
     applicationImports = {}
     const currentPkg = resolver.sync(process.cwd(), './package.json')
 

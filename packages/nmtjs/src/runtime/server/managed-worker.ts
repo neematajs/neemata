@@ -384,7 +384,7 @@ export class ManagedWorker extends EventEmitter<ManagedWorkerEvents> {
         process.exit(action.code)
         break
       case 'wait':
-        this.logger.info('Worker failed, waiting for fix via HMR')
+        this.logger.debug('Worker failed, waiting for fix via HMR')
         break
       case 'ignore':
         this.logger.warn({ error }, 'Worker error ignored')
@@ -397,7 +397,7 @@ export class ManagedWorker extends EventEmitter<ManagedWorkerEvents> {
    */
   private scheduleRestart(delay: number): void {
     this.transition('restarting')
-    this.logger.info(
+    this.logger.debug(
       { delay, attempt: this.ctx.consecutiveFailures },
       'Scheduling worker restart',
     )

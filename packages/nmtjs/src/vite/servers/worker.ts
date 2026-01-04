@@ -35,8 +35,6 @@ export async function createViteServer(
     (v) => v.path,
   )
 
-  // Use a wrapper that calls _hotAccept dynamically, so it works even if _hotAccept
-  // is registered after the module is initially loaded
   const _injectHmr = `\n\nif(import.meta.hot) { import.meta.hot.accept((module) => globalThis._hotAccept?.(module)) }`
 
   const server = await createServer(

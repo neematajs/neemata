@@ -579,7 +579,12 @@ describe('Container', () => {
 
   describe('Disposal Lock', () => {
     it('should prevent new resolutions during disposal', async () => {
-      const injectable = createFactoryInjectable({ factory: () => 'test' })
+      const injectable = createFactoryInjectable({
+        factory: () => 'test',
+        dispose: () => new Promise((r) => setTimeout(r, 50)),
+      })
+
+      await container.resolve(injectable)
 
       // Start disposal (but don't await it yet)
       const disposalPromise = container.dispose()
@@ -1538,9 +1543,11 @@ describe('Container', () => {
       })
       const token = createLazyInjectable()
 
-      await container.provide(token, factoryInjectable)
+      container.provide(token, factoryInjectable)
 
-      expect(container.get(token)).toBe(value)
+      // Lazy resolution - get() won't work until resolved
+      const resolved = await container.resolve(token)
+      expect(resolved).toBe(value)
 
       await container.dispose()
 
@@ -1556,13 +1563,178 @@ describe('Container', () => {
       })
       const token = createLazyInjectable()
 
-      await container.provide([{ token, value: factoryInjectable }])
+      container.provide([{ token, value: factoryInjectable }])
 
-      expect(container.get(token)).toBe(value)
+      const resolved = await container.resolve(token)
+      expect(resolved).toBe(value)
 
       await container.dispose()
 
       expect(disposeSpy).toHaveBeenCalledWith(value, {})
+    })
+  })
+
+  describe('Provisions', () => {
+    it('should survive container disposal', async () => {
+      const token = createLazyInjectable()
+      const value = { foo: 'bar' }
+
+      container.provide(token, value)
+
+      // Resolve to verify it works
+      const resolved1 = await container.resolve(token)
+      expect(resolved1).toBe(value)
+
+      // Dispose container
+      await container.dispose()
+
+      // Provision should still be available after disposal
+      const resolved2 = await container.resolve(token)
+      expect(resolved2).toBe(value)
+    })
+
+    it('should allow factory injectables to be re-resolved after disposal', async () => {
+      const factorySpy = vi.fn(() => ({ id: Math.random() }))
+      const factoryInjectable = createFactoryInjectable({ factory: factorySpy })
+      const token = createLazyInjectable()
+
+      container.provide(token, factoryInjectable)
+
+      // First resolution
+      const resolved1 = await container.resolve(token)
+      expect(factorySpy).toHaveBeenCalledTimes(1)
+
+      // Dispose container - clears instances but not provisions
+      await container.dispose()
+
+      // Re-resolve after disposal - factory should be called again
+      const resolved2 = await container.resolve(token)
+      expect(factorySpy).toHaveBeenCalledTimes(2)
+      expect(resolved2).not.toBe(resolved1) // New instance
+    })
+
+    it('should be removed with withhold()', async () => {
+      const token = createLazyInjectable()
+      const value = { foo: 'bar' }
+
+      container.provide(token, value)
+
+      // Verify it's there
+      expect(container.containsWithinSelf(token)).toBe(true)
+      const resolved = await container.resolve(token)
+      expect(resolved).toBe(value)
+
+      // Withhold the provision
+      container.withhold(token)
+
+      // Should no longer be available
+      expect(container.containsWithinSelf(token)).toBe(false)
+      await expect(container.resolve(token)).rejects.toThrow(
+        'No instance provided',
+      )
+    })
+
+    it('should be accessible via get() for plain values', async () => {
+      const token = createLazyInjectable()
+      const value = { foo: 'bar' }
+
+      container.provide(token, value)
+
+      // get() should return the value directly
+      expect(container.get(token)).toBe(value)
+    })
+
+    it('should be included in containsWithinSelf()', async () => {
+      const token = createLazyInjectable()
+      const value = { foo: 'bar' }
+
+      expect(container.containsWithinSelf(token)).toBe(false)
+
+      container.provide(token, value)
+
+      expect(container.containsWithinSelf(token)).toBe(true)
+    })
+
+    it('should be included in contains()', async () => {
+      const token = createLazyInjectable()
+      const value = { foo: 'bar' }
+
+      const childContainer = container.fork(Scope.Connection)
+
+      container.provide(token, value)
+
+      // Parent has it
+      expect(container.contains(token)).toBe(true)
+      // Child can see it through parent
+      expect(childContainer.contains(token)).toBe(true)
+      expect(childContainer.containsWithinSelf(token)).toBe(false)
+    })
+
+    it('should lazily resolve injectable provisions', async () => {
+      const factorySpy = vi.fn(() => ({ value: 'created' }))
+      const factoryInjectable = createFactoryInjectable({ factory: factorySpy })
+      const token = createLazyInjectable()
+
+      container.provide(token, factoryInjectable)
+
+      // Factory should not be called yet
+      expect(factorySpy).not.toHaveBeenCalled()
+
+      // Now resolve
+      const resolved = await container.resolve(token)
+
+      // Factory should be called
+      expect(factorySpy).toHaveBeenCalledTimes(1)
+      expect(resolved).toEqual({ value: 'created' })
+    })
+
+    it('should cache resolved injectable provisions in instances', async () => {
+      const factorySpy = vi.fn(() => ({ value: 'created' }))
+      const factoryInjectable = createFactoryInjectable({ factory: factorySpy })
+      const token = createLazyInjectable()
+
+      container.provide(token, factoryInjectable)
+
+      // Resolve multiple times
+      const resolved1 = await container.resolve(token)
+      const resolved2 = await container.resolve(token)
+      const resolved3 = await container.resolve(token)
+
+      // Factory should only be called once
+      expect(factorySpy).toHaveBeenCalledTimes(1)
+      expect(resolved1).toBe(resolved2)
+      expect(resolved2).toBe(resolved3)
+    })
+
+    it('should work with multiple provisions', async () => {
+      const token1 = createLazyInjectable()
+      const token2 = createLazyInjectable()
+      const value1 = { id: 1 }
+      const value2 = { id: 2 }
+
+      container.provide([
+        { token: token1, value: value1 },
+        { token: token2, value: value2 },
+      ])
+
+      expect(await container.resolve(token1)).toBe(value1)
+      expect(await container.resolve(token2)).toBe(value2)
+    })
+
+    it('should withhold multiple provisions', async () => {
+      const token1 = createLazyInjectable()
+      const token2 = createLazyInjectable()
+      const token3 = createLazyInjectable()
+
+      container.provide(token1, 'value1')
+      container.provide(token2, 'value2')
+      container.provide(token3, 'value3')
+
+      container.withhold(token1, token2)
+
+      expect(container.containsWithinSelf(token1)).toBe(false)
+      expect(container.containsWithinSelf(token2)).toBe(false)
+      expect(container.containsWithinSelf(token3)).toBe(true)
     })
   })
 })

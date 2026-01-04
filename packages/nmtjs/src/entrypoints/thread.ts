@@ -2,12 +2,13 @@ import type { MessagePort } from 'node:worker_threads'
 import { fileURLToPath } from 'node:url'
 import { workerData as _workerData } from 'node:worker_threads'
 
+import type { ModuleRunner } from 'vite/module-runner'
+
 import type {
   ThreadErrorMessage,
   ThreadPortMessage,
   WorkerThreadErrorOrigin,
-} from 'nmtjs/runtime'
-import type { ModuleRunner } from 'vite/module-runner'
+} from '../runtime/index.ts'
 
 export type RunWorkerOptions = {
   port: MessagePort

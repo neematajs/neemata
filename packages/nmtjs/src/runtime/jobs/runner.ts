@@ -4,7 +4,7 @@ import { anyAbortSignal } from '@nmtjs/common'
 import { Scope } from '@nmtjs/core'
 import { UnrecoverableError } from 'bullmq'
 
-import type { LifecycleHooks } from '../core/hooks.ts'
+import type { LifecycleHooks } from '../hooks.ts'
 import type { AnyJob } from './job.ts'
 import type { AnyJobStep } from './step.ts'
 import type {
@@ -130,8 +130,8 @@ export class JobRunner<
     )
     const signal = anyAbortSignal(runSignal, stopListener.signal)
     await using container = this.container.fork(Scope.Global)
-    await container.provide(jobAbortSignal, signal)
-    await container.provide(currentJobInfo, this.createJobInfo(job, options))
+    container.provide(jobAbortSignal, signal)
+    container.provide(currentJobInfo, this.createJobInfo(job, options))
 
     // Create mutable state context for saveProgress
     const progressContext = {
@@ -144,7 +144,7 @@ export class JobRunner<
     }
 
     // Provide saveProgress injectable
-    await container.provide(
+    container.provide(
       saveJobProgress,
       this.createSaveProgressFn(progressContext),
     )
@@ -204,12 +204,18 @@ export class JobRunner<
             progress,
           })
           if (!shouldRun) {
-            stepResults[stepIndex] = { data: null, duration: 0 }
+            const now = Date.now()
+            stepResults[stepIndex] = {
+              data: null,
+              startedAt: now,
+              completedAt: now,
+              duration: 0,
+            }
             continue
           }
         }
 
-        const stepStartTime = Date.now()
+        const stepStartedAt = Date.now()
 
         await this.beforeStep({
           job,
@@ -240,9 +246,14 @@ export class JobRunner<
         )
 
         const produced = step.output.encode(handlerReturn ?? {})
-        const duration = Date.now() - stepStartTime
+        const stepCompletedAt = Date.now()
 
-        stepResults[stepIndex] = { data: produced, duration }
+        stepResults[stepIndex] = {
+          data: produced,
+          startedAt: stepStartedAt,
+          completedAt: stepCompletedAt,
+          duration: stepCompletedAt - stepStartedAt,
+        }
         Object.assign(result, produced)
 
         await job.afterEachHandler?.({

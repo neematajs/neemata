@@ -262,6 +262,8 @@ const infoOutputSchema = t.object({
 const stepResultEntrySchema = t
   .object({
     data: t.record(t.string(), t.any()).nullable(),
+    startedAt: t.number(),
+    completedAt: t.number(),
     duration: t.number(),
   })
   .nullable()

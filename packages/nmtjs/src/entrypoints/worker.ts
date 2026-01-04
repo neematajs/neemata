@@ -1,13 +1,12 @@
 import { workerData } from 'node:worker_threads'
 
-import type { ServerConfig } from 'nmtjs/runtime'
+import type { ServerConfig } from '../runtime/index.ts'
+import type { RunWorkerOptions } from './thread.ts'
 import {
   ApplicationWorkerRuntime,
   isApplicationConfig,
   JobWorkerRuntime,
-} from 'nmtjs/runtime'
-
-import type { RunWorkerOptions } from './thread.ts'
+} from '../runtime/index.ts'
 
 /**
  * Worker entry point.

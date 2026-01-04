@@ -4,8 +4,8 @@ import type { Redis, RedisOptions } from 'ioredis'
 import type { Redis as Valkey, RedisOptions as ValkeyOptions } from 'iovalkey'
 
 import type { ApplicationConfig } from './application/config.ts'
-import type { BaseRuntime } from './core/runtime.ts'
 import type { LifecycleHook, StoreType } from './enums.ts'
+import type { BaseRuntime } from './runtime.ts'
 
 export type WorkerThreadErrorOrigin = 'bootstrap' | 'start' | 'runtime'
 

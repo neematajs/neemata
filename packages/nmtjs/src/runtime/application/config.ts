@@ -1,7 +1,7 @@
 import type { ConnectionIdentity, Transport } from '@nmtjs/gateway'
 
-import type { LifecycleHooks } from '../core/hooks.ts'
-import type { RuntimePlugin } from '../core/plugin.ts'
+import type { LifecycleHooks } from '../hooks.ts'
+import type { RuntimePlugin } from '../plugin.ts'
 import type { ApiOptions } from './api/api.ts'
 import type { AnyFilter } from './api/filters.ts'
 import type { AnyGuard } from './api/guards.ts'
