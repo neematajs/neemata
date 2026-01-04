@@ -7,7 +7,8 @@ import type {
 import type { ProtocolVersion } from '@nmtjs/protocol'
 import type { BaseClientFormat } from '@nmtjs/protocol/client'
 import { createFuture } from '@nmtjs/common'
-import { ConnectionType, ProtocolBlob } from '@nmtjs/protocol'
+import { ConnectionType, ErrorCode, ProtocolBlob } from '@nmtjs/protocol'
+import { ProtocolError } from '@nmtjs/protocol/client'
 
 type DecodeBase64Function = (data: string) => ArrayBufferView
 
@@ -123,6 +124,7 @@ export class HttpTransportClient
         } catch (cause) {
           const error = new Error('Failed to decode stream message', { cause })
           writable.abort(error)
+          source.close()
         }
       })
       return future.promise
@@ -153,15 +155,32 @@ export class HttpTransportClient
           return {
             type: 'blob' as const,
             metadata: { type, size, filename },
-            source: body,
+            source: response.body!,
           }
         } else {
           return { type: 'rpc' as const, result: await response.bytes() }
         }
       } else {
-        const decoded = await response.text()
-        // throw new ProtocolError()
-        throw new Error()
+        try {
+          const buffer = await response.bytes()
+          const error = client.format.decode(buffer) as {
+            code?: string
+            message?: string
+            data?: unknown
+          }
+          throw new ProtocolError(
+            error.code || ErrorCode.ClientRequestError,
+            error.message || response.statusText,
+            error.data,
+          )
+        } catch (cause) {
+          if (cause instanceof ProtocolError) throw cause
+          // If decoding fails, throw generic error with status info
+          throw new ProtocolError(
+            ErrorCode.ClientRequestError,
+            `HTTP ${response.status}: ${response.statusText}`,
+          )
+        }
       }
     }
   }

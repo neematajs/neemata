@@ -16,7 +16,7 @@ export class ProtocolBlob implements ProtocolBlobInterface {
 
   public readonly source: any
   public readonly metadata: ProtocolBlobMetadata
-  public readonly encode?: () => unknown
+  public readonly encode?: (metadata: ProtocolBlobMetadata) => unknown
   public readonly toJSON?: () => unknown
 
   constructor({
@@ -51,10 +51,10 @@ export class ProtocolBlob implements ProtocolBlobInterface {
   static from(
     _source: any,
     _metadata: { size?: number; type?: string; filename?: string } = {},
-    _encode?: () => unknown,
+    _encode?: (metadata: ProtocolBlobMetadata) => unknown,
   ) {
     let source: any
-    const metadata = { ..._metadata }
+    const metadata = { type: 'application/octet-stream', ..._metadata }
 
     if (_source instanceof globalThis.ReadableStream) {
       source = _source
@@ -85,15 +85,10 @@ export class ProtocolBlob implements ProtocolBlobInterface {
 
     return new ProtocolBlob({
       source,
-      encode: _encode,
+      encode: _encode?.bind(null, metadata),
       size: metadata.size,
       type: metadata.type,
       filename: metadata.filename,
     })
   }
-
-  // toJSON() {
-  //   if (!this.encode) throw new Error('Blob format encoder is not defined')
-  //   return this.encode()
-  // }
 }

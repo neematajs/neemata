@@ -1,6 +1,7 @@
 import type { Pattern } from '@nmtjs/common'
 import { match } from '@nmtjs/common'
 
+import type { ProtocolBlobMetadata } from '../common/blob.ts'
 import type {
   DecodeRPCContext,
   EncodeRPCStreams,
@@ -21,7 +22,7 @@ export interface BaseServerEncoder {
   contentType: string
   encode(data: unknown): ArrayBufferView
   encodeRPC(data: unknown, streams: EncodeRPCStreams): ArrayBufferView
-  encodeBlob(streamId: number): unknown
+  encodeBlob(streamId: number, metadata: ProtocolBlobMetadata): unknown
 }
 
 export abstract class BaseServerFormat
@@ -32,7 +33,7 @@ export abstract class BaseServerFormat
 
   abstract encode(data: unknown): ArrayBufferView
   abstract encodeRPC(data: unknown, streams: EncodeRPCStreams): ArrayBufferView
-  abstract encodeBlob(streamId: number): unknown
+  abstract encodeBlob(streamId: number, metadata: ProtocolBlobMetadata): unknown
   abstract decode(buffer: ArrayBufferView): any
   abstract decodeRPC(
     buffer: ArrayBufferView,
@@ -74,7 +75,10 @@ export class ProtocolFormats {
   decoders = new Map<Pattern, BaseServerDecoder>()
   encoders = new Map<Pattern, BaseServerEncoder>()
 
-  constructor(formats: BaseServerFormat[]) {
+  default: BaseServerFormat
+
+  constructor(formats: [BaseServerFormat, ...BaseServerFormat[]]) {
+    this.default = formats[0]
     for (const format of formats) {
       this.encoders.set(format.contentType, format)
       for (const acceptType of format.accept) {

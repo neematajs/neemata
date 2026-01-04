@@ -2,6 +2,7 @@ import type { Dependant } from '@nmtjs/core'
 import type { GatewayOptions, Transport } from '@nmtjs/gateway'
 import { Gateway } from '@nmtjs/gateway'
 import { JsonFormat } from '@nmtjs/json-format/server'
+import { MsgpackFormat } from '@nmtjs/msgpack-format/server'
 import { ProtocolFormats } from '@nmtjs/protocol/server'
 
 import type { ApplicationConfig } from '../application/config.ts'
@@ -90,7 +91,7 @@ export class ApplicationWorkerRuntime extends BaseWorkerRuntime {
       logger: this.logger,
       container: this.container,
       hooks: this.lifecycleHooks,
-      formats: new ProtocolFormats([new JsonFormat()]),
+      formats: new ProtocolFormats([new JsonFormat(), new MsgpackFormat()]),
       transports: this.transports,
       api: this.api,
       identity: this.appConfig.identity,

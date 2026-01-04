@@ -394,7 +394,7 @@ export async function createTestSetup<TRouter extends AnyRootRouter>(
   const channel = new TransportChannel()
 
   // --- Server-side setup ---
-  const logger = createTestLogger({ pinoOptions: { level: 'error' } })
+  const logger = createTestLogger()
   const container = new Container({ logger })
   const hooks = new Hooks()
   const serverFormat = createTestServerFormat()

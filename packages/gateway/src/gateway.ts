@@ -618,8 +618,8 @@ export class Gateway {
 
     return (source, metadata) => {
       const streamId = getStreamId()
-      const blob = ProtocolBlob.from(source, metadata, () => {
-        return encoder.encodeBlob(streamId)
+      const blob = ProtocolBlob.from(source, metadata, (metadata) => {
+        return encoder.encodeBlob(streamId, metadata)
       })
       const stream = this.blobStreams.createServerStream(
         connectionId,

@@ -36,6 +36,7 @@
     "@nmtjs/gateway": "workspace:*",
     "@nmtjs/http-transport": "workspace:*",
     "@nmtjs/json-format": "workspace:*",
+    "@nmtjs/msgpack-format": "workspace:*",
     "@nmtjs/protocol": "workspace:*",
     "@nmtjs/type": "workspace:*",
     "@nmtjs/ws-transport": "workspace:*",

@@ -649,7 +649,7 @@ describe('RPC Streaming', () => {
       expect(setup.client.isClean).toBe(true)
     })
 
-    it.skip('should not leak state after partial consumption with break', async () => {
+    it('should not leak state after partial consumption with break', async () => {
       // FIXME: When breaking out of a for-await loop, the async iterator's return()
       // is called but ProtocolServerStreamInterface doesn't cancel the underlying
       // readable stream, so the cancel callback (which sends RpcAbort) is never invoked.

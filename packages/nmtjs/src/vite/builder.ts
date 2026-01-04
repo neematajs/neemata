@@ -18,7 +18,7 @@ export async function createBuilder(
       with: { type: 'json' },
     }).then((mod) => mod.default)
 
-    // techinically it's possible to do the same with rolldown directly,
+    // technically it's possible to do the same with rolldown directly,
     // but vite handles a lot of things, like defines substitutions, etc.
     // also, since during dev the code is processed via vite anyway,
     // using vite for build as well ensures consistency between dev and prod

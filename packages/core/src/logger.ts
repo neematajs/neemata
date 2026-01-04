@@ -50,7 +50,7 @@ const levelLabels = {
   [Number.POSITIVE_INFINITY]: 'SILENT',
 }
 
-export const createLogger = (options: LoggingOptions = {}, $lable: string) => {
+export const createLogger = (options: LoggingOptions = {}, $label: string) => {
   let { destinations, pinoOptions } = options
 
   if (!destinations || !destinations?.length) {
@@ -88,7 +88,7 @@ export const createLogger = (options: LoggingOptions = {}, $lable: string) => {
   return pino(
     { timestamp: stdTimeFunctions.isoTime, ...pinoOptions, level, serializers },
     pino.multistream(destinations!),
-  ).child({ $lable, $threadId: threadId })
+  ).child({ $label, $threadId: threadId })
 }
 
 export type CreateConsolePrettyDestination = (
@@ -103,10 +103,10 @@ export const createConsolePrettyDestination: CreateConsolePrettyDestination = (
   level,
   stream: pretty({
     colorize: true,
-    ignore: 'hostname,$lable,$threadId',
+    ignore: 'hostname,$label,$threadId',
     errorLikeObjectKeys: ['err', 'error', 'cause'],
     messageFormat: (log, messageKey) => {
-      const group = fg(`[${log.$lable}]`, 11)
+      const group = fg(`[${log.$label}]`, 11)
       const msg = fg(log[messageKey], messageColors[log.level as number])
       const thread = fg(`(Thread-${log.$threadId})`, 89)
       return `\x1b[0m${thread} ${group} ${msg}`
