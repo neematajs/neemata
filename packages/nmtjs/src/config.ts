@@ -1,6 +1,6 @@
 import type { Plugin as VitePlugin } from 'vite'
 
-export type ExtrernalDependency = string | RegExp
+export type ExternalDependency = string | RegExp
 
 type DeepPartial<T> = {
   [P in keyof T]?: T[P] extends Record<any, unknown> ? DeepPartial<T[P]> : T[P]
@@ -27,9 +27,9 @@ export interface NeemataConfig {
    *
    * 'all' - exclude all dependencies from package.json
    *
-   * ExtrernalDependency[] - array of package names or regular expressions to match package names
+   * ExternalDependency[] - array of package names or regular expressions to match package names
    */
-  externalDependencies: 'prod' | 'all' | ExtrernalDependency[]
+  externalDependencies: 'prod' | 'all' | ExternalDependency[]
   /**
    * Timeout in milliseconds for graceful shutdown of application workers
    */
