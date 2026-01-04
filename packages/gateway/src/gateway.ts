@@ -270,7 +270,7 @@ export class Gateway {
   protected onConnect(transport: string): TransportWorkerParams['onConnect'] {
     const logger = this.logger.child({ transport })
     return async (options, ...injections) => {
-      logger.debug('Initiating new connection')
+      logger.trace('Initiating new connection')
 
       const protocol = versions[options.protocolVersion]
       if (!protocol) throw new Error('Unsupported protocol version')
@@ -333,7 +333,7 @@ export class Gateway {
           },
         })
       } catch (error) {
-        logger.debug({ error }, 'Error establishing connection')
+        logger.error({ error }, 'Error establishing connection')
         container.dispose()
         throw error
       }
@@ -375,7 +375,7 @@ export class Gateway {
               message.rpc,
             )
             try {
-              await rpcContext.container.provide([
+              rpcContext.container.provide([
                 ...injections,
                 provision(
                   injectables.createBlob,
@@ -454,7 +454,7 @@ export class Gateway {
         signal,
       )
       try {
-        await rpcContext.container.provide([
+        rpcContext.container.provide([
           ...injections,
           provision(injectables.rpcAbortSignal, signal),
           provision(

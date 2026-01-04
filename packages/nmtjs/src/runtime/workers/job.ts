@@ -52,7 +52,7 @@ export class JobWorkerRuntime extends BaseWorkerRuntime {
       }
     }
 
-    await this.container.provide(
+    this.container.provide(
       jobWorkerPool,
       this.runtimeOptions.poolName as JobWorkerPool,
     )

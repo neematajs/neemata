@@ -57,7 +57,7 @@ export abstract class BaseWorkerRuntime extends BaseRuntime {
       )
     }
 
-    await this.container.provide(injections)
+    this.container.provide(injections)
     await super.initialize()
   }
 

@@ -70,11 +70,7 @@ export abstract class BaseRuntime {
     if (!this.plugins?.length) return
     for (const { name, hooks, injections } of this.plugins) {
       this.logger.debug(`Initializing plugin [${name}]...`)
-      if (injections) {
-        for (const injection of injections) {
-          await this.container.provide(injection.token, injection.value)
-        }
-      }
+      if (injections) this.container.provide(injections)
       if (hooks) this.lifecycleHooks.addHooks(hooks)
     }
   }
