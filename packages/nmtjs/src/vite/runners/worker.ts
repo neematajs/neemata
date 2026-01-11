@@ -1,6 +1,5 @@
-import {
+import wt, {
   BroadcastChannel,
-  isInternalThread,
   isMainThread,
   parentPort,
   threadId,
@@ -22,7 +21,8 @@ export function createBroadcastChannel(threadId: number): BroadcastChannel {
 export function createModuleRunner(
   mode: 'development' | 'production' = 'development',
 ): ModuleRunner {
-  if (isMainThread || isInternalThread)
+  // TODO: bun does not support isInternalThread yet
+  if (isMainThread || wt.isInternalThread)
     throw new Error('Module runner can only be created inside worker threads.')
 
   const channel = createBroadcastChannel(threadId)

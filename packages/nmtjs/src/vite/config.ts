@@ -17,13 +17,13 @@ const ext = new URL(import.meta.url).pathname.endsWith('.ts') ? '.ts' : '.js'
 
 export const baseViteConfigOptions = {
   entrypointMainPath: fileURLToPath(
-    import.meta.resolve(`../entrypoints/main${ext}`),
+    new URL(`../entrypoints/main${ext}`, import.meta.url),
   ),
   entrypointWorkerPath: fileURLToPath(
-    import.meta.resolve(`../entrypoints/worker${ext}`),
+    new URL(`../entrypoints/worker${ext}`, import.meta.url),
   ),
   entrypointThreadPath: fileURLToPath(
-    import.meta.resolve(`../entrypoints/thread${ext}`),
+    new URL(`../entrypoints/thread${ext}`, import.meta.url),
   ),
   // entrypointCLIPath: fileURLToPath(import.meta.resolve('../entrypoints/cli')),
 } satisfies Partial<ViteConfigOptions>

@@ -5,5 +5,5 @@ export default defineConfig({
     main: { specifier: './src/applications/main/index.ts', type: 'neemata' },
   },
   serverPath: './src/index.ts',
-  build: { minify: false },
+  vite: { build: { minify: false } },
 })

@@ -9,7 +9,7 @@ import type {
   Plugin,
   ViteDevServer,
 } from 'vite'
-import { DevEnvironment } from 'vite'
+import { DevEnvironment, mergeConfig } from 'vite'
 
 import type { NeemataConfig } from '../../config.ts'
 import type { ViteConfigOptions } from '../config.ts'
@@ -39,35 +39,38 @@ export async function createViteServer(
 
   const server = await createServer(
     options,
-    {
-      appType: 'custom',
-      clearScreen: false,
-      resolve: { alias: config.alias },
-      mode,
-      plugins: [
-        ...buildPlugins,
-        ...neemataConfig.plugins,
-        ...(mode === 'development'
-          ? [
-              {
-                name: 'neemata-worker-application-hmr',
-                transform(code, id, _options) {
-                  if (applicationEntries.includes(id)) {
-                    return code + _injectHmr
-                  }
-                },
-                handleHotUpdate(ctx) {
-                  // Emit event when application entry files change
-                  // This allows restarting failed workers after code fixes
-                  if (ctx.file && applicationEntries.includes(ctx.file)) {
-                    events.emit('hmr-update', { file: ctx.file })
-                  }
-                },
-              } satisfies Plugin,
-            ]
-          : []),
-      ],
-    },
+    mergeConfig(
+      {
+        appType: 'custom',
+        clearScreen: false,
+        resolve: { alias: config.alias },
+        mode,
+        optimizeDeps: { noDiscovery: true },
+        plugins: [
+          ...buildPlugins,
+          ...(mode === 'development'
+            ? [
+                {
+                  name: 'neemata-worker-application-hmr',
+                  transform(code, id, _options) {
+                    if (applicationEntries.includes(id)) {
+                      return code + _injectHmr
+                    }
+                  },
+                  handleHotUpdate(ctx) {
+                    // Emit event when application entry files change
+                    // This allows restarting failed workers after code fixes
+                    if (ctx.file && applicationEntries.includes(ctx.file)) {
+                      events.emit('hmr-update', { file: ctx.file })
+                    }
+                  },
+                } satisfies Plugin,
+              ]
+            : []),
+        ],
+      },
+      neemataConfig.vite,
+    ),
     {
       createEnvironment: async (name, config, context) => {
         const channels = new Map<number, BroadcastChannel>()

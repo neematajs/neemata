@@ -81,7 +81,7 @@ function createServer(): ApplicationServer {
   }
 
   const workerConfig = {
-    path: fileURLToPath(import.meta.resolve(`./thread${_ext}`)),
+    path: fileURLToPath(new URL(`./thread${_ext}`, import.meta.url)),
     workerData: { vite: _vite?.mode },
     worker: _viteServerEvents
       ? (worker: Worker) => {

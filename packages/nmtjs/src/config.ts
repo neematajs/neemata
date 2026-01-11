@@ -1,4 +1,7 @@
-import type { Plugin as VitePlugin } from 'vite'
+import { resolve } from 'node:path'
+
+import type { UserConfig } from 'vite'
+import { mergeConfig } from 'vite'
 
 export type ExternalDependency = string | RegExp
 
@@ -43,8 +46,7 @@ export interface NeemataConfig {
    */
   env: (Record<string, string> | string)[]
 
-  build: { outDir: string; minify: boolean }
-  plugins: VitePlugin[]
+  vite: UserConfig
 }
 
 export function defineConfig(
@@ -59,6 +61,9 @@ export function defineConfig(
     ...config,
     // @ts-expect-error
     applications: config.applications || {},
-    build: { outDir: './dist', minify: true, ...config.build },
+    vite: mergeConfig(
+      { build: { outDir: resolve('./dist'), minify: true } },
+      config.vite || {},
+    ),
   }
 }

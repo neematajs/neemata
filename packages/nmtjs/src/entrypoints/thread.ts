@@ -21,7 +21,7 @@ export type RunWorkerOptions = {
 const workerData = _workerData as RunWorkerOptions
 
 const ext = new URL(import.meta.url).pathname.endsWith('.ts') ? '.ts' : '.js'
-const workerPath = fileURLToPath(import.meta.resolve(`./worker${ext}`))
+const workerPath = fileURLToPath(new URL(`./worker${ext}`, import.meta.url))
 
 type WorkerModule = typeof import('./worker.ts')
 type WorkerRuntime = Awaited<ReturnType<WorkerModule['run']>>
