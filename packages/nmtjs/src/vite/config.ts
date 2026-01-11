@@ -1,0 +1,45 @@
+import { fileURLToPath } from 'node:url'
+
+export type ViteConfigOptions = {
+  applicationImports: Record<
+    string,
+    { path: string; specifier: string; type: 'neemata' | 'custom' }
+  >
+  serverEntryPath: string
+  entrypointMainPath: string
+  entrypointWorkerPath: string
+  entrypointThreadPath: string
+  // entrypointCLIPath: string
+  configPath: string
+}
+
+const ext = new URL(import.meta.url).pathname.endsWith('.ts') ? '.ts' : '.js'
+
+export const baseViteConfigOptions = {
+  entrypointMainPath: fileURLToPath(
+    new URL(`../entrypoints/main${ext}`, import.meta.url),
+  ),
+  entrypointWorkerPath: fileURLToPath(
+    new URL(`../entrypoints/worker${ext}`, import.meta.url),
+  ),
+  entrypointThreadPath: fileURLToPath(
+    new URL(`../entrypoints/thread${ext}`, import.meta.url),
+  ),
+  // entrypointCLIPath: fileURLToPath(import.meta.resolve('../entrypoints/cli')),
+} satisfies Partial<ViteConfigOptions>
+
+export function createConfig(options: ViteConfigOptions) {
+  const alias = { '#server': options.serverEntryPath }
+  const entries = {
+    server: options.serverEntryPath,
+    main: options.entrypointMainPath,
+    thread: options.entrypointThreadPath,
+    worker: options.entrypointWorkerPath,
+  }
+
+  for (const [name, { path }] of Object.entries(options.applicationImports)) {
+    entries[`application.${name}`] = path
+  }
+
+  return { alias, entries }
+}

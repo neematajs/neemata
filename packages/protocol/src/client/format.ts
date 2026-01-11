@@ -1,31 +1,30 @@
-import type {
-  DecodeRPCContext,
-  EncodeRPCContext,
-  ProtocolRPC,
-  ProtocolRPCResponse,
-} from '../common/types.ts'
+import type { ProtocolBlob } from '../common/blob.ts'
+import type { DecodeRPCContext } from '../common/types.ts'
 import type {
   ProtocolClientBlobStream,
   ProtocolServerBlobStream,
 } from './stream.ts'
 
-export type ProtocolRPCEncode = {
-  buffer: ArrayBuffer
-  streams: Record<number, ProtocolClientBlobStream>
+export interface EncodeRPCContext<T = any> {
+  addStream: (blob: ProtocolBlob) => T
 }
 
+export type ProtocolRPCEncode = ArrayBufferView
+
 export interface BaseClientDecoder {
-  decode(buffer: ArrayBuffer): any
+  decode(buffer: ArrayBufferView): unknown
   decodeRPC(
-    buffer: ArrayBuffer,
-    context: DecodeRPCContext<ProtocolServerBlobStream>,
-  ): ProtocolRPCResponse<ProtocolServerBlobStream>
+    buffer: ArrayBufferView,
+    context: DecodeRPCContext<
+      (options?: { signal?: AbortSignal }) => ProtocolServerBlobStream
+    >,
+  ): unknown
 }
 
 export interface BaseClientEncoder {
-  encode(data: any): ArrayBuffer
+  encode(data: unknown): ArrayBufferView
   encodeRPC(
-    rpc: ProtocolRPC,
+    data: unknown,
     context: EncodeRPCContext<ProtocolClientBlobStream>,
   ): ProtocolRPCEncode
 }
@@ -35,14 +34,16 @@ export abstract class BaseClientFormat
 {
   abstract contentType: string
 
-  abstract encode(data: any): ArrayBuffer
+  abstract encode(data: unknown): ArrayBufferView
   abstract encodeRPC(
-    rpc: ProtocolRPC,
-    context: EncodeRPCContext<ProtocolClientBlobStream>,
+    data: unknown,
+    context: EncodeRPCContext,
   ): ProtocolRPCEncode
-  abstract decode(buffer: ArrayBuffer): any
+  abstract decode(buffer: ArrayBufferView): unknown
   abstract decodeRPC(
-    buffer: ArrayBuffer,
-    context: DecodeRPCContext<ProtocolServerBlobStream>,
-  ): ProtocolRPCResponse<ProtocolServerBlobStream>
+    buffer: ArrayBufferView,
+    context: DecodeRPCContext<
+      (options?: { signal?: AbortSignal }) => ProtocolServerBlobStream
+    >,
+  ): unknown
 }

@@ -5,7 +5,6 @@ import type { TRouterContract } from '../src/index.ts'
 import type { TEventContract } from '../src/schemas/event.ts'
 import type { TProcedureContract } from '../src/schemas/procedure.ts'
 import { c, IsRouterContract, RouterContract } from '../src/index.ts'
-import { APIContract, IsAPIContract } from '../src/schemas/api.ts'
 import { EventContract, IsEventContract } from '../src/schemas/event.ts'
 import {
   IsProcedureContract,
@@ -20,10 +19,6 @@ import {
 describe('Exports', () => {
   it('Contract should be defined', () => {
     expect(c).toBeDefined()
-  })
-
-  it('should export API contract', () => {
-    expect(c).toHaveProperty('api', APIContract)
   })
 
   it('should export Router contract', () => {
@@ -167,7 +162,7 @@ describe('Contract — Procedure', { sequential: true }, () => {
     it('should create a Procedure contract', () => {
       const inputType = t.any()
       const outputType = t.any()
-      const streamType = t.any()
+      const streamType = true
       const unnamedProcedure = c.procedure({
         input: inputType,
         output: outputType,
@@ -186,8 +181,9 @@ describe('Contract — Procedure', { sequential: true }, () => {
         name: 'testProcedure',
         input: inputType,
         output: outputType,
-        stream: streamType,
+        stream: true,
       })
+
       expect(namedProcedure).toBeDefined()
       expect(namedProcedure).toHaveProperty('name', 'testProcedure')
       expect(namedProcedure).toHaveProperty('type', 'neemata:procedure')
@@ -211,7 +207,7 @@ describe('Contract — Procedure', { sequential: true }, () => {
       const streamProcedure = c.procedure({
         input: t.object({ name: t.string(), age: t.number() }),
         output: t.object({ greeting: t.string() }),
-        stream: t.string(),
+        stream: true,
       })
 
       expectTypeOf(simpleProcedure.name).toEqualTypeOf<undefined>()
@@ -226,7 +222,7 @@ describe('Contract — Procedure', { sequential: true }, () => {
       expectTypeOf(streamProcedure.output).toEqualTypeOf<
         t.ObjectType<{ greeting: t.StringType }>
       >()
-      expectTypeOf(streamProcedure.stream).toEqualTypeOf<t.StringType>()
+      expectTypeOf(streamProcedure.stream).toEqualTypeOf<true>()
 
       expectTypeOf(namedProcedure.name).toEqualTypeOf<'testProcedure'>()
       expectTypeOf(namedProcedure.input).toEqualTypeOf<t.NeverType>()
@@ -262,7 +258,7 @@ describe('Contract — Router', { sequential: true }, () => {
           inlineProcedureWithStream: c.procedure({
             input: t.any(),
             output: t.any(),
-            stream: t.any(),
+            stream: true,
           }),
           nested: nestedRouter,
         },
@@ -309,14 +305,10 @@ describe('Contract — Router', { sequential: true }, () => {
           inlineProcedure: c.procedure({ input: t.any(), output: t.any() }),
           inlineProcedureWithStream: c.procedure({
             input: t.any(),
-            output: t.any(),
-            stream: t.string(),
+            output: t.string(),
+            stream: true,
           }),
           nested: nestedRouter,
-        },
-        events: {
-          testEvent: testEvent,
-          inlineEvent: c.event({ payload: t.object({ data: t.string() }) }),
         },
       })
 
@@ -338,8 +330,8 @@ describe('Contract — Router', { sequential: true }, () => {
       ).toEqualTypeOf<
         TProcedureContract<
           t.AnyType,
-          t.AnyType,
           t.StringType,
+          true,
           'inlineProcedureWithStream'
         >
       >()
@@ -361,62 +353,42 @@ describe('Contract — Router', { sequential: true }, () => {
   })
 })
 
-describe('Contract — API', { sequential: true }, () => {
+describe('Contract — Router', { sequential: true }, () => {
   describe('Runtime', () => {
-    it('should create an API contract', () => {
+    it('should create a Router contract', () => {
       const inputType = t.any()
       const outputType = t.any()
-
-      const api = c.api({
-        router: c.router({
-          routes: {
-            testProcedure: c.procedure({
-              input: inputType,
-              output: outputType,
-            }),
-          },
-
-          name: 'root',
-        }),
+      const router = c.router({
+        routes: {
+          testProcedure: c.procedure({ input: inputType, output: outputType }),
+        },
+        name: 'root',
       })
 
-      expect(api).toBeDefined()
-      expect(api).toHaveProperty('type', 'neemata:api')
-      expect(api).toHaveProperty('router')
-      expect(IsAPIContract(api)).toBe(true)
+      expect(router).toBeDefined()
+      expect(router).toHaveProperty('type', 'neemata:router')
+      expect(router).toHaveProperty('name', 'root')
+      expect(router).toHaveProperty('routes')
+      expect(IsRouterContract(router)).toBe(true)
     })
   })
 
   describe('Typings', () => {
-    it('should correctly resolve API contract types', () => {
-      const api = c.api({
-        router: c.router({
-          routes: {
-            testProcedure: c.procedure({
-              input: t.string(),
-              output: t.string(),
-            }),
-          },
-          name: 'test',
-        }),
+    it('should correctly resolve a router contract types', () => {
+      const router = c.router({
+        routes: {
+          testProcedure: c.procedure({ input: t.string(), output: t.string() }),
+        },
+        name: 'root',
       })
 
-      expect(api).toHaveProperty('router')
-      expect(api.router).toHaveProperty('routes')
-      expect(api.router.routes.testProcedure).toBeDefined()
-      expect(api.router.routes.testProcedure.name).toBe('test/testProcedure')
-      expectTypeOf(api.router.name).toEqualTypeOf<'test'>()
-      expectTypeOf(api.router).toEqualTypeOf<
-        TRouterContract<
-          {
-            readonly testProcedure: TProcedureContract<
-              t.StringType,
-              t.StringType,
-              undefined,
-              'test/testProcedure'
-            >
-          },
-          'test'
+      expectTypeOf(router.name).toEqualTypeOf<'root'>()
+      expectTypeOf(router.routes.testProcedure).toEqualTypeOf<
+        TProcedureContract<
+          t.StringType,
+          t.StringType,
+          undefined,
+          'root/testProcedure'
         >
       >()
     })

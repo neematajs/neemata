@@ -1,5 +1,4 @@
-export const BlobKey: unique symbol = Symbol.for('neemata:BlobKey')
-export type BlobKey = typeof BlobKey
+import { kBlobKey } from './constants.ts'
 
 export type ProtocolBlobMetadata = {
   type: string
@@ -9,61 +8,87 @@ export type ProtocolBlobMetadata = {
 
 export interface ProtocolBlobInterface {
   readonly metadata: ProtocolBlobMetadata
-  readonly [BlobKey]: true
+  readonly [kBlobKey]: any
 }
 
 export class ProtocolBlob implements ProtocolBlobInterface {
-  readonly [BlobKey] = true
+  [kBlobKey]: true = true
 
-  public readonly metadata: ProtocolBlobMetadata
   public readonly source: any
+  public readonly metadata: ProtocolBlobMetadata
+  public readonly encode?: (metadata: ProtocolBlobMetadata) => unknown
+  public readonly toJSON?: () => unknown
 
-  constructor(
-    source: any,
-    size?: number,
+  constructor({
+    source,
+    encode,
+    size,
     type = 'application/octet-stream',
-    filename?: string,
-  ) {
+    filename,
+  }: {
+    source: any
+    encode?: () => unknown
+    size?: number
+    type?: string
+    filename?: string
+  }) {
     if (typeof size !== 'undefined' && size <= 0)
       throw new Error('Blob size is invalid')
 
+    this.encode = encode
     this.source = source
     this.metadata = { size, type, filename }
+    if (encode) {
+      Object.defineProperty(this, 'toJSON', {
+        configurable: false,
+        enumerable: false,
+        writable: false,
+        value: encode,
+      })
+    }
   }
 
   static from(
-    source: any,
-    metadata: { size?: number; type?: string; filename?: string } = {},
+    _source: any,
+    _metadata: { size?: number; type?: string; filename?: string } = {},
+    _encode?: (metadata: ProtocolBlobMetadata) => unknown,
   ) {
-    let _source: any
+    let source: any
+    const metadata = { type: 'application/octet-stream', ..._metadata }
 
-    if (source instanceof globalThis.ReadableStream) {
-      _source = source
-    } else if ('File' in globalThis && source instanceof globalThis.File) {
-      _source = source.stream()
-      metadata.size = source.size
-      metadata.filename = source.name
-    } else if (source instanceof globalThis.Blob) {
-      _source = source.stream()
-      metadata.size = source.size
-    } else if (typeof source === 'string') {
-      const blob = new Blob([source])
-      _source = blob.stream()
-      metadata.size = blob.size
-      metadata.type = metadata.type || 'text/plain'
-    } else if (source instanceof globalThis.ArrayBuffer) {
-      const blob = new Blob([source])
-      _source = blob.stream()
-      metadata.size = blob.size
+    if (_source instanceof globalThis.ReadableStream) {
+      source = _source
+    } else if ('File' in globalThis && _source instanceof globalThis.File) {
+      source = _source.stream()
+      metadata.size ??= _source.size
+      metadata.filename ??= _source.name
+    } else if (_source instanceof globalThis.Blob) {
+      source = _source.stream()
+      metadata.size ??= _source.size
+      metadata.type ??= _source.type
+    } else if (typeof _source === 'string') {
+      const blob = new Blob([_source])
+      source = blob.stream()
+      metadata.size ??= blob.size
+      metadata.type ??= 'text/plain'
+    } else if (globalThis.ArrayBuffer.isView(_source)) {
+      const blob = new Blob([_source as ArrayBufferView<ArrayBuffer>])
+      source = blob.stream()
+      metadata.size ??= blob.size
+    } else if (_source instanceof globalThis.ArrayBuffer) {
+      const blob = new Blob([_source])
+      source = blob.stream()
+      metadata.size ??= blob.size
     } else {
-      _source = source
+      source = _source
     }
 
-    return new ProtocolBlob(
-      _source,
-      metadata.size,
-      metadata.type,
-      metadata.filename,
-    )
+    return new ProtocolBlob({
+      source,
+      encode: _encode?.bind(null, metadata),
+      size: metadata.size,
+      type: metadata.type,
+      filename: metadata.filename,
+    })
   }
 }
