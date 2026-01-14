@@ -21,6 +21,19 @@ try {
   }
 } catch {}
 
+try {
+  const { packageJsonPath } = resolver.sync(process.cwd(), 'uWebSockets.js')
+  if (packageJsonPath) {
+    targets.push({
+      src: join(
+        dirname(packageJsonPath),
+        `uws_${process.platform}_${process.arch}_${process.versions.modules}.node`,
+      ),
+      dest: './chunks/',
+    })
+  }
+} catch {}
+
 export const buildPlugins: Plugin[] = [
   ...(targets.length ? viteStaticCopy({ targets }) : []),
 ]

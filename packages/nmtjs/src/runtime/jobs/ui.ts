@@ -12,6 +12,12 @@ export function createJobsUI(queues: Queue[]) {
   createBullBoard({
     queues: queues.map((q) => new BullMQAdapter(q, { readOnlyMode: true })),
     serverAdapter,
+    options: {
+      uiBasePath: new URL(
+        '.',
+        import.meta.resolve('@bull-board/ui/package.json'),
+      ).pathname,
+    },
   })
   const router = serverAdapter.registerHandlers()
   app.use(router)
