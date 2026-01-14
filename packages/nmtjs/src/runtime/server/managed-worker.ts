@@ -380,7 +380,9 @@ export class ManagedWorker extends EventEmitter<ManagedWorkerEvents> {
         this.scheduleRestart(action.delay)
         break
       case 'exit':
-        this.logger.fatal({ error }, 'Worker failed, exiting process')
+        this.logger.fatal(
+          new Error('Worker failed, exiting process', { cause: error }),
+        )
         process.exit(action.code)
         break
       case 'wait':
@@ -407,7 +409,7 @@ export class ManagedWorker extends EventEmitter<ManagedWorkerEvents> {
       // Reset to idle before starting
       this.transition('idle')
       this.start().catch((error) => {
-        this.logger.error({ error }, 'Restart failed')
+        this.logger.error(new Error('Restart failed', { cause: error }))
       })
     }, delay)
   }

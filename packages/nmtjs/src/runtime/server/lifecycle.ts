@@ -130,8 +130,9 @@ export class ServerLifecycle extends EventEmitter<LifecycleEvents> {
       await this.server?.stop()
     } catch (error) {
       this.logger.error(
-        { error },
-        'Error while stopping server (continuing shutdown)',
+        new Error('Error while stopping server (continuing shutdown)', {
+          cause: error,
+        }),
       )
     } finally {
       this.server = null
@@ -176,12 +177,18 @@ export class ServerLifecycle extends EventEmitter<LifecycleEvents> {
 
     switch (action.type) {
       case 'exit':
-        this.logger.fatal({ error }, 'Startup failed, exiting')
+        this.logger.fatal(
+          new Error('Startup failed, exiting', { cause: error }),
+        )
         process.exit(action.code)
         break
       case 'wait':
         // Dev mode: stay alive, HMR will call reload()
-        this.logger.error({ error }, 'Startup failed, waiting for fix via HMR')
+        this.logger.error(
+          new Error('Startup failed, waiting for fix via HMR', {
+            cause: error,
+          }),
+        )
         break
       case 'restart':
         this.logger.warn(
@@ -192,7 +199,7 @@ export class ServerLifecycle extends EventEmitter<LifecycleEvents> {
           // Only restart if still in failed state
           if (this.state === 'failed') {
             this.start().catch((e) => {
-              this.logger.error({ error: e }, 'Restart failed')
+              this.logger.error(new Error('Restart failed', { cause: e }))
             })
           }
         }, action.delay)
