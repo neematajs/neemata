@@ -1,6 +1,7 @@
 import type { Logger } from '@nmtjs/core'
 import { createLogger } from '@nmtjs/core'
 
+import type { MetricsServer } from '../metrics/server.ts'
 import type { Store } from '../types.ts'
 import type { ServerConfig } from './config.ts'
 import type { ErrorPolicy } from './error-policy.ts'
@@ -14,6 +15,7 @@ import type {
   WorkerPoolConfig,
   WorkerPoolFactory,
 } from './worker-pool.ts'
+import { createMetricsServer } from '../metrics/server.ts'
 import { createStoreClient } from '../store/index.ts'
 import { ApplicationServerApplications } from './applications.ts'
 import { DevErrorPolicy } from './error-policy.ts'
@@ -21,12 +23,6 @@ import { ApplicationServerJobs } from './jobs.ts'
 import { ManagedWorker } from './managed-worker.ts'
 import { ApplicationServerProxy } from './proxy.ts'
 import { WorkerPool } from './worker-pool.ts'
-
-// Re-export types for backwards compatibility
-export type {
-  ApplicationServerRunOptions,
-  ApplicationServerWorkerConfig,
-} from './types.ts'
 
 /**
  * Default factory for creating ManagedWorker instances.
@@ -67,6 +63,7 @@ export class ApplicationServer {
 
   proxy?: ApplicationServerProxy
   store?: Store
+  metrics?: MetricsServer
 
   constructor(
     readonly config: ServerConfig,
@@ -94,6 +91,12 @@ export class ApplicationServer {
   async start() {
     const { config, logger, errorPolicy, workerFactory, poolFactory } = this
     logger.info('Starting application server...')
+
+    if (config.metrics) {
+      this.metrics = await createMetricsServer(this.logger, config.metrics)
+      await this.metrics.start()
+      logger.info('Metrics server started')
+    }
 
     if (config.store) {
       this.store = await createStoreClient(config.store)
@@ -172,6 +175,11 @@ export class ApplicationServer {
     if (this.store) {
       this.logger.debug('Closing store...')
       this.store.disconnect(false)
+    }
+
+    if (this.metrics) {
+      this.logger.info('Stopping metrics server...')
+      await this.metrics.stop()
     }
 
     this.logger.info('Application server stopped')

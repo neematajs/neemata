@@ -158,7 +158,7 @@ async function startServer(
   })
 
   // Give it a bit more time to fully initialize
-  await setTimeout(500)
+  await setTimeout(1500)
 
   return serverProcess
 }

@@ -26,6 +26,12 @@ import {
   jobOperation,
   RuntimeInjectables,
 } from './runtime/index.ts'
+import {
+  createCounterMetric,
+  createGaugeMetric,
+  createHistogramMetric,
+  createSummaryMetric,
+} from './runtime/metrics/metric.ts'
 
 export const neemata = {
   app: defineApplication,
@@ -53,6 +59,12 @@ export const neemata = {
   step: createStep,
   hook: createHook,
   jobRouter: Object.assign(createJobsRouter, { operation: jobOperation }),
+  metrics: {
+    counter: createCounterMetric,
+    gauge: createGaugeMetric,
+    histogram: createHistogramMetric,
+    summary: createSummaryMetric,
+  },
 }
 
 export { c } from '@nmtjs/contract'

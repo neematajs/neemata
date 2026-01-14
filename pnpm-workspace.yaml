@@ -10,3 +10,4 @@ catalog:
 onlyBuiltDependencies:
   - esbuild
   - msgpackr-extract
+  - prom-client

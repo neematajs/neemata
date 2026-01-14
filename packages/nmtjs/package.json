@@ -49,6 +49,7 @@
     "ioredis": "^5.8.2",
     "iovalkey": "^0.3.3",
     "oxc-resolver": "^11.13.2",
+    "prom-client": "git@github.com:siimon/prom-client.git#d4d2dcb366384833951e0116caca707b5f62aa5e",
     "vite": "catalog:",
     "vite-plugin-static-copy": "3.1.4"
   },

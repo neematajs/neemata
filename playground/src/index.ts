@@ -7,4 +7,5 @@ export default n.server({
       threads: [{ ws: { listen: { port: 4000, hostname: '127.0.0.1' } } }],
     },
   },
+  metrics: {},
 })

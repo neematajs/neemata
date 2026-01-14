@@ -70,7 +70,9 @@ export class WsTransportClient {
       })
       ws.addEventListener('error', (event) => {
         this.connecting = null
-        reject(new Error('WebSocket error', { cause: event }))
+        reject(
+          new Error('WebSocket error', { cause: (event as ErrorEvent).error }),
+        )
       })
       ws.addEventListener('close', (event) => {
         this.webSocket = null

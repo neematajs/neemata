@@ -88,6 +88,37 @@ export interface ServerConfigInit {
   commands?: {}
   pubsub?: { adapter: PubSubAdapterType }
   deploymentId?: string
+  metrics?: {
+    /**
+     * @default '/metrics'
+     */
+    path?: string
+    /**
+     * @default 9187
+     */
+    port?: number
+    /**
+     * @default 0.0.0.0
+     */
+    host?: string
+
+    push?: {
+      /**
+       * Pushgateway URL (including protocol and port)
+       *
+       * @default http://127.0.0.1:9091
+       */
+      url?: string
+      /**
+       * Job name for the pushgateway
+       */
+      name: string
+      /**
+       * Push interval in milliseconds
+       */
+      interval: number
+    }
+  }
 }
 
 export interface ServerConfig {
@@ -119,11 +150,20 @@ export interface ServerConfig {
   commands?: {}
   pubsub: ServerConfigInit['pubsub']
   deploymentId: ServerConfigInit['deploymentId']
+  metrics?: ServerConfigInit['metrics']
 }
 
 export function defineServer(options: ServerConfigInit): ServerConfig {
-  const { deploymentId, logger, commands, proxy, store, applications, pubsub } =
-    options
+  const {
+    deploymentId,
+    logger,
+    commands,
+    proxy,
+    store,
+    applications,
+    pubsub,
+    metrics,
+  } = options
 
   let jobs: ServerConfig['jobs'] | undefined
   if (options.jobs) {
@@ -149,6 +189,7 @@ export function defineServer(options: ServerConfigInit): ServerConfig {
     applications,
     pubsub,
     jobs,
+    metrics,
   } as const)
 }
 
