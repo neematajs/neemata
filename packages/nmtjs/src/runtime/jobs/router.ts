@@ -458,7 +458,7 @@ function createListProcedure(
     metadata: config.metadata,
     timeout: config.timeout,
     handler: async (ctx: DependencyContext<JobManagerDeps>, input) => {
-      ctx.logger.debug(
+      ctx.logger.trace(
         {
           jobName: job.options.name,
           page: input.page,
@@ -472,7 +472,7 @@ function createListProcedure(
         limit: input.limit,
         status: input.status as JobStatus[],
       })
-      ctx.logger.debug(
+      ctx.logger.trace(
         { jobName: job.options.name, total: result.total, pages: result.pages },
         'Jobs listed',
       )
@@ -552,7 +552,7 @@ function createAddProcedure(
 
       // Call beforeAdd hook if provided
       if (config.beforeAdd) {
-        ctx.logger.debug(
+        ctx.logger.trace(
           { jobName: job.options.name },
           'Running beforeAdd hook',
         )
@@ -715,7 +715,7 @@ function createRemoveProcedure(
     metadata: config.metadata,
     timeout: config.timeout,
     handler: async (ctx: DependencyContext<JobManagerDeps>, input) => {
-      ctx.logger.debug(
+      ctx.logger.trace(
         { jobName: job.options.name, id: input.id },
         'Removing job',
       )
