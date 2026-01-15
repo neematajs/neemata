@@ -20,7 +20,7 @@ export type BinaryTypes = {
 export const encodeNumber = <T extends keyof BinaryTypes>(
   value: BinaryTypes[T],
   type: T,
-  littleEndian = false,
+  littleEndian = true,
 ) => {
   const bytesNeeded = globalThis[`${type}Array`].BYTES_PER_ELEMENT
   const ab = new ArrayBuffer(bytesNeeded)
@@ -30,31 +30,41 @@ export const encodeNumber = <T extends keyof BinaryTypes>(
 }
 
 export const decodeNumber = <T extends keyof BinaryTypes>(
-  buffer: ArrayBuffer,
+  buffer: ArrayBuffer | ArrayBufferView,
   type: T,
   offset = 0,
-  littleEndian = false,
+  littleEndian = true,
 ): BinaryTypes[T] => {
-  const view = new DataView(buffer)
-  return view[`get${type}`](offset, littleEndian) as BinaryTypes[T]
+  const ab = buffer instanceof ArrayBuffer ? buffer : buffer.buffer
+  const baseOffset = buffer instanceof ArrayBuffer ? 0 : buffer.byteOffset
+  const view = new DataView(ab)
+  return view[`get${type}`](baseOffset + offset, littleEndian) as BinaryTypes[T]
 }
 
-export const encodeText = (text: string) =>
-  new Uint8Array(utf8encoder.encode(text)).buffer as ArrayBuffer
+export const encodeText = (text: string) => utf8encoder.encode(text)
 
 export const decodeText = (buffer: Parameters<typeof utf8decoder.decode>[0]) =>
   utf8decoder.decode(buffer)
 
-export const concat = (...buffers: ArrayBuffer[]) => {
-  const totalLength = buffers.reduce(
-    (acc, buffer) => acc + buffer.byteLength,
-    0,
-  )
+export const concat = (...buffers: (ArrayBuffer | ArrayBufferView)[]) => {
+  let totalLength = 0
+  for (const buffer of buffers) totalLength += buffer.byteLength
   const view = new Uint8Array(totalLength)
   let offset = 0
   for (const buffer of buffers) {
-    view.set(new Uint8Array(buffer), offset)
-    offset += buffer.byteLength
+    const chunk =
+      buffer instanceof ArrayBuffer
+        ? new Uint8Array(buffer)
+        : new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength)
+    view.set(chunk, offset)
+    offset += chunk.byteLength
   }
-  return view.buffer
+  return view
 }
+
+export const UTF8Transform = () =>
+  new TransformStream<string, Uint8Array>({
+    transform(chunk, controller) {
+      controller.enqueue(encodeText(chunk))
+    },
+  })

@@ -4,6 +4,7 @@ export default defineProject({
   test: {
     environment: 'node',
     include: ['test/**/*.spec.ts'],
+    exclude: ['test/_legacy/**'],
     typecheck: { enabled: true, tsconfig: './tsconfig.json' },
   },
 })

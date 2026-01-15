@@ -1,19 +1,6 @@
-import type { LazyInjectable } from '@nmtjs/core'
-import { createLazyInjectable, Scope } from '@nmtjs/core'
-import { ProtocolInjectables } from '@nmtjs/protocol/server'
+import { connectionData as connectionDataInjectable } from '@nmtjs/gateway'
 
 import type { WsTransportServerRequest } from './types.ts'
 
-const connectionData = ProtocolInjectables.connectionData as LazyInjectable<
-  WsTransportServerRequest,
-  Scope.Connection
->
-
-const httpResponseHeaders = createLazyInjectable<Headers, Scope.Call>(
-  Scope.Call,
-)
-
-export const WsTransportInjectables = {
-  connectionData,
-  httpResponseHeaders,
-} as const
+export const connectionData =
+  connectionDataInjectable.$withType<WsTransportServerRequest>()

@@ -2,7 +2,7 @@ import type { ArrayMap } from '@nmtjs/common'
 import type { ZodMiniTuple } from 'zod/mini'
 import { tuple as zodTuple } from 'zod/mini'
 
-import type { ZodPlainType } from './_plain.ts'
+import type { ZodPlainType } from './_utils.ts'
 import { BaseType } from './base.ts'
 
 export class TupleType<

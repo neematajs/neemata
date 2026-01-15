@@ -1,7 +1,13 @@
 packages:
   - packages/*
-  - tests/*
+  - tests
+  - playground
+
+catalog:
+  zod: ^4.3.5
+  vite: 8.0.0-beta.8
+
 onlyBuiltDependencies:
   - esbuild
-catalog:
-  zod: ^4.0.0
+  - msgpackr-extract
+  - prom-client

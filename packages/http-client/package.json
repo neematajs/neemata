@@ -18,8 +18,7 @@
     }
   },
   "scripts": {
-    "build": "tsc",
-    "type-check": "tsc --noEmit"
+    "clean-build": "rm -rf ./dist"
   },
   "dependencies": {
     "@nmtjs/client": "workspace:*",
@@ -33,6 +32,7 @@
   },
   "files": [
     "dist",
+    "src",
     "LICENSE.md",
     "README.md"
   ]
