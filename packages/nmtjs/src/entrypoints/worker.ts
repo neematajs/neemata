@@ -114,7 +114,7 @@ function setupApplicationHMR(runtime: ApplicationWorkerRuntime) {
       logger.info('Application reloaded successfully')
     } catch (error) {
       // Log error but keep worker alive for next HMR update
-      logger.error({ error }, 'Error during HMR reload')
+      logger.error(new Error('Error during HMR reload', { cause: error }))
     }
   }
 
@@ -148,7 +148,7 @@ function setupApplicationHMR(runtime: ApplicationWorkerRuntime) {
     if (!module) return
 
     if (!isApplicationConfig(module.default)) {
-      logger.error('Invalid application config during HMR reload')
+      logger.error(new Error('Invalid application config during HMR reload'))
       return
     }
 

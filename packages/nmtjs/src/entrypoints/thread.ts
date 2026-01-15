@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url'
 import { workerData as _workerData } from 'node:worker_threads'
 
 import type { ModuleRunner } from 'vite/module-runner'
+import { createLogger } from '@nmtjs/core'
 
 import type {
   ThreadErrorMessage,
@@ -19,6 +20,15 @@ export type RunWorkerOptions = {
 }
 
 const workerData = _workerData as RunWorkerOptions
+
+const logger = createLogger(
+  {
+    pinoOptions: {
+      level: workerData.vite === 'development' ? 'debug' : 'info',
+    },
+  },
+  'Thread',
+)
 
 const ext = new URL(import.meta.url).pathname.endsWith('.ts') ? '.ts' : '.js'
 const workerPath = fileURLToPath(new URL(`./worker${ext}`, import.meta.url))
@@ -113,7 +123,7 @@ function reportError(
         data: serializeError(error, origin, fatal),
       } satisfies ThreadPortMessage)
     } catch {}
-    console.error(new Error(`Worker thread ${origin} error`, { cause: error }))
+    logger.error(new Error(`Worker thread ${origin} error`, { cause: error }))
     ;(error as any)[kReportedError] = true
   }
   return error

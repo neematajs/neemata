@@ -151,7 +151,8 @@ function initializeLifecycle(configValue: ServerConfig) {
   // Listen for lifecycle errors (once)
   lifecycle.on('error', (error, handled) => {
     if (!handled) {
-      getLogger().error({ error }, 'Unhandled lifecycle error')
+      const logger = getLogger()
+      logger.error(new Error('Unhandled lifecycle error', { cause: error }))
     }
   })
 }
@@ -174,7 +175,8 @@ function setupHMR() {
       try {
         await hmrCoordinator.scheduleReload()
       } catch (cause) {
-        console.error(new Error('Error during HMR reload:', { cause }))
+        const logger = getLogger()
+        logger.error(new Error('Error during HMR reload', { cause }))
       }
     }
   })
@@ -198,16 +200,21 @@ async function handleHMRUpdate(_event: { file: string }) {
   // If server is running, restart any failed workers
   const server = lifecycle?.getServer()
   if (server) {
+    const logger = getLogger()
     try {
       const restarted = await server.restartFailedWorkers()
       if (restarted > 0) {
-        getLogger().info(
+        logger.info(
           { count: restarted },
           'Restarted failed workers after HMR update',
         )
       }
     } catch (error) {
-      getLogger().error({ error }, 'Failed to restart workers after HMR update')
+      logger.error(
+        new Error('Failed to restart workers after HMR update', {
+          cause: error,
+        }),
+      )
     }
   }
 }
@@ -217,7 +224,8 @@ async function handleHMRUpdate(_event: { file: string }) {
  */
 function handleStartupError(error: unknown) {
   const normalized = error instanceof Error ? error : new Error(String(error))
-  getLogger().error(
+  const logger = getLogger()
+  logger.error(
     new Error('Failed to start application server', { cause: normalized }),
   )
 }
@@ -229,14 +237,13 @@ async function handleTermination() {
   if (isTerminating) return
   isTerminating = true
 
-  getLogger().info('Shutting down...')
+  const logger = getLogger()
+  logger.info('Shutting down...')
 
   try {
     await lifecycle?.stop()
   } catch (error) {
-    getLogger().error(
-      new Error('Failed to stop server', { cause: error as Error }),
-    )
+    logger.error(new Error('Failed to stop server', { cause: error as Error }))
   }
 
   _viteServer?.close()
@@ -247,7 +254,8 @@ async function handleTermination() {
  * Handle unexpected errors.
  */
 function handleUnexpectedError(error: Error) {
-  getLogger().error(new Error('Unexpected Error:', { cause: error }))
+  const logger = getLogger()
+  logger.error(new Error('Unexpected Error', { cause: error }))
 }
 
 /**
@@ -287,7 +295,8 @@ async function main() {
 }
 
 main().catch((error) => {
-  getLogger().fatal({ error }, 'Fatal error during startup')
+  const logger = getLogger()
+  logger.fatal(new Error('Fatal error during startup', { cause: error }))
   if (!isDev) {
     process.exit(1)
   }
