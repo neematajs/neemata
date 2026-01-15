@@ -93,12 +93,14 @@ export class ApplicationServer {
     logger.info('Starting application server...')
 
     if (config.metrics) {
+      logger.info('Starting metrics server...')
       this.metrics = await createMetricsServer(this.logger, config.metrics)
       await this.metrics.start()
-      logger.info('Metrics server started')
+      logger.debug('Metrics server started')
     }
 
     if (config.store) {
+      logger.info('Connecting to store...')
       this.store = await createStoreClient(config.store)
       await this.store.connect()
       logger.debug('Store connected')
@@ -134,6 +136,9 @@ export class ApplicationServer {
     }
 
     if (this.config.proxy) {
+      this.logger.debug(
+        'Proxy configuration detected, creating a proxy server...',
+      )
       this.proxy = new ApplicationServerProxy({
         logger: this.logger,
         config: this.config.proxy,
@@ -155,7 +160,9 @@ export class ApplicationServer {
     }
 
     if (this.proxy) {
+      logger.info('Starting proxy server...')
       await this.proxy.start()
+      logger.debug('Proxy server started')
     }
 
     logger.info('Application server started')
@@ -165,24 +172,39 @@ export class ApplicationServer {
     this.logger.info('Stopping application server...')
 
     // Stop proxy + stop accepting new jobs first
-    await this.proxy?.stop()
-    await this.jobRunners?.stop()
+    if (this.proxy) {
+      this.logger.info('Stopping proxy server...')
+      await this.proxy.stop()
+      this.logger.debug('Proxy server stopped')
+    }
+
+    if (this.jobRunners) {
+      this.logger.info('Stopping job runners...')
+      await this.jobRunners.stop()
+      this.logger.debug('Job runners stopped')
+    }
 
     // Stop applications
-    await this.applications?.stop()
+    if (this.applications) {
+      this.logger.info('Stopping applications...')
+      await this.applications.stop()
+      this.logger.debug('Applications stopped')
+    }
 
     // Close store connection
     if (this.store) {
-      this.logger.debug('Closing store...')
+      this.logger.info('Closing store...')
       this.store.disconnect(false)
+      this.logger.debug('Store disconnected')
     }
 
     if (this.metrics) {
       this.logger.info('Stopping metrics server...')
       await this.metrics.stop()
+      this.logger.debug('Metrics server stopped')
     }
 
-    this.logger.info('Application server stopped')
+    this.logger.info('Application server gracefully stopped')
   }
 
   /**

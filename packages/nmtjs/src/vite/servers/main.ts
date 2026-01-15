@@ -12,12 +12,12 @@ import { createServer } from '../server.ts'
 export async function createMainServer(
   options: ViteConfigOptions,
   mode: 'development' | 'production',
-  neemataConfig: NeemataConfig,
+  { vite }: NeemataConfig,
 ): Promise<{ server: ViteDevServer; runner: ModuleRunner }> {
   const config = createConfig(options)
   const server = await createServer(
     options,
-    mergeConfig(config, {
+    mergeConfig(vite, {
       appType: 'custom',
       clearScreen: false,
       resolve: { alias: config.alias },

@@ -102,7 +102,7 @@ export class ApplicationServerProxy {
     }
     this.params.logger.info(
       { hostname: config.hostname, port: config.port, threads: config.threads },
-      'Starting proxy server...',
+      'Proxy configuration',
     )
     await this.proxyServer.start()
   }

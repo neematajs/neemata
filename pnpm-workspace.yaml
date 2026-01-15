@@ -4,7 +4,7 @@ packages:
   - playground
 
 catalog:
-  zod: ^4.1.0
+  zod: ^4.3.5
   vite: 8.0.0-beta.7
 
 onlyBuiltDependencies:
