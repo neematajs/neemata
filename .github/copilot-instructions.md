@@ -81,7 +81,7 @@ Neemata is a TypeScript RPC framework with bidirectional streaming, dependency i
 
 #### Infrastructure
 
-- **`proxy`** - Rust-based reverse proxy (Pingora/napi-rs) for production load balancing, rate limiting, and routing traffic between worker threads spawned by runtime/server.
+- **`proxy`** - Rust-based reverse proxy (Pingora/napi-rs) for production load balancing, rate limiting, and routing traffic between worker threads spawned by runtime/server (moved to separate package due to native binary).
 
 - **`nmtjs`** - CLI and umbrella package. **This is the only package end-users should import from.** Re-exports from underlying packages with a unified API.
 
@@ -183,9 +183,3 @@ Package-specific mocks (transports, APIs) remain in each package's `test/_mocks/
 ---
 
 **Important**: If during development you notice that implementation deviates from the architecture described in these instructions, explicitly point this out to the user and suggest updating these instructions to reflect the new implementation. **Never modify this file without explicit user consent.**
-
----
-
-**Limitations**:
-- Running `cat > /some/path/here << 'ENDOFFILE'` is strictly prohibited. Always use standard file editing tools.
-- Remove file and create a new one in case of full rewrite.

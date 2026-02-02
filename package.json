@@ -7,7 +7,7 @@
     "build": "pnpm run clean-build && pnpm run --parallel -r build && pnpm tsgo -b tsconfig.build.json",
     "dev": "pnpm run clean-build && pnpm tsgo -b tsconfig.build.json --watch",
     "clean": "rm -rf dist node_modules && pnpm -r exec rm -rf dist node_modules",
-    "test": "pnpm build && pnpm --filter proxy test && pnpm test:unit && pnpm test:integration",
+    "test": "pnpm build && pnpm test:unit && pnpm test:integration",
     "test:integration": "vitest run tests/test/integration playground/test",
     "test:sustainability": "vitest run --logHeapUsage tests/test/sustainability",
     "test:unit": "vitest run packages/*",
@@ -17,10 +17,10 @@
     "test:runtime:node": "pnpm --filter neemata-test-node run test",
     "test:runtime:deno": "pnpm --filter neemata-test-deno run test",
     "check:type": "pnpm tsgo -b tsconfig.build.json --noEmit",
-    "check:lint": "biome lint --diagnostic-level=error . && pnpm --filter proxy lint",
+    "check:lint": "biome lint --diagnostic-level=error .",
     "check:fmt": "biome format --diagnostic-level=error .",
     "check": "pnpm run check:fmt && pnpm run check:lint && pnpm run check:type",
-    "fmt": "biome check --diagnostic-level=error --write . && pnpm --filter proxy fmt",
+    "fmt": "biome check --diagnostic-level=error --write .",
     "prepare": "husky"
   },
   "devDependencies": {
