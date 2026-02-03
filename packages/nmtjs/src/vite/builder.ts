@@ -20,71 +20,74 @@ export async function createBuilder(
     }).then((mod) => mod.default)
 
     return await viteBuild(
-      mergeConfig(neemataConfig.vite, {
-        appType: 'custom',
-        clearScreen: false,
-        resolve: { alias: config.alias, noExternal: true },
-        plugins: [...plugins],
-        build: {
-          lib: { entry: config.entries, formats: ['es'] },
-          ssr: true,
-          ssrEmitAssets: true,
-          target: 'node24',
-          sourcemap: true,
-          outDir: resolve('./dist'),
-          minify: true,
-          emptyOutDir: true,
-          rolldownOptions: {
-            platform: 'node',
-            external: (id) => {
-              if (neemataConfig.externalDependencies === 'all') return true
-              if (
-                isBuiltin(id) ||
-                id.includes('nmtjs/src/vite/servers') ||
-                id.includes('nmtjs/src/vite/runners')
-              )
-                return true
+      mergeConfig(
+        {
+          appType: 'custom',
+          clearScreen: false,
+          resolve: { alias: config.alias, noExternal: ['@nmtjs/proxy'] },
+          plugins: [...plugins],
+          build: {
+            lib: { entry: config.entries, formats: ['es'] },
+            ssr: true,
+            ssrEmitAssets: true,
+            target: 'node24',
+            sourcemap: true,
+            outDir: resolve('./dist'),
+            minify: true,
+            emptyOutDir: true,
+            rolldownOptions: {
+              platform: 'node',
+              external: (id) => {
+                if (neemataConfig.externalDependencies === 'all') return true
+                if (
+                  isBuiltin(id) ||
+                  id.includes('nmtjs/src/vite/servers') ||
+                  id.includes('nmtjs/src/vite/runners')
+                )
+                  return true
 
-              if (neemataConfig.externalDependencies === 'prod') {
-                const prodDeps = Object.keys(packageJson.dependencies ?? {})
-                if (prodDeps.includes(id)) return true
-              }
-
-              if (Array.isArray(neemataConfig.externalDependencies)) {
-                for (const dep of neemataConfig.externalDependencies) {
-                  if (typeof dep === 'string' && dep === id) return true
-                  if (dep instanceof RegExp && dep.test(id)) return true
+                if (neemataConfig.externalDependencies === 'prod') {
+                  const prodDeps = Object.keys(packageJson.dependencies ?? {})
+                  if (prodDeps.includes(id)) return true
                 }
-              }
 
-              return false
-            },
-            transform: {
-              define: {
-                __VITE_CONFIG__: '""',
-                __APPLICATIONS_CONFIG__: JSON.stringify(
-                  JSON.stringify(
-                    Object.fromEntries(
-                      Object.entries(configOptions.applicationImports).map(
-                        ([appName, { type }]) => [
-                          appName,
-                          { type, specifier: `./application.${appName}.js` },
-                        ],
+                if (Array.isArray(neemataConfig.externalDependencies)) {
+                  for (const dep of neemataConfig.externalDependencies) {
+                    if (typeof dep === 'string' && dep === id) return true
+                    if (dep instanceof RegExp && dep.test(id)) return true
+                  }
+                }
+
+                return false
+              },
+              transform: {
+                define: {
+                  __VITE_CONFIG__: '""',
+                  __APPLICATIONS_CONFIG__: JSON.stringify(
+                    JSON.stringify(
+                      Object.fromEntries(
+                        Object.entries(configOptions.applicationImports).map(
+                          ([appName, { type }]) => [
+                            appName,
+                            { type, specifier: `./application.${appName}.js` },
+                          ],
+                        ),
                       ),
                     ),
                   ),
-                ),
+                },
+              },
+              output: {
+                entryFileNames: '[name].js',
+                chunkFileNames: '[name]-[hash].js',
+                assetFileNames: '[name][extname]',
               },
             },
-            output: {
-              entryFileNames: '[name].js',
-              chunkFileNames: '[name]-[hash].js',
-              assetFileNames: '[name][extname]',
-            },
+            chunkSizeWarningLimit: 10_000,
           },
-          chunkSizeWarningLimit: 10_000,
-        },
-      } satisfies UserConfig),
+        } satisfies UserConfig,
+        neemataConfig.vite,
+      ),
     )
   }
   return { build }

@@ -17,14 +17,17 @@ export async function createMainServer(
   const config = createConfig(options)
   const server = await createServer(
     options,
-    mergeConfig(vite, {
-      appType: 'custom',
-      clearScreen: false,
-      resolve: { alias: config.alias },
-      mode,
-      plugins: [...plugins],
-      optimizeDeps: { noDiscovery: true },
-    } satisfies UserConfig),
+    mergeConfig(
+      {
+        appType: 'custom',
+        clearScreen: false,
+        resolve: { alias: config.alias, noExternal: ['@nmtjs/proxy'] },
+        mode,
+        plugins: [...plugins],
+        optimizeDeps: { noDiscovery: true },
+      } satisfies UserConfig,
+      vite,
+    ),
   )
   const environment = server.environments.neemata
 
