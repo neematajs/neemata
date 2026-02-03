@@ -375,7 +375,7 @@ describe('Playground E2E - Dev Mode', { timeout: 60000 }, () => {
           `{ message: 'pong-hmr' }`,
         )
         await writeFile(PING_PROCEDURE_PATH, modifiedContent, 'utf-8')
-        await setTimeout(1000)
+        await setTimeout(2000)
         const result2 = await client.call.ping({})
         expect(result2).toEqual({ message: 'pong-hmr' })
       } finally {
