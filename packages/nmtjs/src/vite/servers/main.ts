@@ -6,7 +6,7 @@ import { createServerModuleRunner, mergeConfig } from 'vite'
 import type { NeemataConfig } from '../../config.ts'
 import type { ViteConfigOptions } from '../config.ts'
 import { createConfig } from '../config.ts'
-import { buildPlugins } from '../plugins.ts'
+import { plugins } from '../plugins.ts'
 import { createServer } from '../server.ts'
 
 export async function createMainServer(
@@ -22,7 +22,7 @@ export async function createMainServer(
       clearScreen: false,
       resolve: { alias: config.alias },
       mode,
-      plugins: [...buildPlugins],
+      plugins: [...plugins],
       optimizeDeps: { noDiscovery: true },
     } satisfies UserConfig),
   )

@@ -27,9 +27,9 @@
     }
   },
   "dependencies": {
-    "@bull-board/api": "6.15.0",
-    "@bull-board/h3": "6.15.0",
-    "@bull-board/ui": "6.15.0",
+    "@bull-board/api": "6.16.4",
+    "@bull-board/h3": "6.16.4",
+    "@bull-board/ui": "6.16.4",
     "@nmtjs/common": "workspace:*",
     "@nmtjs/contract": "workspace:*",
     "@nmtjs/core": "workspace:*",
@@ -40,26 +40,25 @@
     "@nmtjs/protocol": "workspace:*",
     "@nmtjs/type": "workspace:*",
     "@nmtjs/ws-transport": "workspace:*",
-    "bullmq": "5.63.0",
-    "citty": "^0.1.6",
+    "bullmq": "5.67.2",
+    "citty": "0.2.0",
     "dedent": "^1.7.0",
     "dotenv": "^17.2.3",
     "ejs": "3.1.10",
     "h3": "1.15.4",
-    "ioredis": "^5.8.2",
+    "ioredis": "^5.9.2",
     "iovalkey": "^0.3.3",
-    "oxc-resolver": "^11.13.2",
+    "oxc-resolver": "11.17.0",
     "prom-client": "git@github.com:siimon/prom-client.git#d4d2dcb366384833951e0116caca707b5f62aa5e",
-    "vite": "catalog:",
-    "vite-plugin-static-copy": "3.1.4"
+    "vite": "catalog:"
   },
   "devDependencies": {
-    "@nmtjs/proxy": "workspace:*",
-    "pino": "^9.6.0",
+    "@nmtjs/proxy": "catalog:",
+    "pino": "10.3.0",
     "zod": "catalog:"
   },
   "peerDependencies": {
-    "@nmtjs/proxy": "workspace:*",
+    "@nmtjs/proxy": "catalog:",
     "zod": "catalog:"
   },
   "peerDependenciesMeta": {

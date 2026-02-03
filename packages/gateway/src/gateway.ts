@@ -2,10 +2,10 @@ import { randomUUID } from 'node:crypto'
 import { isTypedArray } from 'node:util/types'
 
 import type {
+  ChildLoggerOptions,
   Container,
   Hooks,
   Logger,
-  LoggerChildOptions,
   ResolveInjectableType,
 } from '@nmtjs/core'
 import type {
@@ -74,6 +74,7 @@ export class Gateway {
     this.options = {
       rpcStreamConsumeTimeout: 5000,
       streamTimeouts: {
+        // TODO: fix these ts errors
         //@ts-expect-error
         [StreamTimeout.Pull]:
           options.streamTimeouts?.[StreamTimeout.Pull] ?? 5000,
@@ -666,7 +667,7 @@ export class Gateway {
   }
 }
 
-const gatewayLoggerOptions: LoggerChildOptions = {
+const gatewayLoggerOptions: ChildLoggerOptions = {
   serializers: {
     chunk: (chunk) =>
       isTypedArray(chunk) ? `<Buffer length=${chunk.byteLength}>` : chunk,

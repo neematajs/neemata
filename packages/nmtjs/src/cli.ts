@@ -1,6 +1,5 @@
 #!/usr/bin/env node --enable-source-maps
 
-import { once } from 'node:events'
 import { relative, resolve } from 'node:path'
 import process from 'node:process'
 
@@ -94,7 +93,6 @@ const mainCommand = defineCommand({
           config,
         )
         await runner.import(viteConfigOptions.entrypointMainPath)
-        await once(process, 'beforeExit')
       },
     }),
     preview: defineCommand({
@@ -105,7 +103,6 @@ const mainCommand = defineCommand({
           config,
         )
         await runner.import(viteConfigOptions.entrypointMainPath)
-        await once(process, 'beforeExit')
       },
     }),
     build: defineCommand({

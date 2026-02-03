@@ -47,17 +47,6 @@ const errorPolicy = getErrorPolicy(mode)
 // Logger for main process (created lazily with config-based level)
 let logger: ReturnType<typeof createLogger>
 
-function getLogger(): ReturnType<typeof createLogger> {
-  if (!logger) {
-    // Use server config's logger options if available, otherwise default based on mode
-    const loggerOptions = currentServerConfig?.logger ?? {
-      pinoOptions: { level: isDev ? 'debug' : 'info' },
-    }
-    logger = createLogger(loggerOptions, 'Main')
-  }
-  return logger
-}
-
 // Vite server and events (dev only)
 let _viteServerEvents: EventEmitter<WorkerServerEventMap> | undefined
 let _viteServer: ViteDevServer | undefined
@@ -133,6 +122,10 @@ function initializeLifecycle(configValue: ServerConfig) {
 
   // Store initial config
   currentServerConfig = configValue
+  const loggerOptions = currentServerConfig?.logger ?? {
+    pinoOptions: { level: isDev ? 'debug' : 'info' },
+  }
+  logger = createLogger(loggerOptions, 'Main')
 
   // Create runtime environment
   const env = createRuntimeEnvironment(mode, {
@@ -141,17 +134,16 @@ function initializeLifecycle(configValue: ServerConfig) {
   })
 
   // Create lifecycle (singleton)
-  lifecycle = new ServerLifecycle(env, createServer, getLogger())
+  lifecycle = new ServerLifecycle(env, createServer, logger)
 
   // Create HMR coordinator (dev only, singleton)
   if (isDev) {
-    hmrCoordinator = new HMRCoordinator(lifecycle, getLogger())
+    hmrCoordinator = new HMRCoordinator(lifecycle, logger)
   }
 
   // Listen for lifecycle errors (once)
   lifecycle.on('error', (error, handled) => {
     if (!handled) {
-      const logger = getLogger()
       logger.error(new Error('Unhandled lifecycle error', { cause: error }))
     }
   })
@@ -175,7 +167,6 @@ function setupHMR() {
       try {
         await hmrCoordinator.scheduleReload()
       } catch (cause) {
-        const logger = getLogger()
         logger.error(new Error('Error during HMR reload', { cause }))
       }
     }
@@ -200,7 +191,6 @@ async function handleHMRUpdate(_event: { file: string }) {
   // If server is running, restart any failed workers
   const server = lifecycle?.getServer()
   if (server) {
-    const logger = getLogger()
     try {
       const restarted = await server.restartFailedWorkers()
       if (restarted > 0) {
@@ -224,7 +214,6 @@ async function handleHMRUpdate(_event: { file: string }) {
  */
 function handleStartupError(error: unknown) {
   const normalized = error instanceof Error ? error : new Error(String(error))
-  const logger = getLogger()
   logger.error(
     new Error('Failed to start application server', { cause: normalized }),
   )
@@ -237,7 +226,6 @@ async function handleTermination() {
   if (isTerminating) return
   isTerminating = true
 
-  const logger = getLogger()
   logger.info('Shutting down...')
 
   try {
@@ -254,7 +242,6 @@ async function handleTermination() {
  * Handle unexpected errors.
  */
 function handleUnexpectedError(error: Error) {
-  const logger = getLogger()
   logger.error(new Error('Unexpected Error', { cause: error }))
 }
 
@@ -295,7 +282,6 @@ async function main() {
 }
 
 main().catch((error) => {
-  const logger = getLogger()
   logger.fatal(new Error('Fatal error during startup', { cause: error }))
   if (!isDev) {
     process.exit(1)

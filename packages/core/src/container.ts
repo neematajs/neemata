@@ -42,9 +42,7 @@ export class Container {
     public readonly scope: Exclude<Scope, Scope.Transient> = Scope.Global,
     private readonly parent?: Container,
   ) {
-    if ((scope as any) === Scope.Transient) {
-      throw new Error('Invalid scope')
-    }
+    if ((scope as Scope) === Scope.Transient) throw new Error('Invalid scope')
     this.provide(CoreInjectables.inject, this.createInjectFunction())
     this.provide(CoreInjectables.dispose, this.createDisposeFunction())
   }

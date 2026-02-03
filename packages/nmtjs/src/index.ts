@@ -1,3 +1,6 @@
+// biome-ignore assist/source/organizeImports: for ts
+import type {} from 'pino'
+
 import {
   CoreInjectables,
   createConsolePrettyDestination,
@@ -14,6 +17,7 @@ import {
   createGuard,
   createHook,
   createJob,
+  createJobRouterOperation,
   createJobsRouter,
   createMiddleware,
   createPlugin,
@@ -23,7 +27,6 @@ import {
   createStep,
   defineApplication,
   defineServer,
-  jobOperation,
   RuntimeInjectables,
 } from './runtime/index.ts'
 import {
@@ -33,38 +36,42 @@ import {
   createSummaryMetric,
 } from './runtime/metrics/metric.ts'
 
-export const neemata = {
-  app: defineApplication,
-  server: defineServer,
-  injectables: {
+export namespace neemata {
+  export const app = defineApplication
+  export const server = defineServer
+  export const injectables = Object.freeze({
     ...CoreInjectables,
     ...GatewayInjectables,
     ...RuntimeInjectables,
-  },
-  transport: createTransport,
-  plugin: createPlugin,
-  logging: { console: createConsolePrettyDestination },
-  value: createValueInjectable,
-  lazy: createLazyInjectable,
-  factory: createFactoryInjectable,
-  rootRouter: createRootRouter,
-  router: createRouter,
-  contractRouter: createContractRouter,
-  procedure: createProcedure,
-  contractProcedure: createContractProcedure,
-  middleware: createMiddleware,
-  guard: createGuard,
-  filter: createFilter,
-  job: createJob,
-  step: createStep,
-  hook: createHook,
-  jobRouter: Object.assign(createJobsRouter, { operation: jobOperation }),
-  metrics: {
+  })
+  export const inject = injectables
+  export const transport = createTransport
+  export const plugin = createPlugin
+  export const logging = Object.freeze({
+    console: createConsolePrettyDestination,
+  })
+  export const value = createValueInjectable
+  export const lazy = createLazyInjectable
+  export const factory = createFactoryInjectable
+  export const rootRouter = createRootRouter
+  export const router = createRouter
+  export const contractRouter = createContractRouter
+  export const jobRouter = createJobsRouter
+  export const jobRouterOperation = createJobRouterOperation
+  export const procedure = createProcedure
+  export const contractProcedure = createContractProcedure
+  export const middleware = createMiddleware
+  export const guard = createGuard
+  export const filter = createFilter
+  export const job = createJob
+  export const step = createStep
+  export const hook = createHook
+  export const metrics = Object.freeze({
     counter: createCounterMetric,
     gauge: createGaugeMetric,
     histogram: createHistogramMetric,
     summary: createSummaryMetric,
-  },
+  })
 }
 
 export { c } from '@nmtjs/contract'

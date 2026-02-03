@@ -1,20 +1,15 @@
 import { threadId } from 'node:worker_threads'
 
-import type * as pinoType from 'pino'
-import { pino, stdTimeFunctions } from 'pino'
+import type {
+  ChildLoggerOptions,
+  DestinationStream,
+  Level,
+  Logger,
+  LoggerOptions,
+  StreamEntry,
+} from 'pino'
+import { levels, multistream, pino, stdTimeFunctions } from 'pino'
 import { build as pretty } from 'pino-pretty'
-
-export type { StreamEntry } from 'pino'
-export type Logger = pinoType.Logger
-export type LoggerOptions = pinoType.LoggerOptions
-export type LoggerChildOptions = pinoType.ChildLoggerOptions
-export type LoggingOptions = {
-  destinations?: Array<
-    pinoType.DestinationStream | pinoType.StreamEntry<pinoType.Level>
-  >
-  pinoOptions?: LoggerOptions
-}
-
 import { errWithCause } from 'pino-std-serializers'
 
 // TODO: use node:util inspect
@@ -56,7 +51,7 @@ export const createLogger = (options: LoggingOptions = {}, $label: string) => {
   if (!destinations || !destinations?.length) {
     destinations = [
       createConsolePrettyDestination(
-        (options.pinoOptions?.level || 'info') as pinoType.Level,
+        (options.pinoOptions?.level || 'info') as Level,
       ),
     ]
   }
@@ -66,12 +61,12 @@ export const createLogger = (options: LoggingOptions = {}, $label: string) => {
       Math.min(
         acc,
         'stream' in destination
-          ? pino.levels.values[destination.level!]
+          ? levels.values[destination.level!]
           : Number.POSITIVE_INFINITY,
       ),
     Number.POSITIVE_INFINITY,
   )
-  const level = pino.levels.labels[lowestLevelValue]
+  const level = levels.labels[lowestLevelValue]
   const serializers = {
     headers: (value: any) => {
       if (value instanceof Headers) {
@@ -87,14 +82,14 @@ export const createLogger = (options: LoggingOptions = {}, $label: string) => {
 
   return pino(
     { timestamp: stdTimeFunctions.isoTime, ...pinoOptions, level, serializers },
-    pino.multistream(destinations!),
+    multistream(destinations!),
   ).child({ $label, $threadId: threadId })
 }
 
 export type CreateConsolePrettyDestination = (
-  level: pinoType.Level,
+  level: Level,
   sync?: boolean,
-) => pinoType.StreamEntry
+) => StreamEntry
 
 export const createConsolePrettyDestination: CreateConsolePrettyDestination = (
   level,
@@ -117,3 +112,17 @@ export const createConsolePrettyDestination: CreateConsolePrettyDestination = (
     sync,
   }),
 })
+
+export type {
+  Logger,
+  ChildLoggerOptions,
+  LoggerOptions,
+  DestinationStream,
+  StreamEntry,
+  Level,
+}
+
+export type LoggingOptions = {
+  destinations?: Array<DestinationStream | StreamEntry<Level>>
+  pinoOptions?: LoggerOptions
+}

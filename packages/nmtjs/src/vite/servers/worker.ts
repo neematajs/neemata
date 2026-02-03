@@ -7,6 +7,7 @@ import type {
   HotChannelListener,
   HotPayload,
   Plugin,
+  UserConfig,
   ViteDevServer,
 } from 'vite'
 import { DevEnvironment, mergeConfig } from 'vite'
@@ -14,7 +15,7 @@ import { DevEnvironment, mergeConfig } from 'vite'
 import type { NeemataConfig } from '../../config.ts'
 import type { ViteConfigOptions } from '../config.ts'
 import { createConfig } from '../config.ts'
-import { buildPlugins } from '../plugins.ts'
+import { plugins } from '../plugins.ts'
 import { createBroadcastChannel } from '../runners/worker.ts'
 import { createServer } from '../server.ts'
 
@@ -39,38 +40,35 @@ export async function createViteServer(
 
   const server = await createServer(
     options,
-    mergeConfig(
-      {
-        appType: 'custom',
-        clearScreen: false,
-        resolve: { alias: config.alias },
-        mode,
-        optimizeDeps: { noDiscovery: true },
-        plugins: [
-          ...buildPlugins,
-          ...(mode === 'development'
-            ? [
-                {
-                  name: 'neemata-worker-application-hmr',
-                  transform(code, id, _options) {
-                    if (applicationEntries.includes(id)) {
-                      return code + _injectHmr
-                    }
-                  },
-                  handleHotUpdate(ctx) {
-                    // Emit event when application entry files change
-                    // This allows restarting failed workers after code fixes
-                    if (ctx.file && applicationEntries.includes(ctx.file)) {
-                      events.emit('hmr-update', { file: ctx.file })
-                    }
-                  },
-                } satisfies Plugin,
-              ]
-            : []),
-        ],
-      },
-      neemataConfig.vite,
-    ),
+    mergeConfig(neemataConfig.vite, {
+      appType: 'custom',
+      clearScreen: false,
+      resolve: { alias: config.alias },
+      mode,
+      optimizeDeps: { noDiscovery: true },
+      plugins: [
+        ...plugins,
+        ...(mode === 'development'
+          ? [
+              {
+                name: 'neemata-worker-application-hmr',
+                transform(code, id, _options) {
+                  if (applicationEntries.includes(id)) {
+                    return code + _injectHmr
+                  }
+                },
+                handleHotUpdate(ctx) {
+                  // Emit event when application entry files change
+                  // This allows restarting failed workers after code fixes
+                  if (ctx.file && applicationEntries.includes(ctx.file)) {
+                    events.emit('hmr-update', { file: ctx.file })
+                  }
+                },
+              } satisfies Plugin,
+            ]
+          : []),
+      ],
+    } satisfies UserConfig),
     {
       createEnvironment: async (name, config, context) => {
         const channels = new Map<number, BroadcastChannel>()

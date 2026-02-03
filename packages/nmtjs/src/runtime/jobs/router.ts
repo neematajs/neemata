@@ -348,7 +348,7 @@ function createAddInputSchema<T extends AnyJob>(job: T): AddInputSchemaType<T> {
  * })
  * ```
  */
-export function jobOperation<
+export function createJobRouterOperation<
   Deps extends Dependencies,
   T extends AnyJob = AnyJob,
 >(
@@ -623,7 +623,7 @@ function createRetryProcedure(
 
       await ctx.jobManager.retry(job, input.id, { clearState })
 
-      ctx.logger.info(
+      ctx.logger.trace(
         { jobName: job.options.name, id: input.id },
         'Job retried',
       )

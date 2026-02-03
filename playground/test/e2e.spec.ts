@@ -1,6 +1,7 @@
 import type { ChildProcess } from 'node:child_process'
 import { spawn } from 'node:child_process'
 import { readFile, writeFile } from 'node:fs/promises'
+import { connect } from 'node:net'
 import { resolve } from 'node:path'
 import { setTimeout } from 'node:timers/promises'
 
@@ -27,12 +28,37 @@ const PING_PROCEDURE_PATH = resolve(
   CWD,
   'src/applications/main/procedures/ping.ts',
 )
+const SERVER_HOST = '127.0.0.1'
+const SERVER_PORT = 4000
 
 async function startServer(
   command: 'dev' | 'preview' | 'build',
   options: { timeout?: number } = {},
 ): Promise<ChildProcess> {
   const { timeout = 15000 } = options
+
+  const canConnect = () =>
+    new Promise<boolean>((resolve) => {
+      const socket = connect({ host: SERVER_HOST, port: SERVER_PORT })
+      const cleanup = () => {
+        socket.removeAllListeners()
+        socket.destroy()
+      }
+
+      socket.setTimeout(500)
+      socket.once('connect', () => {
+        cleanup()
+        resolve(true)
+      })
+      socket.once('timeout', () => {
+        cleanup()
+        resolve(false)
+      })
+      socket.once('error', () => {
+        cleanup()
+        resolve(false)
+      })
+    })
 
   // If build command, run build first then start the built server
   if (command === 'build') {
@@ -69,9 +95,25 @@ async function startServer(
     })
 
     await new Promise<void>((resolve, reject) => {
+      let settled = false
+
+      const finish = (error?: Error) => {
+        if (settled) return
+        settled = true
+        cleanup()
+        if (error) reject(error)
+        else resolve()
+      }
+
       const timeoutId = globalThis.setTimeout(() => {
-        reject(new Error('Server startup timeout (build)'))
+        finish(new Error('Server startup timeout (build)'))
       }, timeout)
+
+      const readinessInterval = globalThis.setInterval(() => {
+        canConnect().then((ready) => {
+          if (ready) finish()
+        })
+      }, 250)
 
       const checkReady = (data: Buffer) => {
         const output = data.toString()
@@ -80,9 +122,24 @@ async function startServer(
           output.includes('listening') ||
           output.includes('4000')
         ) {
-          globalThis.clearTimeout(timeoutId)
-          resolve()
+          finish()
         }
+      }
+
+      const onError = (err: Error) => finish(err)
+      const onExit = (code: number | null) => {
+        if (code !== 0 && code !== null) {
+          finish(new Error(`Server exited with code ${code}`))
+        }
+      }
+
+      const cleanup = () => {
+        globalThis.clearTimeout(timeoutId)
+        globalThis.clearInterval(readinessInterval)
+        serverProcess.stdout?.off('data', checkReady)
+        serverProcess.stderr?.off('data', checkReady)
+        serverProcess.off('error', onError)
+        serverProcess.off('exit', onExit)
       }
 
       serverProcess.stdout?.on('data', checkReady)
@@ -94,17 +151,8 @@ async function startServer(
         }
       })
 
-      serverProcess.on('error', (err) => {
-        globalThis.clearTimeout(timeoutId)
-        reject(err)
-      })
-
-      serverProcess.on('exit', (code) => {
-        if (code !== 0 && code !== null) {
-          globalThis.clearTimeout(timeoutId)
-          reject(new Error(`Server exited with code ${code}`))
-        }
-      })
+      serverProcess.on('error', onError)
+      serverProcess.on('exit', onExit)
     })
 
     await setTimeout(500)
@@ -119,9 +167,25 @@ async function startServer(
   })
 
   await new Promise<void>((resolve, reject) => {
+    let settled = false
+
+    const finish = (error?: Error) => {
+      if (settled) return
+      settled = true
+      cleanup()
+      if (error) reject(error)
+      else resolve()
+    }
+
     const timeoutId = globalThis.setTimeout(() => {
-      reject(new Error(`Server startup timeout (${command})`))
+      finish(new Error(`Server startup timeout (${command})`))
     }, timeout)
+
+    const readinessInterval = globalThis.setInterval(() => {
+      canConnect().then((ready) => {
+        if (ready) finish()
+      })
+    }, 250)
 
     const checkReady = (data: Buffer) => {
       const output = data.toString()
@@ -130,9 +194,24 @@ async function startServer(
         output.includes('listening') ||
         output.includes('4000')
       ) {
-        globalThis.clearTimeout(timeoutId)
-        resolve()
+        finish()
       }
+    }
+
+    const onError = (err: Error) => finish(err)
+    const onExit = (code: number | null) => {
+      if (code !== 0 && code !== null) {
+        finish(new Error(`Server exited with code ${code}`))
+      }
+    }
+
+    const cleanup = () => {
+      globalThis.clearTimeout(timeoutId)
+      globalThis.clearInterval(readinessInterval)
+      serverProcess.stdout?.off('data', checkReady)
+      serverProcess.stderr?.off('data', checkReady)
+      serverProcess.off('error', onError)
+      serverProcess.off('exit', onExit)
     }
 
     serverProcess.stdout?.on('data', checkReady)
@@ -144,17 +223,8 @@ async function startServer(
       }
     })
 
-    serverProcess.on('error', (err) => {
-      globalThis.clearTimeout(timeoutId)
-      reject(err)
-    })
-
-    serverProcess.on('exit', (code) => {
-      if (code !== 0 && code !== null) {
-        globalThis.clearTimeout(timeoutId)
-        reject(new Error(`Server exited with code ${code}`))
-      }
-    })
+    serverProcess.on('error', onError)
+    serverProcess.on('exit', onExit)
   })
 
   // Give it a bit more time to fully initialize
@@ -182,7 +252,7 @@ function createClient(url: string) {
   )
 }
 
-const SERVER_URL = 'ws://127.0.0.1:4000'
+const SERVER_URL = `ws://${SERVER_HOST}:${SERVER_PORT}`
 
 describe(
   'Playground E2E - Preview Mode',

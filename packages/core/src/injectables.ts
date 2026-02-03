@@ -306,10 +306,10 @@ export function compareScope(
   }
 }
 
-const logger = Object.assign(
+const loggerInjectable = Object.assign(
   (label: string) =>
     createFactoryInjectable({
-      dependencies: { logger },
+      dependencies: { logger: loggerInjectable },
       scope: Scope.Global,
       factory: ({ logger }) => logger.child({ $label: label }),
     }),
@@ -319,8 +319,11 @@ const logger = Object.assign(
 ) => FactoryInjectable<Logger, { logger: LazyInjectable<Logger> }>) &
   LazyInjectable<Logger>
 
-const inject = createLazyInjectable<InjectFn>(Scope.Global, 'Inject function')
-const dispose = createLazyInjectable<DisposeFn>(
+const injectFnInjectable = createLazyInjectable<InjectFn>(
+  Scope.Global,
+  'Inject function',
+)
+const disposeFnInjectable = createLazyInjectable<DisposeFn>(
   Scope.Global,
   'Dispose function',
 )
@@ -337,7 +340,11 @@ function resolveInjectableScope(
   return actualScope
 }
 
-export const CoreInjectables = { logger, inject, dispose }
+export namespace CoreInjectables {
+  export const logger = loggerInjectable
+  export const inject = injectFnInjectable
+  export const dispose = disposeFnInjectable
+}
 
 export type Injection<
   T extends AnyInjectable<any, any> = AnyInjectable<any, any>,

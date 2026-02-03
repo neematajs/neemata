@@ -1,12 +1,13 @@
 import { isBuiltin } from 'node:module'
 import { resolve } from 'node:path'
 
+import type { UserConfig } from 'vite'
 import { mergeConfig, build as viteBuild } from 'vite'
 
 import type { NeemataConfig } from '../config.ts'
 import type { ViteConfigOptions } from './config.ts'
 import { createConfig } from './config.ts'
-import { buildPlugins } from './plugins.ts'
+import { plugins } from './plugins.ts'
 
 export async function createBuilder(
   configOptions: ViteConfigOptions,
@@ -18,79 +19,72 @@ export async function createBuilder(
       with: { type: 'json' },
     }).then((mod) => mod.default)
 
-    // technically it's possible to do the same with rolldown directly,
-    // but vite handles a lot of things, like defines substitutions, etc.
-    // also, since during dev the code is processed via vite anyway,
-    // using vite for build as well ensures consistency between dev and prod
     return await viteBuild(
-      mergeConfig(
-        {
-          appType: 'custom',
-          clearScreen: false,
-          resolve: { alias: config.alias },
-          ssr: { noExternal: true },
-          plugins: [...buildPlugins],
-          build: {
-            lib: { entry: config.entries, formats: ['es'] },
-            ssr: true,
-            target: 'node24',
-            sourcemap: true,
-            outDir: resolve('./dist'),
-            minify: true,
-            emptyOutDir: true,
-            rolldownOptions: {
-              platform: 'node',
-              external: (id) => {
-                if (neemataConfig.externalDependencies === 'all') return true
-                if (
-                  isBuiltin(id) ||
-                  id.includes('nmtjs/src/vite/servers') ||
-                  id.includes('nmtjs/src/vite/runners') ||
-                  id.endsWith('.node')
-                )
-                  return true
+      mergeConfig(neemataConfig.vite, {
+        appType: 'custom',
+        clearScreen: false,
+        resolve: { alias: config.alias, noExternal: true },
+        plugins: [...plugins],
+        build: {
+          lib: { entry: config.entries, formats: ['es'] },
+          ssr: true,
+          ssrEmitAssets: true,
+          target: 'node24',
+          sourcemap: true,
+          outDir: resolve('./dist'),
+          minify: true,
+          emptyOutDir: true,
+          rolldownOptions: {
+            platform: 'node',
+            external: (id) => {
+              if (neemataConfig.externalDependencies === 'all') return true
+              if (
+                isBuiltin(id) ||
+                id.includes('nmtjs/src/vite/servers') ||
+                id.includes('nmtjs/src/vite/runners')
+              )
+                return true
 
-                if (neemataConfig.externalDependencies === 'prod') {
-                  const prodDeps = Object.keys(packageJson.dependencies ?? {})
-                  if (prodDeps.includes(id)) return true
+              if (neemataConfig.externalDependencies === 'prod') {
+                const prodDeps = Object.keys(packageJson.dependencies ?? {})
+                if (prodDeps.includes(id)) return true
+              }
+
+              if (Array.isArray(neemataConfig.externalDependencies)) {
+                for (const dep of neemataConfig.externalDependencies) {
+                  if (typeof dep === 'string' && dep === id) return true
+                  if (dep instanceof RegExp && dep.test(id)) return true
                 }
+              }
 
-                if (Array.isArray(neemataConfig.externalDependencies)) {
-                  for (const dep of neemataConfig.externalDependencies) {
-                    if (typeof dep === 'string' && dep === id) return true
-                    if (dep instanceof RegExp && dep.test(id)) return true
-                  }
-                }
-
-                return false
-              },
-              transform: {
-                define: {
-                  __VITE_CONFIG__: '""',
-                  __APPLICATIONS_CONFIG__: JSON.stringify(
-                    JSON.stringify(
-                      Object.fromEntries(
-                        Object.entries(configOptions.applicationImports).map(
-                          ([appName, { type }]) => [
-                            appName,
-                            { type, specifier: `./application.${appName}.js` },
-                          ],
-                        ),
+              return false
+            },
+            transform: {
+              define: {
+                __VITE_CONFIG__: '""',
+                __APPLICATIONS_CONFIG__: JSON.stringify(
+                  JSON.stringify(
+                    Object.fromEntries(
+                      Object.entries(configOptions.applicationImports).map(
+                        ([appName, { type }]) => [
+                          appName,
+                          { type, specifier: `./application.${appName}.js` },
+                        ],
                       ),
                     ),
                   ),
-                },
-              },
-              output: {
-                entryFileNames: '[name].js',
-                chunkFileNames: 'chunks/[name]-[hash].js',
+                ),
               },
             },
-            chunkSizeWarningLimit: 10_000,
+            output: {
+              entryFileNames: '[name].js',
+              chunkFileNames: '[name]-[hash].js',
+              assetFileNames: '[name][extname]',
+            },
           },
+          chunkSizeWarningLimit: 10_000,
         },
-        neemataConfig.vite,
-      ),
+      } satisfies UserConfig),
     )
   }
   return { build }

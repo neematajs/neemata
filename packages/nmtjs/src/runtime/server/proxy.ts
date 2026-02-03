@@ -1,11 +1,14 @@
+import { createRequire } from 'node:module'
+
 import type { Logger } from '@nmtjs/core'
-import { Proxy as NeemataProxy } from '@nmtjs/proxy'
 
 import type {
   ApplicationProxyUpstream,
   ApplicationServerApplications,
 } from './applications.ts'
 import type { ServerConfig } from './config.ts'
+
+const require = createRequire(import.meta.url)
 
 /**
  * Transform ApplicationProxyUpstream to the format expected by Rust proxy.
@@ -27,7 +30,7 @@ function toProxyUpstream(upstream: ApplicationProxyUpstream) {
 }
 
 export class ApplicationServerProxy {
-  proxyServer: NeemataProxy
+  proxyServer: import('@nmtjs/proxy').Proxy
 
   protected readonly onAdd: (application: string, upstream: any) => void
   protected readonly onRemove: (application: string, upstream: any) => void
@@ -43,7 +46,7 @@ export class ApplicationServerProxy {
     if (!config) {
       throw new Error('Proxy config is required')
     }
-
+    const { Proxy: NeemataProxy } = require('@nmtjs/proxy')
     this.proxyServer = new NeemataProxy({
       listen: `${config.hostname}:${config.port}`,
       tls: config.tls
