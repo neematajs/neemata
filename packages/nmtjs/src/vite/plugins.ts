@@ -18,7 +18,10 @@ export const plugins: Plugin[] = [
           source: await readFile(id),
         })
         const runtimePath = `./${this.getFileName(refId)}`
-        return `export default require(${JSON.stringify(runtimePath)});`
+        return (
+          `const id = ${JSON.stringify(runtimePath)};` +
+          `export default require(id);`
+        )
       }
       return null
     },
@@ -39,7 +42,10 @@ export const plugins: Plugin[] = [
           source: await readFile(uwsNodeAddonPath),
         })
         const runtimePath = `./${this.getFileName(refId)}`
-        return `export default require(${JSON.stringify(runtimePath)});`
+        return (
+          `const id = ${JSON.stringify(runtimePath)};` +
+          `export default require(id);`
+        )
       }
       return null
     },

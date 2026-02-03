@@ -24,7 +24,7 @@ export async function createBuilder(
         {
           appType: 'custom',
           clearScreen: false,
-          resolve: { alias: config.alias, noExternal: ['@nmtjs/proxy'] },
+          resolve: { alias: config.alias, noExternal: true },
           plugins: [...plugins],
           build: {
             lib: { entry: config.entries, formats: ['es'] },
