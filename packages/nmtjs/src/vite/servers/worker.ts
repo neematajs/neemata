@@ -43,7 +43,7 @@ export async function createViteServer(
     mergeConfig(neemataConfig.vite, {
       appType: 'custom',
       clearScreen: false,
-      resolve: { alias: config.alias },
+      resolve: { alias: config.alias, external: ['@nmtjs/proxy'] },
       mode,
       optimizeDeps: { noDiscovery: true },
       plugins: [

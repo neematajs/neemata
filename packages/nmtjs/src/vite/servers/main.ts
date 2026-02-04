@@ -21,7 +21,7 @@ export async function createMainServer(
       {
         appType: 'custom',
         clearScreen: false,
-        resolve: { alias: config.alias, noExternal: true },
+        resolve: { alias: config.alias, external: ['@nmtjs/proxy'] },
         mode,
         plugins: [...plugins],
         optimizeDeps: { noDiscovery: true },
