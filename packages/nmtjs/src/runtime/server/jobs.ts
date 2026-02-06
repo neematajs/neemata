@@ -245,7 +245,20 @@ export class ApplicationServerJobs {
               { worker: worker.name },
               'Worker close timed out, forcing close',
             )
-            await worker.close(true)
+            const forceClosePromise = worker.close(true)
+            const forceTimeout = new Promise<'timeout'>((resolve) =>
+              setTimeout(() => resolve('timeout'), closeTimeout),
+            )
+            const forceResult = await Promise.race([
+              forceClosePromise,
+              forceTimeout,
+            ])
+            if (forceResult === 'timeout') {
+              logger.error(
+                { worker: worker.name },
+                'Force close timed out, abandoning worker',
+              )
+            }
           }
         } catch (error) {
           logger.warn({ error }, 'Failed to close BullMQ worker')
