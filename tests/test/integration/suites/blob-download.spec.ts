@@ -22,10 +22,21 @@ const downloadProcedure = createProcedure({
   output: c.blob(),
   handler: ({ createBlob }, input) => {
     const buffer = Buffer.from(input.content, 'utf-8')
+    let closeTimer: ReturnType<typeof setTimeout> | undefined
+    let closed = false
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
+        closeTimer = setTimeout(() => {
+          if (closed) return
+          closed = true
+          controller.close()
+        }, 10)
+
         controller.enqueue(new Uint8Array(buffer))
-        setTimeout(() => controller.close(), 10)
+      },
+      cancel() {
+        closed = true
+        if (closeTimer) clearTimeout(closeTimer)
       },
     })
     return createBlob(stream, { type: 'text/plain', size: buffer.byteLength })
@@ -43,10 +54,21 @@ const echoBlobProcedure = createProcedure({
       chunks.push(chunk)
     }
     const buffer = Buffer.concat(chunks)
+    let closeTimer: ReturnType<typeof setTimeout> | undefined
+    let closed = false
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
+        closeTimer = setTimeout(() => {
+          if (closed) return
+          closed = true
+          controller.close()
+        }, 10)
+
         controller.enqueue(new Uint8Array(buffer))
-        setTimeout(() => controller.close(), 10)
+      },
+      cancel() {
+        closed = true
+        if (closeTimer) clearTimeout(closeTimer)
       },
     })
     return createBlob(stream, clientBlob.metadata)
@@ -91,10 +113,21 @@ const downloadWithMetadataProcedure = createProcedure({
   output: c.blob(),
   handler: ({ createBlob }, input) => {
     const buffer = Buffer.from(input.content, 'utf-8')
+    let closeTimer: ReturnType<typeof setTimeout> | undefined
+    let closed = false
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
+        closeTimer = setTimeout(() => {
+          if (closed) return
+          closed = true
+          controller.close()
+        }, 10)
+
         controller.enqueue(new Uint8Array(buffer))
-        setTimeout(() => controller.close(), 10)
+      },
+      cancel() {
+        closed = true
+        if (closeTimer) clearTimeout(closeTimer)
       },
     })
     return createBlob(stream, {
@@ -163,11 +196,12 @@ const downloadChunkedProcedure = createProcedure({
     let chunkIndex = 0
     let closed = false
 
+    let closeTimer: ReturnType<typeof setTimeout> | undefined
     const stream = new ReadableStream<Uint8Array>({
       pull(controller) {
         if (chunkIndex >= input.chunks.length) {
           // Delay close to allow event listeners to be attached
-          setTimeout(() => {
+          closeTimer = setTimeout(() => {
             if (!closed) {
               closed = true
               controller.close()
@@ -176,6 +210,10 @@ const downloadChunkedProcedure = createProcedure({
           return
         }
         controller.enqueue(encoder.encode(input.chunks[chunkIndex++]))
+      },
+      cancel() {
+        closed = true
+        if (closeTimer) clearTimeout(closeTimer)
       },
     })
     return createBlob(stream, { type: 'text/plain' })
