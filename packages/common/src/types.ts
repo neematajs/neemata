@@ -24,12 +24,8 @@ export type ClassConstructor<T = any, A extends any[] = any[]> =
     ) => T)
 
 export type ClassInstance<T> = T extends ClassConstructor<infer U> ? U : never
-export type ClassConstructorArgs<T, A = never> = T extends ClassConstructor<
-  any,
-  infer U
->
-  ? U
-  : A
+export type ClassConstructorArgs<T, A = never> =
+  T extends ClassConstructor<any, infer U> ? U : A
 
 export type Callback<T extends any[] = any[], R = any> = (...args: T) => R
 export type OmitFirstItem<T extends any[]> = T extends [any, ...infer U]

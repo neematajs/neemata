@@ -41,20 +41,12 @@ export class StaticClient<
     this.transformer = new BaseClientTransformer()
   }
 
-  override get call() {
-    return this.createProxy(Object.create(null), false) as ClientCallers<
-      this['_']['routes'],
-      SafeCall,
-      false
-    >
+  override get call(): ClientCallers<this['_']['routes'], SafeCall, false> {
+    return this.createProxy(Object.create(null), false)
   }
 
-  override get stream() {
-    return this.createProxy(Object.create(null), true) as ClientCallers<
-      this['_']['routes'],
-      SafeCall,
-      true
-    >
+  override get stream(): ClientCallers<this['_']['routes'], SafeCall, true> {
+    return this.createProxy(Object.create(null), true)
   }
 
   protected createProxy<T>(

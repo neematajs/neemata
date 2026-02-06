@@ -81,12 +81,12 @@ export class RuntimeClient<
     this.#callers = this.buildCallers()
   }
 
-  override get call() {
-    return this.#callers as ClientCallers<this['_']['routes'], SafeCall, false>
+  override get call(): ClientCallers<this['_']['routes'], SafeCall, false> {
+    return this.#callers as any
   }
 
-  override get stream() {
-    return this.#callers as ClientCallers<this['_']['routes'], SafeCall, true>
+  override get stream(): ClientCallers<this['_']['routes'], SafeCall, true> {
+    return this.#callers as any
   }
 
   protected resolveProcedures(router: TAnyRouterContract, path: string[] = []) {
