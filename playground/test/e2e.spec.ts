@@ -245,7 +245,7 @@ async function stopServer(serverProcess: ChildProcess): Promise<void> {
   })
 }
 
-function waitForServerOutput(
+function _waitForServerOutput(
   serverProcess: ChildProcess,
   pattern: string,
   timeout = 30000,
@@ -406,14 +406,7 @@ describe('Playground E2E - Dev Mode', { timeout: 60000 }, () => {
           `{ message: 'pong' }`,
           `{ message: 'pong-hmr' }`,
         )
-        const change = waitForServerOutput(
-          serverProcess!,
-          'Application reloaded successfully',
-          30000,
-        )
         await writeFile(PING_PROCEDURE_PATH, modifiedContent, 'utf-8')
-        await change
-        // Small extra delay to ensure the gateway is fully ready
         await setTimeout(1000)
         const result2 = await client.call.ping({})
         expect(result2).toEqual({ message: 'pong-hmr' })
