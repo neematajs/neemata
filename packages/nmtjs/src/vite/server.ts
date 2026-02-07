@@ -6,7 +6,7 @@ import type { ViteConfigOptions } from './config.ts'
 // Packages that must NOT be externalized to prevent module duplication.
 // When externalized, Vite's ModuleRunner uses native Node import() which has
 // a separate module cache from Vite's cache, causing the same module to be
-// loaded twice with different object identities.
+// loaded twice with different object references.
 const noExternalPackages = ['nmtjs', /^@nmtjs\//]
 
 export function createServer(
