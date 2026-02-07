@@ -1,8 +1,13 @@
 import { Buffer } from 'node:buffer'
+import { ReadableStream } from 'node:stream/web'
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { MessageContext } from '../../src/client/protocol.ts'
+import {
+  ProtocolClientBlobStream,
+  ProtocolServerBlobStream,
+} from '../../src/client/stream.ts'
 import { ProtocolVersion1 } from '../../src/client/versions/v1.ts'
 import { ClientMessageType, ServerMessageType } from '../../src/common/enums.ts'
 
@@ -21,18 +26,23 @@ function createMockContext(): MessageContext {
   return {
     decoder: { decode: vi.fn(), decodeRPC: vi.fn() },
     encoder: { encode: vi.fn(), encodeRPC: vi.fn() },
-    addClientStream: vi.fn((blob) => ({
-      id: 0,
-      metadata: blob.metadata,
-      source: blob.source,
-    })),
-    addServerStream: vi.fn((_streamId, metadata) => ({
-      id: _streamId,
-      metadata,
-    })),
+    addClientStream: vi.fn(
+      (blob) =>
+        new ProtocolClientBlobStream(
+          blob.source instanceof ReadableStream
+            ? blob.source
+            : new ReadableStream(),
+          0,
+          blob.metadata,
+        ),
+    ),
+    addServerStream: vi.fn(
+      (_streamId, metadata) => (_options) =>
+        new ProtocolServerBlobStream(metadata),
+    ),
     transport: { send: vi.fn() },
     streamId: vi.fn().mockReturnValue(1),
-  } as unknown as MessageContext
+  } satisfies MessageContext
 }
 
 describe('ProtocolVersion1 (client) - decodeMessage', () => {

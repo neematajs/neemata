@@ -3,7 +3,9 @@ import { Buffer } from 'node:buffer'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { MessageContext } from '../../src/server/types.ts'
+import { kBlobKey } from '../../src/common/constants.ts'
 import { ClientMessageType, ServerMessageType } from '../../src/common/enums.ts'
+import { ProtocolClientStream } from '../../src/server/stream.ts'
 import { ProtocolVersion1 } from '../../src/server/versions/v1.ts'
 
 const encodeUInt32 = (value: number) => {
@@ -22,21 +24,23 @@ function createMockServerContext(version: ProtocolVersion1): MessageContext {
   return {
     connectionId: 'conn',
     streamId: vi.fn().mockReturnValue(1),
-    decoder: { decode: vi.fn(), decodeRPC: vi.fn() },
-    encoder: { encode: vi.fn(), encodeRPC: vi.fn() },
+    decoder: { decode: vi.fn(), decodeRPC: vi.fn(), accept: ['test'] },
+    encoder: {
+      encode: vi.fn(),
+      encodeRPC: vi.fn(),
+      encodeBlob: vi.fn((streamId, metadata) => ({ streamId, metadata })),
+      contentType: 'test',
+    },
     protocol: version,
     addClientStream: vi.fn(({ streamId, callId, metadata }) => {
-      const consumer = () => ({ id: streamId, callId, metadata })
-      consumer.metadata = metadata
+      const consumer = Object.assign(
+        () => new ProtocolClientStream(streamId, metadata),
+        { metadata, [kBlobKey]: true },
+      )
       return consumer
     }),
-    addServerStream: vi.fn(({ streamId, callId, blob }) => ({
-      id: streamId,
-      callId,
-      metadata: blob.metadata,
-    })),
     transport: { send: vi.fn() },
-  } as unknown as MessageContext
+  }
 }
 
 describe('ProtocolVersion1 - decodeMessage', () => {

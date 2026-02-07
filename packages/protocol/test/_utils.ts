@@ -1,14 +1,16 @@
+import { Buffer } from 'node:buffer'
 import { deserialize, serialize } from 'node:v8'
 
 import type { Pattern } from '@nmtjs/common'
 import { createLogger } from '@nmtjs/core'
 
+import type { ProtocolBlobMetadata } from '../src/common/blob.ts'
 import type {
   DecodeRPCContext,
   EncodeRPCStreams,
-  ProtocolRPC,
-  ProtocolRPCResponse,
+  ProtocolRPCPayload,
 } from '../src/common/types.ts'
+import type { ProtocolClientStream } from '../src/server/stream.ts'
 import { BaseServerFormat } from '../src/server/format.ts'
 
 export class TestFormat extends BaseServerFormat {
@@ -27,19 +29,30 @@ export class TestFormat extends BaseServerFormat {
   }
 
   encodeRPC(
-    rpc: ProtocolRPCResponse,
-    _context: EncodeRPCStreams,
+    data: ProtocolRPCPayload,
+    _streams: EncodeRPCStreams,
   ): ArrayBufferView {
-    return this.encode(rpc)
+    return this.encode(data)
+  }
+
+  encodeBlob(streamId: number, metadata: ProtocolBlobMetadata) {
+    return { streamId, metadata }
   }
 
   decode(buffer: ArrayBufferView): any {
-    return deserialize(Buffer.from(buffer.buffer))
+    const view = Buffer.from(
+      buffer.buffer,
+      buffer.byteOffset,
+      buffer.byteLength,
+    )
+    return deserialize(view)
   }
 
-  decodeRPC(buffer: ArrayBufferView, _context: DecodeRPCContext): ProtocolRPC {
-    const [callId, procedure, payload] = this.decode(buffer)
-    return { callId, procedure, payload }
+  decodeRPC(
+    buffer: ArrayBufferView,
+    _context: DecodeRPCContext<() => ProtocolClientStream>,
+  ): ProtocolRPCPayload {
+    return this.decode(buffer)
   }
 }
 

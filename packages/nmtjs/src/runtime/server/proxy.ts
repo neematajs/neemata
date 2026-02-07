@@ -107,8 +107,6 @@ export class ApplicationServerProxy {
   }
 
   async stop() {
-    this.params.logger.info('Stopping proxy server...')
-
     this.params.applications.off('add', this.onAdd)
     this.params.applications.off('remove', this.onRemove)
 

@@ -245,6 +245,35 @@ async function stopServer(serverProcess: ChildProcess): Promise<void> {
   })
 }
 
+function waitForServerOutput(
+  serverProcess: ChildProcess,
+  pattern: string,
+  timeout = 30000,
+): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const timeoutId = globalThis.setTimeout(() => {
+      cleanup()
+      reject(new Error(`Timed out waiting for server output: "${pattern}"`))
+    }, timeout)
+
+    const onData = (data: Buffer) => {
+      if (data.toString().includes(pattern)) {
+        cleanup()
+        resolve()
+      }
+    }
+
+    const cleanup = () => {
+      globalThis.clearTimeout(timeoutId)
+      serverProcess.stdout?.off('data', onData)
+      serverProcess.stderr?.off('data', onData)
+    }
+
+    serverProcess.stdout?.on('data', onData)
+    serverProcess.stderr?.on('data', onData)
+  })
+}
+
 function createClient(url: string) {
   return new StaticClient(
     { contract, protocol: ProtocolVersion.v1, format: new JsonFormat() },
@@ -375,7 +404,13 @@ describe('Playground E2E - Dev Mode', { timeout: 60000 }, () => {
           `{ message: 'pong-hmr' }`,
         )
         await writeFile(PING_PROCEDURE_PATH, modifiedContent, 'utf-8')
-        await setTimeout(5000)
+        await waitForServerOutput(
+          serverProcess!,
+          'Application reloaded successfully',
+          30000,
+        )
+        // Small extra delay to ensure the gateway is fully ready
+        await setTimeout(1000)
         const result2 = await client.call.ping({})
         expect(result2).toEqual({ message: 'pong-hmr' })
       } finally {

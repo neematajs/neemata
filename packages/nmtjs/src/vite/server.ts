@@ -14,9 +14,15 @@ export function createServer(
   config: UserConfig,
   dev: DevEnvironmentOptions = {},
 ) {
+  const usePolling = !!process.env.CI
+
   return createViteServer({
     ...config,
-    server: { middlewareMode: true, ws: false },
+    server: {
+      middlewareMode: true,
+      ws: false,
+      watch: usePolling ? { usePolling: true } : undefined,
+    },
     resolve: { tsconfigPaths: true, ...config.resolve },
     environments: {
       neemata: {
