@@ -29,7 +29,7 @@ export class ClientStreams {
     this.#collection.delete(streamId)
   }
 
-  async abort(streamId: number, reason?: string) {
+  async abort(streamId: number, reason?: any) {
     const stream = this.#collection.get(streamId)
     if (!stream) return // Stream already cleaned up
     await stream.abort(reason)
@@ -46,7 +46,7 @@ export class ClientStreams {
     this.remove(streamId)
   }
 
-  async clear(reason?: string) {
+  async clear(reason?: any) {
     if (reason) {
       const abortPromises = [...this.#collection.values()].map((stream) =>
         stream.abort(reason),
@@ -118,7 +118,7 @@ export class ServerStreams<
     this.remove(streamId)
   }
 
-  async clear(reason?: string) {
+  async clear(reason?: any) {
     if (reason) {
       const abortPromises = [...this.#writers.values()].map((writer) =>
         writer.abort(reason).finally(() => writer.releaseLock()),
