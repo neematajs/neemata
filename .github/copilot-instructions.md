@@ -180,6 +180,26 @@ import {
 
 Package-specific mocks (transports, APIs) remain in each package's `test/_mocks/` directory.
 
+### Skill (`skills/use-neemata/`)
+
+The `skills/use-neemata/` directory contains a agent skill that teaches usage of the public Neemata API via the `nmtjs` package. It consists of:
+
+- `SKILL.md` — Main skill definition (triggers, prerequisites, key concepts)
+- `references/api-reference.md` — `n.*`, `t.*`, `c.*` function signatures
+- `references/rpc.md` — Procedures, routers, streaming, blobs, contracts, guards, middleware, filters
+- `references/injectables.md` — DI scopes, injectable builders, `n.inject.*` table
+- `references/server-setup.md` — `n.app()`, `n.server()`, `defineConfig()`, project structure
+- `references/client-usage.md` — `StaticClient` setup, calls, streams, blobs, abort
+
+**When modifying public APIs**, check whether the skill references need updating:
+
+- Adding/removing/renaming exports from `packages/nmtjs/src/index.ts` → update `references/api-reference.md`
+- Changing procedure, router, guard, middleware, filter, or blob APIs → update `references/rpc.md`
+- Changing DI scopes, injectable builders, or built-in injectables → update `references/injectables.md`
+- Changing `defineApplication`, `defineServer`, `defineConfig`, or project structure conventions → update `references/server-setup.md`
+- Changing client classes, transport setup, or call patterns → update `references/client-usage.md`
+- Changing imports, architecture overview, or key concepts → update `SKILL.md`
+
 ---
 
-**Important**: If during development you notice that implementation deviates from the architecture described in these instructions, explicitly point this out to the user and suggest updating these instructions to reflect the new implementation. **Never modify this file without explicit user consent.**
+**Important**: If during development you notice that implementation deviates from the architecture described in these instructions, explicitly point this out to the user and suggest updating these instructions to reflect the new implementation. **Never modify this file without explicit user consent.** The same applies to the skill files in `skills/use-neemata/` — flag when they become stale and propose updates.
