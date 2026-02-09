@@ -1,5 +1,6 @@
 {
   "name": "nmtjs",
+  "description": "Neemata framework CLI and umbrella package.",
   "type": "module",
   "scripts": {
     "clean-build": "rm -rf ./dist"

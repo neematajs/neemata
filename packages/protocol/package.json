@@ -1,5 +1,6 @@
 {
   "name": "@nmtjs/protocol",
+  "description": "Binary protocol implementation for Neemata clients and servers.",
   "type": "module",
   "scripts": {
     "clean-build": "rm -rf ./dist"

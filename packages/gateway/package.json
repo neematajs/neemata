@@ -1,5 +1,6 @@
 {
   "name": "@nmtjs/gateway",
+  "description": "Connection management and RPC dispatching gateway for Neemata.",
   "type": "module",
   "scripts": {
     "clean-build": "rm -rf ./dist"

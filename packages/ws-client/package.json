@@ -1,5 +1,6 @@
 {
   "name": "@nmtjs/ws-client",
+  "description": "WebSocket client transport for Neemata.",
   "type": "module",
   "exports": {
     ".": "./src/index.ts"

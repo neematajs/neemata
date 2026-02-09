@@ -1,5 +1,6 @@
 {
   "name": "@nmtjs/http-client",
+  "description": "HTTP client transport for Neemata.",
   "type": "module",
   "exports": {
     ".": {

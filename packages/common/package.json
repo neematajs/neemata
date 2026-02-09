@@ -1,5 +1,6 @@
 {
   "name": "@nmtjs/common",
+  "description": "Shared zero-dependency utilities for Neemata packages.",
   "type": "module",
   "exports": {
     ".": "./src/index.ts"

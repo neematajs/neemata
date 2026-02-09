@@ -1,5 +1,6 @@
 {
   "name": "@nmtjs/client",
+  "description": "Base client infrastructure for Neemata RPC calls.",
   "type": "module",
   "scripts": {
     "clean-build": "rm -rf ./dist"

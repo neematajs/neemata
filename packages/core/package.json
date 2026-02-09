@@ -1,5 +1,6 @@
 {
   "name": "@nmtjs/core",
+  "description": "Dependency injection, hooks, and scoped lifecycle management for Neemata.",
   "type": "module",
   "exports": {
     ".": "./src/index.ts",

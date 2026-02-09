@@ -1,5 +1,6 @@
 {
   "name": "@nmtjs/type",
+  "description": "Schema system and encode/decode helpers for Neemata types.",
   "type": "module",
   "files": [
     "dist",

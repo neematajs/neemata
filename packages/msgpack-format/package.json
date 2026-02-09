@@ -1,5 +1,6 @@
 {
   "name": "@nmtjs/msgpack-format",
+  "description": "MessagePack serialization format for the Neemata protocol.",
   "type": "module",
   "scripts": {
     "clean-build": "rm -rf ./dist"

@@ -1,5 +1,6 @@
 {
   "name": "@nmtjs/contract",
+  "description": "Type-safe API contract definitions for Neemata.",
   "type": "module",
   "exports": {
     ".": "./src/index.ts"
