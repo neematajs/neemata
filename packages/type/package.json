@@ -26,6 +26,7 @@
     "clean-build": "rm -rf ./dist"
   },
   "dependencies": {
+    "@standard-schema/spec": "^1.1.0",
     "temporal-spec": "^0.3.0"
   },
   "peerDependencies": {
