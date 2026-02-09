@@ -52,16 +52,15 @@ jobs:
         run: pnpm install && pnpm build
 
       - name: Log in to npm
-        run: |
-          echo "//registry.npmjs.org/:_authToken=\${NPM_TOKEN}" > ~/.npmrc
+        run: pnpm config set "//registry.npmjs.org/:_authToken=${NPM_TOKEN}"
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Set version
         run: |
           pnpm -r exec pnpm version --allow-same-version --no-commit-hooks --no-git-tag-version --silent ${{ inputs.version }}
-          pnpm --filter !_tests --filter !playground -r exec cp ../../README.md ./
-          pnpm --filter !_tests --filter !playground -r exec cp ../../LICENSE.md ./
+          pnpm -r exec cp "$GITHUB_WORKSPACE/README.md" ./
+          pnpm -r exec cp "$GITHUB_WORKSPACE/LICENSE.md" ./
 
       - name: Dry-run publish and publish
         run: |
