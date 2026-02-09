@@ -12,7 +12,7 @@
     "test:watch": "vitest"
   },
   "devDependencies": {
-    "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.56.0",
+    "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.57.0",
     "@nmtjs/client": "workspace:*",
     "@nmtjs/contract": "workspace:*",
     "@nmtjs/json-format": "workspace:*",
@@ -21,6 +21,7 @@
     "@nmtjs/type": "workspace:*",
     "@nmtjs/ws-client": "workspace:*",
     "@nmtjs/ws-transport": "workspace:*",
+    "@nmtjs/http-transport": "workspace:*",
     "nmtjs": "workspace:*"
   }
 }

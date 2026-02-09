@@ -72,9 +72,9 @@ export const WsTransport: Transport<
   ConnectionType.Bidirectional,
   WsTransportOptions<'bun'>,
   typeof injectables,
-  ProxyableTransportType.HTTP
+  ProxyableTransportType.WS
 > = {
-  proxyable: ProxyableTransportType.HTTP,
+  proxyable: ProxyableTransportType.WS,
   injectables,
   factory(options) {
     return createWSTransportWorker(adapterFactory, options)

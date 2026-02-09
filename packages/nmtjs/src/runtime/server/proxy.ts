@@ -12,14 +12,12 @@ import type { ServerConfig } from './config.ts'
  */
 function toProxyUpstream(upstream: ApplicationProxyUpstream) {
   const url = new URL(upstream.url)
-  const isWebSocket = url.protocol === 'wss:' || url.protocol === 'ws:'
   const secure = url.protocol === 'https:' || url.protocol === 'wss:'
   const port = url.port ? Number.parseInt(url.port, 10) : secure ? 443 : 80
 
   return {
     type: 'port',
-    // WebSocket requires HTTP/1.1 for upgrade
-    transport: isWebSocket ? 'http' : upstream.type,
+    transport: upstream.type,
     secure,
     hostname: url.hostname,
     port,
@@ -29,8 +27,14 @@ function toProxyUpstream(upstream: ApplicationProxyUpstream) {
 export class ApplicationServerProxy {
   proxyServer: NeemataProxy
 
-  protected readonly onAdd: (application: string, upstream: any) => void
-  protected readonly onRemove: (application: string, upstream: any) => void
+  protected readonly onAdd: (
+    application: string,
+    upstream: ApplicationProxyUpstream,
+  ) => void
+  protected readonly onRemove: (
+    application: string,
+    upstream: ApplicationProxyUpstream,
+  ) => void
 
   constructor(
     readonly params: {
@@ -63,7 +67,7 @@ export class ApplicationServerProxy {
         { application, upstream: proxyUpstream },
         'Adding upstream to proxy',
       )
-      void this.proxyServer
+      this.proxyServer
         .addUpstream(application, proxyUpstream)
         .catch((error) => {
           this.params.logger.warn(
@@ -80,7 +84,7 @@ export class ApplicationServerProxy {
         'Removing upstream from proxy',
       )
 
-      void this.proxyServer
+      this.proxyServer
         .removeUpstream(application, proxyUpstream)
         .catch((error) => {
           this.params.logger.warn(

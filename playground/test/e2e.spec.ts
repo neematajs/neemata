@@ -245,38 +245,6 @@ async function stopServer(serverProcess: ChildProcess): Promise<void> {
   })
 }
 
-function _waitForServerOutput(
-  serverProcess: ChildProcess,
-  pattern: string,
-  timeout = 30000,
-): Promise<void> {
-  return new Promise<void>((resolve, reject) => {
-    let buffer = ''
-    const timeoutId = globalThis.setTimeout(() => {
-      cleanup()
-      reject(new Error(`Timed out waiting for server output: "${pattern}"`))
-    }, timeout)
-
-    const onData = (data: Buffer) => {
-      buffer += data.toString()
-      if (buffer.includes(pattern)) {
-        cleanup()
-        resolve()
-      }
-    }
-
-    const cleanup = () => {
-      buffer = ''
-      globalThis.clearTimeout(timeoutId)
-      serverProcess.stdout?.off('data', onData)
-      serverProcess.stderr?.off('data', onData)
-    }
-
-    serverProcess.stdout?.on('data', onData)
-    serverProcess.stderr?.on('data', onData)
-  })
-}
-
 function createClient(url: string) {
   return new StaticClient(
     { contract, protocol: ProtocolVersion.v1, format: new JsonFormat() },
