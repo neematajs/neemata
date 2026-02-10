@@ -16,7 +16,7 @@ function toProxyUpstream(upstream: ApplicationProxyUpstream) {
   const port = url.port ? Number.parseInt(url.port, 10) : secure ? 443 : 80
 
   return {
-    type: 'port',
+    type: 'port' as const,
     transport: upstream.type,
     secure,
     hostname: url.hostname,
