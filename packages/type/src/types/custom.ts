@@ -50,7 +50,6 @@ export class CustomType<
     validation?:
       | ((
           value: EncodeType['_zod']['input'] | DecodeType['_zod']['output'],
-
           payload: core.$RefinementCtx<
             EncodeType['_zod']['output'] | DecodeType['_zod']['output']
           >,

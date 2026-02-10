@@ -1,4 +1,3 @@
-import type { StandardSchemaV1 } from '@standard-schema/spec'
 import type {
   ZodMiniAny,
   ZodMiniArray,
@@ -17,7 +16,11 @@ import type {
   ZodMiniType,
   ZodMiniUnion,
 } from 'zod/mini'
-import { _default, core, nullable, optional, registry } from 'zod/mini'
+import { _default, core, nullable, optional } from 'zod/mini'
+
+import type { TypeMetadata } from './_metadata.ts'
+import { standard } from '../standart-schema.ts'
+import { typesRegistry } from './_metadata.ts'
 
 export type PrimitiveValueType = string | number | boolean | null
 
@@ -44,13 +47,6 @@ export type ZodType = SimpleZodType | ZodMiniType
 
 export type TypeProps = Record<string, any>
 
-export type TypeMetadata<T = any> = {
-  id?: string
-  description?: string
-  examples?: T[]
-  title?: string
-}
-
 export type TypeParams = {
   encode?: (value: any) => any
   metadata?: TypeMetadata
@@ -67,8 +63,6 @@ export type BaseTypeAny<
   DecodedZodType extends ZodType = ZodMiniType,
 > = BaseType<EncodedZodType, DecodedZodType, TypeProps>
 
-export const typesRegistry = registry<TypeMetadata>()
-
 export const NeemataTypeError = core.$ZodError
 export type NeemataTypeError = core.$ZodError
 
@@ -78,11 +72,7 @@ export abstract class BaseType<
   Props extends TypeProps = TypeProps,
   RawEncodeZodType extends SimpleZodType = EncodeZodType,
   RawDecodeZodType extends ZodType = DecodeZodType,
-> implements
-    StandardSchemaV1<
-      DecodeZodType['_zod']['input'],
-      EncodeZodType['_zod']['output']
-    >
+> implements standard.Schema<DecodeZodType>
 {
   readonly encodeZodType: EncodeZodType
   readonly decodeZodType: DecodeZodType
@@ -90,6 +80,11 @@ export abstract class BaseType<
   readonly decodeRawZodType!: RawDecodeZodType
   readonly props: Props
   readonly params: TypeParams
+  readonly standard: {
+    encode: standard.Schema<EncodeZodType>
+    decode: standard.Schema<DecodeZodType>
+  }
+  readonly '~standard': standard.Props<DecodeZodType>
 
   constructor({
     encodeZodType,
@@ -107,6 +102,11 @@ export abstract class BaseType<
 
     this.props = props
     this.params = Object.assign({ checks: [] }, params)
+    this.standard = {
+      encode: standard.encode(this, typesRegistry),
+      decode: standard.decode(this, typesRegistry),
+    }
+    this['~standard'] = this.standard.decode['~standard']
   }
 
   optional(): OptionalType<this> {
@@ -160,39 +160,6 @@ export abstract class BaseType<
     context: core.ParseContext<core.$ZodIssue> = {},
   ): this['decodeZodType']['_zod']['output'] {
     return this.decodeZodType.parse(data, { reportInput: true, ...context })
-  }
-
-  '~standard': StandardSchemaV1.Props<
-    this['decodeZodType']['_zod']['input'],
-    this['encodeZodType']['_zod']['output']
-  > = {
-    validate: (
-      input: unknown,
-      options?: StandardSchemaV1.Options | undefined,
-    ) => {
-      try {
-        const value = this.decode(
-          input,
-          (options?.libraryOptions as any)?.context,
-        )
-        return { value }
-      } catch (e) {
-        if (e instanceof core.$ZodError) {
-          const issues: StandardSchemaV1.Issue[] = e.issues.map((issue) => ({
-            message: issue.message,
-            path: issue.path.length > 0 ? issue.path : undefined,
-          }))
-          return { issues }
-        }
-        throw e
-      }
-    },
-    types: {
-      input: undefined as unknown as this['decodeZodType']['_zod']['input'],
-      output: undefined as unknown as this['encodeZodType']['_zod']['output'],
-    },
-    vendor: 'neemata-type',
-    version: 1,
   }
 }
 

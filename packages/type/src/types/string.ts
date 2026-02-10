@@ -1,5 +1,7 @@
 import type { core, ZodMiniString } from 'zod/mini'
 import {
+  base64,
+  base64url,
   cuid,
   cuid2,
   e164,
@@ -89,6 +91,14 @@ export class StringType extends BaseType<
 
   jwt(options?: core.$ZodJWTParams) {
     return StringType.factory(...this.params.checks, jwt(options))
+  }
+
+  base64(options?: core.$ZodBase64Params) {
+    return StringType.factory(...this.params.checks, base64(options))
+  }
+
+  base64URL(options?: core.$ZodBase64URLParams) {
+    return StringType.factory(...this.params.checks, base64url(options))
   }
 }
 
