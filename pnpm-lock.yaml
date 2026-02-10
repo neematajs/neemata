@@ -7,8 +7,8 @@ settings:
 catalogs:
   default:
     '@nmtjs/proxy':
-      specifier: 1.0.0-beta.1
-      version: 1.0.0-beta.1
+      specifier: 1.0.0-beta.2
+      version: 1.0.0-beta.2
     vite:
       specifier: 8.0.0-beta.13
       version: 8.0.0-beta.13
@@ -266,7 +266,7 @@ importers:
     devDependencies:
       '@nmtjs/proxy':
         specifier: 'catalog:'
-        version: 1.0.0-beta.1
+        version: 1.0.0-beta.2
       pino:
         specifier: 10.3.0
         version: 10.3.0
@@ -378,7 +378,7 @@ importers:
         version: link:../packages/protocol
       '@nmtjs/proxy':
         specifier: 'catalog:'
-        version: 1.0.0-beta.1
+        version: 1.0.0-beta.2
       '@nmtjs/type':
         specifier: workspace:*
         version: link:../packages/type
@@ -896,47 +896,47 @@ packages:
   '@napi-rs/wasm-runtime@1.1.1':
     resolution: {integrity: sha512-p64ah1M1ld8xjWv3qbvFwHiFVWrq1yFvV4f7w+mzaqiR4IlSgkqhcRdHwsGgomwzBH51sRY4NEowLxnaBjcW/A==}
 
-  '@nmtjs/proxy-darwin-arm64@1.0.0-beta.1':
-    resolution: {integrity: sha512-GpIAl3sjb6K0c8GJkC+nIU689tovrylYckSzKeb/WSpDux44mp0uBzNq8CpeQc9pEtbF13Oc2LPmhhR05GLcQQ==}
+  '@nmtjs/proxy-darwin-arm64@1.0.0-beta.2':
+    resolution: {integrity: sha512-DMghbyE+PLoFyX5giC+BjbfhFDHejf2GO2qya60dmYpgiPqmtGhbeIy8JxEpf/CfH9OSQoCkztCpiJ7AtzEcHQ==}
     cpu: [arm64]
     os: [darwin]
 
-  '@nmtjs/proxy-darwin-x64@1.0.0-beta.1':
-    resolution: {integrity: sha512-Vep/WKPQ/0aXS2z7OqWr9rAIFaPGaAg6Ag2RQnL3mwzne4C2UAsdcTPG5IqzqrsnMHTHTgQvypc0cCyFxnx0Mg==}
+  '@nmtjs/proxy-darwin-x64@1.0.0-beta.2':
+    resolution: {integrity: sha512-3YhApnxXVnikMr8nJondxaAAiMeVASGLIskAV5tG1o1wF1B32hHsr5iHUy4UUbGNbhAHnt55JFcsslQkivno9g==}
     cpu: [x64]
     os: [darwin]
 
-  '@nmtjs/proxy-linux-arm-gnueabihf@1.0.0-beta.1':
-    resolution: {integrity: sha512-JZlZdy1Ckp8YygdRzWlmVFHdbWoxeUhyxULAxpQFi9mbyjcGEt8JhHrVXRGClAnLCg2LeBuP7zx6hutb3bkiWQ==}
+  '@nmtjs/proxy-linux-arm-gnueabihf@1.0.0-beta.2':
+    resolution: {integrity: sha512-YZidtbPvsib3BwhVpkioU8GlMD3T1FIvD/pkBPnObVGSPilFX/iIoXaGeGgmazHSR/1efO8tM2ZlHK6rdN2E7g==}
     cpu: [arm]
     os: [linux]
 
-  '@nmtjs/proxy-linux-arm64-gnu@1.0.0-beta.1':
-    resolution: {integrity: sha512-sccnQciPTWr+vndgtme0vk2jgafp6Iz9GPlTID2DmgosfVRsg8Pz2j7rDupqSiai7UZ9/XwxTzbV1g/A6YoFKw==}
+  '@nmtjs/proxy-linux-arm64-gnu@1.0.0-beta.2':
+    resolution: {integrity: sha512-vEk8q337VRR5OmEaxfqRT5FNzBYKJh1u2FLe3OfY+nJfneHRyZ6/v548ZPfCbdqz9kNQXJ8H7ghSSsxfaQ72Hw==}
     cpu: [arm64]
     os: [linux]
     libc: [glibc]
 
-  '@nmtjs/proxy-linux-arm64-musl@1.0.0-beta.1':
-    resolution: {integrity: sha512-ZZHsAIpURcOgsULHHoMH3bLweix4jcLvxr6MLg8grWl6ovZprgGhjL7gxk0UgFN8p2xQQCS+TvesxNlHzDSNkA==}
+  '@nmtjs/proxy-linux-arm64-musl@1.0.0-beta.2':
+    resolution: {integrity: sha512-GW8E2Pii0jzkvvTAoCEstEetUlgay7Vr/iWRykzIacbwMpHxSPLjsQpAgrEoZz54JcFOm9udSvBsI7PEeeGMYg==}
     cpu: [arm64]
     os: [linux]
     libc: [musl]
 
-  '@nmtjs/proxy-linux-x64-gnu@1.0.0-beta.1':
-    resolution: {integrity: sha512-vgay4rPoTMKv/ZQtL3uyvXqp9UFV0vpLUWZ9GITOtLHuCYBd/ryXLvbgkLYgtbgeaXhHcDWuDkL0SAIsB6o6+g==}
+  '@nmtjs/proxy-linux-x64-gnu@1.0.0-beta.2':
+    resolution: {integrity: sha512-YaNHgFmq+qHEql9ld6mdMtuck0/O7fqnIb6l9yuMGYDUwVtUk6YwzIaHFD7q81aEbjhlN/GzceqZfRuOXvO6aA==}
     cpu: [x64]
     os: [linux]
     libc: [glibc]
 
-  '@nmtjs/proxy-linux-x64-musl@1.0.0-beta.1':
-    resolution: {integrity: sha512-Yax2kmZrO1+c/K+YcHCnGJFfSVYeGQiAOj+Qk0o9YmPPcymmumwV4Z/tvCGW8P+JgeJQ+ZbvFObRuOPvkD+g3A==}
+  '@nmtjs/proxy-linux-x64-musl@1.0.0-beta.2':
+    resolution: {integrity: sha512-uhJPr3s9jistYNmpGwv6nMJ7fugOSAmmH7Nd6Uoy/AEDytR8HRwR6vZFG1jMCTdVo5XJ8GPcY3Wamhj7qvknOQ==}
     cpu: [x64]
     os: [linux]
     libc: [musl]
 
-  '@nmtjs/proxy@1.0.0-beta.1':
-    resolution: {integrity: sha512-NFtgTWQwgFOwbxIUFIDdh5zE7d/WBYZf3vaURaYi24e9Id0T/LFes19yklgGaZyBPldomTlusyH9ka6CPnU0+Q==}
+  '@nmtjs/proxy@1.0.0-beta.2':
+    resolution: {integrity: sha512-/IC50LKTrCbWYHleXWWsRR0pIkP7x56VQxj7t2tzQ8TDskNlqaIRnFyiYpuQlDLcvk7jF5wduYcFET8i5inu/Q==}
 
   '@opentelemetry/api@1.9.0':
     resolution: {integrity: sha512-3giAOQvZiH5F9bMlMiv8+GSPMeqg0dbaeo58/0SlA9sxSqZhnUtxzX9/2FzyhS9sWQf5S0GJE0AKBrFqjpeYcg==}
@@ -2331,36 +2331,36 @@ snapshots:
       '@tybys/wasm-util': 0.10.1
     optional: true
 
-  '@nmtjs/proxy-darwin-arm64@1.0.0-beta.1':
+  '@nmtjs/proxy-darwin-arm64@1.0.0-beta.2':
     optional: true
 
-  '@nmtjs/proxy-darwin-x64@1.0.0-beta.1':
+  '@nmtjs/proxy-darwin-x64@1.0.0-beta.2':
     optional: true
 
-  '@nmtjs/proxy-linux-arm-gnueabihf@1.0.0-beta.1':
+  '@nmtjs/proxy-linux-arm-gnueabihf@1.0.0-beta.2':
     optional: true
 
-  '@nmtjs/proxy-linux-arm64-gnu@1.0.0-beta.1':
+  '@nmtjs/proxy-linux-arm64-gnu@1.0.0-beta.2':
     optional: true
 
-  '@nmtjs/proxy-linux-arm64-musl@1.0.0-beta.1':
+  '@nmtjs/proxy-linux-arm64-musl@1.0.0-beta.2':
     optional: true
 
-  '@nmtjs/proxy-linux-x64-gnu@1.0.0-beta.1':
+  '@nmtjs/proxy-linux-x64-gnu@1.0.0-beta.2':
     optional: true
 
-  '@nmtjs/proxy-linux-x64-musl@1.0.0-beta.1':
+  '@nmtjs/proxy-linux-x64-musl@1.0.0-beta.2':
     optional: true
 
-  '@nmtjs/proxy@1.0.0-beta.1':
+  '@nmtjs/proxy@1.0.0-beta.2':
     optionalDependencies:
-      '@nmtjs/proxy-darwin-arm64': 1.0.0-beta.1
-      '@nmtjs/proxy-darwin-x64': 1.0.0-beta.1
-      '@nmtjs/proxy-linux-arm-gnueabihf': 1.0.0-beta.1
-      '@nmtjs/proxy-linux-arm64-gnu': 1.0.0-beta.1
-      '@nmtjs/proxy-linux-arm64-musl': 1.0.0-beta.1
-      '@nmtjs/proxy-linux-x64-gnu': 1.0.0-beta.1
-      '@nmtjs/proxy-linux-x64-musl': 1.0.0-beta.1
+      '@nmtjs/proxy-darwin-arm64': 1.0.0-beta.2
+      '@nmtjs/proxy-darwin-x64': 1.0.0-beta.2
+      '@nmtjs/proxy-linux-arm-gnueabihf': 1.0.0-beta.2
+      '@nmtjs/proxy-linux-arm64-gnu': 1.0.0-beta.2
+      '@nmtjs/proxy-linux-arm64-musl': 1.0.0-beta.2
+      '@nmtjs/proxy-linux-x64-gnu': 1.0.0-beta.2
+      '@nmtjs/proxy-linux-x64-musl': 1.0.0-beta.2
 
   '@opentelemetry/api@1.9.0': {}
 
