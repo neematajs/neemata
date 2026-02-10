@@ -190,6 +190,7 @@ The `skills/use-neemata/` directory contains a agent skill that teaches usage of
 - `references/injectables.md` — DI scopes, injectable builders, `n.inject.*` table
 - `references/server-setup.md` — `n.app()`, `n.server()`, `defineConfig()`, project structure
 - `references/client-usage.md` — `StaticClient` setup, calls, streams, blobs, abort
+- `references/jobs.md` — Background jobs, steps, job manager, retry/backoff, progress, job router
 
 **When modifying public APIs**, check whether the skill references need updating:
 
@@ -198,6 +199,7 @@ The `skills/use-neemata/` directory contains a agent skill that teaches usage of
 - Changing DI scopes, injectable builders, or built-in injectables → update `references/injectables.md`
 - Changing `defineApplication`, `defineServer`, `defineConfig`, or project structure conventions → update `references/server-setup.md`
 - Changing client classes, transport setup, or call patterns → update `references/client-usage.md`
+- Changing job definitions, steps, job manager, job router, or job worker APIs → update `references/jobs.md`
 - Changing imports, architecture overview, or key concepts → update `SKILL.md`
 
 ---

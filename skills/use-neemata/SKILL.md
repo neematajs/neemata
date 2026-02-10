@@ -112,3 +112,4 @@ project/
 - [Injectables](references/injectables.md) — DI scopes, injectable builders (value/lazy/factory), built-in `n.inject.*`
 - [Server Setup](references/server-setup.md) — `n.app()`, `n.server()`, `defineConfig()`, project structure
 - [Client Usage](references/client-usage.md) — `StaticClient` setup, RPC calls, streams, blobs, abort
+- [Jobs](references/jobs.md) — Background jobs, steps, job manager, retry/backoff, progress, job router
