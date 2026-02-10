@@ -1,137 +1,110 @@
 import type {
-  Protocol,
-  ProtocolBaseClientCallOptions,
-  ProtocolBaseTransformer,
-} from '@nmtjs/protocol/client'
-import { ClientMessageType, concat, encodeNumber } from '@nmtjs/protocol'
-import {
-  ProtocolTransport,
-  ProtocolTransportStatus,
-} from '@nmtjs/protocol/client'
+  ClientCallOptions,
+  ClientTransportFactory,
+  ClientTransportStartParams,
+} from '@nmtjs/client'
+import type { ProtocolVersion } from '@nmtjs/protocol'
+import type { BaseClientFormat } from '@nmtjs/protocol/client'
+import { once } from '@nmtjs/common'
+import { ConnectionType } from '@nmtjs/protocol'
 
-export type WebSocketClientTransportOptions = {
+export type WsClientTransportOptions = {
   /**
    * The origin of the server
-   * @example 'http://localhost:3000'
+   * @example 'ws://localhost:3000'
    */
-  origin: string
+  url: string
+  debug?: boolean
+
   /**
    * Custom WebSocket class
    * @default globalThis.WebSocket
    */
-  wsFactory?: (url: URL) => WebSocket
-
-  debug?: boolean
+  WebSocket?: typeof WebSocket
 }
 
-export class WebSocketClientTransport extends ProtocolTransport<WebSocketClientTransportOptions> {
+export class WsTransportClient {
+  type: ConnectionType.Bidirectional = ConnectionType.Bidirectional
+
   protected webSocket: WebSocket | null = null
   protected connecting: Promise<void> | null = null
-  protected options: WebSocketClientTransportOptions
 
   constructor(
-    protected readonly protocol: Protocol,
-    options: WebSocketClientTransportOptions,
+    protected readonly format: BaseClientFormat,
+    protected readonly protocol: ProtocolVersion,
+    protected options: WsClientTransportOptions,
   ) {
-    super()
     this.options = { debug: false, ...options }
   }
 
-  connect(auth: any, transformer: ProtocolBaseTransformer): Promise<void> {
-    // this.auth = auth
-    const wsUrl = new URL('/api', this.options.origin)
-    if (this.protocol.contentType) {
-      wsUrl.searchParams.set('content-type', this.protocol.contentType)
-      wsUrl.searchParams.set('accept', this.protocol.contentType)
-    }
-    if (auth) wsUrl.searchParams.set('auth', auth)
+  async connect(params: ClientTransportStartParams) {
+    const url = new URL(
+      params.application ? `/${params.application}` : '/',
+      this.options.url,
+    )
 
-    const ws =
-      this.options.wsFactory?.(wsUrl) ?? new WebSocket(wsUrl.toString())
+    const secure = url.protocol === 'wss:' || url.protocol === 'https:'
+
+    url.protocol = secure ? 'wss:' : 'ws:'
+    url.searchParams.set('content-type', this.format.contentType)
+    url.searchParams.set('accept', this.format.contentType)
+
+    if (params.auth) {
+      url.searchParams.set('auth', params.auth)
+    }
+
+    const ws = this.options.WebSocket
+      ? new this.options.WebSocket(url)
+      : new WebSocket(url.toString())
 
     ws.binaryType = 'arraybuffer'
 
-    this.status = ProtocolTransportStatus.CONNECTING
-
-    ws.addEventListener('message', ({ data }) => {
-      this.protocol.handleServerMessage(data as ArrayBuffer, this, transformer)
-    })
-
-    ws.addEventListener(
-      'close',
-      (event) => {
-        this.status = ProtocolTransportStatus.DISCONNECTED
-        this.emit(
-          'disconnected',
-          event.code === 1000
-            ? event.reason === 'client'
-              ? 'client'
-              : 'server'
-            : 'error',
+    this.connecting = new Promise((resolve, reject) => {
+      ws.addEventListener('open', () => {
+        this.connecting = null
+        params.onConnect()
+        resolve()
+      })
+      ws.addEventListener('message', (event) => {
+        params.onMessage(new Uint8Array(event.data as ArrayBuffer))
+      })
+      ws.addEventListener('error', (event) => {
+        this.connecting = null
+        reject(
+          new Error('WebSocket error', { cause: (event as ErrorEvent).error }),
         )
+      })
+      ws.addEventListener('close', (event) => {
         this.webSocket = null
-      },
-      { once: true },
-    )
+        this.connecting = null
+        params.onDisconnect('server')
+      })
+    })
 
     this.webSocket = ws
-
-    this.connecting = new Promise((resolve, reject) => {
-      ws.addEventListener(
-        'open',
-        () => {
-          this.status = ProtocolTransportStatus.CONNECTED
-          this.emit('connected')
-          resolve()
-        },
-        { once: true },
-      )
-
-      ws.addEventListener(
-        'error',
-        (event) => {
-          reject(new Error('WebSocket error', { cause: event }))
-        },
-        { once: true },
-      )
-    })
 
     return this.connecting
   }
 
-  async disconnect(): Promise<void> {
+  async disconnect() {
     if (this.webSocket === null) return
+    const closing = once(this.webSocket, 'close')
     this.webSocket!.close(1000, 'client')
-    return _once(this.webSocket, 'close')
+    return closing
   }
 
-  async call(
-    procedure: string,
-    payload: any,
-    options: ProtocolBaseClientCallOptions,
-    transformer: ProtocolBaseTransformer,
-  ) {
-    const { call, buffer } = this.protocol.createRpc(
-      procedure,
-      payload,
-      options,
-      transformer,
-    )
-    await this.send(ClientMessageType.Rpc, buffer)
-    return call
-  }
-
-  async send(
-    messageType: ClientMessageType,
-    buffer: ArrayBuffer,
-  ): Promise<void> {
-    if (this.connecting) await this.connecting
-    this.webSocket!.send(concat(encodeNumber(messageType, 'Uint8'), buffer))
+  async send(message: ArrayBufferView, options: ClientCallOptions) {
+    if (this.webSocket === null) throw new Error('WebSocket is not connected')
+    await this.connecting
+    if (!options.signal?.aborted) this.webSocket!.send(message)
   }
 }
 
-function _once(target: EventTarget, event: string) {
-  return new Promise<void>((resolve) => {
-    target.addEventListener(event, () => resolve(), { once: true })
-  })
-}
+export type WsTransportFactory = ClientTransportFactory<
+  ConnectionType.Bidirectional,
+  WsClientTransportOptions,
+  WsTransportClient
+>
+
+export const WsTransportFactory: WsTransportFactory = (params, options) =>
+  new WsTransportClient(params.format, params.protocol, options)

@@ -1,0 +1,38 @@
+{
+  "name": "@nmtjs/gateway",
+  "description": "Connection management and RPC dispatching gateway for Neemata.",
+  "type": "module",
+  "scripts": {
+    "clean-build": "rm -rf ./dist"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "publishConfig": {
+    "exports": {
+      ".": "./dist/index.js"
+    }
+  },
+  "dependencies": {
+    "@nmtjs/common": "workspace:*",
+    "@nmtjs/core": "workspace:*",
+    "@nmtjs/type": "workspace:*",
+    "@nmtjs/protocol": "workspace:*",
+    "hookable": "6.0.0-rc.1"
+  },
+  "peerDependencies": {
+    "@nmtjs/common": "workspace:*",
+    "@nmtjs/core": "workspace:*",
+    "@nmtjs/type": "workspace:*",
+    "@nmtjs/protocol": "workspace:*"
+  },
+  "devDependencies": {
+    "@nmtjs/_tests": "workspace:*"
+  },
+  "files": [
+    "dist",
+    "src",
+    "LICENSE.md",
+    "README.md"
+  ]
+}

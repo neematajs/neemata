@@ -1,0 +1,27 @@
+{
+  "name": "@nmtjs/playground",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "prepare": "neemata prepare",
+    "postinstall": "$npm_execpath prepare",
+    "dev": "NODE_OPTIONS=--experimental-transform-types neemata dev",
+    "build": "neemata build",
+    "preview": "NODE_OPTIONS=--experimental-transform-types neemata preview",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.57.0",
+    "@nmtjs/client": "workspace:*",
+    "@nmtjs/contract": "workspace:*",
+    "@nmtjs/json-format": "workspace:*",
+    "@nmtjs/protocol": "workspace:*",
+    "@nmtjs/proxy": "catalog:",
+    "@nmtjs/type": "workspace:*",
+    "@nmtjs/ws-client": "workspace:*",
+    "@nmtjs/ws-transport": "workspace:*",
+    "@nmtjs/http-transport": "workspace:*",
+    "nmtjs": "workspace:*"
+  }
+}

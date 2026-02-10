@@ -1,9 +1,13 @@
-import type { Callback } from './types.ts'
+import type { Callback, Pattern } from './types.ts'
 
 export const noopFn = () => {}
 
 export function merge<T extends any[]>(...objects: T) {
   return Object.assign({}, ...objects)
+}
+
+export function unique<T>(array: Iterable<T>): Iterable<T> {
+  return new Set(array).values()
 }
 
 export function defer<T extends Callback>(
@@ -50,22 +54,21 @@ export function debounce(cb: Callback, delay: number) {
 }
 
 // TODO: Promise.withResolvers?
-export interface InteractivePromise<T = any> {
+export interface Future<T = any> {
   promise: Promise<T>
   resolve: (value: T) => void
   reject: (error: any) => void
-  toArgs: () => [resolve: this['resolve'], reject: this['reject']]
 }
 // TODO: Promise.withResolvers?
-export function createPromise<T>(): InteractivePromise<T> {
-  let resolve: InteractivePromise<T>['resolve']
-  let reject: InteractivePromise<T>['reject']
+export function createFuture<T>(): Future<T> {
+  let resolve: Future<T>['resolve']
+  let reject: Future<T>['reject']
   const promise = new Promise<T>((res, rej) => {
     resolve = res
     reject = rej
   })
   // @ts-expect-error
-  return { resolve, reject, promise, toArgs: () => [resolve, reject] }
+  return { resolve, reject, promise }
 }
 
 export function onAbort<T extends Callback>(
@@ -82,26 +85,26 @@ export function withTimeout(
   value: Promise<any>,
   timeout: number,
   timeoutError: Error,
-  controller?: AbortController,
 ) {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(reject, timeout, timeoutError)
-    const clearTimer = () => clearTimeout(timer)
-    const rejectWithTimeout = (error: any) => {
-      reject(error)
-      controller?.abort(error)
-    }
-    value.then(resolve).catch(rejectWithTimeout).finally(clearTimer)
-  })
+  return Promise.race([
+    value,
+    new Promise((_, reject) => setTimeout(reject, timeout, timeoutError)),
+  ])
 }
 
 export function tryCaptureStackTrace(depth = 0) {
-  return (
-    new Error().stack
-      ?.split('\n')
-      .slice(4 + depth)
-      .join('\n') ?? undefined
-  )
+  const traceLines = new Error().stack?.split('\n')
+  if (traceLines) {
+    for (const traceLine of traceLines) {
+      const trimmed = traceLine.trim()
+
+      if (trimmed.startsWith('at eval (') && trimmed.endsWith(')')) {
+        const trace = trimmed.slice(9, -1)
+        return trace
+      }
+    }
+  }
+  return undefined
 }
 
 export function isGeneratorFunction(value: any): value is GeneratorFunction {
@@ -118,6 +121,9 @@ export function isAsyncGeneratorFunction(
     typeof value === 'function' &&
     value.constructor.name === 'AsyncGeneratorFunction'
   )
+}
+export function isAsyncIterable(value: any): value is AsyncIterable<unknown> {
+  return value && typeof value === 'object' && Symbol.asyncIterator in value
 }
 
 export function throwError(message: string, ErrorClass = Error): never {
@@ -142,4 +148,27 @@ export function isAbortError(error) {
       (error.code === 20 || error.code === 'ABORT_ERR')) ||
     (error instanceof Event && error.type === 'abort')
   )
+}
+
+/**
+ * Very simple pattern matching function.
+ */
+export function match(value: string, pattern: Pattern) {
+  if (typeof pattern === 'function') {
+    return pattern(value)
+  } else if (typeof pattern === 'string') {
+    if (pattern === '*' || pattern === '**') {
+      return true
+    } else if (pattern.at(0) === '*' && pattern.at(-1) === '*') {
+      return value.includes(pattern.slice(1, -1))
+    } else if (pattern.at(-1) === '*') {
+      return value.startsWith(pattern.slice(0, -1))
+    } else if (pattern.at(0) === '*') {
+      return value.endsWith(pattern.slice(1))
+    } else {
+      return value === pattern
+    }
+  } else {
+    return pattern.test(value)
+  }
 }

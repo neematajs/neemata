@@ -1,9 +1,5 @@
-import type { Async, OneOf } from '@nmtjs/common'
-import type { Logger } from '@nmtjs/core'
-import type { Connection, ConnectionContext } from '@nmtjs/protocol/server'
+import type { MaybePromise, OneOf } from '@nmtjs/common'
 import type { Hooks } from 'crossws'
-
-export type WsConnectionData = { type: 'ws' | 'http' }
 
 export type WsTransportServerRequest = {
   url: URL
@@ -11,15 +7,10 @@ export type WsTransportServerRequest = {
   headers: Headers
 }
 
+export type WsTransportPeerContext = { connectionId: string }
+
 declare module 'crossws' {
-  interface PeerContext {
-    id: Connection['id']
-    acceptType: string | null
-    contentType: string | null
-    context: ConnectionContext
-    controller: AbortController
-    request: WsTransportServerRequest
-  }
+  interface PeerContext extends WsTransportPeerContext {}
 }
 
 export type WsTransportOptions<
@@ -70,8 +61,7 @@ export type WsTransportRuntimeBun = {
     Pick<
       import('bun').ServeOptions,
       'development' | 'id' | 'maxRequestBodySize' | 'idleTimeout' | 'ipv6Only'
-    > &
-      Pick<import('bun').ServeFunctionOptions<any, any>, 'routes'>
+    >
   >
 }
 
@@ -117,22 +107,15 @@ export type WsAdapterParams<
   R extends keyof WsTransportRuntimes = keyof WsTransportRuntimes,
 > = {
   listen: WsTransportListenOptions
-  apiPath: string
   wsHooks: Hooks
-  fetchHandler: (
-    request: WsTransportServerRequest,
-    body: ReadableStream | null,
-    signal: AbortSignal,
-  ) => Async<Response>
-  logger: Logger
   cors?: WsTransportCorsOptions
   tls?: WsTransportTlsOptions
   runtime?: WsTransportRuntimes[R]
 }
 
 export interface WsAdapterServer {
-  stop: () => Async<any>
-  start: () => Async<string>
+  stop: () => MaybePromise<any>
+  start: () => MaybePromise<string>
 }
 
 export type WsAdapterServerFactory<

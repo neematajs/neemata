@@ -10,7 +10,7 @@ import {
   union as zodUnion,
 } from 'zod/mini'
 
-import type { ZodPlainType } from './_plain.ts'
+import type { ZodPlainType } from './_utils.ts'
 import type { BaseTypeAny } from './base.ts'
 import type { LiteralType } from './literal.ts'
 import type { ObjectType, ObjectTypeProps } from './object.ts'

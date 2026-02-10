@@ -11,7 +11,8 @@ export type TAnyRouterContract<
     string,
     TRouteContract
   >,
-> = TRouterContract<RouteContracts, string | undefined>
+  RouterName extends string | undefined = string | undefined,
+> = TRouterContract<RouteContracts, RouterName>
 
 export type TRouteContract =
   | TAnyProcedureContract
@@ -24,6 +25,12 @@ export interface TRouterContract<
   readonly [Kind]: typeof RouterKind
   readonly type: 'neemata:router'
   readonly name: Name
+  readonly default?: TProcedureContract<
+    any,
+    any,
+    true | undefined,
+    string | undefined
+  >
   readonly routes: {
     [K in keyof Routes]: Routes[K] extends TAnyRouterContract
       ? TRouterContract<

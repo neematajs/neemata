@@ -1,33 +1,28 @@
-import type { OneOf } from '@nmtjs/common'
-import type { Pattern } from '@nmtjs/core'
-import { match } from '@nmtjs/core'
+import type { Pattern } from '@nmtjs/common'
+import { match } from '@nmtjs/common'
 
+import type { ProtocolBlobMetadata } from '../common/blob.ts'
 import type {
   DecodeRPCContext,
-  EncodeRPCContext,
-  ProtocolRPC,
-  ProtocolRPCResponse,
+  EncodeRPCStreams,
+  ProtocolRPCPayload,
 } from '../common/types.ts'
-import type { ProtocolClientStream, ProtocolServerStream } from './stream.ts'
+import type { ProtocolClientStream } from './stream.ts'
 
 export interface BaseServerDecoder {
   accept: Pattern[]
-  decode(buffer: ArrayBuffer): any
+  decode(buffer: ArrayBufferView): unknown
   decodeRPC(
-    buffer: ArrayBuffer,
-    context: DecodeRPCContext<ProtocolClientStream>,
-  ): ProtocolRPC
+    buffer: ArrayBufferView,
+    context: DecodeRPCContext<() => ProtocolClientStream>,
+  ): ProtocolRPCPayload
 }
 
 export interface BaseServerEncoder {
   contentType: string
-  encode(data: any): ArrayBuffer
-  encodeRPC(
-    rpc: OneOf<
-      [{ callId: number; error: any }, { callId: number; result: any }]
-    >,
-    context: EncodeRPCContext<ProtocolServerStream>,
-  ): ArrayBuffer
+  encode(data: unknown): ArrayBufferView
+  encodeRPC(data: unknown, streams: EncodeRPCStreams): ArrayBufferView
+  encodeBlob(streamId: number, metadata: ProtocolBlobMetadata): unknown
 }
 
 export abstract class BaseServerFormat
@@ -36,51 +31,54 @@ export abstract class BaseServerFormat
   abstract accept: Pattern[]
   abstract contentType: string
 
-  abstract encode(data: any): ArrayBuffer
-  abstract encodeRPC(
-    rpc: ProtocolRPCResponse,
-    context: EncodeRPCContext<ProtocolServerStream>,
-  ): ArrayBuffer
-  abstract decode(buffer: ArrayBuffer): any
+  abstract encode(data: unknown): ArrayBufferView
+  abstract encodeRPC(data: unknown, streams: EncodeRPCStreams): ArrayBufferView
+  abstract encodeBlob(streamId: number, metadata: ProtocolBlobMetadata): unknown
+  abstract decode(buffer: ArrayBufferView): any
   abstract decodeRPC(
-    buffer: ArrayBuffer,
-    context: DecodeRPCContext<ProtocolClientStream>,
-  ): ProtocolRPC
+    buffer: ArrayBufferView,
+    context: DecodeRPCContext<() => ProtocolClientStream>,
+  ): ProtocolRPCPayload
 }
 
 export const parseContentTypes = (types: string) => {
-  if (types === '*/*') return ['*/*']
-  return types
+  const normalized = types.trim()
+  if (normalized === '*/*') return ['*/*']
+  return normalized
     .split(',')
+    .map((t) => t.trim())
     .map((t) => {
-      const [type, ...rest] = t.split(';')
+      const [rawType, ...rest] = t.split(';')
       const params = new Map(
         rest.map((p) =>
           p
             .trim()
             .split('=')
             .slice(0, 2)
-            .map((p) => p.trim()),
+            .map((part) => part.trim()),
         ) as [string, string][],
       )
       return {
-        type,
+        type: rawType.trim(),
         q: params.has('q') ? Number.parseFloat(params.get('q')!) : 1,
       }
     })
     .sort((a, b) => {
       if (a.type === '*/*') return 1
       if (b.type === '*/*') return -1
-      return b.q - a.q ? -1 : 1
+      return b.q - a.q
     })
     .map((t) => t.type)
 }
 
-export class ProtocolFormat {
+export class ProtocolFormats {
   decoders = new Map<Pattern, BaseServerDecoder>()
   encoders = new Map<Pattern, BaseServerEncoder>()
 
-  constructor(formats: BaseServerFormat[]) {
+  default: BaseServerFormat
+
+  constructor(formats: [BaseServerFormat, ...BaseServerFormat[]]) {
+    this.default = formats[0]
     for (const format of formats) {
       this.encoders.set(format.contentType, format)
       for (const acceptType of format.accept) {

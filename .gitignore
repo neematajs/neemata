@@ -1,4 +1,6 @@
+.neemata/
 test.*
+_dev/
 
 *.sock
 

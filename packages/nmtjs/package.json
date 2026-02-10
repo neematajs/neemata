@@ -1,51 +1,75 @@
 {
   "name": "nmtjs",
+  "description": "Neemata framework CLI and umbrella package.",
   "type": "module",
   "scripts": {
-    "build": "tsc",
-    "type-check": "tsc --noEmit"
+    "clean-build": "rm -rf ./dist"
+  },
+  "bin": {
+    "neemata": "./src/cli.ts"
   },
   "exports": {
-    ".": {
-      "types": "./src/index.ts",
-      "import": "./dist/index.js",
-      "module-sync": "./dist/index.js"
-    },
-    "./*": {
-      "types": "./src/*.ts",
-      "import": "./dist/*.js",
-      "module-sync": "./dist/*.js"
-    }
+    ".": "./src/index.ts",
+    "./config": "./src/config.ts",
+    "./runtime": "./src/runtime/index.ts",
+    "./runtime/types": "./src/runtime/types.ts"
   },
   "publishConfig": {
+    "bin": {
+      "neemata": "./dist/cli.js"
+    },
     "exports": {
-      ".": {
-        "types": "./dist/index.d.ts",
-        "import": "./dist/index.js",
-        "module-sync": "./dist/index.js"
-      },
-      "./*": {
-        "types": "./dist/*.d.ts",
-        "import": "./dist/*.js",
-        "module-sync": "./dist/*.js"
+      ".": "./dist/index.js",
+      "./config": "./dist/config.js",
+      "./runtime": "./dist/runtime/index.js",
+      "./runtime/types": {
+        "types": "./dist/runtime/types.d.ts"
       }
     }
   },
   "dependencies": {
-    "@nmtjs/api": "workspace:*",
-    "@nmtjs/application": "workspace:*",
-    "@nmtjs/cli": "workspace:*",
+    "@bull-board/api": "6.16.4",
+    "@bull-board/h3": "6.16.4",
+    "@bull-board/ui": "6.16.4",
     "@nmtjs/common": "workspace:*",
     "@nmtjs/contract": "workspace:*",
     "@nmtjs/core": "workspace:*",
+    "@nmtjs/gateway": "workspace:*",
+    "@nmtjs/http-transport": "workspace:*",
     "@nmtjs/json-format": "workspace:*",
+    "@nmtjs/msgpack-format": "workspace:*",
     "@nmtjs/protocol": "workspace:*",
-    "@nmtjs/server": "workspace:*",
     "@nmtjs/type": "workspace:*",
-    "@nmtjs/ws-transport": "workspace:*"
+    "@nmtjs/ws-transport": "workspace:*",
+    "bullmq": "5.67.2",
+    "citty": "0.2.0",
+    "dedent": "^1.7.0",
+    "dotenv": "^17.2.3",
+    "ejs": "3.1.10",
+    "h3": "1.15.4",
+    "ioredis": "^5.9.2",
+    "iovalkey": "^0.3.3",
+    "oxc-resolver": "11.17.0",
+    "prom-client": "git@github.com:siimon/prom-client.git#d4d2dcb366384833951e0116caca707b5f62aa5e",
+    "vite": "catalog:"
+  },
+  "devDependencies": {
+    "@nmtjs/proxy": "catalog:",
+    "pino": "10.3.0",
+    "zod": "catalog:"
+  },
+  "peerDependencies": {
+    "@nmtjs/proxy": "catalog:",
+    "zod": "catalog:"
+  },
+  "peerDependenciesMeta": {
+    "@nmtjs/proxy": {
+      "optional": true
+    }
   },
   "files": [
     "dist",
+    "src",
     "LICENSE.md",
     "README.md"
   ]

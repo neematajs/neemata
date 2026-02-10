@@ -1,7 +1,14 @@
 packages:
   - packages/*
-  - tests/*
+  - tests
+  - playground
+
+catalog:
+  zod: ^4.3.5
+  vite: 8.0.0-beta.13
+  "@nmtjs/proxy": 1.0.0-beta.2
+
 onlyBuiltDependencies:
   - esbuild
-catalog:
-  zod: ^4.0.0
+  - msgpackr-extract
+  - prom-client

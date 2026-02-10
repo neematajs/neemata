@@ -1,0 +1,33 @@
+{
+  "name": "@nmtjs/msgpack-format",
+  "description": "MessagePack serialization format for the Neemata protocol.",
+  "type": "module",
+  "scripts": {
+    "clean-build": "rm -rf ./dist"
+  },
+  "exports": {
+    "./client": "./src/client.ts",
+    "./server": "./src/server.ts"
+  },
+  "publishConfig": {
+    "exports": {
+      "./client": "./dist/client.js",
+      "./server": "./dist/server.js"
+    }
+  },
+  "dependencies": {
+    "@msgpack/msgpack": "^3.1.3",
+    "@nmtjs/common": "workspace:*",
+    "@nmtjs/protocol": "workspace:*"
+  },
+  "peerDependencies": {
+    "@nmtjs/common": "workspace:*",
+    "@nmtjs/protocol": "workspace:*"
+  },
+  "files": [
+    "dist",
+    "src",
+    "LICENSE.md",
+    "README.md"
+  ]
+}

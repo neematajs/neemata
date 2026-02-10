@@ -1,5 +1,6 @@
 import type { ProtocolBlobInterface } from '@nmtjs/protocol'
-import { t } from '@nmtjs/type'
+import { isBlobInterface } from '@nmtjs/protocol'
+import { CustomType } from '@nmtjs/type/custom'
 
 export interface BlobOptions {
   maxSize?: number
@@ -8,19 +9,38 @@ export interface BlobOptions {
 
 export const BlobType = (
   options: BlobOptions = {},
-): t.CustomType<ProtocolBlobInterface> =>
-  t.custom<ProtocolBlobInterface>({
-    decode: (value) => {
-      // TODO: here should be some validation logic to check if the value is an actual blob
-      if ('metadata' in value) {
-        if (options.maxSize) {
-          const size = (value as ProtocolBlobInterface).metadata.size
-          if (typeof size !== 'undefined' && size > options.maxSize) {
-            throw new Error('Blob size unknown or exceeds maximum allowed size')
-          }
-        }
-      }
-      return value
-    },
+): CustomType<ProtocolBlobInterface> =>
+  CustomType.factory({
+    decode: (value) => value,
     encode: (value) => value,
+    validation: {
+      decode(value, { addIssue }) {
+        if (isBlobInterface(value)) {
+          if (options.maxSize) {
+            const size = value.metadata.size
+            if (typeof size !== 'undefined' && size > options.maxSize) {
+              addIssue({
+                code: 'custom',
+                message: `Blob size unknown or exceeds maximum allowed size of ${options.maxSize} bytes`,
+              })
+            }
+          }
+        } else {
+          addIssue({
+            code: 'custom',
+            message:
+              'Value is not a Neemata Blob. Make sure to use transport that supports encoded streams.',
+          })
+        }
+      },
+      encode(value, { addIssue }) {
+        if (!isBlobInterface(value)) {
+          addIssue({
+            code: 'custom',
+            message:
+              'Value is not a Neemata Blob. Make sure to use transport that supports encoded streams.',
+          })
+        }
+      },
+    },
   })

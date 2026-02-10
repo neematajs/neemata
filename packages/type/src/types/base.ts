@@ -1,3 +1,4 @@
+import type { StandardSchemaV1 } from '@standard-schema/spec'
 import type {
   ZodMiniAny,
   ZodMiniArray,
@@ -77,7 +78,12 @@ export abstract class BaseType<
   Props extends TypeProps = TypeProps,
   RawEncodeZodType extends SimpleZodType = EncodeZodType,
   RawDecodeZodType extends ZodType = DecodeZodType,
-> {
+> implements
+    StandardSchemaV1<
+      DecodeZodType['_zod']['input'],
+      EncodeZodType['_zod']['output']
+    >
+{
   readonly encodeZodType: EncodeZodType
   readonly decodeZodType: DecodeZodType
   readonly encodeRawZodType!: RawEncodeZodType
@@ -154,6 +160,39 @@ export abstract class BaseType<
     context: core.ParseContext<core.$ZodIssue> = {},
   ): this['decodeZodType']['_zod']['output'] {
     return this.decodeZodType.parse(data, { reportInput: true, ...context })
+  }
+
+  '~standard': StandardSchemaV1.Props<
+    this['decodeZodType']['_zod']['input'],
+    this['encodeZodType']['_zod']['output']
+  > = {
+    validate: (
+      input: unknown,
+      options?: StandardSchemaV1.Options | undefined,
+    ) => {
+      try {
+        const value = this.decode(
+          input,
+          (options?.libraryOptions as any)?.context,
+        )
+        return { value }
+      } catch (e) {
+        if (e instanceof core.$ZodError) {
+          const issues: StandardSchemaV1.Issue[] = e.issues.map((issue) => ({
+            message: issue.message,
+            path: issue.path.length > 0 ? issue.path : undefined,
+          }))
+          return { issues }
+        }
+        throw e
+      }
+    },
+    types: {
+      input: undefined as unknown as this['decodeZodType']['_zod']['input'],
+      output: undefined as unknown as this['encodeZodType']['_zod']['output'],
+    },
+    vendor: 'neemata-type',
+    version: 1,
   }
 }
 

@@ -1,30 +1,16 @@
-import type {
-  Async,
-  Callback,
-  ClassConstructor,
-  ClassConstructorArgs,
-  ClassInstance,
-} from '@nmtjs/common'
+import type { MaybePromise } from '@nmtjs/common'
 import { tryCaptureStackTrace } from '@nmtjs/common'
 
 import type { DisposeFn, InjectFn } from './container.ts'
-import type { Hook } from './enums.ts'
-import type { HookType } from './hooks.ts'
 import type { Logger } from './logger.ts'
-import type { Registry } from './registry.ts'
 import {
-  kClassInjectable,
-  kClassInjectableCreate,
-  kClassInjectableDispose,
   kFactoryInjectable,
-  kHookCollection,
   kInjectable,
   kLazyInjectable,
   kOptionalDependency,
   kValueInjectable,
 } from './constants.ts'
 import { Scope } from './enums.ts'
-import { Hooks } from './hooks.ts'
 
 const ScopeStrictness = {
   [Scope.Transient]: Number.NaN, // this should make it always fail to compare with other scopes
@@ -74,7 +60,7 @@ export type DependencyContext<Deps extends Dependencies> = {
 export type InjectableFactoryType<
   InjectableType,
   InjectableDeps extends Dependencies,
-> = (context: DependencyContext<InjectableDeps>) => Async<InjectableType>
+> = (context: DependencyContext<InjectableDeps>) => MaybePromise<InjectableType>
 
 export type InjectablePickType<Input, Output> = (injectable: Input) => Output
 
@@ -89,6 +75,8 @@ export type InjectableDisposeType<
 export interface LazyInjectable<T, S extends Scope = Scope.Global>
   extends Dependant<{}> {
   scope: S
+  $withType<O extends T>(): LazyInjectable<O, S>
+  optional(): DependencyOptional<LazyInjectable<T, S>>
   [kInjectable]: any
   [kLazyInjectable]: T
 }
@@ -110,49 +98,16 @@ export interface FactoryInjectable<
   factory: InjectableFactoryType<P, D>
   pick: InjectablePickType<P, T>
   dispose?: InjectableDisposeType<P, D>
+  optional(): DependencyOptional<FactoryInjectable<T, D, S, P>>
   [kInjectable]: any
   [kFactoryInjectable]: any
-}
-
-export interface BaseClassInjectable<
-  T,
-  D extends Dependencies = {},
-  S extends Scope = Scope.Global,
-> extends Dependant<D> {
-  new (...args: any[]): T
-  scope: S
-  [kInjectable]: any
-  [kClassInjectable]: any
-}
-
-export interface ClassInjectable<
-  T,
-  D extends Dependencies = {},
-  S extends Scope = Scope.Global,
-  A extends any[] = [],
-> extends Dependant<D> {
-  new (
-    $context: DependencyContext<D>,
-    ...args: A
-  ): T & {
-    $context: DependencyContext<D>
-    [kClassInjectableCreate]?: () => Promise<void>
-    [kClassInjectableDispose]?: () => Promise<void>
-  }
-  scope: S
-  [kInjectable]: any
-  [kClassInjectable]: any
 }
 
 export type Injectable<
   V = any,
   D extends Dependencies = {},
   S extends Scope = Scope,
-> =
-  | LazyInjectable<V, S>
-  | ValueInjectable<V>
-  | FactoryInjectable<V, D, S, any>
-  | BaseClassInjectable<V, D, S>
+> = LazyInjectable<V, S> | ValueInjectable<V> | FactoryInjectable<V, D, S, any>
 
 export type AnyInjectable<T = any, S extends Scope = Scope> = Injectable<
   T,
@@ -167,10 +122,6 @@ export const isLazyInjectable = (
 export const isFactoryInjectable = (
   injectable: any,
 ): injectable is FactoryInjectable<any> => injectable[kFactoryInjectable]
-
-export const isClassInjectable = (
-  injectable: any,
-): injectable is ClassInjectable<any> => injectable[kClassInjectable]
 
 export const isValueInjectable = (
   injectable: any,
@@ -225,14 +176,17 @@ export function createLazyInjectable<T, S extends Scope = Scope.Global>(
   label?: string,
   stackTraceDepth = 0,
 ): LazyInjectable<T, S> {
-  return Object.freeze({
+  const injectable = Object.freeze({
     scope,
     dependencies: {},
     label,
     stack: tryCaptureStackTrace(stackTraceDepth),
+    optional: () => createOptionalInjectable(injectable),
+    $withType: () => injectable as any,
     [kInjectable]: true,
     [kLazyInjectable]: true as unknown as T,
   })
+  return injectable
 }
 
 export function createValueInjectable<T>(
@@ -279,6 +233,7 @@ export function createFactoryInjectable<
     pick: params.pick ?? ((instance: P) => instance as unknown as T),
     label,
     stack: tryCaptureStackTrace(stackTraceDepth),
+    optional: () => createOptionalInjectable(injectable),
     [kInjectable]: true,
     [kFactoryInjectable]: true,
   }
@@ -289,116 +244,13 @@ export function createFactoryInjectable<
   return Object.freeze(injectable) as any
 }
 
-export const createClassInjectable = <
-  D extends Dependencies = {},
-  S extends Scope = Scope.Global,
->(
-  dependencies: D = {} as D,
-  scope?: S,
-  stackTraceDepth = 0,
-): ClassInjectable<ClassInstance<typeof InjectableClass>, D, S> => {
-  const InjectableClass = class {
-    static dependencies = dependencies
-    static scope = (scope ?? Scope.Global) as S
-    static stack = tryCaptureStackTrace(stackTraceDepth + 2)
-    static [kInjectable] = true
-    static [kClassInjectable] = true
-
-    static get label() {
-      // biome-ignore lint/complexity/noThisInStatic: ok
-      return this.name
-    }
-
-    constructor(public $context: DependencyContext<D>) {}
-
-    async [kClassInjectableCreate]() {}
-    async [kClassInjectableDispose]() {}
-  }
-
-  InjectableClass.scope = resolveInjectableScope(
-    typeof scope === 'undefined',
-    InjectableClass,
-  ) as S
-
-  return InjectableClass
-}
-
-export function createExtendableClassInjectable<
-  B extends ClassConstructor<any>,
-  D extends Dependencies = {},
-  S extends Scope = Scope.Global,
->(
-  baseClass: B,
-  dependencies: D = {} as D,
-  scope?: S,
-  stackTraceDepth = 0,
-): B extends ClassInjectable<any>
-  ? ClassInjectable<ClassInstance<B>, D, S>
-  : ClassInjectable<ClassInstance<B>, D, S, ClassConstructorArgs<B, []>> {
-  if (isClassInjectable(baseClass)) {
-    if (scope && compareScope(baseClass.scope, '>', scope)) {
-      throw new Error(
-        `Invalid scope ${scope} for an extendable class injectable: base class have stricter scope - ${baseClass.scope}`,
-      )
-    } else {
-      scope = scope ?? (baseClass.scope as S)
-    }
-    dependencies = Object.assign({}, baseClass.dependencies, dependencies)
-  }
-
-  const InjectableClass = class extends baseClass {
-    static dependencies = dependencies
-    static scope = (scope ?? Scope.Global) as S
-    static stack = tryCaptureStackTrace(stackTraceDepth)
-    static [kInjectable] = true
-    static [kClassInjectable] = true
-
-    static get label() {
-      // biome-ignore lint/complexity/noThisInStatic: ok
-      return this.name
-    }
-
-    $context!: DependencyContext<D>
-
-    constructor(...args: any[]) {
-      const [$context, ...baseClassArgs] = args
-      if (isClassInjectable(baseClass)) {
-        super($context)
-      } else {
-        super(...baseClassArgs)
-      }
-      this.$context = $context
-    }
-
-    protected async $onCreate() {
-      await super.$onCreate?.()
-    }
-
-    protected async $onDispose() {
-      await super.$onDispose?.()
-    }
-  }
-
-  InjectableClass.scope = resolveInjectableScope(
-    typeof scope === 'undefined',
-    InjectableClass,
-  ) as S
-
-  // @ts-expect-error
-  return InjectableClass
-}
-
 export type DependenciesSubstitution<T extends Dependencies> = {
   [K in keyof T]?: T[K] extends AnyInjectable<infer Type>
     ? AnyInjectable<Type> | DependenciesSubstitution<T[K]['dependencies']>
     : never
 }
 
-export function substitute<
-  T extends
-    | FactoryInjectable<any, any, Scope>
-    | BaseClassInjectable<any, any, Scope>,
->(
+export function substitute<T extends FactoryInjectable<any, any, Scope>>(
   injectable: T,
   substitution: DependenciesSubstitution<T['dependencies']>,
   stackTraceDepth = 0,
@@ -411,21 +263,13 @@ export function substitute<
       const original = dependencies[key]
       if (isInjectable(value)) {
         dependencies[key] = value
-      } else if (isClassInjectable(original) || isFactoryInjectable(original)) {
+      } else if (isFactoryInjectable(original)) {
         dependencies[key] = substitute(original, value, depth)
       }
     }
   }
 
-  if (isClassInjectable(injectable)) {
-    // @ts-expect-error
-    return createExtendableClassInjectable(
-      injectable,
-      dependencies,
-      injectable.scope,
-      depth,
-    )
-  } else if (isFactoryInjectable(injectable)) {
+  if (isFactoryInjectable(injectable)) {
     // @ts-expect-error
     return createFactoryInjectable(
       { ...injectable, dependencies },
@@ -462,34 +306,27 @@ export function compareScope(
   }
 }
 
-const logger = createLazyInjectable<Logger>(Scope.Global, 'Logger')
-const registry = createLazyInjectable<Registry>(Scope.Global, 'Registry')
-const inject = createLazyInjectable<InjectFn>(Scope.Global, 'Inject function')
-const dispose = createLazyInjectable<DisposeFn>(
+const loggerInjectable = Object.assign(
+  (label: string) =>
+    createFactoryInjectable({
+      dependencies: { logger: loggerInjectable },
+      scope: Scope.Global,
+      factory: ({ logger }) => logger.child({ $label: label }),
+    }),
+  createLazyInjectable<Logger>(Scope.Global, 'Logger'),
+) as unknown as ((
+  label: string,
+) => FactoryInjectable<Logger, { logger: LazyInjectable<Logger> }>) &
+  LazyInjectable<Logger>
+
+const injectFnInjectable = createLazyInjectable<InjectFn>(
+  Scope.Global,
+  'Inject function',
+)
+const disposeFnInjectable = createLazyInjectable<DisposeFn>(
   Scope.Global,
   'Dispose function',
 )
-const hook = createFactoryInjectable({
-  scope: Scope.Transient,
-  dependencies: { registry },
-  factory: ({ registry }) => {
-    const hooks = new Hooks()
-    const on = <T extends Hook>(name: T, callback: HookType[T]) => {
-      hooks.add(name, callback as Callback)
-      return registry.hooks.add(name, callback)
-    }
-    return { hooks, on }
-  },
-  pick: ({ on }) => on,
-  dispose: ({ hooks }, { registry }) => {
-    for (const [hook, callbacks] of hooks[kHookCollection].entries()) {
-      for (const callback of callbacks) {
-        registry.hooks.remove(hook, callback)
-      }
-    }
-    hooks.clear()
-  },
-})
 
 function resolveInjectableScope(
   isDefaultScope: boolean,
@@ -503,4 +340,27 @@ function resolveInjectableScope(
   return actualScope
 }
 
-export const CoreInjectables = { logger, registry, inject, dispose, hook }
+export namespace CoreInjectables {
+  export const logger = loggerInjectable
+  export const inject = injectFnInjectable
+  export const dispose = disposeFnInjectable
+}
+
+export type Injection<
+  T extends AnyInjectable<any, any> = AnyInjectable<any, any>,
+> = {
+  token: T
+  value: T extends AnyInjectable<infer R, Scope> ? R | AnyInjectable<R> : never
+}
+
+export const provision = <
+  T extends AnyInjectable<any, any>,
+  V extends T extends AnyInjectable<infer R, Scope>
+    ? R | AnyInjectable<R>
+    : never,
+>(
+  token: T,
+  value: V,
+): Injection<T> => {
+  return { token, value }
+}

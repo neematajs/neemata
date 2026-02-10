@@ -1,5 +1,6 @@
 {
   "name": "@nmtjs/http-client",
+  "description": "HTTP client transport for Neemata.",
   "type": "module",
   "exports": {
     ".": {
@@ -18,8 +19,7 @@
     }
   },
   "scripts": {
-    "build": "tsc",
-    "type-check": "tsc --noEmit"
+    "clean-build": "rm -rf ./dist"
   },
   "dependencies": {
     "@nmtjs/client": "workspace:*",
@@ -33,6 +33,7 @@
   },
   "files": [
     "dist",
+    "src",
     "LICENSE.md",
     "README.md"
   ]

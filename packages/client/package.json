@@ -1,44 +1,20 @@
 {
   "name": "@nmtjs/client",
+  "description": "Base client infrastructure for Neemata RPC calls.",
   "type": "module",
   "scripts": {
-    "build": "tsc",
-    "type-check": "tsc --noEmit"
+    "clean-build": "rm -rf ./dist"
   },
   "exports": {
-    ".": {
-      "types": "./src/common.ts",
-      "import": "./dist/common.js",
-      "module-sync": "./dist/common.js"
-    },
-    "./runtime": {
-      "types": "./src/runtime.ts",
-      "import": "./dist/runtime.js",
-      "module-sync": "./dist/runtime.js"
-    },
-    "./static": {
-      "types": "./src/static.ts",
-      "import": "./dist/static.js",
-      "module-sync": "./dist/static.js"
-    }
+    ".": "./src/index.ts",
+    "./runtime": "./src/clients/runtime.ts",
+    "./static": "./src/clients/static.ts"
   },
   "publishConfig": {
     "exports": {
-      ".": {
-        "types": "./dist/common.d.ts",
-        "import": "./dist/common.js",
-        "module-sync": "./dist/common.js"
-      },
-      "./runtime": {
-        "types": "./dist/runtime.d.ts",
-        "import": "./dist/runtime.js",
-        "module-sync": "./dist/runtime.js"
-      },
-      "./static": {
-        "types": "./dist/static.d.ts",
-        "import": "./dist/static.js",
-        "module-sync": "./dist/static.js"
-      }
+      ".": "./dist/index.js",
+      "./runtime": "./dist/clients/runtime.js",
+      "./static": "./dist/clients/static.js"
     }
   },
   "peerDependencies": {
@@ -48,6 +24,7 @@
     "@nmtjs/protocol": "workspace:*"
   },
   "devDependencies": {
+    "@nmtjs/_tests": "workspace:*",
     "@nmtjs/type": "workspace:*",
     "@nmtjs/contract": "workspace:*",
     "@nmtjs/common": "workspace:*",
@@ -55,6 +32,7 @@
   },
   "files": [
     "dist",
+    "src",
     "LICENSE.md",
     "README.md"
   ]

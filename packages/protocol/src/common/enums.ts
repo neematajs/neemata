@@ -1,17 +1,22 @@
+export enum ProtocolVersion {
+  v1 = 1,
+}
+
 export enum ClientMessageType {
   Rpc = 10,
   RpcAbort = 11,
-  RpcStreamAbort = 12,
+  RpcPull = 12,
 
   ClientStreamPush = 20,
   ClientStreamEnd = 21,
   ClientStreamAbort = 22,
-  ServerStreamAbort = 23,
-  ServerStreamPull = 24,
+
+  ServerStreamAbort = 33,
+  ServerStreamPull = 34,
 }
 
 export enum ServerMessageType {
-  Event = 1,
+  // Event = 1,
 
   RpcResponse = 10,
   RpcStreamResponse = 11,
@@ -23,11 +28,11 @@ export enum ServerMessageType {
   ServerStreamEnd = 21,
   ServerStreamAbort = 22,
 
-  ClientStreamAbort = 23,
-  ClientStreamPull = 24,
+  ClientStreamAbort = 33,
+  ClientStreamPull = 34,
 }
 
-export enum TransportType {
+export enum ConnectionType {
   Bidirectional = 'Bidirectional',
   Unidirectional = 'Unidirectional',
 }
@@ -45,4 +50,13 @@ export enum ErrorCode {
   ServiceUnavailable = 'ServiceUnavailable',
   ClientRequestError = 'ClientRequestError',
   ConnectionError = 'ConnectionError',
+}
+
+export enum MessageByteLength {
+  MessageType = 1,
+  MessageError = 1,
+  ProcedureLength = 2,
+  CallId = 4,
+  StreamId = 4,
+  ChunkSize = 4,
 }

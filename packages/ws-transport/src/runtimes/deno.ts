@@ -1,13 +1,15 @@
-import { createTransport } from '@nmtjs/protocol/server'
+import type { Transport } from '@nmtjs/gateway'
+import type { ConnectionType } from '@nmtjs/protocol'
+import { ProxyableTransportType } from '@nmtjs/gateway'
 import createAdapter from 'crossws/adapters/deno'
 
 import type {
   WsAdapterParams,
   WsAdapterServer,
-  WsConnectionData,
   WsTransportOptions,
 } from '../types.ts'
-import { WsTransportServer } from '../server.ts'
+import * as injectables from '../injectables.ts'
+import { createWSTransportWorker } from '../server.ts'
 import {
   InternalServerErrorHttpResponse,
   NotFoundHttpResponse,
@@ -64,23 +66,14 @@ function adapterFactory(params: WsAdapterParams<'deno'>): WsAdapterServer {
         ...options,
         handler: async (request: Request, info: any) => {
           const url = new URL(request.url)
-          if (url.pathname.startsWith(params.apiPath)) {
-            try {
-              if (request.headers.get('upgrade') === 'websocket') {
-                return await adapter.handleUpgrade(request, info as any)
-              }
-              const { headers, method, body } = request
-              return await params.fetchHandler(
-                { url, method, headers },
-                body,
-                request.signal,
-              )
-            } catch (err) {
-              params.logger.error({ err }, 'Error in fetch handler')
-              return InternalServerErrorHttpResponse()
+          if (url.pathname === '/healthy') return StatusResponse()
+          try {
+            if (request.headers.get('upgrade') === 'websocket') {
+              return await adapter.handleUpgrade(request, info as any)
             }
-          } else if (url.pathname === '/healthy') {
-            return StatusResponse()
+          } catch (err) {
+            console.error('Error in WebSocket fetch handler', err)
+            return InternalServerErrorHttpResponse()
           }
           return NotFoundHttpResponse()
         },
@@ -97,17 +90,14 @@ function adapterFactory(params: WsAdapterParams<'deno'>): WsAdapterServer {
     start: async () => {
       const { server: _server, addr } = await createServer()
       server = _server
+      const proto = params.tls ? 'https' : 'http'
+
       switch (addr.transport) {
         case 'unix':
-        case 'unixpacket':
-          return `unix://${addr.path}`
-        case 'tcp':
-        case 'udp': {
-          const proto = params.tls ? 'https' : 'http'
+          return `${proto}+unix://${addr.path}`
+        case 'tcp': {
           return `${proto}://${addr.hostname}:${addr.port}`
         }
-        case 'vsock':
-          return `vsock://${addr.cid}:${addr.port}`
         default:
           throw new Error(`Unsupported address transport`)
       }
@@ -121,9 +111,15 @@ function adapterFactory(params: WsAdapterParams<'deno'>): WsAdapterServer {
   }
 }
 
-export const WsTransport = createTransport<
-  WsConnectionData,
-  WsTransportOptions<'deno'>
->('WsTransport', (context, options) => {
-  return new WsTransportServer(adapterFactory, context, options)
-})
+export const WsTransport: Transport<
+  ConnectionType.Bidirectional,
+  WsTransportOptions<'deno'>,
+  typeof injectables,
+  ProxyableTransportType.WS
+> = {
+  proxyable: ProxyableTransportType.WS,
+  injectables,
+  factory(options) {
+    return createWSTransportWorker(adapterFactory, options)
+  },
+}

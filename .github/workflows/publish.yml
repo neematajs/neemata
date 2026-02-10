@@ -33,7 +33,6 @@ jobs:
     runs-on: ubuntu-latest
     env:
       NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-      NPM_USERNAME: ${{ secrets.NPM_USERNAME }}
       version_tag: v${{ inputs.version }}
     steps:
       - name: Checkout
@@ -42,15 +41,7 @@ jobs:
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
-
-      - name: Log in to npm
-        run: |
-          echo "//registry.npmjs.org/:_authToken=\${NPM_TOKEN}" > ~/.npmrc
-          echo "Logged in to npm as ${NPM_USERNAME}"
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NPM_USERNAME: ${{ secrets.NPM_USERNAME }}
+          node-version: 24
 
       - uses: pnpm/action-setup@v4
         name: Install pnpm
@@ -60,16 +51,21 @@ jobs:
       - name: Install dependencies and build
         run: pnpm install && pnpm build
 
+      - name: Log in to npm
+        run: pnpm config set "//registry.npmjs.org/:_authToken=${NPM_TOKEN}"
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+
       - name: Set version
         run: |
-          pnpm version ${{ inputs.version }} -ws --allow-same-version --no-commit-hooks --no-git-tag-version --silent || true
-          pnpm -r exec cp ../../README.md ./
-          pnpm -r exec cp ../../LICENSE.md ./
+          pnpm -r exec pnpm version --allow-same-version --no-commit-hooks --no-git-tag-version --silent ${{ inputs.version }}
+          pnpm -r exec cp "$GITHUB_WORKSPACE/README.md" ./
+          pnpm -r exec cp "$GITHUB_WORKSPACE/LICENSE.md" ./
 
       - name: Dry-run publish and publish
         run: |
-          pnpm publish --dry-run --filter "*" --access public --no-git-checks --tag=$(pnpm neemata-tag ${{ inputs.version }})
-          pnpm publish --filter "*" --access public --no-git-checks --tag=$(pnpm neemata-tag ${{ inputs.version }})
+          pnpm publish --dry-run --filter "*" --access public --no-git-checks --tag=$(node scripts/tag.js ${{ inputs.version }})
+          pnpm publish --filter "*" --access public --no-git-checks --tag=$(node scripts/tag.js ${{ inputs.version }})
 
       - name: Publish Github Release
         if: ${{ inputs.release }}

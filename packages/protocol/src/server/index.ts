@@ -1,11 +1,10 @@
-export * from './api.ts'
-export * from './connection.ts'
-export * from './constants.ts'
 export * from './format.ts'
-export * from './injectables.ts'
 export * from './protocol.ts'
-export * from './registry.ts'
 export * from './stream.ts'
-export * from './transport.ts'
 export * from './types.ts'
 export * from './utils.ts'
+
+import { ProtocolVersion } from '../common/enums.ts'
+import { ProtocolVersion1 } from './versions/v1.ts'
+
+export const versions = { [ProtocolVersion.v1]: new ProtocolVersion1() }

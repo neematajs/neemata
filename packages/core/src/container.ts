@@ -1,82 +1,97 @@
+import type { PerformanceMeasure } from 'node:perf_hooks'
 import assert from 'node:assert'
 
-import type { ClassInstance } from '@nmtjs/common'
 import { tryCaptureStackTrace } from '@nmtjs/common'
 
 import type {
   AnyInjectable,
-  ClassInjectable,
   Dependencies,
   DependencyContext,
+  Injection,
   ResolveInjectableType,
 } from './injectables.ts'
 import type { Logger } from './logger.ts'
-import type { Registry } from './registry.ts'
-import { kClassInjectableCreate, kClassInjectableDispose } from './constants.ts'
 import { Scope } from './enums.ts'
 import {
   CoreInjectables,
   compareScope,
-  createExtendableClassInjectable,
   createValueInjectable,
   getDepedencencyInjectable,
-  isClassInjectable,
   isFactoryInjectable,
   isInjectable,
   isLazyInjectable,
   isOptionalInjectable,
   isValueInjectable,
+  provision,
 } from './injectables.ts'
 
 type InstanceWrapper = { private: any; public: any; context: any }
 
-type ContainerOptions = { registry: Registry; logger: Logger }
+type ContainerOptions = { logger: Logger }
 
 export class Container {
   readonly instances = new Map<AnyInjectable, InstanceWrapper[]>()
   private readonly resolvers = new Map<AnyInjectable, Promise<any>>()
   private readonly injectables = new Set<AnyInjectable>()
   private readonly dependants = new Map<AnyInjectable, Set<AnyInjectable>>()
-  // private readonly transients = new Map<any, any>()
+  private readonly provisions = new Map<AnyInjectable, any>()
   private disposing = false
 
   constructor(
-    private readonly application: ContainerOptions,
+    private readonly runtime: ContainerOptions,
     public readonly scope: Exclude<Scope, Scope.Transient> = Scope.Global,
     private readonly parent?: Container,
   ) {
-    if ((scope as any) === Scope.Transient) {
-      throw new Error('Invalid scope')
-    }
+    if ((scope as Scope) === Scope.Transient) throw new Error('Invalid scope')
     this.provide(CoreInjectables.inject, this.createInjectFunction())
     this.provide(CoreInjectables.dispose, this.createDisposeFunction())
-    this.provide(CoreInjectables.registry, application.registry)
   }
 
-  async load() {
+  async initialize(injectables: Iterable<AnyInjectable>) {
+    const measurements: PerformanceMeasure[] = []
+
     const traverse = (dependencies: Dependencies) => {
       for (const key in dependencies) {
         const dependency = dependencies[key]
         const injectable = getDepedencencyInjectable(dependency)
-        this.injectables.add(injectable)
+        if (injectable.scope === this.scope) {
+          this.injectables.add(injectable)
+        }
         traverse(injectable.dependencies)
       }
     }
 
-    for (const dependant of this.application.registry.getDependants()) {
+    for (const dependant of injectables) {
       traverse(dependant.dependencies)
     }
 
-    const injectables = Array.from(this.findCurrentScopeInjectables())
-    await Promise.all(injectables.map((injectable) => this.resolve(injectable)))
+    await Promise.all(
+      [...this.injectables].map((injectable) =>
+        this.resolve(injectable, measurements),
+      ),
+    )
+
+    return measurements
   }
 
   fork(scope: Exclude<Scope, Scope.Transient>) {
-    return new Container(this.application, scope, this)
+    return new Container(this.runtime, scope, this)
+  }
+
+  find(scope: Exclude<Scope, Scope.Transient>): Container | undefined {
+    if (this.scope === scope) {
+      return this
+    } else {
+      return this.parent?.find(scope)
+    }
+  }
+
+  async [Symbol.asyncDispose]() {
+    await this.dispose()
   }
 
   async dispose() {
-    this.application.logger.trace('Disposing [%s] scope context...', this.scope)
+    this.runtime.logger.trace('Disposing [%s] scope context...', this.scope)
 
     // Prevent new resolutions during disposal
     this.disposing = true
@@ -84,11 +99,18 @@ export class Container {
     // Get proper disposal order using topological sort
     const disposalOrder = this.getDisposalOrder()
 
-    // Dispose in the correct order
-    for (const injectable of disposalOrder) {
-      if (this.instances.has(injectable)) {
-        await this.disposeInjectableInstances(injectable)
+    try {
+      // Dispose in the correct order
+      for (const injectable of disposalOrder) {
+        if (this.instances.has(injectable)) {
+          await this.disposeInjectableInstances(injectable)
+        }
       }
+    } catch (error) {
+      this.runtime.logger.fatal(
+        { error },
+        'Potential memory leak: error during container disposal',
+      )
     }
 
     this.instances.clear()
@@ -100,7 +122,11 @@ export class Container {
   }
 
   containsWithinSelf(injectable: AnyInjectable) {
-    return this.instances.has(injectable) || this.resolvers.has(injectable)
+    return (
+      this.provisions.has(injectable) ||
+      this.instances.has(injectable) ||
+      this.resolvers.has(injectable)
+    )
   }
 
   contains(injectable: AnyInjectable): boolean {
@@ -115,6 +141,10 @@ export class Container {
       throw new Error('Cannot get transient injectable directly')
     }
 
+    if (this.provisions.has(injectable)) {
+      return this.provisions.get(injectable)
+    }
+
     if (this.instances.has(injectable)) {
       return this.instances.get(injectable)!.at(0)!.public
     }
@@ -126,59 +156,124 @@ export class Container {
     throw new Error('No instance found')
   }
 
-  resolve<T extends AnyInjectable>(injectable: T) {
-    return this.resolveInjectable(injectable)
+  resolve<T extends AnyInjectable>(
+    injectable: T,
+    measurements?: PerformanceMeasure[],
+  ) {
+    return this.resolveInjectable(
+      injectable,
+      undefined,
+      undefined,
+      measurements,
+    )
   }
 
   async createContext<T extends Dependencies>(dependencies: T) {
     return this.createInjectableContext(dependencies)
   }
 
-  private async createInjectableContext<T extends Dependencies>(
-    dependencies: T,
-    dependant?: AnyInjectable,
+  provide<T extends Injection[]>(injections: T): void
+  provide<T extends AnyInjectable>(
+    injectable: T,
+    value: ResolveInjectableType<T> | AnyInjectable<ResolveInjectableType<T>>,
+  ): void
+  provide<T extends AnyInjectable | Injection[]>(
+    injectable: T,
+    ...[value]: T extends AnyInjectable
+      ? [
+          value:
+            | ResolveInjectableType<T>
+            | AnyInjectable<ResolveInjectableType<T>>,
+        ]
+      : []
   ) {
-    const injections: Record<string, any> = {}
-    const deps = Object.entries(dependencies)
-    const resolvers: Promise<any>[] = Array(deps.length)
-    for (let i = 0; i < deps.length; i++) {
-      const [key, dependency] = deps[i]
-      const injectable = getDepedencencyInjectable(dependency)
-      const resolver = this.resolveInjectable(injectable, dependant)
-      resolvers[i] = resolver.then((value) => (injections[key] = value))
+    const injections = Array.isArray(injectable)
+      ? injectable
+      : [provision(injectable, value)]
+    for (const { token, value } of injections) {
+      if (compareScope(token.scope, '>', this.scope)) {
+        // TODO: more informative error
+        throw new Error('Invalid scope')
+      }
+      this.provisions.set(token, value)
     }
-    await Promise.all(resolvers)
-    return Object.freeze(injections) as DependencyContext<T>
   }
 
-  async provide<T extends AnyInjectable>(
-    injectable: T,
-    instance: ResolveInjectableType<T>,
-  ) {
-    if (compareScope(injectable.scope, '>', this.scope)) {
-      throw new Error('Invalid scope') // TODO: more informative error
+  withhold(...injectables: AnyInjectable[]) {
+    for (const injectable of injectables) {
+      this.provisions.delete(injectable)
     }
-
-    this.instances.set(injectable, [
-      { private: instance, public: instance, context: undefined },
-    ])
   }
 
   satisfies(injectable: AnyInjectable) {
     return compareScope(injectable.scope, '<=', this.scope)
   }
 
-  private *findCurrentScopeInjectables() {
-    for (const injectable of this.injectables) {
-      if (injectable.scope === this.scope) {
-        yield injectable
+  async disposeInjectableInstances(injectable: AnyInjectable) {
+    try {
+      if (this.instances.has(injectable)) {
+        const wrappers = this.instances.get(injectable)!
+        await Promise.all(
+          wrappers.map((wrapper) =>
+            this.disposeInjectableInstance(
+              injectable,
+              wrapper.private,
+              wrapper.context,
+            ),
+          ),
+        )
       }
+    } catch (cause) {
+      const error = new Error(
+        'Injectable disposal error. Potential memory leak',
+        { cause },
+      )
+      this.runtime.logger.error(error)
+    } finally {
+      this.instances.delete(injectable)
     }
+  }
+
+  async disposeInjectableInstance(
+    injectable: AnyInjectable,
+    instance: any,
+    context: any,
+  ) {
+    if (isFactoryInjectable(injectable)) {
+      const { dispose } = injectable
+      if (dispose) await dispose(instance, context)
+    }
+  }
+
+  private async createInjectableContext<T extends Dependencies>(
+    dependencies: T,
+    dependant?: AnyInjectable,
+    measurements?: PerformanceMeasure[],
+  ) {
+    const injections: Record<string, any> = {}
+    const deps = Object.entries(dependencies)
+    const resolvers: Promise<any>[] = Array(deps.length)
+    for (let i = 0; i < deps.length; i++) {
+      const [key, dependency] = deps[i]
+      const isOptional = isOptionalInjectable(dependency)
+      const injectable = getDepedencencyInjectable(dependency)
+      const resolver = this.resolveInjectable(
+        injectable,
+        dependant,
+        isOptional,
+        measurements,
+      )
+      resolvers[i] = resolver.then((value) => (injections[key] = value))
+    }
+    await Promise.all(resolvers)
+    return Object.freeze(injections) as DependencyContext<T>
   }
 
   private resolveInjectable<T extends AnyInjectable>(
     injectable: T,
     dependant?: AnyInjectable,
+    isOptional?: boolean,
+    measurements?: PerformanceMeasure[],
   ): Promise<ResolveInjectableType<T>> {
     if (this.disposing) {
       return Promise.reject(new Error('Cannot resolve during disposal'))
@@ -191,14 +286,31 @@ export class Container {
       )
     }
 
-    if (isValueInjectable(injectable)) {
+    if (this.provisions.has(injectable)) {
+      const provided = this.provisions.get(injectable)
+      if (isInjectable(provided)) {
+        return this.resolveInjectable(
+          provided,
+          dependant,
+          isOptional,
+          measurements,
+        )
+      } else {
+        return Promise.resolve(provided)
+      }
+    } else if (isValueInjectable(injectable)) {
       return Promise.resolve(injectable.value)
     } else if (
       this.parent?.contains(injectable) ||
       (this.parent?.satisfies(injectable) &&
         compareScope(this.parent.scope, '<', this.scope))
     ) {
-      return this.parent.resolveInjectable(injectable, dependant)
+      return this.parent.resolveInjectable(
+        injectable,
+        dependant,
+        undefined,
+        measurements,
+      )
     } else {
       const { stack, label } = injectable
 
@@ -218,9 +330,7 @@ export class Container {
         return this.resolvers.get(injectable)!
       } else {
         const isLazy = isLazyInjectable(injectable)
-
         if (isLazy) {
-          const isOptional = isOptionalInjectable(injectable)
           if (isOptional) return Promise.resolve(undefined as any)
           return Promise.reject(
             new Error(
@@ -228,8 +338,18 @@ export class Container {
             ),
           )
         } else {
-          const resolution = this.createResolution(injectable).finally(() => {
+          const measure = measurements
+            ? performance.measure(injectable.label || injectable.stack || '')
+            : null
+          const resolution = this.createResolution(
+            injectable,
+            measurements,
+          ).finally(() => {
             this.resolvers.delete(injectable)
+
+            // biome-ignore lint: false
+            // @ts-ignore
+            if (measurements && measure) measurements.push(measure)
           })
           if (injectable.scope !== Scope.Transient) {
             this.resolvers.set(injectable, resolution)
@@ -242,9 +362,14 @@ export class Container {
 
   private async createResolution<T extends AnyInjectable>(
     injectable: T,
+    measurements?: PerformanceMeasure[],
   ): Promise<ResolveInjectableType<T>> {
     const { dependencies } = injectable
-    const context = await this.createInjectableContext(dependencies, injectable)
+    const context = await this.createInjectableContext(
+      dependencies,
+      injectable,
+      measurements,
+    )
     const wrapper = {
       private: null as any,
       public: null as ResolveInjectableType<T>,
@@ -255,13 +380,6 @@ export class Container {
         injectable.factory(wrapper.context),
       )
       wrapper.public = injectable.pick(wrapper.private)
-    } else if (isClassInjectable(injectable)) {
-      const instance: ClassInstance<ClassInjectable<unknown>> = new injectable(
-        context,
-      )
-      wrapper.private = instance
-      wrapper.public = wrapper.private
-      await instance[kClassInjectableCreate]?.call(instance)
     } else {
       throw new Error('Invalid injectable type')
     }
@@ -281,7 +399,12 @@ export class Container {
     const inject = <T extends AnyInjectable>(
       injectable: T,
       context: InlineInjectionDependencies<T>,
+      scope: Exclude<Scope, Scope.Transient> = this.scope,
     ) => {
+      const container = this.find(scope)
+      if (!container)
+        throw new Error('No container found for the specified scope')
+
       const dependencies: Dependencies = { ...injectable.dependencies }
 
       for (const key in context) {
@@ -293,39 +416,42 @@ export class Container {
         }
       }
 
-      const newInjectable = isClassInjectable(injectable)
-        ? createExtendableClassInjectable(
-            injectable,
-            dependencies,
-            Scope.Transient,
-            1,
-          )
-        : {
-            ...injectable,
-            dependencies,
-            scope: Scope.Transient,
-            stack: tryCaptureStackTrace(1),
-          }
+      const newInjectable = {
+        ...injectable,
+        dependencies,
+        scope: Scope.Transient,
+        stack: tryCaptureStackTrace(1),
+      }
 
-      return this.resolve(newInjectable) as Promise<ResolveInjectableType<T>>
+      return container.resolve(newInjectable) as Promise<
+        ResolveInjectableType<T>
+      >
     }
 
     const explicit = async <T extends AnyInjectable>(
       injectable: T,
       context: InlineInjectionDependencies<T>,
+      scope: Exclude<Scope, Scope.Transient> = this.scope,
     ) => {
       if ('asyncDispose' in Symbol === false) {
         throw new Error(
           'Symbol.asyncDispose is not supported in this environment',
         )
       }
+
+      const container = this.find(scope)
+      if (!container)
+        throw new Error('No container found for the specified scope')
+
       const instance = await inject(injectable, context)
-      const dispose = this.createDisposeFunction()
-      return Object.assign(instance, {
+      const dispose = container.createDisposeFunction()
+
+      return {
+        instance,
         [Symbol.asyncDispose]: async () => {
           await dispose(injectable, instance)
         },
-      })
+      }
     }
 
     return Object.assign(inject, { explicit })
@@ -390,46 +516,6 @@ export class Container {
     }
 
     return result
-  }
-
-  private async disposeInjectableInstances(injectable: AnyInjectable) {
-    try {
-      if (this.instances.has(injectable)) {
-        const wrappers = this.instances.get(injectable)!
-        await Promise.all(
-          wrappers.map((wrapper) =>
-            this.disposeInjectableInstance(
-              injectable,
-              wrapper.private,
-              wrapper.context,
-            ),
-          ),
-        )
-      }
-    } catch (cause) {
-      const error = new Error(
-        'Injectable disposal error. Potential memory leak',
-        { cause },
-      )
-      this.application.logger.error(error)
-    } finally {
-      this.instances.delete(injectable)
-    }
-  }
-
-  private async disposeInjectableInstance(
-    injectable: AnyInjectable,
-    instance: any,
-    context: any,
-  ) {
-    if (isFactoryInjectable(injectable)) {
-      const { dispose } = injectable
-      if (dispose) await dispose(instance, context)
-    } else if (isClassInjectable(injectable)) {
-      await (instance as ClassInstance<ClassInjectable<unknown>>)[
-        kClassInjectableDispose
-      ]?.()
-    }
   }
 }
 

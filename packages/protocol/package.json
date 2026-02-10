@@ -1,58 +1,40 @@
 {
   "name": "@nmtjs/protocol",
+  "description": "Binary protocol implementation for Neemata clients and servers.",
   "type": "module",
   "scripts": {
-    "build": "tsc",
-    "type-check": "tsc --noEmit"
+    "clean-build": "rm -rf ./dist"
   },
   "exports": {
-    ".": {
-      "types": "./src/common/index.ts",
-      "import": "./dist/common/index.js",
-      "module-sync": "./dist/common/index.js"
-    },
-    "./server": {
-      "types": "./src/server/index.ts",
-      "import": "./dist/server/index.js",
-      "module-sync": "./dist/server/index.js"
-    },
-    "./client": {
-      "types": "./src/client/index.ts",
-      "import": "./dist/client/index.js",
-      "module-sync": "./dist/client/index.js"
-    }
+    ".": "./src/common/index.ts",
+    "./server": "./src/server/index.ts",
+    "./client": "./src/client/index.ts"
   },
   "publishConfig": {
     "exports": {
-      ".": {
-        "types": "./dist/common/index.d.ts",
-        "import": "./dist/common/index.js",
-        "module-sync": "./dist/common/index.js"
-      },
-      "./server": {
-        "types": "./dist/server/index.d.ts",
-        "import": "./dist/server/index.js",
-        "module-sync": "./dist/server/index.js"
-      },
-      "./client": {
-        "types": "./dist/client/index.d.ts",
-        "import": "./dist/client/index.js",
-        "module-sync": "./dist/client/index.js"
-      }
+      ".": "./dist/common/index.js",
+      "./server": "./dist/server/index.js",
+      "./client": "./dist/client/index.js"
     }
   },
   "dependencies": {
     "@nmtjs/common": "workspace:*",
     "@nmtjs/type": "workspace:*",
+    "@nmtjs/contract": "workspace:*",
+    "hookable": "6.0.0-rc.1"
+  },
+  "devDependencies": {
     "@nmtjs/core": "workspace:*"
   },
   "peerDependencies": {
     "@nmtjs/common": "workspace:*",
+    "@nmtjs/core": "workspace:*",
     "@nmtjs/type": "workspace:*",
-    "@nmtjs/core": "workspace:*"
+    "@nmtjs/contract": "workspace:*"
   },
   "files": [
     "dist",
+    "src",
     "LICENSE.md",
     "README.md"
   ]

@@ -1,78 +1,97 @@
-// biome-ignore lint/correctness/noUnusedImports: TSC wants it
-// biome-ignore assist/source/organizeImports: TSC wants it
-import type {
-  kClassInjectable,
-  kClassInjectableCreate,
-  kClassInjectableDispose,
-  kInjectable,
-} from '@nmtjs/core/constants'
+// biome-ignore assist/source/organizeImports: for ts
+import type {} from 'pino'
 
 import {
-  AppInjectables,
-  createApplication,
-  createTask,
-} from '@nmtjs/application'
+  CoreInjectables,
+  createConsolePrettyDestination,
+  createFactoryInjectable,
+  createLazyInjectable,
+  createValueInjectable,
+} from '@nmtjs/core'
+import { createTransport, GatewayInjectables } from '@nmtjs/gateway'
+
 import {
   createContractProcedure,
   createContractRouter,
   createFilter,
   createGuard,
+  createHook,
+  createJob,
+  createJobRouterOperation,
+  createJobsRouter,
   createMiddleware,
-  createProcedure,
-  createRouter,
-} from '@nmtjs/api'
-import {
-  CoreInjectables,
-  createClassInjectable,
-  createConsolePrettyDestination,
-  createExtendableClassInjectable,
-  createFactoryInjectable,
-  createLazyInjectable,
-  createOptionalInjectable,
   createPlugin,
-  createValueInjectable,
-} from '@nmtjs/core'
-import { createTransport, ProtocolInjectables } from '@nmtjs/protocol/server'
-import { createServer } from '@nmtjs/server'
+  createProcedure,
+  createRootRouter,
+  createRouter,
+  createStep,
+  defineApplication,
+  defineServer,
+  RuntimeInjectables,
+} from './runtime/index.ts'
+import {
+  createCounterMetric,
+  createGaugeMetric,
+  createHistogramMetric,
+  createSummaryMetric,
+} from './runtime/metrics/metric.ts'
 
-export const neemata = {
-  app: createApplication,
-  server: createServer,
-  injectables: {
+export namespace neemata {
+  export const app = defineApplication
+  export const server = defineServer
+  export const injectables = Object.freeze({
     ...CoreInjectables,
-    ...ProtocolInjectables,
-    ...AppInjectables,
-  },
-  transport: createTransport,
-  plugin: createPlugin,
-  logging: {
-    console:
-      // TODO: TSC wants it
-      createConsolePrettyDestination as typeof createConsolePrettyDestination,
-  },
-  optional: createOptionalInjectable,
-  value: createValueInjectable,
-  lazy: createLazyInjectable,
-  factory: createFactoryInjectable,
-  class: createClassInjectable,
-  extendClass: createExtendableClassInjectable,
-  task: createTask,
-  router: createRouter,
-  contractRouter: createContractRouter,
-  procedure: createProcedure,
-  contractProcedure: createContractProcedure,
-  middleware: createMiddleware,
-  guard: createGuard,
-  filter: createFilter,
+    ...GatewayInjectables,
+    ...RuntimeInjectables,
+  })
+  export const inject = injectables
+  export const transport = createTransport
+  export const plugin = createPlugin
+  export const logging = Object.freeze({
+    console: createConsolePrettyDestination,
+  })
+  export const value = createValueInjectable
+  export const lazy = createLazyInjectable
+  export const factory = createFactoryInjectable
+  export const rootRouter = createRootRouter
+  export const router = createRouter
+  export const contractRouter = createContractRouter
+  export const jobRouter = createJobsRouter
+  export const jobRouterOperation = createJobRouterOperation
+  export const procedure = createProcedure
+  export const contractProcedure = createContractProcedure
+  export const middleware = createMiddleware
+  export const guard = createGuard
+  export const filter = createFilter
+  export const job = createJob
+  export const step = createStep
+  export const hook = createHook
+  export const metrics = Object.freeze({
+    counter: createCounterMetric,
+    gauge: createGaugeMetric,
+    histogram: createHistogramMetric,
+    summary: createSummaryMetric,
+  })
 }
 
-export { ApiError } from '@nmtjs/api'
-export { WorkerType } from '@nmtjs/application'
 export { c } from '@nmtjs/contract'
-export { Hook, Scope } from '@nmtjs/core'
-export { ErrorCode, ProtocolBlob, TransportType } from '@nmtjs/protocol'
-export { createStreamResponse } from '@nmtjs/protocol/server'
+export { Scope } from '@nmtjs/core'
+export {
+  type ConnectionIdentityType,
+  GatewayHook,
+  ProxyableTransportType,
+} from '@nmtjs/gateway'
+export { ConnectionType, ErrorCode, ProtocolBlob } from '@nmtjs/protocol'
 export { t } from '@nmtjs/type'
+
+export {
+  ApiError,
+  defineApplication,
+  JobWorkerPool,
+  LifecycleHook,
+  StoreType,
+  WorkerType,
+} from './runtime/index.ts'
 
 export { neemata as n }
 export default neemata

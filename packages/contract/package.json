@@ -1,32 +1,28 @@
 {
   "name": "@nmtjs/contract",
+  "description": "Type-safe API contract definitions for Neemata.",
   "type": "module",
   "exports": {
-    ".": {
-      "types": "./src/index.ts",
-      "import": "./dist/index.js",
-      "module-sync": "./dist/index.js"
-    }
+    ".": "./src/index.ts"
   },
   "publishConfig": {
     "exports": {
-      ".": {
-        "types": "./dist/index.d.ts",
-        "import": "./dist/index.js",
-        "module-sync": "./dist/index.js"
-      }
+      ".": "./dist/index.js"
     }
   },
   "scripts": {
-    "build": "tsc",
-    "type-check": "tsc --noEmit"
+    "clean-build": "rm -rf ./dist"
   },
   "dependencies": {
     "@nmtjs/protocol": "workspace:*",
     "@nmtjs/type": "workspace:*"
   },
+  "devDependencies": {
+    "zod": "catalog:"
+  },
   "files": [
     "dist",
+    "src",
     "LICENSE.md",
     "README.md"
   ]

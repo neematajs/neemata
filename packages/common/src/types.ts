@@ -1,3 +1,11 @@
+const TSErrorSymbol: unique symbol = Symbol('TSError')
+
+export type TSError<
+  ErrorMessage extends string = string,
+  // biome-ignore lint/correctness/noUnusedVariables: this is used to tag the type
+  TagType = never,
+> = `TS Error: ${ErrorMessage}` & { [TSErrorSymbol]: true }
+
 export interface TypeProvider {
   readonly input: unknown
   readonly output: unknown
@@ -16,12 +24,8 @@ export type ClassConstructor<T = any, A extends any[] = any[]> =
     ) => T)
 
 export type ClassInstance<T> = T extends ClassConstructor<infer U> ? U : never
-export type ClassConstructorArgs<T, A = never> = T extends ClassConstructor<
-  any,
-  infer U
->
-  ? U
-  : A
+export type ClassConstructorArgs<T, A = never> =
+  T extends ClassConstructor<any, infer U> ? U : A
 
 export type Callback<T extends any[] = any[], R = any> = (...args: T) => R
 export type OmitFirstItem<T extends any[]> = T extends [any, ...infer U]
@@ -29,7 +33,7 @@ export type OmitFirstItem<T extends any[]> = T extends [any, ...infer U]
   : []
 export type ErrorClass = new (...args: any[]) => Error
 export type Extra = Record<string, any>
-export type Async<T> = T | Promise<T>
+export type MaybePromise<T> = T | Promise<T>
 
 export type ArrayMap<T extends readonly any[], K extends keyof T[number]> = {
   [I in keyof T]: T[I][K]
@@ -70,3 +74,5 @@ type MergeTypes<TypesArray extends any[], Res = {}> = TypesArray extends [
   : Res
 
 type OnlyFirst<F, S> = F & { [Key in keyof Omit<S, keyof F>]?: never }
+
+export type Pattern = RegExp | string | ((value: string) => boolean)
