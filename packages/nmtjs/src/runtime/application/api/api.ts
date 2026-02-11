@@ -116,7 +116,7 @@ export class ApplicationApi implements GatewayApi {
       const handled = await this.handleFilters(callOptions, error)
       if (handled === error && error instanceof ProtocolError === false) {
         const logError = new Error('Unhandled error', { cause: error })
-        this.options.logger.debug(logError)
+        this.options.logger.error(logError)
         throw new ApiError(
           ErrorCode.InternalServerError,
           'Internal Server Error',

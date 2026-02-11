@@ -2,7 +2,7 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "rootDir": ".",
-    "lib": ["ESNext", "DOM"]
+    "lib": ["ES2024", "DOM"]
   },
   "include": ["src/**/*", "test/**/*"]
 }

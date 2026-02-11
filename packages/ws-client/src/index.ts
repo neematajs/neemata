@@ -96,7 +96,7 @@ export class WsTransportClient {
   async send(message: ArrayBufferView, options: ClientCallOptions) {
     if (this.webSocket === null) throw new Error('WebSocket is not connected')
     await this.connecting
-    if (!options.signal?.aborted) this.webSocket!.send(message)
+    if (!options.signal?.aborted) this.webSocket!.send(message as any)
   }
 }
 
