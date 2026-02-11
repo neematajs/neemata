@@ -217,8 +217,6 @@ export class ApplicationServerJobs {
 
   async stop() {
     const { logger } = this.params
-    // TODO: make configurable
-    const closeTimeout = 10_000 // 10 seconds timeout for graceful close
 
     if (this.ui) {
       await new Promise<void>((resolve) => {
@@ -228,38 +226,16 @@ export class ApplicationServerJobs {
       })
     }
 
-    // Stop accepting new jobs first.
+    // Force-close BullMQ workers immediately — stops accepting new jobs
+    // and doesn't wait for in-flight processor callbacks.
+    // We must use force=true on the first call because BullMQ caches the
+    // closing promise: a second call with force=true returns the original
+    // (non-force) promise, making it ineffective.
+    // Interrupted jobs will be retried via BullMQ's stalled job mechanism.
     await Promise.all(
       [...this.queueWorkers].map(async (worker) => {
         try {
-          // Try graceful close with timeout
-          const closePromise = worker.close()
-          const timeoutPromise = new Promise<'timeout'>((resolve) =>
-            setTimeout(() => resolve('timeout'), closeTimeout),
-          )
-
-          const result = await Promise.race([closePromise, timeoutPromise])
-
-          if (result === 'timeout') {
-            logger.warn(
-              { worker: worker.name },
-              'Worker close timed out, forcing close',
-            )
-            const forceClosePromise = worker.close(true)
-            const forceTimeout = new Promise<'timeout'>((resolve) =>
-              setTimeout(() => resolve('timeout'), closeTimeout),
-            )
-            const forceResult = await Promise.race([
-              forceClosePromise,
-              forceTimeout,
-            ])
-            if (forceResult === 'timeout') {
-              logger.error(
-                { worker: worker.name },
-                'Force close timed out, abandoning worker',
-              )
-            }
-          }
+          await worker.close(true)
         } catch (error) {
           logger.warn({ error }, 'Failed to close BullMQ worker')
         }
@@ -267,6 +243,21 @@ export class ApplicationServerJobs {
     )
     this.queueWorkers.clear()
 
+    // Stop job runner thread pools — sends 'stop' to threads, waits for
+    // graceful exit with timeout, force-kills if needed.
+    // Pending pool.run() calls will be rejected by ManagedWorker.stop().
+    await Promise.all(
+      Array.from(this.pools.values()).map(async (pool) => {
+        try {
+          await pool.stopAll()
+        } catch (error) {
+          logger.warn({ error }, 'Failed to stop job pool')
+        }
+      }),
+    )
+    this.pools.clear()
+
+    // Close UI queues last (non-critical)
     await Promise.all(
       this.uiQueues.map(async (queue) => {
         try {
@@ -278,17 +269,6 @@ export class ApplicationServerJobs {
     )
     this.uiQueues = []
     this.ui = undefined
-
-    await Promise.all(
-      Array.from(this.pools.values()).map(async (pool) => {
-        try {
-          await pool.stopAll()
-        } catch (error) {
-          logger.warn({ error }, 'Failed to stop job pool')
-        }
-      }),
-    )
-    this.pools.clear()
   }
 
   /**
