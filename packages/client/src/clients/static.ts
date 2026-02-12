@@ -61,7 +61,11 @@ export class StaticClient<
         const caller = (
           payload?: unknown,
           options?: Partial<ClientCallOptions>,
-        ) => this._call(newPath.join('/'), payload, options)
+        ) =>
+          this._call(newPath.join('/'), payload, {
+            ...options,
+            _stream_response: isStream || options?._stream_response,
+          })
         return this.createProxy(caller as any, isStream, newPath)
       },
     }) as T

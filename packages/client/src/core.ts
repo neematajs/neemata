@@ -32,6 +32,7 @@ import {
 import type {
   ClientDisconnectReason,
   ClientPlugin,
+  ClientPluginEvent,
   ClientPluginInstance,
 } from './plugins/types.ts'
 import type { BaseClientTransformer } from './transformers.ts'
@@ -349,6 +350,13 @@ export abstract class BaseClient<
     call.signal = signal
 
     this.calls.set(callId, call)
+    this.emitClientEvent({
+      kind: 'rpc_request',
+      timestamp: Date.now(),
+      callId,
+      procedure,
+      body: payload,
+    })
 
     // Check if signal is already aborted before proceeding
     if (signal?.aborted) {
@@ -404,6 +412,13 @@ export abstract class BaseClient<
           this.handleCallResponse(callId, response)
         }
       } catch (error) {
+        this.emitClientEvent({
+          kind: 'rpc_error',
+          timestamp: Date.now(),
+          callId,
+          procedure,
+          error,
+        })
         call.reject(error)
       }
     }
@@ -441,6 +456,14 @@ export abstract class BaseClient<
   protected async onConnect() {
     this._state = 'connected'
     this._lastDisconnectReason = 'server'
+    this.emitClientEvent({
+      kind: 'connected',
+      timestamp: Date.now(),
+      transportType:
+        this.transport.type === ConnectionType.Bidirectional
+          ? 'bidirectional'
+          : 'unidirectional',
+    })
     for (const plugin of this.plugins) {
       await plugin.onConnect?.()
     }
@@ -458,6 +481,11 @@ export abstract class BaseClient<
 
     this._state = 'disconnected'
     this._lastDisconnectReason = effectiveReason
+    this.emitClientEvent({
+      kind: 'disconnected',
+      timestamp: Date.now(),
+      reason: effectiveReason,
+    })
 
     // Connection is gone, never keep old message context around.
     this.messageContext = null
@@ -543,6 +571,13 @@ export abstract class BaseClient<
     for (const plugin of this.plugins) {
       plugin.onServerMessage?.(message, buffer)
     }
+    this.emitClientEvent({
+      kind: 'server_message',
+      timestamp: Date.now(),
+      messageType: message.type,
+      rawByteLength: buffer.byteLength,
+      body: message,
+    })
 
     switch (message.type) {
       case ServerMessageType.RpcResponse:
@@ -635,12 +670,33 @@ export abstract class BaseClient<
     const call = this.calls.get(callId)
     if (!call) return
     if (error) {
+      this.emitClientEvent({
+        kind: 'rpc_error',
+        timestamp: Date.now(),
+        callId,
+        procedure: call.procedure,
+        error,
+      })
       call.reject(new ProtocolError(error.code, error.message, error.data))
     } else {
       try {
         const transformed = this.transformer.decode(call.procedure, result)
+        this.emitClientEvent({
+          kind: 'rpc_response',
+          timestamp: Date.now(),
+          callId,
+          procedure: call.procedure,
+          body: transformed,
+        })
         call.resolve(transformed)
       } catch (error) {
+        this.emitClientEvent({
+          kind: 'rpc_error',
+          timestamp: Date.now(),
+          callId,
+          procedure: call.procedure,
+          error,
+        })
         call.reject(
           new ProtocolError(
             ErrorCode.ClientRequestError,
@@ -658,6 +714,13 @@ export abstract class BaseClient<
     const call = this.calls.get(message.callId)
     if (message.error) {
       if (!call) return
+      this.emitClientEvent({
+        kind: 'rpc_error',
+        timestamp: Date.now(),
+        callId: message.callId,
+        procedure: call.procedure,
+        error: message.error,
+      })
       call.reject(
         new ProtocolError(
           message.error.code,
@@ -668,6 +731,13 @@ export abstract class BaseClient<
     } else {
       if (call) {
         const { procedure, signal } = call
+        this.emitClientEvent({
+          kind: 'rpc_response',
+          timestamp: Date.now(),
+          callId: message.callId,
+          procedure,
+          stream: true,
+        })
         const stream = new ProtocolServerRPCStream({
           start: (controller) => {
             if (signal) {
@@ -733,6 +803,13 @@ export abstract class BaseClient<
 
     if (response.type === 'rpc_stream') {
       if (call) {
+        this.emitClientEvent({
+          kind: 'rpc_response',
+          timestamp: Date.now(),
+          callId,
+          procedure: call.procedure,
+          stream: true,
+        })
         const stream = new ProtocolServerStream({
           transform: (chunk) => {
             return this.transformer.decode(
@@ -754,6 +831,13 @@ export abstract class BaseClient<
       }
     } else if (response.type === 'blob') {
       if (call) {
+        this.emitClientEvent({
+          kind: 'rpc_response',
+          timestamp: Date.now(),
+          callId,
+          procedure: call.procedure,
+          stream: true,
+        })
         const { metadata, source } = response
         const stream = new ProtocolServerBlobStream(metadata)
         this.serverStreams.add(this.getStreamId(), stream)
@@ -774,8 +858,22 @@ export abstract class BaseClient<
           call.procedure,
           response.result,
         )
+        this.emitClientEvent({
+          kind: 'rpc_response',
+          timestamp: Date.now(),
+          callId,
+          procedure: call.procedure,
+          body: transformed,
+        })
         call.resolve(transformed)
       } catch (error) {
+        this.emitClientEvent({
+          kind: 'rpc_error',
+          timestamp: Date.now(),
+          callId,
+          procedure: call.procedure,
+          error,
+        })
         call.reject(
           new ProtocolError(
             ErrorCode.ClientRequestError,
@@ -805,5 +903,14 @@ export abstract class BaseClient<
       this.callId = 0
     }
     return this.callId++
+  }
+
+  protected emitClientEvent(event: ClientPluginEvent) {
+    for (const plugin of this.plugins) {
+      try {
+        const result = plugin.onClientEvent?.(event)
+        Promise.resolve(result).catch(noopFn)
+      } catch {}
+    }
   }
 }

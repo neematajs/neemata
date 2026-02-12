@@ -72,6 +72,7 @@ Connectivity behavior is fully composed via plugins.
 import {
   browserConnectivityPlugin,
   heartbeatPlugin,
+  loggingPlugin,
   reconnectPlugin,
 } from '@nmtjs/client'
 import { StaticClient } from '@nmtjs/client/static'
@@ -89,6 +90,9 @@ const client = new StaticClient(
       reconnectPlugin(),
       browserConnectivityPlugin(),
       heartbeatPlugin({ interval: 15000, timeout: 5000 }),
+      loggingPlugin({
+        onEvent: (event) => console.log(event),
+      }),
     ],
   },
   WsTransportClient,
@@ -99,12 +103,21 @@ const client = new StaticClient(
 - `reconnectPlugin()` — Exponential backoff reconnect loop
 - `browserConnectivityPlugin()` — Reconnect nudges on `pageshow`, `online`, `focus`, and `visibilitychange`
 - `heartbeatPlugin()` — Ping/Pong liveness checks and reconnect on timeout
+- `loggingPlugin()` — Emits structured client events to `onEvent`; message bodies are omitted by default and enabled with `includeBodies: true`
+
+```typescript
+loggingPlugin({
+  onEvent: (event) => {
+    sink(event)
+  },
+}) // includeBodies defaults to false
+```
 
 ## Plugin Order
 
 Plugin order is deterministic and significant.
 
-- `onInit`, `onConnect`, `onServerMessage` run in registration order.
+- `onInit`, `onConnect`, `onServerMessage`, `onClientEvent` run in registration order.
 - `onDisconnect`, `dispose` run in reverse registration order.
 
 Recommended order for connectivity stack:
