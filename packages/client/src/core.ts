@@ -7,7 +7,13 @@ import type {
   ProtocolVersionInterface,
   ServerMessageTypePayload,
 } from '@nmtjs/protocol/client'
-import { anyAbortSignal, createFuture, MAX_UINT32, noopFn } from '@nmtjs/common'
+import {
+  anyAbortSignal,
+  createFuture,
+  MAX_UINT32,
+  noopFn,
+  withTimeout,
+} from '@nmtjs/common'
 import {
   ClientMessageType,
   ConnectionType,
@@ -51,6 +57,11 @@ export type ProtocolClientCall = Future<any> & {
 const DEFAULT_RECONNECT_TIMEOUT = 1000
 const DEFAULT_MAX_RECONNECT_TIMEOUT = 60000
 
+const DEFAULT_RECONNECT_REASON = 'connect_error'
+
+const DEFAULT_HEARTBEAT_INTERVAL = 15000
+const DEFAULT_HEARTBEAT_TIMEOUT = 5000
+
 export interface BaseClientOptions<
   RouterContract extends TAnyRouterContract = TAnyRouterContract,
   SafeCall extends boolean = false,
@@ -62,6 +73,15 @@ export interface BaseClientOptions<
   timeout?: number
   autoreconnect?: boolean
   safe?: SafeCall
+
+  /**
+   * Heartbeat to detect half-open bidirectional connections (e.g. browser sleep/wake).
+   *
+   * - `false` disables it.
+   * - `{ interval, timeout }` enables with custom values.
+   * - `undefined` defaults to enabled in browsers when `autoreconnect` is true.
+   */
+  heartbeat?: false | { interval?: number; timeout?: number }
 }
 
 /**
@@ -115,7 +135,23 @@ export abstract class BaseClient<
   protected connecting: Promise<void> | null = null
   protected state: 'connected' | 'disconnected' = 'disconnected'
 
-  #auth: any
+  protected reconnecting: Promise<void> | null = null
+  protected reconnectAbortController: AbortController | null = null
+  protected lastDisconnectReason: 'server' | 'client' | (string & {}) = 'server'
+  protected disposed = false
+
+  protected heartbeatConfig: { interval: number; timeout: number } | null = null
+  protected heartbeatAbortController: AbortController | null = null
+  protected heartbeatTask: Promise<void> | null = null
+  protected pingNonce = 0
+  protected pendingPings = new Map<number, Future<void>>()
+
+  private clientDisconnectAsReconnect = false
+  private clientDisconnectOverrideReason: string | null = null
+
+  private browserCleanup: Array<() => void> = []
+
+  private authValue: any
 
   constructor(
     readonly options: BaseClientOptions<RouterContract, SafeCall>,
@@ -142,43 +178,109 @@ export abstract class BaseClient<
       this.transport.type === ConnectionType.Bidirectional &&
       this.options.autoreconnect
     ) {
-      this.on('disconnected', async (reason) => {
-        while (this.state === 'disconnected') {
-          const timeout = new Promise((resolve) =>
-            setTimeout(resolve, this.reconnectTimeout),
-          )
-          this.reconnectTimeout = Math.min(
-            this.reconnectTimeout * 2,
-            DEFAULT_MAX_RECONNECT_TIMEOUT,
-          )
-          await timeout
-          await this.connect().catch(noopFn)
-        }
-      })
-
-      this.on('connected', () => {
-        this.reconnectTimeout = DEFAULT_RECONNECT_TIMEOUT
-      })
+      this.heartbeatConfig = this.resolveHeartbeatConfig()
 
       if (globalThis.window) {
-        globalThis.window.addEventListener('pageshow', () => {
-          if (this.state === 'disconnected') this.connect()
-        })
+        const onPageShow = () => {
+          if (this.state === 'disconnected' && !this.disposed) {
+            this.connect().catch(noopFn)
+          }
+        }
+        globalThis.window.addEventListener('pageshow', onPageShow)
+        this.browserCleanup.push(() =>
+          globalThis.window?.removeEventListener('pageshow', onPageShow),
+        )
+
+        const onOnline = () => {
+          if (this.state === 'disconnected' && !this.disposed) {
+            this.connect().catch(noopFn)
+          }
+        }
+        globalThis.window.addEventListener('online', onOnline)
+        this.browserCleanup.push(() =>
+          globalThis.window?.removeEventListener('online', onOnline),
+        )
+
+        const onFocus = () => {
+          if (this.state === 'disconnected' && !this.disposed) {
+            this.connect().catch(noopFn)
+          }
+        }
+        globalThis.window.addEventListener('focus', onFocus)
+        this.browserCleanup.push(() =>
+          globalThis.window?.removeEventListener('focus', onFocus),
+        )
+      }
+
+      if (globalThis.document) {
+        const onVisibilityChange = () => {
+          if (
+            globalThis.document?.visibilityState === 'visible' &&
+            this.state === 'disconnected' &&
+            !this.disposed
+          ) {
+            this.connect().catch(noopFn)
+          }
+        }
+        globalThis.document.addEventListener(
+          'visibilitychange',
+          onVisibilityChange,
+        )
+        this.browserCleanup.push(() =>
+          globalThis.document?.removeEventListener(
+            'visibilitychange',
+            onVisibilityChange,
+          ),
+        )
       }
     }
   }
 
+  protected resolveHeartbeatConfig(): {
+    interval: number
+    timeout: number
+  } | null {
+    if (this.options.heartbeat === false) return null
+
+    if (this.options.heartbeat) {
+      return {
+        interval: this.options.heartbeat.interval ?? DEFAULT_HEARTBEAT_INTERVAL,
+        timeout: this.options.heartbeat.timeout ?? DEFAULT_HEARTBEAT_TIMEOUT,
+      }
+    }
+
+    // Default: enable heartbeat in browsers if autoreconnect is enabled.
+    if (globalThis.window && this.options.autoreconnect) {
+      return {
+        interval: DEFAULT_HEARTBEAT_INTERVAL,
+        timeout: DEFAULT_HEARTBEAT_TIMEOUT,
+      }
+    }
+
+    return null
+  }
+
+  dispose() {
+    this.disposed = true
+    this.cancelReconnect()
+    this.stopHeartbeat()
+    for (const cleanup of this.browserCleanup) cleanup()
+    this.browserCleanup = []
+  }
+
   get auth() {
-    return this.#auth
+    return this.authValue
   }
 
   set auth(value) {
-    this.#auth = value
+    this.authValue = value
   }
 
   connect() {
     if (this.state === 'connected') return Promise.resolve()
     if (this.connecting) return this.connecting
+
+    if (this.disposed) return Promise.reject(new Error('Client is disposed'))
 
     const _connect = async () => {
       if (this.transport.type === ConnectionType.Bidirectional) {
@@ -187,7 +289,7 @@ export abstract class BaseClient<
         const serverStreams = this.serverStreams
         const transport = {
           send: (buffer) => {
-            this.#send(buffer).catch(noopFn)
+            this.send(buffer).catch(noopFn)
           },
         }
         this.messageContext = {
@@ -195,7 +297,7 @@ export abstract class BaseClient<
           encoder: this.options.format,
           decoder: this.options.format,
           addClientStream: (blob) => {
-            const streamId = this.#getStreamId()
+            const streamId = this.getStreamId()
             return this.clientStreams.add(blob.source, streamId, blob.metadata)
           },
           addServerStream(streamId, metadata) {
@@ -234,7 +336,7 @@ export abstract class BaseClient<
               return stream
             }
           },
-          streamId: this.#getStreamId.bind(this),
+          streamId: this.getStreamId.bind(this),
         }
         return this.transport.connect({
           auth: this.auth,
@@ -246,19 +348,52 @@ export abstract class BaseClient<
       }
     }
 
+    let emitDisconnectOnFailure: 'server' | 'client' | (string & {}) | null =
+      null
+
     this.connecting = _connect()
       .then(() => {
         this.state = 'connected'
       })
+      .catch((error) => {
+        if (
+          this.transport.type === ConnectionType.Bidirectional &&
+          this.options.autoreconnect
+        ) {
+          emitDisconnectOnFailure = DEFAULT_RECONNECT_REASON
+        }
+        throw error
+      })
       .finally(() => {
         this.connecting = null
+
+        if (emitDisconnectOnFailure && !this.disposed) {
+          this.state = 'disconnected'
+          this.lastDisconnectReason = emitDisconnectOnFailure
+          // Ensure reconnect loop is driven even if connect() fails before any onDisconnect fires.
+          void this.onDisconnect(emitDisconnectOnFailure)
+        }
       })
 
     return this.connecting
   }
 
-  async disconnect() {
+  async disconnect(options: { reconnect?: boolean; reason?: string } = {}) {
     if (this.transport.type === ConnectionType.Bidirectional) {
+      // Ensure connect() won't short-circuit while the transport is closing.
+      this.state = 'disconnected'
+      this.lastDisconnectReason = 'client'
+
+      if (options.reconnect) {
+        this.clientDisconnectAsReconnect = true
+        this.clientDisconnectOverrideReason = options.reason ?? 'server'
+      } else {
+        this.cancelReconnect()
+        this.clientDisconnectAsReconnect = false
+        this.clientDisconnectOverrideReason = null
+      }
+
+      this.stopHeartbeat()
       this.cab!.abort()
       await this.transport.disconnect()
       this.messageContext = null
@@ -290,7 +425,7 @@ export abstract class BaseClient<
 
     const signal = signals.length ? anyAbortSignal(...signals) : undefined
 
-    const callId = this.#getCallId()
+    const callId = this.getCallId()
     const call = createFuture() as ProtocolClientCall
     call.procedure = procedure
     call.signal = signal
@@ -322,7 +457,7 @@ export abstract class BaseClient<
                 ClientMessageType.RpcAbort,
                 { callId },
               )
-              this.#send(buffer).catch(noopFn)
+              this.send(buffer).catch(noopFn)
             }
           },
           { once: true },
@@ -337,7 +472,7 @@ export abstract class BaseClient<
             ClientMessageType.Rpc,
             { callId, procedure, payload: transformedPayload },
           )
-          await this.#send(buffer, signal)
+          await this.send(buffer, signal)
         } else {
           const response = await this.transport.call(
             {
@@ -348,7 +483,7 @@ export abstract class BaseClient<
             { callId, procedure, payload: transformedPayload },
             { signal, _stream_response: options._stream_response },
           )
-          this.#handleCallResponse(callId, response)
+          this.handleCallResponse(callId, response)
         }
       } catch (error) {
         call.reject(error)
@@ -387,15 +522,234 @@ export abstract class BaseClient<
 
   protected async onConnect() {
     this.state = 'connected'
+    this.lastDisconnectReason = 'server'
+    this.reconnectTimeout = DEFAULT_RECONNECT_TIMEOUT
+    this.cancelReconnect()
+    this.startHeartbeat()
     this.emit('connected')
   }
 
   protected async onDisconnect(reason: 'client' | 'server' | (string & {})) {
+    const effectiveReason =
+      reason === 'client' && this.clientDisconnectAsReconnect
+        ? (this.clientDisconnectOverrideReason ?? 'server')
+        : reason
+
+    this.clientDisconnectAsReconnect = false
+    this.clientDisconnectOverrideReason = null
+
     this.state = 'disconnected'
-    this.emit('disconnected', reason)
-    this.clientStreams.clear(reason)
-    this.serverStreams.clear(reason)
-    this.rpcStreams.clear(reason)
+    this.lastDisconnectReason = effectiveReason
+
+    // Connection is gone, never keep old message context around.
+    this.messageContext = null
+
+    this.stopHeartbeat(effectiveReason)
+
+    // Fail-fast: do not keep pending calls around across disconnects.
+    if (this.calls.size) {
+      const error = new ProtocolError(
+        ErrorCode.ConnectionError,
+        'Disconnected',
+        { reason: effectiveReason },
+      )
+      for (const call of this.calls.values()) {
+        call.reject(error)
+      }
+      this.calls.clear()
+    }
+
+    if (this.cab) {
+      try {
+        this.cab.abort(reason)
+      } catch {
+        this.cab.abort()
+      }
+      this.cab = null
+    }
+
+    this.emit('disconnected', effectiveReason)
+
+    void this.clientStreams.clear(effectiveReason)
+    void this.serverStreams.clear(effectiveReason)
+    void this.rpcStreams.clear(effectiveReason)
+
+    if (
+      this.transport.type === ConnectionType.Bidirectional &&
+      this.options.autoreconnect &&
+      effectiveReason !== 'client' &&
+      !this.disposed
+    ) {
+      this.ensureReconnectLoop()
+    } else {
+      this.cancelReconnect()
+    }
+  }
+
+  protected startHeartbeat() {
+    if (!this.heartbeatConfig) return
+    if (this.heartbeatTask) return
+    if (this.transport.type !== ConnectionType.Bidirectional) return
+
+    this.heartbeatAbortController = new AbortController()
+    const signal = this.heartbeatAbortController.signal
+
+    this.heartbeatTask = (async () => {
+      while (!signal.aborted && !this.disposed && this.state === 'connected') {
+        if (this.isReconnectPaused()) {
+          await this.sleep(1000, signal)
+          continue
+        }
+
+        await this.sleep(this.heartbeatConfig!.interval, signal)
+
+        if (
+          signal.aborted ||
+          this.disposed ||
+          this.state !== 'connected' ||
+          !this.messageContext
+        ) {
+          continue
+        }
+
+        const nonce = this.nextPingNonce()
+        const future = createFuture<void>()
+        this.pendingPings.set(nonce, future)
+
+        try {
+          const buffer = this.protocol.encodeMessage(
+            this.messageContext,
+            ClientMessageType.Ping,
+            { nonce },
+          )
+          await this.send(buffer, signal)
+
+          await withTimeout(
+            future.promise,
+            this.heartbeatConfig!.timeout,
+            new Error('Heartbeat timeout'),
+          )
+        } catch {
+          this.pendingPings.delete(nonce)
+
+          if (!signal.aborted && !this.disposed && this.state === 'connected') {
+            await this.disconnect({
+              reconnect: true,
+              reason: 'heartbeat_timeout',
+            }).catch(noopFn)
+          }
+        }
+      }
+    })().finally(() => {
+      this.heartbeatTask = null
+      this.heartbeatAbortController = null
+    })
+  }
+
+  protected stopHeartbeat(reason?: any) {
+    this.heartbeatAbortController?.abort()
+    this.heartbeatAbortController = null
+    this.heartbeatTask = null
+
+    if (this.pendingPings.size) {
+      const error = new Error('Heartbeat stopped', { cause: reason })
+      for (const pending of this.pendingPings.values()) pending.reject(error)
+      this.pendingPings.clear()
+    }
+  }
+
+  protected nextPingNonce() {
+    if (this.pingNonce >= MAX_UINT32) this.pingNonce = 0
+    return this.pingNonce++
+  }
+
+  protected computeReconnectDelay(ms: number) {
+    // Jitter only in browsers to avoid breaking deterministic node tests.
+    if (globalThis.window) {
+      const jitter = Math.floor(ms * 0.2 * Math.random())
+      return ms + jitter
+    }
+    return ms
+  }
+
+  protected isReconnectPaused() {
+    if (globalThis.window && 'navigator' in globalThis.window) {
+      if (globalThis.window.navigator?.onLine === false) return true
+    }
+    if (globalThis.document) {
+      if (globalThis.document.visibilityState === 'hidden') return true
+    }
+    return false
+  }
+
+  protected sleep(ms: number, signal?: AbortSignal) {
+    return new Promise<void>((resolve) => {
+      if (signal?.aborted) return resolve()
+      const timer = setTimeout(resolve, ms)
+      if (signal) {
+        signal.addEventListener(
+          'abort',
+          () => {
+            clearTimeout(timer)
+            resolve()
+          },
+          { once: true },
+        )
+      }
+    })
+  }
+
+  protected ensureReconnectLoop() {
+    if (this.reconnecting) return
+
+    this.reconnectAbortController = new AbortController()
+    const signal = this.reconnectAbortController.signal
+
+    this.reconnecting = (async () => {
+      while (
+        !signal.aborted &&
+        !this.disposed &&
+        this.state === 'disconnected' &&
+        this.lastDisconnectReason !== 'client'
+      ) {
+        if (this.isReconnectPaused()) {
+          // Poll occasionally while paused; browser events also poke connect().
+          await this.sleep(1000, signal)
+          continue
+        }
+
+        const delay = this.computeReconnectDelay(this.reconnectTimeout)
+        await this.sleep(delay, signal)
+
+        if (
+          signal.aborted ||
+          this.disposed ||
+          this.state !== 'disconnected' ||
+          this.lastDisconnectReason === 'client'
+        ) {
+          break
+        }
+
+        const previousTimeout = this.reconnectTimeout
+        await this.connect().catch(noopFn)
+
+        if (this.state === 'disconnected') {
+          this.reconnectTimeout = Math.min(
+            previousTimeout * 2,
+            DEFAULT_MAX_RECONNECT_TIMEOUT,
+          )
+        }
+      }
+    })().finally(() => {
+      this.reconnecting = null
+      this.reconnectAbortController = null
+    })
+  }
+
+  protected cancelReconnect() {
+    this.reconnectAbortController?.abort()
+    this.reconnectAbortController = null
+    this.reconnecting = null
   }
 
   protected async onMessage(buffer: ArrayBufferView) {
@@ -405,11 +759,30 @@ export abstract class BaseClient<
 
     switch (message.type) {
       case ServerMessageType.RpcResponse:
-        this.#handleRPCResponseMessage(message)
+        this.handleRPCResponseMessage(message)
         break
       case ServerMessageType.RpcStreamResponse:
-        this.#handleRPCStreamResponseMessage(message)
+        this.handleRPCStreamResponseMessage(message)
         break
+      case ServerMessageType.Pong: {
+        const pending = this.pendingPings.get(message.nonce)
+        if (pending) {
+          this.pendingPings.delete(message.nonce)
+          pending.resolve()
+        }
+        break
+      }
+      case ServerMessageType.Ping: {
+        if (this.messageContext) {
+          const buffer = this.protocol.encodeMessage(
+            this.messageContext,
+            ClientMessageType.Pong,
+            { nonce: message.nonce },
+          )
+          this.send(buffer).catch(noopFn)
+        }
+        break
+      }
       case ServerMessageType.RpcStreamChunk:
         this.rpcStreams.push(message.callId, message.chunk)
         break
@@ -439,14 +812,14 @@ export abstract class BaseClient<
                 ClientMessageType.ClientStreamPush,
                 { streamId: message.streamId, chunk },
               )
-              this.#send(buffer).catch(noopFn)
+              this.send(buffer).catch(noopFn)
             } else {
               const buffer = this.protocol.encodeMessage(
                 this.messageContext!,
                 ClientMessageType.ClientStreamEnd,
                 { streamId: message.streamId },
               )
-              this.#send(buffer).catch(noopFn)
+              this.send(buffer).catch(noopFn)
               this.clientStreams.end(message.streamId)
             }
           },
@@ -456,7 +829,7 @@ export abstract class BaseClient<
               ClientMessageType.ClientStreamAbort,
               { streamId: message.streamId },
             )
-            this.#send(buffer).catch(noopFn)
+            this.send(buffer).catch(noopFn)
             this.clientStreams.remove(message.streamId)
           },
         )
@@ -467,7 +840,7 @@ export abstract class BaseClient<
     }
   }
 
-  #handleRPCResponseMessage(
+  private handleRPCResponseMessage(
     message: ServerMessageTypePayload[ServerMessageType.RpcResponse],
   ) {
     const { callId, result, error } = message
@@ -491,7 +864,7 @@ export abstract class BaseClient<
     }
   }
 
-  #handleRPCStreamResponseMessage(
+  private handleRPCStreamResponseMessage(
     message: ServerMessageTypePayload[ServerMessageType.RpcStreamResponse],
   ) {
     const call = this.calls.get(message.callId)
@@ -525,7 +898,7 @@ export abstract class BaseClient<
                           ClientMessageType.RpcAbort,
                           { callId: message.callId, reason: signal.reason },
                         )
-                        this.#send(buffer).catch(noopFn)
+                        this.send(buffer).catch(noopFn)
                       }
                     }
                   },
@@ -545,7 +918,7 @@ export abstract class BaseClient<
               ClientMessageType.RpcPull,
               { callId: message.callId },
             )
-            this.#send(buffer).catch(noopFn)
+            this.send(buffer).catch(noopFn)
           },
           readableStrategy: { highWaterMark: 0 },
         })
@@ -561,13 +934,13 @@ export abstract class BaseClient<
             ClientMessageType.RpcAbort,
             { callId: message.callId },
           )
-          this.#send(buffer).catch(noopFn)
+          this.send(buffer).catch(noopFn)
         }
       }
     }
   }
 
-  #handleCallResponse(callId: number, response: ClientCallResponse) {
+  private handleCallResponse(callId: number, response: ClientCallResponse) {
     const call = this.calls.get(callId)
 
     if (response.type === 'rpc_stream') {
@@ -595,7 +968,7 @@ export abstract class BaseClient<
       if (call) {
         const { metadata, source } = response
         const stream = new ProtocolServerBlobStream(metadata)
-        this.serverStreams.add(this.#getStreamId(), stream)
+        this.serverStreams.add(this.getStreamId(), stream)
         call.resolve(({ signal }: { signal?: AbortSignal }) => {
           source.pipeTo(stream.writable, { signal }).catch(noopFn)
           return stream
@@ -626,20 +999,20 @@ export abstract class BaseClient<
     }
   }
 
-  #send(buffer: ArrayBufferView, signal?: AbortSignal) {
+  protected send(buffer: ArrayBufferView, signal?: AbortSignal) {
     if (this.transport.type === ConnectionType.Unidirectional)
       throw new Error('Invalid transport type for send')
     return this.transport.send(buffer, { signal })
   }
 
-  #getStreamId() {
+  protected getStreamId() {
     if (this.streamId >= MAX_UINT32) {
       this.streamId = 0
     }
     return this.streamId++
   }
 
-  #getCallId() {
+  protected getCallId() {
     if (this.callId >= MAX_UINT32) {
       this.callId = 0
     }

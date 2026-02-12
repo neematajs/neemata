@@ -65,6 +65,8 @@ export type ServerMessageTypePayload = {
   [ServerMessageType.RpcStreamEnd]: { callId: number }
   [ServerMessageType.RpcStreamChunk]: { callId: number; chunk: ArrayBufferView }
   [ServerMessageType.RpcStreamResponse]: { callId: number }
+  [ServerMessageType.Pong]: { nonce: number }
+  [ServerMessageType.Ping]: { nonce: number }
   [ServerMessageType.ClientStreamAbort]: { streamId: number; reason?: string }
   [ServerMessageType.ClientStreamPull]: { streamId: number; size: number }
   [ServerMessageType.ServerStreamAbort]: { streamId: number; reason?: string }
@@ -86,6 +88,8 @@ export type ClientMessageTypePayload = {
   }
   [ClientMessageType.RpcPull]: { callId: number }
   [ClientMessageType.RpcAbort]: { callId: number; reason?: string }
+  [ClientMessageType.Ping]: { nonce: number }
+  [ClientMessageType.Pong]: { nonce: number }
   [ClientMessageType.ClientStreamPush]: {
     streamId: number
     chunk: ArrayBufferView

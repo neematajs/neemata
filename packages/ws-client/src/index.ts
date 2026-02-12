@@ -28,6 +28,7 @@ export class WsTransportClient {
 
   protected webSocket: WebSocket | null = null
   protected connecting: Promise<void> | null = null
+  protected closingByClient = false
 
   constructor(
     protected readonly format: BaseClientFormat,
@@ -38,6 +39,7 @@ export class WsTransportClient {
   }
 
   async connect(params: ClientTransportStartParams) {
+    this.closingByClient = false
     const url = new URL(
       params.application ? `/${params.application}` : '/',
       this.options.url,
@@ -60,24 +62,43 @@ export class WsTransportClient {
     ws.binaryType = 'arraybuffer'
 
     this.connecting = new Promise((resolve, reject) => {
+      let settled = false
+      const settle = (fn: () => void) => {
+        if (settled) return
+        settled = true
+        fn()
+      }
+
       ws.addEventListener('open', () => {
-        this.connecting = null
-        params.onConnect()
-        resolve()
+        settle(() => {
+          this.connecting = null
+          params.onConnect()
+          resolve()
+        })
       })
       ws.addEventListener('message', (event) => {
         params.onMessage(new Uint8Array(event.data as ArrayBuffer))
       })
       ws.addEventListener('error', (event) => {
-        this.connecting = null
-        reject(
-          new Error('WebSocket error', { cause: (event as ErrorEvent).error }),
-        )
+        settle(() => {
+          this.connecting = null
+          reject(
+            new Error('WebSocket error', {
+              cause: (event as ErrorEvent).error,
+            }),
+          )
+        })
       })
       ws.addEventListener('close', (event) => {
-        this.webSocket = null
-        this.connecting = null
-        params.onDisconnect('server')
+        const reason: 'client' | 'server' =
+          this.closingByClient || event.reason === 'client'
+            ? 'client'
+            : 'server'
+        settle(() => {
+          this.webSocket = null
+          this.connecting = null
+          params.onDisconnect(reason)
+        })
       })
     })
 
@@ -88,6 +109,7 @@ export class WsTransportClient {
 
   async disconnect() {
     if (this.webSocket === null) return
+    this.closingByClient = true
     const closing = once(this.webSocket, 'close')
     this.webSocket!.close(1000, 'client')
     return closing

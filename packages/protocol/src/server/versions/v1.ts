@@ -49,6 +49,14 @@ export class ProtocolVersion1 extends ProtocolVersionInterface {
           reasonPayload.byteLength > 0 ? decodeText(reasonPayload) : undefined
         return { type: messageType, callId, reason }
       }
+      case ClientMessageType.Ping: {
+        const nonce = messagePayload.readUInt32LE(0)
+        return { type: messageType, nonce }
+      }
+      case ClientMessageType.Pong: {
+        const nonce = messagePayload.readUInt32LE(0)
+        return { type: messageType, nonce }
+      }
       case ClientMessageType.ServerStreamAbort: {
         const streamId = messagePayload.readUInt32LE(0)
         const reasonPayload = messagePayload.subarray(
@@ -144,6 +152,22 @@ export class ProtocolVersion1 extends ProtocolVersionInterface {
           encodeNumber(messageType, 'Uint8'),
           encodeNumber(callId, 'Uint32'),
           reason ? encodeText(reason) : Buffer.alloc(0),
+        )
+      }
+      case ServerMessageType.Pong: {
+        const { nonce } =
+          payload as ServerMessageTypePayload[ServerMessageType.Pong]
+        return this.encode(
+          encodeNumber(messageType, 'Uint8'),
+          encodeNumber(nonce, 'Uint32'),
+        )
+      }
+      case ServerMessageType.Ping: {
+        const { nonce } =
+          payload as ServerMessageTypePayload[ServerMessageType.Ping]
+        return this.encode(
+          encodeNumber(messageType, 'Uint8'),
+          encodeNumber(nonce, 'Uint32'),
         )
       }
       case ServerMessageType.ClientStreamPull: {

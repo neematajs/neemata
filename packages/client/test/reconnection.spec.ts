@@ -1,4 +1,4 @@
-import { ConnectionType } from '@nmtjs/protocol'
+import { ConnectionType, ErrorCode } from '@nmtjs/protocol'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { BaseClientOptions } from '../src/core.ts'
@@ -69,8 +69,11 @@ const createMockUnidirectionalTransport = () => {
 
 // Mock format
 const mockFormat = {
+  contentType: 'test',
   encode: vi.fn((data) => new Uint8Array()),
   decode: vi.fn((data) => ({})),
+  encodeRPC: vi.fn((data) => new Uint8Array()),
+  decodeRPC: vi.fn((data) => ({})),
 }
 
 // Base options for client
@@ -164,6 +167,55 @@ describe('BaseClient Reconnection', () => {
 
       // Reconnection attempt should be made
       expect(transport.connect).toHaveBeenCalledTimes(1)
+    })
+
+    it('should not reconnect after client-initiated disconnect', async () => {
+      const { factory, transport, simulateConnect, simulateDisconnect } =
+        createMockBidirectionalTransport()
+      const client = new StaticClient(
+        { ...baseOptions, autoreconnect: true },
+        factory,
+        {},
+      )
+
+      // Initial connect
+      const connectPromise = client.connect()
+      simulateConnect()
+      await connectPromise
+
+      // Reset mock to track reconnection attempts
+      transport.connect.mockClear()
+
+      // Simulate client-initiated disconnect
+      simulateDisconnect('client')
+
+      // Advance timers significantly
+      await vi.advanceTimersByTimeAsync(120000)
+
+      // No reconnection attempts should be made
+      expect(transport.connect).not.toHaveBeenCalled()
+    })
+
+    it('should retry when initial connect fails (autoreconnect enabled)', async () => {
+      const { factory, transport, setConnectFail } =
+        createMockBidirectionalTransport()
+      const client = new StaticClient(
+        { ...baseOptions, autoreconnect: true },
+        factory,
+        {},
+      )
+
+      setConnectFail(true, new Error('Connection failed'))
+
+      await expect(client.connect()).rejects.toThrow('Connection failed')
+
+      // Allow connect() rejection handlers to run
+      await vi.advanceTimersByTimeAsync(0)
+
+      // First retry after 1s
+      await vi.advanceTimersByTimeAsync(1000)
+
+      expect(transport.connect).toHaveBeenCalledTimes(2)
     })
   })
 
@@ -458,6 +510,28 @@ describe('BaseClient Reconnection', () => {
       // Simulate client-initiated disconnect
       simulateDisconnect('client')
       expect(disconnectedHandler).toHaveBeenCalledWith('client')
+    })
+
+    it('should reject pending calls on disconnect', async () => {
+      const { factory, simulateConnect, simulateDisconnect } =
+        createMockBidirectionalTransport()
+      const client = new StaticClient(
+        { ...baseOptions, autoreconnect: false },
+        factory,
+        {},
+      )
+
+      const connectPromise = client.connect()
+      simulateConnect()
+      await connectPromise
+
+      const callPromise = (client as any)._call('test', undefined, {})
+
+      simulateDisconnect('server')
+
+      await expect(callPromise).rejects.toMatchObject({
+        code: ErrorCode.ConnectionError,
+      })
     })
   })
 

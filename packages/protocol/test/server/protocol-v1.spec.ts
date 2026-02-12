@@ -103,6 +103,30 @@ describe('ProtocolVersion1 - decodeMessage', () => {
     })
   })
 
+  it('decodes Ping payload', () => {
+    const nonce = 123456
+    const buffer = Buffer.concat([
+      Buffer.from([ClientMessageType.Ping]),
+      encodeUInt32(nonce),
+    ])
+    expect(version.decodeMessage(context, buffer)).toEqual({
+      type: ClientMessageType.Ping,
+      nonce,
+    })
+  })
+
+  it('decodes Pong payload', () => {
+    const nonce = 7
+    const buffer = Buffer.concat([
+      Buffer.from([ClientMessageType.Pong]),
+      encodeUInt32(nonce),
+    ])
+    expect(version.decodeMessage(context, buffer)).toEqual({
+      type: ClientMessageType.Pong,
+      nonce,
+    })
+  })
+
   it('decodes ClientStream messages', () => {
     const streamId = 12
     const chunk = Buffer.from('hello')
@@ -223,6 +247,22 @@ describe('ProtocolVersion1 - encodeMessage', () => {
     expect(buffer[5]).toBe(1)
     expect(buffer.subarray(6)).toEqual(Buffer.from([0xbb]))
     expect(encoder.encode).toHaveBeenCalled()
+  })
+
+  it('encodes Pong payload', () => {
+    const buffer = toBuffer(
+      version.encodeMessage(context, ServerMessageType.Pong, { nonce: 42 }),
+    )
+    expect(buffer[0]).toBe(ServerMessageType.Pong)
+    expect(buffer.readUInt32LE(1)).toBe(42)
+  })
+
+  it('encodes Ping payload', () => {
+    const buffer = toBuffer(
+      version.encodeMessage(context, ServerMessageType.Ping, { nonce: 99 }),
+    )
+    expect(buffer[0]).toBe(ServerMessageType.Ping)
+    expect(buffer.readUInt32LE(1)).toBe(99)
   })
 
   it('encodes RPC response with streams metadata', () => {

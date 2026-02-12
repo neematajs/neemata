@@ -77,6 +77,23 @@ export class WsTransportServer
     }
   }
 
+  close(
+    connectionId: string,
+    options: { code?: number; reason?: string } = {},
+  ) {
+    const peer = this.clients.get(connectionId)
+    if (!peer) return
+    this.clients.delete(connectionId)
+    try {
+      peer.close(options.code ?? 1001, options.reason ?? 'Closed')
+    } catch (error) {
+      console.error(
+        `Failed to close WebSocket connection ${connectionId}`,
+        error,
+      )
+    }
+  }
+
   private createWsHooks(): Hooks {
     return defineHooks({
       upgrade: async (req) => {

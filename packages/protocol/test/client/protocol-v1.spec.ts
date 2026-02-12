@@ -166,6 +166,22 @@ describe('ProtocolVersion1 (client) - decodeMessage', () => {
     })
   })
 
+  it('decodes Pong payload', () => {
+    const buffer = buildMessage(ServerMessageType.Pong, encodeUInt32(123))
+    expect(version.decodeMessage(context, buffer)).toEqual({
+      type: ServerMessageType.Pong,
+      nonce: 123,
+    })
+  })
+
+  it('decodes Ping payload', () => {
+    const buffer = buildMessage(ServerMessageType.Ping, encodeUInt32(555))
+    expect(version.decodeMessage(context, buffer)).toEqual({
+      type: ServerMessageType.Ping,
+      nonce: 555,
+    })
+  })
+
   it('decodes client/server stream control messages', () => {
     const pullMessage = buildMessage(
       ServerMessageType.ClientStreamPull,
@@ -272,6 +288,22 @@ describe('ProtocolVersion1 (client) - encodeMessage', () => {
       { take: 10 },
       { addStream: expect.any(Function) },
     )
+  })
+
+  it('encodes Ping payload', () => {
+    const buffer = toBuffer(
+      version.encodeMessage(context, ClientMessageType.Ping, { nonce: 77 }),
+    )
+    expect(buffer[0]).toBe(ClientMessageType.Ping)
+    expect(buffer.readUInt32LE(1)).toBe(77)
+  })
+
+  it('encodes Pong payload', () => {
+    const buffer = toBuffer(
+      version.encodeMessage(context, ClientMessageType.Pong, { nonce: 88 }),
+    )
+    expect(buffer[0]).toBe(ClientMessageType.Pong)
+    expect(buffer.readUInt32LE(1)).toBe(88)
   })
 
   it('encodes RpcAbort', () => {

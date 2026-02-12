@@ -64,6 +64,12 @@ export interface TransportWorker<Type extends ConnectionType = ConnectionType> {
   send?: Type extends 'unidirectional'
     ? never
     : (connectionId: string, buffer: ArrayBufferView) => boolean | null
+  close?: Type extends 'unidirectional'
+    ? never
+    : (
+        connectionId: string,
+        options?: { code?: number; reason?: string },
+      ) => MaybePromise<void>
 }
 
 export interface Transport<

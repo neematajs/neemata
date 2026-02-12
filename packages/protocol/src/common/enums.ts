@@ -7,6 +7,9 @@ export enum ClientMessageType {
   RpcAbort = 11,
   RpcPull = 12,
 
+  Ping = 13,
+  Pong = 14,
+
   ClientStreamPush = 20,
   ClientStreamEnd = 21,
   ClientStreamAbort = 22,
@@ -23,6 +26,9 @@ export enum ServerMessageType {
   RpcStreamChunk = 12,
   RpcStreamEnd = 13,
   RpcStreamAbort = 14,
+
+  Pong = 15,
+  Ping = 16,
 
   ServerStreamPush = 20,
   ServerStreamEnd = 21,

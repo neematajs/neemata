@@ -13,10 +13,17 @@ import type {
   ProtocolFormats,
   MessageContext as ProtocolMessageContext,
 } from '@nmtjs/protocol/server'
-import { anyAbortSignal, isAbortError } from '@nmtjs/common'
+import {
+  anyAbortSignal,
+  createFuture,
+  isAbortError,
+  noopFn,
+  withTimeout,
+} from '@nmtjs/common'
 import { createFactoryInjectable, provision, Scope } from '@nmtjs/core'
 import {
   ClientMessageType,
+  ConnectionType,
   isBlobInterface,
   kBlobKey,
   ProtocolBlob,
@@ -55,13 +62,30 @@ export interface GatewayOptions {
   identity?: ConnectionIdentity
   rpcStreamConsumeTimeout?: number
   streamTimeouts?: Partial<StreamConfig['timeouts']>
+
+  /**
+   * Server-initiated heartbeat for bidirectional connections.
+   * When enabled, gateway periodically sends protocol Ping and expects Pong.
+   */
+  heartbeat?: false | { interval?: number; timeout?: number }
 }
+
+const DEFAULT_GATEWAY_HEARTBEAT_INTERVAL = 15000
+const DEFAULT_GATEWAY_HEARTBEAT_TIMEOUT = 5000
 
 export class Gateway {
   readonly logger: Logger
   readonly connections: ConnectionManager
   readonly rpcs: RpcManager
   readonly blobStreams: BlobStreamsManager
+  private readonly heartbeat = new Map<
+    string,
+    {
+      abortController: AbortController
+      pending: Map<number, ReturnType<typeof createFuture<void>>>
+      nonce: number
+    }
+  >()
   public options: Required<
     Omit<GatewayOptions, 'streamTimeouts'> & {
       streamTimeouts: Required<
@@ -73,6 +97,7 @@ export class Gateway {
   constructor(options: GatewayOptions) {
     this.options = {
       rpcStreamConsumeTimeout: 5000,
+      heartbeat: false,
       streamTimeouts: {
         // TODO: fix these ts errors
         //@ts-expect-error
@@ -116,6 +141,93 @@ export class Gateway {
       if (proxyable) hosts.push({ url, type: proxyable })
     }
     return hosts
+  }
+
+  private resolveHeartbeatConfig() {
+    if (this.options.heartbeat === false) return null
+    if (!this.options.heartbeat) return null
+    return {
+      interval:
+        this.options.heartbeat.interval ?? DEFAULT_GATEWAY_HEARTBEAT_INTERVAL,
+      timeout:
+        this.options.heartbeat.timeout ?? DEFAULT_GATEWAY_HEARTBEAT_TIMEOUT,
+    }
+  }
+
+  private startHeartbeat(connection: GatewayConnection) {
+    const config = this.resolveHeartbeatConfig()
+    if (!config) return
+    if (connection.type !== ConnectionType.Bidirectional) return
+    if (this.heartbeat.has(connection.id)) return
+
+    const abortController = new AbortController()
+    const signal = anyAbortSignal(
+      connection.abortController.signal,
+      abortController.signal,
+    )
+
+    const state = {
+      abortController,
+      pending: new Map<number, ReturnType<typeof createFuture<void>>>(),
+      nonce: 0,
+    }
+    this.heartbeat.set(connection.id, state)
+
+    const transportWorker =
+      this.options.transports[connection.transport]?.transport
+    const loop = async () => {
+      while (!signal.aborted && this.connections.has(connection.id)) {
+        await new Promise((resolve) => setTimeout(resolve, config.interval))
+        if (signal.aborted || !this.connections.has(connection.id)) break
+
+        const ctx = this.createMessageContext(connection, connection.transport)
+        const nonce = state.nonce++
+
+        const future = createFuture<void>()
+        state.pending.set(nonce, future)
+
+        try {
+          transportWorker.send?.(
+            connection.id,
+            connection.protocol.encodeMessage(ctx, ServerMessageType.Ping, {
+              nonce,
+            }),
+          )
+
+          await withTimeout(
+            future.promise,
+            config.timeout,
+            new Error('Heartbeat timeout'),
+          )
+        } catch {
+          state.pending.delete(nonce)
+          try {
+            transportWorker.close?.(connection.id, {
+              code: 1001,
+              reason: 'heartbeat_timeout',
+            })
+          } finally {
+            await this.closeConnection(connection.id)
+          }
+          break
+        }
+      }
+    }
+
+    loop().catch(noopFn)
+  }
+
+  private stopHeartbeat(connectionId: string, reason?: any) {
+    const state = this.heartbeat.get(connectionId)
+    if (!state) return
+    this.heartbeat.delete(connectionId)
+    state.abortController.abort(reason)
+
+    if (state.pending.size) {
+      const error = new Error('Heartbeat stopped', { cause: reason })
+      for (const pending of state.pending.values()) pending.reject(error)
+      state.pending.clear()
+    }
   }
 
   async stop() {
@@ -310,6 +422,8 @@ export class Gateway {
 
         this.connections.add(connection)
 
+        this.startHeartbeat(connection)
+
         container.provide(
           injectables.connectionAbortSignal,
           abortController.signal,
@@ -347,6 +461,7 @@ export class Gateway {
     const logger = this.logger.child({ transport })
     return async (connectionId) => {
       logger.debug({ connectionId }, 'Disconnecting connection')
+      this.stopHeartbeat(connectionId, 'disconnect')
       await this.closeConnection(connectionId)
     }
   }
@@ -368,6 +483,28 @@ export class Gateway {
         logger.trace(message, 'Received message')
 
         switch (message.type) {
+          case ClientMessageType.Ping: {
+            if (connection.type === ConnectionType.Bidirectional) {
+              messageContext.transport.send!(
+                connectionId,
+                connection.protocol.encodeMessage(
+                  messageContext,
+                  ServerMessageType.Pong,
+                  { nonce: message.nonce },
+                ),
+              )
+            }
+            break
+          }
+          case ClientMessageType.Pong: {
+            const hb = this.heartbeat.get(connectionId)
+            const pending = hb?.pending.get(message.nonce)
+            if (pending) {
+              hb!.pending.delete(message.nonce)
+              pending.resolve()
+            }
+            break
+          }
           case ClientMessageType.Rpc: {
             const rpcContext = this.createRpcContext(
               connection,
@@ -596,6 +733,13 @@ export class Gateway {
   protected async closeConnection(connectionId: string) {
     if (this.connections.has(connectionId)) {
       const connection = this.connections.get(connectionId)
+      this.stopHeartbeat(connectionId, 'close')
+
+      const transportWorker =
+        this.options.transports[connection.transport]?.transport
+      if (connection.type === ConnectionType.Bidirectional) {
+        transportWorker?.close?.(connectionId, { code: 1001, reason: 'closed' })
+      }
       connection.abortController.abort()
       connection.container.dispose()
     }
