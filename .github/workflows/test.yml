@@ -75,5 +75,5 @@ jobs:
         run: pnpm exec playwright install chromium
       - run: pnpm run build
       - run: pnpm run test:unit
-      - run: pnpm run test:integration
       - run: pnpm --filter playground run test
+      - run: pnpm run test:integration
