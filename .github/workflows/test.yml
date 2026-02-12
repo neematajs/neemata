@@ -73,7 +73,4 @@ jobs:
       - name: Install Playwright browser (macOS)
         if: matrix.os == 'macos-latest'
         run: pnpm exec playwright install chromium
-      - run: pnpm run build
-      - run: pnpm run test:unit
-      - run: pnpm --filter playground run test
-      - run: pnpm run test:integration
+      - run: pnpm run test
