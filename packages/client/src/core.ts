@@ -430,6 +430,11 @@ export abstract class BaseClient<
             controller.abort()
           })
         }
+
+        if (options._stream_response && typeof value === 'function') {
+          return value
+        }
+
         controller.abort()
         return value
       },
@@ -820,7 +825,36 @@ export abstract class BaseClient<
         })
         this.rpcStreams.add(callId, stream)
         call.resolve(({ signal }: { signal?: AbortSignal }) => {
-          response.stream.pipeTo(stream.writable, { signal }).catch(noopFn)
+          const reader = response.stream.getReader()
+
+          let onAbort: (() => void) | undefined
+          if (signal) {
+            onAbort = () => {
+              reader.cancel(signal.reason).catch(noopFn)
+              this.rpcStreams.abort(callId).catch(noopFn)
+            }
+            if (signal.aborted) onAbort()
+            else signal.addEventListener('abort', onAbort, { once: true })
+          }
+
+          void (async () => {
+            try {
+              while (true) {
+                const { done, value } = await reader.read()
+                if (done) break
+                await this.rpcStreams.push(callId, value)
+              }
+              await this.rpcStreams.end(callId)
+            } catch {
+              await this.rpcStreams.abort(callId).catch(noopFn)
+            } finally {
+              reader.releaseLock()
+              if (signal && onAbort) {
+                signal.removeEventListener('abort', onAbort)
+              }
+            }
+          })()
+
           return stream
         })
       } else {

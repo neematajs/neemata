@@ -152,7 +152,7 @@ export class HttpTransportServer
           const type = contentType || 'application/octet-stream'
           const contentLength = request.headers.get('content-length')
           const size = contentLength
-            ? Number.parseInt(contentLength)
+            ? Number.parseInt(contentLength, 10)
             : undefined
           payload = new ProtocolClientStream(-1, { size, type })
           bodyStream.pipe(payload)
@@ -227,10 +227,16 @@ export class HttpTransportServer
           headers: responseHeaders,
         })
       } else if (isAsyncIterable(result)) {
-        responseHeaders.set('Content-Type', connection.encoder.contentType)
-        responseHeaders.set('Transfer-Encoding', 'chunked')
+        responseHeaders.set('Content-Type', 'text/event-stream')
+        responseHeaders.set('Cache-Control', 'no-cache, no-transform')
+        responseHeaders.set(
+          'X-Stream-Content-Type',
+          connection.encoder.contentType,
+        )
+        responseHeaders.set('X-Accel-Buffering', 'no')
         const stream = new ReadableStream({
           async start(controller) {
+            const encoder = new TextEncoder()
             try {
               for await (const chunk of result) {
                 const encoded = connection.encoder.encode(chunk)
@@ -239,7 +245,7 @@ export class HttpTransportServer
                   encoded.byteOffset,
                   encoded.byteLength,
                 ).toString('base64')
-                controller.enqueue(`data: ${base64}\n\n`)
+                controller.enqueue(encoder.encode(`data: ${base64}\n\n`))
               }
               controller.close()
             } catch (error) {

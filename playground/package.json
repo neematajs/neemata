@@ -15,6 +15,7 @@
     "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.57.0",
     "@nmtjs/client": "workspace:*",
     "@nmtjs/contract": "workspace:*",
+    "@nmtjs/http-client": "workspace:*",
     "@nmtjs/json-format": "workspace:*",
     "@nmtjs/protocol": "workspace:*",
     "@nmtjs/proxy": "catalog:",

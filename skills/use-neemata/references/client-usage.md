@@ -58,7 +58,17 @@ const client = new RuntimeClient<typeof appContract>(
     plugins: [reconnectPlugin()],
   },
   HttpTransportClient,
-  { url: 'http://localhost:4000' },
+  {
+    url: 'http://localhost:4000',
+    affinity: {
+      // Optional: custom proxy affinity header key
+      key: 'session-key-123',
+      // Optional: custom header name (default: x-nmt-affinity-key)
+      headerName: 'x-nmt-affinity-key',
+      // Optional: cookie forwarding mode for proxy sticky cookie
+      credentials: 'include',
+    },
+  },
 )
 ```
 

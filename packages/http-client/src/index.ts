@@ -6,9 +6,10 @@ import type {
 } from '@nmtjs/client'
 import type { ProtocolVersion } from '@nmtjs/protocol'
 import type { BaseClientFormat } from '@nmtjs/protocol/client'
-import { createFuture } from '@nmtjs/common'
 import { ConnectionType, ErrorCode, ProtocolBlob } from '@nmtjs/protocol'
 import { ProtocolError } from '@nmtjs/protocol/client'
+
+import { HttpStreamParser } from './http-stream-parser.ts'
 
 type DecodeBase64Function = (data: string) => ArrayBufferView
 
@@ -41,6 +42,7 @@ export type HttpClientTransportOptions = {
   url: string
   debug?: boolean
   EventSource?: typeof EventSource
+  fetch?: typeof fetch
   decodeBase64?: DecodeBase64Function
 }
 
@@ -57,6 +59,16 @@ export class HttpTransportClient
   ) {
     this.options = { debug: false, ...options }
     this.decodeBase64 = createDecodeBase64(options.decodeBase64)
+  }
+
+  private getFetch(): typeof fetch {
+    const implementation = this.options.fetch ?? globalThis.fetch
+    if (!implementation) {
+      throw new Error(
+        'Fetch API is not available. Provide HttpClientTransportOptions.fetch',
+      )
+    }
+    return implementation
   }
 
   url({
@@ -81,6 +93,7 @@ export class HttpTransportClient
   ) {
     const { procedure, payload } = rpc
     const requestHeaders = new Headers()
+    const fetchImpl = this.getFetch()
 
     const url = this.url({ application: client.application, procedure })
 
@@ -98,38 +111,85 @@ export class HttpTransportClient
     }
 
     if (options._stream_response) {
-      const _constructor = this.options.EventSource
-        ? this.options.EventSource
-        : EventSource
-      const source = new _constructor(url.toString(), { withCredentials: true })
-      const future = createFuture<{
-        type: 'rpc_stream'
-        stream: ReadableStream<ArrayBufferView>
-      }>()
-      const { readable, writable } = new TransformStream()
-      const writer = writable.getWriter()
-      source.addEventListener('open', () =>
-        future.resolve({ type: 'rpc_stream', stream: readable }),
-      )
-      source.addEventListener('close', () => writable.close())
-      source.addEventListener('error', (event) => {
-        const error = new Error('Stream error', { cause: event })
-        future.reject(error)
-        writable.abort(error)
+      const response = await fetchImpl(url.toString(), {
+        body,
+        method: 'POST',
+        headers: requestHeaders,
+        signal: options.signal,
+        credentials: 'include',
+        keepalive: true,
       })
-      source.addEventListener('message', (event) => {
+
+      if (!response.ok) {
         try {
-          const buffer = this.decodeBase64(event.data)
-          writer.write(buffer)
+          const buffer = await response.bytes()
+          const error = client.format.decode(buffer) as {
+            code?: string
+            message?: string
+            data?: unknown
+          }
+          throw new ProtocolError(
+            error.code || ErrorCode.ClientRequestError,
+            error.message || response.statusText,
+            error.data,
+          )
         } catch (cause) {
-          const error = new Error('Failed to decode stream message', { cause })
-          writable.abort(error)
-          source.close()
+          if (cause instanceof ProtocolError) throw cause
+          throw new ProtocolError(
+            ErrorCode.ClientRequestError,
+            `HTTP ${response.status}: ${response.statusText}`,
+          )
         }
+      }
+
+      if (!response.body) {
+        throw new ProtocolError(
+          ErrorCode.ClientRequestError,
+          'Empty stream response body',
+        )
+      }
+
+      const stream = new ReadableStream<ArrayBufferView>({
+        start: async (controller) => {
+          const reader = response.body!.getReader()
+          const decoder = new TextDecoder()
+          const parser = new HttpStreamParser()
+
+          try {
+            while (true) {
+              const { done, value } = await reader.read()
+              if (done) break
+              const chunk = decoder.decode(value, { stream: true })
+              parser.push(chunk, (eventData) => {
+                controller.enqueue(this.decodeBase64(eventData))
+              })
+            }
+
+            const tail = decoder.decode()
+            parser.push(tail, (eventData) => {
+              controller.enqueue(this.decodeBase64(eventData))
+            })
+            parser.finish((eventData) => {
+              controller.enqueue(this.decodeBase64(eventData))
+            })
+
+            controller.close()
+          } catch (cause) {
+            controller.error(new Error('Stream error', { cause }))
+          } finally {
+            reader.releaseLock()
+          }
+        },
+        cancel: async () => {
+          try {
+            await response.body?.cancel()
+          } catch {}
+        },
       })
-      return future.promise
+
+      return { type: 'rpc_stream' as const, stream }
     } else {
-      const response = await fetch(url.toString(), {
+      const response = await fetchImpl(url.toString(), {
         body,
         method: 'POST',
         headers: requestHeaders,

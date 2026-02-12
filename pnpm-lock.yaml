@@ -373,6 +373,9 @@ importers:
       '@nmtjs/contract':
         specifier: workspace:*
         version: link:../packages/contract
+      '@nmtjs/http-client':
+        specifier: workspace:*
+        version: link:../packages/http-client
       '@nmtjs/http-transport':
         specifier: workspace:*
         version: link:../packages/http-transport
