@@ -317,13 +317,22 @@ Marker type for blob fields in input/output schemas.
 
 ## `t.*` Namespace (Type System)
 
-Wraps `zod/mini` with encode/decode for protocol serialization.
+Type schemas for RPC validation and protocol serialization.
+
+Neemata types are **bidirectional**:
+
+- **decode**: wire format → app values (e.g. ISO string → `Date`)
+- **encode**: app values → wire format (e.g. `Date` → ISO string)
+
+For full details (including Standard Schema support), see [Type System](type-system.md).
 
 ### Primitives
 
 ```typescript
-t.string()      // Chainable: .min(n), .max(n), .email(), .url(), .uuid(), .pattern(regex)
-t.number()      // Chainable: .positive(), .negative(), .int(), .gt(n), .gte(n), .lt(n), .lte(n)
+t.string()      // Chainable: .min(n), .max(n), .email(), .url(), .uuid(), .pattern(...)
+t.number()      // Chainable: .positive(), .negative(), .gt(n), .gte(n), .lt(n), .lte(n)
+t.integer()
+t.bigInt()      // bigint → string (wire)
 t.boolean()
 t.null()
 t.any()
@@ -357,15 +366,35 @@ t.custom({ decode, encode })   // Custom bidirectional transform
 .default(value)     // Default value
 .title('Name')
 .description('...')
-.examples([...])
+.examples(a, b, c)
 .meta({...})
 ```
 
 ### Type Inference
 
 ```typescript
-type Input = t.infer.decode.input<typeof myType>
-type Output = t.infer.decode.output<typeof myType>
+// Decode/encode modes
+type DecodeInput = t.infer.decode.input<typeof myType>
+type DecodeOutput = t.infer.decode.output<typeof myType>
+type EncodeInput = t.infer.encode.input<typeof myType>
+type EncodeOutput = t.infer.encode.output<typeof myType>
+
+// Raw modes (pre/post transforms)
+type DecodeRawInput = t.infer.decodeRaw.input<typeof myType>
+type DecodeRawOutput = t.infer.decodeRaw.output<typeof myType>
+type EncodeRawInput = t.infer.encodeRaw.input<typeof myType>
+type EncodeRawOutput = t.infer.encodeRaw.output<typeof myType>
+```
+
+### Standard Schema (quick)
+
+```typescript
+// Standard Schema v1 (defaults to decode mode)
+myType['~standard']
+
+// Explicit modes
+myType.standard.decode['~standard']
+myType.standard.encode['~standard']
 ```
 
 ---

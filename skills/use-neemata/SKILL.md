@@ -108,6 +108,7 @@ project/
 ## References
 
 - [API Quick Reference](references/api-reference.md) — Function signatures and options for `n.*`, `t.*`, `c.*` APIs
+- [Type System](references/type-system.md) — `t.*` encode/decode modes, inference, and Standard Schema (JSON Schema) support
 - [RPC](references/rpc.md) — Procedures, routers, streaming, blobs, contracts, guards, middleware, filters, error handling
 - [Injectables](references/injectables.md) — DI scopes, injectable builders (value/lazy/factory), built-in `n.inject.*`
 - [Server Setup](references/server-setup.md) — `n.app()`, `n.server()`, `defineConfig()`, project structure
