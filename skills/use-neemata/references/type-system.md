@@ -5,11 +5,13 @@ description: Neemata `t.*` schemas — encode/decode modes, transforms, inferenc
 
 # Type System (`t.*`)
 
-Import from `nmtjs`:
+Import from `nmtjs` or `@nmtjs/type`:
 
 ```ts
 import { t } from 'nmtjs'
+import { t } from '@nmtjs/type'
 ```
+
 
 A Neemata schema is both:
 
@@ -50,14 +52,6 @@ const encoded = user.encode({
 // encoded.id: string
 // encoded.createdAt: string
 ```
-
-### Raw modes
-
-For tooling, Neemata also exposes “raw” inference variants:
-
-- `t.infer.decodeRaw.*` / `t.infer.encodeRaw.*`
-
-These correspond to the underlying Zod input/output types *before/after* Neemata’s transform wiring.
 
 ## Builders
 
@@ -151,12 +145,6 @@ type DecodeOutput = t.infer.decode.output<typeof user>
 
 type EncodeInput = t.infer.encode.input<typeof user>
 type EncodeOutput = t.infer.encode.output<typeof user>
-
-type DecodeRawInput = t.infer.decodeRaw.input<typeof user>
-type DecodeRawOutput = t.infer.decodeRaw.output<typeof user>
-
-type EncodeRawInput = t.infer.encodeRaw.input<typeof user>
-type EncodeRawOutput = t.infer.encodeRaw.output<typeof user>
 ```
 
 ## Standard Schema v1 support (and JSON Schema)

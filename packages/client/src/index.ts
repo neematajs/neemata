@@ -1,5 +1,6 @@
 export * from './core.ts'
 export * from './events.ts'
+export * from './plugins/index.ts'
 export * from './transformers.ts'
 export * from './transport.ts'
 export * from './types.ts'

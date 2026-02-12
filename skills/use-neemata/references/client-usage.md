@@ -1,15 +1,23 @@
 ---
 title: Client Usage
-description: Setting up type-safe clients with StaticClient, making RPC calls,
-  consuming streams, and sending/receiving blobs.
+description: Setting up StaticClient and RuntimeClient, composing connectivity
+  plugins, and performing calls, streams, and blob transfers.
 ---
 
 # Client Usage
 
-## Client Setup
+## Client Packages
+
+- Base client API, shared types, and plugins: `@nmtjs/client`
+- Static proxy client: `@nmtjs/client/static`
+- Runtime prebuilt client: `@nmtjs/client/runtime`
+- Transport implementations: `@nmtjs/ws-client`, `@nmtjs/http-client`
+
+## StaticClient Setup
 
 ```typescript
-import { StaticClient, ProtocolBlob } from 'nmtjs'
+import { reconnectPlugin } from '@nmtjs/client'
+import { StaticClient } from '@nmtjs/client/static'
 import { WsTransportClient } from '@nmtjs/ws-client'
 import { JsonFormat } from '@nmtjs/json-format/client'
 import { ProtocolVersion } from '@nmtjs/protocol'
@@ -21,6 +29,7 @@ const client = new StaticClient<typeof appContract>(
     protocol: ProtocolVersion.v1,
     format: new JsonFormat(),
     timeout: 5000,
+    plugins: [reconnectPlugin()],
   },
   WsTransportClient,
   { url: 'ws://localhost:4000' },
@@ -29,9 +38,82 @@ const client = new StaticClient<typeof appContract>(
 await client.connect()
 ```
 
-- `StaticClient` — Proxy-based, type-safe calls using contract types at compile time
-- `RuntimeClient` — Pre-built callers with runtime encode/decode via contract schemas
-- Transport options: `WsTransportClient` (bidirectional) or `HttpTransportClient` (unidirectional)
+- `StaticClient` is proxy-based and resolves procedure paths lazily from property access.
+
+## RuntimeClient Setup
+
+```typescript
+import { reconnectPlugin } from '@nmtjs/client'
+import { RuntimeClient } from '@nmtjs/client/runtime'
+import { HttpTransportClient } from '@nmtjs/http-client'
+import { JsonFormat } from '@nmtjs/json-format/client'
+import { ProtocolVersion } from '@nmtjs/protocol'
+import type { appContract } from './contracts.ts'
+
+const client = new RuntimeClient<typeof appContract>(
+  {
+    contract: appContract,
+    protocol: ProtocolVersion.v1,
+    format: new JsonFormat(),
+    plugins: [reconnectPlugin()],
+  },
+  HttpTransportClient,
+  { url: 'http://localhost:4000' },
+)
+```
+
+- `RuntimeClient` builds callers eagerly and validates encode/decode with contract schemas at runtime.
+
+## Connectivity Plugins
+
+Connectivity behavior is fully composed via plugins.
+
+```typescript
+import {
+  browserConnectivityPlugin,
+  heartbeatPlugin,
+  reconnectPlugin,
+} from '@nmtjs/client'
+import { StaticClient } from '@nmtjs/client/static'
+import { WsTransportClient } from '@nmtjs/ws-client'
+import { JsonFormat } from '@nmtjs/json-format/client'
+import { ProtocolVersion } from '@nmtjs/protocol'
+import type { appContract } from './contracts.ts'
+
+const client = new StaticClient(
+  {
+    contract: appContract,
+    protocol: ProtocolVersion.v1,
+    format: new JsonFormat(),
+    plugins: [
+      reconnectPlugin(),
+      browserConnectivityPlugin(),
+      heartbeatPlugin({ interval: 15000, timeout: 5000 }),
+    ],
+  },
+  WsTransportClient,
+  { url: 'ws://localhost:4000' },
+)
+```
+
+- `reconnectPlugin()` — Exponential backoff reconnect loop
+- `browserConnectivityPlugin()` — Reconnect nudges on `pageshow`, `online`, `focus`, and `visibilitychange`
+- `heartbeatPlugin()` — Ping/Pong liveness checks and reconnect on timeout
+
+## Plugin Order
+
+Plugin order is deterministic and significant.
+
+- `onInit`, `onConnect`, `onServerMessage` run in registration order.
+- `onDisconnect`, `dispose` run in reverse registration order.
+
+Recommended order for connectivity stack:
+
+1. `reconnectPlugin()`
+2. `browserConnectivityPlugin()`
+3. `heartbeatPlugin()`
+
+This ensures setup flows top-down while teardown flows bottom-up (heartbeat stops before reconnect teardown).
 
 ## RPC Calls
 
@@ -65,7 +147,7 @@ const stream = await client.stream.data({}, { signal: controller.signal })
 ## Blob Upload
 
 ```typescript
-import { ProtocolBlob } from 'nmtjs'
+import { ProtocolBlob } from '@nmtjs/client'
 
 const blob = ProtocolBlob.from('file contents', {
   type: 'text/plain',
@@ -92,3 +174,8 @@ for await (const chunk of blob) {
 ```typescript
 await client.disconnect()
 ```
+
+## Migration Note
+
+- Connectivity behavior is plugin-driven.
+- Legacy option flags such as autoreconnect and heartbeat are replaced by explicit plugin composition.

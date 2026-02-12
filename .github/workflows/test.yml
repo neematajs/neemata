@@ -67,6 +67,10 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pnpm-store-
       - run: pnpm install
-      - run: pnpm run build
-      - run: pnpm run test:unit
-      - run: pnpm run test:integration
+      - name: Install Playwright browser (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Install Playwright browser (macOS)
+        if: matrix.os == 'macos-latest'
+        run: pnpm exec playwright install chromium
+      - run: pnpm run test
