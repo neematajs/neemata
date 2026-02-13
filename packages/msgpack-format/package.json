@@ -6,13 +6,29 @@
     "clean-build": "rm -rf ./dist"
   },
   "exports": {
-    "./client": "./src/client.ts",
-    "./server": "./src/server.ts"
+    "./client": {
+      "types": "./src/client.ts",
+      "import": "./dist/client.js",
+      "module-sync": "./dist/client.js"
+    },
+    "./server": {
+      "types": "./src/server.ts",
+      "import": "./dist/server.js",
+      "module-sync": "./dist/server.js"
+    }
   },
   "publishConfig": {
     "exports": {
-      "./client": "./dist/client.js",
-      "./server": "./dist/server.js"
+      "./client": {
+        "types": "./dist/client.d.ts",
+        "import": "./dist/client.js",
+        "module-sync": "./dist/client.js"
+      },
+      "./server": {
+        "types": "./dist/server.d.ts",
+        "import": "./dist/server.js",
+        "module-sync": "./dist/server.js"
+      }
     }
   },
   "dependencies": {

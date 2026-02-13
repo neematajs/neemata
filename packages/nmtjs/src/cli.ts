@@ -1,5 +1,4 @@
-#!/usr/bin/env node --enable-source-maps
-
+import { existsSync } from 'node:fs'
 import { relative, resolve } from 'node:path'
 import process from 'node:process'
 
@@ -19,11 +18,30 @@ const commonArgs = {
   config: {
     type: 'string',
     alias: 'c',
-    default: './neemata.config.ts',
     description: 'Path to Neemata config file',
     required: false,
   },
 } satisfies Record<string, ArgDef>
+
+function resolveConfigPath(configPathArg: string | undefined): string {
+  if (configPathArg) {
+    return resolve(configPathArg)
+  }
+
+  const tsConfigPath = resolve('./neemata.config.ts')
+  if (existsSync(tsConfigPath)) {
+    return tsConfigPath
+  }
+
+  const jsConfigPath = resolve('./neemata.config.js')
+  if (existsSync(jsConfigPath)) {
+    return jsConfigPath
+  }
+
+  throw new Error(
+    'Failed to resolve Neemata config file. Create neemata.config.ts or neemata.config.js, or pass --config.',
+  )
+}
 
 let config: NeemataConfig
 let viteConfigOptions: ViteConfigOptions
@@ -32,11 +50,15 @@ let applicationImports: Record<
   { path: string; specifier: string; type: 'neemata' | 'custom' }
 >
 
+async function runPrepare() {
+  await generateTypings(applicationImports)
+}
+
 const mainCommand = defineCommand({
   meta: { description: 'Neemata CLI' },
   args: { ...commonArgs },
   async setup(ctx) {
-    const configPath = resolve(ctx.args.config as string)
+    const configPath = resolveConfigPath(ctx.args.config as string | undefined)
     config = await import(configPath).then((m) => m.default)
 
     for (const env of config.env) {
@@ -82,11 +104,12 @@ const mainCommand = defineCommand({
   subCommands: {
     prepare: defineCommand({
       async run(ctx) {
-        await generateTypings(applicationImports)
+        await runPrepare()
       },
     }),
     dev: defineCommand({
       async run(ctx) {
+        await runPrepare()
         const { runner } = await createMainServer(
           viteConfigOptions,
           'development',
@@ -97,6 +120,7 @@ const mainCommand = defineCommand({
     }),
     preview: defineCommand({
       async run(ctx) {
+        await runPrepare()
         const { runner } = await createMainServer(
           viteConfigOptions,
           'production',
@@ -107,6 +131,7 @@ const mainCommand = defineCommand({
     }),
     build: defineCommand({
       async run(ctx) {
+        await runPrepare()
         const builder = await createBuilder(viteConfigOptions, config)
         await builder.build()
       },

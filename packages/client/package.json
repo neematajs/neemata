@@ -6,15 +6,39 @@
     "clean-build": "rm -rf ./dist"
   },
   "exports": {
-    ".": "./src/index.ts",
-    "./runtime": "./src/clients/runtime.ts",
-    "./static": "./src/clients/static.ts"
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./dist/index.js",
+      "module-sync": "./dist/index.js"
+    },
+    "./runtime": {
+      "types": "./src/clients/runtime.ts",
+      "import": "./dist/clients/runtime.js",
+      "module-sync": "./dist/clients/runtime.js"
+    },
+    "./static": {
+      "types": "./src/clients/static.ts",
+      "import": "./dist/clients/static.js",
+      "module-sync": "./dist/clients/static.js"
+    }
   },
   "publishConfig": {
     "exports": {
-      ".": "./dist/index.js",
-      "./runtime": "./dist/clients/runtime.js",
-      "./static": "./dist/clients/static.js"
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js",
+        "module-sync": "./dist/index.js"
+      },
+      "./runtime": {
+        "types": "./dist/clients/runtime.d.ts",
+        "import": "./dist/clients/runtime.js",
+        "module-sync": "./dist/clients/runtime.js"
+      },
+      "./static": {
+        "types": "./dist/clients/static.d.ts",
+        "import": "./dist/clients/static.js",
+        "module-sync": "./dist/clients/static.js"
+      }
     }
   },
   "peerDependencies": {

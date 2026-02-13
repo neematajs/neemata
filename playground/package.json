@@ -3,8 +3,6 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "prepare": "neemata prepare",
-    "postinstall": "$npm_execpath prepare",
     "dev": "NODE_OPTIONS=--experimental-transform-types neemata dev",
     "build": "neemata build",
     "preview": "NODE_OPTIONS=--experimental-transform-types neemata preview",

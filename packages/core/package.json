@@ -3,13 +3,29 @@
   "description": "Dependency injection, hooks, and scoped lifecycle management for Neemata.",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts",
-    "./constants": "./src/constants.ts"
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./dist/index.js",
+      "module-sync": "./dist/index.js"
+    },
+    "./constants": {
+      "types": "./src/constants.ts",
+      "import": "./dist/constants.js",
+      "module-sync": "./dist/constants.js"
+    }
   },
   "publishConfig": {
     "exports": {
-      ".": "./dist/index.js",
-      "./constants": "./dist/constants.js"
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js",
+        "module-sync": "./dist/index.js"
+      },
+      "./constants": {
+        "types": "./dist/constants.d.ts",
+        "import": "./dist/constants.js",
+        "module-sync": "./dist/constants.js"
+      }
     }
   },
   "scripts": {
