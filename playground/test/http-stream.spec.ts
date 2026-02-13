@@ -78,17 +78,6 @@ async function startServer(command: 'preview', timeout = 15000) {
       })
     }, 250)
 
-    const checkReady = (data: Buffer) => {
-      const output = data.toString()
-      if (
-        output.includes('started') ||
-        output.includes('listening') ||
-        output.includes('4000')
-      ) {
-        finish()
-      }
-    }
-
     const onError = (err: Error) => finish(err)
     const onExit = (code: number | null) => {
       if (code !== 0 && code !== null) {
@@ -99,14 +88,9 @@ async function startServer(command: 'preview', timeout = 15000) {
     const cleanup = () => {
       globalThis.clearTimeout(timeoutId)
       globalThis.clearInterval(readinessInterval)
-      serverProcess.stdout?.off('data', checkReady)
-      serverProcess.stderr?.off('data', checkReady)
       serverProcess.off('error', onError)
       serverProcess.off('exit', onExit)
     }
-
-    serverProcess.stdout?.on('data', checkReady)
-    serverProcess.stderr?.on('data', checkReady)
 
     serverProcess.on('error', onError)
     serverProcess.on('exit', onExit)
