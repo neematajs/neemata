@@ -98,6 +98,7 @@ export class HttpTransportClient
     const url = this.url({ application: client.application, procedure })
 
     if (client.auth) requestHeaders.set('Authorization', client.auth)
+    requestHeaders.set('Accept', client.format.contentType)
 
     let body: any
 

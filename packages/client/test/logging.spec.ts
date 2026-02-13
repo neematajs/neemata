@@ -66,7 +66,7 @@ const createMockUnidirectionalTransport = () => {
     type: ConnectionType.Unidirectional as const,
     call: vi.fn(async (context, input, _options) => ({
       type: 'rpc' as const,
-      result: context.format.encodeRPC({ ok: true, echoed: input.payload }),
+      result: context.format.encode({ ok: true, echoed: input.payload }),
     })),
   }
 
@@ -120,9 +120,6 @@ const baseOptions: BaseClientOptions<typeof testContract> = {
   protocol: 1,
   format: mockFormat as any,
 }
-
-const decodeRpcPayload = (data: unknown) =>
-  mockFormat.decodeRPC(data as ArrayBufferView)
 
 describe('loggingPlugin', () => {
   it('emits rpc_request and rpc_response for unidirectional rpc call', async () => {
@@ -241,10 +238,7 @@ describe('loggingPlugin', () => {
     ) as Extract<ClientLogEvent, { kind: 'server_message' }>
 
     expect(requestEvent.body).toEqual(payload)
-    expect(decodeRpcPayload(responseEvent.body)).toEqual({
-      ok: true,
-      echoed: payload,
-    })
+    expect(responseEvent.body).toEqual({ ok: true, echoed: payload })
     expect(serverMessageEvent.body).toEqual({ nested: true })
   })
 
@@ -274,7 +268,7 @@ describe('loggingPlugin', () => {
 
     await Promise.resolve()
 
-    expect(decodeRpcPayload(result)).toEqual({ ok: true, echoed: {} })
+    expect(result).toEqual({ ok: true, echoed: {} })
     expect(onSinkError).toHaveBeenCalledTimes(2)
   })
 

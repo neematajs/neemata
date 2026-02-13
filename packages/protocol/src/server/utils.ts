@@ -11,12 +11,12 @@ export const getFormat = (
   format: ProtocolFormats,
   { accept, contentType }: ResolveFormatParams,
 ) => {
-  const encoder = contentType ? format.supportsEncoder(contentType) : undefined
-  if (!encoder)
-    throw new UnsupportedContentTypeError('Unsupported Content type')
+  const encoder = accept ? format.supportsEncoder(accept) : undefined
+  if (!encoder) throw new UnsupportedAcceptTypeError('Unsupported Accept type')
 
-  const decoder = accept ? format.supportsDecoder(accept) : undefined
-  if (!decoder) throw new UnsupportedAcceptTypeError('Unsupported Accept type')
+  const decoder = contentType ? format.supportsDecoder(contentType) : undefined
+  if (!decoder)
+    throw new UnsupportedContentTypeError('Unsupported Content type')
 
   return { encoder, decoder }
 }
