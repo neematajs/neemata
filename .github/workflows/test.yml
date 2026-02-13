@@ -69,7 +69,7 @@ jobs:
             ${{ runner.os }}-pnpm-store-
       - run: pnpm install
       - name: Install Playwright browser (Linux)
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'blacksmith-4vcpu-ubuntu-2404'
         run: pnpm exec playwright install --with-deps chromium
       - name: Install Playwright browser (macOS)
         if: matrix.os == 'macos-latest'
