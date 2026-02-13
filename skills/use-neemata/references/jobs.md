@@ -45,6 +45,20 @@ const processUserJob = n.job({
   .return()
 ```
 
+## How Job Execution Works
+
+At runtime, each job execution follows this flow:
+
+1. Decode job input and restore checkpointed state (`progress`, completed step results, next step index)
+2. Resolve job-level dependencies (`dependencies` on `n.job`)
+3. Build execution-scoped `data` once (if `data` callback is provided)
+4. Run remaining steps in order (respecting optional step conditions)
+5. Merge each step output into the accumulated result
+6. Run `.return()` handler to produce the final typed output
+
+On retry with checkpoint resume (`clearState: false`), completed steps are not re-executed.
+On retry from scratch (`clearState: true`), execution restarts from step 0.
+
 ### Job Options
 
 | Option | Type | Description |
@@ -55,7 +69,7 @@ const processUserJob = n.job({
 | `output` | `t.*` schema | Final output schema |
 | `progress` | `t.*` schema | Optional user-defined progress state schema |
 | `dependencies` | `Record<string, Injectable>` | DI dependencies for job context |
-| `data` | `(ctx, input, progress) => Data` | Factory for per-execution context data |
+| `data` | `(ctx, input, progress) => Data` | Async/sync factory for ephemeral execution context shared across all steps/hooks |
 | `attempts` | `number` | Max retry attempts |
 | `backoff` | `JobBackoffOptions` | Retry strategy: `{ type: 'fixed' | 'exponential', delay: number, jitter?: number }` |
 | `concurrency` | `number` | Max concurrent executions (defaults to pool capacity / jobs) |
@@ -70,6 +84,61 @@ const processUserJob = n.job({
 4. `.beforeEach(handler)` / `.afterEach(handler)` — per-step hooks (after `.return()`)
 5. `.onError(handler)` — per-step error hook; return `false` to make error unrecoverable
 
+## `data` Callback (Functionality & Usability)
+
+`data` builds per-run context once, before steps execute, and that value is reused by all steps/hooks in the same run.
+
+```typescript
+data: async (ctx, input, progress) => ({ ... })
+```
+
+- Receives decoded `ctx` (job dependencies), `input`, and checkpointed `progress`
+- Available in step handlers (`handler(ctx, stepInput, data)`), conditions, and job hooks/`.return()` via `params.data`
+- Not checkpointed: recomputed on each retry/restart
+
+Use `data` for runtime helpers/shared derived values. Use `progress` + `n.inject.saveJobProgress` for resumable state.
+
+### Example: Shared Context via `data` (manual typing in step)
+
+```typescript
+type SyncUsersData = {
+  tenantConfig: Awaited<ReturnType<typeof userApiInjectable.getTenantConfig>>
+  startCursor?: string
+}
+
+const syncUsersJob = n.job({
+  name: 'syncUsers',
+  pool: JobWorkerPool.Io,
+  input: t.object({ tenantId: t.string() }),
+  output: t.object({ synced: t.number() }),
+  progress: t.object({ cursor: t.string().optional() }),
+  dependencies: { userApi: userApiInjectable },
+  data: async ({ userApi }, input, progress): Promise<SyncUsersData> => {
+    const tenantConfig = await userApi.getTenantConfig(input.tenantId)
+    return {
+      tenantConfig,
+      startCursor: progress.cursor,
+    }
+  },
+})
+  .step(n.step({
+    label: 'sync-page',
+    input: t.object({ tenantId: t.string() }),
+    output: t.object({ synced: t.number() }),
+    handler: async (_ctx, stepInput, data: SyncUsersData) => {
+      const result = await syncPage(stepInput.tenantId, data.tenantConfig, data.startCursor)
+      return { synced: result.count }
+    },
+  }))
+  .return()
+```
+
+`data` typing in step handlers is manual (annotate the 3rd arg). Steps remain type-safe:
+
+- Step input must satisfy the job's accumulated result at that point (including previous steps)
+- Step `data` type must match the job `data` contract
+- If either is incompatible, TypeScript shows a compile-time error
+
 ## Defining Steps
 
 Each step has typed input (from accumulated prior results) and typed output (merged into result for subsequent steps):
@@ -80,7 +149,8 @@ const fetchStep = n.step({
   input: t.object({ id: t.string() }),
   output: t.object({ data: t.any() }),
   dependencies: { db: dbInjectable },
-  handler: async ({ db }, input) => {
+  handler: async ({ db }, input, data) => {
+    // `data` is the value returned by job `data` callback
     return { data: await db.find(input.id) }
   },
 })
