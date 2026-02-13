@@ -7,7 +7,7 @@
     "build": "pnpm run clean-build && pnpm tsgo -b tsconfig.build.json && pnpm run --parallel -r build",
     "dev": "pnpm run clean-build && pnpm tsgo -b tsconfig.build.json --watch",
     "clean": "rm -rf dist node_modules && pnpm -r exec rm -rf dist node_modules",
-    "test": "pnpm build && pnpm test:unit && pnpm test:browser:client && pnpm test:integration && pnpm test:e2e",
+    "test": "pnpm build && vitest --run",
     "test:integration": "vitest run tests/test/integration",
     "test:e2e": "vitest run playground/test",
     "test:unit": "vitest run packages/*",

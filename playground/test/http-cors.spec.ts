@@ -48,11 +48,17 @@ async function startServer(
     args.push('--config', options.configPath)
   }
 
+  const childEnv = { ...process.env, FORCE_COLOR: '0' }
+
   const serverProcess = spawn('pnpm', args, {
     cwd: CWD,
     stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env, FORCE_COLOR: '0' },
+    detached: process.platform === 'linux',
+    env: childEnv,
   })
+
+  serverProcess.stdout?.on('data', () => {})
+  serverProcess.stderr?.on('data', () => {})
 
   await new Promise<void>((resolve, reject) => {
     let settled = false
@@ -77,9 +83,7 @@ async function startServer(
 
     const onError = (err: Error) => finish(err)
     const onExit = (code: number | null) => {
-      if (code !== 0 && code !== null) {
-        finish(new Error(`Server exited with code ${code}`))
-      }
+      finish(new Error(`Server exited before readiness (code ${code})`))
     }
 
     const cleanup = () => {
@@ -99,11 +103,32 @@ async function startServer(
 }
 
 async function stopServer(serverProcess: ChildProcess): Promise<void> {
-  serverProcess.kill('SIGTERM')
+  const killProcess = (signal: NodeJS.Signals) => {
+    const pid = serverProcess.pid
+
+    if (!pid) return
+
+    if (process.platform === 'linux') {
+      try {
+        process.kill(-pid, signal)
+        return
+      } catch {
+        // Fall through to direct process kill
+      }
+    }
+
+    try {
+      serverProcess.kill(signal)
+    } catch {
+      // Ignore if process already exited
+    }
+  }
+
+  killProcess('SIGTERM')
   await new Promise<void>((resolve) => {
     serverProcess.on('exit', () => resolve())
     globalThis.setTimeout(() => {
-      serverProcess.kill('SIGKILL')
+      killProcess('SIGKILL')
       resolve()
     }, 5000)
   })

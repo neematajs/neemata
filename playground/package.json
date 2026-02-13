@@ -3,9 +3,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "NODE_OPTIONS=--experimental-transform-types neemata dev",
+    "dev": "neemata dev",
     "build": "neemata build",
-    "preview": "NODE_OPTIONS=--experimental-transform-types neemata preview",
+    "preview": "neemata preview",
     "test": "vitest run",
     "test:watch": "vitest"
   },
