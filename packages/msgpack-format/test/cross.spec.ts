@@ -29,6 +29,16 @@ describe('MsgpackFormat', () => {
       expect(clientDecoded).toEqual(data)
     })
 
+    it('should handle top-level undefined in non-RPC encode/decode both directions', () => {
+      const clientEncoded = clientFormat.encode(undefined)
+      const serverDecoded = serverFormat.decode(Buffer.from(clientEncoded))
+      expect(serverDecoded).toBeUndefined()
+
+      const serverEncoded = serverFormat.encode(undefined)
+      const clientDecoded = clientFormat.decode(Buffer.from(serverEncoded))
+      expect(clientDecoded).toBeUndefined()
+    })
+
     it('should have consistent encodeRPC/decodeRPC without blobs between client and server', () => {
       const clientAddStreamFn = vi.fn()
       const serverAddStreamFn = vi.fn()

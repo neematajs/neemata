@@ -60,6 +60,10 @@ export class MsgpackFormat extends BaseServerFormat {
   }
 
   decode(data: Buffer) {
+    if (data.byteLength === 0) {
+      return undefined
+    }
+
     return decode(data)
   }
 
