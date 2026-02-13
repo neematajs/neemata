@@ -66,7 +66,7 @@ async function startServer(
       const buildProcess = spawn('pnpm', ['build'], {
         cwd: CWD,
         stdio: ['ignore', 'pipe', 'pipe'],
-        detached: true,
+        detached: process.platform === 'linux',
         env: { ...process.env, FORCE_COLOR: '0' },
       })
 
@@ -92,7 +92,7 @@ async function startServer(
     const serverProcess = spawn('node', ['dist/main.js'], {
       cwd: CWD,
       stdio: ['ignore', 'pipe', 'pipe'],
-      detached: true,
+      detached: process.platform === 'linux',
       env: { ...process.env, FORCE_COLOR: '0' },
     })
 
@@ -166,7 +166,7 @@ async function startServer(
   const serverProcess = spawn('pnpm', [command], {
     cwd: CWD,
     stdio: ['ignore', 'pipe', 'pipe'],
-    detached: true,
+    detached: process.platform === 'linux',
     env: { ...process.env, FORCE_COLOR: '0' },
   })
 
@@ -245,7 +245,7 @@ async function stopServer(serverProcess: ChildProcess): Promise<void> {
       return
     }
 
-    if (process.platform !== 'win32') {
+    if (process.platform === 'linux') {
       try {
         process.kill(-pid, signal)
         return

@@ -29,7 +29,12 @@ on:
         required: true
 
 jobs:
+  test:
+    uses: ./.github/workflows/test.yml
+    secrets: inherit
+
   build-and-publish:
+    needs: [test]
     runs-on: ubuntu-latest
     env:
       NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
