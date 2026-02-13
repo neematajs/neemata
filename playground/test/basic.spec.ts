@@ -117,17 +117,6 @@ async function startServer(
         })
       }, 250)
 
-      const checkReady = (data: Buffer) => {
-        const output = data.toString()
-        if (
-          output.includes('started') ||
-          output.includes('listening') ||
-          output.includes('4000')
-        ) {
-          finish()
-        }
-      }
-
       const onError = (err: Error) => finish(err)
       const onExit = (code: number | null) => {
         if (code !== 0 && code !== null) {
@@ -138,20 +127,9 @@ async function startServer(
       const cleanup = () => {
         globalThis.clearTimeout(timeoutId)
         globalThis.clearInterval(readinessInterval)
-        serverProcess.stdout?.off('data', checkReady)
-        serverProcess.stderr?.off('data', checkReady)
         serverProcess.off('error', onError)
         serverProcess.off('exit', onExit)
       }
-
-      serverProcess.stdout?.on('data', checkReady)
-      serverProcess.stderr?.on('data', (data) => {
-        checkReady(data)
-        const output = data.toString()
-        if (output.includes('ERROR') || output.includes('Error')) {
-          console.error('Server error:', output)
-        }
-      })
 
       serverProcess.on('error', onError)
       serverProcess.on('exit', onExit)
@@ -191,17 +169,6 @@ async function startServer(
       })
     }, 250)
 
-    const checkReady = (data: Buffer) => {
-      const output = data.toString()
-      if (
-        output.includes('started') ||
-        output.includes('listening') ||
-        output.includes('4000')
-      ) {
-        finish()
-      }
-    }
-
     const onError = (err: Error) => finish(err)
     const onExit = (code: number | null) => {
       if (code !== 0 && code !== null) {
@@ -212,20 +179,9 @@ async function startServer(
     const cleanup = () => {
       globalThis.clearTimeout(timeoutId)
       globalThis.clearInterval(readinessInterval)
-      serverProcess.stdout?.off('data', checkReady)
-      serverProcess.stderr?.off('data', checkReady)
       serverProcess.off('error', onError)
       serverProcess.off('exit', onExit)
     }
-
-    serverProcess.stdout?.on('data', checkReady)
-    serverProcess.stderr?.on('data', (data) => {
-      checkReady(data)
-      const output = data.toString()
-      if (output.includes('ERROR') || output.includes('Error')) {
-        console.error('Server error:', output)
-      }
-    })
 
     serverProcess.on('error', onError)
     serverProcess.on('exit', onExit)
@@ -241,9 +197,7 @@ async function stopServer(serverProcess: ChildProcess): Promise<void> {
   const killProcess = (signal: NodeJS.Signals) => {
     const pid = serverProcess.pid
 
-    if (!pid) {
-      return
-    }
+    if (!pid) return
 
     if (process.platform === 'linux') {
       try {
