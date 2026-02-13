@@ -1,5 +1,3 @@
-#!/usr/bin/env node --enable-source-maps
-
 import { existsSync } from 'node:fs'
 import { relative, resolve } from 'node:path'
 import process from 'node:process'
@@ -52,6 +50,10 @@ let applicationImports: Record<
   { path: string; specifier: string; type: 'neemata' | 'custom' }
 >
 
+async function runPrepare() {
+  await generateTypings(applicationImports)
+}
+
 const mainCommand = defineCommand({
   meta: { description: 'Neemata CLI' },
   args: { ...commonArgs },
@@ -102,11 +104,12 @@ const mainCommand = defineCommand({
   subCommands: {
     prepare: defineCommand({
       async run(ctx) {
-        await generateTypings(applicationImports)
+        await runPrepare()
       },
     }),
     dev: defineCommand({
       async run(ctx) {
+        await runPrepare()
         const { runner } = await createMainServer(
           viteConfigOptions,
           'development',
@@ -117,6 +120,7 @@ const mainCommand = defineCommand({
     }),
     preview: defineCommand({
       async run(ctx) {
+        await runPrepare()
         const { runner } = await createMainServer(
           viteConfigOptions,
           'production',
@@ -127,6 +131,7 @@ const mainCommand = defineCommand({
     }),
     build: defineCommand({
       async run(ctx) {
+        await runPrepare()
         const builder = await createBuilder(viteConfigOptions, config)
         await builder.build()
       },

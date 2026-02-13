@@ -6,13 +6,18 @@
     "clean-build": "rm -rf ./dist"
   },
   "bin": {
-    "neemata": "./dist/cli.js"
+    "neemata": "./bin/cli.js"
   },
   "exports": {
     ".": {
       "types": "./src/index.ts",
       "import": "./dist/index.js",
       "module-sync": "./dist/index.js"
+    },
+    "./cli": {
+      "types": "./src/cli.ts",
+      "import": "./dist/cli.js",
+      "module-sync": "./dist/cli.js"
     },
     "./config": {
       "types": "./src/config.ts",
@@ -36,6 +41,11 @@
         "types": "./dist/index.d.ts",
         "import": "./dist/index.js",
         "module-sync": "./dist/index.js"
+      },
+      "./cli": {
+        "types": "./dist/cli.d.ts",
+        "import": "./dist/cli.js",
+        "module-sync": "./dist/cli.js"
       },
       "./config": {
         "types": "./dist/config.d.ts",
@@ -95,6 +105,7 @@
     }
   },
   "files": [
+    "bin",
     "dist",
     "src",
     "LICENSE.md",
