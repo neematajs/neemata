@@ -19,6 +19,10 @@ export class MsgpackFormat extends BaseClientFormat {
   contentType = 'application/msgpack'
 
   encode(data: any): Uint8Array {
+    if (typeof data === 'undefined') {
+      return new Uint8Array(0)
+    }
+
     return encode(data, { ignoreUndefined: true })
   }
 
@@ -46,6 +50,10 @@ export class MsgpackFormat extends BaseClientFormat {
   }
 
   decode(data: ArrayBufferView): any {
+    if (data.byteLength === 0) {
+      return undefined
+    }
+
     return decode(data)
   }
 

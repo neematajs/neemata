@@ -26,6 +26,10 @@ describe('MsgpackFormat', () => {
 
         expect(format.decode(buffer)).toEqual(data)
       })
+
+      it('should decode empty buffer to undefined', () => {
+        expect(format.decode(new Uint8Array(0))).toBeUndefined()
+      })
     })
 
     describe('encodeRPC', () => {
