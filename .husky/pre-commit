@@ -1,1 +1,1 @@
-pnpm run build && pnpm run check && pnpm run test:no-build
+pnpm run build && pnpm run check && pnpm run test:unit && pnpm run test:integration

@@ -48,6 +48,7 @@ const DEFAULT_CORS_PARAMS = Object.freeze({
     'Content-Disposition',
     'Content-Length',
     'Accept',
+    'Authorization',
     'Transfer-Encoding',
   ],
   maxAge: undefined,
@@ -347,7 +348,10 @@ export class HttpTransportServer
       ) {
         params = { ...DEFAULT_CORS_PARAMS }
         for (const key in DEFAULT_CORS_PARAMS) {
-          params[key] = this.#corsOptions[key]
+          const value = this.#corsOptions[key]
+          if (value !== undefined) {
+            params[key] = value
+          }
         }
       }
     } else if (typeof this.#corsOptions === 'function') {
@@ -359,7 +363,10 @@ export class HttpTransportServer
       } else if (typeof result === 'object') {
         params = { ...DEFAULT_CORS_PARAMS }
         for (const key in DEFAULT_CORS_PARAMS) {
-          params[key] = result[key]
+          const value = result[key]
+          if (value !== undefined) {
+            params[key] = value
+          }
         }
       }
     }
