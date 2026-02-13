@@ -6,24 +6,51 @@
     "clean-build": "rm -rf ./dist"
   },
   "bin": {
-    "neemata": "./src/cli.ts"
+    "neemata": "./dist/cli.js"
   },
   "exports": {
-    ".": "./src/index.ts",
-    "./config": "./src/config.ts",
-    "./runtime": "./src/runtime/index.ts",
-    "./runtime/types": "./src/runtime/types.ts"
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./dist/index.js",
+      "module-sync": "./dist/index.js"
+    },
+    "./config": {
+      "types": "./src/config.ts",
+      "import": "./dist/config.js",
+      "module-sync": "./dist/config.js"
+    },
+    "./runtime": {
+      "types": "./src/runtime/index.ts",
+      "import": "./dist/runtime/index.js",
+      "module-sync": "./dist/runtime/index.js"
+    },
+    "./runtime/types": {
+      "types": "./src/runtime/types.ts",
+      "import": "./dist/runtime/types.js",
+      "module-sync": "./dist/runtime/types.js"
+    }
   },
   "publishConfig": {
-    "bin": {
-      "neemata": "./dist/cli.js"
-    },
     "exports": {
-      ".": "./dist/index.js",
-      "./config": "./dist/config.js",
-      "./runtime": "./dist/runtime/index.js",
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js",
+        "module-sync": "./dist/index.js"
+      },
+      "./config": {
+        "types": "./dist/config.d.ts",
+        "import": "./dist/config.js",
+        "module-sync": "./dist/config.js"
+      },
+      "./runtime": {
+        "types": "./dist/runtime/index.d.ts",
+        "import": "./dist/runtime/index.js",
+        "module-sync": "./dist/runtime/index.js"
+      },
       "./runtime/types": {
-        "types": "./dist/runtime/types.d.ts"
+        "types": "./dist/runtime/types.d.ts",
+        "import": "./dist/runtime/types.js",
+        "module-sync": "./dist/runtime/types.js"
       }
     }
   },

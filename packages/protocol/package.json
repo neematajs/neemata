@@ -6,15 +6,39 @@
     "clean-build": "rm -rf ./dist"
   },
   "exports": {
-    ".": "./src/common/index.ts",
-    "./server": "./src/server/index.ts",
-    "./client": "./src/client/index.ts"
+    ".": {
+      "types": "./src/common/index.ts",
+      "import": "./dist/common/index.js",
+      "module-sync": "./dist/common/index.js"
+    },
+    "./server": {
+      "types": "./src/server/index.ts",
+      "import": "./dist/server/index.js",
+      "module-sync": "./dist/server/index.js"
+    },
+    "./client": {
+      "types": "./src/client/index.ts",
+      "import": "./dist/client/index.js",
+      "module-sync": "./dist/client/index.js"
+    }
   },
   "publishConfig": {
     "exports": {
-      ".": "./dist/common/index.js",
-      "./server": "./dist/server/index.js",
-      "./client": "./dist/client/index.js"
+      ".": {
+        "types": "./dist/common/index.d.ts",
+        "import": "./dist/common/index.js",
+        "module-sync": "./dist/common/index.js"
+      },
+      "./server": {
+        "types": "./dist/server/index.d.ts",
+        "import": "./dist/server/index.js",
+        "module-sync": "./dist/server/index.js"
+      },
+      "./client": {
+        "types": "./dist/client/index.d.ts",
+        "import": "./dist/client/index.js",
+        "module-sync": "./dist/client/index.js"
+      }
     }
   },
   "dependencies": {

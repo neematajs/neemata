@@ -3,17 +3,49 @@
   "description": "WebSocket server transport for Neemata runtimes.",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts",
-    "./bun": "./src/runtimes/bun.ts",
-    "./deno": "./src/runtimes/deno.ts",
-    "./node": "./src/runtimes/node.ts"
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./dist/index.js",
+      "module-sync": "./dist/index.js"
+    },
+    "./bun": {
+      "types": "./src/runtimes/bun.ts",
+      "import": "./dist/runtimes/bun.js",
+      "module-sync": "./dist/runtimes/bun.js"
+    },
+    "./deno": {
+      "types": "./src/runtimes/deno.ts",
+      "import": "./dist/runtimes/deno.js",
+      "module-sync": "./dist/runtimes/deno.js"
+    },
+    "./node": {
+      "types": "./src/runtimes/node.ts",
+      "import": "./dist/runtimes/node.js",
+      "module-sync": "./dist/runtimes/node.js"
+    }
   },
   "publishConfig": {
     "exports": {
-      ".": "./dist/index.js",
-      "./bun": "./dist/runtimes/bun.js",
-      "./deno": "./dist/runtimes/deno.js",
-      "./node": "./dist/runtimes/node.js"
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js",
+        "module-sync": "./dist/index.js"
+      },
+      "./bun": {
+        "types": "./dist/runtimes/bun.d.ts",
+        "import": "./dist/runtimes/bun.js",
+        "module-sync": "./dist/runtimes/bun.js"
+      },
+      "./deno": {
+        "types": "./dist/runtimes/deno.d.ts",
+        "import": "./dist/runtimes/deno.js",
+        "module-sync": "./dist/runtimes/deno.js"
+      },
+      "./node": {
+        "types": "./dist/runtimes/node.d.ts",
+        "import": "./dist/runtimes/node.js",
+        "module-sync": "./dist/runtimes/node.js"
+      }
     }
   },
   "scripts": {
