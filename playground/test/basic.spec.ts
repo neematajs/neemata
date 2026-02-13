@@ -245,7 +245,7 @@ async function stopServer(serverProcess: ChildProcess): Promise<void> {
       return
     }
 
-    if (true) {
+    if (process.platform !== 'win32') {
       try {
         process.kill(-pid, signal)
         return
