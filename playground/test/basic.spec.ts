@@ -66,6 +66,7 @@ async function startServer(
       const buildProcess = spawn('pnpm', ['build'], {
         cwd: CWD,
         stdio: ['ignore', 'pipe', 'pipe'],
+        detached: true,
         env: { ...process.env, FORCE_COLOR: '0' },
       })
 
@@ -91,6 +92,7 @@ async function startServer(
     const serverProcess = spawn('node', ['dist/main.js'], {
       cwd: CWD,
       stdio: ['ignore', 'pipe', 'pipe'],
+      detached: true,
       env: { ...process.env, FORCE_COLOR: '0' },
     })
 
@@ -164,6 +166,7 @@ async function startServer(
   const serverProcess = spawn('pnpm', [command], {
     cwd: CWD,
     stdio: ['ignore', 'pipe', 'pipe'],
+    detached: true,
     env: { ...process.env, FORCE_COLOR: '0' },
   })
 
@@ -235,11 +238,34 @@ async function startServer(
 }
 
 async function stopServer(serverProcess: ChildProcess): Promise<void> {
-  serverProcess.kill('SIGTERM')
+  const killProcess = (signal: NodeJS.Signals) => {
+    const pid = serverProcess.pid
+
+    if (!pid) {
+      return
+    }
+
+    if (true) {
+      try {
+        process.kill(-pid, signal)
+        return
+      } catch {
+        // Fall through to direct process kill
+      }
+    }
+
+    try {
+      serverProcess.kill(signal)
+    } catch {
+      // Ignore if process already exited
+    }
+  }
+
+  killProcess('SIGTERM')
   await new Promise<void>((resolve) => {
     serverProcess.on('exit', () => resolve())
     globalThis.setTimeout(() => {
-      serverProcess.kill('SIGKILL')
+      killProcess('SIGKILL')
       resolve()
     }, 5000)
   })
@@ -254,6 +280,35 @@ function createClient(url: string) {
 }
 
 const SERVER_URL = `ws://${SERVER_HOST}:${SERVER_PORT}`
+
+async function waitForPingMessage(
+  client: ReturnType<typeof createClient>,
+  expectedMessage: string,
+  options: { timeoutMs?: number; intervalMs?: number } = {},
+) {
+  const timeoutMs = options.timeoutMs ?? 15000
+  const intervalMs = options.intervalMs ?? 250
+  const startedAt = Date.now()
+  let lastResult: unknown = null
+
+  while (Date.now() - startedAt < timeoutMs) {
+    lastResult = await client.call.ping({})
+    if (
+      typeof lastResult === 'object' &&
+      lastResult !== null &&
+      'message' in lastResult &&
+      (lastResult as { message: string }).message === expectedMessage
+    ) {
+      return
+    }
+
+    await setTimeout(intervalMs)
+  }
+
+  throw new Error(
+    `Timed out waiting for ping message '${expectedMessage}'. Last result: ${JSON.stringify(lastResult)}`,
+  )
+}
 
 describe(
   'Playground E2E - Preview Mode',
@@ -375,9 +430,7 @@ describe('Playground E2E - Dev Mode', { timeout: 60000 }, () => {
           `'pong-hmr'`,
         )
         await writeFile(PING_PROCEDURE_PATH, modifiedContent, 'utf-8')
-        await setTimeout(2000)
-        const result2 = await client.call.ping({})
-        expect(result2).toEqual({ message: 'pong-hmr' })
+        await waitForPingMessage(client, 'pong-hmr')
       } finally {
         try {
           await client.disconnect()
