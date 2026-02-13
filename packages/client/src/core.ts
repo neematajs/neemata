@@ -890,7 +890,7 @@ export abstract class BaseClient<
       try {
         const transformed = this.transformer.decode(
           call.procedure,
-          response.result,
+          this.options.format.decode(response.result),
         )
         this.emitClientEvent({
           kind: 'rpc_response',
