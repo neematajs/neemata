@@ -52,7 +52,7 @@ export class QueueJobResult<T extends AnyJob = AnyJob> {
   }
 
   get id() {
-    return this.#options.bullJob.id
+    return this.#options.bullJob.id!
   }
 
   get name() {
@@ -446,7 +446,6 @@ export class JobManager {
         return ['delayed']
       case 'cancelled':
         return [] // BullMQ doesn't have a cancelled state
-      case 'unknown':
       default:
         return []
     }

@@ -1,0 +1,42 @@
+services:
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+
+  valkey:
+    image: valkey/valkey:8-alpine
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+
+  test-redis:
+    build:
+      context: .
+      dockerfile: Dockerfile.jobs-e2e
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      JOBS_BACKEND: redis
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+    command: ["pnpm", "run", "test:e2e:jobs:redis"]
+
+  test-valkey:
+    build:
+      context: .
+      dockerfile: Dockerfile.jobs-e2e
+    depends_on:
+      valkey:
+        condition: service_healthy
+    environment:
+      JOBS_BACKEND: valkey
+      VALKEY_HOST: valkey
+      VALKEY_PORT: "6379"
+    command: ["pnpm", "run", "test:e2e:jobs:valkey"]
