@@ -1,0 +1,26 @@
+{
+  "name": "@nmtjs/tests-integration",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run --passWithNoTests"
+  },
+  "devDependencies": {
+    "@nmtjs/client": "workspace:*",
+    "@nmtjs/common": "workspace:*",
+    "@nmtjs/contract": "workspace:*",
+    "@nmtjs/core": "workspace:*",
+    "@nmtjs/gateway": "workspace:*",
+    "@nmtjs/http-client": "workspace:*",
+    "@nmtjs/http-transport": "workspace:*",
+    "@nmtjs/json-format": "workspace:*",
+    "@nmtjs/protocol": "workspace:*",
+    "@nmtjs/type": "workspace:*",
+    "@nmtjs/ws-client": "workspace:*",
+    "@nmtjs/ws-transport": "workspace:*",
+    "nmtjs": "workspace:*"
+  }
+}

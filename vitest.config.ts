@@ -4,7 +4,7 @@ export default defineConfig({
   test: {
     testTimeout: 15000,
     passWithNoTests: true,
-    projects: ['./packages/*', './tests/test/integration', './playground'],
+    projects: ['./packages/*', './tests/integration', './tests/e2e'],
     coverage: {
       enabled: false,
       include: ['packages/*/src/**'],

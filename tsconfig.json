@@ -43,7 +43,10 @@
       "path": "./packages/ws-transport/tsconfig.json"
     },
     {
-      "path": "./playground/tsconfig.json"
+      "path": "./tests/e2e/tsconfig.json"
+    },
+    {
+      "path": "./tests/integration/tsconfig.json"
     }
   ],
   "include": []

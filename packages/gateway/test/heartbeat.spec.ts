@@ -1,10 +1,5 @@
 import { Buffer } from 'node:buffer'
 
-import {
-  createTestContainer,
-  createTestLogger,
-  createTestServerFormat,
-} from '@nmtjs/_tests'
 import { Hooks } from '@nmtjs/core'
 import {
   ClientMessageType,
@@ -13,6 +8,11 @@ import {
   ServerMessageType,
 } from '@nmtjs/protocol'
 import { ProtocolFormats } from '@nmtjs/protocol/server'
+import {
+  createTestContainer,
+  createTestLogger,
+  createTestServerFormat,
+} from '@nmtjs/tests-integration'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { GatewayApi } from '../src/api.ts'

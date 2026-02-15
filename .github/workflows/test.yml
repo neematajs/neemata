@@ -79,19 +79,22 @@ jobs:
   tests-jobs:
     needs: [lint]
     runs-on: blacksmith-4vcpu-ubuntu-2404
-    strategy:
-      fail-fast: false
-      matrix:
-        backend:
-          - redis
-          - valkey
     services:
-      store:
-        image: ${{ matrix.backend == 'valkey' && 'valkey/valkey:latest-alpine' || 'redis:latest-alpine' }}
+      redis:
+        image: redis:latest-alpine
         ports:
           - 6379:6379
         options: >-
-          --health-cmd "redis-cli ping || valkey-cli ping"
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      valkey:
+        image: valkey/valkey:latest-alpine
+        ports:
+          - 6380:6379
+        options: >-
+          --health-cmd "valkey-cli ping"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
@@ -119,4 +122,9 @@ jobs:
             ${{ runner.os }}-pnpm-store-
       - run: pnpm install
       - run: pnpm build
-      - run: pnpm run test:e2e:jobs:${{ matrix.backend }}
+      - run: pnpm run test:e2e:jobs
+        env:
+          REDIS_HOST: localhost
+          REDIS_PORT: "6379"
+          VALKEY_HOST: localhost
+          VALKEY_PORT: "6380"

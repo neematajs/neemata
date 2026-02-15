@@ -137,10 +137,12 @@ Two distinct streaming mechanisms exist in the framework:
 
 ```bash
 pnpm build               # Build all packages
-pnpm test                # Build + unit tests + runtime tests
+pnpm test                # Build + unit + integration + E2E (excluding jobs E2E)
 pnpm test:unit           # Unit tests only (vitest)
 pnpm test:integration    # Integration tests only
-pnpm test:watch          # Watch mode
+pnpm test:e2e            # E2E tests only (excluding jobs E2E)
+pnpm test:e2e:jobs       # Jobs E2E only (Redis + Valkey, requires stores)
+pnpm test:e2e:jobs:docker # Jobs E2E in Docker (recommended locally)
 pnpm check               # Format + lint + type-check (required before commit)
 pnpm fmt                 # Auto-fix with Biome
 ```
@@ -158,11 +160,13 @@ pnpm fmt                 # Auto-fix with Biome
 Prefer using `tests` tool for validating test. However, here are the repo commands available:
 
 - **Unit tests**: `packages/*/test/*.spec.ts` - Test individual package functionality (runs with `pnpm test:unit`)
-- **Integration tests**: `tests/test/` - Test cross-package interactions (runs with `pnpm test:integration`)
+- **Integration tests**: `tests/integration/test/` - Test cross-package interactions (runs with `pnpm test:integration`)
+- **E2E tests**: `tests/e2e/test/` - Test full application/runtime behavior (runs with `pnpm test:e2e`)
+- **Jobs E2E tests**: `tests/e2e/test/jobs.spec.ts` - Runs against Redis + Valkey (runs with `pnpm test:e2e:jobs` or `pnpm test:e2e:jobs:docker`)
 
-**Shared Test Utilities** (`@nmtjs/_tests` from `tests/src/`):
+**Shared Test Utilities** (`@nmtjs/tests-integration` from `tests/integration/src/`):
 
-Common test helpers to reduce boilerplate across packages. Add as dev dependency: `"@nmtjs/_tests": "workspace:*"`
+Common test helpers to reduce boilerplate across packages. Add as dev dependency: `"@nmtjs/tests-integration": "workspace:*"`
 
 ```typescript
 import {
@@ -170,7 +174,7 @@ import {
   createTestContainer,     // Container with test logger
   createTestServerFormat,  // BaseServerFormat (JsonFormat)
   createTestClientFormat,  // BaseClientFormat (JsonFormat)
-} from '@nmtjs/_tests'
+} from '@nmtjs/tests-integration'
 ```
 
 - `createTestLogger(options?)` - Creates a silent pino logger (disabled by default)

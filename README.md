@@ -22,28 +22,18 @@ Run both backends with one command:
 pnpm run test:e2e:jobs:docker
 ```
 
-Run Jobs E2E with Redis:
+This command rebuilds the test image on each run and executes Redis + Valkey suites in one pass.
+
+Run Jobs E2E directly in Docker:
 
 ```bash
-docker compose -f docker-compose.jobs-e2e.yml run --rm test-redis
-```
-
-Run Jobs E2E with Valkey:
-
-```bash
-docker compose -f docker-compose.jobs-e2e.yml run --rm test-valkey
+docker compose -f docker-compose.jobs-e2e.yml run --rm --build test-jobs
 ```
 
 Manual Docker control:
 
 ```bash
-docker compose -f docker-compose.jobs-e2e.yml up -d --wait redis
-docker compose -f docker-compose.jobs-e2e.yml run --rm test-redis
-pnpm run docker:jobs:down
-```
-
-```bash
-docker compose -f docker-compose.jobs-e2e.yml up -d --wait valkey
-docker compose -f docker-compose.jobs-e2e.yml run --rm test-valkey
-pnpm run docker:jobs:down
+docker compose -f docker-compose.jobs-e2e.yml up -d --wait redis valkey
+docker compose -f docker-compose.jobs-e2e.yml run --rm --build test-jobs
+docker compose -f docker-compose.jobs-e2e.yml down -v --remove-orphans
 ```

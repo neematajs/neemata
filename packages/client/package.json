@@ -48,7 +48,7 @@
     "@nmtjs/protocol": "workspace:*"
   },
   "devDependencies": {
-    "@nmtjs/_tests": "workspace:*",
+    "@nmtjs/tests-integration": "workspace:*",
     "@nmtjs/type": "workspace:*",
     "@nmtjs/contract": "workspace:*",
     "@nmtjs/common": "workspace:*",
