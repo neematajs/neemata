@@ -11,6 +11,7 @@
     "@nmtjs/contract": "workspace:*",
     "@nmtjs/http-client": "workspace:*",
     "@nmtjs/json-format": "workspace:*",
+    "@nmtjs/msgpack-format": "workspace:*",
     "@nmtjs/protocol": "workspace:*",
     "@nmtjs/proxy": "catalog:",
     "@nmtjs/type": "workspace:*",
