@@ -81,7 +81,7 @@ jobs:
     runs-on: blacksmith-4vcpu-ubuntu-2404
     services:
       redis:
-        image: redis:latest-alpine
+        image: redis:8-alpine
         ports:
           - 6379:6379
         options: >-
@@ -90,7 +90,7 @@ jobs:
           --health-timeout 5s
           --health-retries 5
       valkey:
-        image: valkey/valkey:latest-alpine
+        image: valkey/valkey:9-alpine
         ports:
           - 6380:6379
         options: >-
