@@ -16,6 +16,12 @@ Prerequisites:
 No host ports are exposed in this setup. Tests run fully inside Docker containers.
 The test image is optimized for Docker layer caching with `pnpm fetch` + offline install.
 
+Run both backends with one command:
+
+```bash
+pnpm run test:e2e:jobs:docker
+```
+
 Run Jobs E2E with Redis:
 
 ```bash
