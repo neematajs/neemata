@@ -382,6 +382,9 @@ importers:
       '@nmtjs/json-format':
         specifier: workspace:*
         version: link:../../packages/json-format
+      '@nmtjs/msgpack-format':
+        specifier: workspace:*
+        version: link:../../packages/msgpack-format
       '@nmtjs/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
