@@ -115,7 +115,7 @@ export class JobRunner<
       ...rest
     } = options
 
-    const { input, output, steps } = job
+    const { input, output, jobSteps: steps } = job
 
     const result: Record<string, unknown> = { ...runResult }
     const decodedInput = input.decode(data)
@@ -177,127 +177,120 @@ export class JobRunner<
     progressContext.stepResults = stepResults
     progressContext.options = runOptions
 
-    for (
-      let stepIndex = currentStepIndex;
-      stepIndex < steps.length;
-      stepIndex++
-    ) {
+    for (let stepIndex = currentStepIndex; stepIndex < steps.length; ) {
+      if (signal.aborted) {
+        const { reason } = signal
+        if (reason instanceof UnrecoverableError) throw reason
+        throw new UnrecoverableError('Job cancelled')
+      }
+
+      const groupStart = job.parallelGroupByStepIndex.get(stepIndex)
+
+      if (groupStart !== undefined) {
+        const groupEnd = job.parallelGroups.get(groupStart) ?? groupStart + 1
+        const resultSnapshot = Object.freeze(
+          Object.assign({}, decodedInput, result),
+        )
+
+        const pending = [] as number[]
+        for (let index = groupStart; index < groupEnd; index++) {
+          if (!stepResults[index]) pending.push(index)
+        }
+
+        if (pending.length > 0) {
+          const settled = await Promise.all(
+            pending.map(async (index) => {
+              const step = steps[index]
+              try {
+                const produced = await this.runStep({
+                  job,
+                  step,
+                  stepIndex: index,
+                  result,
+                  resultSnapshot,
+                  decodedInput,
+                  progress,
+                  stepResults,
+                  options: runOptions,
+                  jobDependencyContext,
+                  jobData,
+                  container,
+                  applyResult: false,
+                })
+                return { index, produced }
+              } catch (error) {
+                return { index, error }
+              }
+            }),
+          )
+
+          const errors = settled.filter(
+            (entry): entry is { index: number; error: unknown } =>
+              'error' in entry,
+          )
+
+          if (errors.length > 0) {
+            throw new Error(
+              `Error during parallel step group [${groupStart}-${groupEnd - 1}]`,
+              { cause: errors[0].error },
+            )
+          }
+
+          const keyOwners = new Map<string, number>()
+          for (const entry of settled) {
+            if (!('produced' in entry) || !entry.produced) continue
+            for (const key of Object.keys(entry.produced)) {
+              const owner = keyOwners.get(key)
+              if (owner !== undefined && owner !== entry.index) {
+                throw new Error(
+                  `Parallel step key conflict for "${key}" between steps [${owner}] and [${entry.index}]`,
+                )
+              }
+              keyOwners.set(key, entry.index)
+            }
+          }
+
+          for (let index = groupStart; index < groupEnd; index++) {
+            const entry = settled.find(
+              (
+                item,
+              ): item is {
+                index: number
+                produced: Record<string, unknown> | null
+              } => item.index === index && 'produced' in item,
+            )
+            if (entry?.produced) {
+              Object.assign(result, entry.produced)
+            }
+          }
+        }
+
+        stepIndex = groupEnd
+        continue
+      }
+
       const step = steps[stepIndex]
       const resultSnapshot = Object.freeze(
         Object.assign({}, decodedInput, result),
       )
 
-      try {
-        if (signal.aborted) {
-          const { reason } = signal
-          if (reason instanceof UnrecoverableError) throw reason
-          throw new UnrecoverableError('Job cancelled')
-        }
+      await this.runStep({
+        job,
+        step,
+        stepIndex,
+        result,
+        resultSnapshot,
+        decodedInput,
+        progress,
+        stepResults,
+        options: runOptions,
+        jobDependencyContext,
+        jobData,
+        container,
+        applyResult: true,
+      })
 
-        const condition = job.conditions.get(stepIndex)
-        if (condition) {
-          const shouldRun = await condition({
-            context: jobDependencyContext,
-            data: jobData,
-            input: decodedInput,
-            result: resultSnapshot,
-            progress,
-          })
-          if (!shouldRun) {
-            const now = Date.now()
-            stepResults[stepIndex] = {
-              data: null,
-              startedAt: now,
-              completedAt: now,
-              duration: 0,
-            }
-            continue
-          }
-        }
-
-        const stepStartedAt = Date.now()
-
-        await this.beforeStep({
-          job,
-          step,
-          stepIndex,
-          result,
-          options: runOptions,
-          stepResults,
-        })
-
-        const stepContext = await container.createContext(step.dependencies)
-        const stepInput = step.input.decode(resultSnapshot)
-
-        await job.beforeEachHandler?.({
-          context: jobDependencyContext,
-          data: jobData,
-          input: decodedInput,
-          result: resultSnapshot,
-          progress,
-          step,
-          stepIndex,
-        })
-
-        const handlerReturn = await step.handler(
-          stepContext,
-          stepInput,
-          jobData,
-        )
-
-        const produced = step.output.encode(handlerReturn ?? {})
-        const stepCompletedAt = Date.now()
-
-        stepResults[stepIndex] = {
-          data: produced,
-          startedAt: stepStartedAt,
-          completedAt: stepCompletedAt,
-          duration: stepCompletedAt - stepStartedAt,
-        }
-        Object.assign(result, produced)
-
-        await job.afterEachHandler?.({
-          context: jobDependencyContext,
-          data: jobData,
-          input: decodedInput,
-          result,
-          progress,
-          step,
-          stepIndex,
-        })
-
-        await this.afterStep({
-          job,
-          step,
-          stepIndex,
-          result,
-          stepResult: stepResults[stepIndex],
-          stepResults,
-          options: runOptions,
-        })
-      } catch (error) {
-        const wrapped = new Error(`Error during step [${stepIndex}]`, {
-          cause: error,
-        })
-        this.logger.error(wrapped)
-
-        const allowRetry = await job.onErrorHandler?.({
-          context: jobDependencyContext,
-          data: jobData,
-          input: decodedInput,
-          result: result,
-          progress,
-          step,
-          stepIndex,
-          error,
-        })
-
-        if (allowRetry === false) {
-          throw new UnrecoverableError('Job failed (unrecoverable)')
-        }
-
-        throw wrapped
-      }
+      stepIndex++
     }
 
     const finalPayload = await job.returnHandler!({
@@ -309,6 +302,161 @@ export class JobRunner<
     })
 
     return output.encode(finalPayload)
+  }
+
+  protected async runStep(params: {
+    job: AnyJob
+    step: AnyJobStep
+    stepIndex: number
+    result: Record<string, unknown>
+    resultSnapshot: Record<string, unknown>
+    decodedInput: Record<string, unknown>
+    progress: Record<string, unknown>
+    stepResults: StepResultEntry[]
+    options: RunOptions
+    jobDependencyContext: any
+    jobData: unknown
+    container: Container
+    applyResult: boolean
+  }): Promise<Record<string, unknown> | null> {
+    const {
+      job,
+      step,
+      stepIndex,
+      result,
+      resultSnapshot,
+      decodedInput,
+      progress,
+      stepResults,
+      options,
+      jobDependencyContext,
+      jobData,
+      container,
+      applyResult,
+    } = params
+
+    try {
+      const condition = job.conditions.get(stepIndex)
+      if (condition) {
+        const shouldRun = await condition({
+          context: jobDependencyContext,
+          data: jobData,
+          input: decodedInput,
+          result: resultSnapshot,
+          progress,
+        })
+        if (!shouldRun) {
+          const now = Date.now()
+          const skippedResult = {
+            data: null,
+            startedAt: now,
+            completedAt: now,
+            duration: 0,
+          }
+          stepResults[stepIndex] = skippedResult
+          await this.afterStep({
+            job,
+            step,
+            stepIndex,
+            result,
+            stepResult: skippedResult,
+            stepResults,
+            options,
+          })
+          return null
+        }
+      }
+
+      const stepStartedAt = Date.now()
+
+      await this.beforeStep({
+        job,
+        step,
+        stepIndex,
+        result,
+        options,
+        stepResults,
+      })
+
+      const stepContext = await container.createContext(step.dependencies)
+      const stepInput = step.input.decode(resultSnapshot)
+
+      await job.beforeEachHandler?.({
+        context: jobDependencyContext,
+        data: jobData,
+        input: decodedInput,
+        result: resultSnapshot,
+        progress,
+        step,
+        stepIndex,
+      })
+
+      const handlerReturn = await step.handler(stepContext, stepInput, jobData)
+
+      const produced = step.output.encode(handlerReturn ?? {})
+      const stepCompletedAt = Date.now()
+      const stepResult: StepResultEntry = {
+        data: produced,
+        startedAt: stepStartedAt,
+        completedAt: stepCompletedAt,
+        duration: stepCompletedAt - stepStartedAt,
+      }
+
+      stepResults[stepIndex] = stepResult
+
+      if (applyResult) {
+        Object.assign(result, produced)
+      }
+
+      await job.afterEachHandler?.({
+        context: jobDependencyContext,
+        data: jobData,
+        input: decodedInput,
+        result: applyResult ? result : Object.assign({}, result, produced),
+        progress,
+        step,
+        stepIndex,
+      })
+
+      await this.afterStep({
+        job,
+        step,
+        stepIndex,
+        result,
+        stepResult,
+        stepResults,
+        options,
+      })
+
+      return produced
+    } catch (error) {
+      const wrapped = new Error(`Error during step [${stepIndex}]`, {
+        cause: error,
+      })
+      this.logger.error(wrapped)
+
+      const allowRetry = await job.onErrorHandler?.({
+        context: jobDependencyContext,
+        data: jobData,
+        input: decodedInput,
+        result,
+        progress,
+        step,
+        stepIndex,
+        error,
+      })
+
+      if (allowRetry === false) {
+        throw new UnrecoverableError('Job failed (unrecoverable)')
+      }
+
+      throw wrapped
+    }
+  }
+
+  protected nextStepIndex(stepResults: StepResultEntry[]) {
+    const missingIndex = stepResults.findIndex((entry) => !entry)
+    return missingIndex === -1 ? stepResults.length : missingIndex
   }
 
   protected async beforeStep(
@@ -361,7 +509,9 @@ export class ApplicationWorkerJobRunner extends JobRunner<
       id: queueJob?.id,
       queue: queueJob?.queueName,
       attempts: queueJob?.attemptsMade,
-      stepIndex: options.currentStepIndex,
+      stepIndex: options.stepResults
+        ? this.nextStepIndex(options.stepResults)
+        : options.currentStepIndex,
     }
   }
 
@@ -374,11 +524,7 @@ export class ApplicationWorkerJobRunner extends JobRunner<
 
       const { queueJob } = options
 
-      // Find current step index based on completed steps
-      let currentStepIndex = 0
-      for (let i = 0; i < stepResults.length; i++) {
-        if (stepResults[i]) currentStepIndex = i + 1
-      }
+      const currentStepIndex = this.nextStepIndex(stepResults)
 
       // Encode progress before persisting if schema is defined
       const encodedProgress = job.progress
@@ -411,7 +557,7 @@ export class ApplicationWorkerJobRunner extends JobRunner<
       stepIndex,
       options: { queueJob, progress },
     } = params
-    const nextStepIndex = stepIndex + 1
+    const nextStepIndex = this.nextStepIndex(stepResults)
 
     // Encode progress before persisting if schema is defined
     const encodedProgress = job.progress
@@ -428,7 +574,7 @@ export class ApplicationWorkerJobRunner extends JobRunner<
 
     await Promise.all([
       queueJob.log(
-        `Step ${step.label || nextStepIndex} completed in ${(stepResult.duration / 1000).toFixed(3)}s`,
+        `Step ${step.label || stepIndex + 1} completed in ${(stepResult.duration / 1000).toFixed(3)}s`,
       ),
       queueJob.updateProgress(checkpoint),
     ])
