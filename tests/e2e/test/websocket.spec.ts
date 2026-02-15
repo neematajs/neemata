@@ -15,6 +15,10 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 const contract = c.router({
   routes: {
+    ping: c.procedure({
+      input: t.object({}),
+      output: t.object({ message: t.string() }),
+    }),
     streamCount: c.procedure({
       input: t.object({ count: t.number() }),
       output: t.object({ index: t.number() }),
@@ -160,6 +164,18 @@ describe('Playground E2E - WebSocket Streaming', { timeout: 30000 }, () => {
   afterAll(async () => {
     if (serverProcess) {
       await stopServer(serverProcess)
+    }
+  })
+
+  it('calls ping procedure over WebSocket transport', async () => {
+    const client = createWsClient(new JsonFormat())
+
+    await client.connect()
+    try {
+      const result = await client.call.ping({})
+      expect(result).toEqual({ message: 'pong' })
+    } finally {
+      await client.disconnect()
     }
   })
 
