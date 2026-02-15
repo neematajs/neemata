@@ -12,13 +12,12 @@ export type JobStepHandler<
   Deps extends Dependencies,
   Input extends AnyObjectLikeType,
   Output extends AnyObjectLikeType,
-  Return,
   Data = any,
 > = (
   context: DependencyContext<Deps>,
   input: t.infer.decode.output<Input>,
   data: Data,
-) => MaybePromise<null extends Return ? t.infer.encode.input<Output> : Return>
+) => MaybePromise<t.infer.encode.input<Output>>
 
 export interface JobStep<
   Input extends AnyObjectLikeType = AnyObjectLikeType,
@@ -28,11 +27,12 @@ export interface JobStep<
   Data = any,
 > extends Dependant {
   [kJobStepKey]: any
+  _?: { return: Return }
   label?: string
   input: Input
   output: Output
   dependencies: Deps
-  handler: JobStepHandler<Deps, Input, Output, Return, Data>
+  handler: JobStepHandler<Deps, Input, Output, Data>
 }
 
 export function createStep<
@@ -46,7 +46,7 @@ export function createStep<
   input: Input
   output?: Output
   dependencies?: Deps
-  handler: JobStepHandler<Deps, Input, Output, Return, Data>
+  handler: JobStepHandler<Deps, Input, Output, Data>
 }): JobStep<Input, Output, Deps, Return, Data> {
   return Object.freeze({
     [kJobStepKey]: true,

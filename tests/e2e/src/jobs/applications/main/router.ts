@@ -6,6 +6,8 @@ import {
   retryJobProcedure,
   startCheckpointJobProcedure,
   startHungJobProcedure,
+  startParallelConflictJobProcedure,
+  startParallelJobProcedure,
   startQuickJobProcedure,
   startSlowJobProcedure,
 } from './procedures/jobs.ts'
@@ -17,6 +19,8 @@ export const router = n.rootRouter([
       startSlowJob: startSlowJobProcedure,
       startCheckpointJob: startCheckpointJobProcedure,
       startHungJob: startHungJobProcedure,
+      startParallelJob: startParallelJobProcedure,
+      startParallelConflictJob: startParallelConflictJobProcedure,
       getJob: getJobProcedure,
       cancelJob: cancelJobProcedure,
       retryJob: retryJobProcedure,

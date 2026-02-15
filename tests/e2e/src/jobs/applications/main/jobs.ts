@@ -1,6 +1,33 @@
 import { JobWorkerPool, n, t } from 'nmtjs'
 
-type JobKind = 'quick' | 'slow' | 'checkpoint' | 'hung'
+type JobKind =
+  | 'quick'
+  | 'slow'
+  | 'checkpoint'
+  | 'hung'
+  | 'parallel'
+  | 'parallelConflict'
+
+type SlowProgress = { tick?: number }
+type SlowData = { progress: { tick: number } }
+
+type CheckpointProgress = { index?: number; failed?: boolean }
+type CheckpointData = { progress: { index: number; failed: boolean } }
+
+type ParallelProgress = {
+  leftRuns?: number
+  rightRuns?: number
+  leftFailures?: number
+  rightFailures?: number
+}
+type ParallelData = {
+  progress: {
+    leftRuns: number
+    rightRuns: number
+    leftFailures: number
+    rightFailures: number
+  }
+}
 
 async function wait(ms: number, signal: AbortSignal) {
   if (signal.aborted) throw new Error('Job cancelled')
@@ -43,10 +70,9 @@ const slow = n
     pool: JobWorkerPool.Io,
     input: t.object({ ticks: t.number(), delayMs: t.number() }),
     output: t.object({ ticks: t.number() }),
-    data: async (_, __, progress) => {
-      const state = progress as { tick?: number }
-      if (typeof state.tick !== 'number') state.tick = 0
-      return { progress: state }
+    progress: t.object({ tick: t.number().optional() }),
+    data: async (_, __, progress: SlowProgress): Promise<SlowData> => {
+      return { progress: { tick: progress.tick ?? 0 } }
     },
   })
   .step(
@@ -58,7 +84,7 @@ const slow = n
         saveProgress: n.inject.saveJobProgress,
       },
       handler: async ({ signal, saveProgress }, input, data) => {
-        const state = data.progress as { tick: number }
+        const state = data.progress
 
         for (let tick = state.tick; tick < input.ticks; tick++) {
           await wait(input.delayMs, signal)
@@ -78,11 +104,21 @@ const checkpoint = n
     pool: JobWorkerPool.Io,
     input: t.object({ total: t.number(), failAt: t.number() }),
     output: t.object({ processed: t.number() }),
-    data: async (_, __, progress) => {
-      const state = progress as { index?: number; failed?: boolean }
-      if (typeof state.index !== 'number') state.index = 0
-      if (typeof state.failed !== 'boolean') state.failed = false
-      return { progress: state }
+    progress: t.object({
+      index: t.number().optional(),
+      failed: t.boolean().optional(),
+    }),
+    data: async (
+      _,
+      __,
+      progress: CheckpointProgress,
+    ): Promise<CheckpointData> => {
+      return {
+        progress: {
+          index: progress.index ?? 0,
+          failed: progress.failed ?? false,
+        },
+      }
     },
   })
   .step(
@@ -91,7 +127,7 @@ const checkpoint = n
       output: t.object({ processed: t.number() }),
       dependencies: { saveProgress: n.inject.saveJobProgress },
       handler: async ({ saveProgress }, input, data) => {
-        const state = data.progress as { index: number; failed: boolean }
+        const state = data.progress
 
         for (let index = state.index; index < input.total; index++) {
           if (index === input.failAt && !state.failed) {
@@ -131,13 +167,213 @@ const hung = n
   )
   .return(({ result }) => ({ done: Boolean(result.done) }))
 
-export const jobs = { quick, slow, checkpoint, hung } as const
+const parallel = n
+  .job({
+    name: 'playground-parallel',
+    pool: JobWorkerPool.Io,
+    input: t.object({
+      base: t.number(),
+      delayMs: t.number(),
+      failLeftTimes: t.number(),
+      failRightTimes: t.number(),
+    }),
+    output: t.object({
+      left: t.number(),
+      right: t.number(),
+      total: t.number(),
+      leftRuns: t.number(),
+      rightRuns: t.number(),
+    }),
+    progress: t.object({
+      leftRuns: t.number().optional(),
+      rightRuns: t.number().optional(),
+      leftFailures: t.number().optional(),
+      rightFailures: t.number().optional(),
+    }),
+    data: async (_, __, progress: ParallelProgress): Promise<ParallelData> => {
+      return {
+        progress: {
+          leftRuns: progress.leftRuns ?? 0,
+          rightRuns: progress.rightRuns ?? 0,
+          leftFailures: progress.leftFailures ?? 0,
+          rightFailures: progress.rightFailures ?? 0,
+        },
+      }
+    },
+  })
+  .step(
+    n.step({
+      input: t.object({
+        base: t.number(),
+        delayMs: t.number(),
+        failLeftTimes: t.number(),
+        failRightTimes: t.number(),
+      }),
+      output: t.object({
+        base: t.number(),
+        delayMs: t.number(),
+        failLeftTimes: t.number(),
+        failRightTimes: t.number(),
+      }),
+      handler: async (_, input) => ({
+        base: input.base,
+        delayMs: input.delayMs,
+        failLeftTimes: input.failLeftTimes,
+        failRightTimes: input.failRightTimes,
+      }),
+    }),
+  )
+  .steps(
+    n.step({
+      input: t.object({
+        base: t.number(),
+        delayMs: t.number(),
+        failLeftTimes: t.number(),
+        failRightTimes: t.number(),
+      }),
+      output: t.object({ left: t.number() }),
+      dependencies: {
+        signal: n.inject.jobAbortSignal,
+        saveProgress: n.inject.saveJobProgress,
+      },
+      handler: async ({ signal, saveProgress }, input, data) => {
+        const state = data.progress
+
+        await wait(input.delayMs, signal)
+        state.leftRuns += 1
+        await saveProgress()
+
+        if (state.leftFailures < input.failLeftTimes) {
+          state.leftFailures += 1
+          await saveProgress()
+          throw new Error('Parallel fixture left failure')
+        }
+
+        return { left: input.base + 1 }
+      },
+    }),
+    n.step({
+      input: t.object({
+        base: t.number(),
+        delayMs: t.number(),
+        failLeftTimes: t.number(),
+        failRightTimes: t.number(),
+      }),
+      output: t.object({ right: t.number() }),
+      dependencies: {
+        signal: n.inject.jobAbortSignal,
+        saveProgress: n.inject.saveJobProgress,
+      },
+      handler: async ({ signal, saveProgress }, input, data) => {
+        const state = data.progress
+
+        await wait(input.delayMs, signal)
+        state.rightRuns += 1
+        await saveProgress()
+
+        if (state.rightFailures < input.failRightTimes) {
+          state.rightFailures += 1
+          await saveProgress()
+          throw new Error('Parallel fixture right failure')
+        }
+
+        return { right: input.base + 2 }
+      },
+    }),
+  )
+  .step(
+    n.step({
+      input: t.object({
+        base: t.number(),
+        delayMs: t.number(),
+        failLeftTimes: t.number(),
+        failRightTimes: t.number(),
+        left: t.number(),
+        right: t.number(),
+      }),
+      output: t.object({
+        left: t.number(),
+        right: t.number(),
+        total: t.number(),
+        leftRuns: t.number(),
+        rightRuns: t.number(),
+      }),
+      handler: async (_, input, data) => {
+        const state = data.progress
+
+        return {
+          left: input.left,
+          right: input.right,
+          total: input.left + input.right,
+          leftRuns: state.leftRuns,
+          rightRuns: state.rightRuns,
+        }
+      },
+    }),
+  )
+  .return(({ result }) => ({
+    left: Number(result.left ?? 0),
+    right: Number(result.right ?? 0),
+    total: Number(result.total ?? 0),
+    leftRuns: Number(result.leftRuns ?? 0),
+    rightRuns: Number(result.rightRuns ?? 0),
+  }))
+
+const parallelConflict = n
+  .job({
+    name: 'playground-parallel-conflict',
+    pool: JobWorkerPool.Io,
+    input: t.object({ base: t.number(), delayMs: t.number() }),
+    output: t.object({ shared: t.number() }),
+  })
+  .step(
+    n.step({
+      input: t.object({ base: t.number(), delayMs: t.number() }),
+      output: t.object({ base: t.number(), delayMs: t.number() }),
+      handler: async (_, input) => ({
+        base: input.base,
+        delayMs: input.delayMs,
+      }),
+    }),
+  )
+  .steps(
+    n.step({
+      input: t.object({ base: t.number(), delayMs: t.number() }),
+      output: t.object({ shared: t.number() }),
+      dependencies: { signal: n.inject.jobAbortSignal },
+      handler: async ({ signal }, input) => {
+        await wait(input.delayMs, signal)
+        return { shared: input.base + 1 }
+      },
+    }),
+    n.step({
+      input: t.object({ base: t.number(), delayMs: t.number() }),
+      output: t.object({ shared: t.number() }),
+      dependencies: { signal: n.inject.jobAbortSignal },
+      handler: async ({ signal }, input) => {
+        await wait(input.delayMs, signal)
+        return { shared: input.base + 2 }
+      },
+    }),
+  )
+  .return(({ result }) => ({ shared: Number(result.shared ?? 0) }))
+
+export const jobs = {
+  quick,
+  slow,
+  checkpoint,
+  hung,
+  parallel,
+  parallelConflict,
+} as const
 
 export function resolveJobByKind(kind: string) {
   if (kind === 'quick') return jobs.quick
   if (kind === 'slow') return jobs.slow
   if (kind === 'checkpoint') return jobs.checkpoint
   if (kind === 'hung') return jobs.hung
+  if (kind === 'parallel') return jobs.parallel
+  if (kind === 'parallelConflict') return jobs.parallelConflict
 
   throw new Error(`Invalid job kind: ${kind}`)
 }

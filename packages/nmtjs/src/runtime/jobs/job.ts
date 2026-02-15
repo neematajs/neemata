@@ -32,6 +32,45 @@ type GroupOutput<Steps extends readonly AnyJobStep[]> = UnionToIntersection<
   StepOutput<Steps[number]>
 >
 
+type EnsureStepInputSatisfied<
+  CurrentResult,
+  StepInput extends AnyObjectLikeType,
+> =
+  CurrentResult extends t.infer.decode.output<StepInput>
+    ? unknown
+    : TSError<
+        'Accumulated job result does not satisfy current step input:',
+        CurrentResult
+      >
+
+type EnsureStepDataSatisfied<CurrentData, StepData> =
+  CurrentData extends StepData
+    ? unknown
+    : TSError<'Job data does not satisfy step data type:', CurrentData>
+
+type ValidatedParallelStep<
+  Step extends AnyJobStep,
+  CurrentResult,
+  CurrentData,
+> =
+  Step extends JobStep<infer StepInput, any, any, any, infer StepData>
+    ? Step &
+        EnsureStepInputSatisfied<CurrentResult, StepInput> &
+        EnsureStepDataSatisfied<CurrentData, StepData>
+    : never
+
+type ValidatedParallelSteps<
+  Steps extends readonly AnyJobStep[],
+  CurrentResult,
+  CurrentData,
+> = {
+  [K in keyof Steps]: ValidatedParallelStep<
+    Steps[K],
+    CurrentResult,
+    CurrentData
+  >
+}
+
 export type AnyJobOptions = JobOptions<string, any, any, any, any, any>
 
 export interface AnyJob {
@@ -261,7 +300,6 @@ export class Job<
     StepInput extends AnyObjectLikeType,
     StepOutput extends AnyObjectLikeType,
     StepDeps extends Dependencies,
-    StepResult,
     Condition extends
       | JobCondition<Deps, Result, this['_']['data'], Input>
       | undefined,
@@ -272,14 +310,10 @@ export class Job<
             StepInput,
             StepOutput,
             StepDeps,
-            this['_']['result'] extends t.infer.decode.output<StepInput>
-              ? t.infer.decode.output<StepOutput>
-              : TSError<
-                  'Accumulated job result does not satisfy current step input:',
-                  this['_']['result']
-                >,
+            any,
             this['_']['data']
-          >,
+          > &
+            EnsureStepInputSatisfied<this['_']['result'], StepInput>,
           condition?: Condition,
         ]
       : [TSError<'Job has already has return statement'>]
@@ -296,7 +330,7 @@ export class Job<
       Input,
       Output,
       Progress,
-      [...JobSteps, JobStep<StepInput, StepOutput, StepDeps, StepResult, any>],
+      [...JobSteps, JobStep<StepInput, StepOutput, StepDeps, any, any>],
       Result &
         (undefined extends Condition
           ? t.infer.decode.output<
@@ -310,9 +344,14 @@ export class Job<
     >
   }
 
-  steps<GroupSteps extends [AnyJobStep, AnyJobStep, ...AnyJobStep[]]>(
+  steps<const GroupSteps extends [AnyJobStep, AnyJobStep, ...AnyJobStep[]]>(
     ...steps: Return extends false
-      ? GroupSteps
+      ? GroupSteps &
+          ValidatedParallelSteps<
+            GroupSteps,
+            this['_']['result'],
+            this['_']['data']
+          >
       : [TSError<'Job has already has return statement'>]
   ) {
     const validated: AnyJobStep[] = []

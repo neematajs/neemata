@@ -46,6 +46,35 @@ export const startHungJobProcedure = n.procedure({
   },
 })
 
+export const startParallelJobProcedure = n.procedure({
+  dependencies,
+  input: t.object({
+    base: t.number(),
+    delayMs: t.number(),
+    failLeftTimes: t.number(),
+    failRightTimes: t.number(),
+  }),
+  output: t.object({ id: t.string() }),
+  handler: async ({ jobManager }, input) => {
+    const queued = await jobManager.add(jobs.parallel, input, { oneoff: false })
+
+    return { id: queued.id }
+  },
+})
+
+export const startParallelConflictJobProcedure = n.procedure({
+  dependencies,
+  input: t.object({ base: t.number(), delayMs: t.number() }),
+  output: t.object({ id: t.string() }),
+  handler: async ({ jobManager }, input) => {
+    const queued = await jobManager.add(jobs.parallelConflict, input, {
+      oneoff: false,
+    })
+
+    return { id: queued.id }
+  },
+})
+
 export const getJobProcedure = n.procedure({
   dependencies,
   input: t.object({ kind: t.string(), id: t.string() }),

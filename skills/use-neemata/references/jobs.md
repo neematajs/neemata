@@ -59,6 +59,10 @@ At runtime, each job execution follows this flow:
 On retry with checkpoint resume (`clearState: false`), completed steps are not re-executed.
 On retry from scratch (`clearState: true`), execution restarts from step 0.
 
+For parallel groups created with `.steps(...)`, sibling steps run together and their outputs
+are merged after the whole group settles. If siblings emit overlapping output keys,
+the group fails with a key-conflict error.
+
 ### Job Options
 
 | Option | Type | Description |
@@ -79,10 +83,11 @@ On retry from scratch (`clearState: true`), execution restarts from step 0.
 ### Builder Chain
 
 1. `n.job(options)` — create job
-2. `.step(step, condition?)` — add a step (can repeat). Condition: `({context, data, input, result, progress}) => boolean`
-3. `.return(handler?)` — **required** to finalize. Maps accumulated result to output. Handler optional if types already match
-4. `.beforeEach(handler)` / `.afterEach(handler)` — per-step hooks (after `.return()`)
-5. `.onError(handler)` — per-step error hook; return `false` to make error unrecoverable
+2. `.step(step, condition?)` — add a linear step (can repeat). Condition: `({context, data, input, result, progress}) => boolean`
+3. `.steps(stepA, stepB, ...rest)` — add a parallel step group (**at least 2 steps**)
+4. `.return(handler?)` — **required** to finalize. Maps accumulated result to output. Handler optional if types already match
+5. `.beforeEach(handler)` / `.afterEach(handler)` — per-step hooks (after `.return()`)
+6. `.onError(handler)` — per-step error hook; return `false` to make error unrecoverable
 
 ## `data` Callback (Functionality & Usability)
 
@@ -165,6 +170,44 @@ myJob
   .return()
 ```
 
+## Parallel Step Groups (`.steps`)
+
+Use `.steps(...)` when independent steps can run in parallel against the same input snapshot.
+
+```typescript
+const job = n
+  .job({
+    name: 'parallel-example',
+    pool: JobWorkerPool.Io,
+    input: t.object({ id: t.string() }),
+    output: t.object({ left: t.number(), right: t.number(), total: t.number() }),
+  })
+  .steps(
+    n.step({
+      input: t.object({ id: t.string() }),
+      output: t.object({ left: t.number() }),
+      handler: async () => ({ left: 1 }),
+    }),
+    n.step({
+      input: t.object({ id: t.string() }),
+      output: t.object({ right: t.number() }),
+      handler: async () => ({ right: 2 }),
+    }),
+  )
+  .step(n.step({
+    input: t.object({ id: t.string(), left: t.number(), right: t.number() }),
+    output: t.object({ total: t.number() }),
+    handler: async (_, input) => ({ total: input.left + input.right }),
+  }))
+  .return()
+```
+
+Notes:
+- All parallel siblings observe the same pre-group result snapshot.
+- Sibling outputs are merged after the whole group settles.
+- If any sibling throws, the group fails.
+- If siblings produce overlapping keys, the group fails with a key-conflict error.
+
 ## Enqueuing Jobs from Procedures
 
 Use the `jobManager` injectable to add jobs from RPC handlers:
@@ -196,6 +239,20 @@ const startJobProcedure = n.procedure({
 | `retry(job, id, options?)` | Retry a job. `{ clearState?: boolean }` — clear checkpoint or resume |
 | `cancel(job, id)` | Cancel a waiting or active job |
 | `remove(job, id)` | Remove a job from the queue |
+
+### Retry Semantics (`retry`)
+
+- `retry(job, id, { clearState: false })`: resumes from persisted checkpoint/progress when available.
+- `retry(job, id, { clearState: true })`: clears progress and reruns from step 0.
+- If `clearState` is omitted:
+  - failed jobs default to resume (`false`)
+  - completed jobs default to rerun (`true`)
+- Missing job IDs reject.
+- Retrying non-retriable states (for example active jobs) rejects.
+
+For parallel key-conflict failures, behavior depends on `clearState`:
+- `clearState: false` can complete by reusing previously persisted step outputs.
+- `clearState: true` reruns conflicting siblings and fails again unless the conflict is removed.
 
 ### Add Options
 
@@ -344,3 +401,5 @@ Each pool gets `threads` worker threads. `jobs` is the number of concurrent jobs
 Jobs automatically checkpoint after each step. On failure and retry:
 - If `clearState: true` — reruns from the beginning
 - If `clearState: false` (default for failed jobs) — resumes from the last completed step
+
+For completed jobs, `retry` defaults to `clearState: true` (rerun).

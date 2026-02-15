@@ -30,7 +30,14 @@ export default n.server({
       [JobWorkerPool.Io]: { threads: 1, jobs: 1 },
       [JobWorkerPool.Compute]: { threads: 1, jobs: 1 },
     },
-    jobs: [jobs.quick, jobs.slow, jobs.checkpoint, jobs.hung],
+    jobs: [
+      jobs.quick,
+      jobs.slow,
+      jobs.checkpoint,
+      jobs.hung,
+      jobs.parallel,
+      jobs.parallelConflict,
+    ],
   },
   metrics: {},
   proxy: {
