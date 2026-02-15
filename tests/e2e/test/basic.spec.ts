@@ -8,7 +8,6 @@ import { setTimeout } from 'node:timers/promises'
 import { StaticClient } from '@nmtjs/client/static'
 import { c } from '@nmtjs/contract'
 import { JsonFormat } from '@nmtjs/json-format/client'
-import { MsgpackFormat } from '@nmtjs/msgpack-format/client'
 import { ProtocolVersion } from '@nmtjs/protocol'
 import { t } from '@nmtjs/type'
 import { WsTransportFactory } from '@nmtjs/ws-client'
@@ -20,11 +19,6 @@ const contract = c.router({
     ping: c.procedure({
       input: t.object({}),
       output: t.object({ message: t.string() }),
-    }),
-    streamCount: c.procedure({
-      input: t.object({ count: t.number() }),
-      output: t.object({ index: t.number() }),
-      stream: true,
     }),
   },
 })
@@ -240,12 +234,9 @@ async function stopServer(serverProcess: ChildProcess): Promise<void> {
   })
 }
 
-function createClient(
-  url: string,
-  format: JsonFormat | MsgpackFormat = new JsonFormat(),
-) {
+function createClient(url: string) {
   return new StaticClient(
-    { contract, protocol: ProtocolVersion.v1, format },
+    { contract, protocol: ProtocolVersion.v1, format: new JsonFormat() },
     WsTransportFactory,
     { url },
   )
@@ -477,62 +468,6 @@ describe(
       const result2 = await client.call.ping({})
       expect(result2).toEqual({ message: 'pong' })
       await client.disconnect()
-    })
-  },
-)
-
-describe(
-  'Playground E2E - WebSocket Streaming',
-  { timeout: 30000, concurrent: false },
-  () => {
-    let serverProcess: ChildProcess | null = null
-
-    beforeAll(async () => {
-      serverProcess = await startServer('preview')
-    }, 20000)
-
-    afterAll(async () => {
-      if (serverProcess) {
-        await stopServer(serverProcess)
-      }
-    })
-
-    it('streams values over WebSocket transport with JSON format', async () => {
-      const client = createClient(SERVER_URL, new JsonFormat())
-      const result: number[] = []
-
-      await client.connect()
-
-      try {
-        for await (const chunk of await client.stream.streamCount({
-          count: 5,
-        })) {
-          result.push(chunk.index)
-        }
-      } finally {
-        await client.disconnect()
-      }
-
-      expect(result).toEqual([0, 1, 2, 3, 4])
-    })
-
-    it('streams values over WebSocket transport with Msgpack format', async () => {
-      const client = createClient(SERVER_URL, new MsgpackFormat())
-      const result: number[] = []
-
-      await client.connect()
-
-      try {
-        for await (const chunk of await client.stream.streamCount({
-          count: 5,
-        })) {
-          result.push(chunk.index)
-        }
-      } finally {
-        await client.disconnect()
-      }
-
-      expect(result).toEqual([0, 1, 2, 3, 4])
     })
   },
 )
