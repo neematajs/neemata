@@ -317,7 +317,8 @@ for (const backend of JOBS_BACKENDS) {
           async () => getJob(client, 'quick', queued.id),
           {
             description: `quick job ${queued.id} to complete`,
-            condition: (job) => job?.status === 'completed',
+            condition: (job) =>
+              job?.status === 'completed' && job?.output !== null,
           },
         )
 
@@ -427,7 +428,8 @@ for (const backend of JOBS_BACKENDS) {
           async () => getJob(client, 'parallel', queued.id),
           {
             description: `parallel job ${queued.id} completion`,
-            condition: (job) => job?.status === 'completed',
+            condition: (job) =>
+              job?.status === 'completed' && job?.output !== null,
           },
         )
 
@@ -481,7 +483,8 @@ for (const backend of JOBS_BACKENDS) {
           async () => getJob(client, 'parallel', queued.id),
           {
             description: `parallel job ${queued.id} completion after retry`,
-            condition: (job) => job?.status === 'completed',
+            condition: (job) =>
+              job?.status === 'completed' && job?.output !== null,
           },
         )
 
@@ -535,7 +538,8 @@ for (const backend of JOBS_BACKENDS) {
           async () => getJob(client, 'parallel', queued.id),
           {
             description: `parallel job ${queued.id} completion after both-branch retry`,
-            condition: (job) => job?.status === 'completed',
+            condition: (job) =>
+              job?.status === 'completed' && job?.output !== null,
           },
         )
 
@@ -599,7 +603,8 @@ for (const backend of JOBS_BACKENDS) {
           async () => getJob(client, 'parallel', queued.id),
           {
             description: `parallel job ${queued.id} completion after multi-retry`,
-            condition: (job) => job?.status === 'completed',
+            condition: (job) =>
+              job?.status === 'completed' && job?.output !== null,
           },
         )
 
@@ -729,7 +734,8 @@ for (const backend of JOBS_BACKENDS) {
           async () => getJob(client, 'parallelConflict', queued.id),
           {
             description: `parallel conflict job ${queued.id} completion after retry`,
-            condition: (job) => job?.status === 'completed',
+            condition: (job) =>
+              job?.status === 'completed' && job?.output !== null,
           },
         )
 
@@ -879,7 +885,8 @@ for (const backend of JOBS_BACKENDS) {
           async () => getJob(client, 'quick', queued.id),
           {
             description: `quick job ${queued.id} completion for cancel no-op`,
-            condition: (job) => job?.status === 'completed',
+            condition: (job) =>
+              job?.status === 'completed' && job?.output !== null,
           },
         )
 
@@ -926,7 +933,8 @@ for (const backend of JOBS_BACKENDS) {
           {
             timeoutMs: 10000,
             description: `hung job ${queued.id} eventual completion`,
-            condition: (job) => job?.status === 'completed',
+            condition: (job) =>
+              job?.status === 'completed' && job?.output !== null,
           },
         )
 
