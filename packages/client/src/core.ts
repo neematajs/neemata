@@ -888,9 +888,14 @@ export abstract class BaseClient<
     } else if (response.type === 'rpc') {
       if (!call) return
       try {
+        const decodedPayload =
+          response.result.byteLength === 0
+            ? undefined
+            : this.options.format.decode(response.result)
+
         const transformed = this.transformer.decode(
           call.procedure,
-          this.options.format.decode(response.result),
+          decodedPayload,
         )
         this.emitClientEvent({
           kind: 'rpc_response',
