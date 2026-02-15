@@ -1,0 +1,8 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "files": ["./.neemata/types.d.ts"],
+  "include": ["./src/**/*.ts", "./test/**/*.ts"]
+}

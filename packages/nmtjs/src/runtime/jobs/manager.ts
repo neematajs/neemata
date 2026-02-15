@@ -52,7 +52,7 @@ export class QueueJobResult<T extends AnyJob = AnyJob> {
   }
 
   get id() {
-    return this.#options.bullJob.id
+    return this.#options.bullJob.id!
   }
 
   get name() {
@@ -213,7 +213,7 @@ export class JobManager {
   getInfo(job: AnyJob): JobDefinitionInfo {
     return {
       name: job.options.name,
-      steps: job.steps.map((step, index) => ({
+      steps: job.jobSteps.map((step, index) => ({
         label: step.label,
         conditional: job.conditions.has(index),
       })),
@@ -446,7 +446,6 @@ export class JobManager {
         return ['delayed']
       case 'cancelled':
         return [] // BullMQ doesn't have a cancelled state
-      case 'unknown':
       default:
         return []
     }

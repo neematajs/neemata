@@ -41,9 +41,6 @@
     },
     {
       "path": "./packages/ws-transport/tsconfig.build.json"
-    },
-    {
-      "path": "./playground/tsconfig.json"
     }
   ],
   "include": []

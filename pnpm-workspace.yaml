@@ -1,7 +1,6 @@
 packages:
   - packages/*
-  - tests
-  - playground
+  - tests/*
 
 catalog:
   zod: ^4.3.5

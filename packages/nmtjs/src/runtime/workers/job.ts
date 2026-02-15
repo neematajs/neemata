@@ -141,7 +141,7 @@ export class JobWorkerRuntime extends BaseWorkerRuntime {
         yield job
         // we explicitly DO NOT WANT to yield steps here, so per-job container
         // resolves them independently each time — creates more isolation
-        // yield* job.steps
+        // yield* job.jobSteps
       }
     }
   }
