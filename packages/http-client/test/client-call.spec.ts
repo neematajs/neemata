@@ -34,6 +34,26 @@ const toUint8 = (buffer: ArrayBufferView) =>
   new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength)
 
 describe('HttpTransportClient + StaticClient', () => {
+  it('returns undefined for empty unidirectional RPC response body', async () => {
+    const format = new TestJsonFormat()
+    const fetchSpy = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(
+        new Response(new Uint8Array(0) as any, {
+          status: 200,
+          headers: { 'content-type': format.contentType },
+        }),
+      )
+
+    const client = new StaticClient(
+      { contract: {} as any, protocol: ProtocolVersion.v1, format },
+      HttpTransportFactory,
+      { url: 'http://localhost:4000', fetch: fetchSpy },
+    )
+
+    await expect((client.call as any).empty(undefined)).resolves.toBeUndefined()
+  })
+
   it('returns decoded object for unidirectional RPC call', async () => {
     const format = new TestJsonFormat()
     const fetchSpy = vi
