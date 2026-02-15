@@ -29,6 +29,33 @@ type ParallelData = {
   }
 }
 
+function ensureSlowProgress(
+  progress: SlowProgress,
+): asserts progress is { tick: number } {
+  if (typeof progress.tick !== 'number') progress.tick = 0
+}
+
+function ensureCheckpointProgress(
+  progress: CheckpointProgress,
+): asserts progress is { index: number; failed: boolean } {
+  if (typeof progress.index !== 'number') progress.index = 0
+  if (typeof progress.failed !== 'boolean') progress.failed = false
+}
+
+function ensureParallelProgress(
+  progress: ParallelProgress,
+): asserts progress is {
+  leftRuns: number
+  rightRuns: number
+  leftFailures: number
+  rightFailures: number
+} {
+  if (typeof progress.leftRuns !== 'number') progress.leftRuns = 0
+  if (typeof progress.rightRuns !== 'number') progress.rightRuns = 0
+  if (typeof progress.leftFailures !== 'number') progress.leftFailures = 0
+  if (typeof progress.rightFailures !== 'number') progress.rightFailures = 0
+}
+
 async function wait(ms: number, signal: AbortSignal) {
   if (signal.aborted) throw new Error('Job cancelled')
 
@@ -72,7 +99,8 @@ const slow = n
     output: t.object({ ticks: t.number() }),
     progress: t.object({ tick: t.number().optional() }),
     data: async (_, __, progress: SlowProgress): Promise<SlowData> => {
-      return { progress: { tick: progress.tick ?? 0 } }
+      ensureSlowProgress(progress)
+      return { progress }
     },
   })
   .step(
@@ -113,12 +141,8 @@ const checkpoint = n
       __,
       progress: CheckpointProgress,
     ): Promise<CheckpointData> => {
-      return {
-        progress: {
-          index: progress.index ?? 0,
-          failed: progress.failed ?? false,
-        },
-      }
+      ensureCheckpointProgress(progress)
+      return { progress }
     },
   })
   .step(
@@ -191,14 +215,8 @@ const parallel = n
       rightFailures: t.number().optional(),
     }),
     data: async (_, __, progress: ParallelProgress): Promise<ParallelData> => {
-      return {
-        progress: {
-          leftRuns: progress.leftRuns ?? 0,
-          rightRuns: progress.rightRuns ?? 0,
-          leftFailures: progress.leftFailures ?? 0,
-          rightFailures: progress.rightFailures ?? 0,
-        },
-      }
+      ensureParallelProgress(progress)
+      return { progress }
     },
   })
   .step(
