@@ -213,7 +213,7 @@ export class JobManager {
   getInfo(job: AnyJob): JobDefinitionInfo {
     return {
       name: job.options.name,
-      steps: job.steps.map((step, index) => ({
+      steps: job.jobSteps.map((step, index) => ({
         label: step.label,
         conditional: job.conditions.has(index),
       })),
