@@ -1,7 +1,9 @@
 import { n } from 'nmtjs'
 
+import { jobs } from './jobs.ts'
 import {
   cancelJobProcedure,
+  getJobInfoProcedure,
   getJobProcedure,
   retryJobProcedure,
   startCheckpointJobProcedure,
@@ -22,8 +24,10 @@ export const router = n.rootRouter([
       startParallelJob: startParallelJobProcedure,
       startParallelConflictJob: startParallelConflictJobProcedure,
       getJob: getJobProcedure,
+      getJobInfo: getJobInfoProcedure,
       cancelJob: cancelJobProcedure,
       retryJob: retryJobProcedure,
     },
   }),
+  n.jobRouter({ jobs }),
 ])

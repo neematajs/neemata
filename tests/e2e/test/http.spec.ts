@@ -1,8 +1,5 @@
 import type { ChildProcess } from 'node:child_process'
-import { spawn } from 'node:child_process'
-import { connect } from 'node:net'
 import { resolve } from 'node:path'
-import { setTimeout } from 'node:timers/promises'
 
 import { StaticClient } from '@nmtjs/client/static'
 import { c } from '@nmtjs/contract'
@@ -11,6 +8,14 @@ import { JsonFormat } from '@nmtjs/json-format/client'
 import { ProtocolVersion } from '@nmtjs/protocol'
 import { t } from '@nmtjs/type'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+
+import {
+  DEFAULT_SERVER_HOST,
+  DEFAULT_SERVER_PORT,
+  E2E_CWD,
+  startNeemataCliServer,
+  stopServerProcess,
+} from './_utils/server.ts'
 
 const contract = c.router({
   routes: {
@@ -22,7 +27,7 @@ const contract = c.router({
   },
 })
 
-const CWD = resolve(import.meta.dirname, '..')
+const CWD = E2E_CWD
 const BASIC_CONFIG_PATH = resolve(CWD, 'src/basic/neemata.config.js')
 const ALLOWLIST_CONFIG_PATH = resolve(
   CWD,
@@ -32,8 +37,8 @@ const CORS_TRUE_CONFIG_PATH = resolve(
   CWD,
   'src/basic/neemata.cors-true.config.js',
 )
-const SERVER_HOST = '127.0.0.1'
-const SERVER_PORT = 4000
+const SERVER_HOST = DEFAULT_SERVER_HOST
+const SERVER_PORT = DEFAULT_SERVER_PORT
 const SERVER_URL = `http://${SERVER_HOST}:${SERVER_PORT}`
 const ALLOWED_ORIGIN = 'https://allowed-origin.test'
 const DISALLOWED_ORIGIN = 'https://blocked-origin.test'
@@ -42,118 +47,14 @@ async function startServer(
   command: 'preview',
   options: { timeout?: number; configPath?: string } = {},
 ) {
-  const timeout = options.timeout ?? 15000
-  const canConnect = () =>
-    new Promise<boolean>((resolve) => {
-      const socket = connect({ host: SERVER_HOST, port: SERVER_PORT })
-      const cleanup = () => {
-        socket.removeAllListeners()
-        socket.destroy()
-      }
-
-      socket.setTimeout(500)
-      socket.once('connect', () => {
-        cleanup()
-        resolve(true)
-      })
-      socket.once('timeout', () => {
-        cleanup()
-        resolve(false)
-      })
-      socket.once('error', () => {
-        cleanup()
-        resolve(false)
-      })
-    })
-
-  const args = ['exec', 'neemata', command]
-  if (options.configPath) {
-    args.push('--config', options.configPath)
-  }
-
-  const childEnv = { ...process.env, FORCE_COLOR: '0' }
-
-  const serverProcess = spawn('pnpm', args, {
+  return await startNeemataCliServer({
+    command,
     cwd: CWD,
-    stdio: ['ignore', 'pipe', 'pipe'],
-    detached: process.platform === 'linux',
-    env: childEnv,
-  })
-
-  serverProcess.stdout?.on('data', () => {})
-  serverProcess.stderr?.on('data', () => {})
-
-  await new Promise<void>((resolve, reject) => {
-    let settled = false
-
-    const finish = (error?: Error) => {
-      if (settled) return
-      settled = true
-      cleanup()
-      if (error) reject(error)
-      else resolve()
-    }
-
-    const timeoutId = globalThis.setTimeout(() => {
-      finish(new Error(`Server startup timeout (${command})`))
-    }, timeout)
-
-    const readinessInterval = globalThis.setInterval(() => {
-      canConnect().then((ready) => {
-        if (ready) finish()
-      })
-    }, 250)
-
-    const onError = (err: Error) => finish(err)
-    const onExit = (code: number | null) => {
-      finish(new Error(`Server exited before readiness (code ${code})`))
-    }
-
-    const cleanup = () => {
-      globalThis.clearTimeout(timeoutId)
-      globalThis.clearInterval(readinessInterval)
-      serverProcess.off('error', onError)
-      serverProcess.off('exit', onExit)
-    }
-
-    serverProcess.on('error', onError)
-    serverProcess.on('exit', onExit)
-  })
-
-  await setTimeout(1000)
-
-  return serverProcess
-}
-
-async function stopServer(serverProcess: ChildProcess): Promise<void> {
-  const killProcess = (signal: NodeJS.Signals) => {
-    const pid = serverProcess.pid
-
-    if (!pid) return
-
-    if (process.platform === 'linux') {
-      try {
-        process.kill(-pid, signal)
-        return
-      } catch {
-        // Fall through to direct process kill
-      }
-    }
-
-    try {
-      serverProcess.kill(signal)
-    } catch {
-      // Ignore if process already exited
-    }
-  }
-
-  killProcess('SIGTERM')
-  await new Promise<void>((resolve) => {
-    serverProcess.on('exit', () => resolve())
-    globalThis.setTimeout(() => {
-      killProcess('SIGKILL')
-      resolve()
-    }, 5000)
+    configPath: options.configPath,
+    timeoutMs: options.timeout ?? 15000,
+    startupDelayMs: 1000,
+    host: SERVER_HOST,
+    port: SERVER_PORT,
   })
 }
 
@@ -176,7 +77,7 @@ describe('Playground E2E - HTTP CORS', { timeout: 30000 }, () => {
 
   afterAll(async () => {
     if (serverProcess) {
-      await stopServer(serverProcess)
+      await stopServerProcess(serverProcess)
     }
   })
 
@@ -263,7 +164,7 @@ describe('Playground E2E - HTTP CORS (cors: true)', { timeout: 30000 }, () => {
 
   afterAll(async () => {
     if (serverProcess) {
-      await stopServer(serverProcess)
+      await stopServerProcess(serverProcess)
     }
   })
 
@@ -323,7 +224,7 @@ describe('Playground E2E - HTTP Streaming', { timeout: 30000 }, () => {
 
   afterAll(async () => {
     if (serverProcess) {
-      await stopServer(serverProcess)
+      await stopServerProcess(serverProcess)
     }
   })
 

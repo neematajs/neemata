@@ -84,6 +84,15 @@ export const getJobProcedure = n.procedure({
   },
 })
 
+export const getJobInfoProcedure = n.procedure({
+  dependencies,
+  input: t.object({ kind: t.string() }),
+  output: t.any(),
+  handler: async ({ jobManager }, input) => {
+    return jobManager.getInfo(resolveJobByKind(input.kind))
+  },
+})
+
 export const cancelJobProcedure = n.procedure({
   dependencies,
   input: t.object({ kind: t.string(), id: t.string() }),

@@ -1,8 +1,5 @@
 import type { ChildProcess } from 'node:child_process'
-import { spawn } from 'node:child_process'
-import { connect } from 'node:net'
 import { resolve } from 'node:path'
-import { setTimeout } from 'node:timers/promises'
 
 import { StaticClient } from '@nmtjs/client/static'
 import { c } from '@nmtjs/contract'
@@ -11,6 +8,15 @@ import { ProtocolVersion } from '@nmtjs/protocol'
 import { t } from '@nmtjs/type'
 import { WsTransportFactory } from '@nmtjs/ws-client'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+
+import { poll } from './_utils/poll.ts'
+import {
+  DEFAULT_SERVER_HOST,
+  DEFAULT_SERVER_PORT,
+  E2E_CWD,
+  startNeemataCliServer,
+  stopServerProcess,
+} from './_utils/server.ts'
 
 type JobKind =
   | 'quick'
@@ -40,6 +46,11 @@ type JobItem = {
   progress?: JobProgress
   error?: string
   stacktrace?: string[]
+}
+
+type JobInfo = {
+  name: string
+  steps: { label?: string; conditional: boolean; parallel: boolean }[]
 }
 
 const contract = c.router({
@@ -77,6 +88,10 @@ const contract = c.router({
       input: t.object({ kind: t.string(), id: t.string() }),
       output: t.any(),
     }),
+    getJobInfo: c.procedure({
+      input: t.object({ kind: t.string() }),
+      output: t.any(),
+    }),
     cancelJob: c.procedure({
       input: t.object({ kind: t.string(), id: t.string() }),
       output: t.any(),
@@ -92,9 +107,9 @@ const contract = c.router({
   },
 })
 
-const CWD = resolve(import.meta.dirname, '..')
-const SERVER_HOST = '127.0.0.1'
-const SERVER_PORT = 4000
+const CWD = E2E_CWD
+const SERVER_HOST = DEFAULT_SERVER_HOST
+const SERVER_PORT = DEFAULT_SERVER_PORT
 const SERVER_URL = `ws://${SERVER_HOST}:${SERVER_PORT}`
 const JOBS_BACKENDS = [
   'redis',
@@ -113,152 +128,19 @@ function createClient() {
   )
 }
 
-async function startServer(
-  command: 'preview',
-  options: { timeout?: number; configPath: string },
-) {
-  const timeout = options.timeout ?? 20000
-
-  const canConnect = () =>
-    new Promise<boolean>((resolve) => {
-      const socket = connect({ host: SERVER_HOST, port: SERVER_PORT })
-      const cleanup = () => {
-        socket.removeAllListeners()
-        socket.destroy()
-      }
-
-      socket.setTimeout(500)
-      socket.once('connect', () => {
-        cleanup()
-        resolve(true)
-      })
-      socket.once('timeout', () => {
-        cleanup()
-        resolve(false)
-      })
-      socket.once('error', () => {
-        cleanup()
-        resolve(false)
-      })
-    })
-
-  const args = ['exec', 'neemata', command, '--config', options.configPath]
-
-  const serverProcess = spawn('pnpm', args, {
-    cwd: CWD,
-    stdio: ['ignore', 'pipe', 'pipe'],
-    detached: process.platform === 'linux',
-    env: { ...process.env, FORCE_COLOR: '0' },
-  })
-
-  serverProcess.stdout?.on('data', () => {})
-  serverProcess.stderr?.on('data', () => {})
-
-  await new Promise<void>((resolve, reject) => {
-    let settled = false
-
-    const finish = (error?: Error) => {
-      if (settled) return
-      settled = true
-      cleanup()
-      if (error) reject(error)
-      else resolve()
-    }
-
-    const timeoutId = globalThis.setTimeout(() => {
-      finish(new Error(`Server startup timeout (${command})`))
-    }, timeout)
-
-    const readinessInterval = globalThis.setInterval(() => {
-      canConnect().then((ready) => {
-        if (ready) finish()
-      })
-    }, 250)
-
-    const onError = (err: Error) => finish(err)
-    const onExit = (code: number | null) => {
-      finish(new Error(`Server exited before readiness (code ${code})`))
-    }
-
-    const cleanup = () => {
-      globalThis.clearTimeout(timeoutId)
-      globalThis.clearInterval(readinessInterval)
-      serverProcess.off('error', onError)
-      serverProcess.off('exit', onExit)
-    }
-
-    serverProcess.on('error', onError)
-    serverProcess.on('exit', onExit)
-  })
-
-  await setTimeout(1200)
-
-  return serverProcess
-}
-
-async function stopServer(serverProcess: ChildProcess): Promise<void> {
-  const killProcess = (signal: NodeJS.Signals) => {
-    const pid = serverProcess.pid
-
-    if (!pid) return
-
-    if (process.platform === 'linux') {
-      try {
-        process.kill(-pid, signal)
-        return
-      } catch {
-        // Fall through to direct process kill
-      }
-    }
-
-    try {
-      serverProcess.kill(signal)
-    } catch {
-      // Ignore if process already exited
-    }
-  }
-
-  killProcess('SIGTERM')
-  await new Promise<void>((resolve) => {
-    serverProcess.on('exit', () => resolve())
-    globalThis.setTimeout(() => {
-      killProcess('SIGKILL')
-      resolve()
-    }, 5000)
-  })
-}
-
-async function poll<T>(
-  operation: () => Promise<T>,
-  options: {
-    timeoutMs?: number
-    intervalMs?: number
-    condition: (value: T) => boolean
-    description: string
-  },
-) {
-  const timeoutMs = options.timeoutMs ?? 20000
-  const intervalMs = options.intervalMs ?? 200
-  const startedAt = Date.now()
-  let lastValue: T | undefined
-
-  while (Date.now() - startedAt < timeoutMs) {
-    lastValue = await operation()
-    if (options.condition(lastValue)) return lastValue
-    await setTimeout(intervalMs)
-  }
-
-  throw new Error(
-    `Timed out waiting for ${options.description}. Last value: ${JSON.stringify(lastValue)}`,
-  )
-}
-
 async function getJob(
   client: ReturnType<typeof createClient>,
   kind: JobKind,
   id: string,
 ) {
   return (await client.call.getJob({ kind, id })) as JobItem | null
+}
+
+async function getJobInfo(
+  client: ReturnType<typeof createClient>,
+  kind: JobKind,
+) {
+  return (await client.call.getJobInfo({ kind })) as JobInfo
 }
 
 /**
@@ -295,14 +177,20 @@ for (const backend of JOBS_BACKENDS) {
     let serverProcess: ChildProcess | null = null
 
     beforeAll(async () => {
-      serverProcess = await startServer('preview', {
+      serverProcess = await startNeemataCliServer({
+        command: 'preview',
         configPath: getConfigPath(backend),
+        timeoutMs: 20000,
+        startupDelayMs: 1200,
+        cwd: CWD,
+        host: SERVER_HOST,
+        port: SERVER_PORT,
       })
     }, 30000)
 
     afterAll(async () => {
       if (serverProcess) {
-        await stopServer(serverProcess)
+        await stopServerProcess(serverProcess)
       }
     })
 
@@ -325,6 +213,31 @@ for (const backend of JOBS_BACKENDS) {
         expect(completed).not.toBeNull()
         expect(completed?.status).toBe('completed')
         expect(completed?.output).toEqual({ value: 'quick-ok' })
+      } finally {
+        await client.disconnect()
+      }
+    })
+
+    it('job info includes parallel metadata for each step', async () => {
+      const client = createClient()
+      await client.connect()
+
+      try {
+        const parallelInfo = await getJobInfo(client, 'parallel')
+
+        expect(parallelInfo.name).toBe('playground-parallel')
+        expect(parallelInfo.steps.map((step) => step.parallel)).toEqual([
+          false,
+          true,
+          true,
+          false,
+        ])
+
+        const quickInfo = await getJobInfo(client, 'quick')
+        expect(quickInfo.name).toBe('playground-quick')
+        expect(quickInfo.steps.every((step) => step.parallel === false)).toBe(
+          true,
+        )
       } finally {
         await client.disconnect()
       }
