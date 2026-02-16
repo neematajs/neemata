@@ -235,7 +235,7 @@ const startJobProcedure = n.procedure({
 | `add(job, data, options?)` | Enqueue a job. Returns `QueueJobResult` with `.id` and `.waitResult()` |
 | `list(job, options?)` | Paginated listing. Options: `{ page?, limit?, status?[] }` |
 | `get(job, id)` | Get a single job by ID |
-| `getInfo(job)` | Get job definition info (name, steps, labels) |
+| `getInfo(job)` | Get job definition info (name, steps with labels, conditional, parallel) |
 | `retry(job, id, options?)` | Retry a job. `{ clearState?: boolean }` — clear checkpoint or resume |
 | `cancel(job, id)` | Cancel a waiting or active job |
 | `remove(job, id)` | Remove a job from the queue |

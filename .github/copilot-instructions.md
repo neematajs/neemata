@@ -141,8 +141,8 @@ pnpm test                # Build + unit + integration + E2E (excluding jobs E2E)
 pnpm test:unit           # Unit tests only (vitest)
 pnpm test:integration    # Integration tests only
 pnpm test:e2e            # E2E tests only (excluding jobs E2E)
-pnpm test:e2e:jobs       # Jobs E2E only (Redis + Valkey, requires stores)
-pnpm test:e2e:jobs:docker # Jobs E2E in Docker (recommended locally)
+pnpm test:e2e:jobs       # Jobs E2E only (Redis + Valkey, requires stores; use mainly in CI or when stores are already provisioned)
+pnpm test:e2e:jobs:docker # Jobs E2E in Docker (use this locally)
 pnpm check               # Format + lint + type-check (required before commit)
 pnpm fmt                 # Auto-fix with Biome
 ```
@@ -162,7 +162,7 @@ Prefer using `tests` tool for validating test. However, here are the repo comman
 - **Unit tests**: `packages/*/test/*.spec.ts` - Test individual package functionality (runs with `pnpm test:unit`)
 - **Integration tests**: `tests/integration/test/` - Test cross-package interactions (runs with `pnpm test:integration`)
 - **E2E tests**: `tests/e2e/test/` - Test full application/runtime behavior (runs with `pnpm test:e2e`)
-- **Jobs E2E tests**: `tests/e2e/test/jobs.spec.ts` - Runs against Redis + Valkey (runs with `pnpm test:e2e:jobs` or `pnpm test:e2e:jobs:docker`)
+- **Jobs E2E tests**: `tests/e2e/test/jobs.spec.ts` - Runs against Redis + Valkey; locally prefer `pnpm test:e2e:jobs:docker` (use `pnpm test:e2e:jobs` when stores are already available)
 
 **Shared Test Utilities** (`@nmtjs/tests-integration` from `tests/integration/src/`):
 

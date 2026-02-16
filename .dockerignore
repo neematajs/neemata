@@ -5,6 +5,8 @@ coverage
 .gitignore
 .vscode
 .husky
+.github
+.pnpm-store
 **/node_modules
 **/dist
 **/coverage

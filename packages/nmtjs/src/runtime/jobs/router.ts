@@ -254,7 +254,11 @@ const idInputSchema = t.object({ id: t.string() })
 const infoOutputSchema = t.object({
   name: t.string(),
   steps: t.array(
-    t.object({ label: t.string().optional(), conditional: t.boolean() }),
+    t.object({
+      label: t.string().optional(),
+      conditional: t.boolean(),
+      parallel: t.boolean(),
+    }),
   ),
 })
 

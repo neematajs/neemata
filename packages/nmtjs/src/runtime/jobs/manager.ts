@@ -216,6 +216,7 @@ export class JobManager {
       steps: job.jobSteps.map((step, index) => ({
         label: step.label,
         conditional: job.conditions.has(index),
+        parallel: job.parallelGroupByStepIndex.has(index),
       })),
     }
   }

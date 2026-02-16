@@ -8,6 +8,8 @@ export interface JobStepInfo {
   label?: string
   /** Whether this step has a condition that may skip it */
   conditional: boolean
+  /** Whether this step executes in a parallel group */
+  parallel: boolean
 }
 
 /** Metadata about a job definition (not a running job instance) */
