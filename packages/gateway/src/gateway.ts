@@ -424,10 +424,10 @@ export class Gateway {
 
         this.startHeartbeat(connection)
 
-        container.provide(
-          injectables.connectionAbortSignal,
-          abortController.signal,
-        )
+        container.provide([
+          provision(injectables.connection, connection),
+          provision(injectables.connectionAbortSignal, abortController.signal),
+        ])
 
         logger.debug(
           {
