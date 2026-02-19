@@ -22,6 +22,7 @@ export * from './object.ts'
 export * from './string.ts'
 export * from './tuple.ts'
 export * from './union.ts'
+export * from './unknown.ts'
 
 export namespace infer {
   export namespace decode {
