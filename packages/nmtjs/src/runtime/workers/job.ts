@@ -114,10 +114,7 @@ export class JobWorkerRuntime extends BaseWorkerRuntime {
           if (error instanceof UnrecoverableError) {
             this.runtimeOptions.port.postMessage({
               type: 'task',
-              data: {
-                id,
-                task: { type: 'unrecoverable_error', error: error.message },
-              },
+              data: { id, task: { type: 'unrecoverable_error', error } },
             } satisfies ThreadPortMessage)
           } else {
             this.runtimeOptions.port.postMessage({

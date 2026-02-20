@@ -1,3 +1,5 @@
+import { inspect } from 'node:util'
+
 import type { Logger } from '@nmtjs/core'
 import type { RedisClient } from 'bullmq'
 import { Queue, UnrecoverableError, Worker } from 'bullmq'
@@ -17,6 +19,19 @@ import { JobWorkerPool, WorkerType } from '../enums.ts'
 import { getJobQueueName } from '../jobs/manager.ts'
 import { createJobsUI } from '../jobs/ui.ts'
 import { JobRunnersPool } from './worker-pool.ts'
+
+function enrichBullMqErrorStack(error: unknown): Error {
+  const normalized =
+    error instanceof Error
+      ? error
+      : new Error(
+          typeof error === 'string' ? error : inspect(error, false, 20, false),
+        )
+
+  normalized.stack = inspect(normalized, false, 20, false)
+
+  return normalized
+}
 
 /**
  * ApplicationServerJobs manages job worker pools and BullMQ queue workers.
@@ -188,18 +203,18 @@ export class ApplicationServerJobs {
           switch (result.type) {
             case 'success':
               return result.result
-            case 'unrecoverable_error':
-              throw new UnrecoverableError(
-                typeof result.error === 'string'
-                  ? result.error
-                  : 'Unrecoverable error',
-              )
+            case 'unrecoverable_error': {
+              const error = enrichBullMqErrorStack(result.error)
+              const unrecoverableError = new UnrecoverableError(error.message)
+              unrecoverableError.stack = error.stack
+              throw unrecoverableError
+            }
             case 'job_not_found':
             case 'queue_job_not_found':
               throw new UnrecoverableError(result.type)
             case 'error':
               console.error(result.error)
-              throw result.error
+              throw enrichBullMqErrorStack(result.error)
             default:
               throw new UnrecoverableError('Unknown job task result')
           }
