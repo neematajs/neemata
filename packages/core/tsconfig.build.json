@@ -6,7 +6,7 @@
     "outDir": "./dist",
     "declaration": true,
     "sourceMap": true,
-    "isolatedDeclarations": true
+    "isolatedDeclarations": false
   },
   "include": ["src/**/*"]
 }
