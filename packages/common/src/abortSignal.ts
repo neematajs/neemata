@@ -1,3 +1,6 @@
+const isNode =
+  !('Bun' in globalThis) && globalThis.process?.release?.name === 'node'
+
 /**
  * Combines multiple AbortSignals into one that aborts when any of the source signals abort.
  *
@@ -20,7 +23,7 @@ export function anyAbortSignal(
   }
 
   // Use native implementation on Bun (no memory leak there)
-  if ('Bun' in globalThis) {
+  if (!isNode) {
     return AbortSignal.any(filtered)
   }
 
@@ -38,8 +41,8 @@ export function anyAbortSignal(
   // Track cleanup functions
   const cleanups: (() => void)[] = []
 
-  const onAbort = () => {
-    controller.abort()
+  const onAbort = (signal: AbortSignal) => {
+    controller.abort(signal.reason)
     // Clean up all listeners immediately after abort
     cleanup()
   }
@@ -53,8 +56,10 @@ export function anyAbortSignal(
 
   // Attach listeners to all signals
   for (const signal of filtered) {
-    signal.addEventListener('abort', onAbort, { once: true })
-    cleanups.push(() => signal.removeEventListener('abort', onAbort))
+    signal.addEventListener('abort', () => onAbort(signal), { once: true })
+    cleanups.push(() =>
+      signal.removeEventListener('abort', () => onAbort(signal)),
+    )
   }
 
   return controller.signal
