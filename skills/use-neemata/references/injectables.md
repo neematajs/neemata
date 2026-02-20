@@ -37,22 +37,70 @@ const serviceInjectable = n.factory({
 })
 ```
 
+### `n.lazy` pattern: define once, provide at runtime
+
+`n.lazy` is useful when a value is only known during request processing. Common
+flow:
+
+1. Define a lazy token (usually in a shared `injectables.ts` file)
+2. Provide a concrete value from middleware/hook/transport integration
+3. Inject and use it in procedures via `dependencies`
+
+```typescript
+import { randomUUID } from 'node:crypto'
+
+import { n, Scope, t } from 'nmtjs'
+
+// 1) Define a token once
+export const requestId = n.lazy<string>(Scope.Call)
+
+// 2) Provide it at runtime from middleware
+export const requestIdMiddleware = n.middleware({
+  handle: async (_, call, next, payload) => {
+    const value = randomUUID()
+    call.container.provide(requestId, value)
+    return next(payload)
+  },
+})
+
+// 3) Consume it in procedures
+export const echoProcedure = n.procedure({
+  dependencies: { requestId, logger: n.inject.logger('echo') },
+  input: t.object({ message: t.string() }),
+  output: t.object({ requestId: t.string(), message: t.string() }),
+  handler: ({ requestId, logger }, input) => {
+    logger.info({ requestId }, 'Request received')
+    return { requestId, message: input.message }
+  },
+})
+```
+
+If a lazy token may be absent, inject it as optional in dependencies using
+`myLazy.optional()`.
+
 ## Built-in Injectables (`n.inject.*`)
 
-| Injectable | Scope | Type | Description |
-|---|---|---|---|
-| `n.inject.logger` | Global | `Logger` | Pino logger instance |
-| `n.inject.logger('label')` | Global | `Logger` | Labeled logger |
-| `n.inject.inject` | Global | Function | DI inject function |
-| `n.inject.dispose` | Global | Function | DI dispose function |
-| `n.inject.connection` | Connection | `GatewayConnection` | Connection object |
-| `n.inject.connectionId` | Connection | `string` | Connection ID |
-| `n.inject.connectionData` | Connection | `unknown` | Auth/metadata |
-| `n.inject.connectionAbortSignal` | Connection | `AbortSignal` | Connection lifetime signal |
-| `n.inject.rpcClientAbortSignal` | Call | `AbortSignal` | Client-initiated abort |
-| `n.inject.rpcStreamAbortSignal` | Call | `AbortSignal` | Stream timeout abort |
-| `n.inject.rpcAbortSignal` | Call | `AbortSignal` | Combined abort signal |
-| `n.inject.createBlob` | Call | Function | Blob factory for responses |
+| Injectable | Scope | Type | What it is | When to use |
+|---|---|---|---|---|
+| `n.inject.logger` | Global | `Logger` | Base app logger instance | Default logging in guards, middleware, procedures, and jobs |
+| `n.inject.logger('label')` | Global | `Logger` | Child logger with label context | Prefer for component-specific logs (e.g. `logger('auth')`) |
+| `n.inject.inject` | Global | Function | Imperative DI resolver for current container | Advanced/infrastructure scenarios; prefer declarative `dependencies` |
+| `n.inject.dispose` | Global | Function | Imperative disposal helper for container-managed values | Infrastructure/plugins; avoid in regular request handlers |
+| `n.inject.connection` | Connection | `GatewayConnection` | Full connection object (id, type, identity, transport, protocol context) | When you need low-level connection details beyond metadata |
+| `n.inject.connectionId` | Connection | `string` | Stable current connection identifier | Correlation IDs, metrics labels, per-connection caches/maps |
+| `n.inject.connectionData` | Connection | `unknown` | Transport-provided request/connection context | Auth/session/user/request metadata propagated from transport |
+| `n.inject.connectionAbortSignal` | Connection | `AbortSignal` | Signal aborted when connection is closed/disconnected | Cancel long-running work tied to connection lifetime |
+| `n.inject.rpcClientAbortSignal` | Call | `AbortSignal` | Per-call cancellation from client/request side | Use only if you specifically need client/request-originated cancellation |
+| `n.inject.rpcStreamAbortSignal` | Call | `AbortSignal` | Optional stream-timeout signal | Only available when procedure sets `streamTimeout` |
+| `n.inject.rpcAbortSignal` | Call | `AbortSignal` | Unified call signal (client/request + connection + optional stream timeout) | Recommended default signal for handler cancellation checks |
+| `n.inject.createBlob` | Call | Function | Factory that wraps data source into protocol blob response | Server-to-client binary streaming/blob responses |
+
+### Cancellation signal quick guide
+
+- Use `n.inject.rpcAbortSignal` by default in procedure handlers.
+- Use `n.inject.connectionAbortSignal` when work should survive call boundaries but stop on disconnect.
+- Use `n.inject.rpcStreamAbortSignal` only in stream procedures with explicit `streamTimeout`.
+- Avoid requiring `n.inject.rpcStreamAbortSignal` in generic procedures because it is optional by design.
 
 ## Using Injectables in Procedures
 

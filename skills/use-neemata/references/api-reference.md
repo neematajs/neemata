@@ -217,22 +217,11 @@ n.factory({                              // FactoryInjectable — created via fa
 
 ### `n.inject` (recommended) / `n.injectables` (deprecated)
 
-Built-in injectables:
+Built-in injectables include logger, DI helpers, connection context, RPC
+cancellation signals, and blob helpers.
 
-| Injectable | Scope | Type |
-|---|---|---|
-| `n.inject.logger` | Global | `Logger` |
-| `n.inject.logger('label')` | Global | `Logger` (labeled) |
-| `n.inject.inject` | Global | DI inject function |
-| `n.inject.dispose` | Global | DI dispose function |
-| `n.inject.connection` | Connection | `GatewayConnection` |
-| `n.inject.connectionId` | Connection | `string` |
-| `n.inject.connectionData` | Connection | `unknown` |
-| `n.inject.connectionAbortSignal` | Connection | `AbortSignal` |
-| `n.inject.rpcClientAbortSignal` | Call | `AbortSignal` |
-| `n.inject.rpcStreamAbortSignal` | Call | `AbortSignal` |
-| `n.inject.rpcAbortSignal` | Call | `AbortSignal` |
-| `n.inject.createBlob` | Call | Blob factory function |
+For the complete table with scope, types, behavior, and usage guidance, see
+[Injectables Reference](injectables.md).
 
 ### Metrics
 
