@@ -72,26 +72,48 @@ export async function createViteServer(
     {
       createEnvironment: async (name, config, context) => {
         const channels = new Map<number, BroadcastChannel>()
-        const clients = new Map<BroadcastChannel, HotChannelClient>()
-        const handlers = new Map<string, HotChannelListener>()
+        const clients = new Map<number, HotChannelClient>()
+        const handlers = new Map<string, Set<Function>>()
+
+        const emit = (
+          event: string,
+          data: unknown,
+          client: HotChannelClient,
+        ) => {
+          const listeners = handlers.get(event)
+          if (!listeners?.size) return
+          for (const listener of listeners) {
+            ;(listener as HotChannelListener)(data, client)
+          }
+        }
 
         events.on('worker', (worker) => {
           const channel = createBroadcastChannel(worker.threadId)
-          channel.onmessage = (event) => {
-            const value = event.data
-            const handler = handlers.get(value.event)
-            if (handler) handler(value.data, client)
-          }
-          channels.set(worker.threadId, channel)
-          const client = {
+          const client: HotChannelClient = {
             send: (payload: HotPayload) => {
               channel.postMessage(payload)
             },
           }
-          clients.set(channel, client)
-          worker.on('exit', () => {
-            const handler = handlers.get('vite:client:disconnect')
-            if (handler) handler(undefined, client)
+
+          channel.onmessage = (event) => {
+            const value = event.data
+            if (value && typeof value.event === 'string') {
+              emit(value.event, value.data, client)
+            }
+          }
+
+          channels.set(worker.threadId, channel)
+          clients.set(worker.threadId, client)
+
+          emit('vite:client:connect', undefined, client)
+
+          worker.once('exit', () => {
+            emit('vite:client:disconnect', undefined, client)
+
+            channel.onmessage = () => {}
+            channel.close()
+            channels.delete(worker.threadId)
+            clients.delete(worker.threadId)
           })
         })
 
@@ -102,10 +124,25 @@ export async function createViteServer(
             }
           },
           on(event, handler) {
-            handlers.set(event, handler)
+            let listeners = handlers.get(event)
+            if (!listeners) {
+              listeners = new Set()
+              handlers.set(event, listeners)
+            }
+            listeners.add(handler)
           },
-          off(event) {
-            handlers.delete(event)
+          off(event, handler) {
+            if (!handler) {
+              handlers.delete(event)
+              return
+            }
+
+            const listeners = handlers.get(event)
+            if (!listeners) return
+            listeners.delete(handler)
+            if (!listeners.size) {
+              handlers.delete(event)
+            }
           },
         }
 

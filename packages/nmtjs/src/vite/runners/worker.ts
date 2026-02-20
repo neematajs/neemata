@@ -20,12 +20,16 @@ export function createBroadcastChannel(threadId: number): BroadcastChannel {
 
 export function createModuleRunner(
   mode: 'development' | 'production' = 'development',
+  timeoutMs = 5000,
 ): ModuleRunner {
   // TODO: bun does not support isInternalThread yet
   if (isMainThread || wt.isInternalThread)
     throw new Error('Module runner can only be created inside worker threads.')
 
   const channel = createBroadcastChannel(threadId)
+
+  const transportTimeout =
+    Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 5000
 
   const transport: ModuleRunnerTransport = {
     connect({ onMessage, onDisconnection }) {
@@ -38,7 +42,7 @@ export function createModuleRunner(
     send(data) {
       channel.postMessage(data)
     },
-    timeout: 5000,
+    timeout: transportTimeout,
   }
 
   const runner = new ModuleRunner(
