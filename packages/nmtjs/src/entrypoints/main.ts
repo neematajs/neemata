@@ -43,9 +43,13 @@ const applicationsConfig: Record<
 const mode = _vite?.mode === 'development' ? 'development' : 'production'
 const isDev = mode === 'development'
 const errorPolicy = getErrorPolicy(mode)
+const bootstrapLogger = createLogger(
+  { pinoOptions: { level: isDev ? 'debug' : 'info' } },
+  'Main',
+)
 
 // Logger for main process (created lazily with config-based level)
-let logger: ReturnType<typeof createLogger>
+let logger: ReturnType<typeof createLogger> = bootstrapLogger
 
 // Vite server and events (dev only)
 let _viteServerEvents: EventEmitter<WorkerServerEventMap> | undefined
@@ -61,6 +65,22 @@ let currentServerConfig: ServerConfig | undefined
 // Track termination state
 let isTerminating = false
 
+function resolveViteRunnerTimeoutMs(): number | undefined {
+  const raw = process.env.NMTJS_VITE_RUNNER_TIMEOUT_MS
+  if (!raw) return undefined
+
+  const parsed = Number.parseInt(raw, 10)
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    logger.warn(
+      { value: raw },
+      'Invalid NMTJS_VITE_RUNNER_TIMEOUT_MS, falling back to default',
+    )
+    return undefined
+  }
+
+  return parsed
+}
+
 /**
  * Create the ApplicationServer instance using currentServerConfig.
  */
@@ -71,7 +91,10 @@ function createServer(): ApplicationServer {
 
   const workerConfig = {
     path: fileURLToPath(new URL(`./thread${_ext}`, import.meta.url)),
-    workerData: { vite: _vite?.mode },
+    workerData: {
+      vite: _vite?.mode,
+      viteModuleRunnerTimeoutMs: resolveViteRunnerTimeoutMs(),
+    },
     worker: _viteServerEvents
       ? (worker: Worker) => {
           _viteServerEvents!.emit('worker', worker)
@@ -234,15 +257,20 @@ async function handleTermination() {
     logger.error(new Error('Failed to stop server', { cause: error as Error }))
   }
 
-  _viteServer?.close()
+  try {
+    await _viteServer?.close()
+  } catch (error) {
+    logger.error(new Error('Failed to close Vite server', { cause: error }))
+  }
   process.exit(0)
 }
 
 /**
  * Handle unexpected errors.
  */
-function handleUnexpectedError(error: Error) {
-  logger.error(new Error('Unexpected Error', { cause: error }))
+function handleUnexpectedError(error: unknown) {
+  const normalized = error instanceof Error ? error : new Error(String(error))
+  logger.error(new Error('Unexpected Error', { cause: normalized }))
 }
 
 /**

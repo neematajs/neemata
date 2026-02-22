@@ -17,6 +17,7 @@ export type RunWorkerOptions = {
     | { type: 'application'; name: string; path: string; transportsData: any }
     | { type: 'jobs'; jobWorkerPool: string }
   vite?: 'development' | 'production'
+  viteModuleRunnerTimeoutMs?: number
 }
 
 const workerData = _workerData as RunWorkerOptions
@@ -42,6 +43,7 @@ let runner: ModuleRunner | undefined
 let workerModule: WorkerModule
 let runtime: WorkerRuntime | undefined
 let runtimeStarted = false
+let cleanupPromise: Promise<void> | null = null
 
 process.on('uncaughtException', (error) => {
   reportError(error, 'runtime', { fatal: true })
@@ -51,13 +53,36 @@ process.on('unhandledRejection', (error) => {
   reportError(error, 'runtime', { fatal: true })
 })
 
-process.on('exit', () => {
-  void cleanup()
+process.once('SIGTERM', () => {
+  void terminate(0)
+})
+
+process.once('SIGINT', () => {
+  void terminate(0)
+})
+
+process.once('beforeExit', () => {
+  if (!cleanupPromise && (runtimeStarted || runner)) {
+    void cleanup()
+  }
 })
 
 async function cleanup() {
-  await stopRuntime()
-  await closeRunner()
+  if (cleanupPromise) return cleanupPromise
+
+  cleanupPromise = (async () => {
+    await stopRuntime()
+    await closeRunner()
+  })().finally(() => {
+    cleanupPromise = null
+  })
+
+  return cleanupPromise
+}
+
+async function terminate(code: number) {
+  await cleanup()
+  process.exit(code)
 }
 
 async function closeRunner() {
@@ -136,7 +161,10 @@ async function loadWorkerModule() {
         '../vite/runners/worker.ts'
       )) as typeof import('../vite/runners/worker.ts')
 
-      runner = createModuleRunner(workerData.vite)
+      runner = createModuleRunner(
+        workerData.vite,
+        workerData.viteModuleRunnerTimeoutMs,
+      )
       workerModule = await runner.import(workerPath)
     } else {
       runner = undefined
@@ -159,8 +187,7 @@ async function initializeRuntime() {
 
   workerData.port.on('message', async (msg) => {
     if (msg.type === 'stop') {
-      await cleanup()
-      process.exit(0)
+      await terminate(0)
     }
   })
 }
@@ -190,6 +217,5 @@ main().catch(async (error) => {
   if (!(normalized as any)[kReportedError]) {
     reportError(normalized, 'bootstrap')
   }
-  await cleanup()
-  process.exit(1)
+  await terminate(1)
 })

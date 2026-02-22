@@ -139,6 +139,31 @@ export const liveDataProcedure = n.procedure({
 })
 ```
 
+- Prefer `n.inject.rpcAbortSignal` in handlers for general cancellation support
+  (client abort, client timeout/request abort, and disconnect)
+- `n.inject.rpcStreamAbortSignal` is optional and only available when
+  `streamTimeout` is configured for that procedure
+
+```typescript
+import { n, t } from 'nmtjs'
+
+export const streamWithTimeoutProcedure = n.procedure({
+  dependencies: {
+    signal: n.inject.rpcAbortSignal,
+    streamSignal: n.inject.rpcStreamAbortSignal,
+  },
+  input: t.object({}),
+  output: t.object({ value: t.number() }),
+  stream: true,
+  streamTimeout: 5_000,
+  async *handler({ signal, streamSignal }) {
+    while (!signal.aborted && !streamSignal.aborted) {
+      yield { value: Math.random() }
+    }
+  },
+})
+```
+
 ## Blob Upload (Client → Server)
 
 ```typescript
