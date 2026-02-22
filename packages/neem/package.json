@@ -1,0 +1,43 @@
+{
+  "name": "@nmtjs/neem",
+  "description": "Neemata Application Server",
+  "type": "module",
+  "scripts": {
+    "clean-build": "rm -rf ./dist"
+  },
+  "exports": {
+    "./cli": {
+      "types": "./src/cli.ts",
+      "import": "./dist/cli.js",
+      "module-sync": "./dist/cli.js"
+    }
+  },
+  "dependencies": {
+    "@nmtjs/common": "workspace:*",
+    "@nmtjs/core": "workspace:*",
+    "citty": "0.2.0",
+    "dotenv": "^17.2.3",
+    "oxc-resolver": "11.17.0",
+    "prom-client": "git@github.com:siimon/prom-client.git#d4d2dcb366384833951e0116caca707b5f62aa5e",
+    "vite": "catalog:"
+  },
+  "devDependencies": {
+    "@nmtjs/proxy": "catalog:",
+    "pino": "10.3.0"
+  },
+  "peerDependencies": {
+    "@nmtjs/proxy": "catalog:"
+  },
+  "peerDependenciesMeta": {
+    "@nmtjs/proxy": {
+      "optional": true
+    }
+  },
+  "files": [
+    "bin",
+    "dist",
+    "src",
+    "LICENSE.md",
+    "README.md"
+  ]
+}

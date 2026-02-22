@@ -213,6 +213,37 @@ importers:
         specifier: workspace:*
         version: link:../protocol
 
+  packages/neem:
+    dependencies:
+      '@nmtjs/common':
+        specifier: workspace:*
+        version: link:../common
+      '@nmtjs/core':
+        specifier: workspace:*
+        version: link:../core
+      citty:
+        specifier: 0.2.0
+        version: 0.2.0
+      dotenv:
+        specifier: ^17.2.3
+        version: 17.2.3
+      oxc-resolver:
+        specifier: 11.17.0
+        version: 11.17.0
+      prom-client:
+        specifier: git@github.com:siimon/prom-client.git#d4d2dcb366384833951e0116caca707b5f62aa5e
+        version: https://codeload.github.com/siimon/prom-client/tar.gz/d4d2dcb366384833951e0116caca707b5f62aa5e
+      vite:
+        specifier: 'catalog:'
+        version: 8.0.0-beta.15(@types/node@24.10.1)(esbuild@0.27.2)(jiti@2.6.1)
+    devDependencies:
+      '@nmtjs/proxy':
+        specifier: 'catalog:'
+        version: 1.0.0-beta.4
+      pino:
+        specifier: 10.3.0
+        version: 10.3.0
+
   packages/nmtjs:
     dependencies:
       '@nmtjs/application':
