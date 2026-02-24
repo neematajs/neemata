@@ -38,7 +38,7 @@ export interface StepResultEntry {
 export interface JobProgressCheckpoint {
   /** Index of the next step to execute (0 = not started, length = completed) */
   stepIndex: number
-  /** Label of the last completed step */
+  /** Label of the next step to execute, if labeled */
   stepLabel?: string
   /** Accumulated result from all completed steps */
   result: Record<string, unknown>
