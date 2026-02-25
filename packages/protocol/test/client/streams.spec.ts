@@ -42,6 +42,23 @@ describe('ProtocolClientBlobStream', () => {
     const chunk3 = await stream.read(1)
     expect(chunk3).toBeNull()
   })
+
+  it('returns up to requested size without waiting to accumulate', async () => {
+    const stream = new ProtocolClientBlobStream(
+      readableFrom(['hello', 'world']),
+      1,
+      { type: 'text/plain' },
+    )
+
+    const chunk1 = await stream.read(10)
+    expect(decoder.decode(chunk1!)).toBe('hello')
+
+    const chunk2 = await stream.read(10)
+    expect(decoder.decode(chunk2!)).toBe('world')
+
+    const chunk3 = await stream.read(10)
+    expect(chunk3).toBeNull()
+  })
 })
 
 describe('ProtocolServerStream', () => {

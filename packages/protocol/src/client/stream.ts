@@ -34,12 +34,7 @@ export class ProtocolClientBlobStream
           controller.close()
           return
         }
-        const chunk = value
-        controller.enqueue(
-          chunk instanceof Uint8Array
-            ? chunk
-            : new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength),
-        )
+        controller.enqueue(value)
       },
       transform: (chunk) => {
         if (chunk instanceof ArrayBuffer) {
@@ -82,21 +77,15 @@ export class ProtocolClientBlobStream
   }
 
   async read(size: number) {
-    while (this.#queue.byteLength < size) {
+    if (this.#queue.byteLength === 0) {
       const { done, value } = await this.#reader.read()
-      if (done) {
-        if (this.#queue.byteLength > 0) {
-          const chunk = this.#queue
-          this.#queue = new Uint8Array(0)
-          return chunk
-        }
-        return null
-      }
-      const buffer = value
-      this.#queue = concat(this.#queue, buffer)
+      if (done) return null
+      this.#queue = concat(this.#queue, value)
     }
-    const chunk = this.#queue.subarray(0, size)
-    this.#queue = this.#queue.subarray(size)
+
+    const chunkSize = Math.min(size, this.#queue.byteLength)
+    const chunk = this.#queue.subarray(0, chunkSize)
+    this.#queue = this.#queue.subarray(chunkSize)
     return chunk
   }
 }
