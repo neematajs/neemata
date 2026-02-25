@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.7-labs
 FROM node:24-trixie-slim
 
 WORKDIR /workspace
@@ -7,14 +8,11 @@ ENV PATH=$PNPM_HOME:$PATH
 
 RUN corepack enable
 
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY --parents ./package.json ./pnpm-lock.yaml ./pnpm-workspace.yaml ./packages/*/package.json ./tests/*/package.json ./packages/nmtjs/bin ./
 
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store pnpm fetch
-
-COPY tsconfig.base.json tsconfig.build.json tsconfig.json vitest.config.ts biome.json ./
-COPY packages ./packages
-COPY tests ./tests
-COPY scripts ./scripts
-
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store pnpm install --frozen-lockfile --offline
+
+COPY . .
+
 RUN pnpm build

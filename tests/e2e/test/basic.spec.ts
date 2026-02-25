@@ -1,7 +1,6 @@
 import type { ChildProcess } from 'node:child_process'
 import { spawn } from 'node:child_process'
 import { readFile, writeFile } from 'node:fs/promises'
-import { connect } from 'node:net'
 import { resolve } from 'node:path'
 import { setTimeout } from 'node:timers/promises'
 
@@ -13,6 +12,15 @@ import { t } from '@nmtjs/type'
 import { WsTransportFactory } from '@nmtjs/ws-client'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
+import {
+  DEFAULT_SERVER_HOST,
+  DEFAULT_SERVER_PORT,
+  E2E_CWD,
+  startNeemataCliServer,
+  stopServerProcess,
+  waitForPortReady,
+} from './_utils/server.ts'
+
 // Define the contract that matches our server's router
 const contract = c.router({
   routes: {
@@ -23,7 +31,7 @@ const contract = c.router({
   },
 })
 
-const CWD = resolve(import.meta.dirname, '..')
+const CWD = E2E_CWD
 const BASIC_CONFIG_PATH = resolve(CWD, 'src/basic/neemata.config.js')
 const PING_PROCEDURE_PATH = resolve(
   CWD,
@@ -42,29 +50,6 @@ async function startServer(
   options: { timeout?: number } = {},
 ): Promise<ChildProcess> {
   const { timeout = 15000 } = options
-
-  const canConnect = () =>
-    new Promise<boolean>((resolve) => {
-      const socket = connect({ host: SERVER_HOST, port: SERVER_PORT })
-      const cleanup = () => {
-        socket.removeAllListeners()
-        socket.destroy()
-      }
-
-      socket.setTimeout(500)
-      socket.once('connect', () => {
-        cleanup()
-        resolve(true)
-      })
-      socket.once('timeout', () => {
-        cleanup()
-        resolve(false)
-      })
-      socket.once('error', () => {
-        cleanup()
-        resolve(false)
-      })
-    })
 
   // If build command, run build first then start the built server
   if (command === 'build') {
@@ -106,43 +91,10 @@ async function startServer(
       env: { ...process.env, FORCE_COLOR: '0' },
     })
 
-    await new Promise<void>((resolve, reject) => {
-      let settled = false
-
-      const finish = (error?: Error) => {
-        if (settled) return
-        settled = true
-        cleanup()
-        if (error) reject(error)
-        else resolve()
-      }
-
-      const timeoutId = globalThis.setTimeout(() => {
-        finish(new Error('Server startup timeout (build)'))
-      }, timeout)
-
-      const readinessInterval = globalThis.setInterval(() => {
-        canConnect().then((ready) => {
-          if (ready) finish()
-        })
-      }, 250)
-
-      const onError = (err: Error) => finish(err)
-      const onExit = (code: number | null) => {
-        if (code !== 0 && code !== null) {
-          finish(new Error(`Server exited with code ${code}`))
-        }
-      }
-
-      const cleanup = () => {
-        globalThis.clearTimeout(timeoutId)
-        globalThis.clearInterval(readinessInterval)
-        serverProcess.off('error', onError)
-        serverProcess.off('exit', onExit)
-      }
-
-      serverProcess.on('error', onError)
-      serverProcess.on('exit', onExit)
+    await waitForPortReady({
+      host: SERVER_HOST,
+      port: SERVER_PORT,
+      timeoutMs: timeout,
     })
 
     await setTimeout(1500)
@@ -150,92 +102,14 @@ async function startServer(
     return serverProcess
   }
 
-  // For dev and preview commands
-  const serverProcess = spawn(
-    'pnpm',
-    ['exec', 'neemata', command, '--config', BASIC_CONFIG_PATH],
-    {
-      cwd: CWD,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      detached: process.platform === 'linux',
-      env: { ...process.env, FORCE_COLOR: '0' },
-    },
-  )
-
-  await new Promise<void>((resolve, reject) => {
-    let settled = false
-
-    const finish = (error?: Error) => {
-      if (settled) return
-      settled = true
-      cleanup()
-      if (error) reject(error)
-      else resolve()
-    }
-
-    const timeoutId = globalThis.setTimeout(() => {
-      finish(new Error(`Server startup timeout (${command})`))
-    }, timeout)
-
-    const readinessInterval = globalThis.setInterval(() => {
-      canConnect().then((ready) => {
-        if (ready) finish()
-      })
-    }, 250)
-
-    const onError = (err: Error) => finish(err)
-    const onExit = (code: number | null) => {
-      if (code !== 0 && code !== null) {
-        finish(new Error(`Server exited with code ${code}`))
-      }
-    }
-
-    const cleanup = () => {
-      globalThis.clearTimeout(timeoutId)
-      globalThis.clearInterval(readinessInterval)
-      serverProcess.off('error', onError)
-      serverProcess.off('exit', onExit)
-    }
-
-    serverProcess.on('error', onError)
-    serverProcess.on('exit', onExit)
-  })
-
-  // Give it a bit more time to fully initialize
-  await setTimeout(1500)
-
-  return serverProcess
-}
-
-async function stopServer(serverProcess: ChildProcess): Promise<void> {
-  const killProcess = (signal: NodeJS.Signals) => {
-    const pid = serverProcess.pid
-
-    if (!pid) return
-
-    if (process.platform === 'linux') {
-      try {
-        process.kill(-pid, signal)
-        return
-      } catch {
-        // Fall through to direct process kill
-      }
-    }
-
-    try {
-      serverProcess.kill(signal)
-    } catch {
-      // Ignore if process already exited
-    }
-  }
-
-  killProcess('SIGTERM')
-  await new Promise<void>((resolve) => {
-    serverProcess.on('exit', () => resolve())
-    globalThis.setTimeout(() => {
-      killProcess('SIGKILL')
-      resolve()
-    }, 5000)
+  return await startNeemataCliServer({
+    command,
+    cwd: CWD,
+    configPath: BASIC_CONFIG_PATH,
+    timeoutMs: timeout,
+    startupDelayMs: 1500,
+    host: SERVER_HOST,
+    port: SERVER_PORT,
   })
 }
 
@@ -322,7 +196,7 @@ describe(
 
     afterAll(async () => {
       if (serverProcess) {
-        await stopServer(serverProcess)
+        await stopServerProcess(serverProcess)
       }
     })
 
@@ -423,7 +297,7 @@ describe('Playground E2E - Dev Mode', { timeout: 60000 }, () => {
     }
 
     if (serverProcess) {
-      await stopServer(serverProcess)
+      await stopServerProcess(serverProcess)
     }
   })
 
@@ -651,7 +525,7 @@ describe(
 
     afterAll(async () => {
       if (serverProcess) {
-        await stopServer(serverProcess)
+        await stopServerProcess(serverProcess)
       }
     })
 

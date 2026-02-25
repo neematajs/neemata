@@ -81,6 +81,8 @@ const quick = n
     pool: JobWorkerPool.Io,
     input: t.object({ value: t.string() }),
     output: t.object({ value: t.string() }),
+    progress: t.object({}),
+    oneoff: false,
   })
   .step(
     n.step({
@@ -97,6 +99,7 @@ const slow = n
     pool: JobWorkerPool.Io,
     input: t.object({ ticks: t.number(), delayMs: t.number() }),
     output: t.object({ ticks: t.number() }),
+    oneoff: false,
     progress: t.object({ tick: t.number().optional() }),
     data: async (_, __, progress: SlowProgress): Promise<SlowData> => {
       ensureSlowProgress(progress)
@@ -132,6 +135,7 @@ const checkpoint = n
     pool: JobWorkerPool.Io,
     input: t.object({ total: t.number(), failAt: t.number() }),
     output: t.object({ processed: t.number() }),
+    oneoff: false,
     progress: t.object({
       index: t.number().optional(),
       failed: t.boolean().optional(),
@@ -176,6 +180,7 @@ const hung = n
     pool: JobWorkerPool.Io,
     input: t.object({ durationMs: t.number() }),
     output: t.object({ done: t.boolean() }),
+    progress: t.object({}),
   })
   .step(
     n.step({
@@ -343,6 +348,7 @@ const parallelConflict = n
     pool: JobWorkerPool.Io,
     input: t.object({ base: t.number(), delayMs: t.number() }),
     output: t.object({ shared: t.number() }),
+    progress: t.object({}),
   })
   .step(
     n.step({

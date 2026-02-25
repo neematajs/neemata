@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, expectTypeOf, it } from 'vitest'
 
 import { t } from '../src/index.ts'
 
@@ -219,5 +219,24 @@ describe('Complex type', () => {
     }
 
     schema.encode(value)
+  })
+})
+
+describe('Unknown type', () => {
+  const schema = t.unknown()
+
+  it('should decode and encode any value', () => {
+    expect(schema.decode('value')).toBe('value')
+    expect(schema.decode({ key: 'value' })).toEqual({ key: 'value' })
+    expect(schema.encode(123)).toBe(123)
+  })
+
+  it('should infer unknown for decode and encode output', () => {
+    expectTypeOf<
+      t.infer.decode.output<typeof schema>
+    >().toEqualTypeOf<unknown>()
+    expectTypeOf<
+      t.infer.encode.output<typeof schema>
+    >().toEqualTypeOf<unknown>()
   })
 })
