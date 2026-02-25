@@ -135,7 +135,7 @@ export class WsTransportServer
         this.clients.set(connectionId, peer)
       },
       message: async (peer, message) => {
-        const data = message.arrayBuffer() as ArrayBuffer
+        const data = message.arrayBuffer().slice() as ArrayBuffer
         try {
           await this.params.onMessage({
             connectionId: peer.context.connectionId,

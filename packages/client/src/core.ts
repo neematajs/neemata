@@ -209,6 +209,7 @@ export abstract class BaseClient<
 
     const _connect = async () => {
       if (this.transport.type === ConnectionType.Bidirectional) {
+        const client = this
         this.cab = new AbortController()
         const protocol = this.protocol
         const serverStreams = this.serverStreams
@@ -228,6 +229,13 @@ export abstract class BaseClient<
           addServerStream(streamId, metadata) {
             const stream = new ProtocolServerBlobStream(metadata, {
               pull: (controller) => {
+                client.emitStreamEvent({
+                  direction: 'outgoing',
+                  streamType: 'server_blob',
+                  action: 'pull',
+                  streamId,
+                  byteLength: 65535,
+                })
                 transport.send(
                   protocol.encodeMessage(
                     this,
@@ -247,6 +255,12 @@ export abstract class BaseClient<
                 signal.addEventListener(
                   'abort',
                   () => {
+                    client.emitStreamEvent({
+                      direction: 'outgoing',
+                      streamType: 'server_blob',
+                      action: 'abort',
+                      streamId,
+                    })
                     transport.send(
                       protocol.encodeMessage(
                         this,
@@ -612,29 +626,83 @@ export abstract class BaseClient<
         break
       }
       case ServerMessageType.RpcStreamChunk:
+        this.emitStreamEvent({
+          direction: 'incoming',
+          streamType: 'rpc',
+          action: 'push',
+          callId: message.callId,
+          byteLength: message.chunk.byteLength,
+        })
         this.rpcStreams.push(message.callId, message.chunk)
         break
       case ServerMessageType.RpcStreamEnd:
+        this.emitStreamEvent({
+          direction: 'incoming',
+          streamType: 'rpc',
+          action: 'end',
+          callId: message.callId,
+        })
         this.rpcStreams.end(message.callId)
         this.calls.delete(message.callId)
         break
       case ServerMessageType.RpcStreamAbort:
+        this.emitStreamEvent({
+          direction: 'incoming',
+          streamType: 'rpc',
+          action: 'abort',
+          callId: message.callId,
+          reason: message.reason,
+        })
         this.rpcStreams.abort(message.callId)
         this.calls.delete(message.callId)
         break
       case ServerMessageType.ServerStreamPush:
+        this.emitStreamEvent({
+          direction: 'incoming',
+          streamType: 'server_blob',
+          action: 'push',
+          streamId: message.streamId,
+          byteLength: message.chunk.byteLength,
+        })
         this.serverStreams.push(message.streamId, message.chunk)
         break
       case ServerMessageType.ServerStreamEnd:
+        this.emitStreamEvent({
+          direction: 'incoming',
+          streamType: 'server_blob',
+          action: 'end',
+          streamId: message.streamId,
+        })
         this.serverStreams.end(message.streamId)
         break
       case ServerMessageType.ServerStreamAbort:
+        this.emitStreamEvent({
+          direction: 'incoming',
+          streamType: 'server_blob',
+          action: 'abort',
+          streamId: message.streamId,
+          reason: message.reason,
+        })
         this.serverStreams.abort(message.streamId)
         break
       case ServerMessageType.ClientStreamPull:
+        this.emitStreamEvent({
+          direction: 'incoming',
+          streamType: 'client_blob',
+          action: 'pull',
+          streamId: message.streamId,
+          byteLength: message.size,
+        })
         this.clientStreams.pull(message.streamId, message.size).then(
           (chunk) => {
             if (chunk) {
+              this.emitStreamEvent({
+                direction: 'outgoing',
+                streamType: 'client_blob',
+                action: 'push',
+                streamId: message.streamId,
+                byteLength: chunk.byteLength,
+              })
               const buffer = this.protocol.encodeMessage(
                 this.messageContext!,
                 ClientMessageType.ClientStreamPush,
@@ -642,6 +710,12 @@ export abstract class BaseClient<
               )
               this.send(buffer).catch(noopFn)
             } else {
+              this.emitStreamEvent({
+                direction: 'outgoing',
+                streamType: 'client_blob',
+                action: 'end',
+                streamId: message.streamId,
+              })
               const buffer = this.protocol.encodeMessage(
                 this.messageContext!,
                 ClientMessageType.ClientStreamEnd,
@@ -652,6 +726,12 @@ export abstract class BaseClient<
             }
           },
           () => {
+            this.emitStreamEvent({
+              direction: 'outgoing',
+              streamType: 'client_blob',
+              action: 'abort',
+              streamId: message.streamId,
+            })
             const buffer = this.protocol.encodeMessage(
               this.messageContext!,
               ClientMessageType.ClientStreamAbort,
@@ -663,6 +743,13 @@ export abstract class BaseClient<
         )
         break
       case ServerMessageType.ClientStreamAbort:
+        this.emitStreamEvent({
+          direction: 'incoming',
+          streamType: 'client_blob',
+          action: 'abort',
+          streamId: message.streamId,
+          reason: message.reason,
+        })
         this.clientStreams.abort(message.streamId)
         break
     }
@@ -776,6 +863,12 @@ export abstract class BaseClient<
             )
           },
           pull: () => {
+            this.emitStreamEvent({
+              direction: 'outgoing',
+              streamType: 'rpc',
+              action: 'pull',
+              callId: message.callId,
+            })
             const buffer = this.protocol.encodeMessage(
               this.messageContext!,
               ClientMessageType.RpcPull,
@@ -928,6 +1021,19 @@ export abstract class BaseClient<
     if (this.transport.type === ConnectionType.Unidirectional)
       throw new Error('Invalid transport type for send')
     return this.transport.send(buffer, { signal })
+  }
+
+  protected emitStreamEvent(
+    event: Omit<
+      Extract<ClientPluginEvent, { kind: 'stream_event' }>,
+      'kind' | 'timestamp'
+    >,
+  ) {
+    this.emitClientEvent({
+      kind: 'stream_event',
+      timestamp: Date.now(),
+      ...event,
+    })
   }
 
   protected getStreamId() {

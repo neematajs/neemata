@@ -533,6 +533,7 @@ export class ApplicationWorkerJobRunner extends JobRunner<
 
       const checkpoint: JobProgressCheckpoint = {
         stepIndex: currentStepIndex,
+        stepLabel: job.jobSteps[currentStepIndex]?.label,
         result,
         stepResults,
         progress: encodedProgress,
@@ -566,7 +567,7 @@ export class ApplicationWorkerJobRunner extends JobRunner<
 
     const checkpoint: JobProgressCheckpoint = {
       stepIndex: nextStepIndex,
-      stepLabel: step.label,
+      stepLabel: job.jobSteps[nextStepIndex]?.label,
       result,
       stepResults,
       progress: encodedProgress,

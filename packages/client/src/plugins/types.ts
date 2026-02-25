@@ -38,6 +38,17 @@ export type ClientPluginEvent =
       procedure: string
       error: unknown
     }
+  | {
+      kind: 'stream_event'
+      timestamp: number
+      direction: 'incoming' | 'outgoing'
+      streamType: 'rpc' | 'client_blob' | 'server_blob'
+      action: 'response' | 'pull' | 'push' | 'end' | 'abort'
+      callId?: number
+      streamId?: number
+      byteLength?: number
+      reason?: string
+    }
 
 /**
  * Client plugin lifecycle contract.

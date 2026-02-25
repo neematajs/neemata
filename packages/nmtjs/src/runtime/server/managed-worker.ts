@@ -97,23 +97,23 @@ const STOP_TIMEOUT_MS = 10_000
  * - stopped: Worker has been terminated (terminal state)
  */
 export class ManagedWorker extends EventEmitter<ManagedWorkerEvents> {
-  private state: WorkerState = 'idle'
-  private ctx: ManagedWorkerContext = {
+  protected state: WorkerState = 'idle'
+  protected ctx: ManagedWorkerContext = {
     consecutiveFailures: 0,
     totalFailures: 0,
     lastStableTime: null,
     lastError: null,
   }
-  private worker: Worker | null = null
-  private port: MessagePort | null = null
-  private restartTimer: ReturnType<typeof setTimeout> | null = null
-  private startPromise: Promise<void> | null = null
-  private pendingTaskIds = new Set<string>()
-  private logger: Logger
+  protected worker: Worker | null = null
+  protected port: MessagePort | null = null
+  protected restartTimer: ReturnType<typeof setTimeout> | null = null
+  protected startPromise: Promise<void> | null = null
+  protected pendingTaskIds = new Set<string>()
+  protected logger: Logger
 
   constructor(
     readonly config: ManagedWorkerConfig,
-    private readonly policy: ErrorPolicy,
+    protected readonly policy: ErrorPolicy,
     logger: Logger,
   ) {
     super()
@@ -231,7 +231,7 @@ export class ManagedWorker extends EventEmitter<ManagedWorkerEvents> {
   /**
    * Internal: Start the worker and wait for it to be ready.
    */
-  private async doStart(): Promise<void> {
+  protected async doStart(): Promise<void> {
     this.transition('starting')
 
     try {
@@ -264,7 +264,7 @@ export class ManagedWorker extends EventEmitter<ManagedWorkerEvents> {
   /**
    * Wait for the worker to emit a 'ready' message or timeout.
    */
-  private waitForReady(): Promise<void> {
+  protected waitForReady(): Promise<void> {
     return new Promise((resolve, reject) => {
       let settled = false
       let timer: ReturnType<typeof setTimeout>
@@ -307,7 +307,7 @@ export class ManagedWorker extends EventEmitter<ManagedWorkerEvents> {
   /**
    * Attach listeners for port and worker events.
    */
-  private attachListeners(): void {
+  protected attachListeners(): void {
     if (!this.port || !this.worker) return
 
     this.port.on('message', (msg: ThreadPortMessage) => {
@@ -347,7 +347,9 @@ export class ManagedWorker extends EventEmitter<ManagedWorkerEvents> {
   /**
    * Handle worker ready event.
    */
-  private handleReady(hosts?: ThreadPortMessageTypes['ready']['hosts']): void {
+  protected handleReady(
+    hosts?: ThreadPortMessageTypes['ready']['hosts'],
+  ): void {
     // Check if worker was stable before this (for failure count reset)
     if (
       this.ctx.lastStableTime !== null &&
@@ -364,14 +366,22 @@ export class ManagedWorker extends EventEmitter<ManagedWorkerEvents> {
   /**
    * Handle worker error.
    */
-  private handleError(error: Error): void {
+  protected handleError(error: Error): void {
     const workerError = error as WorkerThreadError
     this.ctx.lastError = error
     this.ctx.consecutiveFailures++
     this.ctx.totalFailures++
 
     this.transition('error')
-    this.emit('error', workerError)
+    if (this.listenerCount('error') > 0) {
+      this.emit('error', workerError)
+    } else {
+      this.logger.error(workerError)
+    }
+
+    // Unblock any pending run() callers waiting for task-* events.
+    // On runtime errors the current worker may never emit task completion.
+    this.rejectPendingTasks()
 
     // Cleanup old worker
     this.terminateWorker().catch(() => {})
@@ -410,7 +420,7 @@ export class ManagedWorker extends EventEmitter<ManagedWorkerEvents> {
   /**
    * Schedule a restart after the given delay.
    */
-  private scheduleRestart(delay: number): void {
+  protected scheduleRestart(delay: number): void {
     this.transition('restarting')
     this.logger.debug(
       { delay, attempt: this.ctx.consecutiveFailures },
@@ -430,7 +440,7 @@ export class ManagedWorker extends EventEmitter<ManagedWorkerEvents> {
   /**
    * Clear any pending restart timer.
    */
-  private clearRestartTimer(): void {
+  protected clearRestartTimer(): void {
     if (this.restartTimer) {
       clearTimeout(this.restartTimer)
       this.restartTimer = null
@@ -440,7 +450,7 @@ export class ManagedWorker extends EventEmitter<ManagedWorkerEvents> {
   /**
    * Terminate the underlying worker thread.
    */
-  private async terminateWorker(): Promise<void> {
+  protected async terminateWorker(): Promise<void> {
     if (!this.worker) return
 
     const timeout = STOP_TIMEOUT_MS
@@ -461,7 +471,7 @@ export class ManagedWorker extends EventEmitter<ManagedWorkerEvents> {
   /**
    * Cleanup internal state.
    */
-  private cleanup(): void {
+  protected cleanup(): void {
     this.worker = null
     this.port = null
   }
@@ -471,7 +481,7 @@ export class ManagedWorker extends EventEmitter<ManagedWorkerEvents> {
    * for each tracked task id. This unblocks callers waiting on
    * `once(this, 'task-<id>')` so they don't hang during shutdown.
    */
-  private rejectPendingTasks(): void {
+  protected rejectPendingTasks(): void {
     for (const id of this.pendingTaskIds) {
       const result: JobTaskResult = {
         type: 'error',
@@ -485,7 +495,7 @@ export class ManagedWorker extends EventEmitter<ManagedWorkerEvents> {
   /**
    * Transition to a new state, emitting the state-change event.
    */
-  private transition(to: WorkerState): void {
+  protected transition(to: WorkerState): void {
     const from = this.state
     this.state = to
     this.logger.trace({ from, to }, 'Worker state transition')
@@ -495,7 +505,7 @@ export class ManagedWorker extends EventEmitter<ManagedWorkerEvents> {
   /**
    * Assert that the current state is one of the allowed states.
    */
-  private assertState(...allowed: WorkerState[]): void {
+  protected assertState(...allowed: WorkerState[]): void {
     if (!allowed.includes(this.state)) {
       throw new Error(
         `Invalid worker state: ${this.state}, expected one of: ${allowed.join(', ')}`,

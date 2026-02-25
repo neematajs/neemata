@@ -37,8 +37,13 @@ const PING_PROCEDURE_PATH = resolve(
   CWD,
   'src/basic/applications/main/procedures/ping.ts',
 )
-const SERVER_HOST = DEFAULT_SERVER_HOST
-const SERVER_PORT = DEFAULT_SERVER_PORT
+const APPLICATION_ENTRY_PATH = resolve(
+  CWD,
+  'src/basic/applications/main/index.ts',
+)
+const ROUTER_PATH = resolve(CWD, 'src/basic/applications/main/router.ts')
+const SERVER_HOST = '127.0.0.1'
+const SERVER_PORT = 4000
 
 async function startServer(
   command: 'dev' | 'preview' | 'build',
@@ -147,6 +152,38 @@ async function waitForPingMessage(
   )
 }
 
+async function waitForPingResponsiveness(
+  client: ReturnType<typeof createClient>,
+  options: { timeoutMs?: number; intervalMs?: number } = {},
+) {
+  const timeoutMs = options.timeoutMs ?? 15000
+  const intervalMs = options.intervalMs ?? 250
+  const startedAt = Date.now()
+  let lastError: unknown = null
+
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      const result = await client.call.ping({})
+      if (
+        typeof result === 'object' &&
+        result !== null &&
+        'message' in result &&
+        typeof (result as { message: unknown }).message === 'string'
+      ) {
+        return
+      }
+    } catch (error) {
+      lastError = error
+    }
+
+    await setTimeout(intervalMs)
+  }
+
+  throw new Error(
+    `Timed out waiting for ping responsiveness. Last error: ${lastError instanceof Error ? lastError.message : String(lastError)}`,
+  )
+}
+
 describe(
   'Playground E2E - Preview Mode',
   { timeout: 30000, concurrent: false },
@@ -217,17 +254,46 @@ describe(
 describe('Playground E2E - Dev Mode', { timeout: 60000 }, () => {
   let serverProcess: ChildProcess | null = null
   let originalPingContent: string | null = null
+  let originalApplicationEntryContent: string | null = null
+  let originalRouterContent: string | null = null
+  let serverStdErr = ''
+  let serverStdOut = ''
 
   beforeAll(async () => {
     // Save original file content for restoration
     originalPingContent = await readFile(PING_PROCEDURE_PATH, 'utf-8')
+    originalApplicationEntryContent = await readFile(
+      APPLICATION_ENTRY_PATH,
+      'utf-8',
+    )
+    originalRouterContent = await readFile(ROUTER_PATH, 'utf-8')
     serverProcess = await startServer('dev', { timeout: 20000 })
+
+    serverProcess.stderr?.on('data', (data) => {
+      serverStdErr += data.toString()
+    })
+
+    serverProcess.stdout?.on('data', (data) => {
+      serverStdOut += data.toString()
+    })
   }, 25000)
 
   afterAll(async () => {
     // Restore original file content
     if (originalPingContent) {
       await writeFile(PING_PROCEDURE_PATH, originalPingContent, 'utf-8')
+    }
+
+    if (originalApplicationEntryContent) {
+      await writeFile(
+        APPLICATION_ENTRY_PATH,
+        originalApplicationEntryContent,
+        'utf-8',
+      )
+    }
+
+    if (originalRouterContent) {
+      await writeFile(ROUTER_PATH, originalRouterContent, 'utf-8')
     }
 
     if (serverProcess) {
@@ -277,6 +343,174 @@ describe('Playground E2E - Dev Mode', { timeout: 60000 }, () => {
       }
     },
   )
+
+  it('should survive rapid consecutive procedure changes in dev mode', async () => {
+    const client = createClient(SERVER_URL)
+    await client.connect()
+
+    const cycleCount = 3
+    const editsPerCycle = 12
+
+    try {
+      for (let cycle = 0; cycle < cycleCount; cycle++) {
+        let lastExpectedMessage = 'pong'
+
+        for (let editIndex = 0; editIndex < editsPerCycle; editIndex++) {
+          lastExpectedMessage = `pong-hmr-stress-${cycle}-${editIndex}`
+          const modifiedContent = originalPingContent!.replace(
+            `'pong'`,
+            `'${lastExpectedMessage}'`,
+          )
+
+          await writeFile(PING_PROCEDURE_PATH, modifiedContent, 'utf-8')
+        }
+
+        await waitForPingMessage(client, lastExpectedMessage, {
+          timeoutMs: 20000,
+          intervalMs: 150,
+        })
+      }
+
+      expect(serverProcess?.exitCode).toBeNull()
+
+      const combinedOutput = `${serverStdOut}\n${serverStdErr}`
+      expect(combinedOutput).not.toContain('BroadcastChannel is closed')
+      expect(combinedOutput).not.toContain('Unexpected Error')
+    } finally {
+      try {
+        await writeFile(PING_PROCEDURE_PATH, originalPingContent!, 'utf-8')
+        await waitForPingMessage(client, 'pong', {
+          timeoutMs: 20000,
+          intervalMs: 150,
+        })
+      } catch {
+        // Ignore cleanup errors when server is already unstable
+      }
+
+      try {
+        await client.disconnect()
+      } catch {
+        // Ignore
+      }
+    }
+  })
+
+  it('should survive rapid consecutive application-entry changes', async () => {
+    const client = createClient(SERVER_URL)
+    await client.connect()
+
+    const cycleCount = 3
+    const editsPerCycle = 10
+
+    try {
+      for (let cycle = 0; cycle < cycleCount; cycle++) {
+        for (let editIndex = 0; editIndex < editsPerCycle; editIndex++) {
+          const stamp = `hmr-entry-${cycle}-${editIndex}-${Date.now()}`
+          const content = `${originalApplicationEntryContent!}\n\nexport const __hmrEntryStamp = '${stamp}'\n`
+
+          await writeFile(APPLICATION_ENTRY_PATH, content, 'utf-8')
+        }
+
+        await waitForPingMessage(client, 'pong', {
+          timeoutMs: 25000,
+          intervalMs: 200,
+        })
+
+        expect(serverProcess?.exitCode).toBeNull()
+      }
+
+      const combinedOutput = `${serverStdOut}\n${serverStdErr}`
+      expect(combinedOutput).not.toContain('BroadcastChannel is closed')
+      expect(combinedOutput).not.toContain('Unexpected Error')
+    } finally {
+      try {
+        await writeFile(
+          APPLICATION_ENTRY_PATH,
+          originalApplicationEntryContent!,
+          'utf-8',
+        )
+
+        await waitForPingMessage(client, 'pong', {
+          timeoutMs: 20000,
+          intervalMs: 150,
+        })
+      } catch {
+        // Ignore cleanup errors when server is already unstable
+      }
+
+      try {
+        await client.disconnect()
+      } catch {
+        // Ignore
+      }
+    }
+  })
+
+  it('should survive extreme burst HMR churn across multiple files', async () => {
+    const client = createClient(SERVER_URL)
+    await client.connect()
+
+    const cycles = 8
+    const burstsPerCycle = 8
+
+    try {
+      for (let cycle = 0; cycle < cycles; cycle++) {
+        for (let burstIndex = 0; burstIndex < burstsPerCycle; burstIndex++) {
+          const stamp = `${cycle}-${burstIndex}-${Date.now()}`
+
+          const pingContent = originalPingContent!.replace(
+            `'pong'`,
+            `'pong-burst-${cycle}-${burstIndex}'`,
+          )
+
+          const routerContent = `${originalRouterContent!}\n\nexport const __hmrRouterStamp = '${stamp}'\n`
+          const entryContent = `${originalApplicationEntryContent!}\n\nexport const __hmrEntryBurstStamp = '${stamp}'\n`
+
+          await Promise.all([
+            writeFile(PING_PROCEDURE_PATH, pingContent, 'utf-8'),
+            writeFile(ROUTER_PATH, routerContent, 'utf-8'),
+            writeFile(APPLICATION_ENTRY_PATH, entryContent, 'utf-8'),
+          ])
+        }
+
+        await waitForPingResponsiveness(client, {
+          timeoutMs: 30000,
+          intervalMs: 120,
+        })
+
+        expect(serverProcess?.exitCode).toBeNull()
+      }
+
+      const combinedOutput = `${serverStdOut}\n${serverStdErr}`
+      expect(combinedOutput).not.toContain('BroadcastChannel is closed')
+      expect(combinedOutput).not.toContain('Unexpected Error')
+    } finally {
+      try {
+        await Promise.all([
+          writeFile(PING_PROCEDURE_PATH, originalPingContent!, 'utf-8'),
+          writeFile(
+            APPLICATION_ENTRY_PATH,
+            originalApplicationEntryContent!,
+            'utf-8',
+          ),
+          writeFile(ROUTER_PATH, originalRouterContent!, 'utf-8'),
+        ])
+
+        await waitForPingMessage(client, 'pong', {
+          timeoutMs: 30000,
+          intervalMs: 150,
+        })
+      } catch {
+        // Ignore cleanup errors when server is already unstable
+      }
+
+      try {
+        await client.disconnect()
+      } catch {
+        // Ignore
+      }
+    }
+  })
 })
 
 describe(
