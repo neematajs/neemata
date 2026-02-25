@@ -24,6 +24,24 @@ const contract = c.router({
       output: t.object({ index: t.number() }),
       stream: true,
     }),
+    streamBlob: c.procedure({
+      input: t.object({ file: c.blob() }),
+      output: t.object({ chunk: t.string() }),
+      stream: true,
+    }),
+    uploadBlob: c.procedure({
+      input: t.object({ file: c.blob() }),
+      output: t.object({
+        size: t.number(),
+        content: t.string(),
+        type: t.string(),
+        filename: t.string().optional(),
+      }),
+    }),
+    downloadBlob: c.procedure({
+      input: t.object({ content: t.string(), filename: t.string().optional() }),
+      output: c.blob(),
+    }),
   },
 })
 
@@ -154,6 +172,38 @@ function createWsClient(format: JsonFormat | MsgpackFormat) {
   )
 }
 
+function createBlobSource(content: string): {
+  stream: ReadableStream<Uint8Array>
+  size: number
+} {
+  const bytes = new TextEncoder().encode(content)
+  return {
+    size: bytes.byteLength,
+    stream: new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(bytes)
+        controller.close()
+      },
+    }),
+  }
+}
+
+async function readBlobToString(
+  blobResponse:
+    | AsyncIterable<ArrayBufferView>
+    | ((options?: { signal?: AbortSignal }) => AsyncIterable<ArrayBufferView>),
+): Promise<string> {
+  const stream =
+    typeof blobResponse === 'function' ? blobResponse({}) : blobResponse
+  const chunks: Buffer[] = []
+
+  for await (const chunk of stream) {
+    chunks.push(Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength))
+  }
+
+  return Buffer.concat(chunks).toString('utf-8')
+}
+
 describe('Playground E2E - WebSocket Streaming', { timeout: 30000 }, () => {
   let serverProcess: ChildProcess | null = null
 
@@ -209,5 +259,95 @@ describe('Playground E2E - WebSocket Streaming', { timeout: 30000 }, () => {
     }
 
     expect(result).toEqual([0, 1, 2, 3, 4])
+  })
+
+  it('streams response from blob input over WebSocket transport with JSON format', async () => {
+    const client = createWsClient(new JsonFormat())
+    const content = 'hello from ws blob stream input'
+    const source = createBlobSource(content)
+    const blob = client.blob(source.stream, {
+      type: 'text/plain',
+      filename: 'ws-stream-blob-input.txt',
+      size: source.size,
+    })
+
+    const result: string[] = []
+
+    await client.connect()
+    try {
+      for await (const chunk of await client.stream.streamBlob({
+        file: blob,
+      })) {
+        result.push(chunk.chunk)
+      }
+    } finally {
+      await client.disconnect()
+    }
+
+    expect(result.join('')).toBe(content)
+  })
+
+  it('uploads and downloads blob over WebSocket transport with JSON format', async () => {
+    const client = createWsClient(new JsonFormat())
+    const content = 'hello from ws json blob'
+    const source = createBlobSource(content)
+    const blob = client.blob(source.stream, {
+      type: 'text/plain',
+      filename: 'ws-json-upload.txt',
+      size: source.size,
+    })
+
+    await client.connect()
+    try {
+      const uploadResult = await client.call.uploadBlob({ file: blob })
+      expect(uploadResult).toEqual({
+        size: Buffer.byteLength(content),
+        content,
+        type: 'text/plain',
+        filename: 'ws-json-upload.txt',
+      })
+
+      const downloadBlob = await client.call.downloadBlob({
+        content,
+        filename: 'ws-json-download.txt',
+      })
+
+      const downloadContent = await readBlobToString(downloadBlob)
+      expect(downloadContent).toBe(content)
+    } finally {
+      await client.disconnect()
+    }
+  })
+
+  it('uploads and downloads blob over WebSocket transport with Msgpack format', async () => {
+    const client = createWsClient(new MsgpackFormat())
+    const content = 'hello from ws msgpack blob'
+    const source = createBlobSource(content)
+    const blob = client.blob(source.stream, {
+      type: 'text/plain',
+      filename: 'ws-msgpack-upload.txt',
+      size: source.size,
+    })
+
+    await client.connect()
+    try {
+      const uploadResult = await client.call.uploadBlob({ file: blob })
+      expect(uploadResult).toEqual({
+        size: Buffer.byteLength(content),
+        content,
+        type: 'text/plain',
+        filename: 'ws-msgpack-upload.txt',
+      })
+
+      const downloadBlob = await client.call.downloadBlob({
+        content,
+        filename: 'ws-msgpack-download.txt',
+      })
+
+      const downloadContent = await readBlobToString(downloadBlob)
+      expect(downloadContent).toBe(content)
+    } finally {
+      await client.disconnect()
+    }
   })
 })

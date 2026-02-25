@@ -1,5 +1,5 @@
 import { c } from '@nmtjs/contract'
-import { ConnectionType } from '@nmtjs/protocol'
+import { ConnectionType, ServerMessageType } from '@nmtjs/protocol'
 import { t } from '@nmtjs/type'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -341,5 +341,50 @@ describe('loggingPlugin', () => {
       nonce: 1,
       payload: { hello: 'world' },
     })
+  })
+
+  it('emits stream_event for incoming server stream chunk', async () => {
+    const emitted: ClientLogEvent[] = []
+
+    const { factory, simulateConnect } = createMockBidirectionalTransport()
+    const client = new TestStaticClient(
+      {
+        ...baseOptions,
+        plugins: [
+          loggingPlugin({
+            includeBodies: true,
+            onEvent: (event) => {
+              emitted.push(event)
+            },
+          }),
+        ],
+      },
+      factory,
+      {},
+    )
+
+    const connectPromise = client.connect()
+    simulateConnect()
+    await connectPromise
+
+    await client.emitDecodedServerMessage(
+      {
+        type: ServerMessageType.ServerStreamPush,
+        streamId: 7,
+        chunk: new Uint8Array([1, 2, 3]),
+      },
+      new Uint8Array([1, 2, 3, 4]),
+    )
+
+    const streamEvent = emitted.find(
+      (event) => event.kind === 'stream_event',
+    ) as Extract<ClientLogEvent, { kind: 'stream_event' }>
+
+    expect(streamEvent).toBeDefined()
+    expect(streamEvent.direction).toBe('incoming')
+    expect(streamEvent.streamType).toBe('server_blob')
+    expect(streamEvent.action).toBe('push')
+    expect(streamEvent.streamId).toBe(7)
+    expect(streamEvent.byteLength).toBe(3)
   })
 })
