@@ -6,6 +6,11 @@
     "clean-build": "rm -rf ./dist"
   },
   "exports": {
+    ".": {
+      "types": "./src/common.ts",
+      "import": "./dist/common.js",
+      "module-sync": "./dist/common.js"
+    },
     "./client": {
       "types": "./src/client.ts",
       "import": "./dist/client.js",
@@ -19,6 +24,11 @@
   },
   "publishConfig": {
     "exports": {
+      ".": {
+        "types": "./dist/common.d.ts",
+        "import": "./dist/common.js",
+        "module-sync": "./dist/common.js"
+      },
       "./client": {
         "types": "./dist/client.d.ts",
         "import": "./dist/client.js",
