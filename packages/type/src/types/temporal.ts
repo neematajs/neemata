@@ -1,4 +1,3 @@
-import type { Temporal } from 'temporal-spec'
 import type { ZodMiniString } from 'zod/mini'
 import { iso, regex, string } from 'zod/mini'
 
@@ -9,34 +8,38 @@ type Types = Exclude<
   'Now' | 'Instant' | 'Calendar' | 'TimeZone'
 >
 
-type TemporalTransformer<T extends Types> = {
-  decode: (value: string) => ReturnType<(typeof Temporal)[T]['from']>
-  encode: (value: ReturnType<(typeof Temporal)[T]['from']>) => string
+type TemporalTransformer<T extends typeof Temporal, U extends Types> = {
+  decode: (value: string) => InstanceType<T[U]>
+  encode: (value: InstanceType<T[U]>) => string
 }
 
-const createTemporalTransformer = <T extends Types>(
-  implementation: typeof Temporal,
-  type: T,
-  decode = (value: string) => implementation[type].from(value),
-  encode = (value: ReturnType<(typeof Temporal)[T]['from']>) =>
+const createTemporalTransformer = <T extends typeof Temporal, U extends Types>(
+  implementation: T,
+  type: U,
+  decode = (value: string | InstanceType<T[U]>) => {
+    if (typeof value === 'string') return implementation[type].from(value)
+    else return value
+  },
+  encode = (value: ReturnType<T[U]['from']>) =>
     value.toString({
       calendarName: 'never',
       smallestUnit: 'microsecond',
       timeZoneName: 'never',
     }),
 ) => {
-  return { decode, encode } as TemporalTransformer<T>
+  return { decode, encode } as TemporalTransformer<T, U>
 }
 
 type EncodeType = ZodMiniString<string>
 
-export class PlainDateType extends TransformType<
-  Temporal.PlainDate,
-  EncodeType
-> {
-  static factory(implementation: typeof Temporal): PlainDateType {
+export class PlainDateType<
+  T extends typeof Temporal = typeof Temporal,
+> extends TransformType<InstanceType<T['PlainDate']>, EncodeType> {
+  static factory<T extends typeof Temporal>(
+    implementation: T,
+  ): PlainDateType<T> {
     const transformer = createTemporalTransformer(implementation, 'PlainDate')
-    return CustomType.factory<Temporal.PlainDate, EncodeType>({
+    return CustomType.factory<InstanceType<T['PlainDate']>, EncodeType>({
       decode: transformer.decode,
       encode: transformer.encode,
       type: iso.date(),
@@ -45,16 +48,17 @@ export class PlainDateType extends TransformType<
   }
 }
 
-export class PlainDateTimeType extends TransformType<
-  Temporal.PlainDateTime,
-  EncodeType
-> {
-  static factory(implementation: typeof Temporal): PlainDateTimeType {
+export class PlainDateTimeType<
+  T extends typeof Temporal = typeof Temporal,
+> extends TransformType<InstanceType<T['PlainDateTime']>, EncodeType> {
+  static factory<T extends typeof Temporal>(
+    implementation: T,
+  ): PlainDateTimeType<T> {
     const transformer = createTemporalTransformer(
       implementation,
       'PlainDateTime',
     )
-    return CustomType.factory<Temporal.PlainDateTime, EncodeType>({
+    return CustomType.factory<InstanceType<T['PlainDateTime']>, EncodeType>({
       decode: transformer.decode,
       encode: transformer.encode,
       type: iso.datetime({ local: true }),
@@ -63,11 +67,12 @@ export class PlainDateTimeType extends TransformType<
   }
 }
 
-export class ZonedDateTimeType extends TransformType<
-  Temporal.ZonedDateTime,
-  EncodeType
-> {
-  static factory(implementation: typeof Temporal): ZonedDateTimeType {
+export class ZonedDateTimeType<
+  T extends typeof Temporal = typeof Temporal,
+> extends TransformType<InstanceType<T['ZonedDateTime']>, EncodeType> {
+  static factory<T extends typeof Temporal>(
+    implementation: T,
+  ): ZonedDateTimeType<T> {
     const transformer = createTemporalTransformer(
       implementation,
       'ZonedDateTime',
@@ -82,7 +87,7 @@ export class ZonedDateTimeType extends TransformType<
             offset: 'never',
           }) + 'Z',
     )
-    return CustomType.factory<Temporal.ZonedDateTime, EncodeType>({
+    return CustomType.factory<InstanceType<T['ZonedDateTime']>, EncodeType>({
       decode: transformer.decode,
       encode: transformer.encode,
       type: iso.datetime(),
@@ -91,13 +96,14 @@ export class ZonedDateTimeType extends TransformType<
   }
 }
 
-export class PlainTimeType extends TransformType<
-  Temporal.PlainTime,
-  EncodeType
-> {
-  static factory(implementation: typeof Temporal): PlainTimeType {
+export class PlainTimeType<
+  T extends typeof Temporal = typeof Temporal,
+> extends TransformType<InstanceType<T['PlainTime']>, EncodeType> {
+  static factory<T extends typeof Temporal>(
+    implementation: T,
+  ): PlainTimeType<T> {
     const transformer = createTemporalTransformer(implementation, 'PlainTime')
-    return CustomType.factory<Temporal.PlainTime, EncodeType>({
+    return CustomType.factory<InstanceType<T['PlainTime']>, EncodeType>({
       decode: transformer.decode,
       encode: transformer.encode,
       type: iso.time(),
@@ -106,10 +112,14 @@ export class PlainTimeType extends TransformType<
   }
 }
 
-export class DurationType extends TransformType<Temporal.Duration, EncodeType> {
-  static factory(implementation: typeof Temporal): DurationType {
+export class DurationType<
+  T extends typeof Temporal = typeof Temporal,
+> extends TransformType<InstanceType<T['Duration']>, EncodeType> {
+  static factory<T extends typeof Temporal>(
+    implementation: T,
+  ): DurationType<T> {
     const transformer = createTemporalTransformer(implementation, 'Duration')
-    return CustomType.factory<Temporal.Duration, EncodeType>({
+    return CustomType.factory<InstanceType<T['Duration']>, EncodeType>({
       decode: transformer.decode,
       encode: transformer.encode,
       type: iso.duration(),
@@ -118,16 +128,17 @@ export class DurationType extends TransformType<Temporal.Duration, EncodeType> {
   }
 }
 
-export class PlainYearMonthType extends TransformType<
-  Temporal.PlainYearMonth,
-  EncodeType
-> {
-  static factory(implementation: typeof Temporal): PlainYearMonthType {
+export class PlainYearMonthType<
+  T extends typeof Temporal = typeof Temporal,
+> extends TransformType<InstanceType<T['PlainYearMonth']>, EncodeType> {
+  static factory<T extends typeof Temporal>(
+    implementation: T,
+  ): PlainYearMonthType<T> {
     const transformer = createTemporalTransformer(
       implementation,
       'PlainYearMonth',
     )
-    return CustomType.factory<Temporal.PlainYearMonth, EncodeType>({
+    return CustomType.factory<InstanceType<T['PlainYearMonth']>, EncodeType>({
       decode: transformer.decode,
       encode: transformer.encode,
       type: string().check(regex(/^\d{4}-\d{2}$/)),
@@ -136,16 +147,17 @@ export class PlainYearMonthType extends TransformType<
   }
 }
 
-export class PlainMonthDayType extends TransformType<
-  Temporal.PlainMonthDay,
-  EncodeType
-> {
-  static factory(implementation: typeof Temporal): PlainMonthDayType {
+export class PlainMonthDayType<
+  T extends typeof Temporal = typeof Temporal,
+> extends TransformType<InstanceType<T['PlainMonthDay']>, EncodeType> {
+  static factory<T extends typeof Temporal>(
+    implementation: T,
+  ): PlainMonthDayType<T> {
     const transformer = createTemporalTransformer(
       implementation,
       'PlainMonthDay',
     )
-    return CustomType.factory<Temporal.PlainMonthDay, EncodeType>({
+    return CustomType.factory<InstanceType<T['PlainMonthDay']>, EncodeType>({
       decode: transformer.decode,
       encode: transformer.encode,
       type: string().check(regex(/^\d{2}-\d{2}$/)),

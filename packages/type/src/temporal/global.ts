@@ -1,5 +1,3 @@
-import 'temporal-spec/global'
-
 import {
   DurationType,
   PlainDateTimeType,
@@ -12,21 +10,21 @@ import {
 
 export const plainDate: () => PlainDateType = PlainDateType.factory.bind(
   PlainDateType,
-  Temporal,
+  globalThis.Temporal,
 )
 export const plainDatetime: () => PlainDateTimeType =
-  PlainDateTimeType.factory.bind(PlainDateTimeType, Temporal)
+  PlainDateTimeType.factory.bind(PlainDateTimeType, globalThis.Temporal)
 export const plainTime: () => PlainTimeType = PlainTimeType.factory.bind(
   PlainTimeType,
-  Temporal,
+  globalThis.Temporal,
 )
 export const zonedDatetime: () => ZonedDateTimeType =
-  ZonedDateTimeType.factory.bind(ZonedDateTimeType, Temporal)
+  ZonedDateTimeType.factory.bind(ZonedDateTimeType, globalThis.Temporal)
 export const duration: () => DurationType = DurationType.factory.bind(
   DurationType,
-  Temporal,
+  globalThis.Temporal,
 )
 export const plainYearMonth: () => PlainYearMonthType =
-  PlainYearMonthType.factory.bind(PlainYearMonthType, Temporal)
+  PlainYearMonthType.factory.bind(PlainYearMonthType, globalThis.Temporal)
 export const plainMonthDay: () => PlainMonthDayType =
-  PlainMonthDayType.factory.bind(PlainMonthDayType, Temporal)
+  PlainMonthDayType.factory.bind(PlainMonthDayType, globalThis.Temporal)

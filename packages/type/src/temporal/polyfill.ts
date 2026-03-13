@@ -10,22 +10,65 @@ import {
   ZonedDateTimeType,
 } from '../types/temporal.ts'
 
-export const plainDate = PlainDateType.factory.bind(PlainDateType, Temporal)
+export const plainDate = PlainDateType.factory.bind(
+  PlainDateType,
+  // @ts-expect-error
+  Temporal,
+) as () => PlainDateType<
+  // @ts-expect-error
+  typeof Temporal
+>
+
 export const plainDatetime = PlainDateTimeType.factory.bind(
   PlainDateTimeType,
+  // @ts-expect-error
   Temporal,
-)
-export const plainTime = PlainTimeType.factory.bind(PlainTimeType, Temporal)
+) as () => PlainDateTimeType<
+  // @ts-expect-error
+  typeof Temporal
+>
+
+export const plainTime = PlainTimeType.factory.bind(
+  PlainTimeType,
+  // @ts-expect-error
+  Temporal,
+) as () => PlainTimeType<
+  // @ts-expect-error
+  typeof Temporal
+>
+
 export const zonedDatetime = ZonedDateTimeType.factory.bind(
   ZonedDateTimeType,
+  // @ts-expect-error
   Temporal,
-)
-export const duration = DurationType.factory.bind(DurationType, Temporal)
+) as () => ZonedDateTimeType<
+  // @ts-expect-error
+  typeof Temporal
+>
+
+export const duration = DurationType.factory.bind(
+  DurationType,
+  // @ts-expect-error
+  Temporal,
+) as () => DurationType<
+  // @ts-expect-error
+  typeof Temporal
+>
+
 export const plainYearMonth = PlainYearMonthType.factory.bind(
   PlainYearMonthType,
+  // @ts-expect-error
   Temporal,
-)
+) as () => PlainYearMonthType<
+  // @ts-expect-error
+  typeof Temporal
+>
+
 export const plainMonthDay = PlainMonthDayType.factory.bind(
   PlainMonthDayType,
+  // @ts-expect-error
   Temporal,
-)
+) as () => PlainMonthDayType<
+  // @ts-expect-error
+  typeof Temporal
+>
