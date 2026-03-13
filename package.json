@@ -2,6 +2,7 @@
   "name": "neemata",
   "private": true,
   "type": "module",
+  "license": "MIT",
   "scripts": {
     "clean-build": "pnpm run --parallel -r clean-build",
     "build": "pnpm run clean-build && pnpm tsgo -b tsconfig.build.json",

@@ -1,4 +1,4 @@
-import type { WorkerType } from '../enums.ts'
+import type { WorkerType } from './enums.ts'
 
 /**
  * Context provided to error policy decisions about worker failures.

@@ -4,16 +4,14 @@ import { MessageChannel, Worker } from 'node:worker_threads'
 
 import type { Logger } from '@nmtjs/core'
 
-import type { WorkerType } from '../enums.ts'
 import type {
-  JobTaskResult,
   ServerPortMessageTypes,
   ThreadErrorMessage,
   ThreadPortMessage,
   ThreadPortMessageTypes,
-  WorkerJobTask,
   WorkerThreadError,
 } from '../types.ts'
+import type { WorkerType } from './enums.ts'
 import type { ErrorPolicy, WorkerErrorContext } from './error-policy.ts'
 
 const omitExecArgv = ['--expose-gc']
@@ -61,7 +59,6 @@ export interface ManagedWorkerEvents {
   'state-change': [from: WorkerState, to: WorkerState]
   ready: [hosts?: ThreadPortMessageTypes['ready']['hosts']]
   error: [error: WorkerThreadError]
-  task: [data: ThreadPortMessageTypes['task']]
 }
 
 /**
@@ -108,7 +105,6 @@ export class ManagedWorker extends EventEmitter<ManagedWorkerEvents> {
   private port: MessagePort | null = null
   private restartTimer: ReturnType<typeof setTimeout> | null = null
   private startPromise: Promise<void> | null = null
-  private pendingTaskIds = new Set<string>()
   private logger: Logger
 
   constructor(
@@ -172,7 +168,7 @@ export class ManagedWorker extends EventEmitter<ManagedWorkerEvents> {
   /**
    * Stop the worker.
    * Can be called from any state except 'stopped'.
-   * Clears any pending restart timers and rejects pending run() tasks.
+   * Clears any pending restart timers.
    */
   async stop(): Promise<void> {
     this.clearRestartTimer()
@@ -180,39 +176,11 @@ export class ManagedWorker extends EventEmitter<ManagedWorkerEvents> {
     if (this.state === 'stopped') return
     this.transition('stopping')
 
-    // Reject any pending run() calls that are waiting for task results.
-    // Without this, callers of pool.run() would hang forever since the
-    // port is about to be closed and task-* events will never fire.
-    this.rejectPendingTasks()
-
     try {
       await this.terminateWorker()
     } finally {
       this.cleanup()
       this.transition('stopped')
-    }
-  }
-
-  /**
-   * Run a task on this worker (for job workers).
-   * The worker must be in 'ready' state.
-   */
-  async run(task: WorkerJobTask): Promise<JobTaskResult> {
-    if (this.state !== 'ready' || !this.port) {
-      throw new Error('Worker is not ready to run tasks')
-    }
-
-    const id = crypto.randomUUID()
-    this.pendingTaskIds.add(id)
-    this.send('task', { id, task })
-
-    try {
-      const [result] = (await once(this, `task-${id}` as any)) as [
-        JobTaskResult,
-      ]
-      return result
-    } finally {
-      this.pendingTaskIds.delete(id)
     }
   }
 
@@ -239,12 +207,16 @@ export class ManagedWorker extends EventEmitter<ManagedWorkerEvents> {
       this.port = port1
 
       const { config } = this
+      const transferList = [
+        port2,
+        ...(config.workerOptions?.transferList ?? []),
+      ]
       this.worker = new Worker(config.path, {
         ...config.workerOptions,
         execArgv: process.execArgv.filter((f) => !omitExecArgv.includes(f)),
         workerData: { ...config.workerData, port: port2 },
         name: `${config.name}-${config.index + 1}`,
-        transferList: [port2],
+        transferList,
       })
 
       // Notify callback if provided
@@ -319,12 +291,6 @@ export class ManagedWorker extends EventEmitter<ManagedWorkerEvents> {
         case 'error': {
           const error = createWorkerThreadError(data as ThreadErrorMessage)
           this.handleError(error)
-          break
-        }
-        case 'task': {
-          const taskData = data as ThreadPortMessageTypes['task']
-          this.emit('task', taskData)
-          this.emit(`task-${taskData.id}` as any, taskData.task)
           break
         }
       }
@@ -464,22 +430,6 @@ export class ManagedWorker extends EventEmitter<ManagedWorkerEvents> {
   private cleanup(): void {
     this.worker = null
     this.port = null
-  }
-
-  /**
-   * Reject all pending run() calls by emitting an error result
-   * for each tracked task id. This unblocks callers waiting on
-   * `once(this, 'task-<id>')` so they don't hang during shutdown.
-   */
-  private rejectPendingTasks(): void {
-    for (const id of this.pendingTaskIds) {
-      const result: JobTaskResult = {
-        type: 'error',
-        error: new Error('Worker is shutting down'),
-      }
-      this.emit(`task-${id}` as any, result)
-    }
-    this.pendingTaskIds.clear()
   }
 
   /**

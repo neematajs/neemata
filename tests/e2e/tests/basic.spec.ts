@@ -13,8 +13,6 @@ import { WsTransportFactory } from '@nmtjs/ws-client'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import {
-  DEFAULT_SERVER_HOST,
-  DEFAULT_SERVER_PORT,
   E2E_CWD,
   startNeemataCliServer,
   stopServerProcess,

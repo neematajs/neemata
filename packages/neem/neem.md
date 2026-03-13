@@ -22,9 +22,10 @@ Non-goal:
    - Framework-specific logic lives in adapters.
    - Neem host runtime only orchestrates lifecycle and infrastructure.
 
-3. **Plugin-driven infrastructure capabilities**
-   - Store/jobs and similar infrastructure integrations are plugin capabilities.
-   - CLI commands are first-class core server/application concepts.
+3. **Plugin-driven extensibility**
+   - Plugins are framework-agnostic extension units integrated via hookable lifecycle hooks.
+   - Build metadata is provided from plugin config (`plugin.build.entrypoints(ctx)`).
+   - CLI commands are first-class application-level concepts.
 
 4. **Per-app Vite orchestration (DX-first)**
    - In dev, each app gets its own Vite server/environment.
@@ -84,25 +85,87 @@ Decision:
   - run app build with merged (common + app) Vite config
 
 ### Plugin contract
-- setup/dispose lifecycle
-- optional capabilities:
-  - store
-  - jobs
+- agnostic, hook-based runtime lifecycle integration
+- runtime hooks are executed through neem hook bus (`hookable`)
+   - `server:setup`
+   - `server:start`
+   - `server:stop`
+   - `server:dispose`
+- plugin-owned worker communication (Neem provides worker lifecycle only; no built-in task RPC/message contract)
+- one worker pool is allocated per plugin runtime instance (v1)
+- build metadata is config-driven (not runtime hook execution):
+   - `plugin.build.entrypoints(ctx)`
 
 ### Commands contract (first-class)
-- commands are declared directly in Neem server/application contracts
+- commands are declared directly in application definitions
 - commands are orchestrated by Neem CLI/runtime (not injected through plugins)
 
 ### Plugin build entrypoints contract (target)
-- plugins may declare additional buildable runtime units (for example job workers)
+- plugins may declare additional buildable runtime units (for example plugin workers)
 - neem build pipeline discovers plugin entrypoints and bundles them as first-class artifacts
 - neem start/runtime resolves plugin runtime units through a generated build manifest
+
+### Pool-first Vite orchestration (v1 draft)
+- every worker pool is Vite-powered in development (applications and plugin pools)
+- each pool owns exactly one Vite dev environment/server instance
+- workers spawned in a pool bind to that pool's Vite environment
+- HMR invalidation/restarts are pool-scoped (no global worker restart)
+
+Conceptual shape:
+- `application -> application pool -> vite env`
+- `plugin(instance by index) -> plugin pool -> vite env`
+- one-pool-per-plugin-instance in v1 remains intact
+
+Proposed contracts:
+
+```ts
+type NeemPoolId = string
+
+type NeemPoolKind = 'application' | 'plugin'
+
+type NeemPoolViteConfig = {
+   config?: UserConfig
+   // Future: if needed, add dedicated environment options from Vite API
+}
+
+type NeemPoolDescriptor = {
+   id: NeemPoolId
+   kind: NeemPoolKind
+   owner: string // app name or plugin pool name
+   vite: NeemPoolViteConfig
+}
+
+type NeemPoolEnvironmentHandle = {
+   poolId: NeemPoolId
+   server: ViteDevServer
+   environmentName: string
+   stop: () => Promise<void>
+}
+
+type NeemPoolEnvironmentOrchestrator = {
+   ensurePoolEnvironment: (
+      descriptor: NeemPoolDescriptor,
+   ) => Promise<NeemPoolEnvironmentHandle>
+   getPoolEnvironment: (poolId: NeemPoolId) => NeemPoolEnvironmentHandle | undefined
+   stopPoolEnvironment: (poolId: NeemPoolId) => Promise<void>
+   stopAll: () => Promise<void>
+}
+```
+
+Implementation draft:
+- `src/runtime/vite-orchestrator.ts` provides `VitePoolOrchestrator` implementing `NeemPoolEnvironmentOrchestrator` without server wiring yet.
+
+Lifecycle expectations:
+- when a pool is created, Neem resolves/creates a Vite environment for that pool
+- when a worker is spawned in a pool, worker bootstrap receives pool environment metadata
+- on pool HMR update, only workers in that pool are restarted
+- on pool disposal, pool workers stop first, then pool Vite environment is stopped
 
 > TODO: define plugin/application channel orchestration contract in a separate phase.
 > For now channels are intentionally out of scope for plugin API.
 
 Conceptual shape:
-- `build:entrypoints` hook returning `PluginBuildEntrypoint[]`
+- `plugin.build.entrypoints(ctx)` resolver returning `PluginBuildEntrypoint[]`
 - `PluginBuildEntrypoint` fields:
    - `id` (stable logical identifier)
    - `source` (module specifier/path)
@@ -123,22 +186,42 @@ type PluginBuildEntrypoint = {
 
 type NeemPluginContext = {
    mode: 'development' | 'production'
-   logger: Logger
-   commands: {
-      register: (command: NeemCommandDefinition) => void
-      unregister: (name: string) => void
+   workers: {
+      spawn: (options: {
+         id?: string
+         name: string
+         path?: string
+         type?: WorkerType
+         workerData?: Record<string, unknown>
+         ports?: Record<string, MessagePort>
+         workerOptions?: Partial<WorkerOptions>
+      }) => Promise<{
+         id: string
+         name: string
+         type: WorkerType
+         path: string
+         getState: () => WorkerState
+         isHealthy: () => boolean
+         stop: () => Promise<void>
+      }>
+      stop: (workerId: string) => Promise<boolean>
+      get: (workerId: string) => unknown
+      list: () => unknown[]
+      stopAll: () => Promise<void>
    }
 }
 
 type NeemPlugin = {
    name: string
-   setup?: (ctx: NeemPluginContext) => Promise<void> | void
-   start?: (ctx: NeemPluginContext) => Promise<void> | void
-   stop?: (ctx: NeemPluginContext) => Promise<void> | void
-   dispose?: (ctx: NeemPluginContext) => Promise<void> | void
    hooks?: {
-      'build:entrypoints'?: (
-         ctx: NeemPluginContext,
+      'server:setup'?: (ctx: NeemPluginContext) => Promise<void> | void
+      'server:start'?: (ctx: NeemPluginContext) => Promise<void> | void
+      'server:stop'?: (ctx: NeemPluginContext) => Promise<void> | void
+      'server:dispose'?: (ctx: NeemPluginContext) => Promise<void> | void
+   }
+   build?: {
+      entrypoints?: (
+         ctx: { mode: 'production' },
       ) => Promise<PluginBuildEntrypoint[]> | PluginBuildEntrypoint[]
    }
 }
@@ -170,6 +253,8 @@ type NeemBuildManifest = {
 
 Notes:
 - Plugin/app channel orchestration is intentionally out of scope for this phase.
+- Plugin workers communicate through plugin-defined channels (for example transferred `MessagePort`s passed to `workers.spawn`).
+- Build step reads only server/plugin config metadata and does not execute runtime server hooks.
 
 ---
 
@@ -177,9 +262,9 @@ Notes:
 
 ### Development
 1. Neem loads server config + app registry.
-2. Neem starts one Vite server/environment per app.
-3. Worker pools are spawned per app; workers bind to their app's Vite environment channel.
-4. HMR updates are routed app-locally, then failed workers for that app are restarted.
+2. Neem starts one Vite server/environment per pool (application pools + plugin pools).
+3. Workers are spawned under pools and bind to their pool Vite environment channel.
+4. HMR updates are routed pool-locally, then failed workers for that pool are restarted.
 
 ### Production / Start
 1. Neem starts workers from built artifacts / resolvable app specifiers.
@@ -200,7 +285,7 @@ Manifest is produced by `neem build` and consumed by `neem start`.
 
 Responsibilities:
 - map app entrypoints to built outputs
-- map plugin runtime units (for example jobs workers) to built outputs
+- map plugin runtime units (for example plugin workers) to built outputs
 - provide deterministic runtime lookup without re-resolving source modules
 
 Conceptual structure:
@@ -237,7 +322,7 @@ Conceptual structure:
 
 ### Phase 4
 - Adapter package(s), including nmtjs adapter.
-- Optional plugin packages for jobs/store.
+- Optional domain-specific plugin packages.
 
 ---
 
@@ -250,3 +335,5 @@ Conceptual structure:
 - Do not alter `nmtjs` package while drafting `neem`: **accepted**.
 - Commands are first-class; plugins remain infrastructure-oriented: **accepted**.
 - Plugins may define extra runtime build entrypoints; neem orchestrates build + manifest resolution: **accepted**.
+- Plugin runtime instance identity uses plugin registration array index in v1 (config changes imply full restart): **accepted**.
+- Universal Vite-in-dev strategy: every pool is Vite-powered and owns one Vite environment in v1: **accepted**.

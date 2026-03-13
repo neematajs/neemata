@@ -1,46 +1,47 @@
 import { createLogger } from '@nmtjs/core'
 
-import type { NeemServerConfig } from './config.ts'
-import type { ErrorPolicy } from './error-policy.ts'
-import type { NeemServerWorkerConfig } from './types.ts'
-import type { ManagedWorkerFactory, WorkerPoolFactory } from './worker-pool.ts'
+import type {
+  NeemPoolEnvironmentOrchestrator,
+  NeemServerWorkerConfig,
+} from '../types.ts'
+import type { NeemApplicationConfig, NeemServerConfig } from './config.ts'
 import { createRuntimeEnvironment } from './environment.ts'
-import { getErrorPolicy } from './error-policy.ts'
 import { HMRCoordinator } from './hmr-coordinator.ts'
 import { ServerLifecycle } from './lifecycle.ts'
-import {
-  defaultPoolFactory,
-  defaultWorkerFactory,
-  NeemServer,
-} from './server.ts'
+import { NeemServer } from './server.ts'
 
 export interface StartNeemServerOptions {
   config: NeemServerConfig
-  applicationsConfig: Record<string, { specifier: string }>
+  applicationsConfig: Record<string, NeemApplicationConfig>
   workerConfig: NeemServerWorkerConfig
   mode: 'development' | 'production'
+  moduleLoader: 'runner' | 'native'
   onLifecycleError?: (error: Error, handled: boolean) => void
   setupProcessHandlers?: boolean
-  errorPolicy?: ErrorPolicy
-  workerFactory?: ManagedWorkerFactory
-  poolFactory?: WorkerPoolFactory
+  poolEnvironmentOrchestrator?: NeemPoolEnvironmentOrchestrator
 }
 
 export async function startNeemServer(options: StartNeemServerOptions) {
-  const errorPolicy = options.errorPolicy ?? getErrorPolicy(options.mode)
   const logger = createLogger(options.config.logger, 'NeemMain')
 
   const env = createRuntimeEnvironment(options.mode)
+  const poolEnvironmentOrchestrator =
+    options.poolEnvironmentOrchestrator ??
+    (await createDefaultPoolEnvironmentOrchestrator(
+      options.mode,
+      options.moduleLoader,
+      logger,
+    ))
+
   const createServer = () =>
     new NeemServer(
-      options.config,
-      options.applicationsConfig,
-      options.workerConfig,
-      undefined,
-      options.mode,
-      errorPolicy,
-      options.workerFactory ?? defaultWorkerFactory,
-      options.poolFactory ?? defaultPoolFactory,
+      {
+        config: options.config,
+        applications: options.applicationsConfig,
+        worker: options.workerConfig,
+        mode: options.mode,
+      },
+      poolEnvironmentOrchestrator,
     )
 
   const lifecycle = new ServerLifecycle(env, createServer, logger)
@@ -89,4 +90,18 @@ export async function startNeemServer(options: StartNeemServerOptions) {
       return await server.restartFailedWorkers()
     },
   }
+}
+
+async function createDefaultPoolEnvironmentOrchestrator(
+  mode: 'development' | 'production',
+  moduleLoader: 'runner' | 'native',
+  logger: ReturnType<typeof createLogger>,
+): Promise<NeemPoolEnvironmentOrchestrator | undefined> {
+  if (moduleLoader !== 'runner') {
+    return undefined
+  }
+
+  const { VitePoolOrchestrator } = await import('../vite/orchestrator.ts')
+
+  return new VitePoolOrchestrator({ mode, logger })
 }

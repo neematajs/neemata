@@ -1,8 +1,75 @@
+import type EventEmitter from 'node:events'
+import type { Worker } from 'node:worker_threads'
+
 import type { LoggingOptions } from '@nmtjs/core'
 import type { ApplicationOptions } from '@nmtjs/proxy'
+import type { UserConfig, ViteDevServer } from 'vite'
 
-import type { NeemCommandsConfig } from './commands.ts'
-import type { NeemServerPlugin } from './plugins.ts'
+import type { NeemCommandsConfig } from './runtime/commands.ts'
+import type { NeemServerPlugin } from './runtime/plugins.ts'
+
+/**
+ * Run options for the Neem application server.
+ */
+export type NeemServerRunOptions = { applications: string[] }
+
+export type NeemPoolId = string
+
+export type NeemPoolKind = 'application' | 'plugin'
+
+export interface NeemPoolViteConfig {
+  config?: UserConfig
+  entrypoints?: string[]
+}
+
+export interface NeemPoolDescriptor {
+  id: NeemPoolId
+  kind: NeemPoolKind
+  owner: string
+  vite: NeemPoolViteConfig
+}
+
+export interface NeemPoolEnvironmentHandle {
+  poolId: NeemPoolId
+  server: ViteDevServer
+  environmentName: string
+  stop: () => Promise<void>
+}
+
+export interface NeemPoolHmrUpdate {
+  poolId: NeemPoolId
+  environmentName: string
+  file: string
+}
+
+export interface NeemPoolEnvironmentOrchestrator {
+  ensurePoolEnvironment: (
+    descriptor: NeemPoolDescriptor,
+  ) => Promise<NeemPoolEnvironmentHandle>
+  getPoolEnvironment: (
+    poolId: NeemPoolId,
+  ) => NeemPoolEnvironmentHandle | undefined
+  attachWorker: (poolId: NeemPoolId, worker: Worker) => void
+  detachWorker: (poolId: NeemPoolId, threadId: number) => void
+  stopPoolEnvironment: (poolId: NeemPoolId) => Promise<void>
+  stopAll: () => Promise<void>
+}
+
+/**
+ * Minimal event map required for worker management.
+ * The events emitter may have additional events (like 'hmr-update').
+ */
+export type WorkerEventMap = { worker: [Worker]; [key: string]: any[] }
+
+/**
+ * Configuration for worker management in NeemServer.
+ */
+export type NeemServerWorkerConfig = {
+  path: string
+  workerData?: any
+  onWorker?: (worker: Worker) => any
+  events?: EventEmitter<WorkerEventMap>
+}
 
 export type ApplicationUpstream = { type: 'http' | 'http2' | 'ws'; url: string }
 
@@ -21,29 +88,11 @@ export type WorkerThreadError = Error & {
   fatal?: boolean
 }
 
-export type WorkerJobTask = { jobId: string; jobName: string; data: any }
-
-export type JobTaskResult = {
-  [K in keyof JobTaskResultTypes]: { type: K } & JobTaskResultTypes[K]
-}[keyof JobTaskResultTypes]
-
-export type JobTaskResultTypes = {
-  success: { result?: unknown }
-  error: { error: any }
-  unrecoverable_error: { error: any }
-  job_not_found: {}
-  queue_job_not_found: {}
-}
-
-export type ServerPortMessageTypes = {
-  stop: undefined
-  task: { id: string; task: WorkerJobTask }
-}
+export type ServerPortMessageTypes = { stop: undefined }
 
 export type ThreadPortMessageTypes = {
   ready: { hosts?: ApplicationUpstream[] }
   error: ThreadErrorMessage
-  task: { id: string; task: JobTaskResult }
 }
 
 export type ServerPortMessage = {
@@ -84,6 +133,7 @@ export interface ApplicationDefinition<
   TAdapter extends ApplicationAdapter = ApplicationAdapter,
 > {
   adapter: TAdapter
+  commands?: NeemCommandsConfig
   definition: TAdapter extends ApplicationAdapter<
     string,
     infer TDefinition,
@@ -135,7 +185,6 @@ export interface NeemServerConfigInit<
   logger?: LoggingOptions
   applications: NeemServerApplicationsConfig<TApps>
   proxy?: NeemServerProxyConfig<TApps>
-  commands?: NeemCommandsConfig
   plugins?: NeemServerPlugin[]
   deploymentId?: string
   metrics?: { path?: string; port?: number; host?: string }

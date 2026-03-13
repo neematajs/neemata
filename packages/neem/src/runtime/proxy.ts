@@ -31,6 +31,7 @@ export class ApplicationServerProxy {
     application: string,
     upstream: ApplicationProxyUpstream,
   ) => void
+
   protected readonly onRemove: (
     application: string,
     upstream: ApplicationProxyUpstream,

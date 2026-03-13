@@ -18,6 +18,7 @@
     "@nmtjs/ws-client": "workspace:*",
     "@nmtjs/ws-transport": "workspace:*",
     "@nmtjs/http-transport": "workspace:*",
+    "@nmtjs/neem": "workspace:*",
     "nmtjs": "workspace:*"
   }
 }

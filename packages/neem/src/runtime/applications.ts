@@ -4,20 +4,21 @@ import type { Logger } from '@nmtjs/core'
 
 import type {
   ApplicationUpstream,
+  NeemPoolEnvironmentOrchestrator,
+  NeemServerWorkerConfig,
   ThreadPortMessageTypes,
   WorkerThreadError,
 } from '../types.ts'
-import type { NeemServerConfig } from './config.ts'
+import type { NeemApplicationConfig, NeemServerConfig } from './config.ts'
 import type { ErrorPolicy } from './error-policy.ts'
 import type { ManagedWorker } from './managed-worker.ts'
-import type { NeemServerWorkerConfig } from './types.ts'
 import type {
   ManagedWorkerFactory,
   WorkerPool,
   WorkerPoolConfig,
   WorkerPoolFactory,
 } from './worker-pool.ts'
-import { WorkerType } from '../enums.ts'
+import { WorkerType } from './enums.ts'
 
 export type ApplicationProxyUpstream = {
   type: ApplicationUpstream['type']
@@ -55,13 +56,15 @@ export class ApplicationServerApplications extends EventEmitter<{
   constructor(
     readonly params: {
       logger: Logger
+      mode: 'development' | 'production'
       applications: string[]
       workerConfig: NeemServerWorkerConfig
-      applicationsConfig: Record<string, { specifier: string }>
+      applicationsConfig: Record<string, NeemApplicationConfig>
       serverConfig: NeemServerConfig
       errorPolicy: ErrorPolicy
       workerFactory: ManagedWorkerFactory
       poolFactory: WorkerPoolFactory
+      poolEnvironmentOrchestrator?: NeemPoolEnvironmentOrchestrator
     },
   ) {
     super()
@@ -87,8 +90,8 @@ export class ApplicationServerApplications extends EventEmitter<{
     } = this.params
 
     for (const applicationName of applications) {
-      const applicationPath = applicationsConfig[applicationName]
-      if (!applicationPath) {
+      const applicationRuntimeConfig = applicationsConfig[applicationName]
+      if (!applicationRuntimeConfig) {
         logger.warn(
           `Application [${applicationName}] not found in applicationsConfig, skipping...`,
         )
@@ -102,13 +105,41 @@ export class ApplicationServerApplications extends EventEmitter<{
         `Spinning [${threadsConfig.length}] workers for [${applicationName}] application...`,
       )
 
+      const poolName = `application-${applicationName}`
+      const poolEnvironment = this.params.poolEnvironmentOrchestrator
+        ? await this.params.poolEnvironmentOrchestrator.ensurePoolEnvironment({
+            id: poolName,
+            kind: 'application',
+            owner: applicationName,
+            vite: {
+              config: applicationRuntimeConfig.viteConfig,
+              entrypoints: [applicationRuntimeConfig.entrypoint],
+            },
+          })
+        : undefined
+
       // Create a WorkerPool for this application
       const poolConfig: WorkerPoolConfig = {
-        name: `application-${applicationName}`,
+        name: poolName,
         workerType: WorkerType.Application,
         path: workerConfig.path,
-        workerData: { ...workerConfig.workerData },
-        onWorker: workerConfig.worker,
+        workerData: {
+          ...workerConfig.workerData,
+          mode: this.params.mode,
+          pool: {
+            id: poolName,
+            kind: 'application',
+            owner: applicationName,
+            environmentName: poolEnvironment?.environmentName,
+          },
+        },
+        onWorker: (worker) => {
+          workerConfig.onWorker?.(worker)
+          this.params.poolEnvironmentOrchestrator?.attachWorker(
+            poolConfig.name,
+            worker,
+          )
+        },
       }
 
       const pool = poolFactory(poolConfig, errorPolicy, workerFactory, logger)
@@ -119,7 +150,7 @@ export class ApplicationServerApplications extends EventEmitter<{
           runtime: {
             type: 'application',
             name: applicationName,
-            specifier: applicationPath.specifier,
+            entrypoint: applicationRuntimeConfig.entrypoint,
             options: threadsConfig[i],
           },
         }
@@ -180,6 +211,17 @@ export class ApplicationServerApplications extends EventEmitter<{
    */
   async stop() {
     await Promise.all([...this.pools.values()].map((p) => p.stopAll()))
+
+    if (this.params.poolEnvironmentOrchestrator) {
+      await Promise.all(
+        [...this.pools.values()].map((p) =>
+          this.params.poolEnvironmentOrchestrator!.stopPoolEnvironment(
+            p.config.name,
+          ),
+        ),
+      )
+    }
+
     this.pools.clear()
   }
 

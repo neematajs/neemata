@@ -222,27 +222,30 @@ importers:
         specifier: workspace:*
         version: link:../core
       citty:
-        specifier: 0.2.0
-        version: 0.2.0
+        specifier: 0.2.1
+        version: 0.2.1
       dotenv:
-        specifier: ^17.2.3
-        version: 17.2.3
+        specifier: 17.3.1
+        version: 17.3.1
+      hookable:
+        specifier: 6.0.1
+        version: 6.0.1
       oxc-resolver:
-        specifier: 11.17.0
-        version: 11.17.0
+        specifier: 11.19.1
+        version: 11.19.1(@emnapi/core@1.9.2)(@emnapi/runtime@1.9.2)
       prom-client:
         specifier: git@github.com:siimon/prom-client.git#d4d2dcb366384833951e0116caca707b5f62aa5e
         version: https://codeload.github.com/siimon/prom-client/tar.gz/d4d2dcb366384833951e0116caca707b5f62aa5e
-      vite:
-        specifier: 'catalog:'
-        version: 8.0.0-beta.15(@types/node@24.10.1)(esbuild@0.27.2)(jiti@2.6.1)
     devDependencies:
       '@nmtjs/proxy':
         specifier: 'catalog:'
-        version: 1.0.0-beta.4
+        version: 1.0.0-beta.6
       pino:
         specifier: 10.3.0
         version: 10.3.0
+      vite:
+        specifier: 'catalog:'
+        version: 8.0.8(@types/node@25.5.0)(esbuild@0.27.2)(jiti@2.6.1)
 
   packages/nmtjs:
     dependencies:
@@ -422,6 +425,9 @@ importers:
       '@nmtjs/msgpack-format':
         specifier: workspace:*
         version: link:../../packages/msgpack-format
+      '@nmtjs/neem':
+        specifier: workspace:*
+        version: link:../../packages/neem
       '@nmtjs/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
@@ -1051,6 +1057,9 @@ packages:
     resolution: {integrity: sha512-NUPRluOfOiTKBKvWPtSD4PhFvWCqOi0BGStNWs57X9js7XGTprSmFoz5F0tWhR4WPjNeR9jXqdC7/UpSJTnlRg==}
     engines: {node: '>=18'}
 
+  citty@0.2.1:
+    resolution: {integrity: sha512-kEV95lFBhQgtogAPlQfJJ0WGVSokvLr/UEoFPiKKOXF7pl98HfUVUD0ejsuTCld/9xH9vogSywZ5KqHzXrZpqg==}
+
   citty@0.2.2:
     resolution: {integrity: sha512-+6vJA3L98yv+IdfKGZHBNiGW5KHn22e/JwID0Strsz8h4S/csAu/OuICwxrg44k5MRiZHWIo8XXuJgQTriRP4w==}
 
@@ -1107,6 +1116,10 @@ packages:
     resolution: {integrity: sha512-Btj2BOOO83o3WyH59e8MgXsxEQVcarkUOpEYrubB0urwnN10yQ364rsiByU11nZlqWYZm05i/of7io4mzihBtQ==}
     engines: {node: '>=8'}
 
+  dotenv@17.3.1:
+    resolution: {integrity: sha512-IO8C/dzEb6O3F9/twg6ZLXz164a2fhTnEWb95H23Dm4OuN+92NmEAlTrupP9VW6Jm3sO26tQlqyvyi4CsnY9GA==}
+    engines: {node: '>=12'}
+
   dotenv@17.4.2:
     resolution: {integrity: sha512-nI4U3TottKAcAD9LLud4Cb7b2QztQMUEfHbvhTH09bqXTxnSie8WnjPALV/WMCrJZ6UV/qHJ6L03OqO3LcdYZw==}
     engines: {node: '>=12'}
@@ -1161,6 +1174,9 @@ packages:
 
   help-me@5.0.0:
     resolution: {integrity: sha512-7xgomUX6ADmcYzFik0HzAxh/73YlKR9bmFzf51CZwR+b6YtzU2m0u49hQCqV6SvlqIqsaxovfwdvbnsw3b/zpg==}
+
+  hookable@6.0.1:
+    resolution: {integrity: sha512-uKGyY8BuzN/a5gvzvA+3FVWo0+wUjgtfSdnmjtrOVwQCZPHpHDH2WRO3VZSOeluYrHoDCiXFffZXs8Dj1ULWtw==}
 
   hookable@6.1.1:
     resolution: {integrity: sha512-U9LYDy1CwhMCnprUfeAZWZGByVbhd54hwepegYTK7Pi5NvqEj63ifz5z+xukznehT7i6NIZRu89Ay1AZmRsLEQ==}
@@ -1350,6 +1366,10 @@ packages:
 
   pino-std-serializers@7.1.0:
     resolution: {integrity: sha512-BndPH67/JxGExRgiX1dX0w1FvZck5Wa4aal9198SrRhZjH3GxKQUKIBnYJTdj2HDN3UQAS06HlfcSbQj2OHmaw==}
+
+  pino@10.3.0:
+    resolution: {integrity: sha512-0GNPNzHXBKw6U/InGe79A3Crzyk9bcSyObF9/Gfo9DLEf5qj5RF50RSjsu0W1rZ6ZqRGdzDFCRBQvi9/rSGPtA==}
+    hasBin: true
 
   pino@10.3.1:
     resolution: {integrity: sha512-r34yH/GlQpKZbU1BvFFqOjhISRo1MNx1tWYsYvmj6KIRHSPMT2+yHOEb1SG6NMvRoHRF0a07kCOox/9yakl1vg==}
@@ -2061,6 +2081,8 @@ snapshots:
 
   chai@6.2.2: {}
 
+  citty@0.2.1: {}
+
   citty@0.2.2: {}
 
   cluster-key-slot@1.1.2: {}
@@ -2088,6 +2110,8 @@ snapshots:
   denque@2.1.0: {}
 
   detect-libc@2.1.2: {}
+
+  dotenv@17.3.1: {}
 
   dotenv@17.4.2: {}
 
@@ -2124,6 +2148,8 @@ snapshots:
   has-flag@4.0.0: {}
 
   help-me@5.0.0: {}
+
+  hookable@6.0.1: {}
 
   hookable@6.1.1: {}
 
@@ -2335,6 +2361,20 @@ snapshots:
       strip-json-comments: 5.0.3
 
   pino-std-serializers@7.1.0: {}
+
+  pino@10.3.0:
+    dependencies:
+      '@pinojs/redact': 0.4.0
+      atomic-sleep: 1.0.0
+      on-exit-leak-free: 2.1.2
+      pino-abstract-transport: 3.0.0
+      pino-std-serializers: 7.1.0
+      process-warning: 5.0.0
+      quick-format-unescaped: 4.0.4
+      real-require: 0.2.0
+      safe-stable-stringify: 2.5.0
+      sonic-boom: 4.2.1
+      thread-stream: 4.0.0
 
   pino@10.3.1:
     dependencies:

@@ -2,8 +2,7 @@ import EventEmitter from 'node:events'
 
 import type { Logger } from '@nmtjs/core'
 
-import type { WorkerType } from '../enums.ts'
-import type { JobTaskResult, WorkerJobTask } from '../types.ts'
+import type { WorkerType } from './enums.ts'
 import type { ErrorPolicy } from './error-policy.ts'
 import type {
   ManagedWorker,
@@ -41,6 +40,15 @@ export interface WorkerPoolConfig {
   path: string
   workerData?: any
   onWorker?: (worker: import('node:worker_threads').Worker) => void
+}
+
+export interface WorkerPoolAddOptions {
+  id?: string
+  name?: string
+  path?: string
+  workerType?: WorkerType
+  workerOptions?: ManagedWorkerConfig['workerOptions']
+  onWorker?: ManagedWorkerConfig['onWorker']
 }
 
 /**
@@ -84,6 +92,7 @@ export type WorkerPoolFactory = (
  */
 export class WorkerPool extends EventEmitter<WorkerPoolEvents> {
   private workers: ManagedWorker[] = []
+  private workerStateChangeHandlers = new WeakMap<ManagedWorker, () => void>()
   private health: PoolHealth = 'healthy'
   private logger: Logger
 
@@ -122,27 +131,56 @@ export class WorkerPool extends EventEmitter<WorkerPoolEvents> {
    *
    * @param workerData - Additional data to pass to the worker
    * @param index - Worker index (used for naming)
+   * @param options - Optional worker config overrides
    * @returns The created ManagedWorker
    */
-  add(workerData: any, index: number): ManagedWorker {
+  add(
+    workerData: any,
+    index: number,
+    options?: WorkerPoolAddOptions,
+  ): ManagedWorker {
     const { config } = this
 
     const workerConfig: ManagedWorkerConfig = {
-      id: `${config.name}-${index + 1}`,
-      name: config.name,
+      id: options?.id ?? `${config.name}-${index + 1}`,
+      name: options?.name ?? config.name,
       index,
-      workerType: config.workerType,
-      path: config.path,
+      workerType: options?.workerType ?? config.workerType,
+      path: options?.path ?? config.path,
       workerData: { ...config.workerData, ...workerData },
-      onWorker: config.onWorker,
+      workerOptions: options?.workerOptions,
+      onWorker: options?.onWorker ?? config.onWorker,
     }
 
     const worker = this.workerFactory(workerConfig, this.policy, this.logger)
 
-    worker.on('state-change', () => this.updateHealth())
+    const onStateChange = () => this.updateHealth()
+    worker.on('state-change', onStateChange)
+    this.workerStateChangeHandlers.set(worker, onStateChange)
 
     this.workers.push(worker)
+    this.updateHealth()
     return worker
+  }
+
+  /**
+   * Stop and remove a worker by id.
+   */
+  async remove(workerId: string): Promise<boolean> {
+    const workerIndex = this.workers.findIndex((w) => w.config.id === workerId)
+    if (workerIndex === -1) return false
+
+    const worker = this.workers[workerIndex]!
+    const onStateChange = this.workerStateChangeHandlers.get(worker)
+    if (onStateChange) {
+      worker.off('state-change', onStateChange)
+      this.workerStateChangeHandlers.delete(worker)
+    }
+
+    this.workers.splice(workerIndex, 1)
+    await worker.stop()
+    this.updateHealth()
+    return true
   }
 
   /**
@@ -185,6 +223,7 @@ export class WorkerPool extends EventEmitter<WorkerPoolEvents> {
 
     // Remove all event listeners from workers before stopping
     for (const worker of this.workers) {
+      this.workerStateChangeHandlers.delete(worker)
       worker.removeAllListeners()
     }
 
@@ -242,33 +281,5 @@ export class WorkerPool extends EventEmitter<WorkerPoolEvents> {
       )
       this.emit('health-change', newHealth)
     }
-  }
-}
-
-/**
- * JobRunnersPool extends WorkerPool with round-robin task execution.
- * Used for job worker pools where tasks need to be distributed across workers.
- */
-export class JobRunnersPool extends WorkerPool {
-  private runIndex = 0
-
-  /**
-   * Run a task on the next available worker (round-robin).
-   */
-  async run(task: WorkerJobTask): Promise<JobTaskResult> {
-    const workers = this.getWorkers()
-    const healthyWorkers = workers.filter((w) => w.isHealthy)
-
-    if (healthyWorkers.length === 0) {
-      throw new Error('No healthy job runner threads available')
-    }
-
-    if (this.runIndex >= healthyWorkers.length) {
-      this.runIndex = 0
-    }
-
-    const worker = healthyWorkers[this.runIndex]!
-    this.runIndex++
-    return await worker.run(task)
   }
 }

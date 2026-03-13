@@ -1,13 +1,3 @@
-export enum StoreType {
-  Redis = 'Redis',
-  Valkey = 'Valkey',
-}
-
-export enum JobWorkerPool {
-  Io = 'Io',
-  Compute = 'Compute',
-}
-
 export enum LifecycleHook {
   BeforeInitialize = 'lifecycle:beforeInitialize',
   AfterInitialize = 'lifecycle:afterInitialize',
@@ -19,6 +9,6 @@ export enum LifecycleHook {
 
 export enum WorkerType {
   Application = 'Application',
-  Job = 'Job',
   Command = 'Command',
+  Plugin = 'Plugin',
 }

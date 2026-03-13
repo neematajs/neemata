@@ -31,6 +31,9 @@
       "path": "./packages/msgpack-format/tsconfig.json"
     },
     {
+      "path": "./packages/neem/tsconfig.json"
+    },
+    {
       "path": "./packages/nmtjs/tsconfig.json"
     },
     {

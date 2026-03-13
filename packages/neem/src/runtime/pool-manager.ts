@@ -37,7 +37,7 @@ export interface PoolManagerEvents {
  * PoolManager manages multiple application pools with aggregate health tracking.
  *
  * Features:
- * - Creates and manages WorkerPools for each application/job type
+ * - Creates and manages WorkerPools for each application or plugin domain
  * - Aggregates health across all pools
  * - Provides server-level health reports
  *
@@ -70,7 +70,7 @@ export class PoolManager extends EventEmitter<PoolManagerEvents> {
   }
 
   /**
-   * Create a new pool for an application or job type.
+   * Create a new pool for an application or plugin domain.
    *
    * @param config - Pool configuration
    * @returns The created WorkerPool

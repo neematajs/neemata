@@ -2,33 +2,9 @@ import type {
   ApplicationAdapter,
   ApplicationDefinition,
   ApplicationRuntime,
-} from './types.ts'
-import { kApplicationDefinition } from './constants.ts'
-
-export type ApplicationDefinitionWithMarker<
-  TAdapter extends ApplicationAdapter = ApplicationAdapter,
-> = ApplicationDefinition<TAdapter> & {
-  readonly [kApplicationDefinition]: true
-}
-
-export function defineApplication<
-  TAdapter extends ApplicationAdapter,
->(options: {
-  adapter: TAdapter
-  definition: TAdapter extends ApplicationAdapter<
-    string,
-    infer TDefinition,
-    any
-  >
-    ? TDefinition
-    : never
-}): ApplicationDefinitionWithMarker<TAdapter> {
-  return Object.freeze({
-    [kApplicationDefinition]: true,
-    adapter: options.adapter,
-    definition: options.definition,
-  })
-}
+} from '../types.ts'
+import type { ApplicationDefinitionWithMarker } from './config.ts'
+import { kApplicationConfig, kApplicationDefinition } from './constants.ts'
 
 export function isApplicationDefinition(
   value: unknown,
