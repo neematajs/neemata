@@ -23,7 +23,7 @@
     "prepare": "husky"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.4.3",
+    "@biomejs/biome": "2.4.6",
     "@tsconfig/node24": "^24.0.3",
     "@types/node": "^24",
     "@typescript/native-preview": "7.0.0-dev.20260219.1",

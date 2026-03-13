@@ -184,72 +184,71 @@ async function waitForPingResponsiveness(
   )
 }
 
-describe(
-  'Playground E2E - Preview Mode',
-  { timeout: 30000, concurrent: false },
-  () => {
-    let serverProcess: ChildProcess | null = null
+describe('Playground E2E - Preview Mode', {
+  timeout: 30000,
+  concurrent: false,
+}, () => {
+  let serverProcess: ChildProcess | null = null
 
-    beforeAll(async () => {
-      serverProcess = await startServer('preview')
-    }, 20000)
+  beforeAll(async () => {
+    serverProcess = await startServer('preview')
+  }, 20000)
 
-    afterAll(async () => {
-      if (serverProcess) {
-        await stopServerProcess(serverProcess)
-      }
-    })
+  afterAll(async () => {
+    if (serverProcess) {
+      await stopServerProcess(serverProcess)
+    }
+  })
 
-    it('should connect to the server and call ping procedure', async () => {
-      const client = createClient(SERVER_URL)
+  it('should connect to the server and call ping procedure', async () => {
+    const client = createClient(SERVER_URL)
 
-      await client.connect()
+    await client.connect()
 
-      try {
-        const result = await client.call.ping({})
+    try {
+      const result = await client.call.ping({})
+      expect(result).toEqual({ message: 'pong' })
+    } finally {
+      await client.disconnect()
+    }
+  })
+
+  it('should handle multiple sequential calls', async () => {
+    const client = createClient(SERVER_URL)
+
+    await client.connect()
+
+    try {
+      const results = await Promise.all([
+        client.call.ping({}),
+        client.call.ping({}),
+        client.call.ping({}),
+      ])
+
+      for (const result of results) {
         expect(result).toEqual({ message: 'pong' })
-      } finally {
-        await client.disconnect()
       }
-    })
-
-    it('should handle multiple sequential calls', async () => {
-      const client = createClient(SERVER_URL)
-
-      await client.connect()
-
-      try {
-        const results = await Promise.all([
-          client.call.ping({}),
-          client.call.ping({}),
-          client.call.ping({}),
-        ])
-
-        for (const result of results) {
-          expect(result).toEqual({ message: 'pong' })
-        }
-      } finally {
-        await client.disconnect()
-      }
-    })
-
-    it('should reconnect after disconnect', async () => {
-      const client = createClient(SERVER_URL)
-
-      // First connection
-      await client.connect()
-      const result1 = await client.call.ping({})
-      expect(result1).toEqual({ message: 'pong' })
+    } finally {
       await client.disconnect()
+    }
+  })
 
-      // Second connection
-      await client.connect()
-      const result2 = await client.call.ping({})
-      expect(result2).toEqual({ message: 'pong' })
-      await client.disconnect()
-    })
-  },
-)
+  it('should reconnect after disconnect', async () => {
+    const client = createClient(SERVER_URL)
+
+    // First connection
+    await client.connect()
+    const result1 = await client.call.ping({})
+    expect(result1).toEqual({ message: 'pong' })
+    await client.disconnect()
+
+    // Second connection
+    await client.connect()
+    const result2 = await client.call.ping({})
+    expect(result2).toEqual({ message: 'pong' })
+    await client.disconnect()
+  })
+})
 
 describe('Playground E2E - Dev Mode', { timeout: 60000 }, () => {
   let serverProcess: ChildProcess | null = null
@@ -314,35 +313,33 @@ describe('Playground E2E - Dev Mode', { timeout: 60000 }, () => {
     }
   })
 
-  it(
-    'should hot reload when procedure file changes',
-    { retry: 3 },
-    async () => {
-      const client = createClient(SERVER_URL)
+  it('should hot reload when procedure file changes', {
+    retry: 3,
+  }, async () => {
+    const client = createClient(SERVER_URL)
 
-      await client.connect()
+    await client.connect()
 
+    try {
+      // Initial call should return 'pong'
+      const result1 = await client.call.ping({})
+      expect(result1).toEqual({ message: 'pong' })
+
+      // Modify the procedure file to return a different message
+      const modifiedContent = originalPingContent!.replace(
+        `'pong'`,
+        `'pong-hmr'`,
+      )
+      await writeFile(PING_PROCEDURE_PATH, modifiedContent, 'utf-8')
+      await waitForPingMessage(client, 'pong-hmr')
+    } finally {
       try {
-        // Initial call should return 'pong'
-        const result1 = await client.call.ping({})
-        expect(result1).toEqual({ message: 'pong' })
-
-        // Modify the procedure file to return a different message
-        const modifiedContent = originalPingContent!.replace(
-          `'pong'`,
-          `'pong-hmr'`,
-        )
-        await writeFile(PING_PROCEDURE_PATH, modifiedContent, 'utf-8')
-        await waitForPingMessage(client, 'pong-hmr')
-      } finally {
-        try {
-          await client.disconnect()
-        } catch {
-          // Ignore
-        }
+        await client.disconnect()
+      } catch {
+        // Ignore
       }
-    },
-  )
+    }
+  })
 
   it('should survive rapid consecutive procedure changes in dev mode', async () => {
     const client = createClient(SERVER_URL)
@@ -513,69 +510,68 @@ describe('Playground E2E - Dev Mode', { timeout: 60000 }, () => {
   })
 })
 
-describe(
-  'Playground E2E - Production Build',
-  { timeout: 45000, concurrent: false },
-  () => {
-    let serverProcess: ChildProcess | null = null
+describe('Playground E2E - Production Build', {
+  timeout: 45000,
+  concurrent: false,
+}, () => {
+  let serverProcess: ChildProcess | null = null
 
-    beforeAll(async () => {
-      serverProcess = await startServer('build', { timeout: 25000 })
-    }, 30000)
+  beforeAll(async () => {
+    serverProcess = await startServer('build', { timeout: 25000 })
+  }, 30000)
 
-    afterAll(async () => {
-      if (serverProcess) {
-        await stopServerProcess(serverProcess)
-      }
-    })
+  afterAll(async () => {
+    if (serverProcess) {
+      await stopServerProcess(serverProcess)
+    }
+  })
 
-    it('should connect to the built server and call ping procedure', async () => {
-      const client = createClient(SERVER_URL)
+  it('should connect to the built server and call ping procedure', async () => {
+    const client = createClient(SERVER_URL)
 
-      await client.connect()
+    await client.connect()
 
-      try {
-        const result = await client.call.ping({})
+    try {
+      const result = await client.call.ping({})
+      expect(result).toEqual({ message: 'pong' })
+    } finally {
+      await client.disconnect()
+    }
+  })
+
+  it('should handle multiple sequential calls on built server', async () => {
+    const client = createClient(SERVER_URL)
+
+    await client.connect()
+
+    try {
+      const results = await Promise.all([
+        client.call.ping({}),
+        client.call.ping({}),
+        client.call.ping({}),
+      ])
+
+      for (const result of results) {
         expect(result).toEqual({ message: 'pong' })
-      } finally {
-        await client.disconnect()
       }
-    })
-
-    it('should handle multiple sequential calls on built server', async () => {
-      const client = createClient(SERVER_URL)
-
-      await client.connect()
-
-      try {
-        const results = await Promise.all([
-          client.call.ping({}),
-          client.call.ping({}),
-          client.call.ping({}),
-        ])
-
-        for (const result of results) {
-          expect(result).toEqual({ message: 'pong' })
-        }
-      } finally {
-        await client.disconnect()
-      }
-    })
-
-    it('should reconnect after disconnect on built server', async () => {
-      const client = createClient(SERVER_URL)
-
-      // First connection
-      await client.connect()
-      const result1 = await client.call.ping({})
-      expect(result1).toEqual({ message: 'pong' })
+    } finally {
       await client.disconnect()
+    }
+  })
 
-      // Second connection
-      await client.connect()
-      const result2 = await client.call.ping({})
-      expect(result2).toEqual({ message: 'pong' })
-      await client.disconnect()
-    })
-  },
-)
+  it('should reconnect after disconnect on built server', async () => {
+    const client = createClient(SERVER_URL)
+
+    // First connection
+    await client.connect()
+    const result1 = await client.call.ping({})
+    expect(result1).toEqual({ message: 'pong' })
+    await client.disconnect()
+
+    // Second connection
+    await client.connect()
+    const result2 = await client.call.ping({})
+    expect(result2).toEqual({ message: 'pong' })
+    await client.disconnect()
+  })
+})
