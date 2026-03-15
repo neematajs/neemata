@@ -38,10 +38,6 @@ export class ProtocolVersion1 extends ProtocolVersionInterface {
 
         return { type: messageType, rpc: { callId, procedure, payload } }
       }
-      case ClientMessageType.RpcPull: {
-        const callId = messagePayload.readUInt32LE(0)
-        return { type: messageType, callId }
-      }
       case ClientMessageType.RpcAbort: {
         const callId = messagePayload.readUInt32LE(0)
         const reasonPayload = messagePayload.subarray(MessageByteLength.CallId)

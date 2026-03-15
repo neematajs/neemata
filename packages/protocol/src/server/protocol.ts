@@ -86,7 +86,6 @@ export type ClientMessageTypePayload = {
       streams?: EncodeRPCStreams
     }
   }
-  [ClientMessageType.RpcPull]: { callId: number }
   [ClientMessageType.RpcAbort]: { callId: number; reason?: string }
   [ClientMessageType.Ping]: { nonce: number }
   [ClientMessageType.Pong]: { nonce: number }
