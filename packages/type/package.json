@@ -20,11 +20,16 @@
       "module-sync": "./dist/types/*.js"
     },
     "./temporal": {
+      "types": "./src/temporal/index.ts",
+      "import": "./dist/temporal/index.js",
+      "module-sync": "./dist/temporal/index.js"
+    },
+    "./temporal/global": {
       "types": "./src/temporal/global.ts",
       "import": "./dist/temporal/global.js",
       "module-sync": "./dist/temporal/global.js"
     },
-    "./temporal-polyfill": {
+    "./temporal/polyfill": {
       "types": "./src/temporal/polyfill.ts",
       "import": "./dist/temporal/polyfill.js",
       "module-sync": "./dist/temporal/polyfill.js"
@@ -43,11 +48,16 @@
         "module-sync": "./dist/types/*.js"
       },
       "./temporal": {
+        "types": "./dist/temporal/index.d.ts",
+        "import": "./dist/temporal/index.js",
+        "module-sync": "./dist/temporal/index.js"
+      },
+      "./temporal/global": {
         "types": "./dist/temporal/global.d.ts",
         "import": "./dist/temporal/global.js",
         "module-sync": "./dist/temporal/global.js"
       },
-      "./temporal-polyfill": {
+      "./temporal/polyfill": {
         "types": "./dist/temporal/polyfill.d.ts",
         "import": "./dist/temporal/polyfill.js",
         "module-sync": "./dist/temporal/polyfill.js"
@@ -58,17 +68,16 @@
     "clean-build": "rm -rf ./dist"
   },
   "dependencies": {
-    "@standard-schema/spec": "^1.1.0",
-    "temporal-spec": "^0.3.0"
+    "@standard-schema/spec": "^1.1.0"
   },
   "peerDependencies": {
     "@nmtjs/common": "workspace:*",
-    "temporal-polyfill": "^0.3.0",
+    "temporal-polyfill": "^0.3.2",
     "zod": "catalog:"
   },
   "devDependencies": {
     "@nmtjs/common": "workspace:*",
-    "temporal-polyfill": "^0.3.0",
+    "temporal-polyfill": "^0.3.2",
     "zod": "catalog:"
   },
   "peerDependenciesMeta": {
