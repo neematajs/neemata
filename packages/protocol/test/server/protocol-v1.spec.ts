@@ -20,6 +20,8 @@ const encodeUInt16 = (value: number) => {
   return buffer
 }
 
+const LEGACY_RPC_PULL_MESSAGE_TYPE = 12
+
 function createMockServerContext(version: ProtocolVersion1): MessageContext {
   return {
     connectionId: 'conn',
@@ -104,7 +106,10 @@ describe('ProtocolVersion1 - decodeMessage', () => {
   })
 
   it('throws on legacy RpcPull payload', () => {
-    const buffer = Buffer.concat([Buffer.from([12]), encodeUInt32(99)])
+    const buffer = Buffer.concat([
+      Buffer.from([LEGACY_RPC_PULL_MESSAGE_TYPE]),
+      encodeUInt32(99),
+    ])
 
     expect(() => version.decodeMessage(context, buffer)).toThrow(
       /Unsupported message type/,

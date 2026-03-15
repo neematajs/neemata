@@ -95,7 +95,7 @@ const baseOptions: BaseClientOptions<typeof testContract> = {
   format: mockFormat as any,
 }
 
-describe('rpc streams', () => {
+describe('RPC Streams', () => {
   it('does not send pull messages when consuming bidirectional RPC streams', async () => {
     const { factory, simulateConnect, transport } =
       createMockBidirectionalTransport()
