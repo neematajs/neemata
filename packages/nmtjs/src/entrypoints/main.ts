@@ -1,4 +1,4 @@
-import type { Worker } from 'node:worker_threads'
+import type { MessagePort, Worker } from 'node:worker_threads'
 import EventEmitter from 'node:events'
 import { fileURLToPath } from 'node:url'
 
@@ -96,8 +96,8 @@ function createServer(): ApplicationServer {
       viteModuleRunnerTimeoutMs: resolveViteRunnerTimeoutMs(),
     },
     worker: _viteServerEvents
-      ? (worker: Worker) => {
-          _viteServerEvents!.emit('worker', worker)
+      ? ({ worker, vitePort }: { worker: Worker; vitePort?: MessagePort }) => {
+          _viteServerEvents!.emit('worker', { worker, vitePort })
         }
       : undefined,
     events: _viteServerEvents,

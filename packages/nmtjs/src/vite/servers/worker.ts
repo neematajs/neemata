@@ -1,5 +1,5 @@
 import type EventEmitter from 'node:events'
-import type { BroadcastChannel, Worker } from 'node:worker_threads'
+import type { MessagePort, Worker } from 'node:worker_threads'
 
 import type {
   HotChannel,
@@ -13,14 +13,14 @@ import type {
 import { DevEnvironment, mergeConfig } from 'vite'
 
 import type { NeemataConfig } from '../../config.ts'
+import type { WorkerRegistration } from '../../runtime/server/types.ts'
 import type { ViteConfigOptions } from '../config.ts'
 import { createConfig } from '../config.ts'
 import { plugins } from '../plugins.ts'
-import { createBroadcastChannel } from '../runners/worker.ts'
 import { createServer } from '../server.ts'
 
 export type WorkerServerEventMap = {
-  worker: [Worker]
+  worker: [WorkerRegistration]
   /** Emitted when an HMR update occurs for an application file (useful for restarting dead workers) */
   'hmr-update': [{ file: string }]
 }
@@ -71,7 +71,10 @@ export async function createViteServer(
     } satisfies UserConfig),
     {
       createEnvironment: async (name, config, context) => {
-        const channels = new Map<number, BroadcastChannel>()
+        const connections = new Map<
+          number,
+          { worker: Worker; port: MessagePort; client: HotChannelClient }
+        >()
         const clients = new Map<number, HotChannelClient>()
         const handlers = new Map<string, Set<Function>>()
 
@@ -87,40 +90,57 @@ export async function createViteServer(
           }
         }
 
-        events.on('worker', (worker) => {
-          const channel = createBroadcastChannel(worker.threadId)
+        events.on('worker', ({ worker, vitePort }) => {
+          if (!vitePort) return
+
           const client: HotChannelClient = {
             send: (payload: HotPayload) => {
-              channel.postMessage(payload)
+              vitePort.postMessage(payload)
             },
           }
 
-          channel.onmessage = (event) => {
-            const value = event.data
-            if (value && typeof value.event === 'string') {
+          const handleMessage = (value: HotPayload) => {
+            if (value.type === 'custom') {
               emit(value.event, value.data, client)
             }
           }
 
-          channels.set(worker.threadId, channel)
+          let disconnected = false
+          const disconnect = (closePort: boolean) => {
+            if (disconnected) return
+            disconnected = true
+
+            emit('vite:client:disconnect', undefined, client)
+
+            vitePort.off('message', handleMessage)
+            worker.off('exit', handleWorkerExit)
+            vitePort.off('close', handlePortClose)
+
+            if (closePort) {
+              vitePort.close()
+            }
+
+            connections.delete(worker.threadId)
+            clients.delete(worker.threadId)
+          }
+
+          const handleWorkerExit = () => disconnect(true)
+          const handlePortClose = () => disconnect(false)
+
+          vitePort.on('message', handleMessage)
+          worker.once('exit', handleWorkerExit)
+          vitePort.once('close', handlePortClose)
+
+          connections.set(worker.threadId, { worker, port: vitePort, client })
           clients.set(worker.threadId, client)
 
           emit('vite:client:connect', undefined, client)
-
-          worker.once('exit', () => {
-            emit('vite:client:disconnect', undefined, client)
-
-            channel.onmessage = () => {}
-            channel.close()
-            channels.delete(worker.threadId)
-            clients.delete(worker.threadId)
-          })
         })
 
         const transport: HotChannel = {
           send(data) {
-            for (const channel of channels.values()) {
-              channel.postMessage(data)
+            for (const connection of connections.values()) {
+              connection.port.postMessage(data)
             }
           },
           on(event, handler) {
