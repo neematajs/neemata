@@ -130,7 +130,6 @@ describe('Connection Lifecycle', () => {
       // Verify all gateway state is cleaned up
       expect(setup.gateway.connections.connections.size).toBe(0)
       expect(setup.gateway.rpcs.rpcs.size).toBe(0)
-      expect(setup.gateway.rpcs.streams.size).toBe(0)
       expect(setup.gateway.blobStreams.clientStreams.size).toBe(0)
       expect(setup.gateway.blobStreams.serverStreams.size).toBe(0)
 
@@ -203,7 +202,6 @@ describe('Connection Lifecycle', () => {
       // Verify fresh state - only one connection
       expect(setup.gateway.connections.connections.size).toBe(1)
       expect(setup.gateway.rpcs.rpcs.size).toBe(0)
-      expect(setup.gateway.rpcs.streams.size).toBe(0)
 
       // Make another call
       const result = await setup.client.call.echo({ message: 'after' })
@@ -275,7 +273,6 @@ describe('Connection Lifecycle', () => {
       expect(setup.gateway.connections.connections.size).toBe(0)
       expect(setup.gateway.connections.streamIds.size).toBe(0)
       expect(setup.gateway.rpcs.rpcs.size).toBe(0)
-      expect(setup.gateway.rpcs.streams.size).toBe(0)
       expect(setup.gateway.blobStreams.clientStreams.size).toBe(0)
       expect(setup.gateway.blobStreams.serverStreams.size).toBe(0)
       expect(setup.gateway.blobStreams.clientCallStreams.size).toBe(0)

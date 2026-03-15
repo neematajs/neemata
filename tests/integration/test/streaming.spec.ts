@@ -182,7 +182,7 @@ describe('RPC Streaming', () => {
       expect(setup.client.isClean).toBe(true)
     })
 
-    it('should track stream pull state on gateway', async () => {
+    it('should clear gateway RPC state after stream completion', async () => {
       const stream = await setup.client.stream.streamDelay({
         count: 3,
         delay: 50,
@@ -208,7 +208,6 @@ describe('RPC Streaming', () => {
       await new Promise((resolve) => setTimeout(resolve, 50))
 
       expect(setup.gateway.rpcs.rpcs.size).toBe(0)
-      expect(setup.gateway.rpcs.streams.size).toBe(0)
     })
   })
 
@@ -398,7 +397,7 @@ describe('RPC Streaming', () => {
   })
 
   describe('Backpressure', () => {
-    it('should wait for client pull before sending next chunk', async () => {
+    it('should keep delivering chunks while the client processes previous ones', async () => {
       const pullTimes: number[] = []
       const chunkTimes: number[] = []
 
@@ -412,13 +411,15 @@ describe('RPC Streaming', () => {
         pullTimes.push(Date.now() - startTime)
       }
 
-      // Verify chunks are received in order with reasonable timing
+      // Verify chunks are received in order with reasonable timing.
+      // RPC streams are push-driven now, so slow client processing should not
+      // prevent the remaining chunks from arriving.
       expect(chunkTimes).toHaveLength(5)
-      // Each chunk should come after the previous pull (within reasonable margin)
       for (let i = 1; i < chunkTimes.length; i++) {
-        // The chunk should arrive after we finished processing the previous one
-        expect(chunkTimes[i]).toBeGreaterThanOrEqual(pullTimes[i - 1] - 5)
+        expect(chunkTimes[i]).toBeGreaterThanOrEqual(chunkTimes[i - 1])
       }
+
+      expect(pullTimes).toHaveLength(5)
     })
 
     it('should not cause buffer overflow with slow client', async () => {
@@ -558,7 +559,6 @@ describe('RPC Streaming', () => {
 
       // Verify gateway RPC state is cleared
       expect(setup.gateway.rpcs.rpcs.size).toBe(0)
-      expect(setup.gateway.rpcs.streams.size).toBe(0)
 
       // Verify client internal state is cleared
       expect(setup.client.pendingCallsCount).toBe(0)
@@ -588,7 +588,6 @@ describe('RPC Streaming', () => {
 
       // Verify gateway RPC state is cleared
       expect(setup.gateway.rpcs.rpcs.size).toBe(0)
-      expect(setup.gateway.rpcs.streams.size).toBe(0)
 
       // Verify client internal state is cleared
       expect(setup.client.pendingCallsCount).toBe(0)
@@ -612,7 +611,6 @@ describe('RPC Streaming', () => {
 
       // Verify gateway RPC state is cleared
       expect(setup.gateway.rpcs.rpcs.size).toBe(0)
-      expect(setup.gateway.rpcs.streams.size).toBe(0)
 
       // Verify client internal state is cleared
       expect(setup.client.pendingCallsCount).toBe(0)
@@ -641,7 +639,6 @@ describe('RPC Streaming', () => {
 
       // Verify all gateway RPC state is cleared
       expect(setup.gateway.rpcs.rpcs.size).toBe(0)
-      expect(setup.gateway.rpcs.streams.size).toBe(0)
 
       // Verify client internal state is cleared
       expect(setup.client.pendingCallsCount).toBe(0)
@@ -667,7 +664,6 @@ describe('RPC Streaming', () => {
 
       // Verify gateway state is cleared
       expect(setup.gateway.rpcs.rpcs.size).toBe(0)
-      expect(setup.gateway.rpcs.streams.size).toBe(0)
 
       // Verify client internal state is cleared
       expect(setup.client.pendingCallsCount).toBe(0)

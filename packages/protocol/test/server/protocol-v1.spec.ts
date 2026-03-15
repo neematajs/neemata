@@ -103,6 +103,14 @@ describe('ProtocolVersion1 - decodeMessage', () => {
     })
   })
 
+  it('throws on legacy RpcPull payload', () => {
+    const buffer = Buffer.concat([Buffer.from([12]), encodeUInt32(99)])
+
+    expect(() => version.decodeMessage(context, buffer)).toThrow(
+      /Unsupported message type/,
+    )
+  })
+
   it('decodes Ping payload', () => {
     const nonce = 123456
     const buffer = Buffer.concat([

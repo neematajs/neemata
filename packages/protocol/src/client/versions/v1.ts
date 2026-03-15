@@ -152,15 +152,6 @@ export class ProtocolVersion1 extends ProtocolVersionInterface {
           reason ? encodeText(reason) : new Uint8Array(0),
         )
       }
-      case ClientMessageType.RpcPull: {
-        const { callId } =
-          payload as ClientMessageTypePayload[ClientMessageType.RpcPull]
-
-        return this.encode(
-          encodeNumber(messageType, 'Uint8'),
-          encodeNumber(callId, 'Uint32'),
-        )
-      }
       case ClientMessageType.Ping: {
         const { nonce } =
           payload as ClientMessageTypePayload[ClientMessageType.Ping]

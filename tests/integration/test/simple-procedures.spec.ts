@@ -234,7 +234,6 @@ describe('Simple RPC Calls', () => {
 
       await waitForCleanup()
       expect(setup.gateway.rpcs.rpcs.size).toBe(0)
-      expect(setup.gateway.rpcs.streams.size).toBe(0)
       expect(setup.client.pendingCallsCount).toBe(0)
     })
 
@@ -245,7 +244,6 @@ describe('Simple RPC Calls', () => {
 
       await waitForCleanup()
       expect(setup.gateway.rpcs.rpcs.size).toBe(0)
-      expect(setup.gateway.rpcs.streams.size).toBe(0)
       expect(setup.client.pendingCallsCount).toBe(0)
     })
 
@@ -256,7 +254,6 @@ describe('Simple RPC Calls', () => {
       // Verify cleanup
       await waitForCleanup()
       expect(setup.gateway.rpcs.rpcs.size).toBe(0)
-      expect(setup.gateway.rpcs.streams.size).toBe(0)
       expect(setup.client.pendingCallsCount).toBe(0)
     })
 
@@ -272,7 +269,6 @@ describe('Simple RPC Calls', () => {
       // Verify cleanup after all sequential calls
       await waitForCleanup()
       expect(setup.gateway.rpcs.rpcs.size).toBe(0)
-      expect(setup.gateway.rpcs.streams.size).toBe(0)
       expect(setup.client.pendingCallsCount).toBe(0)
     })
 
@@ -288,7 +284,6 @@ describe('Simple RPC Calls', () => {
       // Verify cleanup after all concurrent calls
       await waitForCleanup()
       expect(setup.gateway.rpcs.rpcs.size).toBe(0)
-      expect(setup.gateway.rpcs.streams.size).toBe(0)
       expect(setup.client.pendingCallsCount).toBe(0)
     })
 
@@ -434,7 +429,6 @@ describe('Simple RPC Calls', () => {
       // Verify cleanup after all calls
       await waitForCleanup()
       expect(setup.gateway.rpcs.rpcs.size).toBe(0)
-      expect(setup.gateway.rpcs.streams.size).toBe(0)
       expect(setup.client.pendingCallsCount).toBe(0)
     })
 

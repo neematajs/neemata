@@ -27,7 +27,6 @@ export type MessageContext = {
 export type ClientMessageTypePayload = {
   [ClientMessageType.Rpc]: { callId: number; procedure: string; payload: any }
   [ClientMessageType.RpcAbort]: { callId: number; reason?: string }
-  [ClientMessageType.RpcPull]: { callId: number }
   [ClientMessageType.Ping]: { nonce: number }
   [ClientMessageType.Pong]: { nonce: number }
   [ClientMessageType.ClientStreamPush]: {

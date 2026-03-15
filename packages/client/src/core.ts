@@ -862,20 +862,6 @@ export abstract class BaseClient<
               this.options.format.decode(chunk),
             )
           },
-          pull: () => {
-            this.emitStreamEvent({
-              direction: 'outgoing',
-              streamType: 'rpc',
-              action: 'pull',
-              callId: message.callId,
-            })
-            const buffer = this.protocol.encodeMessage(
-              this.messageContext!,
-              ClientMessageType.RpcPull,
-              { callId: message.callId },
-            )
-            this.send(buffer).catch(noopFn)
-          },
           readableStrategy: { highWaterMark: 0 },
         })
         this.rpcStreams.add(message.callId, stream)

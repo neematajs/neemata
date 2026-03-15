@@ -60,7 +60,6 @@ export interface GatewayOptions {
     }
   }
   identity?: ConnectionIdentity
-  rpcStreamConsumeTimeout?: number
   streamTimeouts?: Partial<StreamConfig['timeouts']>
 
   /**
@@ -96,7 +95,6 @@ export class Gateway {
 
   constructor(options: GatewayOptions) {
     this.options = {
-      rpcStreamConsumeTimeout: 5000,
       heartbeat: false,
       streamTimeouts: {
         // TODO: fix these ts errors
@@ -286,7 +284,6 @@ export class Gateway {
       )
 
       this.rpcs.delete(connection.id, callId)
-      this.rpcs.releasePull(connection.id, callId)
 
       await container.dispose()
     }
@@ -526,10 +523,6 @@ export class Gateway {
             }
             break
           }
-          case ClientMessageType.RpcPull: {
-            this.rpcs.releasePull(connectionId, message.callId)
-            break
-          }
           case ClientMessageType.RpcAbort: {
             this.rpcs.abort(connectionId, message.callId)
             break
@@ -659,16 +652,6 @@ export class Gateway {
         )
 
         try {
-          const consumeTimeoutSignal = this.options.rpcStreamConsumeTimeout
-            ? AbortSignal.timeout(this.options.rpcStreamConsumeTimeout)
-            : undefined
-
-          const streamSignal = consumeTimeoutSignal
-            ? anyAbortSignal(signal, consumeTimeoutSignal)
-            : signal
-
-          await this.rpcs.awaitPull(connectionId, callId, streamSignal)
-
           for await (const chunk of response()) {
             signal.throwIfAborted()
             const chunkEncoded = encoder.encode(chunk)
@@ -680,7 +663,6 @@ export class Gateway {
                 { callId, chunk: chunkEncoded },
               ),
             )
-            await this.rpcs.awaitPull(connectionId, callId)
           }
 
           transport.send!(
