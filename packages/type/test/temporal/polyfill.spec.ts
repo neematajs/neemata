@@ -26,6 +26,7 @@ describe.sequential('./temporal/polyfill', () => {
       zonedDatetime: temporalPolyfill
         .zonedDatetime()
         .decode(temporalDecodeInputs.zonedDatetime),
+      instant: temporalPolyfill.instant().decode(temporalDecodeInputs.instant),
       duration: temporalPolyfill
         .duration()
         .decode(temporalDecodeInputs.duration),

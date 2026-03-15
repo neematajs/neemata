@@ -1,5 +1,6 @@
 import {
   DurationType,
+  InstantType,
   PlainDateTimeType,
   PlainDateType,
   PlainMonthDayType,
@@ -20,6 +21,10 @@ export const plainTime: () => PlainTimeType = PlainTimeType.factory.bind(
 )
 export const zonedDatetime: () => ZonedDateTimeType =
   ZonedDateTimeType.factory.bind(ZonedDateTimeType, globalThis.Temporal)
+export const instant: () => InstantType = InstantType.factory.bind(
+  InstantType,
+  globalThis.Temporal,
+)
 export const duration: () => DurationType = DurationType.factory.bind(
   DurationType,
   globalThis.Temporal,

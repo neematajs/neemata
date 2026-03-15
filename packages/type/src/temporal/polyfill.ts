@@ -2,6 +2,7 @@ import { Temporal } from 'temporal-polyfill'
 
 import {
   DurationType,
+  InstantType,
   PlainDateTimeType,
   PlainDateType,
   PlainMonthDayType,
@@ -42,6 +43,15 @@ export const zonedDatetime = ZonedDateTimeType.factory.bind(
   // @ts-expect-error
   Temporal,
 ) as () => ZonedDateTimeType<
+  // @ts-expect-error
+  typeof Temporal
+>
+
+export const instant = InstantType.factory.bind(
+  InstantType,
+  // @ts-expect-error
+  Temporal,
+) as () => InstantType<
   // @ts-expect-error
   typeof Temporal
 >
