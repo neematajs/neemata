@@ -21,6 +21,9 @@ describe('./temporal', () => {
       zonedDatetime: temporal
         .zonedDatetime(implementation)
         .decode(temporalDecodeInputs.zonedDatetime),
+      instant: temporal
+        .instant(implementation)
+        .decode(temporalDecodeInputs.instant),
       duration: temporal
         .duration(implementation)
         .decode(temporalDecodeInputs.duration),

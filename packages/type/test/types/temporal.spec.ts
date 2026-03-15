@@ -115,7 +115,7 @@ describe('TemporalType - ZonedDateTime', () => {
 
   describe('decode (string -> Temporal.ZonedDateTime)', () => {
     it('should decode ISO datetime string to Temporal.ZonedDateTime in UTC', () => {
-      const input = '2021-01-01T12:30:45.123Z'
+      const input = '2021-01-01T12:30:45.123+00:00[UTC]'
       const result = zonedDateTimeType.decode(input)
 
       expect(result).toBeInstanceOf(Temporal.ZonedDateTime)
@@ -129,7 +129,7 @@ describe('TemporalType - ZonedDateTime', () => {
     })
 
     it('should decode instant string to Temporal.ZonedDateTime', () => {
-      const input = '2021-06-15T08:00:00Z'
+      const input = '2021-06-15T08:00:00+00:00[UTC]'
       const result = zonedDateTimeType.decode(input)
 
       expect(result).toBeInstanceOf(Temporal.ZonedDateTime)
@@ -149,7 +149,7 @@ describe('TemporalType - ZonedDateTime', () => {
       const result = zonedDateTimeType.encode(input)
 
       expect(typeof result).toBe('string')
-      expect(result).toBe('2021-01-01T12:30:45.123Z')
+      expect(result).toBe('2021-01-01T12:30:45.123000+00:00[UTC]')
     })
 
     it('should encode with UTC timezone marker', () => {
@@ -158,9 +158,55 @@ describe('TemporalType - ZonedDateTime', () => {
       ).toZonedDateTimeISO('UTC')
       const result = zonedDateTimeType.encode(input)
 
-      expect(result).toBe('2021-06-15T08:00:00.000Z')
-      expect(result).toContain('Z')
-      expect(result).not.toContain('[UTC]')
+      expect(result).toBe('2021-06-15T08:00:00.000000+00:00[UTC]')
+      expect(result).toContain('[UTC]')
+    })
+  })
+})
+
+describe('TemporalType - Instant', () => {
+  const instantType = t.instant()
+
+  describe('decode (string -> Temporal.Instant)', () => {
+    it('should decode ISO instant string to Temporal.Instant', () => {
+      const input = '2021-01-01T12:30:45.123Z'
+      const result = instantType.decode(input)
+
+      expect(result).toBeInstanceOf(Temporal.Instant)
+      expect(result.epochNanoseconds).toBe(
+        Temporal.Instant.from(input).epochNanoseconds,
+      )
+    })
+
+    it('should decode offset instant string to Temporal.Instant', () => {
+      const input = '2021-06-15T06:00:00Z'
+      const result = instantType.decode(input)
+
+      expect(result).toBeInstanceOf(Temporal.Instant)
+      expect(result.epochNanoseconds).toBe(
+        Temporal.Instant.from('2021-06-15T06:00:00Z').epochNanoseconds,
+      )
+    })
+
+    it('should reject invalid instant format', () => {
+      expect(() => instantType.decode('not-an-instant')).toThrow()
+    })
+  })
+
+  describe('encode (Temporal.Instant -> string)', () => {
+    it('should encode Temporal.Instant to ISO string', () => {
+      const input = Temporal.Instant.from('2021-01-01T12:30:45.123Z')
+      const result = instantType.encode(input)
+
+      expect(typeof result).toBe('string')
+      expect(result).toBe('2021-01-01T12:30:45.123Z')
+    })
+
+    it('should normalize offset values to UTC', () => {
+      const input = Temporal.Instant.from('2021-06-15T08:00:00+02:00')
+      const result = instantType.encode(input)
+
+      expect(result).toBe('2021-06-15T06:00:00Z')
     })
   })
 })
@@ -505,6 +551,15 @@ describe('TemporalType - Edge Cases', () => {
       expect(decoded.hours).toBe(original.hours)
       expect(decoded.minutes).toBe(original.minutes)
       expect(decoded.seconds).toBe(original.seconds)
+    })
+
+    it('should roundtrip Instant correctly', () => {
+      const original = Temporal.Instant.from('2021-06-15T12:30:45.123Z')
+      const instantType = t.instant()
+      const encoded = instantType.encode(original)
+      const decoded = instantType.decode(encoded)
+
+      expect(decoded.epochNanoseconds).toBe(original.epochNanoseconds)
     })
   })
 })

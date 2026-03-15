@@ -76,23 +76,32 @@ export class ZonedDateTimeType<
     const transformer = createTemporalTransformer(
       implementation,
       'ZonedDateTime',
-      (value) => implementation.Instant.from(value).toZonedDateTimeISO('UTC'),
-      (value) =>
-        value
-          .withTimeZone('UTC')
-          .toString({
-            smallestUnit: 'milliseconds',
-            timeZoneName: 'never',
-            calendarName: 'never',
-            offset: 'never',
-          }) + 'Z',
+      (value) => implementation.ZonedDateTime.from(value),
+      (value) => value.toString({ smallestUnit: 'microsecond' }),
     )
     return CustomType.factory<InstanceType<T['ZonedDateTime']>, EncodeType>({
       decode: transformer.decode,
       encode: transformer.encode,
-      type: iso.datetime(),
-      error: 'Invalid datetime format',
+      type: string(),
+      error: 'Invalid zoned datetime format',
     })
+  }
+}
+
+export class InstantType<
+  T extends typeof Temporal = typeof Temporal,
+> extends TransformType<InstanceType<T['Instant']>, EncodeType> {
+  static factory<T extends typeof Temporal>(implementation: T): InstantType<T> {
+    const decode = (value: string) =>
+      implementation.Instant.from(value) as InstanceType<T['Instant']>
+    const encode = (value: InstanceType<T['Instant']>) => value.toJSON()
+
+    return CustomType.factory<InstanceType<T['Instant']>, EncodeType>({
+      decode,
+      encode,
+      type: iso.datetime(),
+      error: 'Invalid instant format',
+    }) as InstantType<T>
   }
 }
 

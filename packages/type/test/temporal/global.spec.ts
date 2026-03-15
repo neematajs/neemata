@@ -27,6 +27,7 @@ describe.sequential('./temporal/global', () => {
       zonedDatetime: temporalGlobal
         .zonedDatetime()
         .decode(temporalDecodeInputs.zonedDatetime),
+      instant: temporalGlobal.instant().decode(temporalDecodeInputs.instant),
       duration: temporalGlobal.duration().decode(temporalDecodeInputs.duration),
       plainYearMonth: temporalGlobal
         .plainYearMonth()

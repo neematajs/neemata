@@ -47,6 +47,7 @@ export const registerTemporalTypes = (Temporal: typeof globalThis.Temporal) => {
   const TEMPORAL_PLAIN_MONTH_DAY_EXT_TYPE = 0x06
   const TEMPORAL_DURATION_EXT_TYPE = 0x07
   const TEMPORAL_ZONED_DATETIME_EXT_TYPE = 0x08
+  const TEMPORAL_INSTANT_EXT_TYPE = 0x09
 
   const temporalTypes = new Map<
     number,
@@ -57,6 +58,7 @@ export const registerTemporalTypes = (Temporal: typeof globalThis.Temporal) => {
     | typeof Temporal.PlainYearMonth
     | typeof Temporal.PlainMonthDay
     | typeof Temporal.ZonedDateTime
+    | typeof Temporal.Instant
   >()
 
   temporalTypes.set(TEMPORAL_PLAIN_DATE_EXT_TYPE, Temporal.PlainDate)
@@ -66,6 +68,7 @@ export const registerTemporalTypes = (Temporal: typeof globalThis.Temporal) => {
   temporalTypes.set(TEMPORAL_PLAIN_MONTH_DAY_EXT_TYPE, Temporal.PlainMonthDay)
   temporalTypes.set(TEMPORAL_DURATION_EXT_TYPE, Temporal.Duration)
   temporalTypes.set(TEMPORAL_ZONED_DATETIME_EXT_TYPE, Temporal.ZonedDateTime)
+  temporalTypes.set(TEMPORAL_INSTANT_EXT_TYPE, Temporal.Instant)
 
   for (const [type, TemporalClass] of temporalTypes) {
     extensionCodec.register({
