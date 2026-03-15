@@ -51,7 +51,7 @@ export interface ManagedWorkerConfig {
   path: string
   workerData?: any
   workerOptions?: Partial<WorkerOptions>
-  onWorker?: (worker: Worker) => void
+  onWorker?: (registration: { worker: Worker; vitePort?: MessagePort }) => void
 }
 
 /**
@@ -106,6 +106,7 @@ export class ManagedWorker extends EventEmitter<ManagedWorkerEvents> {
   }
   protected worker: Worker | null = null
   protected port: MessagePort | null = null
+  protected vitePort: MessagePort | null = null
   protected restartTimer: ReturnType<typeof setTimeout> | null = null
   protected startPromise: Promise<void> | null = null
   protected pendingTaskIds = new Set<string>()
@@ -238,17 +239,27 @@ export class ManagedWorker extends EventEmitter<ManagedWorkerEvents> {
       const { port1, port2 } = new MessageChannel()
       this.port = port1
 
+      const viteChannel = this.config.onWorker ? new MessageChannel() : null
+      this.vitePort = viteChannel?.port1 ?? null
+
       const { config } = this
       this.worker = new Worker(config.path, {
         ...config.workerOptions,
         execArgv: process.execArgv.filter((f) => !omitExecArgv.includes(f)),
-        workerData: { ...config.workerData, port: port2 },
+        workerData: {
+          ...config.workerData,
+          port: port2,
+          vitePort: viteChannel?.port2,
+        },
         name: `${config.name}-${config.index + 1}`,
-        transferList: [port2],
+        transferList: viteChannel ? [port2, viteChannel.port2] : [port2],
       })
 
       // Notify callback if provided
-      config.onWorker?.(this.worker)
+      config.onWorker?.({
+        worker: this.worker,
+        vitePort: this.vitePort ?? undefined,
+      })
 
       // Set up message handling
       this.attachListeners()
@@ -472,8 +483,11 @@ export class ManagedWorker extends EventEmitter<ManagedWorkerEvents> {
    * Cleanup internal state.
    */
   protected cleanup(): void {
+    this.port?.close()
+    this.vitePort?.close()
     this.worker = null
     this.port = null
+    this.vitePort = null
   }
 
   /**

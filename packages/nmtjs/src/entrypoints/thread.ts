@@ -13,6 +13,7 @@ import type {
 
 export type RunWorkerOptions = {
   port: MessagePort
+  vitePort?: MessagePort
   runtime:
     | { type: 'application'; name: string; path: string; transportsData: any }
     | { type: 'jobs'; jobWorkerPool: string }
@@ -162,6 +163,7 @@ async function loadWorkerModule() {
       )) as typeof import('../vite/runners/worker.ts')
 
       runner = createModuleRunner(
+        workerData.vitePort,
         workerData.vite,
         workerData.viteModuleRunnerTimeoutMs,
       )

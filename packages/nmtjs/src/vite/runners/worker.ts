@@ -1,11 +1,6 @@
-import wt, {
-  BroadcastChannel,
-  isMainThread,
-  parentPort,
-  threadId,
-} from 'node:worker_threads'
+import type { MessagePort } from 'node:worker_threads'
+import wt, { isMainThread } from 'node:worker_threads'
 
-import type { HotPayload } from 'vite'
 import type { ModuleRunnerTransport } from 'vite/module-runner'
 import { noopFn } from '@nmtjs/common'
 import {
@@ -14,11 +9,8 @@ import {
   ModuleRunner,
 } from 'vite/module-runner'
 
-export function createBroadcastChannel(threadId: number): BroadcastChannel {
-  return new BroadcastChannel(`nmtjs:vite:${threadId}`)
-}
-
 export function createModuleRunner(
+  vitePort: MessagePort | undefined,
   mode: 'development' | 'production' = 'development',
   timeoutMs = 5000,
 ): ModuleRunner {
@@ -26,21 +18,23 @@ export function createModuleRunner(
   if (isMainThread || wt.isInternalThread)
     throw new Error('Module runner can only be created inside worker threads.')
 
-  const channel = createBroadcastChannel(threadId)
+  if (!vitePort) {
+    throw new Error('Module runner requires a dedicated Vite message port.')
+  }
 
   const transportTimeout =
     Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 5000
 
   const transport: ModuleRunnerTransport = {
     connect({ onMessage, onDisconnection }) {
-      // @ts-expect-error
-      channel.onmessage = (event: MessageEvent<HotPayload>) => {
-        onMessage(event.data)
-      }
-      parentPort!.on('close', onDisconnection)
+      vitePort.on('message', onMessage)
+      vitePort.on('close', onDisconnection)
     },
     send(data) {
-      channel.postMessage(data)
+      vitePort.postMessage(data)
+    },
+    disconnect() {
+      vitePort.close()
     },
     timeout: transportTimeout,
   }

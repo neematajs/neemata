@@ -10,6 +10,7 @@ import type {
   ManagedWorkerConfig,
   WorkerState,
 } from './managed-worker.ts'
+import type { WorkerRegistration } from './types.ts'
 
 /**
  * Health states for a worker pool.
@@ -40,7 +41,7 @@ export interface WorkerPoolConfig {
   workerType: WorkerType
   path: string
   workerData?: any
-  onWorker?: (worker: import('node:worker_threads').Worker) => void
+  onWorker?: (registration: WorkerRegistration) => void
 }
 
 /**
