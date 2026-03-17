@@ -24,7 +24,9 @@ export class MsgpackFormat extends BaseServerFormat {
 
   encode(data: any) {
     return typeof data !== 'undefined'
-      ? Buffer.from(encode(data, { ignoreUndefined: true }))
+      ? Buffer.from(
+          encode(data, { extensionCodec, context: {}, ignoreUndefined: true }),
+        )
       : Buffer.alloc(0)
   }
 
@@ -64,7 +66,7 @@ export class MsgpackFormat extends BaseServerFormat {
       return undefined
     }
 
-    return decode(data)
+    return decode(data, { extensionCodec, context: {} })
   }
 
   decodeRPC(

@@ -23,7 +23,7 @@ export class MsgpackFormat extends BaseClientFormat {
       return new Uint8Array(0)
     }
 
-    return encode(data, { ignoreUndefined: true })
+    return encode(data, { extensionCodec, ignoreUndefined: true, context: {} })
   }
 
   encodeRPC(
@@ -54,7 +54,7 @@ export class MsgpackFormat extends BaseClientFormat {
       return undefined
     }
 
-    return decode(data)
+    return decode(data, { extensionCodec, context: {} })
   }
 
   decodeRPC(
