@@ -82,8 +82,7 @@ export const registerTemporalTypes = (Temporal: typeof globalThis.Temporal) => {
         return null
       },
       decode: (data) => {
-        const text = decodeText(data)
-        return TemporalClass.from(text)
+        return decodeText(data)
       },
     })
   }
@@ -92,7 +91,7 @@ export const registerTemporalTypes = (Temporal: typeof globalThis.Temporal) => {
 extensionCodec.register({
   type: STREAM_EXT_TYPE,
   encode: (object: unknown, context: MsgpackContext): Uint8Array | null => {
-    return context.encodeStream!(object) ?? null
+    return context.encodeStream?.(object) ?? null
   },
   decode: (data: Uint8Array, _extType: number, context: MsgpackContext) => {
     return context.decodeStream!(data)
