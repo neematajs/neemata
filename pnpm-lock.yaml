@@ -252,8 +252,8 @@ importers:
         specifier: 3.1.10
         version: 3.1.10
       h3:
-        specifier: 1.15.5
-        version: 1.15.5
+        specifier: 1.15.6
+        version: 1.15.6
       ioredis:
         specifier: ^5.9.2
         version: 5.9.2
@@ -1569,8 +1569,8 @@ packages:
     engines: {node: ^8.16.0 || ^10.6.0 || >=11.0.0}
     os: [darwin]
 
-  h3@1.15.5:
-    resolution: {integrity: sha512-xEyq3rSl+dhGX2Lm0+eFQIAzlDN6Fs0EcC4f7BNUmzaRX/PTzeuM+Tr2lHB8FoXggsQIeXLj8EDVgs5ywxyxmg==}
+  h3@1.15.6:
+    resolution: {integrity: sha512-oi15ESLW5LRthZ+qPCi5GNasY/gvynSKUQxgiovrY63bPAtG59wtM+LSrlcwvOHAXzGrXVLnI97brbkdPF9WoQ==}
 
   has-flag@4.0.0:
     resolution: {integrity: sha512-EykJT/Q1KjTWctppgIAgfSO0tKVuZUjhgMr17kqTumMl6Afv3EISleU7qZUzoXDFTAHTDC4NOoG/ZxU3EvlMPQ==}
@@ -2176,7 +2176,7 @@ snapshots:
       '@bull-board/api': 6.16.4(@bull-board/ui@6.16.4)
       '@bull-board/ui': 6.16.4
       ejs: 3.1.10
-      h3: 1.15.5
+      h3: 1.15.6
 
   '@bull-board/ui@6.16.4':
     dependencies:
@@ -2939,7 +2939,7 @@ snapshots:
   fsevents@2.3.3:
     optional: true
 
-  h3@1.15.5:
+  h3@1.15.6:
     dependencies:
       cookie-es: 1.2.2
       crossws: 0.3.5
