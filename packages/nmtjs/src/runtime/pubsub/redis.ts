@@ -85,7 +85,7 @@ export const RedisPubSubAdapterPlugin = (): RuntimePlugin => {
   return {
     name: 'pubsub-redis-adapter',
     hooks: {
-      'lifecycle:afterInitialize': async (ctx) => {
+      'lifecycle:beforeInitialize': async (ctx) => {
         ctx.container.provide([
           provision(
             pubSubAdapter,
