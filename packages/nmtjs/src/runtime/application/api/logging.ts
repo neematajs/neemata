@@ -39,16 +39,32 @@ export const LoggingCallMiddleware = (
     errorLevel?: 'warn' | 'error' | 'fatal'
     includePayload?: boolean
     includeResponse?: boolean
-  } = { level: 'info', includePayload: true, includeResponse: true },
+    includeStreamChunks?: boolean
+  } = {},
 ) =>
   createMiddleware({
     dependencies: { logger: CoreInjectables.logger('RPC') },
     handle: async ({ logger }, call, next, payload) => {
-      const logFn = logger[options.level || 'info'].bind(logger)
-      const errorLogFn = logger[options.errorLevel || 'error'].bind(logger)
+      const {
+        includePayload,
+        includeResponse,
+        includeStreamChunks,
+        level,
+        errorLevel,
+      } = {
+        level: 'info' as const,
+        errorLevel: 'error' as const,
+        includePayload: true,
+        includeResponse: true,
+        includeStreamChunks: true,
+        ...options,
+      }
+
+      const logFn = logger[level].bind(logger)
+      const errorLogFn = logger[errorLevel].bind(logger)
 
       logFn(
-        options.includePayload
+        includePayload
           ? { procedure: call.procedure.contract.name, payload: payload }
           : { procedure: call.procedure.contract.name },
         'RPC call',
@@ -60,21 +76,31 @@ export const LoggingCallMiddleware = (
 
       try {
         const response = await next()
-        if (options.includeResponse) {
+        if (includeResponse) {
           if (isIterableProcedure) {
             logFn({ result: 'success', response: 'Stream' }, 'RPC response')
-            return async function* (...args: any[]) {
-              for await (const chunk of response(...args)) {
-                logFn({ callId: call.callId, chunk }, 'RPC stream chunk')
-                yield chunk
-              }
-            }
           } else {
             logFn({ result: 'success', response }, 'RPC response')
           }
         } else {
           logFn({ result: 'success' }, 'RPC response')
         }
+
+        if (isIterableProcedure && includeStreamChunks) {
+          return async function* (...args: any[]) {
+            try {
+              for await (const chunk of response(...args)) {
+                logFn({ callId: call.callId, chunk }, 'RPC stream chunk')
+                yield chunk
+              }
+              logFn({ callId: call.callId }, 'RPC stream end')
+            } catch (error) {
+              errorLogFn({ callId: call.callId, error }, 'RPC stream error')
+              throw error
+            }
+          }
+        }
+
         return response
       } catch (error) {
         errorLogFn({ error }, 'RPC error')

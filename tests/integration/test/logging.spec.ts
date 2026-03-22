@@ -215,11 +215,43 @@ describe('logging middlewares', () => {
       result: 'success',
       response: 'Stream',
     })
+    expect(rpcChunkLogs).toHaveLength(3)
+    expect(
+      rpcChunkLogs.every((entry) => typeof entry.callId === 'string'),
+    ).toBe(true)
+    expect(new Set(rpcChunkLogs.map((entry) => entry.callId)).size).toBe(1)
     expect(rpcChunkLogs.map((entry) => entry.chunk)).toEqual([
       { index: 0 },
       { index: 1 },
       { index: 2 },
     ])
+  })
+
+  it('can disable stream chunk logging while keeping stream response logging', async () => {
+    const { logger, getLogs } = createCapturingLogger()
+    const setup = await setupWithLogger(logger, [
+      LoggingCallMiddleware({ includeStreamChunks: false }),
+    ])
+
+    const stream = await setup.client.stream.stream({ count: 3 })
+
+    for await (const _chunk of stream) {
+      // Consume the stream fully.
+    }
+    await waitForLogs()
+
+    const rpcResponseLog = getLogs().find(
+      (entry) => entry.msg === 'RPC response',
+    )
+    const rpcChunkLogs = getLogs().filter(
+      (entry) => entry.msg === 'RPC stream chunk',
+    )
+
+    expect(rpcResponseLog).toMatchObject({
+      result: 'success',
+      response: 'Stream',
+    })
+    expect(rpcChunkLogs).toHaveLength(0)
   })
 
   it('respects payload/result logging options', async () => {
