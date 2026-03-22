@@ -98,7 +98,6 @@ export class ApplicationApi implements GatewayApi {
     )
 
     const timeout = procedure.contract.timeout ?? this.options.timeout
-    const isIterableProcedure = IsStreamProcedureContract(procedure.contract)
     const streamTimeoutSignal = procedure.streamTimeout
       ? AbortSignal.timeout(procedure.streamTimeout)
       : undefined
@@ -109,14 +108,9 @@ export class ApplicationApi implements GatewayApi {
 
     try {
       const handle = await this.createProcedureHandler(callOptions)
-      const result = timeout
+      return timeout
         ? await this.withTimeout(handle(payload), timeout)
         : await handle(payload)
-      if (isIterableProcedure) {
-        return this.handleIterableOutput(procedure, result)
-      } else {
-        return this.handleOutput(procedure, result)
-      }
     } catch (error) {
       const handled = await this.handleFilters(callOptions, error)
       if (handled === error && error instanceof ProtocolError === false) {
@@ -142,10 +136,11 @@ export class ApplicationApi implements GatewayApi {
       procedure,
     })
 
-    const middlewares = await this.resolveMiddlewares(callOptions)
+    const isIterableProcedure = IsStreamProcedureContract(procedure.contract)
+    const middlewares = this.resolveMiddlewares(callOptions)
 
     const handleProcedure = async (payload: any) => {
-      const middleware = middlewares.next().value
+      const middleware = (await middlewares).next().value
       if (middleware) {
         const next = (...args: any[]) =>
           handleProcedure(args.length === 0 ? payload : args[0])
@@ -156,7 +151,11 @@ export class ApplicationApi implements GatewayApi {
         const { dependencies, handler } = procedure
         const context = await container.createContext(dependencies)
         const result = await handler(context, input)
-        return result
+        if (isIterableProcedure) {
+          return this.handleIterableOutput(procedure, result)
+        } else {
+          return this.handleOutput(procedure, result)
+        }
       }
     }
 

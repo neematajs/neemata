@@ -29,6 +29,19 @@ const echoProcedure = createProcedure({
   },
 })
 
+const streamProcedure = createProcedure({
+  input: t.object({ count: t.number() }),
+  output: t.object({ index: t.number() }),
+  stream: true,
+  dependencies: { logger: CoreInjectables.logger('HandlerLogger') },
+  async *handler({ logger }, { count }) {
+    for (let i = 0; i < count; i++) {
+      logger.info({ handler: true, index: i }, 'Stream handler log')
+      yield { index: i }
+    }
+  },
+})
+
 const failingProcedure = createProcedure({
   input: t.object({ message: t.string() }),
   output: t.never(),
@@ -38,7 +51,13 @@ const failingProcedure = createProcedure({
 })
 
 const router = createRootRouter([
-  createRouter({ routes: { echo: echoProcedure, fail: failingProcedure } }),
+  createRouter({
+    routes: {
+      echo: echoProcedure,
+      stream: streamProcedure,
+      fail: failingProcedure,
+    },
+  }),
 ] as const)
 
 const waitForLogs = async () => {
@@ -165,6 +184,42 @@ describe('logging middlewares', () => {
       result: 'success',
       response: { echoed: 'hello' },
     })
+  })
+
+  it('logs stream responses and chunks', async () => {
+    const { logger, getLogs } = createCapturingLogger()
+    const setup = await setupWithLogger(logger, [LoggingCallMiddleware()])
+
+    const stream = await setup.client.stream.stream({ count: 3 })
+    const chunks: unknown[] = []
+
+    for await (const chunk of stream) {
+      chunks.push(chunk)
+    }
+    await waitForLogs()
+
+    const rpcCallLog = getLogs().find((entry) => entry.msg === 'RPC call')
+    const rpcResponseLog = getLogs().find(
+      (entry) => entry.msg === 'RPC response',
+    )
+    const rpcChunkLogs = getLogs().filter(
+      (entry) => entry.msg === 'RPC stream chunk',
+    )
+
+    expect(chunks).toEqual([{ index: 0 }, { index: 1 }, { index: 2 }])
+    expect(rpcCallLog).toMatchObject({
+      procedure: 'stream',
+      payload: { count: 3 },
+    })
+    expect(rpcResponseLog).toMatchObject({
+      result: 'success',
+      response: 'Stream',
+    })
+    expect(rpcChunkLogs.map((entry) => entry.chunk)).toEqual([
+      { index: 0 },
+      { index: 1 },
+      { index: 2 },
+    ])
   })
 
   it('respects payload/result logging options', async () => {
