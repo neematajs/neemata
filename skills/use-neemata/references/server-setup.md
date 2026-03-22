@@ -10,7 +10,7 @@ description: Application definition, server configuration, neemata.config.ts, an
 
 The config file defines application entry points and the server path:
 
-```typescript
+```ts
 import { defineConfig } from 'nmtjs/config'
 
 export default defineConfig({
@@ -29,7 +29,7 @@ export default defineConfig({
 
 Each application defines its transports, router, and optional guards/middleware:
 
-```typescript
+```ts
 import { HttpTransport } from '@nmtjs/http-transport/node'
 import { WsTransport } from '@nmtjs/ws-transport/node'
 import { n } from 'nmtjs'
@@ -50,7 +50,7 @@ export default n.app({
 
 The server entry point orchestrates workers, proxy, store, and metrics:
 
-```typescript
+```ts
 import { n } from 'nmtjs'
 
 export default n.server({

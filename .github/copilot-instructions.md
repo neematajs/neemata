@@ -168,7 +168,7 @@ Prefer using `tests` tool for validating test. However, here are the repo comman
 
 Common test helpers to reduce boilerplate across packages. Add as dev dependency: `"@nmtjs/tests-integration": "workspace:*"`
 
-```typescript
+```ts
 import {
   createTestLogger,        // Silent logger for tests
   createTestContainer,     // Container with test logger

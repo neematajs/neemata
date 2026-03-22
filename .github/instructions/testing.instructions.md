@@ -296,7 +296,7 @@ These tests must verify that internal state maps on BOTH client and gateway are 
 
 The `Gateway` class exposes its internal managers as public readonly properties, allowing tests to directly verify cleanup:
 
-```typescript
+```ts
 // Available for inspection in tests via setup.gateway:
 setup.gateway.connections  // ConnectionManager - tracks active connections
 setup.gateway.rpcs         // RpcManager - tracks pending RPCs and stream pulls
@@ -313,7 +313,7 @@ expect(setup.gateway.blobStreams.serverStreams.size).toBe(0)  // No download str
 
 The `TestClient` class (defined in `_setup.ts`) extends `StaticClient` and exposes internal state for testing. The `BaseClient` class uses `protected` fields, allowing test subclasses to access them.
 
-```typescript
+```ts
 // TestClient exposes these readonly properties:
 setup.client.pendingCallsCount       // Number of pending RPC calls
 setup.client.activeClientStreamsCount // Number of active uploads
@@ -437,7 +437,7 @@ Defensive programming and protocol edge cases.
 
 ### createTestSetup()
 
-```typescript
+```ts
 interface TestSetup<TRouter> {
   gateway: Gateway
   client: StaticClient<...>
@@ -460,7 +460,7 @@ async function createTestSetup<TRouter>(
 
 ### Usage Pattern
 
-```typescript
+```ts
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import type { TestSetup } from './_setup.ts'
@@ -605,7 +605,7 @@ When a client breaks out of a `for await...of` loop consuming an RPC stream, the
 **Location**: `packages/protocol/src/client/stream.ts` - `ProtocolServerStreamInterface[Symbol.asyncIterator]`
 
 **Current behavior**:
-```typescript
+```ts
 async *[Symbol.asyncIterator]() {
   const reader = this.readable.getReader()
   while (true) {
@@ -618,7 +618,7 @@ async *[Symbol.asyncIterator]() {
 ```
 
 **Fix needed**: Use try-finally to cancel the reader when the iterator is terminated early:
-```typescript
+```ts
 async *[Symbol.asyncIterator]() {
   const reader = this.readable.getReader()
   try {

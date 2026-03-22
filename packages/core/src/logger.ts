@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { threadId } from 'node:worker_threads'
 
 import type {
@@ -45,6 +46,11 @@ const levelLabels = {
   [Number.POSITIVE_INFINITY]: 'SILENT',
 }
 
+export const loggerLocalStorage = new AsyncLocalStorage<object | undefined>({
+  defaultValue: undefined,
+  name: 'NeemataAsyncLocalStorage',
+})
+
 export const createLogger = (options: LoggingOptions = {}, $label: string) => {
   let { destinations, pinoOptions } = options
 
@@ -81,7 +87,21 @@ export const createLogger = (options: LoggingOptions = {}, $label: string) => {
   }
 
   return pino(
-    { timestamp: stdTimeFunctions.isoTime, ...pinoOptions, level, serializers },
+    {
+      timestamp: stdTimeFunctions.isoTime,
+      ...pinoOptions,
+      level,
+      serializers,
+      formatters: {
+        log(object) {
+          const localStorageValue = loggerLocalStorage.getStore()
+          if (localStorageValue) {
+            return Object.assign(object, localStorageValue)
+          }
+          return object
+        },
+      },
+    },
     multistream(destinations!),
   ).child({ $label, $threadId: threadId })
 }

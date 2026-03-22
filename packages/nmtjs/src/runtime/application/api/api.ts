@@ -1,4 +1,5 @@
 import assert from 'node:assert'
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { inspect } from 'node:util'
 
 import type { Container, Logger } from '@nmtjs/core'

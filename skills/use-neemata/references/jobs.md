@@ -13,7 +13,7 @@ in a separate worker thread pool. Jobs require a store (Redis or Valkey).
 
 Jobs are built with a chainable API: define options, add steps, then finalize with `.return()`:
 
-```typescript
+```ts
 import { n, t, JobWorkerPool } from 'nmtjs'
 
 const processUserJob = n.job({
@@ -93,7 +93,7 @@ the group fails with a key-conflict error.
 
 `data` builds per-run context once, before steps execute, and that value is reused by all steps/hooks in the same run.
 
-```typescript
+```ts
 data: async (ctx, input, progress) => ({ ... })
 ```
 
@@ -105,7 +105,7 @@ Use `data` for runtime helpers/shared derived values. Use `progress` + `n.inject
 
 ### Example: Shared Context via `data` (manual typing in step)
 
-```typescript
+```ts
 type SyncUsersData = {
   tenantConfig: Awaited<ReturnType<typeof userApiInjectable.getTenantConfig>>
   startCursor?: string
@@ -148,7 +148,7 @@ const syncUsersJob = n.job({
 
 Each step has typed input (from accumulated prior results) and typed output (merged into result for subsequent steps):
 
-```typescript
+```ts
 const fetchStep = n.step({
   label: 'fetch-data',
   input: t.object({ id: t.string() }),
@@ -163,7 +163,7 @@ const fetchStep = n.step({
 
 ### Conditional Steps
 
-```typescript
+```ts
 myJob
   .step(fetchStep)
   .step(optionalStep, ({ result }) => result.needsProcessing === true)
@@ -174,7 +174,7 @@ myJob
 
 Use `.steps(...)` when independent steps can run in parallel against the same input snapshot.
 
-```typescript
+```ts
 const job = n
   .job({
     name: 'parallel-example',
@@ -212,7 +212,7 @@ Notes:
 
 Use the `jobManager` injectable to add jobs from RPC handlers:
 
-```typescript
+```ts
 import { n, t } from 'nmtjs'
 
 const startJobProcedure = n.procedure({
@@ -256,7 +256,7 @@ For parallel key-conflict failures, behavior depends on `clearState`:
 
 ### Add Options
 
-```typescript
+```ts
 jobManager.add(myJob, data, {
   jobId: 'custom-id',       // custom job ID
   priority: 1,              // higher = processed first
@@ -270,7 +270,7 @@ jobManager.add(myJob, data, {
 
 ### Waiting for Result
 
-```typescript
+```ts
 const queueResult = await jobManager.add(myJob, { userId: '123' })
 const output = await queueResult.waitResult() // typed as job's output
 ```
@@ -291,7 +291,7 @@ These are available inside job step handlers and job hooks:
 
 For long-running steps, persist progress to allow resumption on failure:
 
-```typescript
+```ts
 const longStep = n.step({
   dependencies: { saveProgress: n.inject.saveJobProgress },
   input: t.object({ items: t.array(t.string()) }),
@@ -308,7 +308,7 @@ const longStep = n.step({
 
 ### Handling Cancellation
 
-```typescript
+```ts
 const cancellableStep = n.step({
   dependencies: { signal: n.inject.jobAbortSignal },
   input: t.object({}),
@@ -326,7 +326,7 @@ const cancellableStep = n.step({
 
 Expose job CRUD operations as RPC procedures:
 
-```typescript
+```ts
 import { n } from 'nmtjs'
 
 const jobManagementRouter = n.jobRouter({
@@ -345,7 +345,7 @@ export const router = n.rootRouter([appRouter, jobManagementRouter] as const)
 
 Disable or customize individual operations per job:
 
-```typescript
+```ts
 const jobManagementRouter = n.jobRouter({
   jobs: { processUser: processUserJob },
   defaults: {
@@ -367,7 +367,7 @@ const jobManagementRouter = n.jobRouter({
 
 Jobs require a store and pool configuration in `n.server()`:
 
-```typescript
+```ts
 import { n, StoreType, JobWorkerPool } from 'nmtjs'
 
 export default n.server({
