@@ -134,12 +134,12 @@ export const createConsolePrettyDestination: CreateConsolePrettyDestination = (
 })
 
 export type {
-  Logger,
   ChildLoggerOptions,
-  LoggerOptions,
   DestinationStream,
-  StreamEntry,
   Level,
+  Logger,
+  LoggerOptions,
+  StreamEntry,
 }
 
 export type LoggingOptions = {

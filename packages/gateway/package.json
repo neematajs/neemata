@@ -24,15 +24,15 @@
   "dependencies": {
     "@nmtjs/common": "workspace:*",
     "@nmtjs/core": "workspace:*",
-    "@nmtjs/type": "workspace:*",
     "@nmtjs/protocol": "workspace:*",
-    "hookable": "6.0.0-rc.1"
+    "@nmtjs/type": "workspace:*",
+    "hookable": "6.1.0"
   },
   "peerDependencies": {
     "@nmtjs/common": "workspace:*",
     "@nmtjs/core": "workspace:*",
-    "@nmtjs/type": "workspace:*",
-    "@nmtjs/protocol": "workspace:*"
+    "@nmtjs/protocol": "workspace:*",
+    "@nmtjs/type": "workspace:*"
   },
   "devDependencies": {
     "@nmtjs/tests-integration": "workspace:*"

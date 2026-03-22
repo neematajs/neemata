@@ -16,7 +16,6 @@ import {
 } from 'bullmq'
 
 import type { ServerStoreConfig } from '../server/config.ts'
-import type { Store } from '../types.ts'
 import type { AnyJob, JobBackoffOptions } from './job.ts'
 import type { JobDefinitionInfo, JobProgressCheckpoint } from './types.ts'
 import { createStoreClient } from '../store/index.ts'
@@ -138,7 +137,7 @@ type JobQueueEntry = {
  * - Consider leader election for sync to reduce write contention
  */
 export class JobManager {
-  protected store!: Store
+  protected store!: RedisClient
   /**
    * Per-job dedicated queues. Each job has its own queue for granular control.
    */
@@ -162,21 +161,22 @@ export class JobManager {
   }
 
   async initialize() {
-    this.store = await createStoreClient(this.storeConfig)
+    this.store = (await createStoreClient(
+      this.storeConfig,
+    )) as unknown as RedisClient
+
     await this.store.connect()
 
     // Create a dedicated queue for each job
     for (const job of this.jobs) {
       const queueName = getJobQueueName(job)
       const entry: JobQueueEntry = {
-        queue: new Queue(queueName, { connection: this.store as RedisClient }),
+        queue: new Queue(queueName, { connection: this.store }),
         events: new QueueEvents(queueName, {
-          connection: this.store as RedisClient,
+          connection: this.store,
           autorun: true,
         }),
-        custom: new QueueEventsProducer(queueName, {
-          connection: this.store as RedisClient,
-        }),
+        custom: new QueueEventsProducer(queueName, { connection: this.store }),
       }
       this.jobQueues.set(job.options.name, entry)
     }
