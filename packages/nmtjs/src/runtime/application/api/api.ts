@@ -145,11 +145,11 @@ export class ApplicationApi implements GatewayApi {
           handleProcedure(args.length === 0 ? payload : args[0])
         return middleware.handle(middleware.ctx, callCtx, next, payload)
       } else {
-        await this.handleGuards(callOptions, callCtx)
-        const { dependencies } = procedure
-        const context = await container.createContext(dependencies)
         const input = this.handleInput(procedure, payload)
-        const result = await procedure.handler(context, input)
+        await this.handleGuards(callOptions, callCtx, input)
+        const { dependencies, handler } = procedure
+        const context = await container.createContext(dependencies)
+        const result = await handler(context, input)
         return result
       }
     }
@@ -186,6 +186,7 @@ export class ApplicationApi implements GatewayApi {
   private async handleGuards(
     callOptions: ApiCallOptions,
     callCtx: ApiCallContext,
+    payload: any,
   ) {
     const { path, procedure, container } = callOptions
     const guards = [
@@ -195,7 +196,10 @@ export class ApplicationApi implements GatewayApi {
     ]
     for (const guard of guards) {
       const ctx = await container.createContext(guard.dependencies)
-      const result = await guard.can(ctx, callCtx)
+      const result = await guard.can(
+        ctx,
+        Object.freeze({ ...callCtx, payload }),
+      )
       if (result === false) throw new ApiError(ErrorCode.Forbidden)
     }
   }

@@ -6,6 +6,7 @@ import type {
   TRouteContract,
   TRouterContract,
 } from '@nmtjs/contract'
+import type { t } from '@nmtjs/type'
 import type { AnyType } from '@nmtjs/type/any'
 import { c, IsRouterContract } from '@nmtjs/contract'
 
@@ -16,8 +17,8 @@ import { kRootRouter, kRouter } from './constants.ts'
 
 export interface AnyRouter {
   contract: TAnyRouterContract
-  routes: Record<string, AnyProcedure<any> | AnyRouter>
-  guards: Set<AnyGuard>
+  routes: Record<string, AnyProcedure<TAnyProcedureContract> | AnyRouter>
+  guards: Set<AnyGuard<any>>
   middlewares: Set<AnyMiddleware>
   timeout?: number
   [kRouter]: any
@@ -45,7 +46,7 @@ export interface Router<Contract extends TAnyRouterContract> extends AnyRouter {
           >
         : never
   }
-  guards: Set<AnyGuard>
+  guards: Set<AnyGuard<FlattenRouterContractInput<Contract['routes']>>>
   middlewares: Set<AnyMiddleware>
   timeout?: number
   [kRouter]: any
@@ -70,7 +71,11 @@ export type MergeRoutersRoutesContracts<
   ? {
       [K in keyof First['routes']]: First['routes'][K]
     } & MergeRoutersRoutesContracts<Rest>
-  : {}
+  : Routers extends [infer First extends TAnyRouterContract]
+    ? {
+        [K in keyof First['routes']]: First['routes'][K]
+      }
+    : {}
 
 export type ExtractRouterContracts<
   Routers extends readonly { contract: TAnyRouterContract }[],
@@ -94,7 +99,7 @@ export function createRootRouter<Routers extends readonly AnyRouter[]>(
 > {
   const routes: Record<string, any> = {}
   for (const router of routers) Object.assign(routes, router.routes)
-  const router = createRouter({ name: undefined, routes: routes })
+  const router = createRouter({ routes, name: undefined })
   return Object.freeze({
     ...router,
     default: defaultProcedure,
@@ -102,11 +107,34 @@ export function createRootRouter<Routers extends readonly AnyRouter[]>(
   }) as any
 }
 
+export type FlattenRouterInput<
+  Routes extends Record<string, AnyProcedure<any> | AnyRouter>,
+> = {
+  [K in keyof Routes]: Routes[K] extends AnyRouter
+    ? FlattenRouterInput<Routes[K]['routes']>
+    : Routes[K] extends AnyProcedure
+      ? Routes[K]['contract']['input']
+      : never
+}[keyof Routes]
+
+export type FlattenRouterContractInput<
+  Routes extends Record<string, TAnyProcedureContract | TAnyRouterContract>,
+> = {
+  [K in keyof Routes]: Routes[K] extends TAnyRouterContract
+    ? FlattenRouterContractInput<Routes[K]['routes']>
+    : Routes[K] extends TAnyProcedureContract
+      ? Routes[K]['input']
+      : never
+}[keyof Routes]
+
 export function createRouter<
+  const Routes extends Record<string, AnyProcedure<any> | AnyRouter>,
   const Options extends {
+    routes: Routes
     name?: string
-    routes?: Record<string, AnyProcedure<any> | AnyRouter>
-    guards?: AnyGuard[]
+    guards?: AnyGuard<
+      t.infer.decode.output<FlattenRouterInput<Options['routes']>>
+    >[]
     middlewares?: AnyMiddleware[]
     hooks?: Record<string, Callback[]>
     timeout?: number
@@ -127,8 +155,7 @@ export function createRouter<
     null extends Options['name'] ? undefined : Options['name']
   >
 > {
-  const { name, guards, middlewares, timeout } = params
-  const routes: Record<string, any> = params.routes || {}
+  const { routes, name, guards, middlewares, timeout } = params
 
   const routesContracts: any = {}
   for (const [name, route] of Object.entries(routes)) {
@@ -144,7 +171,7 @@ export function createRouter<
     guards,
     middlewares,
     timeout,
-  })
+  }) as any
 }
 
 export function createContractRouter<Contract extends TAnyRouterContract>(
@@ -157,7 +184,7 @@ export function createContractRouter<Contract extends TAnyRouterContract>(
           ? AnyProcedure<Contract['routes'][K]>
           : never
     }
-    guards?: AnyGuard[]
+    guards?: AnyGuard<FlattenRouterContractInput<Contract['routes']>>[]
     middlewares?: AnyMiddleware[]
     timeout?: number
   },

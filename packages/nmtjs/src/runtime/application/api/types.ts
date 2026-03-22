@@ -1,15 +1,28 @@
+import type { TProcedureContract } from '@nmtjs/contract'
 import type { Container } from '@nmtjs/core'
 import type { GatewayConnection } from '@nmtjs/gateway'
+import type { AnyCompatibleType, BaseTypeAny } from '@nmtjs/type'
 
-import type { AnyProcedure } from './procedure.ts'
+import type { Procedure } from './procedure.ts'
 import type { AnyRouter } from './router.ts'
 
-export type ApiCallContext = Readonly<{
+export type ApiCallContext<Payload = unknown> = Readonly<{
   connection: GatewayConnection
   container: Container
   path: AnyRouter[]
-  procedure: AnyProcedure
+  procedure: Procedure<
+    TProcedureContract<
+      AnyCompatibleType<any, Payload>,
+      BaseTypeAny,
+      true | undefined,
+      string | undefined
+    >,
+    any
+  >
 }>
+
+export type ApiGuardContext<Payload = unknown> = ApiCallContext<Payload> &
+  Readonly<{ payload: Payload }>
 
 export type JsonPrimitive<T> =
   Equal<T, JsonPrimitiveMain<T>> extends true ? T : JsonPrimitiveMain<T>

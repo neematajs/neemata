@@ -24,7 +24,7 @@ export interface ApplicationConfig<
   plugins: RuntimePlugin[]
   filters: AnyFilter[]
   middlewares: AnyMiddleware[]
-  guards: AnyGuard[]
+  guards: AnyGuard<unknown>[]
   hooks: AnyHook[]
   lifecycleHooks: LifecycleHooks['_']['config']
 }

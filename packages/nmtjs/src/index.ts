@@ -15,6 +15,7 @@ import {
   createContractRouter,
   createFilter,
   createGuard,
+  createGuardFactory,
   createHook,
   createJob,
   createJobRouterOperation,
@@ -62,6 +63,7 @@ export namespace neemata {
   export const contractProcedure = createContractProcedure
   export const middleware = createMiddleware
   export const guard = createGuard
+  export const guardFactory = createGuardFactory
   export const filter = createFilter
   export const job = createJob
   export const step = createStep

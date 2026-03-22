@@ -1,6 +1,6 @@
 ---
-name: neemata
-description: 'Answer questions about the Neemata framework and help build RPC-based applications with bidirectional streaming, dependency injection, and multi-runtime support. Use when developers: (1) Ask about Neemata APIs like n.procedure, n.router, n.app, n.server, n.guard, n.middleware, n.factory, (2) Want to build RPC servers, streaming endpoints, background jobs, or type-safe clients, (3) Have questions about dependency injection scopes, transports (WS/HTTP), contracts, blobs, or the protocol layer, (4) Use the nmtjs package or @nmtjs/* packages. Triggers on: "neemata", "nmtjs", "n.procedure", "n.router", "n.app", "n.server", "createProcedure", "RPC framework", "ProtocolBlob", "t.object", "c.procedure", "n.guard", "n.middleware", "n.factory", "defineApplication", "defineServer", "defineConfig".'
+name: use-neemata
+description: 'Answer questions about the Neemata framework and help build RPC-based applications with bidirectional streaming, dependency injection, and multi-runtime support. Use when developers: (1) Ask about Neemata APIs like n.procedure, n.router, n.rootRouter, n.app, n.server, n.guard, n.guardFactory, n.middleware, n.factory, (2) Want to build RPC servers, streaming endpoints, background jobs, or type-safe clients, (3) Have questions about dependency injection scopes, transports (WS/HTTP), contracts, blobs, typed guards, or the protocol layer, (4) Use the nmtjs package or @nmtjs/* packages. Triggers on: "neemata", "nmtjs", "n.procedure", "n.router", "n.rootRouter", "n.app", "n.server", "createProcedure", "RPC framework", "ProtocolBlob", "t.object", "c.procedure", "n.guard", "n.guardFactory", "typed guard", "n.middleware", "n.factory", "defineApplication", "defineServer", "defineConfig".'
 ---
 
 ## Prerequisites
@@ -97,7 +97,7 @@ project/
     applications/
       main/
         index.ts                 # n.app({...}) — application definition
-        router.ts                # n.rootRouter([...]) — route tree
+        router.ts                # n.rootRouter([routerA, routerB] as const) — route tree
         procedures/
           example.ts             # n.procedure({...}) — RPC handlers
         guards/

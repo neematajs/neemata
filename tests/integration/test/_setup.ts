@@ -485,6 +485,7 @@ export { t } from '@nmtjs/type'
 export {
   ApiError,
   ApplicationApi,
+  createGuard,
   createProcedure,
   createRootRouter,
   createRouter,

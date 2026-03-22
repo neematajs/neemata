@@ -338,7 +338,7 @@ const jobManagementRouter = n.jobRouter({
 // processUser/info, processUser/list, processUser/get,
 // processUser/add, processUser/retry, processUser/cancel, processUser/remove
 
-export const router = n.rootRouter([appRouter, jobManagementRouter])
+export const router = n.rootRouter([appRouter, jobManagementRouter] as const)
 ```
 
 ### Customizing Operations
