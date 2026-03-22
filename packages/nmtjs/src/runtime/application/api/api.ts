@@ -1,5 +1,5 @@
 import assert from 'node:assert'
-import { AsyncLocalStorage } from 'node:async_hooks'
+import { randomUUID } from 'node:crypto'
 import { inspect } from 'node:util'
 
 import type { Container, Logger } from '@nmtjs/core'
@@ -30,6 +30,7 @@ import { kDefaultProcedure } from './constants.ts'
 registerDefaultLocale()
 
 export type ApiCallOptions<T extends AnyProcedure = AnyProcedure> = Readonly<{
+  callId: string
   connection: GatewayConnection
   path: AnyRouter[]
   procedure: T
@@ -73,13 +74,16 @@ export class ApplicationApi implements GatewayApi {
   }
 
   async call(options: GatewayApiCallOptions): Promise<GatewayApiCallResult> {
+    const callId = randomUUID()
+
     const { payload, container, signal, connection } = options
 
     const { procedure, path } = this.find(options.procedure)
 
     options.metadata?.(procedure.metadata)
 
-    const callOptions = Object.freeze({
+    const callOptions: ApiCallOptions = Object.freeze({
+      callId,
       payload,
       container,
       signal,
@@ -128,9 +132,10 @@ export class ApplicationApi implements GatewayApi {
   }
 
   private async createProcedureHandler(callOptions: ApiCallOptions) {
-    const { connection, procedure, container, path } = callOptions
+    const { callId, connection, procedure, container, path } = callOptions
 
     const callCtx: ApiCallContext = Object.freeze({
+      callId,
       connection,
       container,
       path,

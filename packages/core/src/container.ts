@@ -7,7 +7,7 @@ import type {
   AnyInjectable,
   Dependencies,
   DependencyContext,
-  Injection,
+  Provision,
   ResolveInjectableType,
 } from './injectables.ts'
 import type { Logger } from './logger.ts'
@@ -172,25 +172,19 @@ export class Container {
     return this.createInjectableContext(dependencies)
   }
 
-  provide<T extends Injection[]>(injections: T): void
+  provide<T extends Provision[]>(provisions: T): void
   provide<T extends AnyInjectable>(
     injectable: T,
-    value: ResolveInjectableType<T> | AnyInjectable<ResolveInjectableType<T>>,
+    value: ResolveInjectableType<T>,
   ): void
-  provide<T extends AnyInjectable | Injection[]>(
+  provide<T extends AnyInjectable | Provision[]>(
     injectable: T,
-    ...[value]: T extends AnyInjectable
-      ? [
-          value:
-            | ResolveInjectableType<T>
-            | AnyInjectable<ResolveInjectableType<T>>,
-        ]
-      : []
+    ...[value]: T extends AnyInjectable ? [value: ResolveInjectableType<T>] : []
   ) {
-    const injections = Array.isArray(injectable)
+    const provisions = Array.isArray(injectable)
       ? injectable
       : [provision(injectable, value)]
-    for (const { token, value } of injections) {
+    for (const { token, value } of provisions) {
       if (compareScope(token.scope, '>', this.scope)) {
         // TODO: more informative error
         throw new Error('Invalid scope')

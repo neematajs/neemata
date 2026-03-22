@@ -153,36 +153,38 @@ describe('logging middlewares', () => {
     await waitForLogs()
 
     const rpcCallLog = getLogs().find((entry) => entry.msg === 'RPC call')
-    const rpcResultLog = getLogs().find(
-      (entry) => entry.msg === 'RPC call result',
+    const rpcResponseLog = getLogs().find(
+      (entry) => entry.msg === 'RPC response',
     )
 
-    expect(rpcCallLog?.$rpc).toEqual({
+    expect(rpcCallLog).toMatchObject({
       procedure: 'echo',
       payload: { message: 'hello' },
     })
-    expect(rpcResultLog?.$rpc).toEqual({
-      procedure: 'echo',
-      result: { echoed: 'hello' },
+    expect(rpcResponseLog).toMatchObject({
+      result: 'success',
+      response: { echoed: 'hello' },
     })
   })
 
   it('respects payload/result logging options', async () => {
     const { logger, getLogs } = createCapturingLogger()
     const setup = await setupWithLogger(logger, [
-      LoggingCallMiddleware({ includePayload: false, includeResult: false }),
+      LoggingCallMiddleware({ includePayload: false, includeResponse: false }),
     ])
 
     await setup.client.call.echo({ message: 'hello' })
     await waitForLogs()
 
     const rpcCallLog = getLogs().find((entry) => entry.msg === 'RPC call')
-    const rpcResultLog = getLogs().find(
-      (entry) => entry.msg === 'RPC call result',
+    const rpcResponseLog = getLogs().find(
+      (entry) => entry.msg === 'RPC response',
     )
 
-    expect(rpcCallLog?.$rpc).toEqual({ procedure: 'echo' })
-    expect(rpcResultLog).toBeUndefined()
+    expect(rpcCallLog).toMatchObject({ procedure: 'echo' })
+    expect(rpcCallLog).not.toHaveProperty('payload')
+    expect(rpcResponseLog).toMatchObject({ result: 'success' })
+    expect(rpcResponseLog).not.toHaveProperty('response')
   })
 
   it('logs call errors', async () => {
@@ -194,15 +196,12 @@ describe('logging middlewares', () => {
     )
     await waitForLogs()
 
-    const rpcErrorLog = getLogs().find(
-      (entry) => entry.msg === 'RPC call error',
-    )
-    const rpcResultLog = getLogs().find(
-      (entry) => entry.msg === 'RPC call result',
+    const rpcErrorLog = getLogs().find((entry) => entry.msg === 'RPC error')
+    const rpcResponseLog = getLogs().find(
+      (entry) => entry.msg === 'RPC response',
     )
 
-    expect(rpcErrorLog?.$rpc?.procedure).toBe('fail')
-    expect(rpcErrorLog?.$rpc).toHaveProperty('error')
-    expect(rpcResultLog).toBeUndefined()
+    expect(rpcErrorLog).toHaveProperty('error')
+    expect(rpcResponseLog).toBeUndefined()
   })
 })

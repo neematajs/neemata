@@ -6,7 +6,8 @@ import { createMiddleware } from './middlewares.ts'
 
 const defaultContext = (options: ApiCallContext, payload: unknown) => {
   return {
-    $connection: {
+    callId: options.callId,
+    connection: {
       id: options.connection.id,
       type: options.connection.type,
       transport: options.connection.transport,
@@ -32,40 +33,36 @@ export const LoggingCallContextMiddleware = (
   })
 
 export const LoggingCallMiddleware = (
-  options: { includePayload?: boolean; includeResult?: boolean } = {
-    includePayload: true,
-    includeResult: true,
-  },
+  options: {
+    level?: 'info' | 'debug' | 'trace'
+    errorLevel?: 'warn' | 'error' | 'fatal'
+    includePayload?: boolean
+    includeResponse?: boolean
+  } = { level: 'info', includePayload: true, includeResponse: true },
 ) =>
   createMiddleware({
-    handle: async (_, call, next, payload) => {
-      const logger = await call.container.resolve(
-        CoreInjectables.logger('CallLogger'),
-      )
-      logger.info(
+    dependencies: { logger: CoreInjectables.logger('RPC') },
+    handle: async ({ logger }, call, next, payload) => {
+      const logFn = logger[options.level || 'info'].bind(logger)
+      const errorLogFn = logger[options.errorLevel || 'error'].bind(logger)
+
+      logFn(
         options.includePayload
-          ? {
-              $rpc: {
-                procedure: call.procedure.contract.name,
-                payload: payload,
-              },
-            }
-          : { $rpc: { procedure: call.procedure.contract.name } },
+          ? { procedure: call.procedure.contract.name, payload: payload }
+          : { procedure: call.procedure.contract.name },
         'RPC call',
       )
+
       try {
-        const result = await next()
-        if (options.includeResult)
-          logger.info(
-            { $rpc: { procedure: call.procedure.contract.name, result } },
-            'RPC call result',
-          )
-        return result
+        const response = await next()
+        if (options.includeResponse) {
+          logFn({ result: 'success', response }, 'RPC response')
+        } else {
+          logFn({ result: 'success' }, 'RPC response')
+        }
+        return response
       } catch (error) {
-        logger.error(
-          { $rpc: { procedure: call.procedure.contract.name, error } },
-          'RPC call error',
-        )
+        errorLogFn({ error }, 'RPC error')
         throw error
       }
     },

@@ -7,6 +7,7 @@ import type { Procedure } from './procedure.ts'
 import type { AnyRouter } from './router.ts'
 
 export type ApiCallContext<Payload = unknown> = Readonly<{
+  callId: string
   connection: GatewayConnection
   container: Container
   path: AnyRouter[]

@@ -1,5 +1,5 @@
 import type { MaybePromise } from '@nmtjs/common'
-import type { Injection, LazyInjectable, Scope } from '@nmtjs/core'
+import type { LazyInjectable, Provision, Scope } from '@nmtjs/core'
 import type { ConnectionType, ProtocolVersion } from '@nmtjs/protocol'
 import type { ProtocolFormats } from '@nmtjs/protocol/server'
 
@@ -35,18 +35,18 @@ export type TransportWorkerParams<
   formats: ProtocolFormats
   onConnect: (
     options: TransportOnConnectOptions<Type>,
-    ...injections: Injection[]
+    ...injections: Provision[]
   ) => Promise<GatewayConnection & AsyncDisposable>
   onDisconnect: (connectionId: GatewayConnection['id']) => Promise<void>
   onMessage: (
     options: TransportOnMessageOptions,
-    ...injections: Injection[]
+    ...injections: Provision[]
   ) => Promise<void>
   onRpc: (
     connection: GatewayConnection,
     rpc: GatewayRpc,
     signal: AbortSignal,
-    ...injections: Injection[]
+    ...injections: Provision[]
   ) => Promise<unknown>
 }
 

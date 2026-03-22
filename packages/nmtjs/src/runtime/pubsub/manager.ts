@@ -41,25 +41,27 @@ export type PubSubSubscribe = <
   events: Events,
   options: Contract['options'],
   signal?: AbortSignal,
-) => Omit<Readable, typeof Symbol.asyncIterator> & {
-  [Symbol.asyncIterator]: () => AsyncIterator<
-    {} extends Events
-      ? {
-          [K in keyof Contract['events']]: {
-            event: K
-            data: t.infer.decode.output<Contract['events'][K]['payload']>
-          }
-        }[keyof Contract['events']]
-      : {
-          [K in keyof Events]: K extends keyof Contract['events']
-            ? {
-                event: K
-                data: t.infer.decode.output<Contract['events'][K]['payload']>
-              }
-            : never
-        }[keyof Events]
-  >
-}
+) => Promise<
+  Omit<Readable, typeof Symbol.asyncIterator> & {
+    [Symbol.asyncIterator]: () => AsyncIterator<
+      {} extends Events
+        ? {
+            [K in keyof Contract['events']]: {
+              event: K
+              data: t.infer.decode.output<Contract['events'][K]['payload']>
+            }
+          }[keyof Contract['events']]
+        : {
+            [K in keyof Events]: K extends keyof Contract['events']
+              ? {
+                  event: K
+                  data: t.infer.decode.output<Contract['events'][K]['payload']>
+                }
+              : never
+          }[keyof Events]
+    >
+  }
+>
 
 export type PubSubPublish = <
   S extends TAnySubscriptionContract,
@@ -78,11 +80,16 @@ export class PubSubManager {
   constructor(protected readonly options: PubSubManagerOptions) {}
 
   protected get adapter() {
-    return this.options.container.get(pubSubAdapter)
+    return this.options.container.resolve(pubSubAdapter)
   }
 
-  subscribe: PubSubSubscribe = (subscription, events, options, signal) => {
-    assert(this.adapter, 'PubSub adapter is not configured')
+  subscribe: PubSubSubscribe = async (
+    subscription,
+    events,
+    options,
+    signal,
+  ) => {
+    const adapter = await this.adapter
 
     const eventKeys =
       Object.keys(events).length === 0
@@ -97,7 +104,7 @@ export class PubSubManager {
       if (this.subscriptions.has(channel)) {
         streams[index] = this.subscriptions.get(channel)!.stream
       } else {
-        const iterable = this.adapter.subscribe(channel, signal)
+        const iterable = adapter.subscribe(channel, signal)
         const stream = this.createEventStream(iterable)
         stream.on('close', () => this.subscriptions.delete(channel))
         streams[index] = stream
@@ -109,13 +116,13 @@ export class PubSubManager {
   }
 
   publish: PubSubPublish = async (event, options, data) => {
-    assert(this.adapter, 'PubSub adapter is not configured')
+    const adapter = await this.adapter
 
     const channel = getChannelName(event, options)
 
     try {
       const payload = event.payload.encode(data)
-      return await this.adapter.publish(channel, payload)
+      return await adapter.publish(channel, payload)
     } catch (error: any) {
       this.options.logger.error(
         `Failed to publish event "${event.name}" on channel "${channel}": ${error.message}`,

@@ -86,22 +86,20 @@ export const RedisPubSubAdapterPlugin = (): RuntimePlugin => {
     name: 'pubsub-redis-adapter',
     hooks: {
       'lifecycle:beforeInitialize': async (ctx) => {
-        ctx.container.provide([
-          provision(
-            pubSubAdapter,
-            createFactoryInjectable({
-              dependencies: { config: storeConfig },
-              factory: async ({ config }) => {
-                const connection = await createStoreClient(config)
-                const adapter = new RedisPubSubAdapter(connection)
-                await adapter.initialize()
-                return { adapter, connection }
-              },
-              pick: ({ adapter }) => adapter,
-              dispose: ({ connection }) => connection.quit(),
-            }),
-          ),
-        ])
+        const adapter = await ctx.container.resolve(
+          createFactoryInjectable({
+            dependencies: { config: storeConfig },
+            factory: async ({ config }) => {
+              const connection = await createStoreClient(config)
+              const adapter = new RedisPubSubAdapter(connection)
+              await adapter.initialize()
+              return { adapter, connection }
+            },
+            pick: ({ adapter }) => adapter,
+            dispose: ({ connection }) => connection.quit(),
+          }),
+        )
+        ctx.container.provide(pubSubAdapter, adapter)
       },
     },
   }
