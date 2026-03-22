@@ -1,4 +1,4 @@
-import type { Injection } from '@nmtjs/core'
+import type { Provision } from '@nmtjs/core'
 import { CoreInjectables, provision } from '@nmtjs/core'
 
 import type { WorkerType } from '../enums.ts'
@@ -34,7 +34,7 @@ export abstract class BaseWorkerRuntime extends BaseRuntime {
   }
 
   async initialize(): Promise<void> {
-    const injections: Injection[] = [
+    const injections: Provision[] = [
       provision(CoreInjectables.logger, this.logger),
       provision(injectables.workerType, this.workerType),
       provision(
