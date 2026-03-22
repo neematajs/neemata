@@ -25,7 +25,7 @@
   "devDependencies": {
     "@biomejs/biome": "2.4.8",
     "@tsconfig/node24": "^24.0.4",
-    "@types/node": "^25.5.0",
+    "@types/node": "^24",
     "@typescript/native-preview": "7.0.0-dev.20260219.1",
     "@vitest/browser-playwright": "4.1.0",
     "@vitest/coverage-v8": "4.1.0",

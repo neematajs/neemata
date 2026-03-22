@@ -106,7 +106,6 @@ function createServer(): ApplicationServer {
   return new ApplicationServer(
     currentServerConfig,
     applicationsConfig,
-    // @ts-expect-error
     workerConfig,
     undefined, // runOptions
     errorPolicy,
