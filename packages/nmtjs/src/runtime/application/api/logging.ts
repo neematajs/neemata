@@ -1,4 +1,5 @@
 import type { MaybePromise } from '@nmtjs/common'
+import { IsStreamProcedureContract } from '@nmtjs/contract'
 import { CoreInjectables, loggerLocalStorage } from '@nmtjs/core'
 
 import type { ApiCallContext } from './types.ts'
@@ -53,10 +54,24 @@ export const LoggingCallMiddleware = (
         'RPC call',
       )
 
+      const isIterableProcedure = IsStreamProcedureContract(
+        call.procedure.contract,
+      )
+
       try {
         const response = await next()
         if (options.includeResponse) {
-          logFn({ result: 'success', response }, 'RPC response')
+          if (isIterableProcedure) {
+            logFn({ result: 'success', response: 'Stream' }, 'RPC response')
+            return async function* (...args: any[]) {
+              for await (const chunk of response(...args)) {
+                logFn({ callId: call.callId, chunk }, 'RPC stream chunk')
+                yield chunk
+              }
+            }
+          } else {
+            logFn({ result: 'success', response }, 'RPC response')
+          }
         } else {
           logFn({ result: 'success' }, 'RPC response')
         }
