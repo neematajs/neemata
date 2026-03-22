@@ -43,18 +43,18 @@
   },
   "dependencies": {
     "@nmtjs/common": "workspace:*",
-    "@nmtjs/type": "workspace:*",
     "@nmtjs/contract": "workspace:*",
-    "hookable": "6.0.0-rc.1"
+    "@nmtjs/type": "workspace:*",
+    "hookable": "6.1.0"
   },
   "devDependencies": {
     "@nmtjs/core": "workspace:*"
   },
   "peerDependencies": {
     "@nmtjs/common": "workspace:*",
+    "@nmtjs/contract": "workspace:*",
     "@nmtjs/core": "workspace:*",
-    "@nmtjs/type": "workspace:*",
-    "@nmtjs/contract": "workspace:*"
+    "@nmtjs/type": "workspace:*"
   },
   "files": [
     "dist",

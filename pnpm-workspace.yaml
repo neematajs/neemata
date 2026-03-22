@@ -3,9 +3,9 @@ packages:
   - tests/*
 
 catalog:
-  zod: ^4.3.5
-  vite: 8.0.0
   "@nmtjs/proxy": 1.0.0-beta.4
+  vite: 8.0.1
+  zod: ^4.0.0
 
 onlyBuiltDependencies:
   - esbuild
