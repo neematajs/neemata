@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { TestSetup } from './_setup.ts'
 import {
   ApiError,
+  createGuard,
   createProcedure,
   createRootRouter,
   createRouter,
@@ -173,6 +174,19 @@ const abortableWithStateProcedure = createProcedure({
   },
 })
 
+let guardedDatePayload: { createdAt: Date } | null = null
+const dateGuard = createGuard((_ctx, call) => {
+  guardedDatePayload = call.payload as { createdAt: Date }
+  return (call.payload as any).createdAt instanceof Date
+})
+
+const guardedDateProcedure = createProcedure({
+  input: t.object({ createdAt: t.date() }),
+  output: t.object({ iso: t.string() }),
+  guards: [dateGuard],
+  handler: async (_, input) => ({ iso: input.createdAt.toISOString() }),
+})
+
 // For testing ProtocolError directly
 const failingWithProtocolErrorProcedure = createProcedure({
   input: t.object({}),
@@ -200,6 +214,7 @@ const router = createRootRouter(
         fast: fastProcedure,
         abortable: abortableProcedure,
         abortableWithState: abortableWithStateProcedure,
+        guardedDate: guardedDateProcedure,
       },
     }),
   ] as const,
@@ -219,6 +234,7 @@ describe('Simple RPC Calls', () => {
   beforeEach(async () => {
     counterValue = 0
     defaultProcedureHits = 0
+    guardedDatePayload = null
     setup = await createTestSetup({ router })
   })
 
@@ -340,6 +356,23 @@ describe('Simple RPC Calls', () => {
   })
 
   describe('Error Handling', () => {
+    it('should pass decoded payload to guards before invoking the handler', async () => {
+      const result = await setup.client.call.guardedDate({
+        createdAt: '2024-01-01T00:00:00.000Z',
+      })
+
+      expect(result).toEqual({ iso: '2024-01-01T00:00:00.000Z' })
+      expect(guardedDatePayload).not.toBeNull()
+      expect(guardedDatePayload?.createdAt).toBeInstanceOf(Date)
+      expect(guardedDatePayload?.createdAt.toISOString()).toBe(
+        '2024-01-01T00:00:00.000Z',
+      )
+
+      await waitForCleanup()
+      expect(setup.gateway.rpcs.rpcs.size).toBe(0)
+      expect(setup.client.pendingCallsCount).toBe(0)
+    })
+
     it('should propagate server errors to client', async () => {
       await expect(setup.client.call.failing({})).rejects.toThrow()
 

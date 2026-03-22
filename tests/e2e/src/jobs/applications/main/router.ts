@@ -30,4 +30,4 @@ export const router = n.rootRouter([
     },
   }),
   n.jobRouter({ jobs }),
-])
+] as const)

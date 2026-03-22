@@ -60,7 +60,7 @@ export type CreateProcedureParams<
 > =
   | {
       dependencies?: ProcedureDeps
-      guards?: AnyGuard[]
+      guards?: AnyGuard<t.infer.decode.output<ProcedureContract['input']>>[]
       middlewares?: AnyMiddleware[]
       metadata?: Metadata[]
       streamTimeout?: number
@@ -157,7 +157,9 @@ export function createProcedure<
          */
         stream?: TStream
         dependencies?: Deps
-        guards?: AnyGuard[]
+        guards?: AnyGuard<
+          TInput extends BaseType ? t.infer.decode.output<TInput> : any
+        >[]
         middlewares?: AnyMiddleware[]
         metadata?: Metadata[]
         timeout?: number

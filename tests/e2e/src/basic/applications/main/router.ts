@@ -16,4 +16,4 @@ export const router = n.rootRouter([
       downloadBlob: downloadBlobProcedure,
     },
   }),
-])
+] as const)

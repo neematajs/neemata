@@ -64,7 +64,7 @@ const adminRouter = n.router({
 })
 
 // Root router merges all routers
-export const router = n.rootRouter([usersRouter, adminRouter])
+export const router = n.rootRouter([usersRouter, adminRouter] as const)
 ```
 
 ## Contract-First Approach
@@ -213,21 +213,39 @@ export const downloadProcedure = n.procedure({
 ## Guards (Access Control)
 
 ```typescript
-import { n } from 'nmtjs'
+import { n, t } from 'nmtjs'
 
 // Guard with DI
 const authGuard = n.guard({
   dependencies: { connectionData: n.inject.connectionData },
-  can: (ctx) => ctx.connectionData?.authenticated === true,
+  can: (ctx, call) => {
+    return (
+      ctx.connectionData?.authenticated === true &&
+      call.payload !== undefined
+    )
+  },
 })
 
 // Simple guard (no dependencies)
-const simpleGuard = n.guard((ctx, call) => true)
+const simpleGuard = n.guard((_ctx, call) => call.payload !== undefined)
+
+// Typed guard factory for decoded payload access
+const scopedGuard = n.guardFactory<{ scope: string; createdAt: Date }>()(
+  (_ctx, call) => {
+    return (
+      call.payload.scope === 'user' &&
+      call.payload.createdAt instanceof Date
+    )
+  },
+)
 
 // Attach to procedure
 const protectedProcedure = n.procedure({
-  guards: [authGuard],
-  input: t.object({}),
+  guards: [authGuard, scopedGuard],
+  input: t.object({
+    scope: t.string(),
+    createdAt: t.date(),
+  }),
   output: t.object({}),
   handler: () => ({}),
 })
@@ -238,6 +256,10 @@ const protectedRouter = n.router({
   routes: { ... },
 })
 ```
+
+- Guards run before the handler.
+- `call.payload` contains the decoded input payload, so transforms like `t.date()` are already applied.
+- Use `n.guardFactory<Payload>()` when you want type-safe access to `call.payload`.
 
 ## Middleware (Request Pipeline)
 

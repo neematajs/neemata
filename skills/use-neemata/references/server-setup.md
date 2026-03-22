@@ -87,7 +87,7 @@ project/
     applications/
       main/
         index.ts                 # n.app({...}) — application definition
-        router.ts                # n.rootRouter([...]) — route tree
+        router.ts                # n.rootRouter([routerA, routerB] as const) — route tree
         procedures/
           example.ts             # n.procedure({...}) — RPC handlers
         guards/

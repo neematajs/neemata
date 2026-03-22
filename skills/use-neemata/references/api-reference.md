@@ -91,6 +91,30 @@ n.guard({
 n.guard((ctx, call) => boolean)
 ```
 
+- `call.payload` is available inside guards and contains the decoded input payload when the procedure/router defines an `input` schema.
+- `n.guard(...)` is untyped for payloads by default, so `call.payload` is `unknown` unless you narrow it manually.
+
+### `n.guardFactory<Payload>()(options | canFn)`
+
+Create a typed guard factory for reuse across procedures and routers.
+
+```typescript
+const authScopeGuard = n.guardFactory<{ scope: string }>()({
+  dependencies: { connectionData: n.inject.connectionData },
+  can: (deps, call) => {
+    return (
+      deps.connectionData?.authenticated === true &&
+      call.payload.scope === 'user'
+    )
+  },
+})
+
+// Shorthand
+const enabledGuard = n.guardFactory<{ enabled: boolean }>()(
+  (_ctx, call) => call.payload.enabled === true,
+)
+```
+
 ### `n.middleware(options | handleFn)`
 
 Request pipeline middleware.
