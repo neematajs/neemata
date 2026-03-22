@@ -6,11 +6,11 @@ import type { BaseRuntimeOptions } from '../runtime.ts'
 import type { ServerConfig } from '../server/config.ts'
 import * as injectables from '../injectables.ts'
 import { JobManager } from '../jobs/manager.ts'
-import { PubSubManager } from '../pubsub/manager.ts'
+import { SubscriptionManager } from '../subscription/manager.ts'
 import { BaseRuntime } from '../runtime.ts'
 
 export abstract class BaseWorkerRuntime extends BaseRuntime {
-  pubsub: PubSubManager
+  subscriptionManager: SubscriptionManager
   jobManager?: JobManager
 
   constructor(
@@ -20,7 +20,7 @@ export abstract class BaseWorkerRuntime extends BaseRuntime {
   ) {
     super(options)
 
-    this.pubsub = new PubSubManager({
+    this.subscriptionManager = new SubscriptionManager({
       logger: this.logger,
       container: this.container,
     })
@@ -38,12 +38,12 @@ export abstract class BaseWorkerRuntime extends BaseRuntime {
       provision(CoreInjectables.logger, this.logger),
       provision(injectables.workerType, this.workerType),
       provision(
-        injectables.pubSubPublish,
-        this.pubsub.publish.bind(this.pubsub),
+        injectables.publish,
+        this.subscriptionManager.publish.bind(this.subscriptionManager),
       ),
       provision(
-        injectables.pubSubSubscribe,
-        this.pubsub.subscribe.bind(this.pubsub),
+        injectables.subscribe,
+        this.subscriptionManager.subscribe.bind(this.subscriptionManager),
       ),
     ]
 
