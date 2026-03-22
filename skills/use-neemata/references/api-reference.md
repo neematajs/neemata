@@ -14,7 +14,7 @@ All builder functions are available via the `n` namespace (or `neemata`).
 
 Create a standalone RPC procedure (auto-generates contract from input/output).
 
-```typescript
+```ts
 n.procedure({
   input: TType,              // t.* type schema for input validation
   output: TType,             // t.* type schema for output validation
@@ -30,7 +30,7 @@ n.procedure({
 
 Implement a pre-defined contract.
 
-```typescript
+```ts
 n.contractProcedure(contractProcedure, {
   dependencies?: Record<string, Injectable>,
   guards?: Guard[],
@@ -43,7 +43,7 @@ n.contractProcedure(contractProcedure, {
 
 Group procedures into a named router.
 
-```typescript
+```ts
 n.router({
   name?: string,
   routes: Record<string, Procedure | Router>,
@@ -57,7 +57,7 @@ n.router({
 
 Implement a contract-defined router.
 
-```typescript
+```ts
 n.contractRouter(routerContract, {
   routes: Record<string, Procedure>,
   guards?: Guard[],
@@ -69,7 +69,7 @@ n.contractRouter(routerContract, {
 
 Merge multiple routers into the root router for an application.
 
-```typescript
+```ts
 n.rootRouter(
   [router1, router2, ...] as const,
   defaultProcedure?,  // optional fallback for unknown routes
@@ -80,7 +80,7 @@ n.rootRouter(
 
 Access control guard.
 
-```typescript
+```ts
 // With dependencies
 n.guard({
   dependencies?: Record<string, Injectable>,
@@ -98,7 +98,7 @@ n.guard((ctx, call) => boolean)
 
 Create a typed guard factory for reuse across procedures and routers.
 
-```typescript
+```ts
 const authScopeGuard = n.guardFactory<{ scope: string }>()({
   dependencies: { connectionData: n.inject.connectionData },
   can: (deps, call) => {
@@ -117,9 +117,10 @@ const enabledGuard = n.guardFactory<{ enabled: boolean }>()(
 
 ### `n.middleware(options | handleFn)`
 
-Request pipeline middleware.
+Request pipeline middleware operating on the raw request payload before input
+decoding and guards.
 
-```typescript
+```ts
 // With dependencies
 n.middleware({
   dependencies?: Record<string, Injectable>,
@@ -130,11 +131,17 @@ n.middleware({
 n.middleware(async (ctx, call, next, payload) => next(payload))
 ```
 
+- `payload` is the raw request payload, not the decoded guard/handler input.
+- `next()` forwards the current raw payload unchanged.
+- `next(payload)` forwards or replaces the raw payload for downstream middleware
+  and the eventual decode step.
+- Use guards when you need decoded `call.payload`.
+
 ### `n.filter(options)`
 
 Error filter — catches specific error types and transforms them.
 
-```typescript
+```ts
 n.filter({
   errorClass: ErrorConstructor,
   dependencies?: Record<string, Injectable>,
@@ -146,7 +153,7 @@ n.filter({
 
 Named hook handler.
 
-```typescript
+```ts
 n.hook({
   name: string,              // hook name (e.g., GatewayHook.Connect)
   dependencies?: Record<string, Injectable>,
@@ -158,7 +165,7 @@ n.hook({
 
 Plugin with lifecycle hooks and injections.
 
-```typescript
+```ts
 n.plugin({
   name: string,
   hooks?: Hook[],
@@ -170,7 +177,7 @@ n.plugin({
 
 Define an application module.
 
-```typescript
+```ts
 n.app({
   router: RootRouter,                           // Required
   transports?: Record<string, TransportClass>,   // e.g., { ws: WsTransport, http: HttpTransport }
@@ -188,7 +195,7 @@ n.app({
 
 Define the server configuration.
 
-```typescript
+```ts
 n.server({
   logger: { pinoOptions: PinoOptions },
   applications: {
@@ -218,7 +225,7 @@ n.server({
 
 Create a transport definition.
 
-```typescript
+```ts
 n.transport({
   factory: TransportClass,
   injectables?: Record<string, Injectable>,
@@ -228,7 +235,7 @@ n.transport({
 
 ### Dependency Injection Builders
 
-```typescript
+```ts
 n.value(staticValue)                     // ValueInjectable — wraps a static value
 n.lazy<T>(scope?)                        // LazyInjectable — token for late-bound values
 n.factory({                              // FactoryInjectable — created via factory function
@@ -249,7 +256,7 @@ For the complete table with scope, types, behavior, and usage guidance, see
 
 ### Metrics
 
-```typescript
+```ts
 n.metrics.counter({ name, help, labelNames? })
 n.metrics.gauge({ name, help, labelNames? })
 n.metrics.histogram({ name, help, labelNames?, buckets? })
@@ -258,7 +265,7 @@ n.metrics.summary({ name, help, labelNames?, percentiles? })
 
 ### Jobs
 
-```typescript
+```ts
 n.job({
   name: string,
   steps: Step[],
@@ -282,7 +289,7 @@ n.jobRouterOperation(...)    // Single job operation
 
 ### `c.procedure(options)`
 
-```typescript
+```ts
 c.procedure({
   input?: TType,
   output?: TType,
@@ -293,7 +300,7 @@ c.procedure({
 
 ### `c.router(options)`
 
-```typescript
+```ts
 c.router({
   name?: string,
   routes: Record<string, ProcedureContract | RouterContract>,
@@ -303,7 +310,7 @@ c.router({
 
 ### `c.event(options?)`
 
-```typescript
+```ts
 c.event({
   payload?: TType,
 })
@@ -311,7 +318,7 @@ c.event({
 
 ### `c.subscription(options)`
 
-```typescript
+```ts
 c.subscription({
   events: Record<string, EventContract>,
 })
@@ -321,7 +328,7 @@ c.subscription({
 
 Marker type for blob fields in input/output schemas.
 
-```typescript
+```ts
 // In input — client sends a ProtocolBlob, server receives a blob accessor function
 // In output — server returns a blob via createBlob, client receives async iterable
 ```
@@ -341,7 +348,7 @@ For full details (including Standard Schema support), see [Type System](type-sys
 
 ### Primitives
 
-```typescript
+```ts
 t.string()      // Chainable: .min(n), .max(n), .email(), .url(), .uuid(), .pattern(...)
 t.number()      // Chainable: .positive(), .negative(), .gt(n), .gte(n), .lt(n), .lte(n)
 t.integer()
@@ -354,7 +361,7 @@ t.never()
 
 ### Composites
 
-```typescript
+```ts
 t.object({ key: t.string(), age: t.number() })
 t.array(t.string())           // Chainable: .min(n), .max(n), .length(n)
 t.tuple([t.string(), t.number()])
@@ -365,14 +372,14 @@ t.literal('hello')
 
 ### Special Types
 
-```typescript
+```ts
 t.date()                       // Date ↔ ISO string (auto encode/decode in protocol)
 t.custom({ decode, encode })   // Custom bidirectional transform
 ```
 
 ### Modifiers (chainable on any type)
 
-```typescript
+```ts
 .optional()         // T | undefined
 .nullable()         // T | null
 .nullish()          // T | null | undefined
@@ -385,7 +392,7 @@ t.custom({ decode, encode })   // Custom bidirectional transform
 
 ### Type Inference
 
-```typescript
+```ts
 // Decode/encode modes
 type DecodeInput = t.infer.decode.input<typeof myType>
 type DecodeOutput = t.infer.decode.output<typeof myType>
@@ -401,7 +408,7 @@ type EncodeRawOutput = t.infer.encodeRaw.output<typeof myType>
 
 ### Standard Schema (quick)
 
-```typescript
+```ts
 // Standard Schema v1 (defaults to decode mode)
 myType['~standard']
 
@@ -416,7 +423,7 @@ myType.standard.encode['~standard']
 
 ### `Scope`
 
-```typescript
+```ts
 Scope.Global       // Singleton
 Scope.Connection   // Per connection
 Scope.Call         // Per RPC call
@@ -425,7 +432,7 @@ Scope.Transient    // New every injection
 
 ### `ErrorCode`
 
-```typescript
+```ts
 ErrorCode.ValidationError
 ErrorCode.BadRequest
 ErrorCode.NotFound
@@ -442,13 +449,13 @@ ErrorCode.ConnectionError
 
 ### `ApiError`
 
-```typescript
+```ts
 new ApiError(code: ErrorCode, message: string, data?: any)
 ```
 
 ### `ProtocolBlob`
 
-```typescript
+```ts
 ProtocolBlob.from(source, metadata?, encode?)
 // source: ReadableStream | File | Blob | string | ArrayBuffer | Uint8Array
 // metadata: { type?: string, size?: number, filename?: string }
@@ -456,21 +463,21 @@ ProtocolBlob.from(source, metadata?, encode?)
 
 ### `ConnectionType`
 
-```typescript
+```ts
 ConnectionType.Bidirectional    // WebSocket — full duplex
 ConnectionType.Unidirectional   // HTTP — request/response
 ```
 
 ### `GatewayHook`
 
-```typescript
+```ts
 GatewayHook.Connect       // Fired on new connection
 GatewayHook.Disconnect    // Fired on disconnect
 ```
 
 ### `LifecycleHook`
 
-```typescript
+```ts
 LifecycleHook.BeforeInitialize
 LifecycleHook.AfterInitialize
 LifecycleHook.BeforeDispose

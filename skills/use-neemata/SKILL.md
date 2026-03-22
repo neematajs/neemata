@@ -40,7 +40,7 @@ Search source code in `node_modules/nmtjs/`:
 
 All user-facing code should import from `nmtjs`:
 
-```typescript
+```ts
 import { n, t, c, Scope, ErrorCode, ProtocolBlob, ConnectionType } from 'nmtjs'
 ```
 

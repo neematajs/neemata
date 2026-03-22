@@ -19,7 +19,7 @@ Containers form a hierarchy: `Global → Connection → Call`. A scope can only 
 
 ## Injectable Builders
 
-```typescript
+```ts
 import { n, Scope } from 'nmtjs'
 
 // Static value — wraps a constant
@@ -46,7 +46,7 @@ flow:
 2. Provide a concrete value from middleware/hook/transport integration
 3. Inject and use it in procedures via `dependencies`
 
-```typescript
+```ts
 import { randomUUID } from 'node:crypto'
 
 import { n, Scope, t } from 'nmtjs'
@@ -56,10 +56,10 @@ export const requestId = n.lazy<string>(Scope.Call)
 
 // 2) Provide it at runtime from middleware
 export const requestIdMiddleware = n.middleware({
-  handle: async (_, call, next, payload) => {
+  handle: async (_, call, next) => {
     const value = randomUUID()
     call.container.provide(requestId, value)
-    return next(payload)
+    return next()
   },
 })
 
@@ -74,6 +74,9 @@ export const echoProcedure = n.procedure({
   },
 })
 ```
+
+Middleware is a good place to provide call-scoped values like correlation IDs.
+It runs before guards and handlers and operates on the raw request payload.
 
 If a lazy token may be absent, inject it as optional in dependencies using
 `myLazy.optional()`.
@@ -106,7 +109,7 @@ If a lazy token may be absent, inject it as optional in dependencies using
 
 Pass injectables via the `dependencies` option — they are resolved and injected as the first argument to the handler:
 
-```typescript
+```ts
 import { n, t } from 'nmtjs'
 
 export const profileProcedure = n.procedure({

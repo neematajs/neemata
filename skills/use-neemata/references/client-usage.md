@@ -15,7 +15,7 @@ description: Setting up StaticClient and RuntimeClient, composing connectivity
 
 ## StaticClient Setup
 
-```typescript
+```ts
 import { reconnectPlugin } from '@nmtjs/client'
 import { StaticClient } from '@nmtjs/client/static'
 import { WsTransportClient } from '@nmtjs/ws-client'
@@ -42,7 +42,7 @@ await client.connect()
 
 ## RuntimeClient Setup
 
-```typescript
+```ts
 import { reconnectPlugin } from '@nmtjs/client'
 import { RuntimeClient } from '@nmtjs/client/runtime'
 import { HttpTransportClient } from '@nmtjs/http-client'
@@ -78,7 +78,7 @@ const client = new RuntimeClient<typeof appContract>(
 
 Connectivity behavior is fully composed via plugins.
 
-```typescript
+```ts
 import {
   browserConnectivityPlugin,
   heartbeatPlugin,
@@ -115,7 +115,7 @@ const client = new StaticClient(
 - `heartbeatPlugin()` — Ping/Pong liveness checks and reconnect on timeout
 - `loggingPlugin()` — Emits structured client events to `onEvent`; message bodies are omitted by default and enabled with `includeBodies: true`
 
-```typescript
+```ts
 loggingPlugin({
   onEvent: (event) => {
     sink(event)
@@ -140,7 +140,7 @@ This ensures setup flows top-down while teardown flows bottom-up (heartbeat stop
 
 ## RPC Calls
 
-```typescript
+```ts
 // Type-safe procedure call — returns Promise<Output>
 const result = await client.call.greet({ name: 'World' })
 // result: { greeting: 'Hello, World!' }
@@ -148,7 +148,7 @@ const result = await client.call.greet({ name: 'World' })
 
 ## Streaming Calls
 
-```typescript
+```ts
 // Returns AsyncIterable<Output>
 const stream = await client.stream.liveData({})
 for await (const chunk of stream) {
@@ -158,7 +158,7 @@ for await (const chunk of stream) {
 
 ## Abort / Cancel
 
-```typescript
+```ts
 const controller = new AbortController()
 const promise = client.call.slowOp({}, { signal: controller.signal })
 controller.abort() // cancels the call
@@ -169,7 +169,7 @@ const stream = await client.stream.data({}, { signal: controller.signal })
 
 ## Blob Upload
 
-```typescript
+```ts
 import { ProtocolBlob } from '@nmtjs/client'
 
 const blob = ProtocolBlob.from('file contents', {
@@ -184,7 +184,7 @@ await client.call.upload({ file: blob })
 
 ## Blob Download
 
-```typescript
+```ts
 const blob = await client.call.download({ content: 'hello' })
 // blob is an async iterable of Uint8Array chunks
 for await (const chunk of blob) {
@@ -194,7 +194,7 @@ for await (const chunk of blob) {
 
 ## Disconnect
 
-```typescript
+```ts
 await client.disconnect()
 ```
 

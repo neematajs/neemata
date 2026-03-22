@@ -8,7 +8,7 @@ description: Procedures, routers, streaming, blobs, contracts, guards, middlewar
 
 ## Basic Procedure
 
-```typescript
+```ts
 import { n, t } from 'nmtjs'
 
 export const pingProcedure = n.procedure({
@@ -23,7 +23,7 @@ export const pingProcedure = n.procedure({
 
 ## Procedure with Dependencies
 
-```typescript
+```ts
 import { n, t, Scope } from 'nmtjs'
 
 const dbInjectable = n.factory({
@@ -44,7 +44,7 @@ export const getUserProcedure = n.procedure({
 
 ## Router Setup
 
-```typescript
+```ts
 import { n } from 'nmtjs'
 
 // Group procedures into named routers
@@ -71,7 +71,7 @@ export const router = n.rootRouter([usersRouter, adminRouter] as const)
 
 Define contracts separately (shared between client and server), then implement:
 
-```typescript
+```ts
 import { c, t } from 'nmtjs'
 
 // Shared contract (e.g., in a shared package)
@@ -85,7 +85,7 @@ export const appContract = c.router({
 })
 ```
 
-```typescript
+```ts
 import { n } from 'nmtjs'
 import { greetContract } from './contracts.ts'
 
@@ -97,7 +97,7 @@ const greetProcedure = n.contractProcedure(greetContract, {
 
 ## Streaming Procedure (Server → Client)
 
-```typescript
+```ts
 import { n, t } from 'nmtjs'
 
 export const streamProcedure = n.procedure({
@@ -118,7 +118,7 @@ export const streamProcedure = n.procedure({
 
 ## Streaming with Abort Signal
 
-```typescript
+```ts
 import { n, t } from 'nmtjs'
 
 export const liveDataProcedure = n.procedure({
@@ -144,7 +144,7 @@ export const liveDataProcedure = n.procedure({
 - `n.inject.rpcStreamAbortSignal` is optional and only available when
   `streamTimeout` is configured for that procedure
 
-```typescript
+```ts
 import { n, t } from 'nmtjs'
 
 export const streamWithTimeoutProcedure = n.procedure({
@@ -166,7 +166,7 @@ export const streamWithTimeoutProcedure = n.procedure({
 
 ## Blob Upload (Client → Server)
 
-```typescript
+```ts
 import { n, t, c } from 'nmtjs'
 
 export const uploadProcedure = n.procedure({
@@ -190,7 +190,7 @@ export const uploadProcedure = n.procedure({
 
 ## Blob Download (Server → Client)
 
-```typescript
+```ts
 import { n, t, c } from 'nmtjs'
 
 export const downloadProcedure = n.procedure({
@@ -212,7 +212,7 @@ export const downloadProcedure = n.procedure({
 
 ## Guards (Access Control)
 
-```typescript
+```ts
 import { n, t } from 'nmtjs'
 
 // Guard with DI
@@ -263,15 +263,25 @@ const protectedRouter = n.router({
 
 ## Middleware (Request Pipeline)
 
-```typescript
+Middleware runs on the **raw request payload** before input decoding and before
+guards execute. Use middleware for request context, correlation IDs, raw payload
+logging, or pre-validation payload rewriting.
+
+```ts
 import { n } from 'nmtjs'
 
 const loggingMiddleware = n.middleware({
   dependencies: { logger: n.inject.logger('rpc') },
   handle: async (ctx, call, next, payload) => {
-    ctx.logger.info({ procedure: call.procedure }, 'Call started')
-    const result = await next(payload)
-    ctx.logger.info({ procedure: call.procedure }, 'Call completed')
+    ctx.logger.info(
+      { procedure: call.procedure.contract.name, payload },
+      'Raw call started',
+    )
+    const result = await next()
+    ctx.logger.info(
+      { procedure: call.procedure.contract.name },
+      'Call completed',
+    )
     return result
   },
 })
@@ -279,15 +289,24 @@ const loggingMiddleware = n.middleware({
 // Simple middleware (no dependencies)
 const timingMiddleware = n.middleware(async (ctx, call, next, payload) => {
   const start = Date.now()
-  const result = await next(payload)
-  console.log(`${call.procedure} took ${Date.now() - start}ms`)
+  const result = await next()
+  console.log(`${call.procedure.contract.name} took ${Date.now() - start}ms`)
   return result
 })
 ```
 
+- `payload` is the raw inbound payload as received by the RPC pipeline.
+- `next()` forwards the current raw payload unchanged.
+- `next(newPayload)` replaces the raw payload for downstream middleware and the
+  eventual decode step.
+- If you need decoded input with transforms applied (for example `t.date()` →
+  `Date`), use a guard or the procedure handler instead.
+- For stream procedures, middleware wraps stream creation and sees the returned
+  stream object rather than each emitted chunk.
+
 ## Error Handling
 
-```typescript
+```ts
 import { n, t, ErrorCode, ApiError } from 'nmtjs'
 
 export const procedure = n.procedure({

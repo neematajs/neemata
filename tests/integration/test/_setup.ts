@@ -6,14 +6,27 @@ import type {
   ClientTransportStartParams,
 } from '@nmtjs/client'
 import type { TAnyRouterContract } from '@nmtjs/contract'
+import type { Logger } from '@nmtjs/core'
 import type {
   GatewayConnection,
   TransportWorker,
   TransportWorkerParams,
 } from '@nmtjs/gateway'
-import type { AnyProcedure, AnyRootRouter, AnyRouter } from 'nmtjs/runtime'
+import type {
+  AnyFilter,
+  AnyGuard,
+  AnyMiddleware,
+  AnyProcedure,
+  AnyRootRouter,
+  AnyRouter,
+} from 'nmtjs/runtime'
 import { StaticClient } from '@nmtjs/client/static'
-import { Container, createLazyInjectable, Hooks } from '@nmtjs/core'
+import {
+  Container,
+  CoreInjectables,
+  createLazyInjectable,
+  Hooks,
+} from '@nmtjs/core'
 import { Gateway } from '@nmtjs/gateway'
 import { ConnectionType, ProtocolVersion } from '@nmtjs/protocol'
 import { ProtocolFormats } from '@nmtjs/protocol/server'
@@ -307,12 +320,14 @@ export interface TestSetupOptions<TRouter extends AnyRootRouter> {
   router: TRouter
   /** Client timeout in ms (default: 5000) */
   timeout?: number
+  /** Custom logger for Gateway/ApplicationApi/container */
+  logger?: Logger
   /** Custom guards for ApplicationApi */
-  guards?: []
+  guards?: AnyGuard[]
   /** Custom middlewares for ApplicationApi */
-  middlewares?: []
+  middlewares?: AnyMiddleware[]
   /** Custom filters for ApplicationApi */
-  filters?: []
+  filters?: AnyFilter[]
 }
 
 // export function resetCounterValue() {
@@ -386,6 +401,7 @@ export async function createTestSetup<TRouter extends AnyRootRouter>(
   const {
     router,
     timeout = 5000,
+    logger = createTestLogger(),
     guards = [],
     middlewares = [],
     filters = [],
@@ -394,8 +410,8 @@ export async function createTestSetup<TRouter extends AnyRootRouter>(
   const channel = new TransportChannel()
 
   // --- Server-side setup ---
-  const logger = createTestLogger()
   const container = new Container({ logger })
+  container.provide(CoreInjectables.logger, logger)
   const hooks = new Hooks()
   const serverFormat = createTestServerFormat()
   const serverTransport = new EventEmitterServerTransport(channel)
