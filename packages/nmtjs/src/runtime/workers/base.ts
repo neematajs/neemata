@@ -6,8 +6,8 @@ import type { BaseRuntimeOptions } from '../runtime.ts'
 import type { ServerConfig } from '../server/config.ts'
 import * as injectables from '../injectables.ts'
 import { JobManager } from '../jobs/manager.ts'
-import { SubscriptionManager } from '../subscription/manager.ts'
 import { BaseRuntime } from '../runtime.ts'
+import { SubscriptionManager } from '../subscription/manager.ts'
 
 export abstract class BaseWorkerRuntime extends BaseRuntime {
   subscriptionManager: SubscriptionManager

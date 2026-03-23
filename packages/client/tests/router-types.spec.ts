@@ -1,22 +1,18 @@
-/**
- * Test file for investigating ClientCallers type resolution with deeply nested routers
- */
+import { c } from '@nmtjs/contract'
+import { t } from '@nmtjs/type'
+import { describe, expectTypeOf, it } from 'vitest'
+
 import type {
   ClientCallers,
   ResolveContract,
   StaticInputContractTypeProvider,
   StaticOutputContractTypeProvider,
-} from '@nmtjs/client'
-import { c } from '@nmtjs/contract'
-import { t } from '@nmtjs/type'
-import { describe, expectTypeOf, it } from 'vitest'
+} from '../src/index.ts'
 
-// Level 1 - Simple flat router (should work)
 const level1Contract = c.router({
   routes: { proc1: c.procedure({ input: t.string(), output: t.string() }) },
 })
 
-// Level 2 - One level of nesting
 const level2Contract = c.router({
   routes: {
     nested: c.router({
@@ -25,7 +21,6 @@ const level2Contract = c.router({
   },
 })
 
-// Level 3 - Two levels of nesting
 const level3Contract = c.router({
   routes: {
     level1: c.router({
@@ -40,7 +35,6 @@ const level3Contract = c.router({
   },
 })
 
-// Level 4 - Three levels of nesting
 const level4Contract = c.router({
   routes: {
     a: c.router({
@@ -59,7 +53,6 @@ const level4Contract = c.router({
   },
 })
 
-// Level 5 - Four levels of nesting
 const level5Contract = c.router({
   routes: {
     a: c.router({
@@ -85,7 +78,6 @@ const level5Contract = c.router({
   },
 })
 
-// Level 6 - Five levels of nesting
 const level6Contract = c.router({
   routes: {
     a: c.router({
@@ -115,7 +107,6 @@ const level6Contract = c.router({
   },
 })
 
-// Level 7 - Six levels of nesting
 const level7Contract = c.router({
   routes: {
     a: c.router({
@@ -158,7 +149,6 @@ describe('ClientCallers type resolution with nested routers', () => {
     >
     type Callers = ClientCallers<Resolved, false, false>
 
-    // This should be a function
     type Proc1Type = Callers['proc1']
     expectTypeOf<Proc1Type>().toBeFunction()
   })
@@ -171,7 +161,6 @@ describe('ClientCallers type resolution with nested routers', () => {
     >
     type Callers = ClientCallers<Resolved, false, false>
 
-    // nested should be an object with proc2
     type NestedType = Callers['nested']
     type Proc2Type = NestedType['proc2']
     expectTypeOf<Proc2Type>().toBeFunction()
@@ -185,7 +174,6 @@ describe('ClientCallers type resolution with nested routers', () => {
     >
     type Callers = ClientCallers<Resolved, false, false>
 
-    // level1.level2.proc3 should be a function
     type Level1Type = Callers['level1']
     type Level2Type = Level1Type['level2']
     type Proc3Type = Level2Type['proc3']
@@ -200,7 +188,6 @@ describe('ClientCallers type resolution with nested routers', () => {
     >
     type Callers = ClientCallers<Resolved, false, false>
 
-    // a.b.c.proc4 should be a function
     type AType = Callers['a']
     type BType = AType['b']
     type CType = BType['c']
@@ -216,7 +203,6 @@ describe('ClientCallers type resolution with nested routers', () => {
     >
     type Callers = ClientCallers<Resolved, false, false>
 
-    // a.b.c.d.proc5 should be a function
     type AType = Callers['a']
     type BType = AType['b']
     type CType = BType['c']
@@ -233,7 +219,6 @@ describe('ClientCallers type resolution with nested routers', () => {
     >
     type Callers = ClientCallers<Resolved, false, false>
 
-    // a.b.c.d.e.proc6 should be a function
     type AType = Callers['a']
     type BType = AType['b']
     type CType = BType['c']
@@ -251,7 +236,6 @@ describe('ClientCallers type resolution with nested routers', () => {
     >
     type Callers = ClientCallers<Resolved, false, false>
 
-    // a.b.c.d.e.f.proc7 should be a function
     type AType = Callers['a']
     type BType = AType['b']
     type CType = BType['c']

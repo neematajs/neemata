@@ -5,59 +5,84 @@ import type {
 } from '@nmtjs/protocol'
 import type { BaseClientFormat } from '@nmtjs/protocol/client'
 
-export type ClientTransportMessageOptions = {
+export type ClientDisconnectReason = 'client' | 'server' | (string & {})
+
+export interface TransportConnectParams {
+  auth?: string
+  application?: string
+  onMessage: (message: ArrayBufferView) => void
+  onConnect: () => void
+  onDisconnect: (reason: ClientDisconnectReason) => void
+}
+
+export interface TransportSendOptions {
   signal?: AbortSignal
-  _stream_response?: boolean
 }
 
-export interface ClientTransportStartParams {
-  auth?: string
-  application?: string
-  onMessage: (message: ArrayBufferView) => any
-  onConnect: () => any
-  onDisconnect: (reason: 'client' | 'server' | (string & {})) => any
-}
-
-export interface ClientTransportRpcParams {
-  format: BaseClientFormat
+export interface TransportCallContext {
+  contentType: string
   auth?: string
   application?: string
 }
 
-export type ClientCallResponse =
-  | { type: 'rpc'; result: ArrayBufferView }
-  | { type: 'rpc_stream'; stream: ReadableStream<ArrayBufferView> }
-  | {
-      type: 'blob'
-      metadata: ProtocolBlobMetadata
-      source: ReadableStream<ArrayBufferView>
-    }
+export interface TransportRpcParams {
+  callId: number
+  procedure: string
+  payload: ArrayBufferView
+  blob?: { source: ReadableStream; metadata: ProtocolBlobMetadata }
+}
 
-export type ClientTransport<T extends ConnectionType = ConnectionType> =
-  T extends ConnectionType.Bidirectional
-    ? {
-        type: ConnectionType.Bidirectional
-        connect(params: ClientTransportStartParams): Promise<void>
-        disconnect(): Promise<void>
-        send(
-          message: ArrayBufferView,
-          options: ClientTransportMessageOptions,
-        ): Promise<void>
-      }
-    : {
-        type: ConnectionType.Unidirectional
-        connect?(params: ClientTransportStartParams): Promise<void>
-        disconnect?(): Promise<void>
-        call(
-          client: {
-            format: BaseClientFormat
-            auth?: string
-            application?: string
-          },
-          rpc: { callId: number; procedure: string; payload: any },
-          options: ClientTransportMessageOptions,
-        ): Promise<ClientCallResponse>
-      }
+export interface TransportCallOptions {
+  signal?: AbortSignal
+  streamResponse?: boolean
+}
+
+export interface TransportRpcResponse {
+  type: 'rpc'
+  result: ArrayBufferView
+}
+
+export interface TransportRpcStreamResponse {
+  type: 'rpc_stream'
+  stream: ReadableStream<ArrayBufferView>
+}
+
+export interface TransportBlobResponse {
+  type: 'blob'
+  metadata: ProtocolBlobMetadata
+  source: ReadableStream<ArrayBufferView>
+}
+
+export interface TransportErrorResponse {
+  type: 'error'
+  error: ArrayBufferView
+  status?: number
+  statusText?: string
+}
+
+export type TransportCallResponse =
+  | TransportRpcResponse
+  | TransportRpcStreamResponse
+  | TransportBlobResponse
+  | TransportErrorResponse
+
+export interface BidirectionalTransport {
+  type: ConnectionType.Bidirectional
+  connect(params: TransportConnectParams): Promise<void>
+  disconnect(): Promise<void>
+  send(message: ArrayBufferView, options: TransportSendOptions): Promise<void>
+}
+
+export interface UnidirectionalTransport {
+  type: ConnectionType.Unidirectional
+  call(
+    context: TransportCallContext,
+    rpc: TransportRpcParams,
+    options: TransportCallOptions,
+  ): Promise<TransportCallResponse>
+}
+
+export type ClientTransport = BidirectionalTransport | UnidirectionalTransport
 
 export interface ClientTransportParams {
   protocol: ProtocolVersion
@@ -65,7 +90,11 @@ export interface ClientTransportParams {
 }
 
 export type ClientTransportFactory<
-  Type extends ConnectionType,
+  Transport extends ClientTransport = ClientTransport,
   Options = unknown,
-  Transport extends ClientTransport<Type> = ClientTransport<Type>,
 > = (params: ClientTransportParams, options: Options) => Transport
+
+export type ClientTransportMessageOptions = TransportSendOptions
+export type ClientTransportStartParams = TransportConnectParams
+export type ClientTransportRpcParams = TransportCallContext
+export type ClientCallResponse = TransportCallResponse

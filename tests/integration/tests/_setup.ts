@@ -1,9 +1,9 @@
 import { EventEmitter } from 'node:events'
 
 import type {
-  ClientTransport,
+  BidirectionalTransport,
   ClientTransportFactory,
-  ClientTransportStartParams,
+  TransportConnectParams,
 } from '@nmtjs/client'
 import type { TAnyRouterContract } from '@nmtjs/contract'
 import type { Logger } from '@nmtjs/core'
@@ -166,19 +166,17 @@ export class EventEmitterServerTransport implements TransportWorker {
 /**
  * Client-side transport using EventEmitter channel.
  */
-export class EventEmitterClientTransport
-  implements ClientTransport<ConnectionType.Bidirectional>
-{
+export class EventEmitterClientTransport implements BidirectionalTransport {
   readonly type = ConnectionType.Bidirectional as const
   private channel: TransportChannel
-  private params: ClientTransportStartParams | null = null
+  private params: TransportConnectParams | null = null
   private connectionId: string | null = null
 
   constructor(channel: TransportChannel) {
     this.channel = channel
   }
 
-  async connect(params: ClientTransportStartParams): Promise<void> {
+  async connect(params: TransportConnectParams): Promise<void> {
     this.params = params
 
     return new Promise<void>((resolve) => {
@@ -252,7 +250,7 @@ export class TestClient<
   SafeCall extends boolean = false,
 > extends StaticClient<Transport, RouterContract, SafeCall> {
   callUnknownProcedureForDefaultTest(payload?: unknown, options?: any) {
-    return this._call(kUnknownProcedureForDefaultTest, payload, options)
+    return this.rpcLayer.call(kUnknownProcedureForDefaultTest, payload, options)
   }
 
   /**
@@ -260,7 +258,7 @@ export class TestClient<
    * Should be 0 after all calls complete.
    */
   get pendingCallsCount() {
-    return this.calls.size
+    return this.rpcLayer.pendingCallCount
   }
 
   /**
@@ -268,7 +266,7 @@ export class TestClient<
    * Should be 0 after all uploads complete.
    */
   get activeClientStreamsCount() {
-    return this.clientStreams.size
+    return this.streamLayer.clientStreams.size
   }
 
   /**
@@ -276,7 +274,7 @@ export class TestClient<
    * Should be 0 after all downloads complete.
    */
   get activeServerStreamsCount() {
-    return this.serverStreams.size
+    return this.streamLayer.serverStreams.size
   }
 
   /**
@@ -284,7 +282,7 @@ export class TestClient<
    * Should be 0 after all streaming RPCs complete.
    */
   get activeRpcStreamsCount() {
-    return this.rpcStreams.size
+    return this.rpcLayer.activeStreamCount
   }
 
   /**
@@ -307,7 +305,7 @@ export class TestClient<
 export interface TestSetup<TRouter extends AnyRootRouter> {
   gateway: Gateway
   client: TestClient<
-    ClientTransportFactory<ConnectionType.Bidirectional, TransportChannel>,
+    ClientTransportFactory<EventEmitterClientTransport, TransportChannel>,
     TRouter['contract'],
     false
   >
@@ -446,7 +444,7 @@ export async function createTestSetup<TRouter extends AnyRootRouter>(
   const clientFormat = createTestClientFormat()
 
   const transportFactory: ClientTransportFactory<
-    ConnectionType.Bidirectional,
+    EventEmitterClientTransport,
     TransportChannel
   > = (_params, ch) => new EventEmitterClientTransport(ch)
 

@@ -4,5 +4,5 @@
     "noEmit": true
   },
   "files": ["./.neemata/types.d.ts"],
-  "include": ["./src/**/*.ts", "./test/**/*.ts"]
+  "include": ["./src/**/*.ts", "./tests/**/*.ts"]
 }

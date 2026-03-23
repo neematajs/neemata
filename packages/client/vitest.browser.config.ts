@@ -3,7 +3,7 @@ import { defineProject } from 'vitest/config'
 
 export default defineProject({
   test: {
-    include: ['packages/client/test/**/*.browser.spec.ts'],
+    include: ['tests/**/*.browser.spec.ts'],
     browser: {
       enabled: true,
       headless: true,

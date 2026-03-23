@@ -1,7 +1,8 @@
 import type {
-  ClientCallOptions,
+  BidirectionalTransport,
   ClientTransportFactory,
-  ClientTransportStartParams,
+  TransportConnectParams,
+  TransportSendOptions,
 } from '@nmtjs/client'
 import type { ProtocolVersion } from '@nmtjs/protocol'
 import type { BaseClientFormat } from '@nmtjs/protocol/client'
@@ -23,7 +24,7 @@ export type WsClientTransportOptions = {
   WebSocket?: typeof WebSocket
 }
 
-export class WsTransportClient {
+export class WsTransportClient implements BidirectionalTransport {
   type: ConnectionType.Bidirectional = ConnectionType.Bidirectional
 
   protected webSocket: WebSocket | null = null
@@ -38,7 +39,7 @@ export class WsTransportClient {
     this.options = { debug: false, ...options }
   }
 
-  async connect(params: ClientTransportStartParams) {
+  async connect(params: TransportConnectParams) {
     this.closingByClient = false
     const url = new URL(
       params.application ? `/${params.application}` : '/',
@@ -62,15 +63,18 @@ export class WsTransportClient {
     ws.binaryType = 'arraybuffer'
 
     this.connecting = new Promise((resolve, reject) => {
-      let settled = false
-      const settle = (fn: () => void) => {
-        if (settled) return
-        settled = true
+      let connectSettled = false
+      let opened = false
+
+      const settleConnect = (fn: () => void) => {
+        if (connectSettled) return
+        connectSettled = true
         fn()
       }
 
       ws.addEventListener('open', () => {
-        settle(() => {
+        opened = true
+        settleConnect(() => {
           this.connecting = null
           params.onConnect()
           resolve()
@@ -80,7 +84,7 @@ export class WsTransportClient {
         params.onMessage(new Uint8Array(event.data as ArrayBuffer))
       })
       ws.addEventListener('error', (event) => {
-        settle(() => {
+        settleConnect(() => {
           this.connecting = null
           reject(
             new Error('WebSocket error', {
@@ -94,11 +98,17 @@ export class WsTransportClient {
           this.closingByClient || event.reason === 'client'
             ? 'client'
             : 'server'
-        settle(() => {
-          this.webSocket = null
-          this.connecting = null
-          params.onDisconnect(reason)
-        })
+        this.webSocket = null
+        this.connecting = null
+
+        if (!opened) {
+          settleConnect(() => {
+            reject(new Error('WebSocket closed before opening'))
+          })
+          return
+        }
+
+        params.onDisconnect(reason)
       })
     })
 
@@ -115,7 +125,7 @@ export class WsTransportClient {
     return closing
   }
 
-  async send(message: ArrayBufferView, options: ClientCallOptions) {
+  async send(message: ArrayBufferView, options: TransportSendOptions) {
     if (this.webSocket === null) throw new Error('WebSocket is not connected')
     await this.connecting
     if (!options.signal?.aborted) this.webSocket!.send(message as any)
@@ -123,9 +133,8 @@ export class WsTransportClient {
 }
 
 export type WsTransportFactory = ClientTransportFactory<
-  ConnectionType.Bidirectional,
-  WsClientTransportOptions,
-  WsTransportClient
+  WsTransportClient,
+  WsClientTransportOptions
 >
 
 export const WsTransportFactory: WsTransportFactory = (params, options) =>

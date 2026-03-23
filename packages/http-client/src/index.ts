@@ -1,12 +1,13 @@
 import type {
-  ClientTransport,
   ClientTransportFactory,
-  ClientTransportMessageOptions,
-  ClientTransportRpcParams,
+  TransportCallContext,
+  TransportCallOptions,
+  TransportRpcParams,
+  UnidirectionalTransport,
 } from '@nmtjs/client'
 import type { ProtocolVersion } from '@nmtjs/protocol'
 import type { BaseClientFormat } from '@nmtjs/protocol/client'
-import { ConnectionType, ErrorCode, ProtocolBlob } from '@nmtjs/protocol'
+import { ConnectionType, ErrorCode } from '@nmtjs/protocol'
 import { ProtocolError } from '@nmtjs/protocol/client'
 
 import { HttpStreamParser } from './http-stream-parser.ts'
@@ -46,9 +47,7 @@ export type HttpClientTransportOptions = {
   decodeBase64?: DecodeBase64Function
 }
 
-export class HttpTransportClient
-  implements ClientTransport<ConnectionType.Unidirectional>
-{
+export class HttpTransportClient implements UnidirectionalTransport {
   type: ConnectionType.Unidirectional = ConnectionType.Unidirectional
   decodeBase64: DecodeBase64Function
 
@@ -71,47 +70,42 @@ export class HttpTransportClient
     return implementation
   }
 
-  url({
-    procedure,
-    application,
-    payload,
-  }: {
-    procedure: string
-    application?: string
-    payload?: unknown
-  }) {
+  url({ procedure, application }: { procedure: string; application?: string }) {
     const base = application ? `/${application}/${procedure}` : `/${procedure}`
     const url = new URL(base, this.options.url)
-    if (payload) url.searchParams.set('payload', JSON.stringify(payload))
     return url
   }
 
   async call(
-    client: ClientTransportRpcParams,
-    rpc: { callId: number; procedure: string; payload: unknown },
-    options: ClientTransportMessageOptions,
+    context: TransportCallContext,
+    rpc: TransportRpcParams,
+    options: TransportCallOptions,
   ) {
     const { procedure, payload } = rpc
     const requestHeaders = new Headers()
     const fetchImpl = this.getFetch()
 
-    const url = this.url({ application: client.application, procedure })
+    const url = this.url({ application: context.application, procedure })
 
-    if (client.auth) requestHeaders.set('Authorization', client.auth)
-    requestHeaders.set('Accept', client.format.contentType)
+    if (context.auth) requestHeaders.set('Authorization', context.auth)
+    requestHeaders.set('Accept', context.contentType)
 
     let body: any
 
-    if (payload instanceof ProtocolBlob) {
-      requestHeaders.set('Content-Type', payload.metadata.type)
+    if (rpc.blob) {
+      requestHeaders.set('Content-Type', rpc.blob.metadata.type)
       requestHeaders.set(NEEMATA_BLOB_HEADER, 'true')
+      body = rpc.blob.source
     } else {
-      requestHeaders.set('Content-Type', client.format.contentType)
-      const buffer = client.format.encode(payload)
-      body = buffer
+      requestHeaders.set('Content-Type', context.contentType)
+      body = new Uint8Array(
+        payload.buffer,
+        payload.byteOffset,
+        payload.byteLength,
+      )
     }
 
-    if (options._stream_response) {
+    if (options.streamResponse) {
       const response = await fetchImpl(url.toString(), {
         body,
         method: 'POST',
@@ -122,24 +116,11 @@ export class HttpTransportClient
       })
 
       if (!response.ok) {
-        try {
-          const buffer = await response.bytes()
-          const error = client.format.decode(buffer) as {
-            code?: string
-            message?: string
-            data?: unknown
-          }
-          throw new ProtocolError(
-            error.code || ErrorCode.ClientRequestError,
-            error.message || response.statusText,
-            error.data,
-          )
-        } catch (cause) {
-          if (cause instanceof ProtocolError) throw cause
-          throw new ProtocolError(
-            ErrorCode.ClientRequestError,
-            `HTTP ${response.status}: ${response.statusText}`,
-          )
+        return {
+          type: 'error' as const,
+          error: await response.bytes().catch(() => new Uint8Array(0)),
+          status: response.status,
+          statusText: response.statusText,
         }
       }
 
@@ -222,25 +203,11 @@ export class HttpTransportClient
           return { type: 'rpc' as const, result: await response.bytes() }
         }
       } else {
-        try {
-          const buffer = await response.bytes()
-          const error = client.format.decode(buffer) as {
-            code?: string
-            message?: string
-            data?: unknown
-          }
-          throw new ProtocolError(
-            error.code || ErrorCode.ClientRequestError,
-            error.message || response.statusText,
-            error.data,
-          )
-        } catch (cause) {
-          if (cause instanceof ProtocolError) throw cause
-          // If decoding fails, throw generic error with status info
-          throw new ProtocolError(
-            ErrorCode.ClientRequestError,
-            `HTTP ${response.status}: ${response.statusText}`,
-          )
+        return {
+          type: 'error' as const,
+          error: await response.bytes().catch(() => new Uint8Array(0)),
+          status: response.status,
+          statusText: response.statusText,
         }
       }
     }
@@ -248,9 +215,8 @@ export class HttpTransportClient
 }
 
 export type HttpTransportFactory = ClientTransportFactory<
-  ConnectionType.Unidirectional,
-  HttpClientTransportOptions,
-  HttpTransportClient
+  HttpTransportClient,
+  HttpClientTransportOptions
 >
 
 export const HttpTransportFactory: HttpTransportFactory = (params, options) => {

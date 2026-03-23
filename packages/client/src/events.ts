@@ -13,13 +13,6 @@ export class EventEmitter<
     string
   >,
 > {
-  static once<
-    T extends EventEmitter,
-    E extends T extends EventEmitter<any, infer Event> ? Event : never,
-  >(ee: T, event: E) {
-    return new Promise((resolve) => ee.once(event, resolve))
-  }
-
   #target = new EventTarget()
   #listeners = new Map<Callback, Callback>()
 
@@ -30,7 +23,7 @@ export class EventEmitter<
   ) {
     const wrapper = (event) => listener(...event.detail)
     this.#listeners.set(listener, wrapper)
-    this.#target.addEventListener(event, wrapper, { ...options, once: false })
+    this.#target.addEventListener(event, wrapper, options)
     return () => this.#target.removeEventListener(event, wrapper)
   }
 

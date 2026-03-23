@@ -1,8 +1,30 @@
-import type { BaseClient } from '../core.ts'
+import type { ClientCore, ConnectionState } from '../core.ts'
+import type { PingLayerApi } from '../layers/ping.ts'
 
 export type ClientDisconnectReason = 'client' | 'server' | (string & {})
 
+export interface ReconnectConfig {
+  initialTimeout?: number
+  maxTimeout?: number
+}
+
+export type StreamEvent = {
+  direction: 'incoming' | 'outgoing'
+  streamType: 'rpc' | 'client_blob' | 'server_blob'
+  action: 'response' | 'pull' | 'push' | 'end' | 'abort'
+  callId?: number
+  streamId?: number
+  byteLength?: number
+  reason?: string
+}
+
 export type ClientPluginEvent =
+  | {
+      kind: 'state_changed'
+      timestamp: number
+      state: ConnectionState
+      previous: ConnectionState
+    }
   | {
       kind: 'connected'
       timestamp: number
@@ -38,17 +60,7 @@ export type ClientPluginEvent =
       procedure: string
       error: unknown
     }
-  | {
-      kind: 'stream_event'
-      timestamp: number
-      direction: 'incoming' | 'outgoing'
-      streamType: 'rpc' | 'client_blob' | 'server_blob'
-      action: 'response' | 'pull' | 'push' | 'end' | 'abort'
-      callId?: number
-      streamId?: number
-      byteLength?: number
-      reason?: string
-    }
+  | ({ kind: 'stream_event'; timestamp: number } & StreamEvent)
 
 /**
  * Client plugin lifecycle contract.
@@ -67,6 +79,11 @@ export interface ClientPluginInstance {
   dispose?(): void
 }
 
+export interface ClientPluginContext {
+  core: ClientCore
+  ping: PingLayerApi
+}
+
 export type ClientPlugin = (
-  client: BaseClient<any, any, any, any, any>,
+  context: ClientPluginContext,
 ) => ClientPluginInstance

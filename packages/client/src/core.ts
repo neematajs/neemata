@@ -1,49 +1,30 @@
-import type { Future, TypeProvider } from '@nmtjs/common'
-import type { TAnyRouterContract } from '@nmtjs/contract'
-import type { ProtocolBlobMetadata, ProtocolVersion } from '@nmtjs/protocol'
+import type { ProtocolVersion } from '@nmtjs/protocol'
 import type {
   BaseClientFormat,
   MessageContext,
   ProtocolVersionInterface,
-  ServerMessageTypePayload,
 } from '@nmtjs/protocol/client'
-import {
-  anyAbortSignal,
-  createFuture,
-  MAX_UINT32,
-  noopFn,
-  withTimeout,
-} from '@nmtjs/common'
-import {
-  ClientMessageType,
-  ConnectionType,
-  ErrorCode,
-  ProtocolBlob,
-  ServerMessageType,
-} from '@nmtjs/protocol'
-import {
-  ProtocolError,
-  ProtocolServerBlobStream,
-  ProtocolServerRPCStream,
-  ProtocolServerStream,
-  versions,
-} from '@nmtjs/protocol/client'
+import { noopFn } from '@nmtjs/common'
+import { ConnectionType } from '@nmtjs/protocol'
+import { ProtocolError, versions } from '@nmtjs/protocol/client'
 
 import type {
-  ClientDisconnectReason,
   ClientPlugin,
+  ClientPluginContext,
   ClientPluginEvent,
   ClientPluginInstance,
+  ReconnectConfig,
+  StreamEvent,
 } from './plugins/types.ts'
-import type { BaseClientTransformer } from './transformers.ts'
-import type { ClientCallResponse, ClientTransportFactory } from './transport.ts'
 import type {
-  ClientCallers,
-  ClientCallOptions,
-  ResolveAPIRouterRoutes,
-} from './types.ts'
+  ClientDisconnectReason,
+  ClientTransport,
+  TransportCallContext,
+  TransportCallOptions,
+  TransportCallResponse,
+  TransportRpcParams,
+} from './transport.ts'
 import { EventEmitter } from './events.ts'
-import { ClientStreams, ServerStreams } from './streams.ts'
 
 export {
   ErrorCode,
@@ -51,545 +32,337 @@ export {
   type ProtocolBlobMetadata,
 } from '@nmtjs/protocol'
 
-export * from './types.ts'
+export type ConnectionState =
+  | 'idle'
+  | 'connecting'
+  | 'connected'
+  | 'disconnecting'
+  | 'disconnected'
 
-export class ClientError extends ProtocolError {}
-
-export type ProtocolClientCall = Future<any> & {
-  procedure: string
-  signal?: AbortSignal
-}
-
-const DEFAULT_RECONNECT_REASON = 'connect_error'
-
-export interface BaseClientOptions<
-  RouterContract extends TAnyRouterContract = TAnyRouterContract,
-  SafeCall extends boolean = false,
-> {
-  contract: RouterContract
+export interface ClientCoreOptions {
   protocol: ProtocolVersion
   format: BaseClientFormat
   application?: string
-  timeout?: number
   plugins?: ClientPlugin[]
-  safe?: SafeCall
 }
 
-/**
- * @todo Add error logging in ClientStreamPull rejection handler for easier debugging
- * @todo Consider edge case where callId/streamId overflow at MAX_UINT32 with existing entries
- */
-export abstract class BaseClient<
-  TransportFactory extends ClientTransportFactory<
-    any,
-    any
-  > = ClientTransportFactory<any, any>,
-  RouterContract extends TAnyRouterContract = TAnyRouterContract,
-  SafeCall extends boolean = false,
-  InputTypeProvider extends TypeProvider = TypeProvider,
-  OutputTypeProvider extends TypeProvider = TypeProvider,
-> extends EventEmitter<{
-  connected: []
-  disconnected: [reason: ClientDisconnectReason]
-  pong: [nonce: number]
-}> {
-  _!: {
-    routes: ResolveAPIRouterRoutes<
-      RouterContract,
-      InputTypeProvider,
-      OutputTypeProvider
-    >
-    safe: SafeCall
+export class ClientError extends ProtocolError {}
+
+const DEFAULT_RECONNECT_TIMEOUT = 1000
+const DEFAULT_MAX_RECONNECT_TIMEOUT = 60000
+const DEFAULT_CONNECT_ERROR_REASON = 'connect_error'
+
+const sleep = (ms: number, signal?: AbortSignal) => {
+  return new Promise<void>((resolve) => {
+    if (signal?.aborted) return resolve()
+
+    const timer = setTimeout(resolve, ms)
+    signal?.addEventListener(
+      'abort',
+      () => {
+        clearTimeout(timer)
+        resolve()
+      },
+      { once: true },
+    )
+  })
+}
+
+const computeReconnectDelay = (ms: number) => {
+  if (globalThis.window) {
+    const jitter = Math.floor(ms * 0.2 * Math.random())
+    return ms + jitter
   }
 
-  protected abstract readonly transformer: BaseClientTransformer
+  return ms
+}
 
-  abstract call: ClientCallers<this['_']['routes'], SafeCall, false>
-  abstract stream: ClientCallers<this['_']['routes'], SafeCall, true>
+export class ClientCore extends EventEmitter<{
+  message: [message: unknown, raw: ArrayBufferView]
+  connected: []
+  disconnected: [reason: ClientDisconnectReason]
+  state_changed: [state: ConnectionState, previous: ConnectionState]
+  pong: [nonce: number]
+}> {
+  readonly protocol: ProtocolVersionInterface
+  readonly format: BaseClientFormat
+  readonly application?: string
 
-  protected calls = new Map<number, ProtocolClientCall>()
-  protected transport: TransportFactory extends ClientTransportFactory<
-    any,
-    any,
-    infer T
-  >
-    ? T
-    : never
-  protected protocol: ProtocolVersionInterface
-  protected messageContext!: MessageContext | null
-  protected clientStreams = new ClientStreams()
-  protected serverStreams = new ServerStreams()
-  protected rpcStreams = new ServerStreams()
-  protected callId = 0
-  protected streamId = 0
-  protected cab: AbortController | null = null
-  protected connecting: Promise<void> | null = null
+  auth: any
+  messageContext: MessageContext | null = null
 
-  protected _state: 'connected' | 'disconnected' = 'disconnected'
-  protected _lastDisconnectReason: ClientDisconnectReason = 'server'
-  protected _disposed = false
-
-  protected pingNonce = 0
-  protected pendingPings = new Map<number, Future<void>>()
-  protected plugins: ClientPluginInstance[] = []
-
-  private clientDisconnectAsReconnect = false
-  private clientDisconnectOverrideReason: string | null = null
-
-  private authValue: any
+  #state: ConnectionState = 'idle'
+  #messageContextFactory: (() => MessageContext) | null = null
+  #cab: AbortController | null = null
+  #connecting: Promise<void> | null = null
+  #disposed = false
+  #plugins: ClientPluginInstance[] = []
+  #lastDisconnectReason: ClientDisconnectReason = 'server'
+  #clientDisconnectAsReconnect = false
+  #clientDisconnectOverrideReason: ClientDisconnectReason | null = null
+  #reconnectConfig: ReconnectConfig | null = null
+  #reconnectPauseReasons = new Set<string>()
+  #reconnectController: AbortController | null = null
+  #reconnectPromise: Promise<void> | null = null
+  #reconnectTimeout = DEFAULT_RECONNECT_TIMEOUT
+  #reconnectImmediate = false
 
   constructor(
-    readonly options: BaseClientOptions<RouterContract, SafeCall>,
-    readonly transportFactory: TransportFactory,
-    readonly transportOptions: TransportFactory extends ClientTransportFactory<
-      any,
-      infer U
-    >
-      ? U
-      : never,
+    options: ClientCoreOptions,
+    readonly transport: ClientTransport,
   ) {
     super()
 
     this.protocol = versions[options.protocol]
-
-    const { format, protocol } = this.options
-
-    this.transport = this.transportFactory(
-      { protocol, format },
-      this.transportOptions,
-    ) as any
-
-    this.plugins = this.options.plugins?.map((plugin) => plugin(this)) ?? []
-    for (const plugin of this.plugins) {
-      plugin.onInit?.()
-    }
-  }
-
-  dispose() {
-    this._disposed = true
-    this.stopAllPendingPings('dispose')
-    for (let i = this.plugins.length - 1; i >= 0; i--) {
-      this.plugins[i].dispose?.()
-    }
+    this.format = options.format
+    this.application = options.application
   }
 
   get state() {
-    return this._state
+    return this.#state
   }
 
   get lastDisconnectReason() {
-    return this._lastDisconnectReason
+    return this.#lastDisconnectReason
   }
 
   get transportType() {
     return this.transport.type
   }
 
+  get connectionSignal() {
+    return this.#cab?.signal
+  }
+
   isDisposed() {
-    return this._disposed
+    return this.#disposed
   }
 
-  requestReconnect(reason?: string) {
-    return this.disconnect({ reconnect: true, reason })
+  initPlugins(plugins: ClientPlugin[] = [], context: ClientPluginContext) {
+    if (this.#plugins.length > 0) return
+
+    this.#plugins = plugins.map((plugin) => plugin(context))
+    for (const plugin of this.#plugins) {
+      plugin.onInit?.()
+    }
   }
 
-  get auth() {
-    return this.authValue
+  setMessageContextFactory(factory: () => MessageContext) {
+    this.#messageContextFactory = factory
   }
 
-  set auth(value) {
-    this.authValue = value
+  configureReconnect(config: ReconnectConfig | null) {
+    this.#reconnectConfig = config
+    this.#reconnectTimeout = config?.initialTimeout ?? DEFAULT_RECONNECT_TIMEOUT
+    this.#reconnectImmediate = false
+
+    if (!config) {
+      this.#cancelReconnectLoop()
+      return
+    }
+
+    if (
+      this.transport.type === ConnectionType.Bidirectional &&
+      this.#state === 'disconnected' &&
+      this.#lastDisconnectReason !== 'client'
+    ) {
+      this.#ensureReconnectLoop()
+    }
+  }
+
+  setReconnectPauseReason(reason: string, active: boolean) {
+    if (active) {
+      this.#reconnectPauseReasons.add(reason)
+    } else {
+      this.#reconnectPauseReasons.delete(reason)
+    }
+  }
+
+  triggerReconnect() {
+    if (
+      this.#disposed ||
+      !this.#reconnectConfig ||
+      this.transport.type !== ConnectionType.Bidirectional
+    ) {
+      return
+    }
+
+    this.#reconnectImmediate = true
+
+    if (this.#state === 'disconnected' || this.#state === 'idle') {
+      this.#ensureReconnectLoop()
+    }
   }
 
   connect() {
-    if (this._state === 'connected') return Promise.resolve()
-    if (this.connecting) return this.connecting
-
-    if (this._disposed) return Promise.reject(new Error('Client is disposed'))
-
-    const _connect = async () => {
-      if (this.transport.type === ConnectionType.Bidirectional) {
-        const client = this
-        this.cab = new AbortController()
-        const protocol = this.protocol
-        const serverStreams = this.serverStreams
-        const transport = {
-          send: (buffer) => {
-            this.send(buffer).catch(noopFn)
-          },
-        }
-        this.messageContext = {
-          transport,
-          encoder: this.options.format,
-          decoder: this.options.format,
-          addClientStream: (blob) => {
-            const streamId = this.getStreamId()
-            return this.clientStreams.add(blob.source, streamId, blob.metadata)
-          },
-          addServerStream(streamId, metadata) {
-            const stream = new ProtocolServerBlobStream(metadata, {
-              pull: (controller) => {
-                client.emitStreamEvent({
-                  direction: 'outgoing',
-                  streamType: 'server_blob',
-                  action: 'pull',
-                  streamId,
-                  byteLength: 65535,
-                })
-                transport.send(
-                  protocol.encodeMessage(
-                    this,
-                    ClientMessageType.ServerStreamPull,
-                    { streamId, size: 65535 /* 64kb by default */ },
-                  ),
-                )
-              },
-              close: () => {
-                serverStreams.remove(streamId)
-              },
-              readableStrategy: { highWaterMark: 0 },
-            })
-            serverStreams.add(streamId, stream)
-            return ({ signal }: { signal?: AbortSignal } = {}) => {
-              if (signal)
-                signal.addEventListener(
-                  'abort',
-                  () => {
-                    client.emitStreamEvent({
-                      direction: 'outgoing',
-                      streamType: 'server_blob',
-                      action: 'abort',
-                      streamId,
-                    })
-                    transport.send(
-                      protocol.encodeMessage(
-                        this,
-                        ClientMessageType.ServerStreamAbort,
-                        { streamId },
-                      ),
-                    )
-                    serverStreams.abort(streamId)
-                  },
-                  { once: true },
-                )
-              return stream
-            }
-          },
-          streamId: this.getStreamId.bind(this),
-        }
-        return this.transport.connect({
-          auth: this.auth,
-          application: this.options.application,
-          onMessage: this.onMessage.bind(this),
-          onConnect: this.onConnect.bind(this),
-          onDisconnect: this.onDisconnect.bind(this),
-        })
-      }
+    if (this.#disposed) {
+      return Promise.reject(new Error('Client is disposed'))
     }
 
-    let emitDisconnectOnFailure: 'server' | 'client' | (string & {}) | null =
-      null
+    if (this.#state === 'connected') return Promise.resolve()
+    if (this.#connecting) return this.#connecting
 
-    this.connecting = _connect()
-      .then(() => {
-        this._state = 'connected'
+    if (this.transport.type === ConnectionType.Unidirectional) {
+      return this.#handleConnected()
+    }
+
+    if (!this.#messageContextFactory) {
+      return Promise.reject(
+        new Error('Message context factory is not configured'),
+      )
+    }
+
+    this.#setState('connecting')
+    this.#cab = new AbortController()
+    this.messageContext = this.#messageContextFactory()
+
+    this.#connecting = this.transport
+      .connect({
+        auth: this.auth,
+        application: this.application,
+        onMessage: (message) => {
+          void this.#onMessage(message)
+        },
+        onConnect: () => {
+          void this.#handleConnected()
+        },
+        onDisconnect: (reason) => {
+          void this.#handleDisconnected(reason)
+        },
       })
-      .catch((error) => {
-        if (this.transport.type === ConnectionType.Bidirectional) {
-          emitDisconnectOnFailure = DEFAULT_RECONNECT_REASON
-        }
+      .catch(async (error) => {
+        this.messageContext = null
+        this.#cab = null
+        await this.#handleDisconnected(DEFAULT_CONNECT_ERROR_REASON)
         throw error
       })
       .finally(() => {
-        this.connecting = null
-
-        if (emitDisconnectOnFailure && !this._disposed) {
-          this._state = 'disconnected'
-          this._lastDisconnectReason = emitDisconnectOnFailure
-          void this.onDisconnect(emitDisconnectOnFailure)
-        }
+        this.#connecting = null
       })
 
-    return this.connecting
+    return this.#connecting
   }
 
-  async disconnect(options: { reconnect?: boolean; reason?: string } = {}) {
-    if (this.transport.type === ConnectionType.Bidirectional) {
-      // Ensure connect() won't short-circuit while the transport is closing.
-      this._state = 'disconnected'
-      this._lastDisconnectReason = 'client'
+  async disconnect(reason: ClientDisconnectReason = 'client') {
+    this.#cancelReconnectLoop()
 
-      if (options.reconnect) {
-        this.clientDisconnectAsReconnect = true
-        this.clientDisconnectOverrideReason = options.reason ?? 'server'
-      } else {
-        this.clientDisconnectAsReconnect = false
-        this.clientDisconnectOverrideReason = null
-      }
-
-      this.cab!.abort()
-      await this.transport.disconnect()
-      this.messageContext = null
-      this.cab = null
+    if (this.transport.type === ConnectionType.Unidirectional) {
+      await this.#handleDisconnected(reason)
+      return
     }
-  }
 
-  blob(
-    source: Blob | ReadableStream | string | AsyncIterable<Uint8Array>,
-    metadata?: ProtocolBlobMetadata,
-  ) {
-    return ProtocolBlob.from(source, metadata)
-  }
+    if (this.#state === 'idle' || this.#state === 'disconnected') {
+      this.#lastDisconnectReason = reason
+      this.#setState('disconnected')
+      return
+    }
 
-  protected async _call(
-    procedure: string,
-    payload: any,
-    options: ClientCallOptions = {},
-  ) {
-    const timeout = options.timeout ?? this.options.timeout
-    const controller = new AbortController()
+    this.#setState('disconnecting')
 
-    // attach all abort signals
-    const signals: AbortSignal[] = [controller.signal]
-
-    if (timeout) signals.push(AbortSignal.timeout(timeout))
-    if (options.signal) signals.push(options.signal)
-    if (this.cab?.signal) signals.push(this.cab.signal)
-
-    const signal = signals.length ? anyAbortSignal(...signals) : undefined
-
-    const callId = this.getCallId()
-    const call = createFuture() as ProtocolClientCall
-    call.procedure = procedure
-    call.signal = signal
-
-    this.calls.set(callId, call)
-    this.emitClientEvent({
-      kind: 'rpc_request',
-      timestamp: Date.now(),
-      callId,
-      procedure,
-      body: payload,
-    })
-
-    // Check if signal is already aborted before proceeding
-    if (signal?.aborted) {
-      this.calls.delete(callId)
-      const error = new ProtocolError(
-        ErrorCode.ClientRequestError,
-        signal.reason,
-      )
-      call.reject(error)
-    } else {
-      if (signal) {
-        signal.addEventListener(
-          'abort',
-          () => {
-            call.reject(
-              new ProtocolError(ErrorCode.ClientRequestError, signal!.reason),
-            )
-            if (
-              this.transport.type === ConnectionType.Bidirectional &&
-              this.messageContext
-            ) {
-              const buffer = this.protocol.encodeMessage(
-                this.messageContext,
-                ClientMessageType.RpcAbort,
-                { callId },
-              )
-              this.send(buffer).catch(noopFn)
-            }
-          },
-          { once: true },
-        )
-      }
-
+    if (this.#cab && !this.#cab.signal.aborted) {
       try {
-        const transformedPayload = this.transformer.encode(procedure, payload)
-        if (this.transport.type === ConnectionType.Bidirectional) {
-          const buffer = this.protocol.encodeMessage(
-            this.messageContext!,
-            ClientMessageType.Rpc,
-            { callId, procedure, payload: transformedPayload },
-          )
-          await this.send(buffer, signal)
-        } else {
-          const response = await this.transport.call(
-            {
-              application: this.options.application,
-              format: this.options.format,
-              auth: this.auth,
-            },
-            { callId, procedure, payload: transformedPayload },
-            { signal, _stream_response: options._stream_response },
-          )
-          this.handleCallResponse(callId, response)
-        }
-      } catch (error) {
-        this.emitClientEvent({
-          kind: 'rpc_error',
-          timestamp: Date.now(),
-          callId,
-          procedure,
-          error,
-        })
-        call.reject(error)
+        this.#cab.abort(reason)
+      } catch {
+        this.#cab.abort()
       }
     }
 
-    const result = call.promise.then(
-      (value) => {
-        if (value instanceof ProtocolServerRPCStream) {
-          return value.createAsyncIterable(() => {
-            controller.abort()
-          })
-        }
+    try {
+      await this.transport.disconnect()
 
-        if (options._stream_response && typeof value === 'function') {
-          return value
-        }
-
-        controller.abort()
-        return value
-      },
-      (err) => {
-        controller.abort()
-        throw err
-      },
-    )
-
-    if (this.options.safe) {
-      return await result
-        .then((result) => ({ result }))
-        .catch((error) => ({ error }))
-        .finally(() => {
-          this.calls.delete(callId)
-        })
-    } else {
-      return await result.finally(() => {
-        this.calls.delete(callId)
-      })
+      if (this.#state === 'disconnecting') {
+        await this.#handleDisconnected(reason)
+      }
+    } catch (error) {
+      await this.#handleDisconnected(reason)
+      throw error
     }
   }
 
-  protected async onConnect() {
-    this._state = 'connected'
-    this._lastDisconnectReason = 'server'
-    this.emitClientEvent({
-      kind: 'connected',
-      timestamp: Date.now(),
-      transportType:
-        this.transport.type === ConnectionType.Bidirectional
-          ? 'bidirectional'
-          : 'unidirectional',
-    })
-    for (const plugin of this.plugins) {
-      await plugin.onConnect?.()
+  requestReconnect(reason: ClientDisconnectReason = 'server') {
+    if (this.transport.type !== ConnectionType.Bidirectional) {
+      return Promise.resolve()
     }
-    this.emit('connected')
+
+    this.#clientDisconnectAsReconnect = true
+    this.#clientDisconnectOverrideReason = reason
+
+    return this.disconnect('client')
   }
 
-  protected async onDisconnect(reason: ClientDisconnectReason) {
-    const effectiveReason =
-      reason === 'client' && this.clientDisconnectAsReconnect
-        ? (this.clientDisconnectOverrideReason ?? 'server')
-        : reason
+  dispose() {
+    if (this.#disposed) return
 
-    this.clientDisconnectAsReconnect = false
-    this.clientDisconnectOverrideReason = null
-
-    this._state = 'disconnected'
-    this._lastDisconnectReason = effectiveReason
-    this.emitClientEvent({
-      kind: 'disconnected',
-      timestamp: Date.now(),
-      reason: effectiveReason,
-    })
-
-    // Connection is gone, never keep old message context around.
+    this.#disposed = true
+    this.#cancelReconnectLoop()
     this.messageContext = null
 
-    this.stopAllPendingPings(effectiveReason)
-
-    // Fail-fast: do not keep pending calls around across disconnects.
-    if (this.calls.size) {
-      const error = new ProtocolError(
-        ErrorCode.ConnectionError,
-        'Disconnected',
-        { reason: effectiveReason },
-      )
-      for (const call of this.calls.values()) {
-        call.reject(error)
-      }
-      this.calls.clear()
-    }
-
-    if (this.cab) {
+    if (this.#cab && !this.#cab.signal.aborted) {
       try {
-        this.cab.abort(reason)
+        this.#cab.abort('dispose')
       } catch {
-        this.cab.abort()
+        this.#cab.abort()
       }
-      this.cab = null
     }
 
-    this.emit('disconnected', effectiveReason)
-
-    for (let i = this.plugins.length - 1; i >= 0; i--) {
-      await this.plugins[i].onDisconnect?.(effectiveReason)
-    }
-
-    void this.clientStreams.clear(effectiveReason)
-    void this.serverStreams.clear(effectiveReason)
-    void this.rpcStreams.clear(effectiveReason)
-  }
-
-  protected nextPingNonce() {
-    if (this.pingNonce >= MAX_UINT32) this.pingNonce = 0
-    return this.pingNonce++
-  }
-
-  ping(timeout: number, signal?: AbortSignal) {
     if (
-      !this.messageContext ||
-      this.transport.type !== ConnectionType.Bidirectional
+      this.transport.type === ConnectionType.Bidirectional &&
+      (this.#state === 'connecting' || this.#state === 'connected')
     ) {
-      return Promise.reject(new Error('Client is not connected'))
+      void this.transport.disconnect().catch(noopFn)
     }
 
-    const nonce = this.nextPingNonce()
-    const future = createFuture<void>()
-    this.pendingPings.set(nonce, future)
-
-    const buffer = this.protocol.encodeMessage(
-      this.messageContext,
-      ClientMessageType.Ping,
-      { nonce },
-    )
-
-    return this.send(buffer, signal)
-      .then(() =>
-        withTimeout(future.promise, timeout, new Error('Heartbeat timeout')),
-      )
-      .finally(() => {
-        this.pendingPings.delete(nonce)
-      })
+    for (let i = this.#plugins.length - 1; i >= 0; i--) {
+      this.#plugins[i].dispose?.()
+    }
   }
 
-  protected stopAllPendingPings(reason?: any) {
-    if (!this.pendingPings.size) return
-    const error = new Error('Heartbeat stopped', { cause: reason })
-    for (const pending of this.pendingPings.values()) pending.reject(error)
-    this.pendingPings.clear()
+  send(buffer: ArrayBufferView, signal?: AbortSignal) {
+    if (this.transport.type !== ConnectionType.Bidirectional) {
+      throw new Error('Invalid transport type for send')
+    }
+
+    return this.transport.send(buffer, { signal })
   }
 
-  protected async onMessage(buffer: ArrayBufferView) {
+  transportCall(
+    context: TransportCallContext,
+    rpc: TransportRpcParams,
+    options: TransportCallOptions,
+  ): Promise<TransportCallResponse> {
+    if (this.transport.type !== ConnectionType.Unidirectional) {
+      throw new Error('Invalid transport type for call')
+    }
+
+    return this.transport.call(context, rpc, options)
+  }
+
+  emitClientEvent(event: ClientPluginEvent) {
+    for (const plugin of this.#plugins) {
+      try {
+        const result = plugin.onClientEvent?.(event)
+        Promise.resolve(result).catch(noopFn)
+      } catch {}
+    }
+  }
+
+  emitStreamEvent(event: StreamEvent) {
+    this.emitClientEvent({
+      kind: 'stream_event',
+      timestamp: Date.now(),
+      ...event,
+    })
+  }
+
+  async #onMessage(buffer: ArrayBufferView) {
     if (!this.messageContext) return
 
     const message = this.protocol.decodeMessage(this.messageContext, buffer)
-    for (const plugin of this.plugins) {
+
+    for (const plugin of this.#plugins) {
       plugin.onServerMessage?.(message, buffer)
     }
+
     this.emitClientEvent({
       kind: 'server_message',
       timestamp: Date.now(),
@@ -598,450 +371,170 @@ export abstract class BaseClient<
       body: message,
     })
 
-    switch (message.type) {
-      case ServerMessageType.RpcResponse:
-        this.handleRPCResponseMessage(message)
-        break
-      case ServerMessageType.RpcStreamResponse:
-        this.handleRPCStreamResponseMessage(message)
-        break
-      case ServerMessageType.Pong: {
-        const pending = this.pendingPings.get(message.nonce)
-        if (pending) {
-          this.pendingPings.delete(message.nonce)
-          pending.resolve()
-        }
-        this.emit('pong', message.nonce)
-        break
-      }
-      case ServerMessageType.Ping: {
-        if (this.messageContext) {
-          const buffer = this.protocol.encodeMessage(
-            this.messageContext,
-            ClientMessageType.Pong,
-            { nonce: message.nonce },
-          )
-          this.send(buffer).catch(noopFn)
-        }
-        break
-      }
-      case ServerMessageType.RpcStreamChunk:
-        this.emitStreamEvent({
-          direction: 'incoming',
-          streamType: 'rpc',
-          action: 'push',
-          callId: message.callId,
-          byteLength: message.chunk.byteLength,
-        })
-        this.rpcStreams.push(message.callId, message.chunk)
-        break
-      case ServerMessageType.RpcStreamEnd:
-        this.emitStreamEvent({
-          direction: 'incoming',
-          streamType: 'rpc',
-          action: 'end',
-          callId: message.callId,
-        })
-        this.rpcStreams.end(message.callId)
-        this.calls.delete(message.callId)
-        break
-      case ServerMessageType.RpcStreamAbort:
-        this.emitStreamEvent({
-          direction: 'incoming',
-          streamType: 'rpc',
-          action: 'abort',
-          callId: message.callId,
-          reason: message.reason,
-        })
-        this.rpcStreams.abort(message.callId)
-        this.calls.delete(message.callId)
-        break
-      case ServerMessageType.ServerStreamPush:
-        this.emitStreamEvent({
-          direction: 'incoming',
-          streamType: 'server_blob',
-          action: 'push',
-          streamId: message.streamId,
-          byteLength: message.chunk.byteLength,
-        })
-        this.serverStreams.push(message.streamId, message.chunk)
-        break
-      case ServerMessageType.ServerStreamEnd:
-        this.emitStreamEvent({
-          direction: 'incoming',
-          streamType: 'server_blob',
-          action: 'end',
-          streamId: message.streamId,
-        })
-        this.serverStreams.end(message.streamId)
-        break
-      case ServerMessageType.ServerStreamAbort:
-        this.emitStreamEvent({
-          direction: 'incoming',
-          streamType: 'server_blob',
-          action: 'abort',
-          streamId: message.streamId,
-          reason: message.reason,
-        })
-        this.serverStreams.abort(message.streamId)
-        break
-      case ServerMessageType.ClientStreamPull:
-        this.emitStreamEvent({
-          direction: 'incoming',
-          streamType: 'client_blob',
-          action: 'pull',
-          streamId: message.streamId,
-          byteLength: message.size,
-        })
-        this.clientStreams.pull(message.streamId, message.size).then(
-          (chunk) => {
-            if (chunk) {
-              this.emitStreamEvent({
-                direction: 'outgoing',
-                streamType: 'client_blob',
-                action: 'push',
-                streamId: message.streamId,
-                byteLength: chunk.byteLength,
-              })
-              const buffer = this.protocol.encodeMessage(
-                this.messageContext!,
-                ClientMessageType.ClientStreamPush,
-                { streamId: message.streamId, chunk },
-              )
-              this.send(buffer).catch(noopFn)
-            } else {
-              this.emitStreamEvent({
-                direction: 'outgoing',
-                streamType: 'client_blob',
-                action: 'end',
-                streamId: message.streamId,
-              })
-              const buffer = this.protocol.encodeMessage(
-                this.messageContext!,
-                ClientMessageType.ClientStreamEnd,
-                { streamId: message.streamId },
-              )
-              this.send(buffer).catch(noopFn)
-              this.clientStreams.end(message.streamId)
-            }
-          },
-          () => {
-            this.emitStreamEvent({
-              direction: 'outgoing',
-              streamType: 'client_blob',
-              action: 'abort',
-              streamId: message.streamId,
-            })
-            const buffer = this.protocol.encodeMessage(
-              this.messageContext!,
-              ClientMessageType.ClientStreamAbort,
-              { streamId: message.streamId },
-            )
-            this.send(buffer).catch(noopFn)
-            this.clientStreams.remove(message.streamId)
-          },
-        )
-        break
-      case ServerMessageType.ClientStreamAbort:
-        this.emitStreamEvent({
-          direction: 'incoming',
-          streamType: 'client_blob',
-          action: 'abort',
-          streamId: message.streamId,
-          reason: message.reason,
-        })
-        this.clientStreams.abort(message.streamId)
-        break
-    }
+    this.emit('message', message, buffer)
   }
 
-  private handleRPCResponseMessage(
-    message: ServerMessageTypePayload[ServerMessageType.RpcResponse],
-  ) {
-    const { callId, result, error } = message
-    const call = this.calls.get(callId)
-    if (!call) return
-    if (error) {
-      this.emitClientEvent({
-        kind: 'rpc_error',
-        timestamp: Date.now(),
-        callId,
-        procedure: call.procedure,
-        error,
-      })
-      call.reject(new ProtocolError(error.code, error.message, error.data))
-    } else {
-      try {
-        const transformed = this.transformer.decode(call.procedure, result)
-        this.emitClientEvent({
-          kind: 'rpc_response',
-          timestamp: Date.now(),
-          callId,
-          procedure: call.procedure,
-          body: transformed,
-        })
-        call.resolve(transformed)
-      } catch (error) {
-        this.emitClientEvent({
-          kind: 'rpc_error',
-          timestamp: Date.now(),
-          callId,
-          procedure: call.procedure,
-          error,
-        })
-        call.reject(
-          new ProtocolError(
-            ErrorCode.ClientRequestError,
-            'Unable to decode response',
-            error,
-          ),
-        )
-      }
-    }
-  }
+  async #handleConnected() {
+    this.#reconnectTimeout =
+      this.#reconnectConfig?.initialTimeout ?? DEFAULT_RECONNECT_TIMEOUT
+    this.#reconnectImmediate = false
 
-  private handleRPCStreamResponseMessage(
-    message: ServerMessageTypePayload[ServerMessageType.RpcStreamResponse],
-  ) {
-    const call = this.calls.get(message.callId)
-    if (message.error) {
-      if (!call) return
-      this.emitClientEvent({
-        kind: 'rpc_error',
-        timestamp: Date.now(),
-        callId: message.callId,
-        procedure: call.procedure,
-        error: message.error,
-      })
-      call.reject(
-        new ProtocolError(
-          message.error.code,
-          message.error.message,
-          message.error.data,
-        ),
-      )
-    } else {
-      if (call) {
-        const { procedure, signal } = call
-        this.emitClientEvent({
-          kind: 'rpc_response',
-          timestamp: Date.now(),
-          callId: message.callId,
-          procedure,
-          stream: true,
-        })
-        const stream = new ProtocolServerRPCStream({
-          start: (controller) => {
-            if (signal) {
-              if (signal.aborted) controller.error(signal.reason)
-              else
-                signal.addEventListener(
-                  'abort',
-                  () => {
-                    controller.error(signal.reason)
-                    if (this.rpcStreams.has(message.callId)) {
-                      this.rpcStreams.remove(message.callId)
-                      this.calls.delete(message.callId)
-                      if (this.messageContext) {
-                        const buffer = this.protocol.encodeMessage(
-                          this.messageContext,
-                          ClientMessageType.RpcAbort,
-                          { callId: message.callId, reason: signal.reason },
-                        )
-                        this.send(buffer).catch(noopFn)
-                      }
-                    }
-                  },
-                  { once: true },
-                )
-            }
-          },
-          transform: (chunk) => {
-            return this.transformer.decode(
-              procedure,
-              this.options.format.decode(chunk),
-            )
-          },
-          readableStrategy: { highWaterMark: 0 },
-        })
-        this.rpcStreams.add(message.callId, stream)
-        call.resolve(stream)
-      } else {
-        // Call not found, but stream response received
-        // This can happen if the call was aborted or timed out
-        // Need to send an abort for the stream to avoid resource leaks from server side
-        if (this.messageContext) {
-          const buffer = this.protocol.encodeMessage(
-            this.messageContext,
-            ClientMessageType.RpcAbort,
-            { callId: message.callId },
-          )
-          this.send(buffer).catch(noopFn)
-        }
-      }
-    }
-  }
+    this.#setState('connected')
+    this.#lastDisconnectReason = 'server'
 
-  private handleCallResponse(callId: number, response: ClientCallResponse) {
-    const call = this.calls.get(callId)
-
-    if (response.type === 'rpc_stream') {
-      if (call) {
-        this.emitClientEvent({
-          kind: 'rpc_response',
-          timestamp: Date.now(),
-          callId,
-          procedure: call.procedure,
-          stream: true,
-        })
-        const stream = new ProtocolServerStream({
-          transform: (chunk) => {
-            return this.transformer.decode(
-              call.procedure,
-              this.options.format.decode(chunk),
-            )
-          },
-        })
-        this.rpcStreams.add(callId, stream)
-        call.resolve(({ signal }: { signal?: AbortSignal }) => {
-          const reader = response.stream.getReader()
-
-          let onAbort: (() => void) | undefined
-          if (signal) {
-            onAbort = () => {
-              reader.cancel(signal.reason).catch(noopFn)
-              this.rpcStreams.abort(callId).catch(noopFn)
-            }
-            if (signal.aborted) onAbort()
-            else signal.addEventListener('abort', onAbort, { once: true })
-          }
-
-          void (async () => {
-            try {
-              while (true) {
-                const { done, value } = await reader.read()
-                if (done) break
-                await this.rpcStreams.push(callId, value)
-              }
-              await this.rpcStreams.end(callId)
-            } catch {
-              await this.rpcStreams.abort(callId).catch(noopFn)
-            } finally {
-              reader.releaseLock()
-              if (signal && onAbort) {
-                signal.removeEventListener('abort', onAbort)
-              }
-            }
-          })()
-
-          return stream
-        })
-      } else {
-        // Call not found, but stream response received
-        // This can happen if the call was aborted or timed out
-        // Need to cancel the stream to avoid resource leaks from server side
-        response.stream.cancel().catch(noopFn)
-      }
-    } else if (response.type === 'blob') {
-      if (call) {
-        this.emitClientEvent({
-          kind: 'rpc_response',
-          timestamp: Date.now(),
-          callId,
-          procedure: call.procedure,
-          stream: true,
-        })
-        const { metadata, source } = response
-        const stream = new ProtocolServerBlobStream(metadata)
-        this.serverStreams.add(this.getStreamId(), stream)
-        call.resolve(({ signal }: { signal?: AbortSignal }) => {
-          source.pipeTo(stream.writable, { signal }).catch(noopFn)
-          return stream
-        })
-      } else {
-        // Call not found, but blob response received
-        // This can happen if the call was aborted or timed out
-        // Need to cancel the stream to avoid resource leaks from server side
-        response.source.cancel().catch(noopFn)
-      }
-    } else if (response.type === 'rpc') {
-      if (!call) return
-      try {
-        const decodedPayload =
-          response.result.byteLength === 0
-            ? undefined
-            : this.options.format.decode(response.result)
-
-        const transformed = this.transformer.decode(
-          call.procedure,
-          decodedPayload,
-        )
-        this.emitClientEvent({
-          kind: 'rpc_response',
-          timestamp: Date.now(),
-          callId,
-          procedure: call.procedure,
-          body: transformed,
-        })
-        call.resolve(transformed)
-      } catch (error) {
-        this.emitClientEvent({
-          kind: 'rpc_error',
-          timestamp: Date.now(),
-          callId,
-          procedure: call.procedure,
-          error,
-        })
-        call.reject(
-          new ProtocolError(
-            ErrorCode.ClientRequestError,
-            'Unable to decode response',
-            error,
-          ),
-        )
-      }
-    }
-  }
-
-  protected send(buffer: ArrayBufferView, signal?: AbortSignal) {
-    if (this.transport.type === ConnectionType.Unidirectional)
-      throw new Error('Invalid transport type for send')
-    return this.transport.send(buffer, { signal })
-  }
-
-  protected emitStreamEvent(
-    event: Omit<
-      Extract<ClientPluginEvent, { kind: 'stream_event' }>,
-      'kind' | 'timestamp'
-    >,
-  ) {
     this.emitClientEvent({
-      kind: 'stream_event',
+      kind: 'connected',
       timestamp: Date.now(),
-      ...event,
+      transportType:
+        this.transport.type === ConnectionType.Bidirectional
+          ? 'bidirectional'
+          : 'unidirectional',
     })
+
+    for (const plugin of this.#plugins) {
+      await plugin.onConnect?.()
+    }
+
+    this.emit('connected')
   }
 
-  protected getStreamId() {
-    if (this.streamId >= MAX_UINT32) {
-      this.streamId = 0
+  async #handleDisconnected(reason: ClientDisconnectReason) {
+    const effectiveReason =
+      reason === 'client' && this.#clientDisconnectAsReconnect
+        ? (this.#clientDisconnectOverrideReason ?? 'server')
+        : reason
+
+    this.#clientDisconnectAsReconnect = false
+    this.#clientDisconnectOverrideReason = null
+
+    const shouldSkip =
+      this.#state === 'disconnected' &&
+      this.messageContext === null &&
+      this.#lastDisconnectReason === effectiveReason
+
+    this.messageContext = null
+
+    if (this.#cab) {
+      if (!this.#cab.signal.aborted) {
+        try {
+          this.#cab.abort(reason)
+        } catch {
+          this.#cab.abort()
+        }
+      }
+      this.#cab = null
     }
-    return this.streamId++
+
+    if (shouldSkip) return
+
+    this.#lastDisconnectReason = effectiveReason
+    this.#setState('disconnected')
+
+    this.emitClientEvent({
+      kind: 'disconnected',
+      timestamp: Date.now(),
+      reason: effectiveReason,
+    })
+
+    this.emit('disconnected', effectiveReason)
+
+    for (let i = this.#plugins.length - 1; i >= 0; i--) {
+      await this.#plugins[i].onDisconnect?.(effectiveReason)
+    }
+
+    if (this.#shouldReconnect(effectiveReason)) {
+      this.#ensureReconnectLoop()
+    }
   }
 
-  protected getCallId() {
-    if (this.callId >= MAX_UINT32) {
-      this.callId = 0
-    }
-    return this.callId++
+  #setState(next: ConnectionState) {
+    if (next === this.#state) return
+
+    const previous = this.#state
+    this.#state = next
+
+    this.emitClientEvent({
+      kind: 'state_changed',
+      timestamp: Date.now(),
+      state: next,
+      previous,
+    })
+
+    this.emit('state_changed', next, previous)
   }
 
-  protected emitClientEvent(event: ClientPluginEvent) {
-    for (const plugin of this.plugins) {
-      try {
-        const result = plugin.onClientEvent?.(event)
-        Promise.resolve(result).catch(noopFn)
-      } catch {}
-    }
+  #shouldReconnect(reason: ClientDisconnectReason) {
+    return (
+      !this.#disposed &&
+      !!this.#reconnectConfig &&
+      this.transport.type === ConnectionType.Bidirectional &&
+      reason !== 'client'
+    )
+  }
+
+  #cancelReconnectLoop() {
+    this.#reconnectImmediate = false
+    this.#reconnectController?.abort()
+    this.#reconnectController = null
+    this.#reconnectPromise = null
+  }
+
+  #ensureReconnectLoop() {
+    if (this.#reconnectPromise || !this.#reconnectConfig) return
+
+    const signal = new AbortController()
+    this.#reconnectController = signal
+
+    this.#reconnectPromise = (async () => {
+      while (
+        !signal.signal.aborted &&
+        !this.#disposed &&
+        this.#reconnectConfig &&
+        (this.#state === 'disconnected' || this.#state === 'idle') &&
+        this.#lastDisconnectReason !== 'client'
+      ) {
+        if (this.#reconnectPauseReasons.size) {
+          await sleep(1000, signal.signal)
+          continue
+        }
+
+        const delay = this.#reconnectImmediate
+          ? 0
+          : computeReconnectDelay(this.#reconnectTimeout)
+        this.#reconnectImmediate = false
+
+        if (delay > 0) {
+          await sleep(delay, signal.signal)
+        }
+
+        const currentState = this.state
+
+        if (
+          signal.signal.aborted ||
+          this.#disposed ||
+          !this.#reconnectConfig ||
+          currentState === 'connected' ||
+          currentState === 'connecting'
+        ) {
+          break
+        }
+
+        const previousTimeout = this.#reconnectTimeout
+
+        await this.connect().catch(noopFn)
+
+        if (this.state !== 'connected' && this.#reconnectConfig) {
+          this.#reconnectTimeout = Math.min(
+            previousTimeout * 2,
+            this.#reconnectConfig.maxTimeout ?? DEFAULT_MAX_RECONNECT_TIMEOUT,
+          )
+        }
+      }
+    })().finally(() => {
+      if (this.#reconnectController === signal) {
+        this.#reconnectController = null
+      }
+      this.#reconnectPromise = null
+    })
   }
 }
