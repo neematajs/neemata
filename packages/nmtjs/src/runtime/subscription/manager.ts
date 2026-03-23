@@ -11,27 +11,27 @@ import type { Container, Logger } from '@nmtjs/core'
 import type { t } from '@nmtjs/type'
 import { isAbortError } from '@nmtjs/common'
 
-import { pubSubAdapter } from '../injectables.ts'
+import { subscriptionAdapter } from '../injectables.ts'
 
-export type PubSubAdapterEvent = { channel: string; payload: any }
+export type SubscriptionAdapterEvent = { channel: string; payload: any }
 
-export interface PubSubAdapterType {
+export interface SubscriptionAdapterType {
   publish(channel: string, payload: any): Promise<boolean>
   subscribe(
     channel: string,
     signal?: AbortSignal,
-  ): AsyncGenerator<PubSubAdapterEvent>
+  ): AsyncGenerator<SubscriptionAdapterEvent>
   initialize(): Promise<void>
   dispose(): Promise<void>
 }
 
-export type PubSubChannel = {
+export type SubscriptionChannel = {
   stream: Readable
   subscription: TAnySubscriptionContract
   event: TAnyEventContract
 }
 
-export type PubSubSubscribe = <
+export type SubscribeFn = <
   Contract extends TAnySubscriptionContract,
   Events extends {
     [K in keyof Contract['events']]?: true
@@ -63,7 +63,7 @@ export type PubSubSubscribe = <
   }
 >
 
-export type PubSubPublish = <
+export type PublishFn = <
   S extends TAnySubscriptionContract,
   E extends S['events'][keyof S['events']],
 >(
@@ -72,29 +72,35 @@ export type PubSubPublish = <
   data: t.infer.decode.input<E['payload']>,
 ) => Promise<boolean>
 
-export type PubSubManagerOptions = { logger: Logger; container: Container }
+export type SubscriptionManagerOptions = {
+  logger: Logger
+  container: Container
+}
 
-export class PubSubManager {
-  readonly subscriptions = new Map<string, PubSubChannel>()
+export class SubscriptionManager {
+  readonly subscriptions = new Map<string, SubscriptionChannel>()
+  protected readonly logger: Logger
 
-  constructor(protected readonly options: PubSubManagerOptions) {}
-
-  protected get adapter() {
-    return this.options.container.resolve(pubSubAdapter)
+  constructor(protected readonly options: SubscriptionManagerOptions) {
+    this.logger = options.logger.child({ component: SubscriptionManager.name })
   }
 
-  subscribe: PubSubSubscribe = async (
-    subscription,
-    events,
-    options,
-    signal,
-  ) => {
+  protected get adapter() {
+    return this.options.container.resolve(subscriptionAdapter)
+  }
+
+  subscribe: SubscribeFn = async (subscription, events, options, signal) => {
     const adapter = await this.adapter
 
     const eventKeys =
       Object.keys(events).length === 0
         ? Object.keys(subscription.events)
         : Object.keys(events)
+
+    this.logger.debug(
+      { subscription: subscription.name, eventCount: eventKeys.length },
+      'Opening subscription',
+    )
 
     const streams = Array(eventKeys.length)
 
@@ -103,44 +109,115 @@ export class PubSubManager {
       const channel = getChannelName(event, options)
       if (this.subscriptions.has(channel)) {
         streams[index] = this.subscriptions.get(channel)!.stream
+        this.logger.trace(
+          {
+            channel,
+            event: event.name,
+            activeChannels: this.subscriptions.size,
+          },
+          'Reusing pubsub channel stream',
+        )
       } else {
         const iterable = adapter.subscribe(channel, signal)
         const stream = this.createEventStream(iterable)
-        stream.on('close', () => this.subscriptions.delete(channel))
+        stream.on('close', () => {
+          this.subscriptions.delete(channel)
+          this.logger.debug(
+            {
+              channel,
+              event: event.name,
+              activeChannels: this.subscriptions.size,
+            },
+            'Pubsub channel stream closed',
+          )
+        })
+        stream.on('error', (error) => {
+          this.logger.warn(
+            { channel, event: event.name, error },
+            'Pubsub channel stream failed',
+          )
+        })
         streams[index] = stream
         this.subscriptions.set(channel, { subscription, event, stream })
+        this.logger.debug(
+          {
+            channel,
+            event: event.name,
+            activeChannels: this.subscriptions.size,
+          },
+          'Creating channel stream',
+        )
       }
     }
 
-    return mergeEventStreams(streams, signal)
+    const mergedStream = mergeEventStreams(streams, signal)
+
+    mergedStream.once('close', () => {
+      this.logger.debug(
+        { subscription: subscription.name, eventCount: eventKeys.length },
+        'Pubsub subscription stream closed',
+      )
+    })
+    mergedStream.once('error', (error) => {
+      this.logger.warn(
+        {
+          subscription: subscription.name,
+          eventCount: eventKeys.length,
+          error,
+        },
+        'Pubsub subscription stream failed',
+      )
+    })
+
+    return mergedStream
   }
 
-  publish: PubSubPublish = async (event, options, data) => {
+  publish: PublishFn = async (event, options, data) => {
     const adapter = await this.adapter
 
     const channel = getChannelName(event, options)
 
+    this.logger.trace({ channel, event: event.name }, 'Publishing pubsub event')
+
     try {
       const payload = event.payload.encode(data)
-      return await adapter.publish(channel, payload)
+      const published = await adapter.publish(channel, payload)
+
+      if (published) {
+        this.logger.trace(
+          { channel, event: event.name },
+          'Published pubsub event',
+        )
+      } else {
+        this.logger.warn(
+          { channel, event: event.name },
+          'Pubsub adapter reported publish failure',
+        )
+      }
+
+      return published
     } catch (error: any) {
-      this.options.logger.error(
-        `Failed to publish event "${event.name}" on channel "${channel}": ${error.message}`,
+      this.logger.error(
+        { channel, event: event.name, error },
+        'Failed to publish pubsub event',
       )
-      return Promise.reject(error)
+      throw error
     }
   }
 
   private createEventStream(
-    iterable: AsyncGenerator<PubSubAdapterEvent>,
+    iterable: AsyncGenerator<SubscriptionAdapterEvent>,
   ): Readable {
     const { subscriptions } = this
+    const logger = this.logger
+
     return new Readable({
       objectMode: true,
       read() {
         iterable.next().then(
           ({ value, done }) => {
             if (done) {
+              logger.trace('Pubsub adapter stream ended')
               this.push(null)
             } else {
               const subscription = subscriptions.get(value.channel)
@@ -148,17 +225,32 @@ export class PubSubManager {
                 const { event } = subscription
                 try {
                   const data = event.payload.decode(value.payload)
+                  logger.trace(
+                    { channel: value.channel, event: event.name },
+                    'Received event',
+                  )
                   this.push({ event: event.name, data })
                 } catch (error: any) {
+                  logger.warn(
+                    { channel: value.channel, event: event.name, error },
+                    'Failed to decode pubsub event payload',
+                  )
                   this.destroy(error)
                 }
+              } else {
+                logger.trace(
+                  { channel: value.channel },
+                  'Dropped pubsub event for inactive channel',
+                )
               }
             }
           },
           (error) => {
             if (isAbortError(error)) {
+              logger.trace('Pubsub adapter stream aborted')
               this.push(null)
             } else {
+              logger.warn({ error }, 'Pubsub adapter stream failed')
               this.destroy(error)
             }
           },
