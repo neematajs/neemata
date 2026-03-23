@@ -205,6 +205,7 @@ describe('ClientCore', () => {
 
   it('reconnects after a server disconnect when reconnect is configured', async () => {
     vi.useFakeTimers()
+    const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0)
 
     try {
       const transport = createBidirectionalTransportDouble()
@@ -229,6 +230,7 @@ describe('ClientCore', () => {
       expect(transport.transport.connect).toHaveBeenCalledTimes(2)
       expect(core.state).toBe('connecting')
     } finally {
+      randomSpy.mockRestore()
       vi.useRealTimers()
     }
   })

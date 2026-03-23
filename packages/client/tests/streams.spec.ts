@@ -102,7 +102,8 @@ describe('ClientStreams', () => {
       const error = new Error('Test abort')
       await streams.abort(5, error)
 
-      expect(cancel).toHaveBeenCalledWith(error)
+      expect(cancel).toHaveBeenCalledTimes(1)
+      expect(cancel.mock.calls[0]?.[0]).toBe(error)
       expect(() => streams.get(5)).toThrow('Stream not found')
     })
 
@@ -129,8 +130,10 @@ describe('ClientStreams', () => {
       const error = new Error('Clear all')
       await streams.clear(error)
 
-      expect(cancelA).toHaveBeenCalledWith(error)
-      expect(cancelB).toHaveBeenCalledWith(error)
+      expect(cancelA).toHaveBeenCalledTimes(1)
+      expect(cancelB).toHaveBeenCalledTimes(1)
+      expect(cancelA.mock.calls[0]?.[0]).toBe(error)
+      expect(cancelB.mock.calls[0]?.[0]).toBe(error)
       expect(() => streams.get(7)).toThrow('Stream not found')
       expect(() => streams.get(8)).toThrow('Stream not found')
     })

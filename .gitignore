@@ -1,3 +1,5 @@
+.vitest-attachments/
+__screenshots__/
 .neemata/
 test.*
 _dev/

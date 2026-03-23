@@ -11,11 +11,12 @@ import {
 describe('heartbeatPlugin', () => {
   beforeEach(() => {
     vi.useFakeTimers()
+    vi.spyOn(Math, 'random').mockReturnValue(0)
   })
 
   afterEach(() => {
     vi.useRealTimers()
-    vi.clearAllMocks()
+    vi.restoreAllMocks()
   })
 
   it('forces reconnect when pong is not received in time', async () => {

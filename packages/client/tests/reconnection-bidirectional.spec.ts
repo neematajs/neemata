@@ -10,11 +10,12 @@ import {
 describe('reconnectPlugin (bidirectional)', () => {
   beforeEach(() => {
     vi.useFakeTimers()
+    vi.spyOn(Math, 'random').mockReturnValue(0)
   })
 
   afterEach(() => {
     vi.useRealTimers()
-    vi.clearAllMocks()
+    vi.restoreAllMocks()
   })
 
   it('does not reconnect when reconnect plugin is not installed', async () => {
