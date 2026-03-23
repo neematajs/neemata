@@ -3,12 +3,16 @@ import { defineProject } from 'vitest/config'
 
 export default defineProject({
   test: {
-    include: ['tests/**/*.browser.spec.ts'],
+    include: ['packages/client/tests/**/*.browser.spec.ts'],
     browser: {
       enabled: true,
       headless: true,
       provider: playwright(),
-      instances: [{ browser: 'chromium' }],
+      instances: [
+        { browser: 'chromium' },
+        { browser: 'firefox' },
+        { browser: 'webkit' },
+      ],
     },
   },
 })
