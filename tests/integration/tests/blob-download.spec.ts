@@ -308,6 +308,10 @@ describe('Blob Download (Server → Client)', () => {
       })
 
       // Access metadata before consuming
+      expect(getBlobStream.metadata.type).toBe('text/markdown')
+      expect(getBlobStream.metadata.filename).toBe('readme.md')
+      expect(getBlobStream.metadata.size).toBe(content.length)
+
       const blobStream = getBlobStream()
       expect(blobStream.metadata.type).toBe('text/markdown')
       expect(blobStream.metadata.filename).toBe('readme.md')

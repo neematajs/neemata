@@ -1,16 +1,17 @@
 import { c } from '@nmtjs/contract'
-import { ConnectionType, ServerMessageType } from '@nmtjs/protocol'
+import { ServerMessageType } from '@nmtjs/protocol'
 import { t } from '@nmtjs/type'
 import { describe, expect, it, vi } from 'vitest'
 
-import type { BaseClientOptions } from '../src/core.ts'
+import type { BaseClientOptions } from '../src/client.ts'
 import type { ClientLogEvent } from '../src/plugins/logging.ts'
-import type {
-  ClientTransportFactory,
-  ClientTransportStartParams,
-} from '../src/transport.ts'
 import { StaticClient } from '../src/clients/static.ts'
 import { loggingPlugin } from '../src/plugins/logging.ts'
+import {
+  createMockBidirectionalTransport,
+  createMockUnidirectionalTransport,
+  mockFormat,
+} from './_helpers/transports.ts'
 
 const testContract = c.router({
   routes: {
@@ -41,84 +42,10 @@ const testContract = c.router({
   },
 })
 
-class TestStaticClient<
-  Transport extends ClientTransportFactory<any, any>,
-> extends StaticClient<Transport, typeof testContract> {
-  emitTestEvent(event: ClientLogEvent) {
-    this.emitClientEvent(event)
-  }
-
-  async emitDecodedServerMessage(message: unknown, raw: ArrayBufferView) {
-    const protocol = this.protocol
-    const originalDecodeMessage = protocol.decodeMessage
-    protocol.decodeMessage = (() => message) as typeof protocol.decodeMessage
-
-    try {
-      await this.onMessage(raw)
-    } finally {
-      protocol.decodeMessage = originalDecodeMessage
-    }
-  }
-}
-
-const createMockUnidirectionalTransport = () => {
-  const transport = {
-    type: ConnectionType.Unidirectional as const,
-    call: vi.fn(async (context, input, _options) => ({
-      type: 'rpc' as const,
-      result: context.format.encode({ ok: true, echoed: input.payload }),
-    })),
-  }
-
-  return { transport, factory: () => transport }
-}
-
-const createMockBidirectionalTransport = () => {
-  let connectHandler: ClientTransportStartParams | null = null
-  let connectResolve: (() => void) | null = null
-
-  const transport = {
-    type: ConnectionType.Bidirectional as const,
-    connect: vi.fn(async (params: ClientTransportStartParams) => {
-      connectHandler = params
-      return new Promise<void>((resolve) => {
-        connectResolve = resolve
-      })
-    }),
-    disconnect: vi.fn(async () => {
-      connectHandler?.onDisconnect?.('client')
-    }),
-    send: vi.fn(async () => {}),
-  }
-
-  return {
-    transport,
-    factory: () => transport,
-    simulateConnect: () => {
-      if (connectResolve) {
-        connectResolve()
-        connectHandler?.onConnect?.()
-      }
-    },
-  }
-}
-
-const mockFormat = {
-  contentType: 'test',
-  encode: vi.fn((data) => new TextEncoder().encode(JSON.stringify(data))),
-  decode: vi.fn((data) =>
-    JSON.parse(new TextDecoder().decode(data as ArrayBufferView)),
-  ),
-  encodeRPC: vi.fn((data) => new TextEncoder().encode(JSON.stringify(data))),
-  decodeRPC: vi.fn((data) =>
-    JSON.parse(new TextDecoder().decode(data as ArrayBufferView)),
-  ),
-}
-
 const baseOptions: BaseClientOptions<typeof testContract> = {
   contract: testContract,
   protocol: 1,
-  format: mockFormat as any,
+  format: mockFormat,
 }
 
 describe('loggingPlugin', () => {
@@ -126,7 +53,7 @@ describe('loggingPlugin', () => {
     const emitted: ClientLogEvent[] = []
 
     const { factory } = createMockUnidirectionalTransport()
-    const client = new TestStaticClient(
+    const client = new StaticClient(
       {
         ...baseOptions,
         plugins: [
@@ -158,7 +85,7 @@ describe('loggingPlugin', () => {
     const emitted: ClientLogEvent[] = []
 
     const { factory } = createMockUnidirectionalTransport()
-    const client = new TestStaticClient(
+    const client = new StaticClient(
       {
         ...baseOptions,
         plugins: [
@@ -174,7 +101,7 @@ describe('loggingPlugin', () => {
     )
 
     await client.call.account.get({ token: 'secret' })
-    client.emitTestEvent({
+    client.core.emitClientEvent({
       kind: 'server_message',
       timestamp: Date.now(),
       messageType: 1,
@@ -202,7 +129,7 @@ describe('loggingPlugin', () => {
 
     const payload = { token: 'keep-me' }
     const { factory } = createMockUnidirectionalTransport()
-    const client = new TestStaticClient(
+    const client = new StaticClient(
       {
         ...baseOptions,
         plugins: [
@@ -219,7 +146,7 @@ describe('loggingPlugin', () => {
     )
 
     await client.call.account.get(payload)
-    client.emitTestEvent({
+    client.core.emitClientEvent({
       kind: 'server_message',
       timestamp: Date.now(),
       messageType: 2,
@@ -255,7 +182,7 @@ describe('loggingPlugin', () => {
       })
 
     const { factory } = createMockUnidirectionalTransport()
-    const client = new TestStaticClient(
+    const client = new StaticClient(
       {
         ...baseOptions,
         plugins: [loggingPlugin({ includeBodies: true, onEvent, onSinkError })],
@@ -276,7 +203,7 @@ describe('loggingPlugin', () => {
     const emitted: ClientLogEvent[] = []
 
     const { factory } = createMockUnidirectionalTransport()
-    const client = new TestStaticClient(
+    const client = new StaticClient(
       {
         ...baseOptions,
         plugins: [
@@ -299,11 +226,11 @@ describe('loggingPlugin', () => {
     expect(emitted.some((event) => event.kind === 'rpc_response')).toBe(true)
   })
 
-  it('emits server_message through onClientEvent hook', async () => {
+  it('emits server_message through core message handling', async () => {
     const emitted: ClientLogEvent[] = []
 
-    const { factory, simulateConnect } = createMockBidirectionalTransport()
-    const client = new TestStaticClient(
+    const transport = createMockBidirectionalTransport()
+    const client = new StaticClient(
       {
         ...baseOptions,
         plugins: [
@@ -315,20 +242,19 @@ describe('loggingPlugin', () => {
           }),
         ],
       },
-      factory,
+      transport.factory,
       {},
     )
 
     const connectPromise = client.connect()
-    simulateConnect()
+    transport.simulateConnect()
     await connectPromise
 
     const decodedMessage = { type: 4, nonce: 1, payload: { hello: 'world' } }
+    ;(client.core.protocol as any).decodeMessage = () => decodedMessage
 
-    await client.emitDecodedServerMessage(
-      decodedMessage,
-      new Uint8Array([1, 2, 3]),
-    )
+    transport.emitMessage(new Uint8Array([1, 2, 3]))
+    await Promise.resolve()
 
     const serverMessageEvent = emitted.find(
       (event) => event.kind === 'server_message',
@@ -336,18 +262,14 @@ describe('loggingPlugin', () => {
 
     expect(serverMessageEvent).toBeDefined()
     expect(serverMessageEvent.rawByteLength).toBe(3)
-    expect(serverMessageEvent.body).toEqual({
-      type: 4,
-      nonce: 1,
-      payload: { hello: 'world' },
-    })
+    expect(serverMessageEvent.body).toEqual(decodedMessage)
   })
 
   it('emits stream_event for incoming server stream chunk', async () => {
     const emitted: ClientLogEvent[] = []
 
-    const { factory, simulateConnect } = createMockBidirectionalTransport()
-    const client = new TestStaticClient(
+    const transport = createMockBidirectionalTransport()
+    const client = new StaticClient(
       {
         ...baseOptions,
         plugins: [
@@ -359,22 +281,22 @@ describe('loggingPlugin', () => {
           }),
         ],
       },
-      factory,
+      transport.factory,
       {},
     )
 
     const connectPromise = client.connect()
-    simulateConnect()
+    transport.simulateConnect()
     await connectPromise
 
-    await client.emitDecodedServerMessage(
-      {
-        type: ServerMessageType.ServerStreamPush,
-        streamId: 7,
-        chunk: new Uint8Array([1, 2, 3]),
-      },
-      new Uint8Array([1, 2, 3, 4]),
-    )
+    ;(client.core.protocol as any).decodeMessage = () => ({
+      type: ServerMessageType.ServerStreamPush,
+      streamId: 7,
+      chunk: new Uint8Array([1, 2, 3]),
+    })
+
+    transport.emitMessage(new Uint8Array([1, 2, 3, 4]))
+    await Promise.resolve()
 
     const streamEvent = emitted.find(
       (event) => event.kind === 'stream_event',

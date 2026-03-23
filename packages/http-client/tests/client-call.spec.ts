@@ -129,4 +129,31 @@ describe('HttpTransportClient + StaticClient', () => {
     expect(rpcResponse?.body).toEqual({ ok: true, echoed: payload })
     expect(ArrayBuffer.isView(rpcResponse?.body)).toBe(false)
   })
+
+  it('maps non-ok responses into client protocol errors', async () => {
+    const format = new TestJsonFormat()
+    const fetchSpy = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(
+        new Response(
+          format.encode({ code: 'BAD_REQUEST', message: 'Nope' }) as any,
+          {
+            status: 400,
+            statusText: 'Bad Request',
+            headers: { 'content-type': format.contentType },
+          },
+        ),
+      )
+
+    const client = new StaticClient(
+      { contract: {} as any, protocol: ProtocolVersion.v1, format },
+      HttpTransportFactory,
+      { url: 'http://localhost:4000', fetch: fetchSpy },
+    )
+
+    await expect((client.call as any).nope(undefined)).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'Nope',
+    })
+  })
 })

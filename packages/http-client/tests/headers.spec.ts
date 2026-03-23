@@ -38,8 +38,8 @@ describe('HttpTransportClient headers', () => {
     })
 
     await transport.call(
-      { format },
-      { callId: 1, procedure: 'ping', payload: { ok: true } },
+      { contentType: format.contentType },
+      { callId: 1, procedure: 'ping', payload: new Uint8Array([1]) },
       {},
     )
 
@@ -48,5 +48,42 @@ describe('HttpTransportClient headers', () => {
 
     expect(headers.get('accept')).toBe(format.contentType)
     expect(headers.get('content-type')).toBe(format.contentType)
+  })
+
+  it('sends blob upload requests with blob content type header', async () => {
+    const format = new TestFormat()
+    const fetchSpy = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(new Response(new Uint8Array([1]), { status: 200 }))
+
+    const transport = new HttpTransportClient(format, ProtocolVersion.v1, {
+      url: 'http://localhost:4000',
+      fetch: fetchSpy,
+    })
+
+    const source = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array([9]))
+        controller.close()
+      },
+    })
+
+    await transport.call(
+      { contentType: format.contentType },
+      {
+        callId: 1,
+        procedure: 'upload',
+        payload: new Uint8Array(0),
+        blob: { source, metadata: { type: 'application/octet-stream' } },
+      },
+      {},
+    )
+
+    const [, requestInit] = fetchSpy.mock.calls[0]
+    const headers = requestInit?.headers as Headers
+
+    expect(headers.get('content-type')).toBe('application/octet-stream')
+    expect(headers.get('x-neemata-blob')).toBe('true')
+    expect(requestInit?.body).toBe(source)
   })
 })

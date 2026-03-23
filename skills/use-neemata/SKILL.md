@@ -1,18 +1,20 @@
 ---
 name: use-neemata
-description: 'Answer questions about the Neemata framework and help build RPC-based applications with bidirectional streaming, dependency injection, and multi-runtime support. Use when developers: (1) Ask about Neemata APIs like n.procedure, n.router, n.rootRouter, n.app, n.server, n.guard, n.guardFactory, n.middleware, n.factory, (2) Want to build RPC servers, streaming endpoints, background jobs, or type-safe clients, (3) Have questions about dependency injection scopes, transports (WS/HTTP), contracts, blobs, typed guards, or the protocol layer, (4) Use the nmtjs package or @nmtjs/* packages. Triggers on: "neemata", "nmtjs", "n.procedure", "n.router", "n.rootRouter", "n.app", "n.server", "createProcedure", "RPC framework", "ProtocolBlob", "t.object", "c.procedure", "n.guard", "n.guardFactory", "typed guard", "n.middleware", "n.factory", "defineApplication", "defineServer", "defineConfig".'
+description: 'Answer questions about the Neemata framework and help build RPC-based applications with bidirectional streaming, dependency injection, and multi-runtime support. Use when developers: (1) Ask about Neemata APIs like n.procedure, n.router, n.rootRouter, n.app, n.server, n.guard, n.guardFactory, n.middleware, n.factory, (2) Want to build RPC servers, streaming endpoints, background jobs, or type-safe clients, (3) Have questions about dependency injection scopes, transports (WS/HTTP), contracts, blobs, typed guards, or the protocol layer, (4) Use the nmtjs package or @nmtjs/* packages including @nmtjs/client, @nmtjs/ws-client, and @nmtjs/http-client. Triggers on: "neemata", "nmtjs", "@nmtjs/client", "StaticClient", "RuntimeClient", "WsTransportClient", "HttpTransportClient", "n.procedure", "n.router", "n.rootRouter", "n.app", "n.server", "createProcedure", "RPC framework", "ProtocolBlob", "t.object", "c.procedure", "n.guard", "n.guardFactory", "typed guard", "n.middleware", "n.factory", "defineApplication", "defineServer", "defineConfig".'
 ---
 
 ## Prerequisites
 
-Before working with a Neemata project, check if `node_modules/nmtjs` exists. If
-not, install the `nmtjs` package using the project's package manager (e.g.,
-`pnpm add nmtjs`).
+Before working with a Neemata project, check whether the relevant public
+packages are installed:
 
-Do not install internal `@nmtjs/*` packages directly. The `nmtjs` umbrella
-package re-exports everything users need. Transport packages
-(`@nmtjs/ws-transport`, `@nmtjs/http-transport`) are separate dependencies for
-server-side application definitions only:
+- Server / application definitions: `node_modules/nmtjs`
+- Client runtime: `node_modules/@nmtjs/client`
+
+For server-side code, prefer the `nmtjs` umbrella package. Do not install most
+internal `@nmtjs/*` packages directly for application/router/DI usage. Server
+transport packages (`@nmtjs/ws-transport`, `@nmtjs/http-transport`) remain
+separate dependencies for application definitions:
 
 ```bash
 pnpm add nmtjs @nmtjs/ws-transport @nmtjs/http-transport
@@ -21,7 +23,9 @@ pnpm add nmtjs @nmtjs/ws-transport @nmtjs/http-transport
 For client-side usage, install:
 
 ```bash
-pnpm add nmtjs @nmtjs/ws-client    # or @nmtjs/http-client
+pnpm add @nmtjs/client @nmtjs/ws-client @nmtjs/json-format
+# or
+pnpm add @nmtjs/client @nmtjs/http-client @nmtjs/json-format
 ```
 
 ## Finding Documentation
@@ -29,6 +33,8 @@ pnpm add nmtjs @nmtjs/ws-client    # or @nmtjs/http-client
 Search source code in `node_modules/nmtjs/`:
 
 - **Public API**: `grep -r "query" node_modules/nmtjs/src/`
+- **Client API**: `grep -r "query" node_modules/@nmtjs/client/src/`
+- **Client transports**: `grep -r "query" node_modules/@nmtjs/ws-client/ node_modules/@nmtjs/http-client/`
 - **Core DI**: `grep -r "query" node_modules/@nmtjs/core/src/`
 - **Contract types**: `grep -r "query" node_modules/@nmtjs/contract/src/`
 - **Type system**: `grep -r "query" node_modules/@nmtjs/type/src/`
@@ -38,7 +44,7 @@ Search source code in `node_modules/nmtjs/`:
 
 ### Import Convention
 
-All user-facing code should import from `nmtjs`:
+Server-side Neemata APIs should import from `nmtjs`:
 
 ```ts
 import { n, t, c, Scope, ErrorCode, ProtocolBlob, ConnectionType } from 'nmtjs'
@@ -58,7 +64,7 @@ Neemata uses a layered architecture:
 3. **Application** (`n.app()`) — defines transports, router, guards, middleware for one app
 4. **Router** (`n.rootRouter()` / `n.router()`) — groups procedures
 5. **Procedure** (`n.procedure()`) — individual RPC endpoint with input/output types and handler
-6. **Client** (`StaticClient` / `RuntimeClient`) — type-safe RPC calls
+6. **Client** (`StaticClient` / `RuntimeClient`) — type-safe RPC calls via `@nmtjs/client`
 
 ### Dependency Injection Scopes
 
@@ -83,7 +89,9 @@ Two streaming mechanisms:
   - [Server Setup](references/server-setup.md), [Client](references/client-usage.md)
 2. Check [API Quick Reference](references/api-reference.md) for correct signatures
 3. Search `node_modules/nmtjs/src/` for current type definitions
-4. Verify you're importing from `nmtjs` (not internal `@nmtjs/*` packages)
+4. Verify you're importing from the correct public package:
+   - server/application code → `nmtjs`
+   - client runtime code → `@nmtjs/client`, `@nmtjs/ws-client`, `@nmtjs/http-client`
 
 ## Project Structure
 

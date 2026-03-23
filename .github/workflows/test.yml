@@ -70,11 +70,15 @@ jobs:
       - run: pnpm install
       - name: Install Playwright browser (Linux)
         if: matrix.os == 'blacksmith-4vcpu-ubuntu-2404'
-        run: pnpm exec playwright install --with-deps chromium
+        run: |
+          pnpm exec playwright install --with-deps chromium firefox webkit
       - name: Install Playwright browser (macOS)
         if: matrix.os == 'macos-latest'
-        run: pnpm exec playwright install chromium
-      - run: pnpm run test
+        run: |
+          pnpm exec playwright install chromium firefox webkit
+      - run: |
+          pnpm run test
+          pnpm run test:browser:client
 
   tests-jobs:
     needs: [lint]

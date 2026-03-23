@@ -8,16 +8,19 @@ description: Setting up StaticClient and RuntimeClient, composing connectivity
 
 ## Client Packages
 
-- Base client API, shared types, and plugins: `@nmtjs/client`
-- Static proxy client: `@nmtjs/client/static`
-- Runtime prebuilt client: `@nmtjs/client/runtime`
+- Base client API, both client classes, shared types, and plugins: `@nmtjs/client`
 - Transport implementations: `@nmtjs/ws-client`, `@nmtjs/http-client`
+- Client formats: `@nmtjs/json-format/client`, `@nmtjs/msgpack-format/client`
+
+`nmtjs` does **not** currently re-export `StaticClient`, `RuntimeClient`, or the
+client transport packages, so client applications should import those directly
+from the client packages.
 
 ## StaticClient Setup
 
 ```ts
 import { reconnectPlugin } from '@nmtjs/client'
-import { StaticClient } from '@nmtjs/client/static'
+import { StaticClient } from '@nmtjs/client'
 import { WsTransportClient } from '@nmtjs/ws-client'
 import { JsonFormat } from '@nmtjs/json-format/client'
 import { ProtocolVersion } from '@nmtjs/protocol'
@@ -39,12 +42,13 @@ await client.connect()
 ```
 
 - `StaticClient` is proxy-based and resolves procedure paths lazily from property access.
+- Use `client.call.*` for non-stream procedures and `client.stream.*` for procedures declared with `stream: true`.
 
 ## RuntimeClient Setup
 
 ```ts
 import { reconnectPlugin } from '@nmtjs/client'
-import { RuntimeClient } from '@nmtjs/client/runtime'
+import { RuntimeClient } from '@nmtjs/client'
 import { HttpTransportClient } from '@nmtjs/http-client'
 import { JsonFormat } from '@nmtjs/json-format/client'
 import { ProtocolVersion } from '@nmtjs/protocol'
@@ -73,6 +77,7 @@ const client = new RuntimeClient<typeof appContract>(
 ```
 
 - `RuntimeClient` builds callers eagerly and validates encode/decode with contract schemas at runtime.
+- Stream procedures are exposed only on `client.stream.*`; non-stream procedures stay on `client.call.*`.
 
 ## Connectivity Plugins
 
@@ -85,7 +90,7 @@ import {
   loggingPlugin,
   reconnectPlugin,
 } from '@nmtjs/client'
-import { StaticClient } from '@nmtjs/client/static'
+import { StaticClient } from '@nmtjs/client'
 import { WsTransportClient } from '@nmtjs/ws-client'
 import { JsonFormat } from '@nmtjs/json-format/client'
 import { ProtocolVersion } from '@nmtjs/protocol'
@@ -170,15 +175,13 @@ const stream = await client.stream.data({}, { signal: controller.signal })
 ## Blob Upload
 
 ```ts
-import { ProtocolBlob } from '@nmtjs/client'
-
-const blob = ProtocolBlob.from('file contents', {
+const blob = client.blob('file contents', {
   type: 'text/plain',
   filename: 'readme.txt',
 })
 await client.call.upload({ file: blob })
 
-// ProtocolBlob.from() accepts:
+// client.blob(...) accepts:
 //   ReadableStream, File, Blob, string, ArrayBuffer, Uint8Array
 ```
 
@@ -186,8 +189,12 @@ await client.call.upload({ file: blob })
 
 ```ts
 const blob = await client.call.download({ content: 'hello' })
-// blob is an async iterable of Uint8Array chunks
-for await (const chunk of blob) {
+
+// { type: 'text/plain', size: 12 }
+blob.metadata 
+
+// blob has to be called to be consumed, and returns an async iterable of Uint8Array chunks
+for await (const chunk of blob()) {
   // process chunk
 }
 ```

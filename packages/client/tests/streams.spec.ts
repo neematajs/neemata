@@ -41,7 +41,7 @@ describe('ClientStreams', () => {
     it('should throw if stream not found', () => {
       const streams = new ClientStreams()
 
-      expect(() => streams.get(999)).toThrowError('Stream not found')
+      expect(() => streams.get(999)).toThrow('Stream not found')
     })
   })
 
@@ -61,7 +61,6 @@ describe('ClientStreams', () => {
       const source = createReadable([new Uint8Array([1])])
       streams.add(source, 1, metadata)
 
-      // Read all data
       await streams.pull(1, 1)
       const chunk = await streams.pull(1, 1)
 
@@ -77,7 +76,7 @@ describe('ClientStreams', () => {
 
       await streams.end(2)
 
-      expect(() => streams.get(2)).toThrowError('Stream not found')
+      expect(() => streams.get(2)).toThrow('Stream not found')
     })
   })
 
@@ -89,7 +88,7 @@ describe('ClientStreams', () => {
 
       streams.remove(3)
 
-      expect(() => streams.get(3)).toThrowError('Stream not found')
+      expect(() => streams.get(3)).toThrow('Stream not found')
     })
   })
 
@@ -103,8 +102,9 @@ describe('ClientStreams', () => {
       const error = new Error('Test abort')
       await streams.abort(5, error)
 
-      expect(cancel).toHaveBeenCalledWith(error)
-      expect(() => streams.get(5)).toThrowError('Stream not found')
+      expect(cancel).toHaveBeenCalledTimes(1)
+      expect(cancel.mock.calls[0]?.[0]).toBe(error)
+      expect(() => streams.get(5)).toThrow('Stream not found')
     })
 
     it('should abort with default error when none provided', async () => {
@@ -130,10 +130,12 @@ describe('ClientStreams', () => {
       const error = new Error('Clear all')
       await streams.clear(error)
 
-      expect(cancelA).toHaveBeenCalledWith(error)
-      expect(cancelB).toHaveBeenCalledWith(error)
-      expect(() => streams.get(7)).toThrowError('Stream not found')
-      expect(() => streams.get(8)).toThrowError('Stream not found')
+      expect(cancelA).toHaveBeenCalledTimes(1)
+      expect(cancelB).toHaveBeenCalledTimes(1)
+      expect(cancelA.mock.calls[0]?.[0]).toBe(error)
+      expect(cancelB.mock.calls[0]?.[0]).toBe(error)
+      expect(() => streams.get(7)).toThrow('Stream not found')
+      expect(() => streams.get(8)).toThrow('Stream not found')
     })
 
     it('should clear all streams without error', () => {
@@ -143,8 +145,8 @@ describe('ClientStreams', () => {
 
       streams.clear()
 
-      expect(() => streams.get(1)).toThrowError('Stream not found')
-      expect(() => streams.get(2)).toThrowError('Stream not found')
+      expect(() => streams.get(1)).toThrow('Stream not found')
+      expect(() => streams.get(2)).toThrow('Stream not found')
     })
   })
 })
@@ -189,7 +191,7 @@ describe('ServerStreams', () => {
     it('should throw if stream not found', () => {
       const streams = new ServerStreams<ProtocolServerStream<ArrayBufferView>>()
 
-      expect(() => streams.get(999)).toThrowError('Stream not found')
+      expect(() => streams.get(999)).toThrow('Stream not found')
     })
   })
 
@@ -221,7 +223,7 @@ describe('ServerStreams', () => {
 
       await streams.end(4)
 
-      expect(() => streams.get(4)).toThrowError('Stream not found')
+      expect(() => streams.get(4)).toThrow('Stream not found')
     })
   })
 
@@ -233,7 +235,7 @@ describe('ServerStreams', () => {
 
       streams.remove(5)
 
-      expect(() => streams.get(5)).toThrowError('Stream not found')
+      expect(() => streams.get(5)).toThrow('Stream not found')
     })
   })
 
@@ -245,7 +247,7 @@ describe('ServerStreams', () => {
 
       await streams.abort(4)
 
-      expect(() => streams.get(4)).toThrowError('Stream not found')
+      expect(() => streams.get(4)).toThrow('Stream not found')
     })
 
     it('should not throw when aborting non-existent stream', async () => {
@@ -266,8 +268,8 @@ describe('ServerStreams', () => {
       const error = new Error('shutdown')
       await streams.clear(error)
 
-      expect(() => streams.get(10)).toThrowError('Stream not found')
-      expect(() => streams.get(11)).toThrowError('Stream not found')
+      expect(() => streams.get(10)).toThrow('Stream not found')
+      expect(() => streams.get(11)).toThrow('Stream not found')
     })
 
     it('should clear all streams without calling abort when no error', async () => {
@@ -277,7 +279,7 @@ describe('ServerStreams', () => {
 
       await streams.clear()
 
-      expect(() => streams.get(1)).toThrowError('Stream not found')
+      expect(() => streams.get(1)).toThrow('Stream not found')
     })
   })
 })

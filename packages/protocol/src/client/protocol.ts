@@ -8,7 +8,7 @@ import type { BaseProtocolError, EncodeRPCStreams } from '../common/types.ts'
 import type { BaseClientDecoder, BaseClientEncoder } from './format.ts'
 import type {
   ProtocolClientBlobStream,
-  ProtocolServerBlobStream,
+  ProtocolServerBlobConsumer,
 } from './stream.ts'
 import { concat } from '../common/binary.ts'
 
@@ -19,7 +19,7 @@ export type MessageContext = {
   addServerStream: (
     streamId: number,
     metadata: ProtocolBlobMetadata,
-  ) => (options?: { signal?: AbortSignal }) => ProtocolServerBlobStream
+  ) => ProtocolServerBlobConsumer
   transport: { send: (buffer: ArrayBufferView) => void }
   streamId: () => number
 }

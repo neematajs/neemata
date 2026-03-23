@@ -4,5 +4,5 @@
     "rootDir": ".",
     "types": ["pino"]
   },
-  "include": ["src/**/*", "test/**/*"]
+  "include": ["src/**/*", "tests/**/*"]
 }

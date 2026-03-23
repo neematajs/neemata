@@ -4,5 +4,5 @@
     "rootDir": ".",
     "lib": ["ES2023", "DOM"]
   },
-  "include": ["src/**/*", "test/**/*"]
+  "include": ["src/**/*", "tests/**/*"]
 }

@@ -1,60 +1,15 @@
-import { ConnectionType, ServerMessageType } from '@nmtjs/protocol'
+import { ServerMessageType } from '@nmtjs/protocol'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import type { BaseClientOptions } from '../src/core.ts'
 import type {
   ClientPlugin,
   ClientPluginInstance,
 } from '../src/plugins/types.ts'
-import type { ClientTransportStartParams } from '../src/transport.ts'
 import { StaticClient } from '../src/clients/static.ts'
-
-const createMockBidirectionalTransport = () => {
-  let connectHandler: ClientTransportStartParams | null = null
-  let connectResolve: (() => void) | null = null
-
-  const transport = {
-    type: ConnectionType.Bidirectional as const,
-    connect: vi.fn(async (params: ClientTransportStartParams) => {
-      connectHandler = params
-      return new Promise<void>((resolve) => {
-        connectResolve = resolve
-      })
-    }),
-    disconnect: vi.fn(async () => {
-      connectHandler?.onDisconnect?.('client')
-    }),
-    send: vi.fn(async () => {}),
-  }
-
-  return {
-    transport,
-    factory: () => transport,
-    simulateConnect: () => {
-      if (connectResolve) {
-        connectResolve()
-        connectHandler?.onConnect?.()
-      }
-    },
-    simulateDisconnect: (reason: 'server' | 'client' = 'server') => {
-      connectHandler?.onDisconnect?.(reason)
-    },
-  }
-}
-
-const mockFormat = {
-  contentType: 'test',
-  encode: vi.fn((data) => new Uint8Array()),
-  decode: vi.fn((data) => ({})),
-  encodeRPC: vi.fn((data) => new Uint8Array()),
-  decodeRPC: vi.fn((data) => ({})),
-}
-
-const baseOptions: BaseClientOptions = {
-  contract: {} as any,
-  protocol: 1,
-  format: mockFormat as any,
-}
+import {
+  createBaseOptions,
+  createMockBidirectionalTransport,
+} from './_helpers/transports.ts'
 
 describe('Plugin order', () => {
   afterEach(() => {
@@ -83,29 +38,27 @@ describe('Plugin order', () => {
         }) satisfies ClientPluginInstance
     }
 
-    const { factory, simulateConnect, simulateDisconnect } =
-      createMockBidirectionalTransport()
-
+    const transport = createMockBidirectionalTransport()
     const client = new StaticClient(
       {
-        ...baseOptions,
+        ...createBaseOptions(),
         plugins: [mkPlugin('a'), mkPlugin('b'), mkPlugin('c')],
       },
-      factory,
+      transport.factory,
       {},
     )
 
     expect(events.join('|')).toBe('init:a|init:b|init:c')
 
     const connectPromise = client.connect()
-    simulateConnect()
+    transport.simulateConnect()
     await connectPromise
 
     expect(events.join('|')).toBe(
       'init:a|init:b|init:c|connect:a|connect:b|connect:c',
     )
 
-    simulateDisconnect('server')
+    transport.simulateDisconnect('server')
     await vi.waitFor(() => {
       expect(events.join('|')).toBe(
         'init:a|init:b|init:c|connect:a|connect:b|connect:c|disconnect:c|disconnect:b|disconnect:a',
@@ -130,27 +83,28 @@ describe('Plugin order', () => {
         }) satisfies ClientPluginInstance
     }
 
-    const { factory, simulateConnect } = createMockBidirectionalTransport()
+    const transport = createMockBidirectionalTransport()
 
     const client = new StaticClient(
       {
-        ...baseOptions,
+        ...createBaseOptions(),
         plugins: [mkPlugin('a'), mkPlugin('b'), mkPlugin('c')],
       },
-      factory,
+      transport.factory,
       {},
     )
 
     const connectPromise = client.connect()
-    simulateConnect()
+    transport.simulateConnect()
     await connectPromise
 
-    ;(client as any).protocol.decodeMessage = () => ({
+    ;(client.core.protocol as any).decodeMessage = () => ({
       type: ServerMessageType.Pong,
       nonce: 1,
     })
 
-    await (client as any).onMessage(new Uint8Array())
+    transport.emitMessage(new Uint8Array())
+    await Promise.resolve()
 
     expect(events.join('|')).toBe('message:a|message:b|message:c')
   })

@@ -4,11 +4,13 @@ import { ReadableStream } from 'node:stream/web'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { MessageContext } from '../../src/client/protocol.ts'
+import type { ProtocolServerBlobConsumer } from '../../src/client/stream.ts'
 import {
   ProtocolClientBlobStream,
   ProtocolServerBlobStream,
 } from '../../src/client/stream.ts'
 import { ProtocolVersion1 } from '../../src/client/versions/v1.ts'
+import { kBlobKey } from '../../src/common/constants.ts'
 import { ClientMessageType, ServerMessageType } from '../../src/common/enums.ts'
 
 const encodeUInt32 = (value: number) => {
@@ -21,6 +23,32 @@ const buildMessage = (type: number, payload: Buffer) =>
   Buffer.concat([Buffer.from([type]), payload])
 
 const toBuffer = (view: ArrayBufferView) => Buffer.from(view as Uint8Array)
+
+const createBlobConsumer = (metadata: {
+  type: string
+  size?: number
+  filename?: string
+}): ProtocolServerBlobConsumer => {
+  const consumer = ((_options) =>
+    new ProtocolServerBlobStream(metadata)) as ProtocolServerBlobConsumer
+
+  Object.defineProperties(consumer, {
+    metadata: {
+      configurable: false,
+      enumerable: true,
+      writable: false,
+      value: metadata,
+    },
+    [kBlobKey]: {
+      configurable: false,
+      enumerable: false,
+      writable: false,
+      value: true,
+    },
+  })
+
+  return consumer
+}
 
 function createMockContext(): MessageContext {
   return {
@@ -36,9 +64,8 @@ function createMockContext(): MessageContext {
           blob.metadata,
         ),
     ),
-    addServerStream: vi.fn(
-      (_streamId, metadata) => (_options) =>
-        new ProtocolServerBlobStream(metadata),
+    addServerStream: vi.fn((_streamId, metadata) =>
+      createBlobConsumer(metadata),
     ),
     transport: { send: vi.fn() },
     streamId: vi.fn().mockReturnValue(1),

@@ -2,7 +2,7 @@ import type { ProtocolBlob } from '../common/blob.ts'
 import type { DecodeRPCContext } from '../common/types.ts'
 import type {
   ProtocolClientBlobStream,
-  ProtocolServerBlobStream,
+  ProtocolServerBlobConsumer,
 } from './stream.ts'
 
 export interface EncodeRPCContext<T = any> {
@@ -15,9 +15,7 @@ export interface BaseClientDecoder {
   decode(buffer: ArrayBufferView): unknown
   decodeRPC(
     buffer: ArrayBufferView,
-    context: DecodeRPCContext<
-      (options?: { signal?: AbortSignal }) => ProtocolServerBlobStream
-    >,
+    context: DecodeRPCContext<ProtocolServerBlobConsumer>,
   ): unknown
 }
 
@@ -42,8 +40,6 @@ export abstract class BaseClientFormat
   abstract decode(buffer: ArrayBufferView): unknown
   abstract decodeRPC(
     buffer: ArrayBufferView,
-    context: DecodeRPCContext<
-      (options?: { signal?: AbortSignal }) => ProtocolServerBlobStream
-    >,
+    context: DecodeRPCContext<ProtocolServerBlobConsumer>,
   ): unknown
 }

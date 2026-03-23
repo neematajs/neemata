@@ -3,24 +3,30 @@ import type { TAnyProcedureContract, TAnyRouterContract } from '@nmtjs/contract'
 import type { ProtocolBlobInterface } from '@nmtjs/protocol'
 import type {
   ProtocolError,
-  ProtocolServerBlobStream,
+  ProtocolServerBlobConsumer,
 } from '@nmtjs/protocol/client'
 import type { BaseTypeAny, PlainType, t } from '@nmtjs/type'
 
 export const ResolvedType: unique symbol = Symbol('ResolvedType')
 export type ResolvedType = typeof ResolvedType
 
-export type ClientCallOptions = {
-  timeout?: number
-  signal?: AbortSignal
+export type RpcCallOptions = { timeout?: number; signal?: AbortSignal }
+
+export type StreamCallOptions = RpcCallOptions & { autoReconnect?: boolean }
+
+export type ClientCallOptions = StreamCallOptions & {
   /**
    * @internal
    */
   _stream_response?: boolean
 }
 
+export type BlobSubscriptionOptions = { signal?: AbortSignal }
+
+export type StreamSubscriptionOptions = Partial<StreamCallOptions>
+
 export type ClientOutputType<T> = T extends ProtocolBlobInterface
-  ? (options?: { signal?: AbortSignal }) => ProtocolServerBlobStream
+  ? ProtocolServerBlobConsumer
   : T extends { [PlainType]?: true }
     ? { [K in keyof Omit<T, PlainType>]: ClientOutputType<T[K]> }
     : T
@@ -99,10 +105,29 @@ export type ClientCaller<
   SafeCall extends boolean,
 > = (
   ...args: Procedure['input'] extends t.NeverType
-    ? [data?: undefined, options?: Partial<ClientCallOptions>]
+    ? [
+        data?: undefined,
+        options?: Partial<
+          Procedure['stream'] extends true ? StreamCallOptions : RpcCallOptions
+        >,
+      ]
     : undefined extends t.infer.encode.input<Procedure['contract']['input']>
-      ? [data?: Procedure['input'], options?: Partial<ClientCallOptions>]
-      : [data: Procedure['input'], options?: Partial<ClientCallOptions>]
+      ? [
+          data?: Procedure['input'],
+          options?: Partial<
+            Procedure['stream'] extends true
+              ? StreamCallOptions
+              : RpcCallOptions
+          >,
+        ]
+      : [
+          data: Procedure['input'],
+          options?: Partial<
+            Procedure['stream'] extends true
+              ? StreamCallOptions
+              : RpcCallOptions
+          >,
+        ]
 ) => SafeCall extends true
   ? Promise<OneOf<[{ result: Procedure['output'] }, { error: ProtocolError }]>>
   : Promise<Procedure['output']>

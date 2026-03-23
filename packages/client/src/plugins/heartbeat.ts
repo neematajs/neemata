@@ -40,7 +40,7 @@ export interface HeartbeatPluginOptions {
 export const heartbeatPlugin = (
   options: HeartbeatPluginOptions = {},
 ): ClientPlugin => {
-  return (client) => {
+  return ({ core, ping }) => {
     const interval = options.interval ?? DEFAULT_HEARTBEAT_INTERVAL
     const timeout = options.timeout ?? DEFAULT_HEARTBEAT_TIMEOUT
 
@@ -55,7 +55,7 @@ export const heartbeatPlugin = (
 
     const startHeartbeat = () => {
       if (heartbeatTask) return
-      if (client.transportType !== ConnectionType.Bidirectional) return
+      if (core.transportType !== ConnectionType.Bidirectional) return
 
       heartbeatAbortController = new AbortController()
       const signal = heartbeatAbortController.signal
@@ -63,8 +63,8 @@ export const heartbeatPlugin = (
       heartbeatTask = (async () => {
         while (
           !signal.aborted &&
-          !client.isDisposed() &&
-          client.state === 'connected'
+          !core.isDisposed() &&
+          core.state === 'connected'
         ) {
           if (isPaused()) {
             await sleep(1000, signal)
@@ -75,21 +75,21 @@ export const heartbeatPlugin = (
 
           if (
             signal.aborted ||
-            client.isDisposed() ||
-            client.state !== 'connected'
+            core.isDisposed() ||
+            core.state !== 'connected'
           ) {
             continue
           }
 
           try {
-            await client.ping(timeout, signal)
+            await ping.ping(timeout, signal)
           } catch {
             if (
               !signal.aborted &&
-              !client.isDisposed() &&
-              client.state === 'connected'
+              !core.isDisposed() &&
+              core.state === 'connected'
             ) {
-              await client
+              await core
                 .requestReconnect('heartbeat_timeout')
                 .catch(() => void 0)
             }
