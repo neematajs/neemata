@@ -43,6 +43,7 @@ export interface ClientCoreOptions {
   protocol: ProtocolVersion
   format: BaseClientFormat
   application?: string
+  autoConnect?: boolean
   plugins?: ClientPlugin[]
 }
 
@@ -87,6 +88,7 @@ export class ClientCore extends EventEmitter<{
   readonly protocol: ProtocolVersionInterface
   readonly format: BaseClientFormat
   readonly application?: string
+  readonly autoConnect: boolean
 
   auth: any
   messageContext: MessageContext | null = null
@@ -116,6 +118,7 @@ export class ClientCore extends EventEmitter<{
     this.protocol = versions[options.protocol]
     this.format = options.format
     this.application = options.application
+    this.autoConnect = options.autoConnect ?? false
   }
 
   get state() {
@@ -136,6 +139,17 @@ export class ClientCore extends EventEmitter<{
 
   isDisposed() {
     return this.#disposed
+  }
+
+  shouldConnectOnCall() {
+    return (
+      this.autoConnect &&
+      !this.#disposed &&
+      this.#lastDisconnectReason !== 'client' &&
+      (this.#state === 'idle' ||
+        this.#state === 'connecting' ||
+        this.#state === 'disconnected')
+    )
   }
 
   initPlugins(plugins: ClientPlugin[] = [], context: ClientPluginContext) {
