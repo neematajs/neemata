@@ -30,6 +30,7 @@ export interface ClientOptions<
   protocol: ProtocolVersion
   format: BaseClientFormat
   application?: string
+  autoConnect?: boolean
   timeout?: number
   plugins?: ClientPlugin[]
   safe?: SafeCall
@@ -121,6 +122,7 @@ export class Client<
       protocol: this.options.protocol,
       format: this.options.format,
       application: this.options.application,
+      autoConnect: this.options.autoConnect,
     }
 
     this.core = new ClientCore(coreOptions, transport)

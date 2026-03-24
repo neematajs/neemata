@@ -39,6 +39,55 @@ const toReasonString = (reason: unknown) => {
   return String(reason)
 }
 
+const toAbortError = (signal: AbortSignal) => {
+  return new ProtocolError(ErrorCode.ClientRequestError, String(signal.reason))
+}
+
+const waitForConnect = async (core: ClientCore, signal?: AbortSignal) => {
+  if (!core.shouldConnectOnCall()) return
+
+  if (signal?.aborted) {
+    throw toAbortError(signal)
+  }
+
+  const connectPromise = core.connect()
+
+  if (!signal) {
+    await connectPromise
+    return
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    const onAbort = () => {
+      reject(toAbortError(signal))
+    }
+
+    signal.addEventListener('abort', onAbort, { once: true })
+
+    connectPromise.then(resolve, reject).finally(() => {
+      signal.removeEventListener('abort', onAbort)
+    })
+  })
+}
+
+const ensureConnectedForCall = async (
+  core: ClientCore,
+  signal?: AbortSignal,
+) => {
+  if (!core.autoConnect) return
+
+  if (core.state !== 'connected') {
+    await waitForConnect(core, signal)
+  }
+
+  if (core.state !== 'connected') {
+    throw new ProtocolError(
+      ErrorCode.ConnectionError,
+      'Client is not connected',
+    )
+  }
+}
+
 const waitForConnected = (core: ClientCore, signal?: AbortSignal) => {
   if (core.state === 'connected') return Promise.resolve()
 
@@ -572,36 +621,40 @@ export const createRpcLayer = (
     })
 
     if (signal?.aborted) {
-      call.reject(
-        new ProtocolError(ErrorCode.ClientRequestError, String(signal.reason)),
-      )
+      call.reject(toAbortError(signal))
     } else {
-      signal?.addEventListener(
-        'abort',
-        () => {
-          call.reject(
-            new ProtocolError(
-              ErrorCode.ClientRequestError,
-              String(signal.reason),
-            ),
-          )
-
-          if (
-            core.transportType === ConnectionType.Bidirectional &&
-            core.messageContext
-          ) {
-            const buffer = core.protocol.encodeMessage(
-              core.messageContext,
-              ClientMessageType.RpcAbort,
-              { callId: currentCallId, reason: toReasonString(signal.reason) },
-            )
-            core.send(buffer).catch(noopFn)
-          }
-        },
-        { once: true },
-      )
-
       try {
+        if (core.autoConnect) {
+          await ensureConnectedForCall(core, signal)
+        }
+
+        if (signal?.aborted) {
+          throw toAbortError(signal)
+        }
+
+        signal?.addEventListener(
+          'abort',
+          () => {
+            call.reject(toAbortError(signal))
+
+            if (
+              core.transportType === ConnectionType.Bidirectional &&
+              core.messageContext
+            ) {
+              const buffer = core.protocol.encodeMessage(
+                core.messageContext,
+                ClientMessageType.RpcAbort,
+                {
+                  callId: currentCallId,
+                  reason: toReasonString(signal.reason),
+                },
+              )
+              core.send(buffer).catch(noopFn)
+            }
+          },
+          { once: true },
+        )
+
         const transformedPayload = transformer.encode(procedure, payload)
 
         if (core.transportType === ConnectionType.Bidirectional) {

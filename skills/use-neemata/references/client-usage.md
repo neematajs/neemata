@@ -31,17 +31,18 @@ const client = new StaticClient<typeof appContract>(
     contract: appContract,
     protocol: ProtocolVersion.v1,
     format: new JsonFormat(),
+    autoConnect: true,
     timeout: 5000,
     plugins: [reconnectPlugin()],
   },
   WsTransportClient,
   { url: 'ws://localhost:4000' },
 )
-
-await client.connect()
 ```
 
 - `StaticClient` is proxy-based and resolves procedure paths lazily from property access.
+- `autoConnect: true` lets the client connect on the first call/stream instead of requiring an explicit `await client.connect()`.
+- After an explicit `await client.disconnect()`, implicit reconnection is suppressed until you connect again manually.
 - Use `client.call.*` for non-stream procedures and `client.stream.*` for procedures declared with `stream: true`.
 
 ## RuntimeClient Setup
@@ -59,6 +60,7 @@ const client = new RuntimeClient<typeof appContract>(
     contract: appContract,
     protocol: ProtocolVersion.v1,
     format: new JsonFormat(),
+    autoConnect: true,
     plugins: [reconnectPlugin()],
   },
   HttpTransportClient,
