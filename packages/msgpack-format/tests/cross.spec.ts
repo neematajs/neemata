@@ -1,5 +1,7 @@
 import type { ProtocolClientBlobStream } from '@nmtjs/protocol/client'
 import { ProtocolBlob } from '@nmtjs/protocol'
+import { ProtocolError as ClientProtocolError } from '@nmtjs/protocol/client'
+import { ProtocolError as ServerProtocolError } from '@nmtjs/protocol/server'
 import { describe, expect, it, vi } from 'vitest'
 
 import { MsgpackFormat as ClientMsgpackFormat } from '../src/client.ts'
@@ -9,6 +11,11 @@ describe('MsgpackFormat', () => {
   const clientFormat = new ClientMsgpackFormat()
   const serverFormat = new ServerMsgpackFormat()
   const data = { foo: 'bar', baz: 42, nested: { a: 1, b: [true, false] } }
+  const createToJSONValue = () => ({
+    kind: 'custom',
+    original: 'value',
+    toJSON: () => ({ type: 'custom-json', value: 'serialized' }),
+  })
 
   describe('Cross compatibility', () => {
     it('should have consistent encode/decode between client and server', () => {
@@ -228,6 +235,61 @@ describe('MsgpackFormat', () => {
         { addStream: vi.fn() },
       )
       expect(clientDecoded).toEqual(['a', null, null, 'b'])
+    })
+
+    it('should preserve serialized ProtocolError shape in both directions', () => {
+      const clientError = new ClientProtocolError(
+        'BadRequest',
+        'Client payload invalid',
+        { field: 'email' },
+      )
+      const clientEncoded = clientFormat.encodeRPC(
+        { error: clientError },
+        { addStream: vi.fn() },
+      )
+      const serverDecoded = serverFormat.decodeRPC(Buffer.from(clientEncoded), {
+        addStream: vi.fn(),
+      })
+
+      expect(serverDecoded).toEqual({ error: clientError.toJSON() })
+
+      const serverError = new ServerProtocolError(
+        'Forbidden',
+        'Missing permission',
+        { permission: 'write' },
+      )
+      const serverEncoded = serverFormat.encodeRPC({ error: serverError }, {})
+      const clientDecoded = clientFormat.decodeRPC(Buffer.from(serverEncoded), {
+        addStream: vi.fn(),
+      })
+
+      expect(clientDecoded).toEqual({ error: serverError.toJSON() })
+    })
+
+    it('should preserve serialized toJSON output in both directions', () => {
+      const clientEncoded = clientFormat.encodeRPC(
+        { meta: createToJSONValue() },
+        { addStream: vi.fn() },
+      )
+      const serverDecoded = serverFormat.decodeRPC(Buffer.from(clientEncoded), {
+        addStream: vi.fn(),
+      })
+
+      expect(serverDecoded).toEqual({
+        meta: { type: 'custom-json', value: 'serialized' },
+      })
+
+      const serverEncoded = serverFormat.encodeRPC(
+        { meta: createToJSONValue() },
+        {},
+      )
+      const clientDecoded = clientFormat.decodeRPC(Buffer.from(serverEncoded), {
+        addStream: vi.fn(),
+      })
+
+      expect(clientDecoded).toEqual({
+        meta: { type: 'custom-json', value: 'serialized' },
+      })
     })
   })
 })

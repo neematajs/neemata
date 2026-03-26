@@ -1,20 +1,28 @@
 import type { ProtocolBlobMetadata } from '@nmtjs/protocol'
 import { decode, ExtensionCodec, encode } from '@msgpack/msgpack'
-import { decodeText, encodeText } from '@nmtjs/protocol'
+import { isError } from '@nmtjs/common'
+import { ProtocolBlob } from '@nmtjs/protocol'
 
 // Extension type code for blob streams
-export const STREAM_EXT_TYPE = 0x01
+export const STREAM_EXT_TYPE = 100
+export const ERROR_EXT_TYPE = 101
+export const JSON_EXT_TYPE = 102
+
+export const _hasToJSON = (obj: any): obj is { toJSON: () => any } => {
+  return (
+    typeof obj === 'object' && obj !== null && typeof obj.toJSON === 'function'
+  )
+}
 
 // Encodes stream ID + metadata into extension type payload
 export const encodeStreamExt = (
   id: number,
   metadata: ProtocolBlobMetadata,
 ): Uint8Array => {
-  // Format: [id: u32 BE][metadata: msgpack]
   const metadataBuffer = encode(metadata)
   const buffer = new Uint8Array(4 + metadataBuffer.byteLength)
   const view = new DataView(buffer.buffer)
-  view.setUint32(0, id, false) // big-endian
+  view.setUint32(0, id)
   buffer.set(metadataBuffer, 4)
   return buffer
 }
@@ -24,7 +32,7 @@ export const decodeStreamExt = (
   data: Uint8Array,
 ): { id: number; metadata: ProtocolBlobMetadata } => {
   const view = new DataView(data.buffer, data.byteOffset, data.byteLength)
-  const id = view.getUint32(0, false)
+  const id = view.getUint32(0)
   const metadata = decode(data.subarray(4)) as ProtocolBlobMetadata
   return { id, metadata }
 }
@@ -39,61 +47,39 @@ export type MsgpackContext = {
 // Uses msgpack's context feature to pass dynamic encode/decode handlers
 export const extensionCodec = new ExtensionCodec<MsgpackContext>()
 
-export const registerTemporalTypes = (Temporal: typeof globalThis.Temporal) => {
-  const TEMPORAL_PLAIN_DATE_EXT_TYPE = 0x02
-  const TEMPORAL_PLAIN_DATETIME_EXT_TYPE = 0x03
-  const TEMPORAL_PLAIN_TIME_EXT_TYPE = 0x04
-  const TEMPORAL_PLAIN_YEAR_MONTH_EXT_TYPE = 0x05
-  const TEMPORAL_PLAIN_MONTH_DAY_EXT_TYPE = 0x06
-  const TEMPORAL_DURATION_EXT_TYPE = 0x07
-  const TEMPORAL_ZONED_DATETIME_EXT_TYPE = 0x08
-  const TEMPORAL_INSTANT_EXT_TYPE = 0x09
-
-  const temporalTypes = new Map<
-    number,
-    | typeof Temporal.Duration
-    | typeof Temporal.PlainDate
-    | typeof Temporal.PlainDateTime
-    | typeof Temporal.PlainTime
-    | typeof Temporal.PlainYearMonth
-    | typeof Temporal.PlainMonthDay
-    | typeof Temporal.ZonedDateTime
-    | typeof Temporal.Instant
-  >()
-
-  temporalTypes.set(TEMPORAL_PLAIN_DATE_EXT_TYPE, Temporal.PlainDate)
-  temporalTypes.set(TEMPORAL_PLAIN_DATETIME_EXT_TYPE, Temporal.PlainDateTime)
-  temporalTypes.set(TEMPORAL_PLAIN_TIME_EXT_TYPE, Temporal.PlainTime)
-  temporalTypes.set(TEMPORAL_PLAIN_YEAR_MONTH_EXT_TYPE, Temporal.PlainYearMonth)
-  temporalTypes.set(TEMPORAL_PLAIN_MONTH_DAY_EXT_TYPE, Temporal.PlainMonthDay)
-  temporalTypes.set(TEMPORAL_DURATION_EXT_TYPE, Temporal.Duration)
-  temporalTypes.set(TEMPORAL_ZONED_DATETIME_EXT_TYPE, Temporal.ZonedDateTime)
-  temporalTypes.set(TEMPORAL_INSTANT_EXT_TYPE, Temporal.Instant)
-
-  for (const [type, TemporalClass] of temporalTypes) {
-    extensionCodec.register({
-      type,
-      encode: (object) => {
-        if (object instanceof TemporalClass) {
-          return encodeText(
-            (object as InstanceType<typeof TemporalClass>).toJSON(),
-          )
-        }
-        return null
-      },
-      decode: (data) => {
-        return decodeText(data)
-      },
-    })
-  }
-}
-
 extensionCodec.register({
   type: STREAM_EXT_TYPE,
   encode: (object: unknown, context: MsgpackContext): Uint8Array | null => {
+    if (object instanceof ProtocolBlob === false) return null
     return context.encodeStream?.(object) ?? null
   },
   decode: (data: Uint8Array, _extType: number, context: MsgpackContext) => {
     return context.decodeStream!(data)
+  },
+})
+
+extensionCodec.register({
+  type: ERROR_EXT_TYPE,
+  encode: (object: unknown): Uint8Array | null => {
+    if (isError(object)) {
+      let error = { name: object.name, message: object.message }
+      if (_hasToJSON(object)) error = object.toJSON()
+      return encode(error)
+    }
+    return null
+  },
+  decode: (data: Uint8Array) => {
+    return decode(data)
+  },
+})
+
+extensionCodec.register({
+  type: JSON_EXT_TYPE,
+  encode: (object: unknown): Uint8Array | null => {
+    if (_hasToJSON(object)) return encode(object.toJSON())
+    return null
+  },
+  decode: (data: Uint8Array) => {
+    return decode(data)
   },
 })

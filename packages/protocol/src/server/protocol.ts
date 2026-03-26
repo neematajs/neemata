@@ -26,7 +26,12 @@ export class ProtocolError extends Error implements BaseProtocolError {
   }
 
   toJSON() {
-    return { code: this.code, message: this.message, data: this.data }
+    return {
+      name: this.code,
+      message: this.message,
+      data: this.data,
+      code: this.code,
+    }
   }
 }
 

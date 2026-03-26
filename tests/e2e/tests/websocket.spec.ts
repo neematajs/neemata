@@ -1,6 +1,7 @@
 import type { ChildProcess } from 'node:child_process'
 import { resolve } from 'node:path'
 
+import type { ProtocolServerBlobConsumer } from '@nmtjs/protocol/client'
 import { StaticClient } from '@nmtjs/client/static'
 import { c } from '@nmtjs/contract'
 import { JsonFormat } from '@nmtjs/json-format/client'
@@ -8,7 +9,7 @@ import { MsgpackFormat } from '@nmtjs/msgpack-format/client'
 import { ProtocolVersion } from '@nmtjs/protocol'
 import { t } from '@nmtjs/type'
 import { WsTransportFactory } from '@nmtjs/ws-client'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, expectTypeOf, it } from 'vitest'
 
 import {
   DEFAULT_SERVER_HOST,
@@ -46,6 +47,15 @@ const contract = c.router({
     downloadBlob: c.procedure({
       input: t.object({ content: t.string(), filename: t.string().optional() }),
       output: c.blob(),
+    }),
+    downloadBundle: c.procedure({
+      input: t.object({ content: t.string() }),
+      output: t.object({ audio: c.blob(), transcript: t.string() }),
+    }),
+    streamBundle: c.procedure({
+      input: t.object({ content: t.string() }),
+      output: t.object({ audio: c.blob(), transcript: t.string() }),
+      stream: true,
     }),
   },
 })
@@ -97,6 +107,26 @@ async function readBlobToString(
 }
 
 describe('Playground E2E - WebSocket Streaming', { timeout: 30000 }, () => {
+  it('types nested blob outputs as callable blob consumers for package consumers', () => {
+    type WsClient = StaticClient<typeof WsTransportFactory, typeof contract>
+    type DownloadBundleResponse = Awaited<
+      ReturnType<WsClient['call']['downloadBundle']>
+    >
+    type StreamBundleResponse =
+      Awaited<
+        ReturnType<WsClient['stream']['streamBundle']>
+      > extends AsyncIterable<infer Chunk>
+        ? Chunk
+        : never
+
+    expectTypeOf<
+      DownloadBundleResponse['audio']
+    >().toEqualTypeOf<ProtocolServerBlobConsumer>()
+    expectTypeOf<
+      StreamBundleResponse['audio']
+    >().toEqualTypeOf<ProtocolServerBlobConsumer>()
+  })
+
   let serverProcess: ChildProcess | null = null
 
   beforeAll(async () => {

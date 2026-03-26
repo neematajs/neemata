@@ -172,3 +172,11 @@ export function match(value: string, pattern: Pattern) {
     return pattern.test(value)
   }
 }
+
+export const isError = (value: any): value is Error => {
+  if ('isError' in Error && typeof Error.isError === 'function') {
+    return Error.isError(value)
+  } else {
+    return value instanceof Error
+  }
+}

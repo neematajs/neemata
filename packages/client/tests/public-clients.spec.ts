@@ -1,7 +1,8 @@
+import type { ProtocolServerBlobConsumer } from '@nmtjs/protocol/client'
 import { c } from '@nmtjs/contract'
 import { ServerMessageType } from '@nmtjs/protocol'
 import { t } from '@nmtjs/type'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, expectTypeOf, it, vi } from 'vitest'
 
 import { RuntimeClient } from '../src/clients/runtime.ts'
 import { StaticClient } from '../src/clients/static.ts'
@@ -38,6 +39,10 @@ const staticContract = c.router({
     files: c.router({
       routes: {
         download: c.procedure({ input: t.object({}), output: c.blob() }),
+        downloadBundle: c.procedure({
+          input: t.object({}),
+          output: t.object({ audio: c.blob(), transcript: t.string() }),
+        }),
       },
     }),
   },
@@ -58,10 +63,36 @@ const runtimeContract = c.router({
         }),
       },
     }),
+    media: c.router({
+      routes: {
+        transcript: c.procedure({
+          input: t.object({}),
+          output: t.object({ audio: c.blob(), createdAt: t.date() }),
+        }),
+      },
+    }),
   },
 })
 
 describe('public clients', () => {
+  it('maps nested blob outputs to callable blob consumers in public client types', () => {
+    type StaticPublicClient = StaticClient<any, typeof staticContract>
+    type RuntimePublicClient = RuntimeClient<any, typeof runtimeContract>
+    type StaticNestedBlobResponse = Awaited<
+      ReturnType<StaticPublicClient['call']['files']['downloadBundle']>
+    >
+    type RuntimeNestedBlobResponse = Awaited<
+      ReturnType<RuntimePublicClient['call']['media']['transcript']>
+    >
+
+    expectTypeOf<
+      StaticNestedBlobResponse['audio']
+    >().toEqualTypeOf<ProtocolServerBlobConsumer>()
+    expectTypeOf<
+      RuntimeNestedBlobResponse['audio']
+    >().toEqualTypeOf<ProtocolServerBlobConsumer>()
+  })
+
   it('StaticClient routes nested call procedures through the public call API', async () => {
     const { factory } = createMockUnidirectionalTransport(
       async (context, rpc, options) => {
