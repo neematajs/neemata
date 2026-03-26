@@ -2,12 +2,18 @@ import { Buffer } from 'node:buffer'
 
 import type { DecodeRPCContext, EncodeRPCStreams } from '@nmtjs/protocol'
 import { ProtocolBlob } from '@nmtjs/protocol'
+import { ProtocolError } from '@nmtjs/protocol/server'
 import { describe, expect, it, vi } from 'vitest'
 
 import { MsgpackFormat } from '../src/server.ts'
 
 describe('Server MsgpackFormat', () => {
   const format = new MsgpackFormat()
+  const createToJSONValue = () => ({
+    kind: 'custom',
+    original: 'value',
+    toJSON: () => ({ type: 'custom-json', value: 'serialized' }),
+  })
 
   describe('Server', () => {
     describe('encode', () => {
@@ -34,6 +40,38 @@ describe('Server MsgpackFormat', () => {
 
       it('should decode empty buffer to undefined', () => {
         expect(format.decode(Buffer.alloc(0))).toBeUndefined()
+      })
+
+      it('should encode and decode objects with toJSON using serialized output', () => {
+        const value = createToJSONValue()
+
+        const buffer = format.encode(value)
+
+        expect(format.decode(buffer)).toEqual({
+          type: 'custom-json',
+          value: 'serialized',
+        })
+      })
+
+      it('should encode and decode plain Error instances as objects', () => {
+        const error = new Error('boom')
+
+        const buffer = format.encode(error)
+
+        expect(format.decode(buffer)).toEqual({
+          name: 'Error',
+          message: 'boom',
+        })
+      })
+
+      it('should encode and decode ProtocolError using toJSON', () => {
+        const error = new ProtocolError('BadRequest', 'Invalid payload', {
+          field: 'name',
+        })
+
+        const buffer = format.encode(error)
+
+        expect(format.decode(buffer)).toEqual(error.toJSON())
       })
     })
 
@@ -144,6 +182,34 @@ describe('Server MsgpackFormat', () => {
 
         expect(decoded).toEqual({ foo: 'bar', stream: mockConsumer })
         expect(ctx.addStream).toHaveBeenCalledWith(streamId, metadata)
+      })
+
+      it('should encode and decode nested toJSON values in RPC payloads', () => {
+        const payload = { ok: true, meta: createToJSONValue() }
+
+        const encoded = Buffer.from(format.encodeRPC(payload, {}) as Uint8Array)
+
+        const ctx = { addStream: vi.fn() } as DecodeRPCContext<any>
+        const decoded = format.decodeRPC(encoded, ctx)
+
+        expect(decoded).toEqual({
+          ok: true,
+          meta: { type: 'custom-json', value: 'serialized' },
+        })
+      })
+
+      it('should encode and decode nested ProtocolError values in RPC payloads', () => {
+        const error = new ProtocolError('Forbidden', 'Access denied', {
+          role: 'guest',
+        })
+        const payload = { ok: false, error }
+
+        const encoded = Buffer.from(format.encodeRPC(payload, {}) as Uint8Array)
+
+        const ctx = { addStream: vi.fn() } as DecodeRPCContext<any>
+        const decoded = format.decodeRPC(encoded, ctx)
+
+        expect(decoded).toEqual({ ok: false, error: error.toJSON() })
       })
     })
 
