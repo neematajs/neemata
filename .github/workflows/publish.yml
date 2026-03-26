@@ -8,12 +8,17 @@ permissions:
 on:
   workflow_dispatch:
     inputs:
+      run_tests:
+        description: "Whether to run tests before publishing"
+        type: boolean
+        required: true
+        default: false
       release:
         description: "Whether to publish release"
         type: boolean
         required: true
         default: true
-      pre-release:
+      pre_release:
         description: "Whether it is a pre-release"
         type: boolean
         required: true
@@ -30,11 +35,13 @@ on:
 
 jobs:
   test:
+    if: ${{ inputs.run_tests }}
     uses: ./.github/workflows/test.yml
     secrets: inherit
 
   build-and-publish:
     needs: [test]
+    if: ${{ always() && (!inputs.run_tests || needs.test.result == 'success') }}
     runs-on: ubuntu-latest
     env:
       NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -88,6 +95,6 @@ jobs:
               tag_name: '${{ env.version_tag }}',
               name: '${{ env.version_tag }}',
               draft: false,
-              prerelease: ${{ inputs.pre-release }},
+              prerelease: ${{ inputs.pre_release }},
               generate_release_notes: true
             }))
