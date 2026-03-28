@@ -41,13 +41,13 @@
     "@nmtjs/core": "workspace:*",
     "citty": "0.2.1",
     "dotenv": "17.3.1",
-    "hookable": "6.0.1",
+    "hookable": "6.1.0",
     "oxc-resolver": "11.19.1",
     "prom-client": "git@github.com:siimon/prom-client.git#d4d2dcb366384833951e0116caca707b5f62aa5e"
   },
   "devDependencies": {
     "@nmtjs/proxy": "catalog:",
-    "pino": "10.3.0",
+    "pino": "10.3.1",
     "vite": "catalog:"
   },
   "peerDependencies": {
