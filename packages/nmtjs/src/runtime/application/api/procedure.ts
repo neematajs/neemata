@@ -6,7 +6,6 @@ import type {
   DependencyContext,
   Metadata,
 } from '@nmtjs/core'
-import type { InputType } from '@nmtjs/protocol/server'
 import type { BaseType } from '@nmtjs/type'
 import type * as zod from 'zod/mini'
 import { c } from '@nmtjs/contract'
@@ -42,7 +41,7 @@ export interface Procedure<
   ProcedureDeps extends Dependencies,
 > extends BaseProcedure<ProcedureContract, ProcedureDeps> {
   handler: ProcedureHandlerType<
-    InputType<t.infer.decodeRaw.output<ProcedureContract['input']>>,
+    t.infer.decode.output<ProcedureContract['input']>,
     ProcedureContract['stream'] extends true
       ? AsyncIterable<t.infer.encode.input<ProcedureContract['output']>>
       : t.infer.encode.input<ProcedureContract['output']>,
@@ -65,7 +64,7 @@ export type CreateProcedureParams<
       metadata?: Metadata[]
       streamTimeout?: number
       handler: ProcedureHandlerType<
-        InputType<t.infer.decodeRaw.output<ProcedureContract['input']>>,
+        t.infer.decode.output<ProcedureContract['input']>,
         ProcedureContract['stream'] extends undefined
           ? t.infer.encode.input<ProcedureContract['output']>
           : AsyncIterable<
@@ -75,7 +74,7 @@ export type CreateProcedureParams<
       >
     }
   | ProcedureHandlerType<
-      InputType<t.infer.decodeRaw.output<ProcedureContract['input']>>,
+      t.infer.decode.output<ProcedureContract['input']>,
       ProcedureContract['stream'] extends undefined
         ? t.infer.decode.input<ProcedureContract['output']>
         : AsyncIterable<
@@ -164,9 +163,7 @@ export function createProcedure<
         metadata?: Metadata[]
         timeout?: number
         handler: ProcedureHandlerType<
-          TInput extends BaseType
-            ? InputType<t.infer.decodeRaw.output<TInput>>
-            : never,
+          TInput extends BaseType ? t.infer.decode.output<TInput> : never,
           TStream extends true | number
             ? AsyncIterable<
                 TOutput extends BaseType
@@ -180,9 +177,7 @@ export function createProcedure<
         >
       }
     | ProcedureHandlerType<
-        TInput extends BaseType
-          ? InputType<t.infer.decodeRaw.output<TInput>>
-          : never,
+        TInput extends BaseType ? t.infer.decode.output<TInput> : never,
         Return,
         Deps
       >,

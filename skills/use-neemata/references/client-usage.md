@@ -177,13 +177,13 @@ const stream = await client.stream.data({}, { signal: controller.signal })
 ## Blob Upload
 
 ```ts
-const blob = client.blob('file contents', {
+const blob = client.createBlob('file contents', {
   type: 'text/plain',
   filename: 'readme.txt',
 })
 await client.call.upload({ file: blob })
 
-// client.blob(...) accepts:
+// client.createBlob(...) accepts:
 //   ReadableStream, File, Blob, string, ArrayBuffer, Uint8Array
 ```
 
@@ -192,14 +192,21 @@ await client.call.upload({ file: blob })
 ```ts
 const blob = await client.call.download({ content: 'hello' })
 
+// blob is a protocol blob marker carrying metadata
 // { type: 'text/plain', size: 12 }
 blob.metadata 
 
-// blob has to be called to be consumed, and returns an async iterable of Uint8Array chunks
-for await (const chunk of blob()) {
+const controller = new AbortController()
+const stream = client.consumeBlob(blob, { signal: controller.signal })
+
+for await (const chunk of stream) {
   // process chunk
 }
 ```
+
+- Download results are lazy: no bytes flow until `client.consumeBlob(blob)` is called.
+- `client.consumeBlob(blob)` is the explicit boundary between metadata/reference handling and stream consumption.
+- `client.consumeBlob(blob, { signal })` supports aborting blob consumption, similar to the previous callable consumer API.
 
 ## Disconnect
 

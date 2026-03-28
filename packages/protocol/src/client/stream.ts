@@ -209,8 +209,3 @@ export class ProtocolServerBlobStream
     throw new Error('Unable to slice')
   }
 }
-
-export type ProtocolServerBlobConsumer = ((options?: {
-  signal?: AbortSignal
-}) => ProtocolServerBlobStream) &
-  ProtocolBlobInterface

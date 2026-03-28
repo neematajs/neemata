@@ -1,7 +1,7 @@
 import type { ChildProcess } from 'node:child_process'
 import { resolve } from 'node:path'
 
-import type { ProtocolServerBlobConsumer } from '@nmtjs/protocol/client'
+import type { ProtocolBlobInterface } from '@nmtjs/protocol'
 import { StaticClient } from '@nmtjs/client/static'
 import { c } from '@nmtjs/contract'
 import { JsonFormat } from '@nmtjs/json-format/client'
@@ -91,12 +91,10 @@ function createBlobSource(content: string): {
 }
 
 async function readBlobToString(
-  blobResponse:
-    | AsyncIterable<ArrayBufferView>
-    | ((options?: { signal?: AbortSignal }) => AsyncIterable<ArrayBufferView>),
+  client: ReturnType<typeof createWsClient>,
+  blob: ProtocolBlobInterface,
 ): Promise<string> {
-  const stream =
-    typeof blobResponse === 'function' ? blobResponse({}) : blobResponse
+  const stream = client.consumeBlob(blob)
   const chunks: Buffer[] = []
 
   for await (const chunk of stream) {
@@ -107,7 +105,7 @@ async function readBlobToString(
 }
 
 describe('Playground E2E - WebSocket Streaming', { timeout: 30000 }, () => {
-  it('types nested blob outputs as callable blob consumers for package consumers', () => {
+  it('types nested blob outputs as protocol blob markers for package consumers', () => {
     type WsClient = StaticClient<typeof WsTransportFactory, typeof contract>
     type DownloadBundleResponse = Awaited<
       ReturnType<WsClient['call']['downloadBundle']>
@@ -121,10 +119,10 @@ describe('Playground E2E - WebSocket Streaming', { timeout: 30000 }, () => {
 
     expectTypeOf<
       DownloadBundleResponse['audio']
-    >().toEqualTypeOf<ProtocolServerBlobConsumer>()
+    >().toEqualTypeOf<ProtocolBlobInterface>()
     expectTypeOf<
       StreamBundleResponse['audio']
-    >().toEqualTypeOf<ProtocolServerBlobConsumer>()
+    >().toEqualTypeOf<ProtocolBlobInterface>()
   })
 
   let serverProcess: ChildProcess | null = null
@@ -195,7 +193,7 @@ describe('Playground E2E - WebSocket Streaming', { timeout: 30000 }, () => {
     const client = createWsClient(new JsonFormat())
     const content = 'hello from ws blob stream input'
     const source = createBlobSource(content)
-    const blob = client.blob(source.stream, {
+    const blob = client.createBlob(source.stream, {
       type: 'text/plain',
       filename: 'ws-stream-blob-input.txt',
       size: source.size,
@@ -221,7 +219,7 @@ describe('Playground E2E - WebSocket Streaming', { timeout: 30000 }, () => {
     const client = createWsClient(new JsonFormat())
     const content = 'hello from ws json blob'
     const source = createBlobSource(content)
-    const blob = client.blob(source.stream, {
+    const blob = client.createBlob(source.stream, {
       type: 'text/plain',
       filename: 'ws-json-upload.txt',
       size: source.size,
@@ -242,7 +240,7 @@ describe('Playground E2E - WebSocket Streaming', { timeout: 30000 }, () => {
         filename: 'ws-json-download.txt',
       })
 
-      const downloadContent = await readBlobToString(downloadBlob)
+      const downloadContent = await readBlobToString(client, downloadBlob)
       expect(downloadContent).toBe(content)
     } finally {
       await client.disconnect()
@@ -253,7 +251,7 @@ describe('Playground E2E - WebSocket Streaming', { timeout: 30000 }, () => {
     const client = createWsClient(new MsgpackFormat())
     const content = 'hello from ws msgpack blob'
     const source = createBlobSource(content)
-    const blob = client.blob(source.stream, {
+    const blob = client.createBlob(source.stream, {
       type: 'text/plain',
       filename: 'ws-msgpack-upload.txt',
       size: source.size,
@@ -274,7 +272,7 @@ describe('Playground E2E - WebSocket Streaming', { timeout: 30000 }, () => {
         filename: 'ws-msgpack-download.txt',
       })
 
-      const downloadContent = await readBlobToString(downloadBlob)
+      const downloadContent = await readBlobToString(client, downloadBlob)
       expect(downloadContent).toBe(content)
     } finally {
       await client.disconnect()

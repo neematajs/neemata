@@ -8,7 +8,45 @@ export type ProtocolBlobMetadata = {
 
 export interface ProtocolBlobInterface {
   readonly metadata: ProtocolBlobMetadata
+  readonly streamId?: number
   readonly [kBlobKey]: any
+}
+
+export const createProtocolBlobReference = (
+  streamId: number,
+  metadata: ProtocolBlobMetadata,
+): ProtocolBlobInterface => {
+  return Object.defineProperties(
+    {},
+    {
+      metadata: {
+        configurable: false,
+        enumerable: true,
+        writable: false,
+        value: metadata,
+      },
+      streamId: {
+        configurable: false,
+        enumerable: false,
+        writable: false,
+        value: streamId,
+      },
+      [kBlobKey]: {
+        configurable: false,
+        enumerable: false,
+        writable: false,
+        value: true,
+      },
+    },
+  ) as ProtocolBlobInterface
+}
+
+export const getProtocolBlobStreamId = (blob: ProtocolBlobInterface) => {
+  if (typeof blob.streamId !== 'number') {
+    throw new Error('Blob does not reference a protocol stream')
+  }
+
+  return blob.streamId
 }
 
 export class ProtocolBlob implements ProtocolBlobInterface {

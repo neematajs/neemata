@@ -1,7 +1,14 @@
 import type { TypeProvider } from '@nmtjs/common'
 import type { TAnyRouterContract } from '@nmtjs/contract'
-import type { ProtocolBlobMetadata, ProtocolVersion } from '@nmtjs/protocol'
-import type { BaseClientFormat } from '@nmtjs/protocol/client'
+import type {
+  ProtocolBlobInterface,
+  ProtocolBlobMetadata,
+  ProtocolVersion,
+} from '@nmtjs/protocol'
+import type {
+  BaseClientFormat,
+  ProtocolServerBlobStream,
+} from '@nmtjs/protocol/client'
 import { noopFn } from '@nmtjs/common'
 import { ProtocolBlob } from '@nmtjs/protocol'
 
@@ -144,7 +151,7 @@ export class Client<
       streamId: () => this.streamLayer.getStreamId(),
       addClientStream: (blob) => this.streamLayer.addClientStream(blob),
       addServerStream: (streamId, metadata) =>
-        this.streamLayer.createServerBlobStream(streamId, metadata),
+        this.streamLayer.createServerBlob(streamId, metadata),
     }))
 
     this.core.initPlugins(this.options.plugins, {
@@ -205,11 +212,18 @@ export class Client<
     return this.pingLayer.ping(timeout, signal)
   }
 
-  blob(
+  createBlob(
     source: Blob | ReadableStream | string | AsyncIterable<Uint8Array>,
     metadata?: ProtocolBlobMetadata,
   ) {
     return ProtocolBlob.from(source, metadata)
+  }
+
+  consumeBlob(
+    blob: ProtocolBlobInterface,
+    options?: { signal?: AbortSignal },
+  ): ProtocolServerBlobStream {
+    return this.streamLayer.consumeServerBlob(blob, options)
   }
 
   dispose() {

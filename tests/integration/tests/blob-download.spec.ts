@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { TestSetup } from './_setup.ts'
 import {
   c,
+  consumeBlob,
   createBlob,
   createProcedure,
   createRootRouter,
@@ -44,11 +45,11 @@ const downloadProcedure = createProcedure({
 })
 
 const echoBlobProcedure = createProcedure({
-  dependencies: { createBlob },
+  dependencies: { createBlob, consumeBlob },
   input: t.object({ file: c.blob() }),
   output: c.blob(),
-  handler: async ({ createBlob }, input) => {
-    const clientBlob = input.file()
+  handler: async ({ createBlob, consumeBlob }, input) => {
+    const clientBlob = consumeBlob(input.file)
     const chunks: Uint8Array[] = []
     for await (const chunk of clientBlob) {
       chunks.push(chunk)
@@ -252,8 +253,8 @@ describe('Blob Download (Server → Client)', () => {
   describe('Basic Download', () => {
     it('should download blob and consume content', async () => {
       const content = 'Downloaded content'
-      const getBlobStream = await setup.client.call.download({ content })
-      const blobStream = getBlobStream()
+      const blob = await setup.client.call.download({ content })
+      const blobStream = setup.client.consumeBlob(blob)
 
       const chunks: Uint8Array[] = []
       for await (const chunk of blobStream) {
@@ -270,10 +271,8 @@ describe('Blob Download (Server → Client)', () => {
       const content = 'Echo this content'
       const uploadBlob = ProtocolBlob.from(content)
 
-      const getBlobStream = await setup.client.call.echoBlob({
-        file: uploadBlob,
-      })
-      const blobStream = getBlobStream()
+      const blob = await setup.client.call.echoBlob({ file: uploadBlob })
+      const blobStream = setup.client.consumeBlob(blob)
 
       const chunks: Uint8Array[] = []
       for await (const chunk of blobStream) {
@@ -288,8 +287,8 @@ describe('Blob Download (Server → Client)', () => {
 
     it('should download large blob (1MB+)', async () => {
       const sizeBytes = 1024 * 1024 // 1MB
-      const getBlobStream = await setup.client.call.downloadLarge({ sizeBytes })
-      const blobStream = getBlobStream()
+      const blob = await setup.client.call.downloadLarge({ sizeBytes })
+      const blobStream = setup.client.consumeBlob(blob)
 
       let totalBytes = 0
       for await (const chunk of blobStream) {
@@ -301,18 +300,18 @@ describe('Blob Download (Server → Client)', () => {
 
     it('should preserve blob metadata', async () => {
       const content = 'Content with metadata'
-      const getBlobStream = await setup.client.call.downloadWithMetadata({
+      const blob = await setup.client.call.downloadWithMetadata({
         content,
         type: 'text/markdown',
         filename: 'readme.md',
       })
 
       // Access metadata before consuming
-      expect(getBlobStream.metadata.type).toBe('text/markdown')
-      expect(getBlobStream.metadata.filename).toBe('readme.md')
-      expect(getBlobStream.metadata.size).toBe(content.length)
+      expect(blob.metadata.type).toBe('text/markdown')
+      expect(blob.metadata.filename).toBe('readme.md')
+      expect(blob.metadata.size).toBe(content.length)
 
-      const blobStream = getBlobStream()
+      const blobStream = setup.client.consumeBlob(blob)
       expect(blobStream.metadata.type).toBe('text/markdown')
       expect(blobStream.metadata.filename).toBe('readme.md')
       expect(blobStream.metadata.size).toBe(content.length)
@@ -332,10 +331,8 @@ describe('Blob Download (Server → Client)', () => {
       const binaryData = new Uint8Array([0x00, 0x01, 0x02, 0xff, 0xfe, 0xfd])
       const uploadBlob = ProtocolBlob.from(binaryData)
 
-      const getBlobStream = await setup.client.call.echoBlob({
-        file: uploadBlob,
-      })
-      const blobStream = getBlobStream()
+      const blob = await setup.client.call.echoBlob({ file: uploadBlob })
+      const blobStream = setup.client.consumeBlob(blob)
 
       const chunks: Uint8Array[] = []
       for await (const chunk of blobStream) {
@@ -352,8 +349,8 @@ describe('Blob Download (Server → Client)', () => {
   describe('Client Consumption Patterns', () => {
     it('should handle partial download with break', async () => {
       const content = 'x'.repeat(10000)
-      const getBlobStream = await setup.client.call.download({ content })
-      const blobStream = getBlobStream()
+      const blob = await setup.client.call.download({ content })
+      const blobStream = setup.client.consumeBlob(blob)
 
       let receivedBytes = 0
       for await (const chunk of blobStream) {
@@ -366,12 +363,11 @@ describe('Blob Download (Server → Client)', () => {
 
     it('should handle client not consuming blob', async () => {
       const content = 'This content will not be consumed'
-      const getBlobStream = await setup.client.call.download({ content })
+      const blob = await setup.client.call.download({ content })
 
-      // Get the blob stream accessor but never call it or iterate
-      // The blob stream function is returned but not invoked
-      expect(getBlobStream).toBeDefined()
-      expect(typeof getBlobStream).toBe('function')
+      // Get the blob marker but never consume it
+      expect(blob).toBeDefined()
+      expect(blob.metadata.type).toBe('text/plain')
 
       // Wait for potential timeout/cleanup
       await new Promise((resolve) => setTimeout(resolve, 50))
@@ -382,8 +378,8 @@ describe('Blob Download (Server → Client)', () => {
 
     it('should receive multiple chunks correctly', async () => {
       const chunks = ['First ', 'Second ', 'Third']
-      const getBlobStream = await setup.client.call.downloadChunked({ chunks })
-      const blobStream = getBlobStream()
+      const blob = await setup.client.call.downloadChunked({ chunks })
+      const blobStream = setup.client.consumeBlob(blob)
 
       const received: string[] = []
       for await (const chunk of blobStream) {
@@ -403,11 +399,8 @@ describe('Blob Download (Server → Client)', () => {
   describe('Server Lifecycle', () => {
     it('should stream data on client pull', async () => {
       const content = 'word1 word2 word3 word4 word5'
-      const getBlobStream = await setup.client.call.downloadSlow({
-        content,
-        delayMs: 5,
-      })
-      const blobStream = getBlobStream()
+      const blob = await setup.client.call.downloadSlow({ content, delayMs: 5 })
+      const blobStream = setup.client.consumeBlob(blob)
 
       const chunks: string[] = []
       for await (const chunk of blobStream) {
@@ -427,8 +420,8 @@ describe('Blob Download (Server → Client)', () => {
 
     it('should end stream after all data sent', async () => {
       const content = 'Complete download'
-      const getBlobStream = await setup.client.call.download({ content })
-      const blobStream = getBlobStream()
+      const blob = await setup.client.call.download({ content })
+      const blobStream = setup.client.consumeBlob(blob)
 
       const chunks: Uint8Array[] = []
       for await (const chunk of blobStream) {
@@ -449,8 +442,8 @@ describe('Blob Download (Server → Client)', () => {
   describe('Backpressure', () => {
     it('should handle large download with backpressure', async () => {
       const sizeBytes = 500000 // 500KB
-      const getBlobStream = await setup.client.call.downloadLarge({ sizeBytes })
-      const blobStream = getBlobStream()
+      const blob = await setup.client.call.downloadLarge({ sizeBytes })
+      const blobStream = setup.client.consumeBlob(blob)
 
       let totalBytes = 0
       let chunkCount = 0
@@ -501,8 +494,10 @@ describe('Blob Download (Server → Client)', () => {
       const sizeBytes = 100000 // 100KB
       const controller = new AbortController()
 
-      const getBlobStream = await setup.client.call.downloadLarge({ sizeBytes })
-      const blobStream = getBlobStream({ signal: controller.signal })
+      const blob = await setup.client.call.downloadLarge({ sizeBytes })
+      const blobStream = setup.client.consumeBlob(blob, {
+        signal: controller.signal,
+      })
 
       let receivedBytes = 0
 
@@ -535,8 +530,8 @@ describe('Blob Download (Server → Client)', () => {
   describe('Resource Cleanup', () => {
     it('should clean up server streams after download complete', async () => {
       const content = 'Cleanup test content'
-      const getBlobStream = await setup.client.call.download({ content })
-      const blobStream = getBlobStream()
+      const blob = await setup.client.call.download({ content })
+      const blobStream = setup.client.consumeBlob(blob)
 
       for await (const _chunk of blobStream) {
         // Consume all chunks
@@ -559,8 +554,8 @@ describe('Blob Download (Server → Client)', () => {
       // Verify initial state is clean
       expect(setup.client.activeServerStreamsCount).toBe(0)
 
-      const getBlobStream = await setup.client.call.download({ content })
-      const blobStream = getBlobStream()
+      const blob = await setup.client.call.download({ content })
+      const blobStream = setup.client.consumeBlob(blob)
 
       // Consume all chunks
       for await (const _chunk of blobStream) {
@@ -582,8 +577,10 @@ describe('Blob Download (Server → Client)', () => {
       // Verify initial state is clean
       expect(setup.client.activeServerStreamsCount).toBe(0)
 
-      const getBlobStream = await setup.client.call.downloadLarge({ sizeBytes })
-      const blobStream = getBlobStream({ signal: controller.signal })
+      const blob = await setup.client.call.downloadLarge({ sizeBytes })
+      const blobStream = setup.client.consumeBlob(blob, {
+        signal: controller.signal,
+      })
 
       // Start consuming but abort after some data
       const reader = blobStream.readable.getReader()
@@ -615,11 +612,7 @@ describe('Blob Download (Server → Client)', () => {
       // Verify initial state is clean
       expect(setup.client.activeServerStreamsCount).toBe(0)
 
-      const getBlobStream = await setup.client.call.download({ content })
-
-      // Get the blob stream accessor but never consume it
-      // This tests the case where the blob is returned but never iterated
-      const _blobStream = getBlobStream()
+      const _blob = await setup.client.call.download({ content })
 
       // Wait for potential timeout/cleanup
       await new Promise((resolve) => setTimeout(resolve, 100))
@@ -638,8 +631,8 @@ describe('Blob Download (Server → Client)', () => {
       // Verify initial state
       expect(setup.gateway.blobStreams.serverStreams.size).toBe(0)
 
-      const getBlobStream = await setup.client.call.download({ content })
-      const blobStream = getBlobStream()
+      const blob = await setup.client.call.download({ content })
+      const blobStream = setup.client.consumeBlob(blob)
 
       // Consume all chunks
       for await (const _chunk of blobStream) {
@@ -658,8 +651,8 @@ describe('Blob Download (Server → Client)', () => {
       const contents = ['First', 'Second', 'Third', 'Fourth', 'Fifth']
 
       const downloadPromises = contents.map(async (content) => {
-        const getBlobStream = await setup.client.call.download({ content })
-        const blobStream = getBlobStream()
+        const blob = await setup.client.call.download({ content })
+        const blobStream = setup.client.consumeBlob(blob)
         const chunks: Uint8Array[] = []
         for await (const chunk of blobStream) {
           chunks.push(
@@ -684,8 +677,8 @@ describe('Blob Download (Server → Client)', () => {
 
     it('should clean up after partial download', async () => {
       const sizeBytes = 50000 // 50KB
-      const getBlobStream = await setup.client.call.downloadLarge({ sizeBytes })
-      const blobStream = getBlobStream()
+      const blob = await setup.client.call.downloadLarge({ sizeBytes })
+      const blobStream = setup.client.consumeBlob(blob)
 
       let receivedBytes = 0
       for await (const chunk of blobStream) {
@@ -708,8 +701,8 @@ describe('Blob Download (Server → Client)', () => {
       try {
         // Download immediately after setup
         const content = 'Immediate download'
-        const getBlobStream = await localSetup.client.call.download({ content })
-        const blobStream = getBlobStream()
+        const blob = await localSetup.client.call.download({ content })
+        const blobStream = localSetup.client.consumeBlob(blob)
 
         const chunks: Uint8Array[] = []
         for await (const chunk of blobStream) {
@@ -728,8 +721,8 @@ describe('Blob Download (Server → Client)', () => {
       const contents = ['First download', 'Second download', 'Third download']
 
       for (const content of contents) {
-        const getBlobStream = await setup.client.call.download({ content })
-        const blobStream = getBlobStream()
+        const blob = await setup.client.call.download({ content })
+        const blobStream = setup.client.consumeBlob(blob)
 
         const chunks: Uint8Array[] = []
         for await (const chunk of blobStream) {
@@ -784,12 +777,12 @@ describe('Blob Download (Server → Client)', () => {
       const content = 'Content with long filename'
       const longFilename = 'a'.repeat(1000) + '.dat'
 
-      const getBlobStream = await setup.client.call.downloadWithMetadata({
+      const blob = await setup.client.call.downloadWithMetadata({
         content,
         type: 'application/octet-stream',
         filename: longFilename,
       })
-      const blobStream = getBlobStream()
+      const blobStream = setup.client.consumeBlob(blob)
 
       expect(blobStream.metadata.filename).toBe(longFilename)
 
@@ -803,12 +796,12 @@ describe('Blob Download (Server → Client)', () => {
       const content = 'Content with special filename'
       const specialFilename = '文件名 with spaces & special/chars?.txt'
 
-      const getBlobStream = await setup.client.call.downloadWithMetadata({
+      const blob = await setup.client.call.downloadWithMetadata({
         content,
         type: 'text/plain',
         filename: specialFilename,
       })
-      const blobStream = getBlobStream()
+      const blobStream = setup.client.consumeBlob(blob)
 
       expect(blobStream.metadata.filename).toBe(specialFilename)
 

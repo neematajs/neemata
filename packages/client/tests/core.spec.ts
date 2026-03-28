@@ -1,12 +1,18 @@
-import type { ProtocolBlob, ProtocolBlobMetadata } from '@nmtjs/protocol'
+import type {
+  ProtocolBlob,
+  ProtocolBlobInterface,
+  ProtocolBlobMetadata,
+} from '@nmtjs/protocol'
 import type {
   BaseClientFormat,
   MessageContext,
   ProtocolClientBlobStream,
-  ProtocolServerBlobConsumer,
 } from '@nmtjs/protocol/client'
-import { ConnectionType, kBlobKey, ProtocolVersion } from '@nmtjs/protocol'
-import { ProtocolServerBlobStream } from '@nmtjs/protocol/client'
+import {
+  ConnectionType,
+  createProtocolBlobReference,
+  ProtocolVersion,
+} from '@nmtjs/protocol'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { TransportConnectParams } from '../src/transport.ts'
@@ -20,30 +26,6 @@ const format: BaseClientFormat = {
   decodeRPC: vi.fn((chunk) => JSON.parse(new TextDecoder().decode(chunk))),
 } as BaseClientFormat
 
-const createBlobConsumer = (
-  metadata: ProtocolBlobMetadata,
-): ProtocolServerBlobConsumer => {
-  const consumer = (() =>
-    new ProtocolServerBlobStream(metadata)) as ProtocolServerBlobConsumer
-
-  Object.defineProperties(consumer, {
-    metadata: {
-      configurable: false,
-      enumerable: true,
-      writable: false,
-      value: metadata,
-    },
-    [kBlobKey]: {
-      configurable: false,
-      enumerable: false,
-      writable: false,
-      value: true,
-    },
-  })
-
-  return consumer
-}
-
 const createMessageContext = (): MessageContext => ({
   encoder: format,
   decoder: format,
@@ -52,10 +34,12 @@ const createMessageContext = (): MessageContext => ({
   addClientStream: vi.fn(() => ({}) as unknown as ProtocolClientBlobStream) as (
     blob: ProtocolBlob,
   ) => ProtocolClientBlobStream,
-  addServerStream: vi.fn((_, metadata) => createBlobConsumer(metadata)) as (
+  addServerStream: vi.fn((streamId, metadata) =>
+    createProtocolBlobReference(streamId, metadata),
+  ) as (
     streamId: number,
     metadata: ProtocolBlobMetadata,
-  ) => ProtocolServerBlobConsumer,
+  ) => ProtocolBlobInterface,
 })
 
 const createBidirectionalTransportDouble = () => {

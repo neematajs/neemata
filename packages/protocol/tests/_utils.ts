@@ -4,13 +4,15 @@ import { deserialize, serialize } from 'node:v8'
 import type { Pattern } from '@nmtjs/common'
 import { createLogger } from '@nmtjs/core'
 
-import type { ProtocolBlobMetadata } from '../src/common/blob.ts'
+import type {
+  ProtocolBlobInterface,
+  ProtocolBlobMetadata,
+} from '../src/common/blob.ts'
 import type {
   DecodeRPCContext,
   EncodeRPCStreams,
   ProtocolRPCPayload,
 } from '../src/common/types.ts'
-import type { ProtocolClientStream } from '../src/server/stream.ts'
 import { BaseServerFormat } from '../src/server/format.ts'
 
 export class TestFormat extends BaseServerFormat {
@@ -50,7 +52,7 @@ export class TestFormat extends BaseServerFormat {
 
   decodeRPC(
     buffer: ArrayBufferView,
-    _context: DecodeRPCContext<() => ProtocolClientStream>,
+    _context: DecodeRPCContext<ProtocolBlobInterface>,
   ): ProtocolRPCPayload {
     return this.decode(buffer)
   }

@@ -477,6 +477,7 @@ export { StaticClient } from '@nmtjs/client/static'
 export { c } from '@nmtjs/contract'
 export { Container, createLazyInjectable, Hooks } from '@nmtjs/core'
 export {
+  consumeBlob,
   createBlob,
   Gateway,
   rpcAbortSignal,

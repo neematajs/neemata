@@ -1,4 +1,8 @@
-import type { ProtocolBlob, ProtocolBlobMetadata } from '../common/blob.ts'
+import type {
+  ProtocolBlob,
+  ProtocolBlobInterface,
+  ProtocolBlobMetadata,
+} from '../common/blob.ts'
 import type {
   ClientMessageType,
   ProtocolVersion,
@@ -6,10 +10,7 @@ import type {
 } from '../common/enums.ts'
 import type { BaseProtocolError, EncodeRPCStreams } from '../common/types.ts'
 import type { BaseClientDecoder, BaseClientEncoder } from './format.ts'
-import type {
-  ProtocolClientBlobStream,
-  ProtocolServerBlobConsumer,
-} from './stream.ts'
+import type { ProtocolClientBlobStream } from './stream.ts'
 import { concat } from '../common/binary.ts'
 
 export type MessageContext = {
@@ -19,7 +20,7 @@ export type MessageContext = {
   addServerStream: (
     streamId: number,
     metadata: ProtocolBlobMetadata,
-  ) => ProtocolServerBlobConsumer
+  ) => ProtocolBlobInterface
   transport: { send: (buffer: ArrayBufferView) => void }
   streamId: () => number
 }

@@ -1,8 +1,7 @@
-import type { DecodeRPCContext } from '@nmtjs/protocol'
+import type { DecodeRPCContext, ProtocolBlobInterface } from '@nmtjs/protocol'
 import type {
   EncodeRPCContext,
   ProtocolClientBlobStream,
-  ProtocolServerBlobStream,
 } from '@nmtjs/protocol/client'
 import { decode, encode } from '@msgpack/msgpack'
 import { ProtocolBlob } from '@nmtjs/protocol'
@@ -59,9 +58,7 @@ export class MsgpackFormat extends BaseClientFormat {
 
   decodeRPC(
     buffer: ArrayBufferView,
-    context: DecodeRPCContext<
-      (options?: { signal?: AbortSignal }) => ProtocolServerBlobStream
-    >,
+    context: DecodeRPCContext<ProtocolBlobInterface>,
   ) {
     if (buffer.byteLength === 0) {
       return undefined

@@ -257,6 +257,20 @@ describe('BlobStreamsManager', () => {
         ).not.toThrow()
       })
     })
+
+    describe('getClientCallStreamIds', () => {
+      it('should return only still-unconsumed stream ids for a call', () => {
+        manager.createClientStream('conn-1', 1, 100, { type: 'text/plain' }, {})
+        manager.createClientStream('conn-1', 1, 101, { type: 'text/plain' }, {})
+        manager.createClientStream('conn-1', 2, 102, { type: 'text/plain' }, {})
+
+        manager.consumeClientStream('conn-1', 1, 100)
+
+        expect(manager.getClientCallStreamIds('conn-1', 1)).toEqual([101])
+        expect(manager.getClientCallStreamIds('conn-1', 2)).toEqual([102])
+        expect(manager.getClientCallStreamIds('conn-1', 999)).toEqual([])
+      })
+    })
   })
 
   describe('Server Streams (Download)', () => {

@@ -4,6 +4,7 @@ import type {
   ProtocolBlobInterface,
   ProtocolBlobMetadata,
 } from '@nmtjs/protocol'
+import type { ProtocolClientStream } from '@nmtjs/protocol/server'
 import { anyAbortSignal } from '@nmtjs/common'
 import {
   createFactoryInjectable,
@@ -108,6 +109,11 @@ export const createBlob = createLazyInjectable<
   Scope.Call
 >(Scope.Call, 'Create RPC blob')
 
+export const consumeBlob = createLazyInjectable<
+  (blob: ProtocolBlobInterface) => ProtocolClientStream,
+  Scope.Call
+>(Scope.Call, 'Consume RPC blob')
+
 export const GatewayInjectables = {
   connection,
   connectionId,
@@ -117,4 +123,5 @@ export const GatewayInjectables = {
   rpcStreamAbortSignal,
   rpcAbortSignal,
   createBlob,
+  consumeBlob,
 }
