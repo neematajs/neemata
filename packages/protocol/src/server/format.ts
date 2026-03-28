@@ -1,20 +1,22 @@
 import type { Pattern } from '@nmtjs/common'
 import { match } from '@nmtjs/common'
 
-import type { ProtocolBlobMetadata } from '../common/blob.ts'
+import type {
+  ProtocolBlobInterface,
+  ProtocolBlobMetadata,
+} from '../common/blob.ts'
 import type {
   DecodeRPCContext,
   EncodeRPCStreams,
   ProtocolRPCPayload,
 } from '../common/types.ts'
-import type { ProtocolClientStream } from './stream.ts'
 
 export interface BaseServerDecoder {
   accept: Pattern[]
   decode(buffer: ArrayBufferView): unknown
   decodeRPC(
     buffer: ArrayBufferView,
-    context: DecodeRPCContext<() => ProtocolClientStream>,
+    context: DecodeRPCContext<ProtocolBlobInterface>,
   ): ProtocolRPCPayload
 }
 
@@ -37,7 +39,7 @@ export abstract class BaseServerFormat
   abstract decode(buffer: ArrayBufferView): any
   abstract decodeRPC(
     buffer: ArrayBufferView,
-    context: DecodeRPCContext<() => ProtocolClientStream>,
+    context: DecodeRPCContext<ProtocolBlobInterface>,
   ): ProtocolRPCPayload
 }
 

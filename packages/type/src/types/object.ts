@@ -5,11 +5,9 @@ import {
   record as zodRecord,
 } from 'zod/mini'
 
-import type { ZodPlainType } from './_utils.ts'
 import type { BaseTypeAny, OptionalType } from './base.ts'
 import type { LiteralType } from './literal.ts'
 import type { StringType } from './string.ts'
-import { zodPlainType } from './_utils.ts'
 import { BaseType } from './base.ts'
 import { EnumType } from './enum.ts'
 
@@ -18,13 +16,7 @@ export type ObjectTypeProps = { [k: string]: BaseTypeAny }
 export class ObjectType<T extends ObjectTypeProps = {}> extends BaseType<
   ZodMiniObject<{ [K in keyof T]: T[K]['encodeZodType'] }, core.$strip>,
   ZodMiniObject<{ [K in keyof T]: T[K]['decodeZodType'] }, core.$strip>,
-  { properties: T },
-  ZodPlainType<
-    ZodMiniObject<{ [K in keyof T]: T[K]['encodeZodType'] }, core.$strip>
-  >,
-  ZodPlainType<
-    ZodMiniObject<{ [K in keyof T]: T[K]['decodeZodType'] }, core.$strip>
-  >
+  { properties: T }
 > {
   static factory<T extends ObjectTypeProps = {}>(properties: T) {
     const encodeProperties = {} as {
@@ -50,13 +42,7 @@ export class ObjectType<T extends ObjectTypeProps = {}> extends BaseType<
 export class LooseObjectType<T extends ObjectTypeProps = {}> extends BaseType<
   ZodMiniObject<{ [K in keyof T]: T[K]['encodeZodType'] }, core.$loose>,
   ZodMiniObject<{ [K in keyof T]: T[K]['decodeZodType'] }, core.$loose>,
-  { properties: T },
-  ZodPlainType<
-    ZodMiniObject<{ [K in keyof T]: T[K]['encodeZodType'] }, core.$loose>
-  >,
-  ZodPlainType<
-    ZodMiniObject<{ [K in keyof T]: T[K]['decodeZodType'] }, core.$loose>
-  >
+  { properties: T }
 > {
   static factory<T extends ObjectTypeProps = {}>(properties: T) {
     const encodeProperties = {} as {
@@ -93,21 +79,15 @@ export class RecordType<
 > extends BaseType<
   ZodMiniRecord<K['encodeZodType'], E['encodeZodType']>,
   ZodMiniRecord<K['decodeZodType'], E['decodeZodType']>,
-  { key: K; element: E },
-  ZodPlainType<ZodMiniRecord<K['encodeZodType'], E['encodeZodType']>>,
-  ZodPlainType<ZodMiniRecord<K['decodeZodType'], E['decodeZodType']>>
+  { key: K; element: E }
 > {
   static factory<
     K extends LiteralType<string | number> | EnumType | StringType,
     E extends BaseType,
   >(key: K, element: E) {
     return new RecordType<K, E>({
-      encodeZodType: zodPlainType(
-        zodRecord(key.encodeZodType, element.encodeZodType),
-      ),
-      decodeZodType: zodPlainType(
-        zodRecord(key.decodeZodType, element.decodeZodType),
-      ),
+      encodeZodType: zodRecord(key.encodeZodType, element.encodeZodType),
+      decodeZodType: zodRecord(key.decodeZodType, element.decodeZodType),
       props: { key, element },
     })
   }

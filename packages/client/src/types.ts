@@ -1,11 +1,7 @@
 import type { CallTypeProvider, OneOf, TypeProvider } from '@nmtjs/common'
 import type { TAnyProcedureContract, TAnyRouterContract } from '@nmtjs/contract'
-import type { ProtocolBlobInterface } from '@nmtjs/protocol'
-import type {
-  ProtocolError,
-  ProtocolServerBlobConsumer,
-} from '@nmtjs/protocol/client'
-import type { BaseTypeAny, PlainType, t } from '@nmtjs/type'
+import type { ProtocolError } from '@nmtjs/protocol/client'
+import type { BaseTypeAny, t } from '@nmtjs/type'
 
 export const ResolvedType: unique symbol = Symbol('ResolvedType')
 export type ResolvedType = typeof ResolvedType
@@ -25,12 +21,6 @@ export type BlobSubscriptionOptions = { signal?: AbortSignal }
 
 export type StreamSubscriptionOptions = Partial<StreamCallOptions>
 
-export type ClientOutputType<T> = T extends ProtocolBlobInterface
-  ? ProtocolServerBlobConsumer
-  : T extends { [PlainType]?: true }
-    ? { [K in keyof Omit<T, PlainType>]: ClientOutputType<T[K]> }
-    : T
-
 export interface StaticInputContractTypeProvider extends TypeProvider {
   output: this['input'] extends BaseTypeAny
     ? t.infer.decode.input<this['input']>
@@ -45,13 +35,13 @@ export interface RuntimeInputContractTypeProvider extends TypeProvider {
 
 export interface StaticOutputContractTypeProvider extends TypeProvider {
   output: this['input'] extends BaseTypeAny
-    ? ClientOutputType<t.infer.encodeRaw.output<this['input']>>
+    ? t.infer.encode.output<this['input']>
     : never
 }
 
 export interface RuntimeOutputContractTypeProvider extends TypeProvider {
   output: this['input'] extends BaseTypeAny
-    ? ClientOutputType<t.infer.decodeRaw.output<this['input']>>
+    ? t.infer.decode.output<this['input']>
     : never
 }
 

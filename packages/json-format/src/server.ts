@@ -1,5 +1,8 @@
-import type { DecodeRPCContext, EncodeRPCStreams } from '@nmtjs/protocol'
-import type { ProtocolClientStream } from '@nmtjs/protocol/server'
+import type {
+  DecodeRPCContext,
+  EncodeRPCStreams,
+  ProtocolBlobInterface,
+} from '@nmtjs/protocol'
 import { concat, decodeNumber, encodeNumber } from '@nmtjs/protocol'
 import { BaseServerFormat } from '@nmtjs/protocol/server'
 
@@ -43,10 +46,7 @@ export class JsonFormat extends BaseServerFormat {
     return JSON.parse(data.toString('utf-8'), _reviver)
   }
 
-  decodeRPC(
-    buffer: Buffer,
-    context: DecodeRPCContext<() => ProtocolClientStream>,
-  ) {
+  decodeRPC(buffer: Buffer, context: DecodeRPCContext<ProtocolBlobInterface>) {
     const streamsLength = Number(decodeNumber(buffer, 'Uint32'))
     const hasStreams = streamsLength > 0
     const payloadBuffer = buffer.subarray(

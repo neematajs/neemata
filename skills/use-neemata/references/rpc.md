@@ -170,10 +170,11 @@ export const streamWithTimeoutProcedure = n.procedure({
 import { n, t, c } from 'nmtjs'
 
 export const uploadProcedure = n.procedure({
+  dependencies: { consumeBlob: n.inject.consumeBlob },
   input: t.object({ file: c.blob() }),
   output: t.object({ size: t.number() }),
-  handler: async (_, input) => {
-    const blob = input.file() // returns async iterable of Uint8Array chunks
+  handler: async ({ consumeBlob }, input) => {
+    const blob = consumeBlob(input.file)
     const chunks: Uint8Array[] = []
     for await (const chunk of blob) {
       chunks.push(chunk)
@@ -187,6 +188,8 @@ export const uploadProcedure = n.procedure({
 // const blob = ProtocolBlob.from('file contents')
 // await client.call.upload({ file: blob })
 ```
+
+If a handler never calls `consumeBlob(input.file)`, the upload stream is aborted automatically when the handler finishes.
 
 ## Blob Download (Server → Client)
 

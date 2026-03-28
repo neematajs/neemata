@@ -329,8 +329,10 @@ c.subscription({
 Marker type for blob fields in input/output schemas.
 
 ```ts
-// In input — client sends a ProtocolBlob, server receives a blob accessor function
-// In output — server returns a blob via createBlob, client receives async iterable
+// In input — client sends a ProtocolBlob/blob created by client.createBlob(),
+//            server receives a blob marker and calls n.inject.consumeBlob to read it
+// In output — server returns a blob via n.inject.createBlob,
+//             client receives a blob marker and calls client.consumeBlob(blob)
 ```
 
 ---
@@ -398,12 +400,6 @@ type DecodeInput = t.infer.decode.input<typeof myType>
 type DecodeOutput = t.infer.decode.output<typeof myType>
 type EncodeInput = t.infer.encode.input<typeof myType>
 type EncodeOutput = t.infer.encode.output<typeof myType>
-
-// Raw modes (pre/post transforms)
-type DecodeRawInput = t.infer.decodeRaw.input<typeof myType>
-type DecodeRawOutput = t.infer.decodeRaw.output<typeof myType>
-type EncodeRawInput = t.infer.encodeRaw.input<typeof myType>
-type EncodeRawOutput = t.infer.encodeRaw.output<typeof myType>
 ```
 
 ### Standard Schema (quick)

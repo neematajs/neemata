@@ -1,6 +1,7 @@
 import { c, n, t } from 'nmtjs'
 
 export const uploadBlobProcedure = n.procedure({
+  dependencies: { consumeBlob: n.inject.consumeBlob },
   input: t.object({ file: c.blob() }),
   output: t.object({
     size: t.number(),
@@ -8,8 +9,8 @@ export const uploadBlobProcedure = n.procedure({
     type: t.string(),
     filename: t.string().optional(),
   }),
-  handler: async (_, input) => {
-    const blob = input.file()
+  handler: async ({ consumeBlob }, input) => {
+    const blob = consumeBlob(input.file)
     const chunks: Buffer[] = []
 
     for await (const chunk of blob) {

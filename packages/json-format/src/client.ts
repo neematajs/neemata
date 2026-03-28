@@ -1,10 +1,13 @@
 // ./ <reference lib="dom" />
 
-import type { DecodeRPCContext, EncodeRPCStreams } from '@nmtjs/protocol'
+import type {
+  DecodeRPCContext,
+  EncodeRPCStreams,
+  ProtocolBlobInterface,
+} from '@nmtjs/protocol'
 import type {
   EncodeRPCContext,
   ProtocolClientBlobStream,
-  ProtocolServerBlobStream,
 } from '@nmtjs/protocol/client'
 import {
   concat,
@@ -82,9 +85,7 @@ export class JsonFormat extends BaseClientFormat {
 
   decodeRPC(
     _buffer: ArrayBufferView,
-    context: DecodeRPCContext<
-      (options?: { signal?: AbortSignal }) => ProtocolServerBlobStream
-    >,
+    context: DecodeRPCContext<ProtocolBlobInterface>,
   ) {
     const buffer = new Uint8Array(
       _buffer.buffer,

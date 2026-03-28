@@ -1,5 +1,8 @@
-import type { DecodeRPCContext, EncodeRPCStreams } from '@nmtjs/protocol'
-import type { ProtocolClientStream } from '@nmtjs/protocol/server'
+import type {
+  DecodeRPCContext,
+  EncodeRPCStreams,
+  ProtocolBlobInterface,
+} from '@nmtjs/protocol'
 import { decode, encode } from '@msgpack/msgpack'
 import { ProtocolBlob } from '@nmtjs/protocol'
 import { BaseServerFormat } from '@nmtjs/protocol/server'
@@ -69,10 +72,7 @@ export class MsgpackFormat extends BaseServerFormat {
     return decode(data, { extensionCodec, context: {} })
   }
 
-  decodeRPC(
-    buffer: Buffer,
-    context: DecodeRPCContext<() => ProtocolClientStream>,
-  ) {
+  decodeRPC(buffer: Buffer, context: DecodeRPCContext<ProtocolBlobInterface>) {
     if (buffer.byteLength === 0) {
       return undefined
     }

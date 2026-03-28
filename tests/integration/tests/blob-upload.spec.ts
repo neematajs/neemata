@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { TestSetup } from './_setup.ts'
 import {
   c,
+  consumeBlob,
   createProcedure,
   createRootRouter,
   createRouter,
@@ -16,10 +17,11 @@ import {
 // =============================================================================
 
 const uploadProcedure = createProcedure({
+  dependencies: { consumeBlob },
   input: t.object({ file: c.blob() }),
   output: t.object({ size: t.number(), content: t.string() }),
-  handler: async (_, input) => {
-    const blob = input.file()
+  handler: async ({ consumeBlob }, input) => {
+    const blob = consumeBlob(input.file)
     const chunks: Uint8Array[] = []
     for await (const chunk of blob) {
       chunks.push(chunk)
@@ -30,6 +32,7 @@ const uploadProcedure = createProcedure({
 })
 
 const uploadMultipleProcedure = createProcedure({
+  dependencies: { consumeBlob },
   input: t.object({ file1: c.blob(), file2: c.blob() }),
   output: t.object({
     size1: t.number(),
@@ -37,9 +40,9 @@ const uploadMultipleProcedure = createProcedure({
     content1: t.string(),
     content2: t.string(),
   }),
-  handler: async (_, input) => {
-    const blob1 = input.file1()
-    const blob2 = input.file2()
+  handler: async ({ consumeBlob }, input) => {
+    const blob1 = consumeBlob(input.file1)
+    const blob2 = consumeBlob(input.file2)
 
     const chunks1: Uint8Array[] = []
     for await (const chunk of blob1) {
@@ -63,6 +66,7 @@ const uploadMultipleProcedure = createProcedure({
 })
 
 const uploadWithMetadataProcedure = createProcedure({
+  dependencies: { consumeBlob },
   input: t.object({ file: c.blob() }),
   output: t.object({
     size: t.number(),
@@ -70,8 +74,8 @@ const uploadWithMetadataProcedure = createProcedure({
     filename: t.string().optional(),
     metadataSize: t.number().optional(),
   }),
-  handler: async (_, input) => {
-    const blob = input.file()
+  handler: async ({ consumeBlob }, input) => {
+    const blob = consumeBlob(input.file)
     const chunks: Uint8Array[] = []
     for await (const chunk of blob) {
       chunks.push(chunk)
@@ -87,10 +91,11 @@ const uploadWithMetadataProcedure = createProcedure({
 })
 
 const partialConsumeProcedure = createProcedure({
+  dependencies: { consumeBlob },
   input: t.object({ file: c.blob(), bytesToRead: t.number() }),
   output: t.object({ bytesRead: t.number(), content: t.string() }),
-  handler: async (_, input) => {
-    const blob = input.file()
+  handler: async ({ consumeBlob }, input) => {
+    const blob = consumeBlob(input.file)
     const chunks: Uint8Array[] = []
     let totalRead = 0
 
@@ -120,10 +125,11 @@ const unconsumedBlobProcedure = createProcedure({
 })
 
 const trackingUploadProcedure = createProcedure({
+  dependencies: { consumeBlob },
   input: t.object({ file: c.blob() }),
   output: t.object({ chunksReceived: t.number(), totalBytes: t.number() }),
-  handler: async (_, input) => {
-    const blob = input.file()
+  handler: async ({ consumeBlob }, input) => {
+    const blob = consumeBlob(input.file)
     let chunksReceived = 0
     let totalBytes = 0
 
@@ -137,10 +143,11 @@ const trackingUploadProcedure = createProcedure({
 })
 
 const slowUploadProcedure = createProcedure({
+  dependencies: { consumeBlob },
   input: t.object({ file: c.blob() }),
   output: t.object({ size: t.number() }),
-  handler: async (_, input) => {
-    const blob = input.file()
+  handler: async ({ consumeBlob }, input) => {
+    const blob = consumeBlob(input.file)
     let totalBytes = 0
 
     for await (const chunk of blob) {
@@ -380,9 +387,8 @@ describe('Blob Upload (Client → Server)', () => {
 
       // Verify client state is clean (RPC call completed)
       expect(setup.client.pendingCallsCount).toBe(0)
-      // Note: activeClientStreamsCount may be 1 because the client stream cleanup
-      // depends on receiving ClientStreamAbort from the server, which is async
-      // TODO: This indicates a potential cleanup issue in the client
+      expect(setup.client.activeClientStreamsCount).toBe(0)
+      expect(setup.client.isClean).toBe(true)
 
       // Verify gateway blob streams are clean
       // After RPC dispose, abortClientCallStreams is called which cleans up
@@ -558,19 +564,12 @@ describe('Blob Upload (Client → Server)', () => {
 
       // Verify pending calls are cleaned up
       expect(setup.client.pendingCallsCount).toBe(0)
+      expect(setup.client.activeClientStreamsCount).toBe(0)
+      expect(setup.client.isClean).toBe(true)
 
       // Verify gateway cleanup
       expect(setup.gateway.blobStreams.clientStreams.size).toBe(0)
       expect(setup.gateway.blobStreams.clientCallStreams.size).toBe(0)
-
-      // KNOWN ISSUE: Client stream cleanup depends on receiving ClientStreamAbort
-      // from the server, but the gateway's abortClientCallStreams only destroys
-      // the server-side stream without sending a message to the client.
-      // This results in orphaned client streams.
-      // TODO: Gateway should send ServerMessageType.ClientStreamAbort when aborting
-      //       unconsumed client streams so the client can clean up its state.
-      // For now, we document this behavior:
-      // expect(setup.client.activeClientStreamsCount).toBe(0) // Would fail - client has orphaned stream
     })
   })
 

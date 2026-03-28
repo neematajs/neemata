@@ -8,8 +8,8 @@ import type {
   Logger,
   ResolveInjectableType,
 } from '@nmtjs/core'
+import type { ProtocolBlobInterface } from '@nmtjs/protocol'
 import type {
-  ClientStreamConsumer,
   ProtocolFormats,
   MessageContext as ProtocolMessageContext,
 } from '@nmtjs/protocol/server'
@@ -24,8 +24,9 @@ import { createFactoryInjectable, provision, Scope } from '@nmtjs/core'
 import {
   ClientMessageType,
   ConnectionType,
+  createProtocolBlobReference,
+  getProtocolBlobStreamId,
   isBlobInterface,
-  kBlobKey,
   ProtocolBlob,
   ServerMessageType,
 } from '@nmtjs/protocol'
@@ -274,7 +275,23 @@ export class Gateway {
     const container = connection.container.fork(Scope.Call)
 
     const dispose = async () => {
-      const streamAbortReason = 'Stream is not consumed by a user'
+      const streamAbortReason = 'Blob was not consumed before handler completed'
+
+      const unconsumedStreamIds = this.blobStreams.getClientCallStreamIds(
+        connection.id,
+        callId,
+      )
+
+      for (const streamId of unconsumedStreamIds) {
+        messageContext.transport.send?.(
+          connection.id,
+          connection.protocol.encodeMessage(
+            messageContext,
+            ServerMessageType.ClientStreamAbort,
+            { streamId, reason: streamAbortReason },
+          ),
+        )
+      }
 
       // Abort streams related to this call
       this.blobStreams.abortClientCallStreams(
@@ -352,27 +369,7 @@ export class Gateway {
           )
         })
 
-        const consume = () => {
-          this.blobStreams.consumeClientStream(connectionId, callId, streamId)
-          return stream
-        }
-
-        const consumer = Object.defineProperties(consume, {
-          [kBlobKey]: {
-            enumerable: false,
-            configurable: false,
-            writable: false,
-            value: true,
-          },
-          metadata: {
-            value: metadata,
-            enumerable: true,
-            configurable: false,
-            writable: false,
-          },
-        }) as ClientStreamConsumer
-
-        return consumer
+        return createProtocolBlobReference(streamId, metadata)
       },
     } satisfies ProtocolMessageContext & { [key: string]: unknown }
   }
@@ -516,6 +513,10 @@ export class Gateway {
                   injectables.createBlob,
                   this.createBlobFunction(rpcContext),
                 ),
+                provision(
+                  injectables.consumeBlob,
+                  this.consumeBlobFunction(rpcContext),
+                ),
               ])
               await this.handleRpcMessage(connection, rpcContext)
             } finally {
@@ -591,6 +592,10 @@ export class Gateway {
           provision(
             injectables.createBlob,
             this.createBlobFunction(rpcContext),
+          ),
+          provision(
+            injectables.consumeBlob,
+            this.consumeBlobFunction(rpcContext),
           ),
         ])
 
@@ -789,6 +794,18 @@ export class Gateway {
       })
 
       return blob
+    }
+  }
+
+  protected consumeBlobFunction(
+    context: GatewayRpcContext,
+  ): ResolveInjectableType<typeof injectables.consumeBlob> {
+    const { connectionId, callId } = context
+
+    return (blob: ProtocolBlobInterface) => {
+      const streamId = getProtocolBlobStreamId(blob)
+      this.blobStreams.consumeClientStream(connectionId, callId, streamId)
+      return this.blobStreams.getClientStream(connectionId, streamId)
     }
   }
 }

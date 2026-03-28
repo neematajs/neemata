@@ -80,7 +80,7 @@ Containers form a hierarchy: `Global → Connection → Call`. A scope can only 
 Two streaming mechanisms:
 
 - **RPC Streams** — Procedure returns `AsyncIterable`, set `stream: true`. Client consumes via `client.stream.*`
-- **Blob Streams** — Binary data via `ProtocolBlob.from()` (client) and `createBlob` injectable (server). Use `c.blob()` in contracts
+- **Blob Streams** — Binary data via `ProtocolBlob.from()` / `client.createBlob()` on the client, `n.inject.createBlob` on the server, and explicit consumption via `client.consumeBlob()` / `n.inject.consumeBlob`. Use `c.blob()` in contracts
 
 ## When Typecheck Fails
 

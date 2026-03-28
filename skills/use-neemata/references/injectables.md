@@ -97,6 +97,7 @@ If a lazy token may be absent, inject it as optional in dependencies using
 | `n.inject.rpcStreamAbortSignal` | Call | `AbortSignal` | Optional stream-timeout signal | Only available when procedure sets `streamTimeout` |
 | `n.inject.rpcAbortSignal` | Call | `AbortSignal` | Unified call signal (client/request + connection + optional stream timeout) | Recommended default signal for handler cancellation checks |
 | `n.inject.createBlob` | Call | Function | Factory that wraps data source into protocol blob response | Server-to-client binary streaming/blob responses |
+| `n.inject.consumeBlob` | Call | Function | Converts an incoming blob marker from request payload into a readable stream | Client-to-server blob uploads that handlers want to consume explicitly; ignored upload blobs are aborted when the handler completes |
 
 ### Cancellation signal quick guide
 

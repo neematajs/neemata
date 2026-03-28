@@ -5,7 +5,6 @@ import type {
   ProtocolBlob,
   ProtocolBlobMetadata,
 } from '@nmtjs/protocol'
-import type { ProtocolRPCEncode } from '@nmtjs/protocol/client'
 import { noopFn } from '@nmtjs/common'
 import {
   ProtocolClientStream,
@@ -130,6 +129,21 @@ export class BlobStreamsManager {
 
   consumeClientStream(connectionId: string, callId: number, streamId: number) {
     this.untrackClientCall(connectionId, callId, streamId)
+  }
+
+  getClientCallStreamIds(connectionId: string, callId: number) {
+    const key = this.getCallKey(connectionId, callId)
+    return [...(this.clientCallStreams.get(key) ?? [])]
+  }
+
+  getClientStream(connectionId: string, streamId: number) {
+    const key = this.getKey(connectionId, streamId)
+    const state = this.clientStreams.get(key)
+    if (!state) {
+      throw new Error('Stream not found')
+    }
+
+    return state.stream
   }
 
   private removeClientStream(connectionId: string, streamId: number) {

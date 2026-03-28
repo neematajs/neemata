@@ -1,7 +1,6 @@
 import type { core, ZodMiniArray } from 'zod/mini'
 import { length, maxLength, minLength, array as zodArray } from 'zod/mini'
 
-import type { ZodPlainType } from './_utils.ts'
 import { BaseType } from './base.ts'
 
 type Check = core.CheckFn<any[]> | core.$ZodCheck<any[]>
@@ -9,9 +8,7 @@ type Check = core.CheckFn<any[]> | core.$ZodCheck<any[]>
 export class ArrayType<T extends BaseType = BaseType> extends BaseType<
   ZodMiniArray<T['encodeZodType']>,
   ZodMiniArray<T['decodeZodType']>,
-  { element: T },
-  ZodPlainType<ZodMiniArray<T['encodeZodType']>>,
-  ZodPlainType<ZodMiniArray<T['encodeZodType']>>
+  { element: T }
 > {
   static factory<T extends BaseType>(element: T, ...checks: Check[]) {
     return new ArrayType<T>({

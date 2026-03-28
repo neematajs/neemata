@@ -1,4 +1,4 @@
-import type { ProtocolServerBlobConsumer } from '@nmtjs/protocol/client'
+import type { ProtocolBlobInterface } from '@nmtjs/protocol'
 import { c } from '@nmtjs/contract'
 import { ServerMessageType } from '@nmtjs/protocol'
 import { t } from '@nmtjs/type'
@@ -75,7 +75,7 @@ const runtimeContract = c.router({
 })
 
 describe('public clients', () => {
-  it('maps nested blob outputs to callable blob consumers in public client types', () => {
+  it('preserves nested blob outputs in public client types', () => {
     type StaticPublicClient = StaticClient<any, typeof staticContract>
     type RuntimePublicClient = RuntimeClient<any, typeof runtimeContract>
     type StaticNestedBlobResponse = Awaited<
@@ -87,10 +87,10 @@ describe('public clients', () => {
 
     expectTypeOf<
       StaticNestedBlobResponse['audio']
-    >().toEqualTypeOf<ProtocolServerBlobConsumer>()
+    >().toEqualTypeOf<ProtocolBlobInterface>()
     expectTypeOf<
       RuntimeNestedBlobResponse['audio']
-    >().toEqualTypeOf<ProtocolServerBlobConsumer>()
+    >().toEqualTypeOf<ProtocolBlobInterface>()
   })
 
   it('StaticClient routes nested call procedures through the public call API', async () => {
@@ -214,15 +214,14 @@ describe('public clients', () => {
       {},
     )
 
-    const getBlob = await client.call.files.download({})
+    const blob = await client.call.files.download({})
 
-    expect(typeof getBlob).toBe('function')
-    expect(getBlob.metadata).toEqual(metadata)
+    expect(blob).toMatchObject({ metadata })
 
-    const blob = getBlob()
-    expect(blob.metadata).toEqual(metadata)
-    expect(blob.type).toBe('text/plain')
-    expect(blob.size).toBe(12)
+    const blobStream = client.consumeBlob(blob)
+    expect(blobStream.metadata).toEqual(metadata)
+    expect(blobStream.type).toBe('text/plain')
+    expect(blobStream.size).toBe(12)
 
     client.dispose()
   })

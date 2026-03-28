@@ -15,7 +15,6 @@ import type { BaseClientTransformer } from '../transformers.ts'
 import type { ClientCallOptions } from '../types.ts'
 import type { StreamLayerApi } from './streams.ts'
 import { ServerStreams } from '../streams.ts'
-import { createServerBlobConsumer } from './streams.ts'
 
 export type ProtocolClientCall = Future<any> & {
   procedure: string
@@ -484,18 +483,12 @@ export const createRpcLayer = (
         stream: true,
       })
 
-      const { stream } = streams.addServerBlobStream(response.metadata)
-      let started = false
-      call.resolve(
-        createServerBlobConsumer(response.metadata, ({ signal } = {}) => {
-          if (!started) {
-            started = true
-            response.source.pipeTo(stream.writable, { signal }).catch(noopFn)
-          }
-
-          return stream
-        }),
-      )
+      const { blob } = streams.addServerBlobStream(response.metadata, {
+        start: (stream, { signal } = {}) => {
+          response.source.pipeTo(stream.writable, { signal }).catch(noopFn)
+        },
+      })
+      call.resolve(blob)
       return
     }
 
@@ -740,10 +733,6 @@ export const createRpcLayer = (
           }
 
           return stream
-        }
-
-        if (typeof value === 'function') {
-          return value
         }
 
         controller.abort()
