@@ -1,4 +1,8 @@
-import type { ConnectionIdentity, Transport } from '@nmtjs/gateway'
+import type {
+  ConnectionIdentity,
+  GatewayOptions,
+  Transport,
+} from '@nmtjs/gateway'
 
 import type { LifecycleHooks } from '../hooks.ts'
 import type { RuntimePlugin } from '../plugin.ts'
@@ -19,6 +23,7 @@ export interface ApplicationConfig<
   [kApplicationConfig]: any
   router: Router
   api: Pick<ApiOptions, 'timeout'>
+  gateway: Pick<GatewayOptions, 'streamTimeouts' | 'heartbeat'>
   transports: Transports
   identity?: ConnectionIdentity
   plugins: RuntimePlugin[]
@@ -46,6 +51,7 @@ export function defineApplication<
     filters = [] as ApplicationConfig['filters'],
     hooks = [] as ApplicationConfig['hooks'],
     lifecycleHooks = {},
+    gateway = {},
     identity: identityResolver,
   } = options
 
@@ -54,6 +60,7 @@ export function defineApplication<
     router,
     transports,
     api,
+    gateway,
     filters,
     plugins,
     guards,
