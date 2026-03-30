@@ -96,20 +96,17 @@ export class Gateway {
 
   constructor(options: GatewayOptions) {
     this.options = {
-      heartbeat: false,
-      streamTimeouts: {
-        // TODO: fix these ts errors
-        //@ts-expect-error
-        [StreamTimeout.Pull]:
-          options.streamTimeouts?.[StreamTimeout.Pull] ?? 5000,
-        //@ts-expect-error
-        [StreamTimeout.Consume]:
-          options.streamTimeouts?.[StreamTimeout.Consume] ?? 5000,
-        //@ts-expect-error
-        [StreamTimeout.Finish]:
-          options.streamTimeouts?.[StreamTimeout.Finish] ?? 10000,
+      heartbeat: {
+        interval: DEFAULT_GATEWAY_HEARTBEAT_INTERVAL,
+        timeout: DEFAULT_GATEWAY_HEARTBEAT_TIMEOUT,
       },
       ...options,
+      streamTimeouts: {
+        [StreamTimeout.Pull]: 15000,
+        [StreamTimeout.Consume]: 15000,
+        [StreamTimeout.Finish]: 120000,
+        ...options.streamTimeouts,
+      },
       identity:
         options.identity ??
         createFactoryInjectable({

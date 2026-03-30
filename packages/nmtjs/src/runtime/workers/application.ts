@@ -88,6 +88,7 @@ export class ApplicationWorkerRuntime extends BaseWorkerRuntime {
     }
 
     this.gateway = new Gateway({
+      ...this.appConfig.gateway,
       logger: this.logger,
       container: this.container,
       hooks: this.lifecycleHooks,
