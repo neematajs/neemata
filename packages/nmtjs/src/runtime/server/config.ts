@@ -51,7 +51,6 @@ export type ServerJobsConfig = {
    * Using this option will throw an error at startup.
    */
   scheduler?: JobsSchedulerOptions
-  ui?: { hostname?: string; port?: number }
 }
 
 export interface ServerConfigInit {
@@ -145,7 +144,6 @@ export interface ServerConfig {
      * Using this option will throw an error at startup.
      */
     scheduler?: JobsSchedulerOptions
-    ui?: ServerJobsConfig['ui']
   }
   commands?: {}
   subscription: ServerConfigInit['subscription']
@@ -175,7 +173,6 @@ export function defineServer(options: ServerConfigInit): ServerConfig {
       pools: options.jobs.pools,
       jobs: map,
       scheduler: options.jobs.scheduler,
-      ui: options.jobs.ui,
     }
   }
 
