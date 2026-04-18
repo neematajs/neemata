@@ -1,3 +1,5 @@
+/// <reference types="node" />
+
 import type { ServerMessageTypePayload } from '../protocol.ts'
 import type { MessageContext } from '../types.ts'
 import { decodeText, encodeNumber, encodeText } from '../../common/binary.ts'

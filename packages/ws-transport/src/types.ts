@@ -59,7 +59,7 @@ export type WsTransportRuntimeBun = {
   >
   server?: Partial<
     Pick<
-      import('bun').ServeOptions,
+      import('bun').Serve.Options<any, any>,
       'development' | 'id' | 'maxRequestBodySize' | 'idleTimeout' | 'ipv6Only'
     >
   >

@@ -1,11 +1,8 @@
 {
   "extends": "@tsconfig/node24/tsconfig.json",
   "compilerOptions": {
-    "target": "es2024",
-    "lib": ["ES2024"],
-    "module": "nodenext",
     "moduleResolution": "nodenext",
-    "allowJs": false,
+    "allowJs": true,
     "noEmit": true,
     "rewriteRelativeImportExtensions": true,
     "allowImportingTsExtensions": true,

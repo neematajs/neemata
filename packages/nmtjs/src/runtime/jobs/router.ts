@@ -1,3 +1,5 @@
+import assert from 'node:assert'
+
 import type { MaybePromise } from '@nmtjs/common'
 import type { TProcedureContract, TRouterContract } from '@nmtjs/contract'
 import type { Dependencies, DependencyContext, Metadata } from '@nmtjs/core'

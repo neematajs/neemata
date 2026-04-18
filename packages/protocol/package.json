@@ -45,7 +45,7 @@
     "@nmtjs/common": "workspace:*",
     "@nmtjs/contract": "workspace:*",
     "@nmtjs/type": "workspace:*",
-    "hookable": "6.1.0"
+    "hookable": "6.1.1"
   },
   "devDependencies": {
     "@nmtjs/core": "workspace:*"

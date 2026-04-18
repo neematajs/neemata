@@ -132,8 +132,6 @@ export interface ServerConfig {
    * The applications will be accessible via `<hostname>:<port>/<application-name>/**`
    *
    * Requires adding `@nmtjs/proxy` package to your dependencies
-   * and [`cargo`](https://doc.rust-lang.org/cargo/getting-started/installation.html) alongside with
-   * [`rustc`](https://www.rust-lang.org/tools/install) to be available globally for building native modules.
    */
   proxy: ServerConfigInit['proxy']
   jobs?: {

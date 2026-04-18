@@ -35,7 +35,7 @@ jobs:
       - run: pnpm check
 
   tests:
-    needs: [lint]
+    needs: [ lint ]
     strategy:
       fail-fast: false
       matrix:
@@ -43,7 +43,7 @@ jobs:
           - 24
         os:
           - blacksmith-4vcpu-ubuntu-2404
-          - macos-latest
+          - blacksmith-6vcpu-macos-26
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
@@ -73,7 +73,7 @@ jobs:
         run: |
           pnpm exec playwright install --with-deps chromium firefox webkit
       - name: Install Playwright browser (macOS)
-        if: matrix.os == 'macos-latest'
+        if: matrix.os == 'blacksmith-6vcpu-macos-26'
         run: |
           pnpm exec playwright install chromium firefox webkit
       - run: |
@@ -81,7 +81,7 @@ jobs:
           pnpm run test:browser:client
 
   tests-jobs:
-    needs: [lint]
+    needs: [ lint ]
     runs-on: blacksmith-4vcpu-ubuntu-2404
     services:
       redis:

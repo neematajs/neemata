@@ -1,3 +1,5 @@
+/// <reference lib="dom" />
+
 import type { Callback, Pattern } from './types.ts'
 
 export const noopFn = () => {}
