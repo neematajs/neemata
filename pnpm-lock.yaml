@@ -41,9 +41,6 @@ importers:
       '@vitest/ui':
         specifier: 4.1.4
         version: 4.1.4(vitest@4.1.4)
-      husky:
-        specifier: ^9.1.7
-        version: 9.1.7
       playwright:
         specifier: ^1.59.1
         version: 1.59.1
@@ -1270,11 +1267,6 @@ packages:
   html-escaper@2.0.2:
     resolution: {integrity: sha512-H2iMtd0I4Mt5eYiapRdIDjp+XzelXQ0tFE4JS7YFwFevXXMmOp9myNrUvCg0D6ws8iqkRPBfKHgbwig1SmlLfg==}
 
-  husky@9.1.7:
-    resolution: {integrity: sha512-5gs5ytaNjBrh5Ow3zrvdUUY+0VxIuWVL4i9irt6friV+BqdCfmV11CQTWMiBYWHbXhco+J1kHfTOUkePhCDvMA==}
-    engines: {node: '>=18'}
-    hasBin: true
-
   ioredis@5.10.1:
     resolution: {integrity: sha512-HuEDBTI70aYdx1v6U97SbNx9F1+svQKBDo30o0b9fw055LMepzpOOd0Ccg9Q6tbqmBSJaMuY0fB7yw9/vjBYCA==}
     engines: {node: '>=12.22.0'}
@@ -2361,8 +2353,6 @@ snapshots:
   hookable@6.1.1: {}
 
   html-escaper@2.0.2: {}
-
-  husky@9.1.7: {}
 
   ioredis@5.10.1:
     dependencies:

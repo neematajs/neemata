@@ -19,8 +19,7 @@
     "check:lint": "biome lint --diagnostic-level=error .",
     "check:fmt": "biome format --diagnostic-level=error .",
     "check": "pnpm run check:fmt && pnpm run check:lint && pnpm run check:type",
-    "fmt": "biome check --diagnostic-level=error --write .",
-    "prepare": "husky"
+    "fmt": "biome check --diagnostic-level=error --write ."
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.12",
@@ -30,7 +29,6 @@
     "@vitest/browser-playwright": "4.1.4",
     "@vitest/coverage-v8": "4.1.4",
     "@vitest/ui": "4.1.4",
-    "husky": "^9.1.7",
     "playwright": "^1.59.1",
     "vitest": "4.1.4"
   },
