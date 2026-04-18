@@ -1,13 +1,6 @@
 import { createServer } from 'node:http'
 
 import type { Logger } from '@nmtjs/core'
-import {
-  createApp,
-  createRouter,
-  eventHandler,
-  setHeader,
-  toNodeListener,
-} from 'h3'
 import { Pushgateway } from 'prom-client'
 
 import type { ServerConfig } from '../server/config.ts'
@@ -33,17 +26,27 @@ export async function createMetricsServer(
     }, interval)
   }
 
-  const app = createApp()
-  const router = createRouter()
-  router.get(
-    path,
-    eventHandler(async (event) => {
-      setHeader(event, 'Content-Type', registry.contentType)
-      return await registry.workerMetrics()
-    }),
-  )
-  app.use(router)
-  const server = createServer(toNodeListener(app))
+  const server = createServer((req, res) => {
+    const url = new URL(`http://${req.headers.host || 'localhost'}${req.url}`)
+    if (url.pathname === path) {
+      res.setHeader('Content-Type', registry.contentType)
+      registry
+        .workerMetrics()
+        .then((metrics) => {
+          res.writeHead(200)
+          res.end(metrics)
+        })
+        .catch((cause) => {
+          logger.error(new Error('Metrics collection error', { cause }))
+          res.writeHead(500)
+          res.end('Internal Server Error')
+        })
+    } else {
+      res.writeHead(404)
+      res.end('Not Found')
+    }
+  })
+
   return {
     start: () =>
       new Promise<void>((resolve) =>

@@ -54,7 +54,7 @@ export class ProtocolServerStream extends PassThrough {
     this.metadata = blob.metadata
   }
 
-  override resume(): this {
+  resume(): this {
     if (!this.#piped) {
       this.#piped = true
       this.#source.pipe(this)
@@ -62,7 +62,7 @@ export class ProtocolServerStream extends PassThrough {
     return super.resume()
   }
 
-  override destroy(error?: Error | null) {
+  destroy(error?: Error | null) {
     if (!this.#piped) {
       this.#piped = true
     }
