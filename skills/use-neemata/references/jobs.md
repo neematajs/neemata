@@ -381,7 +381,6 @@ export default n.server({
       [JobWorkerPool.Compute]: { threads: 1, jobs: 2 },
     },
     jobs: [processUserJob],
-    ui: { port: 3001 },  // optional BullBoard UI (read-only)
   },
   // ...
 })
