@@ -3,6 +3,7 @@ import type {
   GatewayOptions,
   Transport,
 } from '@nmtjs/gateway'
+import { assertUniqueMetaBindings } from '@nmtjs/core'
 
 import type { LifecycleHooks } from '../hooks.ts'
 import type { RuntimePlugin } from '../plugin.ts'
@@ -10,7 +11,7 @@ import type { ApiOptions } from './api/api.ts'
 import type { AnyFilter } from './api/filters.ts'
 import type { AnyGuard } from './api/guards.ts'
 import type { AnyMiddleware } from './api/middlewares.ts'
-import type { AnyRootRouter } from './api/router.ts'
+import type { AnyRootRouter, AnyRouterMetaBinding } from './api/router.ts'
 import type { AnyHook } from './hook.ts'
 import { kApplicationConfig } from './constants.ts'
 
@@ -29,7 +30,8 @@ export interface ApplicationConfig<
   plugins: RuntimePlugin[]
   filters: AnyFilter[]
   middlewares: AnyMiddleware[]
-  guards: AnyGuard<unknown>[]
+  guards: AnyGuard[]
+  meta: AnyRouterMetaBinding[]
   hooks: AnyHook[]
   lifecycleHooks: LifecycleHooks['_']['config']
 }
@@ -46,6 +48,7 @@ export function defineApplication<
     transports = {},
     guards = [],
     middlewares = [],
+    meta = [],
     plugins = [],
     api = {} as ApplicationConfig['api'],
     filters = [] as ApplicationConfig['filters'],
@@ -54,6 +57,8 @@ export function defineApplication<
     gateway = {},
     identity: identityResolver,
   } = options
+
+  assertUniqueMetaBindings(meta, 'application config')
 
   return Object.freeze({
     [kApplicationConfig]: true,
@@ -65,6 +70,7 @@ export function defineApplication<
     plugins,
     guards,
     middlewares,
+    meta,
     hooks,
     lifecycleHooks,
     identity: identityResolver,

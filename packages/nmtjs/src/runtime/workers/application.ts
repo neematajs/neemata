@@ -69,6 +69,7 @@ export class ApplicationWorkerRuntime extends BaseWorkerRuntime {
       timeout: this.appConfig.api.timeout,
       container: this.container,
       logger: this.logger,
+      meta: this.appConfig.meta,
       filters: this.filters,
       middlewares: this.middlewares,
       guards: this.guards,
@@ -151,9 +152,14 @@ export class ApplicationWorkerRuntime extends BaseWorkerRuntime {
     yield* this.appConfig.filters
     yield* this.appConfig.guards
     yield* this.appConfig.middlewares
+    yield* this.appConfig.meta
     yield* this.appConfig.hooks
+    for (const router of this.routers.values()) {
+      yield* router.meta
+    }
     for (const { procedure } of this.procedures.values()) {
       yield procedure
+      yield* procedure.meta
       yield* procedure.guards
       yield* procedure.middlewares
     }

@@ -3,6 +3,7 @@ import type { LazyInjectable, Provision, Scope } from '@nmtjs/core'
 import type { ConnectionType, ProtocolVersion } from '@nmtjs/protocol'
 import type { ProtocolFormats } from '@nmtjs/protocol/server'
 
+import type { GatewayResolvedProcedure } from './api.ts'
 import type { GatewayConnection } from './connections.ts'
 import type { ProxyableTransportType } from './enums.ts'
 import type { GatewayRpc } from './types.ts'
@@ -42,6 +43,10 @@ export type TransportWorkerParams<
     options: TransportOnMessageOptions,
     ...injections: Provision[]
   ) => Promise<void>
+  resolve: (
+    connection: GatewayConnection,
+    procedure: GatewayRpc['procedure'],
+  ) => Promise<GatewayResolvedProcedure>
   onRpc: (
     connection: GatewayConnection,
     rpc: GatewayRpc,

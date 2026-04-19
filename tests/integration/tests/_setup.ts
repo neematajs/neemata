@@ -426,6 +426,7 @@ export async function createTestSetup<TRouter extends AnyRootRouter>(
     guards: new Set(guards),
     middlewares: new Set(middlewares),
     filters: new Set(filters),
+    meta: [],
   })
 
   const gateway = new Gateway({

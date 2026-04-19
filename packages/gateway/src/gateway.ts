@@ -124,16 +124,17 @@ export class Gateway {
 
   async start() {
     const hosts: { url: string; type: ProxyableTransportType }[] = []
-    for (const key in this.options.transports) {
-      const { transport, proxyable } = this.options.transports[key]
+    for (const transportKey in this.options.transports) {
+      const { transport, proxyable } = this.options.transports[transportKey]
       const url = await transport.start({
         formats: this.options.formats,
-        onConnect: this.onConnect(key),
-        onDisconnect: this.onDisconnect(key),
-        onMessage: this.onMessage(key),
-        onRpc: this.onRpc(key),
+        onConnect: this.onConnect(transportKey),
+        onDisconnect: this.onDisconnect(transportKey),
+        onMessage: this.onMessage(transportKey),
+        resolve: this.resolve(transportKey),
+        onRpc: this.onRpc(transportKey),
       })
-      this.logger.info(`Transport [${key}] started on [${url}]`)
+      this.logger.info(`Transport [${transportKey}] started on [${url}]`)
       if (proxyable) hosts.push({ url, type: proxyable })
     }
     return hosts
@@ -261,7 +262,7 @@ export class Gateway {
     gatewayRpc: GatewayRpc,
     signal?: AbortSignal,
   ): GatewayRpcContext {
-    const { callId, payload, procedure, metadata } = gatewayRpc
+    const { callId, payload, procedure } = gatewayRpc
     const controller = new AbortController()
     this.rpcs.set(connection.id, callId, controller)
 
@@ -307,7 +308,6 @@ export class Gateway {
       callId,
       payload,
       procedure,
-      metadata,
       container,
       signal,
       logger: logger.child({ callId, procedure }),
@@ -569,6 +569,7 @@ export class Gateway {
 
   protected onRpc(transport: string): TransportWorkerParams['onRpc'] {
     const _logger = this.logger.child({ transport })
+
     return async (connection, rpc, signal, ...injections) => {
       const logger = _logger.child({ connectionId: connection.id })
       const messageContext = this.createMessageContext(
@@ -582,6 +583,7 @@ export class Gateway {
         rpc,
         signal,
       )
+
       try {
         rpcContext.container.provide([
           ...injections,
@@ -600,7 +602,6 @@ export class Gateway {
           connection,
           payload: rpc.payload,
           procedure: rpc.procedure,
-          metadata: rpc.metadata,
           container: rpcContext.container,
           signal: rpcContext.signal,
         })
@@ -617,6 +618,16 @@ export class Gateway {
         await rpcContext[Symbol.asyncDispose]()
         throw error
       }
+    }
+  }
+
+  protected resolve(transport: string): TransportWorkerParams['resolve'] {
+    const _logger = this.logger.child({ transport })
+
+    return async (connection, procedure) => {
+      _logger.trace({ connectionId: connection.id, procedure }, 'Resolving RPC')
+
+      return this.options.api.resolve({ connection, procedure })
     }
   }
 

@@ -1,8 +1,6 @@
 import type { AnyInjectable, Container, Logger, Scope } from '@nmtjs/core'
 import type { MessageContext as ProtocolMessageContext } from '@nmtjs/protocol/server'
 
-import type { GatewayApiCallOptions } from './api.ts'
-
 export type ConnectionIdentityType = string
 export type ConnectionIdentity = AnyInjectable<
   ConnectionIdentityType,
@@ -13,7 +11,6 @@ export interface GatewayRpc {
   callId: number
   procedure: string
   payload: unknown
-  metadata?: GatewayApiCallOptions['metadata']
 }
 
 export interface GatewayRpcContext extends ProtocolMessageContext, GatewayRpc {
