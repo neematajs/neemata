@@ -2,17 +2,29 @@ import assert from 'node:assert'
 import { randomUUID } from 'node:crypto'
 import { inspect } from 'node:util'
 
-import type { Container, Logger } from '@nmtjs/core'
+import type {
+  AnyFactoryMetaBinding,
+  AnyMetaBinding,
+  Container,
+  Logger,
+  StaticMetaBinding,
+} from '@nmtjs/core'
 import type {
   GatewayApi,
   GatewayApiCallOptions,
   GatewayApiCallResult,
   GatewayConnection,
+  GatewayResolvedProcedure,
+  GatewayResolveOptions,
 } from '@nmtjs/gateway'
 import { withTimeout } from '@nmtjs/common'
 import { IsStreamProcedureContract } from '@nmtjs/contract'
-import { Scope } from '@nmtjs/core'
-import { isAsyncIterable, rpcStreamAbortSignal } from '@nmtjs/gateway'
+import { getMetaBindingMeta, isStaticMetaBinding, Scope } from '@nmtjs/core'
+import {
+  createGatewayStaticMetaView,
+  isAsyncIterable,
+  rpcStreamAbortSignal,
+} from '@nmtjs/gateway'
 import { ErrorCode } from '@nmtjs/protocol'
 import { ProtocolError } from '@nmtjs/protocol/server'
 import { NeemataTypeError, registerDefaultLocale, type } from '@nmtjs/type'
@@ -21,6 +33,7 @@ import { prettifyError } from 'zod/mini'
 import type { kDefaultProcedure as kDefaultProcedureKey } from './constants.ts'
 import type { AnyFilter } from './filters.ts'
 import type { AnyGuard } from './guards.ts'
+import type { ApiMetaContext } from './meta.ts'
 import type { AnyMiddleware } from './middlewares.ts'
 import type { AnyProcedure } from './procedure.ts'
 import type { AnyRouter } from './router.ts'
@@ -47,10 +60,17 @@ export type ApiOptions = {
     string | kDefaultProcedureKey,
     { procedure: AnyProcedure; path: AnyRouter[] }
   >
+  meta: readonly AnyMetaBinding[]
   guards: Set<AnyGuard>
   middlewares: Set<AnyMiddleware>
   filters: Set<AnyFilter>
 }
+
+type ResolvedMetaBindings = Readonly<{
+  static: readonly StaticMetaBinding[]
+  beforeDecode: readonly AnyFactoryMetaBinding[]
+  afterDecode: readonly AnyFactoryMetaBinding[]
+}>
 
 export class ApiError extends ProtocolError {
   toString() {
@@ -73,14 +93,32 @@ export class ApplicationApi implements GatewayApi {
     throw NotFound()
   }
 
+  async resolve(
+    options: GatewayResolveOptions,
+  ): Promise<GatewayResolvedProcedure> {
+    const { procedure, path } = this.find(options.procedure)
+
+    const metaBindings = this.resolveMetaBindings(path, procedure)
+
+    return Object.freeze({
+      stream: IsStreamProcedureContract(procedure.contract),
+      meta: createGatewayStaticMetaView(metaBindings.static),
+    }) satisfies GatewayResolvedProcedure
+  }
+
   async call(options: GatewayApiCallOptions): Promise<GatewayApiCallResult> {
     const callId = randomUUID()
 
     const { payload, container, signal, connection } = options
 
+    assert(
+      container.scope === Scope.Call,
+      'Invalid container scope, expected to be Scope.Call',
+    )
+
     const { procedure, path } = this.find(options.procedure)
 
-    options.metadata?.(procedure.metadata)
+    const metaBindings = this.resolveMetaBindings(path, procedure)
 
     const callOptions: ApiCallOptions = Object.freeze({
       callId,
@@ -92,11 +130,6 @@ export class ApplicationApi implements GatewayApi {
       path,
     })
 
-    assert(
-      container.scope === Scope.Call,
-      'Invalid container scope, expected to be Scope.Call',
-    )
-
     const timeout = procedure.contract.timeout ?? this.options.timeout
     const streamTimeoutSignal = procedure.streamTimeout
       ? AbortSignal.timeout(procedure.streamTimeout)
@@ -107,7 +140,10 @@ export class ApplicationApi implements GatewayApi {
     }
 
     try {
-      const handle = await this.createProcedureHandler(callOptions)
+      const handle = await this.createProcedureHandler(
+        callOptions,
+        metaBindings,
+      )
       return timeout
         ? await this.withTimeout(handle(payload), timeout)
         : await handle(payload)
@@ -125,7 +161,10 @@ export class ApplicationApi implements GatewayApi {
     }
   }
 
-  private async createProcedureHandler(callOptions: ApiCallOptions) {
+  private async createProcedureHandler(
+    callOptions: ApiCallOptions,
+    metaBindings: ResolvedMetaBindings,
+  ) {
     const { callId, connection, procedure, container, path } = callOptions
 
     const callCtx: ApiCallContext = Object.freeze({
@@ -137,6 +176,9 @@ export class ApplicationApi implements GatewayApi {
     })
 
     const isIterableProcedure = IsStreamProcedureContract(procedure.contract)
+
+    this.applyStaticMetaBindings(container, metaBindings.static)
+
     const middlewares = this.resolveMiddlewares(callOptions)
 
     const handleProcedure = async (payload: any) => {
@@ -146,7 +188,19 @@ export class ApplicationApi implements GatewayApi {
           handleProcedure(args.length === 0 ? payload : args[0])
         return middleware.handle(middleware.ctx, callCtx, next, payload)
       } else {
+        await this.applyFactoryMetaBindings(
+          container,
+          metaBindings.beforeDecode,
+          callCtx,
+          payload,
+        )
         const input = this.handleInput(procedure, payload)
+        await this.applyFactoryMetaBindings(
+          container,
+          metaBindings.afterDecode,
+          callCtx,
+          input,
+        )
         await this.handleGuards(callOptions, callCtx, input)
         const { dependencies, handler } = procedure
         const context = await container.createContext(dependencies)
@@ -160,6 +214,59 @@ export class ApplicationApi implements GatewayApi {
     }
 
     return handleProcedure
+  }
+
+  private resolveMetaBindings(
+    path: AnyRouter[],
+    procedure: AnyProcedure,
+  ): ResolvedMetaBindings {
+    const bindings = [
+      ...this.options.meta,
+      ...path.flatMap((router) => router.meta),
+      ...procedure.meta,
+    ]
+
+    const staticBindings: StaticMetaBinding[] = []
+    const beforeDecode: AnyFactoryMetaBinding[] = []
+    const afterDecode: AnyFactoryMetaBinding[] = []
+
+    for (const binding of bindings) {
+      if (isStaticMetaBinding(binding)) {
+        staticBindings.push(binding)
+      } else if (binding.phase === 'afterDecode') {
+        afterDecode.push(binding)
+      } else {
+        beforeDecode.push(binding)
+      }
+    }
+
+    return Object.freeze({
+      static: Object.freeze(staticBindings),
+      beforeDecode: Object.freeze(beforeDecode),
+      afterDecode: Object.freeze(afterDecode),
+    })
+  }
+
+  private applyStaticMetaBindings(
+    container: Container,
+    bindings: readonly StaticMetaBinding[],
+  ) {
+    for (const binding of bindings) {
+      container.provide(getMetaBindingMeta(binding), binding.value)
+    }
+  }
+
+  private async applyFactoryMetaBindings(
+    container: Container,
+    bindings: readonly AnyFactoryMetaBinding[],
+    callCtx: ApiMetaContext,
+    input: unknown,
+  ) {
+    for (const binding of bindings) {
+      const context = await container.createContext(binding.dependencies)
+      const value = await binding.resolve(context, callCtx, input)
+      container.provide(getMetaBindingMeta(binding), value)
+    }
   }
 
   private async resolveMiddlewares(callOptions: ApiCallOptions) {

@@ -1,21 +1,32 @@
 import type { MaybePromise } from '@nmtjs/common'
 import type { TAnyProcedureContract, TProcedureContract } from '@nmtjs/contract'
-import type {
-  Dependant,
-  Dependencies,
-  DependencyContext,
-  Metadata,
-} from '@nmtjs/core'
+import type { Dependant, Dependencies, DependencyContext } from '@nmtjs/core'
 import type { BaseType } from '@nmtjs/type'
 import type * as zod from 'zod/mini'
 import { c } from '@nmtjs/contract'
-import { MetadataStore } from '@nmtjs/core'
+import { assertUniqueMetaBindings } from '@nmtjs/core'
 import { t } from '@nmtjs/type'
 
 import type { AnyGuard } from './guards.ts'
+import type { AnyCompatibleMetaBinding, CompatibleMetaBinding } from './meta.ts'
 import type { AnyMiddleware } from './middlewares.ts'
 import type { JsonPrimitive } from './types.ts'
 import { kProcedure } from './constants.ts'
+
+export type {
+  AnyCompatibleMetaBinding,
+  CompatibleMetaBinding,
+  StaticOrBeforeDecodeMetaBinding,
+} from './meta.ts'
+export type ProcedureMetaBinding<Input> = CompatibleMetaBinding<Input>
+export type AnyProcedureMetaBinding = AnyCompatibleMetaBinding
+
+export type ProcedureDecodedInput<Input extends BaseType | undefined> =
+  Input extends BaseType ? t.infer.decode.output<Input> : never
+
+export type ProcedureContractDecodedInput<
+  ProcedureContract extends TAnyProcedureContract,
+> = t.infer.decode.output<ProcedureContract['input']>
 
 export interface BaseProcedure<
   ProcedureContract extends TAnyProcedureContract,
@@ -23,7 +34,7 @@ export interface BaseProcedure<
 > extends Dependant<ProcedureDeps> {
   contract: ProcedureContract
   handler: (...args: any[]) => any
-  metadata: MetadataStore
+  meta: readonly AnyProcedureMetaBinding[]
   dependencies: ProcedureDeps
   guards: Set<AnyGuard>
   middlewares: Set<AnyMiddleware>
@@ -41,7 +52,7 @@ export interface Procedure<
   ProcedureDeps extends Dependencies,
 > extends BaseProcedure<ProcedureContract, ProcedureDeps> {
   handler: ProcedureHandlerType<
-    t.infer.decode.output<ProcedureContract['input']>,
+    ProcedureContractDecodedInput<ProcedureContract>,
     ProcedureContract['stream'] extends true
       ? AsyncIterable<t.infer.encode.input<ProcedureContract['output']>>
       : t.infer.encode.input<ProcedureContract['output']>,
@@ -59,12 +70,14 @@ export type CreateProcedureParams<
 > =
   | {
       dependencies?: ProcedureDeps
-      guards?: AnyGuard<t.infer.decode.output<ProcedureContract['input']>>[]
+      guards?: AnyGuard[]
       middlewares?: AnyMiddleware[]
-      metadata?: Metadata[]
+      meta?: ProcedureMetaBinding<
+        ProcedureContractDecodedInput<ProcedureContract>
+      >[]
       streamTimeout?: number
       handler: ProcedureHandlerType<
-        t.infer.decode.output<ProcedureContract['input']>,
+        ProcedureContractDecodedInput<ProcedureContract>,
         ProcedureContract['stream'] extends undefined
           ? t.infer.encode.input<ProcedureContract['output']>
           : AsyncIterable<
@@ -74,7 +87,7 @@ export type CreateProcedureParams<
       >
     }
   | ProcedureHandlerType<
-      t.infer.decode.output<ProcedureContract['input']>,
+      ProcedureContractDecodedInput<ProcedureContract>,
       ProcedureContract['stream'] extends undefined
         ? t.infer.decode.input<ProcedureContract['output']>
         : AsyncIterable<
@@ -92,32 +105,23 @@ export function _createBaseProcedure<
     dependencies?: ProcedureDeps
     middlewares?: AnyMiddleware[]
     guards?: AnyGuard[]
-    metadata?: Metadata[]
+    meta?: AnyProcedureMetaBinding[]
     streamTimeout?: number
   },
 ) {
   const dependencies = params.dependencies ?? ({} as ProcedureDeps)
-  const metadata = new MetadataStore()
   const middlewares = new Set(params.middlewares ?? [])
   const guards = new Set(params.guards ?? [])
+  const meta = Object.freeze([...(params.meta ?? [])])
   const streamTimeout = params.streamTimeout
 
   if (typeof streamTimeout !== 'undefined' && streamTimeout <= 0) {
     throw new Error('Stream timeout must be a positive integer')
   }
 
-  for (const meta of params.metadata ?? []) {
-    metadata.set(meta.key, meta.value)
-  }
+  assertUniqueMetaBindings(meta, 'procedure config')
 
-  return {
-    contract,
-    dependencies,
-    middlewares,
-    guards,
-    metadata,
-    streamTimeout,
-  }
+  return { contract, dependencies, middlewares, guards, meta, streamTimeout }
 }
 
 export function createContractProcedure<
@@ -156,14 +160,12 @@ export function createProcedure<
          */
         stream?: TStream
         dependencies?: Deps
-        guards?: AnyGuard<
-          TInput extends BaseType ? t.infer.decode.output<TInput> : any
-        >[]
+        guards?: AnyGuard[]
         middlewares?: AnyMiddleware[]
-        metadata?: Metadata[]
+        meta?: ProcedureMetaBinding<ProcedureDecodedInput<TInput>>[]
         timeout?: number
         handler: ProcedureHandlerType<
-          TInput extends BaseType ? t.infer.decode.output<TInput> : never,
+          ProcedureDecodedInput<TInput>,
           TStream extends true | number
             ? AsyncIterable<
                 TOutput extends BaseType
@@ -176,11 +178,7 @@ export function createProcedure<
           Deps
         >
       }
-    | ProcedureHandlerType<
-        TInput extends BaseType ? t.infer.decode.output<TInput> : never,
-        Return,
-        Deps
-      >,
+    | ProcedureHandlerType<ProcedureDecodedInput<TInput>, Return, Deps>,
 ): Procedure<
   TProcedureContract<
     TInput extends undefined ? t.NeverType : TInput,
@@ -201,7 +199,7 @@ export function createProcedure<
     dependencies = {} as Deps,
     guards = [],
     middlewares = [],
-    metadata = [],
+    meta = [],
     handler,
     timeout,
   } = typeof paramsOrHandler === 'function'
@@ -216,7 +214,7 @@ export function createProcedure<
       handler: handler as any,
       guards,
       middlewares,
-      metadata,
+      meta,
       streamTimeout: typeof stream === 'number' ? stream : undefined,
     },
   )

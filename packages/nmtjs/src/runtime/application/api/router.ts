@@ -6,20 +6,32 @@ import type {
   TRouteContract,
   TRouterContract,
 } from '@nmtjs/contract'
-import type { t } from '@nmtjs/type'
+import type { BaseTypeAny, t } from '@nmtjs/type'
 import type { AnyType } from '@nmtjs/type/any'
 import { c, IsRouterContract } from '@nmtjs/contract'
+import { assertUniqueMetaBindings } from '@nmtjs/core'
 
 import type { AnyGuard } from './guards.ts'
+import type { AnyCompatibleMetaBinding, CompatibleMetaBinding } from './meta.ts'
 import type { AnyMiddleware } from './middlewares.ts'
 import type { AnyProcedure } from './procedure.ts'
 import { kRootRouter, kRouter } from './constants.ts'
 
+export type RouterMetaBinding<Input> = CompatibleMetaBinding<Input>
+export type AnyRouterMetaBinding = AnyCompatibleMetaBinding
+
+export type AnyRouterRoutes = Record<string, AnyProcedure<any> | AnyRouter>
+export type AnyRouterContractRoutes = Record<
+  string,
+  TAnyProcedureContract | TAnyRouterContract
+>
+
 export interface AnyRouter {
   contract: TAnyRouterContract
-  routes: Record<string, AnyProcedure<TAnyProcedureContract> | AnyRouter>
-  guards: Set<AnyGuard<any>>
+  routes: AnyRouterRoutes
+  guards: Set<AnyGuard>
   middlewares: Set<AnyMiddleware>
+  meta: readonly AnyRouterMetaBinding[]
   timeout?: number
   [kRouter]: any
 }
@@ -46,8 +58,9 @@ export interface Router<Contract extends TAnyRouterContract> extends AnyRouter {
           >
         : never
   }
-  guards: Set<AnyGuard<FlattenRouterContractInput<Contract['routes']>>>
+  guards: Set<AnyGuard>
   middlewares: Set<AnyMiddleware>
+  meta: readonly AnyRouterMetaBinding[]
   timeout?: number
   [kRouter]: any
 }
@@ -86,6 +99,19 @@ export type ExtractRouterContracts<
   ? [First['contract'], ...ExtractRouterContracts<Rest>]
   : []
 
+export type RouterContractsFromRoutes<Routes extends AnyRouterRoutes> = {
+  [K in keyof Routes]: Routes[K] extends AnyRouter
+    ? Routes[K]['contract']
+    : Routes[K] extends AnyProcedure<any>
+      ? Routes[K]['contract']
+      : never
+}
+
+export type RouterContractFromRoutes<
+  Routes extends AnyRouterRoutes,
+  Name extends string | undefined = undefined,
+> = TRouterContract<RouterContractsFromRoutes<Routes>, Name>
+
 export function createRootRouter<Routers extends readonly AnyRouter[]>(
   routers: Routers,
   defaultProcedure?: AnyProcedure<
@@ -107,55 +133,62 @@ export function createRootRouter<Routers extends readonly AnyRouter[]>(
   }) as any
 }
 
-export type FlattenRouterInput<
-  Routes extends Record<string, AnyProcedure<any> | AnyRouter>,
-> = {
-  [K in keyof Routes]: Routes[K] extends AnyRouter
-    ? FlattenRouterInput<Routes[K]['routes']>
-    : Routes[K] extends AnyProcedure
-      ? Routes[K]['contract']['input']
-      : never
-}[keyof Routes]
+export type FlattenRouterContractInput<Routes extends AnyRouterContractRoutes> =
+  {
+    [K in keyof Routes]: Routes[K] extends TAnyRouterContract
+      ? FlattenRouterContractInput<Routes[K]['routes']>
+      : Routes[K] extends TAnyProcedureContract
+        ? Routes[K]['input']
+        : never
+  }[keyof Routes]
 
-export type FlattenRouterContractInput<
-  Routes extends Record<string, TAnyProcedureContract | TAnyRouterContract>,
-> = {
-  [K in keyof Routes]: Routes[K] extends TAnyRouterContract
-    ? FlattenRouterContractInput<Routes[K]['routes']>
-    : Routes[K] extends TAnyProcedureContract
-      ? Routes[K]['input']
-      : never
-}[keyof Routes]
+export type FlattenRouterDecodedInput<Routes extends AnyRouterContractRoutes> =
+  t.infer.decode.output<
+    Extract<FlattenRouterContractInput<Routes>, BaseTypeAny>
+  >
+
+export type RouterDecodedInput<Routes extends AnyRouterRoutes> =
+  FlattenRouterDecodedInput<RouterContractsFromRoutes<Routes>>
+
+export type RouterContractDecodedInput<Contract extends TAnyRouterContract> =
+  FlattenRouterDecodedInput<Contract['routes']>
+
+export interface CreateRouterParams<
+  Routes extends AnyRouterRoutes,
+  Name extends string | undefined = undefined,
+> {
+  routes: Routes
+  name?: Name
+  guards?: AnyGuard[]
+  middlewares?: AnyMiddleware[]
+  meta?: RouterMetaBinding<RouterDecodedInput<Routes>>[]
+  hooks?: Record<string, Callback[]>
+  timeout?: number
+}
+
+export interface CreateContractRouterParams<
+  Contract extends TAnyRouterContract,
+> {
+  routes: {
+    [K in keyof Contract['routes']]: Contract['routes'][K] extends TAnyRouterContract
+      ? Router<Contract['routes'][K]>
+      : Contract['routes'][K] extends TAnyProcedureContract
+        ? AnyProcedure<Contract['routes'][K]>
+        : never
+  }
+  guards?: AnyGuard[]
+  middlewares?: AnyMiddleware[]
+  meta?: RouterMetaBinding<RouterContractDecodedInput<Contract>>[]
+  timeout?: number
+}
 
 export function createRouter<
-  const Routes extends Record<string, AnyProcedure<any> | AnyRouter>,
-  const Options extends {
-    routes: Routes
-    name?: string
-    guards?: AnyGuard<
-      t.infer.decode.output<FlattenRouterInput<Options['routes']>>
-    >[]
-    middlewares?: AnyMiddleware[]
-    hooks?: Record<string, Callback[]>
-    timeout?: number
-  },
+  const Routes extends AnyRouterRoutes,
+  const Name extends string | undefined = undefined,
 >(
-  params: Options,
-): Router<
-  TRouterContract<
-    Options['routes'] extends Record<string, AnyProcedure<any> | AnyRouter>
-      ? {
-          [K in keyof Options['routes']]: Options['routes'][K] extends AnyRouter
-            ? Options['routes'][K]['contract']
-            : Options['routes'][K] extends AnyProcedure<any>
-              ? Options['routes'][K]['contract']
-              : never
-        }
-      : {},
-    null extends Options['name'] ? undefined : Options['name']
-  >
-> {
-  const { routes, name, guards, middlewares, timeout } = params
+  params: CreateRouterParams<Routes, Name>,
+): Router<RouterContractFromRoutes<Routes, Name>> {
+  const { routes, name, guards, middlewares, meta, timeout } = params
 
   const routesContracts: any = {}
   for (const [name, route] of Object.entries(routes)) {
@@ -170,33 +203,27 @@ export function createRouter<
     routes: routes as any,
     guards,
     middlewares,
+    meta,
     timeout,
   }) as any
 }
 
 export function createContractRouter<Contract extends TAnyRouterContract>(
   contract: Contract,
-  params: {
-    routes: {
-      [K in keyof Contract['routes']]: Contract['routes'][K] extends TAnyRouterContract
-        ? Router<Contract['routes'][K]>
-        : Contract['routes'][K] extends TAnyProcedureContract
-          ? AnyProcedure<Contract['routes'][K]>
-          : never
-    }
-    guards?: AnyGuard<FlattenRouterContractInput<Contract['routes']>>[]
-    middlewares?: AnyMiddleware[]
-    timeout?: number
-  },
+  params: CreateContractRouterParams<Contract>,
 ): Router<Contract> {
   const guards = new Set(params.guards ?? [])
   const middlewares = new Set(params.middlewares ?? [])
+  const meta = Object.freeze([...(params.meta ?? [])])
+
+  assertUniqueMetaBindings(meta, 'router config')
 
   return {
     contract,
     routes: params.routes,
     guards,
     middlewares,
+    meta,
     timeout: params.timeout,
     [kRouter]: true,
   }

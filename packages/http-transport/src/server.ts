@@ -1,11 +1,7 @@
 import { Buffer } from 'node:buffer'
 import { Duplex, Readable } from 'node:stream'
 
-import type {
-  GatewayApiCallOptions,
-  TransportWorker,
-  TransportWorkerParams,
-} from '@nmtjs/gateway'
+import type { TransportWorker, TransportWorkerParams } from '@nmtjs/gateway'
 import { anyAbortSignal, isAbortError, isAsyncIterable } from '@nmtjs/common'
 import { provision } from '@nmtjs/core'
 import {
@@ -143,8 +139,17 @@ export class HttpTransportServer
     })
 
     try {
-      // Parse request body if present
+      const resolved = await this.params.resolve(connection, procedure)
+
+      const allowHttpMethod =
+        resolved.meta.get(AllowedHttpMethod) ?? DEFAULT_ALLOWED_METHODS
+
+      if (!allowHttpMethod.includes(method as any)) {
+        throw new ProtocolError(ErrorCode.NotFound)
+      }
+
       let payload: any
+
       if (canHaveBody && body) {
         const bodyStream = Readable.fromWeb(body as any)
         const cannotDecode =
@@ -170,21 +175,12 @@ export class HttpTransportServer
         }
       }
 
-      const metadata: GatewayApiCallOptions['metadata'] = (metadata) => {
-        const allowHttpMethod =
-          metadata.get(AllowedHttpMethod) ?? DEFAULT_ALLOWED_METHODS
-        if (!allowHttpMethod.includes(method as any)) {
-          throw new ProtocolError(ErrorCode.NotFound)
-        }
-      }
-
       const result = await this.params.onRpc(
         connection,
         {
           callId: 0, // since the connection is closed after the call, only one call exists per connection
           payload,
           procedure,
-          metadata,
         },
         signal,
         provision(injections.httpResponseHeaders, responseHeaders),

@@ -1,4 +1,5 @@
-import { createMetadataKey } from '@nmtjs/core'
+import type { MetadataKind } from '@nmtjs/core'
+import { createMeta } from '@nmtjs/core'
 import { ErrorCode } from '@nmtjs/protocol'
 
 export enum HttpStatus {
@@ -146,7 +147,7 @@ export const HttpCodeMap = {
   [ErrorCode.ConnectionError]: HttpStatus.NotAcceptable,
 }
 
-export const AllowedHttpMethod =
-  createMetadataKey<Array<'get' | 'post' | 'put' | 'delete' | 'patch'>>(
-    'http:method',
-  )
+export const AllowedHttpMethod = createMeta<
+  Array<'get' | 'post' | 'put' | 'delete' | 'patch'>,
+  MetadataKind.STATIC
+>()

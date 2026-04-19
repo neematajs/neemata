@@ -1,8 +1,6 @@
-import assert from 'node:assert'
-
 import type { MaybePromise } from '@nmtjs/common'
 import type { TProcedureContract, TRouterContract } from '@nmtjs/contract'
-import type { Dependencies, DependencyContext, Metadata } from '@nmtjs/core'
+import type { Dependencies, DependencyContext } from '@nmtjs/core'
 import type { NullableType, OptionalType } from '@nmtjs/type'
 import type { NeverType } from '@nmtjs/type/never'
 import { CoreInjectables } from '@nmtjs/core'
@@ -10,8 +8,15 @@ import { t } from '@nmtjs/type'
 
 import type { AnyGuard } from '../application/api/guards.ts'
 import type { AnyMiddleware } from '../application/api/middlewares.ts'
-import type { AnyProcedure } from '../application/api/procedure.ts'
-import type { AnyRouter, Router } from '../application/api/router.ts'
+import type {
+  AnyProcedure,
+  ProcedureMetaBinding,
+} from '../application/api/procedure.ts'
+import type {
+  AnyRouter,
+  AnyRouterMetaBinding,
+  Router,
+} from '../application/api/router.ts'
 import type { AnyJob } from './job.ts'
 import type { JobStatus } from './types.ts'
 import { createProcedure } from '../application/api/procedure.ts'
@@ -22,26 +27,42 @@ import { jobManager } from '../injectables.ts'
 // Configuration Types
 // ============================================================================
 
+type ListOperationInput = { page?: number; limit?: number; status?: string[] }
+
+type IdOperationInput = { id: string }
+
+type RetryOperationInput = { id: string; clearState?: boolean }
+
+type AddOperationInput<T extends AnyJob> = {
+  data: T['_']['input']
+  jobId?: string
+  priority?: number
+  delay?: number
+}
+
 /** Base operation config shared by all operations */
-export type BaseOperationConfig<Deps extends Dependencies = {}> = {
+export type BaseOperationConfig<
+  Input = unknown,
+  Deps extends Dependencies = {},
+> = {
   dependencies?: Deps
   guards?: AnyGuard[]
   middlewares?: AnyMiddleware[]
-  metadata?: Metadata[]
+  meta?: ProcedureMetaBinding<Input>[]
   timeout?: number
 }
 
 /** List operation config (read-only, no hooks) */
 export type ListOperationConfig<Deps extends Dependencies = {}> =
-  BaseOperationConfig<Deps>
+  BaseOperationConfig<ListOperationInput, Deps>
 
 /** Get operation config (read-only, no hooks) */
 export type GetOperationConfig<Deps extends Dependencies = {}> =
-  BaseOperationConfig<Deps>
+  BaseOperationConfig<IdOperationInput, Deps>
 
 /** Info operation config (read-only, no hooks) */
 export type InfoOperationConfig<Deps extends Dependencies = {}> =
-  BaseOperationConfig<Deps>
+  BaseOperationConfig<unknown, Deps>
 
 /** Add queue options */
 export type AddQueueOptions = {
@@ -54,7 +75,7 @@ export type AddQueueOptions = {
 export type AddOperationConfig<
   T extends AnyJob = AnyJob,
   Deps extends Dependencies = {},
-> = BaseOperationConfig<Deps> & {
+> = BaseOperationConfig<AddOperationInput<T>, Deps> & {
   beforeAdd?: (
     ctx: DependencyContext<Deps>,
     input: T['_']['input'],
@@ -69,7 +90,7 @@ export type AddOperationConfig<
 
 /** Remove operation config with before/after hooks */
 export type RemoveOperationConfig<Deps extends Dependencies = {}> =
-  BaseOperationConfig<Deps> & {
+  BaseOperationConfig<IdOperationInput, Deps> & {
     beforeRemove?: (
       ctx: DependencyContext<Deps>,
       params: { id: string },
@@ -82,7 +103,7 @@ export type RemoveOperationConfig<Deps extends Dependencies = {}> =
 
 /** Retry operation config with before/after hooks */
 export type RetryOperationConfig<Deps extends Dependencies = {}> =
-  BaseOperationConfig<Deps> & {
+  BaseOperationConfig<RetryOperationInput, Deps> & {
     clearState?: boolean
     beforeRetry?: (
       ctx: DependencyContext<Deps>,
@@ -96,7 +117,7 @@ export type RetryOperationConfig<Deps extends Dependencies = {}> =
 
 /** Cancel operation config with before/after hooks */
 export type CancelOperationConfig<Deps extends Dependencies = {}> =
-  BaseOperationConfig<Deps> & {
+  BaseOperationConfig<IdOperationInput, Deps> & {
     beforeCancel?: (
       ctx: DependencyContext<Deps>,
       params: { id: string },
@@ -134,6 +155,7 @@ export type CreateJobsRouterOptions<Jobs extends Record<string, AnyJob>> = {
   jobs: Jobs
   guards?: AnyGuard[]
   middlewares?: AnyMiddleware[]
+  meta?: JobsRouterMetaBinding[]
   defaults?: DefaultOperations
   overrides?: {
     [K in keyof Jobs]?: JobOperations<Jobs[K]>
@@ -220,6 +242,8 @@ type JobRouterContract<T extends AnyJob> = TRouterContract<
 type JobsRouterContract<Jobs extends Record<string, AnyJob>> = TRouterContract<{
   [K in keyof Jobs]: JobRouterContract<Jobs[K]>
 }>
+
+export type JobsRouterMetaBinding = AnyRouterMetaBinding
 
 /** Return type for createJobsRouter */
 export type JobsRouter<Jobs extends Record<string, AnyJob>> = Router<
@@ -433,7 +457,7 @@ function createInfoProcedure(
     dependencies: { ...deps, ...(config.dependencies ?? {}) },
     guards: allGuards,
     middlewares: allMiddlewares,
-    metadata: config.metadata,
+    meta: config.meta,
     timeout: config.timeout,
     handler: (ctx: DependencyContext<JobManagerDeps>) => {
       ctx.logger.trace({ jobName: job.options.name }, 'Getting job info')
@@ -461,7 +485,7 @@ function createListProcedure(
     dependencies: { ...deps, ...(config.dependencies ?? {}) },
     guards: allGuards,
     middlewares: allMiddlewares,
-    metadata: config.metadata,
+    meta: config.meta,
     timeout: config.timeout,
     handler: async (ctx: DependencyContext<JobManagerDeps>, input) => {
       ctx.logger.trace(
@@ -506,7 +530,7 @@ function createGetProcedure(
     dependencies: { ...deps, ...(config.dependencies ?? {}) },
     guards: allGuards,
     middlewares: allMiddlewares,
-    metadata: config.metadata,
+    meta: config.meta,
     timeout: config.timeout,
     handler: async (ctx: DependencyContext<JobManagerDeps>, input) => {
       ctx.logger.trace(
@@ -542,7 +566,7 @@ function createAddProcedure(
     dependencies: { ...deps, ...(config.dependencies ?? {}) },
     guards: allGuards,
     middlewares: allMiddlewares,
-    metadata: config.metadata,
+    meta: config.meta,
     timeout: config.timeout,
     handler: async (ctx: DependencyContext<JobManagerDeps>, input) => {
       let jobData = input.data
@@ -608,7 +632,7 @@ function createRetryProcedure(
     dependencies: { ...deps, ...(config.dependencies ?? {}) },
     guards: allGuards,
     middlewares: allMiddlewares,
-    metadata: config.metadata,
+    meta: config.meta,
     timeout: config.timeout,
     handler: async (ctx: DependencyContext<JobManagerDeps>, input) => {
       const clearState = input.clearState ?? config.clearState
@@ -664,7 +688,7 @@ function createCancelProcedure(
     dependencies: { ...deps, ...(config.dependencies ?? {}) },
     guards: allGuards,
     middlewares: allMiddlewares,
-    metadata: config.metadata,
+    meta: config.meta,
     timeout: config.timeout,
     handler: async (ctx: DependencyContext<JobManagerDeps>, input) => {
       ctx.logger.debug(
@@ -718,7 +742,7 @@ function createRemoveProcedure(
     dependencies: { ...deps, ...(config.dependencies ?? {}) },
     guards: allGuards,
     middlewares: allMiddlewares,
-    metadata: config.metadata,
+    meta: config.meta,
     timeout: config.timeout,
     handler: async (ctx: DependencyContext<JobManagerDeps>, input) => {
       ctx.logger.trace(
@@ -801,6 +825,10 @@ function mergeOperations(
             ...((defaultOp as any).middlewares ?? []),
             ...((override as any).middlewares ?? []),
           ],
+          meta: [
+            ...((defaultOp as any).meta ?? []),
+            ...((override as any).meta ?? []),
+          ],
         } as any
       } else {
         result[op] = override as any
@@ -858,6 +886,7 @@ export function createJobsRouter<const Jobs extends Record<string, AnyJob>>(
     jobs,
     guards: sharedGuards = [],
     middlewares: sharedMiddlewares = [],
+    meta = [],
     defaults = {},
     overrides = {},
   } = options
@@ -937,5 +966,5 @@ export function createJobsRouter<const Jobs extends Record<string, AnyJob>>(
   }
 
   // Return router containing all job routers
-  return createRouter({ routes }) as JobsRouter<Jobs>
+  return createRouter({ routes, meta }) as JobsRouter<Jobs>
 }

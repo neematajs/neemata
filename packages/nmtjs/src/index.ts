@@ -15,11 +15,11 @@ import {
   createContractRouter,
   createFilter,
   createGuard,
-  createGuardFactory,
   createHook,
   createJob,
   createJobRouterOperation,
   createJobsRouter,
+  createMeta,
   createMiddleware,
   createPlugin,
   createProcedure,
@@ -62,8 +62,8 @@ export namespace neemata {
   export const procedure = createProcedure
   export const contractProcedure = createContractProcedure
   export const middleware = createMiddleware
+  export const meta = createMeta
   export const guard = createGuard
-  export const guardFactory = createGuardFactory
   export const filter = createFilter
   export const job = createJob
   export const step = createStep
@@ -77,7 +77,7 @@ export namespace neemata {
 }
 
 export { c } from '@nmtjs/contract'
-export { Scope } from '@nmtjs/core'
+export { MetadataKind, Scope } from '@nmtjs/core'
 export {
   type ConnectionIdentityType,
   GatewayHook,

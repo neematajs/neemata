@@ -16,6 +16,7 @@ import {
 import { describe, expect, it, vi } from 'vitest'
 
 import type { GatewayApi } from '../src/api.ts'
+import { createGatewayStaticMetaView } from '../src/api.ts'
 import { Gateway } from '../src/gateway.ts'
 
 const encodeUInt32 = (value: number) => {
@@ -25,6 +26,12 @@ const encodeUInt32 = (value: number) => {
 }
 
 describe('Gateway heartbeat', () => {
+  const createResolvedProcedure = () => ({
+    name: 'heartbeat/test',
+    stream: false,
+    meta: createGatewayStaticMetaView([]),
+  })
+
   it('sends server Ping and accepts client Pong', async () => {
     vi.useFakeTimers()
 
@@ -33,7 +40,10 @@ describe('Gateway heartbeat', () => {
 
     const serverFormat = createTestServerFormat()
 
-    const api: GatewayApi = { call: vi.fn(async () => undefined) }
+    const api: GatewayApi = {
+      resolve: vi.fn(async () => createResolvedProcedure()),
+      call: vi.fn(async () => undefined),
+    }
 
     let params: any
     const sent: Buffer[] = []
@@ -101,7 +111,10 @@ describe('Gateway heartbeat', () => {
 
     const serverFormat = createTestServerFormat()
 
-    const api: GatewayApi = { call: vi.fn(async () => undefined) }
+    const api: GatewayApi = {
+      resolve: vi.fn(async () => createResolvedProcedure()),
+      call: vi.fn(async () => undefined),
+    }
 
     let params: any
 

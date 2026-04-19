@@ -2,7 +2,7 @@ import type { MaybePromise } from '@nmtjs/common'
 import { tryCaptureStackTrace } from '@nmtjs/common'
 
 import type { DisposeFn, InjectFn } from './container.ts'
-import type { Logger } from './logger.ts'
+import type { ChildLoggerOptions, Logger } from './logger.ts'
 import {
   kFactoryInjectable,
   kInjectable,
@@ -307,12 +307,14 @@ export function compareScope(
 }
 
 const loggerInjectable = Object.assign(
-  (label: string) =>
-    createFactoryInjectable({
+  (label: string | undefined, options?: ChildLoggerOptions) => {
+    const bindings = label ? { $label: label } : {}
+    return createFactoryInjectable({
       dependencies: { logger: loggerInjectable },
       scope: Scope.Global,
-      factory: ({ logger }) => logger.child({ $label: label }),
-    }),
+      factory: ({ logger }) => logger.child(bindings, options),
+    })
+  },
   createLazyInjectable<Logger>(Scope.Global, 'Logger'),
 ) as unknown as ((
   label: string,
