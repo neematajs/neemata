@@ -18,10 +18,11 @@ Create a standalone RPC procedure (auto-generates contract from input/output).
 n.procedure({
   input: TType,              // t.* type schema for input validation
   output: TType,             // t.* type schema for output validation
-  stream?: boolean,          // true for streaming (handler must be async generator)
+  stream?: true | number,    // true for streaming, or number for explicit stream timeout in ms
   dependencies?: Record<string, Injectable>,
   guards?: Guard[],
   middlewares?: Middleware[],
+  meta?: MetaBinding[],
   handler: (deps, input) => output | AsyncIterable<output>,
 })
 ```
@@ -35,6 +36,7 @@ n.contractProcedure(contractProcedure, {
   dependencies?: Record<string, Injectable>,
   guards?: Guard[],
   middlewares?: Middleware[],
+  meta?: MetaBinding[],
   handler: (deps, input) => output,
 })
 ```
@@ -49,6 +51,7 @@ n.router({
   routes: Record<string, Procedure | Router>,
   guards?: Guard[],
   middlewares?: Middleware[],
+  meta?: MetaBinding[],
   timeout?: number,          // per-procedure timeout in ms
 })
 ```
@@ -62,6 +65,7 @@ n.contractRouter(routerContract, {
   routes: Record<string, Procedure>,
   guards?: Guard[],
   middlewares?: Middleware[],
+  meta?: MetaBinding[],
 })
 ```
 
@@ -93,27 +97,7 @@ n.guard((ctx, call) => boolean)
 
 - `call.payload` is available inside guards and contains the decoded input payload when the procedure/router defines an `input` schema.
 - `n.guard(...)` is untyped for payloads by default, so `call.payload` is `unknown` unless you narrow it manually.
-
-### `n.guardFactory<Payload>()(options | canFn)`
-
-Create a typed guard factory for reuse across procedures and routers.
-
-```ts
-const authScopeGuard = n.guardFactory<{ scope: string }>()({
-  dependencies: { connectionData: n.inject.connectionData },
-  can: (deps, call) => {
-    return (
-      deps.connectionData?.authenticated === true &&
-      call.payload.scope === 'user'
-    )
-  },
-})
-
-// Shorthand
-const enabledGuard = n.guardFactory<{ enabled: boolean }>()(
-  (_ctx, call) => call.payload.enabled === true,
-)
-```
+- For reusable, typed decoded-input data, prefer `n.meta(...).factory({ phase: 'afterDecode' })` and inject that metadata into guards/handlers.
 
 ### `n.middleware(options | handleFn)`
 
@@ -136,6 +120,28 @@ n.middleware(async (ctx, call, next, payload) => next(payload))
 - `next(payload)` forwards or replaces the raw payload for downstream middleware
   and the eventual decode step.
 - Use guards when you need decoded `call.payload`.
+
+### `n.meta<Value, Kind>()`
+
+Create a call-scoped metadata token.
+
+```ts
+const auditTag = n.meta<string, MetadataKind.STATIC>()
+const decodedAccess = n.meta<{ scope: string; createdAt: Date }>()
+
+auditTag.static('admin')
+
+decodedAccess.factory({
+  phase: 'afterDecode',
+  resolve: (_deps, _call, input) => input,
+})
+```
+
+- Static bindings can be attached to `n.app({ meta })`, `n.router({ meta })`, `n.procedure({ meta })`, and `n.jobRouter({ meta })`.
+- Factory bindings run per call.
+- `phase: 'beforeDecode'` receives raw `payload: unknown`.
+- `phase: 'afterDecode'` receives the decoded input type at the definition site.
+- Meta tokens are injectables, so they can be used in `dependencies`.
 
 ### `n.filter(options)`
 
@@ -183,6 +189,7 @@ n.app({
   transports?: Record<string, TransportClass>,   // e.g., { ws: WsTransport, http: HttpTransport }
   guards?: Guard[],
   middlewares?: Middleware[],
+  meta?: MetaBinding[],
   filters?: Filter[],
   plugins?: Plugin[],
   hooks?: Hook[],
@@ -279,8 +286,23 @@ n.step({
   handler: (deps, input) => output,
 })
 
-n.jobRouter(...)             // Create job management API router
-n.jobRouterOperation(...)    // Single job operation
+n.jobRouter({
+  jobs: Record<string, Job>,
+  guards?: Guard[],
+  middlewares?: Middleware[],
+  meta?: MetaBinding[],
+  defaults?: JobRouterDefaults,
+  overrides?: JobRouterOverrides,
+})
+
+n.jobRouterOperation({
+  dependencies?: Record<string, Injectable>,
+  guards?: Guard[],
+  middlewares?: Middleware[],
+  meta?: MetaBinding[],
+  timeout?: number,
+  // operation-specific hooks: beforeAdd/afterAdd, beforeRetry/afterRetry, etc.
+})
 ```
 
 ---
@@ -424,6 +446,13 @@ Scope.Global       // Singleton
 Scope.Connection   // Per connection
 Scope.Call         // Per RPC call
 Scope.Transient    // New every injection
+```
+
+### `MetadataKind`
+
+```ts
+MetadataKind.STATIC     // Token supports `.static(...)` only
+MetadataKind.FACTORY    // Internal enum value used by metadata bindings
 ```
 
 ### `ErrorCode`

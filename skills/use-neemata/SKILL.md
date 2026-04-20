@@ -1,6 +1,6 @@
 ---
 name: use-neemata
-description: 'Answer questions about the Neemata framework and help build RPC-based applications with bidirectional streaming, dependency injection, and multi-runtime support. Use when developers: (1) Ask about Neemata APIs like n.procedure, n.router, n.rootRouter, n.app, n.server, n.guard, n.guardFactory, n.middleware, n.factory, (2) Want to build RPC servers, streaming endpoints, background jobs, or type-safe clients, (3) Have questions about dependency injection scopes, transports (WS/HTTP), contracts, blobs, typed guards, or the protocol layer, (4) Use the nmtjs package or @nmtjs/* packages including @nmtjs/client, @nmtjs/ws-client, and @nmtjs/http-client. Triggers on: "neemata", "nmtjs", "@nmtjs/client", "StaticClient", "RuntimeClient", "WsTransportClient", "HttpTransportClient", "n.procedure", "n.router", "n.rootRouter", "n.app", "n.server", "createProcedure", "RPC framework", "ProtocolBlob", "t.object", "c.procedure", "n.guard", "n.guardFactory", "typed guard", "n.middleware", "n.factory", "defineApplication", "defineServer", "defineConfig".'
+description: 'Answer questions about the Neemata framework and help build RPC-based applications with bidirectional streaming, dependency injection, metadata bindings, and multi-runtime support. Use when developers: (1) Ask about Neemata APIs like n.procedure, n.router, n.rootRouter, n.app, n.server, n.guard, n.meta, n.middleware, n.factory, (2) Want to build RPC servers, streaming endpoints, background jobs, or type-safe clients, (3) Have questions about dependency injection scopes, transports (WS/HTTP), contracts, blobs, metadata bindings, guards, or the protocol layer, (4) Use the nmtjs package or @nmtjs/* packages including @nmtjs/client, @nmtjs/ws-client, and @nmtjs/http-client. Triggers on: "neemata", "nmtjs", "@nmtjs/client", "StaticClient", "RuntimeClient", "WsTransportClient", "HttpTransportClient", "n.procedure", "n.router", "n.rootRouter", "n.app", "n.server", "createProcedure", "RPC framework", "ProtocolBlob", "t.object", "c.procedure", "n.guard", "n.meta", "metadata bindings", "MetadataKind", "n.middleware", "n.factory", "defineApplication", "defineServer", "defineConfig".'
 ---
 
 ## Prerequisites
@@ -47,12 +47,22 @@ Search source code in `node_modules/nmtjs/`:
 Server-side Neemata APIs should import from `nmtjs`:
 
 ```ts
-import { n, t, c, Scope, ErrorCode, ProtocolBlob, ConnectionType } from 'nmtjs'
+import {
+  n,
+  t,
+  c,
+  MetadataKind,
+  Scope,
+  ErrorCode,
+  ProtocolBlob,
+  ConnectionType,
+} from 'nmtjs'
 ```
 
-- `n` — Namespace with all builder functions (`n.procedure`, `n.router`, `n.app`, `n.server`, etc.)
+- `n` — Namespace with all builder functions (`n.procedure`, `n.router`, `n.meta`, `n.app`, `n.server`, etc.)
 - `t` — Type system (wraps zod/mini with encode/decode, e.g., `t.string()`, `t.object()`, `t.date()`)
 - `c` — Contract definitions (`c.procedure()`, `c.router()`, `c.event()`, `c.blob()`)
+- `MetadataKind` — Constrains metadata tokens (for example static-only metadata)
 - `Scope` — DI scopes: `Global`, `Connection`, `Call`, `Transient`
 
 ### Architecture
@@ -61,7 +71,7 @@ Neemata uses a layered architecture:
 
 1. **Config** (`neemata.config.ts`) — defines applications and server entry point via `defineConfig()`
 2. **Server** (`n.server()`) — orchestrates workers, proxy, store, metrics
-3. **Application** (`n.app()`) — defines transports, router, guards, middleware for one app
+3. **Application** (`n.app()`) — defines transports, router, guards, middleware, and app-level meta for one app
 4. **Router** (`n.rootRouter()` / `n.router()`) — groups procedures
 5. **Procedure** (`n.procedure()`) — individual RPC endpoint with input/output types and handler
 6. **Client** (`StaticClient` / `RuntimeClient`) — type-safe RPC calls via `@nmtjs/client`
@@ -81,6 +91,17 @@ Two streaming mechanisms:
 
 - **RPC Streams** — Procedure returns `AsyncIterable`, set `stream: true`. Client consumes via `client.stream.*`
 - **Blob Streams** — Binary data via `ProtocolBlob.from()` / `client.createBlob()` on the client, `n.inject.createBlob` on the server, and explicit consumption via `client.consumeBlob()` / `n.inject.consumeBlob`. Use `c.blob()` in contracts
+
+### Metadata
+
+Use `n.meta()` to define reusable call-scoped metadata tokens.
+
+- `.static(value)` registers static metadata on `n.app()`, `n.router()`, `n.procedure()`, and `n.jobRouter()`.
+- `.factory({ phase, resolve })` computes per-call metadata.
+- `phase: 'beforeDecode'` sees the raw payload (`unknown`).
+- `phase: 'afterDecode'` sees the decoded input type at the definition site.
+- Meta tokens are injectables, so they can be added to `dependencies` in guards, middleware, handlers, and hooks.
+- Prefer metadata bindings over typed guard factories when you need reusable typed per-call values.
 
 ## When Typecheck Fails
 
@@ -117,7 +138,7 @@ project/
 
 - [API Quick Reference](references/api-reference.md) — Function signatures and options for `n.*`, `t.*`, `c.*` APIs
 - [Type System](references/type-system.md) — `t.*` encode/decode modes, inference, and Standard Schema (JSON Schema) support
-- [RPC](references/rpc.md) — Procedures, routers, streaming, blobs, contracts, guards, middleware, filters, error handling
+- [RPC](references/rpc.md) — Procedures, routers, metadata, streaming, blobs, contracts, guards, middleware, filters, error handling
 - [Injectables](references/injectables.md) — DI scopes, injectable builders (value/lazy/factory), built-in `n.inject.*`
 - [Server Setup](references/server-setup.md) — `n.app()`, `n.server()`, `defineConfig()`, project structure
 - [Client Usage](references/client-usage.md) — `StaticClient` setup, RPC calls, streams, blobs, abort

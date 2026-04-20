@@ -27,24 +27,30 @@ export default defineConfig({
 
 ## Application Definition
 
-Each application defines its transports, router, and optional guards/middleware:
+Each application defines its transports, router, and optional guards, middleware, and metadata:
 
 ```ts
 import { HttpTransport } from '@nmtjs/http-transport/node'
 import { WsTransport } from '@nmtjs/ws-transport/node'
-import { n } from 'nmtjs'
+import { MetadataKind, n } from 'nmtjs'
 
 import { router } from './router.ts'
 import { authGuard } from './guards/auth.ts'
 import { loggingMiddleware } from './middleware/logging.ts'
+
+const appArea = n.meta<string, MetadataKind.STATIC>()
 
 export default n.app({
   transports: { ws: WsTransport, http: HttpTransport },
   router,
   guards: [authGuard],
   middlewares: [loggingMiddleware],
+  meta: [appArea.static('main')],
 })
 ```
+
+Application-level static metadata is merged with router and procedure metadata.
+Transports can inspect the merged static metadata during resolve before the call executes.
 
 ## Server Configuration
 
