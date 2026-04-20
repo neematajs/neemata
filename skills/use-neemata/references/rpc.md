@@ -1,7 +1,7 @@
 ---
 title: RPC
-description: Procedures, routers, streaming, blobs, contracts, guards, middleware,
-  filters, and error handling patterns.
+description: Procedures, routers, metadata, streaming, blobs, contracts, guards,
+  middleware, filters, and error handling patterns.
 ---
 
 # RPC
@@ -213,6 +213,35 @@ export const downloadProcedure = n.procedure({
 })
 ```
 
+## Metadata Bindings
+
+```ts
+import { MetadataKind, n, t } from 'nmtjs'
+
+const allowedMethods = n.meta<Array<'get' | 'post'>, MetadataKind.STATIC>()
+const decodedAccess = n.meta<{ scope: string; createdAt: Date }>()
+
+export const protectedProcedure = n.procedure({
+  input: t.object({ scope: t.string(), createdAt: t.date() }),
+  output: t.object({ scope: t.string() }),
+  meta: [
+    allowedMethods.static(['post']),
+    decodedAccess.factory({
+      phase: 'afterDecode',
+      resolve: (_ctx, _call, input) => input,
+    }),
+  ],
+  dependencies: { access: decodedAccess },
+  handler: ({ access }) => ({ scope: access.scope }),
+})
+```
+
+- Static metadata can be attached at the application, router, procedure, or jobs-router level.
+- Static metadata is merged from outer scope to inner scope; narrower scopes override wider ones.
+- `beforeDecode` factory metadata sees the raw payload (`unknown`).
+- `afterDecode` factory metadata sees the decoded input type at the definition site.
+- Metadata tokens are injectables, so they can be reused in middleware, guards, and handlers.
+
 ## Guards (Access Control)
 
 ```ts
@@ -232,15 +261,13 @@ const authGuard = n.guard({
 // Simple guard (no dependencies)
 const simpleGuard = n.guard((_ctx, call) => call.payload !== undefined)
 
-// Typed guard factory for decoded payload access
-const scopedGuard = n.guardFactory<{ scope: string; createdAt: Date }>()(
-  (_ctx, call) => {
-    return (
-      call.payload.scope === 'user' &&
-      call.payload.createdAt instanceof Date
-    )
+// Guard that depends on typed metadata resolved after decode
+const scopedGuard = n.guard({
+  dependencies: { access: decodedAccess },
+  can: ({ access }) => {
+    return access.scope === 'user' && access.createdAt instanceof Date
   },
-)
+})
 
 // Attach to procedure
 const protectedProcedure = n.procedure({
@@ -262,7 +289,8 @@ const protectedRouter = n.router({
 
 - Guards run before the handler.
 - `call.payload` contains the decoded input payload, so transforms like `t.date()` are already applied.
-- Use `n.guardFactory<Payload>()` when you want type-safe access to `call.payload`.
+- `n.guard(...)` does not infer the payload type automatically; narrow `call.payload` manually if you read it directly.
+- Prefer `n.meta(...).factory({ phase: 'afterDecode' })` when you want reusable typed values in guards and handlers.
 
 ## Middleware (Request Pipeline)
 

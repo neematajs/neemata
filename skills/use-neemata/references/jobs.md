@@ -341,6 +341,9 @@ const jobManagementRouter = n.jobRouter({
 export const router = n.rootRouter([appRouter, jobManagementRouter] as const)
 ```
 
+`n.jobRouter(...)` also accepts `meta`, which registers router-level metadata for
+all generated job management routes.
+
 ### Customizing Operations
 
 Disable or customize individual operations per job:
@@ -362,6 +365,38 @@ const jobManagementRouter = n.jobRouter({
   },
 })
 ```
+
+### Job Router Metadata
+
+Both `n.jobRouter(...)` and `n.jobRouterOperation(...)` accept `meta` arrays.
+
+```ts
+import { MetadataKind, n } from 'nmtjs'
+
+const jobsArea = n.meta<string, MetadataKind.STATIC>()
+const addDataMeta = n.meta<{ userId: string }>()
+
+const jobManagementRouter = n.jobRouter({
+  jobs: { processUser: processUserJob },
+  meta: [jobsArea.static('jobs')],
+  overrides: {
+    processUser: {
+      add: n.jobRouterOperation({
+        meta: [
+          addDataMeta.factory({
+            phase: 'afterDecode',
+            resolve: (_ctx, _call, input) => input.data,
+          }),
+        ],
+      }),
+    },
+  },
+})
+```
+
+- `n.jobRouter({ meta })` applies router-level metadata to every generated job route.
+- `n.jobRouterOperation({ meta })` applies procedure-level metadata to a single generated operation.
+- In `defaults` + per-job `overrides`, `meta` arrays are concatenated the same way as guards and middlewares.
 
 ## Server Configuration
 
