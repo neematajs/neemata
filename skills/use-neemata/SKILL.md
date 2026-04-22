@@ -1,6 +1,6 @@
 ---
 name: use-neemata
-description: 'Answer questions about the Neemata framework and help build RPC-based applications with bidirectional streaming, dependency injection, metadata bindings, and multi-runtime support. Use when developers: (1) Ask about Neemata APIs like n.procedure, n.router, n.rootRouter, n.app, n.server, n.guard, n.meta, n.middleware, n.factory, (2) Want to build RPC servers, streaming endpoints, background jobs, or type-safe clients, (3) Have questions about dependency injection scopes, transports (WS/HTTP), contracts, blobs, metadata bindings, guards, or the protocol layer, (4) Use the nmtjs package or @nmtjs/* packages including @nmtjs/client, @nmtjs/ws-client, and @nmtjs/http-client. Triggers on: "neemata", "nmtjs", "@nmtjs/client", "StaticClient", "RuntimeClient", "WsTransportClient", "HttpTransportClient", "n.procedure", "n.router", "n.rootRouter", "n.app", "n.server", "createProcedure", "RPC framework", "ProtocolBlob", "t.object", "c.procedure", "n.guard", "n.meta", "metadata bindings", "MetadataKind", "n.middleware", "n.factory", "defineApplication", "defineServer", "defineConfig".'
+description: 'Answer questions about the Neemata framework and help build RPC applications with `nmtjs` and related `@nmtjs/*` client packages. Use for Neemata APIs such as `n.procedure`, `n.router`, `n.rootRouter`, `n.app`, `n.server`, guards, middleware, metadata bindings, dependency injection scopes, transports, streaming, blobs, contracts, background jobs, and type-safe clients.'
 ---
 
 ## Prerequisites
