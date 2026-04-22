@@ -587,7 +587,10 @@ export class Gateway {
       try {
         rpcContext.container.provide([
           ...injections,
-          provision(injectables.rpcAbortSignal, signal),
+          // Provide only the base per-call signal here. rpcAbortSignal is a
+          // derived injectable that combines rpcClientAbortSignal,
+          // connectionAbortSignal, and optional rpcStreamAbortSignal.
+          provision(injectables.rpcClientAbortSignal, rpcContext.signal),
           provision(
             injectables.createBlob,
             this.createBlobFunction(rpcContext),
@@ -647,7 +650,10 @@ export class Gateway {
       encoder,
     } = context
     try {
-      container.provide(injectables.rpcAbortSignal, signal)
+      // Provide only the base per-call signal here. rpcAbortSignal is resolved
+      // through DI so it can include connection and optional stream timeout
+      // cancellation as well.
+      container.provide(injectables.rpcClientAbortSignal, signal)
       const response = await this.options.api.call({
         connection: connection as any,
         container,

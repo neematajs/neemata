@@ -482,6 +482,7 @@ export {
   createBlob,
   Gateway,
   rpcAbortSignal,
+  rpcClientAbortSignal,
   rpcStreamAbortSignal,
 } from '@nmtjs/gateway'
 export {

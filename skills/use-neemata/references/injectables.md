@@ -93,17 +93,19 @@ If a lazy token may be absent, inject it as optional in dependencies using
 | `n.inject.connectionId` | Connection | `string` | Stable current connection identifier | Correlation IDs, metrics labels, per-connection caches/maps |
 | `n.inject.connectionData` | Connection | `unknown` | Transport-provided request/connection context | Auth/session/user/request metadata propagated from transport |
 | `n.inject.connectionAbortSignal` | Connection | `AbortSignal` | Signal aborted when connection is closed/disconnected | Cancel long-running work tied to connection lifetime |
-| `n.inject.rpcClientAbortSignal` | Call | `AbortSignal` | Per-call cancellation from client/request side | Use only if you specifically need client/request-originated cancellation |
-| `n.inject.rpcStreamAbortSignal` | Call | `AbortSignal` | Optional stream-timeout signal | Only available when procedure sets `streamTimeout` |
-| `n.inject.rpcAbortSignal` | Call | `AbortSignal` | Unified call signal (client/request + connection + optional stream timeout) | Recommended default signal for handler cancellation checks |
+| `n.inject.rpcClientAbortSignal` | Call | `AbortSignal` | Base per-call cancellation signal from client/request side | Use only if you specifically need the pre-composed call signal before framework-level composition |
+| `n.inject.rpcStreamAbortSignal` | Call | `AbortSignal` | Optional stream-timeout signal | Only available when the procedure uses a timed stream configuration such as `stream: 5_000` |
+| `n.inject.rpcAbortSignal` | Call | `AbortSignal` | Unified call signal resolved from client/request + connection + optional stream timeout | Recommended default signal for handler cancellation checks |
 | `n.inject.createBlob` | Call | Function | Factory that wraps data source into protocol blob response | Server-to-client binary streaming/blob responses |
 | `n.inject.consumeBlob` | Call | Function | Converts an incoming blob marker from request payload into a readable stream | Client-to-server blob uploads that handlers want to consume explicitly; ignored upload blobs are aborted when the handler completes |
 
 ### Cancellation signal quick guide
 
 - Use `n.inject.rpcAbortSignal` by default in procedure handlers.
+- `n.inject.rpcClientAbortSignal` is the base per-call signal provided by the gateway; most handlers should prefer `n.inject.rpcAbortSignal`.
 - Use `n.inject.connectionAbortSignal` when work should survive call boundaries but stop on disconnect.
-- Use `n.inject.rpcStreamAbortSignal` only in stream procedures with explicit `streamTimeout`.
+- Use `n.inject.rpcStreamAbortSignal` only in stream procedures with an explicit timed stream configuration (for example `stream: 5_000`).
+- Plain `stream: true` is fully valid for stream procedures; it simply means there is no custom per-procedure stream timeout, so `n.inject.rpcStreamAbortSignal` is not provided.
 - Avoid requiring `n.inject.rpcStreamAbortSignal` in generic procedures because it is optional by design.
 
 ## Using Injectables in Procedures

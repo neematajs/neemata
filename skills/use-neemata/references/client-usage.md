@@ -43,7 +43,7 @@ const client = new StaticClient<typeof appContract>(
 - `StaticClient` is proxy-based and resolves procedure paths lazily from property access.
 - `autoConnect: true` lets the client connect on the first call/stream instead of requiring an explicit `await client.connect()`.
 - After an explicit `await client.disconnect()`, implicit reconnection is suppressed until you connect again manually.
-- Use `client.call.*` for non-stream procedures and `client.stream.*` for procedures declared with `stream: true`.
+- Use `client.call.*` for non-stream procedures and `client.stream.*` for procedures declared with `stream: true` or a numeric `stream` timeout such as `stream: 5_000`.
 
 ## RuntimeClient Setup
 
