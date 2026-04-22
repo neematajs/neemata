@@ -11,6 +11,7 @@ import {
   ErrorCode,
   ProtocolError,
   rpcAbortSignal,
+  rpcClientAbortSignal,
   t,
 } from './_setup.ts'
 
@@ -174,6 +175,17 @@ const abortableWithStateProcedure = createProcedure({
   },
 })
 
+const clientAbortSignalStateProcedure = createProcedure({
+  input: t.object({ delayMs: t.number() }),
+  output: t.object({ initialAborted: t.boolean(), finalAborted: t.boolean() }),
+  dependencies: { signal: rpcClientAbortSignal },
+  handler: async ({ signal }, input) => {
+    const initialAborted = signal.aborted
+    await new Promise((resolve) => setTimeout(resolve, input.delayMs))
+    return { initialAborted, finalAborted: signal.aborted }
+  },
+})
+
 let guardedDatePayload: { createdAt: Date } | null = null
 const dateGuard = createGuard((_ctx, call) => {
   guardedDatePayload = call.payload as { createdAt: Date }
@@ -214,6 +226,7 @@ const router = createRootRouter(
         fast: fastProcedure,
         abortable: abortableProcedure,
         abortableWithState: abortableWithStateProcedure,
+        clientAbortSignalState: clientAbortSignalStateProcedure,
         guardedDate: guardedDateProcedure,
       },
     }),
@@ -489,6 +502,18 @@ describe('Simple RPC Calls', () => {
   })
 
   describe('Abort Signal', () => {
+    it('should provide rpcClientAbortSignal to handler dependencies', async () => {
+      const result = await setup.client.call.clientAbortSignalState({
+        delayMs: 10,
+      })
+
+      expect(result).toEqual({ initialAborted: false, finalAborted: false })
+
+      await waitForCleanup()
+      expect(setup.gateway.rpcs.rpcs.size).toBe(0)
+      expect(setup.client.pendingCallsCount).toBe(0)
+    })
+
     it('should abort RPC call when signal is aborted', async () => {
       const controller = new AbortController()
 

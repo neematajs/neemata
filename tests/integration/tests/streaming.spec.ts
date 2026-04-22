@@ -7,6 +7,7 @@ import {
   createRouter,
   createTestSetup,
   rpcAbortSignal,
+  rpcStreamAbortSignal,
   t,
 } from './_setup.ts'
 
@@ -83,6 +84,23 @@ const streamWithTrackingProcedure = createProcedure({
   },
 })
 
+const streamWithTimeoutSignalProcedure = createProcedure({
+  dependencies: { signal: rpcAbortSignal, streamSignal: rpcStreamAbortSignal },
+  input: t.object({ waitMs: t.number() }),
+  output: t.object({
+    signalAborted: t.boolean(),
+    streamSignalAborted: t.boolean(),
+  }),
+  stream: 25,
+  async *handler({ signal, streamSignal }, { waitMs }) {
+    await new Promise((resolve) => setTimeout(resolve, waitMs))
+    yield {
+      signalAborted: signal.aborted,
+      streamSignalAborted: streamSignal.aborted,
+    }
+  },
+})
+
 const router = createRootRouter([
   createRouter({
     routes: {
@@ -90,6 +108,7 @@ const router = createRootRouter([
       streamDelay: streamDelayProcedure,
       streamError: streamErrorProcedure,
       streamWithTracking: streamWithTrackingProcedure,
+      streamWithTimeoutSignal: streamWithTimeoutSignalProcedure,
     },
   }),
 ] as const)
@@ -354,6 +373,26 @@ describe('RPC Streaming', () => {
   })
 
   describe('Error Handling', () => {
+    it('should include stream timeout in rpcAbortSignal when configured', async () => {
+      const stream = await setup.client.stream.streamWithTimeoutSignal({
+        waitMs: 60,
+      })
+
+      const chunks: unknown[] = []
+      for await (const chunk of stream) {
+        chunks.push(chunk)
+      }
+
+      expect(chunks).toEqual([
+        { signalAborted: true, streamSignalAborted: true },
+      ])
+
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      expect(setup.gateway.rpcs.rpcs.size).toBe(0)
+      expect(setup.client.pendingCallsCount).toBe(0)
+      expect(setup.client.activeRpcStreamsCount).toBe(0)
+    })
+
     it('should propagate server error during iteration', async () => {
       const stream = await setup.client.stream.streamError({ errorAt: 3 })
       const chunks: unknown[] = []

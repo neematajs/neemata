@@ -113,6 +113,8 @@ export const streamProcedure = n.procedure({
 ```
 
 - Set `stream: true` to enable streaming
+- `stream: true` is the standard streaming form and does not add a custom per-procedure stream timeout
+- Use `stream: <ms>` (for example `stream: 5_000`) when you want the stream procedure to expose `n.inject.rpcStreamAbortSignal`
 - Handler must be an `async *generator` that `yield`s values matching `output` type
 - Client consumes via `client.stream.procedureName(input)` which returns `AsyncIterable`
 
@@ -141,8 +143,14 @@ export const liveDataProcedure = n.procedure({
 
 - Prefer `n.inject.rpcAbortSignal` in handlers for general cancellation support
   (client abort, client timeout/request abort, and disconnect)
+- `n.inject.rpcClientAbortSignal` is the base per-call signal provided by the
+  gateway; `n.inject.rpcAbortSignal` resolves the unified signal by combining
+  that call signal with disconnect and optional stream-timeout cancellation.
+- Regular `stream: true` procedures are fully valid and usually all you need
+  when you do not want a custom per-procedure stream timeout.
 - `n.inject.rpcStreamAbortSignal` is optional and only available when
-  `streamTimeout` is configured for that procedure
+  a timed stream configuration is used for that procedure (for example
+  `stream: 5_000`)
 
 ```ts
 import { n, t } from 'nmtjs'
@@ -154,8 +162,7 @@ export const streamWithTimeoutProcedure = n.procedure({
   },
   input: t.object({}),
   output: t.object({ value: t.number() }),
-  stream: true,
-  streamTimeout: 5_000,
+  stream: 5_000,
   async *handler({ signal, streamSignal }) {
     while (!signal.aborted && !streamSignal.aborted) {
       yield { value: Math.random() }

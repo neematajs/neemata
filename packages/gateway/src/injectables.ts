@@ -43,12 +43,16 @@ export const connectionAbortSignal = createLazyInjectable<
 >(Scope.Connection, 'Connection abort signal')
 
 /**
- * The per-RPC signal controlled by the transport/client side.
+ * Base per-RPC signal provisioned by the gateway for the current call.
  *
  * Scope: Call
  *
- * This is aborted for call-level cancellation (client abort, client timeout,
- * or request abort in unidirectional transports).
+ * This represents call-level cancellation from the client/request side
+ * (client abort, client timeout, or request abort in unidirectional
+ * transports) and acts as the source input for rpcAbortSignal.
+ *
+ * Prefer rpcAbortSignal in handlers unless you specifically need the
+ * pre-composed per-call signal.
  */
 export const rpcClientAbortSignal = createLazyInjectable<
   AbortSignal,
@@ -61,7 +65,8 @@ export const rpcClientAbortSignal = createLazyInjectable<
  * Scope: Call
  *
  * This is provided only when stream timeout logic is enabled by the runtime
- * for the procedure (i.e. when `procedure.streamTimeout` is configured).
+ * for the procedure (i.e. when the procedure uses a numeric stream timeout,
+ * such as `stream: 5_000`).
  * Prefer rpcAbortSignal for general handler cancellation.
  */
 export const rpcStreamAbortSignal = createLazyInjectable<
@@ -70,12 +75,15 @@ export const rpcStreamAbortSignal = createLazyInjectable<
 >(Scope.Call, 'RPC stream abort signal')
 
 /**
- * Unified RPC cancellation signal.
+ * Unified RPC cancellation signal derived from other call/connection signals.
  *
  * Scope: Call
  *
  * Combines rpcClientAbortSignal, connectionAbortSignal, and (if present)
  * rpcStreamAbortSignal. This is the recommended signal for procedure logic.
+ *
+ * Gateway/transport code should provide rpcClientAbortSignal, not
+ * rpcAbortSignal directly, so this composition remains intact.
  */
 export const rpcAbortSignal = createFactoryInjectable(
   {
