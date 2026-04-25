@@ -502,6 +502,7 @@ export { t } from '@nmtjs/type'
 export {
   ApiError,
   ApplicationApi,
+  config as runtimeConfig,
   createGuard,
   createProcedure,
   createRootRouter,

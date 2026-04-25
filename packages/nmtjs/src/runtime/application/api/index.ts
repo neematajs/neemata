@@ -57,6 +57,7 @@ export function createMeta<
 }
 
 export * from './api.ts'
+export * from './config.ts'
 export * from './constants.ts'
 export * from './filters.ts'
 export * from './guards.ts'

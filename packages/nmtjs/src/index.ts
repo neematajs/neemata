@@ -11,6 +11,7 @@ import {
 import { createTransport, GatewayInjectables } from '@nmtjs/gateway'
 
 import {
+  config as runtimeConfig,
   createContractProcedure,
   createContractRouter,
   createFilter,
@@ -63,6 +64,7 @@ export namespace neemata {
   export const contractProcedure = createContractProcedure
   export const middleware = createMiddleware
   export const meta = createMeta
+  export const config = runtimeConfig
   export const guard = createGuard
   export const filter = createFilter
   export const job = createJob
