@@ -34,9 +34,6 @@
     "@nmtjs/protocol": "workspace:*",
     "@nmtjs/type": "workspace:*"
   },
-  "devDependencies": {
-    "@nmtjs/tests-integration": "workspace:*"
-  },
   "files": [
     "dist",
     "src",

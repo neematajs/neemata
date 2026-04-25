@@ -59,9 +59,6 @@ importers:
       '@nmtjs/protocol':
         specifier: workspace:*
         version: link:../protocol
-      '@nmtjs/tests-integration':
-        specifier: workspace:*
-        version: link:../../tests/integration
       '@nmtjs/type':
         specifier: workspace:*
         version: link:../type
@@ -123,10 +120,6 @@ importers:
       hookable:
         specifier: 6.1.1
         version: 6.1.1
-    devDependencies:
-      '@nmtjs/tests-integration':
-        specifier: workspace:*
-        version: link:../../tests/integration
 
   packages/http-client:
     dependencies:

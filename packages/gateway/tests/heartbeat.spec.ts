@@ -12,7 +12,7 @@ import {
   createTestContainer,
   createTestLogger,
   createTestServerFormat,
-} from '@nmtjs/tests-integration'
+} from './_helpers/test-utils.ts'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { GatewayApi } from '../src/api.ts'
