@@ -34,7 +34,7 @@ import {
   createTestClientFormat,
   createTestLogger,
   createTestServerFormat,
-} from '@nmtjs/tests-integration'
+} from './_helpers/index.ts'
 import {
   ApplicationApi,
   isProcedure,
@@ -497,7 +497,7 @@ export {
   createTestClientFormat,
   createTestLogger,
   createTestServerFormat,
-} from '@nmtjs/tests-integration'
+} from './_helpers/index.ts'
 export { t } from '@nmtjs/type'
 export {
   ApiError,
