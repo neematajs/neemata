@@ -508,4 +508,142 @@ describe('meta runtime', () => {
       await harness.cleanup()
     }
   })
+
+  it('serializes procedure outputs by default and can skip serialization with runtime config', async () => {
+    const outputDate = new Date('2026-04-25T12:34:56.000Z')
+
+    const serializedProcedure = n.procedure({
+      output: t.date(),
+      handler: () => outputDate,
+    })
+
+    const rawProcedure = n.procedure({
+      output: t.date(),
+      meta: [n.config.static({ serializeOutput: false })],
+      handler: () => outputDate,
+    })
+
+    const rootRouter = n.rootRouter([
+      n.router({
+        routes: { serialized: serializedProcedure, raw: rawProcedure },
+      }),
+    ] as const)
+
+    const harness = createApiHarness(rootRouter)
+
+    try {
+      await expect(harness.call('serialized', undefined)).resolves.toBe(
+        outputDate.toISOString(),
+      )
+      await expect(harness.call('raw', undefined)).resolves.toBe(outputDate)
+    } finally {
+      await harness.cleanup()
+    }
+  })
+
+  it('uses the narrowest runtime config binding for output serialization', async () => {
+    const outputDate = new Date('2026-04-25T12:34:56.000Z')
+
+    const appConfiguredProcedure = n.procedure({
+      output: t.date(),
+      handler: () => outputDate,
+    })
+
+    const routerConfiguredProcedure = n.procedure({
+      output: t.date(),
+      handler: () => outputDate,
+    })
+
+    const procedureConfiguredProcedure = n.procedure({
+      output: t.date(),
+      meta: [n.config.static({ serializeOutput: false })],
+      handler: () => outputDate,
+    })
+
+    const configuredRouter = n.router({
+      name: 'configured',
+      routes: {
+        routerConfigured: routerConfiguredProcedure,
+        procedureConfigured: procedureConfiguredProcedure,
+      },
+      meta: [n.config.static({ serializeOutput: true })],
+    })
+
+    const rootRouter = n.rootRouter([
+      n.router({
+        routes: {
+          appConfigured: appConfiguredProcedure,
+          configured: configuredRouter,
+        },
+      }),
+    ] as const)
+
+    const harness = createApiHarness(rootRouter, [
+      n.config.static({ serializeOutput: false }),
+    ])
+
+    try {
+      await expect(harness.call('appConfigured', undefined)).resolves.toBe(
+        outputDate,
+      )
+      await expect(
+        harness.call('configured/routerConfigured', undefined),
+      ).resolves.toBe(outputDate.toISOString())
+      await expect(
+        harness.call('configured/procedureConfigured', undefined),
+      ).resolves.toBe(outputDate)
+    } finally {
+      await harness.cleanup()
+    }
+  })
+
+  it('applies runtime output serialization config to stream procedure chunks', async () => {
+    const outputDate = new Date('2026-04-25T12:34:56.000Z')
+
+    const serializedStreamProcedure = n.procedure({
+      output: t.date(),
+      stream: true,
+      async *handler() {
+        yield outputDate
+      },
+    })
+
+    const rawStreamProcedure = n.procedure({
+      output: t.date(),
+      stream: true,
+      meta: [n.config.static({ serializeOutput: false })],
+      async *handler() {
+        yield outputDate
+      },
+    })
+
+    const rootRouter = n.rootRouter([
+      n.router({
+        routes: {
+          serializedStream: serializedStreamProcedure,
+          rawStream: rawStreamProcedure,
+        },
+      }),
+    ] as const)
+
+    const harness = createApiHarness(rootRouter)
+
+    try {
+      const serializedStream = (await harness.call(
+        'serializedStream',
+        undefined,
+      )) as () => AsyncIterable<unknown>
+      const rawStream = (await harness.call(
+        'rawStream',
+        undefined,
+      )) as () => AsyncIterable<unknown>
+
+      await expect(Array.fromAsync(serializedStream())).resolves.toEqual([
+        outputDate.toISOString(),
+      ])
+      await expect(Array.fromAsync(rawStream())).resolves.toEqual([outputDate])
+    } finally {
+      await harness.cleanup()
+    }
+  })
 })

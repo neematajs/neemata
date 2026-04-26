@@ -21,6 +21,33 @@ export const pingProcedure = n.procedure({
 - `handler` receives `(dependencies, input)` — if no `dependencies` option, first arg is `{}`
 - Return value must match `output` type
 
+## Runtime Output Serialization
+
+By default, Neemata serializes and validates procedure outputs through the
+`output` schema before sending them to the client. This applies to both regular
+responses and each chunk yielded by stream procedures.
+
+When you want the schema only for static typing and you already return
+transport-ready values, attach the first-party runtime config metadata:
+
+```ts
+import { n, t } from 'nmtjs'
+
+export const fastProcedure = n.procedure({
+  output: t.object({ status: t.string() }),
+  meta: [n.config.static({ serializeOutput: false })],
+  handler: () => ({ status: 'ok' }),
+})
+```
+
+- `serializeOutput` defaults to `true`.
+- Set `serializeOutput: false` at application, router, or procedure scope.
+- Narrower scopes override wider scopes.
+- Input decoding, guards, middleware, and metadata phases are unchanged.
+- Disabling output serialization also skips runtime output validation and output
+  transforms, so use it only when the handler returns values compatible with the
+  selected transport/client.
+
 ## Procedure with Dependencies
 
 ```ts

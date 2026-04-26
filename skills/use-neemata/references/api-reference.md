@@ -17,7 +17,7 @@ Create a standalone RPC procedure (auto-generates contract from input/output).
 ```ts
 n.procedure({
   input: TType,              // t.* type schema for input validation
-  output: TType,             // t.* type schema for output validation
+  output: TType,             // t.* type schema for output serialization/validation
   stream?: true | number,    // true for streaming, or number for explicit stream timeout in ms
   dependencies?: Record<string, Injectable>,
   guards?: Guard[],
@@ -26,6 +26,10 @@ n.procedure({
   handler: (deps, input) => output | AsyncIterable<output>,
 })
 ```
+
+Attach `n.config.static({ serializeOutput: false })` in `meta` to skip
+runtime output serialization/validation for selected procedures or routers while
+keeping the output schema for static typing.
 
 ### `n.contractProcedure(contract, options)`
 
@@ -142,6 +146,23 @@ decodedAccess.factory({
 - `phase: 'beforeDecode'` receives raw `payload: unknown`.
 - `phase: 'afterDecode'` receives the decoded input type at the definition site.
 - Meta tokens are injectables, so they can be used in `dependencies`.
+
+### `n.config.static(value)`
+
+First-party runtime configuration metadata. Attach it through the existing
+`meta` arrays on applications, routers, or procedures. Narrower scopes override
+wider scopes.
+
+```ts
+n.config.static({
+  serializeOutput?: boolean, // default: true
+})
+```
+
+Set `serializeOutput: false` to skip runtime `output` schema serialization and
+validation for procedure responses or stream chunks. The schema still contributes
+static types, but the handler becomes responsible for returning values that the
+selected transport/client can consume.
 
 ### `n.filter(options)`
 

@@ -19,7 +19,12 @@ import type {
 } from '@nmtjs/gateway'
 import { withTimeout } from '@nmtjs/common'
 import { IsStreamProcedureContract } from '@nmtjs/contract'
-import { getMetaBindingMeta, isStaticMetaBinding, Scope } from '@nmtjs/core'
+import {
+  getMetaBindingMeta,
+  getStaticMetaValue,
+  isStaticMetaBinding,
+  Scope,
+} from '@nmtjs/core'
 import {
   createGatewayStaticMetaView,
   isAsyncIterable,
@@ -30,6 +35,7 @@ import { ProtocolError } from '@nmtjs/protocol/server'
 import { NeemataTypeError, registerDefaultLocale, type } from '@nmtjs/type'
 import { prettifyError } from 'zod/mini'
 
+import type { RuntimeConfig } from './config.ts'
 import type { kDefaultProcedure as kDefaultProcedureKey } from './constants.ts'
 import type { AnyFilter } from './filters.ts'
 import type { AnyGuard } from './guards.ts'
@@ -38,6 +44,7 @@ import type { AnyMiddleware } from './middlewares.ts'
 import type { AnyProcedure } from './procedure.ts'
 import type { AnyRouter } from './router.ts'
 import type { ApiCallContext } from './types.ts'
+import { config, defaultRuntimeConfig } from './config.ts'
 import { kDefaultProcedure } from './constants.ts'
 
 registerDefaultLocale()
@@ -70,6 +77,7 @@ type ResolvedMetaBindings = Readonly<{
   static: readonly StaticMetaBinding[]
   beforeDecode: readonly AnyFactoryMetaBinding[]
   afterDecode: readonly AnyFactoryMetaBinding[]
+  config: Required<RuntimeConfig>
 }>
 
 export class ApiError extends ProtocolError {
@@ -206,9 +214,13 @@ export class ApplicationApi implements GatewayApi {
         const context = await container.createContext(dependencies)
         const result = await handler(context, input)
         if (isIterableProcedure) {
-          return this.handleIterableOutput(procedure, result)
+          return this.handleIterableOutput(
+            procedure,
+            result,
+            metaBindings.config,
+          )
         } else {
-          return this.handleOutput(procedure, result)
+          return this.handleOutput(procedure, result, metaBindings.config)
         }
       }
     }
@@ -240,10 +252,13 @@ export class ApplicationApi implements GatewayApi {
       }
     }
 
+    const runtimeConfig = getStaticMetaValue(staticBindings, config)
+
     return Object.freeze({
       static: Object.freeze(staticBindings),
       beforeDecode: Object.freeze(beforeDecode),
       afterDecode: Object.freeze(afterDecode),
+      config: Object.freeze({ ...defaultRuntimeConfig, ...runtimeConfig }),
     })
   }
 
@@ -348,7 +363,11 @@ export class ApplicationApi implements GatewayApi {
     }
   }
 
-  private handleIterableOutput(procedure: AnyProcedure, response: any) {
+  private handleIterableOutput(
+    procedure: AnyProcedure,
+    response: any,
+    runtimeConfig: Required<RuntimeConfig>,
+  ) {
     if (!isAsyncIterable(response))
       throw new Error('Response is an async iterable')
     const chunkType = procedure.contract.output
@@ -357,10 +376,11 @@ export class ApplicationApi implements GatewayApi {
 
     return async function* (onDone?: () => void) {
       try {
-        if (chunkType instanceof type.AnyType === false) {
+        if (runtimeConfig.serializeOutput === false) {
+          yield* response
+        } else if (chunkType instanceof type.AnyType === false) {
           for await (const chunk of response) {
-            const encoded = chunkType.encode(chunk)
-            yield encoded
+            yield chunkType.encode(chunk)
           }
         } else {
           yield* response
@@ -371,8 +391,13 @@ export class ApplicationApi implements GatewayApi {
     }
   }
 
-  private handleOutput(procedure: AnyProcedure, response: any) {
+  private handleOutput(
+    procedure: AnyProcedure,
+    response: any,
+    runtimeConfig: Required<RuntimeConfig>,
+  ) {
     if (procedure.contract.output instanceof type.NeverType === false) {
+      if (runtimeConfig.serializeOutput === false) return response
       const type = procedure.contract.output
       return type.encode(response)
     }

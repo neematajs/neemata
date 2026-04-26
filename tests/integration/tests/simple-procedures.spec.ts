@@ -12,6 +12,7 @@ import {
   ProtocolError,
   rpcAbortSignal,
   rpcClientAbortSignal,
+  runtimeConfig,
   t,
 } from './_setup.ts'
 
@@ -199,6 +200,22 @@ const guardedDateProcedure = createProcedure({
   handler: async (_, input) => ({ iso: input.createdAt.toISOString() }),
 })
 
+const outputMarker = t.custom({
+  decode: (value) => value,
+  encode: (value) => `encoded:${value}`,
+})
+
+const serializedOutputProcedure = createProcedure({
+  output: outputMarker,
+  handler: () => 'raw-output',
+})
+
+const rawOutputProcedure = createProcedure({
+  output: outputMarker,
+  meta: [runtimeConfig.static({ serializeOutput: false })],
+  handler: () => 'raw-output',
+})
+
 // For testing ProtocolError directly
 const failingWithProtocolErrorProcedure = createProcedure({
   input: t.object({}),
@@ -228,6 +245,8 @@ const router = createRootRouter(
         abortableWithState: abortableWithStateProcedure,
         clientAbortSignalState: clientAbortSignalStateProcedure,
         guardedDate: guardedDateProcedure,
+        serializedOutput: serializedOutputProcedure,
+        rawOutput: rawOutputProcedure,
       },
     }),
   ] as const,
@@ -362,6 +381,17 @@ describe('Simple RPC Calls', () => {
       expect(result).toEqual({ status: 'ok' })
 
       // Verify cleanup
+      await waitForCleanup()
+      expect(setup.gateway.rpcs.rpcs.size).toBe(0)
+      expect(setup.client.pendingCallsCount).toBe(0)
+    })
+
+    it('should allow procedures to skip runtime output serialization', async () => {
+      await expect(setup.client.call.serializedOutput()).resolves.toBe(
+        'encoded:raw-output',
+      )
+      await expect(setup.client.call.rawOutput()).resolves.toBe('raw-output')
+
       await waitForCleanup()
       expect(setup.gateway.rpcs.rpcs.size).toBe(0)
       expect(setup.client.pendingCallsCount).toBe(0)
