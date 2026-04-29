@@ -1,5 +1,4 @@
 import type { StaticMetaBinding } from '@nmtjs/core'
-import type { GatewayResolvedProcedure } from '@nmtjs/gateway'
 import { Container, createLogger, getStaticMetaValue, Scope } from '@nmtjs/core'
 import { describe, expect, it } from 'vitest'
 
@@ -8,6 +7,7 @@ import type {
   AnyProcedure,
   AnyRootRouter,
   AnyRouter,
+  ApplicationResolvedProcedure,
 } from '../src/runtime/application/index.ts'
 import { n, t } from '../src/index.ts'
 import {
@@ -76,7 +76,7 @@ function createApiHarness(
       options: {
         connection?: unknown
         onResolve?: (
-          procedure: GatewayResolvedProcedure,
+          procedure: ApplicationResolvedProcedure,
         ) => void | Promise<void>
       } = {},
     ) {

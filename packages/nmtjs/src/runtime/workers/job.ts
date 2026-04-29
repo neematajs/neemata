@@ -1,12 +1,13 @@
 import type { MessagePort } from 'node:worker_threads'
 
+import { LifecycleHook } from '@nmtjs/application'
 import { UnrecoverableError } from 'bullmq'
 
 import type { JobWorkerPool } from '../enums.ts'
 import type { JobProgressCheckpoint } from '../jobs/types.ts'
 import type { ServerConfig } from '../server/config.ts'
 import type { ServerPortMessage, ThreadPortMessage } from '../types.ts'
-import { LifecycleHook, WorkerType } from '../enums.ts'
+import { WorkerType } from '../enums.ts'
 import { jobWorkerPool } from '../injectables.ts'
 import { ApplicationWorkerJobRunner } from '../jobs/runner.ts'
 import { BaseWorkerRuntime } from './base.ts'

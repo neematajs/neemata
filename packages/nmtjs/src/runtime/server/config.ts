@@ -1,9 +1,11 @@
+import type {
+  ApplicationConfig,
+  ApplicationTransport,
+} from '@nmtjs/application'
 import type { LoggingOptions } from '@nmtjs/core'
-import type { Transport } from '@nmtjs/gateway'
 import type { ApplicationOptions } from '@nmtjs/proxy'
 import type { Applications } from 'nmtjs/runtime/types'
 
-import type { ApplicationConfig } from '../application/config.ts'
 import type { JobWorkerPool, StoreType } from '../enums.ts'
 import type { AnyJob } from '../jobs/job.ts'
 import type { JobsSchedulerOptions } from '../scheduler/index.ts'
@@ -30,7 +32,7 @@ export type ServerApplicationConfig<T = ApplicationConfig> =
   T extends ApplicationConfig<any, infer Transports>
     ? {
         threads: {
-          [K in keyof Transports]: Transports[K] extends Transport<
+          [K in keyof Transports]: Transports[K] extends ApplicationTransport<
             any,
             infer Options
           >

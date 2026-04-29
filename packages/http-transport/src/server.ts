@@ -1,6 +1,7 @@
 import { Buffer } from 'node:buffer'
 import { Duplex, Readable } from 'node:stream'
 
+import type { ApplicationResolvedProcedure } from '@nmtjs/application'
 import type { TransportWorker, TransportWorkerParams } from '@nmtjs/gateway'
 import { anyAbortSignal, isAbortError, isAsyncIterable } from '@nmtjs/common'
 import { provision } from '@nmtjs/core'
@@ -69,12 +70,16 @@ const CORS_HEADERS_MAP: Record<
 export function createHTTPTransportWorker(
   adapterFactory: HttpAdapterServerFactory<any>,
   options: HttpTransportOptions,
-): TransportWorker<ConnectionType.Unidirectional> {
+): TransportWorker<
+  ConnectionType.Unidirectional,
+  ApplicationResolvedProcedure
+> {
   return new HttpTransportServer(adapterFactory, options)
 }
 
 export class HttpTransportServer
-  implements TransportWorker<ConnectionType.Unidirectional>
+  implements
+    TransportWorker<ConnectionType.Unidirectional, ApplicationResolvedProcedure>
 {
   #server: HttpAdapterServer
   #corsOptions?:
@@ -84,7 +89,10 @@ export class HttpTransportServer
     | HttpTransportCorsOptions
     | ((origin: string) => boolean | HttpTransportCorsOptions)
 
-  params!: TransportWorkerParams<ConnectionType.Unidirectional>
+  params!: TransportWorkerParams<
+    ConnectionType.Unidirectional,
+    ApplicationResolvedProcedure
+  >
 
   constructor(
     protected readonly adapterFactory: HttpAdapterServerFactory<any>,
@@ -94,7 +102,12 @@ export class HttpTransportServer
     this.#corsOptions = this.options.cors
   }
 
-  async start(hooks: TransportWorkerParams<ConnectionType.Unidirectional>) {
+  async start(
+    hooks: TransportWorkerParams<
+      ConnectionType.Unidirectional,
+      ApplicationResolvedProcedure
+    >,
+  ) {
     this.params = hooks
     return await this.#server.start()
   }

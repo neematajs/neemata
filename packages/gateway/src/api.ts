@@ -15,8 +15,8 @@ export interface GatewayStaticMetaView {
 }
 
 export interface GatewayResolvedProcedure {
+  name: string
   stream: boolean
-  meta: GatewayStaticMetaView
 }
 
 export type GatewayResolveOptions = {
@@ -34,8 +34,10 @@ export type GatewayApiCallOptions = {
 
 export type GatewayApiCallResult = unknown
 
-export interface GatewayApi {
-  resolve(options: GatewayResolveOptions): Promise<GatewayResolvedProcedure>
+export interface GatewayApi<
+  ResolvedProcedure extends GatewayResolvedProcedure = GatewayResolvedProcedure,
+> {
+  resolve(options: GatewayResolveOptions): Promise<ResolvedProcedure>
   call(options: GatewayApiCallOptions): Promise<GatewayApiCallResult>
 }
 
