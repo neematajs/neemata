@@ -31,17 +31,18 @@ import { Gateway } from '@nmtjs/gateway'
 import { ConnectionType, ProtocolVersion } from '@nmtjs/protocol'
 import { ProtocolFormats } from '@nmtjs/protocol/server'
 import {
-  createTestClientFormat,
-  createTestLogger,
-  createTestServerFormat,
-} from './_helpers/index.ts'
-import {
   ApplicationApi,
   isProcedure,
   isRouter,
   kDefaultProcedure,
   kRootRouter,
 } from 'nmtjs/runtime'
+
+import {
+  createTestClientFormat,
+  createTestLogger,
+  createTestServerFormat,
+} from './_helpers/index.ts'
 
 const kUnknownProcedureForDefaultTest = '__tests__/unknown-procedure'
 
@@ -492,12 +493,6 @@ export {
   ProtocolVersion,
 } from '@nmtjs/protocol'
 export { ProtocolError, ProtocolFormats } from '@nmtjs/protocol/server'
-// Re-export useful types and utilities for tests
-export {
-  createTestClientFormat,
-  createTestLogger,
-  createTestServerFormat,
-} from './_helpers/index.ts'
 export { t } from '@nmtjs/type'
 export {
   ApiError,
@@ -508,3 +503,10 @@ export {
   createRootRouter,
   createRouter,
 } from 'nmtjs/runtime'
+
+// Re-export useful types and utilities for tests
+export {
+  createTestClientFormat,
+  createTestLogger,
+  createTestServerFormat,
+} from './_helpers/index.ts'
