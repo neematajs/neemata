@@ -34,6 +34,39 @@ const createDecodeBase64 = (
 }
 
 const NEEMATA_BLOB_HEADER = 'X-Neemata-Blob'
+const MAX_KEEPALIVE_BODY_BYTES = 64 * 1024
+
+const getBodyByteLength = (body: unknown): number | undefined => {
+  if (typeof body === 'string') {
+    return new TextEncoder().encode(body).byteLength
+  }
+
+  if (ArrayBuffer.isView(body)) {
+    return body.byteLength
+  }
+
+  if (body instanceof ArrayBuffer) {
+    return body.byteLength
+  }
+
+  if (typeof Blob !== 'undefined' && body instanceof Blob) {
+    return body.size
+  }
+
+  if (
+    typeof URLSearchParams !== 'undefined' &&
+    body instanceof URLSearchParams
+  ) {
+    return new TextEncoder().encode(body.toString()).byteLength
+  }
+
+  return undefined
+}
+
+const shouldUseKeepalive = (body: unknown): boolean => {
+  const byteLength = getBodyByteLength(body)
+  return byteLength !== undefined && byteLength <= MAX_KEEPALIVE_BODY_BYTES
+}
 
 export type HttpClientTransportOptions = {
   /**
@@ -112,7 +145,7 @@ export class HttpTransportClient implements UnidirectionalTransport {
         headers: requestHeaders,
         signal: options.signal,
         credentials: 'include',
-        keepalive: true,
+        ...(shouldUseKeepalive(body) ? { keepalive: true } : {}),
       })
 
       if (!response.ok) {
@@ -177,7 +210,7 @@ export class HttpTransportClient implements UnidirectionalTransport {
         headers: requestHeaders,
         signal: options.signal,
         credentials: 'include',
-        keepalive: true,
+        ...(shouldUseKeepalive(body) ? { keepalive: true } : {}),
       })
 
       if (response.ok) {
