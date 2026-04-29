@@ -81,6 +81,52 @@ describe('HttpTransportClient + StaticClient', () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1)
   })
 
+  it('uses keepalive for small HTTP request bodies', async () => {
+    const format = new TestJsonFormat()
+    const fetchSpy = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(
+        new Response(format.encode({ ok: true }) as any, {
+          status: 200,
+          headers: { 'content-type': format.contentType },
+        }),
+      )
+
+    const client = new StaticClient(
+      { contract: {} as any, protocol: ProtocolVersion.v1, format },
+      HttpTransportFactory,
+      { url: 'http://localhost:4000', fetch: fetchSpy },
+    )
+
+    await (client.call as any).ping({ userId: 'u1' })
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+    expect(fetchSpy.mock.calls[0]?.[1]?.keepalive).toBe(true)
+  })
+
+  it('omits keepalive for large HTTP request bodies', async () => {
+    const format = new TestJsonFormat()
+    const fetchSpy = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(
+        new Response(format.encode({ ok: true }) as any, {
+          status: 200,
+          headers: { 'content-type': format.contentType },
+        }),
+      )
+
+    const client = new StaticClient(
+      { contract: {} as any, protocol: ProtocolVersion.v1, format },
+      HttpTransportFactory,
+      { url: 'http://localhost:4000', fetch: fetchSpy },
+    )
+
+    await (client.call as any).ping({ data: 'x'.repeat(64 * 1024) })
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+    expect(fetchSpy.mock.calls[0]?.[1]?.keepalive).toBeUndefined()
+  })
+
   it('emits decoded rpc_response body in logging plugin', async () => {
     const emitted: unknown[] = []
     const format = new TestJsonFormat()
