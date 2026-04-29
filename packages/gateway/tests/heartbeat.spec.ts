@@ -8,16 +8,16 @@ import {
   ServerMessageType,
 } from '@nmtjs/protocol'
 import { ProtocolFormats } from '@nmtjs/protocol/server'
-import {
-  createTestContainer,
-  createTestLogger,
-  createTestServerFormat,
-} from './_helpers/test-utils.ts'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { GatewayApi } from '../src/api.ts'
 import { createGatewayStaticMetaView } from '../src/api.ts'
 import { Gateway } from '../src/gateway.ts'
+import {
+  createTestContainer,
+  createTestLogger,
+  createTestServerFormat,
+} from './_helpers/test-utils.ts'
 
 const encodeUInt32 = (value: number) => {
   const buffer = Buffer.allocUnsafe(4)

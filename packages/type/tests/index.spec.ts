@@ -240,3 +240,14 @@ describe('Unknown type', () => {
     >().toEqualTypeOf<unknown>()
   })
 })
+
+describe('Record type', () => {
+  it('accepts generic enum keys', () => {
+    const key: t.EnumType<any> = t.enum(['a', 'b'] as const)
+    const schema = t.record(key, t.number())
+
+    expectTypeOf<typeof schema>().toEqualTypeOf<
+      t.RecordType<t.EnumType<any>, t.NumberType>
+    >()
+  })
+})

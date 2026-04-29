@@ -74,7 +74,7 @@ export type AnyLooseObjectType = LooseObjectType<ObjectTypeProps>
 export type AnyObjectLikeType = AnyObjectType | AnyLooseObjectType
 
 export class RecordType<
-  K extends LiteralType<string | number> | EnumType | StringType,
+  K extends LiteralType<string | number> | EnumType<any> | StringType,
   E extends BaseType,
 > extends BaseType<
   ZodMiniRecord<K['encodeZodType'], E['encodeZodType']>,
@@ -82,7 +82,7 @@ export class RecordType<
   { key: K; element: E }
 > {
   static factory<
-    K extends LiteralType<string | number> | EnumType | StringType,
+    K extends LiteralType<string | number> | EnumType<any> | StringType,
     E extends BaseType,
   >(key: K, element: E) {
     return new RecordType<K, E>({
