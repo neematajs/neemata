@@ -1,5 +1,5 @@
-import type { MetadataKind } from '@nmtjs/core'
-import { createMeta } from '@nmtjs/core'
+import type { MetadataKind } from '@nmtjs/application'
+import { createMeta } from '@nmtjs/application'
 import { ErrorCode } from '@nmtjs/protocol'
 
 export enum HttpStatus {

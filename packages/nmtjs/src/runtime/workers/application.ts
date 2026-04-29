@@ -1,30 +1,33 @@
-import type { Dependant } from '@nmtjs/core'
-import type { GatewayOptions, Transport } from '@nmtjs/gateway'
-import { Gateway } from '@nmtjs/gateway'
-import { JsonFormat } from '@nmtjs/json-format/server'
-import { MsgpackFormat } from '@nmtjs/msgpack-format/server'
-import { ProtocolFormats } from '@nmtjs/protocol/server'
-
-import type { ApplicationConfig } from '../application/config.ts'
 import type {
   AnyFilter,
   AnyGuard,
   AnyMiddleware,
   AnyProcedure,
   AnyRouter,
+  ApplicationConfig,
+  ApplicationResolvedProcedure,
+  ApplicationTransport,
   kDefaultProcedure as kDefaultProcedureKey,
-} from '../application/index.ts'
-import type { ServerConfig } from '../server/config.ts'
-import { ApplicationApi } from '../application/api/api.ts'
-import { ApplicationHooks } from '../application/hooks.ts'
+} from '@nmtjs/application'
+import type { Dependant } from '@nmtjs/core'
+import type { GatewayOptions } from '@nmtjs/gateway'
 import {
+  ApplicationApi,
+  ApplicationHooks,
   isProcedure,
   isRootRouter,
   isRouter,
   kDefaultProcedure,
   kRootRouter,
-} from '../application/index.ts'
-import { LifecycleHook, WorkerType } from '../enums.ts'
+  LifecycleHook,
+} from '@nmtjs/application'
+import { Gateway } from '@nmtjs/gateway'
+import { JsonFormat } from '@nmtjs/json-format/server'
+import { MsgpackFormat } from '@nmtjs/msgpack-format/server'
+import { ProtocolFormats } from '@nmtjs/protocol/server'
+
+import type { ServerConfig } from '../server/config.ts'
+import { WorkerType } from '../enums.ts'
 import { BaseWorkerRuntime } from './base.ts'
 
 export interface ApplicationWorkerRuntimeOptions {
@@ -36,8 +39,8 @@ export interface ApplicationWorkerRuntimeOptions {
 export class ApplicationWorkerRuntime extends BaseWorkerRuntime {
   api!: ApplicationApi
   applicationHooks!: ApplicationHooks
-  gateway!: Gateway
-  transports!: GatewayOptions['transports']
+  gateway!: Gateway<ApplicationResolvedProcedure>
+  transports!: GatewayOptions<ApplicationResolvedProcedure>['transports']
 
   routers = new Map<string | kRootRouter, AnyRouter>()
   procedures = new Map<
@@ -84,7 +87,9 @@ export class ApplicationWorkerRuntime extends BaseWorkerRuntime {
 
     for (const key in this.runtimeOptions.transports) {
       const options = this.runtimeOptions.transports[key]
-      const { factory, proxyable } = this.appConfig.transports[key] as Transport
+      const { factory, proxyable } = this.appConfig.transports[
+        key
+      ] as ApplicationTransport
       this.transports[key] = { transport: await factory(options), proxyable }
     }
 

@@ -2,6 +2,7 @@ import type { MaybePromise } from '@nmtjs/common'
 import { IsStreamProcedureContract } from '@nmtjs/contract'
 import { CoreInjectables, loggerLocalStorage } from '@nmtjs/core'
 
+import type { AnyMiddleware } from './middlewares.ts'
 import type { ApiCallContext } from './types.ts'
 import { createMiddleware } from './middlewares.ts'
 
@@ -23,7 +24,7 @@ export const LoggingCallContextMiddleware = (
     options: ApiCallContext,
     payload: unknown,
   ) => MaybePromise<object> = defaultContext,
-) =>
+): AnyMiddleware =>
   createMiddleware({
     handle: async (_, call, next, payload) => {
       const loggingContext = await cb(call, payload)
@@ -41,7 +42,7 @@ export const LoggingCallMiddleware = (
     includeResponse?: boolean
     includeStreamChunks?: boolean
   } = {},
-) =>
+): AnyMiddleware =>
   createMiddleware({
     dependencies: { logger: CoreInjectables.logger('RPC') },
     handle: async ({ logger }, call, next, payload) => {

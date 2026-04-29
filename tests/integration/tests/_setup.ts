@@ -19,6 +19,7 @@ import type {
   AnyProcedure,
   AnyRootRouter,
   AnyRouter,
+  ApplicationResolvedProcedure,
 } from 'nmtjs/runtime'
 import { StaticClient } from '@nmtjs/client/static'
 import {
@@ -82,8 +83,14 @@ export class TransportChannel {
 /**
  * Server-side transport using EventEmitter channel.
  */
-export class EventEmitterServerTransport implements TransportWorker {
-  private params: TransportWorkerParams | null = null
+export class EventEmitterServerTransport
+  implements
+    TransportWorker<ConnectionType.Bidirectional, ApplicationResolvedProcedure>
+{
+  private params: TransportWorkerParams<
+    ConnectionType.Bidirectional,
+    ApplicationResolvedProcedure
+  > | null = null
   private connections = new Map<string, GatewayConnection>()
   private channel: TransportChannel
 
@@ -91,7 +98,12 @@ export class EventEmitterServerTransport implements TransportWorker {
     this.channel = channel
   }
 
-  async start(params: TransportWorkerParams): Promise<string> {
+  async start(
+    params: TransportWorkerParams<
+      ConnectionType.Bidirectional,
+      ApplicationResolvedProcedure
+    >,
+  ): Promise<string> {
     this.params = params
 
     this.channel.server.on(
@@ -304,7 +316,7 @@ export class TestClient<
 // =============================================================================
 
 export interface TestSetup<TRouter extends AnyRootRouter> {
-  gateway: Gateway
+  gateway: Gateway<ApplicationResolvedProcedure>
   client: TestClient<
     ClientTransportFactory<EventEmitterClientTransport, TransportChannel>,
     TRouter['contract'],

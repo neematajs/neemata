@@ -1,19 +1,17 @@
+import type { RuntimePlugin } from '@nmtjs/application'
 import type {
   AnyInjectable,
   Dependant,
   Logger,
   LoggingOptions,
 } from '@nmtjs/core'
+import { LifecycleHook, LifecycleHooks } from '@nmtjs/application'
 import {
   Container,
   createLogger,
   getDepedencencyInjectable,
   Scope,
 } from '@nmtjs/core'
-
-import type { RuntimePlugin } from './plugin.ts'
-import { LifecycleHook } from './enums.ts'
-import { LifecycleHooks } from './hooks.ts'
 
 export type BaseRuntimeOptions = {
   logger?: LoggingOptions

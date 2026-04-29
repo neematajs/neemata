@@ -1,3 +1,4 @@
+import type { ApplicationResolvedProcedure } from '@nmtjs/application'
 import type { TransportWorker, TransportWorkerParams } from '@nmtjs/gateway'
 import type { Hooks, Peer } from 'crossws'
 import { ConnectionType, ProtocolVersion } from '@nmtjs/protocol'
@@ -18,15 +19,19 @@ import {
 export function createWSTransportWorker(
   adapterFactory: WsAdapterServerFactory<any>,
   options: WsTransportOptions,
-): TransportWorker<ConnectionType.Bidirectional> {
+): TransportWorker<ConnectionType.Bidirectional, ApplicationResolvedProcedure> {
   return new WsTransportServer(adapterFactory, options)
 }
 
 export class WsTransportServer
-  implements TransportWorker<ConnectionType.Bidirectional>
+  implements
+    TransportWorker<ConnectionType.Bidirectional, ApplicationResolvedProcedure>
 {
   #server: WsAdapterServer
-  params!: TransportWorkerParams<ConnectionType.Bidirectional>
+  params!: TransportWorkerParams<
+    ConnectionType.Bidirectional,
+    ApplicationResolvedProcedure
+  >
   clients = new Map<string, Peer>()
 
   constructor(
@@ -37,7 +42,10 @@ export class WsTransportServer
   }
 
   async start(
-    hooks: TransportWorkerParams<ConnectionType.Bidirectional>,
+    hooks: TransportWorkerParams<
+      ConnectionType.Bidirectional,
+      ApplicationResolvedProcedure
+    >,
   ): Promise<string> {
     this.params = hooks
     return await this.#server.start()

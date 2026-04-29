@@ -32,7 +32,7 @@ import {
 } from '@nmtjs/protocol'
 import { getFormat, ProtocolError, versions } from '@nmtjs/protocol/server'
 
-import type { GatewayApi } from './api.ts'
+import type { GatewayApi, GatewayResolvedProcedure } from './api.ts'
 import type { GatewayConnection } from './connections.ts'
 import type { ProxyableTransportType } from './enums.ts'
 import type { StreamConfig } from './streams.ts'
@@ -48,15 +48,17 @@ import * as injectables from './injectables.ts'
 import { RpcManager } from './rpcs.ts'
 import { BlobStreamsManager } from './streams.ts'
 
-export interface GatewayOptions {
+export interface GatewayOptions<
+  ResolvedProcedure extends GatewayResolvedProcedure = GatewayResolvedProcedure,
+> {
   logger: Logger
   container: Container
   hooks: Hooks
   formats: ProtocolFormats
-  api: GatewayApi
+  api: GatewayApi<ResolvedProcedure>
   transports: {
     [key: string]: {
-      transport: TransportWorker
+      transport: TransportWorker<ConnectionType, ResolvedProcedure>
       proxyable?: ProxyableTransportType
     }
   }
@@ -73,7 +75,9 @@ export interface GatewayOptions {
 const DEFAULT_GATEWAY_HEARTBEAT_INTERVAL = 15000
 const DEFAULT_GATEWAY_HEARTBEAT_TIMEOUT = 5000
 
-export class Gateway {
+export class Gateway<
+  ResolvedProcedure extends GatewayResolvedProcedure = GatewayResolvedProcedure,
+> {
   readonly logger: Logger
   readonly connections: ConnectionManager
   readonly rpcs: RpcManager
@@ -87,14 +91,14 @@ export class Gateway {
     }
   >()
   public options: Required<
-    Omit<GatewayOptions, 'streamTimeouts'> & {
+    Omit<GatewayOptions<ResolvedProcedure>, 'streamTimeouts'> & {
       streamTimeouts: Required<
-        Exclude<GatewayOptions['streamTimeouts'], undefined>
+        Exclude<GatewayOptions<ResolvedProcedure>['streamTimeouts'], undefined>
       >
     }
   >
 
-  constructor(options: GatewayOptions) {
+  constructor(options: GatewayOptions<ResolvedProcedure>) {
     this.options = {
       heartbeat: {
         interval: DEFAULT_GATEWAY_HEARTBEAT_INTERVAL,
@@ -624,7 +628,9 @@ export class Gateway {
     }
   }
 
-  protected resolve(transport: string): TransportWorkerParams['resolve'] {
+  protected resolve(
+    transport: string,
+  ): TransportWorkerParams<ConnectionType, ResolvedProcedure>['resolve'] {
     const _logger = this.logger.child({ transport })
 
     return async (connection, procedure) => {

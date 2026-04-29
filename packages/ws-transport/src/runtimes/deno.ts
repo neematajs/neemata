@@ -1,4 +1,4 @@
-import type { Transport } from '@nmtjs/gateway'
+import type { ApplicationTransport } from '@nmtjs/application'
 import type { ConnectionType } from '@nmtjs/protocol'
 import { ProxyableTransportType } from '@nmtjs/gateway'
 import createAdapter from 'crossws/adapters/deno'
@@ -111,7 +111,7 @@ function adapterFactory(params: WsAdapterParams<'deno'>): WsAdapterServer {
   }
 }
 
-export const WsTransport: Transport<
+export const WsTransport: ApplicationTransport<
   ConnectionType.Bidirectional,
   WsTransportOptions<'deno'>,
   typeof injectables,
