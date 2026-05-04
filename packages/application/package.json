@@ -10,6 +10,11 @@
       "types": "./src/index.ts",
       "import": "./dist/index.js",
       "module-sync": "./dist/index.js"
+    },
+    "./neem": {
+      "types": "./src/neem.ts",
+      "import": "./dist/neem.js",
+      "module-sync": "./dist/neem.js"
     }
   },
   "publishConfig": {
@@ -18,6 +23,11 @@
         "types": "./dist/index.d.ts",
         "import": "./dist/index.js",
         "module-sync": "./dist/index.js"
+      },
+      "./neem": {
+        "types": "./dist/neem.d.ts",
+        "import": "./dist/neem.js",
+        "module-sync": "./dist/neem.js"
       }
     }
   },
@@ -27,7 +37,8 @@
     "@nmtjs/core": "workspace:*",
     "@nmtjs/gateway": "workspace:*",
     "@nmtjs/protocol": "workspace:*",
-    "@nmtjs/type": "workspace:*"
+    "@nmtjs/type": "workspace:*",
+    "@nmtjs/neem": "workspace:*"
   },
   "devDependencies": {
     "zod": "catalog:"
@@ -39,6 +50,7 @@
     "@nmtjs/gateway": "workspace:*",
     "@nmtjs/protocol": "workspace:*",
     "@nmtjs/type": "workspace:*",
+    "@nmtjs/neem": "workspace:*",
     "zod": "catalog:"
   },
   "files": [

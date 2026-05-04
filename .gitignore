@@ -3,7 +3,7 @@ __screenshots__/
 .neemata/
 test.*
 _dev/
-
+packages/_neem_old
 *.sock
 
 # Based on https://raw.githubusercontent.com/github/gitignore/main/Node.gitignore

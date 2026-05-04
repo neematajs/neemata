@@ -1,0 +1,104 @@
+{
+  "name": "@nmtjs/neem",
+  "description": "Neem host core for running compiled application and plugin artifacts.",
+  "type": "module",
+  "scripts": {
+    "clean-build": "rm -rf ./dist"
+  },
+  "bin": {
+    "neem": "./bin/neem.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/public/index.ts",
+      "import": "./dist/public/index.js",
+      "module-sync": "./dist/public/index.js"
+    },
+    "./app": {
+      "types": "./src/public/app.ts",
+      "import": "./dist/public/app.js",
+      "module-sync": "./dist/public/app.js"
+    },
+    "./artifact": {
+      "types": "./src/public/artifact.ts",
+      "import": "./dist/public/artifact.js",
+      "module-sync": "./dist/public/artifact.js"
+    },
+    "./config": {
+      "types": "./src/public/config.ts",
+      "import": "./dist/public/config.js",
+      "module-sync": "./dist/public/config.js"
+    },
+    "./plugin": {
+      "types": "./src/public/plugin.ts",
+      "import": "./dist/public/plugin.js",
+      "module-sync": "./dist/public/plugin.js"
+    },
+    "./runtime": {
+      "types": "./src/public/runtime.ts",
+      "import": "./dist/public/runtime.js",
+      "module-sync": "./dist/public/runtime.js"
+    },
+    "./cli": {
+      "types": "./src/cli.ts",
+      "import": "./dist/cli.js",
+      "module-sync": "./dist/cli.js"
+    }
+  },
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./dist/public/index.d.ts",
+        "import": "./dist/public/index.js",
+        "module-sync": "./dist/public/index.js"
+      },
+      "./app": {
+        "types": "./dist/public/app.d.ts",
+        "import": "./dist/public/app.js",
+        "module-sync": "./dist/public/app.js"
+      },
+      "./artifact": {
+        "types": "./dist/public/artifact.d.ts",
+        "import": "./dist/public/artifact.js",
+        "module-sync": "./dist/public/artifact.js"
+      },
+      "./config": {
+        "types": "./dist/public/config.d.ts",
+        "import": "./dist/public/config.js",
+        "module-sync": "./dist/public/config.js"
+      },
+      "./plugin": {
+        "types": "./dist/public/plugin.d.ts",
+        "import": "./dist/public/plugin.js",
+        "module-sync": "./dist/public/plugin.js"
+      },
+      "./runtime": {
+        "types": "./dist/public/runtime.d.ts",
+        "import": "./dist/public/runtime.js",
+        "module-sync": "./dist/public/runtime.js"
+      },
+      "./cli": {
+        "types": "./dist/cli.d.ts",
+        "import": "./dist/cli.js",
+        "module-sync": "./dist/cli.js"
+      }
+    }
+  },
+  "dependencies": {
+    "@nmtjs/common": "workspace:*",
+    "citty": "0.2.2",
+    "hookable": "6.1.1",
+    "oxc-resolver": "11.19.1",
+    "rolldown": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "^24"
+  },
+  "files": [
+    "bin",
+    "dist",
+    "src",
+    "LICENSE.md",
+    "README.md"
+  ]
+}

@@ -9,6 +9,9 @@ catalogs:
     '@nmtjs/proxy':
       specifier: 1.0.0-beta.6
       version: 1.0.0-beta.6
+    rolldown:
+      specifier: 1.0.0-rc.17
+      version: 1.0.0-rc.17
     vite:
       specifier: 8.0.14
       version: 8.0.14
@@ -62,6 +65,9 @@ importers:
       '@nmtjs/gateway':
         specifier: workspace:*
         version: link:../gateway
+      '@nmtjs/neem':
+        specifier: workspace:*
+        version: link:../neem
       '@nmtjs/protocol':
         specifier: workspace:*
         version: link:../protocol
@@ -218,34 +224,22 @@ importers:
       '@nmtjs/common':
         specifier: workspace:*
         version: link:../common
-      '@nmtjs/core':
-        specifier: workspace:*
-        version: link:../core
       citty:
-        specifier: 0.2.1
-        version: 0.2.1
-      dotenv:
-        specifier: 17.3.1
-        version: 17.3.1
+        specifier: 0.2.2
+        version: 0.2.2
       hookable:
         specifier: 6.1.0
         version: 6.1.0
       oxc-resolver:
         specifier: 11.19.1
         version: 11.19.1(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)
-      prom-client:
-        specifier: git@github.com:siimon/prom-client.git#d4d2dcb366384833951e0116caca707b5f62aa5e
-        version: https://codeload.github.com/siimon/prom-client/tar.gz/d4d2dcb366384833951e0116caca707b5f62aa5e
+      rolldown:
+        specifier: 'catalog:'
+        version: 1.0.0-rc.17
     devDependencies:
-      '@nmtjs/proxy':
-        specifier: 'catalog:'
-        version: 1.0.0-beta.6
-      pino:
-        specifier: 10.3.1
-        version: 10.3.1
-      vite:
-        specifier: 'catalog:'
-        version: 8.0.14(@types/node@24.10.1)
+      '@types/node':
+        specifier: ^24
+        version: 24.10.1
 
   packages/nmtjs:
     dependencies:
@@ -491,6 +485,15 @@ importers:
       nmtjs:
         specifier: workspace:*
         version: link:../../packages/nmtjs
+
+  tests/neem:
+    devDependencies:
+      '@nmtjs/application':
+        specifier: workspace:*
+        version: link:../../packages/application
+      '@nmtjs/neem':
+        specifier: workspace:*
+        version: link:../../packages/neem
 
 packages:
 

@@ -10,6 +10,7 @@
     "clean": "rm -rf dist node_modules && pnpm -r exec rm -rf dist node_modules",
     "test": "pnpm build && vitest --run",
     "test:integration": "vitest run tests/integration",
+    "test:neem": "pnpm --filter @nmtjs/tests-neem run test",
     "test:e2e": "vitest run tests/e2e",
     "test:e2e:jobs": "pnpm --filter tests-e2e run test:jobs",
     "test:e2e:jobs:docker": "sh -c 'docker compose -f tests/e2e/docker-compose.jobs-e2e.yml run --rm --build test-jobs; code=$?; docker compose -f tests/e2e/docker-compose.jobs-e2e.yml down -v --remove-orphans; exit $code'",
