@@ -1,6 +1,7 @@
 .vitest-attachments/
 __screenshots__/
 .neemata/
+.neem/
 test.*
 _dev/
 packages/_neem_old

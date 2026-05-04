@@ -1,8 +1,6 @@
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
-import { basename, dirname, extname, relative, resolve } from 'node:path'
+import { mkdir, rename, rm, writeFile } from 'node:fs/promises'
+import { dirname, relative, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
-
-import { transform } from 'rolldown/utils'
 
 import type { NeemResolvedArtifact } from '../public/artifact.ts'
 import type {
@@ -11,6 +9,7 @@ import type {
   NeemConfig,
 } from '../public/config.ts'
 import type { NeemPlugin } from '../public/plugin.ts'
+import type { NeemConfigDiscovery, NeemDiscoveredImport } from './discovery.ts'
 import type {
   NeemBuildManifest,
   NeemBuildManifestArtifact,
@@ -52,7 +51,11 @@ export async function buildNeem(
   await cleanNeemOutDir(outDir)
   await mkdir(outDir, { recursive: true })
 
-  const configArtifact = await transformConfig({ configFile, cwd, outDir })
+  const configArtifact = await buildConfigArtifact({
+    configFile,
+    discovery,
+    outDir,
+  })
 
   const manifest: NeemBuildManifest = {
     schemaVersion: NEEM_MANIFEST_SCHEMA_VERSION,
@@ -137,17 +140,12 @@ export async function buildNeem(
     })
   }
 
-  const manifestFile = resolve(outDir, NEEM_MANIFEST_FILE)
-  await writeFile(
-    `${manifestFile}.tmp`,
-    `${JSON.stringify(manifest, null, 2)}\n`,
-  )
-  await rename(`${manifestFile}.tmp`, manifestFile)
+  const manifestFile = await writeManifest(outDir, manifest)
 
   return { configFile, outDir, manifestFile, manifest }
 }
 
-async function cleanNeemOutDir(outDir: string): Promise<void> {
+export async function cleanNeemOutDir(outDir: string): Promise<void> {
   await Promise.all([
     rm(resolve(outDir, 'config'), { recursive: true, force: true }),
     rm(resolve(outDir, 'apps'), { recursive: true, force: true }),
@@ -156,50 +154,34 @@ async function cleanNeemOutDir(outDir: string): Promise<void> {
   ])
 }
 
-async function transformConfig(options: {
+export async function buildConfigArtifact(options: {
   configFile: string
-  cwd: string
+  discovery: NeemConfigDiscovery
   outDir: string
 }): Promise<NeemResolvedArtifact> {
-  const configOutDir = resolve(options.outDir, 'config', 'entry')
-  const outputFile = resolve(
-    configOutDir,
-    `${basename(options.configFile, extname(options.configFile))}.js`,
-  )
-  const source = await readFile(options.configFile, 'utf8')
-  const result = await transform(options.configFile, source, {
-    cwd: options.cwd,
-    sourcemap: true,
-    sourceType: 'module',
-    tsconfig: true,
-  })
-
-  if (result.errors.length > 0) {
-    throw new AggregateError(result.errors, 'Failed to transform Neem config')
-  }
-
-  await mkdir(configOutDir, { recursive: true })
-
-  const mapFile = `${outputFile}.map`
-  const code = result.map
-    ? `${result.code}\n//# sourceMappingURL=${basename(mapFile)}\n`
-    : result.code
-
-  await writeFile(outputFile, code)
-  if (result.map) {
-    await writeFile(mapFile, `${JSON.stringify(result.map)}\n`)
-  }
-
-  return {
-    id: 'entry',
-    kind: 'module',
+  return buildArtifact({
+    artifact: { id: 'entry', kind: 'module', entry: options.configFile },
     owner: { type: 'config' },
-    file: outputFile,
-    outDir: configOutDir,
+    rolldown: createConfigRolldownOptions(options.discovery),
+    outDir: options.outDir,
+  })
+}
+
+export function createConfigRolldownOptions(
+  discovery: NeemConfigDiscovery | (() => NeemConfigDiscovery),
+): NeemBuildConfig {
+  const imports =
+    typeof discovery === 'function'
+      ? () => collectDiscoveredLazyImports(discovery())
+      : constantImports(collectDiscoveredLazyImports(discovery))
+  return {
+    external(id: string) {
+      return imports().has(id)
+    },
   }
 }
 
-async function loadBuildConfig(
+export async function loadBuildConfig(
   input: NeemBuildConfigInput | undefined,
 ): Promise<NeemBuildConfig | undefined> {
   if (!input) return undefined
@@ -210,11 +192,12 @@ async function loadBuildConfig(
   return input
 }
 
-async function importDefault<T>(file: string): Promise<T> {
-  return ((await import(pathToFileURL(file).href)) as EntryModule<T>).default
+export async function importDefault<T>(file: string): Promise<T> {
+  const module: EntryModule<T> = await import(pathToFileURL(file).href)
+  return module.default
 }
 
-function toManifestArtifact(
+export function toManifestArtifact(
   manifestDir: string,
   artifact: NeemResolvedArtifact,
 ): NeemBuildManifestArtifact {
@@ -227,6 +210,46 @@ function toManifestArtifact(
   }
 }
 
-function toManifestPath(fromDir: string, target: string): string {
+export async function writeManifest(
+  outDir: string,
+  manifest: NeemBuildManifest,
+): Promise<string> {
+  await mkdir(outDir, { recursive: true })
+  const manifestFile = resolve(outDir, NEEM_MANIFEST_FILE)
+  await writeFile(
+    `${manifestFile}.tmp`,
+    `${JSON.stringify(manifest, null, 2)}\n`,
+  )
+  await rename(`${manifestFile}.tmp`, manifestFile)
+  return manifestFile
+}
+
+export function toManifestPath(fromDir: string, target: string): string {
   return relative(fromDir, target).replace(/\\/g, '/')
+}
+
+function collectDiscoveredLazyImports(
+  discovery: NeemConfigDiscovery,
+): Set<string> {
+  const imports = new Set<string>()
+  const add = (entry: NeemDiscoveredImport | undefined) => {
+    if (!entry) return
+    imports.add(entry.specifier)
+    imports.add(entry.resolved)
+  }
+
+  for (const app of Object.values(discovery.apps)) {
+    add(app.entry)
+    add(app.build)
+  }
+  for (const plugin of discovery.plugins) {
+    add(plugin.entry)
+    add(plugin.build)
+  }
+
+  return imports
+}
+
+function constantImports(imports: Set<string>): () => Set<string> {
+  return () => imports
 }

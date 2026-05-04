@@ -3,7 +3,12 @@ import { pathToFileURL } from 'node:url'
 import { defineCommand, runCommand, showUsage } from 'citty'
 
 import { buildNeem } from './internal/build.ts'
+import { devNeem } from './internal/dev.ts'
 import { startNeem } from './internal/start.ts'
+
+export type NeemCliMainOptions = { signal?: AbortSignal }
+
+let currentMainSignal: AbortSignal | undefined
 
 const buildCommand = defineCommand({
   meta: {
@@ -32,7 +37,39 @@ const mainCommand = defineCommand({
   meta: { name: 'neem', description: 'Neem host CLI.' },
   subCommands: {
     build: buildCommand,
-    dev: createReservedCommand('dev'),
+    dev: defineCommand({
+      meta: {
+        name: 'dev',
+        description: 'Start a watched Neem development server.',
+      },
+      args: {
+        config: {
+          type: 'string',
+          description: 'Path to neem.config file.',
+          default: 'neem.config.ts',
+        },
+        outDir: {
+          type: 'string',
+          description: 'Development output directory.',
+          default: '.neem',
+        },
+      },
+      async run({ args }) {
+        const controller = createCliAbortController()
+
+        try {
+          const host = await devNeem({
+            config: args.config,
+            outDir: args.outDir,
+            signal: controller.signal,
+          })
+          console.log(`Neem dev watching ${host.configFile}`)
+          await host.closed
+        } finally {
+          controller.dispose()
+        }
+      },
+    }),
     start: defineCommand({
       meta: {
         name: 'start',
@@ -46,10 +83,7 @@ const mainCommand = defineCommand({
         },
       },
       async run({ args }) {
-        const controller = new AbortController()
-        const abort = () => controller.abort()
-        process.once('SIGINT', abort)
-        process.once('SIGTERM', abort)
+        const controller = createCliAbortController()
 
         try {
           const host = await startNeem({
@@ -59,28 +93,36 @@ const mainCommand = defineCommand({
           console.log(`Neem started from ${host.outDir}`)
           await host.closed
         } finally {
-          process.off('SIGINT', abort)
-          process.off('SIGTERM', abort)
+          controller.dispose()
         }
       },
     }),
   },
 })
 
-export async function main(argv = process.argv.slice(2)): Promise<number> {
+export async function main(
+  argv = process.argv.slice(2),
+  options: NeemCliMainOptions = {},
+): Promise<number> {
   if (!argv.length || argv[0] === '--help' || argv[0] === '-h') {
     await showUsage(mainCommand)
     return 0
   }
 
-  const subCommand = mainCommand.subCommands?.[argv[0] as 'build' | 'start']
+  const subCommand =
+    mainCommand.subCommands?.[argv[0] as 'build' | 'dev' | 'start']
   if (subCommand && (argv[1] === '--help' || argv[1] === '-h')) {
     await showUsage(subCommand as any, mainCommand as any)
     return 0
   }
 
-  await runCommand(mainCommand, { rawArgs: argv })
-  return 0
+  currentMainSignal = options.signal
+  try {
+    await runCommand(mainCommand, { rawArgs: argv })
+    return 0
+  } finally {
+    currentMainSignal = undefined
+  }
 }
 
 if (
@@ -97,17 +139,25 @@ if (
     })
 }
 
-function createReservedCommand(command: string) {
-  return defineCommand({
-    meta: {
-      name: command,
-      description:
-        'Reserved for a later slice. Only `neem build` is wired now.',
-    },
-    run() {
-      throw new Error(
-        `Command [${command}] is reserved for a later Neem slice and is not wired yet.`,
-      )
-    },
+function createCliAbortController() {
+  const controller = new AbortController()
+  const abort = () => controller.abort()
+  const abortFromMainSignal = () => controller.abort()
+
+  process.once('SIGINT', abort)
+  process.once('SIGTERM', abort)
+  currentMainSignal?.addEventListener('abort', abortFromMainSignal, {
+    once: true,
   })
+
+  if (currentMainSignal?.aborted) controller.abort()
+
+  return {
+    signal: controller.signal,
+    dispose() {
+      process.off('SIGINT', abort)
+      process.off('SIGTERM', abort)
+      currentMainSignal?.removeEventListener('abort', abortFromMainSignal)
+    },
+  }
 }

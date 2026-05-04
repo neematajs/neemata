@@ -27,6 +27,8 @@ type RolldownModule = {
   watch: (options: Record<string, unknown>) => RolldownWatcher
 }
 
+type ArtifactBuildMetadata = { entryFileName?: string }
+
 export type NeemBuildArtifactOptions = {
   artifact: NeemArtifact
   owner: NeemArtifactOwner
@@ -45,18 +47,24 @@ export type NeemWatchArtifactHandlers = {
   onError?: (error: unknown, event: unknown) => void | Promise<void>
 }
 
-export type NeemArtifactWatcher = { close: () => Promise<void> }
+export type NeemArtifactWatcher = {
+  ready: Promise<NeemResolvedArtifact>
+  close: () => Promise<void>
+}
 
 export async function buildArtifact(
   options: NeemBuildArtifactOptions,
 ): Promise<NeemResolvedArtifact> {
   const rolldown = await loadRolldown()
   const outDir = resolveArtifactOutDir(options)
+  const metadata: ArtifactBuildMetadata = {}
   await mkdir(outDir, { recursive: true })
 
-  const result = await rolldown.build(createRolldownOptions(options, outDir))
+  const result = await rolldown.build(
+    createRolldownOptions(options, outDir, metadata),
+  )
 
-  return createResolvedArtifact(options, outDir, result)
+  return createResolvedArtifact(options, outDir, result, metadata)
 }
 
 export async function watchArtifact(
@@ -65,14 +73,33 @@ export async function watchArtifact(
 ): Promise<NeemArtifactWatcher> {
   const rolldown = await loadRolldown()
   const outDir = resolveArtifactOutDir(options)
+  const metadata: ArtifactBuildMetadata = {}
   await mkdir(outDir, { recursive: true })
 
-  const watcher = rolldown.watch(createRolldownOptions(options, outDir))
+  const watcher = rolldown.watch(
+    createRolldownOptions(options, outDir, metadata),
+  )
+  let readySettled = false
+  let resolveReady!: (artifact: NeemResolvedArtifact) => void
+  let rejectReady!: (error: unknown) => void
+  const ready = new Promise<NeemResolvedArtifact>((resolve, reject) => {
+    resolveReady = resolve
+    rejectReady = reject
+  })
 
   watcher.on('event', async (event: any) => {
     if (event?.code === 'BUNDLE_END') {
       try {
-        const resolved = createResolvedArtifact(options, outDir, event.result)
+        const resolved = createResolvedArtifact(
+          options,
+          outDir,
+          event.result,
+          metadata,
+        )
+        if (!readySettled) {
+          readySettled = true
+          resolveReady(resolved)
+        }
         await handlers.onRebuild?.(resolved, event)
       } finally {
         await event.result?.close?.()
@@ -81,11 +108,15 @@ export async function watchArtifact(
     }
 
     if (event?.code === 'ERROR') {
+      if (!readySettled) {
+        readySettled = true
+        rejectReady(event.error)
+      }
       await handlers.onError?.(event.error, event)
     }
   })
 
-  return { close: () => watcher.close() }
+  return { ready, close: () => watcher.close() }
 }
 
 async function loadRolldown(): Promise<RolldownModule> {
@@ -95,6 +126,7 @@ async function loadRolldown(): Promise<RolldownModule> {
 function createRolldownOptions(
   options: NeemBuildArtifactOptions,
   outDir: string,
+  metadata: ArtifactBuildMetadata,
 ): Record<string, unknown> {
   const userOptions = mergeRolldownOptions(
     options.rolldown,
@@ -104,11 +136,13 @@ function createRolldownOptions(
     typeof userOptions.output === 'object' && userOptions.output
       ? (userOptions.output as Record<string, unknown>)
       : {}
+  const userPlugins = normalizePlugins(userOptions.plugins)
 
   return {
     ...userOptions,
     input: resolveEntry(options.artifact.entry, options.cwd),
     platform: 'node',
+    plugins: [...userPlugins, createEntryMetadataPlugin(metadata)],
     output: {
       ...userOutput,
       dir: outDir,
@@ -126,19 +160,43 @@ function createResolvedArtifact(
   options: NeemBuildArtifactOptions,
   outDir: string,
   result: RolldownOutput | undefined,
+  metadata: ArtifactBuildMetadata,
 ): NeemResolvedArtifact {
   const entryChunk = result?.output?.find(
     (chunk) => chunk.type === 'chunk' && chunk.isEntry && chunk.fileName,
   )
+  const entryFileName = metadata.entryFileName ?? entryChunk?.fileName
 
   return {
     id: options.artifact.id,
     kind: options.artifact.kind,
     owner: options.owner,
-    file: entryChunk?.fileName
-      ? resolve(outDir, entryChunk.fileName)
+    file: entryFileName
+      ? resolve(outDir, entryFileName)
       : resolve(outDir, 'index.js'),
     outDir,
+  }
+}
+
+function normalizePlugins(value: unknown): unknown[] {
+  if (!value) return []
+  return Array.isArray(value) ? value : [value]
+}
+
+function createEntryMetadataPlugin(
+  metadata: ArtifactBuildMetadata,
+): Record<string, unknown> {
+  return {
+    name: 'neem-entry-metadata',
+    generateBundle(
+      _options: unknown,
+      bundle: Record<string, RolldownOutputChunk>,
+    ) {
+      const entryChunk = Object.values(bundle).find(
+        (chunk) => chunk.type === 'chunk' && chunk.isEntry && chunk.fileName,
+      )
+      metadata.entryFileName = entryChunk?.fileName
+    },
   }
 }
 

@@ -4,6 +4,7 @@ import { resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { buildNeem } from '../../../packages/neem/src/internal/build.ts'
+import { NEEM_MANIFEST_FILE } from '../../../packages/neem/src/internal/manifest.ts'
 import { startNeem } from '../../../packages/neem/src/internal/start.ts'
 
 const fixturesDir = resolve(import.meta.dirname, '../fixtures')
@@ -51,8 +52,11 @@ describe('neem start', () => {
     const { outDir, eventsFile } = await buildFixture('runtime.config.ts')
     process.env.NEEM_RUNTIME_EVENTS_FILE = eventsFile
 
+    const manifest = JSON.parse(
+      await readFile(resolve(outDir, NEEM_MANIFEST_FILE), 'utf8'),
+    ) as { config: { file: string } }
     const configCode = await readFile(
-      resolve(outDir, 'config/entry/runtime.config.js'),
+      resolve(outDir, manifest.config.file),
       'utf8',
     )
     expect(configCode).toContain('import("./runtime-app.ts")')

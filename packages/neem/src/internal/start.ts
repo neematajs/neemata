@@ -29,6 +29,7 @@ export type NeemStartOptions = {
   outDir?: string
   cwd?: string
   mode?: NeemMode
+  failOnWorkerError?: boolean
   signal?: AbortSignal
 }
 
@@ -60,6 +61,7 @@ export async function startNeem(
 ): Promise<NeemStartedHost> {
   const cwd = options.cwd ?? process.cwd()
   const mode = options.mode ?? 'production'
+  const failOnWorkerError = options.failOnWorkerError ?? mode === 'production'
   const outDir = resolve(cwd, options.outDir ?? 'dist')
   const manifestFile = resolve(outDir, NEEM_MANIFEST_FILE)
   const manifest = await readManifest(manifestFile)
@@ -88,7 +90,9 @@ export async function startNeem(
 
   for (const worker of appWorkers) {
     worker.onFailure = (error) => {
-      void host.fail(error)
+      if (failOnWorkerError) {
+        void host.fail(error)
+      }
     }
   }
 

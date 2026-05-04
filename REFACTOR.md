@@ -96,7 +96,8 @@ Current spike status:
 - If Rolldown rebuild fails in dev, keep currently running workers alive.
 - If a rebuilt artifact starts and fails, mark the affected unit failed until the
   next successful rebuild/start.
-- Config or plugin definition changes restart the whole Neem host in dev.
+- Config changes restart the whole app host in dev. Plugin definition changes
+  should be global restarts once plugin dev support is wired.
 - Per-app/per-plugin compiler options should live with app/plugin entry logic,
   not inside `neem.config`.
 - App and plugin entries in config are lazy static import thunks, not plain
@@ -113,8 +114,8 @@ Current spike status:
 - Static import discovery uses Rolldown parser utilities plus Neem's own
   constrained config syntax. Rolldown `build`/`watch` are used after discovery
   for artifact compilation and dev rebuilds.
-- `neem build` and production-only `neem start` are wired. `neem dev` remains
-  reserved until the watch/restart slice.
+- `neem build`, production-only `neem start`, and app-only `neem dev` are
+  wired.
 - CLI command structure uses `citty`.
 - `neem build` uses `--config` and `--outDir`; output directory precedence is
   CLI `--outDir`, then config `outDir`, then `dist`.
@@ -122,13 +123,13 @@ Current spike status:
   `neem.manifest.json`, and never builds or discovers source.
 - Build loads source config, source app entries, source plugin entries, and
   source build config modules with native import in this draft.
-- Production and dev should both use a transformed config module. Config
-  transform is single-file and must preserve lazy app/plugin/build imports
-  instead of bundling them into config output. `neem start` should import
-  transformed config plus manifest; `neem dev` should build/watch the same
-  format and globally restart when config changes.
-- The transformed config artifact has fixed id `entry` and currently writes
-  ESM `.js` output under `outDir/config/entry`.
+- Production and dev should both use a compiled config artifact. Config
+  compilation is config-specific: it may bundle normal config helper imports, but
+  it must externalize discovered lazy app/plugin/build imports so those imports
+  remain lazy and are not bundled into config output.
+- The config artifact has fixed id `entry`, writes ESM `.js` output under
+  `outDir/config/entry`, and must use hashed filenames so re-importing config in
+  dev bypasses Node's ESM module cache.
 - App and plugin entry artifacts have fixed id `entry`. App/plugin-declared
   artifacts inherit app/plugin build config; artifact-level Rolldown options
   override/merge with inherited config.
@@ -138,16 +139,20 @@ Current spike status:
   plugin files during build.
 - Build manifest is internal and written as `neem.manifest.json` with relative
   paths.
+- Dev treats `.neem` as a build-like outDir. The dev manifest is the source of
+  truth after every successful watcher output change.
 - Build cleanup is scoped to Neem-owned paths under `outDir`: `config/`,
   `apps/`, `plugins/`, and `neem.manifest.json`. Unrelated files must survive.
-- Production `start` imports transformed config only to read app thread options;
+- Dev cleanup is scoped to Neem-owned paths once at session startup. Rebuilds do
+  not clean stale hashed artifacts while old workers may still import them.
+- Production `start` imports compiled config only to read app thread options;
   it must not call config app/plugin/build lazy thunks.
 - Production `start` builds an absolute artifact registry from manifest paths
   and passes it to app runtime contexts.
 - Production app runtimes run in Node worker threads, one worker per configured
   app thread.
 - Runtime mode is host-provided through worker data: `neem start` uses
-  `production`; future `neem dev` uses `development`.
+  `production`; `neem dev` uses `development`.
 - App worker bootstrap is an internal package-built Neem artifact
   (`dist/internal/app-worker-entry.js`), not an eval string and not a user
   manifest artifact.
@@ -156,6 +161,41 @@ Current spike status:
   the host.
 - Plugins are build-visible and present in the artifact registry, but plugin
   lifecycle and plugin worker spawning are deferred.
+- First `dev` slice is app-only: plugin imports, plugin artifacts, plugin
+  lifecycle, and plugin workers are skipped until a later slice.
+
+## Feature Porting Ledger
+
+All meaningful current `nmtjs` app-server features must be ported unless they
+are explicitly replaced by an equivalent new architecture. Deprecated or WIP
+features are tracked as `deferred`, not removed. Vite-specific implementation
+details are not parity requirements; equivalent dev rebuild/restart behavior is.
+
+Status values:
+
+- `wired`: current Neem draft already has usable behavior.
+- `partial`: current Neem draft has contract or substrate, but not full parity.
+- `missing`: no meaningful Neem runtime behavior yet.
+- `deferred`: intentionally tracked for later after prerequisite architecture
+  lands.
+
+| Feature | Current owner | New owner | Target shape | Status |
+| --- | --- | --- | --- | --- |
+| Neemata app runtime | `packages/nmtjs/src/runtime/workers/application.ts` | `@nmtjs/application` Neem adapter | Port `ApplicationWorkerRuntime` behind `defineNeemataApp().createRuntime()`: `ApplicationApi`, router/procedure registration, guards, filters, middlewares, meta, hooks, lifecycle hooks, Gateway, formats, transports, identity, heartbeat, and stream timeouts. | `missing` |
+| Build/start/dev substrate | `packages/nmtjs/src/entrypoints/*` + Vite app-server pipeline | `@nmtjs/neem` | Keep config artifact, app/plugin artifacts, manifest, CLI, production start host, and Rolldown dev watchers in the generic host. | `partial` |
+| Worker management | `ManagedWorker`, `WorkerPool`, `ErrorPolicy` | `@nmtjs/neem` host | Reintroduce managed workers/pools with state machine, startup timeout, stop timeout, restart/backoff policy, failure counters, degraded/prod behavior, and health reports. | `missing` |
+| Server lifecycle | `ServerLifecycle`, `HMRCoordinator`, main entrypoint | `@nmtjs/neem` host | Rebuild as Rolldown-backed host lifecycle with `idle`, `starting`, `running`, `reloading`, `failed`, `stopping`, `stopped`, reload superseding, and failed-start recovery in dev. | `partial` |
+| Proxy | `ApplicationServerProxy` | Undecided: `@nmtjs/neem` host subsystem or plugin-backed subsystem | Keep upstream tracking in Neem host, then wire add/remove upstreams, `0.0.0.0` normalization, routing, SNI/TLS, health checks, and proxy lifecycle. | `missing` |
+| Plugins | Application runtime plugins + server subsystems | `@nmtjs/neem` plugin model | Make plugins the main extension model: `setup`, `stop`, artifact declarations, plugin-owned workers, plugin options, and runtime context. | `partial` |
+| Jobs | `ApplicationServerJobs`, `JobWorkerRuntime`, `JobManager` | `@nmtjs/jobs` Neem plugin | Port as first-class plugin with BullMQ queue workers, store dependency, Io/Compute pools, job runner workers, cancellation, progress/checkpoints, return handling, retries/unrecoverable errors, and `jobManager` injection. | `missing` |
+| Store | Server config + runtime/store package | Undecided: host capability or plugin-provided capability | Provide store connection lifecycle for plugins and app runtimes; required by jobs and possibly subscriptions. | `missing` |
+| Subscriptions | `SubscriptionManager` in worker base runtime | Undecided: host capability or plugin | Port publish/subscribe injection and adapter config without tying generic Neem host to Neemata app internals. | `missing` |
+| Metrics | Metrics server in app server | Undecided: host subsystem or plugin | Port metrics server and pushgateway behavior as extension-owned runtime capability. | `missing` |
+| Runtime injections | `BaseWorkerRuntime`, app plugins, job runtime | `@nmtjs/neem` + app/plugin adapters | Port logger, worker type, publish/subscribe, store config, job manager, and app/plugin provisions through explicit runtime contexts. | `missing` |
+| Environment/config legacy | `neemata.config.*`, server config, Vite defines | `@nmtjs/neem` config + app/plugin configs + `nmtjs` umbrella | Map old `serverPath`, `applications`, `externalDependencies`, `env`, `logger`, `store`, `proxy`, `jobs`, `subscription`, `metrics`, and `deploymentId` into the new config/app/plugin model. | `partial` |
+| Scheduler | Jobs scheduler WIP/deprecated path | Future `@nmtjs/jobs` plugin extension | Keep tracked, but do not wire until jobs plugin exists. | `deferred` |
+| Commands | Old command placeholder | Future Neem command runtime or plugin | Keep concept reserved; old runtime was not meaningfully wired. | `deferred` |
+| Dev reload semantics | Vite HMR + module runner + failed-worker recovery | `@nmtjs/neem` Rolldown watch/restart loop | Port behavior, not Vite APIs: rebuild config/apps, update manifest, restart workers, keep old workers on rebuild errors, then add failed-worker recovery and reload superseding. | `partial` |
 
 ## Artifact + Runtime Unit Model
 
@@ -163,8 +203,8 @@ Definitions:
 
 - Source entry: user-authored path from config or plugin/app declaration.
 - Artifact: compiled executable/importable output produced by Rolldown.
-- Config artifact: transformed single-file config output used by future
-  start/dev flows; it is not bundled with lazy app/plugin/build imports.
+- Config artifact: compiled config output used by start/dev flows; it preserves
+  discovered lazy app/plugin/build imports and uses a hashed filename.
 - Runtime unit: thing Neem can run from an artifact.
 - Pool: one or more workers for the same runtime unit and options.
 - Application: runtime unit that starts app workers and returns upstreams.
@@ -237,8 +277,8 @@ Important config constraints:
 - Loading config must not import Rolldown compiler plugins.
 - Config app/plugin entries are lazy functions containing static string-literal
   dynamic imports.
-- The transformed config preserves those lazy imports. Runtime code should not
-  call app/plugin/build thunks from transformed config to discover artifacts;
+- The compiled config preserves those lazy imports. Runtime code should not
+  call app/plugin/build thunks from compiled config to discover artifacts;
   production `start` should use the manifest.
 - App/plugin implementation is imported only by commands that need it:
   `neem dev`, `neem build`, `neem start`, or future command runners.
@@ -420,13 +460,14 @@ Rolldown primitive usage:
 
 - `rolldown/utils.parse` or `parseSync`: parse config source for Neem's
   constrained lazy import thunk syntax.
-- `build`: compile production app/plugin entry artifacts and
+- `build`: one-shot compile production config, app/plugin entry artifacts, and
   plugin-declared artifacts.
-- `watch`: dev rebuild loop for discovered app/plugin artifacts.
+- `watch`: dev rebuild loop for config and app artifacts; plugin artifact watch
+  is deferred.
 - `rolldown`: reserved for lower-level build control if `build` becomes too
   coarse.
-- `rolldown/utils.transform`: transform config source as a single ESM file
-  without bundling lazy imports.
+- `rolldown/utils.transform`: not the long-term config compile path, because it
+  does not give the same watch/incremental pipeline as artifact compilation.
 - `defineConfig` and `minify`: not part of Neem entry discovery.
 
 Static discovery rule:
@@ -446,24 +487,30 @@ then matched with discovered metadata by config key.
 Expected dev flow:
 
 1. Discover static app/plugin entry imports from config source.
-2. Transform/watch the config module as a single file into the same format used
-   by production.
-3. Load transformed config as cheap data.
-4. Match loaded config objects with discovered entry metadata.
-5. Build/load selected app and plugin entries through the baseline Rolldown
-   pipeline.
-6. Collect app runtime units and plugin artifact declarations.
-7. Start Rolldown watchers for app artifacts and plugin artifacts.
-8. Start runtime units from current compiled artifacts.
-9. On config rebuild, globally restart the host.
-10. On app/plugin artifact rebuild, hard-restart the affected unit.
-11. On rebuild error, keep existing running unit alive.
+2. Start a config-specific Rolldown watcher that externalizes lazy
+   app/plugin/build imports by specifier/resolved path. Dev re-runs discovery
+   during config rebuilds so changed lazy import paths remain external.
+3. Write the hashed config artifact under `.neem/config/entry`.
+4. Load config from the hashed config artifact as cheap data.
+5. Match loaded config objects with discovered entry metadata.
+6. Start Rolldown watchers for app entry artifacts using the same artifact layout
+   as production build.
+7. Write `.neem/neem.manifest.json` atomically after every successful watcher
+   output change.
+8. Start runtime units from the current manifest with `mode: 'development'`.
+9. On config rebuild success, write a new hashed config artifact, update the
+   manifest, and globally restart app workers.
+10. On app rebuild success, update the manifest and hard-restart affected app
+    workers.
+11. On rebuild error, keep existing running workers alive.
+12. Plugin imports/artifacts/lifecycle are skipped in the first dev slice.
 
 Expected production build flow:
 
 1. Discover static app/plugin entry imports from config source.
 2. Load source config and source app/plugin entries with native import.
-3. Transform config into `outDir/config/entry` without bundling lazy imports.
+3. Compile config into a hashed artifact under `outDir/config/entry` using the
+   config-specific Rolldown pipeline and externalized lazy imports.
 4. Build app entry artifacts with fixed id `entry`.
 5. Build plugin entry artifacts with fixed id `entry`.
 6. Collect plugin artifact declarations from source plugin entries so
@@ -472,12 +519,12 @@ Expected production build flow:
 8. Write internal `neem.manifest.json` with relative artifact/config paths,
    artifact ids, kinds, owners, app entries, plugin entries, and plugin
    artifacts.
-9. `neem start` imports transformed config and manifest and does not compile.
+9. `neem start` imports compiled config and manifest and does not compile.
 
 Expected production start flow:
 
 1. Read `outDir/neem.manifest.json`.
-2. Import transformed config from manifest `config.file`.
+2. Import compiled config from manifest `config.file`.
 3. Resolve manifest-relative app/plugin artifact paths into absolute files.
 4. For each app thread option, spawn one Node worker from the built app entry
    artifact.
@@ -500,8 +547,8 @@ Compiler/plugin examples:
 ## First Draft Slice
 
 The first implementation draft should prove shape, not parity. The current
-draft has started with `neem build` and production-only `neem start`; `dev`
-remains planned, not wired.
+draft wires `neem build`, production-only `neem start`, and app-only
+`neem dev`.
 
 Build enough to answer whether the architecture works:
 
@@ -514,12 +561,12 @@ Build enough to answer whether the architecture works:
 - Support static discovery of `entry: () => import('./x')` from direct config
   app/plugin declarations.
 - Wire `neem build --config <path> --outDir <path>` with `citty`.
-- Transform config during build without bundling lazy imports.
+- Compile config during build without bundling lazy imports.
 - Emit ESM artifacts as `.js`.
 - Clean only Neem-owned output paths.
 - Write internal `neem.manifest.json` using relative paths.
 - Add tests for build output, manifest path portability, Neem-owned cleanup,
-  CLI build, `.js` output, non-bundled config transform, and plugin
+  CLI build, `.js` output, non-bundled config compilation, and plugin
   source-relative artifact declarations.
 - Wire `neem start --outDir <path>` against built output only.
 - Start generic Neem apps in worker threads from built app entry artifacts.
@@ -529,6 +576,11 @@ Build enough to answer whether the architecture works:
 - Track app upstreams for future proxy integration but do not wire proxy yet.
 - Keep plugin lifecycle unwired while preserving plugin artifacts in the runtime
   registry.
+- Wire `neem dev --config <path> --outDir <path>` with default outDir `.neem`.
+- Use Rolldown `watch()` for dev config/app artifacts instead of repeated
+  one-shot builds.
+- Treat `.neem/neem.manifest.json` as dev runtime source of truth.
+- Restart app workers from manifest changes with `mode: 'development'`.
 - Keep `tests/neem` as a consumer-style package that imports `@nmtjs/neem`
   through package exports and captures what feels good or breaks in user-facing
   config/app/plugin code.
@@ -537,8 +589,8 @@ Do not include in first draft:
 
 - Vite integration
 - in-process HMR/reload
-- `neem dev` watch/restart runtime
 - full jobs plugin
+- plugin dev/lifecycle support
 - metrics redesign
 - proxy redesign beyond what is needed for app upstreams
 
