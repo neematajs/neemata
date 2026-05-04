@@ -193,7 +193,7 @@ type JobItemSchemaType<T extends AnyJob> = t.ObjectType<{
   startedAt: OptionalType<t.NumberType>
   completedAt: OptionalType<t.NumberType>
   error: OptionalType<t.StringType>
-  stacktrace: NullableType<t.ArrayType<t.StringType>>
+  stacktrace: OptionalType<NullableType<t.ArrayType<t.StringType>>>
 }>
 
 /** Type-level representation of createListOutputSchema output */
@@ -323,7 +323,7 @@ function createJobItemSchema<T extends AnyJob>(job: T): JobItemSchemaType<T> {
     startedAt: t.number().optional(),
     completedAt: t.number().optional(),
     error: t.string().optional(),
-    stacktrace: t.array(t.string()).nullable(),
+    stacktrace: t.array(t.string()).nullish(),
   })
 }
 

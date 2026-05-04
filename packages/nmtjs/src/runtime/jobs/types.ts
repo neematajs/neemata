@@ -105,7 +105,7 @@ export interface JobItem<TInput = unknown, TOutput = unknown> {
   /** Error message if job failed */
   error?: string
   /** Stack trace if job failed */
-  stacktrace: string[] | null
+  stacktrace?: string[] | null
 }
 
 // ============================================================================
