@@ -113,11 +113,13 @@ Current spike status:
 - Static import discovery uses Rolldown parser utilities plus Neem's own
   constrained config syntax. Rolldown `build`/`watch` are used after discovery
   for artifact compilation and dev rebuilds.
-- `neem build` is the first wired CLI command. `neem dev` and `neem start`
-  remain reserved until the runtime slice.
+- `neem build` and production-only `neem start` are wired. `neem dev` remains
+  reserved until the watch/restart slice.
 - CLI command structure uses `citty`.
 - `neem build` uses `--config` and `--outDir`; output directory precedence is
   CLI `--outDir`, then config `outDir`, then `dist`.
+- `neem start` uses `--outDir` only, defaults to `dist`, requires an existing
+  `neem.manifest.json`, and never builds or discovers source.
 - Build loads source config, source app entries, source plugin entries, and
   source build config modules with native import in this draft.
 - Production and dev should both use a transformed config module. Config
@@ -138,6 +140,22 @@ Current spike status:
   paths.
 - Build cleanup is scoped to Neem-owned paths under `outDir`: `config/`,
   `apps/`, `plugins/`, and `neem.manifest.json`. Unrelated files must survive.
+- Production `start` imports transformed config only to read app thread options;
+  it must not call config app/plugin/build lazy thunks.
+- Production `start` builds an absolute artifact registry from manifest paths
+  and passes it to app runtime contexts.
+- Production app runtimes run in Node worker threads, one worker per configured
+  app thread.
+- Runtime mode is host-provided through worker data: `neem start` uses
+  `production`; future `neem dev` uses `development`.
+- App worker bootstrap is an internal package-built Neem artifact
+  (`dist/internal/app-worker-entry.js`), not an eval string and not a user
+  manifest artifact.
+- First `start` failure policy is fail-fast: any bootstrap/start failure rejects
+  startup and stops already-started workers; any post-start worker failure stops
+  the host.
+- Plugins are build-visible and present in the artifact registry, but plugin
+  lifecycle and plugin worker spawning are deferred.
 
 ## Artifact + Runtime Unit Model
 
@@ -357,7 +375,6 @@ Key contract decisions still needed:
   adapter-like internal method.
 - How app artifacts are declared for custom apps.
 - Exact upstream type and proxyability contract.
-- Whether production start loads built manifest only or can load source entries.
 
 ## Plugin Direction
 
@@ -457,6 +474,21 @@ Expected production build flow:
    artifacts.
 9. `neem start` imports transformed config and manifest and does not compile.
 
+Expected production start flow:
+
+1. Read `outDir/neem.manifest.json`.
+2. Import transformed config from manifest `config.file`.
+3. Resolve manifest-relative app/plugin artifact paths into absolute files.
+4. For each app thread option, spawn one Node worker from the built app entry
+   artifact.
+5. Worker imports the app artifact, validates the default export, creates the
+   runtime with host-provided mode (`production` for start), starts it, and
+   reports upstreams.
+6. Host waits for all workers to report ready before considering start
+   complete.
+7. On `SIGINT`/`SIGTERM` or host stop, send stop to workers and call runtime
+   `stop()` inside each worker.
+
 Compiler/plugin examples:
 
 - React/TSX renderers should work through Rolldown baseline JSX/TS support.
@@ -468,8 +500,8 @@ Compiler/plugin examples:
 ## First Draft Slice
 
 The first implementation draft should prove shape, not parity. The current
-draft has started with `neem build`; `start` and `dev` remain planned, not
-wired.
+draft has started with `neem build` and production-only `neem start`; `dev`
+remains planned, not wired.
 
 Build enough to answer whether the architecture works:
 
@@ -489,6 +521,14 @@ Build enough to answer whether the architecture works:
 - Add tests for build output, manifest path portability, Neem-owned cleanup,
   CLI build, `.js` output, non-bundled config transform, and plugin
   source-relative artifact declarations.
+- Wire `neem start --outDir <path>` against built output only.
+- Start generic Neem apps in worker threads from built app entry artifacts.
+- Use the typed package-built app worker entry for worker bootstrap; source-mode
+  tests must build `@nmtjs/neem` first so `dist/internal/app-worker-entry.js`
+  exists.
+- Track app upstreams for future proxy integration but do not wire proxy yet.
+- Keep plugin lifecycle unwired while preserving plugin artifacts in the runtime
+  registry.
 - Keep `tests/neem` as a consumer-style package that imports `@nmtjs/neem`
   through package exports and captures what feels good or breaks in user-facing
   config/app/plugin code.
@@ -497,7 +537,6 @@ Do not include in first draft:
 
 - Vite integration
 - in-process HMR/reload
-- `neem start` runtime
 - `neem dev` watch/restart runtime
 - full jobs plugin
 - metrics redesign

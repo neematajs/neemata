@@ -3,6 +3,7 @@ import { pathToFileURL } from 'node:url'
 import { defineCommand, runCommand, showUsage } from 'citty'
 
 import { buildNeem } from './internal/build.ts'
+import { startNeem } from './internal/start.ts'
 
 const buildCommand = defineCommand({
   meta: {
@@ -32,7 +33,37 @@ const mainCommand = defineCommand({
   subCommands: {
     build: buildCommand,
     dev: createReservedCommand('dev'),
-    start: createReservedCommand('start'),
+    start: defineCommand({
+      meta: {
+        name: 'start',
+        description: 'Start a built Neem application server.',
+      },
+      args: {
+        outDir: {
+          type: 'string',
+          description: 'Built output directory.',
+          default: 'dist',
+        },
+      },
+      async run({ args }) {
+        const controller = new AbortController()
+        const abort = () => controller.abort()
+        process.once('SIGINT', abort)
+        process.once('SIGTERM', abort)
+
+        try {
+          const host = await startNeem({
+            outDir: args.outDir,
+            signal: controller.signal,
+          })
+          console.log(`Neem started from ${host.outDir}`)
+          await host.closed
+        } finally {
+          process.off('SIGINT', abort)
+          process.off('SIGTERM', abort)
+        }
+      },
+    }),
   },
 })
 
@@ -42,8 +73,9 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     return 0
   }
 
-  if (argv[0] === 'build' && (argv[1] === '--help' || argv[1] === '-h')) {
-    await showUsage(buildCommand as any, mainCommand as any)
+  const subCommand = mainCommand.subCommands?.[argv[0] as 'build' | 'start']
+  if (subCommand && (argv[1] === '--help' || argv[1] === '-h')) {
+    await showUsage(subCommand as any, mainCommand as any)
     return 0
   }
 
@@ -55,9 +87,14 @@ if (
   process.argv[1] &&
   import.meta.url === pathToFileURL(process.argv[1]).href
 ) {
-  main().then((code) => {
-    process.exitCode = code
-  })
+  main()
+    .then((code) => {
+      process.exitCode = code
+    })
+    .catch((error) => {
+      console.error(error)
+      process.exitCode = 1
+    })
 }
 
 function createReservedCommand(command: string) {

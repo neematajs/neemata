@@ -11,36 +11,24 @@ import type {
   NeemConfig,
 } from '../public/config.ts'
 import type { NeemPlugin } from '../public/plugin.ts'
+import type {
+  NeemBuildManifest,
+  NeemBuildManifestArtifact,
+} from './manifest.ts'
 import { discoverConfigEntriesSync } from './discovery.ts'
+import { NEEM_MANIFEST_FILE, NEEM_MANIFEST_SCHEMA_VERSION } from './manifest.ts'
 import { buildArtifact } from './rolldown.ts'
 
-export const NEEM_MANIFEST_FILE = 'neem.manifest.json'
-export const NEEM_MANIFEST_SCHEMA_VERSION = 1
+export type {
+  NeemBuildManifest,
+  NeemBuildManifestArtifact,
+} from './manifest.ts'
+export { NEEM_MANIFEST_FILE, NEEM_MANIFEST_SCHEMA_VERSION } from './manifest.ts'
 
 export type NeemBuildOptions = {
   config?: string
   outDir?: string
   cwd?: string
-}
-
-export type NeemBuildManifestArtifact = {
-  id: string
-  kind: string
-  owner: NeemResolvedArtifact['owner']
-  file: string
-  outDir: string
-}
-
-export type NeemBuildManifest = {
-  schemaVersion: typeof NEEM_MANIFEST_SCHEMA_VERSION
-  config: { file: string }
-  apps: Record<string, { name: string; entry: NeemBuildManifestArtifact }>
-  plugins: Array<{
-    index: number
-    name: string
-    entry: NeemBuildManifestArtifact
-    artifacts: NeemBuildManifestArtifact[]
-  }>
 }
 
 export type NeemBuildResult = {
