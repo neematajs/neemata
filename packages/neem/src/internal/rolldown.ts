@@ -1,4 +1,4 @@
-import { mkdir } from 'node:fs/promises'
+import { mkdir, stat } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -74,21 +74,67 @@ export async function watchArtifact(
   const rolldown = await loadRolldown()
   const outDir = resolveArtifactOutDir(options)
   const metadata: ArtifactBuildMetadata = {}
+  const entry = resolveEntry(options.artifact.entry, options.cwd)
   await mkdir(outDir, { recursive: true })
 
   const watcher = rolldown.watch(
     createRolldownOptions(options, outDir, metadata),
   )
   let readySettled = false
+  let currentBuildHandled = false
   let resolveReady!: (artifact: NeemResolvedArtifact) => void
   let rejectReady!: (error: unknown) => void
   const ready = new Promise<NeemResolvedArtifact>((resolve, reject) => {
     resolveReady = resolve
     rejectReady = reject
   })
+  let lastEntryMtimeMs = await readMtimeMs(entry)
+  let closed = false
+  let fallbackBuild = Promise.resolve()
+
+  const emitFallbackBuild = (event: unknown): Promise<void> => {
+    fallbackBuild = fallbackBuild.then(async () => {
+      try {
+        const resolved = await buildArtifact(options)
+        if (!readySettled) {
+          readySettled = true
+          resolveReady(resolved)
+        }
+        await handlers.onRebuild?.(resolved, event)
+      } catch (error) {
+        if (!readySettled) {
+          readySettled = true
+          rejectReady(error)
+        }
+        await handlers.onError?.(error, event)
+      }
+    })
+    return fallbackBuild
+  }
+
+  const poll = setInterval(() => {
+    if (closed) return
+    void (async () => {
+      const mtimeMs = await readMtimeMs(entry).catch(() => lastEntryMtimeMs)
+      if (mtimeMs <= lastEntryMtimeMs) return
+      lastEntryMtimeMs = mtimeMs
+      await emitFallbackBuild({ code: 'POLL', file: entry })
+    })()
+  }, 100)
 
   watcher.on('event', async (event: any) => {
+    if (event?.code === 'START') {
+      currentBuildHandled = false
+      return
+    }
+
+    if (event?.code === 'BUNDLE_START') {
+      currentBuildHandled = false
+      return
+    }
+
     if (event?.code === 'BUNDLE_END') {
+      currentBuildHandled = true
       try {
         const resolved = createResolvedArtifact(
           options,
@@ -107,6 +153,12 @@ export async function watchArtifact(
       return
     }
 
+    if (event?.code === 'END' && !currentBuildHandled) {
+      currentBuildHandled = true
+      await emitFallbackBuild(event)
+      return
+    }
+
     if (event?.code === 'ERROR') {
       if (!readySettled) {
         readySettled = true
@@ -116,11 +168,23 @@ export async function watchArtifact(
     }
   })
 
-  return { ready, close: () => watcher.close() }
+  return {
+    ready,
+    async close() {
+      closed = true
+      clearInterval(poll)
+      await fallbackBuild.catch(() => undefined)
+      await watcher.close()
+    },
+  }
 }
 
 async function loadRolldown(): Promise<RolldownModule> {
   return (await import('rolldown')) as RolldownModule
+}
+
+async function readMtimeMs(file: string): Promise<number> {
+  return (await stat(file)).mtimeMs
 }
 
 function createRolldownOptions(

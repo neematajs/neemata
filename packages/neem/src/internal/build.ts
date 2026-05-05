@@ -192,8 +192,8 @@ export async function loadBuildConfig(
   return input
 }
 
-export async function importDefault<T>(file: string): Promise<T> {
-  const module: EntryModule<T> = await import(pathToFileURL(file).href)
+export async function importDefault<T>(specifier: string): Promise<T> {
+  const module: EntryModule<T> = await import(pathToFileURL(specifier).href)
   return module.default
 }
 

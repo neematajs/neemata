@@ -1,3 +1,5 @@
+import type { MessagePort } from 'node:worker_threads'
+
 import type {
   NeemArtifact,
   NeemArtifactRegistry,
@@ -23,12 +25,16 @@ export type NeemPluginWorkerSpawnOptions = {
   workerData?: Record<string, unknown>
 }
 
+export type NeemPluginWorkerHandle = NeemManagedWorkerHandle & {
+  port: MessagePort
+}
+
 export type NeemPluginWorkers = {
   spawn: (
     options: NeemPluginWorkerSpawnOptions,
-  ) => Promise<NeemManagedWorkerHandle>
+  ) => Promise<NeemPluginWorkerHandle>
   stop: (workerId: string) => Promise<boolean>
-  list: () => readonly NeemManagedWorkerHandle[]
+  list: () => readonly NeemPluginWorkerHandle[]
 }
 
 export type NeemPluginContext<Options = unknown> = {

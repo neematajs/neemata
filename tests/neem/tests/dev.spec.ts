@@ -47,6 +47,7 @@ describe('neem dev', () => {
 
     try {
       await host.ready
+      expect(host.getLifecycle().state).toBe('running')
 
       const manifest = await readManifest(fixture.outDir)
       expect(manifest.plugins).toEqual([])
@@ -102,6 +103,7 @@ describe('neem dev', () => {
             event.event === 'create' && event.threadOptions?.label === 'uno',
         )
       })
+      expect(host.getLifecycle().state).toBe('running')
     } finally {
       await host.stop()
       await host.closed

@@ -39,6 +39,11 @@
       "import": "./dist/public/runtime.js",
       "module-sync": "./dist/public/runtime.js"
     },
+    "./worker": {
+      "types": "./src/public/worker.ts",
+      "import": "./dist/public/worker.js",
+      "module-sync": "./dist/public/worker.js"
+    },
     "./cli": {
       "types": "./src/cli.ts",
       "import": "./dist/cli.js",
@@ -76,6 +81,11 @@
         "types": "./dist/public/runtime.d.ts",
         "import": "./dist/public/runtime.js",
         "module-sync": "./dist/public/runtime.js"
+      },
+      "./worker": {
+        "types": "./dist/public/worker.d.ts",
+        "import": "./dist/public/worker.js",
+        "module-sync": "./dist/public/worker.js"
       },
       "./cli": {
         "types": "./dist/cli.d.ts",

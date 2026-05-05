@@ -7,11 +7,14 @@ import type {
   NeemConfig,
 } from '../public/config.ts'
 import type { NeemConfigDiscovery, NeemDiscoveredApp } from './discovery.ts'
+import type {
+  NeemHostLifecycleSnapshot,
+  NeemHostLifecycleToken,
+} from './lifecycle.ts'
 import type { NeemBuildManifest } from './manifest.ts'
 import type { NeemArtifactWatcher } from './rolldown.ts'
 import type { NeemStartedHost } from './start.ts'
 import {
-  buildConfigArtifact,
   cleanNeemOutDir,
   createConfigRolldownOptions,
   importDefault,
@@ -21,6 +24,7 @@ import {
   writeManifest,
 } from './build.ts'
 import { discoverConfigEntriesSync } from './discovery.ts'
+import { NeemHostLifecycle } from './lifecycle.ts'
 import { NEEM_MANIFEST_SCHEMA_VERSION } from './manifest.ts'
 import { watchArtifact } from './rolldown.ts'
 import { startNeem } from './start.ts'
@@ -37,6 +41,7 @@ export type NeemDevHost = {
   outDir: string
   ready: Promise<void>
   closed: Promise<void>
+  getLifecycle: () => NeemHostLifecycleSnapshot
   getRuntime: () => NeemStartedHost | undefined
   stop: () => Promise<void>
 }
@@ -70,6 +75,7 @@ class NeemDevSession implements NeemDevHost {
   private appWatchers = new Map<string, AppWatcherState>()
   private appArtifacts = new Map<string, NeemResolvedArtifact>()
   private operation = Promise.resolve()
+  private lifecycle = new NeemHostLifecycle()
   private stopped = false
   private readySettled = false
   private closedSettled = false
@@ -110,12 +116,18 @@ class NeemDevSession implements NeemDevHost {
   async start(): Promise<void> {
     if (this.stopped) {
       this.rejectReady(new Error('Neem dev stopped before startup'))
+      this.lifecycle.markStopped()
       this.settleClosed()
       return
     }
 
+    this.lifecycle.markStarting()
     await cleanNeemOutDir(this.outDir)
     await this.startConfigWatcher()
+  }
+
+  getLifecycle() {
+    return this.lifecycle.getSnapshot()
   }
 
   getRuntime() {
@@ -125,6 +137,7 @@ class NeemDevSession implements NeemDevHost {
   async stop(): Promise<void> {
     if (this.closedSettled) return
     this.stopped = true
+    const token = this.lifecycle.markStopping()
 
     await Promise.all(
       [...this.appWatchers.values()].map((state) => state.watcher.close()),
@@ -135,6 +148,7 @@ class NeemDevSession implements NeemDevHost {
     await this.operation.catch(() => {})
     await this.stopRuntime()
     this.rejectReady(new Error('Neem dev stopped before ready'))
+    this.lifecycle.markStopped(token)
     this.settleClosed()
   }
 
@@ -168,6 +182,7 @@ class NeemDevSession implements NeemDevHost {
     artifact: NeemResolvedArtifact,
   ): Promise<void> {
     if (this.stopped) return
+    const token = this.beginRuntimeChange()
 
     this.discovery = discoverConfigEntriesSync(this.configFile)
     this.configArtifact = artifact
@@ -175,7 +190,7 @@ class NeemDevSession implements NeemDevHost {
 
     await this.reconcileAppWatchers()
     await this.writeCurrentManifest()
-    await this.restartRuntime()
+    await this.restartRuntime(token)
   }
 
   private async reconcileAppWatchers(): Promise<void> {
@@ -266,8 +281,9 @@ class NeemDevSession implements NeemDevHost {
     this.appArtifacts.set(name, artifact)
     if (options.initial) return
 
+    const token = this.beginRuntimeChange()
     await this.writeCurrentManifest()
-    await this.restartRuntime()
+    await this.restartRuntime(token)
   }
 
   private async writeCurrentManifest(): Promise<void> {
@@ -294,7 +310,9 @@ class NeemDevSession implements NeemDevHost {
     await writeManifest(this.outDir, manifest)
   }
 
-  private async restartRuntime(): Promise<void> {
+  private async restartRuntime(
+    token: NeemHostLifecycleToken | undefined,
+  ): Promise<void> {
     if (this.stopped) return
 
     await this.stopRuntime()
@@ -304,10 +322,11 @@ class NeemDevSession implements NeemDevHost {
         mode: 'development',
         failOnWorkerError: false,
       })
+      this.lifecycle.markRunning(token)
       this.resolveReady()
     } catch (error) {
       this.runtime = undefined
-      this.recordError(error)
+      this.recordError(error, token)
     }
   }
 
@@ -327,11 +346,19 @@ class NeemDevSession implements NeemDevHost {
     })
   }
 
-  private recordError(error: unknown) {
+  private beginRuntimeChange(): NeemHostLifecycleToken | undefined {
+    if (this.readySettled) {
+      return this.lifecycle.beginReload()
+    }
+    return undefined
+  }
+
+  private recordError(error: unknown, token?: NeemHostLifecycleToken) {
     const normalized =
       error instanceof Error
         ? error
         : new Error(String(error ?? 'Unknown error'))
+    this.lifecycle.markFailed(normalized, token)
     if (!this.readySettled) {
       this.readyReject(normalized)
       this.readySettled = true

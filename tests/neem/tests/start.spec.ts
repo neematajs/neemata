@@ -65,6 +65,13 @@ describe('neem start', () => {
 
     try {
       expect(host.getWorkers()).toHaveLength(2)
+      expect(host.getWorkerPools()).toHaveLength(1)
+      expect(host.getWorkerPools()[0]?.getHealth()).toMatchObject({
+        name: 'app:api',
+        size: 2,
+        ready: 2,
+        state: 'ready',
+      })
       expect(
         host
           .getWorkers()
@@ -82,10 +89,49 @@ describe('neem start', () => {
         { type: 'http', url: 'http://127.0.0.1:4101/api/0' },
         { type: 'http', url: 'http://127.0.0.1:4102/api/1' },
       ])
+      expect(
+        host
+          .getProxyUpstreams()
+          .toSorted((a, b) => a.proxyUpstream.port - b.proxyUpstream.port),
+      ).toEqual([
+        expect.objectContaining({
+          appName: 'api',
+          count: 1,
+          proxyUpstream: expect.objectContaining({
+            type: 'port',
+            transport: 'http',
+            hostname: '127.0.0.1',
+            port: 4101,
+          }),
+        }),
+        expect.objectContaining({
+          appName: 'api',
+          count: 1,
+          proxyUpstream: expect.objectContaining({
+            type: 'port',
+            transport: 'http',
+            hostname: '127.0.0.1',
+            port: 4102,
+          }),
+        }),
+      ])
 
       const createEvents = (await readEvents(eventsFile))
         .filter((event) => event.event === 'create')
         .toSorted((a, b) => (a.threadIndex ?? 0) - (b.threadIndex ?? 0))
+      const pluginEvents = (await readEvents(eventsFile)).filter((event) =>
+        event.event.startsWith('plugin-'),
+      )
+      expect(host.getPlugins()).toHaveLength(1)
+      expect(pluginEvents).toContainEqual(
+        expect.objectContaining({
+          event: 'plugin-setup',
+          mode: 'production',
+          name: 'jobs',
+          instanceId: 0,
+          options: { queue: 'runtime' },
+        }),
+      )
       expect(createEvents).toHaveLength(2)
       expect(createEvents[0]).toMatchObject({
         mode: 'production',
@@ -110,6 +156,14 @@ describe('neem start', () => {
     expect(stopEvents.map((event) => event.threadIndex).toSorted()).toEqual([
       0, 1,
     ])
+    expect(await readEvents(eventsFile)).toContainEqual(
+      expect.objectContaining({
+        event: 'plugin-stop',
+        mode: 'production',
+        name: 'jobs',
+        instanceId: 0,
+      }),
+    )
   })
 
   it('fails startup and stops workers that already started', async () => {

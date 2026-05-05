@@ -20,7 +20,33 @@ export default definePlugin<JobsPluginOptions>({
     ]
   },
 
-  setup(ctx) {
+  async setup(ctx) {
     ctx.artifacts.list()
+    await writeEvent({
+      event: 'plugin-setup',
+      mode: ctx.mode,
+      name: ctx.name,
+      instanceId: ctx.instanceId,
+      options: ctx.options,
+      artifacts: ctx.artifacts
+        .list()
+        .map((artifact) => ({ id: artifact.id, owner: artifact.owner })),
+    })
+  },
+
+  async stop(ctx) {
+    await writeEvent({
+      event: 'plugin-stop',
+      mode: ctx.mode,
+      name: ctx.name,
+      instanceId: ctx.instanceId,
+    })
   },
 })
+
+async function writeEvent(event: Record<string, unknown>) {
+  const file = process.env.NEEM_RUNTIME_EVENTS_FILE
+  if (!file) return
+  const { appendFile } = await import('node:fs/promises')
+  await appendFile(file, `${JSON.stringify(event)}\n`)
+}

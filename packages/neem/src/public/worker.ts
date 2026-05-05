@@ -1,0 +1,37 @@
+import type { MessagePort } from 'node:worker_threads'
+
+import type { NeemArtifactRegistry, NeemResolvedArtifact } from './artifact.ts'
+import type { NeemMaybePromise, NeemMode, NeemRuntime } from './runtime.ts'
+
+export type NeemWorkerRuntimeContext<Data = unknown, Definition = unknown> = {
+  mode: NeemMode
+  name: string
+  data: Data
+  definition: Definition
+  artifact: NeemResolvedArtifact
+  artifacts: NeemArtifactRegistry
+  port: MessagePort
+}
+
+export type NeemWorker<Data = unknown, Definition = unknown> = {
+  _: { data: Data; definition: Definition }
+  kind: string
+  definition: Definition
+  createRuntime: (
+    ctx: NeemWorkerRuntimeContext<Data, Definition>,
+  ) => NeemMaybePromise<NeemRuntime>
+}
+
+export type InferNeemWorkerData<TWorker> =
+  TWorker extends NeemWorker<infer TData, any> ? TData : unknown
+
+export function defineWorker<
+  Data = unknown,
+  Definition = unknown,
+  const TWorker extends NeemWorker<Data, Definition> = NeemWorker<
+    Data,
+    Definition
+  >,
+>(worker: Omit<TWorker, '_'>): TWorker {
+  return Object.freeze(worker) satisfies Omit<TWorker, '_'> as TWorker
+}

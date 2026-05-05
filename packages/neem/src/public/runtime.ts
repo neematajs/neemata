@@ -4,9 +4,14 @@ export type NeemMaybePromise<T> = T | Promise<T>
 
 export type NeemApplicationUpstream = { type: string; url: string }
 
+export type NeemRuntimeReloadContext = { reason: 'artifact' }
+
 export type NeemRuntime = {
   start: () => NeemMaybePromise<readonly NeemApplicationUpstream[] | undefined>
   stop: () => NeemMaybePromise<void>
+  reload?: (
+    ctx: NeemRuntimeReloadContext,
+  ) => NeemMaybePromise<readonly NeemApplicationUpstream[] | undefined>
 }
 
 export type NeemWorkerState =

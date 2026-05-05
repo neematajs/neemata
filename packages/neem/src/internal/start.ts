@@ -1,14 +1,21 @@
 import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
-import { resolve } from 'node:path'
+import { parse, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { Worker } from 'node:worker_threads'
+import { MessageChannel } from 'node:worker_threads'
 
 import type {
   NeemArtifactRegistry,
   NeemResolvedArtifact,
 } from '../public/artifact.ts'
 import type { NeemConfig } from '../public/config.ts'
+import type {
+  NeemPlugin,
+  NeemPluginContext,
+  NeemPluginWorkerHandle,
+  NeemPluginWorkerSpawnOptions,
+  NeemPluginWorkers,
+} from '../public/plugin.ts'
 import type {
   NeemApplicationUpstream,
   NeemMode,
@@ -19,11 +26,20 @@ import type {
   NeemAppWorkerErrorMessage,
   NeemAppWorkerMessage,
 } from './app-worker-protocol.ts'
+import type { NeemManagedWorkerController } from './managed-worker.ts'
 import type {
   NeemBuildManifest,
   NeemBuildManifestArtifact,
 } from './manifest.ts'
+import type { NeemProxyUpstreamSnapshot } from './proxy-upstreams.ts'
+import type {
+  NeemWorkerPoolHealth,
+  NeemWorkerPoolState,
+} from './worker-pool.ts'
+import { NeemManagedWorker } from './managed-worker.ts'
 import { NEEM_MANIFEST_FILE, NEEM_MANIFEST_SCHEMA_VERSION } from './manifest.ts'
+import { NeemProxyUpstreamRegistry } from './proxy-upstreams.ts'
+import { NeemWorkerPool } from './worker-pool.ts'
 
 export type NeemStartOptions = {
   outDir?: string
@@ -34,11 +50,27 @@ export type NeemStartOptions = {
 }
 
 export type NeemStartedAppWorker = {
+  id: string
   appName: string
   threadIndex: number
   artifact: NeemResolvedArtifact
   getState: () => NeemWorkerState
   getUpstreams: () => readonly NeemApplicationUpstream[]
+  stop: () => Promise<void>
+}
+
+export type NeemStartedAppWorkerPool = {
+  appName: string
+  name: string
+  list: () => readonly NeemStartedAppWorker[]
+  getState: () => NeemWorkerPoolState
+  getHealth: () => NeemWorkerPoolHealth
+}
+
+export type NeemStartedPlugin = {
+  name: string
+  instanceId: number
+  setup: () => Promise<void>
   stop: () => Promise<void>
 }
 
@@ -49,8 +81,11 @@ export type NeemStartedHost = {
   manifest: NeemBuildManifest
   artifacts: NeemArtifactRegistry
   closed: Promise<void>
+  getPlugins: () => readonly NeemStartedPlugin[]
   getWorkers: () => readonly NeemStartedAppWorker[]
+  getWorkerPools: () => readonly NeemStartedAppWorkerPool[]
   getUpstreams: () => readonly NeemApplicationUpstream[]
+  getProxyUpstreams: () => readonly NeemProxyUpstreamSnapshot[]
   stop: () => Promise<void>
 }
 
@@ -71,25 +106,39 @@ export async function startNeem(
   const artifacts = createArtifactRegistry(
     resolveManifestArtifacts(outDir, manifest),
   )
-
-  const appWorkers = createAppWorkers({
+  const plugins = await createStartedPlugins({
     mode,
     outDir,
     manifest,
     config,
     artifacts,
   })
+
+  const appPools = createAppWorkerPools({
+    mode,
+    outDir,
+    manifest,
+    config,
+    artifacts,
+  })
+  const appWorkers = appPools.flatMap((pool) => pool.list())
   const host = createStartedHost({
     mode,
     outDir,
     manifestFile,
     manifest,
     artifacts,
+    plugins,
+    pools: appPools,
     workers: appWorkers,
   })
 
   for (const worker of appWorkers) {
+    worker.onReady = () => {
+      host.addWorkerUpstreams(worker)
+    }
     worker.onFailure = (error) => {
+      host.removeWorkerUpstreams(worker)
       if (failOnWorkerError) {
         void host.fail(error)
       }
@@ -113,7 +162,10 @@ export async function startNeem(
     .catch(() => {})
 
   try {
-    await Promise.all(appWorkers.map((worker) => worker.start()))
+    for (const plugin of plugins) {
+      await plugin.setup()
+    }
+    await Promise.all(appPools.map((pool) => pool.start()))
   } catch (error) {
     await host.fail(normalizeError(error))
     throw error
@@ -194,14 +246,56 @@ function createArtifactRegistry(
   })
 }
 
-function createAppWorkers(options: {
+async function createStartedPlugins(options: {
   mode: NeemMode
   outDir: string
   manifest: NeemBuildManifest
   config: NeemConfig
   artifacts: NeemArtifactRegistry
-}): NeemAppWorker[] {
-  const workers: NeemAppWorker[] = []
+}): Promise<NeemStartedPlugin[]> {
+  const plugins: NeemStartedPlugin[] = []
+
+  for (const pluginManifest of options.manifest.plugins) {
+    const entry = resolveManifestArtifact(options.outDir, pluginManifest.entry)
+    const plugin = await importDefault<NeemPlugin<any>>(entry.file)
+    if (!isPlugin(plugin)) {
+      throw new Error(
+        `Plugin [${pluginManifest.name}] entry default export does not satisfy NeemPlugin`,
+      )
+    }
+
+    const config = options.config.plugins?.[pluginManifest.index]
+    plugins.push(
+      new NeemStartedHostPlugin({
+        mode: options.mode,
+        name: plugin.name,
+        instanceId: pluginManifest.index,
+        options: config?.options,
+        plugin,
+        artifacts: options.artifacts,
+      }),
+    )
+  }
+
+  return plugins
+}
+
+function isPlugin(value: unknown): value is NeemPlugin<any> {
+  return Boolean(
+    value &&
+      typeof value === 'object' &&
+      typeof (value as NeemPlugin).name === 'string',
+  )
+}
+
+function createAppWorkerPools(options: {
+  mode: NeemMode
+  outDir: string
+  manifest: NeemBuildManifest
+  config: NeemConfig
+  artifacts: NeemArtifactRegistry
+}): NeemAppWorkerPool[] {
+  const pools: NeemAppWorkerPool[] = []
 
   for (const [appName, appManifest] of Object.entries(options.manifest.apps)) {
     const appConfig = options.config.apps[appName]
@@ -213,8 +307,8 @@ function createAppWorkers(options: {
       options.outDir,
       appManifest.entry,
     )
-    appConfig.threads.forEach((threadOptions, threadIndex) => {
-      workers.push(
+    const workers = appConfig.threads.map(
+      (threadOptions, threadIndex) =>
         new NeemAppWorker({
           mode: options.mode,
           appName,
@@ -223,11 +317,11 @@ function createAppWorkers(options: {
           appArtifact,
           artifacts: options.artifacts.list(),
         }),
-      )
-    })
+    )
+    pools.push(new NeemAppWorkerPool({ appName, workers }))
   }
 
-  return workers
+  return pools
 }
 
 function createStartedHost(options: {
@@ -236,6 +330,8 @@ function createStartedHost(options: {
   manifestFile: string
   manifest: NeemBuildManifest
   artifacts: NeemArtifactRegistry
+  plugins: NeemStartedPlugin[]
+  pools: NeemAppWorkerPool[]
   workers: NeemAppWorker[]
 }) {
   let stopPromise: Promise<void> | undefined
@@ -243,6 +339,7 @@ function createStartedHost(options: {
   let closeResolve!: () => void
   let closeReject!: (error: Error) => void
   let failure: Error | undefined
+  const proxyUpstreams = new NeemProxyUpstreamRegistry()
 
   const closed = new Promise<void>((resolve, reject) => {
     closeResolve = resolve
@@ -258,11 +355,19 @@ function createStartedHost(options: {
   }
 
   const stopWorkers = async () => {
-    stopPromise ??= Promise.all(options.workers.map((worker) => worker.stop()))
-      .then(() => undefined)
-      .finally(() => {
+    stopPromise ??= (async () => {
+      try {
+        for (const worker of options.workers) {
+          proxyUpstreams.removeOwnerUpstreams(worker)
+        }
+        await Promise.all(options.pools.map((pool) => pool.stop()))
+        for (const plugin of options.plugins.toReversed()) {
+          await plugin.stop()
+        }
+      } finally {
         settleClosed(failure)
-      })
+      }
+    })().then(() => undefined)
     return stopPromise
   }
 
@@ -273,11 +378,30 @@ function createStartedHost(options: {
     manifest: options.manifest,
     artifacts: options.artifacts,
     closed,
+    getPlugins() {
+      return options.plugins
+    },
     getWorkers() {
       return options.workers
     },
+    getWorkerPools() {
+      return options.pools
+    },
     getUpstreams() {
       return options.workers.flatMap((worker) => worker.getUpstreams())
+    },
+    getProxyUpstreams() {
+      return proxyUpstreams.list()
+    },
+    addWorkerUpstreams(worker: NeemAppWorker) {
+      proxyUpstreams.addOwnerUpstreams(
+        worker,
+        worker.appName,
+        worker.getUpstreams(),
+      )
+    },
+    removeWorkerUpstreams(worker: NeemAppWorker) {
+      proxyUpstreams.removeOwnerUpstreams(worker)
     },
     stop: stopWorkers,
     async fail(error: Error) {
@@ -290,19 +414,15 @@ function createStartedHost(options: {
 }
 
 class NeemAppWorker implements NeemStartedAppWorker {
+  readonly id: string
   readonly appName: string
   readonly threadIndex: number
   readonly artifact: NeemResolvedArtifact
+  onReady?: (worker: NeemAppWorker) => void
   onFailure?: (error: Error) => void
 
-  private worker: Worker | undefined
-  private state: NeemWorkerState = 'idle'
+  private readonly worker: NeemManagedWorker
   private upstreams: readonly NeemApplicationUpstream[] = []
-  private readyResolve: (() => void) | undefined
-  private readyReject: ((error: Error) => void) | undefined
-  private exitResolve: (() => void) | undefined
-  private exitPromise: Promise<void> | undefined
-  private stopping = false
 
   constructor(
     private readonly data: {
@@ -314,28 +434,10 @@ class NeemAppWorker implements NeemStartedAppWorker {
       artifacts: readonly NeemResolvedArtifact[]
     },
   ) {
+    this.id = `${data.appName}:${data.threadIndex}`
     this.appName = data.appName
     this.threadIndex = data.threadIndex
     this.artifact = data.appArtifact
-  }
-
-  getState() {
-    return this.state
-  }
-
-  getUpstreams() {
-    return this.upstreams
-  }
-
-  start(): Promise<void> {
-    if (this.state === 'ready') return Promise.resolve()
-    if (this.worker) {
-      throw new Error(
-        `App worker [${this.appName}:${this.threadIndex}] already started`,
-      )
-    }
-
-    this.state = 'starting'
     const workerData: NeemAppWorkerData = {
       appName: this.data.appName,
       mode: this.data.mode,
@@ -345,133 +447,225 @@ class NeemAppWorker implements NeemStartedAppWorker {
       artifacts: this.data.artifacts,
     }
 
-    const worker = new Worker(resolveAppWorkerEntry(), { workerData })
-    this.worker = worker
-    this.exitPromise = new Promise<void>((resolve) => {
-      this.exitResolve = resolve
-    })
-
-    worker.on('message', (message: NeemAppWorkerMessage) => {
-      this.handleMessage(message)
-    })
-    worker.on('error', (error) => {
-      this.handleError(error)
-    })
-    worker.on('exit', (code) => {
-      this.handleExit(code)
-    })
-
-    return new Promise<void>((resolve, reject) => {
-      this.readyResolve = resolve
-      this.readyReject = reject
+    this.worker = new NeemManagedWorker({
+      id: this.id,
+      name: `app:${data.appName}:${data.threadIndex}`,
+      artifactId: data.appArtifact.id,
+      entry: resolveAppWorkerEntry(),
+      workerData,
+      onMessage: (message, controller) => {
+        this.handleMessage(message as NeemAppWorkerMessage, controller)
+      },
+      onFailure: (error) => {
+        this.onFailure?.(error)
+      },
     })
   }
 
-  async stop(): Promise<void> {
-    if (!this.worker || this.state === 'stopped') return
-
-    this.stopping = true
-    this.state = 'stopping'
-    try {
-      this.worker.postMessage({ type: 'stop' })
-    } catch {}
-
-    try {
-      await Promise.race([
-        this.exitPromise,
-        new Promise((resolve) => setTimeout(resolve, 5_000)),
-      ])
-    } finally {
-      if (this.worker) {
-        await this.worker.terminate()
-      }
-      this.worker = undefined
-      this.state = 'stopped'
-    }
+  getState(): NeemWorkerState {
+    return this.worker.getState()
   }
 
-  private handleMessage(message: NeemAppWorkerMessage) {
+  getUpstreams() {
+    return this.upstreams
+  }
+
+  start(): Promise<void> {
+    return this.worker.start()
+  }
+
+  stop(): Promise<void> {
+    return this.worker.stop().finally(() => {
+      this.upstreams = []
+    })
+  }
+
+  private handleMessage(
+    message: NeemAppWorkerMessage,
+    controller: NeemManagedWorkerController,
+  ) {
     if (message.type === 'ready') {
-      this.state = 'ready'
       this.upstreams = message.data.upstreams ?? []
-      this.readyResolve?.()
-      this.clearReadyHandlers()
+      this.onReady?.(this)
+      controller.markReady()
       return
     }
 
     if (message.type === 'error') {
-      this.handleError(deserializeWorkerError(message.data))
+      controller.fail(deserializeWorkerError(message.data))
       return
     }
 
     if (message.type === 'stopped') {
-      this.state = 'stopped'
+      controller.markStopped()
+    }
+  }
+}
+
+class NeemAppWorkerPool
+  extends NeemWorkerPool<NeemAppWorker>
+  implements NeemStartedAppWorkerPool
+{
+  readonly appName: string
+
+  constructor(options: { appName: string; workers: readonly NeemAppWorker[] }) {
+    super({ name: `app:${options.appName}`, workers: options.workers })
+    this.appName = options.appName
+  }
+}
+
+class NeemStartedHostPlugin implements NeemStartedPlugin {
+  readonly name: string
+  readonly instanceId: number
+
+  private readonly workers: NeemPluginWorkerRegistry
+  private setupComplete = false
+
+  constructor(
+    private readonly options: {
+      mode: NeemMode
+      name: string
+      instanceId: number
+      options: unknown
+      plugin: NeemPlugin<any>
+      artifacts: NeemArtifactRegistry
+    },
+  ) {
+    this.name = options.name
+    this.instanceId = options.instanceId
+    this.workers = new NeemPluginWorkerRegistry({
+      pluginName: options.name,
+      instanceId: options.instanceId,
+      artifacts: options.artifacts,
+    })
+  }
+
+  async setup(): Promise<void> {
+    if (this.setupComplete) return
+    await this.options.plugin.setup?.(this.createContext())
+    this.setupComplete = true
+  }
+
+  async stop(): Promise<void> {
+    try {
+      if (this.setupComplete) {
+        await this.options.plugin.stop?.(this.createContext())
+      }
+    } finally {
+      await this.workers.stopAll()
+      this.setupComplete = false
     }
   }
 
-  private handleError(error: Error) {
-    if (this.state === 'starting') {
-      this.state = 'failed'
-      this.readyReject?.(error)
-      this.clearReadyHandlers()
-      return
+  private createContext(): NeemPluginContext<any> {
+    return {
+      mode: this.options.mode,
+      name: this.options.name,
+      instanceId: this.options.instanceId,
+      options: this.options.options,
+      artifacts: this.options.artifacts,
+      workers: this.workers,
     }
-
-    if (this.stopping || this.state === 'stopped') return
-
-    this.state = 'failed'
-    this.onFailure?.(error)
   }
+}
 
-  private handleExit(code: number) {
-    this.exitResolve?.()
+class NeemPluginWorkerRegistry implements NeemPluginWorkers {
+  private readonly workers = new Map<
+    string,
+    NeemManagedWorker & NeemPluginWorkerHandle
+  >()
 
-    if (this.stopping || this.state === 'stopped') {
-      this.state = 'stopped'
-      return
+  constructor(
+    private readonly options: {
+      pluginName: string
+      instanceId: number
+      artifacts: NeemArtifactRegistry
+    },
+  ) {}
+
+  async spawn(
+    options: NeemPluginWorkerSpawnOptions,
+  ): Promise<NeemPluginWorkerHandle> {
+    const artifact =
+      typeof options.artifact === 'string'
+        ? this.options.artifacts.resolve(options.artifact)
+        : options.artifact
+    if (!artifact) {
+      throw new Error(
+        `Plugin worker artifact [${String(options.artifact)}] was not found`,
+      )
     }
 
-    const error = new Error(
-      `App worker [${this.appName}:${this.threadIndex}] exited with code [${code}]`,
+    const id =
+      options.id ??
+      `${this.options.instanceId}:${this.options.pluginName}:${options.name}`
+    const channel = new MessageChannel()
+    const worker = Object.assign(
+      new NeemManagedWorker({
+        id,
+        name: `plugin:${this.options.pluginName}:${options.name}`,
+        artifactId: artifact.id,
+        entry: pathToFileURL(artifact.file),
+        workerData: { ...(options.workerData ?? {}), port: channel.port2 },
+        workerOptions: { transferList: [channel.port2] },
+        onMessage(message, controller) {
+          if (!message || typeof message !== 'object') return
+          const type = (message as { type?: string }).type
+          if (type === 'ready') {
+            controller.markReady()
+            return
+          }
+          if (type === 'stopped') {
+            controller.markStopped()
+            return
+          }
+          if (type === 'error') {
+            const data = (message as { data?: unknown }).data
+            controller.fail(deserializeGenericWorkerError(data))
+          }
+        },
+      }),
+      { port: channel.port1 },
     )
-
-    if (this.state === 'starting') {
-      this.state = 'failed'
-      this.readyReject?.(error)
-      this.clearReadyHandlers()
-      return
+    this.workers.set(id, worker)
+    try {
+      await worker.start()
+    } catch (error) {
+      this.workers.delete(id)
+      throw error
     }
-
-    if (this.state === 'ready') {
-      this.state = 'failed'
-      this.onFailure?.(error)
-    }
+    return worker
   }
 
-  private clearReadyHandlers() {
-    this.readyResolve = undefined
-    this.readyReject = undefined
+  async stop(workerId: string): Promise<boolean> {
+    const worker = this.workers.get(workerId)
+    if (!worker) return false
+    await worker.stop()
+    worker.port.close()
+    this.workers.delete(workerId)
+    return true
+  }
+
+  list(): readonly NeemPluginWorkerHandle[] {
+    return [...this.workers.values()]
+  }
+
+  async stopAll(): Promise<void> {
+    await Promise.all(
+      [...this.workers.keys()].map((workerId) => this.stop(workerId)),
+    )
   }
 }
 
 async function importDefault<T>(file: string): Promise<T> {
-  return ((await import(pathToFileURL(file).href)) as EntryModule<T>).default
+  const module: EntryModule<T> = await import(pathToFileURL(file).href)
+  return module.default
 }
 
 function resolveAppWorkerEntry(): URL {
-  const currentFile = fileURLToPath(import.meta.url)
-  const entry =
-    currentFile.endsWith('/src/internal/start.ts') ||
-    currentFile.endsWith('\\src\\internal\\start.ts')
-      ? new URL('../../dist/internal/app-worker-entry.js', import.meta.url)
-      : new URL('./app-worker-entry.js', import.meta.url)
-
-  if (!existsSync(fileURLToPath(entry))) {
-    throw new Error(
-      `Neem app worker entry was not found at [${fileURLToPath(entry)}]. Run the @nmtjs/neem package build before starting Neem from source.`,
-    )
-  }
-
+  const currentPath = fileURLToPath(import.meta.url)
+  const currentFile = parse(currentPath)
+  const entry = new URL(`./app-worker-entry${currentFile.ext}`, import.meta.url)
   return entry
 }
 
@@ -482,6 +676,21 @@ function deserializeWorkerError(
   error.name = data.name ?? error.name
   error.stack = data.stack
   return error
+}
+
+function deserializeGenericWorkerError(data: unknown): Error {
+  if (data && typeof data === 'object' && 'message' in data) {
+    const error = new Error(String((data as { message: unknown }).message))
+    if ('name' in data && typeof data.name === 'string') {
+      error.name = data.name
+    }
+    if ('stack' in data && typeof data.stack === 'string') {
+      error.stack = data.stack
+    }
+    return error
+  }
+
+  return normalizeError(data)
 }
 
 function normalizeError(value: unknown): Error {
