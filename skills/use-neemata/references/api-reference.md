@@ -242,7 +242,7 @@ n.server({
     tls?: TlsConfig,
   },
   jobs?: {
-    pools: { Io?: PoolConfig, Compute?: PoolConfig },
+    pools: Record<string, PoolConfig>,
     jobs?: Job[],
   },
   metrics?: { port?: number, path?: string },

@@ -1,4 +1,4 @@
-import { JobWorkerPool, n, t } from 'nmtjs'
+import { n, t } from 'nmtjs'
 
 type JobKind =
   | 'quick'
@@ -78,7 +78,7 @@ async function wait(ms: number, signal: AbortSignal) {
 const quick = n
   .job({
     name: 'playground-quick',
-    pool: JobWorkerPool.Io,
+    pool: 'io',
     input: t.object({ value: t.string() }),
     output: t.object({ value: t.string() }),
     progress: t.object({}),
@@ -96,7 +96,7 @@ const quick = n
 const slow = n
   .job({
     name: 'playground-slow',
-    pool: JobWorkerPool.Io,
+    pool: 'io',
     input: t.object({ ticks: t.number(), delayMs: t.number() }),
     output: t.object({ ticks: t.number() }),
     oneoff: false,
@@ -132,7 +132,7 @@ const slow = n
 const checkpoint = n
   .job({
     name: 'playground-checkpoint',
-    pool: JobWorkerPool.Io,
+    pool: 'io',
     input: t.object({ total: t.number(), failAt: t.number() }),
     output: t.object({ processed: t.number() }),
     oneoff: false,
@@ -177,7 +177,7 @@ const checkpoint = n
 const hung = n
   .job({
     name: 'playground-hung',
-    pool: JobWorkerPool.Io,
+    pool: 'io',
     input: t.object({ durationMs: t.number() }),
     output: t.object({ done: t.boolean() }),
     progress: t.object({}),
@@ -199,7 +199,7 @@ const hung = n
 const parallel = n
   .job({
     name: 'playground-parallel',
-    pool: JobWorkerPool.Io,
+    pool: 'io',
     input: t.object({
       base: t.number(),
       delayMs: t.number(),
@@ -345,7 +345,7 @@ const parallel = n
 const parallelConflict = n
   .job({
     name: 'playground-parallel-conflict',
-    pool: JobWorkerPool.Io,
+    pool: 'io',
     input: t.object({ base: t.number(), delayMs: t.number() }),
     output: t.object({ shared: t.number() }),
     progress: t.object({}),

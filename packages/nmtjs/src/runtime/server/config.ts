@@ -6,7 +6,7 @@ import type { LoggingOptions } from '@nmtjs/core'
 import type { ApplicationOptions } from '@nmtjs/proxy'
 import type { Applications } from 'nmtjs/runtime/types'
 
-import type { JobWorkerPool, StoreType } from '../enums.ts'
+import type { StoreType } from '../enums.ts'
 import type { AnyJob } from '../jobs/job.ts'
 import type { JobsSchedulerOptions } from '../scheduler/index.ts'
 import type { SubscriptionAdapterType } from '../subscription/manager.ts'
@@ -43,10 +43,7 @@ export type ServerApplicationConfig<T = ApplicationConfig> =
     : any
 
 export type ServerJobsConfig = {
-  pools: {
-    [JobWorkerPool.Io]: ServerPoolOptions
-    [JobWorkerPool.Compute]: ServerPoolOptions
-  }
+  pools: Record<string, ServerPoolOptions>
   jobs?: AnyJob[]
   /**
    * @deprecated Scheduler is currently being refactored and is not available.

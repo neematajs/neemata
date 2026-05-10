@@ -97,7 +97,6 @@ export {
 } from '@nmtjs/application'
 
 export {
-  JobWorkerPool,
   StoreType,
   WorkerType,
 } from './runtime/index.ts'

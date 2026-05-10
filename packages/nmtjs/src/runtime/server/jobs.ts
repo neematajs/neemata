@@ -14,9 +14,11 @@ import type {
   WorkerPoolConfig,
   WorkerPoolFactory,
 } from './worker-pool.ts'
-import { JobWorkerPool, WorkerType } from '../enums.ts'
+import { WorkerType } from '../enums.ts'
 import { getJobQueueName } from '../jobs/manager.ts'
 import { JobRunnersPool } from './worker-pool.ts'
+
+type JobsPoolConfig = Exclude<ServerConfig['jobs'], undefined>['pools']
 
 function enrichBullMqErrorStack(error: unknown): Error {
   const normalized =
@@ -31,6 +33,38 @@ function enrichBullMqErrorStack(error: unknown): Error {
   return normalized
 }
 
+function getJobsByPool(jobs: Iterable<AnyJob>): Map<string, AnyJob[]> {
+  const jobsByPool = new Map<string, AnyJob[]>()
+
+  for (const job of jobs) {
+    const poolJobs = jobsByPool.get(job.options.pool)
+    if (poolJobs) {
+      poolJobs.push(job)
+    } else {
+      jobsByPool.set(job.options.pool, [job])
+    }
+  }
+
+  return jobsByPool
+}
+
+function assertActiveJobPoolsConfigured(
+  jobsByPool: Map<string, AnyJob[]>,
+  pools: JobsPoolConfig,
+) {
+  const missingPoolMessages = [...jobsByPool]
+    .filter(([poolName]) => !pools[poolName])
+    .flatMap(([poolName, jobs]) =>
+      jobs.map((job) => `${job.name} -> ${poolName}`),
+    )
+
+  if (missingPoolMessages.length > 0) {
+    throw new Error(
+      `Invalid jobs pool configuration: missing pool config for jobs: ${missingPoolMessages.join(', ')}`,
+    )
+  }
+}
+
 /**
  * ApplicationServerJobs manages job worker pools and BullMQ queue workers.
  *
@@ -38,7 +72,7 @@ function enrichBullMqErrorStack(error: unknown): Error {
  * - Uses JobRunnersPool (extends WorkerPool) for worker management
  * - Uses ManagedWorker for restart logic and state tracking
  * - Integrates with ErrorPolicy for restart decisions
- * - Proper health tracking per job pool type
+ * - Proper health tracking per job pool
  */
 export class ApplicationServerJobs {
   /**
@@ -49,10 +83,10 @@ export class ApplicationServerJobs {
   jobs: Map<string, AnyJob>
 
   /**
-   * Shared resource pools by pool type (Io, Compute).
-   * All jobs of a given pool type share the same pool for resource management.
+   * Shared resource pools by configured pool name.
+   * All jobs using the same pool name share the same pool for resource management.
    */
-  protected pools = new Map<JobWorkerPool, JobRunnersPool>()
+  protected pools = new Map<string, JobRunnersPool>()
 
   constructor(
     readonly params: {
@@ -86,16 +120,16 @@ export class ApplicationServerJobs {
       return
     }
 
-    // Step 1: Initialize shared resource pools (Io, Compute)
-    const poolTypes = Object.values(JobWorkerPool)
+    const jobsByPool = getJobsByPool(this.jobs.values())
+    assertActiveJobPoolsConfigured(jobsByPool, jobsConfig.pools)
 
-    for (const poolType of poolTypes) {
-      const poolConfig = jobsConfig.pools[poolType]
-      if (!poolConfig) continue
+    // Step 1: Initialize shared resource pools used by active jobs
+    for (const poolName of jobsByPool.keys()) {
+      const poolConfig = jobsConfig.pools[poolName]!
 
-      // Create a JobRunnersPool for this pool type
+      // Create a JobRunnersPool for this pool
       const config: WorkerPoolConfig = {
-        name: `job-pool-${poolType}`,
+        name: `job-pool-${poolName}`,
         workerType: WorkerType.Job,
         path: workerConfig.path,
         workerData: { ...workerConfig.workerData },
@@ -111,15 +145,15 @@ export class ApplicationServerJobs {
 
       // Add workers to the pool
       for (let i = 0; i < poolConfig.threads; i++) {
-        pool.add({ runtime: { type: 'jobs', jobWorkerPool: poolType } }, i)
+        pool.add({ runtime: { type: 'jobs', jobWorkerPool: poolName } }, i)
       }
 
       await pool.startAll()
-      this.pools.set(poolType, pool)
+      this.pools.set(poolName, pool)
 
       logger.info(
         {
-          pool: poolType,
+          pool: poolName,
           threads: poolConfig.threads,
           jobsPerThread: poolConfig.jobs,
         },
@@ -129,28 +163,18 @@ export class ApplicationServerJobs {
 
     // Step 2: Create a dedicated BullMQ Worker for each job
     // Calculate how many jobs use each pool for fair concurrency distribution
-    const jobsPerPool = new Map<JobWorkerPool, number>()
-    for (const job of this.jobs.values()) {
-      const count = jobsPerPool.get(job.options.pool) ?? 0
-      jobsPerPool.set(job.options.pool, count + 1)
-    }
-
     for (const job of this.jobs.values()) {
       const queueName = getJobQueueName(job)
-      const poolType = job.options.pool
-      const pool = this.pools.get(poolType)
+      const poolName = job.options.pool
+      const pool = this.pools.get(poolName)
 
       if (!pool) {
-        logger.warn(
-          { job: job.name, pool: poolType },
-          'No pool configured for job, skipping worker creation',
-        )
-        continue
+        throw new Error(`Job "${job.name}" pool "${poolName}" is not started`)
       }
 
-      const poolConfig = jobsConfig.pools[poolType]
+      const poolConfig = jobsConfig.pools[poolName]!
       const poolCapacity = poolConfig.threads * poolConfig.jobs
-      const jobCountInPool = jobsPerPool.get(poolType) ?? 1
+      const jobCountInPool = jobsByPool.get(poolName)?.length ?? 1
       // Use job-specific concurrency if provided, otherwise distribute pool capacity evenly
       const defaultConcurrency = Math.max(
         1,
@@ -192,7 +216,7 @@ export class ApplicationServerJobs {
 
       this.queueWorkers.add(queueWorker)
       logger.info(
-        { job: job.name, queue: queueName, pool: poolType, concurrency },
+        { job: job.name, queue: queueName, pool: poolName, concurrency },
         'Job queue worker started',
       )
     }
@@ -234,9 +258,9 @@ export class ApplicationServerJobs {
   }
 
   /**
-   * Get a job pool by type.
+   * Get a job pool by name.
    */
-  getPool(poolType: JobWorkerPool): JobRunnersPool | undefined {
-    return this.pools.get(poolType)
+  getPool(poolName: string): JobRunnersPool | undefined {
+    return this.pools.get(poolName)
   }
 }

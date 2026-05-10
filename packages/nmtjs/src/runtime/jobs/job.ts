@@ -4,7 +4,6 @@ import type { t } from '@nmtjs/type'
 import type { AnyObjectLikeType, ObjectType } from '@nmtjs/type/object'
 import { tryCaptureStackTrace } from '@nmtjs/common'
 
-import type { JobWorkerPool } from '../enums.ts'
 import type { AnyJobStep, JobStep } from './step.ts'
 import { kJobKey } from '../constants.ts'
 import { isJobStep } from './step.ts'
@@ -200,7 +199,7 @@ export interface JobOptions<
   Data = any,
 > {
   name: Name
-  pool: JobWorkerPool
+  pool: string
   input: Input
   output: Output
   progress?: Progress
