@@ -14,40 +14,15 @@
       "import": "./dist/public/index.js",
       "module-sync": "./dist/public/index.js"
     },
-    "./app": {
-      "types": "./src/public/app.ts",
-      "import": "./dist/public/app.js",
-      "module-sync": "./dist/public/app.js"
-    },
-    "./artifact": {
-      "types": "./src/public/artifact.ts",
-      "import": "./dist/public/artifact.js",
-      "module-sync": "./dist/public/artifact.js"
-    },
-    "./config": {
-      "types": "./src/public/config.ts",
-      "import": "./dist/public/config.js",
-      "module-sync": "./dist/public/config.js"
-    },
-    "./plugin": {
-      "types": "./src/public/plugin.ts",
-      "import": "./dist/public/plugin.js",
-      "module-sync": "./dist/public/plugin.js"
-    },
-    "./runtime": {
-      "types": "./src/public/runtime.ts",
-      "import": "./dist/public/runtime.js",
-      "module-sync": "./dist/public/runtime.js"
-    },
-    "./worker": {
-      "types": "./src/public/worker.ts",
-      "import": "./dist/public/worker.js",
-      "module-sync": "./dist/public/worker.js"
-    },
     "./cli": {
       "types": "./src/cli.ts",
       "import": "./dist/cli.js",
       "module-sync": "./dist/cli.js"
+    },
+    "./internal": {
+      "types": "./src/internal/index.ts",
+      "import": "./dist/internal/index.js",
+      "module-sync": "./dist/internal/index.js"
     }
   },
   "publishConfig": {
@@ -57,40 +32,15 @@
         "import": "./dist/public/index.js",
         "module-sync": "./dist/public/index.js"
       },
-      "./app": {
-        "types": "./dist/public/app.d.ts",
-        "import": "./dist/public/app.js",
-        "module-sync": "./dist/public/app.js"
-      },
-      "./artifact": {
-        "types": "./dist/public/artifact.d.ts",
-        "import": "./dist/public/artifact.js",
-        "module-sync": "./dist/public/artifact.js"
-      },
-      "./config": {
-        "types": "./dist/public/config.d.ts",
-        "import": "./dist/public/config.js",
-        "module-sync": "./dist/public/config.js"
-      },
-      "./plugin": {
-        "types": "./dist/public/plugin.d.ts",
-        "import": "./dist/public/plugin.js",
-        "module-sync": "./dist/public/plugin.js"
-      },
-      "./runtime": {
-        "types": "./dist/public/runtime.d.ts",
-        "import": "./dist/public/runtime.js",
-        "module-sync": "./dist/public/runtime.js"
-      },
-      "./worker": {
-        "types": "./dist/public/worker.d.ts",
-        "import": "./dist/public/worker.js",
-        "module-sync": "./dist/public/worker.js"
-      },
       "./cli": {
         "types": "./dist/cli.d.ts",
         "import": "./dist/cli.js",
         "module-sync": "./dist/cli.js"
+      },
+      "./internal": {
+        "types": "./dist/internal/index.d.ts",
+        "import": "./dist/internal/index.js",
+        "module-sync": "./dist/internal/index.js"
       }
     }
   },

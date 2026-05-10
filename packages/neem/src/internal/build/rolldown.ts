@@ -7,7 +7,7 @@ import type {
   NeemArtifactOwner,
   NeemResolvedArtifact,
   NeemRolldownOptions,
-} from '../public/artifact.ts'
+} from '../../public/artifact.ts'
 
 type RolldownOutputChunk = {
   type?: string

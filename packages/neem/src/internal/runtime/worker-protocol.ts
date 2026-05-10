@@ -1,9 +1,9 @@
 import type { MessagePort } from 'node:worker_threads'
 
-import type { NeemResolvedArtifact } from '../public/artifact.ts'
-import type { NeemApplicationUpstream, NeemMode } from '../public/runtime.ts'
+import type { NeemResolvedArtifact } from '../../public/artifact.ts'
+import type { NeemApplicationUpstream, NeemMode } from '../../public/runtime.ts'
 
-export type NeemRuntimeWorkerData = {
+export type NeemRuntimeWorkerBaseData = {
   mode: NeemMode
   name: string
   data: unknown
@@ -11,6 +11,21 @@ export type NeemRuntimeWorkerData = {
   artifacts: readonly NeemResolvedArtifact[]
   port: MessagePort
 }
+
+export type NeemGenericRuntimeWorkerData = NeemRuntimeWorkerBaseData & {
+  kind?: 'worker'
+}
+
+export type NeemAppRuntimeWorkerData = NeemRuntimeWorkerBaseData & {
+  kind: 'app'
+  appName: string
+  threadIndex: number
+  threadOptions: unknown
+}
+
+export type NeemRuntimeWorkerData =
+  | NeemGenericRuntimeWorkerData
+  | NeemAppRuntimeWorkerData
 
 export type NeemRuntimeWorkerReloadData = {
   artifact: NeemResolvedArtifact

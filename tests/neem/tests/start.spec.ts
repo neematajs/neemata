@@ -3,9 +3,9 @@ import { resolve } from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { buildNeem } from '../../../packages/neem/src/internal/build.ts'
-import { NEEM_MANIFEST_FILE } from '../../../packages/neem/src/internal/manifest.ts'
-import { startNeem } from '../../../packages/neem/src/internal/start.ts'
+import { NEEM_MANIFEST_FILE } from '../../../packages/neem/src/internal/build/manifest.ts'
+import { buildNeem } from '../../../packages/neem/src/internal/commands/build.ts'
+import { startNeem } from '../../../packages/neem/src/internal/commands/start.ts'
 
 const fixturesDir = resolve(import.meta.dirname, '../fixtures')
 const neemInternalDir = resolve(
@@ -33,18 +33,20 @@ describe('neem start', () => {
 
   it('uses package worker entry instead of eval source', async () => {
     const startSource = await readFile(
-      resolve(neemInternalDir, 'start.ts'),
+      resolve(neemInternalDir, 'commands/start.ts'),
       'utf8',
     )
     const workerSource = await readFile(
-      resolve(neemInternalDir, 'app-worker-entry.ts'),
+      resolve(neemInternalDir, 'runtime/worker-entry.ts'),
       'utf8',
     )
 
-    expect(startSource).toContain('app-worker-entry.js')
+    expect(startSource).toContain('resolveRuntimeWorkerEntry')
+    expect(startSource).not.toContain('app-worker-entry')
     expect(startSource).not.toContain('createAppWorkerSource')
     expect(startSource).not.toContain('eval: true')
-    expect(workerSource).toContain('mode: workerData.mode')
+    expect(workerSource).toContain('createAppRuntime')
+    expect(workerSource).toContain('mode: data.mode')
     expect(workerSource).not.toContain("mode: 'production'")
   })
 

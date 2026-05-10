@@ -15,12 +15,12 @@ import { afterEach, describe, expect, it } from 'vitest'
 import type {
   NeemBuildManifest,
   NeemBuildManifestArtifact,
-} from '../../../packages/neem/src/internal/build.ts'
+} from '../../../packages/neem/src/internal/commands/build.ts'
 import { main } from '../../../packages/neem/src/cli.ts'
 import {
   buildNeem,
   NEEM_MANIFEST_FILE,
-} from '../../../packages/neem/src/internal/build.ts'
+} from '../../../packages/neem/src/internal/commands/build.ts'
 
 const fixturesDir = resolve(import.meta.dirname, '../fixtures')
 const configFile = resolve(fixturesDir, 'neem.config.ts')

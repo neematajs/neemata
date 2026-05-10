@@ -1,4 +1,4 @@
-import { defineWorker } from '@nmtjs/neem/worker'
+import { defineWorker } from '@nmtjs/neem'
 
 export default defineWorker({
   kind: 'runtime-channel-fixture',

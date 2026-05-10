@@ -3,7 +3,7 @@ import { pathToFileURL } from 'node:url'
 
 import { describe, expect, it } from 'vitest'
 
-import { NeemManagedWorker } from '../../../packages/neem/src/internal/managed-worker.ts'
+import { NeemManagedWorker } from '../../../packages/neem/src/internal/runtime/managed-worker.ts'
 
 const workerEntry = pathToFileURL(
   resolve(import.meta.dirname, '../fixtures/managed-worker.js'),

@@ -1,4 +1,4 @@
-import { defineAppConfig, defineConfig } from '@nmtjs/neem/config'
+import { defineAppConfig, defineConfig } from '@nmtjs/neem'
 
 export default defineConfig({
   apps: {

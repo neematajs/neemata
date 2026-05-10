@@ -1,10 +1,13 @@
+import { dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
 import { describe, expect, it } from 'vitest'
 
-import type { NeemBuildManifest } from '../../../packages/neem/src/internal/manifest.ts'
-import type { NeemRuntimeSnapshot } from '../../../packages/neem/src/internal/runtime-snapshot.ts'
+import type { NeemBuildManifest } from '../../../packages/neem/src/internal/build/manifest.ts'
+import type { NeemRuntimeSnapshot } from '../../../packages/neem/src/internal/runtime/snapshot.ts'
 import type { NeemConfig } from '../../../packages/neem/src/public/config.ts'
-import { NeemApplicationServer } from '../../../packages/neem/src/internal/application-server.ts'
-import { createRuntimeSnapshot } from '../../../packages/neem/src/internal/runtime-snapshot.ts'
+import { NeemApplicationServer } from '../../../packages/neem/src/internal/runtime/application-server.ts'
+import { createRuntimeSnapshot } from '../../../packages/neem/src/internal/runtime/snapshot.ts'
 
 describe('NeemApplicationServer', () => {
   it('exposes snapshot metadata and marks start/stop state', async () => {
@@ -115,15 +118,30 @@ class TestApplicationServer extends NeemApplicationServer {
 }
 
 function createSnapshot(appName: string): NeemRuntimeSnapshot {
+  const pluginFile = fileURLToPath(
+    new URL('../fixtures/plugin-manager.plugin.js', import.meta.url),
+  )
+
   return createRuntimeSnapshot({
     mode: 'production',
     outDir: '/tmp/neem-out',
-    config: { apps: {} } as NeemConfig,
-    manifest: createManifest(appName),
+    config: {
+      apps: {},
+      plugins: [
+        {
+          entry: async () => ({ default: {} as never }),
+          options: { label: 'app-server' },
+        },
+      ],
+    } as NeemConfig,
+    manifest: createManifest(appName, pluginFile),
   })
 }
 
-function createManifest(appName: string): NeemBuildManifest {
+function createManifest(
+  appName: string,
+  pluginFile: string,
+): NeemBuildManifest {
   return {
     schemaVersion: 1,
     config: { file: 'config/entry/neem.config.js' },
@@ -147,8 +165,8 @@ function createManifest(appName: string): NeemBuildManifest {
           id: 'entry',
           kind: 'module',
           owner: { type: 'plugin', name: 'jobs', instanceId: 0 },
-          file: 'plugins/0-jobs/entry/jobs.js',
-          outDir: 'plugins/0-jobs/entry',
+          file: pluginFile,
+          outDir: dirname(pluginFile),
         },
         artifacts: [],
       },

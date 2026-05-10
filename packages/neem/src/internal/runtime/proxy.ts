@@ -1,4 +1,4 @@
-import type { NeemApplicationUpstream } from '../public/runtime.ts'
+import type { NeemApplicationUpstream } from '../../public/runtime.ts'
 
 export type NeemProxyUpstream = {
   type: 'port'

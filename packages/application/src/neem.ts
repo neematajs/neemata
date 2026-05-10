@@ -1,5 +1,5 @@
-import type { NeemApp } from '@nmtjs/neem/app'
-import { defineApp } from '@nmtjs/neem/app'
+import type { NeemApp } from '@nmtjs/neem'
+import { defineApp } from '@nmtjs/neem'
 
 import type { ApplicationConfig, ApplicationTransport } from './config.ts'
 

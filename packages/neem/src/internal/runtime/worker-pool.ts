@@ -1,4 +1,4 @@
-import type { NeemWorkerState } from '../public/runtime.ts'
+import type { NeemWorkerState } from '../../public/runtime.ts'
 
 export type NeemPoolWorker = {
   id?: string

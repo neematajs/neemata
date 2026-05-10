@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import type { NeemResolvedArtifact } from '../../../packages/neem/src/public/artifact.ts'
-import { createNeemArtifactRegistry } from '../../../packages/neem/src/internal/artifact-registry.ts'
+import { createNeemArtifactRegistry } from '../../../packages/neem/src/internal/runtime/artifact-registry.ts'
 
 describe('Neem artifact registry', () => {
   it('resolves duplicate artifact ids through owner-scoped registries', () => {

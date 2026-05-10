@@ -5,8 +5,8 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 import type { NeemResolvedArtifact } from '../../../packages/neem/src/public/artifact.ts'
-import { createNeemArtifactRegistry } from '../../../packages/neem/src/internal/artifact-registry.ts'
-import { NeemPluginWorkerManager } from '../../../packages/neem/src/internal/plugin-worker-manager.ts'
+import { createNeemArtifactRegistry } from '../../../packages/neem/src/internal/runtime/artifact-registry.ts'
+import { NeemPluginWorkerManager } from '../../../packages/neem/src/internal/runtime/plugin-manager.ts'
 
 describe('Neem plugin worker communication channel', () => {
   it('keeps plugin messages on a dedicated port outside Neem control protocol', async () => {

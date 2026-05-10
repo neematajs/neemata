@@ -40,7 +40,7 @@ Target packages:
 - config loading
 - host app and plugin interfaces
 - config option types
-- lightweight public contracts/helpers/enums through separate export paths
+- lightweight public contracts/helpers/enums through the package root export
 - dev/start/build CLI
 - Rolldown-based source compilation, production build, and dev watch
 - artifact graph and build manifest
@@ -60,15 +60,17 @@ Target packages:
 
 Those should be supplied by app/helper/plugin packages.
 
-`@nmtjs/neem` public contracts should be available from lightweight export paths
-that do not execute or import the full host runtime. This keeps version
-compliance easier and avoids loading internal Neem implementation when users
-only need types/config helpers.
+`@nmtjs/neem` public contracts should be available from the lightweight package
+root export. The root public index re-exports only public contracts/helpers and
+must not execute or import the full host runtime. This keeps version compliance
+easier and avoids loading internal Neem implementation when users only need
+types/config helpers.
 
 Public consumer-facing modules should live under `packages/neem/src/public`.
-Package exports such as `@nmtjs/neem/config`, `@nmtjs/neem/app`, and
-`@nmtjs/neem/plugin` should point at those public modules, not at host runtime
-or compiler internals.
+The current package exports are intentionally narrow: `@nmtjs/neem`,
+`@nmtjs/neem/cli`, and `@nmtjs/neem/internal`. Public subpath exports such as
+`@nmtjs/neem/config`, `@nmtjs/neem/app`, and `@nmtjs/neem/plugin` are not part
+of the current source of truth.
 
 ### Compatibility Stance
 
@@ -111,8 +113,8 @@ Current spike status:
   not inside `neem.config`.
 - App and plugin entries in config are lazy static import thunks, not plain
   strings.
-- `@nmtjs/neem/config` owns config helper typing through `defineConfig`,
-  `defineAppConfig`, and `definePluginConfig`.
+- The `@nmtjs/neem` root public export owns config helper typing through
+  `defineConfig`, `defineAppConfig`, and `definePluginConfig`.
 - App and plugin config helpers infer options from the lazy entry default export.
   They should not take app-family or plugin-family generics in normal usage.
 - Invalid app/plugin entries are rejected by helper input constraints in the
@@ -120,9 +122,9 @@ Current spike status:
 - `defineConfig` is a host-shape helper and currently returns the broad
   `NeemConfig` shape. Entry-specific type precision lives at
   `defineAppConfig(...)` / `definePluginConfig(...)` call sites.
-- Static import discovery uses Rolldown parser utilities plus Neem's own
-  constrained config syntax. Rolldown `build`/`watch` are used after discovery
-  for artifact compilation and dev rebuilds.
+- Static import discovery uses Rolldown parser utilities plus Rolldown/OXC
+  `Visitor` and Neem's own constrained config syntax. Rolldown `build`/`watch`
+  are used after discovery for artifact compilation and dev rebuilds.
 - `neem build`, production-only `neem start`, and app-only `neem dev` are
   wired.
 - CLI command structure uses `citty`.
@@ -162,9 +164,10 @@ Current spike status:
   app thread.
 - Runtime mode is host-provided through worker data: `neem start` uses
   `production`; `neem dev` uses `development`.
-- App worker bootstrap is an internal package-built Neem artifact
-  (`dist/internal/app-worker-entry.js`), not an eval string and not a user
-  manifest artifact.
+- Runtime worker bootstrap is an internal package-built Neem artifact
+  (`dist/internal/runtime/worker-entry.js`), not an eval string and not a user
+  manifest artifact. It handles generic worker artifacts and app runtime
+  threads through the same private worker protocol.
 - First `start` failure policy is fail-fast: any bootstrap/start failure rejects
   startup and stops already-started workers; any post-start worker failure stops
   the host.
@@ -196,14 +199,14 @@ Current spike status:
   provisions directly.
 - No legacy config compatibility loader is planned. Old config fields are
   mapped into the new model only where they still fit.
-- Current package export paths are `@nmtjs/neem`, `@nmtjs/neem/config`,
-  `@nmtjs/neem/app`, `@nmtjs/neem/plugin`, `@nmtjs/neem/artifact`,
-  `@nmtjs/neem/runtime`, and `@nmtjs/neem/cli`.
+- Current package export paths are `@nmtjs/neem`, `@nmtjs/neem/cli`, and
+  `@nmtjs/neem/internal`.
 - `neem` is the only CLI binary in the current Neem package slice. `nmtjs` or
   `neemata` binary aliases are deferred out of scope.
-- Static discovery depth for v1 is direct `defineConfig(...)` app/plugin config
-  declarations using static string-literal dynamic imports. Imported config
-  fragments and computed paths are deferred.
+- Static discovery depth for v1 is default-exported direct
+  `defineConfig(...)` app/plugin config declarations using static
+  string-literal dynamic imports. Imported config fragments, non-default
+  `defineConfig(...)` calls, and computed paths are deferred/rejected.
 - Manifest schema remains internal for v1. No public manifest type/export is
   committed yet.
 - Plugin/module artifact consumers receive resolved artifact records/file paths
@@ -225,9 +228,9 @@ Current spike status:
   config + manifest + scoped artifact registry. `start` and `dev` should both
   feed snapshots into `NeemApplicationServer` instead of each owning separate
   runtime orchestration.
-- Generic reloadable worker contract now exists at `@nmtjs/neem/worker`.
-  `runtime-worker-entry` is the planned Neem-owned bootstrap for plugin workers
-  and later app/runtime worker unification.
+- Generic reloadable worker contract now exists at the `@nmtjs/neem` root
+  public export. `runtime/worker-entry.ts` is the Neem-owned bootstrap for
+  plugin workers and app runtime threads.
 - Production plugin lifecycle now imports built plugin entry artifacts from the
   manifest, runs `setup` before app workers start, runs `stop` after app
   workers stop, and passes typed options plus artifact registry into context.
@@ -309,7 +312,7 @@ import {
   defineAppConfig,
   defineConfig,
   definePluginConfig,
-} from '@nmtjs/neem/config'
+} from '@nmtjs/neem'
 
 export default defineConfig({
   apps: {
@@ -347,6 +350,9 @@ Important config constraints:
 - Loading config must not import Rolldown compiler plugins.
 - Config app/plugin entries are lazy functions containing static string-literal
   dynamic imports.
+- Config discovery only recognizes the config object passed to
+  `export default defineConfig(...)`. Other `defineConfig(...)` calls in the
+  file are ignored.
 - The compiled config preserves those lazy imports. Runtime code should not
   call app/plugin/build thunks from compiled config to discover artifacts;
   production `start` should use the manifest.
@@ -378,7 +384,7 @@ Canonical plugin entry shape:
 
 ```ts
 // src/jobs.plugin.ts
-import { definePlugin } from '@nmtjs/neem/plugin'
+import { definePlugin } from '@nmtjs/neem'
 
 export default definePlugin({
   name: 'jobs',
@@ -579,6 +585,8 @@ Rolldown primitive usage:
 
 - `rolldown/utils.parse` or `parseSync`: parse config source for Neem's
   constrained lazy import thunk syntax.
+- `rolldown/utils.Visitor`: traverse the parsed ESTree program and find only
+  the default-exported `defineConfig(...)` call used as the config root.
 - `build`: one-shot compile production config, app/plugin entry artifacts, and
   plugin-declared artifacts.
 - `watch`: dev rebuild loop for config and app artifacts; plugin artifact watch
@@ -599,8 +607,8 @@ build: () => import('./src/api.build.ts')
 ```
 
 Only static string-literal dynamic imports in direct config declarations are
-valid for v1 discovery. Computed paths and imported config fragments are
-rejected/deferred.
+valid for v1 discovery. Computed paths, imported config fragments, and
+non-default `defineConfig(...)` calls are rejected/deferred.
 
 Discovery should produce resolved metadata for each app/plugin entry and lazy
 build config without executing those entry modules. The loaded config object is
@@ -692,9 +700,9 @@ Build enough to answer whether the architecture works:
   source-relative artifact declarations.
 - Wire `neem start --outDir <path>` against built output only.
 - Start generic Neem apps in worker threads from built app entry artifacts.
-- Use the typed package-built app worker entry for worker bootstrap; source-mode
-  tests must build `@nmtjs/neem` first so `dist/internal/app-worker-entry.js`
-  exists.
+- Use the typed package-built runtime worker entry for worker bootstrap;
+  source-mode tests must build `@nmtjs/neem` first so
+  `dist/internal/runtime/worker-entry.js` exists.
 - Track app upstreams in the host proxy registry with normalization and
   refcounted add/remove events; actual proxy server remains deferred.
 - Preserve plugin artifacts in the runtime registry and run production plugin
@@ -704,9 +712,11 @@ Build enough to answer whether the architecture works:
   `dev` will build/watch snapshots and apply updates to the same server.
 - Keep lifecycle state inside `NeemApplicationServer`; do not add a separate
   lifecycle supervisor or inheritance layer.
-- Add generic `@nmtjs/neem/worker` and package-owned
-  `runtime-worker-entry.js` for reloadable worker artifacts. Next implementation
-  slice is a `RuntimeWorker` wrapper around `NeemManagedWorker`.
+- Add generic worker contracts to the `@nmtjs/neem` root export and
+  package-owned `runtime/worker-entry.js` for reloadable worker artifacts.
+  `NeemRuntimeWorker` now wraps `NeemManagedWorker` for plugin-spawned workers;
+  app workers still have a separate wrapper in `commands/start.ts` until the
+  application server path fully replaces legacy start/dev orchestration.
 - Wire `neem dev --config <path> --outDir <path>` with default outDir `.neem`.
 - Use Rolldown `watch()` for dev config/app artifacts instead of repeated
   one-shot builds.

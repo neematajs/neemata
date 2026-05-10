@@ -2,9 +2,9 @@ import { resolve } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
-import type { NeemBuildManifest } from '../../../packages/neem/src/internal/manifest.ts'
+import type { NeemBuildManifest } from '../../../packages/neem/src/internal/build/manifest.ts'
 import type { NeemConfig } from '../../../packages/neem/src/public/config.ts'
-import { createRuntimeSnapshot } from '../../../packages/neem/src/internal/runtime-snapshot.ts'
+import { createRuntimeSnapshot } from '../../../packages/neem/src/internal/runtime/snapshot.ts'
 
 describe('Neem runtime snapshot', () => {
   it('creates absolute scoped artifacts from manifest-relative paths', () => {

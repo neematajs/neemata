@@ -1,4 +1,4 @@
-import { definePlugin } from '@nmtjs/neem/plugin'
+import { definePlugin } from '@nmtjs/neem'
 
 export type JobsPluginOptions = { queue: string; concurrency?: number }
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import type { NeemWorkerState } from '../../../packages/neem/src/public/runtime.ts'
-import { NeemWorkerPool } from '../../../packages/neem/src/internal/worker-pool.ts'
+import { NeemWorkerPool } from '../../../packages/neem/src/internal/runtime/worker-pool.ts'
 
 describe('NeemWorkerPool', () => {
   it('starts and stops all workers as one unit', async () => {

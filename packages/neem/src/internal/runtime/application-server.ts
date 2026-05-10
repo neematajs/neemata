@@ -1,5 +1,6 @@
-import type { NeemMode } from '../public/index.ts'
-import type { NeemRuntimeSnapshot } from './runtime-snapshot.ts'
+import type { NeemMode } from '../../public/index.ts'
+import type { NeemPluginManager } from './plugin.ts'
+import type { NeemRuntimeSnapshot } from './snapshot.ts'
 import { normalizeError } from './utils.ts'
 
 export type NeemApplicationServerOptions = { snapshot: NeemRuntimeSnapshot }
@@ -30,6 +31,7 @@ export class NeemApplicationServer {
   private lastError: Error | undefined
   private snapshot: NeemRuntimeSnapshot
   private operation = Promise.resolve()
+  private pluginManager: NeemPluginManager | undefined
 
   constructor(readonly options: NeemApplicationServerOptions) {
     this.snapshot = options.snapshot
@@ -93,12 +95,22 @@ export class NeemApplicationServer {
     })
   }
 
-  protected startRuntime(_snapshot: NeemRuntimeSnapshot): Promise<void> {
-    return Promise.resolve()
+  protected async startRuntime(snapshot: NeemRuntimeSnapshot): Promise<void> {
+    const { NeemPluginManager } = await import('./plugin.ts')
+    const pluginManager = new NeemPluginManager({
+      snapshot,
+      onWorkerFailure: (error) => {
+        this.markState('failed', error)
+      },
+    })
+    await pluginManager.start()
+    this.pluginManager = pluginManager
   }
 
-  protected stopRuntime(_snapshot: NeemRuntimeSnapshot): Promise<void> {
-    return Promise.resolve()
+  protected async stopRuntime(_snapshot: NeemRuntimeSnapshot): Promise<void> {
+    const pluginManager = this.pluginManager
+    this.pluginManager = undefined
+    await pluginManager?.stop()
   }
 
   private markState(state: NeemApplicationServerState, error?: Error): void {

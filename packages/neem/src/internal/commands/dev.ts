@@ -1,32 +1,35 @@
 import { resolve } from 'node:path'
 
-import type { NeemResolvedArtifact } from '../public/artifact.ts'
+import type { NeemResolvedArtifact } from '../../public/artifact.ts'
 import type {
   NeemBuildConfig,
   NeemBuildConfigInput,
   NeemConfig,
-} from '../public/config.ts'
-import type { NeemConfigDiscovery, NeemDiscoveredApp } from './discovery.ts'
+} from '../../public/config.ts'
+import type {
+  NeemConfigDiscovery,
+  NeemDiscoveredApp,
+} from '../build/discovery.ts'
+import type { NeemBuildManifest } from '../build/manifest.ts'
+import type { NeemArtifactWatcher } from '../build/rolldown.ts'
 import type {
   NeemHostLifecycleSnapshot,
   NeemHostLifecycleToken,
-} from './lifecycle.ts'
-import type { NeemBuildManifest } from './manifest.ts'
-import type { NeemArtifactWatcher } from './rolldown.ts'
+} from '../runtime/lifecycle.ts'
 import type { NeemStartedHost } from './start.ts'
+import { discoverConfigEntriesSync } from '../build/discovery.ts'
+import { NEEM_MANIFEST_SCHEMA_VERSION } from '../build/manifest.ts'
+import { watchArtifact } from '../build/rolldown.ts'
+import { NeemHostLifecycle } from '../runtime/lifecycle.ts'
+import { importDefault } from '../runtime/utils.ts'
 import {
   cleanNeemOutDir,
   createConfigRolldownOptions,
-  importDefault,
   loadBuildConfig,
   toManifestArtifact,
   toManifestPath,
   writeManifest,
 } from './build.ts'
-import { discoverConfigEntriesSync } from './discovery.ts'
-import { NeemHostLifecycle } from './lifecycle.ts'
-import { NEEM_MANIFEST_SCHEMA_VERSION } from './manifest.ts'
-import { watchArtifact } from './rolldown.ts'
 import { startNeem } from './start.ts'
 
 export type NeemDevOptions = {

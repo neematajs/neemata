@@ -3,19 +3,19 @@ import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { MessageChannel } from 'node:worker_threads'
 
-import type { NeemResolvedArtifact } from '../public/artifact.ts'
+import type { NeemResolvedArtifact } from '../../public/artifact.ts'
 import type {
   NeemApplicationUpstream,
   NeemMode,
   NeemWorkerState,
-} from '../public/runtime.ts'
+} from '../../public/runtime.ts'
 import type { NeemManagedWorkerController } from './managed-worker.ts'
 import type {
   NeemRuntimeWorkerData,
   NeemRuntimeWorkerErrorMessage,
   NeemRuntimeWorkerMessage,
   NeemRuntimeWorkerReloadData,
-} from './runtime-worker-protocol.ts'
+} from './worker-protocol.ts'
 import { NeemManagedWorker } from './managed-worker.ts'
 
 export type NeemRuntimeWorkerOptions = {
@@ -160,12 +160,12 @@ export class NeemRuntimeWorker {
   }
 }
 
-function resolveRuntimeWorkerEntry(): URL {
+export function resolveRuntimeWorkerEntry(): URL {
   const sourceEntry = new URL(
-    '../../dist/internal/runtime-worker-entry.js',
+    '../../../dist/internal/runtime/worker-entry.js',
     import.meta.url,
   )
-  const distEntry = new URL('./runtime-worker-entry.js', import.meta.url)
+  const distEntry = new URL('./worker-entry.js', import.meta.url)
   const entry = isSourceInternalFile(import.meta.url) ? sourceEntry : distEntry
 
   if (!existsSync(fileURLToPath(entry))) {

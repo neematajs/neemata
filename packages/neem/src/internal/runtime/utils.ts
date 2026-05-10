@@ -3,7 +3,7 @@ import { pathToFileURL } from 'node:url'
 import type {
   NeemArtifactRegistry,
   NeemResolvedArtifact,
-} from '../public/artifact.ts'
+} from '../../public/artifact.ts'
 
 type EntryModule<T> = { default: T }
 

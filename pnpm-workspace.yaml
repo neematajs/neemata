@@ -10,8 +10,8 @@ allowBuilds:
 
 catalog:
   "@nmtjs/proxy": 1.0.0-beta.6
-  rolldown: 1.0.0-rc.17
-  vite: 8.0.10
+  rolldown: 1.0.0
+  vite: 8.0.11
   zod: ^4.0.0
 
 minimumReleaseAgeExclude:

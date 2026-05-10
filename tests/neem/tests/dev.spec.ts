@@ -11,10 +11,10 @@ import { resolve } from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
-import type { NeemBuildManifest } from '../../../packages/neem/src/internal/manifest.ts'
+import type { NeemBuildManifest } from '../../../packages/neem/src/internal/build/manifest.ts'
 import { main } from '../../../packages/neem/src/cli.ts'
-import { devNeem } from '../../../packages/neem/src/internal/dev.ts'
-import { NEEM_MANIFEST_FILE } from '../../../packages/neem/src/internal/manifest.ts'
+import { NEEM_MANIFEST_FILE } from '../../../packages/neem/src/internal/build/manifest.ts'
+import { devNeem } from '../../../packages/neem/src/internal/commands/dev.ts'
 
 const fixturesDir = resolve(import.meta.dirname, '../fixtures')
 const tempRoot = resolve(import.meta.dirname, '../node_modules/.tmp')

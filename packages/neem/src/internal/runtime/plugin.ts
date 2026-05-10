@@ -1,9 +1,9 @@
-import type { NeemArtifactRegistry } from '../public/artifact.ts'
-import type { NeemPlugin, NeemPluginContext } from '../public/plugin.ts'
-import type { NeemMode } from '../public/runtime.ts'
-import type { NeemBuildManifest } from './manifest.ts'
-import type { NeemRuntimeSnapshot } from './runtime-snapshot.ts'
-import { NeemPluginWorkerManager } from './plugin-worker-manager.ts'
+import type { NeemArtifactRegistry } from '../../public/artifact.ts'
+import type { NeemPlugin, NeemPluginContext } from '../../public/plugin.ts'
+import type { NeemMode } from '../../public/runtime.ts'
+import type { NeemBuildManifest } from '../build/manifest.ts'
+import type { NeemRuntimeSnapshot } from './snapshot.ts'
+import { NeemPluginWorkerManager } from './plugin-manager.ts'
 import { importDefault } from './utils.ts'
 
 export type NeemStartedPlugin = {

@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
-import type { NeemProxyUpstreamRegistryEvent } from '../../../packages/neem/src/internal/proxy-upstreams.ts'
+import type { NeemProxyUpstreamRegistryEvent } from '../../../packages/neem/src/internal/runtime/proxy.ts'
 import {
   NeemProxyUpstreamRegistry,
   normalizeProxyApplicationUpstream,
   toProxyUpstream,
-} from '../../../packages/neem/src/internal/proxy-upstreams.ts'
+} from '../../../packages/neem/src/internal/runtime/proxy.ts'
 
 describe('neem proxy upstream registry', () => {
   it('normalizes wildcard hosts and maps app upstreams to proxy upstreams', () => {

@@ -1,28 +1,37 @@
 import { mkdir, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, relative, resolve } from 'node:path'
-import { pathToFileURL } from 'node:url'
 
-import type { NeemResolvedArtifact } from '../public/artifact.ts'
+import type { NeemResolvedArtifact } from '../../public/artifact.ts'
 import type {
   NeemBuildConfig,
   NeemBuildConfigInput,
   NeemConfig,
-} from '../public/config.ts'
-import type { NeemPlugin } from '../public/plugin.ts'
-import type { NeemConfigDiscovery, NeemDiscoveredImport } from './discovery.ts'
+} from '../../public/config.ts'
+import type { NeemPlugin } from '../../public/plugin.ts'
+import type {
+  NeemConfigDiscovery,
+  NeemDiscoveredImport,
+} from '../build/discovery.ts'
 import type {
   NeemBuildManifest,
   NeemBuildManifestArtifact,
-} from './manifest.ts'
-import { discoverConfigEntriesSync } from './discovery.ts'
-import { NEEM_MANIFEST_FILE, NEEM_MANIFEST_SCHEMA_VERSION } from './manifest.ts'
-import { buildArtifact } from './rolldown.ts'
+} from '../build/manifest.ts'
+import { discoverConfigEntriesSync } from '../build/discovery.ts'
+import {
+  NEEM_MANIFEST_FILE,
+  NEEM_MANIFEST_SCHEMA_VERSION,
+} from '../build/manifest.ts'
+import { buildArtifact } from '../build/rolldown.ts'
+import { importDefault } from '../runtime/utils.ts'
 
 export type {
   NeemBuildManifest,
   NeemBuildManifestArtifact,
-} from './manifest.ts'
-export { NEEM_MANIFEST_FILE, NEEM_MANIFEST_SCHEMA_VERSION } from './manifest.ts'
+} from '../build/manifest.ts'
+export {
+  NEEM_MANIFEST_FILE,
+  NEEM_MANIFEST_SCHEMA_VERSION,
+} from '../build/manifest.ts'
 
 export type NeemBuildOptions = {
   config?: string
@@ -36,8 +45,6 @@ export type NeemBuildResult = {
   manifestFile: string
   manifest: NeemBuildManifest
 }
-
-type EntryModule<T> = { default: T }
 
 export async function buildNeem(
   options: NeemBuildOptions = {},
@@ -190,11 +197,6 @@ export async function loadBuildConfig(
   }
 
   return input
-}
-
-export async function importDefault<T>(specifier: string): Promise<T> {
-  const module: EntryModule<T> = await import(pathToFileURL(specifier).href)
-  return module.default
 }
 
 export function toManifestArtifact(

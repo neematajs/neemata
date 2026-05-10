@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url'
 
 import { describe, expect, it } from 'vitest'
 
-import { discoverConfigEntriesSync } from '../../../packages/neem/src/internal/discovery.ts'
+import { discoverConfigEntriesSync } from '../../../packages/neem/src/internal/build/discovery.ts'
 
 const fixturesDir = dirname(fileURLToPath(import.meta.url))
 const configFile = resolve(fixturesDir, '../fixtures/neem.config.ts')
@@ -41,7 +41,7 @@ describe('neem config static discovery', () => {
       discoverConfigEntriesSync(
         resolve(fixturesDir, '../fixtures/computed.config.ts'),
         `
-          import { defineConfig } from '@nmtjs/neem/config'
+          import { defineConfig } from '@nmtjs/neem'
           const entry = './basic-app.ts'
           export default defineConfig({
             apps: {
@@ -54,5 +54,27 @@ describe('neem config static discovery', () => {
         `,
       ),
     ).toThrow("Expected api.entry to be () => import('<literal>')")
+  })
+
+  it('only discovers defineConfig from default export', () => {
+    expect(() =>
+      discoverConfigEntriesSync(
+        resolve(fixturesDir, '../fixtures/non-default.config.ts'),
+        `
+          import { defineConfig } from '@nmtjs/neem'
+
+          const unused = defineConfig({
+            apps: {
+              api: {
+                entry: () => import('./basic-app.ts'),
+                threads: [],
+              },
+            },
+          })
+
+          export default {}
+        `,
+      ),
+    ).toThrow('Failed to find defineConfig({...})')
   })
 })

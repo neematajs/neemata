@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { NeemHostLifecycle } from '../../../packages/neem/src/internal/lifecycle.ts'
+import { NeemHostLifecycle } from '../../../packages/neem/src/internal/runtime/lifecycle.ts'
 
 describe('NeemHostLifecycle', () => {
   it('tracks host lifecycle states', () => {

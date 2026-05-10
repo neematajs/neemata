@@ -1,14 +1,17 @@
 import { parentPort, workerData as rawWorkerData } from 'node:worker_threads'
 
-import type { NeemRuntime } from '../public/runtime.ts'
-import type { NeemWorker } from '../public/worker.ts'
+import type { NeemApp } from '../../public/app.ts'
+import type { NeemRuntime } from '../../public/runtime.ts'
+import type { NeemWorker } from '../../public/worker.ts'
 import type {
+  NeemAppRuntimeWorkerData,
+  NeemGenericRuntimeWorkerData,
   NeemRuntimeWorkerData,
   NeemRuntimeWorkerErrorOrigin,
   NeemRuntimeWorkerMessage,
   NeemRuntimeWorkerParentMessage,
   NeemRuntimeWorkerReloadData,
-} from './runtime-worker-protocol.ts'
+} from './worker-protocol.ts'
 import {
   createArtifactRegistry,
   importDefault,
@@ -46,6 +49,16 @@ function reportError(value: unknown, origin: NeemRuntimeWorkerErrorOrigin) {
 async function createRuntime(
   data: NeemRuntimeWorkerData,
 ): Promise<NeemRuntime> {
+  if (data.kind === 'app') {
+    return createAppRuntime(data)
+  }
+
+  return createWorkerRuntime(data)
+}
+
+async function createWorkerRuntime(
+  data: NeemGenericRuntimeWorkerData,
+): Promise<NeemRuntime> {
   const worker = await importDefault<NeemWorker<any, any>>(data.artifact.file)
 
   return worker.createRuntime({
@@ -56,6 +69,22 @@ async function createRuntime(
     artifact: data.artifact,
     artifacts: createArtifactRegistry(data.artifacts),
     port: data.port,
+  })
+}
+
+async function createAppRuntime(
+  data: NeemAppRuntimeWorkerData,
+): Promise<NeemRuntime> {
+  const app = await importDefault<NeemApp<any, any>>(data.artifact.file)
+
+  return app.createRuntime({
+    mode: data.mode,
+    appName: data.appName,
+    threadIndex: data.threadIndex,
+    threadOptions: data.threadOptions,
+    definition: app.definition,
+    artifact: data.artifact,
+    artifacts: createArtifactRegistry(data.artifacts),
   })
 }
 

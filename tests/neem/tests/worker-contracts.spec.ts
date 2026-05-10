@@ -1,8 +1,5 @@
-import type {
-  InferNeemWorkerData,
-  NeemWorkerRuntimeContext,
-} from '@nmtjs/neem/worker'
-import { defineWorker } from '@nmtjs/neem/worker'
+import type { InferNeemWorkerData, NeemWorkerRuntimeContext } from '@nmtjs/neem'
+import { defineWorker } from '@nmtjs/neem'
 import { describe, expect, expectTypeOf, it } from 'vitest'
 
 type FixtureWorkerData = { queue: string; concurrency?: number }

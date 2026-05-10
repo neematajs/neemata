@@ -1,7 +1,7 @@
 import { appendFileSync } from 'node:fs'
 
-import type { NeemAppRuntimeContext } from '@nmtjs/neem/app'
-import { defineApp } from '@nmtjs/neem/app'
+import type { NeemAppRuntimeContext } from '@nmtjs/neem'
+import { defineApp } from '@nmtjs/neem'
 
 export type RuntimeAppThreadOptions = {
   http: { listen: { hostname: string; port: number } }

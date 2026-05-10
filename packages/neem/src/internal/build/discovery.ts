@@ -1,7 +1,10 @@
 import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 
-import { parseSync } from 'rolldown/utils'
+import type { ESTree } from 'rolldown/utils'
+import { parseSync, Visitor } from 'rolldown/utils'
+
+type DiscoveryNode = ESTree.Node | null | undefined
 
 export type NeemDiscoveredImport = {
   specifier: string
@@ -58,8 +61,8 @@ export function discoverConfigEntriesSync(
 
 function discoverApps(
   configFile: string,
-  configObject: any,
-): Record<string, NeemDiscoveredApp> {
+  configObject: ESTree.ObjectExpression,
+) {
   const appsObject = unwrapExpression(getPropertyValue(configObject, 'apps'))
 
   if (!isObjectExpression(appsObject)) return {}
@@ -89,60 +92,63 @@ function discoverApps(
 
 function discoverPlugins(
   configFile: string,
-  configObject: any,
-): NeemDiscoveredPlugin[] {
+  configObject: ESTree.ObjectExpression,
+) {
   const pluginsArray = unwrapExpression(
     getPropertyValue(configObject, 'plugins'),
   )
 
-  if (!pluginsArray || pluginsArray.type !== 'ArrayExpression') return []
+  if (!isArrayExpression(pluginsArray)) return []
 
-  return (pluginsArray.elements ?? []).flatMap(
-    (element: any, index: number) => {
-      const pluginObject = unwrapConfigEntry(element)
-      if (!isObjectExpression(pluginObject)) return []
+  return (pluginsArray.elements ?? []).flatMap((element, index) => {
+    const pluginObject = unwrapConfigEntry(element)
+    if (!isObjectExpression(pluginObject)) return []
 
-      const entry = getStaticImportThunk(
-        pluginObject,
-        'entry',
-        configFile,
-        `plugins[${index}]`,
-      )
-      const build = getOptionalStaticImportThunk(
-        pluginObject,
-        'build',
-        configFile,
-      )
+    const entry = getStaticImportThunk(
+      pluginObject,
+      'entry',
+      configFile,
+      `plugins[${index}]`,
+    )
+    const build = getOptionalStaticImportThunk(
+      pluginObject,
+      'build',
+      configFile,
+    )
 
-      return [
-        {
-          index,
-          entry,
-          build: build?.type === 'import' ? build.value : undefined,
-          hasInlineBuild: build?.type === 'inline',
-        },
-      ]
-    },
-  )
+    return [
+      {
+        index,
+        entry,
+        build: build?.type === 'import' ? build.value : undefined,
+        hasInlineBuild: build?.type === 'inline',
+      },
+    ]
+  })
 }
 
-function findDefineConfigObject(ast: any): any | undefined {
-  let found: any
+function findDefineConfigObject(ast: ESTree.Program) {
+  let found: ESTree.ObjectExpression | undefined
 
-  visit(ast, (node) => {
-    if (found || node?.type !== 'CallExpression') return
-    if (!isIdentifier(node.callee, 'defineConfig')) return
+  new Visitor({
+    ExportDefaultDeclaration(node) {
+      if (found) return
+      const declaration = unwrapExpression(node.declaration)
 
-    const [argument] = node.arguments ?? []
-    const configObject = unwrapExpression(argument)
+      if (declaration?.type !== 'CallExpression') return
+      if (!isIdentifier(declaration.callee, 'defineConfig')) return
 
-    if (isObjectExpression(configObject)) found = configObject
-  })
+      const [argument] = declaration.arguments ?? []
+      const configObject = unwrapExpression(argument)
+
+      if (isObjectExpression(configObject)) found = configObject
+    },
+  }).visit(ast)
 
   return found
 }
 
-function unwrapConfigEntry(node: any): any {
+function unwrapConfigEntry(node: DiscoveryNode) {
   const expression = unwrapExpression(node)
 
   if (expression?.type === 'CallExpression') {
@@ -154,7 +160,7 @@ function unwrapConfigEntry(node: any): any {
 }
 
 function getStaticImportThunk(
-  objectExpression: any,
+  objectExpression: DiscoveryNode,
   propertyName: string,
   importer: string,
   owner: string,
@@ -174,7 +180,7 @@ function getStaticImportThunk(
 }
 
 function getOptionalStaticImportThunk(
-  objectExpression: any,
+  objectExpression: DiscoveryNode,
   propertyName: string,
   importer: string,
 ):
@@ -199,14 +205,14 @@ function getOptionalStaticImportThunk(
   )
 }
 
-function getImportThunkSpecifier(node: any): string | undefined {
+function getImportThunkSpecifier(node: DiscoveryNode) {
   if (node?.type !== 'ArrowFunctionExpression') return undefined
   if ((node.params ?? []).length > 0) return undefined
 
   const body = unwrapExpression(node.body)
 
   if (body?.type !== 'ImportExpression') return undefined
-  if (typeof body.source?.value !== 'string') return undefined
+  if (!isStringLiteral(body.source)) return undefined
 
   return body.source.value
 }
@@ -222,64 +228,74 @@ function resolveImport(
   }
 }
 
-function getPropertyValue(objectExpression: any, name: string): any {
+function getPropertyValue(
+  objectExpression: DiscoveryNode,
+  name: string,
+): ESTree.Expression | undefined {
   if (!isObjectExpression(objectExpression)) return undefined
 
-  return (objectExpression.properties ?? []).find(
-    (property: any) =>
-      isProperty(property) && getStaticPropertyName(property) === name,
-  )?.value
+  for (const property of objectExpression.properties ?? []) {
+    if (!isProperty(property)) continue
+    if (getStaticPropertyName(property) === name) return property.value
+  }
 }
 
-function getStaticPropertyName(property: any): string | undefined {
+function getStaticPropertyName(property: ESTree.ObjectProperty) {
   if (property?.computed) return undefined
 
   if (property.key?.type === 'Identifier') return property.key.name
-  if (typeof property.key?.value === 'string') return property.key.value
+  if (isStringLiteral(property.key)) return property.key.value
 
   return undefined
 }
 
-function unwrapExpression(node: any): any {
+function unwrapExpression(node: DiscoveryNode) {
   let current = node
 
-  while (
-    current?.type === 'TSSatisfiesExpression' ||
-    current?.type === 'TSAsExpression' ||
-    current?.type === 'TSNonNullExpression' ||
-    current?.type === 'ParenthesizedExpression'
-  ) {
+  while (isWrappedExpression(current)) {
     current = current.expression
   }
 
   return current
 }
 
-function isObjectExpression(node: any): boolean {
+function isObjectExpression(
+  node: DiscoveryNode,
+): node is ESTree.ObjectExpression {
   return node?.type === 'ObjectExpression'
 }
 
-function isProperty(node: any): boolean {
+function isArrayExpression(
+  node: DiscoveryNode,
+): node is ESTree.ArrayExpression {
+  return node?.type === 'ArrayExpression'
+}
+
+function isProperty(
+  node: ESTree.ObjectPropertyKind,
+): node is ESTree.ObjectProperty {
   return node?.type === 'Property'
 }
 
-function isIdentifier(node: any, name: string): boolean {
+function isIdentifier(node: DiscoveryNode, name: string) {
   return node?.type === 'Identifier' && node.name === name
 }
 
-function visit(node: any, visitor: (node: any) => void): void {
-  if (!node || typeof node !== 'object') return
+function isStringLiteral(node: DiscoveryNode): node is ESTree.StringLiteral {
+  return node?.type === 'Literal' && typeof node.value === 'string'
+}
 
-  visitor(node)
-
-  for (const value of Object.values(node)) {
-    if (!value) continue
-
-    if (Array.isArray(value)) {
-      for (const item of value) visit(item, visitor)
-      continue
-    }
-
-    if (typeof value === 'object') visit(value, visitor)
-  }
+function isWrappedExpression(
+  node: DiscoveryNode,
+): node is
+  | ESTree.TSSatisfiesExpression
+  | ESTree.TSAsExpression
+  | ESTree.TSNonNullExpression
+  | ESTree.ParenthesizedExpression {
+  return (
+    node?.type === 'TSSatisfiesExpression' ||
+    node?.type === 'TSAsExpression' ||
+    node?.type === 'TSNonNullExpression' ||
+    node?.type === 'ParenthesizedExpression'
+  )
 }

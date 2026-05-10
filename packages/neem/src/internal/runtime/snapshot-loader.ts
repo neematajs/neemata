@@ -1,12 +1,15 @@
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
-import type { NeemConfig } from '../public/config.ts'
-import type { NeemMode } from '../public/runtime.ts'
-import type { NeemBuildManifest } from './manifest.ts'
-import type { NeemRuntimeSnapshot } from './runtime-snapshot.ts'
-import { NEEM_MANIFEST_FILE, NEEM_MANIFEST_SCHEMA_VERSION } from './manifest.ts'
-import { createRuntimeSnapshot } from './runtime-snapshot.ts'
+import type { NeemConfig } from '../../public/config.ts'
+import type { NeemMode } from '../../public/runtime.ts'
+import type { NeemBuildManifest } from '../build/manifest.ts'
+import type { NeemRuntimeSnapshot } from './snapshot.ts'
+import {
+  NEEM_MANIFEST_FILE,
+  NEEM_MANIFEST_SCHEMA_VERSION,
+} from '../build/manifest.ts'
+import { createRuntimeSnapshot } from './snapshot.ts'
 import { importDefault } from './utils.ts'
 
 type ManifestParser = (value: unknown) => NeemBuildManifest

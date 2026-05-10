@@ -4,7 +4,7 @@ import { Worker } from 'node:worker_threads'
 import type {
   NeemManagedWorkerHandle,
   NeemWorkerState,
-} from '../public/runtime.ts'
+} from '../../public/runtime.ts'
 import { normalizeError } from './utils.ts'
 
 export type NeemManagedWorkerController = {

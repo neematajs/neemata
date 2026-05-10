@@ -1,6 +1,5 @@
-import type { InferNeemThreadOptions } from '@nmtjs/neem/app'
-import type { NeemPluginOptions } from '@nmtjs/neem/config'
-import { defineAppConfig, definePluginConfig } from '@nmtjs/neem/config'
+import type { InferNeemThreadOptions, NeemPluginOptions } from '@nmtjs/neem'
+import { defineAppConfig, definePluginConfig } from '@nmtjs/neem'
 import { describe, expect, expectTypeOf, it } from 'vitest'
 
 import app from '../fixtures/basic-app.ts'

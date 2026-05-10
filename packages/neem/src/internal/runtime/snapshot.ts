@@ -1,13 +1,13 @@
 import { resolve } from 'node:path'
 
-import type { NeemResolvedArtifact } from '../public/artifact.ts'
-import type { NeemConfig } from '../public/config.ts'
-import type { NeemMode } from '../public/runtime.ts'
-import type { NeemScopedArtifactRegistry } from './artifact-registry.ts'
+import type { NeemResolvedArtifact } from '../../public/artifact.ts'
+import type { NeemConfig } from '../../public/config.ts'
+import type { NeemMode } from '../../public/runtime.ts'
 import type {
   NeemBuildManifest,
   NeemBuildManifestArtifact,
-} from './manifest.ts'
+} from '../build/manifest.ts'
+import type { NeemScopedArtifactRegistry } from './artifact-registry.ts'
 import { createNeemArtifactRegistry } from './artifact-registry.ts'
 
 export type NeemRuntimeSnapshot = {

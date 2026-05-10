@@ -4,8 +4,8 @@ import { resolve } from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { NEEM_MANIFEST_FILE } from '../../../packages/neem/src/internal/manifest.ts'
-import { loadBuiltRuntimeSnapshot } from '../../../packages/neem/src/internal/snapshot-loader.ts'
+import { NEEM_MANIFEST_FILE } from '../../../packages/neem/src/internal/build/manifest.ts'
+import { loadBuiltRuntimeSnapshot } from '../../../packages/neem/src/internal/runtime/snapshot-loader.ts'
 
 const tempDirs: string[] = []
 
