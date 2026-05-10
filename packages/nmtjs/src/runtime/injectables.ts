@@ -1,6 +1,6 @@
 import { createLazyInjectable, Scope } from '@nmtjs/core'
 
-import type { JobWorkerPool, WorkerType } from './enums.ts'
+import type { WorkerType } from './enums.ts'
 import type { JobManagerInstance } from './jobs/manager.ts'
 import type { JobExecutionContext, SaveJobProgress } from './jobs/types.ts'
 import type { ServerStoreConfig } from './server/config.ts'
@@ -38,7 +38,7 @@ export const workerType = createLazyInjectable<WorkerType>(
   'WorkerType',
 )
 
-export const jobWorkerPool = createLazyInjectable<JobWorkerPool>(
+export const jobWorkerPool = createLazyInjectable<string>(
   Scope.Global,
   'JobWorkerPool',
 )

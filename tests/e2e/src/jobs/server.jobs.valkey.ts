@@ -1,4 +1,4 @@
-import { JobWorkerPool, n, StoreType } from 'nmtjs'
+import { n, StoreType } from 'nmtjs'
 
 import { jobs } from './applications/main/jobs.ts'
 
@@ -26,10 +26,7 @@ export default n.server({
     },
   },
   jobs: {
-    pools: {
-      [JobWorkerPool.Io]: { threads: 1, jobs: 1 },
-      [JobWorkerPool.Compute]: { threads: 1, jobs: 1 },
-    },
+    pools: { io: { threads: 1, jobs: 1 }, compute: { threads: 1, jobs: 1 } },
     jobs: [
       jobs.quick,
       jobs.slow,

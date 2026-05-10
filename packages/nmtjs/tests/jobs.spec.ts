@@ -1,7 +1,6 @@
 import { t } from '@nmtjs/type'
 import { describe, expect, expectTypeOf, it } from 'vitest'
 
-import { JobWorkerPool } from '../src/runtime/enums.ts'
 import { createJob } from '../src/runtime/jobs/job.ts'
 import { JobManager } from '../src/runtime/jobs/manager.ts'
 import { createJobsRouter } from '../src/runtime/jobs/router.ts'
@@ -58,7 +57,7 @@ describe('jobs builder', () => {
 
     const job = createJob({
       name: 'builder-shape',
-      pool: JobWorkerPool.Compute,
+      pool: 'compute',
       input: t.object({ seed: t.number() }),
       output: t.object({ done: t.number() }),
     })
@@ -98,7 +97,7 @@ describe('jobs builder', () => {
 
     const job = createJob({
       name: 'builder-condition',
-      pool: JobWorkerPool.Compute,
+      pool: 'compute',
       input: t.object({ seed: t.number() }),
       output: t.object({
         a: t.number().optional(),
@@ -149,7 +148,7 @@ describe('jobs types', () => {
 
     const job = createJob({
       name: 'types-parallel',
-      pool: JobWorkerPool.Compute,
+      pool: 'compute',
       input: t.object({ seed: t.number() }),
       output: t.object({ done: t.number() }),
     })
@@ -180,7 +179,7 @@ describe('jobs types', () => {
 
     createJob({
       name: 'types-invalid',
-      pool: JobWorkerPool.Compute,
+      pool: 'compute',
       input: t.object({ seed: t.number() }),
       output: t.object({ done: t.number() }),
     })
@@ -196,7 +195,7 @@ describe('jobs types', () => {
 
     createJob({
       name: 'types-invalid-parallel-input',
-      pool: JobWorkerPool.Compute,
+      pool: 'compute',
       input: t.object({ seed: t.number() }),
       output: t.object({ done: t.number() }),
     })
@@ -238,7 +237,7 @@ describe('jobs types', () => {
 
     createJob({
       name: 'types-job-data-compatible',
-      pool: JobWorkerPool.Compute,
+      pool: 'compute',
       input: t.object({ seed: t.number() }),
       output: t.object({ done: t.number() }),
       data: async () => ({ progress: { tick: 1 } }),
@@ -248,7 +247,7 @@ describe('jobs types', () => {
 
     createJob({
       name: 'types-job-data-incompatible-step',
-      pool: JobWorkerPool.Compute,
+      pool: 'compute',
       input: t.object({ seed: t.number() }),
       output: t.object({ done: t.number() }),
       data: async () => ({ progress: { tick: 1 } }),
@@ -259,7 +258,7 @@ describe('jobs types', () => {
 
     createJob({
       name: 'types-job-data-incompatible-parallel',
-      pool: JobWorkerPool.Compute,
+      pool: 'compute',
       input: t.object({ seed: t.number() }),
       output: t.object({ value: t.number(), done: t.number() }),
       data: async () => ({ progress: { tick: 1 } }),
@@ -307,7 +306,7 @@ describe('jobs info metadata', () => {
 
     const job = createJob({
       name: 'info-parallel-manager',
-      pool: JobWorkerPool.Compute,
+      pool: 'compute',
       input: t.object({ seed: t.number() }),
       output: t.object({ total: t.number() }),
     })
@@ -364,7 +363,7 @@ describe('jobs info metadata', () => {
 
     const job = createJob({
       name: 'info-parallel-router',
-      pool: JobWorkerPool.Compute,
+      pool: 'compute',
       input: t.object({ seed: t.number() }),
       output: t.object({ total: t.number() }),
       progress: t.object({}),
@@ -398,7 +397,7 @@ describe('jobs router', () => {
   function createRouterFixtureJob(name: string) {
     return createJob({
       name,
-      pool: JobWorkerPool.Compute,
+      pool: 'compute',
       input: t.object({ seed: t.number() }),
       output: t.object({ value: t.number() }),
       progress: t.object({}),

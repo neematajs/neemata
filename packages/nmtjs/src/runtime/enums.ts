@@ -3,11 +3,6 @@ export enum StoreType {
   Valkey = 'Valkey',
 }
 
-export enum JobWorkerPool {
-  Io = 'Io',
-  Compute = 'Compute',
-}
-
 export enum WorkerType {
   Application = 'Application',
   Job = 'Job',

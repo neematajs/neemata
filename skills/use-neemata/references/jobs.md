@@ -14,11 +14,11 @@ in a separate worker thread pool. Jobs require a store (Redis or Valkey).
 Jobs are built with a chainable API: define options, add steps, then finalize with `.return()`:
 
 ```ts
-import { n, t, JobWorkerPool } from 'nmtjs'
+import { n, t } from 'nmtjs'
 
 const processUserJob = n.job({
   name: 'processUser',
-  pool: JobWorkerPool.Io,
+  pool: 'io',
   input: t.object({ userId: t.string() }),
   output: t.object({ success: t.boolean() }),
   attempts: 3,
@@ -68,7 +68,7 @@ the group fails with a key-conflict error.
 | Option | Type | Description |
 |---|---|---|
 | `name` | `string` | Unique job name (used as queue name) |
-| `pool` | `JobWorkerPool` | `Io` or `Compute` — which worker pool runs this job |
+| `pool` | `string` | Custom pool name configured in `jobs.pools` |
 | `input` | `t.*` schema | Input data schema |
 | `output` | `t.*` schema | Final output schema |
 | `progress` | `t.*` schema | Optional user-defined progress state schema |
@@ -113,7 +113,7 @@ type SyncUsersData = {
 
 const syncUsersJob = n.job({
   name: 'syncUsers',
-  pool: JobWorkerPool.Io,
+  pool: 'io',
   input: t.object({ tenantId: t.string() }),
   output: t.object({ synced: t.number() }),
   progress: t.object({ cursor: t.string().optional() }),
@@ -178,7 +178,7 @@ Use `.steps(...)` when independent steps can run in parallel against the same in
 const job = n
   .job({
     name: 'parallel-example',
-    pool: JobWorkerPool.Io,
+    pool: 'io',
     input: t.object({ id: t.string() }),
     output: t.object({ left: t.number(), right: t.number(), total: t.number() }),
   })
@@ -285,7 +285,7 @@ These are available inside job step handlers and job hooks:
 | `n.inject.jobAbortSignal` | Global | `AbortSignal` | Cancellation signal for current job |
 | `n.inject.saveJobProgress` | Global | `() => Promise<void>` | Manually persist progress mid-step |
 | `n.inject.currentJobInfo` | Global | `JobExecutionContext` | Current job metadata (name, id, attempts) |
-| `n.inject.jobWorkerPool` | Global | `JobWorkerPool` | Current worker's pool type |
+| `n.inject.jobWorkerPool` | Global | `string` | Current worker's pool name |
 
 ### Saving Progress Mid-Step
 
@@ -403,7 +403,7 @@ const jobManagementRouter = n.jobRouter({
 Jobs require a store and pool configuration in `n.server()`:
 
 ```ts
-import { n, StoreType, JobWorkerPool } from 'nmtjs'
+import { n, StoreType } from 'nmtjs'
 
 export default n.server({
   store: {
@@ -412,8 +412,8 @@ export default n.server({
   },
   jobs: {
     pools: {
-      [JobWorkerPool.Io]: { threads: 2, jobs: 5 },
-      [JobWorkerPool.Compute]: { threads: 1, jobs: 2 },
+      io: { threads: 2, jobs: 5 },
+      compute: { threads: 1, jobs: 2 },
     },
     jobs: [processUserJob],
   },
@@ -421,12 +421,10 @@ export default n.server({
 })
 ```
 
-### Pool Types
+### Pool Configuration
 
-| Pool | Use for |
-|---|---|
-| `JobWorkerPool.Io` | I/O-bound jobs (API calls, database queries, file processing) |
-| `JobWorkerPool.Compute` | CPU-bound jobs (data processing, calculations) |
+Pool names are application-defined strings. Use separate pools to isolate workloads
+with different capacity and latency requirements.
 
 Each pool gets `threads` worker threads. `jobs` is the number of concurrent jobs per thread.
 
