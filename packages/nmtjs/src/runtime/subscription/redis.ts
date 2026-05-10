@@ -1,10 +1,10 @@
 import EventEmitter, { on } from 'node:events'
 
+import type { RuntimePlugin } from '@nmtjs/application'
 import type { Logger } from '@nmtjs/core'
 import { isAbortError } from '@nmtjs/common'
 import { createFactoryInjectable } from '@nmtjs/core'
 
-import type { RuntimePlugin } from '../plugin.ts'
 import type { Store } from '../types.ts'
 import type {
   SubscriptionAdapterEvent,

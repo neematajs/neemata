@@ -1,4 +1,4 @@
-import type { Transport } from '@nmtjs/gateway'
+import type { ApplicationTransport } from '@nmtjs/application'
 import type { ConnectionType } from '@nmtjs/protocol'
 import { ProxyableTransportType } from '@nmtjs/gateway'
 
@@ -77,9 +77,9 @@ function adapterFactory(params: HttpAdapterParams<'bun'>): HttpAdapterServer {
   }
 }
 
-export const HttpTransport: Transport<
+export const HttpTransport: ApplicationTransport<
   ConnectionType.Unidirectional,
-  HttpTransportOptions<'deno'>,
+  HttpTransportOptions<'bun'>,
   typeof injectables,
   ProxyableTransportType.HTTP
 > = {

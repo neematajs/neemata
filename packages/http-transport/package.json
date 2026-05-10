@@ -52,6 +52,7 @@
     "clean-build": "rm -rf ./dist"
   },
   "devDependencies": {
+    "@nmtjs/application": "workspace:*",
     "@nmtjs/client": "workspace:*",
     "@nmtjs/common": "workspace:*",
     "@nmtjs/gateway": "workspace:*",
@@ -59,6 +60,7 @@
     "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.63.0"
   },
   "peerDependencies": {
+    "@nmtjs/application": "workspace:*",
     "@nmtjs/common": "workspace:*",
     "@nmtjs/core": "workspace:*",
     "@nmtjs/gateway": "workspace:*",

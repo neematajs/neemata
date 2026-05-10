@@ -2,6 +2,7 @@ import assert from 'node:assert'
 import { randomUUID } from 'node:crypto'
 import { inspect } from 'node:util'
 
+import type { TAnyProcedureContract, TAnyRouterContract } from '@nmtjs/contract'
 import type {
   AnyFactoryMetaBinding,
   AnyMetaBinding,
@@ -16,6 +17,7 @@ import type {
   GatewayConnection,
   GatewayResolvedProcedure,
   GatewayResolveOptions,
+  GatewayStaticMetaView,
 } from '@nmtjs/gateway'
 import { withTimeout } from '@nmtjs/common'
 import { IsStreamProcedureContract } from '@nmtjs/contract'
@@ -59,6 +61,24 @@ export type ApiCallOptions<T extends AnyProcedure = AnyProcedure> = Readonly<{
   signal: AbortSignal
 }>
 
+export type ApplicationResolvedRouter = Readonly<{
+  contract: TAnyRouterContract
+  timeout?: number
+}>
+
+export type ApplicationResolvedProcedureDescriptor = Readonly<{
+  name: string
+  contract: TAnyProcedureContract
+  stream: boolean
+  streamTimeout?: number
+}>
+
+export interface ApplicationResolvedProcedure extends GatewayResolvedProcedure {
+  readonly meta: GatewayStaticMetaView
+  readonly procedure: ApplicationResolvedProcedureDescriptor
+  readonly path: readonly ApplicationResolvedRouter[]
+}
+
 export type ApiOptions = {
   timeout?: number
   container: Container
@@ -88,7 +108,9 @@ export class ApiError extends ProtocolError {
 
 const NotFound = () => new ApiError(ErrorCode.NotFound, 'Procedure not found')
 
-export class ApplicationApi implements GatewayApi {
+export class ApplicationApi
+  implements GatewayApi<ApplicationResolvedProcedure>
+{
   constructor(public options: ApiOptions) {}
 
   find(procedureName: string) {
@@ -103,15 +125,29 @@ export class ApplicationApi implements GatewayApi {
 
   async resolve(
     options: GatewayResolveOptions,
-  ): Promise<GatewayResolvedProcedure> {
+  ): Promise<ApplicationResolvedProcedure> {
     const { procedure, path } = this.find(options.procedure)
 
     const metaBindings = this.resolveMetaBindings(path, procedure)
+    const stream = IsStreamProcedureContract(procedure.contract)
+    const name = procedure.contract.name ?? options.procedure
 
     return Object.freeze({
-      stream: IsStreamProcedureContract(procedure.contract),
+      name,
+      stream,
       meta: createGatewayStaticMetaView(metaBindings.static),
-    }) satisfies GatewayResolvedProcedure
+      procedure: Object.freeze({
+        name,
+        contract: procedure.contract,
+        stream,
+        streamTimeout: procedure.streamTimeout,
+      }),
+      path: Object.freeze(
+        path.map((router) =>
+          Object.freeze({ contract: router.contract, timeout: router.timeout }),
+        ),
+      ),
+    }) satisfies ApplicationResolvedProcedure
   }
 
   async call(options: GatewayApiCallOptions): Promise<GatewayApiCallResult> {

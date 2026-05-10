@@ -48,6 +48,31 @@ importers:
         specifier: 4.1.4
         version: 4.1.4(@opentelemetry/api@1.9.0)(@types/node@24.10.1)(@vitest/browser-playwright@4.1.4)(@vitest/coverage-v8@4.1.4)(@vitest/ui@4.1.4)(vite@8.0.8(@types/node@24.10.1)(esbuild@0.27.2)(jiti@2.6.1))
 
+  packages/application:
+    dependencies:
+      '@nmtjs/common':
+        specifier: workspace:*
+        version: link:../common
+      '@nmtjs/contract':
+        specifier: workspace:*
+        version: link:../contract
+      '@nmtjs/core':
+        specifier: workspace:*
+        version: link:../core
+      '@nmtjs/gateway':
+        specifier: workspace:*
+        version: link:../gateway
+      '@nmtjs/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+      '@nmtjs/type':
+        specifier: workspace:*
+        version: link:../type
+    devDependencies:
+      zod:
+        specifier: 'catalog:'
+        version: 4.3.6
+
   packages/client:
     devDependencies:
       '@nmtjs/common':
@@ -148,6 +173,9 @@ importers:
         specifier: ^24
         version: 24.10.1
     devDependencies:
+      '@nmtjs/application':
+        specifier: workspace:*
+        version: link:../application
       '@nmtjs/client':
         specifier: workspace:*
         version: link:../client
@@ -187,6 +215,9 @@ importers:
 
   packages/nmtjs:
     dependencies:
+      '@nmtjs/application':
+        specifier: workspace:*
+        version: link:../application
       '@nmtjs/common':
         specifier: workspace:*
         version: link:../common
@@ -321,6 +352,9 @@ importers:
         specifier: 0.4.5
         version: 0.4.5
     devDependencies:
+      '@nmtjs/application':
+        specifier: workspace:*
+        version: link:../application
       '@nmtjs/client':
         specifier: workspace:*
         version: link:../client

@@ -65,6 +65,7 @@
     }
   },
   "dependencies": {
+    "@nmtjs/application": "workspace:*",
     "@nmtjs/common": "workspace:*",
     "@nmtjs/contract": "workspace:*",
     "@nmtjs/core": "workspace:*",

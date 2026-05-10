@@ -11,7 +11,6 @@ import { ProtocolFormats } from '@nmtjs/protocol/server'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { GatewayApi } from '../src/api.ts'
-import { createGatewayStaticMetaView } from '../src/api.ts'
 import { Gateway } from '../src/gateway.ts'
 import {
   createTestContainer,
@@ -29,7 +28,6 @@ describe('Gateway heartbeat', () => {
   const createResolvedProcedure = () => ({
     name: 'heartbeat/test',
     stream: false,
-    meta: createGatewayStaticMetaView([]),
   })
 
   it('sends server Ping and accepts client Pong', async () => {

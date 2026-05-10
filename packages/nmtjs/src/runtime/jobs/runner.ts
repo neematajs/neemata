@@ -1,10 +1,11 @@
+import type { LifecycleHooks } from '@nmtjs/application'
 import type { Container, Logger, LoggingOptions } from '@nmtjs/core'
 import type { Job } from 'bullmq'
+import { LifecycleHook } from '@nmtjs/application'
 import { anyAbortSignal } from '@nmtjs/common'
 import { Scope } from '@nmtjs/core'
 import { UnrecoverableError } from 'bullmq'
 
-import type { LifecycleHooks } from '../hooks.ts'
 import type { AnyJob } from './job.ts'
 import type { AnyJobStep } from './step.ts'
 import type {
@@ -12,7 +13,6 @@ import type {
   JobProgressCheckpoint,
   StepResultEntry,
 } from './types.ts'
-import { LifecycleHook } from '../enums.ts'
 import {
   currentJobInfo,
   jobAbortSignal,

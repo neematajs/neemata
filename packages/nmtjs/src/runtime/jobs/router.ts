@@ -1,26 +1,23 @@
+import type {
+  AnyGuard,
+  AnyMiddleware,
+  AnyProcedure,
+  AnyRouter,
+  AnyRouterMetaBinding,
+  ProcedureMetaBinding,
+  Router,
+} from '@nmtjs/application'
 import type { MaybePromise } from '@nmtjs/common'
 import type { TProcedureContract, TRouterContract } from '@nmtjs/contract'
 import type { Dependencies, DependencyContext } from '@nmtjs/core'
 import type { NullableType, OptionalType } from '@nmtjs/type'
 import type { NeverType } from '@nmtjs/type/never'
+import { createProcedure, createRouter } from '@nmtjs/application'
 import { CoreInjectables } from '@nmtjs/core'
 import { t } from '@nmtjs/type'
 
-import type { AnyGuard } from '../application/api/guards.ts'
-import type { AnyMiddleware } from '../application/api/middlewares.ts'
-import type {
-  AnyProcedure,
-  ProcedureMetaBinding,
-} from '../application/api/procedure.ts'
-import type {
-  AnyRouter,
-  AnyRouterMetaBinding,
-  Router,
-} from '../application/api/router.ts'
 import type { AnyJob } from './job.ts'
 import type { JobStatus } from './types.ts'
-import { createProcedure } from '../application/api/procedure.ts'
-import { createRouter } from '../application/api/router.ts'
 import { jobManager } from '../injectables.ts'
 
 // ============================================================================

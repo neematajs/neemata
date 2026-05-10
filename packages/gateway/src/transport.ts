@@ -32,6 +32,7 @@ export interface TransportOnMessageOptions {
 
 export type TransportWorkerParams<
   Type extends ConnectionType = ConnectionType,
+  ResolvedProcedure extends GatewayResolvedProcedure = GatewayResolvedProcedure,
 > = {
   formats: ProtocolFormats
   onConnect: (
@@ -46,7 +47,7 @@ export type TransportWorkerParams<
   resolve: (
     connection: GatewayConnection,
     procedure: GatewayRpc['procedure'],
-  ) => Promise<GatewayResolvedProcedure>
+  ) => Promise<ResolvedProcedure>
   onRpc: (
     connection: GatewayConnection,
     rpc: GatewayRpc,
@@ -57,14 +58,20 @@ export type TransportWorkerParams<
 
 export interface TransportWorkerStartOptions<
   Type extends ConnectionType = ConnectionType,
-> extends TransportWorkerParams<Type> {
+  ResolvedProcedure extends GatewayResolvedProcedure = GatewayResolvedProcedure,
+> extends TransportWorkerParams<Type, ResolvedProcedure> {
   // for extra props in the future
 }
 
-export interface TransportWorker<Type extends ConnectionType = ConnectionType> {
-  start: (params: TransportWorkerParams<Type>) => MaybePromise<string>
+export interface TransportWorker<
+  Type extends ConnectionType = ConnectionType,
+  ResolvedProcedure extends GatewayResolvedProcedure = GatewayResolvedProcedure,
+> {
+  start: (
+    params: TransportWorkerParams<Type, ResolvedProcedure>,
+  ) => MaybePromise<string>
   stop: (
-    params: Pick<TransportWorkerParams<Type>, 'formats'>,
+    params: Pick<TransportWorkerParams<Type, ResolvedProcedure>, 'formats'>,
   ) => MaybePromise<void>
   send?: Type extends 'unidirectional'
     ? never
@@ -86,10 +93,13 @@ export interface Transport<
   Proxyable extends ProxyableTransportType | undefined =
     | ProxyableTransportType
     | undefined,
+  ResolvedProcedure extends GatewayResolvedProcedure = GatewayResolvedProcedure,
 > {
   proxyable: Proxyable
   injectables?: Injections
-  factory: (options: TransportOptions) => MaybePromise<TransportWorker<Type>>
+  factory: (
+    options: TransportOptions,
+  ) => MaybePromise<TransportWorker<Type, ResolvedProcedure>>
 }
 
 export function createTransport<
@@ -101,8 +111,15 @@ export function createTransport<
   Proxyable extends ProxyableTransportType | undefined =
     | ProxyableTransportType
     | undefined,
+  ResolvedProcedure extends GatewayResolvedProcedure = GatewayResolvedProcedure,
 >(
-  config: Transport<Type, TransportOptions, Injections, Proxyable>,
-): Transport<Type, TransportOptions, Injections, Proxyable> {
+  config: Transport<
+    Type,
+    TransportOptions,
+    Injections,
+    Proxyable,
+    ResolvedProcedure
+  >,
+): Transport<Type, TransportOptions, Injections, Proxyable, ResolvedProcedure> {
   return config
 }

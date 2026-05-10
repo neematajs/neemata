@@ -1,11 +1,9 @@
-import type { HookTypes } from '@nmtjs/core'
+import type { ApplicationConfig } from '@nmtjs/application'
 import type { ProxyableTransportType } from '@nmtjs/gateway'
 import type { Redis, RedisOptions } from 'ioredis'
 import type { Redis as Valkey, RedisOptions as ValkeyOptions } from 'iovalkey'
 
-import type { ApplicationConfig } from './application/config.ts'
-import type { LifecycleHook, StoreType } from './enums.ts'
-import type { BaseRuntime } from './runtime.ts'
+import type { StoreType } from './enums.ts'
 
 export type WorkerThreadErrorOrigin = 'bootstrap' | 'start' | 'runtime'
 
@@ -64,13 +62,6 @@ export type JobTaskResultTypes = {
   unrecoverable_error: { error: any }
   job_not_found: {}
   queue_job_not_found: {}
-}
-
-export interface LifecycleHookTypes extends HookTypes {
-  [LifecycleHook.BeforeInitialize]: (runtime: BaseRuntime) => any
-  [LifecycleHook.AfterInitialize]: (runtime: BaseRuntime) => any
-  [LifecycleHook.BeforeDispose]: (runtime: BaseRuntime) => any
-  [LifecycleHook.AfterDispose]: (runtime: BaseRuntime) => any
 }
 
 export type ApplicationDefinitionType =
