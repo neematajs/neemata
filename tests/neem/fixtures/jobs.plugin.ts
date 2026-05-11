@@ -28,6 +28,7 @@ export default definePlugin<JobsPluginOptions>({
       name: ctx.name,
       instanceId: ctx.instanceId,
       options: ctx.options,
+      logger: Boolean(ctx.logger),
       artifacts: ctx.artifacts
         .list()
         .map((artifact) => ({ id: artifact.id, owner: artifact.owner })),

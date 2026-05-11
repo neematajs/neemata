@@ -65,6 +65,12 @@ importers:
       '@nmtjs/gateway':
         specifier: workspace:*
         version: link:../gateway
+      '@nmtjs/json-format':
+        specifier: workspace:*
+        version: link:../json-format
+      '@nmtjs/msgpack-format':
+        specifier: workspace:*
+        version: link:../msgpack-format
       '@nmtjs/neem':
         specifier: workspace:*
         version: link:../neem
@@ -224,6 +230,9 @@ importers:
       '@nmtjs/common':
         specifier: workspace:*
         version: link:../common
+      '@nmtjs/core':
+        specifier: workspace:*
+        version: link:../core
       citty:
         specifier: 0.2.2
         version: 0.2.2
@@ -491,6 +500,9 @@ importers:
       '@nmtjs/application':
         specifier: workspace:*
         version: link:../../packages/application
+      '@nmtjs/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@nmtjs/neem':
         specifier: workspace:*
         version: link:../../packages/neem

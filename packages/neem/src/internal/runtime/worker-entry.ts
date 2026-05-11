@@ -1,6 +1,7 @@
 import { parentPort, workerData as rawWorkerData } from 'node:worker_threads'
 
 import type { NeemApp } from '../../public/app.ts'
+import type { NeemConfig } from '../../public/config.ts'
 import type { NeemRuntime } from '../../public/runtime.ts'
 import type { NeemWorker } from '../../public/worker.ts'
 import type {
@@ -12,6 +13,7 @@ import type {
   NeemRuntimeWorkerParentMessage,
   NeemRuntimeWorkerReloadData,
 } from './worker-protocol.ts'
+import { createNeemChildLogger, resolveNeemConfigLogger } from './logger.ts'
 import {
   createArtifactRegistry,
   importDefault,
@@ -59,12 +61,14 @@ async function createRuntime(
 async function createWorkerRuntime(
   data: NeemGenericRuntimeWorkerData,
 ): Promise<NeemRuntime> {
+  const logger = await resolveWorkerLogger(data.configFile, data.name)
   const worker = await importDefault<NeemWorker<any, any>>(data.artifact.file)
 
   return worker.createRuntime({
     mode: data.mode,
     name: data.name,
     data: data.data,
+    logger,
     definition: worker.definition,
     artifact: data.artifact,
     artifacts: createArtifactRegistry(data.artifacts),
@@ -75,6 +79,10 @@ async function createWorkerRuntime(
 async function createAppRuntime(
   data: NeemAppRuntimeWorkerData,
 ): Promise<NeemRuntime> {
+  const logger = await resolveWorkerLogger(
+    data.configFile,
+    `App/${data.appName}:${data.threadIndex}`,
+  )
   const app = await importDefault<NeemApp<any, any>>(data.artifact.file)
 
   return app.createRuntime({
@@ -82,10 +90,16 @@ async function createAppRuntime(
     appName: data.appName,
     threadIndex: data.threadIndex,
     threadOptions: data.threadOptions,
+    logger,
     definition: app.definition,
     artifact: data.artifact,
     artifacts: createArtifactRegistry(data.artifacts),
   })
+}
+
+async function resolveWorkerLogger(configFile: string, label: string) {
+  const config = await importDefault<NeemConfig>(configFile)
+  return createNeemChildLogger(await resolveNeemConfigLogger(config), label)
 }
 
 async function stopRuntime() {

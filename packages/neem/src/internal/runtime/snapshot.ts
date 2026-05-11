@@ -1,5 +1,8 @@
 import { resolve } from 'node:path'
 
+import type { Logger } from '@nmtjs/core'
+import { createLogger } from '@nmtjs/core'
+
 import type { NeemResolvedArtifact } from '../../public/artifact.ts'
 import type { NeemConfig } from '../../public/config.ts'
 import type { NeemMode } from '../../public/runtime.ts'
@@ -16,6 +19,8 @@ export type NeemRuntimeSnapshot = {
   manifestFile?: string
   manifest: NeemBuildManifest
   config: NeemConfig
+  configFile: string
+  logger: Logger
   artifacts: NeemScopedArtifactRegistry
 }
 
@@ -25,6 +30,8 @@ export type NeemRuntimeSnapshotInput = {
   manifestFile?: string
   manifest: NeemBuildManifest
   config: NeemConfig
+  configFile?: string
+  logger?: Logger
 }
 
 export function createRuntimeSnapshot(
@@ -36,6 +43,9 @@ export function createRuntimeSnapshot(
     manifestFile: input.manifestFile,
     manifest: input.manifest,
     config: input.config,
+    configFile:
+      input.configFile ?? resolve(input.outDir, input.manifest.config.file),
+    logger: input.logger ?? createLogger({}, 'Neem'),
     artifacts: createNeemArtifactRegistry(
       resolveManifestArtifacts(input.outDir, input.manifest),
     ),

@@ -11,7 +11,7 @@ import { createRuntimeSnapshot } from '../../../packages/neem/src/internal/runti
 
 describe('NeemApplicationServer', () => {
   it('exposes snapshot metadata and marks start/stop state', async () => {
-    const server = new NeemApplicationServer({
+    const server = new TestApplicationServer({
       snapshot: createSnapshot('api'),
     })
 

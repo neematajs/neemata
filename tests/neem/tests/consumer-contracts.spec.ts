@@ -1,11 +1,31 @@
 import type { InferNeemThreadOptions, NeemPluginOptions } from '@nmtjs/neem'
-import { defineAppConfig, definePluginConfig } from '@nmtjs/neem'
+import { createLogger } from '@nmtjs/core'
+import { defineAppConfig, defineConfig, definePluginConfig } from '@nmtjs/neem'
 import { describe, expect, expectTypeOf, it } from 'vitest'
 
 import app from '../fixtures/basic-app.ts'
 import jobsPlugin from '../fixtures/jobs.plugin.ts'
 
 describe('@nmtjs/neem consumer contracts', () => {
+  const logger = createLogger({ pinoOptions: { enabled: false } }, 'test')
+
+  it('keeps logger instance and lazy logger entry typed', () => {
+    const direct = defineConfig({ logger, apps: {} })
+    const lazy = defineConfig({
+      logger: () => import('../fixtures/logger.ts'),
+      apps: {},
+    })
+    const invalid = defineConfig({
+      // @ts-expect-error logger entry default must satisfy Logger
+      logger: () => Promise.resolve({ default: { invalid: true } }),
+      apps: {},
+    })
+
+    expect(direct.logger).toBe(logger)
+    expect(typeof lazy.logger).toBe('function')
+    expect(Boolean(invalid)).toBe(true)
+  })
+
   it('keeps app thread options inferred from the app default export', () => {
     type ThreadOptions = InferNeemThreadOptions<typeof app>
 
@@ -44,6 +64,7 @@ describe('@nmtjs/neem consumer contracts', () => {
       name: jobsPlugin.name,
       instanceId: 0,
       options: { queue: 'default' },
+      logger,
     })
 
     expect(Object.keys(app.definition.transports)).toEqual(['http'])

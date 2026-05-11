@@ -1,5 +1,6 @@
-import { mkdir, stat } from 'node:fs/promises'
-import { resolve } from 'node:path'
+import { existsSync } from 'node:fs'
+import { mkdir, readFile, stat } from 'node:fs/promises'
+import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import type {
@@ -28,6 +29,14 @@ type RolldownModule = {
 }
 
 type ArtifactBuildMetadata = { entryFileName?: string }
+type NeemRolldownPluginContext = {
+  emitFile: (emittedFile: {
+    type: 'asset'
+    name: string
+    source: Buffer
+  }) => string
+  getFileName: (referenceId: string) => string
+}
 
 export type NeemBuildArtifactOptions = {
   artifact: NeemArtifact
@@ -206,7 +215,12 @@ function createRolldownOptions(
     ...userOptions,
     input: resolveEntry(options.artifact.entry, options.cwd),
     platform: 'node',
-    plugins: [...userPlugins, createEntryMetadataPlugin(metadata)],
+    plugins: [
+      createNativeAddonPlugin(),
+      createUwsNativeAddonPlugin(),
+      ...userPlugins,
+      createEntryMetadataPlugin(metadata),
+    ],
     output: {
       ...userOutput,
       dir: outDir,
@@ -262,6 +276,61 @@ function createEntryMetadataPlugin(
       metadata.entryFileName = entryChunk?.fileName
     },
   }
+}
+
+function createNativeAddonPlugin(): Record<string, unknown> {
+  return {
+    name: 'neem:native-addon',
+    enforce: 'pre',
+    async load(this: NeemRolldownPluginContext, id: string) {
+      if (!id.endsWith('.node') || !existsSync(id)) return null
+      return await emitNativeAddonModule(this, id)
+    },
+  }
+}
+
+function createUwsNativeAddonPlugin(): Record<string, unknown> {
+  return {
+    name: 'neem:uws-native-addon',
+    enforce: 'pre',
+    async load(this: NeemRolldownPluginContext, id: string) {
+      if (!id.includes('uWebSockets.js/uws.js')) return null
+      const nativeAddon = join(
+        dirname(id),
+        `uws_${process.platform}_${process.arch}_${process.versions.modules}.node`,
+      )
+      return await emitNativeAddonModule(this, nativeAddon)
+    },
+    async transform(
+      this: NeemRolldownPluginContext,
+      _code: string,
+      id: string,
+    ) {
+      if (!id.includes('uWebSockets.js/uws.js')) return null
+      const nativeAddon = join(
+        dirname(id),
+        `uws_${process.platform}_${process.arch}_${process.versions.modules}.node`,
+      )
+      return await emitNativeAddonModule(this, nativeAddon)
+    },
+  }
+}
+
+async function emitNativeAddonModule(
+  context: NeemRolldownPluginContext,
+  file: string,
+): Promise<string> {
+  const refId = context.emitFile({
+    type: 'asset',
+    name: basename(file),
+    source: await readFile(file),
+  })
+  const runtimePath = `./${context.getFileName(refId)}`
+  return [
+    'import { createRequire } from "node:module"',
+    'const require = createRequire(import.meta.url)',
+    `export default require(${JSON.stringify(runtimePath)})`,
+  ].join('\n')
 }
 
 function resolveArtifactOutDir(options: NeemBuildArtifactOptions): string {

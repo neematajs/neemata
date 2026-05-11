@@ -9,6 +9,7 @@ export type NeemRuntimeWorkerBaseData = {
   data: unknown
   artifact: NeemResolvedArtifact
   artifacts: readonly NeemResolvedArtifact[]
+  configFile: string
   port: MessagePort
 }
 

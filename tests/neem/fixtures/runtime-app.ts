@@ -37,6 +37,7 @@ export default defineApp<RuntimeAppThreadOptions, RuntimeAppDefinition>({
       threadOptions: ctx.threadOptions,
       artifact: ctx.artifact,
       artifacts: ctx.artifacts.list(),
+      logger: Boolean(ctx.logger),
     })
 
     return {

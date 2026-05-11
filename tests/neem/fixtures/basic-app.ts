@@ -1,5 +1,5 @@
 import type { ApplicationTransport } from '@nmtjs/application'
-import { defineApplication } from '@nmtjs/application'
+import { createRootRouter, defineApplication } from '@nmtjs/application'
 import { defineNeemataApp } from '@nmtjs/application/neem'
 
 export type BasicAppThreadOptions = {
@@ -7,7 +7,9 @@ export type BasicAppThreadOptions = {
 }
 
 const httpTransport = {
-  proxyable: undefined,
+  proxyable: 'http' as NonNullable<
+    ApplicationTransport<any, BasicAppThreadOptions['http']>['proxyable']
+  >,
   factory(options: BasicAppThreadOptions['http']) {
     return {
       start() {
@@ -20,7 +22,7 @@ const httpTransport = {
 } satisfies ApplicationTransport<any, BasicAppThreadOptions['http']>
 
 const application = defineApplication({
-  router: {} as any,
+  router: createRootRouter([]),
   transports: { http: httpTransport },
 })
 

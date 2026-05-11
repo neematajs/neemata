@@ -1,5 +1,7 @@
 import type { MessagePort } from 'node:worker_threads'
 
+import type { Logger } from '@nmtjs/core'
+
 import type {
   NeemArtifact,
   NeemArtifactRegistry,
@@ -16,6 +18,7 @@ export type NeemPluginArtifactContext<Options = unknown> = {
   name: string
   instanceId: number
   options: Options
+  logger: Logger
 }
 
 export type NeemPluginWorkerSpawnOptions = {
@@ -42,6 +45,7 @@ export type NeemPluginContext<Options = unknown> = {
   name: string
   instanceId: number
   options: Options
+  logger: Logger
   artifacts: NeemArtifactRegistry
   workers: NeemPluginWorkers
 }

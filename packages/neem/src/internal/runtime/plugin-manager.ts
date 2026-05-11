@@ -16,6 +16,7 @@ export type NeemPluginWorkerManagerOptions = {
   name: string
   instanceId: number
   artifacts: NeemScopedArtifactRegistry
+  configFile: string
   startupTimeoutMs?: number
   stopTimeoutMs?: number
   onFailure?: (
@@ -55,6 +56,7 @@ export class NeemPluginWorkerManager implements NeemPluginWorkers {
       data: options.workerData ?? {},
       artifact,
       artifacts: this.options.artifacts.scope(this.owner).list(),
+      configFile: this.options.configFile,
       startupTimeoutMs: this.options.startupTimeoutMs,
       stopTimeoutMs: this.options.stopTimeoutMs,
       onFailure: (error, failedWorker) =>

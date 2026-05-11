@@ -28,6 +28,8 @@ export type NeemDiscoveredPlugin = {
 
 export type NeemConfigDiscovery = {
   configFile: string
+  logger?: NeemDiscoveredImport
+  hasInlineLogger: boolean
   apps: Record<string, NeemDiscoveredApp>
   plugins: NeemDiscoveredPlugin[]
 }
@@ -54,9 +56,34 @@ export function discoverConfigEntriesSync(
 
   return {
     configFile,
+    ...discoverLogger(configFile, configObject),
     apps: discoverApps(configFile, configObject),
     plugins: discoverPlugins(configFile, configObject),
   }
+}
+
+function discoverLogger(
+  configFile: string,
+  configObject: ESTree.ObjectExpression,
+): { logger?: NeemDiscoveredImport; hasInlineLogger: boolean } {
+  const value = unwrapExpression(getPropertyValue(configObject, 'logger'))
+  if (!value) return { hasInlineLogger: false }
+
+  const specifier = getImportThunkSpecifier(value)
+  if (specifier) {
+    return {
+      logger: resolveImport(configFile, specifier),
+      hasInlineLogger: false,
+    }
+  }
+
+  if (value.type === 'ArrowFunctionExpression') {
+    throw new Error(
+      `Expected logger to be a logger instance or () => import('<literal>')`,
+    )
+  }
+
+  return { hasInlineLogger: true }
 }
 
 function discoverApps(

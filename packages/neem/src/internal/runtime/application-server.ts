@@ -1,9 +1,17 @@
 import type { NeemMode } from '../../public/index.ts'
-import type { NeemPluginManager } from './plugin.ts'
+import type { NeemStartedAppWorker, NeemStartedAppWorkerPool } from './app.ts'
+import type { NeemPluginManager, NeemStartedPlugin } from './plugin.ts'
+import type { NeemProxyUpstreamSnapshot } from './proxy.ts'
 import type { NeemRuntimeSnapshot } from './snapshot.ts'
+import { NeemAppManager } from './app.ts'
+import { NeemProxyUpstreamRegistry } from './proxy.ts'
 import { normalizeError } from './utils.ts'
 
-export type NeemApplicationServerOptions = { snapshot: NeemRuntimeSnapshot }
+export type NeemApplicationServerOptions = {
+  snapshot: NeemRuntimeSnapshot
+  failOnWorkerError?: boolean
+  onFailure?: (error: Error) => void | Promise<void>
+}
 
 export type NeemApplicationServerState =
   | 'idle'
@@ -32,6 +40,8 @@ export class NeemApplicationServer {
   private snapshot: NeemRuntimeSnapshot
   private operation = Promise.resolve()
   private pluginManager: NeemPluginManager | undefined
+  private appManager: NeemAppManager | undefined
+  private proxyUpstreams = new NeemProxyUpstreamRegistry()
 
   constructor(readonly options: NeemApplicationServerOptions) {
     this.snapshot = options.snapshot
@@ -52,6 +62,22 @@ export class NeemApplicationServer {
 
   getState(): NeemApplicationServerState {
     return this.state
+  }
+
+  getAppWorkers(): readonly NeemStartedAppWorker[] {
+    return this.appManager?.listWorkers() ?? []
+  }
+
+  getAppWorkerPools(): readonly NeemStartedAppWorkerPool[] {
+    return this.appManager?.listPools() ?? []
+  }
+
+  getProxyUpstreams(): readonly NeemProxyUpstreamSnapshot[] {
+    return this.proxyUpstreams.list()
+  }
+
+  getPlugins(): readonly NeemStartedPlugin[] {
+    return this.pluginManager?.list() ?? []
   }
 
   start(): Promise<void> {
@@ -101,15 +127,38 @@ export class NeemApplicationServer {
       snapshot,
       onWorkerFailure: (error) => {
         this.markState('failed', error)
+        void this.options.onFailure?.(error)
       },
     })
-    await pluginManager.start()
-    this.pluginManager = pluginManager
+    const appManager = new NeemAppManager({
+      snapshot,
+      proxyUpstreams: this.proxyUpstreams,
+      onWorkerFailure: (error) => {
+        if (this.options.failOnWorkerError) {
+          this.markState('failed', error)
+          void this.options.onFailure?.(error)
+        }
+      },
+    })
+
+    try {
+      await pluginManager.start()
+      await appManager.start()
+      this.pluginManager = pluginManager
+      this.appManager = appManager
+    } catch (error) {
+      await appManager.stop().catch(() => undefined)
+      await pluginManager.stop().catch(() => undefined)
+      throw error
+    }
   }
 
   protected async stopRuntime(_snapshot: NeemRuntimeSnapshot): Promise<void> {
+    const appManager = this.appManager
     const pluginManager = this.pluginManager
+    this.appManager = undefined
     this.pluginManager = undefined
+    await appManager?.stop()
     await pluginManager?.stop()
   }
 

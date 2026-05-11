@@ -9,6 +9,7 @@
   },
   "devDependencies": {
     "@nmtjs/application": "workspace:*",
+    "@nmtjs/core": "workspace:*",
     "@nmtjs/neem": "workspace:*"
   }
 }

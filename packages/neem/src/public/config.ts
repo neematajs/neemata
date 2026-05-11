@@ -1,3 +1,5 @@
+import type { Logger } from '@nmtjs/core'
+
 import type { InferNeemThreadOptions, NeemApp } from './app.ts'
 import type { NeemRolldownOptions } from './artifact.ts'
 import type { InferNeemPluginOptions, NeemPlugin } from './plugin.ts'
@@ -24,6 +26,14 @@ export type NeemBuildConfigInput<
   TBuildConfig extends NeemBuildConfig = NeemBuildConfig,
 > = TBuildConfig | NeemBuildConfigLoader<TBuildConfig>
 
+export type NeemLoggerLoader<TLogger extends Logger = Logger> = () => Promise<
+  NeemEntryModule<TLogger>
+>
+
+export type NeemLoggerInput<TLogger extends Logger = Logger> =
+  | TLogger
+  | NeemLoggerLoader<TLogger>
+
 export type NeemAppConfig<TApp extends NeemApp<any, any> = NeemApp<any, any>> =
   {
     entry: NeemEntryLoader<TApp>
@@ -41,12 +51,14 @@ export type NeemPluginOptions<TPlugin = NeemPlugin> = {
 }
 
 export type NeemConfig = {
+  logger?: NeemLoggerInput
   apps: Record<string, NeemAppConfig<any>>
   plugins?: readonly NeemPluginOptions<any>[]
   outDir?: string
 }
 
 export function defineConfig(config: {
+  logger?: NeemLoggerInput
   apps: Record<string, NeemAppConfig<any>>
   plugins?: readonly NeemPluginOptions<any>[]
   outDir?: string

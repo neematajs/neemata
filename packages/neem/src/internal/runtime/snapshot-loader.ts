@@ -9,6 +9,7 @@ import {
   NEEM_MANIFEST_FILE,
   NEEM_MANIFEST_SCHEMA_VERSION,
 } from '../build/manifest.ts'
+import { resolveNeemConfigLogger } from './logger.ts'
 import { createRuntimeSnapshot } from './snapshot.ts'
 import { importDefault } from './utils.ts'
 
@@ -34,6 +35,7 @@ export async function loadBuiltRuntimeSnapshot(
   const config = await importDefault<NeemConfig>(
     resolve(outDir, manifest.config.file),
   )
+  const logger = await resolveNeemConfigLogger(config)
 
   return createRuntimeSnapshot({
     mode: options.mode,
@@ -41,6 +43,8 @@ export async function loadBuiltRuntimeSnapshot(
     manifestFile,
     manifest,
     config,
+    configFile: resolve(outDir, manifest.config.file),
+    logger,
   })
 }
 

@@ -25,6 +25,7 @@ export type NeemRuntimeWorkerOptions = {
   data: unknown
   artifact: NeemResolvedArtifact
   artifacts: readonly NeemResolvedArtifact[]
+  configFile: string
   startupTimeoutMs?: number
   stopTimeoutMs?: number
   onFailure?: (error: Error, worker: NeemRuntimeWorker) => void | Promise<void>
@@ -57,6 +58,7 @@ export class NeemRuntimeWorker {
       data: options.data,
       artifact: options.artifact,
       artifacts: options.artifacts,
+      configFile: options.configFile,
       port: channel.port2,
     }
 

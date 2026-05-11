@@ -11,7 +11,6 @@ const configFile = resolve(fixturesDir, '../fixtures/neem.config.ts')
 describe('neem config static discovery', () => {
   it('discovers app and plugin lazy import entries without executing them', () => {
     const discovery = discoverConfigEntriesSync(configFile)
-    console.dir(discovery, { depth: null })
 
     expect(discovery.apps.api).toMatchObject({
       name: 'api',
@@ -26,6 +25,12 @@ describe('neem config static discovery', () => {
       hasInlineBuild: false,
     })
 
+    expect(discovery.logger).toMatchObject({
+      specifier: './logger.ts',
+      resolved: resolve(fixturesDir, '../fixtures/logger.ts'),
+    })
+    expect(discovery.hasInlineLogger).toBe(false)
+
     expect(discovery.plugins[0]).toMatchObject({
       index: 0,
       entry: {
@@ -34,6 +39,24 @@ describe('neem config static discovery', () => {
       },
       hasInlineBuild: false,
     })
+  })
+
+  it('accepts inline logger config without static import discovery', () => {
+    const discovery = discoverConfigEntriesSync(
+      resolve(fixturesDir, '../fixtures/inline-logger.config.ts'),
+      `
+        import { createLogger } from '@nmtjs/core'
+        import { defineConfig } from '@nmtjs/neem'
+
+        export default defineConfig({
+          logger: createLogger({}, 'test'),
+          apps: {},
+        })
+      `,
+    )
+
+    expect(discovery.logger).toBeUndefined()
+    expect(discovery.hasInlineLogger).toBe(true)
   })
 
   it('rejects computed entry imports for direct config discovery', () => {

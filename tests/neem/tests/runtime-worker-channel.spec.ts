@@ -16,6 +16,9 @@ describe('Neem plugin worker communication channel', () => {
       name: 'channel',
       instanceId: 0,
       artifacts: createNeemArtifactRegistry([artifact]),
+      configFile: fileURLToPath(
+        new URL('../fixtures/worker.config.js', import.meta.url),
+      ),
       startupTimeoutMs: 5_000,
       stopTimeoutMs: 5_000,
     })

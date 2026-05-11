@@ -55,13 +55,15 @@ describe('neem build', () => {
     await expectFile(unrelatedFile)
 
     const configFiles = await readdir(resolve(outDir, 'config/entry'))
-    expect(configFiles).toHaveLength(2)
     expect(
       configFiles.some((file) => /^neem\.config-[^.]+\.js$/.test(file)),
     ).toBe(true)
     expect(
       configFiles.some((file) => /^neem\.config-[^.]+\.js\.map$/.test(file)),
     ).toBe(true)
+    expect(configFiles.some((file) => /^logger-[^.]+\.js$/.test(file))).toBe(
+      true,
+    )
     const configCode = await readFile(
       resolve(outDir, manifest.config.file),
       'utf8',
@@ -69,6 +71,7 @@ describe('neem build', () => {
     expect(configCode).toContain('import("./basic-app.ts")')
     expect(configCode).toContain('import("./basic-app.build.ts")')
     expect(configCode).toContain('import("./jobs.plugin.ts")')
+    expect(configCode).not.toContain('import("./logger.ts")')
 
     const appEntry = manifest.apps.api.entry
     const plugin = manifest.plugins[0]

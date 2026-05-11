@@ -1,26 +1,36 @@
-import { resolve } from 'node:path'
+import { dirname, resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 
-import type { NeemResolvedArtifact } from '../../public/artifact.ts'
+import type {
+  NeemArtifact,
+  NeemResolvedArtifact,
+} from '../../public/artifact.ts'
 import type {
   NeemBuildConfig,
   NeemBuildConfigInput,
   NeemConfig,
 } from '../../public/config.ts'
+import type { NeemPlugin } from '../../public/plugin.ts'
 import type {
   NeemConfigDiscovery,
   NeemDiscoveredApp,
+  NeemDiscoveredPlugin,
 } from '../build/discovery.ts'
-import type { NeemBuildManifest } from '../build/manifest.ts'
+import type {
+  NeemBuildManifest,
+  NeemBuildManifestArtifact,
+} from '../build/manifest.ts'
 import type { NeemArtifactWatcher } from '../build/rolldown.ts'
 import type {
-  NeemHostLifecycleSnapshot,
-  NeemHostLifecycleToken,
-} from '../runtime/lifecycle.ts'
-import type { NeemStartedHost } from './start.ts'
+  NeemApplicationServer,
+  NeemApplicationServerSnapshot,
+} from '../runtime/application-server.ts'
 import { discoverConfigEntriesSync } from '../build/discovery.ts'
 import { NEEM_MANIFEST_SCHEMA_VERSION } from '../build/manifest.ts'
 import { watchArtifact } from '../build/rolldown.ts'
-import { NeemHostLifecycle } from '../runtime/lifecycle.ts'
+import { NeemApplicationServer as RuntimeApplicationServer } from '../runtime/application-server.ts'
+import { resolveNeemConfigLogger } from '../runtime/logger.ts'
+import { createRuntimeSnapshot } from '../runtime/snapshot.ts'
 import { importDefault } from '../runtime/utils.ts'
 import {
   cleanNeemOutDir,
@@ -30,7 +40,6 @@ import {
   toManifestPath,
   writeManifest,
 } from './build.ts'
-import { startNeem } from './start.ts'
 
 export type NeemDevOptions = {
   config?: string
@@ -44,12 +53,37 @@ export type NeemDevHost = {
   outDir: string
   ready: Promise<void>
   closed: Promise<void>
-  getLifecycle: () => NeemHostLifecycleSnapshot
-  getRuntime: () => NeemStartedHost | undefined
+  getLifecycle: () => NeemDevLifecycleSnapshot
+  getRuntime: () => NeemApplicationServer | undefined
   stop: () => Promise<void>
 }
 
 type AppWatcherState = { watcher: NeemArtifactWatcher; entry: string }
+type PluginWatcherState = {
+  watcher: NeemArtifactWatcher
+  entry: string
+  name: string
+}
+type PluginArtifactWatcherState = {
+  watcher: NeemArtifactWatcher
+  entry: string
+}
+type PluginArtifactState = {
+  name: string
+  artifacts: Map<string, NeemResolvedArtifact>
+}
+type NeemDevLifecycleSnapshot =
+  | NeemApplicationServerSnapshot
+  | {
+      state:
+        | 'idle'
+        | 'starting'
+        | 'reloading'
+        | 'failed'
+        | 'stopping'
+        | 'stopped'
+      lastError?: Error
+    }
 
 export async function devNeem(
   options: NeemDevOptions = {},
@@ -73,12 +107,22 @@ class NeemDevSession implements NeemDevHost {
   private discovery: NeemConfigDiscovery | undefined
   private configArtifact: NeemResolvedArtifact | undefined
   private config: NeemConfig | undefined
+  private logger:
+    | Awaited<ReturnType<typeof resolveNeemConfigLogger>>
+    | undefined
   private configWatcher: NeemArtifactWatcher | undefined
-  private runtime: NeemStartedHost | undefined
+  private runtime: NeemApplicationServer | undefined
   private appWatchers = new Map<string, AppWatcherState>()
   private appArtifacts = new Map<string, NeemResolvedArtifact>()
+  private pluginWatchers = new Map<number, PluginWatcherState>()
+  private pluginEntryArtifacts = new Map<number, NeemResolvedArtifact>()
+  private pluginArtifactWatchers = new Map<
+    number,
+    Map<string, PluginArtifactWatcherState>
+  >()
+  private pluginArtifacts = new Map<number, PluginArtifactState>()
   private operation = Promise.resolve()
-  private lifecycle = new NeemHostLifecycle()
+  private lifecycle: NeemDevLifecycleSnapshot = { state: 'idle' }
   private stopped = false
   private readySettled = false
   private closedSettled = false
@@ -86,6 +130,8 @@ class NeemDevSession implements NeemDevHost {
   private readyReject!: (error: Error) => void
   private closedResolve!: () => void
   private initializingApps = new Set<string>()
+  private initializingPlugins = new Set<number>()
+  private initializingPluginArtifacts = new Set<string>()
 
   constructor(options: {
     configFile: string
@@ -119,18 +165,18 @@ class NeemDevSession implements NeemDevHost {
   async start(): Promise<void> {
     if (this.stopped) {
       this.rejectReady(new Error('Neem dev stopped before startup'))
-      this.lifecycle.markStopped()
+      this.lifecycle = { state: 'stopped' }
       this.settleClosed()
       return
     }
 
-    this.lifecycle.markStarting()
+    this.lifecycle = { state: 'starting' }
     await cleanNeemOutDir(this.outDir)
     await this.startConfigWatcher()
   }
 
   getLifecycle() {
-    return this.lifecycle.getSnapshot()
+    return this.runtime?.getSnapshot() ?? this.lifecycle
   }
 
   getRuntime() {
@@ -140,19 +186,41 @@ class NeemDevSession implements NeemDevHost {
   async stop(): Promise<void> {
     if (this.closedSettled) return
     this.stopped = true
-    const token = this.lifecycle.markStopping()
+    this.lifecycle = { state: 'stopping' }
 
-    await Promise.all(
-      [...this.appWatchers.values()].map((state) => state.watcher.close()),
-    )
-    this.appWatchers.clear()
+    await this.stopAppWatchers()
+    await this.stopPluginWatchers()
     await this.configWatcher?.close()
     this.configWatcher = undefined
     await this.operation.catch(() => {})
     await this.stopRuntime()
     this.rejectReady(new Error('Neem dev stopped before ready'))
-    this.lifecycle.markStopped(token)
+    this.lifecycle = { state: 'stopped' }
     this.settleClosed()
+  }
+
+  private async stopAppWatchers(): Promise<void> {
+    const watchers = [...this.appWatchers.values()]
+    this.appWatchers.clear()
+    this.appArtifacts.clear()
+    await Promise.all(watchers.map((state) => state.watcher.close()))
+  }
+
+  private async stopPluginWatchers(): Promise<void> {
+    const pluginWatchers = [...this.pluginWatchers.values()]
+    const artifactWatchers = [...this.pluginArtifactWatchers.values()].flatMap(
+      (watchers) => [...watchers.values()],
+    )
+
+    this.pluginWatchers.clear()
+    this.pluginEntryArtifacts.clear()
+    this.pluginArtifactWatchers.clear()
+    this.pluginArtifacts.clear()
+
+    await Promise.all([
+      ...pluginWatchers.map((state) => state.watcher.close()),
+      ...artifactWatchers.map((state) => state.watcher.close()),
+    ])
   }
 
   private async startConfigWatcher(): Promise<void> {
@@ -185,15 +253,17 @@ class NeemDevSession implements NeemDevHost {
     artifact: NeemResolvedArtifact,
   ): Promise<void> {
     if (this.stopped) return
-    const token = this.beginRuntimeChange()
+    this.beginRuntimeChange()
 
     this.discovery = discoverConfigEntriesSync(this.configFile)
     this.configArtifact = artifact
     this.config = await importDefault<NeemConfig>(artifact.file)
+    this.logger = await resolveNeemConfigLogger(this.config)
 
     await this.reconcileAppWatchers()
-    await this.writeCurrentManifest()
-    await this.restartRuntime(token)
+    await this.reconcilePluginWatchers()
+    const manifest = await this.writeCurrentManifest()
+    await this.restartRuntime(manifest)
   }
 
   private async reconcileAppWatchers(): Promise<void> {
@@ -233,6 +303,270 @@ class NeemDevSession implements NeemDevHost {
       )
       this.appArtifacts.set(name, artifact)
     }
+  }
+
+  private async reconcilePluginWatchers(): Promise<void> {
+    if (!this.config || !this.discovery) return
+
+    const pluginIndexes = new Set(
+      (this.config.plugins ?? []).map((_plugin, index) => index),
+    )
+
+    await Promise.all(
+      [...this.pluginWatchers.entries()]
+        .filter(([index]) => !pluginIndexes.has(index))
+        .map(([index]) => this.removePlugin(index)),
+    )
+
+    for (const [index, pluginConfig] of (this.config.plugins ?? []).entries()) {
+      const discovered = this.discovery.plugins[index]
+      if (!discovered) {
+        throw new Error(`Failed to discover plugin entry for index [${index}]`)
+      }
+
+      const plugin = await importFreshDefault<NeemPlugin<unknown>>(
+        discovered.entry.resolved,
+      )
+      const current = this.pluginWatchers.get(index)
+      if (current?.entry !== discovered.entry.resolved) {
+        if (current) await this.removePlugin(index)
+        const artifact = await this.startPluginWatcher(
+          index,
+          plugin.name,
+          pluginConfig.build,
+          discovered,
+        )
+        this.pluginEntryArtifacts.set(index, artifact)
+      } else if (current.name !== plugin.name) {
+        this.pluginWatchers.set(index, { ...current, name: plugin.name })
+      }
+
+      await this.reconcilePluginArtifactWatchers(
+        index,
+        plugin,
+        pluginConfig.options,
+        pluginConfig.build,
+        discovered,
+      )
+    }
+  }
+
+  private async removePlugin(index: number): Promise<void> {
+    const entry = this.pluginWatchers.get(index)
+    if (entry) await entry.watcher.close()
+    this.pluginWatchers.delete(index)
+    this.pluginEntryArtifacts.delete(index)
+    this.pluginArtifacts.delete(index)
+    const artifactWatchers = this.pluginArtifactWatchers.get(index)
+    this.pluginArtifactWatchers.delete(index)
+    await Promise.all(
+      [...(artifactWatchers?.values() ?? [])].map((state) =>
+        state.watcher.close(),
+      ),
+    )
+  }
+
+  private async startPluginWatcher(
+    index: number,
+    name: string,
+    buildConfigInput: NeemBuildConfigInput | undefined,
+    discovered: NeemDiscoveredPlugin,
+  ): Promise<NeemResolvedArtifact> {
+    const rolldown = await loadPluginBuildConfig(buildConfigInput, discovered)
+    this.initializingPlugins.add(index)
+    const watcher = await watchArtifact(
+      {
+        artifact: {
+          id: 'entry',
+          kind: 'module',
+          entry: discovered.entry.resolved,
+        },
+        owner: { type: 'plugin', name, instanceId: index },
+        rolldown,
+        outDir: this.outDir,
+      },
+      {
+        onRebuild: (artifact) => {
+          const initial = this.initializingPlugins.has(index)
+          return this.enqueue(() =>
+            this.applyPluginEntryArtifact(index, artifact, { initial }),
+          )
+        },
+        onError: (error) => {
+          this.recordError(error)
+        },
+      },
+    )
+
+    this.pluginWatchers.set(index, {
+      watcher,
+      entry: discovered.entry.resolved,
+      name,
+    })
+
+    try {
+      return await watcher.ready
+    } finally {
+      this.initializingPlugins.delete(index)
+    }
+  }
+
+  private async applyPluginEntryArtifact(
+    index: number,
+    artifact: NeemResolvedArtifact,
+    options: { initial: boolean },
+  ): Promise<void> {
+    if (this.stopped || !this.config || !this.discovery) return
+    this.pluginEntryArtifacts.set(index, artifact)
+    if (options.initial) return
+
+    const pluginConfig = this.config.plugins?.[index]
+    const discovered = this.discovery.plugins[index]
+    if (!pluginConfig || !discovered) return
+
+    const plugin = await importFreshDefault<NeemPlugin<unknown>>(
+      discovered.entry.resolved,
+    )
+    const current = this.pluginWatchers.get(index)
+    if (current)
+      this.pluginWatchers.set(index, { ...current, name: plugin.name })
+    await this.reconcilePluginArtifactWatchers(
+      index,
+      plugin,
+      pluginConfig.options,
+      pluginConfig.build,
+      discovered,
+    )
+
+    this.beginRuntimeChange()
+    const manifest = await this.writeCurrentManifest()
+    await this.restartRuntime(manifest)
+  }
+
+  private async reconcilePluginArtifactWatchers(
+    index: number,
+    plugin: NeemPlugin<unknown>,
+    options: unknown,
+    buildConfigInput: NeemBuildConfigInput | undefined,
+    discovered: NeemDiscoveredPlugin,
+  ): Promise<void> {
+    const declared =
+      (await plugin.artifacts?.({
+        mode: 'development',
+        name: plugin.name,
+        instanceId: index,
+        options,
+        logger: this.getLogger(),
+      })) ?? []
+    const nextIds = new Set(declared.map((artifact) => artifact.id))
+    let watchers = this.pluginArtifactWatchers.get(index)
+    if (!watchers) {
+      watchers = new Map()
+      this.pluginArtifactWatchers.set(index, watchers)
+    }
+    let artifactState = this.pluginArtifacts.get(index)
+    if (!artifactState) {
+      artifactState = { name: plugin.name, artifacts: new Map() }
+      this.pluginArtifacts.set(index, artifactState)
+    }
+    artifactState.name = plugin.name
+
+    await Promise.all(
+      [...watchers.entries()]
+        .filter(([id]) => !nextIds.has(id))
+        .map(async ([id, state]) => {
+          await state.watcher.close()
+          watchers.delete(id)
+          artifactState.artifacts.delete(id)
+        }),
+    )
+
+    const rolldown = await loadPluginBuildConfig(buildConfigInput, discovered)
+    for (const artifact of declared) {
+      const entry = artifact.entry.toString()
+      const current = watchers.get(artifact.id)
+      if (current?.entry === entry) continue
+
+      if (current) {
+        await current.watcher.close()
+        watchers.delete(artifact.id)
+        artifactState.artifacts.delete(artifact.id)
+      }
+
+      const built = await this.startPluginArtifactWatcher(
+        index,
+        plugin.name,
+        artifact,
+        rolldown,
+        discovered,
+      )
+      artifactState.artifacts.set(artifact.id, built)
+    }
+  }
+
+  private async startPluginArtifactWatcher(
+    index: number,
+    pluginName: string,
+    artifact: NeemArtifact,
+    rolldown: NeemBuildConfig | undefined,
+    discovered: NeemDiscoveredPlugin,
+  ): Promise<NeemResolvedArtifact> {
+    const key = `${index}:${artifact.id}`
+    this.initializingPluginArtifacts.add(key)
+    const watcher = await watchArtifact(
+      {
+        artifact,
+        owner: { type: 'plugin', name: pluginName, instanceId: index },
+        rolldown,
+        cwd: dirname(discovered.entry.resolved),
+        outDir: this.outDir,
+      },
+      {
+        onRebuild: (built) => {
+          const initial = this.initializingPluginArtifacts.has(key)
+          return this.enqueue(() =>
+            this.applyPluginArtifact(index, pluginName, built, { initial }),
+          )
+        },
+        onError: (error) => {
+          this.recordError(error)
+        },
+      },
+    )
+
+    let watchers = this.pluginArtifactWatchers.get(index)
+    if (!watchers) {
+      watchers = new Map()
+      this.pluginArtifactWatchers.set(index, watchers)
+    }
+    watchers.set(artifact.id, { watcher, entry: artifact.entry.toString() })
+
+    try {
+      return await watcher.ready
+    } finally {
+      this.initializingPluginArtifacts.delete(key)
+    }
+  }
+
+  private async applyPluginArtifact(
+    index: number,
+    pluginName: string,
+    artifact: NeemResolvedArtifact,
+    options: { initial: boolean },
+  ): Promise<void> {
+    if (this.stopped) return
+    let artifactState = this.pluginArtifacts.get(index)
+    if (!artifactState) {
+      artifactState = { name: pluginName, artifacts: new Map() }
+      this.pluginArtifacts.set(index, artifactState)
+    }
+    artifactState.name = pluginName
+    artifactState.artifacts.set(artifact.id, artifact)
+    if (options.initial) return
+
+    this.beginRuntimeChange()
+    const manifest = await this.writeCurrentManifest()
+    await this.restartRuntime(manifest)
   }
 
   private async startAppWatcher(
@@ -284,13 +618,15 @@ class NeemDevSession implements NeemDevHost {
     this.appArtifacts.set(name, artifact)
     if (options.initial) return
 
-    const token = this.beginRuntimeChange()
-    await this.writeCurrentManifest()
-    await this.restartRuntime(token)
+    this.beginRuntimeChange()
+    const manifest = await this.writeCurrentManifest()
+    await this.restartRuntime(manifest)
   }
 
-  private async writeCurrentManifest(): Promise<void> {
-    if (!this.configArtifact || !this.config) return
+  private async writeCurrentManifest(): Promise<NeemBuildManifest> {
+    if (!this.configArtifact || !this.config) {
+      throw new Error('Cannot write Neem dev manifest before config is loaded')
+    }
 
     const manifest: NeemBuildManifest = {
       schemaVersion: NEEM_MANIFEST_SCHEMA_VERSION,
@@ -310,26 +646,55 @@ class NeemDevSession implements NeemDevHost {
       }
     }
 
+    for (const [index, pluginConfig] of (this.config.plugins ?? []).entries()) {
+      const state = this.pluginArtifacts.get(index)
+      const entry = this.pluginEntryArtifacts.get(index)
+      if (!state || !entry) {
+        throw new Error(`Compiled artifact for plugin [${index}] is missing`)
+      }
+
+      manifest.plugins.push({
+        index,
+        name: state.name,
+        entry: toManifestArtifact(this.outDir, entry),
+        artifacts: toManifestPluginArtifacts(this.outDir, state.artifacts),
+      })
+    }
+
     await writeManifest(this.outDir, manifest)
+    return manifest
   }
 
-  private async restartRuntime(
-    token: NeemHostLifecycleToken | undefined,
-  ): Promise<void> {
+  private async restartRuntime(manifest: NeemBuildManifest): Promise<void> {
     if (this.stopped) return
 
-    await this.stopRuntime()
+    if (!this.config) {
+      throw new Error('Cannot start Neem dev runtime before config is loaded')
+    }
+
+    const snapshot = createRuntimeSnapshot({
+      mode: 'development',
+      outDir: this.outDir,
+      manifest,
+      config: this.config,
+      logger: this.getLogger(),
+    })
+
     try {
-      this.runtime = await startNeem({
-        outDir: this.outDir,
-        mode: 'development',
-        failOnWorkerError: false,
-      })
-      this.lifecycle.markRunning(token)
+      if (this.runtime) {
+        await this.runtime.reload(snapshot)
+      } else {
+        this.runtime = new RuntimeApplicationServer({
+          snapshot,
+          failOnWorkerError: false,
+        })
+        await this.runtime.start()
+      }
+      this.lifecycle = this.runtime.getSnapshot()
       this.resolveReady()
     } catch (error) {
       this.runtime = undefined
-      this.recordError(error, token)
+      this.recordError(error)
     }
   }
 
@@ -339,7 +704,6 @@ class NeemDevSession implements NeemDevHost {
     if (!runtime) return
 
     await runtime.stop()
-    await runtime.closed.catch(() => {})
   }
 
   private enqueue(task: () => Promise<void>): Promise<void> {
@@ -349,19 +713,18 @@ class NeemDevSession implements NeemDevHost {
     })
   }
 
-  private beginRuntimeChange(): NeemHostLifecycleToken | undefined {
+  private beginRuntimeChange(): void {
     if (this.readySettled) {
-      return this.lifecycle.beginReload()
+      this.lifecycle = { state: 'reloading' }
     }
-    return undefined
   }
 
-  private recordError(error: unknown, token?: NeemHostLifecycleToken) {
+  private recordError(error: unknown) {
     const normalized =
       error instanceof Error
         ? error
         : new Error(String(error ?? 'Unknown error'))
-    this.lifecycle.markFailed(normalized, token)
+    this.lifecycle = { state: 'failed', lastError: normalized }
     if (!this.readySettled) {
       this.readyReject(normalized)
       this.readySettled = true
@@ -385,6 +748,14 @@ class NeemDevSession implements NeemDevHost {
     this.closedSettled = true
     this.closedResolve()
   }
+
+  private getLogger() {
+    if (!this.logger) {
+      throw new Error('Cannot use Neem logger before config is loaded')
+    }
+
+    return this.logger
+  }
 }
 
 async function loadAppBuildConfig(
@@ -400,4 +771,35 @@ async function loadAppBuildConfig(
   }
 
   return loadBuildConfig(input)
+}
+
+async function loadPluginBuildConfig(
+  input: NeemBuildConfigInput | undefined,
+  discovered: NeemDiscoveredPlugin,
+): Promise<NeemBuildConfig | undefined> {
+  if (discovered.build) {
+    return importDefault<NeemBuildConfig>(discovered.build.resolved)
+  }
+
+  if (typeof input === 'function') {
+    return undefined
+  }
+
+  return loadBuildConfig(input)
+}
+
+function toManifestPluginArtifacts(
+  outDir: string,
+  artifacts: Map<string, NeemResolvedArtifact>,
+): NeemBuildManifestArtifact[] {
+  return [...artifacts.values()].map((artifact) =>
+    toManifestArtifact(outDir, artifact),
+  )
+}
+
+async function importFreshDefault<T>(file: string): Promise<T> {
+  const module = (await import(
+    `${pathToFileURL(file).href}?t=${Date.now()}`
+  )) as { default: T }
+  return module.default
 }

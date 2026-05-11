@@ -40,11 +40,16 @@ describe('neem start', () => {
       resolve(neemInternalDir, 'runtime/worker-entry.ts'),
       'utf8',
     )
+    const appRuntimeSource = await readFile(
+      resolve(neemInternalDir, 'runtime/app.ts'),
+      'utf8',
+    )
 
-    expect(startSource).toContain('resolveRuntimeWorkerEntry')
     expect(startSource).not.toContain('app-worker-entry')
     expect(startSource).not.toContain('createAppWorkerSource')
     expect(startSource).not.toContain('eval: true')
+    expect(appRuntimeSource).toContain('resolveRuntimeWorkerEntry')
+    expect(appRuntimeSource).not.toContain('eval: true')
     expect(workerSource).toContain('createAppRuntime')
     expect(workerSource).toContain('mode: data.mode')
     expect(workerSource).not.toContain("mode: 'production'")
@@ -132,6 +137,7 @@ describe('neem start', () => {
           name: 'jobs',
           instanceId: 0,
           options: { queue: 'runtime' },
+          logger: true,
         }),
       )
       expect(createEvents).toHaveLength(2)
@@ -140,6 +146,7 @@ describe('neem start', () => {
         appName: 'api',
         threadIndex: 0,
         threadOptions: { label: 'one' },
+        logger: true,
         artifact: { id: 'entry', owner: { type: 'app', name: 'api' } },
       })
       expect(
@@ -166,6 +173,24 @@ describe('neem start', () => {
         instanceId: 0,
       }),
     )
+  })
+
+  it('starts Neemata application entries through the application package adapter', async () => {
+    const { outDir } = await buildFixture('neem.config.ts')
+
+    const host = await startNeem({ outDir })
+
+    try {
+      expect(host.getWorkers()).toHaveLength(1)
+      expect(host.getWorkerPools()).toHaveLength(1)
+      expect(host.getWorkers()[0]?.getState()).toBe('ready')
+      expect(host.getUpstreams()).toEqual([
+        { type: 'http', url: 'http://127.0.0.1:3000' },
+      ])
+    } finally {
+      await host.stop()
+      await host.closed
+    }
   })
 
   it('fails startup and stops workers that already started', async () => {

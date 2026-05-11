@@ -46,6 +46,7 @@
   },
   "dependencies": {
     "@nmtjs/common": "workspace:*",
+    "@nmtjs/core": "workspace:*",
     "citty": "0.2.2",
     "hookable": "6.1.1",
     "oxc-resolver": "11.19.1",

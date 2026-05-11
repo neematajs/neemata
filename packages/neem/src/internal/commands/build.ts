@@ -22,6 +22,7 @@ import {
   NEEM_MANIFEST_SCHEMA_VERSION,
 } from '../build/manifest.ts'
 import { buildArtifact } from '../build/rolldown.ts'
+import { resolveNeemInlineLogger } from '../runtime/logger.ts'
 import { importDefault } from '../runtime/utils.ts'
 
 export type {
@@ -53,6 +54,7 @@ export async function buildNeem(
   const configFile = resolve(cwd, options.config ?? 'neem.config.ts')
   const discovery = discoverConfigEntriesSync(configFile)
   const config = await importDefault<NeemConfig>(configFile)
+  const logger = resolveNeemInlineLogger(config.logger)
   const outDir = resolve(cwd, options.outDir ?? config.outDir ?? 'dist')
 
   await cleanNeemOutDir(outDir)
@@ -125,6 +127,7 @@ export async function buildNeem(
         name: pluginName,
         instanceId: index,
         options: pluginConfig.options,
+        logger,
       })) ?? []
 
     const artifacts: NeemBuildManifestArtifact[] = []

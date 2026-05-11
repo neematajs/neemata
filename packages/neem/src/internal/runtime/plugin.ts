@@ -3,6 +3,7 @@ import type { NeemPlugin, NeemPluginContext } from '../../public/plugin.ts'
 import type { NeemMode } from '../../public/runtime.ts'
 import type { NeemBuildManifest } from '../build/manifest.ts'
 import type { NeemRuntimeSnapshot } from './snapshot.ts'
+import { createNeemChildLogger } from './logger.ts'
 import { NeemPluginWorkerManager } from './plugin-manager.ts'
 import { importDefault } from './utils.ts'
 
@@ -81,6 +82,11 @@ export class NeemPluginManager {
         instanceId: pluginManifest.index,
       }),
       workerArtifacts: this.options.snapshot.artifacts,
+      configFile: this.options.snapshot.configFile,
+      logger: createNeemChildLogger(
+        this.options.snapshot.logger,
+        `Neem plugin ${pluginManifest.name}:${pluginManifest.index}`,
+      ),
       startupTimeoutMs: this.options.startupTimeoutMs,
       stopTimeoutMs: this.options.stopTimeoutMs,
       onWorkerFailure: (error, startedPlugin) =>
@@ -97,6 +103,8 @@ type NeemStartedPluginRuntimeOptions = {
   plugin: NeemPlugin<any>
   artifacts: NeemArtifactRegistry
   workerArtifacts: NeemRuntimeSnapshot['artifacts']
+  configFile: string
+  logger: NeemRuntimeSnapshot['logger']
   startupTimeoutMs?: number
   stopTimeoutMs?: number
   onWorkerFailure?: (
@@ -120,6 +128,7 @@ class NeemStartedPluginRuntime implements NeemStartedPlugin {
       name: options.name,
       instanceId: options.instanceId,
       artifacts: options.workerArtifacts,
+      configFile: options.configFile,
       startupTimeoutMs: options.startupTimeoutMs,
       stopTimeoutMs: options.stopTimeoutMs,
       onFailure: (error) => options.onWorkerFailure?.(error, this),
@@ -149,6 +158,7 @@ class NeemStartedPluginRuntime implements NeemStartedPlugin {
       name: this.options.name,
       instanceId: this.options.instanceId,
       options: this.options.options,
+      logger: this.options.logger,
       artifacts: this.options.artifacts,
       workers: this.workers,
     }

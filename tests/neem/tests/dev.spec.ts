@@ -50,12 +50,24 @@ describe('neem dev', () => {
       expect(host.getLifecycle().state).toBe('running')
 
       const manifest = await readManifest(fixture.outDir)
-      expect(manifest.plugins).toEqual([])
+      expect(manifest.plugins).toHaveLength(1)
+      expect(manifest.plugins[0]).toMatchObject({
+        index: 0,
+        name: 'jobs',
+        entry: { id: 'entry', owner: { type: 'plugin', name: 'jobs' } },
+      })
+      expect(
+        manifest.plugins[0]?.artifacts.map((artifact) => artifact.id),
+      ).toEqual(['job-worker', 'job-renderer'])
       expect(manifest.config.file).toMatch(
         /^config\/entry\/runtime\.config-[^.]+\.js$/,
       )
       await expectFile(resolve(fixture.outDir, manifest.config.file))
       await expectFile(resolve(fixture.outDir, manifest.apps.api.entry.file))
+      await expectFile(resolve(fixture.outDir, manifest.plugins[0]!.entry.file))
+      for (const artifact of manifest.plugins[0]!.artifacts) {
+        await expectFile(resolve(fixture.outDir, artifact.file))
+      }
 
       const configCode = await readFile(
         resolve(fixture.outDir, manifest.config.file),
@@ -63,13 +75,27 @@ describe('neem dev', () => {
       )
       expect(configCode).toContain('import("./runtime-app.ts")')
       expect(configCode).toContain('import("./jobs.plugin.ts")')
+      expect(configCode).not.toContain('import("./logger.ts")')
 
       const createEvents = await waitForEvents(
         fixture.eventsFile,
         (events) =>
           events.filter((event) => event.event === 'create').length >= 2,
       )
-      expect(createEvents[0]).toMatchObject({ mode: 'development' })
+      expect(createEvents[0]).toMatchObject({
+        mode: 'development',
+        logger: true,
+      })
+      expect(await readEvents(fixture.eventsFile)).toContainEqual(
+        expect.objectContaining({
+          event: 'plugin-setup',
+          mode: 'development',
+          name: 'jobs',
+          instanceId: 0,
+          options: { queue: 'runtime' },
+          logger: true,
+        }),
+      )
     } finally {
       await host.stop()
       await host.closed
@@ -98,9 +124,12 @@ describe('neem dev', () => {
         const manifest = await readManifest(fixture.outDir)
         if (manifest.config.file === initialManifest.config.file) return false
         const events = await readEvents(fixture.eventsFile)
-        return events.some(
-          (event) =>
-            event.event === 'create' && event.threadOptions?.label === 'uno',
+        return (
+          host.getLifecycle().state === 'running' &&
+          events.some(
+            (event) =>
+              event.event === 'create' && event.threadOptions?.label === 'uno',
+          )
         )
       })
       expect(host.getLifecycle().state).toBe('running')
@@ -149,6 +178,37 @@ describe('neem dev', () => {
     }
   })
 
+  it('restarts plugin lifecycle after plugin source rebuild', async () => {
+    const fixture = await createFixtureCopy()
+    process.env.NEEM_RUNTIME_EVENTS_FILE = fixture.eventsFile
+
+    const host = await devNeem({
+      config: fixture.configFile,
+      outDir: fixture.outDir,
+    })
+
+    try {
+      await host.ready
+      const pluginSource = await readFile(fixture.pluginFile, 'utf8')
+      await writeFile(
+        fixture.pluginFile,
+        pluginSource.replace("'plugin-setup'", "'plugin-setup-dev'"),
+      )
+
+      await waitFor(async () => {
+        const events = await readEvents(fixture.eventsFile)
+        return (
+          host.getLifecycle().state === 'running' &&
+          events.some((event) => event.event === 'plugin-setup-dev')
+        )
+      })
+      expect(host.getLifecycle().state).toBe('running')
+    } finally {
+      await host.stop()
+      await host.closed
+    }
+  })
+
   it('runs dev through the CLI and stops through an abort signal', async () => {
     const fixture = await createFixtureCopy()
     process.env.NEEM_RUNTIME_EVENTS_FILE = fixture.eventsFile
@@ -182,6 +242,7 @@ async function createFixtureCopy() {
     fixtureDir,
     configFile: resolve(fixtureDir, 'runtime.config.ts'),
     appFile: resolve(fixtureDir, 'runtime-app.ts'),
+    pluginFile: resolve(fixtureDir, 'jobs.plugin.ts'),
     outDir: resolve(dir, '.neem'),
     eventsFile: resolve(dir, 'events.jsonl'),
   }

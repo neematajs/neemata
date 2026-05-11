@@ -1,6 +1,7 @@
 import { defineAppConfig, defineConfig, definePluginConfig } from '@nmtjs/neem'
 
 export default defineConfig({
+  logger: () => import('./logger.ts'),
   apps: {
     api: defineAppConfig({
       entry: () => import('./runtime-app.ts'),
