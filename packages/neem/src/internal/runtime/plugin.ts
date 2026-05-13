@@ -1,11 +1,11 @@
-import type { NeemArtifactRegistry } from '../../public/artifact.ts'
-import type { NeemPlugin, NeemPluginContext } from '../../public/plugin.ts'
-import type { NeemMode } from '../../public/runtime.ts'
-import type { NeemBuildManifest } from '../build/manifest.ts'
-import type { NeemRuntimeSnapshot } from './snapshot.ts'
-import { createNeemChildLogger } from './logger.ts'
-import { NeemPluginWorkerManager } from './plugin-manager.ts'
-import { importDefault } from './utils.ts'
+import type { NeemBuildManifest } from '#build/manifest.ts'
+import type { NeemArtifactRegistry } from '#public/artifact.ts'
+import type { NeemPlugin, NeemPluginContext } from '#public/plugin.ts'
+import type { NeemMode } from '#public/runtime.ts'
+import { createNeemChildLogger } from '#runtime/logger.ts'
+import { NeemPluginWorkerManager } from '#runtime/plugin-manager.ts'
+import type { NeemRuntimeSnapshot } from '#runtime/snapshot.ts'
+import { importDefault } from '#runtime/utils.ts'
 
 export type NeemStartedPlugin = {
   name: string
@@ -25,21 +25,31 @@ export type NeemPluginManagerOptions = {
 }
 
 export class NeemPluginManager {
-  private readonly plugins: NeemStartedPluginRuntime[] = []
+  private readonly plugins = new Map<number, NeemStartedPluginRuntime>()
 
   constructor(private readonly options: NeemPluginManagerOptions) {}
 
   list(): readonly NeemStartedPlugin[] {
-    return this.plugins
+    return [...this.plugins.values()].toSorted(
+      (left, right) => left.instanceId - right.instanceId,
+    )
   }
 
   async start(): Promise<void> {
-    if (this.plugins.length > 0) return
+    if (this.plugins.size > 0) return
+    if (this.options.snapshot.manifest.plugins.length === 0) return
 
     try {
+      this.options.snapshot.logger.debug(
+        { count: this.options.snapshot.manifest.plugins.length },
+        'Starting Neem plugins',
+      )
       for (const pluginManifest of this.options.snapshot.manifest.plugins) {
-        const plugin = await this.createPlugin(pluginManifest)
-        this.plugins.push(plugin)
+        const plugin = await this.createPlugin(
+          this.options.snapshot,
+          pluginManifest,
+        )
+        this.plugins.set(plugin.instanceId, plugin)
         await plugin.setup()
       }
     } catch (error) {
@@ -49,15 +59,49 @@ export class NeemPluginManager {
   }
 
   async stop(): Promise<void> {
-    const plugins = this.plugins.splice(0).reverse()
+    const plugins = this.list().toReversed()
+    if (plugins.length === 0) return
+    this.plugins.clear()
+
+    this.options.snapshot.logger.debug(
+      { count: plugins.length },
+      'Stopping Neem plugins',
+    )
     await Promise.all(plugins.map((plugin) => plugin.stop()))
   }
 
+  async reloadPlugin(
+    instanceId: number,
+    snapshot: NeemRuntimeSnapshot,
+  ): Promise<void> {
+    const pluginManifest = snapshot.manifest.plugins.find(
+      (plugin) => plugin.index === instanceId,
+    )
+
+    if (!pluginManifest) {
+      await this.removePlugin(instanceId)
+      return
+    }
+
+    const nextPlugin = await this.createPlugin(snapshot, pluginManifest)
+    await this.removePlugin(instanceId)
+    this.plugins.set(instanceId, nextPlugin)
+
+    try {
+      await nextPlugin.setup()
+    } catch (error) {
+      this.plugins.delete(instanceId)
+      await nextPlugin.stop().catch(() => undefined)
+      throw error
+    }
+  }
+
   private async createPlugin(
+    snapshot: NeemRuntimeSnapshot,
     pluginManifest: NeemBuildManifest['plugins'][number],
   ): Promise<NeemStartedPluginRuntime> {
     const plugin = await importDefault<NeemPlugin<any>>(
-      this.options.snapshot.artifacts.resolveFor(
+      snapshot.artifacts.resolveFor(
         {
           type: 'plugin',
           name: pluginManifest.name,
@@ -67,24 +111,23 @@ export class NeemPluginManager {
       )!.file,
     )
 
-    const options =
-      this.options.snapshot.config.plugins?.[pluginManifest.index]?.options
+    const options = snapshot.config.plugins?.[pluginManifest.index]?.options
 
     return new NeemStartedPluginRuntime({
-      mode: this.options.snapshot.mode,
+      mode: snapshot.mode,
       name: pluginManifest.name,
       instanceId: pluginManifest.index,
       options,
       plugin,
-      artifacts: this.options.snapshot.artifacts.scope({
+      artifacts: snapshot.artifacts.scope({
         type: 'plugin',
         name: pluginManifest.name,
         instanceId: pluginManifest.index,
       }),
-      workerArtifacts: this.options.snapshot.artifacts,
-      configFile: this.options.snapshot.configFile,
+      workerArtifacts: snapshot.artifacts,
+      configFile: snapshot.configFile,
       logger: createNeemChildLogger(
-        this.options.snapshot.logger,
+        snapshot.logger,
         `Neem plugin ${pluginManifest.name}:${pluginManifest.index}`,
       ),
       startupTimeoutMs: this.options.startupTimeoutMs,
@@ -92,6 +135,14 @@ export class NeemPluginManager {
       onWorkerFailure: (error, startedPlugin) =>
         this.options.onWorkerFailure?.(error, startedPlugin),
     })
+  }
+
+  private async removePlugin(instanceId: number): Promise<void> {
+    const plugin = this.plugins.get(instanceId)
+    if (!plugin) return
+
+    this.plugins.delete(instanceId)
+    await plugin.stop()
   }
 }
 
@@ -129,6 +180,7 @@ class NeemStartedPluginRuntime implements NeemStartedPlugin {
       instanceId: options.instanceId,
       artifacts: options.workerArtifacts,
       configFile: options.configFile,
+      logger: options.logger,
       startupTimeoutMs: options.startupTimeoutMs,
       stopTimeoutMs: options.stopTimeoutMs,
       onFailure: (error) => options.onWorkerFailure?.(error, this),
@@ -137,18 +189,34 @@ class NeemStartedPluginRuntime implements NeemStartedPlugin {
 
   async setup(): Promise<void> {
     if (this.setupComplete) return
+    this.options.logger.debug(
+      { plugin: this.name, instanceId: this.instanceId },
+      'Setting up Neem plugin',
+    )
     await this.options.plugin.setup?.(this.createContext())
     this.setupComplete = true
+    this.options.logger.debug(
+      { plugin: this.name, instanceId: this.instanceId },
+      'Neem plugin setup complete',
+    )
   }
 
   async stop(): Promise<void> {
     try {
       if (this.setupComplete) {
+        this.options.logger.debug(
+          { plugin: this.name, instanceId: this.instanceId },
+          'Stopping Neem plugin',
+        )
         await this.options.plugin.stop?.(this.createContext())
       }
     } finally {
-      await this.workers.stopAll()
+      if (this.workers.list().length > 0) await this.workers.stopAll()
       this.setupComplete = false
+      this.options.logger.debug(
+        { plugin: this.name, instanceId: this.instanceId },
+        'Neem plugin stopped',
+      )
     }
   }
 

@@ -2,9 +2,9 @@ import { pathToFileURL } from 'node:url'
 
 import { defineCommand, runCommand, showUsage } from 'citty'
 
-import { buildNeem } from './internal/commands/build.ts'
-import { devNeem } from './internal/commands/dev.ts'
-import { startNeem } from './internal/commands/start.ts'
+import { buildNeem } from '#commands/build.ts'
+import { devNeem } from '#commands/dev.ts'
+import { startNeem } from '#commands/start.ts'
 
 export type NeemCliMainOptions = { signal?: AbortSignal }
 
@@ -27,9 +27,7 @@ const buildCommand = defineCommand({
     },
   },
   async run({ args }) {
-    const result = await buildNeem({ config: args.config, outDir: args.outDir })
-
-    console.log(`Neem build written to ${result.outDir}`)
+    await buildNeem({ config: args.config, outDir: args.outDir })
   },
 })
 
@@ -63,7 +61,6 @@ const mainCommand = defineCommand({
             outDir: args.outDir,
             signal: controller.signal,
           })
-          console.log(`Neem dev watching ${host.configFile}`)
           await host.closed
         } finally {
           controller.dispose()
@@ -90,7 +87,6 @@ const mainCommand = defineCommand({
             outDir: args.outDir,
             signal: controller.signal,
           })
-          console.log(`Neem started from ${host.outDir}`)
           await host.closed
         } finally {
           controller.dispose()

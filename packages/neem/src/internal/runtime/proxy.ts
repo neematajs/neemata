@@ -1,4 +1,7 @@
-import type { NeemApplicationUpstream } from '../../public/runtime.ts'
+import type { NeemProxyConfig } from '#public/config.ts'
+import type { NeemApplicationUpstream } from '#public/runtime.ts'
+import { createNeemChildLogger } from '#runtime/logger.ts'
+import type { NeemRuntimeSnapshot } from '#runtime/snapshot.ts'
 
 export type NeemProxyUpstream = {
   type: 'port'
@@ -134,6 +137,140 @@ export class NeemProxyUpstreamRegistry {
   }
 }
 
+export type NeemProxyManagerOptions = {
+  snapshot: NeemRuntimeSnapshot
+  upstreams: NeemProxyUpstreamRegistry
+  loadProxyPackage?: NeemProxyPackageLoader
+}
+
+export type NeemNativeProxy = {
+  start: () => Promise<undefined>
+  stop: () => Promise<undefined>
+  addUpstream: (
+    appName: string,
+    upstream: NeemProxyUpstream,
+  ) => Promise<undefined>
+  removeUpstream: (
+    appName: string,
+    upstream: NeemProxyUpstream,
+  ) => Promise<undefined>
+}
+
+export type NeemProxyPackageLoader = () => Promise<{
+  Proxy: new (options: NeemNativeProxyOptions) => NeemNativeProxy
+}>
+
+export type NeemNativeProxyOptions = {
+  listen: string
+  tls?: { keyPath: string; certPath: string }
+  applications: Array<{
+    name: string
+    routing: { type?: 'subdomain' | 'path'; name?: string; default?: boolean }
+    sni?: string
+  }>
+  healthCheckIntervalMs?: number
+  stickySessions?: NeemProxyConfig['stickySessions']
+}
+
+export class NeemProxyManager {
+  private readonly logger: NeemRuntimeSnapshot['logger']
+  private readonly config: NeemProxyConfig
+  private readonly loadProxyPackage: NeemProxyPackageLoader
+  private proxy: NeemNativeProxy | undefined
+  private offAdd: (() => void) | undefined
+  private offRemove: (() => void) | undefined
+
+  constructor(private readonly options: NeemProxyManagerOptions) {
+    const config = options.snapshot.config.proxy
+    if (!config) throw new Error('Cannot create Neem proxy without config')
+
+    this.config = config
+    this.logger = createNeemChildLogger(options.snapshot.logger, 'Neem proxy')
+    this.loadProxyPackage = options.loadProxyPackage ?? loadProxyPackage
+  }
+
+  async start(): Promise<void> {
+    if (this.proxy) return
+
+    const proxyPackage = await this.loadProxyPackage()
+    this.proxy = new proxyPackage.Proxy(
+      createNativeProxyOptions(
+        this.config,
+        Object.keys(this.options.snapshot.manifest.apps),
+      ),
+    )
+
+    this.offAdd = this.options.upstreams.on('add', (event) => {
+      void this.addUpstream(event)
+    })
+    this.offRemove = this.options.upstreams.on('remove', (event) => {
+      void this.removeUpstream(event)
+    })
+
+    for (const event of this.options.upstreams.list()) {
+      await this.addUpstream(event)
+    }
+
+    this.logger.info(
+      {
+        hostname: this.config.hostname,
+        port: this.config.port,
+        applications: Object.keys(this.options.snapshot.manifest.apps),
+      },
+      'Starting Neem proxy',
+    )
+    await this.proxy.start()
+    this.logger.info('Neem proxy started')
+  }
+
+  async stop(): Promise<void> {
+    const proxy = this.proxy
+    this.proxy = undefined
+    this.offAdd?.()
+    this.offRemove?.()
+    this.offAdd = undefined
+    this.offRemove = undefined
+
+    if (!proxy) return
+    this.logger.info('Stopping Neem proxy')
+    await proxy.stop()
+    this.logger.info('Neem proxy stopped')
+  }
+
+  private async addUpstream(
+    event: NeemProxyUpstreamRegistryEvent,
+  ): Promise<void> {
+    if (!this.proxy) return
+
+    try {
+      await this.proxy.addUpstream(event.appName, event.proxyUpstream)
+    } catch (error) {
+      this.logger.warn(
+        new Error(`Failed to add proxy upstream for app [${event.appName}]`, {
+          cause: error,
+        }),
+      )
+    }
+  }
+
+  private async removeUpstream(
+    event: NeemProxyUpstreamRegistryEvent,
+  ): Promise<void> {
+    if (!this.proxy) return
+
+    try {
+      await this.proxy.removeUpstream(event.appName, event.proxyUpstream)
+    } catch (error) {
+      this.logger.warn(
+        new Error(
+          `Failed to remove proxy upstream for app [${event.appName}]`,
+          { cause: error },
+        ),
+      )
+    }
+  }
+}
+
 export function normalizeProxyApplicationUpstream(
   upstream: NeemApplicationUpstream,
 ): NeemApplicationUpstream {
@@ -160,3 +297,42 @@ export function toProxyUpstream(
 function getUpstreamKey(upstream: NeemApplicationUpstream): string {
   return `${upstream.type}:${upstream.url}`
 }
+
+function createNativeProxyOptions(
+  config: NeemProxyConfig,
+  appNames: readonly string[],
+): NeemNativeProxyOptions {
+  const configured = config.applications ?? {}
+  const names =
+    Object.keys(configured).length > 0 ? Object.keys(configured) : appNames
+
+  return {
+    listen: `${config.hostname}:${config.port}`,
+    tls: config.tls
+      ? { keyPath: config.tls.key, certPath: config.tls.cert }
+      : undefined,
+    applications: names.flatMap((name) => {
+      const app = configured[name]
+      if (app === undefined && Object.keys(configured).length > 0) return []
+      return [
+        {
+          name,
+          routing: app?.routing ?? { type: 'path', name },
+          sni: app?.sni,
+        },
+      ]
+    }),
+    healthCheckIntervalMs: config.healthChecks?.interval,
+    stickySessions: config.stickySessions,
+  }
+}
+
+async function loadProxyPackage() {
+  return await dynamicImport('@nmtjs/proxy')
+}
+
+const dynamicImport = new Function('specifier', 'return import(specifier)') as (
+  specifier: string,
+) => Promise<{
+  Proxy: new (options: NeemNativeProxyOptions) => NeemNativeProxy
+}>

@@ -1,38 +1,38 @@
 import { mkdir, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, relative, resolve } from 'node:path'
 
-import type { NeemResolvedArtifact } from '../../public/artifact.ts'
+import type {
+  NeemConfigDiscovery,
+  NeemDiscoveredImport,
+} from '#build/discovery.ts'
+import { discoverConfigEntriesSync } from '#build/discovery.ts'
+import type {
+  NeemBuildManifest,
+  NeemBuildManifestArtifact,
+} from '#build/manifest.ts'
+import {
+  NEEM_MANIFEST_FILE,
+  NEEM_MANIFEST_SCHEMA_VERSION,
+} from '#build/manifest.ts'
+import { buildArtifact } from '#build/rolldown.ts'
+import type { NeemResolvedArtifact } from '#public/artifact.ts'
 import type {
   NeemBuildConfig,
   NeemBuildConfigInput,
   NeemConfig,
-} from '../../public/config.ts'
-import type { NeemPlugin } from '../../public/plugin.ts'
-import type {
-  NeemConfigDiscovery,
-  NeemDiscoveredImport,
-} from '../build/discovery.ts'
-import type {
-  NeemBuildManifest,
-  NeemBuildManifestArtifact,
-} from '../build/manifest.ts'
-import { discoverConfigEntriesSync } from '../build/discovery.ts'
-import {
-  NEEM_MANIFEST_FILE,
-  NEEM_MANIFEST_SCHEMA_VERSION,
-} from '../build/manifest.ts'
-import { buildArtifact } from '../build/rolldown.ts'
-import { resolveNeemInlineLogger } from '../runtime/logger.ts'
-import { importDefault } from '../runtime/utils.ts'
+} from '#public/config.ts'
+import type { NeemPlugin } from '#public/plugin.ts'
+import { resolveNeemLogger } from '#runtime/logger.ts'
+import { importDefault } from '#runtime/utils.ts'
 
 export type {
   NeemBuildManifest,
   NeemBuildManifestArtifact,
-} from '../build/manifest.ts'
+} from '#build/manifest.ts'
 export {
   NEEM_MANIFEST_FILE,
   NEEM_MANIFEST_SCHEMA_VERSION,
-} from '../build/manifest.ts'
+} from '#build/manifest.ts'
 
 export type NeemBuildOptions = {
   config?: string
@@ -54,12 +54,24 @@ export async function buildNeem(
   const configFile = resolve(cwd, options.config ?? 'neem.config.ts')
   const discovery = discoverConfigEntriesSync(configFile)
   const config = await importDefault<NeemConfig>(configFile)
-  const logger = resolveNeemInlineLogger(config.logger)
+  const logger = await resolveNeemLogger(config.logger)
   const outDir = resolve(cwd, options.outDir ?? config.outDir ?? 'dist')
 
+  logger.info({ configFile, outDir }, 'Building Neem application')
+  logger.debug(
+    {
+      apps: Object.keys(config.apps),
+      plugins: config.plugins?.length ?? 0,
+      hasLogger: Boolean(config.logger),
+    },
+    'Neem config discovered',
+  )
+
+  logger.debug({ outDir }, 'Cleaning Neem build output')
   await cleanNeemOutDir(outDir)
   await mkdir(outDir, { recursive: true })
 
+  logger.debug({ configFile }, 'Building Neem config artifact')
   const configArtifact = await buildConfigArtifact({
     configFile,
     discovery,
@@ -79,6 +91,10 @@ export async function buildNeem(
       throw new Error(`Failed to discover app entry for [${name}]`)
     }
 
+    logger.debug(
+      { appName: name, entry: discovered.entry.resolved },
+      'Building Neem app entry',
+    )
     await appConfig.entry()
     const rolldown = await loadBuildConfig(appConfig.build)
     const entry = await buildArtifact({
@@ -110,6 +126,14 @@ export async function buildNeem(
       instanceId: index,
     }
 
+    logger.debug(
+      {
+        plugin: pluginName,
+        instanceId: index,
+        entry: discovered.entry.resolved,
+      },
+      'Building Neem plugin entry',
+    )
     const entry = await buildArtifact({
       artifact: {
         id: 'entry',
@@ -132,6 +156,15 @@ export async function buildNeem(
 
     const artifacts: NeemBuildManifestArtifact[] = []
     for (const artifact of declaredArtifacts) {
+      logger.debug(
+        {
+          plugin: pluginName,
+          instanceId: index,
+          artifactId: artifact.id,
+          kind: artifact.kind,
+        },
+        'Building Neem plugin artifact',
+      )
       const built = await buildArtifact({
         artifact,
         owner,
@@ -150,7 +183,16 @@ export async function buildNeem(
     })
   }
 
+  logger.debug('Writing Neem manifest')
   const manifestFile = await writeManifest(outDir, manifest)
+  logger.info(
+    {
+      manifestFile,
+      apps: Object.keys(manifest.apps).length,
+      plugins: manifest.plugins.length,
+    },
+    'Neem build complete',
+  )
 
   return { configFile, outDir, manifestFile, manifest }
 }

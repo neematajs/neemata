@@ -53,6 +53,106 @@ describe('NeemApplicationServer', () => {
     ])
   })
 
+  it('reloads one app without full runtime restart', async () => {
+    const events: string[] = []
+    const server = new TestApplicationServer({
+      snapshot: createSnapshot('api'),
+      events,
+    })
+
+    await server.start()
+    await server.reloadApp('api', createSnapshot('api'))
+
+    expect(server.getSnapshot()).toMatchObject({
+      state: 'running',
+      appNames: ['api'],
+    })
+    expect(events).toEqual(['start:/tmp/neem-out', 'reload-app:api'])
+  })
+
+  it('marks failed app reload and recovers on next successful app reload', async () => {
+    const error = new Error('fixture app reload failure')
+    const events: string[] = []
+    const server = new TestApplicationServer({
+      snapshot: createSnapshot('api'),
+      events,
+    })
+
+    await server.start()
+    server.reloadAppError = error
+
+    await expect(
+      server.reloadApp('api', createSnapshot('api')),
+    ).rejects.toThrow(error)
+    expect(server.getSnapshot()).toMatchObject({
+      state: 'failed',
+      lastError: error,
+    })
+
+    server.reloadAppError = undefined
+    await server.reloadApp('api', createSnapshot('api'))
+
+    expect(server.getSnapshot()).toMatchObject({
+      state: 'running',
+      lastError: undefined,
+    })
+    expect(events).toEqual([
+      'start:/tmp/neem-out',
+      'reload-app:api',
+      'reload-app:api',
+    ])
+  })
+
+  it('reloads one plugin without full runtime restart', async () => {
+    const events: string[] = []
+    const server = new TestApplicationServer({
+      snapshot: createSnapshot('api'),
+      events,
+    })
+
+    await server.start()
+    await server.reloadPlugin(0, createSnapshot('api'))
+
+    expect(server.getSnapshot()).toMatchObject({
+      state: 'running',
+      pluginNames: ['jobs'],
+    })
+    expect(events).toEqual(['start:/tmp/neem-out', 'reload-plugin:0'])
+  })
+
+  it('marks failed plugin reload and recovers on next successful plugin reload', async () => {
+    const error = new Error('fixture plugin reload failure')
+    const events: string[] = []
+    const server = new TestApplicationServer({
+      snapshot: createSnapshot('api'),
+      events,
+    })
+
+    await server.start()
+    server.reloadPluginError = error
+
+    await expect(server.reloadPlugin(0, createSnapshot('api'))).rejects.toThrow(
+      error,
+    )
+    expect(server.getSnapshot()).toMatchObject({
+      state: 'failed',
+      lastError: error,
+    })
+
+    server.reloadPluginError = undefined
+    await server.reloadPlugin(0, createSnapshot('api'))
+
+    expect(server.getSnapshot()).toMatchObject({
+      state: 'running',
+      lastError: undefined,
+    })
+    expect(events).toEqual([
+      'start:/tmp/neem-out',
+      'reload-plugin:0',
+      'reload-plugin:0',
+    ])
+  })
+
   it('marks failed state when start fails', async () => {
     const error = new Error('fixture start failure')
     const server = new TestApplicationServer({
@@ -89,6 +189,8 @@ class TestApplicationServer extends NeemApplicationServer {
   private readonly events: string[]
   private readonly startError: Error | undefined
   private readonly delayMs: number
+  reloadAppError: Error | undefined
+  reloadPluginError: Error | undefined
 
   constructor(options: {
     snapshot: NeemRuntimeSnapshot
@@ -114,6 +216,22 @@ class TestApplicationServer extends NeemApplicationServer {
     snapshot: NeemRuntimeSnapshot,
   ): Promise<void> {
     this.events.push(`stop:${snapshot.outDir}`)
+  }
+
+  protected override async reloadAppRuntime(
+    appName: string,
+    _snapshot: NeemRuntimeSnapshot,
+  ): Promise<void> {
+    this.events.push(`reload-app:${appName}`)
+    if (this.reloadAppError) throw this.reloadAppError
+  }
+
+  protected override async reloadPluginRuntime(
+    instanceId: number,
+    _snapshot: NeemRuntimeSnapshot,
+  ): Promise<void> {
+    this.events.push(`reload-plugin:${instanceId}`)
+    if (this.reloadPluginError) throw this.reloadPluginError
   }
 }
 

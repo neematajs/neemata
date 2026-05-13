@@ -1,9 +1,20 @@
 import { parentPort, workerData as rawWorkerData } from 'node:worker_threads'
 
-import type { NeemApp } from '../../public/app.ts'
-import type { NeemConfig } from '../../public/config.ts'
-import type { NeemRuntime } from '../../public/runtime.ts'
-import type { NeemWorker } from '../../public/worker.ts'
+import type { Logger } from '@nmtjs/core'
+
+import type { NeemApp } from '#public/app.ts'
+import type { NeemConfig } from '#public/config.ts'
+import type { NeemRuntime } from '#public/runtime.ts'
+import type { NeemWorker } from '#public/worker.ts'
+import {
+  createNeemChildLogger,
+  resolveNeemConfigLogger,
+} from '#runtime/logger.ts'
+import {
+  createArtifactRegistry,
+  importDefault,
+  normalizeError,
+} from '#runtime/utils.ts'
 import type {
   NeemAppRuntimeWorkerData,
   NeemGenericRuntimeWorkerData,
@@ -12,13 +23,7 @@ import type {
   NeemRuntimeWorkerMessage,
   NeemRuntimeWorkerParentMessage,
   NeemRuntimeWorkerReloadData,
-} from './worker-protocol.ts'
-import { createNeemChildLogger, resolveNeemConfigLogger } from './logger.ts'
-import {
-  createArtifactRegistry,
-  importDefault,
-  normalizeError,
-} from './utils.ts'
+} from '#runtime/worker-protocol.ts'
 
 if (!parentPort) {
   throw new Error('Neem runtime worker entry requires a parent port')
@@ -29,6 +34,7 @@ const port = parentPort
 const workerData = rawWorkerData as NeemRuntimeWorkerData
 
 let runtime: NeemRuntime | undefined
+let runtimeLogger: Logger | undefined
 let started = false
 
 function postMessage(message: NeemRuntimeWorkerMessage) {
@@ -37,6 +43,9 @@ function postMessage(message: NeemRuntimeWorkerMessage) {
 
 function reportError(value: unknown, origin: NeemRuntimeWorkerErrorOrigin) {
   const error = normalizeError(value)
+  runtimeLogger?.error(
+    new Error(`Neem runtime ${origin} error`, { cause: error }),
+  )
   postMessage({
     type: 'error',
     data: {
@@ -62,6 +71,11 @@ async function createWorkerRuntime(
   data: NeemGenericRuntimeWorkerData,
 ): Promise<NeemRuntime> {
   const logger = await resolveWorkerLogger(data.configFile, data.name)
+  runtimeLogger = logger
+  logger.trace(
+    { worker: data.name, artifactId: data.artifact.id },
+    'Creating Neem worker runtime',
+  )
   const worker = await importDefault<NeemWorker<any, any>>(data.artifact.file)
 
   return worker.createRuntime({
@@ -81,7 +95,16 @@ async function createAppRuntime(
 ): Promise<NeemRuntime> {
   const logger = await resolveWorkerLogger(
     data.configFile,
-    `App/${data.appName}:${data.threadIndex}`,
+    `Neem App/${data.appName}:${data.threadIndex}`,
+  )
+  runtimeLogger = logger
+  logger.trace(
+    {
+      appName: data.appName,
+      threadIndex: data.threadIndex,
+      artifactId: data.artifact.id,
+    },
+    'Creating Neem app runtime',
   )
   const app = await importDefault<NeemApp<any, any>>(data.artifact.file)
 
@@ -103,15 +126,22 @@ async function resolveWorkerLogger(configFile: string, label: string) {
 }
 
 async function stopRuntime() {
+  runtimeLogger?.trace('Stopping Neem runtime')
   if (runtime && started) await runtime.stop()
   started = false
+  runtimeLogger?.trace('Neem runtime stopped')
 }
 
 async function reloadRuntime(data: NeemRuntimeWorkerReloadData) {
   if (!runtime?.reload) {
     throw new Error('Runtime does not implement reload')
   }
+  runtimeLogger?.debug(
+    { artifactId: data.artifact.id },
+    'Reloading Neem runtime',
+  )
   const upstreams = (await runtime.reload({ reason: 'artifact' })) ?? []
+  runtimeLogger?.debug({ upstreams: upstreams.length }, 'Neem runtime reloaded')
   postMessage({ type: 'reloaded', data: { upstreams } })
 }
 
@@ -157,6 +187,10 @@ async function main() {
   try {
     const upstreams = (await runtime.start()) ?? []
     started = true
+    runtimeLogger?.trace(
+      { upstreams: upstreams.length },
+      'Neem runtime started',
+    )
     postMessage({ type: 'ready', data: { upstreams } })
   } catch (error) {
     reportError(error, 'start')

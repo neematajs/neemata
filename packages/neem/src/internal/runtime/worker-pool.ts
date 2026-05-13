@@ -1,4 +1,10 @@
-import type { NeemWorkerState } from '../../public/runtime.ts'
+import type { Logger } from '@nmtjs/core'
+
+import type { NeemWorkerState } from '#public/runtime.ts'
+import {
+  createNeemChildLogger,
+  createNeemDefaultLogger,
+} from '#runtime/logger.ts'
 
 export type NeemPoolWorker = {
   id?: string
@@ -30,18 +36,24 @@ export type NeemWorkerPoolHealth = {
 export type NeemWorkerPoolOptions<TWorker extends NeemPoolWorker> = {
   name: string
   workers: readonly TWorker[]
+  logger?: Logger
 }
 
 export class NeemWorkerPool<TWorker extends NeemPoolWorker> {
   readonly name: string
 
   private readonly workers: readonly TWorker[]
+  private readonly logger: Logger
   private startPromise: Promise<void> | undefined
   private stopPromise: Promise<void> | undefined
 
   constructor(options: NeemWorkerPoolOptions<TWorker>) {
     this.name = options.name
     this.workers = [...options.workers]
+    this.logger = createNeemChildLogger(
+      options.logger ?? createNeemDefaultLogger(),
+      `Neem pool ${options.name}`,
+    )
   }
 
   list(): readonly TWorker[] {
@@ -76,11 +88,16 @@ export class NeemWorkerPool<TWorker extends NeemPoolWorker> {
   }
 
   start(): Promise<void> {
+    this.logger.trace(
+      { count: this.workers.length },
+      'Starting Neem worker pool',
+    )
     this.startPromise ??= Promise.all(
       this.workers.map((worker) => worker.start()),
     )
       .then(() => undefined)
       .finally(() => {
+        this.logger.trace(this.getHealth(), 'Neem worker pool started')
         this.startPromise = undefined
       })
     return this.startPromise
@@ -92,11 +109,16 @@ export class NeemWorkerPool<TWorker extends NeemPoolWorker> {
   }
 
   stop(): Promise<void> {
+    this.logger.trace(
+      { count: this.workers.length },
+      'Stopping Neem worker pool',
+    )
     this.stopPromise ??= Promise.all(
       this.workers.map((worker) => worker.stop()),
     )
       .then(() => undefined)
       .finally(() => {
+        this.logger.trace('Neem worker pool stopped')
         this.stopPromise = undefined
       })
     return this.stopPromise

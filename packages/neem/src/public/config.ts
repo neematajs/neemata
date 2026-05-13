@@ -1,8 +1,8 @@
 import type { Logger } from '@nmtjs/core'
 
-import type { InferNeemThreadOptions, NeemApp } from './app.ts'
-import type { NeemRolldownOptions } from './artifact.ts'
-import type { InferNeemPluginOptions, NeemPlugin } from './plugin.ts'
+import type { InferNeemThreadOptions, NeemApp } from '#public/app.ts'
+import type { NeemRolldownOptions } from '#public/artifact.ts'
+import type { InferNeemPluginOptions, NeemPlugin } from '#public/plugin.ts'
 
 export type NeemEntryModule<T> = { default: T }
 
@@ -50,10 +50,35 @@ export type NeemPluginOptions<TPlugin = NeemPlugin> = {
   options?: InferNeemPluginOptions<TPlugin>
 }
 
+export type NeemProxyRoutingOptions = {
+  type?: 'subdomain' | 'path'
+  name?: string
+  default?: boolean
+}
+
+export type NeemProxyConfig = {
+  hostname: string
+  port: number
+  applications?: Record<
+    string,
+    { routing?: NeemProxyRoutingOptions; sni?: string } | undefined
+  >
+  healthChecks?: { interval?: number }
+  stickySessions?: {
+    enabled?: boolean
+    cookieName?: string
+    headerName?: string
+    ttlMs?: number
+    maxEntries?: number
+  }
+  tls?: { key: string; cert: string }
+}
+
 export type NeemConfig = {
   logger?: NeemLoggerInput
   apps: Record<string, NeemAppConfig<any>>
   plugins?: readonly NeemPluginOptions<any>[]
+  proxy?: NeemProxyConfig
   outDir?: string
 }
 
@@ -61,6 +86,7 @@ export function defineConfig(config: {
   logger?: NeemLoggerInput
   apps: Record<string, NeemAppConfig<any>>
   plugins?: readonly NeemPluginOptions<any>[]
+  proxy?: NeemProxyConfig
   outDir?: string
 }): NeemConfig {
   return Object.freeze(config)

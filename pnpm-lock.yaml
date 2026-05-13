@@ -242,6 +242,9 @@ importers:
       oxc-resolver:
         specifier: 11.19.1
         version: 11.19.1(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)
+      perfect-debounce:
+        specifier: 2.1.0
+        version: 2.1.0
       rolldown:
         specifier: 'catalog:'
         version: 1.0.0
@@ -408,59 +411,26 @@ importers:
         specifier: github:uNetworking/uWebSockets.js#v20.63.0
         version: https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/d584e6247998f725e86db77130de139eda936473
 
-  tests/e2e:
+  tests/neem:
     devDependencies:
-      '@nmtjs/client':
+      '@nmtjs/application':
         specifier: workspace:*
-        version: link:../../packages/client
-      '@nmtjs/contract':
+        version: link:../../packages/application
+      '@nmtjs/core':
         specifier: workspace:*
-        version: link:../../packages/contract
-      '@nmtjs/http-client':
-        specifier: workspace:*
-        version: link:../../packages/http-client
-      '@nmtjs/http-transport':
-        specifier: workspace:*
-        version: link:../../packages/http-transport
-      '@nmtjs/json-format':
-        specifier: workspace:*
-        version: link:../../packages/json-format
-      '@nmtjs/msgpack-format':
-        specifier: workspace:*
-        version: link:../../packages/msgpack-format
+        version: link:../../packages/core
       '@nmtjs/neem':
         specifier: workspace:*
         version: link:../../packages/neem
-      '@nmtjs/protocol':
-        specifier: workspace:*
-        version: link:../../packages/protocol
-      '@nmtjs/proxy':
-        specifier: 'catalog:'
-        version: 1.0.0-beta.6
-      '@nmtjs/type':
-        specifier: workspace:*
-        version: link:../../packages/type
-      '@nmtjs/ws-client':
-        specifier: workspace:*
-        version: link:../../packages/ws-client
-      '@nmtjs/ws-transport':
-        specifier: workspace:*
-        version: link:../../packages/ws-transport
-      nmtjs:
-        specifier: workspace:*
-        version: link:../../packages/nmtjs
-      uWebSockets.js:
-        specifier: github:uNetworking/uWebSockets.js#v20.57.0
-        version: https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/fcfc622a4286909593b7f390056d89e0ca3b56b9
 
-  tests/integration:
+  tests/neemata:
     devDependencies:
+      '@nmtjs/application':
+        specifier: workspace:*
+        version: link:../../packages/application
       '@nmtjs/client':
         specifier: workspace:*
         version: link:../../packages/client
-      '@nmtjs/common':
-        specifier: workspace:*
-        version: link:../../packages/common
       '@nmtjs/contract':
         specifier: workspace:*
         version: link:../../packages/contract
@@ -479,6 +449,9 @@ importers:
       '@nmtjs/json-format':
         specifier: workspace:*
         version: link:../../packages/json-format
+      '@nmtjs/msgpack-format':
+        specifier: workspace:*
+        version: link:../../packages/msgpack-format
       '@nmtjs/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
@@ -491,21 +464,9 @@ importers:
       '@nmtjs/ws-transport':
         specifier: workspace:*
         version: link:../../packages/ws-transport
-      nmtjs:
-        specifier: workspace:*
-        version: link:../../packages/nmtjs
-
-  tests/neem:
-    devDependencies:
-      '@nmtjs/application':
-        specifier: workspace:*
-        version: link:../../packages/application
-      '@nmtjs/core':
-        specifier: workspace:*
-        version: link:../../packages/core
-      '@nmtjs/neem':
-        specifier: workspace:*
-        version: link:../../packages/neem
+      uWebSockets.js:
+        specifier: github:uNetworking/uWebSockets.js#v20.57.0
+        version: https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/fcfc622a4286909593b7f390056d89e0ca3b56b9
 
 packages:
 
@@ -1367,6 +1328,9 @@ packages:
 
   pathe@2.0.3:
     resolution: {integrity: sha512-WUjGcAqP1gQacoQe+OBJsFA7Ld4DyXuUIjZ5cc75cLHvJ7dtNsTugphxIADwspS+AraAUePCKrSVtPLFj/F88w==}
+
+  perfect-debounce@2.1.0:
+    resolution: {integrity: sha512-LjgdTytVFXeUgtHZr9WYViYSM/g8MkcTPYDlPa3cDqMirHjKiSZPYd6DoL7pK8AJQr+uWkQvCjHNdiMqsrJs+g==}
 
   picocolors@1.1.1:
     resolution: {integrity: sha512-xceH2snhtb5M9liqDsmEw56le376mTZkEX/jEb/RxNFyegNul7eNslCXP9FDj/Lcu0X8KEyMceP2ntpaHrDEVA==}
@@ -2359,6 +2323,8 @@ snapshots:
       - '@emnapi/runtime'
 
   pathe@2.0.3: {}
+
+  perfect-debounce@2.1.0: {}
 
   picocolors@1.1.1: {}
 

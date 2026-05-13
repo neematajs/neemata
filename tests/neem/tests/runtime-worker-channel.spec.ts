@@ -2,6 +2,7 @@ import { once } from 'node:events'
 import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { createLogger } from '@nmtjs/core'
 import { describe, expect, it } from 'vitest'
 
 import type { NeemResolvedArtifact } from '../../../packages/neem/src/public/artifact.ts'
@@ -19,6 +20,7 @@ describe('Neem plugin worker communication channel', () => {
       configFile: fileURLToPath(
         new URL('../fixtures/worker.config.js', import.meta.url),
       ),
+      logger: createLogger({ pinoOptions: { enabled: false } }, 'test'),
       startupTimeoutMs: 5_000,
       stopTimeoutMs: 5_000,
     })

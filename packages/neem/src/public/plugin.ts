@@ -6,12 +6,12 @@ import type {
   NeemArtifact,
   NeemArtifactRegistry,
   NeemResolvedArtifact,
-} from './artifact.ts'
+} from '#public/artifact.ts'
 import type {
   NeemManagedWorkerHandle,
   NeemMaybePromise,
   NeemMode,
-} from './runtime.ts'
+} from '#public/runtime.ts'
 
 export type NeemPluginArtifactContext<Options = unknown> = {
   mode: NeemMode

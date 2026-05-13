@@ -49,10 +49,7 @@
       "path": "./packages/ws-transport/tsconfig.json"
     },
     {
-      "path": "./tests/e2e/tsconfig.json"
-    },
-    {
-      "path": "./tests/integration/tsconfig.json"
+      "path": "./tests/neemata/tsconfig.json"
     },
     {
       "path": "./tests/neem/tsconfig.json"

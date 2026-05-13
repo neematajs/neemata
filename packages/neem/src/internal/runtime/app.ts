@@ -1,27 +1,28 @@
 import type { MessagePort } from 'node:worker_threads'
 import { MessageChannel } from 'node:worker_threads'
 
-import type { NeemResolvedArtifact } from '../../public/artifact.ts'
+import type { NeemResolvedArtifact } from '#public/artifact.ts'
 import type {
   NeemApplicationUpstream,
   NeemMode,
   NeemWorkerState,
-} from '../../public/runtime.ts'
-import type { NeemManagedWorkerController } from './managed-worker.ts'
-import type { NeemProxyUpstreamRegistry } from './proxy.ts'
-import type { NeemRuntimeSnapshot } from './snapshot.ts'
+} from '#public/runtime.ts'
+import { createNeemChildLogger } from '#runtime/logger.ts'
+import type { NeemManagedWorkerController } from '#runtime/managed-worker.ts'
+import { NeemManagedWorker } from '#runtime/managed-worker.ts'
+import type { NeemProxyUpstreamRegistry } from '#runtime/proxy.ts'
+import type { NeemRuntimeSnapshot } from '#runtime/snapshot.ts'
 import type {
   NeemWorkerPoolHealth,
   NeemWorkerPoolState,
-} from './worker-pool.ts'
+} from '#runtime/worker-pool.ts'
+import { NeemWorkerPool } from '#runtime/worker-pool.ts'
 import type {
   NeemRuntimeWorkerData,
   NeemRuntimeWorkerErrorMessage,
   NeemRuntimeWorkerMessage,
-} from './worker-protocol.ts'
-import { NeemManagedWorker } from './managed-worker.ts'
-import { NeemWorkerPool } from './worker-pool.ts'
-import { resolveRuntimeWorkerEntry } from './worker-runtime.ts'
+} from '#runtime/worker-protocol.ts'
+import { resolveRuntimeWorkerEntry } from '#runtime/worker-runtime.ts'
 
 export type NeemStartedAppWorker = {
   id: string
@@ -51,14 +52,69 @@ export type NeemAppManagerOptions = {
 }
 
 export class NeemAppManager {
-  private readonly pools: NeemAppWorkerPool[]
-  private readonly workers: NeemAppWorker[]
+  private readonly pools = new Map<string, NeemAppWorkerPool>()
 
   constructor(private readonly options: NeemAppManagerOptions) {
-    this.pools = createAppWorkerPools(options.snapshot)
-    this.workers = this.pools.flatMap((pool) => pool.list())
+    for (const appName of Object.keys(options.snapshot.manifest.apps)) {
+      this.setPool(createAppWorkerPool(options.snapshot, appName))
+    }
+  }
 
-    for (const worker of this.workers) {
+  listWorkers(): readonly NeemStartedAppWorker[] {
+    return [...this.pools.values()].flatMap((pool) => pool.list())
+  }
+
+  listPools(): readonly NeemStartedAppWorkerPool[] {
+    return [...this.pools.values()]
+  }
+
+  getUpstreams(): readonly NeemApplicationUpstream[] {
+    return this.listWorkers().flatMap((worker) => worker.getUpstreams())
+  }
+
+  async start(): Promise<void> {
+    try {
+      this.options.snapshot.logger.trace(
+        {
+          apps: [...this.pools.values()].map((pool) => ({
+            name: pool.appName,
+            threads: pool.list().length,
+          })),
+        },
+        'Starting Neem app workers',
+      )
+      await Promise.all([...this.pools.values()].map((pool) => pool.start()))
+    } catch (error) {
+      await this.stop()
+      throw error
+    }
+  }
+
+  async stop(): Promise<void> {
+    this.options.snapshot.logger.trace('Stopping Neem app workers')
+    await Promise.all(
+      [...this.pools.keys()].map((appName) => this.removePool(appName)),
+    )
+  }
+
+  async reloadApp(
+    appName: string,
+    snapshot: NeemRuntimeSnapshot,
+  ): Promise<void> {
+    const nextPool = createAppWorkerPool(snapshot, appName)
+    await this.removePool(appName)
+    this.setPool(nextPool)
+
+    try {
+      await nextPool.start()
+    } catch (error) {
+      await this.removePool(appName)
+      throw error
+    }
+  }
+
+  private setPool(pool: NeemAppWorkerPool): void {
+    for (const worker of pool.list()) {
       worker.onReady = () => {
         this.options.proxyUpstreams.addOwnerUpstreams(
           worker,
@@ -71,68 +127,52 @@ export class NeemAppManager {
         void this.options.onWorkerFailure?.(error, worker)
       }
     }
+    this.pools.set(pool.appName, pool)
   }
 
-  listWorkers(): readonly NeemStartedAppWorker[] {
-    return this.workers
-  }
+  private async removePool(appName: string): Promise<void> {
+    const pool = this.pools.get(appName)
+    if (!pool) return
 
-  listPools(): readonly NeemStartedAppWorkerPool[] {
-    return this.pools
-  }
-
-  getUpstreams(): readonly NeemApplicationUpstream[] {
-    return this.workers.flatMap((worker) => worker.getUpstreams())
-  }
-
-  async start(): Promise<void> {
-    try {
-      await Promise.all(this.pools.map((pool) => pool.start()))
-    } catch (error) {
-      await this.stop()
-      throw error
-    }
-  }
-
-  async stop(): Promise<void> {
-    for (const worker of this.workers) {
+    this.pools.delete(appName)
+    for (const worker of pool.list()) {
       this.options.proxyUpstreams.removeOwnerUpstreams(worker)
     }
-    await Promise.all(this.pools.map((pool) => pool.stop()))
+    await pool.stop()
   }
 }
 
-function createAppWorkerPools(
+function createAppWorkerPool(
   snapshot: NeemRuntimeSnapshot,
-): NeemAppWorkerPool[] {
-  const pools: NeemAppWorkerPool[] = []
-
-  for (const appName of Object.keys(snapshot.manifest.apps)) {
-    const appConfig = snapshot.config.apps[appName]
-    if (!appConfig) {
-      throw new Error(`Config for app [${appName}] is missing`)
-    }
-
-    const appArtifact = snapshot.artifacts.resolveFor(
-      { type: 'app', name: appName },
-      'entry',
-    )!
-    const workers = appConfig.threads.map(
-      (threadOptions, threadIndex) =>
-        new NeemAppWorker({
-          mode: snapshot.mode,
-          appName,
-          threadIndex,
-          threadOptions,
-          configFile: snapshot.configFile,
-          appArtifact,
-          artifacts: snapshot.artifacts.list(),
-        }),
-    )
-    pools.push(new NeemAppWorkerPool({ appName, workers }))
+  appName: string,
+): NeemAppWorkerPool {
+  const appConfig = snapshot.config.apps[appName]
+  if (!appConfig) {
+    throw new Error(`Config for app [${appName}] is missing`)
   }
 
-  return pools
+  const appArtifact = snapshot.artifacts.resolveFor(
+    { type: 'app', name: appName },
+    'entry',
+  )
+  if (!appArtifact) {
+    throw new Error(`Entry artifact for app [${appName}] is missing`)
+  }
+
+  const workers = appConfig.threads.map(
+    (threadOptions, threadIndex) =>
+      new NeemAppWorker({
+        mode: snapshot.mode,
+        appName,
+        threadIndex,
+        threadOptions,
+        configFile: snapshot.configFile,
+        appArtifact,
+        artifacts: snapshot.artifacts.list(),
+        logger: snapshot.logger,
+      }),
+  )
+  return new NeemAppWorkerPool({ appName, workers, logger: snapshot.logger })
 }
 
 class NeemAppWorker implements NeemStartedAppWorker {
@@ -156,6 +196,7 @@ class NeemAppWorker implements NeemStartedAppWorker {
       configFile: string
       appArtifact: NeemResolvedArtifact
       artifacts: readonly NeemResolvedArtifact[]
+      logger: NeemRuntimeSnapshot['logger']
     },
   ) {
     this.id = `${data.appName}:${data.threadIndex}`
@@ -186,6 +227,10 @@ class NeemAppWorker implements NeemStartedAppWorker {
       entry: resolveRuntimeWorkerEntry(),
       workerData,
       workerOptions: { transferList: [channel.port2] },
+      logger: createNeemChildLogger(
+        data.logger,
+        `App/${data.appName}:${data.threadIndex}`,
+      ),
       onMessage: (message, controller) => {
         this.handleMessage(message as NeemRuntimeWorkerMessage, controller)
       },
@@ -220,17 +265,33 @@ class NeemAppWorker implements NeemStartedAppWorker {
   ) {
     if (message.type === 'ready') {
       this.upstreams = message.data.upstreams ?? []
+      this.data.logger.trace(
+        {
+          appName: this.appName,
+          threadIndex: this.threadIndex,
+          upstreams: this.upstreams.length,
+        },
+        'Neem app worker ready',
+      )
       this.onReady?.(this)
       controller.markReady()
       return
     }
 
     if (message.type === 'error') {
-      controller.fail(deserializeWorkerError(message.data))
+      const error = deserializeWorkerError(message.data)
+      this.data.logger.error(
+        new Error(`Neem app worker [${this.id}] failed`, { cause: error }),
+      )
+      controller.fail(error)
       return
     }
 
     if (message.type === 'stopped') {
+      this.data.logger.trace(
+        { appName: this.appName, threadIndex: this.threadIndex },
+        'Neem app worker stopped',
+      )
       controller.markStopped()
     }
   }
@@ -242,8 +303,16 @@ class NeemAppWorkerPool
 {
   readonly appName: string
 
-  constructor(options: { appName: string; workers: readonly NeemAppWorker[] }) {
-    super({ name: `app:${options.appName}`, workers: options.workers })
+  constructor(options: {
+    appName: string
+    workers: readonly NeemAppWorker[]
+    logger: NeemRuntimeSnapshot['logger']
+  }) {
+    super({
+      name: `app:${options.appName}`,
+      workers: options.workers,
+      logger: options.logger,
+    })
     this.appName = options.appName
   }
 }

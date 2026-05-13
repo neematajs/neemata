@@ -1,11 +1,14 @@
 import type { WorkerOptions } from 'node:worker_threads'
 import { Worker } from 'node:worker_threads'
 
+import type { Logger } from '@nmtjs/core'
+
 import type {
   NeemManagedWorkerHandle,
   NeemWorkerState,
-} from '../../public/runtime.ts'
-import { normalizeError } from './utils.ts'
+} from '#public/runtime.ts'
+import { createNeemDefaultLogger } from '#runtime/logger.ts'
+import { normalizeError } from '#runtime/utils.ts'
 
 export type NeemManagedWorkerController = {
   getState: () => NeemWorkerState
@@ -34,6 +37,7 @@ export type NeemManagedWorkerOptions = {
   entry: URL
   workerData?: unknown
   workerOptions?: Omit<WorkerOptions, 'workerData'>
+  logger?: Logger
   startupTimeoutMs?: number
   stopTimeoutMs?: number
   stopMessage?: unknown
@@ -63,11 +67,13 @@ export class NeemManagedWorker implements NeemManagedWorkerHandle {
   private exitResolve: (() => void) | undefined
   private exitPromise: Promise<void> | undefined
   private stopping = false
+  private readonly logger: Logger
 
   constructor(private readonly options: NeemManagedWorkerOptions) {
     this.id = options.id
     this.name = options.name
     this.artifactId = options.artifactId
+    this.logger = options.logger ?? createNeemDefaultLogger()
   }
 
   getState(): NeemWorkerState {
@@ -97,6 +103,10 @@ export class NeemManagedWorker implements NeemManagedWorkerHandle {
     }
 
     this.state = 'starting'
+    this.logger.trace(
+      { worker: this.name, artifactId: this.artifactId },
+      'Starting Neem worker',
+    )
     this.stopping = false
     this.startedAt = Date.now()
     this.readyAt = undefined
@@ -111,6 +121,10 @@ export class NeemManagedWorker implements NeemManagedWorkerHandle {
     })
 
     const startupTimeout = setTimeout(() => {
+      this.logger.warn(
+        { worker: this.name, timeoutMs: this.startupTimeoutMs() },
+        'Neem worker startup timed out',
+      )
       this.fail(
         new Error(
           `Worker [${this.name}] did not become ready within ${this.startupTimeoutMs()}ms`,
@@ -142,6 +156,10 @@ export class NeemManagedWorker implements NeemManagedWorkerHandle {
 
   async restart(): Promise<void> {
     this.restartCount += 1
+    this.logger.trace(
+      { worker: this.name, restartCount: this.restartCount },
+      'Restarting Neem worker',
+    )
     await this.stop()
     return this.start()
   }
@@ -163,6 +181,7 @@ export class NeemManagedWorker implements NeemManagedWorkerHandle {
 
     this.stopping = true
     this.state = 'stopping'
+    this.logger.trace({ worker: this.name }, 'Stopping Neem worker')
     this.readyReject?.(new Error(`Worker [${this.name}] stopped before ready`))
     this.clearReadyHandlers()
 
@@ -179,6 +198,7 @@ export class NeemManagedWorker implements NeemManagedWorkerHandle {
       this.stoppedAt = Date.now()
       this.exitResolve = undefined
       this.exitPromise = undefined
+      this.logger.trace({ worker: this.name }, 'Neem worker stopped')
     }
   }
 
@@ -201,8 +221,10 @@ export class NeemManagedWorker implements NeemManagedWorkerHandle {
 
   private markReady(): void {
     if (this.state !== 'starting') return
+    this.transition('ready')
     this.state = 'ready'
     this.readyAt = Date.now()
+    this.logger.trace({ worker: this.name }, 'Neem worker ready')
     this.readyResolve?.()
     this.clearReadyHandlers()
   }
@@ -219,8 +241,12 @@ export class NeemManagedWorker implements NeemManagedWorkerHandle {
 
     this.failureCount += 1
     this.lastError = error
+    this.logger.error(
+      new Error(`Neem worker [${this.name}] failed`, { cause: error }),
+    )
 
     if (this.state === 'starting') {
+      this.transition('failed')
       this.state = 'failed'
       this.readyReject?.(error)
       this.clearReadyHandlers()
@@ -229,6 +255,7 @@ export class NeemManagedWorker implements NeemManagedWorkerHandle {
 
     if (this.stopping || this.state === 'stopping') return
 
+    this.transition('failed')
     this.state = 'failed'
     void this.options.onFailure?.(error, this)
   }
@@ -237,6 +264,7 @@ export class NeemManagedWorker implements NeemManagedWorkerHandle {
     this.exitResolve?.()
 
     if (this.stopping || this.state === 'stopped') {
+      this.transition('stopped')
       this.state = 'stopped'
       this.stoppedAt = Date.now()
       return
@@ -257,6 +285,13 @@ export class NeemManagedWorker implements NeemManagedWorkerHandle {
   private async terminateWorker(): Promise<void> {
     if (!this.worker) return
     await this.worker.terminate().catch(() => undefined)
+  }
+
+  private transition(to: NeemWorkerState): void {
+    this.logger.trace(
+      { from: this.state, to, worker: this.name },
+      'Worker state transition',
+    )
   }
 
   private stopTimeout(): Promise<void> {

@@ -1,15 +1,16 @@
 import type {
   NeemArtifactOwner,
   NeemResolvedArtifact,
-} from '../../public/artifact.ts'
+} from '#public/artifact.ts'
 import type {
   NeemPluginWorkerHandle,
   NeemPluginWorkerSpawnOptions,
   NeemPluginWorkers,
-} from '../../public/plugin.ts'
-import type { NeemMode } from '../../public/runtime.ts'
-import type { NeemScopedArtifactRegistry } from './artifact-registry.ts'
-import { NeemRuntimeWorker } from './worker-runtime.ts'
+} from '#public/plugin.ts'
+import type { NeemMode } from '#public/runtime.ts'
+import type { NeemScopedArtifactRegistry } from '#runtime/artifact-registry.ts'
+import type { NeemRuntimeSnapshot } from '#runtime/snapshot.ts'
+import { NeemRuntimeWorker } from '#runtime/worker-runtime.ts'
 
 export type NeemPluginWorkerManagerOptions = {
   mode: NeemMode
@@ -17,6 +18,7 @@ export type NeemPluginWorkerManagerOptions = {
   instanceId: number
   artifacts: NeemScopedArtifactRegistry
   configFile: string
+  logger: NeemRuntimeSnapshot['logger']
   startupTimeoutMs?: number
   stopTimeoutMs?: number
   onFailure?: (
@@ -57,6 +59,7 @@ export class NeemPluginWorkerManager implements NeemPluginWorkers {
       artifact,
       artifacts: this.options.artifacts.scope(this.owner).list(),
       configFile: this.options.configFile,
+      logger: this.options.logger,
       startupTimeoutMs: this.options.startupTimeoutMs,
       stopTimeoutMs: this.options.stopTimeoutMs,
       onFailure: (error, failedWorker) =>
@@ -64,9 +67,26 @@ export class NeemPluginWorkerManager implements NeemPluginWorkers {
     })
 
     this.workers.set(id, worker)
+    this.options.logger.trace(
+      {
+        plugin: this.options.name,
+        instanceId: this.options.instanceId,
+        worker: id,
+        artifactId: artifact.id,
+      },
+      'Starting Neem plugin worker',
+    )
 
     try {
       await worker.start()
+      this.options.logger.trace(
+        {
+          plugin: this.options.name,
+          instanceId: this.options.instanceId,
+          worker: id,
+        },
+        'Neem plugin worker started',
+      )
       return worker
     } catch (error) {
       this.workers.delete(id)
@@ -80,6 +100,14 @@ export class NeemPluginWorkerManager implements NeemPluginWorkers {
     if (!worker) return false
 
     this.workers.delete(workerId)
+    this.options.logger.trace(
+      {
+        plugin: this.options.name,
+        instanceId: this.options.instanceId,
+        worker: workerId,
+      },
+      'Stopping Neem plugin worker',
+    )
     await worker.stop()
     return true
   }
@@ -91,6 +119,14 @@ export class NeemPluginWorkerManager implements NeemPluginWorkers {
   async stopAll(): Promise<void> {
     const workers = [...this.workers.values()]
     this.workers.clear()
+    this.options.logger.trace(
+      {
+        plugin: this.options.name,
+        instanceId: this.options.instanceId,
+        count: workers.length,
+      },
+      'Stopping Neem plugin workers',
+    )
     await Promise.all(workers.map((worker) => worker.stop()))
   }
 

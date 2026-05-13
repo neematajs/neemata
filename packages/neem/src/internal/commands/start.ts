@@ -1,18 +1,20 @@
 import { resolve } from 'node:path'
 
-import type { NeemArtifactRegistry } from '../../public/artifact.ts'
-import type { NeemApplicationUpstream, NeemMode } from '../../public/runtime.ts'
-import type { NeemBuildManifest } from '../build/manifest.ts'
+import type { Logger } from '@nmtjs/core'
+
+import type { NeemBuildManifest } from '#build/manifest.ts'
+import { NEEM_MANIFEST_FILE } from '#build/manifest.ts'
+import type { NeemArtifactRegistry } from '#public/artifact.ts'
+import type { NeemApplicationUpstream, NeemMode } from '#public/runtime.ts'
 import type {
   NeemStartedAppWorker,
   NeemStartedAppWorkerPool,
-} from '../runtime/app.ts'
-import type { NeemApplicationServer } from '../runtime/application-server.ts'
-import type { NeemStartedPlugin } from '../runtime/plugin.ts'
-import type { NeemProxyUpstreamSnapshot } from '../runtime/proxy.ts'
-import { NEEM_MANIFEST_FILE } from '../build/manifest.ts'
-import { NeemApplicationServer as RuntimeApplicationServer } from '../runtime/application-server.ts'
-import { loadBuiltRuntimeSnapshot } from '../runtime/snapshot-loader.ts'
+} from '#runtime/app.ts'
+import type { NeemApplicationServer } from '#runtime/application-server.ts'
+import { NeemApplicationServer as RuntimeApplicationServer } from '#runtime/application-server.ts'
+import type { NeemStartedPlugin } from '#runtime/plugin.ts'
+import type { NeemProxyUpstreamSnapshot } from '#runtime/proxy.ts'
+import { loadBuiltRuntimeSnapshot } from '#runtime/snapshot-loader.ts'
 
 export type NeemStartOptions = {
   outDir?: string
@@ -46,6 +48,16 @@ export async function startNeem(
   const outDir = resolve(cwd, options.outDir ?? 'dist')
   const manifestFile = resolve(outDir, NEEM_MANIFEST_FILE)
   const snapshot = await loadBuiltRuntimeSnapshot({ cwd, outDir, mode })
+  snapshot.logger.info({ outDir, mode }, 'Starting Neem from built output')
+  snapshot.logger.debug(
+    {
+      manifestFile,
+      apps: Object.keys(snapshot.manifest.apps),
+      plugins: snapshot.manifest.plugins.map((plugin) => plugin.name),
+      artifacts: snapshot.artifacts.list().length,
+    },
+    'Neem runtime snapshot loaded',
+  )
   const server = new RuntimeApplicationServer({ snapshot, failOnWorkerError })
   const host = createStartedHost({
     mode,
@@ -53,6 +65,7 @@ export async function startNeem(
     manifestFile,
     manifest: snapshot.manifest,
     artifacts: snapshot.artifacts,
+    logger: snapshot.logger,
     server,
   })
 
@@ -74,6 +87,7 @@ export async function startNeem(
 
   try {
     await server.start()
+    snapshot.logger.info('Neem runtime started')
   } catch (error) {
     await host.fail(error instanceof Error ? error : new Error(String(error)))
     throw error
@@ -88,6 +102,7 @@ function createStartedHost(options: {
   manifestFile: string
   manifest: NeemBuildManifest
   artifacts: NeemArtifactRegistry
+  logger: Logger
   server: NeemApplicationServer
 }) {
   let stopPromise: Promise<void> | undefined
@@ -110,14 +125,18 @@ function createStartedHost(options: {
   }
 
   const stop = async () => {
-    stopPromise ??= options.server
-      .stop()
-      .catch((error) => {
-        failure ??= error instanceof Error ? error : new Error(String(error))
-      })
-      .finally(() => {
-        settleClosed(failure)
-      })
+    if (!stopPromise) {
+      options.logger.info('Stopping Neem runtime')
+      stopPromise = options.server
+        .stop()
+        .catch((error) => {
+          failure ??= error instanceof Error ? error : new Error(String(error))
+        })
+        .finally(() => {
+          options.logger.info('Neem runtime stopped')
+          settleClosed(failure)
+        })
+    }
     return stopPromise
   }
 
@@ -153,6 +172,7 @@ function createStartedHost(options: {
   }
 
   options.server.options.onFailure = (error) => {
+    options.logger.error(new Error('Neem runtime failed', { cause: error }))
     void host.fail(error)
   }
 

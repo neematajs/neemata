@@ -1,257 +1,42 @@
-import type { AnyInjectable, Dependant, Logger } from '@nmtjs/core'
-import type { GatewayOptions } from '@nmtjs/gateway'
 import type { NeemApp, NeemAppRuntimeContext, NeemRuntime } from '@nmtjs/neem'
-import {
-  Container,
-  CoreInjectables,
-  getDepedencencyInjectable,
-} from '@nmtjs/core'
-import { Gateway } from '@nmtjs/gateway'
-import { JsonFormat } from '@nmtjs/json-format/server'
-import { MsgpackFormat } from '@nmtjs/msgpack-format/server'
 import { defineApp } from '@nmtjs/neem'
-import { ProtocolFormats } from '@nmtjs/protocol/server'
 
-import type { ApplicationResolvedProcedure } from './api/api.ts'
-import type { AnyFilter } from './api/filters.ts'
-import type { AnyGuard } from './api/guards.ts'
-import type { AnyMiddleware, AnyProcedure, AnyRouter } from './api/index.ts'
-import type { ApplicationConfig, ApplicationTransport } from './config.ts'
-import { ApplicationApi } from './api/api.ts'
-import { kDefaultProcedure, kRootRouter } from './api/constants.ts'
-import { isProcedure, isRootRouter, isRouter } from './api/index.ts'
-import { LifecycleHook } from './enums.ts'
-import { ApplicationHooks } from './hooks.ts'
-import { LifecycleHooks } from './lifecycle.ts'
+import type { NeemataApplication, NeemataAppTransportOptions } from './app.ts'
+import type { AnyApplicationConfig, ApplicationConfig } from './config.ts'
+import { createApp } from './app.ts'
 
 export type NeemataAppThreadOptions<
   TApplication extends ApplicationConfig<any, any>,
-> =
-  TApplication extends ApplicationConfig<any, infer Transports>
-    ? {
-        [K in keyof Transports]: Transports[K] extends ApplicationTransport<
-          any,
-          infer Options
-        >
-          ? Options
-          : never
-      }
-    : never
+> = NeemataAppTransportOptions<TApplication>
 
 export type NeemataAppRuntimeContext<
-  TApplication extends ApplicationConfig<any, any> = ApplicationConfig<
-    any,
-    any
-  >,
+  TApplication extends ApplicationConfig<any, any> = AnyApplicationConfig,
 > = NeemAppRuntimeContext<NeemataAppThreadOptions<TApplication>, TApplication>
 
 export type NeemataApp<
-  TApplication extends ApplicationConfig<any, any> = ApplicationConfig<
-    any,
-    any
-  >,
+  TApplication extends ApplicationConfig<any, any> = AnyApplicationConfig,
 > = NeemApp<NeemataAppThreadOptions<TApplication>, TApplication>
 
-export class NeemataApplicationRuntime implements NeemRuntime {
-  readonly logger: Logger
-  readonly container: Container
-  readonly lifecycleHooks = new LifecycleHooks()
-  readonly applicationHooks = new ApplicationHooks()
-  readonly filters = new Set<AnyFilter>()
-  readonly middlewares = new Set<AnyMiddleware>()
-  readonly guards = new Set<AnyGuard>()
-  readonly routers = new Map<string | typeof kRootRouter, AnyRouter>()
-  readonly procedures = new Map<
-    string | typeof kDefaultProcedure,
-    { procedure: AnyProcedure; path: AnyRouter[] }
-  >()
+export class NeemataApplicationRuntime<
+  TApplication extends ApplicationConfig<any, any> = AnyApplicationConfig,
+> implements NeemRuntime
+{
+  readonly application: NeemataApplication<TApplication>
 
-  private api?: ApplicationApi
-  private gateway?: Gateway<ApplicationResolvedProcedure>
-  private transports?: GatewayOptions<ApplicationResolvedProcedure>['transports']
-
-  constructor(readonly ctx: NeemataAppRuntimeContext) {
-    this.logger = ctx.logger
-    this.container = new Container({ logger: this.logger })
+  constructor(readonly ctx: NeemataAppRuntimeContext<TApplication>) {
+    this.application = createApp(ctx.definition, {
+      logger: ctx.logger,
+      mode: ctx.mode,
+      transports: ctx.threadOptions,
+    })
   }
 
   async start() {
-    await this.initialize()
-
-    this.transports = {}
-    for (const key in this.ctx.threadOptions) {
-      const options = this.ctx.threadOptions[key]
-      const { factory, proxyable } = this.ctx.definition.transports[
-        key
-      ] as ApplicationTransport
-      this.transports[key] = { transport: await factory(options), proxyable }
-    }
-
-    this.gateway = new Gateway({
-      ...this.ctx.definition.gateway,
-      logger: this.logger,
-      container: this.container,
-      hooks: this.lifecycleHooks,
-      formats: new ProtocolFormats([new JsonFormat(), new MsgpackFormat()]),
-      transports: this.transports,
-      api: this.api!,
-      identity: this.ctx.definition.identity,
-    })
-
-    const upstreams = await this.gateway.start()
-    await this.lifecycleHooks.callHook(LifecycleHook.Start as never)
-    return upstreams
+    return this.application.start()
   }
 
   async stop() {
-    await this.gateway?.stop()
-    await this.dispose()
-    await this.lifecycleHooks.callHook(LifecycleHook.Stop as never)
-  }
-
-  private async initialize() {
-    this.registerApi()
-    this.lifecycleHooks.addHooks(this.ctx.definition.lifecycleHooks)
-    await this.initializePlugins()
-    await this.initializeApplicationHooks()
-    await this.initializeContainer()
-    await this.lifecycleHooks.callHook(LifecycleHook.BeforeInitialize, this)
-    await this.lifecycleHooks.callHook(LifecycleHook.AfterInitialize, this)
-  }
-
-  private async dispose() {
-    await this.lifecycleHooks.callHook(LifecycleHook.BeforeDispose, this)
-    this.applicationHooks.removeAllHooks()
-    await this.container.dispose()
-    await this.disposePlugins()
-    this.lifecycleHooks.removeHooks(this.ctx.definition.lifecycleHooks)
-    this.filters.clear()
-    this.middlewares.clear()
-    this.guards.clear()
-    this.routers.clear()
-    this.procedures.clear()
-    await this.lifecycleHooks.callHook(LifecycleHook.AfterDispose, this)
-  }
-
-  private async initializePlugins() {
-    for (const { hooks, injections } of this.ctx.definition.plugins) {
-      if (injections) this.container.provide(injections)
-      if (hooks) this.lifecycleHooks.addHooks(hooks)
-    }
-  }
-
-  private async disposePlugins() {
-    for (const { hooks, injections } of this.ctx.definition.plugins) {
-      if (hooks) this.lifecycleHooks.removeHooks(hooks)
-      if (injections) {
-        for (const injection of injections) {
-          await this.container.disposeInjectableInstances(injection.token)
-        }
-      }
-    }
-  }
-
-  private async initializeApplicationHooks() {
-    for (const hook of this.ctx.definition.hooks) {
-      this.applicationHooks.hook(hook.name, async (...args: unknown[]) => {
-        const hookCtx = await this.container.createContext(hook.dependencies)
-        await hook.handler(hookCtx, ...args)
-      })
-    }
-  }
-
-  private async initializeContainer() {
-    this.container.provide(CoreInjectables.logger, this.logger)
-
-    const dependencies = new Set<AnyInjectable>()
-
-    for (const injectable of this.injectables()) {
-      for (const key in injectable.dependencies) {
-        const dependency = injectable.dependencies[key]
-        dependencies.add(getDepedencencyInjectable(dependency))
-      }
-    }
-
-    await this.container.initialize(dependencies)
-  }
-
-  private *injectables(): Generator<Dependant> {
-    const { filters, guards, middlewares, hooks, meta } = this.ctx.definition
-
-    yield* hooks
-    yield* filters
-    yield* middlewares
-    yield* guards
-    yield* meta
-
-    for (const router of this.routers.values()) yield* router.meta
-
-    for (const { procedure } of this.procedures.values()) {
-      yield procedure
-      yield* procedure.meta
-      yield* procedure.guards
-      yield* procedure.middlewares
-    }
-  }
-
-  private registerApi() {
-    const { router, filters, guards, middlewares } = this.ctx.definition
-
-    if (this.routers.has(kRootRouter)) {
-      throw new Error('Root router already registered')
-    }
-    if (!isRootRouter(router)) {
-      throw new Error('Root router must be a root router')
-    }
-
-    this.routers.set(kRootRouter, router)
-    this.registerRouter(router, [])
-
-    if (router.default) {
-      if (!isProcedure(router.default)) {
-        throw new Error('Root router default must be a procedure')
-      }
-      this.procedures.set(kDefaultProcedure, {
-        procedure: router.default,
-        path: [router],
-      })
-    }
-
-    for (const filter of filters) this.filters.add(filter)
-    for (const middleware of middlewares) this.middlewares.add(middleware)
-    for (const guard of guards) this.guards.add(guard)
-
-    this.api = new ApplicationApi({
-      timeout: this.ctx.definition.api.timeout,
-      container: this.container,
-      logger: this.logger,
-      meta: this.ctx.definition.meta,
-      filters: this.filters,
-      middlewares: this.middlewares,
-      guards: this.guards,
-      procedures: this.procedures,
-    })
-  }
-
-  private registerRouter(router: AnyRouter, path: AnyRouter[]) {
-    for (const route of Object.values(router.routes)) {
-      if (isRouter(route)) {
-        const name = route.contract.name
-        if (!name) throw new Error('Nested routers must have a name')
-        if (this.routers.has(name)) {
-          throw new Error(`Router ${String(name)} already registered`)
-        }
-        this.routers.set(name, route)
-        this.registerRouter(route, [...path, router])
-      } else if (isProcedure(route)) {
-        const name = route.contract.name
-        if (!name) throw new Error('Procedures must have a name')
-        if (this.procedures.has(name)) {
-          throw new Error(`Procedure ${name} already registered`)
-        }
-        this.procedures.set(name, { procedure: route, path: [...path, router] })
-      }
-    }
+    return this.application.stop()
   }
 }
 

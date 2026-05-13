@@ -1,4 +1,4 @@
-import type { NeemResolvedArtifact } from '../../public/artifact.ts'
+import type { NeemResolvedArtifact } from '#public/artifact.ts'
 
 export const NEEM_MANIFEST_FILE = 'neem.manifest.json'
 export const NEEM_MANIFEST_SCHEMA_VERSION = 1

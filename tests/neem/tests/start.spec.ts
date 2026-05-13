@@ -15,6 +15,7 @@ const neemInternalDir = resolve(
 const tempRoot = resolve(import.meta.dirname, '../node_modules/.tmp')
 const tempDirs: string[] = []
 const previousEventsFile = process.env.NEEM_RUNTIME_EVENTS_FILE
+const previousLogEventsFile = process.env.NEEM_LOG_EVENTS_FILE
 
 describe('neem start', () => {
   afterEach(async () => {
@@ -22,6 +23,11 @@ describe('neem start', () => {
       delete process.env.NEEM_RUNTIME_EVENTS_FILE
     } else {
       process.env.NEEM_RUNTIME_EVENTS_FILE = previousEventsFile
+    }
+    if (previousLogEventsFile === undefined) {
+      delete process.env.NEEM_LOG_EVENTS_FILE
+    } else {
+      process.env.NEEM_LOG_EVENTS_FILE = previousLogEventsFile
     }
 
     await Promise.all(
@@ -224,6 +230,47 @@ describe('neem start', () => {
       expect.objectContaining({ event: 'stop', threadIndex: 0 }),
     )
   })
+
+  it('logs build/start/runtime lifecycle through configured logger', async () => {
+    await mkdir(tempRoot, { recursive: true })
+    const outDir = await mkdtemp(resolve(tempRoot, 'neem-start-logs-'))
+    tempDirs.push(outDir)
+    const logFile = resolve(outDir, 'logs.jsonl')
+    const eventsFile = resolve(outDir, 'events.jsonl')
+    process.env.NEEM_LOG_EVENTS_FILE = logFile
+    process.env.NEEM_RUNTIME_EVENTS_FILE = eventsFile
+
+    await buildNeem({
+      config: resolve(fixturesDir, 'runtime.config.ts'),
+      outDir,
+    })
+    const host = await startNeem({ outDir })
+
+    try {
+      expect(host.getWorkers()).toHaveLength(2)
+    } finally {
+      await host.stop()
+      await host.closed
+    }
+
+    const logs = await readLogs(logFile)
+    expect(logs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          $label: 'Fixture',
+          msg: 'Starting Neem from built output',
+        }),
+        expect.objectContaining({
+          $label: 'Neem App/api:0',
+          msg: 'Creating Neem app runtime',
+        }),
+        expect.objectContaining({
+          $label: 'Neem App/api:0',
+          msg: 'Neem runtime started',
+        }),
+      ]),
+    )
+  })
 })
 
 async function buildFixture(config: string) {
@@ -244,6 +291,15 @@ async function readEvents(file: string): Promise<RuntimeEvent[]> {
     .split('\n')
     .filter(Boolean)
     .map((line) => JSON.parse(line) as RuntimeEvent)
+}
+
+async function readLogs(file: string): Promise<Array<Record<string, unknown>>> {
+  const content = await readFile(file, 'utf8')
+  return content
+    .trim()
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as Record<string, unknown>)
 }
 
 type RuntimeEvent = {

@@ -3,20 +3,26 @@ import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { MessageChannel } from 'node:worker_threads'
 
-import type { NeemResolvedArtifact } from '../../public/artifact.ts'
+import type { Logger } from '@nmtjs/core'
+
+import type { NeemResolvedArtifact } from '#public/artifact.ts'
 import type {
   NeemApplicationUpstream,
   NeemMode,
   NeemWorkerState,
-} from '../../public/runtime.ts'
-import type { NeemManagedWorkerController } from './managed-worker.ts'
+} from '#public/runtime.ts'
+import {
+  createNeemChildLogger,
+  createNeemDefaultLogger,
+} from '#runtime/logger.ts'
+import type { NeemManagedWorkerController } from '#runtime/managed-worker.ts'
+import { NeemManagedWorker } from '#runtime/managed-worker.ts'
 import type {
   NeemRuntimeWorkerData,
   NeemRuntimeWorkerErrorMessage,
   NeemRuntimeWorkerMessage,
   NeemRuntimeWorkerReloadData,
-} from './worker-protocol.ts'
-import { NeemManagedWorker } from './managed-worker.ts'
+} from '#runtime/worker-protocol.ts'
 
 export type NeemRuntimeWorkerOptions = {
   id: string
@@ -26,6 +32,7 @@ export type NeemRuntimeWorkerOptions = {
   artifact: NeemResolvedArtifact
   artifacts: readonly NeemResolvedArtifact[]
   configFile: string
+  logger?: Logger
   startupTimeoutMs?: number
   stopTimeoutMs?: number
   onFailure?: (error: Error, worker: NeemRuntimeWorker) => void | Promise<void>
@@ -69,6 +76,10 @@ export class NeemRuntimeWorker {
       entry: resolveRuntimeWorkerEntry(),
       workerData,
       workerOptions: { transferList: [channel.port2] },
+      logger: createNeemChildLogger(
+        options.logger ?? createNeemDefaultLogger(options.mode),
+        options.name,
+      ),
       startupTimeoutMs: options.startupTimeoutMs,
       stopTimeoutMs: options.stopTimeoutMs,
       onMessage: (message, controller) => {
@@ -124,23 +135,40 @@ export class NeemRuntimeWorker {
   ): void {
     if (message.type === 'ready') {
       this.upstreams = message.data.upstreams ?? []
+      this.options.logger?.debug(
+        { worker: this.name, upstreams: this.upstreams.length },
+        'Neem runtime worker ready',
+      )
       controller.markReady()
       return
     }
 
     if (message.type === 'reloaded') {
       this.upstreams = message.data.upstreams ?? []
+      this.options.logger?.debug(
+        { worker: this.name, upstreams: this.upstreams.length },
+        'Neem runtime worker reloaded',
+      )
       this.resolveReload()
       return
     }
 
     if (message.type === 'stopped') {
+      this.options.logger?.debug(
+        { worker: this.name },
+        'Neem runtime worker stopped',
+      )
       controller.markStopped()
       return
     }
 
     if (message.type === 'error') {
       const error = createRuntimeWorkerError(message)
+      this.options.logger?.error(
+        new Error(`Neem runtime worker [${this.name}] failed`, {
+          cause: error,
+        }),
+      )
       this.rejectReload(error)
       controller.fail(error)
       return

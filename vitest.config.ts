@@ -4,16 +4,11 @@ export default defineConfig({
   test: {
     testTimeout: 15000,
     passWithNoTests: true,
-    projects: [
-      './packages/*',
-      './tests/integration',
-      './tests/e2e',
-      './tests/neem',
-    ],
+    projects: ['./packages/*', './tests/neemata', './tests/neem'],
     coverage: {
       enabled: false,
       include: ['packages/*/src/**'],
-      exclude: ['packages/nmtjs/**', 'packages/proxy/**'],
+      exclude: ['packages/nmtjs/**'],
       reporter: ['text', 'text-summary', 'html'],
     },
   },
