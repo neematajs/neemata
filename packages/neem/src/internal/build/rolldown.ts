@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs'
-import { mkdir, readFile, stat } from 'node:fs/promises'
+import { mkdir, readFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -66,72 +66,34 @@ export async function watchArtifact(
 ): Promise<NeemArtifactWatcher> {
   const outDir = resolveArtifactOutDir(options)
   const metadata: ArtifactBuildMetadata = {}
-  const entry = resolveEntry(options.artifact.entry, options.cwd)
   await mkdir(outDir, { recursive: true })
 
   const watcher = rolldown.watch(
     createRolldownOptions(options, outDir, metadata),
   )
   let readySettled = false
-  let currentBuildHandled = false
   let resolveReady!: (artifact: NeemResolvedArtifact) => void
   let rejectReady!: (error: unknown) => void
   const ready = new Promise<NeemResolvedArtifact>((resolve, reject) => {
     resolveReady = resolve
     rejectReady = reject
   })
-  let lastEntryMtimeMs = await readMtimeMs(entry)
-  let closed = false
-  let fallbackBuild = Promise.resolve()
 
-  const emitFallbackBuild = (event: unknown): Promise<void> => {
-    fallbackBuild = fallbackBuild.then(async () => {
-      try {
-        const resolved = await buildArtifact(options)
-        if (!readySettled) {
-          readySettled = true
-          resolveReady(resolved)
-        }
-        await handlers.onRebuild?.(resolved, event)
-      } catch (error) {
-        if (!readySettled) {
-          readySettled = true
-          rejectReady(error)
-        }
-        await handlers.onError?.(error, event)
-      }
-    })
-    return fallbackBuild
-  }
-
-  const poll = setInterval(() => {
-    if (closed) return
-    void (async () => {
-      const mtimeMs = await readMtimeMs(entry).catch(() => lastEntryMtimeMs)
-      if (mtimeMs <= lastEntryMtimeMs) return
-      lastEntryMtimeMs = mtimeMs
-      await emitFallbackBuild({ code: 'POLL', file: entry })
-    })()
-  }, 100)
-
-  watcher.on('event', async (event: any) => {
+  watcher.on('event', async (event) => {
     if (event?.code === 'START') {
-      currentBuildHandled = false
       return
     }
 
     if (event?.code === 'BUNDLE_START') {
-      currentBuildHandled = false
       return
     }
 
     if (event?.code === 'BUNDLE_END') {
-      currentBuildHandled = true
       try {
         const resolved = createResolvedArtifact(
           options,
           outDir,
-          event.result,
+          undefined,
           metadata,
         )
         if (!readySettled) {
@@ -142,12 +104,6 @@ export async function watchArtifact(
       } finally {
         await event.result?.close?.()
       }
-      return
-    }
-
-    if (event?.code === 'END' && !currentBuildHandled) {
-      currentBuildHandled = true
-      await emitFallbackBuild(event)
       return
     }
 
@@ -163,16 +119,9 @@ export async function watchArtifact(
   return {
     ready,
     async close() {
-      closed = true
-      clearInterval(poll)
-      await fallbackBuild.catch(() => undefined)
       await watcher.close()
     },
   }
-}
-
-async function readMtimeMs(file: string): Promise<number> {
-  return (await stat(file)).mtimeMs
 }
 
 function createRolldownOptions(
@@ -216,7 +165,7 @@ function createRolldownOptions(
 function createResolvedArtifact(
   options: NeemBuildArtifactOptions,
   outDir: string,
-  result: rolldown.RolldownOutput,
+  result: rolldown.RolldownOutput | undefined,
   metadata: ArtifactBuildMetadata,
 ): NeemResolvedArtifact {
   const entryChunk = result?.output?.find(

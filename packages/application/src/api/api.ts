@@ -106,7 +106,8 @@ export class ApiError extends ProtocolError {
   }
 }
 
-const NotFound = () => new ApiError(ErrorCode.NotFound, 'Procedure not found')
+const NotFound = (procedureName: string) =>
+  new ApiError(ErrorCode.NotFound, `Procedure not found: ${procedureName}`)
 
 export class ApplicationApi
   implements GatewayApi<ApplicationResolvedProcedure>
@@ -120,7 +121,7 @@ export class ApplicationApi
     const fallback = this.options.procedures.get(kDefaultProcedure)
     if (fallback) return fallback
 
-    throw NotFound()
+    throw NotFound(procedureName)
   }
 
   async resolve(

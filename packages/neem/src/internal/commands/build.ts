@@ -2,7 +2,7 @@ import { mkdir, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, relative, resolve } from 'node:path'
 
 import { consola } from 'consola'
-import {colorize } from 'consola/utils'
+import { colorize } from 'consola/utils'
 
 import type { NeemResolvedArtifact } from '../../public/artifact.ts'
 import type {
@@ -57,7 +57,7 @@ export async function buildNeem(
   const discovery = discoverConfigEntriesSync(configFile)
   const config = await importDefault<NeemConfig>(configFile)
   const outDir = resolve(cwd, options.outDir ?? config.outDir ?? 'dist')
-  const logger = consola.create({ level: 4 })
+  const logger = consola.create({ level: process.env.TEST ? 0 : 4 })
 
   logger.start('Building Neem bundle')
   logger.debug(`  config: ${configFile}`)
@@ -82,7 +82,7 @@ export async function buildNeem(
 
   for (const [name, appConfig] of Object.entries(config.apps)) {
     const discovered = discovery.apps[name]
-    
+
     if (!discovered) {
       throw new Error(`Failed to discover app entry for [${name}]`)
     }
@@ -91,7 +91,7 @@ export async function buildNeem(
     const rolldown = await loadBuildConfig(appConfig.build)
 
     logger.start(`Building app: ${colorize('green', name)}`)
-    
+
     const entry = await buildArtifact({
       artifact: {
         id: 'entry',
@@ -104,9 +104,7 @@ export async function buildNeem(
       minify: true,
     })
 
-
     for (const outputChunk of entry.bundle!.output) {
-      
       if (outputChunk.type === 'chunk') {
         logger.debug(
           `  Emit: ${outputChunk.fileName} (${colorize('blue', formatBytes(outputChunk.code.length))})`,
@@ -134,7 +132,6 @@ export async function buildNeem(
       type: 'plugin' as const,
       name: pluginName,
       instanceId: index,
-    
     }
     const entry = await buildArtifact({
       artifact: {
@@ -291,10 +288,10 @@ function constantImports(imports: Set<string>): () => Set<string> {
   return () => imports
 }
 
-
-const formatBytes = (bytes: number) => new Intl.NumberFormat('en-US', {
-  style: 'unit',
-  unit: 'kilobyte',
-  unitDisplay: 'short', // 'short' (kB), 'long' (kilobytes), 'narrow' (k)
-  maximumFractionDigits: 2,
-}).format(bytes / 1024)
+const formatBytes = (bytes: number) =>
+  new Intl.NumberFormat('en-US', {
+    style: 'unit',
+    unit: 'kilobyte',
+    unitDisplay: 'short', // 'short' (kB), 'long' (kilobytes), 'narrow' (k)
+    maximumFractionDigits: 2,
+  }).format(bytes / 1024)

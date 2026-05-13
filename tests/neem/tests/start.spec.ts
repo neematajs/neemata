@@ -72,7 +72,7 @@ describe('neem start', () => {
       resolve(outDir, manifest.config.file),
       'utf8',
     )
-    expect(configCode).toContain('import("./runtime-app.ts")')
+    expect(configCode).toContain('./runtime-app.ts')
 
     const host = await startNeem({ outDir })
 

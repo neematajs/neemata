@@ -93,7 +93,7 @@ type NeemDevLifecycleSnapshot =
       lastError?: Error
     }
 
-const NEEM_DEV_RELOAD_DEBOUNCE_MS = 100
+const NEEM_DEV_RELOAD_DEBOUNCE_MS = 250
 
 export async function devNeem(
   options: NeemDevOptions = {},

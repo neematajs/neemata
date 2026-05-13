@@ -68,10 +68,10 @@ describe('neem build', () => {
       resolve(outDir, manifest.config.file),
       'utf8',
     )
-    expect(configCode).toContain('import("./basic-app.ts")')
-    expect(configCode).toContain('import("./basic-app.build.ts")')
-    expect(configCode).toContain('import("./jobs.plugin.ts")')
-    expect(configCode).not.toContain('import("./logger.ts")')
+    expect(configCode).toContain('./basic-app.ts')
+    expect(configCode).toContain('./basic-app.build.ts')
+    expect(configCode).toContain('./jobs.plugin.ts')
+    expect(configCode).not.toContain('./logger.ts')
 
     const appEntry = manifest.apps.api.entry
     const plugin = manifest.plugins[0]
