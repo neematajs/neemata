@@ -2,19 +2,19 @@ import { resolve } from 'node:path'
 
 import type { Logger } from '@nmtjs/core'
 
-import type { NeemBuildManifest } from '#build/manifest.ts'
-import { NEEM_MANIFEST_FILE } from '#build/manifest.ts'
-import type { NeemArtifactRegistry } from '#public/artifact.ts'
-import type { NeemApplicationUpstream, NeemMode } from '#public/runtime.ts'
+import type { NeemArtifactRegistry } from '../../public/artifact.ts'
+import type { NeemApplicationUpstream, NeemMode } from '../../public/runtime.ts'
+import type { NeemBuildManifest } from '../build/manifest.ts'
 import type {
   NeemStartedAppWorker,
   NeemStartedAppWorkerPool,
-} from '#runtime/app.ts'
-import type { NeemApplicationServer } from '#runtime/application-server.ts'
-import { NeemApplicationServer as RuntimeApplicationServer } from '#runtime/application-server.ts'
-import type { NeemStartedPlugin } from '#runtime/plugin.ts'
-import type { NeemProxyUpstreamSnapshot } from '#runtime/proxy.ts'
-import { loadBuiltRuntimeSnapshot } from '#runtime/snapshot-loader.ts'
+} from '../runtime/app.ts'
+import type { NeemApplicationServer } from '../runtime/application-server.ts'
+import type { NeemStartedPlugin } from '../runtime/plugin.ts'
+import type { NeemProxyUpstreamSnapshot } from '../runtime/proxy.ts'
+import { NEEM_MANIFEST_FILE } from '../build/manifest.ts'
+import { NeemApplicationServer as RuntimeApplicationServer } from '../runtime/application-server.ts'
+import { loadBuiltRuntimeSnapshot } from '../runtime/snapshot-loader.ts'
 
 export type NeemStartOptions = {
   outDir?: string

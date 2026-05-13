@@ -1,8 +1,8 @@
 import type { Logger } from '@nmtjs/core'
 
-import type { InferNeemThreadOptions, NeemApp } from '#public/app.ts'
-import type { NeemRolldownOptions } from '#public/artifact.ts'
-import type { InferNeemPluginOptions, NeemPlugin } from '#public/plugin.ts'
+import type { InferNeemThreadOptions, NeemApp } from './app.ts'
+import type { NeemRolldownOptions } from './artifact.ts'
+import type { InferNeemPluginOptions, NeemPlugin } from './plugin.ts'
 
 export type NeemEntryModule<T> = { default: T }
 

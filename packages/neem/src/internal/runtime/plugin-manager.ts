@@ -1,16 +1,16 @@
 import type {
   NeemArtifactOwner,
   NeemResolvedArtifact,
-} from '#public/artifact.ts'
+} from '../../public/artifact.ts'
 import type {
   NeemPluginWorkerHandle,
   NeemPluginWorkerSpawnOptions,
   NeemPluginWorkers,
-} from '#public/plugin.ts'
-import type { NeemMode } from '#public/runtime.ts'
-import type { NeemScopedArtifactRegistry } from '#runtime/artifact-registry.ts'
-import type { NeemRuntimeSnapshot } from '#runtime/snapshot.ts'
-import { NeemRuntimeWorker } from '#runtime/worker-runtime.ts'
+} from '../../public/plugin.ts'
+import type { NeemMode } from '../../public/runtime.ts'
+import type { NeemScopedArtifactRegistry } from './artifact-registry.ts'
+import type { NeemRuntimeSnapshot } from './snapshot.ts'
+import { NeemRuntimeWorker } from './worker-runtime.ts'
 
 export type NeemPluginWorkerManagerOptions = {
   mode: NeemMode

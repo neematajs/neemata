@@ -2,9 +2,9 @@ import { pathToFileURL } from 'node:url'
 
 import { defineCommand, runCommand, showUsage } from 'citty'
 
-import { buildNeem } from '#commands/build.ts'
-import { devNeem } from '#commands/dev.ts'
-import { startNeem } from '#commands/start.ts'
+import { buildNeem } from './internal/commands/build.ts'
+import { devNeem } from './internal/commands/dev.ts'
+import { startNeem } from './internal/commands/start.ts'
 
 export type NeemCliMainOptions = { signal?: AbortSignal }
 

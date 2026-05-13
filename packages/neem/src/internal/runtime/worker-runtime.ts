@@ -5,24 +5,21 @@ import { MessageChannel } from 'node:worker_threads'
 
 import type { Logger } from '@nmtjs/core'
 
-import type { NeemResolvedArtifact } from '#public/artifact.ts'
+import type { NeemResolvedArtifact } from '../../public/artifact.ts'
 import type {
   NeemApplicationUpstream,
   NeemMode,
   NeemWorkerState,
-} from '#public/runtime.ts'
-import {
-  createNeemChildLogger,
-  createNeemDefaultLogger,
-} from '#runtime/logger.ts'
-import type { NeemManagedWorkerController } from '#runtime/managed-worker.ts'
-import { NeemManagedWorker } from '#runtime/managed-worker.ts'
+} from '../../public/runtime.ts'
+import type { NeemManagedWorkerController } from './managed-worker.ts'
 import type {
   NeemRuntimeWorkerData,
   NeemRuntimeWorkerErrorMessage,
   NeemRuntimeWorkerMessage,
   NeemRuntimeWorkerReloadData,
-} from '#runtime/worker-protocol.ts'
+} from './worker-protocol.ts'
+import { createNeemChildLogger, createNeemDefaultLogger } from './logger.ts'
+import { NeemManagedWorker } from './managed-worker.ts'
 
 export type NeemRuntimeWorkerOptions = {
   id: string

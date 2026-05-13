@@ -1,8 +1,10 @@
+import type { RolldownOptions, RolldownOutput } from 'rolldown'
+
 export type NeemArtifactKind = 'worker' | 'module'
 
 export type NeemArtifactEntry = string | URL
 
-export type NeemRolldownOptions = Record<string, unknown>
+export type NeemRolldownOptions = RolldownOptions
 
 export type NeemArtifact = {
   id: string
@@ -22,6 +24,7 @@ export type NeemResolvedArtifact = {
   owner: NeemArtifactOwner
   file: string
   outDir: string
+  bundle?: RolldownOutput
 }
 
 export type NeemArtifactRegistry = {

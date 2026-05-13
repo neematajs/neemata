@@ -2,19 +2,10 @@ import { parentPort, workerData as rawWorkerData } from 'node:worker_threads'
 
 import type { Logger } from '@nmtjs/core'
 
-import type { NeemApp } from '#public/app.ts'
-import type { NeemConfig } from '#public/config.ts'
-import type { NeemRuntime } from '#public/runtime.ts'
-import type { NeemWorker } from '#public/worker.ts'
-import {
-  createNeemChildLogger,
-  resolveNeemConfigLogger,
-} from '#runtime/logger.ts'
-import {
-  createArtifactRegistry,
-  importDefault,
-  normalizeError,
-} from '#runtime/utils.ts'
+import type { NeemApp } from '../../public/app.ts'
+import type { NeemConfig } from '../../public/config.ts'
+import type { NeemRuntime } from '../../public/runtime.ts'
+import type { NeemWorker } from '../../public/worker.ts'
 import type {
   NeemAppRuntimeWorkerData,
   NeemGenericRuntimeWorkerData,
@@ -23,7 +14,13 @@ import type {
   NeemRuntimeWorkerMessage,
   NeemRuntimeWorkerParentMessage,
   NeemRuntimeWorkerReloadData,
-} from '#runtime/worker-protocol.ts'
+} from './worker-protocol.ts'
+import { createNeemChildLogger, resolveNeemConfigLogger } from './logger.ts'
+import {
+  createArtifactRegistry,
+  importDefault,
+  normalizeError,
+} from './utils.ts'
 
 if (!parentPort) {
   throw new Error('Neem runtime worker entry requires a parent port')

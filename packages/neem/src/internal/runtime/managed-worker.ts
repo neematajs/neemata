@@ -6,9 +6,9 @@ import type { Logger } from '@nmtjs/core'
 import type {
   NeemManagedWorkerHandle,
   NeemWorkerState,
-} from '#public/runtime.ts'
-import { createNeemDefaultLogger } from '#runtime/logger.ts'
-import { normalizeError } from '#runtime/utils.ts'
+} from '../../public/runtime.ts'
+import { createNeemDefaultLogger } from './logger.ts'
+import { normalizeError } from './utils.ts'
 
 export type NeemManagedWorkerController = {
   getState: () => NeemWorkerState

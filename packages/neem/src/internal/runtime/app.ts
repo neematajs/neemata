@@ -1,28 +1,28 @@
 import type { MessagePort } from 'node:worker_threads'
 import { MessageChannel } from 'node:worker_threads'
 
-import type { NeemResolvedArtifact } from '#public/artifact.ts'
+import type { NeemResolvedArtifact } from '../../public/artifact.ts'
 import type {
   NeemApplicationUpstream,
   NeemMode,
   NeemWorkerState,
-} from '#public/runtime.ts'
-import { createNeemChildLogger } from '#runtime/logger.ts'
-import type { NeemManagedWorkerController } from '#runtime/managed-worker.ts'
-import { NeemManagedWorker } from '#runtime/managed-worker.ts'
-import type { NeemProxyUpstreamRegistry } from '#runtime/proxy.ts'
-import type { NeemRuntimeSnapshot } from '#runtime/snapshot.ts'
+} from '../../public/runtime.ts'
+import type { NeemManagedWorkerController } from './managed-worker.ts'
+import type { NeemProxyUpstreamRegistry } from './proxy.ts'
+import type { NeemRuntimeSnapshot } from './snapshot.ts'
 import type {
   NeemWorkerPoolHealth,
   NeemWorkerPoolState,
-} from '#runtime/worker-pool.ts'
-import { NeemWorkerPool } from '#runtime/worker-pool.ts'
+} from './worker-pool.ts'
 import type {
   NeemRuntimeWorkerData,
   NeemRuntimeWorkerErrorMessage,
   NeemRuntimeWorkerMessage,
-} from '#runtime/worker-protocol.ts'
-import { resolveRuntimeWorkerEntry } from '#runtime/worker-runtime.ts'
+} from './worker-protocol.ts'
+import { createNeemChildLogger } from './logger.ts'
+import { NeemManagedWorker } from './managed-worker.ts'
+import { NeemWorkerPool } from './worker-pool.ts'
+import { resolveRuntimeWorkerEntry } from './worker-runtime.ts'
 
 export type NeemStartedAppWorker = {
   id: string

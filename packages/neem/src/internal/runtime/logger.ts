@@ -1,8 +1,8 @@
 import type { Logger } from '@nmtjs/core'
 import { createLogger } from '@nmtjs/core'
 
-import type { NeemConfig, NeemLoggerInput } from '#public/config.ts'
-import type { NeemMode } from '#public/runtime.ts'
+import type { NeemConfig, NeemLoggerInput } from '../../public/config.ts'
+import type { NeemMode } from '../../public/runtime.ts'
 
 export async function resolveNeemLogger(
   input: NeemLoggerInput | undefined,

@@ -1,10 +1,7 @@
 import type { Logger } from '@nmtjs/core'
 
-import type { NeemWorkerState } from '#public/runtime.ts'
-import {
-  createNeemChildLogger,
-  createNeemDefaultLogger,
-} from '#runtime/logger.ts'
+import type { NeemWorkerState } from '../../public/runtime.ts'
+import { createNeemChildLogger, createNeemDefaultLogger } from './logger.ts'
 
 export type NeemPoolWorker = {
   id?: string

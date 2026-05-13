@@ -1,14 +1,7 @@
 import type { Logger } from '@nmtjs/core'
 
-import type {
-  NeemArtifactRegistry,
-  NeemResolvedArtifact,
-} from '#public/artifact.ts'
-import type {
-  NeemMaybePromise,
-  NeemMode,
-  NeemRuntime,
-} from '#public/runtime.ts'
+import type { NeemArtifactRegistry, NeemResolvedArtifact } from './artifact.ts'
+import type { NeemMaybePromise, NeemMode, NeemRuntime } from './runtime.ts'
 
 export type NeemAppRuntimeContext<
   ThreadOptions = unknown,

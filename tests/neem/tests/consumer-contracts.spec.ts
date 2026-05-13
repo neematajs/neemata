@@ -64,7 +64,6 @@ describe('@nmtjs/neem consumer contracts', () => {
       name: jobsPlugin.name,
       instanceId: 0,
       options: { queue: 'default' },
-      logger,
     })
 
     expect(Object.keys(app.definition.transports)).toEqual(['http'])

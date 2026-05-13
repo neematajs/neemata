@@ -1,38 +1,40 @@
 import { mkdir, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, relative, resolve } from 'node:path'
 
-import type {
-  NeemConfigDiscovery,
-  NeemDiscoveredImport,
-} from '#build/discovery.ts'
-import { discoverConfigEntriesSync } from '#build/discovery.ts'
-import type {
-  NeemBuildManifest,
-  NeemBuildManifestArtifact,
-} from '#build/manifest.ts'
-import {
-  NEEM_MANIFEST_FILE,
-  NEEM_MANIFEST_SCHEMA_VERSION,
-} from '#build/manifest.ts'
-import { buildArtifact } from '#build/rolldown.ts'
-import type { NeemResolvedArtifact } from '#public/artifact.ts'
+import { consola } from 'consola'
+import {colorize } from 'consola/utils'
+
+import type { NeemResolvedArtifact } from '../../public/artifact.ts'
 import type {
   NeemBuildConfig,
   NeemBuildConfigInput,
   NeemConfig,
-} from '#public/config.ts'
-import type { NeemPlugin } from '#public/plugin.ts'
-import { resolveNeemLogger } from '#runtime/logger.ts'
-import { importDefault } from '#runtime/utils.ts'
+} from '../../public/config.ts'
+import type { NeemPlugin } from '../../public/plugin.ts'
+import type {
+  NeemConfigDiscovery,
+  NeemDiscoveredImport,
+} from '../build/discovery.ts'
+import type {
+  NeemBuildManifest,
+  NeemBuildManifestArtifact,
+} from '../build/manifest.ts'
+import { discoverConfigEntriesSync } from '../build/discovery.ts'
+import {
+  NEEM_MANIFEST_FILE,
+  NEEM_MANIFEST_SCHEMA_VERSION,
+} from '../build/manifest.ts'
+import { buildArtifact } from '../build/rolldown.ts'
+import { importDefault } from '../runtime/utils.ts'
 
 export type {
   NeemBuildManifest,
   NeemBuildManifestArtifact,
-} from '#build/manifest.ts'
+} from '../build/manifest.ts'
 export {
   NEEM_MANIFEST_FILE,
   NEEM_MANIFEST_SCHEMA_VERSION,
-} from '#build/manifest.ts'
+} from '../build/manifest.ts'
 
 export type NeemBuildOptions = {
   config?: string
@@ -54,28 +56,21 @@ export async function buildNeem(
   const configFile = resolve(cwd, options.config ?? 'neem.config.ts')
   const discovery = discoverConfigEntriesSync(configFile)
   const config = await importDefault<NeemConfig>(configFile)
-  const logger = await resolveNeemLogger(config.logger)
   const outDir = resolve(cwd, options.outDir ?? config.outDir ?? 'dist')
+  const logger = consola.create({ level: 4 })
 
-  logger.info({ configFile, outDir }, 'Building Neem application')
-  logger.debug(
-    {
-      apps: Object.keys(config.apps),
-      plugins: config.plugins?.length ?? 0,
-      hasLogger: Boolean(config.logger),
-    },
-    'Neem config discovered',
-  )
+  logger.start('Building Neem bundle')
+  logger.debug(`  config: ${configFile}`)
+  logger.debug(`  outDir: ${outDir}`)
 
-  logger.debug({ outDir }, 'Cleaning Neem build output')
   await cleanNeemOutDir(outDir)
   await mkdir(outDir, { recursive: true })
 
-  logger.debug({ configFile }, 'Building Neem config artifact')
   const configArtifact = await buildConfigArtifact({
     configFile,
     discovery,
     outDir,
+    minify: true,
   })
 
   const manifest: NeemBuildManifest = {
@@ -87,16 +82,16 @@ export async function buildNeem(
 
   for (const [name, appConfig] of Object.entries(config.apps)) {
     const discovered = discovery.apps[name]
+    
     if (!discovered) {
       throw new Error(`Failed to discover app entry for [${name}]`)
     }
 
-    logger.debug(
-      { appName: name, entry: discovered.entry.resolved },
-      'Building Neem app entry',
-    )
     await appConfig.entry()
     const rolldown = await loadBuildConfig(appConfig.build)
+
+    logger.start(`Building app: ${colorize('green', name)}`)
+    
     const entry = await buildArtifact({
       artifact: {
         id: 'entry',
@@ -106,7 +101,22 @@ export async function buildNeem(
       owner: { type: 'app', name },
       rolldown,
       outDir,
+      minify: true,
     })
+
+
+    for (const outputChunk of entry.bundle!.output) {
+      
+      if (outputChunk.type === 'chunk') {
+        logger.debug(
+          `  Emit: ${outputChunk.fileName} (${colorize('blue', formatBytes(outputChunk.code.length))})`,
+        )
+      } else {
+        logger.debug(
+          `  Emit: ${outputChunk.fileName} (${colorize('blue', formatBytes(outputChunk.source.length))})`,
+        )
+      }
+    }
 
     manifest.apps[name] = { name, entry: toManifestArtifact(outDir, entry) }
   }
@@ -124,16 +134,8 @@ export async function buildNeem(
       type: 'plugin' as const,
       name: pluginName,
       instanceId: index,
+    
     }
-
-    logger.debug(
-      {
-        plugin: pluginName,
-        instanceId: index,
-        entry: discovered.entry.resolved,
-      },
-      'Building Neem plugin entry',
-    )
     const entry = await buildArtifact({
       artifact: {
         id: 'entry',
@@ -143,6 +145,7 @@ export async function buildNeem(
       owner,
       rolldown,
       outDir,
+      minify: true,
     })
 
     const declaredArtifacts =
@@ -151,20 +154,10 @@ export async function buildNeem(
         name: pluginName,
         instanceId: index,
         options: pluginConfig.options,
-        logger,
       })) ?? []
 
     const artifacts: NeemBuildManifestArtifact[] = []
     for (const artifact of declaredArtifacts) {
-      logger.debug(
-        {
-          plugin: pluginName,
-          instanceId: index,
-          artifactId: artifact.id,
-          kind: artifact.kind,
-        },
-        'Building Neem plugin artifact',
-      )
       const built = await buildArtifact({
         artifact,
         owner,
@@ -183,16 +176,11 @@ export async function buildNeem(
     })
   }
 
-  logger.debug('Writing Neem manifest')
   const manifestFile = await writeManifest(outDir, manifest)
-  logger.info(
-    {
-      manifestFile,
-      apps: Object.keys(manifest.apps).length,
-      plugins: manifest.plugins.length,
-    },
-    'Neem build complete',
-  )
+  logger.success('Neem build complete')
+  logger.info(`manifest: ${manifestFile}`)
+  logger.info(`apps: ${Object.keys(manifest.apps).length}`)
+  logger.info(`plugins: ${manifest.plugins.length}`)
 
   return { configFile, outDir, manifestFile, manifest }
 }
@@ -210,12 +198,14 @@ export async function buildConfigArtifact(options: {
   configFile: string
   discovery: NeemConfigDiscovery
   outDir: string
+  minify?: boolean
 }): Promise<NeemResolvedArtifact> {
   return buildArtifact({
     artifact: { id: 'entry', kind: 'module', entry: options.configFile },
     owner: { type: 'config' },
     rolldown: createConfigRolldownOptions(options.discovery),
     outDir: options.outDir,
+    minify: options.minify,
   })
 }
 
@@ -300,3 +290,11 @@ function collectDiscoveredLazyImports(
 function constantImports(imports: Set<string>): () => Set<string> {
   return () => imports
 }
+
+
+const formatBytes = (bytes: number) => new Intl.NumberFormat('en-US', {
+  style: 'unit',
+  unit: 'kilobyte',
+  unitDisplay: 'short', // 'short' (kB), 'long' (kilobytes), 'narrow' (k)
+  maximumFractionDigits: 2,
+}).format(bytes / 1024)

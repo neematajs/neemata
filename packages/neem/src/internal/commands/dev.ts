@@ -3,6 +3,40 @@ import { fileURLToPath } from 'node:url'
 
 import { debounce } from 'perfect-debounce'
 
+import type {
+  NeemArtifact,
+  NeemResolvedArtifact,
+} from '../../public/artifact.ts'
+import type {
+  NeemBuildConfig,
+  NeemBuildConfigInput,
+  NeemConfig,
+} from '../../public/config.ts'
+import type { NeemPlugin } from '../../public/plugin.ts'
+import type {
+  NeemConfigDiscovery,
+  NeemDiscoveredApp,
+  NeemDiscoveredPlugin,
+} from '../build/discovery.ts'
+import type {
+  NeemBuildManifest,
+  NeemBuildManifestArtifact,
+} from '../build/manifest.ts'
+import type { NeemArtifactWatcher } from '../build/rolldown.ts'
+import type {
+  NeemApplicationServer,
+  NeemApplicationServerSnapshot,
+} from '../runtime/application-server.ts'
+import { discoverConfigEntriesSync } from '../build/discovery.ts'
+import { NEEM_MANIFEST_SCHEMA_VERSION } from '../build/manifest.ts'
+import { watchArtifact } from '../build/rolldown.ts'
+import { NeemApplicationServer as RuntimeApplicationServer } from '../runtime/application-server.ts'
+import {
+  createNeemDefaultLogger,
+  resolveNeemConfigLogger,
+} from '../runtime/logger.ts'
+import { createRuntimeSnapshot } from '../runtime/snapshot.ts'
+import { importDefault } from '../runtime/utils.ts'
 import {
   cleanNeemOutDir,
   createConfigRolldownOptions,
@@ -11,38 +45,6 @@ import {
   toManifestPath,
   writeManifest,
 } from './build.ts'
-
-import type {
-  NeemConfigDiscovery,
-  NeemDiscoveredApp,
-  NeemDiscoveredPlugin,
-} from '#build/discovery.ts'
-import { discoverConfigEntriesSync } from '#build/discovery.ts'
-import type {
-  NeemBuildManifest,
-  NeemBuildManifestArtifact,
-} from '#build/manifest.ts'
-import { NEEM_MANIFEST_SCHEMA_VERSION } from '#build/manifest.ts'
-import type { NeemArtifactWatcher } from '#build/rolldown.ts'
-import { watchArtifact } from '#build/rolldown.ts'
-import type { NeemArtifact, NeemResolvedArtifact } from '#public/artifact.ts'
-import type {
-  NeemBuildConfig,
-  NeemBuildConfigInput,
-  NeemConfig,
-} from '#public/config.ts'
-import type { NeemPlugin } from '#public/plugin.ts'
-import type {
-  NeemApplicationServer,
-  NeemApplicationServerSnapshot,
-} from '#runtime/application-server.ts'
-import { NeemApplicationServer as RuntimeApplicationServer } from '#runtime/application-server.ts'
-import {
-  createNeemDefaultLogger,
-  resolveNeemConfigLogger,
-} from '#runtime/logger.ts'
-import { createRuntimeSnapshot } from '#runtime/snapshot.ts'
-import { importDefault } from '#runtime/utils.ts'
 
 export type NeemDevOptions = {
   config?: string
@@ -512,7 +514,6 @@ class NeemDevSession implements NeemDevHost {
         name: plugin.name,
         instanceId: index,
         options,
-        logger: this.logger,
       })) ?? []
     const entryArtifact = this.pluginEntryArtifacts.get(index)
     if (!entryArtifact) {

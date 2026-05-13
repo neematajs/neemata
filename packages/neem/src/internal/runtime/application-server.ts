@@ -1,18 +1,12 @@
-import type { NeemMode } from '#public/index.ts'
-import type {
-  NeemStartedAppWorker,
-  NeemStartedAppWorkerPool,
-} from '#runtime/app.ts'
-import { NeemAppManager } from '#runtime/app.ts'
-import { createNeemChildLogger } from '#runtime/logger.ts'
-import type { NeemPluginManager, NeemStartedPlugin } from '#runtime/plugin.ts'
-import type {
-  NeemProxyManager,
-  NeemProxyUpstreamSnapshot,
-} from '#runtime/proxy.ts'
-import { NeemProxyUpstreamRegistry } from '#runtime/proxy.ts'
-import type { NeemRuntimeSnapshot } from '#runtime/snapshot.ts'
-import { normalizeError } from '#runtime/utils.ts'
+import type { NeemMode } from '../../public/index.ts'
+import type { NeemStartedAppWorker, NeemStartedAppWorkerPool } from './app.ts'
+import type { NeemPluginManager, NeemStartedPlugin } from './plugin.ts'
+import type { NeemProxyManager, NeemProxyUpstreamSnapshot } from './proxy.ts'
+import type { NeemRuntimeSnapshot } from './snapshot.ts'
+import { NeemAppManager } from './app.ts'
+import { createNeemChildLogger } from './logger.ts'
+import { NeemProxyUpstreamRegistry } from './proxy.ts'
+import { normalizeError } from './utils.ts'
 
 export type NeemApplicationServerOptions = {
   snapshot: NeemRuntimeSnapshot

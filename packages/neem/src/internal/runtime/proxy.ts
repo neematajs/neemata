@@ -1,7 +1,7 @@
-import type { NeemProxyConfig } from '#public/config.ts'
-import type { NeemApplicationUpstream } from '#public/runtime.ts'
-import { createNeemChildLogger } from '#runtime/logger.ts'
-import type { NeemRuntimeSnapshot } from '#runtime/snapshot.ts'
+import type { NeemProxyConfig } from '../../public/config.ts'
+import type { NeemApplicationUpstream } from '../../public/runtime.ts'
+import type { NeemRuntimeSnapshot } from './snapshot.ts'
+import { createNeemChildLogger } from './logger.ts'
 
 export type NeemProxyUpstream = {
   type: 'port'

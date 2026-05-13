@@ -2,7 +2,7 @@ import type {
   NeemArtifactOwner,
   NeemArtifactRegistry,
   NeemResolvedArtifact,
-} from '#public/artifact.ts'
+} from '../../public/artifact.ts'
 
 export type NeemScopedArtifactRegistry = NeemArtifactRegistry & {
   resolveFor: (
