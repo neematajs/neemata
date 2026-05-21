@@ -13,6 +13,7 @@ export type NeemBuildManifestArtifact = {
 
 export type NeemBuildManifest = {
   schemaVersion: typeof NEEM_MANIFEST_SCHEMA_VERSION
+  runtime?: { entry: string; worker: string }
   config: { file: string }
   apps: Record<string, { name: string; entry: NeemBuildManifestArtifact }>
   plugins: Array<{

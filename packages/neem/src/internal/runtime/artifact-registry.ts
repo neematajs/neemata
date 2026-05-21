@@ -72,5 +72,6 @@ function pushArtifact(
 function getOwnerKey(owner: NeemArtifactOwner): string {
   if (owner.type === 'config') return 'config'
   if (owner.type === 'app') return `app:${owner.name}`
+  if (owner.type === 'runtime') return `runtime:${owner.name}`
   return `plugin:${owner.instanceId}:${owner.name}`
 }

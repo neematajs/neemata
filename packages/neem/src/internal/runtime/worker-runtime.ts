@@ -29,6 +29,7 @@ export type NeemRuntimeWorkerOptions = {
   artifact: NeemResolvedArtifact
   artifacts: readonly NeemResolvedArtifact[]
   configFile: string
+  runtimeWorkerEntry?: string | URL
   logger?: Logger
   startupTimeoutMs?: number
   stopTimeoutMs?: number
@@ -70,7 +71,7 @@ export class NeemRuntimeWorker {
       id: options.id,
       name: options.name,
       artifactId: options.artifact.id,
-      entry: resolveRuntimeWorkerEntry(),
+      entry: options.runtimeWorkerEntry ?? resolveRuntimeWorkerEntry(),
       workerData,
       workerOptions: { transferList: [channel.port2] },
       logger: createNeemChildLogger(

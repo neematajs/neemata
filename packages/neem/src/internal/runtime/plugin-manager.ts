@@ -18,6 +18,7 @@ export type NeemPluginWorkerManagerOptions = {
   instanceId: number
   artifacts: NeemScopedArtifactRegistry
   configFile: string
+  runtimeWorkerEntry?: string | URL
   logger: NeemRuntimeSnapshot['logger']
   startupTimeoutMs?: number
   stopTimeoutMs?: number
@@ -59,6 +60,7 @@ export class NeemPluginWorkerManager implements NeemPluginWorkers {
       artifact,
       artifacts: this.options.artifacts.scope(this.owner).list(),
       configFile: this.options.configFile,
+      runtimeWorkerEntry: this.options.runtimeWorkerEntry,
       logger: this.options.logger,
       startupTimeoutMs: this.options.startupTimeoutMs,
       stopTimeoutMs: this.options.stopTimeoutMs,

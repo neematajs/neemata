@@ -126,6 +126,7 @@ export class NeemPluginManager {
       }),
       workerArtifacts: snapshot.artifacts,
       configFile: snapshot.configFile,
+      runtimeWorkerEntry: snapshot.runtimeWorkerEntry,
       logger: createNeemChildLogger(
         snapshot.logger,
         `Neem plugin ${pluginManifest.name}:${pluginManifest.index}`,
@@ -155,6 +156,7 @@ type NeemStartedPluginRuntimeOptions = {
   artifacts: NeemArtifactRegistry
   workerArtifacts: NeemRuntimeSnapshot['artifacts']
   configFile: string
+  runtimeWorkerEntry?: string | URL
   logger: NeemRuntimeSnapshot['logger']
   startupTimeoutMs?: number
   stopTimeoutMs?: number
@@ -180,6 +182,7 @@ class NeemStartedPluginRuntime implements NeemStartedPlugin {
       instanceId: options.instanceId,
       artifacts: options.workerArtifacts,
       configFile: options.configFile,
+      runtimeWorkerEntry: options.runtimeWorkerEntry,
       logger: options.logger,
       startupTimeoutMs: options.startupTimeoutMs,
       stopTimeoutMs: options.stopTimeoutMs,

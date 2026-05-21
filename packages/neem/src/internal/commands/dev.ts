@@ -943,10 +943,6 @@ async function loadAppBuildConfig(
     return importDefault<NeemBuildConfig>(discovered.build.resolved)
   }
 
-  if (typeof input === 'function') {
-    return undefined
-  }
-
   return loadBuildConfig(input)
 }
 
@@ -956,10 +952,6 @@ async function loadPluginBuildConfig(
 ): Promise<NeemBuildConfig | undefined> {
   if (discovered.build) {
     return importDefault<NeemBuildConfig>(discovered.build.resolved)
-  }
-
-  if (typeof input === 'function') {
-    return undefined
   }
 
   return loadBuildConfig(input)

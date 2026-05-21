@@ -34,7 +34,7 @@ export type NeemManagedWorkerOptions = {
   id: string
   name: string
   artifactId: string
-  entry: URL
+  entry: string | URL
   workerData?: unknown
   workerOptions?: Omit<WorkerOptions, 'workerData'>
   logger?: Logger

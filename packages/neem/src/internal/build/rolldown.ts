@@ -29,6 +29,7 @@ export type NeemBuildArtifactOptions = {
   rolldown?: NeemRolldownOptions
   cwd?: string
   outDir: string
+  artifactOutDir?: string
   sourcemap?: boolean
   minify?: boolean
 }
@@ -260,6 +261,16 @@ async function emitNativeAddonModule(
 }
 
 function resolveArtifactOutDir(options: NeemBuildArtifactOptions): string {
+  if (options.artifactOutDir) return options.artifactOutDir
+
+  if (options.owner.type === 'runtime') {
+    return resolve(
+      options.outDir,
+      'runtime',
+      sanitizePathPart(options.owner.name),
+    )
+  }
+
   if (options.owner.type === 'config') {
     return resolve(
       options.outDir,

@@ -24,7 +24,7 @@ export type NeemBuildConfigLoader<
 
 export type NeemBuildConfigInput<
   TBuildConfig extends NeemBuildConfig = NeemBuildConfig,
-> = TBuildConfig | NeemBuildConfigLoader<TBuildConfig>
+> = NeemBuildConfigLoader<TBuildConfig>
 
 export type NeemLoggerLoader<TLogger extends Logger = Logger> = () => Promise<
   NeemEntryModule<TLogger>

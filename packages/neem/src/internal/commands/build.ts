@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs'
 import { mkdir, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, relative, resolve } from 'node:path'
 
@@ -66,6 +67,7 @@ export async function buildNeem(
   await cleanNeemOutDir(outDir)
   await mkdir(outDir, { recursive: true })
 
+  const runtimeArtifacts = await buildRuntimeArtifacts({ outDir })
   const configArtifact = await buildConfigArtifact({
     configFile,
     discovery,
@@ -75,6 +77,10 @@ export async function buildNeem(
 
   const manifest: NeemBuildManifest = {
     schemaVersion: NEEM_MANIFEST_SCHEMA_VERSION,
+    runtime: {
+      entry: toManifestPath(outDir, runtimeArtifacts.entry.file),
+      worker: toManifestPath(outDir, runtimeArtifacts.worker.file),
+    },
     config: { file: toManifestPath(outDir, configArtifact.file) },
     apps: {},
     plugins: [],
@@ -87,7 +93,6 @@ export async function buildNeem(
       throw new Error(`Failed to discover app entry for [${name}]`)
     }
 
-    await appConfig.entry()
     const rolldown = await loadBuildConfig(appConfig.build)
 
     logger.start(`Building app: ${colorize('green', name)}`)
@@ -184,11 +189,59 @@ export async function buildNeem(
 
 export async function cleanNeemOutDir(outDir: string): Promise<void> {
   await Promise.all([
+    rm(resolve(outDir, 'start.js'), { force: true }),
+    rm(resolve(outDir, 'start.js.map'), { force: true }),
+    rm(resolve(outDir, 'runtime'), { recursive: true, force: true }),
     rm(resolve(outDir, 'config'), { recursive: true, force: true }),
     rm(resolve(outDir, 'apps'), { recursive: true, force: true }),
     rm(resolve(outDir, 'plugins'), { recursive: true, force: true }),
     rm(resolve(outDir, NEEM_MANIFEST_FILE), { force: true }),
   ])
+}
+
+export async function buildRuntimeArtifacts(options: {
+  outDir: string
+}): Promise<{ entry: NeemResolvedArtifact; worker: NeemResolvedArtifact }> {
+  const entry = await buildArtifact({
+    artifact: {
+      id: 'entry',
+      kind: 'module',
+      entry: resolveNeemRuntimeSourceEntry('standalone-entry'),
+      rolldown: {
+        output: {
+          entryFileNames: 'start.js',
+          chunkFileNames: 'runtime/[name]-[hash].js',
+          assetFileNames: 'runtime/[name]-[hash][extname]',
+        },
+      },
+    },
+    owner: { type: 'runtime', name: 'start' },
+    artifactOutDir: options.outDir,
+    outDir: options.outDir,
+    minify: true,
+  })
+
+  const worker = await buildArtifact({
+    artifact: {
+      id: 'worker',
+      kind: 'worker',
+      entry: resolveNeemRuntimeSourceEntry('worker-entry'),
+      rolldown: { output: { entryFileNames: 'worker-entry.js' } },
+    },
+    owner: { type: 'runtime', name: 'worker' },
+    artifactOutDir: resolve(options.outDir, 'runtime'),
+    outDir: options.outDir,
+    minify: true,
+  })
+
+  return { entry, worker }
+}
+
+function resolveNeemRuntimeSourceEntry(name: string): URL {
+  const sourceEntry = new URL(`../runtime/${name}.ts`, import.meta.url)
+  if (existsSync(sourceEntry)) return sourceEntry
+
+  return new URL(`../../../src/internal/runtime/${name}.ts`, import.meta.url)
 }
 
 export async function buildConfigArtifact(options: {
@@ -224,11 +277,7 @@ export async function loadBuildConfig(
   input: NeemBuildConfigInput | undefined,
 ): Promise<NeemBuildConfig | undefined> {
   if (!input) return undefined
-  if (typeof input === 'function') {
-    return (await input()).default
-  }
-
-  return input
+  return (await input()).default
 }
 
 export function toManifestArtifact(

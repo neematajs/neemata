@@ -167,6 +167,7 @@ function createAppWorkerPool(
         threadIndex,
         threadOptions,
         configFile: snapshot.configFile,
+        runtimeWorkerEntry: snapshot.runtimeWorkerEntry,
         appArtifact,
         artifacts: snapshot.artifacts.list(),
         logger: snapshot.logger,
@@ -194,6 +195,7 @@ class NeemAppWorker implements NeemStartedAppWorker {
       threadIndex: number
       threadOptions: unknown
       configFile: string
+      runtimeWorkerEntry?: string | URL
       appArtifact: NeemResolvedArtifact
       artifacts: readonly NeemResolvedArtifact[]
       logger: NeemRuntimeSnapshot['logger']
@@ -224,7 +226,7 @@ class NeemAppWorker implements NeemStartedAppWorker {
       id: this.id,
       name: `app:${data.appName}:${data.threadIndex}`,
       artifactId: data.appArtifact.id,
-      entry: resolveRuntimeWorkerEntry(),
+      entry: data.runtimeWorkerEntry ?? resolveRuntimeWorkerEntry(),
       workerData,
       workerOptions: { transferList: [channel.port2] },
       logger: createNeemChildLogger(

@@ -20,6 +20,7 @@ export type NeemRuntimeSnapshot = {
   manifest: NeemBuildManifest
   config: NeemConfig
   configFile: string
+  runtimeWorkerEntry?: string | URL
   logger: Logger
   artifacts: NeemScopedArtifactRegistry
 }
@@ -31,6 +32,7 @@ export type NeemRuntimeSnapshotInput = {
   manifest: NeemBuildManifest
   config: NeemConfig
   configFile?: string
+  runtimeWorkerEntry?: string | URL
   logger?: Logger
 }
 
@@ -45,6 +47,7 @@ export function createRuntimeSnapshot(
     config: input.config,
     configFile:
       input.configFile ?? resolve(input.outDir, input.manifest.config.file),
+    runtimeWorkerEntry: input.runtimeWorkerEntry,
     logger: input.logger ?? createNeemDefaultLogger(input.mode),
     artifacts: createNeemArtifactRegistry(
       resolveManifestArtifacts(input.outDir, input.manifest),

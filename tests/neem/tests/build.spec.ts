@@ -48,6 +48,14 @@ describe('neem build', () => {
 
     expect(result.manifestFile).toBe(resolve(outDir, NEEM_MANIFEST_FILE))
     expect(manifest.schemaVersion).toBe(1)
+    expect(manifest.runtime).toEqual({
+      entry: 'start.js',
+      worker: 'runtime/worker-entry.js',
+    })
+    expect(isAbsolute(manifest.runtime!.entry)).toBe(false)
+    expect(isAbsolute(manifest.runtime!.worker)).toBe(false)
+    await expectFile(resolve(outDir, manifest.runtime!.entry))
+    await expectFile(resolve(outDir, manifest.runtime!.worker))
     expect(isAbsolute(manifest.config.file)).toBe(false)
     expect(manifest.config.file.endsWith('.js')).toBe(true)
     await expectFile(resolve(outDir, manifest.config.file))
@@ -72,6 +80,12 @@ describe('neem build', () => {
     expect(configCode).toContain('./basic-app.build.ts')
     expect(configCode).toContain('./jobs.plugin.ts')
     expect(configCode).not.toContain('./logger.ts')
+    const startCode = await readFile(
+      resolve(outDir, manifest.runtime!.entry),
+      'utf8',
+    )
+    expect(startCode).not.toContain('@nmtjs/neem/cli')
+    expect(startCode).not.toMatch(/(?:from|import)\(?["']@nmtjs\/neem/)
 
     const appEntry = manifest.apps.api.entry
     const plugin = manifest.plugins[0]
@@ -117,6 +131,15 @@ describe('neem build', () => {
       main(['build', '--config', configFile, '--outDir', outDir]),
     ).resolves.toBe(0)
     await expectFile(resolve(outDir, NEEM_MANIFEST_FILE))
+  })
+
+  it('does not execute app entry thunks while building app artifacts', async () => {
+    delete (globalThis as any).__neemLazyAppLoaded
+    const outDir = await createTempOutDir()
+
+    await buildNeem({ config: resolve(fixturesDir, 'lazy.config.ts'), outDir })
+
+    expect((globalThis as any).__neemLazyAppLoaded).toBeUndefined()
   })
 })
 

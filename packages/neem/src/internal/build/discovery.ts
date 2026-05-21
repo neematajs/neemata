@@ -1,10 +1,27 @@
 import { readFileSync } from 'node:fs'
-import { dirname, resolve } from 'node:path'
 
 import type { ESTree } from 'rolldown/utils'
+import { ResolverFactory } from 'oxc-resolver'
 import { parseSync, Visitor } from 'rolldown/utils'
 
 type DiscoveryNode = ESTree.Node | null | undefined
+
+const resolver = new ResolverFactory({
+  conditionNames: ['import', 'module', 'node', 'default'],
+  extensions: [
+    '.ts',
+    '.tsx',
+    '.mts',
+    '.cts',
+    '.js',
+    '.mjs',
+    '.cjs',
+    '.json',
+    '.node',
+    '.vue',
+  ],
+  tsconfig: 'auto',
+})
 
 export type NeemDiscoveredImport = {
   specifier: string
@@ -16,14 +33,12 @@ export type NeemDiscoveredApp = {
   name: string
   entry: NeemDiscoveredImport
   build?: NeemDiscoveredImport
-  hasInlineBuild: boolean
 }
 
 export type NeemDiscoveredPlugin = {
   index: number
   entry: NeemDiscoveredImport
   build?: NeemDiscoveredImport
-  hasInlineBuild: boolean
 }
 
 export type NeemConfigDiscovery = {
@@ -106,12 +121,7 @@ function discoverApps(
     const entry = getStaticImportThunk(appObject, 'entry', configFile, name)
     const build = getOptionalStaticImportThunk(appObject, 'build', configFile)
 
-    apps[name] = {
-      name,
-      entry,
-      build: build?.type === 'import' ? build.value : undefined,
-      hasInlineBuild: build?.type === 'inline',
-    }
+    apps[name] = { name, entry, build }
   }
 
   return apps
@@ -143,14 +153,7 @@ function discoverPlugins(
       configFile,
     )
 
-    return [
-      {
-        index,
-        entry,
-        build: build?.type === 'import' ? build.value : undefined,
-        hasInlineBuild: build?.type === 'inline',
-      },
-    ]
+    return [{ index, entry, build }]
   })
 }
 
@@ -210,10 +213,7 @@ function getOptionalStaticImportThunk(
   objectExpression: DiscoveryNode,
   propertyName: string,
   importer: string,
-):
-  | { type: 'import'; value: NeemDiscoveredImport }
-  | { type: 'inline' }
-  | undefined {
+): NeemDiscoveredImport | undefined {
   const value = unwrapExpression(
     getPropertyValue(objectExpression, propertyName),
   )
@@ -222,14 +222,10 @@ function getOptionalStaticImportThunk(
 
   const specifier = getImportThunkSpecifier(value)
   if (specifier) {
-    return { type: 'import', value: resolveImport(importer, specifier) }
+    return resolveImport(importer, specifier)
   }
 
-  if (isObjectExpression(value)) return { type: 'inline' }
-
-  throw new Error(
-    `Expected ${propertyName} to be an object or lazy import thunk`,
-  )
+  throw new Error(`Expected ${propertyName} to be () => import('<literal>')`)
 }
 
 function getImportThunkSpecifier(node: DiscoveryNode) {
@@ -251,8 +247,20 @@ function resolveImport(
   return {
     specifier,
     importer,
-    resolved: resolve(dirname(importer), specifier),
+    resolved: resolveImportFile(importer, specifier),
   }
+}
+
+function resolveImportFile(importer: string, specifier: string): string {
+  const result = resolver.resolveFileSync(importer, specifier)
+
+  if (result.path) {
+    return result.path
+  }
+
+  throw new Error(
+    `Failed to resolve import [${specifier}] from [${importer}]: ${result.error ?? 'unknown resolver error'}`,
+  )
 }
 
 function getPropertyValue(

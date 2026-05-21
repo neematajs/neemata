@@ -23,6 +23,7 @@ export type NeemBuiltSnapshotLoadOptions = {
   cwd?: string
   outDir?: string
   mode: NeemMode
+  runtimeWorkerEntry?: string | URL
 }
 
 export async function loadBuiltRuntimeSnapshot(
@@ -44,6 +45,7 @@ export async function loadBuiltRuntimeSnapshot(
     manifest,
     config,
     configFile: resolve(outDir, manifest.config.file),
+    runtimeWorkerEntry: options.runtimeWorkerEntry,
     logger,
   })
 }

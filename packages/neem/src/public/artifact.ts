@@ -17,6 +17,7 @@ export type NeemArtifactOwner =
   | { type: 'config' }
   | { type: 'app'; name: string }
   | { type: 'plugin'; name: string; instanceId: number }
+  | { type: 'runtime'; name: string }
 
 export type NeemResolvedArtifact = {
   id: string

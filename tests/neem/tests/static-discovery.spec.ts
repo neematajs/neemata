@@ -22,7 +22,6 @@ describe('neem config static discovery', () => {
         specifier: './basic-app.build.ts',
         resolved: resolve(fixturesDir, '../fixtures/basic-app.build.ts'),
       },
-      hasInlineBuild: false,
     })
 
     expect(discovery.logger).toMatchObject({
@@ -37,7 +36,6 @@ describe('neem config static discovery', () => {
         specifier: './jobs.plugin.ts',
         resolved: resolve(fixturesDir, '../fixtures/jobs.plugin.ts'),
       },
-      hasInlineBuild: false,
     })
   })
 
@@ -99,5 +97,26 @@ describe('neem config static discovery', () => {
         `,
       ),
     ).toThrow('Failed to find defineConfig({...})')
+  })
+
+  it('rejects inline build config', () => {
+    expect(() =>
+      discoverConfigEntriesSync(
+        resolve(fixturesDir, '../fixtures/inline-build.config.ts'),
+        `
+          import { defineConfig } from '@nmtjs/neem'
+
+          export default defineConfig({
+            apps: {
+              api: {
+                entry: () => import('./basic-app.ts'),
+                build: { plugins: [] },
+                threads: [],
+              },
+            },
+          })
+        `,
+      ),
+    ).toThrow("Expected build to be () => import('<literal>')")
   })
 })

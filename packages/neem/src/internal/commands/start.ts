@@ -21,6 +21,7 @@ export type NeemStartOptions = {
   cwd?: string
   mode?: NeemMode
   failOnWorkerError?: boolean
+  runtimeWorkerEntry?: string | URL
   signal?: AbortSignal
 }
 
@@ -47,7 +48,12 @@ export async function startNeem(
   const failOnWorkerError = options.failOnWorkerError ?? mode === 'production'
   const outDir = resolve(cwd, options.outDir ?? 'dist')
   const manifestFile = resolve(outDir, NEEM_MANIFEST_FILE)
-  const snapshot = await loadBuiltRuntimeSnapshot({ cwd, outDir, mode })
+  const snapshot = await loadBuiltRuntimeSnapshot({
+    cwd,
+    outDir,
+    mode,
+    runtimeWorkerEntry: options.runtimeWorkerEntry,
+  })
   snapshot.logger.info({ outDir, mode }, 'Starting Neem from built output')
   snapshot.logger.debug(
     {
