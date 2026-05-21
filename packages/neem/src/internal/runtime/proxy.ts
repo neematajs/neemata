@@ -5,7 +5,7 @@ import { createNeemChildLogger } from './logger.ts'
 
 export type NeemProxyUpstream = {
   type: 'port'
-  transport: string
+  transport: 'http' | 'http2' | 'ws'
   secure: boolean
   hostname: string
   port: number
@@ -140,7 +140,6 @@ export class NeemProxyUpstreamRegistry {
 export type NeemProxyManagerOptions = {
   snapshot: NeemRuntimeSnapshot
   upstreams: NeemProxyUpstreamRegistry
-  loadProxyPackage?: NeemProxyPackageLoader
 }
 
 export type NeemNativeProxy = {
@@ -155,10 +154,6 @@ export type NeemNativeProxy = {
     upstream: NeemProxyUpstream,
   ) => Promise<undefined>
 }
-
-export type NeemProxyPackageLoader = () => Promise<{
-  Proxy: new (options: NeemNativeProxyOptions) => NeemNativeProxy
-}>
 
 export type NeemNativeProxyOptions = {
   listen: string
@@ -175,7 +170,6 @@ export type NeemNativeProxyOptions = {
 export class NeemProxyManager {
   private readonly logger: NeemRuntimeSnapshot['logger']
   private readonly config: NeemProxyConfig
-  private readonly loadProxyPackage: NeemProxyPackageLoader
   private proxy: NeemNativeProxy | undefined
   private offAdd: (() => void) | undefined
   private offRemove: (() => void) | undefined
@@ -186,13 +180,12 @@ export class NeemProxyManager {
 
     this.config = config
     this.logger = createNeemChildLogger(options.snapshot.logger, 'Neem proxy')
-    this.loadProxyPackage = options.loadProxyPackage ?? loadProxyPackage
   }
 
   async start(): Promise<void> {
     if (this.proxy) return
 
-    const proxyPackage = await this.loadProxyPackage()
+    const proxyPackage = await loadProxyPackage()
     this.proxy = new proxyPackage.Proxy(
       createNativeProxyOptions(
         this.config,
@@ -287,7 +280,7 @@ export function toProxyUpstream(
   const port = url.port ? Number.parseInt(url.port, 10) : secure ? 443 : 80
   return {
     type: 'port',
-    transport: upstream.type,
+    transport: upstream.type as NeemProxyUpstream['transport'],
     secure,
     hostname: url.hostname,
     port,
@@ -298,7 +291,7 @@ function getUpstreamKey(upstream: NeemApplicationUpstream): string {
   return `${upstream.type}:${upstream.url}`
 }
 
-function createNativeProxyOptions(
+export function createNativeProxyOptions(
   config: NeemProxyConfig,
   appNames: readonly string[],
 ): NeemNativeProxyOptions {
@@ -328,11 +321,5 @@ function createNativeProxyOptions(
 }
 
 async function loadProxyPackage() {
-  return await dynamicImport('@nmtjs/proxy')
+  return await import('@nmtjs/proxy')
 }
-
-const dynamicImport = new Function('specifier', 'return import(specifier)') as (
-  specifier: string,
-) => Promise<{
-  Proxy: new (options: NeemNativeProxyOptions) => NeemNativeProxy
-}>

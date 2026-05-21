@@ -54,7 +54,16 @@
     "perfect-debounce": "2.1.0",
     "rolldown": "catalog:"
   },
+  "peerDependencies": {
+    "@nmtjs/proxy": "catalog:"
+  },
+  "peerDependenciesMeta": {
+    "@nmtjs/proxy": {
+      "optional": true
+    }
+  },
   "devDependencies": {
+    "@nmtjs/proxy": "catalog:",
     "@types/node": "^24"
   },
   "files": [

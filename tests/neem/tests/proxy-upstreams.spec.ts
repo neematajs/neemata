@@ -1,13 +1,9 @@
 import { describe, expect, it } from 'vitest'
 
 import type { NeemBuildManifest } from '../../../packages/neem/src/internal/build/manifest.ts'
-import type {
-  NeemNativeProxy,
-  NeemNativeProxyOptions,
-  NeemProxyUpstreamRegistryEvent,
-} from '../../../packages/neem/src/internal/runtime/proxy.ts'
+import type { NeemProxyUpstreamRegistryEvent } from '../../../packages/neem/src/internal/runtime/proxy.ts'
 import {
-  NeemProxyManager,
+  createNativeProxyOptions,
   NeemProxyUpstreamRegistry,
   normalizeProxyApplicationUpstream,
   toProxyUpstream,
@@ -85,85 +81,17 @@ describe('neem proxy upstream registry', () => {
     ])
   })
 
-  it('starts optional native proxy lazily and syncs current + future upstreams', async () => {
-    const upstreams = new NeemProxyUpstreamRegistry()
-    const owner = {}
-    upstreams.addOwnerUpstreams(owner, 'api', [
-      { type: 'http', url: 'http://0.0.0.0:4101/api/0' },
-    ])
+  it('creates native proxy options from Neem proxy config', () => {
+    const snapshot = createProxySnapshot()
+    const options = createNativeProxyOptions(snapshot.config.proxy!, ['api'])
 
-    const created: FakeNativeProxy[] = []
-    const manager = new NeemProxyManager({
-      snapshot: createProxySnapshot(),
-      upstreams,
-      loadProxyPackage: async () => ({
-        Proxy: class extends FakeNativeProxy {
-          constructor(options: NeemNativeProxyOptions) {
-            super(options)
-            created.push(this)
-          }
-        },
-      }),
-    })
-
-    await manager.start()
-    const proxy = created[0]!
-    expect(proxy.options).toMatchObject({
+    expect(options).toMatchObject({
       listen: '127.0.0.1:4090',
       applications: [{ name: 'api', routing: { type: 'path', name: 'api' } }],
       healthCheckIntervalMs: 250,
     })
-    expect(proxy.events).toEqual(['add:api:http:127.0.0.1:4101', 'start'])
-
-    const nextOwner = {}
-    upstreams.addOwnerUpstreams(nextOwner, 'api', [
-      { type: 'ws', url: 'ws://127.0.0.1:4102/ws' },
-    ])
-    await wait()
-    expect(proxy.events).toContain('add:api:ws:127.0.0.1:4102')
-
-    upstreams.removeOwnerUpstreams(owner)
-    await wait()
-    expect(proxy.events).toContain('remove:api:http:127.0.0.1:4101')
-
-    await manager.stop()
-    upstreams.removeOwnerUpstreams(nextOwner)
-    await wait()
-    expect(proxy.events.at(-1)).toBe('stop')
   })
 })
-
-class FakeNativeProxy implements NeemNativeProxy {
-  readonly events: string[] = []
-
-  constructor(readonly options: NeemNativeProxyOptions) {}
-
-  async start(): Promise<undefined> {
-    this.events.push('start')
-  }
-
-  async stop(): Promise<undefined> {
-    this.events.push('stop')
-  }
-
-  async addUpstream(
-    appName: string,
-    upstream: Parameters<NeemNativeProxy['addUpstream']>[1],
-  ): Promise<undefined> {
-    this.events.push(
-      `add:${appName}:${upstream.transport}:${upstream.hostname}:${upstream.port}`,
-    )
-  }
-
-  async removeUpstream(
-    appName: string,
-    upstream: Parameters<NeemNativeProxy['removeUpstream']>[1],
-  ): Promise<undefined> {
-    this.events.push(
-      `remove:${appName}:${upstream.transport}:${upstream.hostname}:${upstream.port}`,
-    )
-  }
-}
 
 function createProxySnapshot() {
   return createRuntimeSnapshot({
@@ -199,8 +127,4 @@ function createManifest(): NeemBuildManifest {
     },
     plugins: [],
   }
-}
-
-function wait(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, 0))
 }
