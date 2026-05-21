@@ -219,6 +219,12 @@ export class HttpTransportServer
         if (metadata.size) {
           responseHeaders.set('Content-Length', metadata.size.toString())
         }
+        if (metadata.filename) {
+          responseHeaders.set(
+            'Content-Disposition',
+            `attachment; filename="${metadata.filename}"`,
+          )
+        }
 
         // Convert source to ReadableStream
         let stream: ReadableStream
@@ -282,7 +288,6 @@ export class HttpTransportServer
         })
       }
     } catch (error) {
-      console.error(error)
       if (error instanceof UnsupportedFormatError) {
         const status =
           error instanceof UnsupportedContentTypeError

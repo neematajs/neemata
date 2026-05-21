@@ -36,6 +36,7 @@ export interface StreamLayerApi {
   addServerBlobStream: (
     metadata: ProtocolBlobMetadata,
     options?: {
+      source?: ReadableStream<ArrayBufferView>
       start?: (
         stream: ProtocolServerBlobStream,
         options?: { signal?: AbortSignal },
@@ -133,6 +134,7 @@ export const createStreamLayer = (core: ClientCore): StreamLayerApi => {
   const addServerBlobStream = (
     metadata: ProtocolBlobMetadata,
     options?: {
+      source?: ReadableStream<ArrayBufferView>
       start?: (
         stream: ProtocolServerBlobStream,
         options?: { signal?: AbortSignal },
@@ -150,12 +152,40 @@ export const createStreamLayer = (core: ClientCore): StreamLayerApi => {
         started = true
         options.start?.(stream, subscriptionOptions)
       })
+    } else if (options?.source) {
+      let started = false
+      serverBlobInitializers.set(id, (subscriptionOptions) => {
+        if (started) return
+        started = true
+        void pumpServerBlobSource(id, options.source!, subscriptionOptions)
+      })
     }
 
     return {
       blob: createProtocolBlobReference(id, metadata),
       streamId: id,
       stream,
+    }
+  }
+
+  const pumpServerBlobSource = async (
+    id: number,
+    source: ReadableStream<ArrayBufferView>,
+    options?: { signal?: AbortSignal },
+  ) => {
+    const reader = source.getReader()
+    try {
+      while (true) {
+        options?.signal?.throwIfAborted()
+        const { done, value } = await reader.read()
+        if (done) break
+        await serverStreams.push(id, value)
+      }
+      await serverStreams.end(id)
+    } catch (error) {
+      await serverStreams.abort(id, error).catch(noopFn)
+    } finally {
+      reader.releaseLock()
     }
   }
 

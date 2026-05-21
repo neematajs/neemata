@@ -91,11 +91,11 @@ export class ServerStreams<
     this.#writers.delete(streamId)
   }
 
-  async abort(streamId: number) {
+  async abort(streamId: number, reason?: unknown) {
     if (this.has(streamId)) {
       const writer = this.#writers.get(streamId)
       if (writer) {
-        await writer.abort()
+        await writer.abort(reason)
         writer.releaseLock()
       }
       this.remove(streamId)

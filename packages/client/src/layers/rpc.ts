@@ -5,6 +5,7 @@ import {
   ClientMessageType,
   ConnectionType,
   ErrorCode,
+  isBlobInterface,
   ProtocolBlob,
   ServerMessageType,
 } from '@nmtjs/protocol'
@@ -484,9 +485,7 @@ export const createRpcLayer = (
       })
 
       const { blob } = streams.addServerBlobStream(response.metadata, {
-        start: (stream, { signal } = {}) => {
-          response.source.pipeTo(stream.writable, { signal }).catch(noopFn)
-        },
+        source: response.source,
       })
       call.resolve(blob)
       return
@@ -733,6 +732,10 @@ export const createRpcLayer = (
           }
 
           return stream
+        }
+
+        if (isBlobInterface(value)) {
+          return value
         }
 
         controller.abort()

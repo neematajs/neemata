@@ -201,8 +201,8 @@ importers:
         specifier: workspace:*
         version: link:../protocol
       uWebSockets.js:
-        specifier: github:uNetworking/uWebSockets.js#v20.63.0
-        version: https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/d584e6247998f725e86db77130de139eda936473
+        specifier: github:uNetworking/uWebSockets.js#v20.67.0
+        version: https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/e0f56ebb4b349017f006e14d1cd29052f2a7121d
 
   packages/json-format:
     dependencies:
@@ -411,8 +411,8 @@ importers:
         specifier: workspace:*
         version: link:../protocol
       uWebSockets.js:
-        specifier: github:uNetworking/uWebSockets.js#v20.63.0
-        version: https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/d584e6247998f725e86db77130de139eda936473
+        specifier: github:uNetworking/uWebSockets.js#v20.67.0
+        version: https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/e0f56ebb4b349017f006e14d1cd29052f2a7121d
 
   tests/neem:
     devDependencies:
@@ -1496,9 +1496,9 @@ packages:
   tslib@2.8.1:
     resolution: {integrity: sha512-oJFu94HQb+KVduSUQL7wnpmqnfmLsOA/nAh6b6EH0wCEoK0/mPeXU6c3wKDV83MkOuHPRHtSXKKU99IBazS/2w==}
 
-  uWebSockets.js@https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/d584e6247998f725e86db77130de139eda936473:
-    resolution: {gitHosted: true, tarball: https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/d584e6247998f725e86db77130de139eda936473}
-    version: 20.63.0
+  uWebSockets.js@https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/e0f56ebb4b349017f006e14d1cd29052f2a7121d:
+    resolution: {tarball: https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/e0f56ebb4b349017f006e14d1cd29052f2a7121d}
+    version: 20.67.0
 
   uWebSockets.js@https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/fcfc622a4286909593b7f390056d89e0ca3b56b9:
     resolution: {gitHosted: true, tarball: https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/fcfc622a4286909593b7f390056d89e0ca3b56b9}
@@ -2499,7 +2499,7 @@ snapshots:
 
   tslib@2.8.1: {}
 
-  uWebSockets.js@https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/d584e6247998f725e86db77130de139eda936473: {}
+  uWebSockets.js@https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/e0f56ebb4b349017f006e14d1cd29052f2a7121d: {}
 
   uWebSockets.js@https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/fcfc622a4286909593b7f390056d89e0ca3b56b9: {}
 

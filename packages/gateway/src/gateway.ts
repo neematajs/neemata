@@ -309,6 +309,7 @@ export class Gateway<
 
     return {
       ...messageContext,
+      connectionType: connection.type,
       callId,
       payload,
       procedure,
@@ -764,11 +765,16 @@ export class Gateway<
       transport,
       protocol,
       connectionId,
+      connectionType,
       callId,
       encoder,
     } = context
 
     return (source, metadata) => {
+      if (connectionType === ConnectionType.Unidirectional) {
+        return ProtocolBlob.from(source, metadata)
+      }
+
       const streamId = getStreamId()
       const blob = ProtocolBlob.from(source, metadata, (metadata) => {
         return encoder.encodeBlob(streamId, metadata)
