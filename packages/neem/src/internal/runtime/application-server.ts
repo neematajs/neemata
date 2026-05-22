@@ -1,9 +1,11 @@
 import type { NeemMode } from '../../public/index.ts'
 import type { NeemStartedAppWorker, NeemStartedAppWorkerPool } from './app.ts'
+import type { NeemHostHooks } from './hooks.ts'
 import type { NeemPluginManager, NeemStartedPlugin } from './plugin.ts'
 import type { NeemProxyManager, NeemProxyUpstreamSnapshot } from './proxy.ts'
 import type { NeemRuntimeSnapshot } from './snapshot.ts'
 import { NeemAppManager } from './app.ts'
+import { callNeemHostHook, createNeemHostHooks } from './hooks.ts'
 import { createNeemChildLogger } from './logger.ts'
 import { NeemProxyUpstreamRegistry } from './proxy.ts'
 import { normalizeError } from './utils.ts'
@@ -45,6 +47,7 @@ export class NeemApplicationServer {
   private appManager: NeemAppManager | undefined
   private proxyManager: NeemProxyManager | undefined
   private proxyUpstreams = new NeemProxyUpstreamRegistry()
+  private readonly hooks: NeemHostHooks = createNeemHostHooks()
 
   constructor(readonly options: NeemApplicationServerOptions) {
     this.snapshot = options.snapshot
@@ -115,11 +118,13 @@ export class NeemApplicationServer {
         await this.startRuntime(this.snapshot)
         this.markState('running')
         this.logLifecycle('Neem server started')
+        await this.callHook('server:ready')
       } catch (error) {
         this.markState('failed', normalizeError(error))
         this.logger.error(
           new Error('Failed to start Neem server', { cause: error }),
         )
+        await this.callHook('server:fail', normalizeError(error))
         throw error
       }
     })
@@ -136,11 +141,13 @@ export class NeemApplicationServer {
         await this.startRuntime(this.snapshot)
         this.markState('running')
         this.logLifecycle('Neem server reloaded')
+        await this.callHook('server:reload')
       } catch (error) {
         this.markState('failed', normalizeError(error))
         this.logger.error(
           new Error('Failed to reload Neem server', { cause: error }),
         )
+        await this.callHook('server:fail', normalizeError(error))
         throw error
       }
     })
@@ -195,6 +202,7 @@ export class NeemApplicationServer {
       this.markState('stopping')
       try {
         this.logLifecycle('Stopping Neem server')
+        await this.callHook('server:stop')
         await this.stopRuntime(this.snapshot)
       } finally {
         this.markState('stopped')
@@ -208,6 +216,7 @@ export class NeemApplicationServer {
     const { NeemProxyManager } = await import('./proxy.ts')
     const pluginManager = new NeemPluginManager({
       snapshot,
+      hooks: this.hooks,
       onWorkerFailure: (error) => {
         this.markState('failed', error)
         void this.options.onFailure?.(error)
@@ -216,6 +225,7 @@ export class NeemApplicationServer {
     const appManager = new NeemAppManager({
       snapshot,
       proxyUpstreams: this.proxyUpstreams,
+      hooks: this.hooks,
       onWorkerFailure: (error) => {
         if (this.options.failOnWorkerError) {
           this.markState('failed', error)
@@ -229,6 +239,7 @@ export class NeemApplicationServer {
 
     try {
       await pluginManager.start()
+      await this.callHook('server:start')
       await appManager.start()
       await proxyManager?.start()
       this.pluginManager = pluginManager
@@ -305,5 +316,24 @@ export class NeemApplicationServer {
   private enqueue(task: () => Promise<void>): Promise<void> {
     this.operation = this.operation.then(task, task)
     return this.operation
+  }
+
+  private callHook(
+    name: 'server:start' | 'server:ready' | 'server:reload' | 'server:stop',
+  ): Promise<void>
+  private callHook(name: 'server:fail', error: Error): Promise<void>
+  private callHook(
+    name:
+      | 'server:start'
+      | 'server:ready'
+      | 'server:reload'
+      | 'server:stop'
+      | 'server:fail',
+    error?: Error,
+  ): Promise<void> {
+    return callNeemHostHook(this.hooks, this.logger, name, {
+      mode: this.snapshot.mode,
+      error,
+    })
   }
 }

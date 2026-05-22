@@ -74,7 +74,7 @@ export const getUserProcedure = n.procedure({
 ```ts
 import { n } from 'nmtjs'
 
-// Group procedures into named routers
+// Group procedures into routers
 const usersRouter = n.router({
   routes: {
     getUser: getUserProcedure,
@@ -94,6 +94,18 @@ const adminRouter = n.router({
 export const router = n.rootRouter([usersRouter, adminRouter] as const)
 ```
 
+- Route object keys are API path segments. A procedure mounted as
+  `routes: { users: n.router({ routes: { profile } }) }` is called as
+  `users/profile` on the wire and `client.call.users.profile(...)` in clients.
+- `n.rootRouter([routerA, routerB] as const)` merges child router routes into an
+  unnamed root router. Root does not add a path prefix.
+- Avoid duplicate top-level route keys across root routers. Later routers
+  overwrite earlier keys during the root merge.
+- The optional second argument to `n.rootRouter()` is a root-only fallback for
+  unknown procedure names. Nested routers do not have their own fallback.
+- Router `timeout`, guards, middleware, and meta are implementation behavior.
+  Route keys, input, output, and stream shape are the public RPC contract.
+
 ## Contract-First Approach
 
 Define contracts separately (shared between client and server), then implement:
@@ -102,25 +114,58 @@ Define contracts separately (shared between client and server), then implement:
 import { c, t } from 'nmtjs'
 
 // Shared contract (e.g., in a shared package)
-export const greetContract = c.procedure({
-  input: t.object({ name: t.string() }),
-  output: t.object({ greeting: t.string() }),
-})
-
 export const appContract = c.router({
-  routes: { greet: greetContract },
+  routes: {
+    users: c.router({
+      routes: {
+        profile: c.procedure({
+          input: t.object({ userId: t.string() }),
+          output: t.object({ ok: t.boolean(), userId: t.string() }),
+        }),
+      },
+    }),
+  },
 })
 ```
 
 ```ts
 import { n } from 'nmtjs'
-import { greetContract } from './contracts.ts'
+import { appContract } from './contracts.ts'
 
 // Server implementation
-const greetProcedure = n.contractProcedure(greetContract, {
-  handler: (_, { name }) => ({ greeting: `Hello, ${name}!` }),
+const profileProcedure = n.contractProcedure(
+  appContract.routes.users.routes.profile,
+  {
+    handler: (_, { userId }) => ({ ok: true, userId }),
+  },
+)
+
+export const usersRouter = n.contractRouter(appContract.routes.users, {
+  routes: {
+    profile: profileProcedure,
+  },
+})
+
+export const appRouter = n.contractRouter(appContract, {
+  routes: {
+    users: usersRouter,
+  },
 })
 ```
+
+- `c.procedure({ name })` can create a standalone named contract, but when a
+  procedure is mounted in `c.router()` or `n.router()`, the router path wins.
+- `c.router({ name })` prefixes child route names. For example, router name
+  `admin`, route `audit`, nested route `feed` becomes `admin/audit/feed`.
+- A nested router's own `name` is recomputed from parent path plus route key when
+  it is mounted. `n.rootRouter()` also rebuilds route contracts from merged route
+  keys, so router `name` is not a root mount path. Do not rely on an inner router
+  `name` staying unchanged after composition.
+- `n.contractRouter(contract, { routes })` must match contract route keys
+  exactly. Nested router contracts require nested router implementations;
+  procedure contracts require matching procedure implementations.
+- Renaming a route key is an RPC API break because it changes transport names
+  and client shape.
 
 ## Streaming Procedure (Server → Client)
 
@@ -142,8 +187,13 @@ export const streamProcedure = n.procedure({
 - Set `stream: true` to enable streaming
 - `stream: true` is the standard streaming form and does not add a custom per-procedure stream timeout
 - Use `stream: <ms>` (for example `stream: 5_000`) when you want the stream procedure to expose `n.inject.rpcStreamAbortSignal`
+- `stream: <ms>` is stored in the public contract as `stream: true`; the numeric
+  value is runtime timeout behavior on the procedure implementation.
 - Handler must be an `async *generator` that `yield`s values matching `output` type
-- Client consumes via `client.stream.procedureName(input)` which returns `AsyncIterable`
+- Non-stream procedures appear under `client.call`; stream procedures appear
+  under `client.stream`.
+- Nested stream clients follow router keys, for example
+  `client.stream.admin.audit.feed(input)` calls `admin/audit/feed`.
 
 ## Streaming with Abort Signal
 

@@ -48,6 +48,7 @@ describe('@nmtjs/neem consumer contracts', () => {
     expectTypeOf<Options>().toEqualTypeOf<{
       queue: string
       concurrency?: number
+      observeHooks?: boolean
     }>()
 
     const pluginConfig = definePluginConfig({

@@ -5,6 +5,10 @@ import { describe, expect, it } from 'vitest'
 
 import type { NeemBuildManifest } from '../../../packages/neem/src/internal/build/manifest.ts'
 import type { NeemConfig } from '../../../packages/neem/src/public/config.ts'
+import {
+  callNeemHostHook,
+  createNeemHostHooks,
+} from '../../../packages/neem/src/internal/runtime/hooks.ts'
 import { NeemPluginManager } from '../../../packages/neem/src/internal/runtime/plugin.ts'
 import { createRuntimeSnapshot } from '../../../packages/neem/src/internal/runtime/snapshot.ts'
 
@@ -22,6 +26,7 @@ describe('NeemPluginManager', () => {
         { name: 'jobs', options: { label: 'queue' } },
         { name: 'metrics', options: { label: 'metrics' } },
       ]),
+      hooks: createNeemHostHooks(),
     })
 
     await manager.start()
@@ -39,6 +44,7 @@ describe('NeemPluginManager', () => {
         label: 'queue',
         artifact: 'worker',
         workers: 'function',
+        hooks: 'function',
       },
       {
         type: 'setup',
@@ -48,6 +54,7 @@ describe('NeemPluginManager', () => {
         label: 'metrics',
         artifact: 'worker',
         workers: 'function',
+        hooks: 'function',
       },
     ])
 
@@ -68,6 +75,7 @@ describe('NeemPluginManager', () => {
         { name: 'jobs', options: { label: 'queue' } },
         { name: 'metrics', options: { label: 'metrics', failSetup: true } },
       ]),
+      hooks: createNeemHostHooks(),
     })
 
     await expect(manager.start()).rejects.toThrow('setup failed: metrics')
@@ -78,6 +86,36 @@ describe('NeemPluginManager', () => {
       expect.objectContaining({ type: 'setup', name: 'metrics' }),
       { type: 'stop', name: 'jobs', instanceId: 0 },
     ])
+  })
+
+  it('exposes observer hooks and removes plugin registrations on stop', async () => {
+    globalThis[eventsKey] = []
+    const hooks = createNeemHostHooks()
+    const snapshot = createSnapshot([
+      {
+        name: 'jobs',
+        options: { label: 'queue', observeHooks: true, failHook: true },
+      },
+    ])
+    const manager = new NeemPluginManager({ snapshot, hooks })
+
+    await manager.start()
+    await manager.stop()
+
+    expect(globalThis[eventsKey]).toEqual([
+      expect.objectContaining({ type: 'setup', name: 'jobs' }),
+      { type: 'hook-plugin-ready', name: 'jobs', instanceId: 0 },
+      { type: 'stop', name: 'jobs', instanceId: 0 },
+      { type: 'hook-plugin-stop', name: 'jobs', instanceId: 0 },
+    ])
+
+    await callNeemHostHook(hooks, snapshot.logger, 'plugin:ready', {
+      mode: 'development',
+      name: 'jobs',
+      instanceId: 0,
+    })
+
+    expect(globalThis[eventsKey]).toHaveLength(4)
   })
 })
 

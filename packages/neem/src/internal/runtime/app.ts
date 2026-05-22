@@ -7,6 +7,7 @@ import type {
   NeemMode,
   NeemWorkerState,
 } from '../../public/runtime.ts'
+import type { NeemHostHooks } from './hooks.ts'
 import type { NeemManagedWorkerController } from './managed-worker.ts'
 import type { NeemProxyUpstreamRegistry } from './proxy.ts'
 import type { NeemRuntimeSnapshot } from './snapshot.ts'
@@ -19,6 +20,7 @@ import type {
   NeemRuntimeWorkerErrorMessage,
   NeemRuntimeWorkerMessage,
 } from './worker-protocol.ts'
+import { callNeemHostHook } from './hooks.ts'
 import { createNeemChildLogger } from './logger.ts'
 import { NeemManagedWorker } from './managed-worker.ts'
 import { NeemWorkerPool } from './worker-pool.ts'
@@ -45,6 +47,7 @@ export type NeemStartedAppWorkerPool = {
 export type NeemAppManagerOptions = {
   snapshot: NeemRuntimeSnapshot
   proxyUpstreams: NeemProxyUpstreamRegistry
+  hooks: NeemHostHooks
   onWorkerFailure?: (
     error: Error,
     worker: NeemStartedAppWorker,
@@ -83,7 +86,11 @@ export class NeemAppManager {
         },
         'Starting Neem app workers',
       )
-      await Promise.all([...this.pools.values()].map((pool) => pool.start()))
+      await Promise.all(
+        [...this.pools.values()].map((pool) =>
+          this.startPool(pool, this.options.snapshot),
+        ),
+      )
     } catch (error) {
       await this.stop()
       throw error
@@ -106,7 +113,13 @@ export class NeemAppManager {
     this.setPool(nextPool)
 
     try {
-      await nextPool.start()
+      await this.startPool(nextPool, snapshot)
+      await callNeemHostHook(
+        this.options.hooks,
+        snapshot.logger,
+        'app:reload',
+        { mode: snapshot.mode, appName },
+      )
     } catch (error) {
       await this.removePool(appName)
       throw error
@@ -115,6 +128,7 @@ export class NeemAppManager {
 
   private setPool(pool: NeemAppWorkerPool): void {
     for (const worker of pool.list()) {
+      worker.hooks = this.options.hooks
       worker.onReady = () => {
         this.options.proxyUpstreams.addOwnerUpstreams(
           worker,
@@ -130,6 +144,30 @@ export class NeemAppManager {
     this.pools.set(pool.appName, pool)
   }
 
+  private async startPool(
+    pool: NeemAppWorkerPool,
+    snapshot: NeemRuntimeSnapshot,
+  ): Promise<void> {
+    await callNeemHostHook(this.options.hooks, snapshot.logger, 'app:start', {
+      mode: snapshot.mode,
+      appName: pool.appName,
+    })
+    try {
+      await pool.start()
+      await callNeemHostHook(this.options.hooks, snapshot.logger, 'app:ready', {
+        mode: snapshot.mode,
+        appName: pool.appName,
+      })
+    } catch (error) {
+      await callNeemHostHook(this.options.hooks, snapshot.logger, 'app:fail', {
+        mode: snapshot.mode,
+        appName: pool.appName,
+        error: error instanceof Error ? error : new Error(String(error)),
+      })
+      throw error
+    }
+  }
+
   private async removePool(appName: string): Promise<void> {
     const pool = this.pools.get(appName)
     if (!pool) return
@@ -139,6 +177,12 @@ export class NeemAppManager {
       this.options.proxyUpstreams.removeOwnerUpstreams(worker)
     }
     await pool.stop()
+    await callNeemHostHook(
+      this.options.hooks,
+      this.options.snapshot.logger,
+      'app:stop',
+      { mode: this.options.snapshot.mode, appName },
+    )
   }
 }
 
@@ -183,6 +227,7 @@ class NeemAppWorker implements NeemStartedAppWorker {
   readonly artifact: NeemResolvedArtifact
   onReady?: (worker: NeemAppWorker) => void
   onFailure?: (error: Error) => void
+  hooks?: NeemHostHooks
 
   private readonly worker: NeemManagedWorker
   private readonly port: MessagePort
@@ -237,6 +282,7 @@ class NeemAppWorker implements NeemStartedAppWorker {
         this.handleMessage(message as NeemRuntimeWorkerMessage, controller)
       },
       onFailure: (error) => {
+        void this.callWorkerHook('worker:fail', error)
         this.onFailure?.(error)
       },
     })
@@ -250,15 +296,26 @@ class NeemAppWorker implements NeemStartedAppWorker {
     return this.upstreams
   }
 
-  start(): Promise<void> {
-    return this.worker.start()
+  async start(): Promise<void> {
+    await this.callWorkerHook('worker:start')
+    try {
+      await this.worker.start()
+      await this.callWorkerHook('worker:ready')
+    } catch (error) {
+      await this.callWorkerHook(
+        'worker:fail',
+        error instanceof Error ? error : new Error(String(error)),
+      )
+      throw error
+    }
   }
 
-  stop(): Promise<void> {
-    return this.worker.stop().finally(() => {
+  async stop(): Promise<void> {
+    await this.worker.stop().finally(() => {
       this.port.close()
       this.upstreams = []
     })
+    await this.callWorkerHook('worker:stop')
   }
 
   private handleMessage(
@@ -296,6 +353,25 @@ class NeemAppWorker implements NeemStartedAppWorker {
       )
       controller.markStopped()
     }
+  }
+
+  private callWorkerHook(
+    name: 'worker:start' | 'worker:ready' | 'worker:stop',
+  ): Promise<void>
+  private callWorkerHook(name: 'worker:fail', error: Error): Promise<void>
+  private callWorkerHook(
+    name: 'worker:start' | 'worker:ready' | 'worker:stop' | 'worker:fail',
+    error?: Error,
+  ): Promise<void> {
+    if (!this.hooks) return Promise.resolve()
+    return callNeemHostHook(this.hooks, this.data.logger, name, {
+      mode: this.data.mode,
+      id: this.id,
+      name: `app:${this.data.appName}:${this.data.threadIndex}`,
+      artifactId: this.artifact.id,
+      owner: this.artifact.owner,
+      error,
+    })
   }
 }
 

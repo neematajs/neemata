@@ -200,6 +200,71 @@ describe('neem start', () => {
     }
   })
 
+  it('allows plugins to observe host lifecycle hooks', async () => {
+    const { outDir, eventsFile } = await buildFixture('runtime-hooks.config.ts')
+    process.env.NEEM_RUNTIME_EVENTS_FILE = eventsFile
+
+    const host = await startNeem({ outDir })
+
+    try {
+      expect(host.getWorkers()).toHaveLength(1)
+    } finally {
+      await host.stop()
+      await host.closed
+    }
+
+    const events = await readEvents(eventsFile)
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          event: 'host-server-start',
+          mode: 'production',
+        }),
+        expect.objectContaining({
+          event: 'host-app-start',
+          mode: 'production',
+          appName: 'api',
+        }),
+        expect.objectContaining({
+          event: 'host-worker-start',
+          mode: 'production',
+          worker: 'app:api:0',
+          owner: { type: 'app', name: 'api' },
+        }),
+        expect.objectContaining({
+          event: 'host-worker-ready',
+          mode: 'production',
+          worker: 'app:api:0',
+          owner: { type: 'app', name: 'api' },
+        }),
+        expect.objectContaining({
+          event: 'host-app-ready',
+          mode: 'production',
+          appName: 'api',
+        }),
+        expect.objectContaining({
+          event: 'host-server-ready',
+          mode: 'production',
+        }),
+        expect.objectContaining({
+          event: 'host-server-stop',
+          mode: 'production',
+        }),
+        expect.objectContaining({
+          event: 'host-worker-stop',
+          mode: 'production',
+          worker: 'app:api:0',
+          owner: { type: 'app', name: 'api' },
+        }),
+        expect.objectContaining({
+          event: 'host-app-stop',
+          mode: 'production',
+          appName: 'api',
+        }),
+      ]),
+    )
+  })
+
   it('starts built output through standalone start entry', async () => {
     const { outDir, eventsFile } = await buildFixture('runtime.config.ts')
     const child = spawn(process.execPath, [resolve(outDir, 'start.js')], {

@@ -184,8 +184,8 @@ Current spike status:
   manifest shape, and scoped-reloads the affected plugin runtime on successful
   rebuild.
 - Host/plugin boundary is **host kernel**: `@nmtjs/neem` owns lifecycle, worker
-  management, artifact registry, capability registry, proxy subsystem, and
-  plugin execution contracts. Feature packages own feature behavior.
+  management, artifact registry, proxy subsystem, health/readiness substrate,
+  and plugin execution contracts. Feature packages own feature behavior.
 - `@nmtjs/proxy` remains a package, but proxy orchestration is a Neem host
   subsystem, not a generic app/plugin feature. It is an optional peer
   dependency of `@nmtjs/neem` and is loaded only when proxy config exists.
@@ -196,15 +196,16 @@ Current spike status:
   worker artifacts/lifecycle and does not understand job task semantics.
 - Store stays private to `@nmtjs/jobs` until another feature needs shared store
   ownership.
-- Subscriptions move to `@nmtjs/subscriptions` as a plugin package, with
-  `@nmtjs/application` adapting that capability into Neemata app injections.
+- Subscriptions move to `@nmtjs/subscriptions` as a plugin package. How
+  Neemata apps consume subscription APIs is deferred to the application package;
+  no generic Neem capability registry is planned for this slice.
 - Metrics move to `@nmtjs/metrics` as a plugin package observing host/runtime
   events.
 - Neemata app plugins stay in `@nmtjs/application` as app-level runtime
   plugins. They are separate from Neem host plugins.
 - Runtime injections for Neemata apps are owned by `@nmtjs/application`; Neem
-  passes host context/capabilities and does not mutate `@nmtjs/core`
-  provisions directly.
+  passes host runtime context and does not mutate `@nmtjs/core` provisions
+  directly.
 - No legacy config compatibility loader is planned. Old config fields are
   mapped into the new model only where they still fit.
 - Current package export paths are `@nmtjs/neem`, `@nmtjs/neem/cli`, and
@@ -270,6 +271,14 @@ Current spike status:
 - Meta-framework app support is tracked as future build model work. Nuxt
   research shows adapter entry bundling can work, but framework build output
   should remain framework-owned instead of being replicated through Rolldown.
+- Deep app-server research confirmed the split between application framework
+  and runtime/platform layer. Neem should stay on the runtime/platform side:
+  lifecycle, workers, proxy, health/readiness, build artifacts, dev reload, and
+  limited host plugins. DI, routing semantics, validation, auth, ORM, and
+  framework-specific APIs belong to app packages/adapters.
+- No generic capability registry for plugin/app integration in the current
+  slice. It adds dependency ordering, versioning, reload, and injection
+  semantics too early. Plugins own their own resources and worker protocols.
 
 ## Feature Porting Ledger
 
@@ -292,14 +301,15 @@ Status values:
 | Build/start/dev substrate | `packages/nmtjs/src/entrypoints/*` + Vite app-server pipeline | `@nmtjs/neem` | Keep config artifact, app/plugin artifacts, standalone runtime artifacts, manifest, CLI, production start host, and Rolldown dev watchers in the generic host. | Build output and dev `.neem` use same manifest/artifact shape. Runtime difference is mode/watch/restart, not different transform semantics. Production build emits `start.js` + `runtime/worker-entry.js` for `node dist/start.js`. | `partial` |
 | Worker management | `ManagedWorker`, `WorkerPool`, `ErrorPolicy` | `@nmtjs/neem` host | Reintroduce managed workers/pools with state machine, startup timeout, stop timeout, restart/backoff policy, failure counters, degraded/prod behavior, and health reports. Managed worker and pool substrates are wired for app workers; backoff/degraded policy remains. | Generic managed-worker substrate belongs to host. Runtime-specific wrappers should layer protocol handling over it instead of duplicating worker control. | `partial` |
 | Server lifecycle | `ServerLifecycle`, `HMRCoordinator`, main entrypoint | `@nmtjs/neem` `NeemApplicationServer` | Keep lifecycle inside the centralized application server: runtime snapshot state, serialized operations, `start`, `reload`, `stop`, failed state, and later app/plugin partial updates. No separate lifecycle supervisor class. | No standalone lifecycle class and no inheritance. `NeemApplicationServer` owns serialized operations, revision, state, and errors directly. | `partial` |
+| Health/readiness | Ad hoc process/runtime state | `@nmtjs/neem` host | Add host-level health/readiness snapshot for production operation: lifecycle state, app pool state, plugin state, worker health, proxy state, and last errors. Later expose through CLI/internal API and optional probe endpoint. | Production app-server research puts readiness/liveness/startup probes in the runtime/platform layer. This should land before feature plugins such as jobs need operational reporting. | `missing` |
 | Proxy | `ApplicationServerProxy` | `@nmtjs/neem` host subsystem backed by `@nmtjs/proxy` | Keep upstream tracking in Neem host, then wire add/remove upstreams, `0.0.0.0` normalization, routing, SNI/TLS, health checks, and proxy lifecycle. Upstream registry, normalization, refcounted add/remove events, and optional `@nmtjs/proxy` lifecycle are wired. | Proxy orchestration is host responsibility because it routes app upstreams. `@nmtjs/proxy` remains implementation package and optional peer; Neem lazy-loads it only when proxy config exists. | `partial` |
-| Host plugins | Server subsystems and future host extensions | `@nmtjs/neem` plugin model | Make Neem plugins the process/host extension model: `setup`, `stop`, artifact declarations, plugin-owned workers, plugin options, and runtime context. Production and dev `setup`/`stop` are wired; plugin entry/artifact rebuilds scoped-reload only the affected plugin runtime. | Plugins expose configured plugin instances; plugin workers use same artifact/runtime-worker path as other Neem runtime units. Scoped plugin reload is stop-then-setup because plugins may own singleton process resources. | `partial` |
+| Host plugins | Server subsystems and future host extensions | `@nmtjs/neem` plugin model | Make Neem plugins a limited process/host extension model: `setup`, `stop`, artifact declarations, plugin-owned workers, typed options, logger, artifact registry, observer-only host lifecycle hooks, and private plugin-to-worker messaging. Production and dev `setup`/`stop` are wired; plugin entry/artifact rebuilds scoped-reload only the affected plugin runtime. | Plugins are not a DI container, app service registry, distributed broker, or app-worker communication layer in v1. They may extend the host by owning resources/workers and observing lifecycle. Plugin semantics stay inside plugin packages. | `partial` |
 | Neemata app plugins | `@nmtjs/application` `RuntimePlugin` | `@nmtjs/application` | Keep Neemata app plugins separate from Neem host plugins for app-level hooks and `@nmtjs/core` provisions. Do not fold them into generic Neem plugins. | App plugins are framework-level extension points. Host plugins are process-level extension points. Names may overlap, ownership must not. | `partial` |
-| Jobs | `ApplicationServerJobs`, `JobWorkerRuntime`, `JobManager` | `@nmtjs/jobs` Neem plugin | Port as explicit first-class plugin with BullMQ queue workers, private store dependency, Io/Compute pools, job runner workers, private job task protocol, cancellation, progress/checkpoints, return handling, retries/unrecoverable errors, and Neemata `jobManager` injection. | Jobs are not host core. Neem only supplies plugin lifecycle, workers, artifacts, capabilities; job semantics stay private to jobs plugin. | `missing` |
+| Jobs | `ApplicationServerJobs`, `JobWorkerRuntime`, `JobManager` | `@nmtjs/jobs` Neem plugin | Port as explicit first-class plugin with BullMQ queue workers, private store dependency, Io/Compute pools, job runner workers, private job task protocol, cancellation, progress/checkpoints, return handling, retries/unrecoverable errors, and Neemata integration owned outside Neem host. | Jobs are not host core. Neem supplies plugin lifecycle, workers, artifacts, logging, and health substrate; job semantics stay private to jobs plugin. | `missing` |
 | Store | Server config + runtime/store package | Private `@nmtjs/jobs` implementation detail for now | Keep Redis/Valkey store client/config inside jobs until a second non-jobs consumer forces a shared store package. Subscriptions should not depend on this private path. | No shared store package until real second consumer appears. Avoid premature host capability. | `missing` |
-| Subscriptions | `SubscriptionManager` in worker base runtime | `@nmtjs/subscriptions` plugin + `@nmtjs/application` integration | Port publish/subscribe adapters as explicit plugin package. Neemata app runtime owns conversion into `publish`/`subscribe` injections. Generic Neem host does not own subscription API. | Treat pub/sub as feature capability, not generic host state. Adapter injects into Neemata runtime later. | `missing` |
+| Subscriptions | `SubscriptionManager` in worker base runtime | `@nmtjs/subscriptions` plugin + `@nmtjs/application` integration | Port publish/subscribe adapters as explicit plugin package. Neemata app runtime owns its own future integration path. Generic Neem host does not own subscription API. | Treat pub/sub as feature behavior, not generic host state. No generic Neem capability registry in current slice. | `missing` |
 | Metrics | Metrics server in app server | `@nmtjs/metrics` Neem plugin | Port metrics server and pushgateway behavior as plugin observing Neem host lifecycle, workers, and app/plugin runtime events. | Metrics observes host/runtime events. Keep extensible plugin shape instead of hardcoding metrics server into Neem core. | `missing` |
-| Runtime injections | `BaseWorkerRuntime`, app plugins, job runtime | `@nmtjs/application` Neemata adapter | Neem passes runtime context/capabilities; Neemata app runtime owns `@nmtjs/core` container provisions for logger, worker type, publish/subscribe, store config, job manager, and app plugins. | Neem passes typed context; framework adapters decide how to map it into framework containers/provisions. | `missing` |
+| Runtime injections | `BaseWorkerRuntime`, app plugins, job runtime | `@nmtjs/application` Neemata adapter | Neem passes runtime context; Neemata app runtime owns `@nmtjs/core` container provisions for logger, worker type, publish/subscribe, store config, job manager, and app plugins. | Neem passes typed context only. Framework adapters decide how to map it into framework containers/provisions. No generic host capability registry for now. | `missing` |
 | Logging | `@nmtjs/core` logger used by app server, workers, runtimes | `@nmtjs/neem` host + adapters | Use config-provided logger across build/dev/start, host lifecycle, plugins, app workers, and generic workers. Keep major user-facing phases at `info`, grouped internals at `debug`, and worker/proxy/state churn at `trace`. | `defineConfig({ logger })` accepts direct or lazy logger. App worker labels stay `App/<name>:<index>`. CLI success output should not bypass logger. Neemata adapters receive logger via runtime context. | `partial` |
 | Environment/config legacy | `neemata.config.*`, server config, Vite defines | New `neem.config.ts` + app/plugin configs + `nmtjs` umbrella exports | No compatibility loader. Map old `serverPath`, `applications`, `externalDependencies`, `env`, `logger`, `store`, `proxy`, `jobs`, `subscription`, `metrics`, and `deploymentId` into new config/app/plugin model where they still fit. | Breaking refactor. Do not add compatibility loader unless later migration pressure proves it needed. | `partial` |
 | Scheduler | Jobs scheduler WIP/deprecated path | Future `@nmtjs/jobs` plugin extension | Keep tracked, but do not wire until jobs plugin exists. | Deferred because scheduler depends on final jobs plugin architecture. | `deferred` |
@@ -543,14 +553,15 @@ Plugin responsibilities may include:
 - declaring executable/importable artifacts
 - hooking host lifecycle
 - spawning managed workers from declared artifacts
-- exposing services to app runtimes through host/plugin context
+- owning resources required by the plugin
+- communicating with plugin-owned workers through raw `MessagePort`s
 
 Current `nmtjs` jobs/server responsibilities should move behind a plugin:
 
 - store connection config
 - BullMQ queue worker orchestration
 - job worker pools
-- job manager injection into app runtime
+- job/task API integration owned by `@nmtjs/jobs` and `@nmtjs/application`
 - job router support through packages outside the generic Neem host
 
 Jobs plugin registration should be explicit in `neem.config`:
@@ -573,28 +584,54 @@ Host should only know:
 - plugin config/options
 - plugin-declared artifacts
 - plugin lifecycle hooks
+- observer-only host lifecycle hooks
 - generic worker/module artifact execution
+- plugin-owned worker message ports
 
 Host should not know job queue/task semantics. `@nmtjs/jobs` owns the private
 task protocol between jobs plugin workers and job runner workers. Neem only
-provides artifact resolution, worker lifecycle, host events, and capability
-registration. `@nmtjs/application` owns conversion of the jobs capability into
-the Neemata `jobManager` injection.
+provides artifact resolution, worker lifecycle, host events/logging, and future
+health reporting. `@nmtjs/application` and feature packages own any app-facing
+integration.
 
-Host plugins are configured host modules, not lazy entry configs. User-facing
-shape should move from `definePluginConfig({ entry, options })` to configured
-plugin factories:
+Host plugins are not a general app service registry, DI module, distributed
+broker, or app-worker communication layer in v1. Plugin-to-app-worker channels
+and a typed capability registry are explicitly deferred.
+
+Plugins may observe host lifecycle through `ctx.hooks`. This uses
+`hookable@6.1.1` nested hooks, so `addHooks({ server: { start() {} } })`
+registers `server:start`. Neem exposes only registration methods (`hook`,
+`hookOnce`, `addHooks`) and never exposes `callHook`, `callHookWith`,
+`removeAllHooks`, or host mutation APIs to plugins. Hook callbacks are
+observer-only; errors are logged and ignored. Plugin hook registrations are
+owned by the plugin runtime and removed on stop/reload.
+
+Initial observer hook set:
+
+- `server:start`, `server:ready`, `server:reload`, `server:stop`,
+  `server:fail`
+- `app:start`, `app:ready`, `app:reload`, `app:stop`, `app:fail`
+- `plugin:setup`, `plugin:ready`, `plugin:stop`, `plugin:fail`
+- `worker:start`, `worker:ready`, `worker:stop`, `worker:fail`
+
+`plugin:*` hooks are host observer events for plugin runtimes. A plugin should
+not rely on seeing its own `plugin:setup` event because hooks are registered
+during setup. It may observe later lifecycle events after registration, and
+other plugins may observe each other according to config array order.
+
+The current user-facing shape remains entry-based:
 
 ```ts
-const jobs = definePlugin<JobsOptions>({ ... })
-
-export default defineConfig({
-  plugins: [jobs({ queue: 'main' })],
+definePluginConfig({
+  entry: () => import('./jobs.plugin.ts'),
+  options: {
+    // typed from the jobs plugin default export
+  },
 })
 ```
 
-Loading config may load lightweight host plugin modules. Heavy execution stays
-in plugin-declared worker/module artifacts.
+Future package-level convenience helpers can wrap this shape, but they must not
+force Neem core to own package-specific resolution or app-framework semantics.
 
 Minimum `NeemPlugin` surface for v1:
 
@@ -612,7 +649,8 @@ export type NeemPlugin<Options = unknown> = {
 Plugin lifecycle context includes mode, plugin name, instance id, typed options,
 artifact registry, and plugin worker controls. `artifacts(...)` is build-time
 declaration. `setup(...)`/`stop(...)` are runtime lifecycle hooks. Production
-`start` runs them; dev plugin lifecycle is still deferred.
+`start` and `dev` run them. Dev scoped-reloads an affected plugin by stopping
+the old plugin runtime and setting up the rebuilt one.
 
 ## Rolldown Direction
 

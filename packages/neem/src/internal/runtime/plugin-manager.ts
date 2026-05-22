@@ -9,7 +9,9 @@ import type {
 } from '../../public/plugin.ts'
 import type { NeemMode } from '../../public/runtime.ts'
 import type { NeemScopedArtifactRegistry } from './artifact-registry.ts'
+import type { NeemHostHooks } from './hooks.ts'
 import type { NeemRuntimeSnapshot } from './snapshot.ts'
+import { callNeemHostHook } from './hooks.ts'
 import { NeemRuntimeWorker } from './worker-runtime.ts'
 
 export type NeemPluginWorkerManagerOptions = {
@@ -19,6 +21,7 @@ export type NeemPluginWorkerManagerOptions = {
   artifacts: NeemScopedArtifactRegistry
   configFile: string
   runtimeWorkerEntry?: string | URL
+  hooks: NeemHostHooks
   logger: NeemRuntimeSnapshot['logger']
   startupTimeoutMs?: number
   stopTimeoutMs?: number
@@ -64,8 +67,10 @@ export class NeemPluginWorkerManager implements NeemPluginWorkers {
       logger: this.options.logger,
       startupTimeoutMs: this.options.startupTimeoutMs,
       stopTimeoutMs: this.options.stopTimeoutMs,
-      onFailure: (error, failedWorker) =>
-        this.options.onFailure?.(error, failedWorker, this),
+      onFailure: (error, failedWorker) => {
+        void this.callWorkerHook(failedWorker, 'worker:fail', error)
+        return this.options.onFailure?.(error, failedWorker, this)
+      },
     })
 
     this.workers.set(id, worker)
@@ -80,7 +85,9 @@ export class NeemPluginWorkerManager implements NeemPluginWorkers {
     )
 
     try {
+      await this.callWorkerHook(worker, 'worker:start')
       await worker.start()
+      await this.callWorkerHook(worker, 'worker:ready')
       this.options.logger.trace(
         {
           plugin: this.options.name,
@@ -92,6 +99,11 @@ export class NeemPluginWorkerManager implements NeemPluginWorkers {
       return worker
     } catch (error) {
       this.workers.delete(id)
+      await this.callWorkerHook(
+        worker,
+        'worker:fail',
+        error instanceof Error ? error : new Error(String(error)),
+      )
       await worker.stop().catch(() => undefined)
       throw error
     }
@@ -111,6 +123,7 @@ export class NeemPluginWorkerManager implements NeemPluginWorkers {
       'Stopping Neem plugin worker',
     )
     await worker.stop()
+    await this.callWorkerHook(worker, 'worker:stop')
     return true
   }
 
@@ -130,6 +143,33 @@ export class NeemPluginWorkerManager implements NeemPluginWorkers {
       'Stopping Neem plugin workers',
     )
     await Promise.all(workers.map((worker) => worker.stop()))
+    await Promise.all(
+      workers.map((worker) => this.callWorkerHook(worker, 'worker:stop')),
+    )
+  }
+
+  private callWorkerHook(
+    worker: NeemRuntimeWorker,
+    name: 'worker:start' | 'worker:ready' | 'worker:stop',
+  ): Promise<void>
+  private callWorkerHook(
+    worker: NeemRuntimeWorker,
+    name: 'worker:fail',
+    error: Error,
+  ): Promise<void>
+  private callWorkerHook(
+    worker: NeemRuntimeWorker,
+    name: 'worker:start' | 'worker:ready' | 'worker:stop' | 'worker:fail',
+    error?: Error,
+  ): Promise<void> {
+    return callNeemHostHook(this.options.hooks, this.options.logger, name, {
+      mode: this.options.mode,
+      id: worker.id,
+      name: worker.name,
+      artifactId: worker.artifactId,
+      owner: worker.artifact.owner,
+      error,
+    })
   }
 
   private resolveWorkerArtifact(

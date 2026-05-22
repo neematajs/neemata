@@ -47,11 +47,11 @@ n.contractProcedure(contractProcedure, {
 
 ### `n.router(options)`
 
-Group procedures into a named router.
+Group procedures and nested routers.
 
 ```ts
 n.router({
-  name?: string,
+  name?: string,             // initial contract name; route keys win when composed
   routes: Record<string, Procedure | Router>,
   guards?: Guard[],
   middlewares?: Middleware[],
@@ -60,18 +60,29 @@ n.router({
 })
 ```
 
+Route keys become RPC path segments. Nested procedures are exposed as slash
+paths, for example `users/profile`, and as nested client methods, for example
+`client.call.users.profile(...)`. Router `name` is not a root mount path;
+`n.rootRouter()` merges route keys and rebuilds child contract names from those
+keys.
+
 ### `n.contractRouter(contract, options)`
 
 Implement a contract-defined router.
 
 ```ts
 n.contractRouter(routerContract, {
-  routes: Record<string, Procedure>,
+  routes: Record<string, Procedure | Router>,
   guards?: Guard[],
   middlewares?: Middleware[],
   meta?: MetaBinding[],
+  timeout?: number,
 })
 ```
+
+The `routes` object must match the contract route keys exactly. Nested router
+contracts require nested router implementations; procedure contracts require
+matching procedure implementations.
 
 ### `n.rootRouter(routers, defaultProcedure?)`
 
@@ -80,9 +91,13 @@ Merge multiple routers into the root router for an application.
 ```ts
 n.rootRouter(
   [router1, router2, ...] as const,
-  defaultProcedure?,  // optional fallback for unknown routes
+  defaultProcedure?,  // optional root fallback for unknown procedure names
 )
 ```
+
+Root router has no path prefix. It merges top-level route keys from all provided
+routers; avoid duplicate top-level keys because later routers overwrite earlier
+routes during merge.
 
 ### `n.guard(options | canFn)`
 
@@ -334,22 +349,31 @@ n.jobRouterOperation({
 
 ```ts
 c.procedure({
-  input?: TType,
-  output?: TType,
-  stream?: boolean,
+  name?: string,             // standalone name; router path overrides when mounted
+  input?: TType,             // defaults to t.never()
+  output?: TType,            // defaults to t.never()
+  stream?: true,             // marks procedure as client.stream RPC
   timeout?: number,
 })
 ```
+
+Use `n.procedure({ stream: 5_000 })` for timed stream implementations. The
+public contract stores timed streams as `stream: true`; the numeric timeout is
+runtime procedure behavior.
 
 ### `c.router(options)`
 
 ```ts
 c.router({
-  name?: string,
+  name?: string,             // optional path prefix for child routes
   routes: Record<string, ProcedureContract | RouterContract>,
   timeout?: number,
 })
 ```
+
+Route keys become path segments. Child procedure and router `name` values are
+computed from parent path plus route key. Example: `name: 'admin'`, route
+`audit`, nested route `feed` becomes `admin/audit/feed`.
 
 ### `c.event(options?)`
 

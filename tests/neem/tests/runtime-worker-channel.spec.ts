@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest'
 
 import type { NeemResolvedArtifact } from '../../../packages/neem/src/public/artifact.ts'
 import { createNeemArtifactRegistry } from '../../../packages/neem/src/internal/runtime/artifact-registry.ts'
+import { createNeemHostHooks } from '../../../packages/neem/src/internal/runtime/hooks.ts'
 import { NeemPluginWorkerManager } from '../../../packages/neem/src/internal/runtime/plugin-manager.ts'
 
 describe('Neem plugin worker communication channel', () => {
@@ -20,6 +21,7 @@ describe('Neem plugin worker communication channel', () => {
       configFile: fileURLToPath(
         new URL('../fixtures/worker.config.js', import.meta.url),
       ),
+      hooks: createNeemHostHooks(),
       logger: createLogger({ pinoOptions: { enabled: false } }, 'test'),
       startupTimeoutMs: 5_000,
       stopTimeoutMs: 5_000,

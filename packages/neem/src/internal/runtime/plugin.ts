@@ -2,7 +2,13 @@ import type { NeemArtifactRegistry } from '../../public/artifact.ts'
 import type { NeemPlugin, NeemPluginContext } from '../../public/plugin.ts'
 import type { NeemMode } from '../../public/runtime.ts'
 import type { NeemBuildManifest } from '../build/manifest.ts'
+import type { NeemHostHooks } from './hooks.ts'
 import type { NeemRuntimeSnapshot } from './snapshot.ts'
+import {
+  callNeemHostHook,
+  clearNeemPluginHooks,
+  createNeemPluginHookRegistrar,
+} from './hooks.ts'
 import { createNeemChildLogger } from './logger.ts'
 import { NeemPluginWorkerManager } from './plugin-manager.ts'
 import { importDefault } from './utils.ts'
@@ -16,6 +22,7 @@ export type NeemStartedPlugin = {
 
 export type NeemPluginManagerOptions = {
   snapshot: NeemRuntimeSnapshot
+  hooks: NeemHostHooks
   startupTimeoutMs?: number
   stopTimeoutMs?: number
   onWorkerFailure?: (
@@ -127,6 +134,7 @@ export class NeemPluginManager {
       workerArtifacts: snapshot.artifacts,
       configFile: snapshot.configFile,
       runtimeWorkerEntry: snapshot.runtimeWorkerEntry,
+      hooks: this.options.hooks,
       logger: createNeemChildLogger(
         snapshot.logger,
         `Neem plugin ${pluginManifest.name}:${pluginManifest.index}`,
@@ -157,6 +165,7 @@ type NeemStartedPluginRuntimeOptions = {
   workerArtifacts: NeemRuntimeSnapshot['artifacts']
   configFile: string
   runtimeWorkerEntry?: string | URL
+  hooks: NeemHostHooks
   logger: NeemRuntimeSnapshot['logger']
   startupTimeoutMs?: number
   stopTimeoutMs?: number
@@ -172,6 +181,7 @@ class NeemStartedPluginRuntime implements NeemStartedPlugin {
   readonly workers: NeemPluginWorkerManager
 
   private setupComplete = false
+  private readonly hookUnregisters = new Set<() => void>()
 
   constructor(private readonly options: NeemStartedPluginRuntimeOptions) {
     this.name = options.name
@@ -183,6 +193,7 @@ class NeemStartedPluginRuntime implements NeemStartedPlugin {
       artifacts: options.workerArtifacts,
       configFile: options.configFile,
       runtimeWorkerEntry: options.runtimeWorkerEntry,
+      hooks: options.hooks,
       logger: options.logger,
       startupTimeoutMs: options.startupTimeoutMs,
       stopTimeoutMs: options.stopTimeoutMs,
@@ -196,31 +207,59 @@ class NeemStartedPluginRuntime implements NeemStartedPlugin {
       { plugin: this.name, instanceId: this.instanceId },
       'Setting up Neem plugin',
     )
-    await this.options.plugin.setup?.(this.createContext())
-    this.setupComplete = true
-    this.options.logger.debug(
-      { plugin: this.name, instanceId: this.instanceId },
-      'Neem plugin setup complete',
-    )
+    await this.callPluginHook('plugin:setup')
+    try {
+      await this.options.plugin.setup?.(this.createContext())
+      this.setupComplete = true
+      this.options.logger.debug(
+        { plugin: this.name, instanceId: this.instanceId },
+        'Neem plugin setup complete',
+      )
+      await this.callPluginHook('plugin:ready')
+    } catch (error) {
+      await this.callPluginHook(
+        'plugin:fail',
+        error instanceof Error ? error : new Error(String(error)),
+      )
+      throw error
+    }
   }
 
   async stop(): Promise<void> {
+    let stopError: Error | undefined
+    let thrownError: unknown
     try {
       if (this.setupComplete) {
         this.options.logger.debug(
           { plugin: this.name, instanceId: this.instanceId },
           'Stopping Neem plugin',
         )
-        await this.options.plugin.stop?.(this.createContext())
+        try {
+          await this.options.plugin.stop?.(this.createContext())
+        } catch (error) {
+          stopError = error instanceof Error ? error : new Error(String(error))
+          await this.callPluginHook('plugin:fail', stopError)
+          thrownError = error
+        }
       }
     } finally {
-      if (this.workers.list().length > 0) await this.workers.stopAll()
-      this.setupComplete = false
-      this.options.logger.debug(
-        { plugin: this.name, instanceId: this.instanceId },
-        'Neem plugin stopped',
-      )
+      try {
+        if (this.workers.list().length > 0) await this.workers.stopAll()
+      } catch (error) {
+        stopError ??= error instanceof Error ? error : new Error(String(error))
+        await this.callPluginHook('plugin:fail', stopError)
+        thrownError ??= error
+      } finally {
+        this.setupComplete = false
+        this.options.logger.debug(
+          { plugin: this.name, instanceId: this.instanceId },
+          'Neem plugin stopped',
+        )
+        if (!stopError) await this.callPluginHook('plugin:stop')
+        clearNeemPluginHooks(this.hookUnregisters)
+      }
     }
+    if (thrownError) throw thrownError
   }
 
   private createContext(): NeemPluginContext<any> {
@@ -232,6 +271,26 @@ class NeemStartedPluginRuntime implements NeemStartedPlugin {
       logger: this.options.logger,
       artifacts: this.options.artifacts,
       workers: this.workers,
+      hooks: createNeemPluginHookRegistrar(
+        this.options.hooks,
+        this.hookUnregisters,
+      ),
     }
+  }
+
+  private callPluginHook(
+    name: 'plugin:setup' | 'plugin:ready' | 'plugin:stop',
+  ): Promise<void>
+  private callPluginHook(name: 'plugin:fail', error: Error): Promise<void>
+  private callPluginHook(
+    name: 'plugin:setup' | 'plugin:ready' | 'plugin:stop' | 'plugin:fail',
+    error?: Error,
+  ): Promise<void> {
+    return callNeemHostHook(this.options.hooks, this.options.logger, name, {
+      mode: this.options.mode,
+      name: this.name,
+      instanceId: this.instanceId,
+      error,
+    })
   }
 }
