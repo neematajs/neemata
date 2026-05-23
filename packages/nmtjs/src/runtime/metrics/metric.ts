@@ -1,6 +1,6 @@
 import type { ClassConstructorArgs } from '@nmtjs/common'
-import type { Metric, MetricConfiguration } from 'prom-client'
-import { Counter, Gauge, Histogram, Summary } from 'prom-client'
+import type { Metric, MetricConfiguration } from '@nmtjs/prom-client'
+import { Counter, Gauge, Histogram, Summary } from '@nmtjs/prom-client'
 
 import { registry } from './registry.ts'
 

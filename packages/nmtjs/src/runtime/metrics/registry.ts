@@ -1,4 +1,8 @@
-import { collectDefaultMetrics, register, WorkerRegistry } from 'prom-client'
+import {
+  collectDefaultMetrics,
+  register,
+  WorkerRegistry,
+} from '@nmtjs/prom-client'
 
 export const workerRegistry = new WorkerRegistry()
 
