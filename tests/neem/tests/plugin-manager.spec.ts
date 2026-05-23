@@ -35,6 +35,22 @@ describe('NeemPluginManager', () => {
       'jobs',
       'metrics',
     ])
+    expect(manager.list().map((plugin) => plugin.getHealth())).toEqual([
+      expect.objectContaining({
+        name: 'jobs',
+        instanceId: 0,
+        state: 'ready',
+        setupComplete: true,
+        workers: { count: 0, workers: [] },
+      }),
+      expect.objectContaining({
+        name: 'metrics',
+        instanceId: 1,
+        state: 'ready',
+        setupComplete: true,
+        workers: { count: 0, workers: [] },
+      }),
+    ])
     expect(globalThis[eventsKey]).toEqual([
       {
         type: 'setup',

@@ -86,6 +86,32 @@ describe('neem start', () => {
         ready: 2,
         state: 'ready',
       })
+      expect(host.getHealth()).toMatchObject({
+        state: 'running',
+        ready: true,
+        apps: [
+          {
+            name: 'api',
+            pool: { state: 'ready', size: 2, ready: 2 },
+            workers: [
+              expect.objectContaining({
+                appName: 'api',
+                threadIndex: 0,
+                state: 'ready',
+              }),
+              expect.objectContaining({
+                appName: 'api',
+                threadIndex: 1,
+                state: 'ready',
+              }),
+            ],
+          },
+        ],
+        plugins: [
+          { name: 'jobs', instanceId: 0, state: 'ready', setupComplete: true },
+        ],
+        proxy: { enabled: false, running: false },
+      })
       expect(
         host
           .getWorkers()

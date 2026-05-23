@@ -8,7 +8,10 @@ import type {
   NeemWorkerState,
 } from '../../public/runtime.ts'
 import type { NeemHostHooks } from './hooks.ts'
-import type { NeemManagedWorkerController } from './managed-worker.ts'
+import type {
+  NeemManagedWorkerController,
+  NeemManagedWorkerHealth,
+} from './managed-worker.ts'
 import type { NeemProxyUpstreamRegistry } from './proxy.ts'
 import type { NeemRuntimeSnapshot } from './snapshot.ts'
 import type {
@@ -32,8 +35,16 @@ export type NeemStartedAppWorker = {
   threadIndex: number
   artifact: NeemResolvedArtifact
   getState: () => NeemWorkerState
+  getHealth: () => NeemStartedAppWorkerHealth
   getUpstreams: () => readonly NeemApplicationUpstream[]
   stop: () => Promise<void>
+}
+
+export type NeemStartedAppWorkerHealth = NeemManagedWorkerHealth & {
+  appName: string
+  threadIndex: number
+  artifact: NeemResolvedArtifact
+  upstreams: readonly NeemApplicationUpstream[]
 }
 
 export type NeemStartedAppWorkerPool = {
@@ -290,6 +301,16 @@ class NeemAppWorker implements NeemStartedAppWorker {
 
   getState(): NeemWorkerState {
     return this.worker.getState()
+  }
+
+  getHealth(): NeemStartedAppWorkerHealth {
+    return {
+      ...this.worker.getHealth(),
+      appName: this.appName,
+      threadIndex: this.threadIndex,
+      artifact: this.artifact,
+      upstreams: this.upstreams,
+    }
   }
 
   getUpstreams() {

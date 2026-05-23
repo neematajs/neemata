@@ -1,9 +1,18 @@
 import type { NeemMode } from '../../public/index.ts'
-import type { NeemStartedAppWorker, NeemStartedAppWorkerPool } from './app.ts'
+import type {
+  NeemStartedAppWorker,
+  NeemStartedAppWorkerHealth,
+  NeemStartedAppWorkerPool,
+} from './app.ts'
 import type { NeemHostHooks } from './hooks.ts'
 import type { NeemPluginManager, NeemStartedPlugin } from './plugin.ts'
-import type { NeemProxyManager, NeemProxyUpstreamSnapshot } from './proxy.ts'
+import type {
+  NeemProxyHealth,
+  NeemProxyManager,
+  NeemProxyUpstreamSnapshot,
+} from './proxy.ts'
 import type { NeemRuntimeSnapshot } from './snapshot.ts'
+import type { NeemWorkerPoolHealth } from './worker-pool.ts'
 import { NeemAppManager } from './app.ts'
 import { callNeemHostHook, createNeemHostHooks } from './hooks.ts'
 import { createNeemChildLogger } from './logger.ts'
@@ -34,6 +43,19 @@ export type NeemApplicationServerSnapshot = {
   state: NeemApplicationServerState
   revision: number
   lastError?: Error
+}
+
+export type NeemApplicationServerHealth = NeemApplicationServerSnapshot & {
+  ready: boolean
+  apps: readonly NeemApplicationServerAppHealth[]
+  plugins: ReturnType<NeemStartedPlugin['getHealth']>[]
+  proxy: NeemProxyHealth
+}
+
+export type NeemApplicationServerAppHealth = {
+  name: string
+  pool: NeemWorkerPoolHealth
+  workers: readonly NeemStartedAppWorkerHealth[]
 }
 
 export class NeemApplicationServer {
@@ -91,6 +113,31 @@ export class NeemApplicationServer {
 
   getState(): NeemApplicationServerState {
     return this.state
+  }
+
+  getHealth(): NeemApplicationServerHealth {
+    const apps = this.getAppWorkerPools().map((pool) => ({
+      name: pool.appName,
+      pool: pool.getHealth(),
+      workers: pool.list().map((worker) => worker.getHealth()),
+    }))
+    const proxy = this.proxyManager?.getHealth() ?? {
+      enabled: Boolean(this.snapshot.config.proxy),
+      running: false,
+      upstreams: this.proxyUpstreams.list(),
+    }
+
+    return {
+      ...this.getSnapshot(),
+      ready:
+        this.state === 'running' &&
+        apps.every((app) => app.pool.state === 'ready') &&
+        this.getPlugins().every((plugin) => plugin.getState() === 'ready') &&
+        (!proxy.enabled || proxy.running),
+      apps,
+      plugins: this.getPlugins().map((plugin) => plugin.getHealth()),
+      proxy,
+    }
   }
 
   getAppWorkers(): readonly NeemStartedAppWorker[] {

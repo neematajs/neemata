@@ -142,6 +142,12 @@ export type NeemProxyManagerOptions = {
   upstreams: NeemProxyUpstreamRegistry
 }
 
+export type NeemProxyHealth = {
+  enabled: boolean
+  running: boolean
+  upstreams: readonly NeemProxyUpstreamSnapshot[]
+}
+
 export type NeemNativeProxy = {
   start: () => Promise<undefined>
   stop: () => Promise<undefined>
@@ -228,6 +234,14 @@ export class NeemProxyManager {
     this.logger.info('Stopping Neem proxy')
     await proxy.stop()
     this.logger.info('Neem proxy stopped')
+  }
+
+  getHealth(): NeemProxyHealth {
+    return {
+      enabled: true,
+      running: Boolean(this.proxy),
+      upstreams: this.options.upstreams.list(),
+    }
   }
 
   private async addUpstream(

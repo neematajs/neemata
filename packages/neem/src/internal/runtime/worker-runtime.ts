@@ -11,7 +11,10 @@ import type {
   NeemMode,
   NeemWorkerState,
 } from '../../public/runtime.ts'
-import type { NeemManagedWorkerController } from './managed-worker.ts'
+import type {
+  NeemManagedWorkerController,
+  NeemManagedWorkerHealth,
+} from './managed-worker.ts'
 import type {
   NeemRuntimeWorkerData,
   NeemRuntimeWorkerErrorMessage,
@@ -89,6 +92,10 @@ export class NeemRuntimeWorker {
 
   getState(): NeemWorkerState {
     return this.worker.getState()
+  }
+
+  getHealth(): NeemManagedWorkerHealth {
+    return this.worker.getHealth()
   }
 
   getUpstreams(): readonly NeemApplicationUpstream[] {

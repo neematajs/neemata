@@ -10,6 +10,7 @@ import type {
 import type { NeemMode } from '../../public/runtime.ts'
 import type { NeemScopedArtifactRegistry } from './artifact-registry.ts'
 import type { NeemHostHooks } from './hooks.ts'
+import type { NeemManagedWorkerHealth } from './managed-worker.ts'
 import type { NeemRuntimeSnapshot } from './snapshot.ts'
 import { callNeemHostHook } from './hooks.ts'
 import { NeemRuntimeWorker } from './worker-runtime.ts'
@@ -30,6 +31,11 @@ export type NeemPluginWorkerManagerOptions = {
     worker: NeemRuntimeWorker,
     manager: NeemPluginWorkerManager,
   ) => void | Promise<void>
+}
+
+export type NeemPluginWorkerManagerHealth = {
+  count: number
+  workers: readonly NeemManagedWorkerHealth[]
 }
 
 export class NeemPluginWorkerManager implements NeemPluginWorkers {
@@ -129,6 +135,13 @@ export class NeemPluginWorkerManager implements NeemPluginWorkers {
 
   list(): readonly NeemPluginWorkerHandle[] {
     return [...this.workers.values()]
+  }
+
+  getHealth(): NeemPluginWorkerManagerHealth {
+    const workers = [...this.workers.values()].map((worker) =>
+      worker.getHealth(),
+    )
+    return { count: workers.length, workers }
   }
 
   async stopAll(): Promise<void> {

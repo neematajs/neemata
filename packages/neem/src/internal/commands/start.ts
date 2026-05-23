@@ -9,7 +9,10 @@ import type {
   NeemStartedAppWorker,
   NeemStartedAppWorkerPool,
 } from '../runtime/app.ts'
-import type { NeemApplicationServer } from '../runtime/application-server.ts'
+import type {
+  NeemApplicationServer,
+  NeemApplicationServerHealth,
+} from '../runtime/application-server.ts'
 import type { NeemStartedPlugin } from '../runtime/plugin.ts'
 import type { NeemProxyUpstreamSnapshot } from '../runtime/proxy.ts'
 import { NEEM_MANIFEST_FILE } from '../build/manifest.ts'
@@ -35,6 +38,7 @@ export type NeemStartedHost = {
   getPlugins: () => readonly NeemStartedPlugin[]
   getWorkers: () => readonly NeemStartedAppWorker[]
   getWorkerPools: () => readonly NeemStartedAppWorkerPool[]
+  getHealth: () => NeemApplicationServerHealth
   getUpstreams: () => readonly NeemApplicationUpstream[]
   getProxyUpstreams: () => readonly NeemProxyUpstreamSnapshot[]
   stop: () => Promise<void>
@@ -161,6 +165,9 @@ function createStartedHost(options: {
     },
     getWorkerPools() {
       return options.server.getAppWorkerPools()
+    },
+    getHealth() {
+      return options.server.getHealth()
     },
     getUpstreams() {
       return options.server

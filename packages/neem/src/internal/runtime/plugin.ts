@@ -3,6 +3,7 @@ import type { NeemPlugin, NeemPluginContext } from '../../public/plugin.ts'
 import type { NeemMode } from '../../public/runtime.ts'
 import type { NeemBuildManifest } from '../build/manifest.ts'
 import type { NeemHostHooks } from './hooks.ts'
+import type { NeemPluginWorkerManagerHealth } from './plugin-manager.ts'
 import type { NeemRuntimeSnapshot } from './snapshot.ts'
 import {
   callNeemHostHook,
@@ -17,7 +18,26 @@ export type NeemStartedPlugin = {
   name: string
   instanceId: number
   workers: NeemPluginWorkerManager
+  getState: () => NeemStartedPluginState
+  getHealth: () => NeemStartedPluginHealth
   stop: () => Promise<void>
+}
+
+export type NeemStartedPluginState =
+  | 'idle'
+  | 'setting-up'
+  | 'ready'
+  | 'stopping'
+  | 'stopped'
+  | 'failed'
+
+export type NeemStartedPluginHealth = {
+  name: string
+  instanceId: number
+  state: NeemStartedPluginState
+  setupComplete: boolean
+  workers: NeemPluginWorkerManagerHealth
+  lastError?: Error
 }
 
 export type NeemPluginManagerOptions = {
@@ -181,6 +201,8 @@ class NeemStartedPluginRuntime implements NeemStartedPlugin {
   readonly workers: NeemPluginWorkerManager
 
   private setupComplete = false
+  private state: NeemStartedPluginState = 'idle'
+  private lastError: Error | undefined
   private readonly hookUnregisters = new Set<() => void>()
 
   constructor(private readonly options: NeemStartedPluginRuntimeOptions) {
@@ -197,12 +219,32 @@ class NeemStartedPluginRuntime implements NeemStartedPlugin {
       logger: options.logger,
       startupTimeoutMs: options.startupTimeoutMs,
       stopTimeoutMs: options.stopTimeoutMs,
-      onFailure: (error) => options.onWorkerFailure?.(error, this),
+      onFailure: (error) => {
+        this.markFailed(error)
+        return options.onWorkerFailure?.(error, this)
+      },
     })
+  }
+
+  getState(): NeemStartedPluginState {
+    return this.state
+  }
+
+  getHealth(): NeemStartedPluginHealth {
+    return {
+      name: this.name,
+      instanceId: this.instanceId,
+      state: this.state,
+      setupComplete: this.setupComplete,
+      workers: this.workers.getHealth(),
+      lastError: this.lastError,
+    }
   }
 
   async setup(): Promise<void> {
     if (this.setupComplete) return
+    this.state = 'setting-up'
+    this.lastError = undefined
     this.options.logger.debug(
       { plugin: this.name, instanceId: this.instanceId },
       'Setting up Neem plugin',
@@ -215,12 +257,12 @@ class NeemStartedPluginRuntime implements NeemStartedPlugin {
         { plugin: this.name, instanceId: this.instanceId },
         'Neem plugin setup complete',
       )
+      this.state = 'ready'
       await this.callPluginHook('plugin:ready')
     } catch (error) {
-      await this.callPluginHook(
-        'plugin:fail',
-        error instanceof Error ? error : new Error(String(error)),
-      )
+      const normalized = normalizeUnknownError(error)
+      this.markFailed(normalized)
+      await this.callPluginHook('plugin:fail', normalized)
       throw error
     }
   }
@@ -228,6 +270,7 @@ class NeemStartedPluginRuntime implements NeemStartedPlugin {
   async stop(): Promise<void> {
     let stopError: Error | undefined
     let thrownError: unknown
+    this.state = 'stopping'
     try {
       if (this.setupComplete) {
         this.options.logger.debug(
@@ -237,7 +280,8 @@ class NeemStartedPluginRuntime implements NeemStartedPlugin {
         try {
           await this.options.plugin.stop?.(this.createContext())
         } catch (error) {
-          stopError = error instanceof Error ? error : new Error(String(error))
+          stopError = normalizeUnknownError(error)
+          this.markFailed(stopError)
           await this.callPluginHook('plugin:fail', stopError)
           thrownError = error
         }
@@ -246,7 +290,8 @@ class NeemStartedPluginRuntime implements NeemStartedPlugin {
       try {
         if (this.workers.list().length > 0) await this.workers.stopAll()
       } catch (error) {
-        stopError ??= error instanceof Error ? error : new Error(String(error))
+        stopError ??= normalizeUnknownError(error)
+        this.markFailed(stopError)
         await this.callPluginHook('plugin:fail', stopError)
         thrownError ??= error
       } finally {
@@ -255,7 +300,11 @@ class NeemStartedPluginRuntime implements NeemStartedPlugin {
           { plugin: this.name, instanceId: this.instanceId },
           'Neem plugin stopped',
         )
-        if (!stopError) await this.callPluginHook('plugin:stop')
+        if (!stopError) {
+          this.state = 'stopped'
+          this.lastError = undefined
+          await this.callPluginHook('plugin:stop')
+        }
         clearNeemPluginHooks(this.hookUnregisters)
       }
     }
@@ -293,4 +342,13 @@ class NeemStartedPluginRuntime implements NeemStartedPlugin {
       error,
     })
   }
+
+  private markFailed(error: Error): void {
+    this.state = 'failed'
+    this.lastError = error
+  }
+}
+
+function normalizeUnknownError(value: unknown): Error {
+  return value instanceof Error ? value : new Error(String(value))
 }
