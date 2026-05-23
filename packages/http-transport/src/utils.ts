@@ -25,4 +25,4 @@ export const InternalServerErrorHttpResponse = () =>
     headers: { 'Content-Type': 'text/plain' },
   })
 
-export const StatusResponse = () => new Response('OK', { status: 200 })
+export const OkResponse = () => new Response('OK', { status: 200 })

@@ -1,5 +1,6 @@
 import type { ChildProcess } from 'node:child_process'
 import { resolve } from 'node:path'
+import { setTimeout } from 'node:timers/promises'
 
 import { StaticClient } from '@nmtjs/client/static'
 import { c } from '@nmtjs/contract'
@@ -248,5 +249,61 @@ describe('Playground E2E - HTTP Streaming', { timeout: 30000 }, () => {
     }
 
     expect(result).toEqual([0, 1, 2, 3, 4])
+  })
+})
+
+describe('Playground E2E - HTTP request aborts', { timeout: 30000 }, () => {
+  let serverProcess: ChildProcess | null = null
+  let stderr = ''
+
+  beforeAll(async () => {
+    serverProcess = await startServer('preview', {
+      configPath: BASIC_CONFIG_PATH,
+    })
+    serverProcess.stderr?.on('data', (chunk) => {
+      stderr += chunk.toString()
+    })
+  }, 20000)
+
+  afterAll(async () => {
+    if (serverProcess) {
+      await stopServerProcess(serverProcess)
+    }
+  })
+
+  it('does not access the uWS response after the client aborts', async () => {
+    const controller = new AbortController()
+    const format = new JsonFormat()
+    const payload = format.encodeRPC(
+      {},
+      {
+        addStream: () => {
+          throw new Error('Unexpected stream payload')
+        },
+      },
+    )
+
+    const request = fetch(`${SERVER_URL}/slowAbort`, {
+      method: 'POST',
+      headers: {
+        Accept: format.contentType,
+        'Content-Type': format.contentType,
+      },
+      body: new Uint8Array(
+        payload.buffer,
+        payload.byteOffset,
+        payload.byteLength,
+      ),
+      signal: controller.signal,
+    }).catch((error) => error)
+
+    await setTimeout(50)
+    controller.abort()
+    await request
+    await setTimeout(600)
+
+    expect(serverProcess?.exitCode).toBeNull()
+    expect(stderr).not.toContain('uWS.HttpResponse must not be accessed')
+    expect(stderr).not.toContain('Worker thread runtime error')
   })
 })

@@ -15,10 +15,13 @@ import { createHTTPTransportWorker } from '../server.ts'
 import {
   InternalServerErrorHttpResponse,
   NotFoundHttpResponse,
-  StatusResponse,
+  OkResponse,
 } from '../utils.ts'
 
 import { App, SSLApp, us_socket_local_port } from 'uWebSockets.js'
+
+const statusResponse = OkResponse()
+const statusResponseBuffer = await statusResponse.arrayBuffer()
 
 function adapterFactory(params: HttpAdapterParams<'node'>): HttpAdapterServer {
   const server = params.tls
@@ -30,20 +33,25 @@ function adapterFactory(params: HttpAdapterParams<'node'>): HttpAdapterServer {
     : App()
 
   server
-    .get('/healthy', async (res) => {
-      res.onAborted(() => {})
-      const response = StatusResponse()
-      res.cork(async () => {
+    .get('/healthy', (res) => {
+      res.cork(() => {
         res
-          .writeStatus(`${response.status} ${response.statusText}`)
-          .end(await response.arrayBuffer())
+          .writeStatus(`${statusResponse.status} ${statusResponse.statusText}`)
+          .end(statusResponseBuffer)
       })
     })
     .any('/*', async (res, req) => {
-      const controller = new AbortController()
+      const requestController = new AbortController()
+      let aborted = false
+      let bodyController: ReadableStreamDefaultController<Buffer> | undefined
+
       res.onAborted(() => {
-        res.aborted = true
-        controller.abort()
+        aborted = true
+        requestController.abort()
+
+        try {
+          bodyController?.error(requestController.signal.reason)
+        } catch {}
       })
 
       let response = NotFoundHttpResponse()
@@ -58,9 +66,11 @@ function adapterFactory(params: HttpAdapterParams<'node'>): HttpAdapterServer {
       const url = new URL(req.getUrl(), `${proto}://${host}`)
       url.search = req.getQuery() ? `?${req.getQuery()}` : ''
       try {
-        const body = new ReadableStream({
+        const body = new ReadableStream<Buffer>({
           start(controller) {
+            bodyController = controller
             res.onData((chunk, isLast) => {
+              if (aborted) return
               if (chunk) {
                 const copy = Buffer.allocUnsafe(chunk.byteLength)
                 copy.set(new Uint8Array(chunk))
@@ -68,13 +78,12 @@ function adapterFactory(params: HttpAdapterParams<'node'>): HttpAdapterServer {
               }
               if (isLast) controller.close()
             })
-            res.onAborted(() => controller.error())
           },
         })
         response = await params.fetchHandler(
           { url, method, headers },
           body,
-          controller.signal,
+          requestController.signal,
         )
       } catch (err) {
         // TODO: proper logging
@@ -82,10 +91,10 @@ function adapterFactory(params: HttpAdapterParams<'node'>): HttpAdapterServer {
         // params.logger.error({ err }, 'Error in fetch handler')
         response = InternalServerErrorHttpResponse()
       }
-      if (res.aborted) return undefined
+      if (aborted) return undefined
       else {
         res.cork(() => {
-          if (res.aborted) return undefined
+          if (aborted) return undefined
           res.writeStatus(
             `${response.status.toString()} ${response.statusText}`,
           )
@@ -95,17 +104,18 @@ function adapterFactory(params: HttpAdapterParams<'node'>): HttpAdapterServer {
           try {
             const reader = response.body.getReader()
             let chunk = await reader.read()
-            do {
-              if (res.aborted) break
+            while (!chunk.done) {
+              if (aborted) break
               if (chunk.value) res.cork(() => res.write(chunk.value!))
               chunk = await reader.read()
-            } while (!chunk.done)
-            if (!res.aborted) res.cork(() => res.end())
+            }
+            if (aborted) await reader.cancel().catch(() => {})
+            else res.cork(() => res.end())
           } catch {
-            if (!res.aborted) res.cork(() => res.close())
+            if (!aborted) res.cork(() => res.close())
           }
         } else {
-          if (!res.aborted) res.cork(() => res.end())
+          if (!aborted) res.cork(() => res.end())
         }
       }
     })
