@@ -4,6 +4,7 @@ permissions:
   contents: write
   actions: write
   attestations: write
+  id-token: write
 
 on:
   workflow_dispatch:
@@ -44,7 +45,6 @@ jobs:
     if: ${{ always() && (!inputs.run_tests || needs.test.result == 'success') }}
     runs-on: ubuntu-latest
     env:
-      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
       VERSION_TAG: v${{ inputs.version }}
     steps:
       - name: Checkout
@@ -62,11 +62,6 @@ jobs:
 
       - name: Install dependencies and build
         run: pnpm install && pnpm build
-
-      - name: Log in to npm
-        run: pnpm config set "//registry.npmjs.org/:_authToken=${NPM_TOKEN}"
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Set version
         run: |
