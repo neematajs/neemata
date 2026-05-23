@@ -13,7 +13,7 @@ import { createHTTPTransportWorker } from '../server.ts'
 import {
   InternalServerErrorHttpResponse,
   NotFoundHttpResponse,
-  StatusResponse,
+  OkResponse,
 } from '../utils.ts'
 
 interface DenoNetAddr {
@@ -64,7 +64,7 @@ function adapterFactory(params: HttpAdapterParams<'deno'>): HttpAdapterServer {
         handler: async (request: Request, info: any) => {
           const url = new URL(request.url)
           if (url.pathname === '/healthy') {
-            return StatusResponse()
+            return OkResponse()
           }
           try {
             if (request.headers.get('upgrade') === 'websocket') {

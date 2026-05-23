@@ -12,7 +12,7 @@ import { createHTTPTransportWorker } from '../server.ts'
 import {
   InternalServerErrorHttpResponse,
   NotFoundHttpResponse,
-  StatusResponse,
+  OkResponse,
 } from '../utils.ts'
 
 function adapterFactory(params: HttpAdapterParams<'bun'>): HttpAdapterServer {
@@ -33,10 +33,7 @@ function adapterFactory(params: HttpAdapterParams<'bun'>): HttpAdapterServer {
           }
         : undefined,
       // @ts-expect-error
-      routes: {
-        ...params.runtime?.routes,
-        '/healthy': { GET: StatusResponse },
-      },
+      routes: { ...params.runtime?.routes, '/healthy': { GET: OkResponse } },
       async fetch(request, server) {
         const url = new URL(request.url)
         try {
