@@ -69,14 +69,14 @@ function adapterFactory(params: HttpAdapterParams<'node'>): HttpAdapterServer {
         const body = new ReadableStream<Buffer>({
           start(controller) {
             bodyController = controller
-            res.onData((chunk, isLast) => {
+            res.onDataV2((chunk, maxRemainingBodyLength) => {
               if (aborted) return
               if (chunk) {
                 const copy = Buffer.allocUnsafe(chunk.byteLength)
                 copy.set(new Uint8Array(chunk))
                 controller.enqueue(copy)
               }
-              if (isLast) controller.close()
+              if (maxRemainingBodyLength === 0n) controller.close()
             })
           },
         })
