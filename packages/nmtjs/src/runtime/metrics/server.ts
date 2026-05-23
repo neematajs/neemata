@@ -1,7 +1,7 @@
 import { createServer } from 'node:http'
 
 import type { Logger } from '@nmtjs/core'
-import { Pushgateway } from 'prom-client'
+import { Pushgateway } from '@nmtjs/prom-client'
 
 import type { ServerConfig } from '../server/config.ts'
 

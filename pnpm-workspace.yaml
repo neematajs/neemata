@@ -12,3 +12,6 @@ catalog:
   vite: 8.0.14
   zod: ^4.0.0
 
+minimumReleaseAgeExclude:
+  - "@nmtjs/prom-client"
+  - "@nmtjs/proxy"

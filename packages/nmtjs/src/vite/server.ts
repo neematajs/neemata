@@ -7,7 +7,7 @@ import type { ViteConfigOptions } from './config.ts'
 // When externalized, Vite's ModuleRunner uses native Node import() which has
 // a separate module cache from Vite's cache, causing the same module to be
 // loaded twice with different object references.
-const noExternalPackages = ['nmtjs', /^@nmtjs\//]
+const noExternalPackages = ['nmtjs', /^@nmtjs\/(?!prom-client$)/]
 
 export function createServer(
   options: ViteConfigOptions,

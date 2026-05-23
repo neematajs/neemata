@@ -83,7 +83,7 @@
     "ioredis": "^5.10.1",
     "iovalkey": "^0.3.3",
     "oxc-resolver": "11.19.1",
-    "prom-client": "git@github.com:siimon/prom-client.git#d4d2dcb366384833951e0116caca707b5f62aa5e",
+    "@nmtjs/prom-client": "1.0.1",
     "vite": "catalog:"
   },
   "devDependencies": {
