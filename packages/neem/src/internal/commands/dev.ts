@@ -25,6 +25,7 @@ import type {
 import type { NeemArtifactWatcher } from '../build/rolldown.ts'
 import type {
   NeemApplicationServer,
+  NeemApplicationServerHealth,
   NeemApplicationServerSnapshot,
 } from '../runtime/application-server.ts'
 import { discoverConfigEntriesSync } from '../build/discovery.ts'
@@ -59,6 +60,7 @@ export type NeemDevHost = {
   ready: Promise<void>
   closed: Promise<void>
   getLifecycle: () => NeemDevLifecycleSnapshot
+  getHealth: () => NeemDevHealthSnapshot
   getRuntime: () => NeemApplicationServer | undefined
   stop: () => Promise<void>
 }
@@ -92,6 +94,9 @@ type NeemDevLifecycleSnapshot =
         | 'stopped'
       lastError?: Error
     }
+type NeemDevHealthSnapshot =
+  | NeemApplicationServerHealth
+  | (NeemDevLifecycleSnapshot & { ready: false })
 
 const NEEM_DEV_RELOAD_DEBOUNCE_MS = 250
 
@@ -197,6 +202,10 @@ class NeemDevSession implements NeemDevHost {
 
   getLifecycle() {
     return this.runtime?.getSnapshot() ?? this.lifecycle
+  }
+
+  getHealth(): NeemDevHealthSnapshot {
+    return this.runtime?.getHealth() ?? { ...this.lifecycle, ready: false }
   }
 
   getRuntime() {

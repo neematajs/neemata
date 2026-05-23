@@ -9,7 +9,7 @@ function events() {
 
 export default definePlugin({
   name: 'plugin-manager-fixture',
-  setup(ctx) {
+  async setup(ctx) {
     events().push({
       type: 'setup',
       name: ctx.name,
@@ -48,8 +48,24 @@ export default definePlugin({
     if (ctx.options?.failSetup) {
       throw new Error(`setup failed: ${ctx.name}`)
     }
+
+    if (ctx.options?.spawnWorker) {
+      await ctx.workers.spawn({
+        name: `${ctx.name}-worker`,
+        artifact: 'worker',
+        workerData: ctx.options.workerData ?? {},
+      })
+      events().push({
+        type: 'worker-spawned',
+        name: ctx.name,
+        instanceId: ctx.instanceId,
+      })
+    }
   },
   stop(ctx) {
     events().push({ type: 'stop', name: ctx.name, instanceId: ctx.instanceId })
+    if (ctx.options?.failStop) {
+      throw new Error(`stop failed: ${ctx.name}`)
+    }
   },
 })

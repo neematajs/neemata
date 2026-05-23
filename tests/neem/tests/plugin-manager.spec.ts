@@ -86,22 +86,121 @@ describe('NeemPluginManager', () => {
 
   it('stops already-started plugins when setup fails', async () => {
     globalThis[eventsKey] = []
+    const hookEvents: unknown[] = []
+    const hooks = createNeemHostHooks()
+    hooks.hook('plugin:fail', (event) => {
+      hookEvents.push({
+        type: 'plugin-fail',
+        name: event.name,
+        instanceId: event.instanceId,
+        error: event.error?.message,
+      })
+    })
     const manager = new NeemPluginManager({
       snapshot: createSnapshot([
         { name: 'jobs', options: { label: 'queue' } },
         { name: 'metrics', options: { label: 'metrics', failSetup: true } },
       ]),
-      hooks: createNeemHostHooks(),
+      hooks,
     })
 
     await expect(manager.start()).rejects.toThrow('setup failed: metrics')
 
     expect(manager.list()).toEqual([])
+    expect(hookEvents).toEqual([
+      {
+        type: 'plugin-fail',
+        name: 'metrics',
+        instanceId: 1,
+        error: 'setup failed: metrics',
+      },
+    ])
     expect(globalThis[eventsKey]).toEqual([
       expect.objectContaining({ type: 'setup', name: 'jobs' }),
       expect.objectContaining({ type: 'setup', name: 'metrics' }),
       { type: 'stop', name: 'jobs', instanceId: 0 },
     ])
+  })
+
+  it('marks plugin health failed when stop fails', async () => {
+    globalThis[eventsKey] = []
+    const manager = new NeemPluginManager({
+      snapshot: createSnapshot([
+        { name: 'jobs', options: { label: 'queue', failStop: true } },
+      ]),
+      hooks: createNeemHostHooks(),
+    })
+
+    await manager.start()
+    const plugin = manager.list()[0]!
+
+    await expect(manager.stop()).rejects.toThrow('stop failed: jobs')
+
+    expect(plugin.getHealth()).toMatchObject({
+      name: 'jobs',
+      instanceId: 0,
+      state: 'failed',
+      setupComplete: false,
+      lastError: expect.objectContaining({ message: 'stop failed: jobs' }),
+    })
+    expect(manager.list()).toEqual([])
+  })
+
+  it('marks plugin health failed when a plugin worker fails', async () => {
+    globalThis[eventsKey] = []
+    const workerFile = fileURLToPath(
+      new URL(
+        '../fixtures/runtime-fail-after-ready-worker.js',
+        import.meta.url,
+      ),
+    )
+    const failures: unknown[] = []
+    const manager = new NeemPluginManager({
+      snapshot: createSnapshot(
+        [{ name: 'jobs', options: { label: 'queue', spawnWorker: true } }],
+        { workerFile },
+      ),
+      hooks: createNeemHostHooks(),
+      onWorkerFailure(error, plugin) {
+        failures.push({
+          error: error.message,
+          plugin: plugin.name,
+          state: plugin.getState(),
+        })
+      },
+    })
+
+    await manager.start()
+    const plugin = manager.list()[0]!
+
+    await waitFor(async () =>
+      plugin.getHealth().state === 'failed' ? plugin.getHealth() : false,
+    )
+
+    expect(plugin.getHealth()).toMatchObject({
+      name: 'jobs',
+      instanceId: 0,
+      state: 'failed',
+      setupComplete: true,
+      workers: {
+        count: 1,
+        workers: [
+          expect.objectContaining({ state: 'failed', failureCount: 1 }),
+        ],
+      },
+      lastError: expect.objectContaining({
+        message: 'fixture plugin worker failure',
+      }),
+    })
+    expect(failures).toEqual([
+      {
+        error: 'fixture plugin worker failure',
+        plugin: 'jobs',
+        state: 'failed',
+      },
+    ])
+
+    await manager.stop().catch(() => undefined)
   })
 
   it('exposes observer hooks and removes plugin registrations on stop', async () => {
@@ -137,14 +236,19 @@ describe('NeemPluginManager', () => {
 
 function createSnapshot(
   plugins: Array<{ name: string; options: Record<string, unknown> }>,
+  options: { workerFile?: string } = {},
 ) {
   const pluginFile = fileURLToPath(
     new URL('../fixtures/plugin-manager.plugin.js', import.meta.url),
+  )
+  const configFile = fileURLToPath(
+    new URL('../fixtures/worker.config.js', import.meta.url),
   )
 
   return createRuntimeSnapshot({
     mode: 'development',
     outDir: dirname(pluginFile),
+    configFile,
     config: {
       apps: {},
       plugins: plugins.map((plugin) => ({
@@ -152,13 +256,14 @@ function createSnapshot(
         options: plugin.options,
       })),
     } as NeemConfig,
-    manifest: createManifest(plugins, pluginFile),
+    manifest: createManifest(plugins, pluginFile, options.workerFile),
   })
 }
 
 function createManifest(
   plugins: Array<{ name: string }>,
   pluginFile: string,
+  workerFile = pluginFile,
 ): NeemBuildManifest {
   return {
     schemaVersion: 1,
@@ -179,10 +284,28 @@ function createManifest(
           id: 'worker',
           kind: 'worker',
           owner: { type: 'plugin', name: plugin.name, instanceId: index },
-          file: pluginFile,
-          outDir: dirname(pluginFile),
+          file: workerFile,
+          outDir: dirname(workerFile),
         },
       ],
     })),
   }
+}
+
+async function waitFor<T>(
+  fn: () => Promise<T | false> | T | false,
+  timeoutMs = 5_000,
+): Promise<T> {
+  const started = Date.now()
+  while (Date.now() - started < timeoutMs) {
+    const result = await fn()
+    if (result) return result
+    await wait(25)
+  }
+
+  throw new Error(`Timed out after ${timeoutMs}ms`)
+}
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }

@@ -167,6 +167,25 @@ describe('NeemApplicationServer', () => {
     })
   })
 
+  it('marks failed health when plugin setup fails during real startup', async () => {
+    const server = new NeemApplicationServer({
+      snapshot: createSnapshot('api', {
+        apps: false,
+        pluginOptions: { label: 'app-server', failSetup: true },
+      }),
+    })
+
+    await expect(server.start()).rejects.toThrow('setup failed: jobs')
+
+    expect(server.getHealth()).toMatchObject({
+      state: 'failed',
+      ready: false,
+      lastError: expect.objectContaining({ message: 'setup failed: jobs' }),
+      apps: [],
+      plugins: [],
+    })
+  })
+
   it('serializes operations', async () => {
     const events: string[] = []
     const server = new TestApplicationServer({
@@ -235,7 +254,10 @@ class TestApplicationServer extends NeemApplicationServer {
   }
 }
 
-function createSnapshot(appName: string): NeemRuntimeSnapshot {
+function createSnapshot(
+  appName: string,
+  options: { apps?: boolean; pluginOptions?: Record<string, unknown> } = {},
+): NeemRuntimeSnapshot {
   const pluginFile = fileURLToPath(
     new URL('../fixtures/plugin-manager.plugin.js', import.meta.url),
   )
@@ -248,33 +270,36 @@ function createSnapshot(appName: string): NeemRuntimeSnapshot {
       plugins: [
         {
           entry: async () => ({ default: {} as never }),
-          options: { label: 'app-server' },
+          options: options.pluginOptions ?? { label: 'app-server' },
         },
       ],
     } as NeemConfig,
-    manifest: createManifest(appName, pluginFile),
+    manifest: createManifest(appName, pluginFile, options.apps !== false),
   })
 }
 
 function createManifest(
   appName: string,
   pluginFile: string,
+  includeApps = true,
 ): NeemBuildManifest {
   return {
     schemaVersion: 1,
     config: { file: 'config/entry/neem.config.js' },
-    apps: {
-      [appName]: {
-        name: appName,
-        entry: {
-          id: 'entry',
-          kind: 'module',
-          owner: { type: 'app', name: appName },
-          file: `apps/${appName}/entry/${appName}.js`,
-          outDir: `apps/${appName}/entry`,
-        },
-      },
-    },
+    apps: includeApps
+      ? {
+          [appName]: {
+            name: appName,
+            entry: {
+              id: 'entry',
+              kind: 'module',
+              owner: { type: 'app', name: appName },
+              file: `apps/${appName}/entry/${appName}.js`,
+              outDir: `apps/${appName}/entry`,
+            },
+          },
+        }
+      : {},
     plugins: [
       {
         index: 0,

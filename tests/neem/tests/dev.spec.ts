@@ -48,6 +48,15 @@ describe('neem dev', () => {
     try {
       await host.ready
       expect(host.getLifecycle().state).toBe('running')
+      expect(host.getHealth()).toMatchObject({
+        state: 'running',
+        ready: true,
+        apps: [{ name: 'api', pool: { state: 'ready', size: 2, ready: 2 } }],
+        plugins: [
+          { name: 'jobs', instanceId: 0, state: 'ready', setupComplete: true },
+        ],
+        proxy: { enabled: false, running: false },
+      })
 
       const manifest = await readManifest(fixture.outDir)
       expect(manifest.plugins).toHaveLength(1)
@@ -159,6 +168,7 @@ describe('neem dev', () => {
 
       events = await readEvents(fixture.eventsFile)
       expect(events.filter((event) => event.event === 'stop')).toHaveLength(0)
+      expect(host.getHealth()).toMatchObject({ state: 'running', ready: true })
 
       await writeFile(
         fixture.appFile,
@@ -176,6 +186,12 @@ describe('neem dev', () => {
         events.filter((event) => event.event === 'stop').length,
       ).toBeGreaterThan(0)
       expect(countEvents(events, 'plugin-setup')).toBe(initialPluginSetupCount)
+      expect(host.getHealth()).toMatchObject({
+        state: 'running',
+        ready: true,
+        apps: [{ name: 'api', pool: { state: 'ready', size: 2, ready: 2 } }],
+        plugins: [{ name: 'jobs', state: 'ready', setupComplete: true }],
+      })
     } finally {
       await host.stop()
       await host.closed
