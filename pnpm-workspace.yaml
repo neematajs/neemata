@@ -2,13 +2,13 @@ packages:
   - packages/*
   - tests/*
 
+allowBuilds:
+  esbuild: true
+  msgpackr-extract: false
+  prom-client: true
+
 catalog:
   "@nmtjs/proxy": 1.0.0-beta.6
-  vite: 8.0.8
+  vite: 8.0.14
   zod: ^4.0.0
-
-onlyBuiltDependencies:
-  - esbuild
-  - msgpackr-extract
-  - prom-client
 
