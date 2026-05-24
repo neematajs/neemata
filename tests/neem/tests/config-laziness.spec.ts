@@ -9,8 +9,8 @@ describe('neem.config consumer shape', () => {
       (module) => module.default,
     )
 
-    expect(typeof config.runtimes.api.entry).toBe('function')
-    expect(typeof config.runtimes.api.build).toBe('function')
+    expect(config.runtimes.api.entry).toBe('./lazy.app.ts')
+    expect(config.runtimes.api.build).toBe('./lazy.build.ts')
     expect((globalThis as any).__neemLazyAppLoaded).toBeUndefined()
     expect((globalThis as any).__neemLazyBuildLoaded).toBeUndefined()
   })

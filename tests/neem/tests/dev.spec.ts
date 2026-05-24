@@ -58,20 +58,12 @@ describe('neem dev', () => {
       })
 
       const manifest = await readManifest(fixture.outDir)
-      expect(manifest.config.file).toMatch(
-        /^config\/entry\/runtime\.config-[^.]+\.js$/,
-      )
-      await expectFile(resolve(fixture.outDir, manifest.config.file))
+      expect(manifest.config.runtimes.api).toMatchObject({
+        threads: expect.any(Array),
+      })
       await expectFile(
         resolve(fixture.outDir, manifest.runtimes!.api!.entry.file),
       )
-
-      const configCode = await readFile(
-        resolve(fixture.outDir, manifest.config.file),
-        'utf8',
-      )
-      expect(configCode).toContain('import("./runtime-app.ts")')
-      expect(configCode).not.toContain('import("./logger.ts")')
 
       const createEvents = await waitForEvents(
         fixture.eventsFile,
@@ -144,7 +136,12 @@ describe('neem dev', () => {
 
       await waitFor(async () => {
         const manifest = await readManifest(fixture.outDir)
-        if (manifest.config.file === initialManifest.config.file) return false
+        if (
+          JSON.stringify(manifest.config.runtimes) ===
+          JSON.stringify(initialManifest.config.runtimes)
+        ) {
+          return false
+        }
         const events = await readEvents(fixture.eventsFile)
         return (
           host.getLifecycle().state === 'running' &&

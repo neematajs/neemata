@@ -7,8 +7,10 @@ import type {
 
 type EntryModule<T> = { default: T }
 
-export async function importDefault<T>(file: string): Promise<T> {
-  const module: EntryModule<T> = await import(pathToFileURL(file).href)
+export async function importDefault<T>(file: string | URL): Promise<T> {
+  const module: EntryModule<T> = await import(
+    file instanceof URL ? file.href : pathToFileURL(file).href
+  )
   return module.default
 }
 

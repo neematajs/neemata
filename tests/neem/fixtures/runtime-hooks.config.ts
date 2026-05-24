@@ -1,10 +1,10 @@
 import { defineConfig, defineRuntimeConfig } from '@nmtjs/neem'
 
 export default defineConfig({
-  logger: () => import('./logger.ts'),
+  logger: './logger.ts',
   runtimes: {
     api: defineRuntimeConfig({
-      entry: () => import('./runtime-app.ts'),
+      entry: './runtime-app.ts',
       threads: [
         {
           label: 'one',

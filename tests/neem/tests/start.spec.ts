@@ -66,15 +66,6 @@ describe('neem start', () => {
     const { outDir, eventsFile } = await buildFixture('runtime.config.ts')
     process.env.NEEM_RUNTIME_EVENTS_FILE = eventsFile
 
-    const manifest = JSON.parse(
-      await readFile(resolve(outDir, NEEM_MANIFEST_FILE), 'utf8'),
-    ) as { config: { file: string } }
-    const configCode = await readFile(
-      resolve(outDir, manifest.config.file),
-      'utf8',
-    )
-    expect(configCode).toContain('./runtime-app.ts')
-
     const host = await startNeem({ outDir })
 
     try {

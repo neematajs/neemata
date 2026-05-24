@@ -1,5 +1,5 @@
 import type {
-  NeemEntryLoader,
+  NeemEntryInput,
   NeemRuntime,
   NeemRuntimeConfig,
   NeemWorker,
@@ -56,11 +56,11 @@ export class NeemataApplicationRuntime<
 export function defineNeemataRuntime<
   const TApplication extends AnyApplicationConfig,
 >(config: {
-  entry: NeemEntryLoader<NeemataWorker<TApplication>>
+  entry: NeemEntryInput<NeemataWorker<TApplication>>
   build?: NeemRuntimeConfig<NeemataWorker<TApplication>>['build']
   threads: Array<NeemataRuntimeThreadOptions<TApplication>>
 }): NeemataRuntimeConfig<TApplication> {
-  return defineRuntimeConfig(config)
+  return defineRuntimeConfig<NeemataWorker<TApplication>>(config)
 }
 
 export function defineNeemataWorker<

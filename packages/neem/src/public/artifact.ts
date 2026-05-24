@@ -13,6 +13,21 @@ export type NeemArtifact = {
   rolldown?: NeemRolldownOptions
 }
 
+export type NeemRuntimeBuildHost = {
+  entry: NeemArtifactEntry
+  build?: NeemArtifactEntry
+}
+
+export type NeemRuntimeBuildMetadata = {
+  host?: NeemRuntimeBuildHost
+  artifacts?: readonly NeemArtifact[]
+}
+
+/** @internal */
+export const kNeemRuntimeBuild: unique symbol = Symbol.for(
+  'neem.runtime.build',
+) as never
+
 export type NeemArtifactOwner =
   | { type: 'config' }
   | { type: 'runtime'; name: string }
@@ -24,6 +39,7 @@ export type NeemResolvedArtifact = {
   file: string
   outDir: string
   bundle?: RolldownOutput
+  emittedArtifacts?: readonly NeemResolvedArtifact[]
 }
 
 export type NeemArtifactRegistry = {

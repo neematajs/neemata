@@ -1,19 +1,11 @@
 import type { InferNeemWorkerData } from '@nmtjs/neem'
-import { createLogger } from '@nmtjs/core'
 import { defineConfig, defineRuntimeConfig } from '@nmtjs/neem'
 import { describe, expect, expectTypeOf, it } from 'vitest'
 
 import app from '../fixtures/basic-app.ts'
 
 describe('@nmtjs/neem consumer contracts', () => {
-  const logger = createLogger({ pinoOptions: { enabled: false } }, 'test')
-
   it('keeps logger inputs typed', () => {
-    const direct = defineConfig({ logger, runtimes: {} })
-    const lazy = defineConfig({
-      logger: () => import('../fixtures/logger.ts'),
-      runtimes: {},
-    })
     const moduleSpecifier = defineConfig({
       logger: '../fixtures/logger.ts',
       runtimes: {},
@@ -27,13 +19,11 @@ describe('@nmtjs/neem consumer contracts', () => {
       runtimes: {},
     })
     const invalid = defineConfig({
-      // @ts-expect-error logger entry default must satisfy Logger
+      // @ts-expect-error logger functions are not declarative config
       logger: () => Promise.resolve({ default: { invalid: true } }),
       runtimes: {},
     })
 
-    expect(direct.logger).toBe(logger)
-    expect(typeof lazy.logger).toBe('function')
     expect(moduleSpecifier.logger).toBe('../fixtures/logger.ts')
     expect(moduleUrl.logger).toBeInstanceOf(URL)
     expect(options.logger).toEqual({ pinoOptions: { enabled: false } })
@@ -47,14 +37,19 @@ describe('@nmtjs/neem consumer contracts', () => {
       http: { listen: { hostname: string; port: number } }
     }>()
 
-    const runtimeConfig = defineRuntimeConfig({
-      entry: () => import('../fixtures/basic-app.ts'),
+    const runtimeConfig = defineRuntimeConfig<typeof app>({
+      entry: '../fixtures/basic-app.ts',
       threads: [{ http: { listen: { hostname: '127.0.0.1', port: 3000 } } }],
     })
 
     expect(runtimeConfig.threads).toBeDefined()
     const [data] = runtimeConfig.threads as Array<ThreadOptions>
     expect(data.http.listen.port).toBe(3000)
+
+    const stringEntryConfig = defineRuntimeConfig({
+      entry: '../fixtures/basic-app.ts',
+    })
+    expect(stringEntryConfig.entry).toBe('../fixtures/basic-app.ts')
   })
 
   it('lets runtime worker entries expose definition metadata', async () => {
@@ -76,8 +71,8 @@ describe('@nmtjs/neem consumer contracts', () => {
   })
 
   it('keeps entry-specific worker data inference without an explicit worker constraint', () => {
-    const invalidConfig = defineRuntimeConfig({
-      entry: () => import('../fixtures/basic-app.ts'),
+    const invalidConfig = defineRuntimeConfig<typeof app>({
+      entry: '../fixtures/basic-app.ts',
       // @ts-expect-error port must stay numeric
       threads: [{ http: { listen: { hostname: '127.0.0.1', port: '3000' } } }],
     })
@@ -87,10 +82,20 @@ describe('@nmtjs/neem consumer contracts', () => {
 
   it('allows host-owned runtime entries that are not worker entries', () => {
     const hostOwnedConfig = defineRuntimeConfig({
-      entry: () => Promise.resolve({ default: { hostOwned: true } }),
-      host: () => Promise.resolve({ default: {} }),
+      entry: '../fixtures/basic-app.ts',
+      host: '../fixtures/generic-runtime-host.ts',
     })
 
     expect(Boolean(hostOwnedConfig)).toBe(true)
+  })
+
+  it('does not expose runtime artifacts as public config', () => {
+    const invalidConfig = defineRuntimeConfig({
+      entry: '../fixtures/basic-app.ts',
+      // @ts-expect-error runtime artifacts are helper-owned build metadata
+      artifacts: () => [],
+    })
+
+    expect(Boolean(invalidConfig)).toBe(true)
   })
 })

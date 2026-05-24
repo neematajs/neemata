@@ -1,5 +1,8 @@
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
+
+import type { Logger } from '@nmtjs/core'
 
 import type { NeemConfig } from '../../public/config.ts'
 import type { NeemMode } from '../../public/runtime.ts'
@@ -9,9 +12,8 @@ import {
   NEEM_MANIFEST_FILE,
   NEEM_MANIFEST_SCHEMA_VERSION,
 } from '../build/manifest.ts'
-import { resolveNeemConfigLogger } from './logger.ts'
+import { createNeemDefaultLogger, resolveNeemConfigLogger } from './logger.ts'
 import { createRuntimeSnapshot } from './snapshot.ts'
-import { importDefault } from './utils.ts'
 
 type ManifestParser = (value: unknown) => NeemBuildManifest
 
@@ -37,10 +39,8 @@ export async function loadBuiltRuntimeSnapshot(
     await readManifest(manifestFile),
     options.runtimes,
   )
-  const config = await importDefault<NeemConfig>(
-    resolve(outDir, manifest.config.file),
-  )
-  const logger = await resolveNeemConfigLogger(config, { mode: options.mode })
+  const logger = await resolveManifestLogger(manifest, outDir, options.mode)
+  const config = createConfigFromManifest(manifest, logger)
 
   return createRuntimeSnapshot({
     mode: options.mode,
@@ -48,10 +48,42 @@ export async function loadBuiltRuntimeSnapshot(
     manifestFile,
     manifest,
     config,
-    configFile: resolve(outDir, manifest.config.file),
+    configFile: manifestFile,
     runtimeWorkerEntry: options.runtimeWorkerEntry,
     logger,
   })
+}
+
+async function resolveManifestLogger(
+  manifest: NeemBuildManifest,
+  outDir: string,
+  mode: NeemMode,
+): Promise<Logger> {
+  const logger = manifest.config.logger
+  if (!logger) return createNeemDefaultLogger(mode)
+  if (logger.type === 'options') {
+    return createNeemDefaultLogger(mode, logger.options)
+  }
+
+  return resolveNeemConfigLogger(
+    { logger: pathToFileURL(resolve(outDir, logger.file)), runtimes: {} },
+    { mode },
+  )
+}
+
+function createConfigFromManifest(
+  manifest: NeemBuildManifest,
+  logger: Logger,
+): NeemConfig {
+  return {
+    proxy: manifest.config.proxy,
+    runtimes: Object.fromEntries(
+      Object.entries(manifest.config.runtimes).map(([name, runtime]) => [
+        name,
+        { entry: '', threads: runtime.threads, options: runtime.options },
+      ]),
+    ),
+  }
 }
 
 function filterManifestRuntimes(

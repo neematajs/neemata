@@ -499,6 +499,8 @@ class NeemRuntimeThread implements NeemStartedRuntimeThread {
       artifact: options.artifact,
       artifacts: options.snapshot.artifacts.list(),
       configFile: options.snapshot.configFile,
+      outDir: options.snapshot.outDir,
+      logger: options.snapshot.manifest.config.logger,
       port: channel.port2,
     }
 

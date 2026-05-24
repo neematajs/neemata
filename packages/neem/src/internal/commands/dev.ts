@@ -1,4 +1,4 @@
-import { dirname, relative, resolve } from 'node:path'
+import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { debounce } from 'perfect-debounce'
@@ -6,20 +6,15 @@ import { debounce } from 'perfect-debounce'
 import type {
   NeemArtifact,
   NeemResolvedArtifact,
+  NeemRuntimeBuildMetadata,
 } from '../../public/artifact.ts'
 import type {
   NeemBuildConfig,
   NeemBuildConfigInput,
   NeemConfig,
+  NeemRuntimeConfigBase,
 } from '../../public/config.ts'
-import type {
-  NeemConfigDiscovery,
-  NeemDiscoveredRuntime,
-} from '../build/discovery.ts'
-import type {
-  NeemBuildManifest,
-  NeemBuildManifestArtifact,
-} from '../build/manifest.ts'
+import type { NeemBuildManifest } from '../build/manifest.ts'
 import type { NeemArtifactWatcher } from '../build/rolldown.ts'
 import type { NeemHostHooks } from '../runtime/hooks.ts'
 import type {
@@ -27,8 +22,9 @@ import type {
   NeemRuntimeServerHealth,
   NeemRuntimeServerSnapshot,
 } from '../runtime/server.ts'
-import { discoverConfigEntriesSync } from '../build/discovery.ts'
+import { kNeemRuntimeBuild } from '../../public/artifact.ts'
 import { NEEM_MANIFEST_SCHEMA_VERSION } from '../build/manifest.ts'
+import { resolveImportFile } from '../build/resolve.ts'
 import { watchArtifact } from '../build/rolldown.ts'
 import {
   createNeemDefaultLogger,
@@ -39,10 +35,9 @@ import { createRuntimeSnapshot } from '../runtime/snapshot.ts'
 import { importDefault } from '../runtime/utils.ts'
 import {
   cleanNeemOutDir,
-  createConfigRolldownOptions,
+  createManifestConfig,
   loadBuildConfig,
   toManifestArtifact,
-  toManifestPath,
   writeManifest,
 } from './build.ts'
 
@@ -67,10 +62,6 @@ export type NeemDevHost = {
 }
 
 type RuntimeWatcherState = { watcher: NeemArtifactWatcher; entry: string }
-type RuntimeArtifactWatcherState = {
-  watcher: NeemArtifactWatcher
-  entry: string
-}
 type NeemDevReloadRequest =
   | { type: 'full' }
   | { type: 'runtimes'; runtimeNames: string[] }
@@ -113,7 +104,6 @@ class NeemDevSession implements NeemDevHost {
   readonly ready: Promise<void>
   readonly closed: Promise<void>
 
-  private discovery: NeemConfigDiscovery | undefined
   private configArtifact: NeemResolvedArtifact | undefined
   private config: NeemConfig | undefined
   private logger = createNeemDefaultLogger('development')
@@ -123,14 +113,6 @@ class NeemDevSession implements NeemDevHost {
   private runtimeArtifacts = new Map<string, NeemResolvedArtifact>()
   private runtimeHostWatchers = new Map<string, RuntimeWatcherState>()
   private runtimeHostArtifacts = new Map<string, NeemResolvedArtifact>()
-  private runtimeArtifactWatchers = new Map<
-    string,
-    Map<string, RuntimeArtifactWatcherState>
-  >()
-  private runtimeDeclaredArtifacts = new Map<
-    string,
-    Map<string, NeemResolvedArtifact>
-  >()
   private operation = Promise.resolve()
   private runtimeOperation = Promise.resolve()
   private lifecycle: NeemDevLifecycleSnapshot = { state: 'idle' }
@@ -151,7 +133,6 @@ class NeemDevSession implements NeemDevHost {
   private readonly hooks: NeemHostHooks | undefined
   private initializingRuntimes = new Set<string>()
   private initializingRuntimeHosts = new Set<string>()
-  private initializingRuntimeArtifacts = new Set<string>()
 
   constructor(options: {
     configFile: string
@@ -238,9 +219,6 @@ class NeemDevSession implements NeemDevHost {
     const watchers = [
       ...this.runtimeWatchers.values(),
       ...this.runtimeHostWatchers.values(),
-      ...this.runtimeArtifactWatchers
-        .values()
-        .flatMap((watchers) => [...watchers.values()]),
     ]
     this.logger.debug(
       { count: watchers.length },
@@ -250,13 +228,10 @@ class NeemDevSession implements NeemDevHost {
     this.runtimeArtifacts.clear()
     this.runtimeHostWatchers.clear()
     this.runtimeHostArtifacts.clear()
-    this.runtimeArtifactWatchers.clear()
-    this.runtimeDeclaredArtifacts.clear()
     await Promise.all(watchers.map((state) => state.watcher.close()))
   }
 
   private async startConfigWatcher(): Promise<void> {
-    this.discovery = discoverConfigEntriesSync(this.configFile)
     this.logger.trace(
       { configFile: this.configFile },
       'Starting Neem config watcher',
@@ -265,9 +240,6 @@ class NeemDevSession implements NeemDevHost {
       {
         artifact: { id: 'entry', kind: 'module', entry: this.configFile },
         owner: { type: 'config' },
-        rolldown: createConfigRolldownOptions(() =>
-          discoverConfigEntriesSync(this.configFile),
-        ),
         outDir: this.outDir,
       },
       {
@@ -291,12 +263,12 @@ class NeemDevSession implements NeemDevHost {
     if (this.stopped) return
     this.beginRuntimeChange()
 
-    this.discovery = discoverConfigEntriesSync(this.configFile)
     this.configArtifact = artifact
     this.config = await importDefault<NeemConfig>(artifact.file)
     this.assertSelectedRuntimesExist()
     this.logger = await resolveNeemConfigLogger(this.config, {
       mode: 'development',
+      importer: this.configFile,
     })
     this.logger.trace({ file: artifact.file }, 'Neem config loaded')
 
@@ -305,7 +277,7 @@ class NeemDevSession implements NeemDevHost {
   }
 
   private async reconcileRuntimeWatchers(): Promise<void> {
-    if (!this.config || !this.discovery) return
+    if (!this.config) return
 
     const runtimeEntries = Object.entries(this.config.runtimes ?? {}).filter(
       ([name]) => this.shouldUseRuntime(name),
@@ -319,31 +291,51 @@ class NeemDevSession implements NeemDevHost {
     )
 
     for (const [name, runtimeConfig] of runtimeEntries) {
-      const discovered = this.discovery.runtimes[name]
-      if (!discovered) {
-        throw new Error(`Failed to discover runtime entry for [${name}]`)
-      }
-
       const current = this.runtimeWatchers.get(name)
-      if (current?.entry !== discovered.entry.resolved) {
+      const entry = resolveRequiredRuntimeBuildEntry(
+        this.configFile,
+        runtimeConfig.entry,
+      )
+      const emittedArtifacts = resolveRuntimeBuildArtifacts(
+        this.configFile,
+        runtimeConfig[kNeemRuntimeBuild]?.artifacts,
+      )
+      const runtimeEntryKey = [
+        entry,
+        runtimeBuildArtifactsKey(emittedArtifacts),
+      ].join('\0')
+      if (current?.entry !== runtimeEntryKey) {
         if (current) await this.removeRuntime(name)
         const artifact = await this.startRuntimeWatcher(
           name,
           runtimeConfig.build,
-          discovered,
+          entry,
+          emittedArtifacts,
+          runtimeEntryKey,
         )
         this.runtimeArtifacts.set(name, artifact)
       }
 
       const hostCurrent = this.runtimeHostWatchers.get(name)
-      if (discovered.host) {
-        if (hostCurrent?.entry !== discovered.host.entry.resolved) {
+      const hostEntry =
+        resolveRuntimeHostEntry(this.configFile, runtimeConfig.host) ??
+        resolveRuntimeBuildEntry(
+          this.configFile,
+          runtimeConfig[kNeemRuntimeBuild]?.host?.entry,
+        )
+      if (hostEntry) {
+        const hostEntryKey = toWatcherEntryKey(hostEntry)
+        if (hostCurrent?.entry !== hostEntryKey) {
           if (hostCurrent) {
             await hostCurrent.watcher.close()
             this.runtimeHostWatchers.delete(name)
             this.runtimeHostArtifacts.delete(name)
           }
-          const artifact = await this.startRuntimeHostWatcher(name, discovered)
+          const artifact = await this.startRuntimeHostWatcher(
+            name,
+            runtimeConfig,
+            hostEntry,
+          )
           this.runtimeHostArtifacts.set(name, artifact)
         }
       } else if (hostCurrent) {
@@ -351,74 +343,6 @@ class NeemDevSession implements NeemDevHost {
         this.runtimeHostWatchers.delete(name)
         this.runtimeHostArtifacts.delete(name)
       }
-
-      await this.reconcileRuntimeArtifactWatchers(
-        name,
-        runtimeConfig.artifacts,
-        runtimeConfig.options,
-        runtimeConfig.build,
-        discovered,
-      )
-    }
-  }
-
-  private async reconcileRuntimeArtifactWatchers(
-    name: string,
-    artifacts: NeemConfig['runtimes'][string]['artifacts'],
-    options: unknown,
-    buildConfigInput: NeemBuildConfigInput | undefined,
-    discovered: NeemDiscoveredRuntime,
-  ): Promise<void> {
-    const rawDeclared =
-      (await artifacts?.({ mode: 'development', name, options })) ?? []
-    const entryArtifact = this.runtimeArtifacts.get(name)
-    if (!entryArtifact) {
-      throw new Error(`Compiled artifact for runtime [${name}] is missing`)
-    }
-    const declared = rawDeclared.map((artifact) =>
-      withSourceRelativeRuntimeArtifact(artifact, discovered, entryArtifact),
-    )
-    const nextIds = new Set(declared.map((artifact) => artifact.id))
-    let watchers = this.runtimeArtifactWatchers.get(name)
-    if (!watchers) {
-      watchers = new Map()
-      this.runtimeArtifactWatchers.set(name, watchers)
-    }
-    let artifactState = this.runtimeDeclaredArtifacts.get(name)
-    if (!artifactState) {
-      artifactState = new Map()
-      this.runtimeDeclaredArtifacts.set(name, artifactState)
-    }
-
-    await Promise.all(
-      [...watchers.entries()]
-        .filter(([id]) => !nextIds.has(id))
-        .map(async ([id, state]) => {
-          await state.watcher.close()
-          watchers.delete(id)
-          artifactState.delete(id)
-        }),
-    )
-
-    const rolldown = await loadRuntimeBuildConfig(buildConfigInput, discovered)
-    for (const artifact of declared) {
-      const entry = artifact.entry.toString()
-      const current = watchers.get(artifact.id)
-      if (current?.entry === entry) continue
-
-      if (current) {
-        await current.watcher.close()
-        watchers.delete(artifact.id)
-        artifactState.delete(artifact.id)
-      }
-
-      const built = await this.startRuntimeDeclaredArtifactWatcher(
-        name,
-        artifact,
-        rolldown,
-        discovered,
-      )
-      artifactState.set(artifact.id, built)
     }
   }
 
@@ -426,43 +350,36 @@ class NeemDevSession implements NeemDevHost {
     this.logger.debug({ runtimeName: name }, 'Removing Neem runtime watcher')
     const watcher = this.runtimeWatchers.get(name)
     const hostWatcher = this.runtimeHostWatchers.get(name)
-    const artifactWatchers = this.runtimeArtifactWatchers.get(name)
     this.runtimeWatchers.delete(name)
     this.runtimeArtifacts.delete(name)
     this.runtimeHostWatchers.delete(name)
     this.runtimeHostArtifacts.delete(name)
-    this.runtimeArtifactWatchers.delete(name)
-    this.runtimeDeclaredArtifacts.delete(name)
-    await Promise.all([
-      watcher?.watcher.close(),
-      hostWatcher?.watcher.close(),
-      ...[...(artifactWatchers?.values() ?? [])].map((state) =>
-        state.watcher.close(),
-      ),
-    ])
+    await Promise.all([watcher?.watcher.close(), hostWatcher?.watcher.close()])
   }
 
   private async startRuntimeWatcher(
     name: string,
     buildConfigInput: NeemBuildConfigInput | undefined,
-    discovered: NeemDiscoveredRuntime,
+    entry: string | URL,
+    emittedArtifacts: NeemRuntimeBuildMetadata['artifacts'] | undefined,
+    entryKey: string,
   ): Promise<NeemResolvedArtifact> {
-    const rolldown = await loadRuntimeBuildConfig(buildConfigInput, discovered)
+    const rolldown = await loadRuntimeBuildConfig(
+      buildConfigInput,
+      this.configFile,
+    )
     this.initializingRuntimes.add(name)
     this.logger.trace(
-      { runtimeName: name, entry: discovered.entry.resolved },
+      { runtimeName: name, entry: toWatcherEntryKey(entry) },
       'Starting Neem runtime watcher',
     )
     const watcher = await watchArtifact(
       {
-        artifact: {
-          id: 'entry',
-          kind: 'worker',
-          entry: discovered.entry.resolved,
-        },
+        artifact: { id: 'entry', kind: 'worker', entry },
         owner: { type: 'runtime', name },
         rolldown,
         outDir: this.outDir,
+        emittedArtifacts,
       },
       {
         onRebuild: (artifact) => {
@@ -477,10 +394,7 @@ class NeemDevSession implements NeemDevHost {
       },
     )
 
-    this.runtimeWatchers.set(name, {
-      watcher,
-      entry: discovered.entry.resolved,
-    })
+    this.runtimeWatchers.set(name, { watcher, entry: entryKey })
 
     try {
       return await watcher.ready
@@ -491,27 +405,25 @@ class NeemDevSession implements NeemDevHost {
 
   private async startRuntimeHostWatcher(
     name: string,
-    discovered: NeemDiscoveredRuntime,
+    runtimeConfig: NeemRuntimeConfigBase,
+    hostEntry: string | URL,
   ): Promise<NeemResolvedArtifact> {
-    if (!discovered.host) {
+    if (!hostEntry) {
       throw new Error(`Runtime [${name}] host entry is missing`)
     }
 
-    const rolldown = discovered.host.build
-      ? await importDefault<NeemBuildConfig>(discovered.host.build.resolved)
-      : undefined
+    const rolldown = await loadRuntimeHostBuildConfig(
+      runtimeConfig,
+      this.configFile,
+    )
     this.initializingRuntimeHosts.add(name)
     this.logger.trace(
-      { runtimeName: name, entry: discovered.host.entry.resolved },
+      { runtimeName: name, entry: toWatcherEntryKey(hostEntry) },
       'Starting Neem runtime host watcher',
     )
     const watcher = await watchArtifact(
       {
-        artifact: {
-          id: 'host',
-          kind: 'module',
-          entry: discovered.host.entry.resolved,
-        },
+        artifact: { id: 'host', kind: 'module', entry: hostEntry },
         owner: { type: 'runtime', name },
         rolldown,
         outDir: this.outDir,
@@ -531,60 +443,13 @@ class NeemDevSession implements NeemDevHost {
 
     this.runtimeHostWatchers.set(name, {
       watcher,
-      entry: discovered.host.entry.resolved,
+      entry: toWatcherEntryKey(hostEntry),
     })
 
     try {
       return await watcher.ready
     } finally {
       this.initializingRuntimeHosts.delete(name)
-    }
-  }
-
-  private async startRuntimeDeclaredArtifactWatcher(
-    name: string,
-    artifact: NeemArtifact,
-    rolldown: NeemBuildConfig | undefined,
-    discovered: NeemDiscoveredRuntime,
-  ): Promise<NeemResolvedArtifact> {
-    const key = `${name}:${artifact.id}`
-    this.initializingRuntimeArtifacts.add(key)
-    this.logger.trace(
-      { runtimeName: name, artifactId: artifact.id },
-      'Starting Neem runtime artifact watcher',
-    )
-    const watcher = await watchArtifact(
-      {
-        artifact,
-        owner: { type: 'runtime', name },
-        rolldown,
-        cwd: dirname(discovered.entry.resolved),
-        outDir: this.outDir,
-      },
-      {
-        onRebuild: (built) => {
-          const initial = this.initializingRuntimeArtifacts.has(key)
-          return this.enqueue(() =>
-            this.applyRuntimeDeclaredArtifact(name, built, { initial }),
-          )
-        },
-        onError: (error) => {
-          this.recordError(error)
-        },
-      },
-    )
-
-    let watchers = this.runtimeArtifactWatchers.get(name)
-    if (!watchers) {
-      watchers = new Map()
-      this.runtimeArtifactWatchers.set(name, watchers)
-    }
-    watchers.set(artifact.id, { watcher, entry: artifact.entry.toString() })
-
-    try {
-      return await watcher.ready
-    } finally {
-      this.initializingRuntimeArtifacts.delete(key)
     }
   }
 
@@ -612,23 +477,6 @@ class NeemDevSession implements NeemDevHost {
     this.scheduleScopedRuntimeReload(name)
   }
 
-  private async applyRuntimeDeclaredArtifact(
-    name: string,
-    artifact: NeemResolvedArtifact,
-    options: { initial: boolean },
-  ): Promise<void> {
-    if (this.stopped) return
-    let artifacts = this.runtimeDeclaredArtifacts.get(name)
-    if (!artifacts) {
-      artifacts = new Map()
-      this.runtimeDeclaredArtifacts.set(name, artifacts)
-    }
-    artifacts.set(artifact.id, artifact)
-    if (options.initial) return
-
-    this.scheduleScopedRuntimeReload(name)
-  }
-
   private async writeCurrentManifest(): Promise<NeemBuildManifest> {
     if (!this.configArtifact || !this.config) {
       throw new Error('Cannot write Neem dev manifest before config is loaded')
@@ -636,7 +484,11 @@ class NeemDevSession implements NeemDevHost {
 
     const manifest: NeemBuildManifest = {
       schemaVersion: NEEM_MANIFEST_SCHEMA_VERSION,
-      config: { file: toManifestPath(this.outDir, this.configArtifact.file) },
+      config: await createManifestConfig(
+        this.config,
+        this.configFile,
+        this.outDir,
+      ),
       runtimes: {},
     }
 
@@ -652,9 +504,8 @@ class NeemDevSession implements NeemDevHost {
         name,
         entry: toManifestArtifact(this.outDir, artifact),
         host: host ? toManifestArtifact(this.outDir, host) : undefined,
-        artifacts: toManifestRuntimeArtifacts(
-          this.outDir,
-          this.runtimeDeclaredArtifacts.get(name) ?? new Map(),
+        artifacts: (artifact.emittedArtifacts ?? []).map((artifact) =>
+          toManifestArtifact(this.outDir, artifact),
         ),
       }
     }
@@ -887,46 +738,85 @@ class NeemDevSession implements NeemDevHost {
 
 async function loadRuntimeBuildConfig(
   input: NeemBuildConfigInput | undefined,
-  discovered: NeemDiscoveredRuntime,
+  importer: string,
 ): Promise<NeemBuildConfig | undefined> {
-  if (discovered.build) {
-    return importDefault<NeemBuildConfig>(discovered.build.resolved)
+  return loadBuildConfig(input, importer)
+}
+
+async function loadRuntimeHostBuildConfig(
+  runtimeConfig: NeemRuntimeConfigBase,
+  importer: string,
+): Promise<NeemBuildConfig | undefined> {
+  const runtimeBuild = runtimeConfig[kNeemRuntimeBuild]
+  if (runtimeBuild?.host?.build) {
+    return loadBuildConfig(runtimeBuild.host.build, importer)
   }
 
-  return loadBuildConfig(input)
-}
-
-function withSourceRelativeRuntimeArtifact(
-  artifact: NeemArtifact,
-  discovered: NeemDiscoveredRuntime,
-  entryArtifact: NeemResolvedArtifact,
-): NeemArtifact {
-  const entry = resolveSourceRelativeArtifactEntry(
-    artifact.entry,
-    dirname(discovered.entry.resolved),
-    entryArtifact.outDir,
+  return loadBuildConfig(
+    getRuntimeHostConfig(runtimeConfig.host)?.build,
+    importer,
   )
-  return entry === artifact.entry ? artifact : { ...artifact, entry }
 }
 
-function resolveSourceRelativeArtifactEntry(
+function toWatcherEntryKey(entry: string | URL): string {
+  return entry instanceof URL ? fileURLToPath(entry) : entry
+}
+
+function getRuntimeHostConfig(
+  input: NeemRuntimeConfigBase['host'],
+): { entry: NeemArtifact['entry']; build?: NeemBuildConfigInput } | undefined {
+  if (!input) return undefined
+  return typeof input === 'string' || input instanceof URL
+    ? { entry: input }
+    : input
+}
+
+function resolveRuntimeHostEntry(
+  importer: string,
+  input: NeemRuntimeConfigBase['host'],
+): NeemArtifact['entry'] | undefined {
+  const host = getRuntimeHostConfig(input)
+  return host ? resolveRuntimeBuildEntry(importer, host.entry) : undefined
+}
+
+function resolveRuntimeBuildArtifacts(
+  importer: string,
+  artifacts: readonly NeemArtifact[] | undefined,
+): readonly NeemArtifact[] | undefined {
+  return artifacts?.map((artifact) => ({
+    ...artifact,
+    entry: resolveRequiredRuntimeBuildEntry(importer, artifact.entry),
+  }))
+}
+
+function resolveRequiredRuntimeBuildEntry(
+  importer: string,
   entry: NeemArtifact['entry'],
-  sourceDir: string,
-  builtEntryDir: string,
 ): NeemArtifact['entry'] {
-  const file = entry instanceof URL ? fileURLToPath(entry) : entry
-  const relativeToBuilt = relative(builtEntryDir, file)
-  if (relativeToBuilt.startsWith('..')) return entry
-  if (relativeToBuilt === '') return entry
-  return resolve(sourceDir, relativeToBuilt)
+  return resolveRuntimeBuildEntry(importer, entry) ?? entry
 }
 
-function toManifestRuntimeArtifacts(
-  outDir: string,
-  artifacts: Map<string, NeemResolvedArtifact>,
-): NeemBuildManifestArtifact[] {
-  return [...artifacts.values()].map((artifact) =>
-    toManifestArtifact(outDir, artifact),
+function resolveRuntimeBuildEntry(
+  importer: string,
+  entry: NeemArtifact['entry'] | undefined,
+): NeemArtifact['entry'] | undefined {
+  if (!entry) return undefined
+  if (entry instanceof URL) return entry
+  if (entry.startsWith('/')) return entry
+  if (entry.startsWith('.')) return resolve(dirname(importer), entry)
+  return resolveImportFile(importer, entry)
+}
+
+function runtimeBuildArtifactsKey(
+  artifacts: readonly NeemArtifact[] | undefined,
+): string {
+  return JSON.stringify(
+    (artifacts ?? []).map((artifact) => ({
+      id: artifact.id,
+      kind: artifact.kind,
+      entry:
+        artifact.entry instanceof URL ? artifact.entry.href : artifact.entry,
+    })),
   )
 }
 

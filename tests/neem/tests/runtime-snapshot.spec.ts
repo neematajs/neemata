@@ -11,7 +11,7 @@ describe('Neem runtime snapshot', () => {
     const outDir = '/tmp/neem-out'
     const manifest: NeemBuildManifest = {
       schemaVersion: 1,
-      config: { file: 'config/entry/neem.config.js' },
+      config: { runtimes: {} },
       runtimes: {
         api: {
           name: 'api',
@@ -69,7 +69,7 @@ describe('Neem runtime snapshot', () => {
   it('rejects invalid manifest artifact kinds', () => {
     const manifest: NeemBuildManifest = {
       schemaVersion: 1,
-      config: { file: 'config/entry/neem.config.js' },
+      config: { runtimes: {} },
       runtimes: {
         api: {
           name: 'api',
@@ -141,7 +141,7 @@ describe('Neem runtime snapshot', () => {
 function createManifest(): NeemBuildManifest {
   return {
     schemaVersion: 1,
-    config: { file: 'config/entry/neem.config.js' },
+    config: { runtimes: {} },
     runtimes: {
       api: {
         name: 'api',

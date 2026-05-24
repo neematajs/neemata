@@ -2,6 +2,7 @@ import type { MessagePort } from 'node:worker_threads'
 
 import type { NeemResolvedArtifact } from '../../public/artifact.ts'
 import type { NeemMode, NeemRuntimeUpstream } from '../../public/runtime.ts'
+import type { NeemBuildManifestLogger } from '../build/manifest.ts'
 
 export type NeemRuntimeWorkerBaseData = {
   mode: NeemMode
@@ -10,6 +11,8 @@ export type NeemRuntimeWorkerBaseData = {
   artifact: NeemResolvedArtifact
   artifacts: readonly NeemResolvedArtifact[]
   configFile: string
+  outDir: string
+  logger?: NeemBuildManifestLogger
   port: MessagePort
 }
 

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 
@@ -18,20 +18,15 @@ describe('Neem built snapshot loader', () => {
     )
   })
 
-  it('loads manifest and compiled config into a runtime snapshot', async () => {
+  it('loads manifest config into a runtime snapshot', async () => {
     const outDir = await mkdtemp(resolve(tmpdir(), 'neem-snapshot-'))
     tempDirs.push(outDir)
 
-    await mkdir(resolve(outDir, 'config/entry'), { recursive: true })
-    await writeFile(
-      resolve(outDir, 'config/entry/neem.config.js'),
-      'export default { runtimes: {} };\n',
-    )
     await writeFile(
       resolve(outDir, NEEM_MANIFEST_FILE),
       `${JSON.stringify({
         schemaVersion: 1,
-        config: { file: 'config/entry/neem.config.js' },
+        config: { runtimes: {} },
         runtimes: {},
       })}\n`,
     )

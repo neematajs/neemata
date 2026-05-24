@@ -1,12 +1,19 @@
-import type { Logger, LoggingOptions } from '@nmtjs/core'
+import type { LoggingOptions } from '@nmtjs/core'
 
-import type { NeemArtifact, NeemRolldownOptions } from './artifact.ts'
-import type { NeemMaybePromise, NeemMode, NeemRuntimeHost } from './runtime.ts'
+import type {
+  kNeemRuntimeBuild,
+  NeemArtifactEntry,
+  NeemRolldownOptions,
+  NeemRuntimeBuildMetadata,
+} from './artifact.ts'
+import type { NeemRuntimeHost } from './runtime.ts'
 import type { InferNeemWorkerData, NeemWorker } from './worker.ts'
 
 export type NeemEntryModule<T> = { default: T }
 
 export type NeemEntryLoader<T> = () => Promise<NeemEntryModule<T>>
+
+export type NeemEntryInput<T> = NeemArtifactEntry
 
 export type InferNeemEntryDefault<TEntry> = TEntry extends () => Promise<
   infer TModule
@@ -24,52 +31,41 @@ export type NeemBuildConfigLoader<
 
 export type NeemBuildConfigInput<
   TBuildConfig extends NeemBuildConfig = NeemBuildConfig,
-> = NeemBuildConfigLoader<TBuildConfig>
+> = NeemArtifactEntry
 
 export type NeemLoggerOptions = LoggingOptions
 
-export type NeemLoggerLoader<TLogger extends Logger = Logger> = () => Promise<
-  NeemEntryModule<TLogger>
->
-
-export type NeemLoggerInput<TLogger extends Logger = Logger> =
-  | NeemLoggerOptions
-  | string
-  | URL
-  | TLogger
-  | NeemLoggerLoader<TLogger>
+export type NeemLoggerInput = NeemLoggerOptions | string | URL
 
 export type NeemRuntimeHostConfig<
   THost extends NeemRuntimeHost = NeemRuntimeHost,
-> = { entry: NeemEntryLoader<THost>; build?: NeemBuildConfigInput }
+> = { entry: NeemArtifactEntry; build?: NeemBuildConfigInput }
 
 export type NeemRuntimeHostInput<
   THost extends NeemRuntimeHost = NeemRuntimeHost,
-> = NeemEntryLoader<THost> | NeemRuntimeHostConfig<THost>
+> = NeemArtifactEntry | NeemRuntimeHostConfig<THost>
 
 export type NeemRuntimeConfig<
   TEntry = NeemWorker<unknown, unknown>,
   THost extends NeemRuntimeHost = NeemRuntimeHost,
 > = {
-  entry: NeemEntryLoader<TEntry>
+  entry: NeemEntryInput<TEntry>
   host?: NeemRuntimeHostInput<THost>
   build?: NeemBuildConfigInput
-  artifacts?: (
-    ctx: NeemRuntimeArtifactContext,
-  ) => NeemMaybePromise<readonly NeemArtifact[]>
   threads?: number | readonly InferNeemRuntimeThreadOptions<TEntry>[]
   options?: unknown
+  /** @internal */
+  [kNeemRuntimeBuild]?: NeemRuntimeBuildMetadata
 }
 
 export type NeemRuntimeConfigBase = {
-  entry: NeemEntryLoader<unknown>
+  entry: NeemEntryInput<unknown>
   host?: NeemRuntimeHostInput
   build?: NeemBuildConfigInput
-  artifacts?: (
-    ctx: NeemRuntimeArtifactContext,
-  ) => NeemMaybePromise<readonly NeemArtifact[]>
   threads?: number | readonly unknown[]
   options?: unknown
+  /** @internal */
+  [kNeemRuntimeBuild]?: NeemRuntimeBuildMetadata
 }
 
 export type InferNeemRuntimeThreadOptions<TEntry> = TEntry extends {
@@ -77,12 +73,6 @@ export type InferNeemRuntimeThreadOptions<TEntry> = TEntry extends {
 }
   ? InferNeemWorkerData<TEntry>
   : unknown
-
-export type NeemRuntimeArtifactContext<Options = unknown> = {
-  mode: NeemMode
-  name: string
-  options: Options
-}
 
 export type NeemProxyRoutingOptions = {
   type?: 'subdomain' | 'path'
@@ -161,14 +151,13 @@ export function defineRuntimeConfig<
   Entry,
   Host extends NeemRuntimeHost = NeemRuntimeHost,
 >(config: {
-  entry: NeemEntryLoader<Entry>
+  entry: NeemEntryInput<Entry>
   host?: NeemRuntimeHostInput<Host>
   build?: NeemBuildConfigInput
-  artifacts?: (
-    ctx: NeemRuntimeArtifactContext,
-  ) => NeemMaybePromise<readonly NeemArtifact[]>
   threads?: number | readonly InferNeemRuntimeThreadOptions<Entry>[]
   options?: unknown
+  /** @internal */
+  [kNeemRuntimeBuild]?: NeemRuntimeBuildMetadata
 }): NeemRuntimeConfig<Entry, Host> {
   return Object.freeze(config) as NeemRuntimeConfig<Entry, Host>
 }

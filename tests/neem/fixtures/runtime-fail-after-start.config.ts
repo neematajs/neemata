@@ -3,7 +3,7 @@ import { defineConfig, defineRuntimeConfig } from '@nmtjs/neem'
 export default defineConfig({
   runtimes: {
     api: defineRuntimeConfig({
-      entry: () => import('./runtime-app.ts'),
+      entry: './runtime-app.ts',
       threads: [
         {
           label: 'survives-until-peer-fails',

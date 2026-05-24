@@ -12,14 +12,18 @@ import type {
   NeemRolldownOptions,
 } from '../../public/artifact.ts'
 
-type ArtifactBuildMetadata = { entryFileName?: string }
+type ArtifactBuildMetadata = {
+  entryFileName?: string
+  emittedArtifacts?: EmittedArtifactBuildMetadata[]
+}
+type EmittedArtifactBuildMetadata = {
+  id: string
+  kind: NeemArtifact['kind']
+  fileName: string
+}
 
 type NeemRolldownPluginContext = {
-  emitFile: (emittedFile: {
-    type: 'asset'
-    name: string
-    source: Buffer
-  }) => string
+  emitFile: (emittedFile: rolldown.EmittedFile) => string
   getFileName: (referenceId: string) => string
 }
 
@@ -30,6 +34,7 @@ export type NeemBuildArtifactOptions = {
   cwd?: string
   outDir: string
   artifactOutDir?: string
+  emittedArtifacts?: readonly NeemArtifact[]
   sourcemap?: boolean
   minify?: boolean
 }
@@ -140,15 +145,22 @@ function createRolldownOptions(
       : {}
   const userPlugins = normalizePlugins(userOptions.plugins)
 
+  const input = resolveEntry(options.artifact.entry, options.cwd)
+
   return {
-    input: resolveEntry(options.artifact.entry, options.cwd),
+    input,
     platform: 'node',
     ...userOptions,
     plugins: [
       createNativeAddonPlugin(),
       createUwsNativeAddonPlugin(),
       ...userPlugins,
-      createEntryMetadataPlugin(metadata),
+      createEmittedArtifactsPlugin(
+        options.emittedArtifacts ?? [],
+        metadata,
+        options.cwd,
+      ),
+      createEntryMetadataPlugin(input, metadata),
     ],
     output: {
       sourcemap: options.sourcemap ?? true,
@@ -170,7 +182,12 @@ function createResolvedArtifact(
   metadata: ArtifactBuildMetadata,
 ): NeemResolvedArtifact {
   const entryChunk = result?.output?.find(
-    (chunk) => chunk.type === 'chunk' && chunk.isEntry && chunk.fileName,
+    (chunk) =>
+      chunk.type === 'chunk' &&
+      chunk.isEntry &&
+      chunk.fileName &&
+      chunk.facadeModuleId ===
+        resolveEntry(options.artifact.entry, options.cwd),
   )
   const entryFileName = metadata.entryFileName ?? entryChunk?.fileName
 
@@ -183,6 +200,13 @@ function createResolvedArtifact(
       : resolve(outDir, 'index.js'),
     outDir,
     bundle: result,
+    emittedArtifacts: metadata.emittedArtifacts?.map((artifact) => ({
+      id: artifact.id,
+      kind: artifact.kind,
+      owner: options.owner,
+      file: resolve(outDir, artifact.fileName),
+      outDir,
+    })),
   }
 }
 
@@ -194,15 +218,49 @@ function normalizePlugins(
 }
 
 function createEntryMetadataPlugin(
+  input: string,
   metadata: ArtifactBuildMetadata,
 ): rolldown.RolldownPlugin {
   return {
     name: 'neem-entry-metadata',
     generateBundle(_options, bundle) {
       const entryChunk = Object.values(bundle).find(
-        (chunk) => chunk.type === 'chunk' && chunk.isEntry && chunk.fileName,
+        (chunk) =>
+          chunk.type === 'chunk' &&
+          chunk.isEntry &&
+          chunk.fileName &&
+          chunk.facadeModuleId === input,
       )
       metadata.entryFileName = entryChunk?.fileName
+    },
+  } satisfies rolldown.RolldownPlugin
+}
+
+function createEmittedArtifactsPlugin(
+  artifacts: readonly NeemArtifact[],
+  metadata: ArtifactBuildMetadata,
+  cwd: string | undefined,
+): rolldown.RolldownPlugin {
+  let emitted: Array<{ artifact: NeemArtifact; referenceId: string }> = []
+
+  return {
+    name: 'neem:emitted-artifacts',
+    buildStart() {
+      emitted = artifacts.map((artifact) => ({
+        artifact,
+        referenceId: this.emitFile({
+          type: 'chunk',
+          id: resolveEntry(artifact.entry, cwd),
+          name: artifact.id,
+        }),
+      }))
+    },
+    generateBundle() {
+      metadata.emittedArtifacts = emitted.map(({ artifact, referenceId }) => ({
+        id: artifact.id,
+        kind: artifact.kind,
+        fileName: this.getFileName(referenceId),
+      }))
     },
   } satisfies rolldown.RolldownPlugin
 }

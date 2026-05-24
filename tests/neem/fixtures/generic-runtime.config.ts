@@ -1,10 +1,10 @@
 import { defineConfig, defineRuntimeConfig } from '@nmtjs/neem'
 
 export default defineConfig({
-  logger: () => import('./logger.ts'),
+  logger: './logger.ts',
   runtimes: {
     api: defineRuntimeConfig({
-      entry: () => import('./generic-runtime.ts'),
+      entry: './generic-runtime.ts',
       threads: [
         {
           label: 'one',
@@ -17,8 +17,8 @@ export default defineConfig({
       ],
     }),
     jobs: defineRuntimeConfig({
-      entry: () => import('./generic-runtime.ts'),
-      host: { entry: () => import('./generic-runtime-host.ts') },
+      entry: './generic-runtime.ts',
+      host: { entry: './generic-runtime-host.ts' },
       options: { queue: 'runtime' },
     }),
   },

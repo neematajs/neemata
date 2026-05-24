@@ -1,8 +1,9 @@
+import { resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { parentPort, workerData as rawWorkerData } from 'node:worker_threads'
 
 import type { Logger } from '@nmtjs/core'
 
-import type { NeemConfig } from '../../public/config.ts'
 import type {
   NeemRuntime,
   NeemRuntimeStartResult,
@@ -16,7 +17,7 @@ import type {
   NeemRuntimeWorkerMessage,
   NeemRuntimeWorkerParentMessage,
 } from './worker-protocol.ts'
-import { createNeemChildLogger, resolveNeemConfigLogger } from './logger.ts'
+import { createNeemChildLogger, createNeemDefaultLogger } from './logger.ts'
 import {
   createArtifactRegistry,
   importDefault,
@@ -64,7 +65,7 @@ async function createRuntime(
 async function createWorkerRuntime(
   data: NeemGenericRuntimeWorkerData,
 ): Promise<NeemRuntime> {
-  const logger = await resolveWorkerLogger(data.configFile, data.name)
+  const logger = await resolveWorkerLogger(data, data.name)
   runtimeLogger = logger
   logger.trace(
     { worker: data.name, artifactId: data.artifact.id },
@@ -86,9 +87,25 @@ async function createWorkerRuntime(
   })
 }
 
-async function resolveWorkerLogger(configFile: string, label: string) {
-  const config = await importDefault<NeemConfig>(configFile)
-  return createNeemChildLogger(await resolveNeemConfigLogger(config), label)
+async function resolveWorkerLogger(
+  data: NeemGenericRuntimeWorkerData,
+  label: string,
+) {
+  const logger = data.logger
+  if (!logger) {
+    return createNeemChildLogger(createNeemDefaultLogger(data.mode), label)
+  }
+  if (logger.type === 'options') {
+    return createNeemChildLogger(
+      createNeemDefaultLogger(data.mode, logger.options),
+      label,
+    )
+  }
+
+  const module = (await import(
+    pathToFileURL(resolve(data.outDir, logger.file)).href
+  )) as { default: Logger }
+  return createNeemChildLogger(module.default, label)
 }
 
 async function stopRuntime(options: { force?: boolean } = {}) {

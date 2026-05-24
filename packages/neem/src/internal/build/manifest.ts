@@ -2,6 +2,7 @@ import type {
   NeemArtifactKind,
   NeemResolvedArtifact,
 } from '../../public/artifact.ts'
+import type { NeemLoggerOptions, NeemProxyConfig } from '../../public/config.ts'
 
 export const NEEM_MANIFEST_FILE = 'neem.manifest.json'
 export const NEEM_MANIFEST_SCHEMA_VERSION = 1
@@ -14,10 +15,25 @@ export type NeemBuildManifestArtifact = {
   outDir: string
 }
 
+export type NeemBuildManifestLogger =
+  | { type: 'options'; options: NeemLoggerOptions }
+  | { type: 'module'; file: string }
+
+export type NeemBuildManifestRuntimeConfig = {
+  threads?: number | readonly unknown[]
+  options?: unknown
+}
+
+export type NeemBuildManifestConfig = {
+  logger?: NeemBuildManifestLogger
+  proxy?: NeemProxyConfig
+  runtimes: Record<string, NeemBuildManifestRuntimeConfig>
+}
+
 export type NeemBuildManifest = {
   schemaVersion: typeof NEEM_MANIFEST_SCHEMA_VERSION
   runtime?: { entry: string; worker: string }
-  config: { file: string }
+  config: NeemBuildManifestConfig
   runtimes?: Record<
     string,
     {

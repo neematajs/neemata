@@ -1,7 +1,6 @@
 import { existsSync } from 'node:fs'
 import { mkdir, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, relative, resolve } from 'node:path'
-import { pathToFileURL } from 'node:url'
 
 import { consola } from 'consola'
 import { colorize } from 'consola/utils'
@@ -14,21 +13,21 @@ import type {
   NeemBuildConfig,
   NeemBuildConfigInput,
   NeemConfig,
-  NeemRuntimeHostInput,
+  NeemLoggerOptions,
+  NeemRuntimeConfigBase,
 } from '../../public/config.ts'
-import type {
-  NeemConfigDiscovery,
-  NeemDiscoveredImport,
-} from '../build/discovery.ts'
 import type {
   NeemBuildManifest,
   NeemBuildManifestArtifact,
+  NeemBuildManifestConfig,
+  NeemBuildManifestLogger,
 } from '../build/manifest.ts'
-import { discoverConfigEntriesSync } from '../build/discovery.ts'
+import { kNeemRuntimeBuild } from '../../public/artifact.ts'
 import {
   NEEM_MANIFEST_FILE,
   NEEM_MANIFEST_SCHEMA_VERSION,
 } from '../build/manifest.ts'
+import { resolveImportFile } from '../build/resolve.ts'
 import { buildArtifact } from '../build/rolldown.ts'
 import { importDefault } from '../runtime/utils.ts'
 
@@ -60,7 +59,6 @@ export async function buildNeem(
 ): Promise<NeemBuildResult> {
   const cwd = options.cwd ?? process.cwd()
   const configFile = resolve(cwd, options.config ?? 'neem.config.ts')
-  const discovery = discoverConfigEntriesSync(configFile)
   const config = await importDefault<NeemConfig>(configFile)
   const outDir = resolve(cwd, options.outDir ?? config.outDir ?? 'dist')
   const logger = consola.create({ level: process.env.TEST ? 0 : 4 })
@@ -77,12 +75,7 @@ export async function buildNeem(
   await mkdir(outDir, { recursive: true })
 
   const runtimeArtifacts = await buildRuntimeArtifacts({ outDir })
-  const configArtifact = await buildConfigArtifact({
-    configFile,
-    discovery,
-    outDir,
-    minify: true,
-  })
+  const manifestConfig = await createManifestConfig(config, configFile, outDir)
 
   const manifest: NeemBuildManifest = {
     schemaVersion: NEEM_MANIFEST_SCHEMA_VERSION,
@@ -90,7 +83,7 @@ export async function buildNeem(
       entry: 'start.js',
       worker: toManifestPath(outDir, runtimeArtifacts.worker.file),
     },
-    config: { file: toManifestPath(outDir, configArtifact.file) },
+    config: manifestConfig,
     runtimes: {},
   }
 
@@ -102,13 +95,12 @@ export async function buildNeem(
   ])
 
   for (const [name, runtimeConfig] of runtimeEntries) {
-    const discovered = discovery.runtimes[name]
-
-    if (!discovered) {
-      throw new Error(`Failed to discover runtime entry for [${name}]`)
-    }
-
-    const rolldown = await loadBuildConfig(runtimeConfig.build)
+    const rolldown = await loadBuildConfig(runtimeConfig.build, configFile)
+    const runtimeBuild = runtimeConfig[kNeemRuntimeBuild]
+    const emittedArtifacts = resolveRuntimeBuildArtifacts(
+      configFile,
+      runtimeBuild?.artifacts,
+    )
 
     logger.start(`Building runtime: ${colorize('green', name)}`)
 
@@ -116,21 +108,28 @@ export async function buildNeem(
       artifact: {
         id: 'entry',
         kind: 'worker',
-        entry: discovered.entry.resolved,
+        entry: resolveRequiredRuntimeBuildEntry(
+          configFile,
+          runtimeConfig.entry,
+        ),
       },
       owner: { type: 'runtime', name },
       rolldown,
       outDir,
+      emittedArtifacts,
       minify: true,
     })
 
-    const hostRolldown = await loadBuildConfig(
-      getRuntimeHostBuildConfig(runtimeConfig.host),
+    const hostRolldown = await loadRuntimeHostBuildConfig(
+      runtimeConfig,
+      configFile,
     )
-    const host = discovered.host
-    const hostArtifact = host
+    const hostEntry =
+      resolveRuntimeHostEntry(configFile, runtimeConfig.host) ??
+      resolveRuntimeBuildEntry(configFile, runtimeBuild?.host?.entry)
+    const hostArtifact = hostEntry
       ? await buildArtifact({
-          artifact: { id: 'host', kind: 'module', entry: host.entry.resolved },
+          artifact: { id: 'host', kind: 'module', entry: hostEntry },
           owner: { type: 'runtime', name },
           rolldown: hostRolldown,
           outDir,
@@ -138,33 +137,13 @@ export async function buildNeem(
         })
       : undefined
 
-    const artifacts: NeemBuildManifestArtifact[] = []
-    const declaredArtifacts =
-      (await runtimeConfig.artifacts?.({
-        mode: 'production',
-        name,
-        options: runtimeConfig.options,
-      })) ?? []
-    for (const artifact of declaredArtifacts) {
-      const built = await buildArtifact({
-        artifact: resolveRuntimeArtifactEntry(
-          artifact,
-          discovered.entry.resolved,
-        ),
-        owner: { type: 'runtime', name },
-        rolldown,
-        cwd: dirname(discovered.entry.resolved),
-        outDir,
-        minify: true,
-      })
-      artifacts.push(toManifestArtifact(outDir, built))
-    }
-
     manifest.runtimes![name] = {
       name,
       entry: toManifestArtifact(outDir, entry),
       host: hostArtifact ? toManifestArtifact(outDir, hostArtifact) : undefined,
-      artifacts,
+      artifacts: (entry.emittedArtifacts ?? []).map((artifact) =>
+        toManifestArtifact(outDir, artifact),
+      ),
     }
   }
 
@@ -267,84 +246,135 @@ function resolveNeemRuntimeSourceEntry(name: string): URL {
   return new URL(`../../../src/internal/runtime/${name}.ts`, import.meta.url)
 }
 
-export async function buildConfigArtifact(options: {
-  configFile: string
-  discovery: NeemConfigDiscovery
-  outDir: string
-  minify?: boolean
-}): Promise<NeemResolvedArtifact> {
-  const generatedEntry = await createConfigArtifactEntry(options)
-
-  try {
-    return await buildArtifact({
-      artifact: { id: 'entry', kind: 'module', entry: generatedEntry },
-      owner: { type: 'config' },
-      rolldown: createConfigRolldownOptions(options.discovery),
-      outDir: options.outDir,
-      minify: options.minify,
-    })
-  } finally {
-    if (generatedEntry !== options.configFile) {
-      await rm(generatedEntry, { force: true })
-    }
-  }
-}
-
-async function createConfigArtifactEntry(options: {
-  configFile: string
-  discovery: NeemConfigDiscovery
-  outDir: string
-}): Promise<string> {
-  const logger = options.discovery.logger
-  if (!logger || logger.source !== 'specifier') return options.configFile
-
-  const file = resolve(options.outDir, '.neem-config-entry.mjs')
-  await writeFile(
-    file,
-    [
-      `import config from ${JSON.stringify(pathToFileURL(options.configFile).href)}`,
-      `import logger from ${JSON.stringify(pathToFileURL(logger.resolved).href)}`,
-      '',
-      'export default { ...config, logger }',
-      '',
-    ].join('\n'),
-  )
-  return file
-}
-
-export function createConfigRolldownOptions(
-  discovery: NeemConfigDiscovery | (() => NeemConfigDiscovery),
-): NeemBuildConfig {
-  const imports =
-    typeof discovery === 'function'
-      ? () => collectDiscoveredLazyImports(discovery())
-      : constantImports(collectDiscoveredLazyImports(discovery))
-  return {
-    external(id: string) {
-      return imports().has(id)
-    },
-  }
-}
-
 export async function loadBuildConfig(
   input: NeemBuildConfigInput | undefined,
+  importer: string,
 ): Promise<NeemBuildConfig | undefined> {
   if (!input) return undefined
-  return (await input()).default
+  return importDefault<NeemBuildConfig>(
+    resolveRequiredRuntimeBuildEntry(importer, input),
+  )
 }
 
-function getRuntimeHostBuildConfig(
-  input: NeemRuntimeHostInput | undefined,
-): NeemBuildConfigInput | undefined {
-  return typeof input === 'function' ? undefined : input?.build
+async function loadRuntimeHostBuildConfig(
+  runtimeConfig: NeemRuntimeConfigBase,
+  importer: string,
+): Promise<NeemBuildConfig | undefined> {
+  const runtimeBuild = runtimeConfig[kNeemRuntimeBuild]
+  if (runtimeBuild?.host?.build) {
+    return loadBuildConfig(runtimeBuild.host.build, importer)
+  }
+
+  return loadBuildConfig(
+    getRuntimeHostConfig(runtimeConfig.host)?.build,
+    importer,
+  )
 }
 
-function resolveRuntimeArtifactEntry(
-  artifact: NeemArtifact,
-  entryFile: string,
-): NeemArtifact {
-  if (artifact.entry instanceof URL) return artifact
-  return { ...artifact, entry: resolve(dirname(entryFile), artifact.entry) }
+export async function createManifestConfig(
+  config: NeemConfig,
+  configFile: string,
+  outDir: string,
+): Promise<NeemBuildManifestConfig> {
+  return {
+    logger: await createManifestLogger(config.logger, configFile, outDir),
+    proxy: config.proxy,
+    runtimes: Object.fromEntries(
+      Object.entries(config.runtimes ?? {}).map(([name, runtime]) => [
+        name,
+        { threads: runtime.threads, options: runtime.options },
+      ]),
+    ),
+  }
+}
+
+async function createManifestLogger(
+  logger: NeemConfig['logger'],
+  configFile: string,
+  outDir: string,
+): Promise<NeemBuildManifestLogger | undefined> {
+  if (!logger) return undefined
+  if (typeof logger === 'string' || logger instanceof URL) {
+    const artifact = await buildArtifact({
+      artifact: {
+        id: 'logger',
+        kind: 'module',
+        entry: resolveRequiredRuntimeBuildEntry(configFile, logger),
+      },
+      owner: { type: 'config' },
+      artifactOutDir: resolve(outDir, 'config', 'logger'),
+      outDir,
+      minify: true,
+    })
+    return { type: 'module', file: toManifestPath(outDir, artifact.file) }
+  }
+
+  if (typeof logger === 'function') {
+    throw new Error(
+      'Logger function loaders are not supported in build config. Use string or URL logger module specifier.',
+    )
+  }
+
+  if (isLoggerOptions(logger)) {
+    return { type: 'options', options: logger }
+  }
+
+  throw new Error(
+    'Logger instances are not supported in build config. Use pino options, string, or URL logger module specifier.',
+  )
+}
+
+function isLoggerOptions(input: unknown): input is NeemLoggerOptions {
+  return (
+    typeof input === 'object' &&
+    input !== null &&
+    !('child' in input && typeof input.child === 'function')
+  )
+}
+
+function getRuntimeHostConfig(
+  input: NeemRuntimeConfigBase['host'],
+): { entry: NeemArtifact['entry']; build?: NeemBuildConfigInput } | undefined {
+  if (!input) return undefined
+  return typeof input === 'string' || input instanceof URL
+    ? { entry: input }
+    : input
+}
+
+function resolveRuntimeHostEntry(
+  importer: string,
+  input: NeemRuntimeConfigBase['host'],
+): NeemArtifact['entry'] | undefined {
+  const host = getRuntimeHostConfig(input)
+  return host ? resolveRuntimeBuildEntry(importer, host.entry) : undefined
+}
+
+function resolveRuntimeBuildArtifacts(
+  importer: string,
+  artifacts: readonly NeemArtifact[] | undefined,
+): readonly NeemArtifact[] | undefined {
+  return artifacts?.map((artifact) => ({
+    ...artifact,
+    entry: resolveRequiredRuntimeBuildEntry(importer, artifact.entry),
+  }))
+}
+
+function resolveRequiredRuntimeBuildEntry(
+  importer: string,
+  entry: NeemArtifact['entry'],
+): NeemArtifact['entry'] {
+  return resolveRuntimeBuildEntry(importer, entry) ?? entry
+}
+
+function resolveRuntimeBuildEntry(
+  importer: string,
+  entry: NeemArtifact['entry'] | undefined,
+): NeemArtifact['entry'] | undefined {
+  if (!entry) return undefined
+  if (entry instanceof URL) return entry
+  if (entry.startsWith('/')) return entry
+  if (entry.startsWith('.')) return resolve(dirname(importer), entry)
+  return resolveImportFile(importer, entry)
 }
 
 export function toManifestArtifact(
@@ -376,29 +406,6 @@ export async function writeManifest(
 
 export function toManifestPath(fromDir: string, target: string): string {
   return relative(fromDir, target).replace(/\\/g, '/')
-}
-
-function collectDiscoveredLazyImports(
-  discovery: NeemConfigDiscovery,
-): Set<string> {
-  const imports = new Set<string>()
-  const add = (entry: NeemDiscoveredImport | undefined) => {
-    if (!entry) return
-    imports.add(entry.specifier)
-    imports.add(entry.resolved)
-  }
-
-  for (const runtime of Object.values(discovery.runtimes)) {
-    add(runtime.entry)
-    add(runtime.build)
-    add(runtime.host?.entry)
-    add(runtime.host?.build)
-  }
-  return imports
-}
-
-function constantImports(imports: Set<string>): () => Set<string> {
-  return () => imports
 }
 
 function normalizeSelectedRuntimes(

@@ -2,7 +2,6 @@ import {
   access,
   mkdir,
   mkdtemp,
-  readdir,
   readFile,
   rm,
   writeFile,
@@ -54,29 +53,18 @@ describe('neem build', () => {
     await expectFile(resolve(outDir, manifest.runtime!.entry))
     await expectFile(resolve(outDir, 'runtime/start.js'))
     await expectFile(resolve(outDir, manifest.runtime!.worker))
-    expect(isAbsolute(manifest.config.file)).toBe(false)
-    expect(manifest.config.file.endsWith('.js')).toBe(true)
-    await expectFile(resolve(outDir, manifest.config.file))
+    expect(manifest.config.runtimes.api).toEqual({
+      threads: [{ http: { listen: { hostname: '127.0.0.1', port: 3000 } } }],
+    })
+    expect(manifest.config.logger).toMatchObject({ type: 'module' })
+    if (manifest.config.logger?.type !== 'module') {
+      throw new Error('Expected module logger artifact')
+    }
     await expectMissing(staleNeemFile)
     await expectFile(unrelatedFile)
 
-    const configFiles = await readdir(resolve(outDir, 'config/entry'))
-    expect(
-      configFiles.some((file) => /^neem\.config-[^.]+\.js$/.test(file)),
-    ).toBe(true)
-    expect(
-      configFiles.some((file) => /^neem\.config-[^.]+\.js\.map$/.test(file)),
-    ).toBe(true)
-    expect(configFiles.some((file) => /^logger-[^.]+\.js$/.test(file))).toBe(
-      true,
-    )
-    const configCode = await readFile(
-      resolve(outDir, manifest.config.file),
-      'utf8',
-    )
-    expect(configCode).toContain('./basic-app.ts')
-    expect(configCode).toContain('./basic-app.build.ts')
-    expect(configCode).not.toContain('./logger.ts')
+    await expectMissing(resolve(outDir, 'config/entry'))
+    await expectFile(resolve(outDir, manifest.config.logger.file))
     const startCode = await readFile(
       resolve(outDir, manifest.runtime!.entry),
       'utf8',
@@ -141,7 +129,7 @@ describe('neem build', () => {
     await expectFile(resolve(outDir, manifest.runtimes!.jobs.host!.file))
   })
 
-  it('builds runtime-declared worker artifacts', async () => {
+  it('builds helper-emitted worker artifacts', async () => {
     const outDir = await createTempOutDir()
 
     await buildNeem({

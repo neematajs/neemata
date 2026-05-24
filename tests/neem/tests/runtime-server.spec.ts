@@ -494,7 +494,7 @@ function createManifest(
 ): NeemBuildManifest {
   return {
     schemaVersion: 1,
-    config: { file: 'config/entry/neem.config.js' },
+    config: { runtimes: {} },
     runtimes: includeRuntimes
       ? {
           [runtimeName]: {
@@ -553,8 +553,8 @@ function createRuntimeHostSnapshot(
       runtimes: includeRuntime
         ? {
             hosted: {
-              entry: async () => ({ default: {} as never }),
-              host: async () => ({ default: {} as never }),
+              entry: './runtime-host.worker.js',
+              host: './runtime-host.host.js',
               options: {
                 eventFile,
                 upstreamUrl: 'http://127.0.0.1:3701/',
@@ -571,7 +571,7 @@ function createRuntimeHostSnapshot(
     } as NeemConfig,
     manifest: {
       schemaVersion: 1,
-      config: { file: 'config/entry/neem.config.js' },
+      config: { runtimes: {} },
       runtimes: includeRuntime
         ? {
             hosted: {

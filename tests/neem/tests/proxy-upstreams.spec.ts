@@ -130,7 +130,7 @@ function createProxySnapshot() {
 function createManifest(): NeemBuildManifest {
   return {
     schemaVersion: 1,
-    config: { file: 'config/entry/neem.config.js' },
+    config: { runtimes: {} },
     runtimes: {
       api: {
         name: 'api',

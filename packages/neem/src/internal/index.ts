@@ -1,5 +1,5 @@
-export * from './build/discovery.ts'
 export * from './build/manifest.ts'
+export * from './build/resolve.ts'
 export * from './build/rolldown.ts'
 export * from './commands/build.ts'
 export * from './commands/dev.ts'

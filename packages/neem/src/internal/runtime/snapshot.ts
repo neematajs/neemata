@@ -49,7 +49,9 @@ export function createRuntimeSnapshot(
     manifest: input.manifest,
     config: input.config,
     configFile:
-      input.configFile ?? resolve(input.outDir, input.manifest.config.file),
+      input.configFile ??
+      input.manifestFile ??
+      resolve(input.outDir, 'neem.config'),
     runtimeWorkerEntry: input.runtimeWorkerEntry,
     logger: input.logger ?? createNeemDefaultLogger(input.mode),
     artifacts: createNeemArtifactRegistry(
@@ -84,7 +86,9 @@ function validateManifest(manifest: NeemBuildManifest): void {
     )
   }
 
-  assertManifestPath(manifest.config.file, 'config.file')
+  if (manifest.config.logger?.type === 'module') {
+    assertManifestPath(manifest.config.logger.file, 'config.logger.file')
+  }
 
   for (const [runtimeName, runtime] of Object.entries(
     manifest.runtimes ?? {},

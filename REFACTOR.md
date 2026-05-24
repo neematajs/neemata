@@ -40,9 +40,9 @@ metrics semantics, store adapters, or app DI provisions.
 - Public Neem exports stay narrow: `@nmtjs/neem`, `@nmtjs/neem/cli`,
   `@nmtjs/neem/internal`.
 - `neem` is the only CLI binary in this slice.
-- Config syntax uses direct default-exported `defineConfig(...)` and static lazy
-  imports:
-  `entry: () => import('./x.ts')`, `build: () => import('./x.build.ts')`.
+- Config syntax uses direct default-exported `defineConfig(...)` and declarative
+  string/URL entries:
+  `entry: './x.ts'`, `build: './x.build.ts'`.
 - Target config uses `runtimes: { [name]: defineRuntimeConfig(...) }`.
   Runtime object keys are stable build/start/deploy unit IDs.
 - Runtime configs have no core `kind`. Neem only cares about entry artifacts,
@@ -64,9 +64,10 @@ metrics semantics, store adapters, or app DI provisions.
 - Host logic is the replacement path for current plugin main-thread behavior.
   A host can run setup/coordination on the Neem main thread, but thread
   lifecycle always stays Neem-owned.
-- Runtime helpers such as `defineNeemataRuntime(...)` can wrap generic runtime
-  config only when static imports stay visible to Neem discovery. Helpers that
-  hide host imports are not allowed.
+- Runtime helpers such as `defineNeemataRuntime(...)` and
+  `defineJobsRuntime(...)` can wrap generic runtime config. Helper-owned build
+  metadata is attached through Neem's internal build symbol, not public config
+  fields.
 - Runtime entries may return upstreams from `start()`. Neem registers returned
   upstreams with the proxy; runtimes returning no upstreams stay background-only.
 - Upstreams are the only runtime capability Neem interprets. No upstreams means
@@ -77,12 +78,18 @@ metrics semantics, store adapters, or app DI provisions.
 - Build output should support both whole-host and per-runtime standalone
   entrypoints:
   `dist/start.js` and `dist/runtimes/<name>/start.js`.
-- Static discovery uses Rolldown/OXC parser utilities and `oxc-resolver`.
+- Build/dev resolution uses `oxc-resolver` for package specifiers and relative
+  paths.
 - Build config is lazy only. Inline compiler config objects are rejected.
-- Config artifact is compiled, hashed, ESM `.js`, and externalizes discovered
-  runtime/build lazy imports.
+- Built manifests store declarative runtime options/proxy/logger metadata.
+  `neem start` no longer imports a compiled config artifact.
+- Logger config accepts inline logger options or a string/URL logger module
+  specifier. Runtime logger objects/loaders are intentionally not config values.
 - Runtime entries compile to fixed `entry` artifacts.
 - Runtime-declared artifact kinds are `worker` and `module`.
+- Public runtime `artifacts` config is removed. Extra helper-owned runtime
+  artifacts are emitted by Rolldown through Neem's hidden build metadata and
+  recorded in the manifest.
 - Artifact files use `.js`, not `.mjs`.
 - Manifest is internal v1: `neem.manifest.json` with relative paths and
   runtime-owned artifacts only.
@@ -114,13 +121,19 @@ metrics semantics, store adapters, or app DI provisions.
   runtime appears later, refactor then.
 - Jobs Redis/Valkey client factory stays owned by `@nmtjs/jobs` runtime
   lifecycle. Return duplicated connections when sharing clients elsewhere.
-- PubSub stays in `@nmtjs/pubsub` as explicit-channel, ephemeral pub/sub.
-  Neem does not know pub/sub semantics.
+- PubSub stays in `@nmtjs/pubsub` as ephemeral pub/sub. Current explicit string
+  channel API is too loose; future cleanup should add typed channel definitions
+  so channel names and payloads are bound together.
 - Durable message broker semantics are future separate package/surface, not
   part of `@nmtjs/pubsub`.
 - Durable eventing, if added, should become explicit runtime helper(s) for
-  event consumers over a durable stream/log. Do not make it a plugin-owned
-  hidden runner.
+  event consumers over durable streams/logs. Do not make it a plugin-owned
+  hidden runner. Target package name is `@nmtjs/eventing`.
+- Eventing should expose typed event definitions and avoid raw strings in app
+  code. Adapters can still operate on raw topics/records internally.
+- Eventing MVP should target `@platformatic/kafka` for Kafka-compatible
+  brokers and Redis Streams for Redis/Valkey. RabbitMQ Streams can be evaluated
+  later; plain Rabbit queues are not the target.
 - Event consumers should follow the same shape as jobs: host owns broker
   consumption/coordination, Neem owns threads, runtime package owns port
   protocol.
@@ -142,7 +155,7 @@ Wired:
 - `neem dev`
 - standalone `dist/start.js`
 - internal manifest/artifact registry
-- config/static import discovery
+- config entry resolution
 - managed workers and worker pools
 - runtime server lifecycle and health snapshot
 - runtime scoped reload
@@ -151,10 +164,12 @@ Wired:
 - proxy lifecycle with optional `@nmtjs/proxy`
 - config logger flow
 - generic runtime-map config/manifest/server path
+- declarative string/URL config entries
+- manifest-backed runtime config for built starts; no built config import
 - runtime host setup/plan/start/stop/fail path
 - selected-runtime build/start/dev
 - per-runtime standalone start entries
-- runtime-declared artifacts
+- helper-owned emitted artifacts
 - runtime thread handles with raw `MessagePort`
 - runtime host/thread failure cleanup contract
 - runtime host cleanup remains Neem-owned even if host `fail`/`stop` handlers
@@ -163,6 +178,7 @@ Wired:
   worker exit
 - runtime lifecycle observer hooks, including scoped `runtime:reload`
 - manifest runtime artifact validation
+- helper-emitted runtime artifacts via hidden Neem build metadata
 
 Ported packages:
 
@@ -173,8 +189,7 @@ Ported packages:
   - explicit Neem runtime host with Neem-owned runner threads
   - runner worker stop fires lifecycle dispose hook so active jobs receive abort
     signal
-  - `defineJobs(...)` config helper and `defineJobsRuntimeArtifacts(...)`
-    artifact helper
+  - `defineJobs(...)` config helper and `defineJobsRuntime(...)` runtime helper
   - CRUD-like lifecycle hooks: `added`, `updated`, `removed`
 - `@nmtjs/pubsub`
   - `PubSubManager`
@@ -182,6 +197,7 @@ Ported packages:
   - explicit channel strings; no option hashing or durable broker semantics
   - Redis adapter with caller-owned client
   - app runtime plugin
+  - typed channel definition cleanup still needed
 
 Still incomplete:
 
@@ -220,25 +236,23 @@ Still incomplete:
 ```ts
 import { defineConfig, defineRuntimeConfig } from '@nmtjs/neem'
 import { defineNeemataRuntime } from '@nmtjs/application/neem'
-import { defineJobsRuntimeArtifacts } from '@nmtjs/jobs/neem'
+import { defineJobsRuntime } from '@nmtjs/jobs/neem'
 
 export default defineConfig({
+  logger: './logger.ts',
   runtimes: {
     api: defineNeemataRuntime({
-      entry: () => import('./src/api.ts'),
-      build: () => import('./src/api.build.ts'),
+      entry: './src/api.ts',
+      build: './src/api.build.ts',
       threads: [{ http: { listen: { hostname: '127.0.0.1', port: 3000 } } }],
     }),
 
-    jobs: defineRuntimeConfig({
-      entry: () => import('./src/jobs.runtime.ts'),
-      host: () => import('@nmtjs/jobs/neem/host'),
-      build: () => import('./src/jobs.build.ts'),
-      artifacts: defineJobsRuntimeArtifacts,
+    jobs: defineJobsRuntime({
+      entry: './src/jobs.ts',
     }),
 
     custom: defineRuntimeConfig({
-      entry: () => import('./src/custom.runtime.ts'),
+      entry: './src/custom.runtime.ts',
       threads: 1,
       options: { foo: 'bar' },
     }),
@@ -248,10 +262,12 @@ export default defineConfig({
 
 Constraints:
 
-- Config loading must not import runtime/build implementation modules.
-- Runtime `start` imports compiled config only for runtime options.
+- Config loading may import the config file during build/dev only. Config code
+  must stay declarative and must not open runtime clients/connections.
+- Runtime `start` reads manifest config metadata and does not import the source
+  or compiled config module.
 - Runtime artifact paths come from manifest, not config thunks.
-- Runtime/build thunks must remain static string-literal dynamic imports.
+- Runtime/build entries are string/URL specifiers resolved from the config file.
 - Runtime helper typing is inferred at helper call sites.
 - Runtime object keys are unique names and become build/start/deploy selectors.
 
@@ -338,11 +354,11 @@ Host/runtime responsibility split:
 
 ## Dev Flow
 
-1. Discover static config entry imports.
-2. Watch config artifact.
-3. Watch runtime host/worker artifacts.
+1. Load source config.
+2. Watch config file.
+3. Watch runtime host/worker artifacts and helper-emitted artifacts.
 4. Write `.neem/neem.manifest.json` after each successful output.
-5. Build runtime snapshot from compiled config + manifest.
+5. Build runtime snapshot from manifest-backed config metadata.
 6. Apply change:
    - config -> full `server.reload(snapshot)`
    - runtime entry/artifact -> `server.reloadRuntime(runtimeName, snapshot)`
@@ -355,23 +371,21 @@ pending scoped runtime reloads when needed.
 
 `neem build`:
 
-1. Discover config imports.
-2. Load source config.
+1. Load source config.
 3. Resolve selected runtime keys, if any.
-4. Build config/runtime host/worker artifacts.
-5. Build runtime-declared artifacts.
+4. Build runtime host/worker artifacts.
+5. Build helper-emitted runtime artifacts.
 6. Write manifest.
 7. Emit root `start.js` and per-runtime `runtimes/<name>/start.js`.
 
 `neem start`:
 
 1. Read manifest.
-2. Import compiled config.
-3. Resolve artifact registry.
-4. Resolve selected runtime keys, if any.
-5. Start runtime worker pools.
-6. Register returned upstreams with proxy if configured.
-7. Stop in reverse: proxy, runtimes.
+2. Resolve artifact registry.
+3. Resolve selected runtime keys, if any.
+4. Start runtime worker pools.
+5. Register returned upstreams with proxy if configured.
+6. Stop in reverse: proxy, runtimes.
 
 Standalone `node dist/start.js` follows same runtime path and injects
 `dist/runtime/worker-entry.js`.

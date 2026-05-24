@@ -1,12 +1,6 @@
-import { defineJobsRuntimeArtifacts } from '@nmtjs/jobs/neem'
-import { defineConfig, defineRuntimeConfig } from '@nmtjs/neem'
+import { defineJobsRuntime } from '@nmtjs/jobs/neem'
+import { defineConfig } from '@nmtjs/neem'
 
 export default defineConfig({
-  runtimes: {
-    jobs: defineRuntimeConfig({
-      entry: () => import('./runtime-jobs.ts'),
-      host: () => import('@nmtjs/jobs/neem/host'),
-      artifacts: defineJobsRuntimeArtifacts,
-    }),
-  },
+  runtimes: { jobs: defineJobsRuntime({ entry: './runtime-jobs.ts' }) },
 })
