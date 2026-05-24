@@ -3,13 +3,18 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build:deps": "tsgo -b ../../packages/neem/tsconfig.build.json ../../packages/application/tsconfig.build.json",
+    "build:deps": "tsgo -b ../../packages/neem/tsconfig.build.json ../../packages/application/tsconfig.build.json ../../packages/jobs/tsconfig.build.json ../../packages/pubsub/tsconfig.build.json",
     "test": "pnpm run build:deps && vitest run --config vitest.config.ts",
     "check:type": "tsgo -p tsconfig.json --noEmit"
   },
   "devDependencies": {
     "@nmtjs/application": "workspace:*",
+    "@nmtjs/contract": "workspace:*",
     "@nmtjs/core": "workspace:*",
-    "@nmtjs/neem": "workspace:*"
+    "@nmtjs/jobs": "workspace:*",
+    "@nmtjs/neem": "workspace:*",
+    "@nmtjs/pubsub": "workspace:*",
+    "@nmtjs/type": "workspace:*",
+    "ioredis": "^5.10.1"
   }
 }

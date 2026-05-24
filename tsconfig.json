@@ -28,6 +28,9 @@
       "path": "./packages/json-format/tsconfig.json"
     },
     {
+      "path": "./packages/jobs/tsconfig.json"
+    },
+    {
       "path": "./packages/msgpack-format/tsconfig.json"
     },
     {
@@ -38,6 +41,9 @@
     },
     {
       "path": "./packages/protocol/tsconfig.json"
+    },
+    {
+      "path": "./packages/pubsub/tsconfig.json"
     },
     {
       "path": "./packages/type/tsconfig.json"

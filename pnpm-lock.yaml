@@ -201,6 +201,37 @@ importers:
         specifier: github:uNetworking/uWebSockets.js#v20.67.0
         version: https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/e0f56ebb4b349017f006e14d1cd29052f2a7121d
 
+  packages/jobs:
+    dependencies:
+      '@nmtjs/application':
+        specifier: workspace:*
+        version: link:../application
+      '@nmtjs/common':
+        specifier: workspace:*
+        version: link:../common
+      '@nmtjs/contract':
+        specifier: workspace:*
+        version: link:../contract
+      '@nmtjs/core':
+        specifier: workspace:*
+        version: link:../core
+      '@nmtjs/neem':
+        specifier: workspace:*
+        version: link:../neem
+      '@nmtjs/type':
+        specifier: workspace:*
+        version: link:../type
+      bullmq:
+        specifier: 5.77.0
+        version: 5.77.0
+    devDependencies:
+      ioredis:
+        specifier: ^5.10.1
+        version: 5.10.1
+      iovalkey:
+        specifier: ^0.3.3
+        version: 0.3.3
+
   packages/json-format:
     dependencies:
       '@nmtjs/common':
@@ -348,6 +379,25 @@ importers:
         specifier: workspace:*
         version: link:../core
 
+  packages/pubsub:
+    dependencies:
+      '@nmtjs/application':
+        specifier: workspace:*
+        version: link:../application
+      '@nmtjs/common':
+        specifier: workspace:*
+        version: link:../common
+      '@nmtjs/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      ioredis:
+        specifier: ^5.10.1
+        version: 5.10.1
+      iovalkey:
+        specifier: ^0.3.3
+        version: 0.3.3
+
   packages/type:
     dependencies:
       '@standard-schema/spec':
@@ -419,12 +469,27 @@ importers:
       '@nmtjs/application':
         specifier: workspace:*
         version: link:../../packages/application
+      '@nmtjs/contract':
+        specifier: workspace:*
+        version: link:../../packages/contract
       '@nmtjs/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@nmtjs/jobs':
+        specifier: workspace:*
+        version: link:../../packages/jobs
       '@nmtjs/neem':
         specifier: workspace:*
         version: link:../../packages/neem
+      '@nmtjs/pubsub':
+        specifier: workspace:*
+        version: link:../../packages/pubsub
+      '@nmtjs/type':
+        specifier: workspace:*
+        version: link:../../packages/type
+      ioredis:
+        specifier: ^5.10.1
+        version: 5.10.1
 
   tests/neemata:
     devDependencies:
@@ -458,6 +523,9 @@ importers:
       '@nmtjs/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
+      '@nmtjs/pubsub':
+        specifier: workspace:*
+        version: link:../../packages/pubsub
       '@nmtjs/type':
         specifier: workspace:*
         version: link:../../packages/type
@@ -1504,11 +1572,6 @@ packages:
   secure-json-parse@4.1.0:
     resolution: {integrity: sha512-l4KnYfEyqYJxDwlNVyRfO2E4NTHfMKAWdUuA8J0yve2Dz/E/PdBepY03RvyJpssIpRFwJoCD55wA+mEDs6ByWA==}
 
-  semver@7.7.4:
-    resolution: {integrity: sha512-vFKC2IEtQnVhpT78h1Yp8wzwrf8CM+MzKMHGJZfBtzhZNycRFnXsHk6E5TxIkkMsgNS7mdX3AGB7x2QM2di4lA==}
-    engines: {node: '>=10'}
-    hasBin: true
-
   semver@7.8.0:
     resolution: {integrity: sha512-AcM7dV/5ul4EekoQ29Agm5vri8JNqRyj39o0qpX6vDF2GZrtutZl5RwgD1XnZjiTAfncsJhMI48QQH3sN87YNA==}
     engines: {node: '>=10'}
@@ -1582,11 +1645,11 @@ packages:
     resolution: {integrity: sha512-oJFu94HQb+KVduSUQL7wnpmqnfmLsOA/nAh6b6EH0wCEoK0/mPeXU6c3wKDV83MkOuHPRHtSXKKU99IBazS/2w==}
 
   uWebSockets.js@https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/e0f56ebb4b349017f006e14d1cd29052f2a7121d:
-    resolution: {gitHosted: true, integrity: sha512-QlTHqq+Dgdfhw55oQ1laP8QCKOK/np1I8QbQFi3+oDzyip0/avIY7dxo+HfmPiUduKJ4D0puaX0ApFAek41qPA==, tarball: https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/e0f56ebb4b349017f006e14d1cd29052f2a7121d}
+    resolution: {gitHosted: true, tarball: https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/e0f56ebb4b349017f006e14d1cd29052f2a7121d}
     version: 20.67.0
 
   uWebSockets.js@https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/fcfc622a4286909593b7f390056d89e0ca3b56b9:
-    resolution: {gitHosted: true, integrity: sha512-jqhmfgWjK666yl7yeIsZYjFtPU1wL+4+H4BZZ9vxAk7ntzA+EC6juu9xuD6aOa6jtoC6EzUZAlPBojgZtzXXCA==, tarball: https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/fcfc622a4286909593b7f390056d89e0ca3b56b9}
+    resolution: {gitHosted: true, tarball: https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/fcfc622a4286909593b7f390056d89e0ca3b56b9}
     version: 20.57.0
 
   undici-types@7.16.0:
@@ -2394,7 +2457,7 @@ snapshots:
 
   make-dir@4.0.0:
     dependencies:
-      semver: 7.7.4
+      semver: 7.8.0
 
   minimist@1.2.8: {}
 
@@ -2583,8 +2646,6 @@ snapshots:
   safe-stable-stringify@2.5.0: {}
 
   secure-json-parse@4.1.0: {}
-
-  semver@7.7.4: {}
 
   semver@7.8.0: {}
 
