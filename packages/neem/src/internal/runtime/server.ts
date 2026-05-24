@@ -1,31 +1,28 @@
 import type { NeemMode } from '../../public/index.ts'
-import type {
-  NeemStartedAppWorker,
-  NeemStartedAppWorkerHealth,
-  NeemStartedAppWorkerPool,
-} from './app.ts'
 import type { NeemHostHooks } from './hooks.ts'
-import type { NeemPluginManager, NeemStartedPlugin } from './plugin.ts'
+import type { NeemProxyHealth, NeemProxyManager } from './proxy.ts'
+import type { NeemProxyUpstreamSnapshot } from './proxy-upstreams.ts'
 import type {
-  NeemProxyHealth,
-  NeemProxyManager,
-  NeemProxyUpstreamSnapshot,
-} from './proxy.ts'
+  NeemRuntimeManager,
+  NeemStartedRuntimePool,
+  NeemStartedRuntimeThread,
+  NeemStartedRuntimeThreadHealth,
+} from './runtime.ts'
 import type { NeemRuntimeSnapshot } from './snapshot.ts'
 import type { NeemWorkerPoolHealth } from './worker-pool.ts'
-import { NeemAppManager } from './app.ts'
 import { callNeemHostHook, createNeemHostHooks } from './hooks.ts'
 import { createNeemChildLogger } from './logger.ts'
-import { NeemProxyUpstreamRegistry } from './proxy.ts'
+import { NeemProxyUpstreamRegistry } from './proxy-upstreams.ts'
 import { normalizeError } from './utils.ts'
 
-export type NeemApplicationServerOptions = {
+export type NeemRuntimeServerOptions = {
   snapshot: NeemRuntimeSnapshot
   failOnWorkerError?: boolean
+  hooks?: NeemHostHooks
   onFailure?: (error: Error) => void | Promise<void>
 }
 
-export type NeemApplicationServerState =
+export type NeemRuntimeServerState =
   | 'idle'
   | 'starting'
   | 'running'
@@ -34,50 +31,48 @@ export type NeemApplicationServerState =
   | 'stopping'
   | 'stopped'
 
-export type NeemApplicationServerSnapshot = {
+export type NeemRuntimeServerSnapshot = {
   mode: NeemMode
   outDir: string
-  appNames: readonly string[]
-  pluginNames: readonly string[]
+  runtimeNames: readonly string[]
   artifactCount: number
-  state: NeemApplicationServerState
+  state: NeemRuntimeServerState
   revision: number
   lastError?: Error
 }
 
-export type NeemApplicationServerHealth = NeemApplicationServerSnapshot & {
+export type NeemRuntimeServerHealth = NeemRuntimeServerSnapshot & {
   ready: boolean
-  apps: readonly NeemApplicationServerAppHealth[]
-  plugins: ReturnType<NeemStartedPlugin['getHealth']>[]
+  runtimes: readonly NeemRuntimeServerRuntimeHealth[]
   proxy: NeemProxyHealth
 }
 
-export type NeemApplicationServerAppHealth = {
+export type NeemRuntimeServerRuntimeHealth = {
   name: string
   pool: NeemWorkerPoolHealth
-  workers: readonly NeemStartedAppWorkerHealth[]
+  threads: readonly NeemStartedRuntimeThreadHealth[]
 }
 
-export class NeemApplicationServer {
-  private state: NeemApplicationServerState = 'idle'
+export class NeemRuntimeServer {
+  private state: NeemRuntimeServerState = 'idle'
   private revision = 0
   private lastError: Error | undefined
   private snapshot: NeemRuntimeSnapshot
   private logger: NeemRuntimeSnapshot['logger']
   private operation = Promise.resolve()
-  private pluginManager: NeemPluginManager | undefined
-  private appManager: NeemAppManager | undefined
+  private runtimeManager: NeemRuntimeManager | undefined
   private proxyManager: NeemProxyManager | undefined
   private proxyUpstreams = new NeemProxyUpstreamRegistry()
-  private readonly hooks: NeemHostHooks = createNeemHostHooks()
+  private readonly hooks: NeemHostHooks
 
-  constructor(readonly options: NeemApplicationServerOptions) {
+  constructor(readonly options: NeemRuntimeServerOptions) {
     this.snapshot = options.snapshot
     this.logger = options.snapshot.logger
+    this.hooks = options.hooks ?? createNeemHostHooks()
     this.proxyUpstreams.on('add', (event) => {
       this.logger.trace(
         {
-          appName: event.appName,
+          runtimeName: event.runtimeName,
           transport: event.proxyUpstream.transport,
           url: event.upstream.url,
           count: event.count,
@@ -88,7 +83,7 @@ export class NeemApplicationServer {
     this.proxyUpstreams.on('remove', (event) => {
       this.logger.trace(
         {
-          appName: event.appName,
+          runtimeName: event.runtimeName,
           transport: event.proxyUpstream.transport,
           url: event.upstream.url,
           count: event.count,
@@ -98,12 +93,11 @@ export class NeemApplicationServer {
     })
   }
 
-  getSnapshot(): NeemApplicationServerSnapshot {
+  getSnapshot(): NeemRuntimeServerSnapshot {
     return {
       mode: this.snapshot.mode,
       outDir: this.snapshot.outDir,
-      appNames: Object.keys(this.snapshot.manifest.apps),
-      pluginNames: this.snapshot.manifest.plugins.map((plugin) => plugin.name),
+      runtimeNames: Object.keys(this.snapshot.manifest.runtimes ?? {}),
       artifactCount: this.snapshot.artifacts.list().length,
       state: this.state,
       revision: this.revision,
@@ -111,15 +105,15 @@ export class NeemApplicationServer {
     }
   }
 
-  getState(): NeemApplicationServerState {
+  getState(): NeemRuntimeServerState {
     return this.state
   }
 
-  getHealth(): NeemApplicationServerHealth {
-    const apps = this.getAppWorkerPools().map((pool) => ({
-      name: pool.appName,
+  getHealth(): NeemRuntimeServerHealth {
+    const runtimes = this.getRuntimeWorkerPools().map((pool) => ({
+      name: pool.runtimeName,
       pool: pool.getHealth(),
-      workers: pool.list().map((worker) => worker.getHealth()),
+      threads: pool.list().map((thread) => thread.getHealth()),
     }))
     const proxy = this.proxyManager?.getHealth() ?? {
       enabled: Boolean(this.snapshot.config.proxy),
@@ -131,29 +125,23 @@ export class NeemApplicationServer {
       ...this.getSnapshot(),
       ready:
         this.state === 'running' &&
-        apps.every((app) => app.pool.state === 'ready') &&
-        this.getPlugins().every((plugin) => plugin.getState() === 'ready') &&
+        runtimes.every((runtime) => runtime.pool.state === 'ready') &&
         (!proxy.enabled || proxy.running),
-      apps,
-      plugins: this.getPlugins().map((plugin) => plugin.getHealth()),
+      runtimes,
       proxy,
     }
   }
 
-  getAppWorkers(): readonly NeemStartedAppWorker[] {
-    return this.appManager?.listWorkers() ?? []
+  getRuntimeWorkers(): readonly NeemStartedRuntimeThread[] {
+    return this.runtimeManager?.listThreads() ?? []
   }
 
-  getAppWorkerPools(): readonly NeemStartedAppWorkerPool[] {
-    return this.appManager?.listPools() ?? []
+  getRuntimeWorkerPools(): readonly NeemStartedRuntimePool[] {
+    return this.runtimeManager?.listPools() ?? []
   }
 
   getProxyUpstreams(): readonly NeemProxyUpstreamSnapshot[] {
     return this.proxyUpstreams.list()
-  }
-
-  getPlugins(): readonly NeemStartedPlugin[] {
-    return this.pluginManager?.list() ?? []
   }
 
   start(): Promise<void> {
@@ -200,27 +188,8 @@ export class NeemApplicationServer {
     })
   }
 
-  reloadApp(appName: string, snapshot: NeemRuntimeSnapshot): Promise<void> {
-    return this.enqueue(async () => {
-      this.markState('reloading')
-      this.snapshot = snapshot
-      this.logger = createNeemChildLogger(snapshot.logger, 'Neem server')
-
-      try {
-        await this.reloadAppRuntime(appName, snapshot)
-        this.markState('running')
-      } catch (error) {
-        this.markState('failed', normalizeError(error))
-        this.logger.error(
-          new Error(`Failed to reload Neem app [${appName}]`, { cause: error }),
-        )
-        throw error
-      }
-    })
-  }
-
-  reloadPlugin(
-    instanceId: number,
+  reloadRuntime(
+    runtimeName: string,
     snapshot: NeemRuntimeSnapshot,
   ): Promise<void> {
     return this.enqueue(async () => {
@@ -229,12 +198,12 @@ export class NeemApplicationServer {
       this.logger = createNeemChildLogger(snapshot.logger, 'Neem server')
 
       try {
-        await this.reloadPluginRuntime(instanceId, snapshot)
+        await this.reloadRuntimeRuntime(runtimeName, snapshot)
         this.markState('running')
       } catch (error) {
         this.markState('failed', normalizeError(error))
         this.logger.error(
-          new Error(`Failed to reload Neem plugin [${instanceId}]`, {
+          new Error(`Failed to reload Neem runtime [${runtimeName}]`, {
             cause: error,
           }),
         )
@@ -259,17 +228,9 @@ export class NeemApplicationServer {
   }
 
   protected async startRuntime(snapshot: NeemRuntimeSnapshot): Promise<void> {
-    const { NeemPluginManager } = await import('./plugin.ts')
     const { NeemProxyManager } = await import('./proxy.ts')
-    const pluginManager = new NeemPluginManager({
-      snapshot,
-      hooks: this.hooks,
-      onWorkerFailure: (error) => {
-        this.markState('failed', error)
-        void this.options.onFailure?.(error)
-      },
-    })
-    const appManager = new NeemAppManager({
+    const { NeemRuntimeManager } = await import('./runtime.ts')
+    const runtimeManager = new NeemRuntimeManager({
       snapshot,
       proxyUpstreams: this.proxyUpstreams,
       hooks: this.hooks,
@@ -285,56 +246,39 @@ export class NeemApplicationServer {
       : undefined
 
     try {
-      await pluginManager.start()
       await this.callHook('server:start')
-      await appManager.start()
+      await runtimeManager.start()
       await proxyManager?.start()
-      this.pluginManager = pluginManager
-      this.appManager = appManager
+      this.runtimeManager = runtimeManager
       this.proxyManager = proxyManager
     } catch (error) {
       await proxyManager?.stop().catch(() => undefined)
-      await appManager.stop().catch(() => undefined)
-      await pluginManager.stop().catch(() => undefined)
+      await runtimeManager.stop().catch(() => undefined)
       throw error
     }
   }
 
   protected async stopRuntime(_snapshot: NeemRuntimeSnapshot): Promise<void> {
     const proxyManager = this.proxyManager
-    const appManager = this.appManager
-    const pluginManager = this.pluginManager
+    const runtimeManager = this.runtimeManager
     this.proxyManager = undefined
-    this.appManager = undefined
-    this.pluginManager = undefined
+    this.runtimeManager = undefined
     await proxyManager?.stop()
-    await appManager?.stop()
-    await pluginManager?.stop()
+    await runtimeManager?.stop()
   }
 
-  protected async reloadAppRuntime(
-    appName: string,
+  protected async reloadRuntimeRuntime(
+    runtimeName: string,
     snapshot: NeemRuntimeSnapshot,
   ): Promise<void> {
-    if (!this.appManager) {
-      throw new Error('Cannot reload Neem app before runtime starts')
+    if (!this.runtimeManager) {
+      throw new Error('Cannot reload Neem runtime before server starts')
     }
 
-    await this.appManager.reloadApp(appName, snapshot)
+    await this.runtimeManager.reloadRuntime(runtimeName, snapshot)
   }
 
-  protected async reloadPluginRuntime(
-    instanceId: number,
-    snapshot: NeemRuntimeSnapshot,
-  ): Promise<void> {
-    if (!this.pluginManager) {
-      throw new Error('Cannot reload Neem plugin before runtime starts')
-    }
-
-    await this.pluginManager.reloadPlugin(instanceId, snapshot)
-  }
-
-  private markState(state: NeemApplicationServerState, error?: Error): void {
+  private markState(state: NeemRuntimeServerState, error?: Error): void {
     const from = this.state
     this.revision += 1
     this.state = state

@@ -1,25 +1,31 @@
-import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { startNeem } from '../commands/start.ts'
 
-const outDir = dirname(fileURLToPath(import.meta.url))
-const controller = new AbortController()
+export type NeemStandaloneStartOptions = { runtimes?: readonly string[] }
 
-const abort = () => controller.abort()
-process.once('SIGINT', abort)
-process.once('SIGTERM', abort)
+export async function startStandalone(
+  options: NeemStandaloneStartOptions = {},
+): Promise<void> {
+  const outDir = fileURLToPath(new URL('../', import.meta.url))
+  const controller = new AbortController()
+  const abort = () => controller.abort()
 
-try {
-  const host = await startNeem({
-    cwd: outDir,
-    outDir: '.',
-    runtimeWorkerEntry: new URL('./runtime/worker-entry.js', import.meta.url),
-    signal: controller.signal,
-  })
+  process.once('SIGINT', abort)
+  process.once('SIGTERM', abort)
 
-  await host.closed
-} finally {
-  process.off('SIGINT', abort)
-  process.off('SIGTERM', abort)
+  try {
+    const host = await startNeem({
+      cwd: outDir,
+      outDir: '.',
+      runtimes: options.runtimes,
+      runtimeWorkerEntry: new URL('./worker-entry.js', import.meta.url),
+      signal: controller.signal,
+    })
+
+    await host.closed
+  } finally {
+    process.off('SIGINT', abort)
+    process.off('SIGTERM', abort)
+  }
 }

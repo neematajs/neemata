@@ -1,7 +1,7 @@
 import { appendFileSync } from 'node:fs'
 
-import type { NeemAppRuntimeContext } from '@nmtjs/neem'
-import { defineApp } from '@nmtjs/neem'
+import type { NeemWorkerRuntimeContext } from '@nmtjs/neem'
+import { defineWorker } from '@nmtjs/neem'
 
 export type RuntimeAppThreadOptions = {
   http: { listen: { hostname: string; port: number } }
@@ -23,18 +23,19 @@ function wait(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-export default defineApp<RuntimeAppThreadOptions, RuntimeAppDefinition>({
-  kind: 'runtime-fixture',
+export default defineWorker<RuntimeAppThreadOptions, RuntimeAppDefinition>({
   definition: { fixture: 'runtime-app' },
   createRuntime(
-    ctx: NeemAppRuntimeContext<RuntimeAppThreadOptions, RuntimeAppDefinition>,
+    ctx: NeemWorkerRuntimeContext<
+      RuntimeAppThreadOptions,
+      RuntimeAppDefinition
+    >,
   ) {
     record({
       event: 'create',
       mode: ctx.mode,
-      appName: ctx.appName,
-      threadIndex: ctx.threadIndex,
-      threadOptions: ctx.threadOptions,
+      name: ctx.name,
+      data: ctx.data,
       definition: ctx.definition,
       artifact: ctx.artifact,
       artifacts: ctx.artifacts.list(),
@@ -43,40 +44,31 @@ export default defineApp<RuntimeAppThreadOptions, RuntimeAppDefinition>({
 
     return {
       async start() {
-        if (ctx.threadOptions.startDelayMs) {
-          await wait(ctx.threadOptions.startDelayMs)
+        if (ctx.data.startDelayMs) {
+          await wait(ctx.data.startDelayMs)
         }
 
-        record({
-          event: 'start',
-          appName: ctx.appName,
-          threadIndex: ctx.threadIndex,
-        })
+        record({ event: 'start', name: ctx.name })
 
-        if (ctx.threadOptions.fail === 'start') {
-          throw new Error(`fixture start failure ${ctx.threadIndex}`)
+        if (ctx.data.fail === 'start') {
+          throw new Error(`fixture start failure ${ctx.name}`)
         }
 
-        if (ctx.threadOptions.fail === 'runtime') {
+        if (ctx.data.fail === 'runtime') {
           setTimeout(() => {
-            throw new Error(`fixture runtime failure ${ctx.threadIndex}`)
-          }, ctx.threadOptions.runtimeFailDelayMs ?? 25)
+            throw new Error(`fixture runtime failure ${ctx.name}`)
+          }, ctx.data.runtimeFailDelayMs ?? 25)
         }
 
-        const { hostname, port } = ctx.threadOptions.http.listen
-        return [
-          {
-            type: 'http',
-            url: `http://${hostname}:${port}/${ctx.appName}/${ctx.threadIndex}`,
-          },
-        ]
+        const { hostname, port } = ctx.data.http.listen
+        return {
+          upstreams: [
+            { type: 'http', url: `http://${hostname}:${port}/${ctx.name}` },
+          ],
+        }
       },
       stop() {
-        record({
-          event: 'stop',
-          appName: ctx.appName,
-          threadIndex: ctx.threadIndex,
-        })
+        record({ event: 'stop', name: ctx.name })
       },
     }
   },

@@ -3,27 +3,29 @@ import { resolve } from 'node:path'
 import type { Logger } from '@nmtjs/core'
 
 import type { NeemArtifactRegistry } from '../../public/artifact.ts'
-import type { NeemApplicationUpstream, NeemMode } from '../../public/runtime.ts'
+import type { NeemMode, NeemRuntimeUpstream } from '../../public/runtime.ts'
 import type { NeemBuildManifest } from '../build/manifest.ts'
-import type {
-  NeemStartedAppWorker,
-  NeemStartedAppWorkerPool,
-} from '../runtime/app.ts'
-import type {
-  NeemApplicationServer,
-  NeemApplicationServerHealth,
-} from '../runtime/application-server.ts'
-import type { NeemStartedPlugin } from '../runtime/plugin.ts'
+import type { NeemHostHooks } from '../runtime/hooks.ts'
 import type { NeemProxyUpstreamSnapshot } from '../runtime/proxy.ts'
+import type {
+  NeemStartedRuntimePool,
+  NeemStartedRuntimeThread,
+} from '../runtime/runtime.ts'
+import type {
+  NeemRuntimeServer,
+  NeemRuntimeServerHealth,
+} from '../runtime/server.ts'
 import { NEEM_MANIFEST_FILE } from '../build/manifest.ts'
-import { NeemApplicationServer as RuntimeApplicationServer } from '../runtime/application-server.ts'
+import { NeemRuntimeServer as RuntimeServer } from '../runtime/server.ts'
 import { loadBuiltRuntimeSnapshot } from '../runtime/snapshot-loader.ts'
 
 export type NeemStartOptions = {
   outDir?: string
   cwd?: string
   mode?: NeemMode
+  runtimes?: readonly string[]
   failOnWorkerError?: boolean
+  hooks?: NeemHostHooks
   runtimeWorkerEntry?: string | URL
   signal?: AbortSignal
 }
@@ -35,11 +37,10 @@ export type NeemStartedHost = {
   manifest: NeemBuildManifest
   artifacts: NeemArtifactRegistry
   closed: Promise<void>
-  getPlugins: () => readonly NeemStartedPlugin[]
-  getWorkers: () => readonly NeemStartedAppWorker[]
-  getWorkerPools: () => readonly NeemStartedAppWorkerPool[]
-  getHealth: () => NeemApplicationServerHealth
-  getUpstreams: () => readonly NeemApplicationUpstream[]
+  getRuntimeWorkers: () => readonly NeemStartedRuntimeThread[]
+  getRuntimeWorkerPools: () => readonly NeemStartedRuntimePool[]
+  getHealth: () => NeemRuntimeServerHealth
+  getUpstreams: () => readonly NeemRuntimeUpstream[]
   getProxyUpstreams: () => readonly NeemProxyUpstreamSnapshot[]
   stop: () => Promise<void>
 }
@@ -56,19 +57,23 @@ export async function startNeem(
     cwd,
     outDir,
     mode,
+    runtimes: options.runtimes,
     runtimeWorkerEntry: options.runtimeWorkerEntry,
   })
   snapshot.logger.info({ outDir, mode }, 'Starting Neem from built output')
   snapshot.logger.debug(
     {
       manifestFile,
-      apps: Object.keys(snapshot.manifest.apps),
-      plugins: snapshot.manifest.plugins.map((plugin) => plugin.name),
+      runtimes: Object.keys(snapshot.manifest.runtimes ?? {}),
       artifacts: snapshot.artifacts.list().length,
     },
     'Neem runtime snapshot loaded',
   )
-  const server = new RuntimeApplicationServer({ snapshot, failOnWorkerError })
+  const server = new RuntimeServer({
+    snapshot,
+    failOnWorkerError,
+    hooks: options.hooks,
+  })
   const host = createStartedHost({
     mode,
     outDir,
@@ -113,7 +118,7 @@ function createStartedHost(options: {
   manifest: NeemBuildManifest
   artifacts: NeemArtifactRegistry
   logger: Logger
-  server: NeemApplicationServer
+  server: NeemRuntimeServer
 }) {
   let stopPromise: Promise<void> | undefined
   let closedSettled = false
@@ -157,21 +162,18 @@ function createStartedHost(options: {
     manifest: options.manifest,
     artifacts: options.artifacts,
     closed,
-    getPlugins() {
-      return options.server.getPlugins()
+    getRuntimeWorkers() {
+      return options.server.getRuntimeWorkers()
     },
-    getWorkers() {
-      return options.server.getAppWorkers()
-    },
-    getWorkerPools() {
-      return options.server.getAppWorkerPools()
+    getRuntimeWorkerPools() {
+      return options.server.getRuntimeWorkerPools()
     },
     getHealth() {
       return options.server.getHealth()
     },
     getUpstreams() {
       return options.server
-        .getAppWorkers()
+        .getRuntimeWorkers()
         .flatMap((worker) => worker.getUpstreams())
     },
     getProxyUpstreams() {

@@ -1,35 +1,38 @@
 import type { MessagePort } from 'node:worker_threads'
 import { pathToFileURL } from 'node:url'
 
-import { LifecycleHooks } from '@nmtjs/application'
+import { LifecycleHook, LifecycleHooks } from '@nmtjs/application'
 import { Container, CoreInjectables, provision } from '@nmtjs/core'
 import { defineWorker } from '@nmtjs/neem'
 import { UnrecoverableError } from 'bullmq'
 
 import type { JobsClientInstance } from '../client.ts'
 import type { JobProgressCheckpoint } from '../core/types.ts'
-import type { JobsPlugin } from './plugin.ts'
 import type { JobsWorkerData, JobsWorkerRequest } from './protocol.ts'
+import type { JobsConfig } from './runtime.ts'
 import { closeJobsClient, resolveJobsClient } from '../client.ts'
 import { jobWorkerPool } from '../core/injectables.ts'
 import { JobManager, QueueJobRunner } from '../manager.ts'
-import { resolveJobsConfig } from './plugin.ts'
+import { resolveJobsWorkerConfig } from './runtime.ts'
 
 export default defineWorker<JobsWorkerData>({
-  kind: 'jobs-worker',
   definition: {},
   createRuntime(ctx) {
     let client: JobsClientInstance | undefined
     let manager: JobManager | undefined
     let listener: ((message: JobsWorkerRequest) => void) | undefined
+    const lifecycleHooks = new LifecycleHooks()
+    const container = new Container({ logger: ctx.logger })
 
     return {
       async start() {
-        const pluginModule = (
-          await import(pathToFileURL(ctx.data.pluginEntryFile).href)
-        ).default as JobsPlugin
-        const config = pluginModule.jobsConfig
-        const resolved = await resolveJobsConfig(config)
+        if (!ctx.data.runtimeEntryFile) {
+          throw new Error('Jobs runtime entry file is missing')
+        }
+        const config = (
+          await import(pathToFileURL(ctx.data.runtimeEntryFile).href)
+        ).default as JobsConfig
+        const resolved = await resolveJobsWorkerConfig(config)
 
         for (const job of resolved.jobs) {
           if (!job.returnHandler) {
@@ -50,7 +53,6 @@ export default defineWorker<JobsWorkerData>({
           throw error
         }
 
-        const container = new Container({ logger: ctx.logger })
         container.provide([
           provision(CoreInjectables.logger, ctx.logger),
           provision(jobWorkerPool, ctx.data.poolName),
@@ -59,7 +61,7 @@ export default defineWorker<JobsWorkerData>({
         const runner = new QueueJobRunner({
           logger: ctx.logger,
           container,
-          lifecycleHooks: new LifecycleHooks(),
+          lifecycleHooks,
         })
 
         listener = (message) => {
@@ -71,6 +73,10 @@ export default defineWorker<JobsWorkerData>({
       async stop() {
         if (listener) ctx.port.off('message', listener)
         try {
+          await lifecycleHooks.callHook(LifecycleHook.BeforeDispose, {
+            logger: ctx.logger,
+            container,
+          })
           await manager?.terminate()
         } finally {
           manager = undefined

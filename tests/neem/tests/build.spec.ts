@@ -12,10 +12,7 @@ import { isAbsolute, resolve } from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
-import type {
-  NeemBuildManifest,
-  NeemBuildManifestArtifact,
-} from '../../../packages/neem/src/internal/commands/build.ts'
+import type { NeemBuildManifest } from '../../../packages/neem/src/internal/commands/build.ts'
 import { main } from '../../../packages/neem/src/cli.ts'
 import {
   buildNeem,
@@ -28,18 +25,18 @@ const tempDirs: string[] = []
 
 describe('neem build', () => {
   afterEach(async () => {
-    // await Promise.all(
-    //   tempDirs
-    //     .splice(0)
-    //     .map((dir) => rm(dir, { recursive: true, force: true })),
-    // )
+    await Promise.all(
+      tempDirs
+        .splice(0)
+        .map((dir) => rm(dir, { recursive: true, force: true })),
+    )
   })
 
-  it('builds transformed config, app entry, plugin entry, plugin artifacts, and manifest', async () => {
+  it('builds transformed config, runtime entry, and manifest', async () => {
     const outDir = await createTempOutDir()
-    const staleNeemFile = resolve(outDir, 'apps/stale/old.js')
+    const staleNeemFile = resolve(outDir, 'runtimes/stale/old.js')
     const unrelatedFile = resolve(outDir, 'unrelated.txt')
-    await mkdir(resolve(outDir, 'apps/stale'), { recursive: true })
+    await mkdir(resolve(outDir, 'runtimes/stale'), { recursive: true })
     await writeFile(staleNeemFile, 'stale')
     await writeFile(unrelatedFile, 'keep')
 
@@ -55,6 +52,7 @@ describe('neem build', () => {
     expect(isAbsolute(manifest.runtime!.entry)).toBe(false)
     expect(isAbsolute(manifest.runtime!.worker)).toBe(false)
     await expectFile(resolve(outDir, manifest.runtime!.entry))
+    await expectFile(resolve(outDir, 'runtime/start.js'))
     await expectFile(resolve(outDir, manifest.runtime!.worker))
     expect(isAbsolute(manifest.config.file)).toBe(false)
     expect(manifest.config.file.endsWith('.js')).toBe(true)
@@ -78,50 +76,34 @@ describe('neem build', () => {
     )
     expect(configCode).toContain('./basic-app.ts')
     expect(configCode).toContain('./basic-app.build.ts')
-    expect(configCode).toContain('./jobs.plugin.ts')
     expect(configCode).not.toContain('./logger.ts')
     const startCode = await readFile(
       resolve(outDir, manifest.runtime!.entry),
       'utf8',
     )
+    expect(startCode).toContain('from "./runtime/start.js"')
+    expect(startCode).toContain('await startStandalone()')
     expect(startCode).not.toContain('@nmtjs/neem/cli')
     expect(startCode).not.toMatch(/(?:from|import)\(?["']@nmtjs\/neem/)
+    const runtimeStartCode = await readFile(
+      resolve(outDir, 'runtime/start.js'),
+      'utf8',
+    )
+    expect(runtimeStartCode).not.toContain('NEEM_RUNTIMES')
+    expect(runtimeStartCode).not.toContain('@nmtjs/neem/cli')
+    expect(runtimeStartCode).not.toMatch(/(?:from|import)\(?["']@nmtjs\/neem/)
 
-    const appEntry = manifest.apps.api.entry
-    const plugin = manifest.plugins[0]
-    expect(appEntry.id).toBe('entry')
-    expect(appEntry.kind).toBe('module')
-    expect(plugin?.entry.id).toBe('entry')
-    expect(plugin?.entry.kind).toBe('module')
+    const runtimeEntry = manifest.runtimes?.api?.entry
+    expect(runtimeEntry?.id).toBe('entry')
+    expect(runtimeEntry?.kind).toBe('worker')
 
-    const artifacts = [
-      manifest.apps.api.entry,
-      plugin?.entry,
-      ...(plugin?.artifacts ?? []),
-    ].filter(Boolean) as NeemBuildManifestArtifact[]
-
-    for (const artifact of artifacts) {
+    if (!runtimeEntry) throw new Error('Missing runtime entry')
+    for (const artifact of [runtimeEntry]) {
       expect(isAbsolute(artifact.file)).toBe(false)
       expect(isAbsolute(artifact.outDir)).toBe(false)
       expect(artifact.file.endsWith('.js')).toBe(true)
       await expectFile(resolve(outDir, artifact.file))
     }
-
-    const worker = plugin?.artifacts.find(
-      (artifact) => artifact.id === 'job-worker',
-    )
-    const renderer = plugin?.artifacts.find(
-      (artifact) => artifact.id === 'job-renderer',
-    )
-
-    expect(worker?.kind).toBe('worker')
-    expect(renderer?.kind).toBe('module')
-    expect(await readFile(resolve(outDir, worker!.file), 'utf8')).toContain(
-      'jobs-worker',
-    )
-    expect(await readFile(resolve(outDir, renderer!.file), 'utf8')).toContain(
-      'job:',
-    )
   })
 
   it('runs build through the CLI', async () => {
@@ -133,7 +115,83 @@ describe('neem build', () => {
     await expectFile(resolve(outDir, NEEM_MANIFEST_FILE))
   })
 
-  it('does not execute app entry thunks while building app artifacts', async () => {
+  it('builds generic runtime entries and host artifacts', async () => {
+    const outDir = await createTempOutDir()
+
+    await buildNeem({
+      config: resolve(fixturesDir, 'generic-runtime.config.ts'),
+      outDir,
+    })
+    const manifest = await readManifest(outDir)
+
+    expect(Object.keys(manifest.runtimes ?? {})).toEqual(['api', 'jobs'])
+    expect(manifest.runtimes?.api?.entry).toMatchObject({
+      id: 'entry',
+      kind: 'worker',
+      owner: { type: 'runtime', name: 'api' },
+    })
+    expect(manifest.runtimes?.jobs?.host).toMatchObject({
+      id: 'host',
+      kind: 'module',
+      owner: { type: 'runtime', name: 'jobs' },
+    })
+
+    await expectFile(resolve(outDir, manifest.runtimes!.api.entry.file))
+    await expectFile(resolve(outDir, manifest.runtimes!.jobs.entry.file))
+    await expectFile(resolve(outDir, manifest.runtimes!.jobs.host!.file))
+  })
+
+  it('builds runtime-declared worker artifacts', async () => {
+    const outDir = await createTempOutDir()
+
+    await buildNeem({
+      config: resolve(fixturesDir, 'runtime-jobs.config.ts'),
+      outDir,
+    })
+    const manifest = await readManifest(outDir)
+
+    expect(manifest.runtimes?.jobs?.host).toMatchObject({
+      id: 'host',
+      kind: 'module',
+      owner: { type: 'runtime', name: 'jobs' },
+    })
+    expect(manifest.runtimes?.jobs?.artifacts).toEqual([
+      expect.objectContaining({
+        id: 'job-runner',
+        kind: 'worker',
+        owner: { type: 'runtime', name: 'jobs' },
+      }),
+    ])
+    await expectFile(resolve(outDir, manifest.runtimes!.jobs.entry.file))
+    await expectFile(resolve(outDir, manifest.runtimes!.jobs.host!.file))
+    await expectFile(
+      resolve(outDir, manifest.runtimes!.jobs.artifacts[0]!.file),
+    )
+  })
+
+  it('builds only selected generic runtimes', async () => {
+    const outDir = await createTempOutDir()
+
+    await buildNeem({
+      config: resolve(fixturesDir, 'generic-runtime.config.ts'),
+      outDir,
+      runtimes: ['api'],
+    })
+    const manifest = await readManifest(outDir)
+
+    expect(Object.keys(manifest.runtimes ?? {})).toEqual(['api'])
+    await expectFile(resolve(outDir, manifest.runtimes!.api.entry.file))
+    await expectFile(resolve(outDir, 'runtimes/api/start.js'))
+    const startCode = await readFile(resolve(outDir, 'runtimes/api/start.js'), {
+      encoding: 'utf8',
+    })
+    expect(startCode).toContain('from "../../runtime/start.js"')
+    expect(startCode).toContain(`await startStandalone({ runtimes: ["api"] })`)
+    expect(startCode).not.toContain('NEEM_RUNTIMES')
+    await expectMissing(resolve(outDir, 'runtimes/jobs/start.js'))
+  })
+
+  it('does not execute runtime entry thunks while building runtime artifacts', async () => {
     delete (globalThis as any).__neemLazyAppLoaded
     const outDir = await createTempOutDir()
 

@@ -1,6 +1,6 @@
 import type { ApplicationTransport } from '@nmtjs/application'
 import { createRootRouter, defineApplication } from '@nmtjs/application'
-import { defineNeemataApp } from '@nmtjs/application/neem'
+import { defineNeemataWorker } from '@nmtjs/application/neem'
 
 export type BasicAppThreadOptions = {
   http: { listen: { hostname: string; port: number } }
@@ -26,4 +26,4 @@ const application = defineApplication({
   transports: { http: httpTransport },
 })
 
-export default defineNeemataApp(application)
+export default defineNeemataWorker(application)

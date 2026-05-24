@@ -47,22 +47,22 @@ describe('neem start', () => {
       resolve(neemInternalDir, 'runtime/worker-entry.ts'),
       'utf8',
     )
-    const appRuntimeSource = await readFile(
-      resolve(neemInternalDir, 'runtime/app.ts'),
+    const runtimeSource = await readFile(
+      resolve(neemInternalDir, 'runtime/runtime.ts'),
       'utf8',
     )
 
     expect(startSource).not.toContain('app-worker-entry')
     expect(startSource).not.toContain('createAppWorkerSource')
     expect(startSource).not.toContain('eval: true')
-    expect(appRuntimeSource).toContain('resolveRuntimeWorkerEntry')
-    expect(appRuntimeSource).not.toContain('eval: true')
-    expect(workerSource).toContain('createAppRuntime')
+    expect(runtimeSource).toContain('resolveRuntimeWorkerEntry')
+    expect(runtimeSource).not.toContain('eval: true')
+    expect(workerSource).toContain('createWorkerRuntime')
     expect(workerSource).toContain('mode: data.mode')
     expect(workerSource).not.toContain("mode: 'production'")
   })
 
-  it('starts built app worker threads and stops app runtimes', async () => {
+  it('starts built runtime worker threads and stops runtimes', async () => {
     const { outDir, eventsFile } = await buildFixture('runtime.config.ts')
     process.env.NEEM_RUNTIME_EVENTS_FILE = eventsFile
 
@@ -78,10 +78,10 @@ describe('neem start', () => {
     const host = await startNeem({ outDir })
 
     try {
-      expect(host.getWorkers()).toHaveLength(2)
-      expect(host.getWorkerPools()).toHaveLength(1)
-      expect(host.getWorkerPools()[0]?.getHealth()).toMatchObject({
-        name: 'app:api',
+      expect(host.getRuntimeWorkers()).toHaveLength(2)
+      expect(host.getRuntimeWorkerPools()).toHaveLength(1)
+      expect(host.getRuntimeWorkerPools()[0]?.getHealth()).toMatchObject({
+        name: 'runtime:api',
         size: 2,
         ready: 2,
         state: 'ready',
@@ -89,45 +89,30 @@ describe('neem start', () => {
       expect(host.getHealth()).toMatchObject({
         state: 'running',
         ready: true,
-        apps: [
+        runtimes: [
           {
             name: 'api',
             pool: { state: 'ready', size: 2, ready: 2 },
-            workers: [
-              expect.objectContaining({
-                appName: 'api',
-                threadIndex: 0,
-                state: 'ready',
-              }),
-              expect.objectContaining({
-                appName: 'api',
-                threadIndex: 1,
-                state: 'ready',
-              }),
+            threads: [
+              expect.objectContaining({ name: 'api:0', state: 'ready' }),
+              expect.objectContaining({ name: 'api:1', state: 'ready' }),
             ],
           },
-        ],
-        plugins: [
-          { name: 'jobs', instanceId: 0, state: 'ready', setupComplete: true },
         ],
         proxy: { enabled: false, running: false },
       })
       expect(
         host
-          .getWorkers()
-          .map((worker) => ({
-            appName: worker.appName,
-            threadIndex: worker.threadIndex,
-            state: worker.getState(),
-          })),
+          .getRuntimeWorkers()
+          .map((worker) => ({ name: worker.name, state: worker.getState() })),
       ).toEqual([
-        { appName: 'api', threadIndex: 0, state: 'ready' },
-        { appName: 'api', threadIndex: 1, state: 'ready' },
+        { name: 'api:0', state: 'ready' },
+        { name: 'api:1', state: 'ready' },
       ])
 
       expect(host.getUpstreams()).toEqual([
-        { type: 'http', url: 'http://127.0.0.1:4101/api/0' },
-        { type: 'http', url: 'http://127.0.0.1:4102/api/1' },
+        { type: 'http', url: 'http://127.0.0.1:4101/api:0' },
+        { type: 'http', url: 'http://127.0.0.1:4102/api:1' },
       ])
       expect(
         host
@@ -135,7 +120,7 @@ describe('neem start', () => {
           .toSorted((a, b) => a.proxyUpstream.port - b.proxyUpstream.port),
       ).toEqual([
         expect.objectContaining({
-          appName: 'api',
+          runtimeName: 'api',
           count: 1,
           proxyUpstream: expect.objectContaining({
             type: 'port',
@@ -145,7 +130,7 @@ describe('neem start', () => {
           }),
         }),
         expect.objectContaining({
-          appName: 'api',
+          runtimeName: 'api',
           count: 1,
           proxyUpstream: expect.objectContaining({
             type: 'port',
@@ -158,35 +143,15 @@ describe('neem start', () => {
 
       const createEvents = (await readEvents(eventsFile))
         .filter((event) => event.event === 'create')
-        .toSorted((a, b) => (a.threadIndex ?? 0) - (b.threadIndex ?? 0))
-      const pluginEvents = (await readEvents(eventsFile)).filter((event) =>
-        event.event.startsWith('plugin-'),
-      )
-      expect(host.getPlugins()).toHaveLength(1)
-      expect(pluginEvents).toContainEqual(
-        expect.objectContaining({
-          event: 'plugin-setup',
-          mode: 'production',
-          name: 'jobs',
-          instanceId: 0,
-          options: { queue: 'runtime' },
-          logger: true,
-        }),
-      )
+        .toSorted((a, b) => String(a.name).localeCompare(String(b.name)))
       expect(createEvents).toHaveLength(2)
       expect(createEvents[0]).toMatchObject({
         mode: 'production',
-        appName: 'api',
-        threadIndex: 0,
-        threadOptions: { label: 'one' },
+        name: 'api:0',
+        data: { label: 'one' },
         logger: true,
-        artifact: { id: 'entry', owner: { type: 'app', name: 'api' } },
+        artifact: { id: 'entry', owner: { type: 'runtime', name: 'api' } },
       })
-      expect(
-        createEvents[0].artifacts.some(
-          (artifact) => artifact.id === 'job-worker',
-        ),
-      ).toBe(true)
     } finally {
       await host.stop()
       await host.closed
@@ -195,17 +160,10 @@ describe('neem start', () => {
     const stopEvents = (await readEvents(eventsFile)).filter(
       (event) => event.event === 'stop',
     )
-    expect(stopEvents.map((event) => event.threadIndex).toSorted()).toEqual([
-      0, 1,
+    expect(stopEvents.map((event) => event.name).toSorted()).toEqual([
+      'api:0',
+      'api:1',
     ])
-    expect(await readEvents(eventsFile)).toContainEqual(
-      expect.objectContaining({
-        event: 'plugin-stop',
-        mode: 'production',
-        name: 'jobs',
-        instanceId: 0,
-      }),
-    )
   })
 
   it('starts Neemata application entries through the application package adapter', async () => {
@@ -214,9 +172,9 @@ describe('neem start', () => {
     const host = await startNeem({ outDir })
 
     try {
-      expect(host.getWorkers()).toHaveLength(1)
-      expect(host.getWorkerPools()).toHaveLength(1)
-      expect(host.getWorkers()[0]?.getState()).toBe('ready')
+      expect(host.getRuntimeWorkers()).toHaveLength(1)
+      expect(host.getRuntimeWorkerPools()).toHaveLength(1)
+      expect(host.getRuntimeWorkers()[0]?.getState()).toBe('ready')
       expect(host.getUpstreams()).toEqual([
         { type: 'http', url: 'http://127.0.0.1:3000' },
       ])
@@ -226,70 +184,154 @@ describe('neem start', () => {
     }
   })
 
-  it('allows plugins to observe host lifecycle hooks', async () => {
-    const { outDir, eventsFile } = await buildFixture('runtime-hooks.config.ts')
+  it('starts generic runtimes and passes host-managed thread ports', async () => {
+    const { outDir, eventsFile } = await buildFixture(
+      'generic-runtime.config.ts',
+    )
     process.env.NEEM_RUNTIME_EVENTS_FILE = eventsFile
 
     const host = await startNeem({ outDir })
 
     try {
-      expect(host.getWorkers()).toHaveLength(1)
+      expect(host.getRuntimeWorkers()).toHaveLength(4)
+      expect(host.getRuntimeWorkerPools()).toHaveLength(2)
+      expect(host.getHealth()).toMatchObject({
+        state: 'running',
+        ready: true,
+        runtimeNames: ['api', 'jobs'],
+        runtimes: [
+          { name: 'api', pool: { state: 'ready', size: 2, ready: 2 } },
+          { name: 'jobs', pool: { state: 'ready', size: 2, ready: 2 } },
+        ],
+      })
+      expect(host.getUpstreams()).toEqual([
+        { type: 'http', url: 'http://127.0.0.1:4201/api:0' },
+        { type: 'http', url: 'http://127.0.0.1:4202/api:1' },
+      ])
+      await waitForEvent(
+        eventsFile,
+        (event) =>
+          event.event === 'runtime-message' &&
+          event.message?.type === 'host-ready',
+      )
     } finally {
       await host.stop()
       await host.closed
     }
 
     const events = await readEvents(eventsFile)
-    expect(events).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          event: 'host-server-start',
-          mode: 'production',
-        }),
-        expect.objectContaining({
-          event: 'host-app-start',
-          mode: 'production',
-          appName: 'api',
-        }),
-        expect.objectContaining({
-          event: 'host-worker-start',
-          mode: 'production',
-          worker: 'app:api:0',
-          owner: { type: 'app', name: 'api' },
-        }),
-        expect.objectContaining({
-          event: 'host-worker-ready',
-          mode: 'production',
-          worker: 'app:api:0',
-          owner: { type: 'app', name: 'api' },
-        }),
-        expect.objectContaining({
-          event: 'host-app-ready',
-          mode: 'production',
-          appName: 'api',
-        }),
-        expect.objectContaining({
-          event: 'host-server-ready',
-          mode: 'production',
-        }),
-        expect.objectContaining({
-          event: 'host-server-stop',
-          mode: 'production',
-        }),
-        expect.objectContaining({
-          event: 'host-worker-stop',
-          mode: 'production',
-          worker: 'app:api:0',
-          owner: { type: 'app', name: 'api' },
-        }),
-        expect.objectContaining({
-          event: 'host-app-stop',
-          mode: 'production',
-          appName: 'api',
-        }),
-      ]),
-    )
+    expect(
+      events.some(
+        (event) =>
+          event.event === 'host-setup' &&
+          event.name === 'jobs' &&
+          event.options?.queue === 'runtime' &&
+          event.artifact?.id === 'entry' &&
+          event.artifact.owner.type === 'runtime' &&
+          event.artifact.owner.name === 'jobs' &&
+          event.hostArtifact?.id === 'host' &&
+          event.hostArtifact.owner.type === 'runtime' &&
+          event.hostArtifact.owner.name === 'jobs',
+      ),
+    ).toBe(true)
+    expect(events.some((event) => event.event === 'host-plan')).toBe(true)
+    expect(
+      events.some(
+        (event) =>
+          event.event === 'host-start' &&
+          JSON.stringify(event.threads) ===
+            JSON.stringify(['worker:0', 'worker:1']),
+      ),
+    ).toBe(true)
+    expect(
+      events.some(
+        (event) =>
+          event.event === 'runtime-message' &&
+          event.message?.type === 'host-ready',
+      ),
+    ).toBe(true)
+    expect(
+      events.some(
+        (event) =>
+          event.event === 'host-stop' &&
+          JSON.stringify(event.threads) ===
+            JSON.stringify(['worker:0', 'worker:1']),
+      ),
+    ).toBe(true)
   })
+
+  it('starts only selected generic runtimes', async () => {
+    const { outDir, eventsFile } = await buildFixture(
+      'generic-runtime.config.ts',
+    )
+    process.env.NEEM_RUNTIME_EVENTS_FILE = eventsFile
+
+    const host = await startNeem({ outDir, runtimes: ['api'] })
+
+    try {
+      expect(host.getRuntimeWorkers()).toHaveLength(2)
+      expect(host.getRuntimeWorkerPools()).toHaveLength(1)
+      expect(host.getHealth()).toMatchObject({
+        state: 'running',
+        ready: true,
+        runtimeNames: ['api'],
+        runtimes: [
+          { name: 'api', pool: { state: 'ready', size: 2, ready: 2 } },
+        ],
+      })
+      expect(host.getUpstreams()).toEqual([
+        { type: 'http', url: 'http://127.0.0.1:4201/api:0' },
+        { type: 'http', url: 'http://127.0.0.1:4202/api:1' },
+      ])
+    } finally {
+      await host.stop()
+      await host.closed
+    }
+
+    const events = await readEvents(eventsFile)
+    expect(events.some((event) => event.name === 'jobs')).toBe(false)
+    expect(events.some((event) => event.event === 'host-setup')).toBe(false)
+  })
+
+  it('starts selected generic runtime through per-runtime standalone entry', async () => {
+    const { outDir, eventsFile } = await buildFixture(
+      'generic-runtime.config.ts',
+    )
+    const child = spawn(
+      process.execPath,
+      [resolve(outDir, 'runtimes/api/start.js')],
+      {
+        env: { ...process.env, NEEM_RUNTIME_EVENTS_FILE: eventsFile },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
+    )
+    let output = ''
+    child.stdout.on('data', (chunk) => {
+      output += String(chunk)
+    })
+    child.stderr.on('data', (chunk) => {
+      output += String(chunk)
+    })
+
+    try {
+      await waitForEvent(
+        eventsFile,
+        (event) => event.event === 'runtime-start' && event.name === 'api:0',
+      )
+      child.kill('SIGTERM')
+      const exit = await waitForExit(child)
+      expect(exit).toEqual({ code: 0, signal: null })
+
+      const events = await readEvents(eventsFile)
+      expect(events.some((event) => event.name === 'jobs')).toBe(false)
+      expect(events.some((event) => event.event === 'host-setup')).toBe(false)
+    } catch (error) {
+      child.kill('SIGKILL')
+      throw new Error(`per-runtime standalone start failed\n${output}`, {
+        cause: error,
+      })
+    }
+  }, 15000)
 
   it('starts built output through standalone start entry', async () => {
     const { outDir, eventsFile } = await buildFixture('runtime.config.ts')
@@ -311,7 +353,7 @@ describe('neem start', () => {
       const exit = await waitForExit(child)
       expect(exit).toEqual({ code: 0, signal: null })
       expect(await readEvents(eventsFile)).toContainEqual(
-        expect.objectContaining({ event: 'stop', threadIndex: 0 }),
+        expect.objectContaining({ event: 'stop', name: 'api:0' }),
       )
     } catch (error) {
       child.kill('SIGKILL')
@@ -326,12 +368,19 @@ describe('neem start', () => {
     process.env.NEEM_RUNTIME_EVENTS_FILE = eventsFile
 
     await expect(startNeem({ outDir })).rejects.toThrow(
-      'fixture start failure 1',
+      'fixture start failure api:1',
+    )
+    await waitForEvent(
+      eventsFile,
+      (event) => event.event === 'stop' && event.name === 'api:1',
     )
 
     const events = await readEvents(eventsFile)
     expect(events).toContainEqual(
-      expect.objectContaining({ event: 'stop', threadIndex: 0 }),
+      expect.objectContaining({ event: 'stop', name: 'api:0' }),
+    )
+    expect(events).toContainEqual(
+      expect.objectContaining({ event: 'stop', name: 'api:1' }),
     )
   })
 
@@ -343,11 +392,11 @@ describe('neem start', () => {
 
     const host = await startNeem({ outDir })
 
-    await expect(host.closed).rejects.toThrow('fixture runtime failure 1')
+    await expect(host.closed).rejects.toThrow('fixture runtime failure api:1')
 
     const events = await readEvents(eventsFile)
     expect(events).toContainEqual(
-      expect.objectContaining({ event: 'stop', threadIndex: 0 }),
+      expect.objectContaining({ event: 'stop', name: 'api:0' }),
     )
   })
 
@@ -367,7 +416,7 @@ describe('neem start', () => {
     const host = await startNeem({ outDir })
 
     try {
-      expect(host.getWorkers()).toHaveLength(2)
+      expect(host.getRuntimeWorkers()).toHaveLength(2)
     } finally {
       await host.stop()
       await host.closed
@@ -381,11 +430,11 @@ describe('neem start', () => {
           msg: 'Starting Neem from built output',
         }),
         expect.objectContaining({
-          $label: 'Neem App/api:0',
-          msg: 'Creating Neem app runtime',
+          $label: 'api:0',
+          msg: 'Creating Neem worker runtime',
         }),
         expect.objectContaining({
-          $label: 'Neem App/api:0',
+          $label: 'api:0',
           msg: 'Neem runtime started',
         }),
       ]),
@@ -445,10 +494,15 @@ async function waitForExit(
 
 type RuntimeEvent = {
   event: string
+  name?: string
   mode?: string
-  appName?: string
+  runtimeName?: string
   threadIndex?: number
-  threadOptions?: Record<string, unknown>
+  data?: Record<string, unknown>
+  options?: Record<string, unknown>
   artifact?: { id: string; owner: Record<string, unknown> }
+  hostArtifact?: { id: string; owner: Record<string, unknown> }
   artifacts: Array<{ id: string }>
+  threads?: string[]
+  message?: Record<string, unknown>
 }

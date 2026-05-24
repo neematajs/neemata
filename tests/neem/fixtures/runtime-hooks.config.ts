@@ -1,9 +1,9 @@
-import { defineAppConfig, defineConfig, definePluginConfig } from '@nmtjs/neem'
+import { defineConfig, defineRuntimeConfig } from '@nmtjs/neem'
 
 export default defineConfig({
   logger: () => import('./logger.ts'),
-  apps: {
-    api: defineAppConfig({
+  runtimes: {
+    api: defineRuntimeConfig({
       entry: () => import('./runtime-app.ts'),
       threads: [
         {
@@ -13,10 +13,4 @@ export default defineConfig({
       ],
     }),
   },
-  plugins: [
-    definePluginConfig({
-      entry: () => import('./jobs.plugin.ts'),
-      options: { queue: 'runtime', observeHooks: true },
-    }),
-  ],
 })

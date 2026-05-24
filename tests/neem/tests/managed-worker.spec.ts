@@ -19,7 +19,6 @@ describe('NeemManagedWorker', () => {
       id: 'ready-worker',
       state: 'ready',
       failureCount: 0,
-      restartCount: 0,
     })
     expect(worker.getHealth().readyAt).toBeTypeOf('number')
 

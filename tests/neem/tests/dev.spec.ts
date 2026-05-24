@@ -36,7 +36,7 @@ describe('neem dev', () => {
     )
   })
 
-  it('starts app workers in development mode from watched build output', async () => {
+  it('starts runtime workers in development mode from watched build output', async () => {
     const fixture = await createFixtureCopy()
     process.env.NEEM_RUNTIME_EVENTS_FILE = fixture.eventsFile
 
@@ -51,39 +51,26 @@ describe('neem dev', () => {
       expect(host.getHealth()).toMatchObject({
         state: 'running',
         ready: true,
-        apps: [{ name: 'api', pool: { state: 'ready', size: 2, ready: 2 } }],
-        plugins: [
-          { name: 'jobs', instanceId: 0, state: 'ready', setupComplete: true },
+        runtimes: [
+          { name: 'api', pool: { state: 'ready', size: 2, ready: 2 } },
         ],
         proxy: { enabled: false, running: false },
       })
 
       const manifest = await readManifest(fixture.outDir)
-      expect(manifest.plugins).toHaveLength(1)
-      expect(manifest.plugins[0]).toMatchObject({
-        index: 0,
-        name: 'jobs',
-        entry: { id: 'entry', owner: { type: 'plugin', name: 'jobs' } },
-      })
-      expect(
-        manifest.plugins[0]?.artifacts.map((artifact) => artifact.id),
-      ).toEqual(['job-worker', 'job-renderer'])
       expect(manifest.config.file).toMatch(
         /^config\/entry\/runtime\.config-[^.]+\.js$/,
       )
       await expectFile(resolve(fixture.outDir, manifest.config.file))
-      await expectFile(resolve(fixture.outDir, manifest.apps.api.entry.file))
-      await expectFile(resolve(fixture.outDir, manifest.plugins[0]!.entry.file))
-      for (const artifact of manifest.plugins[0]!.artifacts) {
-        await expectFile(resolve(fixture.outDir, artifact.file))
-      }
+      await expectFile(
+        resolve(fixture.outDir, manifest.runtimes!.api!.entry.file),
+      )
 
       const configCode = await readFile(
         resolve(fixture.outDir, manifest.config.file),
         'utf8',
       )
       expect(configCode).toContain('import("./runtime-app.ts")')
-      expect(configCode).toContain('import("./jobs.plugin.ts")')
       expect(configCode).not.toContain('import("./logger.ts")')
 
       const createEvents = await waitForEvents(
@@ -95,16 +82,42 @@ describe('neem dev', () => {
         mode: 'development',
         logger: true,
       })
-      expect(await readEvents(fixture.eventsFile)).toContainEqual(
-        expect.objectContaining({
-          event: 'plugin-setup',
-          mode: 'development',
-          name: 'jobs',
-          instanceId: 0,
-          options: { queue: 'runtime' },
-          logger: true,
-        }),
+    } finally {
+      await host.stop()
+      await host.closed
+    }
+  })
+
+  it('starts only selected runtimes in development mode', async () => {
+    const fixture = await createFixtureCopy('generic-runtime.config.ts')
+    process.env.NEEM_RUNTIME_EVENTS_FILE = fixture.eventsFile
+
+    const host = await devNeem({
+      config: fixture.configFile,
+      outDir: fixture.outDir,
+      runtimes: ['api'],
+    })
+
+    try {
+      await host.ready
+      expect(host.getHealth()).toMatchObject({
+        state: 'running',
+        ready: true,
+        runtimeNames: ['api'],
+        runtimes: [
+          { name: 'api', pool: { state: 'ready', size: 2, ready: 2 } },
+        ],
+      })
+
+      const manifest = await readManifest(fixture.outDir)
+      expect(Object.keys(manifest.runtimes ?? {})).toEqual(['api'])
+      await expectFile(
+        resolve(fixture.outDir, manifest.runtimes!.api!.entry.file),
       )
+
+      const events = await readEvents(fixture.eventsFile)
+      expect(events.some((event) => event.name === 'jobs')).toBe(false)
+      expect(events.some((event) => event.event === 'host-setup')).toBe(false)
     } finally {
       await host.stop()
       await host.closed
@@ -136,8 +149,7 @@ describe('neem dev', () => {
         return (
           host.getLifecycle().state === 'running' &&
           events.some(
-            (event) =>
-              event.event === 'create' && event.threadOptions?.label === 'uno',
+            (event) => event.event === 'create' && event.data?.label === 'uno',
           )
         )
       })
@@ -148,7 +160,7 @@ describe('neem dev', () => {
     }
   })
 
-  it('restarts workers after app source rebuild and keeps old workers on rebuild errors', async () => {
+  it('restarts workers after runtime source rebuild and keeps old workers on rebuild errors', async () => {
     const fixture = await createFixtureCopy()
     process.env.NEEM_RUNTIME_EVENTS_FILE = fixture.eventsFile
 
@@ -161,7 +173,6 @@ describe('neem dev', () => {
       await host.ready
       let events = await readEvents(fixture.eventsFile)
       const initialCreateCount = countEvents(events, 'create')
-      const initialPluginSetupCount = countEvents(events, 'plugin-setup')
       const appSource = await readFile(fixture.appFile, 'utf8')
       await writeFile(fixture.appFile, 'const = ;\n')
       await wait(300)
@@ -173,8 +184,8 @@ describe('neem dev', () => {
       await writeFile(
         fixture.appFile,
         appSource.replace(
-          "kind: 'runtime-fixture'",
-          "kind: 'runtime-dev-fixture'",
+          "definition: { fixture: 'runtime-app' }",
+          "definition: { fixture: 'runtime-dev-app' }",
         ),
       )
 
@@ -185,12 +196,12 @@ describe('neem dev', () => {
       expect(
         events.filter((event) => event.event === 'stop').length,
       ).toBeGreaterThan(0)
-      expect(countEvents(events, 'plugin-setup')).toBe(initialPluginSetupCount)
       expect(host.getHealth()).toMatchObject({
         state: 'running',
         ready: true,
-        apps: [{ name: 'api', pool: { state: 'ready', size: 2, ready: 2 } }],
-        plugins: [{ name: 'jobs', state: 'ready', setupComplete: true }],
+        runtimes: [
+          { name: 'api', pool: { state: 'ready', size: 2, ready: 2 } },
+        ],
       })
     } finally {
       await host.stop()
@@ -198,7 +209,7 @@ describe('neem dev', () => {
     }
   })
 
-  it('coalesces rapid app source rebuilds and applies the latest artifact', async () => {
+  it('coalesces rapid runtime source rebuilds and applies the latest artifact', async () => {
     const fixture = await createFixtureCopy()
     process.env.NEEM_RUNTIME_EVENTS_FILE = fixture.eventsFile
 
@@ -250,83 +261,6 @@ describe('neem dev', () => {
       expect(countEvents(settledEvents, 'create')).toBe(
         countEvents(events, 'create'),
       )
-      expect(countEvents(events, 'plugin-setup')).toBe(
-        countEvents(initialEvents, 'plugin-setup'),
-      )
-      expect(host.getLifecycle().state).toBe('running')
-    } finally {
-      await host.stop()
-      await host.closed
-    }
-  })
-
-  it('performs a global restart after plugin source rebuild', async () => {
-    const fixture = await createFixtureCopy()
-    process.env.NEEM_RUNTIME_EVENTS_FILE = fixture.eventsFile
-
-    const host = await devNeem({
-      config: fixture.configFile,
-      outDir: fixture.outDir,
-    })
-
-    try {
-      await host.ready
-      const initialEvents = await readEvents(fixture.eventsFile)
-      const initialCreateCount = countEvents(initialEvents, 'create')
-      const initialPluginSetupCount = countEvents(initialEvents, 'plugin-setup')
-      const pluginSource = await readFile(fixture.pluginFile, 'utf8')
-      await writeFile(
-        fixture.pluginFile,
-        pluginSource.replace("'plugin-setup'", "'plugin-setup-dev'"),
-      )
-
-      const events = await waitFor(async () => {
-        const events = await readEvents(fixture.eventsFile)
-        return host.getLifecycle().state === 'running' &&
-          events.some((event) => event.event === 'plugin-setup-dev') &&
-          countEvents(events, 'create') >= initialCreateCount + 2
-          ? events
-          : false
-      })
-      expect(countEvents(events, 'plugin-setup')).toBe(initialPluginSetupCount)
-      expect(host.getLifecycle().state).toBe('running')
-    } finally {
-      await host.stop()
-      await host.closed
-    }
-  })
-
-  it('performs a global restart after declared plugin artifact rebuild', async () => {
-    const fixture = await createFixtureCopy()
-    process.env.NEEM_RUNTIME_EVENTS_FILE = fixture.eventsFile
-
-    const host = await devNeem({
-      config: fixture.configFile,
-      outDir: fixture.outDir,
-    })
-
-    try {
-      await host.ready
-      const initialEvents = await readEvents(fixture.eventsFile)
-      const initialCreateCount = countEvents(initialEvents, 'create')
-      const initialPluginSetupCount = countEvents(initialEvents, 'plugin-setup')
-      const workerSource = await readFile(fixture.workerFile, 'utf8')
-      await writeFile(
-        fixture.workerFile,
-        workerSource.replace('jobs-worker', 'jobs-worker-dev'),
-      )
-
-      const events = await waitFor(async () => {
-        const events = await readEvents(fixture.eventsFile)
-        return host.getLifecycle().state === 'running' &&
-          countEvents(events, 'plugin-setup') > initialPluginSetupCount &&
-          countEvents(events, 'create') >= initialCreateCount + 2
-          ? events
-          : false
-      })
-      expect(
-        events.filter((event) => event.event === 'plugin-stop').length,
-      ).toBeGreaterThan(0)
       expect(host.getLifecycle().state).toBe('running')
     } finally {
       await host.stop()
@@ -347,7 +281,6 @@ describe('neem dev', () => {
       await host.ready
       const initialEvents = await readEvents(fixture.eventsFile)
       const initialCreateCount = countEvents(initialEvents, 'create')
-      const initialPluginSetupCount = countEvents(initialEvents, 'plugin-setup')
       const source = await readFile(fixture.configFile, 'utf8')
       await writeFile(
         fixture.configFile,
@@ -357,12 +290,10 @@ describe('neem dev', () => {
       const events = await waitFor(async () => {
         const events = await readEvents(fixture.eventsFile)
         return host.getLifecycle().state === 'running' &&
-          countEvents(events, 'create') >= initialCreateCount + 2 &&
-          countEvents(events, 'plugin-setup') > initialPluginSetupCount
+          countEvents(events, 'create') >= initialCreateCount + 2
           ? events
           : false
       })
-      expect(countEvents(events, 'plugin-stop')).toBeGreaterThan(0)
       expect(host.getLifecycle().state).toBe('running')
     } finally {
       await host.stop()
@@ -390,7 +321,7 @@ describe('neem dev', () => {
   })
 })
 
-async function createFixtureCopy() {
+async function createFixtureCopy(config = 'runtime.config.ts') {
   await mkdir(tempRoot, { recursive: true })
   const dir = await mkdtemp(resolve(tempRoot, 'neem-dev-'))
   tempDirs.push(dir)
@@ -401,10 +332,8 @@ async function createFixtureCopy() {
   return {
     dir,
     fixtureDir,
-    configFile: resolve(fixtureDir, 'runtime.config.ts'),
+    configFile: resolve(fixtureDir, config),
     appFile: resolve(fixtureDir, 'runtime-app.ts'),
-    pluginFile: resolve(fixtureDir, 'jobs.plugin.ts'),
-    workerFile: resolve(fixtureDir, 'jobs.worker.ts'),
     outDir: resolve(dir, '.neem'),
     eventsFile: resolve(dir, 'events.jsonl'),
   }
@@ -472,9 +401,8 @@ async function expectFile(path: string): Promise<void> {
 
 type RuntimeEvent = {
   event: string
+  name?: string
   mode?: string
-  appName?: string
-  threadIndex?: number
-  threadOptions?: Record<string, unknown>
+  data?: Record<string, unknown>
   definition?: { fixture?: string }
 }

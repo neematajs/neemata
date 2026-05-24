@@ -18,15 +18,17 @@ export type NeemWorkerRuntimeContext<Data = unknown, Definition = unknown> = {
 
 export type NeemWorker<Data = unknown, Definition = unknown> = {
   _: { data: Data; definition: Definition }
-  kind: string
   definition: Definition
   createRuntime: (
     ctx: NeemWorkerRuntimeContext<Data, Definition>,
   ) => NeemMaybePromise<NeemRuntime>
 }
 
-export type InferNeemWorkerData<TWorker> =
-  TWorker extends NeemWorker<infer TData, any> ? TData : unknown
+export type InferNeemWorkerData<TWorker> = TWorker extends {
+  _: { data: infer TData }
+}
+  ? TData
+  : unknown
 
 export function defineWorker<
   Data = unknown,

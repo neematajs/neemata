@@ -1,17 +1,31 @@
 import type {
+  JobRunnerRunOptions,
+  JobsClient,
   JobsHookEvent,
   JobsHookRemovedEvent,
   JobsLifecycleHooks,
+  SaveProgressContext,
 } from '@nmtjs/jobs'
-import type { NeemPluginContext } from '@nmtjs/neem'
-import { createLogger } from '@nmtjs/core'
-import { callJobsHook, createJob, createStep, jobManager } from '@nmtjs/jobs'
-import { defineJobs, resolveJobsConfig } from '@nmtjs/jobs/neem'
+import { LifecycleHook, LifecycleHooks } from '@nmtjs/application'
+import { Container, createLogger } from '@nmtjs/core'
+import {
+  callJobsHook,
+  createJob,
+  createStep,
+  JobRunner,
+  jobAbortSignal,
+  jobManager,
+} from '@nmtjs/jobs'
+import {
+  defineJobs,
+  resolveJobsConfig,
+  resolveJobsWorkerConfig,
+} from '@nmtjs/jobs/neem'
 import { t } from '@nmtjs/type'
 import { describe, expect, expectTypeOf, it } from 'vitest'
 
-describe('@nmtjs/jobs plugin contracts', () => {
-  it('defines a Neem plugin from async jobs and hook factories', async () => {
+describe('@nmtjs/jobs Neem contracts', () => {
+  it('defines jobs runtime config from async jobs and hook factories', async () => {
     const calls: unknown[] = []
     const importUsersJob = createJob({
       name: 'import-users',
@@ -25,7 +39,7 @@ describe('@nmtjs/jobs plugin contracts', () => {
       input: t.object({}),
       output: t.object({}),
     }).return()
-    const plugin = defineJobs({
+    const config = defineJobs({
       client: createClientConfig(),
       pools: { default: { threads: 2, jobs: 5 } },
       jobs: async () => {
@@ -48,11 +62,8 @@ describe('@nmtjs/jobs plugin contracts', () => {
       },
     })
 
-    expect(plugin.name).toBe('jobs')
-    expect(plugin.artifacts?.(createArtifactContext())).toEqual([
-      expect.objectContaining({ id: 'job-runner', kind: 'worker' }),
-    ])
-    await resolveJobsConfig(plugin.jobsConfig)
+    expect(config.pools.default).toEqual({ threads: 2, jobs: 5 })
+    await resolveJobsConfig(config)
     expect(calls).toEqual([{ type: 'jobs-factory' }, { type: 'hooks-factory' }])
     calls.length = 0
 
@@ -79,6 +90,32 @@ describe('@nmtjs/jobs plugin contracts', () => {
     )
 
     expect(calls).toEqual([{ type: 'added', id: '1', jobName: 'import-users' }])
+  })
+
+  it('does not resolve lifecycle hooks in runner worker config', async () => {
+    const calls: unknown[] = []
+    const job = createJob({
+      name: 'worker-only',
+      pool: 'default',
+      input: t.object({}),
+      output: t.object({}),
+    }).return()
+
+    const resolved = await resolveJobsWorkerConfig({
+      client: createClientConfig(),
+      pools: { default: { threads: 1, jobs: 1 } },
+      jobs: async () => {
+        calls.push({ type: 'jobs-factory' })
+        return [job]
+      },
+      hooks: async () => {
+        calls.push({ type: 'hooks-factory' })
+        return {}
+      },
+    })
+
+    expect(resolved.jobs).toEqual([job])
+    expect(calls).toEqual([{ type: 'jobs-factory' }])
   })
 
   it('isolates hook errors through the provided error handler', async () => {
@@ -149,42 +186,65 @@ describe('@nmtjs/jobs plugin contracts', () => {
     expect(job.jobSteps).toEqual([first])
     expect(jobManager.label).toBe('JobManager')
   })
+
+  it('aborts running jobs when lifecycle dispose hook fires', async () => {
+    let aborted = false
+    const logger = createLogger({ pinoOptions: { enabled: false } }, 'test')
+    const container = new Container({ logger })
+    const lifecycleHooks = new LifecycleHooks()
+    const step = createStep({
+      input: t.object({}),
+      output: t.object({}),
+      dependencies: { signal: jobAbortSignal },
+      handler({ signal }) {
+        return new Promise((_, reject) => {
+          signal.addEventListener('abort', () => {
+            aborted = true
+            reject(new Error('job aborted'))
+          })
+        })
+      },
+    })
+    const job = createJob({
+      name: 'abort-on-dispose',
+      pool: 'default',
+      input: t.object({}),
+      output: t.object({}),
+    })
+      .step(step)
+      .return()
+    const runner = new TestJobRunner({ logger, container, lifecycleHooks })
+
+    const running = runner.runJob(
+      job,
+      {},
+      { signal: new AbortController().signal },
+    )
+    await wait(10)
+    await lifecycleHooks.callHook(LifecycleHook.BeforeDispose, {
+      logger,
+      container,
+    })
+
+    await expect(running).rejects.toThrow('Error during step [0]')
+    expect(aborted).toBe(true)
+  })
 })
 
-function createPluginContext(): NeemPluginContext {
-  return {
-    mode: 'development',
-    name: 'jobs',
-    instanceId: 0,
-    options: undefined,
-    logger: createLogger({ pinoOptions: { enabled: false } }, 'test'),
-    artifacts: { resolve: () => undefined, list: () => [] },
-    workers: {
-      spawn: async () => {
-        throw new Error('unexpected worker spawn')
-      },
-      stop: async () => false,
-      list: () => [],
-    },
-    hooks: {
-      hook: () => () => {},
-      hookOnce: () => () => {},
-      addHooks: () => () => {},
-    },
-  }
-}
-
-function createArtifactContext() {
-  return {
-    mode: 'development' as const,
-    name: 'jobs',
-    instanceId: 0,
-    options: undefined,
+class TestJobRunner extends JobRunner {
+  protected createSaveProgressFn(
+    _context: SaveProgressContext<JobRunnerRunOptions>,
+  ) {
+    return async () => {}
   }
 }
 
 function createClientConfig() {
-  return () => ({}) as any
+  return (() => ({})) as JobsClient
+}
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 function createJobEvent(options: { id: string }): JobsHookEvent {

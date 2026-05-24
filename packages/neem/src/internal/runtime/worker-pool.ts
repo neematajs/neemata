@@ -100,11 +100,6 @@ export class NeemWorkerPool<TWorker extends NeemPoolWorker> {
     return this.startPromise
   }
 
-  async restart(): Promise<void> {
-    await this.stop()
-    return this.start()
-  }
-
   stop(): Promise<void> {
     this.logger.trace(
       { count: this.workers.length },

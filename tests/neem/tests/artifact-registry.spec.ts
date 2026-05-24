@@ -9,42 +9,41 @@ describe('Neem artifact registry', () => {
       {
         id: 'entry',
         kind: 'module',
-        owner: { type: 'app', name: 'api' },
-        file: '/out/apps/api/entry.js',
-        outDir: '/out/apps/api',
+        owner: { type: 'runtime', name: 'api' },
+        file: '/out/runtimes/api/entry.js',
+        outDir: '/out/runtimes/api',
       },
       {
         id: 'entry',
         kind: 'module',
-        owner: { type: 'plugin', name: 'jobs', instanceId: 0 },
-        file: '/out/plugins/jobs/entry.js',
-        outDir: '/out/plugins/jobs',
+        owner: { type: 'runtime', name: 'jobs' },
+        file: '/out/runtimes/jobs/entry.js',
+        outDir: '/out/runtimes/jobs',
       },
       {
         id: 'job-worker',
         kind: 'worker',
-        owner: { type: 'plugin', name: 'jobs', instanceId: 0 },
-        file: '/out/plugins/jobs/job-worker.js',
-        outDir: '/out/plugins/jobs',
+        owner: { type: 'runtime', name: 'jobs' },
+        file: '/out/runtimes/jobs/job-worker.js',
+        outDir: '/out/runtimes/jobs',
       },
     ]
 
     const registry = createNeemArtifactRegistry(artifacts)
 
-    expect(registry.resolve('entry')?.file).toBe('/out/apps/api/entry.js')
+    expect(registry.resolve('entry')?.file).toBe('/out/runtimes/api/entry.js')
     expect(
-      registry.resolveFor(
-        { type: 'plugin', name: 'jobs', instanceId: 0 },
-        'entry',
-      )?.file,
-    ).toBe('/out/plugins/jobs/entry.js')
+      registry.resolveFor({ type: 'runtime', name: 'jobs' }, 'entry')?.file,
+    ).toBe('/out/runtimes/jobs/entry.js')
     expect(
-      registry.scope({ type: 'app', name: 'api' }).resolve('entry')?.file,
-    ).toBe('/out/apps/api/entry.js')
+      registry.scope({ type: 'runtime', name: 'api' }).resolve('entry')?.file,
+    ).toBe('/out/runtimes/api/entry.js')
     expect(
-      registry
-        .scope({ type: 'plugin', name: 'jobs', instanceId: 0 })
-        .resolve('job-worker')?.file,
-    ).toBe('/out/plugins/jobs/job-worker.js')
+      registry.scope({ type: 'runtime', name: 'jobs' }).resolve('job-worker')
+        ?.file,
+    ).toBe('/out/runtimes/jobs/job-worker.js')
+    expect(
+      registry.scope({ type: 'runtime', name: 'api' }).resolve('job-worker'),
+    ).toBeUndefined()
   })
 })

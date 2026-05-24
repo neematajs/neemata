@@ -1,17 +1,21 @@
 import { existsSync } from 'node:fs'
 import { mkdir, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, relative, resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 
 import { consola } from 'consola'
 import { colorize } from 'consola/utils'
 
-import type { NeemResolvedArtifact } from '../../public/artifact.ts'
+import type {
+  NeemArtifact,
+  NeemResolvedArtifact,
+} from '../../public/artifact.ts'
 import type {
   NeemBuildConfig,
   NeemBuildConfigInput,
   NeemConfig,
+  NeemRuntimeHostInput,
 } from '../../public/config.ts'
-import type { NeemPlugin } from '../../public/plugin.ts'
 import type {
   NeemConfigDiscovery,
   NeemDiscoveredImport,
@@ -41,6 +45,7 @@ export type NeemBuildOptions = {
   config?: string
   outDir?: string
   cwd?: string
+  runtimes?: readonly string[]
 }
 
 export type NeemBuildResult = {
@@ -63,6 +68,10 @@ export async function buildNeem(
   logger.start('Building Neem bundle')
   logger.debug(`  config: ${configFile}`)
   logger.debug(`  outDir: ${outDir}`)
+  const selectedRuntimes = normalizeSelectedRuntimes(options.runtimes)
+  if (selectedRuntimes) {
+    logger.debug(`  runtimes: ${selectedRuntimes.join(', ')}`)
+  }
 
   await cleanNeemOutDir(outDir)
   await mkdir(outDir, { recursive: true })
@@ -78,111 +87,95 @@ export async function buildNeem(
   const manifest: NeemBuildManifest = {
     schemaVersion: NEEM_MANIFEST_SCHEMA_VERSION,
     runtime: {
-      entry: toManifestPath(outDir, runtimeArtifacts.entry.file),
+      entry: 'start.js',
       worker: toManifestPath(outDir, runtimeArtifacts.worker.file),
     },
     config: { file: toManifestPath(outDir, configArtifact.file) },
-    apps: {},
-    plugins: [],
+    runtimes: {},
   }
 
-  for (const [name, appConfig] of Object.entries(config.apps)) {
-    const discovered = discovery.apps[name]
+  const runtimeEntries = Object.entries(config.runtimes ?? {}).filter(
+    ([name]) => shouldBuildName(name, selectedRuntimes),
+  )
+  assertSelectedRuntimesExist(selectedRuntimes, [
+    ...Object.keys(config.runtimes ?? {}),
+  ])
+
+  for (const [name, runtimeConfig] of runtimeEntries) {
+    const discovered = discovery.runtimes[name]
 
     if (!discovered) {
-      throw new Error(`Failed to discover app entry for [${name}]`)
+      throw new Error(`Failed to discover runtime entry for [${name}]`)
     }
 
-    const rolldown = await loadBuildConfig(appConfig.build)
+    const rolldown = await loadBuildConfig(runtimeConfig.build)
 
-    logger.start(`Building app: ${colorize('green', name)}`)
+    logger.start(`Building runtime: ${colorize('green', name)}`)
 
     const entry = await buildArtifact({
       artifact: {
         id: 'entry',
-        kind: 'module',
+        kind: 'worker',
         entry: discovered.entry.resolved,
       },
-      owner: { type: 'app', name },
+      owner: { type: 'runtime', name },
       rolldown,
       outDir,
       minify: true,
     })
 
-    for (const outputChunk of entry.bundle!.output) {
-      if (outputChunk.type === 'chunk') {
-        logger.debug(
-          `  Emit: ${outputChunk.fileName} (${colorize('blue', formatBytes(outputChunk.code.length))})`,
-        )
-      } else {
-        logger.debug(
-          `  Emit: ${outputChunk.fileName} (${colorize('blue', formatBytes(outputChunk.source.length))})`,
-        )
-      }
-    }
-
-    manifest.apps[name] = { name, entry: toManifestArtifact(outDir, entry) }
-  }
-
-  for (const [index, pluginConfig] of (config.plugins ?? []).entries()) {
-    const discovered = discovery.plugins[index]
-    if (!discovered) {
-      throw new Error(`Failed to discover plugin entry for index [${index}]`)
-    }
-
-    const plugin = (await pluginConfig.entry()).default as NeemPlugin<any>
-    const pluginName = plugin.name
-    const rolldown = await loadBuildConfig(pluginConfig.build)
-    const owner = {
-      type: 'plugin' as const,
-      name: pluginName,
-      instanceId: index,
-    }
-    const entry = await buildArtifact({
-      artifact: {
-        id: 'entry',
-        kind: 'module',
-        entry: discovered.entry.resolved,
-      },
-      owner,
-      rolldown,
-      outDir,
-      minify: true,
-    })
-
-    const declaredArtifacts =
-      (await plugin.artifacts?.({
-        mode: 'production',
-        name: pluginName,
-        instanceId: index,
-        options: pluginConfig.options,
-      })) ?? []
+    const hostRolldown = await loadBuildConfig(
+      getRuntimeHostBuildConfig(runtimeConfig.host),
+    )
+    const host = discovered.host
+    const hostArtifact = host
+      ? await buildArtifact({
+          artifact: { id: 'host', kind: 'module', entry: host.entry.resolved },
+          owner: { type: 'runtime', name },
+          rolldown: hostRolldown,
+          outDir,
+          minify: true,
+        })
+      : undefined
 
     const artifacts: NeemBuildManifestArtifact[] = []
+    const declaredArtifacts =
+      (await runtimeConfig.artifacts?.({
+        mode: 'production',
+        name,
+        options: runtimeConfig.options,
+      })) ?? []
     for (const artifact of declaredArtifacts) {
       const built = await buildArtifact({
-        artifact,
-        owner,
+        artifact: resolveRuntimeArtifactEntry(
+          artifact,
+          discovered.entry.resolved,
+        ),
+        owner: { type: 'runtime', name },
         rolldown,
         cwd: dirname(discovered.entry.resolved),
         outDir,
+        minify: true,
       })
       artifacts.push(toManifestArtifact(outDir, built))
     }
 
-    manifest.plugins.push({
-      index,
-      name: pluginName,
+    manifest.runtimes![name] = {
+      name,
       entry: toManifestArtifact(outDir, entry),
+      host: hostArtifact ? toManifestArtifact(outDir, hostArtifact) : undefined,
       artifacts,
-    })
+    }
   }
 
   const manifestFile = await writeManifest(outDir, manifest)
+  await writeStandaloneStartEntries(
+    outDir,
+    Object.keys(manifest.runtimes ?? {}),
+  )
   logger.success('Neem build complete')
   logger.info(`manifest: ${manifestFile}`)
-  logger.info(`apps: ${Object.keys(manifest.apps).length}`)
-  logger.info(`plugins: ${manifest.plugins.length}`)
+  logger.info(`runtimes: ${Object.keys(manifest.runtimes ?? {}).length}`)
 
   return { configFile, outDir, manifestFile, manifest }
 }
@@ -192,11 +185,41 @@ export async function cleanNeemOutDir(outDir: string): Promise<void> {
     rm(resolve(outDir, 'start.js'), { force: true }),
     rm(resolve(outDir, 'start.js.map'), { force: true }),
     rm(resolve(outDir, 'runtime'), { recursive: true, force: true }),
+    rm(resolve(outDir, 'runtimes'), { recursive: true, force: true }),
     rm(resolve(outDir, 'config'), { recursive: true, force: true }),
-    rm(resolve(outDir, 'apps'), { recursive: true, force: true }),
-    rm(resolve(outDir, 'plugins'), { recursive: true, force: true }),
     rm(resolve(outDir, NEEM_MANIFEST_FILE), { force: true }),
   ])
+}
+
+async function writeStandaloneStartEntries(
+  outDir: string,
+  runtimeNames: readonly string[],
+): Promise<void> {
+  await writeFile(
+    resolve(outDir, 'start.js'),
+    [
+      `import { startStandalone } from ${JSON.stringify('./runtime/start.js')}`,
+      '',
+      'await startStandalone()',
+      '',
+    ].join('\n'),
+  )
+
+  await Promise.all(
+    runtimeNames.map(async (name) => {
+      const dir = resolve(outDir, 'runtimes', name)
+      await mkdir(dir, { recursive: true })
+      await writeFile(
+        resolve(dir, 'start.js'),
+        [
+          `import { startStandalone } from ${JSON.stringify('../../runtime/start.js')}`,
+          '',
+          `await startStandalone({ runtimes: [${JSON.stringify(name)}] })`,
+          '',
+        ].join('\n'),
+      )
+    }),
+  )
 }
 
 export async function buildRuntimeArtifacts(options: {
@@ -209,7 +232,7 @@ export async function buildRuntimeArtifacts(options: {
       entry: resolveNeemRuntimeSourceEntry('standalone-entry'),
       rolldown: {
         output: {
-          entryFileNames: 'start.js',
+          entryFileNames: 'runtime/start.js',
           chunkFileNames: 'runtime/[name]-[hash].js',
           assetFileNames: 'runtime/[name]-[hash][extname]',
         },
@@ -250,13 +273,43 @@ export async function buildConfigArtifact(options: {
   outDir: string
   minify?: boolean
 }): Promise<NeemResolvedArtifact> {
-  return buildArtifact({
-    artifact: { id: 'entry', kind: 'module', entry: options.configFile },
-    owner: { type: 'config' },
-    rolldown: createConfigRolldownOptions(options.discovery),
-    outDir: options.outDir,
-    minify: options.minify,
-  })
+  const generatedEntry = await createConfigArtifactEntry(options)
+
+  try {
+    return await buildArtifact({
+      artifact: { id: 'entry', kind: 'module', entry: generatedEntry },
+      owner: { type: 'config' },
+      rolldown: createConfigRolldownOptions(options.discovery),
+      outDir: options.outDir,
+      minify: options.minify,
+    })
+  } finally {
+    if (generatedEntry !== options.configFile) {
+      await rm(generatedEntry, { force: true })
+    }
+  }
+}
+
+async function createConfigArtifactEntry(options: {
+  configFile: string
+  discovery: NeemConfigDiscovery
+  outDir: string
+}): Promise<string> {
+  const logger = options.discovery.logger
+  if (!logger || logger.source !== 'specifier') return options.configFile
+
+  const file = resolve(options.outDir, '.neem-config-entry.mjs')
+  await writeFile(
+    file,
+    [
+      `import config from ${JSON.stringify(pathToFileURL(options.configFile).href)}`,
+      `import logger from ${JSON.stringify(pathToFileURL(logger.resolved).href)}`,
+      '',
+      'export default { ...config, logger }',
+      '',
+    ].join('\n'),
+  )
+  return file
 }
 
 export function createConfigRolldownOptions(
@@ -278,6 +331,20 @@ export async function loadBuildConfig(
 ): Promise<NeemBuildConfig | undefined> {
   if (!input) return undefined
   return (await input()).default
+}
+
+function getRuntimeHostBuildConfig(
+  input: NeemRuntimeHostInput | undefined,
+): NeemBuildConfigInput | undefined {
+  return typeof input === 'function' ? undefined : input?.build
+}
+
+function resolveRuntimeArtifactEntry(
+  artifact: NeemArtifact,
+  entryFile: string,
+): NeemArtifact {
+  if (artifact.entry instanceof URL) return artifact
+  return { ...artifact, entry: resolve(dirname(entryFile), artifact.entry) }
 }
 
 export function toManifestArtifact(
@@ -321,15 +388,12 @@ function collectDiscoveredLazyImports(
     imports.add(entry.resolved)
   }
 
-  for (const app of Object.values(discovery.apps)) {
-    add(app.entry)
-    add(app.build)
+  for (const runtime of Object.values(discovery.runtimes)) {
+    add(runtime.entry)
+    add(runtime.build)
+    add(runtime.host?.entry)
+    add(runtime.host?.build)
   }
-  for (const plugin of discovery.plugins) {
-    add(plugin.entry)
-    add(plugin.build)
-  }
-
   return imports
 }
 
@@ -337,10 +401,27 @@ function constantImports(imports: Set<string>): () => Set<string> {
   return () => imports
 }
 
-const formatBytes = (bytes: number) =>
-  new Intl.NumberFormat('en-US', {
-    style: 'unit',
-    unit: 'kilobyte',
-    unitDisplay: 'short', // 'short' (kB), 'long' (kilobytes), 'narrow' (k)
-    maximumFractionDigits: 2,
-  }).format(bytes / 1024)
+function normalizeSelectedRuntimes(
+  runtimes: readonly string[] | undefined,
+): readonly string[] | undefined {
+  const selected = runtimes?.map((runtime) => runtime.trim()).filter(Boolean)
+  return selected && selected.length > 0 ? [...new Set(selected)] : undefined
+}
+
+function shouldBuildName(
+  name: string,
+  selected: readonly string[] | undefined,
+): boolean {
+  return !selected || selected.includes(name)
+}
+
+function assertSelectedRuntimesExist(
+  selected: readonly string[] | undefined,
+  available: readonly string[],
+): void {
+  if (!selected) return
+  const missing = selected.filter((name) => !available.includes(name))
+  if (missing.length > 0) {
+    throw new Error(`Unknown Neem runtime(s): ${missing.join(', ')}`)
+  }
+}

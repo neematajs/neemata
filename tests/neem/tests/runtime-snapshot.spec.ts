@@ -12,58 +12,148 @@ describe('Neem runtime snapshot', () => {
     const manifest: NeemBuildManifest = {
       schemaVersion: 1,
       config: { file: 'config/entry/neem.config.js' },
-      apps: {
+      runtimes: {
         api: {
           name: 'api',
           entry: {
             id: 'entry',
-            kind: 'module',
-            owner: { type: 'app', name: 'api' },
-            file: 'apps/api/entry/api.js',
-            outDir: 'apps/api/entry',
+            kind: 'worker',
+            owner: { type: 'runtime', name: 'api' },
+            file: 'runtimes/api/entry/api.js',
+            outDir: 'runtimes/api/entry',
           },
+          artifacts: [],
         },
-      },
-      plugins: [
-        {
-          index: 0,
+        jobs: {
           name: 'jobs',
           entry: {
             id: 'entry',
             kind: 'module',
-            owner: { type: 'plugin', name: 'jobs', instanceId: 0 },
-            file: 'plugins/0-jobs/entry/jobs.js',
-            outDir: 'plugins/0-jobs/entry',
+            owner: { type: 'runtime', name: 'jobs' },
+            file: 'runtimes/jobs/entry/jobs.js',
+            outDir: 'runtimes/jobs/entry',
           },
           artifacts: [
             {
               id: 'job-worker',
               kind: 'worker',
-              owner: { type: 'plugin', name: 'jobs', instanceId: 0 },
-              file: 'plugins/0-jobs/job-worker/jobs.worker.js',
-              outDir: 'plugins/0-jobs/job-worker',
+              owner: { type: 'runtime', name: 'jobs' },
+              file: 'runtimes/jobs/job-worker/jobs.worker.js',
+              outDir: 'runtimes/jobs/job-worker',
             },
           ],
         },
-      ],
+      },
     }
 
     const snapshot = createRuntimeSnapshot({
       mode: 'development',
       outDir,
       manifest,
-      config: { apps: {} } as NeemConfig,
+      config: { runtimes: {} } as NeemConfig,
     })
 
     expect(snapshot.artifacts.list()).toHaveLength(3)
     expect(
-      snapshot.artifacts.scope({ type: 'app', name: 'api' }).resolve('entry')
-        ?.file,
-    ).toBe(resolve(outDir, 'apps/api/entry/api.js'))
+      snapshot.artifacts
+        .scope({ type: 'runtime', name: 'api' })
+        .resolve('entry')?.file,
+    ).toBe(resolve(outDir, 'runtimes/api/entry/api.js'))
     expect(
       snapshot.artifacts
-        .scope({ type: 'plugin', name: 'jobs', instanceId: 0 })
+        .scope({ type: 'runtime', name: 'jobs' })
         .resolve('entry')?.file,
-    ).toBe(resolve(outDir, 'plugins/0-jobs/entry/jobs.js'))
+    ).toBe(resolve(outDir, 'runtimes/jobs/entry/jobs.js'))
+  })
+
+  it('rejects invalid manifest artifact kinds', () => {
+    const manifest: NeemBuildManifest = {
+      schemaVersion: 1,
+      config: { file: 'config/entry/neem.config.js' },
+      runtimes: {
+        api: {
+          name: 'api',
+          entry: {
+            id: 'entry',
+            kind: 'invalid' as never,
+            owner: { type: 'runtime', name: 'api' },
+            file: 'runtimes/api/entry/api.js',
+            outDir: 'runtimes/api/entry',
+          },
+          artifacts: [],
+        },
+      },
+    }
+
+    expect(() =>
+      createRuntimeSnapshot({
+        mode: 'development',
+        outDir: '/tmp/neem-out',
+        manifest,
+        config: { runtimes: {} } as NeemConfig,
+      }),
+    ).toThrow('Invalid Neem manifest artifact kind [invalid]')
+  })
+
+  it('rejects unsupported manifest schema versions', () => {
+    const manifest = createManifest()
+    manifest.schemaVersion = 2 as never
+
+    expect(() =>
+      createRuntimeSnapshot({
+        mode: 'development',
+        outDir: '/tmp/neem-out',
+        manifest,
+        config: { runtimes: {} } as NeemConfig,
+      }),
+    ).toThrow('Unsupported Neem manifest schema version [2]')
+  })
+
+  it('rejects manifest paths outside the output directory', () => {
+    const manifest = createManifest()
+    manifest.runtimes!.api.entry.file = '../api.js'
+
+    expect(() =>
+      createRuntimeSnapshot({
+        mode: 'development',
+        outDir: '/tmp/neem-out',
+        manifest,
+        config: { runtimes: {} } as NeemConfig,
+      }),
+    ).toThrow('paths must be relative to output directory')
+  })
+
+  it('rejects runtime artifacts owned by another runtime', () => {
+    const manifest = createManifest()
+    manifest.runtimes!.api.entry.owner = { type: 'runtime', name: 'other' }
+
+    expect(() =>
+      createRuntimeSnapshot({
+        mode: 'development',
+        outDir: '/tmp/neem-out',
+        manifest,
+        config: { runtimes: {} } as NeemConfig,
+      }),
+    ).toThrow('entry owner must be runtime [api]')
   })
 })
+
+function createManifest(): NeemBuildManifest {
+  return {
+    schemaVersion: 1,
+    config: { file: 'config/entry/neem.config.js' },
+    runtimes: {
+      api: {
+        name: 'api',
+        entry: {
+          id: 'entry',
+          kind: 'worker',
+          owner: { type: 'runtime', name: 'api' },
+          file: 'runtimes/api/entry/api.js',
+          outDir: 'runtimes/api/entry',
+        },
+        artifacts: [],
+      },
+    },
+  }
+}

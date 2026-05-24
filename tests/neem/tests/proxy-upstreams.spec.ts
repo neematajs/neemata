@@ -5,14 +5,14 @@ import type { NeemProxyUpstreamRegistryEvent } from '../../../packages/neem/src/
 import {
   createNativeProxyOptions,
   NeemProxyUpstreamRegistry,
-  normalizeProxyApplicationUpstream,
+  normalizeProxyRuntimeUpstream,
   toProxyUpstream,
 } from '../../../packages/neem/src/internal/runtime/proxy.ts'
 import { createRuntimeSnapshot } from '../../../packages/neem/src/internal/runtime/snapshot.ts'
 
 describe('neem proxy upstream registry', () => {
-  it('normalizes wildcard hosts and maps app upstreams to proxy upstreams', () => {
-    const upstream = normalizeProxyApplicationUpstream({
+  it('normalizes wildcard hosts and maps runtime upstreams to proxy upstreams', () => {
+    const upstream = normalizeProxyRuntimeUpstream({
       type: 'http',
       url: 'http://0.0.0.0:4101/api/0',
     })
@@ -59,7 +59,7 @@ describe('neem proxy upstream registry', () => {
 
     expect(registry.list()).toEqual([
       expect.objectContaining({
-        appName: 'api',
+        runtimeName: 'api',
         count: 2,
         upstream: { type: 'http', url: 'http://127.0.0.1:4101/api/0' },
       }),
@@ -69,7 +69,7 @@ describe('neem proxy upstream registry', () => {
 
     registry.removeOwnerUpstreams(workerA)
     expect(registry.list()).toEqual([
-      expect.objectContaining({ appName: 'api', count: 1 }),
+      expect.objectContaining({ runtimeName: 'api', count: 1 }),
     ])
     expect(events).toHaveLength(1)
 
@@ -91,6 +91,24 @@ describe('neem proxy upstream registry', () => {
       healthCheckIntervalMs: 250,
     })
   })
+
+  it('omits configured proxy routes for runtimes outside selected manifest', () => {
+    const options = createNativeProxyOptions(
+      {
+        hostname: '127.0.0.1',
+        port: 4090,
+        runtimes: {
+          api: { routing: { type: 'path', name: 'api' } },
+          jobs: { routing: { type: 'path', name: 'jobs' } },
+        },
+      },
+      ['api'],
+    )
+
+    expect(options.applications).toEqual([
+      { name: 'api', routing: { type: 'path', name: 'api' } },
+    ])
+  })
 })
 
 function createProxySnapshot() {
@@ -103,7 +121,7 @@ function createProxySnapshot() {
         port: 4090,
         healthChecks: { interval: 250 },
       },
-      apps: {},
+      runtimes: {},
     },
     manifest: createManifest(),
   })
@@ -113,18 +131,18 @@ function createManifest(): NeemBuildManifest {
   return {
     schemaVersion: 1,
     config: { file: 'config/entry/neem.config.js' },
-    apps: {
+    runtimes: {
       api: {
         name: 'api',
         entry: {
           id: 'entry',
-          kind: 'module',
-          owner: { type: 'app', name: 'api' },
-          file: 'apps/api/entry/api.js',
-          outDir: 'apps/api/entry',
+          kind: 'worker',
+          owner: { type: 'runtime', name: 'api' },
+          file: 'runtimes/api/entry/api.js',
+          outDir: 'runtimes/api/entry',
         },
+        artifacts: [],
       },
     },
-    plugins: [],
   }
 }

@@ -1,4 +1,4 @@
-import { resolve } from 'node:path'
+import { isAbsolute, normalize, resolve } from 'node:path'
 
 import type { Logger } from '@nmtjs/core'
 
@@ -10,6 +10,7 @@ import type {
   NeemBuildManifestArtifact,
 } from '../build/manifest.ts'
 import type { NeemScopedArtifactRegistry } from './artifact-registry.ts'
+import { NEEM_MANIFEST_SCHEMA_VERSION } from '../build/manifest.ts'
 import { createNeemArtifactRegistry } from './artifact-registry.ts'
 import { createNeemDefaultLogger } from './logger.ts'
 
@@ -39,6 +40,8 @@ export type NeemRuntimeSnapshotInput = {
 export function createRuntimeSnapshot(
   input: NeemRuntimeSnapshotInput,
 ): NeemRuntimeSnapshot {
+  validateManifest(input.manifest)
+
   return Object.freeze({
     mode: input.mode,
     outDir: input.outDir,
@@ -61,13 +64,12 @@ function resolveManifestArtifacts(
 ): NeemResolvedArtifact[] {
   const artifacts: NeemResolvedArtifact[] = []
 
-  for (const app of Object.values(manifest.apps)) {
-    artifacts.push(resolveManifestArtifact(outDir, app.entry))
-  }
-
-  for (const plugin of manifest.plugins) {
-    artifacts.push(resolveManifestArtifact(outDir, plugin.entry))
-    for (const artifact of plugin.artifacts) {
+  for (const runtime of Object.values(manifest.runtimes ?? {})) {
+    artifacts.push(resolveManifestArtifact(outDir, runtime.entry))
+    if (runtime.host) {
+      artifacts.push(resolveManifestArtifact(outDir, runtime.host))
+    }
+    for (const artifact of runtime.artifacts) {
       artifacts.push(resolveManifestArtifact(outDir, artifact))
     }
   }
@@ -75,13 +77,85 @@ function resolveManifestArtifacts(
   return artifacts
 }
 
+function validateManifest(manifest: NeemBuildManifest): void {
+  if (manifest.schemaVersion !== NEEM_MANIFEST_SCHEMA_VERSION) {
+    throw new Error(
+      `Unsupported Neem manifest schema version [${String(manifest.schemaVersion)}]`,
+    )
+  }
+
+  assertManifestPath(manifest.config.file, 'config.file')
+
+  for (const [runtimeName, runtime] of Object.entries(
+    manifest.runtimes ?? {},
+  )) {
+    if (runtime.name !== runtimeName) {
+      throw new Error(
+        `Invalid Neem manifest runtime [${runtimeName}]: runtime name must match manifest key`,
+      )
+    }
+
+    assertRuntimeArtifact(runtimeName, runtime.entry, 'entry')
+    if (runtime.entry.id !== 'entry') {
+      throw new Error(
+        `Invalid Neem manifest runtime [${runtimeName}]: entry artifact id must be [entry]`,
+      )
+    }
+
+    if (runtime.host) {
+      assertRuntimeArtifact(runtimeName, runtime.host, 'host')
+      if (runtime.host.id !== 'host') {
+        throw new Error(
+          `Invalid Neem manifest runtime [${runtimeName}]: host artifact id must be [host]`,
+        )
+      }
+    }
+
+    for (const artifact of runtime.artifacts) {
+      assertRuntimeArtifact(runtimeName, artifact, `artifact [${artifact.id}]`)
+    }
+  }
+}
+
+function assertRuntimeArtifact(
+  runtimeName: string,
+  artifact: NeemBuildManifestArtifact,
+  label: string,
+): void {
+  if (
+    artifact.owner.type !== 'runtime' ||
+    artifact.owner.name !== runtimeName
+  ) {
+    throw new Error(
+      `Invalid Neem manifest runtime [${runtimeName}]: ${label} owner must be runtime [${runtimeName}]`,
+    )
+  }
+
+  assertManifestPath(artifact.file, `${runtimeName}.${label}.file`)
+  assertManifestPath(artifact.outDir, `${runtimeName}.${label}.outDir`)
+}
+
+function assertManifestPath(path: string, label: string): void {
+  if (!path || isAbsolute(path) || normalize(path).startsWith('..')) {
+    throw new Error(
+      `Invalid Neem manifest path [${label}]: paths must be relative to output directory`,
+    )
+  }
+}
+
 function resolveManifestArtifact(
   outDir: string,
   artifact: NeemBuildManifestArtifact,
 ): NeemResolvedArtifact {
+  if (artifact.kind !== 'worker' && artifact.kind !== 'module') {
+    throw new Error(
+      `Invalid Neem manifest artifact kind [${String(artifact.kind)}] for artifact [${artifact.id}]`,
+    )
+  }
+
   return {
     id: artifact.id,
-    kind: artifact.kind as NeemResolvedArtifact['kind'],
+    kind: artifact.kind,
     owner: artifact.owner,
     file: resolve(outDir, artifact.file),
     outDir: resolve(outDir, artifact.outDir),

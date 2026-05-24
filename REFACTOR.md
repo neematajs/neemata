@@ -5,24 +5,31 @@ This file tracks current architecture decisions and remaining porting work.
 ## Goals
 
 - Move process/server infrastructure into `@nmtjs/neem`.
-- Keep Neem generic: build artifacts, run workers, manage host lifecycle,
-  proxying, health, and host plugins.
+- Keep Neem generic: build artifacts, run named runtimes, manage host
+  lifecycle, proxying, and health.
 - Keep framework behavior outside Neem: Neemata API runtime, jobs, pub/sub,
   metrics, adapters, routers, validation, DI semantics, and transports.
+- Make every deployable unit a runtime. Apps, jobs, schedulers, event
+  consumers, bots, and custom workers all use the same host orchestration path.
+- Treat Neem as an intelligent runtime orchestrator, not an app/plugin-specific
+  server.
 - Use Rolldown as the v1 build/watch backend.
 - Use rebuild + worker recycle for dev. No Vite-style in-process HMR.
-- Keep `nmtjs` as a future thin umbrella package, not the app-server owner.
+- Leave `packages/nmtjs` untouched during this Neem slice. No imports, exports,
+  wrappers, compatibility shims, or migration edits there. Replace or thin it
+  only after Neem runtime architecture is finished.
 
 ## Package Topology
 
 - `@nmtjs/neem`: generic host, CLI, build/dev/start, manifest, artifact graph,
-  worker runtime, proxy orchestration, host plugins.
+  runtime worker orchestration, optional proxy orchestration.
 - `@nmtjs/application`: Neemata app model and Neem adapter.
-- `@nmtjs/jobs`: BullMQ-backed jobs package and Neem host plugin.
+- `@nmtjs/jobs`: BullMQ-backed jobs package and Neem runtime adapter.
 - `@nmtjs/pubsub`: pub/sub manager, adapters, app runtime plugin.
-- `@nmtjs/metrics`: future metrics plugin.
+- `@nmtjs/metrics`: future runtime/host observability package.
 - `@nmtjs/proxy`: proxy implementation, optional peer used by Neem.
-- `nmtjs`: future umbrella/DX exports.
+- `nmtjs`: legacy umbrella package. Do not update in this slice; it stays as-is
+  until Neem is finished and can replace it cleanly.
 
 `@nmtjs/neem` must not own Neemata routers, procedures, jobs, pubsub,
 metrics semantics, store adapters, or app DI provisions.
@@ -36,35 +43,72 @@ metrics semantics, store adapters, or app DI provisions.
 - Config syntax uses direct default-exported `defineConfig(...)` and static lazy
   imports:
   `entry: () => import('./x.ts')`, `build: () => import('./x.build.ts')`.
+- Target config uses `runtimes: { [name]: defineRuntimeConfig(...) }`.
+  Runtime object keys are stable build/start/deploy unit IDs.
+- Runtime configs have no core `kind`. Neem only cares about entry artifacts,
+  threads/options, lifecycle, health, and returned upstreams.
+- Runtimes are keyed by object name. That key is the stable build/start/deploy
+  selector and replaces app/plugin instance identity where possible.
+- Runtime configs may provide a host artifact. Hosts run on the Neem main
+  thread and can do runtime orchestration logic that cannot live inside worker
+  threads.
+- Runtime hosts are declarative. They return desired thread plans and never
+  spawn workers directly. Neem owns thread orchestration, reloads, stop order,
+  worker errors, `MessageChannel` setup, and worker health accounting.
+- Host lifecycle is:
+  `setup -> plan -> Neem starts planned threads -> start(handles) -> stop`.
+  Hosts receive started thread handles with raw `MessagePort`s after Neem starts
+  their planned threads.
+- Runtime thread `MessagePort`s are transport only; Neem does not define RPC,
+  schemas, request IDs, or feature semantics.
+- Host logic is the replacement path for current plugin main-thread behavior.
+  A host can run setup/coordination on the Neem main thread, but thread
+  lifecycle always stays Neem-owned.
+- Runtime helpers such as `defineNeemataRuntime(...)` can wrap generic runtime
+  config only when static imports stay visible to Neem discovery. Helpers that
+  hide host imports are not allowed.
+- Runtime entries may return upstreams from `start()`. Neem registers returned
+  upstreams with the proxy; runtimes returning no upstreams stay background-only.
+- Upstreams are the only runtime capability Neem interprets. No upstreams means
+  background runtime. No separate `app`, `job`, `consumer`, or `plugin` kind is
+  needed in core.
+- CLI should support selected runtimes:
+  `neem build api`, `neem start api`, `neem dev api`, and multi-select forms.
+- Build output should support both whole-host and per-runtime standalone
+  entrypoints:
+  `dist/start.js` and `dist/runtimes/<name>/start.js`.
 - Static discovery uses Rolldown/OXC parser utilities and `oxc-resolver`.
 - Build config is lazy only. Inline compiler config objects are rejected.
 - Config artifact is compiled, hashed, ESM `.js`, and externalizes discovered
-  app/plugin/build lazy imports.
-- App/plugin entries compile to fixed `entry` artifacts.
-- Plugin-declared artifact kinds are `worker` and `module`.
+  runtime/build lazy imports.
+- Runtime entries compile to fixed `entry` artifacts.
+- Runtime-declared artifact kinds are `worker` and `module`.
 - Artifact files use `.js`, not `.mjs`.
-- Manifest is internal v1: `neem.manifest.json` with relative paths.
+- Manifest is internal v1: `neem.manifest.json` with relative paths and
+  runtime-owned artifacts only.
 - `neem build` emits `start.js` and `runtime/worker-entry.js`.
 - `neem start` only consumes built output and never discovers/builds source.
 - `neem dev` treats `.neem` as build-like output and keeps manifest as runtime
   source of truth.
 - Runtime mode is host-provided: `start -> production`, `dev -> development`.
 - Runtime worker bootstrap is package-owned file, not eval source.
-- `NeemApplicationServer` owns lifecycle state, snapshots, serialized
-  operations, full reload, app reload, and plugin reload. No separate lifecycle
+- `NeemRuntimeServer` owns lifecycle state, snapshots, serialized
+  operations, full reload, and scoped runtime reload. No separate lifecycle
   supervisor.
 - Dev config changes trigger global reload.
-- Dev app artifact changes reload only affected app pool.
-- Dev plugin entry/artifact changes reload only affected plugin runtime.
+- Dev runtime artifact changes reload only affected runtime pool.
 - Rebuild errors keep currently running units alive.
 - Replacement start failure marks affected runtime/host failed until next good
   rebuild.
 - Proxy is a Neem host subsystem backed by optional peer `@nmtjs/proxy`.
-- Neem host plugins are limited host extensions: lifecycle, artifacts,
-  plugin-owned workers, raw plugin-worker `MessagePort`, observer hooks.
-- No generic capability registry, app-worker service registry, or plugin-to-app
-  worker channel in v1.
-- Jobs stay in `@nmtjs/jobs`; Neem only sees generic plugin artifacts/workers.
+- Neem host plugins are not part of the target architecture. Packages that
+  need host coordination plus workers expose a runtime helper with a host entry.
+- No generic capability registry or app-worker service registry in v1.
+- Jobs stay in `@nmtjs/jobs`; target Neem integration is explicit jobs runtime,
+  not hidden plugin-owned workers.
+- Jobs runtime host owns queue-worker coordination on the Neem main thread and
+  asks Neem to run job runner threads. It talks to those threads over runtime
+  thread ports.
 - Jobs intentionally use BullMQ directly for both Neemata and Neem host
   runtime. No queue adapter/backend abstraction in v1; if another real queue
   runtime appears later, refactor then.
@@ -74,11 +118,20 @@ metrics semantics, store adapters, or app DI provisions.
   Neem does not know pub/sub semantics.
 - Durable message broker semantics are future separate package/surface, not
   part of `@nmtjs/pubsub`.
-- Metrics should become a Neem plugin that observes host/runtime events.
+- Durable eventing, if added, should become explicit runtime helper(s) for
+  event consumers over a durable stream/log. Do not make it a plugin-owned
+  hidden runner.
+- Event consumers should follow the same shape as jobs: host owns broker
+  consumption/coordination, Neem owns threads, runtime package owns port
+  protocol.
+- Metrics should observe host/runtime events. Implementation can use runtime
+  hooks or a narrow host extension, but must not introduce feature-specific host
+  semantics.
 - Logging uses configured logger for runtime layers. CLI only owns fatal
-  boundary. App worker label format is `Neem App/<name>:<index>`.
-- Meta-framework apps should keep framework build output framework-owned. Neem
-  should compile/adapt thin entries and record framework output metadata later.
+  boundary. Runtime worker labels are runtime/thread names.
+- Meta-framework runtimes should keep framework build output framework-owned.
+  Neem should compile/adapt thin entries and record framework output metadata
+  later.
 
 ## Current Status
 
@@ -91,12 +144,25 @@ Wired:
 - internal manifest/artifact registry
 - config/static import discovery
 - managed workers and worker pools
-- application server lifecycle and health snapshot
-- app scoped reload
-- plugin scoped reload
-- plugin lifecycle and plugin-owned workers
+- runtime server lifecycle and health snapshot
+- runtime scoped reload
+- Neem host plugin model removed; runtime hosts replace main-thread
+  coordination
 - proxy lifecycle with optional `@nmtjs/proxy`
 - config logger flow
+- generic runtime-map config/manifest/server path
+- runtime host setup/plan/start/stop/fail path
+- selected-runtime build/start/dev
+- per-runtime standalone start entries
+- runtime-declared artifacts
+- runtime thread handles with raw `MessagePort`
+- runtime host/thread failure cleanup contract
+- runtime host cleanup remains Neem-owned even if host `fail`/`stop` handlers
+  throw
+- runtime worker `start()` failure cleans up partially-created runtime before
+  worker exit
+- runtime lifecycle observer hooks, including scoped `runtime:reload`
+- manifest runtime artifact validation
 
 Ported packages:
 
@@ -104,7 +170,11 @@ Ported packages:
   - app-facing job builders/router helpers/injectables
   - direct BullMQ manager and runner
   - Redis/Valkey client factory; runtime owns returned connection lifecycle
-  - Neem host plugin and job runner worker artifact
+  - explicit Neem runtime host with Neem-owned runner threads
+  - runner worker stop fires lifecycle dispose hook so active jobs receive abort
+    signal
+  - `defineJobs(...)` config helper and `defineJobsRuntimeArtifacts(...)`
+    artifact helper
   - CRUD-like lifecycle hooks: `added`, `updated`, `removed`
 - `@nmtjs/pubsub`
   - `PubSubManager`
@@ -118,108 +188,168 @@ Still incomplete:
 - full Neemata adapter parity audit
 - production-grade worker restart/backoff/degraded policy
 - HTTP health/readiness probe exposure
-- metrics plugin
+- metrics/observability package
 - scheduler/commands
 - meta-framework build/watch lifecycle
-- umbrella `nmtjs` export cleanup
 
 ## Feature Porting Ledger
 
 | Feature | New owner | Target | Status |
 | --- | --- | --- | --- |
 | Build/start/dev substrate | `@nmtjs/neem` | Generic manifest/artifact runtime with Rolldown build/watch. | `wired` |
-| Application server lifecycle | `@nmtjs/neem` | Central `NeemApplicationServer` with start/stop/reload/scoped reload. | `wired` |
-| Worker management | `@nmtjs/neem` | Managed workers, pools, health, timeouts; restart/backoff later. | `partial` |
-| Proxy | `@nmtjs/neem` + `@nmtjs/proxy` | Optional host subsystem routing app upstreams. | `partial` |
-| Host plugins | `@nmtjs/neem` | Limited host extension model with artifacts, lifecycle, hooks, workers. | `wired` |
-| Neemata runtime | `@nmtjs/application` | Neem adapter over pure Neemata app runtime. | `partial` |
-| Jobs | `@nmtjs/jobs` | Direct BullMQ jobs runtime + Neem host plugin + app plugin/injectables. | `partial` |
+| Runtime map | `@nmtjs/neem` | `runtimes: { [name]: runtime }` as only generic orchestration model. | `wired` |
+| Runtime hosts | `@nmtjs/neem` | Main-thread setup/plan/start/stop/fail with declarative thread plans. | `wired` |
+| Runtime server lifecycle | `@nmtjs/neem` | Central server with start/stop/reload/scoped runtime reload. | `wired` |
+| Worker management | `@nmtjs/neem` | Managed runtime workers, pools, health, timeouts; restart/backoff later. | `partial` |
+| Proxy | `@nmtjs/neem` + `@nmtjs/proxy` | Optional host subsystem routing returned runtime upstreams. | `partial` |
+| Host plugins | none | Removed from Neem target model; runtime hosts replace worker-owning plugin behavior. | `removed` |
+| Neemata runtime | `@nmtjs/application` | Generic runtime adapter over pure Neemata app runtime. | `wired` |
+| Jobs | `@nmtjs/jobs` | Direct BullMQ jobs runtime + app plugin/injectables. Neem adapter uses runtime host and Neem-owned runner threads. | `partial` |
 | PubSub | `@nmtjs/pubsub` | Pub/sub package + app runtime plugin/adapters. | `partial` |
-| Metrics | `@nmtjs/metrics` | Host/runtime observer plugin. | `missing` |
+| Eventing | future `@nmtjs/eventing` | Durable stream/log client plus runtime host/consumer threads. | `research` |
+| Metrics | `@nmtjs/metrics` | Host/runtime observer package. | `missing` |
 | Runtime injections | app packages | Neem passes context; adapters map into app containers. | `partial` |
 | Health/readiness | `@nmtjs/neem` | Internal health exists; public/probe exposure later. | `partial` |
-| Meta-framework apps | adapter packages + Neem build hooks | Framework-owned build output with thin Neem adapter artifacts. | `missing` |
-| Scheduler | `@nmtjs/jobs` later | Deferred until jobs plugin settles. | `deferred` |
-| Commands | future Neem/plugin surface | Placeholder only. | `deferred` |
-| Umbrella exports | `nmtjs` | Thin DX package over scoped packages. | `missing` |
+| Meta-framework runtimes | adapter packages + Neem build hooks | Framework-owned build output with thin Neem adapter artifacts. | `missing` |
+| Scheduler | `@nmtjs/jobs` or runtime helper later | Deferred until runtime model settles. | `deferred` |
+| Commands | future runtime/helper surface | Placeholder only. | `deferred` |
+| Umbrella exports | `nmtjs` | Replace/thin after Neem lands. No changes in current slice. | `deferred` |
 
-## Minimal Config Shape
+## Target Config Shape
 
 ```ts
-import {
-  defineAppConfig,
-  defineConfig,
-  definePluginConfig,
-} from '@nmtjs/neem'
+import { defineConfig, defineRuntimeConfig } from '@nmtjs/neem'
+import { defineNeemataRuntime } from '@nmtjs/application/neem'
+import { defineJobsRuntimeArtifacts } from '@nmtjs/jobs/neem'
 
 export default defineConfig({
-  apps: {
-    api: defineAppConfig({
+  runtimes: {
+    api: defineNeemataRuntime({
       entry: () => import('./src/api.ts'),
       build: () => import('./src/api.build.ts'),
       threads: [{ http: { listen: { hostname: '127.0.0.1', port: 3000 } } }],
     }),
-  },
-  plugins: [
-    definePluginConfig({
-      entry: () => import('./src/jobs.plugin.ts'),
+
+    jobs: defineRuntimeConfig({
+      entry: () => import('./src/jobs.runtime.ts'),
+      host: () => import('@nmtjs/jobs/neem/host'),
+      build: () => import('./src/jobs.build.ts'),
+      artifacts: defineJobsRuntimeArtifacts,
     }),
-  ],
+
+    custom: defineRuntimeConfig({
+      entry: () => import('./src/custom.runtime.ts'),
+      threads: 1,
+      options: { foo: 'bar' },
+    }),
+  },
 })
 ```
 
 Constraints:
 
-- Config loading must not import app/plugin/build implementation modules.
+- Config loading must not import runtime/build implementation modules.
 - Runtime `start` imports compiled config only for runtime options.
 - Runtime artifact paths come from manifest, not config thunks.
-- App/plugin/build thunks must remain static string-literal dynamic imports.
-- App/plugin typing is inferred at `defineAppConfig` /
-  `definePluginConfig` call sites.
+- Runtime/build thunks must remain static string-literal dynamic imports.
+- Runtime helper typing is inferred at helper call sites.
+- Runtime object keys are unique names and become build/start/deploy selectors.
 
 ## Host Contracts
 
-App entries default-export a value satisfying:
+Runtime host entries default-export a value satisfying:
 
 ```ts
-export type NeemApp<ThreadOptions = unknown, Definition = unknown> = {
-  _: { threadOptions: ThreadOptions; definition: Definition }
-  kind: string
+export type NeemRuntimeHost<Options = unknown> = {
+  setup?(ctx: NeemRuntimeHostContext<Options>): NeemMaybePromise<void>
+  plan?(ctx: NeemRuntimeHostContext<Options>): NeemMaybePromise<NeemRuntimePlan>
+  start?(ctx: NeemRuntimeStartedContext<Options>): NeemMaybePromise<void>
+  stop?(ctx: NeemRuntimeStoppedContext<Options>): NeemMaybePromise<void>
+  fail?(ctx: NeemRuntimeFailedContext<Options>): NeemMaybePromise<void>
+}
+
+export type NeemRuntimePlan = {
+  threads?: readonly NeemRuntimeThreadPlan[]
+}
+
+export type NeemRuntimeThreadPlan<Data = unknown> = {
+  name: string
+  artifact: string | NeemResolvedArtifact
+  count?: number
+  data?: Data
+}
+
+export type NeemRuntimeThreadHandle = {
+  id: string
+  name: string
+  port: MessagePort
+  stop(): Promise<void>
+}
+```
+
+Host lifecycle details:
+
+- `setup(ctx)` runs on Neem main thread before any runtime workers start.
+- `plan(ctx)` returns desired worker/thread topology.
+- Neem creates channels, starts workers, waits for readiness, and tracks
+  failures.
+- `start(ctx)` receives started thread handles and can attach protocol handlers
+  to their ports.
+- `stop(ctx)` runs before Neem tears down runtime-owned threads.
+- `fail(ctx)` is best-effort notification after host or worker failure.
+
+Runtime worker entries default-export a value satisfying:
+
+```ts
+export type NeemRuntimeWorker<Data = unknown, Definition = unknown> = {
+  _: { data: Data; definition: Definition }
   definition: Definition
   createRuntime: (
-    ctx: NeemAppRuntimeContext<ThreadOptions, Definition>,
+    ctx: NeemWorkerRuntimeContext<Data, Definition>,
   ) => NeemMaybePromise<NeemRuntime>
 }
-```
 
-Plugin entries default-export a value satisfying:
-
-```ts
-export type NeemPlugin<Options = unknown> = {
-  name: string
-  artifacts?: (
-    ctx: NeemPluginArtifactContext<Options>,
-  ) => NeemMaybePromise<readonly NeemArtifact[]>
-  setup?: (ctx: NeemPluginContext<Options>) => NeemMaybePromise<void>
-  stop?: (ctx: NeemPluginContext<Options>) => NeemMaybePromise<void>
+export type NeemRuntime = {
+  start(): NeemMaybePromise<void | { upstreams?: readonly NeemProxyUpstream[] }>
+  stop(): NeemMaybePromise<void>
 }
 ```
+
+Default host behavior exists for simple worker-pool runtimes:
+
+1. Build one thread plan from runtime entry + configured threads.
+2. Start planned runtime workers.
+3. Wait for worker readiness.
+4. Collect returned upstreams.
+5. Stop workers on runtime stop/reload.
+
+Custom hosts, such as future jobs or event-consumer runtimes, can return
+multiple thread plans and then use started thread ports in `start(...)`. Hosts
+still do not spawn workers directly.
+
+Host/runtime responsibility split:
+
+- Runtime package decides what threads are needed.
+- Runtime package owns protocol spoken over returned `MessagePort`s.
+- Neem creates `MessageChannel`s, starts workers, wires ports, tracks health,
+  stops workers, and serializes reload operations.
+- Neem only inspects upstreams returned by worker runtimes. No upstreams means
+  background runtime.
 
 ## Dev Flow
 
 1. Discover static config entry imports.
 2. Watch config artifact.
-3. Watch app/plugin artifacts.
+3. Watch runtime host/worker artifacts.
 4. Write `.neem/neem.manifest.json` after each successful output.
 5. Build runtime snapshot from compiled config + manifest.
 6. Apply change:
    - config -> full `server.reload(snapshot)`
-   - app entry -> `server.reloadApp(appName, snapshot)`
-   - plugin entry/artifact -> `server.reloadPlugin(instanceId, snapshot)`
+   - runtime entry/artifact -> `server.reloadRuntime(runtimeName, snapshot)`
 7. On rebuild error, keep existing runtime.
 
-Dev reload scheduler is latest-wins and debounced. Config/plugin changes
-supersede pending app reloads when needed.
+Dev reload scheduler is latest-wins and debounced. Config changes supersede
+pending scoped runtime reloads when needed.
 
 ## Production Flow
 
@@ -227,40 +357,38 @@ supersede pending app reloads when needed.
 
 1. Discover config imports.
 2. Load source config.
-3. Build runtime artifacts.
-4. Build config/app/plugin artifacts.
-5. Build plugin-declared artifacts.
+3. Resolve selected runtime keys, if any.
+4. Build config/runtime host/worker artifacts.
+5. Build runtime-declared artifacts.
 6. Write manifest.
+7. Emit root `start.js` and per-runtime `runtimes/<name>/start.js`.
 
 `neem start`:
 
 1. Read manifest.
 2. Import compiled config.
 3. Resolve artifact registry.
-4. Start plugins.
-5. Start app worker pools.
-6. Start proxy if configured.
-7. Stop in reverse: proxy, apps, plugins.
+4. Resolve selected runtime keys, if any.
+5. Start runtime worker pools.
+6. Register returned upstreams with proxy if configured.
+7. Stop in reverse: proxy, runtimes.
 
 Standalone `node dist/start.js` follows same runtime path and injects
 `dist/runtime/worker-entry.js`.
 
 ## Near-Term Agenda
 
-1. Audit Neemata adapter parity against old app worker runtime.
-2. Clean `nmtjs` umbrella exports so jobs/pubsub come from scoped
-   packages.
-3. Add metrics plugin package.
-4. Add health/readiness probe exposure.
-5. Design framework-owned build lifecycle for Nuxt/other meta-frameworks.
-6. Decide scheduler placement after jobs plugin settles.
+1. Audit Neemata adapter parity against runtime worker behavior.
+2. Add metrics/observability on generic runtime lifecycle.
+3. Add health/readiness probe exposure.
+4. Design framework-owned build lifecycle for Nuxt/other meta-frameworks.
+5. Revisit durable eventing after runtime model lands.
 
 ## Non-Goals For Current Slice
 
 - Vite integration
 - in-process HMR
 - generic host capability registry
-- plugin-to-app-worker channels
-- host-owned jobs/pubsub semantics
+- Neem-core-owned jobs/pubsub semantics
 - command runtime
 - legacy config compatibility loader

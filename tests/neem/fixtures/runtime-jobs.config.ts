@@ -1,8 +1,12 @@
-import { defineConfig, definePluginConfig } from '@nmtjs/neem'
+import { defineJobsRuntimeArtifacts } from '@nmtjs/jobs/neem'
+import { defineConfig, defineRuntimeConfig } from '@nmtjs/neem'
 
 export default defineConfig({
-  apps: {},
-  plugins: [
-    definePluginConfig({ entry: () => import('./runtime-jobs.plugin.ts') }),
-  ],
+  runtimes: {
+    jobs: defineRuntimeConfig({
+      entry: () => import('./runtime-jobs.ts'),
+      host: () => import('@nmtjs/jobs/neem/host'),
+      artifacts: defineJobsRuntimeArtifacts,
+    }),
+  },
 })

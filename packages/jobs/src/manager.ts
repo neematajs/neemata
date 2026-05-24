@@ -180,32 +180,6 @@ type JobQueueEntry = {
   custom: QueueEventsProducer
 }
 
-/**
- * TODO: Consider implementing SQL-backed read model for job queries.
- *
- * Current limitations with direct queue queries:
- * - Pagination is per-type, requires complex offset calculations
- * - Limited filtering/sorting capabilities
- * - No full-text search on job data
- *
- * Proposed architecture:
- * 1. Shared SQLite file (WAL mode) across all workers on the same machine
- * 2. Each worker subscribes to queue events and syncs to SQLite
- * 3. List/filter/sort queries run against SQLite with proper SQL semantics
- * 4. Mutations (add, retry, cancel, remove) still go through the queue directly
- *
- * Benefits:
- * - Proper SQL pagination, filtering, sorting
- * - Shared query storage can stay separate from queue execution
- * - No per-process memory duplication (shared file)
- * - Complex queries: date ranges, priority ranges, full-text search
- *
- * Implementation notes:
- * - Use better-sqlite3 (sync, fast for in-memory/WAL)
- * - Subscribe to QueueEvents BEFORE initial sync to buffer events
- * - Handle race conditions: initial load + event replay
- * - Consider leader election for sync to reduce write contention
- */
 export class JobManager {
   protected client: RedisClient
   /**

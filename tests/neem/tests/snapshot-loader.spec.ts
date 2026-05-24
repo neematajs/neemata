@@ -25,15 +25,14 @@ describe('Neem built snapshot loader', () => {
     await mkdir(resolve(outDir, 'config/entry'), { recursive: true })
     await writeFile(
       resolve(outDir, 'config/entry/neem.config.js'),
-      'export default { apps: {}, plugins: [] };\n',
+      'export default { runtimes: {} };\n',
     )
     await writeFile(
       resolve(outDir, NEEM_MANIFEST_FILE),
       `${JSON.stringify({
         schemaVersion: 1,
         config: { file: 'config/entry/neem.config.js' },
-        apps: {},
-        plugins: [],
+        runtimes: {},
       })}\n`,
     )
 
@@ -44,7 +43,7 @@ describe('Neem built snapshot loader', () => {
 
     expect(snapshot.mode).toBe('production')
     expect(snapshot.outDir).toBe(outDir)
-    expect(snapshot.config.apps).toEqual({})
+    expect(snapshot.config.runtimes).toEqual({})
     expect(snapshot.artifacts.list()).toEqual([])
   })
 })

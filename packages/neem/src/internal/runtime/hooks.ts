@@ -2,55 +2,56 @@ import type { Logger } from '@nmtjs/core'
 import type { Hookable, HookCallback } from 'hookable'
 import { createHooks } from 'hookable'
 
+import type { NeemArtifactOwner } from '../../public/artifact.ts'
 import type {
-  NeemPluginHostHookRegistrar,
-  NeemPluginHostHooks,
-} from '../../public/plugin.ts'
+  NeemMaybePromise,
+  NeemMode,
+  NeemRuntimeUpstream,
+} from '../../public/runtime.ts'
 import { normalizeError } from './utils.ts'
 
-export type NeemHostHooks = Hookable<NeemPluginHostHooks>
+export type NeemHostHookEvent = { mode: NeemMode; error?: Error }
+
+export type NeemHostRuntimeHookEvent = NeemHostHookEvent & {
+  name: string
+  upstreams?: readonly NeemRuntimeUpstream[]
+}
+
+export type NeemHostWorkerHookEvent = NeemHostHookEvent & {
+  id: string
+  name: string
+  artifactId: string
+  owner: NeemArtifactOwner
+}
+
+export type NeemHostHookMap = {
+  'server:start': (event: NeemHostHookEvent) => NeemMaybePromise<void>
+  'server:ready': (event: NeemHostHookEvent) => NeemMaybePromise<void>
+  'server:reload': (event: NeemHostHookEvent) => NeemMaybePromise<void>
+  'server:stop': (event: NeemHostHookEvent) => NeemMaybePromise<void>
+  'server:fail': (event: NeemHostHookEvent) => NeemMaybePromise<void>
+  'runtime:start': (event: NeemHostRuntimeHookEvent) => NeemMaybePromise<void>
+  'runtime:ready': (event: NeemHostRuntimeHookEvent) => NeemMaybePromise<void>
+  'runtime:reload': (event: NeemHostRuntimeHookEvent) => NeemMaybePromise<void>
+  'runtime:stop': (event: NeemHostRuntimeHookEvent) => NeemMaybePromise<void>
+  'runtime:fail': (event: NeemHostRuntimeHookEvent) => NeemMaybePromise<void>
+  'worker:start': (event: NeemHostWorkerHookEvent) => NeemMaybePromise<void>
+  'worker:ready': (event: NeemHostWorkerHookEvent) => NeemMaybePromise<void>
+  'worker:stop': (event: NeemHostWorkerHookEvent) => NeemMaybePromise<void>
+  'worker:fail': (event: NeemHostWorkerHookEvent) => NeemMaybePromise<void>
+}
+
+export type NeemHostHooks = Hookable<NeemHostHookMap>
 
 export function createNeemHostHooks(): NeemHostHooks {
-  return createHooks<NeemPluginHostHooks>()
+  return createHooks<NeemHostHookMap>()
 }
 
-export function createNeemPluginHookRegistrar(
-  hooks: NeemHostHooks,
-  unregisters: Set<() => void>,
-): NeemPluginHostHookRegistrar {
-  return {
-    hook(name, callback, options) {
-      const unregister = hooks.hook(name, callback, options)
-      unregisters.add(unregister)
-      return () => {
-        unregisters.delete(unregister)
-        unregister()
-      }
-    },
-    hookOnce(name, callback) {
-      const unregister = hooks.hookOnce(name, callback)
-      unregisters.add(unregister)
-      return () => {
-        unregisters.delete(unregister)
-        unregister()
-      }
-    },
-    addHooks(configHooks) {
-      const unregister = hooks.addHooks(configHooks)
-      unregisters.add(unregister)
-      return () => {
-        unregisters.delete(unregister)
-        unregister()
-      }
-    },
-  }
-}
-
-export async function callNeemHostHook<Name extends keyof NeemPluginHostHooks>(
+export async function callNeemHostHook<Name extends keyof NeemHostHookMap>(
   hooks: NeemHostHooks,
   logger: Logger,
   name: Name,
-  ...args: Parameters<NeemPluginHostHooks[Name]>
+  ...args: Parameters<NeemHostHookMap[Name]>
 ): Promise<void> {
   await hooks.callHookWith(
     async (callbacks, callbackArgs, hookName) => {
@@ -61,11 +62,6 @@ export async function callNeemHostHook<Name extends keyof NeemPluginHostHooks>(
     name,
     args,
   )
-}
-
-export function clearNeemPluginHooks(unregisters: Set<() => void>): void {
-  for (const unregister of unregisters) unregister()
-  unregisters.clear()
 }
 
 async function callHookCallback(

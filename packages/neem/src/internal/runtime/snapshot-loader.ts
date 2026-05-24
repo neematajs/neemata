@@ -23,6 +23,7 @@ export type NeemBuiltSnapshotLoadOptions = {
   cwd?: string
   outDir?: string
   mode: NeemMode
+  runtimes?: readonly string[]
   runtimeWorkerEntry?: string | URL
 }
 
@@ -32,7 +33,10 @@ export async function loadBuiltRuntimeSnapshot(
   const cwd = options.cwd ?? process.cwd()
   const outDir = resolve(cwd, options.outDir ?? 'dist')
   const manifestFile = resolve(outDir, NEEM_MANIFEST_FILE)
-  const manifest = await readManifest(manifestFile)
+  const manifest = filterManifestRuntimes(
+    await readManifest(manifestFile),
+    options.runtimes,
+  )
   const config = await importDefault<NeemConfig>(
     resolve(outDir, manifest.config.file),
   )
@@ -48,6 +52,30 @@ export async function loadBuiltRuntimeSnapshot(
     runtimeWorkerEntry: options.runtimeWorkerEntry,
     logger,
   })
+}
+
+function filterManifestRuntimes(
+  manifest: NeemBuildManifest,
+  runtimes: readonly string[] | undefined,
+): NeemBuildManifest {
+  const selected = runtimes?.map((runtime) => runtime.trim()).filter(Boolean)
+  if (!selected || selected.length === 0) return manifest
+
+  const names = [...new Set(selected)]
+  const available = Object.keys(manifest.runtimes ?? {})
+  const missing = names.filter((name) => !available.includes(name))
+  if (missing.length > 0) {
+    throw new Error(`Unknown Neem runtime(s): ${missing.join(', ')}`)
+  }
+
+  return {
+    ...manifest,
+    runtimes: Object.fromEntries(
+      Object.entries(manifest.runtimes ?? {}).filter(([name]) =>
+        names.includes(name),
+      ),
+    ),
+  }
 }
 
 async function readManifest(manifestFile: string): Promise<NeemBuildManifest> {

@@ -23,7 +23,6 @@ export type NeemManagedWorkerHealth = {
   artifactId: string
   state: NeemWorkerState
   failureCount: number
-  restartCount: number
   startedAt?: number
   readyAt?: number
   stoppedAt?: number
@@ -56,7 +55,6 @@ export class NeemManagedWorker implements NeemManagedWorkerHandle {
   private worker: Worker | undefined
   private state: NeemWorkerState = 'idle'
   private failureCount = 0
-  private restartCount = 0
   private startedAt: number | undefined
   private readyAt: number | undefined
   private stoppedAt: number | undefined
@@ -87,7 +85,6 @@ export class NeemManagedWorker implements NeemManagedWorkerHandle {
       artifactId: this.artifactId,
       state: this.state,
       failureCount: this.failureCount,
-      restartCount: this.restartCount,
       startedAt: this.startedAt,
       readyAt: this.readyAt,
       stoppedAt: this.stoppedAt,
@@ -152,16 +149,6 @@ export class NeemManagedWorker implements NeemManagedWorkerHandle {
     })
 
     return this.readyPromise
-  }
-
-  async restart(): Promise<void> {
-    this.restartCount += 1
-    this.logger.trace(
-      { worker: this.name, restartCount: this.restartCount },
-      'Restarting Neem worker',
-    )
-    await this.stop()
-    return this.start()
   }
 
   send(message: unknown): void {

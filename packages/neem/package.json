@@ -1,6 +1,6 @@
 {
   "name": "@nmtjs/neem",
-  "description": "Neem host core for running compiled application and plugin artifacts.",
+  "description": "Neem host core for running compiled runtime artifacts.",
   "type": "module",
   "scripts": {
     "clean-build": "rm -rf ./dist"

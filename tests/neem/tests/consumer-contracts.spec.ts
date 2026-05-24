@@ -1,81 +1,68 @@
-import type { InferNeemThreadOptions, NeemPluginOptions } from '@nmtjs/neem'
+import type { InferNeemWorkerData } from '@nmtjs/neem'
 import { createLogger } from '@nmtjs/core'
-import { defineAppConfig, defineConfig, definePluginConfig } from '@nmtjs/neem'
+import { defineConfig, defineRuntimeConfig } from '@nmtjs/neem'
 import { describe, expect, expectTypeOf, it } from 'vitest'
 
 import app from '../fixtures/basic-app.ts'
-import jobsPlugin from '../fixtures/jobs.plugin.ts'
 
 describe('@nmtjs/neem consumer contracts', () => {
   const logger = createLogger({ pinoOptions: { enabled: false } }, 'test')
 
-  it('keeps logger instance and lazy logger entry typed', () => {
-    const direct = defineConfig({ logger, apps: {} })
+  it('keeps logger inputs typed', () => {
+    const direct = defineConfig({ logger, runtimes: {} })
     const lazy = defineConfig({
       logger: () => import('../fixtures/logger.ts'),
-      apps: {},
+      runtimes: {},
+    })
+    const moduleSpecifier = defineConfig({
+      logger: '../fixtures/logger.ts',
+      runtimes: {},
+    })
+    const moduleUrl = defineConfig({
+      logger: new URL('../fixtures/logger.ts', import.meta.url),
+      runtimes: {},
+    })
+    const options = defineConfig({
+      logger: { pinoOptions: { enabled: false } },
+      runtimes: {},
     })
     const invalid = defineConfig({
       // @ts-expect-error logger entry default must satisfy Logger
       logger: () => Promise.resolve({ default: { invalid: true } }),
-      apps: {},
+      runtimes: {},
     })
 
     expect(direct.logger).toBe(logger)
     expect(typeof lazy.logger).toBe('function')
+    expect(moduleSpecifier.logger).toBe('../fixtures/logger.ts')
+    expect(moduleUrl.logger).toBeInstanceOf(URL)
+    expect(options.logger).toEqual({ pinoOptions: { enabled: false } })
     expect(Boolean(invalid)).toBe(true)
   })
 
-  it('keeps app thread options inferred from the app default export', () => {
-    type ThreadOptions = InferNeemThreadOptions<typeof app>
+  it('keeps runtime worker data inferred from the worker default export', () => {
+    type ThreadOptions = InferNeemWorkerData<typeof app>
 
     expectTypeOf<ThreadOptions>().toEqualTypeOf<{
       http: { listen: { hostname: string; port: number } }
     }>()
 
-    const appConfig = defineAppConfig({
+    const runtimeConfig = defineRuntimeConfig({
       entry: () => import('../fixtures/basic-app.ts'),
       threads: [{ http: { listen: { hostname: '127.0.0.1', port: 3000 } } }],
     })
 
-    const thread = appConfig.threads[0]
-    expect(thread.http.listen.port).toBe(3000)
+    expect(runtimeConfig.threads).toBeDefined()
+    const [data] = runtimeConfig.threads as Array<ThreadOptions>
+    expect(data.http.listen.port).toBe(3000)
   })
 
-  it('keeps plugin options inferred from the plugin default export', () => {
-    type Options = NonNullable<NeemPluginOptions<typeof jobsPlugin>['options']>
-
-    expectTypeOf<Options>().toEqualTypeOf<{
-      queue: string
-      concurrency?: number
-      observeHooks?: boolean
-    }>()
-
-    const pluginConfig = definePluginConfig({
-      entry: () => import('../fixtures/jobs.plugin.ts'),
-      options: { queue: 'default', concurrency: 2 },
-    })
-
-    expect(pluginConfig.options?.queue).toBe('default')
-  })
-
-  it('lets app and plugin entries declare worker/module artifacts', async () => {
-    const pluginArtifacts = await jobsPlugin.artifacts?.({
-      mode: 'development',
-      name: jobsPlugin.name,
-      instanceId: 0,
-      options: { queue: 'default' },
-    })
-
+  it('lets runtime worker entries expose definition metadata', async () => {
     expect(Object.keys(app.definition.transports)).toEqual(['http'])
-    expect(pluginArtifacts).toMatchObject([
-      { id: 'job-worker', kind: 'worker' },
-      { id: 'job-renderer', kind: 'module' },
-    ])
   })
 
-  it('rejects wrong app and plugin option types at compile time', () => {
-    const invalidThread: InferNeemThreadOptions<typeof app> = {
+  it('rejects wrong runtime data at compile time', () => {
+    const invalidThread: InferNeemWorkerData<typeof app> = {
       http: {
         listen: {
           hostname: '127.0.0.1',
@@ -85,21 +72,11 @@ describe('@nmtjs/neem consumer contracts', () => {
       },
     }
 
-    const invalidPlugin = definePluginConfig({
-      entry: () => import('../fixtures/jobs.plugin.ts'),
-      options: {
-        queue: 'default',
-        // @ts-expect-error concurrency must stay numeric
-        concurrency: '2',
-      },
-    })
-
     expect(Boolean(invalidThread)).toBe(true)
-    expect(Boolean(invalidPlugin)).toBe(true)
   })
 
-  it('keeps entry-specific thread inference without an explicit app constraint', () => {
-    const invalidConfig = defineAppConfig({
+  it('keeps entry-specific worker data inference without an explicit worker constraint', () => {
+    const invalidConfig = defineRuntimeConfig({
       entry: () => import('../fixtures/basic-app.ts'),
       // @ts-expect-error port must stay numeric
       threads: [{ http: { listen: { hostname: '127.0.0.1', port: '3000' } } }],
@@ -108,23 +85,12 @@ describe('@nmtjs/neem consumer contracts', () => {
     expect(Boolean(invalidConfig)).toBe(true)
   })
 
-  it('rejects app entries whose default export does not satisfy NeemApp', () => {
-    const invalidConfig = defineAppConfig({
-      // @ts-expect-error entry default must satisfy NeemApp
-      entry: () => Promise.resolve({ default: { kind: 'invalid' } }),
-      threads: [{ http: { listen: { hostname: '127.0.0.1', port: 3000 } } }],
+  it('allows host-owned runtime entries that are not worker entries', () => {
+    const hostOwnedConfig = defineRuntimeConfig({
+      entry: () => Promise.resolve({ default: { hostOwned: true } }),
+      host: () => Promise.resolve({ default: {} }),
     })
 
-    expect(Boolean(invalidConfig)).toBe(true)
-  })
-
-  it('rejects plugin entries whose default export does not satisfy NeemPlugin', () => {
-    const invalidConfig = definePluginConfig({
-      // @ts-expect-error entry default must satisfy NeemPlugin
-      entry: () => Promise.resolve({ default: { invalid: true } }),
-      options: { queue: 'default' },
-    })
-
-    expect(Boolean(invalidConfig)).toBe(true)
+    expect(Boolean(hostOwnedConfig)).toBe(true)
   })
 })

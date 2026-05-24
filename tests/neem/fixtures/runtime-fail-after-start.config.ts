@@ -1,8 +1,8 @@
-import { defineAppConfig, defineConfig } from '@nmtjs/neem'
+import { defineConfig, defineRuntimeConfig } from '@nmtjs/neem'
 
 export default defineConfig({
-  apps: {
-    api: defineAppConfig({
+  runtimes: {
+    api: defineRuntimeConfig({
       entry: () => import('./runtime-app.ts'),
       threads: [
         {

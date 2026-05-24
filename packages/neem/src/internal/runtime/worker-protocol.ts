@@ -1,7 +1,7 @@
 import type { MessagePort } from 'node:worker_threads'
 
 import type { NeemResolvedArtifact } from '../../public/artifact.ts'
-import type { NeemApplicationUpstream, NeemMode } from '../../public/runtime.ts'
+import type { NeemMode, NeemRuntimeUpstream } from '../../public/runtime.ts'
 
 export type NeemRuntimeWorkerBaseData = {
   mode: NeemMode
@@ -13,44 +13,17 @@ export type NeemRuntimeWorkerBaseData = {
   port: MessagePort
 }
 
-export type NeemGenericRuntimeWorkerData = NeemRuntimeWorkerBaseData & {
-  kind?: 'worker'
-}
+export type NeemGenericRuntimeWorkerData = NeemRuntimeWorkerBaseData
 
-export type NeemAppRuntimeWorkerData = NeemRuntimeWorkerBaseData & {
-  kind: 'app'
-  appName: string
-  threadIndex: number
-  threadOptions: unknown
-}
+export type NeemRuntimeWorkerData = NeemGenericRuntimeWorkerData
 
-export type NeemRuntimeWorkerData =
-  | NeemGenericRuntimeWorkerData
-  | NeemAppRuntimeWorkerData
+export type NeemRuntimeWorkerParentMessage = { type: 'stop' }
 
-export type NeemRuntimeWorkerReloadData = {
-  artifact: NeemResolvedArtifact
-  artifacts: readonly NeemResolvedArtifact[]
-}
-
-export type NeemRuntimeWorkerParentMessage =
-  | { type: 'stop' }
-  | { type: 'reload'; data: NeemRuntimeWorkerReloadData }
-
-export type NeemRuntimeWorkerErrorOrigin =
-  | 'bootstrap'
-  | 'start'
-  | 'reload'
-  | 'runtime'
+export type NeemRuntimeWorkerErrorOrigin = 'bootstrap' | 'start' | 'runtime'
 
 export type NeemRuntimeWorkerReadyMessage = {
   type: 'ready'
-  data: { upstreams?: readonly NeemApplicationUpstream[] }
-}
-
-export type NeemRuntimeWorkerReloadedMessage = {
-  type: 'reloaded'
-  data: { upstreams?: readonly NeemApplicationUpstream[] }
+  data: { upstreams?: readonly NeemRuntimeUpstream[] }
 }
 
 export type NeemRuntimeWorkerErrorMessage = {
@@ -67,6 +40,5 @@ export type NeemRuntimeWorkerStoppedMessage = { type: 'stopped' }
 
 export type NeemRuntimeWorkerMessage =
   | NeemRuntimeWorkerReadyMessage
-  | NeemRuntimeWorkerReloadedMessage
   | NeemRuntimeWorkerErrorMessage
   | NeemRuntimeWorkerStoppedMessage

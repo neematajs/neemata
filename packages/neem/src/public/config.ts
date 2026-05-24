@@ -1,8 +1,8 @@
-import type { Logger } from '@nmtjs/core'
+import type { Logger, LoggingOptions } from '@nmtjs/core'
 
-import type { InferNeemThreadOptions, NeemApp } from './app.ts'
-import type { NeemRolldownOptions } from './artifact.ts'
-import type { InferNeemPluginOptions, NeemPlugin } from './plugin.ts'
+import type { NeemArtifact, NeemRolldownOptions } from './artifact.ts'
+import type { NeemMaybePromise, NeemMode, NeemRuntimeHost } from './runtime.ts'
+import type { InferNeemWorkerData, NeemWorker } from './worker.ts'
 
 export type NeemEntryModule<T> = { default: T }
 
@@ -26,28 +26,62 @@ export type NeemBuildConfigInput<
   TBuildConfig extends NeemBuildConfig = NeemBuildConfig,
 > = NeemBuildConfigLoader<TBuildConfig>
 
+export type NeemLoggerOptions = LoggingOptions
+
 export type NeemLoggerLoader<TLogger extends Logger = Logger> = () => Promise<
   NeemEntryModule<TLogger>
 >
 
 export type NeemLoggerInput<TLogger extends Logger = Logger> =
+  | NeemLoggerOptions
+  | string
+  | URL
   | TLogger
   | NeemLoggerLoader<TLogger>
 
-export type NeemAppConfig<TApp extends NeemApp<any, any> = NeemApp<any, any>> =
-  {
-    entry: NeemEntryLoader<TApp>
-    build?: NeemBuildConfigInput
-    threads: Array<InferNeemThreadOptions<TApp>>
-  }
+export type NeemRuntimeHostConfig<
+  THost extends NeemRuntimeHost = NeemRuntimeHost,
+> = { entry: NeemEntryLoader<THost>; build?: NeemBuildConfigInput }
 
-export type NeemAppOptions<TApp extends NeemApp<any, any> = NeemApp<any, any>> =
-  NeemAppConfig<TApp>
+export type NeemRuntimeHostInput<
+  THost extends NeemRuntimeHost = NeemRuntimeHost,
+> = NeemEntryLoader<THost> | NeemRuntimeHostConfig<THost>
 
-export type NeemPluginOptions<TPlugin = NeemPlugin> = {
-  entry: NeemEntryLoader<TPlugin>
+export type NeemRuntimeConfig<
+  TEntry = NeemWorker<unknown, unknown>,
+  THost extends NeemRuntimeHost = NeemRuntimeHost,
+> = {
+  entry: NeemEntryLoader<TEntry>
+  host?: NeemRuntimeHostInput<THost>
   build?: NeemBuildConfigInput
-  options?: InferNeemPluginOptions<TPlugin>
+  artifacts?: (
+    ctx: NeemRuntimeArtifactContext,
+  ) => NeemMaybePromise<readonly NeemArtifact[]>
+  threads?: number | readonly InferNeemRuntimeThreadOptions<TEntry>[]
+  options?: unknown
+}
+
+export type NeemRuntimeConfigBase = {
+  entry: NeemEntryLoader<unknown>
+  host?: NeemRuntimeHostInput
+  build?: NeemBuildConfigInput
+  artifacts?: (
+    ctx: NeemRuntimeArtifactContext,
+  ) => NeemMaybePromise<readonly NeemArtifact[]>
+  threads?: number | readonly unknown[]
+  options?: unknown
+}
+
+export type InferNeemRuntimeThreadOptions<TEntry> = TEntry extends {
+  _: { data: unknown }
+}
+  ? InferNeemWorkerData<TEntry>
+  : unknown
+
+export type NeemRuntimeArtifactContext<Options = unknown> = {
+  mode: NeemMode
+  name: string
+  options: Options
 }
 
 export type NeemProxyRoutingOptions = {
@@ -59,7 +93,7 @@ export type NeemProxyRoutingOptions = {
 export type NeemProxyConfig = {
   hostname: string
   port: number
-  applications?: Record<
+  runtimes?: Record<
     string,
     { routing?: NeemProxyRoutingOptions; sni?: string } | undefined
   >
@@ -74,36 +108,67 @@ export type NeemProxyConfig = {
   tls?: { key: string; cert: string }
 }
 
-export type NeemConfig = {
+export type NeemConfig<
+  TRuntimes extends Record<string, NeemRuntimeConfigBase> = Record<
+    string,
+    NeemRuntimeConfigBase
+  >,
+> = {
+  /**
+   * Logger configuration for Neem host/runtime logs.
+   *
+   * Use a plain options object for simple JSON-compatible settings accepted by
+   * @nmtjs/core createLogger. Neem can serialize these settings into build
+   * metadata and create the default logger at runtime.
+   *
+   * Use a string or URL module specifier when logging setup needs runtime logic,
+   * custom transports, streams, env-sensitive setup, or non-serializable values.
+   * The module must default-export an @nmtjs/core Logger.
+   *
+   * Do not create logger instances or open runtime resources directly in
+   * neem.config.ts; config is build/dev declaration only.
+   */
   logger?: NeemLoggerInput
-  apps: Record<string, NeemAppConfig<any>>
-  plugins?: readonly NeemPluginOptions<any>[]
+  runtimes: TRuntimes
   proxy?: NeemProxyConfig
   outDir?: string
 }
 
-export function defineConfig(config: {
+export function defineConfig<
+  const TRuntimes extends Record<string, NeemRuntimeConfigBase>,
+>(config: {
+  /**
+   * Logger configuration for Neem host/runtime logs.
+   *
+   * Use a plain options object for simple JSON-compatible settings accepted by
+   * @nmtjs/core createLogger. Use a string or URL module specifier when logging
+   * setup needs runtime logic, custom transports, streams, env-sensitive setup,
+   * or non-serializable values. The module must default-export an @nmtjs/core
+   * Logger.
+   *
+   * Do not create logger instances or open runtime resources directly in
+   * neem.config.ts; config is build/dev declaration only.
+   */
   logger?: NeemLoggerInput
-  apps: Record<string, NeemAppConfig<any>>
-  plugins?: readonly NeemPluginOptions<any>[]
+  runtimes: TRuntimes
   proxy?: NeemProxyConfig
   outDir?: string
-}): NeemConfig {
+}): NeemConfig<TRuntimes> {
   return Object.freeze(config)
 }
 
-export function defineAppConfig<App extends NeemApp<any, any>>(config: {
-  entry: NeemEntryLoader<App>
+export function defineRuntimeConfig<
+  Entry,
+  Host extends NeemRuntimeHost = NeemRuntimeHost,
+>(config: {
+  entry: NeemEntryLoader<Entry>
+  host?: NeemRuntimeHostInput<Host>
   build?: NeemBuildConfigInput
-  threads: Array<InferNeemThreadOptions<App>>
-}): NeemAppConfig<App> {
-  return Object.freeze(config) as any
-}
-
-export function definePluginConfig<Plugin extends NeemPlugin<any>>(config: {
-  entry: NeemEntryLoader<Plugin>
-  build?: NeemBuildConfigInput
-  options?: InferNeemPluginOptions<Plugin>
-}): NeemPluginOptions<Plugin> {
-  return Object.freeze(config) as any
+  artifacts?: (
+    ctx: NeemRuntimeArtifactContext,
+  ) => NeemMaybePromise<readonly NeemArtifact[]>
+  threads?: number | readonly InferNeemRuntimeThreadOptions<Entry>[]
+  options?: unknown
+}): NeemRuntimeConfig<Entry, Host> {
+  return Object.freeze(config) as NeemRuntimeConfig<Entry, Host>
 }

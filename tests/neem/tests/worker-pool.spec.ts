@@ -44,18 +44,6 @@ describe('NeemWorkerPool', () => {
       state: 'degraded',
     })
   })
-
-  it('restarts the pool by stopping before starting again', async () => {
-    const workers = [new FakeWorker('one'), new FakeWorker('two')]
-    const pool = new NeemWorkerPool({ name: 'test-pool', workers })
-
-    await pool.start()
-    await pool.restart()
-
-    expect(pool.getState()).toBe('ready')
-    expect(workers.map((worker) => worker.starts)).toEqual([2, 2])
-    expect(workers.map((worker) => worker.stops)).toEqual([1, 1])
-  })
 })
 
 class FakeWorker {

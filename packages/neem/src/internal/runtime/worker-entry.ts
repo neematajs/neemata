@@ -2,18 +2,19 @@ import { parentPort, workerData as rawWorkerData } from 'node:worker_threads'
 
 import type { Logger } from '@nmtjs/core'
 
-import type { NeemApp } from '../../public/app.ts'
 import type { NeemConfig } from '../../public/config.ts'
-import type { NeemRuntime } from '../../public/runtime.ts'
+import type {
+  NeemRuntime,
+  NeemRuntimeStartResult,
+  NeemRuntimeUpstream,
+} from '../../public/runtime.ts'
 import type { NeemWorker } from '../../public/worker.ts'
 import type {
-  NeemAppRuntimeWorkerData,
   NeemGenericRuntimeWorkerData,
   NeemRuntimeWorkerData,
   NeemRuntimeWorkerErrorOrigin,
   NeemRuntimeWorkerMessage,
   NeemRuntimeWorkerParentMessage,
-  NeemRuntimeWorkerReloadData,
 } from './worker-protocol.ts'
 import { createNeemChildLogger, resolveNeemConfigLogger } from './logger.ts'
 import {
@@ -57,10 +58,6 @@ function reportError(value: unknown, origin: NeemRuntimeWorkerErrorOrigin) {
 async function createRuntime(
   data: NeemRuntimeWorkerData,
 ): Promise<NeemRuntime> {
-  if (data.kind === 'app') {
-    return createAppRuntime(data)
-  }
-
   return createWorkerRuntime(data)
 }
 
@@ -73,7 +70,9 @@ async function createWorkerRuntime(
     { worker: data.name, artifactId: data.artifact.id },
     'Creating Neem worker runtime',
   )
-  const worker = await importDefault<NeemWorker<any, any>>(data.artifact.file)
+  const worker = await importDefault<NeemWorker<unknown, unknown>>(
+    data.artifact.file,
+  )
 
   return worker.createRuntime({
     mode: data.mode,
@@ -87,59 +86,16 @@ async function createWorkerRuntime(
   })
 }
 
-async function createAppRuntime(
-  data: NeemAppRuntimeWorkerData,
-): Promise<NeemRuntime> {
-  const logger = await resolveWorkerLogger(
-    data.configFile,
-    `Neem App/${data.appName}:${data.threadIndex}`,
-  )
-  runtimeLogger = logger
-  logger.trace(
-    {
-      appName: data.appName,
-      threadIndex: data.threadIndex,
-      artifactId: data.artifact.id,
-    },
-    'Creating Neem app runtime',
-  )
-  const app = await importDefault<NeemApp<any, any>>(data.artifact.file)
-
-  return app.createRuntime({
-    mode: data.mode,
-    appName: data.appName,
-    threadIndex: data.threadIndex,
-    threadOptions: data.threadOptions,
-    logger,
-    definition: app.definition,
-    artifact: data.artifact,
-    artifacts: createArtifactRegistry(data.artifacts),
-  })
-}
-
 async function resolveWorkerLogger(configFile: string, label: string) {
   const config = await importDefault<NeemConfig>(configFile)
   return createNeemChildLogger(await resolveNeemConfigLogger(config), label)
 }
 
-async function stopRuntime() {
+async function stopRuntime(options: { force?: boolean } = {}) {
   runtimeLogger?.trace('Stopping Neem runtime')
-  if (runtime && started) await runtime.stop()
+  if (runtime && (started || options.force)) await runtime.stop()
   started = false
   runtimeLogger?.trace('Neem runtime stopped')
-}
-
-async function reloadRuntime(data: NeemRuntimeWorkerReloadData) {
-  if (!runtime?.reload) {
-    throw new Error('Runtime does not implement reload')
-  }
-  runtimeLogger?.debug(
-    { artifactId: data.artifact.id },
-    'Reloading Neem runtime',
-  )
-  const upstreams = (await runtime.reload({ reason: 'artifact' })) ?? []
-  runtimeLogger?.debug({ upstreams: upstreams.length }, 'Neem runtime reloaded')
-  postMessage({ type: 'reloaded', data: { upstreams } })
 }
 
 async function stopAndExit() {
@@ -156,11 +112,6 @@ async function stopAndExit() {
 
 port.on('message', (message: NeemRuntimeWorkerParentMessage) => {
   if (message?.type === 'stop') void stopAndExit()
-  if (message?.type === 'reload') {
-    void reloadRuntime(message.data).catch((error) => {
-      reportError(error, 'reload')
-    })
-  }
 })
 
 process.on('uncaughtException', (error) => {
@@ -182,7 +133,7 @@ async function main() {
   }
 
   try {
-    const upstreams = (await runtime.start()) ?? []
+    const upstreams = normalizeRuntimeUpstreams(await runtime.start())
     started = true
     runtimeLogger?.trace(
       { upstreams: upstreams.length },
@@ -190,9 +141,29 @@ async function main() {
     )
     postMessage({ type: 'ready', data: { upstreams } })
   } catch (error) {
+    await stopRuntime({ force: true }).catch((cleanupError) => {
+      runtimeLogger?.warn(
+        new Error('Neem runtime cleanup after start error failed', {
+          cause: normalizeError(cleanupError),
+        }),
+      )
+    })
     reportError(error, 'start')
     process.exit(1)
   }
+}
+
+function normalizeRuntimeUpstreams(
+  result: readonly NeemRuntimeUpstream[] | NeemRuntimeStartResult | undefined,
+): readonly NeemRuntimeUpstream[] {
+  if (!result) return []
+  return isRuntimeStartResult(result) ? (result.upstreams ?? []) : result
+}
+
+function isRuntimeStartResult(
+  result: readonly NeemRuntimeUpstream[] | NeemRuntimeStartResult,
+): result is NeemRuntimeStartResult {
+  return !Array.isArray(result)
 }
 
 void main()

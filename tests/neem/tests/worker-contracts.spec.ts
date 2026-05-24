@@ -5,7 +5,6 @@ import { describe, expect, expectTypeOf, it } from 'vitest'
 type FixtureWorkerData = { queue: string; concurrency?: number }
 
 const worker = defineWorker<FixtureWorkerData, { fixture: true }>({
-  kind: 'fixture-worker',
   definition: { fixture: true },
   createRuntime(ctx) {
     expectTypeOf(ctx).toEqualTypeOf<
@@ -16,9 +15,6 @@ const worker = defineWorker<FixtureWorkerData, { fixture: true }>({
         return undefined
       },
       stop() {},
-      reload() {
-        return undefined
-      },
     }
   },
 })
@@ -28,7 +24,7 @@ describe('@nmtjs/neem worker contract', () => {
     type Data = InferNeemWorkerData<typeof worker>
 
     expectTypeOf<Data>().toEqualTypeOf<FixtureWorkerData>()
-    expect(worker.kind).toBe('fixture-worker')
+    expect(worker.definition).toEqual({ fixture: true })
   })
 
   it('rejects invalid worker data at compile time', () => {

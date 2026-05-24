@@ -35,7 +35,7 @@ export function createNeemArtifactRegistry(
       return byId.get(id)?.[0]
     },
     resolveFor(owner: NeemArtifactOwner, id: string) {
-      return byOwner.get(getOwnerKey(owner))?.get(id)?.[0] ?? byId.get(id)?.[0]
+      return byOwner.get(getOwnerKey(owner))?.get(id)?.[0]
     },
     list() {
       return artifacts
@@ -71,7 +71,5 @@ function pushArtifact(
 
 function getOwnerKey(owner: NeemArtifactOwner): string {
   if (owner.type === 'config') return 'config'
-  if (owner.type === 'app') return `app:${owner.name}`
-  if (owner.type === 'runtime') return `runtime:${owner.name}`
-  return `plugin:${owner.instanceId}:${owner.name}`
+  return `runtime:${owner.name}`
 }

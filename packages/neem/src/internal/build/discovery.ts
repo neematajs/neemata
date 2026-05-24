@@ -8,18 +8,7 @@ type DiscoveryNode = ESTree.Node | null | undefined
 
 const resolver = new ResolverFactory({
   conditionNames: ['import', 'module', 'node', 'default'],
-  extensions: [
-    '.ts',
-    '.tsx',
-    '.mts',
-    '.cts',
-    '.js',
-    '.mjs',
-    '.cjs',
-    '.json',
-    '.node',
-    '.vue',
-  ],
+  extensions: ['.ts', '.mts', '.cts', '.js', '.mjs', '.cjs', '.json', '.node'],
   tsconfig: 'auto',
 })
 
@@ -29,24 +18,18 @@ export type NeemDiscoveredImport = {
   resolved: string
 }
 
-export type NeemDiscoveredApp = {
+export type NeemDiscoveredRuntime = {
   name: string
   entry: NeemDiscoveredImport
   build?: NeemDiscoveredImport
-}
-
-export type NeemDiscoveredPlugin = {
-  index: number
-  entry: NeemDiscoveredImport
-  build?: NeemDiscoveredImport
+  host?: { entry: NeemDiscoveredImport; build?: NeemDiscoveredImport }
 }
 
 export type NeemConfigDiscovery = {
   configFile: string
-  logger?: NeemDiscoveredImport
+  logger?: NeemDiscoveredImport & { source: 'import' | 'specifier' }
   hasInlineLogger: boolean
-  apps: Record<string, NeemDiscoveredApp>
-  plugins: NeemDiscoveredPlugin[]
+  runtimes: Record<string, NeemDiscoveredRuntime>
 }
 
 export function discoverConfigEntriesSync(
@@ -72,89 +55,106 @@ export function discoverConfigEntriesSync(
   return {
     configFile,
     ...discoverLogger(configFile, configObject),
-    apps: discoverApps(configFile, configObject),
-    plugins: discoverPlugins(configFile, configObject),
+    runtimes: discoverRuntimes(configFile, configObject),
   }
 }
 
 function discoverLogger(
   configFile: string,
   configObject: ESTree.ObjectExpression,
-): { logger?: NeemDiscoveredImport; hasInlineLogger: boolean } {
+): {
+  logger?: NeemDiscoveredImport & { source: 'import' | 'specifier' }
+  hasInlineLogger: boolean
+} {
   const value = unwrapExpression(getPropertyValue(configObject, 'logger'))
   if (!value) return { hasInlineLogger: false }
 
-  const specifier = getImportThunkSpecifier(value)
-  if (specifier) {
+  const importSpecifier = getImportThunkSpecifier(value)
+  if (importSpecifier) {
     return {
-      logger: resolveImport(configFile, specifier),
+      logger: {
+        ...resolveImport(configFile, importSpecifier),
+        source: 'import',
+      },
+      hasInlineLogger: false,
+    }
+  }
+
+  const moduleSpecifier = getLoggerModuleSpecifier(value)
+  if (moduleSpecifier) {
+    return {
+      logger: {
+        ...resolveImport(configFile, moduleSpecifier),
+        source: 'specifier',
+      },
       hasInlineLogger: false,
     }
   }
 
   if (value.type === 'ArrowFunctionExpression') {
     throw new Error(
-      `Expected logger to be a logger instance or () => import('<literal>')`,
+      `Expected logger to be logger options, string/URL specifier, logger instance, or () => import('<literal>')`,
     )
   }
 
   return { hasInlineLogger: true }
 }
 
-function discoverApps(
+function discoverRuntimes(
   configFile: string,
   configObject: ESTree.ObjectExpression,
 ) {
-  const appsObject = unwrapExpression(getPropertyValue(configObject, 'apps'))
+  const runtimesObject = unwrapExpression(
+    getPropertyValue(configObject, 'runtimes'),
+  )
 
-  if (!isObjectExpression(appsObject)) return {}
+  if (!isObjectExpression(runtimesObject)) return {}
 
-  const apps: Record<string, NeemDiscoveredApp> = {}
+  const runtimes: Record<string, NeemDiscoveredRuntime> = {}
 
-  for (const property of appsObject.properties ?? []) {
+  for (const property of runtimesObject.properties ?? []) {
     if (!isProperty(property)) continue
 
     const name = getStaticPropertyName(property)
-    if (!name) continue
+    if (!name) {
+      throw new Error('Expected runtime name to be a static property name')
+    }
+    if (runtimes[name]) {
+      throw new Error(`Duplicate Neem runtime name [${name}]`)
+    }
 
-    const appObject = unwrapConfigEntry(property.value)
-    const entry = getStaticImportThunk(appObject, 'entry', configFile, name)
-    const build = getOptionalStaticImportThunk(appObject, 'build', configFile)
-
-    apps[name] = { name, entry, build }
-  }
-
-  return apps
-}
-
-function discoverPlugins(
-  configFile: string,
-  configObject: ESTree.ObjectExpression,
-) {
-  const pluginsArray = unwrapExpression(
-    getPropertyValue(configObject, 'plugins'),
-  )
-
-  if (!isArrayExpression(pluginsArray)) return []
-
-  return (pluginsArray.elements ?? []).flatMap((element, index) => {
-    const pluginObject = unwrapConfigEntry(element)
-    if (!isObjectExpression(pluginObject)) return []
-
-    const entry = getStaticImportThunk(
-      pluginObject,
-      'entry',
-      configFile,
-      `plugins[${index}]`,
-    )
+    const runtimeObject = unwrapConfigEntry(property.value)
+    const entry = getStaticImportThunk(runtimeObject, 'entry', configFile, name)
     const build = getOptionalStaticImportThunk(
-      pluginObject,
+      runtimeObject,
       'build',
       configFile,
     )
+    const hostValue = unwrapExpression(getPropertyValue(runtimeObject, 'host'))
+    const hostSpecifier = getImportThunkSpecifier(hostValue)
+    const hostObject = unwrapConfigEntry(hostValue)
+    const host = hostSpecifier
+      ? { entry: resolveImport(configFile, hostSpecifier) }
+      : isObjectExpression(hostObject)
+        ? {
+            entry: getStaticImportThunk(
+              hostObject,
+              'entry',
+              configFile,
+              `${name}.host`,
+            ),
+            build: getOptionalStaticImportThunk(
+              hostObject,
+              'build',
+              configFile,
+            ),
+          }
+        : undefined
 
-    return [{ index, entry, build }]
-  })
+    runtimes[name] = { name, entry, build, host }
+  }
+
+  return runtimes
 }
 
 function findDefineConfigObject(ast: ESTree.Program) {
@@ -240,6 +240,22 @@ function getImportThunkSpecifier(node: DiscoveryNode) {
   return body.source.value
 }
 
+function getLoggerModuleSpecifier(node: DiscoveryNode) {
+  const expression = unwrapExpression(node)
+
+  if (isStringLiteral(expression)) return expression.value
+
+  if (
+    expression?.type === 'NewExpression' &&
+    isIdentifier(expression.callee, 'URL')
+  ) {
+    const [specifier] = expression.arguments ?? []
+    if (isStringLiteral(specifier)) return specifier.value
+  }
+
+  return undefined
+}
+
 function resolveImport(
   importer: string,
   specifier: string,
@@ -298,12 +314,6 @@ function isObjectExpression(
   node: DiscoveryNode,
 ): node is ESTree.ObjectExpression {
   return node?.type === 'ObjectExpression'
-}
-
-function isArrayExpression(
-  node: DiscoveryNode,
-): node is ESTree.ArrayExpression {
-  return node?.type === 'ArrayExpression'
 }
 
 function isProperty(

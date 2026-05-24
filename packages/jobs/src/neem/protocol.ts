@@ -19,4 +19,4 @@ export type JobsWorkerResponse = {
   task: JobsWorkerTaskResult
 }
 
-export type JobsWorkerData = { poolName: string; pluginEntryFile: string }
+export type JobsWorkerData = { poolName: string; runtimeEntryFile: string }

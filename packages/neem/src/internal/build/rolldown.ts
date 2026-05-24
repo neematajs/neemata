@@ -279,17 +279,7 @@ function resolveArtifactOutDir(options: NeemBuildArtifactOptions): string {
     )
   }
 
-  const owner =
-    options.owner.type === 'plugin'
-      ? `${options.owner.instanceId}-${options.owner.name}`
-      : options.owner.name
-
-  return resolve(
-    options.outDir,
-    options.owner.type === 'plugin' ? 'plugins' : 'apps',
-    sanitizePathPart(owner),
-    sanitizePathPart(options.artifact.id),
-  )
+  return resolve(options.outDir, sanitizePathPart(options.artifact.id))
 }
 
 function resolveEntry(entry: string | URL, cwd = process.cwd()): string {

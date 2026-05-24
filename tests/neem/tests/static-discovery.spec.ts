@@ -9,10 +9,10 @@ const fixturesDir = dirname(fileURLToPath(import.meta.url))
 const configFile = resolve(fixturesDir, '../fixtures/neem.config.ts')
 
 describe('neem config static discovery', () => {
-  it('discovers app and plugin lazy import entries without executing them', () => {
+  it('discovers runtime lazy import entries without executing them', () => {
     const discovery = discoverConfigEntriesSync(configFile)
 
-    expect(discovery.apps.api).toMatchObject({
+    expect(discovery.runtimes.api).toMatchObject({
       name: 'api',
       entry: {
         specifier: './basic-app.ts',
@@ -29,14 +29,6 @@ describe('neem config static discovery', () => {
       resolved: resolve(fixturesDir, '../fixtures/logger.ts'),
     })
     expect(discovery.hasInlineLogger).toBe(false)
-
-    expect(discovery.plugins[0]).toMatchObject({
-      index: 0,
-      entry: {
-        specifier: './jobs.plugin.ts',
-        resolved: resolve(fixturesDir, '../fixtures/jobs.plugin.ts'),
-      },
-    })
   })
 
   it('accepts inline logger config without static import discovery', () => {
@@ -48,13 +40,47 @@ describe('neem config static discovery', () => {
 
         export default defineConfig({
           logger: createLogger({}, 'test'),
-          apps: {},
+          runtimes: {},
         })
       `,
     )
 
     expect(discovery.logger).toBeUndefined()
     expect(discovery.hasInlineLogger).toBe(true)
+  })
+
+  it('discovers logger module string and URL specifiers', () => {
+    const stringDiscovery = discoverConfigEntriesSync(
+      resolve(fixturesDir, '../fixtures/logger-string.config.ts'),
+      `
+        import { defineConfig } from '@nmtjs/neem'
+
+        export default defineConfig({
+          logger: './logger.ts',
+          runtimes: {},
+        })
+      `,
+    )
+    const urlDiscovery = discoverConfigEntriesSync(
+      resolve(fixturesDir, '../fixtures/logger-url.config.ts'),
+      `
+        import { defineConfig } from '@nmtjs/neem'
+
+        export default defineConfig({
+          logger: new URL('./logger.ts', import.meta.url),
+          runtimes: {},
+        })
+      `,
+    )
+
+    expect(stringDiscovery.logger).toMatchObject({
+      specifier: './logger.ts',
+      resolved: resolve(fixturesDir, '../fixtures/logger.ts'),
+    })
+    expect(urlDiscovery.logger).toMatchObject({
+      specifier: './logger.ts',
+      resolved: resolve(fixturesDir, '../fixtures/logger.ts'),
+    })
   })
 
   it('rejects computed entry imports for direct config discovery', () => {
@@ -65,10 +91,9 @@ describe('neem config static discovery', () => {
           import { defineConfig } from '@nmtjs/neem'
           const entry = './basic-app.ts'
           export default defineConfig({
-            apps: {
+            runtimes: {
               api: {
                 entry: () => import(entry),
-                threads: [],
               },
             },
           })
@@ -85,10 +110,9 @@ describe('neem config static discovery', () => {
           import { defineConfig } from '@nmtjs/neem'
 
           const unused = defineConfig({
-            apps: {
+            runtimes: {
               api: {
                 entry: () => import('./basic-app.ts'),
-                threads: [],
               },
             },
           })
@@ -107,16 +131,57 @@ describe('neem config static discovery', () => {
           import { defineConfig } from '@nmtjs/neem'
 
           export default defineConfig({
-            apps: {
+            runtimes: {
               api: {
                 entry: () => import('./basic-app.ts'),
                 build: { plugins: [] },
-                threads: [],
               },
             },
           })
         `,
       ),
     ).toThrow("Expected build to be () => import('<literal>')")
+  })
+
+  it('rejects computed runtime names', () => {
+    expect(() =>
+      discoverConfigEntriesSync(
+        resolve(fixturesDir, '../fixtures/computed-runtime-name.config.ts'),
+        `
+          import { defineConfig } from '@nmtjs/neem'
+          const runtimeName = 'api'
+
+          export default defineConfig({
+            runtimes: {
+              [runtimeName]: {
+                entry: () => import('./basic-app.ts'),
+              },
+            },
+          })
+        `,
+      ),
+    ).toThrow('Expected runtime name to be a static property name')
+  })
+
+  it('rejects duplicate runtime names', () => {
+    expect(() =>
+      discoverConfigEntriesSync(
+        resolve(fixturesDir, '../fixtures/duplicate-runtime-name.config.ts'),
+        `
+          import { defineConfig } from '@nmtjs/neem'
+
+          export default defineConfig({
+            runtimes: {
+              api: {
+                entry: () => import('./basic-app.ts'),
+              },
+              'api': {
+                entry: () => import('./runtime-app.ts'),
+              },
+            },
+          })
+        `,
+      ),
+    ).toThrow('Duplicate Neem runtime name [api]')
   })
 })

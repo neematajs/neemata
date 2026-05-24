@@ -13,9 +13,14 @@ let currentMainSignal: AbortSignal | undefined
 const buildCommand = defineCommand({
   meta: {
     name: 'build',
-    description: 'Build Neem config, app entries, and plugin artifacts.',
+    description: 'Build Neem config and runtime artifacts.',
   },
   args: {
+    runtime: {
+      type: 'positional',
+      description: 'Runtime name to build.',
+      required: false,
+    },
     config: {
       type: 'string',
       description: 'Path to neem.config file.',
@@ -27,7 +32,11 @@ const buildCommand = defineCommand({
     },
   },
   async run({ args }) {
-    await buildNeem({ config: args.config, outDir: args.outDir })
+    await buildNeem({
+      config: args.config,
+      outDir: args.outDir,
+      runtimes: collectRuntimeArgs(args),
+    })
   },
 })
 
@@ -51,6 +60,11 @@ const mainCommand = defineCommand({
           description: 'Development output directory.',
           default: '.neem',
         },
+        runtime: {
+          type: 'positional',
+          description: 'Runtime name to start in dev.',
+          required: false,
+        },
       },
       async run({ args }) {
         const controller = createCliAbortController()
@@ -59,6 +73,7 @@ const mainCommand = defineCommand({
           const host = await devNeem({
             config: args.config,
             outDir: args.outDir,
+            runtimes: collectRuntimeArgs(args),
             signal: controller.signal,
           })
           await host.closed
@@ -70,13 +85,18 @@ const mainCommand = defineCommand({
     start: defineCommand({
       meta: {
         name: 'start',
-        description: 'Start a built Neem application server.',
+        description: 'Start a built Neem runtime server.',
       },
       args: {
         outDir: {
           type: 'string',
           description: 'Built output directory.',
           default: 'dist',
+        },
+        runtime: {
+          type: 'positional',
+          description: 'Runtime name to start.',
+          required: false,
         },
       },
       async run({ args }) {
@@ -85,6 +105,7 @@ const mainCommand = defineCommand({
         try {
           const host = await startNeem({
             outDir: args.outDir,
+            runtimes: collectRuntimeArgs(args),
             signal: controller.signal,
           })
           await host.closed
@@ -119,6 +140,10 @@ export async function main(
   } finally {
     currentMainSignal = undefined
   }
+}
+
+function collectRuntimeArgs(args: { _: string[]; runtime?: string }) {
+  return [...new Set([args.runtime, ...args._].filter(Boolean) as string[])]
 }
 
 if (

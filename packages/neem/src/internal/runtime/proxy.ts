@@ -1,141 +1,14 @@
 import type { NeemProxyConfig } from '../../public/config.ts'
-import type { NeemApplicationUpstream } from '../../public/runtime.ts'
+import type {
+  NeemProxyUpstream,
+  NeemProxyUpstreamRegistry,
+  NeemProxyUpstreamRegistryEvent,
+  NeemProxyUpstreamSnapshot,
+} from './proxy-upstreams.ts'
 import type { NeemRuntimeSnapshot } from './snapshot.ts'
 import { createNeemChildLogger } from './logger.ts'
 
-export type NeemProxyUpstream = {
-  type: 'port'
-  transport: 'http' | 'http2' | 'ws'
-  secure: boolean
-  hostname: string
-  port: number
-}
-
-export type NeemProxyUpstreamSnapshot = {
-  appName: string
-  upstream: NeemApplicationUpstream
-  proxyUpstream: NeemProxyUpstream
-  count: number
-}
-
-export type NeemProxyUpstreamRegistryEvent = NeemProxyUpstreamSnapshot
-
-type Listener = (event: NeemProxyUpstreamRegistryEvent) => void
-
-type RegistryEntry = {
-  upstream: NeemApplicationUpstream
-  proxyUpstream: NeemProxyUpstream
-  count: number
-}
-
-export class NeemProxyUpstreamRegistry {
-  private readonly upstreams = new Map<string, Map<string, RegistryEntry>>()
-  private readonly upstreamsByOwner = new WeakMap<
-    object,
-    Array<{ appName: string; key: string }>
-  >()
-  private readonly listeners = {
-    add: new Set<Listener>(),
-    remove: new Set<Listener>(),
-  }
-
-  addOwnerUpstreams(
-    owner: object,
-    appName: string,
-    upstreams: readonly NeemApplicationUpstream[],
-  ): void {
-    this.removeOwnerUpstreams(owner)
-
-    const keys: Array<{ appName: string; key: string }> = []
-    for (const upstream of upstreams) {
-      const normalized = normalizeProxyApplicationUpstream(upstream)
-      const proxyUpstream = toProxyUpstream(normalized)
-      const key = getUpstreamKey(normalized)
-      keys.push({ appName, key })
-      this.addUpstream(appName, key, normalized, proxyUpstream)
-    }
-
-    if (keys.length > 0) {
-      this.upstreamsByOwner.set(owner, keys)
-    }
-  }
-
-  removeOwnerUpstreams(owner: object): void {
-    const keys = this.upstreamsByOwner.get(owner)
-    if (!keys) return
-    this.upstreamsByOwner.delete(owner)
-
-    for (const { appName, key } of keys) {
-      const appUpstreams = this.upstreams.get(appName)
-      const current = appUpstreams?.get(key)
-      if (!current) continue
-
-      current.count--
-      if (current.count > 0) continue
-
-      appUpstreams?.delete(key)
-      this.emit('remove', {
-        appName,
-        upstream: current.upstream,
-        proxyUpstream: current.proxyUpstream,
-        count: 0,
-      })
-      if (appUpstreams && appUpstreams.size === 0) {
-        this.upstreams.delete(appName)
-      }
-    }
-  }
-
-  list(appName?: string): readonly NeemProxyUpstreamSnapshot[] {
-    const entries =
-      appName === undefined
-        ? [...this.upstreams.entries()]
-        : [[appName, this.upstreams.get(appName)] as const]
-    return entries.flatMap(([name, upstreams]) =>
-      [...(upstreams?.values() ?? [])].map((entry) => ({
-        appName: name,
-        upstream: entry.upstream,
-        proxyUpstream: entry.proxyUpstream,
-        count: entry.count,
-      })),
-    )
-  }
-
-  on(event: 'add' | 'remove', listener: Listener): () => void {
-    this.listeners[event].add(listener)
-    return () => {
-      this.listeners[event].delete(listener)
-    }
-  }
-
-  private addUpstream(
-    appName: string,
-    key: string,
-    upstream: NeemApplicationUpstream,
-    proxyUpstream: NeemProxyUpstream,
-  ): void {
-    let appUpstreams = this.upstreams.get(appName)
-    if (!appUpstreams) {
-      appUpstreams = new Map()
-      this.upstreams.set(appName, appUpstreams)
-    }
-
-    const current = appUpstreams.get(key)
-    if (current) {
-      current.count++
-      return
-    }
-
-    appUpstreams.set(key, { upstream, proxyUpstream, count: 1 })
-    this.emit('add', { appName, upstream, proxyUpstream, count: 1 })
-  }
-
-  private emit(event: 'add' | 'remove', data: NeemProxyUpstreamRegistryEvent) {
-    for (const listener of this.listeners[event]) {
-      listener(data)
-    }
-  }
-}
+export * from './proxy-upstreams.ts'
 
 export type NeemProxyManagerOptions = {
   snapshot: NeemRuntimeSnapshot
@@ -152,11 +25,11 @@ export type NeemNativeProxy = {
   start: () => Promise<undefined>
   stop: () => Promise<undefined>
   addUpstream: (
-    appName: string,
+    runtimeName: string,
     upstream: NeemProxyUpstream,
   ) => Promise<undefined>
   removeUpstream: (
-    appName: string,
+    runtimeName: string,
     upstream: NeemProxyUpstream,
   ) => Promise<undefined>
 }
@@ -164,6 +37,7 @@ export type NeemNativeProxy = {
 export type NeemNativeProxyOptions = {
   listen: string
   tls?: { keyPath: string; certPath: string }
+  // @nmtjs/proxy still names route groups "applications"; Neem maps runtimes into that native shape.
   applications: Array<{
     name: string
     routing: { type?: 'subdomain' | 'path'; name?: string; default?: boolean }
@@ -195,7 +69,7 @@ export class NeemProxyManager {
     this.proxy = new proxyPackage.Proxy(
       createNativeProxyOptions(
         this.config,
-        Object.keys(this.options.snapshot.manifest.apps),
+        Object.keys(this.options.snapshot.manifest.runtimes ?? {}),
       ),
     )
 
@@ -214,7 +88,7 @@ export class NeemProxyManager {
       {
         hostname: this.config.hostname,
         port: this.config.port,
-        applications: Object.keys(this.options.snapshot.manifest.apps),
+        runtimes: Object.keys(this.options.snapshot.manifest.runtimes ?? {}),
       },
       'Starting Neem proxy',
     )
@@ -250,12 +124,13 @@ export class NeemProxyManager {
     if (!this.proxy) return
 
     try {
-      await this.proxy.addUpstream(event.appName, event.proxyUpstream)
+      await this.proxy.addUpstream(event.runtimeName, event.proxyUpstream)
     } catch (error) {
       this.logger.warn(
-        new Error(`Failed to add proxy upstream for app [${event.appName}]`, {
-          cause: error,
-        }),
+        new Error(
+          `Failed to add proxy upstream for runtime [${event.runtimeName}]`,
+          { cause: error },
+        ),
       )
     }
   }
@@ -266,11 +141,11 @@ export class NeemProxyManager {
     if (!this.proxy) return
 
     try {
-      await this.proxy.removeUpstream(event.appName, event.proxyUpstream)
+      await this.proxy.removeUpstream(event.runtimeName, event.proxyUpstream)
     } catch (error) {
       this.logger.warn(
         new Error(
-          `Failed to remove proxy upstream for app [${event.appName}]`,
+          `Failed to remove proxy upstream for runtime [${event.runtimeName}]`,
           { cause: error },
         ),
       )
@@ -278,40 +153,16 @@ export class NeemProxyManager {
   }
 }
 
-export function normalizeProxyApplicationUpstream(
-  upstream: NeemApplicationUpstream,
-): NeemApplicationUpstream {
-  const url = new URL(upstream.url)
-  if (url.hostname === '0.0.0.0') url.hostname = '127.0.0.1'
-  return { type: upstream.type, url: url.toString() }
-}
-
-export function toProxyUpstream(
-  upstream: NeemApplicationUpstream,
-): NeemProxyUpstream {
-  const url = new URL(upstream.url)
-  const secure = url.protocol === 'https:' || url.protocol === 'wss:'
-  const port = url.port ? Number.parseInt(url.port, 10) : secure ? 443 : 80
-  return {
-    type: 'port',
-    transport: upstream.type as NeemProxyUpstream['transport'],
-    secure,
-    hostname: url.hostname,
-    port,
-  }
-}
-
-function getUpstreamKey(upstream: NeemApplicationUpstream): string {
-  return `${upstream.type}:${upstream.url}`
-}
-
 export function createNativeProxyOptions(
   config: NeemProxyConfig,
-  appNames: readonly string[],
+  runtimeNames: readonly string[],
 ): NeemNativeProxyOptions {
-  const configured = config.applications ?? {}
+  const configured = config.runtimes ?? {}
+  const active = new Set(runtimeNames)
   const names =
-    Object.keys(configured).length > 0 ? Object.keys(configured) : appNames
+    Object.keys(configured).length > 0
+      ? Object.keys(configured).filter((name) => active.has(name))
+      : runtimeNames
 
   return {
     listen: `${config.hostname}:${config.port}`,
@@ -319,13 +170,13 @@ export function createNativeProxyOptions(
       ? { keyPath: config.tls.key, certPath: config.tls.cert }
       : undefined,
     applications: names.flatMap((name) => {
-      const app = configured[name]
-      if (app === undefined && Object.keys(configured).length > 0) return []
+      const runtime = configured[name]
+      if (runtime === undefined && Object.keys(configured).length > 0) return []
       return [
         {
           name,
-          routing: app?.routing ?? { type: 'path', name },
-          sni: app?.sni,
+          routing: runtime?.routing ?? { type: 'path', name },
+          sni: runtime?.sni,
         },
       ]
     }),

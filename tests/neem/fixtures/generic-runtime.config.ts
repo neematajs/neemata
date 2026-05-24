@@ -1,21 +1,25 @@
 import { defineConfig, defineRuntimeConfig } from '@nmtjs/neem'
 
 export default defineConfig({
+  logger: () => import('./logger.ts'),
   runtimes: {
     api: defineRuntimeConfig({
-      entry: () => import('./runtime-app.ts'),
+      entry: () => import('./generic-runtime.ts'),
       threads: [
         {
-          label: 'ready-before-failure',
+          label: 'one',
           http: { listen: { hostname: '127.0.0.1', port: 4201 } },
         },
         {
-          label: 'fails-on-start',
-          fail: 'start',
-          startDelayMs: 25,
+          label: 'two',
           http: { listen: { hostname: '127.0.0.1', port: 4202 } },
         },
       ],
+    }),
+    jobs: defineRuntimeConfig({
+      entry: () => import('./generic-runtime.ts'),
+      host: { entry: () => import('./generic-runtime-host.ts') },
+      options: { queue: 'runtime' },
     }),
   },
 })
