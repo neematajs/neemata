@@ -16,6 +16,9 @@
       "path": "./packages/core/tsconfig.json"
     },
     {
+      "path": "./packages/eventing/tsconfig.json"
+    },
+    {
       "path": "./packages/gateway/tsconfig.json"
     },
     {
@@ -56,6 +59,9 @@
     },
     {
       "path": "./tests/neemata/tsconfig.json"
+    },
+    {
+      "path": "./tests/eventing/tsconfig.json"
     },
     {
       "path": "./tests/neem/tsconfig.json"

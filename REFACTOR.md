@@ -26,6 +26,8 @@ This file tracks current architecture decisions and remaining porting work.
 - `@nmtjs/application`: Neemata app model and Neem adapter.
 - `@nmtjs/jobs`: BullMQ-backed jobs package and Neem runtime adapter.
 - `@nmtjs/pubsub`: pub/sub manager, adapters, app runtime plugin.
+- `@nmtjs/eventing`: typed durable event stream contracts, adapters, app
+  producer plugin, and Neem consumer runtime.
 - `@nmtjs/metrics`: future runtime/host observability package.
 - `@nmtjs/proxy`: proxy implementation, optional peer used by Neem.
 - `nmtjs`: legacy umbrella package. Do not update in this slice; it stays as-is
@@ -134,9 +136,9 @@ metrics semantics, store adapters, or app DI provisions.
 - Eventing MVP should target `@platformatic/kafka` for Kafka-compatible
   brokers and Redis Streams for Redis/Valkey. RabbitMQ Streams can be evaluated
   later; plain Rabbit queues are not the target.
-- Event consumers should follow the same shape as jobs: host owns broker
-  consumption/coordination, Neem owns threads, runtime package owns port
-  protocol.
+- Event consumers should run as named Neem runtimes. Neem owns threads and
+  lifecycle; `@nmtjs/eventing` owns broker clients, consumer groups, handler
+  dispatch, and ack/commit policy.
 - Metrics should observe host/runtime events. Implementation can use runtime
   hooks or a narrow host extension, but must not introduce feature-specific host
   semantics.
@@ -198,6 +200,12 @@ Ported packages:
   - Redis adapter with caller-owned client
   - app runtime plugin
   - typed channel definition cleanup still needed
+- `@nmtjs/eventing`
+  - typed `defineEvent(...)` contracts with topic/key/payload
+  - app-facing `publishEvent` injectable and plugin
+  - Redis Streams adapter
+  - Kafka-compatible adapter using `@platformatic/kafka`
+  - explicit Neem eventing runtime helper and worker entry
 
 Still incomplete:
 
@@ -222,7 +230,7 @@ Still incomplete:
 | Neemata runtime | `@nmtjs/application` | Generic runtime adapter over pure Neemata app runtime. | `wired` |
 | Jobs | `@nmtjs/jobs` | Direct BullMQ jobs runtime + app plugin/injectables. Neem adapter uses runtime host and Neem-owned runner threads. | `partial` |
 | PubSub | `@nmtjs/pubsub` | Pub/sub package + app runtime plugin/adapters. | `partial` |
-| Eventing | future `@nmtjs/eventing` | Durable stream/log client plus runtime host/consumer threads. | `research` |
+| Eventing | `@nmtjs/eventing` | Durable stream/log client plus Neem consumer runtime. | `partial` |
 | Metrics | `@nmtjs/metrics` | Host/runtime observer package. | `missing` |
 | Runtime injections | app packages | Neem passes context; adapters map into app containers. | `partial` |
 | Health/readiness | `@nmtjs/neem` | Internal health exists; public/probe exposure later. | `partial` |
@@ -396,7 +404,9 @@ Standalone `node dist/start.js` follows same runtime path and injects
 2. Add metrics/observability on generic runtime lifecycle.
 3. Add health/readiness probe exposure.
 4. Design framework-owned build lifecycle for Nuxt/other meta-frameworks.
-5. Revisit durable eventing after runtime model lands.
+5. Add typed pubsub channel definitions.
+6. Harden eventing runtime policies: retries, poison messages, DLQ, pending
+   Redis Streams recovery, Kafka partition/concurrency docs.
 
 ## Non-Goals For Current Slice
 

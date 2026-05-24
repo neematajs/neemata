@@ -157,6 +157,33 @@ describe('neem build', () => {
     )
   })
 
+  it('builds eventing runtime with emitted config artifact', async () => {
+    const outDir = await createTempOutDir()
+
+    await buildNeem({
+      config: resolve(fixturesDir, 'runtime-eventing.config.ts'),
+      outDir,
+    })
+    const manifest = await readManifest(outDir)
+
+    expect(manifest.runtimes?.events?.entry).toMatchObject({
+      id: 'entry',
+      kind: 'worker',
+      owner: { type: 'runtime', name: 'events' },
+    })
+    expect(manifest.runtimes?.events?.artifacts).toEqual([
+      expect.objectContaining({
+        id: 'eventing-config',
+        kind: 'module',
+        owner: { type: 'runtime', name: 'events' },
+      }),
+    ])
+    await expectFile(resolve(outDir, manifest.runtimes!.events.entry.file))
+    await expectFile(
+      resolve(outDir, manifest.runtimes!.events.artifacts[0]!.file),
+    )
+  })
+
   it('builds only selected generic runtimes', async () => {
     const outDir = await createTempOutDir()
 
