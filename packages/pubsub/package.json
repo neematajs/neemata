@@ -1,0 +1,51 @@
+{
+  "name": "@nmtjs/pubsub",
+  "description": "Neemata ephemeral publish/subscribe injectables and adapters.",
+  "type": "module",
+  "scripts": {
+    "clean-build": "rm -rf ./dist"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./dist/index.js",
+      "module-sync": "./dist/index.js"
+    }
+  },
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js",
+        "module-sync": "./dist/index.js"
+      }
+    }
+  },
+  "dependencies": {
+    "@nmtjs/common": "workspace:*",
+    "@nmtjs/application": "workspace:*",
+    "@nmtjs/core": "workspace:*"
+  },
+  "peerDependencies": {
+    "ioredis": "^5.10.1",
+    "iovalkey": "^0.3.3"
+  },
+  "peerDependenciesMeta": {
+    "ioredis": {
+      "optional": true
+    },
+    "iovalkey": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "ioredis": "^5.10.1",
+    "iovalkey": "^0.3.3"
+  },
+  "files": [
+    "dist",
+    "src",
+    "LICENSE.md",
+    "README.md"
+  ]
+}
