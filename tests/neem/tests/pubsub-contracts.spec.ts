@@ -9,11 +9,14 @@ import type {
 import { Container, createLogger } from '@nmtjs/core'
 import {
   createPubSubPlugin,
+  PubSubChannelContract,
+  PubSubEventContract,
   PubSubManager,
   pubsubAdapter,
   RedisPubSubAdapter,
 } from '@nmtjs/pubsub'
-import { describe, expect, it } from 'vitest'
+import { t } from '@nmtjs/type'
+import { describe, expect, expectTypeOf, it } from 'vitest'
 
 type CapturedLog = Record<string, any>
 
@@ -41,7 +44,10 @@ class TestPubSubAdapter implements PubSubAdapter {
 
   async *subscribe(channel: string): AsyncGenerator<PubSubMessage> {
     this.subscribeCalls.push(channel)
-    yield { channel, payload: { text: 'hello' } }
+    yield {
+      channel,
+      payload: { event: 'chat.room/message', data: { text: 'hello' } },
+    }
   }
 }
 
@@ -76,6 +82,15 @@ class FakeRedisClient extends EventEmitter {
 }
 
 const chatChannel = 'chat:room-1'
+const chatRoom = PubSubChannelContract({
+  name: 'chat.room',
+  params: t.object({ roomId: t.string() }),
+  events: {
+    message: PubSubEventContract({ payload: t.object({ text: t.string() }) }),
+    typing: PubSubEventContract({ payload: t.object({ userId: t.string() }) }),
+  },
+  channel: (params) => `chat:${params.roomId}`,
+})
 
 describe('@nmtjs/pubsub contracts', () => {
   it('provides publish/subscribe through an application plugin', async () => {
@@ -87,7 +102,7 @@ describe('@nmtjs/pubsub contracts', () => {
     await plugin.hooks?.['lifecycle:beforeInitialize']?.({ logger, container })
 
     const manager = new PubSubManager({ logger, adapter })
-    const stream = await manager.subscribe(chatChannel)
+    const stream = await manager.subscribe(chatRoom, { roomId: 'room-1' })
 
     const events: unknown[] = []
     for await (const event of stream) events.push(event)
@@ -95,7 +110,7 @@ describe('@nmtjs/pubsub contracts', () => {
     await plugin.hooks?.['lifecycle:beforeDispose']?.({ logger, container })
 
     expect(events).toEqual([
-      { channel: chatChannel, payload: { text: 'hello' } },
+      { event: 'chat.room/message', data: { text: 'hello' } },
     ])
     expect(adapter.initializeCalls).toBe(1)
     expect(adapter.disposeCalls).toBe(1)
@@ -106,21 +121,29 @@ describe('@nmtjs/pubsub contracts', () => {
     const adapter = new TestPubSubAdapter()
     const { manager, getLogs } = createPubSubManagerHarness(adapter)
 
-    const stream = await manager.subscribe<{ text: string }>(chatChannel)
+    const stream = await manager.subscribe(chatRoom, { roomId: 'room-1' })
 
-    const events: Array<{ channel: string; payload: { text: string } }> = []
+    const events: unknown[] = []
     for await (const event of stream) {
+      expectTypeOf(event).toEqualTypeOf<
+        | { event: 'chat.room/message'; data: { text: string } }
+        | { event: 'chat.room/typing'; data: { userId: string } }
+      >()
       events.push(event)
     }
 
     adapter.publishResult = false
-    const published = await manager.publish(chatChannel, { text: 'world' })
+    const published = await manager.publish(
+      chatRoom.events.message,
+      { roomId: 'room-1' },
+      { text: 'world' },
+    )
 
     await waitForLogs()
     const logs = getLogs()
 
     expect(events).toEqual([
-      { channel: chatChannel, payload: { text: 'hello' } },
+      { event: 'chat.room/message', data: { text: 'hello' } },
     ])
     expect(published).toBe(false)
     expect(
@@ -137,12 +160,19 @@ describe('@nmtjs/pubsub contracts', () => {
     const adapter = new TestPubSubAdapter()
     const { manager } = createPubSubManagerHarness(adapter)
 
-    await expect(manager.publish(chatChannel, { text: 'world' })).resolves.toBe(
-      true,
-    )
+    await expect(
+      manager.publish(
+        chatRoom.events.message,
+        { roomId: 'room-1' },
+        { text: 'world' },
+      ),
+    ).resolves.toBe(true)
 
     expect(adapter.publishCalls).toEqual([
-      { channel: chatChannel, payload: { text: 'world' } },
+      {
+        channel: chatChannel,
+        payload: { event: 'chat.room/message', data: { text: 'world' } },
+      },
     ])
   })
 

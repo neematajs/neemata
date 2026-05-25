@@ -1,11 +1,18 @@
+import { basename, dirname, join } from 'node:path'
+
 import type {
   NeemEntryInput,
+  NeemRolldownOptions,
   NeemRuntime,
   NeemRuntimeConfig,
   NeemWorker,
   NeemWorkerRuntimeContext,
 } from '@nmtjs/neem'
-import { defineRuntimeConfig, defineWorker } from '@nmtjs/neem'
+import {
+  defineRuntimeConfig,
+  defineWorker,
+  kNeemRuntimeBuild,
+} from '@nmtjs/neem'
 
 import type { NeemataApplication, NeemataAppTransportOptions } from './app.ts'
 import type { AnyApplicationConfig } from './config.ts'
@@ -60,7 +67,12 @@ export function defineNeemataRuntime<
   build?: NeemRuntimeConfig<NeemataWorker<TApplication>>['build']
   threads: Array<NeemataRuntimeThreadOptions<TApplication>>
 }): NeemataRuntimeConfig<TApplication> {
-  return defineRuntimeConfig<NeemataWorker<TApplication>>(config)
+  return defineRuntimeConfig<NeemataWorker<TApplication>>({
+    ...config,
+    [kNeemRuntimeBuild]: {
+      rolldown: { plugins: [createUwsNativeAddonPlugin()] },
+    },
+  })
 }
 
 export function defineNeemataWorker<
@@ -72,4 +84,40 @@ export function defineNeemataWorker<
       return new NeemataApplicationRuntime(ctx)
     },
   })
+}
+
+type NeemataRolldownPluginContext = {
+  fs: { readFile: (file: string) => Promise<Uint8Array> }
+  emitFile: (emittedFile: {
+    type: 'asset'
+    name: string
+    source: Uint8Array
+  }) => string
+  getFileName: (referenceId: string) => string
+}
+
+function createUwsNativeAddonPlugin(): NonNullable<
+  NeemRolldownOptions['plugins']
+> {
+  return {
+    name: 'neemata:uws-native-addon',
+    async load(this: NeemataRolldownPluginContext, id: string) {
+      if (!id.includes('uWebSockets.js/uws.js')) return null
+      const nativeAddon = join(
+        dirname(id),
+        `uws_${process.platform}_${process.arch}_${process.versions.modules}.node`,
+      )
+      const refId = this.emitFile({
+        type: 'asset',
+        name: basename(nativeAddon),
+        source: await this.fs.readFile(nativeAddon),
+      })
+
+      return [
+        'import { createRequire } from "node:module"',
+        'const require = createRequire(import.meta.url)',
+        `export default require(${JSON.stringify(`./${this.getFileName(refId)}`)})`,
+      ].join('\n')
+    },
+  } as NonNullable<NeemRolldownOptions['plugins']>
 }

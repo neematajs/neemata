@@ -12,7 +12,7 @@ import {
   NEEM_MANIFEST_FILE,
   NEEM_MANIFEST_SCHEMA_VERSION,
 } from '../build/manifest.ts'
-import { createNeemDefaultLogger, resolveNeemConfigLogger } from './logger.ts'
+import { createNeemDefaultLogger } from './logger.ts'
 import { createRuntimeSnapshot } from './snapshot.ts'
 
 type ManifestParser = (value: unknown) => NeemBuildManifest
@@ -65,10 +65,8 @@ async function resolveManifestLogger(
     return createNeemDefaultLogger(mode, logger.options)
   }
 
-  return resolveNeemConfigLogger(
-    { logger: pathToFileURL(resolve(outDir, logger.file)), runtimes: {} },
-    { mode },
-  )
+  return (await import(pathToFileURL(resolve(outDir, logger.file)).href))
+    .default as Logger
 }
 
 function createConfigFromManifest(

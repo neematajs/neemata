@@ -1,6 +1,5 @@
-import { existsSync } from 'node:fs'
-import { mkdir, readFile } from 'node:fs/promises'
-import { basename, dirname, join, resolve } from 'node:path'
+import { mkdir } from 'node:fs/promises'
+import { basename, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import * as rolldown from 'rolldown'
@@ -16,15 +15,11 @@ type ArtifactBuildMetadata = {
   entryFileName?: string
   emittedArtifacts?: EmittedArtifactBuildMetadata[]
 }
+
 type EmittedArtifactBuildMetadata = {
   id: string
   kind: NeemArtifact['kind']
   fileName: string
-}
-
-type NeemRolldownPluginContext = {
-  emitFile: (emittedFile: rolldown.EmittedFile) => string
-  getFileName: (referenceId: string) => string
 }
 
 export type NeemBuildArtifactOptions = {
@@ -153,7 +148,6 @@ function createRolldownOptions(
     ...userOptions,
     plugins: [
       createNativeAddonPlugin(),
-      createUwsNativeAddonPlugin(),
       ...userPlugins,
       createEmittedArtifactsPlugin(
         options.emittedArtifacts ?? [],
@@ -268,49 +262,30 @@ function createEmittedArtifactsPlugin(
 function createNativeAddonPlugin() {
   return {
     name: 'neem:native-addon',
-    async load(this: NeemRolldownPluginContext, id: string) {
-      if (!id.endsWith('.node') || !existsSync(id)) return null
+    async load(this: rolldown.PluginContext, id: string) {
+      const isNapi = id.endsWith('.node')
+      const accessible = await this.fs.stat(id).then(
+        () => true,
+        () => false,
+      )
+      if (!isNapi || !accessible) return null
       return await emitNativeAddonModule(this, id)
     },
   } satisfies rolldown.RolldownPlugin
 }
 
-function createUwsNativeAddonPlugin() {
-  return {
-    name: 'neem:uws-native-addon',
-    async load(this: NeemRolldownPluginContext, id: string) {
-      if (!id.includes('uWebSockets.js/uws.js')) return null
-      const nativeAddon = join(
-        dirname(id),
-        `uws_${process.platform}_${process.arch}_${process.versions.modules}.node`,
-      )
-      return await emitNativeAddonModule(this, nativeAddon)
-    },
-    async transform(
-      this: NeemRolldownPluginContext,
-      _code: string,
-      id: string,
-    ) {
-      if (!id.includes('uWebSockets.js/uws.js')) return null
-      const nativeAddon = join(
-        dirname(id),
-        `uws_${process.platform}_${process.arch}_${process.versions.modules}.node`,
-      )
-      return await emitNativeAddonModule(this, nativeAddon)
-    },
-  } satisfies rolldown.RolldownPlugin
-}
-
 async function emitNativeAddonModule(
-  context: NeemRolldownPluginContext,
+  context: rolldown.PluginContext,
   file: string,
 ): Promise<string> {
   const refId = context.emitFile({
     type: 'asset',
     name: basename(file),
-    source: await readFile(file),
+    source: await context.fs.readFile(file),
   })
+
   const runtimePath = `./${context.getFileName(refId)}`
+
   return [
     'import { createRequire } from "node:module"',
     'const require = createRequire(import.meta.url)',
@@ -356,6 +331,10 @@ function mergeRolldownOptions(
   base: NeemRolldownOptions | undefined,
   override: NeemRolldownOptions | undefined,
 ): NeemRolldownOptions {
+  const plugins = [
+    ...normalizePlugins(base?.plugins),
+    ...normalizePlugins(override?.plugins),
+  ]
   const baseOutput =
     typeof base?.output === 'object' && base.output
       ? (base.output as Record<string, unknown>)
@@ -369,5 +348,6 @@ function mergeRolldownOptions(
     ...(base ?? {}),
     ...(override ?? {}),
     output: { ...baseOutput, ...overrideOutput },
+    plugins: plugins.length > 0 ? plugins : undefined,
   }
 }

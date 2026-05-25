@@ -2,7 +2,7 @@ import type { BaseType } from '@nmtjs/type'
 import { t } from '@nmtjs/type'
 
 import type { ContractSchemaOptions } from '../utils.ts'
-import type { SubcriptionOptions } from './subscription.ts'
+import type { SubcriptionOptions } from './legacy-subscription.ts'
 import { Kind } from '../constants.ts'
 import { createSchema } from '../utils.ts'
 

@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs'
 import { mkdir, rename, rm, writeFile } from 'node:fs/promises'
-import { dirname, relative, resolve } from 'node:path'
+import { dirname, join, relative, resolve } from 'node:path'
 
 import { consola } from 'consola'
 import { colorize } from 'consola/utils'
@@ -54,6 +54,8 @@ export type NeemBuildResult = {
   manifest: NeemBuildManifest
 }
 
+const logger = consola.create({ level: process.env.TEST ? 0 : 4 })
+
 export async function buildNeem(
   options: NeemBuildOptions = {},
 ): Promise<NeemBuildResult> {
@@ -61,7 +63,6 @@ export async function buildNeem(
   const configFile = resolve(cwd, options.config ?? 'neem.config.ts')
   const config = await importDefault<NeemConfig>(configFile)
   const outDir = resolve(cwd, options.outDir ?? config.outDir ?? 'dist')
-  const logger = consola.create({ level: process.env.TEST ? 0 : 4 })
 
   logger.start('Building Neem bundle')
   logger.debug(`  config: ${configFile}`)
@@ -69,6 +70,8 @@ export async function buildNeem(
   const selectedRuntimes = normalizeSelectedRuntimes(options.runtimes)
   if (selectedRuntimes) {
     logger.debug(`  runtimes: ${selectedRuntimes.join(', ')}`)
+  } else {
+    logger.debug(`  runtimes: ${Object.keys(config.runtimes).join(', ')}`)
   }
 
   await cleanNeemOutDir(outDir)
@@ -112,6 +115,7 @@ export async function buildNeem(
           configFile,
           runtimeConfig.entry,
         ),
+        rolldown: runtimeBuild?.rolldown,
       },
       owner: { type: 'runtime', name },
       rolldown,
@@ -178,9 +182,7 @@ async function writeStandaloneStartEntries(
     resolve(outDir, 'start.js'),
     [
       `import { startStandalone } from ${JSON.stringify('./runtime/start.js')}`,
-      '',
       'await startStandalone()',
-      '',
     ].join('\n'),
   )
 
@@ -192,9 +194,7 @@ async function writeStandaloneStartEntries(
         resolve(dir, 'start.js'),
         [
           `import { startStandalone } from ${JSON.stringify('../../runtime/start.js')}`,
-          '',
           `await startStandalone({ runtimes: [${JSON.stringify(name)}] })`,
-          '',
         ].join('\n'),
       )
     }),
@@ -211,15 +211,14 @@ export async function buildRuntimeArtifacts(options: {
       entry: resolveNeemRuntimeSourceEntry('standalone-entry'),
       rolldown: {
         output: {
-          entryFileNames: 'runtime/start.js',
-          chunkFileNames: 'runtime/[name]-[hash].js',
-          assetFileNames: 'runtime/[name]-[hash][extname]',
+          entryFileNames: 'start.js',
+          chunkFileNames: '[name]-[hash].js',
         },
       },
     },
     owner: { type: 'runtime', name: 'start' },
-    artifactOutDir: options.outDir,
-    outDir: options.outDir,
+    artifactOutDir: join(options.outDir, 'runtime'),
+    outDir: join(options.outDir, 'runtime'),
     minify: true,
   })
 
@@ -429,6 +428,7 @@ function assertSelectedRuntimesExist(
   if (!selected) return
   const missing = selected.filter((name) => !available.includes(name))
   if (missing.length > 0) {
-    throw new Error(`Unknown Neem runtime(s): ${missing.join(', ')}`)
+    logger.error(`Unknown Neem runtime(s): ${missing.join(', ')}`)
+    process.exit(1)
   }
 }

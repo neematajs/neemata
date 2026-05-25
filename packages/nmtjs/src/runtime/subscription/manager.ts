@@ -5,7 +5,7 @@ import { PassThrough, Readable } from 'node:stream'
 import type {
   SubcriptionOptions,
   TAnyEventContract,
-  TAnySubscriptionContract,
+  TAnyLegacySubscriptionContract,
 } from '@nmtjs/contract'
 import type { Container, Logger } from '@nmtjs/core'
 import type { t } from '@nmtjs/type'
@@ -27,12 +27,12 @@ export interface SubscriptionAdapterType {
 
 export type SubscriptionChannel = {
   stream: Readable
-  subscription: TAnySubscriptionContract
+  subscription: TAnyLegacySubscriptionContract
   event: TAnyEventContract
 }
 
 export type SubscribeFn = <
-  Contract extends TAnySubscriptionContract,
+  Contract extends TAnyLegacySubscriptionContract,
   Events extends {
     [K in keyof Contract['events']]?: true
   },
@@ -64,7 +64,7 @@ export type SubscribeFn = <
 >
 
 export type PublishFn = <
-  S extends TAnySubscriptionContract,
+  S extends TAnyLegacySubscriptionContract,
   E extends S['events'][keyof S['events']],
 >(
   event: E,

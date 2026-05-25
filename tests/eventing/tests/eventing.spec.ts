@@ -4,19 +4,15 @@ import type {
   EventingAdapterMessage,
   EventingAdapterMessageHandler,
   EventingConsumer,
-  RedisStreamsEventingClient,
 } from '@nmtjs/eventing'
+import type { RedisStreamsEventingClient } from '@nmtjs/eventing/redis-streams'
 import { createLogger } from '@nmtjs/core'
-import {
-  consume,
-  defineEvent,
-  EventingManager,
-  RedisStreamsEventingAdapter,
-} from '@nmtjs/eventing'
+import { consume, EventingManager, EventStreamContract } from '@nmtjs/eventing'
+import { RedisStreamsEventingAdapter } from '@nmtjs/eventing/redis-streams'
 import { t } from '@nmtjs/type'
 import { describe, expect, expectTypeOf, it } from 'vitest'
 
-const userCreated = defineEvent({
+const userCreated = EventStreamContract({
   name: 'user.created',
   topic: 'users',
   key: t.string(),

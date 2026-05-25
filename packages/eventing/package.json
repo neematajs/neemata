@@ -11,6 +11,16 @@
       "import": "./dist/index.js",
       "module-sync": "./dist/index.js"
     },
+    "./kafka": {
+      "types": "./src/kafka.ts",
+      "import": "./dist/kafka.js",
+      "module-sync": "./dist/kafka.js"
+    },
+    "./redis-streams": {
+      "types": "./src/redis-streams.ts",
+      "import": "./dist/redis-streams.js",
+      "module-sync": "./dist/redis-streams.js"
+    },
     "./neem": {
       "types": "./src/neem/index.ts",
       "import": "./dist/neem/index.js",
@@ -29,6 +39,16 @@
         "import": "./dist/index.js",
         "module-sync": "./dist/index.js"
       },
+      "./kafka": {
+        "types": "./dist/kafka.d.ts",
+        "import": "./dist/kafka.js",
+        "module-sync": "./dist/kafka.js"
+      },
+      "./redis-streams": {
+        "types": "./dist/redis-streams.d.ts",
+        "import": "./dist/redis-streams.js",
+        "module-sync": "./dist/redis-streams.js"
+      },
       "./neem": {
         "types": "./dist/neem/index.d.ts",
         "import": "./dist/neem/index.js",
@@ -44,6 +64,7 @@
   "dependencies": {
     "@nmtjs/application": "workspace:*",
     "@nmtjs/common": "workspace:*",
+    "@nmtjs/contract": "workspace:*",
     "@nmtjs/core": "workspace:*",
     "@nmtjs/neem": "workspace:*",
     "@nmtjs/type": "workspace:*"

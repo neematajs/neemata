@@ -1,5 +1,3 @@
-import { pathToFileURL } from 'node:url'
-
 import type { Logger } from '@nmtjs/core'
 import { createLogger } from '@nmtjs/core'
 
@@ -12,21 +10,10 @@ export async function resolveNeemLogger(
 ): Promise<Logger> {
   if (!input) return createNeemDefaultLogger(options.mode)
   if (typeof input === 'string' || input instanceof URL) {
-    const specifier =
-      typeof input === 'string' && options.importer
-        ? await resolveLoggerSpecifier(options.importer, input)
-        : input.toString()
+    const specifier = input.toString()
     return (await import(specifier)).default as Logger
   }
   return createNeemDefaultLogger(options.mode, input)
-}
-
-async function resolveLoggerSpecifier(
-  importer: string,
-  specifier: string,
-): Promise<string> {
-  const { resolveImportFile } = await import('../build/resolve.ts')
-  return pathToFileURL(resolveImportFile(importer, specifier)).href
 }
 
 export function resolveNeemInlineLogger(

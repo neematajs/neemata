@@ -1,35 +1,101 @@
 import { Readable } from 'node:stream'
 
+import type {
+  SubscriptionPublishInput as PubSubPublishInput,
+  SubscriptionSelectedEventUnion as PubSubSelectedEventUnion,
+  SubscriptionParams,
+  TAnySubscriptionContract,
+  TAnySubscriptionEventContract,
+  TSubscriptionEventContract,
+} from '@nmtjs/contract'
 import type { Logger } from '@nmtjs/core'
 import { isAbortError } from '@nmtjs/common'
 
 import type { PubSubAdapter, PubSubMessage } from './adapter.ts'
+import { resolvePubSubChannelName } from './utils.ts'
 
-export type PubSubChannel = { channel: string; stream: Readable }
+export type PubSubChannelStream = { channel: string; stream: Readable }
 
 export type PubSubStream<Payload = unknown> = Omit<
   Readable,
   typeof Symbol.asyncIterator
-> & { [Symbol.asyncIterator]: () => AsyncIterator<PubSubMessage<Payload>> }
+> & { [Symbol.asyncIterator]: () => AsyncIterator<Payload> }
 
-export type SubscribeFn = <Payload = unknown>(
-  channel: string,
+export type SubscribeFn = <
+  Channel extends TAnySubscriptionContract,
+  Events extends Partial<Record<keyof Channel['events'], true>> = {},
+>(
+  channel: Channel,
+  params: SubscriptionParams<Channel>,
+  events?: Events,
   signal?: AbortSignal,
-) => Promise<PubSubStream<Payload>>
+) => Promise<PubSubStream<PubSubSelectedEventUnion<Channel, Events>>>
 
-export type PublishFn = (channel: string, payload: unknown) => Promise<boolean>
+export type PublishFn = <Event extends TAnySubscriptionEventContract>(
+  event: Event,
+  params: PubSubEventParams<Event>,
+  payload: PubSubPublishInput<Event>,
+) => Promise<boolean>
+
+export type PubSubEventParams<Event extends TAnySubscriptionEventContract> =
+  Event extends TSubscriptionEventContract<any, any, infer Channel>
+    ? SubscriptionParams<Channel>
+    : never
 
 export type PubSubManagerOptions = { logger: Logger; adapter: PubSubAdapter }
 
 export class PubSubManager {
-  readonly channels = new Map<string, PubSubChannel>()
+  readonly channels = new Map<string, PubSubChannelStream>()
   protected readonly logger: Logger
 
   constructor(protected readonly options: PubSubManagerOptions) {
     this.logger = options.logger.child({ component: PubSubManager.name })
   }
 
-  subscribe = async <Payload = unknown>(
+  async subscribe<
+    Channel extends TAnySubscriptionContract,
+    Events extends Partial<Record<keyof Channel['events'], true>> = {},
+  >(
+    channel: Channel,
+    params: SubscriptionParams<Channel>,
+    events?: Events,
+    signal?: AbortSignal,
+  ): Promise<PubSubStream<PubSubSelectedEventUnion<Channel, Events>>> {
+    const channelName = resolvePubSubChannelName(channel, params)
+    const selected = events ?? {}
+    const selectedEvents =
+      Object.keys(selected).length === 0
+        ? Object.values(channel.events)
+        : Object.entries(selected).flatMap(([key, include]) =>
+            include ? [channel.events[key]!] : [],
+          )
+    const eventByName = new Map(
+      selectedEvents.map((event) => [event.name, event]),
+    )
+
+    const stream = await this.subscribeRaw<PubSubMessage>(channelName, signal)
+    return this.createDecodedEventStream(stream, eventByName) as PubSubStream<
+      PubSubSelectedEventUnion<Channel, Events>
+    >
+  }
+
+  async publish<Event extends TAnySubscriptionEventContract>(
+    event: Event,
+    params: PubSubEventParams<Event>,
+    payload: PubSubPublishInput<Event>,
+  ): Promise<boolean> {
+    const channelName = resolvePubSubChannelName(
+      assertEventChannel(event),
+      params,
+    )
+    const encodedPayload = event.payload.encode(payload)
+    return await this.publishRaw(channelName, {
+      event: event.name,
+      data: encodedPayload,
+    })
+  }
+
+  subscribeRaw = async <Payload = unknown>(
     channel: string,
     signal?: AbortSignal,
   ): Promise<PubSubStream<Payload>> => {
@@ -66,7 +132,7 @@ export class PubSubManager {
     return stream as PubSubStream<Payload>
   }
 
-  publish: PublishFn = async (channel, payload) => {
+  publishRaw = async (channel: string, payload: unknown): Promise<boolean> => {
     const adapter = this.options.adapter
 
     this.logger.trace({ channel }, 'Publishing pubsub message')
@@ -119,4 +185,66 @@ export class PubSubManager {
       },
     })
   }
+
+  private createDecodedEventStream(
+    source: PubSubStream<PubSubMessage>,
+    events: Map<string, TAnySubscriptionEventContract>,
+  ): PubSubStream {
+    const logger = this.logger
+
+    return new Readable({
+      objectMode: true,
+      read() {
+        source[Symbol.asyncIterator]()
+          .next()
+          .then(
+            ({ value, done }) => {
+              if (done) {
+                this.push(null)
+                return
+              }
+
+              const payload = value.payload as {
+                event?: string
+                data?: unknown
+              }
+              const event = payload.event
+                ? events.get(payload.event)
+                : undefined
+              if (!event) {
+                logger.trace(
+                  { channel: value.channel, event: payload.event },
+                  'Dropped pubsub event for inactive subscription',
+                )
+                this.read(0)
+                return
+              }
+
+              try {
+                this.push({
+                  event: event.name,
+                  data: event.payload.decode(payload.data),
+                })
+              } catch (error) {
+                logger.warn(
+                  { channel: value.channel, event: event.name, error },
+                  'Failed to decode pubsub event payload',
+                )
+                this.destroy(error as Error)
+              }
+            },
+            (error) => this.destroy(error),
+          )
+      },
+    }) as PubSubStream
+  }
+}
+
+function assertEventChannel(
+  event: TAnySubscriptionEventContract,
+): TAnySubscriptionContract {
+  if (!event.subscription) {
+    throw new Error(`PubSub event [${event.name}] is not bound to a channel`)
+  }
+  return event.subscription
 }

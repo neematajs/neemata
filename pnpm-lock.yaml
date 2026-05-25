@@ -145,6 +145,9 @@ importers:
       '@nmtjs/common':
         specifier: workspace:*
         version: link:../common
+      '@nmtjs/contract':
+        specifier: workspace:*
+        version: link:../contract
       '@nmtjs/core':
         specifier: workspace:*
         version: link:../core
@@ -415,6 +418,9 @@ importers:
       '@nmtjs/common':
         specifier: workspace:*
         version: link:../common
+      '@nmtjs/contract':
+        specifier: workspace:*
+        version: link:../contract
       '@nmtjs/core':
         specifier: workspace:*
         version: link:../core

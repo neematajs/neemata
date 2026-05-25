@@ -4,8 +4,18 @@ import { describe, expect, expectTypeOf, it } from 'vitest'
 import type { TRouterContract } from '../src/index.ts'
 import type { TEventContract } from '../src/schemas/event.ts'
 import type { TProcedureContract } from '../src/schemas/procedure.ts'
-import { c, IsRouterContract, RouterContract } from '../src/index.ts'
+import {
+  c,
+  EventStreamContract,
+  IsEventStreamContract,
+  IsRouterContract,
+  RouterContract,
+} from '../src/index.ts'
 import { EventContract, IsEventContract } from '../src/schemas/event.ts'
+import {
+  _legacy_SubscriptionContract,
+  IsLegacySubscriptionContract,
+} from '../src/schemas/legacy-subscription.ts'
 import {
   IsProcedureContract,
   IsStreamProcedureContract,
@@ -35,6 +45,10 @@ describe('Exports', () => {
 
   it('should export Event contract', () => {
     expect(c).toHaveProperty('event', EventContract)
+  })
+
+  it('should export Event Stream contract', () => {
+    expect(c).toHaveProperty('eventStream', EventStreamContract)
   })
 })
 
@@ -76,6 +90,8 @@ describe('Contract — Subscription', { sequential: true }, () => {
 
       const subscription = c.subscription({
         name: 'testSubscription',
+        params: t.object({ id: t.string() }),
+        channel: (params) => `test:${params.id}`,
         events: { testEvent },
       })
 
@@ -91,17 +107,17 @@ describe('Contract — Subscription', { sequential: true }, () => {
         'name',
         'testSubscription/testEvent',
       )
+      expect(subscription.channel({ id: 'one' })).toBe('test:one')
       expect(IsSubscriptionContract(subscription)).toBe(true)
       expect(IsEventContract(subscription.events.testEvent)).toBe(true)
     })
 
-    it('should create a Subscription contract with options', () => {
+    it('keeps legacy Subscription contract available', () => {
       const testEvent = c.event({ payload: t.any() })
 
-      const subscription = c.subscription.withOptions<{ test: string }>()({
-        name: 'testSubscription',
-        events: { testEvent },
-      })
+      const subscription = _legacy_SubscriptionContract.withOptions<{
+        test: string
+      }>()({ name: 'testSubscription', events: { testEvent } })
 
       expect(subscription).toBeDefined()
       expect(subscription).toHaveProperty('type', 'neemata:subscription')
@@ -115,7 +131,7 @@ describe('Contract — Subscription', { sequential: true }, () => {
         'name',
         'testSubscription/testEvent',
       )
-      expect(IsSubscriptionContract(subscription)).toBe(true)
+      expect(IsLegacySubscriptionContract(subscription)).toBe(true)
       expect(IsEventContract(subscription.events.testEvent)).toBe(true)
     })
   })
@@ -124,6 +140,8 @@ describe('Contract — Subscription', { sequential: true }, () => {
     it('should correctly resolve Subscription contract types', () => {
       const subscription1 = c.subscription({
         name: 'testSubscription',
+        params: t.object({ id: t.string() }),
+        channel: (params) => `test:${params.id}`,
         events: {
           event1: c.event({ payload: t.string() }),
           event2: c.event({
@@ -132,28 +150,54 @@ describe('Contract — Subscription', { sequential: true }, () => {
         },
       })
 
-      expectTypeOf(subscription1.options).toEqualTypeOf<null>()
-      expectTypeOf(subscription1.name).toEqualTypeOf<'testSubscription'>()
-      expectTypeOf(subscription1.events.event1).toEqualTypeOf<
-        TEventContract<t.StringType, 'testSubscription/event1', null>
+      expectTypeOf(subscription1.params).toEqualTypeOf<
+        t.ObjectType<{ id: t.StringType }>
       >()
-      expectTypeOf(subscription1.events.event2).toEqualTypeOf<
-        TEventContract<
-          t.ObjectType<{ id: t.NumberType; value: t.StringType }>,
-          'testSubscription/event2',
-          null
-        >
+      expectTypeOf(subscription1.name).toEqualTypeOf<'testSubscription'>()
+      expectTypeOf(
+        subscription1.events.event1.name,
+      ).toEqualTypeOf<'testSubscription/event1'>()
+      expectTypeOf(
+        subscription1.events.event1.payload,
+      ).toEqualTypeOf<t.StringType>()
+      expectTypeOf(subscription1.events.event1.subscription).toEqualTypeOf<
+        typeof subscription1
+      >()
+      expectTypeOf(
+        subscription1.events.event2.name,
+      ).toEqualTypeOf<'testSubscription/event2'>()
+      expectTypeOf(subscription1.events.event2.subscription).toEqualTypeOf<
+        typeof subscription1
       >()
     })
 
-    it('should correctly resolve Subscription contract types with options', () => {
-      const subscription2 = c.subscription.withOptions<{ test: string }>()({
+    it('should correctly resolve legacy Subscription contract types with options', () => {
+      const subscription2 = _legacy_SubscriptionContract.withOptions<{
+        test: string
+      }>()({
         name: 'testSubscription',
         events: { event1: c.event({ payload: t.string() }) },
       })
 
       expectTypeOf(subscription2.options).toEqualTypeOf<{ test: string }>()
     })
+  })
+})
+
+describe('Contract — Event Stream', { sequential: true }, () => {
+  it('should create an Event Stream contract', () => {
+    const stream = c.eventStream({
+      name: 'user.created',
+      topic: 'users',
+      key: t.string(),
+      payload: t.object({ id: t.string() }),
+    })
+
+    expect(stream).toHaveProperty('type', 'neemata:event-stream')
+    expect(stream).toHaveProperty('name', 'user.created')
+    expect(stream).toHaveProperty('topic', 'users')
+    expect(IsEventStreamContract(stream)).toBe(true)
+    expectTypeOf(stream.key).toEqualTypeOf<t.StringType | undefined>()
   })
 })
 

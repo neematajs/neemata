@@ -1,7 +1,22 @@
+export type {
+  SubscriptionEventMessage as PubSubEventMessage,
+  SubscriptionParams as PubSubChannelParams,
+  SubscriptionPublishInput as PubSubPublishInput,
+  SubscriptionSelectedEventUnion as PubSubSelectedEventUnion,
+  TAnySubscriptionContract as TAnyPubSubChannelContract,
+  TAnySubscriptionEventContract as TAnyPubSubEventContract,
+  TSubscriptionContract as TPubSubChannelContract,
+  TSubscriptionEventContract as TPubSubEventContract,
+} from '@nmtjs/contract'
+export {
+  EventContract as PubSubEventContract,
+  SubscriptionContract as PubSubChannelContract,
+} from '@nmtjs/contract'
+
 export type { PubSubAdapter, PubSubMessage } from './adapter.ts'
 export type {
   PublishFn,
-  PubSubChannel,
+  PubSubChannelStream,
   PubSubManagerOptions,
   PubSubStream,
   SubscribeFn,

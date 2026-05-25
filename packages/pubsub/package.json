@@ -24,6 +24,7 @@
   "dependencies": {
     "@nmtjs/common": "workspace:*",
     "@nmtjs/application": "workspace:*",
+    "@nmtjs/contract": "workspace:*",
     "@nmtjs/core": "workspace:*"
   },
   "peerDependencies": {

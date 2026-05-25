@@ -123,9 +123,9 @@ metrics semantics, store adapters, or app DI provisions.
   runtime appears later, refactor then.
 - Jobs Redis/Valkey client factory stays owned by `@nmtjs/jobs` runtime
   lifecycle. Return duplicated connections when sharing clients elsewhere.
-- PubSub stays in `@nmtjs/pubsub` as ephemeral pub/sub. Current explicit string
-  channel API is too loose; future cleanup should add typed channel definitions
-  so channel names and payloads are bound together.
+- PubSub stays in `@nmtjs/pubsub` as ephemeral pub/sub. Public API uses typed
+  channel/event definitions with explicit channel builders; raw string channels
+  stay adapter/internal only. No hash-based channel naming.
 - Durable message broker semantics are future separate package/surface, not
   part of `@nmtjs/pubsub`.
 - Durable eventing, if added, should become explicit runtime helper(s) for
@@ -196,13 +196,13 @@ Ported packages:
 - `@nmtjs/pubsub`
   - `PubSubManager`
   - `publish`/`subscribe`/`pubsubAdapter` injectables
-  - explicit channel strings; no option hashing or durable broker semantics
+  - typed `PubSubChannelContract(...)` / `PubSubEventContract(...)`
+  - explicit channel builders; no option hashing or durable broker semantics
   - Redis adapter with caller-owned client
   - app runtime plugin
-  - typed channel definition cleanup still needed
 - `@nmtjs/eventing`
   - typed `defineEvent(...)` contracts with topic/key/payload
-  - app-facing `publishEvent` injectable and plugin
+  - app-facing `produce` injectable and plugin
   - Redis Streams adapter
   - Kafka-compatible adapter using `@platformatic/kafka`
   - explicit Neem eventing runtime helper and worker entry
@@ -404,8 +404,7 @@ Standalone `node dist/start.js` follows same runtime path and injects
 2. Add metrics/observability on generic runtime lifecycle.
 3. Add health/readiness probe exposure.
 4. Design framework-owned build lifecycle for Nuxt/other meta-frameworks.
-5. Add typed pubsub channel definitions.
-6. Harden eventing runtime policies: retries, poison messages, DLQ, pending
+5. Harden eventing runtime policies: retries, poison messages, DLQ, pending
    Redis Streams recovery, Kafka partition/concurrency docs.
 
 ## Non-Goals For Current Slice

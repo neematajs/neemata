@@ -21,6 +21,7 @@ export type NeemRuntimeBuildHost = {
 export type NeemRuntimeBuildMetadata = {
   host?: NeemRuntimeBuildHost
   artifacts?: readonly NeemArtifact[]
+  rolldown?: NeemRolldownOptions
 }
 
 /** @internal */

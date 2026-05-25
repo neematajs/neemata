@@ -1,7 +1,7 @@
 import EventEmitter from 'node:events'
 import { Writable } from 'node:stream'
 
-import { EventContract, SubscriptionContract } from '@nmtjs/contract'
+import { _legacy_SubscriptionContract, EventContract } from '@nmtjs/contract'
 import { Container, createLogger } from '@nmtjs/core'
 import { t } from '@nmtjs/type'
 import { describe, expect, it } from 'vitest'
@@ -114,14 +114,14 @@ function createSubscriptionManagerHarness(adapter: SubscriptionAdapterType) {
   return { manager: new SubscriptionManager({ logger, container }), getLogs }
 }
 
-const chatSubscription = SubscriptionContract.withOptions<{ roomId: string }>()(
-  {
-    name: 'chat',
-    events: {
-      message: EventContract({ payload: t.object({ text: t.string() }) }),
-    },
+const chatSubscription = _legacy_SubscriptionContract.withOptions<{
+  roomId: string
+}>()({
+  name: 'chat',
+  events: {
+    message: EventContract({ payload: t.object({ text: t.string() }) }),
   },
-)
+})
 
 describe('Subscription logging', () => {
   it('logs manager subscription lifecycle and publish failures', async () => {

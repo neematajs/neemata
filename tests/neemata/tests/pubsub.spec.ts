@@ -7,7 +7,13 @@ import {
   defineApplication,
 } from '@nmtjs/application'
 import { createLogger } from '@nmtjs/core'
-import { createPubSubPlugin, publish, subscribe } from '@nmtjs/pubsub'
+import {
+  createPubSubPlugin,
+  PubSubChannelContract,
+  PubSubEventContract,
+  publish,
+  subscribe,
+} from '@nmtjs/pubsub'
 import { t } from '@nmtjs/type'
 import { describe, expect, it } from 'vitest'
 
@@ -38,7 +44,14 @@ class MemoryPubSubAdapter implements PubSubAdapter {
   }
 }
 
-const chatChannel = 'chat:room-1'
+const chatRoom = PubSubChannelContract({
+  name: 'chat.room',
+  params: t.object({ roomId: t.string() }),
+  events: {
+    message: PubSubEventContract({ payload: t.object({ text: t.string() }) }),
+  },
+  channel: (params) => `chat:${params.roomId}`,
+})
 
 describe('Neemata pubsub integration', () => {
   it('provides publish and subscribe injectables through app plugin', async () => {
@@ -48,11 +61,11 @@ describe('Neemata pubsub integration', () => {
       output: t.object({ text: t.string() }),
       dependencies: { publish, subscribe },
       async handler(ctx, input) {
-        await ctx.publish(chatChannel, input)
-        const stream = await ctx.subscribe<{ text: string }>(chatChannel)
+        await ctx.publish(chatRoom.events.message, { roomId: 'room-1' }, input)
+        const stream = await ctx.subscribe(chatRoom, { roomId: 'room-1' })
 
         for await (const event of stream) {
-          return event.payload
+          return event.data
         }
 
         throw new Error('Expected subscription event')
@@ -74,8 +87,12 @@ describe('Neemata pubsub integration', () => {
     await app.start()
     const ctx = await app.container.createContext({ publish, subscribe })
 
-    await ctx.publish(chatChannel, { text: 'hello' })
-    const stream = await ctx.subscribe<{ text: string }>(chatChannel)
+    await ctx.publish(
+      chatRoom.events.message,
+      { roomId: 'room-1' },
+      { text: 'hello' },
+    )
+    const stream = await ctx.subscribe(chatRoom, { roomId: 'room-1' })
 
     const events: unknown[] = []
     for await (const event of stream) events.push(event)
@@ -83,7 +100,7 @@ describe('Neemata pubsub integration', () => {
     await app.stop()
 
     expect(events).toEqual([
-      { channel: chatChannel, payload: { text: 'hello' } },
+      { event: 'chat.room/message', data: { text: 'hello' } },
     ])
     expect(adapter.initializeCalls).toBe(1)
     expect(adapter.disposeCalls).toBe(1)

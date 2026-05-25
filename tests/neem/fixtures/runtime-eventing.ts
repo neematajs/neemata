@@ -4,11 +4,15 @@ import type {
   EventingAdapterMessageHandler,
   EventingConsumer,
 } from '@nmtjs/eventing'
-import { consume, defineEvent, defineEventConsumers } from '@nmtjs/eventing'
+import {
+  consume,
+  defineEventConsumers,
+  EventStreamContract,
+} from '@nmtjs/eventing'
 import { defineEventing } from '@nmtjs/eventing/neem'
 import { t } from '@nmtjs/type'
 
-const userCreated = defineEvent({
+const userCreated = EventStreamContract({
   name: 'user.created',
   topic: 'users',
   key: t.string(),

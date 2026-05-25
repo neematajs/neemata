@@ -47,6 +47,10 @@ export type NeemNativeProxyOptions = {
   stickySessions?: NeemProxyConfig['stickySessions']
 }
 
+type NeemNativeProxyConstructor = new (
+  options: NeemNativeProxyOptions,
+) => NeemNativeProxy
+
 export class NeemProxyManager {
   private readonly logger: NeemRuntimeSnapshot['logger']
   private readonly config: NeemProxyConfig
@@ -186,5 +190,37 @@ export function createNativeProxyOptions(
 }
 
 async function loadProxyPackage() {
-  return await import('@nmtjs/proxy')
+  const module = await import('@nmtjs/proxy')
+  return normalizeProxyPackage(module)
+}
+
+function normalizeProxyPackage(module: unknown): {
+  Proxy: NeemNativeProxyConstructor
+} {
+  const candidates = [
+    module,
+    (module as { default?: unknown })?.default,
+    (module as { 'module.exports'?: unknown })?.['module.exports'],
+    (
+      (module as { default?: { default?: unknown } })?.default as {
+        default?: unknown
+      }
+    )?.default,
+    (
+      (module as { default?: { 'module.exports'?: unknown } })?.default as {
+        'module.exports'?: unknown
+      }
+    )?.['module.exports'],
+  ]
+
+  for (const candidate of candidates) {
+    const ProxyConstructor = (
+      candidate as { Proxy?: NeemNativeProxyConstructor } | undefined
+    )?.Proxy
+    if (typeof ProxyConstructor === 'function') {
+      return { Proxy: ProxyConstructor }
+    }
+  }
+
+  throw new Error('Invalid @nmtjs/proxy module: missing Proxy export')
 }

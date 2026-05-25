@@ -23,13 +23,11 @@ import type {
   NeemRuntimeServerSnapshot,
 } from '../runtime/server.ts'
 import { kNeemRuntimeBuild } from '../../public/artifact.ts'
+import { resolveNeemConfigLogger } from '../build/logger.ts'
 import { NEEM_MANIFEST_SCHEMA_VERSION } from '../build/manifest.ts'
 import { resolveImportFile } from '../build/resolve.ts'
 import { watchArtifact } from '../build/rolldown.ts'
-import {
-  createNeemDefaultLogger,
-  resolveNeemConfigLogger,
-} from '../runtime/logger.ts'
+import { createNeemDefaultLogger } from '../runtime/logger.ts'
 import { NeemRuntimeServer as RuntimeServer } from '../runtime/server.ts'
 import { createRuntimeSnapshot } from '../runtime/snapshot.ts'
 import { importDefault } from '../runtime/utils.ts'
@@ -292,13 +290,14 @@ class NeemDevSession implements NeemDevHost {
 
     for (const [name, runtimeConfig] of runtimeEntries) {
       const current = this.runtimeWatchers.get(name)
+      const runtimeBuild = runtimeConfig[kNeemRuntimeBuild]
       const entry = resolveRequiredRuntimeBuildEntry(
         this.configFile,
         runtimeConfig.entry,
       )
       const emittedArtifacts = resolveRuntimeBuildArtifacts(
         this.configFile,
-        runtimeConfig[kNeemRuntimeBuild]?.artifacts,
+        runtimeBuild?.artifacts,
       )
       const runtimeEntryKey = [
         entry,
@@ -309,6 +308,7 @@ class NeemDevSession implements NeemDevHost {
         const artifact = await this.startRuntimeWatcher(
           name,
           runtimeConfig.build,
+          runtimeBuild?.rolldown,
           entry,
           emittedArtifacts,
           runtimeEntryKey,
@@ -360,6 +360,7 @@ class NeemDevSession implements NeemDevHost {
   private async startRuntimeWatcher(
     name: string,
     buildConfigInput: NeemBuildConfigInput | undefined,
+    runtimeBuildRolldown: NeemBuildConfig | undefined,
     entry: string | URL,
     emittedArtifacts: NeemRuntimeBuildMetadata['artifacts'] | undefined,
     entryKey: string,
@@ -375,7 +376,12 @@ class NeemDevSession implements NeemDevHost {
     )
     const watcher = await watchArtifact(
       {
-        artifact: { id: 'entry', kind: 'worker', entry },
+        artifact: {
+          id: 'entry',
+          kind: 'worker',
+          entry,
+          rolldown: runtimeBuildRolldown,
+        },
         owner: { type: 'runtime', name },
         rolldown,
         outDir: this.outDir,
