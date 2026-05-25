@@ -1,17 +1,20 @@
 import { basename, dirname, join } from 'node:path'
 
 import type {
+  InferNeemRuntimeThreadOptions,
   NeemEntryInput,
   NeemRolldownOptions,
   NeemRuntime,
+  NeemRuntimeBuildOptions,
   NeemRuntimeConfig,
+  NeemRuntimeFactory,
   NeemWorker,
   NeemWorkerRuntimeContext,
 } from '@nmtjs/neem'
 import {
-  defineRuntimeConfig,
+  defineRuntime,
   defineWorker,
-  kNeemRuntimeBuild,
+  mergeNeemRuntimeBuildOptions,
 } from '@nmtjs/neem'
 
 import type { NeemataApplication, NeemataAppTransportOptions } from './app.ts'
@@ -33,9 +36,8 @@ export type NeemataWorker<
   TApplication extends AnyApplicationConfig = AnyApplicationConfig,
 > = NeemWorker<NeemataRuntimeThreadOptions<TApplication>, TApplication>
 
-export type NeemataRuntimeConfig<
-  TApplication extends AnyApplicationConfig = AnyApplicationConfig,
-> = NeemRuntimeConfig<NeemataWorker<TApplication>>
+export type NeemataRuntimeConfig<TEntry extends NeemataWorker = NeemataWorker> =
+  NeemRuntimeConfig<TEntry>
 
 export class NeemataApplicationRuntime<
   TApplication extends AnyApplicationConfig = AnyApplicationConfig,
@@ -61,18 +63,20 @@ export class NeemataApplicationRuntime<
 }
 
 export function defineNeemataRuntime<
-  const TApplication extends AnyApplicationConfig,
+  const TEntry extends NeemataWorker = NeemataWorker,
 >(config: {
-  entry: NeemEntryInput<NeemataWorker<TApplication>>
-  build?: NeemRuntimeConfig<NeemataWorker<TApplication>>['build']
-  threads: Array<NeemataRuntimeThreadOptions<TApplication>>
-}): NeemataRuntimeConfig<TApplication> {
-  return defineRuntimeConfig<NeemataWorker<TApplication>>({
-    ...config,
-    [kNeemRuntimeBuild]: {
-      rolldown: { plugins: [createUwsNativeAddonPlugin()] },
-    },
-  })
+  application: NeemEntryInput<TEntry>
+  threads: readonly InferNeemRuntimeThreadOptions<TEntry>[]
+}): NeemRuntimeFactory {
+  return (build?: NeemRuntimeBuildOptions) =>
+    defineRuntime<TEntry>({
+      entry: config.application,
+      threads: config.threads,
+      build: mergeNeemRuntimeBuildOptions(
+        { rolldown: { plugins: [createUwsNativeAddonPlugin()] } },
+        build,
+      ),
+    })
 }
 
 export function defineNeemataWorker<

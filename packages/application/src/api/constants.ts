@@ -12,6 +12,11 @@ export type kRouter = typeof kRouter
 export const kRootRouter: unique symbol = Symbol.for('neemata:RootRouterKey')
 export type kRootRouter = typeof kRootRouter
 
+export const kRootRouterSources: unique symbol = Symbol.for(
+  'neemata:RootRouterSourcesKey',
+)
+export type kRootRouterSources = typeof kRootRouterSources
+
 export const kMiddleware: unique symbol = Symbol.for('neemata:MiddlewareKey')
 export type kMiddleware = typeof kMiddleware
 

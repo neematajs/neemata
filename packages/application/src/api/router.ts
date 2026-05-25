@@ -15,7 +15,7 @@ import type { AnyGuard } from './guards.ts'
 import type { AnyCompatibleMetaBinding, CompatibleMetaBinding } from './meta.ts'
 import type { AnyMiddleware } from './middlewares.ts'
 import type { AnyProcedure } from './procedure.ts'
-import { kRootRouter, kRouter } from './constants.ts'
+import { kRootRouter, kRootRouterSources, kRouter } from './constants.ts'
 
 export type RouterMetaBinding<Input> = CompatibleMetaBinding<Input>
 export type AnyRouterMetaBinding = AnyCompatibleMetaBinding
@@ -38,6 +38,7 @@ export interface AnyRouter {
 
 export interface AnyRootRouter extends AnyRouter {
   [kRootRouter]: any
+  [kRootRouterSources]: readonly AnyRouter[]
   contract: TAnyRouterContract<Record<string, TRouteContract>, undefined>
   default?: AnyProcedure<any>
 }
@@ -72,6 +73,7 @@ export interface RootRouter<
   >,
 > extends Router<Contract> {
   [kRootRouter]: any
+  [kRootRouterSources]: readonly AnyRouter[]
   default?: AnyProcedure<any>
 }
 
@@ -130,6 +132,7 @@ export function createRootRouter<Routers extends readonly AnyRouter[]>(
     ...router,
     default: defaultProcedure,
     [kRootRouter]: true,
+    [kRootRouterSources]: routers,
   }) as any
 }
 

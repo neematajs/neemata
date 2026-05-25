@@ -1,10 +1,9 @@
 import type { LoggingOptions } from '@nmtjs/core'
 
 import type {
-  kNeemRuntimeBuild,
   NeemArtifactEntry,
   NeemRolldownOptions,
-  NeemRuntimeBuildMetadata,
+  NeemRuntimeBuildHost,
 } from './artifact.ts'
 import type { NeemRuntimeHost } from './runtime.ts'
 import type { InferNeemWorkerData, NeemWorker } from './worker.ts'
@@ -33,6 +32,27 @@ export type NeemBuildConfigInput<
   TBuildConfig extends NeemBuildConfig = NeemBuildConfig,
 > = NeemArtifactEntry
 
+export type NeemRuntimeBuildOptions = { rolldown?: NeemRolldownOptions }
+
+export type NeemRuntimeBuildConfig = NeemRuntimeBuildOptions & {
+  config?: NeemBuildConfigInput
+  host?: NeemRuntimeBuildHost
+  artifacts?: readonly {
+    id: string
+    kind: 'worker' | 'module'
+    entry: NeemArtifactEntry
+    rolldown?: NeemRolldownOptions
+  }[]
+}
+
+export type NeemRuntimeBuildInput =
+  | NeemBuildConfigInput
+  | NeemRuntimeBuildConfig
+
+export type NeemRuntimeFactory<
+  TBuild extends NeemRuntimeBuildOptions = NeemRuntimeBuildOptions,
+> = (build?: TBuild) => NeemRuntimeConfigBase
+
 export type NeemLoggerOptions = LoggingOptions
 
 export type NeemLoggerInput = NeemLoggerOptions | string | URL
@@ -51,21 +71,17 @@ export type NeemRuntimeConfig<
 > = {
   entry: NeemEntryInput<TEntry>
   host?: NeemRuntimeHostInput<THost>
-  build?: NeemBuildConfigInput
+  build?: NeemRuntimeBuildInput
   threads?: number | readonly InferNeemRuntimeThreadOptions<TEntry>[]
   options?: unknown
-  /** @internal */
-  [kNeemRuntimeBuild]?: NeemRuntimeBuildMetadata
 }
 
 export type NeemRuntimeConfigBase = {
   entry: NeemEntryInput<unknown>
   host?: NeemRuntimeHostInput
-  build?: NeemBuildConfigInput
+  build?: NeemRuntimeBuildInput
   threads?: number | readonly unknown[]
   options?: unknown
-  /** @internal */
-  [kNeemRuntimeBuild]?: NeemRuntimeBuildMetadata
 }
 
 export type InferNeemRuntimeThreadOptions<TEntry> = TEntry extends {
@@ -147,17 +163,67 @@ export function defineConfig<
   return Object.freeze(config)
 }
 
-export function defineRuntimeConfig<
+export function defineRuntime<
   Entry,
   Host extends NeemRuntimeHost = NeemRuntimeHost,
 >(config: {
   entry: NeemEntryInput<Entry>
   host?: NeemRuntimeHostInput<Host>
-  build?: NeemBuildConfigInput
+  build?: NeemRuntimeBuildInput
   threads?: number | readonly InferNeemRuntimeThreadOptions<Entry>[]
   options?: unknown
-  /** @internal */
-  [kNeemRuntimeBuild]?: NeemRuntimeBuildMetadata
 }): NeemRuntimeConfig<Entry, Host> {
   return Object.freeze(config) as NeemRuntimeConfig<Entry, Host>
+}
+
+export function mergeNeemRuntimeBuildOptions(
+  base: NeemRuntimeBuildInput | undefined,
+  override: NeemRuntimeBuildOptions | undefined,
+): NeemRuntimeBuildConfig | undefined {
+  const baseConfig = normalizeRuntimeBuildInput(base)
+  if (!baseConfig) return override
+  if (!override) return baseConfig
+
+  return {
+    ...baseConfig,
+    ...override,
+    rolldown: mergeRolldownOptions(baseConfig.rolldown, override.rolldown),
+  }
+}
+
+function normalizeRuntimeBuildInput(
+  input: NeemRuntimeBuildInput | undefined,
+): NeemRuntimeBuildConfig | undefined {
+  if (!input) return undefined
+  return typeof input === 'string' || input instanceof URL
+    ? { config: input }
+    : input
+}
+
+function mergeRolldownOptions(
+  base: NeemRolldownOptions | undefined,
+  override: NeemRolldownOptions | undefined,
+): NeemRolldownOptions | undefined {
+  if (!base) return override
+  if (!override) return base
+
+  const plugins = [
+    ...normalizeRolldownPlugins(base.plugins),
+    ...normalizeRolldownPlugins(override.plugins),
+  ]
+
+  return {
+    ...base,
+    ...override,
+    plugins: plugins.length > 0 ? plugins : undefined,
+  }
+}
+
+function normalizeRolldownPlugins(
+  plugins: NeemRolldownOptions['plugins'] | undefined,
+): NonNullable<NeemRolldownOptions['plugins']>[] {
+  if (!plugins) return []
+  return (Array.isArray(plugins) ? plugins : [plugins]).filter(
+    (plugin): plugin is NonNullable<typeof plugin> => plugin !== undefined,
+  )
 }

@@ -4,8 +4,8 @@ import { defineConfig } from '@nmtjs/neem'
 export default defineConfig({
   runtimes: {
     events: defineEventingRuntime({
-      entry: './runtime-eventing.ts',
+      config: './runtime-eventing.ts',
       threads: 2,
-    }),
+    })(),
   },
 })

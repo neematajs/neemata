@@ -1,5 +1,10 @@
-import type { NeemEntryInput, NeemMaybePromise } from '@nmtjs/neem'
-import { defineRuntimeConfig, kNeemRuntimeBuild } from '@nmtjs/neem'
+import type {
+  NeemEntryInput,
+  NeemMaybePromise,
+  NeemRuntimeBuildOptions,
+  NeemRuntimeFactory,
+} from '@nmtjs/neem'
+import { defineRuntime, mergeNeemRuntimeBuildOptions } from '@nmtjs/neem'
 
 import type { JobsClient } from '../client.ts'
 import type { JobsLifecycleHooks } from '../core/hooks.ts'
@@ -38,8 +43,8 @@ export type ResolvedJobsWorkerConfig<Job extends AnyJobsJob = AnyJobsJob> = {
 export type JobsRuntimeEntry<Job extends AnyJobsJob = AnyJobsJob> =
   JobsConfig<Job>
 
-export type JobsRuntimeConfigInput<Job extends AnyJobsJob = AnyJobsJob> = {
-  entry: NeemEntryInput<JobsRuntimeEntry<Job>>
+export type JobsRuntimeConfigInput<TConfig extends JobsConfig = JobsConfig> = {
+  config: NeemEntryInput<TConfig>
 }
 
 const emptyHooks: JobsLifecycleHooks = Object.freeze({})
@@ -67,16 +72,22 @@ export async function resolveJobsWorkerConfig<const Job extends AnyJobsJob>(
   return { client: config.client, jobs: await config.jobs() }
 }
 
-export function defineJobsRuntime<const Job extends AnyJobsJob>(
-  config: JobsRuntimeConfigInput<Job>,
-) {
-  return defineRuntimeConfig({
-    entry: config.entry,
-    [kNeemRuntimeBuild]: {
-      host: { entry: '@nmtjs/jobs/neem/host' },
-      artifacts: [{ id: 'job-runner', kind: 'worker', entry: jobsWorkerEntry }],
-    },
-  })
+export function defineJobsRuntime<
+  const TConfig extends JobsConfig = JobsConfig,
+>(config: JobsRuntimeConfigInput<TConfig>): NeemRuntimeFactory {
+  return (build?: NeemRuntimeBuildOptions) =>
+    defineRuntime({
+      entry: config.config,
+      build: mergeNeemRuntimeBuildOptions(
+        {
+          host: { entry: '@nmtjs/jobs/neem/host' },
+          artifacts: [
+            { id: 'job-runner', kind: 'worker', entry: jobsWorkerEntry },
+          ],
+        },
+        build,
+      ),
+    })
 }
 
 export const jobsWorkerEntry = '@nmtjs/jobs/neem/worker-entry'

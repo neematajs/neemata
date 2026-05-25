@@ -69,9 +69,14 @@ export async function watchArtifact(
   const metadata: ArtifactBuildMetadata = {}
   await mkdir(outDir, { recursive: true })
 
-  const watcher = rolldown.watch(
-    createRolldownOptions(options, outDir, metadata),
-  )
+  const watcher = rolldown.watch({
+    ...createRolldownOptions(options, outDir, metadata),
+    watch: {
+      buildDelay: 100,
+      clearScreen: false,
+      watcher: { debounceDelay: 50, useDebounce: true },
+    },
+  })
   let readySettled = false
   let resolveReady!: (artifact: NeemResolvedArtifact) => void
   let rejectReady!: (error: unknown) => void

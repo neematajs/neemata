@@ -1,5 +1,10 @@
-import type { NeemEntryInput, NeemMaybePromise } from '@nmtjs/neem'
-import { defineRuntimeConfig, kNeemRuntimeBuild } from '@nmtjs/neem'
+import type {
+  NeemEntryInput,
+  NeemMaybePromise,
+  NeemRuntimeBuildOptions,
+  NeemRuntimeFactory,
+} from '@nmtjs/neem'
+import { defineRuntime, mergeNeemRuntimeBuildOptions } from '@nmtjs/neem'
 
 import type { EventingAdapter } from '../core/adapter.ts'
 import type { AnyEventingConsumerDefinition } from '../core/consumer.ts'
@@ -16,20 +21,33 @@ export type EventingRuntimeConfig = {
 }
 
 export type EventingRuntimeConfigInput = {
-  entry: NeemEntryInput<EventingRuntimeConfig>
+  config: NeemEntryInput<EventingRuntimeConfig>
   threads?: number
 }
 
-export function defineEventingRuntime(config: EventingRuntimeConfigInput) {
-  return defineRuntimeConfig({
-    entry: eventingWorkerEntry,
-    threads: config.threads ?? 1,
-    [kNeemRuntimeBuild]: {
-      artifacts: [
-        { id: eventingConfigArtifactId, kind: 'module', entry: config.entry },
-      ],
-    },
-  })
+export function defineEventingRuntime<
+  const TConfig extends EventingRuntimeConfig = EventingRuntimeConfig,
+>(config: {
+  config: NeemEntryInput<TConfig>
+  threads?: number
+}): NeemRuntimeFactory {
+  return (build?: NeemRuntimeBuildOptions) =>
+    defineRuntime({
+      entry: eventingWorkerEntry,
+      threads: config.threads ?? 1,
+      build: mergeNeemRuntimeBuildOptions(
+        {
+          artifacts: [
+            {
+              id: eventingConfigArtifactId,
+              kind: 'module',
+              entry: config.config,
+            },
+          ],
+        },
+        build,
+      ),
+    })
 }
 
 export function defineEventing(config: EventingRuntimeConfig) {

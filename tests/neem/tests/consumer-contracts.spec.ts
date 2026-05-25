@@ -1,5 +1,5 @@
 import type { InferNeemWorkerData } from '@nmtjs/neem'
-import { defineConfig, defineRuntimeConfig } from '@nmtjs/neem'
+import { defineConfig, defineRuntime } from '@nmtjs/neem'
 import { describe, expect, expectTypeOf, it } from 'vitest'
 
 import app from '../fixtures/basic-app.ts'
@@ -37,7 +37,7 @@ describe('@nmtjs/neem consumer contracts', () => {
       http: { listen: { hostname: string; port: number } }
     }>()
 
-    const runtimeConfig = defineRuntimeConfig<typeof app>({
+    const runtimeConfig = defineRuntime<typeof app>({
       entry: '../fixtures/basic-app.ts',
       threads: [{ http: { listen: { hostname: '127.0.0.1', port: 3000 } } }],
     })
@@ -46,7 +46,7 @@ describe('@nmtjs/neem consumer contracts', () => {
     const [data] = runtimeConfig.threads as Array<ThreadOptions>
     expect(data.http.listen.port).toBe(3000)
 
-    const stringEntryConfig = defineRuntimeConfig({
+    const stringEntryConfig = defineRuntime({
       entry: '../fixtures/basic-app.ts',
     })
     expect(stringEntryConfig.entry).toBe('../fixtures/basic-app.ts')
@@ -71,7 +71,7 @@ describe('@nmtjs/neem consumer contracts', () => {
   })
 
   it('keeps entry-specific worker data inference without an explicit worker constraint', () => {
-    const invalidConfig = defineRuntimeConfig<typeof app>({
+    const invalidConfig = defineRuntime<typeof app>({
       entry: '../fixtures/basic-app.ts',
       // @ts-expect-error port must stay numeric
       threads: [{ http: { listen: { hostname: '127.0.0.1', port: '3000' } } }],
@@ -81,7 +81,7 @@ describe('@nmtjs/neem consumer contracts', () => {
   })
 
   it('allows host-owned runtime entries that are not worker entries', () => {
-    const hostOwnedConfig = defineRuntimeConfig({
+    const hostOwnedConfig = defineRuntime({
       entry: '../fixtures/basic-app.ts',
       host: '../fixtures/generic-runtime-host.ts',
     })
@@ -90,7 +90,7 @@ describe('@nmtjs/neem consumer contracts', () => {
   })
 
   it('does not expose runtime artifacts as public config', () => {
-    const invalidConfig = defineRuntimeConfig({
+    const invalidConfig = defineRuntime({
       entry: '../fixtures/basic-app.ts',
       // @ts-expect-error runtime artifacts are helper-owned build metadata
       artifacts: () => [],

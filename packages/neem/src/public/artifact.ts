@@ -24,11 +24,6 @@ export type NeemRuntimeBuildMetadata = {
   rolldown?: NeemRolldownOptions
 }
 
-/** @internal */
-export const kNeemRuntimeBuild: unique symbol = Symbol.for(
-  'neem.runtime.build',
-) as never
-
 export type NeemArtifactOwner =
   | { type: 'config' }
   | { type: 'runtime'; name: string }

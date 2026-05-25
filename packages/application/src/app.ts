@@ -13,14 +13,23 @@ import { ProtocolFormats } from '@nmtjs/protocol/server'
 import type { ApplicationResolvedProcedure } from './api/api.ts'
 import type { AnyFilter } from './api/filters.ts'
 import type { AnyGuard } from './api/guards.ts'
-import type { AnyMiddleware, AnyProcedure, AnyRouter } from './api/index.ts'
+import type {
+  AnyMiddleware,
+  AnyProcedure,
+  AnyRootRouter,
+  AnyRouter,
+} from './api/index.ts'
 import type {
   AnyApplicationConfig,
   ApplicationConfig,
   ApplicationTransport,
 } from './config.ts'
 import { ApplicationApi } from './api/api.ts'
-import { kDefaultProcedure, kRootRouter } from './api/constants.ts'
+import {
+  kDefaultProcedure,
+  kRootRouter,
+  kRootRouterSources,
+} from './api/constants.ts'
 import { isProcedure, isRootRouter, isRouter } from './api/index.ts'
 import { LifecycleHook } from './enums.ts'
 import { ApplicationHooks } from './hooks.ts'
@@ -216,7 +225,7 @@ export class NeemataApplication<
     }
 
     this.routers.set(kRootRouter, router)
-    this.registerRouter(router, [])
+    this.registerRootRouter(router)
 
     if (router.default) {
       if (!isProcedure(router.default)) {
@@ -242,6 +251,25 @@ export class NeemataApplication<
       guards: this.guards,
       procedures: this.procedures,
     })
+  }
+
+  private registerRootRouter(router: AnyRootRouter) {
+    for (const source of router[kRootRouterSources]) {
+      this.registerRouter(source, this.getRootSourcePath(router, source))
+    }
+  }
+
+  private getRootSourcePath(root: AnyRootRouter, source: AnyRouter) {
+    return this.hasRouteContext(source) ? [root, source] : [root]
+  }
+
+  private hasRouteContext(router: AnyRouter): boolean {
+    return (
+      router.meta.length > 0 ||
+      router.guards.size > 0 ||
+      router.middlewares.size > 0 ||
+      router.timeout !== undefined
+    )
   }
 
   private registerRouter(router: AnyRouter, path: AnyRouter[]) {

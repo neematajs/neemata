@@ -14,6 +14,8 @@ import type {
   NeemBuildConfigInput,
   NeemConfig,
   NeemLoggerOptions,
+  NeemRuntimeBuildConfig,
+  NeemRuntimeBuildInput,
   NeemRuntimeConfigBase,
 } from '../../public/config.ts'
 import type {
@@ -22,7 +24,6 @@ import type {
   NeemBuildManifestConfig,
   NeemBuildManifestLogger,
 } from '../build/manifest.ts'
-import { kNeemRuntimeBuild } from '../../public/artifact.ts'
 import {
   NEEM_MANIFEST_FILE,
   NEEM_MANIFEST_SCHEMA_VERSION,
@@ -63,20 +64,20 @@ export async function buildNeem(
   const configFile = resolve(cwd, options.config ?? 'neem.config.ts')
   const config = await importDefault<NeemConfig>(configFile)
   const outDir = resolve(cwd, options.outDir ?? config.outDir ?? 'dist')
+  const selectedRuntimes =
+    normalizeSelectedRuntimes(options.runtimes) || Object.keys(config.runtimes)
 
   logger.start('Building Neem bundle')
-  logger.debug(`  config: ${configFile}`)
-  logger.debug(`  outDir: ${outDir}`)
-  const selectedRuntimes = normalizeSelectedRuntimes(options.runtimes)
-  if (selectedRuntimes) {
-    logger.debug(`  runtimes: ${selectedRuntimes.join(', ')}`)
-  } else {
-    logger.debug(`  runtimes: ${Object.keys(config.runtimes).join(', ')}`)
-  }
+  logger.debug(`  config: ${colorize('green', configFile)}`)
+  logger.debug(`  outDir: ${colorize('green', outDir)}`)
+  logger.debug(
+    `  runtimes: ${selectedRuntimes.map((v) => colorize('cyan', v)).join(', ')}`,
+  )
 
   await cleanNeemOutDir(outDir)
   await mkdir(outDir, { recursive: true })
 
+  logger.info('Bulding Neem runtime:')
   const runtimeArtifacts = await buildRuntimeArtifacts({ outDir })
   const manifestConfig = await createManifestConfig(config, configFile, outDir)
 
@@ -97,15 +98,19 @@ export async function buildNeem(
     ...Object.keys(config.runtimes ?? {}),
   ])
 
+  for (const chunk of runtimeArtifacts.entry.bundle?.output ?? []) {
+    logger.debug(`  ${chunk.type}: ${colorize('green', chunk.fileName)}`)
+  }
+
   for (const [name, runtimeConfig] of runtimeEntries) {
-    const rolldown = await loadBuildConfig(runtimeConfig.build, configFile)
-    const runtimeBuild = runtimeConfig[kNeemRuntimeBuild]
+    const runtimeBuild = getRuntimeBuildConfig(runtimeConfig.build)
+    const rolldown = await loadBuildConfig(runtimeBuild?.config, configFile)
     const emittedArtifacts = resolveRuntimeBuildArtifacts(
       configFile,
       runtimeBuild?.artifacts,
     )
 
-    logger.start(`Building runtime: ${colorize('green', name)}`)
+    logger.start(`Building ${colorize('cyan', name)}:`)
 
     const entry = await buildArtifact({
       artifact: {
@@ -123,6 +128,10 @@ export async function buildNeem(
       emittedArtifacts,
       minify: true,
     })
+
+    for (const chunk of entry.bundle?.output ?? []) {
+      logger.debug(`  ${chunk.type}: ${colorize('green', chunk.fileName)}`)
+    }
 
     const hostRolldown = await loadRuntimeHostBuildConfig(
       runtimeConfig,
@@ -157,8 +166,10 @@ export async function buildNeem(
     Object.keys(manifest.runtimes ?? {}),
   )
   logger.success('Neem build complete')
-  logger.info(`manifest: ${manifestFile}`)
-  logger.info(`runtimes: ${Object.keys(manifest.runtimes ?? {}).length}`)
+  logger.info(`manifest: ${colorize('green', manifestFile)}`)
+  logger.info(
+    `runtimes: ${colorize('green', Object.keys(manifest.runtimes ?? {}).length)}`,
+  )
 
   return { configFile, outDir, manifestFile, manifest }
 }
@@ -259,7 +270,7 @@ async function loadRuntimeHostBuildConfig(
   runtimeConfig: NeemRuntimeConfigBase,
   importer: string,
 ): Promise<NeemBuildConfig | undefined> {
-  const runtimeBuild = runtimeConfig[kNeemRuntimeBuild]
+  const runtimeBuild = getRuntimeBuildConfig(runtimeConfig.build)
   if (runtimeBuild?.host?.build) {
     return loadBuildConfig(runtimeBuild.host.build, importer)
   }
@@ -268,6 +279,15 @@ async function loadRuntimeHostBuildConfig(
     getRuntimeHostConfig(runtimeConfig.host)?.build,
     importer,
   )
+}
+
+function getRuntimeBuildConfig(
+  input: NeemRuntimeBuildInput | undefined,
+): NeemRuntimeBuildConfig | undefined {
+  if (!input) return undefined
+  return typeof input === 'string' || input instanceof URL
+    ? { config: input }
+    : input
 }
 
 export async function createManifestConfig(

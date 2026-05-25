@@ -30,7 +30,7 @@ export function createEventingPlugin(
 
         ctx.container.provide([
           provision(eventingAdapter, adapter),
-          provision(produce, manager.produce.bind(manager)),
+          provision(produce, (...args) => manager.produce(...args)),
         ])
       },
       [LifecycleHook.BeforeDispose]: async () => {
