@@ -299,6 +299,7 @@ export async function createManifestConfig(
     logger: await createManifestLogger(config.logger, configFile, outDir),
     proxy: config.proxy,
     health: config.health,
+    commands: await createManifestCommands(config.commands, configFile, outDir),
     runtimes: Object.fromEntries(
       Object.entries(config.runtimes ?? {}).map(([name, runtime]) => [
         name,
@@ -306,6 +307,34 @@ export async function createManifestConfig(
       ]),
     ),
   }
+}
+
+async function createManifestCommands(
+  commands: NeemConfig['commands'],
+  configFile: string,
+  outDir: string,
+): Promise<NeemBuildManifestConfig['commands']> {
+  if (!commands) return undefined
+
+  const entries = await Promise.all(
+    Object.entries(commands).map(async ([name, entry]) => {
+      const artifact = await buildArtifact({
+        artifact: {
+          id: `command:${name}`,
+          kind: 'module',
+          entry: resolveRequiredRuntimeBuildEntry(configFile, entry),
+        },
+        owner: { type: 'config' },
+        artifactOutDir: resolve(outDir, 'config', 'commands', name),
+        outDir,
+        minify: true,
+      })
+
+      return [name, { file: toManifestPath(outDir, artifact.file) }] as const
+    }),
+  )
+
+  return Object.fromEntries(entries)
 }
 
 async function createManifestLogger(

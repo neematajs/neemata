@@ -200,6 +200,41 @@ describe('neem build', () => {
     )
   })
 
+  it('builds and runs CLI command artifacts', async () => {
+    const outDir = await createTempOutDir()
+    const outputFile = resolve(outDir, 'command-output.json')
+    const previousOutput = process.env.NEEM_TEST_COMMAND_OUTPUT
+    process.env.NEEM_TEST_COMMAND_OUTPUT = outputFile
+
+    try {
+      await buildNeem({
+        config: resolve(fixturesDir, 'commands.config.ts'),
+        outDir,
+      })
+      const manifest = await readManifest(outDir)
+
+      expect(manifest.config.commands?.echo).toEqual({
+        file: expect.stringMatching(/^config\/commands\/echo\/.+\.js$/),
+      })
+      await expectFile(resolve(outDir, manifest.config.commands!.echo!.file))
+
+      await expect(
+        main(['run', '--outDir', outDir, 'echo', '--value', 'ok', 'tail']),
+      ).resolves.toBe(0)
+      await expect(readJson(outputFile)).resolves.toEqual({
+        rawArgs: ['--value', 'ok', 'tail'],
+        value: 'ok',
+        rest: ['tail'],
+      })
+    } finally {
+      if (previousOutput === undefined) {
+        delete process.env.NEEM_TEST_COMMAND_OUTPUT
+      } else {
+        process.env.NEEM_TEST_COMMAND_OUTPUT = previousOutput
+      }
+    }
+  })
+
   it('builds only selected generic runtimes', async () => {
     const outDir = await createTempOutDir()
 
@@ -250,4 +285,8 @@ async function expectFile(path: string): Promise<void> {
 
 async function expectMissing(path: string): Promise<void> {
   await expect(access(path)).rejects.toThrow()
+}
+
+async function readJson(path: string): Promise<unknown> {
+  return JSON.parse(await readFile(path, 'utf8')) as unknown
 }

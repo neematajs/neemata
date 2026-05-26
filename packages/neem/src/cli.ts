@@ -4,6 +4,7 @@ import { defineCommand, runCommand, showUsage } from 'citty'
 
 import { buildNeem } from './internal/commands/build.ts'
 import { devNeem } from './internal/commands/dev.ts'
+import { runNeemCommand } from './internal/commands/run.ts'
 import { startNeem } from './internal/commands/start.ts'
 import { createNeemTestProbe } from './internal/runtime/test-probe.ts'
 
@@ -41,10 +42,27 @@ const buildCommand = defineCommand({
   },
 })
 
+const runBuiltCommand = defineCommand({
+  meta: { name: 'run', description: 'Run a built Neem CLI command.' },
+  args: {
+    outDir: {
+      type: 'string',
+      description: 'Built output directory.',
+      default: 'dist',
+    },
+    command: {
+      type: 'positional',
+      description: 'Command name to run.',
+      required: true,
+    },
+  },
+})
+
 const mainCommand = defineCommand({
   meta: { name: 'neem', description: 'Neem host CLI.' },
   subCommands: {
     build: buildCommand,
+    run: runBuiltCommand,
     dev: defineCommand({
       meta: {
         name: 'dev',
@@ -130,6 +148,11 @@ export async function main(
   argv = process.argv.slice(2),
   options: NeemCliMainOptions = {},
 ): Promise<number> {
+  if (argv[0] === 'run' && argv[1] !== '--help' && argv[1] !== '-h') {
+    await runBuiltNeemCommandFromCli(argv.slice(1))
+    return 0
+  }
+
   if (!argv.length || argv[0] === '--help' || argv[0] === '-h') {
     await showUsage(mainCommand)
     return 0
@@ -153,6 +176,47 @@ export async function main(
 
 function collectRuntimeArgs(args: { _: string[]; runtime?: string }) {
   return [...new Set([args.runtime, ...args._].filter(Boolean) as string[])]
+}
+
+async function runBuiltNeemCommandFromCli(argv: readonly string[]) {
+  const { outDir, command, args } = parseRunCommandArgs(argv)
+  await runNeemCommand({ outDir, command, args })
+}
+
+function parseRunCommandArgs(argv: readonly string[]) {
+  let outDir: string | undefined
+  let index = 0
+
+  while (index < argv.length) {
+    const arg = argv[index]
+    if (arg === '--') {
+      index++
+      break
+    }
+    if (arg === '--outDir' || arg === '--out-dir') {
+      outDir = argv[index + 1]
+      index += 2
+      continue
+    }
+    if (arg?.startsWith('--outDir=')) {
+      outDir = arg.slice('--outDir='.length)
+      index++
+      continue
+    }
+    if (arg?.startsWith('--out-dir=')) {
+      outDir = arg.slice('--out-dir='.length)
+      index++
+      continue
+    }
+    break
+  }
+
+  const command = argv[index]
+  if (!command) {
+    throw new Error('Missing Neem command name')
+  }
+
+  return { outDir, command, args: argv.slice(index + 1) }
 }
 
 if (

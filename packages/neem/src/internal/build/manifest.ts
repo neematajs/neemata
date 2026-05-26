@@ -32,6 +32,7 @@ export type NeemBuildManifestConfig = {
   logger?: NeemBuildManifestLogger
   proxy?: NeemProxyConfig
   health?: NeemHealthConfig
+  commands?: Record<string, { file: string }>
   runtimes: Record<string, NeemBuildManifestRuntimeConfig>
 }
 

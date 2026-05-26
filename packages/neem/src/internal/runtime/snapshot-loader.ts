@@ -76,6 +76,11 @@ function createConfigFromManifest(
   return {
     proxy: manifest.config.proxy,
     health: manifest.config.health,
+    commands: manifest.config.commands
+      ? Object.fromEntries(
+          Object.keys(manifest.config.commands).map((name) => [name, '']),
+        )
+      : undefined,
     runtimes: Object.fromEntries(
       Object.entries(manifest.config.runtimes).map(([name, runtime]) => [
         name,

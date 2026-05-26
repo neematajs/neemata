@@ -1,4 +1,5 @@
 import type { LoggingOptions } from '@nmtjs/core'
+import type { CommandDef } from 'citty'
 
 import type {
   NeemArtifactEntry,
@@ -56,6 +57,11 @@ export type NeemRuntimeFactory<
 export type NeemLoggerOptions = LoggingOptions
 
 export type NeemLoggerInput = NeemLoggerOptions | string | URL
+
+export type NeemCommand = CommandDef
+
+export type NeemCommandInput<TCommand extends NeemCommand = NeemCommand> =
+  NeemArtifactEntry
 
 export type NeemRuntimeHostConfig<
   THost extends NeemRuntimeHost = NeemRuntimeHost,
@@ -144,6 +150,7 @@ export type NeemConfig<
   runtimes: TRuntimes
   proxy?: NeemProxyConfig
   health?: NeemHealthConfig
+  commands?: Record<string, NeemCommandInput>
   outDir?: string
 }
 
@@ -166,6 +173,7 @@ export function defineConfig<
   runtimes: TRuntimes
   proxy?: NeemProxyConfig
   health?: NeemHealthConfig
+  commands?: Record<string, NeemCommandInput>
   outDir?: string
 }): NeemConfig<TRuntimes> {
   return Object.freeze(config)
