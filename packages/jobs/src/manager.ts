@@ -5,10 +5,12 @@ import type { LifecycleHooks } from '@nmtjs/application'
 import type { Container, Logger } from '@nmtjs/core'
 import type {
   Job,
+  JobSchedulerJson,
   JobState,
   JobType,
   QueueEventsListener,
   RedisClient,
+  RepeatOptions,
 } from 'bullmq'
 import {
   Queue,
@@ -26,6 +28,7 @@ import type {
   JobRunnerRunOptions,
   SaveProgressContext,
 } from './core/runner.ts'
+import type { JobScheduleEntry, JobScheduleInfo } from './core/scheduler.ts'
 import type {
   JobDefinitionInfo,
   JobExecutionContext,
@@ -209,6 +212,9 @@ export class JobManager {
       retry: this.retry.bind(this),
       remove: this.remove.bind(this),
       cancel: this.cancel.bind(this),
+      schedule: this.schedule.bind(this),
+      unschedule: this.unschedule.bind(this),
+      listSchedules: this.listSchedules.bind(this),
     }
   }
 
@@ -366,6 +372,46 @@ export class JobManager {
 
     await this.emitAdded(bullJob)
     return new QueueJobResult({ job, bullJob, events })
+  }
+
+  async schedule<T extends AnyJob>(entry: JobScheduleEntry<T>) {
+    const { queue, events } = this.getJobQueue(entry.job)
+    const bullJob = await queue.upsertJobScheduler(
+      entry.id,
+      toBullRepeatOptions(entry.repeat),
+      {
+        name: entry.job.options.name,
+        data: entry.data,
+        opts: {
+          priority: entry.options?.priority,
+          attempts: entry.options?.attempts ?? entry.job.options.attempts,
+          backoff: entry.options?.backoff ?? entry.job.options.backoff,
+          removeOnComplete:
+            entry.options?.removeOnComplete ?? entry.job.options.oneoff ?? true,
+          removeOnFail:
+            entry.options?.removeOnFail ?? entry.job.options.oneoff ?? true,
+        },
+      },
+    )
+
+    await this.emitAdded(bullJob)
+    return new QueueJobResult({ job: entry.job, bullJob, events })
+  }
+
+  async unschedule(job: AnyJob, id: string) {
+    const { queue } = this.getJobQueue(job)
+    const removed = await queue.removeJobScheduler(id)
+    if (!removed) throw new Error(`Job scheduler [${id}] not found`)
+  }
+
+  async listSchedules<T extends AnyJob>(
+    job: T,
+  ): Promise<JobScheduleInfo<T['_']['input']>[]> {
+    const { queue } = this.getJobQueue(job)
+    const schedules = (await queue.getJobSchedulers()) as JobSchedulerJson<
+      T['_']['input']
+    >[]
+    return schedules.map((schedule) => mapJobSchedule(queue.name, schedule))
   }
 
   async retry(job: AnyJob, id: string, options?: { clearState?: boolean }) {
@@ -555,5 +601,33 @@ export class JobManager {
       default:
         return []
     }
+  }
+}
+
+function toBullRepeatOptions(
+  repeat: JobScheduleEntry['repeat'],
+): Omit<RepeatOptions, 'key'> {
+  return {
+    pattern: 'cron' in repeat ? repeat.cron : undefined,
+    every: 'every' in repeat ? repeat.every : undefined,
+    limit: repeat.limit,
+    immediately: repeat.immediately,
+    tz: repeat.timezone,
+  }
+}
+
+function mapJobSchedule<TData>(
+  queueName: string,
+  schedule: JobSchedulerJson<TData>,
+): JobScheduleInfo<TData> {
+  return {
+    id: schedule.key,
+    jobName: schedule.name,
+    queueName,
+    data: schedule.template?.data,
+    next: schedule.next,
+    every: schedule.every,
+    cron: schedule.pattern,
+    timezone: schedule.tz,
   }
 }

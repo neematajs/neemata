@@ -1,4 +1,5 @@
 import type { AnyJob, JobBackoffOptions } from './job.ts'
+import type { JobScheduleEntry, JobScheduleInfo } from './scheduler.ts'
 import type { JobDefinitionInfo, JobItem, JobStatus } from './types.ts'
 
 export type JobItemOf<T extends AnyJob = AnyJob> = JobItem<
@@ -40,6 +41,11 @@ export interface JobsManager {
     data: T['_']['input'],
     options?: JobAddOptions,
   ): Promise<JobResult<T>>
+  schedule<T extends AnyJob>(entry: JobScheduleEntry<T>): Promise<JobResult<T>>
+  unschedule(job: AnyJob, id: string): Promise<void>
+  listSchedules<T extends AnyJob>(
+    job: T,
+  ): Promise<JobScheduleInfo<T['_']['input']>[]>
   retry(
     job: AnyJob,
     id: string,

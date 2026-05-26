@@ -60,11 +60,26 @@ describe('@nmtjs/jobs Neem contracts', () => {
           },
         }
       },
+      schedules: async () => {
+        calls.push({ type: 'schedules-factory' })
+        return [
+          {
+            id: 'import-users-hourly',
+            job: importUsersJob,
+            data: {},
+            repeat: { every: 60 * 60 * 1000 },
+          },
+        ]
+      },
     })
 
     expect(config.pools.default).toEqual({ threads: 2, jobs: 5 })
     await resolveJobsConfig(config)
-    expect(calls).toEqual([{ type: 'jobs-factory' }, { type: 'hooks-factory' }])
+    expect(calls).toEqual([
+      { type: 'jobs-factory' },
+      { type: 'hooks-factory' },
+      { type: 'schedules-factory' },
+    ])
     calls.length = 0
 
     const resolved = await resolveJobsConfig({
@@ -80,6 +95,7 @@ describe('@nmtjs/jobs Neem contracts', () => {
 
     expect(resolved.jobs).toEqual([exportUsersJob])
     expect(Object.keys(resolved.hooks)).toEqual(['added'])
+    expect(resolved.schedules).toEqual([])
 
     await callJobsHook(resolved.hooks, 'added', createJobEvent({ id: '1' }))
     await callJobsHook(resolved.hooks, 'updated', createJobEvent({ id: '1' }))
@@ -111,6 +127,10 @@ describe('@nmtjs/jobs Neem contracts', () => {
       hooks: async () => {
         calls.push({ type: 'hooks-factory' })
         return {}
+      },
+      schedules: async () => {
+        calls.push({ type: 'schedules-factory' })
+        return []
       },
     })
 

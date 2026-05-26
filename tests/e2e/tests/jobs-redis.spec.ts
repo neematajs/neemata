@@ -150,6 +150,41 @@ describe.skipIf(!redisUrl)('@nmtjs/jobs Redis e2e', () => {
       progress: { stepIndex: 1, progress: { saved: 'checkpoint' } },
     })
   })
+
+  it('schedules jobs through BullMQ job schedulers', async () => {
+    const job = createJob({
+      name: createTestName('e2e-scheduled-job'),
+      pool: 'default',
+      input: t.object({ value: t.string() }),
+      output: t.object({ ok: t.boolean(), value: t.string() }),
+    }).return(({ input }) => ({ ok: true, value: input.value }))
+
+    const { manager } = await createJobHarness(job)
+    const scheduleId = createTestName('schedule')
+    const result = await manager.schedule({
+      id: scheduleId,
+      job,
+      data: { value: 'scheduled' },
+      repeat: { every: 1000, limit: 1 },
+      options: { removeOnComplete: false, removeOnFail: false },
+    })
+
+    await expect(manager.listSchedules(job)).resolves.toEqual([
+      expect.objectContaining({
+        id: scheduleId,
+        jobName: job.name,
+        queueName: manager.getQueue(job).queue.name,
+        data: { value: 'scheduled' },
+        every: 1000,
+      }),
+    ])
+    await expect(result.waitResult()).resolves.toEqual({
+      ok: true,
+      value: 'scheduled',
+    })
+    await manager.unschedule(job, scheduleId)
+    await expect(manager.listSchedules(job)).resolves.toEqual([])
+  })
 })
 
 function createRedisClient() {
