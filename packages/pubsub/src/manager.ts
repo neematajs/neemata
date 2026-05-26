@@ -195,46 +195,40 @@ export class PubSubManager {
     return new Readable({
       objectMode: true,
       read() {
-        source[Symbol.asyncIterator]()
-          .next()
-          .then(
-            ({ value, done }) => {
-              if (done) {
-                this.push(null)
-                return
-              }
+        void (async () => {
+          while (true) {
+            const { value, done } = await source[Symbol.asyncIterator]().next()
+            if (done) {
+              this.push(null)
+              return
+            }
 
-              const payload = value.payload as {
-                event?: string
-                data?: unknown
-              }
-              const event = payload.event
-                ? events.get(payload.event)
-                : undefined
-              if (!event) {
-                logger.trace(
-                  { channel: value.channel, event: payload.event },
-                  'Dropped pubsub event for inactive subscription',
-                )
-                this.read(0)
-                return
-              }
+            const payload = value.payload as { event?: string; data?: unknown }
+            const event = payload.event ? events.get(payload.event) : undefined
+            if (!event) {
+              logger.trace(
+                { channel: value.channel, event: payload.event },
+                'Dropped pubsub event for inactive subscription',
+              )
+              continue
+            }
 
-              try {
-                this.push({
-                  event: event.name,
-                  data: event.payload.decode(payload.data),
-                })
-              } catch (error) {
-                logger.warn(
-                  { channel: value.channel, event: event.name, error },
-                  'Failed to decode pubsub event payload',
-                )
-                this.destroy(error as Error)
-              }
-            },
-            (error) => this.destroy(error),
-          )
+            try {
+              this.push({
+                event: event.name,
+                data: event.payload.decode(payload.data),
+              })
+              return
+            } catch (error) {
+              logger.warn(
+                { channel: value.channel, event: event.name, error },
+                'Failed to decode pubsub event payload',
+              )
+              this.destroy(error as Error)
+              return
+            }
+          }
+        })().catch((error) => this.destroy(error))
       },
     }) as PubSubStream
   }

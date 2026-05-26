@@ -498,6 +498,43 @@ importers:
         specifier: github:uNetworking/uWebSockets.js#v20.67.0
         version: https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/e0f56ebb4b349017f006e14d1cd29052f2a7121d
 
+  tests/e2e:
+    dependencies:
+      '@nmtjs/application':
+        specifier: workspace:*
+        version: link:../../packages/application
+      '@nmtjs/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@nmtjs/eventing':
+        specifier: workspace:*
+        version: link:../../packages/eventing
+      '@nmtjs/jobs':
+        specifier: workspace:*
+        version: link:../../packages/jobs
+      '@nmtjs/pubsub':
+        specifier: workspace:*
+        version: link:../../packages/pubsub
+      '@nmtjs/type':
+        specifier: workspace:*
+        version: link:../../packages/type
+      '@platformatic/kafka':
+        specifier: ^2.1.0
+        version: 2.1.0
+      bullmq:
+        specifier: ^5.66.0
+        version: 5.77.0
+      ioredis:
+        specifier: ^5.10.1
+        version: 5.10.1
+      vitest:
+        specifier: 4.1.7
+        version: 4.1.7(@opentelemetry/api@1.9.0)(@types/node@24.10.1)(@vitest/browser-playwright@4.1.7)(@vitest/coverage-v8@4.1.7)(@vitest/ui@4.1.7)(vite@8.0.11(@types/node@24.10.1))
+    devDependencies:
+      '@types/node':
+        specifier: ^24
+        version: 24.10.1
+
   tests/eventing:
     dependencies:
       '@nmtjs/core':

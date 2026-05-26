@@ -160,7 +160,7 @@ async function readRedisStreams(
   const xreadgroup = client.xreadgroup.bind(client) as (
     ...args: unknown[]
   ) => Promise<unknown>
-  return xreadgroup(
+  const response = await xreadgroup(
     'GROUP',
     options.groupId,
     options.consumerId,
@@ -171,6 +171,7 @@ async function readRedisStreams(
     ...options.topics,
     ...options.ids,
   )
+  return hasRedisStreamMessages(response) ? response : null
 }
 
 async function ensureRedisStreamGroup(
@@ -188,6 +189,16 @@ async function ensureRedisStreamGroup(
 
 function isBusyGroupError(error: unknown): boolean {
   return error instanceof Error && error.message.includes('BUSYGROUP')
+}
+
+function hasRedisStreamMessages(response: unknown): boolean {
+  return (
+    Array.isArray(response) &&
+    response.some(
+      (entry) =>
+        Array.isArray(entry) && Array.isArray(entry[1]) && entry[1].length > 0,
+    )
+  )
 }
 
 function decodeRedisStreamMessage(

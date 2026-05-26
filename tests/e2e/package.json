@@ -1,0 +1,25 @@
+{
+  "name": "@nmtjs/tests-e2e",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:deps": "tsgo -b ../../packages/contract/tsconfig.build.json ../../packages/eventing/tsconfig.build.json ../../packages/jobs/tsconfig.build.json ../../packages/pubsub/tsconfig.build.json",
+    "test": "pnpm run build:deps && vitest run --config vitest.config.ts",
+    "check:type": "tsgo -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@nmtjs/application": "workspace:*",
+    "@nmtjs/core": "workspace:*",
+    "@nmtjs/eventing": "workspace:*",
+    "@nmtjs/jobs": "workspace:*",
+    "@nmtjs/pubsub": "workspace:*",
+    "@nmtjs/type": "workspace:*",
+    "@platformatic/kafka": "^2.1.0",
+    "bullmq": "^5.66.0",
+    "ioredis": "^5.10.1",
+    "vitest": "4.1.7"
+  },
+  "devDependencies": {
+    "@types/node": "^24"
+  }
+}

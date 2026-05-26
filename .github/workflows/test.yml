@@ -80,7 +80,7 @@ jobs:
           pnpm run test
           pnpm run test:browser:client
 
-  tests-jobs:
+  tests-e2e:
     needs: [ lint ]
     runs-on: blacksmith-4vcpu-ubuntu-2404
     services:
@@ -93,15 +93,27 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
-      valkey:
-        image: valkey/valkey:9-alpine
+      kafka:
+        image: apache/kafka:3.9.1
         ports:
-          - 6380:6379
+          - 9092:9092
+        env:
+          KAFKA_NODE_ID: "1"
+          KAFKA_PROCESS_ROLES: broker,controller
+          KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+          KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+          KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+          KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+          KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+          KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+          KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+          KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+          KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
         options: >-
-          --health-cmd "valkey-cli ping"
+          --health-cmd "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list"
           --health-interval 10s
           --health-timeout 5s
-          --health-retries 5
+          --health-retries 12
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -126,9 +138,7 @@ jobs:
             ${{ runner.os }}-pnpm-store-
       - run: pnpm install
       - run: pnpm build
-      - run: pnpm run test:e2e:jobs
+      - run: pnpm run test:e2e
         env:
-          REDIS_HOST: localhost
-          REDIS_PORT: "6379"
-          VALKEY_HOST: localhost
-          VALKEY_PORT: "6380"
+          REDIS_URL: redis://localhost:6379
+          KAFKA_BROKERS: localhost:9092
