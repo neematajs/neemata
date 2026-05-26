@@ -1,4 +1,5 @@
 import type { NeemMode } from '../../public/index.ts'
+import type { NeemHealthProbeServer } from './health-probe.ts'
 import type { NeemHostHooks } from './hooks.ts'
 import type { NeemProxyHealth, NeemProxyManager } from './proxy.ts'
 import type { NeemProxyUpstreamSnapshot } from './proxy-upstreams.ts'
@@ -62,6 +63,7 @@ export class NeemRuntimeServer {
   private operation = Promise.resolve()
   private runtimeManager: NeemRuntimeManager | undefined
   private proxyManager: NeemProxyManager | undefined
+  private healthProbe: NeemHealthProbeServer | undefined
   private proxyUpstreams = new NeemProxyUpstreamRegistry()
   private readonly hooks: NeemHostHooks
 
@@ -150,6 +152,7 @@ export class NeemRuntimeServer {
       this.markState('starting')
       try {
         this.logLifecycle({ mode: this.snapshot.mode }, 'Starting Neem server')
+        await this.syncHealthProbe(this.snapshot)
         await this.startRuntime(this.snapshot)
         this.markState('running')
         this.logLifecycle('Neem server started')
@@ -173,6 +176,7 @@ export class NeemRuntimeServer {
         await this.stopRuntime(this.snapshot)
         this.snapshot = snapshot
         this.logger = createNeemChildLogger(snapshot.logger, 'Neem server')
+        await this.syncHealthProbe(snapshot)
         await this.startRuntime(this.snapshot)
         this.markState('running')
         this.logLifecycle('Neem server reloaded')
@@ -198,6 +202,7 @@ export class NeemRuntimeServer {
       this.logger = createNeemChildLogger(snapshot.logger, 'Neem server')
 
       try {
+        await this.syncHealthProbe(snapshot)
         await this.reloadRuntimeRuntime(runtimeName, snapshot)
         this.markState('running')
       } catch (error) {
@@ -221,6 +226,7 @@ export class NeemRuntimeServer {
         await this.callHook('server:stop')
         await this.stopRuntime(this.snapshot)
       } finally {
+        await this.stopHealthProbe()
         this.markState('stopped')
         this.logLifecycle('Neem server stopped')
       }
@@ -265,6 +271,32 @@ export class NeemRuntimeServer {
     this.runtimeManager = undefined
     await proxyManager?.stop()
     await runtimeManager?.stop()
+  }
+
+  protected async syncHealthProbe(
+    snapshot: NeemRuntimeSnapshot,
+  ): Promise<void> {
+    const config = snapshot.config.health
+    if (this.healthProbe?.matches(config)) return
+
+    await this.stopHealthProbe()
+
+    if (!config) return
+
+    const { NeemHealthProbeServer } = await import('./health-probe.ts')
+    const probe = new NeemHealthProbeServer({
+      config,
+      logger: snapshot.logger,
+      getHealth: () => this.getHealth(),
+    })
+    await probe.start()
+    this.healthProbe = probe
+  }
+
+  protected async stopHealthProbe(): Promise<void> {
+    const probe = this.healthProbe
+    this.healthProbe = undefined
+    await probe?.stop()
   }
 
   protected async reloadRuntimeRuntime(

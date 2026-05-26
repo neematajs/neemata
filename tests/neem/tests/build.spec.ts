@@ -103,6 +103,22 @@ describe('neem build', () => {
     await expectFile(resolve(outDir, NEEM_MANIFEST_FILE))
   })
 
+  it('persists health probe config in the manifest', async () => {
+    const outDir = await createTempOutDir()
+
+    await buildNeem({
+      config: resolve(fixturesDir, 'health.config.ts'),
+      outDir,
+    })
+    const manifest = await readManifest(outDir)
+
+    expect(manifest.config.health).toEqual({
+      hostname: '127.0.0.1',
+      port: 3100,
+      paths: { health: '/healthz', ready: '/readyz' },
+    })
+  })
+
   it('builds generic runtime entries and host artifacts', async () => {
     const outDir = await createTempOutDir()
 

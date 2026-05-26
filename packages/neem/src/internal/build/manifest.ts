@@ -2,7 +2,11 @@ import type {
   NeemArtifactKind,
   NeemResolvedArtifact,
 } from '../../public/artifact.ts'
-import type { NeemLoggerOptions, NeemProxyConfig } from '../../public/config.ts'
+import type {
+  NeemHealthConfig,
+  NeemLoggerOptions,
+  NeemProxyConfig,
+} from '../../public/config.ts'
 
 export const NEEM_MANIFEST_FILE = 'neem.manifest.json'
 export const NEEM_MANIFEST_SCHEMA_VERSION = 1
@@ -27,6 +31,7 @@ export type NeemBuildManifestRuntimeConfig = {
 export type NeemBuildManifestConfig = {
   logger?: NeemBuildManifestLogger
   proxy?: NeemProxyConfig
+  health?: NeemHealthConfig
   runtimes: Record<string, NeemBuildManifestRuntimeConfig>
 }
 

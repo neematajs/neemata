@@ -298,6 +298,7 @@ export async function createManifestConfig(
   return {
     logger: await createManifestLogger(config.logger, configFile, outDir),
     proxy: config.proxy,
+    health: config.health,
     runtimes: Object.fromEntries(
       Object.entries(config.runtimes ?? {}).map(([name, runtime]) => [
         name,

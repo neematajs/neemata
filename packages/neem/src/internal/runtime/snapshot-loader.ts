@@ -75,6 +75,7 @@ function createConfigFromManifest(
 ): NeemConfig {
   return {
     proxy: manifest.config.proxy,
+    health: manifest.config.health,
     runtimes: Object.fromEntries(
       Object.entries(manifest.config.runtimes).map(([name, runtime]) => [
         name,

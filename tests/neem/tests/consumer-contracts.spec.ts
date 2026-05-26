@@ -30,6 +30,27 @@ describe('@nmtjs/neem consumer contracts', () => {
     expect(Boolean(invalid)).toBe(true)
   })
 
+  it('keeps health probe config typed', () => {
+    const config = defineConfig({
+      health: {
+        hostname: '127.0.0.1',
+        port: 3100,
+        paths: { health: '/healthz', ready: '/readyz' },
+      },
+      runtimes: {},
+    })
+    const invalid = defineConfig({
+      health: {
+        // @ts-expect-error health probe port must be numeric
+        port: '3100',
+      },
+      runtimes: {},
+    })
+
+    expect(config.health?.paths?.ready).toBe('/readyz')
+    expect(Boolean(invalid)).toBe(true)
+  })
+
   it('keeps runtime worker data inferred from the worker default export', () => {
     type ThreadOptions = InferNeemWorkerData<typeof app>
 

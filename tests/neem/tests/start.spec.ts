@@ -1,4 +1,5 @@
-import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { createServer as createNetServer } from 'node:net'
 import { resolve } from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
@@ -168,6 +169,50 @@ describe('neem start', () => {
       expect(host.getUpstreams()).toEqual([
         { type: 'http', url: 'http://127.0.0.1:3000' },
       ])
+    } finally {
+      await host.stop()
+      await host.closed
+    }
+  })
+
+  it('starts public health probes from built manifest config', async () => {
+    const port = await getFreePort()
+    const { outDir } = await buildInlineFixture(
+      `import { defineNeemataRuntime } from '@nmtjs/application/neem'
+import { defineConfig } from '@nmtjs/neem'
+
+export default defineConfig({
+  health: {
+    hostname: '127.0.0.1',
+    port: ${port},
+    paths: { health: '/healthz', ready: '/readyz' },
+  },
+  runtimes: {
+    api: defineNeemataRuntime({
+      application: ${JSON.stringify(resolve(fixturesDir, 'basic-app.ts'))},
+      threads: [{ http: { listen: { hostname: '127.0.0.1', port: 3000 } } }],
+    })(),
+  },
+})
+`,
+    )
+
+    const host = await startNeem({ outDir })
+
+    try {
+      const healthResponse = await fetch(`http://127.0.0.1:${port}/healthz`)
+      const readyResponse = await fetch(`http://127.0.0.1:${port}/readyz`)
+
+      expect(healthResponse.status).toBe(200)
+      expect(await healthResponse.json()).toMatchObject({
+        ok: true,
+        health: { state: 'running', ready: true },
+      })
+      expect(readyResponse.status).toBe(200)
+      expect(await readyResponse.json()).toMatchObject({
+        ok: true,
+        health: { state: 'running', ready: true },
+      })
     } finally {
       await host.stop()
       await host.closed
@@ -370,6 +415,35 @@ async function buildFixture(config: string) {
   tempDirs.push(outDir)
   await buildNeem({ config: resolve(fixturesDir, config), outDir })
   return { outDir, eventsFile: resolve(outDir, 'events.jsonl') }
+}
+
+async function buildInlineFixture(configSource: string) {
+  await mkdir(tempRoot, { recursive: true })
+  const outDir = await mkdtemp(resolve(tempRoot, 'neem-start-'))
+  tempDirs.push(outDir)
+  const configFile = resolve(outDir, 'neem.config.ts')
+  await writeFile(configFile, configSource)
+  await buildNeem({ config: configFile, outDir })
+  return { outDir, eventsFile: resolve(outDir, 'events.jsonl') }
+}
+
+async function getFreePort(): Promise<number> {
+  const server = createNetServer()
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', () => resolve())
+  })
+  const address = server.address()
+  if (!address || typeof address === 'string') {
+    throw new Error('Failed to allocate test port')
+  }
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => {
+      if (error) reject(error)
+      else resolve()
+    })
+  })
+  return address.port
 }
 
 async function readEvents(file: string): Promise<RuntimeEvent[]> {

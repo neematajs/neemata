@@ -114,6 +114,12 @@ export type NeemProxyConfig = {
   tls?: { key: string; cert: string }
 }
 
+export type NeemHealthConfig = {
+  hostname?: string
+  port: number
+  paths?: { health?: string; ready?: string }
+}
+
 export type NeemConfig<
   TRuntimes extends Record<string, NeemRuntimeConfigBase> = Record<
     string,
@@ -137,6 +143,7 @@ export type NeemConfig<
   logger?: NeemLoggerInput
   runtimes: TRuntimes
   proxy?: NeemProxyConfig
+  health?: NeemHealthConfig
   outDir?: string
 }
 
@@ -158,6 +165,7 @@ export function defineConfig<
   logger?: NeemLoggerInput
   runtimes: TRuntimes
   proxy?: NeemProxyConfig
+  health?: NeemHealthConfig
   outDir?: string
 }): NeemConfig<TRuntimes> {
   return Object.freeze(config)

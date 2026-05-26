@@ -1,4 +1,5 @@
 import { mkdtemp, readFile } from 'node:fs/promises'
+import { createServer as createNetServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { dirname, join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -123,6 +124,71 @@ describe('NeemRuntimeServer', () => {
       'host-stop:1',
       'worker-stop:hosted:worker',
     ])
+  })
+
+  it('serves public health and readiness probes', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'neem-runtime-health-'))
+    const eventFile = join(dir, 'events.log')
+    const port = await getFreePort()
+    const server = new NeemRuntimeServer({
+      snapshot: createRuntimeHostSnapshot(eventFile, { health: { port } }),
+    })
+
+    await server.start()
+    try {
+      const healthResponse = await fetch(`http://127.0.0.1:${port}/health`)
+      const readyResponse = await fetch(`http://127.0.0.1:${port}/ready`)
+      const health = await healthResponse.json()
+      const ready = await readyResponse.json()
+
+      expect(healthResponse.status).toBe(200)
+      expect(health).toMatchObject({
+        ok: true,
+        health: { state: 'running', ready: true },
+      })
+      expect(readyResponse.status).toBe(200)
+      expect(ready).toMatchObject({
+        ok: true,
+        health: { state: 'running', ready: true },
+      })
+    } finally {
+      await server.stop()
+    }
+  })
+
+  it('reports failed readiness through the public probe', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'neem-runtime-health-fail-'))
+    const eventFile = join(dir, 'events.log')
+    const port = await getFreePort()
+    const server = new NeemRuntimeServer({
+      snapshot: createRuntimeHostSnapshot(eventFile, {
+        failPlan: true,
+        health: { port },
+      }),
+    })
+
+    await expect(server.start()).rejects.toThrow('host plan failed')
+    try {
+      const healthResponse = await fetch(`http://127.0.0.1:${port}/health`)
+      const readyResponse = await fetch(`http://127.0.0.1:${port}/ready`)
+
+      expect(healthResponse.status).toBe(503)
+      expect(await healthResponse.json()).toMatchObject({
+        ok: false,
+        health: {
+          state: 'failed',
+          ready: false,
+          lastError: { message: 'host plan failed' },
+        },
+      })
+      expect(readyResponse.status).toBe(503)
+      expect(await readyResponse.json()).toMatchObject({
+        ok: false,
+        health: { state: 'failed', ready: false },
+      })
+    } finally {
+      await server.stop()
+    }
   })
 
   it('allows runtime hosts to plan threads with resolved artifacts', async () => {
@@ -434,6 +500,7 @@ function createRuntimeHostSnapshot(
     useResolvedArtifact?: boolean
     includeRuntime?: boolean
     failWorkerAfterStart?: boolean
+    health?: NeemConfig['health']
   } = {},
 ): NeemRuntimeSnapshot {
   const hostFile = fileURLToPath(
@@ -461,6 +528,7 @@ function createRuntimeHostSnapshot(
     runtimeWorkerEntry: workerEntry,
     configFile,
     config: {
+      health: options.health,
       runtimes: includeRuntime
         ? {
             hosted: {
@@ -507,6 +575,25 @@ function createRuntimeHostSnapshot(
         : {},
     },
   })
+}
+
+async function getFreePort(): Promise<number> {
+  const server = createNetServer()
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', () => resolve())
+  })
+  const address = server.address()
+  if (!address || typeof address === 'string') {
+    throw new Error('Failed to allocate test port')
+  }
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => {
+      if (error) reject(error)
+      else resolve()
+    })
+  })
+  return address.port
 }
 
 async function readEvents(file: string): Promise<string[]> {
