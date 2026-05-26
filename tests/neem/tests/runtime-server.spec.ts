@@ -459,6 +459,90 @@ describe('NeemRuntimeServer', () => {
     await server.stop()
   })
 
+  it('restarts a production runtime after post-ready worker failure', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'neem-runtime-worker-restart-'))
+    const eventFile = join(dir, 'events.log')
+    const server = new NeemRuntimeServer({
+      snapshot: createRuntimeHostSnapshot(eventFile, {
+        failWorkerAfterStart: 1,
+      }),
+      failOnWorkerError: true,
+      recovery: { attempts: 2, delayMs: 1, maxDelayMs: 1 },
+    })
+
+    await server.start()
+
+    await waitForEvents(eventFile, (events) => {
+      return events.filter((event) => event === 'host-start:1:1').length === 2
+    })
+    expect(server.getHealth()).toMatchObject({
+      state: 'running',
+      ready: true,
+      runtimes: [{ name: 'hosted', pool: { state: 'ready', ready: 1 } }],
+    })
+
+    await server.stop()
+  })
+
+  it('marks host failed after worker restart exhaustion', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'neem-runtime-worker-exhaust-'))
+    const eventFile = join(dir, 'events.log')
+    const port = await getFreePort()
+    const server = new NeemRuntimeServer({
+      snapshot: createRuntimeHostSnapshot(eventFile, {
+        failWorkerAfterStart: true,
+        health: { port },
+      }),
+      failOnWorkerError: true,
+      recovery: { attempts: 1, delayMs: 1, maxDelayMs: 1 },
+    })
+
+    await server.start()
+
+    await waitForEvents(eventFile, (events) => {
+      return events.filter((event) => event === 'host-fail:1').length >= 2
+    })
+    await waitForHealth(server, (health) => health.state === 'failed')
+    const readyResponse = await fetch(`http://127.0.0.1:${port}/ready`)
+
+    expect(server.getHealth()).toMatchObject({ state: 'failed', ready: false })
+    expect(readyResponse.status).toBe(503)
+
+    await server.stop()
+  })
+
+  it('reports degraded runtimes as not ready', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'neem-runtime-worker-degraded-'))
+    const eventFile = join(dir, 'events.log')
+    const port = await getFreePort()
+    const server = new NeemRuntimeServer({
+      snapshot: createRuntimeHostSnapshot(eventFile, {
+        failWorkerAfterStart: true,
+        extraStableWorker: true,
+        health: { port },
+      }),
+      recovery: { attempts: 0 },
+    })
+
+    await server.start()
+
+    await waitForHealth(server, (health) => {
+      return health.runtimes.some(
+        (runtime) => runtime.pool.state === 'degraded',
+      )
+    })
+    const readyResponse = await fetch(`http://127.0.0.1:${port}/ready`)
+
+    expect(server.getHealth()).toMatchObject({
+      state: 'running',
+      ready: false,
+      runtimes: [{ name: 'hosted', pool: { state: 'degraded', ready: 1 } }],
+    })
+    expect(readyResponse.status).toBe(503)
+
+    await server.stop()
+  })
+
   it('serializes operations', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'neem-runtime-serialize-'))
     const eventFile = join(dir, 'events.log')
@@ -499,7 +583,8 @@ function createRuntimeHostSnapshot(
     failFail?: boolean
     useResolvedArtifact?: boolean
     includeRuntime?: boolean
-    failWorkerAfterStart?: boolean
+    failWorkerAfterStart?: boolean | number
+    extraStableWorker?: boolean
     health?: NeemConfig['health']
   } = {},
 ): NeemRuntimeSnapshot {
@@ -543,6 +628,7 @@ function createRuntimeHostSnapshot(
                 failFail: options.failFail,
                 useResolvedArtifact: options.useResolvedArtifact,
                 failWorkerAfterStart: options.failWorkerAfterStart,
+                extraStableWorker: options.extraStableWorker,
               },
             },
           }
@@ -611,6 +697,18 @@ async function waitForEvents(
     await wait(25)
   }
   throw new Error('Timed out waiting for runtime events')
+}
+
+async function waitForHealth(
+  server: NeemRuntimeServer,
+  predicate: (health: ReturnType<NeemRuntimeServer['getHealth']>) => boolean,
+): Promise<void> {
+  const started = Date.now()
+  while (Date.now() - started < 5_000) {
+    if (predicate(server.getHealth())) return
+    await wait(25)
+  }
+  throw new Error('Timed out waiting for runtime health')
 }
 
 function wait(ms: number): Promise<void> {

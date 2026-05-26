@@ -3,6 +3,7 @@ import type { NeemHealthProbeServer } from './health-probe.ts'
 import type { NeemHostHooks } from './hooks.ts'
 import type { NeemProxyHealth, NeemProxyManager } from './proxy.ts'
 import type { NeemProxyUpstreamSnapshot } from './proxy-upstreams.ts'
+import type { NeemRuntimeRecoveryOptions } from './recovery.ts'
 import type {
   NeemRuntimeManager,
   NeemStartedRuntimePool,
@@ -19,6 +20,7 @@ import { normalizeError } from './utils.ts'
 export type NeemRuntimeServerOptions = {
   snapshot: NeemRuntimeSnapshot
   failOnWorkerError?: boolean
+  recovery?: NeemRuntimeRecoveryOptions
   hooks?: NeemHostHooks
   onFailure?: (error: Error) => void | Promise<void>
 }
@@ -240,6 +242,7 @@ export class NeemRuntimeServer {
       snapshot,
       proxyUpstreams: this.proxyUpstreams,
       hooks: this.hooks,
+      recovery: this.options.recovery,
       onWorkerFailure: (error) => {
         if (this.options.failOnWorkerError) {
           this.markState('failed', error)

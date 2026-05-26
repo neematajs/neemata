@@ -16,6 +16,7 @@ import type {
   NeemManagedWorkerHealth,
 } from './managed-worker.ts'
 import type { NeemProxyUpstreamRegistry } from './proxy-upstreams.ts'
+import type { NeemRuntimeRecoveryOptions } from './recovery.ts'
 import type { NeemRuntimeSnapshot } from './snapshot.ts'
 import type {
   NeemWorkerPoolHealth,
@@ -29,6 +30,10 @@ import type {
 import { callNeemHostHook } from './hooks.ts'
 import { createNeemChildLogger } from './logger.ts'
 import { NeemManagedWorker } from './managed-worker.ts'
+import {
+  createRuntimeRecoveryPolicy,
+  getRuntimeRecoveryDelay,
+} from './recovery.ts'
 import { importDefault } from './utils.ts'
 import { NeemWorkerPool } from './worker-pool.ts'
 import { resolveRuntimeWorkerEntry } from './worker-runtime.ts'
@@ -58,6 +63,7 @@ export type NeemRuntimeManagerOptions = {
   snapshot: NeemRuntimeSnapshot
   proxyUpstreams: NeemProxyUpstreamRegistry
   hooks: NeemHostHooks
+  recovery?: NeemRuntimeRecoveryOptions
   onWorkerFailure?: (
     error: Error,
     worker: NeemStartedRuntimeThread,
@@ -164,6 +170,9 @@ class NeemRuntimeHostRuntime {
   private hostContext: NeemRuntimeHostContext | undefined
   private pools: readonly NeemRuntimeThreadPool[] = []
   private threads: readonly NeemRuntimeThread[] = []
+  private stopped = true
+  private recoveryPromise: Promise<void> | undefined
+  private restartAttempts = 0
 
   constructor(private readonly options: NeemRuntimeHostRuntimeOptions) {}
 
@@ -177,6 +186,7 @@ class NeemRuntimeHostRuntime {
 
   async start(): Promise<void> {
     const { snapshot, runtimeName } = this.options
+    this.stopped = false
     const hostContext = this.createHostContext()
     const host = await this.loadHost()
     this.host = host
@@ -234,6 +244,7 @@ class NeemRuntimeHostRuntime {
   }
 
   async stop(): Promise<void> {
+    this.stopped = true
     const threads = this.threads
     const host = this.host
     const hostContext = this.hostContext
@@ -352,7 +363,62 @@ class NeemRuntimeHostRuntime {
       await this.callRuntimeHook('runtime:fail', undefined, error)
     }
 
-    await this.options.onWorkerFailure?.(error, worker)
+    if (this.recoveryPromise) return
+
+    const policy = createRuntimeRecoveryPolicy(
+      this.options.snapshot.mode,
+      this.options.recovery,
+    )
+    if (policy.attempts === 0) {
+      await this.options.onWorkerFailure?.(error, worker)
+      return
+    }
+
+    this.recoveryPromise = this.recoverWorkerFailure(error, worker).finally(
+      () => {
+        this.recoveryPromise = undefined
+      },
+    )
+    await this.recoveryPromise
+  }
+
+  private async recoverWorkerFailure(
+    initialError: Error,
+    worker: NeemStartedRuntimeThread,
+  ): Promise<void> {
+    const policy = createRuntimeRecoveryPolicy(
+      this.options.snapshot.mode,
+      this.options.recovery,
+    )
+    let lastError = initialError
+
+    while (this.restartAttempts < policy.attempts) {
+      const attempt = this.restartAttempts + 1
+      const delayMs = getRuntimeRecoveryDelay(policy, attempt)
+      this.hostContext?.logger.warn(
+        {
+          runtimeName: this.options.runtimeName,
+          worker: worker.name,
+          attempt,
+          attempts: policy.attempts,
+          delayMs,
+        },
+        'Restarting Neem runtime after worker failure',
+      )
+      this.restartAttempts = attempt
+      await wait(delayMs)
+      if (this.stopped) return
+
+      try {
+        await this.stop()
+        await this.start()
+        return
+      } catch (error) {
+        lastError = toError(error)
+      }
+    }
+
+    await this.options.onWorkerFailure?.(lastError, worker)
   }
 }
 
@@ -636,6 +702,10 @@ function deserializeWorkerError(
 
 function toError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error))
+}
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 function callRuntimeReloadHook(options: {
