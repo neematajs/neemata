@@ -24,6 +24,14 @@ export type KafkaEventingAdapterOptions = {
   clientId: string
   bootstrapBrokers: readonly string[]
   producer?: Partial<ProducerOptions<string, string, string, string>>
+  /**
+   * Kafka consumer options.
+   *
+   * Concurrency is controlled by broker partitions and consumer groups, not by
+   * this adapter. Multiple Neem eventing runtime threads using the same
+   * `groupId` share partitions. Extra consumers beyond partition count can sit
+   * idle. Ordering is only guaranteed within one partition.
+   */
   consumer?: Partial<
     Omit<ConsumerOptions<string, string, string, string>, 'groupId'>
   >

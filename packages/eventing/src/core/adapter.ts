@@ -19,11 +19,15 @@ export type EventingAdapterMessage = {
 
 export type EventingConsumeFrom = 'latest' | 'earliest' | 'committed'
 
+export type EventingAdapterDeadLetterOptions = { topic?: string }
+
 export type EventingAdapterConsumeOptions = {
   topics: readonly string[]
   groupId: string
   consumerId?: string
   from?: EventingConsumeFrom
+  recoverPending?: boolean
+  deadLetter?: EventingAdapterDeadLetterOptions
   signal?: AbortSignal
 }
 

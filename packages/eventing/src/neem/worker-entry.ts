@@ -4,9 +4,8 @@ import type { NeemRuntime, NeemWorkerRuntimeContext } from '@nmtjs/neem'
 import { defineWorker } from '@nmtjs/neem'
 
 import type { EventingConsumer } from '../core/adapter.ts'
-import type { EventingConsumerDefinition } from '../core/consumer.ts'
 import type { EventingRuntimeConfig } from './runtime.ts'
-import { decodeEventingMessage } from '../core/consumer.ts'
+import { handleEventingConsumerMessage } from '../core/consumer.ts'
 import { eventingConfigArtifactId } from './runtime.ts'
 
 export default defineWorker({
@@ -47,12 +46,17 @@ class EventingRuntime implements NeemRuntime {
           groupId: definition.groupId,
           consumerId: definition.consumerId ?? this.ctx.name,
           from: definition.from,
+          recoverPending: definition.recoverPending,
+          deadLetter: definition.deadLetter,
           signal: this.abortController.signal,
         },
         async (message) => {
           if (message.name !== definition.event.name) return
-          const event = decodeEventingMessage(definition.event, message)
-          await runHandler(definition, this.ctx, event, message)
+          await handleEventingConsumerMessage(
+            definition,
+            { logger: this.ctx.logger },
+            message,
+          )
         },
       )
       this.consumers.push(consumer)
@@ -77,17 +81,4 @@ class EventingRuntime implements NeemRuntime {
     await this.adapter?.dispose()
     this.adapter = undefined
   }
-}
-
-async function runHandler(
-  definition: EventingConsumerDefinition,
-  ctx: NeemWorkerRuntimeContext,
-  event: unknown,
-  message: unknown,
-) {
-  await definition.handle(
-    { logger: ctx.logger },
-    event as never,
-    message as never,
-  )
 }

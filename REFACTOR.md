@@ -211,8 +211,12 @@ Ported packages:
   - typed `defineEvent(...)` contracts with topic/key/payload
   - app-facing `produce` injectable and plugin
   - Redis Streams adapter
+    - consumer-owned pending message recovery before new reads
+    - dead-letter stream policy for poison/invalid messages
   - Kafka-compatible adapter using `@platformatic/kafka`
+    - explicit consumer-group/partition concurrency documentation
   - explicit Neem eventing runtime helper and worker entry
+  - in-process consumer handler retries before adapter ack/commit policy
 
 Still incomplete:
 
@@ -435,8 +439,8 @@ Standalone `node dist/start.js` follows same runtime path and injects
 1. Add metrics/observability on generic runtime lifecycle.
 2. Add health/readiness probe exposure.
 3. Design framework-owned build lifecycle for Nuxt/other meta-frameworks.
-4. Harden eventing runtime policies: retries, poison messages, DLQ, pending
-   Redis Streams recovery, Kafka partition/concurrency docs.
+4. Decide next durable runtime target: scheduler/commands, eventing RabbitMQ
+   Streams, or production restart/backoff policy.
 
 ## Neemata Adapter Parity Audit
 

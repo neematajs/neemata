@@ -59,6 +59,7 @@ export class RedisStreamsEventingAdapter implements EventingAdapter {
     const controller = new AbortController()
     const signal = mergeSignals(controller.signal, options.signal)
     const consumerId = options.consumerId ?? `${options.groupId}-${process.pid}`
+    const recoverPending = options.recoverPending ?? true
 
     for (const topic of options.topics) {
       await ensureRedisStreamGroup(
@@ -71,27 +72,57 @@ export class RedisStreamsEventingAdapter implements EventingAdapter {
 
     const closed = (async () => {
       while (!signal.aborted) {
-        const response = await this.options.client.xreadgroup(
-          'GROUP',
-          options.groupId,
-          consumerId,
-          'COUNT',
-          this.options.count ?? 10,
-          'BLOCK',
-          this.options.blockMs ?? 500,
-          'STREAMS',
-          ...options.topics,
-          ...options.topics.map(() => '>'),
-        )
+        const response =
+          (recoverPending &&
+            (await readRedisStreams(this.options.client, {
+              groupId: options.groupId,
+              consumerId,
+              topics: options.topics,
+              count: this.options.count ?? 10,
+              ids: options.topics.map(() => '0'),
+            }))) ||
+          (await readRedisStreams(this.options.client, {
+            groupId: options.groupId,
+            consumerId,
+            topics: options.topics,
+            count: this.options.count ?? 10,
+            blockMs: this.options.blockMs ?? 500,
+            ids: options.topics.map(() => '>'),
+          }))
 
         if (!response) continue
 
         for (const [topic, messages] of response as RedisStreamReadResponse) {
           for (const [id, fields] of messages) {
             signal.throwIfAborted()
-            const message = decodeRedisStreamMessage(topic, id, fields)
-            await handler(message)
-            await this.options.client.xack(topic, options.groupId, id)
+            try {
+              const message = decodeRedisStreamMessage(topic, id, fields)
+              await handler(message)
+              await this.options.client.xack(topic, options.groupId, id)
+            } catch (error) {
+              if (signal.aborted) throw error
+              if (!options.deadLetter) throw error
+
+              await writeRedisDeadLetter(this.options.client, {
+                sourceTopic: topic,
+                sourceId: id,
+                fields,
+                deadLetterTopic:
+                  options.deadLetter.topic ?? getDeadLetterTopic(topic),
+                error,
+              })
+              await this.options.client.xack(topic, options.groupId, id)
+              this.logger?.error(
+                {
+                  error,
+                  topic,
+                  id,
+                  deadLetterTopic:
+                    options.deadLetter.topic ?? getDeadLetterTopic(topic),
+                },
+                'Redis Streams event moved to dead-letter stream',
+              )
+            }
           }
         }
       }
@@ -110,6 +141,37 @@ export class RedisStreamsEventingAdapter implements EventingAdapter {
 type RedisStreamReadResponse = Array<
   [stream: string, messages: Array<[id: string, fields: string[]]>]
 >
+
+type RedisStreamsReadOptions = {
+  groupId: string
+  consumerId: string
+  topics: readonly string[]
+  count: number
+  blockMs?: number
+  ids: readonly string[]
+}
+
+async function readRedisStreams(
+  client: RedisStreamsEventingClient,
+  options: RedisStreamsReadOptions,
+) {
+  const blockArgs =
+    options.blockMs === undefined ? [] : ['BLOCK', options.blockMs]
+  const xreadgroup = client.xreadgroup.bind(client) as (
+    ...args: unknown[]
+  ) => Promise<unknown>
+  return xreadgroup(
+    'GROUP',
+    options.groupId,
+    options.consumerId,
+    'COUNT',
+    options.count,
+    ...blockArgs,
+    'STREAMS',
+    ...options.topics,
+    ...options.ids,
+  )
+}
 
 async function ensureRedisStreamGroup(
   client: RedisStreamsEventingClient,
@@ -142,6 +204,58 @@ function decodeRedisStreamMessage(
     headers: record.headers ? JSON.parse(record.headers) : {},
     raw: { id, fields },
   }
+}
+
+async function writeRedisDeadLetter(
+  client: RedisStreamsEventingClient,
+  input: {
+    sourceTopic: string
+    sourceId: string
+    fields: string[]
+    deadLetterTopic: string
+    error: unknown
+  },
+) {
+  const record = Object.fromEntries(chunkPairs(input.fields))
+  const headers = parseHeaders(record.headers)
+  await client.xadd(
+    input.deadLetterTopic,
+    '*',
+    'sourceTopic',
+    input.sourceTopic,
+    'sourceId',
+    input.sourceId,
+    'name',
+    record.name ?? '',
+    'payload',
+    record.payload ?? '',
+    'headers',
+    JSON.stringify({
+      ...headers,
+      'x-eventing-source-topic': input.sourceTopic,
+      'x-eventing-source-id': input.sourceId,
+      'x-eventing-error': getErrorMessage(input.error),
+    }),
+    'key',
+    record.key ?? '',
+  )
+}
+
+function getDeadLetterTopic(topic: string): string {
+  return `${topic}.dlq`
+}
+
+function parseHeaders(headers: string | undefined): Record<string, string> {
+  if (!headers) return {}
+  try {
+    return JSON.parse(headers)
+  } catch {
+    return {}
+  }
+}
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
 }
 
 function chunkPairs(values: string[]): Array<[string, string]> {
