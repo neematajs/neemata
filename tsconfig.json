@@ -37,6 +37,9 @@
       "path": "./packages/msgpack-format/tsconfig.json"
     },
     {
+      "path": "./packages/metrics/tsconfig.json"
+    },
+    {
       "path": "./packages/neem/tsconfig.json"
     },
     {
@@ -62,6 +65,9 @@
     },
     {
       "path": "./tests/eventing/tsconfig.json"
+    },
+    {
+      "path": "./tests/metrics/tsconfig.json"
     },
     {
       "path": "./tests/e2e/tsconfig.json"

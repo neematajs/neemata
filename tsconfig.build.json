@@ -37,6 +37,9 @@
       "path": "./packages/msgpack-format/tsconfig.build.json"
     },
     {
+      "path": "./packages/metrics/tsconfig.build.json"
+    },
+    {
       "path": "./packages/neem/tsconfig.build.json"
     },
     {

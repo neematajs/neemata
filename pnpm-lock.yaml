@@ -272,6 +272,21 @@ importers:
         specifier: workspace:*
         version: link:../protocol
 
+  packages/metrics:
+    dependencies:
+      '@nmtjs/common':
+        specifier: workspace:*
+        version: link:../common
+      '@nmtjs/core':
+        specifier: workspace:*
+        version: link:../core
+      '@nmtjs/neem':
+        specifier: workspace:*
+        version: link:../neem
+      '@nmtjs/prom-client':
+        specifier: 1.0.1
+        version: 1.0.1
+
   packages/msgpack-format:
     dependencies:
       '@msgpack/msgpack':
@@ -546,6 +561,28 @@ importers:
       '@nmtjs/type':
         specifier: workspace:*
         version: link:../../packages/type
+      vitest:
+        specifier: 4.1.7
+        version: 4.1.7(@opentelemetry/api@1.9.0)(@types/node@24.10.1)(@vitest/browser-playwright@4.1.7)(@vitest/coverage-v8@4.1.7)(@vitest/ui@4.1.7)(vite@8.0.11(@types/node@24.10.1))
+    devDependencies:
+      '@types/node':
+        specifier: ^24
+        version: 24.10.1
+
+  tests/metrics:
+    dependencies:
+      '@nmtjs/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@nmtjs/metrics':
+        specifier: workspace:*
+        version: link:../../packages/metrics
+      '@nmtjs/neem':
+        specifier: workspace:*
+        version: link:../../packages/neem
+      '@nmtjs/prom-client':
+        specifier: 1.0.1
+        version: 1.0.1
       vitest:
         specifier: 4.1.7
         version: 4.1.7(@opentelemetry/api@1.9.0)(@types/node@24.10.1)(@vitest/browser-playwright@4.1.7)(@vitest/coverage-v8@4.1.7)(@vitest/ui@4.1.7)(vite@8.0.11(@types/node@24.10.1))

@@ -1,0 +1,20 @@
+{
+  "name": "@nmtjs/tests-metrics",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:deps": "tsgo -b ../../packages/neem/tsconfig.build.json ../../packages/metrics/tsconfig.build.json",
+    "test": "pnpm run build:deps && vitest run --config vitest.config.ts",
+    "check:type": "tsgo -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@nmtjs/core": "workspace:*",
+    "@nmtjs/metrics": "workspace:*",
+    "@nmtjs/neem": "workspace:*",
+    "@nmtjs/prom-client": "1.0.1",
+    "vitest": "4.1.7"
+  },
+  "devDependencies": {
+    "@types/node": "^24"
+  }
+}

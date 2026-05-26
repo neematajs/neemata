@@ -1,0 +1,101 @@
+import type { Logger } from '@nmtjs/core'
+import type {
+  NeemHostHooks,
+  NeemRuntimeServerHealth,
+} from '@nmtjs/neem/internal'
+import { Counter, Gauge, Registry } from '@nmtjs/prom-client'
+
+export type NeemMetricsObserver = { recordHealth(): void }
+
+export function createNeemMetricsObserver(options: {
+  hooks: NeemHostHooks
+  logger: Logger
+  registry?: Registry
+  getHealth: () => NeemRuntimeServerHealth
+}): NeemMetricsObserver {
+  const registry = options.registry ?? new Registry()
+  const lifecycleEvents = new Counter({
+    name: 'neem_lifecycle_events_total',
+    help: 'Neem host lifecycle events.',
+    labelNames: ['event'],
+    registers: [registry],
+  })
+  const runtimeReady = new Gauge({
+    name: 'neem_runtime_ready',
+    help: 'Neem runtime readiness by runtime name.',
+    labelNames: ['runtime'],
+    registers: [registry],
+  })
+  const runtimePoolThreads = new Gauge({
+    name: 'neem_runtime_pool_threads',
+    help: 'Neem runtime thread count by runtime and state.',
+    labelNames: ['runtime', 'state'],
+    registers: [registry],
+  })
+
+  const recordLifecycle = (event: string) => {
+    lifecycleEvents.inc({ event })
+    recordHealth()
+  }
+
+  options.hooks.hook('server:start', () => recordLifecycle('server:start'))
+  options.hooks.hook('server:ready', () => recordLifecycle('server:ready'))
+  options.hooks.hook('server:reload', () => recordLifecycle('server:reload'))
+  options.hooks.hook('server:stop', () => recordLifecycle('server:stop'))
+  options.hooks.hook('server:fail', () => recordLifecycle('server:fail'))
+  options.hooks.hook('runtime:start', (event) =>
+    recordLifecycle(`runtime:start:${event.name}`),
+  )
+  options.hooks.hook('runtime:ready', (event) =>
+    recordLifecycle(`runtime:ready:${event.name}`),
+  )
+  options.hooks.hook('runtime:reload', (event) =>
+    recordLifecycle(`runtime:reload:${event.name}`),
+  )
+  options.hooks.hook('runtime:stop', (event) =>
+    recordLifecycle(`runtime:stop:${event.name}`),
+  )
+  options.hooks.hook('runtime:fail', (event) =>
+    recordLifecycle(`runtime:fail:${event.name}`),
+  )
+  options.hooks.hook('worker:start', (event) =>
+    recordLifecycle(`worker:start:${event.name}`),
+  )
+  options.hooks.hook('worker:ready', (event) =>
+    recordLifecycle(`worker:ready:${event.name}`),
+  )
+  options.hooks.hook('worker:stop', (event) =>
+    recordLifecycle(`worker:stop:${event.name}`),
+  )
+  options.hooks.hook('worker:fail', (event) =>
+    recordLifecycle(`worker:fail:${event.name}`),
+  )
+
+  function recordHealth() {
+    const health = options.getHealth()
+    for (const runtime of health.runtimes) {
+      runtimeReady.set(
+        { runtime: runtime.name },
+        runtime.pool.state === 'ready' ? 1 : 0,
+      )
+      runtimePoolThreads.set(
+        { runtime: runtime.name, state: 'ready' },
+        runtime.pool.ready,
+      )
+      runtimePoolThreads.set(
+        { runtime: runtime.name, state: 'failed' },
+        runtime.pool.failed,
+      )
+      runtimePoolThreads.set(
+        { runtime: runtime.name, state: 'stopped' },
+        runtime.pool.stopped,
+      )
+      runtimePoolThreads.set(
+        { runtime: runtime.name, state: 'starting' },
+        runtime.pool.starting,
+      )
+    }
+  }
+
+  return { recordHealth }
+}
