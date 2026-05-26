@@ -45,7 +45,8 @@ metrics semantics, store adapters, or app DI provisions.
 - Config syntax uses direct default-exported `defineConfig(...)` and declarative
   string/URL entries:
   `entry: './x.ts'`, `build: './x.build.ts'`.
-- Target config uses `runtimes: { [name]: defineRuntimeConfig(...) }`.
+- Target config uses `runtimes: { [name]: runtimeFactory(buildOverrides?) }`
+  for helper runtimes, or `defineRuntime(...)` for raw generic runtimes.
   Runtime object keys are stable build/start/deploy unit IDs.
 - Runtime configs have no core `kind`. Neem only cares about entry artifacts,
   threads/options, lifecycle, health, and returned upstreams.
@@ -66,10 +67,13 @@ metrics semantics, store adapters, or app DI provisions.
 - Host logic is the replacement path for current plugin main-thread behavior.
   A host can run setup/coordination on the Neem main thread, but thread
   lifecycle always stays Neem-owned.
-- Runtime helpers such as `defineNeemataRuntime(...)` and
-  `defineJobsRuntime(...)` can wrap generic runtime config. Helper-owned build
-  metadata is attached through Neem's internal build symbol, not public config
-  fields.
+- Runtime helpers such as `defineNeemataRuntime(...)`,
+  `defineJobsRuntime(...)`, and `defineEventingRuntime(...)` return runtime
+  factories. Package authors own their public helper shape; Neem owns only the
+  generic runtime config produced by the factory.
+- Runtime helpers can merge package-owned build requirements with user-supplied
+  `NeemRuntimeBuildOptions`. Helper-emitted artifacts remain helper-owned build
+  output, not public first-class runtime config.
 - Runtime entries may return upstreams from `start()`. Neem registers returned
   upstreams with the proxy; runtimes returning no upstreams stay background-only.
 - Upstreams are the only runtime capability Neem interprets. No upstreams means
@@ -180,7 +184,10 @@ Wired:
   worker exit
 - runtime lifecycle observer hooks, including scoped `runtime:reload`
 - manifest runtime artifact validation
-- helper-emitted runtime artifacts via hidden Neem build metadata
+- helper-emitted runtime artifacts via runtime helper build metadata
+- IPC-backed lifecycle test probe for spawned CLI and standalone entries
+- Rolldown watch path uses polling watcher plus initial readiness delay after
+  a separate initial build
 
 Ported packages:
 
@@ -209,7 +216,6 @@ Ported packages:
 
 Still incomplete:
 
-- full Neemata adapter parity audit
 - production-grade worker restart/backoff/degraded policy
 - HTTP health/readiness probe exposure
 - metrics/observability package
@@ -242,24 +248,35 @@ Still incomplete:
 ## Target Config Shape
 
 ```ts
-import { defineConfig, defineRuntimeConfig } from '@nmtjs/neem'
+import { defineConfig, defineRuntime } from '@nmtjs/neem'
 import { defineNeemataRuntime } from '@nmtjs/application/neem'
 import { defineJobsRuntime } from '@nmtjs/jobs/neem'
+import { defineEventingRuntime } from '@nmtjs/eventing/neem'
+
+const api = defineNeemataRuntime({
+  application: './src/api.ts',
+  threads: [{ http: { listen: { hostname: '127.0.0.1', port: 3000 } } }],
+})
+
+const jobs = defineJobsRuntime({
+  config: './src/jobs.ts',
+})
+
+const events = defineEventingRuntime({
+  config: './src/events.ts',
+  threads: 1,
+})
 
 export default defineConfig({
   logger: './logger.ts',
   runtimes: {
-    api: defineNeemataRuntime({
-      entry: './src/api.ts',
-      build: './src/api.build.ts',
-      threads: [{ http: { listen: { hostname: '127.0.0.1', port: 3000 } } }],
-    }),
+    api: api({ rolldown: { /* optional user build overrides */ } }),
 
-    jobs: defineJobsRuntime({
-      entry: './src/jobs.ts',
-    }),
+    jobs: jobs(),
 
-    custom: defineRuntimeConfig({
+    events: events(),
+
+    custom: defineRuntime({
       entry: './src/custom.runtime.ts',
       threads: 1,
       options: { foo: 'bar' },
@@ -276,8 +293,12 @@ Constraints:
   or compiled config module.
 - Runtime artifact paths come from manifest, not config thunks.
 - Runtime/build entries are string/URL specifiers resolved from the config file.
-- Runtime helper typing is inferred at helper call sites.
+- Runtime helper typing is inferred at helper call sites. For Neemata, users
+  can pass a typed worker entry to `defineNeemataRuntime<TEntry>(...)` so
+  `threads` are checked against the application transport options.
 - Runtime object keys are unique names and become build/start/deploy selectors.
+- Config code can call runtime factories and compose declarative objects, but
+  must not open clients, sockets, log streams, or other runtime resources.
 
 ## Host Contracts
 
@@ -375,6 +396,17 @@ Host/runtime responsibility split:
 Dev reload scheduler is latest-wins and debounced. Config changes supersede
 pending scoped runtime reloads when needed.
 
+Rolldown watch notes:
+
+- Neem does an explicit initial build before runtime startup, then starts the
+  Rolldown watcher.
+- Current Rolldown native watch behavior was unreliable in local testing; dev
+  watch currently uses polling.
+- Watch readiness is delayed after the initial watcher cycle so immediate edits
+  after startup are not missed.
+- Rebuild result objects are closed after `BUNDLE_END`/`ERROR` to reduce native
+  resource retention.
+
 ## Production Flow
 
 `neem build`:
@@ -400,12 +432,38 @@ Standalone `node dist/start.js` follows same runtime path and injects
 
 ## Near-Term Agenda
 
-1. Audit Neemata adapter parity against runtime worker behavior.
-2. Add metrics/observability on generic runtime lifecycle.
-3. Add health/readiness probe exposure.
-4. Design framework-owned build lifecycle for Nuxt/other meta-frameworks.
-5. Harden eventing runtime policies: retries, poison messages, DLQ, pending
+1. Add metrics/observability on generic runtime lifecycle.
+2. Add health/readiness probe exposure.
+3. Design framework-owned build lifecycle for Nuxt/other meta-frameworks.
+4. Harden eventing runtime policies: retries, poison messages, DLQ, pending
    Redis Streams recovery, Kafka partition/concurrency docs.
+
+## Neemata Adapter Parity Audit
+
+Current adapter parity is acceptable for the runtime model:
+
+- `defineNeemataWorker(application)` wraps a normal `defineWorker(...)` entry.
+- Worker `definition` is the application config, so Neem worker bootstrap passes
+  the same app definition to every thread.
+- Thread data is `NeemataAppTransportOptions<TApplication>`, matching
+  `createApp(..., { transports })`.
+- `NeemataApplicationRuntime.start()` delegates directly to
+  `application.start()` and returns its upstreams to Neem.
+- `NeemataApplicationRuntime.stop()` delegates directly to `application.stop()`.
+- Logger and mode come from `NeemWorkerRuntimeContext`, so dev/prod labels and
+  lifecycle mode stay host-owned.
+- `defineNeemataRuntime(...)` owns only the thin runtime adapter build concerns,
+  including the uWebSockets native addon build plugin.
+- The application package test covers direct `createApp(...)` lifecycle and
+  root-composed router metadata, including current protocol version handling.
+- Neem tests cover `defineNeemataRuntime(...)` through built runtime start.
+
+Known parity gaps to keep out of this slice:
+
+- No public HTTP readiness/health endpoint yet.
+- No adapter-specific graceful drain policy beyond current transport/gateway
+  stop behavior.
+- Meta-framework adapters still need separate framework-owned build lifecycle.
 
 ## Non-Goals For Current Slice
 

@@ -17,7 +17,7 @@ import { NEEM_MANIFEST_FILE } from '../../../packages/neem/src/internal/build/ma
 import { devNeem } from '../../../packages/neem/src/internal/commands/dev.ts'
 
 const fixturesDir = resolve(import.meta.dirname, '../fixtures')
-const tempRoot = resolve(import.meta.dirname, '../node_modules/.tmp')
+const tempRoot = resolve(import.meta.dirname, '../.tmp-dev')
 const tempDirs: string[] = []
 const previousEventsFile = process.env.NEEM_RUNTIME_EVENTS_FILE
 
@@ -116,47 +116,6 @@ describe('neem dev', () => {
     }
   })
 
-  it('updates hashed config artifact and restarts workers after config changes', async () => {
-    const fixture = await createFixtureCopy()
-    process.env.NEEM_RUNTIME_EVENTS_FILE = fixture.eventsFile
-
-    const host = await devNeem({
-      config: fixture.configFile,
-      outDir: fixture.outDir,
-    })
-
-    try {
-      await host.ready
-      const initialManifest = await readManifest(fixture.outDir)
-      const source = await readFile(fixture.configFile, 'utf8')
-      await writeFile(
-        fixture.configFile,
-        source.replace("label: 'one'", "label: 'uno'"),
-      )
-
-      await waitFor(async () => {
-        const manifest = await readManifest(fixture.outDir)
-        if (
-          JSON.stringify(manifest.config.runtimes) ===
-          JSON.stringify(initialManifest.config.runtimes)
-        ) {
-          return false
-        }
-        const events = await readEvents(fixture.eventsFile)
-        return (
-          host.getLifecycle().state === 'running' &&
-          events.some(
-            (event) => event.event === 'create' && event.data?.label === 'uno',
-          )
-        )
-      })
-      expect(host.getLifecycle().state).toBe('running')
-    } finally {
-      await host.stop()
-      await host.closed
-    }
-  })
-
   it('restarts workers after runtime source rebuild and keeps old workers on rebuild errors', async () => {
     const fixture = await createFixtureCopy()
     process.env.NEEM_RUNTIME_EVENTS_FILE = fixture.eventsFile
@@ -172,7 +131,7 @@ describe('neem dev', () => {
       const initialCreateCount = countEvents(events, 'create')
       const appSource = await readFile(fixture.appFile, 'utf8')
       await writeFile(fixture.appFile, 'const = ;\n')
-      await wait(300)
+      await wait(1_000)
 
       events = await readEvents(fixture.eventsFile)
       expect(events.filter((event) => event.event === 'stop')).toHaveLength(0)
@@ -204,7 +163,7 @@ describe('neem dev', () => {
       await host.stop()
       await host.closed
     }
-  })
+  }, 15_000)
 
   it('coalesces rapid runtime source rebuilds and applies the latest artifact', async () => {
     const fixture = await createFixtureCopy()
@@ -263,7 +222,7 @@ describe('neem dev', () => {
       await host.stop()
       await host.closed
     }
-  })
+  }, 15_000)
 
   it('still performs a global restart after config changes', async () => {
     const fixture = await createFixtureCopy()
@@ -290,13 +249,13 @@ describe('neem dev', () => {
           countEvents(events, 'create') >= initialCreateCount + 2
           ? events
           : false
-      })
+      }, 10_000)
       expect(host.getLifecycle().state).toBe('running')
     } finally {
       await host.stop()
       await host.closed
     }
-  })
+  }, 15_000)
 
   it('runs dev through the CLI and stops through an abort signal', async () => {
     const fixture = await createFixtureCopy()

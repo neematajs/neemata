@@ -1,6 +1,6 @@
 import { createLogger } from '@nmtjs/core'
 import { ProxyableTransportType } from '@nmtjs/gateway'
-import { ConnectionType } from '@nmtjs/protocol'
+import { ConnectionType, ProtocolVersion } from '@nmtjs/protocol'
 import { describe, expect, it } from 'vitest'
 
 import type { ApplicationTransport } from '../src/index.ts'
@@ -93,7 +93,7 @@ describe('Neemata application runtime', () => {
         accept: '*/*',
         contentType: '*/*',
         data: {},
-        protocolVersion: 'v1',
+        protocolVersion: ProtocolVersion.v1,
         type: ConnectionType.Unidirectional,
       })
       await using disposableConnection = connection

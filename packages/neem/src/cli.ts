@@ -5,6 +5,7 @@ import { defineCommand, runCommand, showUsage } from 'citty'
 import { buildNeem } from './internal/commands/build.ts'
 import { devNeem } from './internal/commands/dev.ts'
 import { startNeem } from './internal/commands/start.ts'
+import { createNeemTestProbe } from './internal/runtime/test-probe.ts'
 
 export type NeemCliMainOptions = { signal?: AbortSignal }
 
@@ -68,15 +69,19 @@ const mainCommand = defineCommand({
       },
       async run({ args }) {
         const controller = createCliAbortController()
+        const probe = createNeemTestProbe()
+        probe?.emit('cli:dev:start')
 
         try {
           const host = await devNeem({
             config: args.config,
             outDir: args.outDir,
             runtimes: collectRuntimeArgs(args),
+            hooks: probe?.hooks,
             signal: controller.signal,
           })
           await host.closed
+          probe?.emit('cli:dev:closed')
         } finally {
           controller.dispose()
         }
@@ -101,14 +106,18 @@ const mainCommand = defineCommand({
       },
       async run({ args }) {
         const controller = createCliAbortController()
+        const probe = createNeemTestProbe()
+        probe?.emit('cli:start:start')
 
         try {
           const host = await startNeem({
             outDir: args.outDir,
             runtimes: collectRuntimeArgs(args),
+            hooks: probe?.hooks,
             signal: controller.signal,
           })
           await host.closed
+          probe?.emit('cli:start:closed')
         } finally {
           controller.dispose()
         }

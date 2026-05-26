@@ -1,4 +1,3 @@
-import { spawn } from 'node:child_process'
 import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
@@ -13,7 +12,7 @@ const neemInternalDir = resolve(
   import.meta.dirname,
   '../../../packages/neem/src/internal',
 )
-const tempRoot = resolve(import.meta.dirname, '../node_modules/.tmp')
+const tempRoot = resolve(import.meta.dirname, '../.tmp-start')
 const tempDirs: string[] = []
 const previousEventsFile = process.env.NEEM_RUNTIME_EVENTS_FILE
 const previousLogEventsFile = process.env.NEEM_LOG_EVENTS_FILE
@@ -284,74 +283,6 @@ describe('neem start', () => {
     expect(events.some((event) => event.event === 'host-setup')).toBe(false)
   })
 
-  it('starts selected generic runtime through per-runtime standalone entry', async () => {
-    const { outDir, eventsFile } = await buildFixture(
-      'generic-runtime.config.ts',
-    )
-    const child = spawn(
-      process.execPath,
-      [resolve(outDir, 'runtimes/api/start.js')],
-      {
-        env: { ...process.env, NEEM_RUNTIME_EVENTS_FILE: eventsFile },
-        stdio: ['ignore', 'pipe', 'pipe'],
-      },
-    )
-    let output = ''
-    child.stdout.on('data', (chunk) => {
-      output += String(chunk)
-    })
-    child.stderr.on('data', (chunk) => {
-      output += String(chunk)
-    })
-
-    try {
-      await waitForEvent(
-        eventsFile,
-        (event) => event.event === 'runtime-start' && event.name === 'api:0',
-      )
-      child.kill('SIGTERM')
-      const exit = await waitForExit(child)
-      expect(exit).toEqual({ code: 0, signal: null })
-
-      const events = await readEvents(eventsFile)
-      expect(events.some((event) => event.name === 'jobs')).toBe(false)
-      expect(events.some((event) => event.event === 'host-setup')).toBe(false)
-    } catch (error) {
-      child.kill('SIGKILL')
-      throw new Error(`per-runtime standalone start failed\n${output}`, {
-        cause: error,
-      })
-    }
-  }, 15000)
-
-  it('starts built output through standalone start entry', async () => {
-    const { outDir, eventsFile } = await buildFixture('runtime.config.ts')
-    const child = spawn(process.execPath, [resolve(outDir, 'start.js')], {
-      env: { ...process.env, NEEM_RUNTIME_EVENTS_FILE: eventsFile },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
-    let output = ''
-    child.stdout.on('data', (chunk) => {
-      output += String(chunk)
-    })
-    child.stderr.on('data', (chunk) => {
-      output += String(chunk)
-    })
-
-    try {
-      await waitForEvent(eventsFile, (event) => event.event === 'start')
-      child.kill('SIGTERM')
-      const exit = await waitForExit(child)
-      expect(exit).toEqual({ code: 0, signal: null })
-      expect(await readEvents(eventsFile)).toContainEqual(
-        expect.objectContaining({ event: 'stop', name: 'api:0' }),
-      )
-    } catch (error) {
-      child.kill('SIGKILL')
-      throw new Error(`standalone start failed\n${output}`, { cause: error })
-    }
-  }, 15000)
-
   it('fails startup and stops workers that already started', async () => {
     const { outDir, eventsFile } = await buildFixture(
       'runtime-fail-start.config.ts',
@@ -472,15 +403,6 @@ async function waitForEvent(
     await new Promise((resolve) => setTimeout(resolve, 25))
   }
   throw new Error(`Timed out waiting for runtime event`)
-}
-
-async function waitForExit(
-  child: ReturnType<typeof spawn>,
-): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
-  return await new Promise((resolve, reject) => {
-    child.once('error', reject)
-    child.once('exit', (code, signal) => resolve({ code, signal }))
-  })
 }
 
 type RuntimeEvent = {

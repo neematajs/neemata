@@ -1,5 +1,5 @@
 import type { FSWatcher } from 'node:fs'
-import { watch } from 'node:fs'
+import { unwatchFile, watch, watchFile } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
@@ -107,6 +107,7 @@ class NeemDevSession implements NeemDevHost {
   private config: NeemConfig | undefined
   private logger = createNeemDefaultLogger('development')
   private configWatcher: FSWatcher | undefined
+  private watchesConfigFile = false
   private runtime: NeemRuntimeServer | undefined
   private runtimeWatchers = new Map<string, RuntimeWatcherState>()
   private runtimeArtifacts = new Map<string, NeemResolvedArtifact>()
@@ -121,6 +122,10 @@ class NeemDevSession implements NeemDevHost {
   private reloadFlushQueued = false
   private scheduleRuntimeReloadFlush = debounce(
     () => this.queueRuntimeReloadFlush(),
+    NEEM_DEV_RELOAD_DEBOUNCE_MS,
+  )
+  private scheduleConfigApply = debounce(
+    () => this.enqueue(() => this.applyConfig()),
     NEEM_DEV_RELOAD_DEBOUNCE_MS,
   )
   private readySettled = false
@@ -202,8 +207,13 @@ class NeemDevSession implements NeemDevHost {
     this.logger.info('Stopping Neem dev session')
 
     this.scheduleRuntimeReloadFlush.cancel()
+    this.scheduleConfigApply.cancel()
     await this.stopRuntimeWatchers()
     await this.configWatcher?.close()
+    if (this.watchesConfigFile) {
+      unwatchFile(this.configFile)
+      this.watchesConfigFile = false
+    }
     this.configWatcher = undefined
     await this.operation.catch(() => {})
     await this.runtimeOperation.catch(() => {})
@@ -237,8 +247,14 @@ class NeemDevSession implements NeemDevHost {
     )
     await this.applyConfig()
     this.configWatcher = watch(this.configFile, () => {
-      void this.enqueue(() => this.applyConfig())
+      void this.scheduleConfigApply()
     })
+    watchFile(this.configFile, { interval: 100 }, (current, previous) => {
+      if (current.mtimeMs !== previous.mtimeMs) {
+        void this.scheduleConfigApply()
+      }
+    })
+    this.watchesConfigFile = true
     this.configWatcher.on('error', (error) => {
       this.recordError(error)
     })

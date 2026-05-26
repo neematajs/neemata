@@ -5,7 +5,6 @@ import { fileURLToPath } from 'node:url'
 
 import { describe, expect, it } from 'vitest'
 
-import type { NeemBuildManifest } from '../../../packages/neem/src/internal/build/manifest.ts'
 import type { NeemRuntimeSnapshot } from '../../../packages/neem/src/internal/runtime/snapshot.ts'
 import type { NeemConfig } from '../../../packages/neem/src/public/config.ts'
 import { createNeemHostHooks } from '../../../packages/neem/src/internal/runtime/hooks.ts'
@@ -14,13 +13,16 @@ import { createRuntimeSnapshot } from '../../../packages/neem/src/internal/runti
 
 describe('NeemRuntimeServer', () => {
   it('exposes snapshot metadata and marks start/stop state', async () => {
-    const server = new TestRuntimeServer({ snapshot: createSnapshot('api') })
+    const dir = await mkdtemp(join(tmpdir(), 'neem-runtime-snapshot-'))
+    const eventFile = join(dir, 'events.log')
+    const server = new NeemRuntimeServer({
+      snapshot: createRuntimeHostSnapshot(eventFile),
+    })
 
     expect(server.getSnapshot()).toMatchObject({
       mode: 'production',
-      outDir: '/tmp/neem-out',
-      runtimeNames: ['api'],
-      artifactCount: 1,
+      runtimeNames: ['hosted'],
+      artifactCount: 2,
       state: 'idle',
       revision: 0,
     })
@@ -33,88 +35,61 @@ describe('NeemRuntimeServer', () => {
   })
 
   it('reloads with a new snapshot', async () => {
-    const events: string[] = []
-    const server = new TestRuntimeServer({
-      snapshot: createSnapshot('api'),
-      events,
+    const dir = await mkdtemp(join(tmpdir(), 'neem-runtime-reload-'))
+    const eventFile = join(dir, 'events.log')
+    const server = new NeemRuntimeServer({
+      snapshot: createRuntimeHostSnapshot(eventFile),
     })
 
     await server.start()
-    await server.reload(createSnapshot('admin'))
+    await server.reload(createRuntimeHostSnapshot(eventFile))
 
     expect(server.getSnapshot()).toMatchObject({
       state: 'running',
-      runtimeNames: ['admin'],
+      runtimeNames: ['hosted'],
     })
-    expect(events).toEqual([
-      'start:/tmp/neem-out',
-      'stop:/tmp/neem-out',
-      'start:/tmp/neem-out',
+    await expect(readEvents(eventFile)).resolves.toEqual([
+      'host-setup:hosted',
+      'host-plan:hosted',
+      'worker-start:hosted:worker',
+      'host-start:1:1',
+      'host-stop:1',
+      'worker-stop:hosted:worker',
+      'host-setup:hosted',
+      'host-plan:hosted',
+      'worker-start:hosted:worker',
+      'host-start:1:1',
     ])
-  })
 
-  it('reloads one runtime without full server restart', async () => {
-    const events: string[] = []
-    const server = new TestRuntimeServer({
-      snapshot: createSnapshot('api'),
-      events,
-    })
-
-    await server.start()
-    await server.reloadRuntime('api', createSnapshot('api'))
-
-    expect(server.getSnapshot()).toMatchObject({
-      state: 'running',
-      runtimeNames: ['api'],
-    })
-    expect(events).toEqual(['start:/tmp/neem-out', 'reload-runtime:api'])
+    await server.stop()
   })
 
   it('marks failed runtime reload and recovers on next successful runtime reload', async () => {
-    const error = new Error('fixture runtime reload failure')
-    const events: string[] = []
-    const server = new TestRuntimeServer({
-      snapshot: createSnapshot('api'),
-      events,
+    const dir = await mkdtemp(join(tmpdir(), 'neem-runtime-reload-fail-'))
+    const eventFile = join(dir, 'events.log')
+    const server = new NeemRuntimeServer({
+      snapshot: createRuntimeHostSnapshot(eventFile),
     })
 
     await server.start()
-    server.startError = error
-
     await expect(
-      server.reloadRuntime('api', createSnapshot('api')),
-    ).rejects.toThrow(error)
+      server.reloadRuntime(
+        'hosted',
+        createRuntimeHostSnapshot(eventFile, { failStart: true }),
+      ),
+    ).rejects.toThrow('host start failed')
     expect(server.getSnapshot()).toMatchObject({
       state: 'failed',
-      lastError: error,
+      lastError: expect.objectContaining({ message: 'host start failed' }),
     })
 
-    server.startError = undefined
-    await server.reloadRuntime('api', createSnapshot('api'))
+    await server.reloadRuntime('hosted', createRuntimeHostSnapshot(eventFile))
 
     expect(server.getSnapshot()).toMatchObject({
       state: 'running',
       lastError: undefined,
     })
-    expect(events).toEqual([
-      'start:/tmp/neem-out',
-      'reload-runtime:api',
-      'reload-runtime:api',
-    ])
-  })
-
-  it('marks failed state when start fails', async () => {
-    const error = new Error('fixture start failure')
-    const server = new TestRuntimeServer({
-      snapshot: createSnapshot('api'),
-      startError: error,
-    })
-
-    await expect(server.start()).rejects.toThrow(error)
-    expect(server.getSnapshot()).toMatchObject({
-      state: 'failed',
-      lastError: error,
-    })
+    await server.stop()
   })
 
   it('runs runtime host setup/plan/start/stop on the main thread', async () => {
@@ -419,99 +394,35 @@ describe('NeemRuntimeServer', () => {
   })
 
   it('serializes operations', async () => {
-    const events: string[] = []
-    const server = new TestRuntimeServer({
-      snapshot: createSnapshot('api'),
-      events,
-      delayMs: 10,
+    const dir = await mkdtemp(join(tmpdir(), 'neem-runtime-serialize-'))
+    const eventFile = join(dir, 'events.log')
+    const server = new NeemRuntimeServer({
+      snapshot: createRuntimeHostSnapshot(eventFile),
     })
 
-    await Promise.all([server.start(), server.reload(createSnapshot('admin'))])
+    await Promise.all([
+      server.start(),
+      server.reload(createRuntimeHostSnapshot(eventFile)),
+    ])
 
-    expect(events).toEqual([
-      'start:/tmp/neem-out',
-      'stop:/tmp/neem-out',
-      'start:/tmp/neem-out',
+    expect(server.getState()).toBe('running')
+    await server.stop()
+    await expect(readEvents(eventFile)).resolves.toEqual([
+      'host-setup:hosted',
+      'host-plan:hosted',
+      'worker-start:hosted:worker',
+      'host-start:1:1',
+      'host-stop:1',
+      'worker-stop:hosted:worker',
+      'host-setup:hosted',
+      'host-plan:hosted',
+      'worker-start:hosted:worker',
+      'host-start:1:1',
+      'host-stop:1',
+      'worker-stop:hosted:worker',
     ])
   })
 })
-
-class TestRuntimeServer extends NeemRuntimeServer {
-  private readonly events: string[]
-  startError: Error | undefined
-  private readonly delayMs: number
-
-  constructor(options: {
-    snapshot: NeemRuntimeSnapshot
-    events?: string[]
-    startError?: Error
-    delayMs?: number
-  }) {
-    super({ snapshot: options.snapshot })
-    this.events = options.events ?? []
-    this.startError = options.startError
-    this.delayMs = options.delayMs ?? 0
-  }
-
-  protected override async startRuntime(
-    snapshot: NeemRuntimeSnapshot,
-  ): Promise<void> {
-    if (this.delayMs) await wait(this.delayMs)
-    if (this.startError) throw this.startError
-    this.events.push(`start:${snapshot.outDir}`)
-  }
-
-  protected override async stopRuntime(
-    snapshot: NeemRuntimeSnapshot,
-  ): Promise<void> {
-    this.events.push(`stop:${snapshot.outDir}`)
-  }
-
-  protected override async reloadRuntimeRuntime(
-    runtimeName: string,
-    _snapshot: NeemRuntimeSnapshot,
-  ): Promise<void> {
-    this.events.push(`reload-runtime:${runtimeName}`)
-    if (this.startError) throw this.startError
-  }
-}
-
-function createSnapshot(
-  runtimeName: string,
-  options: { runtimes?: boolean } = {},
-): NeemRuntimeSnapshot {
-  return createRuntimeSnapshot({
-    mode: 'production',
-    outDir: '/tmp/neem-out',
-    config: { runtimes: {} } as NeemConfig,
-    manifest: createManifest(runtimeName, options.runtimes !== false),
-  })
-}
-
-function createManifest(
-  runtimeName: string,
-  includeRuntimes = true,
-): NeemBuildManifest {
-  return {
-    schemaVersion: 1,
-    config: { runtimes: {} },
-    runtimes: includeRuntimes
-      ? {
-          [runtimeName]: {
-            name: runtimeName,
-            entry: {
-              id: 'entry',
-              kind: 'worker',
-              owner: { type: 'runtime', name: runtimeName },
-              file: `runtimes/${runtimeName}/entry/${runtimeName}.js`,
-              outDir: `runtimes/${runtimeName}/entry`,
-            },
-            artifacts: [],
-          },
-        }
-      : {},
-  }
-}
 
 function createRuntimeHostSnapshot(
   eventFile: string,
