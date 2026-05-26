@@ -2,9 +2,11 @@ import { createServer as createNetServer } from 'node:net'
 
 import { createLogger } from '@nmtjs/core'
 import {
+  createDefaultMetricsRolldownPlugin,
   createMetricsRegistry,
   createMetricsServer,
   createNeemMetricsObserver,
+  getDefaultMetricsLoaderImport,
   registerDefaultMetrics,
 } from '@nmtjs/metrics'
 import { describe, expect, it } from 'vitest'
@@ -75,6 +77,26 @@ describe('@nmtjs/metrics', () => {
     expect(metrics).toContain('neem_lifecycle_events_total')
     expect(metrics).toContain('neem_runtime_ready')
     expect(metrics).toContain('neem_runtime_pool_threads')
+  })
+
+  it('injects default metrics registration through the build plugin', () => {
+    const plugin = createDefaultMetricsRolldownPlugin({
+      include: /runtime-entry\.ts$/,
+    }) as {
+      resolveId(id: string): string | undefined
+      load(id: string): string | undefined
+      transform(code: string, id: string): string | undefined
+    }
+    const loader = getDefaultMetricsLoaderImport()
+
+    expect(plugin.resolveId(loader)).toBe(loader)
+    expect(plugin.load(loader)).toContain('registerDefaultMetrics')
+    expect(
+      plugin.transform('export const ok = true', '/src/runtime-entry.ts'),
+    ).toBe(`import ${JSON.stringify(loader)};\nexport const ok = true`)
+    expect(plugin.transform('export const ok = true', '/src/other.ts')).toBe(
+      undefined,
+    )
   })
 })
 
