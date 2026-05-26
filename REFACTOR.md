@@ -117,6 +117,9 @@ metrics semantics, store adapters, or app DI provisions.
 - Neem host plugins are not part of the target architecture. Packages that
   need host coordination plus workers expose a runtime helper with a host entry.
 - No generic capability registry or app-worker service registry in v1.
+- Public health/readiness probes are Neem-owned host endpoints. They are
+  configured with top-level `health`, not `proxy.healthChecks`, because proxy
+  health checks are upstream-routing internals.
 - Jobs stay in `@nmtjs/jobs`; target Neem integration is explicit jobs runtime,
   not hidden plugin-owned workers.
 - Jobs runtime host owns queue-worker coordination on the Neem main thread and
@@ -143,9 +146,21 @@ metrics semantics, store adapters, or app DI provisions.
 - Event consumers should run as named Neem runtimes. Neem owns threads and
   lifecycle; `@nmtjs/eventing` owns broker clients, consumer groups, handler
   dispatch, and ack/commit policy.
-- Metrics should observe host/runtime events. Implementation can use runtime
-  hooks or a narrow host extension, but must not introduce feature-specific host
+- Metrics should observe host/runtime events through Neem hooks and health
+  snapshots. Neem core must not own Prometheus or feature-specific metrics
   semantics.
+- Metrics v1 is Prometheus-compatible only. `@nmtjs/metrics` owns the endpoint,
+  Pushgateway support, metric worker threads, and a package-owned Rolldown
+  plugin that injects default metrics registration.
+- Production worker recovery is generic Neem behavior. Post-ready worker
+  failures restart with bounded attempts and backoff; exhaustion marks the
+  runtime failed and host readiness false.
+- Degraded runtime pools are visible in health snapshots, but degraded or
+  failed runtimes make `/ready` return `503`.
+- Scheduler belongs in `@nmtjs/jobs` and schedules job enqueue operations. It
+  must not reintroduce hidden plugin-owned workers.
+- Commands mean CLI commands. They are deferred until runtime hardening and the
+  jobs scheduler shape are clearer.
 - Logging uses configured logger for runtime layers. CLI only owns fatal
   boundary. Runtime worker labels are runtime/thread names.
 - Meta-framework runtimes should keep framework build output framework-owned.
@@ -182,6 +197,7 @@ Wired:
   throw
 - runtime worker `start()` failure cleans up partially-created runtime before
   worker exit
+- public health/readiness probe server backed by `NeemRuntimeServer.getHealth()`
 - runtime lifecycle observer hooks, including scoped `runtime:reload`
 - manifest runtime artifact validation
 - helper-emitted runtime artifacts via runtime helper build metadata
@@ -221,10 +237,54 @@ Ported packages:
 Still incomplete:
 
 - production-grade worker restart/backoff/degraded policy
-- HTTP health/readiness probe exposure
 - metrics/observability package
-- scheduler/commands
+- jobs scheduler
+- CLI commands
 - meta-framework build/watch lifecycle
+
+## Remaining Runtime Hardening
+
+### 1. Production Restart Policy
+
+- Owner: `@nmtjs/neem`.
+- Add generic runtime worker recovery, not app/job-specific recovery.
+- Post-ready worker crashes restart with bounded attempts and backoff.
+- Restart success restores runtime readiness.
+- Restart exhaustion marks the runtime failed and makes host readiness false.
+- Degraded pools remain visible in health; `/ready` returns `503` while any
+  required runtime is degraded or failed.
+
+Test coverage:
+
+- post-ready worker crash restarts with backoff
+- restart success restores readiness
+- restart exhaustion marks runtime failed
+- degraded runtime makes `/ready` return `503`
+
+### 2. Metrics / Observability
+
+- Owner: `@nmtjs/metrics`.
+- Prometheus-compatible v1 only.
+- Host-owned observer surface over Neem hooks and health snapshots.
+- Keep Prometheus endpoint and Pushgateway support outside Neem core.
+- Use metric worker threads like old `nmtjs`.
+- Inject default metrics registration through a package-owned Rolldown plugin.
+
+Test coverage:
+
+- host lifecycle metrics update from hooks
+- worker/runtime health metrics reflect current snapshots
+- `/metrics` returns Prometheus text
+- default metrics loader registers default metrics once
+- stop cleans endpoint, push interval, and metrics workers
+
+### 3. Scheduler / CLI Commands
+
+- Scheduler owner: `@nmtjs/jobs`.
+- Scheduler schedules job enqueue operations and does not run hidden workers.
+- Commands mean CLI commands, not runtime commands in v1.
+- Defer concrete scheduler/command tests until each implementation plan is
+  defined.
 
 ## Feature Porting Ledger
 
@@ -234,19 +294,19 @@ Still incomplete:
 | Runtime map | `@nmtjs/neem` | `runtimes: { [name]: runtime }` as only generic orchestration model. | `wired` |
 | Runtime hosts | `@nmtjs/neem` | Main-thread setup/plan/start/stop/fail with declarative thread plans. | `wired` |
 | Runtime server lifecycle | `@nmtjs/neem` | Central server with start/stop/reload/scoped runtime reload. | `wired` |
-| Worker management | `@nmtjs/neem` | Managed runtime workers, pools, health, timeouts; restart/backoff later. | `partial` |
+| Worker management | `@nmtjs/neem` | Managed runtime workers, pools, health, timeouts; production restart/backoff policy still missing. | `partial` |
 | Proxy | `@nmtjs/neem` + `@nmtjs/proxy` | Optional host subsystem routing returned runtime upstreams. | `partial` |
 | Host plugins | none | Removed from Neem target model; runtime hosts replace worker-owning plugin behavior. | `removed` |
 | Neemata runtime | `@nmtjs/application` | Generic runtime adapter over pure Neemata app runtime. | `wired` |
 | Jobs | `@nmtjs/jobs` | Direct BullMQ jobs runtime + app plugin/injectables. Neem adapter uses runtime host and Neem-owned runner threads. | `partial` |
 | PubSub | `@nmtjs/pubsub` | Pub/sub package + app runtime plugin/adapters. | `partial` |
 | Eventing | `@nmtjs/eventing` | Durable stream/log client plus Neem consumer runtime. | `partial` |
-| Metrics | `@nmtjs/metrics` | Host/runtime observer package. | `missing` |
+| Metrics | `@nmtjs/metrics` | Prometheus host observer over Neem hooks/health, with metric worker threads. | `missing` |
 | Runtime injections | app packages | Neem passes context; adapters map into app containers. | `partial` |
-| Health/readiness | `@nmtjs/neem` | Internal health exists; public/probe exposure later. | `partial` |
+| Health/readiness | `@nmtjs/neem` | Host-owned public `/health` and `/ready` probes from manifest-backed config. | `wired` |
 | Meta-framework runtimes | adapter packages + Neem build hooks | Framework-owned build output with thin Neem adapter artifacts. | `missing` |
-| Scheduler | `@nmtjs/jobs` or runtime helper later | Deferred until runtime model settles. | `deferred` |
-| Commands | future runtime/helper surface | Placeholder only. | `deferred` |
+| Scheduler | `@nmtjs/jobs` | Jobs-owned scheduler that enqueues jobs. | `deferred` |
+| Commands | `@nmtjs/neem` CLI | CLI commands, deferred until runtime hardening and scheduler shape are clearer. | `deferred` |
 | Umbrella exports | `nmtjs` | Replace/thin after Neem lands. No changes in current slice. | `deferred` |
 
 ## Target Config Shape
@@ -273,6 +333,7 @@ const events = defineEventingRuntime({
 
 export default defineConfig({
   logger: './logger.ts',
+  health: { hostname: '127.0.0.1', port: 3100 },
   runtimes: {
     api: api({ rolldown: { /* optional user build overrides */ } }),
 
@@ -416,11 +477,11 @@ Rolldown watch notes:
 `neem build`:
 
 1. Load source config.
-3. Resolve selected runtime keys, if any.
-4. Build runtime host/worker artifacts.
-5. Build helper-emitted runtime artifacts.
-6. Write manifest.
-7. Emit root `start.js` and per-runtime `runtimes/<name>/start.js`.
+2. Resolve selected runtime keys, if any.
+3. Build runtime host/worker artifacts.
+4. Build helper-emitted runtime artifacts.
+5. Write manifest.
+6. Emit root `start.js` and per-runtime `runtimes/<name>/start.js`.
 
 `neem start`:
 
@@ -428,19 +489,20 @@ Rolldown watch notes:
 2. Resolve artifact registry.
 3. Resolve selected runtime keys, if any.
 4. Start runtime worker pools.
-5. Register returned upstreams with proxy if configured.
-6. Stop in reverse: proxy, runtimes.
+5. Start host health/readiness probe if configured.
+6. Register returned upstreams with proxy if configured.
+7. Stop in reverse: health probe, proxy, runtimes.
 
 Standalone `node dist/start.js` follows same runtime path and injects
 `dist/runtime/worker-entry.js`.
 
 ## Near-Term Agenda
 
-1. Add metrics/observability on generic runtime lifecycle.
-2. Add health/readiness probe exposure.
-3. Design framework-owned build lifecycle for Nuxt/other meta-frameworks.
-4. Decide next durable runtime target: scheduler/commands, eventing RabbitMQ
-   Streams, or production restart/backoff policy.
+1. Add production restart/backoff/degraded policy.
+2. Add `@nmtjs/metrics` Prometheus observer package.
+3. Add jobs-owned scheduler.
+4. Add CLI commands.
+5. Design framework-owned build lifecycle for Nuxt/other meta-frameworks.
 
 ## Neemata Adapter Parity Audit
 
@@ -464,7 +526,6 @@ Current adapter parity is acceptable for the runtime model:
 
 Known parity gaps to keep out of this slice:
 
-- No public HTTP readiness/health endpoint yet.
 - No adapter-specific graceful drain policy beyond current transport/gateway
   stop behavior.
 - Meta-framework adapters still need separate framework-owned build lifecycle.
