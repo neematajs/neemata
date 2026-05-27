@@ -13,7 +13,7 @@ import type { LifecycleHooks } from './lifecycle.ts'
 import type { RuntimePlugin } from './plugin.ts'
 import { kApplicationConfig } from './constants.ts'
 
-export type AnyApplicationConfig = ApplicationConfig<AnyRootRouter>
+export type AnyApplicationConfig = ApplicationConfig<AnyRootRouter, any>
 
 export type ApplicationTransport<
   Type extends ConnectionType = ConnectionType,

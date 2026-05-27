@@ -60,7 +60,7 @@ export class NeemataApplicationRuntime<
 export function defineNeemataRuntime<
   const TEntry extends NeemataWorker = NeemataWorker,
 >(config: {
-  application: NeemEntryInput<TEntry>
+  application: NeemEntryInput
   threads: readonly InferNeemRuntimeThreadOptions<TEntry>[]
 }): NeemRuntimeFactory {
   return defineRuntime<TEntry>({

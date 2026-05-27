@@ -13,7 +13,7 @@ export type NeemEntryModule<T> = { default: T }
 
 export type NeemEntryLoader<T> = () => Promise<NeemEntryModule<T>>
 
-export type NeemEntryInput<T> = NeemArtifactEntry
+export type NeemEntryInput = NeemArtifactEntry
 
 export type InferNeemEntryDefault<TEntry> = TEntry extends () => Promise<
   infer TModule
@@ -75,7 +75,7 @@ export type NeemRuntimeConfig<
   TEntry = NeemWorker<unknown, unknown>,
   THost extends NeemRuntimeHost = NeemRuntimeHost,
 > = {
-  entry: NeemEntryInput<TEntry>
+  entry: NeemEntryInput
   host?: NeemRuntimeHostInput<THost>
   build?: NeemRuntimeBuildInput
   threads?: number | readonly InferNeemRuntimeThreadOptions<TEntry>[]
@@ -83,7 +83,7 @@ export type NeemRuntimeConfig<
 }
 
 export type NeemRuntimeConfigBase = {
-  entry: NeemEntryInput<unknown>
+  entry: NeemEntryInput
   host?: NeemRuntimeHostInput
   build?: NeemRuntimeBuildInput
   threads?: number | readonly unknown[]
@@ -183,7 +183,7 @@ export function defineRuntime<
   Entry,
   Host extends NeemRuntimeHost = NeemRuntimeHost,
 >(config: {
-  entry: NeemEntryInput<Entry>
+  entry: NeemEntryInput
   host?: NeemRuntimeHostInput<Host>
   build?: NeemRuntimeBuildInput
   threads?: number | readonly InferNeemRuntimeThreadOptions<Entry>[]
