@@ -50,10 +50,6 @@ export type NeemRuntimeBuildInput =
   | NeemBuildConfigInput
   | NeemRuntimeBuildConfig
 
-export type NeemRuntimeFactory<
-  TBuild extends NeemRuntimeBuildOptions = NeemRuntimeBuildOptions,
-> = (build?: TBuild) => NeemRuntimeConfigBase
-
 export type NeemLoggerOptions = LoggingOptions
 
 export type NeemLoggerInput = NeemLoggerOptions | string | URL
@@ -88,6 +84,18 @@ export type NeemRuntimeConfigBase = {
   build?: NeemRuntimeBuildInput
   threads?: number | readonly unknown[]
   options?: unknown
+}
+
+export type NeemRuntimeConfigInput =
+  | NeemRuntimeConfigBase
+  | readonly [NeemRuntimeConfigBase, NeemRuntimeBuildOptions]
+
+export type NeemRuntimeConfigEntries = Record<string, NeemRuntimeConfigInput>
+
+export type NeemNormalizedRuntimeConfigEntries<
+  TRuntimes extends NeemRuntimeConfigEntries,
+> = {
+  readonly [K in keyof TRuntimes]: NeemRuntimeConfigBase
 }
 
 export type InferNeemRuntimeThreadOptions<TEntry> = TEntry extends {
@@ -127,9 +135,9 @@ export type NeemHealthConfig = {
 }
 
 export type NeemConfig<
-  TRuntimes extends Record<string, NeemRuntimeConfigBase> = Record<
+  TRuntimes extends NeemRuntimeConfigEntries = Record<
     string,
-    NeemRuntimeConfigBase
+    NeemRuntimeConfigInput
   >,
 > = {
   /**
@@ -154,8 +162,12 @@ export type NeemConfig<
   outDir?: string
 }
 
+export type NeemNormalizedConfig = NeemConfig<
+  Record<string, NeemRuntimeConfigBase>
+>
+
 export function defineConfig<
-  const TRuntimes extends Record<string, NeemRuntimeConfigBase>,
+  const TRuntimes extends NeemRuntimeConfigEntries,
 >(config: {
   /**
    * Logger configuration for Neem host/runtime logs.
@@ -188,14 +200,50 @@ export function defineRuntime<
   build?: NeemRuntimeBuildInput
   threads?: number | readonly InferNeemRuntimeThreadOptions<Entry>[]
   options?: unknown
-}): NeemRuntimeFactory {
+}): NeemRuntimeConfig<Entry, Host> {
+  return Object.freeze(config) as NeemRuntimeConfig<Entry, Host>
+}
+
+export function normalizeNeemConfig<
+  const TRuntimes extends NeemRuntimeConfigEntries,
+>(
+  config: NeemConfig<TRuntimes>,
+): NeemConfig<NeemNormalizedRuntimeConfigEntries<TRuntimes>> {
+  return Object.freeze({
+    ...config,
+    runtimes: normalizeNeemRuntimeConfigEntries(config.runtimes),
+  })
+}
+
+export function normalizeNeemRuntimeConfigEntries<
+  const TRuntimes extends NeemRuntimeConfigEntries,
+>(runtimes: TRuntimes): NeemNormalizedRuntimeConfigEntries<TRuntimes> {
   return Object.freeze(
-    (build?: NeemRuntimeBuildOptions) =>
-      Object.freeze({
-        ...config,
-        build: mergeNeemRuntimeBuildOptions(config.build, build),
-      }) as NeemRuntimeConfig<Entry, Host>,
-  )
+    Object.fromEntries(
+      Object.entries(runtimes).map(([name, input]) => [
+        name,
+        normalizeNeemRuntimeConfig(input),
+      ]),
+    ),
+  ) as NeemNormalizedRuntimeConfigEntries<TRuntimes>
+}
+
+export function normalizeNeemRuntimeConfig(
+  input: NeemRuntimeConfigInput,
+): NeemRuntimeConfigBase {
+  if (!isRuntimeConfigTuple(input)) return input
+  const [runtime, build] = input
+
+  return Object.freeze({
+    ...runtime,
+    build: mergeNeemRuntimeBuildOptions(runtime.build, build),
+  })
+}
+
+function isRuntimeConfigTuple(
+  input: NeemRuntimeConfigInput,
+): input is readonly [NeemRuntimeConfigBase, NeemRuntimeBuildOptions] {
+  return Array.isArray(input)
 }
 
 function mergeNeemRuntimeBuildOptions(

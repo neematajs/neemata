@@ -6,7 +6,6 @@ import type {
   NeemRolldownOptions,
   NeemRuntime,
   NeemRuntimeConfig,
-  NeemRuntimeFactory,
   NeemWorker,
   NeemWorkerRuntimeContext,
 } from '@nmtjs/neem'
@@ -62,7 +61,7 @@ export function defineNeemataRuntime<
 >(config: {
   application: NeemEntryInput
   threads: readonly InferNeemRuntimeThreadOptions<TEntry>[]
-}): NeemRuntimeFactory {
+}): NeemRuntimeConfig<TEntry> {
   return defineRuntime<TEntry>({
     entry: config.application,
     threads: config.threads,

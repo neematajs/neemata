@@ -1,3 +1,5 @@
+import type { NeemRolldownOptions } from '@nmtjs/neem'
+
 const defaultMetricsLoaderId = '@nmtjs/metrics/default-loader'
 
 export type DefaultMetricsRolldownPluginOptions = {
@@ -6,7 +8,7 @@ export type DefaultMetricsRolldownPluginOptions = {
 
 export function createDefaultMetricsRolldownPlugin(
   options: DefaultMetricsRolldownPluginOptions = {},
-): object {
+): NonNullable<NeemRolldownOptions['plugins']> {
   const shouldInject = createMatcher(options.include)
 
   return {

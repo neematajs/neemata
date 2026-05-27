@@ -1,7 +1,7 @@
 import type {
   NeemEntryInput,
   NeemMaybePromise,
-  NeemRuntimeFactory,
+  NeemRuntimeConfigBase,
 } from '@nmtjs/neem'
 import { defineRuntime } from '@nmtjs/neem'
 
@@ -43,7 +43,7 @@ export type JobsRuntimeEntry<Job extends AnyJobsJob = AnyJobsJob> =
   JobsConfig<Job>
 
 export type JobsRuntimeConfigInput<TConfig extends JobsConfig = JobsConfig> = {
-  config: NeemEntryInput<TConfig>
+  config: NeemEntryInput
 }
 
 const emptyHooks: JobsLifecycleHooks = Object.freeze({})
@@ -73,14 +73,12 @@ export async function resolveJobsWorkerConfig<const Job extends AnyJobsJob>(
 
 export function defineJobsRuntime<
   const TConfig extends JobsConfig = JobsConfig,
->(config: JobsRuntimeConfigInput<TConfig>): NeemRuntimeFactory {
+>(config: JobsRuntimeConfigInput<TConfig>): NeemRuntimeConfigBase {
   return defineRuntime({
     entry: config.config,
     build: {
       host: { entry: '@nmtjs/jobs/neem/host' },
-      artifacts: [{ id: 'job-runner', kind: 'worker', entry: jobsWorkerEntry }],
+      artifacts: [{ id: 'job-runner', kind: 'worker', entry: '@nmtjs/jobs/neem/worker-entry' }],
     },
   })
 }
-
-export const jobsWorkerEntry = '@nmtjs/jobs/neem/worker-entry'

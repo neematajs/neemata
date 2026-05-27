@@ -1,5 +1,5 @@
 import type { InferNeemWorkerData } from '@nmtjs/neem'
-import { defineConfig, defineRuntime } from '@nmtjs/neem'
+import { defineConfig, defineRuntime, normalizeNeemConfig } from '@nmtjs/neem'
 import { describe, expect, expectTypeOf, it } from 'vitest'
 
 import app from '../fixtures/basic-app.ts'
@@ -62,7 +62,7 @@ describe('@nmtjs/neem consumer contracts', () => {
       entry: '../fixtures/basic-app.ts',
       threads: [{ http: { listen: { hostname: '127.0.0.1', port: 3000 } } }],
     })
-    const runtimeConfig = runtime()
+    const runtimeConfig = runtime
 
     expect(runtimeConfig.threads).toBeDefined()
     const [data] = runtimeConfig.threads as Array<ThreadOptions>
@@ -70,7 +70,7 @@ describe('@nmtjs/neem consumer contracts', () => {
 
     const stringEntryConfig = defineRuntime({
       entry: '../fixtures/basic-app.ts',
-    })()
+    })
     expect(stringEntryConfig.entry).toBe('../fixtures/basic-app.ts')
   })
 
@@ -106,12 +106,12 @@ describe('@nmtjs/neem consumer contracts', () => {
     const hostOwnedConfig = defineRuntime({
       entry: '../fixtures/basic-app.ts',
       host: '../fixtures/generic-runtime-host.ts',
-    })()
+    })
 
     expect(Boolean(hostOwnedConfig)).toBe(true)
   })
 
-  it('merges runtime build overrides inside defineRuntime factory', () => {
+  it('merges tuple runtime build overrides after helper defaults', () => {
     const basePlugin = { name: 'base' }
     const overridePlugin = { name: 'override' }
     const runtime = defineRuntime({
@@ -125,7 +125,10 @@ describe('@nmtjs/neem consumer contracts', () => {
       },
     })
 
-    const runtimeConfig = runtime({ rolldown: { plugins: [overridePlugin] } })
+    const config = defineConfig({
+      runtimes: { api: [runtime, { rolldown: { plugins: [overridePlugin] } }] },
+    })
+    const runtimeConfig = normalizeNeemConfig(config).runtimes.api
 
     expect(runtimeConfig.build).toMatchObject({
       host: { entry: '../fixtures/generic-runtime-host.ts' },

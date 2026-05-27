@@ -15,11 +15,11 @@ export default defineConfig({
           http: { listen: { hostname: '127.0.0.1', port: 4202 } },
         },
       ],
-    })(),
+    }),
     jobs: defineRuntime({
       entry: './generic-runtime.ts',
       host: { entry: './generic-runtime-host.ts' },
       options: { queue: 'runtime' },
-    })(),
+    }),
   },
 })

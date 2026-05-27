@@ -13,6 +13,7 @@ import type {
   NeemBuildConfig,
   NeemBuildConfigInput,
   NeemConfig,
+  NeemNormalizedConfig,
   NeemRuntimeBuildConfig,
   NeemRuntimeBuildInput,
   NeemRuntimeConfigBase,
@@ -25,6 +26,7 @@ import type {
   NeemRuntimeServerHealth,
   NeemRuntimeServerSnapshot,
 } from '../runtime/server.ts'
+import { normalizeNeemConfig } from '../../public/config.ts'
 import { resolveNeemConfigLogger } from '../build/logger.ts'
 import { NEEM_MANIFEST_SCHEMA_VERSION } from '../build/manifest.ts'
 import { resolveImportFile } from '../build/resolve.ts'
@@ -104,7 +106,7 @@ class NeemDevSession implements NeemDevHost {
   readonly ready: Promise<void>
   readonly closed: Promise<void>
 
-  private config: NeemConfig | undefined
+  private config: NeemNormalizedConfig | undefined
   private logger = createNeemDefaultLogger('development')
   private configWatcher: FSWatcher | undefined
   private watchesConfigFile = false
@@ -264,7 +266,9 @@ class NeemDevSession implements NeemDevHost {
     if (this.stopped) return
     this.beginRuntimeChange()
 
-    this.config = await importFreshDefault<NeemConfig>(this.configFile)
+    this.config = normalizeNeemConfig(
+      await importFreshDefault<NeemConfig>(this.configFile),
+    )
     this.assertSelectedRuntimesExist()
     this.logger = await resolveNeemConfigLogger(this.config, {
       mode: 'development',

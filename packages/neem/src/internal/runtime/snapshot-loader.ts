@@ -4,7 +4,7 @@ import { pathToFileURL } from 'node:url'
 
 import type { Logger } from '@nmtjs/core'
 
-import type { NeemConfig } from '../../public/config.ts'
+import type { NeemNormalizedConfig } from '../../public/config.ts'
 import type { NeemMode } from '../../public/runtime.ts'
 import type { NeemBuildManifest } from '../build/manifest.ts'
 import type { NeemRuntimeSnapshot } from './snapshot.ts'
@@ -72,7 +72,7 @@ async function resolveManifestLogger(
 function createConfigFromManifest(
   manifest: NeemBuildManifest,
   logger: Logger,
-): NeemConfig {
+): NeemNormalizedConfig {
   return {
     proxy: manifest.config.proxy,
     health: manifest.config.health,

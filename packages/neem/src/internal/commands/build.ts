@@ -24,6 +24,7 @@ import type {
   NeemBuildManifestConfig,
   NeemBuildManifestLogger,
 } from '../build/manifest.ts'
+import { normalizeNeemConfig } from '../../public/config.ts'
 import {
   NEEM_MANIFEST_FILE,
   NEEM_MANIFEST_SCHEMA_VERSION,
@@ -62,7 +63,9 @@ export async function buildNeem(
 ): Promise<NeemBuildResult> {
   const cwd = options.cwd ?? process.cwd()
   const configFile = resolve(cwd, options.config ?? 'neem.config.ts')
-  const config = await importDefault<NeemConfig>(configFile)
+  const config = normalizeNeemConfig(
+    await importDefault<NeemConfig>(configFile),
+  )
   const outDir = resolve(cwd, options.outDir ?? config.outDir ?? 'dist')
   const selectedRuntimes =
     normalizeSelectedRuntimes(options.runtimes) || Object.keys(config.runtimes)
@@ -295,13 +298,23 @@ export async function createManifestConfig(
   configFile: string,
   outDir: string,
 ): Promise<NeemBuildManifestConfig> {
+  const normalizedConfig = normalizeNeemConfig(config)
+
   return {
-    logger: await createManifestLogger(config.logger, configFile, outDir),
-    proxy: config.proxy,
-    health: config.health,
-    commands: await createManifestCommands(config.commands, configFile, outDir),
+    logger: await createManifestLogger(
+      normalizedConfig.logger,
+      configFile,
+      outDir,
+    ),
+    proxy: normalizedConfig.proxy,
+    health: normalizedConfig.health,
+    commands: await createManifestCommands(
+      normalizedConfig.commands,
+      configFile,
+      outDir,
+    ),
     runtimes: Object.fromEntries(
-      Object.entries(config.runtimes ?? {}).map(([name, runtime]) => [
+      Object.entries(normalizedConfig.runtimes ?? {}).map(([name, runtime]) => [
         name,
         { threads: runtime.threads, options: runtime.options },
       ]),

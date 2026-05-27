@@ -1,7 +1,7 @@
 import type {
   NeemEntryInput,
   NeemMaybePromise,
-  NeemRuntimeFactory,
+  NeemRuntimeConfigBase,
 } from '@nmtjs/neem'
 import { defineRuntime } from '@nmtjs/neem'
 
@@ -20,16 +20,13 @@ export type EventingRuntimeConfig = {
 }
 
 export type EventingRuntimeConfigInput = {
-  config: NeemEntryInput<EventingRuntimeConfig>
+  config: NeemEntryInput
   threads?: number
 }
 
 export function defineEventingRuntime<
   const TConfig extends EventingRuntimeConfig = EventingRuntimeConfig,
->(config: {
-  config: NeemEntryInput<TConfig>
-  threads?: number
-}): NeemRuntimeFactory {
+>(config: { config: NeemEntryInput; threads?: number }): NeemRuntimeConfigBase {
   return defineRuntime({
     entry: eventingWorkerEntry,
     threads: config.threads ?? 1,

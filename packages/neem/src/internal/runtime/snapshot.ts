@@ -3,7 +3,7 @@ import { isAbsolute, normalize, resolve } from 'node:path'
 import type { Logger } from '@nmtjs/core'
 
 import type { NeemResolvedArtifact } from '../../public/artifact.ts'
-import type { NeemConfig } from '../../public/config.ts'
+import type { NeemNormalizedConfig } from '../../public/config.ts'
 import type { NeemMode } from '../../public/runtime.ts'
 import type {
   NeemBuildManifest,
@@ -19,7 +19,7 @@ export type NeemRuntimeSnapshot = {
   outDir: string
   manifestFile?: string
   manifest: NeemBuildManifest
-  config: NeemConfig
+  config: NeemNormalizedConfig
   configFile: string
   runtimeWorkerEntry?: string | URL
   logger: Logger
@@ -31,7 +31,7 @@ export type NeemRuntimeSnapshotInput = {
   outDir: string
   manifestFile?: string
   manifest: NeemBuildManifest
-  config: NeemConfig
+  config: NeemNormalizedConfig
   configFile?: string
   runtimeWorkerEntry?: string | URL
   logger?: Logger

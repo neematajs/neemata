@@ -6,6 +6,6 @@ export default defineConfig({
     events: defineEventingRuntime({
       config: './runtime-eventing.ts',
       threads: 2,
-    })(),
+    }),
   },
 })
