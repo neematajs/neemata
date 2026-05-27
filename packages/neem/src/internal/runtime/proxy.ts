@@ -118,7 +118,7 @@ export class NeemProxyManager {
     return {
       enabled: true,
       running: Boolean(this.proxy),
-      upstreams: this.options.upstreams.list(),
+      upstreams: [...this.options.upstreams.list()],
     }
   }
 

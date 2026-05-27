@@ -1,5 +1,10 @@
 import type { InferNeemWorkerData } from '@nmtjs/neem'
-import { defineConfig, defineRuntime, normalizeNeemConfig } from '@nmtjs/neem'
+import {
+  defineConfig,
+  defineRuntime,
+  defineRuntimeHost,
+  normalizeNeemConfig,
+} from '@nmtjs/neem'
 import { describe, expect, expectTypeOf, it } from 'vitest'
 
 import app from '../fixtures/basic-app.ts'
@@ -109,6 +114,34 @@ describe('@nmtjs/neem consumer contracts', () => {
     })
 
     expect(Boolean(hostOwnedConfig)).toBe(true)
+  })
+
+  it('types runtime hosts as per-runtime factories', () => {
+    const host = defineRuntimeHost((params) => {
+      expectTypeOf(params.options).toEqualTypeOf<unknown>()
+
+      return {
+        plan() {
+          return { threads: [] }
+        },
+        start(startParams) {
+          expectTypeOf(startParams).toHaveProperty('threads')
+          // @ts-expect-error base runtime params are captured by factory
+          void startParams.options
+        },
+      }
+    })
+    const invalidHost = defineRuntimeHost(
+      // @ts-expect-error runtime hosts must be factories
+      {
+        setup() {
+          return undefined
+        },
+      },
+    )
+
+    expect(Boolean(host)).toBe(true)
+    expect(Boolean(invalidHost)).toBe(true)
   })
 
   it('merges tuple runtime build overrides after helper defaults', () => {

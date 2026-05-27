@@ -57,7 +57,7 @@ describe('neem proxy upstream registry', () => {
     registry.addOwnerUpstreams(workerA, 'api', upstreams)
     registry.addOwnerUpstreams(workerB, 'api', upstreams)
 
-    expect(registry.list()).toEqual([
+    expect([...registry.list()]).toEqual([
       expect.objectContaining({
         runtimeName: 'api',
         count: 2,
@@ -68,13 +68,13 @@ describe('neem proxy upstream registry', () => {
     expect(events[0]?.type).toBe('add')
 
     registry.removeOwnerUpstreams(workerA)
-    expect(registry.list()).toEqual([
+    expect([...registry.list()]).toEqual([
       expect.objectContaining({ runtimeName: 'api', count: 1 }),
     ])
     expect(events).toHaveLength(1)
 
     registry.removeOwnerUpstreams(workerB)
-    expect(registry.list()).toEqual([])
+    expect([...registry.list()]).toEqual([])
     expect(events).toEqual([
       expect.objectContaining({ type: 'add' }),
       expect.objectContaining({ type: 'remove' }),

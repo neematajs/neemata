@@ -4,7 +4,8 @@ import { MessageChannel } from 'node:worker_threads'
 import type { NeemResolvedArtifact } from '../../public/artifact.ts'
 import type {
   NeemRuntimeHost,
-  NeemRuntimeHostContext,
+  NeemRuntimeHostFactory,
+  NeemRuntimeHostParams,
   NeemRuntimeThreadHandle,
   NeemRuntimeThreadPlan,
   NeemRuntimeUpstream,
@@ -90,14 +91,16 @@ export class NeemRuntimeManager {
     }
   }
 
-  listThreads(): readonly NeemStartedRuntimeThread[] {
-    return [...this.runtimes.values()].flatMap((runtime) =>
-      runtime.listThreads(),
-    )
+  *listThreads(): IterableIterator<NeemStartedRuntimeThread> {
+    for (const runtime of this.runtimes.values()) {
+      yield* runtime.listThreads()
+    }
   }
 
-  listPools(): readonly NeemStartedRuntimePool[] {
-    return [...this.runtimes.values()].flatMap((runtime) => runtime.listPools())
+  *listPools(): IterableIterator<NeemStartedRuntimePool> {
+    for (const runtime of this.runtimes.values()) {
+      yield* runtime.listPools()
+    }
   }
 
   async start(): Promise<void> {
@@ -145,13 +148,15 @@ export class NeemRuntimeManager {
 
     try {
       await next.start()
+      const upstreams: NeemRuntimeUpstream[] = []
+      for (const thread of next.listThreads()) {
+        upstreams.push(...thread.getUpstreams())
+      }
       await callRuntimeReloadHook({
         hooks: this.options.hooks,
         snapshot,
         runtimeName,
-        upstreams: next
-          .listThreads()
-          .flatMap((thread) => thread.getUpstreams()),
+        upstreams,
       })
     } catch (error) {
       this.runtimes.delete(runtimeName)
@@ -167,7 +172,7 @@ type NeemRuntimeHostRuntimeOptions = NeemRuntimeManagerOptions & {
 
 class NeemRuntimeHostRuntime {
   private host: NeemRuntimeHost | undefined
-  private hostContext: NeemRuntimeHostContext | undefined
+  private hostParams: NeemRuntimeHostParams | undefined
   private pools: readonly NeemRuntimeThreadPool[] = []
   private threads: readonly NeemRuntimeThread[] = []
   private stopped = true
@@ -176,27 +181,28 @@ class NeemRuntimeHostRuntime {
 
   constructor(private readonly options: NeemRuntimeHostRuntimeOptions) {}
 
-  listThreads(): readonly NeemStartedRuntimeThread[] {
-    return this.threads
+  *listThreads(): IterableIterator<NeemStartedRuntimeThread> {
+    yield* this.threads
   }
 
-  listPools(): readonly NeemStartedRuntimePool[] {
-    return this.pools
+  *listPools(): IterableIterator<NeemStartedRuntimePool> {
+    yield* this.pools
   }
 
   async start(): Promise<void> {
     const { snapshot, runtimeName } = this.options
     this.stopped = false
-    const hostContext = this.createHostContext()
-    const host = await this.loadHost()
-    this.host = host
-    this.hostContext = hostContext
+    const hostParams = this.createHostParams()
+    let host: NeemRuntimeHost | undefined
+    this.hostParams = hostParams
 
     try {
       await this.callRuntimeHook('runtime:start')
-      await host?.setup?.(hostContext)
+      const hostFactory = await this.loadHost()
+      host = await hostFactory?.(hostParams)
+      this.host = host
       const plan = host?.plan
-        ? await host.plan(hostContext)
+        ? await host.plan()
         : { threads: createDefaultRuntimeThreadPlans(snapshot, runtimeName) }
 
       this.threads = createRuntimeThreads({
@@ -206,7 +212,7 @@ class NeemRuntimeHostRuntime {
         hooks: this.options.hooks,
         onWorkerFailure: (error, worker) => {
           void this.handleWorkerFailure(error, worker).catch((failureError) => {
-            hostContext.logger.warn(
+            hostParams.logger.warn(
               new Error(
                 `Runtime [${runtimeName}] worker failure handler failed`,
                 { cause: toError(failureError) },
@@ -226,14 +232,14 @@ class NeemRuntimeHostRuntime {
           thread.getUpstreams(),
         )
       }
-      await host?.start?.({ ...hostContext, threads: this.threads, upstreams })
+      await host?.start?.({ threads: this.threads, upstreams })
       await this.callRuntimeHook('runtime:ready', upstreams)
     } catch (error) {
       const normalized = toError(error)
-      await this.callHostFail(host, hostContext, normalized)
+      await this.callHostFail(host, hostParams, normalized)
       await this.callRuntimeHook('runtime:fail', undefined, normalized)
       await this.stop().catch((stopError) => {
-        hostContext.logger.warn(
+        hostParams.logger.warn(
           new Error(`Runtime [${runtimeName}] cleanup failed`, {
             cause: toError(stopError),
           }),
@@ -247,16 +253,16 @@ class NeemRuntimeHostRuntime {
     this.stopped = true
     const threads = this.threads
     const host = this.host
-    const hostContext = this.hostContext
+    const hostParams = this.hostParams
     this.host = undefined
-    this.hostContext = undefined
+    this.hostParams = undefined
     this.threads = []
     this.pools = []
 
     let stopError: Error | undefined
-    if (hostContext) {
+    if (hostParams) {
       try {
-        await host?.stop?.({ ...hostContext, threads })
+        await host?.stop?.({ threads })
       } catch (error) {
         stopError = toError(error)
       }
@@ -268,7 +274,7 @@ class NeemRuntimeHostRuntime {
     const threadResults = await Promise.allSettled(
       threads.map((thread) => thread.stop()),
     )
-    if (hostContext) await this.callRuntimeHook('runtime:stop')
+    if (hostParams) await this.callRuntimeHook('runtime:stop')
 
     const threadError = threadResults.find(
       (result): result is PromiseRejectedResult => result.status === 'rejected',
@@ -305,7 +311,7 @@ class NeemRuntimeHostRuntime {
     )
   }
 
-  private async loadHost(): Promise<NeemRuntimeHost | undefined> {
+  private async loadHost(): Promise<NeemRuntimeHostFactory | undefined> {
     const artifact = resolveRuntimeArtifact(
       this.options.snapshot,
       this.options.runtimeName,
@@ -313,10 +319,10 @@ class NeemRuntimeHostRuntime {
     )
     if (!artifact) return undefined
 
-    return importDefault<NeemRuntimeHost>(artifact.file)
+    return importDefault<NeemRuntimeHostFactory>(artifact.file)
   }
 
-  private createHostContext(): NeemRuntimeHostContext {
+  private createHostParams(): NeemRuntimeHostParams {
     const { snapshot, runtimeName } = this.options
     const owner = { type: 'runtime' as const, name: runtimeName }
     const artifact = resolveRuntimeArtifact(snapshot, runtimeName, 'entry')
@@ -337,13 +343,13 @@ class NeemRuntimeHostRuntime {
 
   private async callHostFail(
     host: NeemRuntimeHost | undefined,
-    hostContext: NeemRuntimeHostContext,
+    hostParams: NeemRuntimeHostParams,
     error: Error,
   ): Promise<void> {
     try {
-      await host?.fail?.({ ...hostContext, error, threads: this.threads })
+      await host?.fail?.({ error, threads: this.threads })
     } catch (failError) {
-      hostContext.logger.warn(
+      hostParams.logger.warn(
         new Error(`Runtime [${this.options.runtimeName}] fail handler failed`, {
           cause: toError(failError),
         }),
@@ -356,10 +362,10 @@ class NeemRuntimeHostRuntime {
     worker: NeemStartedRuntimeThread,
   ): Promise<void> {
     const host = this.host
-    const hostContext = this.hostContext
+    const hostParams = this.hostParams
 
-    if (hostContext) {
-      await this.callHostFail(host, hostContext, error)
+    if (hostParams) {
+      await this.callHostFail(host, hostParams, error)
       await this.callRuntimeHook('runtime:fail', undefined, error)
     }
 
@@ -395,7 +401,7 @@ class NeemRuntimeHostRuntime {
     while (this.restartAttempts < policy.attempts) {
       const attempt = this.restartAttempts + 1
       const delayMs = getRuntimeRecoveryDelay(policy, attempt)
-      this.hostContext?.logger.warn(
+      this.hostParams?.logger.warn(
         {
           runtimeName: this.options.runtimeName,
           worker: worker.name,

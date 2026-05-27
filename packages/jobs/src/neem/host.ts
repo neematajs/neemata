@@ -27,149 +27,162 @@ type JobsRuntimeState = {
   queueWorkers: Set<Worker>
 }
 
-const states = new Map<string, JobsRuntimeState>()
+export default defineRuntimeHost(async (params) => {
+  const config = (await import(pathToFileURL(params.artifact.file).href))
+    .default as JobsConfig
+  const resolved = await resolveJobsConfig(config)
+  const jobs = new Map<string, AnyJob>()
+  for (const job of resolved.jobs) jobs.set(job.name, job)
+  validateJobs([...jobs.values()])
+  assertPoolsConfigured(groupJobsByPool(jobs.values()), resolved.pools)
 
-export default defineRuntimeHost({
-  async setup(ctx) {
-    const config = (await import(pathToFileURL(ctx.artifact.file).href))
-      .default as JobsConfig
-    const resolved = await resolveJobsConfig(config)
-    const jobs = new Map<string, AnyJob>()
-    for (const job of resolved.jobs) jobs.set(job.name, job)
-    validateJobs([...jobs.values()])
-    assertPoolsConfigured(groupJobsByPool(jobs.values()), resolved.pools)
-    states.set(ctx.name, {
-      config: resolved,
-      jobs,
-      pools: new Map(),
-      queueWorkers: new Set(),
-    })
-  },
+  const state: JobsRuntimeState = {
+    config: resolved,
+    jobs,
+    pools: new Map(),
+    queueWorkers: new Set(),
+  }
 
-  plan(ctx) {
-    const state = getState(ctx.name)
-    const jobsByPool = groupJobsByPool(state.jobs.values())
-    return {
-      threads: [...jobsByPool.keys()].map((poolName) => ({
-        name: `jobs:${poolName}`,
-        artifact: 'job-runner',
-        count: state.config.pools[poolName]!.threads,
-        data: { poolName, runtimeEntryFile: ctx.artifact.file },
-      })),
-    }
-  },
-
-  async start(ctx) {
-    const state = getState(ctx.name)
-    const jobsByPool = groupJobsByPool(state.jobs.values())
-    state.client = await resolveJobsClient(state.config.client)
+  async function stopJobsRuntime() {
+    await Promise.allSettled(
+      [...state.queueWorkers].map((worker) => worker.close(true)),
+    )
+    state.queueWorkers.clear()
+    state.pools.clear()
 
     try {
-      state.manager = new JobManager(
-        state.client,
-        [...state.jobs.values()],
-        state.config.hooks,
-        (error, event, hook) => {
-          ctx.logger.warn(
-            { error, hook, jobId: event.id },
-            'Neem jobs lifecycle hook failed',
-          )
-        },
-      )
-      await state.manager.initialize()
-    } catch (error) {
-      await closeJobsClient(state.client)
-      state.client = undefined
+      await state.manager?.terminate()
+    } finally {
       state.manager = undefined
-      throw error
+      if (state.client) await closeJobsClient(state.client)
+      state.client = undefined
     }
+  }
 
-    for (const [poolName, poolJobs] of jobsByPool) {
-      const poolConfig = state.config.pools[poolName]!
-      const pool = new JobsRuntimeWorkerPool(poolName)
-      for (const thread of ctx.threads.filter((thread) =>
-        thread.name.startsWith(`jobs:${poolName}`),
-      )) {
-        pool.add(thread)
+  return {
+    plan() {
+      const jobsByPool = groupJobsByPool(state.jobs.values())
+      return {
+        threads: [...jobsByPool.keys()].map((poolName) => ({
+          name: `jobs:${poolName}`,
+          artifact: 'job-runner',
+          count: state.config.pools[poolName]!.threads,
+          data: { poolName, runtimeEntryFile: params.artifact.file },
+        })),
       }
-      state.pools.set(poolName, pool)
-      ctx.logger.info(
-        {
-          pool: poolName,
-          threads: pool.handles.length,
-          jobsPerThread: poolConfig.jobs,
-        },
-        'Neem jobs runner pool started',
-      )
+    },
 
-      for (const job of poolJobs) {
-        const poolCapacity = poolConfig.threads * poolConfig.jobs
-        const concurrency =
-          job.options.concurrency ??
-          Math.max(1, Math.floor(poolCapacity / poolJobs.length))
+    async start(startParams) {
+      const jobsByPool = groupJobsByPool(state.jobs.values())
+      state.client = await resolveJobsClient(state.config.client)
 
-        const worker = new Worker(
-          getJobQueueName(job),
-          async (bullJob) => {
-            const result = await pool.run({
-              jobId: String(bullJob.id ?? ''),
-              jobName: bullJob.name,
-              data: bullJob.data,
-            })
-
-            switch (result.type) {
-              case 'success':
-                return result.result
-              case 'unrecoverable_error': {
-                const error = enrichBullMqErrorStack(result.error)
-                const unrecoverable = new UnrecoverableError(error.message)
-                unrecoverable.stack = error.stack
-                throw unrecoverable
-              }
-              case 'job_not_found':
-              case 'queue_job_not_found':
-                throw new UnrecoverableError(result.type)
-              case 'error':
-                throw enrichBullMqErrorStack(result.error)
-            }
+      try {
+        state.manager = new JobManager(
+          state.client,
+          [...state.jobs.values()],
+          state.config.hooks,
+          (error, event, hook) => {
+            params.logger.warn(
+              { error, hook, jobId: event.id },
+              'Neem jobs lifecycle hook failed',
+            )
           },
-          { connection: state.manager.connection, concurrency },
         )
+        await state.manager.initialize()
+      } catch (error) {
+        await closeJobsClient(state.client)
+        state.client = undefined
+        state.manager = undefined
+        throw error
+      }
 
-        worker.on('active', (bullJob) => {
-          void state.manager?.emitUpdated(bullJob)
-        })
-        worker.on('progress', (bullJob) => {
-          void state.manager?.emitUpdated(bullJob)
-        })
-        worker.on('completed', (bullJob) => {
-          void state.manager?.emitUpdated(bullJob, 'completed')
-        })
-        worker.on('failed', (bullJob) => {
-          if (bullJob) void state.manager?.emitUpdated(bullJob, 'failed')
-        })
-
-        state.queueWorkers.add(worker)
-        ctx.logger.info(
+      for (const [poolName, poolJobs] of jobsByPool) {
+        const poolConfig = state.config.pools[poolName]!
+        const pool = new JobsRuntimeWorkerPool(poolName)
+        for (const thread of startParams.threads.filter((thread) =>
+          thread.name.startsWith(`jobs:${poolName}`),
+        )) {
+          pool.add(thread)
+        }
+        state.pools.set(poolName, pool)
+        params.logger.info(
           {
-            job: job.name,
-            queue: getJobQueueName(job),
             pool: poolName,
-            concurrency,
+            threads: pool.handles.length,
+            jobsPerThread: poolConfig.jobs,
           },
-          'Neem jobs queue worker started',
+          'Neem jobs runner pool started',
         )
+
+        for (const job of poolJobs) {
+          const poolCapacity = poolConfig.threads * poolConfig.jobs
+          const concurrency =
+            job.options.concurrency ??
+            Math.max(1, Math.floor(poolCapacity / poolJobs.length))
+
+          const worker = new Worker(
+            getJobQueueName(job),
+            async (bullJob) => {
+              const result = await pool.run({
+                jobId: String(bullJob.id ?? ''),
+                jobName: bullJob.name,
+                data: bullJob.data,
+              })
+
+              switch (result.type) {
+                case 'success':
+                  return result.result
+                case 'unrecoverable_error': {
+                  const error = enrichBullMqErrorStack(result.error)
+                  const unrecoverable = new UnrecoverableError(error.message)
+                  unrecoverable.stack = error.stack
+                  throw unrecoverable
+                }
+                case 'job_not_found':
+                case 'queue_job_not_found':
+                  throw new UnrecoverableError(result.type)
+                case 'error':
+                  throw enrichBullMqErrorStack(result.error)
+              }
+            },
+            { connection: state.manager.connection, concurrency },
+          )
+
+          worker.on('active', (bullJob) => {
+            void state.manager?.emitUpdated(bullJob)
+          })
+          worker.on('progress', (bullJob) => {
+            void state.manager?.emitUpdated(bullJob)
+          })
+          worker.on('completed', (bullJob) => {
+            void state.manager?.emitUpdated(bullJob, 'completed')
+          })
+          worker.on('failed', (bullJob) => {
+            if (bullJob) void state.manager?.emitUpdated(bullJob, 'failed')
+          })
+
+          state.queueWorkers.add(worker)
+          params.logger.info(
+            {
+              job: job.name,
+              queue: getJobQueueName(job),
+              pool: poolName,
+              concurrency,
+            },
+            'Neem jobs queue worker started',
+          )
+        }
       }
-    }
-  },
+    },
 
-  async stop(ctx) {
-    await stopJobsRuntime(ctx.name)
-  },
+    async stop() {
+      await stopJobsRuntime()
+    },
 
-  async fail(ctx) {
-    await stopJobsRuntime(ctx.name)
-  },
+    async fail() {
+      await stopJobsRuntime()
+    },
+  }
 })
 
 class JobsRuntimeWorkerPool {
@@ -213,32 +226,6 @@ class JobsRuntimeWorkerPool {
       handle.port.postMessage({ type: 'task', id, task })
     })
   }
-}
-
-async function stopJobsRuntime(name: string) {
-  const state = states.get(name)
-  if (!state) return
-  states.delete(name)
-
-  await Promise.allSettled(
-    [...state.queueWorkers].map((worker) => worker.close(true)),
-  )
-  state.queueWorkers.clear()
-  state.pools.clear()
-
-  try {
-    await state.manager?.terminate()
-  } finally {
-    state.manager = undefined
-    if (state.client) await closeJobsClient(state.client)
-    state.client = undefined
-  }
-}
-
-function getState(name: string): JobsRuntimeState {
-  const state = states.get(name)
-  if (!state) throw new Error(`Jobs runtime [${name}] is not initialized`)
-  return state
 }
 
 function validateJobs(jobs: readonly AnyJob[]) {

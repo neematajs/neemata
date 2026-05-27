@@ -6,7 +6,7 @@ import type {
   NeemRolldownOptions,
   NeemRuntimeBuildHost,
 } from './artifact.ts'
-import type { NeemRuntimeHost } from './runtime.ts'
+import type { NeemRuntimeHostFactory } from './runtime.ts'
 import type { InferNeemWorkerData, NeemWorker } from './worker.ts'
 
 export type NeemEntryModule<T> = { default: T }
@@ -60,16 +60,16 @@ export type NeemCommandInput<TCommand extends NeemCommand = NeemCommand> =
   NeemArtifactEntry
 
 export type NeemRuntimeHostConfig<
-  THost extends NeemRuntimeHost = NeemRuntimeHost,
+  THost extends NeemRuntimeHostFactory = NeemRuntimeHostFactory,
 > = { entry: NeemArtifactEntry; build?: NeemBuildConfigInput }
 
 export type NeemRuntimeHostInput<
-  THost extends NeemRuntimeHost = NeemRuntimeHost,
+  THost extends NeemRuntimeHostFactory = NeemRuntimeHostFactory,
 > = NeemArtifactEntry | NeemRuntimeHostConfig<THost>
 
 export type NeemRuntimeConfig<
   TEntry = NeemWorker<unknown, unknown>,
-  THost extends NeemRuntimeHost = NeemRuntimeHost,
+  THost extends NeemRuntimeHostFactory = NeemRuntimeHostFactory,
 > = {
   entry: NeemEntryInput
   host?: NeemRuntimeHostInput<THost>
@@ -193,7 +193,7 @@ export function defineConfig<
 
 export function defineRuntime<
   Entry,
-  Host extends NeemRuntimeHost = NeemRuntimeHost,
+  Host extends NeemRuntimeHostFactory = NeemRuntimeHostFactory,
 >(config: {
   entry: NeemEntryInput
   host?: NeemRuntimeHostInput<Host>

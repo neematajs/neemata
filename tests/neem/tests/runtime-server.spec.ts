@@ -106,8 +106,8 @@ describe('NeemRuntimeServer', () => {
       state: 'running',
       runtimeNames: ['hosted'],
     })
-    expect(server.getRuntimeWorkers()).toHaveLength(1)
-    expect(server.getProxyUpstreams()).toMatchObject([
+    expect([...server.getRuntimeWorkers()]).toHaveLength(1)
+    expect([...server.getProxyUpstreams()]).toMatchObject([
       {
         runtimeName: 'hosted',
         upstream: { type: 'http', url: 'http://127.0.0.1:3701/' },
@@ -333,8 +333,8 @@ describe('NeemRuntimeServer', () => {
       state: 'running',
       runtimeNames: [],
     })
-    expect(server.getRuntimeWorkers()).toEqual([])
-    expect(server.getProxyUpstreams()).toEqual([])
+    expect([...server.getRuntimeWorkers()]).toEqual([])
+    expect([...server.getProxyUpstreams()]).toEqual([])
 
     await server.stop()
 

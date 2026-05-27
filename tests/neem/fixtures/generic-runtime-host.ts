@@ -8,45 +8,46 @@ function record(event: Record<string, unknown>) {
   appendFileSync(file, `${JSON.stringify(event)}\n`)
 }
 
-export default defineRuntimeHost({
-  setup(ctx) {
-    record({
-      event: 'host-setup',
-      mode: ctx.mode,
-      name: ctx.name,
-      options: ctx.options,
-      artifact: ctx.artifact,
-      hostArtifact: ctx.hostArtifact,
-      logger: Boolean(ctx.logger),
-    })
-  },
-  plan() {
-    record({ event: 'host-plan' })
-    return {
-      threads: [
-        {
-          name: 'worker',
-          artifact: 'entry',
-          count: 2,
-          data: { label: 'planned' },
-        },
-      ],
-    }
-  },
-  start(ctx) {
-    record({
-      event: 'host-start',
-      threads: ctx.threads.map((thread) => thread.name),
-      upstreams: ctx.upstreams,
-    })
-    for (const thread of ctx.threads) {
-      thread.port.postMessage({ type: 'host-ready', thread: thread.name })
-    }
-  },
-  stop(ctx) {
-    record({
-      event: 'host-stop',
-      threads: ctx.threads.map((thread) => thread.name),
-    })
-  },
+export default defineRuntimeHost((params) => {
+  record({
+    event: 'host-setup',
+    mode: params.mode,
+    name: params.name,
+    options: params.options,
+    artifact: params.artifact,
+    hostArtifact: params.hostArtifact,
+    logger: Boolean(params.logger),
+  })
+
+  return {
+    plan() {
+      record({ event: 'host-plan' })
+      return {
+        threads: [
+          {
+            name: 'worker',
+            artifact: 'entry',
+            count: 2,
+            data: { label: 'planned' },
+          },
+        ],
+      }
+    },
+    start(startParams) {
+      record({
+        event: 'host-start',
+        threads: startParams.threads.map((thread) => thread.name),
+        upstreams: startParams.upstreams,
+      })
+      for (const thread of startParams.threads) {
+        thread.port.postMessage({ type: 'host-ready', thread: thread.name })
+      }
+    },
+    stop(stopParams) {
+      record({
+        event: 'host-stop',
+        threads: stopParams.threads.map((thread) => thread.name),
+      })
+    },
+  }
 })

@@ -114,7 +114,7 @@ export class NeemRuntimeServer {
   }
 
   getHealth(): NeemRuntimeServerHealth {
-    const runtimes = this.getRuntimeWorkerPools().map((pool) => ({
+    const runtimes = [...this.getRuntimeWorkerPools()].map((pool) => ({
       name: pool.runtimeName,
       pool: pool.getHealth(),
       threads: pool.list().map((thread) => thread.getHealth()),
@@ -122,7 +122,7 @@ export class NeemRuntimeServer {
     const proxy = this.proxyManager?.getHealth() ?? {
       enabled: Boolean(this.snapshot.config.proxy),
       running: false,
-      upstreams: this.proxyUpstreams.list(),
+      upstreams: [...this.proxyUpstreams.list()],
     }
 
     return {
@@ -136,16 +136,18 @@ export class NeemRuntimeServer {
     }
   }
 
-  getRuntimeWorkers(): readonly NeemStartedRuntimeThread[] {
-    return this.runtimeManager?.listThreads() ?? []
+  *getRuntimeWorkers(): IterableIterator<NeemStartedRuntimeThread> {
+    if (!this.runtimeManager) return
+    yield* this.runtimeManager.listThreads()
   }
 
-  getRuntimeWorkerPools(): readonly NeemStartedRuntimePool[] {
-    return this.runtimeManager?.listPools() ?? []
+  *getRuntimeWorkerPools(): IterableIterator<NeemStartedRuntimePool> {
+    if (!this.runtimeManager) return
+    yield* this.runtimeManager.listPools()
   }
 
-  getProxyUpstreams(): readonly NeemProxyUpstreamSnapshot[] {
-    return this.proxyUpstreams.list()
+  *getProxyUpstreams(): IterableIterator<NeemProxyUpstreamSnapshot> {
+    yield* this.proxyUpstreams.list()
   }
 
   start(): Promise<void> {

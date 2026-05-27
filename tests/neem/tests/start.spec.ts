@@ -69,9 +69,9 @@ describe('neem start', () => {
     const host = await startNeem({ outDir })
 
     try {
-      expect(host.getRuntimeWorkers()).toHaveLength(2)
-      expect(host.getRuntimeWorkerPools()).toHaveLength(1)
-      expect(host.getRuntimeWorkerPools()[0]?.getHealth()).toMatchObject({
+      expect([...host.getRuntimeWorkers()]).toHaveLength(2)
+      expect([...host.getRuntimeWorkerPools()]).toHaveLength(1)
+      expect([...host.getRuntimeWorkerPools()][0]?.getHealth()).toMatchObject({
         name: 'runtime:api',
         size: 2,
         ready: 2,
@@ -93,8 +93,7 @@ describe('neem start', () => {
         proxy: { enabled: false, running: false },
       })
       expect(
-        host
-          .getRuntimeWorkers()
+        [...host.getRuntimeWorkers()]
           .map((worker) => ({ name: worker.name, state: worker.getState() })),
       ).toEqual([
         { name: 'api:0', state: 'ready' },
@@ -106,8 +105,7 @@ describe('neem start', () => {
         { type: 'http', url: 'http://127.0.0.1:4102/api:1' },
       ])
       expect(
-        host
-          .getProxyUpstreams()
+        [...host.getProxyUpstreams()]
           .toSorted((a, b) => a.proxyUpstream.port - b.proxyUpstream.port),
       ).toEqual([
         expect.objectContaining({
@@ -163,9 +161,9 @@ describe('neem start', () => {
     const host = await startNeem({ outDir })
 
     try {
-      expect(host.getRuntimeWorkers()).toHaveLength(1)
-      expect(host.getRuntimeWorkerPools()).toHaveLength(1)
-      expect(host.getRuntimeWorkers()[0]?.getState()).toBe('ready')
+      expect([...host.getRuntimeWorkers()]).toHaveLength(1)
+      expect([...host.getRuntimeWorkerPools()]).toHaveLength(1)
+      expect([...host.getRuntimeWorkers()][0]?.getState()).toBe('ready')
       expect(host.getUpstreams()).toEqual([
         { type: 'http', url: 'http://127.0.0.1:3000' },
       ])
@@ -228,8 +226,8 @@ export default defineConfig({
     const host = await startNeem({ outDir })
 
     try {
-      expect(host.getRuntimeWorkers()).toHaveLength(4)
-      expect(host.getRuntimeWorkerPools()).toHaveLength(2)
+      expect([...host.getRuntimeWorkers()]).toHaveLength(4)
+      expect([...host.getRuntimeWorkerPools()]).toHaveLength(2)
       expect(host.getHealth()).toMatchObject({
         state: 'running',
         ready: true,
@@ -304,8 +302,8 @@ export default defineConfig({
     const host = await startNeem({ outDir, runtimes: ['api'] })
 
     try {
-      expect(host.getRuntimeWorkers()).toHaveLength(2)
-      expect(host.getRuntimeWorkerPools()).toHaveLength(1)
+      expect([...host.getRuntimeWorkers()]).toHaveLength(2)
+      expect([...host.getRuntimeWorkerPools()]).toHaveLength(1)
       expect(host.getHealth()).toMatchObject({
         state: 'running',
         ready: true,
@@ -383,7 +381,7 @@ export default defineConfig({
     const host = await startNeem({ outDir })
 
     try {
-      expect(host.getRuntimeWorkers()).toHaveLength(2)
+      expect([...host.getRuntimeWorkers()]).toHaveLength(2)
     } finally {
       await host.stop()
       await host.closed

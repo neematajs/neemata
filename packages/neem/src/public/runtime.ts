@@ -34,7 +34,7 @@ export type NeemRuntimeThreadHandle = NeemManagedWorkerHandle & {
   port: MessagePort
 }
 
-export type NeemRuntimeHostContext<Options = unknown> = {
+export type NeemRuntimeHostParams<Options = unknown> = {
   mode: NeemMode
   name: string
   options: Options
@@ -44,37 +44,36 @@ export type NeemRuntimeHostContext<Options = unknown> = {
   artifacts: NeemArtifactRegistry
 }
 
-export type NeemRuntimeStartedContext<Options = unknown> =
-  NeemRuntimeHostContext<Options> & {
-    threads: readonly NeemRuntimeThreadHandle[]
-    upstreams: readonly NeemRuntimeUpstream[]
-  }
-
-export type NeemRuntimeStoppedContext<Options = unknown> =
-  NeemRuntimeHostContext<Options> & {
-    threads: readonly NeemRuntimeThreadHandle[]
-  }
-
-export type NeemRuntimeFailedContext<Options = unknown> =
-  NeemRuntimeHostContext<Options> & {
-    error: Error
-    threads: readonly NeemRuntimeThreadHandle[]
-  }
-
-export type NeemRuntimeHost<Options = unknown> = {
-  setup?: (ctx: NeemRuntimeHostContext<Options>) => NeemMaybePromise<void>
-  plan?: (
-    ctx: NeemRuntimeHostContext<Options>,
-  ) => NeemMaybePromise<NeemRuntimePlan>
-  start?: (ctx: NeemRuntimeStartedContext<Options>) => NeemMaybePromise<void>
-  stop?: (ctx: NeemRuntimeStoppedContext<Options>) => NeemMaybePromise<void>
-  fail?: (ctx: NeemRuntimeFailedContext<Options>) => NeemMaybePromise<void>
+export type NeemRuntimeHostStartedParams = {
+  threads: readonly NeemRuntimeThreadHandle[]
+  upstreams: readonly NeemRuntimeUpstream[]
 }
 
-export function defineRuntimeHost<const THost extends NeemRuntimeHost>(
-  host: THost,
-): THost {
-  return Object.freeze(host)
+export type NeemRuntimeHostStoppedParams = {
+  threads: readonly NeemRuntimeThreadHandle[]
+}
+
+export type NeemRuntimeHostFailedParams = {
+  error: Error
+  threads: readonly NeemRuntimeThreadHandle[]
+}
+
+export type NeemRuntimeHost = {
+  plan?: () => NeemMaybePromise<NeemRuntimePlan>
+  start?: (params: NeemRuntimeHostStartedParams) => NeemMaybePromise<void>
+  stop?: (params: NeemRuntimeHostStoppedParams) => NeemMaybePromise<void>
+  fail?: (params: NeemRuntimeHostFailedParams) => NeemMaybePromise<void>
+}
+
+export type NeemRuntimeHostFactory<
+  Options = unknown,
+  THost extends NeemRuntimeHost = NeemRuntimeHost,
+> = (params: NeemRuntimeHostParams<Options>) => NeemMaybePromise<THost>
+
+export function defineRuntimeHost<const TFactory extends NeemRuntimeHostFactory>(
+  factory: TFactory,
+): TFactory {
+  return Object.freeze(factory)
 }
 
 export type NeemWorkerState =

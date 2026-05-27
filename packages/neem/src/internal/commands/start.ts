@@ -37,11 +37,11 @@ export type NeemStartedHost = {
   manifest: NeemBuildManifest
   artifacts: NeemArtifactRegistry
   closed: Promise<void>
-  getRuntimeWorkers: () => readonly NeemStartedRuntimeThread[]
-  getRuntimeWorkerPools: () => readonly NeemStartedRuntimePool[]
+  getRuntimeWorkers: () => IterableIterator<NeemStartedRuntimeThread>
+  getRuntimeWorkerPools: () => IterableIterator<NeemStartedRuntimePool>
   getHealth: () => NeemRuntimeServerHealth
   getUpstreams: () => readonly NeemRuntimeUpstream[]
-  getProxyUpstreams: () => readonly NeemProxyUpstreamSnapshot[]
+  getProxyUpstreams: () => IterableIterator<NeemProxyUpstreamSnapshot>
   stop: () => Promise<void>
 }
 
@@ -172,9 +172,11 @@ function createStartedHost(options: {
       return options.server.getHealth()
     },
     getUpstreams() {
-      return options.server
-        .getRuntimeWorkers()
-        .flatMap((worker) => worker.getUpstreams())
+      const upstreams: NeemRuntimeUpstream[] = []
+      for (const worker of options.server.getRuntimeWorkers()) {
+        upstreams.push(...worker.getUpstreams())
+      }
+      return upstreams
     },
     getProxyUpstreams() {
       return options.server.getProxyUpstreams()

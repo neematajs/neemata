@@ -83,19 +83,31 @@ export class NeemProxyUpstreamRegistry {
     }
   }
 
-  list(runtimeName?: string): readonly NeemProxyUpstreamSnapshot[] {
-    const entries =
-      runtimeName === undefined
-        ? [...this.upstreams.entries()]
-        : [[runtimeName, this.upstreams.get(runtimeName)] as const]
-    return entries.flatMap(([name, upstreams]) =>
-      [...(upstreams?.values() ?? [])].map((entry) => ({
-        runtimeName: name,
+  *list(runtimeName?: string): IterableIterator<NeemProxyUpstreamSnapshot> {
+    if (runtimeName !== undefined) {
+      yield* this.listRuntime(runtimeName)
+      return
+    }
+
+    for (const name of this.upstreams.keys()) {
+      yield* this.listRuntime(name)
+    }
+  }
+
+  private *listRuntime(
+    runtimeName: string,
+  ): IterableIterator<NeemProxyUpstreamSnapshot> {
+    const upstreams = this.upstreams.get(runtimeName)
+    if (!upstreams) return
+
+    for (const entry of upstreams.values()) {
+      yield {
+        runtimeName,
         upstream: entry.upstream,
         proxyUpstream: entry.proxyUpstream,
         count: entry.count,
-      })),
-    )
+      }
+    }
   }
 
   on(event: 'add' | 'remove', listener: Listener): () => void {
