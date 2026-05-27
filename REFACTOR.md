@@ -46,7 +46,8 @@ metrics semantics, store adapters, or app DI provisions.
   string/URL entries:
   `entry: './x.ts'`, `build: './x.build.ts'`.
 - Target config uses `runtimes: { [name]: runtimeFactory(buildOverrides?) }`
-  for helper runtimes, or `defineRuntime(...)` for raw generic runtimes.
+  for helper runtimes, or `defineRuntime(...)(buildOverrides?)` for raw generic
+  runtimes.
   Runtime object keys are stable build/start/deploy unit IDs.
 - Runtime configs have no core `kind`. Neem only cares about entry artifacts,
   threads/options, lifecycle, health, and returned upstreams.
@@ -157,8 +158,14 @@ metrics semantics, store adapters, or app DI provisions.
   runtime failed and host readiness false.
 - Degraded runtime pools are visible in health snapshots, but degraded or
   failed runtimes make `/ready` return `503`.
-- Scheduler belongs in `@nmtjs/jobs` and schedules job enqueue operations. It
-  must not reintroduce hidden plugin-owned workers.
+- Scheduler belongs in `@nmtjs/scheduler` as a separate package depending on
+  `@nmtjs/jobs`. It exposes a dedicated scheduler runtime/controller instead
+  of making jobs runtime startup register schedules. It owns BullMQ scheduler
+  metadata for its Neem runtime key/name and does not run job handlers.
+- Scheduler runtime must support both deployment handoff policies:
+  `continuity` keeps existing schedules until new reconciliation succeeds;
+  `cutover` removes owned schedules on stop/takeover so stale scheduled work
+  stops immediately if the new scheduler cannot become ready.
 - Commands mean built CLI command artifacts. `neem run <name> ...` loads the
   built command module and passes command args through without starting a
   runtime worker.
@@ -234,13 +241,15 @@ Ported packages:
     - explicit consumer-group/partition concurrency documentation
   - explicit Neem eventing runtime helper and worker entry
   - in-process consumer handler retries before adapter ack/commit policy
+- `@nmtjs/scheduler`
+  - schedule contracts over `@nmtjs/jobs` job definitions
+  - BullMQ job scheduler controller
+  - runtime-name-owned scheduler ids
+  - `continuity` and `cutover` handoff policies
+  - explicit Neem scheduler runtime host
 
 Still incomplete:
 
-- production-grade worker restart/backoff/degraded policy
-- metrics/observability package
-- jobs scheduler
-- CLI commands
 - meta-framework build/watch lifecycle
 
 ## Completed Runtime Hardening
@@ -282,8 +291,19 @@ Test coverage:
 
 ### 3. Scheduler / CLI Commands
 
-- Scheduler owner: `@nmtjs/jobs`.
-- Scheduler schedules job enqueue operations and does not run hidden workers.
+- Scheduler owner: `@nmtjs/scheduler`.
+- Scheduler API uses BullMQ job schedulers through `@nmtjs/jobs` job
+  definitions and Redis/Valkey client factories. Schedule registration is not
+  part of jobs worker startup.
+- Scheduler runtime owns schedule metadata under its Neem runtime key/name,
+  reconciles desired schedules, reports ready only after successful
+  registration/verification, and should usually be deployed as a single
+  instance. Runtime context must expose the runtime key/name so scheduler code
+  can derive stable owned scheduler ids.
+- Scheduler deployment handoff supports:
+  - `continuity`: previous schedules remain until new scheduler reconciles.
+  - `cutover`: owned schedules are removed on stop/takeover, making failed
+    replacement visible by stopping scheduled work.
 - Commands mean built CLI command artifacts, not runtime commands in v1.
 
 ## Feature Porting Ledger
@@ -298,14 +318,14 @@ Test coverage:
 | Proxy | `@nmtjs/neem` + `@nmtjs/proxy` | Optional host subsystem routing returned runtime upstreams. | `partial` |
 | Host plugins | none | Removed from Neem target model; runtime hosts replace worker-owning plugin behavior. | `removed` |
 | Neemata runtime | `@nmtjs/application` | Generic runtime adapter over pure Neemata app runtime. | `wired` |
-| Jobs | `@nmtjs/jobs` | Direct BullMQ jobs runtime + app plugin/injectables. Neem adapter uses runtime host and Neem-owned runner threads. Scheduler uses BullMQ job schedulers. | `wired` |
+| Jobs | `@nmtjs/jobs` | Direct BullMQ jobs runtime + app plugin/injectables. Neem adapter uses runtime host and Neem-owned runner threads. | `wired` |
 | PubSub | `@nmtjs/pubsub` | Pub/sub package + app runtime plugin/adapters. | `partial` |
 | Eventing | `@nmtjs/eventing` | Durable stream/log client plus Neem consumer runtime. | `partial` |
 | Metrics | `@nmtjs/metrics` | Prometheus host observer over Neem hooks/health, endpoint, Pushgateway, and Prometheus worker registry support. | `wired` |
 | Runtime injections | app packages | Neem passes context; adapters map into app containers. | `partial` |
 | Health/readiness | `@nmtjs/neem` | Host-owned public `/health` and `/ready` probes from manifest-backed config. | `wired` |
 | Meta-framework runtimes | adapter packages + Neem build hooks | Framework-owned build output with thin Neem adapter artifacts. | `missing` |
-| Scheduler | `@nmtjs/jobs` | Jobs-owned scheduler that enqueues jobs. | `wired` |
+| Scheduler | `@nmtjs/scheduler` | Dedicated scheduler runtime/controller over BullMQ job schedulers, with runtime-name ownership and continuity/cutover handoff policies. | `partial` |
 | Commands | `@nmtjs/neem` CLI | Built CLI command artifacts executed with `neem run`. | `wired` |
 | Umbrella exports | `nmtjs` | Replace/thin after Neem lands. No changes in current slice. | `deferred` |
 
@@ -345,7 +365,7 @@ export default defineConfig({
       entry: './src/custom.runtime.ts',
       threads: 1,
       options: { foo: 'bar' },
-    }),
+    })(),
   },
 })
 ```
@@ -498,9 +518,10 @@ Standalone `node dist/start.js` follows same runtime path and injects
 
 ## Near-Term Agenda
 
-1. Design framework-owned build lifecycle for Nuxt/other meta-frameworks.
-2. Tighten eventing/pubsub typed contracts after runtime hardening.
-3. Keep broker e2e coverage running in CI services for Redis/Kafka-backed
+1. Finish scheduler runtime e2e coverage and deployment handoff tests.
+2. Design framework-owned build lifecycle for Nuxt/other meta-frameworks.
+3. Tighten eventing/pubsub typed contracts after runtime hardening.
+4. Keep broker e2e coverage running in CI services for Redis/Kafka-backed
    packages.
 
 ## Neemata Adapter Parity Audit

@@ -58,10 +58,11 @@ describe('@nmtjs/neem consumer contracts', () => {
       http: { listen: { hostname: string; port: number } }
     }>()
 
-    const runtimeConfig = defineRuntime<typeof app>({
+    const runtime = defineRuntime<typeof app>({
       entry: '../fixtures/basic-app.ts',
       threads: [{ http: { listen: { hostname: '127.0.0.1', port: 3000 } } }],
     })
+    const runtimeConfig = runtime()
 
     expect(runtimeConfig.threads).toBeDefined()
     const [data] = runtimeConfig.threads as Array<ThreadOptions>
@@ -69,7 +70,7 @@ describe('@nmtjs/neem consumer contracts', () => {
 
     const stringEntryConfig = defineRuntime({
       entry: '../fixtures/basic-app.ts',
-    })
+    })()
     expect(stringEntryConfig.entry).toBe('../fixtures/basic-app.ts')
   })
 
@@ -105,9 +106,39 @@ describe('@nmtjs/neem consumer contracts', () => {
     const hostOwnedConfig = defineRuntime({
       entry: '../fixtures/basic-app.ts',
       host: '../fixtures/generic-runtime-host.ts',
-    })
+    })()
 
     expect(Boolean(hostOwnedConfig)).toBe(true)
+  })
+
+  it('merges runtime build overrides inside defineRuntime factory', () => {
+    const basePlugin = { name: 'base' }
+    const overridePlugin = { name: 'override' }
+    const runtime = defineRuntime({
+      entry: '../fixtures/basic-app.ts',
+      build: {
+        host: { entry: '../fixtures/generic-runtime-host.ts' },
+        artifacts: [
+          { id: 'config', kind: 'module', entry: '../fixtures/basic-app.ts' },
+        ],
+        rolldown: { plugins: [basePlugin] },
+      },
+    })
+
+    const runtimeConfig = runtime({ rolldown: { plugins: [overridePlugin] } })
+
+    expect(runtimeConfig.build).toMatchObject({
+      host: { entry: '../fixtures/generic-runtime-host.ts' },
+      artifacts: [
+        { id: 'config', kind: 'module', entry: '../fixtures/basic-app.ts' },
+      ],
+    })
+    expect(
+      typeof runtimeConfig.build === 'object' &&
+        !(runtimeConfig.build instanceof URL)
+        ? runtimeConfig.build.rolldown?.plugins
+        : undefined,
+    ).toEqual([basePlugin, overridePlugin])
   })
 
   it('does not expose runtime artifacts as public config', () => {

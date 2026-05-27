@@ -77,15 +77,6 @@ export default defineRuntimeHost({
         },
       )
       await state.manager.initialize()
-      for (const schedule of state.config.schedules) {
-        const job = state.jobs.get(schedule.job.name)
-        if (!job) {
-          throw new Error(
-            `Invalid jobs schedule [${schedule.id}]: job [${schedule.job.name}] is not configured`,
-          )
-        }
-        await state.manager.schedule(schedule)
-      }
     } catch (error) {
       await closeJobsClient(state.client)
       state.client = undefined

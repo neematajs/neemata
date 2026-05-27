@@ -1,15 +1,13 @@
 import type {
   NeemEntryInput,
   NeemMaybePromise,
-  NeemRuntimeBuildOptions,
   NeemRuntimeFactory,
 } from '@nmtjs/neem'
-import { defineRuntime, mergeNeemRuntimeBuildOptions } from '@nmtjs/neem'
+import { defineRuntime } from '@nmtjs/neem'
 
 import type { JobsClient } from '../client.ts'
 import type { JobsLifecycleHooks } from '../core/hooks.ts'
 import type { AnyJob } from '../core/job.ts'
-import type { JobScheduleEntry } from '../core/scheduler.ts'
 
 export type AnyJobsJob = AnyJob
 
@@ -22,15 +20,11 @@ export type JobsHooksFactory = () => NeemMaybePromise<
   JobsLifecycleHooks | undefined
 >
 
-export type JobsSchedulesFactory<Job extends AnyJobsJob = AnyJobsJob> =
-  () => NeemMaybePromise<readonly JobScheduleEntry<Job>[] | undefined>
-
 export type JobsConfig<Job extends AnyJobsJob = AnyJobsJob> = {
   client: JobsClient
   pools: Record<string, JobsPoolConfig>
   jobs: JobsFactory<Job>
   hooks?: JobsHooksFactory
-  schedules?: JobsSchedulesFactory<Job>
 }
 
 export type ResolvedJobsConfig<Job extends AnyJobsJob = AnyJobsJob> = {
@@ -38,7 +32,6 @@ export type ResolvedJobsConfig<Job extends AnyJobsJob = AnyJobsJob> = {
   pools: Record<string, JobsPoolConfig>
   jobs: readonly Job[]
   hooks: JobsLifecycleHooks
-  schedules: readonly JobScheduleEntry<Job>[]
 }
 
 export type ResolvedJobsWorkerConfig<Job extends AnyJobsJob = AnyJobsJob> = {
@@ -69,7 +62,6 @@ export async function resolveJobsConfig<const Job extends AnyJobsJob>(
     pools: config.pools,
     jobs: await config.jobs(),
     hooks: (await config.hooks?.()) ?? emptyHooks,
-    schedules: (await config.schedules?.()) ?? [],
   }
 }
 
@@ -82,19 +74,13 @@ export async function resolveJobsWorkerConfig<const Job extends AnyJobsJob>(
 export function defineJobsRuntime<
   const TConfig extends JobsConfig = JobsConfig,
 >(config: JobsRuntimeConfigInput<TConfig>): NeemRuntimeFactory {
-  return (build?: NeemRuntimeBuildOptions) =>
-    defineRuntime({
-      entry: config.config,
-      build: mergeNeemRuntimeBuildOptions(
-        {
-          host: { entry: '@nmtjs/jobs/neem/host' },
-          artifacts: [
-            { id: 'job-runner', kind: 'worker', entry: jobsWorkerEntry },
-          ],
-        },
-        build,
-      ),
-    })
+  return defineRuntime({
+    entry: config.config,
+    build: {
+      host: { entry: '@nmtjs/jobs/neem/host' },
+      artifacts: [{ id: 'job-runner', kind: 'worker', entry: jobsWorkerEntry }],
+    },
+  })
 }
 
 export const jobsWorkerEntry = '@nmtjs/jobs/neem/worker-entry'

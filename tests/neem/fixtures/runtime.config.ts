@@ -15,6 +15,6 @@ export default defineConfig({
           http: { listen: { hostname: '127.0.0.1', port: 4102 } },
         },
       ],
-    }),
+    })(),
   },
 })

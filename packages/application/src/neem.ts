@@ -5,17 +5,12 @@ import type {
   NeemEntryInput,
   NeemRolldownOptions,
   NeemRuntime,
-  NeemRuntimeBuildOptions,
   NeemRuntimeConfig,
   NeemRuntimeFactory,
   NeemWorker,
   NeemWorkerRuntimeContext,
 } from '@nmtjs/neem'
-import {
-  defineRuntime,
-  defineWorker,
-  mergeNeemRuntimeBuildOptions,
-} from '@nmtjs/neem'
+import { defineRuntime, defineWorker } from '@nmtjs/neem'
 
 import type { NeemataApplication, NeemataAppTransportOptions } from './app.ts'
 import type { AnyApplicationConfig } from './config.ts'
@@ -68,15 +63,11 @@ export function defineNeemataRuntime<
   application: NeemEntryInput<TEntry>
   threads: readonly InferNeemRuntimeThreadOptions<TEntry>[]
 }): NeemRuntimeFactory {
-  return (build?: NeemRuntimeBuildOptions) =>
-    defineRuntime<TEntry>({
-      entry: config.application,
-      threads: config.threads,
-      build: mergeNeemRuntimeBuildOptions(
-        { rolldown: { plugins: [createUwsNativeAddonPlugin()] } },
-        build,
-      ),
-    })
+  return defineRuntime<TEntry>({
+    entry: config.application,
+    threads: config.threads,
+    build: { rolldown: { plugins: [createUwsNativeAddonPlugin()] } },
+  })
 }
 
 export function defineNeemataWorker<

@@ -188,22 +188,30 @@ export function defineRuntime<
   build?: NeemRuntimeBuildInput
   threads?: number | readonly InferNeemRuntimeThreadOptions<Entry>[]
   options?: unknown
-}): NeemRuntimeConfig<Entry, Host> {
-  return Object.freeze(config) as NeemRuntimeConfig<Entry, Host>
+}): NeemRuntimeFactory {
+  return Object.freeze(
+    (build?: NeemRuntimeBuildOptions) =>
+      Object.freeze({
+        ...config,
+        build: mergeNeemRuntimeBuildOptions(config.build, build),
+      }) as NeemRuntimeConfig<Entry, Host>,
+  )
 }
 
-export function mergeNeemRuntimeBuildOptions(
+function mergeNeemRuntimeBuildOptions(
   base: NeemRuntimeBuildInput | undefined,
   override: NeemRuntimeBuildOptions | undefined,
-): NeemRuntimeBuildConfig | undefined {
+): NeemRuntimeBuildInput | undefined {
+  if (!base) return override
+  if (!override) return base
   const baseConfig = normalizeRuntimeBuildInput(base)
   if (!baseConfig) return override
-  if (!override) return baseConfig
+  const normalizedBase = baseConfig
 
   return {
-    ...baseConfig,
+    ...normalizedBase,
     ...override,
-    rolldown: mergeRolldownOptions(baseConfig.rolldown, override.rolldown),
+    rolldown: mergeRolldownOptions(normalizedBase.rolldown, override.rolldown),
   }
 }
 

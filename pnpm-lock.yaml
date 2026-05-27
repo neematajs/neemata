@@ -447,6 +447,28 @@ importers:
         specifier: ^0.3.3
         version: 0.3.3
 
+  packages/scheduler:
+    dependencies:
+      '@nmtjs/common':
+        specifier: workspace:*
+        version: link:../common
+      '@nmtjs/jobs':
+        specifier: workspace:*
+        version: link:../jobs
+      '@nmtjs/neem':
+        specifier: workspace:*
+        version: link:../neem
+      bullmq:
+        specifier: 5.77.0
+        version: 5.77.0
+    devDependencies:
+      ioredis:
+        specifier: ^5.10.1
+        version: 5.10.1
+      iovalkey:
+        specifier: ^0.3.3
+        version: 0.3.3
+
   packages/type:
     dependencies:
       '@standard-schema/spec':
@@ -530,6 +552,9 @@ importers:
       '@nmtjs/pubsub':
         specifier: workspace:*
         version: link:../../packages/pubsub
+      '@nmtjs/scheduler':
+        specifier: workspace:*
+        version: link:../../packages/scheduler
       '@nmtjs/type':
         specifier: workspace:*
         version: link:../../packages/type
@@ -614,6 +639,9 @@ importers:
       '@nmtjs/pubsub':
         specifier: workspace:*
         version: link:../../packages/pubsub
+      '@nmtjs/scheduler':
+        specifier: workspace:*
+        version: link:../../packages/scheduler
       '@nmtjs/type':
         specifier: workspace:*
         version: link:../../packages/type

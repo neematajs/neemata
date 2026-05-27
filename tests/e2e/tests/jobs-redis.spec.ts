@@ -9,6 +9,7 @@ import {
   QueueJobRunner,
   saveJobProgress,
 } from '@nmtjs/jobs'
+import { JobSchedulerController } from '@nmtjs/scheduler'
 import { t } from '@nmtjs/type'
 import { Worker } from 'bullmq'
 import { Redis } from 'ioredis'
@@ -19,10 +20,18 @@ import { createTestLogger, createTestName, redisUrl } from './helpers.ts'
 const clients: Redis[] = []
 const workers: Worker[] = []
 const managers: JobManager[] = []
+const schedulers: JobSchedulerController[] = []
 
 describe.skipIf(!redisUrl)('@nmtjs/jobs Redis e2e', () => {
   afterEach(async () => {
     await Promise.allSettled(workers.splice(0).map((worker) => worker.close()))
+    const activeSchedulers = schedulers.splice(0)
+    await Promise.allSettled(
+      activeSchedulers.map((scheduler) => scheduler.removeOwned()),
+    )
+    await Promise.allSettled(
+      activeSchedulers.map((scheduler) => scheduler.close()),
+    )
     await Promise.allSettled(
       managers.splice(0).map((manager) => manager.terminate()),
     )
@@ -151,7 +160,7 @@ describe.skipIf(!redisUrl)('@nmtjs/jobs Redis e2e', () => {
     })
   })
 
-  it('schedules jobs through BullMQ job schedulers', async () => {
+  it('schedules jobs through @nmtjs/scheduler and BullMQ job schedulers', async () => {
     const job = createJob({
       name: createTestName('e2e-scheduled-job'),
       pool: 'default',
@@ -160,30 +169,38 @@ describe.skipIf(!redisUrl)('@nmtjs/jobs Redis e2e', () => {
     }).return(({ input }) => ({ ok: true, value: input.value }))
 
     const { manager } = await createJobHarness(job)
-    const scheduleId = createTestName('schedule')
-    const result = await manager.schedule({
-      id: scheduleId,
-      job,
-      data: { value: 'scheduled' },
-      repeat: { every: 1000, limit: 1 },
-      options: { removeOnComplete: false, removeOnFail: false },
+    const schedulerClient = createRedisClient()
+    clients.push(schedulerClient)
+    const scheduler = new JobSchedulerController({
+      owner: createTestName('scheduler'),
+      client: schedulerClient,
+      jobs: [job],
     })
+    schedulers.push(scheduler)
+    const scheduleId = createTestName('schedule')
+    await scheduler.reconcile([
+      {
+        id: scheduleId,
+        job,
+        data: { value: 'scheduled' },
+        repeat: { every: 1000, limit: 1 },
+        options: { removeOnComplete: false, removeOnFail: false },
+      },
+    ])
 
-    await expect(manager.listSchedules(job)).resolves.toEqual([
+    await expect(scheduler.list(job)).resolves.toEqual([
       expect.objectContaining({
         id: scheduleId,
+        schedulerId: expect.stringContaining(scheduleId),
         jobName: job.name,
         queueName: manager.getQueue(job).queue.name,
         data: { value: 'scheduled' },
         every: 1000,
       }),
     ])
-    await expect(result.waitResult()).resolves.toEqual({
-      ok: true,
-      value: 'scheduled',
-    })
-    await manager.unschedule(job, scheduleId)
-    await expect(manager.listSchedules(job)).resolves.toEqual([])
+    await waitForScheduledResult(manager, job)
+    await scheduler.removeOwned()
+    await expect(scheduler.list(job)).resolves.toEqual([])
   })
 })
 
@@ -220,4 +237,25 @@ async function createJobHarness(job: AnyJob) {
   workers.push(worker)
   await worker.waitUntilReady()
   return { manager }
+}
+
+async function waitForScheduledResult(manager: JobManager, job: AnyJob) {
+  const started = Date.now()
+  while (Date.now() - started < 5000) {
+    const list = await manager.list(job, { status: ['completed'], limit: 10 })
+    const item = list.items.find(
+      (item) =>
+        item.data &&
+        typeof item.data === 'object' &&
+        'value' in item.data &&
+        item.data.value === 'scheduled',
+    )
+    if (item) return
+    await wait(50)
+  }
+  throw new Error('Scheduled job did not complete')
+}
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }

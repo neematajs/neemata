@@ -1,10 +1,9 @@
 import type {
   NeemEntryInput,
   NeemMaybePromise,
-  NeemRuntimeBuildOptions,
   NeemRuntimeFactory,
 } from '@nmtjs/neem'
-import { defineRuntime, mergeNeemRuntimeBuildOptions } from '@nmtjs/neem'
+import { defineRuntime } from '@nmtjs/neem'
 
 import type { EventingAdapter } from '../core/adapter.ts'
 import type { AnyEventingConsumerDefinition } from '../core/consumer.ts'
@@ -31,23 +30,15 @@ export function defineEventingRuntime<
   config: NeemEntryInput<TConfig>
   threads?: number
 }): NeemRuntimeFactory {
-  return (build?: NeemRuntimeBuildOptions) =>
-    defineRuntime({
-      entry: eventingWorkerEntry,
-      threads: config.threads ?? 1,
-      build: mergeNeemRuntimeBuildOptions(
-        {
-          artifacts: [
-            {
-              id: eventingConfigArtifactId,
-              kind: 'module',
-              entry: config.config,
-            },
-          ],
-        },
-        build,
-      ),
-    })
+  return defineRuntime({
+    entry: eventingWorkerEntry,
+    threads: config.threads ?? 1,
+    build: {
+      artifacts: [
+        { id: eventingConfigArtifactId, kind: 'module', entry: config.config },
+      ],
+    },
+  })
 }
 
 export function defineEventing(config: EventingRuntimeConfig) {
