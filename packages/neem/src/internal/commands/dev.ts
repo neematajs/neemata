@@ -39,8 +39,8 @@ import {
 } from './build.ts'
 
 export type NeemDevOptions = {
-  config?: string
-  outDir?: string
+  config: string
+  outDir: string
   cwd?: string
   runtimes?: readonly string[]
   hooks?: NeemHostHooks
@@ -80,9 +80,7 @@ type NeemDevHealthSnapshot =
 
 const NEEM_DEV_RELOAD_DEBOUNCE_MS = 100
 
-export async function devNeem(
-  options: NeemDevOptions = {},
-): Promise<NeemDevHost> {
+export async function devNeem(options: NeemDevOptions): Promise<NeemDevHost> {
   const cwd = options.cwd ?? process.cwd()
   const session = new NeemDevSession({
     configFile: resolve(cwd, options.config ?? 'neem.config.ts'),
@@ -688,6 +686,7 @@ class NeemDevSession implements NeemDevHost {
 
   private enqueue(task: () => Promise<void>): Promise<void> {
     this.operation = this.operation.then(task, task)
+    global.gc?.()
     return this.operation.catch((error) => {
       this.recordError(error)
     })

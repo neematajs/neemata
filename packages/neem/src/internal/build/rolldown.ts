@@ -186,6 +186,7 @@ function createRolldownOptions(
 
   return {
     input,
+    
     platform: 'node',
     ...userOptions,
     plugins: [
