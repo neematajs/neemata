@@ -93,8 +93,10 @@ describe('neem start', () => {
         proxy: { enabled: false, running: false },
       })
       expect(
-        [...host.getRuntimeWorkers()]
-          .map((worker) => ({ name: worker.name, state: worker.getState() })),
+        [...host.getRuntimeWorkers()].map((worker) => ({
+          name: worker.name,
+          state: worker.getState(),
+        })),
       ).toEqual([
         { name: 'api:0', state: 'ready' },
         { name: 'api:1', state: 'ready' },
@@ -105,8 +107,9 @@ describe('neem start', () => {
         { type: 'http', url: 'http://127.0.0.1:4102/api:1' },
       ])
       expect(
-        [...host.getProxyUpstreams()]
-          .toSorted((a, b) => a.proxyUpstream.port - b.proxyUpstream.port),
+        [...host.getProxyUpstreams()].toSorted(
+          (a, b) => a.proxyUpstream.port - b.proxyUpstream.port,
+        ),
       ).toEqual([
         expect.objectContaining({
           runtimeName: 'api',

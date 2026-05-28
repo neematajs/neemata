@@ -70,9 +70,9 @@ export type NeemRuntimeHostFactory<
   THost extends NeemRuntimeHost = NeemRuntimeHost,
 > = (params: NeemRuntimeHostParams<Options>) => NeemMaybePromise<THost>
 
-export function defineRuntimeHost<const TFactory extends NeemRuntimeHostFactory>(
-  factory: TFactory,
-): TFactory {
+export function defineRuntimeHost<
+  const TFactory extends NeemRuntimeHostFactory,
+>(factory: TFactory): TFactory {
   return Object.freeze(factory)
 }
 

@@ -12,9 +12,9 @@ import { resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import type { NeemBuildManifest } from '../../../packages/neem/src/internal/build/manifest.ts'
-import { main } from '../../../packages/neem/src/cli.ts'
 import { NEEM_MANIFEST_FILE } from '../../../packages/neem/src/internal/build/manifest.ts'
 import { devNeem } from '../../../packages/neem/src/internal/commands/dev.ts'
+import { spawnNeem } from '../support/e2e.ts'
 
 const fixturesDir = resolve(import.meta.dirname, '../fixtures')
 const tempRoot = resolve(import.meta.dirname, '../.tmp-dev')
@@ -243,7 +243,7 @@ describe('neem dev', () => {
         source.replace("label: 'one'", "label: 'eins'"),
       )
 
-      const events = await waitFor(async () => {
+      await waitFor(async () => {
         const events = await readEvents(fixture.eventsFile)
         return host.getLifecycle().state === 'running' &&
           countEvents(events, 'create') >= initialCreateCount + 2
@@ -257,24 +257,28 @@ describe('neem dev', () => {
     }
   }, 15_000)
 
-  it('runs dev through the CLI and stops through an abort signal', async () => {
+  it('runs dev through the CLI and stops on SIGTERM', async () => {
     const fixture = await createFixtureCopy()
     process.env.NEEM_RUNTIME_EVENTS_FILE = fixture.eventsFile
-    const controller = new AbortController()
+    const neem = spawnNeem([
+      'dev',
+      '--config',
+      fixture.configFile,
+      '--outDir',
+      fixture.outDir,
+    ])
 
-    const running = main(
-      ['dev', '--config', fixture.configFile, '--outDir', fixture.outDir],
-      { signal: controller.signal },
-    )
+    try {
+      await waitFor(async () => {
+        await access(resolve(fixture.outDir, NEEM_MANIFEST_FILE))
+        return true
+      })
+    } finally {
+      const exit = await neem.stop()
 
-    await waitFor(async () => {
-      await access(resolve(fixture.outDir, NEEM_MANIFEST_FILE))
-      return true
-    })
-
-    controller.abort()
-    await expect(running).resolves.toBe(0)
-  })
+      expect(exit).toEqual({ code: 0, signal: null })
+    }
+  }, 15_000)
 })
 
 async function createFixtureCopy(config = 'runtime.config.ts') {
