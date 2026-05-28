@@ -45,7 +45,7 @@ const isDev = mode === 'development'
 const errorPolicy = getErrorPolicy(mode)
 const bootstrapLogger = createLogger(
   { pinoOptions: { level: isDev ? 'debug' : 'info' } },
-  'Main',
+  'main',
 )
 
 // Logger for main process (created lazily with config-based level)
@@ -148,7 +148,7 @@ function initializeLifecycle(configValue: ServerConfig) {
   const loggerOptions = currentServerConfig?.logger ?? {
     pinoOptions: { level: isDev ? 'debug' : 'info' },
   }
-  logger = createLogger(loggerOptions, 'Main')
+  logger = createLogger(loggerOptions, 'main')
 
   // Create runtime environment
   const env = createRuntimeEnvironment(mode, {

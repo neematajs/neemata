@@ -29,7 +29,7 @@ import type {
   NeemRuntimeWorkerMessage,
 } from './worker-protocol.ts'
 import { callNeemHostHook } from './hooks.ts'
-import { createNeemChildLogger } from './logger.ts'
+import { createNeemChildLogger, createNeemRuntimeLabel } from './logger.ts'
 import { NeemManagedWorker } from './managed-worker.ts'
 import {
   createRuntimeRecoveryPolicy,
@@ -334,7 +334,10 @@ class NeemRuntimeHostRuntime {
       mode: snapshot.mode,
       name: runtimeName,
       options: snapshot.config.runtimes?.[runtimeName]?.options,
-      logger: createNeemChildLogger(snapshot.logger, `Runtime/${runtimeName}`),
+      logger: createNeemChildLogger(
+        snapshot.logger,
+        createNeemRuntimeLabel(runtimeName),
+      ),
       artifact,
       hostArtifact: resolveRuntimeArtifact(snapshot, runtimeName, 'host'),
       artifacts: snapshot.artifacts.scope(owner),
@@ -566,6 +569,7 @@ class NeemRuntimeThread implements NeemStartedRuntimeThread {
 
     const workerData: NeemRuntimeWorkerData = {
       mode: options.snapshot.mode,
+      runtimeName: options.runtimeName,
       name: this.name,
       data: options.plan.data ?? {},
       artifact: options.artifact,
@@ -585,7 +589,7 @@ class NeemRuntimeThread implements NeemStartedRuntimeThread {
       workerOptions: { transferList: [channel.port2] },
       logger: createNeemChildLogger(
         options.snapshot.logger,
-        `Runtime/${options.runtimeName}:${options.plan.name}`,
+        createNeemRuntimeLabel(options.runtimeName, options.plan.name),
       ),
       onMessage: (message, host) => {
         this.handleMessage(message as NeemRuntimeWorkerMessage, host)

@@ -22,7 +22,7 @@ export class NeemHealthProbeServer {
   private server: Server | undefined
 
   constructor(private readonly options: NeemHealthProbeOptions) {
-    this.logger = createNeemChildLogger(options.logger, 'Neem health')
+    this.logger = createNeemChildLogger(options.logger, 'neem:health')
     this.hostname = options.config.hostname ?? '127.0.0.1'
     this.port = options.config.port
     this.healthPath = normalizeProbePath(

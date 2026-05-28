@@ -71,7 +71,7 @@ export class NeemRuntimeServer {
 
   constructor(readonly options: NeemRuntimeServerOptions) {
     this.snapshot = options.snapshot
-    this.logger = options.snapshot.logger
+    this.logger = createNeemChildLogger(options.snapshot.logger, 'neem:server')
     this.hooks = options.hooks ?? createNeemHostHooks()
     this.proxyUpstreams.on('add', (event) => {
       this.logger.trace(
@@ -179,7 +179,7 @@ export class NeemRuntimeServer {
         this.logLifecycle('Reloading Neem server')
         await this.stopRuntime(this.snapshot)
         this.snapshot = snapshot
-        this.logger = createNeemChildLogger(snapshot.logger, 'Neem server')
+        this.logger = createNeemChildLogger(snapshot.logger, 'neem:server')
         await this.syncHealthProbe(snapshot)
         await this.startRuntime(this.snapshot)
         this.markState('running')
@@ -203,7 +203,7 @@ export class NeemRuntimeServer {
     return this.enqueue(async () => {
       this.markState('reloading')
       this.snapshot = snapshot
-      this.logger = createNeemChildLogger(snapshot.logger, 'Neem server')
+      this.logger = createNeemChildLogger(snapshot.logger, 'neem:server')
 
       try {
         await this.syncHealthProbe(snapshot)

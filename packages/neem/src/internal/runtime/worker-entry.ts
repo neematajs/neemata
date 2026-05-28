@@ -17,7 +17,11 @@ import type {
   NeemRuntimeWorkerMessage,
   NeemRuntimeWorkerParentMessage,
 } from './worker-protocol.ts'
-import { createNeemChildLogger, createNeemDefaultLogger } from './logger.ts'
+import {
+  createNeemChildLogger,
+  createNeemDefaultLogger,
+  createNeemRuntimeLabel,
+} from './logger.ts'
 import {
   createArtifactRegistry,
   importDefault,
@@ -65,7 +69,10 @@ async function createRuntime(
 async function createWorkerRuntime(
   data: NeemGenericRuntimeWorkerData,
 ): Promise<NeemRuntime> {
-  const logger = await resolveWorkerLogger(data, data.name)
+  const logger = await resolveWorkerLogger(
+    data,
+    createNeemRuntimeLabel(data.runtimeName, data.name),
+  )
   runtimeLogger = logger
   logger.trace(
     { worker: data.name, artifactId: data.artifact.id },

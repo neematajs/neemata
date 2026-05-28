@@ -398,11 +398,11 @@ export default defineConfig({
           msg: 'Starting Neem from built output',
         }),
         expect.objectContaining({
-          $label: 'api:0',
+          $label: 'runtime:api:0',
           msg: 'Creating Neem worker runtime',
         }),
         expect.objectContaining({
-          $label: 'api:0',
+          $label: 'runtime:api:0',
           msg: 'Neem runtime started',
         }),
       ]),

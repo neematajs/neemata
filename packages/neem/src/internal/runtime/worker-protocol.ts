@@ -6,6 +6,7 @@ import type { NeemBuildManifestLogger } from '../build/manifest.ts'
 
 export type NeemRuntimeWorkerBaseData = {
   mode: NeemMode
+  runtimeName: string
   name: string
   data: unknown
   artifact: NeemResolvedArtifact

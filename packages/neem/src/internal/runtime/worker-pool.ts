@@ -49,7 +49,7 @@ export class NeemWorkerPool<TWorker extends NeemPoolWorker> {
     this.workers = [...options.workers]
     this.logger = createNeemChildLogger(
       options.logger ?? createNeemDefaultLogger(),
-      `Neem pool ${options.name}`,
+      'neem:pool',
     )
   }
 
@@ -86,7 +86,7 @@ export class NeemWorkerPool<TWorker extends NeemPoolWorker> {
 
   start(): Promise<void> {
     this.logger.trace(
-      { count: this.workers.length },
+      { pool: this.name, count: this.workers.length },
       'Starting Neem worker pool',
     )
     this.startPromise ??= Promise.all(
@@ -102,7 +102,7 @@ export class NeemWorkerPool<TWorker extends NeemPoolWorker> {
 
   stop(): Promise<void> {
     this.logger.trace(
-      { count: this.workers.length },
+      { pool: this.name, count: this.workers.length },
       'Stopping Neem worker pool',
     )
     this.stopPromise ??= Promise.all(

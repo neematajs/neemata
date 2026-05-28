@@ -63,7 +63,7 @@ export class NeemProxyManager {
     if (!config) throw new Error('Cannot create Neem proxy without config')
 
     this.config = config
-    this.logger = createNeemChildLogger(options.snapshot.logger, 'Neem proxy')
+    this.logger = createNeemChildLogger(options.snapshot.logger, 'neem:proxy')
   }
 
   async start(): Promise<void> {

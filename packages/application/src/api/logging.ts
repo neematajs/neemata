@@ -44,7 +44,7 @@ export const LoggingCallMiddleware = (
   } = {},
 ): AnyMiddleware =>
   createMiddleware({
-    dependencies: { logger: CoreInjectables.logger('RPC') },
+    dependencies: { logger: CoreInjectables.logger('rpc') },
     handle: async ({ logger }, call, next, payload) => {
       const {
         includePayload,

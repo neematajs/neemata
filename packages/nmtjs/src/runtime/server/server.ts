@@ -81,7 +81,7 @@ export class ApplicationServer {
     readonly workerFactory: ManagedWorkerFactory = defaultWorkerFactory,
     readonly poolFactory: WorkerPoolFactory = defaultPoolFactory,
   ) {
-    this.logger = createLogger(config.logger, 'Server')
+    this.logger = createLogger(config.logger, 'server')
     this.logger.trace(
       { applications: applicationsConfig, workerConfig, runOptions },
       'ApplicationServer initialized',

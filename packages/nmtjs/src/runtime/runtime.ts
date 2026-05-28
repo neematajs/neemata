@@ -27,7 +27,7 @@ export abstract class BaseRuntime {
   plugins: RuntimePlugin[]
 
   constructor(options: BaseRuntimeOptions = {}) {
-    this.logger = createLogger(options.logger, options.name || 'Runtime')
+    this.logger = createLogger(options.logger, options.name ?? 'runtime')
     this.container = options.container
       ? options.container.fork(Scope.Global)
       : new Container({ logger: this.logger })

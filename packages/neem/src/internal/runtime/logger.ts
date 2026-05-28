@@ -38,12 +38,25 @@ export function createNeemChildLogger(logger: Logger, label: string): Logger {
   return logger.child({ $label: label })
 }
 
+export function createNeemRuntimeLabel(
+  runtimeName: string,
+  threadName?: string,
+): string {
+  if (!threadName) return `runtime:${runtimeName}`
+
+  const runtimePrefix = `${runtimeName}:`
+  const normalizedThreadName = threadName.startsWith(runtimePrefix)
+    ? threadName.slice(runtimePrefix.length)
+    : threadName
+  return `runtime:${runtimeName}:${normalizedThreadName}`
+}
+
 export function createNeemDefaultLogger(
   mode: NeemMode = 'production',
   input: Exclude<NeemLoggerInput, string | URL> = {},
 ): Logger {
   if (process.env.NODE_ENV === 'test') {
-    return createLogger({ pinoOptions: { enabled: false } }, 'Neem')
+    return createLogger({ pinoOptions: { enabled: false } }, 'neem')
   }
 
   return createLogger(
@@ -54,6 +67,6 @@ export function createNeemDefaultLogger(
         ...input.pinoOptions,
       },
     },
-    'Neem',
+    'neem',
   )
 }

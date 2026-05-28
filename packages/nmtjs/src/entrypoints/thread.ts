@@ -29,7 +29,7 @@ const logger = createLogger(
       level: workerData.vite === 'development' ? 'debug' : 'info',
     },
   },
-  'Thread',
+  'thread',
 )
 
 const ext = new URL(import.meta.url).pathname.endsWith('.ts') ? '.ts' : '.js'
