@@ -155,6 +155,22 @@ export const devCommand = defineCommand({
         })
       }, 250)
 
+      const shutdown = () => {
+        void (async () => {
+          await watcher?.close()
+          watcher = null
+          const child = forked
+          forked = null
+          if (child && child.exitCode === null && child.signalCode === null) {
+            child.kill('SIGTERM')
+            await waitForProcessExit(child).catch(() => undefined)
+          }
+          process.exit(0)
+        })()
+      }
+
+      process.once('SIGINT', shutdown)
+      process.once('SIGTERM', shutdown)
       startWatcher()
     }
   },
@@ -222,4 +238,10 @@ function createCliAbortController() {
       process.off('SIGTERM', abort)
     },
   }
+}
+
+function waitForProcessExit(child: ChildProcess): Promise<void> {
+  return new Promise((resolve) => {
+    child.once('exit', () => resolve())
+  })
 }
