@@ -1,19 +1,12 @@
 import { existsSync } from 'node:fs'
 import { mkdir, rename, rm, writeFile } from 'node:fs/promises'
-import { dirname, join, relative, resolve } from 'node:path'
+import { join, relative, resolve } from 'node:path'
 
 import { consola } from 'consola'
 import { colorize } from 'consola/utils'
 
-import type {
-  NeemArtifact,
-  NeemResolvedArtifact,
-} from '../../public/artifact.ts'
-import type {
-  NeemConfig,
-  NeemLoggerOptions,
-  NeemRuntimeConfigBase,
-} from '../../public/config.ts'
+import type { NeemResolvedArtifact } from '../../public/artifact.ts'
+import type { NeemConfig, NeemLoggerOptions } from '../../public/config.ts'
 import type {
   NeemBuildManifest,
   NeemBuildManifestArtifact,
@@ -25,7 +18,11 @@ import {
   NEEM_MANIFEST_FILE,
   NEEM_MANIFEST_SCHEMA_VERSION,
 } from '../build/manifest.ts'
-import { resolveImportFile } from '../build/resolve.ts'
+import {
+  normalizeSelectedRuntimeNames,
+  resolveRuntimeBuildPlans,
+} from '../build/runtime-plan.ts'
+import { resolveRequiredBuildEntry } from '../build/resolve.ts'
 import { buildArtifact } from '../build/rolldown.ts'
 import { importDefault } from '../runtime/utils.ts'
 
@@ -63,14 +60,19 @@ export async function buildNeem(
     await importDefault<NeemConfig>(configFile),
   )
   const outDir = resolve(cwd, options.outDir ?? config.outDir ?? 'dist')
-  const selectedRuntimes =
-    normalizeSelectedRuntimes(options.runtimes) || Object.keys(config.runtimes)
+  const selectedRuntimes = normalizeSelectedRuntimeNames(options.runtimes)
+  const runtimePlans = resolveRuntimeBuildPlans(
+    configFile,
+    config,
+    selectedRuntimes,
+  )
+  const runtimeNames = runtimePlans.map((plan) => plan.name)
 
   logger.start('Building Neem bundle')
   logger.debug(`  config: ${colorize('green', configFile)}`)
   logger.debug(`  outDir: ${colorize('green', outDir)}`)
   logger.debug(
-    `  runtimes: ${selectedRuntimes.map((v) => colorize('cyan', v)).join(', ')}`,
+    `  runtimes: ${runtimeNames.map((v) => colorize('cyan', v)).join(', ')}`,
   )
 
   await cleanNeemOutDir(outDir)
@@ -90,38 +92,24 @@ export async function buildNeem(
     runtimes: {},
   }
 
-  const runtimeEntries = Object.entries(config.runtimes ?? {}).filter(
-    ([name]) => shouldBuildName(name, selectedRuntimes),
-  )
-  assertSelectedRuntimesExist(selectedRuntimes, [
-    ...Object.keys(config.runtimes ?? {}),
-  ])
-
   for (const chunk of runtimeArtifacts.entry.bundle?.output ?? []) {
     logger.debug(`  ${chunk.type}: ${colorize('green', chunk.fileName)}`)
   }
 
-  for (const [name, runtimeConfig] of runtimeEntries) {
-    const emittedArtifacts = resolveRuntimeBuildArtifacts(
-      configFile,
-      runtimeConfig.artifacts,
-    )
-
+  for (const plan of runtimePlans) {
+    const name = plan.name
     logger.start(`Building ${colorize('cyan', name)}:`)
 
     const entry = await buildArtifact({
       artifact: {
         id: 'entry',
         kind: 'worker',
-        entry: resolveRequiredRuntimeBuildEntry(
-          configFile,
-          runtimeConfig.worker.entry,
-        ),
-        rolldown: runtimeConfig.worker.build?.rolldown,
+        entry: plan.worker.entry,
+        rolldown: plan.worker.rolldown,
       },
       owner: { type: 'runtime', name },
       outDir,
-      emittedArtifacts,
+      emittedArtifacts: plan.worker.artifacts,
       minify: true,
     })
 
@@ -129,14 +117,13 @@ export async function buildNeem(
       logger.debug(`  ${chunk.type}: ${colorize('green', chunk.fileName)}`)
     }
 
-    const hostEntry = resolveRuntimeHostEntry(configFile, runtimeConfig.host)
-    const hostArtifact = hostEntry
+    const hostArtifact = plan.host
       ? await buildArtifact({
           artifact: {
             id: 'host',
             kind: 'module',
-            entry: hostEntry,
-            rolldown: runtimeConfig.host?.build?.rolldown,
+            entry: plan.host.entry,
+            rolldown: plan.host.rolldown,
           },
           owner: { type: 'runtime', name },
           outDir,
@@ -292,7 +279,7 @@ async function createManifestCommands(
         artifact: {
           id: `command:${name}`,
           kind: 'module',
-          entry: resolveRequiredRuntimeBuildEntry(configFile, entry),
+          entry: resolveRequiredBuildEntry(configFile, entry),
         },
         owner: { type: 'config' },
         artifactOutDir: resolve(outDir, 'config', 'commands', name),
@@ -318,7 +305,7 @@ async function createManifestLogger(
       artifact: {
         id: 'logger',
         kind: 'module',
-        entry: resolveRequiredRuntimeBuildEntry(configFile, logger),
+        entry: resolveRequiredBuildEntry(configFile, logger),
       },
       owner: { type: 'config' },
       artifactOutDir: resolve(outDir, 'config', 'logger'),
@@ -351,41 +338,6 @@ function isLoggerOptions(input: unknown): input is NeemLoggerOptions {
   )
 }
 
-function resolveRuntimeHostEntry(
-  importer: string,
-  input: NeemRuntimeConfigBase['host'],
-): NeemArtifact['entry'] | undefined {
-  return input ? resolveRuntimeBuildEntry(importer, input.entry) : undefined
-}
-
-function resolveRuntimeBuildArtifacts(
-  importer: string,
-  artifacts: readonly NeemArtifact[] | undefined,
-): readonly NeemArtifact[] | undefined {
-  return artifacts?.map((artifact) => ({
-    ...artifact,
-    entry: resolveRequiredRuntimeBuildEntry(importer, artifact.entry),
-  }))
-}
-
-function resolveRequiredRuntimeBuildEntry(
-  importer: string,
-  entry: NeemArtifact['entry'],
-): NeemArtifact['entry'] {
-  return resolveRuntimeBuildEntry(importer, entry) ?? entry
-}
-
-function resolveRuntimeBuildEntry(
-  importer: string,
-  entry: NeemArtifact['entry'] | undefined,
-): NeemArtifact['entry'] | undefined {
-  if (!entry) return undefined
-  if (entry instanceof URL) return entry
-  if (entry.startsWith('/')) return entry
-  if (entry.startsWith('.')) return resolve(dirname(importer), entry)
-  return resolveImportFile(importer, entry)
-}
-
 export function toManifestArtifact(
   manifestDir: string,
   artifact: NeemResolvedArtifact,
@@ -415,30 +367,4 @@ export async function writeManifest(
 
 export function toManifestPath(fromDir: string, target: string): string {
   return relative(fromDir, target).replace(/\\/g, '/')
-}
-
-function normalizeSelectedRuntimes(
-  runtimes: readonly string[] | undefined,
-): readonly string[] | undefined {
-  const selected = runtimes?.map((runtime) => runtime.trim()).filter(Boolean)
-  return selected && selected.length > 0 ? [...new Set(selected)] : undefined
-}
-
-function shouldBuildName(
-  name: string,
-  selected: readonly string[] | undefined,
-): boolean {
-  return !selected || selected.includes(name)
-}
-
-function assertSelectedRuntimesExist(
-  selected: readonly string[] | undefined,
-  available: readonly string[],
-): void {
-  if (!selected) return
-  const missing = selected.filter((name) => !available.includes(name))
-  if (missing.length > 0) {
-    logger.error(`Unknown Neem runtime(s): ${missing.join(', ')}`)
-    process.exit(1)
-  }
 }
