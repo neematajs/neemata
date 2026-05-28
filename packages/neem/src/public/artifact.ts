@@ -13,13 +13,7 @@ export type NeemArtifact = {
   rolldown?: NeemRolldownOptions
 }
 
-export type NeemRuntimeBuildHost = {
-  entry: NeemArtifactEntry
-  build?: NeemArtifactEntry
-}
-
 export type NeemRuntimeBuildMetadata = {
-  host?: NeemRuntimeBuildHost
   artifacts?: readonly NeemArtifact[]
   rolldown?: NeemRolldownOptions
 }

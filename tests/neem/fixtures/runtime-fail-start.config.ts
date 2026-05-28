@@ -3,7 +3,7 @@ import { defineConfig, defineRuntime } from '@nmtjs/neem'
 export default defineConfig({
   runtimes: {
     api: defineRuntime({
-      entry: './runtime-app.ts',
+      worker: { entry: './runtime-app.ts' },
       threads: [
         {
           label: 'ready-before-failure',

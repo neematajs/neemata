@@ -10,12 +10,8 @@ import type {
   NeemResolvedArtifact,
 } from '../../public/artifact.ts'
 import type {
-  NeemBuildConfig,
-  NeemBuildConfigInput,
   NeemConfig,
   NeemNormalizedConfig,
-  NeemRuntimeBuildConfig,
-  NeemRuntimeBuildInput,
   NeemRuntimeConfigBase,
 } from '../../public/config.ts'
 import type { NeemBuildManifest } from '../build/manifest.ts'
@@ -38,7 +34,6 @@ import { importDefault } from '../runtime/utils.ts'
 import {
   cleanNeemOutDir,
   createManifestConfig,
-  loadBuildConfig,
   toManifestArtifact,
   writeManifest,
 } from './build.ts'
@@ -296,14 +291,13 @@ class NeemDevSession implements NeemDevHost {
 
     for (const [name, runtimeConfig] of runtimeEntries) {
       const current = this.runtimeWatchers.get(name)
-      const runtimeBuild = getRuntimeBuildConfig(runtimeConfig.build)
       const entry = resolveRequiredRuntimeBuildEntry(
         this.configFile,
-        runtimeConfig.entry,
+        runtimeConfig.worker.entry,
       )
       const emittedArtifacts = resolveRuntimeBuildArtifacts(
         this.configFile,
-        runtimeBuild?.artifacts,
+        runtimeConfig.artifacts,
       )
       const runtimeEntryKey = [
         entry,
@@ -313,8 +307,7 @@ class NeemDevSession implements NeemDevHost {
         if (current) await this.removeRuntime(name)
         const artifact = await this.startRuntimeWatcher(
           name,
-          runtimeBuild?.config,
-          runtimeBuild?.rolldown,
+          runtimeConfig.worker.build?.rolldown,
           entry,
           emittedArtifacts,
           runtimeEntryKey,
@@ -323,9 +316,10 @@ class NeemDevSession implements NeemDevHost {
       }
 
       const hostCurrent = this.runtimeHostWatchers.get(name)
-      const hostEntry =
-        resolveRuntimeHostEntry(this.configFile, runtimeConfig.host) ??
-        resolveRuntimeBuildEntry(this.configFile, runtimeBuild?.host?.entry)
+      const hostEntry = resolveRuntimeHostEntry(
+        this.configFile,
+        runtimeConfig.host,
+      )
       if (hostEntry) {
         const hostEntryKey = toWatcherEntryKey(hostEntry)
         if (hostCurrent?.entry !== hostEntryKey) {
@@ -362,16 +356,11 @@ class NeemDevSession implements NeemDevHost {
 
   private async startRuntimeWatcher(
     name: string,
-    buildConfigInput: NeemBuildConfigInput | undefined,
-    runtimeBuildRolldown: NeemBuildConfig | undefined,
+    runtimeRolldown: NeemArtifact['rolldown'],
     entry: string | URL,
-    emittedArtifacts: NeemRuntimeBuildConfig['artifacts'] | undefined,
+    emittedArtifacts: readonly NeemArtifact[] | undefined,
     entryKey: string,
   ): Promise<NeemResolvedArtifact> {
-    const rolldown = await loadRuntimeBuildConfig(
-      buildConfigInput,
-      this.configFile,
-    )
     this.initializingRuntimes.add(name)
     this.logger.trace(
       { runtimeName: name, entry: toWatcherEntryKey(entry) },
@@ -383,10 +372,9 @@ class NeemDevSession implements NeemDevHost {
           id: 'entry',
           kind: 'worker',
           entry,
-          rolldown: runtimeBuildRolldown,
+          rolldown: runtimeRolldown,
         },
         owner: { type: 'runtime', name },
-        rolldown,
         outDir: this.outDir,
         emittedArtifacts,
       },
@@ -421,10 +409,6 @@ class NeemDevSession implements NeemDevHost {
       throw new Error(`Runtime [${name}] host entry is missing`)
     }
 
-    const rolldown = await loadRuntimeHostBuildConfig(
-      runtimeConfig,
-      this.configFile,
-    )
     this.initializingRuntimeHosts.add(name)
     this.logger.trace(
       { runtimeName: name, entry: toWatcherEntryKey(hostEntry) },
@@ -432,9 +416,13 @@ class NeemDevSession implements NeemDevHost {
     )
     const watcher = await watchArtifact(
       {
-        artifact: { id: 'host', kind: 'module', entry: hostEntry },
+        artifact: {
+          id: 'host',
+          kind: 'module',
+          entry: hostEntry,
+          rolldown: runtimeConfig.host?.build?.rolldown,
+        },
         owner: { type: 'runtime', name },
-        rolldown,
         outDir: this.outDir,
       },
       {
@@ -745,56 +733,15 @@ class NeemDevSession implements NeemDevHost {
   }
 }
 
-async function loadRuntimeBuildConfig(
-  input: NeemBuildConfigInput | undefined,
-  importer: string,
-): Promise<NeemBuildConfig | undefined> {
-  return loadBuildConfig(input, importer)
-}
-
-async function loadRuntimeHostBuildConfig(
-  runtimeConfig: NeemRuntimeConfigBase,
-  importer: string,
-): Promise<NeemBuildConfig | undefined> {
-  const runtimeBuild = getRuntimeBuildConfig(runtimeConfig.build)
-  if (runtimeBuild?.host?.build) {
-    return loadBuildConfig(runtimeBuild.host.build, importer)
-  }
-
-  return loadBuildConfig(
-    getRuntimeHostConfig(runtimeConfig.host)?.build,
-    importer,
-  )
-}
-
-function getRuntimeBuildConfig(
-  input: NeemRuntimeBuildInput | undefined,
-): NeemRuntimeBuildConfig | undefined {
-  if (!input) return undefined
-  return typeof input === 'string' || input instanceof URL
-    ? { config: input }
-    : input
-}
-
 function toWatcherEntryKey(entry: string | URL): string {
   return entry instanceof URL ? fileURLToPath(entry) : entry
-}
-
-function getRuntimeHostConfig(
-  input: NeemRuntimeConfigBase['host'],
-): { entry: NeemArtifact['entry']; build?: NeemBuildConfigInput } | undefined {
-  if (!input) return undefined
-  return typeof input === 'string' || input instanceof URL
-    ? { entry: input }
-    : input
 }
 
 function resolveRuntimeHostEntry(
   importer: string,
   input: NeemRuntimeConfigBase['host'],
 ): NeemArtifact['entry'] | undefined {
-  const host = getRuntimeHostConfig(input)
-  return host ? resolveRuntimeBuildEntry(importer, host.entry) : undefined
+  return input ? resolveRuntimeBuildEntry(importer, input.entry) : undefined
 }
 
 function resolveRuntimeBuildArtifacts(

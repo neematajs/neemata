@@ -84,7 +84,11 @@ function createConfigFromManifest(
     runtimes: Object.fromEntries(
       Object.entries(manifest.config.runtimes).map(([name, runtime]) => [
         name,
-        { entry: '', threads: runtime.threads, options: runtime.options },
+        {
+          worker: { entry: '' },
+          threads: runtime.threads,
+          options: runtime.options,
+        },
       ]),
     ),
   }

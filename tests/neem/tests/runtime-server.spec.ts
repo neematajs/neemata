@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 import type { NeemRuntimeSnapshot } from '../../../packages/neem/src/internal/runtime/snapshot.ts'
-import type { NeemConfig } from '../../../packages/neem/src/public/config.ts'
+import type { NeemNormalizedConfig } from '../../../packages/neem/src/public/config.ts'
 import { createNeemHostHooks } from '../../../packages/neem/src/internal/runtime/hooks.ts'
 import { NeemRuntimeServer } from '../../../packages/neem/src/internal/runtime/server.ts'
 import { createRuntimeSnapshot } from '../../../packages/neem/src/internal/runtime/snapshot.ts'
@@ -585,7 +585,7 @@ function createRuntimeHostSnapshot(
     includeRuntime?: boolean
     failWorkerAfterStart?: boolean | number
     extraStableWorker?: boolean
-    health?: NeemConfig['health']
+    health?: NeemNormalizedConfig['health']
   } = {},
 ): NeemRuntimeSnapshot {
   const hostFile = fileURLToPath(
@@ -617,8 +617,8 @@ function createRuntimeHostSnapshot(
       runtimes: includeRuntime
         ? {
             hosted: {
-              entry: './runtime-host.worker.js',
-              host: './runtime-host.host.js',
+              worker: { entry: './runtime-host.worker.js' },
+              host: { entry: './runtime-host.host.js' },
               options: {
                 eventFile,
                 upstreamUrl: 'http://127.0.0.1:3701/',
@@ -633,7 +633,7 @@ function createRuntimeHostSnapshot(
             },
           }
         : {},
-    } as NeemConfig,
+    } as NeemNormalizedConfig,
     manifest: {
       schemaVersion: 1,
       config: { runtimes: {} },

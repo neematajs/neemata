@@ -64,7 +64,7 @@ describe('@nmtjs/neem consumer contracts', () => {
     }>()
 
     const runtime = defineRuntime<typeof app>({
-      entry: '../fixtures/basic-app.ts',
+      worker: { entry: '../fixtures/basic-app.ts' },
       threads: [{ http: { listen: { hostname: '127.0.0.1', port: 3000 } } }],
     })
     const runtimeConfig = runtime
@@ -74,9 +74,9 @@ describe('@nmtjs/neem consumer contracts', () => {
     expect(data.http.listen.port).toBe(3000)
 
     const stringEntryConfig = defineRuntime({
-      entry: '../fixtures/basic-app.ts',
+      worker: { entry: '../fixtures/basic-app.ts' },
     })
-    expect(stringEntryConfig.entry).toBe('../fixtures/basic-app.ts')
+    expect(stringEntryConfig.worker.entry).toBe('../fixtures/basic-app.ts')
   })
 
   it('lets runtime worker entries expose definition metadata', async () => {
@@ -99,7 +99,7 @@ describe('@nmtjs/neem consumer contracts', () => {
 
   it('keeps entry-specific worker data inference without an explicit worker constraint', () => {
     const invalidConfig = defineRuntime<typeof app>({
-      entry: '../fixtures/basic-app.ts',
+      worker: { entry: '../fixtures/basic-app.ts' },
       // @ts-expect-error port must stay numeric
       threads: [{ http: { listen: { hostname: '127.0.0.1', port: '3000' } } }],
     })
@@ -109,8 +109,8 @@ describe('@nmtjs/neem consumer contracts', () => {
 
   it('allows host-owned runtime entries that are not worker entries', () => {
     const hostOwnedConfig = defineRuntime({
-      entry: '../fixtures/basic-app.ts',
-      host: '../fixtures/generic-runtime-host.ts',
+      worker: { entry: '../fixtures/basic-app.ts' },
+      host: { entry: '../fixtures/generic-runtime-host.ts' },
     })
 
     expect(Boolean(hostOwnedConfig)).toBe(true)
@@ -131,14 +131,12 @@ describe('@nmtjs/neem consumer contracts', () => {
         },
       }
     })
-    const invalidHost = defineRuntimeHost(
+    const invalidHost = defineRuntimeHost({
       // @ts-expect-error runtime hosts must be factories
-      {
-        setup() {
-          return undefined
-        },
+      setup() {
+        return undefined
       },
-    )
+    })
 
     expect(Boolean(host)).toBe(true)
     expect(Boolean(invalidHost)).toBe(true)
@@ -148,39 +146,122 @@ describe('@nmtjs/neem consumer contracts', () => {
     const basePlugin = { name: 'base' }
     const overridePlugin = { name: 'override' }
     const runtime = defineRuntime({
-      entry: '../fixtures/basic-app.ts',
-      build: {
-        host: { entry: '../fixtures/generic-runtime-host.ts' },
+      worker: {
+        entry: '../fixtures/basic-app.ts',
+        build: { rolldown: { plugins: [basePlugin] } },
+      },
+      artifacts: [
+        { id: 'config', kind: 'module', entry: '../fixtures/basic-app.ts' },
+      ],
+      host: { entry: '../fixtures/generic-runtime-host.ts' },
+    })
+
+    const config = defineConfig({
+      runtimes: {
+        api: [
+          runtime,
+          {
+            worker: { build: { rolldown: { plugins: [overridePlugin] } } },
+            artifacts: [
+              {
+                id: 'extra',
+                kind: 'module',
+                entry: '../fixtures/basic-app.ts',
+              },
+            ],
+          },
+        ],
+      },
+    })
+    const runtimeConfig = normalizeNeemConfig(config).runtimes.api
+
+    expect(runtimeConfig.artifacts).toEqual([
+      { id: 'config', kind: 'module', entry: '../fixtures/basic-app.ts' },
+      { id: 'extra', kind: 'module', entry: '../fixtures/basic-app.ts' },
+    ])
+    expect(runtimeConfig.host).toMatchObject({
+      entry: '../fixtures/generic-runtime-host.ts',
+    })
+    expect(runtimeConfig.worker.build?.rolldown?.plugins).toEqual([
+      basePlugin,
+      overridePlugin,
+    ])
+  })
+
+  it('rejects worker-scoped runtime artifacts at compile time', () => {
+    const invalidConfig = defineRuntime({
+      worker: {
+        entry: '../fixtures/basic-app.ts',
+        // @ts-expect-error runtime artifacts must live on runtime config
         artifacts: [
           { id: 'config', kind: 'module', entry: '../fixtures/basic-app.ts' },
         ],
-        rolldown: { plugins: [basePlugin] },
+      },
+    })
+
+    expect(Boolean(invalidConfig)).toBe(true)
+  })
+
+  it('merges tuple runtime host overrides into host config', () => {
+    const hostPlugin = { name: 'host' }
+    const runtime = defineRuntime({
+      worker: { entry: '../fixtures/basic-app.ts' },
+      host: {
+        entry: '../fixtures/generic-runtime-host.ts',
+        build: { rolldown: { plugins: [hostPlugin] } },
       },
     })
 
     const config = defineConfig({
-      runtimes: { api: [runtime, { rolldown: { plugins: [overridePlugin] } }] },
+      runtimes: {
+        api: [
+          runtime,
+          { host: { build: { rolldown: { external: ['host-extra'] } } } },
+        ],
+      },
     })
     const runtimeConfig = normalizeNeemConfig(config).runtimes.api
 
-    expect(runtimeConfig.build).toMatchObject({
-      host: { entry: '../fixtures/generic-runtime-host.ts' },
-      artifacts: [
-        { id: 'config', kind: 'module', entry: '../fixtures/basic-app.ts' },
-      ],
+    expect(runtimeConfig.host).toMatchObject({
+      entry: '../fixtures/generic-runtime-host.ts',
     })
-    expect(
-      typeof runtimeConfig.build === 'object' &&
-        !(runtimeConfig.build instanceof URL)
-        ? runtimeConfig.build.rolldown?.plugins
-        : undefined,
-    ).toEqual([basePlugin, overridePlugin])
+    expect(runtimeConfig.host?.build?.rolldown?.plugins).toEqual([hostPlugin])
+    expect(runtimeConfig.host?.build?.rolldown?.external).toEqual([
+      'host-extra',
+    ])
   })
 
-  it('does not expose runtime artifacts as public config', () => {
+  it('requires host override entry when runtime has no host', () => {
+    const runtime = defineRuntime({
+      worker: { entry: '../fixtures/basic-app.ts' },
+    })
+    const config = defineConfig({
+      runtimes: { api: [runtime, { host: { build: { rolldown: {} } } }] },
+    })
+
+    expect(() => normalizeNeemConfig(config)).toThrow(
+      'Runtime host override must include entry when base runtime has no host.',
+    )
+  })
+
+  it('rejects old top-level tuple build overrides at compile time', () => {
+    const runtime = defineRuntime({
+      worker: { entry: '../fixtures/basic-app.ts' },
+    })
+    const invalidConfig = defineConfig({
+      runtimes: {
+        // @ts-expect-error tuple overrides must use explicit worker or host sections
+        api: [runtime, { rolldown: { plugins: [] } }],
+      },
+    })
+
+    expect(Boolean(invalidConfig)).toBe(true)
+  })
+
+  it('does not expose top-level runtime artifacts as public config', () => {
     const invalidConfig = defineRuntime({
-      entry: '../fixtures/basic-app.ts',
-      // @ts-expect-error runtime artifacts are helper-owned build metadata
+      worker: { entry: '../fixtures/basic-app.ts' },
+      // @ts-expect-error runtime artifacts must be declarative artifact entries
       artifacts: () => [],
     })
 

@@ -2,9 +2,9 @@ import type { LoggingOptions } from '@nmtjs/core'
 import type { CommandDef } from 'citty'
 
 import type {
+  NeemArtifact,
   NeemArtifactEntry,
   NeemRolldownOptions,
-  NeemRuntimeBuildHost,
 } from './artifact.ts'
 import type { NeemRuntimeHostFactory } from './runtime.ts'
 import type { InferNeemWorkerData, NeemWorker } from './worker.ts'
@@ -23,33 +23,6 @@ export type InferNeemEntryDefault<TEntry> = TEntry extends () => Promise<
     : never
   : never
 
-export type NeemBuildConfig = NeemRolldownOptions
-
-export type NeemBuildConfigLoader<
-  TBuildConfig extends NeemBuildConfig = NeemBuildConfig,
-> = () => Promise<NeemEntryModule<TBuildConfig>>
-
-export type NeemBuildConfigInput<
-  TBuildConfig extends NeemBuildConfig = NeemBuildConfig,
-> = NeemArtifactEntry
-
-export type NeemRuntimeBuildOptions = { rolldown?: NeemRolldownOptions }
-
-export type NeemRuntimeBuildConfig = NeemRuntimeBuildOptions & {
-  config?: NeemBuildConfigInput
-  host?: NeemRuntimeBuildHost
-  artifacts?: readonly {
-    id: string
-    kind: 'worker' | 'module'
-    entry: NeemArtifactEntry
-    rolldown?: NeemRolldownOptions
-  }[]
-}
-
-export type NeemRuntimeBuildInput =
-  | NeemBuildConfigInput
-  | NeemRuntimeBuildConfig
-
 export type NeemLoggerOptions = LoggingOptions
 
 export type NeemLoggerInput = NeemLoggerOptions | string | URL
@@ -61,34 +34,43 @@ export type NeemCommandInput<TCommand extends NeemCommand = NeemCommand> =
 
 export type NeemRuntimeHostConfig<
   THost extends NeemRuntimeHostFactory = NeemRuntimeHostFactory,
-> = { entry: NeemArtifactEntry; build?: NeemBuildConfigInput }
+> = { entry: NeemArtifactEntry; build?: NeemRuntimeBuildConfig }
 
-export type NeemRuntimeHostInput<
-  THost extends NeemRuntimeHostFactory = NeemRuntimeHostFactory,
-> = NeemArtifactEntry | NeemRuntimeHostConfig<THost>
+export type NeemRuntimeWorkerConfig = {
+  entry: NeemEntryInput
+  build?: NeemRuntimeBuildConfig
+}
+
+export type NeemRuntimeBuildConfig = { rolldown?: NeemRolldownOptions }
 
 export type NeemRuntimeConfig<
   TEntry = NeemWorker<unknown, unknown>,
   THost extends NeemRuntimeHostFactory = NeemRuntimeHostFactory,
 > = {
-  entry: NeemEntryInput
-  host?: NeemRuntimeHostInput<THost>
-  build?: NeemRuntimeBuildInput
+  worker: NeemRuntimeWorkerConfig
+  host?: NeemRuntimeHostConfig<THost>
+  artifacts?: readonly NeemArtifact[]
   threads?: number | readonly InferNeemRuntimeThreadOptions<TEntry>[]
   options?: unknown
 }
 
 export type NeemRuntimeConfigBase = {
-  entry: NeemEntryInput
-  host?: NeemRuntimeHostInput
-  build?: NeemRuntimeBuildInput
+  worker: NeemRuntimeWorkerConfig
+  host?: NeemRuntimeHostConfig
+  artifacts?: readonly NeemArtifact[]
   threads?: number | readonly unknown[]
   options?: unknown
 }
 
+export type NeemRuntimeConfigOverrides = {
+  worker?: Partial<Pick<NeemRuntimeWorkerConfig, 'build'>>
+  host?: Partial<NeemRuntimeHostConfig>
+  artifacts?: readonly NeemArtifact[]
+}
+
 export type NeemRuntimeConfigInput =
   | NeemRuntimeConfigBase
-  | readonly [NeemRuntimeConfigBase, NeemRuntimeBuildOptions]
+  | readonly [NeemRuntimeConfigBase, NeemRuntimeConfigOverrides]
 
 export type NeemRuntimeConfigEntries = Record<string, NeemRuntimeConfigInput>
 
@@ -195,9 +177,9 @@ export function defineRuntime<
   Entry,
   Host extends NeemRuntimeHostFactory = NeemRuntimeHostFactory,
 >(config: {
-  entry: NeemEntryInput
-  host?: NeemRuntimeHostInput<Host>
-  build?: NeemRuntimeBuildInput
+  worker: NeemRuntimeWorkerConfig
+  host?: NeemRuntimeHostConfig<Host>
+  artifacts?: readonly NeemArtifact[]
   threads?: number | readonly InferNeemRuntimeThreadOptions<Entry>[]
   options?: unknown
 }): NeemRuntimeConfig<Entry, Host> {
@@ -232,44 +214,85 @@ export function normalizeNeemRuntimeConfig(
   input: NeemRuntimeConfigInput,
 ): NeemRuntimeConfigBase {
   if (!isRuntimeConfigTuple(input)) return input
-  const [runtime, build] = input
+  const [runtime, overrides] = input
 
-  return Object.freeze({
-    ...runtime,
-    build: mergeNeemRuntimeBuildOptions(runtime.build, build),
-  })
+  return mergeRuntimeConfigOverrides(runtime, overrides)
 }
 
 function isRuntimeConfigTuple(
   input: NeemRuntimeConfigInput,
-): input is readonly [NeemRuntimeConfigBase, NeemRuntimeBuildOptions] {
+): input is readonly [NeemRuntimeConfigBase, NeemRuntimeConfigOverrides] {
   return Array.isArray(input)
 }
 
-function mergeNeemRuntimeBuildOptions(
-  base: NeemRuntimeBuildInput | undefined,
-  override: NeemRuntimeBuildOptions | undefined,
-): NeemRuntimeBuildInput | undefined {
-  if (!base) return override
+function mergeRuntimeConfigOverrides(
+  runtime: NeemRuntimeConfigBase,
+  override: NeemRuntimeConfigOverrides,
+): NeemRuntimeConfigBase {
+  return Object.freeze({
+    ...runtime,
+    worker: mergeRuntimeWorkerConfig(runtime.worker, override.worker),
+    host:
+      override.host === undefined
+        ? runtime.host
+        : mergeRuntimeHostConfig(runtime.host, override.host),
+    artifacts: mergeRuntimeArtifacts(runtime.artifacts, override.artifacts),
+  })
+}
+
+function mergeRuntimeWorkerConfig(
+  base: NeemRuntimeWorkerConfig,
+  override: NeemRuntimeConfigOverrides['worker'],
+): NeemRuntimeWorkerConfig {
   if (!override) return base
-  const baseConfig = normalizeRuntimeBuildInput(base)
-  if (!baseConfig) return override
-  const normalizedBase = baseConfig
 
   return {
-    ...normalizedBase,
+    ...base,
     ...override,
-    rolldown: mergeRolldownOptions(normalizedBase.rolldown, override.rolldown),
+    build: mergeRuntimeBuildConfig(base.build, override.build),
   }
 }
 
-function normalizeRuntimeBuildInput(
-  input: NeemRuntimeBuildInput | undefined,
+function mergeRuntimeHostConfig(
+  base: NeemRuntimeHostConfig | undefined,
+  override: Partial<NeemRuntimeHostConfig>,
+): NeemRuntimeHostConfig {
+  const host = {
+    ...base,
+    ...override,
+    build: mergeRuntimeBuildConfig(base?.build, override.build),
+  }
+
+  if (!host.entry) {
+    throw new Error(
+      'Runtime host override must include entry when base runtime has no host.',
+    )
+  }
+
+  return host as NeemRuntimeHostConfig
+}
+
+function mergeRuntimeBuildConfig(
+  base: NeemRuntimeBuildConfig | undefined,
+  override: NeemRuntimeBuildConfig | undefined,
 ): NeemRuntimeBuildConfig | undefined {
-  if (!input) return undefined
-  return typeof input === 'string' || input instanceof URL
-    ? { config: input }
-    : input
+  if (!base) return override
+  if (!override) return base
+
+  return {
+    ...base,
+    ...override,
+    rolldown: mergeRolldownOptions(base.rolldown, override.rolldown),
+  }
+}
+
+function mergeRuntimeArtifacts(
+  base: readonly NeemArtifact[] | undefined,
+  override: readonly NeemArtifact[] | undefined,
+): readonly NeemArtifact[] | undefined {
+  if (!base) return override
+  if (!override) return base
+  return [...base, ...override]
 }
 
 function mergeRolldownOptions(

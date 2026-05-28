@@ -10,12 +10,8 @@ import type {
   NeemResolvedArtifact,
 } from '../../public/artifact.ts'
 import type {
-  NeemBuildConfig,
-  NeemBuildConfigInput,
   NeemConfig,
   NeemLoggerOptions,
-  NeemRuntimeBuildConfig,
-  NeemRuntimeBuildInput,
   NeemRuntimeConfigBase,
 } from '../../public/config.ts'
 import type {
@@ -106,11 +102,9 @@ export async function buildNeem(
   }
 
   for (const [name, runtimeConfig] of runtimeEntries) {
-    const runtimeBuild = getRuntimeBuildConfig(runtimeConfig.build)
-    const rolldown = await loadBuildConfig(runtimeBuild?.config, configFile)
     const emittedArtifacts = resolveRuntimeBuildArtifacts(
       configFile,
-      runtimeBuild?.artifacts,
+      runtimeConfig.artifacts,
     )
 
     logger.start(`Building ${colorize('cyan', name)}:`)
@@ -121,12 +115,11 @@ export async function buildNeem(
         kind: 'worker',
         entry: resolveRequiredRuntimeBuildEntry(
           configFile,
-          runtimeConfig.entry,
+          runtimeConfig.worker.entry,
         ),
-        rolldown: runtimeBuild?.rolldown,
+        rolldown: runtimeConfig.worker.build?.rolldown,
       },
       owner: { type: 'runtime', name },
-      rolldown,
       outDir,
       emittedArtifacts,
       minify: true,
@@ -136,18 +129,16 @@ export async function buildNeem(
       logger.debug(`  ${chunk.type}: ${colorize('green', chunk.fileName)}`)
     }
 
-    const hostRolldown = await loadRuntimeHostBuildConfig(
-      runtimeConfig,
-      configFile,
-    )
-    const hostEntry =
-      resolveRuntimeHostEntry(configFile, runtimeConfig.host) ??
-      resolveRuntimeBuildEntry(configFile, runtimeBuild?.host?.entry)
+    const hostEntry = resolveRuntimeHostEntry(configFile, runtimeConfig.host)
     const hostArtifact = hostEntry
       ? await buildArtifact({
-          artifact: { id: 'host', kind: 'module', entry: hostEntry },
+          artifact: {
+            id: 'host',
+            kind: 'module',
+            entry: hostEntry,
+            rolldown: runtimeConfig.host?.build?.rolldown,
+          },
           owner: { type: 'runtime', name },
-          rolldown: hostRolldown,
           outDir,
           minify: true,
         })
@@ -259,40 +250,6 @@ function resolveNeemRuntimeSourceEntry(name: string): URL {
   return new URL(`../../../src/internal/runtime/${name}.ts`, import.meta.url)
 }
 
-export async function loadBuildConfig(
-  input: NeemBuildConfigInput | undefined,
-  importer: string,
-): Promise<NeemBuildConfig | undefined> {
-  if (!input) return undefined
-  return importDefault<NeemBuildConfig>(
-    resolveRequiredRuntimeBuildEntry(importer, input),
-  )
-}
-
-async function loadRuntimeHostBuildConfig(
-  runtimeConfig: NeemRuntimeConfigBase,
-  importer: string,
-): Promise<NeemBuildConfig | undefined> {
-  const runtimeBuild = getRuntimeBuildConfig(runtimeConfig.build)
-  if (runtimeBuild?.host?.build) {
-    return loadBuildConfig(runtimeBuild.host.build, importer)
-  }
-
-  return loadBuildConfig(
-    getRuntimeHostConfig(runtimeConfig.host)?.build,
-    importer,
-  )
-}
-
-function getRuntimeBuildConfig(
-  input: NeemRuntimeBuildInput | undefined,
-): NeemRuntimeBuildConfig | undefined {
-  if (!input) return undefined
-  return typeof input === 'string' || input instanceof URL
-    ? { config: input }
-    : input
-}
-
 export async function createManifestConfig(
   config: NeemConfig,
   configFile: string,
@@ -394,21 +351,11 @@ function isLoggerOptions(input: unknown): input is NeemLoggerOptions {
   )
 }
 
-function getRuntimeHostConfig(
-  input: NeemRuntimeConfigBase['host'],
-): { entry: NeemArtifact['entry']; build?: NeemBuildConfigInput } | undefined {
-  if (!input) return undefined
-  return typeof input === 'string' || input instanceof URL
-    ? { entry: input }
-    : input
-}
-
 function resolveRuntimeHostEntry(
   importer: string,
   input: NeemRuntimeConfigBase['host'],
 ): NeemArtifact['entry'] | undefined {
-  const host = getRuntimeHostConfig(input)
-  return host ? resolveRuntimeBuildEntry(importer, host.entry) : undefined
+  return input ? resolveRuntimeBuildEntry(importer, input.entry) : undefined
 }
 
 function resolveRuntimeBuildArtifacts(

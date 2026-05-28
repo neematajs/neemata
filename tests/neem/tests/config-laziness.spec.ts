@@ -12,12 +12,10 @@ describe('neem.config consumer shape', () => {
     )
     const normalizedConfig = normalizeNeemConfig(config)
 
-    expect(normalizedConfig.runtimes.api.entry).toBe('./lazy.app.ts')
-    expect(normalizedConfig.runtimes.api.build).toMatchObject({
-      config: './lazy.build.ts',
-      rolldown: { define: { __LAZY_RUNTIME__: 'true' } },
+    expect(normalizedConfig.runtimes.api.worker.entry).toBe('./lazy.app.ts')
+    expect(normalizedConfig.runtimes.api.worker).toMatchObject({
+      build: { rolldown: { external: ['lazy-runtime-external'] } },
     })
     expect((globalThis as any).__neemLazyAppLoaded).toBeUndefined()
-    expect((globalThis as any).__neemLazyBuildLoaded).toBeUndefined()
   })
 })

@@ -63,9 +63,11 @@ export function defineNeemataRuntime<
   threads: readonly InferNeemRuntimeThreadOptions<TEntry>[]
 }): NeemRuntimeConfig<TEntry> {
   return defineRuntime<TEntry>({
-    entry: config.application,
+    worker: {
+      entry: config.application,
+      build: { rolldown: { plugins: [createUwsNativeAddonPlugin()] } },
+    },
     threads: config.threads,
-    build: { rolldown: { plugins: [createUwsNativeAddonPlugin()] } },
   })
 }
 

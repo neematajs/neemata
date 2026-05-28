@@ -4,7 +4,7 @@ export default defineConfig({
   logger: './logger.ts',
   runtimes: {
     api: defineRuntime({
-      entry: './generic-runtime.ts',
+      worker: { entry: './generic-runtime.ts' },
       threads: [
         {
           label: 'one',
@@ -17,7 +17,7 @@ export default defineConfig({
       ],
     }),
     jobs: defineRuntime({
-      entry: './generic-runtime.ts',
+      worker: { entry: './generic-runtime.ts' },
       host: { entry: './generic-runtime-host.ts' },
       options: { queue: 'runtime' },
     }),

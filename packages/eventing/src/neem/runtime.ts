@@ -28,13 +28,11 @@ export function defineEventingRuntime<
   const TConfig extends EventingRuntimeConfig = EventingRuntimeConfig,
 >(config: { config: NeemEntryInput; threads?: number }): NeemRuntimeConfigBase {
   return defineRuntime({
-    entry: eventingWorkerEntry,
+    worker: { entry: eventingWorkerEntry },
+    artifacts: [
+      { id: eventingConfigArtifactId, kind: 'module', entry: config.config },
+    ],
     threads: config.threads ?? 1,
-    build: {
-      artifacts: [
-        { id: eventingConfigArtifactId, kind: 'module', entry: config.config },
-      ],
-    },
   })
 }
 

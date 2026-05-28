@@ -4,7 +4,7 @@ export default defineConfig({
   logger: './logger.ts',
   runtimes: {
     api: defineRuntime({
-      entry: './runtime-app.ts',
+      worker: { entry: './runtime-app.ts' },
       threads: [
         {
           label: 'one',

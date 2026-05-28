@@ -56,8 +56,8 @@ describe('@nmtjs/scheduler Neem contracts', () => {
   it('keeps scheduler runtime helper typed as Neem runtime config', () => {
     const runtime = defineSchedulerRuntime({ config: './scheduler.config.ts' })
 
-    expectTypeOf(runtime.entry).toEqualTypeOf<string | URL>()
-    expect(runtime.entry).toBe('./scheduler.config.ts')
+    expectTypeOf(runtime.worker.entry).toEqualTypeOf<string | URL>()
+    expect(runtime.worker.entry).toBe('./scheduler.config.ts')
   })
 })
 

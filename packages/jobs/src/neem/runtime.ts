@@ -75,10 +75,14 @@ export function defineJobsRuntime<
   const TConfig extends JobsConfig = JobsConfig,
 >(config: JobsRuntimeConfigInput<TConfig>): NeemRuntimeConfigBase {
   return defineRuntime({
-    entry: config.config,
-    build: {
-      host: { entry: '@nmtjs/jobs/neem/host' },
-      artifacts: [{ id: 'job-runner', kind: 'worker', entry: '@nmtjs/jobs/neem/worker-entry' }],
-    },
+    worker: { entry: config.config },
+    artifacts: [
+      {
+        id: 'job-runner',
+        kind: 'worker',
+        entry: '@nmtjs/jobs/neem/worker-entry',
+      },
+    ],
+    host: { entry: '@nmtjs/jobs/neem/host' },
   })
 }

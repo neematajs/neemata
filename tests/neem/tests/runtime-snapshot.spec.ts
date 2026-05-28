@@ -3,7 +3,7 @@ import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import type { NeemBuildManifest } from '../../../packages/neem/src/internal/build/manifest.ts'
-import type { NeemConfig } from '../../../packages/neem/src/public/config.ts'
+import type { NeemNormalizedConfig } from '../../../packages/neem/src/public/config.ts'
 import { createRuntimeSnapshot } from '../../../packages/neem/src/internal/runtime/snapshot.ts'
 
 describe('Neem runtime snapshot', () => {
@@ -50,7 +50,7 @@ describe('Neem runtime snapshot', () => {
       mode: 'development',
       outDir,
       manifest,
-      config: { runtimes: {} } as NeemConfig,
+      config: { runtimes: {} } as NeemNormalizedConfig,
     })
 
     expect(snapshot.artifacts.list()).toHaveLength(3)
@@ -90,7 +90,7 @@ describe('Neem runtime snapshot', () => {
         mode: 'development',
         outDir: '/tmp/neem-out',
         manifest,
-        config: { runtimes: {} } as NeemConfig,
+        config: { runtimes: {} } as NeemNormalizedConfig,
       }),
     ).toThrow('Invalid Neem manifest artifact kind [invalid]')
   })
@@ -104,7 +104,7 @@ describe('Neem runtime snapshot', () => {
         mode: 'development',
         outDir: '/tmp/neem-out',
         manifest,
-        config: { runtimes: {} } as NeemConfig,
+        config: { runtimes: {} } as NeemNormalizedConfig,
       }),
     ).toThrow('Unsupported Neem manifest schema version [2]')
   })
@@ -118,7 +118,7 @@ describe('Neem runtime snapshot', () => {
         mode: 'development',
         outDir: '/tmp/neem-out',
         manifest,
-        config: { runtimes: {} } as NeemConfig,
+        config: { runtimes: {} } as NeemNormalizedConfig,
       }),
     ).toThrow('paths must be relative to output directory')
   })
@@ -132,7 +132,7 @@ describe('Neem runtime snapshot', () => {
         mode: 'development',
         outDir: '/tmp/neem-out',
         manifest,
-        config: { runtimes: {} } as NeemConfig,
+        config: { runtimes: {} } as NeemNormalizedConfig,
       }),
     ).toThrow('entry owner must be runtime [api]')
   })
