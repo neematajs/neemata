@@ -3,11 +3,7 @@ import type {
   NeemNormalizedConfig,
   NeemRuntimeConfigBase,
 } from '../../public/config.ts'
-import {
-  resolveBuildEntry,
-  resolveRequiredBuildEntry,
-  toBuildEntryKey,
-} from './resolve.ts'
+import { resolveBuildEntry, resolveRequiredBuildEntry } from './resolve.ts'
 
 export type NeemRuntimeBuildPlan = {
   name: string
@@ -15,12 +11,10 @@ export type NeemRuntimeBuildPlan = {
     entry: NeemArtifact['entry']
     rolldown?: NeemRolldownOptions
     artifacts?: readonly NeemArtifact[]
-    watcherKey: string
   }
   host?: {
     entry: NeemArtifact['entry']
     rolldown?: NeemRolldownOptions
-    watcherKey: string
   }
 }
 
@@ -60,16 +54,11 @@ export function resolveRuntimeBuildPlan(
       entry,
       rolldown: runtimeConfig.worker.build?.rolldown,
       artifacts,
-      watcherKey: [
-        toBuildEntryKey(entry),
-        runtimeBuildArtifactsKey(artifacts),
-      ].join('\0'),
     },
     host: hostEntry
       ? {
           entry: hostEntry,
           rolldown: runtimeConfig.host?.build?.rolldown,
-          watcherKey: toBuildEntryKey(hostEntry),
         }
       : undefined,
   }
@@ -108,17 +97,4 @@ function resolveRuntimeBuildArtifacts(
     ...artifact,
     entry: resolveRequiredBuildEntry(importer, artifact.entry),
   }))
-}
-
-function runtimeBuildArtifactsKey(
-  artifacts: readonly NeemArtifact[] | undefined,
-): string {
-  return JSON.stringify(
-    (artifacts ?? []).map((artifact) => ({
-      id: artifact.id,
-      kind: artifact.kind,
-      entry:
-        artifact.entry instanceof URL ? artifact.entry.href : artifact.entry,
-    })),
-  )
 }

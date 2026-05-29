@@ -224,17 +224,19 @@ describe('neem dev', () => {
     }
   }, 15_000)
 
-  it('still performs a global restart after config changes', async () => {
+  it('restarts the dev child process after config changes', async () => {
     const fixture = await createFixtureCopy()
     process.env.NEEM_RUNTIME_EVENTS_FILE = fixture.eventsFile
-
-    const host = await devNeem({
-      config: fixture.configFile,
-      outDir: fixture.outDir,
-    })
+    const neem = spawnNeem([
+      'dev',
+      '--config',
+      fixture.configFile,
+      '--outDir',
+      fixture.outDir,
+    ])
 
     try {
-      await host.ready
+      await neem.waitForEvent((event) => event.event === 'hook:server:ready')
       const initialEvents = await readEvents(fixture.eventsFile)
       const initialCreateCount = countEvents(initialEvents, 'create')
       const source = await readFile(fixture.configFile, 'utf8')
@@ -243,17 +245,22 @@ describe('neem dev', () => {
         source.replace("label: 'one'", "label: 'eins'"),
       )
 
-      await waitFor(async () => {
+      await neem.waitForEvent(
+        () =>
+          neem.events().filter((event) => event.event === 'hook:server:ready')
+            .length >= 2,
+      )
+      const events = await waitFor(async () => {
         const events = await readEvents(fixture.eventsFile)
-        return host.getLifecycle().state === 'running' &&
-          countEvents(events, 'create') >= initialCreateCount + 2
+        return countEvents(events, 'create') >= initialCreateCount + 2 &&
+          events.some((event) => event.data?.label === 'eins')
           ? events
           : false
       }, 10_000)
-      expect(host.getLifecycle().state).toBe('running')
+      expect(events.some((event) => event.data?.label === 'eins')).toBe(true)
     } finally {
-      await host.stop()
-      await host.closed
+      const exit = await neem.stop()
+      expect(exit).toEqual({ code: 0, signal: null })
     }
   }, 15_000)
 

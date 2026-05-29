@@ -1,5 +1,3 @@
-import type { FSWatcher } from 'node:fs'
-import { unwatchFile, watch, watchFile } from 'node:fs'
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
@@ -59,7 +57,7 @@ export type NeemDevHost = {
   stop: () => Promise<void>
 }
 
-type RuntimeWatcherState = { watcher: NeemArtifactWatcher; entry: string }
+type RuntimeWatcherState = { watcher: NeemArtifactWatcher }
 type NeemDevReloadRequest =
   | { type: 'full' }
   | { type: 'runtimes'; runtimeNames: string[] }
@@ -102,8 +100,6 @@ class NeemDevSession implements NeemDevHost {
 
   private config: NeemNormalizedConfig | undefined
   private logger = createNeemDefaultLogger('development')
-  private configWatcher: FSWatcher | undefined
-  private watchesConfigFile = false
   private runtime: NeemRuntimeServer | undefined
   private runtimeWatchers = new Map<string, RuntimeWatcherState>()
   private runtimeArtifacts = new Map<string, NeemResolvedArtifact>()
@@ -118,10 +114,6 @@ class NeemDevSession implements NeemDevHost {
   private reloadFlushQueued = false
   private scheduleRuntimeReloadFlush = debounce(
     () => this.queueRuntimeReloadFlush(),
-    NEEM_DEV_RELOAD_DEBOUNCE_MS,
-  )
-  private scheduleConfigApply = debounce(
-    () => this.enqueue(() => this.applyConfig()),
     NEEM_DEV_RELOAD_DEBOUNCE_MS,
   )
   private readySettled = false
@@ -181,7 +173,7 @@ class NeemDevSession implements NeemDevHost {
       'Starting Neem dev session',
     )
     await cleanNeemOutDir(this.outDir)
-    await this.startConfigWatcher()
+    await this.applyConfig()
   }
 
   getLifecycle() {
@@ -203,14 +195,7 @@ class NeemDevSession implements NeemDevHost {
     this.logger.info('Stopping Neem dev session')
 
     this.scheduleRuntimeReloadFlush.cancel()
-    this.scheduleConfigApply.cancel()
     await this.stopRuntimeWatchers()
-    await this.configWatcher?.close()
-    if (this.watchesConfigFile) {
-      unwatchFile(this.configFile)
-      this.watchesConfigFile = false
-    }
-    this.configWatcher = undefined
     await this.operation.catch(() => {})
     await this.runtimeOperation.catch(() => {})
     await this.stopRuntime()
@@ -236,26 +221,6 @@ class NeemDevSession implements NeemDevHost {
     await Promise.all(watchers.map((state) => state.watcher.close()))
   }
 
-  private async startConfigWatcher(): Promise<void> {
-    this.logger.trace(
-      { configFile: this.configFile },
-      'Starting Neem config watcher',
-    )
-    await this.applyConfig()
-    this.configWatcher = watch(this.configFile, () => {
-      void this.scheduleConfigApply()
-    })
-    watchFile(this.configFile, { interval: 100 }, (current, previous) => {
-      if (current.mtimeMs !== previous.mtimeMs) {
-        void this.scheduleConfigApply()
-      }
-    })
-    this.watchesConfigFile = true
-    this.configWatcher.on('error', (error) => {
-      this.recordError(error)
-    })
-  }
-
   private async applyConfig(): Promise<void> {
     if (this.stopped) return
     this.beginRuntimeChange()
@@ -269,11 +234,11 @@ class NeemDevSession implements NeemDevHost {
     })
     this.logger.trace({ file: this.configFile }, 'Neem config loaded')
 
-    await this.reconcileRuntimeWatchers()
+    await this.startRuntimeWatchers()
     this.scheduleFullRuntimeReload()
   }
 
-  private async reconcileRuntimeWatchers(): Promise<void> {
+  private async startRuntimeWatchers(): Promise<void> {
     if (!this.config) return
 
     const runtimePlans = resolveRuntimeBuildPlans(
@@ -281,60 +246,25 @@ class NeemDevSession implements NeemDevHost {
       this.config,
       this.selectedRuntimes,
     )
-    const runtimeNames = new Set(runtimePlans.map((plan) => plan.name))
-
-    await Promise.all(
-      [...this.runtimeWatchers.entries()]
-        .filter(([name]) => !runtimeNames.has(name))
-        .map(([name]) => this.removeRuntime(name)),
-    )
 
     for (const plan of runtimePlans) {
-      const current = this.runtimeWatchers.get(plan.name)
-      if (current?.entry !== plan.worker.watcherKey) {
-        if (current) await this.removeRuntime(plan.name)
-        const artifact = await this.startRuntimeWatcher(
-          plan.name,
-          plan.worker.rolldown,
-          plan.worker.entry,
-          plan.worker.artifacts,
-          plan.worker.watcherKey,
-        )
-        this.runtimeArtifacts.set(plan.name, artifact)
-      }
+      const artifact = await this.startRuntimeWatcher(
+        plan.name,
+        plan.worker.rolldown,
+        plan.worker.entry,
+        plan.worker.artifacts,
+      )
+      this.runtimeArtifacts.set(plan.name, artifact)
 
-      const hostCurrent = this.runtimeHostWatchers.get(plan.name)
       if (plan.host) {
-        if (hostCurrent?.entry !== plan.host.watcherKey) {
-          if (hostCurrent) {
-            await hostCurrent.watcher.close()
-            this.runtimeHostWatchers.delete(plan.name)
-            this.runtimeHostArtifacts.delete(plan.name)
-          }
-          const artifact = await this.startRuntimeHostWatcher(
-            plan.name,
-            plan.host.rolldown,
-            plan.host.entry,
-          )
-          this.runtimeHostArtifacts.set(plan.name, artifact)
-        }
-      } else if (hostCurrent) {
-        await hostCurrent.watcher.close()
-        this.runtimeHostWatchers.delete(plan.name)
-        this.runtimeHostArtifacts.delete(plan.name)
+        const hostArtifact = await this.startRuntimeHostWatcher(
+          plan.name,
+          plan.host.rolldown,
+          plan.host.entry,
+        )
+        this.runtimeHostArtifacts.set(plan.name, hostArtifact)
       }
     }
-  }
-
-  private async removeRuntime(name: string): Promise<void> {
-    this.logger.debug({ runtimeName: name }, 'Removing Neem runtime watcher')
-    const watcher = this.runtimeWatchers.get(name)
-    const hostWatcher = this.runtimeHostWatchers.get(name)
-    this.runtimeWatchers.delete(name)
-    this.runtimeArtifacts.delete(name)
-    this.runtimeHostWatchers.delete(name)
-    this.runtimeHostArtifacts.delete(name)
-    await Promise.all([watcher?.watcher.close(), hostWatcher?.watcher.close()])
   }
 
   private async startRuntimeWatcher(
@@ -342,7 +272,6 @@ class NeemDevSession implements NeemDevHost {
     runtimeRolldown: NeemRolldownOptions | undefined,
     entry: string | URL,
     emittedArtifacts: readonly NeemArtifact[] | undefined,
-    entryKey: string,
   ): Promise<NeemResolvedArtifact> {
     this.initializingRuntimes.add(name)
     this.logger.trace(
@@ -374,7 +303,7 @@ class NeemDevSession implements NeemDevHost {
       },
     )
 
-    this.runtimeWatchers.set(name, { watcher, entry: entryKey })
+    this.runtimeWatchers.set(name, { watcher })
 
     try {
       return await watcher.ready
@@ -417,10 +346,7 @@ class NeemDevSession implements NeemDevHost {
       },
     )
 
-    this.runtimeHostWatchers.set(name, {
-      watcher,
-      entry: toBuildEntryKey(hostEntry),
-    })
+    this.runtimeHostWatchers.set(name, { watcher })
 
     try {
       return await watcher.ready
