@@ -32,6 +32,17 @@ export type NeemCommand = CommandDef
 export type NeemCommandInput<TCommand extends NeemCommand = NeemCommand> =
   NeemArtifactEntry
 
+export type NeemPluginBuild = {
+  rolldown?: NeemRolldownOptions
+}
+
+export type NeemPluginInput = {
+  name: string
+  entry?: NeemEntryInput
+  build?: NeemPluginBuild
+  options?: unknown
+}
+
 export type NeemRuntimeHostConfig<
   THost extends NeemRuntimeHostFactory = NeemRuntimeHostFactory,
 > = { entry: NeemArtifactEntry; build?: NeemRuntimeBuildConfig }
@@ -141,6 +152,7 @@ export type NeemConfig<
   proxy?: NeemProxyConfig
   health?: NeemHealthConfig
   commands?: Record<string, NeemCommandInput>
+  plugins?: readonly NeemPluginInput[]
   outDir?: string
 }
 
@@ -168,9 +180,14 @@ export function defineConfig<
   proxy?: NeemProxyConfig
   health?: NeemHealthConfig
   commands?: Record<string, NeemCommandInput>
+  plugins?: readonly NeemPluginInput[]
   outDir?: string
 }): NeemConfig<TRuntimes> {
   return Object.freeze(config)
+}
+
+export function definePlugin<const T extends NeemPluginInput>(plugin: T): T {
+  return Object.freeze(plugin)
 }
 
 export function defineRuntime<

@@ -16,6 +16,8 @@ import type {
   NeemRuntimeServerHealth,
 } from '../runtime/server.ts'
 import { NEEM_MANIFEST_FILE } from '../build/manifest.ts'
+import { createNeemHostHooks } from '../runtime/hooks.ts'
+import { registerManifestPluginHooks } from '../runtime/plugin-hooks.ts'
 import { NeemRuntimeServer as RuntimeServer } from '../runtime/server.ts'
 import { loadBuiltRuntimeSnapshot } from '../runtime/snapshot-loader.ts'
 
@@ -69,10 +71,19 @@ export async function startNeem(
     },
     'Neem runtime snapshot loaded',
   )
+  const hooks = options.hooks ?? createNeemHostHooks()
   const server = new RuntimeServer({
     snapshot,
     failOnWorkerError,
-    hooks: options.hooks,
+    hooks,
+  })
+  await registerManifestPluginHooks({
+    manifest: snapshot.manifest,
+    outDir,
+    mode,
+    logger: snapshot.logger,
+    hooks,
+    getHealth: () => server.getHealth(),
   })
   const host = createStartedHost({
     mode,

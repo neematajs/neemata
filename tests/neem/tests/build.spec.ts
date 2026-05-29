@@ -214,6 +214,45 @@ describe('neem build', () => {
     )
   })
 
+  it('builds plugin entries, keeps duplicate names, and applies build plugins', async () => {
+    const outDir = await createTempOutDir()
+
+    await buildNeem({
+      config: resolve(fixturesDir, 'plugin.config.ts'),
+      outDir,
+    })
+    const manifest = await readManifest(outDir)
+
+    expect(manifest.plugins).toEqual([
+      {
+        name: 'hooks',
+        entry: {
+          file: expect.stringMatching(/^config\/plugins\/000-hooks\/.+\.js$/),
+        },
+        options: { label: 'first' },
+      },
+      {
+        name: 'hooks',
+        entry: {
+          file: expect.stringMatching(/^config\/plugins\/001-hooks\/.+\.js$/),
+        },
+        options: { label: 'second' },
+      },
+      { name: 'build-only' },
+    ])
+    expect(JSON.stringify(manifest.plugins)).not.toContain('rolldown')
+    await expectFile(resolve(outDir, manifest.plugins![0]!.entry!.file))
+    await expectFile(resolve(outDir, manifest.plugins![1]!.entry!.file))
+
+    const runtimeEntry = await readFile(
+      resolve(outDir, manifest.runtimes!.api.entry.file),
+      'utf8',
+    )
+    expect(runtimeEntry).toMatch(/__neemPluginMarkers\.push\([`"']a[`"']\)/)
+    expect(runtimeEntry).toMatch(/__neemPluginMarkers\.push\([`"']b[`"']\)/)
+    expect(runtimeEntry).toMatch(/__neemPluginMarkers\.push\([`"']c[`"']\)/)
+  })
+
   // TODO: Restore when built command execution has a mature CLI surface.
   // it('builds and runs CLI command artifacts', async () => {
   //   const outDir = await createTempOutDir()

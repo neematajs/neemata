@@ -19,6 +19,10 @@ import {
   NEEM_MANIFEST_SCHEMA_VERSION,
 } from '../build/manifest.ts'
 import {
+  mergePluginRolldownOptions,
+  resolvePluginBuildPlans,
+} from '../build/plugin-plan.ts'
+import {
   normalizeSelectedRuntimeNames,
   resolveRuntimeBuildPlans,
 } from '../build/runtime-plan.ts'
@@ -61,10 +65,13 @@ export async function buildNeem(
   )
   const outDir = resolve(cwd, options.outDir ?? config.outDir ?? 'dist')
   const selectedRuntimes = normalizeSelectedRuntimeNames(options.runtimes)
+  const pluginPlans = resolvePluginBuildPlans(configFile, config)
+  const pluginRolldown = mergePluginRolldownOptions(pluginPlans)
   const runtimePlans = resolveRuntimeBuildPlans(
     configFile,
     config,
     selectedRuntimes,
+    { rolldown: pluginRolldown },
   )
   const runtimeNames = runtimePlans.map((plan) => plan.name)
 
@@ -88,6 +95,11 @@ export async function buildNeem(
       entry: 'start.js',
       worker: toManifestPath(outDir, runtimeArtifacts.worker.file),
     },
+    plugins: await buildPluginManifestEntries({
+      configFile,
+      outDir,
+      plugins: pluginPlans,
+    }),
     config: manifestConfig,
     runtimes: {},
   }
@@ -153,6 +165,45 @@ export async function buildNeem(
   )
 
   return { configFile, outDir, manifestFile, manifest }
+}
+
+async function buildPluginManifestEntries(options: {
+  configFile: string
+  outDir: string
+  plugins: ReturnType<typeof resolvePluginBuildPlans>
+}): Promise<NeemBuildManifest['plugins']> {
+  if (options.plugins.length === 0) return undefined
+
+  return Promise.all(
+    options.plugins.map(async (plugin) => {
+      const entry = plugin.entry
+        ? await buildArtifact({
+            artifact: {
+              id: 'plugin',
+              kind: 'module',
+              entry: plugin.entry,
+            },
+            owner: { type: 'config' },
+            artifactOutDir: resolve(
+              options.outDir,
+              'config',
+              'plugins',
+              plugin.key,
+            ),
+            outDir: options.outDir,
+            minify: true,
+          })
+        : undefined
+
+      return {
+        name: plugin.name,
+        entry: entry
+          ? { file: toManifestPath(options.outDir, entry.file) }
+          : undefined,
+        options: plugin.options,
+      }
+    }),
+  )
 }
 
 export async function cleanNeemOutDir(outDir: string): Promise<void> {

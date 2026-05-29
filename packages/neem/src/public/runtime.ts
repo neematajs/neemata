@@ -10,6 +10,95 @@ export type NeemMaybePromise<T> = T | Promise<T>
 
 export type NeemRuntimeUpstream = { type: string; url: string }
 
+export type NeemRuntimeServerState =
+  | 'idle'
+  | 'starting'
+  | 'running'
+  | 'reloading'
+  | 'failed'
+  | 'stopping'
+  | 'stopped'
+
+export type NeemRuntimeServerSnapshot = {
+  mode: NeemMode
+  outDir: string
+  runtimeNames: readonly string[]
+  artifactCount: number
+  state: NeemRuntimeServerState
+  revision: number
+  lastError?: Error
+}
+
+export type NeemWorkerPoolState =
+  | 'idle'
+  | 'starting'
+  | 'ready'
+  | 'degraded'
+  | 'stopping'
+  | 'stopped'
+  | 'failed'
+
+export type NeemWorkerPoolHealth = {
+  name: string
+  state: NeemWorkerPoolState
+  size: number
+  ready: number
+  failed: number
+  stopped: number
+  starting: number
+}
+
+export type NeemManagedWorkerHealth = {
+  id: string
+  name: string
+  artifactId: string
+  state: NeemWorkerState
+  failureCount: number
+  startedAt?: number
+  readyAt?: number
+  stoppedAt?: number
+  lastError?: Error
+}
+
+export type NeemStartedRuntimeThreadHealth = NeemManagedWorkerHealth & {
+  runtimeName: string
+  artifact: NeemResolvedArtifact
+  upstreams: readonly NeemRuntimeUpstream[]
+}
+
+export type NeemProxyUpstream = {
+  type: 'port'
+  transport: 'http' | 'http2' | 'ws'
+  secure: boolean
+  hostname: string
+  port: number
+}
+
+export type NeemProxyUpstreamSnapshot = {
+  runtimeName: string
+  upstream: NeemRuntimeUpstream
+  proxyUpstream: NeemProxyUpstream
+  count: number
+}
+
+export type NeemProxyHealth = {
+  enabled: boolean
+  running: boolean
+  upstreams: readonly NeemProxyUpstreamSnapshot[]
+}
+
+export type NeemRuntimeServerRuntimeHealth = {
+  name: string
+  pool: NeemWorkerPoolHealth
+  threads: readonly NeemStartedRuntimeThreadHealth[]
+}
+
+export type NeemRuntimeServerHealth = NeemRuntimeServerSnapshot & {
+  ready: boolean
+  runtimes: readonly NeemRuntimeServerRuntimeHealth[]
+  proxy: NeemProxyHealth
+}
+
 export type NeemRuntimeStartResult = {
   upstreams?: readonly NeemRuntimeUpstream[]
 }

@@ -90,6 +90,17 @@ function validateManifest(manifest: NeemBuildManifest): void {
     assertManifestPath(manifest.config.logger.file, 'config.logger.file')
   }
 
+  for (const [index, plugin] of (manifest.plugins ?? []).entries()) {
+    if (!plugin.name.trim()) {
+      throw new Error(
+        `Invalid Neem manifest plugin [${index}]: name is required`,
+      )
+    }
+    if (plugin.entry) {
+      assertManifestPath(plugin.entry.file, `plugins.${index}.entry.file`)
+    }
+  }
+
   for (const [runtimeName, runtime] of Object.entries(
     manifest.runtimes ?? {},
   )) {

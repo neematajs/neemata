@@ -1,6 +1,8 @@
-import type { InferNeemWorkerData } from '@nmtjs/neem'
+import type { InferNeemWorkerData, NeemHostHookMap } from '@nmtjs/neem'
 import {
   defineConfig,
+  definePlugin,
+  definePluginHooks,
   defineRuntime,
   defineRuntimeHost,
   normalizeNeemConfig,
@@ -54,6 +56,34 @@ describe('@nmtjs/neem consumer contracts', () => {
 
     expect(config.health?.paths?.ready).toBe('/readyz')
     expect(Boolean(invalid)).toBe(true)
+  })
+
+  it('keeps Neem plugins typed and ordered without unique names', () => {
+    const hooks = definePluginHooks((ctx) => {
+      expectTypeOf(ctx.name).toEqualTypeOf<string>()
+      expectTypeOf(ctx.getHealth().ready).toEqualTypeOf<boolean>()
+
+      return {
+        'server:start'(event) {
+          expectTypeOf(event).toEqualTypeOf<
+            Parameters<NeemHostHookMap['server:start']>[0]
+          >()
+        },
+      }
+    })
+    const config = defineConfig({
+      plugins: [
+        definePlugin({ name: 'observer', options: { label: 'first' } }),
+        definePlugin({ name: 'observer', options: { label: 'second' } }),
+      ],
+      runtimes: {},
+    })
+
+    expect(config.plugins?.map((plugin) => plugin.name)).toEqual([
+      'observer',
+      'observer',
+    ])
+    expect(Boolean(hooks)).toBe(true)
   })
 
   it('keeps runtime worker data inferred from the worker default export', () => {

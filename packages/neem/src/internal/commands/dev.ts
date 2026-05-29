@@ -10,8 +10,10 @@ import type {
 } from '../../public/artifact.ts'
 import type { NeemConfig, NeemNormalizedConfig } from '../../public/config.ts'
 import type { NeemBuildManifest } from '../build/manifest.ts'
+import type { NeemPluginBuildPlan } from '../build/plugin-plan.ts'
 import type { NeemArtifactWatcher } from '../build/rolldown.ts'
 import type { NeemHostHooks } from '../runtime/hooks.ts'
+import type { NeemPluginHookRegistration } from '../runtime/plugin-hooks.ts'
 import type {
   NeemRuntimeServer,
   NeemRuntimeServerHealth,
@@ -24,9 +26,15 @@ import {
   normalizeSelectedRuntimeNames,
   resolveRuntimeBuildPlans,
 } from '../build/runtime-plan.ts'
+import {
+  mergePluginRolldownOptions,
+  resolvePluginBuildPlans,
+} from '../build/plugin-plan.ts'
 import { toBuildEntryKey } from '../build/resolve.ts'
 import { watchArtifact } from '../build/rolldown.ts'
+import { createNeemHostHooks } from '../runtime/hooks.ts'
 import { createNeemDefaultLogger } from '../runtime/logger.ts'
+import { registerManifestPluginHooks } from '../runtime/plugin-hooks.ts'
 import { NeemRuntimeServer as RuntimeServer } from '../runtime/server.ts'
 import { createRuntimeSnapshot } from '../runtime/snapshot.ts'
 import { importDefault } from '../runtime/utils.ts'
@@ -105,6 +113,10 @@ class NeemDevSession implements NeemDevHost {
   private runtimeArtifacts = new Map<string, NeemResolvedArtifact>()
   private runtimeHostWatchers = new Map<string, RuntimeWatcherState>()
   private runtimeHostArtifacts = new Map<string, NeemResolvedArtifact>()
+  private pluginPlans: readonly NeemPluginBuildPlan[] = []
+  private pluginWatchers = new Map<string, RuntimeWatcherState>()
+  private pluginArtifacts = new Map<string, NeemResolvedArtifact>()
+  private pluginHookRegistrations: NeemPluginHookRegistration[] = []
   private operation = Promise.resolve()
   private runtimeOperation = Promise.resolve()
   private lifecycle: NeemDevLifecycleSnapshot = { state: 'idle' }
@@ -122,9 +134,10 @@ class NeemDevSession implements NeemDevHost {
   private readyReject!: (error: Error) => void
   private closedResolve!: () => void
   private readonly selectedRuntimes: readonly string[] | undefined
-  private readonly hooks: NeemHostHooks | undefined
+  private readonly hooks: NeemHostHooks
   private initializingRuntimes = new Set<string>()
   private initializingRuntimeHosts = new Set<string>()
+  private initializingPlugins = new Set<string>()
 
   constructor(options: {
     configFile: string
@@ -136,7 +149,7 @@ class NeemDevSession implements NeemDevHost {
     this.configFile = options.configFile
     this.outDir = options.outDir
     this.selectedRuntimes = normalizeSelectedRuntimeNames(options.runtimes)
-    this.hooks = options.hooks
+    this.hooks = options.hooks ?? createNeemHostHooks()
     this.ready = new Promise<void>((resolve, reject) => {
       this.readyResolve = resolve
       this.readyReject = reject
@@ -199,6 +212,7 @@ class NeemDevSession implements NeemDevHost {
     await this.operation.catch(() => {})
     await this.runtimeOperation.catch(() => {})
     await this.stopRuntime()
+    this.removePluginHooks()
     this.rejectReady(new Error('Neem dev stopped before ready'))
     this.lifecycle = { state: 'stopped' }
     this.logger.info('Neem dev session stopped')
@@ -209,6 +223,7 @@ class NeemDevSession implements NeemDevHost {
     const watchers = [
       ...this.runtimeWatchers.values(),
       ...this.runtimeHostWatchers.values(),
+      ...this.pluginWatchers.values(),
     ]
     this.logger.debug(
       { count: watchers.length },
@@ -218,6 +233,8 @@ class NeemDevSession implements NeemDevHost {
     this.runtimeArtifacts.clear()
     this.runtimeHostWatchers.clear()
     this.runtimeHostArtifacts.clear()
+    this.pluginWatchers.clear()
+    this.pluginArtifacts.clear()
     await Promise.all(watchers.map((state) => state.watcher.close()))
   }
 
@@ -232,9 +249,11 @@ class NeemDevSession implements NeemDevHost {
       mode: 'development',
       importer: this.configFile,
     })
+    this.pluginPlans = resolvePluginBuildPlans(this.configFile, this.config)
     this.logger.trace({ file: this.configFile }, 'Neem config loaded')
 
     await this.startRuntimeWatchers()
+    await this.startPluginWatchers()
     this.scheduleFullRuntimeReload()
   }
 
@@ -245,6 +264,7 @@ class NeemDevSession implements NeemDevHost {
       this.configFile,
       this.config,
       this.selectedRuntimes,
+      { rolldown: mergePluginRolldownOptions(this.pluginPlans) },
     )
 
     for (const plan of runtimePlans) {
@@ -264,6 +284,56 @@ class NeemDevSession implements NeemDevHost {
         )
         this.runtimeHostArtifacts.set(plan.name, hostArtifact)
       }
+    }
+  }
+
+  private async startPluginWatchers(): Promise<void> {
+    for (const plan of this.pluginPlans) {
+      if (!plan.entry) continue
+
+      const artifact = await this.startPluginWatcher(plan)
+      this.pluginArtifacts.set(plan.key, artifact)
+    }
+  }
+
+  private async startPluginWatcher(
+    plan: NeemPluginBuildPlan,
+  ): Promise<NeemResolvedArtifact> {
+    this.initializingPlugins.add(plan.key)
+    this.logger.trace(
+      { pluginName: plan.name, entry: toBuildEntryKey(plan.entry!) },
+      'Starting Neem plugin watcher',
+    )
+    const watcher = await watchArtifact(
+      {
+        artifact: {
+          id: 'plugin',
+          kind: 'module',
+          entry: plan.entry!,
+        },
+        owner: { type: 'config' },
+        artifactOutDir: resolve(this.outDir, 'config', 'plugins', plan.key),
+        outDir: this.outDir,
+      },
+      {
+        onRebuild: (artifact) => {
+          const initial = this.initializingPlugins.has(plan.key)
+          return this.enqueue(() =>
+            this.applyPluginArtifact(plan.key, artifact, { initial }),
+          )
+        },
+        onError: (error) => {
+          this.recordError(error)
+        },
+      },
+    )
+
+    this.pluginWatchers.set(plan.key, { watcher })
+
+    try {
+      return await watcher.ready
+    } finally {
+      this.initializingPlugins.delete(plan.key)
     }
   }
 
@@ -379,6 +449,18 @@ class NeemDevSession implements NeemDevHost {
     this.scheduleScopedRuntimeReload(name)
   }
 
+  private async applyPluginArtifact(
+    key: string,
+    artifact: NeemResolvedArtifact,
+    options: { initial: boolean },
+  ): Promise<void> {
+    if (this.stopped) return
+    this.pluginArtifacts.set(key, artifact)
+    if (options.initial) return
+
+    this.scheduleFullRuntimeReload()
+  }
+
   private async writeCurrentManifest(): Promise<NeemBuildManifest> {
     if (!this.config) {
       throw new Error('Cannot write Neem dev manifest before config is loaded')
@@ -391,6 +473,7 @@ class NeemDevSession implements NeemDevHost {
         this.configFile,
         this.outDir,
       ),
+      plugins: this.createPluginManifestEntries(),
       runtimes: {},
     }
 
@@ -398,6 +481,7 @@ class NeemDevSession implements NeemDevHost {
       this.configFile,
       this.config,
       this.selectedRuntimes,
+      { rolldown: mergePluginRolldownOptions(this.pluginPlans) },
     )) {
       const name = plan.name
       const artifact = this.runtimeArtifacts.get(name)
@@ -438,6 +522,7 @@ class NeemDevSession implements NeemDevHost {
       const reloading = !!this.runtime
       if (this.runtime) {
         this.logger.info('Reloading Neem dev runtime...')
+        await this.reloadPluginHooks(manifest, this.runtime)
         await this.runtime.reload(snapshot)
       } else {
         this.logger.info('Starting Neem dev runtime...')
@@ -446,6 +531,7 @@ class NeemDevSession implements NeemDevHost {
           failOnWorkerError: false,
           hooks: this.hooks,
         })
+        await this.reloadPluginHooks(manifest, this.runtime)
         await this.runtime.start()
       }
       this.lifecycle = this.runtime.getSnapshot()
@@ -568,6 +654,49 @@ class NeemDevSession implements NeemDevHost {
       config: this.config,
       logger: this.logger,
     })
+  }
+
+  private createPluginManifestEntries(): NeemBuildManifest['plugins'] {
+    if (this.pluginPlans.length === 0) return undefined
+
+    return this.pluginPlans.map((plan) => {
+      const artifact = this.pluginArtifacts.get(plan.key)
+      if (plan.entry && !artifact) {
+        throw new Error(`Compiled artifact for plugin [${plan.name}] is missing`)
+      }
+
+      return {
+        name: plan.name,
+        entry: artifact
+          ? { file: toManifestArtifact(this.outDir, artifact).file }
+          : undefined,
+        options: plan.options,
+      }
+    })
+  }
+
+  private async reloadPluginHooks(
+    manifest: NeemBuildManifest,
+    server: NeemRuntimeServer,
+  ): Promise<void> {
+    this.removePluginHooks()
+    this.pluginHookRegistrations = await registerManifestPluginHooks({
+      manifest,
+      outDir: this.outDir,
+      mode: 'development',
+      logger: this.logger,
+      hooks: this.hooks,
+      getHealth: () => server.getHealth(),
+      cacheBust: true,
+    })
+  }
+
+  private removePluginHooks(): void {
+    for (const registration of this.pluginHookRegistrations
+      .splice(0)
+      .reverse()) {
+      registration.remove()
+    }
   }
 
   private async stopRuntime(): Promise<void> {

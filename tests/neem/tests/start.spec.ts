@@ -17,6 +17,7 @@ const tempRoot = resolve(import.meta.dirname, '../.tmp-start')
 const tempDirs: string[] = []
 const previousEventsFile = process.env.NEEM_RUNTIME_EVENTS_FILE
 const previousLogEventsFile = process.env.NEEM_LOG_EVENTS_FILE
+const previousPluginEventsFile = process.env.NEEM_PLUGIN_EVENTS_FILE
 
 describe('neem start', () => {
   afterEach(async () => {
@@ -29,6 +30,11 @@ describe('neem start', () => {
       delete process.env.NEEM_LOG_EVENTS_FILE
     } else {
       process.env.NEEM_LOG_EVENTS_FILE = previousLogEventsFile
+    }
+    if (previousPluginEventsFile === undefined) {
+      delete process.env.NEEM_PLUGIN_EVENTS_FILE
+    } else {
+      process.env.NEEM_PLUGIN_EVENTS_FILE = previousPluginEventsFile
     }
 
     await Promise.all(
@@ -169,6 +175,36 @@ describe('neem start', () => {
       expect([...host.getRuntimeWorkers()][0]?.getState()).toBe('ready')
       expect(host.getUpstreams()).toEqual([
         { type: 'http', url: 'http://127.0.0.1:3000' },
+      ])
+    } finally {
+      await host.stop()
+      await host.closed
+    }
+  })
+
+  it('loads built plugin hooks from the manifest in order', async () => {
+    const { outDir } = await buildFixture('plugin.config.ts')
+    const pluginEventsFile = resolve(outDir, 'plugin-events.jsonl')
+    process.env.NEEM_PLUGIN_EVENTS_FILE = pluginEventsFile
+
+    const host = await startNeem({ outDir })
+
+    try {
+      await waitForEvent(
+        pluginEventsFile,
+        (event) => event.event === 'plugin:server:ready',
+      )
+      const starts = (await readEvents(pluginEventsFile)).filter(
+        (event) => event.event === 'plugin:server:start',
+      )
+      expect(starts.map((event) => event.name)).toEqual(['hooks', 'hooks'])
+      expect(starts.map((event) => event.options)).toEqual([
+        { label: 'first' },
+        { label: 'second' },
+      ])
+      expect(starts.map((event) => event.mode)).toEqual([
+        'production',
+        'production',
       ])
     } finally {
       await host.stop()

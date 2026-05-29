@@ -3,6 +3,7 @@ import type {
   NeemNormalizedConfig,
   NeemRuntimeConfigBase,
 } from '../../public/config.ts'
+import { mergeRolldownOptions } from './plugin-plan.ts'
 import { resolveBuildEntry, resolveRequiredBuildEntry } from './resolve.ts'
 
 export type NeemRuntimeBuildPlan = {
@@ -22,6 +23,7 @@ export function resolveRuntimeBuildPlans(
   configFile: string,
   config: NeemNormalizedConfig,
   selectedRuntimes: readonly string[] | undefined,
+  options: { rolldown?: NeemRolldownOptions } = {},
 ): readonly NeemRuntimeBuildPlan[] {
   const runtimeEntries = Object.entries(config.runtimes ?? {})
   assertSelectedRuntimeNamesExist(
@@ -32,7 +34,7 @@ export function resolveRuntimeBuildPlans(
   return runtimeEntries
     .filter(([name]) => shouldUseRuntimeName(name, selectedRuntimes))
     .map(([name, runtimeConfig]) =>
-      resolveRuntimeBuildPlan(configFile, name, runtimeConfig),
+      resolveRuntimeBuildPlan(configFile, name, runtimeConfig, options),
     )
 }
 
@@ -40,6 +42,7 @@ export function resolveRuntimeBuildPlan(
   configFile: string,
   name: string,
   runtimeConfig: NeemRuntimeConfigBase,
+  options: { rolldown?: NeemRolldownOptions } = {},
 ): NeemRuntimeBuildPlan {
   const entry = resolveRequiredBuildEntry(configFile, runtimeConfig.worker.entry)
   const artifacts = resolveRuntimeBuildArtifacts(
@@ -52,7 +55,10 @@ export function resolveRuntimeBuildPlan(
     name,
     worker: {
       entry,
-      rolldown: runtimeConfig.worker.build?.rolldown,
+      rolldown: mergeRolldownOptions(
+        options.rolldown,
+        runtimeConfig.worker.build?.rolldown,
+      ),
       artifacts,
     },
     host: hostEntry

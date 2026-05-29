@@ -36,9 +36,16 @@ export type NeemBuildManifestConfig = {
   runtimes: Record<string, NeemBuildManifestRuntimeConfig>
 }
 
+export type NeemBuildManifestPlugin = {
+  name: string
+  entry?: { file: string }
+  options?: unknown
+}
+
 export type NeemBuildManifest = {
   schemaVersion: typeof NEEM_MANIFEST_SCHEMA_VERSION
   runtime?: { entry: string; worker: string }
+  plugins?: readonly NeemBuildManifestPlugin[]
   config: NeemBuildManifestConfig
   runtimes?: Record<
     string,

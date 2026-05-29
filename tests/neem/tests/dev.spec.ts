@@ -20,6 +20,7 @@ const fixturesDir = resolve(import.meta.dirname, '../fixtures')
 const tempRoot = resolve(import.meta.dirname, '../.tmp-dev')
 const tempDirs: string[] = []
 const previousEventsFile = process.env.NEEM_RUNTIME_EVENTS_FILE
+const previousPluginEventsFile = process.env.NEEM_PLUGIN_EVENTS_FILE
 
 describe('neem dev', () => {
   afterEach(async () => {
@@ -27,6 +28,11 @@ describe('neem dev', () => {
       delete process.env.NEEM_RUNTIME_EVENTS_FILE
     } else {
       process.env.NEEM_RUNTIME_EVENTS_FILE = previousEventsFile
+    }
+    if (previousPluginEventsFile === undefined) {
+      delete process.env.NEEM_PLUGIN_EVENTS_FILE
+    } else {
+      process.env.NEEM_PLUGIN_EVENTS_FILE = previousPluginEventsFile
     }
 
     await Promise.all(
@@ -224,6 +230,57 @@ describe('neem dev', () => {
     }
   }, 15_000)
 
+  it('reloads plugin hooks after plugin entry rebuilds', async () => {
+    const fixture = await createFixtureCopy('plugin.config.ts')
+    process.env.NEEM_RUNTIME_EVENTS_FILE = fixture.eventsFile
+    process.env.NEEM_PLUGIN_EVENTS_FILE = fixture.pluginEventsFile
+
+    const host = await devNeem({
+      config: fixture.configFile,
+      outDir: fixture.outDir,
+    })
+
+    try {
+      await host.ready
+      await waitForEvents(
+        fixture.pluginEventsFile,
+        (events) =>
+          events.filter((event) => event.event === 'plugin:server:ready')
+            .length >= 2,
+      )
+
+      const source = await readFile(fixture.pluginHooksFile, 'utf8')
+      await writeFile(
+        fixture.pluginHooksFile,
+        source.replace(
+          "const pluginVersion = 'one'",
+          "const pluginVersion = 'two'",
+        ),
+      )
+
+      const events = await waitForEvents(
+        fixture.pluginEventsFile,
+        (events) =>
+          events.filter(
+            (event) =>
+              event.event === 'plugin:server:reload' &&
+              event.version === 'two',
+          ).length >= 2,
+      )
+      const reloads = events.filter(
+        (event) => event.event === 'plugin:server:reload',
+      )
+      expect(reloads.map((event) => event.version)).toEqual(['two', 'two'])
+      expect(reloads.map((event) => event.options)).toEqual([
+        { label: 'first' },
+        { label: 'second' },
+      ])
+    } finally {
+      await host.stop()
+      await host.closed
+    }
+  }, 15_000)
+
   it('restarts the dev child process after config changes', async () => {
     const fixture = await createFixtureCopy()
     process.env.NEEM_RUNTIME_EVENTS_FILE = fixture.eventsFile
@@ -301,8 +358,10 @@ async function createFixtureCopy(config = 'runtime.config.ts') {
     fixtureDir,
     configFile: resolve(fixtureDir, config),
     appFile: resolve(fixtureDir, 'runtime-app.ts'),
+    pluginHooksFile: resolve(fixtureDir, 'plugin-hooks.ts'),
     outDir: resolve(dir, '.neem'),
     eventsFile: resolve(dir, 'events.jsonl'),
+    pluginEventsFile: resolve(dir, 'plugin-events.jsonl'),
   }
 }
 
@@ -370,6 +429,8 @@ type RuntimeEvent = {
   event: string
   name?: string
   mode?: string
+  version?: string
   data?: Record<string, unknown>
+  options?: Record<string, unknown>
   definition?: { fixture?: string }
 }
