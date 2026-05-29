@@ -10,7 +10,7 @@ import type {
   NeemResolvedArtifact,
   NeemRolldownOptions,
 } from '../../public/artifact.ts'
-import { mergeNeemRolldownOptions } from '../../public/rolldown-options.ts'
+import { mergeNeemRolldownOptions } from './utils.ts'
 
 type ArtifactBuildMetadata = {
   entryFileName?: string

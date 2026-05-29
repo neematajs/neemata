@@ -1,4 +1,4 @@
-import type { NeemRolldownOptions } from './artifact.ts'
+import type { NeemRolldownOptions } from '../../public/artifact.ts'
 
 const OUTPUT_ARRAY_ERROR =
   'Neem Rolldown output arrays are not supported; configure a single output object.'

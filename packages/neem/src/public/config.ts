@@ -8,7 +8,7 @@ import type {
 } from './artifact.ts'
 import type { NeemRuntimeHostFactory } from './runtime.ts'
 import type { InferNeemWorkerData, NeemWorker } from './worker.ts'
-import { mergeNeemRolldownOptions } from './rolldown-options.ts'
+import { mergeNeemRolldownOptions } from '../internal/build/utils.ts'
 
 export type NeemEntryModule<T> = { default: T }
 

@@ -6,8 +6,8 @@ import type {
   NeemNormalizedConfig,
   NeemRuntimeConfigBase,
 } from '../../public/config.ts'
-import { mergeNeemRolldownOptions } from '../../public/rolldown-options.ts'
 import { resolveBuildEntry, resolveRequiredBuildEntry } from './resolve.ts'
+import { mergeNeemRolldownOptions } from './utils.ts'
 
 export type NeemRuntimeBuildPlan = {
   name: string

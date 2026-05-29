@@ -3,8 +3,8 @@ import type {
   NeemNormalizedConfig,
   NeemPluginInput,
 } from '../../public/config.ts'
-import { mergeNeemRolldownOptions } from '../../public/rolldown-options.ts'
 import { resolveBuildEntry } from './resolve.ts'
+import { mergeNeemRolldownOptions } from './utils.ts'
 
 export type NeemPluginBuildPlan = {
   key: string
