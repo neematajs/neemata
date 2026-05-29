@@ -21,29 +21,28 @@ import type {
 } from '../runtime/server.ts'
 import { normalizeNeemConfig } from '../../public/config.ts'
 import { resolveNeemConfigLogger } from '../build/logger.ts'
-import { NEEM_MANIFEST_SCHEMA_VERSION } from '../build/manifest.ts'
 import {
-  normalizeSelectedRuntimeNames,
-  resolveRuntimeBuildPlans,
-} from '../build/runtime-plan.ts'
+  NEEM_MANIFEST_SCHEMA_VERSION,
+  selectManifestRuntimes,
+  toManifestArtifact,
+  writeManifest,
+} from '../build/manifest.ts'
 import {
   mergePluginRolldownOptions,
   resolvePluginBuildPlans,
 } from '../build/plugin-plan.ts'
 import { toBuildEntryKey } from '../build/resolve.ts'
 import { watchArtifact } from '../build/rolldown.ts'
+import {
+  normalizeSelectedRuntimeNames,
+  resolveRuntimeBuildPlans,
+} from '../build/runtime-plan.ts'
 import { createNeemHostHooks } from '../runtime/hooks.ts'
 import { createNeemDefaultLogger } from '../runtime/logger.ts'
 import { registerManifestPluginHooks } from '../runtime/plugin-hooks.ts'
 import { NeemRuntimeServer as RuntimeServer } from '../runtime/server.ts'
 import { createRuntimeSnapshot } from '../runtime/snapshot.ts'
-import { importDefault } from '../runtime/utils.ts'
-import {
-  cleanNeemOutDir,
-  createManifestConfig,
-  toManifestArtifact,
-  writeManifest,
-} from './build.ts'
+import { cleanNeemOutDir, createManifestConfig } from './build.ts'
 
 export type NeemDevOptions = {
   config: string
@@ -306,11 +305,7 @@ class NeemDevSession implements NeemDevHost {
     )
     const watcher = await watchArtifact(
       {
-        artifact: {
-          id: 'plugin',
-          kind: 'module',
-          entry: plan.entry!,
-        },
+        artifact: { id: 'plugin', kind: 'module', entry: plan.entry! },
         owner: { type: 'config' },
         artifactOutDir: resolve(this.outDir, 'config', 'plugins', plan.key),
         outDir: this.outDir,
@@ -499,8 +494,12 @@ class NeemDevSession implements NeemDevHost {
       }
     }
 
-    await writeManifest(this.outDir, manifest)
-    return manifest
+    const outputManifest = selectManifestRuntimes(
+      manifest,
+      Object.keys(manifest.runtimes ?? {}),
+    )
+    await writeManifest(this.outDir, outputManifest)
+    return outputManifest
   }
 
   private async restartRuntime(manifest: NeemBuildManifest): Promise<void> {
@@ -662,7 +661,9 @@ class NeemDevSession implements NeemDevHost {
     return this.pluginPlans.map((plan) => {
       const artifact = this.pluginArtifacts.get(plan.key)
       if (plan.entry && !artifact) {
-        throw new Error(`Compiled artifact for plugin [${plan.name}] is missing`)
+        throw new Error(
+          `Compiled artifact for plugin [${plan.name}] is missing`,
+        )
       }
 
       return {

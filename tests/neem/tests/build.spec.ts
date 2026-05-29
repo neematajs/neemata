@@ -303,6 +303,7 @@ describe('neem build', () => {
     const manifest = await readManifest(outDir)
 
     expect(Object.keys(manifest.runtimes ?? {})).toEqual(['api'])
+    expect(Object.keys(manifest.config.runtimes)).toEqual(['api'])
     await expectFile(resolve(outDir, manifest.runtimes!.api.entry.file))
     await expectFile(resolve(outDir, 'runtimes/api/start.js'))
     const startCode = await readFile(resolve(outDir, 'runtimes/api/start.js'), {

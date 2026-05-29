@@ -1,9 +1,12 @@
-import type { NeemArtifact, NeemRolldownOptions } from '../../public/artifact.ts'
+import type {
+  NeemArtifact,
+  NeemRolldownOptions,
+} from '../../public/artifact.ts'
 import type {
   NeemNormalizedConfig,
   NeemRuntimeConfigBase,
 } from '../../public/config.ts'
-import { mergeRolldownOptions } from './plugin-plan.ts'
+import { mergeNeemRolldownOptions } from '../../public/rolldown-options.ts'
 import { resolveBuildEntry, resolveRequiredBuildEntry } from './resolve.ts'
 
 export type NeemRuntimeBuildPlan = {
@@ -13,10 +16,7 @@ export type NeemRuntimeBuildPlan = {
     rolldown?: NeemRolldownOptions
     artifacts?: readonly NeemArtifact[]
   }
-  host?: {
-    entry: NeemArtifact['entry']
-    rolldown?: NeemRolldownOptions
-  }
+  host?: { entry: NeemArtifact['entry']; rolldown?: NeemRolldownOptions }
 }
 
 export function resolveRuntimeBuildPlans(
@@ -44,7 +44,10 @@ export function resolveRuntimeBuildPlan(
   runtimeConfig: NeemRuntimeConfigBase,
   options: { rolldown?: NeemRolldownOptions } = {},
 ): NeemRuntimeBuildPlan {
-  const entry = resolveRequiredBuildEntry(configFile, runtimeConfig.worker.entry)
+  const entry = resolveRequiredBuildEntry(
+    configFile,
+    runtimeConfig.worker.entry,
+  )
   const artifacts = resolveRuntimeBuildArtifacts(
     configFile,
     runtimeConfig.artifacts,
@@ -55,17 +58,14 @@ export function resolveRuntimeBuildPlan(
     name,
     worker: {
       entry,
-      rolldown: mergeRolldownOptions(
+      rolldown: mergeNeemRolldownOptions(
         options.rolldown,
         runtimeConfig.worker.build?.rolldown,
       ),
       artifacts,
     },
     host: hostEntry
-      ? {
-          entry: hostEntry,
-          rolldown: runtimeConfig.host?.build?.rolldown,
-        }
+      ? { entry: hostEntry, rolldown: runtimeConfig.host?.build?.rolldown }
       : undefined,
   }
 }

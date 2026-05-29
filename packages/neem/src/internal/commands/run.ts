@@ -1,15 +1,10 @@
-import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 import type { CommandDef } from 'citty'
 import { runCommand } from 'citty'
 
-import type { NeemBuildManifest } from '../build/manifest.ts'
-import {
-  NEEM_MANIFEST_FILE,
-  NEEM_MANIFEST_SCHEMA_VERSION,
-} from '../build/manifest.ts'
+import { NEEM_MANIFEST_FILE, readManifest } from '../build/manifest.ts'
 
 export type NeemRunCommandOptions = {
   cwd?: string
@@ -43,17 +38,4 @@ export async function runNeemCommand(
 
   return (await runCommand(commandDef, { rawArgs: [...(options.args ?? [])] }))
     .result
-}
-
-async function readManifest(manifestFile: string): Promise<NeemBuildManifest> {
-  const manifest = JSON.parse(
-    await readFile(manifestFile, 'utf8'),
-  ) as NeemBuildManifest
-  if (manifest.schemaVersion !== NEEM_MANIFEST_SCHEMA_VERSION) {
-    throw new Error(
-      `Unsupported Neem manifest schema version [${String(manifest.schemaVersion)}] at [${manifestFile}]`,
-    )
-  }
-
-  return manifest
 }

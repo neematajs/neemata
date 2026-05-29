@@ -1,7 +1,16 @@
 import type { Logger } from '@nmtjs/core'
 
-import type { NeemWorkerState } from '../../public/runtime.ts'
+import type {
+  NeemWorkerPoolHealth,
+  NeemWorkerPoolState,
+  NeemWorkerState,
+} from '../../public/runtime.ts'
 import { createNeemChildLogger, createNeemDefaultLogger } from './logger.ts'
+
+export type {
+  NeemWorkerPoolHealth,
+  NeemWorkerPoolState,
+} from '../../public/runtime.ts'
 
 export type NeemPoolWorker = {
   id?: string
@@ -9,25 +18,6 @@ export type NeemPoolWorker = {
   getState: () => NeemWorkerState
   start: () => Promise<void>
   stop: () => Promise<void>
-}
-
-export type NeemWorkerPoolState =
-  | 'idle'
-  | 'starting'
-  | 'ready'
-  | 'degraded'
-  | 'stopping'
-  | 'stopped'
-  | 'failed'
-
-export type NeemWorkerPoolHealth = {
-  name: string
-  state: NeemWorkerPoolState
-  size: number
-  ready: number
-  failed: number
-  stopped: number
-  starting: number
 }
 
 export type NeemWorkerPoolOptions<TWorker extends NeemPoolWorker> = {

@@ -3,18 +3,19 @@ import { resolve } from 'node:path'
 import type { Logger } from '@nmtjs/core'
 
 import type { NeemArtifactRegistry } from '../../public/artifact.ts'
-import type { NeemMode, NeemRuntimeUpstream } from '../../public/runtime.ts'
+import type {
+  NeemMode,
+  NeemProxyUpstreamSnapshot,
+  NeemRuntimeServerHealth,
+  NeemRuntimeUpstream,
+} from '../../public/runtime.ts'
 import type { NeemBuildManifest } from '../build/manifest.ts'
 import type { NeemHostHooks } from '../runtime/hooks.ts'
-import type { NeemProxyUpstreamSnapshot } from '../runtime/proxy.ts'
 import type {
   NeemStartedRuntimePool,
   NeemStartedRuntimeThread,
 } from '../runtime/runtime.ts'
-import type {
-  NeemRuntimeServer,
-  NeemRuntimeServerHealth,
-} from '../runtime/server.ts'
+import type { NeemRuntimeServer } from '../runtime/server.ts'
 import { NEEM_MANIFEST_FILE } from '../build/manifest.ts'
 import { createNeemHostHooks } from '../runtime/hooks.ts'
 import { registerManifestPluginHooks } from '../runtime/plugin-hooks.ts'
@@ -72,11 +73,7 @@ export async function startNeem(
     'Neem runtime snapshot loaded',
   )
   const hooks = options.hooks ?? createNeemHostHooks()
-  const server = new RuntimeServer({
-    snapshot,
-    failOnWorkerError,
-    hooks,
-  })
+  const server = new RuntimeServer({ snapshot, failOnWorkerError, hooks })
   await registerManifestPluginHooks({
     manifest: snapshot.manifest,
     outDir,

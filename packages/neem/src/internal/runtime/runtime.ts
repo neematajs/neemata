@@ -9,13 +9,11 @@ import type {
   NeemRuntimeThreadHandle,
   NeemRuntimeThreadPlan,
   NeemRuntimeUpstream,
+  NeemStartedRuntimeThreadHealth,
   NeemWorkerState,
 } from '../../public/runtime.ts'
 import type { NeemHostHooks } from './hooks.ts'
-import type {
-  NeemManagedWorkerController,
-  NeemManagedWorkerHealth,
-} from './managed-worker.ts'
+import type { NeemManagedWorkerController } from './managed-worker.ts'
 import type { NeemProxyUpstreamRegistry } from './proxy-upstreams.ts'
 import type { NeemRuntimeRecoveryOptions } from './recovery.ts'
 import type { NeemRuntimeSnapshot } from './snapshot.ts'
@@ -39,17 +37,13 @@ import { importDefault } from './utils.ts'
 import { NeemWorkerPool } from './worker-pool.ts'
 import { resolveRuntimeWorkerEntry } from './worker-runtime.ts'
 
+export type { NeemStartedRuntimeThreadHealth } from '../../public/runtime.ts'
+
 export type NeemStartedRuntimeThread = NeemRuntimeThreadHandle & {
   runtimeName: string
   artifact: NeemResolvedArtifact
   getHealth: () => NeemStartedRuntimeThreadHealth
   getUpstreams: () => readonly NeemRuntimeUpstream[]
-}
-
-export type NeemStartedRuntimeThreadHealth = NeemManagedWorkerHealth & {
-  runtimeName: string
-  artifact: NeemResolvedArtifact
-  upstreams: readonly NeemRuntimeUpstream[]
 }
 
 export type NeemStartedRuntimePool = {

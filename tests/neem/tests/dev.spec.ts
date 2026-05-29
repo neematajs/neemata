@@ -109,6 +109,7 @@ describe('neem dev', () => {
 
       const manifest = await readManifest(fixture.outDir)
       expect(Object.keys(manifest.runtimes ?? {})).toEqual(['api'])
+      expect(Object.keys(manifest.config.runtimes)).toEqual(['api'])
       await expectFile(
         resolve(fixture.outDir, manifest.runtimes!.api!.entry.file),
       )
@@ -263,8 +264,7 @@ describe('neem dev', () => {
         (events) =>
           events.filter(
             (event) =>
-              event.event === 'plugin:server:reload' &&
-              event.version === 'two',
+              event.event === 'plugin:server:reload' && event.version === 'two',
           ).length >= 2,
       )
       const reloads = events.filter(

@@ -1,21 +1,30 @@
-import type { NeemMode } from '../../public/index.ts'
+import type {
+  NeemRuntimeServerHealth,
+  NeemRuntimeServerSnapshot,
+  NeemRuntimeServerState,
+} from '../../public/runtime.ts'
 import type { NeemHealthProbeServer } from './health-probe.ts'
 import type { NeemHostHooks } from './hooks.ts'
-import type { NeemProxyHealth, NeemProxyManager } from './proxy.ts'
+import type { NeemProxyManager } from './proxy.ts'
 import type { NeemProxyUpstreamSnapshot } from './proxy-upstreams.ts'
 import type { NeemRuntimeRecoveryOptions } from './recovery.ts'
 import type {
   NeemRuntimeManager,
   NeemStartedRuntimePool,
   NeemStartedRuntimeThread,
-  NeemStartedRuntimeThreadHealth,
 } from './runtime.ts'
 import type { NeemRuntimeSnapshot } from './snapshot.ts'
-import type { NeemWorkerPoolHealth } from './worker-pool.ts'
 import { callNeemHostHook, createNeemHostHooks } from './hooks.ts'
 import { createNeemChildLogger } from './logger.ts'
 import { NeemProxyUpstreamRegistry } from './proxy-upstreams.ts'
 import { normalizeError } from './utils.ts'
+
+export type {
+  NeemRuntimeServerHealth,
+  NeemRuntimeServerRuntimeHealth,
+  NeemRuntimeServerSnapshot,
+  NeemRuntimeServerState,
+} from '../../public/runtime.ts'
 
 export type NeemRuntimeServerOptions = {
   snapshot: NeemRuntimeSnapshot
@@ -23,37 +32,6 @@ export type NeemRuntimeServerOptions = {
   recovery?: NeemRuntimeRecoveryOptions
   hooks?: NeemHostHooks
   onFailure?: (error: Error) => void | Promise<void>
-}
-
-export type NeemRuntimeServerState =
-  | 'idle'
-  | 'starting'
-  | 'running'
-  | 'reloading'
-  | 'failed'
-  | 'stopping'
-  | 'stopped'
-
-export type NeemRuntimeServerSnapshot = {
-  mode: NeemMode
-  outDir: string
-  runtimeNames: readonly string[]
-  artifactCount: number
-  state: NeemRuntimeServerState
-  revision: number
-  lastError?: Error
-}
-
-export type NeemRuntimeServerHealth = NeemRuntimeServerSnapshot & {
-  ready: boolean
-  runtimes: readonly NeemRuntimeServerRuntimeHealth[]
-  proxy: NeemProxyHealth
-}
-
-export type NeemRuntimeServerRuntimeHealth = {
-  name: string
-  pool: NeemWorkerPoolHealth
-  threads: readonly NeemStartedRuntimeThreadHealth[]
 }
 
 export class NeemRuntimeServer {

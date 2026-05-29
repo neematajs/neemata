@@ -5,28 +5,19 @@ import type { Logger } from '@nmtjs/core'
 
 import type {
   NeemManagedWorkerHandle,
+  NeemManagedWorkerHealth,
   NeemWorkerState,
 } from '../../public/runtime.ts'
 import { createNeemDefaultLogger } from './logger.ts'
 import { normalizeError } from './utils.ts'
+
+export type { NeemManagedWorkerHealth } from '../../public/runtime.ts'
 
 export type NeemManagedWorkerController = {
   getState: () => NeemWorkerState
   markReady: () => void
   markStopped: () => void
   fail: (error: Error) => void
-}
-
-export type NeemManagedWorkerHealth = {
-  id: string
-  name: string
-  artifactId: string
-  state: NeemWorkerState
-  failureCount: number
-  startedAt?: number
-  readyAt?: number
-  stoppedAt?: number
-  lastError?: Error
 }
 
 export type NeemManagedWorkerOptions = {

@@ -8,6 +8,7 @@ import type {
 } from './artifact.ts'
 import type { NeemRuntimeHostFactory } from './runtime.ts'
 import type { InferNeemWorkerData, NeemWorker } from './worker.ts'
+import { mergeNeemRolldownOptions } from './rolldown-options.ts'
 
 export type NeemEntryModule<T> = { default: T }
 
@@ -32,9 +33,7 @@ export type NeemCommand = CommandDef
 export type NeemCommandInput<TCommand extends NeemCommand = NeemCommand> =
   NeemArtifactEntry
 
-export type NeemPluginBuild = {
-  rolldown?: NeemRolldownOptions
-}
+export type NeemPluginBuild = { rolldown?: NeemRolldownOptions }
 
 export type NeemPluginInput = {
   name: string
@@ -293,13 +292,14 @@ function mergeRuntimeBuildConfig(
   base: NeemRuntimeBuildConfig | undefined,
   override: NeemRuntimeBuildConfig | undefined,
 ): NeemRuntimeBuildConfig | undefined {
-  if (!base) return override
-  if (!override) return base
+  if (!base && !override) return undefined
+
+  const rolldown = mergeNeemRolldownOptions(base?.rolldown, override?.rolldown)
 
   return {
-    ...base,
-    ...override,
-    rolldown: mergeRolldownOptions(base.rolldown, override.rolldown),
+    ...(base ?? {}),
+    ...(override ?? {}),
+    ...(rolldown ? { rolldown } : {}),
   }
 }
 
@@ -310,32 +310,4 @@ function mergeRuntimeArtifacts(
   if (!base) return override
   if (!override) return base
   return [...base, ...override]
-}
-
-function mergeRolldownOptions(
-  base: NeemRolldownOptions | undefined,
-  override: NeemRolldownOptions | undefined,
-): NeemRolldownOptions | undefined {
-  if (!base) return override
-  if (!override) return base
-
-  const plugins = [
-    ...normalizeRolldownPlugins(base.plugins),
-    ...normalizeRolldownPlugins(override.plugins),
-  ]
-
-  return {
-    ...base,
-    ...override,
-    plugins: plugins.length > 0 ? plugins : undefined,
-  }
-}
-
-function normalizeRolldownPlugins(
-  plugins: NeemRolldownOptions['plugins'] | undefined,
-): NonNullable<NeemRolldownOptions['plugins']>[] {
-  if (!plugins) return []
-  return (Array.isArray(plugins) ? plugins : [plugins]).filter(
-    (plugin): plugin is NonNullable<typeof plugin> => plugin !== undefined,
-  )
 }

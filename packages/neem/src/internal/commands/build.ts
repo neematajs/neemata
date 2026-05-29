@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs'
-import { mkdir, rename, rm, writeFile } from 'node:fs/promises'
-import { join, relative, resolve } from 'node:path'
+import { mkdir, rm, writeFile } from 'node:fs/promises'
+import { join, resolve } from 'node:path'
 
 import { consola } from 'consola'
 import { colorize } from 'consola/utils'
@@ -9,7 +9,6 @@ import type { NeemResolvedArtifact } from '../../public/artifact.ts'
 import type { NeemConfig, NeemLoggerOptions } from '../../public/config.ts'
 import type {
   NeemBuildManifest,
-  NeemBuildManifestArtifact,
   NeemBuildManifestConfig,
   NeemBuildManifestLogger,
 } from '../build/manifest.ts'
@@ -17,17 +16,21 @@ import { normalizeNeemConfig } from '../../public/config.ts'
 import {
   NEEM_MANIFEST_FILE,
   NEEM_MANIFEST_SCHEMA_VERSION,
+  selectManifestRuntimes,
+  toManifestArtifact,
+  toManifestPath,
+  writeManifest,
 } from '../build/manifest.ts'
 import {
   mergePluginRolldownOptions,
   resolvePluginBuildPlans,
 } from '../build/plugin-plan.ts'
+import { resolveRequiredBuildEntry } from '../build/resolve.ts'
+import { buildArtifact } from '../build/rolldown.ts'
 import {
   normalizeSelectedRuntimeNames,
   resolveRuntimeBuildPlans,
 } from '../build/runtime-plan.ts'
-import { resolveRequiredBuildEntry } from '../build/resolve.ts'
-import { buildArtifact } from '../build/rolldown.ts'
 import { importDefault } from '../runtime/utils.ts'
 
 export type {
@@ -153,18 +156,19 @@ export async function buildNeem(
     }
   }
 
-  const manifestFile = await writeManifest(outDir, manifest)
+  const outputManifest = selectManifestRuntimes(manifest, runtimeNames)
+  const manifestFile = await writeManifest(outDir, outputManifest)
   await writeStandaloneStartEntries(
     outDir,
-    Object.keys(manifest.runtimes ?? {}),
+    Object.keys(outputManifest.runtimes ?? {}),
   )
   logger.success('Neem build complete')
   logger.info(`manifest: ${colorize('green', manifestFile)}`)
   logger.info(
-    `runtimes: ${colorize('green', Object.keys(manifest.runtimes ?? {}).length)}`,
+    `runtimes: ${colorize('green', Object.keys(outputManifest.runtimes ?? {}).length)}`,
   )
 
-  return { configFile, outDir, manifestFile, manifest }
+  return { configFile, outDir, manifestFile, manifest: outputManifest }
 }
 
 async function buildPluginManifestEntries(options: {
@@ -178,11 +182,7 @@ async function buildPluginManifestEntries(options: {
     options.plugins.map(async (plugin) => {
       const entry = plugin.entry
         ? await buildArtifact({
-            artifact: {
-              id: 'plugin',
-              kind: 'module',
-              entry: plugin.entry,
-            },
+            artifact: { id: 'plugin', kind: 'module', entry: plugin.entry },
             owner: { type: 'config' },
             artifactOutDir: resolve(
               options.outDir,
@@ -387,35 +387,4 @@ function isLoggerOptions(input: unknown): input is NeemLoggerOptions {
     input !== null &&
     !('child' in input && typeof input.child === 'function')
   )
-}
-
-export function toManifestArtifact(
-  manifestDir: string,
-  artifact: NeemResolvedArtifact,
-): NeemBuildManifestArtifact {
-  return {
-    id: artifact.id,
-    kind: artifact.kind,
-    owner: artifact.owner,
-    file: toManifestPath(manifestDir, artifact.file),
-    outDir: toManifestPath(manifestDir, artifact.outDir),
-  }
-}
-
-export async function writeManifest(
-  outDir: string,
-  manifest: NeemBuildManifest,
-): Promise<string> {
-  await mkdir(outDir, { recursive: true })
-  const manifestFile = resolve(outDir, NEEM_MANIFEST_FILE)
-  await writeFile(
-    `${manifestFile}.tmp`,
-    `${JSON.stringify(manifest, null, 2)}\n`,
-  )
-  await rename(`${manifestFile}.tmp`, manifestFile)
-  return manifestFile
-}
-
-export function toManifestPath(fromDir: string, target: string): string {
-  return relative(fromDir, target).replace(/\\/g, '/')
 }

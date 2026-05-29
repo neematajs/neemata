@@ -1,24 +1,19 @@
 import type { NeemProxyConfig } from '../../public/config.ts'
+import type { NeemProxyHealth } from '../../public/runtime.ts'
 import type {
   NeemProxyUpstream,
   NeemProxyUpstreamRegistry,
   NeemProxyUpstreamRegistryEvent,
-  NeemProxyUpstreamSnapshot,
 } from './proxy-upstreams.ts'
 import type { NeemRuntimeSnapshot } from './snapshot.ts'
 import { createNeemChildLogger } from './logger.ts'
 
+export type { NeemProxyHealth } from '../../public/runtime.ts'
 export * from './proxy-upstreams.ts'
 
 export type NeemProxyManagerOptions = {
   snapshot: NeemRuntimeSnapshot
   upstreams: NeemProxyUpstreamRegistry
-}
-
-export type NeemProxyHealth = {
-  enabled: boolean
-  running: boolean
-  upstreams: readonly NeemProxyUpstreamSnapshot[]
 }
 
 export type NeemNativeProxy = {

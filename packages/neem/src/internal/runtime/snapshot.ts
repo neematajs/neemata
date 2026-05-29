@@ -1,4 +1,4 @@
-import { isAbsolute, normalize, resolve } from 'node:path'
+import { resolve } from 'node:path'
 
 import type { Logger } from '@nmtjs/core'
 
@@ -10,7 +10,7 @@ import type {
   NeemBuildManifestArtifact,
 } from '../build/manifest.ts'
 import type { NeemScopedArtifactRegistry } from './artifact-registry.ts'
-import { NEEM_MANIFEST_SCHEMA_VERSION } from '../build/manifest.ts'
+import { validateManifest } from '../build/manifest.ts'
 import { createNeemArtifactRegistry } from './artifact-registry.ts'
 import { createNeemDefaultLogger } from './logger.ts'
 
@@ -77,85 +77,6 @@ function resolveManifestArtifacts(
   }
 
   return artifacts
-}
-
-function validateManifest(manifest: NeemBuildManifest): void {
-  if (manifest.schemaVersion !== NEEM_MANIFEST_SCHEMA_VERSION) {
-    throw new Error(
-      `Unsupported Neem manifest schema version [${String(manifest.schemaVersion)}]`,
-    )
-  }
-
-  if (manifest.config.logger?.type === 'module') {
-    assertManifestPath(manifest.config.logger.file, 'config.logger.file')
-  }
-
-  for (const [index, plugin] of (manifest.plugins ?? []).entries()) {
-    if (!plugin.name.trim()) {
-      throw new Error(
-        `Invalid Neem manifest plugin [${index}]: name is required`,
-      )
-    }
-    if (plugin.entry) {
-      assertManifestPath(plugin.entry.file, `plugins.${index}.entry.file`)
-    }
-  }
-
-  for (const [runtimeName, runtime] of Object.entries(
-    manifest.runtimes ?? {},
-  )) {
-    if (runtime.name !== runtimeName) {
-      throw new Error(
-        `Invalid Neem manifest runtime [${runtimeName}]: runtime name must match manifest key`,
-      )
-    }
-
-    assertRuntimeArtifact(runtimeName, runtime.entry, 'entry')
-    if (runtime.entry.id !== 'entry') {
-      throw new Error(
-        `Invalid Neem manifest runtime [${runtimeName}]: entry artifact id must be [entry]`,
-      )
-    }
-
-    if (runtime.host) {
-      assertRuntimeArtifact(runtimeName, runtime.host, 'host')
-      if (runtime.host.id !== 'host') {
-        throw new Error(
-          `Invalid Neem manifest runtime [${runtimeName}]: host artifact id must be [host]`,
-        )
-      }
-    }
-
-    for (const artifact of runtime.artifacts) {
-      assertRuntimeArtifact(runtimeName, artifact, `artifact [${artifact.id}]`)
-    }
-  }
-}
-
-function assertRuntimeArtifact(
-  runtimeName: string,
-  artifact: NeemBuildManifestArtifact,
-  label: string,
-): void {
-  if (
-    artifact.owner.type !== 'runtime' ||
-    artifact.owner.name !== runtimeName
-  ) {
-    throw new Error(
-      `Invalid Neem manifest runtime [${runtimeName}]: ${label} owner must be runtime [${runtimeName}]`,
-    )
-  }
-
-  assertManifestPath(artifact.file, `${runtimeName}.${label}.file`)
-  assertManifestPath(artifact.outDir, `${runtimeName}.${label}.outDir`)
-}
-
-function assertManifestPath(path: string, label: string): void {
-  if (!path || isAbsolute(path) || normalize(path).startsWith('..')) {
-    throw new Error(
-      `Invalid Neem manifest path [${label}]: paths must be relative to output directory`,
-    )
-  }
 }
 
 function resolveManifestArtifact(

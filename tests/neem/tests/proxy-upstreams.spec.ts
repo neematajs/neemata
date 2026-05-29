@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest'
 
 import type { NeemBuildManifest } from '../../../packages/neem/src/internal/build/manifest.ts'
-import type { NeemProxyUpstreamRegistryEvent } from '../../../packages/neem/src/internal/runtime/proxy.ts'
+import type { NeemProxyUpstreamRegistryEvent } from '../../../packages/neem/src/internal/runtime/proxy-upstreams.ts'
+import { createNativeProxyOptions } from '../../../packages/neem/src/internal/runtime/proxy.ts'
 import {
-  createNativeProxyOptions,
   NeemProxyUpstreamRegistry,
   normalizeProxyRuntimeUpstream,
   toProxyUpstream,
-} from '../../../packages/neem/src/internal/runtime/proxy.ts'
+} from '../../../packages/neem/src/internal/runtime/proxy-upstreams.ts'
 import { createRuntimeSnapshot } from '../../../packages/neem/src/internal/runtime/snapshot.ts'
 
 describe('neem proxy upstream registry', () => {

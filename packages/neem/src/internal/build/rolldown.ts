@@ -10,6 +10,7 @@ import type {
   NeemResolvedArtifact,
   NeemRolldownOptions,
 } from '../../public/artifact.ts'
+import { mergeNeemRolldownOptions } from '../../public/rolldown-options.ts'
 
 type ArtifactBuildMetadata = {
   entryFileName?: string
@@ -182,10 +183,8 @@ function createRolldownOptions(
   outDir: string,
   metadata: ArtifactBuildMetadata,
 ): rolldown.BuildOptions {
-  const userOptions = mergeRolldownOptions(
-    options.rolldown,
-    options.artifact.rolldown,
-  )
+  const userOptions =
+    mergeNeemRolldownOptions(options.rolldown, options.artifact.rolldown) ?? {}
   const userOutput =
     typeof userOptions.output === 'object' && userOptions.output
       ? (userOptions.output as Record<string, unknown>)
@@ -277,10 +276,9 @@ function createArtifactInput(options: NeemBuildArtifactOptions): ArtifactInput {
     emittedArtifacts,
     input: Object.fromEntries([
       ['entry', entry],
-      ...emittedArtifacts.map((artifact) => [
-        artifact.inputName,
-        artifact.entry,
-      ] as const),
+      ...emittedArtifacts.map(
+        (artifact) => [artifact.inputName, artifact.entry] as const,
+      ),
     ]),
   }
 }
@@ -396,35 +394,13 @@ function sanitizePathPart(value: string): string {
     .replace(/-+/g, '-')
 }
 
-function createArtifactInputName(artifact: NeemArtifact, index: number): string {
+function createArtifactInputName(
+  artifact: NeemArtifact,
+  index: number,
+): string {
   return `artifact-${index}-${sanitizePathPart(artifact.id)}`
 }
 
 function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
-}
-
-function mergeRolldownOptions(
-  base: NeemRolldownOptions | undefined,
-  override: NeemRolldownOptions | undefined,
-): NeemRolldownOptions {
-  const plugins = [
-    ...normalizePlugins(base?.plugins),
-    ...normalizePlugins(override?.plugins),
-  ]
-  const baseOutput =
-    typeof base?.output === 'object' && base.output
-      ? (base.output as Record<string, unknown>)
-      : {}
-  const overrideOutput =
-    typeof override?.output === 'object' && override.output
-      ? (override.output as Record<string, unknown>)
-      : {}
-
-  return {
-    ...(base ?? {}),
-    ...(override ?? {}),
-    output: { ...baseOutput, ...overrideOutput },
-    plugins: plugins.length > 0 ? plugins : undefined,
-  }
 }

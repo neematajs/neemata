@@ -3,6 +3,7 @@ import type {
   NeemNormalizedConfig,
   NeemPluginInput,
 } from '../../public/config.ts'
+import { mergeNeemRolldownOptions } from '../../public/rolldown-options.ts'
 import { resolveBuildEntry } from './resolve.ts'
 
 export type NeemPluginBuildPlan = {
@@ -27,7 +28,7 @@ export function mergePluginRolldownOptions(
   plugins: readonly NeemPluginBuildPlan[],
 ): NeemRolldownOptions | undefined {
   return plugins.reduce<NeemRolldownOptions | undefined>(
-    (merged, plugin) => mergeRolldownOptions(merged, plugin.rolldown),
+    (merged, plugin) => mergeNeemRolldownOptions(merged, plugin.rolldown),
     undefined,
   )
 }
@@ -50,34 +51,6 @@ function resolvePluginBuildPlan(
     rolldown: plugin.build?.rolldown,
     options: plugin.options,
   }
-}
-
-export function mergeRolldownOptions(
-  base: NeemRolldownOptions | undefined,
-  override: NeemRolldownOptions | undefined,
-): NeemRolldownOptions | undefined {
-  if (!base) return override
-  if (!override) return base
-
-  const plugins = [
-    ...normalizeRolldownPlugins(base.plugins),
-    ...normalizeRolldownPlugins(override.plugins),
-  ]
-
-  return {
-    ...base,
-    ...override,
-    plugins: plugins.length > 0 ? plugins : undefined,
-  }
-}
-
-function normalizeRolldownPlugins(
-  plugins: NeemRolldownOptions['plugins'] | undefined,
-): NonNullable<NeemRolldownOptions['plugins']>[] {
-  if (!plugins) return []
-  return (Array.isArray(plugins) ? plugins : [plugins]).filter(
-    (plugin): plugin is NonNullable<typeof plugin> => plugin !== undefined,
-  )
 }
 
 function sanitizePathPart(value: string): string {

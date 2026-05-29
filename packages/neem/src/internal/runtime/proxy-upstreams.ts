@@ -1,19 +1,13 @@
-import type { NeemRuntimeUpstream } from '../../public/runtime.ts'
+import type {
+  NeemProxyUpstream,
+  NeemProxyUpstreamSnapshot,
+  NeemRuntimeUpstream,
+} from '../../public/runtime.ts'
 
-export type NeemProxyUpstream = {
-  type: 'port'
-  transport: 'http' | 'http2' | 'ws'
-  secure: boolean
-  hostname: string
-  port: number
-}
-
-export type NeemProxyUpstreamSnapshot = {
-  runtimeName: string
-  upstream: NeemRuntimeUpstream
-  proxyUpstream: NeemProxyUpstream
-  count: number
-}
+export type {
+  NeemProxyUpstream,
+  NeemProxyUpstreamSnapshot,
+} from '../../public/runtime.ts'
 
 export type NeemProxyUpstreamRegistryEvent = NeemProxyUpstreamSnapshot
 
