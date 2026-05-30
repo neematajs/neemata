@@ -10,7 +10,6 @@ import type {
 } from '../../public/runtime.ts'
 import type { NeemWorker } from '../../public/worker.ts'
 import type {
-  NeemGenericRuntimeWorkerData,
   NeemRuntimeWorkerData,
   NeemRuntimeWorkerErrorOrigin,
   NeemRuntimeWorkerMessage,
@@ -66,7 +65,7 @@ async function createRuntime(
 }
 
 async function createWorkerRuntime(
-  data: NeemGenericRuntimeWorkerData,
+  data: NeemRuntimeWorkerData,
 ): Promise<NeemRuntime> {
   const logger = await resolveWorkerLogger(
     data,
@@ -93,10 +92,7 @@ async function createWorkerRuntime(
   })
 }
 
-async function resolveWorkerLogger(
-  data: NeemGenericRuntimeWorkerData,
-  label: string,
-) {
+async function resolveWorkerLogger(data: NeemRuntimeWorkerData, label: string) {
   const logger = data.logger
   if (!logger) {
     return createNeemChildLogger(createNeemDefaultLogger(data.mode), label)

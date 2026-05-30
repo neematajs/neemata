@@ -2,6 +2,7 @@ import { mkdir } from 'node:fs/promises'
 import { basename, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import type { MaybePromise } from '@nmtjs/common'
 import * as rolldown from 'rolldown'
 
 import type {
@@ -52,8 +53,8 @@ export type NeemWatchArtifactHandlers = {
   onRebuild?: (
     artifact: NeemResolvedArtifact,
     event: unknown,
-  ) => void | Promise<void>
-  onError?: (error: unknown, event: unknown) => void | Promise<void>
+  ) => MaybePromise<void>
+  onError?: (error: unknown, event: unknown) => MaybePromise<void>
 }
 
 export type NeemArtifactWatcher = {

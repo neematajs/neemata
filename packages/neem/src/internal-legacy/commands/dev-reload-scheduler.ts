@@ -1,3 +1,4 @@
+import type { DebouncedReturn } from 'perfect-debounce'
 import { OperationQueue, OperationSupersededError } from '@nmtjs/common'
 import { debounce } from 'perfect-debounce'
 
@@ -17,7 +18,7 @@ export class NeemDevReloadScheduler {
   private readonly operations = new OperationQueue({ strategy: 'latest' })
   private pendingFullReload = false
   private pendingRuntimeReloads = new Set<string>()
-  private readonly scheduleFlush: (() => Promise<void>) & { cancel: () => void }
+  private readonly scheduleFlush: DebouncedReturn<[], void>
 
   constructor(private readonly options: NeemDevReloadSchedulerOptions) {
     this.scheduleFlush = debounce(() => this.queueFlush(), options.debounceMs)

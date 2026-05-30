@@ -4,8 +4,8 @@ import { pathToFileURL } from 'node:url'
 import type { Logger } from '@nmtjs/core'
 
 import type {
-  NeemHostHookMap,
   NeemHostHooks,
+  NeemPluginHooks,
   NeemPluginHooksFactory,
 } from '../../public/hooks.ts'
 import type { NeemMode, NeemRuntimeServerHealth } from '../../public/runtime.ts'
@@ -22,7 +22,7 @@ export async function registerManifestPluginHooks(options: {
   getHealth: () => NeemRuntimeServerHealth
   cacheBust?: boolean
 }): Promise<NeemPluginHookRegistration[]> {
-  const pluginHooks: Partial<NeemHostHookMap>[] = []
+  const pluginHooks: NeemPluginHooks[] = []
 
   for (const plugin of options.manifest.plugins ?? []) {
     if (!plugin.entry) continue

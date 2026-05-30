@@ -1,4 +1,7 @@
-import type { NeemRolldownOptions } from '../../public/artifact.ts'
+import type {
+  NeemArtifactEntry,
+  NeemRolldownOptions,
+} from '../../public/artifact.ts'
 import type {
   NeemNormalizedConfig,
   NeemPluginInput,
@@ -10,7 +13,7 @@ export type NeemPluginBuildPlan = {
   key: string
   index: number
   name: string
-  entry?: string | URL
+  entry?: NeemArtifactEntry
   rolldown?: NeemRolldownOptions
   options?: unknown
 }

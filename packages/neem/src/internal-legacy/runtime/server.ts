@@ -1,3 +1,4 @@
+import type { MaybePromise } from '@nmtjs/common'
 import { OperationQueue } from '@nmtjs/common'
 
 import type {
@@ -33,7 +34,7 @@ export type NeemRuntimeServerOptions = {
   failOnWorkerError?: boolean
   recovery?: NeemRuntimeRecoveryOptions
   hooks?: NeemHostHooks
-  onFailure?: (error: Error) => void | Promise<void>
+  onFailure?: (error: Error) => MaybePromise<void>
 }
 
 export class NeemRuntimeServer {
@@ -96,6 +97,7 @@ export class NeemRuntimeServer {
   getHealth(): NeemRuntimeServerHealth {
     const runtimes = [...this.getRuntimeWorkerPools()].map((pool) => ({
       name: pool.runtimeName,
+      ready: pool.getHealth().state === 'ready',
       pool: pool.getHealth(),
       threads: pool.list().map((thread) => thread.getHealth()),
     }))

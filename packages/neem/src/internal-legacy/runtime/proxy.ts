@@ -1,7 +1,10 @@
 import { OperationQueue } from '@nmtjs/common'
 
 import type { NeemProxyConfig } from '../../public/config.ts'
-import type { NeemProxyHealth } from '../../public/runtime.ts'
+import type {
+  NeemProxyHealth,
+  NeemProxyUpstreamFailure,
+} from '../../public/runtime.ts'
 import type {
   NeemProxyUpstream,
   NeemProxyUpstreamRegistry,
@@ -59,14 +62,7 @@ export class NeemProxyManager {
   private readonly mutations = new OperationQueue()
   private mutationError: Error | undefined
   private readonly applied = new Map<string, NeemProxyUpstreamRegistryEvent>()
-  private readonly failures = new Map<
-    string,
-    {
-      operation: 'add' | 'remove'
-      upstream: NeemProxyUpstreamRegistryEvent
-      error: Error
-    }
-  >()
+  private readonly failures = new Map<string, NeemProxyUpstreamFailure>()
 
   constructor(private readonly options: NeemProxyManagerOptions) {
     const config = options.snapshot.config.proxy

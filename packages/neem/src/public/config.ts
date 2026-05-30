@@ -8,7 +8,7 @@ import type {
 } from './artifact.ts'
 import type { NeemRuntimeHostFactory } from './runtime.ts'
 import type { InferNeemWorkerData, NeemWorker } from './worker.ts'
-import { mergeNeemRolldownOptions } from '../internal/build/utils.ts'
+import { mergeRolldownOptions } from '../internal/build/rolldown-options.ts'
 
 export type NeemEntryModule<T> = { default: T }
 
@@ -53,24 +53,37 @@ export type NeemRuntimeWorkerConfig = {
 
 export type NeemRuntimeBuildConfig = { rolldown?: NeemRolldownOptions }
 
-export type NeemRuntimeConfig<
-  TEntry = NeemWorker<unknown, unknown>,
-  THost extends NeemRuntimeHostFactory = NeemRuntimeHostFactory,
-> = {
-  worker: NeemRuntimeWorkerConfig
+type NeemRuntimeSharedConfig<TEntry, THost extends NeemRuntimeHostFactory> = {
   host?: NeemRuntimeHostConfig<THost>
   artifacts?: readonly NeemArtifact[]
   threads?: number | readonly InferNeemRuntimeThreadOptions<TEntry>[]
   options?: unknown
 }
 
-export type NeemRuntimeConfigBase = {
-  worker: NeemRuntimeWorkerConfig
-  host?: NeemRuntimeHostConfig
-  artifacts?: readonly NeemArtifact[]
-  threads?: number | readonly unknown[]
-  options?: unknown
-}
+export type NeemRuntimeConfig<
+  TEntry = NeemWorker<unknown, unknown>,
+  THost extends NeemRuntimeHostFactory = NeemRuntimeHostFactory,
+> = NeemRuntimeSharedConfig<TEntry, THost> &
+  (
+    | { worker: NeemRuntimeWorkerConfig; host?: NeemRuntimeHostConfig<THost> }
+    | { worker?: undefined; host: NeemRuntimeHostConfig<THost> }
+  )
+
+export type NeemRuntimeConfigBase =
+  | {
+      worker: NeemRuntimeWorkerConfig
+      host?: NeemRuntimeHostConfig
+      artifacts?: readonly NeemArtifact[]
+      threads?: number | readonly unknown[]
+      options?: unknown
+    }
+  | {
+      worker?: undefined
+      host: NeemRuntimeHostConfig
+      artifacts?: readonly NeemArtifact[]
+      threads?: number | readonly unknown[]
+      options?: unknown
+    }
 
 export type NeemRuntimeConfigOverrides = {
   worker?: Partial<Pick<NeemRuntimeWorkerConfig, 'build'>>
@@ -192,13 +205,7 @@ export function definePlugin<const T extends NeemPluginInput>(plugin: T): T {
 export function defineRuntime<
   Entry,
   Host extends NeemRuntimeHostFactory = NeemRuntimeHostFactory,
->(config: {
-  worker: NeemRuntimeWorkerConfig
-  host?: NeemRuntimeHostConfig<Host>
-  artifacts?: readonly NeemArtifact[]
-  threads?: number | readonly InferNeemRuntimeThreadOptions<Entry>[]
-  options?: unknown
-}): NeemRuntimeConfig<Entry, Host> {
+>(config: NeemRuntimeConfig<Entry, Host>): NeemRuntimeConfig<Entry, Host> {
   return Object.freeze(config) as NeemRuntimeConfig<Entry, Host>
 }
 
@@ -253,13 +260,14 @@ function mergeRuntimeConfigOverrides(
         ? runtime.host
         : mergeRuntimeHostConfig(runtime.host, override.host),
     artifacts: mergeRuntimeArtifacts(runtime.artifacts, override.artifacts),
-  })
+  }) as NeemRuntimeConfigBase
 }
 
 function mergeRuntimeWorkerConfig(
-  base: NeemRuntimeWorkerConfig,
+  base: NeemRuntimeWorkerConfig | undefined,
   override: NeemRuntimeConfigOverrides['worker'],
-): NeemRuntimeWorkerConfig {
+): NeemRuntimeWorkerConfig | undefined {
+  if (!base) return undefined
   if (!override) return base
 
   return {
@@ -294,7 +302,7 @@ function mergeRuntimeBuildConfig(
 ): NeemRuntimeBuildConfig | undefined {
   if (!base && !override) return undefined
 
-  const rolldown = mergeNeemRolldownOptions(base?.rolldown, override?.rolldown)
+  const rolldown = mergeRolldownOptions(base?.rolldown, override?.rolldown)
 
   return {
     ...(base ?? {}),

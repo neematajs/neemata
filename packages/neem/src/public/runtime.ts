@@ -99,6 +99,7 @@ export type NeemProxyUpstreamFailure = {
 
 export type NeemRuntimeServerRuntimeHealth = {
   name: string
+  ready: boolean
   pool: NeemWorkerPoolHealth
   threads: readonly NeemStartedRuntimeThreadHealth[]
 }
@@ -129,7 +130,10 @@ export type NeemRuntimeThreadPlan<Data = unknown> = {
 
 export type NeemRuntimePlan = { threads?: readonly NeemRuntimeThreadPlan[] }
 
-export type NeemRuntimeThreadHandle = NeemManagedWorkerHandle & {
+export type NeemRuntimeThreadHandle = {
+  id: string
+  name: string
+  artifactId: string
   port: MessagePort
 }
 

@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url'
 
 import { ResolverFactory } from 'oxc-resolver'
 
-import type { NeemArtifact } from '../../public/artifact.ts'
+import type { NeemArtifactEntry } from '../../public/artifact.ts'
 
 const resolver = new ResolverFactory({
   conditionNames: ['import', 'module', 'node', 'default'],
@@ -25,15 +25,15 @@ export function resolveImportFile(importer: string, specifier: string): string {
 
 export function resolveRequiredBuildEntry(
   importer: string,
-  entry: NeemArtifact['entry'],
-): NeemArtifact['entry'] {
+  entry: NeemArtifactEntry,
+): NeemArtifactEntry {
   return resolveBuildEntry(importer, entry) ?? entry
 }
 
 export function resolveBuildEntry(
   importer: string,
-  entry: NeemArtifact['entry'] | undefined,
-): NeemArtifact['entry'] | undefined {
+  entry: NeemArtifactEntry | undefined,
+): NeemArtifactEntry | undefined {
   if (!entry) return undefined
   if (entry instanceof URL) return entry
   if (entry.startsWith('/')) return entry
@@ -41,6 +41,6 @@ export function resolveBuildEntry(
   return resolveImportFile(importer, entry)
 }
 
-export function toBuildEntryKey(entry: string | URL): string {
+export function toBuildEntryKey(entry: NeemArtifactEntry): string {
   return entry instanceof URL ? fileURLToPath(entry) : entry
 }

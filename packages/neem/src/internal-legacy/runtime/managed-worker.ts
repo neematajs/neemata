@@ -1,6 +1,7 @@
 import type { WorkerOptions } from 'node:worker_threads'
 import { Worker } from 'node:worker_threads'
 
+import type { MaybePromise } from '@nmtjs/common'
 import type { Logger } from '@nmtjs/core'
 
 import type {
@@ -34,8 +35,8 @@ export type NeemManagedWorkerOptions = {
   onMessage?: (
     message: unknown,
     controller: NeemManagedWorkerController,
-  ) => void | Promise<void>
-  onFailure?: (error: Error, worker: NeemManagedWorker) => void | Promise<void>
+  ) => MaybePromise<void>
+  onFailure?: (error: Error, worker: NeemManagedWorker) => MaybePromise<void>
 }
 
 export class NeemManagedWorker implements NeemManagedWorkerHandle {

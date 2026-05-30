@@ -1,5 +1,6 @@
 import type {
   NeemArtifact,
+  NeemArtifactEntry,
   NeemRolldownOptions,
 } from '../../public/artifact.ts'
 import type {
@@ -13,11 +14,11 @@ import { mergeNeemRolldownOptions } from './utils.ts'
 export type NeemRuntimeBuildPlan = {
   name: string
   worker: {
-    entry: NeemArtifact['entry']
+    entry: NeemArtifactEntry
     rolldown?: NeemRolldownOptions
     artifacts?: readonly NeemArtifact[]
   }
-  host?: { entry: NeemArtifact['entry']; rolldown?: NeemRolldownOptions }
+  host?: { entry: NeemArtifactEntry; rolldown?: NeemRolldownOptions }
 }
 
 export function resolveRuntimeBuildPlans(
@@ -46,6 +47,10 @@ function resolveRuntimeBuildPlan(
   runtimeConfig: NeemRuntimeConfigBase,
   options: { rolldown?: NeemRolldownOptions } = {},
 ): NeemRuntimeBuildPlan {
+  if (!runtimeConfig.worker) {
+    throw new Error(`Legacy Neem runtime [${name}] requires a worker entry`)
+  }
+
   const entry = resolveRequiredBuildEntry(
     configFile,
     runtimeConfig.worker.entry,

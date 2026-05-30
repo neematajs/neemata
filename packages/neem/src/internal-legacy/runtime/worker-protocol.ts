@@ -4,7 +4,7 @@ import type { NeemResolvedArtifact } from '../../public/artifact.ts'
 import type { NeemMode, NeemRuntimeUpstream } from '../../public/runtime.ts'
 import type { NeemBuildManifestLogger } from '../build/manifest.ts'
 
-export type NeemRuntimeWorkerBaseData = {
+export type NeemRuntimeWorkerData = {
   mode: NeemMode
   runtimeName: string
   name: string
@@ -15,10 +15,6 @@ export type NeemRuntimeWorkerBaseData = {
   logger?: NeemBuildManifestLogger
   port: MessagePort
 }
-
-export type NeemGenericRuntimeWorkerData = NeemRuntimeWorkerBaseData
-
-export type NeemRuntimeWorkerData = NeemGenericRuntimeWorkerData
 
 export type NeemRuntimeWorkerParentMessage = { type: 'stop' }
 

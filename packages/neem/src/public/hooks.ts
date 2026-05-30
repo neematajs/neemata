@@ -42,6 +42,8 @@ export type NeemHostHookMap = {
 
 export type NeemHostHooks = Hookable<NeemHostHookMap>
 
+export type NeemPluginHooks = Partial<NeemHostHookMap>
+
 export type NeemPluginHooksContext<Options = unknown> = {
   name: string
   mode: NeemMode
@@ -52,7 +54,7 @@ export type NeemPluginHooksContext<Options = unknown> = {
 
 export type NeemPluginHooksFactory<Options = unknown> = (
   ctx: NeemPluginHooksContext<Options>,
-) => MaybePromise<Partial<NeemHostHookMap>>
+) => MaybePromise<NeemPluginHooks>
 
 export function definePluginHooks<const T extends NeemPluginHooksFactory>(
   factory: T,

@@ -1,0 +1,71 @@
+import type { NeemMode, NeemRuntimeServerHealth } from '../../public/runtime.ts'
+import type { SerializedError } from '../shared/utils.ts'
+
+export type ServiceResponse<TEvent, TResult = unknown> =
+  | { id: number; type: 'result'; data?: TResult }
+  | { id: number; type: 'error'; error: SerializedError }
+  | { type: 'event'; event: TEvent }
+
+export type WatcherStartRequest = {
+  id: number
+  type: 'start'
+  configFile: string
+  outDir: string
+  runtimes?: readonly string[]
+}
+
+export type WatcherStopRequest = { id: number; type: 'stop' }
+
+export type WatcherRequest = WatcherStartRequest | WatcherStopRequest
+
+export type WatcherEvent =
+  | { type: 'ready'; manifestFile: string }
+  | { type: 'config-invalidated' }
+  | { type: 'runtime-changed'; runtimeName: string }
+  | { type: 'runtime-host-changed'; runtimeName: string }
+  | { type: 'plugin-changed' }
+  | { type: 'logger-changed' }
+  | { type: 'error'; error: SerializedError }
+
+export type WatcherResult = { manifestFile?: string }
+
+export type WatcherResponse = ServiceResponse<WatcherEvent, WatcherResult>
+
+export type RuntimeStartRequest = {
+  id: number
+  type: 'start'
+  mode: NeemMode
+  outDir: string
+  manifestFile: string
+  runtimes?: readonly string[]
+}
+
+export type RuntimeReloadRequest = {
+  id: number
+  type: 'reload'
+  manifestFile: string
+}
+
+export type RuntimeReloadRuntimeRequest = {
+  id: number
+  type: 'reload-runtime'
+  runtimeName: string
+  manifestFile: string
+}
+
+export type RuntimeStopRequest = { id: number; type: 'stop' }
+
+export type RuntimeRequest =
+  | RuntimeStartRequest
+  | RuntimeReloadRequest
+  | RuntimeReloadRuntimeRequest
+  | RuntimeStopRequest
+
+export type RuntimeEvent =
+  | { type: 'ready'; health: NeemRuntimeServerHealth }
+  | { type: 'stopped' }
+  | { type: 'error'; error: SerializedError }
+
+export type RuntimeResult = { health?: NeemRuntimeServerHealth }
+
+export type RuntimeResponse = ServiceResponse<RuntimeEvent, RuntimeResult>

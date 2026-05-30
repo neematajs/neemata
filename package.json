@@ -5,7 +5,7 @@
   "license": "MIT",
   "scripts": {
     "clean-build": "pnpm run --parallel -r clean-build",
-    "build": "pnpm run clean-build && pnpm tsgo -b tsconfig.build.json",
+    "build": "pnpm tsgo -b tsconfig.build.json",
     "dev": "pnpm run clean-build && pnpm tsgo -b tsconfig.build.json --watch",
     "clean": "rm -rf dist node_modules && pnpm -r exec rm -rf dist node_modules",
     "test": "pnpm build && vitest --run",

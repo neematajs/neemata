@@ -1,17 +1,29 @@
-import type { ChildProcess } from 'node:child_process'
-import { fork } from 'node:child_process'
-import { isBuiltin } from 'node:module'
 import { resolve } from 'node:path'
 
+import { createFuture, OperationQueue } from '@nmtjs/common'
 import { defineCommand } from 'citty'
-import { debounce } from 'perfect-debounce'
-import * as rolldown from 'rolldown'
-import { parse } from 'rolldown/utils'
 
+import type {
+  RuntimeEvent,
+  RuntimeResult,
+  WatcherEvent,
+  WatcherResult,
+} from './internal/services/protocol.ts'
 import { buildNeem } from './internal/commands/build.ts'
-import { devNeem } from './internal/commands/dev.ts'
-import { startNeem } from './internal/commands/start.ts'
-import { createNeemTestProbe } from './internal/runtime/test-probe.ts'
+import { MANIFEST_FILE } from './internal/manifest/manifest.ts'
+import {
+  resolveServiceEntry,
+  WorkerServiceClient,
+} from './internal/services/client.ts'
+import { createNeemTestProbe } from './internal/shared/test-probe.ts'
+import {
+  deserializeError,
+  normalizeError,
+  serializeError,
+} from './internal/shared/utils.ts'
+
+type RuntimeClient = WorkerServiceClient<RuntimeEvent, RuntimeResult>
+type WatcherClient = WorkerServiceClient<WatcherEvent, WatcherResult>
 
 export const buildCommand = defineCommand({
   meta: {
@@ -35,11 +47,78 @@ export const buildCommand = defineCommand({
     },
   },
   async run({ args }) {
+    const probe = createNeemTestProbe()
+    probe?.emit('cli:build:start')
     await buildNeem({
       config: args.config,
       outDir: args.outDir,
       runtimes: parseRuntimes(args.runtime),
     })
+    probe?.emit('cli:build:closed')
+  },
+})
+
+export const startCommand = defineCommand({
+  meta: { name: 'start', description: 'Start a built Neem runtime server.' },
+  args: {
+    outDir: {
+      type: 'string',
+      description: 'Built output directory.',
+      default: 'dist',
+    },
+    runtime: {
+      type: 'positional',
+      description: 'Comma-separated runtime names to start.',
+      required: false,
+    },
+  },
+  async run({ args }) {
+    const cwd = process.cwd()
+    const outDir = resolve(cwd, args.outDir)
+    const manifestFile = resolve(outDir, MANIFEST_FILE)
+    const probe = createNeemTestProbe()
+    const controller = createCliAbortController()
+    const closed = createFuture<void>()
+    closed.promise.catch(() => {})
+    probe?.emit('cli:start:start')
+
+    const runtime = createRuntimeClient({
+      onEvent(event) {
+        probe?.emit(`runtime:${event.type}`, normalizeEvent(event))
+        if (event.type === 'stopped') closed.resolve()
+        if (event.type === 'error') closed.reject(deserializeError(event.error))
+      },
+      onFailure(error) {
+        closed.reject(error)
+      },
+    })
+
+    controller.signal.addEventListener(
+      'abort',
+      () => {
+        void runtime.stop().then(
+          () => closed.resolve(),
+          (error) => closed.reject(normalizeError(error)),
+        )
+      },
+      { once: true },
+    )
+
+    try {
+      await runtime.request({
+        id: 0,
+        type: 'start',
+        mode: 'production',
+        outDir,
+        manifestFile,
+        runtimes: parseRuntimes(args.runtime),
+      })
+      await closed.promise
+      probe?.emit('cli:start:closed')
+    } finally {
+      controller.dispose()
+      await runtime.stop().catch(() => undefined)
+    }
   },
 })
 
@@ -65,146 +144,22 @@ export const devCommand = defineCommand({
       required: false,
     },
   },
-  async run({ args, data }) {
-    if (data) {
-      const probe = createNeemTestProbe()
-      const controller = createCliAbortController()
-      probe?.emit('cli:dev:start')
-
-      try {
-        const host = await devNeem({
-          config: args.config,
-          outDir: args.outDir,
-          runtimes: parseRuntimes(args.runtime),
-          hooks: probe?.hooks,
-          signal: controller?.signal,
-        })
-        await host.closed
-        probe?.emit('cli:dev:closed')
-      } finally {
-        controller.dispose()
-      }
-    } else {
-      const self = process.argv[1]
-      const forkArgs = ['--config', args.config, '--outDir', args.outDir]
-      if (args.runtime) forkArgs.push(args.runtime)
-
-      let forked: ChildProcess | null = null
-      let watcher: rolldown.RolldownWatcher | null = null
-
-      const startWatcher = debounce(() => {
-        watcher?.close()
-
-        watcher = rolldown.watch({
-          input: resolve(args.config),
-          platform: 'node',
-          logLevel: 'warn',
-          external: (id) => {
-            return isBuiltin(id)
-          },
-          output: {
-            file: resolve(args.outDir, 'neem.config.js'),
-            minify: false,
-            codeSplitting: false,
-            sourcemap: false,
-          },
-          experimental: { chunkOptimization: false },
-          optimization: { inlineConst: false, pifeForModuleWrappers: false },
-          treeshake: false,
-          watch: {
-            buildDelay: 100,
-            clearScreen: false,
-            skipWrite: true,
-            exclude: 'node_modules/**',
-            watcher: {
-              debounceDelay: 50,
-              useDebounce: true,
-              usePolling: true,
-              compareContentsForPolling: true,
-            },
-          },
-        })
-
-        let initial = true
-
-        watcher.on('event', (event) => {
-          switch (event.code) {
-            case 'END': {
-              if (!initial) {
-                startWatcher()
-              } else {
-                startProcess()
-                initial = false
-              }
-              break
-            }
-          }
-        })
-      }, 250)
-
-      const startProcess = debounce(async () => {
-        forked?.kill()
-        forked = fork(self, forkArgs, {
-          execArgv: ['--expose-gc'],
-          stdio: 'inherit',
-          env: { ...process.env, NEEM_DEV_PROCESS: '1' },
-        })
-        forked?.on('message', (msg) => {
-          process.send?.(msg)
-        })
-      }, 250)
-
-      const shutdown = () => {
-        void (async () => {
-          await watcher?.close()
-          watcher = null
-          const child = forked
-          forked = null
-          if (child && child.exitCode === null && child.signalCode === null) {
-            child.kill('SIGTERM')
-            await waitForProcessExit(child).catch(() => undefined)
-          }
-          process.exit(0)
-        })()
-      }
-
-      process.once('SIGINT', shutdown)
-      process.once('SIGTERM', shutdown)
-      startWatcher()
-    }
-  },
-})
-
-export const startCommand = defineCommand({
-  meta: { name: 'start', description: 'Start a built Neem runtime server.' },
-  args: {
-    outDir: {
-      type: 'string',
-      description: 'Built output directory.',
-      default: 'dist',
-    },
-    runtime: {
-      type: 'positional',
-      description: 'Comma-separated runtime names to start.',
-      required: false,
-    },
-  },
-  async run({ args, data }) {
+  async run({ args }) {
     const controller = createCliAbortController()
-    const probe = createNeemTestProbe()
-    probe?.emit('cli:start:start')
+    const supervisor = new DevSupervisor({
+      configFile: resolve(process.cwd(), args.config),
+      outDir: resolve(process.cwd(), args.outDir),
+      runtimes: parseRuntimes(args.runtime),
+      signal: controller.signal,
+      probe: createNeemTestProbe(),
+    })
 
     try {
-      const host = await startNeem({
-        outDir: args.outDir,
-        runtimes: parseRuntimes(args.runtime),
-        hooks: probe?.hooks,
-        signal: controller.signal,
-      })
-      await host.closed
-      probe?.emit('cli:start:closed')
+      await supervisor.start()
+      await supervisor.closed
     } finally {
       controller.dispose()
+      await supervisor.stop().catch(() => undefined)
     }
   },
 })
@@ -213,6 +168,173 @@ export const mainCommand = defineCommand({
   meta: { name: 'neem', description: 'Neem host CLI.' },
   subCommands: { build: buildCommand, dev: devCommand, start: startCommand },
 })
+
+type DevSupervisorOptions = {
+  configFile: string
+  outDir: string
+  runtimes?: readonly string[]
+  signal: AbortSignal
+  probe?: ReturnType<typeof createNeemTestProbe>
+}
+
+class DevSupervisor {
+  readonly closed: Promise<void>
+
+  private readonly closedFuture = createFuture<void>()
+  private readonly events = new OperationQueue()
+  private watcher: WatcherClient | undefined
+  private runtime: RuntimeClient | undefined
+  private manifestFile: string | undefined
+  private stopped = false
+
+  constructor(private readonly options: DevSupervisorOptions) {
+    this.closed = this.closedFuture.promise
+    this.closed.catch(() => {})
+
+    if (options.signal.aborted) this.stopped = true
+    options.signal.addEventListener(
+      'abort',
+      () => {
+        void this.stop()
+      },
+      { once: true },
+    )
+  }
+
+  async start(): Promise<void> {
+    this.options.probe?.emit('cli:dev:start')
+    await this.startWatcher()
+  }
+
+  async stop(): Promise<void> {
+    if (this.stopped && !this.watcher && !this.runtime) return
+    this.stopped = true
+    await this.events.waitIdle()
+    const watcher = this.watcher
+    const runtime = this.runtime
+    this.watcher = undefined
+    this.runtime = undefined
+    await Promise.all([watcher?.stop(), runtime?.stop()])
+    this.options.probe?.emit('cli:dev:closed')
+    this.closedFuture.resolve()
+  }
+
+  private async startWatcher(): Promise<void> {
+    if (this.stopped) return
+    const watcher = createWatcherClient({
+      onEvent: (event) => {
+        this.options.probe?.emit(`watcher:${event.type}`, normalizeEvent(event))
+        void this.events
+          .run(() => this.handleWatcherEvent(event))
+          .catch((error) => {
+            this.closedFuture.reject(normalizeError(error))
+          })
+      },
+      onFailure: (error) => this.closedFuture.reject(error),
+    })
+    this.watcher = watcher
+    const result = await watcher.request({
+      id: 0,
+      type: 'start',
+      configFile: this.options.configFile,
+      outDir: this.options.outDir,
+      runtimes: this.options.runtimes,
+    })
+    if (result?.manifestFile) this.manifestFile = result.manifestFile
+  }
+
+  private async handleWatcherEvent(event: WatcherEvent): Promise<void> {
+    if (this.stopped) return
+
+    switch (event.type) {
+      case 'ready':
+        this.manifestFile = event.manifestFile
+        await this.restartRuntime()
+        return
+      case 'config-invalidated':
+        await this.stopRuntime()
+        await this.stopWatcher()
+        await this.startWatcher()
+        return
+      case 'runtime-changed':
+      case 'runtime-host-changed':
+        await this.reloadRuntime(event.runtimeName)
+        return
+      case 'plugin-changed':
+      case 'logger-changed':
+        await this.restartRuntime()
+        return
+      case 'error':
+        this.closedFuture.reject(deserializeError(event.error))
+        return
+    }
+  }
+
+  private async restartRuntime(): Promise<void> {
+    if (!this.manifestFile) return
+    await this.stopRuntime()
+    const runtime = createRuntimeClient({
+      onEvent: (event) => {
+        this.options.probe?.emit(`runtime:${event.type}`, normalizeEvent(event))
+        if (event.type === 'error') {
+          this.closedFuture.reject(deserializeError(event.error))
+        }
+      },
+      onFailure: (error) => this.closedFuture.reject(error),
+    })
+    this.runtime = runtime
+    await runtime.request({
+      id: 0,
+      type: 'start',
+      mode: 'development',
+      outDir: this.options.outDir,
+      manifestFile: this.manifestFile,
+      runtimes: this.options.runtimes,
+    })
+  }
+
+  private async reloadRuntime(runtimeName: string): Promise<void> {
+    if (!this.runtime || !this.manifestFile) return
+    await this.runtime.request({
+      id: 0,
+      type: 'reload-runtime',
+      runtimeName,
+      manifestFile: this.manifestFile,
+    })
+  }
+
+  private async stopRuntime(): Promise<void> {
+    const runtime = this.runtime
+    this.runtime = undefined
+    await runtime?.stop()
+  }
+
+  private async stopWatcher(): Promise<void> {
+    const watcher = this.watcher
+    this.watcher = undefined
+    await watcher?.stop()
+  }
+}
+
+function createWatcherClient(options: {
+  onEvent: (event: WatcherEvent) => void
+  onFailure: (error: Error) => void
+}): WatcherClient {
+  return new WorkerServiceClient<WatcherEvent, WatcherResult>({
+    entry: resolveServiceEntry('watcher-entry'),
+    ...options,
+  })
+}
+
+function createRuntimeClient(options: {
+  onEvent: (event: RuntimeEvent) => void
+  onFailure: (error: Error) => void
+}): RuntimeClient {
+  return new WorkerServiceClient<RuntimeEvent, RuntimeResult>({
+    entry: resolveServiceEntry('runtime-entry'),
+    ...options,
+  })
+}
 
 function parseRuntimes(runtime?: string): string[] | undefined {
   if (!runtime) return undefined
@@ -239,8 +361,23 @@ function createCliAbortController() {
   }
 }
 
-function waitForProcessExit(child: ChildProcess): Promise<void> {
-  return new Promise((resolve) => {
-    child.once('exit', () => resolve())
-  })
+function normalizeEvent(event: { error?: unknown } & Record<string, unknown>) {
+  return event.error
+    ? {
+        ...event,
+        error: isSerializedError(event.error)
+          ? event.error
+          : serializeError(event.error),
+      }
+    : event
+}
+
+function isSerializedError(
+  value: unknown,
+): value is { message: string; name?: string; stack?: string } {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as { message?: unknown }).message === 'string'
+  )
 }
