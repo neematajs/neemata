@@ -213,6 +213,58 @@ describe('NeemRuntimeServer', () => {
     ])
   })
 
+  it('uses config-derived default threads when host plan returns nothing', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'neem-runtime-default-plan-'))
+    const eventFile = join(dir, 'events.log')
+    const server = new NeemRuntimeServer({
+      snapshot: createRuntimeHostSnapshot(eventFile, {
+        defaultPlan: true,
+        threads: [
+          { eventFile, upstreamUrl: 'http://127.0.0.1:3701/' },
+          { eventFile, upstreamUrl: 'http://127.0.0.1:3702/' },
+        ],
+      }),
+    })
+
+    await server.start()
+    await server.stop()
+
+    const events = await readEvents(eventFile)
+    expect(events.slice(0, 6)).toEqual([
+      'host-setup:hosted',
+      'host-plan:hosted',
+      'worker-start:hosted:0',
+      'worker-start:hosted:1',
+      'host-start:2:2',
+      'host-stop:2',
+    ])
+    expect(new Set(events.slice(6))).toEqual(
+      new Set(['worker-stop:hosted:0', 'worker-stop:hosted:1']),
+    )
+  })
+
+  it('validates final planned thread topology before startup', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'neem-runtime-topology-'))
+    const duplicateEventFile = join(dir, 'duplicate-events.log')
+    const emptyEventFile = join(dir, 'empty-events.log')
+
+    await expect(
+      new NeemRuntimeServer({
+        snapshot: createRuntimeHostSnapshot(duplicateEventFile, {
+          duplicateThreadName: true,
+        }),
+      }).start(),
+    ).rejects.toThrow('duplicate thread name')
+
+    await expect(
+      new NeemRuntimeServer({
+        snapshot: createRuntimeHostSnapshot(emptyEventFile, {
+          emptyPlan: true,
+        }),
+      }).start(),
+    ).rejects.toThrow('must plan at least one thread')
+  })
+
   it('allows observers to receive server/runtime/worker lifecycle hooks', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'neem-runtime-hooks-'))
     const eventFile = join(dir, 'events.log')
@@ -346,6 +398,41 @@ describe('NeemRuntimeServer', () => {
       'host-stop:1',
       'worker-stop:hosted:worker',
     ])
+  })
+
+  it('publishes scoped reload proxy upstreams after runtime host start', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'neem-runtime-proxy-barrier-'))
+    const eventFile = join(dir, 'events.log')
+    const proxyPort = await getFreePort()
+    const server = new NeemRuntimeServer({
+      snapshot: createRuntimeHostSnapshot(eventFile, { proxyPort }),
+    })
+
+    await server.start()
+
+    const reload = server.reloadRuntime(
+      'hosted',
+      createRuntimeHostSnapshot(eventFile, {
+        proxyPort,
+        hostStartDelayMs: 150,
+      }),
+    )
+    await waitForEvents(eventFile, (events) => {
+      return events.filter((event) => event === 'host-start:1:1').length === 2
+    })
+    await wait(25)
+
+    expect([...server.getProxyUpstreams()]).toEqual([])
+
+    await reload
+    expect([...server.getProxyUpstreams()]).toMatchObject([
+      {
+        runtimeName: 'hosted',
+        upstream: { type: 'http', url: 'http://127.0.0.1:3701/' },
+      },
+    ])
+
+    await server.stop()
   })
 
   it('fails host startup during planning and runs cleanup hooks', async () => {
@@ -585,7 +672,14 @@ function createRuntimeHostSnapshot(
     includeRuntime?: boolean
     failWorkerAfterStart?: boolean | number
     extraStableWorker?: boolean
+    hostStartDelayMs?: number
+    proxyPort?: number
     health?: NeemNormalizedConfig['health']
+    defaultPlan?: boolean
+    emptyPlan?: boolean
+    duplicateThreadName?: boolean
+    threadCount?: number
+    threads?: number | readonly unknown[]
   } = {},
 ): NeemRuntimeSnapshot {
   const hostFile = fileURLToPath(
@@ -614,6 +708,9 @@ function createRuntimeHostSnapshot(
     configFile,
     config: {
       health: options.health,
+      proxy: options.proxyPort
+        ? { hostname: '127.0.0.1', port: options.proxyPort }
+        : undefined,
       runtimes: includeRuntime
         ? {
             hosted: {
@@ -629,14 +726,25 @@ function createRuntimeHostSnapshot(
                 useResolvedArtifact: options.useResolvedArtifact,
                 failWorkerAfterStart: options.failWorkerAfterStart,
                 extraStableWorker: options.extraStableWorker,
+                hostStartDelayMs: options.hostStartDelayMs,
+                defaultPlan: options.defaultPlan,
+                emptyPlan: options.emptyPlan,
+                duplicateThreadName: options.duplicateThreadName,
+                threadCount: options.threadCount,
               },
+              threads: options.threads,
             },
           }
         : {},
     } as NeemNormalizedConfig,
     manifest: {
       schemaVersion: 1,
-      config: { runtimes: {} },
+      config: {
+        proxy: options.proxyPort
+          ? { hostname: '127.0.0.1', port: options.proxyPort }
+          : undefined,
+        runtimes: {},
+      },
       runtimes: includeRuntime
         ? {
             hosted: {

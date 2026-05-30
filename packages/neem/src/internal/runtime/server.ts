@@ -1,3 +1,5 @@
+import { OperationQueue } from '@nmtjs/common'
+
 import type {
   NeemRuntimeServerHealth,
   NeemRuntimeServerSnapshot,
@@ -40,7 +42,7 @@ export class NeemRuntimeServer {
   private lastError: Error | undefined
   private snapshot: NeemRuntimeSnapshot
   private logger: NeemRuntimeSnapshot['logger']
-  private operation = Promise.resolve()
+  private readonly operations = new OperationQueue()
   private runtimeManager: NeemRuntimeManager | undefined
   private proxyManager: NeemProxyManager | undefined
   private healthProbe: NeemHealthProbeServer | undefined
@@ -100,7 +102,11 @@ export class NeemRuntimeServer {
     const proxy = this.proxyManager?.getHealth() ?? {
       enabled: Boolean(this.snapshot.config.proxy),
       running: false,
+      ready: false,
       upstreams: [...this.proxyUpstreams.list()],
+      appliedUpstreams: [],
+      pending: 0,
+      failedUpstreams: [],
     }
 
     return {
@@ -108,7 +114,7 @@ export class NeemRuntimeServer {
       ready:
         this.state === 'running' &&
         runtimes.every((runtime) => runtime.pool.state === 'ready') &&
-        (!proxy.enabled || proxy.running),
+        (!proxy.enabled || proxy.ready),
       runtimes,
       proxy,
     }
@@ -186,6 +192,7 @@ export class NeemRuntimeServer {
       try {
         await this.syncHealthProbe(snapshot)
         await this.reloadRuntimeRuntime(runtimeName, snapshot)
+        await this.proxyManager?.waitForSync()
         this.markState('running')
       } catch (error) {
         this.markState('failed', normalizeError(error))
@@ -320,8 +327,7 @@ export class NeemRuntimeServer {
   }
 
   private enqueue(task: () => Promise<void>): Promise<void> {
-    this.operation = this.operation.then(task, task)
-    return this.operation
+    return this.operations.run(task)
   }
 
   private callHook(

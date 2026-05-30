@@ -1,9 +1,10 @@
 import type { MessagePort } from 'node:worker_threads'
 
+import type { MaybePromise } from '@nmtjs/common'
 import type { Logger } from '@nmtjs/core'
 
 import type { NeemArtifactRegistry, NeemResolvedArtifact } from './artifact.ts'
-import type { NeemMaybePromise, NeemMode, NeemRuntime } from './runtime.ts'
+import type { NeemMode, NeemRuntime } from './runtime.ts'
 
 export type NeemWorkerRuntimeContext<Data = unknown, Definition = unknown> = {
   mode: NeemMode
@@ -21,7 +22,7 @@ export type NeemWorker<Data = unknown, Definition = unknown> = {
   definition: Definition
   createRuntime: (
     ctx: NeemWorkerRuntimeContext<Data, Definition>,
-  ) => NeemMaybePromise<NeemRuntime>
+  ) => MaybePromise<NeemRuntime>
 }
 
 export type InferNeemWorkerData<TWorker> = TWorker extends {

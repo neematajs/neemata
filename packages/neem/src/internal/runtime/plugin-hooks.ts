@@ -4,6 +4,7 @@ import { pathToFileURL } from 'node:url'
 import type { Logger } from '@nmtjs/core'
 
 import type {
+  NeemHostHookMap,
   NeemHostHooks,
   NeemPluginHooksFactory,
 } from '../../public/hooks.ts'
@@ -21,7 +22,7 @@ export async function registerManifestPluginHooks(options: {
   getHealth: () => NeemRuntimeServerHealth
   cacheBust?: boolean
 }): Promise<NeemPluginHookRegistration[]> {
-  const registrations: NeemPluginHookRegistration[] = []
+  const pluginHooks: Partial<NeemHostHookMap>[] = []
 
   for (const plugin of options.manifest.plugins ?? []) {
     if (!plugin.entry) continue
@@ -40,15 +41,28 @@ export async function registerManifestPluginHooks(options: {
       )
     }
 
-    const pluginHooks = await factory({
-      name: plugin.name,
-      mode: options.mode,
-      options: plugin.options,
-      logger: options.logger,
-      getHealth: options.getHealth,
-    })
-    const remove = options.hooks.addHooks(pluginHooks)
-    registrations.push({ remove })
+    pluginHooks.push(
+      await factory({
+        name: plugin.name,
+        mode: options.mode,
+        options: plugin.options,
+        logger: options.logger,
+        getHealth: options.getHealth,
+      }),
+    )
+  }
+
+  const registrations: NeemPluginHookRegistration[] = []
+  try {
+    for (const hooks of pluginHooks) {
+      const remove = options.hooks.addHooks(hooks)
+      registrations.push({ remove })
+    }
+  } catch (error) {
+    for (const registration of registrations.splice(0).reverse()) {
+      registration.remove()
+    }
+    throw error
   }
 
   return registrations

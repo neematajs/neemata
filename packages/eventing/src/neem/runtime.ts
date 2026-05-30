@@ -1,16 +1,13 @@
-import type {
-  NeemEntryInput,
-  NeemMaybePromise,
-  NeemRuntimeConfigBase,
-} from '@nmtjs/neem'
+import type { MaybePromise } from '@nmtjs/common'
+import type { NeemEntryInput, NeemRuntimeConfigBase } from '@nmtjs/neem'
 import { defineRuntime } from '@nmtjs/neem'
 
 import type { EventingAdapter } from '../core/adapter.ts'
 import type { AnyEventingConsumerDefinition } from '../core/consumer.ts'
 
-export type EventingAdapterFactory = () => NeemMaybePromise<EventingAdapter>
+export type EventingAdapterFactory = () => MaybePromise<EventingAdapter>
 
-export type EventingConsumersFactory = () => NeemMaybePromise<
+export type EventingConsumersFactory = () => MaybePromise<
   readonly AnyEventingConsumerDefinition[]
 >
 

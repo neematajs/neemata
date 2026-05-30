@@ -164,6 +164,10 @@ type NeemRuntimeHostRuntimeOptions = NeemRuntimeManagerOptions & {
   runtimeName: string
 }
 
+type NeemResolvedRuntimeThreadPlan = Omit<NeemRuntimeThreadPlan, 'count'> & {
+  artifact: string | NeemResolvedArtifact
+}
+
 class NeemRuntimeHostRuntime {
   private host: NeemRuntimeHost | undefined
   private hostParams: NeemRuntimeHostParams | undefined
@@ -195,14 +199,18 @@ class NeemRuntimeHostRuntime {
       const hostFactory = await this.loadHost()
       host = await hostFactory?.(hostParams)
       this.host = host
-      const plan = host?.plan
-        ? await host.plan()
-        : { threads: createDefaultRuntimeThreadPlans(snapshot, runtimeName) }
+      const plan = await host?.plan?.()
+      const threadPlans = resolveRuntimeThreadTopology({
+        snapshot,
+        runtimeName,
+        defaultThreads: hostParams.defaultThreads,
+        plans: plan?.threads,
+      })
 
       this.threads = createRuntimeThreads({
         snapshot,
         runtimeName,
-        plans: plan.threads ?? [],
+        plans: threadPlans,
         hooks: this.options.hooks,
         onWorkerFailure: (error, worker) => {
           void this.handleWorkerFailure(error, worker).catch((failureError) => {
@@ -219,6 +227,7 @@ class NeemRuntimeHostRuntime {
 
       await Promise.all(this.pools.map((pool) => pool.start()))
       const upstreams = this.threads.flatMap((thread) => thread.getUpstreams())
+      await host?.start?.({ threads: this.threads, upstreams })
       for (const thread of this.threads) {
         this.options.proxyUpstreams.addOwnerUpstreams(
           thread,
@@ -226,7 +235,6 @@ class NeemRuntimeHostRuntime {
           thread.getUpstreams(),
         )
       }
-      await host?.start?.({ threads: this.threads, upstreams })
       await this.callRuntimeHook('runtime:ready', upstreams)
     } catch (error) {
       const normalized = toError(error)
@@ -335,6 +343,7 @@ class NeemRuntimeHostRuntime {
       artifact,
       hostArtifact: resolveRuntimeArtifact(snapshot, runtimeName, 'host'),
       artifacts: snapshot.artifacts.scope(owner),
+      defaultThreads: createDefaultRuntimeThreadPlans(snapshot, runtimeName),
     }
   }
 
@@ -447,6 +456,10 @@ function createDefaultRuntimeThreadPlans(
   const threads = config?.threads ?? 1
 
   if (typeof threads === 'number') {
+    assertPositiveInteger(
+      threads,
+      `Runtime [${runtimeName}] threads must be a positive integer`,
+    )
     return Array.from({ length: threads }, (_, index) => ({
       name: `${runtimeName}:${index}`,
       artifact: 'entry',
@@ -461,10 +474,51 @@ function createDefaultRuntimeThreadPlans(
   }))
 }
 
+function resolveRuntimeThreadTopology(options: {
+  snapshot: NeemRuntimeSnapshot
+  runtimeName: string
+  defaultThreads: readonly NeemRuntimeThreadPlan[]
+  plans: readonly NeemRuntimeThreadPlan[] | undefined
+}): readonly NeemResolvedRuntimeThreadPlan[] {
+  const sourcePlans = options.plans ?? options.defaultThreads
+  const resolved = sourcePlans.flatMap((plan) => {
+    const count = plan.count ?? 1
+    assertPositiveInteger(
+      count,
+      `Runtime [${options.runtimeName}] thread [${plan.name}] count must be a positive integer`,
+    )
+
+    return Array.from({ length: count }, (_, threadIndex) => ({
+      name: count > 1 ? `${plan.name}:${threadIndex}` : plan.name,
+      artifact: plan.artifact,
+      data: plan.data,
+    }))
+  })
+
+  if (resolved.length === 0) {
+    throw new Error(
+      `Runtime [${options.runtimeName}] must plan at least one thread`,
+    )
+  }
+
+  const names = new Set<string>()
+  for (const plan of resolved) {
+    if (names.has(plan.name)) {
+      throw new Error(
+        `Runtime [${options.runtimeName}] has duplicate thread name [${plan.name}]`,
+      )
+    }
+    names.add(plan.name)
+    resolveThreadPlanArtifact(options.snapshot, options.runtimeName, plan)
+  }
+
+  return resolved
+}
+
 function createRuntimeThreads(options: {
   snapshot: NeemRuntimeSnapshot
   runtimeName: string
-  plans: readonly NeemRuntimeThreadPlan[]
+  plans: readonly NeemResolvedRuntimeThreadPlan[]
   hooks: NeemHostHooks
   onWorkerFailure?: (
     error: Error,
@@ -472,27 +526,21 @@ function createRuntimeThreads(options: {
   ) => void | Promise<void>
 }): readonly NeemRuntimeThread[] {
   let index = 0
-  return options.plans.flatMap((plan) => {
+  return options.plans.map((plan) => {
     const artifact = resolveThreadPlanArtifact(
       options.snapshot,
       options.runtimeName,
       plan,
     )
 
-    return Array.from({ length: plan.count ?? 1 }, (_, threadIndex) => {
-      return new NeemRuntimeThread({
-        snapshot: options.snapshot,
-        runtimeName: options.runtimeName,
-        plan: {
-          ...plan,
-          name:
-            (plan.count ?? 1) > 1 ? `${plan.name}:${threadIndex}` : plan.name,
-        },
-        index: index++,
-        artifact,
-        hooks: options.hooks,
-        onWorkerFailure: options.onWorkerFailure,
-      })
+    return new NeemRuntimeThread({
+      snapshot: options.snapshot,
+      runtimeName: options.runtimeName,
+      plan,
+      index: index++,
+      artifact,
+      hooks: options.hooks,
+      onWorkerFailure: options.onWorkerFailure,
     })
   })
 }
@@ -500,7 +548,7 @@ function createRuntimeThreads(options: {
 function resolveThreadPlanArtifact(
   snapshot: NeemRuntimeSnapshot,
   runtimeName: string,
-  plan: NeemRuntimeThreadPlan,
+  plan: NeemRuntimeThreadPlan | NeemResolvedRuntimeThreadPlan,
 ): NeemResolvedArtifact {
   if (typeof plan.artifact !== 'string') return plan.artifact
 
@@ -512,6 +560,12 @@ function resolveThreadPlanArtifact(
   }
 
   return artifact
+}
+
+function assertPositiveInteger(value: number, message: string): void {
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error(message)
+  }
 }
 
 function createRuntimeThreadPools(

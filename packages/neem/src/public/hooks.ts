@@ -1,9 +1,9 @@
+import type { MaybePromise } from '@nmtjs/common'
 import type { Logger } from '@nmtjs/core'
 import type { Hookable } from 'hookable'
 
 import type { NeemArtifactOwner } from './artifact.ts'
 import type {
-  NeemMaybePromise,
   NeemMode,
   NeemRuntimeServerHealth,
   NeemRuntimeUpstream,
@@ -24,20 +24,20 @@ export type NeemHostWorkerHookEvent = NeemHostHookEvent & {
 }
 
 export type NeemHostHookMap = {
-  'server:start': (event: NeemHostHookEvent) => NeemMaybePromise<void>
-  'server:ready': (event: NeemHostHookEvent) => NeemMaybePromise<void>
-  'server:reload': (event: NeemHostHookEvent) => NeemMaybePromise<void>
-  'server:stop': (event: NeemHostHookEvent) => NeemMaybePromise<void>
-  'server:fail': (event: NeemHostHookEvent) => NeemMaybePromise<void>
-  'runtime:start': (event: NeemHostRuntimeHookEvent) => NeemMaybePromise<void>
-  'runtime:ready': (event: NeemHostRuntimeHookEvent) => NeemMaybePromise<void>
-  'runtime:reload': (event: NeemHostRuntimeHookEvent) => NeemMaybePromise<void>
-  'runtime:stop': (event: NeemHostRuntimeHookEvent) => NeemMaybePromise<void>
-  'runtime:fail': (event: NeemHostRuntimeHookEvent) => NeemMaybePromise<void>
-  'worker:start': (event: NeemHostWorkerHookEvent) => NeemMaybePromise<void>
-  'worker:ready': (event: NeemHostWorkerHookEvent) => NeemMaybePromise<void>
-  'worker:stop': (event: NeemHostWorkerHookEvent) => NeemMaybePromise<void>
-  'worker:fail': (event: NeemHostWorkerHookEvent) => NeemMaybePromise<void>
+  'server:start': (event: NeemHostHookEvent) => MaybePromise<void>
+  'server:ready': (event: NeemHostHookEvent) => MaybePromise<void>
+  'server:reload': (event: NeemHostHookEvent) => MaybePromise<void>
+  'server:stop': (event: NeemHostHookEvent) => MaybePromise<void>
+  'server:fail': (event: NeemHostHookEvent) => MaybePromise<void>
+  'runtime:start': (event: NeemHostRuntimeHookEvent) => MaybePromise<void>
+  'runtime:ready': (event: NeemHostRuntimeHookEvent) => MaybePromise<void>
+  'runtime:reload': (event: NeemHostRuntimeHookEvent) => MaybePromise<void>
+  'runtime:stop': (event: NeemHostRuntimeHookEvent) => MaybePromise<void>
+  'runtime:fail': (event: NeemHostRuntimeHookEvent) => MaybePromise<void>
+  'worker:start': (event: NeemHostWorkerHookEvent) => MaybePromise<void>
+  'worker:ready': (event: NeemHostWorkerHookEvent) => MaybePromise<void>
+  'worker:stop': (event: NeemHostWorkerHookEvent) => MaybePromise<void>
+  'worker:fail': (event: NeemHostWorkerHookEvent) => MaybePromise<void>
 }
 
 export type NeemHostHooks = Hookable<NeemHostHookMap>
@@ -52,7 +52,7 @@ export type NeemPluginHooksContext<Options = unknown> = {
 
 export type NeemPluginHooksFactory<Options = unknown> = (
   ctx: NeemPluginHooksContext<Options>,
-) => NeemMaybePromise<Partial<NeemHostHookMap>>
+) => MaybePromise<Partial<NeemHostHookMap>>
 
 export function definePluginHooks<const T extends NeemPluginHooksFactory>(
   factory: T,

@@ -41,7 +41,7 @@ export class NeemProxyUpstreamRegistry {
     for (const upstream of upstreams) {
       const normalized = normalizeProxyRuntimeUpstream(upstream)
       const proxyUpstream = toProxyUpstream(normalized)
-      const key = getUpstreamKey(normalized)
+      const key = getProxyRuntimeUpstreamKey(normalized)
       keys.push({ runtimeName, key })
       this.addUpstream(runtimeName, key, normalized, proxyUpstream)
     }
@@ -163,6 +163,8 @@ export function toProxyUpstream(
   }
 }
 
-function getUpstreamKey(upstream: NeemRuntimeUpstream): string {
+export function getProxyRuntimeUpstreamKey(
+  upstream: NeemRuntimeUpstream,
+): string {
   return `${upstream.type}:${upstream.url}`
 }

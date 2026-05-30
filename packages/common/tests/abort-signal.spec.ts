@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { anyAbortSignal } from '../src/abortSignal.ts'
+import { anyAbortSignal } from '../src/abort-signal.ts'
 
 describe('anyAbortSignal', () => {
   it('throws when no signals are provided', () => {

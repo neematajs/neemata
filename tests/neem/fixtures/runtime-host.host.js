@@ -15,6 +15,12 @@ export default async function createRuntimeHost(params) {
       if (params.options.failPlan) {
         throw new Error('host plan failed')
       }
+      if (params.options.defaultPlan) {
+        return undefined
+      }
+      if (params.options.emptyPlan) {
+        return { threads: [] }
+      }
       const threads = [
         {
           name: `${params.name}:worker`,
@@ -28,6 +34,19 @@ export default async function createRuntimeHost(params) {
           },
         },
       ]
+      if (params.options.duplicateThreadName) {
+        threads.push({
+          name: `${params.name}:worker`,
+          artifact: 'entry',
+          data: {
+            eventFile: params.options.eventFile,
+            upstreamUrl: params.options.upstreamUrl,
+          },
+        })
+      }
+      if (params.options.threadCount) {
+        threads[0].count = params.options.threadCount
+      }
       if (params.options.extraStableWorker) {
         threads.push({
           name: `${params.name}:stable`,
@@ -48,6 +67,9 @@ export default async function createRuntimeHost(params) {
         params.options.eventFile,
         `host-start:${startParams.threads.length}:${startParams.upstreams.length}`,
       )
+      if (params.options.hostStartDelayMs) {
+        await wait(params.options.hostStartDelayMs)
+      }
       if (params.options.failStart) {
         throw new Error('host start failed')
       }
@@ -81,4 +103,8 @@ function shouldFailWorkerAfterStart(ctx) {
   const count = workerFailures.get(key) ?? 0
   workerFailures.set(key, count + 1)
   return count < option
+}
+
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }

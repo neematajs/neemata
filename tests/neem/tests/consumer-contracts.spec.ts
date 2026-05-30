@@ -1,4 +1,10 @@
-import type { InferNeemWorkerData, NeemHostHookMap } from '@nmtjs/neem'
+import { createRequire } from 'node:module'
+
+import type {
+  InferNeemWorkerData,
+  NeemHostHookMap,
+  NeemRuntimeThreadPlan,
+} from '@nmtjs/neem'
 import {
   defineConfig,
   definePlugin,
@@ -10,6 +16,8 @@ import {
 import { describe, expect, expectTypeOf, it } from 'vitest'
 
 import app from '../fixtures/basic-app.ts'
+
+const require = createRequire(import.meta.url)
 
 describe('@nmtjs/neem consumer contracts', () => {
   it('keeps logger inputs typed', () => {
@@ -113,6 +121,12 @@ describe('@nmtjs/neem consumer contracts', () => {
     expect(Object.keys(app.definition.transports)).toEqual(['http'])
   })
 
+  it('does not expose the internal implementation barrel', async () => {
+    expect(() => require.resolve('@nmtjs/neem/internal')).toThrow(
+      'Package subpath',
+    )
+  })
+
   it('rejects wrong runtime data at compile time', () => {
     const invalidThread: InferNeemWorkerData<typeof app> = {
       http: {
@@ -149,6 +163,9 @@ describe('@nmtjs/neem consumer contracts', () => {
   it('types runtime hosts as per-runtime factories', () => {
     const host = defineRuntimeHost((params) => {
       expectTypeOf(params.options).toEqualTypeOf<unknown>()
+      expectTypeOf(params.defaultThreads).toEqualTypeOf<
+        readonly NeemRuntimeThreadPlan[]
+      >()
 
       return {
         plan() {

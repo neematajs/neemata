@@ -125,13 +125,12 @@ export const devCommand = defineCommand({
           },
         })
 
-        
         let initial = true
-        
+
         watcher.on('event', (event) => {
           switch (event.code) {
             case 'END': {
-              if(!initial) {
+              if (!initial) {
                 startWatcher()
               } else {
                 startProcess()

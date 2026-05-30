@@ -80,6 +80,7 @@ describe('@nmtjs/metrics', () => {
   })
 
   it('injects default metrics registration through the build plugin', () => {
+    // @ts-expect-error
     const plugin = createDefaultMetricsRolldownPlugin({
       include: /runtime-entry\.ts$/,
     }) as {

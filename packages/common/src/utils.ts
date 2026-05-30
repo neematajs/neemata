@@ -45,32 +45,10 @@ export function range(count: number, start = 0) {
   }
 }
 
-export function debounce(cb: Callback, delay: number) {
-  let timer: any
-  const clear = () => timer && clearTimeout(timer)
-  const fn = (...args: any[]) => {
-    clear()
-    timer = setTimeout(cb, delay, ...args)
-  }
-  return Object.assign(fn, { clear })
-}
+export type Future<T = any> = PromiseWithResolvers<T>
 
-// TODO: Promise.withResolvers?
-export interface Future<T = any> {
-  promise: Promise<T>
-  resolve: (value: T) => void
-  reject: (error: any) => void
-}
-// TODO: Promise.withResolvers?
 export function createFuture<T>(): Future<T> {
-  let resolve: Future<T>['resolve']
-  let reject: Future<T>['reject']
-  const promise = new Promise<T>((res, rej) => {
-    resolve = res
-    reject = rej
-  })
-  // @ts-expect-error
-  return { resolve, reject, promise }
+  return Promise.withResolvers<T>()
 }
 
 export function onAbort<T extends Callback>(

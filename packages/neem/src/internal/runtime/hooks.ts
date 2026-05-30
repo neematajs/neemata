@@ -2,10 +2,7 @@ import type { Logger } from '@nmtjs/core'
 import type { HookCallback } from 'hookable'
 import { createHooks } from 'hookable'
 
-import type {
-  NeemHostHookMap,
-  NeemHostHooks,
-} from '../../public/hooks.ts'
+import type { NeemHostHookMap, NeemHostHooks } from '../../public/hooks.ts'
 import { normalizeError } from './utils.ts'
 
 export type {

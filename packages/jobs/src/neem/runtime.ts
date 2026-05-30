@@ -1,8 +1,5 @@
-import type {
-  NeemEntryInput,
-  NeemMaybePromise,
-  NeemRuntimeConfigBase,
-} from '@nmtjs/neem'
+import type { MaybePromise } from '@nmtjs/common'
+import type { NeemEntryInput, NeemRuntimeConfigBase } from '@nmtjs/neem'
 import { defineRuntime } from '@nmtjs/neem'
 
 import type { JobsClient } from '../client.ts'
@@ -14,9 +11,9 @@ export type AnyJobsJob = AnyJob
 export type JobsPoolConfig = { threads: number; jobs: number }
 
 export type JobsFactory<Job extends AnyJobsJob = AnyJobsJob> =
-  () => NeemMaybePromise<readonly Job[]>
+  () => MaybePromise<readonly Job[]>
 
-export type JobsHooksFactory = () => NeemMaybePromise<
+export type JobsHooksFactory = () => MaybePromise<
   JobsLifecycleHooks | undefined
 >
 

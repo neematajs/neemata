@@ -1,7 +1,7 @@
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
-import { debounce } from 'perfect-debounce'
+import { OperationQueue } from '@nmtjs/common'
 
 import type {
   NeemArtifact,
@@ -19,6 +19,7 @@ import type {
   NeemRuntimeServerHealth,
   NeemRuntimeServerSnapshot,
 } from '../runtime/server.ts'
+import type { NeemDevReloadRequest } from './dev-reload-scheduler.ts'
 import { normalizeNeemConfig } from '../../public/config.ts'
 import { resolveNeemConfigLogger } from '../build/logger.ts'
 import {
@@ -43,6 +44,7 @@ import { registerManifestPluginHooks } from '../runtime/plugin-hooks.ts'
 import { NeemRuntimeServer as RuntimeServer } from '../runtime/server.ts'
 import { createRuntimeSnapshot } from '../runtime/snapshot.ts'
 import { cleanNeemOutDir, createManifestConfig } from './build.ts'
+import { NeemDevReloadScheduler } from './dev-reload-scheduler.ts'
 
 export type NeemDevOptions = {
   config: string
@@ -65,9 +67,6 @@ export type NeemDevHost = {
 }
 
 type RuntimeWatcherState = { watcher: NeemArtifactWatcher }
-type NeemDevReloadRequest =
-  | { type: 'full' }
-  | { type: 'runtimes'; runtimeNames: string[] }
 type NeemDevLifecycleSnapshot =
   | NeemRuntimeServerSnapshot
   | {
@@ -116,17 +115,10 @@ class NeemDevSession implements NeemDevHost {
   private pluginWatchers = new Map<string, RuntimeWatcherState>()
   private pluginArtifacts = new Map<string, NeemResolvedArtifact>()
   private pluginHookRegistrations: NeemPluginHookRegistration[] = []
-  private operation = Promise.resolve()
-  private runtimeOperation = Promise.resolve()
+  private readonly operations = new OperationQueue()
   private lifecycle: NeemDevLifecycleSnapshot = { state: 'idle' }
   private stopped = false
-  private pendingFullReload = false
-  private pendingRuntimeReloads = new Set<string>()
-  private reloadFlushQueued = false
-  private scheduleRuntimeReloadFlush = debounce(
-    () => this.queueRuntimeReloadFlush(),
-    NEEM_DEV_RELOAD_DEBOUNCE_MS,
-  )
+  private readonly reloadScheduler: NeemDevReloadScheduler
   private readySettled = false
   private closedSettled = false
   private readyResolve!: () => void
@@ -149,6 +141,13 @@ class NeemDevSession implements NeemDevHost {
     this.outDir = options.outDir
     this.selectedRuntimes = normalizeSelectedRuntimeNames(options.runtimes)
     this.hooks = options.hooks ?? createNeemHostHooks()
+    this.reloadScheduler = new NeemDevReloadScheduler({
+      debounceMs: NEEM_DEV_RELOAD_DEBOUNCE_MS,
+      isStopped: () => this.stopped,
+      onBegin: () => this.beginRuntimeChange(),
+      onFlush: (request) => this.flushRuntimeReload(request),
+      onError: (error) => this.recordError(error),
+    })
     this.ready = new Promise<void>((resolve, reject) => {
       this.readyResolve = resolve
       this.readyReject = reject
@@ -206,10 +205,10 @@ class NeemDevSession implements NeemDevHost {
     this.lifecycle = { state: 'stopping' }
     this.logger.info('Stopping Neem dev session')
 
-    this.scheduleRuntimeReloadFlush.cancel()
+    this.reloadScheduler.stop()
     await this.stopRuntimeWatchers()
-    await this.operation.catch(() => {})
-    await this.runtimeOperation.catch(() => {})
+    await this.operations.waitIdle()
+    await this.reloadScheduler.drain()
     await this.stopRuntime()
     this.removePluginHooks()
     this.rejectReady(new Error('Neem dev stopped before ready'))
@@ -253,7 +252,7 @@ class NeemDevSession implements NeemDevHost {
 
     await this.startRuntimeWatchers()
     await this.startPluginWatchers()
-    this.scheduleFullRuntimeReload()
+    this.reloadScheduler.requestFull()
   }
 
   private async startRuntimeWatchers(): Promise<void> {
@@ -429,7 +428,7 @@ class NeemDevSession implements NeemDevHost {
     this.runtimeArtifacts.set(name, artifact)
     if (options.initial) return
 
-    this.scheduleScopedRuntimeReload(name)
+    this.reloadScheduler.requestRuntime(name)
   }
 
   private async applyRuntimeHostArtifact(
@@ -441,7 +440,7 @@ class NeemDevSession implements NeemDevHost {
     this.runtimeHostArtifacts.set(name, artifact)
     if (options.initial) return
 
-    this.scheduleScopedRuntimeReload(name)
+    this.reloadScheduler.requestRuntime(name)
   }
 
   private async applyPluginArtifact(
@@ -453,7 +452,7 @@ class NeemDevSession implements NeemDevHost {
     this.pluginArtifacts.set(key, artifact)
     if (options.initial) return
 
-    this.scheduleFullRuntimeReload()
+    this.reloadScheduler.requestFull()
   }
 
   private async writeCurrentManifest(): Promise<NeemBuildManifest> {
@@ -517,29 +516,39 @@ class NeemDevSession implements NeemDevHost {
       logger: this.logger,
     })
 
+    const runtime = this.runtime
     try {
-      const reloading = !!this.runtime
-      if (this.runtime) {
+      const reloading = !!runtime
+      if (runtime) {
         this.logger.info('Reloading Neem dev runtime...')
-        await this.reloadPluginHooks(manifest, this.runtime)
-        await this.runtime.reload(snapshot)
+        await this.reloadPluginHooks(manifest, runtime)
+        await runtime.reload(snapshot)
       } else {
         this.logger.info('Starting Neem dev runtime...')
-        this.runtime = new RuntimeServer({
+        const nextRuntime = new RuntimeServer({
           snapshot,
           failOnWorkerError: false,
           hooks: this.hooks,
         })
-        await this.reloadPluginHooks(manifest, this.runtime)
-        await this.runtime.start()
+        this.runtime = nextRuntime
+        await this.reloadPluginHooks(manifest, nextRuntime)
+        await nextRuntime.start()
       }
-      this.lifecycle = this.runtime.getSnapshot()
+      this.lifecycle = this.runtime?.getSnapshot() ?? this.lifecycle
       this.logger.info(
         reloading ? 'Neem dev runtime reloaded' : 'Neem dev runtime ready',
       )
       this.resolveReady()
     } catch (error) {
-      this.runtime = undefined
+      if (!runtime) {
+        await this.stopRuntime().catch((stopError) => {
+          this.logger.warn(
+            new Error('Failed to clean up failed Neem dev runtime start', {
+              cause: stopError,
+            }),
+          )
+        })
+      }
       this.recordError(error)
     }
   }
@@ -568,77 +577,19 @@ class NeemDevSession implements NeemDevHost {
     }
   }
 
-  private scheduleFullRuntimeReload(): void {
-    if (this.stopped) return
-    this.pendingFullReload = true
-    this.pendingRuntimeReloads.clear()
-    this.scheduleRuntimeReload()
-  }
-
-  private scheduleScopedRuntimeReload(runtimeName: string): void {
-    if (this.stopped) return
-    if (!this.pendingFullReload) {
-      this.pendingRuntimeReloads.add(runtimeName)
-    }
-    this.scheduleRuntimeReload()
-  }
-
-  private scheduleRuntimeReload(): void {
-    this.beginRuntimeChange()
-    void this.scheduleRuntimeReloadFlush()
-  }
-
-  private queueRuntimeReloadFlush(): void {
-    if (this.stopped || this.reloadFlushQueued) return
-    this.reloadFlushQueued = true
-    this.runtimeOperation = this.runtimeOperation
-      .then(
-        () => this.flushRuntimeReload(),
-        () => this.flushRuntimeReload(),
-      )
-      .catch((error) => {
-        this.recordError(error)
-      })
-  }
-
-  private async flushRuntimeReload(): Promise<void> {
-    this.reloadFlushQueued = false
+  private async flushRuntimeReload(
+    request: NeemDevReloadRequest,
+  ): Promise<void> {
     if (this.stopped) return
 
-    const request = this.takePendingRuntimeReload()
-    if (!request) return
-
-    try {
-      const manifest = await this.writeCurrentManifest()
-      if (request.type === 'full') {
-        await this.restartRuntime(manifest)
-      } else {
-        for (const runtimeName of request.runtimeNames) {
-          await this.reloadNamedRuntime(runtimeName, manifest)
-        }
-      }
-    } finally {
-      if (!this.stopped && this.hasPendingRuntimeReload()) {
-        this.scheduleRuntimeReload()
+    const manifest = await this.writeCurrentManifest()
+    if (request.type === 'full') {
+      await this.restartRuntime(manifest)
+    } else {
+      for (const runtimeName of request.runtimeNames) {
+        await this.reloadNamedRuntime(runtimeName, manifest)
       }
     }
-  }
-
-  private takePendingRuntimeReload(): NeemDevReloadRequest | undefined {
-    if (this.pendingFullReload) {
-      this.pendingFullReload = false
-      this.pendingRuntimeReloads.clear()
-      return { type: 'full' }
-    }
-
-    if (this.pendingRuntimeReloads.size === 0) return undefined
-    const runtimeNames = [...this.pendingRuntimeReloads]
-    this.pendingRuntimeReloads.clear()
-    return { type: 'runtimes', runtimeNames }
-  }
-
-  private hasPendingRuntimeReload(): boolean {
-    return this.pendingFullReload || this.pendingRuntimeReloads.size > 0
   }
 
   private createRuntimeSnapshot(manifest: NeemBuildManifest) {
@@ -680,8 +631,7 @@ class NeemDevSession implements NeemDevHost {
     manifest: NeemBuildManifest,
     server: NeemRuntimeServer,
   ): Promise<void> {
-    this.removePluginHooks()
-    this.pluginHookRegistrations = await registerManifestPluginHooks({
+    const registrations = await registerManifestPluginHooks({
       manifest,
       outDir: this.outDir,
       mode: 'development',
@@ -690,6 +640,8 @@ class NeemDevSession implements NeemDevHost {
       getHealth: () => server.getHealth(),
       cacheBust: true,
     })
+    this.removePluginHooks()
+    this.pluginHookRegistrations = registrations
   }
 
   private removePluginHooks(): void {
@@ -710,11 +662,11 @@ class NeemDevSession implements NeemDevHost {
   }
 
   private enqueue(task: () => Promise<void>): Promise<void> {
-    this.operation = this.operation.then(task, task)
-    global.gc?.()
-    return this.operation.catch((error) => {
+    const operation = this.operations.run(task).catch((error) => {
       this.recordError(error)
     })
+    global.gc?.()
+    return operation
   }
 
   private beginRuntimeChange(): void {

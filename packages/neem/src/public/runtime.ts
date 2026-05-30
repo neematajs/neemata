@@ -1,12 +1,11 @@
 import type { MessagePort } from 'node:worker_threads'
 
+import type { MaybePromise } from '@nmtjs/common'
 import type { Logger } from '@nmtjs/core'
 
 import type { NeemArtifactRegistry, NeemResolvedArtifact } from './artifact.ts'
 
 export type NeemMode = 'development' | 'production'
-
-export type NeemMaybePromise<T> = T | Promise<T>
 
 export type NeemRuntimeUpstream = { type: string; url: string }
 
@@ -84,7 +83,18 @@ export type NeemProxyUpstreamSnapshot = {
 export type NeemProxyHealth = {
   enabled: boolean
   running: boolean
+  ready: boolean
   upstreams: readonly NeemProxyUpstreamSnapshot[]
+  appliedUpstreams: readonly NeemProxyUpstreamSnapshot[]
+  pending: number
+  failedUpstreams: readonly NeemProxyUpstreamFailure[]
+  lastError?: Error
+}
+
+export type NeemProxyUpstreamFailure = {
+  operation: 'add' | 'remove'
+  upstream: NeemProxyUpstreamSnapshot
+  error: Error
 }
 
 export type NeemRuntimeServerRuntimeHealth = {
@@ -104,10 +114,10 @@ export type NeemRuntimeStartResult = {
 }
 
 export type NeemRuntime = {
-  start: () => NeemMaybePromise<
+  start: () => MaybePromise<
     readonly NeemRuntimeUpstream[] | NeemRuntimeStartResult | undefined
   >
-  stop: () => NeemMaybePromise<void>
+  stop: () => MaybePromise<void>
 }
 
 export type NeemRuntimeThreadPlan<Data = unknown> = {
@@ -131,6 +141,7 @@ export type NeemRuntimeHostParams<Options = unknown> = {
   artifact: NeemResolvedArtifact
   hostArtifact?: NeemResolvedArtifact
   artifacts: NeemArtifactRegistry
+  defaultThreads: readonly NeemRuntimeThreadPlan[]
 }
 
 export type NeemRuntimeHostStartedParams = {
@@ -148,16 +159,16 @@ export type NeemRuntimeHostFailedParams = {
 }
 
 export type NeemRuntimeHost = {
-  plan?: () => NeemMaybePromise<NeemRuntimePlan>
-  start?: (params: NeemRuntimeHostStartedParams) => NeemMaybePromise<void>
-  stop?: (params: NeemRuntimeHostStoppedParams) => NeemMaybePromise<void>
-  fail?: (params: NeemRuntimeHostFailedParams) => NeemMaybePromise<void>
+  plan?: () => MaybePromise<NeemRuntimePlan>
+  start?: (params: NeemRuntimeHostStartedParams) => MaybePromise<void>
+  stop?: (params: NeemRuntimeHostStoppedParams) => MaybePromise<void>
+  fail?: (params: NeemRuntimeHostFailedParams) => MaybePromise<void>
 }
 
 export type NeemRuntimeHostFactory<
   Options = unknown,
   THost extends NeemRuntimeHost = NeemRuntimeHost,
-> = (params: NeemRuntimeHostParams<Options>) => NeemMaybePromise<THost>
+> = (params: NeemRuntimeHostParams<Options>) => MaybePromise<THost>
 
 export function defineRuntimeHost<
   const TFactory extends NeemRuntimeHostFactory,

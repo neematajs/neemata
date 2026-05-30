@@ -1,8 +1,11 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { NeemBuildManifest } from '../../../packages/neem/src/internal/build/manifest.ts'
 import type { NeemProxyUpstreamRegistryEvent } from '../../../packages/neem/src/internal/runtime/proxy-upstreams.ts'
-import { createNativeProxyOptions } from '../../../packages/neem/src/internal/runtime/proxy.ts'
+import {
+  createNativeProxyOptions,
+  NeemProxyManager,
+} from '../../../packages/neem/src/internal/runtime/proxy.ts'
 import {
   NeemProxyUpstreamRegistry,
   normalizeProxyRuntimeUpstream,
@@ -10,7 +13,32 @@ import {
 } from '../../../packages/neem/src/internal/runtime/proxy-upstreams.ts'
 import { createRuntimeSnapshot } from '../../../packages/neem/src/internal/runtime/snapshot.ts'
 
+const nativeProxyFixture = new URL(
+  '../fixtures/native-proxy.js',
+  import.meta.url,
+).href
+
+type NativeProxyTestState = {
+  operations: string[]
+  options: unknown[]
+  startError?: string
+  stopError?: string
+  addError?: string
+  removeError?: string
+  removeDelayMs?: number
+}
+
+declare global {
+  // eslint-disable-next-line no-var
+  var __neemNativeProxyTestState: NativeProxyTestState | undefined
+}
+
 describe('neem proxy upstream registry', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+    globalThis.__neemNativeProxyTestState = undefined
+  })
+
   it('normalizes wildcard hosts and maps runtime upstreams to proxy upstreams', () => {
     const upstream = normalizeProxyRuntimeUpstream({
       type: 'http',
@@ -109,6 +137,83 @@ describe('neem proxy upstream registry', () => {
       { name: 'api', routing: { type: 'path', name: 'api' } },
     ])
   })
+
+  it('serializes native proxy mutations', async () => {
+    const registry = new NeemProxyUpstreamRegistry()
+    const state = useNativeProxyFixture()
+    const manager = new NeemProxyManager({
+      snapshot: createProxySnapshot(),
+      upstreams: registry,
+    })
+    const current = {}
+    const next = {}
+    const upstreams = [{ type: 'http' as const, url: 'http://127.0.0.1:4101' }]
+
+    await manager.start()
+    registry.addOwnerUpstreams(current, 'api', upstreams)
+    await manager.waitForIdle()
+    state.operations.length = 0
+
+    state.removeDelayMs = 50
+    registry.removeOwnerUpstreams(current)
+    registry.addOwnerUpstreams(next, 'api', upstreams)
+    await manager.waitForIdle()
+
+    expect(state.operations).toEqual(['remove:api:4101', 'add:api:4101'])
+
+    await manager.stop()
+  })
+
+  it('tracks applied proxy upstreams and failed mutations in health', async () => {
+    const registry = new NeemProxyUpstreamRegistry()
+    useNativeProxyFixture({ addError: 'native add failed' })
+    const manager = new NeemProxyManager({
+      snapshot: createProxySnapshot(),
+      upstreams: registry,
+    })
+
+    await manager.start()
+    registry.addOwnerUpstreams({}, 'api', [
+      { type: 'http', url: 'http://127.0.0.1:4101' },
+    ])
+
+    await expect(manager.waitForSync()).rejects.toThrow('native add failed')
+    expect(manager.getHealth()).toMatchObject({
+      running: true,
+      ready: false,
+      upstreams: [expect.objectContaining({ runtimeName: 'api' })],
+      appliedUpstreams: [],
+      pending: 0,
+      failedUpstreams: [
+        expect.objectContaining({
+          operation: 'add',
+          error: expect.objectContaining({ message: 'native add failed' }),
+        }),
+      ],
+      lastError: expect.objectContaining({ message: 'native add failed' }),
+    })
+
+    await manager.stop()
+  })
+
+  it('fails startup when initial proxy upstream sync fails', async () => {
+    const registry = new NeemProxyUpstreamRegistry()
+    registry.addOwnerUpstreams({}, 'api', [
+      { type: 'http', url: 'http://127.0.0.1:4101' },
+    ])
+    useNativeProxyFixture({ addError: 'initial add failed' })
+    const manager = new NeemProxyManager({
+      snapshot: createProxySnapshot(),
+      upstreams: registry,
+    })
+
+    await expect(manager.start()).rejects.toThrow('initial add failed')
+    expect(manager.getHealth()).toMatchObject({
+      running: false,
+      ready: false,
+      appliedUpstreams: [],
+    })
+  })
 })
 
 function createProxySnapshot() {
@@ -125,6 +230,15 @@ function createProxySnapshot() {
     },
     manifest: createManifest(),
   })
+}
+
+function useNativeProxyFixture(
+  state: Partial<NativeProxyTestState> = {},
+): NativeProxyTestState {
+  const next = { operations: [], options: [], ...state }
+  globalThis.__neemNativeProxyTestState = next
+  vi.stubEnv('NEEM_INTERNAL_PROXY_MODULE', nativeProxyFixture)
+  return next
 }
 
 function createManifest(): NeemBuildManifest {

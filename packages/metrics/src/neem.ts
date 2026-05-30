@@ -1,8 +1,5 @@
 import type { Logger } from '@nmtjs/core'
-import type {
-  NeemHostHooks,
-  NeemRuntimeServerHealth,
-} from '@nmtjs/neem/internal'
+import type { NeemHostHooks, NeemRuntimeServerHealth } from '@nmtjs/neem'
 import { Counter, Gauge, Registry } from '@nmtjs/prom-client'
 
 export type NeemMetricsObserver = { recordHealth(): void }
