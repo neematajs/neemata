@@ -1,5 +1,4 @@
 import { resolve } from 'node:path'
-import { pathToFileURL } from 'node:url'
 import { parentPort, workerData as rawWorkerData } from 'node:worker_threads'
 
 import type { Logger } from '@nmtjs/core'
@@ -109,10 +108,10 @@ async function resolveWorkerLogger(
     )
   }
 
-  const module = (await import(
-    pathToFileURL(resolve(data.outDir, logger.file)).href
-  )) as { default: Logger }
-  return createNeemChildLogger(module.default, label)
+  return createNeemChildLogger(
+    await importDefault<Logger>(resolve(data.outDir, logger.file)),
+    label,
+  )
 }
 
 async function stopRuntime(options: { force?: boolean } = {}) {

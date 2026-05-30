@@ -1,10 +1,10 @@
 import { resolve } from 'node:path'
-import { pathToFileURL } from 'node:url'
 
 import type { CommandDef } from 'citty'
 import { runCommand } from 'citty'
 
 import { NEEM_MANIFEST_FILE, readManifest } from '../build/manifest.ts'
+import { importDefault } from '../runtime/utils.ts'
 
 export type NeemRunCommandOptions = {
   cwd?: string
@@ -26,9 +26,9 @@ export async function runNeemCommand(
     throw new Error(`Unknown Neem command [${options.command}]`)
   }
 
-  const commandFile = resolve(outDir, command.file)
-  const module = await import(pathToFileURL(commandFile).href)
-  const commandDef = module.default as CommandDef | undefined
+  const commandDef = await importDefault<CommandDef | undefined>(
+    resolve(outDir, command.file),
+  )
 
   if (!commandDef || typeof commandDef !== 'object') {
     throw new Error(

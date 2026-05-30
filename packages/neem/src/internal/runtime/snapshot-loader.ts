@@ -1,5 +1,4 @@
 import { resolve } from 'node:path'
-import { pathToFileURL } from 'node:url'
 
 import type { Logger } from '@nmtjs/core'
 
@@ -14,6 +13,7 @@ import {
 } from '../build/manifest.ts'
 import { createNeemDefaultLogger } from './logger.ts'
 import { createRuntimeSnapshot } from './snapshot.ts'
+import { importDefault } from './utils.ts'
 
 export type NeemBuiltSnapshotLoadOptions = {
   cwd?: string
@@ -52,13 +52,12 @@ async function resolveManifestLogger(
   manifest: NeemBuildManifest,
   outDir: string,
   mode: NeemMode,
-): Promise<Logger> {
+): Promise<Logger | undefined> {
   const logger = manifest.config.logger
-  if (!logger) return createNeemDefaultLogger(mode)
+  if (!logger) return undefined
   if (logger.type === 'options') {
     return createNeemDefaultLogger(mode, logger.options)
   }
 
-  return (await import(pathToFileURL(resolve(outDir, logger.file)).href))
-    .default as Logger
+  return importDefault<Logger>(resolve(outDir, logger.file))
 }

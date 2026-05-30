@@ -21,7 +21,7 @@ import type {
 } from '../runtime/server.ts'
 import type { NeemDevReloadRequest } from './dev-reload-scheduler.ts'
 import { normalizeNeemConfig } from '../../public/config.ts'
-import { resolveNeemConfigLogger } from '../build/logger.ts'
+import { resolveNeemLogger } from '../build/logger.ts'
 import {
   NEEM_MANIFEST_SCHEMA_VERSION,
   selectManifestRuntimes,
@@ -243,7 +243,7 @@ class NeemDevSession implements NeemDevHost {
     this.config = normalizeNeemConfig(
       await importFreshDefault<NeemConfig>(this.configFile),
     )
-    this.logger = await resolveNeemConfigLogger(this.config, {
+    this.logger = await resolveNeemLogger(this.config.logger, {
       mode: 'development',
       importer: this.configFile,
     })
