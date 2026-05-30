@@ -6,7 +6,11 @@ import { consola } from 'consola'
 import { colorize } from 'consola/utils'
 
 import type { NeemResolvedArtifact } from '../../public/artifact.ts'
-import type { NeemConfig, NeemLoggerOptions } from '../../public/config.ts'
+import type {
+  NeemConfig,
+  NeemLoggerOptions,
+  NeemNormalizedConfig,
+} from '../../public/config.ts'
 import type {
   NeemBuildManifest,
   NeemBuildManifestConfig,
@@ -16,7 +20,6 @@ import { normalizeNeemConfig } from '../../public/config.ts'
 import {
   NEEM_MANIFEST_FILE,
   NEEM_MANIFEST_SCHEMA_VERSION,
-  selectManifestRuntimes,
   toManifestArtifact,
   toManifestPath,
   writeManifest,
@@ -27,10 +30,8 @@ import {
 } from '../build/plugin-plan.ts'
 import { resolveRequiredBuildEntry } from '../build/resolve.ts'
 import { buildArtifact } from '../build/rolldown.ts'
-import {
-  normalizeSelectedRuntimeNames,
-  resolveRuntimeBuildPlans,
-} from '../build/runtime-plan.ts'
+import { resolveRuntimeBuildPlans } from '../build/runtime-plan.ts'
+import { normalizeSelectedRuntimeNames } from '../build/runtime-selection.ts'
 import { importDefault } from '../runtime/utils.ts'
 
 export type {
@@ -90,7 +91,12 @@ export async function buildNeem(
 
   logger.info('Bulding Neem runtime:')
   const runtimeArtifacts = await buildRuntimeArtifacts({ outDir })
-  const manifestConfig = await createManifestConfig(config, configFile, outDir)
+  const manifestConfig = await createManifestConfig(
+    config,
+    configFile,
+    outDir,
+    { runtimes: runtimeNames },
+  )
 
   const manifest: NeemBuildManifest = {
     schemaVersion: NEEM_MANIFEST_SCHEMA_VERSION,
@@ -156,19 +162,18 @@ export async function buildNeem(
     }
   }
 
-  const outputManifest = selectManifestRuntimes(manifest, runtimeNames)
-  const manifestFile = await writeManifest(outDir, outputManifest)
+  const manifestFile = await writeManifest(outDir, manifest)
   await writeStandaloneStartEntries(
     outDir,
-    Object.keys(outputManifest.runtimes ?? {}),
+    Object.keys(manifest.runtimes ?? {}),
   )
   logger.success('Neem build complete')
   logger.info(`manifest: ${colorize('green', manifestFile)}`)
   logger.info(
-    `runtimes: ${colorize('green', Object.keys(outputManifest.runtimes ?? {}).length)}`,
+    `runtimes: ${colorize('green', Object.keys(manifest.runtimes ?? {}).length)}`,
   )
 
-  return { configFile, outDir, manifestFile, manifest: outputManifest }
+  return { configFile, outDir, manifestFile, manifest }
 }
 
 async function buildPluginManifestEntries(options: {
@@ -289,36 +294,31 @@ function resolveNeemRuntimeSourceEntry(name: string): URL {
 }
 
 export async function createManifestConfig(
-  config: NeemConfig,
+  config: NeemNormalizedConfig,
   configFile: string,
   outDir: string,
+  options: { runtimes?: readonly string[] } = {},
 ): Promise<NeemBuildManifestConfig> {
-  const normalizedConfig = normalizeNeemConfig(config)
+  const runtimes = options.runtimes ? new Set(options.runtimes) : undefined
 
   return {
-    logger: await createManifestLogger(
-      normalizedConfig.logger,
-      configFile,
-      outDir,
-    ),
-    proxy: normalizedConfig.proxy,
-    health: normalizedConfig.health,
-    commands: await createManifestCommands(
-      normalizedConfig.commands,
-      configFile,
-      outDir,
-    ),
+    logger: await createManifestLogger(config.logger, configFile, outDir),
+    proxy: config.proxy,
+    health: config.health,
+    commands: await createManifestCommands(config.commands, configFile, outDir),
     runtimes: Object.fromEntries(
-      Object.entries(normalizedConfig.runtimes ?? {}).map(([name, runtime]) => [
-        name,
-        { threads: runtime.threads, options: runtime.options },
-      ]),
+      Object.entries(config.runtimes ?? {})
+        .filter(([name]) => !runtimes || runtimes.has(name))
+        .map(([name, runtime]) => [
+          name,
+          { threads: runtime.threads, options: runtime.options },
+        ]),
     ),
   }
 }
 
 async function createManifestCommands(
-  commands: NeemConfig['commands'],
+  commands: NeemNormalizedConfig['commands'],
   configFile: string,
   outDir: string,
 ): Promise<NeemBuildManifestConfig['commands']> {
@@ -346,7 +346,7 @@ async function createManifestCommands(
 }
 
 async function createManifestLogger(
-  logger: NeemConfig['logger'],
+  logger: NeemNormalizedConfig['logger'],
   configFile: string,
   outDir: string,
 ): Promise<NeemBuildManifestLogger | undefined> {

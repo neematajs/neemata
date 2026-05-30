@@ -11,6 +11,10 @@ import type {
   NeemNormalizedConfig,
   NeemProxyConfig,
 } from '../../public/config.ts'
+import {
+  assertSelectedRuntimeNamesExist,
+  normalizeSelectedRuntimeNames,
+} from './runtime-selection.ts'
 
 export const NEEM_MANIFEST_FILE = 'neem.manifest.json'
 export const NEEM_MANIFEST_SCHEMA_VERSION = 1
@@ -125,15 +129,12 @@ export function selectManifestRuntimes(
   manifest: NeemBuildManifest,
   runtimes: readonly string[] | undefined,
 ): NeemBuildManifest {
-  const selected = runtimes?.map((runtime) => runtime.trim()).filter(Boolean)
-  if (!selected || selected.length === 0) return manifest
+  const names = normalizeSelectedRuntimeNames(runtimes)
+  if (!names) return manifest
 
-  const names = [...new Set(selected)]
   const available = Object.keys(manifest.runtimes ?? {})
-  const missing = names.filter((name) => !available.includes(name))
-  if (missing.length > 0) {
-    throw new Error(`Unknown Neem runtime(s): ${missing.join(', ')}`)
-  }
+  assertSelectedRuntimeNamesExist(names, available)
+  const selected = new Set(names)
 
   return {
     ...manifest,
@@ -141,13 +142,13 @@ export function selectManifestRuntimes(
       ...manifest.config,
       runtimes: Object.fromEntries(
         Object.entries(manifest.config.runtimes).filter(([name]) =>
-          names.includes(name),
+          selected.has(name),
         ),
       ),
     },
     runtimes: Object.fromEntries(
       Object.entries(manifest.runtimes ?? {}).filter(([name]) =>
-        names.includes(name),
+        selected.has(name),
       ),
     ),
   }

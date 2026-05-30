@@ -12,6 +12,7 @@ import type { NeemConfig, NeemNormalizedConfig } from '../../public/config.ts'
 import type { NeemBuildManifest } from '../build/manifest.ts'
 import type { NeemPluginBuildPlan } from '../build/plugin-plan.ts'
 import type { NeemArtifactWatcher } from '../build/rolldown.ts'
+import type { NeemRuntimeBuildPlan } from '../build/runtime-plan.ts'
 import type { NeemHostHooks } from '../runtime/hooks.ts'
 import type { NeemPluginHookRegistration } from '../runtime/plugin-hooks.ts'
 import type {
@@ -24,7 +25,6 @@ import { normalizeNeemConfig } from '../../public/config.ts'
 import { resolveNeemLogger } from '../build/logger.ts'
 import {
   NEEM_MANIFEST_SCHEMA_VERSION,
-  selectManifestRuntimes,
   toManifestArtifact,
   writeManifest,
 } from '../build/manifest.ts'
@@ -34,10 +34,8 @@ import {
 } from '../build/plugin-plan.ts'
 import { toBuildEntryKey } from '../build/resolve.ts'
 import { watchArtifact } from '../build/rolldown.ts'
-import {
-  normalizeSelectedRuntimeNames,
-  resolveRuntimeBuildPlans,
-} from '../build/runtime-plan.ts'
+import { resolveRuntimeBuildPlans } from '../build/runtime-plan.ts'
+import { normalizeSelectedRuntimeNames } from '../build/runtime-selection.ts'
 import { createNeemHostHooks } from '../runtime/hooks.ts'
 import { createNeemDefaultLogger } from '../runtime/logger.ts'
 import { registerManifestPluginHooks } from '../runtime/plugin-hooks.ts'
@@ -111,6 +109,7 @@ class NeemDevSession implements NeemDevHost {
   private runtimeArtifacts = new Map<string, NeemResolvedArtifact>()
   private runtimeHostWatchers = new Map<string, RuntimeWatcherState>()
   private runtimeHostArtifacts = new Map<string, NeemResolvedArtifact>()
+  private runtimePlans: readonly NeemRuntimeBuildPlan[] = []
   private pluginPlans: readonly NeemPluginBuildPlan[] = []
   private pluginWatchers = new Map<string, RuntimeWatcherState>()
   private pluginArtifacts = new Map<string, NeemResolvedArtifact>()
@@ -248,6 +247,12 @@ class NeemDevSession implements NeemDevHost {
       importer: this.configFile,
     })
     this.pluginPlans = resolvePluginBuildPlans(this.configFile, this.config)
+    this.runtimePlans = resolveRuntimeBuildPlans(
+      this.configFile,
+      this.config,
+      this.selectedRuntimes,
+      { rolldown: mergePluginRolldownOptions(this.pluginPlans) },
+    )
     this.logger.trace({ file: this.configFile }, 'Neem config loaded')
 
     await this.startRuntimeWatchers()
@@ -256,16 +261,7 @@ class NeemDevSession implements NeemDevHost {
   }
 
   private async startRuntimeWatchers(): Promise<void> {
-    if (!this.config) return
-
-    const runtimePlans = resolveRuntimeBuildPlans(
-      this.configFile,
-      this.config,
-      this.selectedRuntimes,
-      { rolldown: mergePluginRolldownOptions(this.pluginPlans) },
-    )
-
-    for (const plan of runtimePlans) {
+    for (const plan of this.runtimePlans) {
       const artifact = await this.startRuntimeWatcher(
         plan.name,
         plan.worker.rolldown,
@@ -466,17 +462,13 @@ class NeemDevSession implements NeemDevHost {
         this.config,
         this.configFile,
         this.outDir,
+        { runtimes: this.runtimePlans.map((plan) => plan.name) },
       ),
       plugins: this.createPluginManifestEntries(),
       runtimes: {},
     }
 
-    for (const plan of resolveRuntimeBuildPlans(
-      this.configFile,
-      this.config,
-      this.selectedRuntimes,
-      { rolldown: mergePluginRolldownOptions(this.pluginPlans) },
-    )) {
+    for (const plan of this.runtimePlans) {
       const name = plan.name
       const artifact = this.runtimeArtifacts.get(name)
       if (!artifact) {
@@ -493,12 +485,8 @@ class NeemDevSession implements NeemDevHost {
       }
     }
 
-    const outputManifest = selectManifestRuntimes(
-      manifest,
-      Object.keys(manifest.runtimes ?? {}),
-    )
-    await writeManifest(this.outDir, outputManifest)
-    return outputManifest
+    await writeManifest(this.outDir, manifest)
+    return manifest
   }
 
   private async restartRuntime(manifest: NeemBuildManifest): Promise<void> {

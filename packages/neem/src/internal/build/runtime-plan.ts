@@ -7,6 +7,7 @@ import type {
   NeemRuntimeConfigBase,
 } from '../../public/config.ts'
 import { resolveBuildEntry, resolveRequiredBuildEntry } from './resolve.ts'
+import { assertSelectedRuntimeNamesExist } from './runtime-selection.ts'
 import { mergeNeemRolldownOptions } from './utils.ts'
 
 export type NeemRuntimeBuildPlan = {
@@ -30,15 +31,16 @@ export function resolveRuntimeBuildPlans(
     selectedRuntimes,
     runtimeEntries.map(([name]) => name),
   )
+  const selected = selectedRuntimes ? new Set(selectedRuntimes) : undefined
 
   return runtimeEntries
-    .filter(([name]) => shouldUseRuntimeName(name, selectedRuntimes))
+    .filter(([name]) => !selected || selected.has(name))
     .map(([name, runtimeConfig]) =>
       resolveRuntimeBuildPlan(configFile, name, runtimeConfig, options),
     )
 }
 
-export function resolveRuntimeBuildPlan(
+function resolveRuntimeBuildPlan(
   configFile: string,
   name: string,
   runtimeConfig: NeemRuntimeConfigBase,
@@ -67,31 +69,6 @@ export function resolveRuntimeBuildPlan(
     host: hostEntry
       ? { entry: hostEntry, rolldown: runtimeConfig.host?.build?.rolldown }
       : undefined,
-  }
-}
-
-export function normalizeSelectedRuntimeNames(
-  runtimes: readonly string[] | undefined,
-): readonly string[] | undefined {
-  const selected = runtimes?.map((runtime) => runtime.trim()).filter(Boolean)
-  return selected && selected.length > 0 ? [...new Set(selected)] : undefined
-}
-
-export function shouldUseRuntimeName(
-  name: string,
-  selected: readonly string[] | undefined,
-): boolean {
-  return !selected || selected.includes(name)
-}
-
-export function assertSelectedRuntimeNamesExist(
-  selected: readonly string[] | undefined,
-  available: readonly string[],
-): void {
-  if (!selected) return
-  const missing = selected.filter((name) => !available.includes(name))
-  if (missing.length > 0) {
-    throw new Error(`Unknown Neem runtime(s): ${missing.join(', ')}`)
   }
 }
 
