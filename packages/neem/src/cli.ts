@@ -15,7 +15,7 @@ import {
   resolveServiceEntry,
   WorkerServiceClient,
 } from './internal/services/client.ts'
-import { createNeemTestProbe } from './internal/shared/test-probe.ts'
+import { createNeemTestProbe, type NeemTestProbe } from './internal/shared/test-probe.ts'
 import {
   deserializeError,
   normalizeError,
@@ -174,7 +174,7 @@ type DevSupervisorOptions = {
   outDir: string
   runtimes?: readonly string[]
   signal: AbortSignal
-  probe?: ReturnType<typeof createNeemTestProbe>
+  probe?: NeemTestProbe
 }
 
 class DevSupervisor {
