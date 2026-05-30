@@ -11,7 +11,6 @@ export type NeemRuntimeWorkerBaseData = {
   data: unknown
   artifact: NeemResolvedArtifact
   artifacts: readonly NeemResolvedArtifact[]
-  configFile: string
   outDir: string
   logger?: NeemBuildManifestLogger
   port: MessagePort

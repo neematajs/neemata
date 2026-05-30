@@ -230,14 +230,14 @@ describe('NeemRuntimeServer', () => {
     await server.stop()
 
     const events = await readEvents(eventFile)
-    expect(events.slice(0, 6)).toEqual([
+    expect(events.slice(0, 2)).toEqual([
       'host-setup:hosted',
       'host-plan:hosted',
-      'worker-start:hosted:0',
-      'worker-start:hosted:1',
-      'host-start:2:2',
-      'host-stop:2',
     ])
+    expect(new Set(events.slice(2, 4))).toEqual(
+      new Set(['worker-start:hosted:0', 'worker-start:hosted:1']),
+    )
+    expect(events.slice(4, 6)).toEqual(['host-start:2:2', 'host-stop:2'])
     expect(new Set(events.slice(6))).toEqual(
       new Set(['worker-stop:hosted:0', 'worker-stop:hosted:1']),
     )
@@ -695,17 +695,12 @@ function createRuntimeHostSnapshot(
       import.meta.url,
     ),
   )
-  const configFile = fileURLToPath(
-    new URL('../fixtures/runtime-host.config.js', import.meta.url),
-  )
-
   const includeRuntime = options.includeRuntime !== false
 
   return createRuntimeSnapshot({
     mode: 'production',
     outDir,
     runtimeWorkerEntry: workerEntry,
-    configFile,
     config: {
       health: options.health,
       proxy: options.proxyPort

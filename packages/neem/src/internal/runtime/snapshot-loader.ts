@@ -42,7 +42,6 @@ export async function loadBuiltRuntimeSnapshot(
     manifestFile,
     manifest,
     config,
-    configFile: manifestFile,
     runtimeWorkerEntry: options.runtimeWorkerEntry,
     logger,
   })
