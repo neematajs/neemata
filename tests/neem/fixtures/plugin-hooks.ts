@@ -11,8 +11,8 @@ export default definePluginHooks((ctx) => {
   })
 
   return {
-    'host:initialize'(event) {
-      record({ event: 'plugin-host-initialize', mode: event.mode })
+    initialize(event) {
+      record({ event: 'plugin-initialize', mode: event.mode })
     },
     'server:start'(event) {
       record({ event: 'plugin-server-start', mode: event.mode })
@@ -34,8 +34,8 @@ export default definePluginHooks((ctx) => {
         message: event.error?.message,
       })
     },
-    'host:dispose'(event) {
-      record({ event: 'plugin-host-dispose', mode: event.mode })
+    dispose(event) {
+      record({ event: 'plugin-dispose', mode: event.mode })
     },
   }
 })

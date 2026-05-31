@@ -592,6 +592,9 @@ importers:
       '@nmtjs/jobs':
         specifier: workspace:*
         version: link:../../packages/jobs
+      '@nmtjs/metrics':
+        specifier: workspace:*
+        version: link:../../packages/metrics
       '@nmtjs/neem':
         specifier: workspace:*
         version: link:../../packages/neem

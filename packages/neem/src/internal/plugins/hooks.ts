@@ -1,6 +1,5 @@
-import type { MaybePromise } from '@nmtjs/common'
 import type { Logger } from '@nmtjs/core'
-import type { Hookable, HookCallback } from 'hookable'
+import type { Hookable } from 'hookable'
 import { createHooks } from 'hookable'
 
 import type {
@@ -10,12 +9,8 @@ import type {
   NeemHostWorkerHookEvent,
 } from '../../public/hooks.ts'
 import { childLogger } from '../shared/logger.ts'
-import { normalizeError } from '../shared/utils.ts'
 
-export type HostHookMap = NeemHostHookMap & {
-  'host:initialize': (event: NeemHostHookEvent) => MaybePromise<void>
-  'host:dispose': (event: NeemHostHookEvent) => MaybePromise<void>
-}
+export type HostHookMap = NeemHostHookMap
 
 export type HostHooks = Hookable<HostHookMap>
 
@@ -47,27 +42,10 @@ export async function callHostHook<Name extends keyof HostHookMap>(
         )
       }
       for (const callback of callbacks) {
-        await callHookCallback(callback, callbackArgs, hookName, hookLogger)
+        await callback(...callbackArgs)
       }
     },
     name,
     args,
   )
-}
-
-async function callHookCallback(
-  callback: HookCallback,
-  args: unknown[],
-  name: string,
-  logger: Logger,
-): Promise<void> {
-  try {
-    await callback(...args)
-  } catch (error) {
-    logger.warn(
-      new Error(`Neem host hook [${name}] failed`, {
-        cause: normalizeError(error),
-      }),
-    )
-  }
 }

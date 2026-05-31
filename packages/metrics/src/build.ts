@@ -1,40 +1,24 @@
-import type { NeemRolldownOptions } from '@nmtjs/neem'
+import type { RolldownPluginOption } from '@nmtjs/neem'
 
-const defaultMetricsLoaderId = '@nmtjs/metrics/default-loader'
+const PackageNotFoundError = new Error(
+  '"@nmtjs/metrics" package is not found. Make sure it is installed as package.json dependency',
+)
 
-export type DefaultMetricsRolldownPluginOptions = {
-  include?: RegExp | ((id: string) => boolean)
-}
-
-export function createDefaultMetricsRolldownPlugin(
-  options: DefaultMetricsRolldownPluginOptions = {},
-): NonNullable<NeemRolldownOptions['plugins']> {
-  const shouldInject = createMatcher(options.include)
-
+export function createDefaultMetricsRolldownPlugin(): RolldownPluginOption {
   return {
     name: 'nmtjs-metrics-default-loader',
-    resolveId(id: string) {
-      return id === defaultMetricsLoaderId ? id : undefined
-    },
-    load(id: string) {
-      if (id !== defaultMetricsLoaderId) return undefined
-      return "import { registerDefaultMetrics } from '@nmtjs/metrics'; registerDefaultMetrics();"
-    },
-    transform(code: string, id: string) {
-      if (id === defaultMetricsLoaderId || !shouldInject(id)) return undefined
-      return `import ${JSON.stringify(defaultMetricsLoaderId)};\n${code}`
+    async transform(this, code, id) {
+      if (this.getModuleInfo?.(id)?.isEntry) {
+        const metricsPackage = await this.resolve('@nmtjs/metrics')
+        if (!metricsPackage) throw PackageNotFoundError
+        const file = await this.load({ id: metricsPackage.id })
+        const lines = [
+          `import { registerDefaultMetrics } from ${JSON.stringify(file.id)}`,
+          'registerDefaultMetrics()',
+          code,
+        ]
+        return lines.join('\n')
+      }
     },
   }
-}
-
-export function getDefaultMetricsLoaderImport(): string {
-  return defaultMetricsLoaderId
-}
-
-function createMatcher(
-  include: DefaultMetricsRolldownPluginOptions['include'],
-): (id: string) => boolean {
-  if (!include) return () => false
-  if (include instanceof RegExp) return (id) => include.test(id)
-  return include
 }

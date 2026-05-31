@@ -24,6 +24,8 @@ export type NeemHostWorkerHookEvent = NeemHostHookEvent & {
 }
 
 export type NeemHostHookMap = {
+  initialize: (event: NeemHostHookEvent) => MaybePromise<void>
+  dispose: (event: NeemHostHookEvent) => MaybePromise<void>
   'server:start': (event: NeemHostHookEvent) => MaybePromise<void>
   'server:ready': (event: NeemHostHookEvent) => MaybePromise<void>
   'server:reload': (event: NeemHostHookEvent) => MaybePromise<void>

@@ -2,7 +2,7 @@ import type { Server } from 'node:http'
 import { createServer } from 'node:http'
 
 import type { Logger } from '@nmtjs/core'
-import type { Registry } from '@nmtjs/prom-client'
+import type { Registry, RegistryContentType } from '@nmtjs/prom-client'
 import { Pushgateway, WorkerRegistry } from '@nmtjs/prom-client'
 
 import { metricsWorkerRegistry } from './registry.ts'
@@ -16,10 +16,17 @@ export type MetricsServerConfig = {
 
 export type MetricsServer = { start(): Promise<void>; stop(): Promise<void> }
 
+export type MetricsCollector = {
+  readonly contentType: RegistryContentType
+  metrics(): string | Promise<string>
+}
+
+export type MetricsRegistry = Registry | WorkerRegistry<any> | MetricsCollector
+
 export function createMetricsServer(options: {
   logger: Logger
   config?: MetricsServerConfig
-  registry?: Registry | WorkerRegistry<any>
+  registry?: MetricsRegistry
 }): MetricsServer {
   const logger = options.logger
   const config = options.config ?? {}
@@ -28,6 +35,8 @@ export function createMetricsServer(options: {
   const port = config.port ?? 9187
   const path = config.path ?? '/metrics'
   let server: Server | undefined
+  let pushGateway: Pushgateway<RegistryContentType> | undefined
+  let pushJobName: string | undefined
   let pushInterval: NodeJS.Timeout | undefined
 
   return {
@@ -58,25 +67,28 @@ export function createMetricsServer(options: {
       })
 
       if (config.push) {
-        const gateway = new Pushgateway(
+        pushJobName = config.push.name
+        pushGateway = new Pushgateway(
           config.push.url ?? 'http://127.0.0.1:9091',
           {},
-          registry,
+          createPushGatewayRegistry(registry),
         )
         pushInterval = setInterval(() => {
-          gateway.pushAdd({ jobName: config.push!.name }).catch((cause) => {
-            logger.error(new Error('Metrics push error', { cause }))
-          })
+          void pushMetrics(pushGateway, pushJobName, logger)
         }, config.push.interval)
       }
 
       await new Promise<void>((resolve) => {
         server!.listen({ host, port }, resolve)
       })
+      logger.info(getMetricsServerListenMessage(server, path))
     },
     async stop() {
       if (pushInterval) clearInterval(pushInterval)
       pushInterval = undefined
+      await pushMetrics(pushGateway, pushJobName, logger)
+      pushGateway = undefined
+      pushJobName = undefined
 
       const current = server
       server = undefined
@@ -91,8 +103,64 @@ export function createMetricsServer(options: {
   }
 }
 
-function collectMetrics(registry: Registry | WorkerRegistry<any>) {
+async function pushMetrics(
+  gateway: Pushgateway<RegistryContentType> | undefined,
+  jobName: string | undefined,
+  logger: Logger,
+): Promise<void> {
+  if (!gateway || !jobName) return
+  await gateway.pushAdd({ jobName }).catch((cause) => {
+    logger.error(new Error('Metrics push error', { cause }))
+  })
+}
+
+function getMetricsServerListenMessage(server: Server, path: string): string {
+  const address = server.address()
+  if (!address || typeof address === 'string') {
+    return `Metrics server started at ${path}`
+  }
+
+  const host = address.address
+  const port = address.port
+  return `Metrics server started at http://${formatUrlHost(host)}:${port}${path}`
+}
+
+function formatUrlHost(host: string): string {
+  return host.includes(':') ? `[${host}]` : host
+}
+
+export function createCombinedMetricsCollector(
+  registry: Registry,
+  workerRegistry: WorkerRegistry<any> = metricsWorkerRegistry,
+): MetricsCollector {
+  return {
+    get contentType() {
+      return registry.contentType
+    },
+    async metrics() {
+      const [hostMetrics, workerMetrics] = await Promise.all([
+        registry.metrics(),
+        workerRegistry.workerMetrics(),
+      ])
+      return joinMetrics(hostMetrics, workerMetrics)
+    },
+  }
+}
+
+function collectMetrics(registry: MetricsRegistry) {
   return registry instanceof WorkerRegistry
     ? registry.workerMetrics()
     : registry.metrics()
+}
+
+function createPushGatewayRegistry(registry: MetricsRegistry): Registry {
+  return { metrics: () => collectMetrics(registry) } as Registry
+}
+
+function joinMetrics(...parts: string[]): string {
+  const body = parts
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .join('\n\n')
+  return body ? `${body}\n` : ''
 }

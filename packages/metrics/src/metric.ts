@@ -1,22 +1,41 @@
-import type { ClassConstructorArgs } from '@nmtjs/common'
-import type { Metric, MetricConfiguration, Registry } from '@nmtjs/prom-client'
+import type {
+  CounterConfiguration,
+  GaugeConfiguration,
+  HistogramConfiguration,
+  Metric,
+  MetricConfiguration,
+  Registry,
+  SummaryConfiguration,
+} from '@nmtjs/prom-client'
 import { Counter, Gauge, Histogram, Summary } from '@nmtjs/prom-client'
 
 import { metricsRegistry } from './registry.ts'
 
-export const createMetric =
-  <T extends Metric>(
-    MetricConstructor: new (config: MetricConfiguration<any>) => T,
-  ) =>
-  (config: ClassConstructorArgs<T>[0] & { registry?: Registry }): T => {
-    const { registry = metricsRegistry, ...metricConfig } = config
-    return new MetricConstructor({
-      ...metricConfig,
-      registers: [...(metricConfig.registers ?? []), registry],
-    } as MetricConfiguration<any>)
-  }
-
-export const createCounterMetric = createMetric(Counter)
-export const createGaugeMetric = createMetric(Gauge)
-export const createHistogramMetric = createMetric(Histogram)
-export const createSummaryMetric = createMetric(Summary)
+export const createCounterMetric = <N extends string>(
+  configuration: CounterConfiguration<N>,
+) =>
+  new Counter({
+    ...configuration,
+    registers: [...(configuration.registers ?? []), metricsRegistry],
+  })
+export const createGaugeMetric = <N extends string>(
+  configuration: GaugeConfiguration<N>,
+) =>
+  new Gauge({
+    ...configuration,
+    registers: [...(configuration.registers ?? []), metricsRegistry],
+  })
+export const createHistogramMetric = <N extends string>(
+  configuration: HistogramConfiguration<N>,
+) =>
+  new Histogram({
+    ...configuration,
+    registers: [...(configuration.registers ?? []), metricsRegistry],
+  })
+export const createSummaryMetric = <N extends string>(
+  configuration: SummaryConfiguration<N>,
+) =>
+  new Summary({
+    ...configuration,
+    registers: [...(configuration.registers ?? []), metricsRegistry],
+  })

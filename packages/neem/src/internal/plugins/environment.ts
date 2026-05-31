@@ -7,7 +7,7 @@ import type { NeemMode, NeemRuntimeServerHealth } from '../../public/runtime.ts'
 import type { Manifest } from '../manifest/manifest.ts'
 import type { HostHooks, PluginHooks } from './hooks.ts'
 import { childLogger } from '../shared/logger.ts'
-import { importDefault } from '../shared/utils.ts'
+import { importDefault, normalizeError } from '../shared/utils.ts'
 import { callHostHook } from './hooks.ts'
 
 export type PluginContext<Options = unknown> = {
@@ -60,13 +60,22 @@ export class PluginEnvironment {
       await callHostHook(
         this.options.hooks,
         this.options.logger,
-        'host:initialize',
+        'initialize',
         { mode: this.options.mode },
       )
       this.initialized = true
       if (pluginNames.length > 0) this.logger.debug('Neem plugins initialized')
       this.logger.trace({ plugins: pluginNames }, 'Neem plugins')
     } catch (error) {
+      await callHostHook(this.options.hooks, this.options.logger, 'dispose', {
+        mode: this.options.mode,
+      }).catch((disposeError) => {
+        this.logger.warn(
+          new Error('Neem plugin initialization cleanup failed', {
+            cause: normalizeError(disposeError),
+          }),
+        )
+      })
       for (const remove of removers.reverse()) remove()
       this.removers = []
       throw error
@@ -78,12 +87,9 @@ export class PluginEnvironment {
 
     this.logger.debug('Disposing Neem plugins')
     try {
-      await callHostHook(
-        this.options.hooks,
-        this.options.logger,
-        'host:dispose',
-        { mode: this.options.mode },
-      )
+      await callHostHook(this.options.hooks, this.options.logger, 'dispose', {
+        mode: this.options.mode,
+      })
     } finally {
       for (const remove of this.removers.splice(0).reverse()) remove()
       this.initialized = false

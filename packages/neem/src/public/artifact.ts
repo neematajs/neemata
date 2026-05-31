@@ -1,5 +1,7 @@
 import type { RolldownOptions, RolldownOutput } from 'rolldown'
 
+export type { RolldownPluginOption } from 'rolldown'
+
 export type NeemArtifactKind = 'worker' | 'module'
 
 export type NeemArtifactEntry = string | URL

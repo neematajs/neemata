@@ -113,7 +113,7 @@ export class HostController {
         const normalized = normalizeError(error)
         this.markState('failed', normalized)
         this.logger.error({ err: normalized }, 'Failed to start Neem server')
-        await this.callServerHook('server:fail', normalized)
+        await this.callServerFailHook(normalized)
         await this.stopSubsystems().catch(() => undefined)
         throw normalized
       }
@@ -153,7 +153,8 @@ export class HostController {
         const normalized = normalizeError(error)
         this.markState('failed', normalized)
         this.logger.error({ err: normalized }, 'Failed to reload Neem server')
-        await this.callServerHook('server:fail', normalized)
+        await this.callServerFailHook(normalized)
+        await this.stopSubsystems().catch(() => undefined)
         throw normalized
       }
     })
@@ -178,12 +179,12 @@ export class HostController {
       }
 
       await this.proxy?.setUpstreams(this.collectRuntimeUpstreams())
+      this.markState('running')
       await callHostHook(this.hooks, this.snapshot.logger, 'runtime:reload', {
         mode: this.snapshot.mode,
         name: runtimeName,
         upstreams: this.runtimes.get(runtimeName)?.getUpstreams() ?? [],
       })
-      this.markState('running')
       this.logger.debug(`Neem runtime ${runtimeName} reloaded`)
       this.logger.trace({ runtimeName }, 'Neem runtime reload result')
     })
@@ -195,13 +196,20 @@ export class HostController {
       this.markState('stopping')
       this.logger.info('Neem server stopping')
 
+      let stopError: Error | undefined
       try {
-        await this.callServerHook('server:stop')
-        await this.stopSubsystems()
+        await this.callServerHook('server:stop').catch((error) => {
+          stopError = normalizeError(error)
+        })
+        await this.stopSubsystems().catch((error) => {
+          stopError ??= normalizeError(error)
+        })
       } finally {
         this.markState('stopped')
         this.logger.info('Neem server stopped')
       }
+
+      if (stopError) throw stopError
     })
   }
 
@@ -345,6 +353,16 @@ export class HostController {
     return callHostHook(this.hooks, this.logger, name, {
       mode: this.snapshot.mode,
       error,
+    })
+  }
+
+  private async callServerFailHook(error: Error): Promise<void> {
+    await this.callServerHook('server:fail', error).catch((failError) => {
+      this.logger.warn(
+        new Error('Neem server fail hook failed', {
+          cause: normalizeError(failError),
+        }),
+      )
     })
   }
 

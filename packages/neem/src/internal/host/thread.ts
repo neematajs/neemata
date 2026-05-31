@@ -161,7 +161,7 @@ export class ThreadController {
       )
     } catch (error) {
       const normalized = normalizeError(error)
-      await this.callWorkerHook('worker:fail', normalized)
+      await this.callWorkerFailHook(normalized)
       await this.terminateWorker()
       throw normalized
     } finally {
@@ -262,7 +262,7 @@ export class ThreadController {
       return
     }
 
-    void this.callWorkerHook('worker:fail', error)
+    void this.callWorkerFailHook(error)
     void this.options.onFailure?.(error, this)
   }
 
@@ -301,6 +301,16 @@ export class ThreadController {
         error,
       },
     )
+  }
+
+  private async callWorkerFailHook(error: Error): Promise<void> {
+    await this.callWorkerHook('worker:fail', error).catch((hookError) => {
+      this.logger.warn(
+        new Error('Neem worker fail hook failed', {
+          cause: normalizeError(hookError),
+        }),
+      )
+    })
   }
 
   private async terminateWorker(): Promise<void> {

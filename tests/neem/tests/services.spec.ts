@@ -290,6 +290,65 @@ describe('Neem v2 services', () => {
     await neem.stop()
   }, 60_000)
 
+  it('serves metrics from the metrics plugin and restarts without leaking the port', async () => {
+    const fixture = await useFixture({ config: 'metrics.config.ts' })
+    const port = await getFreePort()
+    const logsFile = resolve(fixture.dir, 'metrics-logs.jsonl')
+    const neem = spawnTrackedNeem(
+      ['dev', '--config', fixture.configFile, '--outDir', fixture.outDir],
+      {
+        env: {
+          NEEM_LOG_EVENTS_FILE: logsFile,
+          NEEM_METRICS_PORT: String(port),
+          NEEM_RUNTIME_EVENTS_FILE: fixture.eventsFile,
+        },
+      },
+    )
+
+    await neem.waitForEvent((event) => event.event === 'runtime:ready', 30_000)
+    await waitForEventCount(fixture.eventsFile, 'runtime-start', 1)
+
+    const initialMetrics = await waitForMetrics(port, neem)
+    expect(initialMetrics).toContain('neem_lifecycle_events_total')
+    expect(initialMetrics).toContain('neem_runtime_ready')
+    expect(initialMetrics).toContain('process_cpu_user_seconds_total')
+
+    const startLog = await waitFor(
+      async () => {
+        const logs = await readLogEvents(logsFile)
+        return (
+          logs.find(
+            (event) =>
+              event.msg ===
+              `Metrics server started at http://127.0.0.1:${port}/metrics`,
+          ) ?? false
+        )
+      },
+      30_000,
+      () => formatSpawnedOutput(neem),
+    )
+    expect(startLog).toMatchObject({
+      msg: `Metrics server started at http://127.0.0.1:${port}/metrics`,
+    })
+
+    await appendFile(
+      fixture.configFile,
+      "\nexport const metricsReloadMarker = 'changed'\n",
+    )
+
+    await neem.waitForEvent(
+      (event) => event.event === 'watcher:config-invalidated',
+      30_000,
+    )
+    await waitForEventCount(fixture.eventsFile, 'runtime-start', 2)
+
+    const reloadedMetrics = await waitForMetrics(port, neem)
+    expect(reloadedMetrics).toContain('neem_lifecycle_events_total')
+    expect(reloadedMetrics).toContain('process_cpu_user_seconds_total')
+
+    await neem.stop()
+  }, 60_000)
+
   it('routes traffic through the native proxy to runtime upstreams', async () => {
     const fixture = await useFixture({ config: 'proxy.config.ts' })
     const proxyPort = await getFreePort()
@@ -409,6 +468,7 @@ describe('Neem v2 services', () => {
 
     await neem.waitForEvent((event) => event.event === 'runtime:ready', 30_000)
     await waitForEventCount(fixture.eventsFile, 'plugin-setup', 1)
+    await waitForEventCount(fixture.eventsFile, 'plugin-initialize', 1)
 
     await appendFile(
       pluginFile,
@@ -419,59 +479,29 @@ describe('Neem v2 services', () => {
       (event) => event.event === 'watcher:plugin-changed',
       30_000,
     )
-    await waitForEventCount(fixture.eventsFile, 'plugin-host-dispose', 1)
+    await waitForEventCount(fixture.eventsFile, 'plugin-dispose', 1)
     await waitForEventCount(fixture.eventsFile, 'plugin-setup', 2)
+    await waitForEventCount(fixture.eventsFile, 'plugin-initialize', 2)
 
     await neem.stop()
-    await waitForEventCount(fixture.eventsFile, 'plugin-host-dispose', 2)
+    await waitForEventCount(fixture.eventsFile, 'plugin-dispose', 2)
   }, 60_000)
 
-  it('keeps serving when a plugin hook throws and disposes plugin hooks once', async () => {
+  it('fails startup when a plugin hook throws and disposes plugin hooks once', async () => {
     const fixture = await useFixture({ config: 'throwing-plugin.config.ts' })
-    const logsFile = resolve(fixture.dir, 'logs.jsonl')
     const neem = spawnTrackedNeem(
       ['dev', '--config', fixture.configFile, '--outDir', fixture.outDir],
-      {
-        env: {
-          NEEM_LOG_EVENTS_FILE: logsFile,
-          NEEM_RUNTIME_EVENTS_FILE: fixture.eventsFile,
-        },
-      },
+      { env: { NEEM_RUNTIME_EVENTS_FILE: fixture.eventsFile } },
     )
 
-    await neem.waitForEvent((event) => event.event === 'runtime:ready', 30_000)
+    const exit = await neem.waitForExit()
+    expect(exit.code).not.toBe(0)
     await waitForEventCount(
       fixture.eventsFile,
       'throwing-plugin-server-start',
       1,
     )
-    const logs = await waitFor(
-      async () => {
-        const events = await readLogEvents(logsFile)
-        return events.some((event) =>
-          String(event.msg).includes('Neem host hook [server:start] failed'),
-        )
-          ? events
-          : false
-      },
-      30_000,
-      () => formatSpawnedOutput(neem),
-    )
-    expect(logs).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          level: 40,
-          msg: expect.stringContaining('Neem host hook [server:start] failed'),
-        }),
-      ]),
-    )
-
-    await neem.stop()
-    await waitForEventCount(
-      fixture.eventsFile,
-      'throwing-plugin-host-dispose',
-      1,
-    )
+    await waitForEventCount(fixture.eventsFile, 'throwing-plugin-dispose', 1)
   }, 60_000)
 
   it('runs host-only zero-thread runtimes', async () => {
@@ -736,6 +766,23 @@ async function fetchJson(
   const text = await response.text()
   const body = parseJsonObject(text)
   return { status: response.status, body }
+}
+
+async function waitForMetrics(
+  port: number,
+  neem: SpawnedNeem,
+): Promise<string> {
+  return await waitFor(
+    async () => {
+      const response = await fetch(`http://127.0.0.1:${port}/metrics`).catch(
+        () => undefined,
+      )
+      if (!response || response.status !== 200) return false
+      return await response.text()
+    },
+    30_000,
+    () => formatSpawnedOutput(neem),
+  )
 }
 
 function formatSpawnedOutput(neem: SpawnedNeem): string {

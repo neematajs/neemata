@@ -124,7 +124,7 @@ export class RuntimeController {
     } catch (error) {
       const normalized = normalizeError(error)
       await this.callHostFail(normalized)
-      await this.callRuntimeHook('runtime:fail', undefined, normalized)
+      await this.callRuntimeFailHook(normalized)
       await this.stop().catch((stopError) => {
         hostParams.logger.warn(
           new Error(`Runtime [${this.name}] cleanup failed`, {
@@ -166,7 +166,12 @@ export class RuntimeController {
     await host?.shutdown().catch((error) => {
       hostError ??= normalizeError(error)
     })
-    if (hostParams) await this.callRuntimeHook('runtime:stop')
+    let hookError: Error | undefined
+    if (hostParams) {
+      await this.callRuntimeHook('runtime:stop').catch((error) => {
+        hookError = normalizeError(error)
+      })
+    }
     hostParams?.logger.debug('Neem runtime stopped')
 
     const threadError = threadResults.find(
@@ -174,6 +179,7 @@ export class RuntimeController {
     )
     if (hostError) throw hostError
     if (threadError) throw normalizeError(threadError.reason)
+    if (hookError) throw hookError
   }
 
   replaceSnapshot(snapshot: RuntimeSnapshot): void {
@@ -193,7 +199,7 @@ export class RuntimeController {
       'Neem runtime worker failure',
     )
     await this.callHostFail(error)
-    await this.callRuntimeHook('runtime:fail', undefined, error)
+    await this.callRuntimeFailHook(error)
 
     if (this.recoveryPromise) return
 
@@ -214,7 +220,7 @@ export class RuntimeController {
 
   private async handleHostFailure(error: Error): Promise<void> {
     this.hostParams?.logger.warn({ err: error }, 'Neem runtime host failed')
-    await this.callRuntimeHook('runtime:fail', undefined, error)
+    await this.callRuntimeFailHook(error)
 
     if (this.recoveryPromise) return
 
@@ -349,6 +355,18 @@ export class RuntimeController {
         }),
       )
     }
+  }
+
+  private async callRuntimeFailHook(error: Error): Promise<void> {
+    await this.callRuntimeHook('runtime:fail', undefined, error).catch(
+      (hookError) => {
+        this.hostParams?.logger.warn(
+          new Error(`Runtime [${this.name}] fail hook failed`, {
+            cause: normalizeError(hookError),
+          }),
+        )
+      },
+    )
   }
 
   private callRuntimeHook(name: 'runtime:start' | 'runtime:stop'): Promise<void>
