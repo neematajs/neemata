@@ -7,7 +7,7 @@ import type {
   NeemRolldownOptions,
 } from './artifact.ts'
 import type { NeemRuntimeHostFactory } from './runtime.ts'
-import type { InferNeemWorkerData, NeemWorker } from './worker.ts'
+import type { InferNeemRuntimeWorkerData, NeemRuntimeWorker } from './worker.ts'
 import { mergeRolldownOptions } from '../internal/build/rolldown-options.ts'
 
 export type NeemEntryModule<T> = { default: T }
@@ -61,7 +61,7 @@ type NeemRuntimeSharedConfig<TEntry, THost extends NeemRuntimeHostFactory> = {
 }
 
 export type NeemRuntimeConfig<
-  TEntry = NeemWorker<unknown, unknown>,
+  TEntry = NeemRuntimeWorker<unknown, unknown>,
   THost extends NeemRuntimeHostFactory = NeemRuntimeHostFactory,
 > = NeemRuntimeSharedConfig<TEntry, THost> &
   (
@@ -106,7 +106,7 @@ export type NeemNormalizedRuntimeConfigEntries<
 export type InferNeemRuntimeThreadOptions<TEntry> = TEntry extends {
   _: { data: unknown }
 }
-  ? InferNeemWorkerData<TEntry>
+  ? InferNeemRuntimeWorkerData<TEntry>
   : unknown
 
 export type NeemProxyRoutingOptions = {

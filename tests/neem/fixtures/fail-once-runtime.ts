@@ -1,11 +1,11 @@
 import { existsSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
-import { defineWorker } from '@nmtjs/neem'
+import { defineRuntimeWorker } from '@nmtjs/neem'
 
 import { record } from './_events.ts'
 
-export default defineWorker<{ label: string }>({
+export default defineRuntimeWorker<{ label: string }>({
   definition: { fixture: 'fail-once-runtime' },
   createRuntime(ctx) {
     return {

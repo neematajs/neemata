@@ -1,5 +1,5 @@
-import type { NeemWorkerRuntimeContext } from '@nmtjs/neem'
-import { defineWorker } from '@nmtjs/neem'
+import type { NeemRuntimeWorkerContext } from '@nmtjs/neem'
+import { defineRuntimeWorker } from '@nmtjs/neem'
 
 import { record } from './_events.ts'
 
@@ -8,9 +8,9 @@ export type GenericRuntimeData = {
   http?: { listen: { hostname: string; port: number } }
 }
 
-export default defineWorker<GenericRuntimeData>({
+export default defineRuntimeWorker<GenericRuntimeData>({
   definition: { fixture: 'generic-runtime' },
-  createRuntime(ctx: NeemWorkerRuntimeContext<GenericRuntimeData>) {
+  createRuntime(ctx: NeemRuntimeWorkerContext<GenericRuntimeData>) {
     record({
       event: 'runtime-create',
       mode: ctx.mode,

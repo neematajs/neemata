@@ -6,10 +6,10 @@ import type {
   NeemRolldownOptions,
   NeemRuntime,
   NeemRuntimeConfig,
-  NeemWorker,
-  NeemWorkerRuntimeContext,
+  NeemRuntimeWorker,
+  NeemRuntimeWorkerContext,
 } from '@nmtjs/neem'
-import { defineRuntime, defineWorker } from '@nmtjs/neem'
+import { defineRuntime, defineRuntimeWorker } from '@nmtjs/neem'
 
 import type { NeemataApplication, NeemataAppTransportOptions } from './app.ts'
 import type { AnyApplicationConfig } from './config.ts'
@@ -21,14 +21,14 @@ export type NeemataRuntimeThreadOptions<
 
 export type NeemataRuntimeContext<
   TApplication extends AnyApplicationConfig = AnyApplicationConfig,
-> = NeemWorkerRuntimeContext<
+> = NeemRuntimeWorkerContext<
   NeemataRuntimeThreadOptions<TApplication>,
   TApplication
 >
 
 export type NeemataWorker<
   TApplication extends AnyApplicationConfig = AnyApplicationConfig,
-> = NeemWorker<NeemataRuntimeThreadOptions<TApplication>, TApplication>
+> = NeemRuntimeWorker<NeemataRuntimeThreadOptions<TApplication>, TApplication>
 
 export type NeemataRuntimeConfig<TEntry extends NeemataWorker = NeemataWorker> =
   NeemRuntimeConfig<TEntry>
@@ -74,7 +74,10 @@ export function defineNeemataRuntime<
 export function defineNeemataWorker<
   const TApplication extends AnyApplicationConfig,
 >(application: TApplication): NeemataWorker<TApplication> {
-  return defineWorker<NeemataRuntimeThreadOptions<TApplication>, TApplication>({
+  return defineRuntimeWorker<
+    NeemataRuntimeThreadOptions<TApplication>,
+    TApplication
+  >({
     definition: application,
     createRuntime(ctx) {
       return new NeemataApplicationRuntime(ctx)

@@ -41,6 +41,13 @@ describe('createBuildGraph', () => {
           scheduler: defineRuntime({
             host: { entry: './scheduler.host.ts' },
             threads: 0,
+            artifacts: [
+              {
+                id: 'scheduler-config',
+                kind: 'module',
+                entry: './scheduler.config.ts',
+              },
+            ],
           }),
         },
       }),
@@ -65,10 +72,10 @@ describe('createBuildGraph', () => {
       pluginRolldown,
       runtimeRolldown,
     ])
-    expect(api?.worker?.emittedArtifacts).toEqual([
+    expect(api?.host?.artifact.entry).toBe('/workspace/app/api.host.ts')
+    expect(api?.artifacts.map((target) => target.artifact)).toEqual([
       { id: 'schema', kind: 'module', entry: '/workspace/app/schema.ts' },
     ])
-    expect(api?.host?.artifact.entry).toBe('/workspace/app/api.host.ts')
 
     const scheduler = graph.runtimes.find(
       (runtime) => runtime.name === 'scheduler',
@@ -77,13 +84,22 @@ describe('createBuildGraph', () => {
     expect(scheduler?.host?.artifact.entry).toBe(
       '/workspace/app/scheduler.host.ts',
     )
+    expect(scheduler?.artifacts.map((target) => target.artifact)).toEqual([
+      {
+        id: 'scheduler-config',
+        kind: 'module',
+        entry: '/workspace/app/scheduler.config.ts',
+      },
+    ])
     expect(graph.targets.map((target) => target.key)).toEqual([
       'runtime:start-entry',
       'runtime:worker-entry',
       'config:logger',
       'runtime:api:worker',
       'runtime:api:host',
+      'runtime:api:artifact:000-schema',
       'runtime:scheduler:host',
+      'runtime:scheduler:artifact:000-scheduler-config',
       'plugin:000-scope-plugin-one',
     ])
   })
@@ -99,6 +115,13 @@ describe('createBuildGraph', () => {
           scheduler: defineRuntime({
             host: { entry: './scheduler.host.ts' },
             threads: 0,
+            artifacts: [
+              {
+                id: 'scheduler-config',
+                kind: 'module',
+                entry: './scheduler.config.ts',
+              },
+            ],
           }),
         },
       }),
@@ -109,6 +132,7 @@ describe('createBuildGraph', () => {
       'runtime:start-entry',
       'runtime:worker-entry',
       'runtime:scheduler:host',
+      'runtime:scheduler:artifact:000-scheduler-config',
     ])
   })
 

@@ -47,10 +47,9 @@ async function initialize(): Promise<void> {
     }),
     runtimeLabel(data.runtimeName, 'host'),
   )
-  logger.debug('Neem host initializing')
   logger.trace(
     { artifactId: data.hostArtifact.id, file: data.hostArtifact.file },
-    'Neem host artifact',
+    'Neem host initializing',
   )
   const factory = await importDefault<NeemRuntimeHostFactory>(
     data.hostArtifact.file,
@@ -68,7 +67,7 @@ async function initialize(): Promise<void> {
     }),
     defaultThreads: data.defaultThreads,
   })
-  logger.debug('Neem host initialized')
+  logger.trace('Neem host initialized')
   post({ type: 'ready' })
 }
 
@@ -76,7 +75,7 @@ async function handle(request: HostRunnerRequest): Promise<void> {
   try {
     switch (request.type) {
       case 'plan':
-        logger?.debug('Calling Neem host plan')
+        logger?.trace('Calling Neem host plan')
         post({
           id: request.id,
           type: 'result',
@@ -85,13 +84,12 @@ async function handle(request: HostRunnerRequest): Promise<void> {
         return
       case 'start':
         currentThreads = request.threads
-        logger?.debug('Calling Neem host start')
         logger?.trace(
           {
             threads: request.threads.length,
             upstreams: request.upstreams.length,
           },
-          'Neem host start options',
+          'Calling Neem host start',
         )
         await host?.start?.({
           threads: request.threads,
@@ -100,17 +98,16 @@ async function handle(request: HostRunnerRequest): Promise<void> {
         post({ id: request.id, type: 'result' })
         return
       case 'stop':
-        logger?.debug('Calling Neem host stop')
         logger?.trace(
           { threads: currentThreads.length },
-          'Neem host stop options',
+          'Calling Neem host stop',
         )
         await host?.stop?.({ threads: currentThreads })
         currentThreads = []
         post({ id: request.id, type: 'result' })
         return
       case 'fail':
-        logger?.debug('Calling Neem host fail')
+        logger?.trace('Calling Neem host fail')
         await host?.fail?.({
           error: deserializeError(request.error),
           threads: currentThreads,
@@ -118,7 +115,7 @@ async function handle(request: HostRunnerRequest): Promise<void> {
         post({ id: request.id, type: 'result' })
         return
       case 'shutdown':
-        logger?.debug('Neem host shutting down')
+        logger?.trace('Neem host shutting down')
         post({ id: request.id, type: 'result' })
         port.close()
         return

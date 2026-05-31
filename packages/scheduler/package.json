@@ -43,6 +43,7 @@
   },
   "dependencies": {
     "@nmtjs/common": "workspace:*",
+    "@nmtjs/core": "workspace:*",
     "@nmtjs/jobs": "workspace:*",
     "@nmtjs/neem": "workspace:*",
     "bullmq": "5.77.0"

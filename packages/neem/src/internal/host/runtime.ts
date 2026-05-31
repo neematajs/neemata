@@ -88,7 +88,6 @@ export class RuntimeController {
         defaultThreads: hostParams.defaultThreads,
         plans: plan?.threads,
       })
-      hostParams.logger.debug('Neem runtime thread topology resolved')
       hostParams.logger.trace(
         {
           threads: threadPlans.map((plan) => ({

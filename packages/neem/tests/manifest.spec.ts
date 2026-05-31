@@ -5,11 +5,16 @@ import { resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import type {
+  CompiledGraph,
+  CompiledTarget,
+} from '../src/internal/build/compiler.ts'
+import type {
   Manifest,
   ManifestArtifact,
 } from '../src/internal/manifest/manifest.ts'
 import {
   assertManifestPath,
+  createManifest as createCompiledManifest,
   MANIFEST_SCHEMA_VERSION,
   selectManifestRuntimes,
   toManifestPath,
@@ -49,6 +54,23 @@ describe('Neem manifest', () => {
     expect(() => selectManifestRuntimes(manifest, ['missing'])).toThrow(
       'Unknown Neem runtime(s): missing',
     )
+  })
+
+  it('creates runtime artifacts without requiring a worker artifact', () => {
+    const manifest = createCompiledManifest(createCompiledHostOnlyGraph())
+
+    expect(manifest.runtimes.scheduler).toMatchObject({
+      name: 'scheduler',
+      entry: undefined,
+      host: { id: 'host', file: 'runtime/scheduler/host/index.js' },
+      artifacts: [
+        {
+          id: 'scheduler-config',
+          kind: 'module',
+          file: 'runtime/scheduler/artifacts/000-scheduler-config/index.js',
+        },
+      ],
+    })
   })
 
   it('writes root and per-runtime production start entries', async () => {
@@ -155,6 +177,98 @@ function artifact(
   file: string,
   kind: ManifestArtifact['kind'] = 'worker',
 ): ManifestArtifact {
+  return {
+    id,
+    kind,
+    owner: { type: 'runtime', name: runtimeName },
+    file,
+    outDir: file.replace(/\/[^/]+$/, ''),
+  }
+}
+
+function createCompiledHostOnlyGraph(): CompiledGraph {
+  const outDir = '/workspace/app/dist'
+  const start = resolvedArtifact(
+    'start',
+    'start',
+    `${outDir}/runtime/start.js`,
+    'module',
+  )
+  const worker = resolvedArtifact(
+    'worker-entry',
+    'worker',
+    `${outDir}/runtime/worker-entry.js`,
+  )
+  const host = resolvedArtifact(
+    'host',
+    'scheduler',
+    `${outDir}/runtime/scheduler/host/index.js`,
+    'module',
+  )
+  const config = resolvedArtifact(
+    'scheduler-config',
+    'scheduler',
+    `${outDir}/runtime/scheduler/artifacts/000-scheduler-config/index.js`,
+    'module',
+  )
+
+  return {
+    graph: {
+      outDir,
+      config: {
+        runtimes: {
+          scheduler: {
+            host: { entry: './scheduler.host.ts' },
+            threads: 0,
+            artifacts: [
+              {
+                id: 'scheduler-config',
+                kind: 'module',
+                entry: './scheduler.config.ts',
+              },
+            ],
+          },
+        },
+      },
+    },
+    targets: [
+      compiledTarget('start-entry', start),
+      compiledTarget('worker-entry', worker),
+    ],
+    runtimes: [
+      {
+        name: 'scheduler',
+        node: undefined,
+        host: compiledTarget('runtime-host', host),
+        artifacts: [compiledTarget('runtime-artifact', config)],
+      },
+    ],
+    plugins: [],
+  } as unknown as CompiledGraph
+}
+
+function compiledTarget(
+  kind: CompiledTarget['target']['kind'],
+  artifact: CompiledTarget['artifact'],
+): CompiledTarget {
+  return {
+    target: {
+      key: `${artifact.owner.type}:${artifact.id}`,
+      kind,
+      artifact: { id: artifact.id, kind: artifact.kind, entry: artifact.file },
+      owner: artifact.owner,
+      outDir: artifact.outDir,
+    },
+    artifact,
+  }
+}
+
+function resolvedArtifact(
+  id: string,
+  runtimeName: string,
+  file: string,
+  kind: ManifestArtifact['kind'] = 'worker',
+): CompiledTarget['artifact'] {
   return {
     id,
     kind,

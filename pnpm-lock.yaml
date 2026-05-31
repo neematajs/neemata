@@ -452,6 +452,9 @@ importers:
       '@nmtjs/common':
         specifier: workspace:*
         version: link:../common
+      '@nmtjs/core':
+        specifier: workspace:*
+        version: link:../core
       '@nmtjs/jobs':
         specifier: workspace:*
         version: link:../jobs

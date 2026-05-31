@@ -6,11 +6,7 @@ import type { RolldownOutput } from 'rolldown'
 import { createFuture } from '@nmtjs/common'
 import * as rolldown from 'rolldown'
 
-import type {
-  NeemArtifact,
-  NeemResolvedArtifact,
-  NeemRolldownOptions,
-} from '../../public/artifact.ts'
+import type { NeemResolvedArtifact } from '../../public/artifact.ts'
 import type {
   BuildGraph,
   BuildTarget,
@@ -20,24 +16,9 @@ import type {
 import { toFilePath } from '../shared/utils.ts'
 import { mergeRolldownOptions } from './rolldown-options.ts'
 
-type ArtifactInput = {
-  entry: string
-  emittedArtifacts: Array<{
-    artifact: NeemArtifact
-    inputName: string
-    entry: string
-  }>
-  input: string | Record<string, string>
-}
+type ArtifactInput = { entry: string; input: string }
 
-type ArtifactBuildMetadata = {
-  entryFileName?: string
-  emittedArtifacts?: Array<{
-    id: string
-    kind: NeemArtifact['kind']
-    fileName: string
-  }>
-}
+type ArtifactBuildMetadata = { entryFileName?: string }
 
 export type CompiledTarget = {
   target: BuildTarget
@@ -50,6 +31,7 @@ export type CompiledRuntime = {
   node: RuntimeBuildNode
   worker?: CompiledTarget
   host?: CompiledTarget
+  artifacts: readonly CompiledTarget[]
 }
 
 export type CompiledPlugin = { node: PluginBuildNode; entry?: CompiledTarget }
@@ -210,6 +192,15 @@ export function createCompiledGraph(
   const runtimes = graph.runtimes.map((runtime) => {
     const worker = runtime.worker ? byKey.get(runtime.worker.key) : undefined
     const host = runtime.host ? byKey.get(runtime.host.key) : undefined
+    const artifacts = runtime.artifacts.map((artifact) => {
+      const compiled = byKey.get(artifact.key)
+      if (!compiled) {
+        throw new Error(
+          `Compiled runtime [${runtime.name}] artifact [${artifact.artifact.id}] is missing`,
+        )
+      }
+      return compiled
+    })
     if (runtime.worker && !worker) {
       throw new Error(`Compiled runtime [${runtime.name}] worker is missing`)
     }
@@ -217,7 +208,7 @@ export function createCompiledGraph(
       throw new Error(`Compiled runtime [${runtime.name}] host is missing`)
     }
 
-    return { name: runtime.name, node: runtime, worker, host }
+    return { name: runtime.name, node: runtime, worker, host, artifacts }
   })
   const plugins = graph.plugins.map((plugin) => ({
     node: plugin,
@@ -262,28 +253,7 @@ function createRolldownOptions(
 
 function createArtifactInput(target: BuildTarget): ArtifactInput {
   const entry = toFilePath(target.artifact.entry)
-  const emittedArtifacts = (target.emittedArtifacts ?? []).map(
-    (artifact, index) => ({
-      artifact,
-      inputName: `artifact-${index}-${artifact.id}`,
-      entry: toFilePath(artifact.entry),
-    }),
-  )
-
-  if (emittedArtifacts.length === 0) {
-    return { entry, emittedArtifacts, input: entry }
-  }
-
-  return {
-    entry,
-    emittedArtifacts,
-    input: Object.fromEntries([
-      ['entry', entry],
-      ...emittedArtifacts.map(
-        (artifact) => [artifact.inputName, artifact.entry] as const,
-      ),
-    ]),
-  }
+  return { entry, input: entry }
 }
 
 function createResolvedArtifact(
@@ -307,13 +277,6 @@ function createResolvedArtifact(
     file: resolve(target.outDir, entryFileName ?? 'index.js'),
     outDir: target.outDir,
     bundle,
-    emittedArtifacts: metadata.emittedArtifacts?.map((artifact) => ({
-      id: artifact.id,
-      kind: artifact.kind,
-      owner: target.owner,
-      file: resolve(target.outDir, artifact.fileName),
-      outDir: target.outDir,
-    })),
   }
 }
 
@@ -330,23 +293,6 @@ function createArtifactMetadataPlugin(
         chunk.facadeModuleId === input.entry,
     )
     metadata.entryFileName = entryChunk?.fileName
-    metadata.emittedArtifacts = input.emittedArtifacts.map(
-      ({ artifact, entry }) => {
-        const chunk = Object.values(bundle).find(
-          (candidate) =>
-            candidate.type === 'chunk' &&
-            candidate.isEntry &&
-            candidate.fileName &&
-            candidate.facadeModuleId === entry,
-        )
-
-        return {
-          id: artifact.id,
-          kind: artifact.kind,
-          fileName: chunk?.fileName ?? `${artifact.id}.js`,
-        }
-      },
-    )
   }
 
   return {

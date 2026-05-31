@@ -1,8 +1,8 @@
-import { defineWorker } from '@nmtjs/neem'
+import { defineRuntimeWorker } from '@nmtjs/neem'
 
 import { record } from './_events.ts'
 
-export default defineWorker<{ label: string }>({
+export default defineRuntimeWorker<{ label: string }>({
   definition: { fixture: 'selection-runtime' },
   createRuntime(ctx) {
     const runtime =

@@ -129,8 +129,7 @@ export class ThreadController {
     this.readyAt = undefined
     this.stoppedAt = undefined
     this.lastError = undefined
-    this.logger.debug('Neem worker starting')
-    this.logger.trace({ artifactId: this.artifactId }, 'Neem worker artifact')
+    this.logger.trace({ artifactId: this.artifactId }, 'Neem worker starting')
 
     const ready = createFuture<void>()
     this.ready = ready
@@ -154,10 +153,9 @@ export class ThreadController {
     try {
       await ready.promise
       await this.callWorkerHook('worker:ready')
-      this.logger.debug('Neem worker ready')
       this.logger.trace(
         { upstreams: this.upstreams.length },
-        'Neem worker upstreams',
+        'Neem worker ready',
       )
     } catch (error) {
       const normalized = normalizeError(error)
@@ -180,7 +178,7 @@ export class ThreadController {
     this.stopping = true
     this.state = 'stopping'
     this.ready?.reject(new Error(`Worker [${this.name}] stopped before ready`))
-    this.logger.debug('Neem worker stopping')
+    this.logger.trace('Neem worker stopping')
     try {
       worker.postMessage({ type: 'stop' })
     } catch {}
@@ -207,7 +205,7 @@ export class ThreadController {
       this.upstreams = []
       this.markStopped()
       await this.callWorkerHook('worker:stop')
-      this.logger.debug('Neem worker stopped')
+      this.logger.trace('Neem worker stopped')
     }
   }
 

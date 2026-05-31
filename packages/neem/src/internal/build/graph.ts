@@ -25,6 +25,7 @@ import { mergeRolldownOptions } from './rolldown-options.ts'
 export type BuildTargetKind =
   | 'runtime-worker'
   | 'runtime-host'
+  | 'runtime-artifact'
   | 'start-entry'
   | 'worker-entry'
   | 'plugin-entry'
@@ -41,7 +42,6 @@ export type BuildTarget = {
   }
   owner: NeemArtifactOwner
   outDir: string
-  emittedArtifacts?: readonly NeemArtifact[]
 }
 
 export type RuntimeBuildNode = {
@@ -49,6 +49,7 @@ export type RuntimeBuildNode = {
   config: NeemRuntimeConfigBase
   worker?: BuildTarget
   host?: BuildTarget
+  artifacts: readonly BuildTarget[]
 }
 
 export type PluginBuildNode = {
@@ -105,8 +106,8 @@ export function createBuildGraph(options: {
     workerEntry,
     ...(logger ? [logger] : []),
     ...runtimes.flatMap((runtime) =>
-      [runtime.worker, runtime.host].filter((target): target is BuildTarget =>
-        Boolean(target),
+      [runtime.worker, runtime.host, ...runtime.artifacts].filter(
+        (target): target is BuildTarget => Boolean(target),
       ),
     ),
     ...plugins.flatMap((plugin) => (plugin.entry ? [plugin.entry] : [])),
@@ -252,6 +253,12 @@ function createRuntimeNode(options: {
     options.configFile,
     options.runtime.host?.entry,
   )
+  const artifacts = createRuntimeArtifactTargets({
+    configFile: options.configFile,
+    runtimeDir,
+    runtimeName: options.name,
+    artifacts: options.runtime.artifacts,
+  })
   if (!workerEntry && !hostEntry) {
     throw new Error(
       `Runtime [${options.name}] must configure a worker or host entry`,
@@ -276,10 +283,6 @@ function createRuntimeNode(options: {
           },
           owner: { type: 'runtime', name: options.name },
           outDir: resolve(runtimeDir, 'worker'),
-          emittedArtifacts: resolveRuntimeArtifacts(
-            options.configFile,
-            options.runtime.artifacts,
-          ),
         }
       : undefined,
     host: hostEntry
@@ -296,15 +299,30 @@ function createRuntimeNode(options: {
           outDir: resolve(runtimeDir, 'host'),
         }
       : undefined,
+    artifacts,
   }
 }
 
-function resolveRuntimeArtifacts(
-  configFile: string,
-  artifacts: readonly NeemArtifact[] | undefined,
-): readonly NeemArtifact[] | undefined {
-  return artifacts?.map((artifact) => ({
-    ...artifact,
-    entry: resolveRequiredBuildEntry(configFile, artifact.entry),
-  }))
+function createRuntimeArtifactTargets(options: {
+  configFile: string
+  runtimeDir: string
+  runtimeName: string
+  artifacts: readonly NeemArtifact[] | undefined
+}): readonly BuildTarget[] {
+  return (options.artifacts ?? []).map((artifact, index) => {
+    const key = `${String(index).padStart(3, '0')}-${sanitizePathPart(artifact.id)}`
+
+    return {
+      key: `runtime:${options.runtimeName}:artifact:${key}`,
+      kind: 'runtime-artifact',
+      artifact: {
+        id: artifact.id,
+        kind: artifact.kind,
+        entry: resolveRequiredBuildEntry(options.configFile, artifact.entry),
+        ...(artifact.rolldown ? { rolldown: artifact.rolldown } : {}),
+      },
+      owner: { type: 'runtime', name: options.runtimeName },
+      outDir: resolve(options.runtimeDir, 'artifacts', key),
+    } satisfies BuildTarget
+  })
 }

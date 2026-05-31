@@ -3,7 +3,7 @@ import { pathToFileURL } from 'node:url'
 
 import { LifecycleHook, LifecycleHooks } from '@nmtjs/application'
 import { Container, CoreInjectables, provision } from '@nmtjs/core'
-import { defineWorker } from '@nmtjs/neem'
+import { defineRuntimeWorker } from '@nmtjs/neem'
 import { UnrecoverableError } from 'bullmq'
 
 import type { JobsClientInstance } from '../client.ts'
@@ -15,7 +15,7 @@ import { jobWorkerPool } from '../core/injectables.ts'
 import { JobManager, QueueJobRunner } from '../manager.ts'
 import { resolveJobsWorkerConfig } from './runtime.ts'
 
-export default defineWorker<JobsWorkerData>({
+export default defineRuntimeWorker<JobsWorkerData>({
   definition: {},
   createRuntime(ctx) {
     let client: JobsClientInstance | undefined

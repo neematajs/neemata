@@ -3,15 +3,20 @@ import { defineRuntime } from '@nmtjs/neem'
 
 import type { SchedulerConfig } from '../scheduler.ts'
 
+export const schedulerConfigArtifactId = 'scheduler-config'
+
 export type SchedulerRuntimeConfigInput<
-  TConfig extends SchedulerConfig = SchedulerConfig,
+  _TConfig extends SchedulerConfig = SchedulerConfig,
 > = { config: NeemEntryInput }
 
 export function defineSchedulerRuntime<
   const TConfig extends SchedulerConfig = SchedulerConfig,
 >(config: SchedulerRuntimeConfigInput<TConfig>): NeemRuntimeConfigBase {
   return defineRuntime({
-    worker: { entry: config.config },
     host: { entry: '@nmtjs/scheduler/neem/host' },
+    threads: 0,
+    artifacts: [
+      { id: schedulerConfigArtifactId, kind: 'module', entry: config.config },
+    ],
   })
 }

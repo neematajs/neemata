@@ -6,7 +6,7 @@ import type { Logger } from '@nmtjs/core'
 import type { NeemArtifactRegistry, NeemResolvedArtifact } from './artifact.ts'
 import type { NeemMode, NeemRuntime } from './runtime.ts'
 
-export type NeemWorkerRuntimeContext<Data = unknown, Definition = unknown> = {
+export type NeemRuntimeWorkerContext<Data = unknown, Definition = unknown> = {
   mode: NeemMode
   name: string
   data: Data
@@ -17,24 +17,24 @@ export type NeemWorkerRuntimeContext<Data = unknown, Definition = unknown> = {
   port: MessagePort
 }
 
-export type NeemWorker<Data = unknown, Definition = unknown> = {
+export type NeemRuntimeWorker<Data = unknown, Definition = unknown> = {
   _: { data: Data; definition: Definition }
   definition: Definition
   createRuntime: (
-    ctx: NeemWorkerRuntimeContext<Data, Definition>,
+    ctx: NeemRuntimeWorkerContext<Data, Definition>,
   ) => MaybePromise<NeemRuntime>
 }
 
-export type InferNeemWorkerData<TWorker> = TWorker extends {
+export type InferNeemRuntimeWorkerData<TWorker> = TWorker extends {
   _: { data: infer TData }
 }
   ? TData
   : unknown
 
-export function defineWorker<
+export function defineRuntimeWorker<
   Data = unknown,
   Definition = unknown,
-  const TWorker extends NeemWorker<Data, Definition> = NeemWorker<
+  const TWorker extends NeemRuntimeWorker<Data, Definition> = NeemRuntimeWorker<
     Data,
     Definition
   >,

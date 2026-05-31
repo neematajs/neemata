@@ -191,6 +191,7 @@ async function watchConfigSignal(
 function classifyChange(change: TargetChange): WatcherEvent {
   switch (change.target.kind) {
     case 'runtime-worker':
+    case 'runtime-artifact':
       return { type: 'runtime-changed', runtimeName: getRuntimeName(change) }
     case 'runtime-host':
       return {

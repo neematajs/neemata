@@ -1,16 +1,16 @@
 import type { Server } from 'node:http'
 import { createServer } from 'node:http'
 
-import type { NeemWorkerRuntimeContext } from '@nmtjs/neem'
-import { defineWorker } from '@nmtjs/neem'
+import type { NeemRuntimeWorkerContext } from '@nmtjs/neem'
+import { defineRuntimeWorker } from '@nmtjs/neem'
 
 import { record } from './_events.ts'
 
 type HttpRuntimeData = { label: string; port: number }
 
-export default defineWorker<HttpRuntimeData>({
+export default defineRuntimeWorker<HttpRuntimeData>({
   definition: { fixture: 'http-runtime' },
-  createRuntime(ctx: NeemWorkerRuntimeContext<HttpRuntimeData>) {
+  createRuntime(ctx: NeemRuntimeWorkerContext<HttpRuntimeData>) {
     let server: Server | undefined
 
     return {

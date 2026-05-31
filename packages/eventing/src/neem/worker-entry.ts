@@ -1,16 +1,16 @@
 import { pathToFileURL } from 'node:url'
 
-import type { NeemRuntime, NeemWorkerRuntimeContext } from '@nmtjs/neem'
-import { defineWorker } from '@nmtjs/neem'
+import type { NeemRuntime, NeemRuntimeWorkerContext } from '@nmtjs/neem'
+import { defineRuntimeWorker } from '@nmtjs/neem'
 
 import type { EventingConsumer } from '../core/adapter.ts'
 import type { EventingRuntimeConfig } from './runtime.ts'
 import { handleEventingConsumerMessage } from '../core/consumer.ts'
 import { eventingConfigArtifactId } from './runtime.ts'
 
-export default defineWorker({
+export default defineRuntimeWorker({
   definition: {},
-  async createRuntime(ctx: NeemWorkerRuntimeContext<unknown, unknown>) {
+  async createRuntime(ctx: NeemRuntimeWorkerContext<unknown, unknown>) {
     const artifact = ctx.artifacts.resolve(eventingConfigArtifactId)
     if (!artifact) {
       throw new Error(`Missing eventing artifact [${eventingConfigArtifactId}]`)
@@ -29,7 +29,7 @@ class EventingRuntime implements NeemRuntime {
   protected adapter?: Awaited<ReturnType<EventingRuntimeConfig['adapter']>>
 
   constructor(
-    protected readonly ctx: NeemWorkerRuntimeContext,
+    protected readonly ctx: NeemRuntimeWorkerContext,
     protected readonly config: EventingRuntimeConfig,
   ) {}
 

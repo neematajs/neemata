@@ -7,7 +7,7 @@ import type {
   NeemRuntimeStartResult,
   NeemRuntimeUpstream,
 } from '../../public/runtime.ts'
-import type { NeemWorker } from '../../public/worker.ts'
+import type { NeemRuntimeWorker } from '../../public/worker.ts'
 import type {
   ParentMessage,
   RuntimeWorkerData,
@@ -56,12 +56,11 @@ async function createRuntime(data: RuntimeWorkerData): Promise<NeemRuntime> {
     data,
     runtimeLabel(data.runtimeName, data.name),
   )
-  logger.debug('Neem runtime worker initializing')
   logger.trace(
     { artifactId: data.artifact.id, file: data.artifact.file },
-    'Neem runtime worker artifact',
+    'Neem runtime worker initializing',
   )
-  const worker = await importDefault<NeemWorker<unknown, unknown>>(
+  const worker = await importDefault<NeemRuntimeWorker<unknown, unknown>>(
     data.artifact.file,
   )
 
@@ -75,7 +74,7 @@ async function createRuntime(data: RuntimeWorkerData): Promise<NeemRuntime> {
     artifacts: createArtifactRegistry(data.artifacts),
     port: data.port,
   })
-  logger.debug('Neem runtime worker initialized')
+  logger.trace('Neem runtime worker initialized')
   return created
 }
 
@@ -94,10 +93,9 @@ async function resolveWorkerLogger(
 
 async function stopRuntime(options: { force?: boolean } = {}): Promise<void> {
   if (runtime && (started || options.force)) {
-    logger?.debug('Stopping Neem runtime worker')
-    logger?.trace({ force: options.force }, 'Neem runtime worker stop options')
+    logger?.trace({ force: options.force }, 'Stopping Neem runtime worker')
     await runtime.stop()
-    logger?.debug('Neem runtime worker stopped')
+    logger?.trace('Neem runtime worker stopped')
   }
   started = false
 }
@@ -137,7 +135,7 @@ async function main(): Promise<void> {
   }
 
   try {
-    logger?.debug('Starting Neem runtime worker')
+    logger?.trace('Starting Neem runtime worker')
     const result = await runtime.start()
     const upstreams =
       result === undefined
@@ -146,11 +144,7 @@ async function main(): Promise<void> {
           ? (result as readonly NeemRuntimeUpstream[])
           : ((result as NeemRuntimeStartResult).upstreams ?? [])
     started = true
-    logger?.debug('Neem runtime worker ready')
-    logger?.trace(
-      { upstreams: upstreams.length },
-      'Neem runtime worker upstreams',
-    )
+    logger?.trace({ upstreams: upstreams.length }, 'Neem runtime worker ready')
     postMessage({ type: 'ready', data: { upstreams } })
   } catch (error) {
     await stopRuntime({ force: true }).catch((cleanupError) => {

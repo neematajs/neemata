@@ -1,5 +1,5 @@
-import type { NeemWorkerRuntimeContext } from '@nmtjs/neem'
-import { defineWorker } from '@nmtjs/neem'
+import type { NeemRuntimeWorkerContext } from '@nmtjs/neem'
+import { defineRuntimeWorker } from '@nmtjs/neem'
 
 import { record, wait } from './_events.ts'
 
@@ -13,10 +13,13 @@ export type RuntimeAppThreadOptions = {
 
 type RuntimeAppDefinition = { fixture: 'runtime-app' }
 
-export default defineWorker<RuntimeAppThreadOptions, RuntimeAppDefinition>({
+export default defineRuntimeWorker<
+  RuntimeAppThreadOptions,
+  RuntimeAppDefinition
+>({
   definition: { fixture: 'runtime-app' },
   createRuntime(
-    ctx: NeemWorkerRuntimeContext<
+    ctx: NeemRuntimeWorkerContext<
       RuntimeAppThreadOptions,
       RuntimeAppDefinition
     >,

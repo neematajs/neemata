@@ -186,14 +186,13 @@ export class ProxyController {
       await this.proxy.addUpstream(upstream.runtimeName, upstream.proxyUpstream)
       this.applied.set(key, upstream)
       this.failures.delete(key)
-      this.logger.debug(`Neem proxy upstream added for ${upstream.runtimeName}`)
       this.logger.trace(
         {
           runtimeName: upstream.runtimeName,
           upstream: upstream.upstream,
           count: upstream.count,
         },
-        'Neem proxy upstream',
+        'Neem proxy upstream added',
       )
     } catch (error) {
       const normalized = normalizeError(error)
@@ -214,16 +213,13 @@ export class ProxyController {
       )
       this.applied.delete(key)
       this.failures.delete(key)
-      this.logger.debug(
-        `Neem proxy upstream removed for ${upstream.runtimeName}`,
-      )
       this.logger.trace(
         {
           runtimeName: upstream.runtimeName,
           upstream: upstream.upstream,
           count: upstream.count,
         },
-        'Neem proxy upstream',
+        'Neem proxy upstream removed',
       )
     } catch (error) {
       const normalized = normalizeError(error)

@@ -46,8 +46,7 @@ export class PluginEnvironment {
 
     const pluginNames =
       this.options.manifest.plugins?.map((plugin) => plugin.name) ?? []
-    if (pluginNames.length > 0) this.logger.debug('Initializing Neem plugins')
-    this.logger.trace({ plugins: pluginNames }, 'Neem plugins')
+    this.logger.trace({ plugins: pluginNames }, 'Initializing Neem plugins')
 
     const hooks = await this.loadHooks()
     const removers: Array<() => void> = []
@@ -65,7 +64,7 @@ export class PluginEnvironment {
       )
       this.initialized = true
       if (pluginNames.length > 0) this.logger.debug('Neem plugins initialized')
-      this.logger.trace({ plugins: pluginNames }, 'Neem plugins')
+      this.logger.trace({ plugins: pluginNames }, 'Neem plugins initialized')
     } catch (error) {
       await callHostHook(this.options.hooks, this.options.logger, 'dispose', {
         mode: this.options.mode,
@@ -103,8 +102,7 @@ export class PluginEnvironment {
     for (const plugin of this.options.manifest.plugins ?? []) {
       if (!plugin.entry) continue
 
-      this.logger.debug(`Loading Neem plugin ${plugin.name}`)
-      this.logger.trace({ plugin: plugin.name }, 'Neem plugin')
+      this.logger.trace({ plugin: plugin.name }, 'Loading Neem plugin')
       const factory = await importDefault<PluginFactory>(
         resolve(this.options.outDir, plugin.entry.file),
         { cacheBust: this.options.cacheBust },
@@ -122,8 +120,7 @@ export class PluginEnvironment {
         logger: this.options.logger,
         getHealth: this.options.getHealth,
       })
-      this.logger.debug(`Neem plugin ${plugin.name} loaded`)
-      this.logger.trace({ plugin: plugin.name }, 'Neem plugin')
+      this.logger.trace({ plugin: plugin.name }, 'Neem plugin loaded')
       hooks.push(result)
     }
 

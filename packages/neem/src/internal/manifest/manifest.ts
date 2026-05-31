@@ -91,8 +91,8 @@ export function createManifest(compiled: CompiledGraph): Manifest {
       host: runtime.host
         ? toManifestArtifact(outDir, runtime.host.artifact)
         : undefined,
-      artifacts: (runtime.worker?.artifact.emittedArtifacts ?? []).map(
-        (artifact) => toManifestArtifact(outDir, artifact),
+      artifacts: runtime.artifacts.map((artifact) =>
+        toManifestArtifact(outDir, artifact.artifact),
       ),
     }
   }
