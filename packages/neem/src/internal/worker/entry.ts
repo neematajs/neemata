@@ -56,9 +56,10 @@ async function createRuntime(data: RuntimeWorkerData): Promise<NeemRuntime> {
     data,
     runtimeLabel(data.runtimeName, data.name),
   )
+  logger.debug('Neem runtime worker initializing')
   logger.trace(
     { artifactId: data.artifact.id, file: data.artifact.file },
-    'Neem runtime worker initializing',
+    'Neem runtime worker artifact',
   )
   const worker = await importDefault<NeemWorker<unknown, unknown>>(
     data.artifact.file,
@@ -74,7 +75,7 @@ async function createRuntime(data: RuntimeWorkerData): Promise<NeemRuntime> {
     artifacts: createArtifactRegistry(data.artifacts),
     port: data.port,
   })
-  logger.trace('Neem runtime worker initialized')
+  logger.debug('Neem runtime worker initialized')
   return created
 }
 
@@ -93,9 +94,10 @@ async function resolveWorkerLogger(
 
 async function stopRuntime(options: { force?: boolean } = {}): Promise<void> {
   if (runtime && (started || options.force)) {
-    logger?.trace({ force: options.force }, 'Stopping Neem runtime worker')
+    logger?.debug('Stopping Neem runtime worker')
+    logger?.trace({ force: options.force }, 'Neem runtime worker stop options')
     await runtime.stop()
-    logger?.trace('Neem runtime worker stopped')
+    logger?.debug('Neem runtime worker stopped')
   }
   started = false
 }
@@ -135,7 +137,7 @@ async function main(): Promise<void> {
   }
 
   try {
-    logger?.trace('Starting Neem runtime worker')
+    logger?.debug('Starting Neem runtime worker')
     const result = await runtime.start()
     const upstreams =
       result === undefined
@@ -144,7 +146,11 @@ async function main(): Promise<void> {
           ? (result as readonly NeemRuntimeUpstream[])
           : ((result as NeemRuntimeStartResult).upstreams ?? [])
     started = true
-    logger?.trace({ upstreams: upstreams.length }, 'Neem runtime worker ready')
+    logger?.debug('Neem runtime worker ready')
+    logger?.trace(
+      { upstreams: upstreams.length },
+      'Neem runtime worker upstreams',
+    )
     postMessage({ type: 'ready', data: { upstreams } })
   } catch (error) {
     await stopRuntime({ force: true }).catch((cleanupError) => {

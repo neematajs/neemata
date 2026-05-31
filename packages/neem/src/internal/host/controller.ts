@@ -85,17 +85,18 @@ export class HostController {
     return this.operations.run(async () => {
       if (this.state === 'running') return
       this.markState('starting')
-      this.logger.info(
+      this.logger.info('Neem server starting')
+      this.logger.trace(
         {
           mode: this.snapshot.mode,
           runtimes: Object.keys(this.snapshot.manifest.runtimes),
           outDir: this.snapshot.outDir,
         },
-        'Neem server starting',
+        'Neem server options',
       )
       this.logger.trace(
         { config: this.snapshot.manifest.config },
-        'Neem manifest config loaded',
+        'Neem manifest config',
       )
 
       try {
@@ -106,7 +107,8 @@ export class HostController {
         await this.startProxy()
         this.markState('running')
         await this.callServerHook('server:ready')
-        this.logger.info(this.getLogSnapshot(), 'Neem server ready')
+        this.logger.info('Neem server ready')
+        this.logger.trace(this.getLogSnapshot(), 'Neem server snapshot')
       } catch (error) {
         const normalized = normalizeError(error)
         this.markState('failed', normalized)
@@ -121,17 +123,18 @@ export class HostController {
   reload(snapshot: RuntimeSnapshot): Promise<void> {
     return this.operations.run(async () => {
       this.markState('reloading')
-      this.logger.debug(
+      this.logger.debug('Neem server reloading')
+      this.logger.trace(
         {
           mode: snapshot.mode,
           runtimes: Object.keys(snapshot.manifest.runtimes),
           outDir: snapshot.outDir,
         },
-        'Neem server reloading',
+        'Neem server options',
       )
       this.logger.trace(
         { config: snapshot.manifest.config },
-        'Neem manifest config reloaded',
+        'Neem manifest config',
       )
 
       try {
@@ -144,7 +147,8 @@ export class HostController {
         await this.startProxy()
         this.markState('running')
         await this.callServerHook('server:reload')
-        this.logger.debug(this.getLogSnapshot(), 'Neem server reloaded')
+        this.logger.debug('Neem server reloaded')
+        this.logger.trace(this.getLogSnapshot(), 'Neem server snapshot')
       } catch (error) {
         const normalized = normalizeError(error)
         this.markState('failed', normalized)
@@ -159,7 +163,8 @@ export class HostController {
     return this.operations.run(async () => {
       this.markState('reloading')
       this.replaceSnapshot(snapshot)
-      this.logger.debug({ runtimeName }, 'Neem runtime reloading')
+      this.logger.debug(`Neem runtime ${runtimeName} reloading`)
+      this.logger.trace({ runtimeName }, 'Neem runtime reload options')
 
       const current = this.runtimes.get(runtimeName)
       await current?.stop()
@@ -179,7 +184,8 @@ export class HostController {
         upstreams: this.runtimes.get(runtimeName)?.getUpstreams() ?? [],
       })
       this.markState('running')
-      this.logger.debug({ runtimeName }, 'Neem runtime reloaded')
+      this.logger.debug(`Neem runtime ${runtimeName} reloaded`)
+      this.logger.trace({ runtimeName }, 'Neem runtime reload result')
     })
   }
 
@@ -315,9 +321,10 @@ export class HostController {
     this.state = state
     this.lastError = error
     this.revision++
+    this.logger.debug(`Neem server state: ${previousState} -> ${state}`)
     this.logger.trace(
       { previousState, state, revision: this.revision, err: error },
-      'Neem server state changed',
+      'Neem server state',
     )
   }
 
@@ -334,7 +341,7 @@ export class HostController {
       | 'server:fail',
     error?: Error,
   ): Promise<void> {
-    this.logger.trace({ hook: name, err: error }, 'Calling Neem server hook')
+    this.logger.trace({ hook: name, err: error }, 'Neem server hook')
     return callHostHook(this.hooks, this.logger, name, {
       mode: this.snapshot.mode,
       error,

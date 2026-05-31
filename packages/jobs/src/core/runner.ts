@@ -419,7 +419,15 @@ export abstract class JobRunner<
       const wrapped = new Error(`Error during step [${stepIndex}]`, {
         cause: error,
       })
-      this.logger.error(wrapped)
+      this.logger.error(
+        {
+          err: wrapped,
+          job: job.name,
+          step: step.label || stepIndex + 1,
+          stepIndex,
+        },
+        'Job step failed',
+      )
 
       const allowRetry = await job.onErrorHandler?.({
         context: jobDependencyContext,
@@ -449,12 +457,15 @@ export abstract class JobRunner<
     params: JobRunnerRunBeforeStepParams<RunOptions>,
   ): Promise<void> {
     this.logger.debug(
+      `Executing job [${params.job.name}] step [${params.step.label || params.stepIndex + 1}]`,
+    )
+    this.logger.trace(
       {
         job: params.job.name,
         step: params.step.label || params.stepIndex + 1,
         stepIndex: params.stepIndex,
       },
-      'Executing job step',
+      'Job step',
     )
   }
 
@@ -462,12 +473,15 @@ export abstract class JobRunner<
     params: JobRunnerRunAfterStepParams<RunOptions>,
   ): Promise<void> {
     this.logger.debug(
+      `Completed job [${params.job.name}] step [${params.step.label || params.stepIndex + 1}]`,
+    )
+    this.logger.trace(
       {
         job: params.job.name,
         step: params.step.label || params.stepIndex + 1,
         stepIndex: params.stepIndex,
       },
-      'Completed job step',
+      'Job step',
     )
   }
 }

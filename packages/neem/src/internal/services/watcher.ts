@@ -39,15 +39,16 @@ export class WatcherService {
       cacheBust: true,
     })
     this.logger = createLoggerFromConfigInput('development', config.logger)
-    this.logger.info(
+    this.logger.info('Neem watcher starting')
+    this.logger.trace(
       {
         configFile: this.options.configFile,
         outDir: this.options.outDir,
         runtimes: this.options.runtimes,
       },
-      'Neem watcher starting',
+      'Neem watcher options',
     )
-    this.logger.trace({ config }, 'Neem source config loaded')
+    this.logger.trace({ config }, 'Neem source config')
 
     const graph = createBuildGraph({
       configFile: this.options.configFile,
@@ -55,13 +56,14 @@ export class WatcherService {
       config,
       runtimes: this.options.runtimes,
     })
-    this.logger.debug(
+    this.logger.debug('Neem build graph ready')
+    this.logger.trace(
       {
         runtimes: graph.runtimes.map((runtime) => runtime.name),
         plugins: graph.plugins.map((plugin) => plugin.name),
         targets: graph.targets.map(toLogTarget),
       },
-      'Neem build graph ready',
+      'Neem build graph',
     )
 
     this.configWatcher = await watchConfigSignal(this.options.configFile, () =>
@@ -76,9 +78,10 @@ export class WatcherService {
       this.options.outDir,
       createManifest(compiled),
     )
-    this.logger.info(
+    this.logger.info('Neem watcher ready')
+    this.logger.trace(
       { manifestFile: this.manifestFile, targets: compiled.targets.length },
-      'Neem watcher ready',
+      'Neem watcher manifest',
     )
     await this.emit({ type: 'ready', manifestFile: this.manifestFile })
     return this.manifestFile
@@ -106,13 +109,14 @@ export class WatcherService {
         createManifest(compiled),
       )
       const event = classifyChange(change)
-      this.logger?.debug(
+      this.logger?.debug('Neem watcher rebuild applied')
+      this.logger?.trace(
         {
           event,
           target: toLogTarget(change.target),
           manifestFile: this.manifestFile,
         },
-        'Neem watcher rebuild applied',
+        'Neem watcher rebuild',
       )
       await this.emit(event)
     } catch (error) {

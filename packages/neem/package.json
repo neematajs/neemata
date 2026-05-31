@@ -3,7 +3,9 @@
   "description": "Neem host core for running compiled runtime artifacts.",
   "type": "module",
   "scripts": {
-    "clean-build": "rm -rf ./dist"
+    "clean-build": "rm -rf ./dist",
+    "check:type": "tsgo -p tsconfig.json --noEmit",
+    "test": "vitest run --config vitest.config.ts"
   },
   "bin": {
     "neem": "./bin/neem.js"

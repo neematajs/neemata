@@ -29,9 +29,10 @@ export class EventingManager {
     const payload = event.payload.encode(input.payload)
     const headers = normalizeHeaders(input.headers)
 
+    this.logger.debug(`Producing eventing event [${event.name}]`)
     this.logger.trace(
       { event: event.name, topic: event.topic },
-      'Producing eventing event',
+      'Eventing event',
     )
 
     await this.options.adapter.produce({
@@ -42,9 +43,10 @@ export class EventingManager {
       headers,
     })
 
+    this.logger.debug(`Produced eventing event [${event.name}]`)
     this.logger.trace(
       { event: event.name, topic: event.topic },
-      'Produced eventing event',
+      'Eventing event',
     )
   }
 }

@@ -1,5 +1,7 @@
 import { resolve } from 'node:path'
 
+import type { Logger } from '@nmtjs/core'
+
 import type { NeemMode, NeemRuntimeServerHealth } from '../../public/runtime.ts'
 import type { RuntimeEvent } from './protocol.ts'
 import { HostController } from '../host/controller.ts'
@@ -20,6 +22,7 @@ export type RuntimeServiceOptions = {
 export class RuntimeService {
   private controller: HostController | undefined
   private readonly hooks = createHostHooks()
+  private logger: Logger | undefined
   private mode: NeemMode | undefined
   private outDir: string | undefined
   private runtimes: readonly string[] | undefined
@@ -31,14 +34,16 @@ export class RuntimeService {
     this.outDir = options.outDir
     this.runtimes = options.runtimes
     const snapshot = await this.loadSnapshot(options.manifestFile)
-    snapshot.logger.info(
+    this.logger = snapshot.logger
+    snapshot.logger.info('Neem runtime service starting')
+    snapshot.logger.trace(
       {
         mode: options.mode,
         outDir: options.outDir,
         manifestFile: options.manifestFile,
         runtimes: Object.keys(snapshot.manifest.runtimes),
       },
-      'Neem runtime service starting',
+      'Neem runtime service options',
     )
     const controller = new HostController({
       snapshot,
@@ -52,9 +57,10 @@ export class RuntimeService {
     this.controller = controller
     await controller.start()
     const health = controller.getHealth()
-    snapshot.logger.info(
+    snapshot.logger.info('Neem runtime service ready')
+    snapshot.logger.trace(
       { ready: health.ready, revision: health.revision },
-      'Neem runtime service ready',
+      'Neem runtime service health',
     )
     options.emit({ type: 'ready', health })
     return health
@@ -63,7 +69,8 @@ export class RuntimeService {
   async reload(manifestFile: string): Promise<NeemRuntimeServerHealth> {
     const controller = this.requireController()
     const snapshot = await this.loadSnapshot(manifestFile)
-    snapshot.logger.debug({ manifestFile }, 'Neem runtime service reloading')
+    snapshot.logger.debug('Neem runtime service reloading')
+    snapshot.logger.trace({ manifestFile }, 'Neem runtime service manifest')
     await controller.reload(snapshot)
     return controller.getHealth()
   }
@@ -75,8 +82,11 @@ export class RuntimeService {
     const controller = this.requireController()
     const snapshot = await this.loadSnapshot(manifestFile)
     snapshot.logger.debug(
+      `Neem runtime service reloading runtime ${runtimeName}`,
+    )
+    snapshot.logger.trace(
       { manifestFile, runtimeName },
-      'Neem runtime service reloading runtime',
+      'Neem runtime service runtime reload options',
     )
     await controller.reloadRuntime(runtimeName, snapshot)
     return controller.getHealth()
@@ -85,7 +95,9 @@ export class RuntimeService {
   async stop(): Promise<void> {
     const controller = this.controller
     this.controller = undefined
+    this.logger?.debug('Neem runtime service stopping')
     await controller?.stop()
+    this.logger?.debug('Neem runtime service stopped')
   }
 
   getHealth(): NeemRuntimeServerHealth {

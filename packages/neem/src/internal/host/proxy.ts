@@ -75,12 +75,13 @@ export class ProxyController {
       }
       await this.proxy.start()
       this.running = true
-      this.logger.info(
+      this.logger.info('Neem proxy started')
+      this.logger.trace(
         {
           listen: `${this.config.hostname}:${this.config.port}`,
           upstreams: this.desired.size,
         },
-        'Neem proxy started',
+        'Neem proxy upstreams',
       )
     } catch (error) {
       const proxy = this.proxy
@@ -185,13 +186,14 @@ export class ProxyController {
       await this.proxy.addUpstream(upstream.runtimeName, upstream.proxyUpstream)
       this.applied.set(key, upstream)
       this.failures.delete(key)
+      this.logger.debug(`Neem proxy upstream added for ${upstream.runtimeName}`)
       this.logger.trace(
         {
           runtimeName: upstream.runtimeName,
           upstream: upstream.upstream,
           count: upstream.count,
         },
-        'Neem proxy upstream added',
+        'Neem proxy upstream',
       )
     } catch (error) {
       const normalized = normalizeError(error)
@@ -212,13 +214,16 @@ export class ProxyController {
       )
       this.applied.delete(key)
       this.failures.delete(key)
+      this.logger.debug(
+        `Neem proxy upstream removed for ${upstream.runtimeName}`,
+      )
       this.logger.trace(
         {
           runtimeName: upstream.runtimeName,
           upstream: upstream.upstream,
           count: upstream.count,
         },
-        'Neem proxy upstream removed',
+        'Neem proxy upstream',
       )
     } catch (error) {
       const normalized = normalizeError(error)

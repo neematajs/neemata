@@ -105,13 +105,14 @@ export default defineRuntimeHost(async (params) => {
           pool.add(thread)
         }
         state.pools.set(poolName, pool)
-        params.logger.info(
+        params.logger.info(`Neem jobs runner pool [${poolName}] started`)
+        params.logger.trace(
           {
             pool: poolName,
             threads: pool.handles.length,
             jobsPerThread: poolConfig.jobs,
           },
-          'Neem jobs runner pool started',
+          'Neem jobs runner pool',
         )
 
         for (const job of poolJobs) {
@@ -162,14 +163,15 @@ export default defineRuntimeHost(async (params) => {
           })
 
           state.queueWorkers.add(worker)
-          params.logger.info(
+          params.logger.info(`Neem jobs queue worker [${job.name}] started`)
+          params.logger.trace(
             {
               job: job.name,
               queue: getJobQueueName(job),
               pool: poolName,
               concurrency,
             },
-            'Neem jobs queue worker started',
+            'Neem jobs queue worker',
           )
         }
       }

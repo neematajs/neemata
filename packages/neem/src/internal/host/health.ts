@@ -85,14 +85,15 @@ export class HealthProbe {
     })
 
     this.server = server
-    this.logger.info(
+    this.logger.info('Neem health probe started')
+    this.logger.trace(
       {
         hostname: this.hostname,
         port: this.port,
         health: this.healthPath,
         ready: this.readyPath,
       },
-      'Neem health probe started',
+      'Neem health probe options',
     )
   }
 

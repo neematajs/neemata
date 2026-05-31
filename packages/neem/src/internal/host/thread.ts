@@ -22,7 +22,7 @@ import type {
 } from '../worker/protocol.ts'
 import { callHostHook } from '../plugins/hooks.ts'
 import { childLogger, runtimeLabel } from '../shared/logger.ts'
-import { normalizeError, wait } from '../shared/utils.ts'
+import { normalizeError, raceWithTimeout } from '../shared/utils.ts'
 
 export type ThreadPlan = {
   name: string
@@ -129,7 +129,8 @@ export class ThreadController {
     this.readyAt = undefined
     this.stoppedAt = undefined
     this.lastError = undefined
-    this.logger.trace({ artifactId: this.artifactId }, 'Neem worker starting')
+    this.logger.debug('Neem worker starting')
+    this.logger.trace({ artifactId: this.artifactId }, 'Neem worker artifact')
 
     const ready = createFuture<void>()
     this.ready = ready
@@ -153,9 +154,10 @@ export class ThreadController {
     try {
       await ready.promise
       await this.callWorkerHook('worker:ready')
+      this.logger.debug('Neem worker ready')
       this.logger.trace(
         { upstreams: this.upstreams.length },
-        'Neem worker ready',
+        'Neem worker upstreams',
       )
     } catch (error) {
       const normalized = normalizeError(error)
@@ -178,7 +180,7 @@ export class ThreadController {
     this.stopping = true
     this.state = 'stopping'
     this.ready?.reject(new Error(`Worker [${this.name}] stopped before ready`))
-    this.logger.trace('Neem worker stopping')
+    this.logger.debug('Neem worker stopping')
     try {
       worker.postMessage({ type: 'stop' })
     } catch {}
@@ -186,12 +188,11 @@ export class ThreadController {
     let exited = false
     try {
       if (this.exited) {
-        await Promise.race([
-          this.exited.promise.then(() => {
-            exited = true
-          }),
-          wait(STOP_TIMEOUT_MS),
-        ])
+        const result = await raceWithTimeout(
+          this.exited.promise,
+          STOP_TIMEOUT_MS,
+        )
+        exited = !result.timedOut
       }
     } finally {
       if (!exited) {
@@ -206,7 +207,7 @@ export class ThreadController {
       this.upstreams = []
       this.markStopped()
       await this.callWorkerHook('worker:stop')
-      this.logger.trace('Neem worker stopped')
+      this.logger.debug('Neem worker stopped')
     }
   }
 

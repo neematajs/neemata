@@ -457,7 +457,8 @@ function createInfoProcedure(
     meta: config.meta,
     timeout: config.timeout,
     handler: (ctx: DependencyContext<JobManagerDeps>) => {
-      ctx.logger.trace({ jobName: job.options.name }, 'Getting job info')
+      ctx.logger.debug(`Getting job [${job.options.name}] info`)
+      ctx.logger.trace({ jobName: job.options.name }, 'Job info query')
       return ctx.jobManager.getInfo(job)
     },
   })
@@ -485,6 +486,7 @@ function createListProcedure(
     meta: config.meta,
     timeout: config.timeout,
     handler: async (ctx: DependencyContext<JobManagerDeps>, input) => {
+      ctx.logger.debug(`Listing [${job.options.name}] jobs`)
       ctx.logger.trace(
         {
           jobName: job.options.name,
@@ -492,16 +494,17 @@ function createListProcedure(
           limit: input.limit,
           status: input.status,
         },
-        'Listing jobs',
+        'Jobs list query',
       )
       const result = await ctx.jobManager.list(job, {
         page: input.page,
         limit: input.limit,
         status: input.status as JobStatus[],
       })
+      ctx.logger.debug(`Listed [${job.options.name}] jobs`)
       ctx.logger.trace(
         { jobName: job.options.name, total: result.total, pages: result.pages },
-        'Jobs listed',
+        'Jobs list result',
       )
       return result
     },
@@ -530,14 +533,18 @@ function createGetProcedure(
     meta: config.meta,
     timeout: config.timeout,
     handler: async (ctx: DependencyContext<JobManagerDeps>, input) => {
+      ctx.logger.debug(`Getting [${job.options.name}] job [${input.id}]`)
       ctx.logger.trace(
         { jobName: job.options.name, id: input.id },
-        'Getting job',
+        'Job get query',
       )
       const result = await ctx.jobManager.get(job, input.id)
+      ctx.logger.debug(
+        `[${job.options.name}] job [${input.id}] ${result ? 'found' : 'not found'}`,
+      )
       ctx.logger.trace(
         { jobName: job.options.name, id: input.id, found: result !== null },
-        'Job retrieved',
+        'Job get result',
       )
       return result
     },
@@ -568,21 +575,20 @@ function createAddProcedure(
     handler: async (ctx: DependencyContext<JobManagerDeps>, input) => {
       let jobData = input.data
 
-      ctx.logger.debug(
+      ctx.logger.debug(`Adding [${job.options.name}] job`)
+      ctx.logger.trace(
         {
           jobName: job.options.name,
           jobId: input.jobId,
           priority: input.priority,
         },
-        'Adding job',
+        'Job add options',
       )
 
       // Call beforeAdd hook if provided
       if (config.beforeAdd) {
-        ctx.logger.trace(
-          { jobName: job.options.name },
-          'Running beforeAdd hook',
-        )
+        ctx.logger.debug(`Running [${job.options.name}] beforeAdd hook`)
+        ctx.logger.trace({ jobName: job.options.name }, 'Job beforeAdd hook')
         jobData = await config.beforeAdd(ctx as any, jobData)
       }
 
@@ -595,13 +601,18 @@ function createAddProcedure(
 
       const result = { id: queueResult.id!, name: queueResult.name }
 
-      ctx.logger.info({ jobName: job.options.name, id: result.id }, 'Job added')
+      ctx.logger.info(`Added [${job.options.name}] job [${result.id}]`)
+      ctx.logger.trace(
+        { jobName: job.options.name, id: result.id },
+        'Job add result',
+      )
 
       // Call afterAdd hook if provided
       if (config.afterAdd) {
+        ctx.logger.debug(`Running [${job.options.name}] afterAdd hook`)
         ctx.logger.trace(
           { jobName: job.options.name, id: result.id },
-          'Running afterAdd hook',
+          'Job afterAdd hook',
         )
         await config.afterAdd(ctx as any, result, jobData)
       }
@@ -634,32 +645,36 @@ function createRetryProcedure(
     handler: async (ctx: DependencyContext<JobManagerDeps>, input) => {
       const clearState = input.clearState ?? config.clearState
 
-      ctx.logger.debug(
+      ctx.logger.debug(`Retrying [${job.options.name}] job [${input.id}]`)
+      ctx.logger.trace(
         { jobName: job.options.name, id: input.id, clearState },
-        'Retrying job',
+        'Job retry options',
       )
 
       // Call beforeRetry hook if provided
       if (config.beforeRetry) {
+        ctx.logger.debug(`Running [${job.options.name}] beforeRetry hook`)
         ctx.logger.trace(
           { jobName: job.options.name, id: input.id },
-          'Running beforeRetry hook',
+          'Job beforeRetry hook',
         )
         await config.beforeRetry(ctx as any, { id: input.id, clearState })
       }
 
       await ctx.jobManager.retry(job, input.id, { clearState })
 
+      ctx.logger.debug(`Retried [${job.options.name}] job [${input.id}]`)
       ctx.logger.trace(
         { jobName: job.options.name, id: input.id },
-        'Job retried',
+        'Job retry result',
       )
 
       // Call afterRetry hook if provided
       if (config.afterRetry) {
+        ctx.logger.debug(`Running [${job.options.name}] afterRetry hook`)
         ctx.logger.trace(
           { jobName: job.options.name, id: input.id },
-          'Running afterRetry hook',
+          'Job afterRetry hook',
         )
         await config.afterRetry(ctx as any, { id: input.id, clearState })
       }
@@ -688,32 +703,36 @@ function createCancelProcedure(
     meta: config.meta,
     timeout: config.timeout,
     handler: async (ctx: DependencyContext<JobManagerDeps>, input) => {
-      ctx.logger.debug(
+      ctx.logger.debug(`Canceling [${job.options.name}] job [${input.id}]`)
+      ctx.logger.trace(
         { jobName: job.options.name, id: input.id },
-        'Canceling job',
+        'Job cancel options',
       )
 
       // Call beforeCancel hook if provided
       if (config.beforeCancel) {
+        ctx.logger.debug(`Running [${job.options.name}] beforeCancel hook`)
         ctx.logger.trace(
           { jobName: job.options.name, id: input.id },
-          'Running beforeCancel hook',
+          'Job beforeCancel hook',
         )
         await config.beforeCancel(ctx as any, { id: input.id })
       }
 
       await ctx.jobManager.cancel(job, input.id)
 
-      ctx.logger.info(
+      ctx.logger.info(`Canceled [${job.options.name}] job [${input.id}]`)
+      ctx.logger.trace(
         { jobName: job.options.name, id: input.id },
-        'Job canceled',
+        'Job cancel result',
       )
 
       // Call afterCancel hook if provided
       if (config.afterCancel) {
+        ctx.logger.debug(`Running [${job.options.name}] afterCancel hook`)
         ctx.logger.trace(
           { jobName: job.options.name, id: input.id },
-          'Running afterCancel hook',
+          'Job afterCancel hook',
         )
         await config.afterCancel(ctx as any, { id: input.id })
       }
@@ -742,32 +761,36 @@ function createRemoveProcedure(
     meta: config.meta,
     timeout: config.timeout,
     handler: async (ctx: DependencyContext<JobManagerDeps>, input) => {
+      ctx.logger.debug(`Removing [${job.options.name}] job [${input.id}]`)
       ctx.logger.trace(
         { jobName: job.options.name, id: input.id },
-        'Removing job',
+        'Job remove options',
       )
 
       // Call beforeRemove hook if provided
       if (config.beforeRemove) {
+        ctx.logger.debug(`Running [${job.options.name}] beforeRemove hook`)
         ctx.logger.trace(
           { jobName: job.options.name, id: input.id },
-          'Running beforeRemove hook',
+          'Job beforeRemove hook',
         )
         await config.beforeRemove(ctx as any, { id: input.id })
       }
 
       await ctx.jobManager.remove(job, input.id)
 
-      ctx.logger.info(
+      ctx.logger.info(`Removed [${job.options.name}] job [${input.id}]`)
+      ctx.logger.trace(
         { jobName: job.options.name, id: input.id },
-        'Job removed',
+        'Job remove result',
       )
 
       // Call afterRemove hook if provided
       if (config.afterRemove) {
+        ctx.logger.debug(`Running [${job.options.name}] afterRemove hook`)
         ctx.logger.trace(
           { jobName: job.options.name, id: input.id },
-          'Running afterRemove hook',
+          'Job afterRemove hook',
         )
         await config.afterRemove(ctx as any, { id: input.id })
       }

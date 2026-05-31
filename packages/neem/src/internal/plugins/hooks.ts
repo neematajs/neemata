@@ -43,7 +43,7 @@ export async function callHostHook<Name extends keyof HostHookMap>(
       if (callbacks.length > 0) {
         hookLogger.trace(
           { hook: hookName, callbacks: callbacks.length },
-          'Calling Neem host hook callbacks',
+          'Neem host hook callbacks',
         )
       }
       for (const callback of callbacks) {

@@ -14,7 +14,11 @@ import type {
   HostRunnerResponse,
   HostRunnerResult,
 } from './runner-protocol.ts'
-import { deserializeError, serializeError, wait } from '../shared/utils.ts'
+import {
+  deserializeError,
+  raceWithTimeout,
+  serializeError,
+} from '../shared/utils.ts'
 import { getTransferList } from './runner-protocol.ts'
 
 export type HostRunnerOptions = {
@@ -34,6 +38,7 @@ export class HostRunner {
   private ready: ReturnType<typeof createFuture<void>> | undefined
   private exited: ReturnType<typeof createFuture<void>> | undefined
   private stopping = false
+  private failed = false
 
   constructor(private readonly options: HostRunnerOptions) {}
 
@@ -41,6 +46,7 @@ export class HostRunner {
     if (this.worker) return
 
     this.stopping = false
+    this.failed = false
     this.ready = createFuture<void>()
     this.exited = createFuture<void>()
     const worker = new Worker(resolveHostRunnerEntry(), {
@@ -66,6 +72,7 @@ export class HostRunner {
   }
 
   async callStop(threads: readonly NeemRuntimeThreadHandle[]): Promise<void> {
+    if (!this.worker) return
     await this.request({ id: 0, type: 'stop' })
   }
 
@@ -73,6 +80,7 @@ export class HostRunner {
     error: Error,
     threads: readonly NeemRuntimeThreadHandle[],
   ): Promise<void> {
+    if (!this.worker) return
     await this.request({ id: 0, type: 'fail', error: serializeError(error) })
   }
 
@@ -85,12 +93,11 @@ export class HostRunner {
     try {
       await this.request({ id: 0, type: 'shutdown' })
       if (this.exited) {
-        await Promise.race([
-          this.exited.promise.then(() => {
-            exited = true
-          }),
-          wait(STOP_TIMEOUT_MS),
-        ])
+        const result = await raceWithTimeout(
+          this.exited.promise,
+          STOP_TIMEOUT_MS,
+        )
+        exited = !result.timedOut
       }
     } finally {
       if (!exited) await worker.terminate().catch(() => undefined)
@@ -139,6 +146,7 @@ export class HostRunner {
   private handleExit(code: number): void {
     this.exited?.resolve()
     this.ready?.reject(new Error(`Neem host runner exited with code [${code}]`))
+    this.worker = undefined
 
     if (!this.stopping) {
       this.handleFailure(
@@ -148,6 +156,8 @@ export class HostRunner {
   }
 
   private handleFailure(error: Error): void {
+    if (this.failed) return
+    this.failed = true
     this.failPending(error)
     void this.options.onFailure?.(error)
   }

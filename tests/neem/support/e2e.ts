@@ -41,6 +41,7 @@ export function spawnNode(
   const events: NeemProbeEvent[] = []
   let stdout = ''
   let stderr = ''
+  let exitState: { code: number | null; signal: string | null } | undefined
 
   const child = spawn(process.execPath, args, {
     cwd: options.cwd,
@@ -66,7 +67,10 @@ export function spawnNode(
   const exit = new Promise<{ code: number | null; signal: string | null }>(
     (resolveExit, reject) => {
       child.once('error', reject)
-      child.once('exit', (code, signal) => resolveExit({ code, signal }))
+      child.once('exit', (code, signal) => {
+        exitState = { code, signal }
+        resolveExit(exitState)
+      })
     },
   )
 
@@ -76,14 +80,30 @@ export function spawnNode(
     stderr: () => stderr,
     events: () => events,
     async waitForEvent(predicate, timeoutMs = 10_000) {
-      return await waitFor(
-        () => events.find(predicate),
-        timeoutMs,
-        () =>
-          [
-            `events:\n${JSON.stringify(events, null, 2)}`,
-            formatProcessOutput(stdout, stderr),
-          ].join('\n'),
+      const started = Date.now()
+      while (Date.now() - started < timeoutMs) {
+        const event = events.find(predicate)
+        if (event) return event
+
+        if (exitState) {
+          throw new Error(
+            [
+              `Process exited before expected event with code ${exitState.code} and signal ${exitState.signal}`,
+              `events:\n${JSON.stringify(events, null, 2)}`,
+              formatProcessOutput(stdout, stderr),
+            ].join('\n'),
+          )
+        }
+
+        await wait(25)
+      }
+
+      throw new Error(
+        [
+          `Timed out after ${timeoutMs}ms`,
+          `events:\n${JSON.stringify(events, null, 2)}`,
+          formatProcessOutput(stdout, stderr),
+        ].join('\n'),
       )
     },
     waitForExit: () => exit,
@@ -207,4 +227,5 @@ export type RuntimeEvent = {
   mode?: string
   data?: Record<string, unknown>
   definition?: { fixture?: string }
+  [key: string]: unknown
 }

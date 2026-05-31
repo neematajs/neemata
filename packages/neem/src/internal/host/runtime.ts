@@ -67,12 +67,13 @@ export class RuntimeController {
     this.stopped = false
     const hostParams = this.createHostParams()
     this.hostParams = hostParams
-    hostParams.logger.debug(
+    hostParams.logger.debug('Neem runtime starting')
+    hostParams.logger.trace(
       {
         host: Boolean(hostParams.hostArtifact),
         defaultThreads: hostParams.defaultThreads.length,
       },
-      'Neem runtime starting',
+      'Neem runtime options',
     )
 
     try {
@@ -87,6 +88,7 @@ export class RuntimeController {
         defaultThreads: hostParams.defaultThreads,
         plans: plan?.threads,
       })
+      hostParams.logger.debug('Neem runtime thread topology resolved')
       hostParams.logger.trace(
         {
           threads: threadPlans.map((plan) => ({
@@ -95,7 +97,7 @@ export class RuntimeController {
             owner: plan.artifact.owner,
           })),
         },
-        'Neem runtime thread topology resolved',
+        'Neem runtime thread topology',
       )
       this.threads = threadPlans.map(
         (plan, index) =>
@@ -114,9 +116,10 @@ export class RuntimeController {
       const upstreams = this.getUpstreams()
       await this.host?.callStart(this.getThreadHandles(), upstreams)
       await this.callRuntimeHook('runtime:ready', upstreams)
-      hostParams.logger.debug(
+      hostParams.logger.debug('Neem runtime ready')
+      hostParams.logger.trace(
         { threads: this.threads.length, upstreams: upstreams.length },
-        'Neem runtime ready',
+        'Neem runtime summary',
       )
     } catch (error) {
       const normalized = normalizeError(error)
@@ -142,9 +145,10 @@ export class RuntimeController {
     this.host = undefined
     this.hostParams = undefined
     this.threads = []
-    hostParams?.logger.debug(
+    hostParams?.logger.debug('Neem runtime stopping')
+    hostParams?.logger.trace(
       { threads: threads.length },
-      'Neem runtime stopping',
+      'Neem runtime stop options',
     )
 
     let hostError: Error | undefined
@@ -181,8 +185,12 @@ export class RuntimeController {
     thread: ThreadController,
   ): Promise<void> {
     this.hostParams?.logger.warn(
-      { err: error, thread: thread.name },
-      'Neem runtime worker failed',
+      { err: error },
+      `Neem runtime worker ${thread.name} failed`,
+    )
+    this.hostParams?.logger.trace(
+      { thread: thread.name },
+      'Neem runtime worker failure',
     )
     await this.callHostFail(error)
     await this.callRuntimeHook('runtime:fail', undefined, error)
@@ -238,11 +246,16 @@ export class RuntimeController {
     while (this.restartAttempts < policy.attempts) {
       const attempt = this.restartAttempts + 1
       this.restartAttempts = attempt
+      const delayMs = getRecoveryDelay(policy, attempt)
       this.hostParams?.logger.warn(
-        { err: lastError, attempt, attempts: policy.attempts },
-        'Restarting Neem runtime after failure',
+        { err: lastError },
+        `Restarting Neem runtime after failure (${attempt}/${policy.attempts})`,
       )
-      await wait(getRecoveryDelay(policy, attempt))
+      this.hostParams?.logger.trace(
+        { attempt, attempts: policy.attempts, delayMs },
+        'Neem runtime recovery policy',
+      )
+      await wait(delayMs)
       if (this.stopped) return
 
       try {
@@ -355,7 +368,7 @@ export class RuntimeController {
   ): Promise<void> {
     this.hostParams?.logger.trace(
       { hook: name, upstreams: upstreams?.length, err: error },
-      'Calling Neem runtime hook',
+      'Neem runtime hook',
     )
     return callHostHook(
       this.options.hooks,

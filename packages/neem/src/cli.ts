@@ -4,18 +4,24 @@ import { createFuture, OperationQueue } from '@nmtjs/common'
 import { defineCommand } from 'citty'
 
 import type {
+  WorkerServiceStopCompleteEvent,
+  WorkerServiceStopSlowEvent,
+  WorkerServiceStopTimeoutEvent,
+} from './internal/services/client.ts'
+import type {
   RuntimeEvent,
   RuntimeResult,
   WatcherEvent,
   WatcherResult,
 } from './internal/services/protocol.ts'
+import type { NeemTestProbe } from './internal/shared/test-probe.ts'
 import { buildNeem } from './internal/commands/build.ts'
 import { MANIFEST_FILE } from './internal/manifest/manifest.ts'
 import {
   resolveServiceEntry,
   WorkerServiceClient,
 } from './internal/services/client.ts'
-import { createNeemTestProbe, type NeemTestProbe } from './internal/shared/test-probe.ts'
+import { createNeemTestProbe } from './internal/shared/test-probe.ts'
 import {
   deserializeError,
   normalizeError,
@@ -83,6 +89,7 @@ export const startCommand = defineCommand({
     probe?.emit('cli:start:start')
 
     const runtime = createRuntimeClient({
+      probe,
       onEvent(event) {
         probe?.emit(`runtime:${event.type}`, normalizeEvent(event))
         if (event.type === 'stopped') closed.resolve()
@@ -222,6 +229,7 @@ class DevSupervisor {
   private async startWatcher(): Promise<void> {
     if (this.stopped) return
     const watcher = createWatcherClient({
+      probe: this.options.probe,
       onEvent: (event) => {
         this.options.probe?.emit(`watcher:${event.type}`, normalizeEvent(event))
         void this.events
@@ -274,6 +282,7 @@ class DevSupervisor {
     if (!this.manifestFile) return
     await this.stopRuntime()
     const runtime = createRuntimeClient({
+      probe: this.options.probe,
       onEvent: (event) => {
         this.options.probe?.emit(`runtime:${event.type}`, normalizeEvent(event))
         if (event.type === 'error') {
@@ -317,23 +326,64 @@ class DevSupervisor {
 }
 
 function createWatcherClient(options: {
+  probe?: NeemTestProbe
   onEvent: (event: WatcherEvent) => void
   onFailure: (error: Error) => void
 }): WatcherClient {
   return new WorkerServiceClient<WatcherEvent, WatcherResult>({
     entry: resolveServiceEntry('watcher-entry'),
+    serviceName: 'watcher',
+    onStopComplete: (event) => reportServiceStopComplete(options.probe, event),
+    onStopSlow: (event) => reportServiceStopSlow(options.probe, event),
+    onStopTimeout: (event) => reportServiceStopTimeout(options.probe, event),
     ...options,
   })
 }
 
 function createRuntimeClient(options: {
+  probe?: NeemTestProbe
   onEvent: (event: RuntimeEvent) => void
   onFailure: (error: Error) => void
 }): RuntimeClient {
   return new WorkerServiceClient<RuntimeEvent, RuntimeResult>({
     entry: resolveServiceEntry('runtime-entry'),
+    serviceName: 'runtime',
+    onStopComplete: (event) => reportServiceStopComplete(options.probe, event),
+    onStopSlow: (event) => reportServiceStopSlow(options.probe, event),
+    onStopTimeout: (event) => reportServiceStopTimeout(options.probe, event),
     ...options,
   })
+}
+
+function reportServiceStopSlow(
+  probe: NeemTestProbe | undefined,
+  event: WorkerServiceStopSlowEvent,
+): void {
+  probe?.emit('service:stop-slow', event)
+  process.stderr.write(
+    `Neem ${event.serviceName} service worker still stopping after ${event.elapsedMs}ms\n`,
+  )
+}
+
+function reportServiceStopComplete(
+  probe: NeemTestProbe | undefined,
+  event: WorkerServiceStopCompleteEvent,
+): void {
+  probe?.emit('service:stop-complete', event)
+  const action = event.exited ? 'stopped' : 'did not stop'
+  process.stderr.write(
+    `Neem ${event.serviceName} service worker ${action} after ${event.elapsedMs}ms\n`,
+  )
+}
+
+function reportServiceStopTimeout(
+  probe: NeemTestProbe | undefined,
+  event: WorkerServiceStopTimeoutEvent,
+): void {
+  probe?.emit('service:stop-timeout', event)
+  process.stderr.write(
+    `Neem ${event.serviceName} service stop timed out after ${event.timeoutMs}ms; terminating worker\n`,
+  )
 }
 
 function parseRuntimes(runtime?: string): string[] | undefined {

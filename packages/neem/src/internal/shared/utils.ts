@@ -1,4 +1,6 @@
+import type { TimerOptions } from 'node:timers'
 import { resolve } from 'node:path'
+import { setTimeout as sleep } from 'node:timers/promises'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 export type EntryModule<T> = { default: T }
@@ -37,8 +39,25 @@ export function deserializeError(data: SerializedError): Error {
   return error
 }
 
-export function wait(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
+export function wait(ms: number, options?: TimerOptions): Promise<void> {
+  return sleep(ms, undefined, options)
+}
+
+export async function raceWithTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+): Promise<{ timedOut: false; value: T } | { timedOut: true }> {
+  const timeout = new AbortController()
+  try {
+    return await Promise.race([
+      promise.then((value) => ({ timedOut: false as const, value })),
+      wait(ms, { signal: timeout.signal }).then(() => ({
+        timedOut: true as const,
+      })),
+    ])
+  } finally {
+    timeout.abort()
+  }
 }
 
 export function toFilePath(entry: string | URL, cwd = process.cwd()): string {
