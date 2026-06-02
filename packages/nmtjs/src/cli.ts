@@ -75,9 +75,8 @@ const mainCommand = defineCommand({
     applicationImports = {}
     const currentPkg = resolver.sync(process.cwd(), './package.json')
 
-    for (const [appName, { specifier: appSpecifier, type }] of Object.entries(
-      config.applications,
-    )) {
+    for (const [appName, application] of Object.entries(config.applications)) {
+      const { specifier: appSpecifier, type } = application
       const resolution = resolver.sync(process.cwd(), appSpecifier)
       if (resolution.error)
         throw new Error(

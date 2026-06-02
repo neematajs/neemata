@@ -15,6 +15,7 @@ import {
   createContractProcedure,
   createContractRouter,
   createFilter,
+  defineApplicationHost,
   createGuard,
   createHook,
   createMeta,
@@ -42,6 +43,7 @@ import {
 
 export namespace neemata {
   export const app = defineApplication
+  export const host = defineApplicationHost
   export const server = defineServer
   export const injectables = Object.freeze({
     ...CoreInjectables,
@@ -92,6 +94,7 @@ export { t } from '@nmtjs/type'
 
 export {
   ApiError,
+  defineApplicationHost,
   defineApplication,
   LifecycleHook,
 } from '@nmtjs/application'

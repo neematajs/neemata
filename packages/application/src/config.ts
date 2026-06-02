@@ -1,10 +1,5 @@
 import type { LazyInjectable, Scope } from '@nmtjs/core'
-import type {
-  ConnectionIdentity,
-  GatewayOptions,
-  ProxyableTransportType,
-  Transport,
-} from '@nmtjs/gateway'
+import type { ProxyableTransportType, Transport } from '@nmtjs/gateway'
 import type { ConnectionType } from '@nmtjs/protocol'
 import { assertUniqueMetaBindings } from '@nmtjs/core'
 
@@ -39,17 +34,10 @@ export type ApplicationTransport<
 
 export interface ApplicationConfig<
   Router extends AnyRootRouter = AnyRootRouter,
-  Transports extends Record<string, ApplicationTransport> = Record<
-    string,
-    ApplicationTransport
-  >,
 > {
   [kApplicationConfig]: any
   router: Router
   api: Pick<ApiOptions, 'timeout'>
-  gateway: Pick<GatewayOptions, 'streamTimeouts' | 'heartbeat'>
-  transports: Transports
-  identity?: ConnectionIdentity
   plugins: RuntimePlugin[]
   filters: AnyFilter[]
   middlewares: AnyMiddleware[]
@@ -59,19 +47,12 @@ export interface ApplicationConfig<
   lifecycleHooks: LifecycleHooks['_']['config']
 }
 
-export function defineApplication<
-  R extends AnyRootRouter,
-  T extends Record<string, ApplicationTransport> = Record<
-    string,
-    ApplicationTransport
-  >,
->(
-  options: Pick<ApplicationConfig<R, T>, 'router'> &
-    Partial<Omit<ApplicationConfig<R, T>, 'router'>>,
+export function defineApplication<R extends AnyRootRouter>(
+  options: Pick<ApplicationConfig<R>, 'router'> &
+    Partial<Omit<ApplicationConfig<R>, 'router'>>,
 ) {
   const {
     router,
-    transports = {},
     guards = [],
     middlewares = [],
     meta = [],
@@ -80,8 +61,6 @@ export function defineApplication<
     filters = [] as ApplicationConfig['filters'],
     hooks = [] as ApplicationConfig['hooks'],
     lifecycleHooks = {},
-    gateway = {},
-    identity: identityResolver,
   } = options
 
   assertUniqueMetaBindings(meta, 'application config')
@@ -89,9 +68,7 @@ export function defineApplication<
   return Object.freeze({
     [kApplicationConfig]: true,
     router,
-    transports,
     api,
-    gateway,
     filters,
     plugins,
     guards,
@@ -99,8 +76,7 @@ export function defineApplication<
     meta,
     hooks,
     lifecycleHooks,
-    identity: identityResolver,
-  } satisfies AnyApplicationConfig) as ApplicationConfig<R, T>
+  } satisfies AnyApplicationConfig) as ApplicationConfig<R>
 }
 
 export function isApplicationConfig(value: any): value is ApplicationConfig {

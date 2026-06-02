@@ -1,6 +1,6 @@
 ---
 name: use-neemata
-description: 'Answer questions about the Neemata framework and help build RPC applications with `nmtjs` and related `@nmtjs/*` client packages. Use for Neemata APIs such as `n.procedure`, `n.router`, `n.rootRouter`, `n.app`, `n.server`, guards, middleware, metadata bindings, dependency injection scopes, transports, streaming, blobs, contracts, background jobs, and type-safe clients.'
+description: 'Answer questions about the Neemata framework and help build RPC applications with `nmtjs` and related `@nmtjs/*` client packages. Use for Neemata APIs such as `n.procedure`, `n.router`, `n.rootRouter`, `n.app`, `n.host`, `n.server`, guards, middleware, metadata bindings, dependency injection scopes, transports, streaming, blobs, contracts, background jobs, and type-safe clients.'
 ---
 
 ## Prerequisites
@@ -14,7 +14,7 @@ packages are installed:
 For server-side code, prefer the `nmtjs` umbrella package. Do not install most
 internal `@nmtjs/*` packages directly for application/router/DI usage. Server
 transport packages (`@nmtjs/ws-transport`, `@nmtjs/http-transport`) remain
-separate dependencies for application definitions:
+separate dependencies for application host definitions:
 
 ```bash
 pnpm add nmtjs @nmtjs/ws-transport @nmtjs/http-transport
@@ -59,7 +59,7 @@ import {
 } from 'nmtjs'
 ```
 
-- `n` — Namespace with all builder functions (`n.procedure`, `n.router`, `n.meta`, `n.app`, `n.server`, etc.)
+- `n` — Namespace with all builder functions (`n.procedure`, `n.router`, `n.meta`, `n.app`, `n.host`, `n.server`, etc.)
 - `t` — Type system (wraps zod/mini with encode/decode, e.g., `t.string()`, `t.object()`, `t.date()`)
 - `c` — Contract definitions (`c.procedure()`, `c.router()`, `c.event()`, `c.blob()`)
 - `MetadataKind` — Constrains metadata tokens (for example static-only metadata)
@@ -71,10 +71,16 @@ Neemata uses a layered architecture:
 
 1. **Config** (`neemata.config.ts`) — defines applications and server entry point via `defineConfig()`
 2. **Server** (`n.server()`) — orchestrates workers, proxy, store, metrics
-3. **Application** (`n.app()`) — defines transports, router, guards, middleware, and app-level meta for one app
-4. **Router** (`n.rootRouter()` / `n.router()`) — groups procedures
-5. **Procedure** (`n.procedure()`) — individual RPC endpoint with input/output types and handler
-6. **Client** (`StaticClient` / `RuntimeClient`) — type-safe RPC calls via `@nmtjs/client`
+3. **Application Host** (`n.host(app, { transports })`) — binds one app definition to concrete serving surfaces such as HTTP or WebSocket transport factories
+4. **Application** (`n.app()`) — pure application definition: router, guards, middleware, filters, hooks, dependencies, API options, and app-level meta
+5. **Router** (`n.rootRouter()` / `n.router()`) — groups procedures
+6. **Procedure** (`n.procedure()`) — individual RPC endpoint with input/output types and handler
+7. **Client** (`StaticClient` / `RuntimeClient`) — type-safe RPC calls via `@nmtjs/client`
+
+Application definitions must not own transport factories, gateway options, listen
+options, or connection identity. Put transport factories in the host entry with
+`n.host(app, { transports })`. Server config owns per-thread transport options
+and infers their types from the host's transport map.
 
 ### Dependency Injection Scopes
 
@@ -125,7 +131,8 @@ project/
     index.ts                     # n.server({...}) — server configuration
     applications/
       main/
-        index.ts                 # n.app({...}) — application definition
+        index.ts                 # n.app({...}) — pure application definition
+        host.ts                  # n.host(app, { transports }) — serving surfaces
         router.ts                # n.rootRouter([routerA, routerB] as const) — route tree
         procedures/
           example.ts             # n.procedure({...}) — RPC handlers
@@ -140,6 +147,6 @@ project/
 - [Type System](references/type-system.md) — `t.*` encode/decode modes, inference, and Standard Schema (JSON Schema) support
 - [RPC](references/rpc.md) — Procedures, routers, metadata, streaming, blobs, contracts, guards, middleware, filters, error handling
 - [Injectables](references/injectables.md) — DI scopes, injectable builders (value/lazy/factory), built-in `n.inject.*`
-- [Server Setup](references/server-setup.md) — `n.app()`, `n.server()`, `defineConfig()`, project structure
+- [Server Setup](references/server-setup.md) — `n.app()`, `n.host()`, `n.server()`, `defineConfig()`, project structure
 - [Client Usage](references/client-usage.md) — `StaticClient` setup, RPC calls, streams, blobs, abort
 - [Jobs](references/jobs.md) — Background jobs, steps, job manager, retry/backoff, progress, job router

@@ -1,8 +1,10 @@
 import type {
-  ApplicationConfig,
-  ApplicationTransport,
+  ApplicationHost,
+  ApplicationHostDefinition,
+  TransportOptionsOf,
 } from '@nmtjs/application'
 import type { LoggingOptions } from '@nmtjs/core'
+import type { ConnectionIdentity, GatewayOptions } from '@nmtjs/gateway'
 import type { ApplicationOptions } from '@nmtjs/proxy'
 import type { Applications } from 'nmtjs/runtime/types'
 
@@ -28,19 +30,24 @@ export type ServerStoreConfig =
   | { type: StoreType.Redis; options: StoreTypeOptions[StoreType.Redis] }
   | { type: StoreType.Valkey; options: StoreTypeOptions[StoreType.Valkey] }
 
-export type ServerApplicationConfig<T = ApplicationConfig> =
-  T extends ApplicationConfig<any, infer Transports>
+export type ServerApplicationConfig<T = ApplicationHostDefinition> =
+  T extends ApplicationHostDefinition<any, infer Transports>
     ? {
         threads: {
-          [K in keyof Transports]: Transports[K] extends ApplicationTransport<
-            any,
-            infer Options
-          >
-            ? Options
-            : never
+          [K in keyof Transports]: TransportOptionsOf<Transports[K]>
         }[]
+        gateway?: Pick<GatewayOptions, 'streamTimeouts' | 'heartbeat'>
+        identity?: ConnectionIdentity
       }
-    : any
+    : T extends ApplicationHost<infer Transports>
+      ? {
+          threads: {
+            [K in keyof Transports]: TransportOptionsOf<Transports[K]>
+          }[]
+          gateway?: Pick<GatewayOptions, 'streamTimeouts' | 'heartbeat'>
+          identity?: ConnectionIdentity
+        }
+      : any
 
 export type ServerJobsConfig = {
   pools: Record<string, ServerPoolOptions>
@@ -52,14 +59,19 @@ export type ServerJobsConfig = {
   scheduler?: JobsSchedulerOptions
 }
 
+type ServerApplicationDefinitionConfig<T> = T extends {
+  type: 'neemata'
+  definition: infer Definition
+}
+  ? ServerApplicationConfig<Definition>
+  : ServerApplicationConfig<any>
+
 export interface ServerConfigInit {
   logger: LoggingOptions
   applications: {
-    [K in keyof Applications]: Applications[K]['type'] extends 'neemata'
-      ? ServerApplicationConfig<
-          (Applications[K] & { type: 'neemata' })['definition']
-        >
-      : ServerApplicationConfig<any>
+    [K in keyof Applications]: ServerApplicationDefinitionConfig<
+      Applications[K]
+    >
   }
   store?: ServerStoreConfig
   /**

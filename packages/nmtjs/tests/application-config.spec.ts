@@ -9,6 +9,7 @@ import {
   createRootRouter,
   createRouter,
   defineApplication,
+  defineApplicationHost,
   defineServer,
 } from '../src/runtime/index.ts'
 
@@ -40,15 +41,14 @@ function createRuntime(gateway: TestGatewayConfig = {}) {
     }),
   ] as const)
 
-  const appConfig = defineApplication({
-    router,
+  const appConfig = defineApplication({ router })
+  const hostDefinition = defineApplicationHost(appConfig, {
     transports: { test: transport },
-    gateway,
   })
 
   const serverConfig = defineServer({
     logger: { pinoOptions: { enabled: false } },
-    applications: {},
+    applications: { 'test-app': { threads: [{ test: {} }], gateway } },
   })
 
   return new ApplicationWorkerRuntime(
@@ -58,7 +58,7 @@ function createRuntime(gateway: TestGatewayConfig = {}) {
       path: '/virtual/test-app.ts',
       transports: { test: {} },
     },
-    appConfig,
+    hostDefinition,
   )
 }
 

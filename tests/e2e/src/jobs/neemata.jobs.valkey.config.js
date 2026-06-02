@@ -3,7 +3,7 @@ import { defineConfig } from 'nmtjs/config'
 export default defineConfig({
   applications: {
     main: {
-      specifier: './src/jobs/applications/main/index.ts',
+      specifier: './src/jobs/applications/main/host.ts',
       type: 'neemata',
     },
   },
