@@ -24,6 +24,12 @@ export function mergeRolldownOptions(
 
   result.plugins = plugins.length > 0 ? plugins : undefined
   if (output) result.output = output as NeemRolldownOptions['output']
+  result.transform = {
+    ...result.transform,
+    define: {
+      'import.meta.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV ?? 'production'),
+    }
+  }
   return result
 }
 

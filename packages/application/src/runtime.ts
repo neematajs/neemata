@@ -14,10 +14,14 @@ import type { AnyFilter } from './api/filters.ts'
 import type { AnyGuard } from './api/guards.ts'
 import type { AnyMiddleware } from './api/middlewares.ts'
 import type { AnyProcedure } from './api/procedure.ts'
-import type { AnyRouter } from './api/router.ts'
+import type { AnyRootRouter, AnyRouter } from './api/router.ts'
 import type { ApplicationConfig } from './config.ts'
 import { ApplicationApi } from './api/api.ts'
-import { kDefaultProcedure, kRootRouter } from './api/constants.ts'
+import {
+  kDefaultProcedure,
+  kRootRouter,
+  kRootRouterSources,
+} from './api/constants.ts'
 import { isProcedure } from './api/procedure.ts'
 import { isRootRouter, isRouter } from './api/router.ts'
 import { LifecycleHook } from './enums.ts'
@@ -165,7 +169,7 @@ export class NeemataApplication {
     }
 
     this.routers.set(kRootRouter, router)
-    this.registerRouter(router, [])
+    this.registerRootRouter(router)
 
     if (router.default) {
       if (!isProcedure(router.default)) {
@@ -180,6 +184,28 @@ export class NeemataApplication {
     for (const filter of filters) this.filters.add(filter)
     for (const middleware of middlewares) this.middlewares.add(middleware)
     for (const guard of guards) this.guards.add(guard)
+  }
+
+  protected registerRootRouter(router: AnyRootRouter): void {
+    for (const source of router[kRootRouterSources]) {
+      this.registerRouter(source, this.getRootSourcePath(router, source))
+    }
+  }
+
+  protected getRootSourcePath(
+    root: AnyRootRouter,
+    source: AnyRouter,
+  ): AnyRouter[] {
+    return this.hasRouteContext(source) ? [root, source] : [root]
+  }
+
+  protected hasRouteContext(router: AnyRouter): boolean {
+    return (
+      router.meta.length > 0 ||
+      router.guards.size > 0 ||
+      router.middlewares.size > 0 ||
+      router.timeout !== undefined
+    )
   }
 
   protected registerRouter(router: AnyRouter, path: AnyRouter[] = []): void {

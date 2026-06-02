@@ -1,6 +1,13 @@
 import { basename, dirname, join } from 'node:path'
 
 import type {
+  AnyApplicationHostDefinition,
+  ApplicationHost,
+  ApplicationHostDefinition,
+  ApplicationHostTransportConfig,
+  TransportOptionsOf,
+} from './host.ts'
+import type {
   InferNeemRuntimeThreadOptions,
   NeemEntryInput,
   NeemRolldownOptions,
@@ -10,49 +17,61 @@ import type {
   NeemRuntimeWorkerContext,
 } from '@nmtjs/neem'
 import { defineRuntime, defineRuntimeWorker } from '@nmtjs/neem'
+import { JsonFormat } from '@nmtjs/json-format/server'
+import { MsgpackFormat } from '@nmtjs/msgpack-format/server'
+import { ProtocolFormats } from '@nmtjs/protocol/server'
 
-import type { NeemataApplication, NeemataAppTransportOptions } from './app.ts'
-import type { AnyApplicationConfig } from './config.ts'
-import { createApp } from './app.ts'
+import type { ApplicationTransport } from './config.ts'
+import { createApplicationHost } from './host.ts'
+
+export type NeemataRuntimeTransportOptions<
+  Transports extends Record<string, ApplicationTransport>,
+> = {
+  [K in keyof Transports]: TransportOptionsOf<Transports[K]>
+}
 
 export type NeemataRuntimeThreadOptions<
-  TApplication extends AnyApplicationConfig,
-> = NeemataAppTransportOptions<TApplication>
+  THost extends ApplicationHostDefinition,
+> =
+  THost extends ApplicationHostDefinition<any, infer Transports>
+    ? NeemataRuntimeTransportOptions<Transports>
+    : never
 
 export type NeemataRuntimeContext<
-  TApplication extends AnyApplicationConfig = AnyApplicationConfig,
-> = NeemRuntimeWorkerContext<
-  NeemataRuntimeThreadOptions<TApplication>,
-  TApplication
->
+  THost extends AnyApplicationHostDefinition = AnyApplicationHostDefinition,
+> = NeemRuntimeWorkerContext<NeemataRuntimeThreadOptions<THost>, THost>
 
 export type NeemataWorker<
-  TApplication extends AnyApplicationConfig = AnyApplicationConfig,
-> = NeemRuntimeWorker<NeemataRuntimeThreadOptions<TApplication>, TApplication>
+  THost extends AnyApplicationHostDefinition = AnyApplicationHostDefinition,
+> = NeemRuntimeWorker<NeemataRuntimeThreadOptions<THost>, THost>
 
 export type NeemataRuntimeConfig<TEntry extends NeemataWorker = NeemataWorker> =
   NeemRuntimeConfig<TEntry>
 
 export class NeemataApplicationRuntime<
-  TApplication extends AnyApplicationConfig = AnyApplicationConfig,
+  THost extends AnyApplicationHostDefinition = AnyApplicationHostDefinition,
 > implements NeemRuntime
 {
-  readonly application: NeemataApplication<TApplication>
+  readonly host: ApplicationHost<THost['transports']>
 
-  constructor(readonly ctx: NeemataRuntimeContext<TApplication>) {
-    this.application = createApp(ctx.definition, {
+  constructor(readonly ctx: NeemataRuntimeContext<THost>) {
+    this.host = createApplicationHost(ctx.definition.application, {
+      name: ctx.name,
       logger: ctx.logger,
-      mode: ctx.mode,
-      transports: ctx.data,
+      formats: new ProtocolFormats([new JsonFormat(), new MsgpackFormat()]),
+      transports: createHostTransportConfig(
+        ctx.definition.transports,
+        ctx.data,
+      ),
     })
   }
 
   async start() {
-    return this.application.start()
+    return this.host.start()
   }
 
   async stop() {
-    return this.application.stop()
+    return this.host.stop()
   }
 }
 
@@ -72,17 +91,29 @@ export function defineNeemataRuntime<
 }
 
 export function defineNeemataWorker<
-  const TApplication extends AnyApplicationConfig,
->(application: TApplication): NeemataWorker<TApplication> {
-  return defineRuntimeWorker<
-    NeemataRuntimeThreadOptions<TApplication>,
-    TApplication
-  >({
-    definition: application,
+  const THost extends ApplicationHostDefinition,
+>(host: THost): NeemataWorker<THost> {
+  return defineRuntimeWorker<NeemataRuntimeThreadOptions<THost>, THost>({
+    definition: host,
     createRuntime(ctx) {
       return new NeemataApplicationRuntime(ctx)
     },
   })
+}
+
+function createHostTransportConfig<
+  Transports extends Record<string, ApplicationTransport>,
+>(
+  transports: Transports,
+  options: NeemataRuntimeTransportOptions<Transports>,
+): ApplicationHostTransportConfig<Transports> {
+  const config = {} as ApplicationHostTransportConfig<Transports>
+
+  for (const key in transports) {
+    config[key] = { transport: transports[key], options: options[key] }
+  }
+
+  return config
 }
 
 type NeemataRolldownPluginContext = {

@@ -1,11 +1,14 @@
 import { createLogger } from '@nmtjs/core'
 import { ProxyableTransportType } from '@nmtjs/gateway'
+import { JsonFormat } from '@nmtjs/json-format/server'
+import { MsgpackFormat } from '@nmtjs/msgpack-format/server'
 import { ConnectionType, ProtocolVersion } from '@nmtjs/protocol'
+import { ProtocolFormats } from '@nmtjs/protocol/server'
 import { describe, expect, it } from 'vitest'
 
 import type { ApplicationTransport } from '../src/index.ts'
 import {
-  createApp,
+  createApplicationHost,
   createMeta,
   createProcedure,
   createRootRouter,
@@ -37,19 +40,21 @@ describe('Neemata application runtime', () => {
       { listen: { hostname: string; port: number } }
     >
 
-    const config = defineApplication({
-      router: createRootRouter([]),
-      transports: { http: httpTransport },
-    })
+    const config = defineApplication({ router: createRootRouter([]) })
 
-    const app = createApp(config, {
+    const host = createApplicationHost(config, {
       logger,
-      mode: 'development',
-      transports: { http: { listen: { hostname: '127.0.0.1', port: 3000 } } },
+      formats: createFormats(),
+      transports: {
+        http: {
+          transport: httpTransport,
+          options: { listen: { hostname: '127.0.0.1', port: 3000 } },
+        },
+      },
     })
 
-    const upstreams = await app.start()
-    await app.stop()
+    const upstreams = await host.start()
+    await host.stop()
 
     expect(upstreams).toStrictEqual([
       { type: ProxyableTransportType.HTTP, url: 'http://127.0.0.1:3000' },
@@ -79,15 +84,16 @@ describe('Neemata application runtime', () => {
       },
     } satisfies ApplicationTransport<ConnectionType.Unidirectional, {}>
 
-    const app = createApp(
-      defineApplication({
-        router: createRootRouter([route]),
-        transports: { http: transport },
-      }),
-      { logger, mode: 'development', transports: { http: {} } },
+    const host = createApplicationHost(
+      defineApplication({ router: createRootRouter([route]) }),
+      {
+        logger,
+        formats: createFormats(),
+        transports: { http: { transport, options: {} } },
+      },
     )
 
-    await app.start()
+    await host.start()
     try {
       const connection = await params.onConnect({
         accept: '*/*',
@@ -102,7 +108,11 @@ describe('Neemata application runtime', () => {
       expect(resolved.name).toBe('ping')
       expect(resolved.meta.get(allowed)).toBe('get')
     } finally {
-      await app.stop()
+      await host.stop()
     }
   })
 })
+
+function createFormats() {
+  return new ProtocolFormats([new JsonFormat(), new MsgpackFormat()])
+}
