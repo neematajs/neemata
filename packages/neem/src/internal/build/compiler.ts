@@ -128,10 +128,7 @@ export async function watchTarget(
       clearScreen: false,
       watcher: {
         debounceDelay: 50,
-        pollInterval: 100,
         useDebounce: true,
-        usePolling: true,
-        compareContentsForPolling: true,
       },
     },
   })

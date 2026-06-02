@@ -1,7 +1,16 @@
 import type { ChildProcess } from 'node:child_process'
 import { spawn } from 'node:child_process'
-import { access, cp, mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
-import { resolve } from 'node:path'
+import {
+  access,
+  cp,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rename,
+  rm,
+  writeFile,
+} from 'node:fs/promises'
+import { basename, dirname, resolve } from 'node:path'
 
 export type NeemProbeEvent = {
   source: 'neem:test-probe'
@@ -177,6 +186,34 @@ export async function readRuntimeEvents(file: string): Promise<RuntimeEvent[]> {
 
 export async function expectFile(path: string): Promise<void> {
   await access(path)
+}
+
+export async function updateFileAtomically(
+  path: string,
+  update: (content: string) => string,
+): Promise<void> {
+  const content = await readFile(path, 'utf8')
+  await writeFileAtomically(path, update(content))
+}
+
+export async function writeFileAtomically(
+  path: string,
+  content: string,
+): Promise<void> {
+  const tempFile = resolve(
+    dirname(path),
+    `.${basename(path)}.${process.pid}.${Date.now()}.${Math.random()
+      .toString(16)
+      .slice(2)}.tmp`,
+  )
+
+  try {
+    await writeFile(tempFile, content)
+    await rename(tempFile, path)
+  } catch (error) {
+    await rm(tempFile, { force: true }).catch(() => undefined)
+    throw error
+  }
 }
 
 export async function waitFor<T>(

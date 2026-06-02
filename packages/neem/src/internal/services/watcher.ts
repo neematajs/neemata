@@ -155,8 +155,6 @@ async function watchConfigSignal(
       watcher: {
         debounceDelay: 50,
         useDebounce: true,
-        usePolling: true,
-        compareContentsForPolling: true,
       },
     },
   })

@@ -46,7 +46,7 @@ export type EventingConsumersFactory = () =>
   | readonly AnyEventingConsumerDefinition[]
   | Promise<readonly AnyEventingConsumerDefinition[]>
 
-export function consume<const E extends AnyEventingEvent>(
+export function createEventConsumer<const E extends AnyEventingEvent>(
   event: E,
   options: Omit<EventingConsumerDefinition<E>, 'event'>,
 ): EventingConsumerDefinition<E> {
