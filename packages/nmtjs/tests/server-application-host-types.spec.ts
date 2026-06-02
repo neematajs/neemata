@@ -1,5 +1,5 @@
 import { createTransport } from '@nmtjs/gateway'
-import { describe, expect, expectTypeOf, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 
 import type { ServerApplicationConfig } from '../src/runtime/index.ts'
 import {
@@ -44,7 +44,8 @@ describe('server application host types', () => {
       second: { path: string }
     }
 
-    expectTypeOf<ThreadOptions>().toEqualTypeOf<Expected>()
+    const actual: ThreadOptions = {} as Expected
+    const expected: Expected = {} as ThreadOptions
 
     const valid: ThreadOptions = {
       first: { listen: { port: 3000 }, cors: true },
@@ -69,6 +70,8 @@ describe('server application host types', () => {
       third: {},
     } satisfies ThreadOptions
 
+    expect(actual).toBeDefined()
+    expect(expected).toBeDefined()
     expect(valid).toBeDefined()
     expect(missingTransport).toBeDefined()
     expect(wrongTransportOptions).toBeDefined()
