@@ -120,6 +120,12 @@ export class ApplicationServerApplications extends EventEmitter<{
 
       // Add workers to the pool
       for (let i = 0; i < threadsConfig.length; i++) {
+        if (applicationPath.type !== 'neemata') {
+          throw new Error(
+            `Unsupported custom application worker: ${applicationName}`,
+          )
+        }
+
         const workerData = {
           runtime: {
             type: 'application',

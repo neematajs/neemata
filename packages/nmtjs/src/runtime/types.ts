@@ -1,4 +1,4 @@
-import type { ApplicationConfig } from '@nmtjs/application'
+import type { ApplicationHostDefinition } from '@nmtjs/application'
 import type { ProxyableTransportType } from '@nmtjs/gateway'
 import type { Redis, RedisOptions } from 'ioredis'
 import type { Redis as Valkey, RedisOptions as ValkeyOptions } from 'iovalkey'
@@ -65,7 +65,7 @@ export type JobTaskResultTypes = {
 }
 
 export type ApplicationDefinitionType =
-  | { type: 'neemata'; definition: ApplicationConfig<any, any> }
+  | { type: 'neemata'; definition: ApplicationHostDefinition }
   | { type: 'custom'; definition: any }
 
 export interface Applications

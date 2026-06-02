@@ -1,222 +1,133 @@
 import type {
-  AnyFilter,
-  AnyGuard,
-  AnyMiddleware,
-  AnyProcedure,
-  AnyRouter,
-  ApplicationConfig,
+  ApplicationHost,
+  ApplicationHostDefinition,
+  ApplicationHostOptions,
   ApplicationResolvedProcedure,
   ApplicationTransport,
-  kDefaultProcedure as kDefaultProcedureKey,
+  NeemataApplication,
+  TransportOptionsOf,
 } from '@nmtjs/application'
-import type { Dependant } from '@nmtjs/core'
-import type { GatewayOptions } from '@nmtjs/gateway'
-import {
-  ApplicationApi,
-  ApplicationHooks,
-  isProcedure,
-  isRootRouter,
-  isRouter,
-  kDefaultProcedure,
-  kRootRouter,
-  LifecycleHook,
-} from '@nmtjs/application'
-import { Gateway } from '@nmtjs/gateway'
+import type { Gateway, GatewayOptions } from '@nmtjs/gateway'
+import { createApplicationHost, LifecycleHook } from '@nmtjs/application'
 import { JsonFormat } from '@nmtjs/json-format/server'
 import { MsgpackFormat } from '@nmtjs/msgpack-format/server'
 import { ProtocolFormats } from '@nmtjs/protocol/server'
 
-import type { ServerConfig } from '../server/config.ts'
+import type { ServerApplicationConfig, ServerConfig } from '../server/config.ts'
 import { WorkerType } from '../enums.ts'
 import { BaseWorkerRuntime } from './base.ts'
 
 export interface ApplicationWorkerRuntimeOptions {
   name: string
   path: string
-  transports: { [key: string]: any }
+  transports: ServerApplicationConfig['threads'][number]
 }
 
 export class ApplicationWorkerRuntime extends BaseWorkerRuntime {
-  api!: ApplicationApi
-  applicationHooks!: ApplicationHooks
-  gateway!: Gateway<ApplicationResolvedProcedure>
-  transports!: GatewayOptions<ApplicationResolvedProcedure>['transports']
-
-  routers = new Map<string | kRootRouter, AnyRouter>()
-  procedures = new Map<
-    string | kDefaultProcedureKey,
-    { procedure: AnyProcedure; path: AnyRouter[] }
-  >()
-  filters = new Set<AnyFilter>()
-  middlewares = new Set<AnyMiddleware>()
-  guards = new Set<AnyGuard>()
+  host!: ApplicationHost
 
   constructor(
     readonly config: ServerConfig,
     readonly runtimeOptions: ApplicationWorkerRuntimeOptions,
-    protected appConfig: ApplicationConfig,
+    protected hostDefinition: ApplicationHostDefinition,
   ) {
     super(
       config,
       {
         logger: config.logger,
         name: `Worker ${runtimeOptions.name}`,
-        plugins: appConfig.plugins,
+        plugins: [],
       },
       WorkerType.Application,
     )
+  }
 
-    this.applicationHooks = new ApplicationHooks()
+  get application(): NeemataApplication {
+    return this.host.application
+  }
 
-    this.api = new ApplicationApi({
-      timeout: this.appConfig.api.timeout,
-      container: this.container,
-      logger: this.logger,
-      meta: this.appConfig.meta,
-      filters: this.filters,
-      middlewares: this.middlewares,
-      guards: this.guards,
-      procedures: this.procedures,
-    })
+  get api() {
+    return this.application.api
+  }
+
+  get applicationHooks() {
+    return this.application.applicationHooks
+  }
+
+  get gateway(): Gateway<ApplicationResolvedProcedure> {
+    return this.host.gateway
+  }
+
+  get transports(): GatewayOptions<ApplicationResolvedProcedure>['transports'] {
+    return this.host.transports
   }
 
   async start() {
     await this.initialize()
-
-    this.transports = {}
-
-    for (const key in this.runtimeOptions.transports) {
-      const options = this.runtimeOptions.transports[key]
-      const { factory, proxyable } = this.appConfig.transports[
-        key
-      ] as ApplicationTransport
-      this.transports[key] = { transport: await factory(options), proxyable }
-    }
-
-    this.gateway = new Gateway({
-      ...this.appConfig.gateway,
+    this.host = createApplicationHost(this.hostDefinition.application, {
+      name: this.runtimeOptions.name,
       logger: this.logger,
       container: this.container,
-      hooks: this.lifecycleHooks,
       formats: new ProtocolFormats([new JsonFormat(), new MsgpackFormat()]),
-      transports: this.transports,
-      api: this.api,
-      identity: this.appConfig.identity,
+      ...this.resolveHostOptions(),
     })
-
-    return await this.gateway.start().finally(async () => {
-      await this.lifecycleHooks.callHook(LifecycleHook.Start)
-    })
+    return this.host.start()
   }
 
   async stop() {
-    await this.gateway.stop()
+    await this.host.stop()
     await this.dispose()
     await this.lifecycleHooks.callHook(LifecycleHook.Stop)
   }
 
-  async reload(appConfig: ApplicationConfig): Promise<void> {
-    await this.dispose()
-    this.appConfig = appConfig
-    this.plugins = appConfig.plugins
-    await this.initialize()
-    this.gateway.options.identity =
-      this.appConfig.identity ?? this.gateway.options.identity
-    await this.gateway.reload()
+  async reload(hostDefinition: ApplicationHostDefinition): Promise<void> {
+    this.hostDefinition = hostDefinition
+    await this.host.reloadApplication(hostDefinition.application)
   }
 
-  async initialize(): Promise<void> {
-    this.registerApi()
-    this.lifecycleHooks.addHooks(this.appConfig.lifecycleHooks)
-    await super.initialize()
+  protected *_dependents() {}
+
+  protected resolveHostOptions(): Pick<
+    ApplicationHostOptions,
+    'transports' | 'gateway' | 'identity'
+  > {
+    const config = this.config.applications[
+      this.runtimeOptions.name
+    ] as ServerApplicationConfig
+
+    if (!config) {
+      throw new Error(
+        `Missing server application config: ${this.runtimeOptions.name}`,
+      )
+    }
+
+    return {
+      transports: createHostTransportConfig(
+        this.hostDefinition.transports,
+        this.runtimeOptions.transports,
+      ),
+      gateway: config.gateway,
+      identity: config.identity,
+    }
   }
+}
 
-  protected async _initialize(): Promise<void> {
-    await super._initialize()
-
-    for (const hook of this.appConfig.hooks) {
-      this.applicationHooks.hook(hook.name, async (...args: any[]) => {
-        const ctx = await this.container.createContext(hook.dependencies)
-        await hook.handler(ctx, ...args)
-      })
+function createHostTransportConfig<
+  Transports extends Record<string, ApplicationTransport>,
+>(
+  transports: Transports,
+  options: { [K in keyof Transports]: TransportOptionsOf<Transports[K]> },
+) {
+  const config = {} as {
+    [K in keyof Transports]: {
+      transport: Transports[K]
+      options: TransportOptionsOf<Transports[K]>
     }
   }
 
-  protected async _dispose(): Promise<void> {
-    this.applicationHooks.removeAllHooks()
-    await super._dispose()
-    this.lifecycleHooks.removeHooks(this.appConfig.lifecycleHooks)
-    this.filters.clear()
-    this.middlewares.clear()
-    this.guards.clear()
-    this.routers.clear()
-    this.procedures.clear()
+  for (const key in transports) {
+    config[key] = { transport: transports[key], options: options[key] }
   }
 
-  protected *_dependents(): Generator<Dependant> {
-    yield* this.appConfig.filters
-    yield* this.appConfig.guards
-    yield* this.appConfig.middlewares
-    yield* this.appConfig.meta
-    yield* this.appConfig.hooks
-    for (const router of this.routers.values()) {
-      yield* router.meta
-    }
-    for (const { procedure } of this.procedures.values()) {
-      yield procedure
-      yield* procedure.meta
-      yield* procedure.guards
-      yield* procedure.middlewares
-    }
-  }
-
-  protected registerApi() {
-    const { router, filters, guards, middlewares } = this.appConfig
-
-    if (this.routers.has(kRootRouter)) {
-      throw new Error('Root router already registered')
-    }
-
-    if (!isRootRouter(router)) {
-      throw new Error('Root router must be a root router')
-    }
-
-    this.routers.set(kRootRouter, router)
-    this.registerRouter(router, [])
-
-    if (router.default) {
-      if (!isProcedure(router.default)) {
-        throw new Error('Root router default must be a procedure')
-      }
-      this.procedures.set(kDefaultProcedure, {
-        procedure: router.default,
-        path: [router],
-      })
-    }
-
-    for (const filter of filters) this.filters.add(filter)
-    for (const middleware of middlewares) this.middlewares.add(middleware)
-    for (const guard of guards) this.guards.add(guard)
-  }
-
-  protected registerRouter(router: AnyRouter, path: AnyRouter[] = []) {
-    for (const route of Object.values(router.routes)) {
-      if (isRouter(route)) {
-        const name = route.contract.name
-        if (!name) throw new Error('Nested routers must have a name')
-        if (this.routers.has(name)) {
-          throw new Error(`Router ${String(name)} already registered`)
-        }
-        this.routers.set(name, route)
-        this.registerRouter(route, [...path, router])
-      } else if (isProcedure(route)) {
-        const name = route.contract.name
-        if (!name) throw new Error('Procedures must have a name')
-        if (this.procedures.has(name)) {
-          throw new Error(`Procedure ${name} already registered`)
-        }
-        this.procedures.set(name, { procedure: route, path: [...path, router] })
-      }
-    }
-  }
+  return config
 }

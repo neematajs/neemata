@@ -4,7 +4,7 @@ import type { ServerConfig } from '../runtime/index.ts'
 import type { RunWorkerOptions } from './thread.ts'
 import {
   ApplicationWorkerRuntime,
-  isApplicationConfig,
+  isApplicationHostDefinition,
   JobWorkerRuntime,
 } from '../runtime/index.ts'
 
@@ -38,21 +38,21 @@ async function initializeApplicationWorker(
 ) {
   const { name, path, transportsData } = options
 
-  // Load initial application config
-  const appConfig = await import(
+  // Load initial application host definition
+  const hostDefinition = await import(
     /* @vite-ignore */
     path
   ).then((m) => m.default)
 
-  if (!isApplicationConfig(appConfig)) {
-    throw new Error(`Invalid application config for application: ${name}`)
+  if (!isApplicationHostDefinition(hostDefinition)) {
+    throw new Error(`Invalid application host definition: ${name}`)
   }
 
   // Create runtime
   const runtime = new ApplicationWorkerRuntime(
     serverConfig,
     { name, path, transports: transportsData },
-    appConfig,
+    hostDefinition,
   )
 
   // Set up HMR with supersede logic
@@ -62,7 +62,7 @@ async function initializeApplicationWorker(
 }
 
 /**
- * Set up HMR acceptance for application config changes with supersede logic.
+ * Set up HMR acceptance for application host definition changes with supersede logic.
  *
  * When a reload is in progress and another HMR event arrives, the pending
  * reload is superseded - only the most recent config is applied.
@@ -147,8 +147,10 @@ function setupApplicationHMR(runtime: ApplicationWorkerRuntime) {
     logger.debug('Received HMR update')
     if (!module) return
 
-    if (!isApplicationConfig(module.default)) {
-      logger.error(new Error('Invalid application config during HMR reload'))
+    if (!isApplicationHostDefinition(module.default)) {
+      logger.error(
+        new Error('Invalid application host definition during HMR reload'),
+      )
       return
     }
 
