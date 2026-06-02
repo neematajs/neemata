@@ -99,7 +99,13 @@ export class ApplicationHost<
     await this.application.dispose()
   }
 
-  async reload(appConfig: ApplicationConfig): Promise<void> {
+  async reload(
+    hostDefinition: ApplicationHostDefinition<any, Transports>,
+  ): Promise<void> {
+    await this.reloadApplication(hostDefinition.application)
+  }
+
+  async reloadApplication(appConfig: ApplicationConfig): Promise<void> {
     await this.application.dispose()
     this.appConfig = appConfig
     this.application = await this.createApplication(appConfig)

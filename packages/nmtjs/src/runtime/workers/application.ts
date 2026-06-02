@@ -82,7 +82,7 @@ export class ApplicationWorkerRuntime extends BaseWorkerRuntime {
 
   async reload(hostDefinition: ApplicationHostDefinition): Promise<void> {
     this.hostDefinition = hostDefinition
-    await this.host.reload(hostDefinition.application)
+    await this.host.reloadApplication(hostDefinition.application)
   }
 
   protected *_dependents() {}
