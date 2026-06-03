@@ -9,6 +9,7 @@ function toArray(value: any) {
 
 const merge = createDefu((object, key, value, namespace) => {
   if (!namespace && key === 'plugins') {
+    // @ts-expect-error
     object[key] = [...toArray(object[key]), ...toArray(value)]
     return true
   }
