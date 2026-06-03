@@ -61,15 +61,6 @@
       "path": "./packages/ws-transport/tsconfig.json"
     },
     {
-      "path": "./tests/neemata/tsconfig.json"
-    },
-    {
-      "path": "./tests/eventing/tsconfig.json"
-    },
-    {
-      "path": "./tests/metrics/tsconfig.json"
-    },
-    {
       "path": "./tests/e2e/tsconfig.json"
     },
     {

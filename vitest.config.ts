@@ -4,7 +4,7 @@ export default defineConfig({
   test: {
     testTimeout: 15000,
     passWithNoTests: true,
-    projects: ['./packages/*', './tests/neemata', './tests/neem'],
+    projects: ['./packages/*', './tests/neem'],
     coverage: {
       enabled: false,
       include: ['packages/*/src/**'],

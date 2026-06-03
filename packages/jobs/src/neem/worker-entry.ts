@@ -1,5 +1,4 @@
 import type { MessagePort } from 'node:worker_threads'
-import { pathToFileURL } from 'node:url'
 
 import { LifecycleHook, LifecycleHooks } from '@nmtjs/application'
 import { Container, CoreInjectables, provision } from '@nmtjs/core'
@@ -9,84 +8,93 @@ import { UnrecoverableError } from 'bullmq'
 import type { JobsClientInstance } from '../client.ts'
 import type { JobProgressCheckpoint } from '../core/types.ts'
 import type { JobsWorkerData, JobsWorkerRequest } from './protocol.ts'
-import type { JobsConfig } from './runtime.ts'
+import type { AnyJobsJob, JobsConfig } from './runtime.ts'
 import { closeJobsClient, resolveJobsClient } from '../client.ts'
 import { jobWorkerPool } from '../core/injectables.ts'
 import { JobManager, QueueJobRunner } from '../manager.ts'
 import { resolveJobsWorkerConfig } from './runtime.ts'
 
-export default defineRuntimeWorker<JobsWorkerData>({
-  definition: {},
-  createRuntime(ctx) {
-    let client: JobsClientInstance | undefined
-    let manager: JobManager | undefined
-    let listener: ((message: JobsWorkerRequest) => void) | undefined
-    const lifecycleHooks = new LifecycleHooks()
-    const container = new Container({ logger: ctx.logger })
+export type JobsWorkerConfig<Job extends AnyJobsJob = AnyJobsJob> = Pick<
+  JobsConfig<Job>,
+  'client' | 'jobs'
+>
 
-    return {
-      async start() {
-        if (!ctx.data.runtimeEntryFile) {
-          throw new Error('Jobs runtime entry file is missing')
-        }
-        const config = (
-          await import(pathToFileURL(ctx.data.runtimeEntryFile).href)
-        ).default as JobsConfig
-        const resolved = await resolveJobsWorkerConfig(config)
+export function defineJobsWorker<const Job extends AnyJobsJob>(
+  config: JobsWorkerConfig<Job>,
+) {
+  return defineRuntimeWorker<JobsWorkerData, JobsWorkerConfig<Job>>({
+    definition: config,
+    createRuntime(ctx) {
+      let client: JobsClientInstance | undefined
+      let manager: JobManager | undefined
+      let listener: ((message: JobsWorkerRequest) => void) | undefined
+      const lifecycleHooks = new LifecycleHooks()
+      const container = new Container({ logger: ctx.logger })
 
-        for (const job of resolved.jobs) {
-          if (!job.returnHandler) {
-            throw new Error(
-              `Job "${job.name}" is incomplete. Jobs must call .return() before use.`,
-            )
+      return {
+        async start() {
+          const resolved = await resolveJobsWorkerConfig(ctx.definition)
+
+          for (const job of resolved.jobs) {
+            if (!job.returnHandler) {
+              throw new Error(
+                `Job "${job.name}" is incomplete. Jobs must call .return() before use.`,
+              )
+            }
           }
-        }
 
-        client = await resolveJobsClient(resolved.client)
-        try {
-          manager = new JobManager(client, [...resolved.jobs])
-          await manager.initialize()
-        } catch (error) {
-          await closeJobsClient(client)
-          client = undefined
-          manager = undefined
-          throw error
-        }
+          client = await resolveJobsClient(resolved.client)
+          try {
+            manager = new JobManager(client, [...resolved.jobs])
+            await manager.initialize()
+          } catch (error) {
+            await closeJobsClient(client)
+            client = undefined
+            manager = undefined
+            throw error
+          }
 
-        container.provide([
-          provision(CoreInjectables.logger, ctx.logger),
-          provision(jobWorkerPool, ctx.data.poolName),
-        ])
+          container.provide([
+            provision(CoreInjectables.logger, ctx.logger),
+            provision(jobWorkerPool, ctx.data.poolName),
+          ])
 
-        const runner = new QueueJobRunner({
-          logger: ctx.logger,
-          container,
-          lifecycleHooks,
-        })
-
-        listener = (message) => {
-          if (message.type !== 'task') return
-          void runTask({ message, manager: manager!, runner, port: ctx.port })
-        }
-        ctx.port.on('message', listener)
-      },
-      async stop() {
-        if (listener) ctx.port.off('message', listener)
-        try {
-          await lifecycleHooks.callHook(LifecycleHook.BeforeDispose, {
+          const runner = new QueueJobRunner({
             logger: ctx.logger,
             container,
+            lifecycleHooks,
           })
-          await manager?.terminate()
-        } finally {
-          manager = undefined
-          if (client) await closeJobsClient(client)
-          client = undefined
-        }
-      },
-    }
-  },
-})
+
+          const currentManager = manager
+          listener = (message) => {
+            if (message.type !== 'task') return
+            void runTask({
+              message,
+              manager: currentManager,
+              runner,
+              port: ctx.port,
+            })
+          }
+          ctx.port.on('message', listener)
+        },
+        async stop() {
+          if (listener) ctx.port.off('message', listener)
+          try {
+            await lifecycleHooks.callHook(LifecycleHook.BeforeDispose, {
+              logger: ctx.logger,
+              container,
+            })
+            await manager?.terminate()
+          } finally {
+            manager = undefined
+            if (client) await closeJobsClient(client)
+            client = undefined
+          }
+        },
+      }
+    },
+  })
+}
 
 async function runTask(options: {
   message: JobsWorkerRequest

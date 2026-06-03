@@ -1,4 +1,5 @@
 import { mkdir } from 'node:fs/promises'
+import { isBuiltin } from 'node:module'
 import { basename, resolve } from 'node:path'
 
 import type { MaybePromise } from '@nmtjs/common'
@@ -6,15 +7,18 @@ import type { RolldownOutput } from 'rolldown'
 import { createFuture } from '@nmtjs/common'
 import * as rolldown from 'rolldown'
 
-import type { NeemResolvedArtifact } from '../../public/artifact.ts'
+import type { NeemResolvedArtifact } from '../../shared/types.ts'
+// import type { NeemResolvedArtifact } from '../../public/artifact.ts'
 import type {
   BuildGraph,
   BuildTarget,
   PluginBuildNode,
   RuntimeBuildNode,
 } from './graph.ts'
+import { mergeRolldownOptions } from '../../shared/rolldown.ts'
 import { toFilePath } from '../shared/utils.ts'
-import { mergeRolldownOptions } from './rolldown-options.ts'
+
+// import { mergeRolldownOptions } from './rolldown-options.ts'
 
 type ArtifactInput = { entry: string; input: string }
 
@@ -30,8 +34,8 @@ export type CompiledRuntime = {
   name: string
   node: RuntimeBuildNode
   worker?: CompiledTarget
-  host?: CompiledTarget
-  artifacts: readonly CompiledTarget[]
+  host: CompiledTarget
+  planner: CompiledTarget
 }
 
 export type CompiledPlugin = { node: PluginBuildNode; entry?: CompiledTarget }
@@ -126,10 +130,7 @@ export async function watchTarget(
     watch: {
       buildDelay: 100,
       clearScreen: false,
-      watcher: {
-        debounceDelay: 50,
-        useDebounce: true,
-      },
+      watcher: { debounceDelay: 50, useDebounce: true },
     },
   })
 
@@ -188,24 +189,19 @@ export function createCompiledGraph(
   const byKey = new Map(targets.map((target) => [target.target.key, target]))
   const runtimes = graph.runtimes.map((runtime) => {
     const worker = runtime.worker ? byKey.get(runtime.worker.key) : undefined
-    const host = runtime.host ? byKey.get(runtime.host.key) : undefined
-    const artifacts = runtime.artifacts.map((artifact) => {
-      const compiled = byKey.get(artifact.key)
-      if (!compiled) {
-        throw new Error(
-          `Compiled runtime [${runtime.name}] artifact [${artifact.artifact.id}] is missing`,
-        )
-      }
-      return compiled
-    })
+    const host = byKey.get(runtime.host.key)
+    const planner = byKey.get(runtime.planner.key)
     if (runtime.worker && !worker) {
       throw new Error(`Compiled runtime [${runtime.name}] worker is missing`)
     }
-    if (runtime.host && !host) {
+    if (!host) {
       throw new Error(`Compiled runtime [${runtime.name}] host is missing`)
     }
+    if (!planner) {
+      throw new Error(`Compiled runtime [${runtime.name}] planner is missing`)
+    }
 
-    return { name: runtime.name, node: runtime, worker, host, artifacts }
+    return { name: runtime.name, node: runtime, worker, host, planner }
   })
   const plugins = graph.plugins.map((plugin) => ({
     node: plugin,
@@ -230,6 +226,7 @@ function createRolldownOptions(
     input: input.input,
     platform: 'node',
     ...userOptions,
+    external: createExternalMatcher(userOptions.external),
     plugins: [
       createNativeAddonPlugin(),
       ...normalizePlugins(userOptions.plugins),
@@ -245,6 +242,24 @@ function createRolldownOptions(
       assetFileNames: '[name]-[hash][extname]',
       ...userOutput,
     },
+  }
+}
+
+function createExternalMatcher(
+  userExternal: rolldown.BuildOptions['external'],
+): rolldown.BuildOptions['external'] {
+  return (id, importer, isResolved) => {
+    if (isBuiltin(id)) return true
+    if (!userExternal) return false
+    if (typeof userExternal === 'function') {
+      return userExternal(id, importer, isResolved)
+    }
+    if (Array.isArray(userExternal)) {
+      return userExternal.some((external) =>
+        typeof external === 'string' ? external === id : external.test(id),
+      )
+    }
+    return userExternal === id
   }
 }
 

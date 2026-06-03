@@ -6,24 +6,31 @@ retention.
 
 ## Runtime model
 
-Use `defineSchedulerRuntime()` from `@nmtjs/scheduler/neem` to add a scheduler
-runtime to a Neem app:
+Use `defineSchedulerRuntime()` from `@nmtjs/scheduler/neem` in a runtime
+declaration:
 
 ```ts
 import { defineSchedulerRuntime } from '@nmtjs/scheduler/neem'
 
-export default defineNeemConfig({
-  runtimes: {
-    scheduler: defineSchedulerRuntime({
-      config: '@app/scheduler',
-    }),
-  },
+export default defineSchedulerRuntime({
+  name: 'scheduler',
+  planner: './scheduler.planner.ts',
 })
 ```
 
-The scheduler runtime is host-only. It starts in the Neem host process, loads
-the scheduler config artifact, resolves the jobs client, and reconciles the
-declared schedules against BullMQ.
+The planner returns host-local scheduler config:
+
+```ts
+import { defineSchedulerPlanner } from '@nmtjs/scheduler/neem'
+
+import schedulerConfig from './scheduler.ts'
+
+export default defineSchedulerPlanner(() => schedulerConfig)
+```
+
+The scheduler runtime is host-only. It starts in the Neem host process, resolves
+planner options, creates the jobs client, and reconciles the declared schedules
+against BullMQ.
 
 ## Scheduler config
 

@@ -56,20 +56,14 @@ describe('Neem manifest', () => {
     )
   })
 
-  it('creates runtime artifacts without requiring a worker artifact', () => {
+  it('creates runtime host and planner artifacts without requiring worker', () => {
     const manifest = createCompiledManifest(createCompiledHostOnlyGraph())
 
     expect(manifest.runtimes.scheduler).toMatchObject({
       name: 'scheduler',
-      entry: undefined,
+      worker: undefined,
       host: { id: 'host', file: 'runtime/scheduler/host/index.js' },
-      artifacts: [
-        {
-          id: 'scheduler-config',
-          kind: 'module',
-          file: 'runtime/scheduler/artifacts/000-scheduler-config/index.js',
-        },
-      ],
+      planner: { id: 'planner', file: 'runtime/scheduler/planner/index.js' },
     })
   })
 
@@ -110,26 +104,38 @@ describe('Neem manifest', () => {
       runtimes: {
         api: {
           name: 'api',
-          entry: artifact('entry', 'jobs', 'runtime/api/worker.js'),
-          artifacts: [],
+          worker: artifact('worker', 'jobs', 'runtime/api/worker.js'),
+          host: artifact('host', 'api', 'runtime/api/host.js', 'module'),
+          planner: artifact(
+            'planner',
+            'api',
+            'runtime/api/planner.js',
+            'module',
+          ),
         },
       },
     })
     expect(() => validateManifest(wrongOwner)).toThrow(
-      'entry owner must be runtime [api]',
+      'worker owner must be runtime [api]',
     )
 
     const wrongId = createManifest({
       runtimes: {
         api: {
           name: 'api',
-          entry: artifact('custom', 'api', 'runtime/api/worker.js'),
-          artifacts: [],
+          worker: artifact('custom', 'api', 'runtime/api/worker.js'),
+          host: artifact('host', 'api', 'runtime/api/host.js', 'module'),
+          planner: artifact(
+            'planner',
+            'api',
+            'runtime/api/planner.js',
+            'module',
+          ),
         },
       },
     })
     expect(() => validateManifest(wrongId)).toThrow(
-      'entry artifact id must be [entry]',
+      'worker artifact id must be [worker]',
     )
   })
 })
@@ -153,17 +159,24 @@ function createManifest(overrides: Partial<Manifest> = {}): Manifest {
         'worker',
       ),
     },
-    config: { runtimes: { api: { threads: 1 }, jobs: { threads: 2 } } },
+    config: { runtimes: { api: {}, jobs: {} } },
     runtimes: {
       api: {
         name: 'api',
-        entry: artifact('entry', 'api', 'runtime/api/worker.js'),
-        artifacts: [],
+        worker: artifact('worker', 'api', 'runtime/api/worker.js'),
+        host: artifact('host', 'api', 'runtime/api/host.js', 'module'),
+        planner: artifact('planner', 'api', 'runtime/api/planner.js', 'module'),
       },
       jobs: {
         name: 'jobs',
-        entry: artifact('entry', 'jobs', 'runtime/jobs/worker.js'),
-        artifacts: [],
+        worker: artifact('worker', 'jobs', 'runtime/jobs/worker.js'),
+        host: artifact('host', 'jobs', 'runtime/jobs/host.js', 'module'),
+        planner: artifact(
+          'planner',
+          'jobs',
+          'runtime/jobs/planner.js',
+          'module',
+        ),
       },
     },
   }
@@ -205,32 +218,15 @@ function createCompiledHostOnlyGraph(): CompiledGraph {
     `${outDir}/runtime/scheduler/host/index.js`,
     'module',
   )
-  const config = resolvedArtifact(
-    'scheduler-config',
+  const planner = resolvedArtifact(
+    'planner',
     'scheduler',
-    `${outDir}/runtime/scheduler/artifacts/000-scheduler-config/index.js`,
+    `${outDir}/runtime/scheduler/planner/index.js`,
     'module',
   )
 
   return {
-    graph: {
-      outDir,
-      config: {
-        runtimes: {
-          scheduler: {
-            host: { entry: './scheduler.host.ts' },
-            threads: 0,
-            artifacts: [
-              {
-                id: 'scheduler-config',
-                kind: 'module',
-                entry: './scheduler.config.ts',
-              },
-            ],
-          },
-        },
-      },
-    },
+    graph: { outDir, config: { runtimes: { scheduler: {} } } },
     targets: [
       compiledTarget('start-entry', start),
       compiledTarget('worker-entry', worker),
@@ -240,7 +236,7 @@ function createCompiledHostOnlyGraph(): CompiledGraph {
         name: 'scheduler',
         node: undefined,
         host: compiledTarget('runtime-host', host),
-        artifacts: [compiledTarget('runtime-artifact', config)],
+        planner: compiledTarget('runtime-planner', planner),
       },
     ],
     plugins: [],

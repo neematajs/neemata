@@ -164,8 +164,13 @@ export async function createNeemFixture(
   return {
     dir,
     fixtureDir,
-    configFile: resolve(fixtureDir, options.config ?? 'runtime.config.ts'),
-    appFile: resolve(fixtureDir, 'runtime-app.ts'),
+    configFile: resolve(
+      fixtureDir,
+      'cases',
+      options.config ?? 'runtime',
+      'neem.config.ts',
+    ),
+    appFile: resolve(fixtureDir, 'shared/workers/runtime-app.ts'),
     outDir: resolve(dir, 'dist'),
     eventsFile: resolve(dir, 'events.jsonl'),
     cleanup: () => rm(dir, { recursive: true, force: true }),

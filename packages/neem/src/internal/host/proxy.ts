@@ -1,13 +1,13 @@
 import { OperationQueue } from '@nmtjs/common'
 
-import type { NeemProxyConfig } from '../../public/config.ts'
 import type {
+  NeemProxyConfig,
   NeemProxyHealth,
   NeemProxyUpstream,
   NeemProxyUpstreamFailure,
   NeemProxyUpstreamSnapshot,
   NeemRuntimeUpstream,
-} from '../../public/runtime.ts'
+} from '../../shared/types.ts'
 import type { RuntimeSnapshot } from '../manifest/snapshot.ts'
 import { childLogger } from '../shared/logger.ts'
 import { normalizeError } from '../shared/utils.ts'

@@ -3,7 +3,7 @@ import { resolve } from 'node:path'
 import type { MaybePromise } from '@nmtjs/common'
 import type { Logger } from '@nmtjs/core'
 
-import type { NeemMode, NeemRuntimeServerHealth } from '../../public/runtime.ts'
+import type { NeemMode, NeemRuntimeServerHealth } from '../../shared/types.ts'
 import type { Manifest } from '../manifest/manifest.ts'
 import type { HostHooks, PluginHooks } from './hooks.ts'
 import { childLogger } from '../shared/logger.ts'

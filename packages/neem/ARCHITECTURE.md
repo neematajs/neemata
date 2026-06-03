@@ -62,11 +62,7 @@ Neem config is declarative. It may compose runtime helper functions and build
 options, but it must not open runtime resources.
 
 ```ts
-import { defineNeemataRuntime } from '@nmtjs/application/neem'
-import { defineEventingRuntime } from '@nmtjs/eventing/neem'
-import { defineJobsRuntime } from '@nmtjs/jobs/neem'
 import { defineConfig } from '@nmtjs/neem'
-import apiBuild from '@playground/neemata/build'
 
 export default defineConfig({
   proxy: {
@@ -76,49 +72,38 @@ export default defineConfig({
       neemata: { routing: { default: true } },
     },
   },
-  runtimes: {
-    neemata: [
-      defineNeemataRuntime<typeof import('@playground/neemata').default>({
-        application: '@playground/neemata',
-        threads: [{ http: { listen: { hostname: '127.0.0.1', port: 0 } } }],
-      }),
-      { worker: { build: { rolldown: apiBuild } } },
-    ],
-    jobs: defineJobsRuntime({ config: '@playground/neemata/jobs' }),
-    events: defineEventingRuntime({ config: '@playground/neemata/events' }),
-  },
+  runtimes: [
+    './apps/neemata/src/runtimes/neemata/neem.runtime.ts',
+    './apps/neemata/src/runtimes/jobs/neem.runtime.ts',
+    './apps/neemata/src/runtimes/events/neem.runtime.ts',
+  ],
 })
 ```
 
 Important rules:
 
-- `runtimes` is a record of runtime config inputs keyed by runtime name.
-- Runtime entries are direct runtime config values, not second-stage factories.
-- Runtime helper functions return runtime config directly.
-- A runtime entry may be `[runtimeConfig, overrides]`; this tuple is the only
-  build override form.
-- Overrides merge worker/host build config and helper-emitted artifacts.
+- `runtimes` is an array of runtime project entries: file paths, folder paths,
+  globs, and negated globs.
+- Runtime declaration files default-export a branded declaration from
+  `defineRuntime` or a package `create*Runtime` helper.
+- Runtime names come from explicit declaration `name` or nearest
+  `package.json#name`; duplicate names fail.
 - Raw runtime config shape is:
 
 ```ts
 defineRuntime({
+  name?,
+  planner?,
   worker: { entry, build? },
   host?,
-  artifacts?,
-  threads?,
-  options?,
 })
 ```
 
-This is the current public shape. Host-only runtimes require a later public
-config adjustment so `worker` can be omitted when `host` exists.
-
 - Runtime/build entries are string or URL module specifiers resolved from the
-  config file.
+  runtime declaration file.
 - Package specifiers such as `@playground/neemata` are valid.
-- Runtime object keys are stable build/start/dev selectors.
 - Runtime helper functions own their public input shape. Neem owns only the
-  generic runtime config they return.
+  generic runtime declaration they return.
 
 ## Core Concepts
 
@@ -128,9 +113,7 @@ A runtime is a named deployment unit. It may have:
 
 - one worker entry;
 - optional runtime host entry;
-- optional helper-owned artifacts;
-- thread data or thread count;
-- runtime options;
+- required runtime planner entry;
 - returned upstreams.
 
 Neem interprets only lifecycle state and returned upstreams. Package-specific
@@ -162,29 +145,22 @@ Workers receive:
 
 ### Runtime Host
 
-A runtime host is package-owned coordination code for one runtime. It can plan
-runtime threads and coordinate protocols over thread ports. Jobs are the key
-example: the host owns BullMQ queue workers and dispatches work to Neem-owned
-runner threads.
+A runtime host is package-owned coordination code for one runtime. It receives
+planned worker handles and coordinates protocols over thread ports. Jobs are
+the key example: the host owns BullMQ queue workers and dispatches work to
+Neem-owned runner threads.
 
 Target host contract:
 
 ```ts
 export type NeemRuntimeThreadHandle = {
-  id: string
   name: string
-  artifactId: string
   port: MessagePort
 }
 
 export type NeemRuntimeHost = {
-  plan?: () => MaybePromise<NeemRuntimePlan>
-  start?: (params: {
-    threads: readonly NeemRuntimeThreadHandle[]
-    upstreams: readonly NeemRuntimeUpstream[]
-  }) => MaybePromise<void>
+  start?: () => MaybePromise<void>
   stop?: () => MaybePromise<void>
-  fail?: (error: Error) => MaybePromise<void>
 }
 ```
 
@@ -245,9 +221,9 @@ dist/neem.manifest.json
 dist/start.js
 dist/runtimes/<runtime>/start.js
 dist/runtime/worker-entry.js
-runtime artifacts
+runtime worker artifacts
 runtime host artifacts
-helper-owned artifacts
+runtime planner artifacts
 plugin/logger artifacts
 ```
 
@@ -347,11 +323,12 @@ Startup order:
 
 ```text
 start HostRunner if host exists
-host.plan()
+HostRunner imports and runs planner
 resolve thread topology
 start ThreadController workers
 collect upstreams
-host.start({ threads, upstreams })
+transfer MessagePorts to HostRunner
+HostRunner imports host and calls host.start()
 mark runtime ready
 ```
 
@@ -383,12 +360,13 @@ Failure rule:
 
 ## HostRunner
 
-`HostRunner` is a per-runtime worker that imports the runtime host artifact.
+`HostRunner` is a per-runtime worker that imports planner and runtime host
+artifacts.
 
 Why it exists:
 
-- `host.plan()` can depend on application definitions;
-- jobs and scheduler hosts currently import the runtime entry artifact;
+- planner execution can depend on deploy-time env and package definitions;
+- planner `options` must stay host-local and avoid structured clone;
 - ESM has no safe native cache invalidation yet;
 - reloading a host worker clears that host's JS module graph without restarting
   the whole dev service.
@@ -397,15 +375,13 @@ HostRunner RPC:
 
 ```ts
 type HostRunnerRequest =
-  | { type: 'initialize'; artifactFile: string; params: HostParams }
+  | { type: 'initialize'; hostFile: string; plannerFile: string; params: HostParams }
   | { type: 'plan' }
   | {
       type: 'start'
       threads: readonly NeemRuntimeThreadHandle[]
-      upstreams: readonly NeemRuntimeUpstream[]
     }
   | { type: 'stop' }
-  | { type: 'fail'; error: SerializedError }
 ```
 
 `MessagePort`s for runtime thread handles are transferred to the HostRunner
@@ -428,9 +404,9 @@ Implications:
 
 - public runtime config must allow `host` without `worker`;
 - runtime readiness cannot be derived only from worker pool state;
-- `host.start({ threads: [] })` is valid;
+- host factory params may contain `threads: []`;
 - proxy sync with zero upstreams is valid;
-- scheduler should become host-only instead of carrying a fake worker entry;
+- scheduler is host-only;
 - jobs remains host plus worker threads.
 
 Health should represent runtime state separately from pool state:

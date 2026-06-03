@@ -11,10 +11,10 @@
       "import": "./dist/index.js",
       "module-sync": "./dist/index.js"
     },
-    "./neem": {
-      "types": "./src/neem.ts",
-      "import": "./dist/neem.js",
-      "module-sync": "./dist/neem.js"
+    "./neem/*": {
+      "types": "./src/neem/*.ts",
+      "import": "./dist/neem/*.js",
+      "module-sync": "./dist/neem/*.js"
     }
   },
   "publishConfig": {
@@ -24,10 +24,10 @@
         "import": "./dist/index.js",
         "module-sync": "./dist/index.js"
       },
-      "./neem": {
-        "types": "./dist/neem.d.ts",
-        "import": "./dist/neem.js",
-        "module-sync": "./dist/neem.js"
+      "./neem/*": {
+        "types": "./dist/neem/*.d.ts",
+        "import": "./dist/neem/*.js",
+        "module-sync": "./dist/neem/*.js"
       }
     }
   },

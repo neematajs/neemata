@@ -1,4 +1,4 @@
-export * from './artifact.ts'
+export * from '../shared/types.ts'
 export * from './config.ts'
 export * from './hooks.ts'
 export * from './runtime.ts'

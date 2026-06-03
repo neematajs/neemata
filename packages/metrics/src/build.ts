@@ -1,3 +1,5 @@
+import { fileURLToPath } from 'node:url'
+
 import type { RolldownPluginOption } from '@nmtjs/neem'
 
 const PackageNotFoundError = new Error(
@@ -9,9 +11,16 @@ export function createDefaultMetricsRolldownPlugin(): RolldownPluginOption {
     name: 'nmtjs-metrics-default-loader',
     async transform(this, code, id) {
       if (this.getModuleInfo?.(id)?.isEntry) {
-        const metricsPackage = await this.resolve('@nmtjs/metrics')
+        const metricsPackage =
+          (await this.resolve('@nmtjs/metrics')) ??
+          fileURLToPath(new URL('./index.js', import.meta.url))
         if (!metricsPackage) throw PackageNotFoundError
-        const file = await this.load({ id: metricsPackage.id })
+        const file = await this.load({
+          id:
+            typeof metricsPackage === 'string'
+              ? metricsPackage
+              : metricsPackage.id,
+        })
         const lines = [
           `import { registerDefaultMetrics } from ${JSON.stringify(file.id)}`,
           'registerDefaultMetrics()',

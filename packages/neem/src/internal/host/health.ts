@@ -3,8 +3,10 @@ import { createServer } from 'node:http'
 
 import type { Logger } from '@nmtjs/core'
 
-import type { NeemHealthConfig } from '../../public/config.ts'
-import type { NeemRuntimeServerHealth } from '../../public/runtime.ts'
+import type {
+  NeemHealthConfig,
+  NeemRuntimeServerHealth,
+} from '../../shared/types.ts'
 import { childLogger } from '../shared/logger.ts'
 
 export type HealthProbeOptions = {

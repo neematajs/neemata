@@ -1,16 +1,15 @@
 import type { MaybePromise } from '@nmtjs/common'
+import type { Logger } from '@nmtjs/core'
 
-import type { NeemResolvedArtifact } from '../../public/artifact.ts'
 import type {
-  NeemRuntimeHostParams,
+  NeemResolvedArtifact,
+  NeemRuntimePlan,
   NeemRuntimeServerRuntimeHealth,
-  NeemRuntimeThreadHandle,
-  NeemRuntimeThreadPlan,
   NeemRuntimeUpstream,
   NeemWorkerPoolHealth,
   NeemWorkerPoolState,
   NeemWorkerState,
-} from '../../public/runtime.ts'
+} from '../../shared/types.ts'
 import type { RuntimeSnapshot } from '../manifest/snapshot.ts'
 import type { HostHooks } from '../plugins/hooks.ts'
 import type { RecoveryOptions } from './recovery.ts'
@@ -33,7 +32,7 @@ export type RuntimeControllerOptions = {
 
 export class RuntimeController {
   private host: HostRunner | undefined
-  private hostParams: NeemRuntimeHostParams | undefined
+  private logger: Logger | undefined
   private threads: readonly ThreadController[] = []
   private stopped = true
   private recoveryPromise: Promise<void> | undefined
@@ -65,39 +64,31 @@ export class RuntimeController {
 
   async start(): Promise<void> {
     this.stopped = false
-    const hostParams = this.createHostParams()
-    this.hostParams = hostParams
-    hostParams.logger.debug('Neem runtime starting')
-    hostParams.logger.trace(
-      {
-        host: Boolean(hostParams.hostArtifact),
-        defaultThreads: hostParams.defaultThreads.length,
-      },
-      'Neem runtime options',
-    )
+    const logger = this.createLogger()
+    this.logger = logger
+    logger.debug('Neem runtime starting')
 
     try {
       await this.callRuntimeHook('runtime:start')
-      this.host = this.createHostRunner(hostParams)
-      await this.host?.start()
-      const plan = await this.host?.plan()
+      const host = this.createHostRunner()
+      this.host = host
+      await host.start()
+      const plan = await host.plan()
       const threadPlans = resolveThreadTopology({
         snapshot: this.options.snapshot,
         runtimeName: this.name,
-        requireThreads: !this.host,
-        defaultThreads: hostParams.defaultThreads,
-        plans: plan?.threads,
+        plan,
       })
-      hostParams.logger.trace(
+      logger.trace(
         {
-          threads: threadPlans.map((plan) => ({
-            name: plan.name,
-            artifactId: plan.artifact.id,
-            owner: plan.artifact.owner,
+          threads: threadPlans.map((thread) => ({
+            name: thread.name,
+            artifactId: thread.artifact.id,
           })),
         },
-        'Neem runtime thread topology',
+        'Neem runtime worker topology',
       )
+
       this.threads = threadPlans.map(
         (plan, index) =>
           new ThreadController({
@@ -112,20 +103,18 @@ export class RuntimeController {
       )
 
       await Promise.all(this.threads.map((thread) => thread.start()))
-      const upstreams = this.getUpstreams()
-      await this.host?.callStart(this.getThreadHandles(), upstreams)
-      await this.callRuntimeHook('runtime:ready', upstreams)
-      hostParams.logger.debug('Neem runtime ready')
-      hostParams.logger.trace(
-        { threads: this.threads.length, upstreams: upstreams.length },
+      await host.callStart(this.getThreadHandles())
+      await this.callRuntimeHook('runtime:ready', this.getUpstreams())
+      logger.debug('Neem runtime ready')
+      logger.trace(
+        { threads: this.threads.length, upstreams: this.getUpstreams().length },
         'Neem runtime summary',
       )
     } catch (error) {
       const normalized = normalizeError(error)
-      await this.callHostFail(normalized)
       await this.callRuntimeFailHook(normalized)
       await this.stop().catch((stopError) => {
-        hostParams.logger.warn(
+        logger.warn(
           new Error(`Runtime [${this.name}] cleanup failed`, {
             cause: normalizeError(stopError),
           }),
@@ -138,25 +127,19 @@ export class RuntimeController {
   async stop(): Promise<void> {
     this.stopped = true
     const host = this.host
-    const hostParams = this.hostParams
     const threads = this.threads
-    const handles = this.getThreadHandles()
+    const logger = this.logger
     this.host = undefined
-    this.hostParams = undefined
     this.threads = []
-    hostParams?.logger.debug('Neem runtime stopping')
-    hostParams?.logger.trace(
-      { threads: threads.length },
-      'Neem runtime stop options',
-    )
+    this.logger = undefined
+    logger?.debug('Neem runtime stopping')
+    logger?.trace({ threads: threads.length }, 'Neem runtime stop options')
 
     let hostError: Error | undefined
-    if (hostParams) {
-      try {
-        await host?.callStop(handles)
-      } catch (error) {
-        hostError = normalizeError(error)
-      }
+    try {
+      await host?.callStop()
+    } catch (error) {
+      hostError = normalizeError(error)
     }
 
     const threadResults = await Promise.allSettled(
@@ -165,13 +148,14 @@ export class RuntimeController {
     await host?.shutdown().catch((error) => {
       hostError ??= normalizeError(error)
     })
+
     let hookError: Error | undefined
-    if (hostParams) {
+    if (logger) {
       await this.callRuntimeHook('runtime:stop').catch((error) => {
         hookError = normalizeError(error)
       })
     }
-    hostParams?.logger.debug('Neem runtime stopped')
+    logger?.debug('Neem runtime stopped')
 
     const threadError = threadResults.find(
       (result): result is PromiseRejectedResult => result.status === 'rejected',
@@ -189,36 +173,10 @@ export class RuntimeController {
     error: Error,
     thread: ThreadController,
   ): Promise<void> {
-    this.hostParams?.logger.warn(
+    this.logger?.warn(
       { err: error },
       `Neem runtime worker ${thread.name} failed`,
     )
-    this.hostParams?.logger.trace(
-      { thread: thread.name },
-      'Neem runtime worker failure',
-    )
-    await this.callHostFail(error)
-    await this.callRuntimeFailHook(error)
-
-    if (this.recoveryPromise) return
-
-    const policy = createRecoveryPolicy(
-      this.options.snapshot.mode,
-      this.options.recovery,
-    )
-    if (policy.attempts === 0) {
-      await this.options.onFailure?.(error, this)
-      return
-    }
-
-    this.recoveryPromise = this.recover(error, thread).finally(() => {
-      this.recoveryPromise = undefined
-    })
-    await this.recoveryPromise
-  }
-
-  private async handleHostFailure(error: Error): Promise<void> {
-    this.hostParams?.logger.warn({ err: error }, 'Neem runtime host failed')
     await this.callRuntimeFailHook(error)
 
     if (this.recoveryPromise) return
@@ -238,10 +196,28 @@ export class RuntimeController {
     await this.recoveryPromise
   }
 
-  private async recover(
-    initialError: Error,
-    thread?: ThreadController,
-  ): Promise<void> {
+  private async handleHostFailure(error: Error): Promise<void> {
+    this.logger?.warn({ err: error }, 'Neem runtime host failed')
+    await this.callRuntimeFailHook(error)
+
+    if (this.recoveryPromise) return
+
+    const policy = createRecoveryPolicy(
+      this.options.snapshot.mode,
+      this.options.recovery,
+    )
+    if (policy.attempts === 0) {
+      await this.options.onFailure?.(error, this)
+      return
+    }
+
+    this.recoveryPromise = this.recover(error).finally(() => {
+      this.recoveryPromise = undefined
+    })
+    await this.recoveryPromise
+  }
+
+  private async recover(initialError: Error): Promise<void> {
     const policy = createRecoveryPolicy(
       this.options.snapshot.mode,
       this.options.recovery,
@@ -252,13 +228,9 @@ export class RuntimeController {
       const attempt = this.restartAttempts + 1
       this.restartAttempts = attempt
       const delayMs = getRecoveryDelay(policy, attempt)
-      this.hostParams?.logger.warn(
+      this.logger?.warn(
         { err: lastError },
         `Restarting Neem runtime after failure (${attempt}/${policy.attempts})`,
-      )
-      this.hostParams?.logger.trace(
-        { attempt, attempts: policy.attempts, delayMs },
-        'Neem runtime recovery policy',
       )
       await wait(delayMs)
       if (this.stopped) return
@@ -273,93 +245,44 @@ export class RuntimeController {
       }
     }
 
-    this.hostParams?.logger.error(
-      { err: lastError },
-      'Neem runtime recovery exhausted',
-    )
+    this.logger?.error({ err: lastError }, 'Neem runtime recovery exhausted')
     await this.options.onFailure?.(lastError, this)
   }
 
-  private createHostRunner(
-    hostParams: NeemRuntimeHostParams,
-  ): HostRunner | undefined {
-    const hostArtifact = resolveRuntimeArtifact(
-      this.options.snapshot,
-      this.name,
-      'host',
-    )
-    if (!hostArtifact) return undefined
-
+  private createHostRunner(): HostRunner {
     return new HostRunner({
-      data: this.createHostRunnerData(hostParams, hostArtifact),
+      data: this.createHostRunnerData(),
       onFailure: (error) => this.handleHostFailure(error),
     })
   }
 
-  private createHostRunnerData(
-    hostParams: NeemRuntimeHostParams,
-    hostArtifact: NeemResolvedArtifact,
-  ): HostRunnerData {
+  private createHostRunnerData(): HostRunnerData {
     return {
       mode: this.options.snapshot.mode,
       runtimeName: this.name,
-      options: hostParams.options,
       logger: this.options.snapshot.manifest.config.logger,
       outDir: this.options.snapshot.outDir,
-      artifact: hostParams.artifact,
-      hostArtifact,
-      artifacts: this.options.snapshot.artifacts.list(),
-      defaultThreads: hostParams.defaultThreads,
-    }
-  }
-
-  private createHostParams(): NeemRuntimeHostParams {
-    const owner = { type: 'runtime' as const, name: this.name }
-    const artifact =
-      resolveRuntimeArtifact(this.options.snapshot, this.name, 'entry') ??
-      resolveRuntimeArtifact(this.options.snapshot, this.name, 'host')
-    if (!artifact) {
-      throw new Error(`Runtime [${this.name}] entry artifact is missing`)
-    }
-
-    return {
-      mode: this.options.snapshot.mode,
-      name: this.name,
-      options: this.options.snapshot.config.runtimes[this.name]?.options,
-      logger: childLogger(
-        this.options.snapshot.logger,
-        runtimeLabel(this.name),
-      ),
-      artifact,
-      hostArtifact: resolveRuntimeArtifact(
+      hostArtifact: resolveRequiredRuntimeArtifact(
         this.options.snapshot,
         this.name,
         'host',
       ),
-      artifacts: this.options.snapshot.artifacts.scope(owner),
-      defaultThreads: createDefaultThreadPlans(
+      plannerArtifact: resolveRequiredRuntimeArtifact(
         this.options.snapshot,
         this.name,
+        'planner',
       ),
     }
   }
 
-  private async callHostFail(error: Error): Promise<void> {
-    try {
-      await this.host?.callFail(error, this.getThreadHandles())
-    } catch (failError) {
-      this.hostParams?.logger.warn(
-        new Error(`Runtime [${this.name}] fail handler failed`, {
-          cause: normalizeError(failError),
-        }),
-      )
-    }
+  private createLogger(): Logger {
+    return childLogger(this.options.snapshot.logger, runtimeLabel(this.name))
   }
 
   private async callRuntimeFailHook(error: Error): Promise<void> {
     await this.callRuntimeHook('runtime:fail', undefined, error).catch(
       (hookError) => {
-        this.hostParams?.logger.warn(
+        this.logger?.warn(
           new Error(`Runtime [${this.name}] fail hook failed`, {
             cause: normalizeError(hookError),
           }),
@@ -383,7 +306,7 @@ export class RuntimeController {
     upstreams?: readonly NeemRuntimeUpstream[],
     error?: Error,
   ): Promise<void> {
-    this.hostParams?.logger.trace(
+    this.logger?.trace(
       { hook: name, upstreams: upstreams?.length, err: error },
       'Neem runtime hook',
     )
@@ -408,7 +331,7 @@ export class RuntimeController {
     }
   }
 
-  private getThreadHandles(): readonly NeemRuntimeThreadHandle[] {
+  private getThreadHandles() {
     return this.threads.map((thread) => thread.getHandle())
   }
 }
@@ -424,93 +347,92 @@ export function resolveRuntimeArtifact(
   )
 }
 
-export function createDefaultThreadPlans(
+export function resolveRequiredRuntimeArtifact(
   snapshot: RuntimeSnapshot,
   runtimeName: string,
-): readonly NeemRuntimeThreadPlan[] {
-  const runtime = snapshot.config.runtimes[runtimeName]
-  const entry = resolveRuntimeArtifact(snapshot, runtimeName, 'entry')
-  const threads = runtime?.threads ?? (entry ? 1 : 0)
-
-  if (typeof threads === 'number') {
-    if (!Number.isInteger(threads) || threads < 0) {
-      throw new Error(
-        `Runtime [${runtimeName}] threads must be a non-negative integer`,
-      )
-    }
-    return Array.from({ length: threads }, (_, index) => ({
-      name: `${runtimeName}:${index}`,
-      artifact: 'entry',
-      data: {},
-    }))
+  artifactId: string,
+): NeemResolvedArtifact {
+  const artifact = resolveRuntimeArtifact(snapshot, runtimeName, artifactId)
+  if (!artifact) {
+    throw new Error(
+      `Runtime [${runtimeName}] artifact [${artifactId}] is missing`,
+    )
   }
-
-  return threads.map((data, index) => ({
-    name: `${runtimeName}:${index}`,
-    artifact: 'entry',
-    data,
-  }))
+  return artifact
 }
 
 export function resolveThreadTopology(options: {
   snapshot: RuntimeSnapshot
   runtimeName: string
-  requireThreads: boolean
-  defaultThreads: readonly NeemRuntimeThreadPlan[]
-  plans: readonly NeemRuntimeThreadPlan[] | undefined
+  plan: NeemRuntimePlan | undefined
 }): readonly ThreadPlan[] {
-  const source = options.plans ?? options.defaultThreads
-  const expanded = source.flatMap((plan) => {
-    const count = plan.count ?? 1
-    if (!Number.isInteger(count) || count <= 0) {
-      throw new Error(
-        `Runtime [${options.runtimeName}] thread [${plan.name}] count must be a positive integer`,
-      )
-    }
+  const workerArtifact = resolveRuntimeArtifact(
+    options.snapshot,
+    options.runtimeName,
+    'worker',
+  )
+  const workers = options.plan?.workers ?? []
+  const plans = normalizePlannedWorkers(options.runtimeName, workers)
 
-    return Array.from({ length: count }, (_, index) => ({
-      name: count > 1 ? `${plan.name}:${index}` : plan.name,
-      artifact: resolveThreadArtifact(
-        options.snapshot,
-        options.runtimeName,
-        plan,
-      ),
-      data: plan.data,
-    }))
-  })
-
-  if (expanded.length === 0 && options.requireThreads) {
+  if (plans.length > 0 && !workerArtifact) {
     throw new Error(
-      `Runtime [${options.runtimeName}] must plan at least one thread`,
+      `Runtime [${options.runtimeName}] planned workers but has no worker artifact`,
     )
   }
 
-  const names = new Set<string>()
-  for (const plan of expanded) {
-    if (names.has(plan.name)) {
-      throw new Error(
-        `Runtime [${options.runtimeName}] has duplicate thread name [${plan.name}]`,
-      )
-    }
-    names.add(plan.name)
-  }
-
-  return expanded
+  return plans.map((plan) => ({
+    name: plan.name,
+    artifact: workerArtifact!,
+    data: plan.data,
+  }))
 }
 
-function resolveThreadArtifact(
-  snapshot: RuntimeSnapshot,
+function normalizePlannedWorkers(
   runtimeName: string,
-  plan: NeemRuntimeThreadPlan,
-): NeemResolvedArtifact {
-  if (typeof plan.artifact !== 'string') return plan.artifact
-  const artifact = resolveRuntimeArtifact(snapshot, runtimeName, plan.artifact)
-  if (!artifact) {
+  workers: unknown,
+): readonly { name: string; data: unknown }[] {
+  if (Array.isArray(workers)) {
+    return workers.map((data, index) => {
+      assertStructuredCloneable(runtimeName, `${runtimeName}:${index}`, data)
+      return { name: `${runtimeName}:${index}`, data }
+    })
+  }
+
+  if (!isGroupedWorkerPlan(workers)) {
     throw new Error(
-      `Runtime [${runtimeName}] thread artifact [${plan.artifact}] is missing`,
+      `Runtime [${runtimeName}] planner workers must be an array or record of arrays`,
     )
   }
-  return artifact
+
+  return Object.entries(workers).flatMap(([group, groupWorkers]) =>
+    groupWorkers.map((data, index) => {
+      const name = `${runtimeName}:${group}:${index}`
+      assertStructuredCloneable(runtimeName, name, data)
+      return { name, data }
+    }),
+  )
+}
+
+function isGroupedWorkerPlan(
+  workers: unknown,
+): workers is Record<string, readonly unknown[]> {
+  if (typeof workers !== 'object' || workers === null) return false
+  return Object.values(workers).every((group) => Array.isArray(group))
+}
+
+function assertStructuredCloneable(
+  runtimeName: string,
+  workerName: string,
+  data: unknown,
+): void {
+  try {
+    structuredClone(data)
+  } catch (error) {
+    throw new Error(
+      `Runtime [${runtimeName}] worker [${workerName}] data must be structured-cloneable`,
+      { cause: normalizeError(error) },
+    )
+  }
 }
 
 function getPoolState(states: readonly NeemWorkerState[]): NeemWorkerPoolState {

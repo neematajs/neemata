@@ -6,8 +6,7 @@ import { createFuture } from '@nmtjs/common'
 import type {
   NeemRuntimePlan,
   NeemRuntimeThreadHandle,
-  NeemRuntimeUpstream,
-} from '../../public/runtime.ts'
+} from '../../shared/types.ts'
 import type {
   HostRunnerData,
   HostRunnerRequest,
@@ -64,24 +63,13 @@ export class HostRunner {
     return result?.plan
   }
 
-  async callStart(
-    threads: readonly NeemRuntimeThreadHandle[],
-    upstreams: readonly NeemRuntimeUpstream[],
-  ): Promise<void> {
-    await this.request({ id: 0, type: 'start', threads, upstreams })
+  async callStart(threads: readonly NeemRuntimeThreadHandle[]): Promise<void> {
+    await this.request({ id: 0, type: 'start', threads })
   }
 
-  async callStop(threads: readonly NeemRuntimeThreadHandle[]): Promise<void> {
+  async callStop(): Promise<void> {
     if (!this.worker) return
     await this.request({ id: 0, type: 'stop' })
-  }
-
-  async callFail(
-    error: Error,
-    threads: readonly NeemRuntimeThreadHandle[],
-  ): Promise<void> {
-    if (!this.worker) return
-    await this.request({ id: 0, type: 'fail', error: serializeError(error) })
   }
 
   async shutdown(): Promise<void> {

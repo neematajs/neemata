@@ -2,7 +2,7 @@ import { dirname, resolve } from 'node:path'
 
 import { ResolverFactory } from 'oxc-resolver'
 
-import type { NeemArtifactEntry } from '../../public/artifact.ts'
+import type { NeemArtifactEntry } from '../../shared/types.ts'
 
 const resolver = new ResolverFactory({
   conditionNames: ['import', 'module', 'node', 'default'],

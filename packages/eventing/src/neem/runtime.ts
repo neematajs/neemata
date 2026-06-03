@@ -1,6 +1,10 @@
 import type { MaybePromise } from '@nmtjs/common'
-import type { NeemEntryInput, NeemRuntimeConfigBase } from '@nmtjs/neem'
-import { defineRuntime } from '@nmtjs/neem'
+import type {
+  NeemEntryInput,
+  NeemRuntimeDeclaration,
+  NeemRuntimePlan,
+} from '@nmtjs/neem'
+import { createRuntime, defineRuntimePlanner } from '@nmtjs/neem'
 
 import type { EventingAdapter } from '../core/adapter.ts'
 import type { AnyEventingConsumerDefinition } from '../core/consumer.ts'
@@ -14,22 +18,26 @@ export type EventingConsumersFactory = () => MaybePromise<
 export type EventingRuntimeConfig = {
   adapter: EventingAdapterFactory
   consumers: EventingConsumersFactory
-}
-
-export type EventingRuntimeConfigInput = {
-  config: NeemEntryInput
   threads?: number
 }
 
-export function defineEventingRuntime<
-  const TConfig extends EventingRuntimeConfig = EventingRuntimeConfig,
->(config: { config: NeemEntryInput; threads?: number }): NeemRuntimeConfigBase {
-  return defineRuntime({
-    worker: { entry: eventingWorkerEntry },
-    artifacts: [
-      { id: eventingConfigArtifactId, kind: 'module', entry: config.config },
-    ],
-    threads: config.threads ?? 1,
+export type EventingRuntimeConfigInput = {
+  name?: string
+  planner?: NeemEntryInput
+  worker: NeemEntryInput
+}
+
+export type EventingWorkerData = { consumerIndexes: readonly number[] }
+
+const defineEventingRuntimeProject = createRuntime({})
+
+export function defineEventingRuntime(
+  config: EventingRuntimeConfigInput,
+): NeemRuntimeDeclaration {
+  return defineEventingRuntimeProject({
+    name: config.name,
+    planner: config.planner,
+    worker: { entry: config.worker },
   })
 }
 
@@ -37,6 +45,34 @@ export function defineEventing(config: EventingRuntimeConfig) {
   return Object.freeze(config)
 }
 
-export const eventingConfigArtifactId = 'eventing-config'
+export function defineEventingPlanner<
+  const TConfig extends EventingRuntimeConfig = EventingRuntimeConfig,
+>(factory: () => MaybePromise<TConfig>) {
+  return defineRuntimePlanner(
+    async (): Promise<NeemRuntimePlan<unknown, EventingWorkerData>> => {
+      const config = await factory()
+      const consumers = await config.consumers()
+      const workerCount = Math.min(
+        consumers.length,
+        normalizeThreadCount(config.threads),
+      )
+      const assignments = Array.from(
+        { length: workerCount },
+        (): number[] => [],
+      )
 
-export const eventingWorkerEntry = '@nmtjs/eventing/neem/worker-entry'
+      for (let index = 0; index < consumers.length; index++) {
+        assignments[index % workerCount]!.push(index)
+      }
+
+      return {
+        workers: assignments.map((consumerIndexes) => ({ consumerIndexes })),
+      }
+    },
+  )
+}
+
+function normalizeThreadCount(count: number | undefined): number {
+  if (count === undefined) return 1
+  return Math.max(1, Math.floor(count))
+}

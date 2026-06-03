@@ -6,12 +6,13 @@ import type { Logger } from '@nmtjs/core'
 import { createFuture } from '@nmtjs/common'
 import * as rolldown from 'rolldown'
 
-import type { NeemConfig } from '../../public/config.ts'
+import type { NeemConfig } from '../../shared/types.ts'
 import type { GraphWatcher, TargetChange } from '../build/compiler.ts'
 import type { BuildTarget } from '../build/graph.ts'
 import type { WatcherEvent } from './protocol.ts'
 import { cleanNeemOutDir } from '../build/clean.ts'
 import { watchGraph } from '../build/compiler.ts'
+import { resolveNeemRuntimeDeclarations } from '../build/declarations.ts'
 import { createBuildGraph } from '../build/graph.ts'
 import { createManifest, writeManifest } from '../manifest/manifest.ts'
 import { createLoggerFromConfigInput } from '../shared/logger.ts'
@@ -50,10 +51,14 @@ export class WatcherService {
     )
     this.logger.trace({ config }, 'Neem source config')
 
+    const resolvedConfig = await resolveNeemRuntimeDeclarations(
+      this.options.configFile,
+      config,
+    )
     const graph = createBuildGraph({
       configFile: this.options.configFile,
       outDir: this.options.outDir,
-      config,
+      config: resolvedConfig,
       runtimes: this.options.runtimes,
     })
     this.logger.debug('Neem build graph ready')
@@ -152,10 +157,7 @@ async function watchConfigSignal(
       clearScreen: false,
       skipWrite: true,
       exclude: 'node_modules/**',
-      watcher: {
-        debounceDelay: 50,
-        useDebounce: true,
-      },
+      watcher: { debounceDelay: 50, useDebounce: true },
     },
   })
   const ready = createFuture<void>()
@@ -189,7 +191,7 @@ async function watchConfigSignal(
 function classifyChange(change: TargetChange): WatcherEvent {
   switch (change.target.kind) {
     case 'runtime-worker':
-    case 'runtime-artifact':
+    case 'runtime-planner':
       return { type: 'runtime-changed', runtimeName: getRuntimeName(change) }
     case 'runtime-host':
       return {
@@ -202,6 +204,7 @@ function classifyChange(change: TargetChange): WatcherEvent {
       return { type: 'logger-changed' }
     case 'start-entry':
     case 'worker-entry':
+    case 'host-runner-entry':
       return { type: 'plugin-changed' }
   }
 }

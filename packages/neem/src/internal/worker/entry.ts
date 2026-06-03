@@ -6,15 +6,15 @@ import type {
   NeemRuntime,
   NeemRuntimeStartResult,
   NeemRuntimeUpstream,
-} from '../../public/runtime.ts'
-import type { NeemRuntimeWorker } from '../../public/worker.ts'
+  NeemRuntimeWorker,
+} from '../../shared/types.ts'
 import type {
   ParentMessage,
   RuntimeWorkerData,
   WorkerErrorOrigin,
   WorkerMessage,
 } from './protocol.ts'
-import { createArtifactRegistry } from '../manifest/artifacts.ts'
+import { isNeemRuntimeWorker } from '../../public/worker.ts'
 import {
   childLogger,
   resolveManifestLogger,
@@ -63,6 +63,11 @@ async function createRuntime(data: RuntimeWorkerData): Promise<NeemRuntime> {
   const worker = await importDefault<NeemRuntimeWorker<unknown, unknown>>(
     data.artifact.file,
   )
+  if (!isNeemRuntimeWorker(worker)) {
+    throw new Error(
+      `Runtime worker file [${data.artifact.file}] default export must be a marked runtime worker produced by defineRuntimeWorker`,
+    )
+  }
 
   const created = worker.createRuntime({
     mode: data.mode,
@@ -70,8 +75,6 @@ async function createRuntime(data: RuntimeWorkerData): Promise<NeemRuntime> {
     data: data.data,
     logger,
     definition: worker.definition,
-    artifact: data.artifact,
-    artifacts: createArtifactRegistry(data.artifacts),
     port: data.port,
   })
   logger.trace('Neem runtime worker initialized')

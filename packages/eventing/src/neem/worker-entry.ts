@@ -1,27 +1,23 @@
-import { pathToFileURL } from 'node:url'
-
 import type { NeemRuntime, NeemRuntimeWorkerContext } from '@nmtjs/neem'
 import { defineRuntimeWorker } from '@nmtjs/neem'
 
 import type { EventingConsumer } from '../core/adapter.ts'
-import type { EventingRuntimeConfig } from './runtime.ts'
+import type { EventingRuntimeConfig, EventingWorkerData } from './runtime.ts'
 import { handleEventingConsumerMessage } from '../core/consumer.ts'
-import { eventingConfigArtifactId } from './runtime.ts'
 
-export default defineRuntimeWorker({
-  definition: {},
-  async createRuntime(ctx: NeemRuntimeWorkerContext<unknown, unknown>) {
-    const artifact = ctx.artifacts.resolve(eventingConfigArtifactId)
-    if (!artifact) {
-      throw new Error(`Missing eventing artifact [${eventingConfigArtifactId}]`)
-    }
-    const module = (await import(pathToFileURL(artifact.file).href)) as {
-      default: EventingRuntimeConfig
-    }
-    const config = module.default
-    return new EventingRuntime(ctx, config)
-  },
-})
+export type EventingWorkerConfig = Pick<
+  EventingRuntimeConfig,
+  'adapter' | 'consumers'
+>
+
+export function defineEventingWorker(config: EventingWorkerConfig) {
+  return defineRuntimeWorker<EventingWorkerData, EventingWorkerConfig>({
+    definition: config,
+    createRuntime(ctx) {
+      return new EventingRuntime(ctx, ctx.definition)
+    },
+  })
+}
 
 class EventingRuntime implements NeemRuntime {
   protected readonly abortController = new AbortController()
@@ -29,8 +25,11 @@ class EventingRuntime implements NeemRuntime {
   protected adapter?: Awaited<ReturnType<EventingRuntimeConfig['adapter']>>
 
   constructor(
-    protected readonly ctx: NeemRuntimeWorkerContext,
-    protected readonly config: EventingRuntimeConfig,
+    protected readonly ctx: NeemRuntimeWorkerContext<
+      EventingWorkerData,
+      EventingWorkerConfig
+    >,
+    protected readonly config: EventingWorkerConfig,
   ) {}
 
   async start() {
@@ -39,7 +38,8 @@ class EventingRuntime implements NeemRuntime {
     await adapter.initialize()
 
     const definitions = await this.config.consumers()
-    for (const definition of definitions) {
+    for (const index of this.ctx.data.consumerIndexes) {
+      const definition = definitions[index]!
       const consumer = await adapter.consume(
         {
           topics: [definition.event.topic],

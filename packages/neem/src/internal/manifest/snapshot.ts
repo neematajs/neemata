@@ -2,8 +2,7 @@ import { resolve } from 'node:path'
 
 import type { Logger } from '@nmtjs/core'
 
-import type { NeemResolvedArtifact } from '../../public/artifact.ts'
-import type { NeemMode } from '../../public/runtime.ts'
+import type { NeemMode, NeemResolvedArtifact } from '../../shared/types.ts'
 import type { ScopedArtifactRegistry } from './artifacts.ts'
 import type { Manifest, ManifestArtifact, ManifestConfig } from './manifest.ts'
 import { createDefaultLogger } from '../shared/logger.ts'
@@ -48,13 +47,10 @@ function resolveManifestArtifacts(
   const artifacts: NeemResolvedArtifact[] = []
 
   for (const runtime of Object.values(manifest.runtimes)) {
-    if (runtime.entry)
-      artifacts.push(resolveManifestArtifact(outDir, runtime.entry))
-    if (runtime.host)
-      artifacts.push(resolveManifestArtifact(outDir, runtime.host))
-    for (const artifact of runtime.artifacts) {
-      artifacts.push(resolveManifestArtifact(outDir, artifact))
-    }
+    if (runtime.worker)
+      artifacts.push(resolveManifestArtifact(outDir, runtime.worker))
+    artifacts.push(resolveManifestArtifact(outDir, runtime.host))
+    artifacts.push(resolveManifestArtifact(outDir, runtime.planner))
   }
 
   return artifacts

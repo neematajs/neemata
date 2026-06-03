@@ -1,24 +1,21 @@
 import { describe, expect, it } from 'vitest'
 
+import type { NeemResolvedConfig } from '../src/public/config.ts'
 import { createBuildGraph } from '../src/internal/build/graph.ts'
-import {
-  defineConfig,
-  definePlugin,
-  defineRuntime,
-} from '../src/public/config.ts'
+import { definePlugin, defineRuntime } from '../src/public/config.ts'
 
 const configFile = '/workspace/app/neem.config.ts'
 const outDir = '/workspace/app/dist'
 
 describe('createBuildGraph', () => {
-  it('creates explicit targets for start entries, logger, plugins, workers, hosts, and artifacts', () => {
+  it('creates start, logger, plugin, worker, host, and planner targets', () => {
     const pluginRolldown = { name: 'plugin-rolldown' }
     const runtimeRolldown = { name: 'runtime-rolldown' }
 
     const graph = createBuildGraph({
       configFile,
       outDir,
-      config: defineConfig({
+      config: resolvedConfig({
         logger: './logger.ts',
         plugins: [
           definePlugin({
@@ -29,25 +26,17 @@ describe('createBuildGraph', () => {
           }),
         ],
         runtimes: {
-          api: defineRuntime({
+          api: runtimeDeclaration('api', {
             worker: {
               entry: './api.ts',
               build: { rolldown: { plugins: [runtimeRolldown] } },
             },
             host: { entry: './api.host.ts' },
-            artifacts: [{ id: 'schema', kind: 'module', entry: './schema.ts' }],
-            threads: [{ label: 'one' }],
+            planner: './neem.planner.ts',
           }),
-          scheduler: defineRuntime({
+          scheduler: runtimeDeclaration('scheduler', {
             host: { entry: './scheduler.host.ts' },
-            threads: 0,
-            artifacts: [
-              {
-                id: 'scheduler-config',
-                kind: 'module',
-                entry: './scheduler.config.ts',
-              },
-            ],
+            planner: './scheduler.planner.ts',
           }),
         },
       }),
@@ -55,6 +44,7 @@ describe('createBuildGraph', () => {
 
     expect(graph.startEntry.key).toBe('runtime:start-entry')
     expect(graph.workerEntry.key).toBe('runtime:worker-entry')
+    expect(graph.hostRunnerEntry.key).toBe('runtime:host-runner-entry')
     expect(graph.logger?.artifact.entry).toBe('/workspace/app/logger.ts')
     expect(graph.plugins).toHaveLength(1)
     expect(graph.plugins[0]).toMatchObject({
@@ -62,44 +52,38 @@ describe('createBuildGraph', () => {
       name: '@scope/plugin one',
       options: { fixture: true },
     })
-    expect(graph.plugins[0]?.entry?.outDir).toBe(
-      '/workspace/app/dist/config/plugins/000-scope-plugin-one',
-    )
 
     const api = graph.runtimes.find((runtime) => runtime.name === 'api')
-    expect(api?.worker?.artifact.entry).toBe('/workspace/app/api.ts')
+    expect(api?.worker?.artifact.entry).toBe('/workspace/app/api/api.ts')
     expect(api?.worker?.artifact.rolldown?.plugins).toEqual([
       pluginRolldown,
       runtimeRolldown,
     ])
-    expect(api?.host?.artifact.entry).toBe('/workspace/app/api.host.ts')
-    expect(api?.artifacts.map((target) => target.artifact)).toEqual([
-      { id: 'schema', kind: 'module', entry: '/workspace/app/schema.ts' },
-    ])
+    expect(api?.host.artifact.entry).toBe('/workspace/app/api/api.host.ts')
+    expect(api?.planner.artifact.entry).toBe(
+      '/workspace/app/api/neem.planner.ts',
+    )
 
     const scheduler = graph.runtimes.find(
       (runtime) => runtime.name === 'scheduler',
     )
     expect(scheduler?.worker).toBeUndefined()
-    expect(scheduler?.host?.artifact.entry).toBe(
-      '/workspace/app/scheduler.host.ts',
+    expect(scheduler?.host.artifact.entry).toBe(
+      '/workspace/app/scheduler/scheduler.host.ts',
     )
-    expect(scheduler?.artifacts.map((target) => target.artifact)).toEqual([
-      {
-        id: 'scheduler-config',
-        kind: 'module',
-        entry: '/workspace/app/scheduler.config.ts',
-      },
-    ])
+    expect(scheduler?.planner.artifact.entry).toBe(
+      '/workspace/app/scheduler/scheduler.planner.ts',
+    )
     expect(graph.targets.map((target) => target.key)).toEqual([
       'runtime:start-entry',
       'runtime:worker-entry',
+      'runtime:host-runner-entry',
       'config:logger',
       'runtime:api:worker',
       'runtime:api:host',
-      'runtime:api:artifact:000-schema',
+      'runtime:api:planner',
       'runtime:scheduler:host',
-      'runtime:scheduler:artifact:000-scheduler-config',
+      'runtime:scheduler:planner',
       'plugin:000-scope-plugin-one',
     ])
   })
@@ -109,19 +93,15 @@ describe('createBuildGraph', () => {
       configFile,
       outDir,
       runtimes: [' scheduler '],
-      config: defineConfig({
+      config: resolvedConfig({
         runtimes: {
-          api: defineRuntime({ worker: { entry: './api.ts' } }),
-          scheduler: defineRuntime({
+          api: runtimeDeclaration('api', {
+            worker: { entry: './api.ts' },
+            planner: './api.planner.ts',
+          }),
+          scheduler: runtimeDeclaration('scheduler', {
             host: { entry: './scheduler.host.ts' },
-            threads: 0,
-            artifacts: [
-              {
-                id: 'scheduler-config',
-                kind: 'module',
-                entry: './scheduler.config.ts',
-              },
-            ],
+            planner: './scheduler.planner.ts',
           }),
         },
       }),
@@ -131,8 +111,9 @@ describe('createBuildGraph', () => {
     expect(graph.targets.map((target) => target.key)).toEqual([
       'runtime:start-entry',
       'runtime:worker-entry',
+      'runtime:host-runner-entry',
       'runtime:scheduler:host',
-      'runtime:scheduler:artifact:000-scheduler-config',
+      'runtime:scheduler:planner',
     ])
   })
 
@@ -142,10 +123,40 @@ describe('createBuildGraph', () => {
         configFile,
         outDir,
         runtimes: ['missing'],
-        config: defineConfig({
-          runtimes: { api: defineRuntime({ worker: { entry: './api.ts' } }) },
+        config: resolvedConfig({
+          runtimes: {
+            api: runtimeDeclaration('api', {
+              worker: { entry: './api.ts' },
+              planner: './api.planner.ts',
+            }),
+          },
         }),
       }),
     ).toThrow('Unknown Neem runtime(s): missing')
   })
 })
+
+function resolvedConfig(
+  config: Partial<NeemResolvedConfig> & {
+    runtimes: NeemResolvedConfig['runtimes']
+  },
+): NeemResolvedConfig {
+  return {
+    runtimes: config.runtimes,
+    logger: config.logger,
+    plugins: config.plugins,
+  }
+}
+
+function runtimeDeclaration(
+  name: string,
+  input: Parameters<typeof defineRuntime>[0],
+): NeemResolvedConfig['runtimes'][string] {
+  return {
+    name,
+    file: `/workspace/app/${name}/neem.runtime.ts`,
+    directory: `/workspace/app/${name}`,
+    planner: input.planner ?? './neem.planner.ts',
+    declaration: defineRuntime({ name, ...input }),
+  }
+}

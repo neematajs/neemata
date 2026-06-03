@@ -2,7 +2,7 @@ import { resolve } from 'node:path'
 
 import type { Logger } from '@nmtjs/core'
 
-import type { NeemMode, NeemRuntimeServerHealth } from '../../public/runtime.ts'
+import type { NeemMode, NeemRuntimeServerHealth } from '../../shared/types.ts'
 import type { RuntimeEvent } from './protocol.ts'
 import { HostController } from '../host/controller.ts'
 import { readManifest, selectManifestRuntimes } from '../manifest/manifest.ts'

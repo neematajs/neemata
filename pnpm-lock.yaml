@@ -313,6 +313,9 @@ importers:
       consola:
         specifier: 3.4.2
         version: 3.4.2
+      defu:
+        specifier: ^6.1.7
+        version: 6.1.7
       hookable:
         specifier: 6.1.1
         version: 6.1.1
@@ -613,54 +616,6 @@ importers:
       ioredis:
         specifier: ^5.10.1
         version: 5.10.1
-
-  tests/neemata:
-    devDependencies:
-      '@nmtjs/application':
-        specifier: workspace:*
-        version: link:../../packages/application
-      '@nmtjs/client':
-        specifier: workspace:*
-        version: link:../../packages/client
-      '@nmtjs/contract':
-        specifier: workspace:*
-        version: link:../../packages/contract
-      '@nmtjs/core':
-        specifier: workspace:*
-        version: link:../../packages/core
-      '@nmtjs/gateway':
-        specifier: workspace:*
-        version: link:../../packages/gateway
-      '@nmtjs/http-client':
-        specifier: workspace:*
-        version: link:../../packages/http-client
-      '@nmtjs/http-transport':
-        specifier: workspace:*
-        version: link:../../packages/http-transport
-      '@nmtjs/json-format':
-        specifier: workspace:*
-        version: link:../../packages/json-format
-      '@nmtjs/msgpack-format':
-        specifier: workspace:*
-        version: link:../../packages/msgpack-format
-      '@nmtjs/protocol':
-        specifier: workspace:*
-        version: link:../../packages/protocol
-      '@nmtjs/pubsub':
-        specifier: workspace:*
-        version: link:../../packages/pubsub
-      '@nmtjs/type':
-        specifier: workspace:*
-        version: link:../../packages/type
-      '@nmtjs/ws-client':
-        specifier: workspace:*
-        version: link:../../packages/ws-client
-      '@nmtjs/ws-transport':
-        specifier: workspace:*
-        version: link:../../packages/ws-transport
-      uWebSockets.js:
-        specifier: github:uNetworking/uWebSockets.js#v20.57.0
-        version: https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/fcfc622a4286909593b7f390056d89e0ca3b56b9
 
 packages:
 
@@ -1493,6 +1448,9 @@ packages:
       babel-plugin-macros:
         optional: true
 
+  defu@6.1.7:
+    resolution: {integrity: sha512-7z22QmUWiQ/2d0KkdYmANbRUVABpZ9SNYyH5vx6PZ+nE5bcC0l7uFvEfHlyld/HcGBFTL536ClDt3DEcSlEJAQ==}
+
   denque@2.1.0:
     resolution: {integrity: sha512-HVQE3AAb/pxF8fQAoiqpvg9i3evqug3hoiwakOyZAwJm+6vZehbkYXZ0l4JxS+I3QxM97v5aaRNhj8v5oBhekw==}
     engines: {node: '>=0.10'}
@@ -1919,10 +1877,6 @@ packages:
   uWebSockets.js@https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/e0f56ebb4b349017f006e14d1cd29052f2a7121d:
     resolution: {gitHosted: true, tarball: https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/e0f56ebb4b349017f006e14d1cd29052f2a7121d}
     version: 20.67.0
-
-  uWebSockets.js@https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/fcfc622a4286909593b7f390056d89e0ca3b56b9:
-    resolution: {gitHosted: true, tarball: https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/fcfc622a4286909593b7f390056d89e0ca3b56b9}
-    version: 20.57.0
 
   undici-types@7.16.0:
     resolution: {integrity: sha512-Zz+aZWSj8LE6zoxD+xrjh4VfkIG8Ya6LvYkZqtUQGJPZjYl53ypCaUwWqo7eI0x66KBGeRo+mlBEkMSeSZ38Nw==}
@@ -2673,6 +2627,8 @@ snapshots:
 
   dedent@1.7.2: {}
 
+  defu@6.1.7: {}
+
   denque@2.1.0: {}
 
   detect-libc@2.1.2: {}
@@ -3105,8 +3061,6 @@ snapshots:
   tslib@2.8.1: {}
 
   uWebSockets.js@https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/e0f56ebb4b349017f006e14d1cd29052f2a7121d: {}
-
-  uWebSockets.js@https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/fcfc622a4286909593b7f390056d89e0ca3b56b9: {}
 
   undici-types@7.16.0: {}
 

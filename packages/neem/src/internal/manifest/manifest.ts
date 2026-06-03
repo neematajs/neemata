@@ -3,13 +3,11 @@ import { isAbsolute, normalize, relative, resolve } from 'node:path'
 
 import type {
   NeemArtifactKind,
-  NeemResolvedArtifact,
-} from '../../public/artifact.ts'
-import type {
   NeemHealthConfig,
   NeemLoggerOptions,
   NeemProxyConfig,
-} from '../../public/config.ts'
+  NeemResolvedArtifact,
+} from '../../shared/types.ts'
 import type { CompiledGraph } from '../build/compiler.ts'
 import {
   assertRuntimeNamesExist,
@@ -31,10 +29,7 @@ export type ManifestLogger =
   | { type: 'options'; options: NeemLoggerOptions }
   | { type: 'module'; file: string }
 
-export type ManifestRuntimeConfig = {
-  threads?: number | readonly unknown[]
-  options?: unknown
-}
+export type ManifestRuntimeConfig = { static?: true }
 
 export type ManifestConfig = {
   logger?: ManifestLogger
@@ -58,9 +53,9 @@ export type Manifest = {
     string,
     {
       name: string
-      entry?: ManifestArtifact
-      host?: ManifestArtifact
-      artifacts: ManifestArtifact[]
+      worker?: ManifestArtifact
+      host: ManifestArtifact
+      planner: ManifestArtifact
     }
   >
 }
@@ -85,15 +80,11 @@ export function createManifest(compiled: CompiledGraph): Manifest {
   for (const runtime of compiled.runtimes) {
     manifest.runtimes[runtime.name] = {
       name: runtime.name,
-      entry: runtime.worker
+      worker: runtime.worker
         ? toManifestArtifact(outDir, runtime.worker.artifact)
         : undefined,
-      host: runtime.host
-        ? toManifestArtifact(outDir, runtime.host.artifact)
-        : undefined,
-      artifacts: runtime.artifacts.map((artifact) =>
-        toManifestArtifact(outDir, artifact.artifact),
-      ),
+      host: toManifestArtifact(outDir, runtime.host.artifact),
+      planner: toManifestArtifact(outDir, runtime.planner.artifact),
     }
   }
 
@@ -204,32 +195,33 @@ export function validateManifest(manifest: Manifest): void {
       )
     }
 
-    if (!runtime.entry && !runtime.host) {
+    if (!runtime.worker && !runtime.host) {
       throw new Error(
-        `Invalid Neem manifest runtime [${runtimeName}]: entry or host artifact is required`,
+        `Invalid Neem manifest runtime [${runtimeName}]: worker or host artifact is required`,
       )
     }
 
-    if (runtime.entry) {
-      assertRuntimeArtifact(runtimeName, runtime.entry, 'entry')
-      if (runtime.entry.id !== 'entry') {
+    if (runtime.worker) {
+      assertRuntimeArtifact(runtimeName, runtime.worker, 'worker')
+      if (runtime.worker.id !== 'worker') {
         throw new Error(
-          `Invalid Neem manifest runtime [${runtimeName}]: entry artifact id must be [entry]`,
+          `Invalid Neem manifest runtime [${runtimeName}]: worker artifact id must be [worker]`,
         )
       }
     }
 
-    if (runtime.host) {
-      assertRuntimeArtifact(runtimeName, runtime.host, 'host')
-      if (runtime.host.id !== 'host') {
-        throw new Error(
-          `Invalid Neem manifest runtime [${runtimeName}]: host artifact id must be [host]`,
-        )
-      }
+    assertRuntimeArtifact(runtimeName, runtime.host, 'host')
+    if (runtime.host.id !== 'host') {
+      throw new Error(
+        `Invalid Neem manifest runtime [${runtimeName}]: host artifact id must be [host]`,
+      )
     }
 
-    for (const artifact of runtime.artifacts) {
-      assertRuntimeArtifact(runtimeName, artifact, `artifact [${artifact.id}]`)
+    assertRuntimeArtifact(runtimeName, runtime.planner, 'planner')
+    if (runtime.planner.id !== 'planner') {
+      throw new Error(
+        `Invalid Neem manifest runtime [${runtimeName}]: planner artifact id must be [planner]`,
+      )
     }
   }
 }
@@ -291,10 +283,7 @@ function createManifestConfig(compiled: CompiledGraph): ManifestConfig {
     proxy: config.proxy,
     health: config.health,
     runtimes: Object.fromEntries(
-      Object.entries(config.runtimes).map(([name, runtime]) => [
-        name,
-        { threads: runtime.threads, options: runtime.options },
-      ]),
+      Object.keys(config.runtimes).map((name) => [name, {}]),
     ),
   }
 }

@@ -1,22 +1,33 @@
-import type { NeemEntryInput, NeemRuntimeConfigBase } from '@nmtjs/neem'
-import { defineRuntime } from '@nmtjs/neem'
+import type { MaybePromise } from '@nmtjs/common'
+import type { NeemEntryInput, NeemRuntimeDeclaration } from '@nmtjs/neem'
+import { createRuntime, defineRuntimePlanner } from '@nmtjs/neem'
 
 import type { SchedulerConfig } from '../scheduler.ts'
 
-export const schedulerConfigArtifactId = 'scheduler-config'
+export type SchedulerRuntimeConfigInput = {
+  name?: string
+  planner?: NeemEntryInput
+}
 
-export type SchedulerRuntimeConfigInput<
-  _TConfig extends SchedulerConfig = SchedulerConfig,
-> = { config: NeemEntryInput }
+export type SchedulerPlannerFactory<
+  TConfig extends SchedulerConfig = SchedulerConfig,
+> = () => MaybePromise<TConfig>
 
-export function defineSchedulerRuntime<
-  const TConfig extends SchedulerConfig = SchedulerConfig,
->(config: SchedulerRuntimeConfigInput<TConfig>): NeemRuntimeConfigBase {
-  return defineRuntime({
-    host: { entry: '@nmtjs/scheduler/neem/host' },
-    threads: 0,
-    artifacts: [
-      { id: schedulerConfigArtifactId, kind: 'module', entry: config.config },
-    ],
+const defineSchedulerRuntimeProject = createRuntime({
+  host: { entry: '@nmtjs/scheduler/neem/host' },
+})
+
+export function defineSchedulerRuntime(
+  config: SchedulerRuntimeConfigInput = {},
+): NeemRuntimeDeclaration {
+  return defineSchedulerRuntimeProject({
+    name: config.name,
+    planner: config.planner,
   })
+}
+
+export function defineSchedulerPlanner<
+  const TConfig extends SchedulerConfig = SchedulerConfig,
+>(factory: SchedulerPlannerFactory<TConfig>) {
+  return defineRuntimePlanner(() => ({ workers: [], options: factory }))
 }

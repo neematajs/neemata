@@ -3,8 +3,11 @@ import { resolve } from 'node:path'
 import type { Logger } from '@nmtjs/core'
 import { createLogger } from '@nmtjs/core'
 
-import type { NeemLoggerInput, NeemLoggerOptions } from '../../public/config.ts'
-import type { NeemMode } from '../../public/runtime.ts'
+import type {
+  NeemLoggerInput,
+  NeemLoggerOptions,
+  NeemMode,
+} from '../../shared/types.ts'
 import type { ManifestLogger } from '../manifest/manifest.ts'
 import { importDefault } from './utils.ts'
 

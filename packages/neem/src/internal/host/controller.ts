@@ -6,7 +6,7 @@ import type {
   NeemRuntimeServerSnapshot,
   NeemRuntimeServerState,
   NeemRuntimeUpstream,
-} from '../../public/runtime.ts'
+} from '../../shared/types.ts'
 import type { RuntimeSnapshot } from '../manifest/snapshot.ts'
 import type { HostHooks } from '../plugins/hooks.ts'
 import type { RuntimeUpstreams } from './proxy.ts'

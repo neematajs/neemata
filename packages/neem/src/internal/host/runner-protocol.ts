@@ -1,42 +1,27 @@
 import type { MessagePort } from 'node:worker_threads'
 
-import type { NeemResolvedArtifact } from '../../public/artifact.ts'
 import type {
   NeemMode,
+  NeemResolvedArtifact,
   NeemRuntimePlan,
   NeemRuntimeThreadHandle,
-  NeemRuntimeUpstream,
-} from '../../public/runtime.ts'
+} from '../../shared/types.ts'
 import type { ManifestLogger } from '../manifest/manifest.ts'
 import type { SerializedError } from '../shared/utils.ts'
 
 export type HostRunnerData = {
   mode: NeemMode
   runtimeName: string
-  options: unknown
-  artifact: NeemResolvedArtifact
   hostArtifact: NeemResolvedArtifact
-  artifacts: readonly NeemResolvedArtifact[]
-  defaultThreads: readonly {
-    name: string
-    artifact: string | NeemResolvedArtifact
-    count?: number
-    data?: unknown
-  }[]
+  plannerArtifact: NeemResolvedArtifact
   outDir: string
   logger?: ManifestLogger
 }
 
 export type HostRunnerRequest =
   | { id: number; type: 'plan' }
-  | {
-      id: number
-      type: 'start'
-      threads: readonly NeemRuntimeThreadHandle[]
-      upstreams: readonly NeemRuntimeUpstream[]
-    }
+  | { id: number; type: 'start'; threads: readonly NeemRuntimeThreadHandle[] }
   | { id: number; type: 'stop' }
-  | { id: number; type: 'fail'; error: SerializedError }
   | { id: number; type: 'shutdown' }
 
 export type HostRunnerResponse =

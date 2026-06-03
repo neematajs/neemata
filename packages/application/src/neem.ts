@@ -1,27 +1,31 @@
 import { basename, dirname, join } from 'node:path'
 
 import type {
+  NeemEntryInput,
+  NeemRuntime,
+  NeemRuntimeDeclaration,
+  NeemRuntimePlan,
+  NeemRuntimeWorker,
+  NeemRuntimeWorkerContext,
+  RolldownOptions,
+} from '@nmtjs/neem'
+import { JsonFormat } from '@nmtjs/json-format/server'
+import { MsgpackFormat } from '@nmtjs/msgpack-format/server'
+import {
+  createRuntime,
+  defineRuntimePlanner,
+  defineRuntimeWorker,
+} from '@nmtjs/neem'
+import { ProtocolFormats } from '@nmtjs/protocol/server'
+
+import type { ApplicationTransport } from './config.ts'
+import type {
   AnyApplicationHostDefinition,
   ApplicationHost,
   ApplicationHostDefinition,
   ApplicationHostTransportConfig,
   TransportOptionsOf,
 } from './host.ts'
-import type {
-  InferNeemRuntimeThreadOptions,
-  NeemEntryInput,
-  NeemRolldownOptions,
-  NeemRuntime,
-  NeemRuntimeConfig,
-  NeemRuntimeWorker,
-  NeemRuntimeWorkerContext,
-} from '@nmtjs/neem'
-import { defineRuntime, defineRuntimeWorker } from '@nmtjs/neem'
-import { JsonFormat } from '@nmtjs/json-format/server'
-import { MsgpackFormat } from '@nmtjs/msgpack-format/server'
-import { ProtocolFormats } from '@nmtjs/protocol/server'
-
-import type { ApplicationTransport } from './config.ts'
 import { createApplicationHost } from './host.ts'
 
 export type NeemataRuntimeTransportOptions<
@@ -45,8 +49,11 @@ export type NeemataWorker<
   THost extends AnyApplicationHostDefinition = AnyApplicationHostDefinition,
 > = NeemRuntimeWorker<NeemataRuntimeThreadOptions<THost>, THost>
 
-export type NeemataRuntimeConfig<TEntry extends NeemataWorker = NeemataWorker> =
-  NeemRuntimeConfig<TEntry>
+export type NeemataRuntimeConfig = NeemRuntimeDeclaration
+
+export type NeemataPlannerInput<
+  THost extends AnyApplicationHostDefinition = AnyApplicationHostDefinition,
+> = { instances?: number; transports: NeemataRuntimeThreadOptions<THost> }
 
 export class NeemataApplicationRuntime<
   THost extends AnyApplicationHostDefinition = AnyApplicationHostDefinition,
@@ -75,19 +82,28 @@ export class NeemataApplicationRuntime<
   }
 }
 
-export function defineNeemataRuntime<
-  const TEntry extends NeemataWorker = NeemataWorker,
->(config: {
-  application: NeemEntryInput
-  threads: readonly InferNeemRuntimeThreadOptions<TEntry>[]
-}): NeemRuntimeConfig<TEntry> {
-  return defineRuntime<TEntry>({
+export function createNeemataRuntime(config: { application: NeemEntryInput }) {
+  return createRuntime({
     worker: {
       entry: config.application,
       build: { rolldown: { plugins: [createUwsNativeAddonPlugin()] } },
     },
-    threads: config.threads,
   })
+}
+
+export function defineNeemataPlanner<
+  const THost extends
+    AnyApplicationHostDefinition = AnyApplicationHostDefinition,
+>(planner: () => NeemataPlannerInput<THost>) {
+  return defineRuntimePlanner(
+    (): NeemRuntimePlan<unknown, NeemataRuntimeThreadOptions<THost>> => {
+      const input = planner()
+      const instances = input.instances ?? 1
+      return {
+        workers: Array.from({ length: instances }, () => input.transports),
+      }
+    },
+  )
 }
 
 export function defineNeemataWorker<
@@ -116,22 +132,10 @@ function createHostTransportConfig<
   return config
 }
 
-type NeemataRolldownPluginContext = {
-  fs: { readFile: (file: string) => Promise<Uint8Array> }
-  emitFile: (emittedFile: {
-    type: 'asset'
-    name: string
-    source: Uint8Array
-  }) => string
-  getFileName: (referenceId: string) => string
-}
-
-function createUwsNativeAddonPlugin(): NonNullable<
-  NeemRolldownOptions['plugins']
-> {
+function createUwsNativeAddonPlugin(): NonNullable<RolldownOptions['plugins']> {
   return {
     name: 'neemata:uws-native-addon',
-    async load(this: NeemataRolldownPluginContext, id: string) {
+    async load(id) {
       if (!id.includes('uWebSockets.js/uws.js')) return null
       const nativeAddon = join(
         dirname(id),
@@ -149,5 +153,5 @@ function createUwsNativeAddonPlugin(): NonNullable<
         `export default require(${JSON.stringify(`./${this.getFileName(refId)}`)})`,
       ].join('\n')
     },
-  } as NonNullable<NeemRolldownOptions['plugins']>
+  }
 }

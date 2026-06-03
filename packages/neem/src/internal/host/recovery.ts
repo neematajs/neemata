@@ -1,4 +1,4 @@
-import type { NeemMode } from '../../public/runtime.ts'
+import type { NeemMode } from '../../shared/types.ts'
 
 export type RecoveryPolicy = {
   attempts: number

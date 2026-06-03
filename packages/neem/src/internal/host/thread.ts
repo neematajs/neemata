@@ -5,14 +5,14 @@ import type { MaybePromise } from '@nmtjs/common'
 import type { Logger } from '@nmtjs/core'
 import { createFuture } from '@nmtjs/common'
 
-import type { NeemResolvedArtifact } from '../../public/artifact.ts'
 import type {
   NeemManagedWorkerHealth,
+  NeemResolvedArtifact,
   NeemRuntimeThreadHandle,
   NeemRuntimeUpstream,
   NeemStartedRuntimeThreadHealth,
   NeemWorkerState,
-} from '../../public/runtime.ts'
+} from '../../shared/types.ts'
 import type { RuntimeSnapshot } from '../manifest/snapshot.ts'
 import type { HostHooks } from '../plugins/hooks.ts'
 import type {
@@ -81,7 +81,6 @@ export class ThreadController {
       name: options.plan.name,
       data: options.plan.data,
       artifact: options.plan.artifact,
-      artifacts: options.snapshot.artifacts.list(),
       outDir: options.snapshot.outDir,
       logger: options.snapshot.manifest.config.logger,
       port: channel.port2,
@@ -93,12 +92,7 @@ export class ThreadController {
   private readonly transferPort: NodeMessagePort
 
   getHandle(): NeemRuntimeThreadHandle {
-    return {
-      id: this.id,
-      name: this.name,
-      artifactId: this.artifactId,
-      port: this.port,
-    }
+    return { name: this.name, port: this.port }
   }
 
   getState(): NeemWorkerState {

@@ -2,137 +2,119 @@ import { describe, expect, it } from 'vitest'
 
 import type { RuntimeSnapshot } from '../src/internal/manifest/snapshot.ts'
 import type { NeemResolvedArtifact } from '../src/public/artifact.ts'
-import {
-  createDefaultThreadPlans,
-  resolveThreadTopology,
-} from '../src/internal/host/runtime.ts'
+import { resolveThreadTopology } from '../src/internal/host/runtime.ts'
 import { createArtifactRegistry } from '../src/internal/manifest/artifacts.ts'
 import { createDefaultLogger } from '../src/internal/shared/logger.ts'
 
 describe('runtime thread topology', () => {
-  it('creates default thread plans from numeric and array runtime config', () => {
-    const snapshot = createSnapshot({
-      configRuntimes: {
-        api: { threads: 2 },
-        jobs: { threads: [{ queue: 'high' }, { queue: 'low' }] },
-      },
-    })
-
-    expect(createDefaultThreadPlans(snapshot, 'api')).toEqual([
-      { name: 'api:0', artifact: 'entry', data: {} },
-      { name: 'api:1', artifact: 'entry', data: {} },
-    ])
-    expect(createDefaultThreadPlans(snapshot, 'jobs')).toEqual([
-      { name: 'jobs:0', artifact: 'entry', data: { queue: 'high' } },
-      { name: 'jobs:1', artifact: 'entry', data: { queue: 'low' } },
-    ])
-  })
-
-  it('allows zero-thread host runtimes and rejects zero-thread worker-only runtimes', () => {
-    const snapshot = createSnapshot({ configRuntimes: { api: { threads: 0 } } })
+  it('creates worker plans from array planner output', () => {
+    const snapshot = createSnapshot()
 
     expect(
       resolveThreadTopology({
         snapshot,
         runtimeName: 'api',
-        requireThreads: false,
-        defaultThreads: [],
-        plans: [],
-      }),
-    ).toEqual([])
-    expect(() =>
-      resolveThreadTopology({
-        snapshot,
-        runtimeName: 'api',
-        requireThreads: true,
-        defaultThreads: [],
-        plans: [],
-      }),
-    ).toThrow('must plan at least one thread')
-  })
-
-  it('expands counted host plans and resolves runtime-scoped artifacts', () => {
-    const snapshot = createSnapshot({
-      artifacts: [
-        artifact('entry', 'api', '/out/api-entry.js'),
-        artifact('worker-alt', 'api', '/out/api-alt.js'),
-      ],
-    })
-
-    expect(
-      resolveThreadTopology({
-        snapshot,
-        runtimeName: 'api',
-        requireThreads: true,
-        defaultThreads: [],
-        plans: [
-          {
-            name: 'worker',
-            artifact: 'worker-alt',
-            count: 2,
-            data: { role: 'read' },
-          },
-        ],
+        plan: { workers: [{ label: 'one' }, { label: 'two' }] },
       }),
     ).toEqual([
       {
-        name: 'worker:0',
-        artifact: artifact('worker-alt', 'api', '/out/api-alt.js'),
-        data: { role: 'read' },
+        name: 'api:0',
+        artifact: artifact('worker', 'api', '/out/api-worker.js'),
+        data: { label: 'one' },
       },
       {
-        name: 'worker:1',
-        artifact: artifact('worker-alt', 'api', '/out/api-alt.js'),
-        data: { role: 'read' },
+        name: 'api:1',
+        artifact: artifact('worker', 'api', '/out/api-worker.js'),
+        data: { label: 'two' },
       },
     ])
   })
 
-  it('rejects invalid counts, duplicate thread names, and missing artifacts', () => {
+  it('creates worker plans from grouped planner output', () => {
+    const snapshot = createSnapshot()
+
+    expect(
+      resolveThreadTopology({
+        snapshot,
+        runtimeName: 'api',
+        plan: {
+          workers: { read: [{ pool: 'read' }], write: [{ pool: 'write' }] },
+        },
+      }),
+    ).toEqual([
+      {
+        name: 'api:read:0',
+        artifact: artifact('worker', 'api', '/out/api-worker.js'),
+        data: { pool: 'read' },
+      },
+      {
+        name: 'api:write:0',
+        artifact: artifact('worker', 'api', '/out/api-worker.js'),
+        data: { pool: 'write' },
+      },
+    ])
+  })
+
+  it('allows host-only runtimes when planner returns no workers', () => {
+    const snapshot = createSnapshot({
+      artifacts: [artifact('host', 'scheduler', '/out/scheduler-host.js')],
+    })
+
+    expect(
+      resolveThreadTopology({
+        snapshot,
+        runtimeName: 'scheduler',
+        plan: { workers: [] },
+      }),
+    ).toEqual([])
+  })
+
+  it('rejects planned workers without a worker artifact', () => {
+    const snapshot = createSnapshot({
+      artifacts: [artifact('host', 'scheduler', '/out/scheduler-host.js')],
+    })
+
+    expect(() =>
+      resolveThreadTopology({
+        snapshot,
+        runtimeName: 'scheduler',
+        plan: { workers: [{ pool: 'default' }] },
+      }),
+    ).toThrow('planned workers but has no worker artifact')
+  })
+
+  it('rejects worker data that cannot cross worker_threads', () => {
     const snapshot = createSnapshot()
 
     expect(() =>
       resolveThreadTopology({
         snapshot,
         runtimeName: 'api',
-        requireThreads: true,
-        defaultThreads: [],
-        plans: [{ name: 'bad', artifact: 'entry', count: 0 }],
+        plan: { workers: [() => undefined] },
       }),
-    ).toThrow('count must be a positive integer')
+    ).toThrow('data must be structured-cloneable')
+  })
+
+  it('rejects invalid planner workers output', () => {
+    const snapshot = createSnapshot()
+
     expect(() =>
       resolveThreadTopology({
         snapshot,
         runtimeName: 'api',
-        requireThreads: true,
-        defaultThreads: [],
-        plans: [
-          { name: 'dupe', artifact: 'entry' },
-          { name: 'dupe', artifact: 'entry' },
-        ],
+        plan: { workers: { invalid: true } as never },
       }),
-    ).toThrow('duplicate thread name [dupe]')
-    expect(() =>
-      resolveThreadTopology({
-        snapshot,
-        runtimeName: 'api',
-        requireThreads: true,
-        defaultThreads: [],
-        plans: [{ name: 'missing', artifact: 'missing' }],
-      }),
-    ).toThrow('thread artifact [missing] is missing')
+    ).toThrow('workers must be an array or record of arrays')
   })
 })
 
 function createSnapshot(
-  options: {
-    artifacts?: NeemResolvedArtifact[]
-    configRuntimes?: RuntimeSnapshot['config']['runtimes']
-  } = {},
+  options: { artifacts?: NeemResolvedArtifact[] } = {},
 ): RuntimeSnapshot {
   const artifacts = options.artifacts ?? [
-    artifact('entry', 'api', '/out/api-entry.js'),
-    artifact('entry', 'jobs', '/out/jobs-entry.js'),
+    artifact('worker', 'api', '/out/api-worker.js'),
+    artifact('host', 'api', '/out/api-host.js'),
+    artifact('planner', 'api', '/out/api-planner.js'),
   ]
 
   return {
@@ -145,31 +127,26 @@ function createSnapshot(
         start: artifact('start', 'start', '/out/runtime/start.js'),
         worker: artifact('worker-entry', 'worker', '/out/runtime/worker.js'),
       },
-      config: {
-        runtimes: options.configRuntimes ?? {
-          api: { threads: 1 },
-          jobs: { threads: 1 },
-        },
-      },
+      config: { runtimes: { api: {}, scheduler: {} } },
       runtimes: {
         api: {
           name: 'api',
-          entry: artifact('entry', 'api', '/out/api-entry.js'),
-          artifacts: [],
+          worker: artifact('worker', 'api', '/out/api-worker.js'),
+          host: artifact('host', 'api', '/out/api-host.js'),
+          planner: artifact('planner', 'api', '/out/api-planner.js'),
         },
-        jobs: {
-          name: 'jobs',
-          entry: artifact('entry', 'jobs', '/out/jobs-entry.js'),
-          artifacts: [],
+        scheduler: {
+          name: 'scheduler',
+          host: artifact('host', 'scheduler', '/out/scheduler-host.js'),
+          planner: artifact(
+            'planner',
+            'scheduler',
+            '/out/scheduler-planner.js',
+          ),
         },
       },
     },
-    config: {
-      runtimes: options.configRuntimes ?? {
-        api: { threads: 1 },
-        jobs: { threads: 1 },
-      },
-    },
+    config: { runtimes: { api: {}, scheduler: {} } },
     logger: createDefaultLogger('development'),
     artifacts: createArtifactRegistry(artifacts),
     workerEntry: '/out/runtime/worker.js',
@@ -183,7 +160,7 @@ function artifact(
 ): NeemResolvedArtifact {
   return {
     id,
-    kind: 'worker',
+    kind: id === 'worker' || id === 'worker-entry' ? 'worker' : 'module',
     owner: { type: 'runtime', name: runtimeName },
     file,
     outDir: file.replace(/\/[^/]+$/, ''),

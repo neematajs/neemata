@@ -8,7 +8,11 @@ import type { ProtocolFormats } from '@nmtjs/protocol/server'
 import { Gateway } from '@nmtjs/gateway'
 
 import type { ApplicationResolvedProcedure } from './api/api.ts'
-import type { AnyApplicationConfig, ApplicationConfig, ApplicationTransport } from './config.ts'
+import type {
+  AnyApplicationConfig,
+  ApplicationConfig,
+  ApplicationTransport,
+} from './config.ts'
 import { kApplicationHostDefinition } from './constants.ts'
 import { LifecycleHook } from './enums.ts'
 import { NeemataApplication } from './runtime.ts'
@@ -42,7 +46,10 @@ export interface ApplicationHostDefinition<
   identity?: ConnectionIdentity
 }
 
-export type AnyApplicationHostDefinition = ApplicationHostDefinition<AnyApplicationConfig, any>
+export type AnyApplicationHostDefinition = ApplicationHostDefinition<
+  AnyApplicationConfig,
+  any
+>
 
 export type ApplicationHostDefinitionOptions<
   Transports extends Record<string, ApplicationTransport>,

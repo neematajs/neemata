@@ -5,21 +5,25 @@ import type { Logger } from '@nmtjs/core'
 import type {
   NeemRuntimeHost,
   NeemRuntimeHostFactory,
+  NeemRuntimePlan,
+  NeemRuntimePlanner,
   NeemRuntimeThreadHandle,
-} from '../../public/runtime.ts'
+} from '../../shared/types.ts'
 import type {
   HostRunnerData,
   HostRunnerRequest,
   HostRunnerResponse,
 } from './runner-protocol.ts'
-import { createArtifactRegistry } from '../manifest/artifacts.ts'
+import {
+  isNeemRuntimeHostFactory,
+  isNeemRuntimePlanner,
+} from '../../public/runtime.ts'
 import {
   childLogger,
   resolveManifestLogger,
   runtimeLabel,
 } from '../shared/logger.ts'
 import {
-  deserializeError,
   importDefault,
   normalizeError,
   serializeError,
@@ -33,6 +37,7 @@ const port = parentPort
 const data = rawWorkerData as HostRunnerData
 let host: NeemRuntimeHost | undefined
 let logger: Logger | undefined
+let plannerOptions: unknown
 let currentThreads: readonly NeemRuntimeThreadHandle[] = []
 
 function post(message: HostRunnerResponse): void {
@@ -48,74 +53,97 @@ async function initialize(): Promise<void> {
     runtimeLabel(data.runtimeName, 'host'),
   )
   logger.trace(
-    { artifactId: data.hostArtifact.id, file: data.hostArtifact.file },
-    'Neem host initializing',
+    {
+      hostArtifactId: data.hostArtifact.id,
+      hostFile: data.hostArtifact.file,
+      plannerArtifactId: data.plannerArtifact.id,
+      plannerFile: data.plannerArtifact.file,
+    },
+    'Neem host runner initialized',
   )
+  post({ type: 'ready' })
+}
+
+async function callPlanner(): Promise<NeemRuntimePlan> {
+  if (!logger) throw new Error('Neem host runner logger is not initialized')
+  const planner = await importDefault<NeemRuntimePlanner>(
+    data.plannerArtifact.file,
+  )
+  if (!isNeemRuntimePlanner(planner)) {
+    throw new Error(
+      `Runtime planner file [${data.plannerArtifact.file}] default export must be a marked runtime planner produced by defineRuntimePlanner or a package planner helper`,
+    )
+  }
+
+  const plan = await planner({
+    mode: data.mode,
+    name: data.runtimeName,
+    logger,
+  })
+  if (!plan || !('workers' in plan)) {
+    throw new Error(
+      `Runtime planner file [${data.plannerArtifact.file}] must return workers`,
+    )
+  }
+  plannerOptions = plan.options
+  return { workers: plan.workers }
+}
+
+async function initializeHost(
+  threads: readonly NeemRuntimeThreadHandle[],
+): Promise<void> {
+  if (!logger) throw new Error('Neem host runner logger is not initialized')
   const factory = await importDefault<NeemRuntimeHostFactory>(
     data.hostArtifact.file,
   )
+  if (!isNeemRuntimeHostFactory(factory)) {
+    throw new Error(
+      `Runtime host file [${data.hostArtifact.file}] default export must be a marked runtime host factory produced by defineRuntimeHost`,
+    )
+  }
+
+  currentThreads = threads
   host = await factory({
     mode: data.mode,
     name: data.runtimeName,
-    options: data.options,
     logger,
-    artifact: data.artifact,
-    hostArtifact: data.hostArtifact,
-    artifacts: createArtifactRegistry(data.artifacts).scope({
-      type: 'runtime',
-      name: data.runtimeName,
-    }),
-    defaultThreads: data.defaultThreads,
+    threads,
+    options: plannerOptions,
   })
-  logger.trace('Neem host initialized')
-  post({ type: 'ready' })
+  await host.start?.()
 }
 
 async function handle(request: HostRunnerRequest): Promise<void> {
   try {
     switch (request.type) {
       case 'plan':
-        logger?.trace('Calling Neem host plan')
+        logger?.trace('Calling Neem runtime planner')
         post({
           id: request.id,
           type: 'result',
-          data: { plan: await host?.plan?.() },
+          data: { plan: await callPlanner() },
         })
         return
       case 'start':
-        currentThreads = request.threads
         logger?.trace(
-          {
-            threads: request.threads.length,
-            upstreams: request.upstreams.length,
-          },
-          'Calling Neem host start',
+          { threads: request.threads.length },
+          'Calling Neem runtime host start',
         )
-        await host?.start?.({
-          threads: request.threads,
-          upstreams: request.upstreams,
-        })
+        await initializeHost(request.threads)
         post({ id: request.id, type: 'result' })
         return
       case 'stop':
         logger?.trace(
           { threads: currentThreads.length },
-          'Calling Neem host stop',
+          'Calling Neem runtime host stop',
         )
-        await host?.stop?.({ threads: currentThreads })
+        await host?.stop?.()
+        host = undefined
         currentThreads = []
         post({ id: request.id, type: 'result' })
         return
-      case 'fail':
-        logger?.trace('Calling Neem host fail')
-        await host?.fail?.({
-          error: deserializeError(request.error),
-          threads: currentThreads,
-        })
-        post({ id: request.id, type: 'result' })
-        return
       case 'shutdown':
-        logger?.trace('Neem host shutting down')
+        logger?.trace('Neem host runner shutting down')
         post({ id: request.id, type: 'result' })
         port.close()
         return
