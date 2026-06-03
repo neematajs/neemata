@@ -243,7 +243,7 @@ function mergePluginRolldownOptions(
   plugins: readonly PluginBuildNode[],
 ): RolldownOptions | undefined {
   return plugins.reduce<RolldownOptions | undefined>(
-    (merged, plugin) => mergeRolldownOptions(merged, plugin.rolldown),
+    (merged, plugin) => mergeRolldownOptions(plugin.rolldown, merged),
     undefined,
   )
 }
@@ -288,8 +288,8 @@ function createRuntimeNode(options: {
             kind: 'worker',
             entry: workerEntry,
             rolldown: mergeRolldownOptions(
-              options.pluginRolldown,
               declaration.worker?.build?.rolldown,
+              options.pluginRolldown,
             ),
           },
           owner: { type: 'runtime', name: options.name },

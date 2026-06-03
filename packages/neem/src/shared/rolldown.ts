@@ -3,42 +3,32 @@ import { createDefu } from 'defu'
 
 import type { NeemRolldownOptions } from './types.ts'
 
+function toArray(value: any) {
+  return value === undefined ? [] : Array.isArray(value) ? value : [value]
+}
+
 const merge = createDefu((object, key, value, namespace) => {
-  if (!namespace) {
-    switch (key) {
-      case 'output':
-      case 'input': {
-        // @ts-expect-error
-        object[key] = [
-          ...(Array.isArray(value) ? value : [value]),
-          ...(Array.isArray(object[key]) ? object[key] : [object[key]]),
-        ]
-        return true
-      }
-    }
+  if (!namespace && key === 'plugins') {
+    object[key] = [...toArray(object[key]), ...toArray(value)]
+    return true
   }
 })
 
 export function mergeRolldownOptions(
   ...options: [RolldownOptions | undefined, ...(RolldownOptions | undefined)[]]
 ) {
-  const inputs = options.toReversed()
-  const [last, ...rest] = inputs
-  return merge(last ?? {}, ...rest.filter(Boolean).map((v) => v ?? {}))
+  const [first, ...rest] = options
+  return merge(first ?? {}, ...rest.filter(Boolean).map((v) => v ?? {}))
 }
 
 export function mergeUserRolldownOptions(
   ...options: [RolldownOptions | undefined, ...(RolldownOptions | undefined)[]]
 ) {
-  function strip(options: RolldownOptions): NeemRolldownOptions {
+  function strip(options: RolldownOptions | undefined): NeemRolldownOptions {
+    if (!options) return {}
     const { input, output, cwd, ...other } = options
     return other
   }
-  const inputs = options.toReversed()
-  const [last, ...rest] = inputs
-  let target = { ...strip(last ?? {}) }
-  for (const options of rest) {
-    target = merge(target, strip(options ?? {}))
-  }
-  return target
+  const [first, ...rest] = options
+  return merge(strip(first), ...rest.map(strip))
 }

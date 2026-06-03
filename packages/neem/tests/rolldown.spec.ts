@@ -7,7 +7,7 @@ import {
 } from '../src/shared/rolldown.ts'
 
 describe('mergeRolldownOptions', () => {
-  it('applies Neem hierarchy from root config through plugins, runtime, and internal finalization', () => {
+  it('applies Neem hierarchy from highest precedence through defaults', () => {
     const rootPlugin = plugin('root-config')
     const metricsPlugin = plugin('metrics-plugin')
     const runtimePlugin = plugin('runtime')
@@ -47,10 +47,10 @@ describe('mergeRolldownOptions', () => {
     } satisfies RolldownOptions
 
     const merged = mergeRolldownOptions(
-      rootConfig,
-      pluginLayer,
-      runtime,
       internalFinalization,
+      runtime,
+      pluginLayer,
+      rootConfig,
     )
 
     expect(merged).toMatchObject({
@@ -76,25 +76,25 @@ describe('mergeRolldownOptions', () => {
       },
     })
     expect(merged.plugins).toEqual([
-      finalizationPlugin,
-      runtimePlugin,
-      metricsPlugin,
       rootPlugin,
+      metricsPlugin,
+      runtimePlugin,
+      finalizationPlugin,
     ])
   })
 
-  it('combines Neem hierarchy input and output as ordered Rolldown config lists', () => {
+  it('applies defu defaults to input and output', () => {
     const rootConfig = {
       input: 'root.ts',
       output: { format: 'esm', entryFileNames: 'root.js' },
     } satisfies RolldownOptions
     const pluginLayer = {
       input: 'plugin.ts',
-      output: { format: 'esm', entryFileNames: 'plugin.js' },
+      output: { assetFileNames: 'plugin-[hash][extname]' },
     } satisfies RolldownOptions
     const runtime = {
-      input: ['runtime.ts'],
-      output: [{ format: 'cjs', entryFileNames: 'runtime.cjs' }],
+      input: 'runtime.ts',
+      output: { chunkFileNames: 'runtime-[hash].js' },
     } satisfies RolldownOptions
     const internalFinalization = {
       input: 'neem-entry.ts',
@@ -102,24 +102,20 @@ describe('mergeRolldownOptions', () => {
     } satisfies RolldownOptions
 
     const merged = mergeRolldownOptions(
-      rootConfig,
-      pluginLayer,
-      runtime,
       internalFinalization,
+      runtime,
+      pluginLayer,
+      rootConfig,
     )
 
-    expect(merged.input).toEqual([
-      'neem-entry.ts',
-      'runtime.ts',
-      'plugin.ts',
-      'root.ts',
-    ])
-    expect(merged.output).toEqual([
-      { sourcemap: true, entryFileNames: 'final.js' },
-      { format: 'cjs', entryFileNames: 'runtime.cjs' },
-      { format: 'esm', entryFileNames: 'plugin.js' },
-      { format: 'esm', entryFileNames: 'root.js' },
-    ])
+    expect(merged.input).toBe('neem-entry.ts')
+    expect(merged.output).toEqual({
+      sourcemap: true,
+      entryFileNames: 'final.js',
+      chunkFileNames: 'runtime-[hash].js',
+      assetFileNames: 'plugin-[hash][extname]',
+      format: 'esm',
+    })
   })
 })
 
@@ -179,7 +175,7 @@ describe('mergeUserRolldownOptions', () => {
       plugins: [rootPlugin],
     } satisfies RolldownOptions
 
-    const merged = mergeUserRolldownOptions(rootConfig, pluginLayer, runtime)
+    const merged = mergeUserRolldownOptions(runtime, pluginLayer, rootConfig)
 
     expect(merged).toMatchObject({
       platform: 'browser',
@@ -204,7 +200,7 @@ describe('mergeUserRolldownOptions', () => {
     expect(merged).not.toHaveProperty('cwd')
     expect(merged).not.toHaveProperty('input')
     expect(merged).not.toHaveProperty('output')
-    expect(merged.plugins).toEqual([runtimePlugin, metricsPlugin, rootPlugin])
+    expect(merged.plugins).toEqual([rootPlugin, metricsPlugin, runtimePlugin])
   })
 })
 
