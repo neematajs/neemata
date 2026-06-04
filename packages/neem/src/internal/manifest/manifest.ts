@@ -3,6 +3,7 @@ import { isAbsolute, normalize, relative, resolve } from 'node:path'
 
 import type {
   NeemArtifactKind,
+  NeemEnv,
   NeemHealthConfig,
   NeemLoggerOptions,
   NeemProxyConfig,
@@ -33,6 +34,7 @@ export type ManifestRuntimeConfig = { static?: true }
 
 export type ManifestConfig = {
   logger?: ManifestLogger
+  env?: NeemEnv
   proxy?: NeemProxyConfig
   health?: NeemHealthConfig
   runtimes: Record<string, ManifestRuntimeConfig>
@@ -53,6 +55,7 @@ export type Manifest = {
     string,
     {
       name: string
+      env?: NeemEnv
       worker?: ManifestArtifact
       host: ManifestArtifact
       planner: ManifestArtifact
@@ -80,6 +83,7 @@ export function createManifest(compiled: CompiledGraph): Manifest {
   for (const runtime of compiled.runtimes) {
     manifest.runtimes[runtime.name] = {
       name: runtime.name,
+      env: copyEnv(runtime.node.declaration.declaration.env),
       worker: runtime.worker
         ? toManifestArtifact(outDir, runtime.worker.artifact)
         : undefined,
@@ -280,12 +284,18 @@ function createManifestConfig(compiled: CompiledGraph): ManifestConfig {
   const config = compiled.graph.config
   return {
     logger: createManifestLogger(compiled),
+    env: copyEnv(config.env),
     proxy: config.proxy,
     health: config.health,
     runtimes: Object.fromEntries(
       Object.keys(config.runtimes).map((name) => [name, {}]),
     ),
   }
+}
+
+function copyEnv(env: NeemEnv | undefined): NeemEnv | undefined {
+  if (!env || Object.keys(env).length === 0) return undefined
+  return { ...env }
 }
 
 function createManifestLogger(

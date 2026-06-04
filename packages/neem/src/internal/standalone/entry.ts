@@ -13,7 +13,10 @@ import { createRuntimeSnapshot } from '../manifest/snapshot.ts'
 import { resolveManifestLogger } from '../shared/logger.ts'
 import { normalizeError } from '../shared/utils.ts'
 
-export type StandaloneStartOptions = { runtimes?: readonly string[] }
+export type StandaloneStartOptions = {
+  env?: NodeJS.ProcessEnv
+  runtimes?: readonly string[]
+}
 
 export async function startStandalone(
   options: StandaloneStartOptions = {},
@@ -33,6 +36,7 @@ export async function startStandalone(
     snapshot: createRuntimeSnapshot({
       mode: 'production',
       outDir,
+      env: options.env,
       manifest,
       manifestFile,
       logger,

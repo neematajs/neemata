@@ -8,6 +8,7 @@ export default defineRuntimeHost((params) => {
     mode: params.mode,
     name: params.name,
     options: params.options,
+    env: pickEnv(),
     logger: Boolean(params.logger),
   })
 
@@ -29,3 +30,12 @@ export default defineRuntimeHost((params) => {
     },
   }
 })
+
+function pickEnv() {
+  return {
+    rootOnly: process.env.NEEM_ENV_ROOT_ONLY,
+    runtimeOnly: process.env.NEEM_ENV_RUNTIME_ONLY,
+    layered: process.env.NEEM_ENV_LAYERED,
+    executionOverride: process.env.NEEM_ENV_EXECUTION_OVERRIDE,
+  }
+}

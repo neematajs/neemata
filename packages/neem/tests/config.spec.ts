@@ -21,6 +21,7 @@ import {
 describe('Neem public runtime API', () => {
   it('keeps root runtimes as project entries', () => {
     const config = defineConfig({
+      env: { NODE_ENV: 'production', REDIS_HOST: 'redis' },
       plugins: [
         definePlugin({
           name: 'fixture',
@@ -36,6 +37,8 @@ describe('Neem public runtime API', () => {
       'packages/*/neem.runtime.ts',
       '!apps/legacy',
     ])
+    expect(config.env).toEqual({ NODE_ENV: 'production', REDIS_HOST: 'redis' })
+    expect(Object.isFrozen(config.env)).toBe(true)
     expect(config.plugins?.[0]?.name).toBe('fixture')
   })
 
@@ -43,6 +46,7 @@ describe('Neem public runtime API', () => {
     const declaration = defineRuntime({
       name: 'api',
       planner: './neem.planner.ts',
+      env: { REDIS_DB: '2' },
       worker: { entry: './worker.ts' },
     })
     const planner = defineRuntimePlanner(() => ({ workers: [{ id: 1 }] }))
@@ -55,6 +59,8 @@ describe('Neem public runtime API', () => {
     })
 
     expect(isNeemRuntimeDeclaration(declaration)).toBe(true)
+    expect(declaration.env).toEqual({ REDIS_DB: '2' })
+    expect(Object.isFrozen(declaration.env)).toBe(true)
     expect(isNeemRuntimePlanner(planner)).toBe(true)
     expect(isNeemRuntimeHostFactory(host)).toBe(true)
     expect(isNeemRuntimeWorker(worker)).toBe(true)
@@ -66,6 +72,7 @@ describe('Neem public runtime API', () => {
     const commonHostPlugin = { name: 'common-host' }
     const userHostPlugin = { name: 'user-host' }
     const runtime = createRuntime({
+      env: { RUNTIME_ROOT: 'common', RUNTIME_LAYERED: 'common' },
       worker: {
         entry: './worker.ts',
         build: {
@@ -83,6 +90,7 @@ describe('Neem public runtime API', () => {
     })({
       name: 'api',
       planner: './planner.ts',
+      env: { RUNTIME_LAYERED: 'user', RUNTIME_USER: 'user' },
       worker: {
         build: {
           rolldown: {
@@ -96,6 +104,12 @@ describe('Neem public runtime API', () => {
     })
 
     expect(isNeemRuntimeDeclaration(runtime)).toBe(true)
+    expect(runtime.env).toEqual({
+      RUNTIME_ROOT: 'common',
+      RUNTIME_LAYERED: 'user',
+      RUNTIME_USER: 'user',
+    })
+    expect(Object.isFrozen(runtime.env)).toBe(true)
     expect(runtime.worker?.entry).toBe('./worker.ts')
     expect(runtime.worker?.build?.rolldown?.plugins).toEqual([
       commonWorkerPlugin,

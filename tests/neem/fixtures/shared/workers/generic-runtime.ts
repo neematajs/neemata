@@ -17,6 +17,7 @@ export default defineRuntimeWorker<GenericRuntimeData>({
       name: ctx.name,
       data: ctx.data,
       definition: ctx.definition,
+      env: pickEnv(),
       logger: Boolean(ctx.logger),
     })
 
@@ -43,3 +44,12 @@ export default defineRuntimeWorker<GenericRuntimeData>({
     }
   },
 })
+
+function pickEnv() {
+  return {
+    rootOnly: process.env.NEEM_ENV_ROOT_ONLY,
+    runtimeOnly: process.env.NEEM_ENV_RUNTIME_ONLY,
+    layered: process.env.NEEM_ENV_LAYERED,
+    executionOverride: process.env.NEEM_ENV_EXECUTION_OVERRIDE,
+  }
+}

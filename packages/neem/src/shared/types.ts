@@ -65,6 +65,8 @@ export type NeemLoggerOptions = LoggingOptions
 
 export type NeemLoggerInput = NeemLoggerOptions | string | URL
 
+export type NeemEnv = Record<string, string>
+
 export type NeemPluginBuild = { rolldown?: RolldownOptions }
 
 export type NeemPluginInput = {
@@ -221,6 +223,7 @@ export type NeemRuntimeDeclaration<
 > = {
   name?: string
   planner?: NeemEntryInput
+  env?: NeemEnv
   worker?: NeemRuntimeWorkerDeclaration
   host?: NeemRuntimeHostDeclaration<THost>
 }
@@ -288,6 +291,7 @@ export type NeemConfig<
    * neem.config.ts; config is build/dev declaration only.
    */
   logger?: NeemLoggerInput
+  env?: NeemEnv
   runtimes: TRuntimes
   proxy?: NeemProxyConfig
   health?: NeemHealthConfig

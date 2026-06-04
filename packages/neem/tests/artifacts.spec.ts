@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import type { NeemResolvedArtifact } from '../src/public/artifact.ts'
+import type { NeemResolvedArtifact } from '../src/shared/types.ts'
 import { createArtifactRegistry } from '../src/internal/manifest/artifacts.ts'
 
 describe('createArtifactRegistry', () => {

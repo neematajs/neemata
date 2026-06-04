@@ -23,6 +23,7 @@ import type {
 import { callHostHook } from '../plugins/hooks.ts'
 import { childLogger, runtimeLabel } from '../shared/logger.ts'
 import { normalizeError, raceWithTimeout } from '../shared/utils.ts'
+import { createRuntimeEnv } from './env.ts'
 
 export type ThreadPlan = {
   name: string
@@ -139,6 +140,11 @@ export class ThreadController {
     this.worker = new Worker(this.options.snapshot.workerEntry, {
       workerData: this.workerData,
       transferList: [this.transferPort],
+      env: createRuntimeEnv({
+        manifest: this.options.snapshot.manifest,
+        runtimeName: this.runtimeName,
+        overrideEnv: this.options.snapshot.env,
+      }),
     })
     this.worker.on('message', (message) => this.handleMessage(message))
     this.worker.on('error', (error) => this.fail(error))

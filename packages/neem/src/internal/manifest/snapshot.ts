@@ -11,6 +11,7 @@ import { createArtifactRegistry } from './artifacts.ts'
 export type RuntimeSnapshot = {
   mode: NeemMode
   outDir: string
+  env?: NodeJS.ProcessEnv
   manifestFile?: string
   manifest: Manifest
   config: ManifestConfig
@@ -22,6 +23,7 @@ export type RuntimeSnapshot = {
 export function createRuntimeSnapshot(options: {
   mode: NeemMode
   outDir: string
+  env?: NodeJS.ProcessEnv
   manifest: Manifest
   manifestFile?: string
   logger?: Logger
@@ -29,6 +31,7 @@ export function createRuntimeSnapshot(options: {
   return {
     mode: options.mode,
     outDir: options.outDir,
+    env: options.env,
     manifestFile: options.manifestFile,
     manifest: options.manifest,
     config: options.manifest.config,

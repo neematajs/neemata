@@ -22,6 +22,7 @@ import { getTransferList } from './runner-protocol.ts'
 
 export type HostRunnerOptions = {
   data: HostRunnerData
+  env: NodeJS.ProcessEnv
   onFailure?: (error: Error) => MaybePromise<void>
 }
 
@@ -50,6 +51,7 @@ export class HostRunner {
     this.exited = createFuture<void>()
     const worker = new Worker(resolveHostRunnerEntry(), {
       workerData: this.options.data,
+      env: this.options.env,
     })
     this.worker = worker
     worker.on('message', (message) => this.handleMessage(message))

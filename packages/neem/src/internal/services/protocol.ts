@@ -36,6 +36,7 @@ export type RuntimeStartRequest = {
   type: 'start'
   mode: NeemMode
   outDir: string
+  env?: NodeJS.ProcessEnv
   manifestFile: string
   runtimes?: readonly string[]
 }

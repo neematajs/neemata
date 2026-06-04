@@ -123,6 +123,43 @@ describe('Neem v2 services', () => {
     expect(events.some((event) => event.event === 'runtime-stop')).toBe(true)
   }, 60_000)
 
+  it('passes merged env defaults to planner, host, and worker threads', async () => {
+    const fixture = await useFixture({ config: 'generic-runtime' })
+    const neem = spawnTrackedNeem(
+      ['dev', '--config', fixture.configFile, '--outDir', fixture.outDir],
+      {
+        env: {
+          NEEM_ENV_EXECUTION_OVERRIDE: 'execution',
+          NEEM_RUNTIME_EVENTS_FILE: fixture.eventsFile,
+        },
+      },
+    )
+
+    await neem.waitForEvent((event) => event.event === 'runtime:ready', 30_000)
+
+    const events = await readRuntimeEvents(fixture.eventsFile)
+    const hostSetup = events.find(
+      (event) => event.event === 'host-setup' && event.name === 'jobs',
+    )
+    const runtimeCreate = events.find(
+      (event) => event.event === 'runtime-create' && event.name === 'jobs:0',
+    )
+    const expectedEnv = {
+      rootOnly: 'root',
+      runtimeOnly: 'runtime',
+      layered: 'runtime',
+      executionOverride: 'execution',
+    }
+
+    expect(hostSetup).toMatchObject({
+      env: expectedEnv,
+      options: { env: expectedEnv },
+    })
+    expect(runtimeCreate).toMatchObject({ env: expectedEnv })
+
+    await neem.stop()
+  }, 60_000)
+
   it('imports dev config in the watcher worker, not the CLI main thread', async () => {
     const fixture = await useFixture({ config: 'config-import' })
     const neem = spawnTrackedNeem(

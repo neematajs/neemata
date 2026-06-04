@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import type { NeemProxyConfig } from '../src/public/config.ts'
+import type { NeemProxyConfig } from '../src/shared/types.ts'
 import {
   createDesiredUpstreams,
   createNativeProxyOptions,

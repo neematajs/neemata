@@ -22,6 +22,7 @@ async function handle(request: RuntimeRequest): Promise<void> {
         const health = await service.start({
           mode: request.mode,
           outDir: request.outDir,
+          env: request.env,
           manifestFile: request.manifestFile,
           runtimes: request.runtimes,
           emit: (event) => post({ type: 'event', event }),

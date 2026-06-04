@@ -18,6 +18,7 @@ import type { ThreadPlan } from './thread.ts'
 import { callHostHook } from '../plugins/hooks.ts'
 import { childLogger, runtimeLabel } from '../shared/logger.ts'
 import { normalizeError, wait } from '../shared/utils.ts'
+import { createRuntimeEnv } from './env.ts'
 import { createRecoveryPolicy, getRecoveryDelay } from './recovery.ts'
 import { HostRunner } from './runner.ts'
 import { ThreadController } from './thread.ts'
@@ -252,7 +253,16 @@ export class RuntimeController {
   private createHostRunner(): HostRunner {
     return new HostRunner({
       data: this.createHostRunnerData(),
+      env: this.createRuntimeEnv(),
       onFailure: (error) => this.handleHostFailure(error),
+    })
+  }
+
+  private createRuntimeEnv(): NodeJS.ProcessEnv {
+    return createRuntimeEnv({
+      manifest: this.options.snapshot.manifest,
+      runtimeName: this.name,
+      overrideEnv: this.options.snapshot.env,
     })
   }
 

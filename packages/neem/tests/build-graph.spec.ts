@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import type { NeemResolvedConfig } from '../src/public/config.ts'
+import type { NeemResolvedConfig } from '../src/shared/types.ts'
 import { createBuildGraph } from '../src/internal/build/graph.ts'
 import { definePlugin, defineRuntime } from '../src/public/config.ts'
 

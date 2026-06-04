@@ -15,7 +15,10 @@ import { NeemRuntimeDeclarationBrand } from './runtime.ts'
 export function defineConfig<const TRuntimes extends NeemRuntimeProjectEntries>(
   config: NeemConfig<TRuntimes>,
 ): NeemConfig<TRuntimes> {
-  return Object.freeze(config)
+  return Object.freeze({
+    ...config,
+    ...(config.env ? { env: freezeRuntimeEnv(config.env) } : {}),
+  })
 }
 
 export function definePlugin<const T extends NeemPluginInput>(plugin: T): T {
@@ -27,6 +30,7 @@ export function defineRuntime<
 >(declaration: TDeclaration): NeemMarkedRuntimeDeclaration<TDeclaration> {
   return Object.freeze({
     ...declaration,
+    ...(declaration.env ? { env: freezeRuntimeEnv(declaration.env) } : {}),
     [NeemRuntimeDeclarationBrand]: true,
   }) as NeemMarkedRuntimeDeclaration<TDeclaration>
 }
@@ -68,16 +72,38 @@ function mergeRuntimeDeclarationLayers(
   const {
     worker: _commonWorker,
     host: _commonHost,
+    env: commonEnv,
     ...commonRest
   } = commonOptions
-  const { worker: _userWorker, host: _userHost, ...userRest } = userOptions
+  const {
+    worker: _userWorker,
+    host: _userHost,
+    env: userEnv,
+    ...userRest
+  } = userOptions
+  const env = mergeRuntimeEnv(commonEnv, userEnv)
 
   return {
     ...commonRest,
     ...userRest,
+    ...(env ? { env } : {}),
     ...(worker ? { worker } : {}),
     ...(host ? { host } : {}),
   }
+}
+
+function mergeRuntimeEnv(
+  commonEnv: NeemRuntimeDeclarationLayer['env'],
+  userEnv: NeemRuntimeDeclarationLayer['env'],
+): NeemRuntimeDeclaration['env'] | undefined {
+  if (!commonEnv && !userEnv) return undefined
+  return freezeRuntimeEnv({ ...commonEnv, ...userEnv })
+}
+
+function freezeRuntimeEnv<const T extends NeemRuntimeDeclaration['env']>(
+  env: T,
+): T {
+  return Object.freeze({ ...env }) as T
 }
 
 function mergeRuntimeWorkerDeclarations(

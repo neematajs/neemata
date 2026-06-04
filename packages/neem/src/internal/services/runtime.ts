@@ -14,6 +14,7 @@ import { serializeError } from '../shared/utils.ts'
 export type RuntimeServiceOptions = {
   mode: NeemMode
   outDir: string
+  env?: NodeJS.ProcessEnv
   manifestFile: string
   runtimes?: readonly string[]
   emit: (event: RuntimeEvent) => void
@@ -22,6 +23,7 @@ export type RuntimeServiceOptions = {
 export class RuntimeService {
   private controller: HostController | undefined
   private readonly hooks = createHostHooks()
+  private env: NodeJS.ProcessEnv | undefined
   private logger: Logger | undefined
   private mode: NeemMode | undefined
   private outDir: string | undefined
@@ -32,6 +34,7 @@ export class RuntimeService {
   ): Promise<NeemRuntimeServerHealth> {
     this.mode = options.mode
     this.outDir = options.outDir
+    this.env = options.env
     this.runtimes = options.runtimes
     const snapshot = await this.loadSnapshot(options.manifestFile)
     this.logger = snapshot.logger
@@ -119,6 +122,7 @@ export class RuntimeService {
     return createRuntimeSnapshot({
       mode,
       outDir,
+      env: this.env,
       manifest,
       manifestFile,
       logger,

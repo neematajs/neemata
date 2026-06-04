@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import type { RuntimeSnapshot } from '../src/internal/manifest/snapshot.ts'
-import type { NeemResolvedArtifact } from '../src/public/artifact.ts'
+import type { NeemResolvedArtifact } from '../src/shared/types.ts'
 import { resolveThreadTopology } from '../src/internal/host/runtime.ts'
 import { createArtifactRegistry } from '../src/internal/manifest/artifacts.ts'
 import { createDefaultLogger } from '../src/internal/shared/logger.ts'

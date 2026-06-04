@@ -59,8 +59,10 @@ describe('Neem manifest', () => {
   it('creates runtime host and planner artifacts without requiring worker', () => {
     const manifest = createCompiledManifest(createCompiledHostOnlyGraph())
 
+    expect(manifest.config.env).toEqual({ ROOT_ENV: 'root' })
     expect(manifest.runtimes.scheduler).toMatchObject({
       name: 'scheduler',
+      env: { RUNTIME_ENV: 'scheduler' },
       worker: undefined,
       host: { id: 'host', file: 'runtime/scheduler/host/index.js' },
       planner: { id: 'planner', file: 'runtime/scheduler/planner/index.js' },
@@ -226,7 +228,10 @@ function createCompiledHostOnlyGraph(): CompiledGraph {
   )
 
   return {
-    graph: { outDir, config: { runtimes: { scheduler: {} } } },
+    graph: {
+      outDir,
+      config: { env: { ROOT_ENV: 'root' }, runtimes: { scheduler: {} } },
+    },
     targets: [
       compiledTarget('start-entry', start),
       compiledTarget('worker-entry', worker),
@@ -234,7 +239,9 @@ function createCompiledHostOnlyGraph(): CompiledGraph {
     runtimes: [
       {
         name: 'scheduler',
-        node: undefined,
+        node: {
+          declaration: { declaration: { env: { RUNTIME_ENV: 'scheduler' } } },
+        },
         host: compiledTarget('runtime-host', host),
         planner: compiledTarget('runtime-planner', planner),
       },
