@@ -121,7 +121,7 @@ export class Container {
     this.disposing = false
   }
 
-  containsWithinSelf(injectable: AnyInjectable) {
+  owns(injectable: AnyInjectable) {
     return (
       this.provisions.has(injectable) ||
       this.instances.has(injectable) ||
@@ -130,10 +130,7 @@ export class Container {
   }
 
   contains(injectable: AnyInjectable): boolean {
-    return (
-      this.containsWithinSelf(injectable) ||
-      (this.parent?.contains(injectable) ?? false)
-    )
+    return this.owns(injectable) || (this.parent?.contains(injectable) ?? false)
   }
 
   get<T extends AnyInjectable>(injectable: T): ResolveInjectableType<T> {

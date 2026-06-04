@@ -293,14 +293,14 @@ describe('Container', () => {
     const callInjectableValue = await scopeContainer.resolve(callInjectable)
 
     expect(container.contains(globalInjectable)).toBe(true)
-    expect(container.containsWithinSelf(globalInjectable)).toBe(true)
+    expect(container.owns(globalInjectable)).toBe(true)
 
     expect(callInjectableValue.globalValue).toBe(globalInjectableValue)
 
     expect((scopeContainer as any).parent).toBe(container)
-    expect(scopeContainer.containsWithinSelf(globalInjectable)).toBe(false)
+    expect(scopeContainer.owns(globalInjectable)).toBe(false)
     expect(scopeContainer.contains(globalInjectable)).toBe(true)
-    expect(scopeContainer.containsWithinSelf(connectionInjectable)).toBe(true)
+    expect(scopeContainer.owns(connectionInjectable)).toBe(true)
     expect(scopeContainer.contains(connectionInjectable)).toBe(true)
 
     const connectionInjectableValue =
@@ -468,7 +468,7 @@ describe('Container', () => {
 
       await expect(container.resolve(injectable)).rejects.toThrow(errorMessage)
 
-      expect(container.containsWithinSelf(injectable)).toBe(false)
+      expect(container.owns(injectable)).toBe(false)
 
       await expect(container.resolve(injectable)).rejects.toThrow(errorMessage)
     })
@@ -793,8 +793,8 @@ describe('Container', () => {
       await connectionContainer.dispose()
 
       // Child container should be clean
-      expect(connectionContainer.containsWithinSelf(childDep)).toBe(false)
-      expect(connectionContainer.containsWithinSelf(parentDep)).toBe(false)
+      expect(connectionContainer.owns(childDep)).toBe(false)
+      expect(connectionContainer.owns(parentDep)).toBe(false)
 
       // Parent should still have its dependency
       expect(container.contains(parentDep)).toBe(true)
@@ -892,9 +892,9 @@ describe('Container', () => {
       await connectionContainer.resolve(childDep)
 
       // Verify initial state
-      expect(container.containsWithinSelf(parentDep)).toBe(true)
-      expect(connectionContainer.containsWithinSelf(childDep)).toBe(true)
-      expect(connectionContainer.containsWithinSelf(parentDep)).toBe(false)
+      expect(container.owns(parentDep)).toBe(true)
+      expect(connectionContainer.owns(childDep)).toBe(true)
+      expect(connectionContainer.owns(parentDep)).toBe(false)
 
       // Reset spy
       disposeSpy.mockClear()
@@ -1139,9 +1139,9 @@ describe('Container', () => {
 
       expect(creationOrder).toEqual(['database', 'config', 'logger'])
 
-      expect(container.containsWithinSelf(database)).toBe(true)
-      expect(container.containsWithinSelf(config)).toBe(true)
-      expect(container.containsWithinSelf(logger)).toBe(true)
+      expect(container.owns(database)).toBe(true)
+      expect(container.owns(config)).toBe(true)
+      expect(container.owns(logger)).toBe(true)
 
       const connection1Container = container.fork(Scope.Connection)
 
@@ -1155,13 +1155,11 @@ describe('Container', () => {
         'connectionMetrics',
       ])
 
-      expect(connection1Container.containsWithinSelf(session)).toBe(true)
-      expect(connection1Container.containsWithinSelf(auth)).toBe(true)
-      expect(connection1Container.containsWithinSelf(connectionMetrics)).toBe(
-        true,
-      )
+      expect(connection1Container.owns(session)).toBe(true)
+      expect(connection1Container.owns(auth)).toBe(true)
+      expect(connection1Container.owns(connectionMetrics)).toBe(true)
       expect(connection1Container.contains(database)).toBe(true)
-      expect(connection1Container.containsWithinSelf(database)).toBe(false)
+      expect(connection1Container.owns(database)).toBe(false)
 
       const connection2Container = container.fork(Scope.Connection)
 
@@ -1292,7 +1290,7 @@ describe('Container', () => {
 
       // Transient injectables are stored for disposal tracking but not reused
       expect(container.contains(transientInjectable)).toBe(true)
-      expect(container.containsWithinSelf(transientInjectable)).toBe(true)
+      expect(container.owns(transientInjectable)).toBe(true)
     })
 
     it('should dispose transient injectable instances individually', async () => {
@@ -1512,7 +1510,7 @@ describe('Container', () => {
 
       // Global injectable should be cached in container
       expect(container.contains(globalInjectable)).toBe(true)
-      expect(container.containsWithinSelf(globalInjectable)).toBe(true)
+      expect(container.owns(globalInjectable)).toBe(true)
 
       // If we resolve the transient dependency directly, it should create new instances
       const directTransient1 = await container.resolve(transientDep)
@@ -1620,7 +1618,7 @@ describe('Container', () => {
       container.provide(token, value)
 
       // Verify it's there
-      expect(container.containsWithinSelf(token)).toBe(true)
+      expect(container.owns(token)).toBe(true)
       const resolved = await container.resolve(token)
       expect(resolved).toBe(value)
 
@@ -1628,7 +1626,7 @@ describe('Container', () => {
       container.withhold(token)
 
       // Should no longer be available
-      expect(container.containsWithinSelf(token)).toBe(false)
+      expect(container.owns(token)).toBe(false)
       await expect(container.resolve(token)).rejects.toThrow(
         'No instance provided',
       )
@@ -1648,11 +1646,11 @@ describe('Container', () => {
       const token = createLazyInjectable()
       const value = { foo: 'bar' }
 
-      expect(container.containsWithinSelf(token)).toBe(false)
+      expect(container.owns(token)).toBe(false)
 
       container.provide(token, value)
 
-      expect(container.containsWithinSelf(token)).toBe(true)
+      expect(container.owns(token)).toBe(true)
     })
 
     it('should be included in contains()', async () => {
@@ -1667,7 +1665,7 @@ describe('Container', () => {
       expect(container.contains(token)).toBe(true)
       // Child can see it through parent
       expect(childContainer.contains(token)).toBe(true)
-      expect(childContainer.containsWithinSelf(token)).toBe(false)
+      expect(childContainer.owns(token)).toBe(false)
     })
 
     it('should lazily resolve injectable provisions', async () => {
@@ -1732,9 +1730,9 @@ describe('Container', () => {
 
       container.withhold(token1, token2)
 
-      expect(container.containsWithinSelf(token1)).toBe(false)
-      expect(container.containsWithinSelf(token2)).toBe(false)
-      expect(container.containsWithinSelf(token3)).toBe(true)
+      expect(container.owns(token1)).toBe(false)
+      expect(container.owns(token2)).toBe(false)
+      expect(container.owns(token3)).toBe(true)
     })
   })
 })
