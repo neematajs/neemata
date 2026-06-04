@@ -7,11 +7,11 @@ import { afterEach, describe, expect, it } from 'vitest'
 import type {
   CompiledGraph,
   CompiledTarget,
-} from '../src/internal/build/compiler.ts'
+} from '../../src/internal/build/compiler.ts'
 import type {
   Manifest,
   ManifestArtifact,
-} from '../src/internal/manifest/manifest.ts'
+} from '../../src/internal/manifest/manifest.ts'
 import {
   assertManifestPath,
   createManifest as createCompiledManifest,
@@ -20,7 +20,7 @@ import {
   toManifestPath,
   validateManifest,
   writeStartEntries,
-} from '../src/internal/manifest/manifest.ts'
+} from '../../src/internal/manifest/manifest.ts'
 
 const tempDirs: string[] = []
 

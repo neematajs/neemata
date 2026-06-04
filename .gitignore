@@ -4,9 +4,7 @@ __screenshots__/
 .neem/
 test.*
 _dev/
-tests/neem/.tmp-dev/
-tests/neem/.tmp-e2e/
-tests/neem/.tmp-start/
+packages/neem/tests/e2e/.tmp/
 packages/_neem_old
 *.sock
 

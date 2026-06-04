@@ -4,7 +4,7 @@ import { resolve } from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
-import type { SpawnedNeem } from '../support/e2e.ts'
+import type { SpawnedNeem } from './support/e2e.ts'
 import {
   createNeemFixture,
   expectFile,
@@ -13,7 +13,7 @@ import {
   spawnNeem,
   spawnNode,
   waitFor,
-} from '../support/e2e.ts'
+} from './support/e2e.ts'
 
 const fixtures: Array<{ cleanup: () => Promise<void> }> = []
 const spawned: SpawnedNeem[] = []

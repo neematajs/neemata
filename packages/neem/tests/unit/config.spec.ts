@@ -6,17 +6,17 @@ import {
   definePlugin,
   defineRuntime,
   isNeemRuntimeDeclaration,
-} from '../src/public/config.ts'
+} from '../../src/public/config.ts'
 import {
   defineRuntimeHost,
   defineRuntimePlanner,
   isNeemRuntimeHostFactory,
   isNeemRuntimePlanner,
-} from '../src/public/runtime.ts'
+} from '../../src/public/runtime.ts'
 import {
   defineRuntimeWorker,
   isNeemRuntimeWorker,
-} from '../src/public/worker.ts'
+} from '../../src/public/worker.ts'
 
 describe('Neem public runtime API', () => {
   it('keeps root runtimes as project entries', () => {

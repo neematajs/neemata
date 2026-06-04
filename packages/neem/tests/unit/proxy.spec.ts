@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest'
 
-import type { NeemProxyConfig } from '../src/shared/types.ts'
+import type { NeemProxyConfig } from '../../src/shared/types.ts'
 import {
   createDesiredUpstreams,
   createNativeProxyOptions,
   normalizeRuntimeUpstream,
   toProxyUpstream,
-} from '../src/internal/host/proxy.ts'
+} from '../../src/internal/host/proxy.ts'
 
 describe('Neem proxy helpers', () => {
   it('normalizes wildcard runtime upstreams to loopback', () => {

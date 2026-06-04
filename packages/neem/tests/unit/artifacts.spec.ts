@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
-import type { NeemResolvedArtifact } from '../src/shared/types.ts'
-import { createArtifactRegistry } from '../src/internal/manifest/artifacts.ts'
+import type { NeemResolvedArtifact } from '../../src/shared/types.ts'
+import { createArtifactRegistry } from '../../src/internal/manifest/artifacts.ts'
 
 describe('createArtifactRegistry', () => {
   it('resolves first global id and scoped runtime artifacts independently', () => {

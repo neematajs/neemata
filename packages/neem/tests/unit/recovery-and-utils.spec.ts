@@ -6,18 +6,18 @@ import { describe, expect, it } from 'vitest'
 import {
   createRecoveryPolicy,
   getRecoveryDelay,
-} from '../src/internal/host/recovery.ts'
+} from '../../src/internal/host/recovery.ts'
 import {
   assertRuntimeNamesExist,
   normalizeRuntimeNames,
-} from '../src/internal/shared/runtime-selection.ts'
+} from '../../src/internal/shared/runtime-selection.ts'
 import {
   deserializeError,
   raceWithTimeout,
   sanitizePathPart,
   serializeError,
   toFilePath,
-} from '../src/internal/shared/utils.ts'
+} from '../../src/internal/shared/utils.ts'
 
 const execFileAsync = promisify(execFile)
 
@@ -117,7 +117,7 @@ describe('shared utilities', () => {
   })
 
   it('does not keep the process alive after fast race completion', async () => {
-    const entry = new URL('../src/internal/shared/utils.ts', import.meta.url)
+    const entry = new URL('../../src/internal/shared/utils.ts', import.meta.url)
     const script = `
       const { raceWithTimeout } = await import(${JSON.stringify(entry.href)})
       const result = await raceWithTimeout(Promise.resolve('ok'), 5_000)

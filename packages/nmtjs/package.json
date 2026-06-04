@@ -87,12 +87,12 @@
     "vite": "catalog:"
   },
   "devDependencies": {
-    "@nmtjs/proxy": "catalog:",
+    "@nmtjs/proxy": "1.0.0-beta.6",
     "pino": "10.3.1",
     "zod": "catalog:"
   },
   "peerDependencies": {
-    "@nmtjs/proxy": "catalog:",
+    "@nmtjs/proxy": "1.0.0-beta.6",
     "zod": "catalog:"
   },
   "peerDependenciesMeta": {

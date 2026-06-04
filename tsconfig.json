@@ -62,9 +62,6 @@
     },
     {
       "path": "./tests/e2e/tsconfig.json"
-    },
-    {
-      "path": "./tests/neem/tsconfig.json"
     }
   ],
   "include": []

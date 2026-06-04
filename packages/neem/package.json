@@ -39,16 +39,16 @@
   "dependencies": {
     "@nmtjs/common": "workspace:*",
     "@nmtjs/core": "workspace:*",
-    "citty": "0.2.2",
-    "consola": "3.4.2",
+    "citty": "^0.2.2",
+    "consola": "^3.4.2",
     "defu": "^6.1.7",
-    "hookable": "6.1.1",
-    "oxc-resolver": "11.19.1",
-    "perfect-debounce": "2.1.0",
-    "rolldown": "1.0.3"
+    "hookable": "^6.1.1",
+    "oxc-resolver": "^11.19.1",
+    "perfect-debounce": "^2.1.0",
+    "rolldown": "^1.1.0"
   },
   "peerDependencies": {
-    "@nmtjs/proxy": "catalog:"
+    "@nmtjs/proxy": "1.0.0-beta.6"
   },
   "peerDependenciesMeta": {
     "@nmtjs/proxy": {
@@ -56,7 +56,9 @@
     }
   },
   "devDependencies": {
-    "@nmtjs/proxy": "catalog:",
+    "@nmtjs/metrics": "workspace:*",
+    "@nmtjs/proxy": "1.0.0-beta.6",
+    "@nmtjs/scheduler": "workspace:*",
     "@types/node": "^24"
   },
   "files": [

@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 import {
   mergeRolldownOptions,
   mergeUserRolldownOptions,
-} from '../src/shared/rolldown.ts'
+} from '../../src/shared/rolldown.ts'
 
 describe('mergeRolldownOptions', () => {
   it('applies Neem hierarchy from highest precedence through defaults', () => {

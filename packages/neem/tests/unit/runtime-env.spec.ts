@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
-import type { Manifest } from '../src/internal/manifest/manifest.ts'
-import { createRuntimeEnv } from '../src/internal/host/env.ts'
+import type { Manifest } from '../../src/internal/manifest/manifest.ts'
+import { createRuntimeEnv } from '../../src/internal/host/env.ts'
 
 describe('Neem runtime env', () => {
   it('merges root defaults, runtime defaults, execution env, and test overrides', () => {

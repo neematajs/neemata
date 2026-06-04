@@ -31,10 +31,7 @@ export type SpawnedNeem = {
   stop: () => Promise<{ code: number | null; signal: string | null }>
 }
 
-const neemBin = resolve(
-  import.meta.dirname,
-  '../../../packages/neem/bin/neem.js',
-)
+const neemBin = resolve(import.meta.dirname, '../../../bin/neem.js')
 
 export function spawnNeem(
   args: readonly string[],
@@ -153,7 +150,7 @@ export async function createNeemFixture(
   eventsFile: string
   cleanup: () => Promise<void>
 }> {
-  const tempRoot = resolve(import.meta.dirname, '../.tmp-e2e')
+  const tempRoot = resolve(import.meta.dirname, '../.tmp')
   await mkdir(tempRoot, { recursive: true })
   const dir = await mkdtemp(resolve(tempRoot, 'case-'))
   const fixtureDir = resolve(dir, 'fixtures')

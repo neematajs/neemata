@@ -3,8 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build:deps": "tsgo -b ../../packages/contract/tsconfig.build.json ../../packages/eventing/tsconfig.build.json ../../packages/jobs/tsconfig.build.json ../../packages/scheduler/tsconfig.build.json ../../packages/pubsub/tsconfig.build.json",
-    "test": "pnpm run build:deps && vitest run --config vitest.config.ts",
+    "test": "vitest run --config vitest.config.ts",
     "check:type": "tsgo -p tsconfig.json --noEmit"
   },
   "dependencies": {
