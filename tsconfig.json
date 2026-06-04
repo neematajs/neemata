@@ -59,9 +59,6 @@
     },
     {
       "path": "./packages/ws-transport/tsconfig.json"
-    },
-    {
-      "path": "./tests/e2e/tsconfig.json"
     }
   ],
   "include": []

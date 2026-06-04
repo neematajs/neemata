@@ -1,8 +1,8 @@
 services:
   valkey:
-    image: valkey:9-alpine
+    image: valkey/valkey:9-alpine
     ports:
-      - "${VALKEY_PORT:-6379}:6379"
+      - "${VALKEY_PORT:-6380}:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s

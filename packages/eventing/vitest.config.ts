@@ -1,7 +1,8 @@
-import { defineConfig } from 'vitest/config'
+import { defineProject } from 'vitest/config'
 
-export default defineConfig({
+export default defineProject({
   test: {
+    environment: 'node',
     include: ['tests/**/*.spec.ts'],
     testTimeout: 30000,
     hookTimeout: 30000,

@@ -80,7 +80,7 @@ jobs:
           pnpm run test
           pnpm run test:browser:client
 
-  tests-e2e:
+  tests-integration-services:
     needs: [ lint ]
     runs-on: blacksmith-4vcpu-ubuntu-2404
     services:
@@ -88,6 +88,15 @@ jobs:
         image: redis:8-alpine
         ports:
           - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      valkey:
+        image: valkey/valkey:9-alpine
+        ports:
+          - 6380:6379
         options: >-
           --health-cmd "redis-cli ping"
           --health-interval 10s
@@ -138,7 +147,9 @@ jobs:
             ${{ runner.os }}-pnpm-store-
       - run: pnpm install
       - run: pnpm build
-      - run: pnpm run test:e2e
+      - run: pnpm run test:integration:services
         env:
+          NMTJS_REQUIRE_SERVICE_TESTS: "1"
           REDIS_URL: redis://localhost:6379
+          VALKEY_URL: redis://localhost:6380
           KAFKA_BROKERS: localhost:9092

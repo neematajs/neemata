@@ -3,7 +3,9 @@
   "description": "Neem jobs runtime contracts and BullMQ integration.",
   "type": "module",
   "scripts": {
-    "clean-build": "rm -rf ./dist"
+    "clean-build": "rm -rf ./dist",
+    "test": "vitest run --config vitest.config.ts",
+    "test:integration": "vitest run --config vitest.config.ts tests/integration"
   },
   "exports": {
     ".": {

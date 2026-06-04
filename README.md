@@ -22,3 +22,27 @@ hooks, and starts app workers in production mode.
 uses the same manifest shape as `start`, restarts app workers after successful
 config/app rebuilds, reloads plugin hooks after plugin entry rebuilds, and keeps
 existing workers alive on rebuild errors.
+
+## Service integration tests
+
+Service-backed package integration tests live beside package owners under
+`packages/*/tests/integration`.
+
+Local services:
+
+```sh
+docker compose up -d --wait redis valkey kafka
+```
+
+Run required service tests:
+
+```sh
+NMTJS_REQUIRE_SERVICE_TESTS=1 \
+REDIS_URL=redis://localhost:6379 \
+VALKEY_URL=redis://localhost:6380 \
+KAFKA_BROKERS=localhost:9092 \
+pnpm run test:integration:services
+```
+
+Without service env, these tests skip in normal package/root test runs. In CI,
+`NMTJS_REQUIRE_SERVICE_TESTS=1` makes missing service env fail instead of skip.
