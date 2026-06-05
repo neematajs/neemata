@@ -11,6 +11,7 @@ import {
   kValueInjectable,
 } from './constants.ts'
 import { Scope } from './enums.ts'
+import { forkLogger } from './logger.ts'
 
 const ScopeStrictness = {
   [Scope.Transient]: Number.NaN, // this should make it always fail to compare with other scopes
@@ -308,11 +309,10 @@ export function compareScope(
 
 const loggerInjectable = Object.assign(
   (label: string | undefined, options?: ChildLoggerOptions) => {
-    const bindings = label ? { $label: label } : {}
     return createFactoryInjectable({
       dependencies: { logger: loggerInjectable },
       scope: Scope.Global,
-      factory: ({ logger }) => logger.child(bindings, options),
+      factory: ({ logger }) => forkLogger(logger, label, options),
     })
   },
   createLazyInjectable<Logger>(Scope.Global, 'Logger'),

@@ -3,6 +3,7 @@ import type { GatewayApi } from '@nmtjs/gateway'
 import {
   Container,
   CoreInjectables,
+  forkLogger,
   getDepedencencyInjectable,
   provision,
   Scope,
@@ -54,7 +55,10 @@ export class NeemataApplication {
     protected appConfig: ApplicationConfig,
     options: NeemataApplicationOptions,
   ) {
-    this.logger = options.logger.child(
+    this.logger = forkLogger(
+      options.logger,
+      undefined,
+      undefined,
       options.name ? { application: options.name } : {},
     )
     this.container = options.container

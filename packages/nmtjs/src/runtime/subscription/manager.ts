@@ -10,6 +10,7 @@ import type {
 import type { Container, Logger } from '@nmtjs/core'
 import type { t } from '@nmtjs/type'
 import { isAbortError } from '@nmtjs/common'
+import { forkLogger } from '@nmtjs/core'
 
 import { subscriptionAdapter } from '../injectables.ts'
 
@@ -82,7 +83,7 @@ export class SubscriptionManager {
   protected readonly logger: Logger
 
   constructor(protected readonly options: SubscriptionManagerOptions) {
-    this.logger = options.logger.child({ component: SubscriptionManager.name })
+    this.logger = forkLogger(options.logger, SubscriptionManager.name)
   }
 
   protected get adapter() {

@@ -1,6 +1,7 @@
 import EventEmitter from 'node:events'
 
 import type { Logger } from '@nmtjs/core'
+import { forkLogger } from '@nmtjs/core'
 
 import type { ErrorPolicy } from './error-policy.ts'
 import type {
@@ -56,7 +57,7 @@ export class PoolManager extends EventEmitter<PoolManagerEvents> {
     logger: Logger,
   ) {
     super()
-    this.logger = logger.child({ component: 'PoolManager' })
+    this.logger = forkLogger(logger, 'PoolManager')
   }
 
   /** Current overall server health */

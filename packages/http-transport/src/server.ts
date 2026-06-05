@@ -403,7 +403,7 @@ export class HttpTransportServer
     // const hooks = this.createWsHooks()
     const opts: HttpAdapterParams = {
       ...this.options,
-      // logger: this.logger.child({ $label: 'WsServer' }),
+      // logger: forkLogger(this.logger, 'WsServer'),
       fetchHandler: this.httpHandler.bind(this),
     }
     return this.adapterFactory(opts)

@@ -1,4 +1,5 @@
 import type { Logger } from '@nmtjs/core'
+import { forkLogger } from '@nmtjs/core'
 
 import type { ServerLifecycle } from './lifecycle.ts'
 
@@ -29,7 +30,7 @@ export class HMRCoordinator {
     private readonly lifecycle: ServerLifecycle,
     logger: Logger,
   ) {
-    this.logger = logger.child({ component: 'HMRCoordinator' })
+    this.logger = forkLogger(logger, 'HMRCoordinator')
   }
 
   /**

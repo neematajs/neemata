@@ -3,6 +3,7 @@ import EventEmitter, { once } from 'node:events'
 import { MessageChannel, Worker } from 'node:worker_threads'
 
 import type { Logger } from '@nmtjs/core'
+import { forkLogger } from '@nmtjs/core'
 
 import type { WorkerType } from '../enums.ts'
 import type {
@@ -118,8 +119,7 @@ export class ManagedWorker extends EventEmitter<ManagedWorkerEvents> {
     logger: Logger,
   ) {
     super()
-    this.logger = logger.child({
-      component: 'ManagedWorker',
+    this.logger = forkLogger(logger, 'ManagedWorker', undefined, {
       workerId: config.id,
     })
   }

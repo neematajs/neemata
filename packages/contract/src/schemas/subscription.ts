@@ -1,4 +1,4 @@
-import type { BaseType, t } from '@nmtjs/type'
+import type { BaseType, BaseTypeAny, t } from '@nmtjs/type'
 import { t as types } from '@nmtjs/type'
 
 import type { ContractSchemaOptions } from '../utils.ts'
@@ -9,13 +9,13 @@ import { concatFullName, createSchema } from '../utils.ts'
 export const SubscriptionKind = Symbol('NeemataSubscription')
 
 export type TAnySubscriptionContract = TSubscriptionContract<
-  any,
+  BaseTypeAny,
   Record<string, TAnyEventContract>,
   string | undefined
 >
 
 export type TAnySubscriptionEventContract = TSubscriptionEventContract<
-  any,
+  BaseTypeAny,
   string | undefined,
   TAnySubscriptionContract
 >

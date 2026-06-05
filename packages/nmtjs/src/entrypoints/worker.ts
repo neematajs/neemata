@@ -1,5 +1,7 @@
 import { workerData } from 'node:worker_threads'
 
+import { forkLogger } from '@nmtjs/core'
+
 import type { ServerConfig } from '../runtime/index.ts'
 import type { RunWorkerOptions } from './thread.ts'
 import {
@@ -68,7 +70,7 @@ async function initializeApplicationWorker(
  * reload is superseded - only the most recent config is applied.
  */
 function setupApplicationHMR(runtime: ApplicationWorkerRuntime) {
-  const logger = runtime.logger.child({ component: 'HMR' })
+  const logger = forkLogger(runtime.logger, 'HMR')
 
   // Track active reload
   let activeReload: Promise<void> | null = null

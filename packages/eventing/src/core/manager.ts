@@ -1,4 +1,5 @@
 import type { Logger } from '@nmtjs/core'
+import { forkLogger } from '@nmtjs/core'
 
 import type { EventingAdapter } from './adapter.ts'
 import type {
@@ -21,7 +22,7 @@ export class EventingManager {
   protected readonly logger: Logger
 
   constructor(protected readonly options: EventingManagerOptions) {
-    this.logger = options.logger.child({ component: EventingManager.name })
+    this.logger = forkLogger(options.logger, EventingManager.name)
   }
 
   produce: ProduceFn = async (event, input) => {

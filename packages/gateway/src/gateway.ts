@@ -20,7 +20,12 @@ import {
   noopFn,
   withTimeout,
 } from '@nmtjs/common'
-import { createFactoryInjectable, provision, Scope } from '@nmtjs/core'
+import {
+  createFactoryInjectable,
+  forkLogger,
+  provision,
+  Scope,
+} from '@nmtjs/core'
 import {
   ClientMessageType,
   ConnectionType,
@@ -118,7 +123,7 @@ export class Gateway<
           factory: ({ connectionId }) => connectionId,
         }),
     }
-    this.logger = options.logger.child({}, gatewayLoggerOptions)
+    this.logger = forkLogger(options.logger, undefined, gatewayLoggerOptions)
     this.connections = new ConnectionManager()
     this.rpcs = new RpcManager()
     this.blobStreams = new BlobStreamsManager({
@@ -315,7 +320,7 @@ export class Gateway<
       procedure,
       container,
       signal,
-      logger: logger.child({ callId, procedure }),
+      logger: forkLogger(logger, undefined, undefined, { callId, procedure }),
       [Symbol.asyncDispose]: dispose,
     }
   }
@@ -377,7 +382,7 @@ export class Gateway<
   }
 
   protected onConnect(transport: string): TransportWorkerParams['onConnect'] {
-    const logger = this.logger.child({ transport })
+    const logger = forkLogger(this.logger, undefined, undefined, { transport })
     return async (options, ...injections) => {
       logger.trace('Initiating new connection')
 
@@ -454,7 +459,7 @@ export class Gateway<
   protected onDisconnect(
     transport: string,
   ): TransportWorkerParams['onDisconnect'] {
-    const logger = this.logger.child({ transport })
+    const logger = forkLogger(this.logger, undefined, undefined, { transport })
     return async (connectionId) => {
       logger.debug({ connectionId }, 'Disconnecting connection')
       this.stopHeartbeat(connectionId, 'disconnect')
@@ -463,10 +468,10 @@ export class Gateway<
   }
 
   protected onMessage(transport: string): TransportWorkerParams['onMessage'] {
-    const _logger = this.logger.child({ transport })
+    const _logger = forkLogger(this.logger, undefined, undefined, { transport })
 
     return async ({ connectionId, data }, ...injections) => {
-      const logger = _logger.child({ connectionId })
+      const logger = forkLogger(_logger, undefined, undefined, { connectionId })
       try {
         const connection = this.connections.get(connectionId)
         const messageContext = this.createMessageContext(connection, transport)
@@ -573,10 +578,12 @@ export class Gateway<
   }
 
   protected onRpc(transport: string): TransportWorkerParams['onRpc'] {
-    const _logger = this.logger.child({ transport })
+    const _logger = forkLogger(this.logger, undefined, undefined, { transport })
 
     return async (connection, rpc, signal, ...injections) => {
-      const logger = _logger.child({ connectionId: connection.id })
+      const logger = forkLogger(_logger, undefined, undefined, {
+        connectionId: connection.id,
+      })
       const messageContext = this.createMessageContext(
         connection,
         connection.transport,
@@ -632,7 +639,7 @@ export class Gateway<
   protected resolve(
     transport: string,
   ): TransportWorkerParams<ConnectionType, ResolvedProcedure>['resolve'] {
-    const _logger = this.logger.child({ transport })
+    const _logger = forkLogger(this.logger, undefined, undefined, { transport })
 
     return async (connection, procedure) => {
       _logger.trace({ connectionId: connection.id, procedure }, 'Resolving RPC')

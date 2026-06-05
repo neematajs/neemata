@@ -1,6 +1,7 @@
 import EventEmitter from 'node:events'
 
 import type { Logger } from '@nmtjs/core'
+import { forkLogger } from '@nmtjs/core'
 
 import type { WorkerType } from '../enums.ts'
 import type { JobTaskResult, WorkerJobTask } from '../types.ts'
@@ -95,7 +96,9 @@ export class WorkerPool extends EventEmitter<WorkerPoolEvents> {
     logger: Logger,
   ) {
     super()
-    this.logger = logger.child({ component: 'WorkerPool', pool: config.name })
+    this.logger = forkLogger(logger, 'WorkerPool', undefined, {
+      pool: config.name,
+    })
   }
 
   /** Current pool health */

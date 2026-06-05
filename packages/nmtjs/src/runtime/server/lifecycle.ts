@@ -1,6 +1,7 @@
 import EventEmitter from 'node:events'
 
 import type { Logger } from '@nmtjs/core'
+import { forkLogger } from '@nmtjs/core'
 
 import type { RuntimeEnvironment } from './environment.ts'
 import type { ApplicationServer } from './server.ts'
@@ -61,7 +62,7 @@ export class ServerLifecycle extends EventEmitter<LifecycleEvents> {
     logger: Logger,
   ) {
     super()
-    this.logger = logger.child({ component: 'ServerLifecycle' })
+    this.logger = forkLogger(logger, 'ServerLifecycle')
   }
 
   /** Current lifecycle state */

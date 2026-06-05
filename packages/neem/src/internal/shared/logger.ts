@@ -1,7 +1,7 @@
 import { resolve } from 'node:path'
 
 import type { Logger } from '@nmtjs/core'
-import { createLogger } from '@nmtjs/core'
+import { createLogger, forkLogger } from '@nmtjs/core'
 
 import type {
   NeemLoggerInput,
@@ -12,7 +12,7 @@ import type { ManifestLogger } from '../manifest/manifest.ts'
 import { importDefault } from './utils.ts'
 
 export function childLogger(logger: Logger, label: string): Logger {
-  return logger.child({ $label: label })
+  return forkLogger(logger, label)
 }
 
 export function createLoggerFromConfigInput(

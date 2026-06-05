@@ -120,7 +120,7 @@ export function onceAborted(signal: AbortSignal) {
   return once(signal, 'abort')
 }
 
-export function isAbortError(error) {
+export function isAbortError(error: any): error is Error {
   return (
     (error instanceof Error &&
       error.name === 'AbortError' &&

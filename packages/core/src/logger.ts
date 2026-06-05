@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import { threadId } from 'node:worker_threads'
 
 import type {
+  Bindings,
   ChildLoggerOptions,
   DestinationStream,
   Level,
@@ -101,9 +102,21 @@ export const createLogger = (options: LoggingOptions = {}, $label: string) => {
           return object
         },
       },
+      base: { $label, $threadId: threadId },
     },
     multistream(destinations!),
-  ).child({ $label, $threadId: threadId })
+  )
+}
+
+export const forkLogger = (
+  logger: Logger,
+  label: string | undefined,
+  options?: ChildLoggerOptions,
+  bindings?: Bindings,
+) => {
+  const _bindings = { ...bindings }
+  if (label !== undefined) _bindings.$label = label
+  return logger.child(_bindings, options)
 }
 
 export type CreateConsolePrettyDestination = (
@@ -123,7 +136,7 @@ export const createConsolePrettyDestination: CreateConsolePrettyDestination = (
     messageFormat: (log, messageKey) => {
       const group = fg(`[${log.$label}]`, 11)
       const msg = fg(log[messageKey], messageColors[log.level as number])
-      const thread = fg(`(Thread-${log.$threadId})`, 89)
+      const thread = fg(`(T-${log.$threadId})`, 89)
       return `\x1b[0m${thread} ${group} ${msg}`
     },
     customPrettifiers: {

@@ -3,7 +3,7 @@ import type { Container, Logger, LoggingOptions } from '@nmtjs/core'
 import type { Job } from 'bullmq'
 import { LifecycleHook } from '@nmtjs/application'
 import { anyAbortSignal } from '@nmtjs/common'
-import { Scope } from '@nmtjs/core'
+import { forkLogger, Scope } from '@nmtjs/core'
 import { UnrecoverableError } from 'bullmq'
 
 import type { AnyJob } from './job.ts'
@@ -72,7 +72,7 @@ export class JobRunner<
       lifecycleHooks: LifecycleHooks
     },
   ) {
-    this.logger = runtime.logger.child({ $group: JobRunner.name })
+    this.logger = forkLogger(runtime.logger, JobRunner.name)
   }
 
   get container() {
