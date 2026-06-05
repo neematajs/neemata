@@ -1,10 +1,6 @@
 import type { MaybePromise } from '@nmtjs/common'
-import type {
-  NeemEntryInput,
-  NeemRuntimeDeclaration,
-  NeemRuntimePlan,
-} from '@nmtjs/neem'
-import { createRuntime, defineRuntimePlanner } from '@nmtjs/neem'
+import type { NeemEntryInput, NeemRuntimeDeclaration } from '@nmtjs/neem'
+import { createRuntime } from '@nmtjs/neem'
 
 import type { EventingAdapter } from '../core/adapter.ts'
 import type { AnyEventingConsumerDefinition } from '../core/consumer.ts'
@@ -43,36 +39,4 @@ export function defineEventingRuntime(
 
 export function defineEventing(config: EventingRuntimeConfig) {
   return Object.freeze(config)
-}
-
-export function defineEventingPlanner<
-  const TConfig extends EventingRuntimeConfig = EventingRuntimeConfig,
->(factory: () => MaybePromise<TConfig>) {
-  return defineRuntimePlanner(
-    async (): Promise<NeemRuntimePlan<unknown, EventingWorkerData>> => {
-      const config = await factory()
-      const consumers = await config.consumers()
-      const workerCount = Math.min(
-        consumers.length,
-        normalizeThreadCount(config.threads),
-      )
-      const assignments = Array.from(
-        { length: workerCount },
-        (): number[] => [],
-      )
-
-      for (let index = 0; index < consumers.length; index++) {
-        assignments[index % workerCount]!.push(index)
-      }
-
-      return {
-        workers: assignments.map((consumerIndexes) => ({ consumerIndexes })),
-      }
-    },
-  )
-}
-
-function normalizeThreadCount(count: number | undefined): number {
-  if (count === undefined) return 1
-  return Math.max(1, Math.floor(count))
 }

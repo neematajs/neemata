@@ -4,7 +4,7 @@ import { createLogger } from '@nmtjs/core'
 import { Redis } from 'ioredis'
 import { Redis as Valkey } from 'iovalkey'
 
-import type { RedisStreamsEventingClient } from '../../src/redis-streams.ts'
+import type { RedisStreamsEventingClient } from '../../src/redis.ts'
 
 export type EventingRedisServiceTarget = {
   name: string

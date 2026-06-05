@@ -1,9 +1,9 @@
 import { EventStreamContract } from '@nmtjs/eventing'
-import { RedisStreamsEventingAdapter } from '@nmtjs/eventing/redis-streams'
 import { t } from '@nmtjs/type'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import type { RedisStreamsEventingClient } from '../../src/redis-streams.ts'
+import type { RedisStreamsEventingClient } from '../../src/redis.ts'
+import { RedisStreamsEventingAdapter } from '../../dist/redis.ts'
 import {
   createTestLogger,
   createTestName,

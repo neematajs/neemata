@@ -18,20 +18,25 @@
       "import": "./dist/kafka.js",
       "module-sync": "./dist/kafka.js"
     },
-    "./redis-streams": {
-      "types": "./src/redis-streams.ts",
-      "import": "./dist/redis-streams.js",
-      "module-sync": "./dist/redis-streams.js"
+    "./redis": {
+      "types": "./src/redis.ts",
+      "import": "./dist/redis.js",
+      "module-sync": "./dist/redis.js"
     },
-    "./neem": {
-      "types": "./src/neem/index.ts",
-      "import": "./dist/neem/index.js",
-      "module-sync": "./dist/neem/index.js"
+    "./neem/runtime": {
+      "types": "./src/neem/runtime.ts",
+      "import": "./dist/neem/runtime.js",
+      "module-sync": "./dist/neem/runtime.js"
     },
-    "./neem/worker-entry": {
-      "types": "./src/neem/worker-entry.ts",
-      "import": "./dist/neem/worker-entry.js",
-      "module-sync": "./dist/neem/worker-entry.js"
+    "./neem/worker": {
+      "types": "./src/neem/worker.ts",
+      "import": "./dist/neem/worker.js",
+      "module-sync": "./dist/neem/worker.js"
+    },
+    "./neem/planner": {
+      "types": "./src/neem/planner.ts",
+      "import": "./dist/neem/planner.js",
+      "module-sync": "./dist/neem/planner.js"
     }
   },
   "publishConfig": {
@@ -46,20 +51,25 @@
         "import": "./dist/kafka.js",
         "module-sync": "./dist/kafka.js"
       },
-      "./redis-streams": {
-        "types": "./dist/redis-streams.d.ts",
-        "import": "./dist/redis-streams.js",
-        "module-sync": "./dist/redis-streams.js"
+      "./redis": {
+        "types": "./dist/redis.d.ts",
+        "import": "./dist/redis.js",
+        "module-sync": "./dist/redis.js"
       },
-      "./neem": {
-        "types": "./dist/neem/index.d.ts",
-        "import": "./dist/neem/index.js",
-        "module-sync": "./dist/neem/index.js"
+      "./neem/runtime": {
+        "types": "./dist/neem/runtime.d.ts",
+        "import": "./dist/neem/runtime.js",
+        "module-sync": "./dist/neem/runtime.js"
       },
-      "./neem/worker-entry": {
-        "types": "./dist/neem/worker-entry.d.ts",
-        "import": "./dist/neem/worker-entry.js",
-        "module-sync": "./dist/neem/worker-entry.js"
+      "./neem/worker": {
+        "types": "./dist/neem/worker.d.ts",
+        "import": "./dist/neem/worker.js",
+        "module-sync": "./dist/neem/worker.js"
+      },
+      "./neem/planner": {
+        "types": "./dist/neem/planner.d.ts",
+        "import": "./dist/neem/planner.js",
+        "module-sync": "./dist/neem/planner.js"
       }
     }
   },
