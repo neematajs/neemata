@@ -1,10 +1,9 @@
 import { randomUUID } from 'node:crypto'
 
+import type { JobsClientInstance } from '@nmtjs/jobs'
 import { createLogger } from '@nmtjs/core'
 import { Redis } from 'ioredis'
 import { Redis as Valkey } from 'iovalkey'
-
-import type { JobsClientInstance } from '@nmtjs/jobs'
 
 export type SchedulerServiceTarget = {
   name: string

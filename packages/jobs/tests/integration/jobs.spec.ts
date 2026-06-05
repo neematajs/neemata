@@ -20,7 +20,6 @@ import {
   serviceTargets,
 } from './helpers.ts'
 
-
 for (const target of serviceTargets) {
   requireServiceEnv(target)
 
