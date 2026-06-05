@@ -27,7 +27,7 @@ export type EventingConsumerRetryPolicy = {
 export type EventingConsumerDefinition<
   E extends AnyEventingEvent = AnyEventingEvent,
 > = {
-  event: E
+  message: E
   groupId: string
   consumerId?: string
   from?: 'latest' | 'earliest' | 'committed'
@@ -64,9 +64,9 @@ export function decodeEventingMessage<E extends AnyEventingEvent>(
   message: EventingAdapterMessage,
 ): EventingEventOutput<E> {
   return {
-    name: event.name,
-    topic: event.topic,
-    key: event.key ? event.key.decode(message.key) : message.key,
+    namespace: event.subscription.namespace,
+    event: event.event,
+    key: message.key,
     payload: event.payload.decode(message.payload),
     headers: normalizeHeaders(message.headers),
   } as EventingEventOutput<E>
@@ -77,7 +77,7 @@ export async function handleEventingConsumerMessage(
   ctx: EventingConsumerContext,
   message: EventingAdapterMessage,
 ) {
-  const event = decodeEventingMessage(definition.event, message)
+  const event = decodeEventingMessage(definition.message, message)
   const attempts = normalizeRetryAttempts(definition.retry?.attempts)
   const baseDelayMs = Math.max(0, definition.retry?.delayMs ?? 0)
   const backoff = definition.retry?.backoff ?? 'fixed'
@@ -95,8 +95,8 @@ export async function handleEventingConsumerMessage(
       ctx.logger.warn(
         {
           error,
-          event: definition.event.name,
-          topic: definition.event.topic,
+          event: definition.message.event,
+          topic: definition.message.subscription.namespace,
           attempt,
           attempts,
           delayMs,

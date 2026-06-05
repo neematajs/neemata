@@ -4,6 +4,7 @@ import type {
   Producer,
   ProducerOptions,
 } from '@platformatic/kafka'
+import { forkLogger } from '@nmtjs/core'
 import {
   Consumer,
   Producer as KafkaProducer,
@@ -46,9 +47,9 @@ export class KafkaEventingAdapter implements EventingAdapter {
   protected readonly logger?: Logger
 
   constructor(protected readonly options: KafkaEventingAdapterOptions) {
-    this.logger = options.logger?.child({
-      component: KafkaEventingAdapter.name,
-    })
+    this.logger = options.logger
+      ? forkLogger(options.logger, KafkaEventingAdapter.name)
+      : undefined
   }
 
   async initialize() {

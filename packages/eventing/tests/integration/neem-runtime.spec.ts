@@ -1,8 +1,7 @@
-import { createEventConsumer, EventStreamContract } from '@nmtjs/eventing'
-import {
-  defineEventingPlanner,
-  defineEventingRuntime,
-} from '@nmtjs/eventing/neem'
+import { EventContract, SubscriptionContract } from '@nmtjs/contract'
+import { createEventConsumer } from '@nmtjs/eventing'
+import { defineEventingPlanner } from '@nmtjs/eventing/neem/planner'
+import { defineEventingRuntime } from '@nmtjs/eventing/neem/runtime'
 import { t } from '@nmtjs/type'
 import { describe, expect, it } from 'vitest'
 
@@ -23,12 +22,15 @@ describe('@nmtjs/eventing Neem runtime helpers', () => {
   })
 
   it('spreads consumers across requested worker threads by index', async () => {
-    const event = EventStreamContract({
-      name: 'user.created',
-      topic: 'users',
-      key: t.string(),
-      payload: t.object({ id: t.string() }),
+    const stream = SubscriptionContract({
+      namespace: 'users',
+      params: t.object({ id: t.string() }),
+      key: ({ id }) => id,
+      events: {
+        userCreated: EventContract({ payload: t.object({ id: t.string() }) }),
+      },
     })
+    const event = stream.events.userCreated
     const consumers = [0, 1, 2].map((index) =>
       createEventConsumer(event, {
         groupId: 'events',

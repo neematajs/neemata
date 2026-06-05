@@ -1,4 +1,4 @@
-import { EventStreamContract } from '@nmtjs/eventing'
+import { EventContract, SubscriptionContract } from '@nmtjs/contract'
 import { KafkaEventingAdapter } from '@nmtjs/eventing/kafka'
 import { t } from '@nmtjs/type'
 import { Admin } from '@platformatic/kafka'
@@ -43,12 +43,15 @@ describe.skipIf(!kafkaBrokers?.length)(
       const groupId = createTestName('group')
       const clientId = createTestName('client')
       topics.add(topic)
-      const event = EventStreamContract({
-        name: 'user.created',
-        topic,
-        key: t.string(),
-        payload: t.object({ id: t.string() }),
+      const stream = SubscriptionContract({
+        namespace: topic,
+        params: t.object({ id: t.string() }),
+        key: ({ id }) => id,
+        events: {
+          userCreated: EventContract({ payload: t.object({ id: t.string() }) }),
+        },
       })
+      const event = stream.events.userCreated
       const admin = new Admin({
         clientId: `${clientId}-admin`,
         bootstrapBrokers: kafkaBrokers!,
@@ -68,7 +71,7 @@ describe.skipIf(!kafkaBrokers?.length)(
 
       await adapter.produce({
         topic,
-        name: event.name,
+        name: event.event,
         key: 'user-1',
         payload: { id: 'user-1' },
         headers: { source: 'integration' },
@@ -95,7 +98,7 @@ describe.skipIf(!kafkaBrokers?.length)(
       expect(received).toMatchObject([
         {
           topic,
-          name: event.name,
+          name: event.event,
           key: 'user-1',
           payload: { id: 'user-1' },
           headers: { source: 'integration' },
@@ -133,12 +136,17 @@ describe.skipIf(!kafkaBrokers?.length)(
       const groupId = createTestName('group')
       const clientId = createTestName('client')
       topics.add(topic)
-      const event = EventStreamContract({
-        name: 'order.created',
-        topic,
-        key: t.string(),
-        payload: t.object({ id: t.string() }),
+      const stream = SubscriptionContract({
+        namespace: topic,
+        params: t.object({ id: t.string() }),
+        key: ({ id }) => id,
+        events: {
+          orderCreated: EventContract({
+            payload: t.object({ id: t.string() }),
+          }),
+        },
       })
+      const event = stream.events.orderCreated
       const admin = await createKafkaTopic({
         topic,
         clientId: `${clientId}-admin`,
@@ -148,7 +156,7 @@ describe.skipIf(!kafkaBrokers?.length)(
 
       await adapter.produce({
         topic,
-        name: event.name,
+        name: event.event,
         key: 'order-1',
         payload: { id: 'order-1' },
         headers: { source: 'failure-test' },
@@ -195,7 +203,7 @@ describe.skipIf(!kafkaBrokers?.length)(
       expect(received).toMatchObject([
         {
           topic,
-          name: event.name,
+          name: event.event,
           key: 'order-1',
           payload: { id: 'order-1' },
           headers: { source: 'failure-test' },

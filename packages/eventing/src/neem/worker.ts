@@ -42,7 +42,7 @@ class EventingRuntime implements NeemRuntime {
       const definition = definitions[index]!
       const consumer = await adapter.consume(
         {
-          topics: [definition.event.topic],
+          topics: [definition.message.subscription.namespace],
           groupId: definition.groupId,
           consumerId: definition.consumerId ?? this.ctx.name,
           from: definition.from,
@@ -51,7 +51,7 @@ class EventingRuntime implements NeemRuntime {
           signal: this.abortController.signal,
         },
         async (message) => {
-          if (message.name !== definition.event.name) return
+          if (message.name !== definition.message.event) return
           await handleEventingConsumerMessage(
             definition,
             { logger: this.ctx.logger },
@@ -63,7 +63,7 @@ class EventingRuntime implements NeemRuntime {
       consumer.closed.catch((error) => {
         if (this.abortController.signal.aborted) return
         this.ctx.logger.error(
-          { error, event: definition.event.name },
+          { error, event: definition.message.event },
           'Eventing consumer failed',
         )
         queueMicrotask(() => {

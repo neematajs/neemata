@@ -1,9 +1,9 @@
-import { EventStreamContract } from '@nmtjs/eventing'
+import { EventContract, SubscriptionContract } from '@nmtjs/contract'
 import { t } from '@nmtjs/type'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import type { RedisStreamsEventingClient } from '../../src/redis.ts'
-import { RedisStreamsEventingAdapter } from '../../dist/redis.ts'
+import { RedisStreamsEventingAdapter } from '../../src/redis.ts'
 import {
   createTestLogger,
   createTestName,
@@ -42,12 +42,17 @@ for (const target of redisServiceTargets) {
         streams.add(dlq)
         const groupId = createTestName('group')
         const consumerId = 'consumer-1'
-        const event = EventStreamContract({
-          name: 'user.created',
-          topic,
-          key: t.string(),
-          payload: t.object({ id: t.string() }),
+        const stream = SubscriptionContract({
+          namespace: topic,
+          params: t.object({ id: t.string() }),
+          key: ({ id }) => id,
+          events: {
+            userCreated: EventContract({
+              payload: t.object({ id: t.string() }),
+            }),
+          },
         })
+        const event = stream.events.userCreated
         const client = target.createClient()
         clients.push(client)
         const adapter = new RedisStreamsEventingAdapter({
@@ -60,7 +65,7 @@ for (const target of redisServiceTargets) {
 
         await adapter.produce({
           topic,
-          name: event.name,
+          name: event.event,
           key: 'user-1',
           payload: { id: 'user-1' },
           headers: {},
@@ -96,7 +101,7 @@ for (const target of redisServiceTargets) {
 
         await adapter.produce({
           topic,
-          name: event.name,
+          name: event.event,
           key: 'user-2',
           payload: { id: 'user-2' },
           headers: {},
@@ -122,7 +127,11 @@ for (const target of redisServiceTargets) {
         >
         expect(
           Object.fromEntries(chunkPairs(dlqMessages[0]![1])),
-        ).toMatchObject({ sourceTopic: topic, name: event.name, key: 'user-2' })
+        ).toMatchObject({
+          sourceTopic: topic,
+          name: event.event,
+          key: 'user-2',
+        })
       })
     },
   )

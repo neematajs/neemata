@@ -1,6 +1,7 @@
 import type { Logger } from '@nmtjs/core'
 import type { Redis } from 'ioredis'
 import type { Redis as Valkey } from 'iovalkey'
+import { forkLogger } from '@nmtjs/core'
 
 import type {
   EventingAdapter,
@@ -24,9 +25,9 @@ export class RedisStreamsEventingAdapter implements EventingAdapter {
   protected readonly logger?: Logger
 
   constructor(protected readonly options: RedisStreamsEventingAdapterOptions) {
-    this.logger = options.logger?.child({
-      component: RedisStreamsEventingAdapter.name,
-    })
+    this.logger = options.logger
+      ? forkLogger(options.logger, RedisStreamsEventingAdapter.name)
+      : undefined
   }
 
   async initialize() {
