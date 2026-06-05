@@ -12,6 +12,11 @@
       "types": "./src/index.ts",
       "import": "./dist/index.js",
       "module-sync": "./dist/index.js"
+    },
+    "./redis": {
+      "types": "./src/redis.ts",
+      "import": "./dist/redis.js",
+      "module-sync": "./dist/redis.js"
     }
   },
   "publishConfig": {
@@ -20,6 +25,11 @@
         "types": "./dist/index.d.ts",
         "import": "./dist/index.js",
         "module-sync": "./dist/index.js"
+      },
+      "./redis": {
+        "types": "./dist/redis.d.ts",
+        "import": "./dist/redis.js",
+        "module-sync": "./dist/redis.js"
       }
     }
   },

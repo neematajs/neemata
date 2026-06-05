@@ -1,9 +1,5 @@
-import {
-  PubSubChannelContract,
-  PubSubEventContract,
-  PubSubManager,
-  RedisPubSubAdapter,
-} from '@nmtjs/pubsub'
+import { EventContract, SubscriptionContract } from '@nmtjs/contract'
+import { PubSubManager, RedisPubSubAdapter } from '@nmtjs/pubsub'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import type { RedisPubSubClient } from '../../src/redis.ts'
@@ -36,15 +32,13 @@ for (const target of serviceTargets) {
 
       it('publishes typed events to all subscribers', async () => {
         const channelName = createTestName('pubsub')
-        const channel = PubSubChannelContract({
-          name: channelName,
+        const channel = SubscriptionContract({
+          namespace: channelName,
           params: t.object({ id: t.string() }),
           events: {
-            message: PubSubEventContract({
-              payload: t.object({ text: t.string() }),
-            }),
+            message: EventContract({ payload: t.object({ text: t.string() }) }),
           },
-          channel: ({ id }) => `${channelName}:${id}`,
+          key: ({ id }) => id,
         })
 
         const clientA = target.createClient()
@@ -101,25 +95,23 @@ for (const target of serviceTargets) {
 
         await waitFor(() => received.length === 2)
         expect(received).toEqual([
-          { event: `${channelName}/message`, data: { text: 'hello' } },
-          { event: `${channelName}/message`, data: { text: 'hello' } },
+          { event: 'message', payload: { text: 'hello' } },
+          { event: 'message', payload: { text: 'hello' } },
         ])
       })
 
       it('filters selected events and unsubscribes from channels', async () => {
         const channelName = createTestName('pubsub-filter')
-        const channel = PubSubChannelContract({
-          name: channelName,
+        const channel = SubscriptionContract({
+          namespace: channelName,
           params: t.object({ id: t.string() }),
           events: {
-            message: PubSubEventContract({
-              payload: t.object({ text: t.string() }),
-            }),
-            typing: PubSubEventContract({
+            message: EventContract({ payload: t.object({ text: t.string() }) }),
+            typing: EventContract({
               payload: t.object({ userId: t.string() }),
             }),
           },
-          channel: ({ id }) => `${channelName}:${id}`,
+          key: ({ id }) => id,
         })
 
         const client = target.createClient()
@@ -162,7 +154,7 @@ for (const target of serviceTargets) {
 
         await collector
         expect(received).toEqual([
-          { event: `${channelName}/message`, data: { text: 'visible' } },
+          { event: 'message', payload: { text: 'visible' } },
         ])
 
         await waitFor(async () =>

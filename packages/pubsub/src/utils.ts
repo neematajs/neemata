@@ -3,9 +3,14 @@ import type {
   TAnySubscriptionContract,
 } from '@nmtjs/contract'
 
-export function resolvePubSubChannelName(
-  channel: TAnySubscriptionContract,
-  params: SubscriptionParams<TAnySubscriptionContract>,
+const PUBSUB_CHANNEL_SEPARATOR = ':'
+
+export function resolvePubSubChannel<Channel extends TAnySubscriptionContract>(
+  channel: Channel,
+  params: SubscriptionParams<Channel>,
 ): string {
-  return channel.channel(channel.params.decode(params))
+  const key = channel.key?.(channel.params.decode(params))
+  return key === undefined
+    ? channel.namespace
+    : `${channel.namespace}${PUBSUB_CHANNEL_SEPARATOR}${encodeURIComponent(key)}`
 }

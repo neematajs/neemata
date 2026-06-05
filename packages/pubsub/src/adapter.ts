@@ -1,14 +1,9 @@
-export type PubSubMessage<Payload = unknown> = {
+export type PubSubMessage = {
   channel: string
-  payload: Payload
+  data: { event: string; payload: unknown }
 }
 
 export interface PubSubAdapter {
   publish(channel: string, payload: unknown): Promise<boolean>
-  subscribe(
-    channel: string,
-    signal?: AbortSignal,
-  ): AsyncGenerator<PubSubMessage>
-  initialize(): Promise<void>
-  dispose(): Promise<void>
+  subscribe(channel: string, signal?: AbortSignal): AsyncIterable<PubSubMessage>
 }

@@ -41,9 +41,9 @@ export type PrimitiveZodType =
   | ZodMiniIntersection
   | ZodMiniRecord
 
-export type SimpleZodType = ZodMiniType
+export type SimpleZodType = ZodMiniType<any, any, any>
 
-export type ZodType = SimpleZodType | ZodMiniType
+export type ZodType = SimpleZodType | ZodMiniType<any, any, any>
 
 export type TypeProps = Record<string, any>
 
@@ -61,7 +61,7 @@ export type DefaultTypeParams = {
 export type BaseTypeAny<
   EncodedZodType extends SimpleZodType = SimpleZodType,
   DecodedZodType extends ZodType = ZodMiniType,
-> = BaseType<EncodedZodType, DecodedZodType, TypeProps>
+> = BaseType<any, any, any>
 
 export const NeemataTypeError = core.$ZodError
 export type NeemataTypeError = core.$ZodError
