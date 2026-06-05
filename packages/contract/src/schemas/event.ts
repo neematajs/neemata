@@ -1,52 +1,33 @@
-import type { BaseType } from '@nmtjs/type'
+import type { BaseType, BaseTypeAny } from '@nmtjs/type'
 import { t } from '@nmtjs/type'
 
 import type { ContractSchemaOptions } from '../utils.ts'
-import type { SubcriptionOptions } from './legacy-subscription.ts'
 import { Kind } from '../constants.ts'
 import { createSchema } from '../utils.ts'
 
 export const EventKind = Symbol('NeemataEvent')
 
-export type TAnyEventContract = TEventContract<
-  BaseType,
-  string | undefined,
-  SubcriptionOptions | undefined
->
+export type TAnyEventContract = TEventContract<BaseTypeAny>
 
-export interface TEventContract<
-  Payload extends BaseType = t.NeverType,
-  Name extends string | undefined = undefined,
-  Options extends SubcriptionOptions | undefined = undefined,
-> {
+export interface TEventContract<Payload extends BaseType = t.NeverType> {
   readonly [Kind]: typeof EventKind
   readonly type: 'neemata:event'
-  readonly name: Name
   readonly payload: Payload
-  readonly options: Options
 }
 
 export const EventContract = <
-  Payload extends BaseType,
-  Name extends string | undefined = undefined,
-  Options extends SubcriptionOptions | undefined = undefined,
+  Payload extends BaseType = t.NeverType,
 >(options?: {
   payload?: Payload
   schemaOptions?: ContractSchemaOptions
-  name?: Name
 }) => {
-  const {
-    payload = t.never() as unknown as Payload,
-    schemaOptions = {},
-    name = undefined as any,
-  } = options ?? {}
-  return createSchema<TEventContract<Payload, Name, Options>>({
+  const { payload = t.never() as unknown as Payload, schemaOptions = {} } =
+    options ?? {}
+  return createSchema<TEventContract<Payload>>({
     ...schemaOptions,
     [Kind]: EventKind,
     type: 'neemata:event',
     payload,
-    name,
-    options: undefined as Options,
   })
 }
 

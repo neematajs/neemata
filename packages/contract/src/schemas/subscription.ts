@@ -1,22 +1,31 @@
-import type { BaseType, BaseTypeAny, t } from '@nmtjs/type'
+import type { AnyCompatibleType, BaseType, BaseTypeAny, t } from '@nmtjs/type'
 import { t as types } from '@nmtjs/type'
 
 import type { ContractSchemaOptions } from '../utils.ts'
 import type { TAnyEventContract, TEventContract } from './event.ts'
 import { Kind } from '../constants.ts'
-import { concatFullName, createSchema } from '../utils.ts'
+import { createSchema } from '../utils.ts'
 
 export const SubscriptionKind = Symbol('NeemataSubscription')
 
+export type SubscriptionParamsType = AnyCompatibleType<
+  Record<string, string | number | boolean | null>
+>
+
+export type SubscriptionKey<Params extends BaseType> =
+  Params extends t.NeverType
+    ? undefined
+    : (params: t.infer.decode.output<Params>) => string
+
 export type TAnySubscriptionContract = TSubscriptionContract<
-  BaseTypeAny,
+  any,
   Record<string, TAnyEventContract>,
-  string | undefined
+  string
 >
 
 export type TAnySubscriptionEventContract = TSubscriptionEventContract<
   BaseTypeAny,
-  string | undefined,
+  string,
   TAnySubscriptionContract
 >
 
@@ -24,7 +33,7 @@ export type SubscriptionParams<Contract extends TAnySubscriptionContract> =
   t.infer.decode.output<Contract['params']>
 
 export type SubscriptionEventMessage<E extends TAnySubscriptionEventContract> =
-  { event: E['name']; data: t.infer.decode.output<E['payload']> }
+  { event: E['event']; payload: t.infer.decode.output<E['payload']> }
 
 export type SubscriptionPublishInput<E extends TAnySubscriptionEventContract> =
   t.infer.encode.input<E['payload']>
@@ -47,75 +56,101 @@ export type SubscriptionSelectedEventUnion<
     }[keyof Events]
 
 export interface TSubscriptionEventContract<
-  Payload extends BaseType = BaseType,
-  Name extends string | undefined = string | undefined,
-  Subscription extends TAnySubscriptionContract = TAnySubscriptionContract,
-> extends TEventContract<Payload, Name, undefined> {
+  Payload extends BaseType = BaseTypeAny,
+  Event extends string = string,
+  Subscription = TAnySubscriptionContract,
+> extends TEventContract<Payload> {
+  readonly event: Event
   readonly subscription: Subscription
 }
 
 export interface TSubscriptionContract<
   Params extends BaseType = t.NeverType,
   Events extends Record<string, unknown> = {},
-  Name extends string | undefined = undefined,
+  Namespace extends string = string,
 > {
   readonly [Kind]: typeof SubscriptionKind
   readonly type: 'neemata:subscription'
-  readonly name: Name
+  readonly namespace: Namespace
   readonly params: Params
-  readonly channel: (params: t.infer.decode.output<Params>) => string
+  readonly key: SubscriptionKey<Params>
   readonly events: {
     [K in keyof Events]: Events[K] extends TAnyEventContract
       ? TSubscriptionEventContract<
           Events[K]['payload'],
-          Name extends string
-            ? `${Name}/${Extract<K, string>}`
-            : Extract<K, string>,
-          TSubscriptionContract<Params, Events, Name>
+          Extract<K, string>,
+          TSubscriptionContract<Params, Events, Namespace>
         >
       : never
   }
 }
 
-export const SubscriptionContract = <
-  const Options extends {
-    events: Record<string, TAnyEventContract>
-    channel: (params: any) => string
-    params?: BaseType
-    name?: string
-    schemaOptions?: ContractSchemaOptions
-  },
->(
-  options: Options,
-) => {
-  type Params = Options['params'] extends BaseType
-    ? Options['params']
-    : t.NeverType
-  type Name = Options['name'] extends string ? Options['name'] : undefined
-  type Contract = TSubscriptionContract<Params, Options['events'], Name>
+type SubscriptionContractBaseOptions<
+  Namespace extends string,
+  Events extends Record<string, TAnyEventContract>,
+> = {
+  namespace: Namespace
+  events: Events
+  schemaOptions?: ContractSchemaOptions
+}
 
+type SubscriptionContractNoParamsOptions<
+  Namespace extends string,
+  Events extends Record<string, TAnyEventContract>,
+> = SubscriptionContractBaseOptions<Namespace, Events> & {
+  params?: undefined
+  key?: undefined
+}
+
+type SubscriptionContractWithParamsOptions<
+  Namespace extends string,
+  Params extends SubscriptionParamsType,
+  Events extends Record<string, TAnyEventContract>,
+> = SubscriptionContractBaseOptions<Namespace, Events> & {
+  params: Params
+  key: (params: t.infer.decode.output<Params>) => string
+}
+
+export function SubscriptionContract<
+  const Namespace extends string,
+  const Events extends Record<string, TAnyEventContract>,
+>(
+  options: SubscriptionContractNoParamsOptions<Namespace, Events>,
+): TSubscriptionContract<t.NeverType, Events, Namespace>
+export function SubscriptionContract<
+  const Namespace extends string,
+  const Params extends SubscriptionParamsType,
+  const Events extends Record<string, TAnyEventContract>,
+>(
+  options: SubscriptionContractWithParamsOptions<Namespace, Params, Events>,
+): TSubscriptionContract<Params, Events, Namespace>
+export function SubscriptionContract(options: {
+  namespace: string
+  events: Record<string, TAnyEventContract>
+  params?: BaseType
+  key?: (params: any) => string
+  schemaOptions?: ContractSchemaOptions
+}) {
   const { schemaOptions = {} } = options
-  const name = options.name as Name
-  const params = (options.params ?? types.never()) as Params
-  const events = {} as any
-  const subscription = createSchema<Contract>({
+  const params = options.params ?? types.never()
+  const events = {} as Record<string, TAnySubscriptionEventContract>
+  const subscription = createSchema<any>({
     ...schemaOptions,
     [Kind]: SubscriptionKind,
     type: 'neemata:subscription',
-    name,
+    namespace: options.namespace,
     params,
-    channel: options.channel,
+    key: options.key,
     events,
   })
 
-  for (const key in options.events) {
-    const event = options.events[key]
-    const fullName = concatFullName(name, key)
-    events[key] = createSchema({
+  for (const eventName in options.events) {
+    const event = options.events[eventName]
+    events[eventName] = createSchema<TAnySubscriptionEventContract>({
       ...event,
-      name: fullName,
+      event: eventName,
       subscription,
-    }) as Contract['events'][Extract<keyof Options['events'], string>]
+    })
   }
 
   return subscription
