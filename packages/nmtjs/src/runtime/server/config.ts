@@ -10,7 +10,7 @@ import type { Applications } from 'nmtjs/runtime/types'
 import type { StoreType } from '../enums.ts'
 import type { AnyJob } from '../jobs/job.ts'
 import type { JobsSchedulerOptions } from '../scheduler/index.ts'
-import type { SubscriptionAdapterType } from '../subscription/manager.ts'
+// import type { SubscriptionAdapterType } from '../subscription/manager.ts'
 import type { StoreTypeOptions } from '../types.ts'
 import { kServerConfig } from '../constants.ts'
 
@@ -91,7 +91,7 @@ export interface ServerConfigInit {
   }
   jobs?: ServerJobsConfig
   commands?: {}
-  subscription?: { adapter: SubscriptionAdapterType }
+  // subscription?: { adapter: SubscriptionAdapterType }
   deploymentId?: string
   metrics?: {
     /**
@@ -150,7 +150,7 @@ export interface ServerConfig {
     scheduler?: JobsSchedulerOptions
   }
   commands?: {}
-  subscription: ServerConfigInit['subscription']
+  // subscription: ServerConfigInit['subscription']
   deploymentId: ServerConfigInit['deploymentId']
   metrics?: ServerConfigInit['metrics']
 }
@@ -163,7 +163,7 @@ export function defineServer(options: ServerConfigInit): ServerConfig {
     proxy,
     store,
     applications,
-    subscription,
+    // subscription,
     metrics,
   } = options
 
@@ -188,7 +188,7 @@ export function defineServer(options: ServerConfigInit): ServerConfig {
     proxy,
     store,
     applications,
-    subscription,
+    // subscription,
     jobs,
     metrics,
   } as const)
