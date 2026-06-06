@@ -48,9 +48,9 @@ export type EventingConsumersFactory = () =>
 
 export function createEventConsumer<const E extends AnyEventingEvent>(
   event: E,
-  options: Omit<EventingConsumerDefinition<E>, 'event'>,
+  options: Omit<EventingConsumerDefinition<E>, 'message'>,
 ): EventingConsumerDefinition<E> {
-  return Object.freeze({ event, ...options })
+  return Object.freeze({ message: event, ...options })
 }
 
 export function defineEventConsumers(

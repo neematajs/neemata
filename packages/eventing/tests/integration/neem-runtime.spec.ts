@@ -38,6 +38,7 @@ describe('@nmtjs/eventing Neem runtime helpers', () => {
         async handle() {},
       }),
     )
+    expect(consumers[0]?.message).toBe(event)
     const planner = defineEventingPlanner(() => ({
       adapter: () => {
         throw new Error('planner must not open eventing adapter')

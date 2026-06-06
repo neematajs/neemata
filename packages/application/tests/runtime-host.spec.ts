@@ -66,11 +66,18 @@ function createFormats() {
 describe('application runtime boundary', () => {
   it('initializes application API without transports', async () => {
     const logger = createLogger({ pinoOptions: { enabled: false } }, 'test')
-    const runtime = new NeemataApplication(createApp(), { logger })
+    const runtime = new NeemataApplication(createApp(), {
+      logger,
+      name: 'test-app',
+    })
 
     try {
       await runtime.initialize()
 
+      expect(runtime.logger.bindings()).toMatchObject({
+        $label: 'NeemataApplication',
+        application: 'test-app',
+      })
       expect(runtime.procedures.has('ping')).toBe(true)
       expect(runtime.routers.size).toBeGreaterThan(0)
     } finally {

@@ -1,6 +1,7 @@
 export * from './constants.ts'
 export * from './container.ts'
 export * from './enums.ts'
+export * from './execution-environment.ts'
 export * from './hooks.ts'
 export * from './injectables.ts'
 export * from './logger.ts'

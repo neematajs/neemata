@@ -2,7 +2,7 @@ import type { LifecycleHooks } from '@nmtjs/application'
 import type { Container, Logger, LoggingOptions } from '@nmtjs/core'
 import { LifecycleHook } from '@nmtjs/application'
 import { anyAbortSignal } from '@nmtjs/common'
-import { forkLogger, Scope } from '@nmtjs/core'
+import { ExecutionEnvironment, Scope } from '@nmtjs/core'
 import { UnrecoverableError } from 'bullmq'
 
 import type { AnyJob } from './job.ts'
@@ -57,7 +57,7 @@ export interface SaveProgressContext<
 export abstract class JobRunner<
   RunOptions extends JobRunnerRunOptions = JobRunnerRunOptions,
 > {
-  logger: Logger
+  protected readonly execution: ExecutionEnvironment
 
   constructor(
     protected runtime: {
@@ -66,11 +66,19 @@ export abstract class JobRunner<
       lifecycleHooks: LifecycleHooks
     },
   ) {
-    this.logger = forkLogger(runtime.logger, JobRunner.name)
+    this.execution = new ExecutionEnvironment({
+      logger: runtime.logger,
+      container: runtime.container,
+      label: 'JobRunner',
+    })
+  }
+
+  get logger() {
+    return this.execution.logger
   }
 
   get container() {
-    return this.runtime.container
+    return this.execution.container
   }
 
   protected abstract createSaveProgressFn(
