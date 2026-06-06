@@ -1,13 +1,9 @@
 import type { Logger } from '@nmtjs/core'
-import type {
-  ConsumerOptions,
-  Producer,
-  ProducerOptions,
-} from '@platformatic/kafka'
+import type { ConsumerOptions, ProducerOptions } from '@platformatic/kafka'
 import { forkLogger } from '@nmtjs/core'
 import {
   Consumer,
-  Producer as KafkaProducer,
+  Producer,
   stringDeserializers,
   stringSerializers,
 } from '@platformatic/kafka'
@@ -53,7 +49,7 @@ export class KafkaEventingAdapter implements EventingAdapter {
   }
 
   async initialize() {
-    this.producer = new KafkaProducer({
+    this.producer = new Producer({
       clientId: this.options.clientId,
       bootstrapBrokers: [...this.options.bootstrapBrokers],
       serializers: stringSerializers,
