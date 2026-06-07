@@ -10,7 +10,7 @@ export function defineEventingPlanner<
   return defineRuntimePlanner(
     async (): Promise<NeemRuntimePlan<unknown, EventingWorkerData>> => {
       const config = await factory()
-      const consumers = await config.consumers()
+      const { consumers } = config
       const workerCount = Math.min(
         consumers.length,
         normalizeThreadCount(config.threads),

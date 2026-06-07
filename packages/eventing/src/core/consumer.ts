@@ -9,6 +9,7 @@ import type {
   EventingEventOutput,
   EventingHeaders,
 } from './event.ts'
+import type { AnyEventingSubscriptionConsumerDefinition } from './subscription-consumer.ts'
 
 export type EventingConsumerContext = { logger: Logger }
 
@@ -42,9 +43,11 @@ export type EventingConsumerDefinition<
 
 export type AnyEventingConsumerDefinition = EventingConsumerDefinition<any>
 
-export type EventingConsumersFactory = () =>
-  | readonly AnyEventingConsumerDefinition[]
-  | Promise<readonly AnyEventingConsumerDefinition[]>
+export type AnyEventingConsumerRuntimeDefinition =
+  | AnyEventingConsumerDefinition
+  | AnyEventingSubscriptionConsumerDefinition
+
+export type EventingConsumers = readonly AnyEventingConsumerRuntimeDefinition[]
 
 export function createEventConsumer<const E extends AnyEventingEvent>(
   event: E,
@@ -54,9 +57,9 @@ export function createEventConsumer<const E extends AnyEventingEvent>(
 }
 
 export function defineEventConsumers(
-  consumers: readonly AnyEventingConsumerDefinition[],
-): EventingConsumersFactory {
-  return () => consumers
+  consumers: EventingConsumers,
+): EventingConsumers {
+  return consumers
 }
 
 export function decodeEventingMessage<E extends AnyEventingEvent>(

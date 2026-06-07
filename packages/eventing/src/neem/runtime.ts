@@ -3,17 +3,13 @@ import type { NeemEntryInput, NeemRuntimeDeclaration } from '@nmtjs/neem'
 import { createRuntime } from '@nmtjs/neem'
 
 import type { EventingAdapter } from '../core/adapter.ts'
-import type { AnyEventingConsumerDefinition } from '../core/consumer.ts'
+import type { EventingConsumers } from '../core/consumer.ts'
 
 export type EventingAdapterFactory = () => MaybePromise<EventingAdapter>
 
-export type EventingConsumersFactory = () => MaybePromise<
-  readonly AnyEventingConsumerDefinition[]
->
-
 export type EventingRuntimeConfig = {
   adapter: EventingAdapterFactory
-  consumers: EventingConsumersFactory
+  consumers: EventingConsumers
   threads?: number
 }
 

@@ -1,5 +1,5 @@
 import { EventContract, SubscriptionContract } from '@nmtjs/contract'
-import { createEventConsumer } from '@nmtjs/eventing'
+import { createEventConsumer, implementSubscription } from '@nmtjs/eventing'
 import { defineEventingPlanner } from '@nmtjs/eventing/neem/planner'
 import { defineEventingRuntime } from '@nmtjs/eventing/neem/runtime'
 import { t } from '@nmtjs/type'
@@ -43,7 +43,7 @@ describe('@nmtjs/eventing Neem runtime helpers', () => {
       adapter: () => {
         throw new Error('planner must not open eventing adapter')
       },
-      consumers: () => consumers,
+      consumers,
       threads: 2,
     }))
 
@@ -54,5 +54,32 @@ describe('@nmtjs/eventing Neem runtime helpers', () => {
       { consumerIndexes: [1] },
     ])
     expect(plan.options).toBeUndefined()
+  })
+
+  it('accepts subscription consumers in eventing runtime config', async () => {
+    const stream = SubscriptionContract({
+      namespace: 'users',
+      events: {
+        userCreated: EventContract({ payload: t.object({ id: t.string() }) }),
+      },
+    })
+    const users = implementSubscription(stream)
+    const consumers = [
+      users(
+        { userCreated: users.userCreated(async () => {}) },
+        { groupId: 'events' },
+      ),
+    ]
+    const planner = defineEventingPlanner(() => ({
+      adapter: () => {
+        throw new Error('planner must not open eventing adapter')
+      },
+      consumers,
+      threads: 1,
+    }))
+
+    const plan = await planner()
+
+    expect(plan.workers).toEqual([{ consumerIndexes: [0] }])
   })
 })
