@@ -1,108 +1,82 @@
-// biome-ignore assist/source/organizeImports: for ts
-import type {} from 'pino'
+import { CoreInjectables, createConsolePrettyDestination } from '@nmtjs/core'
+import { EventingInjectables } from '@nmtjs/eventing'
+import { GatewayInjectables } from '@nmtjs/gateway'
+import { JobInjectables } from '@nmtjs/jobs'
+import { PubSubInjectables } from '@nmtjs/pubsub'
 
-import {
-  CoreInjectables,
-  createConsolePrettyDestination,
-  createFactoryInjectable,
-  createLazyInjectable,
-  createValueInjectable,
-} from '@nmtjs/core'
-import { createTransport, GatewayInjectables } from '@nmtjs/gateway'
-
-import {
-  config as runtimeConfig,
-  createContractProcedure,
-  createContractRouter,
-  createFilter,
-  defineApplicationHost,
-  createGuard,
-  createHook,
-  createMeta,
-  createMiddleware,
-  createPlugin,
-  createProcedure,
-  createRootRouter,
-  createRouter,
-  defineApplication,
-} from '@nmtjs/application'
-import {
-  createJob,
-  createJobRouterOperation,
-  createJobsRouter,
-  createStep,
-  defineServer,
-  RuntimeInjectables,
-} from './runtime/index.ts'
-import {
-  createCounterMetric,
-  createGaugeMetric,
-  createHistogramMetric,
-  createSummaryMetric,
-} from './runtime/metrics/metric.ts'
-
-export namespace neemata {
-  export const app = defineApplication
-  export const host = defineApplicationHost
-  export const server = defineServer
-  export const injectables = Object.freeze({
-    ...CoreInjectables,
-    ...GatewayInjectables,
-    ...RuntimeInjectables,
-  })
-  export const inject = injectables
-  export const transport = createTransport
-  export const plugin = createPlugin
-  export const logging = Object.freeze({
-    console: createConsolePrettyDestination,
-  })
-  export const value = createValueInjectable
-  export const lazy = createLazyInjectable
-  export const factory = createFactoryInjectable
-  export const rootRouter = createRootRouter
-  export const router = createRouter
-  export const contractRouter = createContractRouter
-  export const jobRouter = createJobsRouter
-  export const jobRouterOperation = createJobRouterOperation
-  export const procedure = createProcedure
-  export const contractProcedure = createContractProcedure
-  export const middleware = createMiddleware
-  export const meta = createMeta
-  export const config = runtimeConfig
-  export const guard = createGuard
-  export const filter = createFilter
-  export const job = createJob
-  export const step = createStep
-  export const hook = createHook
-  export const metrics = Object.freeze({
-    counter: createCounterMetric,
-    gauge: createGaugeMetric,
-    histogram: createHistogramMetric,
-    summary: createSummaryMetric,
-  })
-}
-
-export { c } from '@nmtjs/contract'
-export { MetadataKind, Scope } from '@nmtjs/core'
-export {
-  type ConnectionIdentityType,
-  GatewayHook,
-  ProxyableTransportType,
-} from '@nmtjs/gateway'
-export { ConnectionType, ErrorCode, ProtocolBlob } from '@nmtjs/protocol'
-export { t } from '@nmtjs/type'
+type Injectables = typeof CoreInjectables &
+  typeof GatewayInjectables &
+  typeof JobInjectables &
+  typeof PubSubInjectables &
+  typeof EventingInjectables
 
 export {
   ApiError,
-  defineApplicationHost,
-  defineApplication,
+  createContractProcedure as contractProcedure,
+  createContractRouter as contractRouter,
+  createFilter as filter,
+  createGuard as guard,
+  createHook as hook,
+  createMeta as meta,
+  createMiddleware as middleware,
+  createPlugin as plugin,
+  createProcedure as procedure,
+  createRootRouter as rootRouter,
+  createRouter as router,
+  defineApplication as app,
+  defineApplicationHost as host,
   LifecycleHook,
 } from '@nmtjs/application'
-
+export { c } from '@nmtjs/contract'
 export {
-  StoreType,
-  WorkerType,
-} from './runtime/index.ts'
+  CoreInjectables,
+  createFactoryInjectable as factory,
+  createLazyInjectable as lazy,
+  createValueInjectable as value,
+  MetadataKind,
+  Scope,
+} from '@nmtjs/core'
+export {
+  createEventConsumer as eventConsumer,
+  createEventingPlugin as eventingPlugin,
+  defineEventConsumers as eventConsumers,
+  EventingInjectables,
+  implementSubscription as eventSubscription,
+} from '@nmtjs/eventing'
+export {
+  type ConnectionIdentityType,
+  createTransport as transport,
+  GatewayHook,
+  GatewayInjectables,
+  ProxyableTransportType,
+} from '@nmtjs/gateway'
+export {
+  createJob as job,
+  createJobRouterOperation as jobOperation,
+  createJobsApplicationPlugin as jobsPlugin,
+  createJobsRouter as jobRouter,
+  createStep as step,
+  JobInjectables,
+} from '@nmtjs/jobs'
+export {
+  ConnectionType,
+  ErrorCode,
+  ProtocolBlob,
+} from '@nmtjs/protocol'
+export {
+  createPubSubPlugin as pubsubPlugin,
+  PubSubInjectables,
+} from '@nmtjs/pubsub'
+export { t } from '@nmtjs/type'
 
-export { neemata as n }
-export default neemata
+export const logging = Object.freeze({
+  console: createConsolePrettyDestination,
+})
+
+export const inject: Injectables = Object.freeze({
+  ...CoreInjectables,
+  ...GatewayInjectables,
+  ...JobInjectables,
+  ...PubSubInjectables,
+  ...EventingInjectables,
+})

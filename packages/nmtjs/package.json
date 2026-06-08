@@ -1,38 +1,15 @@
 {
   "name": "nmtjs",
-  "description": "Neemata framework CLI and umbrella package.",
+  "description": "Neemata framework umbrella package.",
   "type": "module",
   "scripts": {
     "clean-build": "rm -rf ./dist"
-  },
-  "bin": {
-    "neemata": "./bin/cli.js"
   },
   "exports": {
     ".": {
       "types": "./src/index.ts",
       "import": "./dist/index.js",
       "module-sync": "./dist/index.js"
-    },
-    "./cli": {
-      "types": "./src/cli.ts",
-      "import": "./dist/cli.js",
-      "module-sync": "./dist/cli.js"
-    },
-    "./config": {
-      "types": "./src/config.ts",
-      "import": "./dist/config.js",
-      "module-sync": "./dist/config.js"
-    },
-    "./runtime": {
-      "types": "./src/runtime/index.ts",
-      "import": "./dist/runtime/index.js",
-      "module-sync": "./dist/runtime/index.js"
-    },
-    "./runtime/types": {
-      "types": "./src/runtime/types.ts",
-      "import": "./dist/runtime/types.js",
-      "module-sync": "./dist/runtime/types.js"
     }
   },
   "publishConfig": {
@@ -41,67 +18,21 @@
         "types": "./dist/index.d.ts",
         "import": "./dist/index.js",
         "module-sync": "./dist/index.js"
-      },
-      "./cli": {
-        "types": "./dist/cli.d.ts",
-        "import": "./dist/cli.js",
-        "module-sync": "./dist/cli.js"
-      },
-      "./config": {
-        "types": "./dist/config.d.ts",
-        "import": "./dist/config.js",
-        "module-sync": "./dist/config.js"
-      },
-      "./runtime": {
-        "types": "./dist/runtime/index.d.ts",
-        "import": "./dist/runtime/index.js",
-        "module-sync": "./dist/runtime/index.js"
-      },
-      "./runtime/types": {
-        "types": "./dist/runtime/types.d.ts",
-        "import": "./dist/runtime/types.js",
-        "module-sync": "./dist/runtime/types.js"
       }
     }
   },
   "dependencies": {
     "@nmtjs/application": "workspace:*",
-    "@nmtjs/common": "workspace:*",
     "@nmtjs/contract": "workspace:*",
     "@nmtjs/core": "workspace:*",
+    "@nmtjs/eventing": "workspace:*",
     "@nmtjs/gateway": "workspace:*",
-    "@nmtjs/http-transport": "workspace:*",
-    "@nmtjs/json-format": "workspace:*",
-    "@nmtjs/msgpack-format": "workspace:*",
+    "@nmtjs/jobs": "workspace:*",
     "@nmtjs/protocol": "workspace:*",
-    "@nmtjs/type": "workspace:*",
-    "@nmtjs/ws-transport": "workspace:*",
-    "bullmq": "5.77.0",
-    "citty": "0.2.2",
-    "dedent": "^1.7.2",
-    "dotenv": "^17.4.2",
-    "ioredis": "^5.10.1",
-    "iovalkey": "^0.3.3",
-    "oxc-resolver": "11.19.1",
-    "@nmtjs/prom-client": "1.0.1",
-    "vite": "catalog:"
-  },
-  "devDependencies": {
-    "@nmtjs/proxy": "1.0.0-beta.6",
-    "pino": "10.3.1",
-    "zod": "catalog:"
-  },
-  "peerDependencies": {
-    "@nmtjs/proxy": "1.0.0-beta.6",
-    "zod": "catalog:"
-  },
-  "peerDependenciesMeta": {
-    "@nmtjs/proxy": {
-      "optional": true
-    }
+    "@nmtjs/pubsub": "workspace:*",
+    "@nmtjs/type": "workspace:*"
   },
   "files": [
-    "bin",
     "dist",
     "src",
     "LICENSE.md",
