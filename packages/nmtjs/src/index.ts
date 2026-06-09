@@ -25,6 +25,7 @@ export {
   createRouter as router,
   defineApplication as app,
   defineApplicationHost as host,
+  implement as implementRouter,
   LifecycleHook,
 } from '@nmtjs/application'
 export { blobType, c } from '@nmtjs/contract'
@@ -38,11 +39,9 @@ export {
   Scope,
 } from '@nmtjs/core'
 export {
-  createEventConsumer as eventConsumer,
   createEventingPlugin as eventingPlugin,
-  defineEventConsumers as eventConsumers,
   EventingInjectables,
-  implementSubscription as eventSubscription,
+  implement as implementSubscription,
 } from '@nmtjs/eventing'
 export {
   type ConnectionIdentityType,

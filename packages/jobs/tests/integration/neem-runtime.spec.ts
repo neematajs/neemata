@@ -1,3 +1,5 @@
+import type { NeemRuntimePlannerContext } from '@nmtjs/neem'
+import { createLogger } from '@nmtjs/core'
 import { createJob } from '@nmtjs/jobs'
 import { createJobsRuntime, defineJobsPlanner } from '@nmtjs/jobs/neem'
 import { t } from '@nmtjs/type'
@@ -42,7 +44,7 @@ describe('@nmtjs/jobs Neem runtime helpers', () => {
     })
     const planner = defineJobsPlanner(factory)
 
-    const plan = await planner()
+    const plan = await planner(plannerContext)
 
     expect(plan.workers).toEqual({
       fast: [{ poolName: 'fast' }, { poolName: 'fast' }],
@@ -51,3 +53,9 @@ describe('@nmtjs/jobs Neem runtime helpers', () => {
     expect(plan.options).toBe(factory)
   })
 })
+
+const plannerContext = {
+  mode: 'development',
+  name: 'jobs',
+  logger: createLogger({ pinoOptions: { enabled: false } }, 'test'),
+} satisfies NeemRuntimePlannerContext

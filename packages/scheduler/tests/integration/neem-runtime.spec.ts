@@ -1,3 +1,5 @@
+import type { NeemRuntimePlannerContext } from '@nmtjs/neem'
+import { createLogger } from '@nmtjs/core'
 import { createJob } from '@nmtjs/jobs'
 import {
   createSchedulerRuntime,
@@ -46,9 +48,15 @@ describe('@nmtjs/scheduler Neem runtime helpers', () => {
     })
     const planner = defineSchedulerPlanner(factory)
 
-    const plan = await planner()
+    const plan = await planner(plannerContext)
 
     expect(plan.workers).toEqual([])
     expect(plan.options).toBe(factory)
   })
 })
+
+const plannerContext = {
+  mode: 'development',
+  name: 'scheduler',
+  logger: createLogger({ pinoOptions: { enabled: false } }, 'test'),
+} satisfies NeemRuntimePlannerContext

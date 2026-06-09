@@ -30,9 +30,14 @@ export function isNeemRuntimeHostFactory(
   return typeof value === 'function' && value[NeemRuntimeHostBrand] === true
 }
 
-export function defineRuntimePlanner<const TPlanner extends NeemRuntimePlanner>(
-  planner: TPlanner,
-): TPlanner {
+export function defineRuntimePlanner<
+  Options = unknown,
+  Data = unknown,
+  const TPlanner extends NeemRuntimePlanner<Options, Data> = NeemRuntimePlanner<
+    Options,
+    Data
+  >,
+>(planner: TPlanner): TPlanner {
   return Object.freeze(
     Object.assign(planner, { [NeemRuntimePlannerBrand]: true }),
   )

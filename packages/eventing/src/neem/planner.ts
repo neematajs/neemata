@@ -1,5 +1,4 @@
 import type { MaybePromise } from '@nmtjs/common'
-import type { NeemRuntimePlan } from '@nmtjs/neem'
 import { defineRuntimePlanner } from '@nmtjs/neem'
 
 import type { EventingRuntimeConfig, EventingWorkerData } from './runtime.ts'
@@ -7,28 +6,23 @@ import type { EventingRuntimeConfig, EventingWorkerData } from './runtime.ts'
 export function defineEventingPlanner<
   const TConfig extends EventingRuntimeConfig = EventingRuntimeConfig,
 >(factory: () => MaybePromise<TConfig>) {
-  return defineRuntimePlanner(
-    async (): Promise<NeemRuntimePlan<unknown, EventingWorkerData>> => {
-      const config = await factory()
-      const { consumers } = config
-      const workerCount = Math.min(
-        consumers.length,
-        normalizeThreadCount(config.threads),
-      )
-      const assignments = Array.from(
-        { length: workerCount },
-        (): number[] => [],
-      )
+  return defineRuntimePlanner<undefined, EventingWorkerData>(async () => {
+    const config = await factory()
+    const { consumers } = config
+    const workerCount = Math.min(
+      consumers.length,
+      normalizeThreadCount(config.threads),
+    )
+    const assignments = Array.from({ length: workerCount }, (): number[] => [])
 
-      for (let index = 0; index < consumers.length; index++) {
-        assignments[index % workerCount]!.push(index)
-      }
+    for (let index = 0; index < consumers.length; index++) {
+      assignments[index % workerCount]!.push(index)
+    }
 
-      return {
-        workers: assignments.map((consumerIndexes) => ({ consumerIndexes })),
-      }
-    },
-  )
+    return {
+      workers: assignments.map((consumerIndexes) => ({ consumerIndexes })),
+    }
+  })
 }
 
 function normalizeThreadCount(count: number | undefined): number {

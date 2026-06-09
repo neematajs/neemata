@@ -4,7 +4,7 @@ import { CoreInjectables, createValueInjectable } from '@nmtjs/core'
 import { t } from '@nmtjs/type'
 import { describe, expect, expectTypeOf, it } from 'vitest'
 
-import { implementSubscription } from '../src/index.ts'
+import { implement } from '../src/index.ts'
 
 describe('subscription consumer implementation helper', () => {
   const contract = SubscriptionContract({
@@ -18,7 +18,7 @@ describe('subscription consumer implementation helper', () => {
   })
 
   it('builds a subscription consumer from callable event builders', () => {
-    const events = implementSubscription(contract)
+    const events = implement(contract)
     const prefix = createValueInjectable('echo')
     const consumer = events(
       {
@@ -40,6 +40,7 @@ describe('subscription consumer implementation helper', () => {
     expect(consumer.groupId).toBe('echo-service')
     expect(consumer.from).toBe('earliest')
     expect(consumer.handlers.requested?.event).toBe(contract.events.requested)
+    expect(consumer.handlers.requested?.handler).toEqual(expect.any(Function))
     expect(consumer.handlers.completed).toBeUndefined()
   })
 
@@ -52,7 +53,7 @@ describe('subscription consumer implementation helper', () => {
         prototype: EventContract({ payload: t.string() }),
       },
     })
-    const events = implementSubscription(prototypeContract)
+    const events = implement(prototypeContract)
 
     const consumer = events(
       {

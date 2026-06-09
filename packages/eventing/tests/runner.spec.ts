@@ -12,7 +12,7 @@ import type {
 } from '../src/core/adapter.ts'
 import type { AnyEventingConsumerDefinition } from '../src/core/consumer.ts'
 import { EventingRunner } from '../src/core/runner.ts'
-import { implementSubscription } from '../src/index.ts'
+import { implement } from '../src/index.ts'
 import { createTestLogger } from './integration/helpers.ts'
 
 class TestEventingAdapter implements EventingAdapter {
@@ -46,7 +46,7 @@ describe('EventingRunner', () => {
     })
     const event = stream.events.userCreated
     const handledEvents: unknown[] = []
-    const handle: AnyEventingConsumerDefinition['handle'] = vi.fn(
+    const handler: AnyEventingConsumerDefinition['handler'] = vi.fn(
       async (_ctx, event) => {
         handledEvents.push(event)
       },
@@ -55,7 +55,7 @@ describe('EventingRunner', () => {
       message: event,
       groupId: 'users-service',
       from: 'earliest',
-      handle,
+      handler,
     }
     const container = new Container({ logger: createTestLogger('parent') })
     const adapter = new TestEventingAdapter()
@@ -88,7 +88,7 @@ describe('EventingRunner', () => {
         headers: {},
       }
       await adapter.handler?.(ignoredMessage)
-      expect(handle).not.toHaveBeenCalled()
+      expect(handler).not.toHaveBeenCalled()
 
       const message: EventingAdapterMessage = {
         topic: 'users',
@@ -99,7 +99,7 @@ describe('EventingRunner', () => {
       }
       await adapter.handler?.(message)
 
-      expect(handle).toHaveBeenCalledOnce()
+      expect(handler).toHaveBeenCalledOnce()
       expect(handledEvents).toEqual([
         {
           namespace: 'users',
@@ -128,7 +128,7 @@ describe('EventingRunner', () => {
         }),
       },
     })
-    const events = implementSubscription(stream)
+    const events = implement(stream)
     const prefix = createValueInjectable('user')
     const handled: unknown[] = []
     const explicitLoggerLabels: unknown[] = []
@@ -227,7 +227,7 @@ describe('EventingRunner', () => {
         userCreated: EventContract({ payload: t.object({ id: t.string() }) }),
       },
     })
-    const events = implementSubscription(stream)
+    const events = implement(stream)
     const definition = events(
       { userCreated: events.userCreated(async () => {}) },
       { groupId: 'users-service', unhandled: 'fail' },

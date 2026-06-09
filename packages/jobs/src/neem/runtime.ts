@@ -1,5 +1,4 @@
 import type { MaybePromise } from '@nmtjs/common'
-import type { NeemRuntimePlan } from '@nmtjs/neem'
 import { createRuntime, defineRuntimePlanner } from '@nmtjs/neem'
 
 import type { JobsClient } from '../client.ts'
@@ -69,27 +68,25 @@ export function createJobsRuntime() {
 export function defineJobsPlanner<
   const TConfig extends JobsConfig = JobsConfig,
 >(factory: () => MaybePromise<TConfig>) {
-  return defineRuntimePlanner(
-    async (): Promise<NeemRuntimePlan<typeof factory, JobsWorkerData>> => {
-      const config = await factory()
-      const jobs = await config.jobs()
-      const jobsByPool = groupJobsByPool(jobs)
-      assertPoolsConfigured(jobsByPool, config.pools)
+  return defineRuntimePlanner<typeof factory, JobsWorkerData>(async () => {
+    const config = await factory()
+    const jobs = await config.jobs()
+    const jobsByPool = groupJobsByPool(jobs)
+    assertPoolsConfigured(jobsByPool, config.pools)
 
-      return {
-        workers: Object.fromEntries(
-          [...jobsByPool.keys()].map((poolName) => [
-            poolName,
-            Array.from(
-              { length: config.pools[poolName]!.threads },
-              (): JobsWorkerData => ({ poolName }),
-            ),
-          ]),
-        ),
-        options: factory,
-      }
-    },
-  )
+    return {
+      workers: Object.fromEntries(
+        [...jobsByPool.keys()].map((poolName) => [
+          poolName,
+          Array.from(
+            { length: config.pools[poolName]!.threads },
+            (): JobsWorkerData => ({ poolName }),
+          ),
+        ]),
+      ),
+      options: factory,
+    }
+  })
 }
 
 function groupJobsByPool(jobs: Iterable<AnyJob>): Map<string, AnyJob[]> {

@@ -8,12 +8,12 @@ import type {
   EventingConsumer,
 } from './adapter.ts'
 import type { AnyEventingConsumerDefinition } from './consumer.ts'
-import type { AnyEventingSubscriptionConsumerDefinition } from './subscription-consumer.ts'
+import type { AnyEventingSubscriptionConsumerDefinition } from './implement.ts'
 import {
   decodeEventingMessage,
   handleEventingConsumerMessage,
 } from './consumer.ts'
-import { isEventingSubscriptionConsumerDefinition } from './subscription-consumer.ts'
+import { isEventingSubscriptionConsumerDefinition } from './implement.ts'
 
 export type AnyEventingRunnerConsumerDefinition =
   | AnyEventingConsumerDefinition
@@ -189,7 +189,7 @@ export class EventingRunner {
       try {
         await using container = this.container.fork(Scope.Global)
         const ctx = await container.createContext(handler.dependencies)
-        await handler.handle(ctx, event as never, message)
+        await handler.handler(ctx, event as never, message)
         return
       } catch (error) {
         if (attempt >= attempts) throw error

@@ -21,11 +21,13 @@ export function defineNeemataPlanner<
   const THost extends
     AnyApplicationHostDefinition = AnyApplicationHostDefinition,
 >(planner: NeemataPlannerFactory<THost>): NeemataRuntimePlanner<THost> {
-  return defineRuntimePlanner<NeemataRuntimePlanner<THost>>(async (ctx) => {
-    const input = await planner(ctx)
-    const instances = input.instances ?? 1
-    return {
-      workers: Array.from({ length: instances }, () => input.transports),
-    }
-  })
+  return defineRuntimePlanner<undefined, NeemataRuntimeThreadOptions<THost>>(
+    async (ctx) => {
+      const input = await planner(ctx)
+      const instances = input.instances ?? 1
+      return {
+        workers: Array.from({ length: instances }, () => input.transports),
+      }
+    },
+  )
 }

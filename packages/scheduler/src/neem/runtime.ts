@@ -14,5 +14,8 @@ export function createSchedulerRuntime() {
 export function defineSchedulerPlanner<
   const TConfig extends SchedulerConfig = SchedulerConfig,
 >(factory: SchedulerPlannerFactory<TConfig>) {
-  return defineRuntimePlanner(() => ({ workers: [], options: factory }))
+  return defineRuntimePlanner<SchedulerPlannerFactory<TConfig>, never>(() => ({
+    workers: [],
+    options: factory,
+  }))
 }

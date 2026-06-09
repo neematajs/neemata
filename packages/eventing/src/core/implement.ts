@@ -29,7 +29,7 @@ export type EventingSubscriptionHandlerDefinition<
 > = Dependant<Deps> & {
   event: E
   retry?: EventingConsumerRetryPolicy
-  handle: EventingSubscriptionHandler<E, Deps>
+  handler: EventingSubscriptionHandler<E, Deps>
 }
 
 export type AnyEventingSubscriptionHandlerDefinition =
@@ -97,9 +97,9 @@ export type EventingSubscriptionImplementer<
   >
 }
 
-export function implementSubscription<
-  Contract extends TAnySubscriptionContract,
->(contract: Contract): EventingSubscriptionImplementer<Contract> {
+export function implement<Contract extends TAnySubscriptionContract>(
+  contract: Contract,
+): EventingSubscriptionImplementer<Contract> {
   const builder = (
     handlers: EventingSubscriptionImplementedHandlers<Contract>,
     options: EventingSubscriptionConsumerOptions,
@@ -148,7 +148,7 @@ function createEventImplementer<E extends TAnySubscriptionEventContract>(
       ? { handler: paramsOrHandler }
       : paramsOrHandler
 
-    return Object.freeze({ event, dependencies, retry, handle: handler })
+    return Object.freeze({ event, dependencies, retry, handler })
   }) as EventingSubscriptionEventImplementer<E>
 }
 

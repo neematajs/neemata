@@ -1,5 +1,8 @@
+import type { EventingConsumerDefinition } from '@nmtjs/eventing'
+import type { NeemRuntimePlannerContext } from '@nmtjs/neem'
 import { EventContract, SubscriptionContract } from '@nmtjs/contract'
-import { createEventConsumer, implementSubscription } from '@nmtjs/eventing'
+import { createLogger } from '@nmtjs/core'
+import { implement } from '@nmtjs/eventing'
 import { defineEventingPlanner } from '@nmtjs/eventing/neem/planner'
 import { defineRuntime } from '@nmtjs/neem'
 import { t } from '@nmtjs/type'
@@ -31,12 +34,14 @@ describe('@nmtjs/eventing Neem runtime helpers', () => {
       },
     })
     const event = stream.events.userCreated
-    const consumers = [0, 1, 2].map((index) =>
-      createEventConsumer(event, {
-        groupId: 'events',
-        consumerId: `consumer-${index}`,
-        async handle() {},
-      }),
+    const consumers = [0, 1, 2].map(
+      (index) =>
+        ({
+          message: event,
+          groupId: 'events',
+          consumerId: `consumer-${index}`,
+          async handler() {},
+        }) satisfies EventingConsumerDefinition<typeof event>,
     )
     expect(consumers[0]?.message).toBe(event)
     const planner = defineEventingPlanner(() => ({
@@ -47,7 +52,7 @@ describe('@nmtjs/eventing Neem runtime helpers', () => {
       threads: 2,
     }))
 
-    const plan = await planner()
+    const plan = await planner(plannerContext)
 
     expect(plan.workers).toEqual([
       { consumerIndexes: [0, 2] },
@@ -63,7 +68,7 @@ describe('@nmtjs/eventing Neem runtime helpers', () => {
         userCreated: EventContract({ payload: t.object({ id: t.string() }) }),
       },
     })
-    const users = implementSubscription(stream)
+    const users = implement(stream)
     const consumers = [
       users(
         { userCreated: users.userCreated(async () => {}) },
@@ -78,8 +83,14 @@ describe('@nmtjs/eventing Neem runtime helpers', () => {
       threads: 1,
     }))
 
-    const plan = await planner()
+    const plan = await planner(plannerContext)
 
     expect(plan.workers).toEqual([{ consumerIndexes: [0] }])
   })
 })
+
+const plannerContext = {
+  mode: 'development',
+  name: 'events',
+  logger: createLogger({ pinoOptions: { enabled: false } }, 'test'),
+} satisfies NeemRuntimePlannerContext

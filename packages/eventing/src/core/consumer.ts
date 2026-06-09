@@ -9,7 +9,7 @@ import type {
   EventingEventOutput,
   EventingHeaders,
 } from './event.ts'
-import type { AnyEventingSubscriptionConsumerDefinition } from './subscription-consumer.ts'
+import type { AnyEventingSubscriptionConsumerDefinition } from './implement.ts'
 
 export type EventingConsumerContext = { logger: Logger }
 
@@ -38,7 +38,7 @@ export type EventingConsumerDefinition<
   recoverPending?: boolean
   /** Adapter may move failed messages to broker-specific dead-letter storage. */
   deadLetter?: EventingAdapterDeadLetterOptions
-  handle: EventingConsumerHandler<E>
+  handler: EventingConsumerHandler<E>
 }
 
 export type AnyEventingConsumerDefinition = EventingConsumerDefinition<any>
@@ -48,19 +48,6 @@ export type AnyEventingConsumerRuntimeDefinition =
   | AnyEventingSubscriptionConsumerDefinition
 
 export type EventingConsumers = readonly AnyEventingConsumerRuntimeDefinition[]
-
-export function createEventConsumer<const E extends AnyEventingEvent>(
-  event: E,
-  options: Omit<EventingConsumerDefinition<E>, 'message'>,
-): EventingConsumerDefinition<E> {
-  return Object.freeze({ message: event, ...options })
-}
-
-export function defineEventConsumers(
-  consumers: EventingConsumers,
-): EventingConsumers {
-  return consumers
-}
 
 export function decodeEventingMessage<E extends AnyEventingEvent>(
   event: E,
@@ -87,7 +74,7 @@ export async function handleEventingConsumerMessage(
 
   for (let attempt = 1; attempt <= attempts; attempt++) {
     try {
-      await definition.handle(ctx, event as never, message)
+      await definition.handler(ctx, event as never, message)
       return
     } catch (error) {
       if (attempt >= attempts) throw error

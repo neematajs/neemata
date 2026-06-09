@@ -1,5 +1,9 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, expectTypeOf, it } from 'vitest'
 
+import type {
+  NeemRuntimePlanner,
+  NeemRuntimePlannerContext,
+} from '../../src/shared/types.ts'
 import {
   createRuntime,
   defineConfig,
@@ -64,6 +68,35 @@ describe('Neem public runtime API', () => {
     expect(isNeemRuntimePlanner(planner)).toBe(true)
     expect(isNeemRuntimeHostFactory(host)).toBe(true)
     expect(isNeemRuntimeWorker(worker)).toBe(true)
+  })
+
+  it('types runtime planner helper by options and worker data', () => {
+    type PlannerOptions = { factory: () => string }
+    type WorkerData = { poolName: string }
+
+    const planner = defineRuntimePlanner<PlannerOptions, WorkerData>(
+      (ctx: NeemRuntimePlannerContext) => {
+        expect(ctx.mode).toBeTypeOf('string')
+        return {
+          workers: [{ poolName: 'default' }],
+          options: { factory: () => ctx.name },
+        }
+      },
+    )
+
+    const inferredPlanner = defineRuntimePlanner<PlannerOptions, WorkerData>(
+      () => ({
+        workers: [{ poolName: 'default' }],
+        options: { factory: () => 'value' },
+      }),
+    )
+
+    expectTypeOf(planner).toEqualTypeOf<
+      NeemRuntimePlanner<PlannerOptions, WorkerData>
+    >()
+    expectTypeOf(inferredPlanner).toEqualTypeOf<
+      NeemRuntimePlanner<PlannerOptions, WorkerData>
+    >()
   })
 
   it('creates runtime factories with merged worker and host build options', () => {
