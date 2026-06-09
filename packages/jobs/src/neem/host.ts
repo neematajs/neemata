@@ -73,7 +73,7 @@ export default defineRuntimeHost<JobsPlannerFactory | undefined>(
         state.client = await resolveJobsClient(config.client)
 
         try {
-          state.manager = new JobManager(
+          const manager = new JobManager(
             state.client,
             [...state.jobs.values()],
             config.hooks,
@@ -84,92 +84,97 @@ export default defineRuntimeHost<JobsPlannerFactory | undefined>(
               )
             },
           )
-          await state.manager.initialize()
-        } catch (error) {
-          await closeJobsClient(state.client)
-          state.client = undefined
-          state.manager = undefined
-          throw error
-        }
+          state.manager = manager
+          await manager.initialize()
 
-        for (const [poolName, poolJobs] of jobsByPool) {
-          const poolConfig = config.pools[poolName]!
-          const pool = new JobsRuntimeWorkerPool(poolName)
-          for (const thread of params.threads.filter((thread) =>
-            thread.name.startsWith(`${params.name}:${poolName}:`),
-          )) {
-            pool.add(thread)
-          }
-          state.pools.set(poolName, pool)
-          params.logger.info(`Neem jobs runner pool [${poolName}] started`)
-          params.logger.trace(
-            {
-              pool: poolName,
-              threads: pool.handles.length,
-              jobsPerThread: poolConfig.jobs,
-            },
-            'Neem jobs runner pool',
-          )
-
-          for (const job of poolJobs) {
-            const poolCapacity = poolConfig.threads * poolConfig.jobs
-            const concurrency =
-              job.options.concurrency ??
-              Math.max(1, Math.floor(poolCapacity / poolJobs.length))
-
-            const worker = new Worker(
-              getJobQueueName(job),
-              async (bullJob) => {
-                const result = await pool.run({
-                  jobId: String(bullJob.id ?? ''),
-                  jobName: bullJob.name,
-                  data: bullJob.data,
-                })
-
-                switch (result.type) {
-                  case 'success':
-                    return result.result
-                  case 'unrecoverable_error': {
-                    const error = enrichBullMqErrorStack(result.error)
-                    const unrecoverable = new UnrecoverableError(error.message)
-                    unrecoverable.stack = error.stack
-                    throw unrecoverable
-                  }
-                  case 'job_not_found':
-                  case 'queue_job_not_found':
-                    throw new UnrecoverableError(result.type)
-                  case 'error':
-                    throw enrichBullMqErrorStack(result.error)
-                }
-              },
-              { connection: state.manager.connection, concurrency },
-            )
-
-            worker.on('active', (bullJob) => {
-              void state.manager?.emitUpdated(bullJob)
-            })
-            worker.on('progress', (bullJob) => {
-              void state.manager?.emitUpdated(bullJob)
-            })
-            worker.on('completed', (bullJob) => {
-              void state.manager?.emitUpdated(bullJob, 'completed')
-            })
-            worker.on('failed', (bullJob) => {
-              if (bullJob) void state.manager?.emitUpdated(bullJob, 'failed')
-            })
-
-            state.queueWorkers.add(worker)
-            params.logger.info(`Neem jobs queue worker [${job.name}] started`)
+          for (const [poolName, poolJobs] of jobsByPool) {
+            const poolConfig = config.pools[poolName]!
+            const pool = new JobsRuntimeWorkerPool(poolName)
+            for (const thread of params.threads.filter((thread) =>
+              thread.name.startsWith(`${params.name}:${poolName}:`),
+            )) {
+              pool.add(thread)
+            }
+            state.pools.set(poolName, pool)
+            params.logger.info(`Neem jobs runner pool [${poolName}] started`)
             params.logger.trace(
               {
-                job: job.name,
-                queue: getJobQueueName(job),
                 pool: poolName,
-                concurrency,
+                threads: pool.handles.length,
+                jobsPerThread: poolConfig.jobs,
               },
-              'Neem jobs queue worker',
+              'Neem jobs runner pool',
             )
+
+            for (const job of poolJobs) {
+              const poolCapacity = poolConfig.threads * poolConfig.jobs
+              const concurrency =
+                job.options.concurrency ??
+                Math.max(1, Math.floor(poolCapacity / poolJobs.length))
+
+              const worker = new Worker(
+                getJobQueueName(job),
+                async (bullJob) => {
+                  const result = await pool.run({
+                    jobId: String(bullJob.id ?? ''),
+                    jobName: bullJob.name,
+                    data: bullJob.data,
+                  })
+
+                  switch (result.type) {
+                    case 'success':
+                      return result.result
+                    case 'unrecoverable_error': {
+                      const error = enrichBullMqErrorStack(result.error)
+                      const unrecoverable = new UnrecoverableError(
+                        error.message,
+                      )
+                      unrecoverable.stack = error.stack
+                      throw unrecoverable
+                    }
+                    case 'job_not_found':
+                    case 'queue_job_not_found':
+                      throw new UnrecoverableError(result.type)
+                    case 'error':
+                      throw enrichBullMqErrorStack(result.error)
+                  }
+                },
+                { connection: manager.connection, concurrency },
+              )
+
+              worker.on('active', (bullJob) => {
+                void state.manager?.emitUpdated(bullJob)
+              })
+              worker.on('progress', (bullJob) => {
+                void state.manager?.emitUpdated(bullJob)
+              })
+              worker.on('completed', (bullJob) => {
+                void state.manager?.emitUpdated(bullJob, 'completed')
+              })
+              worker.on('failed', (bullJob) => {
+                if (bullJob) void state.manager?.emitUpdated(bullJob, 'failed')
+              })
+
+              state.queueWorkers.add(worker)
+              params.logger.info(`Neem jobs queue worker [${job.name}] started`)
+              params.logger.trace(
+                {
+                  job: job.name,
+                  queue: getJobQueueName(job),
+                  pool: poolName,
+                  concurrency,
+                },
+                'Neem jobs queue worker',
+              )
+            }
           }
+
+          await Promise.all(
+            [...state.queueWorkers].map((worker) => worker.waitUntilReady()),
+          )
+        } catch (error) {
+          await stopJobsRuntime()
+          throw error
         }
       },
 
