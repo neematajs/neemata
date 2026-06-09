@@ -111,8 +111,7 @@ export type RouterContractsFromRoutes<Routes extends AnyRouterRoutes> = {
 
 export type RouterContractFromRoutes<
   Routes extends AnyRouterRoutes,
-  Name extends string | undefined = undefined,
-> = TRouterContract<RouterContractsFromRoutes<Routes>, Name>
+> = TRouterContract<RouterContractsFromRoutes<Routes>, undefined>
 
 export function createRootRouter<Routers extends readonly AnyRouter[]>(
   routers: Routers,
@@ -127,7 +126,7 @@ export function createRootRouter<Routers extends readonly AnyRouter[]>(
 > {
   const routes: Record<string, any> = {}
   for (const router of routers) Object.assign(routes, router.routes)
-  const router = createRouter({ routes, name: undefined })
+  const router = createRouter({ routes })
   return Object.freeze({
     ...router,
     default: defaultProcedure,
@@ -156,12 +155,8 @@ export type RouterDecodedInput<Routes extends AnyRouterRoutes> =
 export type RouterContractDecodedInput<Contract extends TAnyRouterContract> =
   FlattenRouterDecodedInput<Contract['routes']>
 
-export interface CreateRouterParams<
-  Routes extends AnyRouterRoutes,
-  Name extends string | undefined = undefined,
-> {
+export interface CreateRouterParams<Routes extends AnyRouterRoutes> {
   routes: Routes
-  name?: Name
   guards?: AnyGuard[]
   middlewares?: AnyMiddleware[]
   meta?: RouterMetaBinding<RouterDecodedInput<Routes>>[]
@@ -187,18 +182,17 @@ export interface CreateContractRouterParams<
 
 export function createRouter<
   const Routes extends AnyRouterRoutes,
-  const Name extends string | undefined = undefined,
 >(
-  params: CreateRouterParams<Routes, Name>,
-): Router<RouterContractFromRoutes<Routes, Name>> {
-  const { routes, name, guards, middlewares, meta, timeout } = params
+  params: CreateRouterParams<Routes>,
+): Router<RouterContractFromRoutes<Routes>> {
+  const { routes, guards, middlewares, meta, timeout } = params
 
   const routesContracts: any = {}
   for (const [name, route] of Object.entries(routes)) {
     routesContracts[name] = route.contract
   }
 
-  const contract = c.router({ routes: routesContracts, timeout, name })
+  const contract = c.router({ routes: routesContracts, timeout })
 
   assignRouteContracts(routes, contract)
 
