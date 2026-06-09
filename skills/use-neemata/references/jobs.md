@@ -1,437 +1,364 @@
----
-title: Jobs
-description: Background job definitions, steps, job manager, retry/backoff, progress
-  checkpoints, job router, and server configuration.
----
-
 # Jobs
 
-Neemata's job system is built on BullMQ. Each job gets a dedicated queue and runs
-in a separate worker thread pool. Jobs require a store (Redis or Valkey).
+Use jobs for durable background work. A job is a typed unit of queued work with
+input, output, optional progress, step pipeline, lifecycle hooks, and queue
+operations. Jobs are not RPC procedures; expose queue operations through RPC
+only when the product API needs enqueue/status/retry/cancel/remove access.
 
-## Defining a Job
+End-user application code should prefer `nmtjs` exports: `job`, `step`,
+`jobRouter`, `jobOperation`, `jobsPlugin`, and `inject`.
 
-Jobs are built with a chainable API: define options, add steps, then finalize with `.return()`:
+## Job Definition
 
 ```ts
-import { n, t } from 'nmtjs'
+import { job, t } from 'nmtjs'
 
-const processUserJob = n.job({
-  name: 'processUser',
-  pool: 'io',
-  input: t.object({ userId: t.string() }),
-  output: t.object({ success: t.boolean() }),
-  attempts: 3,
-  backoff: { type: 'exponential', delay: 1000 },
-})
-  .step(n.step({
-    label: 'fetch-user',
-    input: t.object({ userId: t.string() }),
-    output: t.object({ user: t.object({ name: t.string() }) }),
-    handler: async (ctx, input) => {
-      const user = await fetchUser(input.userId)
-      return { user }
-    },
-  }))
-  .step(n.step({
-    label: 'process',
-    input: t.object({ user: t.object({ name: t.string() }) }),
-    output: t.object({ success: t.boolean() }),
-    handler: async (ctx, input) => {
-      await doSomething(input.user)
-      return { success: true }
-    },
-  }))
-  .return()
+export const echoJob = job({
+  name: 'echo',
+  pool: 'default',
+  input: t.object({ message: t.string() }),
+  output: t.object({ ok: t.boolean(), message: t.string() }),
+}).return(({ input }) => ({ ok: true, message: input.message }))
 ```
 
-## How Job Execution Works
+Rules:
 
-At runtime, each job execution follows this flow:
+- `name` identifies the job and its queue.
+- `pool` selects the Neem jobs worker pool.
+- `input`, `output`, and optional `progress` are Neemata type schemas.
+- Queue options include `concurrency`, `timeout`, `attempts`, `backoff`, and
+  `oneoff`.
+- `data` may build per-run ephemeral state from job dependencies, decoded input,
+  and restored progress.
+- Every runnable job must end with `.return(...)`. If accumulated step output
+  already satisfies `output`, `.return()` may omit a handler.
 
-1. Decode job input and restore checkpointed state (`progress`, completed step results, next step index)
-2. Resolve job-level dependencies (`dependencies` on `n.job`)
-3. Build execution-scoped `data` once (if `data` callback is provided)
-4. Run remaining steps in order (respecting optional step conditions)
-5. Merge each step output into the accumulated result
-6. Run `.return()` handler to produce the final typed output
+## Per-Run Data
 
-On retry with checkpoint resume (`clearState: false`), completed steps are not re-executed.
-On retry from scratch (`clearState: true`), execution restarts from step 0.
-
-For parallel groups created with `.steps(...)`, sibling steps run together and their outputs
-are merged after the whole group settles. If siblings emit overlapping output keys,
-the group fails with a key-conflict error.
-
-### Job Options
-
-| Option | Type | Description |
-|---|---|---|
-| `name` | `string` | Unique job name (used as queue name) |
-| `pool` | `string` | Custom pool name configured in `jobs.pools` |
-| `input` | `t.*` schema | Input data schema |
-| `output` | `t.*` schema | Final output schema |
-| `progress` | `t.*` schema | Optional user-defined progress state schema |
-| `dependencies` | `Record<string, Injectable>` | DI dependencies for job context |
-| `data` | `(ctx, input, progress) => Data` | Async/sync factory for ephemeral execution context shared across all steps/hooks |
-| `attempts` | `number` | Max retry attempts |
-| `backoff` | `JobBackoffOptions` | Retry strategy: `{ type: 'fixed' | 'exponential', delay: number, jitter?: number }` |
-| `concurrency` | `number` | Max concurrent executions (defaults to pool capacity / jobs) |
-| `timeout` | `number` | Execution timeout in ms |
-| `oneoff` | `boolean` | If true (default), remove job on complete/fail |
-
-### Builder Chain
-
-1. `n.job(options)` — create job
-2. `.step(step, condition?)` — add a linear step (can repeat). Condition: `({context, data, input, result, progress}) => boolean`
-3. `.steps(stepA, stepB, ...rest)` — add a parallel step group (**at least 2 steps**)
-4. `.return(handler?)` — **required** to finalize. Maps accumulated result to output. Handler optional if types already match
-5. `.beforeEach(handler)` / `.afterEach(handler)` — per-step hooks (after `.return()`)
-6. `.onError(handler)` — per-step error hook; return `false` to make error unrecoverable
-
-## `data` Callback (Functionality & Usability)
-
-`data` builds per-run context once, before steps execute, and that value is reused by all steps/hooks in the same run.
+Use job `data` for derived state shared by all steps and hooks in one execution.
+It is recomputed on retry/restart; persist resumable state in `progress`.
 
 ```ts
-data: async (ctx, input, progress) => ({ ... })
-```
+import { job, step, t } from 'nmtjs'
+import { tenantApi } from './injectables.ts'
 
-- Receives decoded `ctx` (job dependencies), `input`, and checkpointed `progress`
-- Available in step handlers (`handler(ctx, stepInput, data)`), conditions, and job hooks/`.return()` via `params.data`
-- Not checkpointed: recomputed on each retry/restart
-
-Use `data` for runtime helpers/shared derived values. Use `progress` + `n.inject.saveJobProgress` for resumable state.
-
-### Example: Shared Context via `data` (manual typing in step)
-
-```ts
-type SyncUsersData = {
-  tenantConfig: Awaited<ReturnType<typeof userApiInjectable.getTenantConfig>>
+type SyncData = {
+  tenant: { id: string }
   startCursor?: string
 }
 
-const syncUsersJob = n.job({
-  name: 'syncUsers',
+const syncPage = step({
+  dependencies: { api: tenantApi },
+  input: t.object({ tenantId: t.string() }),
+  output: t.object({ synced: t.number(), cursor: t.string().optional() }),
+  async handler({ api }, _input, data: SyncData) {
+    const page = await api.listUsers({
+      tenantId: data.tenant.id,
+      cursor: data.startCursor,
+    })
+    return { synced: page.items.length, cursor: page.nextCursor }
+  },
+})
+
+export const syncUsersJob = job({
+  name: 'sync-users',
   pool: 'io',
+  dependencies: { api: tenantApi },
   input: t.object({ tenantId: t.string() }),
   output: t.object({ synced: t.number() }),
   progress: t.object({ cursor: t.string().optional() }),
-  dependencies: { userApi: userApiInjectable },
-  data: async ({ userApi }, input, progress): Promise<SyncUsersData> => {
-    const tenantConfig = await userApi.getTenantConfig(input.tenantId)
+  async data({ api }, input, progress): Promise<SyncData> {
     return {
-      tenantConfig,
+      tenant: await api.getTenant(input.tenantId),
       startCursor: progress.cursor,
     }
   },
 })
-  .step(n.step({
-    label: 'sync-page',
-    input: t.object({ tenantId: t.string() }),
-    output: t.object({ synced: t.number() }),
-    handler: async (_ctx, stepInput, data: SyncUsersData) => {
-      const result = await syncPage(stepInput.tenantId, data.tenantConfig, data.startCursor)
-      return { synced: result.count }
-    },
-  }))
-  .return()
+  .step(syncPage)
+  .return(({ result }) => ({ synced: result.synced }))
 ```
 
-`data` typing in step handlers is manual (annotate the 3rd arg). Steps remain type-safe:
+`data` is passed as the third argument to step handlers and as `params.data` to
+conditions, hooks, and `.return(...)`.
 
-- Step input must satisfy the job's accumulated result at that point (including previous steps)
-- Step `data` type must match the job `data` contract
-- If either is incompatible, TypeScript shows a compile-time error
-
-## Defining Steps
-
-Each step has typed input (from accumulated prior results) and typed output (merged into result for subsequent steps):
+## Steps
 
 ```ts
-const fetchStep = n.step({
-  label: 'fetch-data',
-  input: t.object({ id: t.string() }),
-  output: t.object({ data: t.any() }),
-  dependencies: { db: dbInjectable },
-  handler: async ({ db }, input, data) => {
-    // `data` is the value returned by job `data` callback
-    return { data: await db.find(input.id) }
+import { job, step, t } from 'nmtjs'
+
+const loadImage = step({
+  label: 'load image',
+  input: t.object({ imageId: t.string() }),
+  output: t.object({ path: t.string() }),
+  handler: async (_ctx, input) => ({ path: `/tmp/${input.imageId}` }),
+})
+
+export const resizeImageJob = job({
+  name: 'resize-image',
+  pool: 'media',
+  input: t.object({ imageId: t.string() }),
+  output: t.object({ path: t.string(), width: t.number() }),
+})
+  .step(loadImage)
+  .return(({ result }) => ({ path: result.path, width: 640 }))
+```
+
+Step rules:
+
+- A step receives dependency context, current accumulated input/result, and job
+  data.
+- Each step output is merged into accumulated job result.
+- A later step input must be satisfied by accumulated result.
+- `.step(step, condition?)` makes that step conditional; conditional output is
+  typed as partial.
+- `.steps(stepA, stepB, ...)` adds a parallel group; all steps must be valid for
+  the same accumulated input/data.
+- Parallel siblings observe the same input/result snapshot. Their outputs are
+  merged after the whole group succeeds; overlapping output keys fail the group.
+
+## Runtime Context
+
+Jobs can request runtime-provided injectables:
+
+```ts
+import { inject, job, step, t } from 'nmtjs'
+
+type ProgressData = { progress: { done?: number } }
+
+const report = step({
+  dependencies: {
+    save: inject.saveJobProgress,
+    signal: inject.jobAbortSignal,
+  },
+  input: t.object({ total: t.number() }),
+  output: t.object({ done: t.number() }),
+  async handler({ save, signal }, input, data: ProgressData) {
+    signal.throwIfAborted()
+    data.progress.done = input.total
+    await save()
+    return { done: input.total }
   },
 })
-```
 
-### Conditional Steps
-
-```ts
-myJob
-  .step(fetchStep)
-  .step(optionalStep, ({ result }) => result.needsProcessing === true)
+export const progressJob = job({
+  name: 'progress',
+  pool: 'default',
+  input: t.object({ total: t.number() }),
+  output: t.object({ done: t.number() }),
+  progress: t.object({ done: t.number().optional() }),
+  data: (_ctx, _input, progress): ProgressData => ({ progress }),
+})
+  .step(report)
   .return()
 ```
 
-## Parallel Step Groups (`.steps`)
+Available job injectables:
 
-Use `.steps(...)` when independent steps can run in parallel against the same input snapshot.
+- `inject.jobManager` - public queue manager for enqueue/status/retry/cancel.
+- `inject.jobWorkerPool` - current worker pool name inside job workers.
+- `inject.jobAbortSignal` - abort signal for current running job.
+- `inject.saveJobProgress` - persist current progress checkpoint.
+- `inject.currentJobInfo` - current job execution metadata.
+
+## Progress And Retry
+
+Jobs checkpoint after every completed step. A checkpoint contains next step
+index, step results, accumulated result, and user progress. `saveJobProgress`
+persists the current checkpoint from inside a long-running step.
+
+Retry behavior:
+
+- `retry(job, id, { clearState: false })` resumes from the stored checkpoint.
+- `retry(job, id, { clearState: true })` clears progress and reruns from step
+  zero.
+- Failed jobs default to resume; completed jobs default to rerun.
+- `onError(...)` may return `false` to mark the failure unrecoverable.
+
+## Hooks
+
+Job builder hooks run inside the job worker:
 
 ```ts
-const job = n
-  .job({
-    name: 'parallel-example',
-    pool: 'io',
-    input: t.object({ id: t.string() }),
-    output: t.object({ left: t.number(), right: t.number(), total: t.number() }),
+import { inject, job, t } from 'nmtjs'
+
+export const auditedJob = job({
+  name: 'audited',
+  pool: 'default',
+  input: t.object({ message: t.string() }),
+  output: t.object({ ok: t.boolean() }),
+  dependencies: { logger: inject.logger },
+})
+  .return(() => ({ ok: true }))
+  .beforeEach(({ context, step }) => {
+    context.logger.info({ step: step.label }, 'job step starting')
   })
-  .steps(
-    n.step({
-      input: t.object({ id: t.string() }),
-      output: t.object({ left: t.number() }),
-      handler: async () => ({ left: 1 }),
-    }),
-    n.step({
-      input: t.object({ id: t.string() }),
-      output: t.object({ right: t.number() }),
-      handler: async () => ({ right: 2 }),
-    }),
-  )
-  .step(n.step({
-    input: t.object({ id: t.string(), left: t.number(), right: t.number() }),
-    output: t.object({ total: t.number() }),
-    handler: async (_, input) => ({ total: input.left + input.right }),
-  }))
-  .return()
+  .afterEach(({ context, result }) => {
+    context.logger.info({ result }, 'job step completed')
+  })
+  .onError(({ context, error }) => {
+    context.logger.error({ err: error }, 'job step failed')
+  })
 ```
 
-Notes:
-- All parallel siblings observe the same pre-group result snapshot.
-- Sibling outputs are merged after the whole group settles.
-- If any sibling throws, the group fails.
-- If siblings produce overlapping keys, the group fails with a key-conflict error.
+Use `dependencies` on the job or step when hooks need services. Request
+`inject.logger` explicitly; logger is not magic context.
 
-## Enqueuing Jobs from Procedures
-
-Use the `jobManager` injectable to add jobs from RPC handlers:
+Runtime lifecycle hooks live in jobs runtime config:
 
 ```ts
-import { n, t } from 'nmtjs'
+export const jobsConfig = defineJobs({
+  client: createJobsClient,
+  pools: { default: { threads: 2, jobs: 4 } },
+  jobs: () => [echoJob],
+  hooks: () => ({
+    added: (event) => audit(event),
+    updated: (event) => audit(event),
+    removed: (event) => audit(event),
+  }),
+})
+```
 
-const startJobProcedure = n.procedure({
-  dependencies: { jobManager: n.inject.jobManager },
-  input: t.object({ userId: t.string() }),
-  output: t.object({ jobId: t.string() }),
-  handler: async ({ jobManager }, input) => {
-    const result = await jobManager.add(processUserJob, {
-      userId: input.userId,
+## Enqueue From RPC
+
+```ts
+import { inject, procedure, t } from 'nmtjs'
+
+export const enqueueEcho = procedure({
+  dependencies: { jobs: inject.jobManager },
+  input: t.object({ message: t.string() }),
+  output: t.object({ id: t.string(), result: echoJob.output }),
+  async handler({ jobs }, input) {
+    const queued = await jobs.add(echoJob, input, {
+      attempts: 2,
+      backoff: { type: 'fixed', delay: 1000 },
     })
-    return { jobId: result.id }
+
+    return { id: queued.id, result: await queued.waitResult() }
   },
 })
 ```
 
-### Job Manager API (`n.inject.jobManager`)
+`jobs.add(job, data, options)` returns `{ id, name, waitResult() }` typed to the
+job output. Manager methods also include `list`, `get`, `getInfo`, `retry`,
+`cancel`, and `remove`.
 
-| Method | Description |
-|---|---|
-| `add(job, data, options?)` | Enqueue a job. Returns `QueueJobResult` with `.id` and `.waitResult()` |
-| `list(job, options?)` | Paginated listing. Options: `{ page?, limit?, status?[] }` |
-| `get(job, id)` | Get a single job by ID |
-| `getInfo(job)` | Get job definition info (name, steps with labels, conditional, parallel) |
-| `retry(job, id, options?)` | Retry a job. `{ clearState?: boolean }` — clear checkpoint or resume |
-| `cancel(job, id)` | Cancel a waiting or active job |
-| `remove(job, id)` | Remove a job from the queue |
+Add options:
 
-### Retry Semantics (`retry`)
+- `jobId`, `priority`, and `delay` control queue identity and scheduling.
+- `attempts`, `backoff`, and `oneoff` override job-level retry/retention.
+- `forceMissingWorkers` allows enqueue before any worker is attached.
 
-- `retry(job, id, { clearState: false })`: resumes from persisted checkpoint/progress when available.
-- `retry(job, id, { clearState: true })`: clears progress and reruns from step 0.
-- If `clearState` is omitted:
-  - failed jobs default to resume (`false`)
-  - completed jobs default to rerun (`true`)
-- Missing job IDs reject.
-- Retrying non-retriable states (for example active jobs) rejects.
+## Job Router
 
-For parallel key-conflict failures, behavior depends on `clearState`:
-- `clearState: false` can complete by reusing previously persisted step outputs.
-- `clearState: true` reruns conflicting siblings and fails again unless the conflict is removed.
-
-### Add Options
+Use `jobRouter(...)` when the API should expose standard operations for jobs:
 
 ```ts
-jobManager.add(myJob, data, {
-  jobId: 'custom-id',       // custom job ID
-  priority: 1,              // higher = processed first
-  delay: 5000,              // delay before processing (ms)
-  attempts: 5,              // override job-level attempts
-  backoff: { type: 'fixed', delay: 2000 },
-  oneoff: false,            // keep job after completion
-  forceMissingWorkers: true, // enqueue even if no workers running
-})
-```
+import { jobOperation, jobRouter, rootRouter, router } from 'nmtjs'
 
-### Waiting for Result
-
-```ts
-const queueResult = await jobManager.add(myJob, { userId: '123' })
-const output = await queueResult.waitResult() // typed as job's output
-```
-
-## Job Injectables
-
-These are available inside job step handlers and job hooks:
-
-| Injectable | Scope | Type | Description |
-|---|---|---|---|
-| `n.inject.jobManager` | Global | `JobManagerInstance` | Enqueue/list/cancel jobs |
-| `n.inject.jobAbortSignal` | Global | `AbortSignal` | Cancellation signal for current job |
-| `n.inject.saveJobProgress` | Global | `() => Promise<void>` | Manually persist progress mid-step |
-| `n.inject.currentJobInfo` | Global | `JobExecutionContext` | Current job metadata (name, id, attempts) |
-| `n.inject.jobWorkerPool` | Global | `string` | Current worker's pool name |
-
-### Saving Progress Mid-Step
-
-For long-running steps, persist progress to allow resumption on failure:
-
-```ts
-const longStep = n.step({
-  dependencies: { saveProgress: n.inject.saveJobProgress },
-  input: t.object({ items: t.array(t.string()) }),
-  output: t.object({ processed: t.number() }),
-  handler: async ({ saveProgress }, { items }) => {
-    for (const item of items) {
-      await processItem(item)
-      await saveProgress() // checkpoint persisted to Redis
-    }
-    return { processed: items.length }
-  },
-})
-```
-
-### Handling Cancellation
-
-```ts
-const cancellableStep = n.step({
-  dependencies: { signal: n.inject.jobAbortSignal },
-  input: t.object({}),
-  output: t.object({ done: t.boolean() }),
-  handler: async ({ signal }, input) => {
-    while (!signal.aborted) {
-      await doWork()
-    }
-    return { done: !signal.aborted }
-  },
-})
-```
-
-## Job Router (Management API)
-
-Expose job CRUD operations as RPC procedures:
-
-```ts
-import { n } from 'nmtjs'
-
-const jobManagementRouter = n.jobRouter({
-  jobs: { processUser: processUserJob },
-  guards: [adminGuard],
-})
-
-// Generates nested router:
-// processUser/info, processUser/list, processUser/get,
-// processUser/add, processUser/retry, processUser/cancel, processUser/remove
-
-export const router = n.rootRouter([appRouter, jobManagementRouter] as const)
-```
-
-`n.jobRouter(...)` also accepts `meta`, which registers router-level metadata for
-all generated job management routes.
-
-### Customizing Operations
-
-Disable or customize individual operations per job:
-
-```ts
-const jobManagementRouter = n.jobRouter({
-  jobs: { processUser: processUserJob },
-  defaults: {
-    remove: false,  // disable remove for all jobs
-  },
+const jobs = jobRouter({
+  jobs: { echo: echoJob },
+  defaults: { remove: false },
   overrides: {
-    processUser: {
-      add: n.jobRouterOperation({
-        guards: [specificGuard],
-        // beforeAdd / afterAdd hooks available
+    echo: {
+      add: jobOperation({
+        beforeAdd: async (_ctx, input) => input,
+        afterAdd: async (_ctx, result) => {
+          await audit({ queued: result.id })
+        },
       }),
-      cancel: false,  // disable cancel for this job
+      cancel: false,
     },
   },
 })
+
+export const api = rootRouter([
+  router({
+    routes: { jobs },
+  }),
+] as const)
 ```
 
-### Job Router Metadata
+Operations per job: `info`, `list`, `get`, `add`, `retry`, `cancel`, `remove`.
+Each operation can have guards, middlewares, meta, timeout, and operation hooks.
+Set an operation to `false` to disable it.
 
-Both `n.jobRouter(...)` and `n.jobRouterOperation(...)` accept `meta` arrays.
+## App Plugin
+
+Use `jobsPlugin(...)` when the Neemata app process needs a `jobManager`, for
+example to enqueue jobs from RPC:
 
 ```ts
-import { MetadataKind, n } from 'nmtjs'
+import { app, jobsPlugin } from 'nmtjs'
 
-const jobsArea = n.meta<string, MetadataKind.STATIC>()
-const addDataMeta = n.meta<{ userId: string }>()
-
-const jobManagementRouter = n.jobRouter({
-  jobs: { processUser: processUserJob },
-  meta: [jobsArea.static('jobs')],
-  overrides: {
-    processUser: {
-      add: n.jobRouterOperation({
-        meta: [
-          addDataMeta.factory({
-            phase: 'afterDecode',
-            resolve: (_ctx, _call, input) => input.data,
-          }),
-        ],
-      }),
-    },
-  },
+export default app({
+  router: api,
+  plugins: [
+    jobsPlugin({
+      client: createJobsClient,
+      jobs: [echoJob, resizeImageJob],
+    }),
+  ],
 })
 ```
 
-- `n.jobRouter({ meta })` applies router-level metadata to every generated job route.
-- `n.jobRouterOperation({ meta })` applies procedure-level metadata to a single generated operation.
-- In `defaults` + per-job `overrides`, `meta` arrays are concatenated the same way as guards and middlewares.
+The plugin creates queues, provides `inject.jobManager`, and closes the jobs
+client during application dispose. It does not run worker pools; workers belong
+to the jobs Neem runtime.
 
-## Server Configuration
+## Neem Runtime
 
-Jobs require a store and pool configuration in `n.server()`:
+Jobs runtime helpers are package-owned and stay on `@nmtjs/jobs/neem`:
 
 ```ts
-import { n, StoreType } from 'nmtjs'
+// config.ts
+import { defineJobs } from '@nmtjs/jobs/neem'
 
-export default n.server({
-  store: {
-    type: StoreType.Redis,
-    options: { host: '127.0.0.1', port: 6379 },
+export const jobsConfig = defineJobs({
+  client: createJobsClient,
+  pools: {
+    default: { threads: 2, jobs: 4 },
+    media: { threads: 1, jobs: 1 },
   },
-  jobs: {
-    pools: {
-      io: { threads: 2, jobs: 5 },
-      compute: { threads: 1, jobs: 2 },
-    },
-    jobs: [processUserJob],
-  },
-  // ...
+  jobs: () => [echoJob, resizeImageJob],
 })
 ```
 
-### Pool Configuration
+```ts
+// neem.runtime.ts
+import { createJobsRuntime } from '@nmtjs/jobs/neem'
 
-Pool names are application-defined strings. Use separate pools to isolate workloads
-with different capacity and latency requirements.
+const defineRuntime = createJobsRuntime()
 
-Each pool gets `threads` worker threads. `jobs` is the number of concurrent jobs per thread.
+export default defineRuntime({
+  name: 'jobs',
+  planner: './neem.planner.ts',
+  worker: { entry: './neem.worker.ts' },
+})
+```
 
-### Progress & Checkpoints
+```ts
+// neem.planner.ts
+import { defineJobsPlanner } from '@nmtjs/jobs/neem'
 
-Jobs automatically checkpoint after each step. On failure and retry:
-- If `clearState: true` — reruns from the beginning
-- If `clearState: false` (default for failed jobs) — resumes from the last completed step
+import { jobsConfig } from './config.ts'
 
-For completed jobs, `retry` defaults to `clearState: true` (rerun).
+export default defineJobsPlanner(() => jobsConfig)
+```
+
+```ts
+// neem.worker.ts
+import { defineJobsWorker } from '@nmtjs/jobs/neem'
+
+import { jobsConfig } from './config.ts'
+
+export default defineJobsWorker(jobsConfig)
+```
+
+Runtime rules:
+
+- `createJobsRuntime()` contributes the package-owned jobs host entry.
+- App runtime declaration owns `name`, `planner`, and `worker.entry`.
+- `defineJobsPlanner(...)` plans one worker group per configured pool.
+- `defineJobsWorker(...)` defines worker-side job execution.
+- Planner/worker entries are import specifiers and separate artifacts; do not
+  import entry modules into each other.

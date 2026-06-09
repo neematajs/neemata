@@ -1,555 +1,122 @@
----
-title: API Quick Reference
-description: Function signatures and available options for the Neemata n.*, t.*, and
-  c.* APIs.
----
+# API Reference
 
-# API Quick Reference
-
-## `n.*` Namespace (from `nmtjs`)
-
-All builder functions are available via the `n` namespace (or `neemata`).
-
-### `n.procedure(options)`
-
-Create a standalone RPC procedure (auto-generates contract from input/output).
+`nmtjs` is the end-user import surface for Neemata server/application code.
+Prefer named imports from `nmtjs` over direct leaf packages when the symbol is
+exported here.
 
 ```ts
-n.procedure({
-  input: TType,              // t.* type schema for input validation
-  output: TType,             // t.* type schema for output serialization/validation
-  stream?: true | number,    // true for streaming, or number for explicit stream timeout in ms
-  dependencies?: Record<string, Injectable>,
-  guards?: Guard[],
-  middlewares?: Middleware[],
-  meta?: MetaBinding[],
-  handler: (deps, input) => output | AsyncIterable<output>,
-})
+import {
+  app,
+  ApiError,
+  blobType,
+  c,
+  ConnectionType,
+  contractProcedure,
+  contractRouter,
+  CoreInjectables,
+  ErrorCode,
+  EventingInjectables,
+  eventingPlugin,
+  factory,
+  filter,
+  GatewayInjectables,
+  GatewayHook,
+  guard,
+  hook,
+  host,
+  implementRouter,
+  implementSubscription,
+  inject,
+  job,
+  JobInjectables,
+  jobOperation,
+  jobRouter,
+  jobsPlugin,
+  lazy,
+  LifecycleHook,
+  logging,
+  MetadataKind,
+  meta,
+  middleware,
+  optional,
+  plugin,
+  procedure,
+  ProtocolBlob,
+  ProxyableTransportType,
+  PubSubInjectables,
+  pubsubPlugin,
+  rootRouter,
+  router,
+  Scope,
+  step,
+  t,
+  transport,
+  value,
+  type ConnectionIdentityType,
+} from 'nmtjs'
 ```
 
-Attach `n.config.static({ serializeOutput: false })` in `meta` to skip
-runtime output serialization/validation for selected procedures or routers while
-keeping the output schema for static typing.
-
-### `n.contractProcedure(contract, options)`
-
-Implement a pre-defined contract.
-
-```ts
-n.contractProcedure(contractProcedure, {
-  dependencies?: Record<string, Injectable>,
-  guards?: Guard[],
-  middlewares?: Middleware[],
-  meta?: MetaBinding[],
-  handler: (deps, input) => output,
-})
-```
-
-### `n.router(options)`
-
-Group procedures and nested routers.
-
-```ts
-n.router({
-  name?: string,             // initial contract name; route keys win when composed
-  routes: Record<string, Procedure | Router>,
-  guards?: Guard[],
-  middlewares?: Middleware[],
-  meta?: MetaBinding[],
-  timeout?: number,          // per-procedure timeout in ms
-})
-```
-
-Route keys become RPC path segments. Nested procedures are exposed as slash
-paths, for example `users/profile`, and as nested client methods, for example
-`client.call.users.profile(...)`. Router `name` is not a root mount path;
-`n.rootRouter()` merges route keys and rebuilds child contract names from those
-keys.
-
-### `n.contractRouter(contract, options)`
-
-Implement a contract-defined router.
-
-```ts
-n.contractRouter(routerContract, {
-  routes: Record<string, Procedure | Router>,
-  guards?: Guard[],
-  middlewares?: Middleware[],
-  meta?: MetaBinding[],
-  timeout?: number,
-})
-```
-
-The `routes` object must match the contract route keys exactly. Nested router
-contracts require nested router implementations; procedure contracts require
-matching procedure implementations.
-
-### `n.rootRouter(routers, defaultProcedure?)`
-
-Merge multiple routers into the root router for an application.
-
-```ts
-n.rootRouter(
-  [router1, router2, ...] as const,
-  defaultProcedure?,  // optional root fallback for unknown procedure names
-)
-```
-
-Root router has no path prefix. It merges top-level route keys from all provided
-routers; avoid duplicate top-level keys because later routers overwrite earlier
-routes during merge.
-
-### `n.guard(options | canFn)`
-
-Access control guard.
-
-```ts
-// With dependencies
-n.guard({
-  dependencies?: Record<string, Injectable>,
-  can: (deps, call) => boolean | Promise<boolean>,
-})
-
-// Shorthand (no deps)
-n.guard((ctx, call) => boolean)
-```
-
-- `call.payload` is available inside guards and contains the decoded input payload when the procedure/router defines an `input` schema.
-- `n.guard(...)` is untyped for payloads by default, so `call.payload` is `unknown` unless you narrow it manually.
-- For reusable, typed decoded-input data, prefer `n.meta(...).factory({ phase: 'afterDecode' })` and inject that metadata into guards/handlers.
-
-### `n.middleware(options | handleFn)`
-
-Request pipeline middleware operating on the raw request payload before input
-decoding and guards.
-
-```ts
-// With dependencies
-n.middleware({
-  dependencies?: Record<string, Injectable>,
-  handle: (deps, call, next, payload) => Promise<result>,
-})
-
-// Shorthand
-n.middleware(async (ctx, call, next, payload) => next(payload))
-```
-
-- `payload` is the raw request payload, not the decoded guard/handler input.
-- `next()` forwards the current raw payload unchanged.
-- `next(payload)` forwards or replaces the raw payload for downstream middleware
-  and the eventual decode step.
-- Use guards when you need decoded `call.payload`.
-
-### `n.meta<Value, Kind>()`
-
-Create a call-scoped metadata token.
-
-```ts
-const auditTag = n.meta<string, MetadataKind.STATIC>()
-const decodedAccess = n.meta<{ scope: string; createdAt: Date }>()
-
-auditTag.static('admin')
-
-decodedAccess.factory({
-  phase: 'afterDecode',
-  resolve: (_deps, _call, input) => input,
-})
-```
-
-- Static bindings can be attached to `n.app({ meta })`, `n.router({ meta })`, `n.procedure({ meta })`, and `n.jobRouter({ meta })`.
-- Factory bindings run per call.
-- `phase: 'beforeDecode'` receives raw `payload: unknown`.
-- `phase: 'afterDecode'` receives the decoded input type at the definition site.
-- Meta tokens are injectables, so they can be used in `dependencies`.
-
-### `n.config.static(value)`
-
-First-party runtime configuration metadata. Attach it through the existing
-`meta` arrays on applications, routers, or procedures. Narrower scopes override
-wider scopes.
-
-```ts
-n.config.static({
-  serializeOutput?: boolean, // default: true
-})
-```
-
-Set `serializeOutput: false` to skip runtime `output` schema serialization and
-validation for procedure responses or stream chunks. The schema still contributes
-static types, but the handler becomes responsible for returning values that the
-selected transport/client can consume.
-
-### `n.filter(options)`
-
-Error filter — catches specific error types and transforms them.
-
-```ts
-n.filter({
-  errorClass: ErrorConstructor,
-  dependencies?: Record<string, Injectable>,
-  catch: (deps, error) => ApiError,
-})
-```
-
-### `n.hook(options)`
-
-Named hook handler.
-
-```ts
-n.hook({
-  name: string,              // hook name (e.g., GatewayHook.Connect)
-  dependencies?: Record<string, Injectable>,
-  handler: (deps, ...args) => any,
-})
-```
-
-### `n.plugin(options)`
-
-Plugin with lifecycle hooks and injections.
-
-```ts
-n.plugin({
-  name: string,
-  hooks?: Hook[],
-  injections?: Injection[],
-})
-```
-
-### `n.app(options)` — `defineApplication`
-
-Define an application module.
-
-```ts
-n.app({
-  router: RootRouter,                           // Required
-  transports?: Record<string, TransportClass>,   // e.g., { ws: WsTransport, http: HttpTransport }
-  guards?: Guard[],
-  middlewares?: Middleware[],
-  meta?: MetaBinding[],
-  filters?: Filter[],
-  plugins?: Plugin[],
-  hooks?: Hook[],
-  identity?: ConnectionIdentity,
-  api?: { timeout?: number },
-})
-```
-
-### `n.server(options)` — `defineServer`
-
-Define the server configuration.
-
-```ts
-n.server({
-  logger: { pinoOptions: PinoOptions },
-  applications: {
-    [appName]: {
-      threads: Array<{
-        ws?: { listen: { port: number, hostname?: string } },
-        http?: { listen: { port: number, hostname?: string } },
-      }>,
-    },
-  },
-  store?: { type: StoreType, options: RedisOptions },
-  proxy?: {
-    port: number,
-    hostname?: string,
-    applications: Record<string, { routing: RoutingConfig }>,
-    tls?: TlsConfig,
-  },
-  jobs?: {
-    pools: Record<string, PoolConfig>,
-    jobs?: Job[],
-  },
-  metrics?: { port?: number, path?: string },
-})
-```
-
-### `n.transport(config)`
-
-Create a transport definition.
-
-```ts
-n.transport({
-  factory: TransportClass,
-  injectables?: Record<string, Injectable>,
-  proxyable?: { type: ProxyableTransportType },
-})
-```
-
-### Dependency Injection Builders
-
-```ts
-n.value(staticValue)                     // ValueInjectable — wraps a static value
-n.lazy<T>(scope?)                        // LazyInjectable — token for late-bound values
-n.factory({                              // FactoryInjectable — created via factory function
-  dependencies?: Record<string, Injectable>,
-  scope?: Scope,                         // Default: Scope.Global
-  factory: (deps) => instance,
-  dispose?: (instance) => void,
-})
-```
-
-### `n.inject` (recommended) / `n.injectables` (deprecated)
-
-Built-in injectables include logger, DI helpers, connection context, RPC
-cancellation signals, and blob helpers.
-
-For the complete table with scope, types, behavior, and usage guidance, see
-[Injectables Reference](injectables.md).
-
-### Metrics
-
-```ts
-n.metrics.counter({ name, help, labelNames? })
-n.metrics.gauge({ name, help, labelNames? })
-n.metrics.histogram({ name, help, labelNames?, buckets? })
-n.metrics.summary({ name, help, labelNames?, percentiles? })
-```
-
-### Jobs
-
-```ts
-n.job({
-  name: string,
-  steps: Step[],
-  retry?: { attempts: number, backoff?: BackoffConfig },
-})
-
-n.step({
-  input: TType,
-  output?: TType,
-  dependencies?: Record<string, Injectable>,
-  handler: (deps, input) => output,
-})
-
-n.jobRouter({
-  jobs: Record<string, Job>,
-  guards?: Guard[],
-  middlewares?: Middleware[],
-  meta?: MetaBinding[],
-  defaults?: JobRouterDefaults,
-  overrides?: JobRouterOverrides,
-})
-
-n.jobRouterOperation({
-  dependencies?: Record<string, Injectable>,
-  guards?: Guard[],
-  middlewares?: Middleware[],
-  meta?: MetaBinding[],
-  timeout?: number,
-  // operation-specific hooks: beforeAdd/afterAdd, beforeRetry/afterRetry, etc.
-})
-```
-
----
-
-## `c.*` Namespace (Contract)
-
-### `c.procedure(options)`
-
-```ts
-c.procedure({
-  name?: string,             // standalone name; router path overrides when mounted
-  input?: TType,             // defaults to t.never()
-  output?: TType,            // defaults to t.never()
-  stream?: true,             // marks procedure as client.stream RPC
-  timeout?: number,
-})
-```
-
-Use `n.procedure({ stream: 5_000 })` for timed stream implementations. The
-public contract stores timed streams as `stream: true`; the numeric timeout is
-runtime procedure behavior.
-
-### `c.router(options)`
-
-```ts
-c.router({
-  name?: string,             // optional path prefix for child routes
-  routes: Record<string, ProcedureContract | RouterContract>,
-  timeout?: number,
-})
-```
-
-Route keys become path segments. Child procedure and router `name` values are
-computed from parent path plus route key. Example: `name: 'admin'`, route
-`audit`, nested route `feed` becomes `admin/audit/feed`.
-
-### `c.event(options?)`
-
-```ts
-c.event({
-  payload?: TType,
-})
-```
-
-### `c.subscription(options)`
-
-```ts
-c.subscription({
-  events: Record<string, EventContract>,
-})
-```
-
-### `c.blob()`
-
-Marker type for blob fields in input/output schemas.
-
-```ts
-// In input — client sends a ProtocolBlob/blob created by client.createBlob(),
-//            server receives a blob marker and calls n.inject.consumeBlob to read it
-// In output — server returns a blob via n.inject.createBlob,
-//             client receives a blob marker and calls client.consumeBlob(blob)
-```
-
----
-
-## `t.*` Namespace (Type System)
-
-Type schemas for RPC validation and protocol serialization.
-
-Neemata types are **bidirectional**:
-
-- **decode**: wire format → app values (e.g. ISO string → `Date`)
-- **encode**: app values → wire format (e.g. `Date` → ISO string)
-
-For full details (including Standard Schema support), see [Type System](type-system.md).
-
-### Primitives
-
-```ts
-t.string()      // Chainable: .min(n), .max(n), .email(), .url(), .uuid(), .pattern(...)
-t.number()      // Chainable: .positive(), .negative(), .gt(n), .gte(n), .lt(n), .lte(n)
-t.integer()
-t.bigInt()      // bigint → string (wire)
-t.boolean()
-t.null()
-t.any()
-t.never()
-```
-
-### Composites
-
-```ts
-t.object({ key: t.string(), age: t.number() })
-t.array(t.string())           // Chainable: .min(n), .max(n), .length(n)
-t.tuple([t.string(), t.number()])
-t.enum(['a', 'b', 'c'])
-t.union(t.string(), t.number())
-t.literal('hello')
-```
-
-### Special Types
-
-```ts
-t.date()                       // Date ↔ ISO string (auto encode/decode in protocol)
-t.custom({ decode, encode })   // Custom bidirectional transform
-```
-
-### Modifiers (chainable on any type)
-
-```ts
-.optional()         // T | undefined
-.nullable()         // T | null
-.nullish()          // T | null | undefined
-.default(value)     // Default value
-.title('Name')
-.description('...')
-.examples(a, b, c)
-.meta({...})
-```
-
-### Type Inference
-
-```ts
-// Decode/encode modes
-type DecodeInput = t.infer.decode.input<typeof myType>
-type DecodeOutput = t.infer.decode.output<typeof myType>
-type EncodeInput = t.infer.encode.input<typeof myType>
-type EncodeOutput = t.infer.encode.output<typeof myType>
-```
-
-### Standard Schema (quick)
-
-```ts
-// Standard Schema v1 (defaults to decode mode)
-myType['~standard']
-
-// Explicit modes
-myType.standard.decode['~standard']
-myType.standard.encode['~standard']
-```
-
----
-
-## Enums & Classes
-
-### `Scope`
-
-```ts
-Scope.Global       // Singleton
-Scope.Connection   // Per connection
-Scope.Call         // Per RPC call
-Scope.Transient    // New every injection
-```
-
-### `MetadataKind`
-
-```ts
-MetadataKind.STATIC     // Token supports `.static(...)` only
-MetadataKind.FACTORY    // Internal enum value used by metadata bindings
-```
-
-### `ErrorCode`
-
-```ts
-ErrorCode.ValidationError
-ErrorCode.BadRequest
-ErrorCode.NotFound
-ErrorCode.Forbidden
-ErrorCode.Unauthorized
-ErrorCode.InternalServerError
-ErrorCode.NotAcceptable
-ErrorCode.RequestTimeout
-ErrorCode.GatewayTimeout
-ErrorCode.ServiceUnavailable
-ErrorCode.ClientRequestError
-ErrorCode.ConnectionError
-```
-
-### `ApiError`
-
-```ts
-new ApiError(code: ErrorCode, message: string, data?: any)
-```
-
-### `ProtocolBlob`
-
-```ts
-ProtocolBlob.from(source, metadata?, encode?)
-// source: ReadableStream | File | Blob | string | ArrayBuffer | Uint8Array
-// metadata: { type?: string, size?: number, filename?: string }
-```
-
-### `ConnectionType`
-
-```ts
-ConnectionType.Bidirectional    // WebSocket — full duplex
-ConnectionType.Unidirectional   // HTTP — request/response
-```
-
-### `GatewayHook`
-
-```ts
-GatewayHook.Connect       // Fired on new connection
-GatewayHook.Disconnect    // Fired on disconnect
-```
-
-### `LifecycleHook`
-
-```ts
-LifecycleHook.BeforeInitialize
-LifecycleHook.AfterInitialize
-LifecycleHook.BeforeDispose
-LifecycleHook.AfterDispose
+## Import Rules
+
+- Use `nmtjs` for app definitions, procedures, routers, contracts via `c`,
+  schemas via `t`, DI, built-in injectables via `inject`, jobs, eventing/pubsub
+  plugins, protocol enums/classes exported above.
+- Use direct package subpaths for clients, transports, formats, adapters, and
+  runtime helpers: `@nmtjs/client`, `@nmtjs/http-transport/node`,
+  `@nmtjs/application/neem/runtime`, `@nmtjs/jobs/neem`,
+  `@nmtjs/eventing/redis`, etc.
+- Avoid direct `@nmtjs/core`, `@nmtjs/type`, `@nmtjs/contract`,
+  `@nmtjs/pubsub`, or `@nmtjs/eventing` imports in end-user examples when
+  `nmtjs` exposes the same symbol.
+
+## Common Builders
+
+- `procedure(options | handler)` - define procedure and infer contract.
+- `contractProcedure(contract, options | handler)` - implement procedure
+  contract.
+- `implementRouter(contract)` - callable contract implementation builder.
+- `router({ routes, guards?, middlewares?, meta?, timeout? })` - group routes.
+- `contractRouter(contract, { routes, ... })` - implement router contract.
+- `rootRouter([routerA, routerB], defaultProcedure?)` - compose root API.
+- `app({ router, guards?, middlewares?, filters?, plugins?, hooks?, meta? })` -
+  pure application definition.
+- `host(application, { transports })` - bind app to serving surfaces.
+- `transport({ factory, injectables?, proxyable? })` - describe transport.
+
+## Contracts And Types
+
+- `t` - schema builders with decode and encode modes.
+- `c.procedure(...)`, `c.router(...)`, `c.event(...)`,
+  `c.subscription(...)` - public API contracts.
+- `blobType()` - protocol blob marker type for input/output schemas.
+- `ProtocolBlob`, `ConnectionType`, `ErrorCode` - protocol helpers.
+
+## DI And Metadata
+
+- `value(value)` - static injectable.
+- `lazy(scope, label?)` - late-provided token.
+- `optional(lazyToken)` - marks a lazy dependency as optional.
+- `factory({ scope?, dependencies?, create, dispose?, pick? })` - scoped
+  factory.
+- `inject` - merged built-ins: core, gateway, jobs, eventing, pubsub.
+- `CoreInjectables`, `GatewayInjectables`, etc. are still exported, but prefer
+  `inject.*` in application examples unless a package API specifically asks for
+  the namespace.
+- `Scope` - `Global`, `Connection`, `Call`, `Transient`.
+- `meta()` and `MetadataKind` - typed metadata tokens and static constraints.
+
+## Jobs, Eventing, PubSub
+
+- `job(...)`, `step(...)`, `jobRouter(...)`, `jobOperation(...)`,
+  `jobsPlugin(...)`.
+- `implementSubscription(...)`, `eventingPlugin(...)`.
+- `pubsubPlugin(...)`, plus `inject.publish` and `inject.subscribe`.
+
+## Source Lookup
+
+When docs and types disagree, trust current source:
+
+```bash
+rg "export .*symbol|symbol" packages/nmtjs/src packages/*/src
+rg "function createProcedure|export function implement" packages/application/src
 ```

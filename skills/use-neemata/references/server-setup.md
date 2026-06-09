@@ -1,102 +1,80 @@
----
-title: Server Setup
-description: Application definition, server configuration, neemata.config.ts, and
-  project structure patterns.
----
+# Application Setup
 
-# Server Setup
+Application code is pure Neemata. Runtime/process orchestration belongs to Neem
+runtime files.
 
-## Neemata Config (neemata.config.ts)
-
-The config file defines application entry points and the server path:
+## Application And Host
 
 ```ts
-import { defineConfig } from 'nmtjs/config'
-
-export default defineConfig({
-  applications: {
-    main: {
-      specifier: './src/applications/main/index.ts',
-      type: 'neemata',
-    },
-  },
-  serverPath: './src/index.ts',
-  externalDependencies: 'prod',
-})
-```
-
-## Application Definition
-
-Each application defines its transports, router, and optional guards, middleware, and metadata:
-
-```ts
+import { app, eventingPlugin, host, jobsPlugin, pubsubPlugin } from 'nmtjs'
 import { HttpTransport } from '@nmtjs/http-transport/node'
-import { WsTransport } from '@nmtjs/ws-transport/node'
-import { MetadataKind, n } from 'nmtjs'
 
-import { router } from './router.ts'
-import { authGuard } from './guards/auth.ts'
-import { loggingMiddleware } from './middleware/logging.ts'
+import { api } from './router.ts'
 
-const appArea = n.meta<string, MetadataKind.STATIC>()
+export const application = app({
+  router: api,
+  plugins: [
+    eventingPlugin({ adapter: () => createEventingAdapter() }),
+    pubsubPlugin({ adapter: createPubSubAdapter() }),
+    jobsPlugin({ client: createJobsClient, jobs: Object.values(jobs) }),
+  ],
+})
 
-export default n.app({
-  transports: { ws: WsTransport, http: HttpTransport },
-  router,
-  guards: [authGuard],
-  middlewares: [loggingMiddleware],
-  meta: [appArea.static('main')],
+export default host(application, {
+  transports: { http: HttpTransport },
 })
 ```
 
-Application-level static metadata is merged with router and procedure metadata.
-Transports can inspect the merged static metadata during resolve before the call executes.
+Rules:
 
-## Server Configuration
+- `app(...)` defines router, guards, middleware, filters, hooks, plugins, and
+  metadata. It should not own listen ports or runtime thread counts.
+- `host(app, { transports })` binds the app to transport factories.
+- Transport packages stay direct imports because they are separate runtime
+  dependencies.
+- App-level static metadata merges with router and procedure metadata.
 
-The server entry point orchestrates workers, proxy, store, and metrics:
+## Neemata Runtime Files
+
+Package runtime helper imports stay on `@nmtjs/application/neem/*` subpaths.
+Generic shape:
 
 ```ts
-import { n } from 'nmtjs'
+// neem.runtime.ts
+import { createNeemataRuntime } from '@nmtjs/application/neem/runtime'
 
-export default n.server({
-  logger: { pinoOptions: { level: 'info' } },
-  applications: {
-    main: {
-      threads: [
-        {
-          ws: { listen: { port: 3001, hostname: '127.0.0.1' } },
-          http: { listen: { port: 3002, hostname: '127.0.0.1' } },
-        },
-      ],
-    },
-  },
-  proxy: {
-    port: 4000,
-    hostname: '127.0.0.1',
-    applications: {
-      main: { routing: { default: true } },
-    },
-  },
+const defineRuntime = createNeemataRuntime({ application: './api.ts' })
+
+export default defineRuntime({
+  name: 'neemata',
+  planner: './neem.planner.ts',
 })
 ```
 
-## Project Structure
+```ts
+// neem.planner.ts
+import { defineNeemataPlanner } from '@nmtjs/application/neem/planner'
 
-A typical Neemata project follows this layout:
+export default defineNeemataPlanner(() => ({
+  instances: 2,
+  transports: {
+    http: { listen: { hostname: '127.0.0.1', port: 0 } },
+  },
+}))
+```
 
+The app runtime worker is created by the package helper. End-user application
+code exports the host from `application: './api.ts'`.
+
+## Project Shape
+
+```text
+src/runtimes/neemata/
+  api.ts            # app(...) and host(...)
+  router.ts         # rootRouter(...)
+  procedures/*.ts
+  neem.runtime.ts   # createNeemataRuntime(...) helper, then export declaration
+  neem.planner.ts   # defineNeemataPlanner(...)
 ```
-project/
-  neemata.config.ts              # defineConfig — app entries + server path
-  src/
-    index.ts                     # n.server({...}) — server configuration
-    applications/
-      main/
-        index.ts                 # n.app({...}) — application definition
-        router.ts                # n.rootRouter([routerA, routerB] as const) — route tree
-        procedures/
-          example.ts             # n.procedure({...}) — RPC handlers
-        guards/
-        middleware/
-        injectables/
-```
+
+Keep contracts in shared packages when clients import the same public API shape.

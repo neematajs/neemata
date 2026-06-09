@@ -1,20 +1,10 @@
----
-title: Client Usage
-description: Setting up StaticClient and RuntimeClient, composing connectivity
-  plugins, and performing calls, streams, and blob transfers.
----
-
 # Client Usage
 
-## Client Packages
+## Client Setup
 
 - Base client API, both client classes, shared types, and plugins: `@nmtjs/client`
 - Transport implementations: `@nmtjs/ws-client`, `@nmtjs/http-client`
 - Client formats: `@nmtjs/json-format/client`, `@nmtjs/msgpack-format/client`
-
-`nmtjs` does **not** currently re-export `StaticClient`, `RuntimeClient`, or the
-client transport packages, so client applications should import those directly
-from the client packages.
 
 ## StaticClient Setup
 
@@ -24,7 +14,7 @@ import { StaticClient } from '@nmtjs/client'
 import { WsTransportClient } from '@nmtjs/ws-client'
 import { JsonFormat } from '@nmtjs/json-format/client'
 import { ProtocolVersion } from '@nmtjs/protocol'
-import type { appContract } from './contracts.ts'
+import { appContract } from './contracts.ts'
 
 const client = new StaticClient<typeof appContract>(
   {
@@ -53,7 +43,7 @@ import { RuntimeClient } from '@nmtjs/client'
 import { HttpTransportClient } from '@nmtjs/http-client'
 import { JsonFormat } from '@nmtjs/json-format/client'
 import { ProtocolVersion } from '@nmtjs/protocol'
-import type { appContract } from './contracts.ts'
+import { appContract } from './contracts.ts'
 
 const client = new RuntimeClient<typeof appContract>(
   {
@@ -96,7 +86,7 @@ import { StaticClient } from '@nmtjs/client'
 import { WsTransportClient } from '@nmtjs/ws-client'
 import { JsonFormat } from '@nmtjs/json-format/client'
 import { ProtocolVersion } from '@nmtjs/protocol'
-import type { appContract } from './contracts.ts'
+import { appContract } from './contracts.ts'
 
 const client = new StaticClient(
   {
@@ -117,10 +107,12 @@ const client = new StaticClient(
 )
 ```
 
-- `reconnectPlugin()` — Exponential backoff reconnect loop
-- `browserConnectivityPlugin()` — Reconnect nudges on `pageshow`, `online`, `focus`, and `visibilitychange`
-- `heartbeatPlugin()` — Ping/Pong liveness checks and reconnect on timeout
-- `loggingPlugin()` — Emits structured client events to `onEvent`; message bodies are omitted by default and enabled with `includeBodies: true`
+- `reconnectPlugin()` - exponential backoff reconnect loop.
+- `browserConnectivityPlugin()` - reconnect nudges on `pageshow`, `online`,
+  `focus`, and `visibilitychange`.
+- `heartbeatPlugin()` - ping/pong liveness checks and reconnect on timeout.
+- `loggingPlugin()` - emits structured client events to `onEvent`; message
+  bodies are omitted by default and enabled with `includeBodies: true`.
 
 ```ts
 loggingPlugin({
@@ -148,7 +140,7 @@ This ensures setup flows top-down while teardown flows bottom-up (heartbeat stop
 ## RPC Calls
 
 ```ts
-// Type-safe procedure call — returns Promise<Output>
+// Type-safe procedure call; returns Promise<Output>
 const result = await client.call.greet({ name: 'World' })
 // result: { greeting: 'Hello, World!' }
 ```
@@ -194,7 +186,7 @@ const blob = await client.call.download({ content: 'hello' })
 
 // blob is a protocol blob marker carrying metadata
 // { type: 'text/plain', size: 12 }
-blob.metadata 
+blob.metadata
 
 const controller = new AbortController()
 const stream = client.consumeBlob(blob, { signal: controller.signal })
@@ -213,8 +205,3 @@ for await (const chunk of stream) {
 ```ts
 await client.disconnect()
 ```
-
-## Migration Note
-
-- Connectivity behavior is plugin-driven.
-- Legacy option flags such as autoreconnect and heartbeat are replaced by explicit plugin composition.
