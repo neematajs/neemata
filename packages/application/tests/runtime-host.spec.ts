@@ -3,7 +3,7 @@ import type { ProtocolFormats } from '@nmtjs/protocol/server'
 import { createLogger } from '@nmtjs/core'
 import { createTransport, StreamTimeout } from '@nmtjs/gateway'
 import { t } from '@nmtjs/type'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import {
   createApplicationHost,
@@ -82,6 +82,38 @@ describe('application runtime boundary', () => {
       expect(runtime.routers.size).toBeGreaterThan(0)
     } finally {
       await runtime.dispose()
+    }
+  })
+
+  it('warns when root-composed routers duplicate a top-level route', async () => {
+    const logger = createLogger({ pinoOptions: { enabled: false } }, 'test')
+    const warn = vi.spyOn(logger, 'warn')
+    const first = createRouter({
+      routes: {
+        ping: createProcedure({ handler: async () => ({ ok: true }) }),
+      },
+    })
+    const second = createRouter({
+      routes: {
+        ping: createProcedure({ handler: async () => ({ ok: true }) }),
+      },
+    })
+    const runtime = new NeemataApplication(
+      defineApplication({ router: createRootRouter([first, second] as const) }),
+      { logger },
+    )
+
+    try {
+      await expect(runtime.initialize()).rejects.toThrow(
+        'Procedure ping already registered',
+      )
+      expect(warn).toHaveBeenCalledWith(
+        { route: 'ping' },
+        'Duplicate root router route',
+      )
+    } finally {
+      await runtime.dispose()
+      warn.mockRestore()
     }
   })
 

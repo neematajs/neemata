@@ -184,8 +184,25 @@ export class NeemataApplication {
   }
 
   protected registerRootRouter(router: AnyRootRouter): void {
+    this.warnDuplicateRootRoutes(router)
     for (const source of router[kRootRouterSources]) {
       this.registerRouter(source, this.getRootSourcePath(router, source))
+    }
+  }
+
+  protected warnDuplicateRootRoutes(router: AnyRootRouter): void {
+    const routes = new Set<string>()
+    const duplicates = new Set<string>()
+
+    for (const source of router[kRootRouterSources]) {
+      for (const route of Object.keys(source.routes)) {
+        if (routes.has(route)) duplicates.add(route)
+        else routes.add(route)
+      }
+    }
+
+    for (const route of duplicates) {
+      this.logger.warn({ route }, 'Duplicate root router route')
     }
   }
 
