@@ -1,4 +1,6 @@
 import { EventContract, SubscriptionContract } from '@nmtjs/contract'
+import { Container } from '@nmtjs/core'
+import { EventingRunner, implement } from '@nmtjs/eventing'
 import { KafkaEventingAdapter } from '@nmtjs/eventing/kafka'
 import { t } from '@nmtjs/type'
 import { Admin } from '@platformatic/kafka'
@@ -213,6 +215,81 @@ describe.skipIf(!kafkaBrokers?.length)(
       await waitFor(
         async () => (await getCommittedOffset(admin, groupId, topic)) === 1n,
       )
+    })
+
+    it('retries subscription handlers before committing delivered messages', async () => {
+      const topic = createTestName('events-kafka-retry')
+      const groupId = createTestName('group')
+      const clientId = createTestName('client')
+      topics.add(topic)
+      const stream = SubscriptionContract({
+        namespace: topic,
+        params: t.object({ id: t.string() }),
+        key: ({ id }) => id,
+        events: {
+          userCreated: EventContract({ payload: t.object({ id: t.string() }) }),
+        },
+      })
+      const events = implement(stream)
+      const admin = await createKafkaTopic({
+        topic,
+        clientId: `${clientId}-admin`,
+      })
+      const adapter = await createKafkaAdapter(clientId)
+      const container = new Container({
+        logger: createTestLogger('eventing-kafka-retry-container'),
+      })
+      const runner = new EventingRunner(
+        { logger: createTestLogger('eventing-kafka-retry'), container },
+        { adapter },
+      )
+      let attempts = 0
+      const handled: unknown[] = []
+
+      try {
+        await runner.start({
+          consumers: [
+            events(
+              {
+                userCreated: events.userCreated({
+                  retry: { attempts: 3 },
+                  async handler(_ctx, event) {
+                    attempts++
+                    if (attempts < 3) throw new Error('retry me')
+                    handled.push(event)
+                  },
+                }),
+              },
+              { groupId, consumerId: `${clientId}-consumer`, from: 'earliest' },
+            ),
+          ],
+        })
+
+        await adapter.produce({
+          topic,
+          name: stream.events.userCreated.event,
+          key: 'user-1',
+          payload: { id: 'user-1' },
+          headers: { source: 'retry-test' },
+        })
+
+        await waitFor(() => handled.length === 1)
+        expect(attempts).toBe(3)
+        expect(handled).toEqual([
+          {
+            namespace: topic,
+            event: 'userCreated',
+            key: 'user-1',
+            payload: { id: 'user-1' },
+            headers: { source: 'retry-test' },
+          },
+        ])
+        await waitFor(
+          async () => (await getCommittedOffset(admin, groupId, topic)) === 1n,
+        )
+      } finally {
+        await runner.dispose()
+      }
     })
 
     async function createKafkaTopic(options: {

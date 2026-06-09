@@ -54,7 +54,8 @@ export function createMetricsServer(options: {
         }
 
         response.setHeader('content-type', registry.contentType)
-        Promise.resolve(collectMetrics(registry))
+        Promise.resolve()
+          .then(() => collectMetrics(registry))
           .then((metrics) => {
             response.writeHead(200)
             response.end(metrics)

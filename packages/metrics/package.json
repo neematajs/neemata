@@ -3,7 +3,8 @@
   "description": "Neem metrics helpers and Prometheus-compatible observer.",
   "type": "module",
   "scripts": {
-    "clean-build": "rm -rf ./dist"
+    "clean-build": "rm -rf ./dist",
+    "test": "vitest run --config vitest.config.ts"
   },
   "exports": {
     ".": {

@@ -1,4 +1,6 @@
 import { EventContract, SubscriptionContract } from '@nmtjs/contract'
+import { Container } from '@nmtjs/core'
+import { EventingRunner, implement } from '@nmtjs/eventing'
 import { t } from '@nmtjs/type'
 import { afterEach, describe, expect, it } from 'vitest'
 
@@ -132,6 +134,83 @@ for (const target of redisServiceTargets) {
           name: event.event,
           key: 'user-2',
         })
+      })
+
+      it('retries subscription handlers before acknowledging delivered messages', async () => {
+        const topic = createTestName('events-redis-retry')
+        streams.add(topic)
+        const stream = SubscriptionContract({
+          namespace: topic,
+          params: t.object({ id: t.string() }),
+          key: ({ id }) => id,
+          events: {
+            userCreated: EventContract({
+              payload: t.object({ id: t.string() }),
+            }),
+          },
+        })
+        const events = implement(stream)
+        let attempts = 0
+        const handled: unknown[] = []
+        const client = target.createClient()
+        clients.push(client)
+        const adapter = new RedisStreamsEventingAdapter({
+          client,
+          logger: createTestLogger('eventing-redis-retry'),
+          blockMs: 25,
+        })
+        const container = new Container({
+          logger: createTestLogger('eventing-redis-retry-container'),
+        })
+        const runner = new EventingRunner(
+          { logger: createTestLogger('eventing-redis-retry'), container },
+          { adapter },
+        )
+
+        try {
+          await runner.start({
+            consumers: [
+              events(
+                {
+                  userCreated: events.userCreated({
+                    retry: { attempts: 3 },
+                    async handler(_ctx, event) {
+                      attempts++
+                      if (attempts < 3) throw new Error('retry me')
+                      handled.push(event)
+                    },
+                  }),
+                },
+                {
+                  groupId: createTestName('events-redis-retry-group'),
+                  from: 'earliest',
+                },
+              ),
+            ],
+          })
+
+          await adapter.produce({
+            topic,
+            name: stream.events.userCreated.event,
+            key: 'user-1',
+            payload: { id: 'user-1' },
+            headers: {},
+          })
+
+          await waitFor(() => handled.length === 1)
+          expect(attempts).toBe(3)
+          expect(handled).toEqual([
+            {
+              namespace: topic,
+              event: 'userCreated',
+              key: 'user-1',
+              payload: { id: 'user-1' },
+              headers: {},
+            },
+          ])
+        } finally {
+          await runner.dispose()
+        }
       })
     },
   )

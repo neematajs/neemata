@@ -126,6 +126,81 @@ for (const target of serviceTargets) {
       })
     })
 
+    it('skips conditional steps without running skipped handlers', async () => {
+      let skippedHandlerRan = false
+      const skippedStep = createStep({
+        label: 'skipped',
+        input: t.object({ value: t.string() }),
+        output: t.object({ skipped: t.boolean() }),
+        handler: async () => {
+          skippedHandlerRan = true
+          return { skipped: true }
+        },
+      })
+      const job = createJob({
+        name: createTestName('integration-conditional-job'),
+        pool: 'default',
+        input: t.object({ value: t.string() }),
+        output: t.object({ value: t.string() }),
+      })
+        .step(skippedStep, () => false)
+        .return(({ input }) => input)
+
+      const { manager } = await createJobHarness(job)
+      const result = await manager.add(
+        job,
+        { value: 'condition' },
+        { oneoff: false },
+      )
+
+      await expect(result.waitResult()).resolves.toEqual({ value: 'condition' })
+      expect(skippedHandlerRan).toBe(false)
+      await expect(manager.get(job, result.id)).resolves.toMatchObject({
+        status: 'completed',
+        output: { value: 'condition' },
+      })
+    })
+
+    it('fails parallel step groups that produce the same result key', async () => {
+      const left = createStep({
+        label: 'left',
+        input: t.object({ value: t.string() }),
+        output: t.object({ duplicated: t.string() }),
+        handler: async () => ({ duplicated: 'left' }),
+      })
+      const right = createStep({
+        label: 'right',
+        input: t.object({ value: t.string() }),
+        output: t.object({ duplicated: t.string() }),
+        handler: async () => ({ duplicated: 'right' }),
+      })
+      const job = createJob({
+        name: createTestName('integration-parallel-conflict-job'),
+        pool: 'default',
+        input: t.object({ value: t.string() }),
+        output: t.object({ duplicated: t.string() }),
+      })
+        .steps(left, right)
+        .return(({ result }) => result)
+
+      const { manager } = await createJobHarness(job)
+      const result = await manager.add(
+        job,
+        { value: 'conflict' },
+        { oneoff: false },
+      )
+
+      await expect(result.waitResult()).rejects.toThrow(
+        'Parallel step key conflict for "duplicated"',
+      )
+      await expect(manager.get(job, result.id)).resolves.toMatchObject({
+        status: 'failed',
+        error: expect.stringContaining(
+          'Parallel step key conflict for "duplicated"',
+        ),
+      })
+    })
+
     it('persists job progress checkpoints', async () => {
       const step = createStep({
         label: 'save progress',

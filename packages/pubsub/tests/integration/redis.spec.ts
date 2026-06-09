@@ -169,6 +169,62 @@ for (const target of serviceTargets) {
         await new Promise((resolve) => setTimeout(resolve, 100))
         expect(received).toHaveLength(1)
       })
+
+      it('skips unknown and invalid broker messages before delivering valid events', async () => {
+        const channelName = createTestName('pubsub-noise')
+        const channel = SubscriptionContract({
+          namespace: channelName,
+          params: t.object({ id: t.string() }),
+          events: {
+            message: EventContract({ payload: t.object({ text: t.string() }) }),
+          },
+          key: ({ id }) => id,
+        })
+
+        const client = target.createClient()
+        const adapter = new RedisPubSubAdapter(
+          client,
+          createTestLogger('pubsub-noise'),
+        )
+        clients.push(client)
+        adapters.push(adapter)
+        await adapter.initialize()
+
+        const manager = new PubSubManager({
+          logger: createTestLogger('pubsub-noise'),
+          adapter,
+        })
+        const controller = new AbortController()
+        const stream = await manager.subscribe(
+          channel,
+          { id: 'room-1' },
+          undefined,
+          controller.signal,
+        )
+        const received: unknown[] = []
+        const collector = collectUntil(stream, received, controller, 1)
+        const rawChannel = `${channelName}:room-1`
+
+        await waitFor(async () => hasSubscribers(client, rawChannel, 1))
+        await client.publish(
+          rawChannel,
+          JSON.stringify({ event: 'missing', payload: { text: 'ignored' } }),
+        )
+        await client.publish(
+          rawChannel,
+          JSON.stringify({ event: 'message', payload: { text: 123 } }),
+        )
+        await manager.publish(
+          channel.events.message,
+          { id: 'room-1' },
+          { text: 'visible' },
+        )
+
+        await collector
+        expect(received).toEqual([
+          { event: 'message', payload: { text: 'visible' } },
+        ])
+      })
     },
   )
 }

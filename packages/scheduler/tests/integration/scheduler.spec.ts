@@ -89,6 +89,80 @@ for (const target of serviceTargets) {
         await expect(scheduler.list(job)).resolves.toEqual([])
       })
 
+      it('reports updated schedules and removes stale owned schedules during reconcile', async () => {
+        const firstJob = createJob({
+          name: createTestName('integration-first-scheduled-job'),
+          pool: 'default',
+          input: t.object({ value: t.string() }),
+          output: t.object({ value: t.string() }),
+        }).return(({ input }) => input)
+        const secondJob = createJob({
+          name: createTestName('integration-second-scheduled-job'),
+          pool: 'default',
+          input: t.object({ value: t.string() }),
+          output: t.object({ value: t.string() }),
+        }).return(({ input }) => input)
+        const schedulerClient = target.createClient()
+        clients.push(schedulerClient)
+        const scheduler = new JobSchedulerController({
+          owner: createTestName('scheduler-reconcile'),
+          client: schedulerClient,
+          jobs: [firstJob, secondJob],
+        })
+        schedulers.push(scheduler)
+        const firstScheduleId = createTestName('first-schedule')
+        const secondScheduleId = createTestName('second-schedule')
+
+        const initial = await scheduler.reconcile([
+          {
+            id: firstScheduleId,
+            job: firstJob,
+            data: { value: 'initial' },
+            repeat: { every: 1000 },
+          },
+          {
+            id: secondScheduleId,
+            job: secondJob,
+            data: { value: 'stale' },
+            repeat: { every: 2000 },
+          },
+        ])
+        expect(initial).toMatchObject({
+          desired: 2,
+          removed: 0,
+          failedRemovals: 0,
+        })
+        expect(initial.added + initial.updated + initial.unchanged).toBe(2)
+
+        await expect(
+          scheduler.reconcile([
+            {
+              id: firstScheduleId,
+              job: firstJob,
+              data: { value: 'updated' },
+              repeat: { every: 1500 },
+            },
+          ]),
+        ).resolves.toMatchObject({
+          desired: 1,
+          added: 0,
+          updated: 1,
+          unchanged: 0,
+          removed: 1,
+          failedRemovals: 0,
+          scheduledJobs: { desired: 1, previous: 2, updated: 1, removed: 1 },
+        })
+
+        await expect(scheduler.list(firstJob)).resolves.toEqual([
+          expect.objectContaining({
+            id: firstScheduleId,
+            data: { value: 'updated' },
+            every: 1500,
+          }),
+        ])
+        await expect(scheduler.list(secondJob)).resolves.toEqual([])
+      })
+
       async function createJobHarness(job: AnyJob) {
         const logger = createTestLogger('scheduler-integration')
         const container = new Container({ logger })
