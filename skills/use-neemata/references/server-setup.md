@@ -43,11 +43,12 @@ Generic shape:
 // neem.runtime.ts
 import { createNeemataRuntime } from '@nmtjs/application/neem/runtime'
 
-const defineRuntime = createNeemataRuntime({ application: './api.ts' })
+const defineRuntime = createNeemataRuntime()
 
 export default defineRuntime({
   name: 'neemata',
   planner: './neem.planner.ts',
+  worker: { entry: './neem.worker.ts' },
 })
 ```
 
@@ -63,8 +64,17 @@ export default defineNeemataPlanner(() => ({
 }))
 ```
 
-The app runtime worker is created by the package helper. End-user application
-code exports the host from `application: './api.ts'`.
+```ts
+// neem.worker.ts
+import { defineNeemataWorker } from '@nmtjs/application/neem/worker'
+
+import applicationHost from './api.ts'
+
+export default defineNeemataWorker(applicationHost)
+```
+
+The app runtime worker entry loads application host code and runs worker-side
+Neemata runtime logic.
 
 ## Project Shape
 
@@ -75,6 +85,7 @@ src/runtimes/neemata/
   procedures/*.ts
   neem.runtime.ts   # createNeemataRuntime(...) helper, then export declaration
   neem.planner.ts   # defineNeemataPlanner(...)
+  neem.worker.ts    # defineNeemataWorker(...)
 ```
 
 Keep contracts in shared packages when clients import the same public API shape.

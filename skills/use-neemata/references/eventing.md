@@ -46,7 +46,7 @@ Package-owned runtime helpers stay on package subpaths:
 
 ```ts
 import { defineRuntime } from '@nmtjs/neem'
-import { defineEventing } from '@nmtjs/eventing/neem'
+import { defineEventing } from '@nmtjs/eventing/neem/runtime'
 import { defineEventingPlanner } from '@nmtjs/eventing/neem/planner'
 import { defineEventingWorker } from '@nmtjs/eventing/neem/worker'
 import { RedisStreamsEventingAdapter } from '@nmtjs/eventing/redis'
