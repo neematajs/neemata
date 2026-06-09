@@ -1,9 +1,5 @@
 import type { MaybePromise } from '@nmtjs/common'
-import type {
-  NeemEntryInput,
-  NeemRuntimeDeclaration,
-  NeemRuntimePlan,
-} from '@nmtjs/neem'
+import type { NeemRuntimePlan } from '@nmtjs/neem'
 import { createRuntime, defineRuntimePlanner } from '@nmtjs/neem'
 
 import type { JobsClient } from '../client.ts'
@@ -41,19 +37,7 @@ export type ResolvedJobsWorkerConfig<Job extends AnyJobsJob = AnyJobsJob> = {
   jobs: readonly Job[]
 }
 
-export type JobsRuntimeEntry<Job extends AnyJobsJob = AnyJobsJob> =
-  JobsConfig<Job>
-
-export type JobsRuntimeConfigInput = {
-  name?: string
-  planner?: NeemEntryInput
-  worker: NeemEntryInput
-}
-
 const emptyHooks: JobsLifecycleHooks = Object.freeze({})
-const defineJobsRuntimeProject = createRuntime({
-  host: { entry: '@nmtjs/jobs/neem/host' },
-})
 
 export function defineJobs<const Job extends AnyJobsJob>(
   config: JobsConfig<Job>,
@@ -78,14 +62,8 @@ export async function resolveJobsWorkerConfig<const Job extends AnyJobsJob>(
   return { client: config.client, jobs: await config.jobs() }
 }
 
-export function defineJobsRuntime(
-  config: JobsRuntimeConfigInput,
-): NeemRuntimeDeclaration {
-  return defineJobsRuntimeProject({
-    name: config.name,
-    planner: config.planner,
-    worker: { entry: config.worker },
-  })
+export function createJobsRuntime() {
+  return createRuntime({ host: { entry: '@nmtjs/jobs/neem/host' } })
 }
 
 export function defineJobsPlanner<

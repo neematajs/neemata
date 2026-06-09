@@ -1,6 +1,4 @@
 import type { MaybePromise } from '@nmtjs/common'
-import type { NeemEntryInput, NeemRuntimeDeclaration } from '@nmtjs/neem'
-import { createRuntime } from '@nmtjs/neem'
 
 import type { EventingAdapter } from '../core/adapter.ts'
 import type { EventingConsumers } from '../core/consumer.ts'
@@ -13,25 +11,7 @@ export type EventingRuntimeConfig = {
   threads?: number
 }
 
-export type EventingRuntimeConfigInput = {
-  name?: string
-  planner?: NeemEntryInput
-  worker: NeemEntryInput
-}
-
 export type EventingWorkerData = { consumerIndexes: readonly number[] }
-
-const defineEventingRuntimeProject = createRuntime({})
-
-export function defineEventingRuntime(
-  config: EventingRuntimeConfigInput,
-): NeemRuntimeDeclaration {
-  return defineEventingRuntimeProject({
-    name: config.name,
-    planner: config.planner,
-    worker: { entry: config.worker },
-  })
-}
 
 export function defineEventing(config: EventingRuntimeConfig) {
   return Object.freeze(config)

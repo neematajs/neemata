@@ -1,16 +1,16 @@
 import { EventContract, SubscriptionContract } from '@nmtjs/contract'
 import { createEventConsumer, implementSubscription } from '@nmtjs/eventing'
 import { defineEventingPlanner } from '@nmtjs/eventing/neem/planner'
-import { defineEventingRuntime } from '@nmtjs/eventing/neem/runtime'
+import { defineRuntime } from '@nmtjs/neem'
 import { t } from '@nmtjs/type'
 import { describe, expect, it } from 'vitest'
 
 describe('@nmtjs/eventing Neem runtime helpers', () => {
   it('declares an eventing runtime with caller-owned worker entry and no host', () => {
-    const runtime = defineEventingRuntime({
+    const runtime = defineRuntime({
       name: 'events',
       planner: './events.planner.ts',
-      worker: './events.worker.ts',
+      worker: { entry: './events.worker.ts' },
     })
 
     expect(runtime).toMatchObject({
@@ -18,7 +18,7 @@ describe('@nmtjs/eventing Neem runtime helpers', () => {
       planner: './events.planner.ts',
       worker: { entry: './events.worker.ts' },
     })
-    expect(runtime.host).toBeUndefined()
+    expect('host' in runtime).toBe(false)
   })
 
   it('spreads consumers across requested worker threads by index', async () => {

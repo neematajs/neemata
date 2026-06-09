@@ -1,14 +1,15 @@
 import { createJob } from '@nmtjs/jobs'
-import { defineJobsPlanner, defineJobsRuntime } from '@nmtjs/jobs/neem'
+import { createJobsRuntime, defineJobsPlanner } from '@nmtjs/jobs/neem'
 import { t } from '@nmtjs/type'
 import { describe, expect, it } from 'vitest'
 
 describe('@nmtjs/jobs Neem runtime helpers', () => {
   it('declares a jobs runtime with package-owned host and caller worker entry', () => {
-    const runtime = defineJobsRuntime({
+    const defineRuntime = createJobsRuntime()
+    const runtime = defineRuntime({
       name: 'jobs',
       planner: './jobs.planner.ts',
-      worker: './jobs.worker.ts',
+      worker: { entry: './jobs.worker.ts' },
     })
 
     expect(runtime).toMatchObject({

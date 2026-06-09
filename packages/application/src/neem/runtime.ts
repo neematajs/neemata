@@ -1,18 +1,13 @@
 import { basename, dirname, join } from 'node:path'
 
-import type {
-  NeemEntryInput,
-  NeemRuntimeDeclaration,
-  RolldownOptions,
-} from '@nmtjs/neem'
+import type { NeemRuntimeDeclaration, RolldownOptions } from '@nmtjs/neem'
 import { createRuntime } from '@nmtjs/neem'
 
 export type NeemataRuntimeConfig = NeemRuntimeDeclaration
 
-export function createNeemataRuntime(config: { application: NeemEntryInput }) {
+export function createNeemataRuntime() {
   return createRuntime({
     worker: {
-      entry: config.application,
       build: { rolldown: { plugins: [createUwsNativeAddonPlugin()] } },
     },
   })

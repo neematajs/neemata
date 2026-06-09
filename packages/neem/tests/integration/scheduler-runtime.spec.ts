@@ -1,17 +1,16 @@
 import type { SchedulerConfig } from '@nmtjs/scheduler'
 import { createLogger } from '@nmtjs/core'
 import {
+  createSchedulerRuntime,
   defineSchedulerPlanner,
-  defineSchedulerRuntime,
 } from '@nmtjs/scheduler/neem'
 import createSchedulerHost from '@nmtjs/scheduler/neem/host'
 import { describe, expect, it } from 'vitest'
 
 describe('scheduler Neem runtime helper', () => {
   it('defines scheduler as a host-only runtime with a planner', () => {
-    const runtime = defineSchedulerRuntime({
-      planner: './scheduler.planner.ts',
-    })
+    const defineRuntime = createSchedulerRuntime()
+    const runtime = defineRuntime({ planner: './scheduler.planner.ts' })
 
     expect(runtime.worker).toBeUndefined()
     expect(runtime.host?.entry).toBe('@nmtjs/scheduler/neem/host')

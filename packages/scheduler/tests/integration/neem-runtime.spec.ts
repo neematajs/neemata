@@ -1,7 +1,7 @@
 import { createJob } from '@nmtjs/jobs'
 import {
+  createSchedulerRuntime,
   defineSchedulerPlanner,
-  defineSchedulerRuntime,
 } from '@nmtjs/scheduler/neem'
 import { describe, expect, it } from 'vitest'
 
@@ -9,7 +9,8 @@ import { t } from '../../../type/src/index.ts'
 
 describe('@nmtjs/scheduler Neem runtime helpers', () => {
   it('declares a host-only scheduler runtime', () => {
-    const runtime = defineSchedulerRuntime({
+    const defineRuntime = createSchedulerRuntime()
+    const runtime = defineRuntime({
       name: 'scheduler',
       planner: './scheduler.planner.ts',
     })
