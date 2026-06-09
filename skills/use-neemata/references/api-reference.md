@@ -37,6 +37,7 @@ import {
   logging,
   MetadataKind,
   meta,
+  metrics,
   middleware,
   optional,
   plugin,
@@ -111,6 +112,12 @@ import {
   `jobsPlugin(...)`.
 - `implementSubscription(...)`, `eventingPlugin(...)`.
 - `pubsubPlugin(...)`, plus `inject.publish` and `inject.subscribe`.
+
+## Metrics
+
+- `metrics.counter(...)`, `metrics.gauge(...)`, `metrics.histogram(...)`,
+  `metrics.summary(...)` create Prometheus-compatible metrics registered in the
+  default Neem metrics registry.
 
 ## Source Lookup
 

@@ -1,13 +1,13 @@
 ---
 name: use-neemata
-description: Use when answering questions or writing code for Neemata RPC applications: contracts, procedures, routers, applications, DI, metadata, guards, middleware, filters, clients, jobs, eventing, pubsub, streaming, blobs, and Neemata runtime integration.
+description: Use when answering questions or writing code for Neemata RPC applications: contracts, procedures, routers, applications, DI, metadata, guards, middleware, filters, clients, jobs, eventing, pubsub, metrics, streaming, blobs, and Neemata runtime integration.
 ---
 
 # Use Neemata
 
 End-user Neemata application code should prefer `nmtjs` umbrella imports for
-application, contract, type, DI, jobs, eventing, and pubsub APIs when the needed
-symbol is exported there.
+application, contract, type, DI, jobs, eventing, pubsub, and metrics APIs when
+the needed symbol is exported there.
 
 Exceptions:
 

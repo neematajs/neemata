@@ -11,7 +11,7 @@ export type NeemMetricsPluginOptions = {
 
 export const metricsPluginName = '@nmtjs/metrics'
 
-export function metrics(
+export default function metrics(
   options: NeemMetricsPluginOptions = {},
 ): NeemPluginInput {
   const defaultMetrics = options.defaultMetrics ?? true

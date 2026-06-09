@@ -2,9 +2,6 @@ import type {
   CounterConfiguration,
   GaugeConfiguration,
   HistogramConfiguration,
-  Metric,
-  MetricConfiguration,
-  Registry,
   SummaryConfiguration,
 } from '@nmtjs/prom-client'
 import { Counter, Gauge, Histogram, Summary } from '@nmtjs/prom-client'

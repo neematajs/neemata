@@ -356,6 +356,9 @@ importers:
       '@nmtjs/jobs':
         specifier: workspace:*
         version: link:../jobs
+      '@nmtjs/metrics':
+        specifier: workspace:*
+        version: link:../metrics
       '@nmtjs/protocol':
         specifier: workspace:*
         version: link:../protocol

@@ -1,13 +1,14 @@
 # Runtimes
 
-`@nmtjs/neem` project config declares which runtime projects exist and how Neem
-orchestrates them. It is generic: application, jobs, eventing, scheduler,
-metrics, bots, and custom services are all named runtimes.
+`@nmtjs/neem` project config declares runtime projects and controller plugins.
+It is generic: applications, jobs, eventing, scheduler, bots, and custom
+services are named runtimes. Metrics is a controller plugin, not a runtime
+declaration.
 
 ## Project Config
 
 ```ts
-import { metrics } from '@nmtjs/metrics/neem'
+import metrics from '@nmtjs/metrics/neem'
 import { defineConfig } from '@nmtjs/neem'
 
 export default defineConfig({
@@ -45,6 +46,8 @@ Rules:
   Duplicate names fail.
 - Config is declarative. Do not open Redis clients, sockets, log transports, or
   runtime resources in `neem.config.ts`.
+- Plugins such as `@nmtjs/metrics/neem` extend the Neem controller and are
+  built into plugin artifacts; they do not appear in `runtimes`.
 - Production `start` reads built manifest/artifacts, not source config.
 
 ## Runtime Declaration Files

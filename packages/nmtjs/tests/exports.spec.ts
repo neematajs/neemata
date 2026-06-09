@@ -43,6 +43,12 @@ describe('nmtjs umbrella exports', () => {
         EventingInjectables: expect.any(Object),
         inject: expect.any(Object),
         logging: expect.any(Object),
+        metrics: expect.objectContaining({
+          counter: expect.any(Function),
+          gauge: expect.any(Function),
+          histogram: expect.any(Function),
+          summary: expect.any(Function),
+        }),
       }),
     )
 
@@ -53,8 +59,15 @@ describe('nmtjs umbrella exports', () => {
       ...mod.PubSubInjectables,
       ...mod.EventingInjectables,
     }
+    const metricMod = await import('@nmtjs/metrics')
 
     expect(mod.logging).toEqual({ console: expect.any(Function) })
+    expect(mod.metrics).toEqual({
+      counter: metricMod.createCounterMetric,
+      gauge: metricMod.createGaugeMetric,
+      histogram: metricMod.createHistogramMetric,
+      summary: metricMod.createSummaryMetric,
+    })
     expect(mod.inject).toEqual(expect.objectContaining(expectedInjectables))
   })
 })

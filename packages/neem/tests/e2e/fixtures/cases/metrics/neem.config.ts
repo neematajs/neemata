@@ -1,4 +1,4 @@
-import { metrics } from '@nmtjs/metrics/neem'
+import metrics from '@nmtjs/metrics/neem'
 import { defineConfig } from '@nmtjs/neem'
 
 export default defineConfig({

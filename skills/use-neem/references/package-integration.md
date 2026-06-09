@@ -108,11 +108,35 @@ export default defineRuntime({
 })
 ```
 
+## Metrics Plugin
+
+Metrics is a package-owned Neem plugin, not a runtime helper:
+
+```ts
+import metrics from '@nmtjs/metrics/neem'
+import { defineConfig } from '@nmtjs/neem'
+
+export default defineConfig({
+  plugins: [
+    metrics({
+      server: { host: '127.0.0.1', port: 9187, path: '/metrics' },
+    }),
+  ],
+  runtimes: ['./src/runtimes/**/neem.runtime.ts'],
+})
+```
+
+Use this shape when a package contributes Neem controller behavior such as
+health/lifecycle observation or a controller-owned HTTP endpoint. Do not invent
+a metrics runtime declaration.
+
 ## Rules
 
 - Package helpers own package-specific host/worker/planner conventions.
 - Neem owns generic declaration shape, artifact building, lifecycle, health,
   proxy, env, and runtime selection.
+- Controller plugins belong in `plugins`; runtime declarations belong in
+  `runtimes`.
 - Use `create*Runtime()` helpers only when the package contributes runtime
   declaration defaults, such as `host.entry` or worker build plugins.
 - Use raw `defineRuntime(...)` when the app owns the whole runtime declaration

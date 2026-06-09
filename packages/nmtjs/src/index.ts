@@ -2,13 +2,28 @@ import { CoreInjectables, createConsolePrettyDestination } from '@nmtjs/core'
 import { EventingInjectables } from '@nmtjs/eventing'
 import { GatewayInjectables } from '@nmtjs/gateway'
 import { JobInjectables } from '@nmtjs/jobs'
+import {
+  createCounterMetric,
+  createGaugeMetric,
+  createHistogramMetric,
+  createSummaryMetric,
+} from '@nmtjs/metrics'
 import { PubSubInjectables } from '@nmtjs/pubsub'
 
-type Injectables = typeof CoreInjectables &
-  typeof GatewayInjectables &
-  typeof JobInjectables &
-  typeof PubSubInjectables &
-  typeof EventingInjectables
+type Injectables = Readonly<
+  typeof CoreInjectables &
+    typeof GatewayInjectables &
+    typeof JobInjectables &
+    typeof PubSubInjectables &
+    typeof EventingInjectables
+>
+
+type Metrics = Readonly<{
+  counter: typeof createCounterMetric
+  gauge: typeof createGaugeMetric
+  histogram: typeof createHistogramMetric
+  summary: typeof createSummaryMetric
+}>
 
 export {
   ApiError,
@@ -71,6 +86,13 @@ export { t } from '@nmtjs/type'
 
 export const logging = Object.freeze({
   console: createConsolePrettyDestination,
+})
+
+export const metrics: Metrics = Object.freeze({
+  counter: createCounterMetric,
+  gauge: createGaugeMetric,
+  histogram: createHistogramMetric,
+  summary: createSummaryMetric,
 })
 
 export const inject: Injectables = Object.freeze({
