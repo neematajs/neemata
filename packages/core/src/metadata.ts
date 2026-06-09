@@ -9,10 +9,7 @@ import type {
 } from './injectables.ts'
 import { kMetaBinding, kMetadata } from './constants.ts'
 import { Scope } from './enums.ts'
-import {
-  createLazyInjectable,
-  createOptionalInjectable,
-} from './injectables.ts'
+import { createLazyInjectable } from './injectables.ts'
 
 export enum MetadataKind {
   STATIC = 'STATIC',
@@ -153,7 +150,6 @@ export function createMeta<
     ...injectable,
     [kMetadata]: true as const,
     $withType: () => meta as any,
-    optional: () => createOptionalInjectable(meta),
     static: (value: Value) =>
       Object.freeze({
         dependencies: {},

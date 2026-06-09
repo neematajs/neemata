@@ -77,7 +77,6 @@ export interface LazyInjectable<T, S extends Scope = Scope.Global>
   extends Dependant<{}> {
   scope: S
   $withType<O extends T>(): LazyInjectable<O, S>
-  optional(): DependencyOptional<LazyInjectable<T, S>>
   [kInjectable]: any
   [kLazyInjectable]: T
 }
@@ -99,7 +98,6 @@ export interface FactoryInjectable<
   create: InjectableFactoryType<P, D>
   pick: InjectablePickType<P, T>
   dispose?: InjectableDisposeType<P, D>
-  optional(): DependencyOptional<FactoryInjectable<T, D, S, P>>
   [kInjectable]: any
   [kFactoryInjectable]: any
 }
@@ -163,13 +161,22 @@ export function getDepedencencyInjectable(
   return dependency
 }
 
-export function createOptionalInjectable<T extends AnyInjectable>(
+export function createOptionalInjectable<T extends LazyInjectable<any, any>>(
   injectable: T,
 ) {
   return Object.freeze({
     [kOptionalDependency]: true,
     injectable,
   }) as DependencyOptional<T>
+}
+
+export function optional<T, S extends Scope>(
+  injectable: LazyInjectable<T, S>,
+): DependencyOptional<LazyInjectable<T, S>> {
+  if (!isLazyInjectable(injectable)) {
+    throw new TypeError('Optional dependencies can only wrap lazy injectables')
+  }
+  return createOptionalInjectable(injectable)
 }
 
 export function createLazyInjectable<T, S extends Scope = Scope.Global>(
@@ -182,7 +189,6 @@ export function createLazyInjectable<T, S extends Scope = Scope.Global>(
     dependencies: {},
     label,
     stack: tryCaptureStackTrace(stackTraceDepth),
-    optional: () => createOptionalInjectable(injectable),
     $withType: () => injectable as any,
     [kInjectable]: true,
     [kLazyInjectable]: true as unknown as T,
@@ -234,7 +240,6 @@ export function createFactoryInjectable<
     pick: params.pick ?? ((instance: P) => instance as unknown as T),
     label,
     stack: tryCaptureStackTrace(stackTraceDepth),
-    optional: () => createOptionalInjectable(injectable),
     [kInjectable]: true,
     [kFactoryInjectable]: true,
   }

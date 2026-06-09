@@ -27,13 +27,14 @@ export {
   defineApplicationHost as host,
   LifecycleHook,
 } from '@nmtjs/application'
-export { c } from '@nmtjs/contract'
+export { blobType, c } from '@nmtjs/contract'
 export {
   CoreInjectables,
   createFactoryInjectable as factory,
   createLazyInjectable as lazy,
   createValueInjectable as value,
   MetadataKind,
+  optional,
   Scope,
 } from '@nmtjs/core'
 export {

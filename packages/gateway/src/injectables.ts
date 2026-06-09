@@ -9,7 +9,7 @@ import { anyAbortSignal } from '@nmtjs/common'
 import {
   createFactoryInjectable,
   createLazyInjectable,
-  createOptionalInjectable,
+  optional,
   Scope,
 } from '@nmtjs/core'
 
@@ -90,7 +90,7 @@ export const rpcAbortSignal = createFactoryInjectable(
     dependencies: {
       rpcClientAbortSignal,
       connectionAbortSignal,
-      rpcStreamAbortSignal: createOptionalInjectable(rpcStreamAbortSignal),
+      rpcStreamAbortSignal: optional(rpcStreamAbortSignal),
     },
     create: (ctx) =>
       anyAbortSignal(

@@ -1,5 +1,14 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  expectTypeOf,
+  it,
+  vi,
+} from 'vitest'
 
+import type { DependencyOptional, LazyInjectable } from '../src/injectables.ts'
 import { noopFn } from '../../common/src/index.ts'
 import {
   kFactoryInjectable,
@@ -16,6 +25,7 @@ import {
   createOptionalInjectable,
   createValueInjectable,
   getInjectableScope,
+  optional,
   substitute,
 } from '../src/injectables.ts'
 import { testLogger } from './_utils.ts'
@@ -27,6 +37,7 @@ describe('Injectable', () => {
     expect(injectable.scope).toBe(Scope.Global)
     expect(kInjectable in injectable).toBe(true)
     expect(kLazyInjectable in injectable).toBe(true)
+    expect('optional' in injectable).toBe(false)
   })
 
   it('should create a lazy injectable with a scope', () => {
@@ -51,6 +62,43 @@ describe('Injectable', () => {
     expect(injectable.scope).toBe(Scope.Global)
     expect(kInjectable in injectable).toBe(true)
     expect(kFactoryInjectable in injectable).toBe(true)
+    expect('optional' in injectable).toBe(false)
+  })
+
+  it('should create optional dependency with helper', () => {
+    const injectable = createLazyInjectable<string, Scope.Call>(Scope.Call)
+    const dependency = optional(injectable)
+
+    expect(dependency).toStrictEqual(createOptionalInjectable(injectable))
+    expectTypeOf(dependency).toEqualTypeOf<
+      DependencyOptional<LazyInjectable<string, Scope.Call>>
+    >()
+  })
+
+  it('should only type optional helper for lazy injectables', () => {
+    const lazyInjectable = createLazyInjectable()
+    const factoryInjectable = createFactoryInjectable({ create: noopFn })
+    const valueInjectable = createValueInjectable('value')
+
+    optional(lazyInjectable)
+
+    expect(() => {
+      // @ts-expect-error factory injectables have their own default resolution
+      optional(factoryInjectable)
+    }).toThrow('Optional dependencies can only wrap lazy injectables')
+
+    expect(() => {
+      // @ts-expect-error value injectables have their own default resolution
+      optional(valueInjectable)
+    }).toThrow('Optional dependencies can only wrap lazy injectables')
+  })
+
+  it('should reject non-lazy injectables at runtime', () => {
+    const factoryInjectable = createFactoryInjectable({ create: noopFn })
+
+    expect(() => optional(factoryInjectable as never)).toThrow(
+      'Optional dependencies can only wrap lazy injectables',
+    )
   })
 
   it('should create a factory injectable with pick', () => {
