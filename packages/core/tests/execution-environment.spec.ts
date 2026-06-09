@@ -41,7 +41,7 @@ describe('ExecutionEnvironment', () => {
     const value = createValueInjectable('value')
     const dependency = createFactoryInjectable({
       dependencies: { value },
-      factory: ({ value }) => ({ value }),
+      create: ({ value }) => ({ value }),
       dispose,
     })
     const dependant: Dependant = { dependencies: { dependency } }

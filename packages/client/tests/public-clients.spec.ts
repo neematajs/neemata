@@ -1,5 +1,5 @@
 import type { ProtocolBlobInterface } from '@nmtjs/protocol'
-import { c } from '@nmtjs/contract'
+import { blobType, c } from '@nmtjs/contract'
 import { ServerMessageType } from '@nmtjs/protocol'
 import { t } from '@nmtjs/type'
 import { describe, expect, expectTypeOf, it, vi } from 'vitest'
@@ -38,10 +38,10 @@ const staticContract = c.router({
     }),
     files: c.router({
       routes: {
-        download: c.procedure({ input: t.object({}), output: c.blob() }),
+        download: c.procedure({ input: t.object({}), output: blobType() }),
         downloadBundle: c.procedure({
           input: t.object({}),
-          output: t.object({ audio: c.blob(), transcript: t.string() }),
+          output: t.object({ audio: blobType(), transcript: t.string() }),
         }),
       },
     }),
@@ -67,7 +67,7 @@ const runtimeContract = c.router({
       routes: {
         transcript: c.procedure({
           input: t.object({}),
-          output: t.object({ audio: c.blob(), createdAt: t.date() }),
+          output: t.object({ audio: blobType(), createdAt: t.date() }),
         }),
       },
     }),

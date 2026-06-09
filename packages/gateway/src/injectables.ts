@@ -92,7 +92,7 @@ export const rpcAbortSignal = createFactoryInjectable(
       connectionAbortSignal,
       rpcStreamAbortSignal: createOptionalInjectable(rpcStreamAbortSignal),
     },
-    factory: (ctx) =>
+    create: (ctx) =>
       anyAbortSignal(
         ctx.rpcClientAbortSignal,
         ctx.connectionAbortSignal,

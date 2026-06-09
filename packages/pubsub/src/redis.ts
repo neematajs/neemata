@@ -166,7 +166,7 @@ export const createRedisAdapter = (
       client: isInjectable(client) ? client : createValueInjectable(client),
       logger: CoreInjectables.logger,
     },
-    factory: async ({ client, logger }) => {
+    create: async ({ client, logger }) => {
       const adapter = new RedisPubSubAdapter(client, logger)
       await adapter.initialize()
       return adapter

@@ -96,7 +96,7 @@ export interface FactoryInjectable<
   P = T,
 > extends Dependant<D> {
   scope: S
-  factory: InjectableFactoryType<P, D>
+  create: InjectableFactoryType<P, D>
   pick: InjectablePickType<P, T>
   dispose?: InjectableDisposeType<P, D>
   optional(): DependencyOptional<FactoryInjectable<T, D, S, P>>
@@ -217,7 +217,7 @@ export function createFactoryInjectable<
         dependencies?: D
         scope?: S
         pick?: InjectablePickType<P, T>
-        factory: InjectableFactoryType<P, D>
+        create: InjectableFactoryType<P, D>
         dispose?: InjectableDisposeType<P, D>
       }
     | InjectableFactoryType<P, D>,
@@ -225,11 +225,11 @@ export function createFactoryInjectable<
   stackTraceDepth = 0,
 ): FactoryInjectable<null extends T ? P : T, D, S, P> {
   const isFactory = typeof paramsOrFactory === 'function'
-  const params = isFactory ? { factory: paramsOrFactory } : paramsOrFactory
+  const params = isFactory ? { create: paramsOrFactory } : paramsOrFactory
   const injectable = {
     dependencies: (params.dependencies ?? {}) as D,
     scope: (params.scope ?? Scope.Global) as S,
-    factory: params.factory,
+    create: params.create,
     dispose: params.dispose,
     pick: params.pick ?? ((instance: P) => instance as unknown as T),
     label,
@@ -312,7 +312,7 @@ const loggerInjectable = Object.assign(
     return createFactoryInjectable({
       dependencies: { logger: loggerInjectable },
       scope: Scope.Global,
-      factory: ({ logger }) => forkLogger(logger, label, options),
+      create: ({ logger }) => forkLogger(logger, label, options),
     })
   },
   createLazyInjectable<Logger>(Scope.Global, 'Logger'),

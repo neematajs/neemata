@@ -45,8 +45,8 @@ describe('Injectable', () => {
   })
 
   it('should create a factory injectable', () => {
-    const injectable = createFactoryInjectable({ factory: noopFn })
-    expect(injectable.factory).toBe(noopFn)
+    const injectable = createFactoryInjectable({ create: noopFn })
+    expect(injectable.create).toBe(noopFn)
     expect(injectable.dependencies).toStrictEqual({})
     expect(injectable.scope).toBe(Scope.Global)
     expect(kInjectable in injectable).toBe(true)
@@ -55,9 +55,9 @@ describe('Injectable', () => {
 
   it('should create a factory injectable with pick', () => {
     const spy = vi.fn()
-    const injectable = createFactoryInjectable({ factory: noopFn, pick: spy })
+    const injectable = createFactoryInjectable({ create: noopFn, pick: spy })
     expect(injectable.pick).toBe(spy)
-    expect(injectable.factory).toBe(noopFn)
+    expect(injectable.create).toBe(noopFn)
     expect(injectable.dependencies).toStrictEqual({})
     expect(injectable.scope).toBe(Scope.Global)
     expect(kInjectable in injectable).toBe(true)
@@ -66,7 +66,7 @@ describe('Injectable', () => {
 
   it('should create a factory injectable with scope', () => {
     const injectable = createFactoryInjectable({
-      factory: noopFn,
+      create: noopFn,
       scope: Scope.Call,
     })
     expect(injectable.scope).toBe(Scope.Call)
@@ -76,7 +76,7 @@ describe('Injectable', () => {
     const dep1 = createLazyInjectable()
     const dep2 = createLazyInjectable()
     const injectable = createFactoryInjectable({
-      factory: noopFn,
+      create: noopFn,
       dependencies: { dep1, dep2 },
     })
     expect(injectable.dependencies).toHaveProperty('dep1', dep1)
@@ -91,17 +91,17 @@ describe('Injectable', () => {
 
     const inj1 = createFactoryInjectable({
       dependencies: { dep1 },
-      factory: () => {},
+      create: () => {},
     })
 
     const inj2 = createFactoryInjectable({
       dependencies: { dep2: inj1 },
-      factory: () => {},
+      create: () => {},
     })
 
     const inj3 = createFactoryInjectable({
       dependencies: { inj1, inj2 },
-      factory: () => {},
+      create: () => {},
     })
 
     const inj4 = substitute(inj3, {
@@ -178,12 +178,12 @@ describe('Container', () => {
     const dep1 = createValueInjectable('dep1' as const)
     const dep2 = createFactoryInjectable({
       dependencies: { dep1 },
-      factory: (deps) => deps,
+      create: (deps) => deps,
     })
     const dep3 = createFactoryInjectable(() => 'dep3' as const)
     const injectable = createFactoryInjectable({
       dependencies: { dep2, dep3 },
-      factory: (deps) => deps,
+      create: (deps) => deps,
     })
     const deps = await container.resolve(injectable)
     expect(deps).toHaveProperty('dep2', { dep1: 'dep1' })
@@ -193,7 +193,7 @@ describe('Container', () => {
   it('should dispose factory injectable', async () => {
     const spy = vi.fn()
     const injectable = createFactoryInjectable({
-      factory: () => ({}),
+      create: () => ({}),
       dispose: spy,
     })
     await container.resolve(injectable)
@@ -210,7 +210,7 @@ describe('Container', () => {
 
   it('should handle factory injectable dispose error', async () => {
     const injectable = createFactoryInjectable({
-      factory: () => ({}),
+      create: () => ({}),
       dispose: () => {
         throw new Error()
       },
@@ -221,7 +221,7 @@ describe('Container', () => {
 
   it('should handle concurrent resolutions', async () => {
     const injectable = createFactoryInjectable({
-      factory: async () => {
+      create: async () => {
         await new Promise((resolve) => setTimeout(resolve, 2))
         return {}
       },
@@ -243,7 +243,7 @@ describe('Container', () => {
     const injectable2 = createLazyInjectable(Scope.Call)
     const injectable3 = createFactoryInjectable({
       dependencies: { injectable, injectable2 },
-      factory: noopFn,
+      create: noopFn,
     })
     expect(getInjectableScope(injectable3)).toBe(Scope.Call)
   })
@@ -252,7 +252,7 @@ describe('Container', () => {
     const v1 = {}
     const v2 = { v1 }
     const injectable = createFactoryInjectable({
-      factory: () => v2,
+      create: () => v2,
       pick: ({ v1 }) => v1,
     })
 
@@ -270,7 +270,7 @@ describe('Container', () => {
       {
         dependencies: { globalValue: globalInjectable },
         scope: Scope.Connection,
-        factory: (deps) => deps,
+        create: (deps) => deps,
       },
       'connection',
     )
@@ -282,7 +282,7 @@ describe('Container', () => {
           connectionValue: connectionInjectable,
         },
         scope: Scope.Call,
-        factory: ({ globalValue, connectionValue }) => {
+        create: ({ globalValue, connectionValue }) => {
           return { globalValue, connectionValue }
         },
       },
@@ -316,17 +316,17 @@ describe('Container', () => {
     const factory1 = vi.fn(() => ({}))
     const injectable1 = createFactoryInjectable({
       scope: Scope.Global,
-      factory: factory1,
+      create: factory1,
     })
     const factory2 = vi.fn(() => ({}))
     const injectable2 = createFactoryInjectable({
       scope: Scope.Connection,
-      factory: factory2,
+      create: factory2,
     })
 
     const dependant = createFactoryInjectable({
       dependencies: { injectable1, injectable2 },
-      factory: noopFn,
+      create: noopFn,
     })
 
     await container.initialize([dependant])
@@ -342,23 +342,19 @@ describe('Container', () => {
     const testGlobalContainer = container.fork(Scope.Global)
 
     const injectable1 = createFactoryInjectable(
-      { factory: () => '1', dispose: disposeSpy },
+      { create: () => '1', dispose: disposeSpy },
       'inj1',
     )
 
     const injectable2 = createFactoryInjectable(
-      {
-        dependencies: { injectable1 },
-        factory: () => '2',
-        dispose: disposeSpy,
-      },
+      { dependencies: { injectable1 }, create: () => '2', dispose: disposeSpy },
       'inj2',
     )
 
     const injectable3 = createFactoryInjectable(
       {
         dependencies: { injectable1, injectable2 },
-        factory: () => '3',
+        create: () => '3',
         dispose: disposeSpy,
       },
       'inj3',
@@ -368,7 +364,7 @@ describe('Container', () => {
       {
         scope: Scope.Connection,
         dependencies: { injectable1, injectable3 },
-        factory: () => '4',
+        create: () => '4',
         dispose: disposeSpy,
       },
       'inj4',
@@ -377,7 +373,7 @@ describe('Container', () => {
     const injectable5 = createFactoryInjectable(
       {
         dependencies: { injectable2, injectable4 },
-        factory: () => '5',
+        create: () => '5',
         dispose: disposeSpy,
       },
       'inj5',
@@ -394,7 +390,7 @@ describe('Container', () => {
     const lazyInjectable = createLazyInjectable()
     const injectable = createFactoryInjectable({
       dependencies: { dep: lazyInjectable },
-      factory: noopFn,
+      create: noopFn,
     })
     await expect(container.resolve(injectable)).rejects.toThrow(
       'No instance provided for an injectable',
@@ -405,7 +401,7 @@ describe('Container', () => {
     const lazyInjectable = createLazyInjectable()
     const injectable = createFactoryInjectable({
       dependencies: { dep: createOptionalInjectable(lazyInjectable) },
-      factory: noopFn,
+      create: noopFn,
     })
     await expect(container.resolve(injectable)).resolves.toBeUndefined()
   })
@@ -416,7 +412,7 @@ describe('Container', () => {
     const value = {}
     const injectable = createFactoryInjectable({
       dependencies: { dep: createValueInjectable<'dep' | 'ped'>('dep') },
-      factory: async (deps) => {
+      create: async (deps) => {
         expect(deps.dep).toBe('ped')
         return value
       },
@@ -437,7 +433,7 @@ describe('Container', () => {
     it('should prevent race conditions during concurrent resolution', async () => {
       let factoryCallCount = 0
       const injectable = createFactoryInjectable({
-        factory: async () => {
+        create: async () => {
           factoryCallCount++
           await new Promise((resolve) => setTimeout(resolve, 10))
           return { id: factoryCallCount }
@@ -461,7 +457,7 @@ describe('Container', () => {
     it('should handle resolution failures properly without memory leaks', async () => {
       const errorMessage = 'Factory failed'
       const injectable = createFactoryInjectable({
-        factory: async (): Promise<string> => {
+        create: async (): Promise<string> => {
           throw new Error(errorMessage)
         },
       })
@@ -477,13 +473,13 @@ describe('Container', () => {
   describe('Enhanced Dependency Tracking', () => {
     it('should track dependencies across different scopes', async () => {
       const globalDep = createFactoryInjectable({
-        factory: () => 'global',
+        create: () => 'global',
         scope: Scope.Global,
       })
 
       const connectionDep = createFactoryInjectable({
         dependencies: { globalDep },
-        factory: (deps) => ({ value: 'connection', global: deps.globalDep }),
+        create: (deps) => ({ value: 'connection', global: deps.globalDep }),
         scope: Scope.Connection,
       })
 
@@ -503,7 +499,7 @@ describe('Container', () => {
       const disposalOrder: string[] = []
 
       const dep1 = createFactoryInjectable({
-        factory: () => 'dep1',
+        create: () => 'dep1',
         dispose: () => {
           disposalOrder.push('dep1')
         },
@@ -511,7 +507,7 @@ describe('Container', () => {
 
       const dep2 = createFactoryInjectable({
         dependencies: { dep1 },
-        factory: (deps) => ({ value: 'dep2', dep1: deps.dep1 }),
+        create: (deps) => ({ value: 'dep2', dep1: deps.dep1 }),
         dispose: () => {
           disposalOrder.push('dep2')
         },
@@ -519,7 +515,7 @@ describe('Container', () => {
 
       const dep3 = createFactoryInjectable({
         dependencies: { dep2 },
-        factory: (deps) => ({ value: 'dep3', dep2: deps.dep2 }),
+        create: (deps) => ({ value: 'dep3', dep2: deps.dep2 }),
         dispose: () => {
           disposalOrder.push('dep3')
         },
@@ -538,7 +534,7 @@ describe('Container', () => {
       const disposalOrder: string[] = []
 
       const depA = createFactoryInjectable({
-        factory: () => 'A',
+        create: () => 'A',
         dispose: () => {
           disposalOrder.push('A')
         },
@@ -546,7 +542,7 @@ describe('Container', () => {
 
       const depB = createFactoryInjectable({
         dependencies: { depA },
-        factory: (deps) => ({ value: 'B', depA: deps.depA }),
+        create: (deps) => ({ value: 'B', depA: deps.depA }),
         dispose: () => {
           disposalOrder.push('B')
         },
@@ -554,7 +550,7 @@ describe('Container', () => {
 
       const depC = createFactoryInjectable({
         dependencies: { depA },
-        factory: (deps) => ({ value: 'C', depA: deps.depA }),
+        create: (deps) => ({ value: 'C', depA: deps.depA }),
         dispose: () => {
           disposalOrder.push('C')
         },
@@ -562,7 +558,7 @@ describe('Container', () => {
 
       const depD = createFactoryInjectable({
         dependencies: { depB, depC },
-        factory: (deps) => ({ value: 'D', depB: deps.depB, depC: deps.depC }),
+        create: (deps) => ({ value: 'D', depB: deps.depB, depC: deps.depC }),
         dispose: () => {
           disposalOrder.push('D')
         },
@@ -580,7 +576,7 @@ describe('Container', () => {
   describe('Disposal Lock', () => {
     it('should prevent new resolutions during disposal', async () => {
       const injectable = createFactoryInjectable({
-        factory: () => 'test',
+        create: () => 'test',
         dispose: () => new Promise((r) => setTimeout(r, 50)),
       })
 
@@ -599,7 +595,7 @@ describe('Container', () => {
     })
 
     it('should allow resolution in new container after disposal', async () => {
-      const injectable = createFactoryInjectable({ factory: () => 'test' })
+      const injectable = createFactoryInjectable({ create: () => 'test' })
 
       await container.dispose()
 
@@ -617,7 +613,7 @@ describe('Container', () => {
       let resolutionAttempted = false
 
       const slowDisposingInjectable = createFactoryInjectable({
-        factory: () => 'slow',
+        create: () => 'slow',
         dispose: async () => {
           disposalStarted = true
           // Simulate slow disposal
@@ -625,9 +621,7 @@ describe('Container', () => {
         },
       })
 
-      const quickInjectable = createFactoryInjectable({
-        factory: () => 'quick',
-      })
+      const quickInjectable = createFactoryInjectable({ create: () => 'quick' })
 
       await container.resolve(slowDisposingInjectable)
 
@@ -658,7 +652,7 @@ describe('Container', () => {
       const disposalOrder: string[] = []
 
       const parentDep = createFactoryInjectable({
-        factory: () => 'parent',
+        create: () => 'parent',
         scope: Scope.Global,
         dispose: () => {
           disposalOrder.push('parent')
@@ -667,7 +661,7 @@ describe('Container', () => {
 
       const childDep = createFactoryInjectable({
         dependencies: { parentDep },
-        factory: (deps) => ({ value: 'child', parent: deps.parentDep }),
+        create: (deps) => ({ value: 'child', parent: deps.parentDep }),
         scope: Scope.Connection,
         dispose: () => {
           disposalOrder.push('child')
@@ -701,7 +695,7 @@ describe('Container', () => {
       const disposalOrder: string[] = []
 
       const globalDep = createFactoryInjectable({
-        factory: () => 'global',
+        create: () => 'global',
         scope: Scope.Global,
         dispose: () => {
           disposalOrder.push('global')
@@ -710,7 +704,7 @@ describe('Container', () => {
 
       const connectionDep1 = createFactoryInjectable({
         dependencies: { globalDep },
-        factory: (deps) => ({ value: 'conn1', global: deps.globalDep }),
+        create: (deps) => ({ value: 'conn1', global: deps.globalDep }),
         scope: Scope.Connection,
         dispose: () => {
           disposalOrder.push('conn1')
@@ -719,7 +713,7 @@ describe('Container', () => {
 
       const connectionDep2 = createFactoryInjectable({
         dependencies: { globalDep, connectionDep1 },
-        factory: (deps) => ({
+        create: (deps) => ({
           value: 'conn2',
           global: deps.globalDep,
           conn1: deps.connectionDep1,
@@ -732,7 +726,7 @@ describe('Container', () => {
 
       const callDep = createFactoryInjectable({
         dependencies: { globalDep, connectionDep2 },
-        factory: (deps) => ({
+        create: (deps) => ({
           value: 'call',
           global: deps.globalDep,
           conn2: deps.connectionDep2,
@@ -770,13 +764,13 @@ describe('Container', () => {
 
     it('should properly clean up dependency tracking in child containers', async () => {
       const parentDep = createFactoryInjectable({
-        factory: () => 'parent',
+        create: () => 'parent',
         scope: Scope.Global,
       })
 
       const childDep = createFactoryInjectable({
         dependencies: { parentDep },
-        factory: (deps) => ({ value: 'child', parent: deps.parentDep }),
+        create: (deps) => ({ value: 'child', parent: deps.parentDep }),
         scope: Scope.Connection,
       })
 
@@ -802,19 +796,19 @@ describe('Container', () => {
 
     it('should prevent disposal of dependencies still needed by other containers', async () => {
       const sharedDep = createFactoryInjectable({
-        factory: () => 'shared',
+        create: () => 'shared',
         scope: Scope.Global,
       })
 
       const childDep1 = createFactoryInjectable({
         dependencies: { sharedDep },
-        factory: (deps) => ({ value: 'child1', shared: deps.sharedDep }),
+        create: (deps) => ({ value: 'child1', shared: deps.sharedDep }),
         scope: Scope.Connection,
       })
 
       const childDep2 = createFactoryInjectable({
         dependencies: { sharedDep },
-        factory: (deps) => ({ value: 'child2', shared: deps.sharedDep }),
+        create: (deps) => ({ value: 'child2', shared: deps.sharedDep }),
         scope: Scope.Connection,
       })
 
@@ -846,14 +840,14 @@ describe('Container', () => {
 
     it('should handle disposal when parent container is disposed first', async () => {
       const parentDep = createFactoryInjectable({
-        factory: () => 'parent',
+        create: () => 'parent',
         scope: Scope.Global,
         dispose: vi.fn(),
       })
 
       const childDep = createFactoryInjectable({
         dependencies: { parentDep },
-        factory: (deps) => ({ value: 'child', parent: deps.parentDep }),
+        create: (deps) => ({ value: 'child', parent: deps.parentDep }),
         scope: Scope.Connection,
         dispose: vi.fn(),
       })
@@ -872,14 +866,14 @@ describe('Container', () => {
       const disposeSpy = vi.fn()
 
       const parentDep = createFactoryInjectable({
-        factory: () => 'parent',
+        create: () => 'parent',
         scope: Scope.Global,
         dispose: disposeSpy,
       })
 
       const childDep = createFactoryInjectable({
         dependencies: { parentDep },
-        factory: (deps) => ({ value: 'child', parent: deps.parentDep }),
+        create: (deps) => ({ value: 'child', parent: deps.parentDep }),
         scope: Scope.Connection,
         dispose: disposeSpy,
       })
@@ -922,14 +916,14 @@ describe('Container', () => {
 
     it('should not include parent dependencies in disposal order calculation', async () => {
       const parentDep = createFactoryInjectable(
-        { factory: () => 'parent', scope: Scope.Global },
+        { create: () => 'parent', scope: Scope.Global },
         'parentDep',
       )
 
       const childDep = createFactoryInjectable(
         {
           dependencies: { parentDep },
-          factory: (deps) => ({ value: 'child', parent: deps.parentDep }),
+          create: (deps) => ({ value: 'child', parent: deps.parentDep }),
           scope: Scope.Connection,
         },
         'childDep',
@@ -975,7 +969,7 @@ describe('Container', () => {
       // Global scope dependencies (shared across all containers)
       const database = createFactoryInjectable(
         {
-          factory: () => {
+          create: () => {
             creationOrder.push('database')
             return { connection: 'db://localhost:5432' }
           },
@@ -989,7 +983,7 @@ describe('Container', () => {
 
       const config = createFactoryInjectable(
         {
-          factory: () => {
+          create: () => {
             creationOrder.push('config')
             return { port: 3000, env: 'production' }
           },
@@ -1004,7 +998,7 @@ describe('Container', () => {
       const logger = createFactoryInjectable(
         {
           dependencies: { config },
-          factory: ({ config }) => {
+          create: ({ config }) => {
             creationOrder.push('logger')
             return { log: (msg: string) => {} }
           },
@@ -1020,7 +1014,7 @@ describe('Container', () => {
       const session = createFactoryInjectable(
         {
           dependencies: { database, config },
-          factory: ({ database, config }) => {
+          create: ({ database, config }) => {
             creationOrder.push('session')
             return {
               id: Math.random().toString(36),
@@ -1039,7 +1033,7 @@ describe('Container', () => {
       const auth = createFactoryInjectable(
         {
           dependencies: { session, logger },
-          factory: ({ session, logger }) => {
+          create: ({ session, logger }) => {
             creationOrder.push('auth')
             return { userId: 'user123', sessionId: session.id }
           },
@@ -1054,7 +1048,7 @@ describe('Container', () => {
       const connectionMetrics = createFactoryInjectable(
         {
           dependencies: { session, logger },
-          factory: ({ session, logger }) => {
+          create: ({ session, logger }) => {
             creationOrder.push('connectionMetrics')
             return { sessionId: session.id, startTime: Date.now(), requests: 0 }
           },
@@ -1070,7 +1064,7 @@ describe('Container', () => {
       const requestContext = createFactoryInjectable(
         {
           dependencies: { auth, connectionMetrics },
-          factory: ({ auth, connectionMetrics }) => {
+          create: ({ auth, connectionMetrics }) => {
             creationOrder.push('requestContext')
             connectionMetrics.requests++
             return {
@@ -1091,7 +1085,7 @@ describe('Container', () => {
       const validator = createFactoryInjectable(
         {
           dependencies: { requestContext, logger },
-          factory: ({ requestContext, logger }) => {
+          create: ({ requestContext, logger }) => {
             creationOrder.push('validator')
             return {
               validate: (data: any) => true,
@@ -1109,7 +1103,7 @@ describe('Container', () => {
       const businessLogic = createFactoryInjectable(
         {
           dependencies: { requestContext, validator, database, session },
-          factory: ({ requestContext, validator, database, session }) => {
+          create: ({ requestContext, validator, database, session }) => {
             creationOrder.push('businessLogic')
             return {
               process: (data: any) => {
@@ -1253,7 +1247,7 @@ describe('Container', () => {
     it('should create new instance for each resolution of transient injectable', async () => {
       const factorySpy = vi.fn(() => ({ id: Math.random() }))
       const transientInjectable = createFactoryInjectable({
-        factory: factorySpy,
+        create: factorySpy,
         scope: Scope.Transient,
       })
 
@@ -1277,7 +1271,7 @@ describe('Container', () => {
     it('should not cache transient injectable instances for reuse', async () => {
       const factorySpy = vi.fn(() => ({}))
       const transientInjectable = createFactoryInjectable({
-        factory: factorySpy,
+        create: factorySpy,
         scope: Scope.Transient,
       })
 
@@ -1296,7 +1290,7 @@ describe('Container', () => {
     it('should dispose transient injectable instances individually', async () => {
       const disposeSpy = vi.fn()
       const transientInjectable = createFactoryInjectable({
-        factory: () => ({ value: Math.random() }),
+        create: () => ({ value: Math.random() }),
         dispose: disposeSpy,
         scope: Scope.Transient,
       })
@@ -1330,13 +1324,13 @@ describe('Container', () => {
 
     it('should handle transient injectables with dependencies', async () => {
       const globalDep = createFactoryInjectable({
-        factory: () => ({ value: 'global' }),
+        create: () => ({ value: 'global' }),
         scope: Scope.Global,
       })
 
       const transientInjectable = createFactoryInjectable({
         dependencies: { globalDep },
-        factory: ({ globalDep }) => ({
+        create: ({ globalDep }) => ({
           id: Math.random(),
           globalValue: globalDep,
         }),
@@ -1362,7 +1356,7 @@ describe('Container', () => {
     it('should dispose transient injectables during container disposal', async () => {
       const disposeSpy = vi.fn()
       const transientInjectable = createFactoryInjectable({
-        factory: () => ({ value: 'transient' }),
+        create: () => ({ value: 'transient' }),
         dispose: disposeSpy,
         scope: Scope.Transient,
       })
@@ -1380,7 +1374,7 @@ describe('Container', () => {
 
     it('should handle transient injectable with pick function', async () => {
       const transientInjectable = createFactoryInjectable({
-        factory: () => ({
+        create: () => ({
           internal: { secret: 'hidden' },
           publicData: { value: Math.random() },
         }),
@@ -1406,7 +1400,7 @@ describe('Container', () => {
     it('should handle disposal errors in transient injectables', async () => {
       const errorMessage = 'Disposal failed'
       const transientInjectable = createFactoryInjectable({
-        factory: () => ({ value: 'test' }),
+        create: () => ({ value: 'test' }),
         dispose: () => {
           throw new Error(errorMessage)
         },
@@ -1424,13 +1418,13 @@ describe('Container', () => {
 
     it('should work with complex dependency graphs involving transient injectables', async () => {
       const sharedDep = createFactoryInjectable({
-        factory: () => ({ shared: 'value' }),
+        create: () => ({ shared: 'value' }),
         scope: Scope.Global,
       })
 
       const transientDep = createFactoryInjectable({
         dependencies: { sharedDep },
-        factory: ({ sharedDep }) => ({
+        create: ({ sharedDep }) => ({
           transientId: Math.random(),
           shared: sharedDep.shared,
         }),
@@ -1439,7 +1433,7 @@ describe('Container', () => {
 
       const finalInjectable = createFactoryInjectable({
         dependencies: { sharedDep, transientDep },
-        factory: ({ sharedDep, transientDep }) => ({
+        create: ({ sharedDep, transientDep }) => ({
           final: true,
           shared: sharedDep.shared,
           transient: transientDep.transientId,
@@ -1477,13 +1471,13 @@ describe('Container', () => {
       }))
 
       const transientDep = createFactoryInjectable({
-        factory: transientFactorySpy,
+        create: transientFactorySpy,
         scope: Scope.Transient,
       })
 
       const globalInjectable = createFactoryInjectable({
         dependencies: { transientDep },
-        factory: globalFactorySpy,
+        create: globalFactorySpy,
         scope: Scope.Global,
       })
 
@@ -1536,7 +1530,7 @@ describe('Container', () => {
       const disposeSpy = vi.fn()
       const value = { foo: 'bar' }
       const factoryInjectable = createFactoryInjectable({
-        factory: () => value,
+        create: () => value,
         dispose: disposeSpy,
       })
       const token = createLazyInjectable()
@@ -1556,7 +1550,7 @@ describe('Container', () => {
       const disposeSpy = vi.fn()
       const value = { foo: 'bar' }
       const factoryInjectable = createFactoryInjectable({
-        factory: () => value,
+        create: () => value,
         dispose: disposeSpy,
       })
       const token = createLazyInjectable()
@@ -1593,7 +1587,7 @@ describe('Container', () => {
 
     it('should allow factory injectables to be re-resolved after disposal', async () => {
       const factorySpy = vi.fn(() => ({ id: Math.random() }))
-      const factoryInjectable = createFactoryInjectable({ factory: factorySpy })
+      const factoryInjectable = createFactoryInjectable({ create: factorySpy })
       const token = createLazyInjectable()
 
       container.provide(token, factoryInjectable)
@@ -1670,7 +1664,7 @@ describe('Container', () => {
 
     it('should lazily resolve injectable provisions', async () => {
       const factorySpy = vi.fn(() => ({ value: 'created' }))
-      const factoryInjectable = createFactoryInjectable({ factory: factorySpy })
+      const factoryInjectable = createFactoryInjectable({ create: factorySpy })
       const token = createLazyInjectable()
 
       container.provide(token, factoryInjectable)
@@ -1688,7 +1682,7 @@ describe('Container', () => {
 
     it('should cache resolved injectable provisions in instances', async () => {
       const factorySpy = vi.fn(() => ({ value: 'created' }))
-      const factoryInjectable = createFactoryInjectable({ factory: factorySpy })
+      const factoryInjectable = createFactoryInjectable({ create: factorySpy })
       const token = createLazyInjectable()
 
       container.provide(token, factoryInjectable)

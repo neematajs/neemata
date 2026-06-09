@@ -368,7 +368,7 @@ export class Container {
     }
     if (isFactoryInjectable(injectable)) {
       wrapper.private = await Promise.resolve(
-        injectable.factory(wrapper.context),
+        injectable.create(wrapper.context),
       )
       wrapper.public = injectable.pick(wrapper.private)
     } else {

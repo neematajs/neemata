@@ -120,7 +120,7 @@ export class Gateway<
         options.identity ??
         createFactoryInjectable({
           dependencies: { connectionId: injectables.connectionId },
-          factory: ({ connectionId }) => connectionId,
+          create: ({ connectionId }) => connectionId,
         }),
     }
     this.logger = forkLogger(options.logger, undefined, gatewayLoggerOptions)
