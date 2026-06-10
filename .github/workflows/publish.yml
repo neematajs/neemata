@@ -65,7 +65,7 @@ jobs:
 
       - name: Set version
         run: |
-          pnpm -r exec pnpm version --allow-same-version --no-commit-hooks --no-git-tag-version --silent ${{ inputs.version }}
+          pnpm -r exec npm pkg set version=${{ inputs.version }}
           pnpm -r exec cp "$GITHUB_WORKSPACE/README.md" ./
           pnpm -r exec cp "$GITHUB_WORKSPACE/LICENSE.md" ./
 
