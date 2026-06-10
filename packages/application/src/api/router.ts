@@ -109,9 +109,8 @@ export type RouterContractsFromRoutes<Routes extends AnyRouterRoutes> = {
       : never
 }
 
-export type RouterContractFromRoutes<
-  Routes extends AnyRouterRoutes,
-> = TRouterContract<RouterContractsFromRoutes<Routes>, undefined>
+export type RouterContractFromRoutes<Routes extends AnyRouterRoutes> =
+  TRouterContract<RouterContractsFromRoutes<Routes>, undefined>
 
 export function createRootRouter<Routers extends readonly AnyRouter[]>(
   routers: Routers,
@@ -180,9 +179,7 @@ export interface CreateContractRouterParams<
   timeout?: number
 }
 
-export function createRouter<
-  const Routes extends AnyRouterRoutes,
->(
+export function createRouter<const Routes extends AnyRouterRoutes>(
   params: CreateRouterParams<Routes>,
 ): Router<RouterContractFromRoutes<Routes>> {
   const { routes, guards, middlewares, meta, timeout } = params

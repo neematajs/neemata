@@ -11,11 +11,7 @@ import type { AnyProcedure } from './api/procedure.ts'
 import type { AnyRootRouter, AnyRouter } from './api/router.ts'
 import type { ApplicationConfig } from './config.ts'
 import { ApplicationApi } from './api/api.ts'
-import {
-  kDefaultProcedure,
-  kRootRouter,
-  kRootRouterSources,
-} from './api/constants.ts'
+import { kDefaultProcedure, kRootRouterSources } from './api/constants.ts'
 import { isProcedure } from './api/procedure.ts'
 import { isRootRouter, isRouter } from './api/router.ts'
 import { LifecycleHook } from './enums.ts'
@@ -34,7 +30,7 @@ export class NeemataApplication {
   readonly applicationHooks = new ApplicationHooks()
   readonly api: GatewayApi<ApplicationResolvedProcedure>
 
-  readonly routers = new Map<string | kRootRouter, AnyRouter>()
+  readonly routers = new Set<AnyRouter>()
   readonly procedures = new Map<
     string | kDefaultProcedureKey,
     { procedure: AnyProcedure; path: AnyRouter[] }
@@ -143,9 +139,13 @@ export class NeemataApplication {
     yield* this.appConfig.middlewares
     yield* this.appConfig.meta
     yield* this.appConfig.hooks
-    for (const router of this.routers.values()) {
+
+    for (const router of this.routers) {
       yield* router.meta
+      yield* router.guards
+      yield* router.middlewares
     }
+
     for (const { procedure } of this.procedures.values()) {
       yield procedure
       yield* procedure.meta
@@ -157,7 +157,7 @@ export class NeemataApplication {
   protected registerApi(): void {
     const { router, filters, guards, middlewares } = this.appConfig
 
-    if (this.routers.has(kRootRouter)) {
+    if (Array.from(this.routers.values()).some((r) => isRootRouter(r))) {
       throw new Error('Root router already registered')
     }
 
@@ -165,7 +165,7 @@ export class NeemataApplication {
       throw new Error('Root router must be a root router')
     }
 
-    this.routers.set(kRootRouter, router)
+    this.routers.add(router)
     this.registerRootRouter(router)
 
     if (router.default) {
@@ -186,7 +186,8 @@ export class NeemataApplication {
   protected registerRootRouter(router: AnyRootRouter): void {
     this.warnDuplicateRootRoutes(router)
     for (const source of router[kRootRouterSources]) {
-      this.registerRouter(source, this.getRootSourcePath(router, source))
+      this.routers.add(source)
+      this.registerRouter(source, [router])
     }
   }
 
@@ -206,31 +207,17 @@ export class NeemataApplication {
     }
   }
 
-  protected getRootSourcePath(
-    root: AnyRootRouter,
-    source: AnyRouter,
-  ): AnyRouter[] {
-    return this.hasRouteContext(source) ? [root, source] : [root]
-  }
-
-  protected hasRouteContext(router: AnyRouter): boolean {
-    return (
-      router.meta.length > 0 ||
-      router.guards.size > 0 ||
-      router.middlewares.size > 0 ||
-      router.timeout !== undefined
-    )
-  }
-
   protected registerRouter(router: AnyRouter, path: AnyRouter[] = []): void {
     for (const route of Object.values(router.routes)) {
       if (isRouter(route)) {
         const name = route.contract.name
         if (!name) throw new Error('Nested routers must have a name')
-        if (this.routers.has(name)) {
-          throw new Error(`Router ${String(name)} already registered`)
+        for (const router of this.routers) {
+          if (router.contract.name === name) {
+            throw new Error(`Router ${String(name)} already registered`)
+          }
         }
-        this.routers.set(name, route)
+        this.routers.add(route)
         this.registerRouter(route, [...path, router])
       } else if (isProcedure(route)) {
         const name = route.contract.name
