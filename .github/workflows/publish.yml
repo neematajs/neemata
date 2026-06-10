@@ -65,7 +65,7 @@ jobs:
 
       - name: Set version
         run: |
-          pnpm -r exec npm pkg set version=${{ inputs.version }}
+          pnpm -r exec npm pkg set version=${{ inputs.version }} repository.type=git repository.url=https://github.com/neematajs/neemata
           pnpm -r exec cp "$GITHUB_WORKSPACE/README.md" ./
           pnpm -r exec cp "$GITHUB_WORKSPACE/LICENSE.md" ./
 
