@@ -1,4 +1,4 @@
-import { createTransport } from '@nmtjs/gateway'
+import { createTransport, StreamTimeout } from '@nmtjs/gateway'
 import { describe, expect, it } from 'vitest'
 
 import type { ServerApplicationConfig } from '../src/runtime/index.ts'
@@ -34,7 +34,10 @@ const second = createTransport({
   }),
 })
 
-const host = defineApplicationHost(app, { transports: { first, second } })
+const host = defineApplicationHost(app, {
+  transports: { first, second },
+  gateway: { heartbeat: false, streamTimeouts: { [StreamTimeout.Pull]: 1000 } },
+})
 
 describe('server application host types', () => {
   it('infers thread options from application host transports', () => {

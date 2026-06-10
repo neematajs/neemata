@@ -71,16 +71,17 @@ Neemata uses a layered architecture:
 
 1. **Config** (`neemata.config.ts`) — defines applications and server entry point via `defineConfig()`
 2. **Server** (`n.server()`) — orchestrates workers, proxy, store, metrics
-3. **Application Host** (`n.host(app, { transports })`) — binds one app definition to concrete serving surfaces such as HTTP or WebSocket transport factories
+3. **Application Host** (`n.host(app, { transports, gateway, identity })`) — binds one app definition to concrete serving surfaces such as HTTP or WebSocket transport factories and host-local gateway settings
 4. **Application** (`n.app()`) — pure application definition: router, guards, middleware, filters, hooks, dependencies, API options, and app-level meta
 5. **Router** (`n.rootRouter()` / `n.router()`) — groups procedures
 6. **Procedure** (`n.procedure()`) — individual RPC endpoint with input/output types and handler
 7. **Client** (`StaticClient` / `RuntimeClient`) — type-safe RPC calls via `@nmtjs/client`
 
 Application definitions must not own transport factories, gateway options, listen
-options, or connection identity. Put transport factories in the host entry with
-`n.host(app, { transports })`. Server config owns per-thread transport options
-and infers their types from the host's transport map.
+options, or connection identity. Put transport factories, gateway options, and
+connection identity in the host entry with `n.host(app, { transports, gateway,
+identity })`. Server config owns per-thread transport options and infers their
+types from the host's transport map.
 
 ### Dependency Injection Scopes
 
