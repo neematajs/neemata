@@ -106,8 +106,8 @@ export class ApplicationWorkerRuntime extends BaseWorkerRuntime {
         this.hostDefinition.transports,
         this.runtimeOptions.transports,
       ),
-      gateway: config.gateway,
-      identity: config.identity,
+      gateway: this.hostDefinition.gateway,
+      identity: this.hostDefinition.identity,
     }
   }
 }

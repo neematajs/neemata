@@ -4,7 +4,6 @@ import type {
   TransportOptionsOf,
 } from '@nmtjs/application'
 import type { LoggingOptions } from '@nmtjs/core'
-import type { ConnectionIdentity, GatewayOptions } from '@nmtjs/gateway'
 import type { ApplicationOptions } from '@nmtjs/proxy'
 import type { Applications } from 'nmtjs/runtime/types'
 
@@ -36,16 +35,12 @@ export type ServerApplicationConfig<T = ApplicationHostDefinition> =
         threads: {
           [K in keyof Transports]: TransportOptionsOf<Transports[K]>
         }[]
-        gateway?: Pick<GatewayOptions, 'streamTimeouts' | 'heartbeat'>
-        identity?: ConnectionIdentity
       }
     : T extends ApplicationHost<infer Transports>
       ? {
           threads: {
             [K in keyof Transports]: TransportOptionsOf<Transports[K]>
           }[]
-          gateway?: Pick<GatewayOptions, 'streamTimeouts' | 'heartbeat'>
-          identity?: ConnectionIdentity
         }
       : any
 

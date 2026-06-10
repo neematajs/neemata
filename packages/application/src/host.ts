@@ -35,11 +35,23 @@ export interface ApplicationHostDefinition<
   [kApplicationHostDefinition]: any
   application: App
   transports: Transports
+  gateway?: Pick<
+    GatewayOptions<ApplicationResolvedProcedure>,
+    'streamTimeouts' | 'heartbeat'
+  >
+  identity?: ConnectionIdentity
 }
 
 export type ApplicationHostDefinitionOptions<
   Transports extends Record<string, ApplicationTransport>,
-> = { transports: Transports }
+> = {
+  transports: Transports
+  gateway?: Pick<
+    GatewayOptions<ApplicationResolvedProcedure>,
+    'streamTimeouts' | 'heartbeat'
+  >
+  identity?: ConnectionIdentity
+}
 
 export interface ApplicationHostOptions<
   Transports extends Record<string, ApplicationTransport> = Record<

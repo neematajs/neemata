@@ -1,4 +1,5 @@
 import type { TransportWorker, TransportWorkerParams } from '@nmtjs/gateway'
+import { createValueInjectable } from '@nmtjs/core'
 import { createTransport, StreamTimeout } from '@nmtjs/gateway'
 import { t } from '@nmtjs/type'
 import { describe, expect, it } from 'vitest'
@@ -23,11 +24,13 @@ type TestTransportOptions = { marker: string; listen: { port: number } }
 function createRuntime(
   options: {
     gateway?: TestGatewayConfig
+    identity?: ReturnType<typeof createValueInjectable<string>>
     transportOptions?: TestTransportOptions
   } = {},
 ) {
   const {
     gateway = {},
+    identity,
     transportOptions = { marker: 'default', listen: { port: 0 } },
   } = options
 
@@ -70,13 +73,13 @@ function createRuntime(
   const appConfig = defineApplication({ router })
   const hostDefinition = defineApplicationHost(appConfig, {
     transports: { test: transport },
+    gateway,
+    identity,
   })
 
   const serverConfig = defineServer({
     logger: { pinoOptions: { enabled: false } },
-    applications: {
-      'test-app': { threads: [{ test: transportOptions }], gateway },
-    },
+    applications: { 'test-app': { threads: [{ test: transportOptions }] } },
   })
 
   return {
@@ -95,8 +98,10 @@ function createRuntime(
 }
 
 describe('application config', () => {
-  it('propagates gateway heartbeat and stream timeout overrides to the runtime gateway', async () => {
+  it('propagates host gateway and identity overrides to the runtime gateway', async () => {
+    const identity = createValueInjectable('test-identity')
     const { runtime } = createRuntime({
+      identity,
       gateway: {
         heartbeat: { interval: 4321, timeout: 8765 },
         streamTimeouts: {
@@ -121,6 +126,7 @@ describe('application config', () => {
         [StreamTimeout.Consume]: 15000,
         [StreamTimeout.Finish]: 2222,
       })
+      expect(runtime.gateway.options.identity).toBe(identity)
     } finally {
       if (started) await runtime.stop()
     }
