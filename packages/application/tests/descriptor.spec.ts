@@ -1,12 +1,7 @@
 import { Container, createLogger, Scope } from '@nmtjs/core'
 import { describe, expect, it } from 'vitest'
 
-import type {
-  AnyProcedure,
-  AnyRouter,
-  kDefaultProcedure,
-  MetadataKind,
-} from '../src/index.ts'
+import type { AnyProcedure, AnyRouter, MetadataKind } from '../src/index.ts'
 import {
   ApplicationApi,
   createMeta,
@@ -21,7 +16,7 @@ function collectProcedures(
   router: AnyRouter,
   path: AnyRouter[] = [],
   procedures = new Map<
-    string | typeof kDefaultProcedure,
+    string,
     { procedure: AnyProcedure; path: AnyRouter[] }
   >(),
 ) {

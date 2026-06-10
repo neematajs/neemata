@@ -3,7 +3,6 @@ import type { GatewayApi } from '@nmtjs/gateway'
 import { ExecutionEnvironment, forkLogger } from '@nmtjs/core'
 
 import type { ApiOptions, ApplicationResolvedProcedure } from './api/api.ts'
-import type { kDefaultProcedure as kDefaultProcedureKey } from './api/constants.ts'
 import type { AnyFilter } from './api/filters.ts'
 import type { AnyGuard } from './api/guards.ts'
 import type { AnyMiddleware } from './api/middlewares.ts'
@@ -11,7 +10,7 @@ import type { AnyProcedure } from './api/procedure.ts'
 import type { AnyRootRouter, AnyRouter } from './api/router.ts'
 import type { ApplicationConfig } from './config.ts'
 import { ApplicationApi } from './api/api.ts'
-import { kDefaultProcedure, kRootRouterSources } from './api/constants.ts'
+import { kRootRouterSources } from './api/constants.ts'
 import { isProcedure } from './api/procedure.ts'
 import { isRootRouter, isRouter } from './api/router.ts'
 import { LifecycleHook } from './enums.ts'
@@ -32,7 +31,7 @@ export class NeemataApplication {
 
   readonly routers = new Set<AnyRouter>()
   readonly procedures = new Map<
-    string | kDefaultProcedureKey,
+    string,
     { procedure: AnyProcedure; path: AnyRouter[] }
   >()
   readonly filters = new Set<AnyFilter>()
@@ -167,16 +166,6 @@ export class NeemataApplication {
 
     this.routers.add(router)
     this.registerRootRouter(router)
-
-    if (router.default) {
-      if (!isProcedure(router.default)) {
-        throw new Error('Root router default must be a procedure')
-      }
-      this.procedures.set(kDefaultProcedure, {
-        procedure: router.default,
-        path: [router],
-      })
-    }
 
     for (const filter of filters) this.filters.add(filter)
     for (const middleware of middlewares) this.middlewares.add(middleware)

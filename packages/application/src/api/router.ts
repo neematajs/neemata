@@ -7,7 +7,6 @@ import type {
   TRouterContract,
 } from '@nmtjs/contract'
 import type { BaseTypeAny, t } from '@nmtjs/type'
-import type { AnyType } from '@nmtjs/type/any'
 import { c, IsRouterContract } from '@nmtjs/contract'
 import { assertUniqueMetaBindings } from '@nmtjs/core'
 
@@ -40,7 +39,6 @@ export interface AnyRootRouter extends AnyRouter {
   [kRootRouter]: any
   [kRootRouterSources]: readonly AnyRouter[]
   contract: TAnyRouterContract<Record<string, TRouteContract>, undefined>
-  default?: AnyProcedure<any>
 }
 
 export interface Router<Contract extends TAnyRouterContract> extends AnyRouter {
@@ -74,7 +72,6 @@ export interface RootRouter<
 > extends Router<Contract> {
   [kRootRouter]: any
   [kRootRouterSources]: readonly AnyRouter[]
-  default?: AnyProcedure<any>
 }
 
 export type MergeRoutersRoutesContracts<
@@ -114,9 +111,6 @@ export type RouterContractFromRoutes<Routes extends AnyRouterRoutes> =
 
 export function createRootRouter<Routers extends readonly AnyRouter[]>(
   routers: Routers,
-  defaultProcedure?: AnyProcedure<
-    TProcedureContract<AnyType, AnyType, true | undefined, string | undefined>
-  >,
 ): RootRouter<
   TRouterContract<
     MergeRoutersRoutesContracts<ExtractRouterContracts<[...Routers]>>,
@@ -128,7 +122,6 @@ export function createRootRouter<Routers extends readonly AnyRouter[]>(
   const router = createRouter({ routes })
   return Object.freeze({
     ...router,
-    default: defaultProcedure,
     [kRootRouter]: true,
     [kRootRouterSources]: routers,
   }) as any

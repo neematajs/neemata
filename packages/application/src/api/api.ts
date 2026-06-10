@@ -38,7 +38,6 @@ import { NeemataTypeError, registerDefaultLocale, type } from '@nmtjs/type'
 import { prettifyError } from 'zod/mini'
 
 import type { RuntimeConfig } from './config.ts'
-import type { kDefaultProcedure as kDefaultProcedureKey } from './constants.ts'
 import type { AnyFilter } from './filters.ts'
 import type { AnyGuard } from './guards.ts'
 import type { ApiMetaContext } from './meta.ts'
@@ -47,7 +46,6 @@ import type { AnyProcedure } from './procedure.ts'
 import type { AnyRouter } from './router.ts'
 import type { ApiCallContext } from './types.ts'
 import { config, defaultRuntimeConfig } from './config.ts'
-import { kDefaultProcedure } from './constants.ts'
 
 registerDefaultLocale()
 
@@ -83,10 +81,7 @@ export type ApiOptions = {
   timeout?: number
   container: Container
   logger: Logger
-  procedures: Map<
-    string | kDefaultProcedureKey,
-    { procedure: AnyProcedure; path: AnyRouter[] }
-  >
+  procedures: Map<string, { procedure: AnyProcedure; path: AnyRouter[] }>
   meta: readonly AnyMetaBinding[]
   guards: Set<AnyGuard>
   middlewares: Set<AnyMiddleware>
@@ -117,9 +112,6 @@ export class ApplicationApi
   find(procedureName: string) {
     const procedure = this.options.procedures.get(procedureName)
     if (procedure) return procedure
-
-    const fallback = this.options.procedures.get(kDefaultProcedure)
-    if (fallback) return fallback
 
     throw NotFound(procedureName)
   }
