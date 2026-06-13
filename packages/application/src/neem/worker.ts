@@ -41,6 +41,8 @@ export class NeemataApplicationRuntime<
         ctx.definition.transports,
         ctx.data,
       ),
+      gateway: ctx.definition.gateway,
+      identity: ctx.definition.identity,
     })
   }
 
