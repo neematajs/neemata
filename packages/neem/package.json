@@ -45,7 +45,7 @@
     "hookable": "^6.1.1",
     "oxc-resolver": "^11.19.1",
     "perfect-debounce": "^2.1.0",
-    "rolldown": "^1.1.0"
+    "rolldown": "^1.1.1"
   },
   "peerDependencies": {
     "@nmtjs/proxy": "1.0.0-beta.6"
