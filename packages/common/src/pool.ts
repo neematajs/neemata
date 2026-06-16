@@ -6,12 +6,12 @@ interface PoolOptions {
 
 interface PoolQueueItem {
   resolve?: Callback
-  timer?: ReturnType<typeof setTimeout>
+  timer?: ReturnType<typeof globalThis.setTimeout>
 }
 
 export class PoolError extends Error {}
 
-// Fixed pool from https://github.com/metarhia/metautil
+// Ported from https://github.com/metarhia/metautil
 export class Pool<T = unknown> {
   #items: Array<T> = []
   #free: Array<boolean> = []
@@ -84,13 +84,13 @@ export class Pool<T = unknown> {
     if (index < 0) throw new PoolError('Unexpected item')
     if (this.#free[index])
       throw new PoolError('Unable to release not captured item')
-    this.#free[index] = true
-    this.#available++
     if (this.#queue.length > 0) {
       const { resolve, timer } = this.#queue.shift()!
       clearTimeout(timer)
-      if (resolve) setTimeout(resolve, 0, item)
+      if (resolve) return void setTimeout(resolve, 0, item)
     }
+    this.#free[index] = true
+    this.#available++
   }
 
   isFree(item: T) {

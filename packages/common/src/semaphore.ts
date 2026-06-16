@@ -7,7 +7,7 @@ interface SemaphoreQueueItem {
 
 export class SemaphoreError extends Error {}
 
-// Semaphore from https://github.com/metarhia/metautil
+// Ported from https://github.com/metarhia/metautil
 export class Semaphore {
   private counter: number
 
