@@ -54,13 +54,13 @@
     }
   },
   "dependencies": {
-    "@nmtjs/common": "workspace:*",
     "@nmtjs/application": "workspace:*",
+    "@nmtjs/common": "workspace:*",
     "@nmtjs/contract": "workspace:*",
     "@nmtjs/core": "workspace:*",
-    "@nmtjs/type": "workspace:*",
     "@nmtjs/neem": "workspace:*",
-    "bullmq": "5.77.0"
+    "@nmtjs/type": "workspace:*",
+    "bullmq": "5.78.1"
   },
   "peerDependencies": {
     "ioredis": "^5.10.1",
@@ -75,7 +75,7 @@
     }
   },
   "devDependencies": {
-    "ioredis": "^5.10.1",
+    "ioredis": "^5.11.1",
     "iovalkey": "^0.3.3"
   },
   "files": [

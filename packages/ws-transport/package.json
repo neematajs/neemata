@@ -52,7 +52,7 @@
     "clean-build": "rm -rf ./dist"
   },
   "dependencies": {
-    "crossws": "0.4.5"
+    "crossws": "0.4.6"
   },
   "devDependencies": {
     "@nmtjs/application": "workspace:*",

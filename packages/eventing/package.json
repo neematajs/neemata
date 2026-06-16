@@ -98,8 +98,8 @@
     }
   },
   "devDependencies": {
-    "@platformatic/kafka": "^2.1.0",
-    "ioredis": "^5.10.1",
+    "@platformatic/kafka": "^2.3.0",
+    "ioredis": "^5.11.1",
     "iovalkey": "^0.3.3"
   },
   "files": [

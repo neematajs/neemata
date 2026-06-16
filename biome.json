@@ -52,7 +52,7 @@
     "enabled": true,
     "rules": {
       "style": {
-        "recommended": true,
+        "preset": "recommended",
         "noNonNullAssertion": "off",
         "noInferrableTypes": "off",
         "useTemplate": "off",
@@ -79,7 +79,7 @@
         "useShorthandFunctionType": "error"
       },
       "complexity": {
-        "recommended": true,
+        "preset": "recommended",
         "noBannedTypes": "off",
         "noCommaOperator": "error",
         "noArguments": "error",
@@ -91,7 +91,7 @@
         "useIterableCallbackReturn": "off"
       },
       "security": {
-        "recommended": true
+        "preset": "recommended"
       },
       "correctness": {
         "noUnusedFunctionParameters": "off"

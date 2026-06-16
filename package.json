@@ -21,15 +21,15 @@
     "fmt": "biome check --diagnostic-level=error --write ."
   },
   "devDependencies": {
-    "@biomejs/biome": "2.4.15",
+    "@biomejs/biome": "2.5.0",
     "@tsconfig/node24": "^24.0.4",
     "@types/node": "^24",
     "@typescript/native-preview": "7.0.0-dev.20260421.2",
-    "@vitest/browser-playwright": "4.1.7",
-    "@vitest/coverage-v8": "4.1.7",
-    "@vitest/ui": "4.1.7",
-    "playwright": "^1.60.0",
-    "vitest": "4.1.7"
+    "@vitest/browser-playwright": "4.1.9",
+    "@vitest/coverage-v8": "4.1.9",
+    "@vitest/ui": "4.1.9",
+    "playwright": "^1.61.0",
+    "vitest": "4.1.9"
   },
   "packageManager": "pnpm@11.5.1+sha512.93f7b57422ea7068257235b4c16eb60762eb68e1dc23723199cc739043ea9be2c4143274a399d8c6defa2b1176226d9ca1c4b63482d6200c1a8fbaa78c1d1485"
 }
