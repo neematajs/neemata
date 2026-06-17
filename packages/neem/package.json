@@ -3,9 +3,13 @@
   "description": "Neem host core for running compiled runtime artifacts.",
   "type": "module",
   "scripts": {
+    "build": "tsgo -b tsconfig.build.json",
     "clean-build": "rm -rf ./dist",
     "check:type": "tsgo -p tsconfig.json --noEmit",
-    "test": "vitest run --config vitest.config.ts"
+    "test": "pnpm run test:unit && pnpm run test:e2e",
+    "test:e2e": "pnpm run build && vitest run --config vitest.e2e.config.ts",
+    "test:stress": "pnpm run build && vitest run --config vitest.stress.config.ts",
+    "test:unit": "vitest run --config vitest.unit.config.ts"
   },
   "bin": {
     "neem": "./bin/neem.js"
@@ -45,7 +49,8 @@
     "hookable": "^6.1.1",
     "oxc-resolver": "^11.20.0",
     "perfect-debounce": "^2.1.0",
-    "rolldown": "^1.1.1"
+    "rolldown": "^1.1.1",
+    "zod": "catalog:"
   },
   "peerDependencies": {
     "@nmtjs/proxy": "1.0.0-beta.6"

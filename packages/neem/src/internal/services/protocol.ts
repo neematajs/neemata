@@ -18,13 +18,25 @@ export type WatcherStopRequest = { id: number; type: 'stop' }
 
 export type WatcherRequest = WatcherStartRequest | WatcherStopRequest
 
+export type WatcherManifestIdentity = {
+  manifestFile: string
+  manifestRevision: number
+  manifestHash: string
+}
+
+export type WatcherManifestChangeEvent =
+  | ({ type: 'runtime-changed'; runtimeName: string } & WatcherManifestIdentity)
+  | ({
+      type: 'runtime-host-changed'
+      runtimeName: string
+    } & WatcherManifestIdentity)
+  | ({ type: 'plugin-changed' } & WatcherManifestIdentity)
+  | ({ type: 'logger-changed' } & WatcherManifestIdentity)
+
 export type WatcherEvent =
-  | { type: 'ready'; manifestFile: string }
+  | ({ type: 'ready' } & WatcherManifestIdentity)
   | { type: 'config-invalidated' }
-  | { type: 'runtime-changed'; runtimeName: string }
-  | { type: 'runtime-host-changed'; runtimeName: string }
-  | { type: 'plugin-changed' }
-  | { type: 'logger-changed' }
+  | WatcherManifestChangeEvent
   | { type: 'error'; error: SerializedError }
 
 export type WatcherResult = { manifestFile?: string }

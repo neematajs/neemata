@@ -13,7 +13,6 @@ import type {
   ManifestArtifact,
 } from '../../src/internal/manifest/manifest.ts'
 import {
-  assertManifestPath,
   createManifest as createCompiledManifest,
   MANIFEST_SCHEMA_VERSION,
   selectManifestRuntimes,
@@ -31,16 +30,22 @@ afterEach(async () => {
 })
 
 describe('Neem manifest', () => {
-  it('validates relative manifest paths', () => {
-    expect(() => assertManifestPath('runtime/start.js', 'entry')).not.toThrow()
-    expect(() => assertManifestPath('', 'entry')).toThrow(
-      'paths must be relative to output directory',
-    )
-    expect(() => assertManifestPath('/tmp/start.js', 'entry')).toThrow(
-      'paths must be relative to output directory',
-    )
-    expect(() => assertManifestPath('../start.js', 'entry')).toThrow(
-      'paths must be relative to output directory',
+  it('rejects manifest paths outside the output directory', () => {
+    const manifest = createManifest({
+      runtime: {
+        entry: '../runtime/start.js',
+        start: artifact('start', 'start', 'runtime/start.js', 'module'),
+        worker: artifact(
+          'worker-entry',
+          'worker',
+          'runtime/worker-entry.js',
+          'worker',
+        ),
+      },
+    })
+
+    expect(() => validateManifest(manifest)).toThrow(
+      /runtime[\s\S]*entry[\s\S]*Invalid input/,
     )
   })
 
@@ -118,7 +123,7 @@ describe('Neem manifest', () => {
       },
     })
     expect(() => validateManifest(wrongOwner)).toThrow(
-      'worker owner must be runtime [api]',
+      /runtimes[\s\S]*api[\s\S]*worker[\s\S]*owner/,
     )
 
     const wrongId = createManifest({
@@ -137,7 +142,32 @@ describe('Neem manifest', () => {
       },
     })
     expect(() => validateManifest(wrongId)).toThrow(
-      'worker artifact id must be [worker]',
+      /runtimes[\s\S]*api[\s\S]*worker[\s\S]*id/,
+    )
+  })
+
+  it('rejects artifact kinds outside the manifest schema', () => {
+    const manifest = createManifest({
+      runtimes: {
+        api: {
+          name: 'api',
+          worker: {
+            ...artifact('worker', 'api', 'runtime/api/worker.js'),
+            kind: 'asset' as ManifestArtifact['kind'],
+          },
+          host: artifact('host', 'api', 'runtime/api/host.js', 'module'),
+          planner: artifact(
+            'planner',
+            'api',
+            'runtime/api/planner.js',
+            'module',
+          ),
+        },
+      },
+    })
+
+    expect(() => validateManifest(manifest)).toThrow(
+      /runtimes[\s\S]*api[\s\S]*worker[\s\S]*kind/,
     )
   })
 })

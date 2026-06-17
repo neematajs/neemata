@@ -1,0 +1,1 @@
+- when `pnpm test:neem` watcher reload e2e tests fail only under sandbox/restricted filesystem permissions but pass under unrestricted permissions, treat it as an environment limitation; do not attempt Neem code fixes for that failure without reproducing outside the sandbox first

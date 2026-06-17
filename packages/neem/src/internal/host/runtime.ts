@@ -29,6 +29,7 @@ export type RuntimeControllerOptions = {
   hooks: HostHooks
   recovery?: RecoveryOptions
   onFailure?: (error: Error, runtime: RuntimeController) => MaybePromise<void>
+  onRecovered?: (runtime: RuntimeController) => MaybePromise<void>
 }
 
 export class RuntimeController {
@@ -239,6 +240,7 @@ export class RuntimeController {
       try {
         await this.stop()
         await this.start()
+        await this.options.onRecovered?.(this)
         this.restartAttempts = 0
         return
       } catch (error) {

@@ -12,6 +12,7 @@ import type {
   RuntimeEvent,
   RuntimeResult,
   WatcherEvent,
+  WatcherManifestIdentity,
   WatcherResult,
 } from './internal/services/protocol.ts'
 import type { NeemTestProbe } from './internal/shared/test-probe.ts'
@@ -192,6 +193,7 @@ class DevSupervisor {
   private watcher: WatcherClient | undefined
   private runtime: RuntimeClient | undefined
   private manifestFile: string | undefined
+  private manifestRevision = 0
   private stopped = false
 
   constructor(private readonly options: DevSupervisorOptions) {
@@ -256,26 +258,50 @@ class DevSupervisor {
 
     switch (event.type) {
       case 'ready':
-        this.manifestFile = event.manifestFile
+        this.acceptManifest(event, { resetRevision: true })
         await this.restartRuntime()
         return
       case 'config-invalidated':
-        await this.stopRuntime()
-        await this.stopWatcher()
-        await this.startWatcher()
+        await this.replaceWatcher()
         return
       case 'runtime-changed':
       case 'runtime-host-changed':
+        if (!this.acceptManifest(event)) return
         await this.reloadRuntime(event.runtimeName)
         return
       case 'plugin-changed':
       case 'logger-changed':
+        if (!this.acceptManifest(event)) return
         await this.restartRuntime()
         return
       case 'error':
-        this.closedFuture.reject(deserializeError(event.error))
         return
     }
+  }
+
+  private async replaceWatcher(): Promise<void> {
+    const previousWatcher = this.watcher
+
+    try {
+      await this.startWatcher()
+    } catch (error) {
+      const failedWatcher = this.watcher
+      this.watcher = previousWatcher
+      await failedWatcher?.stop().catch(() => undefined)
+      this.reportWatcherError(error)
+      return
+    }
+
+    if (previousWatcher && previousWatcher !== this.watcher) {
+      await previousWatcher.stop()
+    }
+  }
+
+  private reportWatcherError(error: unknown): void {
+    this.options.probe?.emit(
+      'watcher:error',
+      normalizeEvent({ type: 'error', error: serializeError(error) }),
+    )
   }
 
   private async restartRuntime(): Promise<void> {
@@ -318,10 +344,19 @@ class DevSupervisor {
     await runtime?.stop()
   }
 
-  private async stopWatcher(): Promise<void> {
-    const watcher = this.watcher
-    this.watcher = undefined
-    await watcher?.stop()
+  private acceptManifest(
+    event: WatcherManifestIdentity,
+    options: { resetRevision?: boolean } = {},
+  ): boolean {
+    const stale =
+      !options.resetRevision &&
+      event.manifestFile === this.manifestFile &&
+      event.manifestRevision < this.manifestRevision
+    if (stale) return false
+
+    this.manifestFile = event.manifestFile
+    this.manifestRevision = event.manifestRevision
+    return true
   }
 }
 

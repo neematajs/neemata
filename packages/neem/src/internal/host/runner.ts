@@ -13,11 +13,7 @@ import type {
   HostRunnerResponse,
   HostRunnerResult,
 } from './runner-protocol.ts'
-import {
-  deserializeError,
-  raceWithTimeout,
-  serializeError,
-} from '../shared/utils.ts'
+import { deserializeError, raceWithTimeout } from '../shared/utils.ts'
 import { getTransferList } from './runner-protocol.ts'
 
 export type HostRunnerOptions = {
@@ -27,13 +23,17 @@ export type HostRunnerOptions = {
 }
 
 const STOP_TIMEOUT_MS = 5_000
+const DEFAULT_REQUEST_TIMEOUT_MS = 30_000
 
 export class HostRunner {
   private worker: Worker | undefined
   private nextId = 1
   private readonly pending = new Map<
     number,
-    ReturnType<typeof createFuture<HostRunnerResult | undefined>>
+    {
+      future: ReturnType<typeof createFuture<HostRunnerResult | undefined>>
+      timeout: NodeJS.Timeout
+    }
   >()
   private ready: ReturnType<typeof createFuture<void>> | undefined
   private exited: ReturnType<typeof createFuture<void>> | undefined
@@ -55,7 +55,7 @@ export class HostRunner {
     })
     this.worker = worker
     worker.on('message', (message) => this.handleMessage(message))
-    worker.on('error', (error) => this.failPending(error))
+    worker.on('error', (error) => this.handleFailure(error))
     worker.on('exit', (code) => this.handleExit(code))
     await this.ready.promise
   }
@@ -105,7 +105,18 @@ export class HostRunner {
     const id = this.nextId++
     const message = { ...request, id } as HostRunnerRequest
     const future = createFuture<HostRunnerResult | undefined>()
-    this.pending.set(id, future)
+    const timeoutMs = getRequestTimeoutMs(this.options.env)
+    const timeout = setTimeout(() => {
+      this.pending.delete(id)
+      future.reject(
+        new Error(
+          `Neem host runner request [${request.type}] timed out after ${timeoutMs}ms`,
+        ),
+      )
+    }, timeoutMs)
+    timeout.unref()
+
+    this.pending.set(id, { future, timeout })
     worker.postMessage(message, getTransferList(message))
     return future.promise
   }
@@ -122,14 +133,15 @@ export class HostRunner {
       return
     }
 
-    const future = this.pending.get(message.id)
-    if (!future) return
+    const pending = this.pending.get(message.id)
+    if (!pending) return
     this.pending.delete(message.id)
+    clearTimeout(pending.timeout)
 
     if (message.type === 'error') {
-      future.reject(deserializeError(message.error))
+      pending.future.reject(deserializeError(message.error))
     } else {
-      future.resolve(message.data)
+      pending.future.resolve(message.data)
     }
   }
 
@@ -148,6 +160,7 @@ export class HostRunner {
   private handleFailure(error: Error): void {
     if (this.failed) return
     this.failed = true
+    this.worker = undefined
     this.failPending(error)
     void this.options.onFailure?.(error)
   }
@@ -158,11 +171,24 @@ export class HostRunner {
   }
 
   private rejectPending(error: Error): void {
-    for (const future of this.pending.values()) future.reject(error)
+    for (const pending of this.pending.values()) {
+      clearTimeout(pending.timeout)
+      pending.future.reject(error)
+    }
     this.pending.clear()
   }
 }
 
 function resolveHostRunnerEntry(): URL {
   return new URL('./runner-entry.js', import.meta.url)
+}
+
+function getRequestTimeoutMs(env: NodeJS.ProcessEnv): number {
+  const value = Number.parseInt(
+    env.NEEM_HOST_RUNNER_REQUEST_TIMEOUT_MS ?? '',
+    10,
+  )
+  return Number.isFinite(value) && value > 0
+    ? value
+    : DEFAULT_REQUEST_TIMEOUT_MS
 }

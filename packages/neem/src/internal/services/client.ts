@@ -42,6 +42,7 @@ export type WorkerServiceStopTimeoutEvent = {
 
 const STOP_TIMEOUT_MS = 5_000
 const STOP_SLOW_MS = 1_000
+const DEFAULT_REQUEST_TIMEOUT_MS = 30_000
 
 export class WorkerServiceClient<TEvent, TResult = unknown> {
   private readonly worker: Worker
@@ -49,7 +50,10 @@ export class WorkerServiceClient<TEvent, TResult = unknown> {
   private stopping = false
   private readonly pending = new Map<
     number,
-    ReturnType<typeof createFuture<TResult | undefined>>
+    {
+      future: ReturnType<typeof createFuture<TResult | undefined>>
+      timeout: NodeJS.Timeout
+    }
   >()
   private readonly exited = createFuture<void>()
 
@@ -62,11 +66,23 @@ export class WorkerServiceClient<TEvent, TResult = unknown> {
 
   request<T extends TResult = TResult>(
     request: { id: number; type: string } & Record<string, unknown>,
+    options: { timeoutMs?: number } = {},
   ): Promise<T | undefined> {
     const id = this.nextId++
     const message = { ...request, id }
     const future = createFuture<TResult | undefined>()
-    this.pending.set(id, future)
+    const timeoutMs = options.timeoutMs ?? getRequestTimeoutMs()
+    const timeout = setTimeout(() => {
+      this.pending.delete(id)
+      future.reject(
+        new Error(
+          `Neem worker service request [${this.options.serviceName}:${request.type}] timed out after ${timeoutMs}ms`,
+        ),
+      )
+    }, timeoutMs)
+    timeout.unref()
+
+    this.pending.set(id, { future, timeout })
     this.worker.postMessage(message)
     return future.promise as Promise<T | undefined>
   }
@@ -89,9 +105,11 @@ export class WorkerServiceClient<TEvent, TResult = unknown> {
     slowTimer.unref()
     let exited = false
     try {
-      await this.request(request).catch((error) => {
-        if (this.worker.threadId !== -1) throw error
-      })
+      await this.request(request, { timeoutMs: STOP_TIMEOUT_MS }).catch(
+        (error) => {
+          if (this.worker.threadId !== -1) throw error
+        },
+      )
       const result = await raceWithTimeout(this.exited.promise, STOP_TIMEOUT_MS)
       exited = !result.timedOut
       if (result.timedOut) {
@@ -122,14 +140,15 @@ export class WorkerServiceClient<TEvent, TResult = unknown> {
       return
     }
 
-    const future = this.pending.get(message.id)
-    if (!future) return
+    const pending = this.pending.get(message.id)
+    if (!pending) return
     this.pending.delete(message.id)
+    clearTimeout(pending.timeout)
 
     if (message.type === 'error') {
-      future.reject(deserializeError(message.error))
+      pending.future.reject(deserializeError(message.error))
     } else {
-      future.resolve(message.data)
+      pending.future.resolve(message.data)
     }
   }
 
@@ -146,11 +165,24 @@ export class WorkerServiceClient<TEvent, TResult = unknown> {
   }
 
   private rejectPending(error: Error): void {
-    for (const future of this.pending.values()) future.reject(error)
+    for (const pending of this.pending.values()) {
+      clearTimeout(pending.timeout)
+      pending.future.reject(error)
+    }
     this.pending.clear()
   }
 }
 
 export function resolveServiceEntry(name: string): URL {
   return new URL(`./${name}.js`, import.meta.url)
+}
+
+function getRequestTimeoutMs(): number {
+  const value = Number.parseInt(
+    process.env.NEEM_WORKER_SERVICE_REQUEST_TIMEOUT_MS ?? '',
+    10,
+  )
+  return Number.isFinite(value) && value > 0
+    ? value
+    : DEFAULT_REQUEST_TIMEOUT_MS
 }

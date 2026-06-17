@@ -5,6 +5,7 @@ import { createFuture } from '@nmtjs/common'
 
 import { HostController } from '../host/controller.ts'
 import {
+  assertManifestFilesExist,
   MANIFEST_FILE,
   readManifest,
   selectManifestRuntimes,
@@ -27,6 +28,7 @@ export async function startStandalone(
     await readManifest(manifestFile),
     options.runtimes,
   )
+  await assertManifestFilesExist(outDir, manifest)
   const logger = await resolveManifestLogger(manifest.config.logger, {
     mode: 'production',
     outDir,

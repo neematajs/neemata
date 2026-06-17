@@ -2,12 +2,7 @@ import { parentPort, workerData as rawWorkerData } from 'node:worker_threads'
 
 import type { Logger } from '@nmtjs/core'
 
-import type {
-  NeemRuntime,
-  NeemRuntimeStartResult,
-  NeemRuntimeUpstream,
-  NeemRuntimeWorker,
-} from '../../shared/types.ts'
+import type { NeemRuntime, NeemRuntimeWorker } from '../../shared/types.ts'
 import type {
   ParentMessage,
   RuntimeWorkerData,
@@ -15,6 +10,7 @@ import type {
   WorkerMessage,
 } from './protocol.ts'
 import { isNeemRuntimeWorker } from '../../public/worker.ts'
+import { parseRuntimeStartResult } from '../schemas/runtime.ts'
 import {
   childLogger,
   resolveManifestLogger,
@@ -140,12 +136,7 @@ async function main(): Promise<void> {
   try {
     logger?.trace('Starting Neem runtime worker')
     const result = await runtime.start()
-    const upstreams =
-      result === undefined
-        ? []
-        : Array.isArray(result)
-          ? (result as readonly NeemRuntimeUpstream[])
-          : ((result as NeemRuntimeStartResult).upstreams ?? [])
+    const upstreams = parseRuntimeStartResult(result)
     started = true
     logger?.trace({ upstreams: upstreams.length }, 'Neem runtime worker ready')
     postMessage({ type: 'ready', data: { upstreams } })

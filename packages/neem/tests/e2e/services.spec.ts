@@ -702,8 +702,8 @@ describe('Neem v2 services', () => {
     const exit = await neem.waitForExit()
 
     expect(exit.code).not.toBe(0)
-    expect(neem.stderr()).toContain(
-      'Invalid Neem manifest path [runtime.worker.file]',
+    expect(neem.stderr()).toMatch(
+      /runtime[\s\S]*worker[\s\S]*file[\s\S]*Invalid input/,
     )
   }, 60_000)
 })
@@ -817,7 +817,7 @@ async function waitForMetrics(
       const response = await fetch(`http://127.0.0.1:${port}/metrics`).catch(
         () => undefined,
       )
-      if (!response || response.status !== 200) return false
+      if (response?.status !== 200) return false
       return await response.text()
     },
     30_000,

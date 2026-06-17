@@ -24,7 +24,7 @@ export function resolveBuildEntry(
   entry: NeemArtifactEntry | undefined,
 ): NeemArtifactEntry | undefined {
   if (!entry) return undefined
-  if (entry instanceof URL) return entry
+  if (entry instanceof URL) return assertFileUrlEntry(entry)
   if (entry.startsWith('/')) return entry
   if (entry.startsWith('.')) return resolve(dirname(importer), entry)
   return resolveImportFile(importer, entry)
@@ -35,4 +35,11 @@ export function resolveRequiredBuildEntry(
   entry: NeemArtifactEntry,
 ): NeemArtifactEntry {
   return resolveBuildEntry(importer, entry) ?? entry
+}
+
+function assertFileUrlEntry(entry: URL): URL {
+  if (entry.protocol === 'file:') return entry
+  throw new Error(
+    `Unsupported Neem artifact URL [${entry.href}]: only file: URLs are supported`,
+  )
 }

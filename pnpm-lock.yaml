@@ -322,6 +322,9 @@ importers:
       rolldown:
         specifier: ^1.1.1
         version: 1.1.1
+      zod:
+        specifier: 'catalog:'
+        version: 4.3.6
     devDependencies:
       '@nmtjs/metrics':
         specifier: workspace:*

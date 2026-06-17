@@ -162,31 +162,57 @@ export class HostController {
 
   reloadRuntime(runtimeName: string, snapshot: RuntimeSnapshot): Promise<void> {
     return this.operations.run(async () => {
+      const current = this.runtimes.get(runtimeName)
+      let currentDetached = false
+      let currentStopped = false
+      let next: RuntimeController | undefined
+
       this.markState('reloading')
-      this.replaceSnapshot(snapshot)
       this.logger.debug(`Neem runtime ${runtimeName} reloading`)
       this.logger.trace({ runtimeName }, 'Neem runtime reload options')
 
-      const current = this.runtimes.get(runtimeName)
-      await current?.stop()
-      this.runtimes.delete(runtimeName)
+      try {
+        if (current) {
+          this.runtimes.delete(runtimeName)
+          currentDetached = true
+          await this.syncProxyUpstreams()
+          await current.stop()
+          currentStopped = true
+        }
 
-      const exists = Boolean(snapshot.manifest.runtimes[runtimeName])
-      if (exists) {
-        const next = this.createRuntime(runtimeName)
-        this.runtimes.set(runtimeName, next)
-        await next.start()
+        this.replaceSnapshot(snapshot)
+
+        const exists = Boolean(snapshot.manifest.runtimes[runtimeName])
+        if (exists) {
+          next = this.createRuntime(runtimeName)
+          this.runtimes.set(runtimeName, next)
+          await next.start()
+        }
+
+        await this.syncProxyUpstreams()
+        this.markState('running')
+        await callHostHook(this.hooks, this.snapshot.logger, 'runtime:reload', {
+          mode: this.snapshot.mode,
+          name: runtimeName,
+          upstreams: this.runtimes.get(runtimeName)?.getUpstreams() ?? [],
+        })
+        this.logger.debug(`Neem runtime ${runtimeName} reloaded`)
+        this.logger.trace({ runtimeName }, 'Neem runtime reload result')
+      } catch (error) {
+        const normalized = normalizeError(error)
+        this.runtimes.delete(runtimeName)
+        if (currentDetached && !currentStopped) {
+          await current?.stop().catch(() => undefined)
+        }
+        await next?.stop().catch(() => undefined)
+        await this.syncProxyUpstreams().catch(() => undefined)
+        this.markState('failed', normalized)
+        this.logger.error(
+          { err: normalized, runtimeName },
+          `Failed to reload Neem runtime ${runtimeName}`,
+        )
+        await this.callServerFailHook(normalized)
       }
-
-      await this.proxy?.setUpstreams(this.collectRuntimeUpstreams())
-      this.markState('running')
-      await callHostHook(this.hooks, this.snapshot.logger, 'runtime:reload', {
-        mode: this.snapshot.mode,
-        name: runtimeName,
-        upstreams: this.runtimes.get(runtimeName)?.getUpstreams() ?? [],
-      })
-      this.logger.debug(`Neem runtime ${runtimeName} reloaded`)
-      this.logger.trace({ runtimeName }, 'Neem runtime reload result')
     })
   }
 
@@ -253,6 +279,11 @@ export class HostController {
     this.proxy = proxy
   }
 
+  private async syncProxyUpstreams(): Promise<void> {
+    await this.proxy?.setUpstreams(this.collectRuntimeUpstreams())
+    await this.proxy?.waitForIdle()
+  }
+
   private async syncHealthProbe(): Promise<void> {
     const config = this.snapshot.config.health
     if (this.healthProbe?.matches(config)) return
@@ -295,6 +326,9 @@ export class HostController {
       runtimeName,
       hooks: this.hooks,
       recovery: this.options.recovery,
+      onRecovered: async () => {
+        await this.proxy?.setUpstreams(this.collectRuntimeUpstreams())
+      },
       onFailure: (error) => {
         const failOnWorkerError =
           this.options.failOnWorkerError ?? this.snapshot.mode === 'production'

@@ -1,11 +1,11 @@
-import { resolve } from 'node:path'
+import { dirname, resolve } from 'node:path'
 
 import { consola } from 'consola'
 import { colorize } from 'consola/utils'
 
 import type { NeemConfig } from '../../shared/types.ts'
 import type { Manifest } from '../manifest/manifest.ts'
-import { cleanNeemOutDir } from '../build/clean.ts'
+import { assertSafeNeemOutDir, cleanNeemOutDir } from '../build/clean.ts'
 import { compileGraph } from '../build/compiler.ts'
 import { resolveNeemRuntimeDeclarations } from '../build/declarations.ts'
 import { createBuildGraph } from '../build/graph.ts'
@@ -44,7 +44,6 @@ export async function buildNeem(
   logger.debug(`  config: ${colorize('green', configFile)}`)
   logger.debug(`  outDir: ${colorize('green', outDir)}`)
 
-  await cleanNeemOutDir(outDir)
   const resolvedConfig = await resolveNeemRuntimeDeclarations(
     configFile,
     config,
@@ -55,6 +54,9 @@ export async function buildNeem(
     config: resolvedConfig,
     runtimes: options.runtimes,
   })
+
+  assertSafeNeemOutDir({ outDir, configDir: dirname(configFile) })
+  await cleanNeemOutDir(outDir)
   const compiled = await compileGraph(graph)
   const manifest = createManifest(compiled)
   const manifestFile = await writeManifest(outDir, manifest)

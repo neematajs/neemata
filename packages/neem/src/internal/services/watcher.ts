@@ -1,16 +1,22 @@
+import { createHash } from 'node:crypto'
+import { readFile } from 'node:fs/promises'
 import { isBuiltin } from 'node:module'
 import { dirname } from 'node:path'
 
 import type { MaybePromise } from '@nmtjs/common'
 import type { Logger } from '@nmtjs/core'
-import { createFuture } from '@nmtjs/common'
+import { createFuture, OperationQueue } from '@nmtjs/common'
 import * as rolldown from 'rolldown'
 
 import type { NeemConfig } from '../../shared/types.ts'
 import type { GraphWatcher, TargetChange } from '../build/compiler.ts'
 import type { BuildTarget } from '../build/graph.ts'
-import type { WatcherEvent } from './protocol.ts'
-import { cleanNeemOutDir } from '../build/clean.ts'
+import type {
+  WatcherEvent,
+  WatcherManifestChangeEvent,
+  WatcherManifestIdentity,
+} from './protocol.ts'
+import { assertSafeNeemOutDir, cleanNeemOutDir } from '../build/clean.ts'
 import { watchGraph } from '../build/compiler.ts'
 import { resolveNeemRuntimeDeclarations } from '../build/declarations.ts'
 import { createBuildGraph } from '../build/graph.ts'
@@ -25,17 +31,24 @@ export type WatcherServiceOptions = {
   emit: (event: WatcherEvent) => MaybePromise<void>
 }
 
+type WatcherManifestChangeInput =
+  | { type: 'runtime-changed'; runtimeName: string }
+  | { type: 'runtime-host-changed'; runtimeName: string }
+  | { type: 'plugin-changed' }
+  | { type: 'logger-changed' }
+
 export class WatcherService {
+  private readonly changes = new OperationQueue()
   private graphWatcher: GraphWatcher | undefined
   private configWatcher: rolldown.RolldownWatcher | undefined
   private manifestFile: string | undefined
+  private manifestRevision = 0
   private logger: Logger | undefined
   private stopped = false
 
   constructor(private readonly options: WatcherServiceOptions) {}
 
   async start(): Promise<string> {
-    await cleanNeemOutDir(this.options.outDir)
     const config = await importDefault<NeemConfig>(this.options.configFile, {
       cacheBust: true,
     })
@@ -71,6 +84,11 @@ export class WatcherService {
       'Neem build graph',
     )
 
+    assertSafeNeemOutDir({
+      outDir: this.options.outDir,
+      configDir: dirname(this.options.configFile),
+    })
+    await cleanNeemOutDir(this.options.outDir)
     this.configWatcher = await watchConfigSignal(this.options.configFile, () =>
       this.emit({ type: 'config-invalidated' }),
     )
@@ -79,17 +97,19 @@ export class WatcherService {
     })
 
     const compiled = await this.graphWatcher.ready
-    this.manifestFile = await writeManifest(
-      this.options.outDir,
-      createManifest(compiled),
-    )
+    const manifest = await this.writeManifestSnapshot(compiled)
     this.logger.info('Neem watcher ready')
     this.logger.trace(
-      { manifestFile: this.manifestFile, targets: compiled.targets.length },
+      {
+        manifestFile: manifest.manifestFile,
+        manifestRevision: manifest.manifestRevision,
+        manifestHash: manifest.manifestHash,
+        targets: compiled.targets.length,
+      },
       'Neem watcher manifest',
     )
-    await this.emit({ type: 'ready', manifestFile: this.manifestFile })
-    return this.manifestFile
+    await this.emit({ type: 'ready', ...manifest })
+    return manifest.manifestFile
   }
 
   async stop(): Promise<void> {
@@ -101,29 +121,33 @@ export class WatcherService {
     this.configWatcher = undefined
 
     await Promise.all([graphWatcher?.close(), configWatcher?.close()])
+    await this.changes.waitIdle()
     this.logger?.debug('Neem watcher stopped')
   }
 
   private async handleChange(change: TargetChange): Promise<void> {
     if (this.stopped || !this.graphWatcher) return
+    await this.changes.run(() => this.applyChange(change))
+  }
 
+  private async applyChange(change: TargetChange): Promise<void> {
+    if (this.stopped || !this.graphWatcher) return
     try {
       const compiled = this.graphWatcher.snapshot()
-      this.manifestFile = await writeManifest(
-        this.options.outDir,
-        createManifest(compiled),
-      )
+      const manifest = await this.writeManifestSnapshot(compiled)
       const event = classifyChange(change)
       this.logger?.debug('Neem watcher rebuild applied')
       this.logger?.trace(
         {
           event,
           target: toLogTarget(change.target),
-          manifestFile: this.manifestFile,
+          manifestFile: manifest.manifestFile,
+          manifestRevision: manifest.manifestRevision,
+          manifestHash: manifest.manifestHash,
         },
         'Neem watcher rebuild',
       )
-      await this.emit(event)
+      await this.emit(withManifestIdentity(event, manifest))
     } catch (error) {
       await this.emit({ type: 'error', error: serializeError(error) })
     }
@@ -131,6 +155,20 @@ export class WatcherService {
 
   private async emit(event: WatcherEvent): Promise<void> {
     if (!this.stopped) await this.options.emit(event)
+  }
+
+  private async writeManifestSnapshot(
+    compiled: ReturnType<GraphWatcher['snapshot']>,
+  ): Promise<WatcherManifestIdentity> {
+    this.manifestFile = await writeManifest(
+      this.options.outDir,
+      createManifest(compiled),
+    )
+    return {
+      manifestFile: this.manifestFile,
+      manifestRevision: ++this.manifestRevision,
+      manifestHash: await hashFile(this.manifestFile),
+    }
   }
 }
 
@@ -188,7 +226,7 @@ async function watchConfigSignal(
   return watcher
 }
 
-function classifyChange(change: TargetChange): WatcherEvent {
+function classifyChange(change: TargetChange): WatcherManifestChangeInput {
   switch (change.target.kind) {
     case 'runtime-worker':
     case 'runtime-planner':
@@ -207,6 +245,28 @@ function classifyChange(change: TargetChange): WatcherEvent {
     case 'host-runner-entry':
       return { type: 'plugin-changed' }
   }
+}
+
+function withManifestIdentity(
+  event: WatcherManifestChangeInput,
+  manifest: WatcherManifestIdentity,
+): WatcherManifestChangeEvent {
+  switch (event.type) {
+    case 'runtime-changed':
+      return { type: event.type, runtimeName: event.runtimeName, ...manifest }
+    case 'runtime-host-changed':
+      return { type: event.type, runtimeName: event.runtimeName, ...manifest }
+    case 'plugin-changed':
+      return { type: event.type, ...manifest }
+    case 'logger-changed':
+      return { type: event.type, ...manifest }
+  }
+}
+
+async function hashFile(file: string): Promise<string> {
+  return createHash('sha256')
+    .update(await readFile(file))
+    .digest('hex')
 }
 
 function getRuntimeName(change: TargetChange): string {

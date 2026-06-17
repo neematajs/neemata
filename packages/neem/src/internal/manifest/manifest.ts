@@ -1,5 +1,5 @@
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
-import { isAbsolute, normalize, relative, resolve } from 'node:path'
+import { access, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { relative, resolve } from 'node:path'
 
 import type {
   NeemArtifactKind,
@@ -11,12 +11,17 @@ import type {
 } from '../../shared/types.ts'
 import type { CompiledGraph } from '../build/compiler.ts'
 import {
+  NEEM_MANIFEST_SCHEMA_VERSION,
+  parseManifest,
+} from '../schemas/manifest.ts'
+import {
   assertRuntimeNamesExist,
   normalizeRuntimeNames,
 } from '../shared/runtime-selection.ts'
 
 export const MANIFEST_FILE = 'neem.manifest.json'
-export const MANIFEST_SCHEMA_VERSION = 1
+export const MANIFEST_SCHEMA_VERSION = NEEM_MANIFEST_SCHEMA_VERSION
+export { parseManifest } from '../schemas/manifest.ts'
 
 export type ManifestArtifact = {
   id: string
@@ -97,24 +102,19 @@ export function createManifest(compiled: CompiledGraph): Manifest {
 }
 
 export async function readManifest(manifestFile: string): Promise<Manifest> {
-  const manifest = JSON.parse(await readFile(manifestFile, 'utf8')) as Manifest
-  validateManifest(manifest)
-  return manifest
+  return parseManifest(JSON.parse(await readFile(manifestFile, 'utf8')))
 }
 
 export async function writeManifest(
   outDir: string,
   manifest: Manifest,
 ): Promise<string> {
-  validateManifest(manifest)
+  const parsed = parseManifest(manifest)
   await mkdir(outDir, { recursive: true })
   const manifestFile = resolve(outDir, MANIFEST_FILE)
-  await writeFile(
-    `${manifestFile}.tmp`,
-    `${JSON.stringify(manifest, null, 2)}\n`,
-  )
+  await writeFile(`${manifestFile}.tmp`, `${JSON.stringify(parsed, null, 2)}\n`)
   await rename(`${manifestFile}.tmp`, manifestFile)
-  await writeStartEntries(outDir, Object.keys(manifest.runtimes))
+  await writeStartEntries(outDir, Object.keys(parsed.runtimes))
   return manifestFile
 }
 
@@ -161,80 +161,60 @@ export function toManifestArtifact(
   }
 }
 
-export function validateManifest(manifest: Manifest): void {
-  if (manifest.schemaVersion !== MANIFEST_SCHEMA_VERSION) {
-    throw new Error(
-      `Unsupported Neem manifest schema version [${String(manifest.schemaVersion)}]`,
-    )
-  }
+export function validateManifest(
+  manifest: unknown,
+): asserts manifest is Manifest {
+  parseManifest(manifest)
+}
+
+export async function assertManifestFilesExist(
+  outDir: string,
+  manifest: Manifest,
+): Promise<void> {
+  const files: Array<{ label: string; file: string }> = [
+    { label: 'runtime.entry', file: manifest.runtime.entry },
+    { label: 'runtime.start.file', file: manifest.runtime.start.file },
+    { label: 'runtime.worker.file', file: manifest.runtime.worker.file },
+  ]
 
   if (manifest.config.logger?.type === 'module') {
-    assertManifestPath(manifest.config.logger.file, 'config.logger.file')
+    files.push({
+      label: 'config.logger.file',
+      file: manifest.config.logger.file,
+    })
   }
-
-  if (!manifest.runtime?.worker) {
-    throw new Error('Invalid Neem manifest runtime: worker entry is required')
-  }
-  assertManifestPath(manifest.runtime.entry, 'runtime.entry')
-  assertManifestPath(manifest.runtime.start.file, 'runtime.start.file')
-  assertManifestPath(manifest.runtime.start.outDir, 'runtime.start.outDir')
-  assertManifestPath(manifest.runtime.worker.file, 'runtime.worker.file')
-  assertManifestPath(manifest.runtime.worker.outDir, 'runtime.worker.outDir')
 
   for (const [index, plugin] of (manifest.plugins ?? []).entries()) {
-    if (!plugin.name.trim()) {
-      throw new Error(
-        `Invalid Neem manifest plugin [${index}]: name is required`,
-      )
-    }
     if (plugin.entry) {
-      assertManifestPath(plugin.entry.file, `plugins.${index}.entry.file`)
+      files.push({
+        label: `plugins.${index}.entry.file`,
+        file: plugin.entry.file,
+      })
     }
   }
 
   for (const [runtimeName, runtime] of Object.entries(manifest.runtimes)) {
-    if (runtime.name !== runtimeName) {
-      throw new Error(
-        `Invalid Neem manifest runtime [${runtimeName}]: runtime name must match manifest key`,
-      )
-    }
-
-    if (!runtime.worker && !runtime.host) {
-      throw new Error(
-        `Invalid Neem manifest runtime [${runtimeName}]: worker or host artifact is required`,
-      )
-    }
-
     if (runtime.worker) {
-      assertRuntimeArtifact(runtimeName, runtime.worker, 'worker')
-      if (runtime.worker.id !== 'worker') {
-        throw new Error(
-          `Invalid Neem manifest runtime [${runtimeName}]: worker artifact id must be [worker]`,
-        )
-      }
+      files.push({
+        label: `${runtimeName}.worker.file`,
+        file: runtime.worker.file,
+      })
     }
-
-    assertRuntimeArtifact(runtimeName, runtime.host, 'host')
-    if (runtime.host.id !== 'host') {
-      throw new Error(
-        `Invalid Neem manifest runtime [${runtimeName}]: host artifact id must be [host]`,
-      )
-    }
-
-    assertRuntimeArtifact(runtimeName, runtime.planner, 'planner')
-    if (runtime.planner.id !== 'planner') {
-      throw new Error(
-        `Invalid Neem manifest runtime [${runtimeName}]: planner artifact id must be [planner]`,
-      )
-    }
-  }
-}
-
-export function assertManifestPath(path: string, label: string): void {
-  if (!path || isAbsolute(path) || normalize(path).startsWith('..')) {
-    throw new Error(
-      `Invalid Neem manifest path [${label}]: paths must be relative to output directory`,
+    files.push(
+      { label: `${runtimeName}.host.file`, file: runtime.host.file },
+      { label: `${runtimeName}.planner.file`, file: runtime.planner.file },
     )
+  }
+
+  for (const { label, file } of files) {
+    try {
+      await access(resolve(outDir, file))
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        throw new Error(`Missing Neem manifest file [${label}]: ${file}`)
+      }
+      throw error
+    }
   }
 }
 
@@ -288,7 +268,7 @@ function createManifestConfig(compiled: CompiledGraph): ManifestConfig {
     proxy: config.proxy,
     health: config.health,
     runtimes: Object.fromEntries(
-      Object.keys(config.runtimes).map((name) => [name, {}]),
+      compiled.runtimes.map((runtime) => [runtime.name, {}]),
     ),
   }
 }
@@ -329,22 +309,4 @@ function createManifestPlugins(
       : undefined,
     options: plugin.node.options,
   }))
-}
-
-function assertRuntimeArtifact(
-  runtimeName: string,
-  artifact: ManifestArtifact,
-  label: string,
-): void {
-  if (
-    artifact.owner.type !== 'runtime' ||
-    artifact.owner.name !== runtimeName
-  ) {
-    throw new Error(
-      `Invalid Neem manifest runtime [${runtimeName}]: ${label} owner must be runtime [${runtimeName}]`,
-    )
-  }
-
-  assertManifestPath(artifact.file, `${runtimeName}.${label}.file`)
-  assertManifestPath(artifact.outDir, `${runtimeName}.${label}.outDir`)
 }

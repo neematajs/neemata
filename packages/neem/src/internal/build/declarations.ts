@@ -8,12 +8,6 @@ import type {
   NeemResolvedConfig,
   NeemResolvedRuntimeDeclaration,
 } from '../../shared/types.ts'
-// import type {
-//   NeemConfig,
-//   NeemMarkedRuntimeDeclaration,
-//   NeemResolvedConfig,
-//   NeemResolvedRuntimeDeclaration,
-// } from '../../public/config.ts'
 import { isNeemRuntimeDeclaration } from '../../public/config.ts'
 import { resolveBuildEntry } from './resolver.ts'
 
@@ -22,6 +16,8 @@ const runtimeDeclarationFiles = [
   'neem.runtime.mts',
   'neem.runtime.js',
   'neem.runtime.mjs',
+  'neem.runtime.cts',
+  'neem.runtime.cjs',
 ] as const
 
 const plannerFiles = [
@@ -29,6 +25,8 @@ const plannerFiles = [
   'neem.planner.mts',
   'neem.planner.js',
   'neem.planner.mjs',
+  'neem.planner.cts',
+  'neem.planner.cjs',
 ] as const
 
 type RuntimeProjectMatch = { entry: string; file: string; directory: string }

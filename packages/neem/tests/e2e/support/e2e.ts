@@ -10,9 +10,19 @@ import {
   rm,
   writeFile,
 } from 'node:fs/promises'
+import { createServer } from 'node:net'
 import { basename, dirname, resolve } from 'node:path'
 
 export type NeemProbeEvent = {
+  source: 'neem:test-probe'
+  event: string
+  pid: number | undefined
+  sequence: number
+  timestamp: string
+  [key: string]: unknown
+}
+
+type RawNeemProbeEvent = {
   source: 'neem:test-probe'
   event: string
   [key: string]: unknown
@@ -28,8 +38,16 @@ export type SpawnedNeem = {
     timeoutMs?: number,
   ) => Promise<NeemProbeEvent>
   waitForExit: () => Promise<{ code: number | null; signal: string | null }>
-  stop: () => Promise<{ code: number | null; signal: string | null }>
+  stop: (
+    options?: StopOptions,
+  ) => Promise<{ code: number | null; signal: string | null }>
 }
+
+export type StopOptions = { killAfterMs?: number }
+
+type ForceKillDetails = { killAfterMs: number; pid: number | undefined }
+
+const defaultKillAfterMs = 2_000
 
 const neemBin = resolve(import.meta.dirname, '../../../bin/neem.js')
 
@@ -48,6 +66,7 @@ export function spawnNode(
   let stdout = ''
   let stderr = ''
   let exitState: { code: number | null; signal: string | null } | undefined
+  let forceKillDetails: ForceKillDetails | undefined
 
   const child = spawn(process.execPath, args, {
     cwd: options.cwd,
@@ -67,7 +86,14 @@ export function spawnNode(
     stderr += String(chunk)
   })
   child.on('message', (message) => {
-    if (isProbeEvent(message)) events.push(message)
+    if (isRawProbeEvent(message)) {
+      events.push({
+        ...message,
+        pid: child.pid,
+        sequence: events.length + 1,
+        timestamp: new Date().toISOString(),
+      })
+    }
   })
 
   const exit = new Promise<{ code: number | null; signal: string | null }>(
@@ -95,8 +121,12 @@ export function spawnNode(
           throw new Error(
             [
               `Process exited before expected event with code ${exitState.code} and signal ${exitState.signal}`,
-              `events:\n${JSON.stringify(events, null, 2)}`,
-              formatProcessOutput(stdout, stderr),
+              formatProcessDiagnostics(
+                events,
+                stdout,
+                stderr,
+                forceKillDetails,
+              ),
             ].join('\n'),
           )
         }
@@ -107,15 +137,23 @@ export function spawnNode(
       throw new Error(
         [
           `Timed out after ${timeoutMs}ms`,
-          `events:\n${JSON.stringify(events, null, 2)}`,
-          formatProcessOutput(stdout, stderr),
+          formatProcessDiagnostics(events, stdout, stderr, forceKillDetails),
         ].join('\n'),
       )
     },
     waitForExit: () => exit,
-    async stop() {
-      if (child.exitCode === null && child.signalCode === null) {
+    async stop(options = {}) {
+      const killAfterMs = options.killAfterMs ?? defaultKillAfterMs
+      if (isChildRunning(child, exitState)) {
         child.kill('SIGTERM')
+      }
+      const stoppedGracefully = await Promise.race([
+        exit.then(() => true),
+        wait(killAfterMs).then(() => false),
+      ])
+      if (!stoppedGracefully && isChildRunning(child, exitState)) {
+        forceKillDetails = { killAfterMs, pid: child.pid }
+        child.kill('SIGKILL')
       }
       return await exit
     },
@@ -179,11 +217,9 @@ export async function readRuntimeEvents(file: string): Promise<RuntimeEvent[]> {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return ''
     throw error
   })
-  return content
-    .trim()
-    .split('\n')
-    .filter(Boolean)
-    .map((line) => JSON.parse(line) as RuntimeEvent)
+  return getCompleteJsonLines(content).map(
+    (line) => JSON.parse(line) as RuntimeEvent,
+  )
 }
 
 export async function expectFile(path: string): Promise<void> {
@@ -243,11 +279,37 @@ export async function waitFor<T>(
   throw new Error(`Timed out after ${timeoutMs}ms\n${details}`)
 }
 
+export async function getFreePort(): Promise<number> {
+  return await new Promise((resolvePort, reject) => {
+    const server = createServer()
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address()
+      if (!address || typeof address === 'string') {
+        server.close()
+        reject(new Error('Failed to allocate local TCP port'))
+        return
+      }
+
+      server.close((error) => {
+        if (error) reject(error)
+        else resolvePort(address.port)
+      })
+    })
+  })
+}
+
+export async function getDistinctFreePorts(count: number): Promise<number[]> {
+  const ports = new Set<number>()
+  while (ports.size < count) ports.add(await getFreePort())
+  return [...ports]
+}
+
 export function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-function isProbeEvent(message: unknown): message is NeemProbeEvent {
+function isRawProbeEvent(message: unknown): message is RawNeemProbeEvent {
   return (
     typeof message === 'object' &&
     message !== null &&
@@ -258,6 +320,37 @@ function isProbeEvent(message: unknown): message is NeemProbeEvent {
 
 function formatProcessOutput(stdout: string, stderr: string): string {
   return [`stdout:\n${stdout}`, `stderr:\n${stderr}`].join('\n')
+}
+
+function formatProcessDiagnostics(
+  events: readonly NeemProbeEvent[],
+  stdout: string,
+  stderr: string,
+  forceKillDetails: ForceKillDetails | undefined,
+): string {
+  return [
+    forceKillDetails
+      ? `Process was force-killed after ${forceKillDetails.killAfterMs}ms with SIGKILL (pid ${forceKillDetails.pid ?? 'unknown'})`
+      : undefined,
+    `events:\n${JSON.stringify(events, null, 2)}`,
+    formatProcessOutput(stdout, stderr),
+  ]
+    .filter(Boolean)
+    .join('\n')
+}
+
+function isChildRunning(
+  child: ChildProcess,
+  exitState: { code: number | null; signal: string | null } | undefined,
+): boolean {
+  return !exitState && child.exitCode === null && child.signalCode === null
+}
+
+function getCompleteJsonLines(content: string): string[] {
+  if (!content) return []
+  const lines = content.split('\n')
+  if (!content.endsWith('\n')) lines.pop()
+  return lines.filter(Boolean)
 }
 
 export type RuntimeEvent = {
