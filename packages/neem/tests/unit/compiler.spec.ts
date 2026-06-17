@@ -3,12 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 
-import type {
-  BuildOptions,
-  OutputBundle,
-  RolldownOutput,
-  RolldownPluginOption,
-} from 'rolldown'
+import type { BuildOptions, OutputBundle, RolldownOutput } from 'rolldown'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { BuildTarget } from '../../src/internal/build/graph.ts'
@@ -140,8 +135,8 @@ function collectEntryMetadata(
 }
 
 function normalizePluginOptions(
-  plugins: RolldownPluginOption | undefined,
-): RolldownPluginOption[] {
+  plugins: BuildOptions['plugins'] | undefined,
+): unknown[] {
   if (!plugins) return []
   return Array.isArray(plugins) ? plugins : [plugins]
 }
@@ -149,14 +144,16 @@ function normalizePluginOptions(
 function getHookHandler(
   hook: unknown,
 ): ((...args: readonly unknown[]) => unknown) | undefined {
-  if (typeof hook === 'function') return hook
+  if (typeof hook === 'function') {
+    return hook as unknown as (...args: readonly unknown[]) => unknown
+  }
   if (
     typeof hook === 'object' &&
     hook !== null &&
     'handler' in hook &&
     typeof hook.handler === 'function'
   ) {
-    return hook.handler as (...args: readonly unknown[]) => unknown
+    return hook.handler as unknown as (...args: readonly unknown[]) => unknown
   }
   return undefined
 }

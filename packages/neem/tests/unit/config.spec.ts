@@ -1,6 +1,8 @@
 import { describe, expect, expectTypeOf, it } from 'vitest'
 
 import type {
+  NeemPluginInput,
+  NeemRuntimeBuildConfig,
   NeemRuntimePlanner,
   NeemRuntimePlannerContext,
 } from '../../src/shared/types.ts'
@@ -99,6 +101,68 @@ describe('Neem public runtime API', () => {
     >()
   })
 
+  it('limits public rolldown build options to compile-time customization', () => {
+    const pluginBuild = {
+      rolldown: {
+        external: ['react'],
+        resolve: {
+          alias: { '@runtime': './runtime.ts' },
+          conditionNames: ['node', 'import'],
+          extensionAlias: { '.js': ['.ts', '.js'] },
+          exportsFields: [['exports']],
+          extensions: ['.ts', '.js'],
+          mainFields: ['module', 'main'],
+          mainFiles: ['index'],
+          modules: ['node_modules'],
+          symlinks: true,
+        },
+        moduleTypes: { '.txt': 'text' },
+        transform: {
+          define: { __NEEM_TEST__: JSON.stringify(true) },
+          inject: { Buffer: ['node:buffer', 'Buffer'] },
+          dropLabels: ['DEV_ONLY'],
+          jsx: 'react-jsx',
+        },
+        checks: { circularDependency: true },
+        tsconfig: false,
+      },
+    } satisfies NonNullable<NeemPluginInput['build']>
+
+    const runtimeBuild = pluginBuild satisfies NeemRuntimeBuildConfig
+    expect(runtimeBuild.rolldown.resolve?.alias).toEqual({
+      '@runtime': './runtime.ts',
+    })
+
+    const disallowedInput = {
+      // @ts-expect-error Neem owns artifact entries.
+      input: './entry.ts',
+    } satisfies NonNullable<NeemRuntimeBuildConfig['rolldown']>
+    const disallowedOutput = {
+      // @ts-expect-error Neem owns output layout and chunk names.
+      output: { entryFileNames: 'entry.js' },
+    } satisfies NonNullable<NeemRuntimeBuildConfig['rolldown']>
+    const disallowedCwd = {
+      // @ts-expect-error Neem owns build cwd normalization.
+      cwd: '/workspace/app',
+    } satisfies NonNullable<NeemRuntimeBuildConfig['rolldown']>
+    const disallowedWatch = {
+      // @ts-expect-error Neem owns watch lifecycle.
+      watch: { buildDelay: 100 },
+    } satisfies NonNullable<NeemRuntimeBuildConfig['rolldown']>
+    const disallowedExperimental = {
+      // @ts-expect-error Neem owns experimental bundler knobs.
+      experimental: { chunkOptimization: false },
+    } satisfies NonNullable<NeemRuntimeBuildConfig['rolldown']>
+
+    expect([
+      disallowedInput,
+      disallowedOutput,
+      disallowedCwd,
+      disallowedWatch,
+      disallowedExperimental,
+    ]).toHaveLength(5)
+  })
+
   it('creates runtime factories with merged worker and host build options', () => {
     const commonWorkerPlugin = { name: 'common-worker' }
     const userWorkerPlugin = { name: 'user-worker' }
@@ -110,7 +174,6 @@ describe('Neem public runtime API', () => {
         entry: './worker.ts',
         build: {
           rolldown: {
-            output: { chunkFileNames: 'common-[hash].js' },
             plugins: [commonWorkerPlugin],
             transform: { define: { COMMON_FLAG: JSON.stringify(true) } },
           },
@@ -127,7 +190,6 @@ describe('Neem public runtime API', () => {
       worker: {
         build: {
           rolldown: {
-            output: { entryFileNames: 'worker.js' },
             plugins: [userWorkerPlugin],
             transform: { define: { USER_FLAG: JSON.stringify(true) } },
           },
@@ -148,10 +210,7 @@ describe('Neem public runtime API', () => {
       commonWorkerPlugin,
       userWorkerPlugin,
     ])
-    expect(runtime.worker?.build?.rolldown?.output).toEqual({
-      chunkFileNames: 'common-[hash].js',
-      entryFileNames: 'worker.js',
-    })
+    expect(runtime.worker?.build?.rolldown).not.toHaveProperty('output')
     expect(runtime.worker?.build?.rolldown?.transform?.define).toEqual({
       COMMON_FLAG: 'true',
       USER_FLAG: 'true',

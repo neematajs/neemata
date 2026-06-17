@@ -117,6 +117,58 @@ describe('createBuildGraph', () => {
     ])
   })
 
+  it('strips user rolldown topology options from graph targets', () => {
+    const runtimePlugin = { name: 'runtime-plugin' }
+    const graph = createBuildGraph({
+      configFile,
+      outDir,
+      config: resolvedConfig({
+        plugins: [
+          definePlugin({
+            name: 'plugin',
+            build: {
+              rolldown: {
+                input: './plugin-input.ts',
+                output: { entryFileNames: 'plugin-entry.js' },
+                cwd: '/plugin',
+                watch: { buildDelay: 100 },
+                experimental: { chunkOptimization: true },
+                plugins: [{ name: 'plugin-build' }],
+              } as any,
+            },
+          }),
+        ],
+        runtimes: {
+          api: runtimeDeclaration('api', {
+            worker: {
+              entry: './api.ts',
+              build: {
+                rolldown: {
+                  output: { entryFileNames: 'worker.js' },
+                  platform: 'browser',
+                  plugins: [runtimePlugin],
+                } as any,
+              },
+            },
+            planner: './api.planner.ts',
+          }),
+        },
+      }),
+    })
+
+    const api = graph.runtimes.find((runtime) => runtime.name === 'api')
+    expect(api?.worker?.artifact.rolldown?.plugins).toEqual([
+      { name: 'plugin-build' },
+      runtimePlugin,
+    ])
+    expect(api?.worker?.artifact.rolldown).not.toHaveProperty('input')
+    expect(api?.worker?.artifact.rolldown).not.toHaveProperty('output')
+    expect(api?.worker?.artifact.rolldown).not.toHaveProperty('cwd')
+    expect(api?.worker?.artifact.rolldown).not.toHaveProperty('watch')
+    expect(api?.worker?.artifact.rolldown).not.toHaveProperty('experimental')
+    expect(api?.worker?.artifact.rolldown).not.toHaveProperty('platform')
+  })
+
   it('fails before building when selected runtimes are unknown', () => {
     expect(() =>
       createBuildGraph({

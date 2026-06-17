@@ -23,13 +23,63 @@ export function mergeRolldownOptions(
 }
 
 export function mergeUserRolldownOptions(
-  ...options: [RolldownOptions | undefined, ...(RolldownOptions | undefined)[]]
+  ...options: [
+    RolldownOptions | NeemRolldownOptions | undefined,
+    ...(RolldownOptions | NeemRolldownOptions | undefined)[],
+  ]
 ) {
-  function strip(options: RolldownOptions | undefined): NeemRolldownOptions {
+  function strip(
+    options: RolldownOptions | NeemRolldownOptions | undefined,
+  ): NeemRolldownOptions {
     if (!options) return {}
-    const { input, output, cwd, ...other } = options
-    return other
+    const result: NeemRolldownOptions = pickDefined(options, [
+      'plugins',
+      'external',
+      'moduleTypes',
+      'checks',
+      'tsconfig',
+    ])
+    const resolve = pickDefined(options.resolve, [
+      'alias',
+      'conditionNames',
+      'extensionAlias',
+      'exportsFields',
+      'extensions',
+      'mainFields',
+      'mainFiles',
+      'modules',
+      'symlinks',
+    ])
+    const transform = pickDefined(options.transform, [
+      'define',
+      'inject',
+      'dropLabels',
+      'jsx',
+    ])
+
+    return {
+      ...result,
+      ...(hasKeys(resolve) ? { resolve } : {}),
+      ...(hasKeys(transform) ? { transform } : {}),
+    }
   }
   const [first, ...rest] = options
   return merge(strip(first), ...rest.map(strip))
+}
+
+function pickDefined<T extends object, const TKey extends keyof T>(
+  value: T | undefined,
+  keys: readonly TKey[],
+): Pick<T, TKey> {
+  const result = {} as Pick<T, TKey>
+  if (!value) return result
+
+  for (const key of keys) {
+    if (value[key] !== undefined) result[key] = value[key]
+  }
+  return result
+}
+
+function hasKeys(value: object): boolean {
+  return Object.keys(value).length > 0
 }

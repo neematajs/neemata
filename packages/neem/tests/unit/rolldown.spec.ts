@@ -120,25 +120,33 @@ describe('mergeRolldownOptions', () => {
 })
 
 describe('mergeUserRolldownOptions', () => {
-  it('drops input and output from every layer', () => {
+  it('drops topology and output options from every layer', () => {
     const merged = mergeUserRolldownOptions(
       {
         cwd: '/workspace/user',
         input: 'user.ts',
+        platform: 'browser',
         output: { entryFileNames: 'user.js' },
+        watch: { buildDelay: 100 },
+        experimental: { chunkOptimization: true },
         transform: { define: { USER_FLAG: 'true' } },
-      },
+      } as RolldownOptions,
       {
         cwd: '/workspace/default',
         input: 'default.ts',
         output: { entryFileNames: 'default.js' },
+        optimization: { inlineConst: false },
         transform: { define: { DEFAULT_FLAG: 'true' } },
-      },
+      } as RolldownOptions,
     )
 
     expect(merged).not.toHaveProperty('cwd')
     expect(merged).not.toHaveProperty('input')
+    expect(merged).not.toHaveProperty('platform')
     expect(merged).not.toHaveProperty('output')
+    expect(merged).not.toHaveProperty('watch')
+    expect(merged).not.toHaveProperty('experimental')
+    expect(merged).not.toHaveProperty('optimization')
     expect(merged.transform?.define).toEqual({
       USER_FLAG: 'true',
       DEFAULT_FLAG: 'true',
@@ -178,7 +186,6 @@ describe('mergeUserRolldownOptions', () => {
     const merged = mergeUserRolldownOptions(runtime, pluginLayer, rootConfig)
 
     expect(merged).toMatchObject({
-      platform: 'browser',
       resolve: {
         alias: {
           '@runtime': './runtime.ts',
@@ -200,6 +207,7 @@ describe('mergeUserRolldownOptions', () => {
     expect(merged).not.toHaveProperty('cwd')
     expect(merged).not.toHaveProperty('input')
     expect(merged).not.toHaveProperty('output')
+    expect(merged).not.toHaveProperty('platform')
     expect(merged.plugins).toEqual([rootPlugin, metricsPlugin, runtimePlugin])
   })
 })

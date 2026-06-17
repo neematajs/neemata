@@ -9,16 +9,17 @@ import type {
   NeemArtifactOwner,
   NeemResolvedConfig,
   NeemResolvedRuntimeDeclaration,
-  NeemRolldownOptions,
 } from '../../shared/types.ts'
-import { mergeRolldownOptions } from '../../shared/rolldown.ts'
+import {
+  mergeRolldownOptions,
+  mergeUserRolldownOptions,
+} from '../../shared/rolldown.ts'
 import {
   assertRuntimeNamesExist,
   normalizeRuntimeNames,
 } from '../shared/runtime-selection.ts'
 import { sanitizePathPart } from '../shared/utils.ts'
 import { resolveBuildEntry, resolveRequiredBuildEntry } from './resolver.ts'
-// import { mergeRolldownOptions } from './rolldown-options.ts'
 
 export type BuildTargetKind =
   | 'runtime-worker'
@@ -153,7 +154,7 @@ function createPluginNodes(
             outDir: resolve(outDir, 'config', 'plugins', key),
           }
         : undefined,
-      rolldown: plugin.build?.rolldown,
+      rolldown: normalizeUserRolldownOptions(plugin.build?.rolldown),
       options: plugin.options,
     } satisfies PluginBuildNode
   })
@@ -288,7 +289,7 @@ function createRuntimeNode(options: {
             kind: 'worker',
             entry: workerEntry,
             rolldown: mergeRolldownOptions(
-              declaration.worker?.build?.rolldown,
+              normalizeUserRolldownOptions(declaration.worker?.build?.rolldown),
               options.pluginRolldown,
             ),
           },
@@ -303,7 +304,9 @@ function createRuntimeNode(options: {
         id: 'host',
         kind: 'module',
         entry: hostEntry,
-        rolldown: declaration.host?.build?.rolldown,
+        rolldown: normalizeUserRolldownOptions(
+          declaration.host?.build?.rolldown,
+        ),
       },
       owner: { type: 'runtime', name: options.name },
       outDir: resolve(runtimeDir, 'host'),
@@ -315,10 +318,19 @@ function createRuntimeNode(options: {
         id: 'planner',
         kind: 'module',
         entry: plannerEntry,
-        rolldown: declaration.host?.build?.rolldown,
+        rolldown: normalizeUserRolldownOptions(
+          declaration.host?.build?.rolldown,
+        ),
       },
       owner: { type: 'runtime', name: options.name },
       outDir: resolve(runtimeDir, 'planner'),
     },
   }
+}
+
+function normalizeUserRolldownOptions(
+  options: RolldownOptions | undefined,
+): RolldownOptions | undefined {
+  const merged = mergeUserRolldownOptions(options)
+  return Object.keys(merged).length > 0 ? merged : undefined
 }

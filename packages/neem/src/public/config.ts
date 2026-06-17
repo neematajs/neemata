@@ -9,7 +9,7 @@ import type {
   NeemRuntimeProjectEntries,
   NeemRuntimeWorkerDeclaration,
 } from '../shared/types.ts'
-import { mergeRolldownOptions } from '../shared/rolldown.ts'
+import { mergeUserRolldownOptions } from '../shared/rolldown.ts'
 import { NeemRuntimeDeclarationBrand } from './runtime.ts'
 
 export function defineConfig<const TRuntimes extends NeemRuntimeProjectEntries>(
@@ -134,10 +134,10 @@ function mergeRuntimeBuildConfig(
   commonBuild: NeemRuntimeBuildConfig | undefined,
   userBuild: NeemRuntimeBuildConfig | undefined,
 ): NeemRuntimeBuildConfig | undefined {
-  const rolldown = mergeRolldownOptions(
+  const rolldown = mergeUserRolldownOptions(
     userBuild?.rolldown,
     commonBuild?.rolldown,
   )
-  if (!commonBuild && !userBuild && !rolldown) return undefined
-  return { ...commonBuild, ...userBuild, ...(rolldown ? { rolldown } : {}) }
+  if (Object.keys(rolldown).length === 0) return undefined
+  return { rolldown }
 }

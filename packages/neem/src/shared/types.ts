@@ -11,10 +11,31 @@ export type NeemArtifactKind = 'worker' | 'module'
 
 export type NeemArtifactEntry = string | URL
 
-export type NeemRolldownOptions = Omit<
-  RolldownOptions,
-  'input' | 'output' | 'cwd'
+export type NeemRolldownResolveOptions = Pick<
+  NonNullable<RolldownOptions['resolve']>,
+  | 'alias'
+  | 'conditionNames'
+  | 'extensionAlias'
+  | 'exportsFields'
+  | 'extensions'
+  | 'mainFields'
+  | 'mainFiles'
+  | 'modules'
+  | 'symlinks'
 >
+
+export type NeemRolldownTransformOptions = Pick<
+  NonNullable<RolldownOptions['transform']>,
+  'define' | 'inject' | 'dropLabels' | 'jsx'
+>
+
+export type NeemRolldownOptions = Pick<
+  RolldownOptions,
+  'plugins' | 'external' | 'moduleTypes' | 'checks' | 'tsconfig'
+> & {
+  resolve?: NeemRolldownResolveOptions
+  transform?: NeemRolldownTransformOptions
+}
 
 export type NeemArtifact = {
   id: string
@@ -67,7 +88,7 @@ export type NeemLoggerInput = NeemLoggerOptions | string | URL
 
 export type NeemEnv = Record<string, string>
 
-export type NeemPluginBuild = { rolldown?: RolldownOptions }
+export type NeemPluginBuild = { rolldown?: NeemRolldownOptions }
 
 export type NeemPluginInput = {
   name: string
@@ -76,7 +97,7 @@ export type NeemPluginInput = {
   options?: unknown
 }
 
-export type NeemRuntimeBuildConfig = { rolldown?: RolldownOptions }
+export type NeemRuntimeBuildConfig = { rolldown?: NeemRolldownOptions }
 
 export type NeemRuntimeWorkerDeclaration = {
   entry: NeemEntryInput
