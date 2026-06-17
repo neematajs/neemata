@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 
@@ -80,24 +80,48 @@ describe('Neem manifest', () => {
     await writeStartEntries(outDir, ['api', 'jobs'])
 
     await expect(readFile(resolve(outDir, 'start.js'), 'utf8')).resolves.toBe(
-      [
-        'import { startStandalone } from "./runtime/start.js"',
-        'await startStandalone()',
-        '',
-      ].join('\n'),
+      rootStartEntry(),
     )
     await expect(
       readFile(resolve(outDir, 'runtimes/api/start.js'), 'utf8'),
-    ).resolves.toBe(
-      [
-        'import { startStandalone } from "../../runtime/start.js"',
-        'await startStandalone({ runtimes: ["api"] })',
-        '',
-      ].join('\n'),
-    )
+    ).resolves.toBe(runtimeStartEntry('api'))
     await expect(
       readFile(resolve(outDir, 'runtimes/jobs/start.js'), 'utf8'),
     ).resolves.toContain('runtimes: ["jobs"]')
+  })
+
+  it('writes scoped runtime start entries in a single safe directory', async () => {
+    const outDir = await useTempDir()
+
+    await writeStartEntries(outDir, ['@scope/api'])
+
+    const runtimeDirs = await readdir(resolve(outDir, 'runtimes'))
+    expect(runtimeDirs).toHaveLength(1)
+    await expect(
+      readFile(
+        resolve(outDir, 'runtimes', runtimeDirs[0]!, 'start.js'),
+        'utf8',
+      ),
+    ).resolves.toBe(runtimeStartEntry('@scope/api'))
+  })
+
+  it('encodes traversal runtime names without escaping the output directory', async () => {
+    const outDir = await useTempDir()
+
+    await writeStartEntries(outDir, ['..'])
+
+    await expect(readFile(resolve(outDir, 'start.js'), 'utf8')).resolves.toBe(
+      rootStartEntry(),
+    )
+    const runtimeDirs = await readdir(resolve(outDir, 'runtimes'))
+    expect(runtimeDirs).toHaveLength(1)
+    expect(runtimeDirs[0]).not.toBe('..')
+    await expect(
+      readFile(
+        resolve(outDir, 'runtimes', runtimeDirs[0]!, 'start.js'),
+        'utf8',
+      ),
+    ).resolves.toBe(runtimeStartEntry('..'))
   })
 
   it('converts filesystem paths to slash-separated manifest paths', () => {
@@ -176,6 +200,22 @@ async function useTempDir(): Promise<string> {
   const dir = await mkdtemp(resolve(tmpdir(), 'neem-manifest-'))
   tempDirs.push(dir)
   return dir
+}
+
+function rootStartEntry(): string {
+  return [
+    'import { startStandalone } from "./runtime/start.js"',
+    'await startStandalone()',
+    '',
+  ].join('\n')
+}
+
+function runtimeStartEntry(name: string): string {
+  return [
+    'import { startStandalone } from "../../runtime/start.js"',
+    `await startStandalone({ runtimes: [${JSON.stringify(name)}] })`,
+    '',
+  ].join('\n')
 }
 
 function createManifest(overrides: Partial<Manifest> = {}): Manifest {

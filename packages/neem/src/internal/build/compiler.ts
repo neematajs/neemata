@@ -8,7 +8,7 @@ import { createFuture } from '@nmtjs/common'
 import * as rolldown from 'rolldown'
 
 import type { NeemResolvedArtifact } from '../../shared/types.ts'
-// import type { NeemResolvedArtifact } from '../../public/artifact.ts'
+
 import type {
   BuildGraph,
   BuildTarget,
@@ -18,7 +18,6 @@ import type {
 import { mergeRolldownOptions } from '../../shared/rolldown.ts'
 import { toFilePath } from '../shared/utils.ts'
 
-// import { mergeRolldownOptions } from './rolldown-options.ts'
 
 type ArtifactInput = { entry: string; input: string }
 
@@ -78,11 +77,7 @@ export async function compileTarget(
   const metadata: ArtifactBuildMetadata = {}
   await mkdir(target.outDir, { recursive: true })
   const bundle = await rolldown.build(createRolldownOptions(target, metadata))
-  return {
-    target,
-    artifact: createResolvedArtifact(target, bundle, metadata),
-    bundle,
-  }
+  return { target, artifact: createResolvedArtifact(target, bundle, metadata) }
 }
 
 export async function watchGraph(
@@ -122,7 +117,6 @@ export async function watchTarget(
   target: BuildTarget,
   handlers: { onRebuild?: (change: TargetChange) => MaybePromise<void> } = {},
 ): Promise<TargetWatcher> {
-  const initial = await compileTarget(target)
   const metadata: ArtifactBuildMetadata = {}
   await mkdir(target.outDir, { recursive: true })
   const watcher = rolldown.watch({
@@ -135,6 +129,7 @@ export async function watchTarget(
   })
 
   let initialWatchBuild = true
+  let initialCompiled: CompiledTarget | undefined
   const ready = createFuture<CompiledTarget>()
 
   watcher.on('event', async (event) => {
@@ -142,16 +137,16 @@ export async function watchTarget(
     if (code === 'START' || code === 'BUNDLE_START') return
 
     if (code === 'BUNDLE_END') {
-      if (initialWatchBuild) {
-        if ('result' in event) await event.result?.close?.()
-        return
-      }
-
       try {
         const compiled = {
           target,
           artifact: createResolvedArtifact(target, undefined, metadata),
         }
+        if (initialWatchBuild) {
+          initialCompiled = compiled
+          return
+        }
+
         await handlers.onRebuild?.({ target, compiled, initial: false })
       } finally {
         if ('result' in event) await event.result?.close?.()
@@ -162,7 +157,12 @@ export async function watchTarget(
     if (code === 'END') {
       if (initialWatchBuild) {
         initialWatchBuild = false
-        ready.resolve(initial)
+        ready.resolve(
+          initialCompiled ?? {
+            target,
+            artifact: createResolvedArtifact(target, undefined, metadata),
+          },
+        )
       }
       return
     }
@@ -225,7 +225,9 @@ function createRolldownOptions(
   return {
     input: input.input,
     platform: 'node',
+    treeshake: false,
     ...userOptions,
+    experimental: { chunkOptimization: false, ...userOptions.experimental },
     external: createExternalMatcher(userOptions.external),
     plugins: [
       createNativeAddonPlugin(),
@@ -288,7 +290,6 @@ function createResolvedArtifact(
     owner: target.owner,
     file: resolve(target.outDir, entryFileName ?? 'index.js'),
     outDir: target.outDir,
-    bundle,
   }
 }
 

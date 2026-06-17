@@ -118,6 +118,43 @@ describe('EventingRunner', () => {
     expect(adapter.dispose).toHaveBeenCalledOnce()
   })
 
+  it('rejects duplicate single-event consumers for the same topic and group', async () => {
+    const stream = SubscriptionContract({
+      namespace: 'users',
+      events: {
+        userCreated: EventContract({ payload: t.object({ id: t.string() }) }),
+        userDeleted: EventContract({ payload: t.object({ id: t.string() }) }),
+      },
+    })
+    const createdDefinition: AnyEventingConsumerDefinition = {
+      message: stream.events.userCreated,
+      groupId: 'users-service',
+      handler: vi.fn(async () => {}),
+    }
+    const deletedDefinition: AnyEventingConsumerDefinition = {
+      message: stream.events.userDeleted,
+      groupId: 'users-service',
+      handler: vi.fn(async () => {}),
+    }
+    const container = new Container({ logger: createTestLogger('parent') })
+    const adapter = new TestEventingAdapter()
+    const runner = new EventingRunner(
+      { logger: createTestLogger('root'), container },
+      { adapter },
+    )
+
+    try {
+      await expect(
+        runner.start({ consumers: [createdDefinition, deletedDefinition] }),
+      ).rejects.toThrow(
+        'Duplicate eventing consumer for topic [users] and group [users-service]',
+      )
+    } finally {
+      await runner.stop()
+      await container.dispose()
+    }
+  })
+
   it('dispatches subscription consumers with explicit dependency context', async () => {
     const stream = SubscriptionContract({
       namespace: 'users',

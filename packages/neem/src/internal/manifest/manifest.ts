@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer'
 import { access, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { relative, resolve } from 'node:path'
 
@@ -222,10 +223,11 @@ export async function writeStartEntries(
   outDir: string,
   runtimeNames: readonly string[],
 ): Promise<void> {
+  const runtimeStartFile = resolve(outDir, 'runtime/start.js')
   await writeFile(
     resolve(outDir, 'start.js'),
     [
-      `import { startStandalone } from ${JSON.stringify('./runtime/start.js')}`,
+      `import { startStandalone } from ${JSON.stringify(toImportSpecifier(outDir, runtimeStartFile))}`,
       'await startStandalone()',
       '',
     ].join('\n'),
@@ -233,18 +235,30 @@ export async function writeStartEntries(
 
   await Promise.all(
     runtimeNames.map(async (name) => {
-      const dir = resolve(outDir, 'runtimes', name)
+      const dir = resolve(outDir, 'runtimes', toRuntimeStartDirName(name))
       await mkdir(dir, { recursive: true })
       await writeFile(
         resolve(dir, 'start.js'),
         [
-          `import { startStandalone } from ${JSON.stringify('../../runtime/start.js')}`,
+          `import { startStandalone } from ${JSON.stringify(toImportSpecifier(dir, runtimeStartFile))}`,
           `await startStandalone({ runtimes: [${JSON.stringify(name)}] })`,
           '',
         ].join('\n'),
       )
     }),
   )
+}
+
+const SAFE_RUNTIME_START_DIR_NAME = /^[A-Za-z0-9_-]+$/
+
+function toRuntimeStartDirName(name: string): string {
+  if (SAFE_RUNTIME_START_DIR_NAME.test(name)) return name
+  return `~${Buffer.from(name, 'utf8').toString('base64url')}`
+}
+
+function toImportSpecifier(fromDir: string, target: string): string {
+  const specifier = toManifestPath(fromDir, target)
+  return specifier.startsWith('.') ? specifier : `./${specifier}`
 }
 
 function getWorkerEntryArtifact(compiled: CompiledGraph): NeemResolvedArtifact {

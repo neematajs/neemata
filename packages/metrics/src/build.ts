@@ -26,7 +26,11 @@ export function createDefaultMetricsRolldownPlugin(): RolldownPluginOption {
           'registerDefaultMetrics()',
           code,
         ]
-        return lines.join('\n')
+        const map = this.getCombinedSourcemap()
+        return {
+          code: lines.join('\n'),
+          map: { ...map, mappings: `;;${map.mappings}` },
+        }
       }
     },
   }

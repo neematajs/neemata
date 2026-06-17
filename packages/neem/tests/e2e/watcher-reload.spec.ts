@@ -103,6 +103,39 @@ describe('Neem watcher dev reload', () => {
     await neem.stop()
   }, 60_000)
 
+  it('restarts watcher and runtime after a runtime declaration changes', async () => {
+    const fixture = await useFixture({ config: 'generic-runtime' })
+    const runtimeFile = resolve(
+      fixture.fixtureDir,
+      'cases/generic-runtime/api.runtime.ts',
+    )
+    const neem = spawnTrackedNeem(
+      ['dev', '--config', fixture.configFile, '--outDir', fixture.outDir],
+      { env: { NEEM_RUNTIME_EVENTS_FILE: fixture.eventsFile } },
+    )
+
+    await waitForProbeEventCount(neem, 'runtime:ready', 1)
+
+    await replaceInFile(
+      runtimeFile,
+      "  name: 'api',",
+      "  name: 'api',\n  env: { NEEM_ENV_RUNTIME_ONLY: 'runtime-declaration-v2' },",
+    )
+
+    await waitForProbeEventCount(neem, 'watcher:config-invalidated', 1)
+    await waitForProbeEventCount(neem, 'runtime:ready', 2)
+    await waitForRuntimeEvent(
+      fixture.eventsFile,
+      (event) =>
+        event.event === 'runtime-create' &&
+        event.name?.startsWith('api:') === true &&
+        (event.env as Record<string, unknown> | undefined)?.runtimeOnly ===
+          'runtime-declaration-v2',
+    )
+
+    await neem.stop()
+  }, 60_000)
+
   it('converges rapid worker, logger, and plugin edits to the latest manifest', async () => {
     const fixture = await useFixture({ config: 'plugin' })
     const manifestFile = resolve(fixture.outDir, 'neem.manifest.json')

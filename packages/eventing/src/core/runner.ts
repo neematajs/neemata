@@ -66,6 +66,7 @@ export class EventingRunner {
       : this.abortController.signal
 
     try {
+      assertSafeConsumerDefinitions(options.consumers, options)
       await this.options.adapter.initialize()
       this.adapterInitialized = true
 
@@ -219,6 +220,29 @@ function resolveConsumerIndexes(
   options: EventingRunnerStartOptions,
 ): readonly number[] {
   return options.consumerIndexes ?? consumers.map((_, index) => index)
+}
+
+function assertSafeConsumerDefinitions(
+  consumers: readonly AnyEventingRunnerConsumerDefinition[],
+  options: EventingRunnerStartOptions,
+) {
+  const singleEventConsumers = new Set<string>()
+
+  for (const index of resolveConsumerIndexes(consumers, options)) {
+    const definition = consumers[index]!
+    if (isEventingSubscriptionConsumerDefinition(definition)) continue
+
+    const topic = definition.message.subscription.namespace
+    const key = `${topic}\0${definition.groupId}`
+    if (!singleEventConsumers.has(key)) {
+      singleEventConsumers.add(key)
+      continue
+    }
+
+    throw new Error(
+      `Duplicate eventing consumer for topic [${topic}] and group [${definition.groupId}]`,
+    )
+  }
 }
 
 function getConsumerDefinitionName(

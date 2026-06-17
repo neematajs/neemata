@@ -89,8 +89,10 @@ export class WatcherService {
       configDir: dirname(this.options.configFile),
     })
     await cleanNeemOutDir(this.options.outDir)
-    this.configWatcher = await watchConfigSignal(this.options.configFile, () =>
-      this.emit({ type: 'config-invalidated' }),
+    this.configWatcher = await watchConfigSignal(
+      this.options.configFile,
+      graph.runtimes.map((runtime) => runtime.declaration.file),
+      () => this.emit({ type: 'config-invalidated' }),
     )
     this.graphWatcher = await watchGraph(graph, {
       onChange: (change) => this.handleChange(change),
@@ -174,17 +176,16 @@ export class WatcherService {
 
 async function watchConfigSignal(
   configFile: string,
+  runtimeDeclarationFiles: readonly string[],
   onInvalidated: () => MaybePromise<void>,
 ): Promise<rolldown.RolldownWatcher> {
   const watcher = rolldown.watch({
-    input: configFile,
+    input: [configFile, ...runtimeDeclarationFiles],
     platform: 'node',
     logLevel: 'warn',
     external: (id) => isBuiltin(id),
     output: {
-      file: `${dirname(configFile)}/.neem-config-signal.js`,
       minify: false,
-      codeSplitting: false,
       sourcemap: false,
     },
     experimental: { chunkOptimization: false },

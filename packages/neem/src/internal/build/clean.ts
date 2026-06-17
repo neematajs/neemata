@@ -1,5 +1,5 @@
 import { rm } from 'node:fs/promises'
-import { resolve } from 'node:path'
+import { isAbsolute, relative, resolve, sep } from 'node:path'
 
 import { MANIFEST_FILE } from '../manifest/manifest.ts'
 
@@ -7,9 +7,24 @@ export function assertSafeNeemOutDir(options: {
   outDir: string
   configDir: string
 }): void {
-  if (resolve(options.outDir) === resolve(options.configDir)) {
+  const outDir = resolve(options.outDir)
+  const configDir = resolve(options.configDir)
+
+  if (outDir === configDir) {
     throw new Error(
       `Neem output directory must not be the config directory [${options.outDir}]`,
+    )
+  }
+
+  const configRelativePath = relative(outDir, configDir)
+  if (
+    configRelativePath !== '' &&
+    configRelativePath !== '..' &&
+    !configRelativePath.startsWith(`..${sep}`) &&
+    !isAbsolute(configRelativePath)
+  ) {
+    throw new Error(
+      `Neem output directory must not contain the config directory [${options.outDir}]`,
     )
   }
 }
