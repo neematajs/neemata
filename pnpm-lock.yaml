@@ -330,8 +330,8 @@ importers:
         specifier: workspace:*
         version: link:../metrics
       '@nmtjs/proxy':
-        specifier: 1.0.0-beta.6
-        version: 1.0.0-beta.6
+        specifier: 1.0.0-beta.7
+        version: 1.0.0-beta.7
       '@nmtjs/scheduler':
         specifier: workspace:*
         version: link:../scheduler
@@ -677,47 +677,47 @@ packages:
     resolution: {integrity: sha512-Ai7azff5W0NOwes9Mq57YYDS1MUbGp7mKWYN8wNj8vhxmT2yDphcVn6sKQrTmE4WuNH/XTCdZL8jh8lWtD8KqA==}
     engines: {node: ^22 || ^24 || >=26}
 
-  '@nmtjs/proxy-darwin-arm64@1.0.0-beta.6':
-    resolution: {integrity: sha512-T5FASbDMkRSXmHRKETNK6nmoeytahyUJ49yA0MeDCGodC9vc4BU37jOW4uG5zDsdmgf3FO3wiAyiOevbQESlDw==}
+  '@nmtjs/proxy-darwin-arm64@1.0.0-beta.7':
+    resolution: {integrity: sha512-Bcrugpbt0LM4Pv9NzrUYWRhXR8lyRlUSHqydMdvfxJRVlGLXaLncZkVLQ+ewlbRAvmqcwWVrqLDQwaO8mcnPFg==}
     cpu: [arm64]
     os: [darwin]
 
-  '@nmtjs/proxy-darwin-x64@1.0.0-beta.6':
-    resolution: {integrity: sha512-1pI4/Bk2F/jJUk0XsmZFEDS8jWIffOw2Z9z8Tfl22XFJdBfXZz2qEVwInZhMpY6OiDwDSvnUYxa1EQfFIacawA==}
+  '@nmtjs/proxy-darwin-x64@1.0.0-beta.7':
+    resolution: {integrity: sha512-zU4VQkjmcxiHrPxTyru0GpOs5Tv8+3qDCJMvYmnULecpK9TsFD5i5DuiCpdIBQ76NdX3bXo3Oy8lPpQoaS0cHQ==}
     cpu: [x64]
     os: [darwin]
 
-  '@nmtjs/proxy-linux-arm-gnueabihf@1.0.0-beta.6':
-    resolution: {integrity: sha512-DZheelOwdA8aTQNT3FP948+LO16cBchbQEpm3FO3izkZ/oyOwXFmHwudezYXoMBTbw1JNl3qMH9mwtA2xDI7cg==}
+  '@nmtjs/proxy-linux-arm-gnueabihf@1.0.0-beta.7':
+    resolution: {integrity: sha512-qPcRz5ovaBgUxLHXVbZuujkhI5lqHKfw1y4v6Y/eZmjywMGdT6VRA1WJJGpmsjvP4yysQlcpQAS3Eju5QXskRQ==}
     cpu: [arm]
     os: [linux]
 
-  '@nmtjs/proxy-linux-arm64-gnu@1.0.0-beta.6':
-    resolution: {integrity: sha512-AJGXvrJabBr3MOhsEmyB0Ee9yQmacsRcX7vssFXDvsxRNxPUUEd84QooxJ1+PDJ/4SdCi09hVL+pemRqDEJ78Q==}
+  '@nmtjs/proxy-linux-arm64-gnu@1.0.0-beta.7':
+    resolution: {integrity: sha512-LA6/Yc86I5MiUlpjNaXMk9IqU4yvB/Km5BMEZBMOTFFgGeDFOaXt23BVSisTO8JUCpnpVXFxpls0HOyXfGKC9A==}
     cpu: [arm64]
     os: [linux]
     libc: [glibc]
 
-  '@nmtjs/proxy-linux-arm64-musl@1.0.0-beta.6':
-    resolution: {integrity: sha512-+ac83guJQCEyYmBz27hrj5U4nOnifESEdYwBBpzDCUfc9vTLr9K+GCNOF99mD18KzrnibNpmPZP4YIHMD+K1hg==}
+  '@nmtjs/proxy-linux-arm64-musl@1.0.0-beta.7':
+    resolution: {integrity: sha512-+UGq8N2RlIlk5crvCIC+2LNYT5Fb0O0sPHAr5dEo1krPtWhtkbYKIzOh6wFSY1rI45Ga5E7z7NKIsaYf0a6Xeg==}
     cpu: [arm64]
     os: [linux]
     libc: [musl]
 
-  '@nmtjs/proxy-linux-x64-gnu@1.0.0-beta.6':
-    resolution: {integrity: sha512-LJ1vrso7UUnP02jp7GGOhbSJVftolNJxXqcI2MxzOVRjMsEa6Q3U0trVwClwQbNJKf/amVFiSSbkWYTN0If1jA==}
+  '@nmtjs/proxy-linux-x64-gnu@1.0.0-beta.7':
+    resolution: {integrity: sha512-/nTCt+Z/6/OQO4iXrkuZD8LGcvlYtuKgqeJKkvvrJ/cuoJN9hVzJ/+oRRwNatGvQMPl28Y496O6MaUpAxLeWGQ==}
     cpu: [x64]
     os: [linux]
     libc: [glibc]
 
-  '@nmtjs/proxy-linux-x64-musl@1.0.0-beta.6':
-    resolution: {integrity: sha512-aKKhmmTnE5vec9aPy3nt+09HatqoNfDU7sm2OjdLqZeltpe/ay4uLneE1rmNOom9KHe/nlmIVTU+M05gaWb02A==}
+  '@nmtjs/proxy-linux-x64-musl@1.0.0-beta.7':
+    resolution: {integrity: sha512-9+I6fw7T5tlTWAXUAnkPqQlOQSH+937KF+NoYF/GY2OlP59meV4rhEH7ohQzXPDrzC/cFmjp3Ur1zzGyv9KAKw==}
     cpu: [x64]
     os: [linux]
     libc: [musl]
 
-  '@nmtjs/proxy@1.0.0-beta.6':
-    resolution: {integrity: sha512-mD4s5TV4BkgbD5sZjP4XrYtMzjyw62DLSAicS0P255BON+Iz0RlbOh7ynFSMt7ZlznDnjuTtrRFlIQLSkdsg/Q==}
+  '@nmtjs/proxy@1.0.0-beta.7':
+    resolution: {integrity: sha512-tVTgn0jhuQAcbQXwY6rn2MjV85NM8OCg+M2XfqG9muSrxVMt3YZs9KgjdcfUZheEjh3eKQFTHqj07p2gTm2uvg==}
 
   '@node-rs/crc32-android-arm-eabi@1.10.6':
     resolution: {integrity: sha512-vZAMuJXm3TpWPOkkhxdrofWDv+Q+I2oO7ucLRbXyAPmXFNDhHtBxbO1rk9Qzz+M3eep8ieS4/+jCL1Q0zacNMQ==}
@@ -2047,36 +2047,36 @@ snapshots:
     dependencies:
       '@opentelemetry/api': 1.9.0
 
-  '@nmtjs/proxy-darwin-arm64@1.0.0-beta.6':
+  '@nmtjs/proxy-darwin-arm64@1.0.0-beta.7':
     optional: true
 
-  '@nmtjs/proxy-darwin-x64@1.0.0-beta.6':
+  '@nmtjs/proxy-darwin-x64@1.0.0-beta.7':
     optional: true
 
-  '@nmtjs/proxy-linux-arm-gnueabihf@1.0.0-beta.6':
+  '@nmtjs/proxy-linux-arm-gnueabihf@1.0.0-beta.7':
     optional: true
 
-  '@nmtjs/proxy-linux-arm64-gnu@1.0.0-beta.6':
+  '@nmtjs/proxy-linux-arm64-gnu@1.0.0-beta.7':
     optional: true
 
-  '@nmtjs/proxy-linux-arm64-musl@1.0.0-beta.6':
+  '@nmtjs/proxy-linux-arm64-musl@1.0.0-beta.7':
     optional: true
 
-  '@nmtjs/proxy-linux-x64-gnu@1.0.0-beta.6':
+  '@nmtjs/proxy-linux-x64-gnu@1.0.0-beta.7':
     optional: true
 
-  '@nmtjs/proxy-linux-x64-musl@1.0.0-beta.6':
+  '@nmtjs/proxy-linux-x64-musl@1.0.0-beta.7':
     optional: true
 
-  '@nmtjs/proxy@1.0.0-beta.6':
+  '@nmtjs/proxy@1.0.0-beta.7':
     optionalDependencies:
-      '@nmtjs/proxy-darwin-arm64': 1.0.0-beta.6
-      '@nmtjs/proxy-darwin-x64': 1.0.0-beta.6
-      '@nmtjs/proxy-linux-arm-gnueabihf': 1.0.0-beta.6
-      '@nmtjs/proxy-linux-arm64-gnu': 1.0.0-beta.6
-      '@nmtjs/proxy-linux-arm64-musl': 1.0.0-beta.6
-      '@nmtjs/proxy-linux-x64-gnu': 1.0.0-beta.6
-      '@nmtjs/proxy-linux-x64-musl': 1.0.0-beta.6
+      '@nmtjs/proxy-darwin-arm64': 1.0.0-beta.7
+      '@nmtjs/proxy-darwin-x64': 1.0.0-beta.7
+      '@nmtjs/proxy-linux-arm-gnueabihf': 1.0.0-beta.7
+      '@nmtjs/proxy-linux-arm64-gnu': 1.0.0-beta.7
+      '@nmtjs/proxy-linux-arm64-musl': 1.0.0-beta.7
+      '@nmtjs/proxy-linux-x64-gnu': 1.0.0-beta.7
+      '@nmtjs/proxy-linux-x64-musl': 1.0.0-beta.7
 
   '@node-rs/crc32-android-arm-eabi@1.10.6':
     optional: true

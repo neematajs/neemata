@@ -6,6 +6,7 @@ import type {
   NeemProxyUpstream,
   NeemProxyUpstreamFailure,
   NeemProxyUpstreamSnapshot,
+  NeemRuntimeProxyConfig,
   NeemRuntimeUpstream,
 } from '../../shared/types.ts'
 import type { RuntimeSnapshot } from '../manifest/snapshot.ts'
@@ -15,6 +16,7 @@ import { normalizeError } from '../shared/utils.ts'
 export type NativeProxy = {
   start: () => Promise<void>
   stop: () => Promise<void>
+  address: () => { hostname: string; port: number } | null
   addUpstream: (
     runtimeName: string,
     upstream: NeemProxyUpstream,
@@ -30,14 +32,23 @@ export type NativeProxyOptions = {
   tls?: { keyPath: string; certPath: string }
   applications: Array<{
     name: string
-    routing: { type?: 'subdomain' | 'path'; name?: string; default?: boolean }
+    routing: NativeProxyRouting
     sni?: string
   }>
   healthCheckIntervalMs?: number
   stickySessions?: NeemProxyConfig['stickySessions']
 }
 
+type NativeProxyRouting =
+  | { type: 'path'; name?: string }
+  | { type: 'subdomain'; name?: string }
+  | { type: 'default' }
+
 type NativeProxyConstructor = new (options: NativeProxyOptions) => NativeProxy
+type RuntimeProxyConfigs = Record<
+  string,
+  { proxy?: NeemRuntimeProxyConfig } | undefined
+>
 
 export class ProxyController {
   private readonly config: NeemProxyConfig
@@ -62,12 +73,11 @@ export class ProxyController {
 
     const ProxyConstructor = (await loadProxyPackage()).Proxy
     this.proxy = new ProxyConstructor(
-      createNativeProxyOptions(
-        this.config,
-        Object.keys(this.snapshot.manifest.runtimes),
-      ),
+      createNativeProxyOptions(this.config, this.snapshot.config.runtimes),
     )
-    this.desired = createDesiredUpstreams(upstreams)
+    this.desired = createDesiredUpstreams(
+      filterRuntimeUpstreams(upstreams, this.snapshot.config.runtimes),
+    )
 
     try {
       for (const upstream of this.desired.values()) {
@@ -116,7 +126,9 @@ export class ProxyController {
   }
 
   async setUpstreams(upstreams: readonly RuntimeUpstreams[]): Promise<void> {
-    this.desired = createDesiredUpstreams(upstreams)
+    this.desired = createDesiredUpstreams(
+      filterRuntimeUpstreams(upstreams, this.snapshot.config.runtimes),
+    )
     await this.reconcile()
   }
 
@@ -288,34 +300,68 @@ export function toProxyUpstream(
 
 export function createNativeProxyOptions(
   config: NeemProxyConfig,
-  runtimeNames: readonly string[],
+  runtimes: RuntimeProxyConfigs,
 ): NativeProxyOptions {
-  const configured = config.runtimes ?? {}
-  const active = new Set(runtimeNames)
-  const names =
-    Object.keys(configured).length > 0
-      ? Object.keys(configured).filter((name) => active.has(name))
-      : runtimeNames
+  const applications = Object.entries(runtimes).flatMap(([name, runtime]) => {
+    const proxy = runtime?.proxy
+    if (!proxy) return []
+    return [
+      {
+        name,
+        routing: normalizeProxyRouting(name, proxy.routing),
+        sni: proxy.sni,
+      },
+    ]
+  })
+  assertSingleDefaultRoute(applications)
 
   return {
     listen: `${config.hostname}:${config.port}`,
     tls: config.tls
       ? { keyPath: config.tls.key, certPath: config.tls.cert }
       : undefined,
-    applications: names.flatMap((name) => {
-      const runtime = configured[name]
-      if (runtime === undefined && Object.keys(configured).length > 0) return []
-      return [
-        {
-          name,
-          routing: runtime?.routing ?? { type: 'path', name },
-          sni: runtime?.sni,
-        },
-      ]
-    }),
+    applications,
     healthCheckIntervalMs: config.healthChecks?.interval,
     stickySessions: config.stickySessions,
   }
+}
+
+function normalizeProxyRouting(
+  runtimeName: string,
+  routing: NeemRuntimeProxyConfig['routing'],
+): NativeProxyRouting {
+  if (!routing) return { type: 'path', name: runtimeName }
+  if (routing.type === 'default') return { type: 'default' }
+
+  return routing.name === undefined
+    ? { type: routing.type, name: runtimeName }
+    : { type: routing.type, name: routing.name }
+}
+
+function assertSingleDefaultRoute(
+  applications: NativeProxyOptions['applications'],
+): void {
+  const defaults = applications.filter(
+    (application) => application.routing.type === 'default',
+  )
+  if (defaults.length <= 1) return
+  throw new Error(
+    `Multiple Neem proxy default routes configured: ${defaults
+      .map((application) => application.name)
+      .join(', ')}`,
+  )
+}
+
+function filterRuntimeUpstreams(
+  upstreams: readonly RuntimeUpstreams[],
+  runtimes: RuntimeProxyConfigs,
+): readonly RuntimeUpstreams[] {
+  const proxied = new Set(
+    Object.entries(runtimes)
+      .filter(([, runtime]) => runtime?.proxy)
+      .map(([name]) => name),
+  )
+  return upstreams.filter((runtime) => proxied.has(runtime.runtimeName))
 }
 
 function upstreamKey(upstream: NeemProxyUpstreamSnapshot): string {

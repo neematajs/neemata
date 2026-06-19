@@ -7,6 +7,8 @@ import type {
   NeemRuntimeDeclarationLayer,
   NeemRuntimeHostDeclaration,
   NeemRuntimeProjectEntries,
+  NeemProxyRoutingOptions,
+  NeemRuntimeProxyConfig,
   NeemRuntimeWorkerDeclaration,
 } from '../shared/types.ts'
 import { mergeUserRolldownOptions } from '../shared/rolldown.ts'
@@ -73,20 +75,24 @@ function mergeRuntimeDeclarationLayers(
     worker: _commonWorker,
     host: _commonHost,
     env: commonEnv,
+    proxy: commonProxy,
     ...commonRest
   } = commonOptions
   const {
     worker: _userWorker,
     host: _userHost,
     env: userEnv,
+    proxy: userProxy,
     ...userRest
   } = userOptions
   const env = mergeRuntimeEnv(commonEnv, userEnv)
+  const proxy = mergeRuntimeProxyConfig(commonProxy, userProxy)
 
   return {
     ...commonRest,
     ...userRest,
     ...(env ? { env } : {}),
+    ...(proxy ? { proxy } : {}),
     ...(worker ? { worker } : {}),
     ...(host ? { host } : {}),
   }
@@ -104,6 +110,25 @@ function freezeRuntimeEnv<const T extends NeemRuntimeDeclaration['env']>(
   env: T,
 ): T {
   return Object.freeze({ ...env }) as T
+}
+
+function mergeRuntimeProxyConfig(
+  commonProxy: NeemRuntimeDeclarationLayer['proxy'],
+  userProxy: NeemRuntimeDeclarationLayer['proxy'],
+): NeemRuntimeProxyConfig | undefined {
+  if (!commonProxy && !userProxy) return undefined
+  const routing = mergeRuntimeProxyRouting(
+    commonProxy?.routing,
+    userProxy?.routing,
+  )
+  return { ...commonProxy, ...userProxy, ...(routing ? { routing } : {}) }
+}
+
+function mergeRuntimeProxyRouting(
+  commonRouting: NeemRuntimeProxyConfig['routing'],
+  userRouting: NeemRuntimeProxyConfig['routing'],
+): NeemProxyRoutingOptions | undefined {
+  return userRouting ?? commonRouting
 }
 
 function mergeRuntimeWorkerDeclarations(

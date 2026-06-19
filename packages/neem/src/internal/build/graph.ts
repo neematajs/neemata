@@ -1,12 +1,13 @@
 import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 
-import type { RolldownOptions } from 'rolldown'
+import type { OutputOptions, RolldownOptions } from 'rolldown'
 
 import type {
   NeemArtifactEntry,
   NeemArtifactKind,
   NeemArtifactOwner,
+  NeemBuildConfig,
   NeemResolvedConfig,
   NeemResolvedRuntimeDeclaration,
 } from '../../shared/types.ts'
@@ -86,12 +87,26 @@ export function createBuildGraph(options: {
   const selected = selectedRuntimeNames
     ? new Set(selectedRuntimeNames)
     : undefined
-  const plugins = createPluginNodes(options.configFile, options.outDir, config)
+  const rootRolldown = createRootBuildRolldownOptions(config.build)
+  const plugins = createPluginNodes(
+    options.configFile,
+    options.outDir,
+    config,
+    rootRolldown,
+  )
   const pluginRolldown = mergePluginRolldownOptions(plugins)
-  const startEntry = createStartEntryTarget(options.outDir)
-  const workerEntry = createWorkerEntryTarget(options.outDir)
-  const hostRunnerEntry = createHostRunnerEntryTarget(options.outDir)
-  const logger = createLoggerTarget(options.configFile, options.outDir, config)
+  const startEntry = createStartEntryTarget(options.outDir, rootRolldown)
+  const workerEntry = createWorkerEntryTarget(options.outDir, rootRolldown)
+  const hostRunnerEntry = createHostRunnerEntryTarget(
+    options.outDir,
+    rootRolldown,
+  )
+  const logger = createLoggerTarget(
+    options.configFile,
+    options.outDir,
+    config,
+    rootRolldown,
+  )
   const runtimes = Object.entries(config.runtimes)
     .filter(([name]) => !selected || selected.has(name))
     .map(([name, runtime]) =>
@@ -100,6 +115,7 @@ export function createBuildGraph(options: {
         name,
         runtime,
         pluginRolldown,
+        rootRolldown,
       }),
     )
   const targets = [
@@ -133,6 +149,7 @@ function createPluginNodes(
   configFile: string,
   outDir: string,
   config: NeemResolvedConfig,
+  rootRolldown?: RolldownOptions,
 ): readonly PluginBuildNode[] {
   return (config.plugins ?? []).map((plugin, index) => {
     const name = plugin.name.trim()
@@ -149,7 +166,12 @@ function createPluginNodes(
         ? {
             key: `plugin:${key}`,
             kind: 'plugin-entry',
-            artifact: { id: 'plugin', kind: 'module', entry },
+            artifact: {
+              id: 'plugin',
+              kind: 'module',
+              entry,
+              rolldown: rootRolldown,
+            },
             owner: { type: 'config' },
             outDir: resolve(outDir, 'config', 'plugins', key),
           }
@@ -160,7 +182,10 @@ function createPluginNodes(
   })
 }
 
-function createWorkerEntryTarget(outDir: string): BuildTarget {
+function createWorkerEntryTarget(
+  outDir: string,
+  rootRolldown?: RolldownOptions,
+): BuildTarget {
   return {
     key: 'runtime:worker-entry',
     kind: 'worker-entry',
@@ -168,14 +193,20 @@ function createWorkerEntryTarget(outDir: string): BuildTarget {
       id: 'worker-entry',
       kind: 'worker',
       entry: resolveInternalEntry('../worker/entry'),
-      rolldown: { output: { entryFileNames: 'worker-entry.js' } },
+      rolldown: mergeOptionalRolldownOptions(
+        { output: { entryFileNames: 'worker-entry.js' } },
+        rootRolldown,
+      ),
     },
     owner: { type: 'runtime', name: 'worker' },
     outDir: resolve(outDir, 'runtime'),
   }
 }
 
-function createHostRunnerEntryTarget(outDir: string): BuildTarget {
+function createHostRunnerEntryTarget(
+  outDir: string,
+  rootRolldown?: RolldownOptions,
+): BuildTarget {
   return {
     key: 'runtime:host-runner-entry',
     kind: 'host-runner-entry',
@@ -183,14 +214,20 @@ function createHostRunnerEntryTarget(outDir: string): BuildTarget {
       id: 'host-runner-entry',
       kind: 'worker',
       entry: resolveInternalEntry('../host/runner-entry'),
-      rolldown: { output: { entryFileNames: 'runner-entry.js' } },
+      rolldown: mergeOptionalRolldownOptions(
+        { output: { entryFileNames: 'runner-entry.js' } },
+        rootRolldown,
+      ),
     },
     owner: { type: 'runtime', name: 'host-runner' },
     outDir: resolve(outDir, 'runtime'),
   }
 }
 
-function createStartEntryTarget(outDir: string): BuildTarget {
+function createStartEntryTarget(
+  outDir: string,
+  rootRolldown?: RolldownOptions,
+): BuildTarget {
   return {
     key: 'runtime:start-entry',
     kind: 'start-entry',
@@ -198,12 +235,15 @@ function createStartEntryTarget(outDir: string): BuildTarget {
       id: 'start',
       kind: 'module',
       entry: resolveInternalEntry('../standalone/entry'),
-      rolldown: {
-        output: {
-          entryFileNames: 'start.js',
-          chunkFileNames: '[name]-[hash].js',
+      rolldown: mergeOptionalRolldownOptions(
+        {
+          output: {
+            entryFileNames: 'start.js',
+            chunkFileNames: '[name]-[hash].js',
+          },
         },
-      },
+        rootRolldown,
+      ),
     },
     owner: { type: 'runtime', name: 'start' },
     outDir: resolve(outDir, 'runtime'),
@@ -214,6 +254,7 @@ function createLoggerTarget(
   configFile: string,
   outDir: string,
   config: NeemResolvedConfig,
+  rootRolldown?: RolldownOptions,
 ): BuildTarget | undefined {
   const logger = config.logger
   if (!logger || (typeof logger !== 'string' && !(logger instanceof URL))) {
@@ -227,6 +268,7 @@ function createLoggerTarget(
       id: 'logger',
       kind: 'module',
       entry: resolveRequiredBuildEntry(configFile, logger),
+      rolldown: rootRolldown,
     },
     owner: { type: 'config' },
     outDir: resolve(outDir, 'config', 'logger'),
@@ -254,6 +296,7 @@ function createRuntimeNode(options: {
   name: string
   runtime: NeemResolvedRuntimeDeclaration
   pluginRolldown?: RolldownOptions
+  rootRolldown?: RolldownOptions
 }): RuntimeBuildNode {
   const runtimeDir = resolve(
     options.outDir,
@@ -288,9 +331,10 @@ function createRuntimeNode(options: {
             id: 'worker',
             kind: 'worker',
             entry: workerEntry,
-            rolldown: mergeRolldownOptions(
+            rolldown: mergeOptionalRolldownOptions(
               normalizeUserRolldownOptions(declaration.worker?.build?.rolldown),
               options.pluginRolldown,
+              options.rootRolldown,
             ),
           },
           owner: { type: 'runtime', name: options.name },
@@ -304,8 +348,9 @@ function createRuntimeNode(options: {
         id: 'host',
         kind: 'module',
         entry: hostEntry,
-        rolldown: normalizeUserRolldownOptions(
-          declaration.host?.build?.rolldown,
+        rolldown: mergeOptionalRolldownOptions(
+          normalizeUserRolldownOptions(declaration.host?.build?.rolldown),
+          options.rootRolldown,
         ),
       },
       owner: { type: 'runtime', name: options.name },
@@ -318,8 +363,9 @@ function createRuntimeNode(options: {
         id: 'planner',
         kind: 'module',
         entry: plannerEntry,
-        rolldown: normalizeUserRolldownOptions(
-          declaration.host?.build?.rolldown,
+        rolldown: mergeOptionalRolldownOptions(
+          normalizeUserRolldownOptions(declaration.host?.build?.rolldown),
+          options.rootRolldown,
         ),
       },
       owner: { type: 'runtime', name: options.name },
@@ -328,9 +374,36 @@ function createRuntimeNode(options: {
   }
 }
 
+function createRootBuildRolldownOptions(
+  build: NeemBuildConfig | undefined,
+): RolldownOptions | undefined {
+  if (!build) return undefined
+
+  const output: OutputOptions = {}
+  if (build.sourcemap !== undefined) output.sourcemap = build.sourcemap
+  if (build.minify !== undefined) output.minify = build.minify
+  if (build.sourcemapSources !== undefined) {
+    output.sourcemapExcludeSources = build.sourcemapSources === 'exclude'
+  }
+
+  const rolldown: RolldownOptions = {
+    ...(Object.keys(output).length > 0 ? { output } : {}),
+    ...(build.define ? { transform: { define: build.define } } : {}),
+  }
+
+  return Object.keys(rolldown).length > 0 ? rolldown : undefined
+}
+
 function normalizeUserRolldownOptions(
   options: RolldownOptions | undefined,
 ): RolldownOptions | undefined {
   const merged = mergeUserRolldownOptions(options)
+  return Object.keys(merged).length > 0 ? merged : undefined
+}
+
+function mergeOptionalRolldownOptions(
+  ...options: [RolldownOptions | undefined, ...(RolldownOptions | undefined)[]]
+): RolldownOptions | undefined {
+  const merged = mergeRolldownOptions(...options)
   return Object.keys(merged).length > 0 ? merged : undefined
 }

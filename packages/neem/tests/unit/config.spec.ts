@@ -3,8 +3,10 @@ import { describe, expect, expectTypeOf, it } from 'vitest'
 import type {
   NeemPluginInput,
   NeemRuntimeBuildConfig,
+  NeemRuntimeDeclaration,
   NeemRuntimePlanner,
   NeemRuntimePlannerContext,
+  NeemRuntimeProxyConfig,
 } from '../../src/shared/types.ts'
 import {
   createRuntime,
@@ -27,6 +29,12 @@ import {
 describe('Neem public runtime API', () => {
   it('keeps root runtimes as project entries', () => {
     const config = defineConfig({
+      build: {
+        define: { __NEEM_ROOT__: JSON.stringify('root') },
+        minify: 'dce-only',
+        sourcemap: 'hidden',
+        sourcemapSources: 'exclude',
+      },
       env: { NODE_ENV: 'production', REDIS_HOST: 'redis' },
       plugins: [
         definePlugin({
@@ -44,17 +52,25 @@ describe('Neem public runtime API', () => {
       '!apps/legacy',
     ])
     expect(config.env).toEqual({ NODE_ENV: 'production', REDIS_HOST: 'redis' })
+    expect(config.build).toEqual({
+      define: { __NEEM_ROOT__: '"root"' },
+      minify: 'dce-only',
+      sourcemap: 'hidden',
+      sourcemapSources: 'exclude',
+    })
     expect(Object.isFrozen(config.env)).toBe(true)
     expect(config.plugins?.[0]?.name).toBe('fixture')
   })
 
   it('brands runtime declarations, planners, hosts, and workers', () => {
-    const declaration = defineRuntime({
+    const runtimeInput = {
       name: 'api',
       planner: './neem.planner.ts',
       env: { REDIS_DB: '2' },
+      proxy: { routing: { type: 'default' }, sni: 'api.localhost' },
       worker: { entry: './worker.ts' },
-    })
+    } satisfies NeemRuntimeDeclaration
+    const declaration = defineRuntime(runtimeInput)
     const planner = defineRuntimePlanner(() => ({ workers: [{ id: 1 }] }))
     const host = defineRuntimeHost(() => ({}))
     const worker = defineRuntimeWorker({
@@ -66,10 +82,35 @@ describe('Neem public runtime API', () => {
 
     expect(isNeemRuntimeDeclaration(declaration)).toBe(true)
     expect(declaration.env).toEqual({ REDIS_DB: '2' })
+    expect(declaration.proxy).toEqual({
+      routing: { type: 'default' },
+      sni: 'api.localhost',
+    })
     expect(Object.isFrozen(declaration.env)).toBe(true)
     expect(isNeemRuntimePlanner(planner)).toBe(true)
     expect(isNeemRuntimeHostFactory(host)).toBe(true)
     expect(isNeemRuntimeWorker(worker)).toBe(true)
+  })
+
+  it('types default proxy routing as a routing mode', () => {
+    const defaultRoute = {
+      routing: { type: 'default' },
+    } satisfies NeemRuntimeProxyConfig
+    const missingRoutingType = {
+      // @ts-expect-error explicit routing config must declare a type.
+      routing: { name: 'api' },
+    } satisfies NeemRuntimeProxyConfig
+    const deprecatedDefaultFlag = {
+      routing: {
+        type: 'path',
+        // @ts-expect-error default route is now expressed as type: 'default'.
+        default: true,
+      },
+    } satisfies NeemRuntimeProxyConfig
+
+    expect(defaultRoute.routing.type).toBe('default')
+    expect(missingRoutingType.routing.name).toBe('api')
+    expect(deprecatedDefaultFlag.routing.default).toBe(true)
   })
 
   it('types runtime planner helper by options and worker data', () => {
@@ -220,5 +261,20 @@ describe('Neem public runtime API', () => {
       commonHostPlugin,
       userHostPlugin,
     ])
+  })
+
+  it('creates runtime factories with merged proxy options', () => {
+    const runtime = createRuntime({
+      proxy: { routing: { type: 'path', name: 'api' } },
+    })({
+      name: 'api',
+      proxy: { sni: 'api.localhost' },
+      worker: { entry: './worker.ts' },
+    })
+
+    expect(runtime.proxy).toEqual({
+      routing: { type: 'path', name: 'api' },
+      sni: 'api.localhost',
+    })
   })
 })

@@ -169,6 +169,56 @@ describe('createBuildGraph', () => {
     expect(api?.worker?.artifact.rolldown).not.toHaveProperty('platform')
   })
 
+  it('applies root build options to generated targets', () => {
+    const graph = createBuildGraph({
+      configFile,
+      outDir,
+      config: resolvedConfig({
+        build: {
+          define: {
+            __NEEM_ROOT__: JSON.stringify('root'),
+            __NEEM_SHARED__: JSON.stringify('root'),
+          },
+          minify: 'dce-only',
+          sourcemap: 'hidden',
+          sourcemapSources: 'exclude',
+        },
+        runtimes: {
+          api: runtimeDeclaration('api', {
+            worker: {
+              entry: './api.ts',
+              build: {
+                rolldown: {
+                  transform: {
+                    define: { __NEEM_SHARED__: JSON.stringify('worker') },
+                  },
+                },
+              },
+            },
+            planner: './api.planner.ts',
+          }),
+        },
+      }),
+    })
+
+    const api = graph.runtimes.find((runtime) => runtime.name === 'api')
+    expect(graph.startEntry.artifact.rolldown?.output).toMatchObject({
+      entryFileNames: 'start.js',
+      minify: 'dce-only',
+      sourcemap: 'hidden',
+      sourcemapExcludeSources: true,
+    })
+    expect(api?.worker?.artifact.rolldown?.transform?.define).toEqual({
+      __NEEM_ROOT__: '"root"',
+      __NEEM_SHARED__: '"worker"',
+    })
+    expect(api?.worker?.artifact.rolldown?.output).toMatchObject({
+      minify: 'dce-only',
+      sourcemap: 'hidden',
+      sourcemapExcludeSources: true,
+    })
+  })
+
   it('fails before building when selected runtimes are unknown', () => {
     expect(() =>
       createBuildGraph({
@@ -195,6 +245,7 @@ function resolvedConfig(
 ): NeemResolvedConfig {
   return {
     runtimes: config.runtimes,
+    build: config.build,
     logger: config.logger,
     plugins: config.plugins,
   }

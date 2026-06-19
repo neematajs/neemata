@@ -61,19 +61,24 @@ describe('Neem proxy helpers', () => {
     const config: NeemProxyConfig = {
       hostname: '127.0.0.1',
       port: 8080,
-      runtimes: {
-        api: {
-          routing: { type: 'subdomain', name: 'api' },
-          sni: 'api.localhost',
-        },
-        inactive: { routing: { type: 'path', name: 'inactive' } },
-      },
       healthChecks: { interval: 250 },
       stickySessions: { enabled: true, cookieName: 'sid' },
       tls: { key: '/certs/key.pem', cert: '/certs/cert.pem' },
     }
 
-    expect(createNativeProxyOptions(config, ['api', 'jobs'])).toEqual({
+    expect(
+      createNativeProxyOptions(config, {
+        api: {
+          proxy: {
+            routing: { type: 'subdomain', name: 'api' },
+            sni: 'api.localhost',
+          },
+        },
+        jobs: {},
+        defaulted: { proxy: { routing: { type: 'default' } } },
+        conventional: { proxy: { routing: { type: 'path' } } },
+      }),
+    ).toEqual({
       listen: '127.0.0.1:8080',
       tls: { keyPath: '/certs/key.pem', certPath: '/certs/cert.pem' },
       applications: [
@@ -82,21 +87,36 @@ describe('Neem proxy helpers', () => {
           routing: { type: 'subdomain', name: 'api' },
           sni: 'api.localhost',
         },
+        { name: 'defaulted', routing: { type: 'default' }, sni: undefined },
+        {
+          name: 'conventional',
+          routing: { type: 'path', name: 'conventional' },
+          sni: undefined,
+        },
       ],
       healthCheckIntervalMs: 250,
       stickySessions: { enabled: true, cookieName: 'sid' },
     })
   })
 
-  it('defaults proxy routing for every active runtime when no runtime map exists', () => {
+  it('does not expose runtimes without explicit runtime proxy config', () => {
     expect(
-      createNativeProxyOptions({ hostname: '0.0.0.0', port: 80 }, [
-        'api',
-        'jobs',
-      ]).applications,
-    ).toEqual([
-      { name: 'api', routing: { type: 'path', name: 'api' }, sni: undefined },
-      { name: 'jobs', routing: { type: 'path', name: 'jobs' }, sni: undefined },
-    ])
+      createNativeProxyOptions(
+        { hostname: '0.0.0.0', port: 80 },
+        { api: {}, jobs: {} },
+      ).applications,
+    ).toEqual([])
+  })
+
+  it('rejects multiple default proxy routes', () => {
+    expect(() =>
+      createNativeProxyOptions(
+        { hostname: '0.0.0.0', port: 80 },
+        {
+          api: { proxy: { routing: { type: 'default' } } },
+          jobs: { proxy: { routing: { type: 'default' } } },
+        },
+      ),
+    ).toThrow('Multiple Neem proxy default routes configured')
   })
 })

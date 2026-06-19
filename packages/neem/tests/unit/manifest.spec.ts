@@ -65,6 +65,10 @@ describe('Neem manifest', () => {
     const manifest = createCompiledManifest(createCompiledHostOnlyGraph())
 
     expect(manifest.config.env).toEqual({ ROOT_ENV: 'root' })
+    expect(manifest.config.runtimes.scheduler?.proxy).toEqual({
+      routing: { type: 'path', name: 'scheduler' },
+      sni: 'scheduler.localhost',
+    })
     expect(manifest.runtimes.scheduler).toMatchObject({
       name: 'scheduler',
       env: { RUNTIME_ENV: 'scheduler' },
@@ -310,7 +314,15 @@ function createCompiledHostOnlyGraph(): CompiledGraph {
       {
         name: 'scheduler',
         node: {
-          declaration: { declaration: { env: { RUNTIME_ENV: 'scheduler' } } },
+          declaration: {
+            declaration: {
+              env: { RUNTIME_ENV: 'scheduler' },
+              proxy: {
+                routing: { type: 'path', name: 'scheduler' },
+                sni: 'scheduler.localhost',
+              },
+            },
+          },
         },
         host: compiledTarget('runtime-host', host),
         planner: compiledTarget('runtime-planner', planner),

@@ -9,6 +9,7 @@ import type {
   NeemLoggerOptions,
   NeemProxyConfig,
   NeemResolvedArtifact,
+  NeemRuntimeProxyConfig,
 } from '../../shared/types.ts'
 import type { CompiledGraph } from '../build/compiler.ts'
 import {
@@ -36,7 +37,10 @@ export type ManifestLogger =
   | { type: 'options'; options: NeemLoggerOptions }
   | { type: 'module'; file: string }
 
-export type ManifestRuntimeConfig = { static?: true }
+export type ManifestRuntimeConfig = {
+  static?: true
+  proxy?: NeemRuntimeProxyConfig
+}
 
 export type ManifestConfig = {
   logger?: ManifestLogger
@@ -282,14 +286,36 @@ function createManifestConfig(compiled: CompiledGraph): ManifestConfig {
     proxy: config.proxy,
     health: config.health,
     runtimes: Object.fromEntries(
-      compiled.runtimes.map((runtime) => [runtime.name, {}]),
+      compiled.runtimes.map((runtime) => [
+        runtime.name,
+        createManifestRuntimeConfig(runtime.node.declaration.declaration),
+      ]),
     ),
+  }
+}
+
+function createManifestRuntimeConfig(declaration: {
+  proxy?: NeemRuntimeProxyConfig
+}): ManifestRuntimeConfig {
+  return {
+    ...(declaration.proxy
+      ? { proxy: copyRuntimeProxy(declaration.proxy) }
+      : {}),
   }
 }
 
 function copyEnv(env: NeemEnv | undefined): NeemEnv | undefined {
   if (!env || Object.keys(env).length === 0) return undefined
   return { ...env }
+}
+
+function copyRuntimeProxy(
+  proxy: NeemRuntimeProxyConfig,
+): NeemRuntimeProxyConfig {
+  return {
+    ...(proxy.routing ? { routing: { ...proxy.routing } } : {}),
+    ...(proxy.sni !== undefined ? { sni: proxy.sni } : {}),
+  }
 }
 
 function createManifestLogger(

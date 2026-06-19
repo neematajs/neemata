@@ -3,7 +3,7 @@ import type { MessagePort } from 'node:worker_threads'
 import type { MaybePromise } from '@nmtjs/common'
 import type { Logger, LoggingOptions } from '@nmtjs/core'
 import type { Hookable } from 'hookable'
-import type { RolldownOptions, RolldownOutput } from 'rolldown'
+import type { OutputOptions, RolldownOptions, RolldownOutput } from 'rolldown'
 
 export type { RolldownOptions, RolldownPluginOption } from 'rolldown'
 
@@ -87,6 +87,13 @@ export type NeemLoggerOptions = LoggingOptions
 export type NeemLoggerInput = NeemLoggerOptions | string | URL
 
 export type NeemEnv = Record<string, string>
+
+export type NeemBuildConfig = {
+  sourcemap?: OutputOptions['sourcemap']
+  sourcemapSources?: 'include' | 'exclude'
+  minify?: boolean | 'dce-only'
+  define?: Record<string, string>
+}
 
 export type NeemPluginBuild = { rolldown?: NeemRolldownOptions }
 
@@ -245,6 +252,7 @@ export type NeemRuntimeDeclaration<
   name?: string
   planner?: NeemEntryInput
   env?: NeemEnv
+  proxy?: NeemRuntimeProxyConfig
   worker?: NeemRuntimeWorkerDeclaration
   host?: NeemRuntimeHostDeclaration<THost>
 }
@@ -264,19 +272,19 @@ export type NeemRuntimeProjectEntry = string
 
 export type NeemRuntimeProjectEntries = readonly NeemRuntimeProjectEntry[]
 
-export type NeemProxyRoutingOptions = {
-  type?: 'subdomain' | 'path'
-  name?: string
-  default?: boolean
+export type NeemProxyRoutingOptions =
+  | { type: 'path'; name?: string }
+  | { type: 'subdomain'; name?: string }
+  | { type: 'default' }
+
+export type NeemRuntimeProxyConfig = {
+  routing?: NeemProxyRoutingOptions
+  sni?: string
 }
 
 export type NeemProxyConfig = {
   hostname: string
   port: number
-  runtimes?: Record<
-    string,
-    { routing?: NeemProxyRoutingOptions; sni?: string } | undefined
-  >
   healthChecks?: { interval?: number }
   stickySessions?: {
     enabled?: boolean
@@ -313,6 +321,7 @@ export type NeemConfig<
    */
   logger?: NeemLoggerInput
   env?: NeemEnv
+  build?: NeemBuildConfig
   runtimes: TRuntimes
   proxy?: NeemProxyConfig
   health?: NeemHealthConfig

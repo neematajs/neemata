@@ -16,9 +16,6 @@ export default defineConfig({
       10,
     ),
     healthChecks: { interval: 50 },
-    runtimes: {
-      api: { routing: { type: 'path', name: 'api', default: true } },
-    },
   },
   runtimes: ['./api.runtime.ts'],
 })
