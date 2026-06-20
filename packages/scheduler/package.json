@@ -48,7 +48,7 @@
     "@nmtjs/core": "workspace:*",
     "@nmtjs/jobs": "workspace:*",
     "@nmtjs/neem": "workspace:*",
-    "bullmq": "5.78.1"
+    "bullmq": "5.79.0"
   },
   "peerDependencies": {
     "ioredis": "^5.10.1",

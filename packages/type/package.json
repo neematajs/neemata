@@ -77,7 +77,7 @@
   },
   "devDependencies": {
     "@nmtjs/common": "workspace:*",
-    "temporal-polyfill": "^0.3.2",
+    "temporal-polyfill": "^1.0.1",
     "zod": "catalog:"
   },
   "peerDependenciesMeta": {

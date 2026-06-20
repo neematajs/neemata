@@ -3,9 +3,9 @@
   "description": "Neem host core for running compiled runtime artifacts.",
   "type": "module",
   "scripts": {
-    "build": "tsgo -b tsconfig.build.json",
+    "build": "tsc -b tsconfig.build.json",
     "clean-build": "rm -rf ./dist",
-    "check:type": "tsgo -p tsconfig.json --noEmit",
+    "check:type": "tsc -p tsconfig.json --noEmit",
     "test": "pnpm run test:unit && pnpm run test:e2e",
     "test:e2e": "pnpm run build && vitest run --config vitest.e2e.config.ts",
     "test:stress": "pnpm run build && vitest run --config vitest.stress.config.ts",
@@ -47,9 +47,9 @@
     "consola": "^3.4.2",
     "defu": "^6.1.7",
     "hookable": "^6.1.1",
-    "oxc-resolver": "^11.20.0",
+    "oxc-resolver": "^11.21.3",
     "perfect-debounce": "^2.1.0",
-    "rolldown": "^1.1.1",
+    "rolldown": "^1.1.2",
     "zod": "catalog:"
   },
   "peerDependencies": {

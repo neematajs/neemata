@@ -5,8 +5,8 @@
   "license": "MIT",
   "scripts": {
     "clean-build": "pnpm run --parallel -r clean-build",
-    "build": "pnpm tsgo -b tsconfig.build.json",
-    "dev": "pnpm run clean-build && pnpm tsgo -b tsconfig.build.json --watch",
+    "build": "pnpm tsc -b tsconfig.build.json",
+    "dev": "pnpm run clean-build && pnpm tsc -b tsconfig.build.json --watch",
     "clean": "rm -rf dist node_modules && pnpm -r exec rm -rf dist node_modules",
     "test": "pnpm build && vitest --run",
     "test:neem": "pnpm --filter @nmtjs/neem run test",
@@ -14,7 +14,7 @@
     "test:unit": "vitest run packages/*",
     "test:browser:client": "vitest run -c packages/client/vitest.browser.config.ts",
     "test:dev": "vitest dev --ui --coverage",
-    "check:type": "pnpm tsgo -b tsconfig.json --noEmit",
+    "check:type": "pnpm tsc -b tsconfig.json --noEmit",
     "check:lint": "biome lint --diagnostic-level=error .",
     "check:fmt": "biome format --diagnostic-level=error .",
     "check": "pnpm run check:fmt && pnpm run check:lint && pnpm run check:type",
@@ -24,11 +24,12 @@
     "@biomejs/biome": "2.5.0",
     "@tsconfig/node24": "^24.0.4",
     "@types/node": "^24",
-    "@typescript/native-preview": "7.0.0-dev.20260421.2",
     "@vitest/browser-playwright": "4.1.9",
     "@vitest/coverage-v8": "4.1.9",
     "@vitest/ui": "4.1.9",
+    "add": "^2.0.6",
     "playwright": "^1.61.0",
+    "typescript": "7.0.1-rc",
     "vitest": "4.1.9"
   },
   "packageManager": "pnpm@11.5.1+sha512.93f7b57422ea7068257235b4c16eb60762eb68e1dc23723199cc739043ea9be2c4143274a399d8c6defa2b1176226d9ca1c4b63482d6200c1a8fbaa78c1d1485"
