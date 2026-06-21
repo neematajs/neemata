@@ -18,16 +18,8 @@ import {
   isNeemRuntimeHostFactory,
   isNeemRuntimePlanner,
 } from '../../public/runtime.ts'
-import {
-  childLogger,
-  resolveManifestLogger,
-  runtimeLabel,
-} from '../shared/logger.ts'
-import {
-  importDefault,
-  normalizeError,
-  serializeError,
-} from '../shared/utils.ts'
+import { childLogger, resolveManifestLogger, runtimeLabel } from '../logger.ts'
+import { importDefault, normalizeError, serializeError } from '../utils.ts'
 
 if (!parentPort) {
   throw new Error('Neem host runner requires a parent port')

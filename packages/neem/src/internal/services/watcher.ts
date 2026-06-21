@@ -20,9 +20,9 @@ import { assertSafeNeemOutDir, cleanNeemOutDir } from '../build/clean.ts'
 import { watchGraph } from '../build/compiler.ts'
 import { resolveNeemRuntimeDeclarations } from '../build/declarations.ts'
 import { createBuildGraph } from '../build/graph.ts'
+import { createLoggerFromConfigInput } from '../logger.ts'
 import { createManifest, writeManifest } from '../manifest/manifest.ts'
-import { createLoggerFromConfigInput } from '../shared/logger.ts'
-import { importDefault, serializeError } from '../shared/utils.ts'
+import { importDefault, serializeError } from '../utils.ts'
 
 export type WatcherServiceOptions = {
   configFile: string
@@ -184,10 +184,7 @@ async function watchConfigSignal(
     platform: 'node',
     logLevel: 'warn',
     external: (id) => isBuiltin(id),
-    output: {
-      minify: false,
-      sourcemap: false,
-    },
+    output: { minify: false, sourcemap: false },
     experimental: { chunkOptimization: false },
     optimization: { inlineConst: false, pifeForModuleWrappers: false },
     treeshake: false,

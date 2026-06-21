@@ -20,9 +20,9 @@ import type {
   RuntimeWorkerData,
   WorkerMessage,
 } from '../worker/protocol.ts'
+import { childLogger, runtimeLabel } from '../logger.ts'
 import { callHostHook } from '../plugins/hooks.ts'
-import { childLogger, runtimeLabel } from '../shared/logger.ts'
-import { normalizeError, raceWithTimeout } from '../shared/utils.ts'
+import { normalizeError, raceWithTimeout } from '../utils.ts'
 import { createRuntimeEnv } from './env.ts'
 
 export type ThreadPlan = {

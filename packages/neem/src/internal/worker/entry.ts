@@ -10,13 +10,9 @@ import type {
   WorkerMessage,
 } from './protocol.ts'
 import { isNeemRuntimeWorker } from '../../public/worker.ts'
+import { childLogger, resolveManifestLogger, runtimeLabel } from '../logger.ts'
 import { parseRuntimeStartResult } from '../schemas/runtime.ts'
-import {
-  childLogger,
-  resolveManifestLogger,
-  runtimeLabel,
-} from '../shared/logger.ts'
-import { importDefault, normalizeError } from '../shared/utils.ts'
+import { importDefault, normalizeError } from '../utils.ts'
 
 if (!parentPort) {
   throw new Error('Neem runtime worker entry requires a parent port')

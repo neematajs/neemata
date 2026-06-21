@@ -13,13 +13,13 @@ import type {
 } from '../../shared/types.ts'
 import type { CompiledGraph } from '../build/compiler.ts'
 import {
+  assertRuntimeNamesExist,
+  normalizeRuntimeNames,
+} from '../runtime-selection.ts'
+import {
   NEEM_MANIFEST_SCHEMA_VERSION,
   parseManifest,
 } from '../schemas/manifest.ts'
-import {
-  assertRuntimeNamesExist,
-  normalizeRuntimeNames,
-} from '../shared/runtime-selection.ts'
 
 export const MANIFEST_FILE = 'neem.manifest.json'
 export const MANIFEST_SCHEMA_VERSION = NEEM_MANIFEST_SCHEMA_VERSION

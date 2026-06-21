@@ -6,8 +6,8 @@ import type { Logger } from '@nmtjs/core'
 import type { NeemMode, NeemRuntimeServerHealth } from '../../shared/types.ts'
 import type { Manifest } from '../manifest/manifest.ts'
 import type { HostHooks, PluginHooks } from './hooks.ts'
-import { childLogger } from '../shared/logger.ts'
-import { importDefault, normalizeError } from '../shared/utils.ts'
+import { childLogger } from '../logger.ts'
+import { importDefault, normalizeError } from '../utils.ts'
 import { callHostHook } from './hooks.ts'
 
 export type PluginContext<Options = unknown> = {

@@ -18,8 +18,8 @@ import {
 import {
   assertRuntimeNamesExist,
   normalizeRuntimeNames,
-} from '../shared/runtime-selection.ts'
-import { sanitizePathPart } from '../shared/utils.ts'
+} from '../runtime-selection.ts'
+import { sanitizePathPart } from '../utils.ts'
 import { resolveBuildEntry, resolveRequiredBuildEntry } from './resolver.ts'
 
 export type BuildTargetKind =
@@ -61,6 +61,19 @@ export type PluginBuildNode = {
   options?: unknown
 }
 
+export type BuildGroup =
+  | {
+      key: 'runtime:infra'
+      kind: 'infra'
+      targets: readonly [BuildTarget, BuildTarget, BuildTarget]
+    }
+  | {
+      key: string
+      kind: 'target'
+      target: BuildTarget
+      targets: readonly [BuildTarget]
+    }
+
 export type BuildGraph = {
   configFile: string
   outDir: string
@@ -72,6 +85,7 @@ export type BuildGraph = {
   runtimes: readonly RuntimeBuildNode[]
   plugins: readonly PluginBuildNode[]
   targets: readonly BuildTarget[]
+  buildGroups: readonly BuildGroup[]
 }
 
 export function createBuildGraph(options: {
@@ -130,6 +144,21 @@ export function createBuildGraph(options: {
     ),
     ...plugins.flatMap((plugin) => (plugin.entry ? [plugin.entry] : [])),
   ]
+  const infraTargets = [startEntry, workerEntry, hostRunnerEntry] as const
+  const buildGroups: BuildGroup[] = [
+    { key: 'runtime:infra', kind: 'infra', targets: infraTargets },
+    ...targets
+      .slice(infraTargets.length)
+      .map(
+        (target) =>
+          ({
+            key: target.key,
+            kind: 'target',
+            target,
+            targets: [target],
+          }) satisfies BuildGroup,
+      ),
+  ]
 
   return {
     configFile: options.configFile,
@@ -142,6 +171,7 @@ export function createBuildGraph(options: {
     runtimes,
     plugins,
     targets,
+    buildGroups,
   }
 }
 

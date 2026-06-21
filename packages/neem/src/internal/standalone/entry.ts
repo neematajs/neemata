@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url'
 import { createFuture } from '@nmtjs/common'
 
 import { HostController } from '../host/controller.ts'
+import { resolveManifestLogger } from '../logger.ts'
 import {
   assertManifestFilesExist,
   MANIFEST_FILE,
@@ -11,8 +12,7 @@ import {
   selectManifestRuntimes,
 } from '../manifest/manifest.ts'
 import { createRuntimeSnapshot } from '../manifest/snapshot.ts'
-import { resolveManifestLogger } from '../shared/logger.ts'
-import { normalizeError } from '../shared/utils.ts'
+import { normalizeError } from '../utils.ts'
 
 export type StandaloneStartOptions = {
   env?: NodeJS.ProcessEnv

@@ -10,7 +10,7 @@ import { compileGraph } from '../build/compiler.ts'
 import { resolveNeemRuntimeDeclarations } from '../build/declarations.ts'
 import { createBuildGraph } from '../build/graph.ts'
 import { createManifest, writeManifest } from '../manifest/manifest.ts'
-import { importDefault } from '../shared/utils.ts'
+import { importDefault } from '../utils.ts'
 
 export type NeemBuildOptions = {
   config?: string

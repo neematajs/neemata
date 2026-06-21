@@ -10,8 +10,8 @@ import type {
   NeemRuntimeUpstream,
 } from '../../shared/types.ts'
 import type { RuntimeSnapshot } from '../manifest/snapshot.ts'
-import { childLogger } from '../shared/logger.ts'
-import { normalizeError } from '../shared/utils.ts'
+import { childLogger } from '../logger.ts'
+import { normalizeError } from '../utils.ts'
 
 export type NativeProxy = {
   start: () => Promise<void>

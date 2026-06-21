@@ -5,6 +5,7 @@ import type { Logger } from '@nmtjs/core'
 import type { NeemMode, NeemRuntimeServerHealth } from '../../shared/types.ts'
 import type { RuntimeEvent } from './protocol.ts'
 import { HostController } from '../host/controller.ts'
+import { resolveManifestLogger } from '../logger.ts'
 import {
   assertManifestFilesExist,
   readManifest,
@@ -12,8 +13,7 @@ import {
 } from '../manifest/manifest.ts'
 import { createRuntimeSnapshot } from '../manifest/snapshot.ts'
 import { createHostHooks } from '../plugins/hooks.ts'
-import { resolveManifestLogger } from '../shared/logger.ts'
-import { serializeError } from '../shared/utils.ts'
+import { serializeError } from '../utils.ts'
 
 export type RuntimeServiceOptions = {
   mode: NeemMode

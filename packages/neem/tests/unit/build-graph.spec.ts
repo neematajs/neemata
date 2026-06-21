@@ -86,6 +86,25 @@ describe('createBuildGraph', () => {
       'runtime:scheduler:planner',
       'plugin:000-scope-plugin-one',
     ])
+    expect(graph.buildGroups.map((group) => group.key)).toEqual([
+      'runtime:infra',
+      'config:logger',
+      'runtime:api:worker',
+      'runtime:api:host',
+      'runtime:api:planner',
+      'runtime:scheduler:host',
+      'runtime:scheduler:planner',
+      'plugin:000-scope-plugin-one',
+    ])
+    expect(graph.buildGroups[0]).toMatchObject({
+      key: 'runtime:infra',
+      kind: 'infra',
+    })
+    expect(graph.buildGroups[0]?.targets.map((target) => target.kind)).toEqual([
+      'start-entry',
+      'worker-entry',
+      'host-runner-entry',
+    ])
   })
 
   it('filters selected runtimes before target creation', () => {

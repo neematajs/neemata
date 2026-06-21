@@ -1,3 +1,4 @@
+import * as module from 'node:module'
 import { resolve } from 'node:path'
 
 import { createFuture, OperationQueue } from '@nmtjs/common'
@@ -15,19 +16,19 @@ import type {
   WatcherManifestIdentity,
   WatcherResult,
 } from './internal/services/protocol.ts'
-import type { NeemTestProbe } from './internal/shared/test-probe.ts'
+import type { NeemTestProbe } from './internal/test-probe.ts'
 import { buildNeem } from './internal/commands/build.ts'
 import { MANIFEST_FILE } from './internal/manifest/manifest.ts'
 import {
   resolveServiceEntry,
   WorkerServiceClient,
 } from './internal/services/client.ts'
-import { createNeemTestProbe } from './internal/shared/test-probe.ts'
+import { createNeemTestProbe } from './internal/test-probe.ts'
 import {
   deserializeError,
   normalizeError,
   serializeError,
-} from './internal/shared/utils.ts'
+} from './internal/utils.ts'
 
 type RuntimeClient = WorkerServiceClient<RuntimeEvent, RuntimeResult>
 type WatcherClient = WorkerServiceClient<WatcherEvent, WatcherResult>
@@ -151,8 +152,26 @@ export const devCommand = defineCommand({
       description: 'Comma-separated runtime names to start in dev.',
       required: false,
     },
+    cache: {
+      type: 'boolean',
+      description: 'Enable Node.js compile cache',
+      default: true,
+    },
+    cacheDir: {
+      type: 'string',
+      description: 'Directory for Node.js compile cache',
+    },
   },
   async run({ args }) {
+    if (args.cache && 'enableCompileCache' in module) {
+      const { status, directory } = module.enableCompileCache({
+        directory: args.cacheDir,
+      })
+      if (status === module.constants.compileCacheStatus.ENABLED) {
+        process.env.NODE_COMPILE_CACHE = directory
+        console.log(`Node.js compile cache enabled at ${directory}`)
+      }
+    }
     const controller = createCliAbortController()
     const supervisor = new DevSupervisor({
       configFile: resolve(process.cwd(), args.config),

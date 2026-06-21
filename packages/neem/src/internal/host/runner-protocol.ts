@@ -7,7 +7,7 @@ import type {
   NeemRuntimeThreadHandle,
 } from '../../shared/types.ts'
 import type { ManifestLogger } from '../manifest/manifest.ts'
-import type { SerializedError } from '../shared/utils.ts'
+import type { SerializedError } from '../utils.ts'
 
 export type HostRunnerData = {
   mode: NeemMode

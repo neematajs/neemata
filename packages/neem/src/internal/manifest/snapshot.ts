@@ -5,7 +5,7 @@ import type { Logger } from '@nmtjs/core'
 import type { NeemMode, NeemResolvedArtifact } from '../../shared/types.ts'
 import type { ScopedArtifactRegistry } from './artifacts.ts'
 import type { Manifest, ManifestArtifact, ManifestConfig } from './manifest.ts'
-import { createDefaultLogger } from '../shared/logger.ts'
+import { createDefaultLogger } from '../logger.ts'
 import { createArtifactRegistry } from './artifacts.ts'
 
 export type RuntimeSnapshot = {

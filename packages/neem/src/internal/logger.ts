@@ -7,8 +7,8 @@ import type {
   NeemLoggerInput,
   NeemLoggerOptions,
   NeemMode,
-} from '../../shared/types.ts'
-import type { ManifestLogger } from '../manifest/manifest.ts'
+} from '../shared/types.ts'
+import type { ManifestLogger } from './manifest/manifest.ts'
 import { importDefault } from './utils.ts'
 
 export function childLogger(logger: Logger, label: string): Logger {

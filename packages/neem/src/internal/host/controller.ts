@@ -1,3 +1,5 @@
+import { performance } from 'node:perf_hooks'
+
 import { OperationQueue } from '@nmtjs/common'
 
 import type {
@@ -11,10 +13,10 @@ import type { RuntimeSnapshot } from '../manifest/snapshot.ts'
 import type { HostHooks } from '../plugins/hooks.ts'
 import type { RuntimeUpstreams } from './proxy.ts'
 import type { RecoveryOptions } from './recovery.ts'
+import { childLogger } from '../logger.ts'
 import { PluginEnvironment } from '../plugins/environment.ts'
 import { callHostHook, createHostHooks } from '../plugins/hooks.ts'
-import { childLogger } from '../shared/logger.ts'
-import { normalizeError } from '../shared/utils.ts'
+import { normalizeError } from '../utils.ts'
 import { HealthProbe } from './health.ts'
 import { ProxyController } from './proxy.ts'
 import { RuntimeController } from './runtime.ts'
@@ -162,10 +164,16 @@ export class HostController {
 
   reloadRuntime(runtimeName: string, snapshot: RuntimeSnapshot): Promise<void> {
     return this.operations.run(async () => {
+      const reloadStartedAt = performance.now()
       const current = this.runtimes.get(runtimeName)
       let currentDetached = false
       let currentStopped = false
       let next: RuntimeController | undefined
+      let detachProxyMs = 0
+      let stopMs = 0
+      let startMs = 0
+      let attachProxyMs = 0
+      let hooksMs = 0
 
       this.markState('reloading')
       this.logger.debug(`Neem runtime ${runtimeName} reloading`)
@@ -175,8 +183,12 @@ export class HostController {
         if (current) {
           this.runtimes.delete(runtimeName)
           currentDetached = true
+          const detachProxyStartedAt = performance.now()
           await this.syncProxyUpstreams()
+          detachProxyMs = performance.now() - detachProxyStartedAt
+          const stopStartedAt = performance.now()
           await current.stop()
+          stopMs = performance.now() - stopStartedAt
           currentStopped = true
         }
 
@@ -184,19 +196,37 @@ export class HostController {
 
         const exists = Boolean(snapshot.manifest.runtimes[runtimeName])
         if (exists) {
+          const startStartedAt = performance.now()
           next = this.createRuntime(runtimeName)
           this.runtimes.set(runtimeName, next)
           await next.start()
+          startMs = performance.now() - startStartedAt
         }
 
+        const attachProxyStartedAt = performance.now()
         await this.syncProxyUpstreams()
+        attachProxyMs = performance.now() - attachProxyStartedAt
         this.markState('running')
+        const hooksStartedAt = performance.now()
         await callHostHook(this.hooks, this.snapshot.logger, 'runtime:reload', {
           mode: this.snapshot.mode,
           name: runtimeName,
           upstreams: this.runtimes.get(runtimeName)?.getUpstreams() ?? [],
         })
+        hooksMs = performance.now() - hooksStartedAt
         this.logger.debug(`Neem runtime ${runtimeName} reloaded`)
+        this.logger.warn(
+          {
+            runtimeName,
+            totalMs: roundMs(performance.now() - reloadStartedAt),
+            detachProxyMs: roundMs(detachProxyMs),
+            stopMs: roundMs(stopMs),
+            startMs: roundMs(startMs),
+            attachProxyMs: roundMs(attachProxyMs),
+            hooksMs: roundMs(hooksMs),
+          },
+          'Neem runtime reload timing',
+        )
         this.logger.trace({ runtimeName }, 'Neem runtime reload result')
       } catch (error) {
         const normalized = normalizeError(error)
@@ -411,4 +441,8 @@ export class HostController {
       failedUpstreams: [],
     }
   }
+}
+
+function roundMs(value: number): number {
+  return Math.round(value * 10) / 10
 }

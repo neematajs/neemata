@@ -2,8 +2,8 @@ import { Worker } from 'node:worker_threads'
 
 import { createFuture } from '@nmtjs/common'
 
-import type { SerializedError } from '../shared/utils.ts'
-import { deserializeError, raceWithTimeout } from '../shared/utils.ts'
+import type { SerializedError } from '../utils.ts'
+import { deserializeError, raceWithTimeout } from '../utils.ts'
 
 export type WorkerServiceResponse<TEvent, TResult> =
   | { id: number; type: 'result'; data?: TResult }

@@ -1,5 +1,5 @@
 import type { NeemMode, NeemRuntimeServerHealth } from '../../shared/types.ts'
-import type { SerializedError } from '../shared/utils.ts'
+import type { SerializedError } from '../utils.ts'
 
 export type ServiceResponse<TEvent, TResult = unknown> =
   | { id: number; type: 'result'; data?: TResult }

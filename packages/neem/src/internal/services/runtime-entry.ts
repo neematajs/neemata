@@ -1,7 +1,7 @@
 import { parentPort } from 'node:worker_threads'
 
 import type { RuntimeRequest, RuntimeResponse } from './protocol.ts'
-import { serializeError } from '../shared/utils.ts'
+import { serializeError } from '../utils.ts'
 import { RuntimeService } from './runtime.ts'
 
 if (!parentPort) {

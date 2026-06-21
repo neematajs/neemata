@@ -13,7 +13,7 @@ import type {
   HostRunnerResponse,
   HostRunnerResult,
 } from './runner-protocol.ts'
-import { deserializeError, raceWithTimeout } from '../shared/utils.ts'
+import { deserializeError, raceWithTimeout } from '../utils.ts'
 import { getTransferList } from './runner-protocol.ts'
 
 export type HostRunnerOptions = {

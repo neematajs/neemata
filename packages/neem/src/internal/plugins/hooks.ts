@@ -8,7 +8,7 @@ import type {
   NeemHostRuntimeHookEvent,
   NeemHostWorkerHookEvent,
 } from '../../shared/types.ts'
-import { childLogger } from '../shared/logger.ts'
+import { childLogger } from '../logger.ts'
 
 export type HostHookMap = NeemHostHookMap
 

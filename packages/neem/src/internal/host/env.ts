@@ -11,9 +11,10 @@ export function createRuntimeEnv(
   options: CreateRuntimeEnvOptions,
 ): NodeJS.ProcessEnv {
   return compactEnv({
+    ...process.env,
     ...options.manifest.config.env,
     ...options.manifest.runtimes[options.runtimeName]?.env,
-    ...(options.executionEnv ?? process.env),
+    ...(options.executionEnv ?? {}),
     ...options.overrideEnv,
   })
 }

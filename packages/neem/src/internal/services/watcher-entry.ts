@@ -1,7 +1,7 @@
 import { parentPort } from 'node:worker_threads'
 
 import type { WatcherRequest, WatcherResponse } from './protocol.ts'
-import { serializeError } from '../shared/utils.ts'
+import { serializeError } from '../utils.ts'
 import { WatcherService } from './watcher.ts'
 
 if (!parentPort) {
