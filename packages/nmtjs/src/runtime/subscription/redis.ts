@@ -3,7 +3,11 @@ import EventEmitter, { on } from 'node:events'
 import type { RuntimePlugin } from '@nmtjs/application'
 import type { Logger } from '@nmtjs/core'
 import { isAbortError } from '@nmtjs/common'
-import { createFactoryInjectable } from '@nmtjs/core'
+import {
+  CoreInjectables,
+  createFactoryInjectable,
+  provision,
+} from '@nmtjs/core'
 
 import type { Store } from '../types.ts'
 import type {
@@ -130,28 +134,26 @@ export class RedisSubscriptionAdapter implements SubscriptionAdapterType {
 }
 
 export const RedisSubscriptionAdapterPlugin = (): RuntimePlugin => {
-  return {
-    name: 'redis-subscription-adapter',
-    hooks: {
-      'lifecycle:beforeInitialize': async (ctx) => {
-        const adapter = await ctx.container.resolve(
-          createFactoryInjectable({
-            dependencies: { config: storeConfig },
-            factory: async ({ config }) => {
-              const connection = await createStoreClient(config)
-              const adapter = new RedisSubscriptionAdapter(
-                connection,
-                ctx.logger,
-              )
-              await adapter.initialize()
-              return { adapter, connection }
-            },
-            pick: ({ adapter }) => adapter,
-            dispose: ({ connection }) => connection.quit(),
-          }),
-        )
-        ctx.container.provide(subscriptionAdapter, adapter)
+  const adapterFactory = createFactoryInjectable(
+    {
+      dependencies: { config: storeConfig, logger: CoreInjectables.logger },
+      factory: async ({ config, logger }) => {
+        const connection = await createStoreClient(config)
+        const adapter = new RedisSubscriptionAdapter(connection, logger)
+        await adapter.initialize()
+        return { adapter, connection }
+      },
+      pick: ({ adapter }) => adapter,
+      dispose: async ({ adapter, connection }) => {
+        await adapter.dispose()
+        await connection.quit()
       },
     },
+    'RedisSubscriptionAdapter',
+  )
+
+  return {
+    name: 'redis-subscription-adapter',
+    injections: [provision(subscriptionAdapter, adapterFactory)],
   }
 }

@@ -8,6 +8,7 @@ import type {
   Dependencies,
   DependencyContext,
   Provision,
+  ProvisionValue,
   ResolveInjectableType,
 } from './injectables.ts'
 import type { Logger } from './logger.ts'
@@ -175,11 +176,11 @@ export class Container {
   provide<T extends Provision[]>(provisions: T): void
   provide<T extends AnyInjectable>(
     injectable: T,
-    value: ResolveInjectableType<T>,
+    value: ProvisionValue<T>,
   ): void
   provide<T extends AnyInjectable | Provision[]>(
     injectable: T,
-    ...[value]: T extends AnyInjectable ? [value: ResolveInjectableType<T>] : []
+    ...[value]: T extends AnyInjectable ? [value: ProvisionValue<T>] : []
   ) {
     const provisions = Array.isArray(injectable)
       ? injectable

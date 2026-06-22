@@ -348,13 +348,16 @@ export namespace CoreInjectables {
   export const dispose = disposeFnInjectable
 }
 
+export type ProvisionValue<T extends AnyInjectable<any, any>> =
+  T extends AnyInjectable<infer R, Scope> ? R | AnyInjectable<R> : never
+
 export type Provision<
   T extends AnyInjectable<any, any> = AnyInjectable<any, any>,
-> = { token: T; value: T extends AnyInjectable<infer R, Scope> ? R : never }
+> = { token: T; value: ProvisionValue<T> }
 
 export const provision = <
   T extends AnyInjectable<any, any>,
-  V extends T extends AnyInjectable<infer R, Scope> ? R : never,
+  V extends ProvisionValue<T>,
 >(
   token: T,
   value: V,

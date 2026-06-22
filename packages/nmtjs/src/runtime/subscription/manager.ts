@@ -7,11 +7,9 @@ import type {
   TAnyEventContract,
   TAnySubscriptionContract,
 } from '@nmtjs/contract'
-import type { Container, Logger } from '@nmtjs/core'
+import type { Logger } from '@nmtjs/core'
 import type { t } from '@nmtjs/type'
 import { isAbortError } from '@nmtjs/common'
-
-import { subscriptionAdapter } from '../injectables.ts'
 
 export type SubscriptionAdapterEvent = { channel: string; payload: any }
 
@@ -74,7 +72,7 @@ export type PublishFn = <
 
 export type SubscriptionManagerOptions = {
   logger: Logger
-  container: Container
+  adapter: SubscriptionAdapterType
 }
 
 export class SubscriptionManager {
@@ -85,13 +83,7 @@ export class SubscriptionManager {
     this.logger = options.logger.child({ component: SubscriptionManager.name })
   }
 
-  protected get adapter() {
-    return this.options.container.resolve(subscriptionAdapter)
-  }
-
   subscribe: SubscribeFn = async (subscription, events, options, signal) => {
-    const adapter = await this.adapter
-
     const eventKeys =
       Object.keys(events).length === 0
         ? Object.keys(subscription.events)
@@ -118,7 +110,7 @@ export class SubscriptionManager {
           'Reusing pubsub channel stream',
         )
       } else {
-        const iterable = adapter.subscribe(channel, signal)
+        const iterable = this.options.adapter.subscribe(channel, signal)
         const stream = this.createEventStream(iterable)
         stream.on('close', () => {
           this.subscriptions.delete(channel)
@@ -173,15 +165,13 @@ export class SubscriptionManager {
   }
 
   publish: PublishFn = async (event, options, data) => {
-    const adapter = await this.adapter
-
     const channel = getChannelName(event, options)
 
     this.logger.trace({ channel, event: event.name }, 'Publishing pubsub event')
 
     try {
       const payload = event.payload.encode(data)
-      const published = await adapter.publish(channel, payload)
+      const published = await this.options.adapter.publish(channel, payload)
 
       if (published) {
         this.logger.trace(
@@ -203,6 +193,13 @@ export class SubscriptionManager {
       )
       throw error
     }
+  }
+
+  async dispose(): Promise<void> {
+    for (const { stream } of this.subscriptions.values()) {
+      stream.destroy()
+    }
+    this.subscriptions.clear()
   }
 
   private createEventStream(

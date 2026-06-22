@@ -1,5 +1,11 @@
 import type { TransportWorker, TransportWorkerParams } from '@nmtjs/gateway'
-import { createValueInjectable } from '@nmtjs/core'
+import type {
+  SubscriptionAdapterEvent,
+  SubscriptionAdapterType,
+} from '../src/runtime/index.ts'
+import type { RuntimePlugin } from '@nmtjs/application'
+import { EventContract, SubscriptionContract } from '@nmtjs/contract'
+import { createValueInjectable, provision } from '@nmtjs/core'
 import { createTransport, StreamTimeout } from '@nmtjs/gateway'
 import { t } from '@nmtjs/type'
 import { describe, expect, it } from 'vitest'
@@ -12,6 +18,8 @@ import {
   defineApplication,
   defineApplicationHost,
   defineServer,
+  publish,
+  subscriptionAdapter,
 } from '../src/runtime/index.ts'
 
 type TestGatewayConfig = {
@@ -21,16 +29,37 @@ type TestGatewayConfig = {
 
 type TestTransportOptions = { marker: string; listen: { port: number } }
 
+class TestSubscriptionAdapter implements SubscriptionAdapterType {
+  published: Array<{ channel: string; payload: any }> = []
+
+  async initialize() {}
+
+  async dispose() {}
+
+  async publish(channel: string, payload: any): Promise<boolean> {
+    this.published.push({ channel, payload })
+    return true
+  }
+
+  async *subscribe(): AsyncGenerator<SubscriptionAdapterEvent> {}
+}
+
 function createRuntime(
   options: {
     gateway?: TestGatewayConfig
     identity?: ReturnType<typeof createValueInjectable<string>>
+    plugins?: RuntimePlugin[]
+    publishDependency?: boolean
+    serverSubscriptionAdapter?: SubscriptionAdapterType
     transportOptions?: TestTransportOptions
   } = {},
 ) {
   const {
     gateway = {},
     identity,
+    plugins = [],
+    publishDependency = false,
+    serverSubscriptionAdapter,
     transportOptions = { marker: 'default', listen: { port: 0 } },
   } = options
 
@@ -64,13 +93,14 @@ function createRuntime(
         ping: createProcedure({
           input: t.object({ ok: t.boolean() }),
           output: t.object({ ok: t.boolean() }),
+          dependencies: publishDependency ? { publish } : {},
           handler: async (_ctx, input) => input,
         }),
       },
     }),
   ] as const)
 
-  const appConfig = defineApplication({ router })
+  const appConfig = defineApplication({ router, plugins })
   const hostDefinition = defineApplicationHost(appConfig, {
     transports: { test: transport },
     gateway,
@@ -80,6 +110,9 @@ function createRuntime(
   const serverConfig = defineServer({
     logger: { pinoOptions: { enabled: false } },
     applications: { 'test-app': { threads: [{ test: transportOptions }] } },
+    subscription: serverSubscriptionAdapter
+      ? { adapter: serverSubscriptionAdapter }
+      : undefined,
   })
 
   return {
@@ -173,5 +206,89 @@ describe('application config', () => {
     }
 
     expect(transportState.stopParams).toHaveLength(1)
+  })
+
+  it('uses subscription adapters provided by application plugin injections', async () => {
+    const adapter = new TestSubscriptionAdapter()
+    const plugin: RuntimePlugin = {
+      name: 'test-subscription-adapter',
+      injections: [provision(subscriptionAdapter, adapter)],
+    }
+    const subscription = SubscriptionContract.withOptions<{ roomId: string }>()(
+      {
+        name: 'chat',
+        events: {
+          message: EventContract({ payload: t.object({ text: t.string() }) }),
+        },
+      },
+    )
+    const { runtime } = createRuntime({
+      plugins: [plugin],
+      publishDependency: true,
+    })
+
+    let started = false
+
+    try {
+      await runtime.start()
+      started = true
+
+      const appPublish = await runtime.application.container.resolve(publish)
+      await expect(
+        appPublish(
+          subscription.events.message,
+          { roomId: 'room-1' },
+          { text: 'hello' },
+        ),
+      ).resolves.toBe(true)
+    } finally {
+      if (started) await runtime.stop()
+    }
+
+    expect(adapter.published).toHaveLength(1)
+  })
+
+  it('uses server subscription adapters as parent fallback', async () => {
+    const adapter = new TestSubscriptionAdapter()
+    const subscription = SubscriptionContract.withOptions<{ roomId: string }>()(
+      {
+        name: 'chat',
+        events: {
+          message: EventContract({ payload: t.object({ text: t.string() }) }),
+        },
+      },
+    )
+    const { runtime } = createRuntime({
+      publishDependency: true,
+      serverSubscriptionAdapter: adapter,
+    })
+
+    let started = false
+
+    try {
+      await runtime.start()
+      started = true
+
+      const appPublish = await runtime.application.container.resolve(publish)
+      await expect(
+        appPublish(
+          subscription.events.message,
+          { roomId: 'room-1' },
+          { text: 'hello' },
+        ),
+      ).resolves.toBe(true)
+    } finally {
+      if (started) await runtime.stop()
+    }
+
+    expect(adapter.published).toHaveLength(1)
+  })
+
+  it('fails application initialization when publish is injected without an adapter', async () => {
+    const { runtime } = createRuntime({ publishDependency: true })
+
+    await expect(runtime.start()).rejects.toThrow(
+      'No instance provided for SubscriptionAdapter injectable',
+    )
   })
 })
