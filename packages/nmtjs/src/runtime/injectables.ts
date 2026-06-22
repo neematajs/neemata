@@ -1,4 +1,9 @@
-import { createLazyInjectable, Scope } from '@nmtjs/core'
+import {
+  CoreInjectables,
+  createFactoryInjectable,
+  createLazyInjectable,
+  Scope,
+} from '@nmtjs/core'
 
 import type { WorkerType } from './enums.ts'
 import type { JobManagerInstance } from './jobs/manager.ts'
@@ -9,6 +14,7 @@ import type {
   SubscribeFn,
   SubscriptionAdapterType,
 } from './subscription/manager.ts'
+import { SubscriptionManager } from './subscription/manager.ts'
 
 export const subscriptionAdapter =
   createLazyInjectable<SubscriptionAdapterType>(
@@ -16,10 +22,32 @@ export const subscriptionAdapter =
     'SubscriptionAdapter',
   )
 
-export const publish = createLazyInjectable<PublishFn>(Scope.Global, 'Publish')
+export const subscriptionManager = createFactoryInjectable(
+  {
+    dependencies: {
+      adapter: subscriptionAdapter,
+      logger: CoreInjectables.logger,
+    },
+    factory: ({ adapter, logger }) =>
+      new SubscriptionManager({ logger, adapter }),
+    dispose: (manager) => manager.dispose(),
+  },
+  'SubscriptionManager',
+)
 
-export const subscribe = createLazyInjectable<SubscribeFn>(
-  Scope.Global,
+export const publish = createFactoryInjectable(
+  {
+    dependencies: { manager: subscriptionManager },
+    factory: ({ manager }): PublishFn => manager.publish.bind(manager),
+  },
+  'Publish',
+)
+
+export const subscribe = createFactoryInjectable(
+  {
+    dependencies: { manager: subscriptionManager },
+    factory: ({ manager }): SubscribeFn => manager.subscribe.bind(manager),
+  },
   'Subscribe',
 )
 
@@ -60,6 +88,7 @@ export const currentJobInfo = createLazyInjectable<JobExecutionContext>(
 
 export const RuntimeInjectables = {
   subscriptionAdapter,
+  subscriptionManager,
   publish,
   subscribe,
   jobManager,

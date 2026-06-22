@@ -2,7 +2,7 @@ import EventEmitter from 'node:events'
 import { Writable } from 'node:stream'
 
 import { EventContract, SubscriptionContract } from '@nmtjs/contract'
-import { Container, createLogger } from '@nmtjs/core'
+import { createLogger } from '@nmtjs/core'
 import { t } from '@nmtjs/type'
 import { describe, expect, it } from 'vitest'
 
@@ -11,7 +11,6 @@ import type {
   SubscriptionAdapterType,
 } from '../src/runtime/subscription/manager.ts'
 import type { Store } from '../src/runtime/types.ts'
-import { subscriptionAdapter } from '../src/runtime/injectables.ts'
 import { SubscriptionManager } from '../src/runtime/subscription/manager.ts'
 import { RedisSubscriptionAdapter } from '../src/runtime/subscription/redis.ts'
 
@@ -107,11 +106,8 @@ function createCapturingLogger(label = 'test') {
 
 function createSubscriptionManagerHarness(adapter: SubscriptionAdapterType) {
   const { logger, getLogs } = createCapturingLogger('pubsub-test')
-  const container = new Container({ logger })
 
-  container.provide(subscriptionAdapter, adapter)
-
-  return { manager: new SubscriptionManager({ logger, container }), getLogs }
+  return { manager: new SubscriptionManager({ logger, adapter }), getLogs }
 }
 
 const chatSubscription = SubscriptionContract.withOptions<{ roomId: string }>()(

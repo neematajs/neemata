@@ -7,10 +7,8 @@ import type { ServerConfig } from '../server/config.ts'
 import * as injectables from '../injectables.ts'
 import { JobManager } from '../jobs/manager.ts'
 import { BaseRuntime } from '../runtime.ts'
-import { SubscriptionManager } from '../subscription/manager.ts'
 
 export abstract class BaseWorkerRuntime extends BaseRuntime {
-  subscriptionManager: SubscriptionManager
   jobManager?: JobManager
 
   constructor(
@@ -19,11 +17,6 @@ export abstract class BaseWorkerRuntime extends BaseRuntime {
     readonly workerType: WorkerType,
   ) {
     super(options)
-
-    this.subscriptionManager = new SubscriptionManager({
-      logger: this.logger,
-      container: this.container,
-    })
 
     if (this.config.store) {
       this.jobManager = new JobManager(
@@ -37,18 +30,19 @@ export abstract class BaseWorkerRuntime extends BaseRuntime {
     const injections: Provision[] = [
       provision(CoreInjectables.logger, this.logger),
       provision(injectables.workerType, this.workerType),
-      provision(
-        injectables.publish,
-        this.subscriptionManager.publish.bind(this.subscriptionManager),
-      ),
-      provision(
-        injectables.subscribe,
-        this.subscriptionManager.subscribe.bind(this.subscriptionManager),
-      ),
     ]
 
     if (this.config.store) {
       injections.push(provision(injectables.storeConfig, this.config.store))
+    }
+
+    if (this.config.subscription) {
+      injections.push(
+        provision(
+          injectables.subscriptionAdapter,
+          this.config.subscription.adapter,
+        ),
+      )
     }
 
     if (this.jobManager) {
