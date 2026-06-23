@@ -163,6 +163,12 @@ function mergeRuntimeBuildConfig(
     userBuild?.rolldown,
     commonBuild?.rolldown,
   )
-  if (Object.keys(rolldown).length === 0) return undefined
-  return { rolldown }
+  const chunks = userBuild?.chunks ?? commonBuild?.chunks
+  if (Object.keys(rolldown).length === 0 && chunks === undefined) {
+    return undefined
+  }
+  return {
+    ...(Object.keys(rolldown).length > 0 ? { rolldown } : {}),
+    ...(chunks !== undefined ? { chunks } : {}),
+  }
 }

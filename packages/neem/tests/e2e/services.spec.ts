@@ -193,6 +193,9 @@ describe('Neem v2 services', () => {
     )
     await waitForEventCount(fixture.eventsFile, 'config-import', 2)
     await waitForEventCount(fixture.eventsFile, 'runtime-start', 2)
+    expect(
+      neem.events().some((event) => event.event === 'runtime:stopped'),
+    ).toBe(true)
 
     await neem.stop()
   }, 60_000)

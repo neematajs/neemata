@@ -23,6 +23,8 @@ import {
   resolveServiceEntry,
   WorkerServiceClient,
 } from './internal/services/client.ts'
+import type { ConfigSignalWatcher } from './internal/services/config-signal.ts'
+import { watchConfigSignal } from './internal/services/config-signal.ts'
 import { createNeemTestProbe } from './internal/test-probe.ts'
 import {
   deserializeError,
@@ -210,6 +212,8 @@ class DevSupervisor {
   private readonly closedFuture = createFuture<void>()
   private readonly events = new OperationQueue()
   private watcher: WatcherClient | undefined
+  private configSignalWatcher: ConfigSignalWatcher | undefined
+  private configSignalFiles: readonly string[] | undefined
   private runtime: RuntimeClient | undefined
   private manifestFile: string | undefined
   private manifestRevision = 0
@@ -239,10 +243,16 @@ class DevSupervisor {
     this.stopped = true
     await this.events.waitIdle()
     const watcher = this.watcher
+    const configSignalWatcher = this.configSignalWatcher
     const runtime = this.runtime
     this.watcher = undefined
+    this.configSignalWatcher = undefined
     this.runtime = undefined
-    await Promise.all([watcher?.stop(), runtime?.stop()])
+    await Promise.all([
+      configSignalWatcher?.close(),
+      watcher?.stop(),
+      runtime?.stop(),
+    ])
     this.options.probe?.emit('cli:dev:closed')
     this.closedFuture.resolve()
   }
@@ -262,14 +272,23 @@ class DevSupervisor {
       onFailure: (error) => this.closedFuture.reject(error),
     })
     this.watcher = watcher
-    const result = await watcher.request({
-      id: 0,
-      type: 'start',
-      configFile: this.options.configFile,
-      outDir: this.options.outDir,
-      runtimes: this.options.runtimes,
-    })
-    if (result?.manifestFile) this.manifestFile = result.manifestFile
+    try {
+      const result = await watcher.request({
+        id: 0,
+        type: 'start',
+        configFile: this.options.configFile,
+        outDir: this.options.outDir,
+        runtimes: this.options.runtimes,
+      })
+      if (result?.manifestFile) this.manifestFile = result.manifestFile
+      if (result?.configSignalFiles) {
+        await this.startConfigSignalWatcher(result.configSignalFiles)
+      }
+    } catch (error) {
+      if (this.watcher === watcher) this.watcher = undefined
+      await watcher.stop().catch(() => undefined)
+      throw error
+    }
   }
 
   private async handleWatcherEvent(event: WatcherEvent): Promise<void> {
@@ -300,20 +319,51 @@ class DevSupervisor {
 
   private async replaceWatcher(): Promise<void> {
     const previousWatcher = this.watcher
+    const previousSignalFiles = this.configSignalFiles
+    this.watcher = undefined
+    await this.stopRuntime()
+    await this.stopConfigSignalWatcher()
+    await previousWatcher?.stop().catch(() => undefined)
 
     try {
       await this.startWatcher()
     } catch (error) {
-      const failedWatcher = this.watcher
-      this.watcher = previousWatcher
-      await failedWatcher?.stop().catch(() => undefined)
       this.reportWatcherError(error)
+      if (previousSignalFiles) {
+        await this.startConfigSignalWatcher(previousSignalFiles, {
+          tolerateInitialError: true,
+        }).catch((signalError) => this.reportWatcherError(signalError))
+      }
       return
     }
+  }
 
-    if (previousWatcher && previousWatcher !== this.watcher) {
-      await previousWatcher.stop()
-    }
+  private async startConfigSignalWatcher(
+    files: readonly string[],
+    options: { tolerateInitialError?: boolean } = { tolerateInitialError: true },
+  ): Promise<void> {
+    await this.stopConfigSignalWatcher()
+    this.configSignalFiles = [...files]
+    this.configSignalWatcher = await watchConfigSignal({
+      files,
+      tolerateInitialError: options.tolerateInitialError,
+      onInvalidated: () => this.handleConfigSignalInvalidated(),
+    })
+  }
+
+  private async stopConfigSignalWatcher(): Promise<void> {
+    const watcher = this.configSignalWatcher
+    this.configSignalWatcher = undefined
+    await watcher?.close()
+  }
+
+  private handleConfigSignalInvalidated(): void {
+    if (this.stopped) return
+    const event = { type: 'config-invalidated' } as const
+    this.options.probe?.emit(`watcher:${event.type}`, normalizeEvent(event))
+    void this.events.run(() => this.handleWatcherEvent(event)).catch((error) => {
+      this.closedFuture.reject(normalizeError(error))
+    })
   }
 
   private reportWatcherError(error: unknown): void {

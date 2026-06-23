@@ -1,20 +1,19 @@
 import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
-import { isBuiltin } from 'node:module'
 import { dirname } from 'node:path'
 
 import type { MaybePromise } from '@nmtjs/common'
 import type { Logger } from '@nmtjs/core'
-import { createFuture, OperationQueue } from '@nmtjs/common'
-import * as rolldown from 'rolldown'
+import { OperationQueue } from '@nmtjs/common'
 
 import type { NeemConfig } from '../../shared/types.ts'
 import type { GraphWatcher, TargetChange } from '../build/compiler.ts'
-import type { BuildTarget } from '../build/graph.ts'
+import type { BuildGraph, BuildTarget } from '../build/graph.ts'
 import type {
   WatcherEvent,
   WatcherManifestChangeEvent,
   WatcherManifestIdentity,
+  WatcherResult,
 } from './protocol.ts'
 import { assertSafeNeemOutDir, cleanNeemOutDir } from '../build/clean.ts'
 import { watchGraph } from '../build/compiler.ts'
@@ -40,7 +39,6 @@ type WatcherManifestChangeInput =
 export class WatcherService {
   private readonly changes = new OperationQueue()
   private graphWatcher: GraphWatcher | undefined
-  private configWatcher: rolldown.RolldownWatcher | undefined
   private manifestFile: string | undefined
   private manifestRevision = 0
   private logger: Logger | undefined
@@ -48,7 +46,38 @@ export class WatcherService {
 
   constructor(private readonly options: WatcherServiceOptions) {}
 
-  async start(): Promise<string> {
+  async start(): Promise<WatcherResult> {
+    const graph = await this.createGraph()
+    const manifest = await this.startWatchers(graph)
+    this.logger?.info('Neem watcher ready')
+    this.logger?.trace(
+      {
+        manifestFile: manifest.manifestFile,
+        manifestRevision: manifest.manifestRevision,
+        manifestHash: manifest.manifestHash,
+        targets: graph.targets.length,
+      },
+      'Neem watcher manifest',
+    )
+    await this.emit({ type: 'ready', ...manifest })
+    return {
+      manifestFile: manifest.manifestFile,
+      configSignalFiles: this.getConfigSignalFiles(graph),
+    }
+  }
+
+  async stop(): Promise<void> {
+    this.stopped = true
+    this.logger?.debug('Neem watcher stopping')
+    const graphWatcher = this.graphWatcher
+    this.graphWatcher = undefined
+
+    await graphWatcher?.close()
+    await this.changes.waitIdle()
+    this.logger?.debug('Neem watcher stopped')
+  }
+
+  private async createGraph(): Promise<BuildGraph> {
     const config = await importDefault<NeemConfig>(this.options.configFile, {
       cacheBust: true,
     })
@@ -74,8 +103,8 @@ export class WatcherService {
       config: resolvedConfig,
       runtimes: this.options.runtimes,
     })
-    this.logger.debug('Neem build graph ready')
-    this.logger.trace(
+    this.logger?.debug('Neem build graph ready')
+    this.logger?.trace(
       {
         runtimes: graph.runtimes.map((runtime) => runtime.name),
         plugins: graph.plugins.map((plugin) => plugin.name),
@@ -83,48 +112,25 @@ export class WatcherService {
       },
       'Neem build graph',
     )
+    return graph
+  }
 
+  private async startWatchers(
+    graph: BuildGraph,
+  ): Promise<WatcherManifestIdentity> {
     assertSafeNeemOutDir({
       outDir: this.options.outDir,
       configDir: dirname(this.options.configFile),
     })
     await cleanNeemOutDir(this.options.outDir)
-    this.configWatcher = await watchConfigSignal(
-      this.options.configFile,
-      graph.runtimes.map((runtime) => runtime.declaration.file),
-      () => this.emit({ type: 'config-invalidated' }),
-    )
-    this.graphWatcher = await watchGraph(graph, {
+    const graphWatcher = await watchGraph(graph, {
       onChange: (change) => this.handleChange(change),
     })
 
-    const compiled = await this.graphWatcher.ready
+    const compiled = await graphWatcher.ready
+    this.graphWatcher = graphWatcher
     const manifest = await this.writeManifestSnapshot(compiled)
-    this.logger.info('Neem watcher ready')
-    this.logger.trace(
-      {
-        manifestFile: manifest.manifestFile,
-        manifestRevision: manifest.manifestRevision,
-        manifestHash: manifest.manifestHash,
-        targets: compiled.targets.length,
-      },
-      'Neem watcher manifest',
-    )
-    await this.emit({ type: 'ready', ...manifest })
-    return manifest.manifestFile
-  }
-
-  async stop(): Promise<void> {
-    this.stopped = true
-    this.logger?.debug('Neem watcher stopping')
-    const graphWatcher = this.graphWatcher
-    const configWatcher = this.configWatcher
-    this.graphWatcher = undefined
-    this.configWatcher = undefined
-
-    await Promise.all([graphWatcher?.close(), configWatcher?.close()])
-    await this.changes.waitIdle()
-    this.logger?.debug('Neem watcher stopped')
+    return manifest
   }
 
   private async handleChange(change: TargetChange): Promise<void> {
@@ -159,6 +165,13 @@ export class WatcherService {
     if (!this.stopped) await this.options.emit(event)
   }
 
+  private getConfigSignalFiles(graph: BuildGraph): string[] {
+    return [
+      this.options.configFile,
+      ...graph.runtimes.map((runtime) => runtime.declaration.file),
+    ]
+  }
+
   private async writeManifestSnapshot(
     compiled: ReturnType<GraphWatcher['snapshot']>,
   ): Promise<WatcherManifestIdentity> {
@@ -172,56 +185,6 @@ export class WatcherService {
       manifestHash: await hashFile(this.manifestFile),
     }
   }
-}
-
-async function watchConfigSignal(
-  configFile: string,
-  runtimeDeclarationFiles: readonly string[],
-  onInvalidated: () => MaybePromise<void>,
-): Promise<rolldown.RolldownWatcher> {
-  const watcher = rolldown.watch({
-    input: [configFile, ...runtimeDeclarationFiles],
-    platform: 'node',
-    logLevel: 'warn',
-    external: (id) => isBuiltin(id),
-    output: { minify: false, sourcemap: false },
-    experimental: { chunkOptimization: false },
-    optimization: { inlineConst: false, pifeForModuleWrappers: false },
-    treeshake: false,
-    watch: {
-      buildDelay: 100,
-      clearScreen: false,
-      skipWrite: true,
-      exclude: 'node_modules/**',
-      watcher: { debounceDelay: 50, useDebounce: true },
-    },
-  })
-  const ready = createFuture<void>()
-  let initial = true
-
-  watcher.on('event', async (event) => {
-    if (event.code === 'ERROR') {
-      ready.reject(event.error)
-      if ('result' in event) await event.result?.close?.()
-      return
-    }
-
-    if (event.code === 'BUNDLE_END' && 'result' in event) {
-      await event.result?.close?.()
-      return
-    }
-
-    if (event.code !== 'END') return
-    if (initial) {
-      initial = false
-      ready.resolve()
-      return
-    }
-    await onInvalidated()
-  })
-
-  await ready.promise
-  return watcher
 }
 
 function classifyChange(change: TargetChange): WatcherManifestChangeInput {

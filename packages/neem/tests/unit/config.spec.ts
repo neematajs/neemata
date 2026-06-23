@@ -209,11 +209,14 @@ describe('Neem public runtime API', () => {
     const userWorkerPlugin = { name: 'user-worker' }
     const commonHostPlugin = { name: 'common-host' }
     const userHostPlugin = { name: 'user-host' }
+    const commonChunkGroup = { name: 'common', test: /common/ }
+    const userChunkGroup = { name: 'user', test: /user/ }
     const runtime = createRuntime({
       env: { RUNTIME_ROOT: 'common', RUNTIME_LAYERED: 'common' },
       worker: {
         entry: './worker.ts',
         build: {
+          chunks: { groups: [commonChunkGroup] },
           rolldown: {
             plugins: [commonWorkerPlugin],
             transform: { define: { COMMON_FLAG: JSON.stringify(true) } },
@@ -230,6 +233,7 @@ describe('Neem public runtime API', () => {
       env: { RUNTIME_LAYERED: 'user', RUNTIME_USER: 'user' },
       worker: {
         build: {
+          chunks: { groups: [userChunkGroup] },
           rolldown: {
             plugins: [userWorkerPlugin],
             transform: { define: { USER_FLAG: JSON.stringify(true) } },
@@ -251,6 +255,9 @@ describe('Neem public runtime API', () => {
       commonWorkerPlugin,
       userWorkerPlugin,
     ])
+    expect(runtime.worker?.build?.chunks).toEqual({
+      groups: [userChunkGroup],
+    })
     expect(runtime.worker?.build?.rolldown).not.toHaveProperty('output')
     expect(runtime.worker?.build?.rolldown?.transform?.define).toEqual({
       COMMON_FLAG: 'true',

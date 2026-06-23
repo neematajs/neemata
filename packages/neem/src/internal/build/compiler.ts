@@ -4,11 +4,15 @@ import { isBuiltin } from 'node:module'
 import { basename, dirname, resolve } from 'node:path'
 
 import type { MaybePromise } from '@nmtjs/common'
-import type { PreRenderedAsset, RolldownOutput } from 'rolldown'
+import type { OutputOptions, PreRenderedAsset, RolldownOutput } from 'rolldown'
 import { createFuture } from '@nmtjs/common'
 import * as rolldown from 'rolldown'
 
-import type { NeemResolvedArtifact } from '../../shared/types.ts'
+import type {
+  NeemChunkGroup,
+  NeemChunkingOptions,
+  NeemResolvedArtifact,
+} from '../../shared/types.ts'
 import type {
   BuildGraph,
   BuildGroup,
@@ -371,8 +375,8 @@ function createRolldownOptions(
       assetFileNames: metadata.watch
         ? createStableWatchAssetFileName
         : '[name]-[hash][extname]',
-      codeSplitting: { groups: [{ name: 'deps', test: /node_modules/ }] },
       ...userOutput,
+      codeSplitting: resolveCodeSplitting(target.artifact.chunks),
     },
   }
 }
@@ -415,9 +419,27 @@ function createGroupedRolldownOptions(
       assetFileNames: metadata.watch
         ? createStableWatchAssetFileName
         : '[name]-[hash][extname]',
-      codeSplitting: { groups: [{ name: 'deps', test: /node_modules/ }] },
+      codeSplitting: resolveCodeSplitting(firstTarget.artifact.chunks),
     },
   }
+}
+
+const DEFAULT_DEPS_CHUNK_GROUP = {
+  name: 'deps',
+  test: /node_modules/,
+} satisfies NeemChunkGroup
+
+function resolveCodeSplitting(
+  chunks: NeemChunkingOptions | undefined,
+): OutputOptions['codeSplitting'] {
+  if (chunks === false) return undefined
+
+  const groups = chunks?.groups ?? []
+  if (groups.some((group) => group.name === DEFAULT_DEPS_CHUNK_GROUP.name)) {
+    return { groups: [...groups] }
+  }
+
+  return { groups: [...groups, DEFAULT_DEPS_CHUNK_GROUP] }
 }
 
 function createExternalMatcher(

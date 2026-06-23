@@ -27,7 +27,7 @@ afterEach(async () => {
 })
 
 describe('Neem watcher dev reload', () => {
-  it('reports broken config, keeps the proxy alive, then restarts after the config is fixed', async () => {
+  it('reports broken config, stops runtime, then restarts after the config is fixed', async () => {
     const fixture = await useFixture({ config: 'proxy' })
     const proxyPort = await getFreePort()
     const upstreamPort = await getFreePort()
@@ -59,8 +59,7 @@ describe('Neem watcher dev reload', () => {
     expect(error.error).toMatchObject({ message: expect.any(String) })
     expect(
       neem.events().some((event) => event.event === 'runtime:stopped'),
-    ).toBe(false)
-    await waitForProxy(proxyPort, neem)
+    ).toBe(true)
 
     await writeFileAtomically(
       fixture.configFile,

@@ -101,6 +101,49 @@ describe('Neem compiler', () => {
     expect(compiled.artifact.bundle).toBeUndefined()
   })
 
+  it('appends default deps chunk group after user chunk groups', async () => {
+    const target = await createTarget()
+    const localGroup = { name: 'local', test: /perf-large-ts-modules/ }
+    target.artifact.chunks = { groups: [localGroup] }
+    rolldownMock.build.mockResolvedValue(rolldownOutput('index.js', target))
+
+    await compileTarget(target)
+
+    const options = rolldownMock.build.mock.calls[0]?.[0] as BuildOptions
+    expect(options.output).toMatchObject({
+      codeSplitting: {
+        groups: [localGroup, { name: 'deps', test: /node_modules/ }],
+      },
+    })
+  })
+
+  it('lets a user deps chunk group replace the default deps group', async () => {
+    const target = await createTarget()
+    const depsGroup = { name: 'deps', test: /node_modules\/bullmq/ }
+    target.artifact.chunks = { groups: [depsGroup] }
+    rolldownMock.build.mockResolvedValue(rolldownOutput('index.js', target))
+
+    await compileTarget(target)
+
+    const options = rolldownMock.build.mock.calls[0]?.[0] as BuildOptions
+    expect(options.output).toMatchObject({
+      codeSplitting: { groups: [depsGroup] },
+    })
+  })
+
+  it('disables code splitting when chunks is false', async () => {
+    const target = await createTarget()
+    target.artifact.chunks = false
+    rolldownMock.build.mockResolvedValue(rolldownOutput('index.js', target))
+
+    await compileTarget(target)
+
+    const options = rolldownMock.build.mock.calls[0]?.[0] as BuildOptions
+    expect((options.output as { codeSplitting?: unknown }).codeSplitting).toBe(
+      undefined,
+    )
+  })
+
   it('uses the watcher initial build as ready output', async () => {
     const target = await createTarget()
     rolldownMock.build.mockResolvedValue(

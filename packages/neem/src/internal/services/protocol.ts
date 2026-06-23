@@ -39,7 +39,10 @@ export type WatcherEvent =
   | WatcherManifestChangeEvent
   | { type: 'error'; error: SerializedError }
 
-export type WatcherResult = { manifestFile?: string }
+export type WatcherResult = {
+  manifestFile?: string
+  configSignalFiles?: readonly string[]
+}
 
 export type WatcherResponse = ServiceResponse<WatcherEvent, WatcherResult>
 

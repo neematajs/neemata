@@ -25,8 +25,8 @@ async function handle(request: WatcherRequest): Promise<void> {
           runtimes: request.runtimes,
           emit: (event) => post({ type: 'event', event }),
         })
-        const manifestFile = await service.start()
-        post({ id: request.id, type: 'result', data: { manifestFile } })
+        const result = await service.start()
+        post({ id: request.id, type: 'result', data: result })
         return
       }
       case 'stop':

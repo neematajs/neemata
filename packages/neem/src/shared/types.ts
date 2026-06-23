@@ -37,11 +37,27 @@ export type NeemRolldownOptions = Pick<
   transform?: NeemRolldownTransformOptions
 }
 
+type NeemCodeSplittingOptions = Extract<
+  NonNullable<OutputOptions['codeSplitting']>,
+  object
+>
+
+export type NeemChunkGroup = NonNullable<
+  NeemCodeSplittingOptions['groups']
+>[number]
+
+export type NeemChunkingOptions =
+  | false
+  | {
+      groups?: readonly NeemChunkGroup[]
+    }
+
 export type NeemArtifact = {
   id: string
   kind: NeemArtifactKind
   entry: NeemArtifactEntry
   rolldown?: NeemRolldownOptions
+  chunks?: NeemChunkingOptions
 }
 
 export type NeemRuntimeBuildMetadata = {
@@ -104,7 +120,10 @@ export type NeemPluginInput = {
   options?: unknown
 }
 
-export type NeemRuntimeBuildConfig = { rolldown?: NeemRolldownOptions }
+export type NeemRuntimeBuildConfig = {
+  rolldown?: NeemRolldownOptions
+  chunks?: NeemChunkingOptions
+}
 
 export type NeemRuntimeWorkerDeclaration = {
   entry: NeemEntryInput

@@ -8,6 +8,7 @@ import type {
   NeemArtifactKind,
   NeemArtifactOwner,
   NeemBuildConfig,
+  NeemChunkingOptions,
   NeemResolvedConfig,
   NeemResolvedRuntimeDeclaration,
 } from '../../shared/types.ts'
@@ -40,6 +41,7 @@ export type BuildTarget = {
     kind: NeemArtifactKind
     entry: NeemArtifactEntry
     rolldown?: RolldownOptions
+    chunks?: NeemChunkingOptions
   }
   owner: NeemArtifactOwner
   outDir: string
@@ -366,6 +368,7 @@ function createRuntimeNode(options: {
               options.pluginRolldown,
               options.rootRolldown,
             ),
+            chunks: declaration.worker?.build?.chunks,
           },
           owner: { type: 'runtime', name: options.name },
           outDir: resolve(runtimeDir, 'worker'),
@@ -382,6 +385,7 @@ function createRuntimeNode(options: {
           normalizeUserRolldownOptions(declaration.host?.build?.rolldown),
           options.rootRolldown,
         ),
+        chunks: declaration.host?.build?.chunks,
       },
       owner: { type: 'runtime', name: options.name },
       outDir: resolve(runtimeDir, 'host'),
@@ -397,6 +401,7 @@ function createRuntimeNode(options: {
           normalizeUserRolldownOptions(declaration.host?.build?.rolldown),
           options.rootRolldown,
         ),
+        chunks: declaration.host?.build?.chunks,
       },
       owner: { type: 'runtime', name: options.name },
       outDir: resolve(runtimeDir, 'planner'),
