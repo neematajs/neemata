@@ -166,12 +166,13 @@ export const devCommand = defineCommand({
   },
   async run({ args }) {
     if (args.cache && 'enableCompileCache' in module) {
-      const { status, directory } = module.enableCompileCache({
-        directory: args.cacheDir,
-      })
-      if (status === module.constants.compileCacheStatus.ENABLED) {
-        process.env.NODE_COMPILE_CACHE = directory
-        console.log(`Node.js compile cache enabled at ${directory}`)
+      const result = module.enableCompileCache({ directory: args.cacheDir })
+      if (result && typeof result === 'object') {
+        const { status, directory } = result
+        if (status === module.constants.compileCacheStatus.ENABLED) {
+          process.env.NODE_COMPILE_CACHE = directory
+          console.log(`Node.js compile cache enabled at ${directory}`)
+        }
       }
     }
     const controller = createCliAbortController()
