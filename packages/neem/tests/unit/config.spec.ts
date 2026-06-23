@@ -255,9 +255,7 @@ describe('Neem public runtime API', () => {
       commonWorkerPlugin,
       userWorkerPlugin,
     ])
-    expect(runtime.worker?.build?.chunks).toEqual({
-      groups: [userChunkGroup],
-    })
+    expect(runtime.worker?.build?.chunks).toEqual({ groups: [userChunkGroup] })
     expect(runtime.worker?.build?.rolldown).not.toHaveProperty('output')
     expect(runtime.worker?.build?.rolldown?.transform?.define).toEqual({
       COMMON_FLAG: 'true',

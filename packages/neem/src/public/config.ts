@@ -2,12 +2,12 @@ import type {
   NeemConfig,
   NeemMarkedRuntimeDeclaration,
   NeemPluginInput,
+  NeemProxyRoutingOptions,
   NeemRuntimeBuildConfig,
   NeemRuntimeDeclaration,
   NeemRuntimeDeclarationLayer,
   NeemRuntimeHostDeclaration,
   NeemRuntimeProjectEntries,
-  NeemProxyRoutingOptions,
   NeemRuntimeProxyConfig,
   NeemRuntimeWorkerDeclaration,
 } from '../shared/types.ts'

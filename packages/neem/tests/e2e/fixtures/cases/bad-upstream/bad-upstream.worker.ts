@@ -5,9 +5,7 @@ export default defineRuntimeWorker({
   createRuntime() {
     return {
       start() {
-        return {
-          upstreams: [{ type: 'http', url: 'not-a-valid-url' }],
-        }
+        return { upstreams: [{ type: 'http', url: 'not-a-valid-url' }] }
       },
       stop() {},
     }

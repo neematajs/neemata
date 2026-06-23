@@ -52,7 +52,10 @@ describe('Neem config signal watcher', () => {
 
     expect(onInvalidated).toHaveBeenCalledTimes(1)
     const options = rolldownMock.watch.mock.calls[0]?.[0] as BuildOptions
-    expect(options.input).toEqual(['/app/neem.config.ts', '/app/api.runtime.ts'])
+    expect(options.input).toEqual([
+      '/app/neem.config.ts',
+      '/app/api.runtime.ts',
+    ])
     expect(options.watch).toMatchObject({ skipWrite: true })
   })
 })

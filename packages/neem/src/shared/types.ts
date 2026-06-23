@@ -46,11 +46,7 @@ export type NeemChunkGroup = NonNullable<
   NeemCodeSplittingOptions['groups']
 >[number]
 
-export type NeemChunkingOptions =
-  | false
-  | {
-      groups?: readonly NeemChunkGroup[]
-    }
+export type NeemChunkingOptions = false | { groups?: readonly NeemChunkGroup[] }
 
 export type NeemArtifact = {
   id: string

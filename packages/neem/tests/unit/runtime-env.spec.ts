@@ -35,7 +35,7 @@ describe('Neem runtime env', () => {
       overrideEnv: { TEST_ONLY: 'test', TEST_OVERRIDE: 'test' },
     })
 
-    expect(env).toEqual({
+    expect(env).toMatchObject({
       ROOT_ONLY: 'root',
       RUNTIME_ONLY: 'runtime',
       LAYERED: 'runtime',
@@ -44,6 +44,7 @@ describe('Neem runtime env', () => {
       TEST_ONLY: 'test',
       TEST_OVERRIDE: 'test',
     })
+    expect(env.PATH).toBe(process.env.PATH)
     expect(Object.isFrozen(env)).toBe(true)
   })
 })

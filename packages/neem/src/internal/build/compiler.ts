@@ -319,7 +319,9 @@ function createWatchOptions(
   config: NeemBuildWatchConfig | undefined,
 ): NonNullable<rolldown.BuildOptions['watch']> {
   return {
-    ...(config?.buildDelay !== undefined ? { buildDelay: config.buildDelay } : {}),
+    ...(config?.buildDelay !== undefined
+      ? { buildDelay: config.buildDelay }
+      : {}),
     clearScreen: false,
     watcher: { debounceDelay: config?.debounceDelay ?? 50, useDebounce: true },
   }

@@ -36,10 +36,7 @@ describe('ThreadController', () => {
     const thread = new ThreadController({
       snapshot: fixture.snapshot,
       runtimeName: 'api',
-      plan: {
-        name: 'api:0',
-        artifact: fixture.artifact,
-      },
+      plan: { name: 'api:0', artifact: fixture.artifact },
       index: 0,
       hooks: createHostHooks(),
     })
@@ -52,8 +49,9 @@ describe('ThreadController', () => {
       expect(result.timedOut).toBe(false)
     } finally {
       if (result.timedOut) {
-        await (thread as unknown as { terminateWorker: () => Promise<void> })
-          .terminateWorker()
+        await (
+          thread as unknown as { terminateWorker: () => Promise<void> }
+        ).terminateWorker()
       }
       await stop.catch(() => undefined)
     }
@@ -126,10 +124,6 @@ async function createThreadFixture(workerSource: string) {
 
   return {
     artifact,
-    snapshot: createRuntimeSnapshot({
-      mode: 'development',
-      outDir,
-      manifest,
-    }),
+    snapshot: createRuntimeSnapshot({ mode: 'development', outDir, manifest }),
   }
 }

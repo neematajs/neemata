@@ -52,11 +52,7 @@ describe('KafkaEventingAdapter', () => {
     await adapter.initialize()
 
     const consumer = await adapter.consume(
-      {
-        topics: ['orders'],
-        groupId: 'orders-service',
-        deadLetter: {},
-      },
+      { topics: ['orders'], groupId: 'orders-service', deadLetter: {} },
       async () => {
         throw new Error('poison')
       },
