@@ -9,6 +9,7 @@ import type {
   WorkerServiceStopSlowEvent,
   WorkerServiceStopTimeoutEvent,
 } from './internal/services/client.ts'
+import type { ConfigSignalWatcher } from './internal/services/config-signal.ts'
 import type {
   RuntimeEvent,
   RuntimeResult,
@@ -23,7 +24,6 @@ import {
   resolveServiceEntry,
   WorkerServiceClient,
 } from './internal/services/client.ts'
-import type { ConfigSignalWatcher } from './internal/services/config-signal.ts'
 import { watchConfigSignal } from './internal/services/config-signal.ts'
 import { createNeemTestProbe } from './internal/test-probe.ts'
 import {
@@ -341,7 +341,9 @@ class DevSupervisor {
 
   private async startConfigSignalWatcher(
     files: readonly string[],
-    options: { tolerateInitialError?: boolean } = { tolerateInitialError: true },
+    options: { tolerateInitialError?: boolean } = {
+      tolerateInitialError: true,
+    },
   ): Promise<void> {
     await this.stopConfigSignalWatcher()
     this.configSignalFiles = [...files]
@@ -362,9 +364,11 @@ class DevSupervisor {
     if (this.stopped) return
     const event = { type: 'config-invalidated' } as const
     this.options.probe?.emit(`watcher:${event.type}`, normalizeEvent(event))
-    void this.events.run(() => this.handleWatcherEvent(event)).catch((error) => {
-      this.closedFuture.reject(normalizeError(error))
-    })
+    void this.events
+      .run(() => this.handleWatcherEvent(event))
+      .catch((error) => {
+        this.closedFuture.reject(normalizeError(error))
+      })
   }
 
   private reportWatcherError(error: unknown): void {
