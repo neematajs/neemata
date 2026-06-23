@@ -138,6 +138,8 @@ async function handle(request: HostRunnerRequest): Promise<void> {
         logger?.trace('Neem host runner shutting down')
         post({ id: request.id, type: 'result' })
         port.close()
+        await new Promise<void>((resolve) => setImmediate(resolve))
+        process.exit(0)
         return
     }
   } catch (error) {

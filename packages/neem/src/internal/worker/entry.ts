@@ -101,6 +101,8 @@ async function stopAndExit(): Promise<void> {
     postMessage({ type: 'stopped' })
     workerData.port.close()
     port.close()
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    process.exit(0)
   } catch (error) {
     reportError(error, 'runtime')
     process.exit(1)
