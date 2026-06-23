@@ -48,7 +48,6 @@
     "defu": "^6.1.7",
     "hookable": "^6.1.1",
     "oxc-resolver": "^11.21.3",
-    "perfect-debounce": "^2.1.0",
     "rolldown": "^1.1.2",
     "zod": "catalog:"
   },
@@ -69,7 +68,6 @@
   "files": [
     "bin",
     "dist",
-    "src",
     "LICENSE.md",
     "README.md"
   ]

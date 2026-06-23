@@ -319,9 +319,6 @@ importers:
       oxc-resolver:
         specifier: ^11.21.3
         version: 11.21.3
-      perfect-debounce:
-        specifier: ^2.1.0
-        version: 2.1.0
       rolldown:
         specifier: ^1.1.2
         version: 1.1.2
@@ -1691,9 +1688,6 @@ packages:
   pathe@2.0.3:
     resolution: {integrity: sha512-WUjGcAqP1gQacoQe+OBJsFA7Ld4DyXuUIjZ5cc75cLHvJ7dtNsTugphxIADwspS+AraAUePCKrSVtPLFj/F88w==}
 
-  perfect-debounce@2.1.0:
-    resolution: {integrity: sha512-LjgdTytVFXeUgtHZr9WYViYSM/g8MkcTPYDlPa3cDqMirHjKiSZPYd6DoL7pK8AJQr+uWkQvCjHNdiMqsrJs+g==}
-
   picocolors@1.1.1:
     resolution: {integrity: sha512-xceH2snhtb5M9liqDsmEw56le376mTZkEX/jEb/RxNFyegNul7eNslCXP9FDj/Lcu0X8KEyMceP2ntpaHrDEVA==}
 
@@ -2945,8 +2939,6 @@ snapshots:
       '@oxc-resolver/binding-win32-x64-msvc': 11.21.3
 
   pathe@2.0.3: {}
-
-  perfect-debounce@2.1.0: {}
 
   picocolors@1.1.1: {}
 
