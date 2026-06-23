@@ -285,6 +285,7 @@ async function watchTargetGroup(
         })
       } finally {
         if ('result' in event) await event.result?.close?.()
+        globalThis.gc?.()
       }
       return
     }
@@ -369,7 +370,11 @@ function createRolldownOptions(
     platform: 'node',
     treeshake: false,
     ...userOptions,
-    experimental: { chunkOptimization: false, ...userOptions.experimental },
+    experimental: {
+      chunkOptimization: false,
+      incrementalBuild: metadata.watch,
+      ...userOptions.experimental,
+    },
     external: createExternalMatcher(userOptions.external),
     plugins: [
       createNativeAddonPlugin(),
