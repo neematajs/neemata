@@ -96,7 +96,7 @@ export default defineRuntimeHost<JobsPlannerFactory | undefined>(
               pool.add(thread)
             }
             state.pools.set(poolName, pool)
-            params.logger.info(`Neem jobs runner pool [${poolName}] started`)
+            params.logger.debug(`Neem jobs runner pool [${poolName}] started`)
             params.logger.trace(
               {
                 pool: poolName,
@@ -156,7 +156,9 @@ export default defineRuntimeHost<JobsPlannerFactory | undefined>(
               })
 
               state.queueWorkers.add(worker)
-              params.logger.info(`Neem jobs queue worker [${job.name}] started`)
+              params.logger.debug(
+                `Neem jobs queue worker [${job.name}] started`,
+              )
               params.logger.trace(
                 {
                   job: job.name,

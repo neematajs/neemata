@@ -31,7 +31,7 @@ export default defineRuntimeHost<SchedulerPlannerFactory | undefined>(
           const result = await controller.removeOwned({
             reason: 'cutover-stop',
           })
-          params.logger.info('Neem scheduler cutover stopped')
+          params.logger.debug('Neem scheduler cutover stopped')
           params.logger.trace(
             { handoff: resolved.handoff, result },
             'Neem scheduler cutover stop result',
@@ -63,7 +63,7 @@ export default defineRuntimeHost<SchedulerPlannerFactory | undefined>(
             const cutover = await controller.removeOwned({
               reason: 'cutover-start',
             })
-            params.logger.info('Neem scheduler cutover started')
+            params.logger.debug('Neem scheduler cutover started')
             params.logger.trace(
               { handoff: resolved.handoff, result: cutover },
               'Neem scheduler cutover start result',
@@ -72,7 +72,7 @@ export default defineRuntimeHost<SchedulerPlannerFactory | undefined>(
           const result = await controller.reconcile(resolved.schedules)
           state.controller = controller
           state.resolved = resolved
-          params.logger.info('Neem scheduler runtime reconciled')
+          params.logger.debug('Neem scheduler runtime reconciled')
           params.logger.trace(
             {
               schedules: resolved.schedules.length,

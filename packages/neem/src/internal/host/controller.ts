@@ -262,7 +262,7 @@ export class HostController {
         })
       } finally {
         this.markState('stopped')
-        this.logger.info('Neem server stopped')
+        this.logger.debug('Neem server stopped')
       }
 
       if (stopError) throw stopError

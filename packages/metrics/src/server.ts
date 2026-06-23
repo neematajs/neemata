@@ -82,7 +82,7 @@ export function createMetricsServer(options: {
       await new Promise<void>((resolve) => {
         server!.listen({ host, port }, resolve)
       })
-      logger.info(getMetricsServerListenMessage(server, path))
+      logger.debug(getMetricsServerListenMessage(server, path))
     },
     async stop() {
       if (pushInterval) clearInterval(pushInterval)

@@ -85,7 +85,7 @@ export class ProxyController {
       }
       await this.proxy.start()
       this.running = true
-      this.logger.info('Neem proxy started')
+      this.logger.debug('Neem proxy started')
       this.logger.trace(
         {
           listen: `${this.config.hostname}:${this.config.port}`,
@@ -122,7 +122,7 @@ export class ProxyController {
     this.desired.clear()
     this.applied.clear()
     this.failures.clear()
-    this.logger.info('Neem proxy stopped')
+    this.logger.debug('Neem proxy stopped')
   }
 
   async setUpstreams(upstreams: readonly RuntimeUpstreams[]): Promise<void> {

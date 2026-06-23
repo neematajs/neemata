@@ -87,7 +87,7 @@ export class HealthProbe {
     })
 
     this.server = server
-    this.logger.info('Neem health probe started')
+    this.logger.debug('Neem health probe started')
     this.logger.trace(
       {
         hostname: this.hostname,
@@ -110,7 +110,7 @@ export class HealthProbe {
         else resolve()
       })
     })
-    this.logger.info('Neem health probe stopped')
+    this.logger.debug('Neem health probe stopped')
   }
 
   matches(config: NeemHealthConfig | undefined): boolean {

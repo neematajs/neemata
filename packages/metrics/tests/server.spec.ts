@@ -132,7 +132,7 @@ describe('createCombinedMetricsCollector', () => {
 })
 
 function createTestLogger() {
-  return { info: vi.fn(), error: vi.fn() } as unknown as Logger
+  return { debug: vi.fn(), error: vi.fn() } as unknown as Logger
 }
 
 async function fetchText(url: string) {
@@ -141,8 +141,8 @@ async function fetchText(url: string) {
 }
 
 function getLoggedMetricsBaseUrl(logger: Logger, path = '/metrics'): string {
-  const info = logger.info as ReturnType<typeof vi.fn>
-  const message = String(info.mock.calls[0]?.[0])
+  const debug = logger.debug as ReturnType<typeof vi.fn>
+  const message = String(debug.mock.calls[0]?.[0])
   const suffix = path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   const match = message.match(new RegExp(`(https?://[^\\s]+)${suffix}$`))
   if (!match) throw new Error(`Missing metrics listen log: ${message}`)
