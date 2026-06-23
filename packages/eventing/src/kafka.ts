@@ -87,6 +87,10 @@ export class KafkaEventingAdapter implements EventingAdapter {
     options: EventingAdapterConsumeOptions,
     handler: EventingAdapterMessageHandler,
   ): Promise<EventingConsumer> {
+    if (options.deadLetter && !this.producer) {
+      throw new Error('KafkaEventingAdapter not initialized')
+    }
+
     const consumer = new Consumer({
       clientId: options.consumerId ?? this.options.clientId,
       bootstrapBrokers: [...this.options.bootstrapBrokers],
@@ -108,8 +112,38 @@ export class KafkaEventingAdapter implements EventingAdapter {
         for await (const message of stream) {
           options.signal?.throwIfAborted()
           const event = decodeKafkaMessage(message)
-          await handler(event)
-          await message.commit()
+          try {
+            await handler(event)
+            await message.commit()
+          } catch (error) {
+            if (!options.deadLetter) throw error
+
+            await this.producer!.send({
+              messages: [
+                {
+                  topic:
+                    options.deadLetter.topic ?? getDeadLetterTopic(event.topic),
+                  key: message.key,
+                  value: message.value,
+                  headers: {
+                    ...event.headers,
+                    'x-eventing-source-topic': event.topic,
+                    'x-eventing-error': getErrorMessage(error),
+                  },
+                },
+              ],
+            })
+            await message.commit()
+            this.logger?.error(
+              {
+                error,
+                topic: event.topic,
+                deadLetterTopic:
+                  options.deadLetter.topic ?? getDeadLetterTopic(event.topic),
+              },
+              'Kafka event moved to dead-letter topic',
+            )
+          }
         }
       } finally {
         await closeKafkaStream(stream)
@@ -127,6 +161,14 @@ export class KafkaEventingAdapter implements EventingAdapter {
       },
     }
   }
+}
+
+function getDeadLetterTopic(topic: string): string {
+  return `${topic}.dlq`
+}
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
 }
 
 async function closeKafkaStream(stream: { close(): Promise<void> | void }) {

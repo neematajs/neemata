@@ -217,6 +217,89 @@ describe.skipIf(!kafkaBrokers?.length)(
       )
     })
 
+    it('dead-letters failed messages and commits the original offset', async () => {
+      const topic = createTestName('events-kafka-dlq')
+      const dlq = `${topic}.dlq`
+      const groupId = createTestName('group')
+      const clientId = createTestName('client')
+      topics.add(topic)
+      topics.add(dlq)
+      const stream = SubscriptionContract({
+        namespace: topic,
+        params: t.object({ id: t.string() }),
+        key: ({ id }) => id,
+        events: {
+          orderCreated: EventContract({
+            payload: t.object({ id: t.string() }),
+          }),
+        },
+      })
+      const event = stream.events.orderCreated
+      const admin = await createKafkaTopic({
+        topic,
+        clientId: `${clientId}-admin`,
+      })
+      const adapter = await createKafkaAdapter(clientId)
+
+      await adapter.produce({
+        topic,
+        name: event.event,
+        key: 'order-1',
+        payload: { id: 'order-1' },
+        headers: { source: 'dlq-test' },
+      })
+
+      const consumer = await adapter.consume(
+        {
+          topics: [topic],
+          groupId,
+          consumerId: `${clientId}-consumer-dlq`,
+          from: 'earliest',
+          deadLetter: { topic: dlq },
+        },
+        async () => {
+          throw new Error('poison')
+        },
+      )
+
+      await waitFor(
+        async () => (await getCommittedOffset(admin, groupId, topic)) === 1n,
+      )
+      await consumer.close()
+
+      const received: unknown[] = []
+      const controller = new AbortController()
+      const dlqConsumer = await adapter.consume(
+        {
+          topics: [dlq],
+          groupId: `${groupId}-dlq`,
+          consumerId: `${clientId}-consumer-dlq-reader`,
+          from: 'earliest',
+          signal: controller.signal,
+        },
+        async (message) => {
+          received.push(message)
+          controller.abort()
+        },
+      )
+
+      await waitFor(() => received.length === 1)
+      await dlqConsumer.close()
+      expect(received).toMatchObject([
+        {
+          topic: dlq,
+          name: event.event,
+          key: 'order-1',
+          payload: { id: 'order-1' },
+          headers: {
+            source: 'dlq-test',
+            'x-eventing-source-topic': topic,
+            'x-eventing-error': 'poison',
+          },
+        },
+      ])
+    })
+
     it('retries subscription handlers before committing delivered messages', async () => {
       const topic = createTestName('events-kafka-retry')
       const groupId = createTestName('group')
