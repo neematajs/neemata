@@ -113,7 +113,12 @@ export abstract class JobRunner<
     const { input, output, jobSteps: steps } = job
 
     const result: Record<string, unknown> = { ...runResult }
-    const decodedInput = input.decode(data)
+    let decodedInput: Record<string, unknown>
+    try {
+      decodedInput = input.decode(data)
+    } catch {
+      throw new UnrecoverableError('Invalid job input')
+    }
 
     // Initialize progress: decode from checkpoint or start fresh
     const progress: Record<string, unknown> = job.progress
