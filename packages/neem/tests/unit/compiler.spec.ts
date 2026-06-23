@@ -188,7 +188,7 @@ describe('Neem compiler', () => {
   it('uses root watch config for build delay and debounce', async () => {
     const root = await useTempDir()
     const graph = createCompilerGraph(root, {
-      build: { watch: { buildDelay: 125, debounceDelay: 25 } },
+      watch: { buildDelay: 125, debounceDelay: 25 },
     })
     rolldownMock.watch.mockImplementation(() => createWatcher())
 
@@ -320,13 +320,13 @@ async function useTempDir(): Promise<string> {
 
 function createCompilerGraph(
   root: string,
-  options: { build?: ReturnType<typeof createBuildGraph>['config']['build'] } = {},
+  build?: ReturnType<typeof createBuildGraph>['config']['build'],
 ) {
   return createBuildGraph({
     configFile: resolve(root, 'neem.config.ts'),
     outDir: resolve(root, 'dist'),
     config: {
-      build: options.build,
+      build,
       runtimes: {
         api: {
           name: 'api',
