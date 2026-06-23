@@ -61,6 +61,10 @@ export async function callJobsHook<const Name extends JobsHookName>(
       hooks[name] as ((event: JobsHookEventFor<Name>) => unknown) | undefined
     )?.(event)
   } catch (error) {
-    await onError?.(error, event, name)
+    try {
+      await onError?.(error, event, name)
+    } catch {
+      // Hook error handlers must not affect queue operations.
+    }
   }
 }
