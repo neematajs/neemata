@@ -199,9 +199,7 @@ export class ThreadController {
       }
       this.worker = undefined
       this.exited = undefined
-      try {
-        this.port.close()
-      } catch {}
+      this.port.close()
       this.upstreams = []
       this.markStopped()
       await this.callWorkerHook('worker:stop')

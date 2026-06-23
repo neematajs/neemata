@@ -32,6 +32,11 @@ let logger: Logger | undefined
 let plannerOptions: unknown
 let currentThreads: readonly NeemRuntimeThreadHandle[] = []
 
+function closeCurrentThreads(): void {
+  for (const thread of currentThreads) thread.port.close()
+  currentThreads = []
+}
+
 function post(message: HostRunnerResponse): void {
   port.postMessage(message)
 }
@@ -131,11 +136,12 @@ async function handle(request: HostRunnerRequest): Promise<void> {
         )
         await host?.stop?.()
         host = undefined
-        currentThreads = []
+        closeCurrentThreads()
         post({ id: request.id, type: 'result' })
         return
       case 'shutdown':
         logger?.trace('Neem host runner shutting down')
+        closeCurrentThreads()
         post({ id: request.id, type: 'result' })
         port.close()
         await new Promise<void>((resolve) => setImmediate(resolve))

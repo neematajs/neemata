@@ -34,6 +34,8 @@ async function handle(request: WatcherRequest): Promise<void> {
         service = undefined
         post({ id: request.id, type: 'result' })
         port.close()
+        await new Promise<void>((resolve) => setImmediate(resolve))
+        process.exit(0)
         return
     }
   } catch (error) {

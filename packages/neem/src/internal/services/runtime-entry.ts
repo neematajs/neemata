@@ -48,6 +48,8 @@ async function handle(request: RuntimeRequest): Promise<void> {
         post({ id: request.id, type: 'result' })
         post({ type: 'event', event: { type: 'stopped' } })
         port.close()
+        await new Promise<void>((resolve) => setImmediate(resolve))
+        process.exit(0)
         return
     }
   } catch (error) {
