@@ -109,6 +109,12 @@ export type NeemBuildConfig = {
   sourcemapSources?: 'include' | 'exclude'
   minify?: boolean | 'dce-only'
   define?: Record<string, string>
+  watch?: NeemBuildWatchConfig
+}
+
+export type NeemBuildWatchConfig = {
+  buildDelay?: number
+  debounceDelay?: number
 }
 
 export type NeemPluginBuild = { rolldown?: NeemRolldownOptions }

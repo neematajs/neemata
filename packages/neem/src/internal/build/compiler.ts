@@ -9,6 +9,7 @@ import { createFuture } from '@nmtjs/common'
 import * as rolldown from 'rolldown'
 
 import type {
+  NeemBuildWatchConfig,
   NeemChunkGroup,
   NeemChunkingOptions,
   NeemResolvedArtifact,
@@ -118,16 +119,21 @@ export async function watchGraph(
   handlers: { onChange?: (change: TargetChange) => MaybePromise<void> } = {},
 ): Promise<GraphWatcher> {
   const compiled = new Map<string, CompiledTarget>()
+  const watchConfig = graph.config.build?.watch
   const watchers = await Promise.all(
     graph.buildGroups.map((group) =>
-      watchBuildGroup(group, {
-        onRebuild: async (change) => {
-          for (const target of change.compiledTargets ?? [change.compiled]) {
-            compiled.set(target.target.key, target)
-          }
-          await handlers.onChange?.(change)
+      watchBuildGroup(
+        group,
+        {
+          onRebuild: async (change) => {
+            for (const target of change.compiledTargets ?? [change.compiled]) {
+              compiled.set(target.target.key, target)
+            }
+            await handlers.onChange?.(change)
+          },
         },
-      }),
+        watchConfig,
+      ),
     ),
   )
   const ready = Promise.all(watchers.map((watcher) => watcher.ready)).then(
@@ -157,31 +163,29 @@ type BuildGroupWatcher = {
 async function watchBuildGroup(
   group: BuildGroup,
   handlers: { onRebuild?: (change: TargetChange) => MaybePromise<void> } = {},
+  watchConfig?: NeemBuildWatchConfig,
 ): Promise<BuildGroupWatcher> {
   if (group.kind === 'target') {
-    const watcher = await watchTarget(group.target, handlers)
+    const watcher = await watchTarget(group.target, handlers, watchConfig)
     return {
       ready: watcher.ready.then((target) => [target]),
       close: watcher.close,
     }
   }
 
-  return watchTargetGroup(group.targets, handlers)
+  return watchTargetGroup(group.targets, handlers, watchConfig)
 }
 
 export async function watchTarget(
   target: BuildTarget,
   handlers: { onRebuild?: (change: TargetChange) => MaybePromise<void> } = {},
+  watchConfig?: NeemBuildWatchConfig,
 ): Promise<TargetWatcher> {
   const metadata: ArtifactBuildMetadata = { watch: true }
   await mkdir(target.outDir, { recursive: true })
   const watcher = rolldown.watch({
     ...createRolldownOptions(target, metadata),
-    watch: {
-      buildDelay: 50,
-      clearScreen: false,
-      watcher: { debounceDelay: 50, useDebounce: true },
-    },
+    watch: createWatchOptions(watchConfig),
   })
 
   let initialWatchBuild = true
@@ -241,6 +245,7 @@ export async function watchTarget(
 async function watchTargetGroup(
   targets: readonly BuildTarget[],
   handlers: { onRebuild?: (change: TargetChange) => MaybePromise<void> } = {},
+  watchConfig?: NeemBuildWatchConfig,
 ): Promise<BuildGroupWatcher> {
   const metadata: ArtifactBuildMetadata = {
     entryFileNames: new Map(),
@@ -249,11 +254,7 @@ async function watchTargetGroup(
   await mkdirTargetDirs(targets)
   const watcher = rolldown.watch({
     ...createGroupedRolldownOptions(targets, metadata),
-    watch: {
-      buildDelay: 100,
-      clearScreen: false,
-      watcher: { debounceDelay: 50, useDebounce: true },
-    },
+    watch: createWatchOptions(watchConfig),
   })
 
   let initialWatchBuild = true
@@ -310,6 +311,16 @@ async function watchTargetGroup(
     async close() {
       await watcher.close()
     },
+  }
+}
+
+function createWatchOptions(
+  config: NeemBuildWatchConfig | undefined,
+): NonNullable<rolldown.BuildOptions['watch']> {
+  return {
+    ...(config?.buildDelay !== undefined ? { buildDelay: config.buildDelay } : {}),
+    clearScreen: false,
+    watcher: { debounceDelay: config?.debounceDelay ?? 50, useDebounce: true },
   }
 }
 

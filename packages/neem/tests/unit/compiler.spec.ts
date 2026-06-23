@@ -171,6 +171,38 @@ describe('Neem compiler', () => {
     expect(initialResult.close).toHaveBeenCalledTimes(1)
   })
 
+  it('does not set a default watcher build delay', async () => {
+    const target = await createTarget()
+    rolldownMock.watch.mockReturnValue(createWatcher())
+
+    await watchTarget(target)
+
+    const options = rolldownMock.watch.mock.calls[0]?.[0] as BuildOptions
+    expect(options.watch).toMatchObject({
+      clearScreen: false,
+      watcher: { debounceDelay: 50, useDebounce: true },
+    })
+    expect(options.watch).not.toHaveProperty('buildDelay')
+  })
+
+  it('uses root watch config for build delay and debounce', async () => {
+    const root = await useTempDir()
+    const graph = createCompilerGraph(root, {
+      build: { watch: { buildDelay: 125, debounceDelay: 25 } },
+    })
+    rolldownMock.watch.mockImplementation(() => createWatcher())
+
+    await watchGraph(graph)
+
+    for (const [options] of rolldownMock.watch.mock.calls) {
+      expect((options as BuildOptions).watch).toMatchObject({
+        buildDelay: 125,
+        clearScreen: false,
+        watcher: { debounceDelay: 25, useDebounce: true },
+      })
+    }
+  })
+
   it('watches infra targets with one watcher and reports one rebuild for all infra metadata', async () => {
     const root = await useTempDir()
     const graph = createCompilerGraph(root)
@@ -286,11 +318,15 @@ async function useTempDir(): Promise<string> {
   return root
 }
 
-function createCompilerGraph(root: string) {
+function createCompilerGraph(
+  root: string,
+  options: { build?: ReturnType<typeof createBuildGraph>['config']['build'] } = {},
+) {
   return createBuildGraph({
     configFile: resolve(root, 'neem.config.ts'),
     outDir: resolve(root, 'dist'),
     config: {
+      build: options.build,
       runtimes: {
         api: {
           name: 'api',
