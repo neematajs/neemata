@@ -78,6 +78,7 @@ jobs:
           pnpm exec playwright install chromium firefox webkit
       - run: |
           pnpm run test
+          pnpm --filter @nmtjs/neem run test:e2e
           pnpm run test:browser:client
 
   tests-integration-services:
