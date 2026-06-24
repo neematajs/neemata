@@ -14,7 +14,7 @@ import type {
 } from './protocol.ts'
 import type { JobsConfig, JobsPoolConfig } from './runtime.ts'
 import { closeJobsClient, resolveJobsClient } from '../client.ts'
-import { getJobQueueName, JobManager } from '../manager.ts'
+import { getJobQueueName, isCancelledQueueJob, JobManager } from '../manager.ts'
 import { resolveJobsConfig } from './runtime.ts'
 
 type JobsRuntimeState = {
@@ -152,7 +152,12 @@ export default defineRuntimeHost<JobsPlannerFactory | undefined>(
                 void state.manager?.emitUpdated(bullJob, 'completed')
               })
               worker.on('failed', (bullJob) => {
-                if (bullJob) void state.manager?.emitUpdated(bullJob, 'failed')
+                if (bullJob) {
+                  void state.manager?.emitUpdated(
+                    bullJob,
+                    isCancelledQueueJob(bullJob) ? 'cancelled' : 'failed',
+                  )
+                }
               })
 
               state.queueWorkers.add(worker)

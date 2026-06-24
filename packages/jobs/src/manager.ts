@@ -35,6 +35,8 @@ import type {
 import { callJobsHook } from './core/hooks.ts'
 import { JobRunner } from './core/runner.ts'
 
+export const JOB_CANCELLED_REASON = 'Job cancelled'
+
 export class QueueJobRunner extends JobRunner<
   JobRunnerRunOptions & { queueJob: Job }
 > {
@@ -142,6 +144,10 @@ function createCheckpoint(options: {
  */
 export function getJobQueueName(job: AnyJob): string {
   return `job.${job.options.name}`
+}
+
+export function isCancelledQueueJob(job: Pick<Job, 'failedReason'>): boolean {
+  return job.failedReason === JOB_CANCELLED_REASON
 }
 
 type QueueJobResultOptions<T extends AnyJob = AnyJob> = {
@@ -424,7 +430,7 @@ export class JobManager {
     const { events } = this.getJobQueue(job)
     const controller = new AbortController()
     const handler = () => {
-      controller.abort(new UnrecoverableError('Job cancelled'))
+      controller.abort(new UnrecoverableError(JOB_CANCELLED_REASON))
     }
     events.on<CustomJobsEvents>(`cancel:${id}`, handler)
     const signal = controller.signal
@@ -445,7 +451,10 @@ export class JobManager {
     assert(typeof id === 'string', 'Expected job id to be a string')
 
     // Map queue state to public status.
-    const status = this._mapStatus(bullState)
+    const status =
+      bullState === 'failed' && isCancelledQueueJob(bullJob)
+        ? 'cancelled'
+        : this._mapStatus(bullState)
 
     // Extract progress only if it's a valid checkpoint object
     const progress =
