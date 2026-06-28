@@ -13,7 +13,7 @@ describe('nmtjs umbrella exports', () => {
         router: expect.any(Function),
         implementRouter: expect.any(Function),
         contractRouter: expect.any(Function),
-        procedure: expect.any(Function),
+        procedure: expect.any(Object),
         contractProcedure: expect.any(Function),
         middleware: expect.any(Function),
         meta: expect.any(Function),

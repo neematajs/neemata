@@ -83,6 +83,21 @@ export type HandlerInput<
       handler: HandlerFn<Deps, Args, Return>
     }
 
+export function createHandler<
+  Args extends readonly unknown[],
+  Return,
+  Deps extends Dependencies = {},
+>(
+  paramsOrHandler: HandlerInput<Deps, Args, Return>,
+): Handler<Deps, Args, Return> {
+  const { dependencies = {} as Deps, handler } =
+    typeof paramsOrHandler === 'function'
+      ? { handler: paramsOrHandler }
+      : paramsOrHandler
+
+  return Object.freeze({ dependencies, handler }) as Handler<Deps, Args, Return>
+}
+
 export type InjectableFactoryType<
   InjectableType,
   InjectableDeps extends Dependencies,

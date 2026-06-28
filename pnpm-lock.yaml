@@ -473,6 +473,15 @@ importers:
         specifier: 'catalog:'
         version: 4.3.6
 
+  packages/workflows:
+    dependencies:
+      '@nmtjs/core':
+        specifier: workspace:*
+        version: link:../core
+      '@nmtjs/type':
+        specifier: workspace:*
+        version: link:../type
+
   packages/ws-client:
     dependencies:
       '@nmtjs/client':

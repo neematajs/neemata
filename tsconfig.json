@@ -55,6 +55,9 @@
       "path": "./packages/type/tsconfig.json"
     },
     {
+      "path": "./packages/workflows/tsconfig.json"
+    },
+    {
       "path": "./packages/ws-client/tsconfig.json"
     },
     {

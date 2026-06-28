@@ -47,6 +47,7 @@ export { blobType, c } from '@nmtjs/contract'
 export {
   CoreInjectables,
   createFactoryInjectable as factory,
+  createHandler as handler,
   createLazyInjectable as lazy,
   createValueInjectable as value,
   MetadataKind,

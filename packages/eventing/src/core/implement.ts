@@ -18,7 +18,7 @@ export type EventingSubscriptionHandler<
   Deps extends Dependencies,
 > = HandlerFn<
   Deps,
-  [event: EventingEventOutput<E>, message: EventingAdapterMessage],
+  [input: EventingEventOutput<E>, message: EventingAdapterMessage],
   void
 >
 

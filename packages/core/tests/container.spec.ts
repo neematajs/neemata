@@ -21,6 +21,7 @@ import { Scope } from '../src/enums.ts'
 import {
   CoreInjectables,
   createFactoryInjectable,
+  createHandler,
   createLazyInjectable,
   createOptionalInjectable,
   createValueInjectable,
@@ -63,6 +64,24 @@ describe('Injectable', () => {
     expect(kInjectable in injectable).toBe(true)
     expect(kFactoryInjectable in injectable).toBe(true)
     expect('optional' in injectable).toBe(false)
+  })
+
+  it('should create a dependency handler', async () => {
+    const model = createValueInjectable('gpt')
+    const handler = createHandler({
+      dependencies: { model },
+      handler: (ctx, input: { scenario: string }) => {
+        expectTypeOf(ctx.model).toEqualTypeOf<string>()
+        return `${ctx.model}:${input.scenario}`
+      },
+    })
+
+    expect(handler.dependencies).toStrictEqual({ model })
+    const result = await handler.handler(
+      { model: 'gpt-4' },
+      { scenario: 'case' },
+    )
+    expect(result).toBe('gpt-4:case')
   })
 
   it('should create optional dependency with helper', () => {
