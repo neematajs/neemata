@@ -1021,7 +1021,7 @@ describe('Container', () => {
             creationOrder.push('database')
             return { connection: 'db://localhost:5432' }
           },
-          dispose: (instance) => {
+          dispose: () => {
             disposalOrder.push('database')
           },
           scope: Scope.Global,
@@ -1046,9 +1046,9 @@ describe('Container', () => {
       const logger = createFactoryInjectable(
         {
           dependencies: { config },
-          create: ({ config }) => {
+          create: () => {
             creationOrder.push('logger')
-            return { log: (msg: string) => {} }
+            return { log: () => {} }
           },
           dispose: () => {
             disposalOrder.push('logger')
@@ -1070,7 +1070,7 @@ describe('Container', () => {
               timeout: config.env === 'production' ? 30000 : 5000,
             }
           },
-          dispose: (instance) => {
+          dispose: () => {
             disposalOrder.push('session')
           },
           scope: Scope.Connection,
@@ -1081,11 +1081,11 @@ describe('Container', () => {
       const auth = createFactoryInjectable(
         {
           dependencies: { session, logger },
-          create: ({ session, logger }) => {
+          create: ({ session }) => {
             creationOrder.push('auth')
             return { userId: 'user123', sessionId: session.id }
           },
-          dispose: (instance) => {
+          dispose: () => {
             disposalOrder.push('auth')
           },
           scope: Scope.Connection,
@@ -1096,11 +1096,11 @@ describe('Container', () => {
       const connectionMetrics = createFactoryInjectable(
         {
           dependencies: { session, logger },
-          create: ({ session, logger }) => {
+          create: ({ session }) => {
             creationOrder.push('connectionMetrics')
             return { sessionId: session.id, startTime: Date.now(), requests: 0 }
           },
-          dispose: (instance) => {
+          dispose: () => {
             disposalOrder.push('connectionMetrics')
           },
           scope: Scope.Connection,
@@ -1122,7 +1122,7 @@ describe('Container', () => {
               timestamp: Date.now(),
             }
           },
-          dispose: (instance) => {
+          dispose: () => {
             disposalOrder.push('requestContext')
           },
           scope: Scope.Call,
@@ -1133,14 +1133,14 @@ describe('Container', () => {
       const validator = createFactoryInjectable(
         {
           dependencies: { requestContext, logger },
-          create: ({ requestContext, logger }) => {
+          create: ({ requestContext }) => {
             creationOrder.push('validator')
             return {
-              validate: (data: any) => true,
+              validate: () => true,
               requestId: requestContext.requestId,
             }
           },
-          dispose: (instance) => {
+          dispose: () => {
             disposalOrder.push('validator')
           },
           scope: Scope.Call,
@@ -1154,8 +1154,8 @@ describe('Container', () => {
           create: ({ requestContext, validator, database, session }) => {
             creationOrder.push('businessLogic')
             return {
-              process: (data: any) => {
-                validator.validate(data)
+              process: () => {
+                validator.validate()
                 return {
                   result: 'processed',
                   requestId: requestContext.requestId,
@@ -1165,7 +1165,7 @@ describe('Container', () => {
               },
             }
           },
-          dispose: (instance) => {
+          dispose: () => {
             disposalOrder.push('businessLogic')
           },
           scope: Scope.Call,
@@ -1219,7 +1219,7 @@ describe('Container', () => {
       const call1Container = connection1Container.fork(Scope.Call)
 
       const call1Result = await call1Container.resolve(businessLogic)
-      expect(call1Result.process({ data: 'test' })).toMatchObject({
+      expect(call1Result.process()).toMatchObject({
         result: 'processed',
         requestId: expect.any(String),
         sessionId: expect.any(String),

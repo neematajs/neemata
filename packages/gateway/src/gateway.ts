@@ -208,7 +208,7 @@ export class Gateway<
         } catch {
           state.pending.delete(nonce)
           try {
-            transportWorker.close?.(connection.id, {
+            await transportWorker.close?.(connection.id, {
               code: 1001,
               reason: 'heartbeat_timeout',
             })
@@ -450,7 +450,7 @@ export class Gateway<
         })
       } catch (error) {
         logger.error({ error }, 'Error establishing connection')
-        container.dispose()
+        await container.dispose()
         throw error
       }
     }
@@ -753,10 +753,13 @@ export class Gateway<
       const transportWorker =
         this.options.transports[connection.transport]?.transport
       if (connection.type === ConnectionType.Bidirectional) {
-        transportWorker?.close?.(connectionId, { code: 1001, reason: 'closed' })
+        await transportWorker?.close?.(connectionId, {
+          code: 1001,
+          reason: 'closed',
+        })
       }
       connection.abortController.abort()
-      connection.container.dispose()
+      await connection.container.dispose()
     }
 
     this.rpcs.close(connectionId)

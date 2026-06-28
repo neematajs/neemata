@@ -60,10 +60,10 @@ export class KafkaEventingAdapter implements EventingAdapter {
 
   async dispose() {
     await Promise.allSettled(
-      [...this.consumers].map((consumer) => consumer.close(true)),
+      [...this.consumers].map(async (consumer) => consumer.close(true)),
     )
     this.consumers.clear()
-    await this.producer?.close(true)
+    await Promise.resolve(this.producer?.close(true))
     this.producer = undefined
     this.logger?.debug('Kafka eventing adapter disposed')
   }

@@ -36,7 +36,19 @@ export interface RpcLayerApi {
 const toReasonString = (reason: unknown) => {
   if (typeof reason === 'string') return reason
   if (reason === undefined || reason === null) return undefined
-  return String(reason)
+  if (reason instanceof Error) return reason.message
+  try {
+    return JSON.stringify(reason)
+  } catch {}
+  if (
+    typeof reason === 'number' ||
+    typeof reason === 'boolean' ||
+    typeof reason === 'bigint' ||
+    typeof reason === 'symbol'
+  ) {
+    return reason.toString()
+  }
+  return Object.prototype.toString.call(reason)
 }
 
 const toAbortError = (signal: AbortSignal) => {

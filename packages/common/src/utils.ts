@@ -73,7 +73,7 @@ export function withTimeout(
 }
 
 export function tryCaptureStackTrace(depth = 0) {
-  const traceLines = new Error().stack?.split('\n')
+  const traceLines = new Error().stack?.split('\n').slice(depth)
   if (traceLines) {
     for (const traceLine of traceLines) {
       const trimmed = traceLine.trim()

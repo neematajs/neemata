@@ -1,6 +1,7 @@
 import type { Callback } from '@nmtjs/common'
 
 export type EventMap = { [K: string]: any[] }
+type CustomEventName = string & {}
 
 type ListenerRegistration = {
   abortHandler?: () => void
@@ -77,7 +78,7 @@ export class EventEmitter<
   }
 
   on<E extends EventName>(
-    event: E | (Object & string),
+    event: E | CustomEventName,
     listener: (...args: Events[E]) => void,
     options?: AddEventListenerOptions,
   ) {
@@ -121,14 +122,14 @@ export class EventEmitter<
   }
 
   once<E extends EventName>(
-    event: E | (Object & string),
+    event: E | CustomEventName,
     listener: (...args: Events[E]) => void,
     options?: AddEventListenerOptions,
   ) {
     return this.on(event, listener, { ...options, once: true })
   }
 
-  off(event: EventName | (Object & string), listener: Callback) {
+  off(event: EventName | CustomEventName, listener: Callback) {
     const registration = this.#listeners
       .get(event)
       ?.get(listener)
@@ -140,7 +141,7 @@ export class EventEmitter<
     }
   }
 
-  emit<E extends EventName | (Object & string)>(
+  emit<E extends EventName | CustomEventName>(
     event: E,
     ...args: E extends EventName ? Events[E] : any[]
   ) {

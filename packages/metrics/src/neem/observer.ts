@@ -99,5 +99,5 @@ export function createNeemMetricsObserver(options: {
 }): NeemMetricsObserver {
   const lifecycle = createNeemMetricsLifecycle(options)
   options.hooks.addHooks(lifecycle.hooks)
-  return { recordHealth: lifecycle.recordHealth }
+  return { recordHealth: () => lifecycle.recordHealth() }
 }

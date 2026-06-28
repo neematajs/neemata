@@ -52,9 +52,9 @@ export class ProtocolClientBlobStream
       cancel: (reason) => {
         // Use reader.cancel() if reader exists (stream is locked), otherwise source.cancel()
         if (sourceReader) {
-          sourceReader.cancel(reason)
+          return sourceReader.cancel(reason)
         } else {
-          source.cancel(reason)
+          return source.cancel(reason)
         }
       },
     })

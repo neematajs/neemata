@@ -1,5 +1,4 @@
 import {} from 'node:dns'
-import { setTimeout } from 'node:timers/promises'
 
 import type { ApplicationTransport } from '@nmtjs/application'
 import type { ConnectionType } from '@nmtjs/protocol'

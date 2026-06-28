@@ -14,7 +14,7 @@ export function createRuntimeEnv(
     ...process.env,
     ...options.manifest.config.env,
     ...options.manifest.runtimes[options.runtimeName]?.env,
-    ...(options.executionEnv ?? {}),
+    ...options.executionEnv,
     ...options.overrideEnv,
   })
 }

@@ -23,7 +23,6 @@ import type {
   HttpAdapterServer,
   HttpAdapterServerFactory,
   HttpTransportCorsCustomParams,
-  HttpTransportCorsOptions,
   HttpTransportOptions,
   HttpTransportServerRequest,
 } from './types.ts'
@@ -82,12 +81,7 @@ export class HttpTransportServer implements TransportWorker<
   ApplicationResolvedProcedure
 > {
   #server: HttpAdapterServer
-  #corsOptions?:
-    | null
-    | true
-    | string[]
-    | HttpTransportCorsOptions
-    | ((origin: string) => boolean | HttpTransportCorsOptions)
+  #corsOptions?: HttpTransportOptions['cors']
 
   params!: TransportWorkerParams<
     ConnectionType.Unidirectional,

@@ -1,9 +1,8 @@
+import { StaticClient, loggingPlugin } from '@nmtjs/client'
 import { ProtocolVersion } from '@nmtjs/protocol'
 import { BaseClientFormat } from '@nmtjs/protocol/client'
 import { describe, expect, it, vi } from 'vitest'
 
-import { StaticClient } from '../../client/src/clients/static.ts'
-import { loggingPlugin } from '../../client/src/plugins/logging.ts'
 import { HttpTransportFactory } from '../src/index.ts'
 
 class TestJsonFormat extends BaseClientFormat {

@@ -1,13 +1,13 @@
 import type { AnyJob, JobsClientInstance } from '@nmtjs/jobs'
 import type { Job as BullJob } from 'bullmq'
+import { LifecycleHooks } from '@nmtjs/application'
 import { Container } from '@nmtjs/core'
 import { createJob, JobManager, QueueJobRunner } from '@nmtjs/jobs'
 import { JobSchedulerController } from '@nmtjs/scheduler'
+import { t } from '@nmtjs/type'
 import { Worker } from 'bullmq'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { LifecycleHooks } from '../../../application/src/lifecycle.ts'
-import { t } from '../../../type/src/index.ts'
 import {
   createTestLogger,
   createTestName,

@@ -5,9 +5,8 @@ import {
   createSchedulerRuntime,
   defineSchedulerPlanner,
 } from '@nmtjs/scheduler/neem'
+import { t } from '@nmtjs/type'
 import { describe, expect, it } from 'vitest'
-
-import { t } from '../../../type/src/index.ts'
 
 describe('@nmtjs/scheduler Neem runtime helpers', () => {
   it('declares a host-only scheduler runtime', () => {

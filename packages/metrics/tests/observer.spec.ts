@@ -12,7 +12,7 @@ describe('createNeemMetricsLifecycle', () => {
       getHealth: () => testHealth,
     })
 
-    lifecycle.hooks['runtime:ready']?.({ name: 'api' } as never)
+    await lifecycle.hooks['runtime:ready']?.({ name: 'api' } as never)
 
     const metrics = await registry.metrics()
     expect(metrics).toContain(

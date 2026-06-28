@@ -14,28 +14,28 @@ export const BlobType = (
     decode: (value) => value,
     encode: (value) => value,
     validation: {
-      decode(value, { addIssue }) {
+      decode(value, payload) {
         if (isBlobInterface(value)) {
           if (options.maxSize) {
             const size = value.metadata.size
             if (typeof size !== 'undefined' && size > options.maxSize) {
-              addIssue({
+              payload.addIssue({
                 code: 'custom',
                 message: `Blob size unknown or exceeds maximum allowed size of ${options.maxSize} bytes`,
               })
             }
           }
         } else {
-          addIssue({
+          payload.addIssue({
             code: 'custom',
             message:
               'Value is not a Neemata Blob. Make sure to use transport that supports encoded streams.',
           })
         }
       },
-      encode(value, { addIssue }) {
+      encode(value, payload) {
         if (!isBlobInterface(value)) {
-          addIssue({
+          payload.addIssue({
             code: 'custom',
             message:
               'Value is not a Neemata Blob. Make sure to use transport that supports encoded streams.',

@@ -297,11 +297,7 @@ function createManifestConfig(compiled: CompiledGraph): ManifestConfig {
 function createManifestRuntimeConfig(declaration: {
   proxy?: NeemRuntimeProxyConfig
 }): ManifestRuntimeConfig {
-  return {
-    ...(declaration.proxy
-      ? { proxy: copyRuntimeProxy(declaration.proxy) }
-      : {}),
-  }
+  return declaration.proxy ? { proxy: copyRuntimeProxy(declaration.proxy) } : {}
 }
 
 function copyEnv(env: NeemEnv | undefined): NeemEnv | undefined {

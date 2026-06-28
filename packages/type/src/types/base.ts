@@ -61,7 +61,7 @@ export type DefaultTypeParams = {
 export type BaseTypeAny<
   EncodedZodType extends SimpleZodType = SimpleZodType,
   DecodedZodType extends ZodType = ZodMiniType,
-> = BaseType<any, any, any>
+> = BaseType<EncodedZodType, DecodedZodType, any>
 
 export const NeemataTypeError = core.$ZodError
 export type NeemataTypeError = core.$ZodError

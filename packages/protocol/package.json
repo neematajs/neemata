@@ -45,6 +45,7 @@
     "hookable": "6.1.1"
   },
   "devDependencies": {
+    "@nmtjs/client": "workspace:*",
     "@nmtjs/core": "workspace:*"
   },
   "peerDependencies": {

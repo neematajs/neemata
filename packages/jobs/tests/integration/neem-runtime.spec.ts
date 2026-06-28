@@ -11,7 +11,6 @@ import { createJobsRuntime, defineJobsPlanner } from '@nmtjs/jobs/neem'
 import { t } from '@nmtjs/type'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { JobsServiceTarget } from './helpers.ts'
 import jobsHostFactory from '../../src/neem/host.ts'
 import {
   createTestLogger,
@@ -103,7 +102,9 @@ for (const target of serviceTargets) {
       })
 
       afterEach(async () => {
-        await Promise.allSettled(hosts.splice(0).map((host) => host.stop?.()))
+        await Promise.allSettled(
+          hosts.splice(0).map(async (host) => host.stop?.()),
+        )
         for (const port of ports.splice(0)) port.close()
         workerReadyGate.reset()
         workerWaitObserved.reset()

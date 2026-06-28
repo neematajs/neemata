@@ -19,9 +19,12 @@ describe('Pool', () => {
     const captured = await pool.capture()
     const next = pool.next()
     let resolved = false
-    next.then(() => {
-      resolved = true
-    })
+    void next.then(
+      () => {
+        resolved = true
+      },
+      () => {},
+    )
 
     await Promise.resolve()
 

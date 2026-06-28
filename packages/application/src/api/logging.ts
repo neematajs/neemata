@@ -6,7 +6,7 @@ import type { AnyMiddleware } from './middlewares.ts'
 import type { ApiCallContext } from './types.ts'
 import { createMiddleware } from './middlewares.ts'
 
-const defaultContext = (options: ApiCallContext, payload: unknown) => {
+const defaultContext = (options: ApiCallContext) => {
   return {
     callId: options.callId,
     connection: {

@@ -31,7 +31,7 @@ export interface MockBidirectionalTransportControl {
   }
   readonly params: TransportConnectParams | null
   simulateConnect(): void
-  simulateDisconnect(reason?: 'server' | 'client' | string): void
+  simulateDisconnect(reason?: 'server' | 'client' | (string & {})): void
   emitMessage(message: ArrayBufferView): void
   setConnectFail(fail: boolean, error?: Error): void
   rejectConnect(error: Error): void
@@ -120,7 +120,9 @@ export const createMockBidirectionalTransport =
           connectHandler.onConnect()
         }
       },
-      simulateDisconnect: (reason: 'server' | 'client' | string = 'server') => {
+      simulateDisconnect: (
+        reason: 'server' | 'client' | (string & {}) = 'server',
+      ) => {
         connectHandler?.onDisconnect(reason)
       },
       emitMessage: (message: ArrayBufferView) => {

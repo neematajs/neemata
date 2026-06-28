@@ -3,6 +3,15 @@
   "plugins": ["oxc", "typescript", "unicorn"],
   "options": { "typeAware": true },
   "rules": {
+    "eslint/no-unused-vars": [
+      "warn",
+      {
+        "argsIgnorePattern": "^_",
+        "destructuredArrayIgnorePattern": "^_",
+        "ignoreUsingDeclarations": true,
+        "varsIgnorePattern": "^_"
+      }
+    ],
     "no-duplicate-imports": ["error", { "allowSeparateTypeImports": true }],
     "no-sequences": "error",
     "prefer-const": "error",
@@ -13,11 +22,24 @@
       "error",
       { "disallowTypeAnnotations": false, "fixStyle": "separate-type-imports" }
     ],
+    "typescript/unbound-method": ["warn", { "ignoreStatic": true }],
     "typescript/prefer-as-const": "error",
     "typescript/prefer-enum-initializers": "error",
     "typescript/prefer-function-type": "error",
     "typescript/prefer-literal-enum-member": "error",
     "unicorn/prefer-node-protocol": "error",
     "unicorn/prefer-number-properties": "error"
-  }
+  },
+  "overrides": [
+    {
+      "files": [
+        "packages/protocol/src/server/protocol.ts",
+        "packages/http-transport/src/runtimes/deno.ts",
+        "packages/ws-transport/src/runtimes/deno.ts"
+      ],
+      "rules": {
+        "typescript/no-redundant-type-constituents": "off"
+      }
+    }
+  ]
 }

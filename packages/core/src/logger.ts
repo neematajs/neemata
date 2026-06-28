@@ -133,9 +133,12 @@ export const createConsolePrettyDestination: CreateConsolePrettyDestination = (
     ignore: 'hostname,$label,$threadId',
     errorLikeObjectKeys: ['err', 'error', 'cause'],
     messageFormat: (log, messageKey) => {
-      const group = fg(`[${log.$label}]`, 11)
-      const msg = fg(log[messageKey], messageColors[log.level as number])
-      const thread = fg(`(T-${log.$threadId})`, 89)
+      const group = fg(`[${String(log.$label)}]`, 11)
+      const msg = fg(
+        String(log[messageKey]),
+        messageColors[log.level as number],
+      )
+      const thread = fg(`(T-${String(log.$threadId)})`, 89)
       return `\x1b[0m${thread} ${group} ${msg}`
     },
     customPrettifiers: {

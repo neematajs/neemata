@@ -84,7 +84,7 @@ describe('autoConnect', () => {
       {},
     )
 
-    stubBidirectionalProtocol(client)
+    const decodeMessage = stubBidirectionalProtocol(client)
 
     const initialConnect = client.connect()
     transport.simulateConnect()
@@ -94,9 +94,6 @@ describe('autoConnect', () => {
     connectSpy.mockClear()
     sendSpy.mockClear()
 
-    const decodeMessage = client.core.protocol.decodeMessage as ReturnType<
-      typeof vi.fn
-    >
     decodeMessage.mockReturnValueOnce({
       type: ServerMessageType.RpcResponse,
       callId: 0,

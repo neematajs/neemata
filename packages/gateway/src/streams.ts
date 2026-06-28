@@ -398,7 +398,7 @@ export class BlobStreamsManager {
     const key = this.getCallKey(connectionId, callId)
     const clientStreamIds = this.clientCallStreams.get(key)
     if (clientStreamIds) {
-      for (const streamId of [...clientStreamIds]) {
+      for (const streamId of Array.from(clientStreamIds)) {
         this.abortClientStream(connectionId, streamId, reason)
       }
     }
@@ -407,14 +407,14 @@ export class BlobStreamsManager {
   cleanupConnection(connectionId: string) {
     const clientStreamIds = this.connectionClientStreams.get(connectionId)
     if (clientStreamIds) {
-      for (const streamId of [...clientStreamIds]) {
+      for (const streamId of Array.from(clientStreamIds)) {
         this.abortClientStream(connectionId, streamId, 'Connection closed')
       }
     }
 
     const serverStreamIds = this.connectionServerStreams.get(connectionId)
     if (serverStreamIds) {
-      for (const streamId of [...serverStreamIds]) {
+      for (const streamId of Array.from(serverStreamIds)) {
         this.abortServerStream(connectionId, streamId, 'Connection closed')
       }
     }

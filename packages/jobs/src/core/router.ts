@@ -451,7 +451,7 @@ function createInfoProcedure(
 
   return createProcedure({
     output: infoOutputSchema,
-    dependencies: { ...deps, ...(config.dependencies ?? {}) },
+    dependencies: { ...deps, ...config.dependencies },
     guards: allGuards,
     middlewares: allMiddlewares,
     meta: config.meta,
@@ -480,7 +480,7 @@ function createListProcedure(
   return createProcedure({
     input: listInputSchema,
     output: createListOutputSchema(job),
-    dependencies: { ...deps, ...(config.dependencies ?? {}) },
+    dependencies: { ...deps, ...config.dependencies },
     guards: allGuards,
     middlewares: allMiddlewares,
     meta: config.meta,
@@ -527,7 +527,7 @@ function createGetProcedure(
   return createProcedure({
     input: getInputSchema,
     output: createGetOutputSchema(job),
-    dependencies: { ...deps, ...(config.dependencies ?? {}) },
+    dependencies: { ...deps, ...config.dependencies },
     guards: allGuards,
     middlewares: allMiddlewares,
     meta: config.meta,
@@ -567,7 +567,7 @@ function createAddProcedure(
   return createProcedure({
     input: createAddInputSchema(job),
     output: addOutputSchema,
-    dependencies: { ...deps, ...(config.dependencies ?? {}) },
+    dependencies: { ...deps, ...config.dependencies },
     guards: allGuards,
     middlewares: allMiddlewares,
     meta: config.meta,
@@ -637,7 +637,7 @@ function createRetryProcedure(
 
   return createProcedure({
     input: retryInputSchema,
-    dependencies: { ...deps, ...(config.dependencies ?? {}) },
+    dependencies: { ...deps, ...config.dependencies },
     guards: allGuards,
     middlewares: allMiddlewares,
     meta: config.meta,
@@ -697,7 +697,7 @@ function createCancelProcedure(
 
   return createProcedure({
     input: idInputSchema,
-    dependencies: { ...deps, ...(config.dependencies ?? {}) },
+    dependencies: { ...deps, ...config.dependencies },
     guards: allGuards,
     middlewares: allMiddlewares,
     meta: config.meta,
@@ -755,7 +755,7 @@ function createRemoveProcedure(
 
   return createProcedure({
     input: idInputSchema,
-    dependencies: { ...deps, ...(config.dependencies ?? {}) },
+    dependencies: { ...deps, ...config.dependencies },
     guards: allGuards,
     middlewares: allMiddlewares,
     meta: config.meta,

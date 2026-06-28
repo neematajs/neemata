@@ -4,7 +4,10 @@ export type TSError<
   ErrorMessage extends string = string,
   // Used to tag the type.
   TagType = never,
-> = `TS Error: ${ErrorMessage}` & { [TSErrorSymbol]: true }
+> = `TS Error: ${ErrorMessage}` & {
+  [TSErrorSymbol]: true
+  readonly __tag?: TagType
+}
 
 export interface TypeProvider {
   readonly input: unknown

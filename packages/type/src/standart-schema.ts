@@ -37,7 +37,7 @@ export namespace standard {
       '~standard': Object.freeze({
         vendor: 'neemata-type',
         version: 1,
-        validate: (value, options = {}) => {
+        validate: (value, _options = {}) => {
           try {
             return { value: type.decode(value) }
           } catch (e) {
@@ -56,7 +56,7 @@ export namespace standard {
         jsonSchema: {
           input: ({ target, libraryOptions }) => {
             const { json = {} } = (libraryOptions || {}) as {
-              json: ToJSONSchemaParams
+              json?: ToJSONSchemaParams
             }
             const { cycles = 'throw', reused = 'inline' } = json
             return toJSONSchema(type.decodeZodType, {
@@ -70,7 +70,7 @@ export namespace standard {
           },
           output: ({ target, libraryOptions }) => {
             const { json = {} } = (libraryOptions || {}) as {
-              json: ToJSONSchemaParams
+              json?: ToJSONSchemaParams
             }
             const { cycles = 'throw', reused = 'inline' } = json
             return toJSONSchema(type.decodeZodType, {
@@ -114,7 +114,7 @@ export namespace standard {
         jsonSchema: {
           input: ({ target, libraryOptions }) => {
             const { json = {} } = (libraryOptions || {}) as {
-              json: ToJSONSchemaParams
+              json?: ToJSONSchemaParams
             }
             const { cycles = 'throw', reused = 'inline' } = json
             return toJSONSchema(type.encodeZodType, {
@@ -128,7 +128,7 @@ export namespace standard {
           },
           output: ({ target, libraryOptions }) => {
             const { json = {} } = (libraryOptions || {}) as {
-              json: ToJSONSchemaParams
+              json?: ToJSONSchemaParams
             }
             const { cycles = 'throw', reused = 'inline' } = json
             return toJSONSchema(type.encodeZodType, {

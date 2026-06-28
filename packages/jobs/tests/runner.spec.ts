@@ -27,9 +27,13 @@ describe('JobRunner', () => {
       output: t.object({ value: t.string() }),
       attempts: 3,
     }).return(({ input }) => input)
+    const logger = createLogger(
+      { pinoOptions: { enabled: false } },
+      'jobs-test',
+    )
     const runner = new TestJobRunner({
-      logger: createLogger({ pinoOptions: { enabled: false } }, 'jobs-test'),
-      container: new Container(),
+      logger,
+      container: new Container({ logger }),
       lifecycleHooks: new LifecycleHooks(),
     })
 

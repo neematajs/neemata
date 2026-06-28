@@ -2,7 +2,6 @@ import { t } from '@nmtjs/type'
 import { describe, expect, expectTypeOf, it } from 'vitest'
 
 import type { TRouterContract } from '../src/index.ts'
-import type { TEventContract } from '../src/schemas/event.ts'
 import type { TProcedureContract } from '../src/schemas/procedure.ts'
 import type { SubscriptionEventMessage } from '../src/schemas/subscription.ts'
 import { c, IsRouterContract, RouterContract } from '../src/index.ts'
@@ -267,8 +266,6 @@ describe('Contract — Router', { sequential: true }, () => {
         input: t.string(),
         output: t.string(),
       })
-      const testEvent = c.event({ payload: t.object({ message: t.string() }) })
-
       const nestedRouter = c.router({
         routes: {
           nestedProcedure: c.procedure({ input: t.any(), output: t.any() }),

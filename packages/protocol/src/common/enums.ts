@@ -57,11 +57,11 @@ export enum ErrorCode {
   ConnectionError = 'ConnectionError',
 }
 
-export enum MessageByteLength {
-  MessageType = 1,
-  MessageError = 1,
-  ProcedureLength = 2,
-  CallId = 4,
-  StreamId = 4,
-  ChunkSize = 4,
-}
+export const MessageByteLength = {
+  MessageType: 1,
+  MessageError: 1,
+  ProcedureLength: 2,
+  CallId: 4,
+  StreamId: 4,
+  ChunkSize: 4,
+} as const
