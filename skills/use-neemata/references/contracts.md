@@ -57,7 +57,9 @@ export const userEvents = c.subscription({
   key: ({ organizationId }) => organizationId,
   events: {
     created: c.event({ payload: t.object({ id: t.string() }) }),
-    renamed: c.event({ payload: t.object({ id: t.string(), name: t.string() }) }),
+    renamed: c.event({
+      payload: t.object({ id: t.string(), name: t.string() }),
+    }),
   },
 })
 ```

@@ -1,3 +1,4 @@
+import { noopFn } from '@nmtjs/common'
 import {
   afterEach,
   beforeEach,
@@ -9,7 +10,6 @@ import {
 } from 'vitest'
 
 import type { DependencyOptional, LazyInjectable } from '../src/injectables.ts'
-import { noopFn } from '../../common/src/index.ts'
 import {
   kFactoryInjectable,
   kInjectable,

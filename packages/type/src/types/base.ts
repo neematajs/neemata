@@ -70,8 +70,7 @@ export abstract class BaseType<
   EncodeZodType extends SimpleZodType = SimpleZodType,
   DecodeZodType extends ZodType = EncodeZodType,
   Props extends TypeProps = TypeProps,
-> implements standard.Schema<DecodeZodType>
-{
+> implements standard.Schema<DecodeZodType> {
   readonly encodeZodType: EncodeZodType
   readonly decodeZodType: DecodeZodType
   readonly props: Props

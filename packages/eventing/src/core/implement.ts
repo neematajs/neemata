@@ -128,9 +128,9 @@ export function isEventingSubscriptionConsumerDefinition(
 ): value is AnyEventingSubscriptionConsumerDefinition {
   return Boolean(
     value &&
-      typeof value === 'object' &&
-      'subscription' in value &&
-      'handlers' in value,
+    typeof value === 'object' &&
+    'subscription' in value &&
+    'handlers' in value,
   )
 }
 

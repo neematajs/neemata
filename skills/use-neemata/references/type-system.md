@@ -59,7 +59,10 @@ t.unknown()
 Strings:
 
 ```ts
-t.string().min(1).max(255).pattern(/^user_/)
+t.string()
+  .min(1)
+  .max(255)
+  .pattern(/^user_/)
 t.string().email().url().uuid()
 t.string().ipv4().ipv6()
 t.string().emoji().nanoid().cuid().cuid2()

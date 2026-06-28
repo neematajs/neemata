@@ -140,9 +140,7 @@ describe('Neem production portability', () => {
   }, 60_000)
 })
 
-async function buildCopiedFixture(options: {
-  config: string
-}): Promise<{
+async function buildCopiedFixture(options: { config: string }): Promise<{
   copiedOutDir: string
   fixture: Awaited<ReturnType<typeof useFixture>>
 }> {

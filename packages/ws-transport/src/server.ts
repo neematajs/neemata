@@ -23,10 +23,10 @@ export function createWSTransportWorker(
   return new WsTransportServer(adapterFactory, options)
 }
 
-export class WsTransportServer
-  implements
-    TransportWorker<ConnectionType.Bidirectional, ApplicationResolvedProcedure>
-{
+export class WsTransportServer implements TransportWorker<
+  ConnectionType.Bidirectional,
+  ApplicationResolvedProcedure
+> {
   #server: WsAdapterServer
   params!: TransportWorkerParams<
     ConnectionType.Bidirectional,

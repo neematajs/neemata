@@ -28,9 +28,6 @@
       }
     }
   },
-  "scripts": {
-    "clean-build": "rm -rf ./dist"
-  },
   "dependencies": {
     "hookable": "6.1.1"
   },

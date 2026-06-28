@@ -64,22 +64,23 @@ export type ServicePlannerInput = {
   shards: number
 }
 export type ServiceWorkerData = { shard: number }
-export type ServiceRuntimePlanner = NeemRuntimePlanner<undefined, ServiceWorkerData>
+export type ServiceRuntimePlanner = NeemRuntimePlanner<
+  undefined,
+  ServiceWorkerData
+>
 
 export function defineServicePlanner(
   input: ServicePlannerInput,
 ): ServiceRuntimePlanner {
-  return defineRuntimePlanner<undefined, ServiceWorkerData>(
-    async (ctx) => {
-      ctx.logger.info({ runtime: ctx.name }, 'planning service runtime')
+  return defineRuntimePlanner<undefined, ServiceWorkerData>(async (ctx) => {
+    ctx.logger.info({ runtime: ctx.name }, 'planning service runtime')
 
-      return {
-        workers: Array.from({ length: input.shards }, (_, shard) => ({
-          shard,
-        })),
-      }
-    },
-  )
+    return {
+      workers: Array.from({ length: input.shards }, (_, shard) => ({
+        shard,
+      })),
+    }
+  })
 }
 ```
 

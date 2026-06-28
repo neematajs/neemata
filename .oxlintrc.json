@@ -1,6 +1,6 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["oxc", "typescript", "unicorn", "react"],
+  "plugins": ["oxc", "typescript", "unicorn"],
   "options": { "typeAware": true },
   "rules": {
     "no-duplicate-imports": ["error", { "allowSeparateTypeImports": true }],

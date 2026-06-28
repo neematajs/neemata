@@ -73,8 +73,10 @@ export type InjectableDisposeType<
   context: DependencyContext<InjectableDeps>,
 ) => any
 
-export interface LazyInjectable<T, S extends Scope = Scope.Global>
-  extends Dependant<{}> {
+export interface LazyInjectable<
+  T,
+  S extends Scope = Scope.Global,
+> extends Dependant<{}> {
   scope: S
   $withType<O extends T>(): LazyInjectable<O, S>
   [kInjectable]: any

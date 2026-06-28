@@ -2,9 +2,6 @@
   "name": "@nmtjs/application",
   "description": "Neemata application model, API pipeline, and application lifecycle primitives.",
   "type": "module",
-  "scripts": {
-    "clean-build": "rm -rf ./dist"
-  },
   "exports": {
     ".": {
       "types": "./src/index.ts",

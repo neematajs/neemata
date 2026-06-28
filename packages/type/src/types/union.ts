@@ -78,8 +78,8 @@ export type DiscriminatedUnionOptionType<K extends string> = ObjectType<
 
 export class DiscriminatedUnionType<
   K extends string = string,
-  T extends
-    readonly DiscriminatedUnionOptionType<K>[] = DiscriminatedUnionOptionType<K>[],
+  T extends readonly DiscriminatedUnionOptionType<K>[] =
+    DiscriminatedUnionOptionType<K>[],
 > extends BaseType<
   ZodMiniDiscriminatedUnion<ArrayMap<T, 'encodeZodType'>>,
   ZodMiniDiscriminatedUnion<ArrayMap<T, 'decodeZodType'>>,
@@ -87,8 +87,8 @@ export class DiscriminatedUnionType<
 > {
   static factory<
     K extends string = string,
-    T extends
-      readonly DiscriminatedUnionOptionType<K>[] = DiscriminatedUnionOptionType<K>[],
+    T extends readonly DiscriminatedUnionOptionType<K>[] =
+      DiscriminatedUnionOptionType<K>[],
   >(key: K, ...options: T) {
     const encode = options.map((t) => t.encodeZodType) as ArrayMap<
       T,

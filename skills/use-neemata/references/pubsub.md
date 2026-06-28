@@ -33,7 +33,11 @@ export const subscribeRoom = procedure({
   output: t.object({ event: t.string(), text: t.string() }),
   stream: true,
   async *handler({ subscribe }, input) {
-    const stream = await subscribe(rooms, { room: input.room }, { message: true })
+    const stream = await subscribe(
+      rooms,
+      { room: input.room },
+      { message: true },
+    )
     for await (const event of stream) {
       yield { event: event.event, text: event.payload.text }
     }

@@ -4,6 +4,7 @@ import { setTimeout } from 'node:timers/promises'
 import type { ApplicationTransport } from '@nmtjs/application'
 import type { ConnectionType } from '@nmtjs/protocol'
 import { ProxyableTransportType } from '@nmtjs/gateway'
+import { App, SSLApp, us_socket_local_port } from 'uWebSockets.js'
 
 import type {
   HttpAdapterParams,
@@ -17,8 +18,6 @@ import {
   NotFoundHttpResponse,
   OkResponse,
 } from '../utils.ts'
-
-import { App, SSLApp, us_socket_local_port } from 'uWebSockets.js'
 
 const statusResponse = OkResponse()
 const statusResponseBuffer = await statusResponse.arrayBuffer()

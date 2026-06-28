@@ -12,8 +12,8 @@ catalog:
   zod: ^4.0.0
 
 minimumReleaseAgeExclude:
-  - "@nmtjs/prom-client"
-  - "@nmtjs/proxy"
+  - '@nmtjs/prom-client'
+  - '@nmtjs/proxy'
   - '@rolldown/binding-android-arm64@1.1.1'
   - '@rolldown/binding-darwin-arm64@1.1.1'
   - '@rolldown/binding-darwin-x64@1.1.1'

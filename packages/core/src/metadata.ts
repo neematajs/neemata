@@ -52,8 +52,7 @@ type MetaBindingToken<T extends AnyMeta = AnyMeta> = {
 }
 
 export interface StaticMetaBinding<T extends AnyMeta = AnyMeta>
-  extends Dependant<{}>,
-    MetaBindingToken<T> {
+  extends Dependant<{}>, MetaBindingToken<T> {
   readonly kind: MetadataKind.STATIC
   readonly value: ResolveInjectableType<T>
 }
@@ -64,8 +63,8 @@ export interface MetaFactoryBinding<
   Phase extends MetaPhase = MetaPhase,
   Call = unknown,
   Input = unknown,
-> extends Dependant<Deps>,
-    MetaBindingToken<T> {
+>
+  extends Dependant<Deps>, MetaBindingToken<T> {
   readonly kind: MetadataKind.FACTORY
   readonly phase: Phase
   readonly resolve: (

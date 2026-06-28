@@ -1,3 +1,7 @@
 {
-  "recommendations": ["biomejs.biome", "YoavBls.pretty-ts-errors", "TypeScriptTeam.native-preview"]
+  "recommendations": [
+    "oxc.oxc-vscode",
+    "YoavBls.pretty-ts-errors",
+    "TypeScriptTeam.native-preview"
+  ]
 }

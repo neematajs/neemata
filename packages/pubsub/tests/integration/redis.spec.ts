@@ -1,10 +1,10 @@
 import { EventContract, SubscriptionContract } from '@nmtjs/contract'
 import { PubSubManager } from '@nmtjs/pubsub'
 import { RedisPubSubAdapter } from '@nmtjs/pubsub/redis'
+import { t } from '@nmtjs/type'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import type { RedisPubSubClient } from '../../src/redis.ts'
-import { t } from '../../../type/src/index.ts'
 import {
   createTestLogger,
   createTestName,

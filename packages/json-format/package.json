@@ -2,9 +2,6 @@
   "name": "@nmtjs/json-format",
   "description": "JSON serialization format for the Neemata protocol.",
   "type": "module",
-  "scripts": {
-    "clean-build": "rm -rf ./dist"
-  },
   "exports": {
     "./client": {
       "types": "./src/client.ts",

@@ -127,7 +127,9 @@ default-export a Neem worker object that creates a runtime instance:
 ```ts
 export type NeemRuntime = {
   start: () => MaybePromise<
-    readonly NeemRuntimeUpstream[] | { upstreams?: readonly NeemRuntimeUpstream[] } | undefined
+    | readonly NeemRuntimeUpstream[]
+    | { upstreams?: readonly NeemRuntimeUpstream[] }
+    | undefined
   >
   stop: () => MaybePromise<void>
 }
@@ -375,7 +377,12 @@ HostRunner RPC:
 
 ```ts
 type HostRunnerRequest =
-  | { type: 'initialize'; hostFile: string; plannerFile: string; params: HostParams }
+  | {
+      type: 'initialize'
+      hostFile: string
+      plannerFile: string
+      params: HostParams
+    }
   | { type: 'plan' }
   | {
       type: 'start'

@@ -10,27 +10,27 @@ on:
   workflow_dispatch:
     inputs:
       run_tests:
-        description: "Whether to run tests before publishing"
+        description: 'Whether to run tests before publishing'
         type: boolean
         required: true
         default: false
       release:
-        description: "Whether to publish release"
+        description: 'Whether to publish release'
         type: boolean
         required: true
         default: true
       pre_release:
-        description: "Whether it is a pre-release"
+        description: 'Whether it is a pre-release'
         type: boolean
         required: true
         default: false
       autotag:
-        description: "Whether to create a tag"
+        description: 'Whether to create a tag'
         type: boolean
         required: true
         default: true
       version:
-        description: "Version to publish"
+        description: 'Version to publish'
         type: string
         required: true
 

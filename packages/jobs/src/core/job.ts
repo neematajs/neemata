@@ -13,9 +13,7 @@ type DefaultObjectType = ObjectType<{}>
 type DefaultResultType = Record<string, any>
 
 type UnionToIntersection<T> = (
-  T extends unknown
-    ? (value: T) => void
-    : never
+  T extends unknown ? (value: T) => void : never
 ) extends (value: infer R) => void
   ? R
   : never
@@ -186,7 +184,7 @@ export type JobOnErrorHandler<
   error: unknown
 }) => MaybePromise<
   | boolean
-  // biome-ignore lint/suspicious/noConfusingVoidType: its ok
+  // Void is part of the hook contract.
   | void
 >
 
@@ -222,8 +220,7 @@ export class Job<
   out JobSteps extends [...AnyJobStep[]] = [],
   in out Result extends DefaultResultType = {},
   out Return extends boolean = false,
-> implements AnyJob
-{
+> implements AnyJob {
   _!: {
     data: Data
     result: Result & t.infer.decode.output<Input>

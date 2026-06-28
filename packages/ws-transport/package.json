@@ -48,9 +48,6 @@
       }
     }
   },
-  "scripts": {
-    "clean-build": "rm -rf ./dist"
-  },
   "dependencies": {
     "crossws": "0.4.6"
   },

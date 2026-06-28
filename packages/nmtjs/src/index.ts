@@ -73,11 +73,7 @@ export {
   createStep as step,
   JobInjectables,
 } from '@nmtjs/jobs'
-export {
-  ConnectionType,
-  ErrorCode,
-  ProtocolBlob,
-} from '@nmtjs/protocol'
+export { ConnectionType, ErrorCode, ProtocolBlob } from '@nmtjs/protocol'
 export {
   createPubSubPlugin as pubsubPlugin,
   PubSubInjectables,

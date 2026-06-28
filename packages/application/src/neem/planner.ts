@@ -18,8 +18,8 @@ export type NeemataRuntimePlanner<
 > = NeemRuntimePlanner<undefined, NeemataRuntimeThreadOptions<THost>>
 
 export function defineNeemataPlanner<
-  const THost extends
-    AnyApplicationHostDefinition = AnyApplicationHostDefinition,
+  const THost extends AnyApplicationHostDefinition =
+    AnyApplicationHostDefinition,
 >(planner: NeemataPlannerFactory<THost>): NeemataRuntimePlanner<THost> {
   return defineRuntimePlanner<undefined, NeemataRuntimeThreadOptions<THost>>(
     async (ctx) => {

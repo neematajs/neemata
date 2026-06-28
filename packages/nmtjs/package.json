@@ -2,9 +2,6 @@
   "name": "nmtjs",
   "description": "Neemata framework umbrella package.",
   "type": "module",
-  "scripts": {
-    "clean-build": "rm -rf ./dist"
-  },
   "exports": {
     ".": {
       "types": "./src/index.ts",

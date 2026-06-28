@@ -13,8 +13,9 @@ export type GuardParams<Deps extends Dependencies> =
   | { dependencies?: Deps; can: GuardCanFn<Deps> }
   | GuardCanFn<Deps>
 
-export interface Guard<Deps extends Dependencies = Dependencies>
-  extends Dependant<Deps> {
+export interface Guard<
+  Deps extends Dependencies = Dependencies,
+> extends Dependant<Deps> {
   [kGuard]: true
   can: GuardCanFn<Deps>
 }

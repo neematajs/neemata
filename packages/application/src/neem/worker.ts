@@ -28,8 +28,7 @@ export type {
 
 export class NeemataApplicationRuntime<
   THost extends AnyApplicationHostDefinition = AnyApplicationHostDefinition,
-> implements NeemRuntime
-{
+> implements NeemRuntime {
   readonly host: ApplicationHost<THost['transports']>
 
   constructor(readonly ctx: NeemataRuntimeContext<THost>) {

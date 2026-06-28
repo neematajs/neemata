@@ -149,17 +149,15 @@ export function createBuildGraph(options: {
   const infraTargets = [startEntry, workerEntry, hostRunnerEntry] as const
   const buildGroups: BuildGroup[] = [
     { key: 'runtime:infra', kind: 'infra', targets: infraTargets },
-    ...targets
-      .slice(infraTargets.length)
-      .map(
-        (target) =>
-          ({
-            key: target.key,
-            kind: 'target',
-            target,
-            targets: [target],
-          }) satisfies BuildGroup,
-      ),
+    ...targets.slice(infraTargets.length).map(
+      (target) =>
+        ({
+          key: target.key,
+          kind: 'target',
+          target,
+          targets: [target],
+        }) satisfies BuildGroup,
+    ),
   ]
 
   return {

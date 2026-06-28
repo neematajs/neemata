@@ -15,17 +15,12 @@
     "test:browser:client": "vitest run -c packages/client/vitest.browser.config.ts",
     "test:dev": "vitest dev --ui --coverage",
     "check:type": "pnpm tsc -b tsconfig.json --noEmit",
-    "check:lint": "biome lint --diagnostic-level=error .",
-    "check:fmt": "biome format --diagnostic-level=error .",
-    "check:oxc:lint": "oxlint --quiet .",
-    "check:oxc:fmt": "oxfmt --check .",
-    "check:oxc": "pnpm run check:oxc:fmt && pnpm run check:oxc:lint",
+    "check:lint": "oxlint --quiet .",
+    "check:fmt": "oxfmt --check .",
     "check": "pnpm run check:fmt && pnpm run check:lint && pnpm run check:type",
-    "fmt": "biome check --diagnostic-level=error --write .",
-    "fmt:oxc": "oxfmt --write ."
+    "fmt": "oxfmt --write ."
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.0",
     "@tsconfig/node24": "^24.0.4",
     "@types/node": "^24.13.2",
     "@vitest/browser-playwright": "4.1.9",

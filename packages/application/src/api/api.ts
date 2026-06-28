@@ -104,9 +104,7 @@ export class ApiError extends ProtocolError {
 const NotFound = (procedureName: string) =>
   new ApiError(ErrorCode.NotFound, `Procedure not found: ${procedureName}`)
 
-export class ApplicationApi
-  implements GatewayApi<ApplicationResolvedProcedure>
-{
+export class ApplicationApi implements GatewayApi<ApplicationResolvedProcedure> {
   constructor(public options: ApiOptions) {}
 
   find(procedureName: string) {

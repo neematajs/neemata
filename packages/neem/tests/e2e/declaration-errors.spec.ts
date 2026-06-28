@@ -39,9 +39,7 @@ describe('Neem runtime declaration error diagnostics', () => {
   }, 60_000)
 })
 
-async function buildExpectingFailure(
-  config: string,
-): Promise<{
+async function buildExpectingFailure(config: string): Promise<{
   exit: { code: number | null; signal: string | null }
   output: string
 }> {

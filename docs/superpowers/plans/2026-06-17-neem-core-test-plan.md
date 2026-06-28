@@ -13,12 +13,14 @@
 ## Scope
 
 In scope:
+
 - `packages/neem` public API, config/build graph/declaration resolution.
 - manifest/artifact snapshot/start contract.
 - runtime host, worker, health, proxy, recovery, services, CLI dev/build/start flow.
 - current `packages/neem` unit, integration, and e2e harness.
 
 Out of scope:
+
 - Jobs, eventing, pubsub semantics. Their Neem adapters may be used only as examples/fixtures for generic host-only or runtime integration behavior.
 - Regression tests asserting removed/old APIs do not exist.
 
@@ -36,6 +38,7 @@ Out of scope:
 ## Implementation Status
 
 Implemented in this branch:
+
 - Split unit/e2e Vitest configs and package scripts; e2e builds fresh `dist` first.
 - Added process stop kill-after diagnostics, probe sequence/timestamp metadata, tolerant JSONL reading, and shared port helpers to the e2e harness.
 - Added real CLI e2e coverage for outDir safety, declaration discovery/errors, production portability, manifest corruption/preflight, lifecycle timeouts, async worker factory, invalid upstreams, partial startup cleanup, SIGTERM shutdown, bare package entries, file URL entries, unsupported URL diagnostics, and external package/type consumer smoke.
@@ -44,11 +47,13 @@ Implemented in this branch:
 - Added product fixes for known-risk areas: validation before cleanup, known-output cleanup instead of whole outDir removal, selected-runtime manifest consistency, host runner request timeout, host runner failed-worker recovery cleanup, worker service request timeout, upstream validation, manifest shape validation, manifest file preflight, file-URL-only artifact entry diagnostics, recovery proxy upstream refresh, and dev config-invalidation rollback.
 
 Remaining high-value gaps:
+
 - Optional future hardening: abort-signal plumbing for lifecycle requests, deeper source-map stack assertions, and richer probe service/request-id metadata.
 
 ## Current Coverage
 
 Good coverage already exists for:
+
 - Public helpers: branding, frozen env, `createRuntime` merge behavior.
 - Build graph target shape, selected runtime filtering, unknown runtime error.
 - Rolldown merge precedence and sanitization.
@@ -60,6 +65,7 @@ Good coverage already exists for:
 - E2E build/start/dev basics: manifest emission, production start not importing source config, generated runtime wrappers, graceful shutdown, config import isolation, health/ready probes, metrics, proxy, host/worker/logger/plugin reloads, plugin startup failure disposal, host/worker fail-once recovery, runtime selection, invalid manifest path.
 
 Important coverage gaps:
+
 - Declaration discovery through real CLI fixtures: glob/negation, folder convention, package name inference, duplicate names, missing planner, invalid default export, bare package specifiers, URL handling, CJS/MTS/CTS conventions.
 - Failure cleanup: worker start throws before ready, host start throws before ready, multi-worker partial startup failure, hung planner/host start/host stop.
 - Production portability: copy `dist` elsewhere, delete/poison source fixture, start copied output.
@@ -180,6 +186,7 @@ Important coverage gaps:
 ### Task 1: Harness Freshness And Safety
 
 **Files:**
+
 - Modify: `packages/neem/package.json`
 - Create: `packages/neem/vitest.e2e.config.ts`
 - Create: `packages/neem/vitest.unit.config.ts`
@@ -207,6 +214,7 @@ Important coverage gaps:
 ### Task 2: OutDir Safety Tests And Product Fix
 
 **Files:**
+
 - Modify: `packages/neem/src/internal/build/clean.ts`
 - Modify: `packages/neem/src/internal/commands/build.ts`
 - Modify: `packages/neem/src/internal/services/watcher.ts`
@@ -222,6 +230,7 @@ Important coverage gaps:
 ### Task 3: Declaration Discovery Real Fixtures
 
 **Files:**
+
 - Create: `packages/neem/tests/e2e/fixtures/cases/discovery/**`
 - Create: `packages/neem/tests/e2e/fixtures/cases/duplicate-runtime-name/**`
 - Create: `packages/neem/tests/e2e/fixtures/cases/missing-planner/**`
@@ -241,6 +250,7 @@ Important coverage gaps:
 ### Task 4: Manifest And Production Portability
 
 **Files:**
+
 - Create: `packages/neem/tests/e2e/specs/production-portability.spec.ts`
 - Create: `packages/neem/tests/e2e/specs/manifest-corruption.spec.ts`
 - Modify: `packages/neem/src/internal/manifest/manifest.ts`
@@ -265,6 +275,7 @@ Important coverage gaps:
 ### Task 5: Lifecycle Failure And Timeout Coverage
 
 **Files:**
+
 - Create: `packages/neem/tests/e2e/fixtures/cases/async-worker-factory/**`
 - Create: `packages/neem/tests/e2e/fixtures/cases/planner-hang/**`
 - Create: `packages/neem/tests/e2e/fixtures/cases/host-start-hang/**`
@@ -286,6 +297,7 @@ Important coverage gaps:
 ### Task 6: Recovery, Health, Proxy Correctness
 
 **Files:**
+
 - Create: `packages/neem/tests/e2e/fixtures/cases/recovery-proxy/**`
 - Create: `packages/neem/tests/e2e/fixtures/cases/recovery-health/**`
 - Create: `packages/neem/tests/e2e/fixtures/cases/reload-start-failure/**`
@@ -305,6 +317,7 @@ Important coverage gaps:
 ### Task 7: Watcher And Dev Reload Semantics
 
 **Files:**
+
 - Create: `packages/neem/tests/e2e/specs/watcher-reload.spec.ts`
 - Modify: `packages/neem/src/internal/services/watcher.ts`
 - Modify: `packages/neem/src/internal/services/protocol.ts`
@@ -321,6 +334,7 @@ Important coverage gaps:
 ### Task 8: Packaging And Type Smoke
 
 **Files:**
+
 - Create: `packages/neem/tests/e2e/specs/packaging.spec.ts`
 - Create: `packages/neem/tests/e2e/fixtures/consumer/**`
 
@@ -332,6 +346,7 @@ Important coverage gaps:
 ### Task 9: Stress / Nightly Suite
 
 **Files:**
+
 - Create: `packages/neem/vitest.stress.config.ts`
 - Create: `packages/neem/tests/stress/reload-storm.spec.ts`
 - Create: `packages/neem/tests/stress/recovery-loop.spec.ts`

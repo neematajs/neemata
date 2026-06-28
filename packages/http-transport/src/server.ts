@@ -77,10 +77,10 @@ export function createHTTPTransportWorker(
   return new HttpTransportServer(adapterFactory, options)
 }
 
-export class HttpTransportServer
-  implements
-    TransportWorker<ConnectionType.Unidirectional, ApplicationResolvedProcedure>
-{
+export class HttpTransportServer implements TransportWorker<
+  ConnectionType.Unidirectional,
+  ApplicationResolvedProcedure
+> {
   #server: HttpAdapterServer
   #corsOptions?:
     | null

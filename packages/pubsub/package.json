@@ -39,6 +39,11 @@
     "@nmtjs/contract": "workspace:*",
     "@nmtjs/core": "workspace:*"
   },
+  "devDependencies": {
+    "@nmtjs/type": "workspace:*",
+    "ioredis": "^5.11.1",
+    "iovalkey": "^0.3.3"
+  },
   "peerDependencies": {
     "ioredis": "^5.10.1",
     "iovalkey": "^0.3.3"
@@ -50,10 +55,6 @@
     "iovalkey": {
       "optional": true
     }
-  },
-  "devDependencies": {
-    "ioredis": "^5.11.1",
-    "iovalkey": "^0.3.3"
   },
   "files": [
     "dist",

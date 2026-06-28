@@ -168,9 +168,7 @@ async function buildFixture(options: { config?: string } = {}) {
   return fixture
 }
 
-async function startExpectingFailure(
-  outDir: string,
-): Promise<{
+async function startExpectingFailure(outDir: string): Promise<{
   exit: { code: number | null; signal: string | null }
   output: string
 }> {

@@ -6,8 +6,9 @@ import { kMiddleware } from './constants.ts'
 
 export type MiddlewareNext = (payload?: any) => any
 
-export interface Middleware<Deps extends Dependencies = Dependencies>
-  extends Dependant<Deps> {
+export interface Middleware<
+  Deps extends Dependencies = Dependencies,
+> extends Dependant<Deps> {
   [kMiddleware]: true
   handle: (
     ctx: DependencyContext<Deps>,

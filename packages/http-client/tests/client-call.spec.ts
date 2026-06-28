@@ -36,14 +36,12 @@ const toUint8 = (buffer: ArrayBufferView) =>
 describe('HttpTransportClient + StaticClient', () => {
   it('returns undefined for empty unidirectional RPC response body', async () => {
     const format = new TestJsonFormat()
-    const fetchSpy = vi
-      .fn<typeof fetch>()
-      .mockResolvedValue(
-        new Response(new Uint8Array(0) as any, {
-          status: 200,
-          headers: { 'content-type': format.contentType },
-        }),
-      )
+    const fetchSpy = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(new Uint8Array(0) as any, {
+        status: 200,
+        headers: { 'content-type': format.contentType },
+      }),
+    )
 
     const client = new StaticClient(
       { contract: {} as any, protocol: ProtocolVersion.v1, format },
@@ -83,14 +81,12 @@ describe('HttpTransportClient + StaticClient', () => {
 
   it('uses keepalive for small HTTP request bodies', async () => {
     const format = new TestJsonFormat()
-    const fetchSpy = vi
-      .fn<typeof fetch>()
-      .mockResolvedValue(
-        new Response(format.encode({ ok: true }) as any, {
-          status: 200,
-          headers: { 'content-type': format.contentType },
-        }),
-      )
+    const fetchSpy = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(format.encode({ ok: true }) as any, {
+        status: 200,
+        headers: { 'content-type': format.contentType },
+      }),
+    )
 
     const client = new StaticClient(
       { contract: {} as any, protocol: ProtocolVersion.v1, format },
@@ -106,14 +102,12 @@ describe('HttpTransportClient + StaticClient', () => {
 
   it('omits keepalive for large HTTP request bodies', async () => {
     const format = new TestJsonFormat()
-    const fetchSpy = vi
-      .fn<typeof fetch>()
-      .mockResolvedValue(
-        new Response(format.encode({ ok: true }) as any, {
-          status: 200,
-          headers: { 'content-type': format.contentType },
-        }),
-      )
+    const fetchSpy = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(format.encode({ ok: true }) as any, {
+        status: 200,
+        headers: { 'content-type': format.contentType },
+      }),
+    )
 
     const client = new StaticClient(
       { contract: {} as any, protocol: ProtocolVersion.v1, format },
@@ -178,18 +172,16 @@ describe('HttpTransportClient + StaticClient', () => {
 
   it('maps non-ok responses into client protocol errors', async () => {
     const format = new TestJsonFormat()
-    const fetchSpy = vi
-      .fn<typeof fetch>()
-      .mockResolvedValue(
-        new Response(
-          format.encode({ code: 'BAD_REQUEST', message: 'Nope' }) as any,
-          {
-            status: 400,
-            statusText: 'Bad Request',
-            headers: { 'content-type': format.contentType },
-          },
-        ),
-      )
+    const fetchSpy = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        format.encode({ code: 'BAD_REQUEST', message: 'Nope' }) as any,
+        {
+          status: 400,
+          statusText: 'Bad Request',
+          headers: { 'content-type': format.contentType },
+        },
+      ),
+    )
 
     const client = new StaticClient(
       { contract: {} as any, protocol: ProtocolVersion.v1, format },

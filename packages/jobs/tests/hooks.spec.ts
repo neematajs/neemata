@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from 'vitest'
 import type { Job as BullJob } from 'bullmq'
+import { describe, expect, it, vi } from 'vitest'
 
 import { callJobsHook } from '../src/core/hooks.ts'
 import { JobManager } from '../src/manager.ts'
