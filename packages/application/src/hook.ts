@@ -1,10 +1,4 @@
-import type { MaybePromise } from '@nmtjs/common'
-import type {
-  Dependant,
-  Dependencies,
-  DependencyContext,
-  HookTypes,
-} from '@nmtjs/core'
+import type { Dependant, Dependencies, HandlerFn, HookTypes } from '@nmtjs/core'
 import { kHook } from '@nmtjs/core'
 
 export type AnyHook = Hook<HookTypes, string, any>
@@ -17,10 +11,11 @@ export interface Hook<
 > extends Dependant<Deps> {
   [kHook]: any
   name: H
-  handler: (
-    ctx: DependencyContext<Deps>,
-    ...args: H extends keyof T ? Parameters<T[H]> : unknown[]
-  ) => MaybePromise<any>
+  handler: HandlerFn<
+    Deps,
+    H extends keyof T ? Parameters<T[H]> : unknown[],
+    any
+  >
 }
 
 export function createHook<

@@ -58,6 +58,31 @@ export type DependencyContext<Deps extends Dependencies> = {
     : never
 }
 
+export type HandlerFn<
+  Deps extends Dependencies,
+  Args extends readonly unknown[],
+  Return,
+> = (context: DependencyContext<Deps>, ...args: Args) => MaybePromise<Return>
+
+export interface Handler<
+  Deps extends Dependencies,
+  Args extends readonly unknown[],
+  Return,
+> extends Dependant<Deps> {
+  handler: HandlerFn<Deps, Args, Return>
+}
+
+export type HandlerInput<
+  Deps extends Dependencies,
+  Args extends readonly unknown[],
+  Return,
+> =
+  | HandlerFn<{}, Args, Return>
+  | {
+      dependencies?: Deps
+      handler: HandlerFn<Deps, Args, Return>
+    }
+
 export type InjectableFactoryType<
   InjectableType,
   InjectableDeps extends Dependencies,

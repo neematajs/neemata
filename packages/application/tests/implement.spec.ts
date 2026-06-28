@@ -49,7 +49,7 @@ describe('contract implementation helper', () => {
           guards: [
             createGuard({
               dependencies: { allow },
-              can: (ctx) => {
+              handler: (ctx) => {
                 expectTypeOf(ctx.allow).toEqualTypeOf<boolean>()
                 return ctx.allow
               },

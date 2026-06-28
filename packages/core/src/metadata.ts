@@ -1,9 +1,8 @@
-import type { MaybePromise } from '@nmtjs/common'
-
 import type {
   Dependant,
   Dependencies,
-  DependencyContext,
+  Handler,
+  HandlerFn,
   LazyInjectable,
   ResolveInjectableType,
 } from './injectables.ts'
@@ -64,14 +63,11 @@ export interface MetaFactoryBinding<
   Call = unknown,
   Input = unknown,
 >
-  extends Dependant<Deps>, MetaBindingToken<T> {
+  extends
+    Handler<Deps, [call: Call, input: Input], ResolveInjectableType<T>>,
+    MetaBindingToken<T> {
   readonly kind: MetadataKind.FACTORY
   readonly phase: Phase
-  readonly resolve: (
-    context: DependencyContext<Deps>,
-    call: Call,
-    input: Input,
-  ) => MaybePromise<ResolveInjectableType<T>>
 }
 
 export type BeforeDecodeMetaBinding<
@@ -103,20 +99,12 @@ export type MetaFactoryMethod<Value, Call = unknown> = {
   <Deps extends Dependencies = {}>(params: {
     dependencies?: Deps
     phase?: 'beforeDecode'
-    resolve: (
-      context: DependencyContext<Deps>,
-      call: Call,
-      payload: unknown,
-    ) => MaybePromise<Value>
+    handler: HandlerFn<Deps, [call: Call, payload: unknown], Value>
   }): BeforeDecodeMetaBinding<MetaToken<Value>, Deps, Call>
   <Deps extends Dependencies = {}, Input = unknown>(params: {
     dependencies?: Deps
     phase: 'afterDecode'
-    resolve: (
-      context: DependencyContext<Deps>,
-      call: Call,
-      input: Input,
-    ) => MaybePromise<Value>
+    handler: HandlerFn<Deps, [call: Call, input: Input], Value>
   }): AfterDecodeMetaBinding<MetaToken<Value>, Deps, Call, Input>
 }
 
@@ -159,17 +147,13 @@ export function createMeta<
     factory: ((params: {
       dependencies?: Dependencies
       phase?: MetaPhase
-      resolve: (
-        context: DependencyContext<any>,
-        call: Call,
-        input: unknown,
-      ) => unknown
+      handler: HandlerFn<any, [call: Call, input: unknown], unknown>
     }) => {
       return Object.freeze({
         dependencies: params.dependencies ?? {},
+        handler: params.handler,
         kind: MetadataKind.FACTORY,
         phase: params.phase ?? 'beforeDecode',
-        resolve: params.resolve,
         [kMetaBinding]: meta,
       })
     }) as MetaFactoryMethod<Value, Call>,

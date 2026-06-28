@@ -1,6 +1,6 @@
 import type { MaybePromise } from '@nmtjs/common'
 import type { TAnyProcedureContract, TProcedureContract } from '@nmtjs/contract'
-import type { Dependant, Dependencies, DependencyContext } from '@nmtjs/core'
+import type { Dependant, Dependencies, HandlerFn } from '@nmtjs/core'
 import type { BaseType } from '@nmtjs/type'
 import type * as zod from 'zod/mini'
 import { c } from '@nmtjs/contract'
@@ -42,10 +42,11 @@ export interface BaseProcedure<
   [kProcedure]: any
 }
 
-export type ProcedureHandlerType<Input, Output, Deps extends Dependencies> = (
-  ctx: DependencyContext<Deps>,
-  data: Input,
-) => MaybePromise<Output>
+export type ProcedureHandlerType<
+  Input,
+  Output,
+  Deps extends Dependencies,
+> = HandlerFn<Deps, [data: Input], Output>
 
 export interface Procedure<
   ProcedureContract extends TAnyProcedureContract,

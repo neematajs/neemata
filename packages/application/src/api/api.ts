@@ -214,14 +214,14 @@ export class ApplicationApi implements GatewayApi<ApplicationResolvedProcedure> 
 
     this.applyStaticMetaBindings(container, metaBindings.static)
 
-    const middlewares = this.resolveMiddlewares(callOptions)
+    const handlers = this.resolveMiddlewares(callOptions)
 
     const handleProcedure = async (payload: any) => {
-      const middleware = (await middlewares).next().value
+      const middleware = (await handlers).next().value
       if (middleware) {
         const next = (...args: any[]) =>
           handleProcedure(args.length === 0 ? payload : args[0])
-        return middleware.handle(middleware.ctx, callCtx, next, payload)
+        return middleware.handler(middleware.ctx, callCtx, next, payload)
       } else {
         await this.applyFactoryMetaBindings(
           container,
@@ -306,7 +306,7 @@ export class ApplicationApi implements GatewayApi<ApplicationResolvedProcedure> 
   ) {
     for (const binding of bindings) {
       const context = await container.createContext(binding.dependencies)
-      const value = await binding.resolve(context, callCtx, input)
+      const value = await binding.handler(context, callCtx, input)
       container.provide(getMetaBindingMeta(binding), value)
     }
   }
@@ -321,7 +321,7 @@ export class ApplicationApi implements GatewayApi<ApplicationResolvedProcedure> 
     const result = await Promise.all(
       middlewares.map(async (middleware) => {
         const ctx = await container.createContext(middleware.dependencies)
-        return { handle: middleware.handle, ctx }
+        return { handler: middleware.handler, ctx }
       }),
     )
     return result[Symbol.iterator]()
@@ -350,7 +350,7 @@ export class ApplicationApi implements GatewayApi<ApplicationResolvedProcedure> 
     ]
     for (const guard of guards) {
       const ctx = await container.createContext(guard.dependencies)
-      const result = await guard.can(
+      const result = await guard.handler(
         ctx,
         Object.freeze({ ...callCtx, payload }),
       )
@@ -363,7 +363,7 @@ export class ApplicationApi implements GatewayApi<ApplicationResolvedProcedure> 
       for (const filter of this.options.filters) {
         if (error instanceof filter.errorClass) {
           const ctx = await container.createContext(filter.dependencies)
-          const handledError = await filter.catch(ctx, error)
+          const handledError = await filter.handler(ctx, error)
           if (!handledError || handledError instanceof ApiError === false)
             continue
           return handledError

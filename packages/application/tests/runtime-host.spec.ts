@@ -223,19 +223,19 @@ describe('application runtime boundary', () => {
       meta: [
         allowed.factory({
           dependencies: { value: metaDependency },
-          resolve: (ctx) => ctx.value,
+          handler: (ctx) => ctx.value,
         }),
       ],
       guards: [
         createGuard({
           dependencies: { allow: guardDependency },
-          can: (ctx) => ctx.allow,
+          handler: (ctx) => ctx.allow,
         }),
       ],
       middlewares: [
         createMiddleware({
           dependencies: { active: middlewareDependency },
-          handle: (_ctx, _call, next, payload) => next(payload),
+          handler: (_ctx, _call, next, payload) => next(payload),
         }),
       ],
       routes: {

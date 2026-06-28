@@ -1,5 +1,4 @@
-import type { MaybePromise } from '@nmtjs/common'
-import type { Dependant, Dependencies, DependencyContext } from '@nmtjs/core'
+import type { Dependant, Dependencies, HandlerFn } from '@nmtjs/core'
 import type { AnyObjectLikeType, ObjectType } from '@nmtjs/type/object'
 import { tryCaptureStackTrace } from '@nmtjs/common'
 import { t } from '@nmtjs/type'
@@ -13,11 +12,11 @@ export type JobStepHandler<
   Input extends AnyObjectLikeType,
   Output extends AnyObjectLikeType,
   Data = any,
-> = (
-  context: DependencyContext<Deps>,
-  input: t.infer.decode.output<Input>,
-  data: Data,
-) => MaybePromise<t.infer.encode.input<Output>>
+> = HandlerFn<
+  Deps,
+  [input: t.infer.decode.output<Input>, data: Data],
+  t.infer.encode.input<Output>
+>
 
 export interface JobStep<
   Input extends AnyObjectLikeType = AnyObjectLikeType,

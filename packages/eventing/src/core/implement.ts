@@ -1,9 +1,8 @@
-import type { MaybePromise } from '@nmtjs/common'
 import type {
   TAnySubscriptionContract,
   TAnySubscriptionEventContract,
 } from '@nmtjs/contract'
-import type { Dependant, Dependencies, DependencyContext } from '@nmtjs/core'
+import type { Dependencies, Handler, HandlerFn } from '@nmtjs/core'
 
 import type {
   EventingAdapterDeadLetterOptions,
@@ -17,19 +16,22 @@ export type EventingSubscriptionUnhandledPolicy = 'ignore' | 'fail'
 export type EventingSubscriptionHandler<
   E extends TAnySubscriptionEventContract,
   Deps extends Dependencies,
-> = (
-  ctx: DependencyContext<Deps>,
-  event: EventingEventOutput<E>,
-  message: EventingAdapterMessage,
-) => MaybePromise<void>
+> = HandlerFn<
+  Deps,
+  [event: EventingEventOutput<E>, message: EventingAdapterMessage],
+  void
+>
 
 export type EventingSubscriptionHandlerDefinition<
   E extends TAnySubscriptionEventContract = TAnySubscriptionEventContract,
   Deps extends Dependencies = Dependencies,
-> = Dependant<Deps> & {
+> = Handler<
+  Deps,
+  [event: EventingEventOutput<E>, message: EventingAdapterMessage],
+  void
+> & {
   event: E
   retry?: EventingConsumerRetryPolicy
-  handler: EventingSubscriptionHandler<E, Deps>
 }
 
 export type AnyEventingSubscriptionHandlerDefinition =

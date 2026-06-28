@@ -26,7 +26,7 @@ export const LoggingCallContextMiddleware = (
   ) => MaybePromise<object> = defaultContext,
 ): AnyMiddleware =>
   createMiddleware({
-    handle: async (_, call, next, payload) => {
+    handler: async (_, call, next, payload) => {
       const loggingContext = await cb(call, payload)
       return loggerLocalStorage.run(loggingContext, async () => {
         return next()
@@ -45,7 +45,7 @@ export const LoggingCallMiddleware = (
 ): AnyMiddleware =>
   createMiddleware({
     dependencies: { logger: CoreInjectables.logger('rpc') },
-    handle: async ({ logger }, call, next, payload) => {
+    handler: async ({ logger }, call, next, payload) => {
       const {
         includePayload,
         includeResponse,
