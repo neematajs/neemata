@@ -1,0 +1,9 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "..",
+    "noEmit": true,
+    "tsBuildInfoFile": "../node_modules/.tmp/tsconfig.baseline.json.tsbuildinfo"
+  },
+  "files": ["./generated/baseline.ts"]
+}

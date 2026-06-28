@@ -1,0 +1,9 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "..",
+    "noEmit": true,
+    "tsBuildInfoFile": "../node_modules/.tmp/tsconfig.map-50.json.tsbuildinfo"
+  },
+  "files": ["./generated/map-50.ts"]
+}

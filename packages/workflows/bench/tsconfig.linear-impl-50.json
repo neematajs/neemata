@@ -1,0 +1,9 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "..",
+    "noEmit": true,
+    "tsBuildInfoFile": "../node_modules/.tmp/tsconfig.linear-impl-50.json.tsbuildinfo"
+  },
+  "files": ["./generated/linear-impl-50.ts"]
+}

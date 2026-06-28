@@ -367,81 +367,26 @@ type CaseImplementationArgument<
   | CaseImplementationObject<Cases>
   | CaseImplementationFactory<Cases, WorkflowDeps, Outputs, Input>
 
-type ItemOfMapNode<Node> =
-  Node extends WorkflowMapTaskNode<string, AnyTaskDefinition, infer Item>
-    ? Item
-    : Node extends WorkflowMapWorkflowNode<
-          string,
-          AnyWorkflowDefinition,
-          infer Item
-        >
-      ? Item
-      : never
+type ItemOfMapNode<Node> = Node extends {
+  readonly _types?: { readonly input: readonly (infer Item)[] }
+}
+  ? Item
+  : never
 
-type NodeOutput<Node> =
-  Node extends WorkflowActivityNode<
-    infer Name extends string,
-    any,
-    infer Output
-  >
-    ? { readonly [Key in Name]: Output }
-    : Node extends WorkflowTaskNode<
-          infer Name extends string,
-          infer Task extends AnyTaskDefinition
-        >
-      ? { readonly [Key in Name]: TaskOutput<Task> }
-      : Node extends WorkflowChildWorkflowNode<
-            infer Name extends string,
-            infer Child extends AnyWorkflowDefinition
-          >
-        ? { readonly [Key in Name]: WorkflowOutput<Child> }
-        : Node extends WorkflowBranchNode<
-              infer Name extends string,
-              any,
-              any,
-              infer Output
-            >
-          ? { readonly [Key in Name]: Output }
-          : Node extends WorkflowParallelNode<
-                infer Name extends string,
-                any,
-                any,
-                infer Output
-              >
-            ? { readonly [Key in Name]: Output }
-            : Node extends WorkflowMapTaskNode<
-                  infer Name extends string,
-                  infer Task extends AnyTaskDefinition,
-                  infer Item,
-                  infer Mode
-                >
-              ? {
-                  readonly [Key in Name]: MapNodeOutput<
-                    Mode,
-                    Item,
-                    TaskOutput<Task>
-                  >
-                }
-              : Node extends WorkflowMapWorkflowNode<
-                    infer Name extends string,
-                    infer Child extends AnyWorkflowDefinition,
-                    infer Item,
-                    infer Mode
-                  >
-                ? {
-                    readonly [Key in Name]: MapNodeOutput<
-                      Mode,
-                      Item,
-                      WorkflowOutput<Child>
-                    >
-                  }
-                : {}
+type NodeOutput<Node> = Node extends {
+  readonly name: infer Name extends string
+  readonly _types?: { readonly output: infer Output }
+}
+  ? { readonly [Key in Name]: Output }
+  : {}
 
 export type WorkflowImplementationChain<
   Workflow extends AnyWorkflowDefinition,
   WorkflowDeps extends Dependencies,
   Nodes extends readonly WorkflowNode[],
   Outputs extends object,
+  WorkflowArgs = WorkflowInput<Workflow>,
+  Result = WorkflowOutput<Workflow>,
 > = Nodes extends readonly [
   infer Node,
   ...infer Rest extends readonly WorkflowNode[],
@@ -457,14 +402,16 @@ export type WorkflowImplementationChain<
           options?: ActivityImplementationOptions<
             WorkflowDeps,
             Outputs,
-            WorkflowInput<Workflow>,
+            WorkflowArgs,
             Input
           >,
         ) => WorkflowImplementationChain<
           Workflow,
           WorkflowDeps,
           Rest,
-          Outputs & NodeOutput<Node>
+          Outputs & NodeOutput<Node>,
+          WorkflowArgs,
+          Result
         >
       }
     : Node extends WorkflowTaskNode<
@@ -477,14 +424,16 @@ export type WorkflowImplementationChain<
             options?: WorkflowInputMapper<
               WorkflowDeps,
               Outputs,
-              WorkflowInput<Workflow>,
+              WorkflowArgs,
               TaskInput<Task>
             >,
           ) => WorkflowImplementationChain<
             Workflow,
             WorkflowDeps,
             Rest,
-            Outputs & NodeOutput<Node>
+            Outputs & NodeOutput<Node>,
+            WorkflowArgs,
+            Result
           >
         }
       : Node extends WorkflowChildWorkflowNode<
@@ -497,14 +446,16 @@ export type WorkflowImplementationChain<
               options?: WorkflowInputMapper<
                 WorkflowDeps,
                 Outputs,
-                WorkflowInput<Workflow>,
+                WorkflowArgs,
                 WorkflowInput<Child>
               >,
             ) => WorkflowImplementationChain<
               Workflow,
               WorkflowDeps,
               Rest,
-              Outputs & NodeOutput<Node>
+              Outputs & NodeOutput<Node>,
+              WorkflowArgs,
+              Result
             >
           }
         : Node extends WorkflowBranchNode<
@@ -516,19 +467,21 @@ export type WorkflowImplementationChain<
                 select: (
                   ctx: DependencyContext<WorkflowDeps>,
                   outputs: Outputs,
-                  workflowInput: WorkflowInput<Workflow>,
+                  workflowInput: WorkflowArgs,
                 ) => keyof Cases & string
                 cases: CaseImplementationFactory<
                   Cases,
                   WorkflowDeps,
                   Outputs,
-                  WorkflowInput<Workflow>
+                  WorkflowArgs
                 >
               }) => WorkflowImplementationChain<
                 Workflow,
                 WorkflowDeps,
                 Rest,
-                Outputs & NodeOutput<Node>
+                Outputs & NodeOutput<Node>,
+                WorkflowArgs,
+                Result
               >
             }
           : Node extends WorkflowParallelNode<
@@ -541,13 +494,15 @@ export type WorkflowImplementationChain<
                     Cases,
                     WorkflowDeps,
                     Outputs,
-                    WorkflowInput<Workflow>
+                    WorkflowArgs
                   >,
                 ) => WorkflowImplementationChain<
                   Workflow,
                   WorkflowDeps,
                   Rest,
-                  Outputs & NodeOutput<Node>
+                  Outputs & NodeOutput<Node>,
+                  WorkflowArgs,
+                  Result
                 >
               }
             : Node extends WorkflowMapTaskNode<
@@ -560,7 +515,7 @@ export type WorkflowImplementationChain<
                     options: WorkflowMapInputMapper<
                       WorkflowDeps,
                       Outputs,
-                      WorkflowInput<Workflow>,
+                      WorkflowArgs,
                       ItemOfMapNode<Node>,
                       TaskInput<Task>
                     >,
@@ -568,7 +523,9 @@ export type WorkflowImplementationChain<
                     Workflow,
                     WorkflowDeps,
                     Rest,
-                    Outputs & NodeOutput<Node>
+                    Outputs & NodeOutput<Node>,
+                    WorkflowArgs,
+                    Result
                   >
                 }
               : Node extends WorkflowMapWorkflowNode<
@@ -581,7 +538,7 @@ export type WorkflowImplementationChain<
                       options: WorkflowMapInputMapper<
                         WorkflowDeps,
                         Outputs,
-                        WorkflowInput<Workflow>,
+                        WorkflowArgs,
                         ItemOfMapNode<Node>,
                         WorkflowInput<Child>
                       >,
@@ -589,22 +546,26 @@ export type WorkflowImplementationChain<
                       Workflow,
                       WorkflowDeps,
                       Rest,
-                      Outputs & NodeOutput<Node>
+                      Outputs & NodeOutput<Node>,
+                      WorkflowArgs,
+                      Result
                     >
                   }
                 : WorkflowImplementationChain<
                     Workflow,
                     WorkflowDeps,
                     Rest,
-                    Outputs
+                    Outputs,
+                    WorkflowArgs,
+                    Result
                   >
   : {
       readonly finish: (
         finish: (
           ctx: DependencyContext<WorkflowDeps>,
           outputs: Outputs,
-          workflowInput: WorkflowInput<Workflow>,
-        ) => MaybePromise<WorkflowOutput<Workflow>>,
+          workflowInput: WorkflowArgs,
+        ) => MaybePromise<Result>,
       ) => WorkflowImplementation<Workflow, WorkflowDeps>
     }
 
@@ -615,7 +576,9 @@ export type WorkflowImplementer<
   Workflow,
   WorkflowDeps,
   WorkflowNodes<Workflow>,
-  {}
+  {},
+  WorkflowInput<Workflow>,
+  WorkflowOutput<Workflow>
 >
 
 export function implementWorkflow<

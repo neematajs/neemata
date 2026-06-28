@@ -1,0 +1,9 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "..",
+    "noEmit": true,
+    "tsBuildInfoFile": "../node_modules/.tmp/tsconfig.branch-100.json.tsbuildinfo"
+  },
+  "files": ["./generated/branch-100.ts"]
+}

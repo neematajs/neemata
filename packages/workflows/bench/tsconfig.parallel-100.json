@@ -1,0 +1,9 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "..",
+    "noEmit": true,
+    "tsBuildInfoFile": "../node_modules/.tmp/tsconfig.parallel-100.json.tsbuildinfo"
+  },
+  "files": ["./generated/parallel-100.ts"]
+}
