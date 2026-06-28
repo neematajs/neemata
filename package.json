@@ -17,8 +17,12 @@
     "check:type": "pnpm tsc -b tsconfig.json --noEmit",
     "check:lint": "biome lint --diagnostic-level=error .",
     "check:fmt": "biome format --diagnostic-level=error .",
+    "check:oxc:lint": "oxlint --quiet .",
+    "check:oxc:fmt": "oxfmt --check .",
+    "check:oxc": "pnpm run check:oxc:fmt && pnpm run check:oxc:lint",
     "check": "pnpm run check:fmt && pnpm run check:lint && pnpm run check:type",
-    "fmt": "biome check --diagnostic-level=error --write ."
+    "fmt": "biome check --diagnostic-level=error --write .",
+    "fmt:oxc": "oxfmt --write ."
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.0",
@@ -27,7 +31,9 @@
     "@vitest/browser-playwright": "4.1.9",
     "@vitest/coverage-v8": "4.1.9",
     "@vitest/ui": "4.1.9",
-    "add": "^2.0.6",
+    "oxfmt": "0.56.0",
+    "oxlint": "1.71.0",
+    "oxlint-tsgolint": "0.23.0",
     "playwright": "^1.61.0",
     "typescript": "7.0.1-rc",
     "vitest": "4.1.9"

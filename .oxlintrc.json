@@ -1,0 +1,23 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["oxc", "typescript", "unicorn", "react"],
+  "options": { "typeAware": true },
+  "rules": {
+    "no-duplicate-imports": ["error", { "allowSeparateTypeImports": true }],
+    "no-sequences": "error",
+    "prefer-const": "error",
+    "prefer-exponentiation-operator": "error",
+    "react/self-closing-comp": "error",
+    "typescript/consistent-type-exports": "off",
+    "typescript/consistent-type-imports": [
+      "error",
+      { "disallowTypeAnnotations": false, "fixStyle": "separate-type-imports" }
+    ],
+    "typescript/prefer-as-const": "error",
+    "typescript/prefer-enum-initializers": "error",
+    "typescript/prefer-function-type": "error",
+    "typescript/prefer-literal-enum-member": "error",
+    "unicorn/prefer-node-protocol": "error",
+    "unicorn/prefer-number-properties": "error"
+  }
+}

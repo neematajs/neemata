@@ -53,13 +53,12 @@ export const loggerLocalStorage = new AsyncLocalStorage<object | undefined>({
 })
 
 export const createLogger = (options: LoggingOptions = {}, $label: string) => {
-  let { destinations, pinoOptions } = options
+  let { destinations } = options
+  const { pinoOptions } = options
 
-  if (!destinations || !destinations?.length) {
+  if (!destinations?.length) {
     destinations = [
-      createConsolePrettyDestination(
-        (options.pinoOptions?.level || 'info') as Level,
-      ),
+      createConsolePrettyDestination((pinoOptions?.level || 'info') as Level),
     ]
   }
 
