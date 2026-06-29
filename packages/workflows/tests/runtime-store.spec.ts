@@ -287,6 +287,36 @@ describe('in-memory workflow store', () => {
     )
   })
 
+  it('rejects reused semantic attempt identities with primitive kind mismatches', async () => {
+    const runtime = createInMemoryWorkflowRuntime()
+    const run = await runtime.store.createRun({
+      workflowName: 'case-generation',
+      input: { scenario: 'a' },
+    })
+    await runtime.store.createNode({
+      runId: run.id,
+      name: 'content',
+      kind: 'activity',
+    })
+    const identity = { runId: run.id, nodeName: 'content' }
+
+    await runtime.store.ensureNodeAttempt({
+      identity,
+      kind: 'activity',
+      input: { scenario: 'a' },
+    })
+
+    await expect(
+      runtime.store.ensureNodeAttempt({
+        identity,
+        kind: 'task',
+        input: { scenario: 'a' },
+      }),
+    ).rejects.toThrow(
+      `Node [${run.id}.content] kind [activity] cannot create [task] attempt`,
+    )
+  })
+
   it('waits a node idempotently', async () => {
     const runtime = createInMemoryWorkflowRuntime()
     const run = await runtime.store.createRun({

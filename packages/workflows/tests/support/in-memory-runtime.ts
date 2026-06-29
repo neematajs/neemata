@@ -322,11 +322,6 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
     },
     async ensureNodeAttempt(params) {
       const key = identityKey(params.identity)
-      const existing = [...attempts.values()].find(
-        (attempt) => attempt.identity && identityKey(attempt.identity) === key,
-      )
-      if (existing) return { attempt: existing, created: false }
-
       const node = nodes.get(
         nodeKey(params.identity.runId, params.identity.nodeName),
       )
@@ -343,6 +338,11 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
           `Node [${node.runId}.${node.name}] kind [${node.kind}] cannot create [${params.kind}] attempt`,
         )
       }
+      const existing = [...attempts.values()].find(
+        (attempt) => attempt.identity && identityKey(attempt.identity) === key,
+      )
+      if (existing) return { attempt: existing, created: false }
+
       const attempt: StoredAttempt = {
         id: id('attempt'),
         runId: params.identity.runId,
