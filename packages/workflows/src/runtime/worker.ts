@@ -325,8 +325,11 @@ async function reconcileStaleAttempt(
   storedNode: StoredNode | undefined,
   storedAttempt: StoredAttempt | undefined,
 ): Promise<void> {
+  const isCurrentAttempt = storedNode?.currentAttemptId === command.attemptId
+
   if (
     storedNode &&
+    isCurrentAttempt &&
     storedAttempt?.status === 'completed' &&
     storedNode.status !== 'completed'
   ) {
@@ -342,6 +345,7 @@ async function reconcileStaleAttempt(
 
   if (
     storedNode &&
+    isCurrentAttempt &&
     storedAttempt?.status === 'failed' &&
     storedNode.status !== 'failed'
   ) {

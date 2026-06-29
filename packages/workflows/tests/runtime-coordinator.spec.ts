@@ -1014,4 +1014,89 @@ describe('workflow runtime coordinator', () => {
       },
     ])
   })
+
+  it('does not reconcile a completed superseded task attempt', async () => {
+    let handlerCalls = 0
+    const embeddingTask = defineTask({
+      name: 'superseded.reconciled.embedding.generate',
+      input: t.object({ text: t.string() }),
+      output: t.object({ vector: t.array(t.number()) }),
+    })
+    const workflow = defineWorkflow({
+      name: 'superseded-reconciled-task-worker',
+      input: t.object({ text: t.string() }),
+      output: t.object({ vector: t.array(t.number()) }),
+    })
+      .task('embedding', embeddingTask)
+      .build()
+
+    const taskImplementation = implementTask(embeddingTask, {
+      handler: async (_ctx, input) => {
+        handlerCalls += 1
+        return { vector: [input.text.length] }
+      },
+    })
+    const implementation = implementWorkflow(workflow)
+      .embedding(embeddingTask)
+      .finish((_ctx, { embedding }) => ({ vector: embedding.vector }))
+
+    const runtime = createInMemoryWorkflowRuntime()
+    const run = await runtime.store.createRun({
+      workflowName: workflow.name,
+      input: { text: 'alpha' },
+    })
+    const container = createTestContainer()
+
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [implementation],
+      workerId: 'coordinator-1',
+      command: {
+        kind: 'continueRun',
+        runId: run.id,
+        workflowName: workflow.name,
+      },
+    })
+
+    const claimed = await runtime.attemptExecutor.claimTask({
+      workerId: 'task-worker-1',
+      taskNames: [embeddingTask.name],
+      leaseMs: 30_000,
+    })
+    expect(claimed).not.toBeNull()
+
+    await runtime.store.completeCurrentAttempt({
+      attemptId: claimed!.command.attemptId,
+      leaseToken: claimed!.command.leaseToken,
+      output: { vector: [5] },
+    })
+    const secondAttempt = await runtime.store.createAttempt({
+      runId: run.id,
+      nodeName: 'embedding',
+      input: { text: 'beta' },
+    })
+
+    await runTaskAttempt({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [implementation],
+      tasks: [taskImplementation],
+      workerId: 'task-worker-1',
+      claimed: claimed!,
+    })
+
+    await runtime.attemptExecutor.release(claimed!)
+
+    const snapshot = await runtime.store.loadRunSnapshot(run.id)
+    expect(handlerCalls).toBe(0)
+    expect(snapshot?.nodes[0]?.status).toBe('running')
+    expect(snapshot?.nodes[0]?.currentAttemptId).toBe(secondAttempt.id)
+    expect(snapshot?.nodes[0]?.output).toBeUndefined()
+    expect(runtime.inspect().continueRunCommands).toHaveLength(0)
+  })
 })
