@@ -859,7 +859,9 @@ Rules:
 The public client should operate on contracts:
 
 ```ts
+await workflows.start(generateEmbedding, input, options)
 await workflows.start(caseGeneration, input, options)
+await workflows.get(generateEmbedding, runId)
 await workflows.get(caseGeneration, runId)
 await workflows.list(caseGeneration, filter)
 await workflows.cancel(caseGeneration, runId, { reason })
@@ -867,7 +869,7 @@ await workflows.cancel(caseGeneration, runId, { reason })
 
 Rules:
 
-- Client methods accept declarations, not implementations.
+- Client methods accept task or workflow declarations, not implementations.
 - Client return types infer input/output from declarations.
 - Client API must not expose queue IDs or adapter-native job objects.
 

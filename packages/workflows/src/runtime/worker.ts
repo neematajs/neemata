@@ -132,6 +132,19 @@ export async function runActivityAttempt(
         nodeName: command.nodeName,
         error,
       })
+      if (snapshot?.run.kind === 'task') {
+        const failed = await input.store.failRun({
+          runId: command.runId,
+          error,
+        })
+        await wakeParentRun({
+          store: input.store,
+          runCoordinationExecutor: input.runCoordinationExecutor,
+          run: failed,
+        })
+        await input.attemptExecutor.ack(input.claimed)
+        return
+      }
       await enqueueContinueRun(input.runCoordinationExecutor, command)
     }
 
@@ -270,6 +283,25 @@ export async function runTaskAttempt(
     return
   }
 
+  if (snapshot?.run.kind === 'task') {
+    await input.store.completeNode({
+      runId: command.runId,
+      nodeName: command.nodeName,
+      output,
+    })
+    const completed = await input.store.completeRun({
+      runId: command.runId,
+      output,
+    })
+    await wakeParentRun({
+      store: input.store,
+      runCoordinationExecutor: input.runCoordinationExecutor,
+      run: completed,
+    })
+    await input.attemptExecutor.ack(input.claimed)
+    return
+  }
+
   if (shouldCompleteNodeFromAttempt(storedNode)) {
     await input.store.completeNode({
       runId: command.runId,
@@ -327,9 +359,35 @@ async function reconcileStaleAttempt(
     storedNode &&
     isCurrentAttempt &&
     storedAttempt?.status === 'completed' &&
-    storedNode.status !== 'completed' &&
-    shouldCompleteNodeFromAttempt(storedNode)
+    storedNode.status !== 'completed'
   ) {
+    if (storedAttempt.runId === command.runId) {
+      const snapshot = await input.store.loadRunSnapshot(command.runId)
+      if (snapshot?.run.kind === 'task') {
+        await input.store.completeNode({
+          runId: command.runId,
+          nodeName: command.nodeName,
+          output: storedAttempt.output,
+        })
+        const completed = await input.store.completeRun({
+          runId: command.runId,
+          output: storedAttempt.output,
+        })
+        await wakeParentRun({
+          store: input.store,
+          runCoordinationExecutor: input.runCoordinationExecutor,
+          run: completed,
+        })
+        await input.attemptExecutor.ack(input.claimed)
+        return
+      }
+    }
+
+    if (!shouldCompleteNodeFromAttempt(storedNode)) {
+      await input.attemptExecutor.ack(input.claimed)
+      return
+    }
+
     await input.store.completeNode({
       runId: command.runId,
       nodeName: command.nodeName,
@@ -346,6 +404,30 @@ async function reconcileStaleAttempt(
     storedAttempt?.status === 'failed' &&
     storedNode.status !== 'failed'
   ) {
+    const snapshot = await input.store.loadRunSnapshot(command.runId)
+    if (snapshot?.run.kind === 'task') {
+      await input.store.failNode({
+        runId: command.runId,
+        nodeName: command.nodeName,
+        error:
+          storedAttempt.error ??
+          new Error(`Workflow attempt [${command.attemptId}] failed`),
+      })
+      const failed = await input.store.failRun({
+        runId: command.runId,
+        error:
+          storedAttempt.error ??
+          new Error(`Workflow attempt [${command.attemptId}] failed`),
+      })
+      await wakeParentRun({
+        store: input.store,
+        runCoordinationExecutor: input.runCoordinationExecutor,
+        run: failed,
+      })
+      await input.attemptExecutor.ack(input.claimed)
+      return
+    }
+
     await input.store.failNode({
       runId: command.runId,
       nodeName: command.nodeName,
@@ -369,6 +451,28 @@ async function reconcileStaleAttempt(
   }
 
   await input.attemptExecutor.ack(input.claimed)
+}
+
+async function wakeParentRun(input: {
+  readonly store: WorkflowStore
+  readonly runCoordinationExecutor: RunCoordinationExecutor
+  readonly run:
+    | {
+        readonly parentRunId?: string
+        readonly parentNodeName?: string
+      }
+    | undefined
+}) {
+  if (!input.run?.parentRunId || !input.run.parentNodeName) return
+
+  const parent = await input.store.loadRunSnapshot(input.run.parentRunId)
+  if (!parent) return
+
+  await input.runCoordinationExecutor.enqueue({
+    kind: 'continueRun',
+    runId: input.run.parentRunId,
+    workflowName: parent.run.workflowName,
+  })
 }
 
 function shouldCompleteNodeFromAttempt(storedNode: StoredNode | undefined) {

@@ -8,6 +8,9 @@
 
 **Tech Stack:** TypeScript, Vitest, `@nmtjs/workflows` runtime interfaces, in-memory runtime test support, `@nmtjs/core` containers, `@nmtjs/type` schemas.
 
+**Current status:** Task 1 is complete in `f2aaa1f7`. Task 2 is in progress in
+the working tree. Task 3, Task 4, and Task 5 remain pending.
+
 ---
 
 ## File Structure
@@ -39,17 +42,17 @@
 
 ## Task 1: Types And Store Contracts
 
-- [ ] Add failing interface tests for `RunKind`, task run fields, and generic child run creation.
-- [ ] Update runtime state/store types.
-- [ ] Update in-memory store enough for store contract tests.
-- [ ] Run:
+- [x] Add failing interface tests for `RunKind`, task run fields, and generic child run creation.
+- [x] Update runtime state/store types.
+- [x] Update in-memory store enough for store contract tests.
+- [x] Run:
 
 ```bash
 pnpm --filter @nmtjs/workflows exec vitest run tests/runtime-interfaces.spec.ts tests/runtime-store.spec.ts --reporter=agent
 pnpm --filter @nmtjs/workflows exec tsc --noEmit --pretty false
 ```
 
-- [ ] Commit:
+- [x] Commit:
 
 ```bash
 git add packages/workflows/src/runtime packages/workflows/src/types packages/workflows/tests/runtime-interfaces.spec.ts packages/workflows/tests/runtime-store.spec.ts packages/workflows/tests/support/in-memory-runtime.ts
@@ -113,6 +116,30 @@ git diff --check
 ```bash
 git add packages/workflows/src/runtime packages/workflows/src/types packages/workflows/tests
 git commit -m "feat: run mapped tasks as child task runs"
+```
+
+## Task 5: Standalone Task Start
+
+- [ ] Add failing tests showing `workflows.start(task, input)` creates a durable
+      task run and dispatches an internal task attempt.
+- [ ] Ensure standalone task completion marks the task run terminal without
+      requiring a workflow coordinator continuation.
+- [ ] Ensure parent-linked task runs still wake the parent workflow on terminal
+      completion.
+- [ ] Run:
+
+```bash
+pnpm --filter @nmtjs/workflows exec vitest run tests/runtime-worker.spec.ts tests/runtime-store.spec.ts --reporter=agent
+pnpm --filter @nmtjs/workflows exec tsc --noEmit --pretty false
+pnpm oxlint . --format=agent
+git diff --check
+```
+
+- [ ] Commit:
+
+```bash
+git add packages/workflows/src packages/workflows/tests
+git commit -m "feat: start tasks as durable runs"
 ```
 
 ## Acceptance Criteria

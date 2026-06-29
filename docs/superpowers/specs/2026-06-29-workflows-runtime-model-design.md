@@ -209,6 +209,10 @@ Continuation is enqueued after:
 Duplicate continuation commands are valid. The store lock/version makes
 continuation idempotent.
 
+Task completion only enqueues `continueRun` for a parent workflow when the task
+run has parent metadata. A standalone task run can complete without a
+coordinator continuation because it has no workflow graph to advance.
+
 ## Executor Split
 
 The runtime should split dispatch interfaces by semantic role.
@@ -377,6 +381,31 @@ Rules:
 ## Primitive Node Semantics
 
 Primitive nodes perform or start work outside the coordinator.
+
+### Standalone Task Start
+
+A top-level task start creates a durable task run, then dispatches one internal
+task attempt through `AttemptExecutor`.
+
+Behavior:
+
+- Create run with `kind: 'task'`, runnable name, decoded input, tags, and
+  idempotency key.
+- Create the task run's internal task node.
+- Persist task input before dispatching the attempt.
+- Dispatch task attempt by task name.
+- Task worker completes or fails the attempt.
+- Task worker completes or fails the task run.
+- If the task run has parent metadata, enqueue parent `continueRun`; otherwise
+  no workflow continuation is needed.
+
+Rules:
+
+- Standalone task start returns the task run ID.
+- Task run ID is the public handle for `get`, `list`, and `cancel`.
+- Attempt ID is internal retry/lease state.
+- Standalone task execution does not require a workflow implementation or
+  workflow coordinator worker.
 
 ### Activity
 

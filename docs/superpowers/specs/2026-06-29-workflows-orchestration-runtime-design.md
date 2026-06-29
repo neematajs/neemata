@@ -178,6 +178,10 @@ Continuation logic:
 
 Duplicate continuations are expected and must be harmless.
 
+Task attempt completion means the task worker first completes the task run. If
+that task run is linked to a parent workflow node, it then enqueues parent
+`continueRun`. Standalone task runs do not need coordinator continuation.
+
 ## Primitive Node Semantics
 
 ### Activity Node
@@ -597,6 +601,8 @@ interface WorkflowStore {
 - Returns existing non-terminal or terminal attempt for the same identity.
 - Does not create duplicate attempts for duplicate continuations.
 - Does not decide whether the identity is branch, parallel, or map.
+- For task runs, the identity belongs to the task run's internal task node. It is
+  not the public workflow node identity.
 
 `ensureChildRun`:
 
