@@ -516,15 +516,76 @@ async function dispatchBranchNode(input: {
     return
   }
 
-  if (selected.kind !== 'activity') {
-    throw unsupportedBranchCase(input.node.name, selected)
-  }
-
   const identity = {
     runId: input.run.id,
     nodeName: input.node.name,
     caseKey,
   } satisfies NodeChildIdentity
+
+  if (selected.kind === 'task') {
+    const children = await input.store.loadNodeChildren({
+      runId: input.run.id,
+      nodeName: input.node.name,
+    })
+    const existingAttempt = children.attempts.find(
+      (attempt) =>
+        attempt.identity && sameNodeChildIdentity(attempt.identity, identity),
+    )
+
+    if (existingAttempt) {
+      await dispatchTaskAttempt({
+        store: input.store,
+        attemptExecutor: input.attemptExecutor,
+        runCoordinationExecutor: input.runCoordinationExecutor,
+        workflowName: input.workflow.workflow.name,
+        taskName: selected.target.name,
+        runId: input.run.id,
+        nodeName: input.node.name,
+        prepareAttempt: async () => ({
+          attempt: existingAttempt,
+          commandInput: existingAttempt.input,
+        }),
+      })
+      return
+    }
+
+    const nodeInput = selected.input
+      ? selected.input(input.workflowCtx, input.outputs, input.run.input)
+      : input.run.input
+
+    await input.store.setNodeInput({
+      runId: input.run.id,
+      nodeName: input.node.name,
+      input: nodeInput,
+    })
+
+    await dispatchTaskAttempt({
+      store: input.store,
+      attemptExecutor: input.attemptExecutor,
+      runCoordinationExecutor: input.runCoordinationExecutor,
+      workflowName: input.workflow.workflow.name,
+      taskName: selected.target.name,
+      runId: input.run.id,
+      nodeName: input.node.name,
+      prepareAttempt: async () => {
+        const result = await input.store.ensureNodeAttempt({
+          identity,
+          kind: 'task',
+          input: nodeInput,
+        })
+        return {
+          attempt: result.attempt,
+          commandInput: result.created ? nodeInput : result.attempt.input,
+        }
+      },
+    })
+    return
+  }
+
+  if (selected.kind !== 'activity') {
+    throw unsupportedBranchCase(input.node.name, selected)
+  }
+
   const children = await input.store.loadNodeChildren({
     runId: input.run.id,
     nodeName: input.node.name,
@@ -612,6 +673,52 @@ async function dispatchActivityAttempt(input: {
       kind: 'activityAttempt',
       workflowName: input.workflowName,
       activityName: input.activityName,
+      runId: input.runId,
+      nodeName: input.nodeName,
+      attemptId: attempt.id,
+      leaseToken: attempt.leaseToken!,
+      input: commandInput,
+    })
+  } catch (error) {
+    await input.store.failCurrentAttempt({
+      attemptId: attempt.id,
+      leaseToken: attempt.leaseToken!,
+      error,
+    })
+    await input.store.failNode({
+      runId: input.runId,
+      nodeName: input.nodeName,
+      error,
+    })
+    await failRunAndWakeParent({
+      store: input.store,
+      runCoordinationExecutor: input.runCoordinationExecutor,
+      runId: input.runId,
+      error,
+    })
+  }
+}
+
+async function dispatchTaskAttempt(input: {
+  readonly store: WorkflowStore
+  readonly attemptExecutor: AttemptExecutor
+  readonly runCoordinationExecutor: RunCoordinationExecutor
+  readonly workflowName: string
+  readonly taskName: string
+  readonly runId: string
+  readonly nodeName: string
+  readonly prepareAttempt: () => Promise<{
+    readonly attempt: StoredAttempt
+    readonly commandInput: unknown
+  }>
+}) {
+  const { attempt, commandInput } = await input.prepareAttempt()
+
+  try {
+    await input.attemptExecutor.dispatchTask({
+      kind: 'taskAttempt',
+      workflowName: input.workflowName,
+      taskName: input.taskName,
       runId: input.runId,
       nodeName: input.nodeName,
       attemptId: attempt.id,

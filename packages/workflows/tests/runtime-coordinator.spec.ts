@@ -600,6 +600,197 @@ describe('workflow runtime coordinator', () => {
     expect(snapshot?.nodes[0]?.output).toStrictEqual({ text: 'empty:alpha' })
   })
 
+  it('runs a branch task case and completes from selected output', async () => {
+    const task = defineTask({
+      name: 'branch.generate-summary',
+      input: t.object({ scenario: t.string() }),
+      output: t.object({ text: t.string() }),
+    })
+    const workflow = defineWorkflow({
+      name: 'branch-task-workflow',
+      input: t.object({ scenario: t.string() }),
+      output: t.object({ text: t.string() }),
+    })
+      .branch('content', {
+        output: t.object({ text: t.string() }),
+        cases: (helpers) => ({
+          summary: helpers.task(task),
+        }),
+      })
+      .build()
+
+    const taskImplementation = implementTask(task, {
+      handler: async (_ctx, input) => ({ text: `task:${input.scenario}` }),
+    })
+    const workflowImplementation = implementWorkflow(workflow)
+      .content({
+        select: () => 'summary',
+        cases: ({ task: taskCase }) => ({
+          summary: taskCase(task, {
+            input: (_ctx, _outputs, input) => ({ scenario: input.scenario }),
+          }),
+        }),
+      })
+      .finish((_ctx, { content }) => ({ text: content.text }))
+
+    const runtime = createInMemoryWorkflowRuntime()
+    const container = createTestContainer()
+    const run = await runtime.store.createRun({
+      workflowName: workflow.name,
+      input: { scenario: 'alpha' },
+    })
+    const command = {
+      kind: 'continueRun' as const,
+      runId: run.id,
+      workflowName: workflow.name,
+    }
+
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [workflowImplementation],
+      workerId: 'coordinator-1',
+      command,
+    })
+
+    const afterDispatch = await runtime.store.loadRunSnapshot(run.id)
+    const taskCommands = runtime.inspect().taskCommands
+    expect(afterDispatch?.nodes[0]?.selectedCase).toBe('summary')
+    expect(afterDispatch?.nodes[0]?.status).toBe('waiting')
+    expect(afterDispatch?.attempts).toHaveLength(1)
+    expect(afterDispatch?.attempts[0]?.identity).toStrictEqual({
+      runId: run.id,
+      nodeName: 'content',
+      caseKey: 'summary',
+    })
+    expect(taskCommands[0]?.payload).toMatchObject({
+      kind: 'taskAttempt',
+      workflowName: workflow.name,
+      taskName: task.name,
+      runId: run.id,
+      nodeName: 'content',
+      input: { scenario: 'alpha' },
+    })
+
+    const claimed = await runtime.attemptExecutor.claimTask({
+      workerId: 'task-worker-1',
+      taskNames: [task.name],
+      leaseMs: 30_000,
+    })
+    expect(claimed).not.toBeNull()
+
+    await runTaskAttempt({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      tasks: [taskImplementation],
+      workerId: 'task-worker-1',
+      claimed: claimed!,
+    })
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [workflowImplementation],
+      workerId: 'coordinator-1',
+      command,
+    })
+
+    const final = await runtime.store.loadRunSnapshot(run.id)
+    expect(final?.nodes[0]?.status).toBe('completed')
+    expect(final?.nodes[0]?.output).toStrictEqual({ text: 'task:alpha' })
+    expect(final?.run.status).toBe('completed')
+    expect(final?.run.output).toStrictEqual({ text: 'task:alpha' })
+  })
+
+  it('reuses original branch task attempt input on repeated continuation', async () => {
+    const task = defineTask({
+      name: 'branch.stable-summary',
+      input: t.object({ scenario: t.string() }),
+      output: t.object({ text: t.string() }),
+    })
+    const workflow = defineWorkflow({
+      name: 'branch-task-input-reuse',
+      input: t.object({ scenario: t.string() }),
+      output: t.object({ text: t.string() }),
+    })
+      .branch('content', {
+        output: t.object({ text: t.string() }),
+        cases: (helpers) => ({
+          summary: helpers.task(task),
+        }),
+      })
+      .build()
+
+    let mapCalls = 0
+    const implementation = implementWorkflow(workflow)
+      .content({
+        select: () => 'summary',
+        cases: ({ task: taskCase }) => ({
+          summary: taskCase(task, {
+            input: (_ctx, _outputs, input) => {
+              mapCalls += 1
+              if (mapCalls > 1) throw new Error('task mapper called twice')
+              return { scenario: `${input.scenario}-${mapCalls}` }
+            },
+          }),
+        }),
+      })
+      .finish((_ctx, { content }) => ({ text: content.text }))
+
+    const runtime = createInMemoryWorkflowRuntime()
+    const container = createTestContainer()
+    const run = await runtime.store.createRun({
+      workflowName: workflow.name,
+      input: { scenario: 'alpha' },
+    })
+    const command = {
+      kind: 'continueRun' as const,
+      runId: run.id,
+      workflowName: workflow.name,
+    }
+
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [implementation],
+      workerId: 'coordinator-1',
+      command,
+    })
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [implementation],
+      workerId: 'coordinator-1',
+      command,
+    })
+
+    const snapshot = await runtime.store.loadRunSnapshot(run.id)
+    const taskCommands = runtime.inspect().taskCommands
+    const attemptId = taskCommands[0]?.payload.attemptId
+    expect(mapCalls).toBe(1)
+    expect(snapshot?.nodes[0]?.input).toStrictEqual({ scenario: 'alpha-1' })
+    expect(snapshot?.attempts).toHaveLength(1)
+    expect(snapshot?.attempts[0]?.input).toStrictEqual({ scenario: 'alpha-1' })
+    expect(taskCommands).toHaveLength(2)
+    expect(taskCommands.map((item) => item.payload.attemptId)).toEqual([
+      attemptId,
+      attemptId,
+    ])
+    expect(taskCommands.map((item) => item.payload.input)).toStrictEqual([
+      { scenario: 'alpha-1' },
+      { scenario: 'alpha-1' },
+    ])
+  })
+
   it('releases a claimed activity attempt when no workflow implementation is registered', async () => {
     const workflow = defineWorkflow({
       name: 'unrouted-activity-worker',
