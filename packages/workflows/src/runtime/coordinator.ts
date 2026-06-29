@@ -1158,6 +1158,8 @@ async function dispatchMapTaskNode(input: {
     output?: unknown
     error?: unknown
   }> = []
+  const concurrency = mapConcurrencyLimit(input.node)
+  let activeChildren = 0
 
   for (const item of itemSnapshot) {
     const identity = item.identity
@@ -1168,6 +1170,9 @@ async function dispatchMapTaskNode(input: {
     if (existingLink) {
       const snapshot = await input.store.loadRunSnapshot(existingLink.childRunId)
       const childRun = snapshot?.run
+      const childRunIsTerminal = isTerminalChildRun(childRun)
+      if (!childRunIsTerminal) activeChildren += 1
+
       if (input.node.mode === 'start-only') {
         outputItems[item.index] = {
           item: item.item,
@@ -1178,7 +1183,7 @@ async function dispatchMapTaskNode(input: {
         continue
       }
 
-      if (!childRun || !isTerminalRunStatus(childRun.status)) {
+      if (!childRunIsTerminal) {
         await dispatchTaskRunAttempt({
           store: input.store,
           attemptExecutor: input.attemptExecutor,
@@ -1189,6 +1194,8 @@ async function dispatchMapTaskNode(input: {
         })
         continue
       }
+
+      if (!childRun) continue
 
       if (childRun.status === 'completed') {
         await input.store.completeMapItem({
@@ -1244,6 +1251,8 @@ async function dispatchMapTaskNode(input: {
       return
     }
 
+    if (activeChildren >= concurrency) continue
+
     const nodeInput = input.node.input(
       input.workflowCtx,
       input.outputs,
@@ -1268,6 +1277,7 @@ async function dispatchMapTaskNode(input: {
       taskRunId: child.childRun.id,
       taskInput: nodeInput,
     })
+    activeChildren += 1
     if (input.node.mode === 'start-only') {
       outputItems[item.index] = {
         item: item.item,
@@ -1279,10 +1289,7 @@ async function dispatchMapTaskNode(input: {
   }
 
   const completedItems = outputItems.filter((item) => item !== undefined)
-  if (
-    input.node.mode === 'start-only' ||
-    completedItems.length === itemSnapshot.length
-  ) {
+  if (completedItems.length === itemSnapshot.length) {
     const output = { items: completedItems }
     await input.store.completeNode({
       runId: input.run.id,
@@ -1358,6 +1365,8 @@ async function dispatchMapWorkflowNode(input: {
     output?: unknown
     error?: unknown
   }> = []
+  const concurrency = mapConcurrencyLimit(input.node)
+  let activeChildren = 0
 
   for (const item of itemSnapshot) {
     const identity = item.identity
@@ -1368,6 +1377,9 @@ async function dispatchMapWorkflowNode(input: {
     if (existingLink) {
       const snapshot = await input.store.loadRunSnapshot(existingLink.childRunId)
       const childRun = snapshot?.run
+      const childRunIsTerminal = isTerminalChildRun(childRun)
+      if (!childRunIsTerminal) activeChildren += 1
+
       if (input.node.mode === 'start-only') {
         outputItems[item.index] = {
           item: item.item,
@@ -1378,7 +1390,7 @@ async function dispatchMapWorkflowNode(input: {
         continue
       }
 
-      if (!childRun || !isTerminalRunStatus(childRun.status)) {
+      if (!childRunIsTerminal) {
         await input.runCoordinationExecutor.enqueue({
           kind: 'continueRun',
           runId: existingLink.childRunId,
@@ -1386,6 +1398,8 @@ async function dispatchMapWorkflowNode(input: {
         })
         continue
       }
+
+      if (!childRun) continue
 
       if (childRun.status === 'completed') {
         await input.store.completeMapItem({
@@ -1442,6 +1456,8 @@ async function dispatchMapWorkflowNode(input: {
       return
     }
 
+    if (activeChildren >= concurrency) continue
+
     const nodeInput = input.node.input(
       input.workflowCtx,
       input.outputs,
@@ -1462,6 +1478,7 @@ async function dispatchMapWorkflowNode(input: {
       runId: child.childRun.id,
       workflowName: input.node.target.name,
     })
+    activeChildren += 1
     if (input.node.mode === 'start-only') {
       outputItems[item.index] = {
         item: item.item,
@@ -1473,10 +1490,7 @@ async function dispatchMapWorkflowNode(input: {
   }
 
   const completedItems = outputItems.filter((item) => item !== undefined)
-  if (
-    input.node.mode === 'start-only' ||
-    completedItems.length === itemSnapshot.length
-  ) {
+  if (completedItems.length === itemSnapshot.length) {
     const output = { items: completedItems }
     await input.store.completeNode({
       runId: input.run.id,
@@ -1521,6 +1535,14 @@ function unsupportedParallelCase(
 
 function hasStoredNodeInput(node: { readonly input?: unknown }): boolean {
   return Object.prototype.hasOwnProperty.call(node, 'input')
+}
+
+function mapConcurrencyLimit(node: MapNodeImplementation): number {
+  return node.concurrency ?? Number.POSITIVE_INFINITY
+}
+
+function isTerminalChildRun(run: StoredRun | undefined): boolean {
+  return !!run && isTerminalRunStatus(run.status)
 }
 
 async function dispatchActivityAttempt(input: {

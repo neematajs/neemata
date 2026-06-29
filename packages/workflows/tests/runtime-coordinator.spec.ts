@@ -1389,6 +1389,131 @@ describe('workflow runtime coordinator', () => {
     })
   })
 
+  it('bounds mapTask child run dispatch by node concurrency', async () => {
+    const embeddingTask = defineTask({
+      name: 'map.bounded-embedding',
+      input: t.object({ text: t.string() }),
+      output: t.object({ id: t.string() }),
+    })
+    const workflow = defineWorkflow({
+      name: 'map-task-bounded-workflow',
+      input: t.object({ texts: t.array(t.string()) }),
+      output: t.object({ ids: t.array(t.string()) }),
+    })
+      .mapTask('embeddings', embeddingTask, {
+        item: t.string(),
+        mode: 'wait-all',
+        concurrency: 2,
+      })
+      .build()
+
+    const implementation = implementWorkflow(workflow)
+      .embeddings(embeddingTask, {
+        items: (_ctx, _outputs, input) => input.texts,
+        input: (_ctx, _outputs, item) => ({ text: item }),
+      })
+      .finish((_ctx, { embeddings }) => ({
+        ids: embeddings.items.map((item) => item.output.id),
+      }))
+
+    const runtime = createInMemoryWorkflowRuntime()
+    const container = createTestContainer()
+    const run = await runtime.store.createRun({
+      workflowName: workflow.name,
+      input: { texts: ['alpha', 'beta', 'gamma'] },
+    })
+    const command = {
+      kind: 'continueRun' as const,
+      runId: run.id,
+      workflowName: workflow.name,
+    }
+
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [implementation],
+      workerId: 'coordinator-1',
+      command,
+    })
+
+    const firstBatch = await runtime.store.loadRunSnapshot(run.id)
+    expect(firstBatch?.nodes[0]?.status).toBe('waiting')
+    expect(firstBatch?.childLinks.map((link) => link.itemIndex)).toStrictEqual([
+      0, 1,
+    ])
+
+    await runtime.store.completeRun({
+      runId: firstBatch!.childLinks[0]!.childRunId,
+      output: { id: 'embedding:alpha' },
+    })
+
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [implementation],
+      workerId: 'coordinator-1',
+      command,
+    })
+
+    const secondBatch = await runtime.store.loadRunSnapshot(run.id)
+    expect(secondBatch?.nodes[0]?.status).toBe('waiting')
+    expect(secondBatch?.childLinks.map((link) => link.itemIndex)).toStrictEqual([
+      0, 1, 2,
+    ])
+
+    await runtime.store.completeRun({
+      runId: secondBatch!.childLinks[1]!.childRunId,
+      output: { id: 'embedding:beta' },
+    })
+    await runtime.store.completeRun({
+      runId: secondBatch!.childLinks[2]!.childRunId,
+      output: { id: 'embedding:gamma' },
+    })
+
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [implementation],
+      workerId: 'coordinator-1',
+      command,
+    })
+
+    const final = await runtime.store.loadRunSnapshot(run.id)
+    const runIds = final!.childLinks.map((link) => link.childRunId)
+    expect(final?.nodes[0]?.status).toBe('completed')
+    expect(final?.nodes[0]?.output).toStrictEqual({
+      items: [
+        {
+          item: 'alpha',
+          index: 0,
+          runId: runIds[0],
+          output: { id: 'embedding:alpha' },
+        },
+        {
+          item: 'beta',
+          index: 1,
+          runId: runIds[1],
+          output: { id: 'embedding:beta' },
+        },
+        {
+          item: 'gamma',
+          index: 2,
+          runId: runIds[2],
+          output: { id: 'embedding:gamma' },
+        },
+      ],
+    })
+    expect(final?.run.output).toStrictEqual({
+      ids: ['embedding:alpha', 'embedding:beta', 'embedding:gamma'],
+    })
+  })
+
   it('runs mapTask wait-settled items without failing parent on item failure', async () => {
     const embeddingTask = defineTask({
       name: 'map.settled-embedding',
@@ -1673,6 +1798,131 @@ describe('workflow runtime coordinator', () => {
     expect(final?.run.status).toBe('completed')
     expect(final?.run.output).toStrictEqual({
       ids: ['child:alpha', 'child:beta'],
+    })
+  })
+
+  it('bounds mapWorkflow child run dispatch by node concurrency', async () => {
+    const childWorkflow = defineWorkflow({
+      name: 'map-bounded-child',
+      input: t.object({ text: t.string() }),
+      output: t.object({ id: t.string() }),
+    }).build()
+    const parentWorkflow = defineWorkflow({
+      name: 'map-workflow-bounded-parent',
+      input: t.object({ texts: t.array(t.string()) }),
+      output: t.object({ ids: t.array(t.string()) }),
+    })
+      .mapWorkflow('children', childWorkflow, {
+        item: t.string(),
+        mode: 'wait-all',
+        concurrency: 2,
+      })
+      .build()
+
+    const parentImplementation = implementWorkflow(parentWorkflow)
+      .children(childWorkflow, {
+        items: (_ctx, _outputs, input) => input.texts,
+        input: (_ctx, _outputs, item) => ({ text: item }),
+      })
+      .finish((_ctx, { children }) => ({
+        ids: children.items.map((item) => item.output.id),
+      }))
+
+    const runtime = createInMemoryWorkflowRuntime()
+    const container = createTestContainer()
+    const parentRun = await runtime.store.createRun({
+      workflowName: parentWorkflow.name,
+      input: { texts: ['alpha', 'beta', 'gamma'] },
+    })
+    const parentCommand = {
+      kind: 'continueRun' as const,
+      runId: parentRun.id,
+      workflowName: parentWorkflow.name,
+    }
+
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [parentImplementation],
+      workerId: 'parent-coordinator',
+      command: parentCommand,
+    })
+
+    const firstBatch = await runtime.store.loadRunSnapshot(parentRun.id)
+    expect(firstBatch?.nodes[0]?.status).toBe('waiting')
+    expect(firstBatch?.childLinks.map((link) => link.itemIndex)).toStrictEqual([
+      0, 1,
+    ])
+
+    await runtime.store.completeRun({
+      runId: firstBatch!.childLinks[0]!.childRunId,
+      output: { id: 'child:alpha' },
+    })
+
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [parentImplementation],
+      workerId: 'parent-coordinator',
+      command: parentCommand,
+    })
+
+    const secondBatch = await runtime.store.loadRunSnapshot(parentRun.id)
+    expect(secondBatch?.nodes[0]?.status).toBe('waiting')
+    expect(secondBatch?.childLinks.map((link) => link.itemIndex)).toStrictEqual([
+      0, 1, 2,
+    ])
+
+    await runtime.store.completeRun({
+      runId: secondBatch!.childLinks[1]!.childRunId,
+      output: { id: 'child:beta' },
+    })
+    await runtime.store.completeRun({
+      runId: secondBatch!.childLinks[2]!.childRunId,
+      output: { id: 'child:gamma' },
+    })
+
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [parentImplementation],
+      workerId: 'parent-coordinator',
+      command: parentCommand,
+    })
+
+    const final = await runtime.store.loadRunSnapshot(parentRun.id)
+    const runIds = final!.childLinks.map((link) => link.childRunId)
+    expect(final?.nodes[0]?.status).toBe('completed')
+    expect(final?.nodes[0]?.output).toStrictEqual({
+      items: [
+        {
+          item: 'alpha',
+          index: 0,
+          runId: runIds[0],
+          output: { id: 'child:alpha' },
+        },
+        {
+          item: 'beta',
+          index: 1,
+          runId: runIds[1],
+          output: { id: 'child:beta' },
+        },
+        {
+          item: 'gamma',
+          index: 2,
+          runId: runIds[2],
+          output: { id: 'child:gamma' },
+        },
+      ],
+    })
+    expect(final?.run.output).toStrictEqual({
+      ids: ['child:alpha', 'child:beta', 'child:gamma'],
     })
   })
 
