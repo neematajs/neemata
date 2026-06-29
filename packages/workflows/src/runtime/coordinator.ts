@@ -316,12 +316,6 @@ async function dispatchWorkflowNode(input: {
   })
   if (existing.status === 'completed' || existing.status === 'failed') return
 
-  const nodeInput =
-    existing.input ??
-    (input.node.input
-      ? input.node.input(input.workflowCtx, input.outputs, input.run.input)
-      : input.run.input)
-
   await dispatchChildWorkflow({
     store: input.store,
     attemptExecutor: input.attemptExecutor,
@@ -336,7 +330,12 @@ async function dispatchWorkflowNode(input: {
       nodeName: input.node.name,
     },
     workflowName: input.node.target.name,
-    nodeInput,
+    resolveNodeInput: () =>
+      hasStoredNodeInput(existing)
+        ? existing.input
+        : input.node.input
+          ? input.node.input(input.workflowCtx, input.outputs, input.run.input)
+          : input.run.input,
   })
 }
 
@@ -355,7 +354,7 @@ async function dispatchChildWorkflow(input: {
     readonly caseKey?: string
   }
   readonly workflowName: string
-  readonly nodeInput: unknown
+  readonly resolveNodeInput: () => unknown
 }): Promise<void> {
   const children = await input.store.loadNodeChildren({
     runId: input.run.id,
@@ -416,15 +415,16 @@ async function dispatchChildWorkflow(input: {
     return
   }
 
+  const nodeInput = input.resolveNodeInput()
   await input.store.setNodeInput({
     runId: input.run.id,
     nodeName: input.nodeName,
-    input: input.nodeInput,
+    input: nodeInput,
   })
   const child = await input.store.ensureChildWorkflowRun({
     identity: input.identity,
     workflowName: input.workflowName,
-    input: input.nodeInput,
+    input: nodeInput,
     parentRunId: input.run.id,
     parentNodeName: input.nodeName,
     rootRunId: input.run.rootRunId,
@@ -559,12 +559,6 @@ async function dispatchBranchNode(input: {
   } satisfies NodeChildIdentity
 
   if (selected.kind === 'workflow') {
-    const nodeInput =
-      existing.input ??
-      (selected.input
-        ? selected.input(input.workflowCtx, input.outputs, input.run.input)
-        : input.run.input)
-
     await dispatchChildWorkflow({
       store: input.store,
       attemptExecutor: input.attemptExecutor,
@@ -576,7 +570,12 @@ async function dispatchBranchNode(input: {
       nodeName: input.node.name,
       identity,
       workflowName: selected.target.name,
-      nodeInput,
+      resolveNodeInput: () =>
+        hasStoredNodeInput(existing)
+          ? existing.input
+          : selected.input
+            ? selected.input(input.workflowCtx, input.outputs, input.run.input)
+            : input.run.input,
     })
     return
   }
@@ -710,6 +709,10 @@ function unsupportedBranchCase(
   return new Error(
     `Unsupported branch ${selected.kind} case [${selected.name}] in node [${nodeName}]`,
   )
+}
+
+function hasStoredNodeInput(node: { readonly input?: unknown }): boolean {
+  return Object.prototype.hasOwnProperty.call(node, 'input')
 }
 
 async function dispatchActivityAttempt(input: {

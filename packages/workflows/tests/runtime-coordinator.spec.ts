@@ -888,6 +888,97 @@ describe('workflow runtime coordinator', () => {
     expect(final?.run.output).toStrictEqual({ text: 'child:alpha' })
   })
 
+  it('does not remap branch child workflow input after link exists', async () => {
+    const childWorkflow = defineWorkflow({
+      name: 'branch-remap-child',
+      input: t.unknown(),
+      output: t.object({ text: t.string() }),
+    }).build()
+    const parentWorkflow = defineWorkflow({
+      name: 'branch-remap-parent',
+      input: t.object({ scenario: t.string() }),
+      output: t.object({ text: t.string() }),
+    })
+      .branch('content', {
+        output: t.object({ text: t.string() }),
+        cases: ({ workflow }) => ({
+          child: workflow(childWorkflow),
+        }),
+      })
+      .build()
+
+    let mapCalls = 0
+    const implementation = implementWorkflow(parentWorkflow)
+      .content({
+        select: () => 'child',
+        cases: ({ workflow }) => ({
+          child: workflow(childWorkflow, {
+            input: () => {
+              mapCalls += 1
+              if (mapCalls > 1) throw new Error('mapper called twice')
+              return undefined
+            },
+          }),
+        }),
+      })
+      .finish((_ctx, { content }) => ({ text: content.text }))
+
+    const runtime = createInMemoryWorkflowRuntime()
+    const container = createTestContainer()
+    const parentRun = await runtime.store.createRun({
+      workflowName: parentWorkflow.name,
+      input: { scenario: 'alpha' },
+    })
+    const command = {
+      kind: 'continueRun' as const,
+      runId: parentRun.id,
+      workflowName: parentWorkflow.name,
+    }
+
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [implementation],
+      workerId: 'parent-coordinator',
+      command,
+    })
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [implementation],
+      workerId: 'parent-coordinator',
+      command,
+    })
+
+    const snapshot = await runtime.store.loadRunSnapshot(parentRun.id)
+    const childLink = snapshot?.childLinks[0]
+    expect(mapCalls).toBe(1)
+    expect(snapshot?.nodes[0]).toHaveProperty('input', undefined)
+    expect(snapshot?.childLinks).toHaveLength(1)
+    expect(runtime.inspect().continueRunCommands).toStrictEqual([
+      {
+        id: expect.any(String),
+        payload: {
+          kind: 'continueRun',
+          runId: childLink?.childRunId,
+          workflowName: childWorkflow.name,
+        },
+      },
+      {
+        id: expect.any(String),
+        payload: {
+          kind: 'continueRun',
+          runId: childLink?.childRunId,
+          workflowName: childWorkflow.name,
+        },
+      },
+    ])
+  })
+
   it('releases a claimed activity attempt when no workflow implementation is registered', async () => {
     const workflow = defineWorkflow({
       name: 'unrouted-activity-worker',
@@ -2109,6 +2200,87 @@ describe('workflow runtime coordinator', () => {
         .inspect()
         .runs.filter((run) => run.workflowName === childWorkflow.name),
     ).toHaveLength(1)
+  })
+
+  it('does not remap direct child workflow input after link exists', async () => {
+    const childWorkflow = defineWorkflow({
+      name: 'direct-remap-child',
+      input: t.unknown(),
+      output: t.object({ text: t.string() }),
+    }).build()
+    const parentWorkflow = defineWorkflow({
+      name: 'direct-remap-parent',
+      input: t.object({ scenario: t.string() }),
+      output: t.object({ text: t.string() }),
+    })
+      .workflow('child', childWorkflow)
+      .build()
+
+    let mapCalls = 0
+    const implementation = implementWorkflow(parentWorkflow)
+      .child(childWorkflow, {
+        input: () => {
+          mapCalls += 1
+          if (mapCalls > 1) throw new Error('mapper called twice')
+          return undefined
+        },
+      })
+      .finish((_ctx, { child }) => ({ text: child.text }))
+
+    const runtime = createInMemoryWorkflowRuntime()
+    const container = createTestContainer()
+    const parentRun = await runtime.store.createRun({
+      workflowName: parentWorkflow.name,
+      input: { scenario: 'alpha' },
+    })
+    const command = {
+      kind: 'continueRun' as const,
+      runId: parentRun.id,
+      workflowName: parentWorkflow.name,
+    }
+
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [implementation],
+      workerId: 'parent-coordinator',
+      command,
+    })
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [implementation],
+      workerId: 'parent-coordinator',
+      command,
+    })
+
+    const snapshot = await runtime.store.loadRunSnapshot(parentRun.id)
+    const childLink = snapshot?.childLinks[0]
+    expect(mapCalls).toBe(1)
+    expect(snapshot?.nodes[0]).toHaveProperty('input', undefined)
+    expect(snapshot?.childLinks).toHaveLength(1)
+    expect(runtime.inspect().continueRunCommands).toStrictEqual([
+      {
+        id: expect.any(String),
+        payload: {
+          kind: 'continueRun',
+          runId: childLink?.childRunId,
+          workflowName: childWorkflow.name,
+        },
+      },
+      {
+        id: expect.any(String),
+        payload: {
+          kind: 'continueRun',
+          runId: childLink?.childRunId,
+          workflowName: childWorkflow.name,
+        },
+      },
+    ])
   })
 
   it('re-enqueues an existing non-terminal child workflow after child enqueue fails', async () => {
