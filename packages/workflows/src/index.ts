@@ -57,6 +57,7 @@ export type {
   StoredNode,
   StoredRun,
   StoredTimelineEvent,
+  StartTaskRunInput,
   TaskAttemptCommand,
   TaskWorkerClaim,
   WaitNodeParams,
@@ -80,6 +81,7 @@ export type {
   MapWaitSettledOutput,
   MaybePromise,
   RetryPolicy,
+  RunnableInput,
   RunnableRun,
   RunKind,
   Schema,
@@ -115,5 +117,6 @@ export {
   runActivityAttempt,
   runTaskAttempt,
   runWithConcurrency,
+  startTaskRun,
 } from './runtime/index.ts'
 export { isTerminalNodeStatus, isTerminalRunStatus } from './runtime/index.ts'

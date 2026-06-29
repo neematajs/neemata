@@ -9,8 +9,8 @@ export type {
   TaskAttemptCommand,
   TaskWorkerClaim,
 } from './commands.ts'
-export { continueWorkflowRun } from './coordinator.ts'
-export type { ContinueWorkflowRunInput } from './coordinator.ts'
+export { continueWorkflowRun, startTaskRun } from './coordinator.ts'
+export type { ContinueWorkflowRunInput, StartTaskRunInput } from './coordinator.ts'
 export type { AttemptExecutor, RunCoordinationExecutor } from './executors.ts'
 export { createWorkflowRuntimeRegistry } from './registry.ts'
 export type { WorkflowRuntimeRegistry } from './registry.ts'

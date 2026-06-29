@@ -9,6 +9,7 @@ import type {
   WorkflowImplementation,
   WorkflowCaseImplementation,
 } from '../implement/index.ts'
+import type { AnyTaskDefinition, TaskInput } from '../types/index.ts'
 import type { ContinueRunCommand } from './commands.ts'
 import type { AttemptExecutor, RunCoordinationExecutor } from './executors.ts'
 import { createWorkflowRuntimeRegistry } from './registry.ts'
@@ -27,6 +28,41 @@ export type ContinueWorkflowRunInput = {
   readonly workerId: string
   readonly command: ContinueRunCommand
   readonly leaseMs?: number
+}
+
+export type StartTaskRunInput<Task extends AnyTaskDefinition> = {
+  readonly store: WorkflowStore
+  readonly runCoordinationExecutor: RunCoordinationExecutor
+  readonly attemptExecutor: AttemptExecutor
+  readonly task: Task
+  readonly input: TaskInput<Task>
+  readonly tags?: Readonly<Record<string, string>>
+  readonly idempotencyKey?: readonly unknown[]
+}
+
+export async function startTaskRun<Task extends AnyTaskDefinition>(
+  input: StartTaskRunInput<Task>,
+): Promise<StoredRun> {
+  const run = await input.store.createRun({
+    kind: 'task',
+    name: input.task.name,
+    workflowName: input.task.name,
+    taskName: input.task.name,
+    input: input.input,
+    tags: input.tags,
+    idempotencyKey: input.idempotencyKey,
+  })
+
+  await dispatchTaskRunAttempt({
+    store: input.store,
+    attemptExecutor: input.attemptExecutor,
+    runCoordinationExecutor: input.runCoordinationExecutor,
+    taskName: input.task.name,
+    taskRunId: run.id,
+    taskInput: input.input,
+  })
+
+  return run
 }
 
 export async function continueWorkflowRun(

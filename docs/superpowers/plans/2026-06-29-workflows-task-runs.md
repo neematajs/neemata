@@ -9,8 +9,8 @@
 **Tech Stack:** TypeScript, Vitest, `@nmtjs/workflows` runtime interfaces, in-memory runtime test support, `@nmtjs/core` containers, `@nmtjs/type` schemas.
 
 **Current status:** Task 1 is complete in `f2aaa1f7`. Task 2 and Task 3 are
-complete in `51d16026`. Task 4 wait-all is implemented in this slice;
-wait-settled/start-only and Task 5 remain pending.
+complete in `51d16026`. Task 4 wait-all is complete in `9d5af9bd`; Task 5 is
+implemented in this slice. `wait-settled` and `start-only` remain pending.
 
 ---
 
@@ -121,13 +121,13 @@ git commit -m "feat: run mapped tasks as child task runs"
 
 ## Task 5: Standalone Task Start
 
-- [ ] Add failing tests showing `workflows.start(task, input)` creates a durable
-      task run and dispatches an internal task attempt.
-- [ ] Ensure standalone task completion marks the task run terminal without
+- [x] Add failing tests showing `WorkflowClient.start(task, input)` is typed and
+      `startTaskRun` creates a durable task run with an internal task attempt.
+- [x] Ensure standalone task completion marks the task run terminal without
       requiring a workflow coordinator continuation.
-- [ ] Ensure parent-linked task runs still wake the parent workflow on terminal
+- [x] Ensure parent-linked task runs still wake the parent workflow on terminal
       completion.
-- [ ] Run:
+- [x] Run:
 
 ```bash
 pnpm --filter @nmtjs/workflows exec vitest run tests/runtime-worker.spec.ts tests/runtime-store.spec.ts --reporter=agent
@@ -136,7 +136,7 @@ pnpm oxlint . --format=agent
 git diff --check
 ```
 
-- [ ] Commit:
+- [x] Commit:
 
 ```bash
 git add packages/workflows/src packages/workflows/tests

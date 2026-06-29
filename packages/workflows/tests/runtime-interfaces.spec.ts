@@ -38,6 +38,7 @@ import type {
   StoredRun,
   TaskRun,
   WaitNodeParams,
+  WorkflowClient,
   WorkflowStore,
 } from '../src/index.ts'
 import type {
@@ -117,6 +118,31 @@ describe('workflow runtime interfaces', () => {
     expectTypeOf<RunnableRun>().toMatchTypeOf<
       { kind: 'task' } | { kind: 'workflow' }
     >()
+  })
+
+  it('types workflow client start/get/list/cancel over task declarations', () => {
+    const task = defineTask({
+      name: 'client.embedding',
+      input: t.object({ text: t.string() }),
+      output: t.object({ id: t.string() }),
+    })
+
+    const assertClient = (client: WorkflowClient) => {
+      expectTypeOf(client.start(task, { text: 'alpha' })).toEqualTypeOf<
+        Promise<TaskRun<typeof task>>
+      >()
+      expectTypeOf(client.get(task, 'run-1')).toEqualTypeOf<
+        Promise<TaskRun<typeof task> | undefined>
+      >()
+      expectTypeOf(client.list(task)).toEqualTypeOf<
+        Promise<TaskRun<typeof task>[]>
+      >()
+      expectTypeOf(client.cancel(task, 'run-1')).toEqualTypeOf<
+        Promise<TaskRun<typeof task>>
+      >()
+    }
+
+    expect(assertClient).toBeTypeOf('function')
   })
 
   it('exports semantic orchestration store contracts', () => {
