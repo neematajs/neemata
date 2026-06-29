@@ -8,9 +8,12 @@ import { describe, expect, it } from 'vitest'
 
 import {
   continueWorkflowRun,
+  defineTask,
   defineWorkflow,
+  implementTask,
   implementWorkflow,
   runActivityAttempt,
+  runTaskAttempt,
 } from '../src/index.ts'
 import { createInMemoryWorkflowRuntime } from '../src/testing/index.ts'
 
@@ -633,5 +636,186 @@ describe('workflow runtime coordinator', () => {
     expect(runtime.inspect().activityCommands).toHaveLength(0)
     expect(snapshot?.run.status).toBe('failed')
     expect(snapshot?.nodes[0]?.status).toBe('failed')
+  })
+
+  it('dispatches a task attempt, runs it, and completes run after continuation', async () => {
+    const embeddingTask = defineTask({
+      name: 'embedding.generate',
+      input: t.object({ text: t.string() }),
+      output: t.object({ vector: t.array(t.number()) }),
+    })
+    const workflow = defineWorkflow({
+      name: 'task-worker',
+      input: t.object({ text: t.string() }),
+      output: t.object({ vector: t.array(t.number()) }),
+    })
+      .task('embedding', embeddingTask)
+      .build()
+
+    const taskImplementation = implementTask(embeddingTask, {
+      handler: async (_ctx, input) => ({ vector: [input.text.length] }),
+    })
+    const implementation = implementWorkflow(workflow)
+      .embedding(embeddingTask, {
+        input: (_ctx, _outputs, input) => ({ text: input.text }),
+      })
+      .finish((_ctx, { embedding }) => ({ vector: embedding.vector }))
+
+    const runtime = createInMemoryWorkflowRuntime()
+    const run = await runtime.store.createRun({
+      workflowName: workflow.name,
+      input: { text: 'alpha' },
+    })
+    const container = createTestContainer()
+
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [implementation],
+      workerId: 'coordinator-1',
+      command: {
+        kind: 'continueRun',
+        runId: run.id,
+        workflowName: workflow.name,
+      },
+    })
+
+    const afterDispatch = runtime.inspect()
+    expect(afterDispatch.taskCommands).toHaveLength(1)
+    expect(afterDispatch.taskCommands[0]?.payload).toMatchObject({
+      kind: 'taskAttempt',
+      taskName: 'embedding.generate',
+      workflowName: workflow.name,
+      runId: run.id,
+      nodeName: 'embedding',
+      input: { text: 'alpha' },
+    })
+
+    const claimed = await runtime.attemptExecutor.claimTask({
+      workerId: 'task-worker-1',
+      taskNames: [embeddingTask.name],
+      leaseMs: 30_000,
+    })
+    expect(claimed).not.toBeNull()
+
+    await runTaskAttempt({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      tasks: [taskImplementation],
+      workerId: 'task-worker-1',
+      claimed: claimed!,
+    })
+
+    expect(runtime.inspect().continueRunCommands).toStrictEqual([
+      {
+        id: expect.any(String),
+        payload: {
+          kind: 'continueRun',
+          runId: run.id,
+          workflowName: workflow.name,
+        },
+      },
+    ])
+
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [implementation],
+      workerId: 'coordinator-1',
+      command: {
+        kind: 'continueRun',
+        runId: run.id,
+        workflowName: workflow.name,
+      },
+    })
+
+    const snapshot = await runtime.store.loadRunSnapshot(run.id)
+    expect(snapshot?.run.status).toBe('completed')
+    expect(snapshot?.run.output).toStrictEqual({ vector: [5] })
+  })
+
+  it('acks a stale task attempt without running its handler', async () => {
+    let handlerCalls = 0
+    const embeddingTask = defineTask({
+      name: 'stale.embedding.generate',
+      input: t.object({ text: t.string() }),
+      output: t.object({ vector: t.array(t.number()) }),
+    })
+    const workflow = defineWorkflow({
+      name: 'stale-task-worker',
+      input: t.object({ text: t.string() }),
+      output: t.object({ vector: t.array(t.number()) }),
+    })
+      .task('embedding', embeddingTask)
+      .build()
+
+    const taskImplementation = implementTask(embeddingTask, {
+      handler: async (_ctx, input) => {
+        handlerCalls += 1
+        return { vector: [input.text.length] }
+      },
+    })
+    const implementation = implementWorkflow(workflow)
+      .embedding(embeddingTask)
+      .finish((_ctx, { embedding }) => ({ vector: embedding.vector }))
+
+    const runtime = createInMemoryWorkflowRuntime()
+    const run = await runtime.store.createRun({
+      workflowName: workflow.name,
+      input: { text: 'alpha' },
+    })
+    const container = createTestContainer()
+
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [implementation],
+      workerId: 'coordinator-1',
+      command: {
+        kind: 'continueRun',
+        runId: run.id,
+        workflowName: workflow.name,
+      },
+    })
+
+    const claimed = await runtime.attemptExecutor.claimTask({
+      workerId: 'task-worker-1',
+      taskNames: [embeddingTask.name],
+      leaseMs: 30_000,
+    })
+    expect(claimed).not.toBeNull()
+
+    await runTaskAttempt({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      tasks: [taskImplementation],
+      workerId: 'task-worker-1',
+      claimed: {
+        ...claimed!,
+        command: {
+          ...claimed!.command,
+          leaseToken: 'stale-attempt-token',
+        },
+      },
+    })
+
+    await runtime.attemptExecutor.release(claimed!)
+
+    const snapshot = await runtime.store.loadRunSnapshot(run.id)
+    expect(handlerCalls).toBe(0)
+    expect(snapshot?.nodes[0]?.status).toBe('running')
+    expect(snapshot?.attempts[0]?.status).toBe('started')
+    expect(runtime.inspect().taskCommands).toHaveLength(0)
+    expect(runtime.inspect().continueRunCommands).toHaveLength(0)
   })
 })

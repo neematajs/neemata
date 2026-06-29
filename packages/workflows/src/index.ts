@@ -30,6 +30,7 @@ export type {
   RunCoordinationExecutor,
   RunCoordinationWorkerClaim,
   RunActivityAttemptInput,
+  RunTaskAttemptInput,
   RunLease,
   RunSnapshot,
   RuntimeAttemptStatus,
@@ -94,5 +95,6 @@ export {
   continueWorkflowRun,
   createWorkflowRuntimeRegistry,
   runActivityAttempt,
+  runTaskAttempt,
 } from './runtime/index.ts'
 export { isTerminalNodeStatus, isTerminalRunStatus } from './runtime/index.ts'

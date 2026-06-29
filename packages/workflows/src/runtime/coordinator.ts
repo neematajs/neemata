@@ -2,6 +2,7 @@ import type { Container, DependencyContext } from '@nmtjs/core'
 
 import type {
   ActivityNodeImplementation,
+  RunnableNodeImplementation,
   WorkflowImplementation,
 } from '../implement/index.ts'
 import type { ContinueRunCommand } from './commands.ts'
@@ -81,6 +82,20 @@ export async function continueWorkflowRun(
       return
     }
 
+    if (nextNode.kind === 'task') {
+      await dispatchTaskNode({
+        store: input.store,
+        attemptExecutor: input.attemptExecutor,
+        workflow: implementation,
+        workflowCtx: workflowCtx as DependencyContext<any>,
+        runId: snapshot.run.id,
+        workflowInput: snapshot.run.input,
+        outputs,
+        node: nextNode,
+      })
+      return
+    }
+
     if (nextNode.kind !== 'activity') {
       throw new Error(`Unsupported runtime node kind [${nextNode.kind}]`)
     }
@@ -97,6 +112,71 @@ export async function continueWorkflowRun(
     })
   } finally {
     await input.store.releaseRunLease(lease)
+  }
+}
+
+async function dispatchTaskNode(input: {
+  readonly store: WorkflowStore
+  readonly attemptExecutor: AttemptExecutor
+  readonly workflow: WorkflowImplementation
+  readonly workflowCtx: DependencyContext<any>
+  readonly runId: string
+  readonly workflowInput: unknown
+  readonly outputs: Record<string, unknown>
+  readonly node: RunnableNodeImplementation
+}) {
+  const existing = await input.store.createNode({
+    runId: input.runId,
+    name: input.node.name,
+    kind: 'task',
+  })
+  if (existing.status === 'running' || existing.status === 'waiting') return
+
+  const nodeInput = input.node.input
+    ? input.node.input(
+        input.workflowCtx,
+        input.outputs,
+        input.workflowInput,
+      )
+    : input.workflowInput
+
+  await input.store.setNodeInput({
+    runId: input.runId,
+    nodeName: input.node.name,
+    input: nodeInput,
+  })
+  const attempt = await input.store.createAttempt({
+    runId: input.runId,
+    nodeName: input.node.name,
+    input: nodeInput,
+  })
+
+  try {
+    await input.attemptExecutor.dispatchTask({
+      kind: 'taskAttempt',
+      workflowName: input.workflow.workflow.name,
+      taskName: input.node.target.name,
+      runId: input.runId,
+      nodeName: input.node.name,
+      attemptId: attempt.id,
+      leaseToken: attempt.leaseToken!,
+      input: nodeInput,
+    })
+  } catch (error) {
+    await input.store.failCurrentAttempt({
+      attemptId: attempt.id,
+      leaseToken: attempt.leaseToken!,
+      error,
+    })
+    await input.store.failNode({
+      runId: input.runId,
+      nodeName: input.node.name,
+      error,
+    })
+    await input.store.failRun({
+      runId: input.runId,
+      error,
+    })
   }
 }
 
