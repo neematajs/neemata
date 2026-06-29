@@ -205,18 +205,15 @@ continuation idempotent.
 
 The runtime should split dispatch interfaces by semantic role.
 
-`CoordinationExecutor` owns continuation commands:
+`RunCoordinationExecutor` owns continuation commands:
 
 ```ts
-interface CoordinationExecutor {
-  enqueueContinueRun(command: ContinueRunCommand): Promise<void>
-  enqueueDelayedContinueRun(
-    command: ContinueRunCommand,
-    runAt: Date,
-  ): Promise<void>
-  claimContinueRun(worker: CoordinationWorkerClaim): Promise<ClaimedCommand | null>
-  ackContinueRun(command: ClaimedCommand): Promise<void>
-  releaseContinueRun(command: ClaimedCommand): Promise<void>
+interface RunCoordinationExecutor {
+  enqueue(command: ContinueRunCommand): Promise<void>
+  enqueueDelayed(command: ContinueRunCommand, runAt: Date): Promise<void>
+  claim(worker: RunCoordinationWorkerClaim): Promise<ClaimedCommand | null>
+  ack(command: ClaimedCommand): Promise<void>
+  release(command: ClaimedCommand): Promise<void>
 }
 ```
 
@@ -224,19 +221,19 @@ interface CoordinationExecutor {
 
 ```ts
 interface AttemptExecutor {
-  dispatchActivityAttempt(command: ActivityAttemptCommand): Promise<void>
-  dispatchTaskAttempt(command: TaskAttemptCommand): Promise<void>
-  claimActivityAttempt(worker: ActivityWorkerClaim): Promise<ClaimedAttempt | null>
-  claimTaskAttempt(worker: TaskWorkerClaim): Promise<ClaimedAttempt | null>
-  heartbeatAttempt(attempt: ClaimedAttempt): Promise<void>
-  ackAttempt(attempt: ClaimedAttempt): Promise<void>
-  releaseAttempt(attempt: ClaimedAttempt): Promise<void>
+  dispatchActivity(command: ActivityAttemptCommand): Promise<void>
+  dispatchTask(command: TaskAttemptCommand): Promise<void>
+  claimActivity(worker: ActivityWorkerClaim): Promise<ClaimedAttempt | null>
+  claimTask(worker: TaskWorkerClaim): Promise<ClaimedAttempt | null>
+  heartbeat(attempt: ClaimedAttempt): Promise<void>
+  ack(attempt: ClaimedAttempt): Promise<void>
+  release(attempt: ClaimedAttempt): Promise<void>
 }
 ```
 
 Rules:
 
-- `CoordinationExecutor` commands are idempotent run pokes. They carry no
+- `RunCoordinationExecutor` commands are idempotent run pokes. They carry no
   business payload and may be duplicated or coalesced by `runId`.
 - `AttemptExecutor` commands are leased work attempts. They have attempt
   identity, heartbeat/timeout behavior, and output/error completion.
@@ -492,7 +489,7 @@ Store adapters provide:
 - idempotency enforcement
 - stale completion rejection
 
-Coordination executor adapters provide:
+Run coordination executor adapters provide:
 
 - command enqueue
 - delayed command enqueue
