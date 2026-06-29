@@ -3,8 +3,10 @@ import type { Container, DependencyContext } from '@nmtjs/core'
 import type {
   ActivityNodeImplementation,
   BranchNodeImplementation,
+  ParallelNodeImplementation,
   TaskImplementation,
   WorkflowImplementation,
+  WorkflowCaseImplementation,
 } from '../implement/index.ts'
 import type {
   ActivityAttemptCommand,
@@ -15,6 +17,10 @@ import type { AttemptExecutor, RunCoordinationExecutor } from './executors.ts'
 import { createWorkflowRuntimeRegistry } from './registry.ts'
 import type { StoredAttempt, StoredNode } from './state.ts'
 import type { WorkflowStore } from './store.ts'
+
+type ActivityAttemptNode =
+  | ActivityNodeImplementation
+  | Extract<WorkflowCaseImplementation, { readonly kind: 'activity' }>
 
 export async function runWithConcurrency<T>(
   items: readonly T[],
@@ -95,7 +101,12 @@ export async function runActivityAttempt(
     return
   }
 
-  const node = resolveActivityAttemptNode(workflow, storedNode, command)
+  const node = resolveActivityAttemptNode(
+    workflow,
+    storedNode,
+    storedAttempt,
+    command,
+  )
   if (!node) {
     await input.attemptExecutor.release(input.claimed)
     return
@@ -138,11 +149,13 @@ export async function runActivityAttempt(
     return
   }
 
-  await input.store.completeNode({
-    runId: command.runId,
-    nodeName: command.nodeName,
-    output,
-  })
+  if (shouldCompleteNodeFromAttempt(storedNode)) {
+    await input.store.completeNode({
+      runId: command.runId,
+      nodeName: command.nodeName,
+      output,
+    })
+  }
   await enqueueContinueRun(input.runCoordinationExecutor, command)
   await input.attemptExecutor.ack(input.claimed)
 }
@@ -150,8 +163,9 @@ export async function runActivityAttempt(
 function resolveActivityAttemptNode(
   workflow: WorkflowImplementation,
   storedNode: StoredNode | undefined,
+  storedAttempt: StoredAttempt | undefined,
   command: ActivityAttemptCommand,
-): ActivityNodeImplementation | undefined {
+): ActivityAttemptNode | undefined {
   const direct = workflow.nodes.find(
     (candidate): candidate is ActivityNodeImplementation =>
       candidate.kind === 'activity' && candidate.name === command.nodeName,
@@ -160,15 +174,28 @@ function resolveActivityAttemptNode(
     return direct.activity.name === command.activityName ? direct : undefined
   }
 
-  if (storedNode?.kind !== 'branch' || storedNode.selectedCase === undefined) {
+  if (!storedNode) {
     return undefined
   }
 
-  const branch = workflow.nodes.find(
-    (candidate): candidate is BranchNodeImplementation =>
-      candidate.kind === 'branch' && candidate.name === command.nodeName,
-  )
-  const selected = branch?.cases[storedNode.selectedCase]
+  let selected: WorkflowCaseImplementation | undefined
+  if (storedNode.kind === 'branch' && storedNode.selectedCase !== undefined) {
+    const branch = workflow.nodes.find(
+      (candidate): candidate is BranchNodeImplementation =>
+        candidate.kind === 'branch' && candidate.name === command.nodeName,
+    )
+    selected = branch?.cases[storedNode.selectedCase]
+  }
+
+  if (storedNode.kind === 'parallel') {
+    const parallel = workflow.nodes.find(
+      (candidate): candidate is ParallelNodeImplementation =>
+        candidate.kind === 'parallel' && candidate.name === command.nodeName,
+    )
+    const memberKey = storedAttempt?.identity?.memberKey
+    selected = memberKey === undefined ? undefined : parallel?.cases[memberKey]
+  }
+
   if (selected?.kind !== 'activity') return undefined
 
   return selected.activity.name === command.activityName ? selected : undefined
@@ -243,11 +270,13 @@ export async function runTaskAttempt(
     return
   }
 
-  await input.store.completeNode({
-    runId: command.runId,
-    nodeName: command.nodeName,
-    output,
-  })
+  if (shouldCompleteNodeFromAttempt(storedNode)) {
+    await input.store.completeNode({
+      runId: command.runId,
+      nodeName: command.nodeName,
+      output,
+    })
+  }
   await enqueueContinueRun(input.runCoordinationExecutor, command)
   await input.attemptExecutor.ack(input.claimed)
 }
@@ -259,7 +288,7 @@ function isFreshActivityAttempt(
 ): boolean {
   return (
     storedNode !== undefined &&
-    storedNode.currentAttemptId === command.attemptId &&
+    isCurrentAttemptForNode(storedNode, command.attemptId) &&
     storedAttempt !== undefined &&
     storedAttempt.status === 'started' &&
     storedAttempt.leaseToken === command.leaseToken
@@ -273,7 +302,7 @@ function isFreshTaskAttempt(
 ): boolean {
   return (
     storedNode !== undefined &&
-    storedNode.currentAttemptId === command.attemptId &&
+    isCurrentAttemptForNode(storedNode, command.attemptId) &&
     storedAttempt !== undefined &&
     storedAttempt.status === 'started' &&
     storedAttempt.leaseToken === command.leaseToken
@@ -289,13 +318,17 @@ async function reconcileStaleAttempt(
   storedNode: StoredNode | undefined,
   storedAttempt: StoredAttempt | undefined,
 ): Promise<void> {
-  const isCurrentAttempt = storedNode?.currentAttemptId === command.attemptId
+  const isCurrentAttempt = isCurrentAttemptForNode(
+    storedNode,
+    command.attemptId,
+  )
 
   if (
     storedNode &&
     isCurrentAttempt &&
     storedAttempt?.status === 'completed' &&
-    storedNode.status !== 'completed'
+    storedNode.status !== 'completed' &&
+    shouldCompleteNodeFromAttempt(storedNode)
   ) {
     await input.store.completeNode({
       runId: command.runId,
@@ -336,6 +369,19 @@ async function reconcileStaleAttempt(
   }
 
   await input.attemptExecutor.ack(input.claimed)
+}
+
+function shouldCompleteNodeFromAttempt(storedNode: StoredNode | undefined) {
+  return storedNode?.kind !== 'parallel'
+}
+
+function isCurrentAttemptForNode(
+  storedNode: StoredNode | undefined,
+  attemptId: string,
+) {
+  if (!storedNode) return false
+  if (storedNode.kind === 'parallel') return true
+  return storedNode.currentAttemptId === attemptId
 }
 
 async function enqueueContinueRun(

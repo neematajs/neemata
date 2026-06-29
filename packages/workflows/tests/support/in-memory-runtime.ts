@@ -250,7 +250,12 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
       if (attempt.status !== 'started') return undefined
 
       const node = nodes.get(nodeKey(attempt.runId, attempt.nodeName))
-      if (!node || node.currentAttemptId !== attemptId) return undefined
+      if (
+        !node ||
+        (node.kind !== 'parallel' && node.currentAttemptId !== attemptId)
+      ) {
+        return undefined
+      }
 
       const updated: StoredAttempt = {
         ...attempt,
@@ -267,7 +272,12 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
       if (attempt.status !== 'started') return undefined
 
       const node = nodes.get(nodeKey(attempt.runId, attempt.nodeName))
-      if (!node || node.currentAttemptId !== attemptId) return undefined
+      if (
+        !node ||
+        (node.kind !== 'parallel' && node.currentAttemptId !== attemptId)
+      ) {
+        return undefined
+      }
 
       const updated: StoredAttempt = {
         ...attempt,

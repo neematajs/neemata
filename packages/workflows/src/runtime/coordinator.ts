@@ -3,6 +3,7 @@ import type { Container, DependencyContext } from '@nmtjs/core'
 import type {
   ActivityNodeImplementation,
   BranchNodeImplementation,
+  ParallelNodeImplementation,
   RunnableNodeImplementation,
   WorkflowImplementation,
   WorkflowCaseImplementation,
@@ -151,6 +152,20 @@ async function advanceWorkflowRun(input: {
 
   if (nextNode.kind === 'branch') {
     await dispatchBranchNode({
+      store: input.store,
+      attemptExecutor: input.attemptExecutor,
+      runCoordinationExecutor: input.runCoordinationExecutor,
+      workflow: input.workflow,
+      workflowCtx: input.workflowCtx,
+      run: input.run,
+      outputs: input.outputs,
+      node: nextNode,
+    })
+    return
+  }
+
+  if (nextNode.kind === 'parallel') {
+    await dispatchParallelNode({
       store: input.store,
       attemptExecutor: input.attemptExecutor,
       runCoordinationExecutor: input.runCoordinationExecutor,
@@ -707,12 +722,222 @@ async function dispatchBranchNode(input: {
   })
 }
 
+async function dispatchParallelNode(input: {
+  readonly store: WorkflowStore
+  readonly attemptExecutor: AttemptExecutor
+  readonly runCoordinationExecutor: RunCoordinationExecutor
+  readonly workflow: WorkflowImplementation
+  readonly workflowCtx: DependencyContext<any>
+  readonly run: StoredRun
+  readonly outputs: Record<string, unknown>
+  readonly node: ParallelNodeImplementation
+}) {
+  const existing = await input.store.createNode({
+    runId: input.run.id,
+    name: input.node.name,
+    kind: 'parallel',
+  })
+  if (existing.status === 'completed' || existing.status === 'failed') return
+
+  const children = await input.store.loadNodeChildren({
+    runId: input.run.id,
+    nodeName: input.node.name,
+  })
+  const outputs: Record<string, unknown> = {}
+
+  for (const [memberKey, member] of Object.entries(input.node.cases)) {
+    const identity = {
+      runId: input.run.id,
+      nodeName: input.node.name,
+      memberKey,
+    } satisfies NodeChildIdentity
+
+    const existingAttempt = children.attempts.find(
+      (attempt) =>
+        attempt.identity && sameNodeChildIdentity(attempt.identity, identity),
+    )
+    if (existingAttempt?.status === 'completed') {
+      outputs[memberKey] = existingAttempt.output
+      continue
+    }
+    if (existingAttempt?.status === 'failed') {
+      const error =
+        existingAttempt.error ??
+        new Error(`Parallel member [${input.node.name}.${memberKey}] failed`)
+      await input.store.failNode({
+        runId: input.run.id,
+        nodeName: input.node.name,
+        error,
+      })
+      await failRunAndWakeParent({
+        store: input.store,
+        runCoordinationExecutor: input.runCoordinationExecutor,
+        runId: input.run.id,
+        error,
+      })
+      return
+    }
+
+    if (member.kind === 'workflow') {
+      const existingLink = children.childLinks.find((link) =>
+        sameNodeChildIdentity(link.identity, identity),
+      )
+      if (existingLink) {
+        const snapshot = await input.store.loadRunSnapshot(existingLink.childRunId)
+        const childRun = snapshot?.run
+        if (!childRun || !isTerminalRunStatus(childRun.status)) {
+          await input.runCoordinationExecutor.enqueue({
+            kind: 'continueRun',
+            runId: existingLink.childRunId,
+            workflowName: existingLink.workflowName,
+          })
+          continue
+        }
+        if (childRun.status === 'completed') {
+          outputs[memberKey] = childRun.output
+          continue
+        }
+
+        const error =
+          childRun.error ??
+          new Error(`Parallel child workflow [${childRun.id}] ${childRun.status}`)
+        await input.store.failNode({
+          runId: input.run.id,
+          nodeName: input.node.name,
+          error,
+        })
+        await failRunAndWakeParent({
+          store: input.store,
+          runCoordinationExecutor: input.runCoordinationExecutor,
+          runId: input.run.id,
+          error,
+        })
+        return
+      }
+
+      const nodeInput = member.input
+        ? member.input(input.workflowCtx, input.outputs, input.run.input)
+        : input.run.input
+      const child = await input.store.ensureChildWorkflowRun({
+        identity,
+        workflowName: member.target.name,
+        input: nodeInput,
+        parentRunId: input.run.id,
+        parentNodeName: input.node.name,
+        rootRunId: input.run.rootRunId,
+      })
+      await input.runCoordinationExecutor.enqueue({
+        kind: 'continueRun',
+        runId: child.childRun.id,
+        workflowName: member.target.name,
+      })
+      continue
+    }
+
+    if (member.kind === 'task') {
+      const nodeInput = existingAttempt
+        ? existingAttempt.input
+        : member.input
+          ? member.input(input.workflowCtx, input.outputs, input.run.input)
+          : input.run.input
+
+      await dispatchTaskAttempt({
+        store: input.store,
+        attemptExecutor: input.attemptExecutor,
+        runCoordinationExecutor: input.runCoordinationExecutor,
+        workflowName: input.workflow.workflow.name,
+        taskName: member.target.name,
+        runId: input.run.id,
+        nodeName: input.node.name,
+        prepareAttempt: async () => {
+          const result = await input.store.ensureNodeAttempt({
+            identity,
+            kind: 'task',
+            input: nodeInput,
+          })
+          return {
+            attempt: result.attempt,
+            commandInput: result.created ? nodeInput : result.attempt.input,
+            created: result.created,
+          }
+        },
+      })
+      continue
+    }
+
+    if (member.kind !== 'activity') {
+      throw unsupportedParallelCase(input.node.name, member)
+    }
+
+    const nodeInput = existingAttempt
+      ? existingAttempt.input
+      : member.input
+        ? member.input(input.workflowCtx, input.outputs, input.run.input)
+        : input.run.input
+
+    await dispatchActivityAttempt({
+      store: input.store,
+      attemptExecutor: input.attemptExecutor,
+      runCoordinationExecutor: input.runCoordinationExecutor,
+      workflowName: input.workflow.workflow.name,
+      activityName: member.activity.name,
+      runId: input.run.id,
+      nodeName: input.node.name,
+      prepareAttempt: async () => {
+        const result = await input.store.ensureNodeAttempt({
+          identity,
+          kind: 'activity',
+          input: nodeInput,
+        })
+        return {
+          attempt: result.attempt,
+          commandInput: result.created ? nodeInput : result.attempt.input,
+          created: result.created,
+        }
+      },
+    })
+  }
+
+  const expectedCount = Object.keys(input.node.cases).length
+  if (Object.keys(outputs).length === expectedCount) {
+    await input.store.completeNode({
+      runId: input.run.id,
+      nodeName: input.node.name,
+      output: outputs,
+    })
+    await advanceWorkflowRun({
+      store: input.store,
+      attemptExecutor: input.attemptExecutor,
+      runCoordinationExecutor: input.runCoordinationExecutor,
+      workflow: input.workflow,
+      workflowCtx: input.workflowCtx,
+      run: input.run,
+      outputs: { ...input.outputs, [input.node.name]: outputs },
+    })
+    return
+  }
+
+  await input.store.waitNode({
+    runId: input.run.id,
+    nodeName: input.node.name,
+  })
+}
+
 function unsupportedBranchCase(
   nodeName: string,
   selected: WorkflowCaseImplementation,
 ): Error {
   return new Error(
     `Unsupported branch ${selected.kind} case [${selected.name}] in node [${nodeName}]`,
+  )
+}
+
+function unsupportedParallelCase(
+  nodeName: string,
+  member: WorkflowCaseImplementation,
+): Error {
+  return new Error(
+    `Unsupported parallel ${member.kind} member [${member.name}] in node [${nodeName}]`,
   )
 }
 
