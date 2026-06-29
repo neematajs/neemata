@@ -1,3 +1,8 @@
+import {
+  Container,
+  createLogger,
+  createValueInjectable,
+} from '@nmtjs/core'
 import { t } from '@nmtjs/type'
 import { describe, expect, it } from 'vitest'
 
@@ -9,6 +14,11 @@ import {
 import { createInMemoryWorkflowRuntime } from '../src/testing/index.ts'
 
 describe('workflow runtime coordinator', () => {
+  const createTestContainer = () => {
+    const logger = createLogger({ pinoOptions: { enabled: false } }, 'test')
+    return new Container({ logger })
+  }
+
   it('dispatches an activity attempt, stores node input, and completes run after continuation', async () => {
     const workflow = defineWorkflow({
       name: 'case-generation',
@@ -42,6 +52,7 @@ describe('workflow runtime coordinator', () => {
       store: runtime.store,
       runCoordinationExecutor: runtime.runCoordinationExecutor,
       attemptExecutor: runtime.attemptExecutor,
+      container: createTestContainer(),
       workflows: [implementation],
       workerId: 'coordinator-1',
       command: {
@@ -71,6 +82,7 @@ describe('workflow runtime coordinator', () => {
       store: runtime.store,
       runCoordinationExecutor: runtime.runCoordinationExecutor,
       attemptExecutor: runtime.attemptExecutor,
+      container: createTestContainer(),
       workflows: [implementation],
       workerId: 'coordinator-1',
       command: {
@@ -83,5 +95,186 @@ describe('workflow runtime coordinator', () => {
     const snapshot = await runtime.store.loadRunSnapshot(run.id)
     expect(snapshot?.run.status).toBe('completed')
     expect(snapshot?.run.output).toStrictEqual({ caseId: 'alpha' })
+  })
+
+  it('fails the attempt, node, and run when dispatching the activity fails', async () => {
+    const workflow = defineWorkflow({
+      name: 'dispatch-failure',
+      input: t.object({ scenario: t.string() }),
+      output: t.object({ caseId: t.string() }),
+    })
+      .activity('content', {
+        input: t.object({ scenario: t.string() }),
+        output: t.object({ text: t.string() }),
+      })
+      .build()
+
+    const implementation = implementWorkflow(workflow)
+      .content(async (_ctx, input) => ({ text: input.scenario }))
+      .finish((_ctx, { content }) => ({ caseId: content.text }))
+
+    const runtime = createInMemoryWorkflowRuntime()
+    const run = await runtime.store.createRun({
+      workflowName: workflow.name,
+      input: { scenario: 'alpha' },
+    })
+    const error = new Error('queue down')
+
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: {
+        ...runtime.attemptExecutor,
+        dispatchActivity: async () => {
+          throw error
+        },
+      },
+      container: createTestContainer(),
+      workflows: [implementation],
+      workerId: 'coordinator-1',
+      command: {
+        kind: 'continueRun',
+        runId: run.id,
+        workflowName: workflow.name,
+      },
+    })
+
+    const snapshot = await runtime.store.loadRunSnapshot(run.id)
+    expect(snapshot?.run.status).toBe('failed')
+    expect(snapshot?.nodes[0]?.status).toBe('failed')
+    expect(snapshot?.attempts[0]?.status).toBe('failed')
+  })
+
+  it('passes resolved workflow dependency context to mappers and finish', async () => {
+    const prefix = createValueInjectable('case')
+    const workflow = defineWorkflow({
+      name: 'dependency-context',
+      input: t.object({ scenario: t.string() }),
+      output: t.object({ caseId: t.string() }),
+    })
+      .activity('content', {
+        input: t.object({ scenario: t.string() }),
+        output: t.object({ text: t.string() }),
+      })
+      .build()
+
+    const implementation = implementWorkflow(workflow, {
+      dependencies: { prefix },
+    })
+      .content(async (_ctx, input) => ({ text: input.scenario }), {
+        input: (ctx, _outputs, input) => ({
+          scenario: `${ctx.prefix}:${input.scenario}`,
+        }),
+      })
+      .finish((ctx, { content }) => ({
+        caseId: `${ctx.prefix}:${content.text}`,
+      }))
+
+    const runtime = createInMemoryWorkflowRuntime()
+    const run = await runtime.store.createRun({
+      workflowName: workflow.name,
+      input: { scenario: 'alpha' },
+    })
+    const container = createTestContainer()
+
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [implementation],
+      workerId: 'coordinator-1',
+      command: {
+        kind: 'continueRun',
+        runId: run.id,
+        workflowName: workflow.name,
+      },
+    })
+
+    const afterDispatch = runtime.inspect()
+    expect(afterDispatch.nodes[0]?.input).toStrictEqual({
+      scenario: 'case:alpha',
+    })
+
+    const attempt = afterDispatch.attempts[0]!
+    await runtime.store.completeCurrentAttempt({
+      attemptId: attempt.id,
+      leaseToken: attempt.leaseToken!,
+      output: { text: 'content' },
+    })
+    await runtime.store.completeNode({
+      runId: run.id,
+      nodeName: 'content',
+      output: { text: 'content' },
+    })
+
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [implementation],
+      workerId: 'coordinator-1',
+      command: {
+        kind: 'continueRun',
+        runId: run.id,
+        workflowName: workflow.name,
+      },
+    })
+
+    const snapshot = await runtime.store.loadRunSnapshot(run.id)
+    expect(snapshot?.run.output).toStrictEqual({ caseId: 'case:content' })
+  })
+
+  it('fails the run instead of re-dispatching a failed node', async () => {
+    const workflow = defineWorkflow({
+      name: 'failed-node',
+      input: t.object({ scenario: t.string() }),
+      output: t.object({ caseId: t.string() }),
+    })
+      .activity('content', {
+        input: t.object({ scenario: t.string() }),
+        output: t.object({ text: t.string() }),
+      })
+      .build()
+
+    const implementation = implementWorkflow(workflow)
+      .content(async (_ctx, input) => ({ text: input.scenario }))
+      .finish((_ctx, { content }) => ({ caseId: content.text }))
+
+    const runtime = createInMemoryWorkflowRuntime()
+    const run = await runtime.store.createRun({
+      workflowName: workflow.name,
+      input: { scenario: 'alpha' },
+    })
+    await runtime.store.createNode({
+      runId: run.id,
+      name: 'content',
+      kind: 'activity',
+    })
+    await runtime.store.failNode({
+      runId: run.id,
+      nodeName: 'content',
+      error: new Error('activity failed'),
+    })
+
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container: createTestContainer(),
+      workflows: [implementation],
+      workerId: 'coordinator-1',
+      command: {
+        kind: 'continueRun',
+        runId: run.id,
+        workflowName: workflow.name,
+      },
+    })
+
+    const snapshot = await runtime.store.loadRunSnapshot(run.id)
+    expect(runtime.inspect().activityCommands).toHaveLength(0)
+    expect(snapshot?.run.status).toBe('failed')
+    expect(snapshot?.nodes[0]?.status).toBe('failed')
   })
 })
