@@ -10,6 +10,8 @@ export type {
   TaskWorkerClaim,
 } from './commands.ts'
 export type { AttemptExecutor, RunCoordinationExecutor } from './executors.ts'
+export { createWorkflowRuntimeRegistry } from './registry.ts'
+export type { WorkflowRuntimeRegistry } from './registry.ts'
 export type {
   RuntimeAttemptStatus,
   RuntimeNodeStatus,

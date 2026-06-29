@@ -42,6 +42,7 @@ export type {
   StoredTimelineEvent,
   TaskAttemptCommand,
   TaskWorkerClaim,
+  WorkflowRuntimeRegistry,
   WorkflowStore,
 } from './runtime/index.ts'
 export type {
@@ -87,4 +88,5 @@ export type {
 } from './types/index.ts'
 export { defineTask, defineWorkflow } from './contract/index.ts'
 export { implementTask, implementWorkflow } from './implement/index.ts'
+export { createWorkflowRuntimeRegistry } from './runtime/index.ts'
 export { isTerminalNodeStatus, isTerminalRunStatus } from './runtime/index.ts'
