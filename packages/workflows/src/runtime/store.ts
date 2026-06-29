@@ -153,19 +153,19 @@ export type WorkflowStore = {
     runId: string
     error: unknown
   }): Promise<StoredRun | undefined>
-  ensureNodeAttempt?(
+  ensureNodeAttempt(
     params: EnsureNodeAttemptParams,
   ): Promise<EnsureNodeAttemptResult>
-  ensureChildWorkflowRun?(
+  ensureChildWorkflowRun(
     params: EnsureChildWorkflowRunParams,
   ): Promise<EnsureChildWorkflowRunResult>
-  ensureMapItems?(params: EnsureMapItemsParams): Promise<EnsureMapItemsResult>
-  completeMapItem?(
+  ensureMapItems(params: EnsureMapItemsParams): Promise<EnsureMapItemsResult>
+  completeMapItem(
     params: CompleteMapItemParams,
   ): Promise<StoredMapItem | undefined>
-  failMapItem?(params: FailMapItemParams): Promise<StoredMapItem | undefined>
-  waitNode?(params: WaitNodeParams): Promise<StoredNode | undefined>
-  loadNodeChildren?(
+  failMapItem(params: FailMapItemParams): Promise<StoredMapItem | undefined>
+  waitNode(params: WaitNodeParams): Promise<StoredNode | undefined>
+  loadNodeChildren(
     params: LoadNodeChildrenParams,
   ): Promise<NodeChildrenSnapshot>
 }

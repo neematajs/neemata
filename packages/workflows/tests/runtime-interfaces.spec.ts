@@ -12,10 +12,16 @@ import {
 import type {
   AttemptCommand,
   AttemptExecutor,
+  CompleteMapItemParams,
   ContinueRunCommand,
   EnsureChildWorkflowRunParams,
+  EnsureChildWorkflowRunResult,
   EnsureMapItemsParams,
+  EnsureMapItemsResult,
   EnsureNodeAttemptParams,
+  EnsureNodeAttemptResult,
+  FailMapItemParams,
+  LoadNodeChildrenParams,
   NodeChildIdentity,
   NodeChildrenSnapshot,
   RunCoordinationExecutor,
@@ -27,6 +33,34 @@ import type {
   WaitNodeParams,
   WorkflowStore,
 } from '../src/index.ts'
+
+type SemanticWorkflowStoreMethods = {
+  ensureNodeAttempt(
+    params: EnsureNodeAttemptParams,
+  ): Promise<EnsureNodeAttemptResult>
+  ensureChildWorkflowRun(
+    params: EnsureChildWorkflowRunParams,
+  ): Promise<EnsureChildWorkflowRunResult>
+  ensureMapItems(params: EnsureMapItemsParams): Promise<EnsureMapItemsResult>
+  completeMapItem(
+    params: CompleteMapItemParams,
+  ): Promise<StoredMapItem | undefined>
+  failMapItem(params: FailMapItemParams): Promise<StoredMapItem | undefined>
+  waitNode(params: WaitNodeParams): Promise<StoredNode | undefined>
+  loadNodeChildren(
+    params: LoadNodeChildrenParams,
+  ): Promise<NodeChildrenSnapshot>
+}
+
+type OptionalKeys<T> = {
+  [K in keyof T]-?: Record<string, never> extends Pick<T, K> ? K : never
+}[keyof T]
+
+type WorkflowStoreWithRequiredSemanticMethods = Omit<
+  WorkflowStore,
+  keyof SemanticWorkflowStoreMethods
+> &
+  SemanticWorkflowStoreMethods
 
 describe('workflow runtime interfaces', () => {
   it('exports adapter-free runtime contracts from the root package', () => {
@@ -94,6 +128,14 @@ describe('workflow runtime interfaces', () => {
     expectTypeOf<WorkflowStore>().toHaveProperty('waitNode')
     expectTypeOf<WorkflowStore>().toHaveProperty('ensureChildWorkflowRun')
     expectTypeOf<WorkflowStore>().toHaveProperty('loadNodeChildren')
+    expectTypeOf<WorkflowStore>().toMatchTypeOf<
+      WorkflowStoreWithRequiredSemanticMethods
+    >()
+    expectTypeOf<
+      Extract<OptionalKeys<WorkflowStore>, keyof SemanticWorkflowStoreMethods>
+    >().toEqualTypeOf<never>()
+    const requiredStoreMethods: SemanticWorkflowStoreMethods = {} as WorkflowStore
+    expect(requiredStoreMethods).toBeDefined()
   })
 
   it('routes workflow and task implementations by contract name', () => {

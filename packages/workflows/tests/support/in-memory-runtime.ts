@@ -18,6 +18,7 @@ import type {
   WorkflowStore,
 } from '../../src/runtime/store.ts'
 import type {
+  NodeChildIdentity,
   RunSnapshot,
   StoredAttempt,
   StoredChildLink,
@@ -65,6 +66,7 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
   const attempts = new Map<string, StoredAttempt>()
   const childLinks: StoredChildLink[] = []
   const mapItems: StoredMapItem[] = []
+  const mapItemKeys = new Map<string, readonly (string | undefined)[]>()
   const runLeases = new Map<string, InMemoryRunLease>()
   const continueRunCommands: QueueItem<ContinueRunCommand>[] = []
   const activityCommands: QueueItem<ActivityAttemptCommand>[] = []
@@ -74,6 +76,15 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
   const claimedTaskCommands = new Map<string, ClaimedAttempt>()
 
   const nodeKey = (runId: string, nodeName: string) => `${runId}:${nodeName}`
+  const identityKey = (identity: NodeChildIdentity) =>
+    JSON.stringify([
+      identity.runId,
+      identity.nodeName,
+      identity.caseKey ?? null,
+      identity.memberKey ?? null,
+      identity.itemIndex ?? null,
+      identity.itemKey ?? null,
+    ])
 
   const storedError = (error: unknown): StoredError => {
     if (error instanceof Error) {
@@ -306,6 +317,199 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
       }
       runs.set(runId, updated)
       return updated
+    },
+    async ensureNodeAttempt(params) {
+      const key = identityKey(params.identity)
+      const existing = [...attempts.values()].find(
+        (attempt) => attempt.identity && identityKey(attempt.identity) === key,
+      )
+      if (existing) return { attempt: existing, created: false }
+
+      const node = await store.createNode({
+        runId: params.identity.runId,
+        name: params.identity.nodeName,
+        kind: params.kind,
+      })
+      const attempt: StoredAttempt = {
+        id: id('attempt'),
+        runId: params.identity.runId,
+        nodeName: params.identity.nodeName,
+        identity: params.identity,
+        status: 'started',
+        leaseToken: id('attempt-lease'),
+        attemptNumber: node.attemptCount + 1,
+        input: params.input,
+        dispatchedAt: now(),
+      }
+      const updatedNode: StoredNode = {
+        ...node,
+        status: 'running',
+        currentAttemptId: attempt.id,
+        attemptCount: node.attemptCount + 1,
+        version: node.version + 1,
+        updatedAt: now(),
+      }
+
+      attempts.set(attempt.id, attempt)
+      nodes.set(nodeKey(node.runId, node.name), updatedNode)
+      return { attempt, created: true }
+    },
+    async ensureChildWorkflowRun(params) {
+      const key = identityKey(params.identity)
+      const existingLink = childLinks.find(
+        (link) => identityKey(link.identity) === key,
+      )
+      if (existingLink) {
+        const childRun = runs.get(existingLink.childRunId)
+        if (!childRun) {
+          throw new Error(`Missing child run [${existingLink.childRunId}]`)
+        }
+        return { childLink: existingLink, childRun, created: false }
+      }
+
+      const childRun = await store.createRun({
+        workflowName: params.workflowName,
+        input: params.input,
+        parentRunId: params.parentRunId,
+        parentNodeName: params.parentNodeName,
+        rootRunId: params.rootRunId,
+        tags: params.tags,
+        idempotencyKey: params.idempotencyKey,
+      })
+      const childLink: StoredChildLink = {
+        identity: params.identity,
+        parentRunId: params.parentRunId,
+        parentNodeName: params.parentNodeName,
+        childRunId: childRun.id,
+        workflowName: params.workflowName,
+        ...(params.identity.caseKey === undefined
+          ? {}
+          : { caseKey: params.identity.caseKey }),
+        ...(params.identity.memberKey === undefined
+          ? {}
+          : { memberKey: params.identity.memberKey }),
+        ...(params.identity.itemIndex === undefined
+          ? {}
+          : { itemIndex: params.identity.itemIndex }),
+        ...(params.identity.itemKey === undefined
+          ? {}
+          : { itemKey: params.identity.itemKey }),
+      }
+      childLinks.push(childLink)
+      return { childLink, childRun, created: true }
+    },
+    async ensureMapItems(params) {
+      const key = nodeKey(params.runId, params.nodeName)
+      if (params.keys && params.keys.length !== params.items.length) {
+        throw new Error(`Map item key count mismatch [${key}]`)
+      }
+
+      const keys = params.items.map((_, index) => params.keys?.[index])
+      const existingKeys = mapItemKeys.get(key)
+      const existingItems = mapItems.filter(
+        (item) => item.runId === params.runId && item.nodeName === params.nodeName,
+      )
+      if (existingKeys) {
+        const sameKeys =
+          existingKeys.length === keys.length &&
+          existingKeys.every((existingKey, index) => existingKey === keys[index])
+        if (!sameKeys) throw new Error(`Map item conflict [${key}]`)
+
+        return { items: existingItems, created: false }
+      }
+
+      mapItemKeys.set(key, keys)
+      const createdItems = params.items.map((item, index): StoredMapItem => {
+        const itemKey = params.keys?.[index]
+        const identity: NodeChildIdentity = {
+          runId: params.runId,
+          nodeName: params.nodeName,
+          itemIndex: index,
+          ...(itemKey === undefined ? {} : { itemKey }),
+        }
+        return {
+          identity,
+          runId: params.runId,
+          nodeName: params.nodeName,
+          index,
+          ...(itemKey === undefined ? {} : { key: itemKey }),
+          item,
+          status: 'pending',
+        }
+      })
+      mapItems.push(...createdItems)
+      return { items: createdItems, created: true }
+    },
+    async completeMapItem(params) {
+      const index = mapItems.findIndex(
+        (item) =>
+          item.runId === params.runId &&
+          item.nodeName === params.nodeName &&
+          item.index === params.itemIndex &&
+          item.key === params.itemKey,
+      )
+      if (index === -1) return undefined
+
+      const item = mapItems[index]!
+      if (isTerminalNodeStatus(item.status)) return item
+
+      const updated: StoredMapItem = {
+        ...item,
+        status: 'completed',
+        output: params.output,
+      }
+      mapItems[index] = updated
+      return updated
+    },
+    async failMapItem(params) {
+      const index = mapItems.findIndex(
+        (item) =>
+          item.runId === params.runId &&
+          item.nodeName === params.nodeName &&
+          item.index === params.itemIndex &&
+          item.key === params.itemKey,
+      )
+      if (index === -1) return undefined
+
+      const item = mapItems[index]!
+      if (isTerminalNodeStatus(item.status)) return item
+
+      const updated: StoredMapItem = {
+        ...item,
+        status: 'failed',
+        error: storedError(params.error),
+      }
+      mapItems[index] = updated
+      return updated
+    },
+    async waitNode({ runId, nodeName }) {
+      const key = nodeKey(runId, nodeName)
+      const node = nodes.get(key)
+      if (!node) return undefined
+      if (isTerminalNodeStatus(node.status)) return node
+
+      const updated: StoredNode = {
+        ...node,
+        status: 'waiting',
+        version: node.version + 1,
+        updatedAt: now(),
+      }
+      nodes.set(key, updated)
+      return updated
+    },
+    async loadNodeChildren({ runId, nodeName }) {
+      return {
+        attempts: [...attempts.values()].filter(
+          (attempt) => attempt.runId === runId && attempt.nodeName === nodeName,
+        ),
+        childLinks: childLinks.filter(
+          (link) =>
+            link.parentRunId === runId && link.parentNodeName === nodeName,
+        ),
+        mapItems: mapItems.filter(
+          (item) => item.runId === runId && item.nodeName === nodeName,
+        ),
+      }
     },
   }
 
