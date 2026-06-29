@@ -2,6 +2,7 @@ import type { Container, DependencyContext } from '@nmtjs/core'
 
 import type {
   ActivityNodeImplementation,
+  BranchNodeImplementation,
   TaskImplementation,
   WorkflowImplementation,
 } from '../implement/index.ts'
@@ -94,11 +95,8 @@ export async function runActivityAttempt(
     return
   }
 
-  const node = workflow.nodes.find(
-    (candidate): candidate is ActivityNodeImplementation =>
-      candidate.kind === 'activity' && candidate.name === command.nodeName,
-  )
-  if (!node || node.activity.name !== command.activityName) {
+  const node = resolveActivityAttemptNode(workflow, storedNode, command)
+  if (!node) {
     await input.attemptExecutor.release(input.claimed)
     return
   }
@@ -147,6 +145,33 @@ export async function runActivityAttempt(
   })
   await enqueueContinueRun(input.runCoordinationExecutor, command)
   await input.attemptExecutor.ack(input.claimed)
+}
+
+function resolveActivityAttemptNode(
+  workflow: WorkflowImplementation,
+  storedNode: StoredNode | undefined,
+  command: ActivityAttemptCommand,
+): ActivityNodeImplementation | undefined {
+  const direct = workflow.nodes.find(
+    (candidate): candidate is ActivityNodeImplementation =>
+      candidate.kind === 'activity' && candidate.name === command.nodeName,
+  )
+  if (direct) {
+    return direct.activity.name === command.activityName ? direct : undefined
+  }
+
+  if (storedNode?.kind !== 'branch' || !storedNode.selectedCase) {
+    return undefined
+  }
+
+  const branch = workflow.nodes.find(
+    (candidate): candidate is BranchNodeImplementation =>
+      candidate.kind === 'branch' && candidate.name === command.nodeName,
+  )
+  const selected = branch?.cases[storedNode.selectedCase]
+  if (selected?.kind !== 'activity') return undefined
+
+  return selected.activity.name === command.activityName ? selected : undefined
 }
 
 export async function runTaskAttempt(

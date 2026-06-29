@@ -2,8 +2,10 @@ import type { Container, DependencyContext } from '@nmtjs/core'
 
 import type {
   ActivityNodeImplementation,
+  BranchNodeImplementation,
   RunnableNodeImplementation,
   WorkflowImplementation,
+  WorkflowCaseImplementation,
 } from '../implement/index.ts'
 import type { ContinueRunCommand } from './commands.ts'
 import type { AttemptExecutor, RunCoordinationExecutor } from './executors.ts'
@@ -135,6 +137,20 @@ async function advanceWorkflowRun(input: {
 
   if (nextNode.kind === 'workflow') {
     await dispatchWorkflowNode({
+      store: input.store,
+      attemptExecutor: input.attemptExecutor,
+      runCoordinationExecutor: input.runCoordinationExecutor,
+      workflow: input.workflow,
+      workflowCtx: input.workflowCtx,
+      run: input.run,
+      outputs: input.outputs,
+      node: nextNode,
+    })
+    return
+  }
+
+  if (nextNode.kind === 'branch') {
+    await dispatchBranchNode({
       store: input.store,
       attemptExecutor: input.attemptExecutor,
       runCoordinationExecutor: input.runCoordinationExecutor,
@@ -455,4 +471,130 @@ async function dispatchActivityNode(input: {
       error,
     })
   }
+}
+
+async function dispatchBranchNode(input: {
+  readonly store: WorkflowStore
+  readonly attemptExecutor: AttemptExecutor
+  readonly runCoordinationExecutor: RunCoordinationExecutor
+  readonly workflow: WorkflowImplementation
+  readonly workflowCtx: DependencyContext<any>
+  readonly run: StoredRun
+  readonly outputs: Record<string, unknown>
+  readonly node: BranchNodeImplementation
+}) {
+  const existing = await input.store.createNode({
+    runId: input.run.id,
+    name: input.node.name,
+    kind: 'branch',
+  })
+  if (existing.status === 'completed' || existing.status === 'failed') return
+
+  let caseKey = existing.selectedCase
+  if (caseKey === undefined) {
+    try {
+      caseKey = input.node.select(input.workflowCtx, input.outputs, input.run.input)
+    } catch (error) {
+      await input.store.failNode({
+        runId: input.run.id,
+        nodeName: input.node.name,
+        error,
+      })
+      await failRunAndWakeParent({
+        store: input.store,
+        runCoordinationExecutor: input.runCoordinationExecutor,
+        runId: input.run.id,
+        error,
+      })
+      return
+    }
+
+    await input.store.selectNodeCase({
+      runId: input.run.id,
+      nodeName: input.node.name,
+      caseKey,
+    })
+  }
+
+  const selected = input.node.cases[caseKey]
+  if (!selected) {
+    const error = new Error(`Unknown branch case [${input.node.name}.${caseKey}]`)
+    await input.store.failNode({
+      runId: input.run.id,
+      nodeName: input.node.name,
+      error,
+    })
+    await failRunAndWakeParent({
+      store: input.store,
+      runCoordinationExecutor: input.runCoordinationExecutor,
+      runId: input.run.id,
+      error,
+    })
+    return
+  }
+
+  if (selected.kind !== 'activity') {
+    throw unsupportedBranchCase(input.node.name, selected)
+  }
+
+  const nodeInput = selected.input
+    ? selected.input(input.workflowCtx, input.outputs, input.run.input)
+    : input.run.input
+
+  await input.store.setNodeInput({
+    runId: input.run.id,
+    nodeName: input.node.name,
+    input: nodeInput,
+  })
+
+  const result = await input.store.ensureNodeAttempt({
+    identity: {
+      runId: input.run.id,
+      nodeName: input.node.name,
+      caseKey,
+    },
+    kind: 'activity',
+    input: nodeInput,
+  })
+
+  try {
+    await input.attemptExecutor.dispatchActivity({
+      kind: 'activityAttempt',
+      workflowName: input.workflow.workflow.name,
+      activityName: selected.activity.name,
+      runId: input.run.id,
+      nodeName: input.node.name,
+      attemptId: result.attempt.id,
+      leaseToken: result.attempt.leaseToken!,
+      input: nodeInput,
+    })
+    await input.store.waitNode({
+      runId: input.run.id,
+      nodeName: input.node.name,
+    })
+  } catch (error) {
+    await input.store.failCurrentAttempt({
+      attemptId: result.attempt.id,
+      leaseToken: result.attempt.leaseToken!,
+      error,
+    })
+    await input.store.failNode({
+      runId: input.run.id,
+      nodeName: input.node.name,
+      error,
+    })
+    await failRunAndWakeParent({
+      store: input.store,
+      runCoordinationExecutor: input.runCoordinationExecutor,
+      runId: input.run.id,
+      error,
+    })
+  }
+}
+
+function unsupportedBranchCase(
+  nodeName: string,
+  selected: WorkflowCaseImplementation,
+): Error {
+  return new Error(`Unsupported branch ${selected.kind} case [${selected.name}] in node [${nodeName}]`)
 }

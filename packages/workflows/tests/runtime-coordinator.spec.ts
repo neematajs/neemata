@@ -232,6 +232,227 @@ describe('workflow runtime coordinator', () => {
     ])
   })
 
+  it('runs a branch activity case and completes from selected output', async () => {
+    const workflow = defineWorkflow({
+      name: 'branch-activity-workflow',
+      input: t.object({
+        kind: t.union(t.literal('normal'), t.literal('fallback')),
+        scenario: t.string(),
+      }),
+      output: t.object({ text: t.string() }),
+    })
+      .branch('content', {
+        output: t.object({ text: t.string() }),
+        cases: (helpers) => ({
+          normal: helpers.activity({
+            input: t.object({ scenario: t.string() }),
+            output: t.object({ text: t.string() }),
+          }),
+          fallback: helpers.activity({
+            input: t.object({ scenario: t.string() }),
+            output: t.object({ text: t.string() }),
+          }),
+        }),
+      })
+      .build()
+
+    let selectCalls = 0
+    const implementation = implementWorkflow(workflow)
+      .content({
+        select: (_ctx, _outputs, input) => {
+          selectCalls += 1
+          return input.kind
+        },
+        cases: ({ activity }) => ({
+          normal: activity(
+            async (_ctx, input) => ({ text: `normal:${input.scenario}` }),
+            {
+              input: (_ctx, _outputs, input) => ({
+                scenario: input.scenario,
+              }),
+            },
+          ),
+          fallback: activity(
+            async (_ctx, input) => ({ text: `fallback:${input.scenario}` }),
+            {
+              input: (_ctx, _outputs, input) => ({
+                scenario: input.scenario,
+              }),
+            },
+          ),
+        }),
+      })
+      .finish((_ctx, { content }) => ({ text: content.text }))
+
+    const runtime = createInMemoryWorkflowRuntime()
+    const container = createTestContainer()
+    const run = await runtime.store.createRun({
+      workflowName: workflow.name,
+      input: { kind: 'normal', scenario: 'alpha' },
+    })
+    const command = {
+      kind: 'continueRun' as const,
+      runId: run.id,
+      workflowName: workflow.name,
+    }
+
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [implementation],
+      workerId: 'coordinator-1',
+      command,
+    })
+
+    const afterDispatch = await runtime.store.loadRunSnapshot(run.id)
+    const activityCommands = runtime.inspect().activityCommands
+    expect(afterDispatch?.nodes[0]?.selectedCase).toBe('normal')
+    expect(afterDispatch?.nodes[0]?.status).toBe('waiting')
+    expect(afterDispatch?.attempts).toHaveLength(1)
+    expect(afterDispatch?.attempts[0]?.identity).toStrictEqual({
+      runId: run.id,
+      nodeName: 'content',
+      caseKey: 'normal',
+    })
+    expect(activityCommands).toHaveLength(1)
+    expect(activityCommands[0]?.payload).toMatchObject({
+      kind: 'activityAttempt',
+      workflowName: workflow.name,
+      runId: run.id,
+      nodeName: 'content',
+      input: { scenario: 'alpha' },
+    })
+    expect(activityCommands[0]?.payload.activityName).not.toContain('fallback')
+
+    const claimed = await runtime.attemptExecutor.claimActivity({
+      workerId: 'activity-worker-1',
+      workflowNames: [workflow.name],
+      leaseMs: 30_000,
+    })
+    expect(claimed).not.toBeNull()
+
+    await runActivityAttempt({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [implementation],
+      workerId: 'activity-worker-1',
+      claimed: claimed!,
+    })
+
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [implementation],
+      workerId: 'coordinator-1',
+      command,
+    })
+
+    const final = await runtime.store.loadRunSnapshot(run.id)
+    expect(selectCalls).toBe(1)
+    expect(final?.nodes[0]?.status).toBe('completed')
+    expect(final?.nodes[0]?.selectedCase).toBe('normal')
+    expect(final?.nodes[0]?.output).toStrictEqual({ text: 'normal:alpha' })
+    expect(final?.run.status).toBe('completed')
+    expect(final?.run.output).toStrictEqual({ text: 'normal:alpha' })
+  })
+
+  it('does not reselect or duplicate branch activity attempts on repeated continuation', async () => {
+    const workflow = defineWorkflow({
+      name: 'branch-activity-dedupe',
+      input: t.object({
+        kind: t.literal('normal'),
+        scenario: t.string(),
+      }),
+      output: t.object({ text: t.string() }),
+    })
+      .branch('content', {
+        output: t.object({ text: t.string() }),
+        cases: (helpers) => ({
+          normal: helpers.activity({
+            input: t.object({ scenario: t.string() }),
+            output: t.object({ text: t.string() }),
+          }),
+          fallback: helpers.activity({
+            input: t.object({ scenario: t.string() }),
+            output: t.object({ text: t.string() }),
+          }),
+        }),
+      })
+      .build()
+
+    let selectCalls = 0
+    const implementation = implementWorkflow(workflow)
+      .content({
+        select: () => {
+          selectCalls += 1
+          return 'normal'
+        },
+        cases: ({ activity }) => ({
+          normal: activity(async (_ctx, input) => ({ text: input.scenario }), {
+            input: (_ctx, _outputs, input) => ({ scenario: input.scenario }),
+          }),
+          fallback: activity(async (_ctx, input) => ({ text: input.scenario }), {
+            input: (_ctx, _outputs, input) => ({ scenario: input.scenario }),
+          }),
+        }),
+      })
+      .finish((_ctx, { content }) => ({ text: content.text }))
+
+    const runtime = createInMemoryWorkflowRuntime()
+    const container = createTestContainer()
+    const run = await runtime.store.createRun({
+      workflowName: workflow.name,
+      input: { kind: 'normal', scenario: 'alpha' },
+    })
+    const command = {
+      kind: 'continueRun' as const,
+      runId: run.id,
+      workflowName: workflow.name,
+    }
+
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [implementation],
+      workerId: 'coordinator-1',
+      command,
+    })
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [implementation],
+      workerId: 'coordinator-1',
+      command,
+    })
+
+    const snapshot = await runtime.store.loadRunSnapshot(run.id)
+    const activityCommands = runtime.inspect().activityCommands
+    const attemptId = activityCommands[0]?.payload.attemptId
+    expect(selectCalls).toBe(1)
+    expect(snapshot?.nodes[0]?.selectedCase).toBe('normal')
+    expect(snapshot?.attempts).toHaveLength(1)
+    expect(snapshot?.attempts[0]?.identity).toStrictEqual({
+      runId: run.id,
+      nodeName: 'content',
+      caseKey: 'normal',
+    })
+    expect(activityCommands).toHaveLength(2)
+    expect(activityCommands.map((item) => item.payload.attemptId)).toEqual([
+      attemptId,
+      attemptId,
+    ])
+  })
+
   it('releases a claimed activity attempt when no workflow implementation is registered', async () => {
     const workflow = defineWorkflow({
       name: 'unrouted-activity-worker',
