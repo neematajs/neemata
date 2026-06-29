@@ -11,7 +11,7 @@ import type { ContinueRunCommand } from './commands.ts'
 import type { AttemptExecutor, RunCoordinationExecutor } from './executors.ts'
 import { createWorkflowRuntimeRegistry } from './registry.ts'
 import { isTerminalRunStatus } from './status.ts'
-import type { StoredRun } from './state.ts'
+import type { NodeChildIdentity, StoredAttempt, StoredRun } from './state.ts'
 import type { WorkflowStore } from './store.ts'
 
 export type ContinueWorkflowRunInput = {
@@ -436,41 +436,24 @@ async function dispatchActivityNode(input: {
     nodeName: input.node.name,
     input: nodeInput,
   })
-  const attempt = await input.store.createAttempt({
+
+  await dispatchActivityAttempt({
+    store: input.store,
+    attemptExecutor: input.attemptExecutor,
+    runCoordinationExecutor: input.runCoordinationExecutor,
+    workflowName: input.workflow.workflow.name,
+    activityName: input.node.activity.name,
     runId: input.runId,
     nodeName: input.node.name,
-    input: nodeInput,
+    prepareAttempt: async () => ({
+      attempt: await input.store.createAttempt({
+        runId: input.runId,
+        nodeName: input.node.name,
+        input: nodeInput,
+      }),
+      commandInput: nodeInput,
+    }),
   })
-
-  try {
-    await input.attemptExecutor.dispatchActivity({
-      kind: 'activityAttempt',
-      workflowName: input.workflow.workflow.name,
-      activityName: input.node.activity.name,
-      runId: input.runId,
-      nodeName: input.node.name,
-      attemptId: attempt.id,
-      leaseToken: attempt.leaseToken!,
-      input: nodeInput,
-    })
-  } catch (error) {
-    await input.store.failCurrentAttempt({
-      attemptId: attempt.id,
-      leaseToken: attempt.leaseToken!,
-      error,
-    })
-    await input.store.failNode({
-      runId: input.runId,
-      nodeName: input.node.name,
-      error,
-    })
-    await failRunAndWakeParent({
-      store: input.store,
-      runCoordinationExecutor: input.runCoordinationExecutor,
-      runId: input.runId,
-      error,
-    })
-  }
 }
 
 async function dispatchBranchNode(input: {
@@ -541,60 +524,115 @@ async function dispatchBranchNode(input: {
     ? selected.input(input.workflowCtx, input.outputs, input.run.input)
     : input.run.input
 
-  await input.store.setNodeInput({
+  const identity = {
     runId: input.run.id,
     nodeName: input.node.name,
-    input: nodeInput,
+    caseKey,
+  } satisfies NodeChildIdentity
+  const children = await input.store.loadNodeChildren({
+    runId: input.run.id,
+    nodeName: input.node.name,
   })
+  const hasAttempt = children.attempts.some(
+    (attempt) =>
+      attempt.identity && sameNodeChildIdentity(attempt.identity, identity),
+  )
 
-  const result = await input.store.ensureNodeAttempt({
-    identity: {
+  if (!hasAttempt) {
+    await input.store.setNodeInput({
       runId: input.run.id,
       nodeName: input.node.name,
-      caseKey,
-    },
-    kind: 'activity',
-    input: nodeInput,
-  })
-
-  try {
-    await input.attemptExecutor.dispatchActivity({
-      kind: 'activityAttempt',
-      workflowName: input.workflow.workflow.name,
-      activityName: selected.activity.name,
-      runId: input.run.id,
-      nodeName: input.node.name,
-      attemptId: result.attempt.id,
-      leaseToken: result.attempt.leaseToken!,
       input: nodeInput,
     })
-    await input.store.waitNode({
-      runId: input.run.id,
-      nodeName: input.node.name,
-    })
-  } catch (error) {
-    await input.store.failCurrentAttempt({
-      attemptId: result.attempt.id,
-      leaseToken: result.attempt.leaseToken!,
-      error,
-    })
-    await input.store.failNode({
-      runId: input.run.id,
-      nodeName: input.node.name,
-      error,
-    })
-    await failRunAndWakeParent({
-      store: input.store,
-      runCoordinationExecutor: input.runCoordinationExecutor,
-      runId: input.run.id,
-      error,
-    })
   }
+
+  await dispatchActivityAttempt({
+    store: input.store,
+    attemptExecutor: input.attemptExecutor,
+    runCoordinationExecutor: input.runCoordinationExecutor,
+    workflowName: input.workflow.workflow.name,
+    activityName: selected.activity.name,
+    runId: input.run.id,
+    nodeName: input.node.name,
+    prepareAttempt: async () => {
+      const result = await input.store.ensureNodeAttempt({
+        identity,
+        kind: 'activity',
+        input: nodeInput,
+      })
+      return {
+        attempt: result.attempt,
+        commandInput: result.created ? nodeInput : result.attempt.input,
+      }
+    },
+  })
 }
 
 function unsupportedBranchCase(
   nodeName: string,
   selected: WorkflowCaseImplementation,
 ): Error {
-  return new Error(`Unsupported branch ${selected.kind} case [${selected.name}] in node [${nodeName}]`)
+  return new Error(
+    `Unsupported branch ${selected.kind} case [${selected.name}] in node [${nodeName}]`,
+  )
+}
+
+async function dispatchActivityAttempt(input: {
+  readonly store: WorkflowStore
+  readonly attemptExecutor: AttemptExecutor
+  readonly runCoordinationExecutor: RunCoordinationExecutor
+  readonly workflowName: string
+  readonly activityName: string
+  readonly runId: string
+  readonly nodeName: string
+  readonly prepareAttempt: () => Promise<{
+    readonly attempt: StoredAttempt
+    readonly commandInput: unknown
+  }>
+}) {
+  const { attempt, commandInput } = await input.prepareAttempt()
+
+  try {
+    await input.attemptExecutor.dispatchActivity({
+      kind: 'activityAttempt',
+      workflowName: input.workflowName,
+      activityName: input.activityName,
+      runId: input.runId,
+      nodeName: input.nodeName,
+      attemptId: attempt.id,
+      leaseToken: attempt.leaseToken!,
+      input: commandInput,
+    })
+  } catch (error) {
+    await input.store.failCurrentAttempt({
+      attemptId: attempt.id,
+      leaseToken: attempt.leaseToken!,
+      error,
+    })
+    await input.store.failNode({
+      runId: input.runId,
+      nodeName: input.nodeName,
+      error,
+    })
+    await failRunAndWakeParent({
+      store: input.store,
+      runCoordinationExecutor: input.runCoordinationExecutor,
+      runId: input.runId,
+      error,
+    })
+  }
+}
+
+function sameNodeChildIdentity(
+  left: NodeChildIdentity,
+  right: NodeChildIdentity,
+): boolean {
+  return (
+    left.runId === right.runId &&
+    left.nodeName === right.nodeName &&
+    left.caseKey === right.caseKey &&
+    left.memberKey === right.memberKey &&
+    left.itemIndex === right.itemIndex &&
+    left.itemKey === right.itemKey
+  )
 }

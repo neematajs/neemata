@@ -453,6 +453,77 @@ describe('workflow runtime coordinator', () => {
     ])
   })
 
+  it('reuses original branch activity attempt input on repeated continuation', async () => {
+    const workflow = defineWorkflow({
+      name: 'branch-activity-input-reuse',
+      input: t.object({ scenario: t.string() }),
+      output: t.object({ text: t.string() }),
+    })
+      .branch('content', {
+        output: t.object({ text: t.string() }),
+        cases: (helpers) => ({
+          normal: helpers.activity({
+            input: t.object({ scenario: t.string() }),
+            output: t.object({ text: t.string() }),
+          }),
+        }),
+      })
+      .build()
+
+    let mapCalls = 0
+    const implementation = implementWorkflow(workflow)
+      .content({
+        select: () => 'normal',
+        cases: ({ activity }) => ({
+          normal: activity(async (_ctx, input) => ({ text: input.scenario }), {
+            input: (_ctx, _outputs, input) => {
+              mapCalls += 1
+              return { scenario: `${input.scenario}-${mapCalls}` }
+            },
+          }),
+        }),
+      })
+      .finish((_ctx, { content }) => ({ text: content.text }))
+
+    const runtime = createInMemoryWorkflowRuntime()
+    const container = createTestContainer()
+    const run = await runtime.store.createRun({
+      workflowName: workflow.name,
+      input: { scenario: 'alpha' },
+    })
+    const command = {
+      kind: 'continueRun' as const,
+      runId: run.id,
+      workflowName: workflow.name,
+    }
+
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [implementation],
+      workerId: 'coordinator-1',
+      command,
+    })
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [implementation],
+      workerId: 'coordinator-1',
+      command,
+    })
+
+    const snapshot = await runtime.store.loadRunSnapshot(run.id)
+    expect(mapCalls).toBe(2)
+    expect(snapshot?.nodes[0]?.input).toStrictEqual({ scenario: 'alpha-1' })
+    expect(snapshot?.attempts[0]?.input).toStrictEqual({ scenario: 'alpha-1' })
+    expect(runtime.inspect().activityCommands.map((item) => item.payload.input))
+      .toStrictEqual([{ scenario: 'alpha-1' }, { scenario: 'alpha-1' }])
+  })
+
   it('releases a claimed activity attempt when no workflow implementation is registered', async () => {
     const workflow = defineWorkflow({
       name: 'unrouted-activity-worker',
