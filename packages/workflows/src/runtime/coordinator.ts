@@ -106,6 +106,7 @@ export async function continueWorkflowRun(
     if (nextNode.kind === 'workflow') {
       await dispatchWorkflowNode({
         store: input.store,
+        attemptExecutor: input.attemptExecutor,
         runCoordinationExecutor: input.runCoordinationExecutor,
         workflow: implementation,
         workflowCtx: workflowCtx as DependencyContext<any>,
@@ -224,6 +225,7 @@ async function completeRunAndWakeParent(input: {
 
 async function dispatchWorkflowNode(input: {
   readonly store: WorkflowStore
+  readonly attemptExecutor: AttemptExecutor
   readonly runCoordinationExecutor: RunCoordinationExecutor
   readonly workflow: WorkflowImplementation
   readonly workflowCtx: DependencyContext<any>
@@ -263,10 +265,11 @@ async function dispatchWorkflowNode(input: {
       const nodeIndex = input.workflow.nodes.findIndex(
         (node) => node.name === input.node.name,
       )
+      const nextOutputs = { ...input.outputs, [input.node.name]: childRun.output }
       if (nodeIndex === input.workflow.nodes.length - 1) {
         const output = await input.workflow.finish(
           input.workflowCtx,
-          { ...input.outputs, [input.node.name]: childRun.output },
+          nextOutputs,
           input.run.input,
         )
         await completeRunAndWakeParent({
@@ -275,7 +278,53 @@ async function dispatchWorkflowNode(input: {
           runId: input.run.id,
           output,
         })
+        return
       }
+
+      const nextNode = input.workflow.nodes[nodeIndex + 1]
+      if (!nextNode) return
+      if (nextNode.kind === 'task') {
+        await dispatchTaskNode({
+          store: input.store,
+          attemptExecutor: input.attemptExecutor,
+          workflow: input.workflow,
+          workflowCtx: input.workflowCtx,
+          runId: input.run.id,
+          workflowInput: input.run.input,
+          outputs: nextOutputs,
+          node: nextNode,
+        })
+        return
+      }
+
+      if (nextNode.kind === 'workflow') {
+        await dispatchWorkflowNode({
+          store: input.store,
+          attemptExecutor: input.attemptExecutor,
+          runCoordinationExecutor: input.runCoordinationExecutor,
+          workflow: input.workflow,
+          workflowCtx: input.workflowCtx,
+          run: input.run,
+          outputs: nextOutputs,
+          node: nextNode,
+        })
+        return
+      }
+
+      if (nextNode.kind !== 'activity') {
+        throw new Error(`Unsupported runtime node kind [${nextNode.kind}]`)
+      }
+
+      await dispatchActivityNode({
+        store: input.store,
+        attemptExecutor: input.attemptExecutor,
+        workflow: input.workflow,
+        workflowCtx: input.workflowCtx,
+        runId: input.run.id,
+        workflowInput: input.run.input,
+        outputs: nextOutputs,
+        node: nextNode,
+      })
       return
     }
 
