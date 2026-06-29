@@ -16,6 +16,35 @@ export type {
   WorkflowTags,
 } from './implement/index.ts'
 export type {
+  ActivityAttemptCommand,
+  ActivityWorkerClaim,
+  AttemptCommand,
+  AttemptExecutor,
+  ClaimedAttempt,
+  ClaimedCommand,
+  ContinueRunCommand,
+  CreateAttemptInput,
+  CreateNodeInput,
+  CreateRunInput,
+  RunCoordinationExecutor,
+  RunCoordinationWorkerClaim,
+  RunLease,
+  RunSnapshot,
+  RuntimeAttemptStatus,
+  RuntimeNodeStatus,
+  RuntimeRunStatus,
+  StoredAttempt,
+  StoredChildLink,
+  StoredError,
+  StoredMapItem,
+  StoredNode,
+  StoredRun,
+  StoredTimelineEvent,
+  TaskAttemptCommand,
+  TaskWorkerClaim,
+  WorkflowStore,
+} from './runtime/index.ts'
+export type {
   ActivityBinding,
   ActivityBindings,
   AnyTaskDefinition,
@@ -58,3 +87,4 @@ export type {
 } from './types/index.ts'
 export { defineTask, defineWorkflow } from './contract/index.ts'
 export { implementTask, implementWorkflow } from './implement/index.ts'
+export { isTerminalNodeStatus, isTerminalRunStatus } from './runtime/index.ts'
