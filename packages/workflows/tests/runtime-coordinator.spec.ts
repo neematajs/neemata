@@ -263,8 +263,8 @@ describe('workflow runtime coordinator', () => {
           selectCalls += 1
           return input.kind
         },
-        cases: ({ activity }) => ({
-          normal: activity(
+        cases: (helpers) => ({
+          normal: helpers.activity(
             async (_ctx, input) => ({ text: `normal:${input.scenario}` }),
             {
               input: (_ctx, _outputs, input) => ({
@@ -272,7 +272,7 @@ describe('workflow runtime coordinator', () => {
               }),
             },
           ),
-          fallback: activity(
+          fallback: helpers.activity(
             async (_ctx, input) => ({ text: `fallback:${input.scenario}` }),
             {
               input: (_ctx, _outputs, input) => ({
@@ -393,11 +393,11 @@ describe('workflow runtime coordinator', () => {
           selectCalls += 1
           return 'normal'
         },
-        cases: ({ activity }) => ({
-          normal: activity(async (_ctx, input) => ({ text: input.scenario }), {
+        cases: (helpers) => ({
+          normal: helpers.activity(async (_ctx, input) => ({ text: input.scenario }), {
             input: (_ctx, _outputs, input) => ({ scenario: input.scenario }),
           }),
-          fallback: activity(async (_ctx, input) => ({ text: input.scenario }), {
+          fallback: helpers.activity(async (_ctx, input) => ({ text: input.scenario }), {
             input: (_ctx, _outputs, input) => ({ scenario: input.scenario }),
           }),
         }),
@@ -625,8 +625,8 @@ describe('workflow runtime coordinator', () => {
     const workflowImplementation = implementWorkflow(workflow)
       .content({
         select: () => 'summary',
-        cases: ({ task: taskCase }) => ({
-          summary: taskCase(task, {
+        cases: (helpers) => ({
+          summary: helpers.task(task, {
             input: (_ctx, _outputs, input) => ({ scenario: input.scenario }),
           }),
         }),
@@ -730,8 +730,8 @@ describe('workflow runtime coordinator', () => {
     const implementation = implementWorkflow(workflow)
       .content({
         select: () => 'summary',
-        cases: ({ task: taskCase }) => ({
-          summary: taskCase(task, {
+        cases: (helpers) => ({
+          summary: helpers.task(task, {
             input: (_ctx, _outputs, input) => {
               mapCalls += 1
               if (mapCalls > 1) throw new Error('task mapper called twice')
@@ -804,8 +804,8 @@ describe('workflow runtime coordinator', () => {
     })
       .branch('content', {
         output: t.object({ text: t.string() }),
-        cases: ({ workflow }) => ({
-          child: workflow(childWorkflow),
+        cases: (helpers) => ({
+          child: helpers.workflow(childWorkflow),
         }),
       })
       .build()
@@ -816,8 +816,8 @@ describe('workflow runtime coordinator', () => {
     const parentImplementation = implementWorkflow(parentWorkflow)
       .content({
         select: () => 'child',
-        cases: ({ workflow }) => ({
-          child: workflow(childWorkflow, {
+        cases: (helpers) => ({
+          child: helpers.workflow(childWorkflow, {
             input: (_ctx, _outputs, input) => ({
               scenario: input.scenario,
             }),
@@ -896,8 +896,8 @@ describe('workflow runtime coordinator', () => {
     })
       .branch('content', {
         output: t.object({ text: t.string() }),
-        cases: ({ activity }) => ({
-          normal: activity({
+        cases: (helpers) => ({
+          normal: helpers.activity({
             input: t.object({ scenario: t.string() }),
             output: t.object({ text: t.string() }),
           }),
@@ -908,8 +908,8 @@ describe('workflow runtime coordinator', () => {
     const implementation = implementWorkflow(workflow)
       .content({
         select: () => 'missing' as 'normal',
-        cases: ({ activity }) => ({
-          normal: activity(async (_ctx, input) => ({
+        cases: (helpers) => ({
+          normal: helpers.activity(async (_ctx, input) => ({
             text: input.scenario,
           })),
         }),
@@ -956,16 +956,16 @@ describe('workflow runtime coordinator', () => {
     })
       .branch('content', {
         output: t.object({ text: t.string() }),
-        cases: ({ workflow }) => ({
-          child: workflow(childWorkflow),
+        cases: (helpers) => ({
+          child: helpers.workflow(childWorkflow),
         }),
       })
       .build()
     const parentImplementation = implementWorkflow(parentWorkflow)
       .content({
         select: () => 'child',
-        cases: ({ workflow }) => ({
-          child: workflow(childWorkflow, {
+        cases: (helpers) => ({
+          child: helpers.workflow(childWorkflow, {
             input: (_ctx, _outputs, input) => ({
               scenario: input.scenario,
             }),
@@ -1057,8 +1057,8 @@ describe('workflow runtime coordinator', () => {
     })
       .branch('content', {
         output: t.object({ text: t.string() }),
-        cases: ({ workflow }) => ({
-          child: workflow(childWorkflow),
+        cases: (helpers) => ({
+          child: helpers.workflow(childWorkflow),
         }),
       })
       .build()
@@ -1068,8 +1068,8 @@ describe('workflow runtime coordinator', () => {
     const parentImplementation = implementWorkflow(parentWorkflow)
       .content({
         select: () => 'child',
-        cases: ({ workflow }) => ({
-          child: workflow(childWorkflow, {
+        cases: (helpers) => ({
+          child: helpers.workflow(childWorkflow, {
             input: (_ctx, _outputs, input) => ({
               scenario: input.scenario,
             }),
@@ -1169,8 +1169,8 @@ describe('workflow runtime coordinator', () => {
     })
       .branch('content', {
         output: t.object({ text: t.string() }),
-        cases: ({ workflow }) => ({
-          child: workflow(childWorkflow),
+        cases: (helpers) => ({
+          child: helpers.workflow(childWorkflow),
         }),
       })
       .build()
@@ -1179,8 +1179,8 @@ describe('workflow runtime coordinator', () => {
     const implementation = implementWorkflow(parentWorkflow)
       .content({
         select: () => 'child',
-        cases: ({ workflow }) => ({
-          child: workflow(childWorkflow, {
+        cases: (helpers) => ({
+          child: helpers.workflow(childWorkflow, {
             input: () => {
               mapCalls += 1
               if (mapCalls > 1) throw new Error('mapper called twice')
