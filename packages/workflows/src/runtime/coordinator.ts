@@ -488,6 +488,7 @@ async function dispatchActivityNode(input: {
         input: nodeInput,
       }),
       commandInput: nodeInput,
+      created: true,
     }),
   })
 }
@@ -602,6 +603,7 @@ async function dispatchBranchNode(input: {
         prepareAttempt: async () => ({
           attempt: existingAttempt,
           commandInput: existingAttempt.input,
+          created: false,
         }),
       })
       return
@@ -634,6 +636,7 @@ async function dispatchBranchNode(input: {
         return {
           attempt: result.attempt,
           commandInput: result.created ? nodeInput : result.attempt.input,
+          created: result.created,
         }
       },
     })
@@ -665,6 +668,7 @@ async function dispatchBranchNode(input: {
       prepareAttempt: async () => ({
         attempt: existingAttempt,
         commandInput: existingAttempt.input,
+        created: false,
       }),
     })
     return
@@ -697,6 +701,7 @@ async function dispatchBranchNode(input: {
       return {
         attempt: result.attempt,
         commandInput: result.created ? nodeInput : result.attempt.input,
+        created: result.created,
       }
     },
   })
@@ -726,9 +731,10 @@ async function dispatchActivityAttempt(input: {
   readonly prepareAttempt: () => Promise<{
     readonly attempt: StoredAttempt
     readonly commandInput: unknown
+    readonly created: boolean
   }>
 }) {
-  const { attempt, commandInput } = await input.prepareAttempt()
+  const { attempt, commandInput, created } = await input.prepareAttempt()
 
   try {
     await input.attemptExecutor.dispatchActivity({
@@ -742,6 +748,8 @@ async function dispatchActivityAttempt(input: {
       input: commandInput,
     })
   } catch (error) {
+    if (!created) throw error
+
     await input.store.failCurrentAttempt({
       attemptId: attempt.id,
       leaseToken: attempt.leaseToken!,
@@ -772,9 +780,10 @@ async function dispatchTaskAttempt(input: {
   readonly prepareAttempt: () => Promise<{
     readonly attempt: StoredAttempt
     readonly commandInput: unknown
+    readonly created: boolean
   }>
 }) {
-  const { attempt, commandInput } = await input.prepareAttempt()
+  const { attempt, commandInput, created } = await input.prepareAttempt()
 
   try {
     await input.attemptExecutor.dispatchTask({
@@ -788,6 +797,8 @@ async function dispatchTaskAttempt(input: {
       input: commandInput,
     })
   } catch (error) {
+    if (!created) throw error
+
     await input.store.failCurrentAttempt({
       attemptId: attempt.id,
       leaseToken: attempt.leaseToken!,

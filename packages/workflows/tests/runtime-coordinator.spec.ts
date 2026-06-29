@@ -453,6 +453,159 @@ describe('workflow runtime coordinator', () => {
     ])
   })
 
+  it('preserves a started branch activity attempt when redispatch fails', async () => {
+    const workflow = defineWorkflow({
+      name: 'branch-activity-redispatch-failure',
+      input: t.object({ scenario: t.string() }),
+      output: t.object({ text: t.string() }),
+    })
+      .branch('content', {
+        output: t.object({ text: t.string() }),
+        cases: (helpers) => ({
+          normal: helpers.activity({
+            input: t.object({ scenario: t.string() }),
+            output: t.object({ text: t.string() }),
+          }),
+        }),
+      })
+      .build()
+
+    const implementation = implementWorkflow(workflow)
+      .content({
+        select: () => 'normal',
+        cases: (helpers) => ({
+          normal: helpers.activity(async (_ctx, input) => ({
+            text: input.scenario,
+          })),
+        }),
+      })
+      .finish((_ctx, { content }) => ({ text: content.text }))
+
+    const runtime = createInMemoryWorkflowRuntime()
+    const container = createTestContainer()
+    const run = await runtime.store.createRun({
+      workflowName: workflow.name,
+      input: { scenario: 'alpha' },
+    })
+    const command = {
+      kind: 'continueRun' as const,
+      runId: run.id,
+      workflowName: workflow.name,
+    }
+
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [implementation],
+      workerId: 'coordinator-1',
+      command,
+    })
+
+    await expect(
+      continueWorkflowRun({
+        store: runtime.store,
+        runCoordinationExecutor: runtime.runCoordinationExecutor,
+        attemptExecutor: {
+          ...runtime.attemptExecutor,
+          dispatchActivity: async () => {
+            throw new Error('activity queue down')
+          },
+        },
+        container,
+        workflows: [implementation],
+        workerId: 'coordinator-1',
+        command,
+      }),
+    ).rejects.toThrow('activity queue down')
+
+    const snapshot = await runtime.store.loadRunSnapshot(run.id)
+    expect(snapshot?.run.status).toBe('queued')
+    expect(snapshot?.nodes[0]?.status).toBe('waiting')
+    expect(snapshot?.attempts[0]?.status).toBe('started')
+  })
+
+  it('preserves a completed branch activity attempt when recovery redispatch fails', async () => {
+    const workflow = defineWorkflow({
+      name: 'branch-activity-completed-redispatch-failure',
+      input: t.object({ scenario: t.string() }),
+      output: t.object({ text: t.string() }),
+    })
+      .branch('content', {
+        output: t.object({ text: t.string() }),
+        cases: (helpers) => ({
+          normal: helpers.activity({
+            input: t.object({ scenario: t.string() }),
+            output: t.object({ text: t.string() }),
+          }),
+        }),
+      })
+      .build()
+
+    const implementation = implementWorkflow(workflow)
+      .content({
+        select: () => 'normal',
+        cases: (helpers) => ({
+          normal: helpers.activity(async (_ctx, input) => ({
+            text: input.scenario,
+          })),
+        }),
+      })
+      .finish((_ctx, { content }) => ({ text: content.text }))
+
+    const runtime = createInMemoryWorkflowRuntime()
+    const container = createTestContainer()
+    const run = await runtime.store.createRun({
+      workflowName: workflow.name,
+      input: { scenario: 'alpha' },
+    })
+    const command = {
+      kind: 'continueRun' as const,
+      runId: run.id,
+      workflowName: workflow.name,
+    }
+
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [implementation],
+      workerId: 'coordinator-1',
+      command,
+    })
+
+    const attempt = runtime.inspect().attempts[0]!
+    await runtime.store.completeCurrentAttempt({
+      attemptId: attempt.id,
+      leaseToken: attempt.leaseToken!,
+      output: { text: 'alpha' },
+    })
+
+    await expect(
+      continueWorkflowRun({
+        store: runtime.store,
+        runCoordinationExecutor: runtime.runCoordinationExecutor,
+        attemptExecutor: {
+          ...runtime.attemptExecutor,
+          dispatchActivity: async () => {
+            throw new Error('activity queue down')
+          },
+        },
+        container,
+        workflows: [implementation],
+        workerId: 'coordinator-1',
+        command,
+      }),
+    ).rejects.toThrow('activity queue down')
+
+    const snapshot = await runtime.store.loadRunSnapshot(run.id)
+    expect(snapshot?.run.status).toBe('queued')
+    expect(snapshot?.nodes[0]?.status).toBe('waiting')
+    expect(snapshot?.attempts[0]?.status).toBe('completed')
+  })
+
   it('reuses original branch activity attempt input on repeated continuation', async () => {
     const workflow = defineWorkflow({
       name: 'branch-activity-input-reuse',
@@ -789,6 +942,79 @@ describe('workflow runtime coordinator', () => {
       { scenario: 'alpha-1' },
       { scenario: 'alpha-1' },
     ])
+  })
+
+  it('preserves a started branch task attempt when redispatch fails', async () => {
+    const task = defineTask({
+      name: 'branch.redispatch-summary',
+      input: t.object({ scenario: t.string() }),
+      output: t.object({ text: t.string() }),
+    })
+    const workflow = defineWorkflow({
+      name: 'branch-task-redispatch-failure',
+      input: t.object({ scenario: t.string() }),
+      output: t.object({ text: t.string() }),
+    })
+      .branch('content', {
+        output: t.object({ text: t.string() }),
+        cases: (helpers) => ({
+          summary: helpers.task(task),
+        }),
+      })
+      .build()
+
+    const implementation = implementWorkflow(workflow)
+      .content({
+        select: () => 'summary',
+        cases: (helpers) => ({
+          summary: helpers.task(task),
+        }),
+      })
+      .finish((_ctx, { content }) => ({ text: content.text }))
+
+    const runtime = createInMemoryWorkflowRuntime()
+    const container = createTestContainer()
+    const run = await runtime.store.createRun({
+      workflowName: workflow.name,
+      input: { scenario: 'alpha' },
+    })
+    const command = {
+      kind: 'continueRun' as const,
+      runId: run.id,
+      workflowName: workflow.name,
+    }
+
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [implementation],
+      workerId: 'coordinator-1',
+      command,
+    })
+
+    await expect(
+      continueWorkflowRun({
+        store: runtime.store,
+        runCoordinationExecutor: runtime.runCoordinationExecutor,
+        attemptExecutor: {
+          ...runtime.attemptExecutor,
+          dispatchTask: async () => {
+            throw new Error('task queue down')
+          },
+        },
+        container,
+        workflows: [implementation],
+        workerId: 'coordinator-1',
+        command,
+      }),
+    ).rejects.toThrow('task queue down')
+
+    const snapshot = await runtime.store.loadRunSnapshot(run.id)
+    expect(snapshot?.run.status).toBe('queued')
+    expect(snapshot?.nodes[0]?.status).toBe('waiting')
+    expect(snapshot?.attempts[0]?.status).toBe('started')
   })
 
   it('runs a branch child workflow case on a separate worker', async () => {
