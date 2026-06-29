@@ -705,6 +705,7 @@ describe('workflow runtime coordinator', () => {
       runCoordinationExecutor: runtime.runCoordinationExecutor,
       attemptExecutor: runtime.attemptExecutor,
       container,
+      workflows: [implementation],
       tasks: [taskImplementation],
       workerId: 'task-worker-1',
       claimed: claimed!,
@@ -798,6 +799,7 @@ describe('workflow runtime coordinator', () => {
       runCoordinationExecutor: runtime.runCoordinationExecutor,
       attemptExecutor: runtime.attemptExecutor,
       container,
+      workflows: [implementation],
       tasks: [taskImplementation],
       workerId: 'task-worker-1',
       claimed: {
@@ -817,5 +819,199 @@ describe('workflow runtime coordinator', () => {
     expect(snapshot?.attempts[0]?.status).toBe('started')
     expect(runtime.inspect().taskCommands).toHaveLength(0)
     expect(runtime.inspect().continueRunCommands).toHaveLength(0)
+  })
+
+  it('fails a task attempt whose command task does not match the workflow node target', async () => {
+    let embeddingHandlerCalls = 0
+    let poisonHandlerCalls = 0
+    const embeddingTask = defineTask({
+      name: 'validated.embedding.generate',
+      input: t.object({ text: t.string() }),
+      output: t.object({ vector: t.array(t.number()) }),
+    })
+    const poisonTask = defineTask({
+      name: 'validated.embedding.poison',
+      input: t.object({ text: t.string() }),
+      output: t.object({ vector: t.array(t.number()) }),
+    })
+    const workflow = defineWorkflow({
+      name: 'validated-task-worker',
+      input: t.object({ text: t.string() }),
+      output: t.object({ vector: t.array(t.number()) }),
+    })
+      .task('embedding', embeddingTask)
+      .build()
+
+    const embeddingImplementation = implementTask(embeddingTask, {
+      handler: async (_ctx, input) => {
+        embeddingHandlerCalls += 1
+        return { vector: [input.text.length] }
+      },
+    })
+    const poisonImplementation = implementTask(poisonTask, {
+      handler: async (_ctx, input) => {
+        poisonHandlerCalls += 1
+        return { vector: [input.text.length + 1] }
+      },
+    })
+    const implementation = implementWorkflow(workflow)
+      .embedding(embeddingTask)
+      .finish((_ctx, { embedding }) => ({ vector: embedding.vector }))
+
+    const runtime = createInMemoryWorkflowRuntime()
+    const run = await runtime.store.createRun({
+      workflowName: workflow.name,
+      input: { text: 'alpha' },
+    })
+    const container = createTestContainer()
+
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [implementation],
+      workerId: 'coordinator-1',
+      command: {
+        kind: 'continueRun',
+        runId: run.id,
+        workflowName: workflow.name,
+      },
+    })
+
+    const claimed = await runtime.attemptExecutor.claimTask({
+      workerId: 'task-worker-1',
+      taskNames: [embeddingTask.name],
+      leaseMs: 30_000,
+    })
+    expect(claimed).not.toBeNull()
+
+    const taskCommand = claimed!.command
+    if (taskCommand.kind !== 'taskAttempt') {
+      throw new Error(`Unexpected command kind [${taskCommand.kind}]`)
+    }
+
+    await runTaskAttempt({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [implementation],
+      tasks: [embeddingImplementation, poisonImplementation],
+      workerId: 'task-worker-1',
+      claimed: {
+        ...claimed!,
+        command: {
+          ...taskCommand,
+          taskName: poisonTask.name,
+        },
+      },
+    })
+
+    await runtime.attemptExecutor.release(claimed!)
+
+    const snapshot = await runtime.store.loadRunSnapshot(run.id)
+    expect(embeddingHandlerCalls).toBe(0)
+    expect(poisonHandlerCalls).toBe(0)
+    expect(snapshot?.nodes[0]?.status).toBe('failed')
+    expect(snapshot?.attempts[0]?.status).toBe('failed')
+    expect(runtime.inspect().continueRunCommands).toStrictEqual([
+      {
+        id: expect.any(String),
+        payload: {
+          kind: 'continueRun',
+          runId: run.id,
+          workflowName: workflow.name,
+        },
+      },
+    ])
+  })
+
+  it('reconciles a completed stale task attempt before acking it', async () => {
+    let handlerCalls = 0
+    const embeddingTask = defineTask({
+      name: 'reconciled.embedding.generate',
+      input: t.object({ text: t.string() }),
+      output: t.object({ vector: t.array(t.number()) }),
+    })
+    const workflow = defineWorkflow({
+      name: 'reconciled-task-worker',
+      input: t.object({ text: t.string() }),
+      output: t.object({ vector: t.array(t.number()) }),
+    })
+      .task('embedding', embeddingTask)
+      .build()
+
+    const taskImplementation = implementTask(embeddingTask, {
+      handler: async (_ctx, input) => {
+        handlerCalls += 1
+        return { vector: [input.text.length] }
+      },
+    })
+    const implementation = implementWorkflow(workflow)
+      .embedding(embeddingTask)
+      .finish((_ctx, { embedding }) => ({ vector: embedding.vector }))
+
+    const runtime = createInMemoryWorkflowRuntime()
+    const run = await runtime.store.createRun({
+      workflowName: workflow.name,
+      input: { text: 'alpha' },
+    })
+    const container = createTestContainer()
+
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [implementation],
+      workerId: 'coordinator-1',
+      command: {
+        kind: 'continueRun',
+        runId: run.id,
+        workflowName: workflow.name,
+      },
+    })
+
+    const claimed = await runtime.attemptExecutor.claimTask({
+      workerId: 'task-worker-1',
+      taskNames: [embeddingTask.name],
+      leaseMs: 30_000,
+    })
+    expect(claimed).not.toBeNull()
+
+    await runtime.store.completeCurrentAttempt({
+      attemptId: claimed!.command.attemptId,
+      leaseToken: claimed!.command.leaseToken,
+      output: { vector: [5] },
+    })
+
+    await runTaskAttempt({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [implementation],
+      tasks: [taskImplementation],
+      workerId: 'task-worker-1',
+      claimed: claimed!,
+    })
+
+    await runtime.attemptExecutor.release(claimed!)
+
+    const snapshot = await runtime.store.loadRunSnapshot(run.id)
+    expect(handlerCalls).toBe(0)
+    expect(snapshot?.nodes[0]?.status).toBe('completed')
+    expect(snapshot?.nodes[0]?.output).toStrictEqual({ vector: [5] })
+    expect(runtime.inspect().continueRunCommands).toStrictEqual([
+      {
+        id: expect.any(String),
+        payload: {
+          kind: 'continueRun',
+          runId: run.id,
+          workflowName: workflow.name,
+        },
+      },
+    ])
   })
 })

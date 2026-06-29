@@ -2,6 +2,7 @@ import type { Container, DependencyContext } from '@nmtjs/core'
 
 import type {
   ActivityNodeImplementation,
+  RunnableNodeImplementation,
   TaskImplementation,
   WorkflowImplementation,
 } from '../implement/index.ts'
@@ -29,6 +30,7 @@ export type RunTaskAttemptInput = {
   readonly store: WorkflowStore
   readonly runCoordinationExecutor: RunCoordinationExecutor
   readonly attemptExecutor: AttemptExecutor
+  readonly workflows: readonly WorkflowImplementation<any, any>[]
   readonly tasks: readonly TaskImplementation[]
   readonly workerId: string
   readonly claimed: ClaimedAttempt
@@ -52,14 +54,7 @@ export async function runActivityAttempt(
   )
 
   if (!isFreshActivityAttempt(command, storedNode, storedAttempt)) {
-    if (
-      storedNode?.status === 'completed' &&
-      storedAttempt?.status === 'completed'
-    ) {
-      await enqueueContinueRun(input.runCoordinationExecutor, command)
-    }
-
-    await input.attemptExecutor.ack(input.claimed)
+    await reconcileStaleAttempt(input, command, storedNode, storedAttempt)
     return
   }
 
@@ -154,21 +149,41 @@ export async function runTaskAttempt(
   )
 
   if (!isFreshTaskAttempt(command, storedNode, storedAttempt)) {
-    if (
-      storedNode?.status === 'completed' &&
-      storedAttempt?.status === 'completed'
-    ) {
-      await enqueueContinueRun(input.runCoordinationExecutor, command)
-    }
-
-    await input.attemptExecutor.ack(input.claimed)
+    await reconcileStaleAttempt(input, command, storedNode, storedAttempt)
     return
   }
 
-  const task = input.tasks.find(
-    (candidate) => candidate.task.name === command.taskName,
+  const registry = createWorkflowRuntimeRegistry({
+    workflows: input.workflows as readonly WorkflowImplementation[],
+    tasks: input.tasks,
+  })
+  const workflow = registry.getWorkflow(command.workflowName)
+  if (!workflow) {
+    await failTaskAttemptConfiguration(
+      input,
+      new Error(
+        `No workflow implementation registered for [${command.workflowName}]`,
+      ),
+    )
+    return
+  }
+
+  const node = workflow.nodes.find(
+    (candidate): candidate is RunnableNodeImplementation =>
+      candidate.kind === 'task' && candidate.name === command.nodeName,
   )
-  if (!task) {
+  if (!node || node.target.name !== command.taskName) {
+    await failTaskAttemptConfiguration(
+      input,
+      new Error(
+        `No task node implementation registered for [${command.workflowName}.${command.nodeName}.${command.taskName}]`,
+      ),
+    )
+    return
+  }
+
+  const task = registry.getTask(command.taskName)
+  if (task?.task !== node.target) {
     await failTaskAttemptConfiguration(
       input,
       new Error(`No task implementation registered for [${command.taskName}]`),
@@ -302,6 +317,58 @@ async function failTaskAttemptConfiguration(
 }
 
 type EnqueueContinueRunCommand = ActivityAttemptCommand | TaskAttemptCommand
+type RunAttemptInput = RunActivityAttemptInput | RunTaskAttemptInput
+
+async function reconcileStaleAttempt(
+  input: RunAttemptInput,
+  command: EnqueueContinueRunCommand,
+  storedNode: StoredNode | undefined,
+  storedAttempt: StoredAttempt | undefined,
+): Promise<void> {
+  if (
+    storedNode &&
+    storedAttempt?.status === 'completed' &&
+    storedNode.status !== 'completed'
+  ) {
+    await input.store.completeNode({
+      runId: command.runId,
+      nodeName: command.nodeName,
+      output: storedAttempt.output,
+    })
+    await enqueueContinueRun(input.runCoordinationExecutor, command)
+    await input.attemptExecutor.ack(input.claimed)
+    return
+  }
+
+  if (
+    storedNode &&
+    storedAttempt?.status === 'failed' &&
+    storedNode.status !== 'failed'
+  ) {
+    await input.store.failNode({
+      runId: command.runId,
+      nodeName: command.nodeName,
+      error:
+        storedAttempt.error ??
+        new Error(`Workflow attempt [${command.attemptId}] failed`),
+    })
+    await enqueueContinueRun(input.runCoordinationExecutor, command)
+    await input.attemptExecutor.ack(input.claimed)
+    return
+  }
+
+  if (
+    storedNode &&
+    storedAttempt &&
+    ((storedAttempt.status === 'completed' &&
+      storedNode.status === 'completed') ||
+      (storedAttempt.status === 'failed' && storedNode.status === 'failed'))
+  ) {
+    await enqueueContinueRun(input.runCoordinationExecutor, command)
+  }
+
+  await input.attemptExecutor.ack(input.claimed)
+}
 
 async function enqueueContinueRun(
   runCoordinationExecutor: RunCoordinationExecutor,
