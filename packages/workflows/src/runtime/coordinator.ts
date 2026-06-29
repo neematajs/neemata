@@ -9,6 +9,7 @@ import type { ContinueRunCommand } from './commands.ts'
 import type { AttemptExecutor, RunCoordinationExecutor } from './executors.ts'
 import { createWorkflowRuntimeRegistry } from './registry.ts'
 import { isTerminalRunStatus } from './status.ts'
+import type { StoredRun } from './state.ts'
 import type { WorkflowStore } from './store.ts'
 
 export type ContinueWorkflowRunInput = {
@@ -79,7 +80,12 @@ export async function continueWorkflowRun(
         outputs,
         snapshot.run.input,
       )
-      await input.store.completeRun({ runId: snapshot.run.id, output })
+      await completeRunAndWakeParent({
+        store: input.store,
+        runCoordinationExecutor: input.runCoordinationExecutor,
+        runId: snapshot.run.id,
+        output,
+      })
       return
     }
 
@@ -91,6 +97,19 @@ export async function continueWorkflowRun(
         workflowCtx: workflowCtx as DependencyContext<any>,
         runId: snapshot.run.id,
         workflowInput: snapshot.run.input,
+        outputs,
+        node: nextNode,
+      })
+      return
+    }
+
+    if (nextNode.kind === 'workflow') {
+      await dispatchWorkflowNode({
+        store: input.store,
+        runCoordinationExecutor: input.runCoordinationExecutor,
+        workflow: implementation,
+        workflowCtx: workflowCtx as DependencyContext<any>,
+        run: snapshot.run,
         outputs,
         node: nextNode,
       })
@@ -179,6 +198,127 @@ async function dispatchTaskNode(input: {
       error,
     })
   }
+}
+
+async function completeRunAndWakeParent(input: {
+  readonly store: WorkflowStore
+  readonly runCoordinationExecutor: RunCoordinationExecutor
+  readonly runId: string
+  readonly output: unknown
+}) {
+  const completed = await input.store.completeRun({
+    runId: input.runId,
+    output: input.output,
+  })
+  if (!completed?.parentRunId || !completed.parentNodeName) return
+
+  const parent = await input.store.loadRunSnapshot(completed.parentRunId)
+  if (!parent) return
+
+  await input.runCoordinationExecutor.enqueue({
+    kind: 'continueRun',
+    runId: completed.parentRunId,
+    workflowName: parent.run.workflowName,
+  })
+}
+
+async function dispatchWorkflowNode(input: {
+  readonly store: WorkflowStore
+  readonly runCoordinationExecutor: RunCoordinationExecutor
+  readonly workflow: WorkflowImplementation
+  readonly workflowCtx: DependencyContext<any>
+  readonly run: StoredRun
+  readonly outputs: Record<string, unknown>
+  readonly node: RunnableNodeImplementation
+}) {
+  const existing = await input.store.createNode({
+    runId: input.run.id,
+    name: input.node.name,
+    kind: 'workflow',
+  })
+  if (existing.status === 'completed' || existing.status === 'failed') return
+
+  const children = await input.store.loadNodeChildren({
+    runId: input.run.id,
+    nodeName: input.node.name,
+  })
+  const existingLink = children.childLinks[0]
+  if (existingLink) {
+    const snapshot = await input.store.loadRunSnapshot(existingLink.childRunId)
+    const childRun = snapshot?.run
+    if (!childRun || !isTerminalRunStatus(childRun.status)) {
+      await input.store.waitNode({
+        runId: input.run.id,
+        nodeName: input.node.name,
+      })
+      return
+    }
+
+    if (childRun.status === 'completed') {
+      await input.store.completeNode({
+        runId: input.run.id,
+        nodeName: input.node.name,
+        output: childRun.output,
+      })
+      const nodeIndex = input.workflow.nodes.findIndex(
+        (node) => node.name === input.node.name,
+      )
+      if (nodeIndex === input.workflow.nodes.length - 1) {
+        const output = await input.workflow.finish(
+          input.workflowCtx,
+          { ...input.outputs, [input.node.name]: childRun.output },
+          input.run.input,
+        )
+        await completeRunAndWakeParent({
+          store: input.store,
+          runCoordinationExecutor: input.runCoordinationExecutor,
+          runId: input.run.id,
+          output,
+        })
+      }
+      return
+    }
+
+    await input.store.failNode({
+      runId: input.run.id,
+      nodeName: input.node.name,
+      error:
+        childRun.error ??
+        new Error(`Child workflow [${childRun.id}] ${childRun.status}`),
+    })
+    return
+  }
+
+  const nodeInput = input.node.input
+    ? input.node.input(input.workflowCtx, input.outputs, input.run.input)
+    : input.run.input
+
+  await input.store.setNodeInput({
+    runId: input.run.id,
+    nodeName: input.node.name,
+    input: nodeInput,
+  })
+  const child = await input.store.ensureChildWorkflowRun({
+    identity: {
+      runId: input.run.id,
+      nodeName: input.node.name,
+    },
+    workflowName: input.node.target.name,
+    input: nodeInput,
+    parentRunId: input.run.id,
+    parentNodeName: input.node.name,
+    rootRunId: input.run.rootRunId,
+  })
+
+  await input.runCoordinationExecutor.enqueue({
+    kind: 'continueRun',
+    runId: child.childRun.id,
+    workflowName: input.node.target.name,
+  })
+  await input.store.waitNode({
+    runId: input.run.id,
+    nodeName: input.node.name,
+  })
 }
 
 async function dispatchActivityNode(input: {

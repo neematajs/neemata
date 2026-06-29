@@ -1155,4 +1155,281 @@ describe('workflow runtime coordinator', () => {
     expect(snapshot?.nodes[0]?.output).toBeUndefined()
     expect(runtime.inspect().continueRunCommands).toHaveLength(0)
   })
+
+  it('starts a child workflow run and completes the parent from child output', async () => {
+    const childWorkflow = defineWorkflow({
+      name: 'child-content',
+      input: t.object({ scenario: t.string() }),
+      output: t.object({ text: t.string() }),
+    })
+      .activity('write', {
+        input: t.object({ scenario: t.string() }),
+        output: t.object({ text: t.string() }),
+      })
+      .build()
+    const parentWorkflow = defineWorkflow({
+      name: 'parent-content',
+      input: t.object({ scenario: t.string() }),
+      output: t.object({ caseId: t.string() }),
+    })
+      .workflow('content', childWorkflow)
+      .build()
+
+    const childImplementation = implementWorkflow(childWorkflow)
+      .write(async (_ctx, input) => ({ text: input.scenario }))
+      .finish((_ctx, { write }) => ({ text: write.text }))
+    const parentImplementation = implementWorkflow(parentWorkflow)
+      .content(childWorkflow, {
+        input: (_ctx, _outputs, input) => ({ scenario: input.scenario }),
+      })
+      .finish((_ctx, { content }) => ({ caseId: content.text }))
+
+    const runtime = createInMemoryWorkflowRuntime()
+    const container = createTestContainer()
+    const parentRun = await runtime.store.createRun({
+      workflowName: parentWorkflow.name,
+      input: { scenario: 'alpha' },
+    })
+
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [parentImplementation],
+      workerId: 'parent-coordinator',
+      command: {
+        kind: 'continueRun',
+        runId: parentRun.id,
+        workflowName: parentWorkflow.name,
+      },
+    })
+
+    const afterStart = await runtime.store.loadRunSnapshot(parentRun.id)
+    const childLink = afterStart?.childLinks[0]
+    expect(afterStart?.nodes[0]?.status).toBe('waiting')
+    expect(childLink?.workflowName).toBe(childWorkflow.name)
+    expect(runtime.inspect().continueRunCommands).toStrictEqual([
+      {
+        id: expect.any(String),
+        payload: {
+          kind: 'continueRun',
+          runId: childLink?.childRunId,
+          workflowName: childWorkflow.name,
+        },
+      },
+    ])
+
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [childImplementation],
+      workerId: 'child-coordinator',
+      command: {
+        kind: 'continueRun',
+        runId: childLink!.childRunId,
+        workflowName: childWorkflow.name,
+      },
+    })
+
+    const claimed = await runtime.attemptExecutor.claimActivity({
+      workerId: 'activity-worker',
+      workflowNames: [childWorkflow.name],
+      leaseMs: 30_000,
+    })
+    expect(claimed).not.toBeNull()
+
+    await runActivityAttempt({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [childImplementation],
+      workerId: 'activity-worker',
+      claimed: claimed!,
+    })
+
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [childImplementation],
+      workerId: 'child-coordinator',
+      command: {
+        kind: 'continueRun',
+        runId: childLink!.childRunId,
+        workflowName: childWorkflow.name,
+      },
+    })
+
+    expect(
+      runtime
+        .inspect()
+        .continueRunCommands.some(
+          (command) =>
+            command.payload.runId === parentRun.id &&
+            command.payload.workflowName === parentWorkflow.name,
+        ),
+    ).toBe(true)
+
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [parentImplementation],
+      workerId: 'parent-coordinator',
+      command: {
+        kind: 'continueRun',
+        runId: parentRun.id,
+        workflowName: parentWorkflow.name,
+      },
+    })
+
+    const finalParent = await runtime.store.loadRunSnapshot(parentRun.id)
+    expect(finalParent?.nodes[0]?.status).toBe('completed')
+    expect(finalParent?.nodes[0]?.output).toStrictEqual({ text: 'alpha' })
+    expect(finalParent?.run.status).toBe('completed')
+    expect(finalParent?.run.output).toStrictEqual({ caseId: 'alpha' })
+  })
+
+  it('does not duplicate child workflow runs on repeated parent continuation', async () => {
+    const childWorkflow = defineWorkflow({
+      name: 'dedup-child',
+      input: t.object({ scenario: t.string() }),
+      output: t.object({ text: t.string() }),
+    }).build()
+    const parentWorkflow = defineWorkflow({
+      name: 'dedup-parent',
+      input: t.object({ scenario: t.string() }),
+      output: t.object({ text: t.string() }),
+    })
+      .workflow('child', childWorkflow)
+      .build()
+    const parentImplementation = implementWorkflow(parentWorkflow)
+      .child(childWorkflow)
+      .finish((_ctx, { child }) => ({ text: child.text }))
+
+    const runtime = createInMemoryWorkflowRuntime()
+    const container = createTestContainer()
+    const parentRun = await runtime.store.createRun({
+      workflowName: parentWorkflow.name,
+      input: { scenario: 'alpha' },
+    })
+    const command = {
+      kind: 'continueRun' as const,
+      runId: parentRun.id,
+      workflowName: parentWorkflow.name,
+    }
+
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [parentImplementation],
+      workerId: 'parent-coordinator',
+      command,
+    })
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [parentImplementation],
+      workerId: 'parent-coordinator',
+      command,
+    })
+
+    const snapshot = await runtime.store.loadRunSnapshot(parentRun.id)
+    expect(snapshot?.childLinks).toHaveLength(1)
+    expect(
+      runtime
+        .inspect()
+        .runs.filter((run) => run.workflowName === childWorkflow.name),
+    ).toHaveLength(1)
+  })
+
+  it('fails the parent node when a child workflow run fails', async () => {
+    const childWorkflow = defineWorkflow({
+      name: 'failed-child',
+      input: t.object({ scenario: t.string() }),
+      output: t.object({ text: t.string() }),
+    }).build()
+    const parentWorkflow = defineWorkflow({
+      name: 'failed-parent',
+      input: t.object({ scenario: t.string() }),
+      output: t.object({ text: t.string() }),
+    })
+      .workflow('child', childWorkflow)
+      .build()
+    const parentImplementation = implementWorkflow(parentWorkflow)
+      .child(childWorkflow)
+      .finish((_ctx, { child }) => ({ text: child.text }))
+
+    const runtime = createInMemoryWorkflowRuntime()
+    const container = createTestContainer()
+    const parentRun = await runtime.store.createRun({
+      workflowName: parentWorkflow.name,
+      input: { scenario: 'alpha' },
+    })
+
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [parentImplementation],
+      workerId: 'parent-coordinator',
+      command: {
+        kind: 'continueRun',
+        runId: parentRun.id,
+        workflowName: parentWorkflow.name,
+      },
+    })
+
+    const started = await runtime.store.loadRunSnapshot(parentRun.id)
+    const childRunId = started!.childLinks[0]!.childRunId
+    await runtime.store.failRun({
+      runId: childRunId,
+      error: new Error('child failed'),
+    })
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [parentImplementation],
+      workerId: 'parent-coordinator',
+      command: {
+        kind: 'continueRun',
+        runId: parentRun.id,
+        workflowName: parentWorkflow.name,
+      },
+    })
+
+    const snapshot = await runtime.store.loadRunSnapshot(parentRun.id)
+    expect(snapshot?.nodes[0]?.status).toBe('failed')
+    expect(snapshot?.run.status).toBe('queued')
+
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [parentImplementation],
+      workerId: 'parent-coordinator',
+      command: {
+        kind: 'continueRun',
+        runId: parentRun.id,
+        workflowName: parentWorkflow.name,
+      },
+    })
+
+    const failedRun = await runtime.store.loadRunSnapshot(parentRun.id)
+    expect(failedRun?.run.status).toBe('failed')
+  })
 })
