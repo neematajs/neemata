@@ -544,6 +544,11 @@ type LoadNodeChildrenParams = {
   nodeName: string
 }
 
+type WaitNodeParams = {
+  runId: string
+  nodeName: string
+}
+
 type NodeChildrenSnapshot = {
   attempts: readonly StoredAttempt[]
   childLinks: readonly StoredChildLink[]
@@ -570,6 +575,8 @@ interface WorkflowStore {
   failMapItem(
     params: FailMapItemParams,
   ): Promise<StoredMapItem | undefined>
+
+  waitNode(params: WaitNodeParams): Promise<StoredNode | undefined>
 
   loadNodeChildren(
     params: LoadNodeChildrenParams,
@@ -611,6 +618,13 @@ interface WorkflowStore {
 
 - Loads all structured child state for one parent node.
 - Coordinator uses this to converge branch, parallel, and map nodes.
+
+`waitNode`:
+
+- Marks a non-terminal node as `waiting`.
+- Returns terminal existing node as no-op when already completed/failed/cancelled.
+- Coordinator calls this after dispatching child attempts or child runs for
+  workflow, branch, parallel, and map nodes.
 
 ### Compatibility With Existing Methods
 
