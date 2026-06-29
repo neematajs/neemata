@@ -325,11 +325,14 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
       )
       if (existing) return { attempt: existing, created: false }
 
-      const node = await store.createNode({
-        runId: params.identity.runId,
-        name: params.identity.nodeName,
-        kind: params.kind,
-      })
+      const node = nodes.get(
+        nodeKey(params.identity.runId, params.identity.nodeName),
+      )
+      if (!node) {
+        throw new Error(
+          `Missing node [${params.identity.runId}.${params.identity.nodeName}]`,
+        )
+      }
       const attempt: StoredAttempt = {
         id: id('attempt'),
         runId: params.identity.runId,
@@ -401,7 +404,7 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
     async ensureMapItems(params) {
       const key = nodeKey(params.runId, params.nodeName)
       if (params.keys && params.keys.length !== params.items.length) {
-        throw new Error(`Map item key count mismatch [${key}]`)
+        throw new Error(`Conflicting map items for [${key}]`)
       }
 
       const keys = params.items.map((_, index) => params.keys?.[index])
@@ -413,7 +416,7 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
         const sameKeys =
           existingKeys.length === keys.length &&
           existingKeys.every((existingKey, index) => existingKey === keys[index])
-        if (!sameKeys) throw new Error(`Map item conflict [${key}]`)
+        if (!sameKeys) throw new Error(`Conflicting map items for [${key}]`)
 
         return { items: existingItems, created: false }
       }
@@ -487,6 +490,7 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
       const node = nodes.get(key)
       if (!node) return undefined
       if (isTerminalNodeStatus(node.status)) return node
+      if (node.status === 'waiting') return node
 
       const updated: StoredNode = {
         ...node,
