@@ -86,4 +86,160 @@ describe('workflow runtime interfaces', () => {
     expect(registry.getTask('embedding.generate')).toBe(taskImpl)
     expect(registry.validateRouteability(parentImpl)).toStrictEqual([])
   })
+
+  it('rejects duplicate workflow and task implementation names', () => {
+    const task = defineTask({
+      name: 'embedding.generate',
+      input: t.object({ text: t.string() }),
+      output: t.object({ id: t.string() }),
+    })
+    const workflow = defineWorkflow({
+      name: 'parent',
+      input: t.object({ text: t.string() }),
+      output: t.object({ text: t.string() }),
+    }).build()
+
+    expect(() =>
+      createWorkflowRuntimeRegistry({
+        tasks: [
+          implementTask(task, {
+            handler: async (_ctx, input) => ({ id: input.text }),
+          }),
+          implementTask(task, {
+            handler: async (_ctx, input) => ({ id: input.text }),
+          }),
+        ],
+      }),
+    ).toThrow('Duplicate task implementation [embedding.generate]')
+
+    expect(() =>
+      createWorkflowRuntimeRegistry({
+        workflows: [
+          implementWorkflow(workflow).finish((_ctx, _outputs, input) => input),
+          implementWorkflow(workflow).finish((_ctx, _outputs, input) => input),
+        ],
+      }),
+    ).toThrow('Duplicate workflow implementation [parent]')
+  })
+
+  it('requires route implementations to match the node declaration identity', () => {
+    const expectedTask = defineTask({
+      name: 'embedding.generate',
+      input: t.object({ text: t.string() }),
+      output: t.object({ id: t.string() }),
+    })
+    const sameNameTask = defineTask({
+      name: 'embedding.generate',
+      input: t.object({ text: t.string() }),
+      output: t.object({ id: t.string() }),
+    })
+    const parent = defineWorkflow({
+      name: 'parent',
+      input: t.object({ text: t.string() }),
+      output: t.object({ id: t.string() }),
+    })
+      .task('embedding', expectedTask)
+      .build()
+    const parentImpl = implementWorkflow(parent)
+      .embedding(expectedTask, { input: (_ctx, _outputs, input) => input })
+      .finish((_ctx, { embedding }) => ({ id: embedding.id }))
+    const wrongTaskImpl = implementTask(sameNameTask, {
+      handler: async (_ctx, input) => ({ id: input.text }),
+    })
+
+    const registry = createWorkflowRuntimeRegistry({ tasks: [wrongTaskImpl] })
+
+    expect(registry.validateRouteability(parentImpl)).toStrictEqual([
+      'task:embedding.generate',
+    ])
+  })
+
+  it('reports missing routes from transitive child workflows', () => {
+    const childTask = defineTask({
+      name: 'child.task',
+      input: t.object({ text: t.string() }),
+      output: t.object({ text: t.string() }),
+    })
+    const child = defineWorkflow({
+      name: 'child',
+      input: t.object({ text: t.string() }),
+      output: t.object({ text: t.string() }),
+    })
+      .task('childTask', childTask)
+      .build()
+    const parent = defineWorkflow({
+      name: 'parent',
+      input: t.object({ text: t.string() }),
+      output: t.object({ text: t.string() }),
+    })
+      .workflow('child', child)
+      .build()
+    const childImpl = implementWorkflow(child)
+      .childTask(childTask, { input: (_ctx, _outputs, input) => input })
+      .finish((_ctx, { childTask }) => childTask)
+    const parentImpl = implementWorkflow(parent)
+      .child(child, { input: (_ctx, _outputs, input) => input })
+      .finish((_ctx, { child }) => child)
+
+    const registry = createWorkflowRuntimeRegistry({
+      workflows: [parentImpl, childImpl],
+    })
+
+    expect(registry.validateRouteability(parentImpl)).toStrictEqual([
+      'task:child.task',
+    ])
+  })
+
+  it('reports missing routes from branch, parallel, and map nodes', () => {
+    const task = defineTask({
+      name: 'embedding.generate',
+      input: t.object({ text: t.string() }),
+      output: t.object({ id: t.string() }),
+    })
+    const child = defineWorkflow({
+      name: 'child',
+      input: t.object({ text: t.string() }),
+      output: t.object({ text: t.string() }),
+    }).build()
+    const parent = defineWorkflow({
+      name: 'parent',
+      input: t.object({ text: t.string() }),
+      output: t.object({ ok: t.boolean() }),
+    })
+      .branch('choice', {
+        cases: (helpers) => ({ embedding: helpers.task(task) }),
+      })
+      .parallel('fanout', (helpers) => ({ child: helpers.workflow(child) }))
+      .mapTask('embeddings', task, {
+        item: t.object({ text: t.string() }),
+        mode: 'wait-all',
+      })
+      .mapWorkflow('children', child, {
+        item: t.object({ text: t.string() }),
+        mode: 'wait-all',
+      })
+      .build()
+    const parentImpl = implementWorkflow(parent)
+      .choice({
+        select: () => 'embedding',
+        cases: (helpers) => ({ embedding: helpers.task(task) }),
+      })
+      .fanout((helpers) => ({ child: helpers.workflow(child) }))
+      .embeddings(task, {
+        items: (_ctx, _outputs, input) => [input],
+        input: (_ctx, _outputs, item) => item,
+      })
+      .children(child, {
+        items: (_ctx, _outputs, input) => [input],
+        input: (_ctx, _outputs, item) => item,
+      })
+      .finish(() => ({ ok: true }))
+
+    const registry = createWorkflowRuntimeRegistry({})
+
+    expect(registry.validateRouteability(parentImpl)).toStrictEqual([
+      'task:embedding.generate',
+      'workflow:child',
+    ])
+  })
 })
