@@ -96,5 +96,6 @@ export {
   createWorkflowRuntimeRegistry,
   runActivityAttempt,
   runTaskAttempt,
+  runWithConcurrency,
 } from './runtime/index.ts'
 export { isTerminalNodeStatus, isTerminalRunStatus } from './runtime/index.ts'

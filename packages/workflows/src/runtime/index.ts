@@ -37,5 +37,9 @@ export type {
   RunLease,
   WorkflowStore,
 } from './store.ts'
-export { runActivityAttempt, runTaskAttempt } from './worker.ts'
+export {
+  runActivityAttempt,
+  runTaskAttempt,
+  runWithConcurrency,
+} from './worker.ts'
 export type { RunActivityAttemptInput, RunTaskAttemptInput } from './worker.ts'
