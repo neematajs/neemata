@@ -37,3 +37,5 @@ export type {
   RunLease,
   WorkflowStore,
 } from './store.ts'
+export { runActivityAttempt } from './worker.ts'
+export type { RunActivityAttemptInput } from './worker.ts'
