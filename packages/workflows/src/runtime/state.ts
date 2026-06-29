@@ -45,10 +45,20 @@ export type StoredNode = {
   readonly updatedAt: Date
 }
 
+export type NodeChildIdentity = {
+  readonly runId: string
+  readonly nodeName: string
+  readonly caseKey?: string
+  readonly memberKey?: string
+  readonly itemIndex?: number
+  readonly itemKey?: string
+}
+
 export type StoredAttempt = {
   readonly id: string
   readonly runId: string
   readonly nodeName: string
+  readonly identity?: NodeChildIdentity
   readonly status: RuntimeAttemptStatus
   readonly workerId?: string
   readonly leaseToken?: string
@@ -62,14 +72,19 @@ export type StoredAttempt = {
 }
 
 export type StoredChildLink = {
+  readonly identity: NodeChildIdentity
   readonly parentRunId: string
   readonly parentNodeName: string
   readonly childRunId: string
   readonly workflowName: string
+  readonly caseKey?: string
+  readonly memberKey?: string
   readonly itemIndex?: number
+  readonly itemKey?: string
 }
 
 export type StoredMapItem = {
+  readonly identity: NodeChildIdentity
   readonly runId: string
   readonly nodeName: string
   readonly index: number

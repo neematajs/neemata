@@ -21,6 +21,7 @@ export type {
 } from './status.ts'
 export { isTerminalNodeStatus, isTerminalRunStatus } from './status.ts'
 export type {
+  NodeChildIdentity,
   RunSnapshot,
   StoredAttempt,
   StoredChildLink,
@@ -31,10 +32,21 @@ export type {
   StoredTimelineEvent,
 } from './state.ts'
 export type {
+  CompleteMapItemParams,
   CreateAttemptInput,
   CreateNodeInput,
   CreateRunInput,
+  EnsureChildWorkflowRunParams,
+  EnsureChildWorkflowRunResult,
+  EnsureMapItemsParams,
+  EnsureMapItemsResult,
+  EnsureNodeAttemptParams,
+  EnsureNodeAttemptResult,
+  FailMapItemParams,
+  LoadNodeChildrenParams,
+  NodeChildrenSnapshot,
   RunLease,
+  WaitNodeParams,
   WorkflowStore,
 } from './store.ts'
 export {

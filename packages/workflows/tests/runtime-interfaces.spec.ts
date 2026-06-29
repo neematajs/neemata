@@ -13,10 +13,18 @@ import type {
   AttemptCommand,
   AttemptExecutor,
   ContinueRunCommand,
+  EnsureChildWorkflowRunParams,
+  EnsureMapItemsParams,
+  EnsureNodeAttemptParams,
+  NodeChildIdentity,
+  NodeChildrenSnapshot,
   RunCoordinationExecutor,
   StoredAttempt,
+  StoredChildLink,
+  StoredMapItem,
   StoredNode,
   StoredRun,
+  WaitNodeParams,
   WorkflowStore,
 } from '../src/index.ts'
 
@@ -42,6 +50,50 @@ describe('workflow runtime interfaces', () => {
     expectTypeOf<StoredRun>().toHaveProperty('status')
     expectTypeOf<StoredNode>().toHaveProperty('status')
     expectTypeOf<StoredAttempt>().toHaveProperty('status')
+  })
+
+  it('exports semantic orchestration store contracts', () => {
+    expectTypeOf<NodeChildIdentity>().toMatchTypeOf<{
+      runId: string
+      nodeName: string
+      caseKey?: string
+      memberKey?: string
+      itemIndex?: number
+      itemKey?: string
+    }>()
+    expectTypeOf<EnsureNodeAttemptParams>().toMatchTypeOf<{
+      identity: NodeChildIdentity
+      kind: 'activity' | 'task'
+      input: unknown
+    }>()
+    expectTypeOf<EnsureChildWorkflowRunParams>().toMatchTypeOf<{
+      identity: NodeChildIdentity
+      workflowName: string
+      input: unknown
+      parentRunId: string
+      parentNodeName: string
+      rootRunId: string
+    }>()
+    expectTypeOf<EnsureMapItemsParams>().toMatchTypeOf<{
+      runId: string
+      nodeName: string
+      items: readonly unknown[]
+      keys?: readonly string[]
+    }>()
+    expectTypeOf<NodeChildrenSnapshot>().toMatchTypeOf<{
+      attempts: readonly unknown[]
+      childLinks: readonly unknown[]
+      mapItems: readonly unknown[]
+    }>()
+    expectTypeOf<WaitNodeParams>().toMatchTypeOf<{
+      runId: string
+      nodeName: string
+    }>()
+    expectTypeOf<StoredChildLink>().toHaveProperty('identity')
+    expectTypeOf<StoredMapItem>().toHaveProperty('identity')
+    expectTypeOf<WorkflowStore>().toHaveProperty('waitNode')
+    expectTypeOf<WorkflowStore>().toHaveProperty('ensureChildWorkflowRun')
+    expectTypeOf<WorkflowStore>().toHaveProperty('loadNodeChildren')
   })
 
   it('routes workflow and task implementations by contract name', () => {
