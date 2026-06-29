@@ -247,6 +247,213 @@ describe('workflow runtime coordinator', () => {
     expect(runtime.inspect().continueRunCommands).toHaveLength(0)
   })
 
+  it('acks a superseded activity attempt without running its handler', async () => {
+    let handlerCalls = 0
+    const workflow = defineWorkflow({
+      name: 'superseded-activity-worker',
+      input: t.object({ scenario: t.string() }),
+      output: t.object({ caseId: t.string() }),
+    })
+      .activity('content', {
+        input: t.object({ scenario: t.string() }),
+        output: t.object({ text: t.string() }),
+      })
+      .build()
+
+    const implementation = implementWorkflow(workflow)
+      .content(async (_ctx, input) => {
+        handlerCalls += 1
+        return { text: input.scenario }
+      })
+      .finish((_ctx, { content }) => ({ caseId: content.text }))
+
+    const runtime = createInMemoryWorkflowRuntime()
+    const run = await runtime.store.createRun({
+      workflowName: workflow.name,
+      input: { scenario: 'alpha' },
+    })
+    const container = createTestContainer()
+
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [implementation],
+      workerId: 'coordinator-1',
+      command: {
+        kind: 'continueRun',
+        runId: run.id,
+        workflowName: workflow.name,
+      },
+    })
+
+    const claimed = await runtime.attemptExecutor.claimActivity({
+      workerId: 'activity-worker-1',
+      workflowNames: [workflow.name],
+      leaseMs: 30_000,
+    })
+    expect(claimed).not.toBeNull()
+
+    const secondAttempt = await runtime.store.createAttempt({
+      runId: run.id,
+      nodeName: 'content',
+      input: { scenario: 'beta' },
+    })
+
+    await runActivityAttempt({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [implementation],
+      workerId: 'activity-worker-1',
+      claimed: claimed!,
+    })
+
+    await runtime.attemptExecutor.release(claimed!)
+
+    const snapshot = await runtime.store.loadRunSnapshot(run.id)
+    expect(handlerCalls).toBe(0)
+    expect(snapshot?.nodes[0]?.status).toBe('running')
+    expect(snapshot?.nodes[0]?.currentAttemptId).toBe(secondAttempt.id)
+    expect(snapshot?.nodes[0]?.output).toBeUndefined()
+    expect(runtime.inspect().activityCommands).toHaveLength(0)
+    expect(runtime.inspect().continueRunCommands).toHaveLength(0)
+  })
+
+  it('does not mark a successful handler as failed when continuation enqueue throws', async () => {
+    const workflow = defineWorkflow({
+      name: 'enqueue-failure-activity-worker',
+      input: t.object({ scenario: t.string() }),
+      output: t.object({ caseId: t.string() }),
+    })
+      .activity('content', {
+        input: t.object({ scenario: t.string() }),
+        output: t.object({ text: t.string() }),
+      })
+      .build()
+
+    const implementation = implementWorkflow(workflow)
+      .content(async (_ctx, input) => ({ text: input.scenario }))
+      .finish((_ctx, { content }) => ({ caseId: content.text }))
+
+    const runtime = createInMemoryWorkflowRuntime()
+    const run = await runtime.store.createRun({
+      workflowName: workflow.name,
+      input: { scenario: 'alpha' },
+    })
+    const container = createTestContainer()
+
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [implementation],
+      workerId: 'coordinator-1',
+      command: {
+        kind: 'continueRun',
+        runId: run.id,
+        workflowName: workflow.name,
+      },
+    })
+
+    const claimed = await runtime.attemptExecutor.claimActivity({
+      workerId: 'activity-worker-1',
+      workflowNames: [workflow.name],
+      leaseMs: 30_000,
+    })
+    expect(claimed).not.toBeNull()
+
+    await expect(
+      runActivityAttempt({
+        store: runtime.store,
+        runCoordinationExecutor: {
+          ...runtime.runCoordinationExecutor,
+          enqueue: async () => {
+            throw new Error('continue enqueue down')
+          },
+        },
+        attemptExecutor: runtime.attemptExecutor,
+        container,
+        workflows: [implementation],
+        workerId: 'activity-worker-1',
+        claimed: claimed!,
+      }),
+    ).rejects.toThrow('continue enqueue down')
+
+    const snapshot = await runtime.store.loadRunSnapshot(run.id)
+    expect(snapshot?.attempts[0]?.status).toBe('completed')
+    expect(snapshot?.nodes[0]?.status).toBe('completed')
+    expect(snapshot?.nodes[0]?.output).toStrictEqual({ text: 'alpha' })
+  })
+
+  it('fails and acks current activity attempts with missing workflow implementations', async () => {
+    const runtime = createInMemoryWorkflowRuntime()
+    const run = await runtime.store.createRun({
+      workflowName: 'missing-workflow',
+      input: { scenario: 'alpha' },
+    })
+    await runtime.store.createNode({
+      runId: run.id,
+      name: 'content',
+      kind: 'activity',
+    })
+    const attempt = await runtime.store.createAttempt({
+      runId: run.id,
+      nodeName: 'content',
+      input: { scenario: 'alpha' },
+    })
+    await runtime.attemptExecutor.dispatchActivity({
+      kind: 'activityAttempt',
+      workflowName: 'missing-workflow',
+      activityName: 'content',
+      runId: run.id,
+      nodeName: 'content',
+      attemptId: attempt.id,
+      leaseToken: attempt.leaseToken!,
+      input: { scenario: 'alpha' },
+    })
+
+    const claimed = await runtime.attemptExecutor.claimActivity({
+      workerId: 'activity-worker-1',
+      workflowNames: ['missing-workflow'],
+      leaseMs: 30_000,
+    })
+    expect(claimed).not.toBeNull()
+
+    await runActivityAttempt({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container: createTestContainer(),
+      workflows: [],
+      workerId: 'activity-worker-1',
+      claimed: claimed!,
+    })
+
+    await runtime.attemptExecutor.release(claimed!)
+
+    const snapshot = await runtime.store.loadRunSnapshot(run.id)
+    expect(snapshot?.attempts[0]?.status).toBe('failed')
+    expect(snapshot?.nodes[0]?.status).toBe('failed')
+    expect(snapshot?.nodes[0]?.error?.message).toBe(
+      'No workflow implementation registered for [missing-workflow]',
+    )
+    expect(runtime.inspect().activityCommands).toHaveLength(0)
+    expect(runtime.inspect().continueRunCommands).toStrictEqual([
+      {
+        id: expect.any(String),
+        payload: {
+          kind: 'continueRun',
+          runId: run.id,
+          workflowName: 'missing-workflow',
+        },
+      },
+    ])
+  })
+
   it('fails the attempt, node, and run when dispatching the activity fails', async () => {
     const workflow = defineWorkflow({
       name: 'dispatch-failure',
