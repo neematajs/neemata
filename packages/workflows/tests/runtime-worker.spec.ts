@@ -3,6 +3,7 @@ import { t } from '@nmtjs/type'
 import { describe, expect, it } from 'vitest'
 
 import {
+  type AttemptExecutor,
   defineTask,
   defineWorkflow,
   implementTask,
@@ -16,7 +17,7 @@ import {
 } from '../src/index.ts'
 import { createInMemoryWorkflowRuntime } from './support/in-memory-runtime.ts'
 
-describe('workflow worker concurrency', () => {
+describe('workflow worker runtime', () => {
   const createTestContainer = () => {
     const logger = createLogger({ pinoOptions: { enabled: false } }, 'test')
     return new Container({ logger })
@@ -113,6 +114,59 @@ describe('workflow worker concurrency', () => {
     expect(runtime.inspect().continueRunCommands).toStrictEqual([])
   })
 
+  it('releases continue commands when the run lease is busy', async () => {
+    const workflow = defineWorkflow({
+      name: 'worker.busy-workflow',
+      input: t.object({ text: t.string() }),
+      output: t.object({ text: t.string() }),
+    }).build()
+    const implementation = implementWorkflow(workflow).finish(
+      (_ctx, _outputs, input) => ({ text: input.text }),
+    )
+    const runtime = createInMemoryWorkflowRuntime()
+    const run = await runtime.store.createRun({
+      workflowName: workflow.name,
+      input: { text: 'alpha' },
+    })
+    const lease = await runtime.store.acquireRunLease({
+      runId: run.id,
+      workerId: 'holder',
+      leaseMs: 30_000,
+    })
+    expect(lease).toBeDefined()
+    await runtime.runCoordinationExecutor.enqueue({
+      kind: 'continueRun',
+      runId: run.id,
+      workflowName: workflow.name,
+    })
+
+    const busy = await runWorkflowWorker({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container: createTestContainer(),
+      workflows: [implementation],
+      workerId: 'workflow-worker-1',
+    })
+
+    expect(busy.processed).toBe(0)
+    expect(runtime.inspect().continueRunCommands).toHaveLength(1)
+
+    await runtime.store.releaseRunLease(lease!)
+    const completed = await runWorkflowWorker({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container: createTestContainer(),
+      workflows: [implementation],
+      workerId: 'workflow-worker-1',
+    })
+    expect(completed.processed).toBe(1)
+    expect((await runtime.store.loadRunSnapshot(run.id))?.run.status).toBe(
+      'completed',
+    )
+  })
+
   it('runs activity worker loop by claiming activity attempts', async () => {
     const workflow = defineWorkflow({
       name: 'worker.activity-workflow',
@@ -171,6 +225,119 @@ describe('workflow worker concurrency', () => {
     const completed = await runtime.store.loadRunSnapshot(run.id)
     expect(completed?.run.status).toBe('completed')
     expect(completed?.run.output).toStrictEqual({ text: 'content:alpha' })
+  })
+
+  it('does not hot-loop when a claimed activity is not routeable', async () => {
+    const workflow = defineWorkflow({
+      name: 'worker.route-miss-workflow',
+      input: t.object({ text: t.string() }),
+      output: t.object({ text: t.string() }),
+    })
+      .activity('content', {
+        input: t.object({ text: t.string() }),
+        output: t.object({ text: t.string() }),
+      })
+      .build()
+    const implementation = implementWorkflow(workflow)
+      .content(async (_ctx, input) => ({ text: input.text }))
+      .finish((_ctx, { content }) => ({ text: content.text }))
+    const runtime = createInMemoryWorkflowRuntime()
+    const container = createTestContainer()
+    const run = await runtime.store.createRun({
+      workflowName: workflow.name,
+      input: { text: 'alpha' },
+    })
+    await runtime.runCoordinationExecutor.enqueue({
+      kind: 'continueRun',
+      runId: run.id,
+      workflowName: workflow.name,
+    })
+    await runWorkflowWorker({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [implementation],
+      workerId: 'workflow-worker-1',
+    })
+
+    const command = runtime.inspect().activityCommands[0]!.payload
+    let claimCount = 0
+    let releaseCount = 0
+    const attemptExecutor: AttemptExecutor = {
+      ...runtime.attemptExecutor,
+      claimActivity: async () => {
+        claimCount += 1
+        if (claimCount > 1) throw new Error('claimed released activity again')
+        return {
+          id: 'claimed-route-miss',
+          leaseToken: 'claim-lease',
+          command: { ...command, activityName: 'missing' },
+        }
+      },
+      release: async () => {
+        releaseCount += 1
+      },
+    }
+
+    const result = await runActivityWorker({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor,
+      container,
+      workflows: [implementation],
+      workerId: 'activity-worker-1',
+    })
+
+    expect(result.processed).toBe(0)
+    expect(claimCount).toBe(1)
+    expect(releaseCount).toBe(1)
+  })
+
+  it('waits for active worker lanes before rejecting', async () => {
+    const workflow = defineWorkflow({
+      name: 'worker.reject-workflow',
+      input: t.object({ text: t.string() }),
+      output: t.object({ text: t.string() }),
+    }).build()
+    let slowFinished = false
+    const implementation = implementWorkflow(workflow).finish(
+      async (_ctx, _outputs, input) => {
+        if (input.text === 'bad') throw new Error('bad finish')
+        await new Promise((resolve) => setTimeout(resolve, 10))
+        slowFinished = true
+        return { text: input.text }
+      },
+    )
+    const runtime = createInMemoryWorkflowRuntime()
+    const badRun = await runtime.store.createRun({
+      workflowName: workflow.name,
+      input: { text: 'bad' },
+    })
+    const slowRun = await runtime.store.createRun({
+      workflowName: workflow.name,
+      input: { text: 'slow' },
+    })
+    for (const run of [badRun, slowRun]) {
+      await runtime.runCoordinationExecutor.enqueue({
+        kind: 'continueRun',
+        runId: run.id,
+        workflowName: workflow.name,
+      })
+    }
+
+    await expect(
+      runWorkflowWorker({
+        store: runtime.store,
+        runCoordinationExecutor: runtime.runCoordinationExecutor,
+        attemptExecutor: runtime.attemptExecutor,
+        container: createTestContainer(),
+        workflows: [implementation],
+        workerId: 'workflow-worker-1',
+        concurrency: 2,
+      }),
+    ).rejects.toThrow('bad finish')
+    expect(slowFinished).toBe(true)
   })
 
   it('runs task worker loop by claiming task attempts', async () => {

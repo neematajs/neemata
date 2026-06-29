@@ -31,13 +31,13 @@ describe('workflow orchestration nodes', () => {
         scenarios: t.array(t.object({ id: t.string(), text: t.string() })),
       }),
     })
-    .parallel('sections', ({ activity, task, workflow }) => ({
-      summary: activity({
+    .parallel('sections', (helpers) => ({
+      summary: helpers.activity({
         input: t.object({ text: t.string() }),
         output: t.object({ text: t.string() }),
       }),
-      embedding: task(embeddingTask),
-      child: workflow(childWorkflow),
+      embedding: helpers.task(embeddingTask),
+      child: helpers.workflow(childWorkflow),
     }))
     .mapWorkflow('caseRuns', childWorkflow, {
       item: t.object({ id: t.string(), text: t.string() }),
@@ -123,5 +123,33 @@ describe('workflow orchestration nodes', () => {
     expect(embeddingsNode?.kind).toBe('mapTask')
     if (embeddingsNode?.kind !== 'mapTask') throw new Error('Expected mapTask')
     expect(embeddingsNode.target).toBe(embeddingTask)
+  })
+
+  it('rejects invalid map concurrency at declaration time', () => {
+    expect(() =>
+      defineWorkflow({
+        name: 'invalid-map-task-concurrency',
+        input: t.object({ text: t.string() }),
+      })
+        .mapTask('embeddings', embeddingTask, {
+          item: t.string(),
+          mode: 'wait-all',
+          concurrency: 0,
+        })
+        .build(),
+    ).toThrow('Map node concurrency must be a positive integer')
+
+    expect(() =>
+      defineWorkflow({
+        name: 'invalid-map-workflow-concurrency',
+        input: t.object({ text: t.string() }),
+      })
+        .mapWorkflow('children', childWorkflow, {
+          item: t.string(),
+          mode: 'wait-all',
+          concurrency: Number.NaN,
+        })
+        .build(),
+    ).toThrow('Map node concurrency must be a positive integer')
   })
 })

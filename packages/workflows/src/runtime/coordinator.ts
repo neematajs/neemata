@@ -30,6 +30,10 @@ export type ContinueWorkflowRunInput = {
   readonly leaseMs?: number
 }
 
+export type ContinueWorkflowRunResult = {
+  readonly status: 'processed' | 'busy' | 'ignored'
+}
+
 export type StartTaskRunInput<Task extends AnyTaskDefinition> = {
   readonly store: WorkflowStore
   readonly runCoordinationExecutor: RunCoordinationExecutor
@@ -67,31 +71,33 @@ export async function startTaskRun<Task extends AnyTaskDefinition>(
 
 export async function continueWorkflowRun(
   input: ContinueWorkflowRunInput,
-): Promise<void> {
+): Promise<ContinueWorkflowRunResult> {
   const registry = createWorkflowRuntimeRegistry({
     workflows: input.workflows as readonly WorkflowImplementation[],
   })
   const implementation = registry.getWorkflow(input.command.workflowName)
-  if (!implementation) return
+  if (!implementation) return { status: 'ignored' }
 
   const lease = await input.store.acquireRunLease({
     runId: input.command.runId,
     workerId: input.workerId,
     leaseMs: input.leaseMs ?? 30_000,
   })
-  if (!lease) return
+  if (!lease) return { status: 'busy' }
 
   try {
     const snapshot = await input.store.loadRunSnapshot(input.command.runId)
-    if (!snapshot) return
-    if (snapshot.run.workflowName !== input.command.workflowName) return
+    if (!snapshot) return { status: 'ignored' }
+    if (snapshot.run.workflowName !== input.command.workflowName) {
+      return { status: 'ignored' }
+    }
     if (isTerminalRunStatus(snapshot.run.status)) {
       await wakeParentRun({
         store: input.store,
         runCoordinationExecutor: input.runCoordinationExecutor,
         run: snapshot.run,
       })
-      return
+      return { status: 'processed' }
     }
 
     const failedNode = snapshot.nodes.find((node) => node.status === 'failed')
@@ -104,10 +110,12 @@ export async function continueWorkflowRun(
           failedNode.error ??
           new Error(`Workflow node [${failedNode.name}] failed`),
       })
-      return
+      return { status: 'processed' }
     }
 
-    if (snapshot.nodes.some((node) => node.status === 'cancelled')) return
+    if (snapshot.nodes.some((node) => node.status === 'cancelled')) {
+      return { status: 'processed' }
+    }
 
     const workflowCtx = await input.container.createContext(
       implementation.dependencies,
@@ -127,6 +135,7 @@ export async function continueWorkflowRun(
       run: snapshot.run,
       outputs,
     })
+    return { status: 'processed' }
   } finally {
     await input.store.releaseRunLease(lease)
   }
@@ -330,7 +339,19 @@ async function dispatchChildTaskRun(input: {
   if (existingLink) {
     const snapshot = await input.store.loadRunSnapshot(existingLink.childRunId)
     const childRun = snapshot?.run
-    if (!childRun || !isTerminalRunStatus(childRun.status)) {
+    if (!childRun) {
+      await failMissingChildRun({
+        store: input.store,
+        runCoordinationExecutor: input.runCoordinationExecutor,
+        parentRunId: input.run.id,
+        nodeName: input.nodeName,
+        childKind: 'task',
+        childRunId: existingLink.childRunId,
+      })
+      return
+    }
+
+    if (!isTerminalRunStatus(childRun.status)) {
       await dispatchTaskRunAttempt({
         store: input.store,
         attemptExecutor: input.attemptExecutor,
@@ -488,6 +509,30 @@ async function failRunAndWakeParent(input: {
   })
 }
 
+async function failMissingChildRun(input: {
+  readonly store: WorkflowStore
+  readonly runCoordinationExecutor: RunCoordinationExecutor
+  readonly parentRunId: string
+  readonly nodeName: string
+  readonly childKind: 'task' | 'workflow'
+  readonly childRunId: string
+}) {
+  const error = new Error(
+    `Missing child ${input.childKind} run [${input.childRunId}]`,
+  )
+  await input.store.failNode({
+    runId: input.parentRunId,
+    nodeName: input.nodeName,
+    error,
+  })
+  await failRunAndWakeParent({
+    store: input.store,
+    runCoordinationExecutor: input.runCoordinationExecutor,
+    runId: input.parentRunId,
+    error,
+  })
+}
+
 async function wakeParentRun(input: {
   readonly store: WorkflowStore
   readonly runCoordinationExecutor: RunCoordinationExecutor
@@ -572,7 +617,19 @@ async function dispatchChildWorkflow(input: {
   if (existingLink) {
     const snapshot = await input.store.loadRunSnapshot(existingLink.childRunId)
     const childRun = snapshot?.run
-    if (!childRun || !isTerminalRunStatus(childRun.status)) {
+    if (!childRun) {
+      await failMissingChildRun({
+        store: input.store,
+        runCoordinationExecutor: input.runCoordinationExecutor,
+        parentRunId: input.run.id,
+        nodeName: input.nodeName,
+        childKind: 'workflow',
+        childRunId: existingLink.childRunId,
+      })
+      return
+    }
+
+    if (!isTerminalRunStatus(childRun.status)) {
       await input.runCoordinationExecutor.enqueue({
         kind: 'continueRun',
         runId: existingLink.childRunId,
@@ -937,7 +994,19 @@ async function dispatchParallelNode(input: {
       if (existingLink) {
         const snapshot = await input.store.loadRunSnapshot(existingLink.childRunId)
         const childRun = snapshot?.run
-        if (!childRun || !isTerminalRunStatus(childRun.status)) {
+        if (!childRun) {
+          await failMissingChildRun({
+            store: input.store,
+            runCoordinationExecutor: input.runCoordinationExecutor,
+            parentRunId: input.run.id,
+            nodeName: input.node.name,
+            childKind: 'workflow',
+            childRunId: existingLink.childRunId,
+          })
+          return
+        }
+
+        if (!isTerminalRunStatus(childRun.status)) {
           await input.runCoordinationExecutor.enqueue({
             kind: 'continueRun',
             runId: existingLink.childRunId,
@@ -993,7 +1062,19 @@ async function dispatchParallelNode(input: {
       if (existingLink) {
         const snapshot = await input.store.loadRunSnapshot(existingLink.childRunId)
         const childRun = snapshot?.run
-        if (!childRun || !isTerminalRunStatus(childRun.status)) {
+        if (!childRun) {
+          await failMissingChildRun({
+            store: input.store,
+            runCoordinationExecutor: input.runCoordinationExecutor,
+            parentRunId: input.run.id,
+            nodeName: input.node.name,
+            childKind: 'task',
+            childRunId: existingLink.childRunId,
+          })
+          return
+        }
+
+        if (!isTerminalRunStatus(childRun.status)) {
           await dispatchTaskRunAttempt({
             store: input.store,
             attemptExecutor: input.attemptExecutor,
@@ -1160,6 +1241,7 @@ async function dispatchMapTaskNode(input: {
   }> = []
   const concurrency = mapConcurrencyLimit(input.node)
   let activeChildren = 0
+  let startedChildren = 0
 
   for (const item of itemSnapshot) {
     const identity = item.identity
@@ -1170,8 +1252,22 @@ async function dispatchMapTaskNode(input: {
     if (existingLink) {
       const snapshot = await input.store.loadRunSnapshot(existingLink.childRunId)
       const childRun = snapshot?.run
+      if (!childRun) {
+        await failMissingChildRun({
+          store: input.store,
+          runCoordinationExecutor: input.runCoordinationExecutor,
+          parentRunId: input.run.id,
+          nodeName: input.node.name,
+          childKind: 'task',
+          childRunId: existingLink.childRunId,
+        })
+        return
+      }
+
       const childRunIsTerminal = isTerminalChildRun(childRun)
-      if (!childRunIsTerminal) activeChildren += 1
+      if (input.node.mode !== 'start-only' && !childRunIsTerminal) {
+        activeChildren += 1
+      }
 
       if (input.node.mode === 'start-only') {
         outputItems[item.index] = {
@@ -1194,8 +1290,6 @@ async function dispatchMapTaskNode(input: {
         })
         continue
       }
-
-      if (!childRun) continue
 
       if (childRun.status === 'completed') {
         await input.store.completeMapItem({
@@ -1251,7 +1345,11 @@ async function dispatchMapTaskNode(input: {
       return
     }
 
-    if (activeChildren >= concurrency) continue
+    if (input.node.mode === 'start-only') {
+      if (startedChildren >= concurrency) continue
+    } else if (activeChildren >= concurrency) {
+      continue
+    }
 
     const nodeInput = input.node.input(
       input.workflowCtx,
@@ -1277,14 +1375,16 @@ async function dispatchMapTaskNode(input: {
       taskRunId: child.childRun.id,
       taskInput: nodeInput,
     })
-    activeChildren += 1
     if (input.node.mode === 'start-only') {
+      startedChildren += 1
       outputItems[item.index] = {
         item: item.item,
         index: item.index,
         runId: child.childRun.id,
         status: child.childRun.status,
       }
+    } else {
+      activeChildren += 1
     }
   }
 
@@ -1306,6 +1406,14 @@ async function dispatchMapTaskNode(input: {
       outputs: { ...input.outputs, [input.node.name]: output },
     })
     return
+  }
+
+  if (input.node.mode === 'start-only' && startedChildren > 0) {
+    await input.runCoordinationExecutor.enqueue({
+      kind: 'continueRun',
+      runId: input.run.id,
+      workflowName: input.workflow.workflow.name,
+    })
   }
 
   await input.store.waitNode({
@@ -1367,6 +1475,7 @@ async function dispatchMapWorkflowNode(input: {
   }> = []
   const concurrency = mapConcurrencyLimit(input.node)
   let activeChildren = 0
+  let startedChildren = 0
 
   for (const item of itemSnapshot) {
     const identity = item.identity
@@ -1377,8 +1486,22 @@ async function dispatchMapWorkflowNode(input: {
     if (existingLink) {
       const snapshot = await input.store.loadRunSnapshot(existingLink.childRunId)
       const childRun = snapshot?.run
+      if (!childRun) {
+        await failMissingChildRun({
+          store: input.store,
+          runCoordinationExecutor: input.runCoordinationExecutor,
+          parentRunId: input.run.id,
+          nodeName: input.node.name,
+          childKind: 'workflow',
+          childRunId: existingLink.childRunId,
+        })
+        return
+      }
+
       const childRunIsTerminal = isTerminalChildRun(childRun)
-      if (!childRunIsTerminal) activeChildren += 1
+      if (input.node.mode !== 'start-only' && !childRunIsTerminal) {
+        activeChildren += 1
+      }
 
       if (input.node.mode === 'start-only') {
         outputItems[item.index] = {
@@ -1398,8 +1521,6 @@ async function dispatchMapWorkflowNode(input: {
         })
         continue
       }
-
-      if (!childRun) continue
 
       if (childRun.status === 'completed') {
         await input.store.completeMapItem({
@@ -1456,7 +1577,11 @@ async function dispatchMapWorkflowNode(input: {
       return
     }
 
-    if (activeChildren >= concurrency) continue
+    if (input.node.mode === 'start-only') {
+      if (startedChildren >= concurrency) continue
+    } else if (activeChildren >= concurrency) {
+      continue
+    }
 
     const nodeInput = input.node.input(
       input.workflowCtx,
@@ -1478,14 +1603,16 @@ async function dispatchMapWorkflowNode(input: {
       runId: child.childRun.id,
       workflowName: input.node.target.name,
     })
-    activeChildren += 1
     if (input.node.mode === 'start-only') {
+      startedChildren += 1
       outputItems[item.index] = {
         item: item.item,
         index: item.index,
         runId: child.childRun.id,
         status: child.childRun.status,
       }
+    } else {
+      activeChildren += 1
     }
   }
 
@@ -1507,6 +1634,14 @@ async function dispatchMapWorkflowNode(input: {
       outputs: { ...input.outputs, [input.node.name]: output },
     })
     return
+  }
+
+  if (input.node.mode === 'start-only' && startedChildren > 0) {
+    await input.runCoordinationExecutor.enqueue({
+      kind: 'continueRun',
+      runId: input.run.id,
+      workflowName: input.workflow.workflow.name,
+    })
   }
 
   await input.store.waitNode({
@@ -1538,6 +1673,13 @@ function hasStoredNodeInput(node: { readonly input?: unknown }): boolean {
 }
 
 function mapConcurrencyLimit(node: MapNodeImplementation): number {
+  if (
+    node.concurrency !== undefined &&
+    (!Number.isInteger(node.concurrency) || node.concurrency < 1)
+  ) {
+    throw new Error('Map node concurrency must be a positive integer')
+  }
+
   return node.concurrency ?? Number.POSITIVE_INFINITY
 }
 

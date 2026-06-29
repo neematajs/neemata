@@ -32,6 +32,8 @@ does not define final database tables or adapter code.
   cloud queues.
 - Do not add signals, queries, timers, progress streams, or watch APIs in this
   runtime slice.
+- Do not implement cancellation propagation in this runtime slice.
+- Do not implement retry scheduling in this runtime slice.
 - Do not support arbitrary nested subgraphs inside `branch` or `parallel`.
 
 ## Source Of Truth
@@ -473,7 +475,12 @@ dispatch primitive work.
 
 - Evaluate `items` once.
 - Persist the item snapshot with stable item index and optional item key.
-- Start one child task run per item, bounded by node-level map concurrency.
+- Start one child task run per item.
+- For `wait-all` and `wait-settled`, node-level `concurrency` bounds active
+  child task runs.
+- For `start-only`, node-level `concurrency` bounds how many child task links
+  are started per continuation pass. The parent enqueues another continuation
+  until all child links are persisted.
 - Track each child task run independently.
 - Complete according to mode:
   - `wait-all`: all items must complete successfully
@@ -485,14 +492,22 @@ dispatch primitive work.
 - Evaluate `items` once.
 - Persist the item snapshot with stable item index and optional item key.
 - Persist one child link per item before child dispatch.
-- Start one child workflow run per item, bounded by node-level map concurrency.
+- Start one child workflow run per item.
+- For `wait-all` and `wait-settled`, node-level `concurrency` bounds active
+  child workflow runs.
+- For `start-only`, node-level `concurrency` bounds how many child workflow
+  links are started per continuation pass. The parent enqueues another
+  continuation until all child links are persisted.
 - Track each child run independently.
 - Complete according to mode:
   - `wait-all`: all children must complete successfully
   - `wait-settled`: collect success and failure records
   - `start-only`: complete after child links are persisted
 
-## Cancellation
+## Planned Cancellation Semantics
+
+Cancellation is not implemented in the current runtime slice. The intended model
+is:
 
 Cancellation starts as a run transition to `cancelling`.
 
@@ -506,9 +521,10 @@ Rules:
 - Late completions after cancellation are ignored unless they match still-active
   attempts.
 
-## Retry
+## Planned Retry Semantics
 
-Retry is node-level in v1.
+Retry scheduling is not implemented in the current runtime slice. The intended
+model is node-level retry.
 
 Rules:
 
@@ -519,7 +535,7 @@ Rules:
 - If retry is exhausted, node becomes `failed` and run failure propagates
   according to node semantics.
 
-Workflow-level retry remains out of scope for this runtime slice.
+Workflow-level retry remains out of scope.
 
 ## Adapter Responsibilities
 

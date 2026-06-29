@@ -344,6 +344,13 @@ function assertNodeName(name: string, nodes: readonly WorkflowNode[]) {
   }
 }
 
+function assertMapConcurrency(options: { readonly concurrency?: number }) {
+  if (options.concurrency === undefined) return
+  if (!Number.isInteger(options.concurrency) || options.concurrency < 1) {
+    throw new Error('Map node concurrency must be a positive integer')
+  }
+}
+
 function createBranchCaseHelpers(): BranchCaseHelpers {
   return Object.freeze({
     activity: (options: any) => Object.freeze({ kind: 'activity', ...options }),
@@ -416,6 +423,7 @@ class WorkflowDraftBuilder<Name extends string> {
 
   mapTask(name: string, task: AnyTaskDefinition, options: any) {
     assertNodeName(name, this.nodes)
+    assertMapConcurrency(options)
     return this.withNode(
       Object.freeze({ kind: 'mapTask', name, task, ...options }),
     )
@@ -423,6 +431,7 @@ class WorkflowDraftBuilder<Name extends string> {
 
   mapWorkflow(name: string, workflow: AnyWorkflowDefinition, options: any) {
     assertNodeName(name, this.nodes)
+    assertMapConcurrency(options)
     return this.withNode(
       Object.freeze({ kind: 'mapWorkflow', name, workflow, ...options }),
     )

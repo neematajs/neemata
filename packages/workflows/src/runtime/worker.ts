@@ -49,6 +49,10 @@ export type WorkerLoopResult = {
   readonly processed: number
 }
 
+export type WorkerCommandResult = {
+  readonly status: 'processed' | 'released'
+}
+
 export type WorkerLoopOptions = {
   readonly workerId: string
   readonly concurrency?: number
@@ -98,7 +102,8 @@ export async function runWorkflowWorker(
     if (!claimed) return false
 
     try {
-      await continueWorkflowRun({
+      const leaseMs = input.leaseMs ?? DEFAULT_LEASE_MS
+      const result = await continueWorkflowRun({
         store: input.store,
         runCoordinationExecutor: input.runCoordinationExecutor,
         attemptExecutor: input.attemptExecutor,
@@ -106,10 +111,15 @@ export async function runWorkflowWorker(
         workflows: input.workflows,
         workerId: input.workerId,
         command: claimed.command,
-        leaseMs: input.leaseMs,
+        leaseMs,
       })
+      if (result.status === 'busy') {
+        await input.runCoordinationExecutor.release(claimed)
+        return false
+      }
+
       await input.runCoordinationExecutor.ack(claimed)
-      return true
+      return result.status === 'processed'
     } catch (error) {
       await input.runCoordinationExecutor.release(claimed)
       throw error
@@ -123,19 +133,21 @@ export async function runActivityWorker(
   const workflowNames = input.workflows.map(
     (implementation) => implementation.workflow.name,
   )
+  const activityNames =
+    input.activityNames ?? collectWorkflowActivityNames(input.workflows)
 
   return runWorkerLoop(input, async () => {
     const claimed = await input.attemptExecutor.claimActivity({
       workerId: input.workerId,
       workflowNames,
-      activityNames: input.activityNames,
+      activityNames,
       leaseMs: input.leaseMs ?? DEFAULT_LEASE_MS,
     })
     if (!claimed) return false
 
     try {
-      await runActivityAttempt({ ...input, claimed })
-      return true
+      const result = await runActivityAttempt({ ...input, claimed })
+      return result.status === 'processed'
     } catch (error) {
       await input.attemptExecutor.release(claimed)
       throw error
@@ -157,8 +169,8 @@ export async function runTaskWorker(
     if (!claimed) return false
 
     try {
-      await runTaskAttempt({ ...input, claimed })
-      return true
+      const result = await runTaskAttempt({ ...input, claimed })
+      return result.status === 'processed'
     } catch (error) {
       await input.attemptExecutor.release(claimed)
       throw error
@@ -198,24 +210,34 @@ async function runWorkerLoop(
   assertPositiveInteger(maxIdleClaims, 'Max idle claims')
 
   let processed = 0
-  await runWithConcurrency(
-    Array.from({ length: concurrency }),
-    concurrency,
-    async () => {
+  let firstError: unknown
+  let stopped = false
+  await Promise.allSettled(
+    Array.from({ length: concurrency }, async () => {
       let idleClaims = 0
-      while (!options.signal?.aborted && idleClaims < maxIdleClaims) {
-        const didWork = await claimAndRun()
-        if (didWork) {
-          processed += 1
-          idleClaims = 0
-          continue
-        }
+      try {
+        while (
+          !stopped &&
+          !options.signal?.aborted &&
+          idleClaims < maxIdleClaims
+        ) {
+          const didWork = await claimAndRun()
+          if (didWork) {
+            processed += 1
+            idleClaims = 0
+            continue
+          }
 
-        idleClaims += 1
+          idleClaims += 1
+        }
+      } catch (error) {
+        stopped = true
+        firstError ??= error
       }
-    },
+    }),
   )
 
+  if (firstError) throw firstError
   return { processed }
 }
 
@@ -225,9 +247,31 @@ function assertPositiveInteger(value: number, label: string): void {
   }
 }
 
+function collectWorkflowActivityNames(
+  workflows: readonly WorkflowImplementation<any, any>[],
+): readonly string[] {
+  const names = new Set<string>()
+  for (const workflow of workflows) {
+    for (const node of workflow.nodes) {
+      if (node.kind === 'activity') {
+        names.add(node.activity.name)
+        continue
+      }
+
+      if (node.kind === 'branch' || node.kind === 'parallel') {
+        for (const member of Object.values(node.cases)) {
+          if (member.kind === 'activity') names.add(member.activity.name)
+        }
+      }
+    }
+  }
+
+  return [...names]
+}
+
 export async function runActivityAttempt(
   input: RunActivityAttemptInput,
-): Promise<void> {
+): Promise<WorkerCommandResult> {
   const command = input.claimed.command
   if (command.kind !== 'activityAttempt') {
     throw new Error(`Unsupported attempt command kind [${command.kind}]`)
@@ -242,13 +286,12 @@ export async function runActivityAttempt(
   )
 
   if (!isFreshActivityAttempt(command, storedNode, storedAttempt)) {
-    await reconcileStaleAttempt(input, command, storedNode, storedAttempt)
-    return
+    return await reconcileStaleAttempt(input, command, storedNode, storedAttempt)
   }
 
   if (snapshot?.run.workflowName !== command.workflowName) {
     await input.attemptExecutor.release(input.claimed)
-    return
+    return { status: 'released' }
   }
 
   const registry = createWorkflowRuntimeRegistry({
@@ -257,7 +300,7 @@ export async function runActivityAttempt(
   const workflow = registry.getWorkflow(command.workflowName)
   if (!workflow) {
     await input.attemptExecutor.release(input.claimed)
-    return
+    return { status: 'released' }
   }
 
   const node = resolveActivityAttemptNode(
@@ -268,7 +311,7 @@ export async function runActivityAttempt(
   )
   if (!node) {
     await input.attemptExecutor.release(input.claimed)
-    return
+    return { status: 'released' }
   }
 
   let output: unknown
@@ -302,13 +345,13 @@ export async function runActivityAttempt(
           run: failed,
         })
         await input.attemptExecutor.ack(input.claimed)
-        return
+        return { status: 'processed' }
       }
       await enqueueContinueRun(input.runCoordinationExecutor, command)
     }
 
     await input.attemptExecutor.ack(input.claimed)
-    return
+    return { status: 'processed' }
   }
 
   const attempt = await input.store.completeCurrentAttempt({
@@ -318,7 +361,7 @@ export async function runActivityAttempt(
   })
   if (!attempt) {
     await input.attemptExecutor.ack(input.claimed)
-    return
+    return { status: 'processed' }
   }
 
   if (shouldCompleteNodeFromAttempt(storedNode)) {
@@ -330,6 +373,7 @@ export async function runActivityAttempt(
   }
   await enqueueContinueRun(input.runCoordinationExecutor, command)
   await input.attemptExecutor.ack(input.claimed)
+  return { status: 'processed' }
 }
 
 function resolveActivityAttemptNode(
@@ -375,7 +419,7 @@ function resolveActivityAttemptNode(
 
 export async function runTaskAttempt(
   input: RunTaskAttemptInput,
-): Promise<void> {
+): Promise<WorkerCommandResult> {
   const command = input.claimed.command
   if (command.kind !== 'taskAttempt') {
     throw new Error(`Unsupported attempt command kind [${command.kind}]`)
@@ -390,13 +434,12 @@ export async function runTaskAttempt(
   )
 
   if (!isFreshTaskAttempt(command, storedNode, storedAttempt)) {
-    await reconcileStaleAttempt(input, command, storedNode, storedAttempt)
-    return
+    return await reconcileStaleAttempt(input, command, storedNode, storedAttempt)
   }
 
   if (snapshot?.run.workflowName !== command.workflowName) {
     await input.attemptExecutor.release(input.claimed)
-    return
+    return { status: 'released' }
   }
 
   const registry = createWorkflowRuntimeRegistry({
@@ -405,7 +448,7 @@ export async function runTaskAttempt(
   const task = registry.getTask(command.taskName)
   if (!task) {
     await input.attemptExecutor.release(input.claimed)
-    return
+    return { status: 'released' }
   }
 
   let output: unknown
@@ -436,13 +479,13 @@ export async function runTaskAttempt(
           run: failed,
         })
         await input.attemptExecutor.ack(input.claimed)
-        return
+        return { status: 'processed' }
       }
       await enqueueContinueRun(input.runCoordinationExecutor, command)
     }
 
     await input.attemptExecutor.ack(input.claimed)
-    return
+    return { status: 'processed' }
   }
 
   const attempt = await input.store.completeCurrentAttempt({
@@ -452,7 +495,7 @@ export async function runTaskAttempt(
   })
   if (!attempt) {
     await input.attemptExecutor.ack(input.claimed)
-    return
+    return { status: 'processed' }
   }
 
   if (snapshot?.run.kind === 'task') {
@@ -471,7 +514,7 @@ export async function runTaskAttempt(
       run: completed,
     })
     await input.attemptExecutor.ack(input.claimed)
-    return
+    return { status: 'processed' }
   }
 
   if (shouldCompleteNodeFromAttempt(storedNode)) {
@@ -483,6 +526,7 @@ export async function runTaskAttempt(
   }
   await enqueueContinueRun(input.runCoordinationExecutor, command)
   await input.attemptExecutor.ack(input.claimed)
+  return { status: 'processed' }
 }
 
 function isFreshActivityAttempt(
@@ -521,7 +565,7 @@ async function reconcileStaleAttempt(
   command: EnqueueContinueRunCommand,
   storedNode: StoredNode | undefined,
   storedAttempt: StoredAttempt | undefined,
-): Promise<void> {
+): Promise<WorkerCommandResult> {
   const isCurrentAttempt = isCurrentAttemptForNode(
     storedNode,
     command.attemptId,
@@ -551,13 +595,13 @@ async function reconcileStaleAttempt(
           run: completed,
         })
         await input.attemptExecutor.ack(input.claimed)
-        return
+        return { status: 'processed' }
       }
     }
 
     if (!shouldCompleteNodeFromAttempt(storedNode)) {
       await input.attemptExecutor.ack(input.claimed)
-      return
+      return { status: 'processed' }
     }
 
     await input.store.completeNode({
@@ -567,7 +611,7 @@ async function reconcileStaleAttempt(
     })
     await enqueueContinueRun(input.runCoordinationExecutor, command)
     await input.attemptExecutor.ack(input.claimed)
-    return
+    return { status: 'processed' }
   }
 
   if (
@@ -597,7 +641,7 @@ async function reconcileStaleAttempt(
         run: failed,
       })
       await input.attemptExecutor.ack(input.claimed)
-      return
+      return { status: 'processed' }
     }
 
     await input.store.failNode({
@@ -609,7 +653,7 @@ async function reconcileStaleAttempt(
     })
     await enqueueContinueRun(input.runCoordinationExecutor, command)
     await input.attemptExecutor.ack(input.claimed)
-    return
+    return { status: 'processed' }
   }
 
   if (
@@ -623,6 +667,7 @@ async function reconcileStaleAttempt(
   }
 
   await input.attemptExecutor.ack(input.claimed)
+  return { status: 'processed' }
 }
 
 async function wakeParentRun(input: {

@@ -14,6 +14,7 @@ import type {
   AttemptExecutor,
   CompleteMapItemParams,
   ContinueRunCommand,
+  ContinueWorkflowRunResult,
   CreateRunInput,
   EnsureChildRunParams,
   EnsureChildRunResult,
@@ -38,6 +39,9 @@ import type {
   StoredRun,
   TaskRun,
   WaitNodeParams,
+  WorkerCommandResult,
+  WorkerLoopOptions,
+  WorkerLoopResult,
   WorkflowClient,
   WorkflowStore,
 } from '../src/index.ts'
@@ -109,6 +113,20 @@ describe('workflow runtime interfaces', () => {
     }>()
     expectTypeOf<StoredNode>().toHaveProperty('status')
     expectTypeOf<StoredAttempt>().toHaveProperty('status')
+    expectTypeOf<ContinueWorkflowRunResult>().toMatchTypeOf<{
+      status: 'processed' | 'busy' | 'ignored'
+    }>()
+    expectTypeOf<WorkerCommandResult>().toMatchTypeOf<{
+      status: 'processed' | 'released'
+    }>()
+    expectTypeOf<WorkerLoopOptions>().toMatchTypeOf<{
+      workerId: string
+      concurrency?: number
+      leaseMs?: number
+      maxIdleClaims?: number
+      signal?: AbortSignal
+    }>()
+    expectTypeOf<WorkerLoopResult>().toMatchTypeOf<{ processed: number }>()
     expectTypeOf<TaskRun>().toMatchTypeOf<{
       id: string
       kind: 'task'

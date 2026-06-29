@@ -10,7 +10,11 @@ export type {
   TaskWorkerClaim,
 } from './commands.ts'
 export { continueWorkflowRun, startTaskRun } from './coordinator.ts'
-export type { ContinueWorkflowRunInput, StartTaskRunInput } from './coordinator.ts'
+export type {
+  ContinueWorkflowRunInput,
+  ContinueWorkflowRunResult,
+  StartTaskRunInput,
+} from './coordinator.ts'
 export type { AttemptExecutor, RunCoordinationExecutor } from './executors.ts'
 export { createWorkflowRuntimeRegistry } from './registry.ts'
 export type { WorkflowRuntimeRegistry } from './registry.ts'
@@ -68,4 +72,5 @@ export type {
   RunWorkflowWorkerInput,
   WorkerLoopOptions,
   WorkerLoopResult,
+  WorkerCommandResult,
 } from './worker.ts'
