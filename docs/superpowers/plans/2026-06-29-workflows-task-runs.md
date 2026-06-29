@@ -8,8 +8,9 @@
 
 **Tech Stack:** TypeScript, Vitest, `@nmtjs/workflows` runtime interfaces, in-memory runtime test support, `@nmtjs/core` containers, `@nmtjs/type` schemas.
 
-**Current status:** Task 1 is complete in `f2aaa1f7`. Task 2 is in progress in
-the working tree. Task 3, Task 4, and Task 5 remain pending.
+**Current status:** Task 1 is complete in `f2aaa1f7`. Task 2 and Task 3 are
+complete in `51d16026`. Task 4 wait-all is implemented in this slice;
+wait-settled/start-only and Task 5 remain pending.
 
 ---
 
@@ -61,17 +62,17 @@ git commit -m "feat: model tasks as durable runs"
 
 ## Task 2: Direct Task Node Runtime
 
-- [ ] Add failing coordinator/worker tests showing `.task(...)` creates a child task run and parent completes from that run output.
-- [ ] Update coordinator to create/reuse child task runs for direct task nodes.
-- [ ] Update task worker to complete task runs and wake parent runs.
-- [ ] Run:
+- [x] Add failing coordinator/worker tests showing `.task(...)` creates a child task run and parent completes from that run output.
+- [x] Update coordinator to create/reuse child task runs for direct task nodes.
+- [x] Update task worker to complete task runs and wake parent runs.
+- [x] Run:
 
 ```bash
 pnpm --filter @nmtjs/workflows exec vitest run tests/runtime-coordinator.spec.ts tests/runtime-worker.spec.ts --reporter=agent
 pnpm --filter @nmtjs/workflows exec tsc --noEmit --pretty false
 ```
 
-- [ ] Commit:
+- [x] Commit:
 
 ```bash
 git add packages/workflows/src/runtime packages/workflows/tests/runtime-coordinator.spec.ts packages/workflows/tests/runtime-worker.spec.ts packages/workflows/tests/support/in-memory-runtime.ts
@@ -80,17 +81,17 @@ git commit -m "feat: run workflow task nodes as child task runs"
 
 ## Task 3: Branch And Parallel Task Cases
 
-- [ ] Add failing tests showing branch and parallel task cases create child task run links with `caseKey` or `memberKey`.
-- [ ] Update branch and parallel dispatch to use child task runs for task cases.
-- [ ] Keep activity cases as attempts and workflow cases as workflow runs.
-- [ ] Run:
+- [x] Add failing tests showing branch and parallel task cases create child task run links with `caseKey` or `memberKey`.
+- [x] Update branch and parallel dispatch to use child task runs for task cases.
+- [x] Keep activity cases as attempts and workflow cases as workflow runs.
+- [x] Run:
 
 ```bash
 pnpm --filter @nmtjs/workflows exec vitest run tests/runtime-coordinator.spec.ts tests/runtime-worker.spec.ts --reporter=agent
 pnpm --filter @nmtjs/workflows exec tsc --noEmit --pretty false
 ```
 
-- [ ] Commit:
+- [x] Commit:
 
 ```bash
 git add packages/workflows/src/runtime packages/workflows/tests/runtime-coordinator.spec.ts packages/workflows/tests/runtime-worker.spec.ts packages/workflows/tests/support/in-memory-runtime.ts
@@ -99,10 +100,10 @@ git commit -m "feat: run composite task cases as child task runs"
 
 ## Task 4: MapTask Runtime
 
-- [ ] Add failing tests for `mapTask` `wait-all` preserving item order and exposing child task run IDs.
-- [ ] Implement item snapshotting, child task run creation, and convergence for `wait-all`.
+- [x] Add failing tests for `mapTask` `wait-all` preserving item order and exposing child task run IDs.
+- [x] Implement item snapshotting, child task run creation, and convergence for `wait-all`.
 - [ ] Add `wait-settled` only after `wait-all` passes; keep `start-only` as later slice if it complicates convergence.
-- [ ] Run:
+- [x] Run:
 
 ```bash
 pnpm --filter @nmtjs/workflows exec vitest run tests/runtime-coordinator.spec.ts tests/runtime-worker.spec.ts --reporter=agent
@@ -111,7 +112,7 @@ pnpm oxlint . --format=agent
 git diff --check
 ```
 
-- [ ] Commit:
+- [x] Commit:
 
 ```bash
 git add packages/workflows/src/runtime packages/workflows/src/types packages/workflows/tests

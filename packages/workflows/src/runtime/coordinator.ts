@@ -3,6 +3,7 @@ import type { Container, DependencyContext } from '@nmtjs/core'
 import type {
   ActivityNodeImplementation,
   BranchNodeImplementation,
+  MapNodeImplementation,
   ParallelNodeImplementation,
   RunnableNodeImplementation,
   WorkflowImplementation,
@@ -167,6 +168,20 @@ async function advanceWorkflowRun(input: {
 
   if (nextNode.kind === 'parallel') {
     await dispatchParallelNode({
+      store: input.store,
+      attemptExecutor: input.attemptExecutor,
+      runCoordinationExecutor: input.runCoordinationExecutor,
+      workflow: input.workflow,
+      workflowCtx: input.workflowCtx,
+      run: input.run,
+      outputs: input.outputs,
+      node: nextNode,
+    })
+    return
+  }
+
+  if (nextNode.kind === 'mapTask') {
+    await dispatchMapTaskNode({
       store: input.store,
       attemptExecutor: input.attemptExecutor,
       runCoordinationExecutor: input.runCoordinationExecutor,
@@ -1032,6 +1047,175 @@ async function dispatchParallelNode(input: {
       workflowCtx: input.workflowCtx,
       run: input.run,
       outputs: { ...input.outputs, [input.node.name]: outputs },
+    })
+    return
+  }
+
+  await input.store.waitNode({
+    runId: input.run.id,
+    nodeName: input.node.name,
+  })
+}
+
+async function dispatchMapTaskNode(input: {
+  readonly store: WorkflowStore
+  readonly attemptExecutor: AttemptExecutor
+  readonly runCoordinationExecutor: RunCoordinationExecutor
+  readonly workflow: WorkflowImplementation
+  readonly workflowCtx: DependencyContext<any>
+  readonly run: StoredRun
+  readonly outputs: Record<string, unknown>
+  readonly node: MapNodeImplementation
+}) {
+  if (input.node.mode !== 'wait-all') {
+    throw new Error(
+      `Unsupported mapTask mode [${input.node.mode}] in node [${input.node.name}]`,
+    )
+  }
+
+  const existing = await input.store.createNode({
+    runId: input.run.id,
+    name: input.node.name,
+    kind: 'mapTask',
+  })
+  if (existing.status === 'completed' || existing.status === 'failed') return
+
+  let children = await input.store.loadNodeChildren({
+    runId: input.run.id,
+    nodeName: input.node.name,
+  })
+  const itemSnapshot =
+    children.mapItems.length > 0
+      ? children.mapItems
+      : (
+          await input.store.ensureMapItems({
+            runId: input.run.id,
+            nodeName: input.node.name,
+            items: input.node.items(
+              input.workflowCtx,
+              input.outputs,
+              input.run.input,
+            ),
+          })
+        ).items
+
+  if (children.mapItems.length === 0) {
+    children = await input.store.loadNodeChildren({
+      runId: input.run.id,
+      nodeName: input.node.name,
+    })
+  }
+
+  const outputItems: Array<{
+    item: unknown
+    index: number
+    runId: string
+    output: unknown
+  }> = []
+
+  for (const item of itemSnapshot) {
+    const identity = item.identity
+    const existingLink = children.childLinks.find((link) =>
+      sameNodeChildIdentity(link.identity, identity),
+    )
+
+    if (existingLink) {
+      const snapshot = await input.store.loadRunSnapshot(existingLink.childRunId)
+      const childRun = snapshot?.run
+      if (!childRun || !isTerminalRunStatus(childRun.status)) {
+        await dispatchTaskRunAttempt({
+          store: input.store,
+          attemptExecutor: input.attemptExecutor,
+          runCoordinationExecutor: input.runCoordinationExecutor,
+          taskName: input.node.target.name,
+          taskRunId: existingLink.childRunId,
+          taskInput: childRun?.input ?? input.run.input,
+        })
+        continue
+      }
+
+      if (childRun.status === 'completed') {
+        await input.store.completeMapItem({
+          runId: input.run.id,
+          nodeName: input.node.name,
+          itemIndex: item.index,
+          itemKey: item.key,
+          output: childRun.output,
+        })
+        outputItems[item.index] = {
+          item: item.item,
+          index: item.index,
+          runId: existingLink.childRunId,
+          output: childRun.output,
+        }
+        continue
+      }
+
+      const error =
+        childRun.error ?? new Error(`Mapped task run [${childRun.id}] failed`)
+      await input.store.failMapItem({
+        runId: input.run.id,
+        nodeName: input.node.name,
+        itemIndex: item.index,
+        itemKey: item.key,
+        error,
+      })
+      await input.store.failNode({
+        runId: input.run.id,
+        nodeName: input.node.name,
+        error,
+      })
+      await failRunAndWakeParent({
+        store: input.store,
+        runCoordinationExecutor: input.runCoordinationExecutor,
+        runId: input.run.id,
+        error,
+      })
+      return
+    }
+
+    const nodeInput = input.node.input(
+      input.workflowCtx,
+      input.outputs,
+      item.item,
+      input.run.input,
+      item.index,
+    )
+    const child = await input.store.ensureChildRun({
+      identity,
+      childKind: 'task',
+      childName: input.node.target.name,
+      input: nodeInput,
+      parentRunId: input.run.id,
+      parentNodeName: input.node.name,
+      rootRunId: input.run.rootRunId,
+    })
+    await dispatchTaskRunAttempt({
+      store: input.store,
+      attemptExecutor: input.attemptExecutor,
+      runCoordinationExecutor: input.runCoordinationExecutor,
+      taskName: input.node.target.name,
+      taskRunId: child.childRun.id,
+      taskInput: nodeInput,
+    })
+  }
+
+  const completedItems = outputItems.filter((item) => item !== undefined)
+  if (completedItems.length === itemSnapshot.length) {
+    const output = { items: completedItems }
+    await input.store.completeNode({
+      runId: input.run.id,
+      nodeName: input.node.name,
+      output,
+    })
+    await advanceWorkflowRun({
+      store: input.store,
+      attemptExecutor: input.attemptExecutor,
+      runCoordinationExecutor: input.runCoordinationExecutor,
+      workflow: input.workflow,
+      workflowCtx: input.workflowCtx,
+      run: input.run,
+      outputs: { ...input.outputs, [input.node.name]: output },
     })
     return
   }

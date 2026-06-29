@@ -1245,6 +1245,150 @@ describe('workflow runtime coordinator', () => {
     })
   })
 
+  it('runs mapTask wait-all items as child task runs and preserves item order', async () => {
+    const embeddingTask = defineTask({
+      name: 'map.embedding',
+      input: t.object({ text: t.string() }),
+      output: t.object({ id: t.string() }),
+    })
+    const workflow = defineWorkflow({
+      name: 'map-task-workflow',
+      input: t.object({
+        specs: t.array(t.object({ id: t.string(), text: t.string() })),
+      }),
+      output: t.object({ ids: t.array(t.string()) }),
+    })
+      .mapTask('embeddings', embeddingTask, {
+        item: t.object({ id: t.string(), text: t.string() }),
+        mode: 'wait-all',
+      })
+      .build()
+
+    const taskImplementation = implementTask(embeddingTask, {
+      handler: async (_ctx, input) => ({ id: `embedding:${input.text}` }),
+    })
+    let itemCalls = 0
+    const implementation = implementWorkflow(workflow)
+      .embeddings(embeddingTask, {
+        items: (_ctx, _outputs, input) => {
+          itemCalls += 1
+          if (itemCalls > 1) throw new Error('items called twice')
+          return input.specs
+        },
+        input: (_ctx, _outputs, item) => ({ text: item.text }),
+      })
+      .finish((_ctx, { embeddings }) => ({
+        ids: embeddings.items.map((item) => item.output.id),
+      }))
+
+    const runtime = createInMemoryWorkflowRuntime()
+    const container = createTestContainer()
+    const run = await runtime.store.createRun({
+      workflowName: workflow.name,
+      input: {
+        specs: [
+          { id: 'a', text: 'alpha' },
+          { id: 'b', text: 'beta' },
+        ],
+      },
+    })
+    const command = {
+      kind: 'continueRun' as const,
+      runId: run.id,
+      workflowName: workflow.name,
+    }
+
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [implementation],
+      workerId: 'coordinator-1',
+      command,
+    })
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [implementation],
+      workerId: 'coordinator-1',
+      command,
+    })
+
+    const waiting = await runtime.store.loadRunSnapshot(run.id)
+    expect(itemCalls).toBe(1)
+    expect(waiting?.nodes[0]?.status).toBe('waiting')
+    expect(waiting?.mapItems.map((item) => item.item)).toStrictEqual([
+      { id: 'a', text: 'alpha' },
+      { id: 'b', text: 'beta' },
+    ])
+    expect(waiting?.childLinks.map((link) => link.identity)).toStrictEqual([
+      { runId: run.id, nodeName: 'embeddings', itemIndex: 0 },
+      { runId: run.id, nodeName: 'embeddings', itemIndex: 1 },
+    ])
+    expect(runtime.inspect().taskCommands.map((item) => item.payload.input))
+      .toStrictEqual([
+        { text: 'alpha' },
+        { text: 'beta' },
+        { text: 'alpha' },
+        { text: 'beta' },
+      ])
+
+    for (const _ of [0, 1]) {
+      const claimed = await runtime.attemptExecutor.claimTask({
+        workerId: 'task-worker-1',
+        taskNames: [embeddingTask.name],
+        leaseMs: 30_000,
+      })
+      expect(claimed).not.toBeNull()
+      await runTaskAttempt({
+        store: runtime.store,
+        runCoordinationExecutor: runtime.runCoordinationExecutor,
+        attemptExecutor: runtime.attemptExecutor,
+        container,
+        tasks: [taskImplementation],
+        workerId: 'task-worker-1',
+        claimed: claimed!,
+      })
+    }
+
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [implementation],
+      workerId: 'coordinator-1',
+      command,
+    })
+
+    const final = await runtime.store.loadRunSnapshot(run.id)
+    const runIds = waiting!.childLinks.map((link) => link.childRunId)
+    expect(final?.nodes[0]?.status).toBe('completed')
+    expect(final?.nodes[0]?.output).toStrictEqual({
+      items: [
+        {
+          item: { id: 'a', text: 'alpha' },
+          index: 0,
+          runId: runIds[0],
+          output: { id: 'embedding:alpha' },
+        },
+        {
+          item: { id: 'b', text: 'beta' },
+          index: 1,
+          runId: runIds[1],
+          output: { id: 'embedding:beta' },
+        },
+      ],
+    })
+    expect(final?.run.status).toBe('completed')
+    expect(final?.run.output).toStrictEqual({
+      ids: ['embedding:alpha', 'embedding:beta'],
+    })
+  })
+
   it('reuses original branch child task run input on repeated continuation', async () => {
     const task = defineTask({
       name: 'branch.stable-summary',
