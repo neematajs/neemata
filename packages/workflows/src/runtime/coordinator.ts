@@ -46,7 +46,9 @@ export async function continueWorkflowRun(
 
     const failedNode = snapshot.nodes.find((node) => node.status === 'failed')
     if (failedNode) {
-      await input.store.failRun({
+      await failRunAndWakeParent({
+        store: input.store,
+        runCoordinationExecutor: input.runCoordinationExecutor,
         runId: snapshot.run.id,
         error:
           failedNode.error ??
@@ -112,6 +114,7 @@ async function advanceWorkflowRun(input: {
     await dispatchTaskNode({
       store: input.store,
       attemptExecutor: input.attemptExecutor,
+      runCoordinationExecutor: input.runCoordinationExecutor,
       workflow: input.workflow,
       workflowCtx: input.workflowCtx,
       runId: input.run.id,
@@ -143,6 +146,7 @@ async function advanceWorkflowRun(input: {
   await dispatchActivityNode({
     store: input.store,
     attemptExecutor: input.attemptExecutor,
+    runCoordinationExecutor: input.runCoordinationExecutor,
     workflow: input.workflow,
     workflowCtx: input.workflowCtx,
     runId: input.run.id,
@@ -155,6 +159,7 @@ async function advanceWorkflowRun(input: {
 async function dispatchTaskNode(input: {
   readonly store: WorkflowStore
   readonly attemptExecutor: AttemptExecutor
+  readonly runCoordinationExecutor: RunCoordinationExecutor
   readonly workflow: WorkflowImplementation
   readonly workflowCtx: DependencyContext<any>
   readonly runId: string
@@ -210,7 +215,9 @@ async function dispatchTaskNode(input: {
       nodeName: input.node.name,
       error,
     })
-    await input.store.failRun({
+    await failRunAndWakeParent({
+      store: input.store,
+      runCoordinationExecutor: input.runCoordinationExecutor,
       runId: input.runId,
       error,
     })
@@ -227,14 +234,43 @@ async function completeRunAndWakeParent(input: {
     runId: input.runId,
     output: input.output,
   })
-  if (!completed?.parentRunId || !completed.parentNodeName) return
+  await wakeParentRun({
+    store: input.store,
+    runCoordinationExecutor: input.runCoordinationExecutor,
+    run: completed,
+  })
+}
 
-  const parent = await input.store.loadRunSnapshot(completed.parentRunId)
+async function failRunAndWakeParent(input: {
+  readonly store: WorkflowStore
+  readonly runCoordinationExecutor: RunCoordinationExecutor
+  readonly runId: string
+  readonly error: unknown
+}) {
+  const failed = await input.store.failRun({
+    runId: input.runId,
+    error: input.error,
+  })
+  await wakeParentRun({
+    store: input.store,
+    runCoordinationExecutor: input.runCoordinationExecutor,
+    run: failed,
+  })
+}
+
+async function wakeParentRun(input: {
+  readonly store: WorkflowStore
+  readonly runCoordinationExecutor: RunCoordinationExecutor
+  readonly run: StoredRun | undefined
+}) {
+  if (!input.run?.parentRunId || !input.run.parentNodeName) return
+
+  const parent = await input.store.loadRunSnapshot(input.run.parentRunId)
   if (!parent) return
 
   await input.runCoordinationExecutor.enqueue({
     kind: 'continueRun',
-    runId: completed.parentRunId,
+    runId: input.run.parentRunId,
     workflowName: parent.run.workflowName,
   })
 }
@@ -291,12 +327,19 @@ async function dispatchWorkflowNode(input: {
       return
     }
 
+    const error =
+      childRun.error ??
+      new Error(`Child workflow [${childRun.id}] ${childRun.status}`)
     await input.store.failNode({
       runId: input.run.id,
       nodeName: input.node.name,
-      error:
-        childRun.error ??
-        new Error(`Child workflow [${childRun.id}] ${childRun.status}`),
+      error,
+    })
+    await failRunAndWakeParent({
+      store: input.store,
+      runCoordinationExecutor: input.runCoordinationExecutor,
+      runId: input.run.id,
+      error,
     })
     return
   }
@@ -336,6 +379,7 @@ async function dispatchWorkflowNode(input: {
 async function dispatchActivityNode(input: {
   readonly store: WorkflowStore
   readonly attemptExecutor: AttemptExecutor
+  readonly runCoordinationExecutor: RunCoordinationExecutor
   readonly workflow: WorkflowImplementation
   readonly workflowCtx: DependencyContext<any>
   readonly runId: string
@@ -391,7 +435,9 @@ async function dispatchActivityNode(input: {
       nodeName: input.node.name,
       error,
     })
-    await input.store.failRun({
+    await failRunAndWakeParent({
+      store: input.store,
+      runCoordinationExecutor: input.runCoordinationExecutor,
       runId: input.runId,
       error,
     })

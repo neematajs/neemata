@@ -1515,7 +1515,43 @@ describe('workflow runtime coordinator', () => {
 
     const snapshot = await runtime.store.loadRunSnapshot(parentRun.id)
     expect(snapshot?.nodes[0]?.status).toBe('failed')
-    expect(snapshot?.run.status).toBe('queued')
+    expect(snapshot?.run.status).toBe('failed')
+  })
+
+  it('wakes and fails the parent run when a real child workflow activity fails', async () => {
+    const childWorkflow = defineWorkflow({
+      name: 'activity-failed-child',
+      input: t.object({ scenario: t.string() }),
+      output: t.object({ text: t.string() }),
+    })
+      .activity('write', {
+        input: t.object({ scenario: t.string() }),
+        output: t.object({ text: t.string() }),
+      })
+      .build()
+    const parentWorkflow = defineWorkflow({
+      name: 'activity-failed-parent',
+      input: t.object({ scenario: t.string() }),
+      output: t.object({ text: t.string() }),
+    })
+      .workflow('child', childWorkflow)
+      .build()
+
+    const childImplementation = implementWorkflow(childWorkflow)
+      .write(async () => {
+        throw new Error('child activity failed')
+      })
+      .finish((_ctx, { write }) => ({ text: write.text }))
+    const parentImplementation = implementWorkflow(parentWorkflow)
+      .child(childWorkflow)
+      .finish((_ctx, { child }) => ({ text: child.text }))
+
+    const runtime = createInMemoryWorkflowRuntime()
+    const container = createTestContainer()
+    const parentRun = await runtime.store.createRun({
+      workflowName: parentWorkflow.name,
+      input: { scenario: 'alpha' },
+    })
 
     await continueWorkflowRun({
       store: runtime.store,
@@ -1531,7 +1567,79 @@ describe('workflow runtime coordinator', () => {
       },
     })
 
-    const failedRun = await runtime.store.loadRunSnapshot(parentRun.id)
-    expect(failedRun?.run.status).toBe('failed')
+    const started = await runtime.store.loadRunSnapshot(parentRun.id)
+    const childRunId = started!.childLinks[0]!.childRunId
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [childImplementation],
+      workerId: 'child-coordinator',
+      command: {
+        kind: 'continueRun',
+        runId: childRunId,
+        workflowName: childWorkflow.name,
+      },
+    })
+
+    const claimed = await runtime.attemptExecutor.claimActivity({
+      workerId: 'activity-worker',
+      workflowNames: [childWorkflow.name],
+      leaseMs: 30_000,
+    })
+    expect(claimed).not.toBeNull()
+
+    await runActivityAttempt({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [childImplementation],
+      workerId: 'activity-worker',
+      claimed: claimed!,
+    })
+
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [childImplementation],
+      workerId: 'child-coordinator',
+      command: {
+        kind: 'continueRun',
+        runId: childRunId,
+        workflowName: childWorkflow.name,
+      },
+    })
+
+    expect(
+      runtime
+        .inspect()
+        .continueRunCommands.some(
+          (command) =>
+            command.payload.runId === parentRun.id &&
+            command.payload.workflowName === parentWorkflow.name,
+        ),
+    ).toBe(true)
+
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [parentImplementation],
+      workerId: 'parent-coordinator',
+      command: {
+        kind: 'continueRun',
+        runId: parentRun.id,
+        workflowName: parentWorkflow.name,
+      },
+    })
+
+    const parent = await runtime.store.loadRunSnapshot(parentRun.id)
+    expect(parent?.nodes[0]?.status).toBe('failed')
+    expect(parent?.run.status).toBe('failed')
   })
 })
