@@ -41,8 +41,16 @@ export async function continueWorkflowRun(
 
   try {
     const snapshot = await input.store.loadRunSnapshot(input.command.runId)
-    if (!snapshot || isTerminalRunStatus(snapshot.run.status)) return
+    if (!snapshot) return
     if (snapshot.run.workflowName !== input.command.workflowName) return
+    if (isTerminalRunStatus(snapshot.run.status)) {
+      await wakeParentRun({
+        store: input.store,
+        runCoordinationExecutor: input.runCoordinationExecutor,
+        run: snapshot.run,
+      })
+      return
+    }
 
     const failedNode = snapshot.nodes.find((node) => node.status === 'failed')
     if (failedNode) {
@@ -301,6 +309,11 @@ async function dispatchWorkflowNode(input: {
     const snapshot = await input.store.loadRunSnapshot(existingLink.childRunId)
     const childRun = snapshot?.run
     if (!childRun || !isTerminalRunStatus(childRun.status)) {
+      await input.runCoordinationExecutor.enqueue({
+        kind: 'continueRun',
+        runId: existingLink.childRunId,
+        workflowName: existingLink.workflowName,
+      })
       await input.store.waitNode({
         runId: input.run.id,
         nodeName: input.node.name,
