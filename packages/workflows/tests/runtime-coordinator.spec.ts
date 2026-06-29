@@ -15,7 +15,7 @@ import {
   runActivityAttempt,
   runTaskAttempt,
 } from '../src/index.ts'
-import { createInMemoryWorkflowRuntime } from '../src/testing/index.ts'
+import { createInMemoryWorkflowRuntime } from './support/in-memory-runtime.ts'
 
 describe('workflow runtime coordinator', () => {
   const createTestContainer = () => {

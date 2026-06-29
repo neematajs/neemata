@@ -12,11 +12,6 @@
       "types": "./src/runtime/index.ts",
       "import": "./dist/runtime/index.js",
       "module-sync": "./dist/runtime/index.js"
-    },
-    "./testing": {
-      "types": "./src/testing/index.ts",
-      "import": "./dist/testing/index.js",
-      "module-sync": "./dist/testing/index.js"
     }
   },
   "publishConfig": {
@@ -30,11 +25,6 @@
         "types": "./dist/runtime/index.d.ts",
         "import": "./dist/runtime/index.js",
         "module-sync": "./dist/runtime/index.js"
-      },
-      "./testing": {
-        "types": "./dist/testing/index.d.ts",
-        "import": "./dist/testing/index.js",
-        "module-sync": "./dist/testing/index.js"
       }
     }
   },

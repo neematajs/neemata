@@ -5,18 +5,18 @@ import type {
   ClaimedCommand,
   ContinueRunCommand,
   TaskAttemptCommand,
-} from '../runtime/commands.ts'
+} from '../../src/runtime/commands.ts'
 import type {
   AttemptExecutor,
   RunCoordinationExecutor,
-} from '../runtime/executors.ts'
+} from '../../src/runtime/executors.ts'
 import type {
   CreateAttemptInput,
   CreateNodeInput,
   CreateRunInput,
   RunLease,
   WorkflowStore,
-} from '../runtime/store.ts'
+} from '../../src/runtime/store.ts'
 import type {
   RunSnapshot,
   StoredAttempt,
@@ -25,11 +25,11 @@ import type {
   StoredMapItem,
   StoredNode,
   StoredRun,
-} from '../runtime/state.ts'
+} from '../../src/runtime/state.ts'
 import {
   isTerminalNodeStatus,
   isTerminalRunStatus,
-} from '../runtime/status.ts'
+} from '../../src/runtime/status.ts'
 
 type InMemoryRunLease = RunLease & {
   readonly expiresAt: Date
