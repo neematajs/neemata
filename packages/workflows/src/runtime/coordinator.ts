@@ -66,74 +66,90 @@ export async function continueWorkflowRun(
         .map((node) => [node.name, node.output]),
     )
 
-    const nextNode = implementation.nodes.find(
-      (node) =>
-        !snapshot.nodes.some(
-          (stored) =>
-            stored.name === node.name && stored.status === 'completed',
-        ),
-    )
-
-    if (!nextNode) {
-      const output = await implementation.finish(
-        workflowCtx as DependencyContext<any>,
-        outputs,
-        snapshot.run.input,
-      )
-      await completeRunAndWakeParent({
-        store: input.store,
-        runCoordinationExecutor: input.runCoordinationExecutor,
-        runId: snapshot.run.id,
-        output,
-      })
-      return
-    }
-
-    if (nextNode.kind === 'task') {
-      await dispatchTaskNode({
-        store: input.store,
-        attemptExecutor: input.attemptExecutor,
-        workflow: implementation,
-        workflowCtx: workflowCtx as DependencyContext<any>,
-        runId: snapshot.run.id,
-        workflowInput: snapshot.run.input,
-        outputs,
-        node: nextNode,
-      })
-      return
-    }
-
-    if (nextNode.kind === 'workflow') {
-      await dispatchWorkflowNode({
-        store: input.store,
-        attemptExecutor: input.attemptExecutor,
-        runCoordinationExecutor: input.runCoordinationExecutor,
-        workflow: implementation,
-        workflowCtx: workflowCtx as DependencyContext<any>,
-        run: snapshot.run,
-        outputs,
-        node: nextNode,
-      })
-      return
-    }
-
-    if (nextNode.kind !== 'activity') {
-      throw new Error(`Unsupported runtime node kind [${nextNode.kind}]`)
-    }
-
-    await dispatchActivityNode({
+    await advanceWorkflowRun({
       store: input.store,
       attemptExecutor: input.attemptExecutor,
+      runCoordinationExecutor: input.runCoordinationExecutor,
       workflow: implementation,
       workflowCtx: workflowCtx as DependencyContext<any>,
-      runId: snapshot.run.id,
-      workflowInput: snapshot.run.input,
+      run: snapshot.run,
       outputs,
-      node: nextNode,
     })
   } finally {
     await input.store.releaseRunLease(lease)
   }
+}
+
+async function advanceWorkflowRun(input: {
+  readonly store: WorkflowStore
+  readonly attemptExecutor: AttemptExecutor
+  readonly runCoordinationExecutor: RunCoordinationExecutor
+  readonly workflow: WorkflowImplementation
+  readonly workflowCtx: DependencyContext<any>
+  readonly run: StoredRun
+  readonly outputs: Record<string, unknown>
+}) {
+  const nextNode = input.workflow.nodes.find(
+    (node) => !Object.prototype.hasOwnProperty.call(input.outputs, node.name),
+  )
+
+  if (!nextNode) {
+    const output = await input.workflow.finish(
+      input.workflowCtx,
+      input.outputs,
+      input.run.input,
+    )
+    await completeRunAndWakeParent({
+      store: input.store,
+      runCoordinationExecutor: input.runCoordinationExecutor,
+      runId: input.run.id,
+      output,
+    })
+    return
+  }
+
+  if (nextNode.kind === 'task') {
+    await dispatchTaskNode({
+      store: input.store,
+      attemptExecutor: input.attemptExecutor,
+      workflow: input.workflow,
+      workflowCtx: input.workflowCtx,
+      runId: input.run.id,
+      workflowInput: input.run.input,
+      outputs: input.outputs,
+      node: nextNode,
+    })
+    return
+  }
+
+  if (nextNode.kind === 'workflow') {
+    await dispatchWorkflowNode({
+      store: input.store,
+      attemptExecutor: input.attemptExecutor,
+      runCoordinationExecutor: input.runCoordinationExecutor,
+      workflow: input.workflow,
+      workflowCtx: input.workflowCtx,
+      run: input.run,
+      outputs: input.outputs,
+      node: nextNode,
+    })
+    return
+  }
+
+  if (nextNode.kind !== 'activity') {
+    throw new Error(`Unsupported runtime node kind [${nextNode.kind}]`)
+  }
+
+  await dispatchActivityNode({
+    store: input.store,
+    attemptExecutor: input.attemptExecutor,
+    workflow: input.workflow,
+    workflowCtx: input.workflowCtx,
+    runId: input.run.id,
+    workflowInput: input.run.input,
+    outputs: input.outputs,
+    node: nextNode,
+  })
 }
 
 async function dispatchTaskNode(input: {
@@ -262,68 +278,15 @@ async function dispatchWorkflowNode(input: {
         nodeName: input.node.name,
         output: childRun.output,
       })
-      const nodeIndex = input.workflow.nodes.findIndex(
-        (node) => node.name === input.node.name,
-      )
       const nextOutputs = { ...input.outputs, [input.node.name]: childRun.output }
-      if (nodeIndex === input.workflow.nodes.length - 1) {
-        const output = await input.workflow.finish(
-          input.workflowCtx,
-          nextOutputs,
-          input.run.input,
-        )
-        await completeRunAndWakeParent({
-          store: input.store,
-          runCoordinationExecutor: input.runCoordinationExecutor,
-          runId: input.run.id,
-          output,
-        })
-        return
-      }
-
-      const nextNode = input.workflow.nodes[nodeIndex + 1]
-      if (!nextNode) return
-      if (nextNode.kind === 'task') {
-        await dispatchTaskNode({
-          store: input.store,
-          attemptExecutor: input.attemptExecutor,
-          workflow: input.workflow,
-          workflowCtx: input.workflowCtx,
-          runId: input.run.id,
-          workflowInput: input.run.input,
-          outputs: nextOutputs,
-          node: nextNode,
-        })
-        return
-      }
-
-      if (nextNode.kind === 'workflow') {
-        await dispatchWorkflowNode({
-          store: input.store,
-          attemptExecutor: input.attemptExecutor,
-          runCoordinationExecutor: input.runCoordinationExecutor,
-          workflow: input.workflow,
-          workflowCtx: input.workflowCtx,
-          run: input.run,
-          outputs: nextOutputs,
-          node: nextNode,
-        })
-        return
-      }
-
-      if (nextNode.kind !== 'activity') {
-        throw new Error(`Unsupported runtime node kind [${nextNode.kind}]`)
-      }
-
-      await dispatchActivityNode({
+      await advanceWorkflowRun({
         store: input.store,
         attemptExecutor: input.attemptExecutor,
+        runCoordinationExecutor: input.runCoordinationExecutor,
         workflow: input.workflow,
         workflowCtx: input.workflowCtx,
-        runId: input.run.id,
-        workflowInput: input.run.input,
+        run: input.run,
         outputs: nextOutputs,
-        node: nextNode,
       })
       return
     }
