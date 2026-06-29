@@ -358,7 +358,7 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
     return {
       id: item.id,
       command: item.payload,
-      leaseToken: item.payload.leaseToken,
+      leaseToken: id('attempt-claim-lease'),
     }
   }
 

@@ -189,7 +189,7 @@ describe('in-memory workflow store', () => {
       runId: 'run-1',
       nodeName: 'content',
       attemptId: 'attempt-1',
-      leaseToken: 'activity-lease',
+      leaseToken: 'activity-attempt-lease',
       input: { scenario: 'a' },
     }
     const taskCommand = {
@@ -258,9 +258,11 @@ describe('in-memory workflow store', () => {
       leaseMs: 30_000,
     })
 
-    expect(claimedActivity?.leaseToken).toBe('activity-lease')
+    expect(claimedActivity?.command.leaseToken).toBe('activity-attempt-lease')
+    expect(claimedActivity?.leaseToken).not.toBe(activityCommand.leaseToken)
     expect(claimedActivity?.leaseToken).not.toBe(activityCommand.attemptId)
-    expect(claimedTask?.leaseToken).toBe('task-lease')
+    expect(claimedTask?.command.leaseToken).toBe('task-lease')
+    expect(claimedTask?.leaseToken).not.toBe(taskCommand.leaseToken)
     expect(claimedTask?.leaseToken).not.toBe(taskCommand.attemptId)
 
     await runtime.attemptExecutor.heartbeat(claimedActivity!)
@@ -273,6 +275,9 @@ describe('in-memory workflow store', () => {
       workflowNames: ['case-generation'],
       leaseMs: 30_000,
     })
+    expect(releasedActivity?.leaseToken).not.toBe(claimedActivity?.leaseToken)
+    await runtime.attemptExecutor.release(claimedActivity!)
+    expect(runtime.inspect().activityCommands).toHaveLength(0)
     await runtime.attemptExecutor.ack(releasedActivity!)
     await runtime.attemptExecutor.release(releasedActivity!)
     await runtime.attemptExecutor.ack(claimedTask!)
