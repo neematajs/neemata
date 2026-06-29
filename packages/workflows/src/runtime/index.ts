@@ -54,7 +54,18 @@ export type {
 } from './store.ts'
 export {
   runActivityAttempt,
+  runActivityWorker,
   runTaskAttempt,
+  runTaskWorker,
+  runWorkflowWorker,
   runWithConcurrency,
 } from './worker.ts'
-export type { RunActivityAttemptInput, RunTaskAttemptInput } from './worker.ts'
+export type {
+  RunActivityAttemptInput,
+  RunActivityWorkerInput,
+  RunTaskAttemptInput,
+  RunTaskWorkerInput,
+  RunWorkflowWorkerInput,
+  WorkerLoopOptions,
+  WorkerLoopResult,
+} from './worker.ts'

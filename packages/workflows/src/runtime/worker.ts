@@ -13,6 +13,7 @@ import type {
   ClaimedAttempt,
   TaskAttemptCommand,
 } from './commands.ts'
+import { continueWorkflowRun } from './coordinator.ts'
 import type { AttemptExecutor, RunCoordinationExecutor } from './executors.ts'
 import { createWorkflowRuntimeRegistry } from './registry.ts'
 import type { StoredAttempt, StoredNode } from './state.ts'
@@ -27,9 +28,7 @@ export async function runWithConcurrency<T>(
   concurrency: number,
   worker: (item: T) => Promise<void>,
 ): Promise<void> {
-  if (!Number.isInteger(concurrency) || concurrency < 1) {
-    throw new Error('Concurrency must be a positive integer')
-  }
+  assertPositiveInteger(concurrency, 'Concurrency')
 
   let nextIndex = 0
 
@@ -44,6 +43,127 @@ export async function runWithConcurrency<T>(
   await Promise.all(
     Array.from({ length: Math.min(concurrency, items.length) }, runWorker),
   )
+}
+
+export type WorkerLoopResult = {
+  readonly processed: number
+}
+
+export type WorkerLoopOptions = {
+  readonly workerId: string
+  readonly concurrency?: number
+  readonly leaseMs?: number
+  readonly maxIdleClaims?: number
+  readonly signal?: AbortSignal
+}
+
+export type RunWorkflowWorkerInput = WorkerLoopOptions & {
+  readonly store: WorkflowStore
+  readonly runCoordinationExecutor: RunCoordinationExecutor
+  readonly attemptExecutor: AttemptExecutor
+  readonly workflows: readonly WorkflowImplementation<any, any>[]
+  readonly container: Pick<Container, 'createContext'>
+}
+
+export type RunActivityWorkerInput = WorkerLoopOptions & {
+  readonly store: WorkflowStore
+  readonly runCoordinationExecutor: RunCoordinationExecutor
+  readonly attemptExecutor: AttemptExecutor
+  readonly workflows: readonly WorkflowImplementation<any, any>[]
+  readonly activityNames?: readonly string[]
+  readonly container: Pick<Container, 'createContext'>
+}
+
+export type RunTaskWorkerInput = WorkerLoopOptions & {
+  readonly store: WorkflowStore
+  readonly runCoordinationExecutor: RunCoordinationExecutor
+  readonly attemptExecutor: AttemptExecutor
+  readonly tasks: readonly TaskImplementation[]
+  readonly container: Pick<Container, 'createContext'>
+}
+
+export async function runWorkflowWorker(
+  input: RunWorkflowWorkerInput,
+): Promise<WorkerLoopResult> {
+  const workflowNames = input.workflows.map(
+    (implementation) => implementation.workflow.name,
+  )
+
+  return runWorkerLoop(input, async () => {
+    const claimed = await input.runCoordinationExecutor.claim({
+      workerId: input.workerId,
+      workflowNames,
+      leaseMs: input.leaseMs ?? DEFAULT_LEASE_MS,
+    })
+    if (!claimed) return false
+
+    try {
+      await continueWorkflowRun({
+        store: input.store,
+        runCoordinationExecutor: input.runCoordinationExecutor,
+        attemptExecutor: input.attemptExecutor,
+        container: input.container,
+        workflows: input.workflows,
+        workerId: input.workerId,
+        command: claimed.command,
+        leaseMs: input.leaseMs,
+      })
+      await input.runCoordinationExecutor.ack(claimed)
+      return true
+    } catch (error) {
+      await input.runCoordinationExecutor.release(claimed)
+      throw error
+    }
+  })
+}
+
+export async function runActivityWorker(
+  input: RunActivityWorkerInput,
+): Promise<WorkerLoopResult> {
+  const workflowNames = input.workflows.map(
+    (implementation) => implementation.workflow.name,
+  )
+
+  return runWorkerLoop(input, async () => {
+    const claimed = await input.attemptExecutor.claimActivity({
+      workerId: input.workerId,
+      workflowNames,
+      activityNames: input.activityNames,
+      leaseMs: input.leaseMs ?? DEFAULT_LEASE_MS,
+    })
+    if (!claimed) return false
+
+    try {
+      await runActivityAttempt({ ...input, claimed })
+      return true
+    } catch (error) {
+      await input.attemptExecutor.release(claimed)
+      throw error
+    }
+  })
+}
+
+export async function runTaskWorker(
+  input: RunTaskWorkerInput,
+): Promise<WorkerLoopResult> {
+  const taskNames = input.tasks.map((implementation) => implementation.task.name)
+
+  return runWorkerLoop(input, async () => {
+    const claimed = await input.attemptExecutor.claimTask({
+      workerId: input.workerId,
+      taskNames,
+      leaseMs: input.leaseMs ?? DEFAULT_LEASE_MS,
+    })
+    if (!claimed) return false
+
+    try {
+      await runTaskAttempt({ ...input, claimed })
+      return true
+    } catch (error) {
+      await input.attemptExecutor.release(claimed)
+      throw error
+    }
+  })
 }
 
 export type RunActivityAttemptInput = {
@@ -64,6 +184,45 @@ export type RunTaskAttemptInput = {
   readonly workerId: string
   readonly claimed: ClaimedAttempt
   readonly container: Pick<Container, 'createContext'>
+}
+
+const DEFAULT_LEASE_MS = 30_000
+
+async function runWorkerLoop(
+  options: WorkerLoopOptions,
+  claimAndRun: () => Promise<boolean>,
+): Promise<WorkerLoopResult> {
+  const concurrency = options.concurrency ?? 1
+  const maxIdleClaims = options.maxIdleClaims ?? 1
+  assertPositiveInteger(concurrency, 'Concurrency')
+  assertPositiveInteger(maxIdleClaims, 'Max idle claims')
+
+  let processed = 0
+  await runWithConcurrency(
+    Array.from({ length: concurrency }),
+    concurrency,
+    async () => {
+      let idleClaims = 0
+      while (!options.signal?.aborted && idleClaims < maxIdleClaims) {
+        const didWork = await claimAndRun()
+        if (didWork) {
+          processed += 1
+          idleClaims = 0
+          continue
+        }
+
+        idleClaims += 1
+      }
+    },
+  )
+
+  return { processed }
+}
+
+function assertPositiveInteger(value: number, label: string): void {
+  if (!Number.isInteger(value) || value < 1) {
+    throw new Error(`${label} must be a positive integer`)
+  }
 }
 
 export async function runActivityAttempt(
