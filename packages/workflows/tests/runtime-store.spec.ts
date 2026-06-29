@@ -214,6 +214,43 @@ describe('in-memory workflow store', () => {
     ).rejects.toThrow(`Missing node [${run.id}.content]`)
   })
 
+  it('ensures node attempts idempotently by structured identity', async () => {
+    const runtime = createInMemoryWorkflowRuntime()
+    const run = await runtime.store.createRun({
+      workflowName: 'case-generation',
+      input: { scenario: 'a' },
+    })
+    await runtime.store.createNode({
+      runId: run.id,
+      name: 'content',
+      kind: 'activity',
+    })
+    const identity = {
+      runId: run.id,
+      nodeName: 'content',
+      caseKey: 'case-a',
+      memberKey: 'member-a',
+    }
+
+    const first = await runtime.store.ensureNodeAttempt({
+      identity,
+      kind: 'activity',
+      input: { scenario: 'a' },
+    })
+    const second = await runtime.store.ensureNodeAttempt({
+      identity,
+      kind: 'activity',
+      input: { scenario: 'a' },
+    })
+    const snapshot = await runtime.store.loadRunSnapshot(run.id)
+
+    expect(first.created).toBe(true)
+    expect(second.created).toBe(false)
+    expect(second.attempt.id).toBe(first.attempt.id)
+    expect(first.attempt.identity).toStrictEqual(identity)
+    expect(snapshot?.nodes[0]?.status).toBe('waiting')
+  })
+
   it('waits a node idempotently', async () => {
     const runtime = createInMemoryWorkflowRuntime()
     const run = await runtime.store.createRun({
@@ -265,6 +302,8 @@ describe('in-memory workflow store', () => {
     expect(second.created).toBe(false)
     expect(second.childRun).toBe(first.childRun)
     expect(second.childLink).toBe(first.childLink)
+    expect(first.childRun.parentRunId).toBe(run.id)
+    expect(first.childRun.rootRunId).toBe(run.rootRunId)
   })
 
   it('ensures map items once and rejects conflicting shapes', async () => {

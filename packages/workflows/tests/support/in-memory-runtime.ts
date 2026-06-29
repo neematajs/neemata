@@ -346,7 +346,7 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
       }
       const updatedNode: StoredNode = {
         ...node,
-        status: 'running',
+        status: 'waiting',
         currentAttemptId: attempt.id,
         attemptCount: node.attemptCount + 1,
         version: node.version + 1,
