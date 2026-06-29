@@ -445,31 +445,188 @@ Child workflow execution:
 The current store interface is enough for primitive activity/task tests but too
 thin for full orchestration.
 
-Likely semantic additions:
+The store should expose semantic, atomic operations where the coordinator needs
+idempotency. It should not expose only low-level CRUD calls and force the
+coordinator to hand-roll "check then create" races.
 
-- create or get child link atomically
-- load child run by link
-- create or get map items atomically
-- update map item status/output/error
-- create attempt for composite child identity
-- complete/fail parent node from child identity
-- list attempts/links/items for one node
+The store should also stay graph-agnostic. It should not know whether a child
+identity came from `branch`, `parallel`, `mapTask`, or `mapWorkflow`. The
+coordinator owns graph semantics. The store owns identity uniqueness and state
+transitions.
 
-The store should avoid low-level CRUD names where runtime needs atomic behavior.
+### Child Identity
 
-Potential methods:
+Composite children share one structured identity:
 
 ```ts
-ensureChildWorkflowRun(...)
-ensureMapItems(...)
-ensureMapTaskAttempt(...)
-ensureMapWorkflowRun(...)
-completeMapItem(...)
-failMapItem(...)
-loadNodeChildren(...)
+type NodeChildIdentity = {
+  runId: string
+  nodeName: string
+  caseKey?: string
+  memberKey?: string
+  itemIndex?: number
+  itemKey?: string
+}
 ```
 
-Exact names can be refined during implementation.
+Uniqueness rules:
+
+- primitive node attempt: `{ runId, nodeName }`
+- branch case attempt/link: `{ runId, nodeName, caseKey }`
+- parallel member attempt/link: `{ runId, nodeName, memberKey }`
+- map item attempt/link: `{ runId, nodeName, itemIndex, itemKey? }`
+
+The identity fields must be stored structurally. Dot-path strings are not enough.
+
+### Semantic Store Methods
+
+Store additions:
+
+```ts
+type EnsureNodeAttemptParams = {
+  identity: NodeChildIdentity
+  kind: 'activity' | 'task'
+  input: unknown
+}
+
+type EnsureNodeAttemptResult = {
+  attempt: StoredAttempt
+  created: boolean
+}
+
+type EnsureChildWorkflowRunParams = {
+  identity: NodeChildIdentity
+  workflowName: string
+  input: unknown
+  parentRunId: string
+  parentNodeName: string
+  rootRunId: string
+  tags?: Readonly<Record<string, string>>
+  idempotencyKey?: readonly unknown[]
+}
+
+type EnsureChildWorkflowRunResult = {
+  childLink: StoredChildLink
+  childRun: StoredRun
+  created: boolean
+}
+
+type EnsureMapItemsParams = {
+  runId: string
+  nodeName: string
+  items: readonly unknown[]
+  keys?: readonly string[]
+}
+
+type EnsureMapItemsResult = {
+  items: readonly StoredMapItem[]
+  created: boolean
+}
+
+type CompleteMapItemParams = {
+  runId: string
+  nodeName: string
+  itemIndex: number
+  itemKey?: string
+  output: unknown
+}
+
+type FailMapItemParams = {
+  runId: string
+  nodeName: string
+  itemIndex: number
+  itemKey?: string
+  error: unknown
+}
+
+type LoadNodeChildrenParams = {
+  runId: string
+  nodeName: string
+}
+
+type NodeChildrenSnapshot = {
+  attempts: readonly StoredAttempt[]
+  childLinks: readonly StoredChildLink[]
+  mapItems: readonly StoredMapItem[]
+}
+
+interface WorkflowStore {
+  ensureNodeAttempt(
+    params: EnsureNodeAttemptParams,
+  ): Promise<EnsureNodeAttemptResult>
+
+  ensureChildWorkflowRun(
+    params: EnsureChildWorkflowRunParams,
+  ): Promise<EnsureChildWorkflowRunResult>
+
+  ensureMapItems(
+    params: EnsureMapItemsParams,
+  ): Promise<EnsureMapItemsResult>
+
+  completeMapItem(
+    params: CompleteMapItemParams,
+  ): Promise<StoredMapItem | undefined>
+
+  failMapItem(
+    params: FailMapItemParams,
+  ): Promise<StoredMapItem | undefined>
+
+  loadNodeChildren(
+    params: LoadNodeChildrenParams,
+  ): Promise<NodeChildrenSnapshot>
+}
+```
+
+### Method Semantics
+
+`ensureNodeAttempt`:
+
+- Creates one current attempt for the structured identity if missing.
+- Returns existing non-terminal or terminal attempt for the same identity.
+- Does not create duplicate attempts for duplicate continuations.
+- Does not decide whether the identity is branch, parallel, or map.
+
+`ensureChildWorkflowRun`:
+
+- Atomically creates or returns child run plus child link for the identity.
+- Persists child link before child continuation is dispatched.
+- Returns `created: false` for duplicate continuations.
+- Does not require parent coordinator to have child workflow implementation.
+
+`ensureMapItems`:
+
+- Persists item snapshots once for `(runId, nodeName)`.
+- Returns existing snapshots on duplicate continuation.
+- If repeated with different item count or different keys, rejects with a store
+  conflict error. The coordinator should fail the parent node rather than
+  silently replacing item snapshots.
+
+`completeMapItem` and `failMapItem`:
+
+- Update only non-terminal map items.
+- Return terminal existing item as no-op when already completed/failed/cancelled.
+- Ignore stale completion if item identity does not match.
+
+`loadNodeChildren`:
+
+- Loads all structured child state for one parent node.
+- Coordinator uses this to converge branch, parallel, and map nodes.
+
+### Compatibility With Existing Methods
+
+Existing primitive methods can remain for the first runtime slice:
+
+- `createNode`
+- `setNodeInput`
+- `createAttempt`
+- `completeCurrentAttempt`
+- `failCurrentAttempt`
+- `completeNode`
+- `failNode`
+
+When orchestration lands, direct primitive nodes may keep using current methods
+or migrate to `ensureNodeAttempt({ identity: { runId, nodeName }, ... })`.
+Composite nodes should use the semantic methods from day one.
 
 ## Failure Semantics For V1
 
