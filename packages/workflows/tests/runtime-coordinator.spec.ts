@@ -1389,6 +1389,169 @@ describe('workflow runtime coordinator', () => {
     })
   })
 
+  it('runs mapTask wait-settled items without failing parent on item failure', async () => {
+    const embeddingTask = defineTask({
+      name: 'map.settled-embedding',
+      input: t.object({ text: t.string() }),
+      output: t.object({ id: t.string() }),
+    })
+    const workflow = defineWorkflow({
+      name: 'map-task-settled-workflow',
+      input: t.object({ texts: t.array(t.string()) }),
+      output: t.object({ count: t.number() }),
+    })
+      .mapTask('embeddings', embeddingTask, {
+        item: t.string(),
+        mode: 'wait-settled',
+      })
+      .build()
+
+    const taskImplementation = implementTask(embeddingTask, {
+      handler: async (_ctx, input) => {
+        if (input.text === 'beta') throw new Error('bad embedding')
+        return { id: `embedding:${input.text}` }
+      },
+    })
+    const implementation = implementWorkflow(workflow)
+      .embeddings(embeddingTask, {
+        items: (_ctx, _outputs, input) => input.texts,
+        input: (_ctx, _outputs, item) => ({ text: item }),
+      })
+      .finish((_ctx, { embeddings }) => ({ count: embeddings.items.length }))
+
+    const runtime = createInMemoryWorkflowRuntime()
+    const container = createTestContainer()
+    const run = await runtime.store.createRun({
+      workflowName: workflow.name,
+      input: { texts: ['alpha', 'beta'] },
+    })
+    const command = {
+      kind: 'continueRun' as const,
+      runId: run.id,
+      workflowName: workflow.name,
+    }
+
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [implementation],
+      workerId: 'coordinator-1',
+      command,
+    })
+
+    for (const _ of [0, 1]) {
+      const claimed = await runtime.attemptExecutor.claimTask({
+        workerId: 'task-worker-1',
+        taskNames: [embeddingTask.name],
+        leaseMs: 30_000,
+      })
+      expect(claimed).not.toBeNull()
+      await runTaskAttempt({
+        store: runtime.store,
+        runCoordinationExecutor: runtime.runCoordinationExecutor,
+        attemptExecutor: runtime.attemptExecutor,
+        container,
+        tasks: [taskImplementation],
+        workerId: 'task-worker-1',
+        claimed: claimed!,
+      })
+    }
+
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [implementation],
+      workerId: 'coordinator-1',
+      command,
+    })
+
+    const final = await runtime.store.loadRunSnapshot(run.id)
+    const runIds = final!.childLinks.map((link) => link.childRunId)
+    expect(final?.nodes[0]?.status).toBe('completed')
+    expect(final?.nodes[0]?.output).toMatchObject({
+      items: [
+        {
+          item: 'alpha',
+          index: 0,
+          runId: runIds[0],
+          status: 'completed',
+          output: { id: 'embedding:alpha' },
+        },
+        {
+          item: 'beta',
+          index: 1,
+          runId: runIds[1],
+          status: 'failed',
+          error: { message: 'bad embedding' },
+        },
+      ],
+    })
+    expect(final?.run.status).toBe('completed')
+    expect(final?.run.output).toStrictEqual({ count: 2 })
+  })
+
+  it('runs mapTask start-only and completes after child task runs are started', async () => {
+    const embeddingTask = defineTask({
+      name: 'map.start-only-embedding',
+      input: t.object({ text: t.string() }),
+      output: t.object({ id: t.string() }),
+    })
+    const workflow = defineWorkflow({
+      name: 'map-task-start-only-workflow',
+      input: t.object({ texts: t.array(t.string()) }),
+      output: t.object({ started: t.number() }),
+    })
+      .mapTask('embeddings', embeddingTask, {
+        item: t.string(),
+        mode: 'start-only',
+      })
+      .build()
+
+    const implementation = implementWorkflow(workflow)
+      .embeddings(embeddingTask, {
+        items: (_ctx, _outputs, input) => input.texts,
+        input: (_ctx, _outputs, item) => ({ text: item }),
+      })
+      .finish((_ctx, { embeddings }) => ({ started: embeddings.items.length }))
+
+    const runtime = createInMemoryWorkflowRuntime()
+    const run = await runtime.store.createRun({
+      workflowName: workflow.name,
+      input: { texts: ['alpha', 'beta'] },
+    })
+
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container: createTestContainer(),
+      workflows: [implementation],
+      workerId: 'coordinator-1',
+      command: {
+        kind: 'continueRun',
+        runId: run.id,
+        workflowName: workflow.name,
+      },
+    })
+
+    const final = await runtime.store.loadRunSnapshot(run.id)
+    const runIds = final!.childLinks.map((link) => link.childRunId)
+    expect(runtime.inspect().taskCommands).toHaveLength(2)
+    expect(final?.nodes[0]?.status).toBe('completed')
+    expect(final?.nodes[0]?.output).toStrictEqual({
+      items: [
+        { item: 'alpha', index: 0, runId: runIds[0], status: 'queued' },
+        { item: 'beta', index: 1, runId: runIds[1], status: 'queued' },
+      ],
+    })
+    expect(final?.run.status).toBe('completed')
+    expect(final?.run.output).toStrictEqual({ started: 2 })
+  })
+
   it('reuses original branch child task run input on repeated continuation', async () => {
     const task = defineTask({
       name: 'branch.stable-summary',

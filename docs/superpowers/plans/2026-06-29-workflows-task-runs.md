@@ -10,7 +10,8 @@
 
 **Current status:** Task 1 is complete in `f2aaa1f7`. Task 2 and Task 3 are
 complete in `51d16026`. Task 4 wait-all is complete in `9d5af9bd`; Task 5 is
-implemented in this slice. `wait-settled` and `start-only` remain pending.
+complete in `40b2c2a4`. `wait-settled` and `start-only` are implemented in
+this slice.
 
 ---
 
@@ -102,7 +103,7 @@ git commit -m "feat: run composite task cases as child task runs"
 
 - [x] Add failing tests for `mapTask` `wait-all` preserving item order and exposing child task run IDs.
 - [x] Implement item snapshotting, child task run creation, and convergence for `wait-all`.
-- [ ] Add `wait-settled` only after `wait-all` passes; keep `start-only` as later slice if it complicates convergence.
+- [x] Add `wait-settled` only after `wait-all` passes; keep `start-only` as later slice if it complicates convergence.
 - [x] Run:
 
 ```bash

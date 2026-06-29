@@ -266,6 +266,19 @@ export async function runTaskAttempt(
         nodeName: command.nodeName,
         error,
       })
+      if (snapshot?.run.kind === 'task') {
+        const failed = await input.store.failRun({
+          runId: command.runId,
+          error,
+        })
+        await wakeParentRun({
+          store: input.store,
+          runCoordinationExecutor: input.runCoordinationExecutor,
+          run: failed,
+        })
+        await input.attemptExecutor.ack(input.claimed)
+        return
+      }
       await enqueueContinueRun(input.runCoordinationExecutor, command)
     }
 

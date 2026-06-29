@@ -1103,12 +1103,6 @@ async function dispatchMapTaskNode(input: {
   readonly outputs: Record<string, unknown>
   readonly node: MapNodeImplementation
 }) {
-  if (input.node.mode !== 'wait-all') {
-    throw new Error(
-      `Unsupported mapTask mode [${input.node.mode}] in node [${input.node.name}]`,
-    )
-  }
-
   const existing = await input.store.createNode({
     runId: input.run.id,
     name: input.node.name,
@@ -1146,7 +1140,9 @@ async function dispatchMapTaskNode(input: {
     item: unknown
     index: number
     runId: string
-    output: unknown
+    status?: string
+    output?: unknown
+    error?: unknown
   }> = []
 
   for (const item of itemSnapshot) {
@@ -1158,6 +1154,16 @@ async function dispatchMapTaskNode(input: {
     if (existingLink) {
       const snapshot = await input.store.loadRunSnapshot(existingLink.childRunId)
       const childRun = snapshot?.run
+      if (input.node.mode === 'start-only') {
+        outputItems[item.index] = {
+          item: item.item,
+          index: item.index,
+          runId: existingLink.childRunId,
+          status: childRun?.status ?? 'queued',
+        }
+        continue
+      }
+
       if (!childRun || !isTerminalRunStatus(childRun.status)) {
         await dispatchTaskRunAttempt({
           store: input.store,
@@ -1182,6 +1188,9 @@ async function dispatchMapTaskNode(input: {
           item: item.item,
           index: item.index,
           runId: existingLink.childRunId,
+          ...(input.node.mode === 'wait-settled'
+            ? { status: childRun.status }
+            : {}),
           output: childRun.output,
         }
         continue
@@ -1196,6 +1205,17 @@ async function dispatchMapTaskNode(input: {
         itemKey: item.key,
         error,
       })
+      if (input.node.mode === 'wait-settled') {
+        outputItems[item.index] = {
+          item: item.item,
+          index: item.index,
+          runId: existingLink.childRunId,
+          status: childRun.status,
+          error,
+        }
+        continue
+      }
+
       await input.store.failNode({
         runId: input.run.id,
         nodeName: input.node.name,
@@ -1234,10 +1254,21 @@ async function dispatchMapTaskNode(input: {
       taskRunId: child.childRun.id,
       taskInput: nodeInput,
     })
+    if (input.node.mode === 'start-only') {
+      outputItems[item.index] = {
+        item: item.item,
+        index: item.index,
+        runId: child.childRun.id,
+        status: child.childRun.status,
+      }
+    }
   }
 
   const completedItems = outputItems.filter((item) => item !== undefined)
-  if (completedItems.length === itemSnapshot.length) {
+  if (
+    input.node.mode === 'start-only' ||
+    completedItems.length === itemSnapshot.length
+  ) {
     const output = { items: completedItems }
     await input.store.completeNode({
       runId: input.run.id,
