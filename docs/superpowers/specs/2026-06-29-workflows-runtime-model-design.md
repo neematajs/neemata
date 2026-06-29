@@ -220,10 +220,10 @@ interface CoordinationExecutor {
 }
 ```
 
-`ExecutionExecutor` owns side-effecting activity and task attempts:
+`AttemptExecutor` owns side-effecting activity and task attempts:
 
 ```ts
-interface ExecutionExecutor {
+interface AttemptExecutor {
   dispatchActivityAttempt(command: ActivityAttemptCommand): Promise<void>
   dispatchTaskAttempt(command: TaskAttemptCommand): Promise<void>
   claimActivityAttempt(worker: ActivityWorkerClaim): Promise<ClaimedAttempt | null>
@@ -238,7 +238,7 @@ Rules:
 
 - `CoordinationExecutor` commands are idempotent run pokes. They carry no
   business payload and may be duplicated or coalesced by `runId`.
-- `ExecutionExecutor` commands are leased work attempts. They have attempt
+- `AttemptExecutor` commands are leased work attempts. They have attempt
   identity, heartbeat/timeout behavior, and output/error completion.
 - Coordination claims are filtered by workflow name.
 - Activity claims are filtered by workflow name and activity node name.
@@ -302,7 +302,7 @@ Rules:
 - Queue adapters may coalesce `continueRun(runId)` commands, but runtime must
   not depend on coalescing.
 
-Execution workers should have separate concurrency:
+Attempt workers should have separate concurrency:
 
 ```ts
 createWorkflowWorker({
@@ -499,7 +499,7 @@ Coordination executor adapters provide:
 - continuation command claim/release/ack
 - workflow-name filtering where the adapter can support it
 
-Execution executor adapters provide:
+Attempt executor adapters provide:
 
 - activity attempt dispatch
 - task attempt dispatch
