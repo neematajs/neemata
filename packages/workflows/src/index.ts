@@ -23,6 +23,7 @@ export type {
   ClaimedAttempt,
   ClaimedCommand,
   ContinueRunCommand,
+  ContinueWorkflowRunInput,
   CreateAttemptInput,
   CreateNodeInput,
   CreateRunInput,
@@ -88,5 +89,8 @@ export type {
 } from './types/index.ts'
 export { defineTask, defineWorkflow } from './contract/index.ts'
 export { implementTask, implementWorkflow } from './implement/index.ts'
-export { createWorkflowRuntimeRegistry } from './runtime/index.ts'
+export {
+  continueWorkflowRun,
+  createWorkflowRuntimeRegistry,
+} from './runtime/index.ts'
 export { isTerminalNodeStatus, isTerminalRunStatus } from './runtime/index.ts'
