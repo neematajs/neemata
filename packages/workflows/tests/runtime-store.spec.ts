@@ -317,6 +317,61 @@ describe('in-memory workflow store', () => {
     )
   })
 
+  it('persists selected node case idempotently', async () => {
+    const runtime = createInMemoryWorkflowRuntime()
+    const run = await runtime.store.createRun({
+      workflowName: 'branch-workflow',
+      input: {},
+    })
+    await runtime.store.createNode({
+      runId: run.id,
+      name: 'choice',
+      kind: 'branch',
+    })
+
+    const first = await runtime.store.selectNodeCase({
+      runId: run.id,
+      nodeName: 'choice',
+      caseKey: 'normal',
+    })
+    const second = await runtime.store.selectNodeCase({
+      runId: run.id,
+      nodeName: 'choice',
+      caseKey: 'normal',
+    })
+
+    expect(first?.selectedCase).toBe('normal')
+    expect(second?.selectedCase).toBe('normal')
+    expect(second?.version).toBe(first?.version)
+    expect(second?.updatedAt).toBe(first?.updatedAt)
+  })
+
+  it('rejects conflicting selected node case', async () => {
+    const runtime = createInMemoryWorkflowRuntime()
+    const run = await runtime.store.createRun({
+      workflowName: 'branch-workflow',
+      input: {},
+    })
+    await runtime.store.createNode({
+      runId: run.id,
+      name: 'choice',
+      kind: 'branch',
+    })
+    await runtime.store.selectNodeCase({
+      runId: run.id,
+      nodeName: 'choice',
+      caseKey: 'normal',
+    })
+
+    await expect(
+      runtime.store.selectNodeCase({
+        runId: run.id,
+        nodeName: 'choice',
+        caseKey: 'fallback',
+      }),
+    ).rejects.toThrow('Conflicting selected case')
+  })
+
   it('waits a node idempotently', async () => {
     const runtime = createInMemoryWorkflowRuntime()
     const run = await runtime.store.createRun({

@@ -196,6 +196,26 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
       nodes.set(key, updated)
       return updated
     },
+    async selectNodeCase({ runId, nodeName, caseKey }) {
+      const key = nodeKey(runId, nodeName)
+      const node = nodes.get(key)
+      if (!node) return undefined
+      if (node.selectedCase === caseKey) return node
+      if (node.selectedCase !== undefined) {
+        throw new Error(
+          `Conflicting selected case for [${runId}.${nodeName}]`,
+        )
+      }
+
+      const updated: StoredNode = {
+        ...node,
+        selectedCase: caseKey,
+        version: node.version + 1,
+        updatedAt: now(),
+      }
+      nodes.set(key, updated)
+      return updated
+    },
     async createAttempt(input: CreateAttemptInput) {
       const key = nodeKey(input.runId, input.nodeName)
       const node = nodes.get(key)

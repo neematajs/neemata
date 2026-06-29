@@ -25,6 +25,7 @@ import type {
   NodeChildIdentity,
   NodeChildrenSnapshot,
   RunCoordinationExecutor,
+  SelectNodeCaseParams,
   StoredAttempt,
   StoredChildLink,
   StoredMapItem,
@@ -35,6 +36,7 @@ import type {
 } from '../src/index.ts'
 
 type SemanticWorkflowStoreMethods = {
+  selectNodeCase(params: SelectNodeCaseParams): Promise<StoredNode | undefined>
   ensureNodeAttempt(
     params: EnsureNodeAttemptParams,
   ): Promise<EnsureNodeAttemptResult>
@@ -87,6 +89,11 @@ describe('workflow runtime interfaces', () => {
   })
 
   it('exports semantic orchestration store contracts', () => {
+    expectTypeOf<SelectNodeCaseParams>().toMatchTypeOf<{
+      runId: string
+      nodeName: string
+      caseKey: string
+    }>()
     expectTypeOf<NodeChildIdentity>().toMatchTypeOf<{
       runId: string
       nodeName: string
@@ -125,6 +132,7 @@ describe('workflow runtime interfaces', () => {
     }>()
     expectTypeOf<StoredChildLink>().toHaveProperty('identity')
     expectTypeOf<StoredMapItem>().toHaveProperty('identity')
+    expectTypeOf<WorkflowStore>().toHaveProperty('selectNodeCase')
     expectTypeOf<WorkflowStore>().toHaveProperty('waitNode')
     expectTypeOf<WorkflowStore>().toHaveProperty('ensureChildWorkflowRun')
     expectTypeOf<WorkflowStore>().toHaveProperty('loadNodeChildren')

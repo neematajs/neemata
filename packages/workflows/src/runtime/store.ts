@@ -85,6 +85,12 @@ export type CompleteMapItemParams = {
   readonly output: unknown
 }
 
+export type SelectNodeCaseParams = {
+  readonly runId: string
+  readonly nodeName: string
+  readonly caseKey: string
+}
+
 export type FailMapItemParams = {
   readonly runId: string
   readonly nodeName: string
@@ -159,6 +165,7 @@ export type WorkflowStore = {
   ensureChildWorkflowRun(
     params: EnsureChildWorkflowRunParams,
   ): Promise<EnsureChildWorkflowRunResult>
+  selectNodeCase(params: SelectNodeCaseParams): Promise<StoredNode | undefined>
   ensureMapItems(params: EnsureMapItemsParams): Promise<EnsureMapItemsResult>
   completeMapItem(
     params: CompleteMapItemParams,
