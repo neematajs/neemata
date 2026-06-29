@@ -791,6 +791,103 @@ describe('workflow runtime coordinator', () => {
     ])
   })
 
+  it('runs a branch child workflow case on a separate worker', async () => {
+    const childWorkflow = defineWorkflow({
+      name: 'branch-child-content',
+      input: t.object({ scenario: t.string() }),
+      output: t.object({ text: t.string() }),
+    }).build()
+    const parentWorkflow = defineWorkflow({
+      name: 'branch-child-parent',
+      input: t.object({ scenario: t.string() }),
+      output: t.object({ text: t.string() }),
+    })
+      .branch('content', {
+        output: t.object({ text: t.string() }),
+        cases: ({ workflow }) => ({
+          child: workflow(childWorkflow),
+        }),
+      })
+      .build()
+
+    const childImplementation = implementWorkflow(childWorkflow).finish(
+      (_ctx, _outputs, input) => ({ text: `child:${input.scenario}` }),
+    )
+    const parentImplementation = implementWorkflow(parentWorkflow)
+      .content({
+        select: () => 'child',
+        cases: ({ workflow }) => ({
+          child: workflow(childWorkflow, {
+            input: (_ctx, _outputs, input) => ({
+              scenario: input.scenario,
+            }),
+          }),
+        }),
+      })
+      .finish((_ctx, { content }) => ({ text: content.text }))
+
+    const runtime = createInMemoryWorkflowRuntime()
+    const container = createTestContainer()
+    const parentRun = await runtime.store.createRun({
+      workflowName: parentWorkflow.name,
+      input: { scenario: 'alpha' },
+    })
+
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [parentImplementation],
+      workerId: 'parent-coordinator',
+      command: {
+        kind: 'continueRun',
+        runId: parentRun.id,
+        workflowName: parentWorkflow.name,
+      },
+    })
+
+    const parentWaiting = await runtime.store.loadRunSnapshot(parentRun.id)
+    const link = parentWaiting!.childLinks[0]!
+    expect(parentWaiting?.nodes[0]?.status).toBe('waiting')
+    expect(link.caseKey).toBe('child')
+    expect(link.workflowName).toBe(childWorkflow.name)
+
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [childImplementation],
+      workerId: 'child-coordinator',
+      command: {
+        kind: 'continueRun',
+        runId: link.childRunId,
+        workflowName: childWorkflow.name,
+      },
+    })
+
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [parentImplementation],
+      workerId: 'parent-coordinator',
+      command: {
+        kind: 'continueRun',
+        runId: parentRun.id,
+        workflowName: parentWorkflow.name,
+      },
+    })
+
+    const final = await runtime.store.loadRunSnapshot(parentRun.id)
+    expect(final?.nodes[0]?.status).toBe('completed')
+    expect(final?.nodes[0]?.output).toStrictEqual({ text: 'child:alpha' })
+    expect(final?.run.status).toBe('completed')
+    expect(final?.run.output).toStrictEqual({ text: 'child:alpha' })
+  })
+
   it('releases a claimed activity attempt when no workflow implementation is registered', async () => {
     const workflow = defineWorkflow({
       name: 'unrouted-activity-worker',

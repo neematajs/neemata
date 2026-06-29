@@ -316,11 +316,54 @@ async function dispatchWorkflowNode(input: {
   })
   if (existing.status === 'completed' || existing.status === 'failed') return
 
+  const nodeInput =
+    existing.input ??
+    (input.node.input
+      ? input.node.input(input.workflowCtx, input.outputs, input.run.input)
+      : input.run.input)
+
+  await dispatchChildWorkflow({
+    store: input.store,
+    attemptExecutor: input.attemptExecutor,
+    runCoordinationExecutor: input.runCoordinationExecutor,
+    workflow: input.workflow,
+    workflowCtx: input.workflowCtx,
+    run: input.run,
+    outputs: input.outputs,
+    nodeName: input.node.name,
+    identity: {
+      runId: input.run.id,
+      nodeName: input.node.name,
+    },
+    workflowName: input.node.target.name,
+    nodeInput,
+  })
+}
+
+async function dispatchChildWorkflow(input: {
+  readonly store: WorkflowStore
+  readonly attemptExecutor: AttemptExecutor
+  readonly runCoordinationExecutor: RunCoordinationExecutor
+  readonly workflow: WorkflowImplementation
+  readonly workflowCtx: DependencyContext<any>
+  readonly run: StoredRun
+  readonly outputs: Record<string, unknown>
+  readonly nodeName: string
+  readonly identity: {
+    readonly runId: string
+    readonly nodeName: string
+    readonly caseKey?: string
+  }
+  readonly workflowName: string
+  readonly nodeInput: unknown
+}): Promise<void> {
   const children = await input.store.loadNodeChildren({
     runId: input.run.id,
-    nodeName: input.node.name,
+    nodeName: input.nodeName,
   })
-  const existingLink = children.childLinks[0]
+  const existingLink = children.childLinks.find((link) =>
+    sameNodeChildIdentity(link.identity, input.identity),
+  )
   if (existingLink) {
     const snapshot = await input.store.loadRunSnapshot(existingLink.childRunId)
     const childRun = snapshot?.run
@@ -332,7 +375,7 @@ async function dispatchWorkflowNode(input: {
       })
       await input.store.waitNode({
         runId: input.run.id,
-        nodeName: input.node.name,
+        nodeName: input.nodeName,
       })
       return
     }
@@ -340,10 +383,10 @@ async function dispatchWorkflowNode(input: {
     if (childRun.status === 'completed') {
       await input.store.completeNode({
         runId: input.run.id,
-        nodeName: input.node.name,
+        nodeName: input.nodeName,
         output: childRun.output,
       })
-      const nextOutputs = { ...input.outputs, [input.node.name]: childRun.output }
+      const nextOutputs = { ...input.outputs, [input.nodeName]: childRun.output }
       await advanceWorkflowRun({
         store: input.store,
         attemptExecutor: input.attemptExecutor,
@@ -361,7 +404,7 @@ async function dispatchWorkflowNode(input: {
       new Error(`Child workflow [${childRun.id}] ${childRun.status}`)
     await input.store.failNode({
       runId: input.run.id,
-      nodeName: input.node.name,
+      nodeName: input.nodeName,
       error,
     })
     await failRunAndWakeParent({
@@ -373,35 +416,28 @@ async function dispatchWorkflowNode(input: {
     return
   }
 
-  const nodeInput = input.node.input
-    ? input.node.input(input.workflowCtx, input.outputs, input.run.input)
-    : input.run.input
-
   await input.store.setNodeInput({
     runId: input.run.id,
-    nodeName: input.node.name,
-    input: nodeInput,
+    nodeName: input.nodeName,
+    input: input.nodeInput,
   })
   const child = await input.store.ensureChildWorkflowRun({
-    identity: {
-      runId: input.run.id,
-      nodeName: input.node.name,
-    },
-    workflowName: input.node.target.name,
-    input: nodeInput,
+    identity: input.identity,
+    workflowName: input.workflowName,
+    input: input.nodeInput,
     parentRunId: input.run.id,
-    parentNodeName: input.node.name,
+    parentNodeName: input.nodeName,
     rootRunId: input.run.rootRunId,
   })
 
   await input.runCoordinationExecutor.enqueue({
     kind: 'continueRun',
     runId: child.childRun.id,
-    workflowName: input.node.target.name,
+    workflowName: input.workflowName,
   })
   await input.store.waitNode({
     runId: input.run.id,
-    nodeName: input.node.name,
+    nodeName: input.nodeName,
   })
 }
 
@@ -521,6 +557,29 @@ async function dispatchBranchNode(input: {
     nodeName: input.node.name,
     caseKey,
   } satisfies NodeChildIdentity
+
+  if (selected.kind === 'workflow') {
+    const nodeInput =
+      existing.input ??
+      (selected.input
+        ? selected.input(input.workflowCtx, input.outputs, input.run.input)
+        : input.run.input)
+
+    await dispatchChildWorkflow({
+      store: input.store,
+      attemptExecutor: input.attemptExecutor,
+      runCoordinationExecutor: input.runCoordinationExecutor,
+      workflow: input.workflow,
+      workflowCtx: input.workflowCtx,
+      run: input.run,
+      outputs: input.outputs,
+      nodeName: input.node.name,
+      identity,
+      workflowName: selected.target.name,
+      nodeInput,
+    })
+    return
+  }
 
   if (selected.kind === 'task') {
     const children = await input.store.loadNodeChildren({
