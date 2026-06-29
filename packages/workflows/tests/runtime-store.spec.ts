@@ -108,6 +108,16 @@ describe('in-memory workflow store', () => {
       leaseToken: secondAttempt.leaseToken!,
       output: { text: 'fresh' },
     })
+    const completedAgain = await runtime.store.completeCurrentAttempt({
+      attemptId: secondAttempt.id,
+      leaseToken: secondAttempt.leaseToken!,
+      output: { text: 'double complete' },
+    })
+    const failedAfterComplete = await runtime.store.failCurrentAttempt({
+      attemptId: secondAttempt.id,
+      leaseToken: secondAttempt.leaseToken!,
+      error: new Error('double fail'),
+    })
 
     expect(sameNode.attemptCount).toBe(0)
     expect(firstAttempt.status).toBe('started')
@@ -116,6 +126,8 @@ describe('in-memory workflow store', () => {
     expect(stale).toBeUndefined()
     expect(wrongToken).toBeUndefined()
     expect(fresh?.output).toStrictEqual({ text: 'fresh' })
+    expect(completedAgain).toBeUndefined()
+    expect(failedAfterComplete).toBeUndefined()
 
     const snapshot = await runtime.store.loadRunSnapshot(run.id)
     expect(snapshot?.nodes).toHaveLength(1)
@@ -124,6 +136,7 @@ describe('in-memory workflow store', () => {
     expect(snapshot?.nodes[0]?.currentAttemptId).toBe(secondAttempt.id)
     expect(snapshot?.nodes[0]?.attemptCount).toBe(2)
     expect(snapshot?.attempts).toHaveLength(2)
+    expect(snapshot?.attempts[1]?.output).toStrictEqual({ text: 'fresh' })
     expect(snapshot?.childLinks).toStrictEqual([])
     expect(snapshot?.mapItems).toStrictEqual([])
   })
@@ -251,6 +264,29 @@ describe('in-memory workflow store', () => {
     expect(snapshot?.nodes[0]?.status).toBe('waiting')
   })
 
+  it('rejects primitive node attempt kind mismatches', async () => {
+    const runtime = createInMemoryWorkflowRuntime()
+    const run = await runtime.store.createRun({
+      workflowName: 'case-generation',
+      input: { scenario: 'a' },
+    })
+    await runtime.store.createNode({
+      runId: run.id,
+      name: 'content',
+      kind: 'activity',
+    })
+
+    await expect(
+      runtime.store.ensureNodeAttempt({
+        identity: { runId: run.id, nodeName: 'content' },
+        kind: 'task',
+        input: { scenario: 'a' },
+      }),
+    ).rejects.toThrow(
+      `Node [${run.id}.content] kind [activity] cannot create [task] attempt`,
+    )
+  })
+
   it('waits a node idempotently', async () => {
     const runtime = createInMemoryWorkflowRuntime()
     const run = await runtime.store.createRun({
@@ -304,6 +340,27 @@ describe('in-memory workflow store', () => {
     expect(second.childLink).toBe(first.childLink)
     expect(first.childRun.parentRunId).toBe(run.id)
     expect(first.childRun.rootRunId).toBe(run.rootRunId)
+  })
+
+  it('rejects child workflow identities that do not match the parent node', async () => {
+    const runtime = createInMemoryWorkflowRuntime()
+    const run = await runtime.store.createRun({
+      workflowName: 'parent',
+      input: { scenario: 'a' },
+    })
+
+    await expect(
+      runtime.store.ensureChildWorkflowRun({
+        identity: { runId: run.id, nodeName: 'other' },
+        workflowName: 'child',
+        input: { scenario: 'a' },
+        parentRunId: run.id,
+        parentNodeName: 'child',
+        rootRunId: run.rootRunId,
+      }),
+    ).rejects.toThrow(
+      `Child identity does not match parent node [${run.id}.child]`,
+    )
   })
 
   it('ensures map items once and rejects conflicting shapes', async () => {

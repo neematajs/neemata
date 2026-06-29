@@ -227,6 +227,7 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
     async completeCurrentAttempt({ attemptId, leaseToken, output }) {
       const attempt = attempts.get(attemptId)
       if (!attempt || attempt.leaseToken !== leaseToken) return undefined
+      if (attempt.status !== 'started') return undefined
 
       const node = nodes.get(nodeKey(attempt.runId, attempt.nodeName))
       if (!node || node.currentAttemptId !== attemptId) return undefined
@@ -243,6 +244,7 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
     async failCurrentAttempt({ attemptId, leaseToken, error }) {
       const attempt = attempts.get(attemptId)
       if (!attempt || attempt.leaseToken !== leaseToken) return undefined
+      if (attempt.status !== 'started') return undefined
 
       const node = nodes.get(nodeKey(attempt.runId, attempt.nodeName))
       if (!node || node.currentAttemptId !== attemptId) return undefined
@@ -333,6 +335,14 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
           `Missing node [${params.identity.runId}.${params.identity.nodeName}]`,
         )
       }
+      if (
+        (node.kind === 'activity' || node.kind === 'task') &&
+        node.kind !== params.kind
+      ) {
+        throw new Error(
+          `Node [${node.runId}.${node.name}] kind [${node.kind}] cannot create [${params.kind}] attempt`,
+        )
+      }
       const attempt: StoredAttempt = {
         id: id('attempt'),
         runId: params.identity.runId,
@@ -358,6 +368,15 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
       return { attempt, created: true }
     },
     async ensureChildWorkflowRun(params) {
+      if (
+        params.identity.runId !== params.parentRunId ||
+        params.identity.nodeName !== params.parentNodeName
+      ) {
+        throw new Error(
+          `Child identity does not match parent node [${params.parentRunId}.${params.parentNodeName}]`,
+        )
+      }
+
       const key = identityKey(params.identity)
       const existingLink = childLinks.find(
         (link) => identityKey(link.identity) === key,
