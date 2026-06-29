@@ -738,21 +738,11 @@ function createWorkflowChain(state: {
           cases: CaseImplementationFactory<any, any, any, any>
         }) => {
           const cases = options.cases(createCaseImplementers())
-          const caseNames = Object.keys(node.cases)
-          const select = (...args: readonly unknown[]) => {
-            const selected = options.select(...args)
-            if (!caseNames.includes(selected)) {
-              throw new Error(
-                `Workflow branch [${node.name}] selected unknown case [${selected}]`,
-              )
-            }
-            return selected
-          }
 
           return nextChain(state, {
             kind: 'branch',
             name: node.name,
-            select,
+            select: options.select,
             cases: Object.freeze(normalizeCases(node, cases)),
           })
         },
