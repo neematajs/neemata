@@ -1552,6 +1552,285 @@ describe('workflow runtime coordinator', () => {
     expect(final?.run.output).toStrictEqual({ started: 2 })
   })
 
+  it('runs mapWorkflow wait-all children on separate workers and preserves item order', async () => {
+    const childWorkflow = defineWorkflow({
+      name: 'map-child-content',
+      input: t.object({ text: t.string() }),
+      output: t.object({ id: t.string() }),
+    }).build()
+    const parentWorkflow = defineWorkflow({
+      name: 'map-workflow-parent',
+      input: t.object({ texts: t.array(t.string()) }),
+      output: t.object({ ids: t.array(t.string()) }),
+    })
+      .mapWorkflow('children', childWorkflow, {
+        item: t.string(),
+        mode: 'wait-all',
+      })
+      .build()
+
+    const childImplementation = implementWorkflow(childWorkflow).finish(
+      (_ctx, _outputs, input) => ({ id: `child:${input.text}` }),
+    )
+    let itemCalls = 0
+    const parentImplementation = implementWorkflow(parentWorkflow)
+      .children(childWorkflow, {
+        items: (_ctx, _outputs, input) => {
+          itemCalls += 1
+          if (itemCalls > 1) throw new Error('items called twice')
+          return input.texts
+        },
+        input: (_ctx, _outputs, item) => ({ text: item }),
+      })
+      .finish((_ctx, { children }) => ({
+        ids: children.items.map((item) => item.output.id),
+      }))
+
+    const runtime = createInMemoryWorkflowRuntime()
+    const container = createTestContainer()
+    const parentRun = await runtime.store.createRun({
+      workflowName: parentWorkflow.name,
+      input: { texts: ['alpha', 'beta'] },
+    })
+    const parentCommand = {
+      kind: 'continueRun' as const,
+      runId: parentRun.id,
+      workflowName: parentWorkflow.name,
+    }
+
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [parentImplementation],
+      workerId: 'parent-coordinator',
+      command: parentCommand,
+    })
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [parentImplementation],
+      workerId: 'parent-coordinator',
+      command: parentCommand,
+    })
+
+    const waiting = await runtime.store.loadRunSnapshot(parentRun.id)
+    expect(itemCalls).toBe(1)
+    expect(waiting?.nodes[0]?.status).toBe('waiting')
+    expect(waiting?.childLinks.map((link) => link.identity)).toStrictEqual([
+      { runId: parentRun.id, nodeName: 'children', itemIndex: 0 },
+      { runId: parentRun.id, nodeName: 'children', itemIndex: 1 },
+    ])
+    const childRunIds = waiting!.childLinks.map((link) => link.childRunId)
+
+    for (const childRunId of childRunIds) {
+      await continueWorkflowRun({
+        store: runtime.store,
+        runCoordinationExecutor: runtime.runCoordinationExecutor,
+        attemptExecutor: runtime.attemptExecutor,
+        container,
+        workflows: [childImplementation],
+        workerId: 'child-coordinator',
+        command: {
+          kind: 'continueRun',
+          runId: childRunId,
+          workflowName: childWorkflow.name,
+        },
+      })
+    }
+
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [parentImplementation],
+      workerId: 'parent-coordinator',
+      command: parentCommand,
+    })
+
+    const final = await runtime.store.loadRunSnapshot(parentRun.id)
+    expect(final?.nodes[0]?.status).toBe('completed')
+    expect(final?.nodes[0]?.output).toStrictEqual({
+      items: [
+        {
+          item: 'alpha',
+          index: 0,
+          runId: childRunIds[0],
+          output: { id: 'child:alpha' },
+        },
+        {
+          item: 'beta',
+          index: 1,
+          runId: childRunIds[1],
+          output: { id: 'child:beta' },
+        },
+      ],
+    })
+    expect(final?.run.status).toBe('completed')
+    expect(final?.run.output).toStrictEqual({
+      ids: ['child:alpha', 'child:beta'],
+    })
+  })
+
+  it('runs mapWorkflow wait-settled without failing parent on child failure', async () => {
+    const childWorkflow = defineWorkflow({
+      name: 'map-settled-child',
+      input: t.object({ text: t.string() }),
+      output: t.object({ id: t.string() }),
+    }).build()
+    const parentWorkflow = defineWorkflow({
+      name: 'map-workflow-settled-parent',
+      input: t.object({ texts: t.array(t.string()) }),
+      output: t.object({ count: t.number() }),
+    })
+      .mapWorkflow('children', childWorkflow, {
+        item: t.string(),
+        mode: 'wait-settled',
+      })
+      .build()
+
+    const parentImplementation = implementWorkflow(parentWorkflow)
+      .children(childWorkflow, {
+        items: (_ctx, _outputs, input) => input.texts,
+        input: (_ctx, _outputs, item) => ({ text: item }),
+      })
+      .finish((_ctx, { children }) => ({ count: children.items.length }))
+
+    const runtime = createInMemoryWorkflowRuntime()
+    const container = createTestContainer()
+    const parentRun = await runtime.store.createRun({
+      workflowName: parentWorkflow.name,
+      input: { texts: ['alpha', 'beta'] },
+    })
+    const parentCommand = {
+      kind: 'continueRun' as const,
+      runId: parentRun.id,
+      workflowName: parentWorkflow.name,
+    }
+
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [parentImplementation],
+      workerId: 'parent-coordinator',
+      command: parentCommand,
+    })
+
+    const waiting = await runtime.store.loadRunSnapshot(parentRun.id)
+    const childRunIds = waiting!.childLinks.map((link) => link.childRunId)
+    await runtime.store.completeRun({
+      runId: childRunIds[0]!,
+      output: { id: 'child:alpha' },
+    })
+    await runtime.store.failRun({
+      runId: childRunIds[1]!,
+      error: new Error('child failed'),
+    })
+
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [parentImplementation],
+      workerId: 'parent-coordinator',
+      command: parentCommand,
+    })
+
+    const final = await runtime.store.loadRunSnapshot(parentRun.id)
+    expect(final?.nodes[0]?.status).toBe('completed')
+    expect(final?.nodes[0]?.output).toMatchObject({
+      items: [
+        {
+          item: 'alpha',
+          index: 0,
+          runId: childRunIds[0],
+          status: 'completed',
+          output: { id: 'child:alpha' },
+        },
+        {
+          item: 'beta',
+          index: 1,
+          runId: childRunIds[1],
+          status: 'failed',
+          error: { message: 'child failed' },
+        },
+      ],
+    })
+    expect(final?.run.status).toBe('completed')
+    expect(final?.run.output).toStrictEqual({ count: 2 })
+  })
+
+  it('runs mapWorkflow start-only and completes after child workflow runs are started', async () => {
+    const childWorkflow = defineWorkflow({
+      name: 'map-start-only-child',
+      input: t.object({ text: t.string() }),
+      output: t.object({ id: t.string() }),
+    }).build()
+    const parentWorkflow = defineWorkflow({
+      name: 'map-workflow-start-only-parent',
+      input: t.object({ texts: t.array(t.string()) }),
+      output: t.object({ started: t.number() }),
+    })
+      .mapWorkflow('children', childWorkflow, {
+        item: t.string(),
+        mode: 'start-only',
+      })
+      .build()
+
+    const parentImplementation = implementWorkflow(parentWorkflow)
+      .children(childWorkflow, {
+        items: (_ctx, _outputs, input) => input.texts,
+        input: (_ctx, _outputs, item) => ({ text: item }),
+      })
+      .finish((_ctx, { children }) => ({ started: children.items.length }))
+
+    const runtime = createInMemoryWorkflowRuntime()
+    const run = await runtime.store.createRun({
+      workflowName: parentWorkflow.name,
+      input: { texts: ['alpha', 'beta'] },
+    })
+
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container: createTestContainer(),
+      workflows: [parentImplementation],
+      workerId: 'parent-coordinator',
+      command: {
+        kind: 'continueRun',
+        runId: run.id,
+        workflowName: parentWorkflow.name,
+      },
+    })
+
+    const final = await runtime.store.loadRunSnapshot(run.id)
+    const runIds = final!.childLinks.map((link) => link.childRunId)
+    expect(
+      runtime
+        .inspect()
+        .continueRunCommands.filter(
+          (command) => command.payload.workflowName === childWorkflow.name,
+        ),
+    ).toHaveLength(2)
+    expect(final?.nodes[0]?.status).toBe('completed')
+    expect(final?.nodes[0]?.output).toStrictEqual({
+      items: [
+        { item: 'alpha', index: 0, runId: runIds[0], status: 'queued' },
+        { item: 'beta', index: 1, runId: runIds[1], status: 'queued' },
+      ],
+    })
+    expect(final?.run.status).toBe('completed')
+    expect(final?.run.output).toStrictEqual({ started: 2 })
+  })
+
   it('reuses original branch child task run input on repeated continuation', async () => {
     const task = defineTask({
       name: 'branch.stable-summary',

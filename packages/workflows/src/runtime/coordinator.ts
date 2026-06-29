@@ -230,8 +230,22 @@ async function advanceWorkflowRun(input: {
     return
   }
 
+  if (nextNode.kind === 'mapWorkflow') {
+    await dispatchMapWorkflowNode({
+      store: input.store,
+      attemptExecutor: input.attemptExecutor,
+      runCoordinationExecutor: input.runCoordinationExecutor,
+      workflow: input.workflow,
+      workflowCtx: input.workflowCtx,
+      run: input.run,
+      outputs: input.outputs,
+      node: nextNode,
+    })
+    return
+  }
+
   if (nextNode.kind !== 'activity') {
-    throw new Error(`Unsupported runtime node kind [${nextNode.kind}]`)
+    throw new Error(`Unsupported runtime node kind [${String(nextNode.kind)}]`)
   }
 
   await dispatchActivityNode({
@@ -1253,6 +1267,200 @@ async function dispatchMapTaskNode(input: {
       taskName: input.node.target.name,
       taskRunId: child.childRun.id,
       taskInput: nodeInput,
+    })
+    if (input.node.mode === 'start-only') {
+      outputItems[item.index] = {
+        item: item.item,
+        index: item.index,
+        runId: child.childRun.id,
+        status: child.childRun.status,
+      }
+    }
+  }
+
+  const completedItems = outputItems.filter((item) => item !== undefined)
+  if (
+    input.node.mode === 'start-only' ||
+    completedItems.length === itemSnapshot.length
+  ) {
+    const output = { items: completedItems }
+    await input.store.completeNode({
+      runId: input.run.id,
+      nodeName: input.node.name,
+      output,
+    })
+    await advanceWorkflowRun({
+      store: input.store,
+      attemptExecutor: input.attemptExecutor,
+      runCoordinationExecutor: input.runCoordinationExecutor,
+      workflow: input.workflow,
+      workflowCtx: input.workflowCtx,
+      run: input.run,
+      outputs: { ...input.outputs, [input.node.name]: output },
+    })
+    return
+  }
+
+  await input.store.waitNode({
+    runId: input.run.id,
+    nodeName: input.node.name,
+  })
+}
+
+async function dispatchMapWorkflowNode(input: {
+  readonly store: WorkflowStore
+  readonly attemptExecutor: AttemptExecutor
+  readonly runCoordinationExecutor: RunCoordinationExecutor
+  readonly workflow: WorkflowImplementation
+  readonly workflowCtx: DependencyContext<any>
+  readonly run: StoredRun
+  readonly outputs: Record<string, unknown>
+  readonly node: MapNodeImplementation
+}) {
+  const existing = await input.store.createNode({
+    runId: input.run.id,
+    name: input.node.name,
+    kind: 'mapWorkflow',
+  })
+  if (existing.status === 'completed' || existing.status === 'failed') return
+
+  let children = await input.store.loadNodeChildren({
+    runId: input.run.id,
+    nodeName: input.node.name,
+  })
+  const itemSnapshot =
+    children.mapItems.length > 0
+      ? children.mapItems
+      : (
+          await input.store.ensureMapItems({
+            runId: input.run.id,
+            nodeName: input.node.name,
+            items: input.node.items(
+              input.workflowCtx,
+              input.outputs,
+              input.run.input,
+            ),
+          })
+        ).items
+
+  if (children.mapItems.length === 0) {
+    children = await input.store.loadNodeChildren({
+      runId: input.run.id,
+      nodeName: input.node.name,
+    })
+  }
+
+  const outputItems: Array<{
+    item: unknown
+    index: number
+    runId: string
+    status?: string
+    output?: unknown
+    error?: unknown
+  }> = []
+
+  for (const item of itemSnapshot) {
+    const identity = item.identity
+    const existingLink = children.childLinks.find((link) =>
+      sameNodeChildIdentity(link.identity, identity),
+    )
+
+    if (existingLink) {
+      const snapshot = await input.store.loadRunSnapshot(existingLink.childRunId)
+      const childRun = snapshot?.run
+      if (input.node.mode === 'start-only') {
+        outputItems[item.index] = {
+          item: item.item,
+          index: item.index,
+          runId: existingLink.childRunId,
+          status: childRun?.status ?? 'queued',
+        }
+        continue
+      }
+
+      if (!childRun || !isTerminalRunStatus(childRun.status)) {
+        await input.runCoordinationExecutor.enqueue({
+          kind: 'continueRun',
+          runId: existingLink.childRunId,
+          workflowName: existingLink.workflowName,
+        })
+        continue
+      }
+
+      if (childRun.status === 'completed') {
+        await input.store.completeMapItem({
+          runId: input.run.id,
+          nodeName: input.node.name,
+          itemIndex: item.index,
+          itemKey: item.key,
+          output: childRun.output,
+        })
+        outputItems[item.index] = {
+          item: item.item,
+          index: item.index,
+          runId: existingLink.childRunId,
+          ...(input.node.mode === 'wait-settled'
+            ? { status: childRun.status }
+            : {}),
+          output: childRun.output,
+        }
+        continue
+      }
+
+      const error =
+        childRun.error ??
+        new Error(`Mapped child workflow [${childRun.id}] ${childRun.status}`)
+      await input.store.failMapItem({
+        runId: input.run.id,
+        nodeName: input.node.name,
+        itemIndex: item.index,
+        itemKey: item.key,
+        error,
+      })
+      if (input.node.mode === 'wait-settled') {
+        outputItems[item.index] = {
+          item: item.item,
+          index: item.index,
+          runId: existingLink.childRunId,
+          status: childRun.status,
+          error,
+        }
+        continue
+      }
+
+      await input.store.failNode({
+        runId: input.run.id,
+        nodeName: input.node.name,
+        error,
+      })
+      await failRunAndWakeParent({
+        store: input.store,
+        runCoordinationExecutor: input.runCoordinationExecutor,
+        runId: input.run.id,
+        error,
+      })
+      return
+    }
+
+    const nodeInput = input.node.input(
+      input.workflowCtx,
+      input.outputs,
+      item.item,
+      input.run.input,
+      item.index,
+    )
+    const child = await input.store.ensureChildWorkflowRun({
+      identity,
+      workflowName: input.node.target.name,
+      input: nodeInput,
+      parentRunId: input.run.id,
+      parentNodeName: input.node.name,
+      rootRunId: input.run.rootRunId,
+    })
+    await input.runCoordinationExecutor.enqueue({
+      kind: 'continueRun',
+      runId: child.childRun.id,
+      workflowName: input.node.target.name,
     })
     if (input.node.mode === 'start-only') {
       outputItems[item.index] = {
