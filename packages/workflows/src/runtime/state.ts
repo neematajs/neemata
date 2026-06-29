@@ -1,4 +1,4 @@
-import type { WorkflowNodeKind } from '../types/index.ts'
+import type { RunKind, WorkflowNodeKind } from '../types/index.ts'
 import type {
   RuntimeAttemptStatus,
   RuntimeNodeStatus,
@@ -13,7 +13,10 @@ export type StoredError = {
 
 export type StoredRun = {
   readonly id: string
+  readonly kind: RunKind
+  readonly name: string
   readonly workflowName: string
+  readonly taskName?: string
   readonly status: RuntimeRunStatus
   readonly input: unknown
   readonly output?: unknown
@@ -76,7 +79,10 @@ export type StoredChildLink = {
   readonly parentRunId: string
   readonly parentNodeName: string
   readonly childRunId: string
+  readonly childKind: RunKind
+  readonly childName: string
   readonly workflowName: string
+  readonly taskName?: string
   readonly caseKey?: string
   readonly memberKey?: string
   readonly itemIndex?: number

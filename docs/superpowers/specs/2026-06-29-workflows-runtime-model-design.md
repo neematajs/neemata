@@ -43,25 +43,33 @@ timeline.
 
 Canonical persisted entities:
 
-- `run`: workflow execution state
+- `run`: task or workflow execution state
 - `node`: workflow graph node state
 - `attempt`: individual execution attempt state
-- `childLink`: parent-to-child workflow linkage
+- `childLink`: parent-to-child task/workflow run linkage
 - `timeline`: append-only facts about important transitions
 
 Queues may contain duplicate commands. Queue state is never authoritative.
 
 ## Run State
 
-A run represents one workflow execution.
+A run represents one durable execution. The runnable can be a workflow or a
+task:
+
+- `workflow run`: durable coordinator for declared workflow graph nodes
+- `task run`: durable execution of one task handler
+
+Attempts are internal retry/lease records under a run. Public APIs and workflow
+outputs should point at run IDs, not attempt IDs.
 
 Run fields should include:
 
 - run ID
-- workflow name
+- run kind: `workflow` or `task`
+- runnable name
 - status
-- workflow input
-- workflow output, when completed
+- input
+- output, when completed
 - error, when failed or cancelled
 - parent run ID, when started by a workflow node
 - parent node name, when started by a workflow node
@@ -217,7 +225,7 @@ interface RunCoordinationExecutor {
 }
 ```
 
-`AttemptExecutor` owns side-effecting activity and task attempts:
+`AttemptExecutor` owns side-effecting activity attempts and task run attempts:
 
 ```ts
 interface AttemptExecutor {
@@ -239,7 +247,8 @@ Rules:
   identity, heartbeat/timeout behavior, and output/error completion.
 - Coordination claims are filtered by workflow name.
 - Activity claims are filtered by workflow name and activity node name.
-- Task claims are filtered by task name.
+- Task claims are filtered by task name. A task attempt belongs to a durable
+  task run; the attempt ID is not a public run handle.
 - The core runtime may use one adapter package to implement both interfaces, but
   the interfaces stay separate.
 
@@ -257,7 +266,7 @@ Per command, it should:
 6. Persist any deterministic control decision, such as selected branch case or
    map item snapshot.
 7. Compute and persist node input before dispatching external work.
-8. Dispatch activity attempts, task starts, or child workflow starts.
+8. Dispatch activity attempts, child task run starts, or child workflow starts.
 9. Mark the run `waiting` if no more local progress is possible.
 10. Run `finish` and mark the run `completed` when all nodes are complete.
 11. Release the run lock.
@@ -319,7 +328,7 @@ This separates:
 - orchestration concurrency: how many runs can be advanced at once
 - activity execution concurrency: how many workflow-local activity attempts can
   execute at once on workers that registered the workflow implementation
-- task execution concurrency: how many reusable task attempts can execute at
+- task execution concurrency: how many reusable task run attempts can execute at
   once on task workers
 
 ## Worker Registration And Routeability
@@ -362,6 +371,8 @@ Rules:
   the owning workflow implementation.
 - Parent workflow A may start child workflow B even when worker A does not have
   B's implementation. B advances on a worker registered for B.
+- Parent workflow A may start child task T even when worker A does not have T's
+  implementation. T executes on a task worker registered for T.
 
 ## Primitive Node Semantics
 
@@ -380,13 +391,16 @@ Activities are workflow-local side-effect boundaries.
 ### Task
 
 - Compute and persist task input.
-- Start or dispatch the task through the task executor.
-- Mark parent node `running` or `waiting`, depending on adapter shape.
-- Complete parent node from task output.
+- Persist child task run/link before dispatching task execution.
+- Dispatch task run through the task executor.
+- Mark parent node `waiting`.
+- Child task terminal state enqueues parent `continueRun`.
+- Parent node completes from child task output.
 - Enqueue `continueRun`.
 
-Tasks are reusable startable units. A workflow task node is still represented as
-a parent workflow node.
+Tasks are reusable startable units. A workflow task node is represented as a
+parent workflow node plus a durable child task run. Task attempts are internal to
+that child task run.
 
 ### Workflow
 
@@ -430,12 +444,12 @@ dispatch primitive work.
 
 - Evaluate `items` once.
 - Persist the item snapshot with stable item index and optional item key.
-- Start one task per item, bounded by node-level map concurrency.
-- Track each item independently.
+- Start one child task run per item, bounded by node-level map concurrency.
+- Track each child task run independently.
 - Complete according to mode:
   - `wait-all`: all items must complete successfully
   - `wait-settled`: collect success and failure records
-  - `start-only`: complete after child starts are persisted
+  - `start-only`: complete after child task run links are persisted
 
 ### Map Workflow
 
@@ -499,7 +513,7 @@ Run coordination executor adapters provide:
 Attempt executor adapters provide:
 
 - activity attempt dispatch
-- task attempt dispatch
+- task run attempt dispatch
 - attempt claim/release/ack
 - worker leasing
 - heartbeats or lease expiry, where needed

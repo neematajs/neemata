@@ -119,8 +119,10 @@ Rules:
 - Task execution is at-least-once.
 - Idempotency is declared on the task implementation because it is executable
   runtime behavior.
-- A task used inside a workflow keeps its public contract but is executed under
-  the parent workflow run.
+- A task used inside a workflow keeps its public contract and starts a durable
+  child task run linked to the parent workflow node.
+- Attempts are internal retry/lease records for a task run. Public task APIs and
+  map outputs should expose task run IDs, not attempt IDs.
 
 ## Activities
 
@@ -662,8 +664,8 @@ Task fan-out:
 
 Modes:
 
-- `start-only`: start every child and continue after child run IDs are
-  checkpointed. Output is run references.
+- `start-only`: start every child task/workflow run and continue after child run
+  IDs are checkpointed. Output is run references.
 - `wait-all`: wait for every child to complete successfully. Output includes
   child outputs.
 - `wait-settled`: wait for every child to reach terminal state. Output includes
@@ -728,6 +730,13 @@ Inside workflow:
 
 Rules:
 
+- A standalone task start creates a durable task run.
+- A workflow task node creates or reuses a durable child task run for the parent
+  run and node name.
+- Branch task cases, parallel task members, and `mapTask` items also create or
+  reuse durable child task runs using structured child identity.
+- Task attempts are internal to a task run. They are not the public handle for
+  workflow dataflow, client APIs, or map outputs.
 - Task node output is addressed by node name.
 - Task nodes appear in the parent implementation chain and must be acknowledged
   with the same task declaration:
@@ -742,12 +751,15 @@ Rules:
 - Task node retry/timeout defaults come from the task declaration.
 - Task node options may override retry/timeout only when the API explicitly
   allows it.
+- Parent retry/restart reuses the existing child task run ID for that task node
+  or composite child identity.
+- The node output is the child task run output.
 
 ## Child Workflow Nodes
 
-Workflow nodes start another workflow run and wait for its output. They are the
-workflow equivalent of task nodes, but they have separate run lifecycle and
-parent-child durability requirements.
+Workflow nodes start another workflow run and wait for its output. Task nodes and
+workflow nodes share the same parent-child durability model: both are child runs;
+workflow nodes coordinate graphs, while task nodes execute one handler.
 
 Top-level workflow node:
 
@@ -863,9 +875,10 @@ Rules:
 
 Idempotency should exist at three levels:
 
-- task start
-- workflow start
-- activity/task node execution
+- task run start
+- workflow run start
+- activity attempt execution
+- child task/workflow run execution from workflow nodes and composite children
 
 Duplicate behavior should be explicit:
 

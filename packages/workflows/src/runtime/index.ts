@@ -36,6 +36,8 @@ export type {
   CreateAttemptInput,
   CreateNodeInput,
   CreateRunInput,
+  EnsureChildRunParams,
+  EnsureChildRunResult,
   EnsureChildWorkflowRunParams,
   EnsureChildWorkflowRunResult,
   EnsureMapItemsParams,

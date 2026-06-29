@@ -1,5 +1,10 @@
 # Workflows Branch Runtime Implementation Plan
 
+> **Superseded task-run note (2026-06-29):** this completed slice dispatches
+> task branch cases as task attempts. The target model changed: task cases should
+> create/reuse child task runs, and attempts should remain internal to those
+> runs.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add v1 runtime execution for `branch` workflow nodes over primitive `activity`, `task`, and child `workflow` cases.

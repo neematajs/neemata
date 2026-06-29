@@ -14,6 +14,9 @@ import type {
   AttemptExecutor,
   CompleteMapItemParams,
   ContinueRunCommand,
+  CreateRunInput,
+  EnsureChildRunParams,
+  EnsureChildRunResult,
   EnsureChildWorkflowRunParams,
   EnsureChildWorkflowRunResult,
   EnsureMapItemsParams,
@@ -25,12 +28,15 @@ import type {
   NodeChildIdentity,
   NodeChildrenSnapshot,
   RunCoordinationExecutor,
+  RunKind,
+  RunnableRun,
   SelectNodeCaseParams,
   StoredAttempt,
   StoredChildLink,
   StoredMapItem,
   StoredNode,
   StoredRun,
+  TaskRun,
   WaitNodeParams,
   WorkflowStore,
 } from '../src/index.ts'
@@ -46,6 +52,7 @@ type SemanticWorkflowStoreMethods = {
   ensureChildWorkflowRun(
     params: EnsureChildWorkflowRunParams,
   ): Promise<EnsureChildWorkflowRunResult>
+  ensureChildRun(params: EnsureChildRunParams): Promise<EnsureChildRunResult>
   ensureMapItems(params: EnsureMapItemsParams): Promise<EnsureMapItemsResult>
   completeMapItem(
     params: CompleteMapItemParams,
@@ -86,9 +93,30 @@ describe('workflow runtime interfaces', () => {
     expectTypeOf<RunCoordinationExecutor>().toHaveProperty('enqueue')
     expectTypeOf<AttemptExecutor>().toHaveProperty('dispatchActivity')
     expectTypeOf<WorkflowStore>().toHaveProperty('createRun')
+    expectTypeOf<CreateRunInput>().toMatchTypeOf<{
+      kind?: RunKind
+      name?: string
+      workflowName: string
+      taskName?: string
+    }>()
     expectTypeOf<StoredRun>().toHaveProperty('status')
+    expectTypeOf<StoredRun>().toMatchTypeOf<{
+      kind: RunKind
+      name: string
+      workflowName: string
+      taskName?: string
+    }>()
     expectTypeOf<StoredNode>().toHaveProperty('status')
     expectTypeOf<StoredAttempt>().toHaveProperty('status')
+    expectTypeOf<TaskRun>().toMatchTypeOf<{
+      id: string
+      kind: 'task'
+      task: string
+      status: string
+    }>()
+    expectTypeOf<RunnableRun>().toMatchTypeOf<
+      { kind: 'task' } | { kind: 'workflow' }
+    >()
   })
 
   it('exports semantic orchestration store contracts', () => {
@@ -121,6 +149,20 @@ describe('workflow runtime interfaces', () => {
       parentNodeName: string
       rootRunId: string
     }>()
+    expectTypeOf<EnsureChildRunParams>().toMatchTypeOf<{
+      identity: NodeChildIdentity
+      childKind: RunKind
+      childName: string
+      input: unknown
+      parentRunId: string
+      parentNodeName: string
+      rootRunId: string
+    }>()
+    expectTypeOf<EnsureChildRunResult>().toMatchTypeOf<{
+      childLink: StoredChildLink
+      childRun: StoredRun
+      created: boolean
+    }>()
     expectTypeOf<EnsureMapItemsParams>().toMatchTypeOf<{
       runId: string
       nodeName: string
@@ -137,9 +179,16 @@ describe('workflow runtime interfaces', () => {
       nodeName: string
     }>()
     expectTypeOf<StoredChildLink>().toHaveProperty('identity')
+    expectTypeOf<StoredChildLink>().toMatchTypeOf<{
+      childKind: RunKind
+      childName: string
+      workflowName: string
+      taskName?: string
+    }>()
     expectTypeOf<StoredMapItem>().toHaveProperty('identity')
     expectTypeOf<WorkflowStore>().toHaveProperty('selectNodeCase')
     expectTypeOf<WorkflowStore>().toHaveProperty('waitNode')
+    expectTypeOf<WorkflowStore>().toHaveProperty('ensureChildRun')
     expectTypeOf<WorkflowStore>().toHaveProperty('ensureChildWorkflowRun')
     expectTypeOf<WorkflowStore>().toHaveProperty('loadNodeChildren')
     expectTypeOf<WorkflowStore>().toMatchTypeOf<

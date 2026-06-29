@@ -1,4 +1,4 @@
-import type { WorkflowNodeKind } from '../types/index.ts'
+import type { RunKind, WorkflowNodeKind } from '../types/index.ts'
 import type {
   NodeChildIdentity,
   RunSnapshot,
@@ -16,7 +16,10 @@ export type RunLease = {
 }
 
 export type CreateRunInput = {
+  readonly kind?: RunKind
+  readonly name?: string
   readonly workflowName: string
+  readonly taskName?: string
   readonly input: unknown
   readonly parentRunId?: string
   readonly parentNodeName?: string
@@ -60,6 +63,24 @@ export type EnsureChildWorkflowRunParams = {
 }
 
 export type EnsureChildWorkflowRunResult = {
+  readonly childLink: StoredChildLink
+  readonly childRun: StoredRun
+  readonly created: boolean
+}
+
+export type EnsureChildRunParams = {
+  readonly identity: NodeChildIdentity
+  readonly childKind: RunKind
+  readonly childName: string
+  readonly input: unknown
+  readonly parentRunId: string
+  readonly parentNodeName: string
+  readonly rootRunId: string
+  readonly tags?: Readonly<Record<string, string>>
+  readonly idempotencyKey?: readonly unknown[]
+}
+
+export type EnsureChildRunResult = {
   readonly childLink: StoredChildLink
   readonly childRun: StoredRun
   readonly created: boolean
@@ -165,6 +186,7 @@ export type WorkflowStore = {
   ensureChildWorkflowRun(
     params: EnsureChildWorkflowRunParams,
   ): Promise<EnsureChildWorkflowRunResult>
+  ensureChildRun(params: EnsureChildRunParams): Promise<EnsureChildRunResult>
   selectNodeCase(params: SelectNodeCaseParams): Promise<StoredNode | undefined>
   ensureMapItems(params: EnsureMapItemsParams): Promise<EnsureMapItemsResult>
   completeMapItem(

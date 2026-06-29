@@ -171,6 +171,7 @@ Owns:
 - run-store interface
 - idempotency interface
 - run, node, activity, task, child workflow, and branch state types
+- durable task and workflow run state types
 - optimistic/versioned update contracts
 
 Rules:
@@ -178,6 +179,8 @@ Rules:
 - Defines source-of-truth concepts.
 - Does not implement a database backend.
 - Must make duplicate and stale completions representable and ignorable.
+- Must distinguish public durable run IDs from internal attempt IDs. Tasks and
+  workflows are public run kinds; attempts are retry/lease records.
 
 ### `executor`
 

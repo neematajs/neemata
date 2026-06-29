@@ -26,6 +26,8 @@ export type WorkflowStatus =
 
 export type TaskStatus = WorkflowStatus
 
+export type RunKind = 'workflow' | 'task'
+
 export type Schema = BaseTypeAny
 
 export type SchemaInput<T extends Schema> = t.infer.decode.output<T>
@@ -354,11 +356,31 @@ export type WorkflowRun<
   Workflow extends AnyWorkflowDefinition = AnyWorkflowDefinition,
 > = {
   id: string
+  kind: 'workflow'
   workflow: Workflow['name']
   status: WorkflowStatus
   input: WorkflowInput<Workflow>
   output?: WorkflowOutput<Workflow>
 }
+
+export type TaskRun<Task extends AnyTaskDefinition = AnyTaskDefinition> = {
+  id: string
+  kind: 'task'
+  task: Task['name']
+  status: TaskStatus
+  input: TaskInput<Task>
+  output?: TaskOutput<Task>
+}
+
+export type RunnableRun<
+  Runnable extends AnyWorkflowDefinition | AnyTaskDefinition =
+    | AnyWorkflowDefinition
+    | AnyTaskDefinition,
+> = Runnable extends AnyWorkflowDefinition
+  ? WorkflowRun<Runnable>
+  : Runnable extends AnyTaskDefinition
+    ? TaskRun<Runnable>
+    : never
 
 export type WorkflowClient = {
   start<Workflow extends AnyWorkflowDefinition>(

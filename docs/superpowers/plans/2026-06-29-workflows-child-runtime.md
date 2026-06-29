@@ -1,5 +1,9 @@
 # Workflows Child Runtime Implementation Plan
 
+> **Superseded task-run note (2026-06-29):** this plan introduced child identity
+> while task nodes were still attempt-only. New work should generalize child
+> links to task/workflow runs and treat task attempts as internal to task runs.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add the first orchestration runtime slice: structured child identity store support and direct child workflow node execution.

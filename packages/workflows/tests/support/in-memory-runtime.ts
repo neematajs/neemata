@@ -104,7 +104,10 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
       const runId = id('run')
       const run: StoredRun = {
         id: runId,
+        kind: input.kind ?? 'workflow',
+        name: input.name ?? input.taskName ?? input.workflowName,
         workflowName: input.workflowName,
+        ...(input.taskName === undefined ? {} : { taskName: input.taskName }),
         status: 'queued',
         input: input.input,
         ...(input.parentRunId === undefined
@@ -397,7 +400,7 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
       nodes.set(nodeKey(node.runId, node.name), updatedNode)
       return { attempt, created: true }
     },
-    async ensureChildWorkflowRun(params) {
+    async ensureChildRun(params) {
       if (
         params.identity.runId !== params.parentRunId ||
         params.identity.nodeName !== params.parentNodeName
@@ -420,7 +423,10 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
       }
 
       const childRun = await store.createRun({
-        workflowName: params.workflowName,
+        kind: params.childKind,
+        name: params.childName,
+        workflowName: params.childName,
+        ...(params.childKind === 'task' ? { taskName: params.childName } : {}),
         input: params.input,
         parentRunId: params.parentRunId,
         parentNodeName: params.parentNodeName,
@@ -433,7 +439,10 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
         parentRunId: params.parentRunId,
         parentNodeName: params.parentNodeName,
         childRunId: childRun.id,
-        workflowName: params.workflowName,
+        childKind: params.childKind,
+        childName: params.childName,
+        workflowName: params.childName,
+        ...(params.childKind === 'task' ? { taskName: params.childName } : {}),
         ...(params.identity.caseKey === undefined
           ? {}
           : { caseKey: params.identity.caseKey }),
@@ -449,6 +458,19 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
       }
       childLinks.push(childLink)
       return { childLink, childRun, created: true }
+    },
+    async ensureChildWorkflowRun(params) {
+      return store.ensureChildRun({
+        identity: params.identity,
+        childKind: 'workflow',
+        childName: params.workflowName,
+        input: params.input,
+        parentRunId: params.parentRunId,
+        parentNodeName: params.parentNodeName,
+        rootRunId: params.rootRunId,
+        tags: params.tags,
+        idempotencyKey: params.idempotencyKey,
+      })
     },
     async ensureMapItems(params) {
       const key = nodeKey(params.runId, params.nodeName)

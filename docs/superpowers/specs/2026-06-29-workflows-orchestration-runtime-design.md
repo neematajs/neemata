@@ -46,14 +46,14 @@ V1 runtime has two classes of graph nodes.
 Primitive runnable nodes:
 
 - `activity`: workflow-local handler attempt
-- `task`: reusable task attempt
+- `task`: reusable child task run, with internal attempts
 - `workflow`: child workflow run, start-and-wait in v1
 
 Bounded orchestration nodes:
 
 - `branch`: select one primitive runnable case
 - `parallel`: run fixed primitive runnable members
-- `mapTask`: run one task per item
+- `mapTask`: run one child task run per item
 - `mapWorkflow`: run one child workflow per item
 
 Orchestration nodes do not contain arbitrary subgraphs. They own a bounded set
@@ -97,14 +97,16 @@ Rules:
 
 ### Child Links
 
-`childLink` represents a durable parent-to-child workflow relation.
+`childLink` represents a durable parent-to-child runnable relation. The child
+can be a task run or workflow run.
 
 Fields:
 
 - parent run ID
 - parent node name
 - child run ID
-- child workflow name
+- child run kind: `task` or `workflow`
+- child runnable name
 - optional branch case key
 - optional parallel member key
 - optional map item index
@@ -131,8 +133,8 @@ Fields:
 - status
 - output
 - error
-- attempt ID for `mapTask`
-- child run ID for `mapWorkflow`
+- child task run ID for `mapTask`
+- child workflow run ID for `mapWorkflow`
 
 Rules:
 
@@ -196,16 +198,17 @@ workflow-local.
 
 ### Task Node
 
-Current behavior remains:
+Task node external work is a child task run.
 
 - create node
 - compute node input through implementation mapper
 - persist node input
-- create attempt
-- dispatch task attempt
+- create/reuse child task run and child link for `(parentRunId, nodeName)`
+- dispatch task run attempt
 - wait
-- task worker completes attempt
-- task worker completes node and enqueues continuation
+- task worker completes task run
+- task run terminal state enqueues parent continuation
+- parent completes node from child task output
 
 Task workers need only task implementations. They do not need parent workflow
 implementations.
@@ -252,10 +255,11 @@ Coordinator behavior:
 4. Resolve selected case implementation.
 5. Dispatch selected case based on primitive kind:
    - activity: create attempt tied to branch node and case key
-   - task: create attempt tied to branch node and case key
-   - workflow: create/reuse child link tied to branch node and case key
+   - task: create/reuse child task run link tied to branch node and case key
+   - workflow: create/reuse child workflow run link tied to branch node and case
+     key
 6. Mark parent branch node `waiting`.
-7. On continuation, inspect selected child attempt/link state.
+7. On continuation, inspect selected child attempt/run-link state.
 8. Complete branch node with selected case output.
 
 Output typing:
@@ -287,8 +291,8 @@ Coordinator behavior:
 1. Create parent parallel node.
 2. For each declared member, create or reuse member state.
 3. Dispatch members that are not terminal:
-   - activity/task attempts
-   - child workflow runs
+   - activity attempts
+   - child task/workflow runs
 4. Mark parent node `waiting`.
 5. On continuation, inspect all member states.
 6. If all completed, complete parent node with object keyed by member name.
@@ -297,9 +301,9 @@ Coordinator behavior:
 
 Member state representation:
 
-- For activity/task members, use attempt records with metadata that identifies
-  parent node and member key.
-- For workflow members, use child links with member key.
+- For activity members, use attempt records with metadata that identifies parent
+  node and member key.
+- For task/workflow members, use child links with member key.
 
 Rules:
 
@@ -319,16 +323,16 @@ V1 implements only `fail-fast` semantics for parent result.
 
 ## MapTask Node Semantics
 
-`mapTask` runs one task attempt per item.
+`mapTask` runs one child task run per item.
 
 Coordinator behavior:
 
 1. Create parent map node.
 2. If no map items exist, evaluate `items(ctx, outputs, workflowInput)`.
 3. Persist item snapshots with index and optional key.
-4. For each item, create/reuse task attempt.
+4. For each item, create/reuse child task run and child link.
 5. Mark parent node `waiting`.
-6. On continuation, inspect item attempts.
+6. On continuation, inspect child task runs through links.
 7. If all completed, complete parent node based on mode.
 8. If failures exist, apply mode/failure policy.
 
@@ -336,8 +340,8 @@ V1 modes:
 
 - `wait-all`: all items must complete; any failed item fails parent.
 - `wait-settled`: parent completes with per-item settled results.
-- `start-only`: parent completes after dispatching items, without waiting for
-  completion.
+- `start-only`: parent completes after child task run links are persisted,
+  without waiting for completion.
 
 Recommended v1 implementation order:
 
@@ -349,8 +353,10 @@ Rules:
 
 - Item array is evaluated once.
 - Item input mapper receives `(ctx, outputs, item, workflowInput, index)`.
-- Attempt command carries task name and item identity.
+- Child task run stores parent run ID, parent node name, root run ID, and item
+  index.
 - Task worker does not need parent workflow implementation.
+- Map output includes child task run IDs.
 - Map output preserves item order by index.
 
 Failure policy:
@@ -358,8 +364,8 @@ Failure policy:
 - `wait-all`: any failed item fails parent.
 - `wait-settled`: failed items become settled error entries; parent can
   complete.
-- `start-only`: dispatch failures fail parent; later item failures do not affect
-  parent because parent already completed.
+- `start-only`: child run creation/dispatch failures fail parent; later item
+  failures do not affect parent because parent already completed.
 
 ## MapWorkflow Node Semantics
 
@@ -494,9 +500,10 @@ type EnsureNodeAttemptResult = {
   created: boolean
 }
 
-type EnsureChildWorkflowRunParams = {
+type EnsureChildRunParams = {
   identity: NodeChildIdentity
-  workflowName: string
+  childKind: 'task' | 'workflow'
+  childName: string
   input: unknown
   parentRunId: string
   parentNodeName: string
@@ -505,7 +512,7 @@ type EnsureChildWorkflowRunParams = {
   idempotencyKey?: readonly unknown[]
 }
 
-type EnsureChildWorkflowRunResult = {
+type EnsureChildRunResult = {
   childLink: StoredChildLink
   childRun: StoredRun
   created: boolean
@@ -560,9 +567,7 @@ interface WorkflowStore {
     params: EnsureNodeAttemptParams,
   ): Promise<EnsureNodeAttemptResult>
 
-  ensureChildWorkflowRun(
-    params: EnsureChildWorkflowRunParams,
-  ): Promise<EnsureChildWorkflowRunResult>
+  ensureChildRun(params: EnsureChildRunParams): Promise<EnsureChildRunResult>
 
   ensureMapItems(
     params: EnsureMapItemsParams,
@@ -593,12 +598,14 @@ interface WorkflowStore {
 - Does not create duplicate attempts for duplicate continuations.
 - Does not decide whether the identity is branch, parallel, or map.
 
-`ensureChildWorkflowRun`:
+`ensureChildRun`:
 
-- Atomically creates or returns child run plus child link for the identity.
-- Persists child link before child continuation is dispatched.
+- Atomically creates or returns child task/workflow run plus child link for the
+  identity.
+- Persists child link before child execution is dispatched.
 - Returns `created: false` for duplicate continuations.
-- Does not require parent coordinator to have child workflow implementation.
+- Does not require parent coordinator to have child task/workflow
+  implementation.
 
 `ensureMapItems`:
 

@@ -1,5 +1,11 @@
 # Workflows Runtime Core Implementation Plan
 
+> **Superseded task-run note (2026-06-29):** this plan predates the decision
+> that tasks are first-class durable runs. Sections describing workflow task
+> nodes as direct task attempts are historical implementation slices, not the
+> target model for new work. New runtime work should model tasks as task runs
+> with internal attempts.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build the first adapter-free workflows runtime slice: interfaces, in-memory test store/executors, primitive activity/task continuation, and worker concurrency wrapper.
