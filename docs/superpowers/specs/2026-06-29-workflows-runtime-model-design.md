@@ -201,6 +201,51 @@ Continuation is enqueued after:
 Duplicate continuation commands are valid. The store lock/version makes
 continuation idempotent.
 
+## Executor Split
+
+The runtime should split dispatch interfaces by semantic role.
+
+`CoordinationExecutor` owns continuation commands:
+
+```ts
+interface CoordinationExecutor {
+  enqueueContinueRun(command: ContinueRunCommand): Promise<void>
+  enqueueDelayedContinueRun(
+    command: ContinueRunCommand,
+    runAt: Date,
+  ): Promise<void>
+  claimContinueRun(worker: CoordinationWorkerClaim): Promise<ClaimedCommand | null>
+  ackContinueRun(command: ClaimedCommand): Promise<void>
+  releaseContinueRun(command: ClaimedCommand): Promise<void>
+}
+```
+
+`ExecutionExecutor` owns side-effecting activity and task attempts:
+
+```ts
+interface ExecutionExecutor {
+  dispatchActivityAttempt(command: ActivityAttemptCommand): Promise<void>
+  dispatchTaskAttempt(command: TaskAttemptCommand): Promise<void>
+  claimActivityAttempt(worker: ActivityWorkerClaim): Promise<ClaimedAttempt | null>
+  claimTaskAttempt(worker: TaskWorkerClaim): Promise<ClaimedAttempt | null>
+  heartbeatAttempt(attempt: ClaimedAttempt): Promise<void>
+  ackAttempt(attempt: ClaimedAttempt): Promise<void>
+  releaseAttempt(attempt: ClaimedAttempt): Promise<void>
+}
+```
+
+Rules:
+
+- `CoordinationExecutor` commands are idempotent run pokes. They carry no
+  business payload and may be duplicated or coalesced by `runId`.
+- `ExecutionExecutor` commands are leased work attempts. They have attempt
+  identity, heartbeat/timeout behavior, and output/error completion.
+- Coordination claims are filtered by workflow name.
+- Activity claims are filtered by workflow name and activity node name.
+- Task claims are filtered by task name.
+- The core runtime may use one adapter package to implement both interfaces, but
+  the interfaces stay separate.
+
 ## Continuation Worker
 
 The orchestration worker consumes `continueRun` commands.
@@ -447,17 +492,25 @@ Store adapters provide:
 - idempotency enforcement
 - stale completion rejection
 
-Executor adapters provide:
+Coordination executor adapters provide:
 
 - command enqueue
 - delayed command enqueue
-- command claim/release/ack
+- continuation command claim/release/ack
+- workflow-name filtering where the adapter can support it
+
+Execution executor adapters provide:
+
+- activity attempt dispatch
+- task attempt dispatch
+- attempt claim/release/ack
 - worker leasing
 - heartbeats or lease expiry, where needed
 - concurrency limits
 
-The core runtime depends on these interfaces, not on BullMQ, Redis, Valkey,
-Postgres, or cloud queue SDKs.
+One concrete adapter may implement both executor interfaces. The core runtime
+depends on the interfaces, not on BullMQ, Redis, Valkey, Postgres, or cloud queue
+SDKs.
 
 ## Design Guardrails
 
@@ -476,6 +529,8 @@ Postgres, or cloud queue SDKs.
 
 - Starting a workflow creates a run and enqueues `continueRun`.
 - Every primitive completion enqueues `continueRun`.
+- Coordination and execution dispatch are represented by separate executor
+  interfaces.
 - Duplicate continuation commands cannot corrupt run or node state.
 - Only one coordinator can advance a specific run at a time.
 - Multiple coordinators can advance different runs concurrently.
