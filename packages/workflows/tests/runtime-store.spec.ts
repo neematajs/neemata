@@ -203,10 +203,14 @@ describe('in-memory workflow store', () => {
       input: { scenario: 'a' },
     }
 
-    await runtime.runCoordinationExecutor.enqueue(continueCommand)
     await runtime.runCoordinationExecutor.enqueueDelayed(
       { ...continueCommand, runId: 'run-2' },
-      new Date(Date.now() + 1_000),
+      new Date(Date.now() + 3_600_000),
+    )
+    await runtime.runCoordinationExecutor.enqueue(continueCommand)
+    await runtime.runCoordinationExecutor.enqueueDelayed(
+      { ...continueCommand, runId: 'run-3' },
+      new Date(Date.now() - 1_000),
     )
     const claimedRun = await runtime.runCoordinationExecutor.claim({
       workerId: 'worker-1',
@@ -214,20 +218,33 @@ describe('in-memory workflow store', () => {
       leaseMs: 30_000,
     })
     expect(claimedRun?.command).toStrictEqual(continueCommand)
-    expect(runtime.inspect().continueRunCommands).toHaveLength(1)
+    expect(runtime.inspect().continueRunCommands).toHaveLength(2)
 
     await runtime.runCoordinationExecutor.release(claimedRun!)
-    expect(runtime.inspect().continueRunCommands).toHaveLength(2)
+    await runtime.runCoordinationExecutor.release(claimedRun!)
+    expect(runtime.inspect().continueRunCommands).toHaveLength(3)
 
     const releasedRun = await runtime.runCoordinationExecutor.claim({
       workerId: 'worker-1',
       workflowNames: ['case-generation'],
       leaseMs: 30_000,
     })
+    expect(releasedRun?.command.runId).toBe('run-3')
     await runtime.runCoordinationExecutor.ack(releasedRun!)
+    await runtime.runCoordinationExecutor.release(releasedRun!)
+    expect(runtime.inspect().continueRunCommands).toHaveLength(2)
+
+    const requeuedRun = await runtime.runCoordinationExecutor.claim({
+      workerId: 'worker-1',
+      workflowNames: ['case-generation'],
+      leaseMs: 30_000,
+    })
+    expect(requeuedRun?.command.runId).toBe('run-1')
+    await runtime.runCoordinationExecutor.ack(requeuedRun!)
 
     await runtime.attemptExecutor.dispatchActivity(activityCommand)
     await runtime.attemptExecutor.dispatchTask(taskCommand)
+    expect(runtime.inspect().taskCommands).toHaveLength(1)
 
     const claimedActivity = await runtime.attemptExecutor.claimActivity({
       workerId: 'worker-1',
@@ -248,6 +265,7 @@ describe('in-memory workflow store', () => {
 
     await runtime.attemptExecutor.heartbeat(claimedActivity!)
     await runtime.attemptExecutor.release(claimedActivity!)
+    await runtime.attemptExecutor.release(claimedActivity!)
     expect(runtime.inspect().activityCommands).toHaveLength(1)
 
     const releasedActivity = await runtime.attemptExecutor.claimActivity({
@@ -256,8 +274,11 @@ describe('in-memory workflow store', () => {
       leaseMs: 30_000,
     })
     await runtime.attemptExecutor.ack(releasedActivity!)
+    await runtime.attemptExecutor.release(releasedActivity!)
     await runtime.attemptExecutor.ack(claimedTask!)
+    await runtime.attemptExecutor.release(claimedTask!)
 
     expect(runtime.inspect().activityCommands).toHaveLength(0)
+    expect(runtime.inspect().taskCommands).toHaveLength(0)
   })
 })

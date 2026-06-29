@@ -2,6 +2,7 @@ import type {
   ActivityAttemptCommand,
   AttemptCommand,
   ClaimedAttempt,
+  ClaimedCommand,
   ContinueRunCommand,
   TaskAttemptCommand,
 } from '../runtime/commands.ts'
@@ -42,6 +43,7 @@ export type InMemoryWorkflowRuntime = {
     readonly attempts: readonly StoredAttempt[]
     readonly continueRunCommands: readonly QueueItem<ContinueRunCommand>[]
     readonly activityCommands: readonly QueueItem<ActivityAttemptCommand>[]
+    readonly taskCommands: readonly QueueItem<TaskAttemptCommand>[]
   }
 }
 
@@ -59,6 +61,9 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
   const continueRunCommands: QueueItem<ContinueRunCommand>[] = []
   const activityCommands: QueueItem<ActivityAttemptCommand>[] = []
   const taskCommands: QueueItem<TaskAttemptCommand>[] = []
+  const claimedContinueRunCommands = new Map<string, ClaimedCommand>()
+  const claimedActivityCommands = new Map<string, ClaimedAttempt>()
+  const claimedTaskCommands = new Map<string, ClaimedAttempt>()
 
   const nodeKey = (runId: string, nodeName: string) => `${runId}:${nodeName}`
 
@@ -291,12 +296,17 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
 
   const claimQueued = <T>(
     queue: QueueItem<T>[],
-    matches: (command: T) => boolean,
+    matches: (item: QueueItem<T>) => boolean,
   ): QueueItem<T> | undefined => {
-    const index = queue.findIndex((item) => matches(item.payload))
+    const index = queue.findIndex(matches)
     if (index === -1) return undefined
     return queue.splice(index, 1)[0]
   }
+
+  const matchesClaim = (
+    stored: Pick<ClaimedAttempt | ClaimedCommand, 'id' | 'leaseToken'> | undefined,
+    claim: Pick<ClaimedAttempt | ClaimedCommand, 'id' | 'leaseToken'>,
+  ) => stored?.leaseToken === claim.leaseToken
 
   const runCoordinationExecutor: RunCoordinationExecutor = {
     async enqueue(command) {
@@ -310,19 +320,32 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
       })
     },
     async claim(worker) {
-      const item = claimQueued(continueRunCommands, (command) =>
-        worker.workflowNames.includes(command.workflowName),
+      const date = now()
+      const item = claimQueued(continueRunCommands, (queued) =>
+        worker.workflowNames.includes(queued.payload.workflowName) &&
+        (queued.runAt === undefined || queued.runAt <= date),
       )
       if (!item) return null
 
-      return {
+      const claim = {
         id: item.id,
         command: item.payload,
         leaseToken: id('continue-lease'),
       }
+      claimedContinueRunCommands.set(claim.id, claim)
+      return claim
     },
-    async ack() {},
+    async ack(command) {
+      if (matchesClaim(claimedContinueRunCommands.get(command.id), command)) {
+        claimedContinueRunCommands.delete(command.id)
+      }
+    },
     async release(command) {
+      if (!matchesClaim(claimedContinueRunCommands.get(command.id), command)) {
+        return
+      }
+
+      claimedContinueRunCommands.delete(command.id)
       continueRunCommands.push({ id: command.id, payload: command.command })
     },
   }
@@ -347,31 +370,54 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
       taskCommands.push({ id: id('task-command'), payload: command })
     },
     async claimActivity(worker) {
-      return claimedAttempt(
-        claimQueued(
-          activityCommands,
-          (command) =>
+      const claim = claimedAttempt(
+        claimQueued(activityCommands, (queued) => {
+          const command = queued.payload
+          return (
             worker.workflowNames.includes(command.workflowName) &&
             (worker.activityNames === undefined ||
-              worker.activityNames.includes(command.activityName)),
-        ),
+              worker.activityNames.includes(command.activityName))
+          )
+        }),
       )
+      if (claim) claimedActivityCommands.set(claim.id, claim)
+      return claim
     },
     async claimTask(worker) {
-      return claimedAttempt(
-        claimQueued(taskCommands, (command) =>
-          worker.taskNames.includes(command.taskName),
-        ),
+      const claim = claimedAttempt(
+        claimQueued(taskCommands, (queued) =>
+          worker.taskNames.includes(queued.payload.taskName),
+        )
       )
+      if (claim) claimedTaskCommands.set(claim.id, claim)
+      return claim
     },
     async heartbeat() {},
-    async ack() {},
+    async ack(attempt) {
+      const inFlight =
+        attempt.command.kind === 'activityAttempt'
+          ? claimedActivityCommands
+          : claimedTaskCommands
+      if (matchesClaim(inFlight.get(attempt.id), attempt)) {
+        inFlight.delete(attempt.id)
+      }
+    },
     async release(attempt) {
       if (attempt.command.kind === 'activityAttempt') {
+        if (!matchesClaim(claimedActivityCommands.get(attempt.id), attempt)) {
+          return
+        }
+
+        claimedActivityCommands.delete(attempt.id)
         activityCommands.push({ id: attempt.id, payload: attempt.command })
         return
       }
 
+      if (!matchesClaim(claimedTaskCommands.get(attempt.id), attempt)) {
+        return
+      }
+
+      claimedTaskCommands.delete(attempt.id)
       taskCommands.push({ id: attempt.id, payload: attempt.command })
     },
   }
@@ -386,6 +432,7 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
       attempts: [...attempts.values()],
       continueRunCommands: [...continueRunCommands],
       activityCommands: [...activityCommands],
+      taskCommands: [...taskCommands],
     }),
   }
 }
