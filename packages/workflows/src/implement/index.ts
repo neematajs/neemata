@@ -12,7 +12,6 @@ import type {
   BranchCaseDefinition,
   IdempotencyConflictPolicy,
   IdempotencyKey,
-  MapNodeOutput,
   MaybePromise,
   TaskInput,
   TaskOutput,
@@ -325,7 +324,7 @@ type CaseImplementers<
   Outputs extends object,
   Input,
 > = {
-  readonly activity: <NodeInput, Output, Deps extends Dependencies = {}>(
+  readonly activity: <NodeInput, Output>(
     value: ActivityImplementationValue<NodeInput, Output>,
     options?: WorkflowInputMapper<WorkflowDeps, Outputs, Input, NodeInput>,
   ) => ActivityCaseDescriptor<NodeInput, Output>
@@ -397,7 +396,7 @@ export type WorkflowImplementationChain<
       infer Output
     >
     ? {
-        readonly [Key in Name]: <Deps extends Dependencies = {}>(
+        readonly [Key in Name]: (
           value: ActivityImplementationValue<Input, Output>,
           options?: ActivityImplementationOptions<
             WorkflowDeps,

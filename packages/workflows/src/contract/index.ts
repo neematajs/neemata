@@ -1,5 +1,4 @@
 import type {
-  ActivityBindings,
   AnyTaskDefinition,
   AnyWorkflowDefinition,
   BranchCaseDefinition,
@@ -7,7 +6,6 @@ import type {
   BranchCaseOutputs,
   CancellationPolicy,
   DurationString,
-  MapNodeOutput,
   MapRunMode,
   RetryPolicy,
   Schema,

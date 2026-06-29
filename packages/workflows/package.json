@@ -8,6 +8,11 @@
       "import": "./dist/index.js",
       "module-sync": "./dist/index.js"
     },
+    "./runtime": {
+      "types": "./src/runtime/index.ts",
+      "import": "./dist/runtime/index.js",
+      "module-sync": "./dist/runtime/index.js"
+    },
     "./testing": {
       "types": "./src/testing/index.ts",
       "import": "./dist/testing/index.js",
@@ -20,6 +25,11 @@
         "types": "./dist/index.d.ts",
         "import": "./dist/index.js",
         "module-sync": "./dist/index.js"
+      },
+      "./runtime": {
+        "types": "./dist/runtime/index.d.ts",
+        "import": "./dist/runtime/index.js",
+        "module-sync": "./dist/runtime/index.js"
       },
       "./testing": {
         "types": "./dist/testing/index.d.ts",
