@@ -160,7 +160,7 @@ function resolveActivityAttemptNode(
     return direct.activity.name === command.activityName ? direct : undefined
   }
 
-  if (storedNode?.kind !== 'branch' || !storedNode.selectedCase) {
+  if (storedNode?.kind !== 'branch' || storedNode.selectedCase === undefined) {
     return undefined
   }
 

@@ -520,10 +520,6 @@ async function dispatchBranchNode(input: {
     throw unsupportedBranchCase(input.node.name, selected)
   }
 
-  const nodeInput = selected.input
-    ? selected.input(input.workflowCtx, input.outputs, input.run.input)
-    : input.run.input
-
   const identity = {
     runId: input.run.id,
     nodeName: input.node.name,
@@ -533,18 +529,37 @@ async function dispatchBranchNode(input: {
     runId: input.run.id,
     nodeName: input.node.name,
   })
-  const hasAttempt = children.attempts.some(
+  const existingAttempt = children.attempts.find(
     (attempt) =>
       attempt.identity && sameNodeChildIdentity(attempt.identity, identity),
   )
 
-  if (!hasAttempt) {
-    await input.store.setNodeInput({
+  if (existingAttempt) {
+    await dispatchActivityAttempt({
+      store: input.store,
+      attemptExecutor: input.attemptExecutor,
+      runCoordinationExecutor: input.runCoordinationExecutor,
+      workflowName: input.workflow.workflow.name,
+      activityName: selected.activity.name,
       runId: input.run.id,
       nodeName: input.node.name,
-      input: nodeInput,
+      prepareAttempt: async () => ({
+        attempt: existingAttempt,
+        commandInput: existingAttempt.input,
+      }),
     })
+    return
   }
+
+  const nodeInput = selected.input
+    ? selected.input(input.workflowCtx, input.outputs, input.run.input)
+    : input.run.input
+
+  await input.store.setNodeInput({
+    runId: input.run.id,
+    nodeName: input.node.name,
+    input: nodeInput,
+  })
 
   await dispatchActivityAttempt({
     store: input.store,

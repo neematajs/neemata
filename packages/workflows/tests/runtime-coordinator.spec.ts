@@ -474,13 +474,17 @@ describe('workflow runtime coordinator', () => {
     const implementation = implementWorkflow(workflow)
       .content({
         select: () => 'normal',
-        cases: ({ activity }) => ({
-          normal: activity(async (_ctx, input) => ({ text: input.scenario }), {
-            input: (_ctx, _outputs, input) => {
-              mapCalls += 1
-              return { scenario: `${input.scenario}-${mapCalls}` }
+        cases: (helpers) => ({
+          normal: helpers.activity(
+            async (_ctx, input) => ({ text: input.scenario }),
+            {
+              input: (_ctx, _outputs, input) => {
+                mapCalls += 1
+                if (mapCalls > 1) throw new Error('mapper called twice')
+                return { scenario: `${input.scenario}-${mapCalls}` }
+              },
             },
-          }),
+          ),
         }),
       })
       .finish((_ctx, { content }) => ({ text: content.text }))
@@ -517,11 +521,83 @@ describe('workflow runtime coordinator', () => {
     })
 
     const snapshot = await runtime.store.loadRunSnapshot(run.id)
-    expect(mapCalls).toBe(2)
+    expect(mapCalls).toBe(1)
     expect(snapshot?.nodes[0]?.input).toStrictEqual({ scenario: 'alpha-1' })
     expect(snapshot?.attempts[0]?.input).toStrictEqual({ scenario: 'alpha-1' })
     expect(runtime.inspect().activityCommands.map((item) => item.payload.input))
       .toStrictEqual([{ scenario: 'alpha-1' }, { scenario: 'alpha-1' }])
+  })
+
+  it('runs a branch activity case with an empty string key', async () => {
+    const workflow = defineWorkflow({
+      name: 'branch-empty-case',
+      input: t.object({ scenario: t.string() }),
+      output: t.object({ text: t.string() }),
+    })
+      .branch('content', {
+        output: t.object({ text: t.string() }),
+        cases: (helpers) => ({
+          '': helpers.activity({
+            input: t.object({ scenario: t.string() }),
+            output: t.object({ text: t.string() }),
+          }),
+        }),
+      })
+      .build()
+
+    const implementation = implementWorkflow(workflow)
+      .content({
+        select: () => '',
+        cases: (helpers) => ({
+          '': helpers.activity(async (_ctx, input) => ({
+            text: `empty:${input.scenario}`,
+          })),
+        }),
+      })
+      .finish((_ctx, { content }) => ({ text: content.text }))
+
+    const runtime = createInMemoryWorkflowRuntime()
+    const container = createTestContainer()
+    const run = await runtime.store.createRun({
+      workflowName: workflow.name,
+      input: { scenario: 'alpha' },
+    })
+
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [implementation],
+      workerId: 'coordinator-1',
+      command: {
+        kind: 'continueRun',
+        runId: run.id,
+        workflowName: workflow.name,
+      },
+    })
+
+    const claimed = await runtime.attemptExecutor.claimActivity({
+      workerId: 'activity-worker-1',
+      workflowNames: [workflow.name],
+      leaseMs: 30_000,
+    })
+    expect(claimed).not.toBeNull()
+
+    await runActivityAttempt({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [implementation],
+      workerId: 'activity-worker-1',
+      claimed: claimed!,
+    })
+
+    const snapshot = await runtime.store.loadRunSnapshot(run.id)
+    expect(snapshot?.nodes[0]?.selectedCase).toBe('')
+    expect(snapshot?.nodes[0]?.status).toBe('completed')
+    expect(snapshot?.nodes[0]?.output).toStrictEqual({ text: 'empty:alpha' })
   })
 
   it('releases a claimed activity attempt when no workflow implementation is registered', async () => {
