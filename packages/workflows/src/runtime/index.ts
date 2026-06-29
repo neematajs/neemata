@@ -46,6 +46,7 @@ export type {
   LoadNodeChildrenParams,
   NodeChildrenSnapshot,
   RunLease,
+  SelectNodeCaseParams,
   WaitNodeParams,
   WorkflowStore,
 } from './store.ts'

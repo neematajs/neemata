@@ -47,6 +47,7 @@ export type {
   RuntimeAttemptStatus,
   RuntimeNodeStatus,
   RuntimeRunStatus,
+  SelectNodeCaseParams,
   StoredAttempt,
   StoredChildLink,
   StoredError,
@@ -60,7 +61,6 @@ export type {
   WorkflowRuntimeRegistry,
   WorkflowStore,
 } from './runtime/index.ts'
-export type { SelectNodeCaseParams } from './runtime/store.ts'
 export type {
   ActivityBinding,
   ActivityBindings,

@@ -34,6 +34,9 @@ import type {
   WaitNodeParams,
   WorkflowStore,
 } from '../src/index.ts'
+import type {
+  SelectNodeCaseParams as RuntimeSelectNodeCaseParams,
+} from '../src/runtime/index.ts'
 
 type SemanticWorkflowStoreMethods = {
   selectNodeCase(params: SelectNodeCaseParams): Promise<StoredNode | undefined>
@@ -94,6 +97,9 @@ describe('workflow runtime interfaces', () => {
       nodeName: string
       caseKey: string
     }>()
+    expectTypeOf<RuntimeSelectNodeCaseParams>().toEqualTypeOf<
+      SelectNodeCaseParams
+    >()
     expectTypeOf<NodeChildIdentity>().toMatchTypeOf<{
       runId: string
       nodeName: string
