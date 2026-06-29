@@ -101,6 +101,57 @@ describe('workflow runtime coordinator', () => {
     expect(snapshot?.run.output).toStrictEqual({ caseId: 'alpha' })
   })
 
+  it('ignores a continuation command whose workflow name does not match the stored run', async () => {
+    const workflowA = defineWorkflow({
+      name: 'stored-workflow',
+      input: t.object({ scenario: t.string() }),
+      output: t.object({ caseId: t.string() }),
+    })
+      .activity('content', {
+        input: t.object({ scenario: t.string() }),
+        output: t.object({ text: t.string() }),
+      })
+      .build()
+    const workflowB = defineWorkflow({
+      name: 'command-workflow',
+      input: t.object({ scenario: t.string() }),
+      output: t.object({ caseId: t.string() }),
+    })
+      .activity('content', {
+        input: t.object({ scenario: t.string() }),
+        output: t.object({ text: t.string() }),
+      })
+      .build()
+
+    const implementationB = implementWorkflow(workflowB)
+      .content(async (_ctx, input) => ({ text: input.scenario }))
+      .finish((_ctx, { content }) => ({ caseId: content.text }))
+    const runtime = createInMemoryWorkflowRuntime()
+    const run = await runtime.store.createRun({
+      workflowName: workflowA.name,
+      input: { scenario: 'alpha' },
+    })
+
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container: createTestContainer(),
+      workflows: [implementationB],
+      workerId: 'coordinator-1',
+      command: {
+        kind: 'continueRun',
+        runId: run.id,
+        workflowName: workflowB.name,
+      },
+    })
+
+    const snapshot = await runtime.store.loadRunSnapshot(run.id)
+    expect(snapshot?.run.status).toBe('queued')
+    expect(snapshot?.nodes).toStrictEqual([])
+    expect(runtime.inspect().activityCommands).toStrictEqual([])
+  })
+
   it('runs a claimed activity attempt and enqueues continuation', async () => {
     const prefix = createValueInjectable('handled')
     const workflow = defineWorkflow({
@@ -179,6 +230,66 @@ describe('workflow runtime coordinator', () => {
         },
       },
     ])
+  })
+
+  it('releases a claimed activity attempt when no workflow implementation is registered', async () => {
+    const workflow = defineWorkflow({
+      name: 'unrouted-activity-worker',
+      input: t.object({ scenario: t.string() }),
+      output: t.object({ caseId: t.string() }),
+    })
+      .activity('content', {
+        input: t.object({ scenario: t.string() }),
+        output: t.object({ text: t.string() }),
+      })
+      .build()
+
+    const implementation = implementWorkflow(workflow)
+      .content(async (_ctx, input) => ({ text: input.scenario }))
+      .finish((_ctx, { content }) => ({ caseId: content.text }))
+    const runtime = createInMemoryWorkflowRuntime()
+    const run = await runtime.store.createRun({
+      workflowName: workflow.name,
+      input: { scenario: 'alpha' },
+    })
+    const container = createTestContainer()
+
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [implementation],
+      workerId: 'coordinator-1',
+      command: {
+        kind: 'continueRun',
+        runId: run.id,
+        workflowName: workflow.name,
+      },
+    })
+
+    const claimed = await runtime.attemptExecutor.claimActivity({
+      workerId: 'activity-worker-1',
+      workflowNames: [workflow.name],
+      leaseMs: 30_000,
+    })
+    expect(claimed).not.toBeNull()
+
+    await runActivityAttempt({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [],
+      workerId: 'activity-worker-1',
+      claimed: claimed!,
+    })
+
+    const snapshot = await runtime.store.loadRunSnapshot(run.id)
+    expect(snapshot?.nodes[0]?.status).toBe('running')
+    expect(snapshot?.attempts[0]?.status).toBe('started')
+    expect(runtime.inspect().activityCommands).toHaveLength(1)
+    expect(runtime.inspect().continueRunCommands).toHaveLength(0)
   })
 
   it('acks a claimed activity attempt when the attempt lease token is stale', async () => {
@@ -392,7 +503,7 @@ describe('workflow runtime coordinator', () => {
     expect(snapshot?.nodes[0]?.output).toStrictEqual({ text: 'alpha' })
   })
 
-  it('fails and acks current activity attempts with missing workflow implementations', async () => {
+  it('releases current activity attempts with missing workflow implementations', async () => {
     const runtime = createInMemoryWorkflowRuntime()
     const run = await runtime.store.createRun({
       workflowName: 'missing-workflow',
@@ -436,25 +547,11 @@ describe('workflow runtime coordinator', () => {
       claimed: claimed!,
     })
 
-    await runtime.attemptExecutor.release(claimed!)
-
     const snapshot = await runtime.store.loadRunSnapshot(run.id)
-    expect(snapshot?.attempts[0]?.status).toBe('failed')
-    expect(snapshot?.nodes[0]?.status).toBe('failed')
-    expect(snapshot?.nodes[0]?.error?.message).toBe(
-      'No workflow implementation registered for [missing-workflow]',
-    )
-    expect(runtime.inspect().activityCommands).toHaveLength(0)
-    expect(runtime.inspect().continueRunCommands).toStrictEqual([
-      {
-        id: expect.any(String),
-        payload: {
-          kind: 'continueRun',
-          runId: run.id,
-          workflowName: 'missing-workflow',
-        },
-      },
-    ])
+    expect(snapshot?.attempts[0]?.status).toBe('started')
+    expect(snapshot?.nodes[0]?.status).toBe('running')
+    expect(runtime.inspect().activityCommands).toHaveLength(1)
+    expect(runtime.inspect().continueRunCommands).toStrictEqual([])
   })
 
   it('fails the attempt, node, and run when dispatching the activity fails', async () => {
@@ -705,7 +802,6 @@ describe('workflow runtime coordinator', () => {
       runCoordinationExecutor: runtime.runCoordinationExecutor,
       attemptExecutor: runtime.attemptExecutor,
       container,
-      workflows: [implementation],
       tasks: [taskImplementation],
       workerId: 'task-worker-1',
       claimed: claimed!,
@@ -799,7 +895,6 @@ describe('workflow runtime coordinator', () => {
       runCoordinationExecutor: runtime.runCoordinationExecutor,
       attemptExecutor: runtime.attemptExecutor,
       container,
-      workflows: [implementation],
       tasks: [taskImplementation],
       workerId: 'task-worker-1',
       claimed: {
@@ -821,16 +916,9 @@ describe('workflow runtime coordinator', () => {
     expect(runtime.inspect().continueRunCommands).toHaveLength(0)
   })
 
-  it('fails a task attempt whose command task does not match the workflow node target', async () => {
-    let embeddingHandlerCalls = 0
-    let poisonHandlerCalls = 0
+  it('releases a task attempt when the worker has no matching task implementation', async () => {
     const embeddingTask = defineTask({
       name: 'validated.embedding.generate',
-      input: t.object({ text: t.string() }),
-      output: t.object({ vector: t.array(t.number()) }),
-    })
-    const poisonTask = defineTask({
-      name: 'validated.embedding.poison',
       input: t.object({ text: t.string() }),
       output: t.object({ vector: t.array(t.number()) }),
     })
@@ -842,18 +930,6 @@ describe('workflow runtime coordinator', () => {
       .task('embedding', embeddingTask)
       .build()
 
-    const embeddingImplementation = implementTask(embeddingTask, {
-      handler: async (_ctx, input) => {
-        embeddingHandlerCalls += 1
-        return { vector: [input.text.length] }
-      },
-    })
-    const poisonImplementation = implementTask(poisonTask, {
-      handler: async (_ctx, input) => {
-        poisonHandlerCalls += 1
-        return { vector: [input.text.length + 1] }
-      },
-    })
     const implementation = implementWorkflow(workflow)
       .embedding(embeddingTask)
       .finish((_ctx, { embedding }) => ({ vector: embedding.vector }))
@@ -896,35 +972,17 @@ describe('workflow runtime coordinator', () => {
       runCoordinationExecutor: runtime.runCoordinationExecutor,
       attemptExecutor: runtime.attemptExecutor,
       container,
-      workflows: [implementation],
-      tasks: [embeddingImplementation, poisonImplementation],
+      tasks: [],
       workerId: 'task-worker-1',
-      claimed: {
-        ...claimed!,
-        command: {
-          ...taskCommand,
-          taskName: poisonTask.name,
-        },
-      },
+      claimed: claimed!,
     })
 
-    await runtime.attemptExecutor.release(claimed!)
-
     const snapshot = await runtime.store.loadRunSnapshot(run.id)
-    expect(embeddingHandlerCalls).toBe(0)
-    expect(poisonHandlerCalls).toBe(0)
-    expect(snapshot?.nodes[0]?.status).toBe('failed')
-    expect(snapshot?.attempts[0]?.status).toBe('failed')
-    expect(runtime.inspect().continueRunCommands).toStrictEqual([
-      {
-        id: expect.any(String),
-        payload: {
-          kind: 'continueRun',
-          runId: run.id,
-          workflowName: workflow.name,
-        },
-      },
-    ])
+    expect(taskCommand.taskName).toBe(embeddingTask.name)
+    expect(snapshot?.nodes[0]?.status).toBe('running')
+    expect(snapshot?.attempts[0]?.status).toBe('started')
+    expect(runtime.inspect().taskCommands).toHaveLength(1)
+    expect(runtime.inspect().continueRunCommands).toHaveLength(0)
   })
 
   it('reconciles a completed stale task attempt before acking it', async () => {
@@ -991,7 +1049,6 @@ describe('workflow runtime coordinator', () => {
       runCoordinationExecutor: runtime.runCoordinationExecutor,
       attemptExecutor: runtime.attemptExecutor,
       container,
-      workflows: [implementation],
       tasks: [taskImplementation],
       workerId: 'task-worker-1',
       claimed: claimed!,
@@ -1084,7 +1141,6 @@ describe('workflow runtime coordinator', () => {
       runCoordinationExecutor: runtime.runCoordinationExecutor,
       attemptExecutor: runtime.attemptExecutor,
       container,
-      workflows: [implementation],
       tasks: [taskImplementation],
       workerId: 'task-worker-1',
       claimed: claimed!,

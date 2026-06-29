@@ -26,6 +26,14 @@ import type {
   StoredNode,
   StoredRun,
 } from '../runtime/state.ts'
+import {
+  isTerminalNodeStatus,
+  isTerminalRunStatus,
+} from '../runtime/status.ts'
+
+type InMemoryRunLease = RunLease & {
+  readonly expiresAt: Date
+}
 
 type QueueItem<T> = {
   readonly id: string
@@ -57,7 +65,7 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
   const attempts = new Map<string, StoredAttempt>()
   const childLinks: StoredChildLink[] = []
   const mapItems: StoredMapItem[] = []
-  const runLeases = new Map<string, RunLease>()
+  const runLeases = new Map<string, InMemoryRunLease>()
   const continueRunCommands: QueueItem<ContinueRunCommand>[] = []
   const activityCommands: QueueItem<ActivityAttemptCommand>[] = []
   const taskCommands: QueueItem<TaskAttemptCommand>[] = []
@@ -106,8 +114,10 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
       runs.set(run.id, run)
       return run
     },
-    async acquireRunLease({ runId }) {
-      if (runLeases.has(runId)) return undefined
+    async acquireRunLease({ runId, leaseMs }) {
+      const date = now()
+      const existingLease = runLeases.get(runId)
+      if (existingLease && existingLease.expiresAt > date) return undefined
 
       const run = runs.get(runId)
       if (!run) return undefined
@@ -116,6 +126,7 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
         runId,
         leaseToken: id('run-lease'),
         version: run.version,
+        expiresAt: new Date(date.getTime() + leaseMs),
       }
       runLeases.set(runId, lease)
       return lease
@@ -238,6 +249,7 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
       const key = nodeKey(runId, nodeName)
       const node = nodes.get(key)
       if (!node) return undefined
+      if (isTerminalNodeStatus(node.status)) return node
 
       const updated: StoredNode = {
         ...node,
@@ -253,6 +265,7 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
       const key = nodeKey(runId, nodeName)
       const node = nodes.get(key)
       if (!node) return undefined
+      if (isTerminalNodeStatus(node.status)) return node
 
       const updated: StoredNode = {
         ...node,
@@ -267,6 +280,7 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
     async completeRun({ runId, output }) {
       const run = runs.get(runId)
       if (!run) return undefined
+      if (isTerminalRunStatus(run.status)) return run
 
       const updated: StoredRun = {
         ...run,
@@ -281,6 +295,7 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
     async failRun({ runId, error }) {
       const run = runs.get(runId)
       if (!run) return undefined
+      if (isTerminalRunStatus(run.status)) return run
 
       const updated: StoredRun = {
         ...run,

@@ -41,6 +41,7 @@ export async function continueWorkflowRun(
   try {
     const snapshot = await input.store.loadRunSnapshot(input.command.runId)
     if (!snapshot || isTerminalRunStatus(snapshot.run.status)) return
+    if (snapshot.run.workflowName !== input.command.workflowName) return
 
     const failedNode = snapshot.nodes.find((node) => node.status === 'failed')
     if (failedNode) {

@@ -37,6 +37,29 @@ describe('in-memory workflow store', () => {
     expect(thirdLease).toBeDefined()
   })
 
+  it('allows a new coordinator to acquire an expired run lease', async () => {
+    const runtime = createInMemoryWorkflowRuntime()
+    const run = await runtime.store.createRun({
+      workflowName: 'case-generation',
+      input: { scenario: 'a' },
+    })
+
+    const expiredLease = await runtime.store.acquireRunLease({
+      runId: run.id,
+      workerId: 'worker-1',
+      leaseMs: 0,
+    })
+    const nextLease = await runtime.store.acquireRunLease({
+      runId: run.id,
+      workerId: 'worker-2',
+      leaseMs: 30_000,
+    })
+
+    expect(expiredLease).toBeDefined()
+    expect(nextLease).toBeDefined()
+    expect(nextLease?.leaseToken).not.toBe(expiredLease?.leaseToken)
+  })
+
   it('persists node input before attempts and ignores stale completions', async () => {
     const runtime = createInMemoryWorkflowRuntime()
     const run = await runtime.store.createRun({
@@ -105,7 +128,7 @@ describe('in-memory workflow store', () => {
     expect(snapshot?.mapItems).toStrictEqual([])
   })
 
-  it('ignores stale failures and updates current attempt, node, and run state', async () => {
+  it('ignores stale failures and treats terminal node and run updates as no-ops', async () => {
     const runtime = createInMemoryWorkflowRuntime()
     const run = await runtime.store.createRun({
       workflowName: 'case-generation',
@@ -167,12 +190,12 @@ describe('in-memory workflow store', () => {
     expect(fresh?.error?.message).toBe('fresh')
     expect(completedNode?.status).toBe('completed')
     expect(completedNode?.output).toStrictEqual({ text: 'done' })
-    expect(failedNode?.status).toBe('failed')
-    expect(failedNode?.error?.message).toBe('node failed')
+    expect(failedNode?.status).toBe('completed')
+    expect(failedNode?.output).toStrictEqual({ text: 'done' })
     expect(completedRun?.status).toBe('completed')
     expect(completedRun?.output).toStrictEqual({ ok: true })
-    expect(failedRun?.status).toBe('failed')
-    expect(failedRun?.error?.message).toBe('run failed')
+    expect(failedRun?.status).toBe('completed')
+    expect(failedRun?.output).toStrictEqual({ ok: true })
   })
 
   it('queues, claims, acknowledges, and releases run and attempt commands', async () => {

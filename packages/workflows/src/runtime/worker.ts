@@ -2,7 +2,6 @@ import type { Container, DependencyContext } from '@nmtjs/core'
 
 import type {
   ActivityNodeImplementation,
-  RunnableNodeImplementation,
   TaskImplementation,
   WorkflowImplementation,
 } from '../implement/index.ts'
@@ -54,7 +53,6 @@ export type RunTaskAttemptInput = {
   readonly store: WorkflowStore
   readonly runCoordinationExecutor: RunCoordinationExecutor
   readonly attemptExecutor: AttemptExecutor
-  readonly workflows: readonly WorkflowImplementation<any, any>[]
   readonly tasks: readonly TaskImplementation[]
   readonly workerId: string
   readonly claimed: ClaimedAttempt
@@ -82,17 +80,17 @@ export async function runActivityAttempt(
     return
   }
 
+  if (snapshot?.run.workflowName !== command.workflowName) {
+    await input.attemptExecutor.release(input.claimed)
+    return
+  }
+
   const registry = createWorkflowRuntimeRegistry({
     workflows: input.workflows as readonly WorkflowImplementation[],
   })
   const workflow = registry.getWorkflow(command.workflowName)
   if (!workflow) {
-    await failActivityAttemptConfiguration(
-      input,
-      new Error(
-        `No workflow implementation registered for [${command.workflowName}]`,
-      ),
-    )
+    await input.attemptExecutor.release(input.claimed)
     return
   }
 
@@ -100,13 +98,8 @@ export async function runActivityAttempt(
     (candidate): candidate is ActivityNodeImplementation =>
       candidate.kind === 'activity' && candidate.name === command.nodeName,
   )
-  if (!node) {
-    await failActivityAttemptConfiguration(
-      input,
-      new Error(
-        `No activity implementation registered for [${command.workflowName}.${command.nodeName}]`,
-      ),
-    )
+  if (!node || node.activity.name !== command.activityName) {
+    await input.attemptExecutor.release(input.claimed)
     return
   }
 
@@ -177,41 +170,17 @@ export async function runTaskAttempt(
     return
   }
 
+  if (snapshot?.run.workflowName !== command.workflowName) {
+    await input.attemptExecutor.release(input.claimed)
+    return
+  }
+
   const registry = createWorkflowRuntimeRegistry({
-    workflows: input.workflows as readonly WorkflowImplementation[],
     tasks: input.tasks,
   })
-  const workflow = registry.getWorkflow(command.workflowName)
-  if (!workflow) {
-    await failTaskAttemptConfiguration(
-      input,
-      new Error(
-        `No workflow implementation registered for [${command.workflowName}]`,
-      ),
-    )
-    return
-  }
-
-  const node = workflow.nodes.find(
-    (candidate): candidate is RunnableNodeImplementation =>
-      candidate.kind === 'task' && candidate.name === command.nodeName,
-  )
-  if (!node || node.target.name !== command.taskName) {
-    await failTaskAttemptConfiguration(
-      input,
-      new Error(
-        `No task node implementation registered for [${command.workflowName}.${command.nodeName}.${command.taskName}]`,
-      ),
-    )
-    return
-  }
-
   const task = registry.getTask(command.taskName)
-  if (task?.task !== node.target) {
-    await failTaskAttemptConfiguration(
-      input,
-      new Error(`No task implementation registered for [${command.taskName}]`),
-    )
+  if (!task) {
+    await input.attemptExecutor.release(input.claimed)
     return
   }
 
@@ -284,60 +253,6 @@ function isFreshTaskAttempt(
     storedAttempt.status === 'started' &&
     storedAttempt.leaseToken === command.leaseToken
   )
-}
-
-async function failActivityAttemptConfiguration(
-  input: RunActivityAttemptInput,
-  error: Error,
-): Promise<void> {
-  const command = input.claimed.command
-  if (command.kind !== 'activityAttempt') {
-    throw new Error(`Unsupported attempt command kind [${command.kind}]`)
-  }
-
-  const attempt = await input.store.failCurrentAttempt({
-    attemptId: command.attemptId,
-    leaseToken: command.leaseToken,
-    error,
-  })
-
-  if (attempt) {
-    await input.store.failNode({
-      runId: command.runId,
-      nodeName: command.nodeName,
-      error,
-    })
-    await enqueueContinueRun(input.runCoordinationExecutor, command)
-  }
-
-  await input.attemptExecutor.ack(input.claimed)
-}
-
-async function failTaskAttemptConfiguration(
-  input: RunTaskAttemptInput,
-  error: Error,
-): Promise<void> {
-  const command = input.claimed.command
-  if (command.kind !== 'taskAttempt') {
-    throw new Error(`Unsupported attempt command kind [${command.kind}]`)
-  }
-
-  const attempt = await input.store.failCurrentAttempt({
-    attemptId: command.attemptId,
-    leaseToken: command.leaseToken,
-    error,
-  })
-
-  if (attempt) {
-    await input.store.failNode({
-      runId: command.runId,
-      nodeName: command.nodeName,
-      error,
-    })
-    await enqueueContinueRun(input.runCoordinationExecutor, command)
-  }
-
-  await input.attemptExecutor.ack(input.claimed)
 }
 
 type EnqueueContinueRunCommand = ActivityAttemptCommand | TaskAttemptCommand
