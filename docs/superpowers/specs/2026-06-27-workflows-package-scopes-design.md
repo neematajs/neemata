@@ -23,8 +23,8 @@ locks in the wrong shape.
 - Keep infrastructure adapters out of the default import graph.
 - Keep declaration graph metadata inspectable from contracts alone.
 - Make workflow state first-class, not a BullMQ progress/status wrapper.
-- Preserve room for multiple executors: in-memory, BullMQ, Postgres-backed,
-  cloud queues, or Temporal-style adapters.
+- Make Postgres the first durable runtime substrate: state and internal queue
+  commands should share one database transaction.
 - Avoid a vague `shared` scope that becomes an ownership dump.
 
 ## Non-Goals
@@ -45,19 +45,19 @@ Use one package with dependency-light default exports:
 packages/workflows
 ```
 
-The package owns vocabulary, contracts, implementation builders, runtime
-interfaces, public types, and optional adapters. Adapters live behind explicit
-subpath exports so importing contracts or runtime interfaces does not evaluate
-adapter modules.
+The package owns vocabulary, contracts, implementation builders, runtime code,
+public types, and Postgres runtime integration. Postgres code lives behind
+explicit subpath exports so importing contracts does not evaluate database or
+migration-tool modules.
 
-Heavy adapter dependencies may live in `packages/workflows/package.json`, but
-they should usually be optional peer dependencies. Concrete adapter modules
-should fail only when that adapter subpath is imported and its peer dependency is
+Heavy Postgres-adjacent dependencies may live in `packages/workflows/package.json`,
+but they should usually be optional peer dependencies. Concrete Postgres modules
+should fail only when that subpath is imported and its peer dependency is
 missing.
 
 ## Core Source Scopes
 
-`packages/workflows/src` should use these scopes:
+`packages/workflows/src` currently uses these scopes:
 
 ```txt
 src/
@@ -65,13 +65,14 @@ src/
   contract/
   implement/
   runtime/
-  client/
-  store/
-  executor/
   adapters/
   types/
-  internal/
 ```
+
+`client` and `internal` should be added only when backed by real code. Store and
+executor contracts currently live under `runtime/` because the runtime is the
+only consumer. They are internal/transitional seams, not a promise that workflow
+runtime backends are interchangeable.
 
 ### `contract`
 
@@ -124,7 +125,7 @@ Rules:
 
 ### `runtime`
 
-Pure workflow runtime interfaces and state-machine orchestration.
+Workflow runtime state-machine orchestration.
 
 Owns:
 
@@ -137,16 +138,18 @@ Owns:
 
 Rules:
 
-- May depend on `contract`, `implement`, `store`, `executor`, `types`, and
-  `internal`.
-- Must depend only on interfaces for storage and execution.
-- Must not import BullMQ, Redis, Valkey, SQL drivers, or cloud queue SDKs.
+- May depend on `contract`, `implement`, `types`, and internal runtime seams.
+- Must keep root imports database-light.
+- May keep store/executor interfaces internally while the runtime is being
+  refactored, but those interfaces should not become app-facing backend
+  extension points.
+- Must not import BullMQ, Redis, Valkey, or cloud queue SDKs.
 - Must support deployments where parent workflows, child workflows, and tasks
   are executed by different worker processes.
 
 ### `client`
 
-Public command surface.
+Reserved public command surface. This scope does not exist yet.
 
 Owns:
 
@@ -160,16 +163,19 @@ Rules:
 
 - Should operate against workflow/task contracts, not implementations.
 - Should expose Neemata workflow statuses, not adapter-native statuses.
-- Must not assume polling, queues, or SQL as the transport model.
+- May assume the v1 durable runtime is Postgres-backed, while keeping the public
+  client vocabulary workflow-specific.
 
 ### `store`
 
-Persistence interfaces and canonical durable state model.
+Internal persistence contracts and canonical durable state model. These
+currently live inside `runtime/store.ts`.
 
 Owns:
 
 - run-store interface
 - idempotency interface
+- run discovery/list interface
 - run, node, activity, task, child workflow, and branch state types
 - durable task and workflow run state types
 - optimistic/versioned update contracts
@@ -177,14 +183,17 @@ Owns:
 Rules:
 
 - Defines source-of-truth concepts.
-- Does not implement a database backend.
+- Should map directly to Postgres-backed runtime behavior.
 - Must make duplicate and stale completions representable and ignorable.
+- Must make run idempotency, child links, map items, and snapshots atomic enough
+  to implement with database constraints and transactions.
 - Must distinguish public durable run IDs from internal attempt IDs. Tasks and
   workflows are public run kinds; attempts are retry/lease records.
 
 ### `executor`
 
-Dispatch interfaces for tasks and activities.
+Internal dispatch contracts for run coordination and attempts. These currently
+live inside `runtime/executors.ts`.
 
 Owns:
 
@@ -196,19 +205,20 @@ Owns:
 Rules:
 
 - Defines at-least-once execution semantics.
-- Does not implement worker leasing or queue mechanics.
+- Should be backed by Postgres command tables in the v1 durable runtime.
 - Must not imply BullMQ queue names or Redis connections.
 
-### `adapters`
+### `postgres`
 
-Concrete infrastructure bindings behind explicit subpath exports.
+Postgres runtime substrate behind explicit subpath exports.
 
 Owns:
 
-- BullMQ executor/store integration, if provided
-- Postgres run-store integration, if provided
-- in-memory testing/runtime adapters, if useful
-- adapter-specific option types
+- Postgres runtime construction
+- Postgres command-table queue implementation
+- Postgres schema verification
+- Drizzle schema artifact factory
+- testing/local schema bootstrap helpers
 
 Rules:
 
@@ -216,7 +226,11 @@ Rules:
 - Must not be imported by `contract`, `implement`, `runtime`, `client`, `store`,
   or `executor`.
 - May import optional peer dependencies.
-- Must keep adapter-specific concepts out of public core types.
+- Must keep Postgres-specific concepts out of root public workflow types.
+- Should be exported as `@nmtjs/workflows/postgres` and
+  `@nmtjs/workflows/postgres/drizzle`. Existing
+  `@nmtjs/workflows/adapters/postgres` paths are transitional compatibility
+  paths during the pivot.
 
 ### `types`
 
@@ -263,36 +277,58 @@ Root `src/index.ts` exports only stable, dependency-light API:
 ```ts
 export { defineTask, defineWorkflow } from './contract'
 export { implementTask, implementWorkflow } from './implement'
+export {
+  createWorkflowRuntimeClient,
+  startTaskRun,
+  startWorkflowRun,
+} from './runtime'
 export type {
+  TaskImplementation,
   TaskStatus,
+  WorkflowImplementation,
   WorkflowActivityNode,
   WorkflowBranchNode,
   WorkflowMapTaskNode,
   WorkflowMapWorkflowNode,
-  WorkflowClient,
   WorkflowNode,
   WorkflowParallelNode,
   WorkflowRun,
   WorkflowStatus,
   WorkflowTaskNode,
 } from './types'
+export type {
+  AttemptExecutor,
+  RunCoordinationExecutor,
+  WorkflowRuntimeAdapter,
+  WorkflowStore,
+} from './runtime'
 ```
 
-Root export must not expose concrete adapters.
+Root export may expose dependency-light runtime helpers while the runtime is in
+flight. Long-term, store/executor interfaces should be treated as internal
+implementation seams, not public backend-adapter contracts. Root must not expose
+Postgres modules or implementation-builder internals such as chain, mapper,
+idempotency callback, or inline activity helper types.
 
-Reserved adapter subpath pattern:
+`createWorkflowRuntimeClient` is a server-side runtime convenience wrapper over
+the store and executor interfaces. It is not the final app-facing client scope.
+`createInMemoryWorkflowRuntime` may remain as a narrow test helper during the
+pivot, but it is not a second durable runtime target.
+
+Current subpaths:
 
 ```txt
-@nmtjs/workflows/adapters/bullmq
+@nmtjs/workflows/runtime
+@nmtjs/workflows/postgres
+@nmtjs/workflows/postgres/drizzle
 @nmtjs/workflows/adapters/postgres
+@nmtjs/workflows/adapters/postgres/drizzle
 ```
 
-Adapter subpaths are the only supported way to import adapter code once concrete
-adapters exist. They are not required for the first contract/implementation
-draft.
-Other subpaths such as `client`, `runtime`, `store`, `executor`, and `testing`
-may be added later only when there is a concrete adapter-author or testing use
-case.
+`adapters/postgres` is a transitional compatibility spelling. New docs and code
+should use `postgres`. BullMQ/cloud queue subpaths are out of scope for v1.
+Other subpaths such as `client` and `testing` may be added later only when there
+is a concrete use case.
 
 ## Dependency Rules
 
@@ -304,7 +340,7 @@ types/internal <- store
 types/internal <- executor
 contract + implement + store + executor -> runtime
 contract + types -> client
-contract + runtime + store + executor -> adapters/*
+contract + runtime + store + executor -> postgres
 ```
 
 Core scopes must not import `adapters/*`.
@@ -314,8 +350,8 @@ dependency is small, pure, and needed by the default import graph.
 
 ## Runtime Boundary
 
-The core runtime should treat queues as dispatch adapters, not sources of
-truth. Canonical state belongs to the store interface:
+The durable runtime should treat the Postgres database as the state and command
+substrate. Canonical state belongs to workflow tables:
 
 - run status
 - node status
@@ -325,8 +361,9 @@ truth. Canonical state belongs to the store interface:
 - output and error state
 - idempotency keys
 
-Executor adapters may be at-least-once. Store updates must make duplicate,
-late, or stale executor completions safe to ignore.
+Internal command queues may be at-least-once. Store updates must make duplicate,
+late, or stale command completions safe to ignore. State updates and follow-up
+command inserts should happen in one transaction whenever they must be atomic.
 
 ## Workflow Vocabulary
 
@@ -362,25 +399,27 @@ Reserved future concepts:
 - watch/subscribe client APIs
 - workflow-level retry
 
-## Current Filesystem Target
+## Current Filesystem
 
-The current draft should include only scopes backed by real API code:
+The current package should include only scopes backed by real API code:
 
 ```txt
 src/
   index.ts
   contract/
   implement/
+  runtime/
+  adapters/
   types/
 ```
 
-`runtime`, `client`, `store`, `executor`, `adapters`, and `internal` should be
-added only when the first real code in that scope lands. Empty folders are not
-useful.
+`runtime/client.ts`, `runtime/in-memory.ts`, and `adapters/postgres*` exist
+today. `runtime/in-memory.ts` is a test/local helper, not a parallel production
+backend. A top-level `client` scope and `internal` should be added only when the
+first real code in those scopes lands. Empty folders are not useful.
 
-`src/api-draft.demo.ts` is acceptable while iterating on API feel, but it should
-move to `tests`, `examples`, or be removed before treating the package as a
-publishable API surface.
+API feel playgrounds live under `tests/examples`. They are type-checked with
+the package but are not part of the publishable `src` surface or build output.
 
 ## Design Guardrails
 
@@ -413,7 +452,5 @@ publishable API surface.
   declarations, while child/task implementations can live in separate workers.
 - Branch and parallel cases are limited to primitive leaves in v1; complex case
   logic should be modeled as child workflows.
-- Runtime code can execute through interfaces without importing the concrete
-  executor or store backend.
-- Adapter subpaths can be added or removed without changing public workflow
-  contracts.
+- Runtime code can execute without root imports pulling Postgres modules.
+- Postgres subpaths can evolve without changing public workflow contracts.

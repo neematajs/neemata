@@ -12,6 +12,26 @@
       "types": "./src/runtime/index.ts",
       "import": "./dist/runtime/index.js",
       "module-sync": "./dist/runtime/index.js"
+    },
+    "./postgres": {
+      "types": "./src/adapters/postgres.ts",
+      "import": "./dist/adapters/postgres.js",
+      "module-sync": "./dist/adapters/postgres.js"
+    },
+    "./postgres/drizzle": {
+      "types": "./src/adapters/postgres/drizzle.ts",
+      "import": "./dist/adapters/postgres/drizzle.js",
+      "module-sync": "./dist/adapters/postgres/drizzle.js"
+    },
+    "./adapters/postgres": {
+      "types": "./src/adapters/postgres.ts",
+      "import": "./dist/adapters/postgres.js",
+      "module-sync": "./dist/adapters/postgres.js"
+    },
+    "./adapters/postgres/drizzle": {
+      "types": "./src/adapters/postgres/drizzle.ts",
+      "import": "./dist/adapters/postgres/drizzle.js",
+      "module-sync": "./dist/adapters/postgres/drizzle.js"
     }
   },
   "publishConfig": {
@@ -25,6 +45,26 @@
         "types": "./dist/runtime/index.d.ts",
         "import": "./dist/runtime/index.js",
         "module-sync": "./dist/runtime/index.js"
+      },
+      "./postgres": {
+        "types": "./dist/adapters/postgres.d.ts",
+        "import": "./dist/adapters/postgres.js",
+        "module-sync": "./dist/adapters/postgres.js"
+      },
+      "./postgres/drizzle": {
+        "types": "./dist/adapters/postgres/drizzle.d.ts",
+        "import": "./dist/adapters/postgres/drizzle.js",
+        "module-sync": "./dist/adapters/postgres/drizzle.js"
+      },
+      "./adapters/postgres": {
+        "types": "./dist/adapters/postgres.d.ts",
+        "import": "./dist/adapters/postgres.js",
+        "module-sync": "./dist/adapters/postgres.js"
+      },
+      "./adapters/postgres/drizzle": {
+        "types": "./dist/adapters/postgres/drizzle.d.ts",
+        "import": "./dist/adapters/postgres/drizzle.js",
+        "module-sync": "./dist/adapters/postgres/drizzle.js"
       }
     }
   },
@@ -35,10 +75,31 @@
     "@nmtjs/core": "workspace:*",
     "@nmtjs/type": "workspace:*"
   },
+  "peerDependencies": {
+    "@electric-sql/pglite": "^0.5.3",
+    "drizzle-kit": "1.0.0-rc.4",
+    "drizzle-orm": "1.0.0-rc.4"
+  },
+  "peerDependenciesMeta": {
+    "@electric-sql/pglite": {
+      "optional": true
+    },
+    "drizzle-kit": {
+      "optional": true
+    },
+    "drizzle-orm": {
+      "optional": true
+    }
+  },
   "files": [
     "dist",
     "src",
     "LICENSE.md",
     "README.md"
-  ]
+  ],
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.3",
+    "drizzle-kit": "1.0.0-rc.4",
+    "drizzle-orm": "1.0.0-rc.4"
+  }
 }

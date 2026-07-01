@@ -6,7 +6,7 @@ import {
   defineWorkflow,
   implementTask,
   implementWorkflow,
-} from './index.ts'
+} from '../../src/index.ts'
 
 const model = createValueInjectable('text-embedding-3-small')
 
@@ -38,20 +38,20 @@ export const caseWorkflow = defineWorkflow({
   })
   .branch('caseContent', {
     output: t.object({ text: t.string() }),
-    cases: ({ activity, workflow }) => ({
-      normal: activity({
+    cases: (helpers) => ({
+      normal: helpers.activity({
         input: t.object({ text: t.string() }),
         output: t.object({ text: t.string() }),
       }),
-      fallback: workflow(fallbackWorkflow),
+      fallback: helpers.workflow(fallbackWorkflow),
     }),
   })
-  .parallel('postProcessing', ({ activity, task }) => ({
-    audit: activity({
+  .parallel('postProcessing', (helpers) => ({
+    audit: helpers.activity({
       input: t.object({ text: t.string() }),
       output: t.object({ ok: t.boolean() }),
     }),
-    embedding: task(embeddingTask),
+    embedding: helpers.task(embeddingTask),
   }))
   .activity('saveCase', {
     input: t.object({ scenario: t.string(), embeddingId: t.string() }),
@@ -86,7 +86,7 @@ export const curriculumWorkflow = defineWorkflow({
 
 export const embeddingImpl = implementTask(embeddingTask, {
   dependencies: { model },
-  idempotency: (_ctx, input) => ['embedding.generate', input.text],
+  idempotency: (_, input) => ['embedding.generate', input.text],
   async handler(ctx, input) {
     return { id: `${ctx.model}:${input.text.length}` }
   },
@@ -101,59 +101,59 @@ const someHandler = createHandler({
 
 export const caseWorkflowImpl = implementWorkflow(caseWorkflow)
   .content(someHandler, {
-    input: (_ctx, _outputs, input) => ({ scenario: input.scenario }),
+    input: (_, __, input) => ({ scenario: input.scenario }),
   })
   .caseContent({
-    select: (_ctx, _outputs, input): 'normal' | 'fallback' => input.kind,
+    select: (_, __, input): 'normal' | 'fallback' => input.kind,
     cases: ({ activity, workflow }) => ({
-      normal: activity(async (_ctx, input) => ({ text: input.text }), {
-        input: (_ctx, { content }) => ({ text: content.text }),
+      normal: activity(async (_, input) => ({ text: input.text }), {
+        input: (_, { content }) => ({ text: content.text }),
       }),
       fallback: workflow(fallbackWorkflow, {
-        input: (_ctx, _outputs, input) => ({ scenario: input.scenario }),
+        input: (_, __, input) => ({ scenario: input.scenario }),
       }),
     }),
   })
   .postProcessing(({ activity, task }) => ({
-    audit: activity(async (_ctx, input) => ({ ok: Boolean(input.text) }), {
-      input: (_ctx, { caseContent }) => ({ text: caseContent.text }),
+    audit: activity(async (_, input) => ({ ok: Boolean(input.text) }), {
+      input: (_, { caseContent }) => ({ text: caseContent.text }),
     }),
     embedding: task(embeddingTask, {
-      input: (_ctx, { caseContent }) => ({ text: caseContent.text }),
+      input: (_, { caseContent }) => ({ text: caseContent.text }),
     }),
   }))
   .saveCase(
     {
-      handler: async (_ctx, input) => ({
+      handler: async (_, input) => ({
         caseId: `${input.scenario}:${input.embeddingId}`,
       }),
     },
     {
-      input: (_ctx, { postProcessing }, input) => ({
+      input: (_, { postProcessing }, input) => ({
         scenario: input.scenario,
         embeddingId: postProcessing.embedding.id,
       }),
     },
   )
-  .finish((_ctx, { saveCase }) => ({ caseId: saveCase.caseId }))
+  .finish((_, { saveCase }) => ({ caseId: saveCase.caseId }))
 
 export const fallbackWorkflowImpl = implementWorkflow(fallbackWorkflow).finish(
-  (_ctx, _outputs, input) => ({ text: input.scenario }),
+  (_, __, input) => ({ text: input.scenario }),
 )
 
 export const curriculumWorkflowImpl = implementWorkflow(curriculumWorkflow)
-  .generateScenarios(async (_ctx, input) => ({ scenarios: input.scenarios }), {
-    input: (_ctx, _outputs, input) => input,
+  .generateScenarios(async (_, input) => ({ scenarios: input.scenarios }), {
+    input: (_, __, input) => input,
   })
   .caseRuns(caseWorkflow, {
-    items: (_ctx, { generateScenarios }) => generateScenarios.scenarios,
-    input: (_ctx, _outputs, item) => ({
+    items: (_, { generateScenarios }) => generateScenarios.scenarios,
+    input: (_, __, item) => ({
       kind: 'normal' as const,
       scenario: item.text,
     }),
   })
   .embeddings(embeddingTask, {
-    items: (_ctx, { generateScenarios }) => generateScenarios.scenarios,
-    input: (_ctx, _outputs, item) => ({ text: item.text }),
+    items: (_, { generateScenarios }) => generateScenarios.scenarios,
+    input: (_, __, item) => ({ text: item.text }),
   })
-  .finish((_ctx, { caseRuns }) => ({ started: caseRuns.items.length }))
+  .finish((_, { caseRuns }) => ({ started: caseRuns.items.length }))

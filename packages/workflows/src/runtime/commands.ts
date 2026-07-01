@@ -13,6 +13,7 @@ export type ActivityAttemptCommand = {
   readonly attemptId: string
   readonly leaseToken: string
   readonly input: unknown
+  readonly idempotencyKey?: readonly unknown[]
 }
 
 export type TaskAttemptCommand = {
@@ -24,6 +25,7 @@ export type TaskAttemptCommand = {
   readonly attemptId: string
   readonly leaseToken: string
   readonly input: unknown
+  readonly idempotencyKey?: readonly unknown[]
 }
 
 export type AttemptCommand = ActivityAttemptCommand | TaskAttemptCommand

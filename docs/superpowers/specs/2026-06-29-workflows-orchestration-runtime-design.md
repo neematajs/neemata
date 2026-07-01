@@ -2,18 +2,14 @@
 
 ## Context
 
-The first runtime slice executes linear `activity` and `task` nodes. The public
-API already declares richer graph nodes:
+The runtime now executes every public v1 graph node kind through adapter-free
+store and executor interfaces:
 
-- child `workflow`
-- `branch`
-- `parallel`
-- `mapTask`
-- `mapWorkflow`
+- primitive `activity`, `task`, and child `workflow` nodes
+- bounded orchestration nodes: `branch`, `parallel`, `mapTask`, `mapWorkflow`
 
-These nodes need one runtime model before implementation continues. Planning
-them one-by-one risks inconsistent state shapes, worker routing, output
-semantics, and retry/cancellation behavior.
+This spec records the target model and current runtime boundaries. It is no
+longer a pre-implementation design note.
 
 This spec designs all v1 orchestration nodes together. Implementation can still
 land in smaller slices.
@@ -37,7 +33,8 @@ land in smaller slices.
 - Do not add retries, backoff scheduling, cancellation propagation, progress
   events, signals, queries, or watch APIs in this spec.
 - Do not define final SQL tables or adapter-specific queues.
-- Do not make the in-memory test runtime public.
+- Do not add concrete BullMQ, Redis, Valkey, SQL, or cloud queue adapters in
+  this spec.
 
 ## Runtime Node Classes
 
@@ -240,12 +237,13 @@ Coordinator behavior:
 Rules:
 
 - V1 child workflow mode is `start-and-wait`.
-- Contract should reserve `mode`, but runtime only accepts start-and-wait.
+- Direct child workflow nodes do not expose a `mode` option in v1. Mode exists
+  on `mapWorkflow`, where start-only and wait modes are meaningful.
 - Child worker routing is by child workflow name.
 - Parent workflow worker does not need child workflow implementation to wait on
   an existing child link.
 - Starting child and persisting child link must be atomic from runtime
-  perspective. Store interface can model this as one semantic operation later.
+  perspective. Store interface models this as one semantic operation.
 
 ## Branch Node Semantics
 
@@ -452,8 +450,8 @@ Child workflow execution:
 
 ## Store Interface Implications
 
-The current store interface is enough for primitive activity/task tests but too
-thin for full orchestration.
+The current store interface exposes semantic child-identity operations for
+orchestration.
 
 The store should expose semantic, atomic operations where the coordinator needs
 idempotency. It should not expose only low-level CRUD calls and force the
@@ -490,7 +488,7 @@ The identity fields must be stored structurally. Dot-path strings are not enough
 
 ### Semantic Store Methods
 
-Store additions:
+Current store methods:
 
 ```ts
 type EnsureNodeAttemptParams = {
@@ -669,9 +667,12 @@ Default v1 behavior:
 No automatic cancellation of sibling work in v1. That needs explicit
 cancellation model later.
 
-## Implementation Slices
+## Historical Implementation Slices
 
-Implement in this order:
+These slices are historical guidance. The current runtime has implemented child
+workflow, branch, parallel, `mapTask`, `mapWorkflow`, and `start-only` behavior.
+
+Implementation landed in this order:
 
 1. **Store child identity support**
    Add structured child identity for attempts, child links, and map items in

@@ -7,15 +7,6 @@ import * as workflows from '../src/index.ts'
 const { defineTask, defineWorkflow, implementTask, implementWorkflow } =
   workflows
 
-// @ts-expect-error legacy mapper scope is not part of the public workflows API
-type LegacyMapperScope = workflows.MapperScope<unknown>
-
-// @ts-expect-error implementation chain internals are not public API
-type LegacyBranchCaseParams = workflows.BranchCaseImplementationParams<any>
-
-void (undefined as unknown as LegacyMapperScope)
-void (undefined as unknown as LegacyBranchCaseParams)
-
 describe('workflow API boundaries', () => {
   const prefix = createValueInjectable('prefix')
 
@@ -45,12 +36,12 @@ describe('workflow API boundaries', () => {
       output: t.object({ text: t.string() }),
     })
     .branch('caseContent', {
-      cases: ({ activity, workflow }) => ({
-        normal: activity({
+      cases: (helpers) => ({
+        normal: helpers.activity({
           input: t.object({ text: t.string() }),
           output: t.object({ kind: t.literal('normal'), text: t.string() }),
         }),
-        fallback: workflow(childWorkflow),
+        fallback: helpers.workflow(childWorkflow),
       }),
     })
     .task('embedding', embedding)

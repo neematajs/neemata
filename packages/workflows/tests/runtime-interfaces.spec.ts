@@ -25,6 +25,9 @@ import type {
   EnsureNodeAttemptParams,
   EnsureNodeAttemptResult,
   FailMapItemParams,
+  InMemoryWorkflowRuntime,
+  ListRunsFilter,
+  ListRunsResult,
   LoadNodeChildrenParams,
   NodeChildIdentity,
   NodeChildrenSnapshot,
@@ -37,12 +40,14 @@ import type {
   StoredMapItem,
   StoredNode,
   StoredRun,
+  StartWorkflowRunInput,
   TaskRun,
   WaitNodeParams,
   WorkerCommandResult,
   WorkerLoopOptions,
   WorkerLoopResult,
-  WorkflowClient,
+  WorkflowRuntimeAdapter,
+  WorkflowStatus,
   WorkflowStore,
 } from '../src/index.ts'
 import type {
@@ -50,6 +55,7 @@ import type {
 } from '../src/runtime/index.ts'
 
 type SemanticWorkflowStoreMethods = {
+  listRuns(params?: ListRunsFilter): Promise<ListRunsResult>
   selectNodeCase(params: SelectNodeCaseParams): Promise<StoredNode | undefined>
   ensureNodeAttempt(
     params: EnsureNodeAttemptParams,
@@ -98,11 +104,34 @@ describe('workflow runtime interfaces', () => {
     expectTypeOf<RunCoordinationExecutor>().toHaveProperty('enqueue')
     expectTypeOf<AttemptExecutor>().toHaveProperty('dispatchActivity')
     expectTypeOf<WorkflowStore>().toHaveProperty('createRun')
+    expectTypeOf<WorkflowRuntimeAdapter>().toMatchTypeOf<{
+      store: WorkflowStore
+      runCoordinationExecutor: RunCoordinationExecutor
+      attemptExecutor: AttemptExecutor
+    }>()
+    expectTypeOf<InMemoryWorkflowRuntime>().toMatchTypeOf<
+      WorkflowRuntimeAdapter
+    >()
     expectTypeOf<CreateRunInput>().toMatchTypeOf<{
       kind?: RunKind
       name?: string
       workflowName: string
       taskName?: string
+    }>()
+    expectTypeOf<ListRunsFilter>().toMatchTypeOf<{
+      kind?: RunKind
+      name?: string
+      status?: string | readonly string[]
+      parentRunId?: string
+      rootRunId?: string
+      tags?: Readonly<Record<string, string>>
+      input?: unknown
+      limit?: number
+      cursor?: string
+    }>()
+    expectTypeOf<ListRunsResult>().toMatchTypeOf<{
+      runs: readonly StoredRun[]
+      nextCursor?: string
     }>()
     expectTypeOf<StoredRun>().toHaveProperty('status')
     expectTypeOf<StoredRun>().toMatchTypeOf<{
@@ -127,6 +156,21 @@ describe('workflow runtime interfaces', () => {
       signal?: AbortSignal
     }>()
     expectTypeOf<WorkerLoopResult>().toMatchTypeOf<{ processed: number }>()
+    expectTypeOf<WorkflowStatus>().toEqualTypeOf<
+      | 'queued'
+      | 'running'
+      | 'waiting'
+      | 'cancelling'
+      | 'cancelled'
+      | 'failed'
+      | 'completed'
+    >()
+    expectTypeOf<StartWorkflowRunInput<any>>().toMatchTypeOf<{
+      workflow: { name: string }
+      input: unknown
+      tags?: Readonly<Record<string, string>>
+      idempotencyKey?: readonly unknown[]
+    }>()
     expectTypeOf<TaskRun>().toMatchTypeOf<{
       id: string
       kind: 'task'
@@ -136,31 +180,6 @@ describe('workflow runtime interfaces', () => {
     expectTypeOf<RunnableRun>().toMatchTypeOf<
       { kind: 'task' } | { kind: 'workflow' }
     >()
-  })
-
-  it('types workflow client start/get/list/cancel over task declarations', () => {
-    const task = defineTask({
-      name: 'client.embedding',
-      input: t.object({ text: t.string() }),
-      output: t.object({ id: t.string() }),
-    })
-
-    const assertClient = (client: WorkflowClient) => {
-      expectTypeOf(client.start(task, { text: 'alpha' })).toEqualTypeOf<
-        Promise<TaskRun<typeof task>>
-      >()
-      expectTypeOf(client.get(task, 'run-1')).toEqualTypeOf<
-        Promise<TaskRun<typeof task> | undefined>
-      >()
-      expectTypeOf(client.list(task)).toEqualTypeOf<
-        Promise<TaskRun<typeof task>[]>
-      >()
-      expectTypeOf(client.cancel(task, 'run-1')).toEqualTypeOf<
-        Promise<TaskRun<typeof task>>
-      >()
-    }
-
-    expect(assertClient).toBeTypeOf('function')
   })
 
   it('exports semantic orchestration store contracts', () => {
@@ -230,6 +249,7 @@ describe('workflow runtime interfaces', () => {
       taskName?: string
     }>()
     expectTypeOf<StoredMapItem>().toHaveProperty('identity')
+    expectTypeOf<WorkflowStore>().toHaveProperty('listRuns')
     expectTypeOf<WorkflowStore>().toHaveProperty('selectNodeCase')
     expectTypeOf<WorkflowStore>().toHaveProperty('waitNode')
     expectTypeOf<WorkflowStore>().toHaveProperty('ensureChildRun')

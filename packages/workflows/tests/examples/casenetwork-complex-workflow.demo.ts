@@ -5,8 +5,7 @@ import {
   defineWorkflow,
   implementTask,
   implementWorkflow,
-  type SchemaOutput,
-} from './index.ts'
+} from '../../src/index.ts'
 
 const caseKindSchema = t.union(t.literal('outpatient'), t.literal('obstetrics'))
 
@@ -112,8 +111,6 @@ const saveCaseInputSchema = t.object({
   generatedQuestions: t.array(t.object({ prompt: t.string() })),
 })
 
-type CurriculumScenario = SchemaOutput<typeof curriculumScenarioSchema>
-
 export const embeddingTask = defineTask({
   name: 'embedding.generate',
   input: t.object({ entity: t.string(), entityId: t.string() }),
@@ -153,31 +150,31 @@ export const outpatientCaseContentWorkflow = defineWorkflow({
     input: t.object({ blueprint: t.string(), review: reviewSchema }),
     output: t.object({ revisedBlueprint: t.string(), usage: usageSchema }),
   })
-  .parallel('sections', ({ activity }) => ({
-    patientBackground: activity({
+  .parallel('sections', (helpers) => ({
+    patientBackground: helpers.activity({
       input: sectionInputSchema,
       output: t.object({ patientBackground: t.string(), usage: usageSchema }),
     }),
-    differentialDiagnosis: activity({
+    differentialDiagnosis: helpers.activity({
       input: sectionInputSchema,
       output: t.object({
         differentialDiagnosis: t.string(),
         usage: usageSchema,
       }),
     }),
-    labsAndDiagnostics: activity({
+    labsAndDiagnostics: helpers.activity({
       input: sectionInputSchema,
       output: t.object({ labsAndDiagnostics: t.string(), usage: usageSchema }),
     }),
-    treatmentPlan: activity({
+    treatmentPlan: helpers.activity({
       input: sectionInputSchema,
       output: t.object({ treatmentPlan: t.string(), usage: usageSchema }),
     }),
-    outcome: activity({
+    outcome: helpers.activity({
       input: sectionInputSchema,
       output: t.object({ outcome: t.string(), usage: usageSchema }),
     }),
-    caseIdentity: activity({
+    caseIdentity: helpers.activity({
       input: sectionInputSchema,
       output: t.object({
         name: t.string(),
@@ -219,46 +216,46 @@ export const obstetricsCaseContentWorkflow = defineWorkflow({
     input: t.object({ blueprint: t.string(), review: reviewSchema }),
     output: t.object({ revisedBlueprint: t.string(), usage: usageSchema }),
   })
-  .parallel('sections', ({ activity }) => ({
-    caseEntry: activity({
+  .parallel('sections', (helpers) => ({
+    caseEntry: helpers.activity({
       input: sectionInputSchema,
       output: t.object({ caseEntry: t.string(), usage: usageSchema }),
     }),
-    maternalFetalAssessment: activity({
+    maternalFetalAssessment: helpers.activity({
       input: sectionInputSchema,
       output: t.object({
         maternalFetalAssessment: t.string(),
         usage: usageSchema,
       }),
     }),
-    interpretationAndPlan: activity({
+    interpretationAndPlan: helpers.activity({
       input: sectionInputSchema,
       output: t.object({
         interpretationAndPlan: t.string(),
         usage: usageSchema,
       }),
     }),
-    laborManagement: activity({
+    laborManagement: helpers.activity({
       input: sectionInputSchema,
       output: t.object({ management: t.string(), usage: usageSchema }),
     }),
-    reassessment: activity({
+    reassessment: helpers.activity({
       input: sectionInputSchema,
       output: t.object({ reassessment: t.string(), usage: usageSchema }),
     }),
-    deliveryPlanning: activity({
+    deliveryPlanning: helpers.activity({
       input: sectionInputSchema,
       output: t.object({ deliveryPlanning: t.string(), usage: usageSchema }),
     }),
-    postpartum: activity({
+    postpartum: helpers.activity({
       input: sectionInputSchema,
       output: t.object({ postpartum: t.string(), usage: usageSchema }),
     }),
-    outcomeReflection: activity({
+    outcomeReflection: helpers.activity({
       input: sectionInputSchema,
       output: t.object({ outcomeReflection: t.string(), usage: usageSchema }),
     }),
-    caseIdentity: activity({
+    caseIdentity: helpers.activity({
       input: sectionInputSchema,
       output: t.object({
         name: t.string(),
@@ -305,22 +302,22 @@ export const caseGenerationWorkflow = defineWorkflow({
   retention: '30d',
 })
   .branch('content', {
-    cases: ({ workflow }) => ({
-      outpatient: workflow(outpatientCaseContentWorkflow, {
+    cases: (helpers) => ({
+      outpatient: helpers.workflow(outpatientCaseContentWorkflow, {
         cancellation: 'propagate',
       }),
-      obstetrics: workflow(obstetricsCaseContentWorkflow, {
+      obstetrics: helpers.workflow(obstetricsCaseContentWorkflow, {
         cancellation: 'propagate',
       }),
     }),
   })
   .branch('questions', {
     output: questionGenerationOutputSchema,
-    cases: ({ workflow }) => ({
-      outpatient: workflow(outpatientQuestionWorkflow, {
+    cases: (helpers) => ({
+      outpatient: helpers.workflow(outpatientQuestionWorkflow, {
         cancellation: 'propagate',
       }),
-      obstetrics: workflow(obstetricsQuestionWorkflow, {
+      obstetrics: helpers.workflow(obstetricsQuestionWorkflow, {
         cancellation: 'propagate',
       }),
     }),
@@ -451,8 +448,8 @@ export const outpatientCaseContentWorkflowImpl = implementWorkflow(
       }),
     },
   )
-  .sections(({ activity }) => ({
-    patientBackground: activity(
+  .sections((helpers) => ({
+    patientBackground: helpers.activity(
       async (_, input) => ({
         patientBackground: input.blueprint,
         usage: zeroUsage,
@@ -463,7 +460,7 @@ export const outpatientCaseContentWorkflowImpl = implementWorkflow(
         }),
       },
     ),
-    differentialDiagnosis: activity(
+    differentialDiagnosis: helpers.activity(
       async (_, input) => ({
         differentialDiagnosis: input.blueprint,
         usage: zeroUsage,
@@ -474,7 +471,7 @@ export const outpatientCaseContentWorkflowImpl = implementWorkflow(
         }),
       },
     ),
-    labsAndDiagnostics: activity(
+    labsAndDiagnostics: helpers.activity(
       async (_, input) => ({
         labsAndDiagnostics: input.blueprint,
         usage: zeroUsage,
@@ -485,7 +482,7 @@ export const outpatientCaseContentWorkflowImpl = implementWorkflow(
         }),
       },
     ),
-    treatmentPlan: activity(
+    treatmentPlan: helpers.activity(
       async (_, input) => ({
         treatmentPlan: input.blueprint,
         usage: zeroUsage,
@@ -496,7 +493,7 @@ export const outpatientCaseContentWorkflowImpl = implementWorkflow(
         }),
       },
     ),
-    outcome: activity(
+    outcome: helpers.activity(
       async (_, input) => ({ outcome: input.blueprint, usage: zeroUsage }),
       {
         input: (_, { applyReview }) => ({
@@ -504,7 +501,7 @@ export const outpatientCaseContentWorkflowImpl = implementWorkflow(
         }),
       },
     ),
-    caseIdentity: activity(
+    caseIdentity: helpers.activity(
       async (_, input) => ({
         name: input.blueprint,
         description: input.blueprint,
@@ -594,8 +591,8 @@ export const obstetricsCaseContentWorkflowImpl = implementWorkflow(
       }),
     },
   )
-  .sections(({ activity }) => ({
-    caseEntry: activity(
+  .sections((helpers) => ({
+    caseEntry: helpers.activity(
       async (_, input) => ({ caseEntry: input.blueprint, usage: zeroUsage }),
       {
         input: (_, { applyReview }) => ({
@@ -603,7 +600,7 @@ export const obstetricsCaseContentWorkflowImpl = implementWorkflow(
         }),
       },
     ),
-    maternalFetalAssessment: activity(
+    maternalFetalAssessment: helpers.activity(
       async (_, input) => ({
         maternalFetalAssessment: input.blueprint,
         usage: zeroUsage,
@@ -614,7 +611,7 @@ export const obstetricsCaseContentWorkflowImpl = implementWorkflow(
         }),
       },
     ),
-    interpretationAndPlan: activity(
+    interpretationAndPlan: helpers.activity(
       async (_, input) => ({
         interpretationAndPlan: input.blueprint,
         usage: zeroUsage,
@@ -625,7 +622,7 @@ export const obstetricsCaseContentWorkflowImpl = implementWorkflow(
         }),
       },
     ),
-    laborManagement: activity(
+    laborManagement: helpers.activity(
       async (_, input) => ({
         management: input.blueprint,
         usage: zeroUsage,
@@ -636,7 +633,7 @@ export const obstetricsCaseContentWorkflowImpl = implementWorkflow(
         }),
       },
     ),
-    reassessment: activity(
+    reassessment: helpers.activity(
       async (_, input) => ({
         reassessment: input.blueprint,
         usage: zeroUsage,
@@ -647,7 +644,7 @@ export const obstetricsCaseContentWorkflowImpl = implementWorkflow(
         }),
       },
     ),
-    deliveryPlanning: activity(
+    deliveryPlanning: helpers.activity(
       async (_, input) => ({
         deliveryPlanning: input.blueprint,
         usage: zeroUsage,
@@ -658,7 +655,7 @@ export const obstetricsCaseContentWorkflowImpl = implementWorkflow(
         }),
       },
     ),
-    postpartum: activity(
+    postpartum: helpers.activity(
       async (_, input) => ({
         postpartum: input.blueprint,
         usage: zeroUsage,
@@ -669,7 +666,7 @@ export const obstetricsCaseContentWorkflowImpl = implementWorkflow(
         }),
       },
     ),
-    outcomeReflection: activity(
+    outcomeReflection: helpers.activity(
       async (_, input) => ({
         outcomeReflection: input.blueprint,
         usage: zeroUsage,
@@ -680,7 +677,7 @@ export const obstetricsCaseContentWorkflowImpl = implementWorkflow(
         }),
       },
     ),
-    caseIdentity: activity(
+    caseIdentity: helpers.activity(
       async (_, input) => ({
         name: input.blueprint,
         description: input.blueprint,
@@ -919,7 +916,7 @@ export const curriculumGenerationWorkflowImpl = implementWorkflow(
 export const casenetworkWorkflowApiGaps = [
   'Definition graph no longer exposes data dependencies because all input/items/select mapping moved to implementation; good separation, but weaker for static UI/progress graph introspection.',
   'Progress/events are still not first-class: no typed emit, progress schema, usage timeline, or watch stream for page/spec/child-run dashboards.',
-  'WorkflowClient is still too small for Casenetwork operations: list only filters by status, with no tags, parent/child run lookup, cursor, event stream, or progress projection.',
+  'No concrete WorkflowClient exists yet; Casenetwork operations will need tags, parent/child run lookup, cursor pagination, event stream, and progress projection once the client is added.',
   'mapWorkflow has start-only/wait-all/wait-settled, but no partial failure policy, failure threshold, or per-item error classification beyond the settled output shape.',
   'Current implementation builder validates runnable identity but does not retain task/workflow/map mapping options or finish output mapper at runtime yet.',
 ] as const

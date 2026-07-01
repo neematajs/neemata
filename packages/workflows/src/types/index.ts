@@ -19,6 +19,7 @@ export type CancellationPolicy = 'propagate' | 'detach'
 export type WorkflowStatus =
   | 'queued'
   | 'running'
+  | 'waiting'
   | 'cancelling'
   | 'cancelled'
   | 'failed'
@@ -84,7 +85,6 @@ export type WorkflowActivityNode<
   Name extends string = string,
   Input = unknown,
   Output = unknown,
-  _Scope = any,
 > = WorkflowNodeBase<'activity', Name> & {
   readonly kind: 'activity'
   readonly name: Name
@@ -98,7 +98,6 @@ export type WorkflowActivityNode<
 export type WorkflowTaskNode<
   Name extends string = string,
   Task extends AnyTaskDefinition = AnyTaskDefinition,
-  _Scope = any,
 > = WorkflowNodeBase<'task', Name> & {
   readonly task: Task
   readonly retry?: RetryPolicy
@@ -109,7 +108,6 @@ export type WorkflowTaskNode<
 export type WorkflowChildWorkflowNode<
   Name extends string = string,
   Workflow extends AnyWorkflowDefinition = AnyWorkflowDefinition,
-  _Scope = any,
 > = WorkflowNodeBase<'workflow', Name> & {
   readonly workflow: Workflow
   readonly cancellation?: CancellationPolicy
@@ -125,7 +123,6 @@ export type WorkflowBranchNode<
     string,
     BranchCaseDefinition
   >,
-  _Scope = any,
   Output = unknown,
 > = WorkflowNodeBase<'branch', Name> & {
   readonly kind: 'branch'
@@ -141,7 +138,6 @@ export type WorkflowParallelNode<
     string,
     BranchCaseDefinition
   >,
-  _Scope = any,
   Output = unknown,
 > = WorkflowNodeBase<'parallel', Name> & {
   readonly kind: 'parallel'
@@ -196,7 +192,6 @@ export type WorkflowMapTaskNode<
   Task extends AnyTaskDefinition = AnyTaskDefinition,
   Item = unknown,
   Mode extends MapRunMode = MapRunMode,
-  _Scope = any,
 > = WorkflowNodeBase<'mapTask', Name> & {
   readonly task: Task
   readonly item: Schema
@@ -215,7 +210,6 @@ export type WorkflowMapWorkflowNode<
   Workflow extends AnyWorkflowDefinition = AnyWorkflowDefinition,
   Item = unknown,
   Mode extends MapRunMode = MapRunMode,
-  _Scope = any,
 > = WorkflowNodeBase<'mapWorkflow', Name> & {
   readonly workflow: Workflow
   readonly item: Schema
@@ -235,7 +229,6 @@ export type BranchCaseDefinition<
   Input = unknown,
   Output = unknown,
   Target = unknown,
-  _Scope = any,
 > = {
   readonly kind: Kind
   readonly _types?: { readonly input: Input; readonly output: Output }
@@ -381,32 +374,3 @@ export type RunnableRun<
   : Runnable extends AnyTaskDefinition
     ? TaskRun<Runnable>
     : never
-
-export type RunnableInput<
-  Runnable extends AnyWorkflowDefinition | AnyTaskDefinition,
-> = Runnable extends AnyWorkflowDefinition
-  ? WorkflowInput<Runnable>
-  : Runnable extends AnyTaskDefinition
-    ? TaskInput<Runnable>
-    : never
-
-export type WorkflowClient = {
-  start<Runnable extends AnyWorkflowDefinition | AnyTaskDefinition>(
-    runnable: Runnable,
-    input: RunnableInput<Runnable>,
-    options?: { idempotencyKey?: IdempotencyKey },
-  ): Promise<RunnableRun<Runnable>>
-  get<Runnable extends AnyWorkflowDefinition | AnyTaskDefinition>(
-    runnable: Runnable,
-    runId: string,
-  ): Promise<RunnableRun<Runnable> | undefined>
-  list<Runnable extends AnyWorkflowDefinition | AnyTaskDefinition>(
-    runnable: Runnable,
-    filter?: { status?: WorkflowStatus },
-  ): Promise<RunnableRun<Runnable>[]>
-  cancel<Runnable extends AnyWorkflowDefinition | AnyTaskDefinition>(
-    runnable: Runnable,
-    runId: string,
-    options?: { reason?: string },
-  ): Promise<RunnableRun<Runnable>>
-}

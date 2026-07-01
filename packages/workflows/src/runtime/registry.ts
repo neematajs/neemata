@@ -1,23 +1,50 @@
+import type { Dependencies } from '@nmtjs/core'
+
 import type {
   TaskImplementation,
   WorkflowCaseImplementation,
   WorkflowImplementation,
   WorkflowNodeImplementation,
 } from '../implement/index.ts'
+import type {
+  AnyTaskDefinition,
+  AnyWorkflowDefinition,
+} from '../types/index.ts'
+
+export type RegisteredWorkflowImplementation = Omit<
+  WorkflowImplementation<AnyWorkflowDefinition, Dependencies>,
+  'dependencies' | 'finish' | 'idempotency' | 'tags'
+> & {
+  readonly dependencies: Dependencies
+  readonly finish: (...args: any[]) => unknown
+  readonly idempotency?: unknown
+  readonly tags?: unknown
+}
+
+export type RegisteredTaskImplementation = Omit<
+  TaskImplementation<AnyTaskDefinition, Dependencies>,
+  'dependencies' | 'handler' | 'idempotency'
+> & {
+  readonly dependencies: Dependencies
+  readonly handler: (...args: any[]) => unknown
+  readonly idempotency?: unknown
+}
 
 export type WorkflowRuntimeRegistry = {
-  readonly workflows: ReadonlyMap<string, WorkflowImplementation>
-  readonly tasks: ReadonlyMap<string, TaskImplementation>
-  readonly getWorkflow: (name: string) => WorkflowImplementation | undefined
-  readonly getTask: (name: string) => TaskImplementation | undefined
+  readonly workflows: ReadonlyMap<string, RegisteredWorkflowImplementation>
+  readonly tasks: ReadonlyMap<string, RegisteredTaskImplementation>
+  readonly getWorkflow: (
+    name: string,
+  ) => RegisteredWorkflowImplementation | undefined
+  readonly getTask: (name: string) => RegisteredTaskImplementation | undefined
   readonly validateRouteability: (
-    workflow: WorkflowImplementation,
+    workflow: RegisteredWorkflowImplementation,
   ) => readonly string[]
 }
 
 export function createWorkflowRuntimeRegistry(options: {
-  workflows?: readonly WorkflowImplementation[]
-  tasks?: readonly TaskImplementation[]
+  workflows?: readonly RegisteredWorkflowImplementation[]
+  tasks?: readonly RegisteredTaskImplementation[]
 }): WorkflowRuntimeRegistry {
   const workflows = createWorkflowMap(options.workflows ?? [])
   const tasks = createTaskMap(options.tasks ?? [])
@@ -29,7 +56,7 @@ export function createWorkflowRuntimeRegistry(options: {
     getTask: (name) => tasks.get(name),
     validateRouteability: (workflow) => {
       const missing = new Set<string>()
-      const visited = new Set<WorkflowImplementation>()
+      const visited = new Set<RegisteredWorkflowImplementation>()
 
       collectMissingWorkflowRoutes(workflow, workflows, tasks, missing, visited)
 
@@ -40,8 +67,10 @@ export function createWorkflowRuntimeRegistry(options: {
   return registry
 }
 
-function createWorkflowMap(workflows: readonly WorkflowImplementation[]) {
-  const map = new Map<string, WorkflowImplementation>()
+function createWorkflowMap(
+  workflows: readonly RegisteredWorkflowImplementation[],
+) {
+  const map = new Map<string, RegisteredWorkflowImplementation>()
 
   for (const workflow of workflows) {
     const name = workflow.workflow.name
@@ -52,8 +81,8 @@ function createWorkflowMap(workflows: readonly WorkflowImplementation[]) {
   return map
 }
 
-function createTaskMap(tasks: readonly TaskImplementation[]) {
-  const map = new Map<string, TaskImplementation>()
+function createTaskMap(tasks: readonly RegisteredTaskImplementation[]) {
+  const map = new Map<string, RegisteredTaskImplementation>()
 
   for (const task of tasks) {
     const name = task.task.name
@@ -65,11 +94,11 @@ function createTaskMap(tasks: readonly TaskImplementation[]) {
 }
 
 function collectMissingWorkflowRoutes(
-  workflow: WorkflowImplementation,
-  workflows: ReadonlyMap<string, WorkflowImplementation>,
-  tasks: ReadonlyMap<string, TaskImplementation>,
+  workflow: RegisteredWorkflowImplementation,
+  workflows: ReadonlyMap<string, RegisteredWorkflowImplementation>,
+  tasks: ReadonlyMap<string, RegisteredTaskImplementation>,
   missing: Set<string>,
-  visited: Set<WorkflowImplementation>,
+  visited: Set<RegisteredWorkflowImplementation>,
 ) {
   if (visited.has(workflow)) return
   visited.add(workflow)
@@ -81,10 +110,10 @@ function collectMissingWorkflowRoutes(
 
 function collectMissingRoute(
   node: WorkflowNodeImplementation | WorkflowCaseImplementation,
-  workflows: ReadonlyMap<string, WorkflowImplementation>,
-  tasks: ReadonlyMap<string, TaskImplementation>,
+  workflows: ReadonlyMap<string, RegisteredWorkflowImplementation>,
+  tasks: ReadonlyMap<string, RegisteredTaskImplementation>,
   missing: Set<string>,
-  visited: Set<WorkflowImplementation>,
+  visited: Set<RegisteredWorkflowImplementation>,
 ) {
   switch (node.kind) {
     case 'task':

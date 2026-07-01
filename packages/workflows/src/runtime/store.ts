@@ -1,4 +1,5 @@
 import type { RunKind, WorkflowNodeKind } from '../types/index.ts'
+import type { RuntimeRunStatus } from './status.ts'
 import type {
   NodeChildIdentity,
   RunSnapshot,
@@ -38,12 +39,31 @@ export type CreateAttemptInput = {
   readonly runId: string
   readonly nodeName: string
   readonly input: unknown
+  readonly idempotencyKey?: readonly unknown[]
+}
+
+export type ListRunsFilter = {
+  readonly kind?: RunKind
+  readonly name?: string
+  readonly status?: RuntimeRunStatus | readonly RuntimeRunStatus[]
+  readonly parentRunId?: string
+  readonly rootRunId?: string
+  readonly tags?: Readonly<Record<string, string>>
+  readonly input?: unknown
+  readonly limit?: number
+  readonly cursor?: string
+}
+
+export type ListRunsResult = {
+  readonly runs: readonly StoredRun[]
+  readonly nextCursor?: string
 }
 
 export type EnsureNodeAttemptParams = {
   readonly identity: NodeChildIdentity
   readonly kind: 'activity' | 'task'
   readonly input: unknown
+  readonly idempotencyKey?: readonly unknown[]
 }
 
 export type EnsureNodeAttemptResult = {
@@ -138,6 +158,7 @@ export type NodeChildrenSnapshot = {
 
 export type WorkflowStore = {
   createRun(input: CreateRunInput): Promise<StoredRun>
+  listRuns(filter?: ListRunsFilter): Promise<ListRunsResult>
   acquireRunLease(params: {
     runId: string
     workerId: string

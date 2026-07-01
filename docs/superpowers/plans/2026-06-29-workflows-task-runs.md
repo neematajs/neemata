@@ -122,8 +122,8 @@ git commit -m "feat: run mapped tasks as child task runs"
 
 ## Task 5: Standalone Task Start
 
-- [x] Add failing tests showing `WorkflowClient.start(task, input)` is typed and
-      `startTaskRun` creates a durable task run with an internal task attempt.
+- [x] Add failing tests showing task run types are exported and `startTaskRun`
+      creates a durable task run with an internal task attempt.
 - [x] Ensure standalone task completion marks the task run terminal without
       requiring a workflow coordinator continuation.
 - [x] Ensure parent-linked task runs still wake the parent workflow on terminal

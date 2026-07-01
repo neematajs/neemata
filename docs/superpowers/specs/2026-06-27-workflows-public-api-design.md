@@ -10,8 +10,8 @@ background execution primitives:
   orchestration nodes
 - `activity`: workflow-local side-effecting operation
 
-This spec defines the intended user-facing API shape. It does not implement the
-runtime or persistence model.
+This spec defines the intended user-facing API shape. The durable runtime is
+Postgres-first, while root declarations and implementations stay import-light.
 
 ## Goals
 
@@ -20,10 +20,12 @@ runtime or persistence model.
 - Make orchestration semantics visible instead of hiding them behind
   `job.step()`.
 - Keep public contracts independent from BullMQ, Redis, Valkey, SQL, and
-  executor details.
+  internal command-runner details.
 - Use explicit node names instead of flat object merging.
 - Keep workflow declarations introspectable without importing implementations.
-- Make idempotency, retries, cancellation, and branch selection first-class.
+- Make idempotency and branch selection first-class. Retry and cancellation
+  policy metadata can exist in contracts, but scheduling/propagation semantics
+  are not implemented in the current runtime slice.
 
 ## Non-Goals
 
@@ -53,11 +55,14 @@ not pull adapter modules:
 import { implementTask, implementWorkflow } from '@nmtjs/workflows'
 ```
 
-Adapters stay behind explicit subpaths:
+Postgres runtime integration stays behind explicit subpaths:
 
 ```ts
-import { createBullMqWorkflowAdapter } from '@nmtjs/workflows/adapters/bullmq'
+import { createPostgresWorkflowRuntime } from '@nmtjs/workflows/postgres'
+import { createSchema } from '@nmtjs/workflows/postgres/drizzle'
 ```
+
+The root contract/implementation API must stay import-light.
 
 ## V1 Surface
 
@@ -69,13 +74,24 @@ The first public API should be small:
 - `implementWorkflow`
 - primitive leaf nodes: `activity`, `task`, `workflow`
 - orchestration nodes: `branch`, `parallel`, `mapTask`, `mapWorkflow`
-- client commands: `start`, `get`, `list`, `cancel`
+- runtime start helpers: `startWorkflowRun`, `startTaskRun`
+- runtime client: `createWorkflowRuntimeClient`
+- Postgres runtime: `createPostgresWorkflowRuntime`
+- reserved app-facing client commands: `list`, `cancel`, `retry`, `watch`
 - public graph types: `WorkflowNode`, `WorkflowActivityNode`,
   `WorkflowTaskNode`, `WorkflowChildWorkflowNode`, `WorkflowBranchNode`,
   `WorkflowParallelNode`, `WorkflowMapTaskNode`, `WorkflowMapWorkflowNode`
 
 Future concepts should remain design-compatible but not part of the first API
 promise.
+
+Current implementation note: there is a small server-side runtime client,
+`createWorkflowRuntimeClient`, which wraps `startWorkflowRun`, `startTaskRun`,
+and `store.loadRunSnapshot`. It is not the final application-facing client.
+Runtime callers may still use start helpers, worker loops, store interfaces, and
+executor interfaces directly while the runtime is still being collapsed around
+Postgres. `createInMemoryWorkflowRuntime` may remain as a narrow local/test
+helper, not as a second production backend.
 
 ## Tasks
 
@@ -599,7 +615,8 @@ Rules:
 
 - Parallel cases are primitive leaves only: activity, task, or child workflow.
 - All parallel siblings receive the same upstream output snapshot.
-- Each sibling keeps its own retry, timeout, idempotency, and failure state.
+- Each sibling keeps its own timeout, idempotency, and failure state. Retry
+  scheduling is planned, not implemented in the current runtime slice.
 - Output is stored under the parallel node name as an object keyed by case name.
 - Inline activity cases are implemented in the parent workflow implementation.
 - Task and workflow cases are acknowledged with declarations.
@@ -681,9 +698,10 @@ Rules:
 - Runtime checkpoints each item-to-child-run link before or with dispatch.
 - Retry/resume must not create duplicate child runs for already-checkpointed
   items.
-- `concurrency` limits active children.
-- Cancellation propagates by default for mapped workflows unless `detach` is
-  specified.
+- `concurrency` limits active children for wait modes. For `start-only`,
+  concurrency limits child links started per continuation pass.
+- Cancellation propagation for mapped workflows is planned but not implemented
+  in the current runtime slice.
 - Parent implementation acknowledges map nodes with the target declaration:
 
   ```ts
@@ -751,8 +769,8 @@ Rules:
 - Task node retry/timeout defaults come from the task declaration.
 - Task node options may override retry/timeout only when the API explicitly
   allows it.
-- Parent retry/restart reuses the existing child task run ID for that task node
-  or composite child identity.
+- Parent restart reuses the existing child task run ID for that task node or
+  composite child identity. Retry scheduling is future runtime work.
 - The node output is the child task run output.
 
 ## Child Workflow Nodes
@@ -794,11 +812,12 @@ Rules:
   ```
 
 - Passing a different workflow declaration is invalid.
-- Parent retry/restart reuses the existing child run ID for that workflow node.
+- Parent restart reuses the existing child run ID for that workflow node.
 - Parent waits for child terminal state.
 - Child output is encoded by the child workflow output contract.
 - The node output is the child workflow output.
-- Parent cancellation propagates to child by default.
+- Parent cancellation propagation is planned but not implemented in the current
+  runtime slice.
 - Runtime rejects duplicate child-start attempts for the same parent node unless
   they resolve to the existing persisted child run.
 
@@ -822,13 +841,19 @@ Rules:
 This keeps distributed workers possible:
 
 ```ts
-createWorkflowWorker({
+runWorkflowWorker({
   workflows: [caseGenerationImpl],
+  // store, executors, container, workerId...
 })
 
-createWorkflowWorker({
+runWorkflowWorker({
   workflows: [rubricGenerationImpl],
+  // store, executors, container, workerId...
+})
+
+runTaskWorker({
   tasks: [generateEmbeddingImpl],
+  // store, executors, container, workerId...
 })
 ```
 
@@ -840,6 +865,7 @@ Public statuses:
 type RunStatus =
   | 'queued'
   | 'running'
+  | 'waiting'
   | 'cancelling'
   | 'cancelled'
   | 'failed'
@@ -853,25 +879,37 @@ Rules:
 - `cancelling` is non-terminal and propagates to active nodes/children.
 - Retry state should be visible in node state, not necessarily top-level run
   status.
+- Public `WorkflowStatus` includes `waiting` to stay aligned with
+  `RuntimeRunStatus`.
 
-## Client API
+## Runtime Client
 
-The public client should operate on contracts:
+The current concrete client is intentionally small and server-side. It operates
+on task/workflow declarations and runtime infrastructure:
 
 ```ts
+const runtime = createPostgresWorkflowRuntime({ connection })
+const workflows = createWorkflowRuntimeClient({
+  ...runtime,
+  container,
+  workflows: [caseGenerationImpl],
+  tasks: [generateEmbeddingImpl],
+})
+
 await workflows.start(generateEmbedding, input, options)
 await workflows.start(caseGeneration, input, options)
-await workflows.get(generateEmbedding, runId)
-await workflows.get(caseGeneration, runId)
-await workflows.list(caseGeneration, filter)
-await workflows.cancel(caseGeneration, runId, { reason })
+await workflows.get(runId)
 ```
 
 Rules:
 
-- Client methods accept task or workflow declarations, not implementations.
-- Client return types infer input/output from declarations.
-- Client API must not expose queue IDs or adapter-native job objects.
+- `start` accepts task or workflow declarations, not implementations.
+- Registered implementations are optional but used when present to compute
+  implementation-owned tags and idempotency keys.
+- `get(runId)` returns the current runtime snapshot shape.
+- The runtime client must not expose queue IDs or adapter-native job objects.
+- `list`, `cancel`, `retry`, `watch`, event streams, and typed public run
+  projections remain future app-facing client work.
 
 ## Idempotency
 
@@ -903,6 +941,10 @@ Rules:
 - API should not imply exactly-once execution.
 - Idempotency callbacks belong to implementations, not declarations. Contracts
   stay structural and import-safe.
+- Current runtime evaluates implementation-owned idempotency callbacks for
+  explicit starts, activity/task attempts, and child task/workflow runs, then
+  persists or dispatches the computed key. Conflict policy enforcement remains a
+  durable store responsibility.
 
 ## Retry And Timeout Policy
 
@@ -922,7 +964,8 @@ Rules:
 - Activity retry retries the activity node.
 - Workflow retry should be a separate semantic, not hidden behind activity
   retry.
-- V1 supports task/activity retry only. Workflow-level retry is future.
+- V1 contracts can declare task/activity retry policy metadata, but current
+  runtime does not schedule retries yet. Workflow-level retry is future.
 - Retry override input should be explicit client behavior, not automatic.
 
 ## Future Extension Points
@@ -953,9 +996,12 @@ import type { WorkflowRun } from '@nmtjs/workflows'
 These imports may require optional peer dependencies:
 
 ```ts
-import { createBullMqWorkflowAdapter } from '@nmtjs/workflows/adapters/bullmq'
-import { createPostgresWorkflowStore } from '@nmtjs/workflows/adapters/postgres'
+import { createPostgresWorkflowRuntime } from '@nmtjs/workflows/postgres'
+import { createSchema } from '@nmtjs/workflows/postgres/drizzle'
 ```
+
+`@nmtjs/workflows/adapters/postgres` remains a transitional compatibility
+spelling. New examples should use `@nmtjs/workflows/postgres`.
 
 ## Open Questions
 
@@ -965,7 +1011,9 @@ import { createPostgresWorkflowStore } from '@nmtjs/workflows/adapters/postgres'
 
 - A user can declare a workflow without importing its implementation.
 - A user can implement a workflow without importing an adapter.
-- A user can start/get/list/cancel runs using declarations.
+- Runtime can start workflow and task runs using declarations through
+  `createWorkflowRuntimeClient`.
+- A full app-facing list/cancel/retry/watch client remains future work.
 - Activity, task, workflow, and branch outputs are addressed by explicit node
   names.
 - Branch cases exactly cover the selector return union.
@@ -974,5 +1022,6 @@ import { createPostgresWorkflowStore } from '@nmtjs/workflows/adapters/postgres'
   `mapTask`, not hidden inside opaque activities.
 - Workflow implementations explicitly acknowledge task and child workflow nodes
   with declarations, without importing their implementations.
-- Public API avoids BullMQ, Redis, Valkey, SQL, and queue-native vocabulary.
-- The API leaves room for BullMQ or Postgres adapters behind subpath exports.
+- Public contract/implementation API avoids BullMQ, Redis, Valkey, SQL, and
+  queue-native vocabulary.
+- Postgres runtime details live behind `@nmtjs/workflows/postgres` subpaths.

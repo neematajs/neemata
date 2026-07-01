@@ -33,12 +33,12 @@ describe('workflow implementation chain', () => {
     })
     .branch('caseContent', {
       output: t.object({ text: t.string() }),
-      cases: ({ activity, workflow }) => ({
-        normal: activity({
+      cases: (helpers) => ({
+        normal: helpers.activity({
           input: t.object({ text: t.string() }),
           output: t.object({ text: t.string() }),
         }),
-        fallback: workflow(fallbackWorkflow),
+        fallback: helpers.workflow(fallbackWorkflow),
       }),
     })
     .task('embedding', embedding)
@@ -148,9 +148,9 @@ describe('workflow implementation chain', () => {
       output: t.union(outpatientWorkflow.output!, obstetricsWorkflow.output!),
     })
       .branch('content', {
-        cases: ({ workflow }) => ({
-          outpatient: workflow(outpatientWorkflow),
-          obstetrics: workflow(obstetricsWorkflow),
+        cases: (helpers) => ({
+          outpatient: helpers.workflow(outpatientWorkflow),
+          obstetrics: helpers.workflow(obstetricsWorkflow),
         }),
       })
       .build()

@@ -459,15 +459,30 @@ Generated job router exposes basic `list/get/retry/cancel/remove`, but real UI
 needs richer filtering and progress. Casenetwork dashboard ends up polling raw
 job data and deriving progress from `stepIndex`.
 
-### Current Workflow Draft
+### Current Workflow Runtime Slice
 
-`WorkflowClient` currently sketches:
+There is now a small concrete server-side runtime client. It wraps low-level
+start helpers and snapshot reads, so product UI concerns remain unaddressed:
 
 ```ts
-client.start(workflow, input)
-client.get(workflow, runId)
-client.list(workflow, { status })
-client.cancel(workflow, runId)
+const runtime = createInMemoryWorkflowRuntime()
+const client = createWorkflowRuntimeClient({
+  ...runtime,
+  container,
+  workflows: [caseGenerationImpl],
+  tasks: [generateEmbeddingImpl],
+})
+
+await client.start(caseGenerationWorkflow, input)
+await client.start(generateEmbeddingTask, input)
+await client.get(runId)
+```
+
+Lower-level runtime entrypoints still exist:
+
+```ts
+startWorkflowRun({ workflow, input, store, runCoordinationExecutor })
+startTaskRun({ task, input, store, runCoordinationExecutor, attemptExecutor })
 ```
 
 ### Requested API
@@ -513,6 +528,6 @@ Requirements:
 
 ## Related Demo
 
-See `packages/workflows/src/casenetwork-complex-workflow.demo.ts` for a
+See `packages/workflows/tests/examples/casenetwork-complex-workflow.demo.ts` for a
 type-level reproduction attempt and inline comments where the current API has
 to compromise.

@@ -32,12 +32,12 @@ describe('workflow contract graph', () => {
     .workflow('fallbackContent', fallbackWorkflow)
     .branch('caseContent', {
       output: t.object({ text: t.string() }),
-      cases: ({ activity, workflow }) => ({
-        normal: activity({
+      cases: (helpers) => ({
+        normal: helpers.activity({
           input: t.object({ text: t.string() }),
           output: t.object({ text: t.string() }),
         }),
-        fallback: workflow(fallbackWorkflow),
+        fallback: helpers.workflow(fallbackWorkflow),
       }),
     })
     .build()

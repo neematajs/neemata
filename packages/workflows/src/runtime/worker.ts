@@ -13,6 +13,10 @@ import type {
   ClaimedAttempt,
   TaskAttemptCommand,
 } from './commands.ts'
+import type {
+  AnyTaskDefinition,
+  AnyWorkflowDefinition,
+} from '../types/index.ts'
 import { continueWorkflowRun } from './coordinator.ts'
 import type { AttemptExecutor, RunCoordinationExecutor } from './executors.ts'
 import { createWorkflowRuntimeRegistry } from './registry.ts'
@@ -22,6 +26,12 @@ import type { WorkflowStore } from './store.ts'
 type ActivityAttemptNode =
   | ActivityNodeImplementation
   | Extract<WorkflowCaseImplementation, { readonly kind: 'activity' }>
+
+type AnyWorkflowImplementation = WorkflowImplementation<
+  AnyWorkflowDefinition,
+  any
+>
+type AnyTaskImplementation = TaskImplementation<AnyTaskDefinition, any>
 
 export async function runWithConcurrency<T>(
   items: readonly T[],
@@ -65,7 +75,7 @@ export type RunWorkflowWorkerInput = WorkerLoopOptions & {
   readonly store: WorkflowStore
   readonly runCoordinationExecutor: RunCoordinationExecutor
   readonly attemptExecutor: AttemptExecutor
-  readonly workflows: readonly WorkflowImplementation<any, any>[]
+  readonly workflows: readonly AnyWorkflowImplementation[]
   readonly container: Pick<Container, 'createContext'>
 }
 
@@ -73,7 +83,8 @@ export type RunActivityWorkerInput = WorkerLoopOptions & {
   readonly store: WorkflowStore
   readonly runCoordinationExecutor: RunCoordinationExecutor
   readonly attemptExecutor: AttemptExecutor
-  readonly workflows: readonly WorkflowImplementation<any, any>[]
+  readonly atomicCompletion?: WorkflowRuntimeAtomicCompletion
+  readonly workflows: readonly AnyWorkflowImplementation[]
   readonly activityNames?: readonly string[]
   readonly container: Pick<Container, 'createContext'>
 }
@@ -82,8 +93,21 @@ export type RunTaskWorkerInput = WorkerLoopOptions & {
   readonly store: WorkflowStore
   readonly runCoordinationExecutor: RunCoordinationExecutor
   readonly attemptExecutor: AttemptExecutor
-  readonly tasks: readonly TaskImplementation[]
+  readonly atomicCompletion?: WorkflowRuntimeAtomicCompletion
+  readonly tasks: readonly AnyTaskImplementation[]
   readonly container: Pick<Container, 'createContext'>
+}
+
+export type WorkflowRuntimeOperationContext = {
+  readonly store: WorkflowStore
+  readonly runCoordinationExecutor: RunCoordinationExecutor
+  readonly attemptExecutor: AttemptExecutor
+}
+
+export type WorkflowRuntimeAtomicCompletion = {
+  readonly run: <T>(
+    handler: (runtime: WorkflowRuntimeOperationContext) => Promise<T>,
+  ) => Promise<T>
 }
 
 export async function runWorkflowWorker(
@@ -182,7 +206,8 @@ export type RunActivityAttemptInput = {
   readonly store: WorkflowStore
   readonly runCoordinationExecutor: RunCoordinationExecutor
   readonly attemptExecutor: AttemptExecutor
-  readonly workflows: readonly WorkflowImplementation<any, any>[]
+  readonly atomicCompletion?: WorkflowRuntimeAtomicCompletion
+  readonly workflows: readonly AnyWorkflowImplementation[]
   readonly workerId: string
   readonly claimed: ClaimedAttempt
   readonly container: Pick<Container, 'createContext'>
@@ -192,7 +217,8 @@ export type RunTaskAttemptInput = {
   readonly store: WorkflowStore
   readonly runCoordinationExecutor: RunCoordinationExecutor
   readonly attemptExecutor: AttemptExecutor
-  readonly tasks: readonly TaskImplementation[]
+  readonly atomicCompletion?: WorkflowRuntimeAtomicCompletion
+  readonly tasks: readonly AnyTaskImplementation[]
   readonly workerId: string
   readonly claimed: ClaimedAttempt
   readonly container: Pick<Container, 'createContext'>
@@ -248,7 +274,7 @@ function assertPositiveInteger(value: number, label: string): void {
 }
 
 function collectWorkflowActivityNames(
-  workflows: readonly WorkflowImplementation<any, any>[],
+  workflows: readonly AnyWorkflowImplementation[],
 ): readonly string[] {
   const names = new Set<string>()
   for (const workflow of workflows) {
@@ -269,6 +295,22 @@ function collectWorkflowActivityNames(
   return [...names]
 }
 
+async function runAtomicCompletion<Input extends RunAttemptInput, Result>(
+  input: Input,
+  handler: (scopedInput: Input) => Promise<Result>,
+): Promise<Result> {
+  if (!input.atomicCompletion) return await handler(input)
+
+  return await input.atomicCompletion.run((runtime) =>
+    handler({
+      ...input,
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+    }),
+  )
+}
+
 export async function runActivityAttempt(
   input: RunActivityAttemptInput,
 ): Promise<WorkerCommandResult> {
@@ -286,7 +328,9 @@ export async function runActivityAttempt(
   )
 
   if (!isFreshActivityAttempt(command, storedNode, storedAttempt)) {
-    return await reconcileStaleAttempt(input, command, storedNode, storedAttempt)
+    return await runAtomicCompletion(input, (scoped) =>
+      reconcileStaleAttempt(scoped, command, storedNode, storedAttempt),
+    )
   }
 
   if (snapshot?.run.workflowName !== command.workflowName) {
@@ -295,9 +339,11 @@ export async function runActivityAttempt(
   }
 
   const registry = createWorkflowRuntimeRegistry({
-    workflows: input.workflows as readonly WorkflowImplementation[],
+    workflows: input.workflows,
   })
-  const workflow = registry.getWorkflow(command.workflowName)
+  const workflow = registry.getWorkflow(command.workflowName) as
+    | WorkflowImplementation
+    | undefined
   if (!workflow) {
     await input.attemptExecutor.release(input.claimed)
     return { status: 'released' }
@@ -322,58 +368,62 @@ export async function runActivityAttempt(
       command.input,
     )
   } catch (error) {
-    const attempt = await input.store.failCurrentAttempt({
-      attemptId: command.attemptId,
-      leaseToken: command.leaseToken,
-      error,
-    })
-
-    if (attempt) {
-      await input.store.failNode({
-        runId: command.runId,
-        nodeName: command.nodeName,
+    return await runAtomicCompletion(input, async (scoped) => {
+      const attempt = await scoped.store.failCurrentAttempt({
+        attemptId: command.attemptId,
+        leaseToken: command.leaseToken,
         error,
       })
-      if (snapshot?.run.kind === 'task') {
-        const failed = await input.store.failRun({
+
+      if (attempt) {
+        await scoped.store.failNode({
           runId: command.runId,
+          nodeName: command.nodeName,
           error,
         })
-        await wakeParentRun({
-          store: input.store,
-          runCoordinationExecutor: input.runCoordinationExecutor,
-          run: failed,
-        })
-        await input.attemptExecutor.ack(input.claimed)
-        return { status: 'processed' }
+        if (snapshot?.run.kind === 'task') {
+          const failed = await scoped.store.failRun({
+            runId: command.runId,
+            error,
+          })
+          await wakeParentRun({
+            store: scoped.store,
+            runCoordinationExecutor: scoped.runCoordinationExecutor,
+            run: failed,
+          })
+          await scoped.attemptExecutor.ack(scoped.claimed)
+          return { status: 'processed' }
+        }
+        await enqueueContinueRun(scoped.runCoordinationExecutor, command)
       }
-      await enqueueContinueRun(input.runCoordinationExecutor, command)
-    }
 
-    await input.attemptExecutor.ack(input.claimed)
-    return { status: 'processed' }
-  }
-
-  const attempt = await input.store.completeCurrentAttempt({
-    attemptId: command.attemptId,
-    leaseToken: command.leaseToken,
-    output,
-  })
-  if (!attempt) {
-    await input.attemptExecutor.ack(input.claimed)
-    return { status: 'processed' }
-  }
-
-  if (shouldCompleteNodeFromAttempt(storedNode)) {
-    await input.store.completeNode({
-      runId: command.runId,
-      nodeName: command.nodeName,
-      output,
+      await scoped.attemptExecutor.ack(scoped.claimed)
+      return { status: 'processed' }
     })
   }
-  await enqueueContinueRun(input.runCoordinationExecutor, command)
-  await input.attemptExecutor.ack(input.claimed)
-  return { status: 'processed' }
+
+  return await runAtomicCompletion(input, async (scoped) => {
+    const attempt = await scoped.store.completeCurrentAttempt({
+      attemptId: command.attemptId,
+      leaseToken: command.leaseToken,
+      output,
+    })
+    if (!attempt) {
+      await scoped.attemptExecutor.ack(scoped.claimed)
+      return { status: 'processed' }
+    }
+
+    if (shouldCompleteNodeFromAttempt(storedNode)) {
+      await scoped.store.completeNode({
+        runId: command.runId,
+        nodeName: command.nodeName,
+        output,
+      })
+    }
+    await enqueueContinueRun(scoped.runCoordinationExecutor, command)
+    await scoped.attemptExecutor.ack(scoped.claimed)
+    return { status: 'processed' }
+  })
 }
 
 function resolveActivityAttemptNode(
@@ -434,7 +484,9 @@ export async function runTaskAttempt(
   )
 
   if (!isFreshTaskAttempt(command, storedNode, storedAttempt)) {
-    return await reconcileStaleAttempt(input, command, storedNode, storedAttempt)
+    return await runAtomicCompletion(input, (scoped) =>
+      reconcileStaleAttempt(scoped, command, storedNode, storedAttempt),
+    )
   }
 
   if (snapshot?.run.workflowName !== command.workflowName) {
@@ -456,77 +508,81 @@ export async function runTaskAttempt(
     const ctx = await input.container.createContext(task.dependencies)
     output = await task.handler(ctx as DependencyContext<any>, command.input)
   } catch (error) {
-    const attempt = await input.store.failCurrentAttempt({
-      attemptId: command.attemptId,
-      leaseToken: command.leaseToken,
-      error,
-    })
-
-    if (attempt) {
-      await input.store.failNode({
-        runId: command.runId,
-        nodeName: command.nodeName,
+    return await runAtomicCompletion(input, async (scoped) => {
+      const attempt = await scoped.store.failCurrentAttempt({
+        attemptId: command.attemptId,
+        leaseToken: command.leaseToken,
         error,
       })
-      if (snapshot?.run.kind === 'task') {
-        const failed = await input.store.failRun({
+
+      if (attempt) {
+        await scoped.store.failNode({
           runId: command.runId,
+          nodeName: command.nodeName,
           error,
         })
-        await wakeParentRun({
-          store: input.store,
-          runCoordinationExecutor: input.runCoordinationExecutor,
-          run: failed,
-        })
-        await input.attemptExecutor.ack(input.claimed)
-        return { status: 'processed' }
+        if (snapshot?.run.kind === 'task') {
+          const failed = await scoped.store.failRun({
+            runId: command.runId,
+            error,
+          })
+          await wakeParentRun({
+            store: scoped.store,
+            runCoordinationExecutor: scoped.runCoordinationExecutor,
+            run: failed,
+          })
+          await scoped.attemptExecutor.ack(scoped.claimed)
+          return { status: 'processed' }
+        }
+        await enqueueContinueRun(scoped.runCoordinationExecutor, command)
       }
-      await enqueueContinueRun(input.runCoordinationExecutor, command)
+
+      await scoped.attemptExecutor.ack(scoped.claimed)
+      return { status: 'processed' }
+    })
+  }
+
+  return await runAtomicCompletion(input, async (scoped) => {
+    const attempt = await scoped.store.completeCurrentAttempt({
+      attemptId: command.attemptId,
+      leaseToken: command.leaseToken,
+      output,
+    })
+    if (!attempt) {
+      await scoped.attemptExecutor.ack(scoped.claimed)
+      return { status: 'processed' }
     }
 
-    await input.attemptExecutor.ack(input.claimed)
-    return { status: 'processed' }
-  }
+    if (snapshot?.run.kind === 'task') {
+      await scoped.store.completeNode({
+        runId: command.runId,
+        nodeName: command.nodeName,
+        output,
+      })
+      const completed = await scoped.store.completeRun({
+        runId: command.runId,
+        output,
+      })
+      await wakeParentRun({
+        store: scoped.store,
+        runCoordinationExecutor: scoped.runCoordinationExecutor,
+        run: completed,
+      })
+      await scoped.attemptExecutor.ack(scoped.claimed)
+      return { status: 'processed' }
+    }
 
-  const attempt = await input.store.completeCurrentAttempt({
-    attemptId: command.attemptId,
-    leaseToken: command.leaseToken,
-    output,
+    if (shouldCompleteNodeFromAttempt(storedNode)) {
+      await scoped.store.completeNode({
+        runId: command.runId,
+        nodeName: command.nodeName,
+        output,
+      })
+    }
+    await enqueueContinueRun(scoped.runCoordinationExecutor, command)
+    await scoped.attemptExecutor.ack(scoped.claimed)
+    return { status: 'processed' }
   })
-  if (!attempt) {
-    await input.attemptExecutor.ack(input.claimed)
-    return { status: 'processed' }
-  }
-
-  if (snapshot?.run.kind === 'task') {
-    await input.store.completeNode({
-      runId: command.runId,
-      nodeName: command.nodeName,
-      output,
-    })
-    const completed = await input.store.completeRun({
-      runId: command.runId,
-      output,
-    })
-    await wakeParentRun({
-      store: input.store,
-      runCoordinationExecutor: input.runCoordinationExecutor,
-      run: completed,
-    })
-    await input.attemptExecutor.ack(input.claimed)
-    return { status: 'processed' }
-  }
-
-  if (shouldCompleteNodeFromAttempt(storedNode)) {
-    await input.store.completeNode({
-      runId: command.runId,
-      nodeName: command.nodeName,
-      output,
-    })
-  }
-  await enqueueContinueRun(input.runCoordinationExecutor, command)
-  await input.attemptExecutor.ack(input.claimed)
-  return { status: 'processed' }
 }
 
 function isFreshActivityAttempt(

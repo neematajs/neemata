@@ -6,7 +6,24 @@
 > target model for new work. New runtime work should model tasks as task runs
 > with internal attempts.
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Current status (2026-06-30):** this plan is historical. The adapter-free
+> runtime now lives under `packages/workflows/src/runtime`, and the in-memory
+> runtime is test support under `packages/workflows/tests/support`, not a public
+> `src/testing` subpath. Use
+> `docs/superpowers/specs/2026-06-29-workflows-runtime-model-design.md` as the
+> current runtime source of truth. Do not execute the task list below for new
+> work without revalidating every path and API name against the current source.
+
+> **Postgres-first pivot (2026-07-01):** this plan also predates the decision
+> that Postgres is the v1 durable runtime substrate. Store/executor interfaces
+> may remain internal/transitional, but new runtime work should not optimize for
+> interchangeable BullMQ/cloud/in-memory backends. Use
+> `docs/superpowers/plans/2026-07-01-workflows-postgres-first-runtime.md` for
+> the next implementation slice.
+
+> **Historical agent instruction:** this originally used
+> superpowers:subagent-driven-development or superpowers:executing-plans. That
+> instruction is preserved as context only; it is not current guidance.
 
 **Goal:** Build the first adapter-free workflows runtime slice: interfaces, in-memory test store/executors, primitive activity/task continuation, and worker concurrency wrapper.
 
@@ -23,7 +40,7 @@
 - Create `packages/workflows/src/runtime/commands.ts`
   - `ContinueRunCommand`, attempt command, claim, worker claim, and lease token types.
 - Create `packages/workflows/src/runtime/state.ts`
-  - Stored run, node, attempt, child link, map item, and timeline types.
+  - Stored run, node, attempt, child link, and map item types.
 - Create `packages/workflows/src/runtime/store.ts`
   - Semantic `WorkflowStore` interface. No CRUD-only API.
 - Create `packages/workflows/src/runtime/executors.ts`
@@ -316,15 +333,6 @@ export type StoredMapItem = {
   readonly attemptId?: string
 }
 
-export type StoredTimelineEvent = {
-  readonly id: string
-  readonly runId: string
-  readonly nodeName?: string
-  readonly type: string
-  readonly payload?: unknown
-  readonly createdAt: Date
-}
-
 export type RunSnapshot = {
   readonly run: StoredRun
   readonly nodes: readonly StoredNode[]
@@ -481,7 +489,6 @@ export type {
   StoredMapItem,
   StoredNode,
   StoredRun,
-  StoredTimelineEvent,
 } from './state.ts'
 export type {
   CreateAttemptInput,
@@ -519,7 +526,6 @@ export type {
   StoredMapItem,
   StoredNode,
   StoredRun,
-  StoredTimelineEvent,
   TaskAttemptCommand,
   TaskWorkerClaim,
   WorkflowStore,
@@ -687,7 +693,6 @@ import type {
   StoredChildLink,
   StoredNode,
   StoredRun,
-  StoredTimelineEvent,
 } from '../runtime/state.ts'
 
 type QueueItem<T> = {
@@ -719,7 +724,6 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
   const attempts = new Map<string, StoredAttempt>()
   const childLinks: StoredChildLink[] = []
   const mapItems: StoredMapItem[] = []
-  const timeline: StoredTimelineEvent[] = []
   const runLeases = new Map<string, RunLease>()
   const continueQueue: QueueItem<ContinueRunCommand>[] = []
   const activityQueue: QueueItem<ActivityAttemptCommand>[] = []

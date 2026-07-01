@@ -67,6 +67,7 @@ export type StoredAttempt = {
   readonly leaseToken?: string
   readonly attemptNumber: number
   readonly input: unknown
+  readonly idempotencyKey?: readonly unknown[]
   readonly output?: unknown
   readonly error?: StoredError
   readonly dispatchedAt: Date
@@ -101,15 +102,6 @@ export type StoredMapItem = {
   readonly error?: StoredError
   readonly childRunId?: string
   readonly attemptId?: string
-}
-
-export type StoredTimelineEvent = {
-  readonly id: string
-  readonly runId: string
-  readonly nodeName?: string
-  readonly type: string
-  readonly payload?: unknown
-  readonly createdAt: Date
 }
 
 export type RunSnapshot = {

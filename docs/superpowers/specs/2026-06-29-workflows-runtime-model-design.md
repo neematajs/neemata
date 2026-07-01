@@ -6,13 +6,16 @@ The public `@nmtjs/workflows` API now separates workflow declarations from
 workflow implementations. Declarations describe the structural graph and schemas.
 Implementations provide handlers and runtime mapping functions.
 
-This spec defines the first runtime model for executing that API. It intentionally
-does not define final database tables or adapter code.
+This spec defines the first runtime model for executing that API. The durable v1
+runtime is Postgres-first: run state and internal command dispatch should be
+persisted in the same database and advanced with transaction boundaries.
 
 ## Goals
 
-- Keep the store as the source of truth for workflow state.
-- Treat queues and workers as dispatch details, not durable state.
+- Keep Postgres workflow tables as the source of truth for workflow state.
+- Treat queue commands as internal Postgres rows, not external durable state.
+- Make state changes and dependent command inserts atomic whenever a split would
+  create lost work.
 - Resume runs from persisted run/node state without replaying arbitrary user
   JavaScript.
 - Make duplicate, stale, and late completions safe.
@@ -27,21 +30,219 @@ does not define final database tables or adapter code.
 
 - Do not implement full event sourcing.
 - Do not implement Temporal-style deterministic replay.
-- Do not define final SQL schema details.
-- Do not define adapter-specific APIs for BullMQ, Redis, Valkey, Postgres, or
-  cloud queues.
+- Do not make BullMQ, Redis, Valkey, or cloud queues part of the v1 runtime.
+- Do not expose generic queue APIs.
 - Do not add signals, queries, timers, progress streams, or watch APIs in this
   runtime slice.
 - Do not implement cancellation propagation in this runtime slice.
 - Do not implement retry scheduling in this runtime slice.
 - Do not support arbitrary nested subgraphs inside `branch` or `parallel`.
 
+## Postgres Runtime Shape
+
+The durable runtime is Postgres-backed:
+
+```ts
+import { createPostgresWorkflowRuntime } from '@nmtjs/workflows/postgres'
+```
+
+Postgres is not a generic adapter peer to BullMQ or cloud queues. It is the v1
+runtime substrate: durable state, leases, delayed work, and continuation/attempt
+commands should live in Postgres so runtime transitions can be atomic.
+
+`createPostgresWorkflowRuntime()` accepts a small `WorkflowPostgresConnection`
+interface instead of a concrete Postgres client so applications can adapt `pg`,
+PGlite, Neon, Postgres.js, Kysely, Drizzle, or other query providers without
+making the runtime depend on those libraries.
+The runtime must not create or migrate schema implicitly. Applications should
+apply schema through their own migration flow before constructing production
+workers.
+
+The Postgres adapter may expose explicit helpers for local/dev/test setup and
+startup checks:
+
+```ts
+await installPostgresWorkflowSchemaForTesting(connection)
+await verifyPostgresWorkflowSchema(connection)
+```
+
+`installPostgresWorkflowSchemaForTesting` is a convenience bootstrap helper for
+tests and local development, not the recommended production migration path.
+`verifyPostgresWorkflowSchema` is the production-safe startup check: it reads
+catalog metadata and fails fast when required workflow objects are missing.
+Required enums, tables, constraints, indexes, and schema version live in one
+`WORKFLOW_POSTGRES_SCHEMA_MANIFEST` constant so verification and tests do not
+maintain separate object lists.
+
+Postgres schema compatibility is tracked by `workflow_schema_version`:
+
+- singleton row: `id = 1`
+- current version: `1`
+
+`installPostgresWorkflowSchemaForTesting` inserts the current singleton version
+row when it creates a fresh schema. `verifyPostgresWorkflowSchema` fails when the
+row is missing or the stored version differs from the package's expected schema
+version.
+
+`@nmtjs/workflows/postgres/drizzle` exports Drizzle schema objects and a schema
+factory for Drizzle-first migration integration. Applications still own
+`drizzle-kit generate`, migration review, and migration execution.
+The factory config controls physical database names only; application-local
+TypeScript export names are owned by the app through normal aliases such as
+`export const WorkflowRunTable = workflows.tables.runs`.
+Finite workflow values should be represented as Postgres enums:
+
+- run kind: `workflow`, `task`
+- workflow node kind: `activity`, `task`, `workflow`, `branch`, `parallel`,
+  `mapTask`, `mapWorkflow`
+- run status: `queued`, `running`, `waiting`, `cancelling`, `cancelled`,
+  `failed`, `completed`
+- node/map-item status: `pending`, `running`, `waiting`, `cancelling`,
+  `cancelled`, `failed`, `completed`
+- attempt status: `started`, `completed`, `failed`, `timedOut`, `cancelled`
+- command kind: `continue`, `activity`, `task`
+
+Drizzle users must export both `workflows.enums.*` and `workflows.tables.*` from
+their app-local schema wrapper so `drizzle-kit generate` emits `CREATE TYPE`
+statements before enum-backed tables.
+
+Postgres and Drizzle code must stay behind `postgres` subpaths so the root
+package import does not pull infrastructure or migration-tool dependencies.
+Existing `@nmtjs/workflows/adapters/postgres` paths are transitional
+compatibility imports during the pivot and should not appear in new examples.
+
+Postgres storage should use `uuid` columns for durable runtime IDs:
+
+- run IDs
+- attempt IDs
+- parent/root/child run references
+- current attempt references
+- command IDs
+
+Public TypeScript APIs still expose IDs as `string`; UUID is a Postgres adapter
+storage choice, not root package vocabulary. Lease tokens may remain text even
+when the adapter generates UUID-shaped tokens.
+
+Postgres storage should use foreign keys for durable state relationships:
+
+- nodes belong to runs
+- attempts belong to nodes
+- child links belong to parent nodes and child runs
+- map item sets belong to nodes
+- map items belong to map item sets and may point at child runs or attempts
+- run leases belong to runs
+
+State-owned relationships should cascade when the owning run/node/set is
+removed. Optional observation pointers, such as current attempt or map item child
+run/attempt references, may use `ON DELETE SET NULL`.
+
+Command queue tables should carry first-class IDs for claim/lease behavior. Add
+foreign keys only for identities that are real columns; payload-only identities
+are not canonical state relationships.
+
+## Internal Command Table
+
+The v1 Postgres runtime should converge on one internal command table:
+
+```txt
+workflow_commands
+  id uuid primary key
+  kind workflow_command_kind not null
+  run_id uuid not null
+  workflow_name text null
+  task_name text null
+  activity_name text null
+  node_name text null
+  attempt_id uuid null
+  payload jsonb not null default '{}'
+  run_at timestamptz not null default now()
+  priority integer not null default 0
+  lease_owner text null
+  lease_token text null
+  lease_expires_at timestamptz null
+  created_at timestamptz not null default now()
+```
+
+Command kinds:
+
+- `continue`
+- `activity`
+- `task`
+
+Rules:
+
+- Claim commands with `FOR UPDATE SKIP LOCKED`.
+- `LISTEN/NOTIFY` is optional latency hint only. Polling remains correctness
+  layer.
+- Claims should support batching and local concurrency.
+- Lease expiry makes abandoned commands claimable again.
+- A command row is internal plumbing, not public job state.
+
+## Run Discovery
+
+The runtime exposes run discovery over durable run state. The application-facing
+client can wrap this later; the low-level shape should stay close to the
+Postgres query model:
+
+```ts
+type ListRunsFilter = {
+  kind?: RunKind
+  name?: string
+  status?: RuntimeRunStatus | readonly RuntimeRunStatus[]
+  parentRunId?: string
+  rootRunId?: string
+  tags?: Readonly<Record<string, string>>
+  input?: unknown
+  limit?: number
+  cursor?: string
+}
+
+type ListRunsResult = {
+  runs: readonly StoredRun[]
+  nextCursor?: string
+}
+```
+
+Rules:
+
+- Results are ordered newest first. Adapters must make rapid run creation
+  deterministic without depending on UUID lexical order.
+- `limit` caps returned rows; adapters may choose a default when omitted.
+- `cursor` resumes from the previous result's `nextCursor`.
+- `tags` use structural containment: every requested tag key/value must exist on
+  the run.
+- `input` uses structural JSON containment. For example,
+  `input: { curriculumId: 'c1' }` matches runs whose stored input contains that
+  object shape.
+- No dot paths, regex, comparison operators, or arbitrary query language are in
+  the v1 store contract.
+
+The Postgres runtime should map `input` containment to JSONB containment:
+
+```sql
+input @> '{"curriculumId":"c1"}'::jsonb
+```
+
+Recommended Postgres indexes for the promised query shape:
+
+```sql
+CREATE INDEX workflow_runs_input_gin_idx
+ON workflow_runs
+USING gin (input jsonb_path_ops);
+
+CREATE INDEX workflow_runs_tags_gin_idx
+ON workflow_runs
+USING gin (tags jsonb_path_ops);
+```
+
+Use GIN for JSON containment. GiST should not be introduced unless a concrete
+query requires it.
+
 ## Source Of Truth
 
-The runtime should use a store-owned state machine with an append-only timeline.
-The store owns current state. Timeline entries are facts for debugging,
-observability, and future UI, but runtime does not rebuild state by replaying the
-timeline.
+The runtime should use a store-owned state machine. Timeline entries are a
+reserved future observability layer; the current store interface owns current
+state and does not rebuild state by replaying a timeline.
 
 Canonical persisted entities:
 
@@ -49,9 +250,10 @@ Canonical persisted entities:
 - `node`: workflow graph node state
 - `attempt`: individual execution attempt state
 - `childLink`: parent-to-child task/workflow run linkage
-- `timeline`: append-only facts about important transitions
+- `timeline`: planned append-only facts about important transitions
 
-Queues may contain duplicate commands. Queue state is never authoritative.
+Command tables may contain duplicate commands. Command state is never
+authoritative.
 
 ## Run State
 
@@ -205,8 +407,8 @@ Continuation is enqueued after:
 - task completion
 - child workflow completion
 - map item completion
-- retry delay expiry
-- cancellation propagation
+- planned retry delay expiry
+- planned cancellation propagation
 
 Duplicate continuation commands are valid. The store lock/version makes
 continuation idempotent.
@@ -215,9 +417,11 @@ Task completion only enqueues `continueRun` for a parent workflow when the task
 run has parent metadata. A standalone task run can complete without a
 coordinator continuation because it has no workflow graph to advance.
 
-## Executor Split
+## Internal Executor Split
 
-The runtime should split dispatch interfaces by semantic role.
+The current code splits dispatch interfaces by semantic role. This is useful
+internally while the Postgres command runner is being built, but it should not be
+presented as an app-facing backend extension API.
 
 `RunCoordinationExecutor` owns continuation commands:
 
@@ -252,11 +456,12 @@ Rules:
 - `AttemptExecutor` commands are leased work attempts. They have attempt
   identity, heartbeat/timeout behavior, and output/error completion.
 - Coordination claims are filtered by workflow name.
-- Activity claims are filtered by workflow name and activity node name.
+- Activity claims are filtered by workflow name and activity name.
 - Task claims are filtered by task name. A task attempt belongs to a durable
   task run; the attempt ID is not a public run handle.
-- The core runtime may use one adapter package to implement both interfaces, but
-  the interfaces stay separate.
+- The Postgres runtime may implement both roles with one command table, but the
+  code can keep separate internal functions/types where it keeps coordinator
+  and attempt semantics clearer.
 
 ## Continuation Worker
 
@@ -295,11 +500,14 @@ previous task or activity should produce that data.
 Concurrency is required, but it is concurrency across runs, not within one run
 coordinator.
 
-Worker API should allow orchestration concurrency:
+Low-level worker API allows orchestration concurrency:
 
 ```ts
-createWorkflowWorker({
+runWorkflowWorker({
   workflows: [curriculumWorkflowImpl, caseWorkflowImpl],
+  runtime,
+  container,
+  workerId: 'workflow-worker-1',
   concurrency: 20,
 })
 ```
@@ -317,14 +525,19 @@ Rules:
 Attempt workers should have separate concurrency:
 
 ```ts
-createWorkflowWorker({
+runActivityWorker({
   workflows: [caseWorkflowImpl],
-  concurrency: 20,
-  activityConcurrency: 50,
+  runtime,
+  container,
+  workerId: 'activity-worker-1',
+  concurrency: 50,
 })
 
-createTaskWorker({
+runTaskWorker({
   tasks: [embeddingTaskImpl],
+  runtime,
+  container,
+  workerId: 'task-worker-1',
   concurrency: 50,
 })
 ```
@@ -347,19 +560,27 @@ the parent graph.
 Example deployment:
 
 ```ts
-createWorkflowWorker({
+runWorkflowWorker({
   workflows: [curriculumWorkflowImpl],
+  runtime,
+  container,
+  workerId: 'curriculum-worker',
   concurrency: 10,
 })
 
-createWorkflowWorker({
+runActivityWorker({
   workflows: [caseGenerationWorkflowImpl],
-  concurrency: 50,
-  activityConcurrency: 100,
+  runtime,
+  container,
+  workerId: 'case-activity-worker',
+  concurrency: 100,
 })
 
-createTaskWorker({
+runTaskWorker({
   tasks: [embeddingTaskImpl],
+  runtime,
+  container,
+  workerId: 'embedding-worker',
   concurrency: 100,
 })
 ```
@@ -437,7 +658,9 @@ that child task run.
 
 - Compute and persist child workflow input.
 - Persist `childLink` before dispatching child start.
-- Start child run, using idempotency keyed by parent run and node name.
+- Start child run keyed by structured parent child identity. Current runtime
+  evaluates implementation-owned idempotency callbacks and persists the computed
+  key on child task/workflow runs.
 - Mark parent node `waiting`.
 - Child terminal state enqueues parent `continueRun`.
 - Parent node completes from child output.
@@ -537,36 +760,66 @@ Rules:
 
 Workflow-level retry remains out of scope.
 
-## Adapter Responsibilities
+## Postgres Runtime Responsibilities
 
-Store adapters provide:
+Durable state storage provides:
 
 - versioned run updates or locks
+- one active coordinator lease per run
+- expired coordinator lease reclaim
+- stale lease release no-op behavior
 - node state persistence
 - attempt persistence
 - child link persistence
-- idempotency enforcement
-- stale completion rejection
+- run idempotency enforcement:
+  - duplicate `createRun` with same runnable identity, same input, and same
+    idempotency key returns the existing run
+  - duplicate `createRun` with the same idempotency key but different runnable
+    identity or input fails with an explicit conflict
+- child link atomicity:
+  - duplicate child identity returns the existing link/run when child kind,
+    child name, input, and idempotency key match
+  - duplicate child identity with different child kind, child name, input, or
+    idempotency key fails with an explicit conflict
+- map item atomicity:
+  - duplicate keys in one `ensureMapItems` call fail
+  - repeated `ensureMapItems` with the same keys and same item payloads returns
+    existing items
+  - repeated `ensureMapItems` with same keys but different item payloads fails
+    with an explicit conflict
+- stale, wrong-token, and duplicate terminal attempt completion rejection
+- terminal node/run update no-op behavior
+- snapshot isolation: `loadRunSnapshot(runId)` returns only that run's nodes,
+  attempts, child links, and map items
+- run discovery with kind, name, status, parent/root, tag containment, input
+  containment, and cursor pagination filters
 
-Run coordination executor adapters provide:
+Run coordination command implementation provides:
 
 - command enqueue
 - delayed command enqueue
 - continuation command claim/release/ack
-- workflow-name filtering where the adapter can support it
+- release requeues a claimed continuation command
+- ack removes a claimed continuation command
+- workflow-name filtering where the command query can support it
 
-Attempt executor adapters provide:
+Attempt command implementation provides:
 
 - activity attempt dispatch
 - task run attempt dispatch
+- activity claim filtering by workflow name and activity name
+- task claim filtering by task name
 - attempt claim/release/ack
+- release requeues a claimed attempt command
+- ack removes a claimed attempt command
 - worker leasing
-- heartbeats or lease expiry, where needed
+- heartbeat support without changing claim ownership
+- heartbeats or lease expiry, where needed for concrete infrastructure
 - concurrency limits
 
-One concrete adapter may implement both executor interfaces. The core runtime
-depends on the interfaces, not on BullMQ, Redis, Valkey, Postgres, or cloud queue
-SDKs.
+Postgres may implement both command roles with one table and separate internal
+claim paths. The root package must not import Postgres code; the durable runtime
+subpath owns that dependency boundary.
 
 ## Design Guardrails
 

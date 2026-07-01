@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   type AttemptExecutor,
+  createInMemoryWorkflowRuntime,
   defineTask,
   defineWorkflow,
   implementTask,
@@ -15,7 +16,6 @@ import {
   runWithConcurrency,
   startTaskRun,
 } from '../src/index.ts'
-import { createInMemoryWorkflowRuntime } from './support/in-memory-runtime.ts'
 
 describe('workflow worker runtime', () => {
   const createTestContainer = () => {

@@ -8,20 +8,157 @@ import { describe, expect, it } from 'vitest'
 
 import {
   continueWorkflowRun,
+  createInMemoryWorkflowRuntime,
   defineTask,
   defineWorkflow,
   implementTask,
   implementWorkflow,
   runActivityAttempt,
   runTaskAttempt,
+  startTaskRun,
+  startWorkflowRun,
 } from '../src/index.ts'
-import { createInMemoryWorkflowRuntime } from './support/in-memory-runtime.ts'
 
 describe('workflow runtime coordinator', () => {
   const createTestContainer = () => {
     const logger = createLogger({ pinoOptions: { enabled: false } }, 'test')
     return new Container({ logger })
   }
+
+  it('starts a workflow run and enqueues continuation', async () => {
+    const workflow = defineWorkflow({
+      name: 'started-workflow',
+      input: t.object({ scenario: t.string() }),
+      output: t.object({ caseId: t.string() }),
+    }).build()
+    const runtime = createInMemoryWorkflowRuntime()
+
+    const run = await startWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      workflow,
+      input: { scenario: 'alpha' },
+      tags: { curriculumId: 'curriculum-1' },
+      idempotencyKey: ['started-workflow', 'alpha'],
+    })
+
+    expect(run).toMatchObject({
+      kind: 'workflow',
+      name: workflow.name,
+      workflowName: workflow.name,
+      input: { scenario: 'alpha' },
+      tags: { curriculumId: 'curriculum-1' },
+      idempotencyKey: ['started-workflow', 'alpha'],
+    })
+    expect(runtime.inspect().continueRunCommands).toMatchObject([
+      {
+        payload: {
+          kind: 'continueRun',
+          runId: run.id,
+          workflowName: workflow.name,
+        },
+      },
+    ])
+  })
+
+  it('computes workflow start tags and idempotency from implementation dependencies', async () => {
+    const prefix = createValueInjectable('wf')
+    const workflow = defineWorkflow({
+      name: 'implemented-start-workflow',
+      input: t.object({ scenario: t.string() }),
+      output: t.object({ caseId: t.string() }),
+    }).build()
+    const implementation = implementWorkflow(workflow, {
+      dependencies: { prefix },
+      tags: (ctx, input) => ({
+        prefix: String(ctx.prefix),
+        scenario: input.scenario,
+      }),
+      idempotency: (ctx, input) => [
+        String(ctx.prefix),
+        'workflow',
+        input.scenario,
+      ],
+    }).finish((_ctx, _outputs, input) => ({ caseId: input.scenario }))
+    const runtime = createInMemoryWorkflowRuntime()
+
+    const run = await startWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      container: createTestContainer(),
+      workflow,
+      implementation,
+      input: { scenario: 'alpha' },
+    })
+
+    expect(run.tags).toStrictEqual({ prefix: 'wf', scenario: 'alpha' })
+    expect(run.idempotencyKey).toStrictEqual(['wf', 'workflow', 'alpha'])
+  })
+
+  it('computes task start idempotency from implementation dependencies', async () => {
+    const prefix = createValueInjectable('task')
+    const task = defineTask({
+      name: 'implemented-start-task',
+      input: t.object({ text: t.string() }),
+      output: t.object({ id: t.string() }),
+    })
+    const implementation = implementTask(task, {
+      dependencies: { prefix },
+      idempotency: (ctx, input) => [String(ctx.prefix), input.text],
+      handler: async (_ctx, input) => ({ id: input.text }),
+    })
+    const runtime = createInMemoryWorkflowRuntime()
+
+    const run = await startTaskRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container: createTestContainer(),
+      task,
+      implementation,
+      input: { text: 'alpha' },
+    })
+
+    expect(run.idempotencyKey).toStrictEqual(['task', 'alpha'])
+    expect(runtime.inspect().taskCommands[0]?.payload.idempotencyKey).toStrictEqual([
+      'task',
+      'alpha',
+    ])
+  })
+
+  it('keeps the workflow run durable when start enqueue fails', async () => {
+    const workflow = defineWorkflow({
+      name: 'enqueue-failing-started-workflow',
+      input: t.object({ scenario: t.string() }),
+      output: t.object({ caseId: t.string() }),
+    }).build()
+    const runtime = createInMemoryWorkflowRuntime()
+    const store = runtime.store
+
+    await expect(
+      startWorkflowRun({
+        store,
+        runCoordinationExecutor: {
+          ...runtime.runCoordinationExecutor,
+          enqueue: async () => {
+            throw new Error('enqueue failed')
+          },
+        },
+        workflow,
+        input: { scenario: 'alpha' },
+      }),
+    ).rejects.toThrow('enqueue failed')
+
+    const runs = runtime.inspect().runs
+    expect(runs).toHaveLength(1)
+    expect(runs[0]).toMatchObject({
+      kind: 'workflow',
+      name: workflow.name,
+      workflowName: workflow.name,
+      status: 'queued',
+      input: { scenario: 'alpha' },
+    })
+  })
 
   it('dispatches an activity attempt, stores node input, and completes run after continuation', async () => {
     const workflow = defineWorkflow({
@@ -99,6 +236,117 @@ describe('workflow runtime coordinator', () => {
     const snapshot = await runtime.store.loadRunSnapshot(run.id)
     expect(snapshot?.run.status).toBe('completed')
     expect(snapshot?.run.output).toStrictEqual({ caseId: 'alpha' })
+  })
+
+  it('stores activity attempt idempotency from implementation mapper', async () => {
+    const workflow = defineWorkflow({
+      name: 'activity-idempotency-workflow',
+      input: t.object({ scenario: t.string() }),
+      output: t.object({ caseId: t.string() }),
+    })
+      .activity('content', {
+        input: t.object({ scenario: t.string() }),
+        output: t.object({ text: t.string() }),
+      })
+      .build()
+
+    const implementation = implementWorkflow(workflow)
+      .content(async (_ctx, input) => ({ text: input.scenario }), {
+        input: (_ctx, _outputs, input) => ({ scenario: input.scenario }),
+        idempotency: (_ctx, _outputs, input) => [
+          'content',
+          input.scenario,
+        ],
+      })
+      .finish((_ctx, { content }) => ({ caseId: content.text }))
+
+    const runtime = createInMemoryWorkflowRuntime()
+    const run = await runtime.store.createRun({
+      workflowName: workflow.name,
+      input: { scenario: 'alpha' },
+    })
+
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container: createTestContainer(),
+      workflows: [implementation],
+      workerId: 'coordinator-1',
+      command: {
+        kind: 'continueRun',
+        runId: run.id,
+        workflowName: workflow.name,
+      },
+    })
+
+    const snapshot = await runtime.store.loadRunSnapshot(run.id)
+    expect(snapshot?.attempts[0]?.idempotencyKey).toStrictEqual([
+      'content',
+      'alpha',
+    ])
+    expect(
+      runtime.inspect().activityCommands[0]?.payload.idempotencyKey,
+    ).toStrictEqual(['content', 'alpha'])
+  })
+
+  it('stores child task run idempotency from implementation mapper', async () => {
+    const task = defineTask({
+      name: 'child-idempotency-task',
+      input: t.object({ text: t.string() }),
+      output: t.object({ id: t.string() }),
+    })
+    const workflow = defineWorkflow({
+      name: 'child-task-idempotency-workflow',
+      input: t.object({ scenario: t.string() }),
+      output: t.object({ id: t.string() }),
+    })
+      .task('embedding', task)
+      .build()
+
+    const implementation = implementWorkflow(workflow)
+      .embedding(task, {
+        input: (_ctx, _outputs, input) => ({ text: input.scenario }),
+        idempotency: (_ctx, _outputs, input) => [
+          'embedding',
+          input.scenario,
+        ],
+      })
+      .finish((_ctx, { embedding }) => ({ id: embedding.id }))
+
+    const runtime = createInMemoryWorkflowRuntime()
+    const run = await runtime.store.createRun({
+      workflowName: workflow.name,
+      input: { scenario: 'alpha' },
+    })
+
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container: createTestContainer(),
+      workflows: [implementation],
+      workerId: 'coordinator-1',
+      command: {
+        kind: 'continueRun',
+        runId: run.id,
+        workflowName: workflow.name,
+      },
+    })
+
+    const snapshot = await runtime.store.loadRunSnapshot(run.id)
+    const childRunId = snapshot?.childLinks[0]?.childRunId
+    expect(childRunId).toBeTypeOf('string')
+
+    const childSnapshot = await runtime.store.loadRunSnapshot(childRunId!)
+    expect(childSnapshot?.run.idempotencyKey).toStrictEqual([
+      'embedding',
+      'alpha',
+    ])
+    expect(runtime.inspect().taskCommands[0]?.payload.idempotencyKey).toStrictEqual([
+      'embedding',
+      'alpha',
+    ])
   })
 
   it('ignores a continuation command whose workflow name does not match the stored run', async () => {

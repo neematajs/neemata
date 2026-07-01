@@ -5,18 +5,19 @@ import type {
   ClaimedCommand,
   ContinueRunCommand,
   TaskAttemptCommand,
-} from '../../src/runtime/commands.ts'
+} from './commands.ts'
 import type {
   AttemptExecutor,
   RunCoordinationExecutor,
-} from '../../src/runtime/executors.ts'
+} from './executors.ts'
 import type {
   CreateAttemptInput,
   CreateNodeInput,
   CreateRunInput,
+  ListRunsFilter,
   RunLease,
   WorkflowStore,
-} from '../../src/runtime/store.ts'
+} from './store.ts'
 import type {
   NodeChildIdentity,
   RunSnapshot,
@@ -26,11 +27,11 @@ import type {
   StoredMapItem,
   StoredNode,
   StoredRun,
-} from '../../src/runtime/state.ts'
+} from './state.ts'
 import {
   isTerminalNodeStatus,
   isTerminalRunStatus,
-} from '../../src/runtime/status.ts'
+} from './status.ts'
 
 type InMemoryRunLease = RunLease & {
   readonly expiresAt: Date
@@ -67,6 +68,7 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
   const childLinks: StoredChildLink[] = []
   const mapItems: StoredMapItem[] = []
   const mapItemKeys = new Map<string, readonly (string | undefined)[]>()
+  const runIdempotencyKeys = new Map<string, string>()
   const runLeases = new Map<string, InMemoryRunLease>()
   const continueRunCommands: QueueItem<ContinueRunCommand>[] = []
   const activityCommands: QueueItem<ActivityAttemptCommand>[] = []
@@ -85,6 +87,73 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
       identity.itemIndex ?? null,
       identity.itemKey ?? null,
     ])
+  const valueKey = (value: unknown) => JSON.stringify(value)
+  const sameValue = (left: unknown, right: unknown) =>
+    valueKey(left) === valueKey(right)
+  const sameOptionalValue = (left: unknown, right: unknown) =>
+    left === undefined && right === undefined
+      ? true
+      : left !== undefined && right !== undefined && sameValue(left, right)
+  const jsonContains = (target: unknown, expected: unknown): boolean => {
+    if (expected === undefined) return true
+    if (Array.isArray(expected)) {
+      if (!Array.isArray(target)) return false
+      return expected.every((expectedItem) =>
+        target.some((targetItem) => jsonContains(targetItem, expectedItem)),
+      )
+    }
+    if (
+      expected &&
+      typeof expected === 'object' &&
+      !Array.isArray(expected)
+    ) {
+      if (!target || typeof target !== 'object' || Array.isArray(target)) {
+        return false
+      }
+
+      const targetRecord = target as Record<string, unknown>
+      return Object.entries(expected).every(([key, value]) =>
+        jsonContains(targetRecord[key], value),
+      )
+    }
+
+    return Object.is(target, expected)
+  }
+
+  const runMatchesFilter = (run: StoredRun, filter: ListRunsFilter) => {
+    const statuses = Array.isArray(filter.status)
+      ? filter.status
+      : filter.status === undefined
+        ? undefined
+        : [filter.status]
+
+    return (
+      (filter.kind === undefined || run.kind === filter.kind) &&
+      (filter.name === undefined || run.name === filter.name) &&
+      (statuses === undefined || statuses.includes(run.status)) &&
+      (filter.parentRunId === undefined ||
+        run.parentRunId === filter.parentRunId) &&
+      (filter.rootRunId === undefined || run.rootRunId === filter.rootRunId) &&
+      (filter.tags === undefined ||
+        Object.entries(filter.tags).every(
+          ([key, value]) => run.tags[key] === value,
+        )) &&
+      (filter.input === undefined || jsonContains(run.input, filter.input))
+    )
+  }
+
+  const runIdempotencyKey = (key: readonly unknown[]) => valueKey(key)
+  const runnableName = (input: CreateRunInput) =>
+    input.name ?? input.taskName ?? input.workflowName
+  const runMatchesCreateInput = (run: StoredRun, input: CreateRunInput) =>
+    run.kind === (input.kind ?? 'workflow') &&
+    run.name === runnableName(input) &&
+    run.workflowName === input.workflowName &&
+    run.taskName === input.taskName &&
+    run.parentRunId === input.parentRunId &&
+    run.parentNodeName === input.parentNodeName &&
+    run.rootRunId === (input.rootRunId ?? run.id) &&
+    sameValue(run.input, input.input)
 
   const storedError = (error: unknown): StoredError => {
     if (error instanceof Error) {
@@ -100,6 +169,20 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
 
   const store: WorkflowStore = {
     async createRun(input: CreateRunInput) {
+      if (input.idempotencyKey) {
+        const existingRunId = runIdempotencyKeys.get(
+          runIdempotencyKey(input.idempotencyKey),
+        )
+        if (existingRunId) {
+          const existing = runs.get(existingRunId)
+          if (existing && runMatchesCreateInput(existing, input)) {
+            return existing
+          }
+
+          throw new Error(`Conflicting idempotent run [${input.workflowName}]`)
+        }
+      }
+
       const date = now()
       const runId = id('run')
       const run: StoredRun = {
@@ -126,7 +209,41 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
         updatedAt: date,
       }
       runs.set(run.id, run)
+      if (input.idempotencyKey) {
+        runIdempotencyKeys.set(runIdempotencyKey(input.idempotencyKey), run.id)
+      }
       return run
+    },
+    async listRuns(filter: ListRunsFilter = {}) {
+      const limit = filter.limit ?? Number.POSITIVE_INFINITY
+      const offset = filter.cursor ? Number.parseInt(filter.cursor, 10) : 0
+      if (
+        filter.limit !== undefined &&
+        (!Number.isFinite(limit) || limit < 1)
+      ) {
+        return { runs: [] }
+      }
+      if (!Number.isInteger(offset) || offset < 0) {
+        throw new Error(`Invalid run list cursor [${filter.cursor}]`)
+      }
+
+      const filtered = [...runs.values()]
+        .filter((run) => runMatchesFilter(run, filter))
+        .sort((left, right) => {
+          const byCreatedAt =
+            right.createdAt.getTime() - left.createdAt.getTime()
+          if (byCreatedAt !== 0) return byCreatedAt
+          return right.id.localeCompare(left.id)
+        })
+
+      const page = filtered.slice(offset, offset + limit)
+      const nextOffset = offset + page.length
+      return {
+        runs: page,
+        ...(nextOffset < filtered.length
+          ? { nextCursor: String(nextOffset) }
+          : {}),
+      }
     },
     async acquireRunLease({ runId, leaseMs }) {
       const date = now()
@@ -232,6 +349,9 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
         leaseToken: id('attempt-lease'),
         attemptNumber: node.attemptCount + 1,
         input: input.input,
+        ...(input.idempotencyKey === undefined
+          ? {}
+          : { idempotencyKey: input.idempotencyKey }),
         dispatchedAt: now(),
       }
       const updatedNode: StoredNode = {
@@ -385,6 +505,9 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
         leaseToken: id('attempt-lease'),
         attemptNumber: node.attemptCount + 1,
         input: params.input,
+        ...(params.idempotencyKey === undefined
+          ? {}
+          : { idempotencyKey: params.idempotencyKey }),
         dispatchedAt: now(),
       }
       const updatedNode: StoredNode = {
@@ -418,6 +541,18 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
         const childRun = runs.get(existingLink.childRunId)
         if (!childRun) {
           throw new Error(`Missing child run [${existingLink.childRunId}]`)
+        }
+        if (
+          existingLink.childKind !== params.childKind ||
+          existingLink.childName !== params.childName ||
+          childRun.kind !== params.childKind ||
+          childRun.name !== params.childName ||
+          !sameValue(childRun.input, params.input) ||
+          !sameOptionalValue(childRun.idempotencyKey, params.idempotencyKey)
+        ) {
+          throw new Error(
+            `Conflicting child run [${params.parentRunId}.${params.parentNodeName}]`,
+          )
         }
         return { childLink: existingLink, childRun, created: false }
       }
@@ -479,6 +614,10 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
       }
 
       const keys = params.items.map((_, index) => params.keys?.[index])
+      const definedKeys = keys.filter((itemKey) => itemKey !== undefined)
+      if (new Set(definedKeys).size !== definedKeys.length) {
+        throw new Error(`Duplicate map item key for [${key}]`)
+      }
       const existingKeys = mapItemKeys.get(key)
       const existingItems = mapItems.filter(
         (item) => item.runId === params.runId && item.nodeName === params.nodeName,
@@ -488,6 +627,12 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
           existingKeys.length === keys.length &&
           existingKeys.every((existingKey, index) => existingKey === keys[index])
         if (!sameKeys) throw new Error(`Conflicting map items for [${key}]`)
+        const sameItems =
+          existingItems.length === params.items.length &&
+          existingItems.every((existingItem, index) =>
+            sameValue(existingItem.item, params.items[index]),
+          )
+        if (!sameItems) throw new Error(`Conflicting map items for [${key}]`)
 
         return { items: existingItems, created: false }
       }

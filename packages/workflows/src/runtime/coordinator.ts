@@ -1,4 +1,4 @@
-import type { Container, DependencyContext } from '@nmtjs/core'
+import type { Container, Dependencies, DependencyContext } from '@nmtjs/core'
 
 import type {
   ActivityNodeImplementation,
@@ -6,16 +6,22 @@ import type {
   MapNodeImplementation,
   ParallelNodeImplementation,
   RunnableNodeImplementation,
+  TaskImplementation,
   WorkflowImplementation,
   WorkflowCaseImplementation,
 } from '../implement/index.ts'
-import type { AnyTaskDefinition, TaskInput } from '../types/index.ts'
+import type {
+  AnyTaskDefinition,
+  AnyWorkflowDefinition,
+  TaskInput,
+  WorkflowInput,
+} from '../types/index.ts'
 import type { ContinueRunCommand } from './commands.ts'
 import type { AttemptExecutor, RunCoordinationExecutor } from './executors.ts'
+import type { NodeChildIdentity, StoredAttempt, StoredRun } from './state.ts'
+import type { CreateRunInput, WorkflowStore } from './store.ts'
 import { createWorkflowRuntimeRegistry } from './registry.ts'
 import { isTerminalRunStatus } from './status.ts'
-import type { NodeChildIdentity, StoredAttempt, StoredRun } from './state.ts'
-import type { WorkflowStore } from './store.ts'
 
 const TASK_RUN_NODE_NAME = '$task'
 
@@ -24,7 +30,10 @@ export type ContinueWorkflowRunInput = {
   readonly runCoordinationExecutor: RunCoordinationExecutor
   readonly attemptExecutor: AttemptExecutor
   readonly container: Pick<Container, 'createContext'>
-  readonly workflows: readonly WorkflowImplementation<any, any>[]
+  readonly workflows: readonly WorkflowImplementation<
+    AnyWorkflowDefinition,
+    any
+  >[]
   readonly workerId: string
   readonly command: ContinueRunCommand
   readonly leaseMs?: number
@@ -34,28 +43,123 @@ export type ContinueWorkflowRunResult = {
   readonly status: 'processed' | 'busy' | 'ignored'
 }
 
-export type StartTaskRunInput<Task extends AnyTaskDefinition> = {
+export type StartTaskRunInput<
+  Task extends AnyTaskDefinition,
+  Deps extends Dependencies = Dependencies,
+> = {
   readonly store: WorkflowStore
   readonly runCoordinationExecutor: RunCoordinationExecutor
   readonly attemptExecutor: AttemptExecutor
+  readonly atomicStart?: WorkflowRuntimeAtomicStart
+  readonly container?: Pick<Container, 'createContext'>
   readonly task: Task
+  readonly implementation?: TaskImplementation<Task, Deps>
   readonly input: TaskInput<Task>
   readonly tags?: Readonly<Record<string, string>>
   readonly idempotencyKey?: readonly unknown[]
 }
 
-export async function startTaskRun<Task extends AnyTaskDefinition>(
-  input: StartTaskRunInput<Task>,
-): Promise<StoredRun> {
-  const run = await input.store.createRun({
+export type StartWorkflowRunInput<
+  Workflow extends AnyWorkflowDefinition,
+  Deps extends Dependencies = Dependencies,
+> = {
+  readonly store: WorkflowStore
+  readonly runCoordinationExecutor: RunCoordinationExecutor
+  readonly atomicStart?: WorkflowRuntimeAtomicStart
+  readonly container?: Pick<Container, 'createContext'>
+  readonly workflow: Workflow
+  readonly implementation?: WorkflowImplementation<Workflow, Deps>
+  readonly input: WorkflowInput<Workflow>
+  readonly tags?: Readonly<Record<string, string>>
+  readonly idempotencyKey?: readonly unknown[]
+}
+
+export type WorkflowRuntimeAtomicStart = {
+  readonly startWorkflowRun: (input: {
+    readonly run: CreateRunInput
+  }) => Promise<StoredRun>
+  readonly startTaskRun: (input: {
+    readonly run: CreateRunInput
+    readonly taskName: string
+    readonly taskInput: unknown
+    readonly idempotencyKey?: readonly unknown[]
+  }) => Promise<StoredRun>
+}
+
+export async function startWorkflowRun<
+  Workflow extends AnyWorkflowDefinition,
+  Deps extends Dependencies = Dependencies,
+>(input: StartWorkflowRunInput<Workflow, Deps>): Promise<StoredRun> {
+  assertImplementationTarget(
+    input.implementation?.workflow,
+    input.workflow,
+    'Workflow start implementation',
+  )
+  const metadata = await resolveWorkflowStartMetadata(input)
+  const runInput: CreateRunInput = {
+    kind: 'workflow',
+    name: input.workflow.name,
+    workflowName: input.workflow.name,
+    input: input.input,
+    tags: metadata.tags,
+    idempotencyKey: metadata.idempotencyKey,
+  }
+
+  if (input.atomicStart) {
+    return await input.atomicStart.startWorkflowRun({ run: runInput })
+  }
+
+  const run = await input.store.createRun(runInput)
+
+  await input.runCoordinationExecutor.enqueue({
+    kind: 'continueRun',
+    runId: run.id,
+    workflowName: input.workflow.name,
+  })
+
+  return run
+}
+
+export async function startTaskRun<
+  Task extends AnyTaskDefinition,
+  Deps extends Dependencies = Dependencies,
+>(input: StartTaskRunInput<Task, Deps>): Promise<StoredRun> {
+  assertImplementationTarget(
+    input.implementation?.task,
+    input.task,
+    'Task start implementation',
+  )
+  const taskCtx = await resolveStartContext({
+    container: input.container,
+    dependencies: input.implementation?.dependencies,
+    needsContext:
+      input.idempotencyKey === undefined && !!input.implementation?.idempotency,
+    label: 'Task start idempotency',
+  })
+  const idempotencyKey =
+    input.idempotencyKey ??
+    resolveIdempotency(input.implementation?.idempotency, taskCtx, input.input)
+
+  const runInput: CreateRunInput = {
     kind: 'task',
     name: input.task.name,
     workflowName: input.task.name,
     taskName: input.task.name,
     input: input.input,
     tags: input.tags,
-    idempotencyKey: input.idempotencyKey,
-  })
+    idempotencyKey,
+  }
+
+  if (input.atomicStart) {
+    return await input.atomicStart.startTaskRun({
+      run: runInput,
+      taskName: input.task.name,
+      taskInput: input.input,
+      ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
+    })
+  }
+
+  const run = await input.store.createRun(runInput)
 
   await dispatchTaskRunAttempt({
     store: input.store,
@@ -64,6 +168,7 @@ export async function startTaskRun<Task extends AnyTaskDefinition>(
     taskName: input.task.name,
     taskRunId: run.id,
     taskInput: input.input,
+    idempotencyKey,
   })
 
   return run
@@ -73,9 +178,11 @@ export async function continueWorkflowRun(
   input: ContinueWorkflowRunInput,
 ): Promise<ContinueWorkflowRunResult> {
   const registry = createWorkflowRuntimeRegistry({
-    workflows: input.workflows as readonly WorkflowImplementation[],
+    workflows: input.workflows,
   })
-  const implementation = registry.getWorkflow(input.command.workflowName)
+  const implementation = registry.getWorkflow(input.command.workflowName) as
+    | WorkflowImplementation
+    | undefined
   if (!implementation) return { status: 'ignored' }
 
   const lease = await input.store.acquireRunLease({
@@ -302,15 +409,17 @@ async function dispatchTaskNode(input: {
       nodeName: input.node.name,
     },
     taskName: input.node.target.name,
+    idempotencyKey: resolveIdempotency(
+      input.node.idempotency,
+      input.workflowCtx,
+      input.outputs,
+      input.run.input,
+    ),
     resolveNodeInput: () =>
       hasStoredNodeInput(existing)
         ? existing.input
         : input.node.input
-          ? input.node.input(
-              input.workflowCtx,
-              input.outputs,
-              input.run.input,
-            )
+          ? input.node.input(input.workflowCtx, input.outputs, input.run.input)
           : input.run.input,
   })
 }
@@ -328,6 +437,7 @@ async function dispatchChildTaskRun(input: {
   readonly identity: NodeChildIdentity
   readonly taskName: string
   readonly resolveNodeInput: () => unknown
+  readonly idempotencyKey?: readonly unknown[]
 }) {
   const children = await input.store.loadNodeChildren({
     runId: input.run.id,
@@ -359,6 +469,7 @@ async function dispatchChildTaskRun(input: {
         taskName: input.taskName,
         taskRunId: existingLink.childRunId,
         taskInput: childRun?.input ?? input.parentNode.input,
+        idempotencyKey: childRun.idempotencyKey,
       })
       await input.store.waitNode({
         runId: input.run.id,
@@ -387,15 +498,11 @@ async function dispatchChildTaskRun(input: {
 
     const error =
       childRun.error ?? new Error(`Child task run [${childRun.id}] failed`)
-    await input.store.failNode({
-      runId: input.run.id,
-      nodeName: input.nodeName,
-      error,
-    })
-    await failRunAndWakeParent({
+    await failNodeAndRun({
       store: input.store,
       runCoordinationExecutor: input.runCoordinationExecutor,
       runId: input.run.id,
+      nodeName: input.nodeName,
       error,
     })
     return
@@ -415,6 +522,7 @@ async function dispatchChildTaskRun(input: {
     parentRunId: input.run.id,
     parentNodeName: input.nodeName,
     rootRunId: input.run.rootRunId,
+    idempotencyKey: input.idempotencyKey,
   })
   await dispatchTaskRunAttempt({
     store: input.store,
@@ -423,6 +531,7 @@ async function dispatchChildTaskRun(input: {
     taskName: input.taskName,
     taskRunId: child.childRun.id,
     taskInput: nodeInput,
+    idempotencyKey: input.idempotencyKey,
   })
   await input.store.waitNode({
     runId: input.run.id,
@@ -437,6 +546,7 @@ async function dispatchTaskRunAttempt(input: {
   readonly taskName: string
   readonly taskRunId: string
   readonly taskInput: unknown
+  readonly idempotencyKey?: readonly unknown[]
 }) {
   await input.store.createNode({
     runId: input.taskRunId,
@@ -465,6 +575,7 @@ async function dispatchTaskRunAttempt(input: {
         },
         kind: 'task',
         input: input.taskInput,
+        idempotencyKey: input.idempotencyKey,
       })
       return {
         attempt: result.attempt,
@@ -509,6 +620,26 @@ async function failRunAndWakeParent(input: {
   })
 }
 
+async function failNodeAndRun(input: {
+  readonly store: WorkflowStore
+  readonly runCoordinationExecutor: RunCoordinationExecutor
+  readonly runId: string
+  readonly nodeName: string
+  readonly error: unknown
+}) {
+  await input.store.failNode({
+    runId: input.runId,
+    nodeName: input.nodeName,
+    error: input.error,
+  })
+  await failRunAndWakeParent({
+    store: input.store,
+    runCoordinationExecutor: input.runCoordinationExecutor,
+    runId: input.runId,
+    error: input.error,
+  })
+}
+
 async function failMissingChildRun(input: {
   readonly store: WorkflowStore
   readonly runCoordinationExecutor: RunCoordinationExecutor
@@ -520,15 +651,11 @@ async function failMissingChildRun(input: {
   const error = new Error(
     `Missing child ${input.childKind} run [${input.childRunId}]`,
   )
-  await input.store.failNode({
-    runId: input.parentRunId,
-    nodeName: input.nodeName,
-    error,
-  })
-  await failRunAndWakeParent({
+  await failNodeAndRun({
     store: input.store,
     runCoordinationExecutor: input.runCoordinationExecutor,
     runId: input.parentRunId,
+    nodeName: input.nodeName,
     error,
   })
 }
@@ -581,6 +708,12 @@ async function dispatchWorkflowNode(input: {
       nodeName: input.node.name,
     },
     workflowName: input.node.target.name,
+    idempotencyKey: resolveIdempotency(
+      input.node.idempotency,
+      input.workflowCtx,
+      input.outputs,
+      input.run.input,
+    ),
     resolveNodeInput: () =>
       hasStoredNodeInput(existing)
         ? existing.input
@@ -606,6 +739,7 @@ async function dispatchChildWorkflow(input: {
   }
   readonly workflowName: string
   readonly resolveNodeInput: () => unknown
+  readonly idempotencyKey?: readonly unknown[]
 }): Promise<void> {
   const children = await input.store.loadNodeChildren({
     runId: input.run.id,
@@ -648,7 +782,10 @@ async function dispatchChildWorkflow(input: {
         nodeName: input.nodeName,
         output: childRun.output,
       })
-      const nextOutputs = { ...input.outputs, [input.nodeName]: childRun.output }
+      const nextOutputs = {
+        ...input.outputs,
+        [input.nodeName]: childRun.output,
+      }
       await advanceWorkflowRun({
         store: input.store,
         attemptExecutor: input.attemptExecutor,
@@ -664,15 +801,11 @@ async function dispatchChildWorkflow(input: {
     const error =
       childRun.error ??
       new Error(`Child workflow [${childRun.id}] ${childRun.status}`)
-    await input.store.failNode({
-      runId: input.run.id,
-      nodeName: input.nodeName,
-      error,
-    })
-    await failRunAndWakeParent({
+    await failNodeAndRun({
       store: input.store,
       runCoordinationExecutor: input.runCoordinationExecutor,
       runId: input.run.id,
+      nodeName: input.nodeName,
       error,
     })
     return
@@ -691,6 +824,7 @@ async function dispatchChildWorkflow(input: {
     parentRunId: input.run.id,
     parentNodeName: input.nodeName,
     rootRunId: input.run.rootRunId,
+    idempotencyKey: input.idempotencyKey,
   })
 
   await input.runCoordinationExecutor.enqueue({
@@ -723,11 +857,7 @@ async function dispatchActivityNode(input: {
   if (existing.status === 'running' || existing.status === 'waiting') return
 
   const nodeInput = input.node.input
-    ? input.node.input(
-        input.workflowCtx,
-        input.outputs,
-        input.workflowInput,
-      )
+    ? input.node.input(input.workflowCtx, input.outputs, input.workflowInput)
     : input.workflowInput
 
   await input.store.setNodeInput({
@@ -749,6 +879,12 @@ async function dispatchActivityNode(input: {
         runId: input.runId,
         nodeName: input.node.name,
         input: nodeInput,
+        idempotencyKey: resolveIdempotency(
+          input.node.idempotency,
+          input.workflowCtx,
+          input.outputs,
+          input.workflowInput,
+        ),
       }),
       commandInput: nodeInput,
       created: true,
@@ -776,17 +912,17 @@ async function dispatchBranchNode(input: {
   let caseKey = existing.selectedCase
   if (caseKey === undefined) {
     try {
-      caseKey = input.node.select(input.workflowCtx, input.outputs, input.run.input)
+      caseKey = input.node.select(
+        input.workflowCtx,
+        input.outputs,
+        input.run.input,
+      )
     } catch (error) {
-      await input.store.failNode({
-        runId: input.run.id,
-        nodeName: input.node.name,
-        error,
-      })
-      await failRunAndWakeParent({
+      await failNodeAndRun({
         store: input.store,
         runCoordinationExecutor: input.runCoordinationExecutor,
         runId: input.run.id,
+        nodeName: input.node.name,
         error,
       })
       return
@@ -801,16 +937,14 @@ async function dispatchBranchNode(input: {
 
   const selected = input.node.cases[caseKey]
   if (!selected) {
-    const error = new Error(`Unknown branch case [${input.node.name}.${caseKey}]`)
-    await input.store.failNode({
-      runId: input.run.id,
-      nodeName: input.node.name,
-      error,
-    })
-    await failRunAndWakeParent({
+    const error = new Error(
+      `Unknown branch case [${input.node.name}.${caseKey}]`,
+    )
+    await failNodeAndRun({
       store: input.store,
       runCoordinationExecutor: input.runCoordinationExecutor,
       runId: input.run.id,
+      nodeName: input.node.name,
       error,
     })
     return
@@ -834,6 +968,12 @@ async function dispatchBranchNode(input: {
       nodeName: input.node.name,
       identity,
       workflowName: selected.target.name,
+      idempotencyKey: resolveIdempotency(
+        selected.idempotency,
+        input.workflowCtx,
+        input.outputs,
+        input.run.input,
+      ),
       resolveNodeInput: () =>
         hasStoredNodeInput(existing)
           ? existing.input
@@ -857,6 +997,12 @@ async function dispatchBranchNode(input: {
       nodeName: input.node.name,
       identity,
       taskName: selected.target.name,
+      idempotencyKey: resolveIdempotency(
+        selected.idempotency,
+        input.workflowCtx,
+        input.outputs,
+        input.run.input,
+      ),
       resolveNodeInput: () =>
         hasStoredNodeInput(existing)
           ? existing.input
@@ -901,6 +1047,12 @@ async function dispatchBranchNode(input: {
   const nodeInput = selected.input
     ? selected.input(input.workflowCtx, input.outputs, input.run.input)
     : input.run.input
+  const idempotencyKey = resolveIdempotency(
+    selected.idempotency,
+    input.workflowCtx,
+    input.outputs,
+    input.run.input,
+  )
 
   await input.store.setNodeInput({
     runId: input.run.id,
@@ -921,6 +1073,7 @@ async function dispatchBranchNode(input: {
         identity,
         kind: 'activity',
         input: nodeInput,
+        idempotencyKey,
       })
       return {
         attempt: result.attempt,
@@ -973,15 +1126,11 @@ async function dispatchParallelNode(input: {
       const error =
         existingAttempt.error ??
         new Error(`Parallel member [${input.node.name}.${memberKey}] failed`)
-      await input.store.failNode({
-        runId: input.run.id,
-        nodeName: input.node.name,
-        error,
-      })
-      await failRunAndWakeParent({
+      await failNodeAndRun({
         store: input.store,
         runCoordinationExecutor: input.runCoordinationExecutor,
         runId: input.run.id,
+        nodeName: input.node.name,
         error,
       })
       return
@@ -992,7 +1141,9 @@ async function dispatchParallelNode(input: {
         sameNodeChildIdentity(link.identity, identity),
       )
       if (existingLink) {
-        const snapshot = await input.store.loadRunSnapshot(existingLink.childRunId)
+        const snapshot = await input.store.loadRunSnapshot(
+          existingLink.childRunId,
+        )
         const childRun = snapshot?.run
         if (!childRun) {
           await failMissingChildRun({
@@ -1021,16 +1172,14 @@ async function dispatchParallelNode(input: {
 
         const error =
           childRun.error ??
-          new Error(`Parallel child workflow [${childRun.id}] ${childRun.status}`)
-        await input.store.failNode({
-          runId: input.run.id,
-          nodeName: input.node.name,
-          error,
-        })
-        await failRunAndWakeParent({
+          new Error(
+            `Parallel child workflow [${childRun.id}] ${childRun.status}`,
+          )
+        await failNodeAndRun({
           store: input.store,
           runCoordinationExecutor: input.runCoordinationExecutor,
           runId: input.run.id,
+          nodeName: input.node.name,
           error,
         })
         return
@@ -1039,6 +1188,12 @@ async function dispatchParallelNode(input: {
       const nodeInput = member.input
         ? member.input(input.workflowCtx, input.outputs, input.run.input)
         : input.run.input
+      const idempotencyKey = resolveIdempotency(
+        member.idempotency,
+        input.workflowCtx,
+        input.outputs,
+        input.run.input,
+      )
       const child = await input.store.ensureChildWorkflowRun({
         identity,
         workflowName: member.target.name,
@@ -1046,6 +1201,7 @@ async function dispatchParallelNode(input: {
         parentRunId: input.run.id,
         parentNodeName: input.node.name,
         rootRunId: input.run.rootRunId,
+        idempotencyKey,
       })
       await input.runCoordinationExecutor.enqueue({
         kind: 'continueRun',
@@ -1060,7 +1216,9 @@ async function dispatchParallelNode(input: {
         sameNodeChildIdentity(link.identity, identity),
       )
       if (existingLink) {
-        const snapshot = await input.store.loadRunSnapshot(existingLink.childRunId)
+        const snapshot = await input.store.loadRunSnapshot(
+          existingLink.childRunId,
+        )
         const childRun = snapshot?.run
         if (!childRun) {
           await failMissingChildRun({
@@ -1082,6 +1240,7 @@ async function dispatchParallelNode(input: {
             taskName: member.target.name,
             taskRunId: existingLink.childRunId,
             taskInput: childRun?.input ?? input.run.input,
+            idempotencyKey: childRun.idempotencyKey,
           })
           continue
         }
@@ -1093,15 +1252,11 @@ async function dispatchParallelNode(input: {
         const error =
           childRun.error ??
           new Error(`Parallel child task run [${childRun.id}] failed`)
-        await input.store.failNode({
-          runId: input.run.id,
-          nodeName: input.node.name,
-          error,
-        })
-        await failRunAndWakeParent({
+        await failNodeAndRun({
           store: input.store,
           runCoordinationExecutor: input.runCoordinationExecutor,
           runId: input.run.id,
+          nodeName: input.node.name,
           error,
         })
         return
@@ -1110,6 +1265,12 @@ async function dispatchParallelNode(input: {
       const nodeInput = member.input
         ? member.input(input.workflowCtx, input.outputs, input.run.input)
         : input.run.input
+      const idempotencyKey = resolveIdempotency(
+        member.idempotency,
+        input.workflowCtx,
+        input.outputs,
+        input.run.input,
+      )
       const child = await input.store.ensureChildRun({
         identity,
         childKind: 'task',
@@ -1118,6 +1279,7 @@ async function dispatchParallelNode(input: {
         parentRunId: input.run.id,
         parentNodeName: input.node.name,
         rootRunId: input.run.rootRunId,
+        idempotencyKey,
       })
       await dispatchTaskRunAttempt({
         store: input.store,
@@ -1126,6 +1288,7 @@ async function dispatchParallelNode(input: {
         taskName: member.target.name,
         taskRunId: child.childRun.id,
         taskInput: nodeInput,
+        idempotencyKey,
       })
       continue
     }
@@ -1139,6 +1302,14 @@ async function dispatchParallelNode(input: {
       : member.input
         ? member.input(input.workflowCtx, input.outputs, input.run.input)
         : input.run.input
+    const idempotencyKey =
+      existingAttempt?.idempotencyKey ??
+      resolveIdempotency(
+        member.idempotency,
+        input.workflowCtx,
+        input.outputs,
+        input.run.input,
+      )
 
     await dispatchActivityAttempt({
       store: input.store,
@@ -1153,6 +1324,7 @@ async function dispatchParallelNode(input: {
           identity,
           kind: 'activity',
           input: nodeInput,
+          idempotencyKey,
         })
         return {
           attempt: result.attempt,
@@ -1250,7 +1422,9 @@ async function dispatchMapTaskNode(input: {
     )
 
     if (existingLink) {
-      const snapshot = await input.store.loadRunSnapshot(existingLink.childRunId)
+      const snapshot = await input.store.loadRunSnapshot(
+        existingLink.childRunId,
+      )
       const childRun = snapshot?.run
       if (!childRun) {
         await failMissingChildRun({
@@ -1264,7 +1438,7 @@ async function dispatchMapTaskNode(input: {
         return
       }
 
-      const childRunIsTerminal = isTerminalChildRun(childRun)
+      const childRunIsTerminal = isTerminalRunStatus(childRun.status)
       if (input.node.mode !== 'start-only' && !childRunIsTerminal) {
         activeChildren += 1
       }
@@ -1287,6 +1461,7 @@ async function dispatchMapTaskNode(input: {
           taskName: input.node.target.name,
           taskRunId: existingLink.childRunId,
           taskInput: childRun?.input ?? input.run.input,
+          idempotencyKey: childRun.idempotencyKey,
         })
         continue
       }
@@ -1331,15 +1506,11 @@ async function dispatchMapTaskNode(input: {
         continue
       }
 
-      await input.store.failNode({
-        runId: input.run.id,
-        nodeName: input.node.name,
-        error,
-      })
-      await failRunAndWakeParent({
+      await failNodeAndRun({
         store: input.store,
         runCoordinationExecutor: input.runCoordinationExecutor,
         runId: input.run.id,
+        nodeName: input.node.name,
         error,
       })
       return
@@ -1358,6 +1529,14 @@ async function dispatchMapTaskNode(input: {
       input.run.input,
       item.index,
     )
+    const idempotencyKey = resolveIdempotency(
+      input.node.idempotency,
+      input.workflowCtx,
+      input.outputs,
+      item.item,
+      input.run.input,
+      item.index,
+    )
     const child = await input.store.ensureChildRun({
       identity,
       childKind: 'task',
@@ -1366,6 +1545,7 @@ async function dispatchMapTaskNode(input: {
       parentRunId: input.run.id,
       parentNodeName: input.node.name,
       rootRunId: input.run.rootRunId,
+      idempotencyKey,
     })
     await dispatchTaskRunAttempt({
       store: input.store,
@@ -1374,6 +1554,7 @@ async function dispatchMapTaskNode(input: {
       taskName: input.node.target.name,
       taskRunId: child.childRun.id,
       taskInput: nodeInput,
+      idempotencyKey,
     })
     if (input.node.mode === 'start-only') {
       startedChildren += 1
@@ -1484,7 +1665,9 @@ async function dispatchMapWorkflowNode(input: {
     )
 
     if (existingLink) {
-      const snapshot = await input.store.loadRunSnapshot(existingLink.childRunId)
+      const snapshot = await input.store.loadRunSnapshot(
+        existingLink.childRunId,
+      )
       const childRun = snapshot?.run
       if (!childRun) {
         await failMissingChildRun({
@@ -1498,7 +1681,7 @@ async function dispatchMapWorkflowNode(input: {
         return
       }
 
-      const childRunIsTerminal = isTerminalChildRun(childRun)
+      const childRunIsTerminal = isTerminalRunStatus(childRun.status)
       if (input.node.mode !== 'start-only' && !childRunIsTerminal) {
         activeChildren += 1
       }
@@ -1563,15 +1746,11 @@ async function dispatchMapWorkflowNode(input: {
         continue
       }
 
-      await input.store.failNode({
-        runId: input.run.id,
-        nodeName: input.node.name,
-        error,
-      })
-      await failRunAndWakeParent({
+      await failNodeAndRun({
         store: input.store,
         runCoordinationExecutor: input.runCoordinationExecutor,
         runId: input.run.id,
+        nodeName: input.node.name,
         error,
       })
       return
@@ -1590,6 +1769,14 @@ async function dispatchMapWorkflowNode(input: {
       input.run.input,
       item.index,
     )
+    const idempotencyKey = resolveIdempotency(
+      input.node.idempotency,
+      input.workflowCtx,
+      input.outputs,
+      item.item,
+      input.run.input,
+      item.index,
+    )
     const child = await input.store.ensureChildWorkflowRun({
       identity,
       workflowName: input.node.target.name,
@@ -1597,6 +1784,7 @@ async function dispatchMapWorkflowNode(input: {
       parentRunId: input.run.id,
       parentNodeName: input.node.name,
       rootRunId: input.run.rootRunId,
+      idempotencyKey,
     })
     await input.runCoordinationExecutor.enqueue({
       kind: 'continueRun',
@@ -1683,8 +1871,80 @@ function mapConcurrencyLimit(node: MapNodeImplementation): number {
   return node.concurrency ?? Number.POSITIVE_INFINITY
 }
 
-function isTerminalChildRun(run: StoredRun | undefined): boolean {
-  return !!run && isTerminalRunStatus(run.status)
+async function resolveWorkflowStartMetadata<
+  Workflow extends AnyWorkflowDefinition,
+  Deps extends Dependencies,
+>(
+  input: StartWorkflowRunInput<Workflow, Deps>,
+): Promise<{
+  readonly tags?: Readonly<Record<string, string>>
+  readonly idempotencyKey?: readonly unknown[]
+}> {
+  const needsContext =
+    (input.tags === undefined && !!input.implementation?.tags) ||
+    (input.idempotencyKey === undefined && !!input.implementation?.idempotency)
+  const ctx = await resolveStartContext<Deps>({
+    container: input.container,
+    dependencies: input.implementation?.dependencies,
+    needsContext,
+    label: 'Workflow start metadata',
+  })
+
+  return {
+    tags: input.tags ?? input.implementation?.tags?.(ctx, input.input),
+    idempotencyKey:
+      input.idempotencyKey ??
+      resolveIdempotency(input.implementation?.idempotency, ctx, input.input),
+  }
+}
+
+async function resolveStartContext<Deps extends Dependencies>(input: {
+  readonly container: Pick<Container, 'createContext'> | undefined
+  readonly dependencies: Deps | undefined
+  readonly needsContext: boolean
+  readonly label: string
+}): Promise<DependencyContext<Deps>> {
+  if (!input.needsContext) return {} as DependencyContext<Deps>
+  if (!input.container) {
+    throw new Error(`${input.label} requires a container`)
+  }
+
+  return (await input.container.createContext(
+    input.dependencies ?? {},
+  )) as DependencyContext<Deps>
+}
+
+function resolveIdempotency(
+  idempotency: unknown,
+  ...args: readonly unknown[]
+): readonly unknown[] | undefined {
+  if (!idempotency) return undefined
+  if (typeof idempotency === 'function') {
+    return idempotency(...args) as readonly unknown[]
+  }
+
+  if (
+    typeof idempotency === 'object' &&
+    idempotency !== null &&
+    'key' in idempotency &&
+    typeof idempotency.key === 'function'
+  ) {
+    return idempotency.key(...args) as readonly unknown[]
+  }
+
+  throw new Error('Invalid idempotency definition')
+}
+
+function assertImplementationTarget(
+  implementationTarget: { readonly name: string } | undefined,
+  target: { readonly name: string },
+  label: string,
+) {
+  if (implementationTarget && implementationTarget.name !== target.name) {
+    throw new Error(
+      `${label} [${implementationTarget.name}] does not match [${target.name}]`,
+    )
+  }
 }
 
 async function dispatchActivityAttempt(input: {
@@ -1713,6 +1973,9 @@ async function dispatchActivityAttempt(input: {
       attemptId: attempt.id,
       leaseToken: attempt.leaseToken!,
       input: commandInput,
+      ...(attempt.idempotencyKey === undefined
+        ? {}
+        : { idempotencyKey: attempt.idempotencyKey }),
     })
   } catch (error) {
     if (!created) throw error
@@ -1722,15 +1985,11 @@ async function dispatchActivityAttempt(input: {
       leaseToken: attempt.leaseToken!,
       error,
     })
-    await input.store.failNode({
-      runId: input.runId,
-      nodeName: input.nodeName,
-      error,
-    })
-    await failRunAndWakeParent({
+    await failNodeAndRun({
       store: input.store,
       runCoordinationExecutor: input.runCoordinationExecutor,
       runId: input.runId,
+      nodeName: input.nodeName,
       error,
     })
   }
@@ -1762,6 +2021,9 @@ async function dispatchTaskAttempt(input: {
       attemptId: attempt.id,
       leaseToken: attempt.leaseToken!,
       input: commandInput,
+      ...(attempt.idempotencyKey === undefined
+        ? {}
+        : { idempotencyKey: attempt.idempotencyKey }),
     })
   } catch (error) {
     if (!created) throw error
@@ -1771,15 +2033,11 @@ async function dispatchTaskAttempt(input: {
       leaseToken: attempt.leaseToken!,
       error,
     })
-    await input.store.failNode({
-      runId: input.runId,
-      nodeName: input.nodeName,
-      error,
-    })
-    await failRunAndWakeParent({
+    await failNodeAndRun({
       store: input.store,
       runCoordinationExecutor: input.runCoordinationExecutor,
       runId: input.runId,
+      nodeName: input.nodeName,
       error,
     })
   }

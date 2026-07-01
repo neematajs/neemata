@@ -5,6 +5,11 @@
 > create/reuse child task runs, and attempts should remain internal to those
 > runs.
 
+> **Current status (2026-06-30):** this plan is historical. Branch, parallel,
+> mapped task, and mapped workflow runtime support now use structured child
+> identities and durable task/workflow child runs. Use the runtime model spec for
+> current semantics before adding new runtime work.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add v1 runtime execution for `branch` workflow nodes over primitive `activity`, `task`, and child `workflow` cases.

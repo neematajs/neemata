@@ -198,7 +198,7 @@ export type WorkflowBuilder<
     Input,
     [
       ...Nodes,
-      WorkflowBranchNode<NodeName, Cases, any, SchemaOutput<OutputSchema>>,
+      WorkflowBranchNode<NodeName, Cases, SchemaOutput<OutputSchema>>,
     ],
     DeclaredOutput
   >
@@ -213,7 +213,7 @@ export type WorkflowBuilder<
     Input,
     [
       ...Nodes,
-      WorkflowBranchNode<NodeName, Cases, any, BranchCaseOutputUnion<Cases>>,
+      WorkflowBranchNode<NodeName, Cases, BranchCaseOutputUnion<Cases>>,
     ],
     DeclaredOutput
   >
@@ -226,7 +226,7 @@ export type WorkflowBuilder<
     Input,
     [
       ...Nodes,
-      WorkflowParallelNode<NodeName, Cases, any, BranchCaseOutputs<Cases>>,
+      WorkflowParallelNode<NodeName, Cases, BranchCaseOutputs<Cases>>,
     ],
     DeclaredOutput
   >
