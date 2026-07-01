@@ -12,7 +12,7 @@ import type {
 } from '../types/index.ts'
 import type { AttemptExecutor, RunCoordinationExecutor } from './executors.ts'
 import type { RunSnapshot, StoredRun } from './state.ts'
-import type { WorkflowStore } from './store.ts'
+import type { ListRunsFilter, ListRunsResult, WorkflowStore } from './store.ts'
 import { startTaskRun, startWorkflowRun } from './coordinator.ts'
 import type { WorkflowRuntimeAtomicStart } from './coordinator.ts'
 import type {
@@ -60,6 +60,7 @@ export type WorkflowRuntimeClient = {
     ): Promise<StoredRun>
   }
   readonly get: (runId: string) => Promise<RunSnapshot | undefined>
+  readonly list: (filter?: ListRunsFilter) => Promise<ListRunsResult>
 }
 
 export function createWorkflowRuntimeClient(
@@ -107,6 +108,7 @@ export function createWorkflowRuntimeClient(
   return Object.freeze({
     start,
     get: (runId) => input.store.loadRunSnapshot(runId),
+    list: (filter) => input.store.listRuns(filter),
   })
 }
 

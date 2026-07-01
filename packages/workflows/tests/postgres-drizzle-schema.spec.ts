@@ -73,17 +73,8 @@ const foreignKeys = (table: Parameters<typeof getTableConfig>[0]) =>
     }
   })
 
-test('creates drizzle schema with custom exported names and runtime config', () => {
-  const schema = createSchema({
-    schema: 'nmt_workflows',
-    casing: 'snake',
-    tables: {
-      runs: 'workflow_run_records',
-    },
-    enums: {
-      runKind: 'workflow_runnable_kind',
-    },
-  })
+test('creates drizzle schema with canonical runtime names', () => {
+  const schema = createSchema()
   const WorkflowRunTable = schema.tables.runs
   const WorkflowNodeTable = schema.tables.nodes
   const SchemaVersionTable = schema.tables.schemaVersion
@@ -93,10 +84,9 @@ test('creates drizzle schema with custom exported names and runtime config', () 
   expectTypeOf(schema.tables).toHaveProperty('runs')
   expectTypeOf(schema.tables).toHaveProperty('nodes')
   expectTypeOf(schema.tables).toHaveProperty('schemaVersion')
-  expectTypeOf(schema).toHaveProperty('runtime')
 
-  expect(getTableName(WorkflowRunTable)).toBe('workflow_run_records')
-  expect(getTableConfig(WorkflowRunTable).schema).toBe('nmt_workflows')
+  expect(getTableName(WorkflowRunTable)).toBe('workflow_runs')
+  expect(getTableConfig(WorkflowRunTable).schema).toBeUndefined()
   expect(getTableName(SchemaVersionTable)).toBe('workflow_schema_version')
   expect(SchemaVersionTable.id.primary).toBe(true)
   expect(SchemaVersionTable.version.notNull).toBe(true)
@@ -115,7 +105,7 @@ test('creates drizzle schema with custom exported names and runtime config', () 
     'completed',
   ])
   expect(getTableName(WorkflowNodeTable)).toBe('workflow_nodes')
-  expect(getTableConfig(WorkflowNodeTable).schema).toBe('nmt_workflows')
+  expect(getTableConfig(WorkflowNodeTable).schema).toBeUndefined()
   expect(WorkflowNodeTable.runId.columnType).toBe('PgUUID')
   expect(WorkflowNodeTable.currentAttemptId.columnType).toBe('PgUUID')
   expect(WorkflowNodeTable.kind.enumValues).toStrictEqual([
@@ -177,13 +167,13 @@ test('creates drizzle schema with custom exported names and runtime config', () 
     expect.arrayContaining([
       {
         columns: ['parent_run_id'],
-        foreignTable: 'workflow_run_records',
+        foreignTable: 'workflow_runs',
         foreignColumns: ['id'],
         onDelete: 'cascade',
       },
       {
         columns: ['root_run_id'],
-        foreignTable: 'workflow_run_records',
+        foreignTable: 'workflow_runs',
         foreignColumns: ['id'],
         onDelete: 'cascade',
       },
@@ -199,7 +189,7 @@ test('creates drizzle schema with custom exported names and runtime config', () 
     expect.arrayContaining([
       {
         columns: ['run_id'],
-        foreignTable: 'workflow_run_records',
+        foreignTable: 'workflow_runs',
         foreignColumns: ['id'],
         onDelete: 'cascade',
       },
@@ -231,7 +221,7 @@ test('creates drizzle schema with custom exported names and runtime config', () 
       },
       {
         columns: ['child_run_id'],
-        foreignTable: 'workflow_run_records',
+        foreignTable: 'workflow_runs',
         foreignColumns: ['id'],
         onDelete: 'cascade',
       },
@@ -257,7 +247,7 @@ test('creates drizzle schema with custom exported names and runtime config', () 
       },
       {
         columns: ['child_run_id'],
-        foreignTable: 'workflow_run_records',
+        foreignTable: 'workflow_runs',
         foreignColumns: ['id'],
         onDelete: 'set null',
       },
@@ -273,7 +263,7 @@ test('creates drizzle schema with custom exported names and runtime config', () 
     expect.arrayContaining([
       {
         columns: ['run_id'],
-        foreignTable: 'workflow_run_records',
+        foreignTable: 'workflow_runs',
         foreignColumns: ['id'],
         onDelete: 'cascade',
       },
@@ -292,34 +282,18 @@ test('creates drizzle schema with custom exported names and runtime config', () 
     'failed',
     'completed',
   ])
-  expect(schema.enums.runKind.enumName).toBe('workflow_runnable_kind')
-  expect(schema.enums.runKind.schema).toBe('nmt_workflows')
+  expect(schema.enums.runKind.enumName).toBe('workflow_run_kind')
+  expect(schema.enums.runKind.schema).toBeUndefined()
   expect(schema.enums.nodeKind.enumName).toBe('workflow_node_kind')
-  expect(schema.enums.nodeKind.schema).toBe('nmt_workflows')
+  expect(schema.enums.nodeKind.schema).toBeUndefined()
   expect(schema.enums.runStatus.enumName).toBe('workflow_run_status')
-  expect(schema.enums.runStatus.schema).toBe('nmt_workflows')
+  expect(schema.enums.runStatus.schema).toBeUndefined()
   expect(schema.enums.nodeStatus.enumName).toBe('workflow_node_status')
-  expect(schema.enums.nodeStatus.schema).toBe('nmt_workflows')
+  expect(schema.enums.nodeStatus.schema).toBeUndefined()
   expect(schema.enums.attemptStatus.enumName).toBe('workflow_attempt_status')
-  expect(schema.enums.attemptStatus.schema).toBe('nmt_workflows')
+  expect(schema.enums.attemptStatus.schema).toBeUndefined()
   expect(schema.enums.commandKind.enumName).toBe('workflow_command_kind')
-  expect(schema.enums.commandKind.schema).toBe('nmt_workflows')
-  expect(schema.runtime).toMatchObject({
-    schema: 'nmt_workflows',
-    tables: {
-      runs: 'workflow_run_records',
-      nodes: 'workflow_nodes',
-      schemaVersion: 'workflow_schema_version',
-    },
-    enums: {
-      runKind: 'workflow_runnable_kind',
-      nodeKind: 'workflow_node_kind',
-      runStatus: 'workflow_run_status',
-      nodeStatus: 'workflow_node_status',
-      attemptStatus: 'workflow_attempt_status',
-      commandKind: 'workflow_command_kind',
-    },
-  })
+  expect(schema.enums.commandKind.schema).toBeUndefined()
   expect(WORKFLOW_POSTGRES_SCHEMA_MANIFEST.indexes).toEqual(
     expect.arrayContaining([
       'workflow_runs_idempotency_idx',

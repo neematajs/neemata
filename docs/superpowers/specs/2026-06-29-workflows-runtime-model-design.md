@@ -87,8 +87,9 @@ version.
 `@nmtjs/workflows/postgres/drizzle` exports Drizzle schema objects and a schema
 factory for Drizzle-first migration integration. Applications still own
 `drizzle-kit generate`, migration review, and migration execution.
-The factory config controls physical database names only; application-local
-TypeScript export names are owned by the app through normal aliases such as
+The factory emits the canonical physical database names required by the runtime.
+Application-local TypeScript export names are owned by the app through normal
+aliases such as
 `export const WorkflowRunTable = workflows.tables.runs`.
 Finite workflow values should be represented as Postgres enums:
 

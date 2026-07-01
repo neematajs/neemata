@@ -106,4 +106,31 @@ describe('workflow runtime client', () => {
       },
     ])
   })
+
+  it('lists runs through the store-backed client', async () => {
+    const workflow = defineWorkflow({
+      name: 'client-listed-workflow',
+      input: t.object({ scenario: t.string() }),
+      output: t.object({ caseId: t.string() }),
+    }).build()
+    const runtime = createInMemoryWorkflowRuntime()
+    const client = createWorkflowRuntimeClient(runtime)
+
+    const alpha = await client.start(workflow, { scenario: 'alpha' }, {
+      tags: { tenantId: 'tenant-1' },
+    })
+    await client.start(workflow, { scenario: 'beta' }, {
+      tags: { tenantId: 'tenant-2' },
+    })
+
+    await expect(
+      client.list({
+        name: workflow.name,
+        tags: { tenantId: 'tenant-1' },
+        input: { scenario: 'alpha' },
+      }),
+    ).resolves.toMatchObject({
+      runs: [{ id: alpha.id }],
+    })
+  })
 })

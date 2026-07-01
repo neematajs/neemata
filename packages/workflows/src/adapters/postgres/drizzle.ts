@@ -6,7 +6,6 @@ import {
   integer,
   jsonb,
   pgEnum,
-  pgSchema,
   pgTable,
   primaryKey,
   text,
@@ -14,8 +13,6 @@ import {
   uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core'
-
-type Casing = 'snake' | 'camel' | 'pascal'
 
 type TableKey =
   | 'schemaVersion'
@@ -35,19 +32,6 @@ type EnumKey =
   | 'nodeStatus'
   | 'attemptStatus'
   | 'commandKind'
-
-export type WorkflowPostgresDrizzleSchemaConfig = {
-  readonly schema?: string
-  readonly casing?: Casing
-  readonly tables?: Partial<Record<TableKey, string>>
-  readonly enums?: Partial<Record<EnumKey, string>>
-}
-
-export type WorkflowPostgresRuntimeSchemaConfig = {
-  readonly schema?: string
-  readonly tables: Record<TableKey, string>
-  readonly enums: Record<EnumKey, string>
-}
 
 const runKindValues = ['workflow', 'task'] as const
 const nodeKindValues = [
@@ -86,158 +70,44 @@ const attemptStatusValues = [
 ] as const
 const commandKindValues = ['continue', 'activity', 'task'] as const
 
-const modelNames = {
-  schemaVersion: {
-    table: {
-      snake: 'workflow_schema_version',
-      camel: 'workflowSchemaVersion',
-      pascal: 'WorkflowSchemaVersion',
-    },
-  },
-  runs: {
-    table: {
-      snake: 'workflow_runs',
-      camel: 'workflowRuns',
-      pascal: 'WorkflowRuns',
-    },
-  },
-  nodes: {
-    table: {
-      snake: 'workflow_nodes',
-      camel: 'workflowNodes',
-      pascal: 'WorkflowNodes',
-    },
-  },
-  attempts: {
-    table: {
-      snake: 'workflow_attempts',
-      camel: 'workflowAttempts',
-      pascal: 'WorkflowAttempts',
-    },
-  },
-  childLinks: {
-    table: {
-      snake: 'workflow_child_links',
-      camel: 'workflowChildLinks',
-      pascal: 'WorkflowChildLinks',
-    },
-  },
-  mapItemSets: {
-    table: {
-      snake: 'workflow_map_item_sets',
-      camel: 'workflowMapItemSets',
-      pascal: 'WorkflowMapItemSets',
-    },
-  },
-  mapItems: {
-    table: {
-      snake: 'workflow_map_items',
-      camel: 'workflowMapItems',
-      pascal: 'WorkflowMapItems',
-    },
-  },
-  runLeases: {
-    table: {
-      snake: 'workflow_run_leases',
-      camel: 'workflowRunLeases',
-      pascal: 'WorkflowRunLeases',
-    },
-  },
-  commands: {
-    table: {
-      snake: 'workflow_commands',
-      camel: 'workflowCommands',
-      pascal: 'WorkflowCommands',
-    },
-  },
-} as const satisfies Record<TableKey, { readonly table: Record<Casing, string> }>
+const tableNames = {
+  schemaVersion: 'workflow_schema_version',
+  runs: 'workflow_runs',
+  nodes: 'workflow_nodes',
+  attempts: 'workflow_attempts',
+  childLinks: 'workflow_child_links',
+  mapItemSets: 'workflow_map_item_sets',
+  mapItems: 'workflow_map_items',
+  runLeases: 'workflow_run_leases',
+  commands: 'workflow_commands',
+} as const satisfies Record<TableKey, string>
 
 const enumNames = {
-  runKind: {
-    snake: 'workflow_run_kind',
-    camel: 'workflowRunKind',
-    pascal: 'WorkflowRunKind',
-  },
-  nodeKind: {
-    snake: 'workflow_node_kind',
-    camel: 'workflowNodeKind',
-    pascal: 'WorkflowNodeKind',
-  },
-  runStatus: {
-    snake: 'workflow_run_status',
-    camel: 'workflowRunStatus',
-    pascal: 'WorkflowRunStatus',
-  },
-  nodeStatus: {
-    snake: 'workflow_node_status',
-    camel: 'workflowNodeStatus',
-    pascal: 'WorkflowNodeStatus',
-  },
-  attemptStatus: {
-    snake: 'workflow_attempt_status',
-    camel: 'workflowAttemptStatus',
-    pascal: 'WorkflowAttemptStatus',
-  },
-  commandKind: {
-    snake: 'workflow_command_kind',
-    camel: 'workflowCommandKind',
-    pascal: 'WorkflowCommandKind',
-  },
-} as const satisfies Record<EnumKey, Record<Casing, string>>
+  runKind: 'workflow_run_kind',
+  nodeKind: 'workflow_node_kind',
+  runStatus: 'workflow_run_status',
+  nodeStatus: 'workflow_node_status',
+  attemptStatus: 'workflow_attempt_status',
+  commandKind: 'workflow_command_kind',
+} as const satisfies Record<EnumKey, string>
 
-const tableKeys = Object.keys(modelNames) as TableKey[]
-const enumKeys = Object.keys(enumNames) as EnumKey[]
-
-const defaultTableName = (key: TableKey, casing: Casing) => {
-  return modelNames[key].table[casing]
-}
-
-const tableName = (
-  key: TableKey,
-  config: WorkflowPostgresDrizzleSchemaConfig,
-) => config.tables?.[key] ?? defaultTableName(key, config.casing ?? 'snake')
-
-const enumName = (
-  key: EnumKey,
-  config: WorkflowPostgresDrizzleSchemaConfig,
-) => config.enums?.[key] ?? enumNames[key][config.casing ?? 'snake']
-
-function createEnums(names: Record<EnumKey, string>, schema: string | undefined) {
-  const schemaBuilder = schema ? pgSchema(schema) : undefined
-  const createEnum = (
-    name: string,
-    values: readonly [string, ...string[]],
-  ) =>
-    schemaBuilder
-      ? schemaBuilder.enum(name, values)
-      : pgEnum(name, values)
-
+function createEnums() {
   return {
-    runKind: createEnum(names.runKind, runKindValues),
-    nodeKind: createEnum(names.nodeKind, nodeKindValues),
-    runStatus: createEnum(names.runStatus, runStatusValues),
-    nodeStatus: createEnum(names.nodeStatus, nodeStatusValues),
-    attemptStatus: createEnum(names.attemptStatus, attemptStatusValues),
-    commandKind: createEnum(names.commandKind, commandKindValues),
+    runKind: pgEnum(enumNames.runKind, runKindValues),
+    nodeKind: pgEnum(enumNames.nodeKind, nodeKindValues),
+    runStatus: pgEnum(enumNames.runStatus, runStatusValues),
+    nodeStatus: pgEnum(enumNames.nodeStatus, nodeStatusValues),
+    attemptStatus: pgEnum(enumNames.attemptStatus, attemptStatusValues),
+    commandKind: pgEnum(enumNames.commandKind, commandKindValues),
   }
 }
 
-export function createSchema<
-  const Config extends WorkflowPostgresDrizzleSchemaConfig = {},
->(config: Config = {} as Config) {
-  const tables = Object.fromEntries(
-    tableKeys.map((key) => [key, tableName(key, config)]),
-  ) as Record<TableKey, string>
-  const enumConfig = Object.fromEntries(
-    enumKeys.map((key) => [key, enumName(key, config)]),
-  ) as Record<EnumKey, string>
-  const enums = createEnums(enumConfig, config.schema)
-  const createTable = (
-    config.schema ? pgSchema(config.schema).table : pgTable
-  ) as typeof pgTable
+export function createSchema() {
+  const enums = createEnums()
+  const createTable = pgTable
 
   const schemaVersion = createTable(
-    tables.schemaVersion,
+    tableNames.schemaVersion,
     {
         id: integer('id').primaryKey().default(1),
         version: integer('version').notNull(),
@@ -250,7 +120,7 @@ export function createSchema<
     ],
   )
   const runs = createTable(
-      tables.runs,
+      tableNames.runs,
       {
         id: uuid('id').primaryKey(),
         kind: enums.runKind('kind').notNull(),
@@ -300,7 +170,7 @@ export function createSchema<
       ],
     )
   const nodes = createTable(
-    tables.nodes,
+    tableNames.nodes,
     {
         runId: uuid('run_id').notNull(),
         name: text('name').notNull(),
@@ -332,7 +202,7 @@ export function createSchema<
     ],
   )
   const attempts = createTable(
-    tables.attempts,
+    tableNames.attempts,
     {
         id: uuid('id').primaryKey(),
         runId: uuid('run_id').notNull(),
@@ -360,7 +230,7 @@ export function createSchema<
     ],
   )
   const childLinks = createTable(
-    tables.childLinks,
+    tableNames.childLinks,
     {
         identityKey: text('identity_key').primaryKey(),
         identity: jsonb('identity').notNull(),
@@ -390,7 +260,7 @@ export function createSchema<
     ],
   )
   const mapItemSets = createTable(
-    tables.mapItemSets,
+    tableNames.mapItemSets,
     {
         runId: uuid('run_id').notNull(),
         nodeName: text('node_name').notNull(),
@@ -409,7 +279,7 @@ export function createSchema<
     ],
   )
   const mapItems = createTable(
-    tables.mapItems,
+    tableNames.mapItems,
     {
         runId: uuid('run_id').notNull(),
         nodeName: text('node_name').notNull(),
@@ -447,7 +317,7 @@ export function createSchema<
     ],
   )
   const runLeases = createTable(
-    tables.runLeases,
+    tableNames.runLeases,
     {
         runId: uuid('run_id').primaryKey(),
         leaseToken: text('lease_token').notNull(),
@@ -463,7 +333,7 @@ export function createSchema<
     ],
   )
   const commands = createTable(
-    tables.commands,
+    tableNames.commands,
     {
       id: uuid('id').primaryKey(),
       kind: enums.commandKind('kind').notNull(),
@@ -506,6 +376,5 @@ export function createSchema<
       commands,
     },
     enums,
-    runtime: { schema: config.schema, tables, enums: enumConfig },
   }
 }
