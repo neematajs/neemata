@@ -173,7 +173,8 @@ Rules:
 - Claim commands with `FOR UPDATE SKIP LOCKED`.
 - `LISTEN/NOTIFY` is optional latency hint only. Polling remains correctness
   layer.
-- Claims should support batching and local concurrency.
+- Claims should support local concurrency. Batch claims are a future throughput
+  optimization.
 - Lease expiry makes abandoned commands claimable again.
 - A command row is internal plumbing, not public job state.
 

@@ -65,17 +65,15 @@ completion remains as fallback for non-Postgres test runtimes.
 
 ### 4. Worker Loop
 
-- Batch command claims.
 - Support local concurrency per command kind.
 - Recover expired leases.
 - Add polling backstop.
-- Add optional notify listener later, after polling path is correct.
 
-Status: partially implemented. Workflow continuation now runs in a Postgres
+Status: implemented for v1. Workflow continuation now runs in a Postgres
 transaction together with command ack/release, matching atomic start and atomic
 attempt completion. Worker loops support local concurrency, abort signals,
 bounded idle polling, and configurable idle delay. Batch claims and optional
-notify remain.
+`LISTEN/NOTIFY` are deferred optimizations, not v1 correctness requirements.
 
 ### 5. Public Surface Cleanup
 
