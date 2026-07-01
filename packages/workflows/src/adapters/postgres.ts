@@ -18,7 +18,10 @@ import type {
   WorkflowStore,
 } from '../runtime/store.ts'
 import type { WorkflowRuntimeAtomicStart } from '../runtime/coordinator.ts'
-import type { WorkflowRuntimeAtomicCompletion } from '../runtime/worker.ts'
+import type {
+  WorkflowRuntimeAtomicCompletion,
+  WorkflowRuntimeAtomicContinuation,
+} from '../runtime/worker.ts'
 import type {
   NodeChildIdentity,
   RunSnapshot,
@@ -1862,11 +1865,24 @@ export function createPostgresWorkflowRuntime(params: {
       }),
   }
 
+  const atomicContinuation: WorkflowRuntimeAtomicContinuation = {
+    run: (handler) =>
+      db.transaction(async (tx) => {
+        const runtime = createPostgresWorkflowRuntime({ connection: tx })
+        return await handler({
+          store: runtime.store,
+          runCoordinationExecutor: runtime.runCoordinationExecutor,
+          attemptExecutor: runtime.attemptExecutor,
+        })
+      }),
+  }
+
   return {
     store,
     runCoordinationExecutor,
     attemptExecutor,
     atomicStart,
+    atomicContinuation,
     atomicCompletion,
     connection: db,
   }

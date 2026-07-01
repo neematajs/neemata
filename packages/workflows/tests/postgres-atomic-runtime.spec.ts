@@ -73,6 +73,83 @@ async function countRows(
   return result.rows[0]?.count ?? 0
 }
 
+test('rolls back empty workflow completion when command ack fails', async () => {
+  const connection = createPgliteConnection()
+  await installPostgresWorkflowSchemaForTesting(connection)
+  const runtime = createPostgresWorkflowRuntime({ connection })
+  const failingRuntime = createPostgresWorkflowRuntime({
+    connection: failNextCommandAck(connection),
+  })
+  const workflow = defineWorkflow({
+    name: 'atomic-continuation-empty-workflow',
+    input: t.object({ value: t.string() }),
+    output: t.object({ value: t.string() }),
+  }).build()
+  const workflowImpl = implementWorkflow(workflow).finish(
+    (_ctx, _outputs, input) => ({ value: input.value }),
+  )
+  const client = createWorkflowRuntimeClient(runtime)
+
+  const run = await client.start(workflow, { value: 'alpha' })
+
+  await expect(
+    runWorkflowWorker({
+      ...failingRuntime,
+      workflows: [workflowImpl],
+      container: createTestContainer(),
+      workerId: 'workflow-worker',
+    }),
+  ).rejects.toThrow('forced command ack failure')
+
+  const snapshot = await runtime.store.loadRunSnapshot(run.id)
+  expect(snapshot?.run.status).toBe('queued')
+  expect(snapshot?.run.output).toBeUndefined()
+  expect(await countRows(connection, 'workflow_commands')).toBe(1)
+})
+
+test('rolls back activity dispatch when command ack fails', async () => {
+  const connection = createPgliteConnection()
+  await installPostgresWorkflowSchemaForTesting(connection)
+  const runtime = createPostgresWorkflowRuntime({ connection })
+  const failingRuntime = createPostgresWorkflowRuntime({
+    connection: failNextCommandAck(connection),
+  })
+  const workflow = defineWorkflow({
+    name: 'atomic-continuation-activity-workflow',
+    input: t.object({ value: t.string() }),
+    output: t.object({ value: t.string() }),
+  })
+    .activity('content', {
+      input: t.object({ value: t.string() }),
+      output: t.object({ value: t.string() }),
+    })
+    .build()
+  const workflowImpl = implementWorkflow(workflow)
+    .content(async (_ctx, input) => ({ value: input.value }))
+    .finish((_ctx, { content }) => content)
+  const client = createWorkflowRuntimeClient(runtime)
+
+  const run = await client.start(workflow, { value: 'alpha' })
+
+  await expect(
+    runWorkflowWorker({
+      ...failingRuntime,
+      workflows: [workflowImpl],
+      container: createTestContainer(),
+      workerId: 'workflow-worker',
+    }),
+  ).rejects.toThrow('forced command ack failure')
+
+  const snapshot = await runtime.store.loadRunSnapshot(run.id)
+  expect(snapshot?.run.status).toBe('queued')
+  expect(snapshot?.nodes).toStrictEqual([])
+  expect(snapshot?.attempts).toStrictEqual([])
+  expect(await countRows(connection, 'workflow_commands', "kind = 'continue'"))
+    .toBe(1)
+  expect(await countRows(connection, 'workflow_commands', "kind = 'activity'"))
+    .toBe(0)
+})
+
 test('rolls back standalone task completion when command ack fails', async () => {
   const connection = createPgliteConnection()
   await installPostgresWorkflowSchemaForTesting(connection)

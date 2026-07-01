@@ -89,6 +89,7 @@ export type {
   WorkerLoopOptions,
   WorkerLoopResult,
   WorkerCommandResult,
+  WorkflowRuntimeAtomicContinuation,
   WorkflowRuntimeAtomicCompletion,
   WorkflowRuntimeOperationContext,
 } from './worker.ts'

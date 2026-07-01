@@ -75,6 +75,7 @@ export type RunWorkflowWorkerInput = WorkerLoopOptions & {
   readonly store: WorkflowStore
   readonly runCoordinationExecutor: RunCoordinationExecutor
   readonly attemptExecutor: AttemptExecutor
+  readonly atomicContinuation?: WorkflowRuntimeAtomicContinuation
   readonly workflows: readonly AnyWorkflowImplementation[]
   readonly container: Pick<Container, 'createContext'>
 }
@@ -110,6 +111,12 @@ export type WorkflowRuntimeAtomicCompletion = {
   ) => Promise<T>
 }
 
+export type WorkflowRuntimeAtomicContinuation = {
+  readonly run: <T>(
+    handler: (runtime: WorkflowRuntimeOperationContext) => Promise<T>,
+  ) => Promise<T>
+}
+
 export async function runWorkflowWorker(
   input: RunWorkflowWorkerInput,
 ): Promise<WorkerLoopResult> {
@@ -126,24 +133,26 @@ export async function runWorkflowWorker(
     if (!claimed) return false
 
     try {
-      const leaseMs = input.leaseMs ?? DEFAULT_LEASE_MS
-      const result = await continueWorkflowRun({
-        store: input.store,
-        runCoordinationExecutor: input.runCoordinationExecutor,
-        attemptExecutor: input.attemptExecutor,
-        container: input.container,
-        workflows: input.workflows,
-        workerId: input.workerId,
-        command: claimed.command,
-        leaseMs,
-      })
-      if (result.status === 'busy') {
-        await input.runCoordinationExecutor.release(claimed)
-        return false
-      }
+      return await runAtomicContinuation(input, async (scoped) => {
+        const leaseMs = input.leaseMs ?? DEFAULT_LEASE_MS
+        const result = await continueWorkflowRun({
+          store: scoped.store,
+          runCoordinationExecutor: scoped.runCoordinationExecutor,
+          attemptExecutor: scoped.attemptExecutor,
+          container: input.container,
+          workflows: input.workflows,
+          workerId: input.workerId,
+          command: claimed.command,
+          leaseMs,
+        })
+        if (result.status === 'busy') {
+          await scoped.runCoordinationExecutor.release(claimed)
+          return false
+        }
 
-      await input.runCoordinationExecutor.ack(claimed)
-      return result.status === 'processed'
+        await scoped.runCoordinationExecutor.ack(claimed)
+        return result.status === 'processed'
+      })
     } catch (error) {
       await input.runCoordinationExecutor.release(claimed)
       throw error
@@ -309,6 +318,21 @@ async function runAtomicCompletion<Input extends RunAttemptInput, Result>(
       attemptExecutor: runtime.attemptExecutor,
     }),
   )
+}
+
+async function runAtomicContinuation<Result>(
+  input: RunWorkflowWorkerInput,
+  handler: (runtime: WorkflowRuntimeOperationContext) => Promise<Result>,
+): Promise<Result> {
+  if (!input.atomicContinuation) {
+    return await handler({
+      store: input.store,
+      runCoordinationExecutor: input.runCoordinationExecutor,
+      attemptExecutor: input.attemptExecutor,
+    })
+  }
+
+  return await input.atomicContinuation.run(handler)
 }
 
 export async function runActivityAttempt(

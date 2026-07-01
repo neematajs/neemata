@@ -70,6 +70,10 @@ completion remains as fallback for non-Postgres test runtimes.
 - Add polling backstop.
 - Add optional notify listener later, after polling path is correct.
 
+Status: partially implemented. Workflow continuation now runs in a Postgres
+transaction together with command ack/release, matching atomic start and atomic
+attempt completion. Batch claims, polling/backoff, and optional notify remain.
+
 ### 5. Public Surface Cleanup
 
 - Keep `@nmtjs/workflows/postgres` and `@nmtjs/workflows/postgres/drizzle` as

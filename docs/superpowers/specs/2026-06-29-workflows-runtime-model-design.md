@@ -480,7 +480,13 @@ Per command, it should:
 8. Dispatch activity attempts, child task run starts, or child workflow starts.
 9. Mark the run `waiting` if no more local progress is possible.
 10. Run `finish` and mark the run `completed` when all nodes are complete.
-11. Release the run lock.
+11. Acknowledge or release the consumed continuation command.
+12. Release the run lock.
+
+For the Postgres runtime, steps that mutate run/node/attempt/child/map state,
+insert follow-up commands, and acknowledge/release the consumed continuation
+command should happen in one transaction. If command acknowledgement fails, graph
+state changes roll back with it.
 
 The continuation worker executes mapper functions:
 

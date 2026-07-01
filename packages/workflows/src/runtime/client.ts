@@ -15,7 +15,10 @@ import type { RunSnapshot, StoredRun } from './state.ts'
 import type { WorkflowStore } from './store.ts'
 import { startTaskRun, startWorkflowRun } from './coordinator.ts'
 import type { WorkflowRuntimeAtomicStart } from './coordinator.ts'
-import type { WorkflowRuntimeAtomicCompletion } from './worker.ts'
+import type {
+  WorkflowRuntimeAtomicCompletion,
+  WorkflowRuntimeAtomicContinuation,
+} from './worker.ts'
 import {
   createWorkflowRuntimeRegistry,
   type RegisteredTaskImplementation,
@@ -33,6 +36,7 @@ export type WorkflowRuntimeAdapter = {
   readonly runCoordinationExecutor: RunCoordinationExecutor
   readonly attemptExecutor: AttemptExecutor
   readonly atomicStart?: WorkflowRuntimeAtomicStart
+  readonly atomicContinuation?: WorkflowRuntimeAtomicContinuation
   readonly atomicCompletion?: WorkflowRuntimeAtomicCompletion
 }
 
