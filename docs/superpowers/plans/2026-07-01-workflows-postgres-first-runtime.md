@@ -21,6 +21,9 @@ imports light.
   compatibility imports.
 - Drizzle is the primary migration artifact target. The runtime does not apply
   production migrations.
+- Drizzle schema factory emits the canonical physical database object names used
+  by the runtime. Custom physical names are deferred until the runtime can
+  verify/query them too.
 - `installPostgresWorkflowSchemaForTesting` stays explicit dev/test bootstrap.
 - `verifyPostgresWorkflowSchema` is the production-safe startup check.
 
@@ -81,6 +84,18 @@ attempt completion. Batch claims, polling/backoff, and optional notify remain.
 - Decide later whether to remove or deprecate `adapters/postgres` before
   publishing.
 - Demote `createInMemoryWorkflowRuntime` to test/local helper if it remains.
+
+Status: `WorkflowRuntimeClient` now exposes store-backed `list` for v1 run
+queries. Package README documents the Postgres/Drizzle startup path and keeps
+production migrations app-owned.
+
+### 6. Child And Map Workflow Smoke
+
+- Verify direct child workflow and `mapWorkflow(wait-all)` through real Postgres
+  command dispatch and worker continuation.
+
+Status: covered by a PGlite worker smoke test. Broader mode matrices stay in
+the in-memory coordinator tests.
 
 ## Non-Goals
 
