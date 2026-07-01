@@ -68,6 +68,7 @@ export type WorkerLoopOptions = {
   readonly concurrency?: number
   readonly leaseMs?: number
   readonly maxIdleClaims?: number
+  readonly idleDelayMs?: number
   readonly signal?: AbortSignal
 }
 
@@ -264,6 +265,9 @@ async function runWorkerLoop(
           }
 
           idleClaims += 1
+          if (idleClaims < maxIdleClaims) {
+            await sleep(options.idleDelayMs ?? 0, options.signal)
+          }
         }
       } catch (error) {
         stopped = true
@@ -274,6 +278,21 @@ async function runWorkerLoop(
 
   if (firstError) throw firstError
   return { processed }
+}
+
+async function sleep(ms: number, signal: AbortSignal | undefined): Promise<void> {
+  if (ms <= 0 || signal?.aborted) return
+
+  await new Promise<void>((resolve) => {
+    const done = () => {
+      clearTimeout(timeout)
+      signal?.removeEventListener('abort', done)
+      resolve()
+    }
+
+    const timeout = setTimeout(done, ms)
+    signal?.addEventListener('abort', done, { once: true })
+  })
 }
 
 function assertPositiveInteger(value: number, label: string): void {

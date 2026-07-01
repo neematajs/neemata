@@ -153,6 +153,7 @@ describe('workflow runtime interfaces', () => {
       concurrency?: number
       leaseMs?: number
       maxIdleClaims?: number
+      idleDelayMs?: number
       signal?: AbortSignal
     }>()
     expectTypeOf<WorkerLoopResult>().toMatchTypeOf<{ processed: number }>()

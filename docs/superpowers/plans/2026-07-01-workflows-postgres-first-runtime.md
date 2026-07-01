@@ -75,7 +75,9 @@ completion remains as fallback for non-Postgres test runtimes.
 
 Status: partially implemented. Workflow continuation now runs in a Postgres
 transaction together with command ack/release, matching atomic start and atomic
-attempt completion. Batch claims, polling/backoff, and optional notify remain.
+attempt completion. Worker loops support local concurrency, abort signals,
+bounded idle polling, and configurable idle delay. Batch claims and optional
+notify remain.
 
 ### 5. Public Surface Cleanup
 

@@ -114,6 +114,53 @@ describe('workflow worker runtime', () => {
     expect(runtime.inspect().continueRunCommands).toStrictEqual([])
   })
 
+  it('can poll after an idle claim without hot-looping', async () => {
+    const workflow = defineWorkflow({
+      name: 'worker.polling-workflow',
+      input: t.object({ text: t.string() }),
+      output: t.object({ text: t.string() }),
+    }).build()
+    const implementation = implementWorkflow(workflow).finish(
+      (_ctx, _outputs, input) => ({ text: input.text }),
+    )
+    const runtime = createInMemoryWorkflowRuntime()
+    const run = await runtime.store.createRun({
+      workflowName: workflow.name,
+      input: { text: 'alpha' },
+    })
+    let claims = 0
+
+    const result = await runWorkflowWorker({
+      store: runtime.store,
+      runCoordinationExecutor: {
+        ...runtime.runCoordinationExecutor,
+        async claim(params) {
+          claims += 1
+          if (claims === 1) {
+            await runtime.runCoordinationExecutor.enqueue({
+              kind: 'continueRun',
+              runId: run.id,
+              workflowName: workflow.name,
+            })
+            return null
+          }
+
+          return runtime.runCoordinationExecutor.claim(params)
+        },
+      },
+      attemptExecutor: runtime.attemptExecutor,
+      container: createTestContainer(),
+      workflows: [implementation],
+      workerId: 'workflow-worker-1',
+      maxIdleClaims: 2,
+      idleDelayMs: 1,
+    })
+
+    const completed = await runtime.store.loadRunSnapshot(run.id)
+    expect(result.processed).toBe(1)
+    expect(completed?.run.status).toBe('completed')
+  })
+
   it('releases continue commands when the run lease is busy', async () => {
     const workflow = defineWorkflow({
       name: 'worker.busy-workflow',
