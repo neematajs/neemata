@@ -22,16 +22,6 @@
       "types": "./src/adapters/postgres/drizzle.ts",
       "import": "./dist/adapters/postgres/drizzle.js",
       "module-sync": "./dist/adapters/postgres/drizzle.js"
-    },
-    "./adapters/postgres": {
-      "types": "./src/adapters/postgres.ts",
-      "import": "./dist/adapters/postgres.js",
-      "module-sync": "./dist/adapters/postgres.js"
-    },
-    "./adapters/postgres/drizzle": {
-      "types": "./src/adapters/postgres/drizzle.ts",
-      "import": "./dist/adapters/postgres/drizzle.js",
-      "module-sync": "./dist/adapters/postgres/drizzle.js"
     }
   },
   "publishConfig": {
@@ -52,16 +42,6 @@
         "module-sync": "./dist/adapters/postgres.js"
       },
       "./postgres/drizzle": {
-        "types": "./dist/adapters/postgres/drizzle.d.ts",
-        "import": "./dist/adapters/postgres/drizzle.js",
-        "module-sync": "./dist/adapters/postgres/drizzle.js"
-      },
-      "./adapters/postgres": {
-        "types": "./dist/adapters/postgres.d.ts",
-        "import": "./dist/adapters/postgres.js",
-        "module-sync": "./dist/adapters/postgres.js"
-      },
-      "./adapters/postgres/drizzle": {
         "types": "./dist/adapters/postgres/drizzle.d.ts",
         "import": "./dist/adapters/postgres/drizzle.js",
         "module-sync": "./dist/adapters/postgres/drizzle.js"

@@ -228,9 +228,7 @@ Rules:
 - May import optional peer dependencies.
 - Must keep Postgres-specific concepts out of root public workflow types.
 - Should be exported as `@nmtjs/workflows/postgres` and
-  `@nmtjs/workflows/postgres/drizzle`. Existing
-  `@nmtjs/workflows/adapters/postgres` paths are transitional compatibility
-  paths during the pivot.
+  `@nmtjs/workflows/postgres/drizzle`.
 
 ### `types`
 
@@ -310,12 +308,9 @@ Current subpaths:
 @nmtjs/workflows/runtime
 @nmtjs/workflows/postgres
 @nmtjs/workflows/postgres/drizzle
-@nmtjs/workflows/adapters/postgres
-@nmtjs/workflows/adapters/postgres/drizzle
 ```
 
-`adapters/postgres` is a transitional compatibility spelling. New docs and code
-should use `postgres`. BullMQ/cloud queue subpaths are out of scope for v1.
+BullMQ/cloud queue subpaths are out of scope for v1.
 Other subpaths such as `client` and `testing` may be added later only when there
 is a concrete use case.
 

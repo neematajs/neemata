@@ -109,8 +109,6 @@ statements before enum-backed tables.
 
 Postgres and Drizzle code must stay behind `postgres` subpaths so the root
 package import does not pull infrastructure or migration-tool dependencies.
-Existing `@nmtjs/workflows/adapters/postgres` paths are transitional
-compatibility imports during the pivot and should not appear in new examples.
 
 Postgres storage should use `uuid` columns for durable runtime IDs:
 

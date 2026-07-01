@@ -1007,9 +1007,6 @@ import { createPostgresWorkflowRuntime } from '@nmtjs/workflows/postgres'
 import { createSchema } from '@nmtjs/workflows/postgres/drizzle'
 ```
 
-`@nmtjs/workflows/adapters/postgres` remains a transitional compatibility
-spelling. New examples should use `@nmtjs/workflows/postgres`.
-
 ## Open Questions
 
 - None for the v1 public API shape in this spec.

@@ -17,8 +17,6 @@ imports light.
   import { createSchema } from '@nmtjs/workflows/postgres/drizzle'
   ```
 
-- Existing `@nmtjs/workflows/adapters/postgres` paths are transitional
-  compatibility imports.
 - Drizzle is the primary migration artifact target. The runtime does not apply
   production migrations.
 - Drizzle schema factory emits the canonical physical database object names used
@@ -83,8 +81,6 @@ notify remain.
 
 - Keep `@nmtjs/workflows/postgres` and `@nmtjs/workflows/postgres/drizzle` as
   preferred subpaths.
-- Decide later whether to remove or deprecate `adapters/postgres` before
-  publishing.
 - Demote `createInMemoryWorkflowRuntime` to test/local helper if it remains.
 
 Status: `WorkflowRuntimeClient` now exposes store-backed `list` for v1 run
