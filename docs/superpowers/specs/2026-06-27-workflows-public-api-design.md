@@ -79,7 +79,7 @@ The first public API should be small:
 - runtime client behind `@nmtjs/workflows/runtime`:
   `createWorkflowRuntimeClient`
 - Postgres runtime: `createPostgresWorkflowRuntime`
-- reserved app-facing client commands: `list`, `cancel`, `retry`, `watch`
+- reserved app-facing client commands: `cancel`, `retry`, `watch`
 - public graph types: `WorkflowNode`, `WorkflowActivityNode`,
   `WorkflowTaskNode`, `WorkflowChildWorkflowNode`, `WorkflowBranchNode`,
   `WorkflowParallelNode`, `WorkflowMapTaskNode`, `WorkflowMapWorkflowNode`
@@ -915,8 +915,8 @@ Rules:
   implementation-owned tags and idempotency keys.
 - `get(runId)` returns the current runtime snapshot shape.
 - The runtime client must not expose queue IDs or adapter-native job objects.
-- `list`, `cancel`, `retry`, `watch`, event streams, and typed public run
-  projections remain future app-facing client work.
+- `cancel`, `retry`, `watch`, event streams, and typed public run projections
+  remain future app-facing client work.
 
 ## Idempotency
 
