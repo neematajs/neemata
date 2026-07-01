@@ -25,7 +25,7 @@ imports light.
 - `installPostgresWorkflowSchemaForTesting` stays explicit dev/test bootstrap.
 - `verifyPostgresWorkflowSchema` is the production-safe startup check.
 
-## Next Implementation Slices
+## Implementation Slices
 
 ### 1. Command Table Unification
 
