@@ -7,13 +7,15 @@ import { t } from '@nmtjs/type'
 import { describe, expect, it } from 'vitest'
 
 import {
-  createInMemoryWorkflowRuntime,
-  createWorkflowRuntimeClient,
   defineTask,
   defineWorkflow,
   implementTask,
   implementWorkflow,
 } from '../src/index.ts'
+import {
+  createInMemoryWorkflowRuntime,
+  createWorkflowRuntimeClient,
+} from '../src/runtime/index.ts'
 
 describe('workflow runtime client', () => {
   const createTestContainer = () => {

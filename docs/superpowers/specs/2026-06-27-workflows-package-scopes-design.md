@@ -277,11 +277,6 @@ Root `src/index.ts` exports only stable, dependency-light API:
 ```ts
 export { defineTask, defineWorkflow } from './contract'
 export { implementTask, implementWorkflow } from './implement'
-export {
-  createWorkflowRuntimeClient,
-  startTaskRun,
-  startWorkflowRun,
-} from './runtime'
 export type {
   TaskImplementation,
   TaskStatus,
@@ -296,24 +291,18 @@ export type {
   WorkflowStatus,
   WorkflowTaskNode,
 } from './types'
-export type {
-  AttemptExecutor,
-  RunCoordinationExecutor,
-  WorkflowRuntimeAdapter,
-  WorkflowStore,
-} from './runtime'
 ```
 
-Root export may expose dependency-light runtime helpers while the runtime is in
-flight. Long-term, store/executor interfaces should be treated as internal
-implementation seams, not public backend-adapter contracts. Root must not expose
-Postgres modules or implementation-builder internals such as chain, mapper,
+Root export should not expose runtime helpers, store/executor interfaces,
+Postgres modules, or implementation-builder internals such as chain, mapper,
 idempotency callback, or inline activity helper types.
 
 `createWorkflowRuntimeClient` is a server-side runtime convenience wrapper over
-the store and executor interfaces. It is not the final app-facing client scope.
-`createInMemoryWorkflowRuntime` may remain as a narrow test helper during the
-pivot, but it is not a second durable runtime target.
+the store and executor interfaces. It lives under `@nmtjs/workflows/runtime`,
+not the root package, and is not the final app-facing client scope.
+`createInMemoryWorkflowRuntime` may remain under the runtime subpath as a narrow
+test/local helper during the pivot, but it is not a second durable runtime
+target.
 
 Current subpaths:
 

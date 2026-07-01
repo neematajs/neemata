@@ -14,10 +14,10 @@ import {
   verifyPostgresWorkflowSchema,
 } from '../src/adapters/postgres.ts'
 import {
-  createWorkflowRuntimeClient,
   defineTask,
   defineWorkflow,
 } from '../src/index.ts'
+import { createWorkflowRuntimeClient } from '../src/runtime/index.ts'
 
 function createPgliteConnection(db = new PGlite()): WorkflowPostgresConnection {
   return {

@@ -7,17 +7,19 @@ import { t } from '@nmtjs/type'
 import { describe, expect, it } from 'vitest'
 
 import {
-  continueWorkflowRun,
-  createInMemoryWorkflowRuntime,
   defineTask,
   defineWorkflow,
   implementTask,
   implementWorkflow,
+} from '../src/index.ts'
+import {
+  continueWorkflowRun,
+  createInMemoryWorkflowRuntime,
   runActivityAttempt,
   runTaskAttempt,
   startTaskRun,
   startWorkflowRun,
-} from '../src/index.ts'
+} from '../src/runtime/index.ts'
 
 describe('workflow runtime coordinator', () => {
   const createTestContainer = () => {

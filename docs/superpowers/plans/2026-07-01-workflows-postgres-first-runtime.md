@@ -89,7 +89,9 @@ notify remain.
 
 Status: `WorkflowRuntimeClient` now exposes store-backed `list` for v1 run
 queries. Package README documents the Postgres/Drizzle startup path and keeps
-production migrations app-owned.
+production migrations app-owned. Root `@nmtjs/workflows` exports are now limited
+to dependency-light contract, implementation, and public graph/type helpers;
+runtime helpers live under `@nmtjs/workflows/runtime`.
 
 ### 6. Child And Map Workflow Smoke
 

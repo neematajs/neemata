@@ -2,56 +2,55 @@ import { t } from '@nmtjs/type'
 import { describe, expect, expectTypeOf, it } from 'vitest'
 
 import {
-  createWorkflowRuntimeRegistry,
   defineTask,
   defineWorkflow,
   implementTask,
   implementWorkflow,
 } from '../src/index.ts'
-
 import type {
-  AttemptCommand,
-  AttemptExecutor,
-  CompleteMapItemParams,
-  ContinueRunCommand,
-  ContinueWorkflowRunResult,
-  CreateRunInput,
-  EnsureChildRunParams,
-  EnsureChildRunResult,
-  EnsureChildWorkflowRunParams,
-  EnsureChildWorkflowRunResult,
-  EnsureMapItemsParams,
-  EnsureMapItemsResult,
-  EnsureNodeAttemptParams,
-  EnsureNodeAttemptResult,
-  FailMapItemParams,
-  InMemoryWorkflowRuntime,
-  ListRunsFilter,
-  ListRunsResult,
-  LoadNodeChildrenParams,
-  NodeChildIdentity,
-  NodeChildrenSnapshot,
-  RunCoordinationExecutor,
   RunKind,
   RunnableRun,
-  SelectNodeCaseParams,
-  StoredAttempt,
-  StoredChildLink,
-  StoredMapItem,
-  StoredNode,
-  StoredRun,
-  StartWorkflowRunInput,
   TaskRun,
-  WaitNodeParams,
-  WorkerCommandResult,
-  WorkerLoopOptions,
-  WorkerLoopResult,
-  WorkflowRuntimeAdapter,
   WorkflowStatus,
-  WorkflowStore,
 } from '../src/index.ts'
-import type {
-  SelectNodeCaseParams as RuntimeSelectNodeCaseParams,
+import {
+  createWorkflowRuntimeRegistry,
+  type AttemptCommand,
+  type AttemptExecutor,
+  type CompleteMapItemParams,
+  type ContinueRunCommand,
+  type ContinueWorkflowRunResult,
+  type CreateRunInput,
+  type EnsureChildRunParams,
+  type EnsureChildRunResult,
+  type EnsureChildWorkflowRunParams,
+  type EnsureChildWorkflowRunResult,
+  type EnsureMapItemsParams,
+  type EnsureMapItemsResult,
+  type EnsureNodeAttemptParams,
+  type EnsureNodeAttemptResult,
+  type FailMapItemParams,
+  type InMemoryWorkflowRuntime,
+  type ListRunsFilter,
+  type ListRunsResult,
+  type LoadNodeChildrenParams,
+  type NodeChildIdentity,
+  type NodeChildrenSnapshot,
+  type RunCoordinationExecutor,
+  type SelectNodeCaseParams,
+  type SelectNodeCaseParams as RuntimeSelectNodeCaseParams,
+  type StartWorkflowRunInput,
+  type StoredAttempt,
+  type StoredChildLink,
+  type StoredMapItem,
+  type StoredNode,
+  type StoredRun,
+  type WaitNodeParams,
+  type WorkerCommandResult,
+  type WorkerLoopOptions,
+  type WorkerLoopResult,
+  type WorkflowRuntimeAdapter,
+  type WorkflowStore,
 } from '../src/runtime/index.ts'
 
 type SemanticWorkflowStoreMethods = {
@@ -86,7 +85,7 @@ type WorkflowStoreWithRequiredSemanticMethods = Omit<
   SemanticWorkflowStoreMethods
 
 describe('workflow runtime interfaces', () => {
-  it('exports adapter-free runtime contracts from the root package', () => {
+  it('exports adapter-free runtime contracts from the runtime subpath', () => {
     expectTypeOf<ContinueRunCommand>().toMatchTypeOf<{
       kind: 'continueRun'
       runId: string

@@ -9,15 +9,17 @@ import {
   type WorkflowPostgresConnection,
 } from '../src/adapters/postgres.ts'
 import {
-  createWorkflowRuntimeClient,
   defineTask,
   defineWorkflow,
   implementTask,
   implementWorkflow,
+} from '../src/index.ts'
+import {
+  createWorkflowRuntimeClient,
   runActivityWorker,
   runTaskWorker,
   runWorkflowWorker,
-} from '../src/index.ts'
+} from '../src/runtime/index.ts'
 
 function createPgliteConnection(db = new PGlite()): WorkflowPostgresConnection {
   return {

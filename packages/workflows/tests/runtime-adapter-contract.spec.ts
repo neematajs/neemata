@@ -3,12 +3,14 @@ import { PGlite } from '@electric-sql/pglite'
 import { describe, expect, it } from 'vitest'
 
 import {
-  createInMemoryWorkflowRuntime,
-  createWorkflowRuntimeClient,
   defineTask,
   defineWorkflow,
-  type WorkflowRuntimeAdapter,
 } from '../src/index.ts'
+import {
+  createInMemoryWorkflowRuntime,
+  createWorkflowRuntimeClient,
+  type WorkflowRuntimeAdapter,
+} from '../src/runtime/index.ts'
 import {
   createPostgresWorkflowRuntime,
   installPostgresWorkflowSchemaForTesting,

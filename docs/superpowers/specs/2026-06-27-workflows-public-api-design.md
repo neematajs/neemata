@@ -74,8 +74,10 @@ The first public API should be small:
 - `implementWorkflow`
 - primitive leaf nodes: `activity`, `task`, `workflow`
 - orchestration nodes: `branch`, `parallel`, `mapTask`, `mapWorkflow`
-- runtime start helpers: `startWorkflowRun`, `startTaskRun`
-- runtime client: `createWorkflowRuntimeClient`
+- runtime start helpers behind `@nmtjs/workflows/runtime`: `startWorkflowRun`,
+  `startTaskRun`
+- runtime client behind `@nmtjs/workflows/runtime`:
+  `createWorkflowRuntimeClient`
 - Postgres runtime: `createPostgresWorkflowRuntime`
 - reserved app-facing client commands: `list`, `cancel`, `retry`, `watch`
 - public graph types: `WorkflowNode`, `WorkflowActivityNode`,
@@ -87,11 +89,12 @@ promise.
 
 Current implementation note: there is a small server-side runtime client,
 `createWorkflowRuntimeClient`, which wraps `startWorkflowRun`, `startTaskRun`,
-and `store.loadRunSnapshot`. It is not the final application-facing client.
+`store.loadRunSnapshot`, and `store.listRuns`. It is exported from the runtime
+subpath, not the root package. It is not the final application-facing client.
 Runtime callers may still use start helpers, worker loops, store interfaces, and
-executor interfaces directly while the runtime is still being collapsed around
-Postgres. `createInMemoryWorkflowRuntime` may remain as a narrow local/test
-helper, not as a second production backend.
+executor interfaces directly from `@nmtjs/workflows/runtime` while the runtime is
+still being collapsed around Postgres. `createInMemoryWorkflowRuntime` may remain
+as a narrow local/test helper, not as a second production backend.
 
 ## Tasks
 
@@ -888,6 +891,9 @@ The current concrete client is intentionally small and server-side. It operates
 on task/workflow declarations and runtime infrastructure:
 
 ```ts
+import { createWorkflowRuntimeClient } from '@nmtjs/workflows/runtime'
+import { createPostgresWorkflowRuntime } from '@nmtjs/workflows/postgres'
+
 const runtime = createPostgresWorkflowRuntime({ connection })
 const workflows = createWorkflowRuntimeClient({
   ...runtime,
@@ -899,6 +905,7 @@ const workflows = createWorkflowRuntimeClient({
 await workflows.start(generateEmbedding, input, options)
 await workflows.start(caseGeneration, input, options)
 await workflows.get(runId)
+await workflows.list({ status: 'running' })
 ```
 
 Rules:
@@ -1013,7 +1020,7 @@ spelling. New examples should use `@nmtjs/workflows/postgres`.
 - A user can implement a workflow without importing an adapter.
 - Runtime can start workflow and task runs using declarations through
   `createWorkflowRuntimeClient`.
-- A full app-facing list/cancel/retry/watch client remains future work.
+- A full app-facing cancel/retry/watch client remains future work.
 - Activity, task, workflow, and branch outputs are addressed by explicit node
   names.
 - Branch cases exactly cover the selector return union.

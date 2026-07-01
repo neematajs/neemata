@@ -3,19 +3,21 @@ import { t } from '@nmtjs/type'
 import { describe, expect, it } from 'vitest'
 
 import {
-  type AttemptExecutor,
-  createInMemoryWorkflowRuntime,
   defineTask,
   defineWorkflow,
   implementTask,
   implementWorkflow,
+} from '../src/index.ts'
+import {
+  type AttemptExecutor,
+  createInMemoryWorkflowRuntime,
   runActivityWorker,
   runTaskWorker,
   runWorkflowWorker,
   runTaskAttempt,
   runWithConcurrency,
   startTaskRun,
-} from '../src/index.ts'
+} from '../src/runtime/index.ts'
 
 describe('workflow worker runtime', () => {
   const createTestContainer = () => {

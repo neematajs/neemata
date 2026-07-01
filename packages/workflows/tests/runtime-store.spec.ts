@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { createInMemoryWorkflowRuntime } from '../src/index.ts'
+import { createInMemoryWorkflowRuntime } from '../src/runtime/index.ts'
 
 describe('in-memory workflow store', () => {
   it('creates runs, leases one coordinator at a time, and releases leases', async () => {

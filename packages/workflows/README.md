@@ -13,6 +13,7 @@ import { defineTask, defineWorkflow, implementTask, implementWorkflow } from '@n
 Postgres runtime code lives behind explicit subpaths:
 
 ```ts
+import { createWorkflowRuntimeClient } from '@nmtjs/workflows/runtime'
 import {
   createPostgresWorkflowRuntime,
   verifyPostgresWorkflowSchema,
