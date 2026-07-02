@@ -62,6 +62,12 @@ const primaryKeyColumns = (table: Parameters<typeof getTableConfig>[0]) =>
     key.columns.map((column) => column.name),
   )
 
+const primaryKeyNames = (table: Parameters<typeof getTableConfig>[0]) =>
+  getTableConfig(table).primaryKeys.map((key) => key.getName())
+
+const uniqueConstraintNames = (table: Parameters<typeof getTableConfig>[0]) =>
+  getTableConfig(table).uniqueConstraints.map((key) => key.getName())
+
 const foreignKeys = (table: Parameters<typeof getTableConfig>[0]) =>
   getTableConfig(table).foreignKeys.map((key) => {
     const reference = key.reference()
@@ -154,15 +160,30 @@ test('creates drizzle schema with canonical runtime names', () => {
     'run_id',
     'name',
   ])
+  expect(primaryKeyNames(schema.tables.nodes)).toContain(
+    'workflow_nodes_pkey',
+  )
   expect(primaryKeyColumns(schema.tables.mapItemSets)).toContainEqual([
     'run_id',
     'node_name',
   ])
+  expect(primaryKeyNames(schema.tables.mapItemSets)).toContain(
+    'workflow_map_item_sets_pkey',
+  )
   expect(primaryKeyColumns(schema.tables.mapItems)).toContainEqual([
     'run_id',
     'node_name',
     'item_index',
   ])
+  expect(primaryKeyNames(schema.tables.mapItems)).toContain(
+    'workflow_map_items_pkey',
+  )
+  expect(uniqueConstraintNames(schema.tables.attempts)).toContain(
+    'workflow_attempts_identity_key_key',
+  )
+  expect(uniqueConstraintNames(schema.tables.mapItems)).toContain(
+    'workflow_map_items_identity_key_key',
+  )
   expect(foreignKeys(schema.tables.runs)).toEqual(
     expect.arrayContaining([
       {
@@ -300,6 +321,12 @@ test('creates drizzle schema with canonical runtime names', () => {
       'workflow_runs_input_gin_idx',
       'workflow_runs_tags_gin_idx',
       'workflow_commands_claim_idx',
+    ]),
+  )
+  expect(WORKFLOW_POSTGRES_SCHEMA_MANIFEST.constraints).toEqual(
+    expect.arrayContaining([
+      'workflow_attempts_identity_key_key',
+      'workflow_map_items_identity_key_key',
     ]),
   )
 })
@@ -490,5 +517,42 @@ test('verifies postgres schema indexes', async () => {
 
   await expect(verifyPostgresWorkflowSchema(connection)).rejects.toThrow(
     'Missing workflow Postgres schema objects: workflow_runs_tags_gin_idx',
+  )
+})
+
+test('verifies postgres schema column definitions', async () => {
+  const connection = createPgliteConnection()
+  await installPostgresWorkflowSchemaForTesting(connection)
+  await expect(verifyPostgresWorkflowSchema(connection)).resolves.toBeUndefined()
+
+  await connection.query(
+    'ALTER TABLE workflow_runs ALTER COLUMN input DROP NOT NULL',
+  )
+
+  await expect(verifyPostgresWorkflowSchema(connection)).rejects.toThrow(
+    'Invalid workflow Postgres schema columns: workflow_runs.input',
+  )
+})
+
+test('verifies postgres schema identity uniqueness constraints', async () => {
+  const connection = createPgliteConnection()
+  await installPostgresWorkflowSchemaForTesting(connection)
+  await expect(verifyPostgresWorkflowSchema(connection)).resolves.toBeUndefined()
+
+  await connection.query(
+    'ALTER TABLE workflow_attempts DROP CONSTRAINT workflow_attempts_identity_key_key',
+  )
+
+  await expect(verifyPostgresWorkflowSchema(connection)).rejects.toThrow(
+    'Missing workflow Postgres schema objects: workflow_attempts_identity_key_key',
+  )
+
+  await installPostgresWorkflowSchemaForTesting(connection)
+  await connection.query(
+    'ALTER TABLE workflow_map_items DROP CONSTRAINT workflow_map_items_identity_key_key',
+  )
+
+  await expect(verifyPostgresWorkflowSchema(connection)).rejects.toThrow(
+    'Missing workflow Postgres schema objects: workflow_map_items_identity_key_key',
   )
 })

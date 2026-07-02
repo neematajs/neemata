@@ -37,6 +37,7 @@ import {
   type NodeChildIdentity,
   type NodeChildrenSnapshot,
   type RunCoordinationExecutor,
+  type RuntimeRunStatus,
   type SelectNodeCaseParams,
   type SelectNodeCaseParams as RuntimeSelectNodeCaseParams,
   type StartWorkflowRunInput,
@@ -120,7 +121,7 @@ describe('workflow runtime interfaces', () => {
     expectTypeOf<ListRunsFilter>().toMatchTypeOf<{
       kind?: RunKind
       name?: string
-      status?: string | readonly string[]
+      status?: RuntimeRunStatus | readonly RuntimeRunStatus[]
       parentRunId?: string
       rootRunId?: string
       tags?: Readonly<Record<string, string>>

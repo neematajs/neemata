@@ -10,6 +10,7 @@ import {
   primaryKey,
   text,
   timestamp,
+  unique,
   uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core'
@@ -188,7 +189,7 @@ export function createSchema() {
         updatedAt: timestamp('updated_at', { withTimezone: true }).notNull(),
       },
     (t) => [
-      primaryKey({ name: 'workflow_nodes_pk', columns: [t.runId, t.name] }),
+      primaryKey({ name: 'workflow_nodes_pkey', columns: [t.runId, t.name] }),
       foreignKey({
         name: 'workflow_nodes_run_fk',
         columns: [t.runId],
@@ -207,7 +208,7 @@ export function createSchema() {
         id: uuid('id').primaryKey(),
         runId: uuid('run_id').notNull(),
         nodeName: text('node_name').notNull(),
-        identityKey: text('identity_key').unique(),
+        identityKey: text('identity_key'),
         identity: jsonb('identity'),
         status: enums.attemptStatus('status').notNull(),
         workerId: text('worker_id'),
@@ -222,6 +223,7 @@ export function createSchema() {
         completedAt: timestamp('completed_at', { withTimezone: true }),
       },
     (t) => [
+      unique('workflow_attempts_identity_key_key').on(t.identityKey),
       foreignKey({
         name: 'workflow_attempts_node_fk',
         columns: [t.runId, t.nodeName],
@@ -268,7 +270,7 @@ export function createSchema() {
       },
     (t) => [
       primaryKey({
-        name: 'workflow_map_item_sets_pk',
+        name: 'workflow_map_item_sets_pkey',
         columns: [t.runId, t.nodeName],
       }),
       foreignKey({
@@ -284,7 +286,7 @@ export function createSchema() {
         runId: uuid('run_id').notNull(),
         nodeName: text('node_name').notNull(),
         itemIndex: integer('item_index').notNull(),
-        identityKey: text('identity_key').notNull().unique(),
+        identityKey: text('identity_key').notNull(),
         identity: jsonb('identity').notNull(),
         itemKey: text('item_key'),
         item: jsonb('item').notNull(),
@@ -296,9 +298,10 @@ export function createSchema() {
       },
     (t) => [
       primaryKey({
-        name: 'workflow_map_items_pk',
+        name: 'workflow_map_items_pkey',
         columns: [t.runId, t.nodeName, t.itemIndex],
       }),
+      unique('workflow_map_items_identity_key_key').on(t.identityKey),
       foreignKey({
         name: 'workflow_map_items_set_fk',
         columns: [t.runId, t.nodeName],

@@ -197,9 +197,8 @@ live inside `runtime/executors.ts`.
 
 Owns:
 
-- command enqueue/claim/heartbeat/complete/fail/cancel interfaces
+- command enqueue/claim/heartbeat/ack/release interfaces
 - lease and timeout protocol types
-- retry scheduling protocol types
 - worker identity types
 
 Rules:
@@ -207,6 +206,8 @@ Rules:
 - Defines at-least-once execution semantics.
 - Should be backed by Postgres command tables in the v1 durable runtime.
 - Must not imply BullMQ queue names or Redis connections.
+- Cancel propagation and retry scheduling are future runtime concepts, not
+  current executor interfaces.
 
 ### `postgres`
 

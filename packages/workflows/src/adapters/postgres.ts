@@ -66,6 +66,44 @@ export const WORKFLOW_POSTGRES_SCHEMA_MANIFEST = {
     'workflow_attempt_status',
     'workflow_command_kind',
   ],
+  enumValues: {
+    workflow_run_kind: ['workflow', 'task'],
+    workflow_node_kind: [
+      'activity',
+      'task',
+      'workflow',
+      'branch',
+      'parallel',
+      'mapTask',
+      'mapWorkflow',
+    ],
+    workflow_run_status: [
+      'queued',
+      'running',
+      'waiting',
+      'cancelling',
+      'cancelled',
+      'failed',
+      'completed',
+    ],
+    workflow_node_status: [
+      'pending',
+      'running',
+      'waiting',
+      'cancelling',
+      'cancelled',
+      'failed',
+      'completed',
+    ],
+    workflow_attempt_status: [
+      'started',
+      'completed',
+      'failed',
+      'timedOut',
+      'cancelled',
+    ],
+    workflow_command_kind: ['continue', 'activity', 'task'],
+  },
   tables: [
     'workflow_schema_version',
     'workflow_runs',
@@ -83,9 +121,11 @@ export const WORKFLOW_POSTGRES_SCHEMA_MANIFEST = {
     'workflow_runs_pkey',
     'workflow_nodes_pkey',
     'workflow_attempts_pkey',
+    'workflow_attempts_identity_key_key',
     'workflow_child_links_pkey',
     'workflow_map_item_sets_pkey',
     'workflow_map_items_pkey',
+    'workflow_map_items_identity_key_key',
     'workflow_run_leases_pkey',
     'workflow_commands_pkey',
     'workflow_runs_parent_run_fk',
@@ -108,6 +148,123 @@ export const WORKFLOW_POSTGRES_SCHEMA_MANIFEST = {
     'workflow_runs_tags_gin_idx',
     'workflow_commands_claim_idx',
   ],
+  columns: {
+    workflow_schema_version: {
+      id: { type: 'int4', nullable: false },
+      version: { type: 'int4', nullable: false },
+      installed_at: { type: 'timestamptz', nullable: false },
+    },
+    workflow_runs: {
+      id: { type: 'uuid', nullable: false },
+      kind: { type: 'workflow_run_kind', nullable: false },
+      name: { type: 'text', nullable: false },
+      workflow_name: { type: 'text', nullable: false },
+      task_name: { type: 'text', nullable: true },
+      status: { type: 'workflow_run_status', nullable: false },
+      input: { type: 'jsonb', nullable: false },
+      output: { type: 'jsonb', nullable: true },
+      error: { type: 'jsonb', nullable: true },
+      parent_run_id: { type: 'uuid', nullable: true },
+      parent_node_name: { type: 'text', nullable: true },
+      root_run_id: { type: 'uuid', nullable: false },
+      tags: { type: 'jsonb', nullable: false },
+      idempotency_key: { type: 'jsonb', nullable: true },
+      version: { type: 'int4', nullable: false },
+      created_at: { type: 'timestamptz', nullable: false },
+      updated_at: { type: 'timestamptz', nullable: false },
+    },
+    workflow_nodes: {
+      run_id: { type: 'uuid', nullable: false },
+      name: { type: 'text', nullable: false },
+      kind: { type: 'workflow_node_kind', nullable: false },
+      status: { type: 'workflow_node_status', nullable: false },
+      input: { type: 'jsonb', nullable: true },
+      output: { type: 'jsonb', nullable: true },
+      error: { type: 'jsonb', nullable: true },
+      selected_case: { type: 'text', nullable: true },
+      current_attempt_id: { type: 'uuid', nullable: true },
+      next_attempt_at: { type: 'timestamptz', nullable: true },
+      attempt_count: { type: 'int4', nullable: false },
+      version: { type: 'int4', nullable: false },
+      created_at: { type: 'timestamptz', nullable: false },
+      updated_at: { type: 'timestamptz', nullable: false },
+    },
+    workflow_attempts: {
+      id: { type: 'uuid', nullable: false },
+      run_id: { type: 'uuid', nullable: false },
+      node_name: { type: 'text', nullable: false },
+      identity_key: { type: 'text', nullable: true },
+      identity: { type: 'jsonb', nullable: true },
+      status: { type: 'workflow_attempt_status', nullable: false },
+      worker_id: { type: 'text', nullable: true },
+      lease_token: { type: 'text', nullable: true },
+      attempt_number: { type: 'int4', nullable: false },
+      input: { type: 'jsonb', nullable: false },
+      idempotency_key: { type: 'jsonb', nullable: true },
+      output: { type: 'jsonb', nullable: true },
+      error: { type: 'jsonb', nullable: true },
+      dispatched_at: { type: 'timestamptz', nullable: false },
+      heartbeat_at: { type: 'timestamptz', nullable: true },
+      completed_at: { type: 'timestamptz', nullable: true },
+    },
+    workflow_child_links: {
+      identity_key: { type: 'text', nullable: false },
+      identity: { type: 'jsonb', nullable: false },
+      parent_run_id: { type: 'uuid', nullable: false },
+      parent_node_name: { type: 'text', nullable: false },
+      child_run_id: { type: 'uuid', nullable: false },
+      child_kind: { type: 'workflow_run_kind', nullable: false },
+      child_name: { type: 'text', nullable: false },
+      workflow_name: { type: 'text', nullable: false },
+      task_name: { type: 'text', nullable: true },
+      case_key: { type: 'text', nullable: true },
+      member_key: { type: 'text', nullable: true },
+      item_index: { type: 'int4', nullable: true },
+      item_key: { type: 'text', nullable: true },
+    },
+    workflow_map_item_sets: {
+      run_id: { type: 'uuid', nullable: false },
+      node_name: { type: 'text', nullable: false },
+      keys: { type: 'jsonb', nullable: false },
+    },
+    workflow_map_items: {
+      run_id: { type: 'uuid', nullable: false },
+      node_name: { type: 'text', nullable: false },
+      item_index: { type: 'int4', nullable: false },
+      identity_key: { type: 'text', nullable: false },
+      identity: { type: 'jsonb', nullable: false },
+      item_key: { type: 'text', nullable: true },
+      item: { type: 'jsonb', nullable: false },
+      status: { type: 'workflow_node_status', nullable: false },
+      output: { type: 'jsonb', nullable: true },
+      error: { type: 'jsonb', nullable: true },
+      child_run_id: { type: 'uuid', nullable: true },
+      attempt_id: { type: 'uuid', nullable: true },
+    },
+    workflow_run_leases: {
+      run_id: { type: 'uuid', nullable: false },
+      lease_token: { type: 'text', nullable: false },
+      version: { type: 'int4', nullable: false },
+      expires_at: { type: 'timestamptz', nullable: false },
+    },
+    workflow_commands: {
+      id: { type: 'uuid', nullable: false },
+      kind: { type: 'workflow_command_kind', nullable: false },
+      run_id: { type: 'uuid', nullable: false },
+      workflow_name: { type: 'text', nullable: true },
+      task_name: { type: 'text', nullable: true },
+      activity_name: { type: 'text', nullable: true },
+      node_name: { type: 'text', nullable: true },
+      attempt_id: { type: 'uuid', nullable: true },
+      payload: { type: 'jsonb', nullable: false },
+      run_at: { type: 'timestamptz', nullable: false },
+      priority: { type: 'int4', nullable: false },
+      lease_owner: { type: 'text', nullable: true },
+      lease_token: { type: 'text', nullable: true },
+      lease_expires_at: { type: 'timestamptz', nullable: true },
+      created_at: { type: 'timestamptz', nullable: false },
+    },
+  },
 } as const
 
 const id = () => randomUUID()
@@ -270,40 +427,94 @@ const many = async <T extends JsonRecord>(
 export async function verifyPostgresWorkflowSchema(
   db: WorkflowPostgresConnection,
 ) {
-  const [enums, tables, constraints, indexes] = await Promise.all([
-    many(db, 'SELECT typname AS name FROM pg_type WHERE typname = ANY($1)', [
-      [...WORKFLOW_POSTGRES_SCHEMA_MANIFEST.enums],
-    ]),
-    many(
-      db,
-      `
-        SELECT tablename AS name
-        FROM pg_tables
-        WHERE schemaname = current_schema()
-          AND tablename = ANY($1)
-      `,
-      [[...WORKFLOW_POSTGRES_SCHEMA_MANIFEST.tables]],
-    ),
-    many(
-      db,
-      `
-        SELECT conname AS name
-        FROM pg_constraint
-        WHERE conname = ANY($1)
-      `,
-      [[...WORKFLOW_POSTGRES_SCHEMA_MANIFEST.constraints]],
-    ),
-    many(
-      db,
-      `
-        SELECT indexname AS name
-        FROM pg_indexes
-        WHERE schemaname = current_schema()
-          AND indexname = ANY($1)
-      `,
-      [[...WORKFLOW_POSTGRES_SCHEMA_MANIFEST.indexes]],
-    ),
-  ])
+  const expectedColumns = Object.entries(
+    WORKFLOW_POSTGRES_SCHEMA_MANIFEST.columns,
+  ).flatMap(([table, columns]) =>
+    Object.entries(columns).map(([column, definition]) => ({
+      key: `${table}.${column}`,
+      table,
+      column,
+      type: definition.type,
+      nullable: definition.nullable,
+    })),
+  )
+  const [enums, enumLabels, tables, columns, constraints, indexes] =
+    await Promise.all([
+      many(
+        db,
+        `
+          SELECT t.typname AS name
+          FROM pg_type t
+          JOIN pg_namespace n ON n.oid = t.typnamespace
+          WHERE n.nspname = current_schema()
+            AND t.typname = ANY($1)
+        `,
+        [[...WORKFLOW_POSTGRES_SCHEMA_MANIFEST.enums]],
+      ),
+      many<{
+        enum_name: string
+        enum_label: string
+      }>(
+        db,
+        `
+          SELECT t.typname AS enum_name, e.enumlabel AS enum_label
+          FROM pg_type t
+          JOIN pg_namespace n ON n.oid = t.typnamespace
+          JOIN pg_enum e ON e.enumtypid = t.oid
+          WHERE n.nspname = current_schema()
+            AND t.typname = ANY($1)
+          ORDER BY t.typname, e.enumsortorder
+        `,
+        [[...WORKFLOW_POSTGRES_SCHEMA_MANIFEST.enums]],
+      ),
+      many(
+        db,
+        `
+          SELECT tablename AS name
+          FROM pg_tables
+          WHERE schemaname = current_schema()
+            AND tablename = ANY($1)
+        `,
+        [[...WORKFLOW_POSTGRES_SCHEMA_MANIFEST.tables]],
+      ),
+      many<{
+        table_name: string
+        column_name: string
+        udt_name: string
+        is_nullable: string
+      }>(
+        db,
+        `
+          SELECT table_name, column_name, udt_name, is_nullable
+          FROM information_schema.columns
+          WHERE table_schema = current_schema()
+            AND table_name = ANY($1)
+        `,
+        [[...WORKFLOW_POSTGRES_SCHEMA_MANIFEST.tables]],
+      ),
+      many(
+        db,
+        `
+          SELECT c.conname AS name
+          FROM pg_constraint c
+          JOIN pg_class rel ON rel.oid = c.conrelid
+          JOIN pg_namespace n ON n.oid = rel.relnamespace
+          WHERE n.nspname = current_schema()
+            AND c.conname = ANY($1)
+        `,
+        [[...WORKFLOW_POSTGRES_SCHEMA_MANIFEST.constraints]],
+      ),
+      many(
+        db,
+        `
+          SELECT indexname AS name
+          FROM pg_indexes
+          WHERE schemaname = current_schema()
+            AND indexname = ANY($1)
+        `,
+        [[...WORKFLOW_POSTGRES_SCHEMA_MANIFEST.indexes]],
+      ),
+    ])
 
   const existing = new Set([
     ...enums.map((row) => row.name),
@@ -321,6 +532,49 @@ export async function verifyPostgresWorkflowSchema(
   if (missing.length > 0) {
     throw new Error(
       `Missing workflow Postgres schema objects: ${missing.join(', ')}`,
+    )
+  }
+
+  const labelsByEnum = new Map<string, string[]>()
+  for (const row of enumLabels) {
+    const values = labelsByEnum.get(row.enum_name) ?? []
+    values.push(row.enum_label)
+    labelsByEnum.set(row.enum_name, values)
+  }
+  const invalidEnums = Object.entries(
+    WORKFLOW_POSTGRES_SCHEMA_MANIFEST.enumValues,
+  )
+    .filter(([name, values]) =>
+      JSON.stringify(labelsByEnum.get(name) ?? []) !== JSON.stringify(values),
+    )
+    .map(([name]) => name)
+
+  if (invalidEnums.length > 0) {
+    throw new Error(
+      `Invalid workflow Postgres schema enums: ${invalidEnums.join(', ')}`,
+    )
+  }
+
+  const columnsByKey = new Map(
+    columns.map((column) => [
+      `${column.table_name}.${column.column_name}`,
+      column,
+    ]),
+  )
+  const invalidColumns = expectedColumns
+    .filter((expected) => {
+      const column = columnsByKey.get(expected.key)
+      return (
+        !column ||
+        column.udt_name !== expected.type ||
+        (column.is_nullable === 'YES') !== expected.nullable
+      )
+    })
+    .map((expected) => expected.key)
+
+  if (invalidColumns.length > 0) {
+    throw new Error(
+      `Invalid workflow Postgres schema columns: ${invalidColumns.join(', ')}`,
     )
   }
 
@@ -481,7 +735,7 @@ export async function installPostgresWorkflowSchemaForTesting(
       id uuid PRIMARY KEY,
       run_id uuid NOT NULL,
       node_name text NOT NULL,
-      identity_key text UNIQUE,
+      identity_key text,
       identity jsonb,
       status workflow_attempt_status NOT NULL,
       worker_id text,
@@ -493,7 +747,8 @@ export async function installPostgresWorkflowSchemaForTesting(
       error jsonb,
       dispatched_at timestamptz NOT NULL,
       heartbeat_at timestamptz,
-      completed_at timestamptz
+      completed_at timestamptz,
+      CONSTRAINT workflow_attempts_identity_key_key UNIQUE (identity_key)
     )
   `)
   await db.query(`
@@ -526,7 +781,7 @@ export async function installPostgresWorkflowSchemaForTesting(
       run_id uuid NOT NULL,
       node_name text NOT NULL,
       item_index integer NOT NULL,
-      identity_key text UNIQUE NOT NULL,
+      identity_key text NOT NULL,
       identity jsonb NOT NULL,
       item_key text,
       item jsonb NOT NULL,
@@ -535,6 +790,7 @@ export async function installPostgresWorkflowSchemaForTesting(
       error jsonb,
       child_run_id uuid,
       attempt_id uuid,
+      CONSTRAINT workflow_map_items_identity_key_key UNIQUE (identity_key),
       PRIMARY KEY (run_id, node_name, item_index)
     )
   `)
@@ -620,6 +876,12 @@ export async function installPostgresWorkflowSchemaForTesting(
         ON DELETE CASCADE;
       END IF;
 
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'workflow_attempts_identity_key_key') THEN
+        ALTER TABLE workflow_attempts
+        ADD CONSTRAINT workflow_attempts_identity_key_key
+        UNIQUE (identity_key);
+      END IF;
+
       IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'workflow_child_links_parent_node_fk') THEN
         ALTER TABLE workflow_child_links
         ADD CONSTRAINT workflow_child_links_parent_node_fk
@@ -666,6 +928,12 @@ export async function installPostgresWorkflowSchemaForTesting(
         FOREIGN KEY (attempt_id)
         REFERENCES workflow_attempts(id)
         ON DELETE SET NULL;
+      END IF;
+
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'workflow_map_items_identity_key_key') THEN
+        ALTER TABLE workflow_map_items
+        ADD CONSTRAINT workflow_map_items_identity_key_key
+        UNIQUE (identity_key);
       END IF;
 
       IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'workflow_run_leases_run_fk') THEN
@@ -1610,13 +1878,7 @@ export function createPostgresWorkflowRuntime(params: {
     },
     async ack(command) {
       await ready
-      await db.query(
-        `
-          DELETE FROM workflow_commands
-          WHERE id = $1 AND lease_token = $2
-        `,
-        [command.id, command.leaseToken],
-      )
+      await ackCommand(command.id, command.leaseToken)
     },
     async release(command) {
       await ready
@@ -1684,6 +1946,20 @@ export function createPostgresWorkflowRuntime(params: {
       command: claimed.payload as AttemptCommand,
       leaseToken: claimed.lease_token as string,
     }
+  }
+
+  const ackCommand = async (commandId: string, leaseToken: string) => {
+    const deleted = await one<{ id: string }>(
+      db,
+      `
+        DELETE FROM workflow_commands
+        WHERE id = $1 AND lease_token = $2
+        RETURNING id
+      `,
+      [commandId, leaseToken],
+    )
+
+    if (!deleted) throw new Error('Stale workflow command ack')
   }
 
   const attemptExecutor: AttemptExecutor = {
@@ -1783,10 +2059,7 @@ export function createPostgresWorkflowRuntime(params: {
     async heartbeat() {},
     async ack(attempt) {
       await ready
-      await db.query(
-        'DELETE FROM workflow_commands WHERE id = $1 AND lease_token = $2',
-        [attempt.id, attempt.leaseToken],
-      )
+      await ackCommand(attempt.id, attempt.leaseToken)
     },
     async release(attempt) {
       await ready
