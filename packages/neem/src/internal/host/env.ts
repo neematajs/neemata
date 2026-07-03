@@ -10,11 +10,15 @@ export type CreateRuntimeEnvOptions = {
 export function createRuntimeEnv(
   options: CreateRuntimeEnvOptions,
 ): NodeJS.ProcessEnv {
+  // Manifest env values are baked deployment defaults; the live execution
+  // environment must override them, and explicit per-start overrides win over
+  // everything. executionEnv exists as a test seam and defaults to the real
+  // process env.
   return compactEnv({
     ...process.env,
     ...options.manifest.config.env,
     ...options.manifest.runtimes[options.runtimeName]?.env,
-    ...options.executionEnv,
+    ...(options.executionEnv ?? process.env),
     ...options.overrideEnv,
   })
 }
