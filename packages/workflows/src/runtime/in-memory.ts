@@ -12,6 +12,7 @@ import type {
   RunSnapshot,
   StoredAttempt,
   StoredChildLink,
+  StoredError,
   StoredMapItem,
   StoredNode,
   StoredRun,
@@ -20,6 +21,7 @@ import type {
   CreateAttemptInput,
   CreateNodeInput,
   CreateRunInput,
+  DeadWorkflowCommand,
   ListRunsFilter,
   RunLease,
   WorkflowStore,
@@ -35,9 +37,25 @@ type QueueItem<T> = {
   readonly id: string
   readonly payload: T
   readonly runAt?: Date
+  readonly deliveryCount: number
+  readonly lastError?: StoredError
+  readonly deadAt?: Date
+  readonly createdAt: Date
+}
+
+type InspectQueueItem<T> = {
+  readonly id: string
+  readonly payload: T
+  readonly runAt?: Date
+}
+
+type ClaimedQueueItem<T> = QueueItem<T> & {
+  readonly leaseToken: string
 }
 
 const RELEASE_BACKOFF_MS = 50
+const MAX_ERROR_BACKOFF_MS = 300_000
+const DEFAULT_MAX_DELIVERIES = 20
 
 export type InMemoryWorkflowRuntime = {
   readonly store: WorkflowStore
@@ -47,16 +65,21 @@ export type InMemoryWorkflowRuntime = {
     readonly runs: readonly StoredRun[]
     readonly nodes: readonly StoredNode[]
     readonly attempts: readonly StoredAttempt[]
-    readonly continueRunCommands: readonly QueueItem<ContinueRunCommand>[]
-    readonly activityCommands: readonly QueueItem<ActivityAttemptCommand>[]
-    readonly taskCommands: readonly QueueItem<TaskAttemptCommand>[]
+    readonly continueRunCommands: readonly InspectQueueItem<ContinueRunCommand>[]
+    readonly activityCommands: readonly InspectQueueItem<ActivityAttemptCommand>[]
+    readonly taskCommands: readonly InspectQueueItem<TaskAttemptCommand>[]
   }
 }
 
-export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
+export function createInMemoryWorkflowRuntime(
+  options: {
+    readonly maxDeliveries?: number
+  } = {},
+): InMemoryWorkflowRuntime {
   let nextId = 1
   const id = (prefix: string) => `${prefix}-${nextId++}`
   const now = () => new Date()
+  const maxDeliveries = options.maxDeliveries ?? DEFAULT_MAX_DELIVERIES
 
   const runs = new Map<string, StoredRun>()
   const nodes = new Map<string, StoredNode>()
@@ -69,9 +92,18 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
   const continueRunCommands: QueueItem<ContinueRunCommand>[] = []
   const activityCommands: QueueItem<ActivityAttemptCommand>[] = []
   const taskCommands: QueueItem<TaskAttemptCommand>[] = []
-  const claimedContinueRunCommands = new Map<string, ClaimedCommand>()
-  const claimedActivityCommands = new Map<string, ClaimedAttempt>()
-  const claimedTaskCommands = new Map<string, ClaimedAttempt>()
+  const claimedContinueRunCommands = new Map<
+    string,
+    ClaimedQueueItem<ContinueRunCommand>
+  >()
+  const claimedActivityCommands = new Map<
+    string,
+    ClaimedQueueItem<ActivityAttemptCommand>
+  >()
+  const claimedTaskCommands = new Map<
+    string,
+    ClaimedQueueItem<TaskAttemptCommand>
+  >()
 
   const nodeKey = (runId: string, nodeName: string) => `${runId}:${nodeName}`
   const stableJsonValue = (value: unknown): unknown => {
@@ -235,6 +267,31 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
           ? { nextCursor: String(nextOffset) }
           : {}),
       }
+    },
+    async listDeadCommands() {
+      return [
+        ...continueRunCommands.flatMap((item) => {
+          const dead = mapDeadCommand(item, 'continue')
+          return dead === undefined ? [] : [dead]
+        }),
+        ...activityCommands.flatMap((item) => {
+          const dead = mapDeadCommand(item, 'activity')
+          return dead === undefined ? [] : [dead]
+        }),
+        ...taskCommands.flatMap((item) => {
+          const dead = mapDeadCommand(item, 'task')
+          return dead === undefined ? [] : [dead]
+        }),
+      ].sort((left, right) => {
+        const byDeadAt = right.deadAt.getTime() - left.deadAt.getTime()
+        if (byDeadAt !== 0) return byDeadAt
+        return right.createdAt.getTime() - left.createdAt.getTime()
+      })
+    },
+    async requeueDeadCommand(commandId) {
+      if (requeueDead(continueRunCommands, commandId)) return
+      if (requeueDead(activityCommands, commandId)) return
+      requeueDead(taskCommands, commandId)
     },
     async acquireRunLease({ runId, leaseMs }) {
       const date = now()
@@ -814,7 +871,9 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
     queue: QueueItem<T>[],
     matches: (item: QueueItem<T>) => boolean,
   ): QueueItem<T> | undefined => {
-    const index = queue.findIndex(matches)
+    const index = queue.findIndex(
+      (item) => item.deadAt === undefined && matches(item),
+    )
     if (index === -1) return undefined
     return queue.splice(index, 1)[0]
   }
@@ -825,26 +884,124 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
       | undefined,
     claim: Pick<ClaimedAttempt | ClaimedCommand, 'id' | 'leaseToken'>,
   ) => stored?.leaseToken === claim.leaseToken
+  const queueItem = <T>(
+    itemId: string,
+    payload: T,
+    runAt?: Date,
+  ): QueueItem<T> => ({
+    id: itemId,
+    payload,
+    ...(runAt === undefined ? {} : { runAt }),
+    deliveryCount: 0,
+    createdAt: now(),
+  })
+  const earliestRunAt = (left: Date | undefined, right: Date | undefined) => {
+    if (left === undefined || right === undefined) return undefined
+    return left <= right ? left : right
+  }
+  const enqueueContinue = (command: ContinueRunCommand, runAt?: Date) => {
+    const existingIndex = continueRunCommands.findIndex(
+      (item) => item.payload.runId === command.runId,
+    )
+    if (existingIndex === -1) {
+      continueRunCommands.push(queueItem(id('continue'), command, runAt))
+      return
+    }
+
+    const existing = continueRunCommands[existingIndex]!
+    continueRunCommands[existingIndex] = {
+      ...existing,
+      payload: command,
+      runAt: earliestRunAt(existing.runAt, runAt),
+    }
+  }
+  const releaseQueueItem = <T>(
+    item: QueueItem<T>,
+    options?: { readonly error?: unknown },
+  ): QueueItem<T> => {
+    if (options?.error === undefined) {
+      return {
+        ...item,
+        runAt: new Date(Date.now() + RELEASE_BACKOFF_MS),
+      }
+    }
+
+    const deliveryCount = item.deliveryCount + 1
+    return {
+      ...item,
+      deliveryCount,
+      lastError: toStoredError(options.error),
+      ...(deliveryCount >= maxDeliveries ? { deadAt: now() } : {}),
+      runAt: new Date(
+        Date.now() +
+          Math.min(
+            2 ** deliveryCount * RELEASE_BACKOFF_MS,
+            MAX_ERROR_BACKOFF_MS,
+          ),
+      ),
+    }
+  }
+  const mapDeadCommand = (
+    item: QueueItem<
+      ContinueRunCommand | ActivityAttemptCommand | TaskAttemptCommand
+    >,
+    kind: DeadWorkflowCommand['kind'],
+  ): DeadWorkflowCommand | undefined => {
+    if (item.deadAt === undefined) return undefined
+    const payload = item.payload
+    return {
+      id: item.id,
+      kind,
+      runId: payload.runId,
+      workflowName: payload.workflowName,
+      ...('taskName' in payload ? { taskName: payload.taskName } : {}),
+      ...('activityName' in payload
+        ? { activityName: payload.activityName }
+        : {}),
+      ...('nodeName' in payload ? { nodeName: payload.nodeName } : {}),
+      ...('attemptId' in payload ? { attemptId: payload.attemptId } : {}),
+      payload,
+      deliveryCount: item.deliveryCount,
+      ...(item.lastError === undefined ? {} : { lastError: item.lastError }),
+      deadAt: item.deadAt,
+      createdAt: item.createdAt,
+    }
+  }
+  const requeueDead = <T>(queue: QueueItem<T>[], commandId: string) => {
+    const index = queue.findIndex(
+      (item) => item.id === commandId && item.deadAt !== undefined,
+    )
+    if (index === -1) return false
+    const item = queue[index]!
+    queue[index] = {
+      id: item.id,
+      payload: item.payload,
+      deliveryCount: 0,
+      createdAt: item.createdAt,
+    }
+    return true
+  }
+  const inspectQueueItem = <T>(item: QueueItem<T>): InspectQueueItem<T> => ({
+    id: item.id,
+    payload: item.payload,
+    ...(item.runAt === undefined ? {} : { runAt: item.runAt }),
+  })
   const attemptCommandExists = (attemptId: string) =>
     activityCommands.some((item) => item.payload.attemptId === attemptId) ||
     taskCommands.some((item) => item.payload.attemptId === attemptId) ||
     [...claimedActivityCommands.values()].some(
-      (item) => item.command.attemptId === attemptId,
+      (item) => item.payload.attemptId === attemptId,
     ) ||
     [...claimedTaskCommands.values()].some(
-      (item) => item.command.attemptId === attemptId,
+      (item) => item.payload.attemptId === attemptId,
     )
 
   const runCoordinationExecutor: RunCoordinationExecutor = {
     async enqueue(command) {
-      continueRunCommands.push({ id: id('continue'), payload: command })
+      enqueueContinue(command)
     },
     async enqueueDelayed(command, runAt) {
-      continueRunCommands.push({
-        id: id('continue'),
-        payload: command,
-        runAt,
-      })
+      enqueueContinue(command, runAt)
     },
     async claim(worker) {
       const date = now()
@@ -861,7 +1018,10 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
         command: item.payload,
         leaseToken: id('continue-lease'),
       }
-      claimedContinueRunCommands.set(claim.id, claim)
+      claimedContinueRunCommands.set(claim.id, {
+        ...item,
+        leaseToken: claim.leaseToken,
+      })
       return claim
     },
     async ack(command) {
@@ -870,52 +1030,55 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
       }
       claimedContinueRunCommands.delete(command.id)
     },
-    async release(command) {
-      if (!matchesClaim(claimedContinueRunCommands.get(command.id), command)) {
+    async release(command, options) {
+      const claimed = claimedContinueRunCommands.get(command.id)
+      if (!claimed || !matchesClaim(claimed, command)) {
         return
       }
 
       claimedContinueRunCommands.delete(command.id)
-      continueRunCommands.push({
-        id: command.id,
-        payload: command.command,
-        runAt: new Date(Date.now() + RELEASE_BACKOFF_MS),
-      })
+      continueRunCommands.push(releaseQueueItem(claimed, options))
     },
   }
 
-  const claimedAttempt = (
-    item: QueueItem<AttemptCommand> | undefined,
-  ): ClaimedAttempt | null => {
-    if (!item) return null
+  const claimedAttempt = <T extends AttemptCommand>(
+    item: QueueItem<T> | undefined,
+  ):
+    | {
+        readonly claim: ClaimedAttempt
+        readonly item: ClaimedQueueItem<T>
+      }
+    | undefined => {
+    if (!item) return undefined
 
+    const leaseToken = id('attempt-claim-lease')
     return {
-      id: item.id,
-      command: item.payload,
-      leaseToken: id('attempt-claim-lease'),
+      claim: {
+        id: item.id,
+        command: item.payload,
+        leaseToken,
+      },
+      item: {
+        ...item,
+        leaseToken,
+      },
     }
   }
 
   const attemptExecutor: AttemptExecutor = {
     async dispatchActivity(command, options) {
       if (attemptCommandExists(command.attemptId)) return
-      activityCommands.push({
-        id: id('activity-command'),
-        payload: command,
-        ...(options?.runAt === undefined ? {} : { runAt: options.runAt }),
-      })
+      activityCommands.push(
+        queueItem(id('activity-command'), command, options?.runAt),
+      )
     },
     async dispatchTask(command, options) {
       if (attemptCommandExists(command.attemptId)) return
-      taskCommands.push({
-        id: id('task-command'),
-        payload: command,
-        ...(options?.runAt === undefined ? {} : { runAt: options.runAt }),
-      })
+      taskCommands.push(queueItem(id('task-command'), command, options?.runAt))
     },
     async claimActivity(worker) {
       const date = now()
-      const claim = claimedAttempt(
+      const claimed = claimedAttempt(
         claimQueued(activityCommands, (queued) => {
           const command = queued.payload
           return (
@@ -926,12 +1089,13 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
           )
         }),
       )
-      if (claim) claimedActivityCommands.set(claim.id, claim)
-      return claim
+      if (!claimed) return null
+      claimedActivityCommands.set(claimed.claim.id, claimed.item)
+      return claimed.claim
     },
     async claimTask(worker) {
       const date = now()
-      const claim = claimedAttempt(
+      const claimed = claimedAttempt(
         claimQueued(
           taskCommands,
           (queued) =>
@@ -939,8 +1103,9 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
             (queued.runAt === undefined || queued.runAt <= date),
         ),
       )
-      if (claim) claimedTaskCommands.set(claim.id, claim)
-      return claim
+      if (!claimed) return null
+      claimedTaskCommands.set(claimed.claim.id, claimed.item)
+      return claimed.claim
     },
     async heartbeat(attempt) {
       const inFlight =
@@ -961,31 +1126,25 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
       }
       inFlight.delete(attempt.id)
     },
-    async release(attempt) {
+    async release(attempt, options) {
       if (attempt.command.kind === 'activityAttempt') {
-        if (!matchesClaim(claimedActivityCommands.get(attempt.id), attempt)) {
+        const claimed = claimedActivityCommands.get(attempt.id)
+        if (!claimed || !matchesClaim(claimed, attempt)) {
           return
         }
 
         claimedActivityCommands.delete(attempt.id)
-        activityCommands.push({
-          id: attempt.id,
-          payload: attempt.command,
-          runAt: new Date(Date.now() + RELEASE_BACKOFF_MS),
-        })
+        activityCommands.push(releaseQueueItem(claimed, options))
         return
       }
 
-      if (!matchesClaim(claimedTaskCommands.get(attempt.id), attempt)) {
+      const claimed = claimedTaskCommands.get(attempt.id)
+      if (!claimed || !matchesClaim(claimed, attempt)) {
         return
       }
 
       claimedTaskCommands.delete(attempt.id)
-      taskCommands.push({
-        id: attempt.id,
-        payload: attempt.command,
-        runAt: new Date(Date.now() + RELEASE_BACKOFF_MS),
-      })
+      taskCommands.push(releaseQueueItem(claimed, options))
     },
     async deleteUnclaimed({ runId }) {
       const deleteQueued = <T extends AttemptCommand>(
@@ -1012,9 +1171,9 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
       runs: [...runs.values()],
       nodes: [...nodes.values()],
       attempts: [...attempts.values()],
-      continueRunCommands: [...continueRunCommands],
-      activityCommands: [...activityCommands],
-      taskCommands: [...taskCommands],
+      continueRunCommands: continueRunCommands.map(inspectQueueItem),
+      activityCommands: activityCommands.map(inspectQueueItem),
+      taskCommands: taskCommands.map(inspectQueueItem),
     }),
   }
 }

@@ -184,8 +184,11 @@ export async function runWorkflowWorker(
         return true
       })
     } catch (error) {
-      await input.runCoordinationExecutor.release(claimed)
-      if (isStaleWorkflowCommandAck(error)) return false
+      if (isStaleWorkflowCommandAck(error)) {
+        await input.runCoordinationExecutor.release(claimed)
+        return false
+      }
+      await input.runCoordinationExecutor.release(claimed, { error })
       throw error
     }
   })
@@ -213,9 +216,14 @@ export async function runActivityWorker(
       const result = await runActivityAttempt({ ...input, claimed })
       return result.status === 'processed'
     } catch (error) {
-      await input.attemptExecutor.release(claimed)
-      if (isStaleWorkflowCommandAck(error)) return false
-      if (isAttemptHeartbeatLeaseLost(error)) return false
+      if (
+        isStaleWorkflowCommandAck(error) ||
+        isAttemptHeartbeatLeaseLost(error)
+      ) {
+        await input.attemptExecutor.release(claimed)
+        return false
+      }
+      await input.attemptExecutor.release(claimed, { error })
       throw error
     }
   })
@@ -240,9 +248,14 @@ export async function runTaskWorker(
       const result = await runTaskAttempt({ ...input, claimed })
       return result.status === 'processed'
     } catch (error) {
-      await input.attemptExecutor.release(claimed)
-      if (isStaleWorkflowCommandAck(error)) return false
-      if (isAttemptHeartbeatLeaseLost(error)) return false
+      if (
+        isStaleWorkflowCommandAck(error) ||
+        isAttemptHeartbeatLeaseLost(error)
+      ) {
+        await input.attemptExecutor.release(claimed)
+        return false
+      }
+      await input.attemptExecutor.release(claimed, { error })
       throw error
     }
   })

@@ -368,6 +368,93 @@ describe('workflow worker runtime', () => {
     expect(completed?.run.output).toStrictEqual({ text: 'content:alpha' })
   })
 
+  it('coalesces continue commands produced by parallel activity fan-out', async () => {
+    const workflow = defineWorkflow({
+      name: 'worker.parallel-coalesced-workflow',
+      input: t.object({ text: t.string() }),
+      output: t.object({ text: t.string() }),
+    })
+      .parallel('sections', (helpers) => ({
+        alpha: helpers.activity({
+          input: t.object({ text: t.string() }),
+          output: t.object({ text: t.string() }),
+        }),
+        beta: helpers.activity({
+          input: t.object({ text: t.string() }),
+          output: t.object({ text: t.string() }),
+        }),
+        gamma: helpers.activity({
+          input: t.object({ text: t.string() }),
+          output: t.object({ text: t.string() }),
+        }),
+      }))
+      .build()
+    const implementation = implementWorkflow(workflow)
+      .sections(({ activity }) => ({
+        alpha: activity(async (_ctx, input) => ({ text: `a:${input.text}` }), {
+          input: (_ctx, _outputs, input) => input,
+        }),
+        beta: activity(async (_ctx, input) => ({ text: `b:${input.text}` }), {
+          input: (_ctx, _outputs, input) => input,
+        }),
+        gamma: activity(async (_ctx, input) => ({ text: `c:${input.text}` }), {
+          input: (_ctx, _outputs, input) => input,
+        }),
+      }))
+      .finish((_ctx, { sections }) => ({
+        text: [
+          sections.alpha.text,
+          sections.beta.text,
+          sections.gamma.text,
+        ].join('|'),
+      }))
+    const runtime = createInMemoryWorkflowRuntime()
+    const container = createTestContainer()
+    const run = await runtime.store.createRun({
+      workflowName: workflow.name,
+      input: { text: 'alpha' },
+    })
+    await runtime.runCoordinationExecutor.enqueue({
+      kind: 'continueRun',
+      runId: run.id,
+      workflowName: workflow.name,
+    })
+
+    await runWorkflowWorker({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [implementation],
+      workerId: 'workflow-worker-1',
+    })
+    await runActivityWorker({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [implementation],
+      workerId: 'activity-worker-1',
+      maxIdleClaims: 4,
+    })
+
+    expect(runtime.inspect().continueRunCommands).toHaveLength(1)
+
+    await runWorkflowWorker({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      workflows: [implementation],
+      workerId: 'workflow-worker-2',
+    })
+    const completed = await runtime.store.loadRunSnapshot(run.id)
+    expect(completed?.run.status).toBe('completed')
+    expect(completed?.run.output).toStrictEqual({
+      text: 'a:alpha|b:alpha|c:alpha',
+    })
+  })
+
   it('retries a failed direct activity attempt before failing the run', async () => {
     const workflow = defineWorkflow({
       name: 'worker.retry-activity-workflow',

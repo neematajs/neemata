@@ -16,9 +16,13 @@ import {
   type WorkflowRuntimeAdapter,
 } from '../src/runtime/index.ts'
 
-type RuntimeFactory = () =>
-  | WorkflowRuntimeAdapter
-  | Promise<WorkflowRuntimeAdapter>
+type RuntimeFactoryOptions = {
+  readonly maxDeliveries?: number
+}
+
+type RuntimeFactory = (
+  options?: RuntimeFactoryOptions,
+) => WorkflowRuntimeAdapter | Promise<WorkflowRuntimeAdapter>
 
 const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
@@ -268,6 +272,288 @@ function workflowRuntimeAdapterContract(
         leaseMs: 30_000,
       })
       expect(afterAck).toBeNull()
+    })
+
+    it('coalesces unclaimed continue commands by run and keeps the latest payload', async () => {
+      const runtime = await createRuntime()
+      const run = await runtime.store.createRun({
+        workflowName: 'coalesced-workflow',
+        input: {},
+      })
+      const first = {
+        kind: 'continueRun' as const,
+        runId: run.id,
+        workflowName: 'coalesced-workflow',
+        generation: 1,
+      }
+      const second = {
+        kind: 'continueRun' as const,
+        runId: run.id,
+        workflowName: 'coalesced-workflow',
+        generation: 2,
+      }
+
+      await runtime.runCoordinationExecutor.enqueue(first)
+      await runtime.runCoordinationExecutor.enqueue(second)
+
+      const claimed = await runtime.runCoordinationExecutor.claim({
+        workerId: 'worker-1',
+        workflowNames: ['coalesced-workflow'],
+        leaseMs: 30_000,
+      })
+      expect(claimed?.command).toStrictEqual(second)
+
+      await runtime.runCoordinationExecutor.ack(claimed!)
+      const empty = await runtime.runCoordinationExecutor.claim({
+        workerId: 'worker-2',
+        workflowNames: ['coalesced-workflow'],
+        leaseMs: 30_000,
+      })
+      expect(empty).toBeNull()
+    })
+
+    it('coalesced continue commands keep an immediate wakeup ahead of a delayed wakeup', async () => {
+      const runtime = await createRuntime()
+      const run = await runtime.store.createRun({
+        workflowName: 'coalesced-delayed-workflow',
+        input: {},
+      })
+      const delayed = {
+        kind: 'continueRun' as const,
+        runId: run.id,
+        workflowName: 'coalesced-delayed-workflow',
+        generation: 1,
+      }
+      const immediate = {
+        kind: 'continueRun' as const,
+        runId: run.id,
+        workflowName: 'coalesced-delayed-workflow',
+        generation: 2,
+      }
+
+      await runtime.runCoordinationExecutor.enqueueDelayed(
+        delayed,
+        new Date(Date.now() + 60_000),
+      )
+      await runtime.runCoordinationExecutor.enqueue(immediate)
+
+      const claimed = await runtime.runCoordinationExecutor.claim({
+        workerId: 'worker-1',
+        workflowNames: ['coalesced-delayed-workflow'],
+        leaseMs: 30_000,
+      })
+      expect(claimed?.command).toStrictEqual(immediate)
+    })
+
+    it('lets a leased continue command coexist with a fresh unclaimed continue', async () => {
+      const runtime = await createRuntime()
+      const run = await runtime.store.createRun({
+        workflowName: 'leased-continue-workflow',
+        input: {},
+      })
+      const first = {
+        kind: 'continueRun' as const,
+        runId: run.id,
+        workflowName: 'leased-continue-workflow',
+        generation: 1,
+      }
+      const second = {
+        kind: 'continueRun' as const,
+        runId: run.id,
+        workflowName: 'leased-continue-workflow',
+        generation: 2,
+      }
+
+      await runtime.runCoordinationExecutor.enqueue(first)
+      const leased = await runtime.runCoordinationExecutor.claim({
+        workerId: 'worker-1',
+        workflowNames: ['leased-continue-workflow'],
+        leaseMs: 30_000,
+      })
+      await runtime.runCoordinationExecutor.enqueue(second)
+      const fresh = await runtime.runCoordinationExecutor.claim({
+        workerId: 'worker-2',
+        workflowNames: ['leased-continue-workflow'],
+        leaseMs: 30_000,
+      })
+
+      expect(leased?.command).toStrictEqual(first)
+      expect(fresh?.command).toStrictEqual(second)
+      expect(fresh?.id).not.toBe(leased?.id)
+    })
+
+    it('dead-letters run coordination commands after max error deliveries and requeues them', async () => {
+      const runtime = await createRuntime({ maxDeliveries: 1 })
+      const run = await runtime.store.createRun({
+        workflowName: 'dead-continue-workflow',
+        input: {},
+      })
+      await runtime.runCoordinationExecutor.enqueue({
+        kind: 'continueRun',
+        runId: run.id,
+        workflowName: 'dead-continue-workflow',
+      })
+      const claimed = await runtime.runCoordinationExecutor.claim({
+        workerId: 'worker-1',
+        workflowNames: ['dead-continue-workflow'],
+        leaseMs: 30_000,
+      })
+
+      await runtime.runCoordinationExecutor.release(claimed!, {
+        error: new Error('poison continue'),
+      })
+
+      const dead = await runtime.store.listDeadCommands()
+      expect(dead).toMatchObject([
+        {
+          kind: 'continue',
+          runId: run.id,
+          workflowName: 'dead-continue-workflow',
+          deliveryCount: 1,
+          lastError: { name: 'Error', message: 'poison continue' },
+        },
+      ])
+      expect(dead[0]?.deadAt).toBeInstanceOf(Date)
+      await expect(
+        runtime.runCoordinationExecutor.claim({
+          workerId: 'worker-2',
+          workflowNames: ['dead-continue-workflow'],
+          leaseMs: 30_000,
+        }),
+      ).resolves.toBeNull()
+
+      await runtime.store.requeueDeadCommand(dead[0]!.id)
+      await expect(runtime.store.listDeadCommands()).resolves.toStrictEqual([])
+      const requeued = await runtime.runCoordinationExecutor.claim({
+        workerId: 'worker-3',
+        workflowNames: ['dead-continue-workflow'],
+        leaseMs: 30_000,
+      })
+      expect(requeued?.command.runId).toBe(run.id)
+    })
+
+    it('does not count busy run coordination releases toward dead-letter delivery', async () => {
+      const runtime = await createRuntime({ maxDeliveries: 1 })
+      const run = await runtime.store.createRun({
+        workflowName: 'busy-release-workflow',
+        input: {},
+      })
+      await runtime.runCoordinationExecutor.enqueue({
+        kind: 'continueRun',
+        runId: run.id,
+        workflowName: 'busy-release-workflow',
+      })
+      const claimed = await runtime.runCoordinationExecutor.claim({
+        workerId: 'worker-1',
+        workflowNames: ['busy-release-workflow'],
+        leaseMs: 30_000,
+      })
+
+      await runtime.runCoordinationExecutor.release(claimed!)
+      await expect(runtime.store.listDeadCommands()).resolves.toStrictEqual([])
+      await waitForReleaseBackoff()
+
+      const reclaimed = await runtime.runCoordinationExecutor.claim({
+        workerId: 'worker-2',
+        workflowNames: ['busy-release-workflow'],
+        leaseMs: 30_000,
+      })
+      expect(reclaimed?.command.runId).toBe(run.id)
+    })
+
+    it('dead-letters attempt commands after max error deliveries and requeues them', async () => {
+      const runtime = await createRuntime({ maxDeliveries: 1 })
+      const run = await runtime.store.createRun({
+        workflowName: 'dead-attempt-workflow',
+        input: {},
+      })
+      const command = {
+        kind: 'activityAttempt' as const,
+        workflowName: 'dead-attempt-workflow',
+        activityName: 'content',
+        runId: run.id,
+        nodeName: 'content',
+        attemptId: '00000000-0000-4000-8000-000000000212',
+        leaseToken: 'attempt-lease',
+        input: {},
+      }
+      await runtime.attemptExecutor.dispatchActivity(command)
+      const claimed = await runtime.attemptExecutor.claimActivity({
+        workerId: 'activity-worker-1',
+        workflowNames: ['dead-attempt-workflow'],
+        activityNames: ['content'],
+        leaseMs: 30_000,
+      })
+
+      await runtime.attemptExecutor.release(claimed!, {
+        error: new Error('poison activity command'),
+      })
+
+      const dead = await runtime.store.listDeadCommands()
+      expect(dead).toMatchObject([
+        {
+          kind: 'activity',
+          runId: run.id,
+          workflowName: 'dead-attempt-workflow',
+          activityName: 'content',
+          attemptId: command.attemptId,
+          deliveryCount: 1,
+          lastError: { name: 'Error', message: 'poison activity command' },
+        },
+      ])
+      await runtime.store.requeueDeadCommand(dead[0]!.id)
+      const requeued = await runtime.attemptExecutor.claimActivity({
+        workerId: 'activity-worker-2',
+        workflowNames: ['dead-attempt-workflow'],
+        activityNames: ['content'],
+        leaseMs: 30_000,
+      })
+      expect(requeued?.command).toStrictEqual(command)
+    })
+
+    it('threads worker continuation errors into dead-letter metadata', async () => {
+      const workflow = defineWorkflow({
+        name: 'poison-worker-workflow',
+        input: t.object({ scenario: t.string() }),
+        output: t.object({ ok: t.boolean() }),
+      })
+        .activity('content', {
+          input: t.object({ scenario: t.string() }),
+          output: t.object({ ok: t.boolean() }),
+        })
+        .build()
+      const implementation = implementWorkflow(workflow)
+        .content(async () => ({ ok: true }))
+        .finish((_ctx, { content }) => content)
+      const runtime = await createRuntime({ maxDeliveries: 1 })
+      const client = createWorkflowRuntimeClient(runtime)
+      const run = await client.start(workflow, { scenario: 'alpha' })
+
+      await expect(
+        runWorkflowWorker({
+          ...runtime,
+          attemptExecutor: {
+            ...runtime.attemptExecutor,
+            dispatchActivity: async () => {
+              throw new Error('poison worker continue')
+            },
+          },
+          atomicContinuation: undefined,
+          container: testContainer,
+          workflows: [implementation],
+          workerId: 'poison-worker-1',
+          maxIdleClaims: 1,
+        }),
+      ).rejects.toThrow('poison worker continue')
+
+      await expect(runtime.store.listDeadCommands()).resolves.toMatchObject([
+        {
+          kind: 'continue',
+          runId: run.id,
+          deliveryCount: 1,
+          lastError: { name: 'Error', message: 'poison worker continue' },
+        },
+      ])
     })
 
     it('claims, heartbeats, acks, and releases attempt commands', async () => {
@@ -1119,8 +1405,8 @@ function workflowRuntimeAdapterContract(
 }
 
 workflowRuntimeAdapterContract('in-memory', createInMemoryWorkflowRuntime)
-workflowRuntimeAdapterContract('postgres', async () => {
+workflowRuntimeAdapterContract('postgres', async (options) => {
   const connection = createPgliteConnection()
   await installPostgresWorkflowSchemaForTesting(connection)
-  return createPostgresWorkflowRuntime({ connection })
+  return createPostgresWorkflowRuntime({ connection, ...options })
 })

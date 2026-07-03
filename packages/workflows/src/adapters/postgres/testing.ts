@@ -16,7 +16,7 @@ export async function installPostgresWorkflowSchemaForTesting(
     `
       INSERT INTO workflow_schema_version (id, version)
       VALUES (1, $1)
-      ON CONFLICT (id) DO NOTHING
+      ON CONFLICT (id) DO UPDATE SET version = EXCLUDED.version
     `,
     [WORKFLOW_POSTGRES_SCHEMA_MANIFEST.version],
   )
@@ -103,6 +103,15 @@ export async function installPostgresWorkflowSchemaForTesting(
     CREATE UNIQUE INDEX IF NOT EXISTS workflow_runs_idempotency_idx
     ON workflow_runs (idempotency_key)
     WHERE idempotency_key IS NOT NULL
+  `)
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS workflow_runs_parent_idx
+    ON workflow_runs (parent_run_id)
+    WHERE parent_run_id IS NOT NULL
+  `)
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS workflow_runs_root_idx
+    ON workflow_runs (root_run_id)
   `)
   await db.query(`
     CREATE INDEX IF NOT EXISTS workflow_runs_input_gin_idx
@@ -219,8 +228,23 @@ export async function installPostgresWorkflowSchemaForTesting(
       lease_owner text,
       lease_token text,
       lease_expires_at timestamptz,
+      delivery_count integer NOT NULL DEFAULT 0,
+      last_error jsonb,
+      dead_at timestamptz,
       created_at timestamptz NOT NULL DEFAULT now()
     )
+  `)
+  await db.query(`
+    ALTER TABLE workflow_commands
+    ADD COLUMN IF NOT EXISTS delivery_count integer NOT NULL DEFAULT 0
+  `)
+  await db.query(`
+    ALTER TABLE workflow_commands
+    ADD COLUMN IF NOT EXISTS last_error jsonb
+  `)
+  await db.query(`
+    ALTER TABLE workflow_commands
+    ADD COLUMN IF NOT EXISTS dead_at timestamptz
   `)
   await db.query(`
     CREATE INDEX IF NOT EXISTS workflow_commands_claim_idx
@@ -229,6 +253,11 @@ export async function installPostgresWorkflowSchemaForTesting(
   await db.query(`
     CREATE INDEX IF NOT EXISTS workflow_commands_run_idx
     ON workflow_commands (run_id)
+  `)
+  await db.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS workflow_commands_continue_dedup_idx
+    ON workflow_commands (run_id)
+    WHERE kind = 'continue' AND lease_token IS NULL
   `)
   await db.query(`
     CREATE INDEX IF NOT EXISTS workflow_attempts_node_idx

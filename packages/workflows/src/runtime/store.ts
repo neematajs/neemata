@@ -4,6 +4,7 @@ import type {
   RunSnapshot,
   StoredAttempt,
   StoredChildLink,
+  StoredError,
   StoredMapItem,
   StoredNode,
   StoredRun,
@@ -57,6 +58,22 @@ export type ListRunsFilter = {
 export type ListRunsResult = {
   readonly runs: readonly StoredRun[]
   readonly nextCursor?: string
+}
+
+export type DeadWorkflowCommand = {
+  readonly id: string
+  readonly kind: 'continue' | 'activity' | 'task'
+  readonly runId: string
+  readonly workflowName?: string
+  readonly taskName?: string
+  readonly activityName?: string
+  readonly nodeName?: string
+  readonly attemptId?: string
+  readonly payload: unknown
+  readonly deliveryCount: number
+  readonly lastError?: StoredError
+  readonly deadAt: Date
+  readonly createdAt: Date
 }
 
 export type EnsureNodeAttemptParams = {
@@ -172,6 +189,8 @@ export type NodeChildrenSnapshot = {
 export type WorkflowStore = {
   createRun(input: CreateRunInput): Promise<StoredRun>
   listRuns(filter?: ListRunsFilter): Promise<ListRunsResult>
+  listDeadCommands(): Promise<readonly DeadWorkflowCommand[]>
+  requeueDeadCommand(id: string): Promise<void>
   acquireRunLease(params: {
     runId: string
     leaseMs: number

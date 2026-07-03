@@ -28,7 +28,11 @@ export type {
   StartWorkflowRunInput,
   WorkflowRuntimeAtomicStart,
 } from './coordinator.ts'
-export type { AttemptExecutor, RunCoordinationExecutor } from './executors.ts'
+export type {
+  AttemptExecutor,
+  CommandReleaseOptions,
+  RunCoordinationExecutor,
+} from './executors.ts'
 export { createInMemoryWorkflowRuntime } from './in-memory.ts'
 export type { InMemoryWorkflowRuntime } from './in-memory.ts'
 export type {
@@ -54,6 +58,7 @@ export type {
   CreateAttemptInput,
   CreateNodeInput,
   CreateRunInput,
+  DeadWorkflowCommand,
   EnsureChildRunParams,
   EnsureChildRunResult,
   EnsureChildWorkflowRunParams,

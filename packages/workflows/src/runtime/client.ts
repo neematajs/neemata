@@ -15,7 +15,12 @@ import type {
 import type { WorkflowRuntimeAtomicStart } from './coordinator.ts'
 import type { AttemptExecutor, RunCoordinationExecutor } from './executors.ts'
 import type { RunSnapshot, StoredRun } from './state.ts'
-import type { ListRunsFilter, ListRunsResult, WorkflowStore } from './store.ts'
+import type {
+  DeadWorkflowCommand,
+  ListRunsFilter,
+  ListRunsResult,
+  WorkflowStore,
+} from './store.ts'
 import type {
   WorkflowRuntimeAtomicCompletion,
   WorkflowRuntimeAtomicContinuation,
@@ -66,6 +71,8 @@ export type WorkflowRuntimeClient = {
   readonly cancel: (runId: string) => Promise<StoredRun | undefined>
   readonly get: (runId: string) => Promise<RunSnapshot | undefined>
   readonly list: (filter?: ListRunsFilter) => Promise<ListRunsResult>
+  readonly listDeadCommands: () => Promise<readonly DeadWorkflowCommand[]>
+  readonly requeueDeadCommand: (id: string) => Promise<void>
 }
 
 export function createWorkflowRuntimeClient(
@@ -125,6 +132,8 @@ export function createWorkflowRuntimeClient(
     },
     get: (runId) => input.store.loadRunSnapshot(runId),
     list: (filter) => input.store.listRuns(filter),
+    listDeadCommands: () => input.store.listDeadCommands(),
+    requeueDeadCommand: (id) => input.store.requeueDeadCommand(id),
   })
 }
 

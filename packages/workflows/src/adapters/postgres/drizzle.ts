@@ -143,6 +143,10 @@ export function createSchema() {
       uniqueIndex('workflow_runs_idempotency_idx')
         .on(t.idempotencyKey)
         .where(sql.raw('idempotency_key IS NOT NULL')),
+      index('workflow_runs_parent_idx')
+        .on(t.parentRunId)
+        .where(sql.raw('parent_run_id IS NOT NULL')),
+      index('workflow_runs_root_idx').on(t.rootRunId),
       index('workflow_runs_input_gin_idx').using(
         'gin',
         t.input.op('jsonb_path_ops'),
@@ -357,6 +361,9 @@ export function createSchema() {
       leaseOwner: text('lease_owner'),
       leaseToken: text('lease_token'),
       leaseExpiresAt: timestamp('lease_expires_at', { withTimezone: true }),
+      deliveryCount: integer('delivery_count').notNull().default(0),
+      lastError: jsonb('last_error'),
+      deadAt: timestamp('dead_at', { withTimezone: true }),
       createdAt: timestamp('created_at', { withTimezone: true })
         .notNull()
         .defaultNow(),
@@ -370,6 +377,9 @@ export function createSchema() {
         t.createdAt,
         t.id,
       ),
+      uniqueIndex('workflow_commands_continue_dedup_idx')
+        .on(t.runId)
+        .where(sql.raw("kind = 'continue' AND lease_token IS NULL")),
       foreignKey({
         name: 'workflow_commands_run_fk',
         columns: [t.runId],

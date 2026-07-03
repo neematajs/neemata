@@ -802,12 +802,15 @@ test('creates drizzle schema with canonical runtime names', () => {
   expect(WORKFLOW_POSTGRES_SCHEMA_MANIFEST.indexes).toEqual(
     expect.arrayContaining([
       'workflow_runs_idempotency_idx',
+      'workflow_runs_parent_idx',
+      'workflow_runs_root_idx',
       'workflow_runs_input_gin_idx',
       'workflow_runs_tags_gin_idx',
       'workflow_attempts_node_idx',
       'workflow_child_links_parent_node_idx',
       'workflow_commands_run_idx',
       'workflow_commands_claim_idx',
+      'workflow_commands_continue_dedup_idx',
     ]),
   )
   expect(WORKFLOW_POSTGRES_SCHEMA_MANIFEST.constraints).toEqual(
@@ -824,6 +827,14 @@ test('drizzle kit exports migration sql from app-owned schema file', async () =>
 
   expect(sql).toContain('CREATE TYPE "workflow_run_kind"')
   expect(sql).toContain('CREATE TABLE "workflow_runs"')
+  expect(sql).toContain('"delivery_count" integer DEFAULT 0 NOT NULL')
+  expect(sql).toContain('"dead_at" timestamp with time zone')
+  expect(sql).toContain(
+    'CREATE UNIQUE INDEX "workflow_commands_continue_dedup_idx"',
+  )
+  expect(sql).toContain(
+    'CREATE INDEX "workflow_runs_parent_idx" ON "workflow_runs" ("parent_run_id") WHERE parent_run_id IS NOT NULL',
+  )
   expect(sql).toContain('CREATE INDEX "workflow_runs_input_gin_idx"')
 })
 
@@ -859,6 +870,206 @@ test('uses one postgres command table for all command kinds', async () => {
   expect(commandTables.rows.map((row) => row.tablename)).toStrictEqual([
     'workflow_commands',
   ])
+})
+
+test('postgres continue enqueue coalesces via partial-index upsert', async () => {
+  const connection = createPgliteConnection()
+  await installPostgresWorkflowSchemaForTesting(connection)
+  const runtime = createPostgresWorkflowRuntime({ connection })
+  const run = await runtime.store.createRun({
+    workflowName: 'postgres-coalesced-workflow',
+    input: {},
+  })
+  const delayed = {
+    kind: 'continueRun' as const,
+    runId: run.id,
+    workflowName: 'postgres-coalesced-workflow',
+    generation: 1,
+  }
+  const immediate = {
+    kind: 'continueRun' as const,
+    runId: run.id,
+    workflowName: 'postgres-coalesced-workflow',
+    generation: 2,
+  }
+
+  await runtime.runCoordinationExecutor.enqueueDelayed(
+    delayed,
+    new Date(Date.now() + 60_000),
+  )
+  await runtime.runCoordinationExecutor.enqueue(immediate)
+
+  const rows = await connection.query<{
+    count: number
+    payload: unknown
+  }>(
+    `
+      SELECT count(*)::int AS count, max(payload::text)::jsonb AS payload
+      FROM workflow_commands
+      WHERE run_id = $1 AND kind = 'continue'
+    `,
+    [run.id],
+  )
+  expect(rows.rows[0]?.count).toBe(1)
+  expect(rows.rows[0]?.payload).toStrictEqual(immediate)
+  await expect(
+    runtime.runCoordinationExecutor.claim({
+      workerId: 'worker-1',
+      workflowNames: ['postgres-coalesced-workflow'],
+      leaseMs: 30_000,
+    }),
+  ).resolves.toMatchObject({ command: immediate })
+})
+
+test('postgres continue enqueue allows leased and fresh continue commands to coexist', async () => {
+  const connection = createPgliteConnection()
+  await installPostgresWorkflowSchemaForTesting(connection)
+  const runtime = createPostgresWorkflowRuntime({ connection })
+  const run = await runtime.store.createRun({
+    workflowName: 'postgres-leased-continue-workflow',
+    input: {},
+  })
+  const first = {
+    kind: 'continueRun' as const,
+    runId: run.id,
+    workflowName: 'postgres-leased-continue-workflow',
+    generation: 1,
+  }
+  const second = {
+    kind: 'continueRun' as const,
+    runId: run.id,
+    workflowName: 'postgres-leased-continue-workflow',
+    generation: 2,
+  }
+
+  await runtime.runCoordinationExecutor.enqueue(first)
+  const leased = await runtime.runCoordinationExecutor.claim({
+    workerId: 'worker-1',
+    workflowNames: ['postgres-leased-continue-workflow'],
+    leaseMs: 30_000,
+  })
+  await runtime.runCoordinationExecutor.enqueue(second)
+
+  const counts = await connection.query<{
+    total: number
+    leased: number
+    unclaimed: number
+  }>(
+    `
+      SELECT
+        count(*)::int AS total,
+        count(*) FILTER (WHERE lease_token IS NOT NULL)::int AS leased,
+        count(*) FILTER (WHERE lease_token IS NULL)::int AS unclaimed
+      FROM workflow_commands
+      WHERE run_id = $1 AND kind = 'continue'
+    `,
+    [run.id],
+  )
+  expect(counts.rows[0]).toStrictEqual({
+    total: 2,
+    leased: 1,
+    unclaimed: 1,
+  })
+
+  const fresh = await runtime.runCoordinationExecutor.claim({
+    workerId: 'worker-2',
+    workflowNames: ['postgres-leased-continue-workflow'],
+    leaseMs: 30_000,
+  })
+  expect(leased?.command).toStrictEqual(first)
+  expect(fresh?.command).toStrictEqual(second)
+})
+
+test('postgres error releases record delivery metadata and cap exponential backoff', async () => {
+  const connection = createPgliteConnection()
+  await installPostgresWorkflowSchemaForTesting(connection)
+  const runtime = createPostgresWorkflowRuntime({
+    connection,
+    maxDeliveries: 20,
+  })
+  const run = await runtime.store.createRun({
+    workflowName: 'postgres-error-release-workflow',
+    input: {},
+  })
+  const command = {
+    kind: 'activityAttempt' as const,
+    workflowName: 'postgres-error-release-workflow',
+    activityName: 'content',
+    runId: run.id,
+    nodeName: 'content',
+    attemptId: '00000000-0000-4000-8000-000000000214',
+    leaseToken: 'attempt-lease',
+    input: {},
+  }
+  await runtime.attemptExecutor.dispatchActivity(command)
+  const claimed = await runtime.attemptExecutor.claimActivity({
+    workerId: 'activity-worker-1',
+    workflowNames: ['postgres-error-release-workflow'],
+    activityNames: ['content'],
+    leaseMs: 30_000,
+  })
+
+  await runtime.attemptExecutor.release(claimed!, {
+    error: new Error('first poison'),
+  })
+
+  const firstRelease = await connection.query<{
+    delivery_count: number
+    last_error: { message: string }
+    delay_ms: number
+    dead_at: Date | null
+  }>(
+    `
+      SELECT
+        delivery_count,
+        last_error,
+        EXTRACT(EPOCH FROM (run_at - now())) * 1000 AS delay_ms,
+        dead_at
+      FROM workflow_commands
+      WHERE attempt_id = $1
+    `,
+    [command.attemptId],
+  )
+  expect(firstRelease.rows[0]?.delivery_count).toBe(1)
+  expect(firstRelease.rows[0]?.last_error).toMatchObject({
+    message: 'first poison',
+  })
+  expect(Number(firstRelease.rows[0]?.delay_ms)).toBeGreaterThanOrEqual(50)
+  expect(Number(firstRelease.rows[0]?.delay_ms)).toBeLessThan(500)
+  expect(firstRelease.rows[0]?.dead_at).toBeNull()
+
+  await connection.query(
+    `
+      UPDATE workflow_commands
+      SET delivery_count = 12,
+          lease_owner = 'activity-worker-2',
+          lease_token = 'manual-lease',
+          lease_expires_at = now() + interval '30 seconds'
+      WHERE attempt_id = $1
+    `,
+    [command.attemptId],
+  )
+  await runtime.attemptExecutor.release(
+    { ...claimed!, leaseToken: 'manual-lease' },
+    { error: new Error('capped poison') },
+  )
+
+  const cappedRelease = await connection.query<{
+    delivery_count: number
+    delay_ms: number
+  }>(
+    `
+      SELECT
+        delivery_count,
+        EXTRACT(EPOCH FROM (run_at - now())) * 1000 AS delay_ms
+      FROM workflow_commands
+      WHERE attempt_id = $1
+    `,
+    [command.attemptId],
+  )
+  expect(cappedRelease.rows[0]?.delivery_count).toBe(13)
+  expect(Number(cappedRelease.rows[0]?.delay_ms)).toBeGreaterThan(250_000)
+  expect(Number(cappedRelease.rows[0]?.delay_ms)).toBeLessThanOrEqual(300_500)
 })
 
 test('returns no activity claim for an empty activity filter', async () => {
@@ -1669,6 +1880,56 @@ test('verifies postgres schema index direction', async () => {
 
   await expect(verifyPostgresWorkflowSchema(connection)).rejects.toThrow(
     'Invalid workflow Postgres schema indexes: workflow_commands_claim_idx',
+  )
+})
+
+test('verifies postgres schema partial index predicates', async () => {
+  const connection = createPgliteConnection()
+  await installPostgresWorkflowSchemaForTesting(connection)
+  await expect(
+    verifyPostgresWorkflowSchema(connection),
+  ).resolves.toBeUndefined()
+
+  await connection.query(
+    'DROP INDEX IF EXISTS workflow_commands_continue_dedup_idx',
+  )
+  await connection.query(`
+    CREATE UNIQUE INDEX workflow_commands_continue_dedup_idx
+    ON workflow_commands (run_id)
+  `)
+
+  await expect(verifyPostgresWorkflowSchema(connection)).rejects.toThrow(
+    'Invalid workflow Postgres schema indexes: workflow_commands_continue_dedup_idx',
+  )
+})
+
+test('rejects a v2 workflow postgres schema missing v3 command columns and indexes', async () => {
+  const connection = createPgliteConnection()
+  await installPostgresWorkflowSchemaForTesting(connection)
+  await connection.query(
+    'DROP INDEX IF EXISTS workflow_commands_continue_dedup_idx',
+  )
+  await connection.query('DROP INDEX IF EXISTS workflow_runs_parent_idx')
+  await connection.query('DROP INDEX IF EXISTS workflow_runs_root_idx')
+  await connection.query(
+    'ALTER TABLE workflow_commands DROP COLUMN IF EXISTS delivery_count',
+  )
+  await connection.query(
+    'ALTER TABLE workflow_commands DROP COLUMN IF EXISTS last_error',
+  )
+  await connection.query(
+    'ALTER TABLE workflow_commands DROP COLUMN IF EXISTS dead_at',
+  )
+  await connection.query(
+    `
+      UPDATE workflow_schema_version
+      SET version = 2
+      WHERE id = 1
+    `,
+  )
+
+  await expect(verifyPostgresWorkflowSchema(connection)).rejects.toThrow(
+    'Missing workflow Postgres schema objects: workflow_runs_parent_idx, workflow_runs_root_idx, workflow_commands_continue_dedup_idx',
   )
 })
 

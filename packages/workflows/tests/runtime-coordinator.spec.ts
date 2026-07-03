@@ -4220,14 +4220,6 @@ describe('workflow runtime coordinator', () => {
           workflowName: childWorkflow.name,
         },
       },
-      {
-        id: expect.any(String),
-        payload: {
-          kind: 'continueRun',
-          runId: childLink?.childRunId,
-          workflowName: childWorkflow.name,
-        },
-      },
     ])
   })
 
@@ -5652,14 +5644,6 @@ describe('workflow runtime coordinator', () => {
     expect(snapshot?.nodes[0]).toHaveProperty('input', undefined)
     expect(snapshot?.childLinks).toHaveLength(1)
     expect(runtime.inspect().continueRunCommands).toStrictEqual([
-      {
-        id: expect.any(String),
-        payload: {
-          kind: 'continueRun',
-          runId: childLink?.childRunId,
-          workflowName: childWorkflow.name,
-        },
-      },
       {
         id: expect.any(String),
         payload: {

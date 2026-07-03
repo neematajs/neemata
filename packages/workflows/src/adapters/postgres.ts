@@ -25,6 +25,7 @@ import type {
 } from '../runtime/state.ts'
 import type {
   CreateRunInput,
+  DeadWorkflowCommand,
   ListRunsFilter,
   WorkflowStore,
 } from '../runtime/store.ts'
@@ -56,6 +57,8 @@ type PostgresWorkflowRuntime = WorkflowRuntimeAdapter & {
 }
 
 const RELEASE_BACKOFF_MS = 50
+const MAX_ERROR_BACKOFF_MS = 300_000
+const DEFAULT_MAX_DELIVERIES = 20
 
 export type WorkflowPostgresQueryClient = {
   query<T extends JsonRecord = JsonRecord>(
@@ -173,7 +176,7 @@ export function createPostgresWorkflowConnection(
   }
 }
 
-export const WORKFLOW_POSTGRES_SCHEMA_VERSION = 2
+export const WORKFLOW_POSTGRES_SCHEMA_VERSION = 3
 const TASK_RUN_NODE_NAME = '$task'
 
 export const WORKFLOW_POSTGRES_SCHEMA_MANIFEST = {
@@ -265,12 +268,15 @@ export const WORKFLOW_POSTGRES_SCHEMA_MANIFEST = {
   ],
   indexes: [
     'workflow_runs_idempotency_idx',
+    'workflow_runs_parent_idx',
+    'workflow_runs_root_idx',
     'workflow_runs_input_gin_idx',
     'workflow_runs_tags_gin_idx',
     'workflow_attempts_node_idx',
     'workflow_child_links_parent_node_idx',
     'workflow_commands_run_idx',
     'workflow_commands_claim_idx',
+    'workflow_commands_continue_dedup_idx',
   ],
   constraintDefinitions: {
     workflow_attempts_identity_key_key: {
@@ -294,6 +300,18 @@ export const WORKFLOW_POSTGRES_SCHEMA_MANIFEST = {
       table: 'workflow_runs',
       unique: true,
       columns: ['idempotency_key'],
+      predicate: 'idempotency_key IS NOT NULL',
+    },
+    workflow_runs_parent_idx: {
+      table: 'workflow_runs',
+      unique: false,
+      columns: ['parent_run_id'],
+      predicate: 'parent_run_id IS NOT NULL',
+    },
+    workflow_runs_root_idx: {
+      table: 'workflow_runs',
+      unique: false,
+      columns: ['root_run_id'],
     },
     workflow_runs_input_gin_idx: {
       table: 'workflow_runs',
@@ -315,6 +333,13 @@ export const WORKFLOW_POSTGRES_SCHEMA_MANIFEST = {
       table: 'workflow_commands',
       unique: false,
       columns: ['run_id'],
+    },
+    workflow_commands_continue_dedup_idx: {
+      table: 'workflow_commands',
+      unique: true,
+      columns: ['run_id'],
+      predicate:
+        "kind = 'continue'::workflow_command_kind AND lease_token IS NULL",
     },
     workflow_attempts_node_idx: {
       table: 'workflow_attempts',
@@ -441,6 +466,9 @@ export const WORKFLOW_POSTGRES_SCHEMA_MANIFEST = {
       lease_owner: { type: 'text', nullable: true },
       lease_token: { type: 'text', nullable: true },
       lease_expires_at: { type: 'timestamptz', nullable: true },
+      delivery_count: { type: 'int4', nullable: false },
+      last_error: { type: 'jsonb', nullable: true },
+      dead_at: { type: 'timestamptz', nullable: true },
       created_at: { type: 'timestamptz', nullable: false },
     },
   },
@@ -503,6 +531,15 @@ const sameStringArray = (left: unknown, right: readonly string[]) => {
     normalized.every((item, index) => item === right[index])
   )
 }
+const normalizeIndexPredicate = (value: unknown) =>
+  typeof value === 'string'
+    ? value
+        .replaceAll('"', '')
+        .replace(/[()]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .toLowerCase()
+    : undefined
 const isUniqueViolation = (error: unknown) =>
   (typeof error === 'object' &&
     error !== null &&
@@ -624,6 +661,25 @@ const mapMapItem = (row: JsonRecord): StoredMapItem => ({
   ...optional('error', fromOptional(row.error) as StoredError | undefined),
   ...optional('childRunId', row.child_run_id as string | undefined),
   ...optional('attemptId', row.attempt_id as string | undefined),
+})
+
+const mapDeadCommand = (row: JsonRecord): DeadWorkflowCommand => ({
+  id: row.id as string,
+  kind: row.kind as DeadWorkflowCommand['kind'],
+  runId: row.run_id as string,
+  ...optional('workflowName', row.workflow_name as string | undefined),
+  ...optional('taskName', row.task_name as string | undefined),
+  ...optional('activityName', row.activity_name as string | undefined),
+  ...optional('nodeName', row.node_name as string | undefined),
+  ...optional('attemptId', row.attempt_id as string | undefined),
+  payload: row.payload,
+  deliveryCount: row.delivery_count as number,
+  ...optional(
+    'lastError',
+    fromOptional(row.last_error) as StoredError | undefined,
+  ),
+  deadAt: row.dead_at as Date,
+  createdAt: row.created_at as Date,
 })
 
 const parseJsonColumn = (value: unknown): unknown =>
@@ -804,6 +860,7 @@ export async function verifyPostgresWorkflowSchema(
       unique: boolean
       columns: unknown
       directions: unknown
+      predicate: string | null
     }>(
       db,
       `
@@ -822,7 +879,8 @@ export async function verifyPostgresWorkflowSchema(
                 ORDER BY ord.ordinality
               ),
               NULL
-            ) AS directions
+            ) AS directions,
+            pg_get_expr(i.indpred, i.indrelid) AS predicate
           FROM pg_index i
           JOIN pg_class idx ON idx.oid = i.indexrelid
           JOIN pg_class tbl ON tbl.oid = i.indrelid
@@ -833,7 +891,7 @@ export async function verifyPostgresWorkflowSchema(
             ON att.attrelid = tbl.oid AND att.attnum = ord.attnum
           WHERE n.nspname = current_schema()
             AND idx.relname = ANY($1)
-          GROUP BY idx.relname, tbl.relname, i.indisunique
+          GROUP BY idx.relname, tbl.relname, i.indisunique, i.indpred, i.indrelid
         `,
       [Object.keys(WORKFLOW_POSTGRES_SCHEMA_MANIFEST.indexDefinitions)],
     ),
@@ -920,7 +978,11 @@ export async function verifyPostgresWorkflowSchema(
           'directions' in expected
             ? expected.directions
             : expected.columns.map(() => 'ASC'),
-        )
+        ) ||
+        normalizeIndexPredicate(actual.predicate) !==
+          normalizeIndexPredicate(
+            'predicate' in expected ? expected.predicate : undefined,
+          )
       )
     })
     .map(([name]) => name)
@@ -978,9 +1040,11 @@ export async function verifyPostgresWorkflowSchema(
 
 export function createPostgresWorkflowRuntime(params: {
   readonly connection: WorkflowPostgresConnection
+  readonly maxDeliveries?: number
 }): PostgresWorkflowRuntime {
   const db = params.connection
   const ready = Promise.resolve()
+  const maxDeliveries = params.maxDeliveries ?? DEFAULT_MAX_DELIVERIES
 
   const createStoredRun = async (
     connection: WorkflowPostgresConnection,
@@ -1134,6 +1198,39 @@ export function createPostgresWorkflowRuntime(params: {
           ? { nextCursor: String(offset + limit) }
           : {}),
       }
+    },
+    async listDeadCommands() {
+      await ready
+      const rows = await many(
+        db,
+        `
+          SELECT *
+          FROM workflow_commands
+          WHERE dead_at IS NOT NULL
+          ORDER BY dead_at DESC, created_at DESC, id ASC
+        `,
+      )
+      return rows
+        .map((row) => withDateColumns(row, ['dead_at', 'created_at', 'run_at']))
+        .map(mapDeadCommand)
+    },
+    async requeueDeadCommand(commandId) {
+      await ready
+      await db.query(
+        `
+          UPDATE workflow_commands
+          SET delivery_count = 0,
+              last_error = NULL,
+              dead_at = NULL,
+              lease_owner = NULL,
+              lease_token = NULL,
+              lease_expires_at = NULL,
+              run_at = now()
+          WHERE id = $1
+            AND dead_at IS NOT NULL
+        `,
+        [commandId],
+      )
     },
     async acquireRunLease({ runId, leaseMs }) {
       await ready
@@ -2194,27 +2291,11 @@ export function createPostgresWorkflowRuntime(params: {
   const runCoordinationExecutor: RunCoordinationExecutor = {
     async enqueue(command) {
       await ready
-      await db.query(
-        `
-          INSERT INTO workflow_commands (
-            id, kind, run_id, workflow_name, payload
-          )
-          VALUES ($1, 'continue', $2, $3, $4::jsonb)
-        `,
-        [id(), command.runId, command.workflowName, json(command)],
-      )
+      await insertContinueCommand(command)
     },
     async enqueueDelayed(command, runAt) {
       await ready
-      await db.query(
-        `
-          INSERT INTO workflow_commands (
-            id, kind, run_id, workflow_name, payload, run_at
-          )
-          VALUES ($1, 'continue', $2, $3, $4::jsonb, $5)
-        `,
-        [id(), command.runId, command.workflowName, json(command), runAt],
-      )
+      await insertContinueCommand(command, runAt)
     },
     async claim(worker) {
       await ready
@@ -2240,8 +2321,38 @@ export function createPostgresWorkflowRuntime(params: {
       await ready
       await ackCommand(command.id, command.leaseToken)
     },
-    async release(command) {
+    async release(command, options) {
       await ready
+      await releaseCommand(command.id, command.leaseToken, options)
+    },
+  }
+
+  const insertContinueCommand = async (
+    command: ContinueRunCommand,
+    runAt?: Date,
+  ) => {
+    await db.query(
+      `
+        INSERT INTO workflow_commands (
+          id, kind, run_id, workflow_name, payload, run_at
+        )
+        VALUES ($1, 'continue', $2, $3, $4::jsonb, COALESCE($5, now()))
+        ON CONFLICT (run_id) WHERE kind = 'continue' AND lease_token IS NULL
+        DO UPDATE
+        SET run_at = LEAST(workflow_commands.run_at, EXCLUDED.run_at),
+            payload = EXCLUDED.payload,
+            workflow_name = EXCLUDED.workflow_name
+      `,
+      [id(), command.runId, command.workflowName, json(command), runAt ?? null],
+    )
+  }
+
+  const releaseCommand = async (
+    commandId: string,
+    leaseToken: string,
+    options?: { readonly error?: unknown },
+  ) => {
+    if (options?.error === undefined) {
       await db.query(
         `
           UPDATE workflow_commands
@@ -2251,9 +2362,38 @@ export function createPostgresWorkflowRuntime(params: {
               run_at = now() + ($3::int * interval '1 millisecond')
           WHERE id = $1 AND lease_token = $2
         `,
-        [command.id, command.leaseToken, RELEASE_BACKOFF_MS],
+        [commandId, leaseToken, RELEASE_BACKOFF_MS],
       )
-    },
+      return
+    }
+
+    await db.query(
+      `
+        UPDATE workflow_commands
+        SET lease_owner = NULL,
+            lease_token = NULL,
+            lease_expires_at = NULL,
+            delivery_count = delivery_count + 1,
+            last_error = $3::jsonb,
+            dead_at = CASE
+              WHEN delivery_count + 1 >= $4 THEN now()
+              ELSE dead_at
+            END,
+            run_at = now() + (
+              LEAST(power(2, delivery_count + 1) * $5, $6)::int
+              * interval '1 millisecond'
+            )
+        WHERE id = $1 AND lease_token = $2
+      `,
+      [
+        commandId,
+        leaseToken,
+        json(toStoredError(options.error)),
+        maxDeliveries,
+        RELEASE_BACKOFF_MS,
+        MAX_ERROR_BACKOFF_MS,
+      ],
+    )
   }
 
   const claimCommand = async (
@@ -2273,6 +2413,7 @@ export function createPostgresWorkflowRuntime(params: {
           WHERE kind = $1
             AND run_at <= now()
             AND (lease_token IS NULL OR lease_expires_at <= now())
+            AND dead_at IS NULL
             AND ${where}
           ORDER BY priority DESC, run_at ASC, created_at ASC, id ASC
           LIMIT 1
@@ -2442,19 +2583,9 @@ export function createPostgresWorkflowRuntime(params: {
       await ready
       await ackCommand(attempt.id, attempt.leaseToken)
     },
-    async release(attempt) {
+    async release(attempt, options) {
       await ready
-      await db.query(
-        `
-          UPDATE workflow_commands
-          SET lease_owner = NULL,
-              lease_token = NULL,
-              lease_expires_at = NULL,
-              run_at = now() + ($3::int * interval '1 millisecond')
-          WHERE id = $1 AND lease_token = $2
-        `,
-        [attempt.id, attempt.leaseToken, RELEASE_BACKOFF_MS],
-      )
+      await releaseCommand(attempt.id, attempt.leaseToken, options)
     },
     async deleteUnclaimed({ runId }) {
       await ready

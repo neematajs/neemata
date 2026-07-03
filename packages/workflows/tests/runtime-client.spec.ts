@@ -189,14 +189,16 @@ describe('workflow runtime client', () => {
 
     expect(cancelling?.status).toBe('cancelling')
     expect(cancellingAgain?.status).toBe('cancelling')
-    expect(runtime.inspect().continueRunCommands).toHaveLength(3)
-    expect(
-      runtime.inspect().continueRunCommands.map((item) => item.payload),
-    ).toEqual(
-      expect.arrayContaining([
-        { kind: 'continueRun', runId: run.id, workflowName: workflow.name },
-      ]),
-    )
+    expect(runtime.inspect().continueRunCommands).toStrictEqual([
+      {
+        id: expect.any(String),
+        payload: {
+          kind: 'continueRun',
+          runId: run.id,
+          workflowName: workflow.name,
+        },
+      },
+    ])
   })
 
   it('returns terminal runs unchanged when cancellation is requested', async () => {
