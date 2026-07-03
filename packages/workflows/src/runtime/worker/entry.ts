@@ -26,6 +26,7 @@ import {
   type WorkerLoopOptions,
   type WorkerLoopResult,
 } from './loop.ts'
+import { isAttemptShutdown } from './heartbeat.ts'
 import { runTaskAttempt } from './task-attempt.ts'
 
 type AnyWorkflowImplementation = WorkflowImplementation<
@@ -133,7 +134,8 @@ export async function runActivityWorker(
     } catch (error) {
       if (
         isStaleWorkflowCommandAck(error) ||
-        isAttemptHeartbeatLeaseLost(error)
+        isAttemptHeartbeatLeaseLost(error) ||
+        isAttemptShutdown(error)
       ) {
         await input.attemptExecutor.release(claimed)
         return false
@@ -165,7 +167,8 @@ export async function runTaskWorker(
     } catch (error) {
       if (
         isStaleWorkflowCommandAck(error) ||
-        isAttemptHeartbeatLeaseLost(error)
+        isAttemptHeartbeatLeaseLost(error) ||
+        isAttemptShutdown(error)
       ) {
         await input.attemptExecutor.release(claimed)
         return false

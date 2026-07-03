@@ -33,9 +33,13 @@ import type {
   WorkflowTaskNode,
 } from '../types/index.ts'
 
+export type AttemptLifecycle = {
+  readonly signal: AbortSignal
+}
+
 export type TaskHandler<Deps extends Dependencies, Input, Output> = HandlerFn<
   Deps,
-  [input: Input],
+  [input: Input, lifecycle?: AttemptLifecycle],
   Output
 >
 
@@ -48,7 +52,11 @@ export type TaskIdempotency<Deps extends Dependencies, Input> =
 export type TaskImplementation<
   Task extends AnyTaskDefinition = AnyTaskDefinition,
   Deps extends Dependencies = {},
-> = Handler<Deps, [input: TaskDecodedInput<Task>], TaskOutputInput<Task>> & {
+> = Handler<
+  Deps,
+  [input: TaskDecodedInput<Task>, lifecycle?: AttemptLifecycle],
+  TaskOutputInput<Task>
+> & {
   readonly kind: 'taskImplementation'
   readonly task: Task
   readonly idempotency?: TaskIdempotency<Deps, TaskDecodedInput<Task>>
@@ -78,13 +86,13 @@ export type ActivityHandler<
   Deps extends Dependencies,
   Input,
   Output,
-> = HandlerFn<Deps, [input: Input], Output>
+> = HandlerFn<Deps, [input: Input, lifecycle?: AttemptLifecycle], Output>
 
 export type ActivityImplementation<
   Input = unknown,
   Output = unknown,
   Deps extends Dependencies = Dependencies,
-> = Handler<Deps, [input: Input], Output> & {
+> = Handler<Deps, [input: Input, lifecycle?: AttemptLifecycle], Output> & {
   readonly kind: 'activityImplementation'
   readonly name: string
 }
@@ -93,7 +101,7 @@ export type ActivityHandlerInput<
   Input,
   Output,
   Deps extends Dependencies,
-> = HandlerInput<Deps, [input: Input], Output>
+> = HandlerInput<Deps, [input: Input, lifecycle?: AttemptLifecycle], Output>
 
 export type WorkflowNodeIdempotency<
   WorkflowDeps extends Dependencies,
@@ -285,8 +293,14 @@ type ActivityImplementationOptions<
   NodeInput,
 > = WorkflowInputMapper<WorkflowDeps, Outputs, Input, NodeInput>
 
+type LegacyActivityHandlerObject<Input, Output> = {
+  readonly dependencies: Dependencies
+  readonly handler: (ctx: any, input: Input) => MaybePromise<Output>
+}
+
 type ActivityImplementationValue<Input, Output> =
   | ActivityHandlerInput<Input, Output, any>
+  | LegacyActivityHandlerObject<Input, Output>
   | ActivityImplementation<Input, Output, any>
 
 type ActivityCaseDescriptor<Input, Output> = {

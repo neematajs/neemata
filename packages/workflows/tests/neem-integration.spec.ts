@@ -129,6 +129,76 @@ describe('workflows Neem integration', () => {
     channel.port2.close()
   })
 
+  it('stops promptly by delivering shutdown to an in-flight task handler', async () => {
+    const task = defineTask({
+      name: 'neem.integration.shutdown-task',
+      input: t.object({ text: t.string() }),
+      output: t.object({ text: t.string() }),
+    })
+    let shutdownReason: unknown
+    let handlerStarted!: () => void
+    const handlerStartedPromise = new Promise<void>((resolve) => {
+      handlerStarted = resolve
+    })
+    const taskImpl = implementTask(task, {
+      handler: async (_ctx, input, lifecycle) => {
+        handlerStarted()
+        await new Promise<void>((resolve) => {
+          const timeout = setTimeout(resolve, 300)
+          lifecycle?.signal.addEventListener(
+            'abort',
+            () => {
+              shutdownReason = lifecycle.signal.reason
+              clearTimeout(timeout)
+              resolve()
+            },
+            { once: true },
+          )
+        })
+        return { text: `late:${input.text}` }
+      },
+    })
+    const runtimeAdapter = createInMemoryWorkflowRuntime()
+    const client = createWorkflowRuntimeClient(runtimeAdapter)
+    const run = await client.start(task, { text: 'alpha' })
+    const config = defineWorkflows({
+      runtime: () => runtimeAdapter,
+      workflows: () => [],
+      tasks: () => [taskImpl],
+      workers: {
+        task: { pollIntervalMs: 1, maxIdleClaims: 1, leaseMs: 30 },
+      },
+    })
+    const worker = defineWorkflowsWorker(config)
+    const channel = new MessageChannel()
+    const runtime = await worker.createRuntime({
+      mode: 'development',
+      name: 'workflows:task:shutdown',
+      data: { role: 'task' },
+      logger,
+      definition: worker.definition,
+      port: channel.port1,
+    })
+
+    try {
+      await runtime.start()
+      await handlerStartedPromise
+      const startedStoppingAt = Date.now()
+      await runtime.stop()
+      const stopElapsedMs = Date.now() - startedStoppingAt
+      const snapshot = await runtimeAdapter.store.loadRunSnapshot(run.id)
+
+      expect(stopElapsedMs).toBeLessThan(150)
+      expect(shutdownReason).toStrictEqual({ type: 'shutdown' })
+      expect(snapshot?.run.status).toBe('queued')
+      expect(snapshot?.attempts[0]?.status).toBe('started')
+      expect(runtimeAdapter.inspect().taskCommands).toHaveLength(1)
+    } finally {
+      channel.port1.close()
+      channel.port2.close()
+    }
+  })
+
   it('logs worker-loop failures immediately and rethrows them on stop', async () => {
     const failure = new Error('coordinator claim failed')
     const errorSpy = vi.spyOn(logger, 'error')

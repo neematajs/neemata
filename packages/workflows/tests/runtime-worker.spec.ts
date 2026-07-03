@@ -14,6 +14,7 @@ import {
   type WorkflowRuntimeAtomicCompletion,
   type WorkflowStore,
   createInMemoryWorkflowRuntime,
+  createWorkflowRuntimeClient,
   runActivityWorker,
   runTaskWorker,
   runWorkflowWorker,
@@ -107,6 +108,12 @@ describe('workflow worker runtime', () => {
           storeCalls.push('failCurrentAttempt')
           return runtime.store.failCurrentAttempt(...args)
         },
+        timeoutCurrentAttempt: async (
+          ...args: Parameters<WorkflowStore['timeoutCurrentAttempt']>
+        ) => {
+          storeCalls.push('timeoutCurrentAttempt')
+          return runtime.store.timeoutCurrentAttempt(...args)
+        },
         createAttempt: async (
           ...args: Parameters<WorkflowStore['createAttempt']>
         ) => {
@@ -139,6 +146,7 @@ describe('workflow worker runtime', () => {
         completeCurrentAttempt: () =>
           failOutsideWrite('completeCurrentAttempt'),
         failCurrentAttempt: () => failOutsideWrite('failCurrentAttempt'),
+        timeoutCurrentAttempt: () => failOutsideWrite('timeoutCurrentAttempt'),
         createAttempt: () => failOutsideWrite('createAttempt'),
         completeNode: () => failOutsideWrite('completeNode'),
         failNode: () => failOutsideWrite('failNode'),
@@ -343,6 +351,77 @@ describe('workflow worker runtime', () => {
     expect(
       (await reconcileRuntime.store.loadRunSnapshot(parentRun.id))?.run.status,
     ).toBe('queued')
+  })
+
+  it('reconciles stale timed-out attempts like failed attempts', async () => {
+    const task = defineTask({
+      name: 'worker.reconcile-timeout-task',
+      input: t.object({ text: t.string() }),
+      output: t.object({ id: t.string() }),
+    })
+    const workflow = defineWorkflow({
+      name: 'worker.reconcile-timeout-workflow',
+      input: t.object({ text: t.string() }),
+      output: t.object({ id: t.string() }),
+    })
+      .task('child', task)
+      .build()
+    const workflowImplementation = implementWorkflow(workflow)
+      .child(task)
+      .finish((_ctx, { child }) => ({ id: child.id }))
+    const taskImplementation = implementTask(task, {
+      handler: async () => {
+        throw new Error('stale timed-out attempt should not run handler')
+      },
+    })
+    const runtime = createInMemoryWorkflowRuntime()
+    const container = createTestContainer()
+    const run = await runtime.store.createRun({
+      workflowName: workflow.name,
+      input: { text: 'alpha' },
+    })
+    await runtime.runCoordinationExecutor.enqueue({
+      kind: 'continueRun',
+      runId: run.id,
+      workflowName: workflow.name,
+    })
+    await runWorkflowWorker({
+      ...runtime,
+      container,
+      workflows: [workflowImplementation],
+      workerId: 'workflow-worker-1',
+    })
+    const claimed = await runtime.attemptExecutor.claimTask({
+      workerId: 'task-worker-1',
+      taskNames: [task.name],
+      leaseMs: 30_000,
+    })
+    expect(claimed).not.toBeNull()
+    await runtime.store.timeoutCurrentAttempt({
+      attemptId: claimed!.command.attemptId,
+      leaseToken: claimed!.command.leaseToken,
+      error: new Error('deadline exceeded'),
+    })
+
+    const result = await runTaskAttempt({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container,
+      tasks: [taskImplementation],
+      workerId: 'task-worker-1',
+      claimed: claimed!,
+    })
+
+    const childSnapshot = await runtime.store.loadRunSnapshot(
+      claimed!.command.runId,
+    )
+    expect(result.status).toBe('processed')
+    expect(childSnapshot?.run.status).toBe('failed')
+    expect(childSnapshot?.nodes[0]?.status).toBe('failed')
+    expect(childSnapshot?.nodes[0]?.error?.message).toBe('deadline exceeded')
+    expect(runtime.inspect().continueRunCommands).toHaveLength(1)
+    expect(runtime.inspect().taskCommands).toStrictEqual([])
   })
 
   it('runs workflow worker loop by claiming continue commands', async () => {
@@ -813,7 +892,7 @@ describe('workflow worker runtime', () => {
     expect(completed?.run.output).toStrictEqual({ text: 'content:alpha' })
   })
 
-  it('fails timed-out activity attempts through the existing failure path', async () => {
+  it('records timed-out activity attempts and delivers a timeout signal', async () => {
     const workflow = defineWorkflow({
       name: 'worker.timeout-activity-workflow',
       input: t.object({ text: t.string() }),
@@ -829,8 +908,16 @@ describe('workflow worker runtime', () => {
     const lateHandlerFinished = new Promise<void>((resolve) => {
       releaseLateHandler = resolve
     })
+    let timeoutReason: unknown
     const implementation = implementWorkflow(workflow)
-      .content(async (_ctx, input) => {
+      .content(async (_ctx, input, lifecycle) => {
+        lifecycle?.signal.addEventListener(
+          'abort',
+          () => {
+            timeoutReason = lifecycle.signal.reason
+          },
+          { once: true },
+        )
         await lateHandlerFinished
         return { text: `too-late:${input.text}` }
       })
@@ -875,7 +962,8 @@ describe('workflow worker runtime', () => {
     })
 
     const failed = await runtime.store.loadRunSnapshot(run.id)
-    expect(failed?.attempts[0]?.status).toBe('failed')
+    expect(timeoutReason).toStrictEqual({ type: 'timeout' })
+    expect(failed?.attempts[0]?.status).toBe('timedOut')
     expect(failed?.attempts[0]?.error).toMatchObject({
       name: 'WorkflowAttemptTimeoutError',
       message: expect.stringContaining('timed out after 5ms'),
@@ -1097,10 +1185,18 @@ describe('workflow worker runtime', () => {
     const lateHandlerFinished = new Promise<void>((resolve) => {
       releaseLateHandler = resolve
     })
+    let timeoutReason: unknown
     const implementation = implementTask(task, {
-      handler: async (_ctx, input) => {
+      handler: async (_ctx, input, lifecycle) => {
         calls += 1
         if (calls === 1) {
+          lifecycle?.signal.addEventListener(
+            'abort',
+            () => {
+              timeoutReason = lifecycle.signal.reason
+            },
+            { once: true },
+          )
           await lateHandlerFinished
           return { id: 'too-late' }
         }
@@ -1137,8 +1233,9 @@ describe('workflow worker runtime', () => {
     })
     expect(exportedError.timeoutMs).toBe(5)
     expect(calls).toBe(2)
+    expect(timeoutReason).toStrictEqual({ type: 'timeout' })
     expect(completed?.attempts.map((attempt) => attempt.status)).toStrictEqual([
-      'failed',
+      'timedOut',
       'completed',
     ])
     expect(completed?.attempts[0]?.error).toMatchObject({
@@ -1289,7 +1386,7 @@ describe('workflow worker runtime', () => {
           ...runtime.attemptExecutor,
           heartbeat: async (attempt) => {
             heartbeatCount += 1
-            await runtime.attemptExecutor.heartbeat(attempt)
+            return await runtime.attemptExecutor.heartbeat(attempt)
           },
         },
         container: createTestContainer(),
@@ -1320,8 +1417,16 @@ describe('workflow worker runtime', () => {
       input: t.object({ text: t.string() }),
       output: t.object({ id: t.string() }),
     })
+    let leaseLostReason: unknown
     const implementation = implementTask(task, {
-      handler: async (_ctx, input) => {
+      handler: async (_ctx, input, lifecycle) => {
+        lifecycle?.signal.addEventListener(
+          'abort',
+          () => {
+            leaseLostReason = lifecycle.signal.reason
+          },
+          { once: true },
+        )
         await new Promise((resolve) => setTimeout(resolve, 30))
         return { id: `embedding:${input.text}` }
       },
@@ -1366,6 +1471,156 @@ describe('workflow worker runtime', () => {
       expect(result.processed).toBe(0)
 
       const snapshot = await runtime.store.loadRunSnapshot(run.id)
+      expect(snapshot?.run.status).toBe('queued')
+      expect(snapshot?.attempts[0]?.status).toBe('started')
+      expect(runtime.inspect().taskCommands).toHaveLength(1)
+      expect(leaseLostReason).toStrictEqual({ type: 'leaseLost' })
+      expect(acked).toBe(false)
+      expect(released).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('ack-drops task attempts when heartbeat observes cancellation', async () => {
+    vi.useFakeTimers()
+    const task = defineTask({
+      name: 'worker.cancel-observed-task',
+      input: t.object({ text: t.string() }),
+      output: t.object({ id: t.string() }),
+      retry: { attempts: 2 },
+    })
+    let cancelReason: unknown
+    const implementation = implementTask(task, {
+      handler: async (_ctx, input, lifecycle) => {
+        lifecycle?.signal.addEventListener(
+          'abort',
+          () => {
+            cancelReason = lifecycle.signal.reason
+          },
+          { once: true },
+        )
+        await new Promise((resolve) => setTimeout(resolve, 30))
+        return { id: `embedding:${input.text}` }
+      },
+    })
+    const runtime = createInMemoryWorkflowRuntime()
+    try {
+      const client = createWorkflowRuntimeClient(runtime)
+      const run = await client.start(task, { text: 'alpha' })
+      await client.cancel(run.id)
+      let acked = false
+      let released = false
+      let retried = false
+
+      const worker = runTaskWorker({
+        store: runtime.store,
+        runCoordinationExecutor: runtime.runCoordinationExecutor,
+        attemptExecutor: {
+          ...runtime.attemptExecutor,
+          ack: async (attempt) => {
+            acked = true
+            await runtime.attemptExecutor.ack(attempt)
+          },
+          release: async (attempt) => {
+            released = true
+            await runtime.attemptExecutor.release(attempt)
+          },
+          dispatchTask: async (...args) => {
+            retried = true
+            await runtime.attemptExecutor.dispatchTask(...args)
+          },
+        },
+        container: createTestContainer(),
+        tasks: [implementation],
+        workerId: 'task-worker-1',
+        leaseMs: 3,
+      })
+      await vi.advanceTimersByTimeAsync(30)
+      const result = await worker
+
+      const snapshot = await runtime.store.loadRunSnapshot(run.id)
+      expect(result.processed).toBe(1)
+      expect(cancelReason).toStrictEqual({ type: 'cancelled' })
+      expect(snapshot?.run.status).toBe('cancelling')
+      expect(snapshot?.attempts[0]?.status).toBe('started')
+      expect(snapshot?.attempts[0]?.output).toBeUndefined()
+      expect(runtime.inspect().taskCommands).toStrictEqual([])
+      expect(acked).toBe(true)
+      expect(released).toBe(false)
+      expect(retried).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('releases task attempts when the worker shutdown signal aborts', async () => {
+    vi.useFakeTimers()
+    const task = defineTask({
+      name: 'worker.shutdown-task',
+      input: t.object({ text: t.string() }),
+      output: t.object({ id: t.string() }),
+    })
+    let shutdownReason: unknown
+    let handlerStarted!: () => void
+    const handlerStartedPromise = new Promise<void>((resolve) => {
+      handlerStarted = resolve
+    })
+    const implementation = implementTask(task, {
+      handler: async (_ctx, input, lifecycle) => {
+        handlerStarted()
+        lifecycle?.signal.addEventListener(
+          'abort',
+          () => {
+            shutdownReason = lifecycle.signal.reason
+          },
+          { once: true },
+        )
+        await new Promise((resolve) => setTimeout(resolve, 30))
+        return { id: `embedding:${input.text}` }
+      },
+    })
+    const runtime = createInMemoryWorkflowRuntime()
+    try {
+      const run = await startTaskRun({
+        store: runtime.store,
+        runCoordinationExecutor: runtime.runCoordinationExecutor,
+        attemptExecutor: runtime.attemptExecutor,
+        task,
+        input: { text: 'alpha' },
+      })
+      const shutdown = new AbortController()
+      let acked = false
+      let released = false
+
+      const worker = runTaskWorker({
+        store: runtime.store,
+        runCoordinationExecutor: runtime.runCoordinationExecutor,
+        attemptExecutor: {
+          ...runtime.attemptExecutor,
+          ack: async (attempt) => {
+            acked = true
+            await runtime.attemptExecutor.ack(attempt)
+          },
+          release: async (attempt) => {
+            released = true
+            await runtime.attemptExecutor.release(attempt)
+          },
+        },
+        container: createTestContainer(),
+        tasks: [implementation],
+        workerId: 'task-worker-1',
+        leaseMs: 3,
+        signal: shutdown.signal,
+      })
+      await handlerStartedPromise
+      shutdown.abort()
+      await vi.advanceTimersByTimeAsync(30)
+      const result = await worker
+
+      const snapshot = await runtime.store.loadRunSnapshot(run.id)
+      expect(result.processed).toBe(0)
+      expect(shutdownReason).toStrictEqual({ type: 'shutdown' })
       expect(snapshot?.run.status).toBe('queued')
       expect(snapshot?.attempts[0]?.status).toBe('started')
       expect(runtime.inspect().taskCommands).toHaveLength(1)

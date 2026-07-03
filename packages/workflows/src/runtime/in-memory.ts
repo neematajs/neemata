@@ -515,6 +515,29 @@ export function createInMemoryWorkflowRuntime(
       attempts.set(attemptId, updated)
       return updated
     },
+    async timeoutCurrentAttempt({ attemptId, leaseToken, error }) {
+      const attempt = attempts.get(attemptId)
+      if (!attempt || attempt.leaseToken !== leaseToken) return undefined
+      if (attempt.status !== 'started') return undefined
+
+      const node = nodes.get(nodeKey(attempt.runId, attempt.nodeName))
+      if (
+        !node ||
+        isTerminalNodeStatus(node.status) ||
+        (node.kind !== 'parallel' && node.currentAttemptId !== attemptId)
+      ) {
+        return undefined
+      }
+
+      const updated: StoredAttempt = {
+        ...attempt,
+        status: 'timedOut',
+        error: toStoredError(error),
+        completedAt: now(),
+      }
+      attempts.set(attemptId, updated)
+      return updated
+    },
     async completeNode({ runId, nodeName, output }) {
       const key = nodeKey(runId, nodeName)
       const node = nodes.get(key)
@@ -1255,6 +1278,7 @@ export function createInMemoryWorkflowRuntime(
       if (!matchesClaim(inFlight.get(attempt.id), attempt)) {
         throw new Error('Workflow attempt heartbeat lease lost')
       }
+      return { runStatus: runs.get(attempt.command.runId)?.status ?? 'queued' }
     },
     async ack(attempt) {
       const inFlight =

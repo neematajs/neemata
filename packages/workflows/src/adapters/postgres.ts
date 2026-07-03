@@ -1603,6 +1603,45 @@ export function createPostgresWorkflowRuntime(params: {
       )
       return row ? mapAttempt(row) : undefined
     },
+    async timeoutCurrentAttempt({ attemptId, leaseToken, error }) {
+      await ready
+      const attempt = await one(
+        db,
+        'SELECT * FROM workflow_attempts WHERE id = $1',
+        [attemptId],
+      )
+      if (
+        !attempt ||
+        attempt.lease_token !== leaseToken ||
+        attempt.status !== 'started'
+      ) {
+        return undefined
+      }
+      const node = await one(
+        db,
+        'SELECT * FROM workflow_nodes WHERE run_id = $1 AND name = $2',
+        [attempt.run_id, attempt.node_name],
+      )
+      if (
+        !node ||
+        isTerminalNodeStatus(node.status as StoredNode['status']) ||
+        (node.kind !== 'parallel' && node.current_attempt_id !== attemptId)
+      ) {
+        return undefined
+      }
+
+      const row = await one(
+        db,
+        `
+          UPDATE workflow_attempts
+          SET status = 'timedOut', error = $3::jsonb, completed_at = now()
+          WHERE id = $1 AND lease_token = $2 AND status = 'started'
+          RETURNING *
+        `,
+        [attemptId, leaseToken, json(toStoredError(error))],
+      )
+      return row ? mapAttempt(row) : undefined
+    },
     async completeNode({ runId, nodeName, output }) {
       await ready
       const node = await one(
@@ -2638,17 +2677,19 @@ export function createPostgresWorkflowRuntime(params: {
     },
     async heartbeat(attempt, leaseMs = 30_000) {
       await ready
-      const updated = await one<{ id: string }>(
+      const updated = await one<{ id: string; run_status: StoredRun['status'] }>(
         db,
         `
-          UPDATE workflow_commands
+          UPDATE workflow_commands c
           SET lease_expires_at = now() + ($3::int * interval '1 millisecond')
-          WHERE id = $1 AND lease_token = $2
-          RETURNING id
+          WHERE c.id = $1 AND c.lease_token = $2
+          RETURNING c.id,
+            (SELECT r.status FROM workflow_runs r WHERE r.id = c.run_id) AS run_status
         `,
         [attempt.id, attempt.leaseToken, leaseMs],
       )
       if (!updated) throw new Error('Workflow attempt heartbeat lease lost')
+      return { runStatus: updated.run_status }
     },
     async ack(attempt) {
       await ready

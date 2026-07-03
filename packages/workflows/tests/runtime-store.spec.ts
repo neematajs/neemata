@@ -209,6 +209,56 @@ describe('in-memory workflow store', () => {
     expect(failedRun?.output).toStrictEqual({ ok: true })
   })
 
+  it('records timed-out current attempts and ignores stale timeout writes', async () => {
+    const runtime = createInMemoryWorkflowRuntime()
+    const run = await runtime.store.createRun({
+      workflowName: 'case-generation',
+      input: { scenario: 'a' },
+    })
+    await runtime.store.createNode({
+      runId: run.id,
+      name: 'content',
+      kind: 'activity',
+    })
+    const firstAttempt = await runtime.store.createAttempt({
+      runId: run.id,
+      nodeName: 'content',
+      input: { scenario: 'a' },
+    })
+    const secondAttempt = await runtime.store.createAttempt({
+      runId: run.id,
+      nodeName: 'content',
+      input: { scenario: 'a' },
+    })
+
+    const stale = await runtime.store.timeoutCurrentAttempt({
+      attemptId: firstAttempt.id,
+      leaseToken: firstAttempt.leaseToken!,
+      error: new Error('stale timeout'),
+    })
+    const wrongToken = await runtime.store.timeoutCurrentAttempt({
+      attemptId: secondAttempt.id,
+      leaseToken: firstAttempt.leaseToken!,
+      error: new Error('wrong token'),
+    })
+    const timedOut = await runtime.store.timeoutCurrentAttempt({
+      attemptId: secondAttempt.id,
+      leaseToken: secondAttempt.leaseToken!,
+      error: new Error('fresh timeout'),
+    })
+    const failedAfterTimeout = await runtime.store.failCurrentAttempt({
+      attemptId: secondAttempt.id,
+      leaseToken: secondAttempt.leaseToken!,
+      error: new Error('too late'),
+    })
+
+    expect(stale).toBeUndefined()
+    expect(wrongToken).toBeUndefined()
+    expect(timedOut?.status).toBe('timedOut')
+    expect(timedOut?.error?.message).toBe('fresh timeout')
+    expect(failedAfterTimeout).toBeUndefined()
+  })
+
   it('requires an existing parent node before ensuring a node attempt', async () => {
     const runtime = createInMemoryWorkflowRuntime()
     const run = await runtime.store.createRun({

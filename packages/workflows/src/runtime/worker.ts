@@ -11,6 +11,7 @@ export {
   type RunWorkflowWorkerInput,
 } from './worker/entry.ts'
 export { WorkflowAttemptTimeoutError } from './worker/heartbeat.ts'
+export type { AttemptAbortReason } from './worker/heartbeat.ts'
 export {
   runWithConcurrency,
   type WorkerLoopOptions,

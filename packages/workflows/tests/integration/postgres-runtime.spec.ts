@@ -576,6 +576,98 @@ describe.skipIf(!postgresTarget.url)(
       expect(finalChild?.run.output).toBeUndefined()
     }, 30_000)
 
+    it('delivers cancellation to an in-flight activity via heartbeat without retrying it', async () => {
+      const { pool, runtime } = await createHarness()
+      const container = createTestContainer()
+      const leaseMs = 180
+      let calls = 0
+      let cancelRequestedAt = 0
+      let abortAfterMs: number | undefined
+      let abortReason: unknown
+      let activityStarted!: () => void
+      const activityStartedPromise = new Promise<void>((resolve) => {
+        activityStarted = resolve
+      })
+      const workflow = defineWorkflow({
+        name: createTestName('postgres-cancel-signal-workflow'),
+        input: t.object({ text: t.string() }),
+        output: t.object({ text: t.string() }),
+      })
+        .activity('slow', {
+          input: t.object({ text: t.string() }),
+          output: t.object({ text: t.string() }),
+        })
+        .build()
+      const workflowImpl = implementWorkflow(workflow)
+        .slow(async (_ctx, input, lifecycle) => {
+          calls += 1
+          activityStarted()
+          await new Promise<void>((resolve) => {
+            const timeout = setTimeout(resolve, leaseMs * 3)
+            lifecycle?.signal.addEventListener(
+              'abort',
+              () => {
+                abortAfterMs = Date.now() - cancelRequestedAt
+                abortReason = lifecycle.signal.reason
+                clearTimeout(timeout)
+                resolve()
+              },
+              { once: true },
+            )
+          })
+          return { text: `late:${input.text}` }
+        })
+        .finish((_ctx, { slow }) => ({ text: slow.text }))
+      const client = createWorkflowRuntimeClient(runtime)
+      const run = await client.start(workflow, { text: 'alpha' })
+      await runWorkflowWorker({
+        ...runtime,
+        container,
+        workflows: [workflowImpl],
+        workerId: 'coordinator-cancel-signal-prime',
+        leaseMs,
+      })
+
+      const activityWorker = runActivityWorker({
+        ...runtime,
+        container,
+        workflows: [workflowImpl],
+        workerId: 'activity-cancel-signal',
+        leaseMs,
+        maxIdleClaims: 1,
+      })
+      await activityStartedPromise
+
+      cancelRequestedAt = Date.now()
+      await client.cancel(run.id)
+      await runWorkflowWorker({
+        ...runtime,
+        container,
+        workflows: [workflowImpl],
+        workerId: 'coordinator-cancel-signal',
+        leaseMs,
+        maxIdleClaims: 5,
+        idleDelayMs: 10,
+      })
+      await expect(activityWorker).resolves.toStrictEqual({ processed: 1 })
+
+      const snapshot = await runtime.store.loadRunSnapshot(run.id)
+      const commands = await pool.query<{ count: number }>(
+        `
+          SELECT count(*)::int AS count
+          FROM workflow_commands
+          WHERE run_id = $1
+        `,
+        [run.id],
+      )
+      expect(abortReason).toStrictEqual({ type: 'cancelled' })
+      expect(abortAfterMs).toBeLessThanOrEqual(Math.floor(leaseMs / 3) + 100)
+      expect(calls).toBe(1)
+      expect(snapshot?.run.status).toBe('cancelled')
+      expect(snapshot?.attempts).toHaveLength(1)
+      expect(commands.rows[0]?.count).toBe(0)
+    }, 30_000)
+
     it('keeps idempotent starts and duplicate continues consistent under contention', async () => {
       const { pool, runtime } = await createHarness()
       const container = createTestContainer()

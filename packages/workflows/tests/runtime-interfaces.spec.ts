@@ -3,6 +3,7 @@ import { describe, expect, expectTypeOf, it } from 'vitest'
 
 import type {
   ActivityImplementation,
+  AttemptLifecycle,
   AnyTaskDefinition,
   AnyWorkflowDefinition,
   RunKind,
@@ -223,6 +224,9 @@ describe('workflow runtime interfaces', () => {
       timeoutMs: 1,
     })
     expectTypeOf<ActivityImplementation>().toHaveProperty('handler')
+    expectTypeOf<AttemptLifecycle>().toMatchTypeOf<{
+      readonly signal: AbortSignal
+    }>()
     expectTypeOf<WorkflowBuilder>().toHaveProperty('build')
     expectTypeOf<RegisteredWorkflowImplementation>().toHaveProperty('workflow')
     expectTypeOf<RegisteredTaskImplementation>().toHaveProperty('task')
@@ -241,6 +245,28 @@ describe('workflow runtime interfaces', () => {
     expectTypeOf<RunnableRun>().toMatchTypeOf<
       { kind: 'task' } | { kind: 'workflow' }
     >()
+  })
+
+  it('keeps two-arg handlers assignable while allowing lifecycle signals', () => {
+    const task = defineTask({
+      name: 'handler-lifecycle-task',
+      input: t.object({ text: t.string() }),
+      output: t.object({ id: t.string() }),
+    })
+    const lifecycleTask = implementTask(task, {
+      handler: async (_ctx, input, lifecycle) => {
+        expectTypeOf(lifecycle).toEqualTypeOf<AttemptLifecycle | undefined>()
+        return {
+          id: lifecycle?.signal.aborted ? 'aborted' : input.text,
+        }
+      },
+    })
+    const twoArgTask = implementTask(task, {
+      handler: async (_ctx, input) => ({ id: input.text }),
+    })
+
+    expect(lifecycleTask.handler).toBeTypeOf('function')
+    expect(twoArgTask.handler).toBeTypeOf('function')
   })
 
   it('exports semantic orchestration store contracts', () => {

@@ -1,5 +1,6 @@
 export type {
   ActivityImplementation,
+  AttemptLifecycle,
   TaskImplementation,
   WorkflowImplementer,
   WorkflowImplementationChain,
@@ -55,3 +56,4 @@ export type {
 export { defineTask, defineWorkflow } from './contract/index.ts'
 export { implementTask, implementWorkflow } from './implement/index.ts'
 export { WorkflowAttemptTimeoutError } from './runtime/index.ts'
+export type { AttemptAbortReason } from './runtime/index.ts'

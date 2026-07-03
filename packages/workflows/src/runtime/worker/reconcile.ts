@@ -106,7 +106,7 @@ export async function reconcileStaleAttempt<Input extends RunAttemptInput>(
   if (
     storedNode &&
     isCurrentAttempt &&
-    storedAttempt?.status === 'failed' &&
+    isFailedAttemptStatus(storedAttempt?.status) &&
     storedNode.status !== 'failed'
   ) {
     const snapshot = await input.store.loadRunSnapshot(command.runId)
@@ -150,7 +150,8 @@ export async function reconcileStaleAttempt<Input extends RunAttemptInput>(
     storedAttempt &&
     ((storedAttempt.status === 'completed' &&
       storedNode.status === 'completed') ||
-      (storedAttempt.status === 'failed' && storedNode.status === 'failed'))
+      (isFailedAttemptStatus(storedAttempt.status) &&
+        storedNode.status === 'failed'))
   ) {
     await enqueueContinueRun(input.runCoordinationExecutor, command)
   }
@@ -172,6 +173,10 @@ function isCurrentAttemptForNode(
   if (!storedNode) return false
   if (storedNode.kind === 'parallel') return true
   return storedNode.currentAttemptId === attemptId
+}
+
+function isFailedAttemptStatus(status: StoredAttempt['status'] | undefined) {
+  return status === 'failed' || status === 'timedOut'
 }
 
 export async function enqueueContinueRun(

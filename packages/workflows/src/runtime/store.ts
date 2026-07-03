@@ -239,6 +239,11 @@ export type WorkflowStore = {
     leaseToken: string
     error: unknown
   }): Promise<StoredAttempt | undefined>
+  timeoutCurrentAttempt(params: {
+    attemptId: string
+    leaseToken: string
+    error: unknown
+  }): Promise<StoredAttempt | undefined>
   completeNode(params: {
     runId: string
     nodeName: string

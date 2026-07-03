@@ -8,9 +8,14 @@ import type {
   TaskAttemptCommand,
   TaskWorkerClaim,
 } from './commands.ts'
+import type { RuntimeRunStatus } from './status.ts'
 
 export type CommandReleaseOptions = {
   readonly error?: unknown
+}
+
+export type AttemptHeartbeatResult = {
+  readonly runStatus: RuntimeRunStatus
 }
 
 export type RunCoordinationExecutor = {
@@ -35,7 +40,10 @@ export type AttemptExecutor = {
   ): Promise<void>
   claimActivity(worker: ActivityWorkerClaim): Promise<ClaimedAttempt | null>
   claimTask(worker: TaskWorkerClaim): Promise<ClaimedAttempt | null>
-  heartbeat(attempt: ClaimedAttempt, leaseMs?: number): Promise<void>
+  heartbeat(
+    attempt: ClaimedAttempt,
+    leaseMs?: number,
+  ): Promise<AttemptHeartbeatResult>
   ack(attempt: ClaimedAttempt): Promise<void>
   release(
     attempt: ClaimedAttempt,

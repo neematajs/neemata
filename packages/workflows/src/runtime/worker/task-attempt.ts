@@ -15,6 +15,8 @@ import {
   type WorkflowRuntimeAtomicCompletion,
 } from './atomic.ts'
 import {
+  isAttemptCancellationObserved,
+  isAttemptShutdown,
   runWithAttemptHeartbeat,
   WorkflowAttemptTimeoutError,
 } from './heartbeat.ts'
@@ -40,6 +42,7 @@ export type RunTaskAttemptInput = {
   readonly workerId: string
   readonly claimed: ClaimedAttempt
   readonly leaseMs?: number
+  readonly signal?: AbortSignal
   readonly container: Pick<Container, 'createContext'>
 }
 
@@ -87,9 +90,13 @@ export async function runTaskAttempt(
     const timeoutMs = parseDurationMs(command.timeout ?? task.task.timeout)
     output = await runWithAttemptHeartbeat(
       input,
-      async () => {
+      async (lifecycle) => {
         const ctx = await input.container.createContext(task.dependencies)
-        return await task.handler(ctx as DependencyContext<any>, command.input)
+        return await task.handler(
+          ctx as DependencyContext<any>,
+          command.input,
+          lifecycle,
+        )
       },
       timeoutMs === undefined
         ? undefined
@@ -110,13 +117,25 @@ export async function runTaskAttempt(
       `task output [${task.task.name}]`,
     )
   } catch (error) {
-    if (isAttemptHeartbeatLeaseLost(error)) throw error
+    if (isAttemptHeartbeatLeaseLost(error) || isAttemptShutdown(error)) {
+      throw error
+    }
+    if (isAttemptCancellationObserved(error)) {
+      return await ackTerminalAttempt(input)
+    }
     return await runAtomicCompletion(input, async (scoped) => {
-      const attempt = await scoped.store.failCurrentAttempt({
-        attemptId: command.attemptId,
-        leaseToken: command.leaseToken,
-        error,
-      })
+      const attempt =
+        error instanceof WorkflowAttemptTimeoutError
+          ? await scoped.store.timeoutCurrentAttempt({
+              attemptId: command.attemptId,
+              leaseToken: command.leaseToken,
+              error,
+            })
+          : await scoped.store.failCurrentAttempt({
+              attemptId: command.attemptId,
+              leaseToken: command.leaseToken,
+              error,
+            })
 
       if (attempt) {
         const retried = await retryTaskAttempt(scoped, {

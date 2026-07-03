@@ -29,6 +29,7 @@ export type {
   WorkflowRuntimeAtomicStart,
 } from './coordinator.ts'
 export type {
+  AttemptHeartbeatResult,
   AttemptExecutor,
   CommandReleaseOptions,
   RunCoordinationExecutor,
@@ -91,6 +92,7 @@ export {
   WorkflowAttemptTimeoutError,
 } from './worker.ts'
 export type {
+  AttemptAbortReason,
   RunActivityAttemptInput,
   RunActivityWorkerInput,
   RunTaskAttemptInput,
