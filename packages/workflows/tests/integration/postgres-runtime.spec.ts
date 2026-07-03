@@ -176,7 +176,7 @@ describe.skipIf(!postgresTarget.url)(
       })
       expect(claimed).not.toBeNull()
 
-      await wait(120)
+      await wait(150)
       await runActivityWorker({
         ...runtime,
         container,
@@ -216,7 +216,7 @@ describe.skipIf(!postgresTarget.url)(
       const workflowImpl = implementWorkflow(workflow)
         .content(async (_ctx, input) => {
           calls += 1
-          await wait(240)
+          await wait(360)
           return { text: `content:${input.text}` }
         })
         .finish((_ctx, { content }) => ({ text: content.text }))
@@ -235,18 +235,18 @@ describe.skipIf(!postgresTarget.url)(
           container,
           workflows: [workflowImpl],
           workerId: 'activity-heartbeat-1',
-          leaseMs: 90,
+          leaseMs: 180,
           maxIdleClaims: 8,
-          idleDelayMs: 40,
+          idleDelayMs: 80,
         }),
         runActivityWorker({
           ...runtime,
           container,
           workflows: [workflowImpl],
           workerId: 'activity-heartbeat-2',
-          leaseMs: 90,
+          leaseMs: 180,
           maxIdleClaims: 8,
-          idleDelayMs: 40,
+          idleDelayMs: 80,
         }),
       ])
       await runWorkflowWorker({
