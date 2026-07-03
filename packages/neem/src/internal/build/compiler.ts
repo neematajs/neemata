@@ -444,18 +444,24 @@ function createGroupedRolldownOptions(
       assetFileNames: metadata.watch
         ? createStableWatchAssetFileName
         : '[name]-[hash][extname]',
-      codeSplitting: resolveCodeSplitting(firstTarget.artifact.chunks),
+      codeSplitting: resolveCodeSplitting(
+        firstTarget.artifact.chunks,
+        inputs.map((input) => input.entry),
+      ),
     },
   }
 }
 
+const DEFAULT_DEPS_CHUNK_TEST = /node_modules/
+
 const DEFAULT_DEPS_CHUNK_GROUP = {
   name: 'deps',
-  test: /node_modules/,
+  test: DEFAULT_DEPS_CHUNK_TEST,
 } satisfies NeemChunkGroup
 
 function resolveCodeSplitting(
   chunks: NeemChunkingOptions | undefined,
+  excludeFromDefaultDeps: readonly string[] = [],
 ): OutputOptions['codeSplitting'] {
   if (chunks === false) return undefined
 
@@ -464,7 +470,24 @@ function resolveCodeSplitting(
     return { groups: [...groups] }
   }
 
-  return { groups: [...groups, DEFAULT_DEPS_CHUNK_GROUP] }
+  return {
+    groups: [...groups, createDefaultDepsChunkGroup(excludeFromDefaultDeps)],
+  }
+}
+
+// When Neem itself is installed as a dependency, the grouped infra entry
+// modules resolve under node_modules and would match the default deps test —
+// merging eagerly-guarded worker/runner entry code into the shared chunk that
+// start.js imports on the main thread. Exclude the entry ids explicitly.
+function createDefaultDepsChunkGroup(
+  excludedIds: readonly string[],
+): NeemChunkGroup {
+  if (excludedIds.length === 0) return DEFAULT_DEPS_CHUNK_GROUP
+  const excluded = new Set(excludedIds)
+  return {
+    name: DEFAULT_DEPS_CHUNK_GROUP.name,
+    test: (id) => !excluded.has(id) && DEFAULT_DEPS_CHUNK_TEST.test(id),
+  }
 }
 
 function createExternalMatcher(

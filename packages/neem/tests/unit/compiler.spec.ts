@@ -63,6 +63,20 @@ describe('Neem compiler', () => {
       dir: resolve(root, 'dist/runtime'),
       entryFileNames: '[name].js',
     })
+    // The default deps group must not swallow the grouped entry modules: when
+    // Neem is installed as a dependency they resolve under node_modules, and
+    // merging worker/runner entry code into the shared deps chunk breaks the
+    // main-thread start path (see packaging e2e).
+    const depsGroup = getCodeSplittingGroups(infraOptions).at(-1) as {
+      name: string
+      test: (id: string) => boolean
+    }
+    expect(depsGroup.name).toBe('deps')
+    expect(depsGroup.test).toBeTypeOf('function')
+    expect(depsGroup.test('/repo/node_modules/zod/index.js')).toBe(true)
+    expect(depsGroup.test(entryPath(graph.workerEntry))).toBe(false)
+    expect(depsGroup.test(entryPath(graph.hostRunnerEntry))).toBe(false)
+    expect(depsGroup.test(entryPath(graph.startEntry))).toBe(false)
     expect(compiled.targets).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -426,6 +440,13 @@ function findInfraOptions(calls: unknown[][]): BuildOptions {
 function entryPath(target: BuildTarget): string {
   const entry = target.artifact.entry
   return entry instanceof URL ? fileURLToPath(entry) : entry
+}
+
+function getCodeSplittingGroups(options: BuildOptions): readonly unknown[] {
+  const output = options.output as {
+    codeSplitting?: { groups?: readonly unknown[] }
+  }
+  return output.codeSplitting?.groups ?? []
 }
 
 function normalizePluginOptions(
