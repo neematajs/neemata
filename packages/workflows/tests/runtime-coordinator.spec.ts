@@ -8,6 +8,7 @@ import {
   implementTask,
   implementWorkflow,
 } from '../src/index.ts'
+import { createRunLeaseFencedStore } from '../src/runtime/coordinator.ts'
 import {
   continueWorkflowRun,
   createInMemoryWorkflowRuntime,
@@ -17,6 +18,7 @@ import {
   runWorkflowWorker,
   startTaskRun,
   startWorkflowRun,
+  type WorkflowStore,
 } from '../src/runtime/index.ts'
 
 describe('workflow runtime coordinator', () => {
@@ -247,6 +249,100 @@ describe('workflow runtime coordinator', () => {
     expect(snapshot?.run.output).toBeUndefined()
   })
 
+  it('renews the run lease before every fenced store mutation', async () => {
+    const lease = { runId: 'run-1', leaseToken: 'lease-token', version: 1 }
+    const mutatingStoreCalls = [
+      ['createRun', { workflowName: 'workflow', input: {} }],
+      ['createNode', { runId: 'run-1', name: 'node', kind: 'activity' }],
+      ['setNodeInput', { runId: 'run-1', nodeName: 'node', input: {} }],
+      ['createAttempt', { runId: 'run-1', nodeName: 'node', input: {} }],
+      [
+        'completeCurrentAttempt',
+        { attemptId: 'attempt-1', leaseToken: 'attempt-lease', output: {} },
+      ],
+      [
+        'failCurrentAttempt',
+        { attemptId: 'attempt-1', leaseToken: 'attempt-lease', error: {} },
+      ],
+      ['completeNode', { runId: 'run-1', nodeName: 'node', output: {} }],
+      ['failNode', { runId: 'run-1', nodeName: 'node', error: {} }],
+      ['completeRun', { runId: 'run-1', output: {} }],
+      ['failRun', { runId: 'run-1', error: {} }],
+      ['requestRunCancellation', { runId: 'run-1' }],
+      ['cancelRun', { runId: 'run-1' }],
+      ['cancelNode', { runId: 'run-1', nodeName: 'node' }],
+      ['cancelNonTerminalRunNodes', { runId: 'run-1' }],
+      [
+        'ensureNodeAttempt',
+        {
+          identity: { runId: 'run-1', nodeName: 'node' },
+          kind: 'activity',
+          input: {},
+        },
+      ],
+      [
+        'ensureChildWorkflowRun',
+        {
+          identity: { runId: 'run-1', nodeName: 'node' },
+          workflowName: 'child',
+          input: {},
+          parentRunId: 'run-1',
+          parentNodeName: 'node',
+          rootRunId: 'run-1',
+        },
+      ],
+      [
+        'ensureChildRun',
+        {
+          identity: { runId: 'run-1', nodeName: 'node' },
+          childKind: 'task',
+          childName: 'child',
+          input: {},
+          parentRunId: 'run-1',
+          parentNodeName: 'node',
+          rootRunId: 'run-1',
+        },
+      ],
+      ['selectNodeCase', { runId: 'run-1', nodeName: 'node', caseKey: 'a' }],
+      ['ensureMapItems', { runId: 'run-1', nodeName: 'node', items: [] }],
+      [
+        'completeMapItem',
+        { runId: 'run-1', nodeName: 'node', itemIndex: 0, output: {} },
+      ],
+      [
+        'failMapItem',
+        { runId: 'run-1', nodeName: 'node', itemIndex: 0, error: {} },
+      ],
+      ['waitNode', { runId: 'run-1', nodeName: 'node' }],
+    ] as const
+
+    for (const [method, params] of mutatingStoreCalls) {
+      const log: string[] = []
+      const store = {
+        ...createInMemoryWorkflowRuntime().store,
+        renewRunLease: async (observedLease: typeof lease, leaseMs: number) => {
+          expect(observedLease).toBe(lease)
+          expect(leaseMs).toBe(123)
+          log.push('renewRunLease')
+          return lease
+        },
+        [method]: async () => {
+          log.push(method)
+          return undefined
+        },
+      } as unknown as WorkflowStore
+      const fenced = createRunLeaseFencedStore(store, lease, 123)
+
+      await (
+        fenced[method as keyof WorkflowStore] as (
+          params: unknown,
+        ) => Promise<unknown>
+      )(params)
+
+      expect(log).toStrictEqual(['renewRunLease', method])
+    }
+  })
+
   it('cancels the run when a node is cancelled', async () => {
     const workflow = defineWorkflow({
       name: 'cancelled-node-workflow',
@@ -303,6 +399,119 @@ describe('workflow runtime coordinator', () => {
 
     const snapshot = await runtime.store.loadRunSnapshot(run.id)
     expect(snapshot?.run.status).toBe('cancelled')
+  })
+
+  it('cancels before failed-node handling when a cancelling run has a failed node', async () => {
+    const workflow = defineWorkflow({
+      name: 'guard-cancelling-before-failed',
+      input: t.object({ text: t.string() }),
+      output: t.object({ text: t.string() }),
+    })
+      .activity('content', {
+        input: t.object({ text: t.string() }),
+        output: t.object({ text: t.string() }),
+      })
+      .build()
+    const implementation = implementWorkflow(workflow)
+      .content(async (_ctx, input) => input)
+      .finish((_ctx, { content }) => content)
+    const runtime = createInMemoryWorkflowRuntime()
+    const run = await runtime.store.createRun({
+      workflowName: workflow.name,
+      input: { text: 'alpha' },
+    })
+    await runtime.store.createNode({
+      runId: run.id,
+      name: 'content',
+      kind: 'activity',
+    })
+    await runtime.store.failNode({
+      runId: run.id,
+      nodeName: 'content',
+      error: new Error('node failed'),
+    })
+    await runtime.store.requestRunCancellation({ runId: run.id })
+
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container: createTestContainer(),
+      workflows: [implementation],
+      workerId: 'coordinator-1',
+      command: {
+        kind: 'continueRun',
+        runId: run.id,
+        workflowName: workflow.name,
+      },
+    })
+
+    const snapshot = await runtime.store.loadRunSnapshot(run.id)
+    expect(snapshot?.run.status).toBe('cancelled')
+    expect(snapshot?.run.error).toBeUndefined()
+  })
+
+  it('fails before cancelled-node handling when a run has failed and cancelled nodes', async () => {
+    const workflow = defineWorkflow({
+      name: 'guard-failed-before-cancelled-node',
+      input: t.object({ text: t.string() }),
+      output: t.object({ text: t.string() }),
+    })
+      .activity('failedContent', {
+        input: t.object({ text: t.string() }),
+        output: t.object({ text: t.string() }),
+      })
+      .activity('cancelledContent', {
+        input: t.object({ text: t.string() }),
+        output: t.object({ text: t.string() }),
+      })
+      .build()
+    const implementation = implementWorkflow(workflow)
+      .failedContent(async (_ctx, input) => input)
+      .cancelledContent(async (_ctx, input) => input)
+      .finish((_ctx, outputs) => outputs.failedContent)
+    const runtime = createInMemoryWorkflowRuntime()
+    const run = await runtime.store.createRun({
+      workflowName: workflow.name,
+      input: { text: 'alpha' },
+    })
+    await runtime.store.createNode({
+      runId: run.id,
+      name: 'failedContent',
+      kind: 'activity',
+    })
+    await runtime.store.createNode({
+      runId: run.id,
+      name: 'cancelledContent',
+      kind: 'activity',
+    })
+    await runtime.store.failNode({
+      runId: run.id,
+      nodeName: 'failedContent',
+      error: new Error('node failed'),
+    })
+    await runtime.store.cancelNode({
+      runId: run.id,
+      nodeName: 'cancelledContent',
+    })
+
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container: createTestContainer(),
+      workflows: [implementation],
+      workerId: 'coordinator-1',
+      command: {
+        kind: 'continueRun',
+        runId: run.id,
+        workflowName: workflow.name,
+      },
+    })
+
+    const snapshot = await runtime.store.loadRunSnapshot(run.id)
+    expect(snapshot?.run.status).toBe('failed')
+    expect(snapshot?.run.error?.message).toBe('node failed')
   })
 
   it('cancels child task runs and deletes unclaimed child commands', async () => {
@@ -706,6 +915,55 @@ describe('workflow runtime coordinator', () => {
     ).toBe('completed')
   })
 
+  it('propagates store errors inside dispatchers without failing the run as a user error', async () => {
+    const workflow = defineWorkflow({
+      name: 'dispatcher-store-error-workflow',
+      input: t.object({ scenario: t.string() }),
+      output: t.object({ caseId: t.string() }),
+    })
+      .activity('content', {
+        input: t.object({ scenario: t.string() }),
+        output: t.object({ text: t.string() }),
+      })
+      .build()
+    const implementation = implementWorkflow(workflow)
+      .content(async (_ctx, input) => ({ text: input.scenario }))
+      .finish((_ctx, { content }) => ({ caseId: content.text }))
+    const runtime = createInMemoryWorkflowRuntime()
+    const run = await runtime.store.createRun({
+      workflowName: workflow.name,
+      input: { scenario: 'alpha' },
+    })
+    const store = {
+      ...runtime.store,
+      createAttempt: async () => {
+        throw new Error('store createAttempt failed')
+      },
+    } satisfies WorkflowStore
+
+    await expect(
+      continueWorkflowRun({
+        store,
+        runCoordinationExecutor: runtime.runCoordinationExecutor,
+        attemptExecutor: runtime.attemptExecutor,
+        container: createTestContainer(),
+        workflows: [implementation],
+        workerId: 'coordinator-1',
+        command: {
+          kind: 'continueRun',
+          runId: run.id,
+          workflowName: workflow.name,
+        },
+      }),
+    ).rejects.toThrow('store createAttempt failed')
+
+    const snapshot = await runtime.store.loadRunSnapshot(run.id)
+    expect(snapshot?.run.status).toBe('queued')
+    expect(snapshot?.run.error).toBeUndefined()
+    expect(snapshot?.nodes[0]?.status).toBe('running')
+    expect(snapshot?.nodes[0]?.error).toBeUndefined()
+  })
+
   it('recovers an activity attempt after node input was stored without an attempt', async () => {
     const workflow = defineWorkflow({
       name: 'activity-attempt-recovery',
@@ -824,6 +1082,114 @@ describe('workflow runtime coordinator', () => {
     ).toStrictEqual(['content', 'alpha'])
   })
 
+  it('passes the workflow run input to an activity input mapper', async () => {
+    const workflow = defineWorkflow({
+      name: 'activity-input-receives-run-input-workflow',
+      input: t.object({ scenario: t.string() }),
+      output: t.object({ text: t.string() }),
+    })
+      .activity('content', {
+        input: t.object({ scenario: t.string() }),
+        output: t.object({ text: t.string() }),
+      })
+      .build()
+
+    let observedInput: unknown
+    const implementation = implementWorkflow(workflow)
+      .content(async (_ctx, input) => ({ text: input.scenario }), {
+        input: (_ctx, _outputs, input) => {
+          observedInput = input
+          return { scenario: input.scenario }
+        },
+      })
+      .finish((_ctx, { content }) => ({ text: content.text }))
+
+    const runtime = createInMemoryWorkflowRuntime()
+    const run = await runtime.store.createRun({
+      workflowName: workflow.name,
+      input: { scenario: 'alpha' },
+    })
+
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container: createTestContainer(),
+      workflows: [implementation],
+      workerId: 'coordinator-1',
+      command: {
+        kind: 'continueRun',
+        runId: run.id,
+        workflowName: workflow.name,
+      },
+    })
+
+    expect(observedInput).toStrictEqual({ scenario: 'alpha' })
+    expect(
+      (await runtime.store.loadRunSnapshot(run.id))?.nodes[0]?.input,
+    ).toStrictEqual({ scenario: 'alpha' })
+  })
+
+  it('skips activity idempotency resolution when an attempt already exists', async () => {
+    const workflow = defineWorkflow({
+      name: 'activity-idempotency-replay-workflow',
+      input: t.object({ scenario: t.string() }),
+      output: t.object({ text: t.string() }),
+    })
+      .activity('content', {
+        input: t.object({ scenario: t.string() }),
+        output: t.object({ text: t.string() }),
+      })
+      .build()
+
+    let idempotencyCalls = 0
+    const implementation = implementWorkflow(workflow)
+      .content(async (_ctx, input) => ({ text: input.scenario }), {
+        input: (_ctx, _outputs, input) => ({ scenario: input.scenario }),
+        idempotency: (_ctx, _outputs, input) => {
+          idempotencyCalls += 1
+          if (idempotencyCalls > 1) {
+            throw new Error('activity idempotency mapper replayed')
+          }
+          return ['content', input.scenario]
+        },
+      })
+      .finish((_ctx, { content }) => ({ text: content.text }))
+
+    const runtime = createInMemoryWorkflowRuntime()
+    const run = await runtime.store.createRun({
+      workflowName: workflow.name,
+      input: { scenario: 'alpha' },
+    })
+    const command = {
+      kind: 'continueRun' as const,
+      runId: run.id,
+      workflowName: workflow.name,
+    }
+
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container: createTestContainer(),
+      workflows: [implementation],
+      workerId: 'coordinator-1',
+      command,
+    })
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container: createTestContainer(),
+      workflows: [implementation],
+      workerId: 'coordinator-1',
+      command,
+    })
+
+    expect(idempotencyCalls).toBe(1)
+    expect(runtime.inspect().activityCommands).toHaveLength(1)
+  })
+
   it('stores child task run idempotency from implementation mapper', async () => {
     const task = defineTask({
       name: 'child-idempotency-task',
@@ -940,6 +1306,80 @@ describe('workflow runtime coordinator', () => {
     expect(snapshot?.run.status).toBe('queued')
     expect(snapshot?.nodes[0]?.status).toBe('waiting')
     expect(runtime.inspect().taskCommands).toHaveLength(1)
+  })
+
+  it('skips child workflow idempotency resolution when a child link already exists', async () => {
+    const childWorkflow = defineWorkflow({
+      name: 'child-idempotency-replay-child-workflow',
+      input: t.object({ scenario: t.string() }),
+      output: t.object({ id: t.string() }),
+    }).build()
+    const parentWorkflow = defineWorkflow({
+      name: 'child-workflow-idempotency-replay-parent',
+      input: t.object({ scenario: t.string() }),
+      output: t.object({ id: t.string() }),
+    })
+      .workflow('child', childWorkflow)
+      .build()
+
+    let idempotencyCalls = 0
+    const implementation = implementWorkflow(parentWorkflow)
+      .child(childWorkflow, {
+        input: (_ctx, _outputs, input) => ({ scenario: input.scenario }),
+        idempotency: (_ctx, _outputs, input) => {
+          idempotencyCalls += 1
+          if (idempotencyCalls > 1) {
+            throw new Error('workflow idempotency mapper replayed')
+          }
+          return ['child', input.scenario]
+        },
+      })
+      .finish((_ctx, { child }) => ({ id: child.id }))
+    const runtime = createInMemoryWorkflowRuntime()
+    const run = await runtime.store.createRun({
+      workflowName: parentWorkflow.name,
+      input: { scenario: 'alpha' },
+    })
+    const command = {
+      kind: 'continueRun' as const,
+      runId: run.id,
+      workflowName: parentWorkflow.name,
+    }
+
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container: createTestContainer(),
+      workflows: [implementation],
+      workerId: 'coordinator-1',
+      command,
+    })
+    await continueWorkflowRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container: createTestContainer(),
+      workflows: [implementation],
+      workerId: 'coordinator-1',
+      command,
+    })
+
+    const snapshot = await runtime.store.loadRunSnapshot(run.id)
+    const childRunId = snapshot?.childLinks[0]?.childRunId
+    expect(idempotencyCalls).toBe(1)
+    expect(childRunId).toBeTypeOf('string')
+    expect(snapshot?.nodes[0]?.status).toBe('waiting')
+    expect(runtime.inspect().continueRunCommands).toStrictEqual([
+      {
+        id: expect.any(String),
+        payload: {
+          kind: 'continueRun',
+          runId: childRunId,
+          workflowName: childWorkflow.name,
+        },
+      },
+    ])
   })
 
   it('re-enqueues an existing started child task attempt without duplicating commands', async () => {
@@ -3823,6 +4263,59 @@ describe('workflow runtime coordinator', () => {
     )
     expect(snapshot?.run.status).toBe('failed')
     expect(handlerCalled).toBe(false)
+    expect(runtime.inspect().activityCommands).toStrictEqual([])
+  })
+
+  it('decodes mapped activity input before resolving activity idempotency', async () => {
+    const workflow = defineWorkflow({
+      name: 'activity-input-decode-before-idempotency-workflow',
+      input: t.object({ scenario: t.string() }),
+      output: t.object({ text: t.string() }),
+    })
+      .activity('content', {
+        input: t.object({ scenario: t.string() }),
+        output: t.object({ text: t.string() }),
+      })
+      .build()
+    let idempotencyCalls = 0
+    const implementation = implementWorkflow(workflow)
+      .content(async (_ctx, input) => ({ text: input.scenario }), {
+        input: () => ({ scenario: 123 }) as never,
+        idempotency: () => {
+          idempotencyCalls += 1
+          throw new Error('idempotency should not run')
+        },
+      })
+      .finish((_ctx, { content }) => ({ text: content.text }))
+    const runtime = createInMemoryWorkflowRuntime()
+    const run = await runtime.store.createRun({
+      workflowName: workflow.name,
+      input: { scenario: 'alpha' },
+    })
+
+    await expect(
+      continueWorkflowRun({
+        store: runtime.store,
+        runCoordinationExecutor: runtime.runCoordinationExecutor,
+        attemptExecutor: runtime.attemptExecutor,
+        container: createTestContainer(),
+        workflows: [implementation],
+        workerId: 'coordinator-1',
+        command: {
+          kind: 'continueRun',
+          runId: run.id,
+          workflowName: workflow.name,
+        },
+      }),
+    ).resolves.toStrictEqual({ status: 'processed' })
+
+    const snapshot = await runtime.store.loadRunSnapshot(run.id)
+    expect(idempotencyCalls).toBe(0)
+    expect(snapshot?.nodes[0]?.status).toBe('failed')
+    expect(snapshot?.nodes[0]?.error?.message).toBe(
+      'Invalid activity input [activity-input-decode-before-idempotency-workflow.content]',
+    )
+    expect(snapshot?.run.status).toBe('failed')
     expect(runtime.inspect().activityCommands).toStrictEqual([])
   })
 

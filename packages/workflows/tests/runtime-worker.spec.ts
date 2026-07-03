@@ -10,6 +10,9 @@ import {
 } from '../src/index.ts'
 import {
   type AttemptExecutor,
+  type RunCoordinationExecutor,
+  type WorkflowRuntimeAtomicCompletion,
+  type WorkflowStore,
   createInMemoryWorkflowRuntime,
   runActivityWorker,
   runTaskWorker,
@@ -79,6 +82,267 @@ describe('workflow worker runtime', () => {
     expect(completed?.run.output).toStrictEqual({ id: 'embedding:alpha' })
     expect(completed?.nodes[0]?.status).toBe('completed')
     expect(runtime.inspect().continueRunCommands).toHaveLength(0)
+  })
+
+  it('uses the atomic scoped runtime for task completion, retry, and stale reconcile writes', async () => {
+    const createAtomicMarker = (
+      runtime: ReturnType<typeof createInMemoryWorkflowRuntime>,
+    ) => {
+      const storeCalls: string[] = []
+      const attemptCalls: string[] = []
+      const runCalls: string[] = []
+      const failOutsideWrite = (method: string): Promise<never> =>
+        Promise.reject(new Error(`${method} used outside atomic completion`))
+      const scopedStore = {
+        ...runtime.store,
+        completeCurrentAttempt: async (
+          ...args: Parameters<WorkflowStore['completeCurrentAttempt']>
+        ) => {
+          storeCalls.push('completeCurrentAttempt')
+          return runtime.store.completeCurrentAttempt(...args)
+        },
+        failCurrentAttempt: async (
+          ...args: Parameters<WorkflowStore['failCurrentAttempt']>
+        ) => {
+          storeCalls.push('failCurrentAttempt')
+          return runtime.store.failCurrentAttempt(...args)
+        },
+        createAttempt: async (
+          ...args: Parameters<WorkflowStore['createAttempt']>
+        ) => {
+          storeCalls.push('createAttempt')
+          return runtime.store.createAttempt(...args)
+        },
+        completeNode: async (
+          ...args: Parameters<WorkflowStore['completeNode']>
+        ) => {
+          storeCalls.push('completeNode')
+          return runtime.store.completeNode(...args)
+        },
+        failNode: async (...args: Parameters<WorkflowStore['failNode']>) => {
+          storeCalls.push('failNode')
+          return runtime.store.failNode(...args)
+        },
+        completeRun: async (
+          ...args: Parameters<WorkflowStore['completeRun']>
+        ) => {
+          storeCalls.push('completeRun')
+          return runtime.store.completeRun(...args)
+        },
+        failRun: async (...args: Parameters<WorkflowStore['failRun']>) => {
+          storeCalls.push('failRun')
+          return runtime.store.failRun(...args)
+        },
+      } satisfies WorkflowStore
+      const outsideStore = {
+        ...runtime.store,
+        completeCurrentAttempt: () =>
+          failOutsideWrite('completeCurrentAttempt'),
+        failCurrentAttempt: () => failOutsideWrite('failCurrentAttempt'),
+        createAttempt: () => failOutsideWrite('createAttempt'),
+        completeNode: () => failOutsideWrite('completeNode'),
+        failNode: () => failOutsideWrite('failNode'),
+        completeRun: () => failOutsideWrite('completeRun'),
+        failRun: () => failOutsideWrite('failRun'),
+      } satisfies WorkflowStore
+      const scopedRunCoordinationExecutor = {
+        ...runtime.runCoordinationExecutor,
+        enqueue: async (
+          ...args: Parameters<RunCoordinationExecutor['enqueue']>
+        ) => {
+          runCalls.push('enqueue')
+          return runtime.runCoordinationExecutor.enqueue(...args)
+        },
+      } satisfies RunCoordinationExecutor
+      const outsideRunCoordinationExecutor = {
+        ...runtime.runCoordinationExecutor,
+        enqueue: () => failOutsideWrite('enqueue'),
+      } satisfies RunCoordinationExecutor
+      const scopedAttemptExecutor = {
+        ...runtime.attemptExecutor,
+        dispatchTask: async (
+          ...args: Parameters<AttemptExecutor['dispatchTask']>
+        ) => {
+          attemptCalls.push('dispatchTask')
+          return runtime.attemptExecutor.dispatchTask(...args)
+        },
+        ack: async (...args: Parameters<AttemptExecutor['ack']>) => {
+          attemptCalls.push('ack')
+          return runtime.attemptExecutor.ack(...args)
+        },
+      } satisfies AttemptExecutor
+      const outsideAttemptExecutor = {
+        ...runtime.attemptExecutor,
+        dispatchTask: () => failOutsideWrite('dispatchTask'),
+        ack: () => failOutsideWrite('ack'),
+      } satisfies AttemptExecutor
+      const atomicCompletion = {
+        run: async (handler) =>
+          handler({
+            store: scopedStore,
+            runCoordinationExecutor: scopedRunCoordinationExecutor,
+            attemptExecutor: scopedAttemptExecutor,
+          }),
+      } satisfies WorkflowRuntimeAtomicCompletion
+
+      return {
+        store: outsideStore,
+        runCoordinationExecutor: outsideRunCoordinationExecutor,
+        attemptExecutor: outsideAttemptExecutor,
+        atomicCompletion,
+        storeCalls,
+        attemptCalls,
+        runCalls,
+      }
+    }
+
+    const container = createTestContainer()
+    const completionTask = defineTask({
+      name: 'atomic-marker-completion-task',
+      input: t.object({ text: t.string() }),
+      output: t.object({ id: t.string() }),
+    })
+    const completionImplementation = implementTask(completionTask, {
+      handler: async (_ctx, input) => ({ id: input.text }),
+    })
+    const completionRuntime = createInMemoryWorkflowRuntime()
+    const completionRun = await startTaskRun({
+      ...completionRuntime,
+      task: completionTask,
+      input: { text: 'alpha' },
+    })
+    const completionClaimed = await completionRuntime.attemptExecutor.claimTask(
+      {
+        workerId: 'task-worker-1',
+        taskNames: [completionTask.name],
+        leaseMs: 30_000,
+      },
+    )
+    expect(completionClaimed).not.toBeNull()
+    const completionMarker = createAtomicMarker(completionRuntime)
+
+    await runTaskAttempt({
+      ...completionMarker,
+      container,
+      tasks: [completionImplementation],
+      workerId: 'task-worker-1',
+      claimed: completionClaimed!,
+    })
+
+    expect(completionMarker.storeCalls).toEqual([
+      'completeCurrentAttempt',
+      'completeNode',
+      'completeRun',
+    ])
+    expect(completionMarker.attemptCalls).toEqual(['ack'])
+    expect(completionMarker.runCalls).toEqual([])
+    expect(
+      (await completionRuntime.store.loadRunSnapshot(completionRun.id))?.run
+        .status,
+    ).toBe('completed')
+
+    const retryTask = defineTask({
+      name: 'atomic-marker-retry-task',
+      input: t.object({ text: t.string() }),
+      output: t.object({ id: t.string() }),
+      retry: { attempts: 2 },
+    })
+    const retryImplementation = implementTask(retryTask, {
+      handler: async () => {
+        throw new Error('retry me')
+      },
+    })
+    const retryRuntime = createInMemoryWorkflowRuntime()
+    await startTaskRun({
+      ...retryRuntime,
+      task: retryTask,
+      input: { text: 'alpha' },
+    })
+    const retryClaimed = await retryRuntime.attemptExecutor.claimTask({
+      workerId: 'task-worker-1',
+      taskNames: [retryTask.name],
+      leaseMs: 30_000,
+    })
+    expect(retryClaimed).not.toBeNull()
+    const retryMarker = createAtomicMarker(retryRuntime)
+
+    await runTaskAttempt({
+      ...retryMarker,
+      container,
+      tasks: [retryImplementation],
+      workerId: 'task-worker-1',
+      claimed: retryClaimed!,
+    })
+
+    expect(retryMarker.storeCalls).toEqual([
+      'failCurrentAttempt',
+      'createAttempt',
+    ])
+    expect(retryMarker.attemptCalls).toEqual(['dispatchTask', 'ack'])
+
+    const reconcileTask = defineTask({
+      name: 'atomic-marker-reconcile-task',
+      input: t.object({ text: t.string() }),
+      output: t.object({ id: t.string() }),
+    })
+    const reconcileWorkflow = defineWorkflow({
+      name: 'atomic-marker-reconcile-workflow',
+      input: t.object({ text: t.string() }),
+      output: t.object({ id: t.string() }),
+    })
+      .task('child', reconcileTask)
+      .build()
+    const reconcileWorkflowImplementation = implementWorkflow(reconcileWorkflow)
+      .child(reconcileTask)
+      .finish((_ctx, { child }) => ({ id: child.id }))
+    const reconcileTaskImplementation = implementTask(reconcileTask, {
+      handler: async () => {
+        throw new Error('stale reconcile should not run handler')
+      },
+    })
+    const reconcileRuntime = createInMemoryWorkflowRuntime()
+    const parentRun = await reconcileRuntime.store.createRun({
+      workflowName: reconcileWorkflow.name,
+      input: { text: 'alpha' },
+    })
+    await reconcileRuntime.runCoordinationExecutor.enqueue({
+      kind: 'continueRun',
+      runId: parentRun.id,
+      workflowName: reconcileWorkflow.name,
+    })
+    await runWorkflowWorker({
+      ...reconcileRuntime,
+      container,
+      workflows: [reconcileWorkflowImplementation],
+      workerId: 'workflow-worker-1',
+    })
+    const reconcileClaimed = await reconcileRuntime.attemptExecutor.claimTask({
+      workerId: 'task-worker-1',
+      taskNames: [reconcileTask.name],
+      leaseMs: 30_000,
+    })
+    expect(reconcileClaimed).not.toBeNull()
+    await reconcileRuntime.store.completeCurrentAttempt({
+      attemptId: reconcileClaimed!.command.attemptId,
+      leaseToken: reconcileClaimed!.command.leaseToken,
+      output: { id: 'alpha' },
+    })
+    const reconcileMarker = createAtomicMarker(reconcileRuntime)
+
+    await runTaskAttempt({
+      ...reconcileMarker,
+      container,
+      tasks: [reconcileTaskImplementation],
+      workerId: 'task-worker-1',
+      claimed: reconcileClaimed!,
+    })
+
+    expect(reconcileMarker.storeCalls).toEqual(['completeNode', 'completeRun'])
+    expect(reconcileMarker.attemptCalls).toEqual(['ack'])
+    expect(reconcileMarker.runCalls).toEqual(['enqueue'])
+    expect(
+      (await reconcileRuntime.store.loadRunSnapshot(parentRun.id))?.run.status,
+    ).toBe('queued')
   })
 
   it('runs workflow worker loop by claiming continue commands', async () => {
