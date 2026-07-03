@@ -285,6 +285,9 @@ async function watchTargetGroup(
         })
       } finally {
         if ('result' in event) await event.result?.close?.()
+        // Rolldown rebuilds retain sizeable allocations between watch builds;
+        // nudge V8 to release them during long dev sessions (no-op unless the
+        // process runs with --expose-gc, which bin/neem.js enables).
         globalThis.gc?.()
       }
       return
@@ -370,9 +373,12 @@ function createRolldownOptions(
   return {
     input: input.input,
     platform: 'node',
+    // No treeshaking: runtime artifacts must keep import side effects intact.
     treeshake: false,
     ...userOptions,
     experimental: {
+      // Chunk optimization may regroup chunks between rebuilds; artifact file
+      // names must stay stable for running dev workers.
       chunkOptimization: false,
       incrementalBuild: metadata.watch,
       ...userOptions.experimental,
@@ -417,6 +423,7 @@ function createGroupedRolldownOptions(
       inputs.map((input) => [input.input, input.entry]),
     ),
     platform: 'node',
+    // Same trade-offs as createRolldownOptions above.
     treeshake: false,
     ...userOptions,
     experimental: { chunkOptimization: false, ...userOptions.experimental },

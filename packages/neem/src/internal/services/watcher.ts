@@ -204,6 +204,9 @@ function classifyChange(change: TargetChange): WatcherManifestChangeInput {
     case 'start-entry':
     case 'worker-entry':
     case 'host-runner-entry':
+      // Infra entries only change when Neem itself changes under a running
+      // dev session; reuse the conservative full-restart policy instead of
+      // introducing a dedicated event.
       return { type: 'plugin-changed' }
   }
 }

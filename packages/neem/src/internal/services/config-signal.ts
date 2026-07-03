@@ -12,6 +12,11 @@ export type ConfigSignalWatchOptions = {
   tolerateInitialError?: boolean
 }
 
+// Deliberate exception to the "no Rolldown watchers in the CLI main thread"
+// rule: this watcher must outlive WatcherService teardown, because a broken
+// config kills the service and something has to keep watching config files to
+// retry. skipWrite keeps it output-free, and it is closed and recreated on
+// every watcher replacement to contain Rolldown watcher resource retention.
 export async function watchConfigSignal({
   files,
   onInvalidated,
