@@ -87,6 +87,14 @@ production migrations app-owned. Root `@nmtjs/workflows` exports are now limited
 to dependency-light contract, implementation, and public graph/type helpers;
 runtime helpers live under `@nmtjs/workflows/runtime`.
 
+`createPostgresWorkflowConnection` now adapts app-owned `pg`-style clients,
+`pg` pools, and PGlite-like clients into the runtime connection interface
+without adding hard driver dependencies. Apps using other clients can still
+provide `WorkflowPostgresConnection` directly.
+
+The Drizzle schema path has a CLI smoke test that exports SQL from an
+app-owned schema file, matching the intended migration ownership model.
+
 ### 6. Child And Map Workflow Smoke
 
 - Verify direct child workflow and `mapWorkflow(wait-all)` through real Postgres

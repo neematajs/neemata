@@ -927,19 +927,16 @@ Idempotency should exist at three levels:
 - activity attempt execution
 - child task/workflow run execution from workflow nodes and composite children
 
-Duplicate behavior should be explicit:
+V1 idempotency callbacks return only a serializable key:
 
 ```ts
-idempotency: {
-  key: (_ctx, input) => ['case-generation', input.curriculumId],
-  conflict: 'return-existing',
-}
+idempotency: (_ctx, input) => ['case-generation', input.curriculumId]
 ```
 
-Initial conflict policies:
-
-- `return-existing`
-- `fail`
+Initial duplicate behavior is runtime-defined: same idempotency key with the
+same durable input returns the existing run/attempt/link; same key with
+different durable input fails as an explicit conflict. Named conflict policies
+can be added later when the store/client contract carries them end to end.
 
 Rules:
 
@@ -950,8 +947,7 @@ Rules:
   stay structural and import-safe.
 - Current runtime evaluates implementation-owned idempotency callbacks for
   explicit starts, activity/task attempts, and child task/workflow runs, then
-  persists or dispatches the computed key. Conflict policy enforcement remains a
-  durable store responsibility.
+  persists or dispatches the computed key.
 
 ## Retry And Timeout Policy
 
