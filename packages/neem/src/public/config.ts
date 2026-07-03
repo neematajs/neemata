@@ -1,14 +1,12 @@
 import type {
   NeemConfig,
+  NeemEntryInput,
   NeemMarkedRuntimeDeclaration,
   NeemPluginInput,
-  NeemProxyRoutingOptions,
   NeemRuntimeBuildConfig,
   NeemRuntimeDeclaration,
   NeemRuntimeDeclarationLayer,
-  NeemRuntimeHostDeclaration,
   NeemRuntimeProxyConfig,
-  NeemRuntimeWorkerDeclaration,
 } from '../shared/types.ts'
 import { mergeUserRolldownOptions } from '../shared/rolldown.ts'
 import { NeemRuntimeDeclarationBrand } from './runtime.ts'
@@ -60,39 +58,14 @@ function mergeRuntimeDeclarationLayers(
   commonOptions: NeemRuntimeDeclarationLayer,
   userOptions: NeemRuntimeDeclarationLayer,
 ): NeemRuntimeDeclaration {
-  const worker = mergeRuntimeWorkerDeclarations(
-    commonOptions.worker,
-    userOptions.worker,
-  )
-  const host = mergeRuntimeHostDeclarations(
-    commonOptions.host,
-    userOptions.host,
-  )
-  const {
-    worker: _commonWorker,
-    host: _commonHost,
-    env: commonEnv,
-    proxy: commonProxy,
-    ...commonRest
-  } = commonOptions
-  const {
-    worker: _userWorker,
-    host: _userHost,
-    env: userEnv,
-    proxy: userProxy,
-    ...userRest
-  } = userOptions
-  const env = mergeRuntimeEnv(commonEnv, userEnv)
-  const proxy = mergeRuntimeProxyConfig(commonProxy, userProxy)
-
   return {
-    ...commonRest,
-    ...userRest,
-    ...(env ? { env } : {}),
-    ...(proxy ? { proxy } : {}),
-    ...(worker ? { worker } : {}),
-    ...(host ? { host } : {}),
-  }
+    ...commonOptions,
+    ...userOptions,
+    env: mergeRuntimeEnv(commonOptions.env, userOptions.env),
+    proxy: mergeRuntimeProxyConfig(commonOptions.proxy, userOptions.proxy),
+    worker: mergeEntryDeclaration(commonOptions.worker, userOptions.worker),
+    host: mergeEntryDeclaration(commonOptions.host, userOptions.host),
+  } as NeemRuntimeDeclaration
 }
 
 function mergeRuntimeEnv(
@@ -114,48 +87,34 @@ function mergeRuntimeProxyConfig(
   userProxy: NeemRuntimeDeclarationLayer['proxy'],
 ): NeemRuntimeProxyConfig | undefined {
   if (!commonProxy && !userProxy) return undefined
-  const routing = mergeRuntimeProxyRouting(
-    commonProxy?.routing,
-    userProxy?.routing,
-  )
-  return { ...commonProxy, ...userProxy, ...(routing ? { routing } : {}) }
-}
-
-function mergeRuntimeProxyRouting(
-  commonRouting: NeemRuntimeProxyConfig['routing'],
-  userRouting: NeemRuntimeProxyConfig['routing'],
-): NeemProxyRoutingOptions | undefined {
-  return userRouting ?? commonRouting
-}
-
-function mergeRuntimeWorkerDeclarations(
-  commonWorker: NeemRuntimeDeclarationLayer['worker'],
-  userWorker: NeemRuntimeDeclarationLayer['worker'],
-): NeemRuntimeWorkerDeclaration | undefined {
-  if (!commonWorker && !userWorker) return undefined
+  // Routing is a mode selection, not a bag of options: the user layer replaces
+  // it wholesale instead of deep-merging into the common layer's mode.
   return {
-    ...commonWorker,
-    ...userWorker,
-    build: mergeRuntimeBuildConfig(commonWorker?.build, userWorker?.build),
-  } as NeemRuntimeWorkerDeclaration
-}
-
-function mergeRuntimeHostDeclarations(
-  commonHost: NeemRuntimeDeclarationLayer['host'],
-  userHost: NeemRuntimeDeclarationLayer['host'],
-): NeemRuntimeHostDeclaration | undefined {
-  if (!commonHost && !userHost) return undefined
-  return {
-    ...commonHost,
-    ...userHost,
-    build: mergeRuntimeBuildConfig(commonHost?.build, userHost?.build),
+    ...commonProxy,
+    ...userProxy,
+    routing: userProxy?.routing ?? commonProxy?.routing,
   }
+}
+
+// Worker and host declarations share the same {entry, build} merge shape.
+function mergeEntryDeclaration<
+  T extends { entry?: NeemEntryInput; build?: NeemRuntimeBuildConfig },
+>(common: Partial<T> | undefined, user: Partial<T> | undefined): T | undefined {
+  if (!common && !user) return undefined
+  return {
+    ...common,
+    ...user,
+    build: mergeRuntimeBuildConfig(common?.build, user?.build),
+  } as T
 }
 
 function mergeRuntimeBuildConfig(
   commonBuild: NeemRuntimeBuildConfig | undefined,
   userBuild: NeemRuntimeBuildConfig | undefined,
 ): NeemRuntimeBuildConfig | undefined {
+  // mergeUserRolldownOptions gives user options scalar priority while its
+  // plugin merger keeps common-layer (framework preset) plugins running
+  // before user plugins — pinned by config.spec.
   const rolldown = mergeUserRolldownOptions(
     userBuild?.rolldown,
     commonBuild?.rolldown,
