@@ -13,6 +13,7 @@ import type {
   HostRunnerResponse,
   HostRunnerResult,
 } from './runner-protocol.ts'
+import { RpcChannel } from '../rpc.ts'
 import { deserializeError, raceWithTimeout } from '../utils.ts'
 import { getTransferList } from './runner-protocol.ts'
 
@@ -27,20 +28,20 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 30_000
 
 export class HostRunner {
   private worker: Worker | undefined
-  private nextId = 1
-  private readonly pending = new Map<
-    number,
-    {
-      future: ReturnType<typeof createFuture<HostRunnerResult | undefined>>
-      timeout: NodeJS.Timeout
-    }
-  >()
+  private readonly rpc: RpcChannel<HostRunnerResult>
   private ready: ReturnType<typeof createFuture<void>> | undefined
   private exited: ReturnType<typeof createFuture<void>> | undefined
   private stopping = false
   private failed = false
 
-  constructor(private readonly options: HostRunnerOptions) {}
+  constructor(private readonly options: HostRunnerOptions) {
+    this.rpc = new RpcChannel({
+      post: (message, transfer) => this.worker?.postMessage(message, transfer),
+      timeoutMs: () => getRequestTimeoutMs(this.options.env),
+      timeoutMessage: (type, timeoutMs) =>
+        `Neem host runner request [${type}] timed out after ${timeoutMs}ms`,
+    })
+  }
 
   async start(): Promise<void> {
     if (this.worker) return
@@ -92,33 +93,15 @@ export class HostRunner {
     } finally {
       if (!exited) await worker.terminate().catch(() => undefined)
       this.worker = undefined
-      this.rejectPending(new Error('Neem host runner stopped'))
+      this.rpc.settleAll(new Error('Neem host runner stopped'))
     }
   }
 
   private request(
     command: HostRunnerCommand,
   ): Promise<HostRunnerResult | undefined> {
-    const worker = this.worker
-    if (!worker) throw new Error('Neem host runner is not started')
-
-    const id = this.nextId++
-    const message = { ...command, id }
-    const future = createFuture<HostRunnerResult | undefined>()
-    const timeoutMs = getRequestTimeoutMs(this.options.env)
-    const timeout = setTimeout(() => {
-      this.pending.delete(id)
-      future.reject(
-        new Error(
-          `Neem host runner request [${command.type}] timed out after ${timeoutMs}ms`,
-        ),
-      )
-    }, timeoutMs)
-    timeout.unref()
-
-    this.pending.set(id, { future, timeout })
-    worker.postMessage(message, getTransferList(command))
-    return future.promise
+    if (!this.worker) throw new Error('Neem host runner is not started')
+    return this.rpc.request(command, { transfer: getTransferList(command) })
   }
 
   private handleMessage(message: HostRunnerResponse): void {
@@ -133,22 +116,18 @@ export class HostRunner {
       return
     }
 
-    const pending = this.pending.get(message.id)
-    if (!pending) return
-    this.pending.delete(message.id)
-    clearTimeout(pending.timeout)
-
-    if (message.type === 'error') {
-      pending.future.reject(deserializeError(message.error))
-    } else {
-      pending.future.resolve(message.data)
-    }
+    this.rpc.settle(message)
   }
 
   private handleExit(code: number): void {
     this.exited?.resolve()
     this.ready?.reject(new Error(`Neem host runner exited with code [${code}]`))
     this.worker = undefined
+    this.rpc.settleAll(
+      new Error(
+        `Neem host runner exited with code [${code}] before responding`,
+      ),
+    )
 
     if (!this.stopping) {
       this.handleFailure(
@@ -161,21 +140,9 @@ export class HostRunner {
     if (this.failed) return
     this.failed = true
     this.worker = undefined
-    this.failPending(error)
-    void this.options.onFailure?.(error)
-  }
-
-  private failPending(error: Error): void {
     this.ready?.reject(error)
-    this.rejectPending(error)
-  }
-
-  private rejectPending(error: Error): void {
-    for (const pending of this.pending.values()) {
-      clearTimeout(pending.timeout)
-      pending.future.reject(error)
-    }
-    this.pending.clear()
+    this.rpc.settleAll(error)
+    void this.options.onFailure?.(error)
   }
 }
 

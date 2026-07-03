@@ -43,8 +43,36 @@ describe('WorkerServiceClient', () => {
       serviceName: 'test-service',
     })
 
-    await expect(client.request({ id: 0, type: 'hang' })).rejects.toThrow(
+    await expect(client.request({ type: 'hang' })).rejects.toThrow(
       'Neem worker service request [test-service:hang] timed out after 50ms',
+    )
+    await expect(client.stop()).resolves.toBeUndefined()
+  })
+
+  it('settles pending requests when the worker exits before responding', async () => {
+    // Long request timeout: the rejection must come from the exit, not the timer.
+    process.env.NEEM_WORKER_SERVICE_REQUEST_TIMEOUT_MS = '30000'
+    const entry = await createWorkerEntry(`
+      import { parentPort } from 'node:worker_threads'
+
+      parentPort.on('message', () => {})
+    `)
+    const client = new WorkerServiceClient<never>({
+      entry,
+      serviceName: 'test-service',
+      onFailure: () => {},
+    })
+
+    const hanging = client.request({ type: 'hang' })
+    hanging.catch(() => {})
+    // Kill from the parent side; vitest's thread bootstrap patches process.exit
+    // inside nested workers, so the worker cannot exit itself in this suite.
+    await (
+      client as unknown as { worker: { terminate: () => Promise<void> } }
+    ).worker.terminate()
+
+    await expect(hanging).rejects.toThrow(
+      /exited with code \[\d+\] before responding/,
     )
     await expect(client.stop()).resolves.toBeUndefined()
   })

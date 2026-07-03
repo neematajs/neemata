@@ -2,8 +2,10 @@ import { Worker } from 'node:worker_threads'
 
 import { createFuture } from '@nmtjs/common'
 
+import type { RpcCommand } from '../rpc.ts'
 import type { SerializedError } from '../utils.ts'
-import { deserializeError, raceWithTimeout } from '../utils.ts'
+import { RpcChannel } from '../rpc.ts'
+import { raceWithTimeout } from '../utils.ts'
 
 export type WorkerServiceResponse<TEvent, TResult> =
   | { id: number; type: 'result'; data?: TResult }
@@ -46,45 +48,36 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 30_000
 
 export class WorkerServiceClient<TEvent, TResult = unknown> {
   private readonly worker: Worker
-  private nextId = 1
   private stopping = false
-  private readonly pending = new Map<
-    number,
-    {
-      future: ReturnType<typeof createFuture<TResult | undefined>>
-      timeout: NodeJS.Timeout
-    }
-  >()
+  private hasExited = false
+  private readonly rpc: RpcChannel<TResult>
   private readonly exited = createFuture<void>()
 
   constructor(private readonly options: WorkerServiceClientOptions<TEvent>) {
     this.worker = new Worker(options.entry)
+    this.rpc = new RpcChannel({
+      post: (message) => this.worker.postMessage(message),
+      timeoutMs: getRequestTimeoutMs,
+      timeoutMessage: (type, timeoutMs) =>
+        `Neem worker service request [${options.serviceName}:${type}] timed out after ${timeoutMs}ms`,
+    })
     this.worker.on('message', (message) => this.handleMessage(message))
     this.worker.on('error', (error) => this.fail(error))
     this.worker.on('exit', (code) => this.handleExit(code))
   }
 
   request<T extends TResult = TResult>(
-    command: { type: string } & Record<string, unknown>,
+    command: RpcCommand,
     options: { timeoutMs?: number } = {},
   ): Promise<T | undefined> {
-    const id = this.nextId++
-    const message = { ...command, id }
-    const future = createFuture<TResult | undefined>()
-    const timeoutMs = options.timeoutMs ?? getRequestTimeoutMs()
-    const timeout = setTimeout(() => {
-      this.pending.delete(id)
-      future.reject(
+    if (this.hasExited) {
+      return Promise.reject(
         new Error(
-          `Neem worker service request [${this.options.serviceName}:${command.type}] timed out after ${timeoutMs}ms`,
+          `Neem worker service [${this.options.serviceName}] is not running`,
         ),
       )
-    }, timeoutMs)
-    timeout.unref()
-
-    this.pending.set(id, { future, timeout })
-    this.worker.postMessage(message)
-    return future.promise as Promise<T | undefined>
+    }
+    return this.rpc.request(command, options) as Promise<T | undefined>
   }
 
   async stop(command: { type: 'stop' } = { type: 'stop' }): Promise<void> {
@@ -125,7 +118,7 @@ export class WorkerServiceClient<TEvent, TResult = unknown> {
         })
       }
       if (!exited) await this.worker.terminate().catch(() => undefined)
-      this.rejectPending(new Error('Neem worker service stopped'))
+      this.rpc.settleAll(new Error('Neem worker service stopped'))
     }
   }
 
@@ -135,23 +128,22 @@ export class WorkerServiceClient<TEvent, TResult = unknown> {
       return
     }
 
-    const pending = this.pending.get(message.id)
-    if (!pending) return
-    this.pending.delete(message.id)
-    clearTimeout(pending.timeout)
-
-    if (message.type === 'error') {
-      pending.future.reject(deserializeError(message.error))
-    } else {
-      pending.future.resolve(message.data)
-    }
+    this.rpc.settle(message)
   }
 
   private handleExit(code: number): void {
+    this.hasExited = true
     this.exited.resolve()
+    this.rpc.settleAll(
+      new Error(
+        `Neem worker service exited with code [${code}] before responding`,
+      ),
+    )
     if (this.stopping) return
 
-    this.fail(new Error(`Neem worker service exited with code [${code}]`))
+    this.options.onFailure?.(
+      new Error(`Neem worker service exited with code [${code}]`),
+    )
   }
 
   private reportStopProgress(
@@ -168,16 +160,8 @@ export class WorkerServiceClient<TEvent, TResult = unknown> {
   }
 
   private fail(error: Error): void {
-    this.rejectPending(error)
+    this.rpc.settleAll(error)
     this.options.onFailure?.(error)
-  }
-
-  private rejectPending(error: Error): void {
-    for (const pending of this.pending.values()) {
-      clearTimeout(pending.timeout)
-      pending.future.reject(error)
-    }
-    this.pending.clear()
   }
 }
 
