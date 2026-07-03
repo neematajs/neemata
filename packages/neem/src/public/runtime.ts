@@ -21,7 +21,9 @@ export function defineRuntimeHost<
     params: NeemRuntimeHostFactoryParams<Options>,
   ) => MaybePromise<NeemRuntimeHost>,
 >(factory: TFactory): TFactory {
-  return Object.freeze(Object.assign(factory, { [NeemRuntimeHostBrand]: true }))
+  // Functions cannot be copied like objects, so branding mutates the input;
+  // it stays unfrozen to keep the caller free to decorate it.
+  return Object.assign(factory, { [NeemRuntimeHostBrand]: true })
 }
 
 export function isNeemRuntimeHostFactory(
@@ -38,9 +40,8 @@ export function defineRuntimePlanner<
     Data
   >,
 >(planner: TPlanner): TPlanner {
-  return Object.freeze(
-    Object.assign(planner, { [NeemRuntimePlannerBrand]: true }),
-  )
+  // Same trade-off as defineRuntimeHost: brand in place, do not freeze.
+  return Object.assign(planner, { [NeemRuntimePlannerBrand]: true })
 }
 
 export function isNeemRuntimePlanner(value: any): value is NeemRuntimePlanner {

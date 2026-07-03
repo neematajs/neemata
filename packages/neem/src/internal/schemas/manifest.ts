@@ -64,9 +64,7 @@ const manifestLoggerSchema = z.discriminatedUnion('type', [
   }),
 ])
 
-const manifestRuntimeConfigSchema = z.looseObject({
-  static: z.optional(z.literal(true)),
-})
+const manifestRuntimeConfigSchema = z.looseObject({})
 
 const manifestConfigSchema = z.looseObject({
   logger: z.optional(manifestLoggerSchema),

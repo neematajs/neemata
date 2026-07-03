@@ -33,11 +33,9 @@ export default defineRuntimeWorker<HttpRuntimeData>({
           server?.listen(ctx.data.port, '127.0.0.1', resolveListen)
         })
 
-        return {
-          upstreams: [
-            { type: 'http', url: `http://127.0.0.1:${ctx.data.port}` },
-          ],
-        }
+        return [
+          { type: 'http' as const, url: `http://127.0.0.1:${ctx.data.port}` },
+        ]
       },
       async stop() {
         record({ event: 'http-runtime-stop', name: ctx.name })

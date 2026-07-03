@@ -98,7 +98,6 @@ describe('Neem compiler', () => {
       resolve(target.outDir, 'compiled-entry.js'),
     )
     expect(compiled.bundle).toBeUndefined()
-    expect(compiled.artifact.bundle).toBeUndefined()
   })
 
   it('appends default deps chunk group after user chunk groups', async () => {
@@ -167,7 +166,6 @@ describe('Neem compiler', () => {
       resolve(target.outDir, 'watch-entry.js'),
     )
     expect(compiled.bundle).toBeUndefined()
-    expect(compiled.artifact.bundle).toBeUndefined()
     expect(initialResult.close).toHaveBeenCalledTimes(1)
   })
 

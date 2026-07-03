@@ -3,7 +3,7 @@ import type { MessagePort } from 'node:worker_threads'
 import type { MaybePromise } from '@nmtjs/common'
 import type { Logger, LoggingOptions } from '@nmtjs/core'
 import type { Hookable } from 'hookable'
-import type { OutputOptions, RolldownOptions, RolldownOutput } from 'rolldown'
+import type { OutputOptions, RolldownOptions } from 'rolldown'
 
 export type { RolldownOptions, RolldownPluginOption } from 'rolldown'
 
@@ -48,19 +48,6 @@ export type NeemChunkGroup = NonNullable<
 
 export type NeemChunkingOptions = false | { groups?: readonly NeemChunkGroup[] }
 
-export type NeemArtifact = {
-  id: string
-  kind: NeemArtifactKind
-  entry: NeemArtifactEntry
-  rolldown?: NeemRolldownOptions
-  chunks?: NeemChunkingOptions
-}
-
-export type NeemRuntimeBuildMetadata = {
-  artifacts?: readonly NeemArtifact[]
-  rolldown?: NeemRolldownOptions
-}
-
 export type NeemArtifactOwner =
   | { type: 'config' }
   | { type: 'runtime'; name: string }
@@ -71,8 +58,6 @@ export type NeemResolvedArtifact = {
   owner: NeemArtifactOwner
   file: string
   outDir: string
-  bundle?: RolldownOutput
-  emittedArtifacts?: readonly NeemResolvedArtifact[]
 }
 
 export type NeemArtifactRegistry = {
@@ -80,19 +65,7 @@ export type NeemArtifactRegistry = {
   list: () => readonly NeemResolvedArtifact[]
 }
 
-export type NeemEntryModule<T> = { default: T }
-
-export type NeemEntryLoader<T> = () => Promise<NeemEntryModule<T>>
-
 export type NeemEntryInput = NeemArtifactEntry
-
-export type InferNeemEntryDefault<TEntry> = TEntry extends () => Promise<
-  infer TModule
->
-  ? TModule extends { default: infer TDefault }
-    ? TDefault
-    : never
-  : never
 
 export type NeemLoggerOptions = LoggingOptions
 
@@ -134,7 +107,9 @@ export type NeemRuntimeWorkerDeclaration = {
 
 export type NeemMode = 'development' | 'production'
 
-export type NeemRuntimeUpstream = { type: string; url: string }
+export type NeemRuntimeUpstreamType = 'http' | 'http2' | 'ws'
+
+export type NeemRuntimeUpstream = { type: NeemRuntimeUpstreamType; url: string }
 
 export type NeemRuntimeServerState =
   | 'idle'
@@ -237,14 +212,8 @@ export type NeemRuntimeServerHealth = NeemRuntimeServerSnapshot & {
   proxy: NeemProxyHealth
 }
 
-export type NeemRuntimeStartResult = {
-  upstreams?: readonly NeemRuntimeUpstream[]
-}
-
 export type NeemRuntime = {
-  start: () => MaybePromise<
-    readonly NeemRuntimeUpstream[] | NeemRuntimeStartResult | undefined
-  >
+  start: () => MaybePromise<readonly NeemRuntimeUpstream[] | undefined>
   stop: () => MaybePromise<void>
 }
 
@@ -263,26 +232,26 @@ export type NeemRuntimePlanner<Options = unknown, Data = unknown> = (
   ctx: NeemRuntimePlannerContext,
 ) => MaybePromise<NeemRuntimePlan<Options, Data>>
 
-export type NeemRuntimeHostDeclaration<
-  _THost extends NeemRuntimeHostFactory = NeemRuntimeHostFactory,
-> = { entry?: NeemEntryInput; build?: NeemRuntimeBuildConfig }
+export type NeemRuntimeHostDeclaration = {
+  entry?: NeemEntryInput
+  build?: NeemRuntimeBuildConfig
+}
 
-export type NeemRuntimeDeclaration<
-  THost extends NeemRuntimeHostFactory = NeemRuntimeHostFactory,
-> = {
+export type NeemRuntimeDeclaration = {
   name?: string
   planner?: NeemEntryInput
   env?: NeemEnv
   proxy?: NeemRuntimeProxyConfig
   worker?: NeemRuntimeWorkerDeclaration
-  host?: NeemRuntimeHostDeclaration<THost>
+  host?: NeemRuntimeHostDeclaration
 }
 
-export type NeemRuntimeDeclarationLayer<
-  THost extends NeemRuntimeHostFactory = NeemRuntimeHostFactory,
-> = Omit<NeemRuntimeDeclaration<THost>, 'worker' | 'host'> & {
+export type NeemRuntimeDeclarationLayer = Omit<
+  NeemRuntimeDeclaration,
+  'worker' | 'host'
+> & {
   worker?: Partial<NeemRuntimeWorkerDeclaration>
-  host?: Partial<NeemRuntimeHostDeclaration<THost>>
+  host?: Partial<NeemRuntimeHostDeclaration>
 }
 
 export type NeemMarkedRuntimeDeclaration<
@@ -314,7 +283,7 @@ export type NeemProxyConfig = {
     ttlMs?: number
     maxEntries?: number
   }
-  tls?: { key: string; cert: string }
+  tls?: { keyPath: string; certPath: string }
 }
 
 export type NeemHealthConfig = {
@@ -323,9 +292,7 @@ export type NeemHealthConfig = {
   paths?: { health?: string; ready?: string }
 }
 
-export type NeemConfig<
-  TRuntimes extends NeemRuntimeProjectEntries = NeemRuntimeProjectEntries,
-> = {
+export type NeemConfig = {
   /**
    * Logger configuration for Neem host/runtime logs.
    *
@@ -343,7 +310,7 @@ export type NeemConfig<
   logger?: NeemLoggerInput
   env?: NeemEnv
   build?: NeemBuildConfig
-  runtimes: TRuntimes
+  runtimes: NeemRuntimeProjectEntries
   proxy?: NeemProxyConfig
   health?: NeemHealthConfig
   // commands?: Record<string, NeemCommandInput>
@@ -395,14 +362,6 @@ export type NeemWorkerState =
   | 'stopping'
   | 'stopped'
   | 'failed'
-
-export type NeemManagedWorkerHandle = {
-  id: string
-  name: string
-  artifactId: string
-  getState: () => NeemWorkerState
-  stop: () => Promise<void>
-}
 
 export type NeemRuntimeWorkerContext<Data = unknown, Definition = unknown> = {
   mode: NeemMode

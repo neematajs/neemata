@@ -7,16 +7,13 @@ import type {
   NeemRuntimeDeclaration,
   NeemRuntimeDeclarationLayer,
   NeemRuntimeHostDeclaration,
-  NeemRuntimeProjectEntries,
   NeemRuntimeProxyConfig,
   NeemRuntimeWorkerDeclaration,
 } from '../shared/types.ts'
 import { mergeUserRolldownOptions } from '../shared/rolldown.ts'
 import { NeemRuntimeDeclarationBrand } from './runtime.ts'
 
-export function defineConfig<const TRuntimes extends NeemRuntimeProjectEntries>(
-  config: NeemConfig<TRuntimes>,
-): NeemConfig<TRuntimes> {
+export function defineConfig(config: NeemConfig): NeemConfig {
   return Object.freeze({
     ...config,
     ...(config.env ? { env: freezeRuntimeEnv(config.env) } : {}),
@@ -24,7 +21,7 @@ export function defineConfig<const TRuntimes extends NeemRuntimeProjectEntries>(
 }
 
 export function definePlugin<const T extends NeemPluginInput>(plugin: T): T {
-  return Object.freeze(plugin)
+  return Object.freeze({ ...plugin })
 }
 
 export function defineRuntime<

@@ -32,11 +32,12 @@ export default defineRuntimeWorker<GenericRuntimeData>({
         if (!ctx.data.http) return
 
         const { hostname, port } = ctx.data.http.listen
-        return {
-          upstreams: [
-            { type: 'http', url: `http://${hostname}:${port}/${ctx.name}` },
-          ],
-        }
+        return [
+          {
+            type: 'http' as const,
+            url: `http://${hostname}:${port}/${ctx.name}`,
+          },
+        ]
       },
       stop() {
         record({ event: 'runtime-stop', name: ctx.name })

@@ -17,13 +17,10 @@ describe('createArtifactRegistry', () => {
     expect(
       registry.resolveFor({ type: 'runtime', name: 'jobs' }, 'entry'),
     ).toBe(jobsEntry)
-    expect(registry.scope({ type: 'runtime', name: 'jobs' }).list()).toEqual([
-      jobsEntry,
-      jobsSchema,
-    ])
     expect(
-      registry.scope({ type: 'runtime', name: 'jobs' }).resolve('schema'),
+      registry.resolveFor({ type: 'runtime', name: 'jobs' }, 'schema'),
     ).toBe(jobsSchema)
+    expect(registry.list()).toEqual([apiEntry, jobsEntry, jobsSchema])
   })
 })
 

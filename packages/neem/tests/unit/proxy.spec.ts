@@ -63,7 +63,7 @@ describe('Neem proxy helpers', () => {
       port: 8080,
       healthChecks: { interval: 250 },
       stickySessions: { enabled: true, cookieName: 'sid' },
-      tls: { key: '/certs/key.pem', cert: '/certs/cert.pem' },
+      tls: { keyPath: '/certs/key.pem', certPath: '/certs/cert.pem' },
     }
 
     expect(

@@ -35,11 +35,6 @@ describe('Neem internal schemas', () => {
     expect(
       parseRuntimeStartResult([{ type: 'http', url: 'http://127.0.0.1:3000' }]),
     ).toEqual([{ type: 'http', url: 'http://127.0.0.1:3000' }])
-    expect(
-      parseRuntimeStartResult({
-        upstreams: [{ type: 'ws', url: 'ws://127.0.0.1:3001' }],
-      }),
-    ).toEqual([{ type: 'ws', url: 'ws://127.0.0.1:3001' }])
-    expect(parseRuntimeStartResult({})).toEqual([])
+    expect(() => parseRuntimeStartResult({})).toThrow()
   })
 })

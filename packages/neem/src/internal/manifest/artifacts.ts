@@ -9,7 +9,6 @@ export type ScopedArtifactRegistry = NeemArtifactRegistry & {
     owner: NeemArtifactOwner,
     id: string,
   ) => NeemResolvedArtifact | undefined
-  scope: (owner: NeemArtifactOwner) => NeemArtifactRegistry
 }
 
 export function createArtifactRegistry(
@@ -39,18 +38,6 @@ export function createArtifactRegistry(
     },
     list() {
       return artifacts
-    },
-    scope(owner) {
-      return {
-        resolve(id) {
-          return registry.resolveFor(owner, id)
-        },
-        list() {
-          return artifacts.filter(
-            (artifact) => getOwnerKey(artifact.owner) === getOwnerKey(owner),
-          )
-        },
-      }
     },
   }
 

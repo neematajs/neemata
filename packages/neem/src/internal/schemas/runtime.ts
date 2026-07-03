@@ -17,18 +17,11 @@ export function parseRuntimeUpstreams(
   ) as readonly NeemRuntimeUpstream[]
 }
 
-const runtimeStartResultSchema = z.optional(
-  z.union([
-    runtimeUpstreamsSchema,
-    z.looseObject({ upstreams: z.optional(runtimeUpstreamsSchema) }),
-  ]),
-)
+const runtimeStartResultSchema = z.optional(runtimeUpstreamsSchema)
 
 export function parseRuntimeStartResult(
   result: unknown,
 ): readonly NeemRuntimeUpstream[] {
   const parsed = runtimeStartResultSchema.parse(result)
-  if (parsed === undefined) return []
-  if (Array.isArray(parsed)) return parsed as readonly NeemRuntimeUpstream[]
-  return (parsed.upstreams ?? []) as readonly NeemRuntimeUpstream[]
+  return (parsed ?? []) as readonly NeemRuntimeUpstream[]
 }

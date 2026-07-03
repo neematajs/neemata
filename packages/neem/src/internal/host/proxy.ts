@@ -291,7 +291,7 @@ export function toProxyUpstream(
 
   return {
     type: 'port',
-    transport: upstream.type as NeemProxyUpstream['transport'],
+    transport: upstream.type,
     secure,
     hostname: url.hostname,
     port,
@@ -317,9 +317,7 @@ export function createNativeProxyOptions(
 
   return {
     listen: `${config.hostname}:${config.port}`,
-    tls: config.tls
-      ? { keyPath: config.tls.key, certPath: config.tls.cert }
-      : undefined,
+    tls: config.tls,
     applications,
     healthCheckIntervalMs: config.healthChecks?.interval,
     stickySessions: config.stickySessions,

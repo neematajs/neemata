@@ -64,11 +64,9 @@ export default defineRuntimeWorker<RecoveryHealthData>({
           port: ctx.data.port,
         })
 
-        return {
-          upstreams: [
-            { type: 'http', url: `http://127.0.0.1:${ctx.data.port}` },
-          ],
-        }
+        return [
+          { type: 'http' as const, url: `http://127.0.0.1:${ctx.data.port}` },
+        ]
       },
       async stop() {
         record({

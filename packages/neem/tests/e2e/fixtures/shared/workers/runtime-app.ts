@@ -50,11 +50,12 @@ export default defineRuntimeWorker<
 
         if (!ctx.data.http) return
         const { hostname, port } = ctx.data.http.listen
-        return {
-          upstreams: [
-            { type: 'http', url: `http://${hostname}:${port}/${ctx.name}` },
-          ],
-        }
+        return [
+          {
+            type: 'http' as const,
+            url: `http://${hostname}:${port}/${ctx.name}`,
+          },
+        ]
       },
       stop() {
         record({ event: 'stop', name: ctx.name })

@@ -38,7 +38,6 @@ export type ManifestLogger =
   | { type: 'module'; file: string }
 
 export type ManifestRuntimeConfig = {
-  static?: true
   proxy?: NeemRuntimeProxyConfig
 }
 
