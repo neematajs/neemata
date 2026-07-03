@@ -12,6 +12,7 @@ import type {
   AnyTaskDefinition,
   AnyWorkflowDefinition,
   BranchCaseDefinition,
+  DurationString,
   RetryPolicy,
   Schema,
 } from '../types/index.ts'
@@ -22,7 +23,11 @@ import type {
 } from './commands.ts'
 import type { AttemptExecutor, RunCoordinationExecutor } from './executors.ts'
 import type { StoredAttempt, StoredNode } from './state.ts'
-import type { WorkflowStore } from './store.ts'
+import type {
+  PruneTerminalRunsParams,
+  WorkflowRetentionPruner,
+  WorkflowStore,
+} from './store.ts'
 import { continueWorkflowRun } from './coordinator.ts'
 import { parseDurationMs } from './duration.ts'
 import { createWorkflowRuntimeRegistry } from './registry.ts'
@@ -92,12 +97,21 @@ export type WorkerCommandResult = {
   readonly status: 'processed' | 'released'
 }
 
+export type WorkerRetentionOptions = {
+  readonly olderThan: DurationString
+  readonly everyMs?: number
+  readonly batchSize?: number
+  readonly statuses?: PruneTerminalRunsParams['statuses']
+}
+
 export type WorkerLoopOptions = {
   readonly workerId: string
   readonly concurrency?: number
   readonly leaseMs?: number
   readonly maxIdleClaims?: number
   readonly idleDelayMs?: number
+  readonly retention?: WorkerRetentionOptions
+  readonly retentionPruner?: WorkflowRetentionPruner
   readonly signal?: AbortSignal
 }
 
@@ -154,7 +168,7 @@ export async function runWorkflowWorker(
     (implementation) => implementation.workflow.name,
   )
 
-  return runWorkerLoop(input, async () => {
+  return runWorkerLoop(withDefaultRetentionPruner(input), async () => {
     const claimed = await input.runCoordinationExecutor.claim({
       workerId: input.workerId,
       workflowNames,
@@ -203,7 +217,7 @@ export async function runActivityWorker(
   const activityNames =
     input.activityNames ?? collectWorkflowActivityNames(input.workflows)
 
-  return runWorkerLoop(input, async () => {
+  return runWorkerLoop(withDefaultRetentionPruner(input), async () => {
     const claimed = await input.attemptExecutor.claimActivity({
       workerId: input.workerId,
       workflowNames,
@@ -236,7 +250,7 @@ export async function runTaskWorker(
     (implementation) => implementation.task.name,
   )
 
-  return runWorkerLoop(input, async () => {
+  return runWorkerLoop(withDefaultRetentionPruner(input), async () => {
     const claimed = await input.attemptExecutor.claimTask({
       workerId: input.workerId,
       taskNames,
@@ -299,6 +313,36 @@ async function runWorkerLoop(
   let processed = 0
   let firstError: unknown
   let stopped = false
+  let lastRetentionAt = 0
+  let retentionRunning = false
+  const runRetentionPrune = async () => {
+    if (!options.retention || !options.retentionPruner) return
+    const everyMs = options.retention.everyMs ?? 60_000
+    if (!Number.isFinite(everyMs) || everyMs < 0) {
+      throw new Error('Retention everyMs must be a non-negative number')
+    }
+    const date = Date.now()
+    if (retentionRunning || date - lastRetentionAt < everyMs) return
+
+    const olderThanMs = parseDurationMs(options.retention.olderThan)
+    if (olderThanMs === undefined) {
+      throw new Error(
+        `Invalid retention olderThan duration [${options.retention.olderThan}]`,
+      )
+    }
+
+    retentionRunning = true
+    lastRetentionAt = date
+    try {
+      await options.retentionPruner.pruneTerminalRuns({
+        olderThan: new Date(date - olderThanMs),
+        batchSize: options.retention.batchSize,
+        statuses: options.retention.statuses,
+      })
+    } finally {
+      retentionRunning = false
+    }
+  }
   await Promise.allSettled(
     Array.from({ length: concurrency }, async () => {
       let idleClaims = 0
@@ -316,6 +360,7 @@ async function runWorkerLoop(
           }
 
           idleClaims += 1
+          await runRetentionPrune()
           if (idleClaims < maxIdleClaims) {
             await sleep(options.idleDelayMs ?? 0, options.signal)
           }
@@ -329,6 +374,13 @@ async function runWorkerLoop(
 
   if (firstError) throw firstError
   return { processed }
+}
+
+function withDefaultRetentionPruner<
+  Input extends WorkerLoopOptions & { readonly store: WorkflowStore },
+>(input: Input): Input {
+  if (input.retentionPruner) return input
+  return { ...input, retentionPruner: input.store }
 }
 
 async function sleep(

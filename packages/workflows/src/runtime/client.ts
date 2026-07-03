@@ -19,6 +19,9 @@ import type {
   DeadWorkflowCommand,
   ListRunsFilter,
   ListRunsResult,
+  PruneTerminalRunsParams,
+  PruneTerminalRunsResult,
+  WorkflowRetentionPruner,
   WorkflowStore,
 } from './store.ts'
 import type {
@@ -43,6 +46,7 @@ export type WorkflowRuntimeAdapter = {
   readonly store: WorkflowStore
   readonly runCoordinationExecutor: RunCoordinationExecutor
   readonly attemptExecutor: AttemptExecutor
+  readonly retentionPruner?: WorkflowRetentionPruner
   readonly atomicStart?: WorkflowRuntimeAtomicStart
   readonly atomicContinuation?: WorkflowRuntimeAtomicContinuation
   readonly atomicCompletion?: WorkflowRuntimeAtomicCompletion
@@ -71,6 +75,9 @@ export type WorkflowRuntimeClient = {
   readonly cancel: (runId: string) => Promise<StoredRun | undefined>
   readonly get: (runId: string) => Promise<RunSnapshot | undefined>
   readonly list: (filter?: ListRunsFilter) => Promise<ListRunsResult>
+  readonly pruneRuns: (
+    params: PruneTerminalRunsParams,
+  ) => Promise<PruneTerminalRunsResult>
   readonly listDeadCommands: () => Promise<readonly DeadWorkflowCommand[]>
   readonly requeueDeadCommand: (id: string) => Promise<void>
 }
@@ -132,9 +139,31 @@ export function createWorkflowRuntimeClient(
     },
     get: (runId) => input.store.loadRunSnapshot(runId),
     list: (filter) => input.store.listRuns(filter),
+    pruneRuns: (params) => pruneRuns(input.store, params),
     listDeadCommands: () => input.store.listDeadCommands(),
     requeueDeadCommand: (id) => input.store.requeueDeadCommand(id),
   })
+}
+
+async function pruneRuns(
+  store: WorkflowStore,
+  params: PruneTerminalRunsParams,
+): Promise<PruneTerminalRunsResult> {
+  const batchSize = normalizePruneBatchSize(params.batchSize)
+  if (batchSize < 1) return { deleted: 0 }
+  let deleted = 0
+
+  while (true) {
+    const result = await store.pruneTerminalRuns({ ...params, batchSize })
+    deleted += result.deleted
+    if (result.deleted < batchSize) return { deleted }
+  }
+}
+
+function normalizePruneBatchSize(batchSize: number | undefined): number {
+  if (batchSize === undefined) return 100
+  if (!Number.isInteger(batchSize) || batchSize < 1) return 0
+  return batchSize
 }
 
 function getWorkflowImplementation<WorkflowDef extends AnyWorkflowDefinition>(

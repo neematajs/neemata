@@ -47,6 +47,117 @@ describe.skipIf(!postgresTarget.url)(
       return harness
     }
 
+    it('prunes completed workflow trees and dead commands while preserving live runs', async () => {
+      const { runtime, pool } = await createHarness()
+      const container = createTestContainer()
+      const childWorkflow = defineWorkflow({
+        name: createTestName('postgres-retention-child'),
+        input: t.object({ text: t.string() }),
+        output: t.object({ text: t.string() }),
+      }).build()
+      const parentWorkflow = defineWorkflow({
+        name: createTestName('postgres-retention-parent'),
+        input: t.object({ text: t.string() }),
+        output: t.object({ text: t.string() }),
+      })
+        .workflow('child', childWorkflow)
+        .build()
+      const liveWorkflow = defineWorkflow({
+        name: createTestName('postgres-retention-live'),
+        input: t.object({ text: t.string() }),
+        output: t.object({ text: t.string() }),
+      })
+        .activity('hold', {
+          input: t.object({ text: t.string() }),
+          output: t.object({ text: t.string() }),
+        })
+        .build()
+      const childImpl = implementWorkflow(childWorkflow).finish(
+        (_ctx, _outputs, input) => ({ text: input.text }),
+      )
+      const parentImpl = implementWorkflow(parentWorkflow)
+        .child(childWorkflow)
+        .finish((_ctx, { child }) => child)
+      const liveImpl = implementWorkflow(liveWorkflow)
+        .hold(async (_ctx, input) => input)
+        .finish((_ctx, { hold }) => hold)
+      const client = createWorkflowRuntimeClient(runtime)
+      const completedRuns = await Promise.all([
+        client.start(parentWorkflow, { text: 'alpha' }),
+        client.start(parentWorkflow, { text: 'beta' }),
+      ])
+      const completedSnapshots = await runWorkersUntilCompleted({
+        runtime,
+        container,
+        workflows: [parentImpl, childImpl],
+        runIds: completedRuns.map((run) => run.id),
+        workerCount: 2,
+      })
+      const completedTreeIds = [
+        ...completedRuns.map((run) => run.id),
+        ...completedSnapshots.flatMap((snapshot) =>
+          snapshot.childLinks.map((link) => link.childRunId),
+        ),
+      ]
+      const liveRun = await client.start(liveWorkflow, { text: 'live' })
+      await runWorkflowWorker({
+        ...runtime,
+        container,
+        workflows: [liveImpl],
+        workerId: 'retention-live-worker',
+        maxIdleClaims: 2,
+        idleDelayMs: 10,
+      })
+      const deadCommandRun = await runtime.store.createRun({
+        workflowName: createTestName('postgres-retention-dead-command'),
+        input: {},
+      })
+      await runtime.runCoordinationExecutor.enqueue({
+        kind: 'continueRun',
+        runId: deadCommandRun.id,
+        workflowName: deadCommandRun.workflowName,
+      })
+      await pool.query(
+        `
+          UPDATE workflow_commands
+          SET delivery_count = 1,
+              dead_at = now() - interval '1 second'
+          WHERE run_id = $1
+        `,
+        [deadCommandRun.id],
+      )
+      await wait(5)
+
+      const pruned = await client.pruneRuns({
+        olderThan: new Date(),
+        batchSize: 1,
+      })
+
+      expect(pruned).toStrictEqual({ deleted: 2 })
+      await expect(
+        runtime.store.loadRunSnapshot(liveRun.id),
+      ).resolves.toBeDefined()
+      await expect(
+        runtime.store.loadRunSnapshot(deadCommandRun.id),
+      ).resolves.toBeDefined()
+      await expectGone(pool, 'workflow_runs', 'id', completedTreeIds)
+      await expectGone(pool, 'workflow_nodes', 'run_id', completedTreeIds)
+      await expectGone(pool, 'workflow_attempts', 'run_id', completedTreeIds)
+      await expectGone(pool, 'workflow_run_leases', 'run_id', completedTreeIds)
+      await expectGone(pool, 'workflow_commands', 'run_id', [
+        ...completedTreeIds,
+        deadCommandRun.id,
+      ])
+      const orphanRuns = await pool.query<{ count: number }>(`
+        SELECT count(*)::int AS count
+        FROM workflow_runs child
+        LEFT JOIN workflow_runs parent ON parent.id = child.parent_run_id
+        WHERE child.parent_run_id IS NOT NULL
+          AND parent.id IS NULL
+      `)
+      expect(orphanRuns.rows[0]?.count).toBe(0)
+    }, 30_000)
+
     it('executes multi-worker activity and task effects exactly once', async () => {
       const { runtime } = await createHarness()
       const container = createTestContainer()
@@ -608,4 +719,21 @@ async function runWorkersUntilCompleted(
 
 function increment(counters: Map<string, number>, key: string) {
   counters.set(key, (counters.get(key) ?? 0) + 1)
+}
+
+async function expectGone(
+  pool: PostgresWorkflowHarness['pool'],
+  table: string,
+  column: string,
+  ids: readonly string[],
+) {
+  const rows = await pool.query<{ count: number }>(
+    `
+      SELECT count(*)::int AS count
+      FROM ${table}
+      WHERE ${column} = ANY($1::uuid[])
+    `,
+    [ids],
+  )
+  expect(rows.rows[0]?.count).toBe(0)
 }

@@ -23,7 +23,10 @@ import type {
   CreateRunInput,
   DeadWorkflowCommand,
   ListRunsFilter,
+  PruneTerminalRunsParams,
   RunLease,
+  TerminalRunStatus,
+  WorkflowRetentionPruner,
   WorkflowStore,
 } from './store.ts'
 import { toStoredError } from './errors.ts'
@@ -56,11 +59,18 @@ type ClaimedQueueItem<T> = QueueItem<T> & {
 const RELEASE_BACKOFF_MS = 50
 const MAX_ERROR_BACKOFF_MS = 300_000
 const DEFAULT_MAX_DELIVERIES = 20
+const DEFAULT_PRUNE_BATCH_SIZE = 100
+const DEFAULT_PRUNE_STATUSES = [
+  'completed',
+  'cancelled',
+  'failed',
+] as const satisfies readonly TerminalRunStatus[]
 
 export type InMemoryWorkflowRuntime = {
   readonly store: WorkflowStore
   readonly runCoordinationExecutor: RunCoordinationExecutor
   readonly attemptExecutor: AttemptExecutor
+  readonly retentionPruner: WorkflowRetentionPruner
   readonly inspect: () => {
     readonly runs: readonly StoredRun[]
     readonly nodes: readonly StoredNode[]
@@ -267,6 +277,34 @@ export function createInMemoryWorkflowRuntime(
           ? { nextCursor: String(nextOffset) }
           : {}),
       }
+    },
+    async pruneTerminalRuns(params: PruneTerminalRunsParams) {
+      const batchSize = normalizePruneBatchSize(params.batchSize)
+      const statuses = normalizePruneStatuses(params.statuses)
+      const deadBefore = params.olderThan.getTime()
+      if (batchSize < 1 || statuses.length === 0) {
+        sweepDeadCommands(deadBefore)
+        return { deleted: 0 }
+      }
+
+      const roots = [...runs.values()]
+        .filter(
+          (run) =>
+            run.parentRunId === undefined &&
+            statuses.includes(run.status as TerminalRunStatus) &&
+            run.updatedAt < params.olderThan,
+        )
+        .sort((left, right) => {
+          const byUpdatedAt =
+            left.updatedAt.getTime() - right.updatedAt.getTime()
+          if (byUpdatedAt !== 0) return byUpdatedAt
+          return left.id.localeCompare(right.id)
+        })
+        .slice(0, batchSize)
+      const treeIds = collectRunTreeIds(roots.map((run) => run.id))
+      deleteRunTrees(treeIds)
+      sweepDeadCommands(deadBefore)
+      return { deleted: roots.length }
     },
     async listDeadCommands() {
       return [
@@ -867,6 +905,108 @@ export function createInMemoryWorkflowRuntime(
     },
   }
 
+  const normalizePruneBatchSize = (batchSize: number | undefined) => {
+    if (batchSize === undefined) return DEFAULT_PRUNE_BATCH_SIZE
+    if (!Number.isInteger(batchSize) || batchSize < 1) return 0
+    return batchSize
+  }
+  const normalizePruneStatuses = (
+    statuses: PruneTerminalRunsParams['statuses'],
+  ): readonly TerminalRunStatus[] => [
+    ...new Set(
+      (statuses ?? DEFAULT_PRUNE_STATUSES).filter((status) =>
+        DEFAULT_PRUNE_STATUSES.includes(status),
+      ),
+    ),
+  ]
+  const collectRunTreeIds = (rootIds: readonly string[]) => {
+    const treeIds = new Set(rootIds)
+    let checkedSize = -1
+    while (checkedSize !== treeIds.size) {
+      checkedSize = treeIds.size
+      for (const run of runs.values()) {
+        if (run.parentRunId && treeIds.has(run.parentRunId)) {
+          treeIds.add(run.id)
+        }
+      }
+    }
+    return treeIds
+  }
+  const deleteRunTrees = (treeIds: ReadonlySet<string>) => {
+    if (treeIds.size === 0) return
+
+    for (const runId of treeIds) {
+      runs.delete(runId)
+      runLeases.delete(runId)
+    }
+    for (const [key, runId] of runIdempotencyKeys) {
+      if (treeIds.has(runId)) runIdempotencyKeys.delete(key)
+    }
+    for (const [key, node] of nodes) {
+      if (treeIds.has(node.runId)) nodes.delete(key)
+    }
+    for (const [attemptId, attempt] of attempts) {
+      if (treeIds.has(attempt.runId)) attempts.delete(attemptId)
+    }
+    for (let index = childLinks.length - 1; index >= 0; index -= 1) {
+      const link = childLinks[index]!
+      if (treeIds.has(link.parentRunId) || treeIds.has(link.childRunId)) {
+        childLinks.splice(index, 1)
+      }
+    }
+    for (let index = mapItems.length - 1; index >= 0; index -= 1) {
+      const item = mapItems[index]!
+      if (
+        treeIds.has(item.runId) ||
+        (item.childRunId !== undefined && treeIds.has(item.childRunId))
+      ) {
+        mapItems.splice(index, 1)
+      }
+    }
+    for (const key of mapItemKeys.keys()) {
+      const runId = key.slice(0, key.indexOf(':'))
+      if (treeIds.has(runId)) mapItemKeys.delete(key)
+    }
+    deleteQueueItemsForRunIds(continueRunCommands, treeIds)
+    deleteQueueItemsForRunIds(activityCommands, treeIds)
+    deleteQueueItemsForRunIds(taskCommands, treeIds)
+    deleteClaimedCommandsForRunIds(claimedContinueRunCommands, treeIds)
+    deleteClaimedCommandsForRunIds(claimedActivityCommands, treeIds)
+    deleteClaimedCommandsForRunIds(claimedTaskCommands, treeIds)
+  }
+  const deleteQueueItemsForRunIds = <T extends { readonly runId: string }>(
+    queue: QueueItem<T>[],
+    runIds: ReadonlySet<string>,
+  ) => {
+    for (let index = queue.length - 1; index >= 0; index -= 1) {
+      if (runIds.has(queue[index]!.payload.runId)) queue.splice(index, 1)
+    }
+  }
+  const deleteClaimedCommandsForRunIds = <T extends { readonly runId: string }>(
+    queue: Map<string, ClaimedQueueItem<T>>,
+    runIds: ReadonlySet<string>,
+  ) => {
+    for (const [commandId, item] of queue) {
+      if (runIds.has(item.payload.runId)) queue.delete(commandId)
+    }
+  }
+  const sweepDeadCommands = (deadBefore: number) => {
+    sweepDeadQueueItems(continueRunCommands, deadBefore)
+    sweepDeadQueueItems(activityCommands, deadBefore)
+    sweepDeadQueueItems(taskCommands, deadBefore)
+  }
+  const sweepDeadQueueItems = <T extends { readonly runId: string }>(
+    queue: QueueItem<T>[],
+    deadBefore: number,
+  ) => {
+    for (let index = queue.length - 1; index >= 0; index -= 1) {
+      const item = queue[index]!
+      if (item.deadAt !== undefined && item.deadAt.getTime() < deadBefore) {
+        queue.splice(index, 1)
+      }
+    }
+  }
+
   const claimQueued = <T>(
     queue: QueueItem<T>[],
     matches: (item: QueueItem<T>) => boolean,
@@ -1165,6 +1305,7 @@ export function createInMemoryWorkflowRuntime(
 
   return {
     store,
+    retentionPruner: store,
     runCoordinationExecutor,
     attemptExecutor,
     inspect: () => ({

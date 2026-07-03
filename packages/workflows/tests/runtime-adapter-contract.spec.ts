@@ -511,6 +511,219 @@ function workflowRuntimeAdapterContract(
       expect(requeued?.command).toStrictEqual(command)
     })
 
+    it('prunes old terminal root run trees and associated commands', async () => {
+      const runtime = await createRuntime()
+      const root = await runtime.store.createRun({
+        workflowName: 'pruned-root-workflow',
+        input: {},
+      })
+      await runtime.store.createNode({
+        runId: root.id,
+        name: 'child',
+        kind: 'workflow',
+      })
+      await runtime.store.createNode({
+        runId: root.id,
+        name: 'map',
+        kind: 'mapTask',
+      })
+      await runtime.store.createNode({
+        runId: root.id,
+        name: 'content',
+        kind: 'activity',
+      })
+      const { childRun } = await runtime.store.ensureChildWorkflowRun({
+        identity: { runId: root.id, nodeName: 'child' },
+        workflowName: 'pruned-child-workflow',
+        input: {},
+        parentRunId: root.id,
+        parentNodeName: 'child',
+        rootRunId: root.id,
+      })
+      await runtime.store.ensureMapItems({
+        runId: root.id,
+        nodeName: 'map',
+        items: [{ id: 'a' }, { id: 'b' }],
+      })
+      const attempt = await runtime.store.createAttempt({
+        runId: root.id,
+        nodeName: 'content',
+        input: {},
+      })
+      const lease = await runtime.store.acquireRunLease({
+        runId: root.id,
+        leaseMs: 30_000,
+      })
+      await runtime.runCoordinationExecutor.enqueue({
+        kind: 'continueRun',
+        runId: root.id,
+        workflowName: root.workflowName,
+      })
+      await runtime.attemptExecutor.dispatchActivity({
+        kind: 'activityAttempt',
+        workflowName: root.workflowName,
+        activityName: 'content',
+        runId: root.id,
+        nodeName: 'content',
+        attemptId: attempt.id,
+        leaseToken: attempt.leaseToken!,
+        input: {},
+      })
+      await runtime.store.completeRun({ runId: root.id, output: { ok: true } })
+
+      const result = await runtime.store.pruneTerminalRuns({
+        olderThan: new Date(Date.now() + 1_000),
+        batchSize: 1,
+      })
+
+      expect(result).toStrictEqual({ deleted: 1 })
+      await expect(
+        runtime.store.loadRunSnapshot(root.id),
+      ).resolves.toBeUndefined()
+      await expect(
+        runtime.store.loadRunSnapshot(childRun.id),
+      ).resolves.toBeUndefined()
+      await expect(
+        runtime.runCoordinationExecutor.claim({
+          workerId: 'prune-checker',
+          workflowNames: [root.workflowName],
+          leaseMs: 30_000,
+        }),
+      ).resolves.toBeNull()
+      await expect(
+        runtime.attemptExecutor.claimActivity({
+          workerId: 'prune-checker',
+          workflowNames: [root.workflowName],
+          activityNames: ['content'],
+          leaseMs: 30_000,
+        }),
+      ).resolves.toBeNull()
+      await expect(
+        runtime.store.renewRunLease(lease!, 30_000),
+      ).resolves.toBeUndefined()
+    })
+
+    it('preserves non-terminal, recent terminal, and terminal child runs during pruning', async () => {
+      const runtime = await createRuntime()
+      const queuedRoot = await runtime.store.createRun({
+        workflowName: 'queued-prune-survivor',
+        input: {},
+      })
+      const recentRoot = await runtime.store.createRun({
+        workflowName: 'recent-prune-survivor',
+        input: {},
+      })
+      await runtime.store.completeRun({
+        runId: recentRoot.id,
+        output: { ok: true },
+      })
+
+      await expect(
+        runtime.store.pruneTerminalRuns({ olderThan: new Date(0) }),
+      ).resolves.toStrictEqual({ deleted: 0 })
+      await expect(
+        runtime.store.loadRunSnapshot(queuedRoot.id),
+      ).resolves.toBeDefined()
+      await expect(
+        runtime.store.loadRunSnapshot(recentRoot.id),
+      ).resolves.toBeDefined()
+
+      const liveParent = await runtime.store.createRun({
+        workflowName: 'live-parent-prune-survivor',
+        input: {},
+      })
+      await runtime.store.createNode({
+        runId: liveParent.id,
+        name: 'child',
+        kind: 'workflow',
+      })
+      const { childRun } = await runtime.store.ensureChildWorkflowRun({
+        identity: { runId: liveParent.id, nodeName: 'child' },
+        workflowName: 'terminal-child-prune-survivor',
+        input: {},
+        parentRunId: liveParent.id,
+        parentNodeName: 'child',
+        rootRunId: liveParent.id,
+      })
+      await runtime.store.completeRun({
+        runId: childRun.id,
+        output: { ok: true },
+      })
+
+      await expect(
+        runtime.store.pruneTerminalRuns({
+          olderThan: new Date(Date.now() + 1_000),
+        }),
+      ).resolves.toStrictEqual({ deleted: 1 })
+      await expect(
+        runtime.store.loadRunSnapshot(liveParent.id),
+      ).resolves.toBeDefined()
+      await expect(
+        runtime.store.loadRunSnapshot(childRun.id),
+      ).resolves.toBeDefined()
+    })
+
+    it('sweeps old dead commands during pruning', async () => {
+      const runtime = await createRuntime({ maxDeliveries: 1 })
+      const run = await runtime.store.createRun({
+        workflowName: 'dead-command-sweep-workflow',
+        input: {},
+      })
+      await runtime.runCoordinationExecutor.enqueue({
+        kind: 'continueRun',
+        runId: run.id,
+        workflowName: run.workflowName,
+      })
+      const claimed = await runtime.runCoordinationExecutor.claim({
+        workerId: 'dead-command-sweeper',
+        workflowNames: [run.workflowName],
+        leaseMs: 30_000,
+      })
+      await runtime.runCoordinationExecutor.release(claimed!, {
+        error: new Error('dead command'),
+      })
+      await expect(runtime.store.listDeadCommands()).resolves.toHaveLength(1)
+
+      await expect(
+        runtime.store.pruneTerminalRuns({
+          olderThan: new Date(Date.now() + 1_000),
+          statuses: [],
+        }),
+      ).resolves.toStrictEqual({ deleted: 0 })
+      await expect(runtime.store.listDeadCommands()).resolves.toStrictEqual([])
+      await expect(runtime.store.loadRunSnapshot(run.id)).resolves.toBeDefined()
+    })
+
+    it('batches store pruning and drains via the runtime client helper', async () => {
+      const runtime = await createRuntime()
+      const client = createWorkflowRuntimeClient(runtime)
+      const runs = await Promise.all(
+        Array.from({ length: 5 }, async (_, index) => {
+          const run = await runtime.store.createRun({
+            workflowName: 'batched-prune-workflow',
+            input: { index },
+          })
+          await runtime.store.completeRun({
+            runId: run.id,
+            output: { index },
+          })
+          return run
+        }),
+      )
+      const olderThan = new Date(Date.now() + 1_000)
+
+      await expect(
+        runtime.store.pruneTerminalRuns({ olderThan, batchSize: 2 }),
+      ).resolves.toStrictEqual({ deleted: 2 })
+      await expect(
+        client.pruneRuns({ olderThan, batchSize: 2 }),
+      ).resolves.toStrictEqual({ deleted: 3 })
+      await expect(
+        runtime.store.listRuns({ name: 'batched-prune-workflow' }),
+      ).resolves.toStrictEqual({ runs: [] })
+      expect(runs).toHaveLength(5)
+    })
+
     it('threads worker continuation errors into dead-letter metadata', async () => {
       const workflow = defineWorkflow({
         name: 'poison-worker-workflow',
@@ -1022,15 +1235,19 @@ function workflowRuntimeAdapterContract(
         leaseToken: `lease-${attemptId}`,
         input: {},
       })
+      const firstRunAt = new Date(Date.now() - 1_000)
 
       await runtime.attemptExecutor.dispatchActivity(
         command(run.id, '00000000-0000-4000-8000-000000000301'),
+        { runAt: firstRunAt },
       )
       await runtime.attemptExecutor.dispatchActivity(
         command(run.id, '00000000-0000-4000-8000-000000000302'),
+        { runAt: new Date(firstRunAt.getTime() + 1) },
       )
       await runtime.attemptExecutor.dispatchActivity(
         command(otherRun.id, '00000000-0000-4000-8000-000000000303'),
+        { runAt: new Date(firstRunAt.getTime() + 2) },
       )
       const claimed = await runtime.attemptExecutor.claimActivity({
         workerId: 'activity-worker-1',

@@ -11,6 +11,11 @@ import type {
 } from './state.ts'
 import type { RuntimeRunStatus } from './status.ts'
 
+export type TerminalRunStatus = Extract<
+  RuntimeRunStatus,
+  'completed' | 'cancelled' | 'failed'
+>
+
 export type RunLease = {
   readonly runId: string
   readonly leaseToken: string
@@ -58,6 +63,22 @@ export type ListRunsFilter = {
 export type ListRunsResult = {
   readonly runs: readonly StoredRun[]
   readonly nextCursor?: string
+}
+
+export type PruneTerminalRunsParams = {
+  readonly olderThan: Date
+  readonly statuses?: readonly TerminalRunStatus[]
+  readonly batchSize?: number
+}
+
+export type PruneTerminalRunsResult = {
+  readonly deleted: number
+}
+
+export type WorkflowRetentionPruner = {
+  pruneTerminalRuns(
+    params: PruneTerminalRunsParams,
+  ): Promise<PruneTerminalRunsResult>
 }
 
 export type DeadWorkflowCommand = {
@@ -189,6 +210,9 @@ export type NodeChildrenSnapshot = {
 export type WorkflowStore = {
   createRun(input: CreateRunInput): Promise<StoredRun>
   listRuns(filter?: ListRunsFilter): Promise<ListRunsResult>
+  pruneTerminalRuns(
+    params: PruneTerminalRunsParams,
+  ): Promise<PruneTerminalRunsResult>
   listDeadCommands(): Promise<readonly DeadWorkflowCommand[]>
   requeueDeadCommand(id: string): Promise<void>
   acquireRunLease(params: {

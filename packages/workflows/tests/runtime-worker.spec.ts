@@ -117,6 +117,31 @@ describe('workflow worker runtime', () => {
     expect(runtime.inspect().continueRunCommands).toStrictEqual([])
   })
 
+  it('runs opt-in retention pruning during idle workflow worker cycles', async () => {
+    const runtime = createInMemoryWorkflowRuntime()
+    const run = await runtime.store.createRun({
+      workflowName: 'worker-retention-workflow',
+      input: {},
+    })
+    await runtime.store.completeRun({ runId: run.id, output: { ok: true } })
+    await new Promise((resolve) => setTimeout(resolve, 5))
+
+    const result = await runWorkflowWorker({
+      ...runtime,
+      container: createTestContainer(),
+      workflows: [],
+      workerId: 'retention-worker-1',
+      maxIdleClaims: 1,
+      retention: {
+        olderThan: '0ms',
+        batchSize: 10,
+      },
+    })
+
+    expect(result.processed).toBe(0)
+    await expect(runtime.store.loadRunSnapshot(run.id)).resolves.toBeUndefined()
+  })
+
   it('releases continuation commands when attempt dispatch fails', async () => {
     const workflow = defineWorkflow({
       name: 'worker.dispatch-failure-workflow',

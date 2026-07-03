@@ -27,6 +27,9 @@ import type {
   CreateRunInput,
   DeadWorkflowCommand,
   ListRunsFilter,
+  PruneTerminalRunsParams,
+  PruneTerminalRunsResult,
+  TerminalRunStatus,
   WorkflowStore,
 } from '../runtime/store.ts'
 import type {
@@ -59,6 +62,12 @@ type PostgresWorkflowRuntime = WorkflowRuntimeAdapter & {
 const RELEASE_BACKOFF_MS = 50
 const MAX_ERROR_BACKOFF_MS = 300_000
 const DEFAULT_MAX_DELIVERIES = 20
+const DEFAULT_PRUNE_BATCH_SIZE = 100
+const DEFAULT_PRUNE_STATUSES = [
+  'completed',
+  'cancelled',
+  'failed',
+] as const satisfies readonly TerminalRunStatus[]
 
 export type WorkflowPostgresQueryClient = {
   query<T extends JsonRecord = JsonRecord>(
@@ -516,6 +525,20 @@ const sameOptionalValue = (left: unknown, right: unknown) =>
   left === undefined && right === undefined
     ? true
     : left !== undefined && right !== undefined && sameValue(left, right)
+const normalizePruneBatchSize = (batchSize: number | undefined) => {
+  if (batchSize === undefined) return DEFAULT_PRUNE_BATCH_SIZE
+  if (!Number.isInteger(batchSize) || batchSize < 1) return 0
+  return batchSize
+}
+const normalizePruneStatuses = (
+  statuses: PruneTerminalRunsParams['statuses'],
+): readonly TerminalRunStatus[] => [
+  ...new Set(
+    (statuses ?? DEFAULT_PRUNE_STATUSES).filter((status) =>
+      DEFAULT_PRUNE_STATUSES.includes(status),
+    ),
+  ),
+]
 const stringArray = (value: unknown): readonly string[] => {
   if (Array.isArray(value)) return value.map(String)
   if (typeof value !== 'string') return []
@@ -1125,6 +1148,50 @@ export function createPostgresWorkflowRuntime(params: {
       throw error
     }
   }
+  const pruneTerminalRunsInTransaction = async (
+    connection: WorkflowPostgresConnection,
+    params: PruneTerminalRunsParams,
+  ): Promise<PruneTerminalRunsResult> => {
+    const batchSize = normalizePruneBatchSize(params.batchSize)
+    const statuses = normalizePruneStatuses(params.statuses)
+    let deleted = 0
+
+    if (batchSize > 0 && statuses.length > 0) {
+      const queryParams: unknown[] = [params.olderThan, ...statuses, batchSize]
+      const statusList = statuses.map((_, index) => `$${index + 2}`).join(', ')
+      const batchParam = `$${queryParams.length}`
+      const rows = await many<{ id: string }>(
+        connection,
+        `
+          DELETE FROM workflow_runs
+          WHERE id IN (
+            SELECT id
+            FROM workflow_runs
+            WHERE parent_run_id IS NULL
+              AND status IN (${statusList})
+              AND updated_at < $1
+            ORDER BY updated_at, id
+            LIMIT ${batchParam}
+            FOR UPDATE SKIP LOCKED
+          )
+          RETURNING id
+        `,
+        queryParams,
+      )
+      deleted = rows.length
+    }
+
+    await connection.query(
+      `
+        DELETE FROM workflow_commands
+        WHERE dead_at IS NOT NULL
+          AND dead_at < $1
+      `,
+      [params.olderThan],
+    )
+
+    return { deleted }
+  }
 
   const store: WorkflowStore = {
     async createRun(input) {
@@ -1198,6 +1265,10 @@ export function createPostgresWorkflowRuntime(params: {
           ? { nextCursor: String(offset + limit) }
           : {}),
       }
+    },
+    async pruneTerminalRuns(params) {
+      await ready
+      return db.transaction((tx) => pruneTerminalRunsInTransaction(tx, params))
     },
     async listDeadCommands() {
       await ready
@@ -2680,10 +2751,25 @@ export function createPostgresWorkflowRuntime(params: {
       }),
   }
 
+  const retentionPruner = {
+    pruneTerminalRuns: (params: PruneTerminalRunsParams) =>
+      db.transaction(async (tx) => {
+        const lock = await one<{ acquired: boolean }>(
+          tx,
+          `
+            SELECT pg_try_advisory_xact_lock(hashtext('workflow_prune')) AS acquired
+          `,
+        )
+        if (!lock?.acquired) return { deleted: 0 }
+        return pruneTerminalRunsInTransaction(tx, params)
+      }),
+  }
+
   return {
     store,
     runCoordinationExecutor,
     attemptExecutor,
+    retentionPruner,
     atomicStart,
     atomicContinuation,
     atomicCompletion,

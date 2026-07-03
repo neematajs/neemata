@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 
 import { PGlite } from '@electric-sql/pglite'
+import { Container, createLogger } from '@nmtjs/core'
 import { t } from '@nmtjs/type'
 import { getTableName } from 'drizzle-orm'
 import { getTableConfig } from 'drizzle-orm/pg-core'
@@ -21,7 +22,10 @@ import {
 import { createSchema } from '../src/adapters/postgres/drizzle.ts'
 import { installPostgresWorkflowSchemaForTesting } from '../src/adapters/postgres/testing.ts'
 import { defineTask, defineWorkflow } from '../src/index.ts'
-import { createWorkflowRuntimeClient } from '../src/runtime/index.ts'
+import {
+  createWorkflowRuntimeClient,
+  runWorkflowWorker,
+} from '../src/runtime/index.ts'
 
 const createPgliteConnection = (db = new PGlite()) =>
   createPostgresWorkflowConnection(db)
@@ -72,6 +76,36 @@ function failNextCommandInsert(
       if (!failed && /INSERT\s+INTO\s+workflow_commands/i.test(sql)) {
         failed = true
         throw new Error('forced command insert failure')
+      }
+
+      return target.query(sql, params)
+    },
+    transaction: (handler) => target.transaction((tx) => handler(wrap(tx))),
+  })
+
+  return wrap(connection)
+}
+
+function captureRetentionLockQueries(
+  connection: WorkflowPostgresConnection,
+  statements: string[],
+): WorkflowPostgresConnection {
+  const wrap = (
+    target: WorkflowPostgresConnection,
+  ): WorkflowPostgresConnection => ({
+    query<T extends Record<string, unknown> = Record<string, unknown>>(
+      sql: string,
+      params = [],
+    ) {
+      statements.push(sql)
+      if (
+        /pg_try_advisory_xact_lock\s*\(\s*hashtext\('workflow_prune'\)\s*\)/i.test(
+          sql,
+        )
+      ) {
+        return Promise.resolve({
+          rows: [{ acquired: true }],
+        } as unknown as WorkflowPostgresQueryResult<T>)
       }
 
       return target.query(sql, params)
@@ -1731,6 +1765,51 @@ test('rolls back task start when initial command insert fails', async () => {
   expect(nodes.rows[0]?.count).toBe(0)
   expect(attempts.rows[0]?.count).toBe(0)
   expect(commands.rows[0]?.count).toBe(0)
+})
+
+test('worker retention pruning takes the Postgres advisory transaction lock', async () => {
+  const connection = createPgliteConnection()
+  await installPostgresWorkflowSchemaForTesting(connection)
+  const statements: string[] = []
+  const runtime = createPostgresWorkflowRuntime({
+    connection: captureRetentionLockQueries(connection, statements),
+  })
+  const run = await runtime.store.createRun({
+    workflowName: 'advisory-retention-workflow',
+    input: {},
+  })
+  await runtime.store.completeRun({ runId: run.id, output: { ok: true } })
+  await new Promise((resolve) => setTimeout(resolve, 5))
+  const logger = createLogger({ pinoOptions: { enabled: false } }, 'test')
+  const container = new Container({ logger })
+
+  await runWorkflowWorker({
+    ...runtime,
+    container,
+    workflows: [],
+    workerId: 'postgres-retention-worker',
+    maxIdleClaims: 1,
+    retention: {
+      olderThan: '0ms',
+      batchSize: 1,
+    },
+  })
+
+  expect(
+    statements.some((sql) =>
+      /pg_try_advisory_xact_lock\s*\(\s*hashtext\('workflow_prune'\)\s*\)/i.test(
+        sql,
+      ),
+    ),
+  ).toBe(true)
+  expect(
+    statements.some(
+      (sql) =>
+        /DELETE\s+FROM\s+workflow_runs/i.test(sql) &&
+        /FOR UPDATE SKIP LOCKED/i.test(sql),
+    ),
+  ).toBe(true)
+  await expect(runtime.store.loadRunSnapshot(run.id)).resolves.toBeUndefined()
 })
 
 test('creates postgres runtime schema with relational constraints', async () => {

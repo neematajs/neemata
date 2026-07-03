@@ -72,10 +72,14 @@ export type {
   ListRunsResult,
   LoadNodeChildrenParams,
   NodeChildrenSnapshot,
+  PruneTerminalRunsParams,
+  PruneTerminalRunsResult,
   RequestRunCancellationParams,
   RunLease,
   SelectNodeCaseParams,
+  TerminalRunStatus,
   WaitNodeParams,
+  WorkflowRetentionPruner,
   WorkflowStore,
 } from './store.ts'
 export {
@@ -94,6 +98,7 @@ export type {
   RunWorkflowWorkerInput,
   WorkerLoopOptions,
   WorkerLoopResult,
+  WorkerRetentionOptions,
   WorkerCommandResult,
   WorkflowRuntimeAtomicContinuation,
   WorkflowRuntimeAtomicCompletion,
