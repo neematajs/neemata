@@ -18,11 +18,18 @@ export type RunCoordinationExecutor = {
 }
 
 export type AttemptExecutor = {
-  dispatchActivity(command: ActivityAttemptCommand): Promise<void>
-  dispatchTask(command: TaskAttemptCommand): Promise<void>
+  dispatchActivity(
+    command: ActivityAttemptCommand,
+    options?: { readonly runAt?: Date },
+  ): Promise<void>
+  dispatchTask(
+    command: TaskAttemptCommand,
+    options?: { readonly runAt?: Date },
+  ): Promise<void>
   claimActivity(worker: ActivityWorkerClaim): Promise<ClaimedAttempt | null>
   claimTask(worker: TaskWorkerClaim): Promise<ClaimedAttempt | null>
-  heartbeat(attempt: ClaimedAttempt): Promise<void>
+  heartbeat(attempt: ClaimedAttempt, leaseMs?: number): Promise<void>
   ack(attempt: ClaimedAttempt): Promise<void>
   release(attempt: ClaimedAttempt): Promise<void>
+  deleteUnclaimed(params: { readonly runId: string }): Promise<number>
 }

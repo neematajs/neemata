@@ -1,34 +1,18 @@
-import { Container, createLogger } from '@nmtjs/core'
 import { PGlite } from '@electric-sql/pglite'
+import { Container, createLogger } from '@nmtjs/core'
 import { t } from '@nmtjs/type'
 import { expect, test } from 'vitest'
 
 import {
+  createPostgresWorkflowConnection,
   createPostgresWorkflowRuntime,
-  installPostgresWorkflowSchemaForTesting,
-  type WorkflowPostgresConnection,
 } from '../src/adapters/postgres.ts'
-import {
-  defineWorkflow,
-  implementWorkflow,
-} from '../src/index.ts'
+import { installPostgresWorkflowSchemaForTesting } from '../src/adapters/postgres/testing.ts'
+import { defineWorkflow, implementWorkflow } from '../src/index.ts'
 import {
   createWorkflowRuntimeClient,
   runWorkflowWorker,
 } from '../src/runtime/index.ts'
-
-function createPgliteConnection(db = new PGlite()): WorkflowPostgresConnection {
-  return {
-    query: (sql, params = []) => db.query(sql, [...params]),
-    transaction: (handler) =>
-      db.transaction((tx) =>
-        handler({
-          query: (sql, params = []) => tx.query(sql, [...params]),
-          transaction: (nested) => nested(createPgliteConnection(db)),
-        }),
-      ),
-  }
-}
 
 function createTestContainer() {
   const logger = createLogger({ pinoOptions: { enabled: false } }, 'test')
@@ -36,7 +20,7 @@ function createTestContainer() {
 }
 
 test('runs direct child and mapWorkflow through postgres workers', async () => {
-  const connection = createPgliteConnection()
+  const connection = createPostgresWorkflowConnection(new PGlite())
   await installPostgresWorkflowSchemaForTesting(connection)
   const runtime = createPostgresWorkflowRuntime({ connection })
   const client = createWorkflowRuntimeClient(runtime)

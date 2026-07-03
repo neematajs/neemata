@@ -1,5 +1,4 @@
 import type { RunKind, WorkflowNodeKind } from '../types/index.ts'
-import type { RuntimeRunStatus } from './status.ts'
 import type {
   NodeChildIdentity,
   RunSnapshot,
@@ -9,6 +8,7 @@ import type {
   StoredNode,
   StoredRun,
 } from './state.ts'
+import type { RuntimeRunStatus } from './status.ts'
 
 export type RunLease = {
   readonly runId: string
@@ -110,7 +110,7 @@ export type EnsureMapItemsParams = {
   readonly runId: string
   readonly nodeName: string
   readonly items: readonly unknown[]
-  readonly keys?: readonly string[]
+  readonly keys?: readonly (string | undefined)[]
 }
 
 export type EnsureMapItemsResult = {
@@ -150,6 +150,19 @@ export type WaitNodeParams = {
   readonly nodeName: string
 }
 
+export type RequestRunCancellationParams = {
+  readonly runId: string
+}
+
+export type CancelNodeParams = {
+  readonly runId: string
+  readonly nodeName: string
+}
+
+export type CancelNonTerminalRunNodesParams = {
+  readonly runId: string
+}
+
 export type NodeChildrenSnapshot = {
   readonly attempts: readonly StoredAttempt[]
   readonly childLinks: readonly StoredChildLink[]
@@ -161,9 +174,9 @@ export type WorkflowStore = {
   listRuns(filter?: ListRunsFilter): Promise<ListRunsResult>
   acquireRunLease(params: {
     runId: string
-    workerId: string
     leaseMs: number
   }): Promise<RunLease | undefined>
+  renewRunLease(lease: RunLease, leaseMs: number): Promise<RunLease | undefined>
   releaseRunLease(lease: RunLease): Promise<void>
   loadRunSnapshot(runId: string): Promise<RunSnapshot | undefined>
   createNode(input: CreateNodeInput): Promise<StoredNode>
@@ -201,6 +214,14 @@ export type WorkflowStore = {
     runId: string
     error: unknown
   }): Promise<StoredRun | undefined>
+  requestRunCancellation(
+    params: RequestRunCancellationParams,
+  ): Promise<StoredRun | undefined>
+  cancelRun(params: { runId: string }): Promise<StoredRun | undefined>
+  cancelNode(params: CancelNodeParams): Promise<StoredNode | undefined>
+  cancelNonTerminalRunNodes(
+    params: CancelNonTerminalRunNodesParams,
+  ): Promise<readonly StoredNode[]>
   ensureNodeAttempt(
     params: EnsureNodeAttemptParams,
   ): Promise<EnsureNodeAttemptResult>

@@ -1,8 +1,4 @@
-import {
-  Container,
-  createLogger,
-  createValueInjectable,
-} from '@nmtjs/core'
+import { Container, createLogger, createValueInjectable } from '@nmtjs/core'
 import { t } from '@nmtjs/type'
 import { describe, expect, it } from 'vitest'
 
@@ -67,6 +63,23 @@ describe('workflow runtime client', () => {
     ])
   })
 
+  it('rejects invalid workflow start input before creating a run', async () => {
+    const workflow = defineWorkflow({
+      name: 'client-invalid-workflow-input',
+      input: t.object({ scenario: t.string() }),
+      output: t.object({ caseId: t.string() }),
+    }).build()
+    const runtime = createInMemoryWorkflowRuntime()
+    const client = createWorkflowRuntimeClient(runtime)
+
+    await expect(
+      client.start(workflow, { scenario: 123 } as never),
+    ).rejects.toThrow('Invalid workflow input [client-invalid-workflow-input]')
+
+    await expect(client.list()).resolves.toStrictEqual({ runs: [] })
+    expect(runtime.inspect().continueRunCommands).toStrictEqual([])
+  })
+
   it('starts tasks and dispatches the task attempt', async () => {
     const prefix = createValueInjectable('task')
     const task = defineTask({
@@ -109,6 +122,23 @@ describe('workflow runtime client', () => {
     ])
   })
 
+  it('rejects invalid task start input before creating a run', async () => {
+    const task = defineTask({
+      name: 'client-invalid-task-input',
+      input: t.object({ text: t.string() }),
+      output: t.object({ id: t.string() }),
+    })
+    const runtime = createInMemoryWorkflowRuntime()
+    const client = createWorkflowRuntimeClient(runtime)
+
+    await expect(client.start(task, { text: 123 } as never)).rejects.toThrow(
+      'Invalid task input [client-invalid-task-input]',
+    )
+
+    await expect(client.list()).resolves.toStrictEqual({ runs: [] })
+    expect(runtime.inspect().taskCommands).toStrictEqual([])
+  })
+
   it('lists runs through the store-backed client', async () => {
     const workflow = defineWorkflow({
       name: 'client-listed-workflow',
@@ -118,12 +148,20 @@ describe('workflow runtime client', () => {
     const runtime = createInMemoryWorkflowRuntime()
     const client = createWorkflowRuntimeClient(runtime)
 
-    const alpha = await client.start(workflow, { scenario: 'alpha' }, {
-      tags: { tenantId: 'tenant-1' },
-    })
-    await client.start(workflow, { scenario: 'beta' }, {
-      tags: { tenantId: 'tenant-2' },
-    })
+    const alpha = await client.start(
+      workflow,
+      { scenario: 'alpha' },
+      {
+        tags: { tenantId: 'tenant-1' },
+      },
+    )
+    await client.start(
+      workflow,
+      { scenario: 'beta' },
+      {
+        tags: { tenantId: 'tenant-2' },
+      },
+    )
 
     await expect(
       client.list({
@@ -134,5 +172,50 @@ describe('workflow runtime client', () => {
     ).resolves.toMatchObject({
       runs: [{ id: alpha.id }],
     })
+  })
+
+  it('requests cancellation and enqueues a continuation', async () => {
+    const workflow = defineWorkflow({
+      name: 'client-cancelled-workflow',
+      input: t.object({ scenario: t.string() }),
+      output: t.object({ caseId: t.string() }),
+    }).build()
+    const runtime = createInMemoryWorkflowRuntime()
+    const client = createWorkflowRuntimeClient(runtime)
+    const run = await client.start(workflow, { scenario: 'alpha' })
+
+    const cancelling = await client.cancel(run.id)
+    const cancellingAgain = await client.cancel(run.id)
+
+    expect(cancelling?.status).toBe('cancelling')
+    expect(cancellingAgain?.status).toBe('cancelling')
+    expect(runtime.inspect().continueRunCommands).toHaveLength(3)
+    expect(
+      runtime.inspect().continueRunCommands.map((item) => item.payload),
+    ).toEqual(
+      expect.arrayContaining([
+        { kind: 'continueRun', runId: run.id, workflowName: workflow.name },
+      ]),
+    )
+  })
+
+  it('returns terminal runs unchanged when cancellation is requested', async () => {
+    const workflow = defineWorkflow({
+      name: 'client-terminal-cancel-workflow',
+      input: t.object({ scenario: t.string() }),
+      output: t.object({ caseId: t.string() }),
+    }).build()
+    const runtime = createInMemoryWorkflowRuntime()
+    const client = createWorkflowRuntimeClient(runtime)
+    const run = await client.start(workflow, { scenario: 'alpha' })
+    await runtime.store.completeRun({
+      runId: run.id,
+      output: { caseId: 'done' },
+    })
+
+    const completed = await client.cancel(run.id)
+
+    expect(completed?.status).toBe('completed')
+    expect(completed?.output).toStrictEqual({ caseId: 'done' })
   })
 })

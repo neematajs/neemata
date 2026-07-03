@@ -1,14 +1,17 @@
 export type {
+  ActivityImplementation,
   TaskImplementation,
+  WorkflowImplementer,
+  WorkflowImplementationChain,
   WorkflowImplementation,
 } from './implement/index.ts'
+export type { WorkflowBuilder } from './contract/index.ts'
 export type {
   AnyTaskDefinition,
   AnyWorkflowDefinition,
   BranchCaseDefinition,
   CancellationPolicy,
   DurationString,
-  IdempotencyConflictPolicy,
   IdempotencyKey,
   MapNodeOutput,
   MapRunMode,
@@ -20,13 +23,17 @@ export type {
   RunnableRun,
   RunKind,
   Schema,
+  SchemaBoundary,
   SchemaInput,
   SchemaOutput,
+  TaskDecodedInput,
   TaskDefinition,
   TaskInput,
+  TaskOutputInput,
   TaskOutput,
   TaskRun,
   TaskStatus,
+  WorkflowDecodedInput,
   WorkflowActivityNode,
   WorkflowBranchNode,
   WorkflowChildWorkflowNode,
@@ -37,11 +44,14 @@ export type {
   WorkflowNode,
   WorkflowNodeBase,
   WorkflowNodes,
+  WorkflowOutputInput,
   WorkflowOutput,
   WorkflowParallelNode,
   WorkflowRun,
+  WorkflowSettledError,
   WorkflowStatus,
   WorkflowTaskNode,
 } from './types/index.ts'
 export { defineTask, defineWorkflow } from './contract/index.ts'
 export { implementTask, implementWorkflow } from './implement/index.ts'
+export { WorkflowAttemptTimeoutError } from './runtime/index.ts'

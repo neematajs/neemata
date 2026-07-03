@@ -6,10 +6,16 @@ import type {
   ContinueRunCommand,
   TaskAttemptCommand,
 } from './commands.ts'
+import type { AttemptExecutor, RunCoordinationExecutor } from './executors.ts'
 import type {
-  AttemptExecutor,
-  RunCoordinationExecutor,
-} from './executors.ts'
+  NodeChildIdentity,
+  RunSnapshot,
+  StoredAttempt,
+  StoredChildLink,
+  StoredMapItem,
+  StoredNode,
+  StoredRun,
+} from './state.ts'
 import type {
   CreateAttemptInput,
   CreateNodeInput,
@@ -18,20 +24,8 @@ import type {
   RunLease,
   WorkflowStore,
 } from './store.ts'
-import type {
-  NodeChildIdentity,
-  RunSnapshot,
-  StoredAttempt,
-  StoredChildLink,
-  StoredError,
-  StoredMapItem,
-  StoredNode,
-  StoredRun,
-} from './state.ts'
-import {
-  isTerminalNodeStatus,
-  isTerminalRunStatus,
-} from './status.ts'
+import { toStoredError } from './errors.ts'
+import { isTerminalNodeStatus, isTerminalRunStatus } from './status.ts'
 
 type InMemoryRunLease = RunLease & {
   readonly expiresAt: Date
@@ -42,6 +36,8 @@ type QueueItem<T> = {
   readonly payload: T
   readonly runAt?: Date
 }
+
+const RELEASE_BACKOFF_MS = 50
 
 export type InMemoryWorkflowRuntime = {
   readonly store: WorkflowStore
@@ -78,8 +74,20 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
   const claimedTaskCommands = new Map<string, ClaimedAttempt>()
 
   const nodeKey = (runId: string, nodeName: string) => `${runId}:${nodeName}`
+  const stableJsonValue = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(stableJsonValue)
+    if (value && typeof value === 'object') {
+      return Object.fromEntries(
+        Object.entries(value)
+          .sort(([left], [right]) => left.localeCompare(right))
+          .map(([key, item]) => [key, stableJsonValue(item)]),
+      )
+    }
+    return value
+  }
+  const valueKey = (value: unknown) => JSON.stringify(stableJsonValue(value))
   const identityKey = (identity: NodeChildIdentity) =>
-    JSON.stringify([
+    valueKey([
       identity.runId,
       identity.nodeName,
       identity.caseKey ?? null,
@@ -87,7 +95,6 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
       identity.itemIndex ?? null,
       identity.itemKey ?? null,
     ])
-  const valueKey = (value: unknown) => JSON.stringify(value)
   const sameValue = (left: unknown, right: unknown) =>
     valueKey(left) === valueKey(right)
   const sameOptionalValue = (left: unknown, right: unknown) =>
@@ -102,11 +109,7 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
         target.some((targetItem) => jsonContains(targetItem, expectedItem)),
       )
     }
-    if (
-      expected &&
-      typeof expected === 'object' &&
-      !Array.isArray(expected)
-    ) {
+    if (expected && typeof expected === 'object' && !Array.isArray(expected)) {
       if (!target || typeof target !== 'object' || Array.isArray(target)) {
         return false
       }
@@ -154,18 +157,6 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
     run.parentNodeName === input.parentNodeName &&
     run.rootRunId === (input.rootRunId ?? run.id) &&
     sameValue(run.input, input.input)
-
-  const storedError = (error: unknown): StoredError => {
-    if (error instanceof Error) {
-      return {
-        name: error.name,
-        message: error.message,
-        stack: error.stack,
-      }
-    }
-
-    return { message: String(error) }
-  }
 
   const store: WorkflowStore = {
     async createRun(input: CreateRunInput) {
@@ -262,6 +253,16 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
       runLeases.set(runId, lease)
       return lease
     },
+    async renewRunLease(lease, leaseMs) {
+      const existingLease = runLeases.get(lease.runId)
+      if (existingLease?.leaseToken !== lease.leaseToken) return undefined
+      const renewedLease = {
+        ...existingLease,
+        expiresAt: new Date(now().getTime() + leaseMs),
+      }
+      runLeases.set(lease.runId, renewedLease)
+      return renewedLease
+    },
     async releaseRunLease(lease) {
       if (runLeases.get(lease.runId)?.leaseToken === lease.leaseToken) {
         runLeases.delete(lease.runId)
@@ -305,6 +306,7 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
       const key = nodeKey(runId, nodeName)
       const node = nodes.get(key)
       if (!node) throw new Error(`Missing node [${runId}.${nodeName}]`)
+      if (isTerminalNodeStatus(node.status)) return node
 
       const updated: StoredNode = {
         ...node,
@@ -320,11 +322,10 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
       const key = nodeKey(runId, nodeName)
       const node = nodes.get(key)
       if (!node) return undefined
+      if (isTerminalNodeStatus(node.status)) return node
       if (node.selectedCase === caseKey) return node
       if (node.selectedCase !== undefined) {
-        throw new Error(
-          `Conflicting selected case for [${runId}.${nodeName}]`,
-        )
+        throw new Error(`Conflicting selected case for [${runId}.${nodeName}]`)
       }
 
       const updated: StoredNode = {
@@ -339,7 +340,13 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
     async createAttempt(input: CreateAttemptInput) {
       const key = nodeKey(input.runId, input.nodeName)
       const node = nodes.get(key)
-      if (!node) throw new Error(`Missing node [${input.runId}.${input.nodeName}]`)
+      if (!node)
+        throw new Error(`Missing node [${input.runId}.${input.nodeName}]`)
+      if (isTerminalNodeStatus(node.status)) {
+        throw new Error(
+          `Terminal node [${input.runId}.${input.nodeName}] cannot create attempt`,
+        )
+      }
 
       const attempt: StoredAttempt = {
         id: id('attempt'),
@@ -375,6 +382,7 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
       const node = nodes.get(nodeKey(attempt.runId, attempt.nodeName))
       if (
         !node ||
+        isTerminalNodeStatus(node.status) ||
         (node.kind !== 'parallel' && node.currentAttemptId !== attemptId)
       ) {
         return undefined
@@ -397,6 +405,7 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
       const node = nodes.get(nodeKey(attempt.runId, attempt.nodeName))
       if (
         !node ||
+        isTerminalNodeStatus(node.status) ||
         (node.kind !== 'parallel' && node.currentAttemptId !== attemptId)
       ) {
         return undefined
@@ -405,7 +414,7 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
       const updated: StoredAttempt = {
         ...attempt,
         status: 'failed',
-        error: storedError(error),
+        error: toStoredError(error),
         completedAt: now(),
       }
       attempts.set(attemptId, updated)
@@ -436,7 +445,7 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
       const updated: StoredNode = {
         ...node,
         status: 'failed',
-        error: storedError(error),
+        error: toStoredError(error),
         version: node.version + 1,
         updatedAt: now(),
       }
@@ -466,11 +475,71 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
       const updated: StoredRun = {
         ...run,
         status: 'failed',
-        error: storedError(error),
+        error: toStoredError(error),
         version: run.version + 1,
         updatedAt: now(),
       }
       runs.set(runId, updated)
+      return updated
+    },
+    async requestRunCancellation({ runId }) {
+      const run = runs.get(runId)
+      if (!run) return undefined
+      if (isTerminalRunStatus(run.status) || run.status === 'cancelling') {
+        return run
+      }
+
+      const updated: StoredRun = {
+        ...run,
+        status: 'cancelling',
+        version: run.version + 1,
+        updatedAt: now(),
+      }
+      runs.set(runId, updated)
+      return updated
+    },
+    async cancelRun({ runId }) {
+      const run = runs.get(runId)
+      if (!run) return undefined
+      if (isTerminalRunStatus(run.status)) return run
+
+      const updated: StoredRun = {
+        ...run,
+        status: 'cancelled',
+        version: run.version + 1,
+        updatedAt: now(),
+      }
+      runs.set(runId, updated)
+      return updated
+    },
+    async cancelNode({ runId, nodeName }) {
+      const key = nodeKey(runId, nodeName)
+      const node = nodes.get(key)
+      if (!node) return undefined
+      if (isTerminalNodeStatus(node.status)) return node
+
+      const updated: StoredNode = {
+        ...node,
+        status: 'cancelled',
+        version: node.version + 1,
+        updatedAt: now(),
+      }
+      nodes.set(key, updated)
+      return updated
+    },
+    async cancelNonTerminalRunNodes({ runId }) {
+      const updated: StoredNode[] = []
+      for (const node of Array.from(nodes.values())) {
+        if (node.runId !== runId || isTerminalNodeStatus(node.status)) continue
+        const cancelled: StoredNode = {
+          ...node,
+          status: 'cancelled',
+          version: node.version + 1,
+          updatedAt: now(),
+        }
+        nodes.set(nodeKey(node.runId, node.name), cancelled)
+        updated.push(cancelled)
+      }
       return updated
     },
     async ensureNodeAttempt(params) {
@@ -495,6 +564,11 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
         (attempt) => attempt.identity && identityKey(attempt.identity) === key,
       )
       if (existing) return { attempt: existing, created: false }
+      if (isTerminalNodeStatus(node.status)) {
+        throw new Error(
+          `Terminal node [${params.identity.runId}.${params.identity.nodeName}] cannot create attempt`,
+        )
+      }
 
       const attempt: StoredAttempt = {
         id: id('attempt'),
@@ -620,12 +694,15 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
       }
       const existingKeys = mapItemKeys.get(key)
       const existingItems = mapItems.filter(
-        (item) => item.runId === params.runId && item.nodeName === params.nodeName,
+        (item) =>
+          item.runId === params.runId && item.nodeName === params.nodeName,
       )
       if (existingKeys) {
         const sameKeys =
           existingKeys.length === keys.length &&
-          existingKeys.every((existingKey, index) => existingKey === keys[index])
+          existingKeys.every(
+            (existingKey, index) => existingKey === keys[index],
+          )
         if (!sameKeys) throw new Error(`Conflicting map items for [${key}]`)
         const sameItems =
           existingItems.length === params.items.length &&
@@ -696,7 +773,7 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
       const updated: StoredMapItem = {
         ...item,
         status: 'failed',
-        error: storedError(params.error),
+        error: toStoredError(params.error),
       }
       mapItems[index] = updated
       return updated
@@ -743,9 +820,20 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
   }
 
   const matchesClaim = (
-    stored: Pick<ClaimedAttempt | ClaimedCommand, 'id' | 'leaseToken'> | undefined,
+    stored:
+      | Pick<ClaimedAttempt | ClaimedCommand, 'id' | 'leaseToken'>
+      | undefined,
     claim: Pick<ClaimedAttempt | ClaimedCommand, 'id' | 'leaseToken'>,
   ) => stored?.leaseToken === claim.leaseToken
+  const attemptCommandExists = (attemptId: string) =>
+    activityCommands.some((item) => item.payload.attemptId === attemptId) ||
+    taskCommands.some((item) => item.payload.attemptId === attemptId) ||
+    [...claimedActivityCommands.values()].some(
+      (item) => item.command.attemptId === attemptId,
+    ) ||
+    [...claimedTaskCommands.values()].some(
+      (item) => item.command.attemptId === attemptId,
+    )
 
   const runCoordinationExecutor: RunCoordinationExecutor = {
     async enqueue(command) {
@@ -760,9 +848,11 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
     },
     async claim(worker) {
       const date = now()
-      const item = claimQueued(continueRunCommands, (queued) =>
-        worker.workflowNames.includes(queued.payload.workflowName) &&
-        (queued.runAt === undefined || queued.runAt <= date),
+      const item = claimQueued(
+        continueRunCommands,
+        (queued) =>
+          worker.workflowNames.includes(queued.payload.workflowName) &&
+          (queued.runAt === undefined || queued.runAt <= date),
       )
       if (!item) return null
 
@@ -775,9 +865,10 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
       return claim
     },
     async ack(command) {
-      if (matchesClaim(claimedContinueRunCommands.get(command.id), command)) {
-        claimedContinueRunCommands.delete(command.id)
+      if (!matchesClaim(claimedContinueRunCommands.get(command.id), command)) {
+        throw new Error('Stale workflow command ack')
       }
+      claimedContinueRunCommands.delete(command.id)
     },
     async release(command) {
       if (!matchesClaim(claimedContinueRunCommands.get(command.id), command)) {
@@ -785,7 +876,11 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
       }
 
       claimedContinueRunCommands.delete(command.id)
-      continueRunCommands.push({ id: command.id, payload: command.command })
+      continueRunCommands.push({
+        id: command.id,
+        payload: command.command,
+        runAt: new Date(Date.now() + RELEASE_BACKOFF_MS),
+      })
     },
   }
 
@@ -802,18 +897,30 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
   }
 
   const attemptExecutor: AttemptExecutor = {
-    async dispatchActivity(command) {
-      activityCommands.push({ id: id('activity-command'), payload: command })
+    async dispatchActivity(command, options) {
+      if (attemptCommandExists(command.attemptId)) return
+      activityCommands.push({
+        id: id('activity-command'),
+        payload: command,
+        ...(options?.runAt === undefined ? {} : { runAt: options.runAt }),
+      })
     },
-    async dispatchTask(command) {
-      taskCommands.push({ id: id('task-command'), payload: command })
+    async dispatchTask(command, options) {
+      if (attemptCommandExists(command.attemptId)) return
+      taskCommands.push({
+        id: id('task-command'),
+        payload: command,
+        ...(options?.runAt === undefined ? {} : { runAt: options.runAt }),
+      })
     },
     async claimActivity(worker) {
+      const date = now()
       const claim = claimedAttempt(
         claimQueued(activityCommands, (queued) => {
           const command = queued.payload
           return (
             worker.workflowNames.includes(command.workflowName) &&
+            (queued.runAt === undefined || queued.runAt <= date) &&
             (worker.activityNames === undefined ||
               worker.activityNames.includes(command.activityName))
           )
@@ -823,23 +930,36 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
       return claim
     },
     async claimTask(worker) {
+      const date = now()
       const claim = claimedAttempt(
-        claimQueued(taskCommands, (queued) =>
-          worker.taskNames.includes(queued.payload.taskName),
-        )
+        claimQueued(
+          taskCommands,
+          (queued) =>
+            worker.taskNames.includes(queued.payload.taskName) &&
+            (queued.runAt === undefined || queued.runAt <= date),
+        ),
       )
       if (claim) claimedTaskCommands.set(claim.id, claim)
       return claim
     },
-    async heartbeat() {},
+    async heartbeat(attempt) {
+      const inFlight =
+        attempt.command.kind === 'activityAttempt'
+          ? claimedActivityCommands
+          : claimedTaskCommands
+      if (!matchesClaim(inFlight.get(attempt.id), attempt)) {
+        throw new Error('Workflow attempt heartbeat lease lost')
+      }
+    },
     async ack(attempt) {
       const inFlight =
         attempt.command.kind === 'activityAttempt'
           ? claimedActivityCommands
           : claimedTaskCommands
-      if (matchesClaim(inFlight.get(attempt.id), attempt)) {
-        inFlight.delete(attempt.id)
+      if (!matchesClaim(inFlight.get(attempt.id), attempt)) {
+        throw new Error('Stale workflow command ack')
       }
+      inFlight.delete(attempt.id)
     },
     async release(attempt) {
       if (attempt.command.kind === 'activityAttempt') {
@@ -848,7 +968,11 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
         }
 
         claimedActivityCommands.delete(attempt.id)
-        activityCommands.push({ id: attempt.id, payload: attempt.command })
+        activityCommands.push({
+          id: attempt.id,
+          payload: attempt.command,
+          runAt: new Date(Date.now() + RELEASE_BACKOFF_MS),
+        })
         return
       }
 
@@ -857,7 +981,26 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
       }
 
       claimedTaskCommands.delete(attempt.id)
-      taskCommands.push({ id: attempt.id, payload: attempt.command })
+      taskCommands.push({
+        id: attempt.id,
+        payload: attempt.command,
+        runAt: new Date(Date.now() + RELEASE_BACKOFF_MS),
+      })
+    },
+    async deleteUnclaimed({ runId }) {
+      const deleteQueued = <T extends AttemptCommand>(
+        queue: QueueItem<T>[],
+      ) => {
+        let deleted = 0
+        for (let index = queue.length - 1; index >= 0; index -= 1) {
+          if (queue[index]?.payload.runId !== runId) continue
+          queue.splice(index, 1)
+          deleted += 1
+        }
+        return deleted
+      }
+
+      return deleteQueued(activityCommands) + deleteQueued(taskCommands)
     },
   }
 

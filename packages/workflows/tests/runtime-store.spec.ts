@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest'
 
 import { createInMemoryWorkflowRuntime } from '../src/runtime/index.ts'
 
+const waitForReleaseBackoff = () =>
+  new Promise((resolve) => setTimeout(resolve, 60))
+
 describe('in-memory workflow store', () => {
   it('creates runs, leases one coordinator at a time, and releases leases', async () => {
     const runtime = createInMemoryWorkflowRuntime()
@@ -12,12 +15,10 @@ describe('in-memory workflow store', () => {
 
     const firstLease = await runtime.store.acquireRunLease({
       runId: run.id,
-      workerId: 'worker-1',
       leaseMs: 30_000,
     })
     const secondLease = await runtime.store.acquireRunLease({
       runId: run.id,
-      workerId: 'worker-2',
       leaseMs: 30_000,
     })
 
@@ -30,7 +31,6 @@ describe('in-memory workflow store', () => {
 
     const thirdLease = await runtime.store.acquireRunLease({
       runId: run.id,
-      workerId: 'worker-2',
       leaseMs: 30_000,
     })
 
@@ -46,12 +46,10 @@ describe('in-memory workflow store', () => {
 
     const expiredLease = await runtime.store.acquireRunLease({
       runId: run.id,
-      workerId: 'worker-1',
       leaseMs: 0,
     })
     const nextLease = await runtime.store.acquireRunLease({
       runId: run.id,
-      workerId: 'worker-2',
       leaseMs: 30_000,
     })
 
@@ -665,8 +663,17 @@ describe('in-memory workflow store', () => {
       workflowNames: ['case-generation'],
       leaseMs: 30_000,
     })
-    expect(requeuedRun?.command.runId).toBe('run-1')
-    await runtime.runCoordinationExecutor.ack(requeuedRun!)
+    expect(requeuedRun).toBeNull()
+
+    await waitForReleaseBackoff()
+
+    const delayedRequeuedRun = await runtime.runCoordinationExecutor.claim({
+      workerId: 'worker-1',
+      workflowNames: ['case-generation'],
+      leaseMs: 30_000,
+    })
+    expect(delayedRequeuedRun?.command.runId).toBe('run-1')
+    await runtime.runCoordinationExecutor.ack(delayedRequeuedRun!)
 
     await runtime.attemptExecutor.dispatchActivity(activityCommand)
     await runtime.attemptExecutor.dispatchTask(taskCommand)
@@ -701,11 +708,24 @@ describe('in-memory workflow store', () => {
       workflowNames: ['case-generation'],
       leaseMs: 30_000,
     })
-    expect(releasedActivity?.leaseToken).not.toBe(claimedActivity?.leaseToken)
+    expect(releasedActivity).toBeNull()
+
+    await waitForReleaseBackoff()
+
+    const delayedReleasedActivity = await runtime.attemptExecutor.claimActivity(
+      {
+        workerId: 'worker-1',
+        workflowNames: ['case-generation'],
+        leaseMs: 30_000,
+      },
+    )
+    expect(delayedReleasedActivity?.leaseToken).not.toBe(
+      claimedActivity?.leaseToken,
+    )
     await runtime.attemptExecutor.release(claimedActivity!)
     expect(runtime.inspect().activityCommands).toHaveLength(0)
-    await runtime.attemptExecutor.ack(releasedActivity!)
-    await runtime.attemptExecutor.release(releasedActivity!)
+    await runtime.attemptExecutor.ack(delayedReleasedActivity!)
+    await runtime.attemptExecutor.release(delayedReleasedActivity!)
     await runtime.attemptExecutor.ack(claimedTask!)
     await runtime.attemptExecutor.release(claimedTask!)
 

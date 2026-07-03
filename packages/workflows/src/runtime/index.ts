@@ -29,8 +29,6 @@ export type {
   WorkflowRuntimeAtomicStart,
 } from './coordinator.ts'
 export type { AttemptExecutor, RunCoordinationExecutor } from './executors.ts'
-export { createWorkflowRuntimeRegistry } from './registry.ts'
-export type { WorkflowRuntimeRegistry } from './registry.ts'
 export { createInMemoryWorkflowRuntime } from './in-memory.ts'
 export type { InMemoryWorkflowRuntime } from './in-memory.ts'
 export type {
@@ -51,6 +49,8 @@ export type {
 } from './state.ts'
 export type {
   CompleteMapItemParams,
+  CancelNodeParams,
+  CancelNonTerminalRunNodesParams,
   CreateAttemptInput,
   CreateNodeInput,
   CreateRunInput,
@@ -67,6 +67,7 @@ export type {
   ListRunsResult,
   LoadNodeChildrenParams,
   NodeChildrenSnapshot,
+  RequestRunCancellationParams,
   RunLease,
   SelectNodeCaseParams,
   WaitNodeParams,
@@ -78,7 +79,7 @@ export {
   runTaskAttempt,
   runTaskWorker,
   runWorkflowWorker,
-  runWithConcurrency,
+  WorkflowAttemptTimeoutError,
 } from './worker.ts'
 export type {
   RunActivityAttemptInput,

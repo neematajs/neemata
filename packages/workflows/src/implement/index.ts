@@ -9,22 +9,26 @@ import type {
 import type {
   AnyTaskDefinition,
   AnyWorkflowDefinition,
+  BoundaryInput,
+  BoundaryOutput,
   BranchCaseDefinition,
-  IdempotencyConflictPolicy,
   IdempotencyKey,
   MapRunMode,
   MaybePromise,
+  RetryPolicy,
+  TaskDecodedInput,
   TaskInput,
-  TaskOutput,
+  TaskOutputInput,
   WorkflowActivityNode,
   WorkflowBranchNode,
   WorkflowChildWorkflowNode,
+  WorkflowDecodedInput,
   WorkflowInput,
   WorkflowMapTaskNode,
   WorkflowMapWorkflowNode,
   WorkflowNode,
   WorkflowNodes,
-  WorkflowOutput,
+  WorkflowOutputInput,
   WorkflowParallelNode,
   WorkflowTaskNode,
 } from '../types/index.ts'
@@ -39,16 +43,15 @@ export type TaskIdempotency<Deps extends Dependencies, Input> =
   | ((ctx: DependencyContext<Deps>, input: Input) => IdempotencyKey)
   | {
       key: (ctx: DependencyContext<Deps>, input: Input) => IdempotencyKey
-      conflict?: IdempotencyConflictPolicy
     }
 
 export type TaskImplementation<
   Task extends AnyTaskDefinition = AnyTaskDefinition,
   Deps extends Dependencies = {},
-> = Handler<Deps, [input: TaskInput<Task>], TaskOutput<Task>> & {
+> = Handler<Deps, [input: TaskDecodedInput<Task>], TaskOutputInput<Task>> & {
   readonly kind: 'taskImplementation'
   readonly task: Task
-  readonly idempotency?: TaskIdempotency<Deps, TaskInput<Task>>
+  readonly idempotency?: TaskIdempotency<Deps, TaskDecodedInput<Task>>
 }
 
 export function implementTask<
@@ -58,8 +61,8 @@ export function implementTask<
   task: Task,
   options: {
     dependencies?: Deps
-    idempotency?: TaskIdempotency<Deps, TaskInput<Task>>
-    handler: TaskHandler<Deps, TaskInput<Task>, TaskOutput<Task>>
+    idempotency?: TaskIdempotency<Deps, TaskDecodedInput<Task>>
+    handler: TaskHandler<Deps, TaskDecodedInput<Task>, TaskOutputInput<Task>>
   },
 ): TaskImplementation<Task, Deps> {
   return Object.freeze({
@@ -108,7 +111,6 @@ export type WorkflowNodeIdempotency<
         outputs: Outputs,
         workflowInput: Input,
       ) => IdempotencyKey
-      conflict?: IdempotencyConflictPolicy
     }
 
 export type WorkflowMapNodeIdempotency<
@@ -132,14 +134,12 @@ export type WorkflowMapNodeIdempotency<
         workflowInput: Input,
         index: number,
       ) => IdempotencyKey
-      conflict?: IdempotencyConflictPolicy
     }
 
 export type WorkflowStartIdempotency<Deps extends Dependencies, Input> =
   | ((ctx: DependencyContext<Deps>, input: Input) => IdempotencyKey)
   | {
       key: (ctx: DependencyContext<Deps>, input: Input) => IdempotencyKey
-      conflict?: IdempotencyConflictPolicy
     }
 
 export type WorkflowTags<Deps extends Dependencies, Input> = (
@@ -165,6 +165,7 @@ export type WorkflowMapInputMapper<
   WorkflowDeps extends Dependencies,
   Outputs extends object,
   Input,
+  ItemInput,
   Item,
   NodeInput,
 > = {
@@ -172,7 +173,7 @@ export type WorkflowMapInputMapper<
     ctx: DependencyContext<WorkflowDeps>,
     outputs: Outputs,
     workflowInput: Input,
-  ) => readonly Item[]
+  ) => readonly ItemInput[]
   readonly input: (
     ctx: DependencyContext<WorkflowDeps>,
     outputs: Outputs,
@@ -197,15 +198,15 @@ export type WorkflowImplementation<
   readonly dependencies: WorkflowDeps
   readonly idempotency?: WorkflowStartIdempotency<
     WorkflowDeps,
-    WorkflowInput<Workflow>
+    WorkflowDecodedInput<Workflow>
   >
-  readonly tags?: WorkflowTags<WorkflowDeps, WorkflowInput<Workflow>>
+  readonly tags?: WorkflowTags<WorkflowDeps, WorkflowDecodedInput<Workflow>>
   readonly nodes: readonly WorkflowNodeImplementation[]
   readonly finish: (
     ctx: DependencyContext<WorkflowDeps>,
     outputs: any,
-    workflowInput: WorkflowInput<Workflow>,
-  ) => MaybePromise<WorkflowOutput<Workflow>>
+    workflowInput: WorkflowDecodedInput<Workflow>,
+  ) => MaybePromise<WorkflowOutputInput<Workflow>>
 }
 
 type StoredCallback = (...args: any[]) => unknown
@@ -214,6 +215,7 @@ export type ActivityNodeImplementation = {
   readonly kind: 'activity'
   readonly name: string
   readonly activity: ActivityImplementation
+  readonly retry?: RetryPolicy
   readonly input?: StoredCallback
   readonly idempotency?: unknown
 }
@@ -222,6 +224,7 @@ export type RunnableNodeImplementation = {
   readonly kind: 'task' | 'workflow'
   readonly name: string
   readonly target: AnyTaskDefinition | AnyWorkflowDefinition
+  readonly retry?: RetryPolicy
   readonly input?: StoredCallback
   readonly idempotency?: unknown
 }
@@ -262,6 +265,7 @@ export type WorkflowCaseImplementation =
       readonly kind: 'activity'
       readonly name: string
       readonly activity: ActivityImplementation
+      readonly retry?: RetryPolicy
       readonly input?: StoredCallback
       readonly idempotency?: unknown
     }
@@ -269,6 +273,7 @@ export type WorkflowCaseImplementation =
       readonly kind: 'task' | 'workflow'
       readonly name: string
       readonly target: AnyTaskDefinition | AnyWorkflowDefinition
+      readonly retry?: RetryPolicy
       readonly input?: StoredCallback
       readonly idempotency?: unknown
     }
@@ -302,8 +307,11 @@ type RunnableCaseDescriptor<
 type CaseImplementationValue<Case> =
   Case extends BranchCaseDefinition<'activity', infer Input, infer Output>
     ?
-        | ActivityImplementationValue<Input, Output>
-        | ActivityCaseDescriptor<Input, Output>
+        | ActivityImplementationValue<
+            BoundaryOutput<Input>,
+            BoundaryInput<Output>
+          >
+        | ActivityCaseDescriptor<BoundaryOutput<Input>, BoundaryInput<Output>>
     : Case extends BranchCaseDefinition<'task', any, any, infer Task>
       ? Task extends AnyTaskDefinition
         ? Task | RunnableCaseDescriptor<Task, TaskInput<Task>>
@@ -370,16 +378,26 @@ type CaseImplementationArgument<
   | CaseImplementationFactory<Cases, WorkflowDeps, Outputs, Input>
 
 type ItemOfMapNode<Node> = Node extends {
-  readonly _types?: { readonly input: readonly (infer Item)[] }
+  readonly _types?: { readonly input: infer Input }
 }
-  ? Item
+  ? BoundaryOutput<Input> extends readonly (infer Item)[]
+    ? Item
+    : never
+  : never
+
+type InputItemOfMapNode<Node> = Node extends {
+  readonly _types?: { readonly input: infer Input }
+}
+  ? BoundaryInput<Input> extends readonly (infer Item)[]
+    ? Item
+    : never
   : never
 
 type NodeOutput<Node> = Node extends {
   readonly name: infer Name extends string
   readonly _types?: { readonly output: infer Output }
 }
-  ? { readonly [Key in Name]: Output }
+  ? { readonly [Key in Name]: BoundaryOutput<Output> }
   : {}
 
 export type WorkflowImplementationChain<
@@ -387,8 +405,8 @@ export type WorkflowImplementationChain<
   WorkflowDeps extends Dependencies,
   Nodes extends readonly WorkflowNode[],
   Outputs extends object,
-  WorkflowArgs = WorkflowInput<Workflow>,
-  Result = WorkflowOutput<Workflow>,
+  WorkflowArgs = WorkflowDecodedInput<Workflow>,
+  Result = WorkflowOutputInput<Workflow>,
 > = Nodes extends readonly [
   infer Node,
   ...infer Rest extends readonly WorkflowNode[],
@@ -400,12 +418,15 @@ export type WorkflowImplementationChain<
     >
     ? {
         readonly [Key in Name]: (
-          value: ActivityImplementationValue<Input, Output>,
+          value: ActivityImplementationValue<
+            BoundaryOutput<Input>,
+            BoundaryInput<Output>
+          >,
           options?: ActivityImplementationOptions<
             WorkflowDeps,
             Outputs,
             WorkflowArgs,
-            Input
+            BoundaryInput<Input>
           >,
         ) => WorkflowImplementationChain<
           Workflow,
@@ -518,6 +539,7 @@ export type WorkflowImplementationChain<
                       WorkflowDeps,
                       Outputs,
                       WorkflowArgs,
+                      InputItemOfMapNode<Node>,
                       ItemOfMapNode<Node>,
                       TaskInput<Task>
                     >,
@@ -541,6 +563,7 @@ export type WorkflowImplementationChain<
                         WorkflowDeps,
                         Outputs,
                         WorkflowArgs,
+                        InputItemOfMapNode<Node>,
                         ItemOfMapNode<Node>,
                         WorkflowInput<Child>
                       >,
@@ -579,8 +602,8 @@ export type WorkflowImplementer<
   WorkflowDeps,
   WorkflowNodes<Workflow>,
   {},
-  WorkflowInput<Workflow>,
-  WorkflowOutput<Workflow>
+  WorkflowDecodedInput<Workflow>,
+  WorkflowOutputInput<Workflow>
 >
 
 export function implementWorkflow<
@@ -592,9 +615,9 @@ export function implementWorkflow<
     dependencies?: WorkflowDeps
     idempotency?: WorkflowStartIdempotency<
       WorkflowDeps,
-      WorkflowInput<Workflow>
+      WorkflowDecodedInput<Workflow>
     >
-    tags?: WorkflowTags<WorkflowDeps, WorkflowInput<Workflow>>
+    tags?: WorkflowTags<WorkflowDeps, WorkflowDecodedInput<Workflow>>
   },
 ): WorkflowImplementer<Workflow, WorkflowDeps> {
   return createWorkflowChain({
@@ -643,6 +666,7 @@ function createWorkflowChain(state: {
             kind: 'activity',
             name: node.name,
             activity: createActivityImplementation(node.name, value),
+            retry: node.retry,
             input: options?.input,
             idempotency: options?.idempotency,
           }),
@@ -663,6 +687,7 @@ function createWorkflowChain(state: {
             kind: 'task',
             name: node.name,
             target: task,
+            retry: node.retry,
             input: options?.input,
             idempotency: options?.idempotency,
           })
@@ -694,7 +719,7 @@ function createWorkflowChain(state: {
       return Object.freeze({
         [node.name]: (
           task: AnyTaskDefinition,
-          options: WorkflowMapInputMapper<any, any, any, any, any>,
+          options: WorkflowMapInputMapper<any, any, any, any, any, any>,
         ) => {
           assertSameRunnable(
             node.task,
@@ -718,7 +743,7 @@ function createWorkflowChain(state: {
       return Object.freeze({
         [node.name]: (
           workflow: AnyWorkflowDefinition,
-          options: WorkflowMapInputMapper<any, any, any, any, any>,
+          options: WorkflowMapInputMapper<any, any, any, any, any, any>,
         ) => {
           assertSameRunnable(
             node.workflow,
@@ -870,6 +895,7 @@ function normalizeCase(
       kind: 'activity',
       name,
       activity: createActivityImplementation(name, descriptor?.value ?? value),
+      retry: 'retry' in branchCase ? branchCase.retry : undefined,
       input: descriptor?.options?.input,
       idempotency: descriptor?.options?.idempotency,
     })
@@ -893,6 +919,7 @@ function normalizeCase(
     kind: branchCase.kind,
     name,
     target: target as AnyTaskDefinition | AnyWorkflowDefinition,
+    retry: 'retry' in branchCase ? branchCase.retry : undefined,
     input: descriptor?.options?.input,
     idempotency: descriptor?.options?.idempotency,
   })

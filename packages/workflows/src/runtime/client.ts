@@ -8,23 +8,26 @@ import type {
   AnyTaskDefinition,
   AnyWorkflowDefinition,
   TaskInput,
+  TaskRun,
   WorkflowInput,
+  WorkflowRun,
 } from '../types/index.ts'
+import type { WorkflowRuntimeAtomicStart } from './coordinator.ts'
 import type { AttemptExecutor, RunCoordinationExecutor } from './executors.ts'
 import type { RunSnapshot, StoredRun } from './state.ts'
 import type { ListRunsFilter, ListRunsResult, WorkflowStore } from './store.ts'
-import { startTaskRun, startWorkflowRun } from './coordinator.ts'
-import type { WorkflowRuntimeAtomicStart } from './coordinator.ts'
 import type {
   WorkflowRuntimeAtomicCompletion,
   WorkflowRuntimeAtomicContinuation,
 } from './worker.ts'
+import { startTaskRun, startWorkflowRun } from './coordinator.ts'
 import {
   createWorkflowRuntimeRegistry,
   type RegisteredTaskImplementation,
   type RegisteredWorkflowImplementation,
   type WorkflowRuntimeRegistry,
 } from './registry.ts'
+import { isTerminalRunStatus } from './status.ts'
 
 export type WorkflowRuntimeStartOptions = {
   readonly tags?: Readonly<Record<string, string>>
@@ -38,6 +41,7 @@ export type WorkflowRuntimeAdapter = {
   readonly atomicStart?: WorkflowRuntimeAtomicStart
   readonly atomicContinuation?: WorkflowRuntimeAtomicContinuation
   readonly atomicCompletion?: WorkflowRuntimeAtomicCompletion
+  readonly dispose?: () => Promise<void> | void
 }
 
 export type CreateWorkflowRuntimeClientInput = WorkflowRuntimeAdapter & {
@@ -52,13 +56,14 @@ export type WorkflowRuntimeClient = {
       workflow: Workflow,
       input: WorkflowInput<Workflow>,
       options?: WorkflowRuntimeStartOptions,
-    ): Promise<StoredRun>
+    ): Promise<WorkflowRun<Workflow>>
     <Task extends AnyTaskDefinition>(
       task: Task,
       input: TaskInput<Task>,
       options?: WorkflowRuntimeStartOptions,
-    ): Promise<StoredRun>
+    ): Promise<TaskRun<Task>>
   }
+  readonly cancel: (runId: string) => Promise<StoredRun | undefined>
   readonly get: (runId: string) => Promise<RunSnapshot | undefined>
   readonly list: (filter?: ListRunsFilter) => Promise<ListRunsResult>
 }
@@ -71,14 +76,14 @@ export function createWorkflowRuntimeClient(
     tasks: input.tasks,
   })
 
-  const start: WorkflowRuntimeClient['start'] = async (
+  const start = (async (
     runnable: AnyWorkflowDefinition | AnyTaskDefinition,
     runnableInput: unknown,
     options?: WorkflowRuntimeStartOptions,
   ) => {
     switch (runnable.kind) {
       case 'workflow':
-        return startWorkflowRun({
+        return (await startWorkflowRun({
           store: input.store,
           runCoordinationExecutor: input.runCoordinationExecutor,
           atomicStart: input.atomicStart,
@@ -88,9 +93,9 @@ export function createWorkflowRuntimeClient(
           input: runnableInput,
           tags: options?.tags,
           idempotencyKey: options?.idempotencyKey,
-        })
+        })) as WorkflowRun<typeof runnable>
       case 'task':
-        return startTaskRun({
+        return (await startTaskRun({
           store: input.store,
           runCoordinationExecutor: input.runCoordinationExecutor,
           attemptExecutor: input.attemptExecutor,
@@ -101,12 +106,23 @@ export function createWorkflowRuntimeClient(
           input: runnableInput,
           tags: options?.tags,
           idempotencyKey: options?.idempotencyKey,
-        })
+        })) as TaskRun<typeof runnable>
     }
-  }
+  }) as WorkflowRuntimeClient['start']
 
   return Object.freeze({
     start,
+    cancel: async (runId) => {
+      const run = await input.store.requestRunCancellation({ runId })
+      if (!run) return undefined
+      if (isTerminalRunStatus(run.status)) return run
+      await input.runCoordinationExecutor.enqueue({
+        kind: 'continueRun',
+        runId: run.id,
+        workflowName: run.workflowName,
+      })
+      return run
+    },
     get: (runId) => input.store.loadRunSnapshot(runId),
     list: (filter) => input.store.listRuns(filter),
   })

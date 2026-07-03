@@ -74,7 +74,8 @@ function createWorkflowMap(
 
   for (const workflow of workflows) {
     const name = workflow.workflow.name
-    if (map.has(name)) throw new Error(`Duplicate workflow implementation [${name}]`)
+    if (map.has(name))
+      throw new Error(`Duplicate workflow implementation [${name}]`)
     map.set(name, workflow)
   }
 
@@ -86,7 +87,8 @@ function createTaskMap(tasks: readonly RegisteredTaskImplementation[]) {
 
   for (const task of tasks) {
     const name = task.task.name
-    if (map.has(name)) throw new Error(`Duplicate task implementation [${name}]`)
+    if (map.has(name))
+      throw new Error(`Duplicate task implementation [${name}]`)
     map.set(name, task)
   }
 

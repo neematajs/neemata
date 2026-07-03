@@ -1,0 +1,611 @@
+import { t } from '@nmtjs/type'
+import { afterEach, describe, expect, it } from 'vitest'
+
+import type {
+  TaskImplementation,
+  WorkflowImplementation,
+} from '../../src/implement/index.ts'
+import {
+  defineTask,
+  defineWorkflow,
+  implementTask,
+  implementWorkflow,
+} from '../../src/index.ts'
+import {
+  createWorkflowRuntimeClient,
+  runActivityWorker,
+  runTaskWorker,
+  runWorkflowWorker,
+  type RunSnapshot,
+} from '../../src/runtime/index.ts'
+import {
+  createPostgresWorkflowHarness,
+  createTestContainer,
+  createTestName,
+  postgresTarget,
+  requireServiceEnv,
+  wait,
+  type PostgresWorkflowHarness,
+} from './helpers.ts'
+
+requireServiceEnv(postgresTarget)
+
+describe.skipIf(!postgresTarget.url)(
+  '@nmtjs/workflows Postgres integration',
+  () => {
+    const harnesses: PostgresWorkflowHarness[] = []
+
+    afterEach(async () => {
+      await Promise.allSettled(
+        harnesses.splice(0).map((harness) => harness.cleanup()),
+      )
+    })
+
+    async function createHarness() {
+      const harness = await createPostgresWorkflowHarness(postgresTarget)
+      harnesses.push(harness)
+      return harness
+    }
+
+    it('executes multi-worker activity and task effects exactly once', async () => {
+      const { runtime } = await createHarness()
+      const container = createTestContainer()
+      const effects = new Map<string, number>()
+      const task = defineTask({
+        name: createTestName('postgres-effect-task'),
+        input: t.object({ runKey: t.string(), item: t.string() }),
+        output: t.object({ id: t.string() }),
+      })
+      const workflow = defineWorkflow({
+        name: createTestName('postgres-effect-workflow'),
+        input: t.object({
+          runKey: t.string(),
+          items: t.array(t.string()),
+        }),
+        output: t.object({ count: t.number() }),
+      })
+        .activity('prepare', {
+          input: t.object({ runKey: t.string() }),
+          output: t.object({ prefix: t.string() }),
+        })
+        .mapTask('items', task, {
+          item: t.string(),
+          mode: 'wait-all',
+          concurrency: 3,
+        })
+        .activity('finalize', {
+          input: t.object({ runKey: t.string(), count: t.number() }),
+          output: t.object({ count: t.number() }),
+        })
+        .build()
+      const taskImpl = implementTask(task, {
+        handler: async (_ctx, input) => {
+          increment(effects, `${input.runKey}:item:${input.item}`)
+          return { id: `${input.runKey}:${input.item}` }
+        },
+      })
+      const workflowImpl = implementWorkflow(workflow)
+        .prepare(async (_ctx, input) => {
+          increment(effects, `${input.runKey}:prepare`)
+          return { prefix: input.runKey }
+        })
+        .items(task, {
+          items: (_ctx, _outputs, input) => input.items,
+          input: (_ctx, { prepare }, item) => ({
+            runKey: prepare.prefix,
+            item,
+          }),
+        })
+        .finalize(
+          async (_ctx, input) => {
+            increment(effects, `${input.runKey}:finalize`)
+            return { count: input.count }
+          },
+          {
+            input: (_ctx, { prepare, items }) => ({
+              runKey: prepare.prefix,
+              count: items.items.length,
+            }),
+          },
+        )
+        .finish((_ctx, { finalize }) => ({ count: finalize.count }))
+      const client = createWorkflowRuntimeClient(runtime)
+      const inputs = Array.from({ length: 20 }, (_, index) => ({
+        runKey: `run-${index}`,
+        items: ['a', 'b', 'c'],
+      }))
+      const runs = await Promise.all(
+        inputs.map((input) => client.start(workflow, input)),
+      )
+
+      const snapshots = await runWorkersUntilCompleted({
+        runtime,
+        container,
+        workflows: [workflowImpl],
+        tasks: [taskImpl],
+        runIds: runs.map((run) => run.id),
+        workerCount: 3,
+        leaseMs: 500,
+      })
+
+      expect(snapshots.map((snapshot) => snapshot.run.status)).toStrictEqual(
+        Array.from({ length: inputs.length }, () => 'completed'),
+      )
+      for (const input of inputs) {
+        expect(effects.get(`${input.runKey}:prepare`)).toBe(1)
+        expect(effects.get(`${input.runKey}:finalize`)).toBe(1)
+        for (const item of input.items) {
+          expect(effects.get(`${input.runKey}:item:${item}`)).toBe(1)
+        }
+      }
+    }, 60_000)
+
+    it('redelivers an unacked activity after a crashed worker lease expires', async () => {
+      const { runtime } = await createHarness()
+      const container = createTestContainer()
+      let calls = 0
+      const workflow = defineWorkflow({
+        name: createTestName('postgres-crash-redelivery-workflow'),
+        input: t.object({ text: t.string() }),
+        output: t.object({ text: t.string() }),
+      })
+        .activity('content', {
+          input: t.object({ text: t.string() }),
+          output: t.object({ text: t.string() }),
+        })
+        .build()
+      const workflowImpl = implementWorkflow(workflow)
+        .content(async (_ctx, input) => {
+          calls += 1
+          return { text: `content:${input.text}` }
+        })
+        .finish((_ctx, { content }) => ({ text: content.text }))
+      const client = createWorkflowRuntimeClient(runtime)
+      const run = await client.start(workflow, { text: 'alpha' })
+      await runWorkflowWorker({
+        ...runtime,
+        container,
+        workflows: [workflowImpl],
+        workerId: 'coordinator-crash',
+      })
+      const claimed = await runtime.attemptExecutor.claimActivity({
+        workerId: 'activity-crashed',
+        workflowNames: [workflow.name],
+        activityNames: ['content'],
+        leaseMs: 50,
+      })
+      expect(claimed).not.toBeNull()
+
+      await wait(120)
+      await runActivityWorker({
+        ...runtime,
+        container,
+        workflows: [workflowImpl],
+        workerId: 'activity-reclaimer',
+        leaseMs: 200,
+        maxIdleClaims: 4,
+        idleDelayMs: 20,
+      })
+      await runWorkflowWorker({
+        ...runtime,
+        container,
+        workflows: [workflowImpl],
+        workerId: 'coordinator-finish',
+      })
+
+      const snapshot = await runtime.store.loadRunSnapshot(run.id)
+      expect(calls).toBe(1)
+      expect(snapshot?.run.status).toBe('completed')
+      expect(snapshot?.run.output).toStrictEqual({ text: 'content:alpha' })
+    }, 30_000)
+
+    it('keeps long activity work alive with heartbeats across lease expiry', async () => {
+      const { runtime } = await createHarness()
+      const container = createTestContainer()
+      let calls = 0
+      const workflow = defineWorkflow({
+        name: createTestName('postgres-heartbeat-workflow'),
+        input: t.object({ text: t.string() }),
+        output: t.object({ text: t.string() }),
+      })
+        .activity('content', {
+          input: t.object({ text: t.string() }),
+          output: t.object({ text: t.string() }),
+        })
+        .build()
+      const workflowImpl = implementWorkflow(workflow)
+        .content(async (_ctx, input) => {
+          calls += 1
+          await wait(240)
+          return { text: `content:${input.text}` }
+        })
+        .finish((_ctx, { content }) => ({ text: content.text }))
+      const client = createWorkflowRuntimeClient(runtime)
+      const run = await client.start(workflow, { text: 'alpha' })
+      await runWorkflowWorker({
+        ...runtime,
+        container,
+        workflows: [workflowImpl],
+        workerId: 'coordinator-heartbeat',
+      })
+
+      await Promise.all([
+        runActivityWorker({
+          ...runtime,
+          container,
+          workflows: [workflowImpl],
+          workerId: 'activity-heartbeat-1',
+          leaseMs: 90,
+          maxIdleClaims: 8,
+          idleDelayMs: 40,
+        }),
+        runActivityWorker({
+          ...runtime,
+          container,
+          workflows: [workflowImpl],
+          workerId: 'activity-heartbeat-2',
+          leaseMs: 90,
+          maxIdleClaims: 8,
+          idleDelayMs: 40,
+        }),
+      ])
+      await runWorkflowWorker({
+        ...runtime,
+        container,
+        workflows: [workflowImpl],
+        workerId: 'coordinator-heartbeat-finish',
+      })
+
+      const snapshot = await runtime.store.loadRunSnapshot(run.id)
+      expect(calls).toBe(1)
+      expect(snapshot?.run.status).toBe('completed')
+      expect(snapshot?.attempts).toHaveLength(1)
+      expect(snapshot?.attempts[0]?.status).toBe('completed')
+    }, 30_000)
+
+    it('aborts completion after activity lease loss and lets another worker finish', async () => {
+      const { pool, runtime } = await createHarness()
+      const container = createTestContainer()
+      let calls = 0
+      let firstStarted!: () => void
+      const firstStartedPromise = new Promise<void>((resolve) => {
+        firstStarted = resolve
+      })
+      const workflow = defineWorkflow({
+        name: createTestName('postgres-lease-loss-workflow'),
+        input: t.object({ text: t.string() }),
+        output: t.object({ text: t.string() }),
+      })
+        .activity('content', {
+          input: t.object({ text: t.string() }),
+          output: t.object({ text: t.string() }),
+        })
+        .build()
+      const workflowImpl = implementWorkflow(workflow)
+        .content(async (_ctx, input) => {
+          calls += 1
+          if (calls === 1) {
+            firstStarted()
+            await wait(220)
+            return { text: `stale:${input.text}` }
+          }
+          return { text: `fresh:${input.text}` }
+        })
+        .finish((_ctx, { content }) => ({ text: content.text }))
+      const client = createWorkflowRuntimeClient(runtime)
+      const run = await client.start(workflow, { text: 'alpha' })
+      await runWorkflowWorker({
+        ...runtime,
+        container,
+        workflows: [workflowImpl],
+        workerId: 'coordinator-lease-loss',
+      })
+
+      const staleWorker = runActivityWorker({
+        ...runtime,
+        container,
+        workflows: [workflowImpl],
+        workerId: 'activity-stale',
+        leaseMs: 60,
+        maxIdleClaims: 1,
+        idleDelayMs: 20,
+      })
+      await firstStartedPromise
+      await pool.query(
+        `
+          UPDATE workflow_commands
+          SET lease_owner = 'activity-stealer',
+              lease_token = 'stolen',
+              lease_expires_at = now() - interval '1 millisecond'
+          WHERE kind = 'activity' AND run_id = $1
+        `,
+        [run.id],
+      )
+
+      await expect(staleWorker).resolves.toStrictEqual({ processed: 0 })
+      await runActivityWorker({
+        ...runtime,
+        container,
+        workflows: [workflowImpl],
+        workerId: 'activity-fresh',
+        leaseMs: 200,
+        maxIdleClaims: 4,
+        idleDelayMs: 20,
+      })
+      await runWorkflowWorker({
+        ...runtime,
+        container,
+        workflows: [workflowImpl],
+        workerId: 'coordinator-lease-loss-finish',
+      })
+
+      const snapshot = await runtime.store.loadRunSnapshot(run.id)
+      expect(calls).toBe(2)
+      expect(snapshot?.run.status).toBe('completed')
+      expect(snapshot?.run.output).toStrictEqual({ text: 'fresh:alpha' })
+      expect(snapshot?.attempts).toHaveLength(1)
+      expect(snapshot?.attempts[0]?.status).toBe('completed')
+    }, 30_000)
+
+    it('cancels parent and child workflows and absorbs late in-flight completion', async () => {
+      const { pool, runtime } = await createHarness()
+      const container = createTestContainer()
+      let releaseSlow!: () => void
+      let slowStarted!: () => void
+      const slowStartedPromise = new Promise<void>((resolve) => {
+        slowStarted = resolve
+      })
+      const releaseSlowPromise = new Promise<void>((resolve) => {
+        releaseSlow = resolve
+      })
+      const childWorkflow = defineWorkflow({
+        name: createTestName('postgres-cancel-child'),
+        input: t.object({ text: t.string() }),
+        output: t.object({ text: t.string() }),
+      })
+        .activity('slow', {
+          input: t.object({ text: t.string() }),
+          output: t.object({ text: t.string() }),
+        })
+        .build()
+      const parentWorkflow = defineWorkflow({
+        name: createTestName('postgres-cancel-parent'),
+        input: t.object({ text: t.string() }),
+        output: t.object({ text: t.string() }),
+      })
+        .workflow('child', childWorkflow)
+        .build()
+      const childImpl = implementWorkflow(childWorkflow)
+        .slow(
+          async (_ctx, input) => {
+            slowStarted()
+            await releaseSlowPromise
+            return { text: `late:${input.text}` }
+          },
+          {
+            input: (_ctx, _outputs, input) => ({ text: input.text }),
+          },
+        )
+        .finish((_ctx, { slow }) => ({ text: slow.text }))
+      const parentImpl = implementWorkflow(parentWorkflow)
+        .child(childWorkflow, {
+          input: (_ctx, _outputs, input) => ({ text: input.text }),
+        })
+        .finish((_ctx, { child }) => ({ text: child.text }))
+      const client = createWorkflowRuntimeClient(runtime)
+      const parentRun = await client.start(parentWorkflow, { text: 'alpha' })
+
+      await runWorkflowWorker({
+        ...runtime,
+        container,
+        workflows: [parentImpl, childImpl],
+        workerId: 'coordinator-cancel-prime',
+        leaseMs: 200,
+        maxIdleClaims: 5,
+        idleDelayMs: 10,
+      })
+      const activityWorker = runActivityWorker({
+        ...runtime,
+        container,
+        workflows: [childImpl],
+        workerId: 'activity-cancel-late',
+        leaseMs: 500,
+        maxIdleClaims: 1,
+      })
+      await slowStartedPromise
+
+      await client.cancel(parentRun.id)
+      await runWorkflowWorker({
+        ...runtime,
+        container,
+        workflows: [parentImpl, childImpl],
+        workerId: 'coordinator-cancel',
+        leaseMs: 200,
+        maxIdleClaims: 10,
+        idleDelayMs: 10,
+      })
+
+      const cancelledParent = await runtime.store.loadRunSnapshot(parentRun.id)
+      const childRunId = cancelledParent?.childLinks[0]?.childRunId
+      expect(childRunId).toBeDefined()
+      const cancelledChild = await runtime.store.loadRunSnapshot(childRunId!)
+      expect(cancelledParent?.run.status).toBe('cancelled')
+      expect(cancelledParent?.nodes[0]?.status).toBe('cancelled')
+      expect(cancelledChild?.run.status).toBe('cancelled')
+      expect(cancelledChild?.nodes[0]?.status).toBe('cancelled')
+
+      const unclaimed = await pool.query<{ count: number }>(
+        `
+          SELECT count(*)::int AS count
+          FROM workflow_commands
+          WHERE run_id = ANY($1::uuid[])
+            AND lease_token IS NULL
+        `,
+        [[parentRun.id, childRunId]],
+      )
+      expect(unclaimed.rows[0]?.count).toBe(0)
+
+      releaseSlow()
+      await expect(activityWorker).resolves.toStrictEqual({ processed: 1 })
+      await runWorkflowWorker({
+        ...runtime,
+        container,
+        workflows: [parentImpl, childImpl],
+        workerId: 'coordinator-cancel-after-late',
+        leaseMs: 200,
+        maxIdleClaims: 5,
+        idleDelayMs: 10,
+      })
+
+      const finalParent = await runtime.store.loadRunSnapshot(parentRun.id)
+      const finalChild = await runtime.store.loadRunSnapshot(childRunId!)
+      expect(finalParent?.run.status).toBe('cancelled')
+      expect(finalParent?.run.output).toBeUndefined()
+      expect(finalChild?.run.status).toBe('cancelled')
+      expect(finalChild?.run.output).toBeUndefined()
+    }, 30_000)
+
+    it('keeps idempotent starts and duplicate continues consistent under contention', async () => {
+      const { pool, runtime } = await createHarness()
+      const container = createTestContainer()
+      let finishCalls = 0
+      const workflow = defineWorkflow({
+        name: createTestName('postgres-contention-workflow'),
+        input: t.object({ text: t.string() }),
+        output: t.object({ text: t.string() }),
+      }).build()
+      const workflowImpl = implementWorkflow(workflow).finish(
+        (_ctx, _outputs, input) => {
+          finishCalls += 1
+          return { text: input.text }
+        },
+      )
+      const client = createWorkflowRuntimeClient(runtime)
+      const starts = await Promise.all(
+        Array.from({ length: 20 }, () =>
+          client.start(
+            workflow,
+            { text: 'alpha' },
+            { idempotencyKey: ['contention', workflow.name, 'alpha'] },
+          ),
+        ),
+      )
+      const runIds = new Set(starts.map((run) => run.id))
+      expect(runIds.size).toBe(1)
+      const runId = starts[0]!.id
+      await Promise.all(
+        Array.from({ length: 20 }, () =>
+          runtime.runCoordinationExecutor.enqueue({
+            kind: 'continueRun',
+            runId,
+            workflowName: workflow.name,
+          }),
+        ),
+      )
+
+      await Promise.all(
+        Array.from({ length: 4 }, (_, index) =>
+          runWorkflowWorker({
+            ...runtime,
+            container,
+            workflows: [workflowImpl],
+            workerId: `coordinator-contention-${index}`,
+            leaseMs: 200,
+            maxIdleClaims: 10,
+            idleDelayMs: 10,
+          }),
+        ),
+      )
+
+      const rows = await pool.query<{ count: number }>(
+        'SELECT count(*)::int AS count FROM workflow_runs',
+      )
+      const snapshot = await runtime.store.loadRunSnapshot(runId)
+      expect(rows.rows[0]?.count).toBe(1)
+      expect(finishCalls).toBe(1)
+      expect(snapshot?.run.status).toBe('completed')
+      expect(snapshot?.run.output).toStrictEqual({ text: 'alpha' })
+    }, 30_000)
+  },
+)
+
+type RunWorkersUntilCompletedInput = {
+  readonly runtime: PostgresWorkflowHarness['runtime']
+  readonly container: ReturnType<typeof createTestContainer>
+  readonly workflows: readonly WorkflowImplementation[]
+  readonly tasks?: readonly TaskImplementation[]
+  readonly runIds: readonly string[]
+  readonly workerCount?: number
+  readonly leaseMs?: number
+}
+
+async function runWorkersUntilCompleted(
+  input: RunWorkersUntilCompletedInput,
+): Promise<RunSnapshot[]> {
+  const workerCount = input.workerCount ?? 2
+  const tasks = input.tasks ?? []
+
+  for (let round = 0; round < 20; round++) {
+    await Promise.all([
+      ...Array.from({ length: workerCount }, (_, index) =>
+        runWorkflowWorker({
+          ...input.runtime,
+          container: input.container,
+          workflows: input.workflows,
+          workerId: `coordinator-${round}-${index}`,
+          leaseMs: input.leaseMs ?? 300,
+          maxIdleClaims: 20,
+          idleDelayMs: 10,
+        }),
+      ),
+      ...Array.from({ length: workerCount }, (_, index) =>
+        runActivityWorker({
+          ...input.runtime,
+          container: input.container,
+          workflows: input.workflows,
+          workerId: `activity-${round}-${index}`,
+          leaseMs: input.leaseMs ?? 300,
+          maxIdleClaims: 20,
+          idleDelayMs: 10,
+        }),
+      ),
+      ...Array.from(
+        { length: tasks.length === 0 ? 0 : workerCount },
+        (_, index) =>
+          runTaskWorker({
+            ...input.runtime,
+            container: input.container,
+            tasks,
+            workerId: `task-${round}-${index}`,
+            leaseMs: input.leaseMs ?? 300,
+            maxIdleClaims: 20,
+            idleDelayMs: 10,
+          }),
+      ),
+    ])
+
+    const snapshots = await Promise.all(
+      input.runIds.map(async (runId) => {
+        const snapshot = await input.runtime.store.loadRunSnapshot(runId)
+        if (!snapshot) throw new Error(`Missing workflow run [${runId}]`)
+        return snapshot
+      }),
+    )
+    if (snapshots.every((snapshot) => snapshot.run.status === 'completed')) {
+      return snapshots
+    }
+  }
+
+  const snapshots = await Promise.all(
+    input.runIds.map((runId) => input.runtime.store.loadRunSnapshot(runId)),
+  )
+  throw new Error(
+    `Workflow runs did not complete: ${snapshots
+      .map((snapshot) => `${snapshot?.run.id}:${snapshot?.run.status}`)
+      .join(', ')}`,
+  )
+}
+
+function increment(counters: Map<string, number>, key: string) {
+  counters.set(key, (counters.get(key) ?? 0) + 1)
+}

@@ -1,13 +1,14 @@
-import { Container, createLogger } from '@nmtjs/core'
 import { PGlite } from '@electric-sql/pglite'
+import { Container, createLogger } from '@nmtjs/core'
 import { t } from '@nmtjs/type'
 import { expect, test } from 'vitest'
 
 import {
+  createPostgresWorkflowConnection,
   createPostgresWorkflowRuntime,
-  installPostgresWorkflowSchemaForTesting,
   type WorkflowPostgresConnection,
 } from '../src/adapters/postgres.ts'
+import { installPostgresWorkflowSchemaForTesting } from '../src/adapters/postgres/testing.ts'
 import {
   defineTask,
   defineWorkflow,
@@ -21,18 +22,8 @@ import {
   runWorkflowWorker,
 } from '../src/runtime/index.ts'
 
-function createPgliteConnection(db = new PGlite()): WorkflowPostgresConnection {
-  return {
-    query: (sql, params = []) => db.query(sql, [...params]),
-    transaction: (handler) =>
-      db.transaction((tx) =>
-        handler({
-          query: (sql, params = []) => tx.query(sql, [...params]),
-          transaction: (nested) => nested(createPgliteConnection(db)),
-        }),
-      ),
-  }
-}
+const createPgliteConnection = () =>
+  createPostgresWorkflowConnection(new PGlite())
 
 function createTestContainer() {
   const logger = createLogger({ pinoOptions: { enabled: false } }, 'test')
@@ -47,18 +38,14 @@ function failNextCommandAck(
     target: WorkflowPostgresConnection,
   ): WorkflowPostgresConnection => ({
     query(sql, params = []) {
-      if (
-        !failed &&
-        /DELETE\s+FROM\s+workflow_commands/i.test(sql)
-      ) {
+      if (!failed && /DELETE\s+FROM\s+workflow_commands/i.test(sql)) {
         failed = true
         throw new Error('forced command ack failure')
       }
 
       return target.query(sql, params)
     },
-    transaction: (handler) =>
-      target.transaction((tx) => handler(wrap(tx))),
+    transaction: (handler) => target.transaction((tx) => handler(wrap(tx))),
   })
 
   return wrap(connection)
@@ -72,10 +59,7 @@ function staleNextCommandAckLease(
     target: WorkflowPostgresConnection,
   ): WorkflowPostgresConnection => ({
     async query(sql, params = []) {
-      if (
-        !stale &&
-        /DELETE\s+FROM\s+workflow_commands/i.test(sql)
-      ) {
+      if (!stale && /DELETE\s+FROM\s+workflow_commands/i.test(sql)) {
         stale = true
         await target.query(
           `
@@ -89,8 +73,7 @@ function staleNextCommandAckLease(
 
       return target.query(sql, params)
     },
-    transaction: (handler) =>
-      target.transaction((tx) => handler(wrap(tx))),
+    transaction: (handler) => target.transaction((tx) => handler(wrap(tx))),
   })
 
   return wrap(connection)
@@ -167,7 +150,7 @@ test('rolls back workflow continuation when command ack lease is stale', async (
       container: createTestContainer(),
       workerId: 'workflow-worker',
     }),
-  ).rejects.toThrow('Stale workflow command ack')
+  ).resolves.toStrictEqual({ processed: 0 })
 
   const snapshot = await runtime.store.loadRunSnapshot(run.id)
   expect(snapshot?.run.status).toBe('queued')
@@ -212,10 +195,12 @@ test('rolls back activity dispatch when command ack fails', async () => {
   expect(snapshot?.run.status).toBe('queued')
   expect(snapshot?.nodes).toStrictEqual([])
   expect(snapshot?.attempts).toStrictEqual([])
-  expect(await countRows(connection, 'workflow_commands', "kind = 'continue'"))
-    .toBe(1)
-  expect(await countRows(connection, 'workflow_commands', "kind = 'activity'"))
-    .toBe(0)
+  expect(
+    await countRows(connection, 'workflow_commands', "kind = 'continue'"),
+  ).toBe(1)
+  expect(
+    await countRows(connection, 'workflow_commands', "kind = 'activity'"),
+  ).toBe(0)
 })
 
 test('rolls back standalone task completion when command ack fails', async () => {
@@ -325,8 +310,9 @@ test('rolls back activity completion when command ack fails', async () => {
   })
   const beforeActivity = await runtime.store.loadRunSnapshot(run.id)
   const beforeNodeStatus = beforeActivity?.nodes[0]?.status
-  expect(await countRows(connection, 'workflow_commands', "kind = 'activity'"))
-    .toBe(1)
+  expect(
+    await countRows(connection, 'workflow_commands', "kind = 'activity'"),
+  ).toBe(1)
 
   await expect(
     runActivityWorker({
@@ -342,10 +328,12 @@ test('rolls back activity completion when command ack fails', async () => {
   expect(snapshot?.nodes[0]?.status).toBe(beforeNodeStatus)
   expect(snapshot?.nodes[0]?.output).toBeUndefined()
   expect(snapshot?.attempts[0]?.status).toBe('started')
-  expect(await countRows(connection, 'workflow_commands', "kind = 'continue'"))
-    .toBe(0)
-  expect(await countRows(connection, 'workflow_commands', "kind = 'activity'"))
-    .toBe(1)
+  expect(
+    await countRows(connection, 'workflow_commands', "kind = 'continue'"),
+  ).toBe(0)
+  expect(
+    await countRows(connection, 'workflow_commands', "kind = 'activity'"),
+  ).toBe(1)
 })
 
 test('rolls back activity completion when command ack lease is stale', async () => {
@@ -378,8 +366,9 @@ test('rolls back activity completion when command ack lease is stale', async () 
     container,
     workerId: 'workflow-worker',
   })
-  expect(await countRows(connection, 'workflow_commands', "kind = 'activity'"))
-    .toBe(1)
+  expect(
+    await countRows(connection, 'workflow_commands', "kind = 'activity'"),
+  ).toBe(1)
 
   await expect(
     runActivityWorker({
@@ -388,14 +377,16 @@ test('rolls back activity completion when command ack lease is stale', async () 
       container,
       workerId: 'activity-worker',
     }),
-  ).rejects.toThrow('Stale workflow command ack')
+  ).resolves.toStrictEqual({ processed: 0 })
 
   const snapshot = await runtime.store.loadRunSnapshot(run.id)
   expect(snapshot?.run.status).toBe('queued')
   expect(snapshot?.nodes[0]?.output).toBeUndefined()
   expect(snapshot?.attempts[0]?.status).toBe('started')
-  expect(await countRows(connection, 'workflow_commands', "kind = 'continue'"))
-    .toBe(0)
-  expect(await countRows(connection, 'workflow_commands', "kind = 'activity'"))
-    .toBe(1)
+  expect(
+    await countRows(connection, 'workflow_commands', "kind = 'continue'"),
+  ).toBe(0)
+  expect(
+    await countRows(connection, 'workflow_commands', "kind = 'activity'"),
+  ).toBe(1)
 })

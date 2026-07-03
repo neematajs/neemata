@@ -18,10 +18,30 @@
       "import": "./dist/adapters/postgres.js",
       "module-sync": "./dist/adapters/postgres.js"
     },
+    "./postgres/testing": {
+      "types": "./src/adapters/postgres/testing.ts",
+      "import": "./dist/adapters/postgres/testing.js",
+      "module-sync": "./dist/adapters/postgres/testing.js"
+    },
     "./postgres/drizzle": {
       "types": "./src/adapters/postgres/drizzle.ts",
       "import": "./dist/adapters/postgres/drizzle.js",
       "module-sync": "./dist/adapters/postgres/drizzle.js"
+    },
+    "./neem": {
+      "types": "./src/neem/index.ts",
+      "import": "./dist/neem/index.js",
+      "module-sync": "./dist/neem/index.js"
+    },
+    "./neem/host": {
+      "types": "./src/neem/host.ts",
+      "import": "./dist/neem/host.js",
+      "module-sync": "./dist/neem/host.js"
+    },
+    "./neem/worker-entry": {
+      "types": "./src/neem/worker-entry.ts",
+      "import": "./dist/neem/worker-entry.js",
+      "module-sync": "./dist/neem/worker-entry.js"
     }
   },
   "publishConfig": {
@@ -41,32 +61,46 @@
         "import": "./dist/adapters/postgres.js",
         "module-sync": "./dist/adapters/postgres.js"
       },
+      "./postgres/testing": {
+        "types": "./dist/adapters/postgres/testing.d.ts",
+        "import": "./dist/adapters/postgres/testing.js",
+        "module-sync": "./dist/adapters/postgres/testing.js"
+      },
       "./postgres/drizzle": {
         "types": "./dist/adapters/postgres/drizzle.d.ts",
         "import": "./dist/adapters/postgres/drizzle.js",
         "module-sync": "./dist/adapters/postgres/drizzle.js"
+      },
+      "./neem": {
+        "types": "./dist/neem/index.d.ts",
+        "import": "./dist/neem/index.js",
+        "module-sync": "./dist/neem/index.js"
+      },
+      "./neem/host": {
+        "types": "./dist/neem/host.d.ts",
+        "import": "./dist/neem/host.js",
+        "module-sync": "./dist/neem/host.js"
+      },
+      "./neem/worker-entry": {
+        "types": "./dist/neem/worker-entry.d.ts",
+        "import": "./dist/neem/worker-entry.js",
+        "module-sync": "./dist/neem/worker-entry.js"
       }
     }
   },
   "scripts": {
-    "clean-build": "rm -rf ./dist"
+    "clean-build": "rm -rf ./dist",
+    "test:integration": "vitest run --config vitest.config.ts tests/integration"
   },
   "dependencies": {
     "@nmtjs/core": "workspace:*",
+    "@nmtjs/neem": "workspace:*",
     "@nmtjs/type": "workspace:*"
   },
   "peerDependencies": {
-    "@electric-sql/pglite": "^0.5.3",
-    "drizzle-kit": "1.0.0-rc.4",
-    "drizzle-orm": "1.0.0-rc.4"
+    "drizzle-orm": ">=1.0.0-rc.4 <2.0.0"
   },
   "peerDependenciesMeta": {
-    "@electric-sql/pglite": {
-      "optional": true
-    },
-    "drizzle-kit": {
-      "optional": true
-    },
     "drizzle-orm": {
       "optional": true
     }
@@ -79,7 +113,9 @@
   ],
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.3",
+    "@types/pg": "^8.20.0",
     "drizzle-kit": "1.0.0-rc.4",
-    "drizzle-orm": "1.0.0-rc.4"
+    "drizzle-orm": "1.0.0-rc.4",
+    "pg": "^8.22.0"
   }
 }

@@ -103,6 +103,19 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+      postgres:
+        image: postgres:17-alpine
+        ports:
+          - 5432:5432
+        env:
+          POSTGRES_USER: neemata
+          POSTGRES_PASSWORD: neemata
+          POSTGRES_DB: neemata
+        options: >-
+          --health-cmd "pg_isready -U neemata"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
       kafka:
         image: apache/kafka:3.9.1
         ports:
@@ -153,4 +166,5 @@ jobs:
           NMTJS_REQUIRE_SERVICE_TESTS: "1"
           REDIS_URL: redis://localhost:6379
           VALKEY_URL: redis://localhost:6380
+          POSTGRES_URL: postgres://neemata:neemata@localhost:5432/neemata
           KAFKA_BROKERS: localhost:9092

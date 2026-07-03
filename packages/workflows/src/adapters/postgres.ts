@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 
+import type { WorkflowRuntimeAdapter } from '../runtime/client.ts'
 import type {
   ActivityAttemptCommand,
   AttemptCommand,
@@ -7,41 +8,44 @@ import type {
   ContinueRunCommand,
   TaskAttemptCommand,
 } from '../runtime/commands.ts'
+import type { WorkflowRuntimeAtomicStart } from '../runtime/coordinator.ts'
 import type {
   AttemptExecutor,
   RunCoordinationExecutor,
 } from '../runtime/executors.ts'
-import type { WorkflowRuntimeAdapter } from '../runtime/index.ts'
-import type {
-  CreateRunInput,
-  ListRunsFilter,
-  WorkflowStore,
-} from '../runtime/store.ts'
-import type { WorkflowRuntimeAtomicStart } from '../runtime/coordinator.ts'
-import type {
-  WorkflowRuntimeAtomicCompletion,
-  WorkflowRuntimeAtomicContinuation,
-} from '../runtime/worker.ts'
 import type {
   NodeChildIdentity,
   RunSnapshot,
   StoredAttempt,
   StoredChildLink,
-  StoredError,
   StoredMapItem,
   StoredNode,
+  StoredError,
   StoredRun,
 } from '../runtime/state.ts'
-import {
-  isTerminalNodeStatus,
-  isTerminalRunStatus,
-} from '../runtime/status.ts'
+import type {
+  CreateRunInput,
+  ListRunsFilter,
+  WorkflowStore,
+} from '../runtime/store.ts'
+import type {
+  WorkflowRuntimeAtomicCompletion,
+  WorkflowRuntimeAtomicContinuation,
+} from '../runtime/worker.ts'
+import { toStoredError } from '../runtime/errors.ts'
+import { isTerminalNodeStatus, isTerminalRunStatus } from '../runtime/status.ts'
+
+type JsonRecord = Record<string, unknown>
+
+export type WorkflowPostgresQueryResult<T extends JsonRecord = JsonRecord> = {
+  readonly rows: readonly T[]
+}
 
 export type WorkflowPostgresConnection = {
-  query<T extends Record<string, unknown> = Record<string, unknown>>(
+  query<T extends JsonRecord = JsonRecord>(
     sql: string,
     params?: readonly unknown[],
-  ): Promise<{ readonly rows: readonly T[] }>
+  ): Promise<WorkflowPostgresQueryResult<T>>
   transaction<T>(
     handler: (connection: WorkflowPostgresConnection) => Promise<T>,
   ): Promise<T>
@@ -51,9 +55,125 @@ type PostgresWorkflowRuntime = WorkflowRuntimeAdapter & {
   readonly connection: WorkflowPostgresConnection
 }
 
-type JsonRecord = Record<string, unknown>
+const RELEASE_BACKOFF_MS = 50
 
-export const WORKFLOW_POSTGRES_SCHEMA_VERSION = 1
+export type WorkflowPostgresQueryClient = {
+  query<T extends JsonRecord = JsonRecord>(
+    sql: string,
+    params?: readonly unknown[],
+  ): Promise<WorkflowPostgresQueryResult<T>>
+}
+
+export type WorkflowPostgresPoolClient = WorkflowPostgresQueryClient & {
+  release(): void
+}
+
+export type WorkflowPostgresPool = WorkflowPostgresQueryClient & {
+  connect(): Promise<WorkflowPostgresPoolClient>
+}
+
+export type WorkflowPostgresTransactionClient = WorkflowPostgresQueryClient & {
+  transaction<T>(
+    handler: (connection: WorkflowPostgresQueryClient) => Promise<T>,
+  ): Promise<T>
+}
+
+type WorkflowPostgresExternalClient =
+  | WorkflowPostgresQueryClient
+  | WorkflowPostgresPool
+  | WorkflowPostgresTransactionClient
+
+const hasTransactionApi = (
+  client: WorkflowPostgresExternalClient,
+): client is WorkflowPostgresTransactionClient =>
+  'transaction' in client && typeof client.transaction === 'function'
+
+const hasConnectApi = (
+  client: WorkflowPostgresExternalClient,
+): client is WorkflowPostgresPool =>
+  'connect' in client &&
+  typeof client.connect === 'function' &&
+  ('totalCount' in client || 'idleCount' in client || 'waitingCount' in client)
+
+const queryPostgresClient = <T extends JsonRecord>(
+  client: WorkflowPostgresQueryClient,
+  sql: string,
+  params: readonly unknown[] = [],
+) => client.query<T>(sql, [...params])
+
+const createTransactionConnection = (
+  client: WorkflowPostgresQueryClient,
+): WorkflowPostgresConnection => ({
+  query: (sql, params = []) => queryPostgresClient(client, sql, params),
+  transaction: (handler) => handler(createTransactionConnection(client)),
+})
+
+const rollbackIgnoringFailure = async (client: WorkflowPostgresQueryClient) => {
+  try {
+    await client.query('ROLLBACK')
+  } catch {}
+}
+
+export function createPostgresWorkflowConnection(
+  client: WorkflowPostgresExternalClient,
+): WorkflowPostgresConnection {
+  let plainClientTransactionQueue = Promise.resolve()
+  const runPlainClientTransaction = async <T>(
+    handler: () => Promise<T>,
+  ): Promise<T> => {
+    const previous = plainClientTransactionQueue
+    let release = () => {}
+    plainClientTransactionQueue = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    await previous
+    try {
+      return await handler()
+    } finally {
+      release()
+    }
+  }
+
+  return {
+    query: (sql, params = []) => queryPostgresClient(client, sql, params),
+    async transaction(handler) {
+      if (hasTransactionApi(client)) {
+        return client.transaction((tx) =>
+          handler(createTransactionConnection(tx)),
+        )
+      }
+
+      if (hasConnectApi(client)) {
+        const tx = await client.connect()
+        try {
+          await tx.query('BEGIN')
+          const result = await handler(createTransactionConnection(tx))
+          await tx.query('COMMIT')
+          return result
+        } catch (error) {
+          await rollbackIgnoringFailure(tx)
+          throw error
+        } finally {
+          tx.release()
+        }
+      }
+
+      return runPlainClientTransaction(async () => {
+        try {
+          await client.query('BEGIN')
+          const result = await handler(createTransactionConnection(client))
+          await client.query('COMMIT')
+          return result
+        } catch (error) {
+          await rollbackIgnoringFailure(client)
+          throw error
+        }
+      })
+    },
+  }
+}
+
+export const WORKFLOW_POSTGRES_SCHEMA_VERSION = 2
 const TASK_RUN_NODE_NAME = '$task'
 
 export const WORKFLOW_POSTGRES_SCHEMA_MANIFEST = {
@@ -141,13 +261,72 @@ export const WORKFLOW_POSTGRES_SCHEMA_MANIFEST = {
     'workflow_map_items_child_run_fk',
     'workflow_map_items_attempt_fk',
     'workflow_run_leases_run_fk',
+    'workflow_commands_run_fk',
   ],
   indexes: [
     'workflow_runs_idempotency_idx',
     'workflow_runs_input_gin_idx',
     'workflow_runs_tags_gin_idx',
+    'workflow_attempts_node_idx',
+    'workflow_child_links_parent_node_idx',
+    'workflow_commands_run_idx',
     'workflow_commands_claim_idx',
   ],
+  constraintDefinitions: {
+    workflow_attempts_identity_key_key: {
+      table: 'workflow_attempts',
+      type: 'u',
+      columns: ['identity_key'],
+    },
+    workflow_map_items_identity_key_key: {
+      table: 'workflow_map_items',
+      type: 'u',
+      columns: ['identity_key'],
+    },
+    workflow_commands_run_fk: {
+      table: 'workflow_commands',
+      type: 'f',
+      columns: ['run_id'],
+    },
+  },
+  indexDefinitions: {
+    workflow_runs_idempotency_idx: {
+      table: 'workflow_runs',
+      unique: true,
+      columns: ['idempotency_key'],
+    },
+    workflow_runs_input_gin_idx: {
+      table: 'workflow_runs',
+      unique: false,
+      columns: ['input'],
+    },
+    workflow_runs_tags_gin_idx: {
+      table: 'workflow_runs',
+      unique: false,
+      columns: ['tags'],
+    },
+    workflow_commands_claim_idx: {
+      table: 'workflow_commands',
+      unique: false,
+      columns: ['kind', 'priority', 'run_at', 'created_at', 'id'],
+      directions: ['ASC', 'DESC', 'ASC', 'ASC', 'ASC'],
+    },
+    workflow_commands_run_idx: {
+      table: 'workflow_commands',
+      unique: false,
+      columns: ['run_id'],
+    },
+    workflow_attempts_node_idx: {
+      table: 'workflow_attempts',
+      unique: false,
+      columns: ['run_id', 'node_name'],
+    },
+    workflow_child_links_parent_node_idx: {
+      table: 'workflow_child_links',
+      unique: false,
+      columns: ['parent_run_id', 'parent_node_name'],
+    },
+  },
   columns: {
     workflow_schema_version: {
       id: { type: 'int4', nullable: false },
@@ -279,12 +458,62 @@ const now = () => {
 }
 const json = (value: unknown) => JSON.stringify(value)
 const fromOptional = (value: unknown) => (value === null ? undefined : value)
-const sameValue = (left: unknown, right: unknown) =>
-  JSON.stringify(left) === JSON.stringify(right)
+const isRecord = (value: unknown): value is JsonRecord =>
+  value !== null && typeof value === 'object' && !Array.isArray(value)
+const sameValue = (left: unknown, right: unknown): boolean => {
+  if (Object.is(left, right)) return true
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return (
+      Array.isArray(left) &&
+      Array.isArray(right) &&
+      left.length === right.length &&
+      left.every((item, index) => sameValue(item, right[index]))
+    )
+  }
+  if (isRecord(left) || isRecord(right)) {
+    if (!isRecord(left) || !isRecord(right)) return false
+    const leftKeys = Object.keys(left).sort()
+    const rightKeys = Object.keys(right).sort()
+    return (
+      leftKeys.length === rightKeys.length &&
+      leftKeys.every(
+        (key, index) =>
+          key === rightKeys[index] && sameValue(left[key], right[key]),
+      )
+    )
+  }
+  return false
+}
 const sameOptionalValue = (left: unknown, right: unknown) =>
   left === undefined && right === undefined
     ? true
     : left !== undefined && right !== undefined && sameValue(left, right)
+const stringArray = (value: unknown): readonly string[] => {
+  if (Array.isArray(value)) return value.map(String)
+  if (typeof value !== 'string') return []
+  const content =
+    value.startsWith('{') && value.endsWith('}') ? value.slice(1, -1) : value
+  if (!content) return []
+  return content.split(',').map((item) => item.replaceAll('"', ''))
+}
+const sameStringArray = (left: unknown, right: readonly string[]) => {
+  const normalized = stringArray(left)
+  return (
+    normalized.length === right.length &&
+    normalized.every((item, index) => item === right[index])
+  )
+}
+const isUniqueViolation = (error: unknown) =>
+  (typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    error.code === '23505') ||
+  (typeof error === 'object' &&
+    error !== null &&
+    'message' in error &&
+    String(error.message).includes(
+      'duplicate key value violates unique constraint',
+    ))
 
 const identityKey = (identity: NodeChildIdentity) =>
   JSON.stringify([
@@ -295,18 +524,6 @@ const identityKey = (identity: NodeChildIdentity) =>
     identity.itemIndex ?? null,
     identity.itemKey ?? null,
   ])
-
-const storedError = (error: unknown): StoredError => {
-  if (error instanceof Error) {
-    return {
-      name: error.name,
-      message: error.message,
-      ...(error.stack === undefined ? {} : { stack: error.stack }),
-    }
-  }
-
-  return { message: String(error) }
-}
 
 const optional = <K extends string, V>(key: K, value: V | null | undefined) =>
   value === undefined || value === null
@@ -409,6 +626,39 @@ const mapMapItem = (row: JsonRecord): StoredMapItem => ({
   ...optional('attemptId', row.attempt_id as string | undefined),
 })
 
+const parseJsonColumn = (value: unknown): unknown =>
+  typeof value === 'string' ? JSON.parse(value) : value
+
+const jsonRecordColumn = (value: unknown): JsonRecord | undefined => {
+  const parsed = parseJsonColumn(value)
+  return isRecord(parsed) ? parsed : undefined
+}
+
+const jsonRecordArrayColumn = (value: unknown): JsonRecord[] => {
+  const parsed = parseJsonColumn(value)
+  return Array.isArray(parsed) ? parsed.filter(isRecord) : []
+}
+
+const dateColumn = (value: unknown): unknown =>
+  value instanceof Date
+    ? value
+    : typeof value === 'string' || typeof value === 'number'
+      ? new Date(value)
+      : value
+
+const withDateColumns = (
+  row: JsonRecord,
+  columns: readonly string[],
+): JsonRecord => {
+  const next = { ...row }
+  for (const column of columns) {
+    if (next[column] !== null && next[column] !== undefined) {
+      next[column] = dateColumn(next[column])
+    }
+  }
+  return next
+}
+
 const one = async <T extends JsonRecord>(
   db: WorkflowPostgresConnection,
   sql: string,
@@ -438,25 +688,33 @@ export async function verifyPostgresWorkflowSchema(
       nullable: definition.nullable,
     })),
   )
-  const [enums, enumLabels, tables, columns, constraints, indexes] =
-    await Promise.all([
-      many(
-        db,
-        `
+  const [
+    enums,
+    enumLabels,
+    tables,
+    columns,
+    constraints,
+    indexes,
+    constraintDefinitions,
+    indexDefinitions,
+  ] = await Promise.all([
+    many(
+      db,
+      `
           SELECT t.typname AS name
           FROM pg_type t
           JOIN pg_namespace n ON n.oid = t.typnamespace
           WHERE n.nspname = current_schema()
             AND t.typname = ANY($1)
         `,
-        [[...WORKFLOW_POSTGRES_SCHEMA_MANIFEST.enums]],
-      ),
-      many<{
-        enum_name: string
-        enum_label: string
-      }>(
-        db,
-        `
+      [[...WORKFLOW_POSTGRES_SCHEMA_MANIFEST.enums]],
+    ),
+    many<{
+      enum_name: string
+      enum_label: string
+    }>(
+      db,
+      `
           SELECT t.typname AS enum_name, e.enumlabel AS enum_label
           FROM pg_type t
           JOIN pg_namespace n ON n.oid = t.typnamespace
@@ -465,36 +723,36 @@ export async function verifyPostgresWorkflowSchema(
             AND t.typname = ANY($1)
           ORDER BY t.typname, e.enumsortorder
         `,
-        [[...WORKFLOW_POSTGRES_SCHEMA_MANIFEST.enums]],
-      ),
-      many(
-        db,
-        `
+      [[...WORKFLOW_POSTGRES_SCHEMA_MANIFEST.enums]],
+    ),
+    many(
+      db,
+      `
           SELECT tablename AS name
           FROM pg_tables
           WHERE schemaname = current_schema()
             AND tablename = ANY($1)
         `,
-        [[...WORKFLOW_POSTGRES_SCHEMA_MANIFEST.tables]],
-      ),
-      many<{
-        table_name: string
-        column_name: string
-        udt_name: string
-        is_nullable: string
-      }>(
-        db,
-        `
+      [[...WORKFLOW_POSTGRES_SCHEMA_MANIFEST.tables]],
+    ),
+    many<{
+      table_name: string
+      column_name: string
+      udt_name: string
+      is_nullable: string
+    }>(
+      db,
+      `
           SELECT table_name, column_name, udt_name, is_nullable
           FROM information_schema.columns
           WHERE table_schema = current_schema()
             AND table_name = ANY($1)
         `,
-        [[...WORKFLOW_POSTGRES_SCHEMA_MANIFEST.tables]],
-      ),
-      many(
-        db,
-        `
+      [[...WORKFLOW_POSTGRES_SCHEMA_MANIFEST.tables]],
+    ),
+    many(
+      db,
+      `
           SELECT c.conname AS name
           FROM pg_constraint c
           JOIN pg_class rel ON rel.oid = c.conrelid
@@ -502,19 +760,84 @@ export async function verifyPostgresWorkflowSchema(
           WHERE n.nspname = current_schema()
             AND c.conname = ANY($1)
         `,
-        [[...WORKFLOW_POSTGRES_SCHEMA_MANIFEST.constraints]],
-      ),
-      many(
-        db,
-        `
+      [[...WORKFLOW_POSTGRES_SCHEMA_MANIFEST.constraints]],
+    ),
+    many(
+      db,
+      `
           SELECT indexname AS name
           FROM pg_indexes
           WHERE schemaname = current_schema()
             AND indexname = ANY($1)
         `,
-        [[...WORKFLOW_POSTGRES_SCHEMA_MANIFEST.indexes]],
-      ),
-    ])
+      [[...WORKFLOW_POSTGRES_SCHEMA_MANIFEST.indexes]],
+    ),
+    many<{
+      name: string
+      table_name: string
+      type: string
+      columns: unknown
+    }>(
+      db,
+      `
+          SELECT
+            c.conname AS name,
+            rel.relname AS table_name,
+            c.contype AS type,
+            array_remove(array_agg(att.attname ORDER BY ord.ordinality), NULL) AS columns
+          FROM pg_constraint c
+          JOIN pg_class rel ON rel.oid = c.conrelid
+          JOIN pg_namespace n ON n.oid = rel.relnamespace
+          LEFT JOIN unnest(c.conkey) WITH ORDINALITY AS ord(attnum, ordinality)
+            ON true
+          LEFT JOIN pg_attribute att
+            ON att.attrelid = rel.oid AND att.attnum = ord.attnum
+          WHERE n.nspname = current_schema()
+            AND c.conname = ANY($1)
+          GROUP BY c.conname, rel.relname, c.contype
+        `,
+      [Object.keys(WORKFLOW_POSTGRES_SCHEMA_MANIFEST.constraintDefinitions)],
+    ),
+    many<{
+      name: string
+      table_name: string
+      unique: boolean
+      columns: unknown
+      directions: unknown
+    }>(
+      db,
+      `
+          SELECT
+            idx.relname AS name,
+            tbl.relname AS table_name,
+            i.indisunique AS unique,
+            array_remove(array_agg(att.attname ORDER BY ord.ordinality), NULL) AS columns,
+            array_remove(
+              array_agg(
+                CASE
+                  WHEN (i.indoption[ord.ordinality - 1]::int & 1) = 1
+                    THEN 'DESC'
+                  ELSE 'ASC'
+                END
+                ORDER BY ord.ordinality
+              ),
+              NULL
+            ) AS directions
+          FROM pg_index i
+          JOIN pg_class idx ON idx.oid = i.indexrelid
+          JOIN pg_class tbl ON tbl.oid = i.indrelid
+          JOIN pg_namespace n ON n.oid = tbl.relnamespace
+          LEFT JOIN unnest(i.indkey) WITH ORDINALITY AS ord(attnum, ordinality)
+            ON true
+          LEFT JOIN pg_attribute att
+            ON att.attrelid = tbl.oid AND att.attnum = ord.attnum
+          WHERE n.nspname = current_schema()
+            AND idx.relname = ANY($1)
+          GROUP BY idx.relname, tbl.relname, i.indisunique
+        `,
+      [Object.keys(WORKFLOW_POSTGRES_SCHEMA_MANIFEST.indexDefinitions)],
+    ),
+  ])
 
   const existing = new Set([
     ...enums.map((row) => row.name),
@@ -544,14 +867,67 @@ export async function verifyPostgresWorkflowSchema(
   const invalidEnums = Object.entries(
     WORKFLOW_POSTGRES_SCHEMA_MANIFEST.enumValues,
   )
-    .filter(([name, values]) =>
-      JSON.stringify(labelsByEnum.get(name) ?? []) !== JSON.stringify(values),
+    .filter(
+      ([name, values]) =>
+        JSON.stringify(labelsByEnum.get(name) ?? []) !== JSON.stringify(values),
     )
     .map(([name]) => name)
 
   if (invalidEnums.length > 0) {
     throw new Error(
       `Invalid workflow Postgres schema enums: ${invalidEnums.join(', ')}`,
+    )
+  }
+
+  const constraintDefinitionsByName = new Map(
+    constraintDefinitions.map((definition) => [definition.name, definition]),
+  )
+  const invalidConstraints = Object.entries(
+    WORKFLOW_POSTGRES_SCHEMA_MANIFEST.constraintDefinitions,
+  )
+    .filter(([name, expected]) => {
+      const actual = constraintDefinitionsByName.get(name)
+      return (
+        !actual ||
+        actual.table_name !== expected.table ||
+        actual.type !== expected.type ||
+        !sameStringArray(actual.columns, expected.columns)
+      )
+    })
+    .map(([name]) => name)
+
+  if (invalidConstraints.length > 0) {
+    throw new Error(
+      `Invalid workflow Postgres schema constraints: ${invalidConstraints.join(', ')}`,
+    )
+  }
+
+  const indexDefinitionsByName = new Map(
+    indexDefinitions.map((definition) => [definition.name, definition]),
+  )
+  const invalidIndexes = Object.entries(
+    WORKFLOW_POSTGRES_SCHEMA_MANIFEST.indexDefinitions,
+  )
+    .filter(([name, expected]) => {
+      const actual = indexDefinitionsByName.get(name)
+      return (
+        !actual ||
+        actual.table_name !== expected.table ||
+        actual.unique !== expected.unique ||
+        !sameStringArray(actual.columns, expected.columns) ||
+        !sameStringArray(
+          actual.directions,
+          'directions' in expected
+            ? expected.directions
+            : expected.columns.map(() => 'ASC'),
+        )
+      )
+    })
+    .map(([name]) => name)
+
+  if (invalidIndexes.length > 0) {
+    throw new Error(
+      `Invalid workflow Postgres schema indexes: ${invalidIndexes.join(', ')}`,
     )
   }
 
@@ -600,391 +976,51 @@ export async function verifyPostgresWorkflowSchema(
   }
 }
 
-export async function installPostgresWorkflowSchemaForTesting(
-  db: WorkflowPostgresConnection,
-) {
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS workflow_schema_version (
-      id integer PRIMARY KEY DEFAULT 1,
-      version integer NOT NULL,
-      installed_at timestamptz NOT NULL DEFAULT now(),
-      CONSTRAINT workflow_schema_version_singleton_chk CHECK (id = 1)
-    )
-  `)
-  await db.query(
-    `
-      INSERT INTO workflow_schema_version (id, version)
-      VALUES (1, $1)
-      ON CONFLICT (id) DO NOTHING
-    `,
-    [WORKFLOW_POSTGRES_SCHEMA_MANIFEST.version],
-  )
-  await db.query(`
-    DO $$
-    BEGIN
-      IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'workflow_run_kind') THEN
-        CREATE TYPE workflow_run_kind AS ENUM ('workflow', 'task');
-      END IF;
-      IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'workflow_node_kind') THEN
-        CREATE TYPE workflow_node_kind AS ENUM (
-          'activity',
-          'task',
-          'workflow',
-          'branch',
-          'parallel',
-          'mapTask',
-          'mapWorkflow'
-        );
-      END IF;
-      IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'workflow_run_status') THEN
-        CREATE TYPE workflow_run_status AS ENUM (
-          'queued',
-          'running',
-          'waiting',
-          'cancelling',
-          'cancelled',
-          'failed',
-          'completed'
-        );
-      END IF;
-      IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'workflow_node_status') THEN
-        CREATE TYPE workflow_node_status AS ENUM (
-          'pending',
-          'running',
-          'waiting',
-          'cancelling',
-          'cancelled',
-          'failed',
-          'completed'
-        );
-      END IF;
-      IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'workflow_attempt_status') THEN
-        CREATE TYPE workflow_attempt_status AS ENUM (
-          'started',
-          'completed',
-          'failed',
-          'timedOut',
-          'cancelled'
-        );
-      END IF;
-      IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'workflow_command_kind') THEN
-        CREATE TYPE workflow_command_kind AS ENUM (
-          'continue',
-          'activity',
-          'task'
-        );
-      END IF;
-    END
-    $$;
-  `)
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS workflow_runs (
-      id uuid PRIMARY KEY,
-      kind workflow_run_kind NOT NULL,
-      name text NOT NULL,
-      workflow_name text NOT NULL,
-      task_name text,
-      status workflow_run_status NOT NULL,
-      input jsonb NOT NULL,
-      output jsonb,
-      error jsonb,
-      parent_run_id uuid,
-      parent_node_name text,
-      root_run_id uuid NOT NULL,
-      tags jsonb NOT NULL DEFAULT '{}'::jsonb,
-      idempotency_key jsonb,
-      version integer NOT NULL,
-      created_at timestamptz NOT NULL,
-      updated_at timestamptz NOT NULL
-    )
-  `)
-  await db.query(`
-    CREATE UNIQUE INDEX IF NOT EXISTS workflow_runs_idempotency_idx
-    ON workflow_runs (idempotency_key)
-    WHERE idempotency_key IS NOT NULL
-  `)
-  await db.query(`
-    CREATE INDEX IF NOT EXISTS workflow_runs_input_gin_idx
-    ON workflow_runs USING gin (input jsonb_path_ops)
-  `)
-  await db.query(`
-    CREATE INDEX IF NOT EXISTS workflow_runs_tags_gin_idx
-    ON workflow_runs USING gin (tags jsonb_path_ops)
-  `)
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS workflow_nodes (
-      run_id uuid NOT NULL,
-      name text NOT NULL,
-      kind workflow_node_kind NOT NULL,
-      status workflow_node_status NOT NULL,
-      input jsonb,
-      output jsonb,
-      error jsonb,
-      selected_case text,
-      current_attempt_id uuid,
-      next_attempt_at timestamptz,
-      attempt_count integer NOT NULL,
-      version integer NOT NULL,
-      created_at timestamptz NOT NULL,
-      updated_at timestamptz NOT NULL,
-      PRIMARY KEY (run_id, name)
-    )
-  `)
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS workflow_attempts (
-      id uuid PRIMARY KEY,
-      run_id uuid NOT NULL,
-      node_name text NOT NULL,
-      identity_key text,
-      identity jsonb,
-      status workflow_attempt_status NOT NULL,
-      worker_id text,
-      lease_token text,
-      attempt_number integer NOT NULL,
-      input jsonb NOT NULL,
-      idempotency_key jsonb,
-      output jsonb,
-      error jsonb,
-      dispatched_at timestamptz NOT NULL,
-      heartbeat_at timestamptz,
-      completed_at timestamptz,
-      CONSTRAINT workflow_attempts_identity_key_key UNIQUE (identity_key)
-    )
-  `)
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS workflow_child_links (
-      identity_key text PRIMARY KEY,
-      identity jsonb NOT NULL,
-      parent_run_id uuid NOT NULL,
-      parent_node_name text NOT NULL,
-      child_run_id uuid NOT NULL,
-      child_kind workflow_run_kind NOT NULL,
-      child_name text NOT NULL,
-      workflow_name text NOT NULL,
-      task_name text,
-      case_key text,
-      member_key text,
-      item_index integer,
-      item_key text
-    )
-  `)
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS workflow_map_item_sets (
-      run_id uuid NOT NULL,
-      node_name text NOT NULL,
-      keys jsonb NOT NULL,
-      PRIMARY KEY (run_id, node_name)
-    )
-  `)
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS workflow_map_items (
-      run_id uuid NOT NULL,
-      node_name text NOT NULL,
-      item_index integer NOT NULL,
-      identity_key text NOT NULL,
-      identity jsonb NOT NULL,
-      item_key text,
-      item jsonb NOT NULL,
-      status workflow_node_status NOT NULL,
-      output jsonb,
-      error jsonb,
-      child_run_id uuid,
-      attempt_id uuid,
-      CONSTRAINT workflow_map_items_identity_key_key UNIQUE (identity_key),
-      PRIMARY KEY (run_id, node_name, item_index)
-    )
-  `)
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS workflow_run_leases (
-      run_id uuid PRIMARY KEY,
-      lease_token text NOT NULL,
-      version integer NOT NULL,
-      expires_at timestamptz NOT NULL
-    )
-  `)
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS workflow_commands (
-      id uuid PRIMARY KEY,
-      kind workflow_command_kind NOT NULL,
-      run_id uuid NOT NULL,
-      workflow_name text,
-      task_name text,
-      activity_name text,
-      node_name text,
-      attempt_id uuid,
-      payload jsonb NOT NULL DEFAULT '{}'::jsonb,
-      run_at timestamptz NOT NULL DEFAULT now(),
-      priority integer NOT NULL DEFAULT 0,
-      lease_owner text,
-      lease_token text,
-      lease_expires_at timestamptz,
-      created_at timestamptz NOT NULL DEFAULT now()
-    )
-  `)
-  await db.query(`
-    CREATE INDEX IF NOT EXISTS workflow_commands_claim_idx
-    ON workflow_commands (kind, lease_token, run_at, priority)
-  `)
-  await db.query(`
-    DO $$
-    BEGIN
-      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'workflow_runs_parent_run_fk') THEN
-        ALTER TABLE workflow_runs
-        ADD CONSTRAINT workflow_runs_parent_run_fk
-        FOREIGN KEY (parent_run_id)
-        REFERENCES workflow_runs(id)
-        ON DELETE CASCADE;
-      END IF;
-
-      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'workflow_runs_root_run_fk') THEN
-        ALTER TABLE workflow_runs
-        ADD CONSTRAINT workflow_runs_root_run_fk
-        FOREIGN KEY (root_run_id)
-        REFERENCES workflow_runs(id)
-        ON DELETE CASCADE;
-      END IF;
-
-      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'workflow_runs_parent_node_fk') THEN
-        ALTER TABLE workflow_runs
-        ADD CONSTRAINT workflow_runs_parent_node_fk
-        FOREIGN KEY (parent_run_id, parent_node_name)
-        REFERENCES workflow_nodes(run_id, name)
-        ON DELETE CASCADE;
-      END IF;
-
-      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'workflow_nodes_run_fk') THEN
-        ALTER TABLE workflow_nodes
-        ADD CONSTRAINT workflow_nodes_run_fk
-        FOREIGN KEY (run_id)
-        REFERENCES workflow_runs(id)
-        ON DELETE CASCADE;
-      END IF;
-
-      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'workflow_nodes_current_attempt_fk') THEN
-        ALTER TABLE workflow_nodes
-        ADD CONSTRAINT workflow_nodes_current_attempt_fk
-        FOREIGN KEY (current_attempt_id)
-        REFERENCES workflow_attempts(id)
-        ON DELETE SET NULL;
-      END IF;
-
-      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'workflow_attempts_node_fk') THEN
-        ALTER TABLE workflow_attempts
-        ADD CONSTRAINT workflow_attempts_node_fk
-        FOREIGN KEY (run_id, node_name)
-        REFERENCES workflow_nodes(run_id, name)
-        ON DELETE CASCADE;
-      END IF;
-
-      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'workflow_attempts_identity_key_key') THEN
-        ALTER TABLE workflow_attempts
-        ADD CONSTRAINT workflow_attempts_identity_key_key
-        UNIQUE (identity_key);
-      END IF;
-
-      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'workflow_child_links_parent_node_fk') THEN
-        ALTER TABLE workflow_child_links
-        ADD CONSTRAINT workflow_child_links_parent_node_fk
-        FOREIGN KEY (parent_run_id, parent_node_name)
-        REFERENCES workflow_nodes(run_id, name)
-        ON DELETE CASCADE;
-      END IF;
-
-      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'workflow_child_links_child_run_fk') THEN
-        ALTER TABLE workflow_child_links
-        ADD CONSTRAINT workflow_child_links_child_run_fk
-        FOREIGN KEY (child_run_id)
-        REFERENCES workflow_runs(id)
-        ON DELETE CASCADE;
-      END IF;
-
-      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'workflow_map_item_sets_node_fk') THEN
-        ALTER TABLE workflow_map_item_sets
-        ADD CONSTRAINT workflow_map_item_sets_node_fk
-        FOREIGN KEY (run_id, node_name)
-        REFERENCES workflow_nodes(run_id, name)
-        ON DELETE CASCADE;
-      END IF;
-
-      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'workflow_map_items_set_fk') THEN
-        ALTER TABLE workflow_map_items
-        ADD CONSTRAINT workflow_map_items_set_fk
-        FOREIGN KEY (run_id, node_name)
-        REFERENCES workflow_map_item_sets(run_id, node_name)
-        ON DELETE CASCADE;
-      END IF;
-
-      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'workflow_map_items_child_run_fk') THEN
-        ALTER TABLE workflow_map_items
-        ADD CONSTRAINT workflow_map_items_child_run_fk
-        FOREIGN KEY (child_run_id)
-        REFERENCES workflow_runs(id)
-        ON DELETE SET NULL;
-      END IF;
-
-      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'workflow_map_items_attempt_fk') THEN
-        ALTER TABLE workflow_map_items
-        ADD CONSTRAINT workflow_map_items_attempt_fk
-        FOREIGN KEY (attempt_id)
-        REFERENCES workflow_attempts(id)
-        ON DELETE SET NULL;
-      END IF;
-
-      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'workflow_map_items_identity_key_key') THEN
-        ALTER TABLE workflow_map_items
-        ADD CONSTRAINT workflow_map_items_identity_key_key
-        UNIQUE (identity_key);
-      END IF;
-
-      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'workflow_run_leases_run_fk') THEN
-        ALTER TABLE workflow_run_leases
-        ADD CONSTRAINT workflow_run_leases_run_fk
-        FOREIGN KEY (run_id)
-        REFERENCES workflow_runs(id)
-        ON DELETE CASCADE;
-      END IF;
-    END
-    $$;
-  `)
-}
-
 export function createPostgresWorkflowRuntime(params: {
   readonly connection: WorkflowPostgresConnection
 }): PostgresWorkflowRuntime {
   const db = params.connection
   const ready = Promise.resolve()
 
-  const store: WorkflowStore = {
-    async createRun(input) {
-      await ready
-      if (input.idempotencyKey) {
-        const existing = await one(
-          db,
-          'SELECT * FROM workflow_runs WHERE idempotency_key = $1::jsonb',
-          [json(input.idempotencyKey)],
-        )
-        if (existing) {
-          const run = mapRun(existing)
-          if (
-            run.kind === (input.kind ?? 'workflow') &&
-            run.name === runnableName(input) &&
-            run.workflowName === input.workflowName &&
-            run.taskName === input.taskName &&
-            run.parentRunId === input.parentRunId &&
-            run.parentNodeName === input.parentNodeName &&
-            run.rootRunId === (input.rootRunId ?? run.id) &&
-            sameValue(run.input, input.input)
-          ) {
-            return run
-          }
-          throw new Error(`Conflicting idempotent run [${input.workflowName}]`)
+  const createStoredRun = async (
+    connection: WorkflowPostgresConnection,
+    input: CreateRunInput,
+    options: { readonly recoverUniqueViolation?: boolean } = {},
+  ) => {
+    const recoverUniqueViolation = options.recoverUniqueViolation ?? true
+    const loadIdempotentRun = async () => {
+      if (!input.idempotencyKey) return undefined
+      const existing = await one(
+        connection,
+        'SELECT * FROM workflow_runs WHERE idempotency_key = $1::jsonb',
+        [json(input.idempotencyKey)],
+      )
+      if (existing) {
+        const run = mapRun(existing)
+        if (
+          run.kind === (input.kind ?? 'workflow') &&
+          run.name === runnableName(input) &&
+          run.workflowName === input.workflowName &&
+          run.taskName === input.taskName &&
+          run.parentRunId === input.parentRunId &&
+          run.parentNodeName === input.parentNodeName &&
+          run.rootRunId === (input.rootRunId ?? run.id) &&
+          sameValue(run.input, input.input)
+        ) {
+          return run
         }
+        throw new Error(`Conflicting idempotent run [${input.workflowName}]`)
       }
+      return undefined
+    }
+    const existing = await loadIdempotentRun()
+    if (existing) return existing
 
-      const date = now()
-      const runId = id()
+    const date = now()
+    const runId = id()
+    try {
       const row = await one(
-        db,
+        connection,
         `
           INSERT INTO workflow_runs (
             id, kind, name, workflow_name, task_name, status, input,
@@ -1013,6 +1049,23 @@ export function createPostgresWorkflowRuntime(params: {
         ],
       )
       return mapRun(row!)
+    } catch (error) {
+      if (
+        recoverUniqueViolation &&
+        input.idempotencyKey &&
+        isUniqueViolation(error)
+      ) {
+        const raced = await loadIdempotentRun()
+        if (raced) return raced
+      }
+      throw error
+    }
+  }
+
+  const store: WorkflowStore = {
+    async createRun(input) {
+      await ready
+      return createStoredRun(db, input)
     },
     async listRuns(filter: ListRunsFilter = {}) {
       await ready
@@ -1091,12 +1144,11 @@ export function createPostgresWorkflowRuntime(params: {
       if (!run) return undefined
 
       const leaseToken = id()
-      const expiresAt = new Date(Date.now() + leaseMs)
       const lease = await one(
         db,
         `
           INSERT INTO workflow_run_leases (run_id, lease_token, version, expires_at)
-          VALUES ($1, $2, $3, $4)
+          VALUES ($1, $2, $3, now() + ($4::int * interval '1 millisecond'))
           ON CONFLICT (run_id) DO UPDATE
           SET lease_token = EXCLUDED.lease_token,
               version = EXCLUDED.version,
@@ -1104,13 +1156,33 @@ export function createPostgresWorkflowRuntime(params: {
           WHERE workflow_run_leases.expires_at <= now()
           RETURNING *
         `,
-        [runId, leaseToken, run.version, expiresAt],
+        [runId, leaseToken, run.version, leaseMs],
       )
       if (!lease) return undefined
       return {
         runId: lease.run_id as string,
         leaseToken: lease.lease_token as string,
         version: lease.version as number,
+      }
+    },
+    async renewRunLease(lease, leaseMs) {
+      await ready
+      if (!isUuid(lease.runId)) return undefined
+      const renewedLease = await one(
+        db,
+        `
+          UPDATE workflow_run_leases
+          SET expires_at = now() + ($3::int * interval '1 millisecond')
+          WHERE run_id = $1 AND lease_token = $2
+          RETURNING *
+        `,
+        [lease.runId, lease.leaseToken, leaseMs],
+      )
+      if (!renewedLease) return undefined
+      return {
+        runId: renewedLease.run_id as string,
+        leaseToken: renewedLease.lease_token as string,
+        version: renewedLease.version as number,
       }
     },
     async releaseRunLease(lease) {
@@ -1124,23 +1196,60 @@ export function createPostgresWorkflowRuntime(params: {
     async loadRunSnapshot(runId) {
       await ready
       if (!isUuid(runId)) return undefined
-      const run = await one(db, 'SELECT * FROM workflow_runs WHERE id = $1', [
-        runId,
-      ])
+      const snapshot = await one<
+        JsonRecord & {
+          run: unknown
+          nodes: unknown
+          attempts: unknown
+          child_links: unknown
+          map_items: unknown
+        }
+      >(
+        db,
+        `
+          SELECT
+            (SELECT to_jsonb(r) FROM workflow_runs r WHERE r.id = $1) AS run,
+            COALESCE(
+              (SELECT jsonb_agg(to_jsonb(n)) FROM workflow_nodes n WHERE n.run_id = $1),
+              '[]'::jsonb
+            ) AS nodes,
+            COALESCE(
+              (SELECT jsonb_agg(to_jsonb(a)) FROM workflow_attempts a WHERE a.run_id = $1),
+              '[]'::jsonb
+            ) AS attempts,
+            COALESCE(
+              (
+                SELECT jsonb_agg(to_jsonb(c))
+                FROM workflow_child_links c
+                WHERE c.parent_run_id = $1
+              ),
+              '[]'::jsonb
+            ) AS child_links,
+            COALESCE(
+              (SELECT jsonb_agg(to_jsonb(m)) FROM workflow_map_items m WHERE m.run_id = $1),
+              '[]'::jsonb
+            ) AS map_items
+        `,
+        [runId],
+      )
+      const run = jsonRecordColumn(snapshot?.run)
       if (!run) return undefined
 
-      const [nodes, attempts, childLinks, mapItems] = await Promise.all([
-        many(db, 'SELECT * FROM workflow_nodes WHERE run_id = $1', [runId]),
-        many(db, 'SELECT * FROM workflow_attempts WHERE run_id = $1', [runId]),
-        many(
-          db,
-          'SELECT * FROM workflow_child_links WHERE parent_run_id = $1',
-          [runId],
-        ),
-        many(db, 'SELECT * FROM workflow_map_items WHERE run_id = $1', [runId]),
-      ])
+      const nodes = jsonRecordArrayColumn(snapshot.nodes).map((node) =>
+        withDateColumns(node, ['created_at', 'updated_at', 'next_attempt_at']),
+      )
+      const attempts = jsonRecordArrayColumn(snapshot.attempts).map((attempt) =>
+        withDateColumns(attempt, [
+          'dispatched_at',
+          'heartbeat_at',
+          'completed_at',
+        ]),
+      )
+      const childLinks = jsonRecordArrayColumn(snapshot.child_links)
+      const mapItems = jsonRecordArrayColumn(snapshot.map_items)
+
       return {
-        run: mapRun(run),
+        run: mapRun(withDateColumns(run, ['created_at', 'updated_at'])),
         nodes: nodes.map(mapNode),
         attempts: attempts.map(mapAttempt),
         childLinks: childLinks.map(mapChildLink),
@@ -1175,61 +1284,78 @@ export function createPostgresWorkflowRuntime(params: {
               version = version + 1,
               updated_at = now()
           WHERE run_id = $1 AND name = $2
+            AND status NOT IN ('completed', 'failed', 'cancelled')
           RETURNING *
         `,
         [runId, nodeName, json(input)],
       )
-      if (!row) throw new Error(`Missing node [${runId}.${nodeName}]`)
-      return mapNode(row)
+      if (row) return mapNode(row)
+      const current = await one(
+        db,
+        'SELECT * FROM workflow_nodes WHERE run_id = $1 AND name = $2',
+        [runId, nodeName],
+      )
+      if (!current) throw new Error(`Missing node [${runId}.${nodeName}]`)
+      return mapNode(current)
     },
     async createAttempt(input) {
       await ready
-      const node = await one(
-        db,
-        'SELECT * FROM workflow_nodes WHERE run_id = $1 AND name = $2',
-        [input.runId, input.nodeName],
-      )
-      if (!node) {
-        throw new Error(`Missing node [${input.runId}.${input.nodeName}]`)
-      }
+      return db.transaction(async (tx) => {
+        const node = await one(
+          tx,
+          'SELECT * FROM workflow_nodes WHERE run_id = $1 AND name = $2',
+          [input.runId, input.nodeName],
+        )
+        if (!node) {
+          throw new Error(`Missing node [${input.runId}.${input.nodeName}]`)
+        }
 
-      const attemptId = id()
-      const leaseToken = id()
-      const attempt = await one(
-        db,
-        `
-          INSERT INTO workflow_attempts (
-            id, run_id, node_name, status, lease_token, attempt_number,
-            input, idempotency_key, dispatched_at
+        const attemptId = id()
+        const leaseToken = id()
+        const attempt = await one(
+          tx,
+          `
+            INSERT INTO workflow_attempts (
+              id, run_id, node_name, status, lease_token, attempt_number,
+              input, idempotency_key, dispatched_at
+            )
+            VALUES (
+              $1, $2, $3, 'started', $4, $5, $6::jsonb, $7::jsonb, now()
+            )
+            RETURNING *
+          `,
+          [
+            attemptId,
+            input.runId,
+            input.nodeName,
+            leaseToken,
+            (node.attempt_count as number) + 1,
+            json(input.input),
+            input.idempotencyKey ? json(input.idempotencyKey) : null,
+          ],
+        )
+        const updatedNode = await one(
+          tx,
+          `
+            UPDATE workflow_nodes
+            SET status = 'running',
+                current_attempt_id = $3,
+                attempt_count = attempt_count + 1,
+                version = version + 1,
+                updated_at = now()
+            WHERE run_id = $1 AND name = $2
+              AND status NOT IN ('completed', 'failed', 'cancelled')
+            RETURNING *
+          `,
+          [input.runId, input.nodeName, attemptId],
+        )
+        if (!updatedNode) {
+          throw new Error(
+            `Terminal node [${input.runId}.${input.nodeName}] cannot create attempt`,
           )
-          VALUES (
-            $1, $2, $3, 'started', $4, $5, $6::jsonb, $7::jsonb, now()
-          )
-          RETURNING *
-        `,
-        [
-          attemptId,
-          input.runId,
-          input.nodeName,
-          leaseToken,
-          (node.attempt_count as number) + 1,
-          json(input.input),
-          input.idempotencyKey ? json(input.idempotencyKey) : null,
-        ],
-      )
-      await db.query(
-        `
-          UPDATE workflow_nodes
-          SET status = 'running',
-              current_attempt_id = $3,
-              attempt_count = attempt_count + 1,
-              version = version + 1,
-              updated_at = now()
-          WHERE run_id = $1 AND name = $2
-        `,
-        [input.runId, input.nodeName, attemptId],
-      )
-      return mapAttempt(attempt!)
+        }
+        return mapAttempt(attempt!)
+      })
     },
     async completeCurrentAttempt({ attemptId, leaseToken, output }) {
       await ready
@@ -1252,6 +1378,7 @@ export function createPostgresWorkflowRuntime(params: {
       )
       if (
         !node ||
+        isTerminalNodeStatus(node.status as StoredNode['status']) ||
         (node.kind !== 'parallel' && node.current_attempt_id !== attemptId)
       ) {
         return undefined
@@ -1290,6 +1417,7 @@ export function createPostgresWorkflowRuntime(params: {
       )
       if (
         !node ||
+        isTerminalNodeStatus(node.status as StoredNode['status']) ||
         (node.kind !== 'parallel' && node.current_attempt_id !== attemptId)
       ) {
         return undefined
@@ -1303,7 +1431,7 @@ export function createPostgresWorkflowRuntime(params: {
           WHERE id = $1 AND lease_token = $2 AND status = 'started'
           RETURNING *
         `,
-        [attemptId, leaseToken, json(storedError(error))],
+        [attemptId, leaseToken, json(toStoredError(error))],
       )
       return row ? mapAttempt(row) : undefined
     },
@@ -1327,11 +1455,18 @@ export function createPostgresWorkflowRuntime(params: {
               version = version + 1,
               updated_at = now()
           WHERE run_id = $1 AND name = $2
+            AND status NOT IN ('completed', 'failed', 'cancelled')
           RETURNING *
         `,
         [runId, nodeName, json(output)],
       )
-      return mapNode(row!)
+      if (row) return mapNode(row)
+      const current = await one(
+        db,
+        'SELECT * FROM workflow_nodes WHERE run_id = $1 AND name = $2',
+        [runId, nodeName],
+      )
+      return current ? mapNode(current) : undefined
     },
     async failNode({ runId, nodeName, error }) {
       await ready
@@ -1353,11 +1488,18 @@ export function createPostgresWorkflowRuntime(params: {
               version = version + 1,
               updated_at = now()
           WHERE run_id = $1 AND name = $2
+            AND status NOT IN ('completed', 'failed', 'cancelled')
           RETURNING *
         `,
-        [runId, nodeName, json(storedError(error))],
+        [runId, nodeName, json(toStoredError(error))],
       )
-      return mapNode(row!)
+      if (row) return mapNode(row)
+      const current = await one(
+        db,
+        'SELECT * FROM workflow_nodes WHERE run_id = $1 AND name = $2',
+        [runId, nodeName],
+      )
+      return current ? mapNode(current) : undefined
     },
     async completeRun({ runId, output }) {
       await ready
@@ -1377,11 +1519,18 @@ export function createPostgresWorkflowRuntime(params: {
               version = version + 1,
               updated_at = now()
           WHERE id = $1
+            AND status NOT IN ('completed', 'failed', 'cancelled')
           RETURNING *
         `,
         [runId, json(output)],
       )
-      return mapRun(row!)
+      if (row) return mapRun(row)
+      const current = await one(
+        db,
+        'SELECT * FROM workflow_runs WHERE id = $1',
+        [runId],
+      )
+      return current ? mapRun(current) : undefined
     },
     async failRun({ runId, error }) {
       await ready
@@ -1401,81 +1550,224 @@ export function createPostgresWorkflowRuntime(params: {
               version = version + 1,
               updated_at = now()
           WHERE id = $1
+            AND status NOT IN ('completed', 'failed', 'cancelled')
           RETURNING *
         `,
-        [runId, json(storedError(error))],
+        [runId, json(toStoredError(error))],
       )
-      return mapRun(row!)
+      if (row) return mapRun(row)
+      const current = await one(
+        db,
+        'SELECT * FROM workflow_runs WHERE id = $1',
+        [runId],
+      )
+      return current ? mapRun(current) : undefined
+    },
+    async requestRunCancellation({ runId }) {
+      await ready
+      const run = await one(db, 'SELECT * FROM workflow_runs WHERE id = $1', [
+        runId,
+      ])
+      if (!run) return undefined
+      if (
+        isTerminalRunStatus(run.status as StoredRun['status']) ||
+        run.status === 'cancelling'
+      ) {
+        return mapRun(run)
+      }
+      const row = await one(
+        db,
+        `
+	          UPDATE workflow_runs
+	          SET status = 'cancelling',
+	              version = version + 1,
+	              updated_at = now()
+	          WHERE id = $1
+	            AND status NOT IN ('cancelling', 'completed', 'failed', 'cancelled')
+	          RETURNING *
+	        `,
+        [runId],
+      )
+      if (row) return mapRun(row)
+      const current = await one(
+        db,
+        'SELECT * FROM workflow_runs WHERE id = $1',
+        [runId],
+      )
+      return current ? mapRun(current) : undefined
+    },
+    async cancelRun({ runId }) {
+      await ready
+      const run = await one(db, 'SELECT * FROM workflow_runs WHERE id = $1', [
+        runId,
+      ])
+      if (!run) return undefined
+      if (isTerminalRunStatus(run.status as StoredRun['status'])) {
+        return mapRun(run)
+      }
+      const row = await one(
+        db,
+        `
+          UPDATE workflow_runs
+          SET status = 'cancelled',
+              version = version + 1,
+              updated_at = now()
+          WHERE id = $1
+            AND status NOT IN ('completed', 'failed', 'cancelled')
+          RETURNING *
+        `,
+        [runId],
+      )
+      if (row) return mapRun(row)
+      const current = await one(
+        db,
+        'SELECT * FROM workflow_runs WHERE id = $1',
+        [runId],
+      )
+      return current ? mapRun(current) : undefined
+    },
+    async cancelNode({ runId, nodeName }) {
+      await ready
+      const node = await one(
+        db,
+        'SELECT * FROM workflow_nodes WHERE run_id = $1 AND name = $2',
+        [runId, nodeName],
+      )
+      if (!node) return undefined
+      if (isTerminalNodeStatus(node.status as StoredNode['status'])) {
+        return mapNode(node)
+      }
+      const row = await one(
+        db,
+        `
+	          UPDATE workflow_nodes
+	          SET status = 'cancelled',
+	              version = version + 1,
+	              updated_at = now()
+	          WHERE run_id = $1 AND name = $2
+	            AND status NOT IN ('completed', 'failed', 'cancelled')
+	          RETURNING *
+	        `,
+        [runId, nodeName],
+      )
+      if (row) return mapNode(row)
+      const current = await one(
+        db,
+        'SELECT * FROM workflow_nodes WHERE run_id = $1 AND name = $2',
+        [runId, nodeName],
+      )
+      return current ? mapNode(current) : undefined
+    },
+    async cancelNonTerminalRunNodes({ runId }) {
+      await ready
+      const rows = await many(
+        db,
+        `
+	          UPDATE workflow_nodes
+	          SET status = 'cancelled',
+	              version = version + 1,
+	              updated_at = now()
+	          WHERE run_id = $1
+	            AND status NOT IN ('completed', 'failed', 'cancelled')
+	          RETURNING *
+	        `,
+        [runId],
+      )
+      return rows.map(mapNode)
     },
     async ensureNodeAttempt(params) {
       await ready
       const key = identityKey(params.identity)
-      const existing = await one(
-        db,
-        'SELECT * FROM workflow_attempts WHERE identity_key = $1',
-        [key],
-      )
-      if (existing) return { attempt: mapAttempt(existing), created: false }
-
-      const node = await one(
-        db,
-        'SELECT * FROM workflow_nodes WHERE run_id = $1 AND name = $2',
-        [params.identity.runId, params.identity.nodeName],
-      )
-      if (!node) {
-        throw new Error(
-          `Missing node [${params.identity.runId}.${params.identity.nodeName}]`,
-        )
-      }
-      if (
-        (node.kind === 'activity' || node.kind === 'task') &&
-        node.kind !== params.kind
-      ) {
-        throw new Error(
-          `Node [${String(node.run_id)}.${String(node.name)}] kind [${String(node.kind)}] cannot create [${params.kind}] attempt`,
-        )
-      }
-
-      const attemptId = id()
-      const leaseToken = id()
-      const attempt = await one(
-        db,
-        `
-          INSERT INTO workflow_attempts (
-            id, run_id, node_name, identity_key, identity, status,
-            lease_token, attempt_number, input, idempotency_key, dispatched_at
+      try {
+        return await db.transaction(async (tx) => {
+          const node = await one(
+            tx,
+            'SELECT * FROM workflow_nodes WHERE run_id = $1 AND name = $2',
+            [params.identity.runId, params.identity.nodeName],
           )
-          VALUES (
-            $1, $2, $3, $4, $5::jsonb, 'started',
-            $6, $7, $8::jsonb, $9::jsonb, now()
+          if (!node) {
+            throw new Error(
+              `Missing node [${params.identity.runId}.${params.identity.nodeName}]`,
+            )
+          }
+          if (
+            (node.kind === 'activity' || node.kind === 'task') &&
+            node.kind !== params.kind
+          ) {
+            throw new Error(
+              `Node [${String(node.run_id)}.${String(node.name)}] kind [${String(node.kind)}] cannot create [${params.kind}] attempt`,
+            )
+          }
+
+          const existing = await one(
+            tx,
+            'SELECT * FROM workflow_attempts WHERE identity_key = $1',
+            [key],
           )
-          RETURNING *
-        `,
-        [
-          attemptId,
-          params.identity.runId,
-          params.identity.nodeName,
-          key,
-          json(params.identity),
-          leaseToken,
-          (node.attempt_count as number) + 1,
-          json(params.input),
-          params.idempotencyKey ? json(params.idempotencyKey) : null,
-        ],
-      )
-      await db.query(
-        `
-          UPDATE workflow_nodes
-          SET status = 'waiting',
-              current_attempt_id = $3,
-              attempt_count = attempt_count + 1,
-              version = version + 1,
-              updated_at = now()
-          WHERE run_id = $1 AND name = $2
-        `,
-        [params.identity.runId, params.identity.nodeName, attemptId],
-      )
-      return { attempt: mapAttempt(attempt!), created: true }
+          if (existing) {
+            return { attempt: mapAttempt(existing), created: false }
+          }
+
+          const attemptId = id()
+          const leaseToken = id()
+          const attempt = await one(
+            tx,
+            `
+              INSERT INTO workflow_attempts (
+                id, run_id, node_name, identity_key, identity, status,
+                lease_token, attempt_number, input, idempotency_key, dispatched_at
+              )
+              VALUES (
+                $1, $2, $3, $4, $5::jsonb, 'started',
+                $6, $7, $8::jsonb, $9::jsonb, now()
+              )
+              RETURNING *
+            `,
+            [
+              attemptId,
+              params.identity.runId,
+              params.identity.nodeName,
+              key,
+              json(params.identity),
+              leaseToken,
+              (node.attempt_count as number) + 1,
+              json(params.input),
+              params.idempotencyKey ? json(params.idempotencyKey) : null,
+            ],
+          )
+          const updatedNode = await one(
+            tx,
+            `
+              UPDATE workflow_nodes
+              SET status = 'waiting',
+                  current_attempt_id = $3,
+                  attempt_count = attempt_count + 1,
+                  version = version + 1,
+                  updated_at = now()
+              WHERE run_id = $1 AND name = $2
+                AND status NOT IN ('completed', 'failed', 'cancelled')
+              RETURNING *
+            `,
+            [params.identity.runId, params.identity.nodeName, attemptId],
+          )
+          if (!updatedNode) {
+            throw new Error(
+              `Terminal node [${params.identity.runId}.${params.identity.nodeName}] cannot create attempt`,
+            )
+          }
+          return { attempt: mapAttempt(attempt!), created: true }
+        })
+      } catch (error) {
+        if (isUniqueViolation(error)) {
+          const raced = await one(
+            db,
+            'SELECT * FROM workflow_attempts WHERE identity_key = $1',
+            [key],
+          )
+          if (raced) return { attempt: mapAttempt(raced), created: false }
+        }
+        throw error
+      }
     },
     async ensureChildRun(params) {
       await ready
@@ -1489,14 +1781,17 @@ export function createPostgresWorkflowRuntime(params: {
       }
 
       const key = identityKey(params.identity)
-      const existingLink = await one(
-        db,
-        'SELECT * FROM workflow_child_links WHERE identity_key = $1',
-        [key],
-      )
-      if (existingLink) {
+      const loadExistingChildRun = async (
+        connection: WorkflowPostgresConnection,
+      ) => {
+        const existingLink = await one(
+          connection,
+          'SELECT * FROM workflow_child_links WHERE identity_key = $1',
+          [key],
+        )
+        if (!existingLink) return undefined
         const childRun = await one(
-          db,
+          connection,
           'SELECT * FROM workflow_runs WHERE id = $1',
           [existingLink.child_run_id],
         )
@@ -1521,49 +1816,70 @@ export function createPostgresWorkflowRuntime(params: {
         }
         return { childLink: link, childRun: run, created: false }
       }
+      const existing = await loadExistingChildRun(db)
+      if (existing) return existing
 
-      const childRun = await store.createRun({
-        kind: params.childKind,
-        name: params.childName,
-        workflowName: params.childName,
-        ...(params.childKind === 'task' ? { taskName: params.childName } : {}),
-        input: params.input,
-        parentRunId: params.parentRunId,
-        parentNodeName: params.parentNodeName,
-        rootRunId: params.rootRunId,
-        tags: params.tags,
-        idempotencyKey: params.idempotencyKey,
-      })
-      const link = await one(
-        db,
-        `
-          INSERT INTO workflow_child_links (
-            identity_key, identity, parent_run_id, parent_node_name,
-            child_run_id, child_kind, child_name, workflow_name, task_name,
-            case_key, member_key, item_index, item_key
+      try {
+        return await db.transaction(async (tx) => {
+          const raced = await loadExistingChildRun(tx)
+          if (raced) return raced
+
+          const childRun = await createStoredRun(
+            tx,
+            {
+              kind: params.childKind,
+              name: params.childName,
+              workflowName: params.childName,
+              ...(params.childKind === 'task'
+                ? { taskName: params.childName }
+                : {}),
+              input: params.input,
+              parentRunId: params.parentRunId,
+              parentNodeName: params.parentNodeName,
+              rootRunId: params.rootRunId,
+              tags: params.tags,
+              idempotencyKey: params.idempotencyKey,
+            },
+            { recoverUniqueViolation: false },
           )
-          VALUES (
-            $1, $2::jsonb, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
+          const link = await one(
+            tx,
+            `
+              INSERT INTO workflow_child_links (
+                identity_key, identity, parent_run_id, parent_node_name,
+                child_run_id, child_kind, child_name, workflow_name, task_name,
+                case_key, member_key, item_index, item_key
+              )
+              VALUES (
+                $1, $2::jsonb, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
+              )
+              RETURNING *
+            `,
+            [
+              key,
+              json(params.identity),
+              params.parentRunId,
+              params.parentNodeName,
+              childRun.id,
+              params.childKind,
+              params.childName,
+              params.childName,
+              params.childKind === 'task' ? params.childName : null,
+              params.identity.caseKey ?? null,
+              params.identity.memberKey ?? null,
+              params.identity.itemIndex ?? null,
+              params.identity.itemKey ?? null,
+            ],
           )
-          RETURNING *
-        `,
-        [
-          key,
-          json(params.identity),
-          params.parentRunId,
-          params.parentNodeName,
-          childRun.id,
-          params.childKind,
-          params.childName,
-          params.childName,
-          params.childKind === 'task' ? params.childName : null,
-          params.identity.caseKey ?? null,
-          params.identity.memberKey ?? null,
-          params.identity.itemIndex ?? null,
-          params.identity.itemKey ?? null,
-        ],
-      )
-      return { childLink: mapChildLink(link!), childRun, created: true }
+          return { childLink: mapChildLink(link!), childRun, created: true }
+        })
+      } catch (error) {
+        if (isUniqueViolation(error)) {
+          const raced = await loadExistingChildRun(db)
+          if (raced) return raced
+        }
+        throw error
+      }
     },
     async ensureChildWorkflowRun(params) {
       return store.ensureChildRun({
@@ -1586,6 +1902,9 @@ export function createPostgresWorkflowRuntime(params: {
         [runId, nodeName],
       )
       if (!node) return undefined
+      if (isTerminalNodeStatus(node.status as StoredNode['status'])) {
+        return mapNode(node)
+      }
       if (node.selected_case === caseKey) return mapNode(node)
       if (node.selected_case !== null) {
         throw new Error(`Conflicting selected case for [${runId}.${nodeName}]`)
@@ -1596,11 +1915,24 @@ export function createPostgresWorkflowRuntime(params: {
           UPDATE workflow_nodes
           SET selected_case = $3, version = version + 1, updated_at = now()
           WHERE run_id = $1 AND name = $2
+            AND status NOT IN ('completed', 'failed', 'cancelled')
+            AND selected_case IS NULL
           RETURNING *
         `,
         [runId, nodeName, caseKey],
       )
-      return mapNode(row!)
+      if (row) return mapNode(row)
+      const current = await one(
+        db,
+        'SELECT * FROM workflow_nodes WHERE run_id = $1 AND name = $2',
+        [runId, nodeName],
+      )
+      if (!current) return undefined
+      if (isTerminalNodeStatus(current.status as StoredNode['status'])) {
+        return mapNode(current)
+      }
+      if (current.selected_case === caseKey) return mapNode(current)
+      throw new Error(`Conflicting selected case for [${runId}.${nodeName}]`)
     },
     async ensureMapItems(params) {
       await ready
@@ -1614,30 +1946,40 @@ export function createPostgresWorkflowRuntime(params: {
         throw new Error(`Duplicate map item key for [${key}]`)
       }
 
-      const existingSet = await one(
-        db,
-        `
-          SELECT *
-          FROM workflow_map_item_sets
-          WHERE run_id = $1 AND node_name = $2
-        `,
-        [params.runId, params.nodeName],
-      )
-      const existingItems = await many(
-        db,
-        `
-          SELECT *
-          FROM workflow_map_items
-          WHERE run_id = $1 AND node_name = $2
-          ORDER BY item_index ASC
-        `,
-        [params.runId, params.nodeName],
-      )
-      if (existingSet) {
-        const existingKeys = existingSet.keys as readonly (string | undefined)[]
+      const loadExistingMapItems = async (
+        connection: WorkflowPostgresConnection,
+      ) => {
+        const existingSet = await one(
+          connection,
+          `
+            SELECT *
+            FROM workflow_map_item_sets
+            WHERE run_id = $1 AND node_name = $2
+          `,
+          [params.runId, params.nodeName],
+        )
+        const existingItems = await many(
+          connection,
+          `
+            SELECT *
+            FROM workflow_map_items
+            WHERE run_id = $1 AND node_name = $2
+            ORDER BY item_index ASC
+          `,
+          [params.runId, params.nodeName],
+        )
+        if (!existingSet) return undefined
+        const existingKeys = existingSet.keys as readonly (
+          | string
+          | null
+          | undefined
+        )[]
         const sameKeys =
           existingKeys.length === keys.length &&
-          existingKeys.every((existingKey, index) => existingKey === keys[index])
+          existingKeys.every(
+            (existingKey, index) =>
+              (existingKey ?? null) === (keys[index] ?? null),
+          )
         if (!sameKeys) throw new Error(`Conflicting map items for [${key}]`)
         const sameItems =
           existingItems.length === params.items.length &&
@@ -1647,74 +1989,70 @@ export function createPostgresWorkflowRuntime(params: {
         if (!sameItems) throw new Error(`Conflicting map items for [${key}]`)
         return { items: existingItems.map(mapMapItem), created: false }
       }
+      const existing = await loadExistingMapItems(db)
+      if (existing) return existing
 
-      await db.query(
-        `
-          INSERT INTO workflow_map_item_sets (run_id, node_name, keys)
-          VALUES ($1, $2, $3::jsonb)
-        `,
-        [params.runId, params.nodeName, json(keys)],
-      )
-      for (const [index, item] of params.items.entries()) {
-        const itemKey = params.keys?.[index]
-        const identity: NodeChildIdentity = {
-          runId: params.runId,
-          nodeName: params.nodeName,
-          itemIndex: index,
-          ...(itemKey === undefined ? {} : { itemKey }),
-        }
-        await db.query(
-          `
-            INSERT INTO workflow_map_items (
-              run_id, node_name, item_index, identity_key, identity,
-              item_key, item, status
+      try {
+        return await db.transaction(async (tx) => {
+          const raced = await loadExistingMapItems(tx)
+          if (raced) return raced
+
+          await tx.query(
+            `
+              INSERT INTO workflow_map_item_sets (run_id, node_name, keys)
+              VALUES ($1, $2, $3::jsonb)
+            `,
+            [params.runId, params.nodeName, json(keys)],
+          )
+          for (const [index, item] of params.items.entries()) {
+            const itemKey = params.keys?.[index]
+            const identity: NodeChildIdentity = {
+              runId: params.runId,
+              nodeName: params.nodeName,
+              itemIndex: index,
+              ...(itemKey === undefined ? {} : { itemKey }),
+            }
+            await tx.query(
+              `
+                INSERT INTO workflow_map_items (
+                  run_id, node_name, item_index, identity_key, identity,
+                  item_key, item, status
+                )
+                VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7::jsonb, 'pending')
+              `,
+              [
+                params.runId,
+                params.nodeName,
+                index,
+                identityKey(identity),
+                json(identity),
+                itemKey ?? null,
+                json(item),
+              ],
             )
-            VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7::jsonb, 'pending')
-          `,
-          [
-            params.runId,
-            params.nodeName,
-            index,
-            identityKey(identity),
-            json(identity),
-            itemKey ?? null,
-            json(item),
-          ],
-        )
+          }
+          const created = await many(
+            tx,
+            `
+              SELECT *
+              FROM workflow_map_items
+              WHERE run_id = $1 AND node_name = $2
+              ORDER BY item_index ASC
+            `,
+            [params.runId, params.nodeName],
+          )
+          return { items: created.map(mapMapItem), created: true }
+        })
+      } catch (error) {
+        if (isUniqueViolation(error)) {
+          const raced = await loadExistingMapItems(db)
+          if (raced) return raced
+        }
+        throw error
       }
-      const created = await many(
-        db,
-        `
-          SELECT *
-          FROM workflow_map_items
-          WHERE run_id = $1 AND node_name = $2
-          ORDER BY item_index ASC
-        `,
-        [params.runId, params.nodeName],
-      )
-      return { items: created.map(mapMapItem), created: true }
     },
     async completeMapItem(params) {
       await ready
-      const item = await one(
-        db,
-        `
-          SELECT *
-          FROM workflow_map_items
-          WHERE run_id = $1 AND node_name = $2 AND item_index = $3
-            AND item_key IS NOT DISTINCT FROM $4
-        `,
-        [
-          params.runId,
-          params.nodeName,
-          params.itemIndex,
-          params.itemKey ?? null,
-        ],
-      )
-      if (!item) return undefined
-      if (isTerminalNodeStatus(item.status as StoredMapItem['status'])) {
-        return mapMapItem(item)
-      }
       const row = await one(
         db,
         `
@@ -1722,6 +2060,7 @@ export function createPostgresWorkflowRuntime(params: {
           SET status = 'completed', output = $5::jsonb
           WHERE run_id = $1 AND node_name = $2 AND item_index = $3
             AND item_key IS NOT DISTINCT FROM $4
+            AND status NOT IN ('completed', 'failed', 'cancelled')
           RETURNING *
         `,
         [
@@ -1732,11 +2071,8 @@ export function createPostgresWorkflowRuntime(params: {
           json(params.output),
         ],
       )
-      return mapMapItem(row!)
-    },
-    async failMapItem(params) {
-      await ready
-      const item = await one(
+      if (row) return mapMapItem(row)
+      const current = await one(
         db,
         `
           SELECT *
@@ -1751,10 +2087,10 @@ export function createPostgresWorkflowRuntime(params: {
           params.itemKey ?? null,
         ],
       )
-      if (!item) return undefined
-      if (isTerminalNodeStatus(item.status as StoredMapItem['status'])) {
-        return mapMapItem(item)
-      }
+      return current ? mapMapItem(current) : undefined
+    },
+    async failMapItem(params) {
+      await ready
       const row = await one(
         db,
         `
@@ -1762,6 +2098,7 @@ export function createPostgresWorkflowRuntime(params: {
           SET status = 'failed', error = $5::jsonb
           WHERE run_id = $1 AND node_name = $2 AND item_index = $3
             AND item_key IS NOT DISTINCT FROM $4
+            AND status NOT IN ('completed', 'failed', 'cancelled')
           RETURNING *
         `,
         [
@@ -1769,10 +2106,26 @@ export function createPostgresWorkflowRuntime(params: {
           params.nodeName,
           params.itemIndex,
           params.itemKey ?? null,
-          json(storedError(params.error)),
+          json(toStoredError(params.error)),
         ],
       )
-      return mapMapItem(row!)
+      if (row) return mapMapItem(row)
+      const current = await one(
+        db,
+        `
+          SELECT *
+          FROM workflow_map_items
+          WHERE run_id = $1 AND node_name = $2 AND item_index = $3
+            AND item_key IS NOT DISTINCT FROM $4
+        `,
+        [
+          params.runId,
+          params.nodeName,
+          params.itemIndex,
+          params.itemKey ?? null,
+        ],
+      )
+      return current ? mapMapItem(current) : undefined
     },
     async waitNode({ runId, nodeName }) {
       await ready
@@ -1794,11 +2147,18 @@ export function createPostgresWorkflowRuntime(params: {
           UPDATE workflow_nodes
           SET status = 'waiting', version = version + 1, updated_at = now()
           WHERE run_id = $1 AND name = $2
+            AND status NOT IN ('completed', 'failed', 'cancelled')
           RETURNING *
         `,
         [runId, nodeName],
       )
-      return mapNode(row!)
+      if (row) return mapNode(row)
+      const current = await one(
+        db,
+        'SELECT * FROM workflow_nodes WHERE run_id = $1 AND name = $2',
+        [runId, nodeName],
+      )
+      return current ? mapNode(current) : undefined
     },
     async loadNodeChildren({ runId, nodeName }) {
       await ready
@@ -1885,10 +2245,13 @@ export function createPostgresWorkflowRuntime(params: {
       await db.query(
         `
           UPDATE workflow_commands
-          SET lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL
+          SET lease_owner = NULL,
+              lease_token = NULL,
+              lease_expires_at = NULL,
+              run_at = now() + ($3::int * interval '1 millisecond')
           WHERE id = $1 AND lease_token = $2
         `,
-        [command.id, command.leaseToken],
+        [command.id, command.leaseToken, RELEASE_BACKOFF_MS],
       )
     },
   }
@@ -1918,17 +2281,11 @@ export function createPostgresWorkflowRuntime(params: {
         UPDATE workflow_commands
         SET lease_owner = $${params.length + 2},
             lease_token = $${params.length + 3},
-            lease_expires_at = $${params.length + 4}
+            lease_expires_at = now() + ($${params.length + 4}::int * interval '1 millisecond')
         WHERE id = (SELECT id FROM candidate)
         RETURNING *
       `,
-      [
-        kind,
-        ...params,
-        workerId,
-        leaseToken,
-        new Date(Date.now() + leaseMs),
-      ],
+      [kind, ...params, workerId, leaseToken, leaseMs],
     )
   }
 
@@ -1963,7 +2320,7 @@ export function createPostgresWorkflowRuntime(params: {
   }
 
   const attemptExecutor: AttemptExecutor = {
-    async dispatchActivity(command: ActivityAttemptCommand) {
+    async dispatchActivity(command: ActivityAttemptCommand, options) {
       await ready
       await db.query(
         `
@@ -1975,9 +2332,13 @@ export function createPostgresWorkflowRuntime(params: {
             activity_name,
             node_name,
             attempt_id,
-            payload
+            payload,
+            run_at
           )
-          VALUES ($1, 'activity', $2, $3, $4, $5, $6, $7::jsonb)
+          SELECT $1, 'activity', $2, $3, $4, $5, $6, $7::jsonb, COALESCE($8, now())
+          WHERE NOT EXISTS (
+            SELECT 1 FROM workflow_commands WHERE attempt_id = $6
+          )
         `,
         [
           id(),
@@ -1987,10 +2348,11 @@ export function createPostgresWorkflowRuntime(params: {
           command.nodeName,
           command.attemptId,
           json(command),
+          options?.runAt ?? null,
         ],
       )
     },
-    async dispatchTask(command: TaskAttemptCommand) {
+    async dispatchTask(command: TaskAttemptCommand, options) {
       await ready
       await db.query(
         `
@@ -2002,9 +2364,13 @@ export function createPostgresWorkflowRuntime(params: {
             task_name,
             node_name,
             attempt_id,
-            payload
+            payload,
+            run_at
           )
-          VALUES ($1, 'task', $2, $3, $4, $5, $6, $7::jsonb)
+          SELECT $1, 'task', $2, $3, $4, $5, $6, $7::jsonb, COALESCE($8, now())
+          WHERE NOT EXISTS (
+            SELECT 1 FROM workflow_commands WHERE attempt_id = $6
+          )
         `,
         [
           id(),
@@ -2014,12 +2380,14 @@ export function createPostgresWorkflowRuntime(params: {
           command.nodeName,
           command.attemptId,
           json(command),
+          options?.runAt ?? null,
         ],
       )
     },
     async claimActivity(worker) {
       await ready
       if (worker.workflowNames.length === 0) return null
+      if (worker.activityNames?.length === 0) return null
       const params: unknown[] = [...worker.workflowNames]
       const workflowList = worker.workflowNames
         .map((_, index) => `$${index + 2}`)
@@ -2056,7 +2424,20 @@ export function createPostgresWorkflowRuntime(params: {
         worker.leaseMs,
       )
     },
-    async heartbeat() {},
+    async heartbeat(attempt, leaseMs = 30_000) {
+      await ready
+      const updated = await one<{ id: string }>(
+        db,
+        `
+          UPDATE workflow_commands
+          SET lease_expires_at = now() + ($3::int * interval '1 millisecond')
+          WHERE id = $1 AND lease_token = $2
+          RETURNING id
+        `,
+        [attempt.id, attempt.leaseToken, leaseMs],
+      )
+      if (!updated) throw new Error('Workflow attempt heartbeat lease lost')
+    },
     async ack(attempt) {
       await ready
       await ackCommand(attempt.id, attempt.leaseToken)
@@ -2066,11 +2447,29 @@ export function createPostgresWorkflowRuntime(params: {
       await db.query(
         `
           UPDATE workflow_commands
-          SET lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL
+          SET lease_owner = NULL,
+              lease_token = NULL,
+              lease_expires_at = NULL,
+              run_at = now() + ($3::int * interval '1 millisecond')
           WHERE id = $1 AND lease_token = $2
         `,
-        [attempt.id, attempt.leaseToken],
+        [attempt.id, attempt.leaseToken, RELEASE_BACKOFF_MS],
       )
+    },
+    async deleteUnclaimed({ runId }) {
+      await ready
+      const deleted = await many<{ id: string }>(
+        db,
+        `
+	          DELETE FROM workflow_commands
+	          WHERE run_id = $1
+	            AND kind IN ('activity', 'task')
+	            AND lease_token IS NULL
+	          RETURNING id
+	        `,
+        [runId],
+      )
+      return deleted.length
     },
   }
 

@@ -9,6 +9,8 @@ import type {
   MapRunMode,
   RetryPolicy,
   Schema,
+  SchemaBoundary,
+  SchemaInput,
   SchemaOutput,
   TaskDefinition,
   TaskInput,
@@ -33,10 +35,7 @@ type AvailableNodeName<Name extends string> = Name extends 'input'
   ? never
   : Name
 
-type BranchCaseMap<Output> = Record<
-  string,
-  BranchCaseDefinition<any, any, Output>
->
+type BranchCaseMap = Record<string, BranchCaseDefinition>
 
 type LeafCaseMap = Record<string, BranchCaseDefinition>
 
@@ -46,10 +45,36 @@ type BranchActivityCaseOptions<BranchOutput, InputSchema, OutputSchema> = {
   retry?: RetryPolicy
   timeout?: DurationString
 } & (OutputSchema extends Schema
-  ? SchemaOutput<OutputSchema> extends BranchOutput
-    ? unknown
-    : never
-  : never)
+  ? OutputMatches<
+      SchemaOutput<OutputSchema>,
+      BranchOutput,
+      'activity case output does not satisfy branch output'
+    >
+  : OutputMismatch<
+      'activity case output does not satisfy branch output',
+      BranchOutput,
+      unknown
+    >)
+
+declare const outputMismatch: unique symbol
+type OutputMismatch<Message extends string, Expected, Received> = {
+  readonly [outputMismatch]: Message
+  readonly expected: Expected
+  readonly received: Received
+}
+
+type OutputMatches<
+  Received,
+  Expected,
+  Message extends string,
+> = Received extends Expected
+  ? unknown
+  : OutputMismatch<Message, Expected, Received>
+
+type SchemaSides<T extends Schema> = SchemaBoundary<
+  SchemaInput<T>,
+  SchemaOutput<T>
+>
 
 export type BranchCaseHelpers = {
   activity<
@@ -62,8 +87,8 @@ export type BranchCaseHelpers = {
     timeout?: DurationString
   }): BranchCaseDefinition<
     'activity',
-    SchemaOutput<InputSchema>,
-    SchemaOutput<OutputSchema>
+    SchemaSides<InputSchema>,
+    SchemaSides<OutputSchema>
   >
   task<Task extends AnyTaskDefinition>(
     task: Task,
@@ -90,36 +115,42 @@ export type ConvergedBranchCaseHelpers<BranchOutput> = {
     options: BranchActivityCaseOptions<BranchOutput, InputSchema, OutputSchema>,
   ): BranchCaseDefinition<
     'activity',
-    SchemaOutput<InputSchema>,
-    SchemaOutput<OutputSchema>
+    SchemaSides<InputSchema>,
+    SchemaSides<OutputSchema>
   >
   task<Task extends AnyTaskDefinition>(
-    task: Task,
+    task: Task &
+      OutputMatches<
+        TaskOutput<Task>,
+        BranchOutput,
+        'task case output does not satisfy branch output'
+      >,
     options?: {
       retry?: RetryPolicy
       timeout?: DurationString
     },
-  ): TaskOutput<Task> extends BranchOutput
-    ? BranchCaseDefinition<'task', TaskInput<Task>, TaskOutput<Task>, Task>
-    : never
+  ): BranchCaseDefinition<'task', TaskInput<Task>, TaskOutput<Task>, Task>
   workflow<Workflow extends AnyWorkflowDefinition>(
-    workflow: Workflow,
+    workflow: Workflow &
+      OutputMatches<
+        WorkflowOutput<Workflow>,
+        BranchOutput,
+        'workflow case output does not satisfy branch output'
+      >,
     options?: {
       cancellation?: CancellationPolicy
     },
-  ): WorkflowOutput<Workflow> extends BranchOutput
-    ? BranchCaseDefinition<
-        'workflow',
-        WorkflowInput<Workflow>,
-        WorkflowOutput<Workflow>,
-        Workflow
-      >
-    : never
+  ): BranchCaseDefinition<
+    'workflow',
+    WorkflowInput<Workflow>,
+    WorkflowOutput<Workflow>,
+    Workflow
+  >
 }
 
 export type WorkflowBuilder<
-  Name extends string,
-  Input,
+  Name extends string = string,
+  Input = unknown,
   Nodes extends readonly WorkflowNode[] = [],
   DeclaredOutput = NoDeclaredOutput,
 > = {
@@ -147,8 +178,8 @@ export type WorkflowBuilder<
       ...Nodes,
       WorkflowActivityNode<
         NodeName,
-        SchemaOutput<InputSchema>,
-        SchemaOutput<OutputSchema>
+        SchemaSides<InputSchema>,
+        SchemaSides<OutputSchema>
       >,
     ],
     DeclaredOutput
@@ -184,7 +215,7 @@ export type WorkflowBuilder<
   branch<
     NodeName extends string,
     OutputSchema extends Schema,
-    Cases extends BranchCaseMap<SchemaOutput<OutputSchema>>,
+    Cases extends BranchCaseMap,
   >(
     name: AvailableNodeName<NodeName>,
     options: {
@@ -196,10 +227,7 @@ export type WorkflowBuilder<
   ): WorkflowBuilder<
     Name,
     Input,
-    [
-      ...Nodes,
-      WorkflowBranchNode<NodeName, Cases, SchemaOutput<OutputSchema>>,
-    ],
+    [...Nodes, WorkflowBranchNode<NodeName, Cases, SchemaOutput<OutputSchema>>],
     DeclaredOutput
   >
 
@@ -224,10 +252,7 @@ export type WorkflowBuilder<
   ): WorkflowBuilder<
     Name,
     Input,
-    [
-      ...Nodes,
-      WorkflowParallelNode<NodeName, Cases, BranchCaseOutputs<Cases>>,
-    ],
+    [...Nodes, WorkflowParallelNode<NodeName, Cases, BranchCaseOutputs<Cases>>],
     DeclaredOutput
   >
 
@@ -251,7 +276,7 @@ export type WorkflowBuilder<
     Input,
     [
       ...Nodes,
-      WorkflowMapTaskNode<NodeName, Task, SchemaOutput<ItemSchema>, Mode>,
+      WorkflowMapTaskNode<NodeName, Task, SchemaSides<ItemSchema>, Mode>,
     ],
     DeclaredOutput
   >
@@ -278,7 +303,7 @@ export type WorkflowBuilder<
       WorkflowMapWorkflowNode<
         NodeName,
         Workflow,
-        SchemaOutput<ItemSchema>,
+        SchemaSides<ItemSchema>,
         Mode
       >,
     ],
@@ -311,11 +336,11 @@ export function defineTask<
   OutputSchema extends Schema,
 >(
   options: TaskOptions<Name, InputSchema, OutputSchema>,
-): TaskDefinition<Name, SchemaOutput<InputSchema>, SchemaOutput<OutputSchema>> {
+): TaskDefinition<Name, SchemaSides<InputSchema>, SchemaSides<OutputSchema>> {
   return Object.freeze({ kind: 'task', ...options }) as TaskDefinition<
     Name,
-    SchemaOutput<InputSchema>,
-    SchemaOutput<OutputSchema>
+    SchemaSides<InputSchema>,
+    SchemaSides<OutputSchema>
   >
 }
 
@@ -461,9 +486,9 @@ export function defineWorkflow<
   options: WorkflowOptions<Name, InputSchema, OutputSchema>,
 ): WorkflowBuilder<
   Name,
-  SchemaOutput<InputSchema>,
+  SchemaSides<InputSchema>,
   [],
-  OutputSchema extends Schema ? SchemaOutput<OutputSchema> : NoDeclaredOutput
+  OutputSchema extends Schema ? SchemaSides<OutputSchema> : NoDeclaredOutput
 > {
   return new WorkflowDraftBuilder(options) as any
 }

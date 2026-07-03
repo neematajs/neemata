@@ -9,6 +9,7 @@ export type StoredError = {
   readonly name?: string
   readonly message: string
   readonly stack?: string
+  readonly cause?: StoredError
 }
 
 export type StoredRun = {

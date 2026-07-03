@@ -1,11 +1,6 @@
-export type RuntimeRunStatus =
-  | 'queued'
-  | 'running'
-  | 'waiting'
-  | 'cancelling'
-  | 'cancelled'
-  | 'failed'
-  | 'completed'
+import type { WorkflowStatus } from '../types/index.ts'
+
+export type RuntimeRunStatus = WorkflowStatus
 
 export type RuntimeNodeStatus =
   | 'pending'

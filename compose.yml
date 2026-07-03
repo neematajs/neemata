@@ -21,6 +21,21 @@ services:
       start_period: 10s
       retries: 5
 
+  postgres:
+    image: postgres:17-alpine
+    ports:
+      - '${POSTGRES_PORT:-5432}:5432'
+    environment:
+      POSTGRES_USER: neemata
+      POSTGRES_PASSWORD: neemata
+      POSTGRES_DB: neemata
+    healthcheck:
+      test: ['CMD', 'pg_isready', '-U', 'neemata']
+      interval: 5s
+      timeout: 5s
+      start_period: 10s
+      retries: 5
+
   kafka:
     image: apache/kafka:3.9.1
     ports:

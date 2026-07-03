@@ -1,3 +1,5 @@
+import type { DurationString } from '../types/index.ts'
+
 export type ContinueRunCommand = {
   readonly kind: 'continueRun'
   readonly runId: string
@@ -26,6 +28,7 @@ export type TaskAttemptCommand = {
   readonly leaseToken: string
   readonly input: unknown
   readonly idempotencyKey?: readonly unknown[]
+  readonly timeout?: DurationString
 }
 
 export type AttemptCommand = ActivityAttemptCommand | TaskAttemptCommand

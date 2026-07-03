@@ -1,6 +1,6 @@
 import { createValueInjectable } from '@nmtjs/core'
 import { t } from '@nmtjs/type'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, expectTypeOf, it } from 'vitest'
 
 import * as workflows from '../src/index.ts'
 
@@ -202,5 +202,81 @@ describe('workflow API boundaries', () => {
     ).toThrow(
       'Workflow task implementation [embedding] does not match contract',
     )
+  })
+
+  it('separates decode input from decoded handler and output types', () => {
+    const dateTask = defineTask({
+      name: 'date.normalize',
+      input: t.date(),
+      output: t.date(),
+    })
+    const dateWorkflow = defineWorkflow({
+      name: 'date.workflow',
+      input: t.date(),
+      output: t.date(),
+    })
+      .activity('normalize', {
+        input: t.date(),
+        output: t.date(),
+      })
+      .mapTask('dates', dateTask, {
+        item: t.date(),
+        mode: 'wait-all',
+      })
+      .build()
+
+    expectTypeOf<workflows.TaskInput<typeof dateTask>>().toEqualTypeOf<string>()
+    expectTypeOf<workflows.TaskOutput<typeof dateTask>>().toEqualTypeOf<Date>()
+    expectTypeOf<
+      workflows.WorkflowInput<typeof dateWorkflow>
+    >().toEqualTypeOf<string>()
+    expectTypeOf<
+      workflows.WorkflowOutput<typeof dateWorkflow>
+    >().toEqualTypeOf<Date>()
+    expectTypeOf<
+      workflows.WorkflowRun<typeof dateWorkflow>['input']
+    >().toEqualTypeOf<Date>()
+    expectTypeOf<
+      workflows.WorkflowRun<typeof dateWorkflow>['output']
+    >().toEqualTypeOf<Date | undefined>()
+
+    implementTask(dateTask, {
+      handler: async (_ctx, input) => {
+        expectTypeOf(input).toEqualTypeOf<Date>()
+        return input.toISOString()
+      },
+    })
+
+    implementWorkflow(dateWorkflow)
+      .normalize(
+        async (_ctx, input) => {
+          expectTypeOf(input).toEqualTypeOf<Date>()
+          return input.toISOString()
+        },
+        {
+          input: (_ctx, _outputs, input) => {
+            expectTypeOf(input).toEqualTypeOf<Date>()
+            return input.toISOString()
+          },
+        },
+      )
+      .dates(dateTask, {
+        items: (_ctx, _outputs, input) => {
+          expectTypeOf(input).toEqualTypeOf<Date>()
+          return [input.toISOString()]
+        },
+        input: (_ctx, _outputs, item, input) => {
+          expectTypeOf(item).toEqualTypeOf<Date>()
+          expectTypeOf(input).toEqualTypeOf<Date>()
+          return item.toISOString()
+        },
+      })
+      .finish((_ctx, { normalize, dates }, input) => {
+        expectTypeOf(normalize).toEqualTypeOf<Date>()
+        expectTypeOf(dates.items[0]?.item).toMatchTypeOf<Date | undefined>()
+        expectTypeOf(dates.items[0]?.output).toMatchTypeOf<Date | undefined>()
+        expectTypeOf(input).toEqualTypeOf<Date>()
+        return normalize.toISOString()
+      })
   })
 })

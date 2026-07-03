@@ -1,39 +1,36 @@
-import { t } from '@nmtjs/type'
 import { PGlite } from '@electric-sql/pglite'
+import { Container, createLogger } from '@nmtjs/core'
+import { t } from '@nmtjs/type'
 import { describe, expect, it } from 'vitest'
 
 import {
-  defineTask,
-  defineWorkflow,
-} from '../src/index.ts'
+  createPostgresWorkflowConnection,
+  createPostgresWorkflowRuntime,
+} from '../src/adapters/postgres.ts'
+import { installPostgresWorkflowSchemaForTesting } from '../src/adapters/postgres/testing.ts'
+import { defineTask, defineWorkflow, implementWorkflow } from '../src/index.ts'
 import {
   createInMemoryWorkflowRuntime,
   createWorkflowRuntimeClient,
+  runWorkflowWorker,
   type WorkflowRuntimeAdapter,
 } from '../src/runtime/index.ts'
-import {
-  createPostgresWorkflowRuntime,
-  installPostgresWorkflowSchemaForTesting,
-  type WorkflowPostgresConnection,
-} from '../src/adapters/postgres.ts'
 
-type RuntimeFactory = () => WorkflowRuntimeAdapter | Promise<WorkflowRuntimeAdapter>
+type RuntimeFactory = () =>
+  | WorkflowRuntimeAdapter
+  | Promise<WorkflowRuntimeAdapter>
 
 const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
-function createPgliteConnection(db = new PGlite()): WorkflowPostgresConnection {
-  return {
-    query: (sql, params = []) => db.query(sql, [...params]),
-    transaction: (handler) =>
-      db.transaction((tx) =>
-        handler({
-          query: (sql, params = []) => tx.query(sql, [...params]),
-          transaction: (nested) => nested(createPgliteConnection(db)),
-        }),
-      ),
-  }
-}
+const waitForReleaseBackoff = () =>
+  new Promise((resolve) => setTimeout(resolve, 60))
+
+const createPgliteConnection = () =>
+  createPostgresWorkflowConnection(new PGlite())
+
+const logger = createLogger({ pinoOptions: { enabled: false } }, 'test')
+const testContainer = new Container({ logger })
 
 function workflowRuntimeAdapterContract(
   name: string,
@@ -76,6 +73,89 @@ function workflowRuntimeAdapterContract(
         expect(run.id).toMatch(uuidPattern)
         expect(claimed?.id).toMatch(uuidPattern)
       }
+    })
+
+    it('cancels a queued workflow run end-to-end', async () => {
+      const workflow = defineWorkflow({
+        name: 'adapter-cancel-queued-workflow',
+        input: t.object({ scenario: t.string() }),
+        output: t.object({ caseId: t.string() }),
+      }).build()
+      const implementation = implementWorkflow(workflow).finish(
+        (_ctx, _outputs, input) => ({ caseId: input.scenario }),
+      )
+      const runtime = await createRuntime()
+      const client = createWorkflowRuntimeClient(runtime)
+      const run = await client.start(workflow, { scenario: 'alpha' })
+
+      await client.cancel(run.id)
+      await runWorkflowWorker({
+        ...runtime,
+        container: testContainer,
+        workflows: [implementation],
+        workerId: 'cancel-worker-1',
+        maxIdleClaims: 3,
+      })
+
+      const snapshot = await client.get(run.id)
+      expect(snapshot?.run.status).toBe('cancelled')
+      expect(snapshot?.nodes).toStrictEqual([])
+    })
+
+    it('recursively cancels a child workflow run end-to-end', async () => {
+      const childWorkflow = defineWorkflow({
+        name: 'adapter-cancel-child-workflow',
+        input: t.object({ scenario: t.string() }),
+        output: t.object({ caseId: t.string() }),
+      }).build()
+      const parentWorkflow = defineWorkflow({
+        name: 'adapter-cancel-parent-workflow',
+        input: t.object({ scenario: t.string() }),
+        output: t.object({ caseId: t.string() }),
+      })
+        .workflow('child', childWorkflow)
+        .build()
+      const childImplementation = implementWorkflow(childWorkflow).finish(
+        (_ctx, _outputs, input) => ({ caseId: input.scenario }),
+      )
+      const parentImplementation = implementWorkflow(parentWorkflow)
+        .child(childWorkflow)
+        .finish((_ctx, { child }) => ({ caseId: child.caseId }))
+      const runtime = await createRuntime()
+      const client = createWorkflowRuntimeClient(runtime)
+      const run = await client.start(parentWorkflow, { scenario: 'alpha' })
+
+      await runWorkflowWorker({
+        ...runtime,
+        container: testContainer,
+        workflows: [parentImplementation],
+        workerId: 'parent-worker-1',
+      })
+      const waiting = await client.get(run.id)
+      const childRunId = waiting?.childLinks[0]?.childRunId
+      expect(childRunId).toBeTypeOf('string')
+
+      await client.cancel(run.id)
+      await runWorkflowWorker({
+        ...runtime,
+        container: testContainer,
+        workflows: [parentImplementation],
+        workerId: 'parent-worker-2',
+        maxIdleClaims: 3,
+      })
+      await runWorkflowWorker({
+        ...runtime,
+        container: testContainer,
+        workflows: [childImplementation],
+        workerId: 'child-worker-1',
+        maxIdleClaims: 3,
+      })
+
+      const parentSnapshot = await client.get(run.id)
+      const childSnapshot = await client.get(childRunId!)
+      expect(parentSnapshot?.run.status).toBe('cancelled')
+      expect(parentSnapshot?.nodes[0]?.status).toBe('cancelled')
+      expect(childSnapshot?.run.status).toBe('cancelled')
     })
 
     it('starts task runs through the runtime client', async () => {
@@ -129,9 +209,13 @@ function workflowRuntimeAdapterContract(
 
     it('claims, acks, and releases run coordination commands', async () => {
       const runtime = await createRuntime()
+      const run = await runtime.store.createRun({
+        workflowName: 'claimable-workflow',
+        input: {},
+      })
       const command = {
         kind: 'continueRun' as const,
-        runId: '00000000-0000-4000-8000-000000000101',
+        runId: run.id,
         workflowName: 'claimable-workflow',
       }
 
@@ -153,6 +237,15 @@ function workflowRuntimeAdapterContract(
 
       await runtime.runCoordinationExecutor.release(first!)
 
+      const noneBeforeBackoff = await runtime.runCoordinationExecutor.claim({
+        workerId: 'worker-2',
+        workflowNames: ['claimable-workflow'],
+        leaseMs: 30_000,
+      })
+      expect(noneBeforeBackoff).toBeNull()
+
+      await waitForReleaseBackoff()
+
       const reclaimed = await runtime.runCoordinationExecutor.claim({
         workerId: 'worker-2',
         workflowNames: ['claimable-workflow'],
@@ -162,6 +255,12 @@ function workflowRuntimeAdapterContract(
       expect(reclaimed?.command).toStrictEqual(command)
 
       await runtime.runCoordinationExecutor.ack(reclaimed!)
+      await expect(
+        runtime.runCoordinationExecutor.ack({
+          ...reclaimed!,
+          leaseToken: 'stale-continue-lease',
+        }),
+      ).rejects.toThrow('Stale workflow command ack')
 
       const afterAck = await runtime.runCoordinationExecutor.claim({
         workerId: 'worker-3',
@@ -173,11 +272,22 @@ function workflowRuntimeAdapterContract(
 
     it('claims, heartbeats, acks, and releases attempt commands', async () => {
       const runtime = await createRuntime()
+      const activityRun = await runtime.store.createRun({
+        workflowName: 'attempt-workflow',
+        input: {},
+      })
+      const taskRun = await runtime.store.createRun({
+        kind: 'task',
+        name: 'embedding',
+        workflowName: 'attempt-task',
+        taskName: 'embedding',
+        input: {},
+      })
       const activityCommand = {
         kind: 'activityAttempt' as const,
         workflowName: 'attempt-workflow',
         activityName: 'content',
-        runId: '00000000-0000-4000-8000-000000000201',
+        runId: activityRun.id,
         nodeName: 'content',
         attemptId: '00000000-0000-4000-8000-000000000202',
         leaseToken: 'lease-activity',
@@ -187,7 +297,7 @@ function workflowRuntimeAdapterContract(
         kind: 'taskAttempt' as const,
         workflowName: 'attempt-task',
         taskName: 'embedding',
-        runId: '00000000-0000-4000-8000-000000000203',
+        runId: taskRun.id,
         nodeName: '$task',
         attemptId: '00000000-0000-4000-8000-000000000204',
         leaseToken: 'lease-task',
@@ -228,7 +338,25 @@ function workflowRuntimeAdapterContract(
       expect(noneWhileActivityClaimed).toBeNull()
 
       await runtime.attemptExecutor.heartbeat(activity!)
+      await expect(
+        runtime.attemptExecutor.heartbeat({
+          ...activity!,
+          leaseToken: 'stale-attempt-lease',
+        }),
+      ).rejects.toThrow('Workflow attempt heartbeat lease lost')
       await runtime.attemptExecutor.release(activity!)
+
+      const activityBeforeBackoff = await runtime.attemptExecutor.claimActivity(
+        {
+          workerId: 'activity-worker-2',
+          workflowNames: ['attempt-workflow'],
+          activityNames: ['content'],
+          leaseMs: 30_000,
+        },
+      )
+      expect(activityBeforeBackoff).toBeNull()
+
+      await waitForReleaseBackoff()
 
       const reclaimedActivity = await runtime.attemptExecutor.claimActivity({
         workerId: 'activity-worker-2',
@@ -264,6 +392,15 @@ function workflowRuntimeAdapterContract(
 
       await runtime.attemptExecutor.release(task!)
 
+      const taskBeforeBackoff = await runtime.attemptExecutor.claimTask({
+        workerId: 'task-worker-2',
+        taskNames: ['embedding'],
+        leaseMs: 30_000,
+      })
+      expect(taskBeforeBackoff).toBeNull()
+
+      await waitForReleaseBackoff()
+
       const reclaimedTask = await runtime.attemptExecutor.claimTask({
         workerId: 'task-worker-2',
         taskNames: ['embedding'],
@@ -289,23 +426,19 @@ function workflowRuntimeAdapterContract(
       })
       const missing = await runtime.store.acquireRunLease({
         runId: 'missing-run',
-        workerId: 'worker-0',
         leaseMs: 30_000,
       })
 
       const expired = await runtime.store.acquireRunLease({
         runId: run.id,
-        workerId: 'worker-1',
         leaseMs: 0,
       })
       const current = await runtime.store.acquireRunLease({
         runId: run.id,
-        workerId: 'worker-2',
         leaseMs: 30_000,
       })
       const busy = await runtime.store.acquireRunLease({
         runId: run.id,
-        workerId: 'worker-3',
         leaseMs: 30_000,
       })
 
@@ -319,7 +452,6 @@ function workflowRuntimeAdapterContract(
 
       const stillBusy = await runtime.store.acquireRunLease({
         runId: run.id,
-        workerId: 'worker-3',
         leaseMs: 30_000,
       })
       expect(stillBusy).toBeUndefined()
@@ -328,7 +460,6 @@ function workflowRuntimeAdapterContract(
 
       const next = await runtime.store.acquireRunLease({
         runId: run.id,
-        workerId: 'worker-3',
         leaseMs: 30_000,
       })
       expect(next).toBeDefined()
@@ -351,6 +482,36 @@ function workflowRuntimeAdapterContract(
 
       expect(same.id).toBe(run.id)
       expect(same.input).toStrictEqual({ scenario: 'alpha' })
+
+      const jsonbOrdered = await runtime.store.createRun({
+        kind: 'workflow',
+        workflowName: 'jsonb-idempotent-workflow',
+        input: { currency: 'USD', amount: 5 },
+        idempotencyKey: ['workflow', 'jsonb-order'],
+      })
+      const sameJsonbOrdered = await runtime.store.createRun({
+        kind: 'workflow',
+        workflowName: 'jsonb-idempotent-workflow',
+        input: { currency: 'USD', amount: 5 },
+        idempotencyKey: ['workflow', 'jsonb-order'],
+      })
+
+      expect(sameJsonbOrdered.id).toBe(jsonbOrdered.id)
+
+      const stableKeyed = await runtime.store.createRun({
+        kind: 'workflow',
+        workflowName: 'stable-json-idempotent-workflow',
+        input: { currency: 'USD', amount: 5 },
+        idempotencyKey: ['workflow', { scenario: 'alpha', rank: 1 }],
+      })
+      const sameStableKeyed = await runtime.store.createRun({
+        kind: 'workflow',
+        workflowName: 'stable-json-idempotent-workflow',
+        input: { amount: 5, currency: 'USD' },
+        idempotencyKey: ['workflow', { rank: 1, scenario: 'alpha' }],
+      })
+
+      expect(sameStableKeyed.id).toBe(stableKeyed.id)
 
       await expect(
         runtime.store.createRun({
@@ -424,6 +585,20 @@ function workflowRuntimeAdapterContract(
         nodeName: 'content',
         output: { text: 'node' },
       })
+      const inputAfterTerminal = await runtime.store.setNodeInput({
+        runId: run.id,
+        nodeName: 'content',
+        input: { text: 'too-late' },
+      })
+      const selectedAfterTerminal = await runtime.store.selectNodeCase({
+        runId: run.id,
+        nodeName: 'content',
+        caseKey: 'too-late',
+      })
+      const waitedAfterTerminal = await runtime.store.waitNode({
+        runId: run.id,
+        nodeName: 'content',
+      })
       const failedNode = await runtime.store.failNode({
         runId: run.id,
         nodeName: 'content',
@@ -437,6 +612,23 @@ function workflowRuntimeAdapterContract(
         runId: run.id,
         error: new Error('too-late'),
       })
+      const cancelledRun = await runtime.store.cancelRun({
+        runId: run.id,
+      })
+      await expect(
+        runtime.store.createAttempt({
+          runId: run.id,
+          nodeName: 'content',
+          input: { text: 'too-late' },
+        }),
+      ).rejects.toThrow(/terminal/i)
+      await expect(
+        runtime.store.ensureNodeAttempt({
+          identity: { runId: run.id, nodeName: 'content', caseKey: 'late' },
+          kind: 'activity',
+          input: { text: 'too-late' },
+        }),
+      ).rejects.toThrow(/terminal/i)
 
       expect(stale).toBeUndefined()
       expect(wrongToken).toBeUndefined()
@@ -444,11 +636,145 @@ function workflowRuntimeAdapterContract(
       expect(duplicate).toBeUndefined()
       expect(failAfterComplete).toBeUndefined()
       expect(completedNode?.status).toBe('completed')
+      expect(inputAfterTerminal.status).toBe('completed')
+      expect(inputAfterTerminal.input).toBeUndefined()
+      expect(selectedAfterTerminal?.status).toBe('completed')
+      expect(selectedAfterTerminal?.selectedCase).toBeUndefined()
+      expect(waitedAfterTerminal?.status).toBe('completed')
       expect(failedNode?.status).toBe('completed')
       expect(failedNode?.output).toStrictEqual({ text: 'node' })
       expect(completedRun?.status).toBe('completed')
       expect(failedRun?.status).toBe('completed')
       expect(failedRun?.output).toStrictEqual({ ok: true })
+      expect(cancelledRun?.status).toBe('completed')
+      expect(cancelledRun?.output).toStrictEqual({ ok: true })
+    })
+
+    it('cancels a non-terminal run', async () => {
+      const runtime = await createRuntime()
+      const run = await runtime.store.createRun({
+        workflowName: 'cancelled-workflow',
+        input: {},
+      })
+
+      const cancelled = await runtime.store.cancelRun({
+        runId: run.id,
+      })
+      const completedAfterCancel = await runtime.store.completeRun({
+        runId: run.id,
+        output: { ok: true },
+      })
+      const failedAfterCancel = await runtime.store.failRun({
+        runId: run.id,
+        error: new Error('too-late'),
+      })
+
+      expect(cancelled?.status).toBe('cancelled')
+      expect(completedAfterCancel?.status).toBe('cancelled')
+      expect(failedAfterCancel?.status).toBe('cancelled')
+    })
+
+    it('requests cancellation before final cancellation', async () => {
+      const runtime = await createRuntime()
+      const run = await runtime.store.createRun({
+        workflowName: 'requested-cancel-workflow',
+        input: {},
+      })
+      await runtime.store.createNode({
+        runId: run.id,
+        name: 'first',
+        kind: 'activity',
+      })
+      await runtime.store.createNode({
+        runId: run.id,
+        name: 'second',
+        kind: 'activity',
+      })
+      await runtime.store.completeNode({
+        runId: run.id,
+        nodeName: 'first',
+        output: { ok: true },
+      })
+
+      const requested = await runtime.store.requestRunCancellation({
+        runId: run.id,
+      })
+      const cancelledNode = await runtime.store.cancelNode({
+        runId: run.id,
+        nodeName: 'second',
+      })
+      await runtime.store.cancelNonTerminalRunNodes({ runId: run.id })
+      const final = await runtime.store.cancelRun({ runId: run.id })
+      const snapshot = await runtime.store.loadRunSnapshot(run.id)
+
+      expect(requested?.status).toBe('cancelling')
+      expect(cancelledNode?.status).toBe('cancelled')
+      expect(final?.status).toBe('cancelled')
+      expect(snapshot?.nodes.map((node) => [node.name, node.status])).toEqual([
+        ['first', 'completed'],
+        ['second', 'cancelled'],
+      ])
+    })
+
+    it('deletes only unclaimed attempt commands for a run', async () => {
+      const runtime = await createRuntime()
+      const run = await runtime.store.createRun({
+        workflowName: 'delete-unclaimed-workflow',
+        input: {},
+      })
+      const otherRun = await runtime.store.createRun({
+        workflowName: 'delete-unclaimed-workflow',
+        input: {},
+      })
+      const command = (runId: string, attemptId: string) => ({
+        kind: 'activityAttempt' as const,
+        workflowName: 'delete-unclaimed-workflow',
+        activityName: 'content',
+        runId,
+        nodeName: 'content',
+        attemptId,
+        leaseToken: `lease-${attemptId}`,
+        input: {},
+      })
+
+      await runtime.attemptExecutor.dispatchActivity(
+        command(run.id, '00000000-0000-4000-8000-000000000301'),
+      )
+      await runtime.attemptExecutor.dispatchActivity(
+        command(run.id, '00000000-0000-4000-8000-000000000302'),
+      )
+      await runtime.attemptExecutor.dispatchActivity(
+        command(otherRun.id, '00000000-0000-4000-8000-000000000303'),
+      )
+      const claimed = await runtime.attemptExecutor.claimActivity({
+        workerId: 'activity-worker-1',
+        workflowNames: ['delete-unclaimed-workflow'],
+        activityNames: ['content'],
+        leaseMs: 30_000,
+      })
+
+      const deleted = await runtime.attemptExecutor.deleteUnclaimed({
+        runId: run.id,
+      })
+      const remainingClaim = await runtime.attemptExecutor.claimActivity({
+        workerId: 'activity-worker-2',
+        workflowNames: ['delete-unclaimed-workflow'],
+        activityNames: ['content'],
+        leaseMs: 30_000,
+      })
+      await runtime.attemptExecutor.ack(claimed!)
+      await runtime.attemptExecutor.ack(remainingClaim!)
+      const emptyClaim = await runtime.attemptExecutor.claimActivity({
+        workerId: 'activity-worker-3',
+        workflowNames: ['delete-unclaimed-workflow'],
+        activityNames: ['content'],
+        leaseMs: 30_000,
+      })
+
+      expect(claimed?.command.runId).toBe(run.id)
+      expect(deleted).toBe(1)
+      expect(remainingClaim?.command.runId).toBe(otherRun.id)
+      expect(emptyClaim).toBeNull()
     })
 
     it('ensures child links and map items atomically', async () => {
@@ -470,6 +796,11 @@ function workflowRuntimeAdapterContract(
       await runtime.store.createNode({
         runId: parent.id,
         name: 'duplicate-items',
+        kind: 'mapTask',
+      })
+      await runtime.store.createNode({
+        runId: parent.id,
+        name: 'keyless-items',
         kind: 'mapTask',
       })
       const childParams = {
@@ -496,6 +827,18 @@ function workflowRuntimeAdapterContract(
         items: [{ id: 1 }, { id: 2 }],
         keys: ['one', 'two'],
       })
+      const firstKeylessItems = await runtime.store.ensureMapItems({
+        runId: parent.id,
+        nodeName: 'keyless-items',
+        items: [{ currency: 'USD', amount: 5 }],
+        keys: [undefined],
+      })
+      const sameKeylessItems = await runtime.store.ensureMapItems({
+        runId: parent.id,
+        nodeName: 'keyless-items',
+        items: [{ currency: 'USD', amount: 5 }],
+        keys: [undefined],
+      })
 
       expect(firstChild.created).toBe(true)
       expect(sameChild.created).toBe(false)
@@ -515,6 +858,26 @@ function workflowRuntimeAdapterContract(
       expect(firstItems.created).toBe(true)
       expect(sameItems.created).toBe(false)
       expect(sameItems.items).toStrictEqual(firstItems.items)
+      expect(firstKeylessItems.created).toBe(true)
+      expect(sameKeylessItems.created).toBe(false)
+      expect(sameKeylessItems.items).toStrictEqual(firstKeylessItems.items)
+      const completedItem = await runtime.store.completeMapItem({
+        runId: parent.id,
+        nodeName: 'items',
+        itemIndex: 0,
+        itemKey: 'one',
+        output: { id: 'one' },
+      })
+      const failedAfterComplete = await runtime.store.failMapItem({
+        runId: parent.id,
+        nodeName: 'items',
+        itemIndex: 0,
+        itemKey: 'one',
+        error: new Error('too-late'),
+      })
+      expect(completedItem?.status).toBe('completed')
+      expect(failedAfterComplete?.status).toBe('completed')
+      expect(failedAfterComplete?.output).toStrictEqual({ id: 'one' })
       await expect(
         runtime.store.ensureMapItems({
           runId: parent.id,
@@ -539,6 +902,31 @@ function workflowRuntimeAdapterContract(
           keys: ['one', 'two'],
         }),
       ).rejects.toThrow('Conflicting map items')
+    })
+
+    it('preserves stored error cause chains', async () => {
+      const runtime = await createRuntime()
+      const run = await runtime.store.createRun({
+        workflowName: 'adapter-error-cause-workflow',
+        input: { scenario: 'alpha' },
+      })
+      const error = new Error('outer failure', {
+        cause: new Error('inner cause'),
+      })
+
+      const failed = await runtime.store.failRun({
+        runId: run.id,
+        error,
+      })
+
+      expect(failed?.error).toMatchObject({
+        name: 'Error',
+        message: 'outer failure',
+        cause: {
+          name: 'Error',
+          message: 'inner cause',
+        },
+      })
     })
 
     it('loads run snapshots without leaking state across runs', async () => {
@@ -604,18 +992,18 @@ function workflowRuntimeAdapterContract(
       expect(firstSnapshot?.nodes.map((node) => node.name)).toEqual(
         expect.arrayContaining(['first-node', 'child', 'items']),
       )
-      expect(firstSnapshot?.attempts.map((attempt) => attempt.runId)).toStrictEqual([
-        first.id,
-      ])
+      expect(
+        firstSnapshot?.attempts.map((attempt) => attempt.runId),
+      ).toStrictEqual([first.id])
       expect(firstSnapshot?.childLinks).toHaveLength(1)
       expect(firstSnapshot?.mapItems).toHaveLength(1)
       expect(secondSnapshot?.run.id).toBe(second.id)
       expect(secondSnapshot?.nodes.map((node) => node.name)).toStrictEqual([
         'second-node',
       ])
-      expect(secondSnapshot?.attempts.map((attempt) => attempt.runId)).toStrictEqual([
-        second.id,
-      ])
+      expect(
+        secondSnapshot?.attempts.map((attempt) => attempt.runId),
+      ).toStrictEqual([second.id])
       expect(secondSnapshot?.childLinks).toStrictEqual([])
       expect(secondSnapshot?.mapItems).toStrictEqual([])
     })

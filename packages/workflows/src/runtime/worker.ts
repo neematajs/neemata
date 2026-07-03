@@ -9,19 +9,25 @@ import type {
   WorkflowCaseImplementation,
 } from '../implement/index.ts'
 import type {
+  AnyTaskDefinition,
+  AnyWorkflowDefinition,
+  BranchCaseDefinition,
+  RetryPolicy,
+  Schema,
+} from '../types/index.ts'
+import type {
   ActivityAttemptCommand,
   ClaimedAttempt,
   TaskAttemptCommand,
 } from './commands.ts'
-import type {
-  AnyTaskDefinition,
-  AnyWorkflowDefinition,
-} from '../types/index.ts'
-import { continueWorkflowRun } from './coordinator.ts'
 import type { AttemptExecutor, RunCoordinationExecutor } from './executors.ts'
-import { createWorkflowRuntimeRegistry } from './registry.ts'
 import type { StoredAttempt, StoredNode } from './state.ts'
 import type { WorkflowStore } from './store.ts'
+import { continueWorkflowRun } from './coordinator.ts'
+import { parseDurationMs } from './duration.ts'
+import { createWorkflowRuntimeRegistry } from './registry.ts'
+import { isTerminalRunStatus } from './status.ts'
+import { wakeParentRun } from './wake.ts'
 
 type ActivityAttemptNode =
   | ActivityNodeImplementation
@@ -32,6 +38,29 @@ type AnyWorkflowImplementation = WorkflowImplementation<
   any
 >
 type AnyTaskImplementation = TaskImplementation<AnyTaskDefinition, any>
+
+export class WorkflowAttemptTimeoutError extends Error {
+  readonly runId: string
+  readonly nodeName: string
+  readonly attemptId: string
+  readonly timeoutMs: number
+
+  constructor(input: {
+    readonly runId: string
+    readonly nodeName: string
+    readonly attemptId: string
+    readonly timeoutMs: number
+  }) {
+    super(
+      `Workflow attempt [${input.attemptId}] for [${input.runId}.${input.nodeName}] timed out after ${input.timeoutMs}ms`,
+    )
+    this.name = 'WorkflowAttemptTimeoutError'
+    this.runId = input.runId
+    this.nodeName = input.nodeName
+    this.attemptId = input.attemptId
+    this.timeoutMs = input.timeoutMs
+  }
+}
 
 export async function runWithConcurrency<T>(
   items: readonly T[],
@@ -146,16 +175,17 @@ export async function runWorkflowWorker(
           command: claimed.command,
           leaseMs,
         })
-        if (result.status === 'busy') {
+        if (result.status !== 'processed') {
           await scoped.runCoordinationExecutor.release(claimed)
           return false
         }
 
         await scoped.runCoordinationExecutor.ack(claimed)
-        return result.status === 'processed'
+        return true
       })
     } catch (error) {
       await input.runCoordinationExecutor.release(claimed)
+      if (isStaleWorkflowCommandAck(error)) return false
       throw error
     }
   })
@@ -184,6 +214,8 @@ export async function runActivityWorker(
       return result.status === 'processed'
     } catch (error) {
       await input.attemptExecutor.release(claimed)
+      if (isStaleWorkflowCommandAck(error)) return false
+      if (isAttemptHeartbeatLeaseLost(error)) return false
       throw error
     }
   })
@@ -192,7 +224,9 @@ export async function runActivityWorker(
 export async function runTaskWorker(
   input: RunTaskWorkerInput,
 ): Promise<WorkerLoopResult> {
-  const taskNames = input.tasks.map((implementation) => implementation.task.name)
+  const taskNames = input.tasks.map(
+    (implementation) => implementation.task.name,
+  )
 
   return runWorkerLoop(input, async () => {
     const claimed = await input.attemptExecutor.claimTask({
@@ -207,6 +241,8 @@ export async function runTaskWorker(
       return result.status === 'processed'
     } catch (error) {
       await input.attemptExecutor.release(claimed)
+      if (isStaleWorkflowCommandAck(error)) return false
+      if (isAttemptHeartbeatLeaseLost(error)) return false
       throw error
     }
   })
@@ -220,6 +256,7 @@ export type RunActivityAttemptInput = {
   readonly workflows: readonly AnyWorkflowImplementation[]
   readonly workerId: string
   readonly claimed: ClaimedAttempt
+  readonly leaseMs?: number
   readonly container: Pick<Container, 'createContext'>
 }
 
@@ -231,6 +268,7 @@ export type RunTaskAttemptInput = {
   readonly tasks: readonly AnyTaskImplementation[]
   readonly workerId: string
   readonly claimed: ClaimedAttempt
+  readonly leaseMs?: number
   readonly container: Pick<Container, 'createContext'>
 }
 
@@ -280,7 +318,10 @@ async function runWorkerLoop(
   return { processed }
 }
 
-async function sleep(ms: number, signal: AbortSignal | undefined): Promise<void> {
+async function sleep(
+  ms: number,
+  signal: AbortSignal | undefined,
+): Promise<void> {
   if (ms <= 0 || signal?.aborted) return
 
   await new Promise<void>((resolve) => {
@@ -298,6 +339,31 @@ async function sleep(ms: number, signal: AbortSignal | undefined): Promise<void>
 function assertPositiveInteger(value: number, label: string): void {
   if (!Number.isInteger(value) || value < 1) {
     throw new Error(`${label} must be a positive integer`)
+  }
+}
+
+function isStaleWorkflowCommandAck(error: unknown): boolean {
+  return (
+    error instanceof Error && error.message === 'Stale workflow command ack'
+  )
+}
+
+function isAttemptHeartbeatLeaseLost(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    error.message === 'Workflow attempt heartbeat lease lost'
+  )
+}
+
+function decodeSchemaValue(
+  schema: Schema,
+  value: unknown,
+  label: string,
+): unknown {
+  try {
+    return schema.decode(value as never)
+  } catch (error) {
+    throw new Error(`Invalid ${label}`, { cause: error })
   }
 }
 
@@ -354,6 +420,61 @@ async function runAtomicContinuation<Result>(
   return await input.atomicContinuation.run(handler)
 }
 
+async function runWithAttemptHeartbeat<T>(
+  input: Pick<RunAttemptInput, 'attemptExecutor' | 'claimed' | 'leaseMs'>,
+  handler: () => Promise<T>,
+  timeout?: {
+    readonly timeoutMs: number
+    readonly createError: () => Error
+  },
+): Promise<T> {
+  const leaseMs = input.leaseMs ?? DEFAULT_LEASE_MS
+  const intervalMs = Math.max(1, Math.floor(leaseMs / 3))
+  let heartbeatRunning = false
+  let heartbeatFailed = false
+  let rejectHeartbeat: (error: unknown) => void = () => {}
+  const heartbeatFailure = new Promise<never>((_resolve, reject) => {
+    rejectHeartbeat = reject
+  })
+  const interval = setInterval(() => {
+    if (heartbeatRunning || heartbeatFailed) return
+    heartbeatRunning = true
+    void input.attemptExecutor
+      .heartbeat(input.claimed, leaseMs)
+      .catch((error: unknown) => {
+        if (!isAttemptHeartbeatLeaseLost(error)) return
+        heartbeatFailed = true
+        rejectHeartbeat(error)
+      })
+      .finally(() => {
+        heartbeatRunning = false
+      })
+  }, intervalMs)
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined
+  const timeoutFailure =
+    timeout === undefined
+      ? undefined
+      : new Promise<never>((_resolve, reject) => {
+          timeoutHandle = setTimeout(
+            () => reject(timeout.createError()),
+            timeout.timeoutMs,
+          )
+        })
+
+  try {
+    const work = handler()
+    work.catch(() => {})
+    return await Promise.race(
+      timeoutFailure === undefined
+        ? [work, heartbeatFailure]
+        : [work, heartbeatFailure, timeoutFailure],
+    )
+  } finally {
+    clearInterval(interval)
+    if (timeoutHandle !== undefined) clearTimeout(timeoutHandle)
+  }
+}
+
 export async function runActivityAttempt(
   input: RunActivityAttemptInput,
 ): Promise<WorkerCommandResult> {
@@ -369,8 +490,11 @@ export async function runActivityAttempt(
   const storedAttempt = snapshot?.attempts.find(
     (attempt) => attempt.id === command.attemptId,
   )
+  if (snapshot && isTerminalRunStatus(snapshot.run.status)) {
+    return await ackTerminalAttempt(input)
+  }
 
-  if (!isFreshActivityAttempt(command, storedNode, storedAttempt)) {
+  if (!isFreshAttempt(command, storedNode, storedAttempt)) {
     return await runAtomicCompletion(input, (scoped) =>
       reconcileStaleAttempt(scoped, command, storedNode, storedAttempt),
     )
@@ -405,12 +529,51 @@ export async function runActivityAttempt(
 
   let output: unknown
   try {
-    const ctx = await input.container.createContext(node.activity.dependencies)
-    output = await node.activity.handler(
-      ctx as DependencyContext<any>,
-      command.input,
+    const timeoutMs = resolveActivityAttemptTimeoutMs(
+      workflow,
+      storedNode,
+      storedAttempt,
+      command,
     )
+    output = await runWithAttemptHeartbeat(
+      input,
+      async () => {
+        const ctx = await input.container.createContext(
+          node.activity.dependencies,
+        )
+        return await node.activity.handler(
+          ctx as DependencyContext<any>,
+          command.input,
+        )
+      },
+      timeoutMs === undefined
+        ? undefined
+        : {
+            timeoutMs,
+            createError: () =>
+              new WorkflowAttemptTimeoutError({
+                runId: command.runId,
+                nodeName: command.nodeName,
+                attemptId: command.attemptId,
+                timeoutMs,
+              }),
+          },
+    )
+    const outputSchema = resolveActivityAttemptOutputSchema(
+      workflow,
+      storedNode,
+      storedAttempt,
+      command,
+    )
+    if (outputSchema) {
+      output = decodeSchemaValue(
+        outputSchema.schema,
+        output,
+        outputSchema.label,
+      )
+    }
   } catch (error) {
+    if (isAttemptHeartbeatLeaseLost(error)) throw error
     return await runAtomicCompletion(input, async (scoped) => {
       const attempt = await scoped.store.failCurrentAttempt({
         attemptId: command.attemptId,
@@ -419,6 +582,16 @@ export async function runActivityAttempt(
       })
 
       if (attempt) {
+        const retried = await retryActivityAttempt(scoped, {
+          command,
+          failedAttempt: attempt,
+          retry: node.retry,
+        })
+        if (retried) {
+          await scoped.attemptExecutor.ack(scoped.claimed)
+          return { status: 'processed' }
+        }
+
         await scoped.store.failNode({
           runId: command.runId,
           nodeName: command.nodeName,
@@ -510,6 +683,78 @@ function resolveActivityAttemptNode(
   return selected.activity.name === command.activityName ? selected : undefined
 }
 
+function resolveActivityAttemptTimeoutMs(
+  workflow: WorkflowImplementation,
+  storedNode: StoredNode | undefined,
+  storedAttempt: StoredAttempt | undefined,
+  command: ActivityAttemptCommand,
+): number | undefined {
+  const declaration = workflow.workflow.nodes.find(
+    (candidate) => candidate.name === command.nodeName,
+  )
+  if (!declaration) return undefined
+  if (declaration.kind === 'activity')
+    return parseDurationMs(declaration.timeout)
+  if (declaration.kind === 'branch') {
+    const caseKey = storedAttempt?.identity?.caseKey ?? storedNode?.selectedCase
+    const selected =
+      caseKey === undefined ? undefined : declaration.cases[caseKey]
+    if (selected?.kind !== 'activity') return undefined
+    const activityDeclaration = selected as BranchCaseDefinition<'activity'>
+    return parseDurationMs(activityDeclaration.timeout)
+  }
+  if (declaration.kind === 'parallel') {
+    const memberKey = storedAttempt?.identity?.memberKey
+    const selected =
+      memberKey === undefined ? undefined : declaration.cases[memberKey]
+    if (selected?.kind !== 'activity') return undefined
+    const activityDeclaration = selected as BranchCaseDefinition<'activity'>
+    return parseDurationMs(activityDeclaration.timeout)
+  }
+  return undefined
+}
+
+function resolveActivityAttemptOutputSchema(
+  workflow: WorkflowImplementation,
+  storedNode: StoredNode | undefined,
+  storedAttempt: StoredAttempt | undefined,
+  command: ActivityAttemptCommand,
+): { readonly schema: Schema; readonly label: string } | undefined {
+  const declaration = workflow.workflow.nodes.find(
+    (candidate) => candidate.name === command.nodeName,
+  )
+  if (!declaration) return undefined
+  if (declaration.kind === 'activity') {
+    return {
+      schema: declaration.output,
+      label: `activity output [${workflow.workflow.name}.${command.nodeName}]`,
+    }
+  }
+  if (declaration.kind === 'branch') {
+    const caseKey = storedAttempt?.identity?.caseKey ?? storedNode?.selectedCase
+    const selected =
+      caseKey === undefined ? undefined : declaration.cases[caseKey]
+    if (selected?.kind !== 'activity') return undefined
+    const activityDeclaration = selected as BranchCaseDefinition<'activity'>
+    return {
+      schema: activityDeclaration.output,
+      label: `activity output [${workflow.workflow.name}.${command.nodeName}.${caseKey}]`,
+    }
+  }
+  if (declaration.kind === 'parallel') {
+    const memberKey = storedAttempt?.identity?.memberKey
+    const selected =
+      memberKey === undefined ? undefined : declaration.cases[memberKey]
+    if (selected?.kind !== 'activity') return undefined
+    const activityDeclaration = selected as BranchCaseDefinition<'activity'>
+    return {
+      schema: activityDeclaration.output,
+      label: `activity output [${workflow.workflow.name}.${command.nodeName}.${memberKey}]`,
+    }
+  }
+  return undefined
+}
+
 export async function runTaskAttempt(
   input: RunTaskAttemptInput,
 ): Promise<WorkerCommandResult> {
@@ -525,8 +770,11 @@ export async function runTaskAttempt(
   const storedAttempt = snapshot?.attempts.find(
     (attempt) => attempt.id === command.attemptId,
   )
+  if (snapshot && isTerminalRunStatus(snapshot.run.status)) {
+    return await ackTerminalAttempt(input)
+  }
 
-  if (!isFreshTaskAttempt(command, storedNode, storedAttempt)) {
+  if (!isFreshAttempt(command, storedNode, storedAttempt)) {
     return await runAtomicCompletion(input, (scoped) =>
       reconcileStaleAttempt(scoped, command, storedNode, storedAttempt),
     )
@@ -548,9 +796,33 @@ export async function runTaskAttempt(
 
   let output: unknown
   try {
-    const ctx = await input.container.createContext(task.dependencies)
-    output = await task.handler(ctx as DependencyContext<any>, command.input)
+    const timeoutMs = parseDurationMs(command.timeout ?? task.task.timeout)
+    output = await runWithAttemptHeartbeat(
+      input,
+      async () => {
+        const ctx = await input.container.createContext(task.dependencies)
+        return await task.handler(ctx as DependencyContext<any>, command.input)
+      },
+      timeoutMs === undefined
+        ? undefined
+        : {
+            timeoutMs,
+            createError: () =>
+              new WorkflowAttemptTimeoutError({
+                runId: command.runId,
+                nodeName: command.nodeName,
+                attemptId: command.attemptId,
+                timeoutMs,
+              }),
+          },
+    )
+    output = decodeSchemaValue(
+      task.task.output,
+      output,
+      `task output [${task.task.name}]`,
+    )
   } catch (error) {
+    if (isAttemptHeartbeatLeaseLost(error)) throw error
     return await runAtomicCompletion(input, async (scoped) => {
       const attempt = await scoped.store.failCurrentAttempt({
         attemptId: command.attemptId,
@@ -559,6 +831,16 @@ export async function runTaskAttempt(
       })
 
       if (attempt) {
+        const retried = await retryTaskAttempt(scoped, {
+          command,
+          failedAttempt: attempt,
+          retry: task.task.retry,
+        })
+        if (retried) {
+          await scoped.attemptExecutor.ack(scoped.claimed)
+          return { status: 'processed' }
+        }
+
         await scoped.store.failNode({
           runId: command.runId,
           nodeName: command.nodeName,
@@ -628,22 +910,11 @@ export async function runTaskAttempt(
   })
 }
 
-function isFreshActivityAttempt(
-  command: ActivityAttemptCommand,
-  storedNode: StoredNode | undefined,
-  storedAttempt: StoredAttempt | undefined,
-): boolean {
-  return (
-    storedNode !== undefined &&
-    isCurrentAttemptForNode(storedNode, command.attemptId) &&
-    storedAttempt !== undefined &&
-    storedAttempt.status === 'started' &&
-    storedAttempt.leaseToken === command.leaseToken
-  )
-}
-
-function isFreshTaskAttempt(
-  command: TaskAttemptCommand,
+function isFreshAttempt(
+  command: Pick<
+    ActivityAttemptCommand | TaskAttemptCommand,
+    'attemptId' | 'leaseToken'
+  >,
   storedNode: StoredNode | undefined,
   storedAttempt: StoredAttempt | undefined,
 ): boolean {
@@ -658,6 +929,127 @@ function isFreshTaskAttempt(
 
 type EnqueueContinueRunCommand = ActivityAttemptCommand | TaskAttemptCommand
 type RunAttemptInput = RunActivityAttemptInput | RunTaskAttemptInput
+
+async function ackTerminalAttempt(
+  input: RunAttemptInput,
+): Promise<WorkerCommandResult> {
+  return await runAtomicCompletion(input, async (scoped) => {
+    await scoped.attemptExecutor.ack(scoped.claimed)
+    return { status: 'processed' }
+  })
+}
+
+async function retryActivityAttempt(
+  input: RunActivityAttemptInput,
+  params: {
+    readonly command: ActivityAttemptCommand
+    readonly failedAttempt: StoredAttempt
+    readonly retry?: RetryPolicy
+  },
+): Promise<boolean> {
+  return retryAttemptCore(input, params, async (retryAttempt, options) => {
+    await input.attemptExecutor.dispatchActivity(
+      {
+        kind: 'activityAttempt',
+        workflowName: params.command.workflowName,
+        activityName: params.command.activityName,
+        runId: params.command.runId,
+        nodeName: params.command.nodeName,
+        attemptId: retryAttempt.id,
+        leaseToken: retryAttempt.leaseToken!,
+        input: retryAttempt.input,
+        ...(retryAttempt.idempotencyKey === undefined
+          ? {}
+          : { idempotencyKey: retryAttempt.idempotencyKey }),
+      },
+      options,
+    )
+  })
+}
+
+async function retryTaskAttempt(
+  input: RunTaskAttemptInput,
+  params: {
+    readonly command: TaskAttemptCommand
+    readonly failedAttempt: StoredAttempt
+    readonly retry?: RetryPolicy
+  },
+): Promise<boolean> {
+  return retryAttemptCore(input, params, async (retryAttempt, options) => {
+    await input.attemptExecutor.dispatchTask(
+      {
+        kind: 'taskAttempt',
+        workflowName: params.command.workflowName,
+        taskName: params.command.taskName,
+        runId: params.command.runId,
+        nodeName: params.command.nodeName,
+        attemptId: retryAttempt.id,
+        leaseToken: retryAttempt.leaseToken!,
+        input: retryAttempt.input,
+        ...(retryAttempt.idempotencyKey === undefined
+          ? {}
+          : { idempotencyKey: retryAttempt.idempotencyKey }),
+        ...(params.command.timeout === undefined
+          ? {}
+          : { timeout: params.command.timeout }),
+      },
+      options,
+    )
+  })
+}
+
+async function retryAttemptCore(
+  input: RunAttemptInput,
+  params: {
+    readonly command: ActivityAttemptCommand | TaskAttemptCommand
+    readonly failedAttempt: StoredAttempt
+    readonly retry?: RetryPolicy
+  },
+  dispatch: (
+    retryAttempt: StoredAttempt,
+    options: { readonly runAt?: Date } | undefined,
+  ) => Promise<void>,
+): Promise<boolean> {
+  if (!shouldRetryAttempt(params.failedAttempt, params.retry)) return false
+
+  const retryAttempt = await input.store.createAttempt({
+    runId: params.command.runId,
+    nodeName: params.command.nodeName,
+    input: params.failedAttempt.input,
+    idempotencyKey: params.failedAttempt.idempotencyKey,
+  })
+  await dispatch(
+    retryAttempt,
+    retryDispatchOptions(params.retry, params.failedAttempt.attemptNumber),
+  )
+  return true
+}
+
+function shouldRetryAttempt(
+  failedAttempt: StoredAttempt,
+  retry: RetryPolicy | undefined,
+): retry is RetryPolicy {
+  return retry !== undefined && failedAttempt.attemptNumber < retry.attempts
+}
+
+function retryDispatchOptions(
+  retry: RetryPolicy | undefined,
+  failedAttemptNumber: number,
+): { readonly runAt?: Date } | undefined {
+  const delayMs = retryDelayMs(retry, failedAttemptNumber)
+  return delayMs > 0 ? { runAt: new Date(Date.now() + delayMs) } : undefined
+}
+
+function retryDelayMs(
+  retry: RetryPolicy | undefined,
+  failedAttemptNumber: number,
+): number {
+  const base = parseDurationMs(retry?.delay) ?? 0
+  if (base === 0) return 0
+  return retry?.backoff === 'exponential'
+    ? base * 2 ** Math.max(0, failedAttemptNumber - 1)
+    : base
+}
 
 async function reconcileStaleAttempt(
   input: RunAttemptInput,
@@ -699,6 +1091,7 @@ async function reconcileStaleAttempt(
     }
 
     if (!shouldCompleteNodeFromAttempt(storedNode)) {
+      await enqueueContinueRun(input.runCoordinationExecutor, command)
       await input.attemptExecutor.ack(input.claimed)
       return { status: 'processed' }
     }
@@ -767,28 +1160,6 @@ async function reconcileStaleAttempt(
 
   await input.attemptExecutor.ack(input.claimed)
   return { status: 'processed' }
-}
-
-async function wakeParentRun(input: {
-  readonly store: WorkflowStore
-  readonly runCoordinationExecutor: RunCoordinationExecutor
-  readonly run:
-    | {
-        readonly parentRunId?: string
-        readonly parentNodeName?: string
-      }
-    | undefined
-}) {
-  if (!input.run?.parentRunId || !input.run.parentNodeName) return
-
-  const parent = await input.store.loadRunSnapshot(input.run.parentRunId)
-  if (!parent) return
-
-  await input.runCoordinationExecutor.enqueue({
-    kind: 'continueRun',
-    runId: input.run.parentRunId,
-    workflowName: parent.run.workflowName,
-  })
 }
 
 function shouldCompleteNodeFromAttempt(storedNode: StoredNode | undefined) {
