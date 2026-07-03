@@ -93,12 +93,9 @@ export class HostController {
           mode: this.snapshot.mode,
           runtimes: Object.keys(this.snapshot.manifest.runtimes),
           outDir: this.snapshot.outDir,
+          config: this.snapshot.manifest.config,
         },
         'Neem server options',
-      )
-      this.logger.trace(
-        { config: this.snapshot.manifest.config },
-        'Neem manifest config',
       )
 
       try {
@@ -110,7 +107,7 @@ export class HostController {
         this.markState('running')
         await this.callServerHook('server:ready')
         this.logger.info('Neem server ready')
-        this.logger.trace(this.getLogSnapshot(), 'Neem server snapshot')
+        this.logger.trace(this.getSnapshot(), 'Neem server snapshot')
       } catch (error) {
         const normalized = normalizeError(error)
         this.markState('failed', normalized)
@@ -131,12 +128,9 @@ export class HostController {
           mode: snapshot.mode,
           runtimes: Object.keys(snapshot.manifest.runtimes),
           outDir: snapshot.outDir,
+          config: snapshot.manifest.config,
         },
         'Neem server options',
-      )
-      this.logger.trace(
-        { config: snapshot.manifest.config },
-        'Neem manifest config',
       )
 
       try {
@@ -150,7 +144,7 @@ export class HostController {
         this.markState('running')
         await this.callServerHook('server:reload')
         this.logger.debug('Neem server reloaded')
-        this.logger.trace(this.getLogSnapshot(), 'Neem server snapshot')
+        this.logger.trace(this.getSnapshot(), 'Neem server snapshot')
       } catch (error) {
         const normalized = normalizeError(error)
         this.markState('failed', normalized)
@@ -215,7 +209,7 @@ export class HostController {
         })
         hooksMs = performance.now() - hooksStartedAt
         this.logger.debug(`Neem runtime ${runtimeName} reloaded`)
-        this.logger.warn(
+        this.logger.debug(
           {
             runtimeName,
             totalMs: roundMs(performance.now() - reloadStartedAt),
@@ -383,11 +377,6 @@ export class HostController {
     }))
   }
 
-  private getLogSnapshot() {
-    const { artifactCount, ...snapshot } = this.getSnapshot()
-    return { ...snapshot, runtimeArtifactCount: artifactCount }
-  }
-
   private markState(state: NeemRuntimeServerState, error?: Error): void {
     const previousState = this.state
     this.state = state
@@ -400,10 +389,6 @@ export class HostController {
     )
   }
 
-  private callServerHook(
-    name: 'server:start' | 'server:ready' | 'server:reload' | 'server:stop',
-  ): Promise<void>
-  private callServerHook(name: 'server:fail', error: Error): Promise<void>
   private callServerHook(
     name:
       | 'server:start'

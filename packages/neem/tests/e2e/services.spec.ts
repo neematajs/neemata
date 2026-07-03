@@ -219,7 +219,7 @@ describe('Neem v2 services', () => {
       async () => {
         const events = await readLogEvents(logsFile)
         return events.some((event) => event.msg === 'Neem server ready') &&
-          events.some((event) => event.msg === 'Neem manifest config') &&
+          events.some((event) => event.msg === 'Neem server options') &&
           events.some((event) => event.msg === 'Neem worker starting')
           ? events
           : false
@@ -237,7 +237,7 @@ describe('Neem v2 services', () => {
         }),
         expect.objectContaining({
           level: 10,
-          msg: 'Neem manifest config',
+          msg: 'Neem server options',
           $label: 'neem:server',
           config: expect.objectContaining({
             runtimes: expect.objectContaining({ api: {} }),

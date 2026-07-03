@@ -100,7 +100,7 @@ export class RuntimeController {
             index,
             hooks: this.options.hooks,
             onFailure: (error, thread) =>
-              this.handleThreadFailure(error, thread),
+              this.handleFailure(error, `worker ${thread.name}`),
           }),
       )
 
@@ -171,35 +171,8 @@ export class RuntimeController {
     this.options = { ...this.options, snapshot }
   }
 
-  private async handleThreadFailure(
-    error: Error,
-    thread: ThreadController,
-  ): Promise<void> {
-    this.logger?.warn(
-      { err: error },
-      `Neem runtime worker ${thread.name} failed`,
-    )
-    await this.callRuntimeFailHook(error)
-
-    if (this.recoveryPromise) return
-
-    const policy = createRecoveryPolicy(
-      this.options.snapshot.mode,
-      this.options.recovery,
-    )
-    if (policy.attempts === 0) {
-      await this.options.onFailure?.(error, this)
-      return
-    }
-
-    this.recoveryPromise = this.recover(error).finally(() => {
-      this.recoveryPromise = undefined
-    })
-    await this.recoveryPromise
-  }
-
-  private async handleHostFailure(error: Error): Promise<void> {
-    this.logger?.warn({ err: error }, 'Neem runtime host failed')
+  private async handleFailure(error: Error, source: string): Promise<void> {
+    this.logger?.warn({ err: error }, `Neem runtime ${source} failed`)
     await this.callRuntimeFailHook(error)
 
     if (this.recoveryPromise) return
@@ -256,7 +229,7 @@ export class RuntimeController {
     return new HostRunner({
       data: this.createHostRunnerData(),
       env: this.createRuntimeEnv(),
-      onFailure: (error) => this.handleHostFailure(error),
+      onFailure: (error) => this.handleFailure(error, 'host'),
     })
   }
 
@@ -303,16 +276,6 @@ export class RuntimeController {
     )
   }
 
-  private callRuntimeHook(name: 'runtime:start' | 'runtime:stop'): Promise<void>
-  private callRuntimeHook(
-    name: 'runtime:ready',
-    upstreams: readonly NeemRuntimeUpstream[],
-  ): Promise<void>
-  private callRuntimeHook(
-    name: 'runtime:fail',
-    upstreams: undefined,
-    error: Error,
-  ): Promise<void>
   private callRuntimeHook(
     name: 'runtime:start' | 'runtime:ready' | 'runtime:stop' | 'runtime:fail',
     upstreams?: readonly NeemRuntimeUpstream[],
@@ -405,8 +368,8 @@ function normalizePlannedWorkers(
 ): readonly { name: string; data: unknown }[] {
   if (Array.isArray(workers)) {
     return workers.map((data, index) => {
-      assertStructuredCloneable(runtimeName, `${runtimeName}:${index}`, data)
-      return { name: `${runtimeName}:${index}`, data }
+      const name = `${runtimeName}:${index}`
+      return { name, data: cloneWorkerData(runtimeName, name, data) }
     })
   }
 
@@ -419,8 +382,7 @@ function normalizePlannedWorkers(
   return Object.entries(workers).flatMap(([group, groupWorkers]) =>
     groupWorkers.map((data, index) => {
       const name = `${runtimeName}:${group}:${index}`
-      assertStructuredCloneable(runtimeName, name, data)
-      return { name, data }
+      return { name, data: cloneWorkerData(runtimeName, name, data) }
     }),
   )
 }
@@ -432,13 +394,15 @@ function isGroupedWorkerPlan(
   return Object.values(workers).every((group) => Array.isArray(group))
 }
 
-function assertStructuredCloneable(
+// Cloning here both validates the planner data and detaches it from the
+// planner's object graph before it crosses the thread boundary.
+function cloneWorkerData(
   runtimeName: string,
   workerName: string,
   data: unknown,
-): void {
+): unknown {
   try {
-    structuredClone(data)
+    return structuredClone(data)
   } catch (error) {
     throw new Error(
       `Runtime [${runtimeName}] worker [${workerName}] data must be structured-cloneable`,

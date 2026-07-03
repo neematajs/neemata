@@ -4,11 +4,7 @@ import { resolve } from 'node:path'
 import { createFuture, OperationQueue } from '@nmtjs/common'
 import { defineCommand } from 'citty'
 
-import type {
-  WorkerServiceStopCompleteEvent,
-  WorkerServiceStopSlowEvent,
-  WorkerServiceStopTimeoutEvent,
-} from './internal/services/client.ts'
+import type { WorkerServiceStopProgressEvent } from './internal/services/client.ts'
 import type { ConfigSignalWatcher } from './internal/services/config-signal.ts'
 import type {
   RuntimeEvent,
@@ -117,7 +113,6 @@ export const startCommand = defineCommand({
 
     try {
       await runtime.request({
-        id: 0,
         type: 'start',
         mode: 'production',
         outDir,
@@ -275,7 +270,6 @@ class DevSupervisor {
     this.watcher = watcher
     try {
       const result = await watcher.request({
-        id: 0,
         type: 'start',
         configFile: this.options.configFile,
         outDir: this.options.outDir,
@@ -393,7 +387,6 @@ class DevSupervisor {
     })
     this.runtime = runtime
     await runtime.request({
-      id: 0,
       type: 'start',
       mode: 'development',
       outDir: this.options.outDir,
@@ -405,7 +398,6 @@ class DevSupervisor {
   private async reloadRuntime(runtimeName: string): Promise<void> {
     if (!this.runtime || !this.manifestFile) return
     await this.runtime.request({
-      id: 0,
       type: 'reload-runtime',
       runtimeName,
       manifestFile: this.manifestFile,
@@ -442,9 +434,7 @@ function createWatcherClient(options: {
   return new WorkerServiceClient<WatcherEvent, WatcherResult>({
     entry: resolveServiceEntry('watcher-entry'),
     serviceName: 'watcher',
-    onStopComplete: (event) => reportServiceStopComplete(options.probe, event),
-    onStopSlow: (event) => reportServiceStopSlow(options.probe, event),
-    onStopTimeout: (event) => reportServiceStopTimeout(options.probe, event),
+    onStopProgress: (event) => reportServiceStopProgress(options.probe, event),
     ...options,
   })
 }
@@ -457,42 +447,34 @@ function createRuntimeClient(options: {
   return new WorkerServiceClient<RuntimeEvent, RuntimeResult>({
     entry: resolveServiceEntry('runtime-entry'),
     serviceName: 'runtime',
-    onStopComplete: (event) => reportServiceStopComplete(options.probe, event),
-    onStopSlow: (event) => reportServiceStopSlow(options.probe, event),
-    onStopTimeout: (event) => reportServiceStopTimeout(options.probe, event),
+    onStopProgress: (event) => reportServiceStopProgress(options.probe, event),
     ...options,
   })
 }
 
-function reportServiceStopSlow(
+function reportServiceStopProgress(
   probe: NeemTestProbe | undefined,
-  event: WorkerServiceStopSlowEvent,
+  event: WorkerServiceStopProgressEvent,
 ): void {
-  probe?.emit('service:stop-slow', event)
-  process.stderr.write(
-    `Neem ${event.serviceName} service worker still stopping after ${event.elapsedMs}ms\n`,
-  )
-}
-
-function reportServiceStopComplete(
-  probe: NeemTestProbe | undefined,
-  event: WorkerServiceStopCompleteEvent,
-): void {
-  probe?.emit('service:stop-complete', event)
-  const action = event.exited ? 'stopped' : 'did not stop'
-  process.stderr.write(
-    `Neem ${event.serviceName} service worker ${action} after ${event.elapsedMs}ms\n`,
-  )
-}
-
-function reportServiceStopTimeout(
-  probe: NeemTestProbe | undefined,
-  event: WorkerServiceStopTimeoutEvent,
-): void {
-  probe?.emit('service:stop-timeout', event)
-  process.stderr.write(
-    `Neem ${event.serviceName} service stop timed out after ${event.timeoutMs}ms; terminating worker\n`,
-  )
+  probe?.emit(`service:stop-${event.phase}`, event)
+  switch (event.phase) {
+    case 'slow':
+      process.stderr.write(
+        `Neem ${event.serviceName} service worker still stopping after ${event.elapsedMs}ms\n`,
+      )
+      return
+    case 'timeout':
+      process.stderr.write(
+        `Neem ${event.serviceName} service stop timed out after ${event.timeoutMs}ms; terminating worker\n`,
+      )
+      return
+    case 'complete': {
+      const action = event.exited ? 'stopped' : 'did not stop'
+      process.stderr.write(
+        `Neem ${event.serviceName} service worker ${action} after ${event.elapsedMs}ms\n`,
+      )
+    }
+  }
 }
 
 function parseRuntimes(runtime?: string): string[] | undefined {

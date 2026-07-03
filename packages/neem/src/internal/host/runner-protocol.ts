@@ -18,11 +18,14 @@ export type HostRunnerData = {
   logger?: ManifestLogger
 }
 
-export type HostRunnerRequest =
-  | { id: number; type: 'plan' }
-  | { id: number; type: 'start'; threads: readonly NeemRuntimeThreadHandle[] }
-  | { id: number; type: 'stop' }
-  | { id: number; type: 'shutdown' }
+export type HostRunnerCommand =
+  | { type: 'plan' }
+  | { type: 'start'; threads: readonly NeemRuntimeThreadHandle[] }
+  | { type: 'stop' }
+  | { type: 'shutdown' }
+
+// The transport (HostRunner) assigns request ids; callers send bare commands.
+export type HostRunnerRequest = HostRunnerCommand & { id: number }
 
 export type HostRunnerResponse =
   | { id: number; type: 'result'; data?: HostRunnerResult }
@@ -33,7 +36,7 @@ export type HostRunnerResponse =
 export type HostRunnerResult = { plan?: NeemRuntimePlan }
 
 export function getTransferList(
-  request: HostRunnerRequest,
+  request: HostRunnerCommand,
 ): readonly MessagePort[] {
   if (request.type !== 'start') return []
   return request.threads.map((thread) => thread.port)

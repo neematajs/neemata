@@ -25,17 +25,38 @@ export function normalizeError(value: unknown): Error {
   return value instanceof Error ? value : new Error(String(value))
 }
 
-export type SerializedError = { message: string; name?: string; stack?: string }
+export type SerializedError = {
+  message: string
+  name?: string
+  stack?: string
+  cause?: SerializedError
+}
 
-export function serializeError(value: unknown): SerializedError {
+// Depth-limited so a cyclic cause chain cannot recurse forever.
+const MAX_ERROR_CAUSE_DEPTH = 5
+
+export function serializeError(
+  value: unknown,
+  depth = MAX_ERROR_CAUSE_DEPTH,
+): SerializedError {
   const error = normalizeError(value)
-  return { message: error.message, name: error.name, stack: error.stack }
+  return {
+    message: error.message,
+    name: error.name,
+    stack: error.stack,
+    ...(error.cause !== undefined && depth > 0
+      ? { cause: serializeError(error.cause, depth - 1) }
+      : {}),
+  }
 }
 
 export function deserializeError(data: SerializedError): Error {
-  const error = new Error(data.message)
+  const error = new Error(
+    data.message,
+    data.cause ? { cause: deserializeError(data.cause) } : undefined,
+  )
   error.name = data.name ?? error.name
-  error.stack = data.stack
+  if (data.stack !== undefined) error.stack = data.stack
   return error
 }
 

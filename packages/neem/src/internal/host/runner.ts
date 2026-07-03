@@ -8,8 +8,8 @@ import type {
   NeemRuntimeThreadHandle,
 } from '../../shared/types.ts'
 import type {
+  HostRunnerCommand,
   HostRunnerData,
-  HostRunnerRequest,
   HostRunnerResponse,
   HostRunnerResult,
 } from './runner-protocol.ts'
@@ -61,17 +61,17 @@ export class HostRunner {
   }
 
   async plan(): Promise<NeemRuntimePlan | undefined> {
-    const result = await this.request({ id: 0, type: 'plan' })
+    const result = await this.request({ type: 'plan' })
     return result?.plan
   }
 
   async callStart(threads: readonly NeemRuntimeThreadHandle[]): Promise<void> {
-    await this.request({ id: 0, type: 'start', threads })
+    await this.request({ type: 'start', threads })
   }
 
   async callStop(): Promise<void> {
     if (!this.worker) return
-    await this.request({ id: 0, type: 'stop' })
+    await this.request({ type: 'stop' })
   }
 
   async shutdown(): Promise<void> {
@@ -81,7 +81,7 @@ export class HostRunner {
     this.stopping = true
     let exited = false
     try {
-      await this.request({ id: 0, type: 'shutdown' })
+      await this.request({ type: 'shutdown' })
       if (this.exited) {
         const result = await raceWithTimeout(
           this.exited.promise,
@@ -97,27 +97,27 @@ export class HostRunner {
   }
 
   private request(
-    request: HostRunnerRequest,
+    command: HostRunnerCommand,
   ): Promise<HostRunnerResult | undefined> {
     const worker = this.worker
     if (!worker) throw new Error('Neem host runner is not started')
 
     const id = this.nextId++
-    const message = { ...request, id } as HostRunnerRequest
+    const message = { ...command, id }
     const future = createFuture<HostRunnerResult | undefined>()
     const timeoutMs = getRequestTimeoutMs(this.options.env)
     const timeout = setTimeout(() => {
       this.pending.delete(id)
       future.reject(
         new Error(
-          `Neem host runner request [${request.type}] timed out after ${timeoutMs}ms`,
+          `Neem host runner request [${command.type}] timed out after ${timeoutMs}ms`,
         ),
       )
     }, timeoutMs)
     timeout.unref()
 
     this.pending.set(id, { future, timeout })
-    worker.postMessage(message, getTransferList(message))
+    worker.postMessage(message, getTransferList(command))
     return future.promise
   }
 

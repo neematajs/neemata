@@ -15,14 +15,10 @@ import type {
 } from '../../shared/types.ts'
 import type { RuntimeSnapshot } from '../manifest/snapshot.ts'
 import type { HostHooks } from '../plugins/hooks.ts'
-import type {
-  ErrorMessage,
-  RuntimeWorkerData,
-  WorkerMessage,
-} from '../worker/protocol.ts'
+import type { RuntimeWorkerData, WorkerMessage } from '../worker/protocol.ts'
 import { childLogger, runtimeLabel } from '../logger.ts'
 import { callHostHook } from '../plugins/hooks.ts'
-import { normalizeError, raceWithTimeout } from '../utils.ts'
+import { deserializeError, normalizeError, raceWithTimeout } from '../utils.ts'
 import { createRuntimeEnv } from './env.ts'
 
 export type ThreadPlan = {
@@ -215,7 +211,7 @@ export class ThreadController {
     }
 
     if (message.type === 'error') {
-      this.fail(deserializeWorkerError(message.data))
+      this.fail(deserializeError(message.data))
       return
     }
 
@@ -277,10 +273,6 @@ export class ThreadController {
   }
 
   private callWorkerHook(
-    name: 'worker:start' | 'worker:ready' | 'worker:stop',
-  ): Promise<void>
-  private callWorkerHook(name: 'worker:fail', error: Error): Promise<void>
-  private callWorkerHook(
     name: 'worker:start' | 'worker:ready' | 'worker:stop' | 'worker:fail',
     error?: Error,
   ): Promise<void> {
@@ -312,11 +304,4 @@ export class ThreadController {
   private async terminateWorker(): Promise<void> {
     await this.worker?.terminate().catch(() => undefined)
   }
-}
-
-function deserializeWorkerError(data: ErrorMessage['data']): Error {
-  const error = new Error(data.message)
-  error.name = data.name ?? error.name
-  error.stack = data.stack
-  return error
 }
