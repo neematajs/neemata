@@ -98,24 +98,11 @@ export class HostController {
         'Neem server options',
       )
 
-      try {
-        await this.startPlugins()
-        await this.syncHealthProbe()
-        await this.callServerHook('server:start')
-        await this.startRuntimes()
-        await this.startProxy()
-        this.markState('running')
-        await this.callServerHook('server:ready')
-        this.logger.info('Neem server ready')
-        this.logger.trace(this.getSnapshot(), 'Neem server snapshot')
-      } catch (error) {
-        const normalized = normalizeError(error)
-        this.markState('failed', normalized)
-        this.logger.error({ err: normalized }, 'Failed to start Neem server')
-        await this.callServerFailHook(normalized)
-        await this.stopSubsystems().catch(() => undefined)
-        throw normalized
-      }
+      await this.bringUp({
+        readyHook: 'server:ready',
+        onReady: () => this.logger.info('Neem server ready'),
+        failMessage: 'Failed to start Neem server',
+      })
     })
   }
 
@@ -133,27 +120,45 @@ export class HostController {
         'Neem server options',
       )
 
-      try {
-        await this.stopSubsystems()
-        this.replaceSnapshot(snapshot)
-        await this.startPlugins()
-        await this.syncHealthProbe()
-        await this.callServerHook('server:start')
-        await this.startRuntimes()
-        await this.startProxy()
-        this.markState('running')
-        await this.callServerHook('server:reload')
-        this.logger.debug('Neem server reloaded')
-        this.logger.trace(this.getSnapshot(), 'Neem server snapshot')
-      } catch (error) {
-        const normalized = normalizeError(error)
-        this.markState('failed', normalized)
-        this.logger.error({ err: normalized }, 'Failed to reload Neem server')
-        await this.callServerFailHook(normalized)
-        await this.stopSubsystems().catch(() => undefined)
-        throw normalized
-      }
+      await this.bringUp({
+        prepare: async () => {
+          await this.stopSubsystems()
+          this.replaceSnapshot(snapshot)
+        },
+        readyHook: 'server:reload',
+        onReady: () => this.logger.debug('Neem server reloaded'),
+        failMessage: 'Failed to reload Neem server',
+      })
     })
+  }
+
+  // Shared start/reload bring-up: identical subsystem ordering and error
+  // handling, differing only in the reload prelude and success hook/log.
+  private async bringUp(options: {
+    prepare?: () => Promise<void>
+    readyHook: 'server:ready' | 'server:reload'
+    onReady: () => void
+    failMessage: string
+  }): Promise<void> {
+    try {
+      await options.prepare?.()
+      await this.startPlugins()
+      await this.syncHealthProbe()
+      await this.callServerHook('server:start')
+      await this.startRuntimes()
+      await this.startProxy()
+      this.markState('running')
+      await this.callServerHook(options.readyHook)
+      options.onReady()
+      this.logger.trace(this.getSnapshot(), 'Neem server snapshot')
+    } catch (error) {
+      const normalized = normalizeError(error)
+      this.markState('failed', normalized)
+      this.logger.error({ err: normalized }, options.failMessage)
+      await this.callServerFailHook(normalized)
+      await this.stopSubsystems().catch(() => undefined)
+      throw normalized
+    }
   }
 
   reloadRuntime(runtimeName: string, snapshot: RuntimeSnapshot): Promise<void> {
