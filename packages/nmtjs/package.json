@@ -26,7 +26,8 @@
     "@nmtjs/metrics": "workspace:*",
     "@nmtjs/protocol": "workspace:*",
     "@nmtjs/pubsub": "workspace:*",
-    "@nmtjs/type": "workspace:*"
+    "@nmtjs/type": "workspace:*",
+    "@nmtjs/workflows": "workspace:*"
   },
   "files": [
     "dist",

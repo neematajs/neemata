@@ -307,6 +307,9 @@ importers:
       '@nmtjs/type':
         specifier: workspace:*
         version: link:../type
+      '@nmtjs/workflows':
+        specifier: workspace:*
+        version: link:../workflows
 
   packages/protocol:
     dependencies:
@@ -373,6 +376,9 @@ importers:
 
   packages/workflows:
     dependencies:
+      '@nmtjs/common':
+        specifier: workspace:*
+        version: link:../common
       '@nmtjs/core':
         specifier: workspace:*
         version: link:../core

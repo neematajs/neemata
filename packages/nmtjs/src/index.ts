@@ -9,9 +9,7 @@ import {
 import { PubSubInjectables } from '@nmtjs/pubsub'
 
 type Injectables = Readonly<
-  typeof CoreInjectables &
-    typeof GatewayInjectables &
-    typeof PubSubInjectables
+  typeof CoreInjectables & typeof GatewayInjectables & typeof PubSubInjectables
 >
 
 type Metrics = Readonly<{
@@ -63,6 +61,14 @@ export {
   PubSubInjectables,
 } from '@nmtjs/pubsub'
 export { t } from '@nmtjs/type'
+export {
+  defineSchedule as schedule,
+  defineTask as task,
+  defineWorkflow as workflow,
+  implementTask,
+  implementWorkflow,
+  WorkflowAttemptTimeoutError,
+} from '@nmtjs/workflows'
 
 export const logging = Object.freeze({
   console: createConsolePrettyDestination,
