@@ -93,6 +93,7 @@
     "test:integration": "vitest run --config vitest.config.ts tests/integration"
   },
   "dependencies": {
+    "@nmtjs/common": "workspace:*",
     "@nmtjs/core": "workspace:*",
     "@nmtjs/neem": "workspace:*",
     "@nmtjs/type": "workspace:*",

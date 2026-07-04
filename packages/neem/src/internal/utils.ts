@@ -3,6 +3,11 @@ import { resolve } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
+import {
+  MAX_SERIALIZED_ERROR_DEPTH,
+  serializeError as serializeErrorCore,
+} from '@nmtjs/common'
+
 export type EntryModule<T> = { default: T }
 
 export async function importDefault<T>(
@@ -32,22 +37,15 @@ export type SerializedError = {
   cause?: SerializedError
 }
 
-// Depth-limited so a cyclic cause chain cannot recurse forever.
-const MAX_ERROR_CAUSE_DEPTH = 5
-
 export function serializeError(
   value: unknown,
-  depth = MAX_ERROR_CAUSE_DEPTH,
+  depth = MAX_SERIALIZED_ERROR_DEPTH,
 ): SerializedError {
-  const error = normalizeError(value)
-  return {
-    message: error.message,
-    name: error.name,
-    stack: error.stack,
-    ...(error.cause !== undefined && depth > 0
-      ? { cause: serializeError(error.cause, depth - 1) }
-      : {}),
-  }
+  // Non-Error values are normalized to an Error so name/stack are always present.
+  return serializeErrorCore(value, {
+    depth,
+    fallback: (candidate) => serializeErrorCore(normalizeError(candidate)),
+  })
 }
 
 export function deserializeError(data: SerializedError): Error {

@@ -1,3 +1,5 @@
+import { serializeError } from '@nmtjs/common'
+
 import type { StoredError } from './state.ts'
 
 const MAX_STORED_ERROR_CAUSE_DEPTH = 5
@@ -6,21 +8,12 @@ export function toStoredError(
   error: unknown,
   depth = MAX_STORED_ERROR_CAUSE_DEPTH,
 ): StoredError {
-  if (error instanceof Error) {
-    const cause = (error as Error & { readonly cause?: unknown }).cause
-    return {
-      name: error.name,
-      message: error.message,
-      ...(error.stack === undefined ? {} : { stack: error.stack }),
-      ...(cause === undefined || depth <= 0
-        ? {}
-        : { cause: toStoredError(cause, depth - 1) }),
-    }
-  }
-
-  if (isStoredError(error)) return error
-
-  return { message: String(error) }
+  return serializeError(error, {
+    depth,
+    omitUndefinedStack: true,
+    fallback: (value) =>
+      isStoredError(value) ? value : { message: String(value) },
+  })
 }
 
 function isStoredError(error: unknown): error is StoredError {
