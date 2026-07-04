@@ -213,6 +213,30 @@ export async function verifyPostgresWorkflowSchema(
     )
   }
 
+  // version first: when code and database disagree on schema generation,
+  // "expected v1, found vN" diagnoses it (stale build / missed migration),
+  // whereas the structural mismatches below would only obscure that cause
+  const versionRow = await one<{
+    id: number
+    version: number
+  }>(
+    db,
+    `
+      SELECT id, version
+      FROM workflow_schema_version
+      WHERE id = 1
+    `,
+  )
+
+  if (!versionRow) {
+    throw new Error('Missing workflow Postgres schema version')
+  }
+  if (versionRow.version !== WORKFLOW_POSTGRES_SCHEMA_MANIFEST.version) {
+    throw new Error(
+      `Unsupported workflow Postgres schema version [${versionRow.version}], expected [${WORKFLOW_POSTGRES_SCHEMA_MANIFEST.version}]`,
+    )
+  }
+
   const labelsByEnum = new Map<string, string[]>()
   for (const row of enumLabels) {
     const values = labelsByEnum.get(row.enum_name) ?? []
@@ -310,27 +334,6 @@ export async function verifyPostgresWorkflowSchema(
   if (invalidColumns.length > 0) {
     throw new Error(
       `Invalid workflow Postgres schema columns: ${invalidColumns.join(', ')}`,
-    )
-  }
-
-  const versionRow = await one<{
-    id: number
-    version: number
-  }>(
-    db,
-    `
-      SELECT id, version
-      FROM workflow_schema_version
-      WHERE id = 1
-    `,
-  )
-
-  if (!versionRow) {
-    throw new Error('Missing workflow Postgres schema version')
-  }
-  if (versionRow.version !== WORKFLOW_POSTGRES_SCHEMA_MANIFEST.version) {
-    throw new Error(
-      `Unsupported workflow Postgres schema version [${versionRow.version}], expected [${WORKFLOW_POSTGRES_SCHEMA_MANIFEST.version}]`,
     )
   }
 }
