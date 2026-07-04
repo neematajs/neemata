@@ -131,6 +131,12 @@ as the safety net. Cron parsing via `cron-parser` (regular dependency);
   existing workflows runtime client (start + wait/get).
 - After Slice H lands: add one `defineSchedule` example to the workflows
   runtime config.
+- Playground DB reset to the v1 baseline (after H): stop the compose postgres
+  and drop its `postgres-data` volume; squash the drizzle migration history to
+  a fresh baseline generated from the updated `createSchema()` (WIP branch —
+  no migration history worth preserving); ensure
+  `scripts/seed-workflows-schema-version.ts` stamps version 1; run
+  `db:generate` + `db:migrate`.
 
 ## Sequencing and verification
 
