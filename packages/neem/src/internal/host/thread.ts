@@ -56,6 +56,8 @@ export class ThreadController {
   private lastError: Error | undefined
   private upstreams: readonly NeemRuntimeUpstream[] = []
   private ready: ReturnType<typeof createFuture<void>> | undefined
+  // ready stays assigned through hook cleanup; fail() must know if startup can still reject.
+  private readySettled = false
   private exited: ReturnType<typeof createFuture<void>> | undefined
   private stopping = false
   private readonly logger: Logger
@@ -124,6 +126,7 @@ export class ThreadController {
 
     const ready = createFuture<void>()
     this.ready = ready
+    this.readySettled = false
     this.exited = createFuture<void>()
     const timer = setTimeout(() => {
       this.fail(
@@ -149,18 +152,22 @@ export class ThreadController {
     try {
       await ready.promise
       await this.callWorkerHook('worker:ready')
+      if (this.hasFailed() && this.lastError) throw this.lastError
       this.logger.trace(
         { upstreams: this.upstreams.length },
         'Neem worker ready',
       )
     } catch (error) {
       const normalized = normalizeError(error)
-      await this.callWorkerFailHook(normalized)
+      const handledFailure = this.hasFailed() && this.readySettled
+      if (!this.hasFailed()) this.markFailed(normalized)
+      if (!handledFailure) await this.callWorkerFailHook(normalized)
       await this.terminateWorker()
       throw normalized
     } finally {
       clearTimeout(timer)
       this.ready = undefined
+      this.readySettled = false
     }
   }
 
@@ -233,6 +240,7 @@ export class ThreadController {
     if (this.state !== 'starting') return
     this.state = 'ready'
     this.readyAt = Date.now()
+    this.readySettled = true
     this.ready?.resolve()
   }
 
@@ -244,18 +252,26 @@ export class ThreadController {
   private fail(error: Error): void {
     if (this.state === 'failed' || this.state === 'stopped') return
 
-    this.failureCount += 1
-    this.lastError = error
-    this.state = 'failed'
-    this.logger.error({ err: error }, 'Neem worker failed')
+    this.markFailed(error)
 
-    if (this.ready) {
+    if (this.ready && !this.readySettled) {
       this.ready.reject(error)
       return
     }
 
     void this.callWorkerFailHook(error)
     void this.options.onFailure?.(error, this)
+  }
+
+  private markFailed(error: Error): void {
+    this.failureCount += 1
+    this.lastError = error
+    this.state = 'failed'
+    this.logger.error({ err: error }, 'Neem worker failed')
+  }
+
+  private hasFailed(): boolean {
+    return this.state === 'failed'
   }
 
   private getWorkerHealth(): NeemManagedWorkerHealth {

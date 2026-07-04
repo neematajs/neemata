@@ -2,6 +2,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 
+import { createFuture } from '@nmtjs/common'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import type { Manifest } from '../../src/internal/manifest/manifest.ts'
@@ -55,6 +56,103 @@ describe('ThreadController', () => {
       }
       await stop.catch(() => undefined)
     }
+  })
+
+  it('runs failure handling when the worker exits while the ready hook is pending', async () => {
+    const fixture = await createThreadFixture(`
+      import { parentPort } from 'node:worker_threads'
+
+      parentPort.postMessage({ type: 'ready', data: { upstreams: [] } })
+      setImmediate(() => process.exit(1))
+    `)
+    const hooks = createHostHooks()
+    const readyHookEntered = createFuture<void>()
+    const releaseReadyHook = createFuture<void>()
+    const failHookObserved = createFuture<Error>()
+    const failureObserved = createFuture<Error>()
+    let failHookCalls = 0
+    let onFailureCalls = 0
+
+    hooks.hook('worker:ready', async () => {
+      readyHookEntered.resolve()
+      await releaseReadyHook.promise
+    })
+    hooks.hook('worker:fail', (event) => {
+      failHookCalls += 1
+      if (event.error) failHookObserved.resolve(event.error)
+    })
+
+    const thread = new ThreadController({
+      snapshot: fixture.snapshot,
+      runtimeName: 'api',
+      plan: { name: 'api:0', artifact: fixture.artifact },
+      index: 0,
+      hooks,
+      onFailure: (error) => {
+        onFailureCalls += 1
+        failureObserved.resolve(error)
+      },
+    })
+
+    const start = thread.start()
+    await readyHookEntered.promise
+
+    const [failHookResult, failureResult] = await Promise.all([
+      raceWithTimeout(failHookObserved.promise, 1_000),
+      raceWithTimeout(failureObserved.promise, 1_000),
+    ])
+
+    try {
+      expect(failHookResult.timedOut).toBe(false)
+      expect(failureResult.timedOut).toBe(false)
+      if (!failHookResult.timedOut) {
+        expect(failHookResult.value.message).toContain('exited with code [1]')
+      }
+      if (!failureResult.timedOut) {
+        expect(failureResult.value.message).toContain('exited with code [1]')
+      }
+      expect(failHookCalls).toBe(1)
+      expect(onFailureCalls).toBe(1)
+      expect(thread.getState()).toBe('failed')
+    } finally {
+      releaseReadyHook.resolve()
+      await start.catch(() => undefined)
+      await thread.stop().catch(() => undefined)
+    }
+
+    expect(failHookCalls).toBe(1)
+    expect(onFailureCalls).toBe(1)
+  })
+
+  it('rejects startup without recovery when the worker exits before ready', async () => {
+    const fixture = await createThreadFixture(`
+      process.exit(1)
+    `)
+    const hooks = createHostHooks()
+    let failHookCalls = 0
+    let onFailureCalls = 0
+    hooks.hook('worker:fail', () => {
+      failHookCalls += 1
+    })
+
+    const thread = new ThreadController({
+      snapshot: fixture.snapshot,
+      runtimeName: 'api',
+      plan: { name: 'api:0', artifact: fixture.artifact },
+      index: 0,
+      hooks,
+      onFailure: () => {
+        onFailureCalls += 1
+      },
+    })
+
+    await expect(thread.start()).rejects.toThrow('exited with code [1]')
+
+    expect(failHookCalls).toBe(1)
+    expect(onFailureCalls).toBe(0)
+    expect(thread.getState()).toBe('failed')
+
+    await thread.stop().catch(() => undefined)
   })
 })
 
