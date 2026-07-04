@@ -357,8 +357,9 @@ Failure rule:
 
 - host failure restarts the whole runtime;
 - worker failure restarts the whole runtime in the first implementation;
-- partial worker restart can be considered later, but jobs/eventing host state
-  is coupled to worker ports, so full runtime restart is safer and simpler.
+- partial worker restart can be considered later, but consumer host state (e.g.
+  workflows) is coupled to worker ports, so full runtime restart is safer and
+  simpler.
 
 ## HostRunner
 
@@ -502,5 +503,5 @@ V2 does not include legacy command artifacts in the first implementation.
 - Vite-style HMR.
 - Runtime command subsystem.
 - Generic capability registry.
-- Neem-owned jobs, eventing, pub/sub, or metrics semantics.
+- Neem-owned workflows, pub/sub, or metrics semantics.
 - Compatibility shims for old internal imports.

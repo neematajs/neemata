@@ -11,7 +11,7 @@
     "test": "pnpm build && vitest --run",
     "test:neem": "pnpm --filter @nmtjs/neem run test",
     "test:integration:services": "pnpm --filter @nmtjs/pubsub --filter @nmtjs/workflows run test:integration",
-    "test:unit": "vitest run --project='!eventing'",
+    "test:unit": "vitest run",
     "test:browser:client": "vitest run -c packages/client/vitest.browser.config.ts",
     "test:dev": "vitest dev --ui --coverage",
     "check:type": "pnpm tsc -b tsconfig.json --noEmit",
