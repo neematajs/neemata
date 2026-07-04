@@ -12,6 +12,7 @@ import { createPostgresWorkflowScheduler } from './schedules.ts'
 import { DEFAULT_MAX_DELIVERIES, TASK_RUN_NODE_NAME, one } from './sql.ts'
 import {
   createPostgresWorkflowStore,
+  createStoredRunWithState,
   pruneTerminalRunsInTransaction,
 } from './store.ts'
 
@@ -37,7 +38,12 @@ export function createPostgresWorkflowRuntime(params: {
     startWorkflowRun: ({ run, startAt }) =>
       db.transaction(async (tx) => {
         const runtime = createPostgresWorkflowRuntime({ connection: tx })
-        const started = await runtime.store.createRun(run)
+        const { run: started, created } = await createStoredRunWithState(
+          tx,
+          run,
+        )
+        if (!created) return started
+
         const command = {
           kind: 'continueRun',
           runId: started.id,
@@ -53,7 +59,12 @@ export function createPostgresWorkflowRuntime(params: {
     startTaskRun: ({ run, taskName, taskInput, idempotencyKey, startAt }) =>
       db.transaction(async (tx) => {
         const runtime = createPostgresWorkflowRuntime({ connection: tx })
-        const started = await runtime.store.createRun(run)
+        const { run: started, created } = await createStoredRunWithState(
+          tx,
+          run,
+        )
+        if (!created) return started
+
         await runtime.store.createNode({
           runId: started.id,
           name: TASK_RUN_NODE_NAME,

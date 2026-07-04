@@ -197,6 +197,16 @@ async function dispatchMapRunNode<Declaration extends MapRunNodeDeclaration>(
     })
   }
 
+  // Per-item snapshot loads would cost O(items) round-trips on every
+  // coordination pass, so load all child run rows in one query instead.
+  const childRuns = new Map(
+    (
+      await input.store.loadRuns(
+        children.childLinks.map((link) => link.childRunId),
+      )
+    ).map((run) => [run.id, run]),
+  )
+
   const outputItems: Array<{
     item: unknown
     index: number
@@ -216,10 +226,7 @@ async function dispatchMapRunNode<Declaration extends MapRunNodeDeclaration>(
     )
 
     if (existingLink) {
-      const snapshot = await input.store.loadRunSnapshot(
-        existingLink.childRunId,
-      )
-      const childRun = snapshot?.run
+      const childRun = childRuns.get(existingLink.childRunId)
       if (!childRun) {
         await failMissingChildRun({
           store: input.store,

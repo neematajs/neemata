@@ -222,6 +222,11 @@ export type WorkflowStore = {
   renewRunLease(lease: RunLease, leaseMs: number): Promise<RunLease | undefined>
   releaseRunLease(lease: RunLease): Promise<void>
   loadRunSnapshot(runId: string): Promise<RunSnapshot | undefined>
+  /**
+   * Loads run rows in first-occurrence order of `runIds`; unknown ids are
+   * omitted.
+   */
+  loadRuns(runIds: readonly string[]): Promise<readonly StoredRun[]>
   createNode(input: CreateNodeInput): Promise<StoredNode>
   setNodeInput(params: {
     runId: string

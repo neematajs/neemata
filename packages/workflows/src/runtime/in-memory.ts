@@ -6,6 +6,7 @@ import type {
   ContinueRunCommand,
   TaskAttemptCommand,
 } from './commands.ts'
+import type { WorkflowRuntimeAtomicStart } from './coordinator.ts'
 import type { AttemptExecutor, RunCoordinationExecutor } from './executors.ts'
 import type { StoredWorkflowSchedule, WorkflowScheduler } from './scheduler.ts'
 import type {
@@ -30,6 +31,7 @@ import type {
   WorkflowRetentionPruner,
   WorkflowStore,
 } from './store.ts'
+import { dispatchTaskRunAttempt } from './coordinator/attempt.ts'
 import { toStoredError } from './errors.ts'
 import {
   nextStoredScheduleRunAt,
@@ -78,6 +80,7 @@ export type InMemoryWorkflowRuntime = {
   readonly attemptExecutor: AttemptExecutor
   readonly retentionPruner: WorkflowRetentionPruner
   readonly scheduler: WorkflowScheduler
+  readonly atomicStart: WorkflowRuntimeAtomicStart
   readonly inspect: () => {
     readonly runs: readonly StoredRun[]
     readonly nodes: readonly StoredNode[]
@@ -214,52 +217,58 @@ export function createInMemoryWorkflowRuntime(
     run.rootRunId === (input.rootRunId ?? run.id) &&
     sameValue(run.input, input.input)
 
+  const createRunWithState = (
+    input: CreateRunInput,
+  ): { readonly run: StoredRun; readonly created: boolean } => {
+    if (input.idempotencyKey) {
+      const existingRunId = runIdempotencyKeys.get(
+        runIdempotencyKey(input.idempotencyKey),
+      )
+      if (existingRunId) {
+        const existing = runs.get(existingRunId)
+        if (existing && runMatchesCreateInput(existing, input)) {
+          return { run: existing, created: false }
+        }
+
+        throw new Error(`Conflicting idempotent run [${input.workflowName}]`)
+      }
+    }
+
+    const date = now()
+    const runId = id('run')
+    const run: StoredRun = {
+      id: runId,
+      kind: input.kind ?? 'workflow',
+      name: input.name ?? input.taskName ?? input.workflowName,
+      workflowName: input.workflowName,
+      ...(input.taskName === undefined ? {} : { taskName: input.taskName }),
+      status: 'queued',
+      input: input.input,
+      ...(input.parentRunId === undefined
+        ? {}
+        : { parentRunId: input.parentRunId }),
+      ...(input.parentNodeName === undefined
+        ? {}
+        : { parentNodeName: input.parentNodeName }),
+      rootRunId: input.rootRunId ?? runId,
+      tags: input.tags ?? {},
+      ...(input.idempotencyKey === undefined
+        ? {}
+        : { idempotencyKey: input.idempotencyKey }),
+      version: 1,
+      createdAt: date,
+      updatedAt: date,
+    }
+    runs.set(run.id, run)
+    if (input.idempotencyKey) {
+      runIdempotencyKeys.set(runIdempotencyKey(input.idempotencyKey), run.id)
+    }
+    return { run, created: true }
+  }
+
   const store: WorkflowStore = {
     async createRun(input: CreateRunInput) {
-      if (input.idempotencyKey) {
-        const existingRunId = runIdempotencyKeys.get(
-          runIdempotencyKey(input.idempotencyKey),
-        )
-        if (existingRunId) {
-          const existing = runs.get(existingRunId)
-          if (existing && runMatchesCreateInput(existing, input)) {
-            return existing
-          }
-
-          throw new Error(`Conflicting idempotent run [${input.workflowName}]`)
-        }
-      }
-
-      const date = now()
-      const runId = id('run')
-      const run: StoredRun = {
-        id: runId,
-        kind: input.kind ?? 'workflow',
-        name: input.name ?? input.taskName ?? input.workflowName,
-        workflowName: input.workflowName,
-        ...(input.taskName === undefined ? {} : { taskName: input.taskName }),
-        status: 'queued',
-        input: input.input,
-        ...(input.parentRunId === undefined
-          ? {}
-          : { parentRunId: input.parentRunId }),
-        ...(input.parentNodeName === undefined
-          ? {}
-          : { parentNodeName: input.parentNodeName }),
-        rootRunId: input.rootRunId ?? runId,
-        tags: input.tags ?? {},
-        ...(input.idempotencyKey === undefined
-          ? {}
-          : { idempotencyKey: input.idempotencyKey }),
-        version: 1,
-        createdAt: date,
-        updatedAt: date,
-      }
-      runs.set(run.id, run)
-      if (input.idempotencyKey) {
-        runIdempotencyKeys.set(runIdempotencyKey(input.idempotencyKey), run.id)
-      }
-      return run
+      return createRunWithState(input).run
     },
     async listRuns(filter: ListRunsFilter = {}) {
       const limit = filter.limit ?? Number.POSITIVE_INFINITY
@@ -376,6 +385,12 @@ export function createInMemoryWorkflowRuntime(
       if (runLeases.get(lease.runId)?.leaseToken === lease.leaseToken) {
         runLeases.delete(lease.runId)
       }
+    },
+    async loadRuns(runIds) {
+      return [...new Set(runIds)].flatMap((runId) => {
+        const run = runs.get(runId)
+        return run ? [run] : []
+      })
     },
     async loadRunSnapshot(runId) {
       const run = runs.get(runId)
@@ -1346,6 +1361,42 @@ export function createInMemoryWorkflowRuntime(
     },
   }
 
+  const atomicStart: WorkflowRuntimeAtomicStart = {
+    async startWorkflowRun({ run, startAt }) {
+      const started = createRunWithState(run)
+      if (!started.created) return started.run
+
+      const command = {
+        kind: 'continueRun',
+        runId: started.run.id,
+        workflowName: started.run.workflowName,
+      } as const
+      if (startAt) {
+        await runCoordinationExecutor.enqueueDelayed(command, startAt)
+      } else {
+        await runCoordinationExecutor.enqueue(command)
+      }
+      return started.run
+    },
+    async startTaskRun({ run, taskName, taskInput, idempotencyKey, startAt }) {
+      const started = createRunWithState(run)
+      if (!started.created) return started.run
+
+      await dispatchTaskRunAttempt({
+        store,
+        runCoordinationExecutor,
+        attemptExecutor,
+        taskName,
+        taskRunId: started.run.id,
+        taskInput,
+        ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
+        startAt,
+        throwOnDispatchFailure: true,
+      })
+      return started.run
+    },
+  }
+
   const scheduler: WorkflowScheduler = {
     async reconcile(entries) {
       const date = now()
@@ -1451,6 +1502,7 @@ export function createInMemoryWorkflowRuntime(
     retentionPruner: store,
     runCoordinationExecutor,
     attemptExecutor,
+    atomicStart,
     scheduler,
     inspect: () => ({
       runs: [...runs.values()],

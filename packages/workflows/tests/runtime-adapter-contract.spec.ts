@@ -107,6 +107,75 @@ function workflowRuntimeAdapterContract(
       ).resolves.toBeNull()
     })
 
+    it('keeps delayed idempotent workflow replays from waking early', async () => {
+      const workflow = defineWorkflow({
+        name: 'adapter-delayed-idempotent-workflow',
+        input: t.object({ scenario: t.string() }),
+        output: t.object({ caseId: t.string() }),
+      }).build()
+      const runtime = await createRuntime()
+      const client = createWorkflowRuntimeClient(runtime)
+      const idempotencyKey = ['workflow', 'delayed-idempotent-alpha']
+      const startAt = new Date(Date.now() + 60_000)
+
+      const run = await client.start(
+        workflow,
+        { scenario: 'alpha' },
+        { idempotencyKey, startAt },
+      )
+      const replay = await client.start(
+        workflow,
+        { scenario: 'alpha' },
+        { idempotencyKey },
+      )
+
+      expect(replay.id).toBe(run.id)
+      await expect(
+        runtime.runCoordinationExecutor.claim({
+          workerId: 'coordinator-before-idempotent-start',
+          workflowNames: [workflow.name],
+          leaseMs: 30_000,
+        }),
+      ).resolves.toBeNull()
+    })
+
+    it('does not enqueue consumed idempotent workflow starts again', async () => {
+      const workflow = defineWorkflow({
+        name: 'adapter-consumed-idempotent-workflow',
+        input: t.object({ scenario: t.string() }),
+        output: t.object({ caseId: t.string() }),
+      }).build()
+      const runtime = await createRuntime()
+      const client = createWorkflowRuntimeClient(runtime)
+      const idempotencyKey = ['workflow', 'consumed-idempotent-alpha']
+
+      const run = await client.start(
+        workflow,
+        { scenario: 'alpha' },
+        { idempotencyKey },
+      )
+      const claimed = await runtime.runCoordinationExecutor.claim({
+        workerId: 'coordinator-consume-idempotent-start',
+        workflowNames: [workflow.name],
+        leaseMs: 30_000,
+      })
+      await runtime.runCoordinationExecutor.ack(claimed!)
+      const replay = await client.start(
+        workflow,
+        { scenario: 'alpha' },
+        { idempotencyKey },
+      )
+
+      expect(replay.id).toBe(run.id)
+      await expect(
+        runtime.runCoordinationExecutor.claim({
+          workerId: 'coordinator-after-idempotent-replay',
+          workflowNames: [workflow.name],
+          leaseMs: 30_000,
+        }),
+      ).resolves.toBeNull()
+    })
+
     it('cancels a queued workflow run end-to-end', async () => {
       const workflow = defineWorkflow({
         name: 'adapter-cancel-queued-workflow',
@@ -257,6 +326,85 @@ function workflowRuntimeAdapterContract(
       await expect(
         runtime.attemptExecutor.claimTask({
           workerId: 'task-before-start',
+          taskNames: [task.name],
+          leaseMs: 30_000,
+        }),
+      ).resolves.toBeNull()
+    })
+
+    it('keeps delayed idempotent task replays parked', async () => {
+      const task = defineTask({
+        name: 'adapter-delayed-idempotent-task',
+        input: t.object({ text: t.string() }),
+        output: t.object({ id: t.string() }),
+      })
+      const runtime = await createRuntime()
+      const client = createWorkflowRuntimeClient(runtime)
+      const idempotencyKey = ['task', 'delayed-idempotent-alpha']
+      const startAt = new Date(Date.now() + 60_000)
+
+      const run = await client.start(
+        task,
+        { text: 'alpha' },
+        { idempotencyKey, startAt },
+      )
+      const replay = await client.start(
+        task,
+        { text: 'alpha' },
+        { idempotencyKey },
+      )
+      const snapshot = await client.get(run.id)
+
+      expect(replay.id).toBe(run.id)
+      expect(snapshot?.nodes).toMatchObject([
+        {
+          runId: run.id,
+          name: '$task',
+          kind: 'task',
+          status: 'waiting',
+          input: { text: 'alpha' },
+        },
+      ])
+      await expect(
+        runtime.attemptExecutor.claimTask({
+          workerId: 'task-before-idempotent-start',
+          taskNames: [task.name],
+          leaseMs: 30_000,
+        }),
+      ).resolves.toBeNull()
+    })
+
+    it('does not enqueue consumed idempotent task starts again', async () => {
+      const task = defineTask({
+        name: 'adapter-consumed-idempotent-task',
+        input: t.object({ text: t.string() }),
+        output: t.object({ id: t.string() }),
+      })
+      const runtime = await createRuntime()
+      const client = createWorkflowRuntimeClient(runtime)
+      const idempotencyKey = ['task', 'consumed-idempotent-alpha']
+
+      const run = await client.start(
+        task,
+        { text: 'alpha' },
+        { idempotencyKey },
+      )
+      const claimed = await runtime.attemptExecutor.claimTask({
+        workerId: 'task-consume-idempotent-start',
+        taskNames: [task.name],
+        leaseMs: 30_000,
+      })
+      await runtime.attemptExecutor.ack(claimed!)
+      const replay = await client.start(
+        task,
+        { text: 'alpha' },
+        { idempotencyKey },
+      )
+
+      expect(replay.id).toBe(run.id)
+      await expect(
+        runtime.attemptExecutor.claimTask({
+          workerId: 'task-after-idempotent-replay',
           taskNames: [task.name],
           leaseMs: 30_000,
         }),
@@ -621,6 +769,10 @@ function workflowRuntimeAdapterContract(
         leaseToken: attempt.leaseToken!,
         input: {},
       })
+      await runtime.store.completeRun({
+        runId: childRun.id,
+        output: { ok: true },
+      })
       await runtime.store.completeRun({ runId: root.id, output: { ok: true } })
 
       const result = await runtime.store.pruneTerminalRuns({
@@ -713,6 +865,33 @@ function workflowRuntimeAdapterContract(
       await expect(
         runtime.store.loadRunSnapshot(childRun.id),
       ).resolves.toBeDefined()
+    })
+
+    it('loads run rows in batch, skipping unknown ids', async () => {
+      const runtime = await createRuntime()
+      const first = await runtime.store.createRun({
+        workflowName: 'batch-load-workflow',
+        input: { index: 1 },
+      })
+      const second = await runtime.store.createRun({
+        workflowName: 'batch-load-workflow',
+        input: { index: 2 },
+      })
+      const missingUuid = '00000000-0000-4000-8000-000000000000'
+
+      const loaded = await runtime.store.loadRuns([
+        second.id,
+        missingUuid,
+        first.id,
+        second.id,
+        'missing-run-id',
+      ])
+
+      expect(loaded.map((run) => run.id)).toStrictEqual([second.id, first.id])
+      await expect(runtime.store.loadRuns([])).resolves.toStrictEqual([])
+      await expect(
+        runtime.store.loadRuns([missingUuid, 'missing-run-id']),
+      ).resolves.toStrictEqual([])
     })
 
     it('sweeps old dead commands during pruning', async () => {

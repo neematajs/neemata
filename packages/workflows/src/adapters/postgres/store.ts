@@ -9,6 +9,7 @@ import {
 
 export {
   createStoredRun,
+  createStoredRunWithState,
   pruneTerminalRunsInTransaction,
 } from './store-runs.ts'
 

@@ -1,4 +1,4 @@
-import type { RunSnapshot } from '../../runtime/state.ts'
+import type { RunSnapshot, StoredRun } from '../../runtime/state.ts'
 import type {
   CreateRunInput,
   ListRunsFilter,
@@ -22,6 +22,7 @@ import {
   mapMapItem,
   mapNode,
   mapRun,
+  DEFAULT_PRUNE_STATUSES,
   normalizePruneBatchSize,
   normalizePruneStatuses,
   now,
@@ -47,13 +48,14 @@ type PostgresWorkflowRunStore = Pick<
   | 'renewRunLease'
   | 'releaseRunLease'
   | 'loadRunSnapshot'
+  | 'loadRuns'
 >
 
-export const createStoredRun = async (
+export const createStoredRunWithState = async (
   connection: WorkflowPostgresConnection,
   input: CreateRunInput,
   options: { readonly recoverUniqueViolation?: boolean } = {},
-) => {
+): Promise<{ readonly run: StoredRun; readonly created: boolean }> => {
   const recoverUniqueViolation = options.recoverUniqueViolation ?? true
   const loadIdempotentRun = async () => {
     if (!input.idempotencyKey) return undefined
@@ -81,7 +83,7 @@ export const createStoredRun = async (
     return undefined
   }
   const existing = await loadIdempotentRun()
-  if (existing) return existing
+  if (existing) return { run: existing, created: false }
 
   const date = now()
   const runId = id()
@@ -115,7 +117,7 @@ export const createStoredRun = async (
         date,
       ],
     )
-    return mapRun(row!)
+    return { run: mapRun(row!), created: true }
   } catch (error) {
     if (
       recoverUniqueViolation &&
@@ -123,11 +125,18 @@ export const createStoredRun = async (
       isUniqueViolation(error)
     ) {
       const raced = await loadIdempotentRun()
-      if (raced) return raced
+      if (raced) return { run: raced, created: false }
     }
     throw error
   }
 }
+
+export const createStoredRun = async (
+  connection: WorkflowPostgresConnection,
+  input: CreateRunInput,
+  options: { readonly recoverUniqueViolation?: boolean } = {},
+) => (await createStoredRunWithState(connection, input, options)).run
+
 export const pruneTerminalRunsInTransaction = async (
   connection: WorkflowPostgresConnection,
   params: PruneTerminalRunsParams,
@@ -137,20 +146,36 @@ export const pruneTerminalRunsInTransaction = async (
   let deleted = 0
 
   if (batchSize > 0 && statuses.length > 0) {
-    const queryParams: unknown[] = [params.olderThan, ...statuses, batchSize]
+    const queryParams: unknown[] = [
+      params.olderThan,
+      ...statuses,
+      ...DEFAULT_PRUNE_STATUSES,
+      batchSize,
+    ]
     const statusList = statuses.map((_, index) => `$${index + 2}`).join(', ')
+    const terminalStatusOffset = statuses.length + 2
+    const terminalStatusList = DEFAULT_PRUNE_STATUSES.map(
+      (_, index) => `$${terminalStatusOffset + index}`,
+    ).join(', ')
     const batchParam = `$${queryParams.length}`
     const rows = await many<{ id: string }>(
       connection,
       `
         DELETE FROM workflow_runs
         WHERE id IN (
-          SELECT id
-          FROM workflow_runs
-          WHERE parent_run_id IS NULL
-            AND status IN (${statusList})
-            AND updated_at < $1
-          ORDER BY updated_at, id
+          SELECT r.id
+          FROM workflow_runs r
+          WHERE r.parent_run_id IS NULL
+            AND r.status IN (${statusList})
+            AND r.updated_at < $1
+            AND NOT EXISTS (
+              SELECT 1
+              FROM workflow_runs d
+              WHERE d.root_run_id = r.id
+                AND d.id <> r.id
+                AND d.status NOT IN (${terminalStatusList})
+            )
+          ORDER BY r.updated_at, r.id
           LIMIT ${batchParam}
           FOR UPDATE SKIP LOCKED
         )
@@ -291,6 +316,15 @@ export const createPostgresWorkflowRunStore = (
     async acquireRunLease({ runId, leaseMs }) {
       await ready
       if (!isUuid(runId)) return undefined
+      const lock = await one<{ acquired: boolean }>(
+        db,
+        `
+        SELECT pg_try_advisory_xact_lock(hashtext('workflow_run_lease:' || $1::text)) AS acquired
+      `,
+        [runId],
+      )
+      if (!lock?.acquired) return undefined
+
       const run = await one(db, 'SELECT * FROM workflow_runs WHERE id = $1', [
         runId,
       ])
@@ -345,6 +379,23 @@ export const createPostgresWorkflowRunStore = (
         'DELETE FROM workflow_run_leases WHERE run_id = $1 AND lease_token = $2',
         [lease.runId, lease.leaseToken],
       )
+    },
+    async loadRuns(runIds) {
+      await ready
+      const ids = [...new Set(runIds)].filter(isUuid)
+      if (ids.length === 0) return []
+      const rows = await many(
+        db,
+        'SELECT * FROM workflow_runs WHERE id = ANY($1::uuid[])',
+        [ids],
+      )
+      // ANY() returns rows in unspecified order; reorder to keep the
+      // first-occurrence contract shared with the in-memory store.
+      const runs = new Map(rows.map(mapRun).map((run) => [run.id, run]))
+      return ids.flatMap((runId) => {
+        const run = runs.get(runId)
+        return run ? [run] : []
+      })
     },
     async loadRunSnapshot(runId) {
       await ready

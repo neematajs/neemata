@@ -40,6 +40,15 @@ export async function dispatchParallelNode(
     runId: input.run.id,
     nodeName: input.node.name,
   })
+  // Per-member snapshot loads cost one round-trip each, so load all child
+  // run rows in one query instead.
+  const childRuns = new Map(
+    (
+      await input.store.loadRuns(
+        children.childLinks.map((link) => link.childRunId),
+      )
+    ).map((run) => [run.id, run]),
+  )
   const outputs: Record<string, unknown> = {}
   const declaration = getWorkflowNodeDeclaration(
     input.workflow,
@@ -96,10 +105,7 @@ export async function dispatchParallelNode(
         sameNodeChildIdentity(link.identity, identity),
       )
       if (existingLink) {
-        const snapshot = await input.store.loadRunSnapshot(
-          existingLink.childRunId,
-        )
-        const childRun = snapshot?.run
+        const childRun = childRuns.get(existingLink.childRunId)
         if (!childRun) {
           await failMissingChildRun({
             store: input.store,
@@ -206,10 +212,7 @@ export async function dispatchParallelNode(
         sameNodeChildIdentity(link.identity, identity),
       )
       if (existingLink) {
-        const snapshot = await input.store.loadRunSnapshot(
-          existingLink.childRunId,
-        )
-        const childRun = snapshot?.run
+        const childRun = childRuns.get(existingLink.childRunId)
         if (!childRun) {
           await failMissingChildRun({
             store: input.store,
