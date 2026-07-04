@@ -48,8 +48,16 @@ Inventory (verified 2026-07-04):
 
 ### Model
 
-New table `workflow_schedules` (schema manifest v4; drizzle + testing kept in
-sync):
+New table `workflow_schedules` (drizzle + testing kept in sync).
+
+Schema versioning: everything on this branch is pre-release WIP, so instead
+of bumping to v4, `WORKFLOW_POSTGRES_SCHEMA_VERSION` is RESET to 1 — the full
+current schema including `workflow_schedules` becomes the v1 baseline.
+Incremental versioning starts only after this branch lands/publishes.
+(Existing local databases seeded at v2/v3 will fail
+`verifyPostgresWorkflowSchema` and need a drop/re-migrate.)
+
+Table shape:
 
 - `id` uuid PK, `name` text UNIQUE — the schedule identity.
 - `runnable_kind` (`workflow` | `task`), `runnable_name` text.
