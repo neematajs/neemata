@@ -1,9 +1,4 @@
-import type { Logger } from '@nmtjs/core'
-import type {
-  NeemHostHooks,
-  NeemPluginHooks,
-  NeemRuntimeServerHealth,
-} from '@nmtjs/neem'
+import type { NeemPluginHooks, NeemRuntimeServerHealth } from '@nmtjs/neem'
 import { Counter, Gauge, Registry } from '@nmtjs/prom-client'
 
 export type NeemMetricsObserver = { recordHealth(): void }
@@ -89,15 +84,4 @@ export function createNeemMetricsLifecycle(options: {
       'worker:fail': (event) => recordLifecycle(`worker:fail:${event.name}`),
     },
   }
-}
-
-export function createNeemMetricsObserver(options: {
-  hooks: NeemHostHooks
-  logger: Logger
-  registry?: Registry
-  getHealth: () => NeemRuntimeServerHealth
-}): NeemMetricsObserver {
-  const lifecycle = createNeemMetricsLifecycle(options)
-  options.hooks.addHooks(lifecycle.hooks)
-  return { recordHealth: () => lifecycle.recordHealth() }
 }
