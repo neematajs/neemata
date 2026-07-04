@@ -13,7 +13,7 @@ describe('nmtjs umbrella exports', () => {
         router: expect.any(Function),
         implementRouter: expect.any(Function),
         contractRouter: expect.any(Function),
-        procedure: expect.any(Object),
+        procedure: expect.any(Function),
         contractProcedure: expect.any(Function),
         middleware: expect.any(Function),
         meta: expect.any(Function),
@@ -30,7 +30,6 @@ describe('nmtjs umbrella exports', () => {
         implementSubscription: expect.any(Function),
         blobType: expect.any(Function),
         c: expect.any(Object),
-        t: expect.any(Object),
         CoreInjectables: expect.any(Object),
         GatewayInjectables: expect.any(Object),
         PubSubInjectables: expect.any(Object),
@@ -45,6 +44,12 @@ describe('nmtjs umbrella exports', () => {
         }),
       }),
     )
+
+    // t is a module namespace re-export (null prototype), which
+    // expect.any(Object)'s instanceof check rejects — assert it structurally
+    expect(mod.t).toBeTypeOf('object')
+    expect(mod.t.object).toBeTypeOf('function')
+    expect(mod.t.string).toBeTypeOf('function')
 
     const expectedInjectables = {
       ...mod.CoreInjectables,
