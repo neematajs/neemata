@@ -1,0 +1,4 @@
+- when running `pnpm test` or `vitest`, add "--reporter=agent" to optimize output for LLMs
+- when running `pnpm test:neem` watcher reload e2e tests fail only under sandbox/restricted filesystem permissions but pass under unrestricted permissions, treat it as an environment limitation; do not attempt Neem code fixes for that failure without reproducing outside the sandbox first
+- when running `pnpm check:lint` or `oxlint`, add "--format=agent" to optimize output for LLMs (after finishing big slices of work, run `pnpm oxlint . --format=agent` to check for any remaining lint issues, including warnings)
+- when running `pnpm check:type` or `tsc`, add "--pretty false" to optimize output for LLMs

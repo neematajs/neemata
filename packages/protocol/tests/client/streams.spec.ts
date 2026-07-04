@@ -1,6 +1,6 @@
+import { ClientStreams, ServerStreams } from '@nmtjs/client'
 import { describe, expect, it, vi } from 'vitest'
 
-import { ClientStreams, ServerStreams } from '../../../client/src/streams.ts'
 import {
   ProtocolClientBlobStream,
   ProtocolServerBlobStream,

@@ -67,10 +67,8 @@ type ClientRoutes<
 >
 
 export class Client<
-  TransportFactory extends ClientTransportFactory<
-    any,
-    any
-  > = ClientTransportFactory<any, any>,
+  TransportFactory extends ClientTransportFactory<any, any> =
+    ClientTransportFactory<any, any>,
   RouterContract extends TAnyRouterContract = TAnyRouterContract,
   SafeCall extends boolean = false,
   InputTypeProvider extends TypeProvider = TypeProvider,

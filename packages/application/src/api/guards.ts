@@ -1,22 +1,29 @@
-import type { MaybePromise } from '@nmtjs/common'
-import type { Dependant, Dependencies, DependencyContext } from '@nmtjs/core'
+import type {
+  Dependencies,
+  Handler,
+  HandlerFn,
+  HandlerInput,
+} from '@nmtjs/core'
 
 import type { ApiGuardContext } from './types.ts'
 import { kGuard } from './constants.ts'
 
-export type GuardCanFn<Deps extends Dependencies> = (
-  ctx: DependencyContext<Deps>,
-  call: ApiGuardContext,
-) => MaybePromise<boolean>
+export type GuardHandlerFn<Deps extends Dependencies> = HandlerFn<
+  Deps,
+  [call: ApiGuardContext],
+  boolean
+>
 
-export type GuardParams<Deps extends Dependencies> =
-  | { dependencies?: Deps; can: GuardCanFn<Deps> }
-  | GuardCanFn<Deps>
+export type GuardParams<Deps extends Dependencies> = HandlerInput<
+  Deps,
+  [call: ApiGuardContext],
+  boolean
+>
 
-export interface Guard<Deps extends Dependencies = Dependencies>
-  extends Dependant<Deps> {
+export interface Guard<
+  Deps extends Dependencies = Dependencies,
+> extends Handler<Deps, [call: ApiGuardContext], boolean> {
   [kGuard]: true
-  can: GuardCanFn<Deps>
 }
 
 export type AnyGuard = Guard<any>
@@ -24,10 +31,14 @@ export type AnyGuard = Guard<any>
 export function createGuard<Deps extends Dependencies = {}>(
   paramsOrHandler: GuardParams<Deps>,
 ): Guard<Deps> {
-  const { dependencies = {} as Deps, can } =
+  const { dependencies = {} as Deps, handler } =
     typeof paramsOrHandler === 'function'
-      ? { can: paramsOrHandler }
+      ? { handler: paramsOrHandler }
       : paramsOrHandler
 
-  return Object.freeze({ dependencies, can, [kGuard]: true }) as Guard<Deps>
+  return Object.freeze({
+    dependencies,
+    handler,
+    [kGuard]: true,
+  }) as Guard<Deps>
 }

@@ -3,26 +3,28 @@
 import type { MaybePromise } from './types.ts'
 
 export interface DuplexStreamOptions<O = unknown, I = O> {
-  start?: (controller: ReadableStreamDefaultController<O>) => void
-  pull?: (controller: ReadableStreamDefaultController<O>) => MaybePromise<void>
+  start?: (controller: globalThis.ReadableStreamDefaultController<O>) => void
+  pull?: (
+    controller: globalThis.ReadableStreamDefaultController<O>,
+  ) => MaybePromise<void>
   cancel?: (reason: unknown) => void
   transform?: (chunk: I) => O
   close?: () => void
-  readableStrategy?: QueuingStrategy<O>
-  writableStrategy?: QueuingStrategy<I>
+  readableStrategy?: globalThis.QueuingStrategy<O>
+  writableStrategy?: globalThis.QueuingStrategy<I>
 }
 
 export class DuplexStream<O = unknown, I = O> {
-  readonly readable: ReadableStream<O>
-  readonly writable!: WritableStream<I>
+  readonly readable: globalThis.ReadableStream<O>
+  readonly writable!: globalThis.WritableStream<I>
 
   constructor(options: DuplexStreamOptions<O, I> = {}) {
-    this.readable = new ReadableStream<O>(
+    this.readable = new globalThis.ReadableStream<O>(
       {
         cancel: options.cancel,
         start: (controller) => {
           // @ts-expect-error
-          this.writable = new WritableStream<I>(
+          this.writable = new globalThis.WritableStream<I>(
             {
               write: (_chunk) => {
                 const chunk = options?.transform

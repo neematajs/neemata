@@ -8,7 +8,11 @@ import type { ProtocolFormats } from '@nmtjs/protocol/server'
 import { Gateway } from '@nmtjs/gateway'
 
 import type { ApplicationResolvedProcedure } from './api/api.ts'
-import type { ApplicationConfig, ApplicationTransport } from './config.ts'
+import type {
+  AnyApplicationConfig,
+  ApplicationConfig,
+  ApplicationTransport,
+} from './config.ts'
 import { kApplicationHostDefinition } from './constants.ts'
 import { LifecycleHook } from './enums.ts'
 import { NeemataApplication } from './runtime.ts'
@@ -41,6 +45,11 @@ export interface ApplicationHostDefinition<
   >
   identity?: ConnectionIdentity
 }
+
+export type AnyApplicationHostDefinition = ApplicationHostDefinition<
+  AnyApplicationConfig,
+  any
+>
 
 export type ApplicationHostDefinitionOptions<
   Transports extends Record<string, ApplicationTransport>,
@@ -121,12 +130,12 @@ export class ApplicationHost<
     await this.application.dispose()
     this.appConfig = appConfig
     this.application = await this.createApplication(appConfig)
-    this.gateway.options.api = this.application.api
-    this.gateway.options.container = this.application.container
-    this.gateway.options.hooks = this.application.lifecycleHooks
-    this.gateway.options.identity =
-      this.options.identity ?? this.gateway.options.identity
-    await this.gateway.reload()
+    await this.gateway.reload({
+      api: this.application.api,
+      container: this.application.container,
+      hooks: this.application.lifecycleHooks,
+      identity: this.options.identity,
+    })
   }
 
   protected async createApplication(appConfig: ApplicationConfig) {

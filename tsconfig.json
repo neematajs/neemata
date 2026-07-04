@@ -31,25 +31,31 @@
       "path": "./packages/msgpack-format/tsconfig.json"
     },
     {
+      "path": "./packages/metrics/tsconfig.json"
+    },
+    {
+      "path": "./packages/neem/tsconfig.json"
+    },
+    {
       "path": "./packages/nmtjs/tsconfig.json"
     },
     {
       "path": "./packages/protocol/tsconfig.json"
     },
     {
+      "path": "./packages/pubsub/tsconfig.json"
+    },
+    {
       "path": "./packages/type/tsconfig.json"
+    },
+    {
+      "path": "./packages/workflows/tsconfig.json"
     },
     {
       "path": "./packages/ws-client/tsconfig.json"
     },
     {
       "path": "./packages/ws-transport/tsconfig.json"
-    },
-    {
-      "path": "./tests/e2e/tsconfig.json"
-    },
-    {
-      "path": "./tests/integration/tsconfig.json"
     }
   ],
   "include": []

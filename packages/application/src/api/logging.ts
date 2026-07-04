@@ -6,7 +6,7 @@ import type { AnyMiddleware } from './middlewares.ts'
 import type { ApiCallContext } from './types.ts'
 import { createMiddleware } from './middlewares.ts'
 
-const defaultContext = (options: ApiCallContext, payload: unknown) => {
+const defaultContext = (options: ApiCallContext) => {
   return {
     callId: options.callId,
     connection: {
@@ -26,7 +26,7 @@ export const LoggingCallContextMiddleware = (
   ) => MaybePromise<object> = defaultContext,
 ): AnyMiddleware =>
   createMiddleware({
-    handle: async (_, call, next, payload) => {
+    handler: async (_, call, next, payload) => {
       const loggingContext = await cb(call, payload)
       return loggerLocalStorage.run(loggingContext, async () => {
         return next()
@@ -44,8 +44,8 @@ export const LoggingCallMiddleware = (
   } = {},
 ): AnyMiddleware =>
   createMiddleware({
-    dependencies: { logger: CoreInjectables.logger('RPC') },
-    handle: async ({ logger }, call, next, payload) => {
+    dependencies: { logger: CoreInjectables.logger('rpc') },
+    handler: async ({ logger }, call, next, payload) => {
       const {
         includePayload,
         includeResponse,

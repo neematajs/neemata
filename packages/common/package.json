@@ -18,9 +18,6 @@
       }
     }
   },
-  "scripts": {
-    "clean-build": "rm -rf ./dist"
-  },
   "files": [
     "dist",
     "src",

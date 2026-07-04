@@ -19,6 +19,11 @@ function adapterFactory(params: HttpAdapterParams<'bun'>): HttpAdapterServer {
   let server: Bun.Server<undefined> | null = null
 
   function createServer() {
+    const routes =
+      typeof params.runtime?.routes === 'object' && params.runtime.routes
+        ? params.runtime.routes
+        : {}
+
     return globalThis.Bun.serve({
       ...params.runtime,
       unix: params.listen.unix as string,
@@ -32,9 +37,10 @@ function adapterFactory(params: HttpAdapterParams<'bun'>): HttpAdapterServer {
             passphrase: params.tls.passphrase,
           }
         : undefined,
-      // @ts-expect-error
-      routes: { ...params.runtime?.routes, '/healthy': { GET: OkResponse } },
-      async fetch(request, server) {
+      routes: Object.assign({}, routes, {
+        '/healthy': { GET: OkResponse },
+      }) as any,
+      async fetch(request) {
         const url = new URL(request.url)
         try {
           if (request.headers.get('upgrade') === 'websocket')
@@ -52,7 +58,7 @@ function adapterFactory(params: HttpAdapterParams<'bun'>): HttpAdapterServer {
           return InternalServerErrorHttpResponse()
         }
       },
-    })
+    } as any)
   }
 
   return {

@@ -73,10 +73,16 @@ export class CustomType<
         ? { encode: validation, decode: validation }
         : validation
       : undefined
+    const errorParams =
+      typeof error === 'string'
+        ? error
+        : error
+          ? { error: error as any }
+          : undefined
 
     const instance = new CustomType<Type, EncodeType, DecodeType>({
       encodeZodType: pipe(
-        zodCustom().check(
+        zodCustom(undefined, errorParams).check(
           ...[
             refine((val) => typeof val !== 'undefined', { abort: true }),
             _validation?.encode ? superRefine(_validation.encode) : undefined,
@@ -88,7 +94,7 @@ export class CustomType<
       decodeZodType: pipe(
         type,
         // @ts-expect-error
-        zodCustom().check(
+        zodCustom(undefined, errorParams).check(
           ...[
             refine((val) => typeof val !== 'undefined', { abort: true }),
             overwrite(decode),

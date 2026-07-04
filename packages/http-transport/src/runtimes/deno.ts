@@ -61,7 +61,7 @@ function adapterFactory(params: HttpAdapterParams<'deno'>): HttpAdapterServer {
       const server = globalThis.Deno.serve({
         ...params.runtime,
         ...options,
-        handler: async (request: Request, info: any) => {
+        handler: async (request: Request) => {
           const url = new URL(request.url)
           if (url.pathname === '/healthy') {
             return OkResponse()

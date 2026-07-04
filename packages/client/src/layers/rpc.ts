@@ -5,6 +5,7 @@ import {
   ClientMessageType,
   ConnectionType,
   ErrorCode,
+  isBlobInterface,
   ProtocolBlob,
   ServerMessageType,
 } from '@nmtjs/protocol'
@@ -35,7 +36,19 @@ export interface RpcLayerApi {
 const toReasonString = (reason: unknown) => {
   if (typeof reason === 'string') return reason
   if (reason === undefined || reason === null) return undefined
-  return String(reason)
+  if (reason instanceof Error) return reason.message
+  try {
+    return JSON.stringify(reason)
+  } catch {}
+  if (
+    typeof reason === 'number' ||
+    typeof reason === 'boolean' ||
+    typeof reason === 'bigint' ||
+    typeof reason === 'symbol'
+  ) {
+    return reason.toString()
+  }
+  return Object.prototype.toString.call(reason)
 }
 
 const toAbortError = (signal: AbortSignal) => {
@@ -484,9 +497,7 @@ export const createRpcLayer = (
       })
 
       const { blob } = streams.addServerBlobStream(response.metadata, {
-        start: (stream, { signal } = {}) => {
-          response.source.pipeTo(stream.writable, { signal }).catch(noopFn)
-        },
+        source: response.source,
       })
       call.resolve(blob)
       return
@@ -733,6 +744,10 @@ export const createRpcLayer = (
           }
 
           return stream
+        }
+
+        if (isBlobInterface(value)) {
+          return value
         }
 
         controller.abort()

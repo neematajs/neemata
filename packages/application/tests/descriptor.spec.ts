@@ -1,12 +1,7 @@
 import { Container, createLogger, Scope } from '@nmtjs/core'
 import { describe, expect, it } from 'vitest'
 
-import type {
-  AnyProcedure,
-  AnyRouter,
-  kDefaultProcedure,
-  MetadataKind,
-} from '../src/index.ts'
+import type { AnyProcedure, AnyRouter, MetadataKind } from '../src/index.ts'
 import {
   ApplicationApi,
   createMeta,
@@ -21,7 +16,7 @@ function collectProcedures(
   router: AnyRouter,
   path: AnyRouter[] = [],
   procedures = new Map<
-    string | typeof kDefaultProcedure,
+    string,
     { procedure: AnyProcedure; path: AnyRouter[] }
   >(),
 ) {
@@ -52,7 +47,6 @@ describe('application resolve descriptor', () => {
     })
 
     const apiRouter = createRouter({
-      name: 'api',
       routes: { status: procedure },
       timeout: 1000,
     })
@@ -87,7 +81,9 @@ describe('application resolve descriptor', () => {
       expect(resolved.procedure.stream).toBe(true)
       expect(resolved.procedure.streamTimeout).toBe(250)
       expect(resolved.path).toHaveLength(2)
-      expect(resolved.path[1]?.contract).toStrictEqual(apiRouter.contract)
+      const mountedApiContract = resolved.path[1]?.contract as any
+      expect(mountedApiContract.name).toBe('api')
+      expect(mountedApiContract.routes.status.name).toBe('api/status')
       expect(resolved.path[1]?.timeout).toBe(1000)
 
       // @ts-expect-error handler is intentionally hidden from transport descriptor

@@ -11,6 +11,7 @@ import {
   kValueInjectable,
 } from './constants.ts'
 import { Scope } from './enums.ts'
+import { forkLogger } from './logger.ts'
 
 const ScopeStrictness = {
   [Scope.Transient]: Number.NaN, // this should make it always fail to compare with other scopes
@@ -57,6 +58,46 @@ export type DependencyContext<Deps extends Dependencies> = {
     : never
 }
 
+export type HandlerFn<
+  Deps extends Dependencies,
+  Args extends readonly unknown[],
+  Return,
+> = (context: DependencyContext<Deps>, ...args: Args) => MaybePromise<Return>
+
+export interface Handler<
+  Deps extends Dependencies,
+  Args extends readonly unknown[],
+  Return,
+> extends Dependant<Deps> {
+  handler: HandlerFn<Deps, Args, Return>
+}
+
+export type HandlerInput<
+  Deps extends Dependencies,
+  Args extends readonly unknown[],
+  Return,
+> =
+  | HandlerFn<{}, Args, Return>
+  | {
+      dependencies?: Deps
+      handler: HandlerFn<Deps, Args, Return>
+    }
+
+export function createHandler<
+  Args extends readonly unknown[],
+  Return,
+  Deps extends Dependencies = {},
+>(
+  paramsOrHandler: HandlerInput<Deps, Args, Return>,
+): Handler<Deps, Args, Return> {
+  const { dependencies = {} as Deps, handler } =
+    typeof paramsOrHandler === 'function'
+      ? { handler: paramsOrHandler }
+      : paramsOrHandler
+
+  return Object.freeze({ dependencies, handler }) as Handler<Deps, Args, Return>
+}
+
 export type InjectableFactoryType<
   InjectableType,
   InjectableDeps extends Dependencies,
@@ -72,11 +113,12 @@ export type InjectableDisposeType<
   context: DependencyContext<InjectableDeps>,
 ) => any
 
-export interface LazyInjectable<T, S extends Scope = Scope.Global>
-  extends Dependant<{}> {
+export interface LazyInjectable<
+  T,
+  S extends Scope = Scope.Global,
+> extends Dependant<{}> {
   scope: S
   $withType<O extends T>(): LazyInjectable<O, S>
-  optional(): DependencyOptional<LazyInjectable<T, S>>
   [kInjectable]: any
   [kLazyInjectable]: T
 }
@@ -95,10 +137,9 @@ export interface FactoryInjectable<
   P = T,
 > extends Dependant<D> {
   scope: S
-  factory: InjectableFactoryType<P, D>
+  create: InjectableFactoryType<P, D>
   pick: InjectablePickType<P, T>
   dispose?: InjectableDisposeType<P, D>
-  optional(): DependencyOptional<FactoryInjectable<T, D, S, P>>
   [kInjectable]: any
   [kFactoryInjectable]: any
 }
@@ -162,13 +203,22 @@ export function getDepedencencyInjectable(
   return dependency
 }
 
-export function createOptionalInjectable<T extends AnyInjectable>(
+export function createOptionalInjectable<T extends LazyInjectable<any, any>>(
   injectable: T,
 ) {
   return Object.freeze({
     [kOptionalDependency]: true,
     injectable,
   }) as DependencyOptional<T>
+}
+
+export function optional<T, S extends Scope>(
+  injectable: LazyInjectable<T, S>,
+): DependencyOptional<LazyInjectable<T, S>> {
+  if (!isLazyInjectable(injectable)) {
+    throw new TypeError('Optional dependencies can only wrap lazy injectables')
+  }
+  return createOptionalInjectable(injectable)
 }
 
 export function createLazyInjectable<T, S extends Scope = Scope.Global>(
@@ -181,7 +231,6 @@ export function createLazyInjectable<T, S extends Scope = Scope.Global>(
     dependencies: {},
     label,
     stack: tryCaptureStackTrace(stackTraceDepth),
-    optional: () => createOptionalInjectable(injectable),
     $withType: () => injectable as any,
     [kInjectable]: true,
     [kLazyInjectable]: true as unknown as T,
@@ -216,7 +265,7 @@ export function createFactoryInjectable<
         dependencies?: D
         scope?: S
         pick?: InjectablePickType<P, T>
-        factory: InjectableFactoryType<P, D>
+        create: InjectableFactoryType<P, D>
         dispose?: InjectableDisposeType<P, D>
       }
     | InjectableFactoryType<P, D>,
@@ -224,16 +273,15 @@ export function createFactoryInjectable<
   stackTraceDepth = 0,
 ): FactoryInjectable<null extends T ? P : T, D, S, P> {
   const isFactory = typeof paramsOrFactory === 'function'
-  const params = isFactory ? { factory: paramsOrFactory } : paramsOrFactory
+  const params = isFactory ? { create: paramsOrFactory } : paramsOrFactory
   const injectable = {
     dependencies: (params.dependencies ?? {}) as D,
     scope: (params.scope ?? Scope.Global) as S,
-    factory: params.factory,
+    create: params.create,
     dispose: params.dispose,
     pick: params.pick ?? ((instance: P) => instance as unknown as T),
     label,
     stack: tryCaptureStackTrace(stackTraceDepth),
-    optional: () => createOptionalInjectable(injectable),
     [kInjectable]: true,
     [kFactoryInjectable]: true,
   }
@@ -308,11 +356,10 @@ export function compareScope(
 
 const loggerInjectable = Object.assign(
   (label: string | undefined, options?: ChildLoggerOptions) => {
-    const bindings = label ? { $label: label } : {}
     return createFactoryInjectable({
       dependencies: { logger: loggerInjectable },
       scope: Scope.Global,
-      factory: ({ logger }) => logger.child(bindings, options),
+      create: ({ logger }) => forkLogger(logger, label, options),
     })
   },
   createLazyInjectable<Logger>(Scope.Global, 'Logger'),

@@ -34,7 +34,7 @@ function createMockServerContext(version: ProtocolVersion1): MessageContext {
       contentType: 'test',
     },
     protocol: version,
-    addClientStream: vi.fn(({ streamId, callId, metadata }) => {
+    addClientStream: vi.fn(({ streamId, metadata }) => {
       const consumer = Object.assign(
         () => new ProtocolClientStream(streamId, metadata),
         { metadata, [kBlobKey]: true },

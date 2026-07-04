@@ -75,7 +75,9 @@ const createBidirectionalTransportDouble = () => {
     emitMessage(buffer: ArrayBufferView) {
       this.params.onMessage(buffer)
     },
-    disconnectFromServer(reason: 'server' | 'client' | string = 'server') {
+    disconnectFromServer(
+      reason: 'server' | 'client' | (string & {}) = 'server',
+    ) {
       this.params.onDisconnect(reason)
     },
   }

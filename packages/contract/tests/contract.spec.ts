@@ -2,8 +2,8 @@ import { t } from '@nmtjs/type'
 import { describe, expect, expectTypeOf, it } from 'vitest'
 
 import type { TRouterContract } from '../src/index.ts'
-import type { TEventContract } from '../src/schemas/event.ts'
 import type { TProcedureContract } from '../src/schemas/procedure.ts'
+import type { SubscriptionEventMessage } from '../src/schemas/subscription.ts'
 import { c, IsRouterContract, RouterContract } from '../src/index.ts'
 import { EventContract, IsEventContract } from '../src/schemas/event.ts'
 import {
@@ -52,19 +52,9 @@ describe('Contract — Event', { sequential: true }, () => {
 
   describe('Typings', () => {
     it('should correctly resolve Event contract types', () => {
-      const unnamedEvent = c.event({ payload: t.string() })
+      const event = c.event({ payload: t.string() })
 
-      expectTypeOf(unnamedEvent.name).toEqualTypeOf<undefined>()
-      expectTypeOf(unnamedEvent.payload).toEqualTypeOf<t.StringType>()
-
-      const namedEvent = c.event({
-        name: 'testEvent',
-        payload: t.object({ id: t.number(), value: t.string() }),
-      })
-      expectTypeOf(namedEvent.name).toEqualTypeOf<'testEvent'>()
-      expectTypeOf(namedEvent.payload).toEqualTypeOf<
-        t.ObjectType<{ id: t.NumberType; value: t.StringType }>
-      >()
+      expectTypeOf(event.payload).toEqualTypeOf<t.StringType>()
     })
   })
 })
@@ -75,46 +65,26 @@ describe('Contract — Subscription', { sequential: true }, () => {
       const testEvent = c.event({ payload: t.any() })
 
       const subscription = c.subscription({
-        name: 'testSubscription',
+        namespace: 'testSubscription',
+        params: t.object({ id: t.string() }),
+        key: (params) => params.id,
         events: { testEvent },
       })
 
       expect(subscription).toBeDefined()
       expect(subscription).toHaveProperty('type', 'neemata:subscription')
-      expect(subscription).toHaveProperty('name', 'testSubscription')
+      expect(subscription).toHaveProperty('namespace', 'testSubscription')
       expect(subscription).toHaveProperty('events')
       expect(subscription.events.testEvent).toHaveProperty(
         'type',
         'neemata:event',
       )
+      expect(subscription.events.testEvent).toHaveProperty('event', 'testEvent')
       expect(subscription.events.testEvent).toHaveProperty(
-        'name',
-        'testSubscription/testEvent',
+        'subscription',
+        subscription,
       )
-      expect(IsSubscriptionContract(subscription)).toBe(true)
-      expect(IsEventContract(subscription.events.testEvent)).toBe(true)
-    })
-
-    it('should create a Subscription contract with options', () => {
-      const testEvent = c.event({ payload: t.any() })
-
-      const subscription = c.subscription.withOptions<{ test: string }>()({
-        name: 'testSubscription',
-        events: { testEvent },
-      })
-
-      expect(subscription).toBeDefined()
-      expect(subscription).toHaveProperty('type', 'neemata:subscription')
-      expect(subscription).toHaveProperty('name', 'testSubscription')
-      expect(subscription).toHaveProperty('events')
-      expect(subscription.events.testEvent).toHaveProperty(
-        'type',
-        'neemata:event',
-      )
-      expect(subscription.events.testEvent).toHaveProperty(
-        'name',
-        'testSubscription/testEvent',
-      )
+      expect(subscription.key({ id: 'one' })).toBe('one')
       expect(IsSubscriptionContract(subscription)).toBe(true)
       expect(IsEventContract(subscription.events.testEvent)).toBe(true)
     })
@@ -123,7 +93,9 @@ describe('Contract — Subscription', { sequential: true }, () => {
   describe('Typings', () => {
     it('should correctly resolve Subscription contract types', () => {
       const subscription1 = c.subscription({
-        name: 'testSubscription',
+        namespace: 'testSubscription',
+        params: t.object({ id: t.string() }),
+        key: (params) => params.id,
         events: {
           event1: c.event({ payload: t.string() }),
           event2: c.event({
@@ -132,27 +104,31 @@ describe('Contract — Subscription', { sequential: true }, () => {
         },
       })
 
-      expectTypeOf(subscription1.options).toEqualTypeOf<null>()
-      expectTypeOf(subscription1.name).toEqualTypeOf<'testSubscription'>()
-      expectTypeOf(subscription1.events.event1).toEqualTypeOf<
-        TEventContract<t.StringType, 'testSubscription/event1', null>
+      expectTypeOf(subscription1.params).toEqualTypeOf<
+        t.ObjectType<{ id: t.StringType }>
       >()
-      expectTypeOf(subscription1.events.event2).toEqualTypeOf<
-        TEventContract<
-          t.ObjectType<{ id: t.NumberType; value: t.StringType }>,
-          'testSubscription/event2',
-          null
-        >
+      expectTypeOf(subscription1.namespace).toEqualTypeOf<'testSubscription'>()
+      expectTypeOf(subscription1.key).toEqualTypeOf<
+        (params: { id: string }) => string
       >()
-    })
-
-    it('should correctly resolve Subscription contract types with options', () => {
-      const subscription2 = c.subscription.withOptions<{ test: string }>()({
-        name: 'testSubscription',
-        events: { event1: c.event({ payload: t.string() }) },
-      })
-
-      expectTypeOf(subscription2.options).toEqualTypeOf<{ test: string }>()
+      expectTypeOf(subscription1.events.event1.event).toEqualTypeOf<'event1'>()
+      expectTypeOf(
+        subscription1.events.event1.payload,
+      ).toEqualTypeOf<t.StringType>()
+      expectTypeOf(subscription1.events.event1.subscription).toEqualTypeOf<
+        typeof subscription1
+      >()
+      expectTypeOf(subscription1.events.event2.event).toEqualTypeOf<'event2'>()
+      expectTypeOf(subscription1.events.event2.subscription).toEqualTypeOf<
+        typeof subscription1
+      >()
+      expectTypeOf<
+        SubscriptionEventMessage<typeof subscription1.events.event1>
+      >().toEqualTypeOf<{ event: 'event1'; payload: string }>()
+      const message: SubscriptionEventMessage<
+        typeof subscription1.events.event1
+      > = { event: 'event1', payload: 'test' }
+      expect(message.payload).toBe('test')
     })
   })
 })
@@ -290,8 +266,6 @@ describe('Contract — Router', { sequential: true }, () => {
         input: t.string(),
         output: t.string(),
       })
-      const testEvent = c.event({ payload: t.object({ message: t.string() }) })
-
       const nestedRouter = c.router({
         routes: {
           nestedProcedure: c.procedure({ input: t.any(), output: t.any() }),

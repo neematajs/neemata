@@ -7,7 +7,6 @@ import type {
   TRouterContract,
 } from '@nmtjs/contract'
 import type { BaseTypeAny, t } from '@nmtjs/type'
-import type { AnyType } from '@nmtjs/type/any'
 import { c, IsRouterContract } from '@nmtjs/contract'
 import { assertUniqueMetaBindings } from '@nmtjs/core'
 
@@ -15,7 +14,7 @@ import type { AnyGuard } from './guards.ts'
 import type { AnyCompatibleMetaBinding, CompatibleMetaBinding } from './meta.ts'
 import type { AnyMiddleware } from './middlewares.ts'
 import type { AnyProcedure } from './procedure.ts'
-import { kRootRouter, kRouter } from './constants.ts'
+import { kRootRouter, kRootRouterSources, kRouter } from './constants.ts'
 
 export type RouterMetaBinding<Input> = CompatibleMetaBinding<Input>
 export type AnyRouterMetaBinding = AnyCompatibleMetaBinding
@@ -38,8 +37,8 @@ export interface AnyRouter {
 
 export interface AnyRootRouter extends AnyRouter {
   [kRootRouter]: any
+  [kRootRouterSources]: readonly AnyRouter[]
   contract: TAnyRouterContract<Record<string, TRouteContract>, undefined>
-  default?: AnyProcedure<any>
 }
 
 export interface Router<Contract extends TAnyRouterContract> extends AnyRouter {
@@ -72,7 +71,7 @@ export interface RootRouter<
   >,
 > extends Router<Contract> {
   [kRootRouter]: any
-  default?: AnyProcedure<any>
+  [kRootRouterSources]: readonly AnyRouter[]
 }
 
 export type MergeRoutersRoutesContracts<
@@ -107,16 +106,11 @@ export type RouterContractsFromRoutes<Routes extends AnyRouterRoutes> = {
       : never
 }
 
-export type RouterContractFromRoutes<
-  Routes extends AnyRouterRoutes,
-  Name extends string | undefined = undefined,
-> = TRouterContract<RouterContractsFromRoutes<Routes>, Name>
+export type RouterContractFromRoutes<Routes extends AnyRouterRoutes> =
+  TRouterContract<RouterContractsFromRoutes<Routes>, undefined>
 
 export function createRootRouter<Routers extends readonly AnyRouter[]>(
   routers: Routers,
-  defaultProcedure?: AnyProcedure<
-    TProcedureContract<AnyType, AnyType, true | undefined, string | undefined>
-  >,
 ): RootRouter<
   TRouterContract<
     MergeRoutersRoutesContracts<ExtractRouterContracts<[...Routers]>>,
@@ -125,11 +119,11 @@ export function createRootRouter<Routers extends readonly AnyRouter[]>(
 > {
   const routes: Record<string, any> = {}
   for (const router of routers) Object.assign(routes, router.routes)
-  const router = createRouter({ routes, name: undefined })
+  const router = createRouter({ routes })
   return Object.freeze({
     ...router,
-    default: defaultProcedure,
     [kRootRouter]: true,
+    [kRootRouterSources]: routers,
   }) as any
 }
 
@@ -153,12 +147,8 @@ export type RouterDecodedInput<Routes extends AnyRouterRoutes> =
 export type RouterContractDecodedInput<Contract extends TAnyRouterContract> =
   FlattenRouterDecodedInput<Contract['routes']>
 
-export interface CreateRouterParams<
-  Routes extends AnyRouterRoutes,
-  Name extends string | undefined = undefined,
-> {
+export interface CreateRouterParams<Routes extends AnyRouterRoutes> {
   routes: Routes
-  name?: Name
   guards?: AnyGuard[]
   middlewares?: AnyMiddleware[]
   meta?: RouterMetaBinding<RouterDecodedInput<Routes>>[]
@@ -182,20 +172,17 @@ export interface CreateContractRouterParams<
   timeout?: number
 }
 
-export function createRouter<
-  const Routes extends AnyRouterRoutes,
-  const Name extends string | undefined = undefined,
->(
-  params: CreateRouterParams<Routes, Name>,
-): Router<RouterContractFromRoutes<Routes, Name>> {
-  const { routes, name, guards, middlewares, meta, timeout } = params
+export function createRouter<const Routes extends AnyRouterRoutes>(
+  params: CreateRouterParams<Routes>,
+): Router<RouterContractFromRoutes<Routes>> {
+  const { routes, guards, middlewares, meta, timeout } = params
 
   const routesContracts: any = {}
   for (const [name, route] of Object.entries(routes)) {
     routesContracts[name] = route.contract
   }
 
-  const contract = c.router({ routes: routesContracts, timeout, name })
+  const contract = c.router({ routes: routesContracts, timeout })
 
   assignRouteContracts(routes, contract)
 

@@ -1,5 +1,3 @@
-/// <reference lib="dom" />
-
 import type { Callback, Pattern } from './types.ts'
 
 export const noopFn = () => {}
@@ -18,7 +16,7 @@ export function defer<T extends Callback>(
   ...args: Parameters<T>
 ): Promise<Awaited<ReturnType<T>>> {
   return new Promise((resolve, reject) =>
-    setTimeout(async () => {
+    globalThis.setTimeout(async () => {
       try {
         resolve(await cb(...args))
       } catch (error) {
@@ -45,36 +43,14 @@ export function range(count: number, start = 0) {
   }
 }
 
-export function debounce(cb: Callback, delay: number) {
-  let timer: any
-  const clear = () => timer && clearTimeout(timer)
-  const fn = (...args: any[]) => {
-    clear()
-    timer = setTimeout(cb, delay, ...args)
-  }
-  return Object.assign(fn, { clear })
-}
+export type Future<T = any> = PromiseWithResolvers<T>
 
-// TODO: Promise.withResolvers?
-export interface Future<T = any> {
-  promise: Promise<T>
-  resolve: (value: T) => void
-  reject: (error: any) => void
-}
-// TODO: Promise.withResolvers?
 export function createFuture<T>(): Future<T> {
-  let resolve: Future<T>['resolve']
-  let reject: Future<T>['reject']
-  const promise = new Promise<T>((res, rej) => {
-    resolve = res
-    reject = rej
-  })
-  // @ts-expect-error
-  return { resolve, reject, promise }
+  return Promise.withResolvers<T>()
 }
 
 export function onAbort<T extends Callback>(
-  signal: AbortSignal,
+  signal: globalThis.AbortSignal,
   cb: T,
   reason?: any,
 ) {
@@ -90,12 +66,14 @@ export function withTimeout(
 ) {
   return Promise.race([
     value,
-    new Promise((_, reject) => setTimeout(reject, timeout, timeoutError)),
+    new Promise((_, reject) =>
+      globalThis.setTimeout(reject, timeout, timeoutError),
+    ),
   ])
 }
 
 export function tryCaptureStackTrace(depth = 0) {
-  const traceLines = new Error().stack?.split('\n')
+  const traceLines = new Error().stack?.split('\n').slice(depth)
   if (traceLines) {
     for (const traceLine of traceLines) {
       const trimmed = traceLine.trim()
@@ -132,23 +110,23 @@ export function throwError(message: string, ErrorClass = Error): never {
   throw new ErrorClass(message)
 }
 
-export function once(target: EventTarget, event: string) {
+export function once(target: globalThis.EventTarget, event: string) {
   return new Promise<void>((resolve) => {
     target.addEventListener(event, () => resolve(), { once: true })
   })
 }
 
-export function onceAborted(signal: AbortSignal) {
+export function onceAborted(signal: globalThis.AbortSignal) {
   return once(signal, 'abort')
 }
 
-export function isAbortError(error) {
+export function isAbortError(error: any): error is Error {
   return (
     (error instanceof Error &&
       error.name === 'AbortError' &&
       'code' in error &&
       (error.code === 20 || error.code === 'ABORT_ERR')) ||
-    (error instanceof Event && error.type === 'abort')
+    (error instanceof globalThis.Event && error.type === 'abort')
   )
 }
 

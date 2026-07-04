@@ -6,6 +6,7 @@ import type {
   Container,
   Hooks,
   Logger,
+  Provision,
   ResolveInjectableType,
 } from '@nmtjs/core'
 import type { ProtocolBlobInterface } from '@nmtjs/protocol'
@@ -20,7 +21,12 @@ import {
   noopFn,
   withTimeout,
 } from '@nmtjs/common'
-import { createFactoryInjectable, provision, Scope } from '@nmtjs/core'
+import {
+  createFactoryInjectable,
+  forkLogger,
+  provision,
+  Scope,
+} from '@nmtjs/core'
 import {
   ClientMessageType,
   ConnectionType,
@@ -115,10 +121,10 @@ export class Gateway<
         options.identity ??
         createFactoryInjectable({
           dependencies: { connectionId: injectables.connectionId },
-          factory: ({ connectionId }) => connectionId,
+          create: ({ connectionId }) => connectionId,
         }),
     }
-    this.logger = options.logger.child({}, gatewayLoggerOptions)
+    this.logger = forkLogger(options.logger, undefined, gatewayLoggerOptions)
     this.connections = new ConnectionManager()
     this.rpcs = new RpcManager()
     this.blobStreams = new BlobStreamsManager({
@@ -203,7 +209,7 @@ export class Gateway<
         } catch {
           state.pending.delete(nonce)
           try {
-            transportWorker.close?.(connection.id, {
+            await transportWorker.close?.(connection.id, {
               code: 1001,
               reason: 'heartbeat_timeout',
             })
@@ -253,7 +259,21 @@ export class Gateway<
     }
   }
 
-  async reload() {
+  async reload(
+    options?: Pick<
+      GatewayOptions<ResolvedProcedure>,
+      'api' | 'container' | 'hooks' | 'identity'
+    >,
+  ) {
+    // Own the hot-swap of these options internally so callers don't reach into
+    // `this.options` directly; identity falls back to the current one.
+    if (options) {
+      this.options.api = options.api
+      this.options.container = options.container
+      this.options.hooks = options.hooks
+      this.options.identity = options.identity ?? this.options.identity
+    }
+
     for (const connections of this.connections.connections.values()) {
       await connections.container.dispose()
     }
@@ -309,12 +329,13 @@ export class Gateway<
 
     return {
       ...messageContext,
+      connectionType: connection.type,
       callId,
       payload,
       procedure,
       container,
       signal,
-      logger: logger.child({ callId, procedure }),
+      logger: forkLogger(logger, undefined, undefined, { callId, procedure }),
       [Symbol.asyncDispose]: dispose,
     }
   }
@@ -376,7 +397,7 @@ export class Gateway<
   }
 
   protected onConnect(transport: string): TransportWorkerParams['onConnect'] {
-    const logger = this.logger.child({ transport })
+    const logger = forkLogger(this.logger, undefined, undefined, { transport })
     return async (options, ...injections) => {
       logger.trace('Initiating new connection')
 
@@ -444,7 +465,7 @@ export class Gateway<
         })
       } catch (error) {
         logger.error({ error }, 'Error establishing connection')
-        container.dispose()
+        await container.dispose()
         throw error
       }
     }
@@ -453,7 +474,7 @@ export class Gateway<
   protected onDisconnect(
     transport: string,
   ): TransportWorkerParams['onDisconnect'] {
-    const logger = this.logger.child({ transport })
+    const logger = forkLogger(this.logger, undefined, undefined, { transport })
     return async (connectionId) => {
       logger.debug({ connectionId }, 'Disconnecting connection')
       this.stopHeartbeat(connectionId, 'disconnect')
@@ -462,10 +483,10 @@ export class Gateway<
   }
 
   protected onMessage(transport: string): TransportWorkerParams['onMessage'] {
-    const _logger = this.logger.child({ transport })
+    const _logger = forkLogger(this.logger, undefined, undefined, { transport })
 
     return async ({ connectionId, data }, ...injections) => {
-      const logger = _logger.child({ connectionId })
+      const logger = forkLogger(_logger, undefined, undefined, { connectionId })
       try {
         const connection = this.connections.get(connectionId)
         const messageContext = this.createMessageContext(connection, transport)
@@ -572,10 +593,12 @@ export class Gateway<
   }
 
   protected onRpc(transport: string): TransportWorkerParams['onRpc'] {
-    const _logger = this.logger.child({ transport })
+    const _logger = forkLogger(this.logger, undefined, undefined, { transport })
 
     return async (connection, rpc, signal, ...injections) => {
-      const logger = _logger.child({ connectionId: connection.id })
+      const logger = forkLogger(_logger, undefined, undefined, {
+        connectionId: connection.id,
+      })
       const messageContext = this.createMessageContext(
         connection,
         connection.transport,
@@ -589,29 +612,11 @@ export class Gateway<
       )
 
       try {
-        rpcContext.container.provide([
-          ...injections,
-          // Provide only the base per-call signal here. rpcAbortSignal is a
-          // derived injectable that combines rpcClientAbortSignal,
-          // connectionAbortSignal, and optional rpcStreamAbortSignal.
-          provision(injectables.rpcClientAbortSignal, rpcContext.signal),
-          provision(
-            injectables.createBlob,
-            this.createBlobFunction(rpcContext),
-          ),
-          provision(
-            injectables.consumeBlob,
-            this.consumeBlobFunction(rpcContext),
-          ),
-        ])
-
-        const result = await this.options.api.call({
+        const result = await this.dispatchRpc(
           connection,
-          payload: rpc.payload,
-          procedure: rpc.procedure,
-          container: rpcContext.container,
-          signal: rpcContext.signal,
-        })
+          rpcContext,
+          injections,
+        )
 
         if (typeof result === 'function') {
           return result(async () => {
@@ -631,7 +636,7 @@ export class Gateway<
   protected resolve(
     transport: string,
   ): TransportWorkerParams<ConnectionType, ResolvedProcedure>['resolve'] {
-    const _logger = this.logger.child({ transport })
+    const _logger = forkLogger(this.logger, undefined, undefined, { transport })
 
     return async (connection, procedure) => {
       _logger.trace({ connectionId: connection.id, procedure }, 'Resolving RPC')
@@ -640,33 +645,56 @@ export class Gateway<
     }
   }
 
+  /**
+   * Shared RPC dispatch prologue for both the HTTP (onRpc) and WS
+   * (handleRpcMessage) paths: provisions the per-call abort signal and invokes
+   * the API. rpcClientAbortSignal is the base per-call signal; rpcAbortSignal is
+   * a derived injectable that combines it with connectionAbortSignal and the
+   * optional rpcStreamAbortSignal.
+   *
+   * When `httpInjections` is provided (HTTP path), the transport-supplied
+   * injections and the createBlob/consumeBlob injectables are provisioned here.
+   * The WS path passes `undefined` because onMessage already provisioned those
+   * before calling handleRpcMessage. This divergence — WS omits blob injectables
+   * at this dispatch point — is suspected to be a gap but is intentionally
+   * preserved pending a decision.
+   */
+  private dispatchRpc(
+    connection: GatewayConnection,
+    context: GatewayRpcContext,
+    httpInjections?: readonly Provision[],
+  ): Promise<unknown> {
+    if (httpInjections) {
+      context.container.provide([
+        ...httpInjections,
+        provision(injectables.rpcClientAbortSignal, context.signal),
+        provision(injectables.createBlob, this.createBlobFunction(context)),
+        provision(injectables.consumeBlob, this.consumeBlobFunction(context)),
+      ])
+    } else {
+      context.container.provide(
+        injectables.rpcClientAbortSignal,
+        context.signal,
+      )
+    }
+
+    return this.options.api.call({
+      connection,
+      container: context.container,
+      payload: context.payload,
+      procedure: context.procedure,
+      signal: context.signal,
+    })
+  }
+
   protected async handleRpcMessage(
     connection: GatewayConnection,
     context: GatewayRpcContext,
   ): Promise<void> {
-    const {
-      container,
-      connectionId,
-      transport,
-      protocol,
-      signal,
-      callId,
-      procedure,
-      payload,
-      encoder,
-    } = context
+    const { connectionId, transport, protocol, signal, callId, encoder } =
+      context
     try {
-      // Provide only the base per-call signal here. rpcAbortSignal is resolved
-      // through DI so it can include connection and optional stream timeout
-      // cancellation as well.
-      container.provide(injectables.rpcClientAbortSignal, signal)
-      const response = await this.options.api.call({
-        connection: connection as any,
-        container,
-        payload,
-        procedure,
-        signal,
-      })
+      const response = await this.dispatchRpc(connection, context)
 
       if (typeof response === 'function') {
         transport.send!(
@@ -745,10 +773,13 @@ export class Gateway<
       const transportWorker =
         this.options.transports[connection.transport]?.transport
       if (connection.type === ConnectionType.Bidirectional) {
-        transportWorker?.close?.(connectionId, { code: 1001, reason: 'closed' })
+        await transportWorker?.close?.(connectionId, {
+          code: 1001,
+          reason: 'closed',
+        })
       }
       connection.abortController.abort()
-      connection.container.dispose()
+      await connection.container.dispose()
     }
 
     this.rpcs.close(connectionId)
@@ -764,11 +795,16 @@ export class Gateway<
       transport,
       protocol,
       connectionId,
+      connectionType,
       callId,
       encoder,
     } = context
 
     return (source, metadata) => {
+      if (connectionType === ConnectionType.Unidirectional) {
+        return ProtocolBlob.from(source, metadata)
+      }
+
       const streamId = getStreamId()
       const blob = ProtocolBlob.from(source, metadata, (metadata) => {
         return encoder.encodeBlob(streamId, metadata)

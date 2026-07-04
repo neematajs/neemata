@@ -1,0 +1,73 @@
+{
+  "name": "@nmtjs/neem",
+  "description": "Neem host core for running compiled runtime artifacts.",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -b tsconfig.build.json",
+    "clean-build": "rm -rf ./dist",
+    "check:type": "tsc -p tsconfig.json --noEmit",
+    "test": "pnpm run test:unit && pnpm run test:e2e",
+    "test:e2e": "pnpm run build && vitest run --config vitest.e2e.config.ts",
+    "test:stress": "pnpm run build && vitest run --config vitest.stress.config.ts",
+    "test:unit": "vitest run --config vitest.unit.config.ts"
+  },
+  "bin": {
+    "neem": "./bin/neem.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/public/index.ts",
+      "import": "./dist/public/index.js",
+      "module-sync": "./dist/public/index.js"
+    },
+    "./cli": {
+      "types": "./src/cli.ts",
+      "import": "./dist/cli.js",
+      "module-sync": "./dist/cli.js"
+    }
+  },
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./dist/public/index.d.ts",
+        "import": "./dist/public/index.js",
+        "module-sync": "./dist/public/index.js"
+      },
+      "./cli": {
+        "types": "./dist/cli.d.ts",
+        "import": "./dist/cli.js",
+        "module-sync": "./dist/cli.js"
+      }
+    }
+  },
+  "dependencies": {
+    "@nmtjs/common": "workspace:*",
+    "@nmtjs/core": "workspace:*",
+    "citty": "^0.2.2",
+    "consola": "^3.4.2",
+    "defu": "^6.1.7",
+    "hookable": "^6.1.1",
+    "oxc-resolver": "^11.21.3",
+    "rolldown": "^1.1.2",
+    "zod": "catalog:"
+  },
+  "peerDependencies": {
+    "@nmtjs/proxy": "1.0.0-beta.7"
+  },
+  "peerDependenciesMeta": {
+    "@nmtjs/proxy": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@nmtjs/metrics": "workspace:*",
+    "@nmtjs/proxy": "1.0.0-beta.7",
+    "@types/node": "^24.13.2"
+  },
+  "files": [
+    "bin",
+    "dist",
+    "LICENSE.md",
+    "README.md"
+  ]
+}

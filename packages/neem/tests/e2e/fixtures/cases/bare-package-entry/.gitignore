@@ -1,0 +1,8 @@
+!node_modules/
+!node_modules/@fixture/
+!node_modules/@fixture/bare-host/
+!node_modules/@fixture/bare-host/**
+!node_modules/@fixture/bare-planner/
+!node_modules/@fixture/bare-planner/**
+!node_modules/@fixture/bare-worker/
+!node_modules/@fixture/bare-worker/**

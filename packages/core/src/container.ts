@@ -122,7 +122,7 @@ export class Container {
     this.disposing = false
   }
 
-  containsWithinSelf(injectable: AnyInjectable) {
+  owns(injectable: AnyInjectable) {
     return (
       this.provisions.has(injectable) ||
       this.instances.has(injectable) ||
@@ -131,10 +131,7 @@ export class Container {
   }
 
   contains(injectable: AnyInjectable): boolean {
-    return (
-      this.containsWithinSelf(injectable) ||
-      (this.parent?.contains(injectable) ?? false)
-    )
+    return this.owns(injectable) || (this.parent?.contains(injectable) ?? false)
   }
 
   get<T extends AnyInjectable>(injectable: T): ResolveInjectableType<T> {
@@ -342,7 +339,6 @@ export class Container {
           ).finally(() => {
             this.resolvers.delete(injectable)
 
-            // biome-ignore lint: false
             // @ts-ignore
             if (measurements && measure) measurements.push(measure)
           })
@@ -372,7 +368,7 @@ export class Container {
     }
     if (isFactoryInjectable(injectable)) {
       wrapper.private = await Promise.resolve(
-        injectable.factory(wrapper.context),
+        injectable.create(wrapper.context),
       )
       wrapper.public = injectable.pick(wrapper.private)
     } else {

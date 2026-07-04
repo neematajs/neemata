@@ -1,0 +1,23 @@
+{
+  "name": "neem-packaging-consumer",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "neem build --config neem.config.ts --outDir dist",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@nmtjs/common": "file:../packages/common",
+    "@nmtjs/core": "file:../packages/core",
+    "@nmtjs/neem": "file:../packages/neem",
+    "@nmtjs/type": "file:../packages/type",
+    "pino": "^10.3.1",
+    "pino-pretty": "^13.0.0",
+    "pino-std-serializers": "^7.0.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.2",
+    "@typescript/native-preview": "7.0.0-dev.20260421.2"
+  }
+}

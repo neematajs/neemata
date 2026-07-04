@@ -18,13 +18,13 @@
       }
     }
   },
-  "scripts": {
-    "clean-build": "rm -rf ./dist"
-  },
   "dependencies": {
     "@nmtjs/client": "workspace:*",
     "@nmtjs/common": "workspace:*",
     "@nmtjs/protocol": "workspace:*"
+  },
+  "devDependencies": {
+    "@nmtjs/msgpack-format": "workspace:*"
   },
   "peerDependencies": {
     "@nmtjs/client": "workspace:*",

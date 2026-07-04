@@ -2,9 +2,12 @@ const TSErrorSymbol: unique symbol = Symbol('TSError')
 
 export type TSError<
   ErrorMessage extends string = string,
-  // biome-ignore lint/correctness/noUnusedVariables: this is used to tag the type
+  // Used to tag the type.
   TagType = never,
-> = `TS Error: ${ErrorMessage}` & { [TSErrorSymbol]: true }
+> = `TS Error: ${ErrorMessage}` & {
+  [TSErrorSymbol]: true
+  readonly __tag?: TagType
+}
 
 export interface TypeProvider {
   readonly input: unknown
@@ -16,12 +19,8 @@ export type CallTypeProvider<T extends TypeProvider, V> = (T & {
 })['output']
 
 export type ClassConstructor<T = any, A extends any[] = any[]> =
-  | (abstract new (
-      ...args: A
-    ) => T)
-  | (new (
-      ...args: A
-    ) => T)
+  | (abstract new (...args: A) => T)
+  | (new (...args: A) => T)
 
 export type ClassInstance<T> = T extends ClassConstructor<infer U> ? U : never
 export type ClassConstructorArgs<T, A = never> =
@@ -40,9 +39,7 @@ export type ArrayMap<T extends readonly any[], K extends keyof T[number]> = {
 }
 
 export type UnionToIntersection<U> = (
-  U extends any
-    ? (k: U) => void
-    : never
+  U extends any ? (k: U) => void : never
 ) extends (k: infer I) => void
   ? I
   : never

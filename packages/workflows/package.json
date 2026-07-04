@@ -1,0 +1,123 @@
+{
+  "name": "@nmtjs/workflows",
+  "description": "Workflow design primitives for Neemata.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./dist/index.js",
+      "module-sync": "./dist/index.js"
+    },
+    "./runtime": {
+      "types": "./src/runtime/index.ts",
+      "import": "./dist/runtime/index.js",
+      "module-sync": "./dist/runtime/index.js"
+    },
+    "./postgres": {
+      "types": "./src/adapters/postgres.ts",
+      "import": "./dist/adapters/postgres.js",
+      "module-sync": "./dist/adapters/postgres.js"
+    },
+    "./postgres/testing": {
+      "types": "./src/adapters/postgres/testing.ts",
+      "import": "./dist/adapters/postgres/testing.js",
+      "module-sync": "./dist/adapters/postgres/testing.js"
+    },
+    "./postgres/drizzle": {
+      "types": "./src/adapters/postgres/drizzle.ts",
+      "import": "./dist/adapters/postgres/drizzle.js",
+      "module-sync": "./dist/adapters/postgres/drizzle.js"
+    },
+    "./neem": {
+      "types": "./src/neem/index.ts",
+      "import": "./dist/neem/index.js",
+      "module-sync": "./dist/neem/index.js"
+    },
+    "./neem/host": {
+      "types": "./src/neem/host.ts",
+      "import": "./dist/neem/host.js",
+      "module-sync": "./dist/neem/host.js"
+    },
+    "./neem/worker-entry": {
+      "types": "./src/neem/worker-entry.ts",
+      "import": "./dist/neem/worker-entry.js",
+      "module-sync": "./dist/neem/worker-entry.js"
+    }
+  },
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js",
+        "module-sync": "./dist/index.js"
+      },
+      "./runtime": {
+        "types": "./dist/runtime/index.d.ts",
+        "import": "./dist/runtime/index.js",
+        "module-sync": "./dist/runtime/index.js"
+      },
+      "./postgres": {
+        "types": "./dist/adapters/postgres.d.ts",
+        "import": "./dist/adapters/postgres.js",
+        "module-sync": "./dist/adapters/postgres.js"
+      },
+      "./postgres/testing": {
+        "types": "./dist/adapters/postgres/testing.d.ts",
+        "import": "./dist/adapters/postgres/testing.js",
+        "module-sync": "./dist/adapters/postgres/testing.js"
+      },
+      "./postgres/drizzle": {
+        "types": "./dist/adapters/postgres/drizzle.d.ts",
+        "import": "./dist/adapters/postgres/drizzle.js",
+        "module-sync": "./dist/adapters/postgres/drizzle.js"
+      },
+      "./neem": {
+        "types": "./dist/neem/index.d.ts",
+        "import": "./dist/neem/index.js",
+        "module-sync": "./dist/neem/index.js"
+      },
+      "./neem/host": {
+        "types": "./dist/neem/host.d.ts",
+        "import": "./dist/neem/host.js",
+        "module-sync": "./dist/neem/host.js"
+      },
+      "./neem/worker-entry": {
+        "types": "./dist/neem/worker-entry.d.ts",
+        "import": "./dist/neem/worker-entry.js",
+        "module-sync": "./dist/neem/worker-entry.js"
+      }
+    }
+  },
+  "scripts": {
+    "clean-build": "rm -rf ./dist",
+    "test:integration": "vitest run --config vitest.config.ts tests/integration"
+  },
+  "dependencies": {
+    "@nmtjs/common": "workspace:*",
+    "@nmtjs/core": "workspace:*",
+    "@nmtjs/neem": "workspace:*",
+    "@nmtjs/type": "workspace:*",
+    "cron-parser": "^5.6.1"
+  },
+  "peerDependencies": {
+    "drizzle-orm": ">=1.0.0-rc.4 <2.0.0"
+  },
+  "peerDependenciesMeta": {
+    "drizzle-orm": {
+      "optional": true
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "LICENSE.md",
+    "README.md"
+  ],
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.3",
+    "@types/pg": "^8.20.0",
+    "drizzle-kit": "1.0.0-rc.4",
+    "drizzle-orm": "1.0.0-rc.4",
+    "pg": "^8.22.0"
+  }
+}

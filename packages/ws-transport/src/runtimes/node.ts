@@ -2,6 +2,7 @@ import type { ApplicationTransport } from '@nmtjs/application'
 import type { ConnectionType } from '@nmtjs/protocol'
 import { ProxyableTransportType } from '@nmtjs/gateway'
 import createAdapter from 'crossws/adapters/uws'
+import { App, SSLApp, us_socket_local_port } from 'uWebSockets.js'
 
 import type {
   WsAdapterParams,
@@ -11,8 +12,6 @@ import type {
 import * as injectables from '../injectables.ts'
 import { createWSTransportWorker } from '../server.ts'
 import { StatusResponse } from '../utils.ts'
-
-import { App, SSLApp, us_socket_local_port } from 'uWebSockets.js'
 
 const statusResponse = StatusResponse()
 const statusResponseBuffer = await statusResponse.arrayBuffer()

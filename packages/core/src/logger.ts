@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import { threadId } from 'node:worker_threads'
 
 import type {
+  Bindings,
   ChildLoggerOptions,
   DestinationStream,
   Level,
@@ -52,13 +53,12 @@ export const loggerLocalStorage = new AsyncLocalStorage<object | undefined>({
 })
 
 export const createLogger = (options: LoggingOptions = {}, $label: string) => {
-  let { destinations, pinoOptions } = options
+  let { destinations } = options
+  const { pinoOptions } = options
 
-  if (!destinations || !destinations?.length) {
+  if (!destinations?.length) {
     destinations = [
-      createConsolePrettyDestination(
-        (options.pinoOptions?.level || 'info') as Level,
-      ),
+      createConsolePrettyDestination((pinoOptions?.level || 'info') as Level),
     ]
   }
 
@@ -101,9 +101,21 @@ export const createLogger = (options: LoggingOptions = {}, $label: string) => {
           return object
         },
       },
+      base: { $label, $threadId: threadId },
     },
     multistream(destinations!),
-  ).child({ $label, $threadId: threadId })
+  )
+}
+
+export const forkLogger = (
+  logger: Logger,
+  label: string | undefined,
+  options?: ChildLoggerOptions,
+  bindings?: Bindings,
+) => {
+  const _bindings = { ...bindings }
+  if (label !== undefined) _bindings.$label = label
+  return logger.child(_bindings, options)
 }
 
 export type CreateConsolePrettyDestination = (
@@ -121,9 +133,12 @@ export const createConsolePrettyDestination: CreateConsolePrettyDestination = (
     ignore: 'hostname,$label,$threadId',
     errorLikeObjectKeys: ['err', 'error', 'cause'],
     messageFormat: (log, messageKey) => {
-      const group = fg(`[${log.$label}]`, 11)
-      const msg = fg(log[messageKey], messageColors[log.level as number])
-      const thread = fg(`(Thread-${log.$threadId})`, 89)
+      const group = fg(`[${String(log.$label)}]`, 11)
+      const msg = fg(
+        String(log[messageKey]),
+        messageColors[log.level as number],
+      )
+      const thread = fg(`(T-${String(log.$threadId)})`, 89)
       return `\x1b[0m${thread} ${group} ${msg}`
     },
     customPrettifiers: {

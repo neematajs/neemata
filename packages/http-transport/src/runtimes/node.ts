@@ -1,9 +1,9 @@
 import {} from 'node:dns'
-import { setTimeout } from 'node:timers/promises'
 
 import type { ApplicationTransport } from '@nmtjs/application'
 import type { ConnectionType } from '@nmtjs/protocol'
 import { ProxyableTransportType } from '@nmtjs/gateway'
+import { App, SSLApp, us_socket_local_port } from 'uWebSockets.js'
 
 import type {
   HttpAdapterParams,
@@ -18,10 +18,12 @@ import {
   OkResponse,
 } from '../utils.ts'
 
-import { App, SSLApp, us_socket_local_port } from 'uWebSockets.js'
-
 const statusResponse = OkResponse()
 const statusResponseBuffer = await statusResponse.arrayBuffer()
+
+type UwsResponse = Parameters<
+  Parameters<ReturnType<typeof App>['any']>[1]
+>[0] & { aborted?: boolean }
 
 function adapterFactory(params: HttpAdapterParams<'node'>): HttpAdapterServer {
   const server = params.tls
@@ -42,11 +44,13 @@ function adapterFactory(params: HttpAdapterParams<'node'>): HttpAdapterServer {
     })
     .any('/*', async (res, req) => {
       const requestController = new AbortController()
+      const uwsRes = res as UwsResponse
       let aborted = false
       let bodyController: ReadableStreamDefaultController<Buffer> | undefined
 
       res.onAborted(() => {
         aborted = true
+        uwsRes.aborted = true
         requestController.abort()
 
         try {
@@ -93,24 +97,28 @@ function adapterFactory(params: HttpAdapterParams<'node'>): HttpAdapterServer {
       }
       if (aborted) return undefined
       else {
+        const fixedContentLength = response.body
+          ? getContentLength(response.headers)
+          : undefined
         res.cork(() => {
           if (aborted) return undefined
           res.writeStatus(
             `${response.status.toString()} ${response.statusText}`,
           )
-          response.headers.forEach((v, k) => res.writeHeader(k, v))
+          response.headers.forEach((v, k) => {
+            if (
+              typeof fixedContentLength === 'number' &&
+              k.toLowerCase() === 'content-length'
+            ) {
+              return
+            }
+
+            res.writeHeader(k, v)
+          })
         })
         if (response.body) {
           try {
-            const reader = response.body.getReader()
-            let chunk = await reader.read()
-            while (!chunk.done) {
-              if (aborted) break
-              if (chunk.value) res.cork(() => res.write(chunk.value!))
-              chunk = await reader.read()
-            }
-            if (aborted) await reader.cancel().catch(() => {})
-            else res.cork(() => res.end())
+            await handleResponseBody(uwsRes, response, fixedContentLength)
           } catch {
             if (!aborted) res.cork(() => res.close())
           }
@@ -151,6 +159,127 @@ function adapterFactory(params: HttpAdapterParams<'node'>): HttpAdapterServer {
       server.close()
     },
   }
+}
+
+async function handleResponseBody(
+  res: UwsResponse,
+  response: Response,
+  fixedContentLength?: number,
+): Promise<void> {
+  if (!response.body) return
+
+  if (typeof fixedContentLength === 'number') {
+    await handleFixedLengthStream(res, response.body, fixedContentLength)
+    return
+  }
+
+  await handleChunkedStream(res, response.body)
+}
+
+async function handleFixedLengthStream(
+  res: UwsResponse,
+  body: ReadableStream<Uint8Array>,
+  totalSize: number,
+): Promise<void> {
+  const reader = body.getReader()
+  try {
+    if (totalSize === 0) {
+      if (!res.aborted) res.cork(() => res.endWithoutBody(0))
+      return
+    }
+
+    let responded = false
+    while (!res.aborted && !responded) {
+      const { done, value } = await reader.read()
+      if (done) break
+      if (value.byteLength === 0) continue
+      responded = await handleFixedChunk(res, value, totalSize)
+    }
+
+    if (!responded && !res.aborted) res.cork(() => res.close())
+  } finally {
+    reader.releaseLock()
+  }
+}
+
+async function handleChunkedStream(
+  res: UwsResponse,
+  body: ReadableStream<Uint8Array>,
+): Promise<void> {
+  const reader = body.getReader()
+  try {
+    while (!res.aborted) {
+      const { done, value } = await reader.read()
+      if (done) break
+      if (value.byteLength === 0) continue
+
+      const ok = res.cork(() => res.write(value))
+      if (!ok) await waitWritable(res)
+    }
+
+    if (!res.aborted) res.cork(() => res.end())
+  } finally {
+    reader.releaseLock()
+  }
+}
+
+function handleFixedChunk(
+  res: UwsResponse,
+  chunk: Uint8Array,
+  totalSize: number,
+): Promise<boolean> {
+  return new Promise((resolve, reject) => {
+    const chunkOffset = res.getWriteOffset()
+
+    const write = (offset: number) => {
+      if (res.aborted) {
+        reject(new Error('Response aborted'))
+        return false
+      }
+
+      const relativeOffset = offset - chunkOffset
+      const remaining =
+        relativeOffset > 0 ? chunk.subarray(relativeOffset) : chunk
+
+      let ok = false
+      let done = false
+      res.cork(() => {
+        ;[ok, done] = res.tryEnd(remaining, totalSize)
+      })
+
+      if (done || ok) {
+        resolve(done)
+        return ok
+      }
+
+      res.onWritable(write)
+      return ok
+    }
+
+    write(chunkOffset)
+  })
+}
+
+function waitWritable(res: UwsResponse): Promise<void> {
+  return new Promise((resolve, reject) => {
+    res.onWritable(() => {
+      if (res.aborted) {
+        reject(new Error('Response aborted'))
+        return false
+      }
+
+      resolve()
+      return true
+    })
+  })
+}
+
+function getContentLength(headers: Headers): number | undefined {
+  const raw = headers.get('content-length')
+  if (!raw) return undefined
+
+  const value = Number(raw)
+  return Number.isSafeInteger(value) && value >= 0 ? value : undefined
 }
 
 export const HttpTransport: ApplicationTransport<

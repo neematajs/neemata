@@ -18,9 +18,6 @@
       }
     }
   },
-  "scripts": {
-    "clean-build": "rm -rf ./dist"
-  },
   "dependencies": {
     "@nmtjs/client": "workspace:*",
     "@nmtjs/common": "workspace:*"

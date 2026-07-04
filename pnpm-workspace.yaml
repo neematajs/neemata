@@ -1,17 +1,39 @@
 packages:
   - packages/*
-  - tests/*
 
 allowBuilds:
   esbuild: true
   msgpackr-extract: false
   prom-client: true
+  protobufjs: true
 
 catalog:
-  "@nmtjs/proxy": 1.0.0-beta.6
-  vite: 8.0.14
+  vite: 8.0.11
   zod: ^4.0.0
 
 minimumReleaseAgeExclude:
-  - "@nmtjs/prom-client"
-  - "@nmtjs/proxy"
+  - '@nmtjs/prom-client'
+  - '@nmtjs/proxy'
+  - '@rolldown/binding-android-arm64@1.1.1'
+  - '@rolldown/binding-darwin-arm64@1.1.1'
+  - '@rolldown/binding-darwin-x64@1.1.1'
+  - '@rolldown/binding-freebsd-x64@1.1.1'
+  - '@rolldown/binding-linux-arm-gnueabihf@1.1.1'
+  - '@rolldown/binding-linux-arm64-gnu@1.1.1'
+  - '@rolldown/binding-linux-arm64-musl@1.1.1'
+  - '@rolldown/binding-linux-ppc64-gnu@1.1.1'
+  - '@rolldown/binding-linux-s390x-gnu@1.1.1'
+  - '@rolldown/binding-linux-x64-gnu@1.1.1'
+  - '@rolldown/binding-linux-x64-musl@1.1.1'
+  - '@rolldown/binding-openharmony-arm64@1.1.1'
+  - '@rolldown/binding-wasm32-wasi@1.1.1'
+  - '@rolldown/binding-win32-arm64-msvc@1.1.1'
+  - '@rolldown/binding-win32-x64-msvc@1.1.1'
+  - rolldown@1.1.1
+  - '@nmtjs/proxy-darwin-arm64@1.0.0-beta.7'
+  - '@nmtjs/proxy-darwin-x64@1.0.0-beta.7'
+  - '@nmtjs/proxy-linux-arm-gnueabihf@1.0.0-beta.7'
+  - '@nmtjs/proxy-linux-arm64-gnu@1.0.0-beta.7'
+  - '@nmtjs/proxy-linux-arm64-musl@1.0.0-beta.7'
+  - '@nmtjs/proxy-linux-x64-gnu@1.0.0-beta.7'
+  - '@nmtjs/proxy-linux-x64-musl@1.0.0-beta.7'

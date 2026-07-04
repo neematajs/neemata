@@ -1,9 +1,9 @@
+import { StaticClient } from '@nmtjs/client'
+import { MsgpackFormat as ClientMsgpackFormat } from '@nmtjs/msgpack-format/client'
+import { MsgpackFormat as ServerMsgpackFormat } from '@nmtjs/msgpack-format/server'
 import { ProtocolVersion } from '@nmtjs/protocol'
 import { describe, expect, it, vi } from 'vitest'
 
-import { StaticClient } from '../../client/src/clients/static.ts'
-import { MsgpackFormat as ClientMsgpackFormat } from '../../msgpack-format/src/client.ts'
-import { MsgpackFormat as ServerMsgpackFormat } from '../../msgpack-format/src/server.ts'
 import { HttpTransportFactory } from '../src/index.ts'
 
 describe('HttpTransportClient + MsgpackFormat', () => {

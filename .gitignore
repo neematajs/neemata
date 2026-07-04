@@ -1,9 +1,11 @@
 .vitest-attachments/
 __screenshots__/
 .neemata/
+.neem/
 test.*
 _dev/
-
+packages/neem/tests/e2e/.tmp/
+packages/_neem_old
 *.sock
 
 # Based on https://raw.githubusercontent.com/github/gitignore/main/Node.gitignore

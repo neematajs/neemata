@@ -138,12 +138,12 @@ describe('ClientStreams', () => {
       expect(() => streams.get(8)).toThrow('Stream not found')
     })
 
-    it('should clear all streams without error', () => {
+    it('should clear all streams without error', async () => {
       const streams = new ClientStreams()
       streams.add(createReadable([]), 1, metadata)
       streams.add(createReadable([]), 2, metadata)
 
-      streams.clear()
+      await streams.clear()
 
       expect(() => streams.get(1)).toThrow('Stream not found')
       expect(() => streams.get(2)).toThrow('Stream not found')

@@ -23,7 +23,6 @@ import type {
   HttpAdapterServer,
   HttpAdapterServerFactory,
   HttpTransportCorsCustomParams,
-  HttpTransportCorsOptions,
   HttpTransportOptions,
   HttpTransportServerRequest,
 } from './types.ts'
@@ -77,17 +76,12 @@ export function createHTTPTransportWorker(
   return new HttpTransportServer(adapterFactory, options)
 }
 
-export class HttpTransportServer
-  implements
-    TransportWorker<ConnectionType.Unidirectional, ApplicationResolvedProcedure>
-{
+export class HttpTransportServer implements TransportWorker<
+  ConnectionType.Unidirectional,
+  ApplicationResolvedProcedure
+> {
   #server: HttpAdapterServer
-  #corsOptions?:
-    | null
-    | true
-    | string[]
-    | HttpTransportCorsOptions
-    | ((origin: string) => boolean | HttpTransportCorsOptions)
+  #corsOptions?: HttpTransportOptions['cors']
 
   params!: TransportWorkerParams<
     ConnectionType.Unidirectional,
@@ -219,6 +213,12 @@ export class HttpTransportServer
         if (metadata.size) {
           responseHeaders.set('Content-Length', metadata.size.toString())
         }
+        if (metadata.filename) {
+          responseHeaders.set(
+            'Content-Disposition',
+            `attachment; filename="${metadata.filename}"`,
+          )
+        }
 
         // Convert source to ReadableStream
         let stream: ReadableStream
@@ -282,7 +282,6 @@ export class HttpTransportServer
         })
       }
     } catch (error) {
-      console.error(error)
       if (error instanceof UnsupportedFormatError) {
         const status =
           error instanceof UnsupportedContentTypeError
@@ -398,7 +397,7 @@ export class HttpTransportServer
     // const hooks = this.createWsHooks()
     const opts: HttpAdapterParams = {
       ...this.options,
-      // logger: this.logger.child({ $label: 'WsServer' }),
+      // logger: forkLogger(this.logger, 'WsServer'),
       fetchHandler: this.httpHandler.bind(this),
     }
     return this.adapterFactory(opts)

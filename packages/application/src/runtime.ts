@@ -1,23 +1,16 @@
-import type { AnyInjectable, Dependant, Logger } from '@nmtjs/core'
+import type { Container, Dependant, Logger } from '@nmtjs/core'
 import type { GatewayApi } from '@nmtjs/gateway'
-import {
-  Container,
-  CoreInjectables,
-  getDepedencencyInjectable,
-  provision,
-  Scope,
-} from '@nmtjs/core'
+import { ExecutionEnvironment, forkLogger } from '@nmtjs/core'
 
 import type { ApiOptions, ApplicationResolvedProcedure } from './api/api.ts'
-import type { kDefaultProcedure as kDefaultProcedureKey } from './api/constants.ts'
 import type { AnyFilter } from './api/filters.ts'
 import type { AnyGuard } from './api/guards.ts'
 import type { AnyMiddleware } from './api/middlewares.ts'
 import type { AnyProcedure } from './api/procedure.ts'
-import type { AnyRouter } from './api/router.ts'
+import type { AnyRootRouter, AnyRouter } from './api/router.ts'
 import type { ApplicationConfig } from './config.ts'
 import { ApplicationApi } from './api/api.ts'
-import { kDefaultProcedure, kRootRouter } from './api/constants.ts'
+import { kRootRouterSources } from './api/constants.ts'
 import { isProcedure } from './api/procedure.ts'
 import { isRootRouter, isRouter } from './api/router.ts'
 import { LifecycleHook } from './enums.ts'
@@ -31,15 +24,14 @@ export interface NeemataApplicationOptions {
 }
 
 export class NeemataApplication {
-  readonly logger: Logger
-  readonly container: Container
+  protected readonly execution: ExecutionEnvironment
   readonly lifecycleHooks = new LifecycleHooks()
   readonly applicationHooks = new ApplicationHooks()
   readonly api: GatewayApi<ApplicationResolvedProcedure>
 
-  readonly routers = new Map<string | kRootRouter, AnyRouter>()
+  readonly routers = new Set<AnyRouter>()
   readonly procedures = new Map<
-    string | kDefaultProcedureKey,
+    string,
     { procedure: AnyProcedure; path: AnyRouter[] }
   >()
   readonly filters = new Set<AnyFilter>()
@@ -50,12 +42,16 @@ export class NeemataApplication {
     protected appConfig: ApplicationConfig,
     options: NeemataApplicationOptions,
   ) {
-    this.logger = options.logger.child(
-      options.name ? { application: options.name } : {},
-    )
-    this.container = options.container
-      ? options.container.fork(Scope.Global)
-      : new Container({ logger: this.logger })
+    const logger = options.name
+      ? forkLogger(options.logger, undefined, undefined, {
+          application: options.name,
+        })
+      : options.logger
+    this.execution = new ExecutionEnvironment({
+      logger,
+      container: options.container,
+      label: 'NeemataApplication',
+    })
 
     this.api = new ApplicationApi({
       timeout: this.appConfig.api.timeout,
@@ -69,11 +65,19 @@ export class NeemataApplication {
     } satisfies ApiOptions)
   }
 
+  get logger() {
+    return this.execution.logger
+  }
+
+  get container() {
+    return this.execution.container
+  }
+
   async initialize(): Promise<void> {
     this.registerApi()
     this.lifecycleHooks.addHooks(this.appConfig.lifecycleHooks)
     await this.initializePlugins()
-    await this.initializeContainer()
+    await this.initializeExecutionEnv()
     await this.lifecycleHooks.callHook(LifecycleHook.BeforeInitialize, this)
     await this.initializeApplicationHooks()
     await this.lifecycleHooks.callHook(LifecycleHook.AfterInitialize, this)
@@ -83,7 +87,7 @@ export class NeemataApplication {
     await this.lifecycleHooks.callHook(LifecycleHook.BeforeDispose, this)
     this.applicationHooks.removeAllHooks()
     await this.lifecycleHooks.callHook(LifecycleHook.AfterDispose, this)
-    await this.disposeContainer()
+    await this.disposeExecutionEnv()
     await this.disposePlugins()
     this.lifecycleHooks.removeHooks(this.appConfig.lifecycleHooks)
     this.filters.clear()
@@ -120,20 +124,12 @@ export class NeemataApplication {
     }
   }
 
-  protected async initializeContainer(): Promise<void> {
-    this.container.provide([provision(CoreInjectables.logger, this.logger)])
-
-    const dependencies = new Set<AnyInjectable>()
-    for (const dependant of this.dependents()) {
-      for (const dependency of Object.values(dependant.dependencies)) {
-        dependencies.add(getDepedencencyInjectable(dependency))
-      }
-    }
-    await this.container.initialize(dependencies)
+  protected async initializeExecutionEnv(): Promise<void> {
+    await this.execution.initialize(this.dependents())
   }
 
-  protected async disposeContainer(): Promise<void> {
-    await this.container.dispose()
+  protected async disposeExecutionEnv(): Promise<void> {
+    await this.execution.dispose()
   }
 
   protected *dependents(): Generator<Dependant> {
@@ -142,9 +138,13 @@ export class NeemataApplication {
     yield* this.appConfig.middlewares
     yield* this.appConfig.meta
     yield* this.appConfig.hooks
-    for (const router of this.routers.values()) {
+
+    for (const router of this.routers) {
       yield* router.meta
+      yield* router.guards
+      yield* router.middlewares
     }
+
     for (const { procedure } of this.procedures.values()) {
       yield procedure
       yield* procedure.meta
@@ -156,7 +156,7 @@ export class NeemataApplication {
   protected registerApi(): void {
     const { router, filters, guards, middlewares } = this.appConfig
 
-    if (this.routers.has(kRootRouter)) {
+    if (Array.from(this.routers.values()).some((r) => isRootRouter(r))) {
       throw new Error('Root router already registered')
     }
 
@@ -164,22 +164,36 @@ export class NeemataApplication {
       throw new Error('Root router must be a root router')
     }
 
-    this.routers.set(kRootRouter, router)
-    this.registerRouter(router, [])
-
-    if (router.default) {
-      if (!isProcedure(router.default)) {
-        throw new Error('Root router default must be a procedure')
-      }
-      this.procedures.set(kDefaultProcedure, {
-        procedure: router.default,
-        path: [router],
-      })
-    }
+    this.routers.add(router)
+    this.registerRootRouter(router)
 
     for (const filter of filters) this.filters.add(filter)
     for (const middleware of middlewares) this.middlewares.add(middleware)
     for (const guard of guards) this.guards.add(guard)
+  }
+
+  protected registerRootRouter(router: AnyRootRouter): void {
+    this.warnDuplicateRootRoutes(router)
+    for (const source of router[kRootRouterSources]) {
+      this.routers.add(source)
+      this.registerRouter(source, [router])
+    }
+  }
+
+  protected warnDuplicateRootRoutes(router: AnyRootRouter): void {
+    const routes = new Set<string>()
+    const duplicates = new Set<string>()
+
+    for (const source of router[kRootRouterSources]) {
+      for (const route of Object.keys(source.routes)) {
+        if (routes.has(route)) duplicates.add(route)
+        else routes.add(route)
+      }
+    }
+
+    for (const route of duplicates) {
+      this.logger.warn({ route }, 'Duplicate root router route')
+    }
   }
 
   protected registerRouter(router: AnyRouter, path: AnyRouter[] = []): void {
@@ -187,10 +201,12 @@ export class NeemataApplication {
       if (isRouter(route)) {
         const name = route.contract.name
         if (!name) throw new Error('Nested routers must have a name')
-        if (this.routers.has(name)) {
-          throw new Error(`Router ${String(name)} already registered`)
+        for (const router of this.routers) {
+          if (router.contract.name === name) {
+            throw new Error(`Router ${String(name)} already registered`)
+          }
         }
-        this.routers.set(name, route)
+        this.routers.add(route)
         this.registerRouter(route, [...path, router])
       } else if (isProcedure(route)) {
         const name = route.contract.name

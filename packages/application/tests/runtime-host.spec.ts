@@ -1,12 +1,15 @@
 import type { TransportWorker, TransportWorkerParams } from '@nmtjs/gateway'
 import type { ProtocolFormats } from '@nmtjs/protocol/server'
-import { createLogger } from '@nmtjs/core'
+import { createFactoryInjectable, createLogger } from '@nmtjs/core'
 import { createTransport, StreamTimeout } from '@nmtjs/gateway'
 import { t } from '@nmtjs/type'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import {
   createApplicationHost,
+  createGuard,
+  createMeta,
+  createMiddleware,
   createProcedure,
   createRootRouter,
   createRouter,
@@ -66,13 +69,188 @@ function createFormats() {
 describe('application runtime boundary', () => {
   it('initializes application API without transports', async () => {
     const logger = createLogger({ pinoOptions: { enabled: false } }, 'test')
-    const runtime = new NeemataApplication(createApp(), { logger })
+    const runtime = new NeemataApplication(createApp(), {
+      logger,
+      name: 'test-app',
+    })
 
     try {
       await runtime.initialize()
 
+      expect(runtime.logger.bindings()).toMatchObject({
+        $label: 'NeemataApplication',
+        application: 'test-app',
+      })
       expect(runtime.procedures.has('ping')).toBe(true)
       expect(runtime.routers.size).toBeGreaterThan(0)
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
+  it('warns when root-composed routers duplicate a top-level route', async () => {
+    const logger = createLogger({ pinoOptions: { enabled: false } }, 'test')
+    const warn = vi.spyOn(logger, 'warn')
+    const first = createRouter({
+      routes: {
+        ping: createProcedure({ handler: async () => ({ ok: true }) }),
+      },
+    })
+    const second = createRouter({
+      routes: {
+        ping: createProcedure({ handler: async () => ({ ok: true }) }),
+      },
+    })
+    const runtime = new NeemataApplication(
+      defineApplication({ router: createRootRouter([first, second] as const) }),
+      { logger },
+    )
+
+    try {
+      await expect(runtime.initialize()).rejects.toThrow(
+        'Procedure ping already registered',
+      )
+      expect(warn).toHaveBeenCalledWith(
+        { route: 'ping' },
+        'Duplicate root router route',
+      )
+    } finally {
+      await runtime.dispose()
+      warn.mockRestore()
+    }
+  })
+
+  it('registers each root-composed source router once in procedure paths', async () => {
+    const logger = createLogger({ pinoOptions: { enabled: false } }, 'test')
+    const allowed = createMeta<'get'>()
+    const procedure = createProcedure({ handler: async () => ({ ok: true }) })
+    const route = createRouter({
+      meta: [allowed.static('get')],
+      routes: { ping: procedure },
+    })
+    const rootRouter = createRootRouter([route] as const)
+    const runtime = new NeemataApplication(
+      defineApplication({ router: rootRouter }),
+      { logger },
+    )
+
+    try {
+      await runtime.initialize()
+      const path = runtime.procedures.get('ping')?.path
+
+      expect(path).toHaveLength(2)
+      expect(path?.[0]).toBe(rootRouter)
+      expect(path?.[1]).toBe(route)
+      expect(runtime.routers.has(rootRouter)).toBe(true)
+      expect(runtime.routers.has(route)).toBe(true)
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
+  it('tracks nested routers from root-composed sources', async () => {
+    const logger = createLogger({ pinoOptions: { enabled: false } }, 'test')
+    const nested = createRouter({
+      routes: {
+        status: createProcedure({ handler: async () => ({ ok: true }) }),
+      },
+    })
+    const source = createRouter({ routes: { api: nested } })
+    const mountedNested = source.routes.api
+    const rootRouter = createRootRouter([source] as const)
+    const runtime = new NeemataApplication(
+      defineApplication({ router: rootRouter }),
+      { logger },
+    )
+
+    try {
+      await runtime.initialize()
+
+      expect(runtime.routers.has(rootRouter)).toBe(true)
+      expect(runtime.routers.has(source)).toBe(true)
+      expect(runtime.routers.has(mountedNested)).toBe(true)
+      const path = runtime.procedures.get('api/status')?.path
+      expect(path).toHaveLength(3)
+      expect(path?.[0]).toBe(rootRouter)
+      expect(path?.[1]).toBe(source)
+      expect(path?.[2]).toBe(mountedNested)
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
+  it('initializes root-composed source router context dependencies', async () => {
+    const logger = createLogger({ pinoOptions: { enabled: false } }, 'test')
+    const initialized = new Set<string>()
+    const metaMarker = createFactoryInjectable({
+      create() {
+        initialized.add('meta')
+        return true
+      },
+    })
+    const guardMarker = createFactoryInjectable({
+      create() {
+        initialized.add('guard')
+        return true
+      },
+    })
+    const middlewareMarker = createFactoryInjectable({
+      create() {
+        initialized.add('middleware')
+        return true
+      },
+    })
+    const metaDependency = createFactoryInjectable({
+      dependencies: { marker: metaMarker },
+      create() {
+        return 'get' as const
+      },
+    })
+    const guardDependency = createFactoryInjectable({
+      dependencies: { marker: guardMarker },
+      create() {
+        return true
+      },
+    })
+    const middlewareDependency = createFactoryInjectable({
+      dependencies: { marker: middlewareMarker },
+      create() {
+        return true
+      },
+    })
+    const allowed = createMeta<'get'>()
+    const source = createRouter({
+      meta: [
+        allowed.factory({
+          dependencies: { value: metaDependency },
+          handler: (ctx) => ctx.value,
+        }),
+      ],
+      guards: [
+        createGuard({
+          dependencies: { allow: guardDependency },
+          handler: (ctx) => ctx.allow,
+        }),
+      ],
+      middlewares: [
+        createMiddleware({
+          dependencies: { active: middlewareDependency },
+          handler: (_ctx, _call, next, payload) => next(payload),
+        }),
+      ],
+      routes: {
+        ping: createProcedure({ handler: async () => ({ ok: true }) }),
+      },
+    })
+    const runtime = new NeemataApplication(
+      defineApplication({ router: createRootRouter([source] as const) }),
+      { logger },
+    )
+
+    try {
+      await runtime.initialize()
+
+      expect(initialized).toEqual(new Set(['meta', 'guard', 'middleware']))
     } finally {
       await runtime.dispose()
     }

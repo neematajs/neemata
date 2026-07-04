@@ -1,0 +1,57 @@
+{
+  "name": "@nmtjs/metrics",
+  "description": "Neem metrics helpers and Prometheus-compatible observer.",
+  "type": "module",
+  "scripts": {
+    "clean-build": "rm -rf ./dist",
+    "test": "vitest run --config vitest.config.ts"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./dist/index.js",
+      "module-sync": "./dist/index.js"
+    },
+    "./neem": {
+      "types": "./src/neem/index.ts",
+      "import": "./dist/neem/index.js",
+      "module-sync": "./dist/neem/index.js"
+    },
+    "./neem/plugin": {
+      "types": "./src/neem/plugin.ts",
+      "import": "./dist/neem/plugin.js",
+      "module-sync": "./dist/neem/plugin.js"
+    }
+  },
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js",
+        "module-sync": "./dist/index.js"
+      },
+      "./neem": {
+        "types": "./dist/neem/index.d.ts",
+        "import": "./dist/neem/index.js",
+        "module-sync": "./dist/neem/index.js"
+      },
+      "./neem/plugin": {
+        "types": "./dist/neem/plugin.d.ts",
+        "import": "./dist/neem/plugin.js",
+        "module-sync": "./dist/neem/plugin.js"
+      }
+    }
+  },
+  "dependencies": {
+    "@nmtjs/common": "workspace:*",
+    "@nmtjs/core": "workspace:*",
+    "@nmtjs/neem": "workspace:*",
+    "@nmtjs/prom-client": "1.0.1"
+  },
+  "files": [
+    "dist",
+    "src",
+    "LICENSE.md",
+    "README.md"
+  ]
+}
