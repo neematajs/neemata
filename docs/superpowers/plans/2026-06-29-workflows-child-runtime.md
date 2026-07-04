@@ -45,6 +45,7 @@
 ### Task 1: Runtime Store Contract For Child Identity
 
 **Files:**
+
 - Modify: `packages/workflows/src/runtime/state.ts`
 - Modify: `packages/workflows/src/runtime/store.ts`
 - Test: `packages/workflows/tests/runtime-interfaces.spec.ts`
@@ -302,7 +303,11 @@ export type * from './state.ts'
 export type * from './status.ts'
 export type * from './store.ts'
 export { continueWorkflowRun } from './coordinator.ts'
-export { runActivityAttempt, runTaskAttempt, runWithConcurrency } from './worker.ts'
+export {
+  runActivityAttempt,
+  runTaskAttempt,
+  runWithConcurrency,
+} from './worker.ts'
 ```
 
 If `runtime/index.ts` already has equivalent exports, leave it unchanged.
@@ -329,6 +334,7 @@ git commit -m "feat: add workflow orchestration store contracts"
 ### Task 2: In-Memory Semantic Store Methods
 
 **Files:**
+
 - Modify: `packages/workflows/tests/support/in-memory-runtime.ts`
 - Test: `packages/workflows/tests/runtime-store.spec.ts`
 
@@ -744,6 +750,7 @@ git commit -m "feat: add in-memory orchestration store semantics"
 ### Task 3: Child Workflow Runtime Tests
 
 **Files:**
+
 - Test: `packages/workflows/tests/runtime-coordinator.spec.ts`
 
 - [ ] **Step 1: Add child workflow execution test**
@@ -947,7 +954,11 @@ it('does not duplicate child workflow runs on repeated parent continuation', asy
 
   const snapshot = await runtime.store.loadRunSnapshot(parentRun.id)
   expect(snapshot?.childLinks).toHaveLength(1)
-  expect(runtime.inspect().runs.filter((run) => run.workflowName === childWorkflow.name)).toHaveLength(1)
+  expect(
+    runtime
+      .inspect()
+      .runs.filter((run) => run.workflowName === childWorkflow.name),
+  ).toHaveLength(1)
 })
 ```
 
@@ -1056,6 +1067,7 @@ Do not commit failing tests alone. Continue to Task 4.
 ### Task 4: Direct Child Workflow Node Runtime
 
 **Files:**
+
 - Modify: `packages/workflows/src/runtime/coordinator.ts`
 - Test: `packages/workflows/tests/runtime-coordinator.spec.ts`
 
@@ -1122,7 +1134,12 @@ async function dispatchWorkflowNode(input: {
   if (existingLink) {
     const snapshot = await input.store.loadRunSnapshot(existingLink.childRunId)
     const childRun = snapshot?.run
-    if (!childRun || childRun.status === 'queued' || childRun.status === 'running' || childRun.status === 'waiting') {
+    if (
+      !childRun ||
+      childRun.status === 'queued' ||
+      childRun.status === 'running' ||
+      childRun.status === 'waiting'
+    ) {
       return
     }
     if (childRun.status === 'completed') {
@@ -1136,7 +1153,8 @@ async function dispatchWorkflowNode(input: {
     await input.store.failNode({
       runId: input.run.id,
       nodeName: input.node.name,
-      error: childRun.error ?? new Error(`Child workflow [${childRun.id}] failed`),
+      error:
+        childRun.error ?? new Error(`Child workflow [${childRun.id}] failed`),
     })
     return
   }
@@ -1190,7 +1208,10 @@ duplicates if two coordinators race in the test store.
 In the code path where `!nextNode` completes a run, after `completeRun`, enqueue parent continuation when the completed run has parent metadata:
 
 ```ts
-const completed = await input.store.completeRun({ runId: snapshot.run.id, output })
+const completed = await input.store.completeRun({
+  runId: snapshot.run.id,
+  output,
+})
 if (completed?.parentRunId && completed.parentNodeName) {
   const parent = await input.store.loadRunSnapshot(completed.parentRunId)
   if (parent) {
@@ -1237,6 +1258,7 @@ git commit -m "feat: run child workflow nodes"
 ### Task 5: Verification And Cleanup
 
 **Files:**
+
 - Review all files changed in Tasks 1-4.
 
 - [ ] **Step 1: Run full workflows tests**

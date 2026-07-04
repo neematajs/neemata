@@ -86,6 +86,7 @@ Non-goals:
 ## Task 1: Store Contract For Selected Branch Case
 
 **Files:**
+
 - Modify: `packages/workflows/src/runtime/store.ts`
 - Modify: `packages/workflows/tests/support/in-memory-runtime.ts`
 - Test: `packages/workflows/tests/runtime-interfaces.spec.ts`
@@ -96,10 +97,7 @@ Non-goals:
 Add imports in `packages/workflows/tests/runtime-interfaces.spec.ts`:
 
 ```ts
-import type {
-  SelectNodeCaseParams,
-  WorkflowStore,
-} from '../src/index.ts'
+import type { SelectNodeCaseParams, WorkflowStore } from '../src/index.ts'
 ```
 
 Add this test:
@@ -266,6 +264,7 @@ git commit -m "feat: add selected branch case store contract"
 ## Task 2: Branch Activity Case Runtime Tests
 
 **Files:**
+
 - Test: `packages/workflows/tests/runtime-coordinator.spec.ts`
 - Test: `packages/workflows/tests/runtime-worker.spec.ts`
 
@@ -306,12 +305,18 @@ it('runs a branch activity case and completes from selected output', async () =>
         return input.kind
       },
       cases: ({ activity }) => ({
-        normal: activity(async (_ctx, input) => ({ text: `normal:${input.scenario}` }), {
-          input: (_ctx, _outputs, input) => ({ scenario: input.scenario }),
-        }),
-        fallback: activity(async (_ctx, input) => ({ text: `fallback:${input.scenario}` }), {
-          input: (_ctx, _outputs, input) => ({ scenario: input.scenario }),
-        }),
+        normal: activity(
+          async (_ctx, input) => ({ text: `normal:${input.scenario}` }),
+          {
+            input: (_ctx, _outputs, input) => ({ scenario: input.scenario }),
+          },
+        ),
+        fallback: activity(
+          async (_ctx, input) => ({ text: `fallback:${input.scenario}` }),
+          {
+            input: (_ctx, _outputs, input) => ({ scenario: input.scenario }),
+          },
+        ),
       }),
     })
     .finish((_ctx, { content }) => ({ text: content.text }))
@@ -330,7 +335,11 @@ it('runs a branch activity case and completes from selected output', async () =>
     container,
     workflows: [implementation],
     workerId: 'coordinator',
-    command: { kind: 'continueRun', runId: run.id, workflowName: workflow.name },
+    command: {
+      kind: 'continueRun',
+      runId: run.id,
+      workflowName: workflow.name,
+    },
   })
 
   const afterDispatch = await runtime.store.loadRunSnapshot(run.id)
@@ -370,7 +379,11 @@ it('runs a branch activity case and completes from selected output', async () =>
     container,
     workflows: [implementation],
     workerId: 'coordinator',
-    command: { kind: 'continueRun', runId: run.id, workflowName: workflow.name },
+    command: {
+      kind: 'continueRun',
+      runId: run.id,
+      workflowName: workflow.name,
+    },
   })
 
   const final = await runtime.store.loadRunSnapshot(run.id)
@@ -428,7 +441,11 @@ it('does not reselect or duplicate branch activity attempts on repeated continua
     workflowName: workflow.name,
     input: { kind: 'normal', scenario: 'alpha' },
   })
-  const command = { kind: 'continueRun' as const, runId: run.id, workflowName: workflow.name }
+  const command = {
+    kind: 'continueRun' as const,
+    runId: run.id,
+    workflowName: workflow.name,
+  }
 
   await continueWorkflowRun({
     store: runtime.store,
@@ -453,7 +470,9 @@ it('does not reselect or duplicate branch activity attempts on repeated continua
   expect(selectCalls).toBe(1)
   expect(snapshot?.attempts).toHaveLength(1)
   expect(runtime.inspect().activityCommands).toHaveLength(2)
-  expect(runtime.inspect().activityCommands.map((item) => item.payload.attemptId)).toEqual([
+  expect(
+    runtime.inspect().activityCommands.map((item) => item.payload.attemptId),
+  ).toEqual([
     runtime.inspect().activityCommands[0]!.payload.attemptId,
     runtime.inspect().activityCommands[0]!.payload.attemptId,
   ])
@@ -486,6 +505,7 @@ git commit -m "test: cover branch activity runtime"
 ## Task 3: Branch Activity Runtime Implementation
 
 **Files:**
+
 - Modify: `packages/workflows/src/runtime/coordinator.ts`
 - Modify: `packages/workflows/src/runtime/worker.ts`
 - Test: `packages/workflows/tests/runtime-coordinator.spec.ts`
@@ -536,7 +556,11 @@ async function dispatchActivityAttempt(input: {
   readonly activityName: string
   readonly runId: string
   readonly nodeName: string
-  readonly identity?: { readonly runId: string; readonly nodeName: string; readonly caseKey?: string }
+  readonly identity?: {
+    readonly runId: string
+    readonly nodeName: string
+    readonly caseKey?: string
+  }
   readonly input: unknown
 }) {
   const result = input.identity
@@ -605,7 +629,9 @@ async function dispatchBranchNode(input: {
 
   const selected = input.node.cases[caseKey]
   if (!selected) {
-    const error = new Error(`Unknown branch case [${input.node.name}.${caseKey}]`)
+    const error = new Error(
+      `Unknown branch case [${input.node.name}.${caseKey}]`,
+    )
     await input.store.failNode({
       runId: input.run.id,
       nodeName: input.node.name,
@@ -727,6 +753,7 @@ git commit -m "feat: run branch activity cases"
 ## Task 4: Branch Task Case Runtime
 
 **Files:**
+
 - Modify: `packages/workflows/src/runtime/coordinator.ts`
 - Test: `packages/workflows/tests/runtime-coordinator.spec.ts`
 
@@ -782,7 +809,11 @@ it('runs a branch task case and completes from selected output', async () => {
     container,
     workflows: [workflowImplementation],
     workerId: 'coordinator',
-    command: { kind: 'continueRun', runId: run.id, workflowName: workflow.name },
+    command: {
+      kind: 'continueRun',
+      runId: run.id,
+      workflowName: workflow.name,
+    },
   })
 
   expect(runtime.inspect().taskCommands[0]?.payload).toMatchObject({
@@ -816,7 +847,11 @@ it('runs a branch task case and completes from selected output', async () => {
     container,
     workflows: [workflowImplementation],
     workerId: 'coordinator',
-    command: { kind: 'continueRun', runId: run.id, workflowName: workflow.name },
+    command: {
+      kind: 'continueRun',
+      runId: run.id,
+      workflowName: workflow.name,
+    },
   })
 
   const final = await runtime.store.loadRunSnapshot(run.id)
@@ -885,6 +920,7 @@ git commit -m "feat: run branch task cases"
 ## Task 5: Branch Child Workflow Case Runtime
 
 **Files:**
+
 - Modify: `packages/workflows/src/runtime/coordinator.ts`
 - Test: `packages/workflows/tests/runtime-coordinator.spec.ts`
 
@@ -1001,7 +1037,11 @@ async function dispatchChildWorkflow(input: {
   readonly run: StoredRun
   readonly outputs: Record<string, unknown>
   readonly nodeName: string
-  readonly identity: { readonly runId: string; readonly nodeName: string; readonly caseKey?: string }
+  readonly identity: {
+    readonly runId: string
+    readonly nodeName: string
+    readonly caseKey?: string
+  }
   readonly workflowName: string
   readonly nodeInput: unknown
 }): Promise<void>
@@ -1082,6 +1122,7 @@ git commit -m "feat: run branch workflow cases"
 ## Task 6: Branch Failure And Recovery Coverage
 
 **Files:**
+
 - Modify: `packages/workflows/src/runtime/coordinator.ts`
 - Test: `packages/workflows/tests/runtime-coordinator.spec.ts`
 
@@ -1130,7 +1171,11 @@ it('fails the run when a branch selects an unknown case', async () => {
     container,
     workflows: [implementation],
     workerId: 'coordinator',
-    command: { kind: 'continueRun', runId: run.id, workflowName: workflow.name },
+    command: {
+      kind: 'continueRun',
+      runId: run.id,
+      workflowName: workflow.name,
+    },
   })
 
   const snapshot = await runtime.store.loadRunSnapshot(run.id)
@@ -1184,10 +1229,7 @@ it('re-enqueues a branch child workflow when enqueue fails after link creation',
   const flakyRunCoordinationExecutor = {
     ...runtime.runCoordinationExecutor,
     async enqueue(command) {
-      if (
-        !failedChildEnqueue &&
-        command.workflowName === childWorkflow.name
-      ) {
+      if (!failedChildEnqueue && command.workflowName === childWorkflow.name) {
         failedChildEnqueue = true
         throw new Error('child enqueue failed')
       }
@@ -1379,6 +1421,7 @@ git commit -m "test: cover branch runtime recovery"
 ## Task 7: Final Verification And Review
 
 **Files:**
+
 - Review all changed files in this plan.
 
 - [ ] **Step 1: Run full focused runtime verification**

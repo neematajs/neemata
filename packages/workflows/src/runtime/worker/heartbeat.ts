@@ -97,7 +97,8 @@ export async function runWithAttemptHeartbeat<T>(
     void input.attemptExecutor
       .heartbeat(input.claimed, leaseMs)
       .then(({ runStatus }) => {
-        if (runStatus !== 'cancelling' && !isTerminalRunStatus(runStatus)) return
+        if (runStatus !== 'cancelling' && !isTerminalRunStatus(runStatus))
+          return
         heartbeatFailed = true
         abortAttempt({ type: 'cancelled' })
         rejectHeartbeat(

@@ -40,6 +40,7 @@
 ## Task 1: Array-First Build Groups And Change Events
 
 **Files:**
+
 - Modify `packages/neem/src/internal/build/graph.ts`
 - Modify `packages/neem/src/internal/build/compiler.ts`
 - Modify `packages/neem/src/internal/services/watcher.ts`
@@ -237,7 +238,10 @@ function classifyChange(change: TargetChange): WatcherManifestChangeInput {
     case 'runtime-planner':
       return { type: 'runtime-changed', runtimeName: getRuntimeName(target) }
     case 'runtime-host':
-      return { type: 'runtime-host-changed', runtimeName: getRuntimeName(target) }
+      return {
+        type: 'runtime-host-changed',
+        runtimeName: getRuntimeName(target),
+      }
     case 'plugin-entry':
       return { type: 'plugin-changed' }
     case 'logger':
@@ -268,6 +272,7 @@ Expected: PASS.
 ## Task 2: Declaration And Graph Boundary Cleanup
 
 **Files:**
+
 - Modify `packages/neem/src/internal/build/declarations.ts`
 - Modify `packages/neem/src/internal/build/graph.ts`
 - Test `packages/neem/tests/unit/build-graph.spec.ts`
@@ -325,6 +330,7 @@ Expected: PASS.
 ## Task 3: Service RPC Boundary And Startup Result Flow
 
 **Files:**
+
 - Modify `packages/neem/src/internal/services/protocol.ts`
 - Modify `packages/neem/src/internal/services/client.ts`
 - Modify `packages/neem/src/internal/services/watcher.ts`
@@ -342,7 +348,11 @@ Expected: PASS.
 In `packages/neem/tests/unit/services-client.spec.ts`, add/adjust coverage so requests do not contain caller-supplied IDs:
 
 ```ts
-const client = new WorkerServiceClient<{ type: 'event' }, { type: 'start' }, { ok: true }>({
+const client = new WorkerServiceClient<
+  { type: 'event' },
+  { type: 'start' },
+  { ok: true }
+>({
   entry,
   serviceName: 'fixture',
 })
@@ -477,7 +487,10 @@ In `cli.ts`, after watcher start result:
 
 ```ts
 if (result) {
-  this.options.probe?.emit('watcher:ready', normalizeEvent({ type: 'ready', ...result }))
+  this.options.probe?.emit(
+    'watcher:ready',
+    normalizeEvent({ type: 'ready', ...result }),
+  )
   this.acceptManifest({ type: 'ready', ...result }, { resetRevision: true })
   if (result.configSignalFiles) {
     await this.startConfigSignalWatcher(result.configSignalFiles)
@@ -527,6 +540,7 @@ Expected: PASS.
 ## Task 4: Runtime Snapshot Context
 
 **Files:**
+
 - Modify `packages/neem/src/internal/manifest/snapshot.ts`
 - Modify `packages/neem/src/internal/services/runtime.ts`
 - Modify `packages/neem/src/internal/standalone/entry.ts`
@@ -647,6 +661,7 @@ Expected: PASS.
 ## Task 5: Host Lifecycle Duplication
 
 **Files:**
+
 - Modify `packages/neem/src/internal/host/controller.ts`
 - Modify `packages/neem/src/internal/host/runtime.ts`
 - Test `packages/neem/tests/e2e/recovery-health-proxy.spec.ts`
@@ -742,6 +757,7 @@ Expected: PASS.
 ## Task 6: Proxy Upstream Internal Type Boundary
 
 **Files:**
+
 - Modify `packages/neem/src/internal/schemas/runtime.ts`
 - Modify `packages/neem/src/internal/host/proxy.ts`
 - Optionally modify `packages/neem/src/internal/host/runtime.ts` only if type propagation requires it.
@@ -765,7 +781,9 @@ Update parse functions:
 export function parseRuntimeUpstreams(
   upstreams: unknown,
 ): readonly ParsedRuntimeUpstream[] {
-  return runtimeUpstreamsSchema.parse(upstreams) as readonly ParsedRuntimeUpstream[]
+  return runtimeUpstreamsSchema.parse(
+    upstreams,
+  ) as readonly ParsedRuntimeUpstream[]
 }
 
 export function parseRuntimeStartResult(
@@ -841,6 +859,7 @@ Expected: PASS.
 ## Task 7: Final Verification
 
 **Files:**
+
 - No planned source edits in this task.
 
 - [ ] **Step 1: Run Neem unit tests**

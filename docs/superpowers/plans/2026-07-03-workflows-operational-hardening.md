@@ -106,12 +106,12 @@ drizzle + testing DDL together).
 One `AbortController` per attempt inside `runWithAttemptHeartbeat`, aborted
 with a typed reason from four sources:
 
-| reason | source | disposition after abort |
-|---|---|---|
-| `timeout` | existing timer | attempt `timedOut` (use the enum; today recorded as `failed`), retry per policy |
-| `leaseLost` | existing heartbeat zero-row | abandon, no terminal write |
-| `cancelled` | NEW: heartbeat piggyback | ack-drop, no retry; coordinator finalizes |
-| `shutdown` | worker-loop signal threaded in | release command, no terminal write |
+| reason      | source                         | disposition after abort                                                         |
+| ----------- | ------------------------------ | ------------------------------------------------------------------------------- |
+| `timeout`   | existing timer                 | attempt `timedOut` (use the enum; today recorded as `failed`), retry per policy |
+| `leaseLost` | existing heartbeat zero-row    | abandon, no terminal write                                                      |
+| `cancelled` | NEW: heartbeat piggyback       | ack-drop, no retry; coordinator finalizes                                       |
+| `shutdown`  | worker-loop signal threaded in | release command, no terminal write                                              |
 
 - Cancellation observation: extend the heartbeat UPDATE with
   `RETURNING (SELECT r.status FROM workflow_runs r WHERE r.id = c.run_id)` —

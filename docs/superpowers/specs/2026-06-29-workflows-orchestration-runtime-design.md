@@ -571,17 +571,13 @@ interface WorkflowStore {
 
   ensureChildRun(params: EnsureChildRunParams): Promise<EnsureChildRunResult>
 
-  ensureMapItems(
-    params: EnsureMapItemsParams,
-  ): Promise<EnsureMapItemsResult>
+  ensureMapItems(params: EnsureMapItemsParams): Promise<EnsureMapItemsResult>
 
   completeMapItem(
     params: CompleteMapItemParams,
   ): Promise<StoredMapItem | undefined>
 
-  failMapItem(
-    params: FailMapItemParams,
-  ): Promise<StoredMapItem | undefined>
+  failMapItem(params: FailMapItemParams): Promise<StoredMapItem | undefined>
 
   waitNode(params: WaitNodeParams): Promise<StoredNode | undefined>
 

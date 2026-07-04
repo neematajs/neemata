@@ -17,6 +17,7 @@ import {
   type WorkflowRuntimeAtomicCompletion,
   type WorkflowRuntimeAtomicContinuation,
 } from './atomic.ts'
+import { isAttemptShutdown } from './heartbeat.ts'
 import {
   DEFAULT_LEASE_MS,
   isAttemptHeartbeatLeaseLost,
@@ -26,7 +27,6 @@ import {
   type WorkerLoopOptions,
   type WorkerLoopResult,
 } from './loop.ts'
-import { isAttemptShutdown } from './heartbeat.ts'
 import { runTaskAttempt } from './task-attempt.ts'
 
 type AnyWorkflowImplementation = WorkflowImplementation<

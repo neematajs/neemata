@@ -75,6 +75,7 @@
 ### Task 1: Runtime Interface Surface
 
 **Files:**
+
 - Create: `packages/workflows/src/runtime/status.ts`
 - Create: `packages/workflows/src/runtime/commands.ts`
 - Create: `packages/workflows/src/runtime/state.ts`
@@ -348,7 +349,12 @@ Create `packages/workflows/src/runtime/store.ts`:
 
 ```ts
 import type { WorkflowNodeKind } from '../types/index.ts'
-import type { RunSnapshot, StoredAttempt, StoredNode, StoredRun } from './state.ts'
+import type {
+  RunSnapshot,
+  StoredAttempt,
+  StoredNode,
+  StoredRun,
+} from './state.ts'
 
 export type RunLease = {
   readonly runId: string
@@ -558,6 +564,7 @@ git commit -m "feat: add workflow runtime interfaces"
 ### Task 2: In-Memory Store Semantics
 
 **Files:**
+
 - Create: `packages/workflows/src/testing/in-memory-runtime.ts`
 - Create: `packages/workflows/src/testing/index.ts`
 - Modify: `packages/workflows/package.json`
@@ -775,7 +782,9 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
       return {
         run,
         nodes: [...nodes.values()].filter((node) => node.runId === runId),
-        attempts: [...attempts.values()].filter((attempt) => attempt.runId === runId),
+        attempts: [...attempts.values()].filter(
+          (attempt) => attempt.runId === runId,
+        ),
         childLinks: childLinks.filter((link) => link.parentRunId === runId),
         mapItems: mapItems.filter((item) => item.runId === runId),
       }
@@ -815,7 +824,8 @@ export function createInMemoryWorkflowRuntime(): InMemoryWorkflowRuntime {
     async createAttempt(input: CreateAttemptInput) {
       const key = nodeKey(input.runId, input.nodeName)
       const node = nodes.get(key)
-      if (!node) throw new Error(`Missing node [${input.runId}.${input.nodeName}]`)
+      if (!node)
+        throw new Error(`Missing node [${input.runId}.${input.nodeName}]`)
       const attempt: StoredAttempt = {
         id: ids('attempt'),
         runId: input.runId,
@@ -1051,6 +1061,7 @@ git commit -m "feat: add in-memory workflow runtime store"
 ### Task 3: Runtime Registry And Routeability
 
 **Files:**
+
 - Create: `packages/workflows/src/runtime/registry.ts`
 - Modify: `packages/workflows/src/runtime/index.ts`
 - Modify: `packages/workflows/src/index.ts`
@@ -1063,7 +1074,12 @@ Append to `packages/workflows/tests/runtime-interfaces.spec.ts`:
 ```ts
 import { t } from '@nmtjs/type'
 
-import { defineTask, defineWorkflow, implementTask, implementWorkflow } from '../src/index.ts'
+import {
+  defineTask,
+  defineWorkflow,
+  implementTask,
+  implementWorkflow,
+} from '../src/index.ts'
 import { createWorkflowRuntimeRegistry } from '../src/index.ts'
 
 describe('workflow runtime registry', () => {
@@ -1231,6 +1247,7 @@ git commit -m "feat: add workflow runtime registry"
 ### Task 4: Continuation Coordinator For Activity Nodes
 
 **Files:**
+
 - Create: `packages/workflows/src/runtime/coordinator.ts`
 - Modify: `packages/workflows/src/runtime/index.ts`
 - Modify: `packages/workflows/src/index.ts`
@@ -1287,7 +1304,11 @@ describe('workflow runtime coordinator', () => {
       attemptExecutor: runtime.attemptExecutor,
       workflows: [implementation],
       workerId: 'coordinator-1',
-      command: { kind: 'continueRun', runId: run.id, workflowName: workflow.name },
+      command: {
+        kind: 'continueRun',
+        runId: run.id,
+        workflowName: workflow.name,
+      },
     })
 
     const afterDispatch = runtime.inspect()
@@ -1312,7 +1333,11 @@ describe('workflow runtime coordinator', () => {
       attemptExecutor: runtime.attemptExecutor,
       workflows: [implementation],
       workerId: 'coordinator-1',
-      command: { kind: 'continueRun', runId: run.id, workflowName: workflow.name },
+      command: {
+        kind: 'continueRun',
+        runId: run.id,
+        workflowName: workflow.name,
+      },
     })
 
     const snapshot = await runtime.store.loadRunSnapshot(run.id)
@@ -1384,9 +1409,11 @@ export async function continueWorkflowRun(
     )
 
     const nextNode = implementation.nodes.find(
-      (node) => !snapshot.nodes.some(
-        (stored) => stored.name === node.name && stored.status === 'completed',
-      ),
+      (node) =>
+        !snapshot.nodes.some(
+          (stored) =>
+            stored.name === node.name && stored.status === 'completed',
+        ),
     )
 
     if (!nextNode) {
@@ -1503,6 +1530,7 @@ git commit -m "feat: coordinate workflow activity nodes"
 ### Task 5: Attempt Worker Completion Path
 
 **Files:**
+
 - Modify: `packages/workflows/src/runtime/worker.ts`
 - Modify: `packages/workflows/src/runtime/index.ts`
 - Modify: `packages/workflows/src/index.ts`
@@ -1543,7 +1571,11 @@ it('runs claimed activity attempts and enqueues continuation on completion', asy
     attemptExecutor: runtime.attemptExecutor,
     workflows: [implementation],
     workerId: 'coordinator-1',
-    command: { kind: 'continueRun', runId: run.id, workflowName: workflow.name },
+    command: {
+      kind: 'continueRun',
+      runId: run.id,
+      workflowName: workflow.name,
+    },
   })
 
   const claimed = await runtime.attemptExecutor.claimActivity({
@@ -1702,6 +1734,7 @@ git commit -m "feat: run workflow activity attempts"
 ### Task 6: Task Nodes And Task Attempt Runner
 
 **Files:**
+
 - Modify: `packages/workflows/src/runtime/coordinator.ts`
 - Modify: `packages/workflows/src/runtime/worker.ts`
 - Modify: `packages/workflows/src/runtime/index.ts`
@@ -1750,7 +1783,11 @@ it('dispatches task nodes to task attempts and resumes parent run', async () => 
     attemptExecutor: runtime.attemptExecutor,
     workflows: [workflowImpl],
     workerId: 'coordinator-1',
-    command: { kind: 'continueRun', runId: run.id, workflowName: workflow.name },
+    command: {
+      kind: 'continueRun',
+      runId: run.id,
+      workflowName: workflow.name,
+    },
   })
 
   const claimed = await runtime.attemptExecutor.claimTask({
@@ -1775,7 +1812,11 @@ it('dispatches task nodes to task attempts and resumes parent run', async () => 
     attemptExecutor: runtime.attemptExecutor,
     workflows: [workflowImpl],
     workerId: 'coordinator-1',
-    command: { kind: 'continueRun', runId: run.id, workflowName: workflow.name },
+    command: {
+      kind: 'continueRun',
+      runId: run.id,
+      workflowName: workflow.name,
+    },
   })
 
   const snapshot = await runtime.store.loadRunSnapshot(run.id)
@@ -1858,20 +1899,27 @@ export type RunTaskAttemptInput = {
   readonly claimed: ClaimedAttempt
 }
 
-export async function runTaskAttempt(input: RunTaskAttemptInput): Promise<void> {
+export async function runTaskAttempt(
+  input: RunTaskAttemptInput,
+): Promise<void> {
   const command = input.claimed.command
   if (command.kind !== 'taskAttempt') {
     throw new Error(`Expected task attempt, received [${command.kind}]`)
   }
 
-  const task = input.tasks.find((candidate) => candidate.task.name === command.taskName)
+  const task = input.tasks.find(
+    (candidate) => candidate.task.name === command.taskName,
+  )
   if (!task) {
     await input.attemptExecutor.release(input.claimed)
     return
   }
 
   try {
-    const output = await task.handler(task.dependencies as DependencyContext<any>, command.input)
+    const output = await task.handler(
+      task.dependencies as DependencyContext<any>,
+      command.input,
+    )
     const attempt = await input.store.completeCurrentAttempt({
       attemptId: command.attemptId,
       leaseToken: input.claimed.leaseToken,
@@ -1948,6 +1996,7 @@ git commit -m "feat: coordinate workflow task nodes"
 ### Task 7: Worker Concurrency Wrapper
 
 **Files:**
+
 - Modify: `packages/workflows/src/runtime/worker.ts`
 - Test: `packages/workflows/tests/runtime-worker.spec.ts`
 
@@ -2054,6 +2103,7 @@ git commit -m "feat: add workflow worker concurrency helper"
 ### Task 8: Package Export Boundaries And Full Verification
 
 **Files:**
+
 - Modify: `packages/workflows/package.json`
 - Modify: `packages/workflows/src/runtime/index.ts`
 - Test: existing workflow test suite

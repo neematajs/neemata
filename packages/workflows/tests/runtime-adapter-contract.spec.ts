@@ -894,9 +894,9 @@ function workflowRuntimeAdapterContract(
 
       expect(wrongTask).toBeNull()
       expect(task?.command).toStrictEqual(taskCommand)
-      await expect(runtime.attemptExecutor.heartbeat(task!)).resolves.toStrictEqual(
-        { runStatus: 'queued' },
-      )
+      await expect(
+        runtime.attemptExecutor.heartbeat(task!),
+      ).resolves.toStrictEqual({ runStatus: 'queued' })
 
       await runtime.attemptExecutor.release(task!)
 

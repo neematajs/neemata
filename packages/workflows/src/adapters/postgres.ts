@@ -2677,7 +2677,10 @@ export function createPostgresWorkflowRuntime(params: {
     },
     async heartbeat(attempt, leaseMs = 30_000) {
       await ready
-      const updated = await one<{ id: string; run_status: StoredRun['status'] }>(
+      const updated = await one<{
+        id: string
+        run_status: StoredRun['status']
+      }>(
         db,
         `
           UPDATE workflow_commands c

@@ -102,7 +102,8 @@ function shouldRetryAttempt(
 ): retry is RetryPolicy {
   return (
     retry !== undefined &&
-    (failedAttempt.status === 'failed' || failedAttempt.status === 'timedOut') &&
+    (failedAttempt.status === 'failed' ||
+      failedAttempt.status === 'timedOut') &&
     failedAttempt.attemptNumber < retry.attempts
   )
 }
