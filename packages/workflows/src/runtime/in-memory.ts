@@ -7,10 +7,7 @@ import type {
   TaskAttemptCommand,
 } from './commands.ts'
 import type { AttemptExecutor, RunCoordinationExecutor } from './executors.ts'
-import type {
-  StoredWorkflowSchedule,
-  WorkflowScheduler,
-} from './scheduler.ts'
+import type { StoredWorkflowSchedule, WorkflowScheduler } from './scheduler.ts'
 import type {
   NodeChildIdentity,
   RunSnapshot,
@@ -1395,9 +1392,7 @@ export function createInMemoryWorkflowRuntime(
       const limit = normalizeScheduleLimit(options.limit)
       if (limit < 1) return { fired: 0 }
       const due = [...schedules.values()]
-        .filter(
-          (schedule) => schedule.enabled && schedule.nextRunAt <= date,
-        )
+        .filter((schedule) => schedule.enabled && schedule.nextRunAt <= date)
         .sort(compareSchedulesByDueDate)
         .slice(0, limit)
 

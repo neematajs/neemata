@@ -84,7 +84,8 @@ const defaultWorkerConfig = {
 export function defineWorkflows<
   const TWorkflowImplementation extends WorkflowImplementation,
   const TTaskImplementation extends TaskImplementation = TaskImplementation,
-  const TScheduleDefinition extends AnyScheduleDefinition = AnyScheduleDefinition,
+  const TScheduleDefinition extends AnyScheduleDefinition =
+    AnyScheduleDefinition,
 >(
   config: WorkflowsConfig<
     TWorkflowImplementation,
@@ -102,7 +103,8 @@ export function defineWorkflows<
 export async function resolveWorkflowsConfig<
   const TWorkflowImplementation extends WorkflowImplementation,
   const TTaskImplementation extends TaskImplementation = TaskImplementation,
-  const TScheduleDefinition extends AnyScheduleDefinition = AnyScheduleDefinition,
+  const TScheduleDefinition extends AnyScheduleDefinition =
+    AnyScheduleDefinition,
 >(
   config: WorkflowsConfig<
     TWorkflowImplementation,

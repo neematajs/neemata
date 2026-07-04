@@ -109,20 +109,23 @@ export async function dispatchTaskAttempt(input: {
   }>
 }) {
   await dispatchPreparedAttempt(input, async (attempt, commandInput) => {
-    await input.attemptExecutor.dispatchTask({
-      kind: 'taskAttempt',
-      workflowName: input.workflowName,
-      taskName: input.taskName,
-      runId: input.runId,
-      nodeName: input.nodeName,
-      attemptId: attempt.id,
-      leaseToken: attempt.leaseToken!,
-      input: commandInput,
-      ...(attempt.idempotencyKey === undefined
-        ? {}
-        : { idempotencyKey: attempt.idempotencyKey }),
-      ...(input.timeout === undefined ? {} : { timeout: input.timeout }),
-    }, input.runAt === undefined ? undefined : { runAt: input.runAt })
+    await input.attemptExecutor.dispatchTask(
+      {
+        kind: 'taskAttempt',
+        workflowName: input.workflowName,
+        taskName: input.taskName,
+        runId: input.runId,
+        nodeName: input.nodeName,
+        attemptId: attempt.id,
+        leaseToken: attempt.leaseToken!,
+        input: commandInput,
+        ...(attempt.idempotencyKey === undefined
+          ? {}
+          : { idempotencyKey: attempt.idempotencyKey }),
+        ...(input.timeout === undefined ? {} : { timeout: input.timeout }),
+      },
+      input.runAt === undefined ? undefined : { runAt: input.runAt },
+    )
   })
 }
 

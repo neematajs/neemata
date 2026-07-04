@@ -14,8 +14,8 @@ import type {
 } from '../types/index.ts'
 import type { WorkflowRuntimeAtomicStart } from './coordinator.ts'
 import type { AttemptExecutor, RunCoordinationExecutor } from './executors.ts'
-import type { RunSnapshot, StoredRun } from './state.ts'
 import type { WorkflowScheduler } from './scheduler.ts'
+import type { RunSnapshot, StoredRun } from './state.ts'
 import type {
   DeadWorkflowCommand,
   ListRunsFilter,

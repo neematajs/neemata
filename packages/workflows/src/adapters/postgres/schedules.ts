@@ -1,5 +1,5 @@
-import type { WorkflowScheduler } from '../../runtime/scheduler.ts'
 import type { WorkflowRuntimeAdapter } from '../../runtime/client.ts'
+import type { WorkflowScheduler } from '../../runtime/scheduler.ts'
 import type { WorkflowPostgresConnection } from './connection.ts'
 import {
   nextStoredScheduleRunAt,
@@ -169,11 +169,7 @@ export function createPostgresWorkflowScheduler(
                   updated_at = now()
               WHERE id = $1
             `,
-            [
-              schedule.id,
-              slot,
-              nextStoredScheduleRunAt(schedule, now),
-            ],
+            [schedule.id, slot, nextStoredScheduleRunAt(schedule, now)],
           )
         }
 

@@ -117,7 +117,9 @@ describe('workflow contract graph', () => {
         runnable: workflow,
         input: { kind: 'normal', scenario: 'alpha' },
       }),
-    ).toThrow('Schedule [missing-cadence] must define exactly one of cron/every')
+    ).toThrow(
+      'Schedule [missing-cadence] must define exactly one of cron/every',
+    )
 
     expect(() =>
       defineSchedule({

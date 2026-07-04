@@ -139,10 +139,14 @@ const client = createWorkflowRuntimeClient({
   tasks: [embedTaskImpl],
 })
 
-const run = await client.start(publishWorkflow, { draftId: 'd1' }, {
-  tags: { draftId: 'd1' },
-  idempotencyKey: ['content.publish', 'd1'],
-})
+const run = await client.start(
+  publishWorkflow,
+  { draftId: 'd1' },
+  {
+    tags: { draftId: 'd1' },
+    idempotencyKey: ['content.publish', 'd1'],
+  },
+)
 await client.get(run.id) // full run snapshot (nodes, attempts, children)
 await client.cancel(run.id)
 await client.list({ tags: { draftId: 'd1' } })

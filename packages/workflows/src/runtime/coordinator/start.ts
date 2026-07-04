@@ -115,10 +115,7 @@ export async function startWorkflowRun<
       workflowName: input.workflow.name,
     } as const
     if (input.startAt) {
-      await input.runCoordinationExecutor.enqueueDelayed(
-        command,
-        input.startAt,
-      )
+      await input.runCoordinationExecutor.enqueueDelayed(command, input.startAt)
     } else {
       await input.runCoordinationExecutor.enqueue(command)
     }

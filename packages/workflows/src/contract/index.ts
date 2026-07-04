@@ -1,3 +1,5 @@
+import { CronExpressionParser } from 'cron-parser'
+
 import type {
   AnyTaskDefinition,
   AnyWorkflowDefinition,
@@ -30,7 +32,6 @@ import type {
   WorkflowParallelNode,
   WorkflowTaskNode,
 } from '../types/index.ts'
-import { CronExpressionParser } from 'cron-parser'
 import { parseDurationMs } from '../runtime/duration.ts'
 
 declare const noDeclaredOutput: unique symbol
@@ -552,9 +553,8 @@ function assertScheduleCadence(input: {
   try {
     CronExpressionParser.parse(input.cron!, { currentDate: new Date(0) })
   } catch (error) {
-    throw new Error(
-      `Invalid schedule [${input.name}] cron [${input.cron!}]`,
-      { cause: error },
-    )
+    throw new Error(`Invalid schedule [${input.name}] cron [${input.cron!}]`, {
+      cause: error,
+    })
   }
 }

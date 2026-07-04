@@ -20,7 +20,9 @@ import {
   type WorkflowRuntimeAdapter,
 } from '../src/runtime/index.ts'
 
-type RuntimeFactory = () => WorkflowRuntimeAdapter | Promise<WorkflowRuntimeAdapter>
+type RuntimeFactory = () =>
+  | WorkflowRuntimeAdapter
+  | Promise<WorkflowRuntimeAdapter>
 
 const createPgliteConnection = () =>
   createPostgresWorkflowConnection(new PGlite())

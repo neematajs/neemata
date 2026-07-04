@@ -8,9 +8,9 @@ import type {
 import type { AttemptExecutor, RunCoordinationExecutor } from './executors.ts'
 import type { StoredRun } from './state.ts'
 import type { WorkflowStore } from './store.ts'
-import { parseDurationMs } from './duration.ts'
-import { decodeSchemaValue } from './coordinator/codec.ts'
 import { dispatchTaskRunAttempt } from './coordinator/attempt.ts'
+import { decodeSchemaValue } from './coordinator/codec.ts'
+import { parseDurationMs } from './duration.ts'
 
 export type StoredWorkflowSchedule = {
   readonly id: string
@@ -82,9 +82,7 @@ export function normalizeScheduleDefinition(
   const runnableName = definition.runnable.name
   const input = decodeScheduleInput(definition)
   const nextRunAt =
-    definition.immediately === true
-      ? now
-      : nextScheduleRunAt(cadence, now, now)
+    definition.immediately === true ? now : nextScheduleRunAt(cadence, now, now)
 
   return {
     name: definition.name,
@@ -191,10 +189,9 @@ function normalizeScheduleCadence(input: {
     CronExpressionParser.parse(input.cron!, { currentDate: new Date(0) })
     return { cron: input.cron! }
   } catch (error) {
-    throw new Error(
-      `Invalid schedule [${input.name}] cron [${input.cron!}]`,
-      { cause: error },
-    )
+    throw new Error(`Invalid schedule [${input.name}] cron [${input.cron!}]`, {
+      cause: error,
+    })
   }
 }
 

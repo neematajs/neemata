@@ -80,7 +80,7 @@ in `runtime/worker/loop.ts` (throttled, non-reentrant; default `everyMs`
 1000, configurable). Each tick, in one transaction:
 
 1. `SELECT ... WHERE enabled AND next_run_at <= now() FOR UPDATE SKIP LOCKED
-   LIMIT batch`.
+LIMIT batch`.
 2. Per row: start the run in-transaction (postgres adapter pattern:
    `createPostgresWorkflowRuntime({ connection: tx })`) with
    `idempotencyKey: ['$schedule', name, slot.toISOString()]` (slot =
@@ -95,7 +95,7 @@ as the safety net. Cron parsing via `cron-parser` (regular dependency);
 ### Public API
 
 - Root: `defineSchedule({ name, runnable, input, cron? | every?, tags?,
-  enabled?, immediately? })` — `runnable` is a task or workflow definition;
+enabled?, immediately? })` — `runnable` is a task or workflow definition;
   `input` validated/encoded against its input schema at reconcile.
   `immediately: true` seeds `next_run_at = now()` instead of the next
   occurrence.

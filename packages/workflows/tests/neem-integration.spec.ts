@@ -355,7 +355,9 @@ describe('workflows Neem integration', () => {
         const current = await client.list({
           tags: { schedule: schedule.name },
         })
-        return current.runs[0]?.status === 'completed' ? current.runs : undefined
+        return current.runs[0]?.status === 'completed'
+          ? current.runs
+          : undefined
       })
 
       expect(runtimeAdapter.inspect().schedules).toMatchObject([
