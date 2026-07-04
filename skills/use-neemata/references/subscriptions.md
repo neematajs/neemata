@@ -34,5 +34,3 @@ export const users = c.subscription({
 ## Boundary
 
 - Pubsub delivers subscription events ephemerally with async iterables.
-- Eventing consumes subscription events durably with consumer groups, offsets,
-  replay, retry, and dead-letter policy.

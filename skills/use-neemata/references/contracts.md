@@ -1,7 +1,7 @@
 # Contracts
 
 Contracts describe public API shape independent of handler implementation.
-They are shared by servers, clients, pubsub, eventing, and tooling.
+They are shared by servers, clients, pubsub, and tooling.
 
 ```ts
 import { c, t } from 'nmtjs'
@@ -71,7 +71,7 @@ Rules:
   present, `key(params)` is required and returns adapter key string.
 - `events` becomes a typed event map. Each event gets its event name and parent
   subscription attached by `c.subscription(...)`.
-- The same subscription contract powers pubsub and eventing.
+- The same subscription contract powers pubsub delivery.
 
 ## Blob Contracts
 

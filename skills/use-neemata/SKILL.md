@@ -1,12 +1,12 @@
 ---
 name: use-neemata
-description: Use when answering questions or writing code for Neemata RPC applications: contracts, procedures, routers, applications, DI, metadata, guards, middleware, filters, clients, workflows, eventing, pubsub, metrics, streaming, blobs, and Neemata runtime integration.
+description: Use when answering questions or writing code for Neemata RPC applications: contracts, procedures, routers, applications, DI, metadata, guards, middleware, filters, clients, workflows, pubsub, metrics, streaming, blobs, and Neemata runtime integration.
 ---
 
 # Use Neemata
 
 End-user Neemata application code should prefer `nmtjs` umbrella imports for
-application, contract, type, DI, eventing, pubsub, and metrics APIs when
+application, contract, type, DI, pubsub, and metrics APIs when
 the needed symbol is exported there.
 
 Exceptions:
@@ -31,7 +31,6 @@ Exceptions:
 - [Injectables](references/injectables.md) - values, lazy tokens, factories,
   scopes, built-ins.
 - [Subscriptions](references/subscriptions.md) - typed event/channel contracts.
-- [Eventing](references/eventing.md) - durable streams, consumers, runtime helpers.
 - [PubSub](references/pubsub.md) - ephemeral fanout, publish/subscribe.
 - [Workflows](references/workflows.md) - durable orchestration: task/workflow
   contracts, implementations, postgres runtime, client, Neem integration.

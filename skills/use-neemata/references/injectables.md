@@ -1,8 +1,8 @@
 # Injectables
 
 Injectables are typed dependency tokens. Handlers receive only dependencies
-declared by their definition. Logger, connection data, abort signals, jobs,
-eventing, pubsub, and blob helpers are available only when requested.
+declared by their definition. Logger, connection data, abort signals, pubsub,
+and blob helpers are available only when requested.
 
 An injectable is identified by its token object, not by a string name. The same
 object also carries the resolved TypeScript type. `value(...)` and `factory(...)`
@@ -262,10 +262,9 @@ Prefer merged `inject.*` tokens in application code:
   `inject.connectionData`, `inject.connectionAbortSignal`,
   `inject.rpcAbortSignal`, `inject.rpcClientAbortSignal`,
   `inject.rpcStreamAbortSignal`, `inject.createBlob`, `inject.consumeBlob`.
-- Eventing: `inject.eventingAdapter`, `inject.produce`.
 - PubSub: `inject.pubsubAdapter`, `inject.publish`, `inject.subscribe`.
 
-`CoreInjectables`, `GatewayInjectables`, `EventingInjectables`, and
+`CoreInjectables`, `GatewayInjectables`, and
 `PubSubInjectables` remain exported for package-level
 integration or when an API explicitly expects the namespace form.
 

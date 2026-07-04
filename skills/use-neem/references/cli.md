@@ -25,9 +25,9 @@ Defaults:
 Runtime selection is a comma-separated positional argument:
 
 ```bash
-neem build api,jobs
+neem build api,worker
 neem dev api
-neem start jobs,scheduler
+neem start api,worker
 ```
 
 Rules:

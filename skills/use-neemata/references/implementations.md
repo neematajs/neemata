@@ -89,5 +89,5 @@ Rules:
 
 - For local-only APIs with no shared contract package, `procedure(...)` and
   `router(...)` are shorter and infer contracts from implementation.
-- For pubsub/eventing delivery, define shared subscription contracts first, then
+- For pubsub delivery, define shared subscription contracts first, then
   use the delivery-specific APIs.

@@ -34,7 +34,7 @@ Use explicit files when the project needs exact ordering or narrow selection:
 runtimes: [
   './src/runtimes/api/neem.runtime.ts',
   './src/runtimes/workflows/neem.runtime.ts',
-  './src/runtimes/events/neem.runtime.ts',
+  './src/runtimes/worker/neem.runtime.ts',
 ]
 ```
 
@@ -77,16 +77,16 @@ import { defineWorkflowsWorker } from '@nmtjs/workflows/neem'
 export default defineWorkflowsWorker(workflowsConfig)
 ```
 
-## Eventing Runtime
+## Custom Runtime
 
-Eventing has no package-owned host entry or worker build defaults, so plain
-Neem `defineRuntime(...)` is the runtime declaration helper:
+Some packages have no package-owned host entry or worker build defaults, so
+plain Neem `defineRuntime(...)` is the runtime declaration helper:
 
 ```ts
 import { defineRuntime } from '@nmtjs/neem'
 
 export default defineRuntime({
-  name: 'events',
+  name: 'worker',
   planner: './neem.planner.ts',
   worker: { entry: './neem.worker.ts' },
 })

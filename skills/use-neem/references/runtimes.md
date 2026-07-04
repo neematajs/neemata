@@ -1,7 +1,7 @@
 # Runtimes
 
 `@nmtjs/neem` project config declares runtime projects and controller plugins.
-It is generic: applications, jobs, eventing, scheduler, bots, and custom
+It is generic: applications, workflows, workers, bots, and custom
 services are named runtimes. Metrics is a controller plugin, not a runtime
 declaration.
 

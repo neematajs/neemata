@@ -6,17 +6,14 @@ runtime files.
 ## Application And Host
 
 ```ts
-import { app, eventingPlugin, host, pubsubPlugin } from 'nmtjs'
+import { app, host, pubsubPlugin } from 'nmtjs'
 import { HttpTransport } from '@nmtjs/http-transport/node'
 
 import { api } from './router.ts'
 
 export const application = app({
   router: api,
-  plugins: [
-    eventingPlugin({ adapter: () => createEventingAdapter() }),
-    pubsubPlugin({ adapter: createPubSubAdapter() }),
-  ],
+  plugins: [pubsubPlugin({ adapter: createPubSubAdapter() })],
 })
 
 export default host(application, {

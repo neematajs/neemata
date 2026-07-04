@@ -54,7 +54,6 @@ export const subscribeRoom = procedure({
 - Pass an event selection object such as `{ message: true }` to narrow stream
   output.
 - Use pubsub for low-latency live fanout where missed messages are acceptable.
-- Use eventing for durable business facts that must survive worker restarts.
 
 ## Plugin And Adapter
 
