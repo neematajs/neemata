@@ -1,5 +1,4 @@
 import { CoreInjectables, createConsolePrettyDestination } from '@nmtjs/core'
-import { EventingInjectables } from '@nmtjs/eventing'
 import { GatewayInjectables } from '@nmtjs/gateway'
 import {
   createCounterMetric,
@@ -12,8 +11,7 @@ import { PubSubInjectables } from '@nmtjs/pubsub'
 type Injectables = Readonly<
   typeof CoreInjectables &
     typeof GatewayInjectables &
-    typeof PubSubInjectables &
-    typeof EventingInjectables
+    typeof PubSubInjectables
 >
 
 type Metrics = Readonly<{
@@ -53,11 +51,6 @@ export {
   Scope,
 } from '@nmtjs/core'
 export {
-  createEventingPlugin as eventingPlugin,
-  EventingInjectables,
-  implement as implementSubscription,
-} from '@nmtjs/eventing'
-export {
   type ConnectionIdentityType,
   createTransport as transport,
   GatewayHook,
@@ -86,5 +79,4 @@ export const inject: Injectables = Object.freeze({
   ...CoreInjectables,
   ...GatewayInjectables,
   ...PubSubInjectables,
-  ...EventingInjectables,
 })

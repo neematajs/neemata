@@ -4,11 +4,11 @@ export default defineConfig({
   test: {
     testTimeout: 15000,
     passWithNoTests: true,
-    projects: ['./packages/*'],
+    projects: ['./packages/*', '!./packages/eventing'],
     coverage: {
       enabled: false,
       include: ['packages/*/src/**'],
-      exclude: ['packages/nmtjs/**'],
+      exclude: ['packages/eventing/**', 'packages/nmtjs/**'],
       reporter: ['text', 'text-summary', 'html'],
     },
   },

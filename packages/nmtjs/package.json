@@ -22,7 +22,6 @@
     "@nmtjs/application": "workspace:*",
     "@nmtjs/contract": "workspace:*",
     "@nmtjs/core": "workspace:*",
-    "@nmtjs/eventing": "workspace:*",
     "@nmtjs/gateway": "workspace:*",
     "@nmtjs/metrics": "workspace:*",
     "@nmtjs/protocol": "workspace:*",

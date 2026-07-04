@@ -26,14 +26,11 @@ describe('nmtjs umbrella exports', () => {
         factory: expect.any(Function),
         transport: expect.any(Function),
         pubsubPlugin: expect.any(Function),
-        eventingPlugin: expect.any(Function),
-        implementSubscription: expect.any(Function),
         blobType: expect.any(Function),
         c: expect.any(Object),
         CoreInjectables: expect.any(Object),
         GatewayInjectables: expect.any(Object),
         PubSubInjectables: expect.any(Object),
-        EventingInjectables: expect.any(Object),
         inject: expect.any(Object),
         logging: expect.any(Object),
         metrics: expect.objectContaining({
@@ -55,7 +52,6 @@ describe('nmtjs umbrella exports', () => {
       ...mod.CoreInjectables,
       ...mod.GatewayInjectables,
       ...mod.PubSubInjectables,
-      ...mod.EventingInjectables,
     }
     const metricMod = await import('@nmtjs/metrics')
 
