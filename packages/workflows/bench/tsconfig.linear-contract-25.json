@@ -1,9 +1,0 @@
-{
-  "extends": "../tsconfig.json",
-  "compilerOptions": {
-    "rootDir": "..",
-    "noEmit": true,
-    "tsBuildInfoFile": "../node_modules/.tmp/tsconfig.linear-contract-25.json.tsbuildinfo"
-  },
-  "files": ["./generated/linear-contract-25.ts"]
-}
