@@ -130,12 +130,12 @@ export class ApplicationHost<
     await this.application.dispose()
     this.appConfig = appConfig
     this.application = await this.createApplication(appConfig)
-    this.gateway.options.api = this.application.api
-    this.gateway.options.container = this.application.container
-    this.gateway.options.hooks = this.application.lifecycleHooks
-    this.gateway.options.identity =
-      this.options.identity ?? this.gateway.options.identity
-    await this.gateway.reload()
+    await this.gateway.reload({
+      api: this.application.api,
+      container: this.application.container,
+      hooks: this.application.lifecycleHooks,
+      identity: this.options.identity,
+    })
   }
 
   protected async createApplication(appConfig: ApplicationConfig) {

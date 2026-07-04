@@ -6,6 +6,7 @@ import type {
   Container,
   Hooks,
   Logger,
+  Provision,
   ResolveInjectableType,
 } from '@nmtjs/core'
 import type { ProtocolBlobInterface } from '@nmtjs/protocol'
@@ -258,7 +259,21 @@ export class Gateway<
     }
   }
 
-  async reload() {
+  async reload(
+    options?: Pick<
+      GatewayOptions<ResolvedProcedure>,
+      'api' | 'container' | 'hooks' | 'identity'
+    >,
+  ) {
+    // Own the hot-swap of these options internally so callers don't reach into
+    // `this.options` directly; identity falls back to the current one.
+    if (options) {
+      this.options.api = options.api
+      this.options.container = options.container
+      this.options.hooks = options.hooks
+      this.options.identity = options.identity ?? this.options.identity
+    }
+
     for (const connections of this.connections.connections.values()) {
       await connections.container.dispose()
     }
@@ -597,29 +612,11 @@ export class Gateway<
       )
 
       try {
-        rpcContext.container.provide([
-          ...injections,
-          // Provide only the base per-call signal here. rpcAbortSignal is a
-          // derived injectable that combines rpcClientAbortSignal,
-          // connectionAbortSignal, and optional rpcStreamAbortSignal.
-          provision(injectables.rpcClientAbortSignal, rpcContext.signal),
-          provision(
-            injectables.createBlob,
-            this.createBlobFunction(rpcContext),
-          ),
-          provision(
-            injectables.consumeBlob,
-            this.consumeBlobFunction(rpcContext),
-          ),
-        ])
-
-        const result = await this.options.api.call({
+        const result = await this.dispatchRpc(
           connection,
-          payload: rpc.payload,
-          procedure: rpc.procedure,
-          container: rpcContext.container,
-          signal: rpcContext.signal,
-        })
+          rpcContext,
+          injections,
+        )
 
         if (typeof result === 'function') {
           return result(async () => {
@@ -648,33 +645,56 @@ export class Gateway<
     }
   }
 
+  /**
+   * Shared RPC dispatch prologue for both the HTTP (onRpc) and WS
+   * (handleRpcMessage) paths: provisions the per-call abort signal and invokes
+   * the API. rpcClientAbortSignal is the base per-call signal; rpcAbortSignal is
+   * a derived injectable that combines it with connectionAbortSignal and the
+   * optional rpcStreamAbortSignal.
+   *
+   * When `httpInjections` is provided (HTTP path), the transport-supplied
+   * injections and the createBlob/consumeBlob injectables are provisioned here.
+   * The WS path passes `undefined` because onMessage already provisioned those
+   * before calling handleRpcMessage. This divergence — WS omits blob injectables
+   * at this dispatch point — is suspected to be a gap but is intentionally
+   * preserved pending a decision.
+   */
+  private dispatchRpc(
+    connection: GatewayConnection,
+    context: GatewayRpcContext,
+    httpInjections?: readonly Provision[],
+  ): Promise<unknown> {
+    if (httpInjections) {
+      context.container.provide([
+        ...httpInjections,
+        provision(injectables.rpcClientAbortSignal, context.signal),
+        provision(injectables.createBlob, this.createBlobFunction(context)),
+        provision(injectables.consumeBlob, this.consumeBlobFunction(context)),
+      ])
+    } else {
+      context.container.provide(
+        injectables.rpcClientAbortSignal,
+        context.signal,
+      )
+    }
+
+    return this.options.api.call({
+      connection,
+      container: context.container,
+      payload: context.payload,
+      procedure: context.procedure,
+      signal: context.signal,
+    })
+  }
+
   protected async handleRpcMessage(
     connection: GatewayConnection,
     context: GatewayRpcContext,
   ): Promise<void> {
-    const {
-      container,
-      connectionId,
-      transport,
-      protocol,
-      signal,
-      callId,
-      procedure,
-      payload,
-      encoder,
-    } = context
+    const { connectionId, transport, protocol, signal, callId, encoder } =
+      context
     try {
-      // Provide only the base per-call signal here. rpcAbortSignal is resolved
-      // through DI so it can include connection and optional stream timeout
-      // cancellation as well.
-      container.provide(injectables.rpcClientAbortSignal, signal)
-      const response = await this.options.api.call({
-        connection: connection as any,
-        container,
-        payload,
-        procedure,
-        signal,
-      })
+      const response = await this.dispatchRpc(connection, context)
 
       if (typeof response === 'function') {
         transport.send!(
