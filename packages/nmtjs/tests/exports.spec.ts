@@ -25,11 +25,6 @@ describe('nmtjs umbrella exports', () => {
         optional: expect.any(Function),
         factory: expect.any(Function),
         transport: expect.any(Function),
-        job: expect.any(Function),
-        step: expect.any(Function),
-        jobRouter: expect.any(Function),
-        jobOperation: expect.any(Function),
-        jobsPlugin: expect.any(Function),
         pubsubPlugin: expect.any(Function),
         eventingPlugin: expect.any(Function),
         implementSubscription: expect.any(Function),
@@ -38,7 +33,6 @@ describe('nmtjs umbrella exports', () => {
         t: expect.any(Object),
         CoreInjectables: expect.any(Object),
         GatewayInjectables: expect.any(Object),
-        JobInjectables: expect.any(Object),
         PubSubInjectables: expect.any(Object),
         EventingInjectables: expect.any(Object),
         inject: expect.any(Object),
@@ -55,7 +49,6 @@ describe('nmtjs umbrella exports', () => {
     const expectedInjectables = {
       ...mod.CoreInjectables,
       ...mod.GatewayInjectables,
-      ...mod.JobInjectables,
       ...mod.PubSubInjectables,
       ...mod.EventingInjectables,
     }

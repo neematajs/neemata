@@ -132,7 +132,7 @@ describe('Neem compiler', () => {
 
   it('lets a user deps chunk group replace the default deps group', async () => {
     const target = await createTarget()
-    const depsGroup = { name: 'deps', test: /node_modules\/bullmq/ }
+    const depsGroup = { name: 'deps', test: /node_modules\/zod/ }
     target.artifact.chunks = { groups: [depsGroup] }
     rolldownMock.build.mockResolvedValue(rolldownOutput('index.js', target))
 

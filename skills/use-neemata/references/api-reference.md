@@ -27,11 +27,6 @@ import {
   implementRouter,
   implementSubscription,
   inject,
-  job,
-  JobInjectables,
-  jobOperation,
-  jobRouter,
-  jobsPlugin,
   lazy,
   LifecycleHook,
   logging,
@@ -49,7 +44,6 @@ import {
   rootRouter,
   router,
   Scope,
-  step,
   t,
   transport,
   value,
@@ -60,12 +54,11 @@ import {
 ## Import Rules
 
 - Use `nmtjs` for app definitions, procedures, routers, contracts via `c`,
-  schemas via `t`, DI, built-in injectables via `inject`, jobs, eventing/pubsub
+  schemas via `t`, DI, built-in injectables via `inject`, eventing/pubsub
   plugins, protocol enums/classes exported above.
 - Use direct package subpaths for clients, transports, formats, adapters, and
   runtime helpers: `@nmtjs/client`, `@nmtjs/http-transport/node`,
-  `@nmtjs/application/neem/runtime`, `@nmtjs/jobs/neem`,
-  `@nmtjs/eventing/redis`, etc.
+  `@nmtjs/application/neem/runtime`, `@nmtjs/eventing/redis`, etc.
 - Avoid direct `@nmtjs/core`, `@nmtjs/type`, `@nmtjs/contract`,
   `@nmtjs/pubsub`, or `@nmtjs/eventing` imports in end-user examples when
   `nmtjs` exposes the same symbol.
@@ -99,17 +92,15 @@ import {
 - `optional(lazyToken)` - marks a lazy dependency as optional.
 - `factory({ scope?, dependencies?, create, dispose?, pick? })` - scoped
   factory.
-- `inject` - merged built-ins: core, gateway, jobs, eventing, pubsub.
+- `inject` - merged built-ins: core, gateway, eventing, pubsub.
 - `CoreInjectables`, `GatewayInjectables`, etc. are still exported, but prefer
   `inject.*` in application examples unless a package API specifically asks for
   the namespace.
 - `Scope` - `Global`, `Connection`, `Call`, `Transient`.
 - `meta()` and `MetadataKind` - typed metadata tokens and static constraints.
 
-## Jobs, Eventing, PubSub
+## Eventing And PubSub
 
-- `job(...)`, `step(...)`, `jobRouter(...)`, `jobOperation(...)`,
-  `jobsPlugin(...)`.
 - `implementSubscription(...)`, `eventingPlugin(...)`.
 - `pubsubPlugin(...)`, plus `inject.publish` and `inject.subscribe`.
 

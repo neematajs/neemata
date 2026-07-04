@@ -33,9 +33,8 @@ Use explicit files when the project needs exact ordering or narrow selection:
 ```ts
 runtimes: [
   './src/runtimes/api/neem.runtime.ts',
-  './src/runtimes/jobs/neem.runtime.ts',
+  './src/runtimes/workflows/neem.runtime.ts',
   './src/runtimes/events/neem.runtime.ts',
-  './src/runtimes/scheduler/neem.runtime.ts',
 ]
 ```
 
@@ -48,15 +47,15 @@ runtimes: [
 ]
 ```
 
-## Jobs Runtime
+## Workflows Runtime
 
 ```ts
-import { createJobsRuntime } from '@nmtjs/jobs/neem'
+import { createWorkflowsRuntime } from '@nmtjs/workflows/neem'
 
-const defineRuntime = createJobsRuntime()
+const defineRuntime = createWorkflowsRuntime()
 
 export default defineRuntime({
-  name: 'jobs',
+  name: 'workflows',
   planner: './neem.planner.ts',
   worker: { entry: './neem.worker.ts' },
 })
@@ -66,16 +65,16 @@ Planner and worker use helpers from the same package:
 
 ```ts
 // neem.planner.ts
-import { defineJobsPlanner } from '@nmtjs/jobs/neem'
+import { defineWorkflowsPlanner } from '@nmtjs/workflows/neem'
 
-export default defineJobsPlanner(() => jobsConfig)
+export default defineWorkflowsPlanner(() => workflowsConfig)
 ```
 
 ```ts
 // neem.worker.ts
-import { defineJobsWorker } from '@nmtjs/jobs/neem'
+import { defineWorkflowsWorker } from '@nmtjs/workflows/neem'
 
-export default defineJobsWorker(jobsConfig)
+export default defineWorkflowsWorker(workflowsConfig)
 ```
 
 ## Eventing Runtime
@@ -90,21 +89,6 @@ export default defineRuntime({
   name: 'events',
   planner: './neem.planner.ts',
   worker: { entry: './neem.worker.ts' },
-})
-```
-
-## Scheduler Runtime
-
-Scheduler is host-only and owns its host entry:
-
-```ts
-import { createSchedulerRuntime } from '@nmtjs/scheduler/neem'
-
-const defineRuntime = createSchedulerRuntime()
-
-export default defineRuntime({
-  name: 'scheduler',
-  planner: './neem.planner.ts',
 })
 ```
 

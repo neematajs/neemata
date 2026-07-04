@@ -262,14 +262,11 @@ Prefer merged `inject.*` tokens in application code:
   `inject.connectionData`, `inject.connectionAbortSignal`,
   `inject.rpcAbortSignal`, `inject.rpcClientAbortSignal`,
   `inject.rpcStreamAbortSignal`, `inject.createBlob`, `inject.consumeBlob`.
-- Jobs: `inject.jobManager`, `inject.jobWorkerPool`,
-  `inject.jobAbortSignal`, `inject.saveJobProgress`,
-  `inject.currentJobInfo`.
 - Eventing: `inject.eventingAdapter`, `inject.produce`.
 - PubSub: `inject.pubsubAdapter`, `inject.publish`, `inject.subscribe`.
 
-`CoreInjectables`, `GatewayInjectables`, `JobInjectables`,
-`EventingInjectables`, and `PubSubInjectables` remain exported for package-level
+`CoreInjectables`, `GatewayInjectables`, `EventingInjectables`, and
+`PubSubInjectables` remain exported for package-level
 integration or when an API explicitly expects the namespace form.
 
 ## Rules

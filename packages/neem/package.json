@@ -62,7 +62,6 @@
   "devDependencies": {
     "@nmtjs/metrics": "workspace:*",
     "@nmtjs/proxy": "1.0.0-beta.7",
-    "@nmtjs/scheduler": "workspace:*",
     "@types/node": "^24.13.2"
   },
   "files": [

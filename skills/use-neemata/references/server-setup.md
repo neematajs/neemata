@@ -6,7 +6,7 @@ runtime files.
 ## Application And Host
 
 ```ts
-import { app, eventingPlugin, host, jobsPlugin, pubsubPlugin } from 'nmtjs'
+import { app, eventingPlugin, host, pubsubPlugin } from 'nmtjs'
 import { HttpTransport } from '@nmtjs/http-transport/node'
 
 import { api } from './router.ts'
@@ -16,7 +16,6 @@ export const application = app({
   plugins: [
     eventingPlugin({ adapter: () => createEventingAdapter() }),
     pubsubPlugin({ adapter: createPubSubAdapter() }),
-    jobsPlugin({ client: createJobsClient, jobs: Object.values(jobs) }),
   ],
 })
 

@@ -236,37 +236,6 @@ importers:
         specifier: github:uNetworking/uWebSockets.js#v20.67.0
         version: https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/e0f56ebb4b349017f006e14d1cd29052f2a7121d
 
-  packages/jobs:
-    dependencies:
-      '@nmtjs/application':
-        specifier: workspace:*
-        version: link:../application
-      '@nmtjs/common':
-        specifier: workspace:*
-        version: link:../common
-      '@nmtjs/contract':
-        specifier: workspace:*
-        version: link:../contract
-      '@nmtjs/core':
-        specifier: workspace:*
-        version: link:../core
-      '@nmtjs/neem':
-        specifier: workspace:*
-        version: link:../neem
-      '@nmtjs/type':
-        specifier: workspace:*
-        version: link:../type
-      bullmq:
-        specifier: 5.79.0
-        version: 5.79.0
-    devDependencies:
-      ioredis:
-        specifier: ^5.11.1
-        version: 5.11.1
-      iovalkey:
-        specifier: ^0.3.3
-        version: 0.3.3
-
   packages/json-format:
     dependencies:
       '@nmtjs/common':
@@ -339,9 +308,6 @@ importers:
       '@nmtjs/proxy':
         specifier: 1.0.0-beta.7
         version: 1.0.0-beta.7
-      '@nmtjs/scheduler':
-        specifier: workspace:*
-        version: link:../scheduler
       '@types/node':
         specifier: ^24.13.2
         version: 24.13.2
@@ -363,9 +329,6 @@ importers:
       '@nmtjs/gateway':
         specifier: workspace:*
         version: link:../gateway
-      '@nmtjs/jobs':
-        specifier: workspace:*
-        version: link:../jobs
       '@nmtjs/metrics':
         specifier: workspace:*
         version: link:../metrics
@@ -416,37 +379,6 @@ importers:
         specifier: workspace:*
         version: link:../core
     devDependencies:
-      '@nmtjs/type':
-        specifier: workspace:*
-        version: link:../type
-      ioredis:
-        specifier: ^5.11.1
-        version: 5.11.1
-      iovalkey:
-        specifier: ^0.3.3
-        version: 0.3.3
-
-  packages/scheduler:
-    dependencies:
-      '@nmtjs/common':
-        specifier: workspace:*
-        version: link:../common
-      '@nmtjs/core':
-        specifier: workspace:*
-        version: link:../core
-      '@nmtjs/jobs':
-        specifier: workspace:*
-        version: link:../jobs
-      '@nmtjs/neem':
-        specifier: workspace:*
-        version: link:../neem
-      bullmq:
-        specifier: 5.79.0
-        version: 5.79.0
-    devDependencies:
-      '@nmtjs/application':
-        specifier: workspace:*
-        version: link:../application
       '@nmtjs/type':
         specifier: workspace:*
         version: link:../type
@@ -1791,15 +1723,6 @@ packages:
   avsc@5.7.9:
     resolution: {integrity: sha512-yOA4wFeI7ET3v32Di/sUybQ+ttP20JHSW3mxLuNGeO0uD6PPcvLrIQXSvy/rhJOWU5JrYh7U4OHplWMmtAtjMg==}
     engines: {node: '>=0.11'}
-
-  bullmq@5.79.0:
-    resolution: {integrity: sha512-sg+kYGn7PIDI/AAkSWINPNz0vMp745YaBYMyo3AtcfXk5iCvjEPU+XMbU3yf7rSf1KsU+OfU+GH8FhxUa+WDNA==}
-    engines: {node: '>=12.22.0'}
-    peerDependencies:
-      redis: '>=5.0.0'
-    peerDependenciesMeta:
-      redis:
-        optional: true
 
   bun-types@1.3.2:
     resolution: {integrity: sha512-i/Gln4tbzKNuxP70OWhJRZz1MRfvqExowP7U6JKoI8cntFrtxg7RJK3jvz7wQW54UuvNC8tbKHHri5fy74FVqg==}
@@ -3516,17 +3439,6 @@ snapshots:
   atomic-sleep@1.0.0: {}
 
   avsc@5.7.9: {}
-
-  bullmq@5.79.0:
-    dependencies:
-      cron-parser: 4.9.0
-      ioredis: 5.10.1
-      msgpackr: 2.0.2
-      node-abort-controller: 3.1.1
-      semver: 7.8.1
-      tslib: 2.8.1
-    transitivePeerDependencies:
-      - supports-color
 
   bun-types@1.3.2(@types/react@19.1.9):
     dependencies:

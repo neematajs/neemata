@@ -31,9 +31,6 @@
       "path": "./packages/json-format/tsconfig.json"
     },
     {
-      "path": "./packages/jobs/tsconfig.json"
-    },
-    {
       "path": "./packages/msgpack-format/tsconfig.json"
     },
     {

@@ -56,12 +56,12 @@ End-user projects should default-export declarations produced by package
 helpers when a package contributes runtime defaults:
 
 ```ts
-import { createJobsRuntime } from '@nmtjs/jobs/neem'
+import { createWorkflowsRuntime } from '@nmtjs/workflows/neem'
 
-const defineRuntime = createJobsRuntime()
+const defineRuntime = createWorkflowsRuntime()
 
 export default defineRuntime({
-  name: 'jobs',
+  name: 'workflows',
   planner: './neem.planner.ts',
   worker: { entry: './neem.worker.ts' },
 })

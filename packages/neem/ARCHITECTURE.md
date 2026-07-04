@@ -148,9 +148,9 @@ Workers receive:
 ### Runtime Host
 
 A runtime host is package-owned coordination code for one runtime. It receives
-planned worker handles and coordinates protocols over thread ports. Jobs are
-the key example: the host owns BullMQ queue workers and dispatches work to
-Neem-owned runner threads.
+planned worker handles and coordinates protocols over thread ports. Package
+runtimes can own coordinator resources and dispatch work to Neem-owned runner
+threads.
 
 Target host contract:
 

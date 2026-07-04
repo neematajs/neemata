@@ -1,7 +1,6 @@
 import { CoreInjectables, createConsolePrettyDestination } from '@nmtjs/core'
 import { EventingInjectables } from '@nmtjs/eventing'
 import { GatewayInjectables } from '@nmtjs/gateway'
-import { JobInjectables } from '@nmtjs/jobs'
 import {
   createCounterMetric,
   createGaugeMetric,
@@ -13,7 +12,6 @@ import { PubSubInjectables } from '@nmtjs/pubsub'
 type Injectables = Readonly<
   typeof CoreInjectables &
     typeof GatewayInjectables &
-    typeof JobInjectables &
     typeof PubSubInjectables &
     typeof EventingInjectables
 >
@@ -66,14 +64,6 @@ export {
   GatewayInjectables,
   ProxyableTransportType,
 } from '@nmtjs/gateway'
-export {
-  createJob as job,
-  createJobRouterOperation as jobOperation,
-  createJobsApplicationPlugin as jobsPlugin,
-  createJobsRouter as jobRouter,
-  createStep as step,
-  JobInjectables,
-} from '@nmtjs/jobs'
 export { ConnectionType, ErrorCode, ProtocolBlob } from '@nmtjs/protocol'
 export {
   createPubSubPlugin as pubsubPlugin,
@@ -95,7 +85,6 @@ export const metrics: Metrics = Object.freeze({
 export const inject: Injectables = Object.freeze({
   ...CoreInjectables,
   ...GatewayInjectables,
-  ...JobInjectables,
   ...PubSubInjectables,
   ...EventingInjectables,
 })
