@@ -17,6 +17,7 @@ export {
   type WorkerLoopOptions,
   type WorkerLoopResult,
   type WorkerRetentionOptions,
+  type WorkerSchedulingOptions,
 } from './worker/loop.ts'
 export {
   runTaskAttempt,

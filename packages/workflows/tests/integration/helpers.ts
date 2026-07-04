@@ -75,6 +75,7 @@ export async function createPostgresWorkflowHarness(
 async function truncateWorkflowTables(pool: PgPool) {
   await pool.query(`
     TRUNCATE TABLE
+      workflow_schedules,
       workflow_commands,
       workflow_run_leases,
       workflow_map_items,

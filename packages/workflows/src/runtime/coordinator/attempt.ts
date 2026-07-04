@@ -15,6 +15,7 @@ export async function dispatchTaskRunAttempt(input: {
   readonly taskInput: unknown
   readonly idempotencyKey?: readonly unknown[]
   readonly timeout?: DurationString
+  readonly startAt?: Date
   readonly throwOnDispatchFailure?: boolean
 }) {
   await input.store.createNode({
@@ -37,6 +38,7 @@ export async function dispatchTaskRunAttempt(input: {
     runId: input.taskRunId,
     nodeName: TASK_RUN_NODE_NAME,
     timeout: input.timeout,
+    runAt: input.startAt,
     throwOnDispatchFailure: input.throwOnDispatchFailure,
     prepareAttempt: async () => {
       const result = await input.store.ensureNodeAttempt({
@@ -98,6 +100,7 @@ export async function dispatchTaskAttempt(input: {
   readonly runId: string
   readonly nodeName: string
   readonly timeout?: DurationString
+  readonly runAt?: Date
   readonly throwOnDispatchFailure?: boolean
   readonly prepareAttempt: () => Promise<{
     readonly attempt: StoredAttempt
@@ -119,7 +122,7 @@ export async function dispatchTaskAttempt(input: {
         ? {}
         : { idempotencyKey: attempt.idempotencyKey }),
       ...(input.timeout === undefined ? {} : { timeout: input.timeout }),
-    })
+    }, input.runAt === undefined ? undefined : { runAt: input.runAt })
   })
 }
 

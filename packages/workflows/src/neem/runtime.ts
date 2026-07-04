@@ -3,7 +3,7 @@ import type {
   WorkflowImplementation,
 } from '../implement/index.ts'
 import type { WorkflowRuntimeAdapter } from '../runtime/client.ts'
-import type { MaybePromise } from '../types/index.ts'
+import type { AnyScheduleDefinition, MaybePromise } from '../types/index.ts'
 
 export type WorkflowsRuntimeFactory = () => MaybePromise<WorkflowRuntimeAdapter>
 
@@ -14,6 +14,10 @@ export type WorkflowsImplementationsFactory<
 export type WorkflowTaskImplementationsFactory<
   Implementation = TaskImplementation,
 > = () => MaybePromise<readonly Implementation[]>
+
+export type WorkflowSchedulesFactory<
+  Schedule extends AnyScheduleDefinition = AnyScheduleDefinition,
+> = () => MaybePromise<readonly Schedule[]>
 
 export type WorkflowWorkerRole = 'coordinator' | 'activity' | 'task'
 
@@ -39,10 +43,12 @@ export type WorkflowsConfig<
   TWorkflowImplementation extends WorkflowImplementation =
     WorkflowImplementation,
   TTaskImplementation extends TaskImplementation = TaskImplementation,
+  TScheduleDefinition extends AnyScheduleDefinition = AnyScheduleDefinition,
 > = {
   readonly runtime: WorkflowsRuntimeFactory
   readonly workflows: WorkflowsImplementationsFactory<TWorkflowImplementation>
   readonly tasks?: WorkflowTaskImplementationsFactory<TTaskImplementation>
+  readonly schedules?: WorkflowSchedulesFactory<TScheduleDefinition>
   readonly workers?: WorkflowsWorkersConfig
 }
 
@@ -50,10 +56,12 @@ export type ResolvedWorkflowsConfig<
   TWorkflowImplementation extends WorkflowImplementation =
     WorkflowImplementation,
   TTaskImplementation extends TaskImplementation = TaskImplementation,
+  TScheduleDefinition extends AnyScheduleDefinition = AnyScheduleDefinition,
 > = {
   readonly runtime: WorkflowsRuntimeFactory
   readonly workflows: readonly TWorkflowImplementation[]
   readonly tasks: readonly TTaskImplementation[]
+  readonly schedules: readonly TScheduleDefinition[]
   readonly workers: Required<{
     readonly coordinator: Required<WorkflowsWorkerPoolConfig>
     readonly activity: Required<WorkflowsActivityWorkerPoolConfig>
@@ -76,24 +84,43 @@ const defaultWorkerConfig = {
 export function defineWorkflows<
   const TWorkflowImplementation extends WorkflowImplementation,
   const TTaskImplementation extends TaskImplementation = TaskImplementation,
+  const TScheduleDefinition extends AnyScheduleDefinition = AnyScheduleDefinition,
 >(
-  config: WorkflowsConfig<TWorkflowImplementation, TTaskImplementation>,
-): WorkflowsConfig<TWorkflowImplementation, TTaskImplementation> {
+  config: WorkflowsConfig<
+    TWorkflowImplementation,
+    TTaskImplementation,
+    TScheduleDefinition
+  >,
+): WorkflowsConfig<
+  TWorkflowImplementation,
+  TTaskImplementation,
+  TScheduleDefinition
+> {
   return Object.freeze(config)
 }
 
 export async function resolveWorkflowsConfig<
   const TWorkflowImplementation extends WorkflowImplementation,
   const TTaskImplementation extends TaskImplementation = TaskImplementation,
+  const TScheduleDefinition extends AnyScheduleDefinition = AnyScheduleDefinition,
 >(
-  config: WorkflowsConfig<TWorkflowImplementation, TTaskImplementation>,
+  config: WorkflowsConfig<
+    TWorkflowImplementation,
+    TTaskImplementation,
+    TScheduleDefinition
+  >,
 ): Promise<
-  ResolvedWorkflowsConfig<TWorkflowImplementation, TTaskImplementation>
+  ResolvedWorkflowsConfig<
+    TWorkflowImplementation,
+    TTaskImplementation,
+    TScheduleDefinition
+  >
 > {
   return {
     runtime: config.runtime,
     workflows: await config.workflows(),
     tasks: (await config.tasks?.()) ?? [],
+    schedules: (await config.schedules?.()) ?? [],
     workers: {
       coordinator: normalizeWorkerPool(config.workers?.coordinator),
       activity: normalizeWorkerPool(config.workers?.activity),

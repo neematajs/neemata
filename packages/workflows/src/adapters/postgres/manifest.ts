@@ -1,4 +1,4 @@
-export const WORKFLOW_POSTGRES_SCHEMA_VERSION = 3
+export const WORKFLOW_POSTGRES_SCHEMA_VERSION = 1
 export const WORKFLOW_POSTGRES_SCHEMA_MANIFEST = {
   version: WORKFLOW_POSTGRES_SCHEMA_VERSION,
   enums: [
@@ -49,6 +49,7 @@ export const WORKFLOW_POSTGRES_SCHEMA_MANIFEST = {
   },
   tables: [
     'workflow_schema_version',
+    'workflow_schedules',
     'workflow_runs',
     'workflow_nodes',
     'workflow_attempts',
@@ -61,6 +62,9 @@ export const WORKFLOW_POSTGRES_SCHEMA_MANIFEST = {
   constraints: [
     'workflow_schema_version_pkey',
     'workflow_schema_version_singleton_chk',
+    'workflow_schedules_pkey',
+    'workflow_schedules_name_key',
+    'workflow_schedules_cadence_chk',
     'workflow_runs_pkey',
     'workflow_nodes_pkey',
     'workflow_attempts_pkey',
@@ -88,6 +92,7 @@ export const WORKFLOW_POSTGRES_SCHEMA_MANIFEST = {
   ],
   indexes: [
     'workflow_runs_idempotency_idx',
+    'workflow_schedules_due_idx',
     'workflow_runs_parent_idx',
     'workflow_runs_root_idx',
     'workflow_runs_input_gin_idx',
@@ -114,8 +119,18 @@ export const WORKFLOW_POSTGRES_SCHEMA_MANIFEST = {
       type: 'f',
       columns: ['run_id'],
     },
+    workflow_schedules_name_key: {
+      table: 'workflow_schedules',
+      type: 'u',
+      columns: ['name'],
+    },
   },
   indexDefinitions: {
+    workflow_schedules_due_idx: {
+      table: 'workflow_schedules',
+      unique: false,
+      columns: ['enabled', 'next_run_at'],
+    },
     workflow_runs_idempotency_idx: {
       table: 'workflow_runs',
       unique: true,
@@ -177,6 +192,21 @@ export const WORKFLOW_POSTGRES_SCHEMA_MANIFEST = {
       id: { type: 'int4', nullable: false },
       version: { type: 'int4', nullable: false },
       installed_at: { type: 'timestamptz', nullable: false },
+    },
+    workflow_schedules: {
+      id: { type: 'uuid', nullable: false },
+      name: { type: 'text', nullable: false },
+      runnable_kind: { type: 'workflow_run_kind', nullable: false },
+      runnable_name: { type: 'text', nullable: false },
+      input: { type: 'jsonb', nullable: false },
+      tags: { type: 'jsonb', nullable: false },
+      cron: { type: 'text', nullable: true },
+      every_ms: { type: 'int8', nullable: true },
+      enabled: { type: 'bool', nullable: false },
+      next_run_at: { type: 'timestamptz', nullable: false },
+      last_slot_at: { type: 'timestamptz', nullable: true },
+      created_at: { type: 'timestamptz', nullable: false },
+      updated_at: { type: 'timestamptz', nullable: false },
     },
     workflow_runs: {
       id: { type: 'uuid', nullable: false },

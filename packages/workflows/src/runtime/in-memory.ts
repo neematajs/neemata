@@ -8,6 +8,10 @@ import type {
 } from './commands.ts'
 import type { AttemptExecutor, RunCoordinationExecutor } from './executors.ts'
 import type {
+  StoredWorkflowSchedule,
+  WorkflowScheduler,
+} from './scheduler.ts'
+import type {
   NodeChildIdentity,
   RunSnapshot,
   StoredAttempt,
@@ -30,6 +34,11 @@ import type {
   WorkflowStore,
 } from './store.ts'
 import { toStoredError } from './errors.ts'
+import {
+  nextStoredScheduleRunAt,
+  normalizeScheduleDefinitions,
+  startStoredScheduleRun,
+} from './scheduler.ts'
 import { isTerminalNodeStatus, isTerminalRunStatus } from './status.ts'
 
 type InMemoryRunLease = RunLease & {
@@ -71,6 +80,7 @@ export type InMemoryWorkflowRuntime = {
   readonly runCoordinationExecutor: RunCoordinationExecutor
   readonly attemptExecutor: AttemptExecutor
   readonly retentionPruner: WorkflowRetentionPruner
+  readonly scheduler: WorkflowScheduler
   readonly inspect: () => {
     readonly runs: readonly StoredRun[]
     readonly nodes: readonly StoredNode[]
@@ -78,6 +88,7 @@ export type InMemoryWorkflowRuntime = {
     readonly continueRunCommands: readonly InspectQueueItem<ContinueRunCommand>[]
     readonly activityCommands: readonly InspectQueueItem<ActivityAttemptCommand>[]
     readonly taskCommands: readonly InspectQueueItem<TaskAttemptCommand>[]
+    readonly schedules: readonly StoredWorkflowSchedule[]
   }
 }
 
@@ -88,7 +99,12 @@ export function createInMemoryWorkflowRuntime(
 ): InMemoryWorkflowRuntime {
   let nextId = 1
   const id = (prefix: string) => `${prefix}-${nextId++}`
-  const now = () => new Date()
+  let lastTimestamp = 0
+  const now = () => {
+    const current = Date.now()
+    lastTimestamp = Math.max(current, lastTimestamp + 1)
+    return new Date(lastTimestamp)
+  }
   const maxDeliveries = options.maxDeliveries ?? DEFAULT_MAX_DELIVERIES
 
   const runs = new Map<string, StoredRun>()
@@ -114,6 +130,7 @@ export function createInMemoryWorkflowRuntime(
     string,
     ClaimedQueueItem<TaskAttemptCommand>
   >()
+  const schedules = new Map<string, StoredWorkflowSchedule>()
 
   const nodeKey = (runId: string, nodeName: string) => `${runId}:${nodeName}`
   const stableJsonValue = (value: unknown): unknown => {
@@ -933,6 +950,11 @@ export function createInMemoryWorkflowRuntime(
     if (!Number.isInteger(batchSize) || batchSize < 1) return 0
     return batchSize
   }
+  const normalizeScheduleLimit = (limit: number | undefined) => {
+    if (limit === undefined) return 100
+    if (!Number.isInteger(limit) || limit < 1) return 0
+    return limit
+  }
   const normalizePruneStatuses = (
     statuses: PruneTerminalRunsParams['statuses'],
   ): readonly TerminalRunStatus[] => [
@@ -1327,11 +1349,114 @@ export function createInMemoryWorkflowRuntime(
     },
   }
 
+  const scheduler: WorkflowScheduler = {
+    async reconcile(entries) {
+      const date = now()
+      const normalizedEntries = normalizeScheduleDefinitions(entries, date)
+      const names = new Set(normalizedEntries.map((entry) => entry.name))
+      for (const scheduleName of schedules.keys()) {
+        if (!names.has(scheduleName)) schedules.delete(scheduleName)
+      }
+
+      for (const normalized of normalizedEntries) {
+        const existing = schedules.get(normalized.name)
+        const shouldResetNextRunAt =
+          existing === undefined ||
+          existing.cron !== normalized.cron ||
+          existing.everyMs !== normalized.everyMs ||
+          (!existing.enabled &&
+            normalized.enabled &&
+            existing.nextRunAt <= date)
+        schedules.set(normalized.name, {
+          id: existing?.id ?? id('schedule'),
+          name: normalized.name,
+          runnableKind: normalized.runnableKind,
+          runnableName: normalized.runnableName,
+          input: normalized.input,
+          tags: normalized.tags,
+          ...(normalized.cron === undefined ? {} : { cron: normalized.cron }),
+          ...(normalized.everyMs === undefined
+            ? {}
+            : { everyMs: normalized.everyMs }),
+          enabled: normalized.enabled,
+          nextRunAt: shouldResetNextRunAt
+            ? normalized.nextRunAt
+            : existing.nextRunAt,
+          ...(existing?.lastSlotAt === undefined
+            ? {}
+            : { lastSlotAt: existing.lastSlotAt }),
+          createdAt: existing?.createdAt ?? date,
+          updatedAt: date,
+        })
+      }
+    },
+    async fireDue(options = {}) {
+      const date = options.now ?? now()
+      const limit = normalizeScheduleLimit(options.limit)
+      if (limit < 1) return { fired: 0 }
+      const due = [...schedules.values()]
+        .filter(
+          (schedule) => schedule.enabled && schedule.nextRunAt <= date,
+        )
+        .sort(compareSchedulesByDueDate)
+        .slice(0, limit)
+
+      for (const schedule of due) {
+        const slot = schedule.nextRunAt
+        await startStoredScheduleRun(
+          { store, runCoordinationExecutor, attemptExecutor },
+          schedule,
+          slot,
+        )
+        const updated: StoredWorkflowSchedule = {
+          ...schedule,
+          lastSlotAt: slot,
+          nextRunAt: nextStoredScheduleRunAt(schedule, date),
+          updatedAt: now(),
+        }
+        schedules.set(schedule.name, updated)
+      }
+
+      return { fired: due.length }
+    },
+    async list() {
+      return [...schedules.values()].sort((left, right) =>
+        left.name.localeCompare(right.name),
+      )
+    },
+    async trigger(name) {
+      const schedule = schedules.get(name)
+      if (!schedule) throw new Error(`Unknown workflow schedule [${name}]`)
+      return startStoredScheduleRun(
+        { store, runCoordinationExecutor, attemptExecutor },
+        schedule,
+        now(),
+      )
+    },
+    async setEnabled(name, enabled) {
+      const schedule = schedules.get(name)
+      if (!schedule) throw new Error(`Unknown workflow schedule [${name}]`)
+      const date = now()
+      const updated = {
+        ...schedule,
+        enabled,
+        nextRunAt:
+          enabled && !schedule.enabled && schedule.nextRunAt <= date
+            ? nextStoredScheduleRunAt(schedule, date)
+            : schedule.nextRunAt,
+        updatedAt: date,
+      }
+      schedules.set(name, updated)
+      return updated
+    },
+  }
+
   return {
     store,
     retentionPruner: store,
     runCoordinationExecutor,
     attemptExecutor,
+    scheduler,
     inspect: () => ({
       runs: [...runs.values()],
       nodes: [...nodes.values()],
@@ -1339,6 +1464,16 @@ export function createInMemoryWorkflowRuntime(
       continueRunCommands: continueRunCommands.map(inspectQueueItem),
       activityCommands: activityCommands.map(inspectQueueItem),
       taskCommands: taskCommands.map(inspectQueueItem),
+      schedules: [...schedules.values()],
     }),
   }
+}
+
+function compareSchedulesByDueDate(
+  left: StoredWorkflowSchedule,
+  right: StoredWorkflowSchedule,
+) {
+  const byDate = left.nextRunAt.getTime() - right.nextRunAt.getTime()
+  if (byDate !== 0) return byDate
+  return left.name.localeCompare(right.name)
 }

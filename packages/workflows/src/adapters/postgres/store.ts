@@ -5,7 +5,6 @@ import { createPostgresWorkflowNodeStore } from './store-nodes.ts'
 import {
   createPostgresWorkflowRunStore,
   createStoredRun,
-  pruneTerminalRunsInTransaction,
 } from './store-runs.ts'
 
 export {

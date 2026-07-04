@@ -9,6 +9,7 @@ export type {
 export type { WorkflowBuilder } from './contract/index.ts'
 export type {
   AnyTaskDefinition,
+  AnyScheduleDefinition,
   AnyWorkflowDefinition,
   BranchCaseDefinition,
   CancellationPolicy,
@@ -21,8 +22,11 @@ export type {
   MapWaitSettledOutput,
   MaybePromise,
   RetryPolicy,
+  RunnableDefinition,
+  RunnableInput,
   RunnableRun,
   RunKind,
+  ScheduleDefinition,
   Schema,
   SchemaBoundary,
   SchemaInput,
@@ -53,7 +57,8 @@ export type {
   WorkflowStatus,
   WorkflowTaskNode,
 } from './types/index.ts'
-export { defineTask, defineWorkflow } from './contract/index.ts'
+export { defineSchedule, defineTask, defineWorkflow } from './contract/index.ts'
+export type { ScheduleOptions } from './contract/index.ts'
 export { implementTask, implementWorkflow } from './implement/index.ts'
 export { WorkflowAttemptTimeoutError } from './runtime/index.ts'
 export type { AttemptAbortReason } from './runtime/index.ts'

@@ -95,7 +95,8 @@
   "dependencies": {
     "@nmtjs/core": "workspace:*",
     "@nmtjs/neem": "workspace:*",
-    "@nmtjs/type": "workspace:*"
+    "@nmtjs/type": "workspace:*",
+    "cron-parser": "^5.6.1"
   },
   "peerDependencies": {
     "drizzle-orm": ">=1.0.0-rc.4 <2.0.0"

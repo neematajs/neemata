@@ -15,6 +15,7 @@ import type {
 import type { WorkflowRuntimeAtomicStart } from './coordinator.ts'
 import type { AttemptExecutor, RunCoordinationExecutor } from './executors.ts'
 import type { RunSnapshot, StoredRun } from './state.ts'
+import type { WorkflowScheduler } from './scheduler.ts'
 import type {
   DeadWorkflowCommand,
   ListRunsFilter,
@@ -40,6 +41,7 @@ import { isTerminalRunStatus } from './status.ts'
 export type WorkflowRuntimeStartOptions = {
   readonly tags?: Readonly<Record<string, string>>
   readonly idempotencyKey?: readonly unknown[]
+  readonly startAt?: Date
 }
 
 export type WorkflowRuntimeAdapter = {
@@ -47,6 +49,7 @@ export type WorkflowRuntimeAdapter = {
   readonly runCoordinationExecutor: RunCoordinationExecutor
   readonly attemptExecutor: AttemptExecutor
   readonly retentionPruner?: WorkflowRetentionPruner
+  readonly scheduler?: WorkflowScheduler
   readonly atomicStart?: WorkflowRuntimeAtomicStart
   readonly atomicContinuation?: WorkflowRuntimeAtomicContinuation
   readonly atomicCompletion?: WorkflowRuntimeAtomicCompletion
@@ -80,6 +83,11 @@ export type WorkflowRuntimeClient = {
   ) => Promise<PruneTerminalRunsResult>
   readonly listDeadCommands: () => Promise<readonly DeadWorkflowCommand[]>
   readonly requeueDeadCommand: (id: string) => Promise<void>
+  readonly schedules: {
+    readonly list: WorkflowScheduler['list']
+    readonly trigger: WorkflowScheduler['trigger']
+    readonly setEnabled: WorkflowScheduler['setEnabled']
+  }
 }
 
 export function createWorkflowRuntimeClient(
@@ -107,6 +115,7 @@ export function createWorkflowRuntimeClient(
           input: runnableInput,
           tags: options?.tags,
           idempotencyKey: options?.idempotencyKey,
+          startAt: options?.startAt,
         })) as WorkflowRun<typeof runnable>
       case 'task':
         return (await startTaskRun({
@@ -120,9 +129,16 @@ export function createWorkflowRuntimeClient(
           input: runnableInput,
           tags: options?.tags,
           idempotencyKey: options?.idempotencyKey,
+          startAt: options?.startAt,
         })) as TaskRun<typeof runnable>
     }
   }) as WorkflowRuntimeClient['start']
+  const requireScheduler = () => {
+    if (!input.scheduler) {
+      throw new Error('Workflow runtime adapter does not support schedules')
+    }
+    return input.scheduler
+  }
 
   return Object.freeze({
     start,
@@ -142,6 +158,12 @@ export function createWorkflowRuntimeClient(
     pruneRuns: (params) => pruneRuns(input.store, params),
     listDeadCommands: () => input.store.listDeadCommands(),
     requeueDeadCommand: (id) => input.store.requeueDeadCommand(id),
+    schedules: {
+      list: async () => requireScheduler().list(),
+      trigger: async (name) => requireScheduler().trigger(name),
+      setEnabled: async (name, enabled) =>
+        requireScheduler().setEnabled(name, enabled),
+    },
   })
 }
 

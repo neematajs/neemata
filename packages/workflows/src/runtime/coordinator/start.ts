@@ -32,6 +32,7 @@ export type StartTaskRunInput<
   readonly input: TaskInput<Task>
   readonly tags?: Readonly<Record<string, string>>
   readonly idempotencyKey?: readonly unknown[]
+  readonly startAt?: Date
 }
 
 export type StartWorkflowRunInput<
@@ -47,6 +48,7 @@ export type StartWorkflowRunInput<
   readonly input: WorkflowInput<Workflow>
   readonly tags?: Readonly<Record<string, string>>
   readonly idempotencyKey?: readonly unknown[]
+  readonly startAt?: Date
 }
 
 type WorkflowStartMetadataInput<
@@ -59,12 +61,14 @@ type WorkflowStartMetadataInput<
 export type WorkflowRuntimeAtomicStart = {
   readonly startWorkflowRun: (input: {
     readonly run: CreateRunInput
+    readonly startAt?: Date
   }) => Promise<StoredRun>
   readonly startTaskRun: (input: {
     readonly run: CreateRunInput
     readonly taskName: string
     readonly taskInput: unknown
     readonly idempotencyKey?: readonly unknown[]
+    readonly startAt?: Date
   }) => Promise<StoredRun>
 }
 
@@ -96,17 +100,28 @@ export async function startWorkflowRun<
   }
 
   if (input.atomicStart) {
-    return await input.atomicStart.startWorkflowRun({ run: runInput })
+    return await input.atomicStart.startWorkflowRun({
+      run: runInput,
+      startAt: input.startAt,
+    })
   }
 
   const run = await input.store.createRun(runInput)
 
   try {
-    await input.runCoordinationExecutor.enqueue({
+    const command = {
       kind: 'continueRun',
       runId: run.id,
       workflowName: input.workflow.name,
-    })
+    } as const
+    if (input.startAt) {
+      await input.runCoordinationExecutor.enqueueDelayed(
+        command,
+        input.startAt,
+      )
+    } else {
+      await input.runCoordinationExecutor.enqueue(command)
+    }
   } catch (error) {
     await input.store.failRun({
       runId: run.id,
@@ -159,6 +174,7 @@ export async function startTaskRun<
       taskName: input.task.name,
       taskInput,
       ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
+      startAt: input.startAt,
     })
   }
 
@@ -173,6 +189,7 @@ export async function startTaskRun<
     taskInput,
     idempotencyKey,
     timeout: input.task.timeout,
+    startAt: input.startAt,
     throwOnDispatchFailure: true,
   })
 

@@ -79,6 +79,29 @@ export async function installPostgresWorkflowSchemaForTesting(
     $$;
   `)
   await db.query(`
+    CREATE TABLE IF NOT EXISTS workflow_schedules (
+      id uuid PRIMARY KEY,
+      name text NOT NULL,
+      runnable_kind workflow_run_kind NOT NULL,
+      runnable_name text NOT NULL,
+      input jsonb NOT NULL,
+      tags jsonb NOT NULL DEFAULT '{}'::jsonb,
+      cron text,
+      every_ms bigint,
+      enabled boolean NOT NULL,
+      next_run_at timestamptz NOT NULL,
+      last_slot_at timestamptz,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now(),
+      CONSTRAINT workflow_schedules_name_key UNIQUE (name),
+      CONSTRAINT workflow_schedules_cadence_chk CHECK ((cron IS NULL) <> (every_ms IS NULL))
+    )
+  `)
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS workflow_schedules_due_idx
+    ON workflow_schedules (enabled, next_run_at)
+  `)
+  await db.query(`
     CREATE TABLE IF NOT EXISTS workflow_runs (
       id uuid PRIMARY KEY,
       kind workflow_run_kind NOT NULL,

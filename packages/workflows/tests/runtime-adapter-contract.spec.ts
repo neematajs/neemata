@@ -79,6 +79,34 @@ function workflowRuntimeAdapterContract(
       }
     })
 
+    it('delays workflow starts without hiding the run row', async () => {
+      const workflow = defineWorkflow({
+        name: 'adapter-delayed-workflow',
+        input: t.object({ scenario: t.string() }),
+        output: t.object({ caseId: t.string() }),
+      }).build()
+      const runtime = await createRuntime()
+      const client = createWorkflowRuntimeClient(runtime)
+      const startAt = new Date(Date.now() + 60_000)
+
+      const run = await client.start(
+        workflow,
+        { scenario: 'alpha' },
+        { startAt },
+      )
+
+      await expect(client.get(run.id)).resolves.toMatchObject({
+        run: { id: run.id, status: 'queued' },
+      })
+      await expect(
+        runtime.runCoordinationExecutor.claim({
+          workerId: 'coordinator-before-start',
+          workflowNames: [workflow.name],
+          leaseMs: 30_000,
+        }),
+      ).resolves.toBeNull()
+    })
+
     it('cancels a queued workflow run end-to-end', async () => {
       const workflow = defineWorkflow({
         name: 'adapter-cancel-queued-workflow',
@@ -209,6 +237,30 @@ function workflowRuntimeAdapterContract(
         expect(claimed?.command.attemptId).toMatch(uuidPattern)
         expect(claimed?.command.leaseToken).toMatch(uuidPattern)
       }
+    })
+
+    it('delays task starts without hiding the run row', async () => {
+      const task = defineTask({
+        name: 'adapter-delayed-task',
+        input: t.object({ text: t.string() }),
+        output: t.object({ id: t.string() }),
+      })
+      const runtime = await createRuntime()
+      const client = createWorkflowRuntimeClient(runtime)
+      const startAt = new Date(Date.now() + 60_000)
+
+      const run = await client.start(task, { text: 'alpha' }, { startAt })
+
+      await expect(client.get(run.id)).resolves.toMatchObject({
+        run: { id: run.id, status: 'queued' },
+      })
+      await expect(
+        runtime.attemptExecutor.claimTask({
+          workerId: 'task-before-start',
+          taskNames: [task.name],
+          leaseMs: 30_000,
+        }),
+      ).resolves.toBeNull()
     })
 
     it('claims, acks, and releases run coordination commands', async () => {

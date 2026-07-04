@@ -43,6 +43,14 @@ export function defineWorkflowsWorker<
         async start() {
           const config = await resolveWorkflowsConfig(ctx.definition)
           runtime = await config.runtime()
+          if (ctx.data.role === 'coordinator' && config.schedules.length > 0) {
+            if (!runtime.scheduler) {
+              throw new Error(
+                'Workflow runtime adapter does not support schedules',
+              )
+            }
+            await runtime.scheduler.reconcile(config.schedules)
+          }
           workerLoopError = undefined
           workerLoop = runRoleLoop({
             role: ctx.data.role,
@@ -98,6 +106,8 @@ async function runRoleLoop(input: {
           leaseMs: input.config.workers.coordinator.leaseMs,
           maxIdleClaims: input.config.workers.coordinator.maxIdleClaims,
           idleDelayMs: input.config.workers.coordinator.pollIntervalMs,
+          scheduling:
+            input.config.schedules.length === 0 ? undefined : { everyMs: 1000 },
           signal: input.signal,
         })
         await sleep(

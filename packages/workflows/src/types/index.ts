@@ -405,3 +405,32 @@ export type RunnableRun<
   : Runnable extends AnyTaskDefinition
     ? TaskRun<Runnable>
     : never
+
+export type RunnableDefinition = AnyWorkflowDefinition | AnyTaskDefinition
+
+export type RunnableInput<Runnable extends RunnableDefinition> =
+  Runnable extends AnyWorkflowDefinition
+    ? WorkflowInput<Runnable>
+    : Runnable extends AnyTaskDefinition
+      ? TaskInput<Runnable>
+      : never
+
+export type ScheduleDefinition<
+  Name extends string = string,
+  Runnable extends RunnableDefinition = RunnableDefinition,
+> = {
+  readonly kind: 'schedule'
+  readonly name: Name
+  readonly runnable: Runnable
+  readonly input: RunnableInput<Runnable>
+  readonly cron?: string
+  readonly every?: DurationString
+  readonly tags?: Readonly<Record<string, string>>
+  readonly enabled: boolean
+  readonly immediately?: boolean
+}
+
+export type AnyScheduleDefinition = ScheduleDefinition<
+  string,
+  RunnableDefinition
+>

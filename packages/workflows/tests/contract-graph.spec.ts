@@ -1,7 +1,7 @@
 import { t } from '@nmtjs/type'
 import { describe, expect, expectTypeOf, it } from 'vitest'
 
-import { defineTask, defineWorkflow } from '../src/index.ts'
+import { defineSchedule, defineTask, defineWorkflow } from '../src/index.ts'
 
 describe('workflow contract graph', () => {
   const embedding = defineTask({
@@ -88,5 +88,67 @@ describe('workflow contract graph', () => {
         }),
       })
       .build()
+  })
+
+  it('defines static schedules for tasks and workflows', () => {
+    const schedule = defineSchedule({
+      name: 'case-generation-schedule',
+      runnable: workflow,
+      input: { kind: 'normal', scenario: 'alpha' },
+      every: '5m',
+      tags: { tenantId: 'tenant-1' },
+    })
+
+    expect(schedule).toMatchObject({
+      kind: 'schedule',
+      name: 'case-generation-schedule',
+      runnable: workflow,
+      input: { kind: 'normal', scenario: 'alpha' },
+      every: '5m',
+      tags: { tenantId: 'tenant-1' },
+      enabled: true,
+    })
+  })
+
+  it('rejects schedule definitions without exactly one cadence', () => {
+    expect(() =>
+      defineSchedule({
+        name: 'missing-cadence',
+        runnable: workflow,
+        input: { kind: 'normal', scenario: 'alpha' },
+      }),
+    ).toThrow('Schedule [missing-cadence] must define exactly one of cron/every')
+
+    expect(() =>
+      defineSchedule({
+        name: 'double-cadence',
+        runnable: workflow,
+        input: { kind: 'normal', scenario: 'alpha' },
+        cron: '* * * * *',
+        every: '1m',
+      }),
+    ).toThrow('Schedule [double-cadence] must define exactly one of cron/every')
+  })
+
+  it('rejects invalid schedule every durations', () => {
+    expect(() =>
+      defineSchedule({
+        name: 'bad-every',
+        runnable: workflow,
+        input: { kind: 'normal', scenario: 'alpha' },
+        every: '0ms',
+      }),
+    ).toThrow('Invalid schedule [bad-every] every duration [0ms]')
+  })
+
+  it('rejects invalid schedule cron expressions', () => {
+    expect(() =>
+      defineSchedule({
+        name: 'bad-cron',
+        runnable: workflow,
+        input: { kind: 'normal', scenario: 'alpha' },
+        cron: 'not a cron',
+      }),
+    ).toThrow('Invalid schedule [bad-cron] cron [not a cron]')
   })
 })

@@ -593,16 +593,20 @@ test('creates drizzle schema with canonical runtime names', () => {
   const WorkflowRunTable = schema.tables.runs
   const WorkflowNodeTable = schema.tables.nodes
   const SchemaVersionTable = schema.tables.schemaVersion
+  const WorkflowScheduleTable = schema.tables.schedules
 
   expectTypeOf(schema).toHaveProperty('tables')
   expectTypeOf(schema).toHaveProperty('enums')
   expectTypeOf(schema.tables).toHaveProperty('runs')
   expectTypeOf(schema.tables).toHaveProperty('nodes')
   expectTypeOf(schema.tables).toHaveProperty('schemaVersion')
+  expectTypeOf(schema.tables).toHaveProperty('schedules')
+  expect(WORKFLOW_POSTGRES_SCHEMA_VERSION).toBe(1)
 
   expect(getTableName(WorkflowRunTable)).toBe('workflow_runs')
   expect(getTableConfig(WorkflowRunTable).schema).toBeUndefined()
   expect(getTableName(SchemaVersionTable)).toBe('workflow_schema_version')
+  expect(getTableName(WorkflowScheduleTable)).toBe('workflow_schedules')
   expect(SchemaVersionTable.id.primary).toBe(true)
   expect(SchemaVersionTable.version.notNull).toBe(true)
   expect(SchemaVersionTable.installedAt.notNull).toBe(true)
@@ -619,6 +623,13 @@ test('creates drizzle schema with canonical runtime names', () => {
     'failed',
     'completed',
   ])
+  expect(WorkflowScheduleTable.id.columnType).toBe('PgUUID')
+  expect(WorkflowScheduleTable.runnableKind.enumValues).toStrictEqual([
+    'workflow',
+    'task',
+  ])
+  expect(WorkflowScheduleTable.enabled.notNull).toBe(true)
+  expect(WorkflowScheduleTable.nextRunAt.notNull).toBe(true)
   expect(getTableName(WorkflowNodeTable)).toBe('workflow_nodes')
   expect(getTableConfig(WorkflowNodeTable).schema).toBeUndefined()
   expect(WorkflowNodeTable.runId.columnType).toBe('PgUUID')
@@ -845,10 +856,12 @@ test('creates drizzle schema with canonical runtime names', () => {
       'workflow_commands_run_idx',
       'workflow_commands_claim_idx',
       'workflow_commands_continue_dedup_idx',
+      'workflow_schedules_due_idx',
     ]),
   )
   expect(WORKFLOW_POSTGRES_SCHEMA_MANIFEST.constraints).toEqual(
     expect.arrayContaining([
+      'workflow_schedules_name_key',
       'workflow_attempts_identity_key_key',
       'workflow_map_items_identity_key_key',
       'workflow_commands_run_fk',
@@ -861,6 +874,8 @@ test('drizzle kit exports migration sql from app-owned schema file', async () =>
 
   expect(sql).toContain('CREATE TYPE "workflow_run_kind"')
   expect(sql).toContain('CREATE TABLE "workflow_runs"')
+  expect(sql).toContain('CREATE TABLE "workflow_schedules"')
+  expect(sql).toContain('CREATE INDEX "workflow_schedules_due_idx"')
   expect(sql).toContain('"delivery_count" integer DEFAULT 0 NOT NULL')
   expect(sql).toContain('"dead_at" timestamp with time zone')
   expect(sql).toContain(

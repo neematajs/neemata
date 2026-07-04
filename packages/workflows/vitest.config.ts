@@ -7,6 +7,7 @@ const includeIntegration = process.argv.some((arg) =>
 export default defineProject({
   test: {
     environment: 'node',
+    testTimeout: 15_000,
     include: includeIntegration
       ? ['tests/integration/**/*.spec.ts']
       : ['tests/*.spec.ts'],

@@ -8,6 +8,7 @@ import type {
 import type { WorkflowPostgresConnection } from './connection.ts'
 import { createAttemptExecutor } from './executor.ts'
 import { createRunCoordinationExecutor } from './queue.ts'
+import { createPostgresWorkflowScheduler } from './schedules.ts'
 import { DEFAULT_MAX_DELIVERIES, TASK_RUN_NODE_NAME, one } from './sql.ts'
 import {
   createPostgresWorkflowStore,
@@ -33,18 +34,23 @@ export function createPostgresWorkflowRuntime(params: {
   const attemptExecutor = createAttemptExecutor(commandContext)
 
   const atomicStart: WorkflowRuntimeAtomicStart = {
-    startWorkflowRun: ({ run }) =>
+    startWorkflowRun: ({ run, startAt }) =>
       db.transaction(async (tx) => {
         const runtime = createPostgresWorkflowRuntime({ connection: tx })
         const started = await runtime.store.createRun(run)
-        await runtime.runCoordinationExecutor.enqueue({
+        const command = {
           kind: 'continueRun',
           runId: started.id,
           workflowName: started.workflowName,
-        })
+        } as const
+        if (startAt) {
+          await runtime.runCoordinationExecutor.enqueueDelayed(command, startAt)
+        } else {
+          await runtime.runCoordinationExecutor.enqueue(command)
+        }
         return started
       }),
-    startTaskRun: ({ run, taskName, taskInput, idempotencyKey }) =>
+    startTaskRun: ({ run, taskName, taskInput, idempotencyKey, startAt }) =>
       db.transaction(async (tx) => {
         const runtime = createPostgresWorkflowRuntime({ connection: tx })
         const started = await runtime.store.createRun(run)
@@ -67,19 +73,22 @@ export function createPostgresWorkflowRuntime(params: {
           input: taskInput,
           ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
         })
-        await runtime.attemptExecutor.dispatchTask({
-          kind: 'taskAttempt',
-          workflowName: taskName,
-          taskName,
-          runId: started.id,
-          nodeName: TASK_RUN_NODE_NAME,
-          attemptId: result.attempt.id,
-          leaseToken: result.attempt.leaseToken!,
-          input: result.created ? taskInput : result.attempt.input,
-          ...(result.attempt.idempotencyKey === undefined
-            ? {}
-            : { idempotencyKey: result.attempt.idempotencyKey }),
-        })
+        await runtime.attemptExecutor.dispatchTask(
+          {
+            kind: 'taskAttempt',
+            workflowName: taskName,
+            taskName,
+            runId: started.id,
+            nodeName: TASK_RUN_NODE_NAME,
+            attemptId: result.attempt.id,
+            leaseToken: result.attempt.leaseToken!,
+            input: result.created ? taskInput : result.attempt.input,
+            ...(result.attempt.idempotencyKey === undefined
+              ? {}
+              : { idempotencyKey: result.attempt.idempotencyKey }),
+          },
+          startAt === undefined ? undefined : { runAt: startAt },
+        )
         return started
       }),
   }
@@ -122,11 +131,19 @@ export function createPostgresWorkflowRuntime(params: {
       }),
   }
 
+  const scheduler = createPostgresWorkflowScheduler({
+    db,
+    ready,
+    createRuntime: (connection) =>
+      createPostgresWorkflowRuntime({ connection, maxDeliveries }),
+  })
+
   return {
     store,
     runCoordinationExecutor,
     attemptExecutor,
     retentionPruner,
+    scheduler,
     atomicStart,
     atomicContinuation,
     atomicCompletion,

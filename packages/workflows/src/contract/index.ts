@@ -8,6 +8,9 @@ import type {
   DurationString,
   MapRunMode,
   RetryPolicy,
+  RunnableDefinition,
+  RunnableInput,
+  ScheduleDefinition,
   Schema,
   SchemaBoundary,
   SchemaInput,
@@ -27,6 +30,8 @@ import type {
   WorkflowParallelNode,
   WorkflowTaskNode,
 } from '../types/index.ts'
+import { CronExpressionParser } from 'cron-parser'
+import { parseDurationMs } from '../runtime/duration.ts'
 
 declare const noDeclaredOutput: unique symbol
 type NoDeclaredOutput = { readonly [noDeclaredOutput]: true }
@@ -355,6 +360,20 @@ export type WorkflowOptions<
   retention?: DurationString
 }
 
+export type ScheduleOptions<
+  Name extends string,
+  Runnable extends RunnableDefinition,
+> = {
+  name: Name
+  runnable: Runnable
+  input: RunnableInput<Runnable>
+  cron?: string
+  every?: DurationString
+  tags?: Readonly<Record<string, string>>
+  enabled?: boolean
+  immediately?: boolean
+}
+
 const nodeNamePattern = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/
 
 function assertNodeName(name: string, nodes: readonly WorkflowNode[]) {
@@ -491,4 +510,51 @@ export function defineWorkflow<
   OutputSchema extends Schema ? SchemaSides<OutputSchema> : NoDeclaredOutput
 > {
   return new WorkflowDraftBuilder(options) as any
+}
+
+export function defineSchedule<
+  Name extends string,
+  Runnable extends RunnableDefinition,
+>(
+  options: ScheduleOptions<Name, Runnable>,
+): ScheduleDefinition<Name, Runnable> {
+  assertScheduleCadence(options)
+  return Object.freeze({
+    kind: 'schedule',
+    ...options,
+    enabled: options.enabled ?? true,
+  }) as ScheduleDefinition<Name, Runnable>
+}
+
+function assertScheduleCadence(input: {
+  readonly name: string
+  readonly cron?: string
+  readonly every?: string
+}) {
+  const cadenceCount =
+    (input.cron === undefined ? 0 : 1) + (input.every === undefined ? 0 : 1)
+  if (cadenceCount !== 1) {
+    throw new Error(
+      `Schedule [${input.name}] must define exactly one of cron/every`,
+    )
+  }
+
+  if (input.every !== undefined) {
+    const everyMs = parseDurationMs(input.every)
+    if (everyMs === undefined || everyMs <= 0) {
+      throw new Error(
+        `Invalid schedule [${input.name}] every duration [${input.every}]`,
+      )
+    }
+    return
+  }
+
+  try {
+    CronExpressionParser.parse(input.cron!, { currentDate: new Date(0) })
+  } catch (error) {
+    throw new Error(
+      `Invalid schedule [${input.name}] cron [${input.cron!}]`,
+      { cause: error },
+    )
+  }
 }

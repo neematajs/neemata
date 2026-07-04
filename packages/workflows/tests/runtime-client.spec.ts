@@ -3,6 +3,7 @@ import { t } from '@nmtjs/type'
 import { describe, expect, it } from 'vitest'
 
 import {
+  defineSchedule,
   defineTask,
   defineWorkflow,
   implementTask,
@@ -54,6 +55,33 @@ describe('workflow runtime client', () => {
     expect(snapshot?.run.id).toBe(run.id)
     expect(runtime.inspect().continueRunCommands).toMatchObject([
       {
+        payload: {
+          kind: 'continueRun',
+          runId: run.id,
+          workflowName: workflow.name,
+        },
+      },
+    ])
+  })
+
+  it('starts workflows at a delayed time while exposing the run immediately', async () => {
+    const workflow = defineWorkflow({
+      name: 'client-delayed-workflow',
+      input: t.object({ scenario: t.string() }),
+      output: t.object({ caseId: t.string() }),
+    }).build()
+    const runtime = createInMemoryWorkflowRuntime()
+    const client = createWorkflowRuntimeClient(runtime)
+    const startAt = new Date(Date.now() + 60_000)
+
+    const run = await client.start(workflow, { scenario: 'alpha' }, { startAt })
+
+    await expect(client.get(run.id)).resolves.toMatchObject({
+      run: { id: run.id, status: 'queued' },
+    })
+    expect(runtime.inspect().continueRunCommands).toMatchObject([
+      {
+        runAt: startAt,
         payload: {
           kind: 'continueRun',
           runId: run.id,
@@ -122,6 +150,34 @@ describe('workflow runtime client', () => {
     ])
   })
 
+  it('starts tasks at a delayed time while exposing the run immediately', async () => {
+    const task = defineTask({
+      name: 'client-delayed-task',
+      input: t.object({ text: t.string() }),
+      output: t.object({ id: t.string() }),
+    })
+    const runtime = createInMemoryWorkflowRuntime()
+    const client = createWorkflowRuntimeClient(runtime)
+    const startAt = new Date(Date.now() + 60_000)
+
+    const run = await client.start(task, { text: 'alpha' }, { startAt })
+
+    await expect(client.get(run.id)).resolves.toMatchObject({
+      run: { id: run.id, status: 'queued' },
+    })
+    expect(runtime.inspect().taskCommands).toMatchObject([
+      {
+        runAt: startAt,
+        payload: {
+          kind: 'taskAttempt',
+          runId: run.id,
+          taskName: task.name,
+          input: { text: 'alpha' },
+        },
+      },
+    ])
+  })
+
   it('rejects invalid task start input before creating a run', async () => {
     const task = defineTask({
       name: 'client-invalid-task-input',
@@ -172,6 +228,63 @@ describe('workflow runtime client', () => {
     ).resolves.toMatchObject({
       runs: [{ id: alpha.id }],
     })
+  })
+
+  it('manages schedules through the adapter scheduler', async () => {
+    const workflow = defineWorkflow({
+      name: 'client-scheduled-workflow',
+      input: t.object({ scenario: t.string() }),
+      output: t.object({ caseId: t.string() }),
+    }).build()
+    const runtime = createInMemoryWorkflowRuntime()
+    const client = createWorkflowRuntimeClient(runtime)
+    const schedule = defineSchedule({
+      name: 'client-schedule',
+      runnable: workflow,
+      input: { scenario: 'alpha' },
+      every: '1m',
+      tags: { tenantId: 'tenant-1' },
+      immediately: true,
+    })
+
+    await runtime.scheduler.reconcile([schedule])
+    await expect(client.schedules.list()).resolves.toMatchObject([
+      {
+        name: 'client-schedule',
+        runnableKind: 'workflow',
+        runnableName: workflow.name,
+        input: { scenario: 'alpha' },
+        tags: { tenantId: 'tenant-1' },
+        everyMs: 60_000,
+        enabled: true,
+      },
+    ])
+
+    const first = await client.schedules.trigger('client-schedule')
+    const second = await client.schedules.trigger('client-schedule')
+
+    expect(first.tags).toStrictEqual({
+      tenantId: 'tenant-1',
+      schedule: 'client-schedule',
+    })
+    expect(second.id).not.toBe(first.id)
+    await client.schedules.setEnabled('client-schedule', false)
+    await expect(client.schedules.list()).resolves.toMatchObject([
+      { name: 'client-schedule', enabled: false },
+    ])
+  })
+
+  it('throws clearly when schedule APIs are used without scheduler support', async () => {
+    const runtime = createInMemoryWorkflowRuntime()
+    const client = createWorkflowRuntimeClient({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+    })
+
+    await expect(client.schedules.list()).rejects.toThrow(
+      'Workflow runtime adapter does not support schedules',
+    )
   })
 
   it('requests cancellation and enqueues a continuation', async () => {

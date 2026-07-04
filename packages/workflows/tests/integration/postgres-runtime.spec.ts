@@ -6,6 +6,7 @@ import type {
   WorkflowImplementation,
 } from '../../src/implement/index.ts'
 import {
+  defineSchedule,
   defineTask,
   defineWorkflow,
   implementTask,
@@ -728,6 +729,134 @@ describe.skipIf(!postgresTarget.url)(
       expect(finishCalls).toBe(1)
       expect(snapshot?.run.status).toBe('completed')
       expect(snapshot?.run.output).toStrictEqual({ text: 'alpha' })
+    }, 30_000)
+
+    it('fires a due schedule exactly once across concurrent coordinator workers', async () => {
+      const { runtime } = await createHarness()
+      const container = createTestContainer()
+      const workflow = defineWorkflow({
+        name: createTestName('postgres-scheduled-once'),
+        input: t.object({ text: t.string() }),
+        output: t.object({ text: t.string() }),
+      }).build()
+      const workflowImpl = implementWorkflow(workflow).finish(
+        (_ctx, _outputs, input) => ({ text: input.text }),
+      )
+      const schedule = defineSchedule({
+        name: createTestName('postgres-schedule-once'),
+        runnable: workflow,
+        input: { text: 'alpha' },
+        every: '1s',
+        immediately: true,
+      })
+
+      await runtime.scheduler!.reconcile([schedule])
+      await Promise.all(
+        Array.from({ length: 3 }, (_, index) =>
+          runWorkflowWorker({
+            ...runtime,
+            container,
+            workflows: [workflowImpl],
+            workerId: `schedule-coordinator-${index}`,
+            scheduling: { everyMs: 0, batchSize: 10 },
+            maxIdleClaims: 4,
+            idleDelayMs: 10,
+          }),
+        ),
+      )
+
+      const runs = await runtime.store.listRuns({
+        tags: { schedule: schedule.name },
+      })
+      expect(runs.runs).toHaveLength(1)
+      expect(runs.runs[0]?.status).toBe('completed')
+      expect(runs.runs[0]?.output).toStrictEqual({ text: 'alpha' })
+    }, 30_000)
+
+    it('stops firing disabled schedules', async () => {
+      const { runtime } = await createHarness()
+      const container = createTestContainer()
+      const workflow = defineWorkflow({
+        name: createTestName('postgres-disabled-schedule-workflow'),
+        input: t.object({ text: t.string() }),
+        output: t.object({ text: t.string() }),
+      }).build()
+      const workflowImpl = implementWorkflow(workflow).finish(
+        (_ctx, _outputs, input) => ({ text: input.text }),
+      )
+      const schedule = defineSchedule({
+        name: createTestName('postgres-disabled-schedule'),
+        runnable: workflow,
+        input: { text: 'alpha' },
+        // long interval: only the immediate slot fires during the test;
+        // a hot interval keeps re-feeding the worker loop and it never idles out
+        every: '1m',
+        immediately: true,
+      })
+
+      await runtime.scheduler!.reconcile([schedule])
+      await runWorkflowWorker({
+        ...runtime,
+        container,
+        workflows: [workflowImpl],
+        workerId: 'schedule-disable-first',
+        scheduling: { everyMs: 0, batchSize: 10 },
+        maxIdleClaims: 4,
+        idleDelayMs: 10,
+      })
+      await runtime.scheduler!.setEnabled(schedule.name, false)
+      // probe far past the next slot: due if it were still enabled, so a zero
+      // fire count isolates the enabled predicate from clock timing
+      const probe = await runtime.scheduler!.fireDue({
+        now: new Date(Date.now() + 300_000),
+        limit: 10,
+      })
+      expect(probe.fired).toBe(0)
+
+      const runs = await runtime.store.listRuns({
+        tags: { schedule: schedule.name },
+      })
+      expect(runs.runs).toHaveLength(1)
+    }, 30_000)
+
+    it('keeps delayed starts visible before command dispatch is due', async () => {
+      const { runtime } = await createHarness()
+      const container = createTestContainer()
+      const workflow = defineWorkflow({
+        name: createTestName('postgres-delayed-start'),
+        input: t.object({ text: t.string() }),
+        output: t.object({ text: t.string() }),
+      }).build()
+      const workflowImpl = implementWorkflow(workflow).finish(
+        (_ctx, _outputs, input) => ({ text: input.text }),
+      )
+      const client = createWorkflowRuntimeClient(runtime)
+      const run = await client.start(
+        workflow,
+        { text: 'alpha' },
+        { startAt: new Date(Date.now() + 200) },
+      )
+
+      await runWorkflowWorker({
+        ...runtime,
+        container,
+        workflows: [workflowImpl],
+        workerId: 'delayed-start-before',
+        maxIdleClaims: 2,
+        idleDelayMs: 20,
+      })
+      const queued = await runtime.store.loadRunSnapshot(run.id)
+      expect(queued?.run.status).toBe('queued')
+
+      await wait(250)
+      const [completed] = await runWorkersUntilCompleted({
+        runtime,
+        container,
+        workflows: [workflowImpl],
+        runIds: [run.id],
+        workerCount: 1,
+      })
+      expect(completed?.run.output).toStrictEqual({ text: 'alpha' })
     }, 30_000)
   },
 )

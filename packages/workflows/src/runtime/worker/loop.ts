@@ -1,4 +1,5 @@
 import type { DurationString } from '../../types/index.ts'
+import type { WorkflowScheduler } from '../scheduler.ts'
 import type {
   PruneTerminalRunsParams,
   WorkflowRetentionPruner,
@@ -41,6 +42,11 @@ export type WorkerRetentionOptions = {
   readonly statuses?: PruneTerminalRunsParams['statuses']
 }
 
+export type WorkerSchedulingOptions = {
+  readonly everyMs?: number
+  readonly batchSize?: number
+}
+
 export type WorkerLoopOptions = {
   readonly workerId: string
   readonly concurrency?: number
@@ -49,6 +55,8 @@ export type WorkerLoopOptions = {
   readonly idleDelayMs?: number
   readonly retention?: WorkerRetentionOptions
   readonly retentionPruner?: WorkflowRetentionPruner
+  readonly scheduling?: WorkerSchedulingOptions
+  readonly scheduler?: WorkflowScheduler
   readonly signal?: AbortSignal
 }
 
@@ -65,7 +73,9 @@ export async function runWorkerLoop(
   let firstError: unknown
   let stopped = false
   let lastRetentionAt = 0
+  let lastSchedulingAt = 0
   let retentionRunning = false
+  let schedulingRunning = false
   const runRetentionPrune = async () => {
     if (!options.retention || !options.retentionPruner) return
     const everyMs = options.retention.everyMs ?? 60_000
@@ -94,6 +104,26 @@ export async function runWorkerLoop(
       retentionRunning = false
     }
   }
+  const runScheduling = async () => {
+    if (!options.scheduling || !options.scheduler) return
+    const everyMs = options.scheduling.everyMs ?? 1_000
+    if (!Number.isFinite(everyMs) || everyMs < 0) {
+      throw new Error('Scheduling everyMs must be a non-negative number')
+    }
+    const date = Date.now()
+    if (schedulingRunning || date - lastSchedulingAt < everyMs) return
+
+    schedulingRunning = true
+    lastSchedulingAt = date
+    try {
+      await options.scheduler.fireDue({
+        now: new Date(date),
+        limit: options.scheduling.batchSize,
+      })
+    } finally {
+      schedulingRunning = false
+    }
+  }
   await Promise.allSettled(
     Array.from({ length: concurrency }, async () => {
       let idleClaims = 0
@@ -112,6 +142,7 @@ export async function runWorkerLoop(
 
           idleClaims += 1
           await runRetentionPrune()
+          await runScheduling()
           if (idleClaims < maxIdleClaims) {
             await sleep(options.idleDelayMs ?? 0, options.signal)
           }

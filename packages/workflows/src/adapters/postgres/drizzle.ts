@@ -1,6 +1,8 @@
 import { sql } from 'drizzle-orm'
 import {
   check,
+  bigint,
+  boolean,
   foreignKey,
   index,
   integer,
@@ -17,6 +19,7 @@ import {
 
 type TableKey =
   | 'schemaVersion'
+  | 'schedules'
   | 'runs'
   | 'nodes'
   | 'attempts'
@@ -73,6 +76,7 @@ const commandKindValues = ['continue', 'activity', 'task'] as const
 
 const tableNames = {
   schemaVersion: 'workflow_schema_version',
+  schedules: 'workflow_schedules',
   runs: 'workflow_runs',
   nodes: 'workflow_nodes',
   attempts: 'workflow_attempts',
@@ -170,6 +174,36 @@ export function createSchema() {
         columns: [t.parentRunId, t.parentNodeName],
         foreignColumns: [nodes.runId, nodes.name],
       }).onDelete('cascade'),
+    ],
+  )
+  const schedules = createTable(
+    tableNames.schedules,
+    {
+      id: uuid('id').primaryKey(),
+      name: text('name').notNull(),
+      runnableKind: enums.runKind('runnable_kind').notNull(),
+      runnableName: text('runnable_name').notNull(),
+      input: jsonb('input').notNull(),
+      tags: jsonb('tags').notNull().default({}),
+      cron: text('cron'),
+      everyMs: bigint('every_ms', { mode: 'number' }),
+      enabled: boolean('enabled').notNull(),
+      nextRunAt: timestamp('next_run_at', { withTimezone: true }).notNull(),
+      lastSlotAt: timestamp('last_slot_at', { withTimezone: true }),
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .defaultNow(),
+      updatedAt: timestamp('updated_at', { withTimezone: true })
+        .notNull()
+        .defaultNow(),
+    },
+    (t) => [
+      unique('workflow_schedules_name_key').on(t.name),
+      index('workflow_schedules_due_idx').on(t.enabled, t.nextRunAt),
+      check(
+        'workflow_schedules_cadence_chk',
+        sql`(${t.cron} IS NULL) <> (${t.everyMs} IS NULL)`,
+      ),
     ],
   )
   const nodes = createTable(
@@ -391,6 +425,7 @@ export function createSchema() {
   return {
     tables: {
       schemaVersion,
+      schedules,
       runs,
       nodes,
       attempts,

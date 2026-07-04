@@ -10,6 +10,7 @@ export const WorkflowMapItemTable = workflows.tables.mapItems
 export const WorkflowNodeTable = workflows.tables.nodes
 export const WorkflowRunLeaseTable = workflows.tables.runLeases
 export const WorkflowRunTable = workflows.tables.runs
+export const WorkflowScheduleTable = workflows.tables.schedules
 export const WorkflowSchemaVersionTable = workflows.tables.schemaVersion
 
 export const WorkflowAttemptStatus = workflows.enums.attemptStatus

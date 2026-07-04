@@ -10,6 +10,7 @@ import { t } from '@nmtjs/type'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
+  defineSchedule,
   defineTask,
   defineWorkflow,
   implementTask,
@@ -316,6 +317,55 @@ describe('workflows Neem integration', () => {
         channel.port1.close()
         channel.port2.close()
       }
+    }
+  })
+
+  it('reconciles schedules once and fires them from coordinator workers', async () => {
+    const runtimeAdapter = createInMemoryWorkflowRuntime()
+    const schedule = defineSchedule({
+      name: 'neem.integration.schedule',
+      runnable: workflow,
+      input: { id: 'scheduled' },
+      every: '1h',
+      immediately: true,
+    })
+    const config = defineWorkflows({
+      runtime: () => runtimeAdapter,
+      workflows: () => [workflowImpl],
+      schedules: () => [schedule],
+      workers: {
+        coordinator: { pollIntervalMs: 1, maxIdleClaims: 1 },
+      },
+    })
+    const worker = defineWorkflowsWorker(config)
+    const channel = new MessageChannel()
+    const runtime = await worker.createRuntime({
+      mode: 'development',
+      name: 'workflows:coordinator:schedule',
+      data: { role: 'coordinator' },
+      logger,
+      definition: worker.definition,
+      port: channel.port1,
+    })
+    const client = createWorkflowRuntimeClient(runtimeAdapter)
+
+    try {
+      await runtime.start()
+      const runs = await waitFor(async () => {
+        const current = await client.list({
+          tags: { schedule: schedule.name },
+        })
+        return current.runs[0]?.status === 'completed' ? current.runs : undefined
+      })
+
+      expect(runtimeAdapter.inspect().schedules).toMatchObject([
+        { name: schedule.name },
+      ])
+      expect(runs[0]?.input).toStrictEqual({ id: 'scheduled' })
+    } finally {
+      await runtime.stop()
+      channel.port1.close()
+      channel.port2.close()
     }
   })
 

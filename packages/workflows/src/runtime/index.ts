@@ -37,6 +37,12 @@ export type {
 export { createInMemoryWorkflowRuntime } from './in-memory.ts'
 export type { InMemoryWorkflowRuntime } from './in-memory.ts'
 export type {
+  StoredWorkflowSchedule,
+  WorkflowScheduler,
+  WorkflowSchedulerFireDueOptions,
+  WorkflowSchedulerFireDueResult,
+} from './scheduler.ts'
+export type {
   RuntimeAttemptStatus,
   RuntimeNodeStatus,
   RuntimeRunStatus,
@@ -101,6 +107,7 @@ export type {
   WorkerLoopOptions,
   WorkerLoopResult,
   WorkerRetentionOptions,
+  WorkerSchedulingOptions,
   WorkerCommandResult,
   WorkflowRuntimeAtomicContinuation,
   WorkflowRuntimeAtomicCompletion,
