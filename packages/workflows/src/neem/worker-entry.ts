@@ -1,12 +1,10 @@
 import { Container, provision, CoreInjectables } from '@nmtjs/core'
 import { defineRuntimeWorker } from '@nmtjs/neem'
 
-import type {
-  TaskImplementation,
-  WorkflowImplementation,
-} from '../implement/index.ts'
 import type { WorkflowRuntimeAdapter } from '../runtime/client.ts'
 import type {
+  AnyTaskImplementation,
+  AnyWorkflowImplementation,
   ResolvedWorkflowsConfig,
   WorkflowsConfig,
   WorkflowsWorkerData,
@@ -19,14 +17,15 @@ import {
 import { resolveWorkflowsConfig } from './runtime.ts'
 
 export type WorkflowsWorkerConfig<
-  TWorkflowImplementation extends WorkflowImplementation =
-    WorkflowImplementation,
-  TTaskImplementation extends TaskImplementation = TaskImplementation,
+  TWorkflowImplementation extends AnyWorkflowImplementation =
+    AnyWorkflowImplementation,
+  TTaskImplementation extends AnyTaskImplementation = AnyTaskImplementation,
 > = WorkflowsConfig<TWorkflowImplementation, TTaskImplementation>
 
 export function defineWorkflowsWorker<
-  const TWorkflowImplementation extends WorkflowImplementation,
-  const TTaskImplementation extends TaskImplementation = TaskImplementation,
+  const TWorkflowImplementation extends AnyWorkflowImplementation,
+  const TTaskImplementation extends AnyTaskImplementation =
+    AnyTaskImplementation,
 >(config: WorkflowsWorkerConfig<TWorkflowImplementation, TTaskImplementation>) {
   return defineRuntimeWorker<WorkflowsWorkerData, WorkflowsWorkerConfig>({
     definition: config,

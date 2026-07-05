@@ -5,14 +5,24 @@ import type {
 import type { WorkflowRuntimeAdapter } from '../runtime/client.ts'
 import type { AnyScheduleDefinition, MaybePromise } from '../types/index.ts'
 
+export type AnyWorkflowImplementation = Omit<
+  WorkflowImplementation,
+  'finish'
+> & {
+  readonly finish: (...args: any[]) => unknown
+}
+export type AnyTaskImplementation = Omit<TaskImplementation, 'handler'> & {
+  readonly handler: (...args: any[]) => unknown
+}
+
 export type WorkflowsRuntimeFactory = () => MaybePromise<WorkflowRuntimeAdapter>
 
 export type WorkflowsImplementationsFactory<
-  Implementation = WorkflowImplementation,
+  Implementation = AnyWorkflowImplementation,
 > = () => MaybePromise<readonly Implementation[]>
 
 export type WorkflowTaskImplementationsFactory<
-  Implementation = TaskImplementation,
+  Implementation = AnyTaskImplementation,
 > = () => MaybePromise<readonly Implementation[]>
 
 export type WorkflowSchedulesFactory<
@@ -40,9 +50,9 @@ export type WorkflowsWorkersConfig = {
 }
 
 export type WorkflowsConfig<
-  TWorkflowImplementation extends WorkflowImplementation =
-    WorkflowImplementation,
-  TTaskImplementation extends TaskImplementation = TaskImplementation,
+  TWorkflowImplementation extends AnyWorkflowImplementation =
+    AnyWorkflowImplementation,
+  TTaskImplementation extends AnyTaskImplementation = AnyTaskImplementation,
   TScheduleDefinition extends AnyScheduleDefinition = AnyScheduleDefinition,
 > = {
   readonly runtime: WorkflowsRuntimeFactory
@@ -53,9 +63,9 @@ export type WorkflowsConfig<
 }
 
 export type ResolvedWorkflowsConfig<
-  TWorkflowImplementation extends WorkflowImplementation =
-    WorkflowImplementation,
-  TTaskImplementation extends TaskImplementation = TaskImplementation,
+  TWorkflowImplementation extends AnyWorkflowImplementation =
+    AnyWorkflowImplementation,
+  TTaskImplementation extends AnyTaskImplementation = AnyTaskImplementation,
   TScheduleDefinition extends AnyScheduleDefinition = AnyScheduleDefinition,
 > = {
   readonly runtime: WorkflowsRuntimeFactory
@@ -82,8 +92,9 @@ const defaultWorkerConfig = {
 } as const
 
 export function defineWorkflows<
-  const TWorkflowImplementation extends WorkflowImplementation,
-  const TTaskImplementation extends TaskImplementation = TaskImplementation,
+  const TWorkflowImplementation extends AnyWorkflowImplementation,
+  const TTaskImplementation extends AnyTaskImplementation =
+    AnyTaskImplementation,
   const TScheduleDefinition extends AnyScheduleDefinition =
     AnyScheduleDefinition,
 >(
@@ -101,8 +112,9 @@ export function defineWorkflows<
 }
 
 export async function resolveWorkflowsConfig<
-  const TWorkflowImplementation extends WorkflowImplementation,
-  const TTaskImplementation extends TaskImplementation = TaskImplementation,
+  const TWorkflowImplementation extends AnyWorkflowImplementation,
+  const TTaskImplementation extends AnyTaskImplementation =
+    AnyTaskImplementation,
   const TScheduleDefinition extends AnyScheduleDefinition =
     AnyScheduleDefinition,
 >(

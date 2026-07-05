@@ -1,6 +1,6 @@
 import { MessageChannel } from 'node:worker_threads'
 
-import { createLogger } from '@nmtjs/core'
+import { createLogger, createValueInjectable } from '@nmtjs/core'
 import {
   isNeemRuntimeDeclaration,
   isNeemRuntimeHostFactory,
@@ -76,6 +76,26 @@ describe('workflows Neem integration', () => {
       activity: [{ role: 'activity' }],
       task: [],
     })
+  })
+
+  it('accepts task implementations with typed dependencies', async () => {
+    const prefix = createValueInjectable('typed')
+    const task = defineTask({
+      name: 'neem.integration.typed-task-dependencies',
+      input: t.object({ text: t.string() }),
+      output: t.object({ text: t.string() }),
+    })
+    const taskImpl = implementTask(task, {
+      dependencies: { prefix },
+      handler: (ctx, input) => ({ text: `${ctx.prefix}:${input.text}` }),
+    })
+    const config = defineWorkflows({
+      runtime: () => createInMemoryWorkflowRuntime(),
+      workflows: () => [],
+      tasks: () => [taskImpl],
+    })
+
+    expect(await config.tasks?.()).toStrictEqual([taskImpl])
   })
 
   it('rejects invalid worker thread counts by role', async () => {
