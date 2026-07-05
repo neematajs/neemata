@@ -272,6 +272,13 @@ export type NeemRuntimeProxyConfig = {
   sni?: string
 }
 
+/**
+ * Values are baked into the manifest at build time. Deploy-time env vars,
+ * resolved when the server starts, override them: `NEEM_PROXY_PORT` (or the
+ * platform-conventional `PORT` as a fallback), `NEEM_PROXY_HOSTNAME`,
+ * `NEEM_PROXY_TLS_KEY_PATH` and `NEEM_PROXY_TLS_CERT_PATH` (both required to
+ * enable TLS when not configured here).
+ */
 export type NeemProxyConfig = {
   hostname: string
   port: number
@@ -286,6 +293,11 @@ export type NeemProxyConfig = {
   tls?: { keyPath: string; certPath: string }
 }
 
+/**
+ * Values are baked into the manifest at build time. Deploy-time env vars,
+ * resolved when the server starts, override them: `NEEM_HEALTH_PORT` and
+ * `NEEM_HEALTH_HOSTNAME`.
+ */
 export type NeemHealthConfig = {
   hostname?: string
   port: number

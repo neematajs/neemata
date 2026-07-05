@@ -7,6 +7,10 @@ import type { ScopedArtifactRegistry } from './artifacts.ts'
 import type { Manifest, ManifestArtifact, ManifestConfig } from './manifest.ts'
 import { createDefaultLogger } from '../logger.ts'
 import { createArtifactRegistry } from './artifacts.ts'
+import {
+  applyHostConfigEnvOverrides,
+  formatAppliedEnvOverride,
+} from './env-overrides.ts'
 
 export type RuntimeSnapshot = {
   mode: NeemMode
@@ -28,14 +32,26 @@ export function createRuntimeSnapshot(options: {
   manifestFile?: string
   logger?: Logger
 }): RuntimeSnapshot {
+  const logger = options.logger ?? createDefaultLogger(options.mode)
+  // Snapshot creation is the single choke point shared by `neem start`,
+  // standalone start.js, and reloads, so deploy-time env overrides applied
+  // here reach every consumer of the effective host config.
+  const { config, applied, warnings } = applyHostConfigEnvOverrides(
+    options.manifest.config,
+    { ...process.env, ...options.env },
+  )
+  for (const override of applied)
+    logger.info(formatAppliedEnvOverride(override))
+  for (const warning of warnings) logger.warn(warning)
+
   return {
     mode: options.mode,
     outDir: options.outDir,
     env: options.env,
     manifestFile: options.manifestFile,
     manifest: options.manifest,
-    config: options.manifest.config,
-    logger: options.logger ?? createDefaultLogger(options.mode),
+    config,
+    logger,
     artifacts: createArtifactRegistry(
       resolveManifestArtifacts(options.outDir, options.manifest),
     ),

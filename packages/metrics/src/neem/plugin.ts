@@ -9,12 +9,22 @@ import {
   createCombinedMetricsCollector,
   createMetricsServer,
 } from '../server.ts'
+import {
+  applyMetricsServerEnvOverrides,
+  formatAppliedMetricsEnvOverride,
+} from './env.ts'
 import { createNeemMetricsLifecycle } from './observer.ts'
 
 type MetricsPluginOptions = { server?: MetricsServerConfig }
 
 export default definePluginHooks((ctx) => {
   const options = parseOptions(ctx.options)
+  // Options were frozen into the manifest at build time; the factory runs at
+  // start, so the live environment gets the final say on server/push knobs.
+  const overrides = applyMetricsServerEnvOverrides(options.server, process.env)
+  for (const override of overrides.applied)
+    ctx.logger.info(formatAppliedMetricsEnvOverride(override))
+  for (const warning of overrides.warnings) ctx.logger.warn(warning)
   const registry = createMetricsRegistry()
   const workerRegistry = createMetricsWorkerRegistry({ primary: true })
   const lifecycle = createNeemMetricsLifecycle({
@@ -23,7 +33,7 @@ export default definePluginHooks((ctx) => {
   })
   const server = createMetricsServer({
     logger: ctx.logger,
-    config: options.server,
+    config: overrides.config,
     registry: createCombinedMetricsCollector(registry, workerRegistry),
   })
 
