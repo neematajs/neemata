@@ -14,6 +14,7 @@ describe('workflow API boundaries', () => {
     name: 'embedding.generate',
     input: t.object({ text: t.string() }),
     output: t.object({ id: t.string() }),
+    idempotency: (input) => ['embedding.generate', input.text],
   })
 
   const childWorkflow = defineWorkflow({
@@ -30,6 +31,8 @@ describe('workflow API boundaries', () => {
     }),
     output: t.object({ caseId: t.string() }),
     retention: '30d',
+    idempotency: (input) => ['case-generation', input.scenario],
+    tags: (input) => ({ kind: input.kind }),
   })
     .activity('content', {
       input: t.object({ scenario: t.string() }),
@@ -68,9 +71,8 @@ describe('workflow API boundaries', () => {
     }
   })
 
-  it('retains implementation-owned idempotency and tags', () => {
+  it('retains definition-owned start metadata and implementation-owned node idempotency', () => {
     const taskImpl = implementTask(embedding, {
-      idempotency: (_ctx, input) => ['embedding.generate', input.text],
       async handler(_ctx, input) {
         return { id: input.text }
       },
@@ -78,8 +80,6 @@ describe('workflow API boundaries', () => {
 
     const workflowImpl = implementWorkflow(workflow, {
       dependencies: { prefix },
-      idempotency: (ctx, input) => [ctx.prefix, input.scenario],
-      tags: (ctx, input) => ({ prefix: ctx.prefix, kind: input.kind }),
     })
       .content(async (_ctx, input) => ({ text: input.scenario }), {
         input: (_ctx, _outputs, input) => ({ scenario: input.scenario }),
@@ -120,9 +120,12 @@ describe('workflow API boundaries', () => {
       })
       .finish((_ctx, { saveCase }) => ({ caseId: saveCase.caseId }))
 
-    expect(taskImpl.idempotency).toBeTypeOf('function')
-    expect(workflowImpl.idempotency).toBeTypeOf('function')
-    expect(workflowImpl.tags).toBeTypeOf('function')
+    expect(embedding.idempotency).toBeTypeOf('function')
+    expect(workflow.idempotency).toBeTypeOf('function')
+    expect(workflow.tags).toBeTypeOf('function')
+    expect(taskImpl).not.toHaveProperty('idempotency')
+    expect(workflowImpl).not.toHaveProperty('idempotency')
+    expect(workflowImpl).not.toHaveProperty('tags')
     const [contentNode, branchNode, embeddingNode, saveNode] =
       workflowImpl.nodes
 

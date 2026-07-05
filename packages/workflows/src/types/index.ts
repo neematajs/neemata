@@ -12,6 +12,14 @@ export type RetryPolicy = {
 
 export type IdempotencyKey = readonly unknown[]
 
+export type RunTags = Readonly<Record<string, string>>
+
+export type RunTagsBuilder<Input> = (input: BoundaryOutput<Input>) => RunTags
+
+export type RunIdempotencyBuilder<Input> = (
+  input: BoundaryOutput<Input>,
+) => IdempotencyKey
+
 export type CancellationPolicy = 'propagate' | 'detach'
 
 export type WorkflowStatus =
@@ -58,6 +66,8 @@ export type TaskDefinition<
   readonly retry?: RetryPolicy
   /** Default timeout for task attempts unless a workflow task/map/branch member overrides it. */
   readonly timeout?: DurationString
+  readonly tags?: RunTagsBuilder<Input>
+  readonly idempotency?: RunIdempotencyBuilder<Input>
   readonly _types?: { readonly input: Input; readonly output: Output }
 }
 
@@ -328,6 +338,8 @@ export type WorkflowDefinition<
   readonly output?: Schema
   readonly nodes: Nodes
   readonly retention?: DurationString
+  readonly tags?: RunTagsBuilder<Input>
+  readonly idempotency?: RunIdempotencyBuilder<Input>
   readonly _types?: {
     readonly input: Input
     readonly output: Output

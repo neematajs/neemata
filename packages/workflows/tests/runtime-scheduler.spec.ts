@@ -218,6 +218,36 @@ function schedulerContract(name: string, createRuntime: RuntimeFactory) {
       expect(afterFire!.nextRunAt.getTime()).toBeGreaterThan(now.getTime())
     })
 
+    it('uses runnable definition tags for scheduled runs without explicit schedule tags', async () => {
+      const workflow = defineWorkflow({
+        name: `${name}-definition-tagged-schedule-workflow`,
+        input: t.object({ scenario: t.string() }),
+        output: t.object({ caseId: t.string() }),
+        tags: (input) => ({ scenario: input.scenario }),
+      }).build()
+      const runtime = await createRuntime()
+      const client = createWorkflowRuntimeClient(runtime)
+      const schedule = defineSchedule({
+        name: `${name}-definition-tagged-schedule`,
+        runnable: workflow,
+        input: { scenario: 'alpha' },
+        every: '1m',
+        immediately: true,
+      })
+
+      await runtime.scheduler!.reconcile([schedule])
+      await runtime.scheduler!.fireDue({
+        now: new Date(Date.now() + 60_000),
+      })
+
+      const runs = await client.list({ tags: { scenario: 'alpha' } })
+      expect(runs.runs).toHaveLength(1)
+      expect(runs.runs[0]?.tags).toStrictEqual({
+        scenario: 'alpha',
+        schedule: schedule.name,
+      })
+    })
+
     it('does not fire disabled schedules', async () => {
       const workflow = defineWorkflow({
         name: `${name}-disabled-workflow`,

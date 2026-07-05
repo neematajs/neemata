@@ -9,6 +9,8 @@ import type {
   CancellationPolicy,
   DurationString,
   MapRunMode,
+  RunIdempotencyBuilder,
+  RunTagsBuilder,
   RetryPolicy,
   RunnableDefinition,
   RunnableInput,
@@ -334,6 +336,8 @@ export type TaskOptions<
   output: OutputSchema
   retry?: RetryPolicy
   timeout?: DurationString
+  tags?: RunTagsBuilder<SchemaSides<InputSchema>>
+  idempotency?: RunIdempotencyBuilder<SchemaSides<InputSchema>>
 }
 
 export function defineTask<
@@ -359,6 +363,8 @@ export type WorkflowOptions<
   input: InputSchema
   output?: OutputSchema
   retention?: DurationString
+  tags?: RunTagsBuilder<SchemaSides<InputSchema>>
+  idempotency?: RunIdempotencyBuilder<SchemaSides<InputSchema>>
 }
 
 export type ScheduleOptions<
@@ -490,6 +496,8 @@ class WorkflowDraftBuilder<Name extends string> {
       output: this.options.output,
       nodes: Object.freeze([...this.nodes]),
       retention: this.options.retention,
+      tags: this.options.tags,
+      idempotency: this.options.idempotency,
     }) as any
   }
 

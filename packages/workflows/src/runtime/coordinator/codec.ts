@@ -82,6 +82,20 @@ export function resolveIdempotency(
   throw new Error('Invalid idempotency definition')
 }
 
+export function resolveTags(
+  tags: unknown,
+  ...args: readonly unknown[]
+): Readonly<Record<string, string>> | undefined {
+  if (!tags) return undefined
+  if (typeof tags === 'function') {
+    return runWorkflowUserCallback(
+      () => tags(...args) as Readonly<Record<string, string>>,
+    )
+  }
+
+  throw new Error('Invalid tags definition')
+}
+
 export function mapConcurrencyLimit(node: MapNodeImplementation): number {
   if (
     node.concurrency !== undefined &&

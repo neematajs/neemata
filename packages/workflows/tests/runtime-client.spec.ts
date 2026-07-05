@@ -1,4 +1,3 @@
-import { Container, createLogger, createValueInjectable } from '@nmtjs/core'
 import { t } from '@nmtjs/type'
 import { describe, expect, it } from 'vitest'
 
@@ -15,30 +14,23 @@ import {
 } from '../src/runtime/index.ts'
 
 describe('workflow runtime client', () => {
-  const createTestContainer = () => {
-    const logger = createLogger({ pinoOptions: { enabled: false } }, 'test')
-    return new Container({ logger })
-  }
-
   it('starts workflows and reads their snapshots', async () => {
-    const prefix = createValueInjectable('wf')
     const workflow = defineWorkflow({
       name: 'client-started-workflow',
       input: t.object({ scenario: t.string() }),
       output: t.object({ caseId: t.string() }),
-    }).build()
-    const implementation = implementWorkflow(workflow, {
-      dependencies: { prefix },
-      tags: (ctx, input) => ({
-        prefix: ctx.prefix,
+      tags: (input) => ({
+        prefix: 'wf',
         scenario: input.scenario,
       }),
-      idempotency: (ctx, input) => [ctx.prefix, input.scenario],
-    }).finish((_ctx, _outputs, input) => ({ caseId: input.scenario }))
+      idempotency: (input) => ['wf', input.scenario],
+    }).build()
+    const implementation = implementWorkflow(workflow).finish(
+      (_ctx, _outputs, input) => ({ caseId: input.scenario }),
+    )
     const runtime = createInMemoryWorkflowRuntime()
     const client = createWorkflowRuntimeClient({
       ...runtime,
-      container: createTestContainer(),
       workflows: [implementation],
     })
 
@@ -91,6 +83,62 @@ describe('workflow runtime client', () => {
     ])
   })
 
+  it('starts workflows with definition-level metadata without registering an implementation', async () => {
+    const workflow = defineWorkflow({
+      name: 'client-definition-metadata-workflow',
+      input: t.object({ curriculumId: t.string() }),
+      output: t.object({ caseId: t.string() }),
+      tags: (input) => ({ curriculumId: input.curriculumId }),
+      idempotency: (input) => ['workflow', input.curriculumId],
+    }).build()
+    const runtime = createInMemoryWorkflowRuntime()
+    const client = createWorkflowRuntimeClient(runtime)
+
+    const run = await client.start(workflow, { curriculumId: 'curriculum-1' })
+    const duplicate = await client.start(workflow, {
+      curriculumId: 'curriculum-1',
+    })
+    const override = await client.start(
+      workflow,
+      { curriculumId: 'curriculum-2' },
+      {
+        tags: { curriculumId: 'override' },
+        idempotencyKey: ['manual', 'curriculum-2'],
+      },
+    )
+
+    expect(duplicate.id).toBe(run.id)
+    expect(run).toMatchObject({
+      tags: { curriculumId: 'curriculum-1' },
+      idempotencyKey: ['workflow', 'curriculum-1'],
+    })
+    expect(override).toMatchObject({
+      tags: { curriculumId: 'override' },
+      idempotencyKey: ['manual', 'curriculum-2'],
+    })
+  })
+
+  it('wraps workflow tags builder errors as user callback errors', async () => {
+    const workflow = defineWorkflow({
+      name: 'client-throwing-tags-workflow',
+      input: t.object({ scenario: t.string() }),
+      output: t.object({ caseId: t.string() }),
+      tags: () => {
+        throw new Error('bad workflow tags')
+      },
+    }).build()
+    const runtime = createInMemoryWorkflowRuntime()
+    const client = createWorkflowRuntimeClient(runtime)
+
+    await expect(
+      client.start(workflow, { scenario: 'alpha' }),
+    ).rejects.toMatchObject({
+      name: 'WorkflowUserCallbackError',
+      message: 'bad workflow tags',
+    })
+    await expect(client.list()).resolves.toStrictEqual({ runs: [] })
+  })
+
   it('rejects invalid workflow start input before creating a run', async () => {
     const workflow = defineWorkflow({
       name: 'client-invalid-workflow-input',
@@ -109,21 +157,18 @@ describe('workflow runtime client', () => {
   })
 
   it('starts tasks and dispatches the task attempt', async () => {
-    const prefix = createValueInjectable('task')
     const task = defineTask({
       name: 'client-started-task',
       input: t.object({ text: t.string() }),
       output: t.object({ id: t.string() }),
+      idempotency: (input) => ['task', input.text],
     })
     const implementation = implementTask(task, {
-      dependencies: { prefix },
-      idempotency: (ctx, input) => [ctx.prefix, input.text],
       handler: async (_ctx, input) => ({ id: input.text }),
     })
     const runtime = createInMemoryWorkflowRuntime()
     const client = createWorkflowRuntimeClient({
       ...runtime,
-      container: createTestContainer(),
       tasks: [implementation],
     })
 
@@ -176,6 +221,48 @@ describe('workflow runtime client', () => {
         },
       },
     ])
+  })
+
+  it('starts tasks with definition-level idempotency without registering an implementation', async () => {
+    const task = defineTask({
+      name: 'client-definition-metadata-task',
+      input: t.object({ text: t.string() }),
+      output: t.object({ id: t.string() }),
+      idempotency: (input) => ['task', input.text],
+    })
+    const runtime = createInMemoryWorkflowRuntime()
+    const client = createWorkflowRuntimeClient(runtime)
+
+    const run = await client.start(task, { text: 'alpha' })
+    const duplicate = await client.start(task, { text: 'alpha' })
+    const override = await client.start(
+      task,
+      { text: 'beta' },
+      { idempotencyKey: ['manual', 'beta'] },
+    )
+
+    expect(duplicate.id).toBe(run.id)
+    expect(run.idempotencyKey).toStrictEqual(['task', 'alpha'])
+    expect(override.idempotencyKey).toStrictEqual(['manual', 'beta'])
+  })
+
+  it('wraps task tags builder errors as user callback errors', async () => {
+    const task = defineTask({
+      name: 'client-throwing-tags-task',
+      input: t.object({ text: t.string() }),
+      output: t.object({ id: t.string() }),
+      tags: () => {
+        throw new Error('bad task tags')
+      },
+    })
+    const runtime = createInMemoryWorkflowRuntime()
+    const client = createWorkflowRuntimeClient(runtime)
+
+    await expect(client.start(task, { text: 'alpha' })).rejects.toMatchObject({
+      name: 'WorkflowUserCallbackError',
+      message: 'bad task tags',
+    })
+    await expect(client.list()).resolves.toStrictEqual({ runs: [] })
   })
 
   it('rejects invalid task start input before creating a run', async () => {
