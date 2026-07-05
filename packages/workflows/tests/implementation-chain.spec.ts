@@ -163,6 +163,44 @@ describe('workflow implementation chain', () => {
     expect(annotated.workflow).toBe(activityWorkflow)
   })
 
+  it('accepts schema-derived annotations for optional parallel activity input', () => {
+    const activityInput = t.object({
+      caseBlueprint: t.string(),
+      name: t.string().optional(),
+    })
+    const activityOutput = t.object({ ok: t.boolean() })
+    const parallelWorkflow = defineWorkflow({
+      name: 'optional-parallel-activity-input',
+      input: t.object({ caseBlueprint: t.string() }),
+      output: activityOutput,
+    })
+      .parallel('cases', (helpers) => ({
+        normal: helpers.activity({
+          input: activityInput,
+          output: activityOutput,
+        }),
+      }))
+      .build()
+
+    implementWorkflow(parallelWorkflow)
+      .cases(({ activity }) => ({
+        normal: activity(
+          async (
+            _ctx,
+            input: t.infer.decode.output<typeof activityInput>,
+          ) => ({
+            ok: input.name === undefined || input.name.length > 0,
+          }),
+          {
+            input: (_ctx, _outputs, input) => ({
+              caseBlueprint: input.caseBlueprint,
+            }),
+          },
+        ),
+      }))
+      .finish((_ctx, { cases }) => cases.normal)
+  })
+
   it('infers branch output union when no common output is declared', () => {
     const outpatientWorkflow = defineWorkflow({
       name: 'outpatient-content',
