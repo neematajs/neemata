@@ -185,10 +185,7 @@ describe('workflow implementation chain', () => {
     implementWorkflow(parallelWorkflow)
       .cases(({ activity }) => ({
         normal: activity(
-          async (
-            _ctx,
-            input: t.infer.decode.output<typeof activityInput>,
-          ) => ({
+          async (_ctx, input: t.infer.decode.output<typeof activityInput>) => ({
             ok: input.name === undefined || input.name.length > 0,
           }),
           {

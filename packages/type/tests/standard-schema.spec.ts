@@ -181,9 +181,7 @@ describe('Standard schema', () => {
       }),
     )
 
-    expectTypeOf<
-      StandardSchemaV1.InferOutput<typeof schema>
-    >().toEqualTypeOf<{
+    expectTypeOf<StandardSchemaV1.InferOutput<typeof schema>>().toEqualTypeOf<{
       id: bigint
       createdAt: Date
       name: string
