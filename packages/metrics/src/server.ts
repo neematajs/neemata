@@ -7,6 +7,13 @@ import { Pushgateway, WorkerRegistry } from '@nmtjs/prom-client'
 
 import { metricsWorkerRegistry } from './registry.ts'
 
+/**
+ * When used via the Neem plugin, options are baked into the manifest at build
+ * time; deploy-time env vars resolved at start override them:
+ * `NEEM_METRICS_PORT`, `NEEM_METRICS_HOST`, `NEEM_METRICS_PATH`,
+ * `NEEM_METRICS_PUSH_URL` (enables push when not configured here),
+ * `NEEM_METRICS_PUSH_NAME`, `NEEM_METRICS_PUSH_INTERVAL` (milliseconds).
+ */
 export type MetricsServerConfig = {
   path?: string
   port?: number
