@@ -163,6 +163,62 @@ describe('workflow implementation chain', () => {
     expect(annotated.workflow).toBe(activityWorkflow)
   })
 
+  it('keeps activity implementation dependencies typed in branch and parallel cases', () => {
+    const service = createValueInjectable({
+      decorate: (text: string) => `${text}!`,
+    })
+    const io = t.object({ text: t.string() })
+    const activity = {
+      dependencies: { service },
+      handler: (
+        ctx: DependencyContext<{ service: typeof service }>,
+        input: t.infer.decode.output<typeof io>,
+      ) => ({ text: ctx.service.decorate(input.text) }),
+    }
+    const branched = defineWorkflow({
+      name: 'branch-case-activity-dependencies',
+      input: io,
+      output: io,
+    })
+      .branch('chosen', {
+        output: io,
+        cases: (helpers) => ({
+          normal: helpers.activity({ input: io, output: io }),
+        }),
+      })
+      .build()
+    const parallel = defineWorkflow({
+      name: 'parallel-case-activity-dependencies',
+      input: io,
+      output: io,
+    })
+      .parallel('cases', (helpers) => ({
+        normal: helpers.activity({ input: io, output: io }),
+      }))
+      .build()
+
+    const branchImplementation = implementWorkflow(branched)
+      .chosen({
+        select: () => 'normal',
+        cases: ({ activity: defineActivity }) => ({
+          normal: defineActivity(activity, {
+            input: (_ctx, _outputs, input) => input,
+          }),
+        }),
+      })
+      .finish((_ctx, { chosen }) => chosen)
+    const parallelImplementation = implementWorkflow(parallel)
+      .cases(({ activity: defineActivity }) => ({
+        normal: defineActivity(activity, {
+          input: (_ctx, _outputs, input) => input,
+        }),
+      }))
+      .finish((_ctx, { cases }) => cases.normal)
+
+    expect(branchImplementation.workflow).toBe(branched)
+    expect(parallelImplementation.workflow).toBe(parallel)
+  })
+
   it('accepts schema-derived annotations for optional parallel activity input', () => {
     const activityInput = t.object({
       caseBlueprint: t.string(),

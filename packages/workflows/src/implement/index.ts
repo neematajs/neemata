@@ -296,6 +296,15 @@ type ActivityCaseDescriptor<
   readonly options?: WorkflowInputMapper<any, any, any, Input>
 }
 
+type AnyActivityImplementationValue<Input, Output> =
+  ActivityImplementationValue<Input, Output, any>
+
+type AnyActivityCaseDescriptor<Input, Output> = ActivityCaseDescriptor<
+  Input,
+  Output,
+  any
+>
+
 type RunnableCaseDescriptor<
   Target extends AnyTaskDefinition | AnyWorkflowDefinition,
   Input,
@@ -308,11 +317,14 @@ type RunnableCaseDescriptor<
 type CaseImplementationValue<Case> =
   Case extends BranchCaseDefinition<'activity', infer Input, infer Output>
     ?
-        | ActivityImplementationValue<
+        | AnyActivityImplementationValue<
             BoundaryOutput<Input>,
             BoundaryInput<Output>
           >
-        | ActivityCaseDescriptor<BoundaryOutput<Input>, BoundaryInput<Output>>
+        | AnyActivityCaseDescriptor<
+            BoundaryOutput<Input>,
+            BoundaryInput<Output>
+          >
     : Case extends BranchCaseDefinition<'task', any, any, infer Task>
       ? Task extends AnyTaskDefinition
         ? Task | RunnableCaseDescriptor<Task, TaskInput<Task>>
@@ -950,7 +962,7 @@ function isActivityImplementation(
 
 function isActivityCaseDescriptor(
   value: unknown,
-): value is ActivityCaseDescriptor<unknown, unknown> {
+): value is ActivityCaseDescriptor<unknown, unknown, any> {
   return Boolean(
     value &&
     typeof value === 'object' &&
