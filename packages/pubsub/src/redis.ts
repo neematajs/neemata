@@ -91,7 +91,23 @@ export class RedisPubSubAdapter implements PubSubAdapter {
 
     this.logger?.debug({ channel }, 'Opening channel listener')
 
+    let registered = false
+
     try {
+      const controllerSignal = this.controller?.signal
+      const finalSignal =
+        signal && controllerSignal
+          ? AbortSignal.any([signal, controllerSignal])
+          : controllerSignal
+
+      finalSignal?.throwIfAborted()
+
+      // Attach the local listener before Redis confirms SUBSCRIBE; otherwise a
+      // message delivered immediately after broker readiness can be dropped.
+      const messages = on(this.events, channel, {
+        signal: finalSignal,
+      })
+
       if (!this.listeners.has(channel)) {
         this.listeners.set(channel, 1)
         const promise = this.subClient.subscribe(channel)
@@ -111,17 +127,10 @@ export class RedisPubSubAdapter implements PubSubAdapter {
         )
       }
 
-      const finalSignal =
-        signal && this.controller?.signal
-          ? AbortSignal.any([signal, this.controller!.signal])
-          : this.controller?.signal
+      registered = true
 
-      finalSignal?.throwIfAborted()
-
-      for await (const args of on(this.events, channel, {
-        signal: finalSignal,
-      })) {
-        this.logger?.trace({ channel }, 'Delivering  message')
+      for await (const args of messages) {
+        this.logger?.trace({ channel }, 'Delivering message')
         yield { channel, data: args[0] }
       }
     } catch (error: any) {
@@ -132,7 +141,7 @@ export class RedisPubSubAdapter implements PubSubAdapter {
       this.logger?.warn({ channel, error }, 'Channel listener error')
       throw error
     } finally {
-      const count = this.listeners.get(channel)
+      const count = registered ? this.listeners.get(channel) : undefined
       if (count !== undefined) {
         if (count > 1) {
           const listeners = count - 1
