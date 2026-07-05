@@ -241,6 +241,25 @@ describe('Unknown type', () => {
   })
 })
 
+describe('Infer type', () => {
+  it('uses optional keys for optional object fields', () => {
+    const schema = t.object({
+      name: t.string().optional(),
+      title: t.string(),
+    })
+
+    type GenericOutput<T extends t.BaseTypeAny> = t.infer.decode.output<T>
+
+    expectTypeOf<t.infer.decode.output<typeof schema>>().toEqualTypeOf<{
+      name?: string | undefined
+      title: string
+    }>()
+    expectTypeOf<GenericOutput<typeof schema>>().toEqualTypeOf<
+      t.infer.decode.output<typeof schema>
+    >()
+  })
+})
+
 describe('Record type', () => {
   it('accepts generic enum keys', () => {
     const key: t.EnumType<any> = t.enum(['a', 'b'] as const)

@@ -165,4 +165,26 @@ describe('Standard schema', () => {
       IsStandardJSON<ReturnType<typeof t.bigInt>>
     >().toEqualTypeOf<true>()
   })
+
+  it('preserves output inference through StandardSchemaV1 generics', () => {
+    function acceptStandardSchema<Schema extends StandardSchemaV1>(
+      schema: Schema,
+    ) {
+      return schema
+    }
+
+    const schema = acceptStandardSchema(
+      t.object({
+        id: t.bigInt(),
+        createdAt: t.date(),
+        name: t.string(),
+      }),
+    )
+
+    expectTypeOf<StandardSchemaV1.InferOutput<typeof schema>>().toEqualTypeOf<{
+      id: bigint
+      createdAt: Date
+      name: string
+    }>()
+  })
 })
