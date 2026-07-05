@@ -43,12 +43,6 @@ export type TaskHandler<Deps extends Dependencies, Input, Output> = HandlerFn<
   Output
 >
 
-export type TaskIdempotency<Deps extends Dependencies, Input> =
-  | ((ctx: DependencyContext<Deps>, input: Input) => IdempotencyKey)
-  | {
-      key: (ctx: DependencyContext<Deps>, input: Input) => IdempotencyKey
-    }
-
 export type TaskImplementation<
   Task extends AnyTaskDefinition = AnyTaskDefinition,
   Deps extends Dependencies = Dependencies,
@@ -59,7 +53,6 @@ export type TaskImplementation<
 > & {
   readonly kind: 'taskImplementation'
   readonly task: Task
-  readonly idempotency?: TaskIdempotency<Deps, TaskDecodedInput<Task>>
 }
 
 export function implementTask<
@@ -69,7 +62,6 @@ export function implementTask<
   task: Task,
   options: {
     dependencies?: Deps
-    idempotency?: TaskIdempotency<Deps, TaskDecodedInput<Task>>
     handler: TaskHandler<Deps, TaskDecodedInput<Task>, TaskOutputInput<Task>>
   },
 ): TaskImplementation<Task, Deps> {
@@ -77,7 +69,6 @@ export function implementTask<
     kind: 'taskImplementation',
     task,
     dependencies: options.dependencies ?? ({} as Deps),
-    idempotency: options.idempotency,
     handler: options.handler,
   })
 }
@@ -144,17 +135,6 @@ export type WorkflowMapNodeIdempotency<
       ) => IdempotencyKey
     }
 
-export type WorkflowStartIdempotency<Deps extends Dependencies, Input> =
-  | ((ctx: DependencyContext<Deps>, input: Input) => IdempotencyKey)
-  | {
-      key: (ctx: DependencyContext<Deps>, input: Input) => IdempotencyKey
-    }
-
-export type WorkflowTags<Deps extends Dependencies, Input> = (
-  ctx: DependencyContext<Deps>,
-  input: Input,
-) => Record<string, string>
-
 export type WorkflowInputMapper<
   WorkflowDeps extends Dependencies,
   Outputs extends object,
@@ -204,11 +184,6 @@ export type WorkflowImplementation<
   readonly kind: 'workflowImplementation'
   readonly workflow: Workflow
   readonly dependencies: WorkflowDeps
-  readonly idempotency?: WorkflowStartIdempotency<
-    WorkflowDeps,
-    WorkflowDecodedInput<Workflow>
-  >
-  readonly tags?: WorkflowTags<WorkflowDeps, WorkflowDecodedInput<Workflow>>
   readonly nodes: readonly WorkflowNodeImplementation[]
   readonly finish: (
     ctx: DependencyContext<WorkflowDeps>,
@@ -644,18 +619,11 @@ export function implementWorkflow<
   workflow: Workflow,
   options?: {
     dependencies?: WorkflowDeps
-    idempotency?: WorkflowStartIdempotency<
-      WorkflowDeps,
-      WorkflowDecodedInput<Workflow>
-    >
-    tags?: WorkflowTags<WorkflowDeps, WorkflowDecodedInput<Workflow>>
   },
 ): WorkflowImplementer<Workflow, WorkflowDeps> {
   return createWorkflowChain({
     workflow,
     dependencies: options?.dependencies ?? ({} as WorkflowDeps),
-    idempotency: options?.idempotency,
-    tags: options?.tags,
     index: 0,
     implementations: [],
   }) as WorkflowImplementer<Workflow, WorkflowDeps>
@@ -664,8 +632,6 @@ export function implementWorkflow<
 function createWorkflowChain(state: {
   workflow: AnyWorkflowDefinition
   dependencies: Dependencies
-  idempotency: unknown
-  tags: unknown
   index: number
   implementations: readonly WorkflowNodeImplementation[]
 }): unknown {
@@ -678,8 +644,6 @@ function createWorkflowChain(state: {
           kind: 'workflowImplementation',
           workflow: state.workflow,
           dependencies: state.dependencies,
-          idempotency: state.idempotency,
-          tags: state.tags,
           nodes: Object.freeze([...state.implementations]),
           finish,
         }),
@@ -835,8 +799,6 @@ function nextChain(
   state: {
     workflow: AnyWorkflowDefinition
     dependencies: Dependencies
-    idempotency: unknown
-    tags: unknown
     index: number
     implementations: readonly WorkflowNodeImplementation[]
   },

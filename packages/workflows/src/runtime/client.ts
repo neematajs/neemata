@@ -1,5 +1,3 @@
-import type { Container } from '@nmtjs/core'
-
 import type {
   TaskImplementation,
   WorkflowImplementation,
@@ -57,7 +55,6 @@ export type WorkflowRuntimeAdapter = {
 }
 
 export type CreateWorkflowRuntimeClientInput = WorkflowRuntimeAdapter & {
-  readonly container?: Pick<Container, 'createContext'>
   readonly workflows?: readonly RegisteredWorkflowImplementation[]
   readonly tasks?: readonly RegisteredTaskImplementation[]
 }
@@ -109,7 +106,6 @@ export function createWorkflowRuntimeClient(
           store: input.store,
           runCoordinationExecutor: input.runCoordinationExecutor,
           atomicStart: input.atomicStart,
-          container: input.container,
           workflow: runnable,
           implementation: getWorkflowImplementation(registry, runnable),
           input: runnableInput,
@@ -123,7 +119,6 @@ export function createWorkflowRuntimeClient(
           runCoordinationExecutor: input.runCoordinationExecutor,
           attemptExecutor: input.attemptExecutor,
           atomicStart: input.atomicStart,
-          container: input.container,
           task: runnable,
           implementation: getTaskImplementation(registry, runnable),
           input: runnableInput,

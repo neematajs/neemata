@@ -1,4 +1,4 @@
-import type { Container, Dependencies, DependencyContext } from '@nmtjs/core'
+import type { Dependencies } from '@nmtjs/core'
 
 import type {
   TaskImplementation,
@@ -7,6 +7,7 @@ import type {
 import type {
   AnyTaskDefinition,
   AnyWorkflowDefinition,
+  IdempotencyKey,
   TaskDecodedInput,
   TaskInput,
   WorkflowDecodedInput,
@@ -16,7 +17,7 @@ import type { AttemptExecutor, RunCoordinationExecutor } from '../executors.ts'
 import type { StoredRun } from '../state.ts'
 import type { CreateRunInput, WorkflowStore } from '../store.ts'
 import { dispatchTaskRunAttempt } from './attempt.ts'
-import { decodeSchemaValue, resolveIdempotency } from './codec.ts'
+import { decodeSchemaValue, resolveIdempotency, resolveTags } from './codec.ts'
 
 export type StartTaskRunInput<
   Task extends AnyTaskDefinition,
@@ -26,7 +27,6 @@ export type StartTaskRunInput<
   readonly runCoordinationExecutor: RunCoordinationExecutor
   readonly attemptExecutor: AttemptExecutor
   readonly atomicStart?: WorkflowRuntimeAtomicStart
-  readonly container?: Pick<Container, 'createContext'>
   readonly task: Task
   readonly implementation?: TaskImplementation<Task, Deps>
   readonly input: TaskInput<Task>
@@ -42,7 +42,6 @@ export type StartWorkflowRunInput<
   readonly store: WorkflowStore
   readonly runCoordinationExecutor: RunCoordinationExecutor
   readonly atomicStart?: WorkflowRuntimeAtomicStart
-  readonly container?: Pick<Container, 'createContext'>
   readonly workflow: Workflow
   readonly implementation?: WorkflowImplementation<Workflow, Deps>
   readonly input: WorkflowInput<Workflow>
@@ -51,10 +50,10 @@ export type StartWorkflowRunInput<
   readonly startAt?: Date
 }
 
-type WorkflowStartMetadataInput<
-  Workflow extends AnyWorkflowDefinition,
-  Deps extends Dependencies,
-> = Omit<StartWorkflowRunInput<Workflow, Deps>, 'input'> & {
+type WorkflowStartMetadataInput<Workflow extends AnyWorkflowDefinition> = {
+  readonly workflow: Workflow
+  readonly tags?: Readonly<Record<string, string>>
+  readonly idempotencyKey?: readonly unknown[]
   readonly input: WorkflowDecodedInput<Workflow>
 }
 
@@ -86,7 +85,7 @@ export async function startWorkflowRun<
     input.input,
     `workflow input [${input.workflow.name}]`,
   ) as WorkflowDecodedInput<Workflow>
-  const metadata = await resolveWorkflowStartMetadata({
+  const metadata = resolveWorkflowStartMetadata({
     ...input,
     input: workflowInput,
   })
@@ -139,13 +138,6 @@ export async function startTaskRun<
     input.task,
     'Task start implementation',
   )
-  const taskCtx = await resolveStartContext({
-    container: input.container,
-    dependencies: input.implementation?.dependencies,
-    needsContext:
-      input.idempotencyKey === undefined && !!input.implementation?.idempotency,
-    label: 'Task start idempotency',
-  })
   const taskInput = decodeSchemaValue(
     input.task.input,
     input.input,
@@ -153,7 +145,7 @@ export async function startTaskRun<
   ) as TaskDecodedInput<Task>
   const idempotencyKey =
     input.idempotencyKey ??
-    resolveIdempotency(input.implementation?.idempotency, taskCtx, taskInput)
+    resolveIdempotency(input.task.idempotency, taskInput)
 
   const runInput: CreateRunInput = {
     kind: 'task',
@@ -161,7 +153,7 @@ export async function startTaskRun<
     workflowName: input.task.name,
     taskName: input.task.name,
     input: taskInput,
-    tags: input.tags,
+    tags: input.tags ?? resolveTags(input.task.tags, taskInput),
     idempotencyKey,
   }
 
@@ -193,47 +185,18 @@ export async function startTaskRun<
   return run
 }
 
-async function resolveWorkflowStartMetadata<
-  Workflow extends AnyWorkflowDefinition,
-  Deps extends Dependencies,
->(
-  input: WorkflowStartMetadataInput<Workflow, Deps>,
-): Promise<{
+function resolveWorkflowStartMetadata<Workflow extends AnyWorkflowDefinition>(
+  input: WorkflowStartMetadataInput<Workflow>,
+): {
   readonly tags?: Readonly<Record<string, string>>
-  readonly idempotencyKey?: readonly unknown[]
-}> {
-  const needsContext =
-    (input.tags === undefined && !!input.implementation?.tags) ||
-    (input.idempotencyKey === undefined && !!input.implementation?.idempotency)
-  const ctx = await resolveStartContext<Deps>({
-    container: input.container,
-    dependencies: input.implementation?.dependencies,
-    needsContext,
-    label: 'Workflow start metadata',
-  })
-
+  readonly idempotencyKey?: IdempotencyKey
+} {
   return {
-    tags: input.tags ?? input.implementation?.tags?.(ctx, input.input),
+    tags: input.tags ?? resolveTags(input.workflow.tags, input.input),
     idempotencyKey:
       input.idempotencyKey ??
-      resolveIdempotency(input.implementation?.idempotency, ctx, input.input),
+      resolveIdempotency(input.workflow.idempotency, input.input),
   }
-}
-
-async function resolveStartContext<Deps extends Dependencies>(input: {
-  readonly container: Pick<Container, 'createContext'> | undefined
-  readonly dependencies: Deps | undefined
-  readonly needsContext: boolean
-  readonly label: string
-}): Promise<DependencyContext<Deps>> {
-  if (!input.needsContext) return {} as DependencyContext<Deps>
-  if (!input.container) {
-    throw new Error(`${input.label} requires a container`)
-  }
-
-  return (await input.container.createContext(
-    input.dependencies ?? {},
-  )) as DependencyContext<Deps>
 }
 
 function assertImplementationTarget(

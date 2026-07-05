@@ -13,21 +13,18 @@ import type {
 
 export type RegisteredWorkflowImplementation = Omit<
   WorkflowImplementation<AnyWorkflowDefinition, Dependencies>,
-  'dependencies' | 'finish' | 'idempotency' | 'tags'
+  'dependencies' | 'finish'
 > & {
   readonly dependencies: Dependencies
   readonly finish: (...args: any[]) => unknown
-  readonly idempotency?: unknown
-  readonly tags?: unknown
 }
 
 export type RegisteredTaskImplementation = Omit<
   TaskImplementation<AnyTaskDefinition, Dependencies>,
-  'dependencies' | 'handler' | 'idempotency'
+  'dependencies' | 'handler'
 > & {
   readonly dependencies: Dependencies
   readonly handler: (...args: any[]) => unknown
-  readonly idempotency?: unknown
 }
 
 export type WorkflowRuntimeRegistry = {

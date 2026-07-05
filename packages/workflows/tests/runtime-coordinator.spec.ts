@@ -63,31 +63,25 @@ describe('workflow runtime coordinator', () => {
     ])
   })
 
-  it('computes workflow start tags and idempotency from implementation dependencies', async () => {
-    const prefix = createValueInjectable('wf')
+  it('computes workflow start tags and idempotency from its definition', async () => {
     const workflow = defineWorkflow({
       name: 'implemented-start-workflow',
       input: t.object({ scenario: t.string() }),
       output: t.object({ caseId: t.string() }),
-    }).build()
-    const implementation = implementWorkflow(workflow, {
-      dependencies: { prefix },
-      tags: (ctx, input) => ({
-        prefix: String(ctx.prefix),
+      tags: (input) => ({
+        prefix: 'wf',
         scenario: input.scenario,
       }),
-      idempotency: (ctx, input) => [
-        String(ctx.prefix),
-        'workflow',
-        input.scenario,
-      ],
-    }).finish((_ctx, _outputs, input) => ({ caseId: input.scenario }))
+      idempotency: (input) => ['wf', 'workflow', input.scenario],
+    }).build()
+    const implementation = implementWorkflow(workflow).finish(
+      (_ctx, _outputs, input) => ({ caseId: input.scenario }),
+    )
     const runtime = createInMemoryWorkflowRuntime()
 
     const run = await startWorkflowRun({
       store: runtime.store,
       runCoordinationExecutor: runtime.runCoordinationExecutor,
-      container: createTestContainer(),
       workflow,
       implementation,
       input: { scenario: 'alpha' },
@@ -97,16 +91,14 @@ describe('workflow runtime coordinator', () => {
     expect(run.idempotencyKey).toStrictEqual(['wf', 'workflow', 'alpha'])
   })
 
-  it('computes task start idempotency from implementation dependencies', async () => {
-    const prefix = createValueInjectable('task')
+  it('computes task start idempotency from its definition', async () => {
     const task = defineTask({
       name: 'implemented-start-task',
       input: t.object({ text: t.string() }),
       output: t.object({ id: t.string() }),
+      idempotency: (input) => ['task', input.text],
     })
     const implementation = implementTask(task, {
-      dependencies: { prefix },
-      idempotency: (ctx, input) => [String(ctx.prefix), input.text],
       handler: async (_ctx, input) => ({ id: input.text }),
     })
     const runtime = createInMemoryWorkflowRuntime()
@@ -115,7 +107,6 @@ describe('workflow runtime coordinator', () => {
       store: runtime.store,
       runCoordinationExecutor: runtime.runCoordinationExecutor,
       attemptExecutor: runtime.attemptExecutor,
-      container: createTestContainer(),
       task,
       implementation,
       input: { text: 'alpha' },

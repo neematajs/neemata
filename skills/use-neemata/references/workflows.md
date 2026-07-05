@@ -34,6 +34,7 @@ export const embedTask = defineTask({
   name: 'content.embed',
   input: t.object({ entityId: t.string(), text: t.string() }),
   output: t.object({ embeddingId: t.string() }),
+  idempotency: (input) => ['content.embed', input.entityId],
   retry: { attempts: 3, backoff: 'exponential' },
   timeout: '30s',
 })
@@ -42,6 +43,8 @@ export const publishWorkflow = defineWorkflow({
   name: 'content.publish',
   input: t.object({ draftId: t.string() }),
   output: t.object({ url: t.string() }),
+  tags: (input) => ({ draftId: input.draftId }),
+  idempotency: (input) => ['content.publish', input.draftId],
 })
   .activity('render', {
     input: t.object({ draftId: t.string() }),
@@ -70,26 +73,23 @@ Builder nodes:
 
 ## Implementations
 
-`implementTask(definition, { handler, idempotency? })`; workflow
-implementations chain one method per node name and end with `.finish(...)`.
-Mapper callbacks receive `(ctx, outputs, input)` where `outputs` holds prior
-node results.
+`implementTask(definition, { handler })`; workflow implementations chain one
+method per node name and end with `.finish(...)`. Mapper callbacks receive
+`(ctx, outputs, input)` where `outputs` holds prior node results. Run-level
+`tags` / `idempotency` belong on definitions; node-level idempotency belongs on
+workflow node mappers.
 
 ```ts
 import { implementTask, implementWorkflow } from '@nmtjs/workflows'
 
 export const embedTaskImpl = implementTask(embedTask, {
-  idempotency: (_, input) => ['content.embed', input.entityId],
   async handler(_ctx, input, lifecycle) {
     // lifecycle?.signal aborts on timeout/leaseLost/cancelled/shutdown
     return { embeddingId: await embed(input.text, lifecycle?.signal) }
   },
 })
 
-export const publishWorkflowImpl = implementWorkflow(publishWorkflow, {
-  tags: (_, input) => ({ draftId: input.draftId }),
-  idempotency: (_, input) => ['content.publish', input.draftId],
-})
+export const publishWorkflowImpl = implementWorkflow(publishWorkflow)
   .render(async (_, input) => ({ html: await render(input.draftId) }))
   .embedding(embedTask, {
     input: (_, { render }, input) => ({
@@ -105,7 +105,10 @@ export const publishWorkflowImpl = implementWorkflow(publishWorkflow, {
 Rules:
 
 - Handlers run at-least-once; make side effects idempotent and use the
-  `idempotency` key builders to deduplicate task/child runs.
+  definition-level `idempotency` builders to deduplicate top-level runs.
+- Use workflow node `idempotency` mappers to deduplicate task/child runs.
+- Schedules inherit runnable definition tags unless `defineSchedule` supplies
+  `tags`; scheduled run idempotency is always schedule-slot based.
 - Branch nodes take `{ select, cases }`; map nodes take
   `{ items, input, idempotency? }` with per-item mappers
   `(ctx, outputs, item, input)`.
@@ -139,14 +142,7 @@ const client = createWorkflowRuntimeClient({
   tasks: [embedTaskImpl],
 })
 
-const run = await client.start(
-  publishWorkflow,
-  { draftId: 'd1' },
-  {
-    tags: { draftId: 'd1' },
-    idempotencyKey: ['content.publish', 'd1'],
-  },
-)
+const run = await client.start(publishWorkflow, { draftId: 'd1' })
 await client.get(run.id) // full run snapshot (nodes, attempts, children)
 await client.cancel(run.id)
 await client.list({ tags: { draftId: 'd1' } })
