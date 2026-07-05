@@ -1,4 +1,4 @@
-import { createValueInjectable } from '@nmtjs/core'
+import { createValueInjectable, type DependencyContext } from '@nmtjs/core'
 import { t } from '@nmtjs/type'
 import { describe, expect, expectTypeOf, it } from 'vitest'
 
@@ -118,6 +118,49 @@ describe('workflow implementation chain', () => {
     if (saveCaseNode?.kind !== 'activity') throw new Error('Expected activity')
     expect(saveCaseNode.input).toBeTypeOf('function')
     expect(implementation.finish).toBeTypeOf('function')
+  })
+
+  it('keeps activity implementation dependencies typed in workflow nodes', () => {
+    const service = createValueInjectable({
+      save: (text: string) => text.length,
+    })
+    const activityWorkflow = defineWorkflow({
+      name: 'activity-dependencies',
+      input: t.object({ text: t.string() }),
+      output: t.object({ size: t.number() }),
+    })
+      .activity('save', {
+        input: t.object({ text: t.string() }),
+        output: t.object({ size: t.number() }),
+      })
+      .build()
+
+    const inferred = implementWorkflow(activityWorkflow)
+      .save({
+        dependencies: { service },
+        handler: (ctx, input) => {
+          expectTypeOf(ctx.service.save).toEqualTypeOf<
+            (text: string) => number
+          >()
+          expectTypeOf(input.text).toEqualTypeOf<string>()
+
+          return { size: ctx.service.save(input.text) }
+        },
+      })
+      .finish((_ctx, { save }) => save)
+
+    const annotated = implementWorkflow(activityWorkflow)
+      .save({
+        dependencies: { service },
+        handler: (
+          ctx: DependencyContext<{ service: typeof service }>,
+          input,
+        ) => ({ size: ctx.service.save(input.text) }),
+      })
+      .finish((_ctx, { save }) => save)
+
+    expect(inferred.workflow).toBe(activityWorkflow)
+    expect(annotated.workflow).toBe(activityWorkflow)
   })
 
   it('infers branch output union when no common output is declared', () => {

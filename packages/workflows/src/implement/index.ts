@@ -51,7 +51,7 @@ export type TaskIdempotency<Deps extends Dependencies, Input> =
 
 export type TaskImplementation<
   Task extends AnyTaskDefinition = AnyTaskDefinition,
-  Deps extends Dependencies = {},
+  Deps extends Dependencies = Dependencies,
 > = Handler<
   Deps,
   [input: TaskDecodedInput<Task>, lifecycle?: AttemptLifecycle],
@@ -293,19 +293,31 @@ type ActivityImplementationOptions<
   NodeInput,
 > = WorkflowInputMapper<WorkflowDeps, Outputs, Input, NodeInput>
 
-type LegacyActivityHandlerObject<Input, Output> = {
-  readonly dependencies: Dependencies
-  readonly handler: (ctx: any, input: Input) => MaybePromise<Output>
+type LegacyActivityHandlerObject<Input, Output, Deps extends Dependencies> = {
+  readonly dependencies: Deps
+  readonly handler: (
+    ctx: DependencyContext<Deps>,
+    input: Input,
+    lifecycle?: AttemptLifecycle,
+  ) => MaybePromise<Output>
 }
 
-type ActivityImplementationValue<Input, Output> =
-  | ActivityHandlerInput<Input, Output, any>
-  | LegacyActivityHandlerObject<Input, Output>
-  | ActivityImplementation<Input, Output, any>
+type ActivityImplementationValue<
+  Input,
+  Output,
+  Deps extends Dependencies = Dependencies,
+> =
+  | ActivityHandlerInput<Input, Output, Deps>
+  | LegacyActivityHandlerObject<Input, Output, Deps>
+  | ActivityImplementation<Input, Output, Deps>
 
-type ActivityCaseDescriptor<Input, Output> = {
+type ActivityCaseDescriptor<
+  Input,
+  Output,
+  Deps extends Dependencies = Dependencies,
+> = {
   readonly kind: 'activityCase'
-  readonly value: ActivityImplementationValue<Input, Output>
+  readonly value: ActivityImplementationValue<Input, Output, Deps>
   readonly options?: WorkflowInputMapper<any, any, any, Input>
 }
 
@@ -349,10 +361,14 @@ type CaseImplementers<
   Outputs extends object,
   Input,
 > = {
-  readonly activity: <NodeInput, Output>(
-    value: ActivityImplementationValue<NodeInput, Output>,
+  readonly activity: <
+    NodeInput,
+    Output,
+    Deps extends Dependencies = Dependencies,
+  >(
+    value: ActivityImplementationValue<NodeInput, Output, Deps>,
     options?: WorkflowInputMapper<WorkflowDeps, Outputs, Input, NodeInput>,
-  ) => ActivityCaseDescriptor<NodeInput, Output>
+  ) => ActivityCaseDescriptor<NodeInput, Output, Deps>
   readonly task: <Task extends AnyTaskDefinition>(
     task: Task,
     options?: WorkflowInputMapper<
@@ -431,10 +447,11 @@ export type WorkflowImplementationChain<
       infer Output
     >
     ? {
-        readonly [Key in Name]: (
+        readonly [Key in Name]: <Deps extends Dependencies = Dependencies>(
           value: ActivityImplementationValue<
             BoundaryOutput<Input>,
-            BoundaryInput<Output>
+            BoundaryInput<Output>,
+            Deps
           >,
           options?: ActivityImplementationOptions<
             WorkflowDeps,
@@ -834,15 +851,15 @@ function nextChain(
 
 function createCaseImplementers(): CaseImplementers<any, any, any> {
   const helpers: CaseImplementers<any, any, any> = {
-    activity: <NodeInput, Output>(
-      value: ActivityImplementationValue<NodeInput, Output>,
+    activity: <NodeInput, Output, Deps extends Dependencies = Dependencies>(
+      value: ActivityImplementationValue<NodeInput, Output, Deps>,
       options?: WorkflowInputMapper<any, any, any, NodeInput>,
     ) =>
       Object.freeze({
         kind: 'activityCase',
         value,
         options,
-      }) as ActivityCaseDescriptor<NodeInput, Output>,
+      }) as ActivityCaseDescriptor<NodeInput, Output, Deps>,
     task: <Task extends AnyTaskDefinition>(
       task: Task,
       options?: WorkflowInputMapper<any, any, any, any>,
