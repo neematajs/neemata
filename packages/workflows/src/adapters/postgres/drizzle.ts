@@ -23,15 +23,14 @@ type TableKey =
   | 'runs'
   | 'nodes'
   | 'attempts'
-  | 'childLinks'
-  | 'mapItemSets'
-  | 'mapItems'
+  | 'nodeChildren'
   | 'runLeases'
   | 'commands'
 
 type EnumKey =
   | 'runKind'
   | 'nodeKind'
+  | 'nodeChildKind'
   | 'runStatus'
   | 'nodeStatus'
   | 'attemptStatus'
@@ -47,6 +46,7 @@ const nodeKindValues = [
   'mapTask',
   'mapWorkflow',
 ] as const
+const nodeChildKindValues = ['activity', 'task', 'workflow'] as const
 const runStatusValues = [
   'queued',
   'running',
@@ -80,9 +80,7 @@ const tableNames = {
   runs: 'workflow_runs',
   nodes: 'workflow_nodes',
   attempts: 'workflow_attempts',
-  childLinks: 'workflow_child_links',
-  mapItemSets: 'workflow_map_item_sets',
-  mapItems: 'workflow_map_items',
+  nodeChildren: 'workflow_node_children',
   runLeases: 'workflow_run_leases',
   commands: 'workflow_commands',
 } as const satisfies Record<TableKey, string>
@@ -90,6 +88,7 @@ const tableNames = {
 const enumNames = {
   runKind: 'workflow_run_kind',
   nodeKind: 'workflow_node_kind',
+  nodeChildKind: 'workflow_node_child_kind',
   runStatus: 'workflow_run_status',
   nodeStatus: 'workflow_node_status',
   attemptStatus: 'workflow_attempt_status',
@@ -100,6 +99,7 @@ function createEnums() {
   return {
     runKind: pgEnum(enumNames.runKind, runKindValues),
     nodeKind: pgEnum(enumNames.nodeKind, nodeKindValues),
+    nodeChildKind: pgEnum(enumNames.nodeChildKind, nodeChildKindValues),
     runStatus: pgEnum(enumNames.runStatus, runStatusValues),
     nodeStatus: pgEnum(enumNames.nodeStatus, nodeStatusValues),
     attemptStatus: pgEnum(enumNames.attemptStatus, attemptStatusValues),
@@ -217,9 +217,6 @@ export function createSchema() {
       output: jsonb('output'),
       error: jsonb('error'),
       selectedCase: text('selected_case'),
-      currentAttemptId: uuid('current_attempt_id'),
-      nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }),
-      attemptCount: integer('attempt_count').notNull(),
       version: integer('version').notNull(),
       createdAt: timestamp('created_at', { withTimezone: true }).notNull(),
       updatedAt: timestamp('updated_at', { withTimezone: true }).notNull(),
@@ -231,11 +228,6 @@ export function createSchema() {
         columns: [t.runId],
         foreignColumns: [runs.id],
       }).onDelete('cascade'),
-      foreignKey({
-        name: 'workflow_nodes_current_attempt_fk',
-        columns: [t.currentAttemptId],
-        foreignColumns: [attempts.id],
-      }).onDelete('set null'),
     ],
   )
   const attempts = createTable(
@@ -244,8 +236,7 @@ export function createSchema() {
       id: uuid('id').primaryKey(),
       runId: uuid('run_id').notNull(),
       nodeName: text('node_name').notNull(),
-      identityKey: text('identity_key'),
-      identity: jsonb('identity'),
+      childKey: text('child_key').notNull(),
       status: enums.attemptStatus('status').notNull(),
       workerId: text('worker_id'),
       leaseToken: text('lease_token'),
@@ -262,7 +253,12 @@ export function createSchema() {
     },
     (t) => [
       index('workflow_attempts_node_idx').on(t.runId, t.nodeName),
-      unique('workflow_attempts_identity_key_key').on(t.identityKey),
+      unique('workflow_attempts_child_attempt_key').on(
+        t.runId,
+        t.nodeName,
+        t.childKey,
+        t.attemptNumber,
+      ),
       foreignKey({
         name: 'workflow_attempts_node_fk',
         columns: [t.runId, t.nodeName],
@@ -270,94 +266,52 @@ export function createSchema() {
       }).onDelete('cascade'),
     ],
   )
-  const childLinks = createTable(
-    tableNames.childLinks,
-    {
-      identityKey: text('identity_key').primaryKey(),
-      identity: jsonb('identity').notNull(),
-      parentRunId: uuid('parent_run_id').notNull(),
-      parentNodeName: text('parent_node_name').notNull(),
-      childRunId: uuid('child_run_id').notNull(),
-      childKind: enums.runKind('child_kind').notNull(),
-      childName: text('child_name').notNull(),
-      workflowName: text('workflow_name').notNull(),
-      taskName: text('task_name'),
-      caseKey: text('case_key'),
-      memberKey: text('member_key'),
-      itemIndex: integer('item_index'),
-      itemKey: text('item_key'),
-    },
-    (t) => [
-      index('workflow_child_links_parent_node_idx').on(
-        t.parentRunId,
-        t.parentNodeName,
-      ),
-      foreignKey({
-        name: 'workflow_child_links_parent_node_fk',
-        columns: [t.parentRunId, t.parentNodeName],
-        foreignColumns: [nodes.runId, nodes.name],
-      }).onDelete('cascade'),
-      foreignKey({
-        name: 'workflow_child_links_child_run_fk',
-        columns: [t.childRunId],
-        foreignColumns: [runs.id],
-      }).onDelete('cascade'),
-    ],
-  )
-  const mapItemSets = createTable(
-    tableNames.mapItemSets,
+  const nodeChildren = createTable(
+    tableNames.nodeChildren,
     {
       runId: uuid('run_id').notNull(),
       nodeName: text('node_name').notNull(),
-      keys: jsonb('keys').notNull(),
-    },
-    (t) => [
-      primaryKey({
-        name: 'workflow_map_item_sets_pkey',
-        columns: [t.runId, t.nodeName],
-      }),
-      foreignKey({
-        name: 'workflow_map_item_sets_node_fk',
-        columns: [t.runId, t.nodeName],
-        foreignColumns: [nodes.runId, nodes.name],
-      }).onDelete('cascade'),
-    ],
-  )
-  const mapItems = createTable(
-    tableNames.mapItems,
-    {
-      runId: uuid('run_id').notNull(),
-      nodeName: text('node_name').notNull(),
-      itemIndex: integer('item_index').notNull(),
-      identityKey: text('identity_key').notNull(),
-      identity: jsonb('identity').notNull(),
-      itemKey: text('item_key'),
-      item: jsonb('item').notNull(),
+      childKey: text('child_key').notNull(),
+      kind: enums.nodeChildKind('kind').notNull(),
       status: enums.nodeStatus('status').notNull(),
+      ordinal: integer('ordinal').notNull().default(0),
+      itemKey: text('item_key'),
+      item: jsonb('item'),
+      input: jsonb('input'),
       output: jsonb('output'),
       error: jsonb('error'),
       childRunId: uuid('child_run_id'),
-      attemptId: uuid('attempt_id'),
+      currentAttemptId: uuid('current_attempt_id'),
+      attemptCount: integer('attempt_count').notNull().default(0),
+      version: integer('version').notNull(),
+      createdAt: timestamp('created_at', { withTimezone: true }).notNull(),
+      updatedAt: timestamp('updated_at', { withTimezone: true }).notNull(),
     },
     (t) => [
       primaryKey({
-        name: 'workflow_map_items_pkey',
-        columns: [t.runId, t.nodeName, t.itemIndex],
+        name: 'workflow_node_children_pkey',
+        columns: [t.runId, t.nodeName, t.childKey],
       }),
-      unique('workflow_map_items_identity_key_key').on(t.identityKey),
+      index('workflow_node_children_node_idx').on(t.runId, t.nodeName),
+      index('workflow_node_children_child_run_idx').on(t.childRunId),
       foreignKey({
-        name: 'workflow_map_items_set_fk',
-        columns: [t.runId, t.nodeName],
-        foreignColumns: [mapItemSets.runId, mapItemSets.nodeName],
+        name: 'workflow_node_children_run_fk',
+        columns: [t.runId],
+        foreignColumns: [runs.id],
       }).onDelete('cascade'),
       foreignKey({
-        name: 'workflow_map_items_child_run_fk',
+        name: 'workflow_node_children_node_fk',
+        columns: [t.runId, t.nodeName],
+        foreignColumns: [nodes.runId, nodes.name],
+      }).onDelete('cascade'),
+      foreignKey({
+        name: 'workflow_node_children_child_run_fk',
         columns: [t.childRunId],
         foreignColumns: [runs.id],
       }).onDelete('set null'),
       foreignKey({
-        name: 'workflow_map_items_attempt_fk',
-        columns: [t.attemptId],
+        name: 'workflow_node_children_current_attempt_fk',
+        columns: [t.currentAttemptId],
         foreignColumns: [attempts.id],
       }).onDelete('set null'),
     ],
@@ -398,6 +352,7 @@ export function createSchema() {
       deliveryCount: integer('delivery_count').notNull().default(0),
       lastError: jsonb('last_error'),
       deadAt: timestamp('dead_at', { withTimezone: true }),
+      reapedAt: timestamp('reaped_at', { withTimezone: true }),
       createdAt: timestamp('created_at', { withTimezone: true })
         .notNull()
         .defaultNow(),
@@ -429,9 +384,7 @@ export function createSchema() {
       runs,
       nodes,
       attempts,
-      childLinks,
-      mapItemSets,
-      mapItems,
+      nodeChildren,
       runLeases,
       commands,
     },

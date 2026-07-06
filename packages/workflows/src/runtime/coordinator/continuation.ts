@@ -127,7 +127,11 @@ export async function continueWorkflowRun(
             .map((node) => [node.name, node.output]),
         )
 
-        await advanceWorkflowRun({
+        // The run has coordination work from here on; queued/waiting → running
+        // before dispatching so status filters see live runs as such.
+        await store.markRunRunning({ runId: snapshot.run.id })
+
+        const outcome = await advanceWorkflowRun({
           store,
           attemptExecutor: input.attemptExecutor,
           runCoordinationExecutor: input.runCoordinationExecutor,
@@ -137,6 +141,9 @@ export async function continueWorkflowRun(
           outputs,
           advance: advanceWorkflowRun,
         })
+        if (outcome === 'parked') {
+          await store.markRunWaiting({ runId: snapshot.run.id })
+        }
         return { status: 'processed' }
       },
     ).catch((error: unknown) => {
@@ -173,6 +180,8 @@ export function createRunLeaseFencedStore(
       fence(() => store.failCurrentAttempt(params)),
     completeNode: (params) => fence(() => store.completeNode(params)),
     failNode: (params) => fence(() => store.failNode(params)),
+    markRunRunning: (params) => fence(() => store.markRunRunning(params)),
+    markRunWaiting: (params) => fence(() => store.markRunWaiting(params)),
     completeRun: (params) => fence(() => store.completeRun(params)),
     failRun: (params) => fence(() => store.failRun(params)),
     requestRunCancellation: (params) =>
@@ -181,14 +190,14 @@ export function createRunLeaseFencedStore(
     cancelNode: (params) => fence(() => store.cancelNode(params)),
     cancelNonTerminalRunNodes: (params) =>
       fence(() => store.cancelNonTerminalRunNodes(params)),
-    ensureNodeAttempt: (params) => fence(() => store.ensureNodeAttempt(params)),
-    ensureChildWorkflowRun: (params) =>
-      fence(() => store.ensureChildWorkflowRun(params)),
+    ensureNodeChildren: (params) =>
+      fence(() => store.ensureNodeChildren(params)),
     ensureChildRun: (params) => fence(() => store.ensureChildRun(params)),
+    ensureChildAttempt: (params) =>
+      fence(() => store.ensureChildAttempt(params)),
     selectNodeCase: (params) => fence(() => store.selectNodeCase(params)),
-    ensureMapItems: (params) => fence(() => store.ensureMapItems(params)),
-    completeMapItem: (params) => fence(() => store.completeMapItem(params)),
-    failMapItem: (params) => fence(() => store.failMapItem(params)),
+    completeNodeChild: (params) => fence(() => store.completeNodeChild(params)),
+    failNodeChild: (params) => fence(() => store.failNodeChild(params)),
     waitNode: (params) => fence(() => store.waitNode(params)),
   }
 }

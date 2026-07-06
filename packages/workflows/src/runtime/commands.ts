@@ -12,6 +12,7 @@ export type ActivityAttemptCommand = {
   readonly activityName: string
   readonly runId: string
   readonly nodeName: string
+  readonly childKey: string
   readonly attemptId: string
   readonly leaseToken: string
   readonly input: unknown
@@ -24,6 +25,7 @@ export type TaskAttemptCommand = {
   readonly taskName: string
   readonly runId: string
   readonly nodeName: string
+  readonly childKey: string
   readonly attemptId: string
   readonly leaseToken: string
   readonly input: unknown

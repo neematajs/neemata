@@ -17,10 +17,9 @@ import {
   jsonRecordColumn,
   many,
   mapAttempt,
-  mapChildLink,
   mapDeadCommand,
-  mapMapItem,
   mapNode,
+  mapNodeChild,
   mapRun,
   DEFAULT_PRUNE_STATUSES,
   normalizePruneBatchSize,
@@ -43,6 +42,7 @@ type PostgresWorkflowRunStore = Pick<
   | 'listRuns'
   | 'pruneTerminalRuns'
   | 'listDeadCommands'
+  | 'claimDeadCommands'
   | 'requeueDeadCommand'
   | 'acquireRunLease'
   | 'renewRunLease'
@@ -295,6 +295,31 @@ export const createPostgresWorkflowRunStore = (
         .map((row) => withDateColumns(row, ['dead_at', 'created_at', 'run_at']))
         .map(mapDeadCommand)
     },
+    async claimDeadCommands(params) {
+      await ready
+      const limit = params?.limit
+      const rows = await many(
+        db,
+        `
+        UPDATE workflow_commands
+        SET reaped_at = now()
+        WHERE id IN (
+          SELECT id
+          FROM workflow_commands
+          WHERE dead_at IS NOT NULL
+            AND reaped_at IS NULL
+          ORDER BY dead_at ASC, created_at ASC, id ASC
+          ${limit === undefined ? '' : 'LIMIT $1'}
+          FOR UPDATE SKIP LOCKED
+        )
+        RETURNING *
+      `,
+        limit === undefined ? [] : [limit],
+      )
+      return rows
+        .map((row) => withDateColumns(row, ['dead_at', 'created_at', 'run_at']))
+        .map(mapDeadCommand)
+    },
     async requeueDeadCommand(commandId) {
       await ready
       await db.query(
@@ -303,6 +328,7 @@ export const createPostgresWorkflowRunStore = (
         SET delivery_count = 0,
             last_error = NULL,
             dead_at = NULL,
+            reaped_at = NULL,
             lease_owner = NULL,
             lease_token = NULL,
             lease_expires_at = NULL,
@@ -404,9 +430,8 @@ export const createPostgresWorkflowRunStore = (
         JsonRecord & {
           run: unknown
           nodes: unknown
+          children: unknown
           attempts: unknown
-          child_links: unknown
-          map_items: unknown
         }
       >(
         db,
@@ -418,21 +443,17 @@ export const createPostgresWorkflowRunStore = (
             '[]'::jsonb
           ) AS nodes,
           COALESCE(
-            (SELECT jsonb_agg(to_jsonb(a)) FROM workflow_attempts a WHERE a.run_id = $1),
-            '[]'::jsonb
-          ) AS attempts,
-          COALESCE(
             (
-              SELECT jsonb_agg(to_jsonb(c))
-              FROM workflow_child_links c
-              WHERE c.parent_run_id = $1
+              SELECT jsonb_agg(to_jsonb(c) ORDER BY c.node_name, c.ordinal, c.child_key)
+              FROM workflow_node_children c
+              WHERE c.run_id = $1
             ),
             '[]'::jsonb
-          ) AS child_links,
+          ) AS children,
           COALESCE(
-            (SELECT jsonb_agg(to_jsonb(m)) FROM workflow_map_items m WHERE m.run_id = $1),
+            (SELECT jsonb_agg(to_jsonb(a)) FROM workflow_attempts a WHERE a.run_id = $1),
             '[]'::jsonb
-          ) AS map_items
+          ) AS attempts
       `,
         [runId],
       )
@@ -440,7 +461,10 @@ export const createPostgresWorkflowRunStore = (
       if (!run) return undefined
 
       const nodes = jsonRecordArrayColumn(snapshot.nodes).map((node) =>
-        withDateColumns(node, ['created_at', 'updated_at', 'next_attempt_at']),
+        withDateColumns(node, ['created_at', 'updated_at']),
+      )
+      const children = jsonRecordArrayColumn(snapshot.children).map((child) =>
+        withDateColumns(child, ['created_at', 'updated_at']),
       )
       const attempts = jsonRecordArrayColumn(snapshot.attempts).map((attempt) =>
         withDateColumns(attempt, [
@@ -449,15 +473,12 @@ export const createPostgresWorkflowRunStore = (
           'completed_at',
         ]),
       )
-      const childLinks = jsonRecordArrayColumn(snapshot.child_links)
-      const mapItems = jsonRecordArrayColumn(snapshot.map_items)
 
       return {
         run: mapRun(withDateColumns(run, ['created_at', 'updated_at'])),
         nodes: nodes.map(mapNode),
+        children: children.map(mapNodeChild),
         attempts: attempts.map(mapAttempt),
-        childLinks: childLinks.map(mapChildLink),
-        mapItems: mapItems.map(mapMapItem),
       } satisfies RunSnapshot
     },
   }

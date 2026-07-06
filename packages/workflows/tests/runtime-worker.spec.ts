@@ -350,7 +350,7 @@ describe('workflow worker runtime', () => {
     expect(reconcileMarker.runCalls).toEqual(['enqueue'])
     expect(
       (await reconcileRuntime.store.loadRunSnapshot(parentRun.id))?.run.status,
-    ).toBe('queued')
+    ).toBe('waiting')
   })
 
   it('reconciles stale timed-out attempts like failed attempts', async () => {
@@ -527,7 +527,7 @@ describe('workflow worker runtime', () => {
     ).rejects.toThrow('activity queue down')
 
     const snapshot = await runtime.store.loadRunSnapshot(run.id)
-    expect(snapshot?.run.status).toBe('queued')
+    expect(snapshot?.run.status).toBe('running')
     expect(snapshot?.nodes[0]?.status).toBe('running')
     expect(snapshot?.attempts[0]?.status).toBe('started')
     expect(runtime.inspect().continueRunCommands).toHaveLength(1)
@@ -1471,7 +1471,7 @@ describe('workflow worker runtime', () => {
       expect(result.processed).toBe(0)
 
       const snapshot = await runtime.store.loadRunSnapshot(run.id)
-      expect(snapshot?.run.status).toBe('queued')
+      expect(snapshot?.run.status).toBe('running')
       expect(snapshot?.attempts[0]?.status).toBe('started')
       expect(runtime.inspect().taskCommands).toHaveLength(1)
       expect(leaseLostReason).toStrictEqual({ type: 'leaseLost' })
@@ -1621,7 +1621,7 @@ describe('workflow worker runtime', () => {
       const snapshot = await runtime.store.loadRunSnapshot(run.id)
       expect(result.processed).toBe(0)
       expect(shutdownReason).toStrictEqual({ type: 'shutdown' })
-      expect(snapshot?.run.status).toBe('queued')
+      expect(snapshot?.run.status).toBe('running')
       expect(snapshot?.attempts[0]?.status).toBe('started')
       expect(runtime.inspect().taskCommands).toHaveLength(1)
       expect(acked).toBe(false)

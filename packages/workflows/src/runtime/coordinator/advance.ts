@@ -2,6 +2,7 @@ import { decodeWorkflowUserSchemaValue } from './codec.ts'
 import {
   isWorkflowUserCallbackError,
   type AdvanceCtx,
+  type AdvanceOutcome,
   unwrapWorkflowUserCallbackError,
 } from './context.ts'
 import { dispatchActivityNode } from './dispatch/activity.ts'
@@ -16,7 +17,9 @@ import {
   failRunAndWakeParent,
 } from './sinks.ts'
 
-export async function advanceWorkflowRun(input: AdvanceCtx) {
+export async function advanceWorkflowRun(
+  input: AdvanceCtx,
+): Promise<AdvanceOutcome> {
   const nextNode = input.workflow.nodes.find(
     (node) => !Object.prototype.hasOwnProperty.call(input.outputs, node.name),
   )
@@ -43,7 +46,7 @@ export async function advanceWorkflowRun(input: AdvanceCtx) {
         runId: input.run.id,
         error,
       })
-      return
+      return 'terminal'
     }
     await completeRunAndWakeParent({
       store: input.store,
@@ -51,38 +54,32 @@ export async function advanceWorkflowRun(input: AdvanceCtx) {
       runId: input.run.id,
       output,
     })
-    return
+    return 'terminal'
   }
 
   try {
     if (nextNode.kind === 'task') {
-      await dispatchTaskNode({ ...input, node: nextNode })
-      return
+      return await dispatchTaskNode({ ...input, node: nextNode })
     }
 
     if (nextNode.kind === 'workflow') {
-      await dispatchWorkflowNode({ ...input, node: nextNode })
-      return
+      return await dispatchWorkflowNode({ ...input, node: nextNode })
     }
 
     if (nextNode.kind === 'branch') {
-      await dispatchBranchNode({ ...input, node: nextNode })
-      return
+      return await dispatchBranchNode({ ...input, node: nextNode })
     }
 
     if (nextNode.kind === 'parallel') {
-      await dispatchParallelNode({ ...input, node: nextNode })
-      return
+      return await dispatchParallelNode({ ...input, node: nextNode })
     }
 
     if (nextNode.kind === 'mapTask') {
-      await dispatchMapTaskNode({ ...input, node: nextNode })
-      return
+      return await dispatchMapTaskNode({ ...input, node: nextNode })
     }
 
     if (nextNode.kind === 'mapWorkflow') {
-      await dispatchMapWorkflowNode({ ...input, node: nextNode })
-      return
+      return await dispatchMapWorkflowNode({ ...input, node: nextNode })
     }
 
     if (nextNode.kind !== 'activity') {
@@ -91,7 +88,7 @@ export async function advanceWorkflowRun(input: AdvanceCtx) {
       )
     }
 
-    await dispatchActivityNode({ ...input, node: nextNode })
+    return await dispatchActivityNode({ ...input, node: nextNode })
   } catch (error) {
     if (!isWorkflowUserCallbackError(error)) throw error
     await failNodeAndRun({
@@ -101,5 +98,6 @@ export async function advanceWorkflowRun(input: AdvanceCtx) {
       nodeName: nextNode.name,
       error: unwrapWorkflowUserCallbackError(error),
     })
+    return 'terminal'
   }
 }

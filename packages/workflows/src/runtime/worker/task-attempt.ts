@@ -55,8 +55,10 @@ export async function runTaskAttempt(
   }
 
   const snapshot = await input.store.loadRunSnapshot(command.runId)
-  const storedNode = snapshot?.nodes.find(
-    (node) => node.name === command.nodeName,
+  const storedChild = snapshot?.children.find(
+    (child) =>
+      child.nodeName === command.nodeName &&
+      child.childKey === command.childKey,
   )
   const storedAttempt = snapshot?.attempts.find(
     (attempt) => attempt.id === command.attemptId,
@@ -65,14 +67,19 @@ export async function runTaskAttempt(
     return await ackTerminalAttempt(input)
   }
 
-  if (!isFreshAttempt(command, storedNode, storedAttempt)) {
+  if (!isFreshAttempt(command, storedChild, storedAttempt)) {
     return await runAtomicCompletion(input, (scoped) =>
-      reconcileStaleAttempt(scoped, command, storedNode, storedAttempt),
+      reconcileStaleAttempt(scoped, command, storedChild, storedAttempt),
     )
   }
 
   if (snapshot?.run.workflowName !== command.workflowName) {
-    await input.attemptExecutor.release(input.claimed)
+    await input.attemptExecutor.release(input.claimed, {
+      reason: 'unroutable',
+      error: new Error(
+        `Run [${command.runId}] workflow does not match command workflow [${command.workflowName}]`,
+      ),
+    })
     return { status: 'released' }
   }
 
@@ -81,8 +88,19 @@ export async function runTaskAttempt(
   })
   const task = registry.getTask(command.taskName)
   if (!task) {
-    await input.attemptExecutor.release(input.claimed)
+    await input.attemptExecutor.release(input.claimed, {
+      reason: 'unroutable',
+      error: new Error(
+        `No registered task implementation [${command.taskName}]`,
+      ),
+    })
     return { status: 'released' }
+  }
+
+  // Task runs are advanced by workers, never by the coordinator, so this is
+  // the queued → running transition for them.
+  if (snapshot.run.kind === 'task') {
+    await input.store.markRunRunning({ runId: command.runId })
   }
 
   let output: unknown
@@ -148,11 +166,19 @@ export async function runTaskAttempt(
           return { status: 'processed' }
         }
 
-        await scoped.store.failNode({
+        await scoped.store.failNodeChild({
           runId: command.runId,
           nodeName: command.nodeName,
+          childKey: command.childKey,
           error,
         })
+        if (shouldCompleteNodeFromAttempt(command.childKey)) {
+          await scoped.store.failNode({
+            runId: command.runId,
+            nodeName: command.nodeName,
+            error,
+          })
+        }
         if (snapshot?.run.kind === 'task') {
           const failed = await scoped.store.failRun({
             runId: command.runId,
@@ -204,7 +230,7 @@ export async function runTaskAttempt(
       return { status: 'processed' }
     }
 
-    if (shouldCompleteNodeFromAttempt(storedNode)) {
+    if (shouldCompleteNodeFromAttempt(command.childKey)) {
       await scoped.store.completeNode({
         runId: command.runId,
         nodeName: command.nodeName,

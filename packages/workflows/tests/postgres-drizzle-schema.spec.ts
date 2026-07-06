@@ -154,38 +154,16 @@ function completeRunAfterRunLoad(
   return wrap(connection)
 }
 
-function insertNodeAfterRunSnapshotLoad(
+function captureWorkflowStatements(
   connection: WorkflowPostgresConnection,
-  runId: string,
+  statements: string[],
 ): WorkflowPostgresConnection {
-  let inserted = false
   const wrap = (
     target: WorkflowPostgresConnection,
   ): WorkflowPostgresConnection => ({
-    async query<T extends Record<string, unknown> = Record<string, unknown>>(
-      sql: string,
-      params: readonly unknown[] = [],
-    ): Promise<WorkflowPostgresQueryResult<T>> {
-      const shouldInsert =
-        !inserted &&
-        /^\s*SELECT\s+\*\s+FROM\s+workflow_runs\s+WHERE\s+id\s+=\s+\$1\s*$/i.test(
-          sql,
-        ) &&
-        params[0] === runId
-      const result = await target.query(sql, params)
-      if (shouldInsert) {
-        inserted = true
-        await target.query(
-          `
-            INSERT INTO workflow_nodes (
-              run_id, name, kind, status, attempt_count, version, created_at, updated_at
-            )
-            VALUES ($1, 'late-node', 'activity', 'pending', 0, 1, now(), now())
-          `,
-          [runId],
-        )
-      }
-      return result as WorkflowPostgresQueryResult<T>
+    query(sql, params = []) {
+      statements.push(sql)
+      return target.query(sql, params)
     },
     transaction: (handler) => target.transaction((tx) => handler(wrap(tx))),
   })
@@ -218,7 +196,7 @@ function raceIdempotentRunInsert(
   }
 }
 
-function raceNodeAttemptInsert(
+function raceChildAttemptInsert(
   connection: WorkflowPostgresConnection,
   writer: WorkflowPostgresConnection = connection,
   state: {
@@ -248,7 +226,7 @@ function raceNodeAttemptInsert(
     async transaction(handler) {
       try {
         return await connection.transaction((tx) =>
-          handler(raceNodeAttemptInsert(tx, writer, state)),
+          handler(raceChildAttemptInsert(tx, writer, state)),
         )
       } catch (error) {
         if (state.raced && !state.committed && state.sql && state.params) {
@@ -256,15 +234,20 @@ function raceNodeAttemptInsert(
           await writer.query(state.sql, state.params)
           await writer.query(
             `
-              UPDATE workflow_nodes
-              SET status = 'waiting',
-                  current_attempt_id = $3,
-                  attempt_count = attempt_count + 1,
+              UPDATE workflow_node_children
+              SET status = 'running',
+                  current_attempt_id = $4,
+                  attempt_count = 1,
                   version = version + 1,
                   updated_at = now()
-              WHERE run_id = $1 AND name = $2
+              WHERE run_id = $1 AND node_name = $2 AND child_key = $3
             `,
-            [state.params[1], state.params[2], state.params[0]],
+            [
+              state.params[1],
+              state.params[2],
+              state.params[3],
+              state.params[0],
+            ],
           )
         }
         throw error
@@ -273,36 +256,21 @@ function raceNodeAttemptInsert(
   }
 }
 
-function raceChildLinkInsert(
+function raceChildRunAfterChildLoad(
   connection: WorkflowPostgresConnection,
   params: {
-    readonly identity: {
-      readonly runId: string
-      readonly nodeName: string
-      readonly caseKey?: string
-      readonly memberKey?: string
-      readonly itemIndex?: number
-      readonly itemKey?: string
-    }
+    readonly runId: string
+    readonly nodeName: string
+    readonly childKey: string
     readonly childKind: 'workflow' | 'task'
     readonly childName: string
     readonly input: unknown
-    readonly parentRunId: string
-    readonly parentNodeName: string
     readonly rootRunId: string
     readonly tags?: Readonly<Record<string, string>>
     readonly idempotencyKey?: readonly unknown[]
   },
 ): WorkflowPostgresConnection {
   let raced = false
-  const key = JSON.stringify([
-    params.identity.runId,
-    params.identity.nodeName,
-    params.identity.caseKey ?? null,
-    params.identity.memberKey ?? null,
-    params.identity.itemIndex ?? null,
-    params.identity.itemKey ?? null,
-  ])
   const wrap = (
     target: WorkflowPostgresConnection,
   ): WorkflowPostgresConnection => ({
@@ -312,8 +280,10 @@ function raceChildLinkInsert(
     ): Promise<WorkflowPostgresQueryResult<T>> {
       const shouldRace =
         !raced &&
-        /FROM\s+workflow_child_links/i.test(sql) &&
-        queryParams[0] === key
+        /FROM\s+workflow_node_children/i.test(sql) &&
+        queryParams[0] === params.runId &&
+        queryParams[1] === params.nodeName &&
+        queryParams[2] === params.childKey
       const result = await target.query<T>(sql, queryParams)
       if (shouldRace) {
         raced = true
@@ -337,8 +307,8 @@ function raceChildLinkInsert(
             params.childName,
             params.childKind === 'task' ? params.childName : null,
             JSON.stringify(params.input),
-            params.parentRunId,
-            params.parentNodeName,
+            params.runId,
+            params.nodeName,
             params.rootRunId,
             JSON.stringify(params.tags ?? {}),
             params.idempotencyKey
@@ -348,30 +318,14 @@ function raceChildLinkInsert(
         )
         await connection.query(
           `
-            INSERT INTO workflow_child_links (
-              identity_key, identity, parent_run_id, parent_node_name,
-              child_run_id, child_kind, child_name, workflow_name, task_name,
-              case_key, member_key, item_index, item_key
-            )
-            VALUES (
-              $1, $2::jsonb, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
-            )
+            UPDATE workflow_node_children
+            SET child_run_id = $4,
+                status = 'running',
+                version = version + 1,
+                updated_at = now()
+            WHERE run_id = $1 AND node_name = $2 AND child_key = $3
           `,
-          [
-            key,
-            JSON.stringify(params.identity),
-            params.parentRunId,
-            params.parentNodeName,
-            childRunId,
-            params.childKind,
-            params.childName,
-            params.childName,
-            params.childKind === 'task' ? params.childName : null,
-            params.identity.caseKey ?? null,
-            params.identity.memberKey ?? null,
-            params.identity.itemIndex ?? null,
-            params.identity.itemKey ?? null,
-          ],
+          [params.runId, params.nodeName, params.childKey, childRunId],
         )
       }
       return result
@@ -382,69 +336,52 @@ function raceChildLinkInsert(
   return wrap(connection)
 }
 
-function raceMapItemsAfterSetLoad(
+function raceNodeChildrenAfterLoad(
   connection: WorkflowPostgresConnection,
   params: {
     readonly runId: string
     readonly nodeName: string
-    readonly items: readonly unknown[]
-    readonly keys?: readonly (string | undefined)[]
+    readonly children: readonly {
+      readonly childKey: string
+      readonly kind: 'activity' | 'task' | 'workflow'
+      readonly ordinal?: number
+      readonly itemKey?: string
+      readonly item?: unknown
+    }[]
   },
+  state: { raced: boolean } = { raced: false },
 ): WorkflowPostgresConnection {
-  let raced = false
   return {
     async query<T extends Record<string, unknown> = Record<string, unknown>>(
       sql: string,
       queryParams: readonly unknown[] = [],
     ): Promise<WorkflowPostgresQueryResult<T>> {
       const shouldRace =
-        !raced &&
-        /FROM\s+workflow_map_item_sets/i.test(sql) &&
+        !state.raced &&
+        /FROM\s+workflow_node_children/i.test(sql) &&
+        queryParams.length === 2 &&
         queryParams[0] === params.runId &&
         queryParams[1] === params.nodeName
       const result = await connection.query<T>(sql, queryParams)
       if (shouldRace) {
-        raced = true
-        const keys = params.items.map((_, index) => params.keys?.[index])
-        await connection.query(
-          `
-            INSERT INTO workflow_map_item_sets (run_id, node_name, keys)
-            VALUES ($1, $2, $3::jsonb)
-          `,
-          [params.runId, params.nodeName, JSON.stringify(keys)],
-        )
-        for (const [index, item] of params.items.entries()) {
-          const itemKey = params.keys?.[index]
-          const identity = {
-            runId: params.runId,
-            nodeName: params.nodeName,
-            itemIndex: index,
-            ...(itemKey === undefined ? {} : { itemKey }),
-          }
-          const identityKey = JSON.stringify([
-            params.runId,
-            params.nodeName,
-            null,
-            null,
-            index,
-            itemKey ?? null,
-          ])
+        state.raced = true
+        for (const child of params.children) {
           await connection.query(
             `
-              INSERT INTO workflow_map_items (
-                run_id, node_name, item_index, identity_key, identity,
-                item_key, item, status
+              INSERT INTO workflow_node_children (
+                run_id, node_name, child_key, kind, status, ordinal,
+                item_key, item, attempt_count, version, created_at, updated_at
               )
-              VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7::jsonb, 'pending')
+              VALUES ($1, $2, $3, $4, 'pending', $5, $6, $7::jsonb, 0, 1, now(), now())
             `,
             [
               params.runId,
               params.nodeName,
-              index,
-              identityKey,
-              JSON.stringify(identity),
-              itemKey ?? null,
-              JSON.stringify(item),
+              child.childKey,
+              child.kind,
+              child.ordinal ?? 0,
+              child.itemKey ?? null,
+              child.item === undefined ? null : JSON.stringify(child.item),
             ],
           )
         }
@@ -453,20 +390,20 @@ function raceMapItemsAfterSetLoad(
     },
     transaction: (handler) =>
       connection.transaction((tx) =>
-        handler(raceMapItemsAfterSetLoad(tx, params)),
+        handler(raceNodeChildrenAfterLoad(tx, params, state)),
       ),
   }
 }
 
-function failChildLinkInsert(
+function failChildRunLinkUpdate(
   connection: WorkflowPostgresConnection,
 ): WorkflowPostgresConnection {
   const wrap = (
     target: WorkflowPostgresConnection,
   ): WorkflowPostgresConnection => ({
     query(sql, params = []) {
-      if (/INSERT\s+INTO\s+workflow_child_links/i.test(sql)) {
-        throw new Error('forced child link insert failure')
+      if (/UPDATE\s+workflow_node_children\s+SET\s+child_run_id/i.test(sql)) {
+        throw new Error('forced child run link failure')
       }
       return target.query(sql, params)
     },
@@ -476,15 +413,19 @@ function failChildLinkInsert(
   return wrap(connection)
 }
 
-function failMapItemInsert(
+function failNodeChildInsert(
   connection: WorkflowPostgresConnection,
+  childKey: string,
 ): WorkflowPostgresConnection {
   const wrap = (
     target: WorkflowPostgresConnection,
   ): WorkflowPostgresConnection => ({
     query(sql, params = []) {
-      if (/INSERT\s+INTO\s+workflow_map_items/i.test(sql)) {
-        throw new Error('forced map item insert failure')
+      if (
+        /INSERT\s+INTO\s+workflow_node_children/i.test(sql) &&
+        params.includes(childKey)
+      ) {
+        throw new Error('forced node child insert failure')
       }
       return target.query(sql, params)
     },
@@ -536,7 +477,7 @@ function rejectClientClockCommandParams(
   return wrap(connection)
 }
 
-function failNodeUpdateAfterAttemptInsert(
+function failChildUpdateAfterAttemptInsert(
   connection: WorkflowPostgresConnection,
 ): WorkflowPostgresConnection {
   let attemptInserted = false
@@ -552,11 +493,9 @@ function failNodeUpdateAfterAttemptInsert(
       }
       if (
         attemptInserted &&
-        /UPDATE\s+workflow_nodes\s+SET\s+status\s+=\s+'(?:running|waiting)'/i.test(
-          sql,
-        )
+        /UPDATE\s+workflow_node_children\s+SET\s+current_attempt_id/i.test(sql)
       ) {
-        throw new Error('forced node update failure')
+        throw new Error('forced child update failure')
       }
       return target.query<T>(sql, params)
     },
@@ -633,7 +572,6 @@ test('creates drizzle schema with canonical runtime names', () => {
   expect(getTableName(WorkflowNodeTable)).toBe('workflow_nodes')
   expect(getTableConfig(WorkflowNodeTable).schema).toBeUndefined()
   expect(WorkflowNodeTable.runId.columnType).toBe('PgUUID')
-  expect(WorkflowNodeTable.currentAttemptId.columnType).toBe('PgUUID')
   expect(WorkflowNodeTable.kind.enumValues).toStrictEqual([
     'activity',
     'task',
@@ -661,12 +599,18 @@ test('creates drizzle schema with canonical runtime names', () => {
   ])
   expect(schema.tables.attempts.id.columnType).toBe('PgUUID')
   expect(schema.tables.attempts.runId.columnType).toBe('PgUUID')
-  expect(schema.tables.childLinks.parentRunId.columnType).toBe('PgUUID')
-  expect(schema.tables.childLinks.childRunId.columnType).toBe('PgUUID')
-  expect(schema.tables.mapItemSets.runId.columnType).toBe('PgUUID')
-  expect(schema.tables.mapItems.runId.columnType).toBe('PgUUID')
-  expect(schema.tables.mapItems.childRunId.columnType).toBe('PgUUID')
-  expect(schema.tables.mapItems.attemptId.columnType).toBe('PgUUID')
+  expect(schema.tables.attempts.childKey.columnType).toBe('PgText')
+  expect(schema.tables.attempts.childKey.notNull).toBe(true)
+  expect(getTableName(schema.tables.nodeChildren)).toBe(
+    'workflow_node_children',
+  )
+  expect(schema.tables.nodeChildren.runId.columnType).toBe('PgUUID')
+  expect(schema.tables.nodeChildren.childKey.columnType).toBe('PgText')
+  expect(schema.tables.nodeChildren.childKey.notNull).toBe(true)
+  expect(schema.tables.nodeChildren.childRunId.columnType).toBe('PgUUID')
+  expect(schema.tables.nodeChildren.currentAttemptId.columnType).toBe('PgUUID')
+  expect(schema.tables.nodeChildren.ordinal.notNull).toBe(true)
+  expect(schema.tables.nodeChildren.attemptCount.notNull).toBe(true)
   expect(schema.tables.runLeases.runId.columnType).toBe('PgUUID')
   expect(schema.tables.commands.id.columnType).toBe('PgUUID')
   expect(schema.tables.commands.kind.enumValues).toStrictEqual([
@@ -682,27 +626,24 @@ test('creates drizzle schema with canonical runtime names', () => {
     'name',
   ])
   expect(primaryKeyNames(schema.tables.nodes)).toContain('workflow_nodes_pkey')
-  expect(primaryKeyColumns(schema.tables.mapItemSets)).toContainEqual([
+  expect(primaryKeyColumns(schema.tables.nodeChildren)).toContainEqual([
     'run_id',
     'node_name',
+    'child_key',
   ])
-  expect(primaryKeyNames(schema.tables.mapItemSets)).toContain(
-    'workflow_map_item_sets_pkey',
-  )
-  expect(primaryKeyColumns(schema.tables.mapItems)).toContainEqual([
-    'run_id',
-    'node_name',
-    'item_index',
-  ])
-  expect(primaryKeyNames(schema.tables.mapItems)).toContain(
-    'workflow_map_items_pkey',
+  expect(primaryKeyNames(schema.tables.nodeChildren)).toContain(
+    'workflow_node_children_pkey',
   )
   expect(uniqueConstraintNames(schema.tables.attempts)).toContain(
-    'workflow_attempts_identity_key_key',
+    'workflow_attempts_child_attempt_key',
   )
-  expect(uniqueConstraintNames(schema.tables.mapItems)).toContain(
-    'workflow_map_items_identity_key_key',
-  )
+  expect(
+    getTableConfig(schema.tables.attempts)
+      .uniqueConstraints.find(
+        (key) => key.getName() === 'workflow_attempts_child_attempt_key',
+      )
+      ?.columns.map((column) => column.name),
+  ).toStrictEqual(['run_id', 'node_name', 'child_key', 'attempt_number'])
   expect(foreignKeys(schema.tables.runs)).toEqual(
     expect.arrayContaining([
       {
@@ -725,80 +666,48 @@ test('creates drizzle schema with canonical runtime names', () => {
       },
     ]),
   )
-  expect(foreignKeys(schema.tables.nodes)).toEqual(
-    expect.arrayContaining([
-      {
-        columns: ['run_id'],
-        foreignTable: 'workflow_runs',
-        foreignColumns: ['id'],
-        onDelete: 'cascade',
-      },
-      {
-        columns: ['current_attempt_id'],
-        foreignTable: 'workflow_attempts',
-        foreignColumns: ['id'],
-        onDelete: 'set null',
-      },
-    ]),
-  )
-  expect(foreignKeys(schema.tables.attempts)).toEqual(
-    expect.arrayContaining([
-      {
-        columns: ['run_id', 'node_name'],
-        foreignTable: 'workflow_nodes',
-        foreignColumns: ['run_id', 'name'],
-        onDelete: 'cascade',
-      },
-    ]),
-  )
-  expect(foreignKeys(schema.tables.childLinks)).toEqual(
-    expect.arrayContaining([
-      {
-        columns: ['parent_run_id', 'parent_node_name'],
-        foreignTable: 'workflow_nodes',
-        foreignColumns: ['run_id', 'name'],
-        onDelete: 'cascade',
-      },
-      {
-        columns: ['child_run_id'],
-        foreignTable: 'workflow_runs',
-        foreignColumns: ['id'],
-        onDelete: 'cascade',
-      },
-    ]),
-  )
-  expect(foreignKeys(schema.tables.mapItemSets)).toEqual(
-    expect.arrayContaining([
-      {
-        columns: ['run_id', 'node_name'],
-        foreignTable: 'workflow_nodes',
-        foreignColumns: ['run_id', 'name'],
-        onDelete: 'cascade',
-      },
-    ]),
-  )
-  expect(foreignKeys(schema.tables.mapItems)).toEqual(
-    expect.arrayContaining([
-      {
-        columns: ['run_id', 'node_name'],
-        foreignTable: 'workflow_map_item_sets',
-        foreignColumns: ['run_id', 'node_name'],
-        onDelete: 'cascade',
-      },
-      {
-        columns: ['child_run_id'],
-        foreignTable: 'workflow_runs',
-        foreignColumns: ['id'],
-        onDelete: 'set null',
-      },
-      {
-        columns: ['attempt_id'],
-        foreignTable: 'workflow_attempts',
-        foreignColumns: ['id'],
-        onDelete: 'set null',
-      },
-    ]),
-  )
+  expect(foreignKeys(schema.tables.nodes)).toStrictEqual([
+    {
+      columns: ['run_id'],
+      foreignTable: 'workflow_runs',
+      foreignColumns: ['id'],
+      onDelete: 'cascade',
+    },
+  ])
+  expect(foreignKeys(schema.tables.attempts)).toStrictEqual([
+    {
+      columns: ['run_id', 'node_name'],
+      foreignTable: 'workflow_nodes',
+      foreignColumns: ['run_id', 'name'],
+      onDelete: 'cascade',
+    },
+  ])
+  expect(foreignKeys(schema.tables.nodeChildren)).toStrictEqual([
+    {
+      columns: ['run_id'],
+      foreignTable: 'workflow_runs',
+      foreignColumns: ['id'],
+      onDelete: 'cascade',
+    },
+    {
+      columns: ['run_id', 'node_name'],
+      foreignTable: 'workflow_nodes',
+      foreignColumns: ['run_id', 'name'],
+      onDelete: 'cascade',
+    },
+    {
+      columns: ['child_run_id'],
+      foreignTable: 'workflow_runs',
+      foreignColumns: ['id'],
+      onDelete: 'set null',
+    },
+    {
+      columns: ['current_attempt_id'],
+      foreignTable: 'workflow_attempts',
+      foreignColumns: ['id'],
+      onDelete: 'set null',
+    },
+  ])
   expect(foreignKeys(schema.tables.runLeases)).toEqual(
     expect.arrayContaining([
       {
@@ -819,11 +728,12 @@ test('creates drizzle schema with canonical runtime names', () => {
       },
     ]),
   )
-  expect(schema.tables.childLinks.childKind.enumValues).toStrictEqual([
-    'workflow',
+  expect(schema.tables.nodeChildren.kind.enumValues).toStrictEqual([
+    'activity',
     'task',
+    'workflow',
   ])
-  expect(schema.tables.mapItems.status.enumValues).toStrictEqual([
+  expect(schema.tables.nodeChildren.status.enumValues).toStrictEqual([
     'pending',
     'running',
     'waiting',
@@ -836,6 +746,8 @@ test('creates drizzle schema with canonical runtime names', () => {
   expect(schema.enums.runKind.schema).toBeUndefined()
   expect(schema.enums.nodeKind.enumName).toBe('workflow_node_kind')
   expect(schema.enums.nodeKind.schema).toBeUndefined()
+  expect(schema.enums.nodeChildKind.enumName).toBe('workflow_node_child_kind')
+  expect(schema.enums.nodeChildKind.schema).toBeUndefined()
   expect(schema.enums.runStatus.enumName).toBe('workflow_run_status')
   expect(schema.enums.runStatus.schema).toBeUndefined()
   expect(schema.enums.nodeStatus.enumName).toBe('workflow_node_status')
@@ -844,6 +756,24 @@ test('creates drizzle schema with canonical runtime names', () => {
   expect(schema.enums.attemptStatus.schema).toBeUndefined()
   expect(schema.enums.commandKind.enumName).toBe('workflow_command_kind')
   expect(schema.enums.commandKind.schema).toBeUndefined()
+  // manifest ⇄ drizzle agreement: same tables, same enums, same enum labels
+  expect([...WORKFLOW_POSTGRES_SCHEMA_MANIFEST.tables].sort()).toStrictEqual(
+    Object.values(schema.tables)
+      .map((table) => getTableName(table))
+      .sort(),
+  )
+  expect([...WORKFLOW_POSTGRES_SCHEMA_MANIFEST.enums].sort()).toStrictEqual(
+    Object.values(schema.enums)
+      .map((schemaEnum) => schemaEnum.enumName)
+      .sort(),
+  )
+  for (const schemaEnum of Object.values(schema.enums)) {
+    expect(
+      WORKFLOW_POSTGRES_SCHEMA_MANIFEST.enumValues[
+        schemaEnum.enumName as keyof typeof WORKFLOW_POSTGRES_SCHEMA_MANIFEST.enumValues
+      ],
+    ).toStrictEqual(schemaEnum.enumValues)
+  }
   expect(WORKFLOW_POSTGRES_SCHEMA_MANIFEST.indexes).toEqual(
     expect.arrayContaining([
       'workflow_runs_idempotency_idx',
@@ -852,7 +782,8 @@ test('creates drizzle schema with canonical runtime names', () => {
       'workflow_runs_input_gin_idx',
       'workflow_runs_tags_gin_idx',
       'workflow_attempts_node_idx',
-      'workflow_child_links_parent_node_idx',
+      'workflow_node_children_node_idx',
+      'workflow_node_children_child_run_idx',
       'workflow_commands_run_idx',
       'workflow_commands_claim_idx',
       'workflow_commands_continue_dedup_idx',
@@ -862,8 +793,12 @@ test('creates drizzle schema with canonical runtime names', () => {
   expect(WORKFLOW_POSTGRES_SCHEMA_MANIFEST.constraints).toEqual(
     expect.arrayContaining([
       'workflow_schedules_name_key',
-      'workflow_attempts_identity_key_key',
-      'workflow_map_items_identity_key_key',
+      'workflow_attempts_child_attempt_key',
+      'workflow_node_children_pkey',
+      'workflow_node_children_run_fk',
+      'workflow_node_children_node_fk',
+      'workflow_node_children_child_run_fk',
+      'workflow_node_children_current_attempt_fk',
       'workflow_commands_run_fk',
     ]),
   )
@@ -873,8 +808,18 @@ test('drizzle kit exports migration sql from app-owned schema file', async () =>
   const sql = await exportDrizzleMigrationSql()
 
   expect(sql).toContain('CREATE TYPE "workflow_run_kind"')
+  expect(sql).toContain('CREATE TYPE "workflow_node_child_kind"')
   expect(sql).toContain('CREATE TABLE "workflow_runs"')
   expect(sql).toContain('CREATE TABLE "workflow_schedules"')
+  expect(sql).toContain('CREATE TABLE "workflow_node_children"')
+  expect(sql).toContain(
+    'CONSTRAINT "workflow_node_children_pkey" PRIMARY KEY("run_id","node_name","child_key")',
+  )
+  expect(sql).toContain(
+    'CONSTRAINT "workflow_attempts_child_attempt_key" UNIQUE("run_id","node_name","child_key","attempt_number")',
+  )
+  expect(sql).toContain('CREATE INDEX "workflow_node_children_node_idx"')
+  expect(sql).toContain('CREATE INDEX "workflow_node_children_child_run_idx"')
   expect(sql).toContain('CREATE INDEX "workflow_schedules_due_idx"')
   expect(sql).toContain('"delivery_count" integer DEFAULT 0 NOT NULL')
   expect(sql).toContain('"dead_at" timestamp with time zone')
@@ -1046,6 +991,7 @@ test('postgres error releases record delivery metadata and cap exponential backo
     activityName: 'content',
     runId: run.id,
     nodeName: 'content',
+    childKey: '$self',
     attemptId: '00000000-0000-4000-8000-000000000214',
     leaseToken: 'attempt-lease',
     input: {},
@@ -1150,6 +1096,7 @@ test('extends activity command leases with heartbeat', async () => {
     activityName: 'content',
     runId: run.id,
     nodeName: 'content',
+    childKey: '$self',
     attemptId: '00000000-0000-4000-8000-000000000002',
     leaseToken: 'attempt-lease',
     input: {},
@@ -1195,6 +1142,7 @@ test('uses postgres-side timestamps for command claim, heartbeat, and release', 
     activityName: 'content',
     runId: run.id,
     nodeName: 'content',
+    childKey: '$self',
     attemptId: '00000000-0000-4000-8000-000000000012',
     leaseToken: 'attempt-lease',
     input: {},
@@ -1368,9 +1316,15 @@ test('loads a populated run snapshot with the same mapped shape as stored rows',
     name: 'content',
     kind: 'activity',
   })
-  const attempt = await runtime.store.createAttempt({
+  await runtime.store.ensureNodeChildren({
     runId: run.id,
     nodeName: node.name,
+    children: [{ childKey: '$self', kind: 'activity' }],
+  })
+  const { attempt } = await runtime.store.ensureChildAttempt({
+    runId: run.id,
+    nodeName: node.name,
+    childKey: '$self',
     input: { scenario: 'alpha' },
   })
   const childNode = await runtime.store.createNode({
@@ -1378,13 +1332,18 @@ test('loads a populated run snapshot with the same mapped shape as stored rows',
     name: 'child',
     kind: 'workflow',
   })
+  await runtime.store.ensureNodeChildren({
+    runId: run.id,
+    nodeName: childNode.name,
+    children: [{ childKey: '$self', kind: 'workflow' }],
+  })
   const child = await runtime.store.ensureChildRun({
-    identity: { runId: run.id, nodeName: childNode.name },
+    runId: run.id,
+    nodeName: childNode.name,
+    childKey: '$self',
     childKind: 'workflow',
     childName: 'snapshot-child',
     input: { child: true },
-    parentRunId: run.id,
-    parentNodeName: childNode.name,
     rootRunId: run.rootRunId,
   })
   const mapNode = await runtime.store.createNode({
@@ -1392,27 +1351,46 @@ test('loads a populated run snapshot with the same mapped shape as stored rows',
     name: 'items',
     kind: 'mapTask',
   })
-  const mapItems = await runtime.store.ensureMapItems({
+  const mapChildren = await runtime.store.ensureNodeChildren({
     runId: run.id,
     nodeName: mapNode.name,
-    items: [{ item: 'one' }],
-    keys: ['one'],
+    children: [
+      {
+        childKey: 'item:0',
+        kind: 'task',
+        ordinal: 0,
+        itemKey: 'one',
+        item: { item: 'one' },
+      },
+    ],
   })
 
   const snapshot = await runtime.store.loadRunSnapshot(run.id)
 
   expect(snapshot?.run).toStrictEqual(run)
   expect(snapshot?.attempts).toStrictEqual([attempt])
-  expect(snapshot?.childLinks).toStrictEqual([child.childLink])
-  expect(snapshot?.mapItems).toStrictEqual(mapItems.items)
+  // children come back ordered by (node_name, ordinal, child_key)
+  expect(snapshot?.children).toHaveLength(3)
+  expect(snapshot?.children[0]).toStrictEqual(child.child)
+  expect(snapshot?.children[1]).toMatchObject({
+    runId: run.id,
+    nodeName: node.name,
+    childKey: '$self',
+    kind: 'activity',
+    status: 'running',
+    currentAttemptId: attempt.id,
+    attemptCount: 1,
+    version: 2,
+  })
+  expect(snapshot?.children[1]?.createdAt).toBeInstanceOf(Date)
+  expect(snapshot?.children[1]?.updatedAt).toBeInstanceOf(Date)
+  expect(snapshot?.children[2]).toStrictEqual(mapChildren.children[0])
   expect(snapshot?.nodes).toHaveLength(3)
   expect(snapshot?.nodes[0]).toMatchObject({
     runId: node.runId,
     name: node.name,
     kind: node.kind,
     status: 'running',
-    currentAttemptId: attempt.id,
-    attemptCount: 1,
     version: 2,
   })
   expect(snapshot?.nodes[0]?.createdAt).toBeInstanceOf(Date)
@@ -1428,14 +1406,31 @@ test('loads a run snapshot from one consistent postgres statement', async () => 
     workflowName: 'consistent-snapshot-workflow',
     input: {},
   })
+  const statements: string[] = []
   const runtime = createPostgresWorkflowRuntime({
-    connection: insertNodeAfterRunSnapshotLoad(connection, run.id),
+    connection: captureWorkflowStatements(connection, statements),
   })
+  // warm up any lazy runtime initialization queries first
+  await runtime.store.loadRunSnapshot(run.id)
+  statements.length = 0
 
   const snapshot = await runtime.store.loadRunSnapshot(run.id)
 
   expect(snapshot?.run.id).toBe(run.id)
   expect(snapshot?.nodes).toStrictEqual([])
+  expect(snapshot?.children).toStrictEqual([])
+  expect(snapshot?.attempts).toStrictEqual([])
+  // run, nodes, children, and attempts must come from a single statement so
+  // concurrent writers cannot produce a torn snapshot
+  expect(statements).toHaveLength(1)
+  for (const table of [
+    'workflow_runs',
+    'workflow_nodes',
+    'workflow_node_children',
+    'workflow_attempts',
+  ]) {
+    expect(statements[0]).toContain(table)
+  }
 })
 
 test('returns the existing idempotent run after an insert race', async () => {
@@ -1459,7 +1454,7 @@ test('returns the existing idempotent run after an insert race', async () => {
   expect(rows.rows[0]?.count).toBe(1)
 })
 
-test('returns the existing node attempt after an insert race', async () => {
+test('returns the existing child attempt after an insert race', async () => {
   const connection = createPgliteConnection()
   await installPostgresWorkflowSchemaForTesting(connection)
   const setupRuntime = createPostgresWorkflowRuntime({ connection })
@@ -1472,13 +1467,19 @@ test('returns the existing node attempt after an insert race', async () => {
     name: 'content',
     kind: 'activity',
   })
+  await setupRuntime.store.ensureNodeChildren({
+    runId: run.id,
+    nodeName: 'content',
+    children: [{ childKey: '$self', kind: 'activity' }],
+  })
   const runtime = createPostgresWorkflowRuntime({
-    connection: raceNodeAttemptInsert(connection),
+    connection: raceChildAttemptInsert(connection),
   })
 
-  const result = await runtime.store.ensureNodeAttempt({
-    identity: { runId: run.id, nodeName: 'content' },
-    kind: 'activity',
+  const result = await runtime.store.ensureChildAttempt({
+    runId: run.id,
+    nodeName: 'content',
+    childKey: '$self',
     input: { text: 'alpha' },
     idempotencyKey: ['content', 'alpha'],
   })
@@ -1491,7 +1492,7 @@ test('returns the existing node attempt after an insert race', async () => {
   expect(rows.rows[0]?.count).toBe(1)
 })
 
-test('returns the existing child run after a child link insert race', async () => {
+test('returns the existing child run after a child run insert race', async () => {
   const connection = createPgliteConnection()
   await installPostgresWorkflowSchemaForTesting(connection)
   const setupRuntime = createPostgresWorkflowRuntime({ connection })
@@ -1504,32 +1505,38 @@ test('returns the existing child run after a child link insert race', async () =
     name: 'child',
     kind: 'workflow',
   })
+  await setupRuntime.store.ensureNodeChildren({
+    runId: parent.id,
+    nodeName: 'child',
+    children: [{ childKey: '$self', kind: 'workflow' }],
+  })
   const childParams = {
-    identity: { runId: parent.id, nodeName: 'child' },
+    runId: parent.id,
+    nodeName: 'child',
+    childKey: '$self',
     childKind: 'workflow' as const,
     childName: 'racy-child-workflow',
     input: { scenario: 'alpha' },
-    parentRunId: parent.id,
-    parentNodeName: 'child',
     rootRunId: parent.rootRunId,
     idempotencyKey: ['racy-child-workflow', 'alpha'],
   }
   const runtime = createPostgresWorkflowRuntime({
-    connection: raceChildLinkInsert(connection, childParams),
+    connection: raceChildRunAfterChildLoad(connection, childParams),
   })
 
   const result = await runtime.store.ensureChildRun(childParams)
 
   expect(result.created).toBe(false)
   expect(result.childRun.input).toStrictEqual({ scenario: 'alpha' })
-  expect(result.childLink.childRunId).toBe(result.childRun.id)
-  const links = await connection.query<{ count: number }>(
-    'SELECT count(*)::int AS count FROM workflow_child_links',
+  expect(result.child.childRunId).toBe(result.childRun.id)
+  const runs = await connection.query<{ count: number }>(
+    'SELECT count(*)::int AS count FROM workflow_runs WHERE parent_run_id = $1',
+    [parent.id],
   )
-  expect(links.rows[0]?.count).toBe(1)
+  expect(runs.rows[0]?.count).toBe(1)
 })
 
-test('returns existing map items after a map set insert race', async () => {
+test('returns existing node children after a child set insert race', async () => {
   const connection = createPgliteConnection()
   await installPostgresWorkflowSchemaForTesting(connection)
   const setupRuntime = createPostgresWorkflowRuntime({ connection })
@@ -1542,32 +1549,48 @@ test('returns existing map items after a map set insert race', async () => {
     name: 'items',
     kind: 'mapTask',
   })
-  const items = [{ text: 'alpha' }, { text: 'beta' }]
+  const children = [
+    {
+      childKey: 'item:0',
+      kind: 'task' as const,
+      ordinal: 0,
+      itemKey: 'alpha',
+      item: { text: 'alpha' },
+    },
+    {
+      childKey: 'item:1',
+      kind: 'task' as const,
+      ordinal: 1,
+      itemKey: 'beta',
+      item: { text: 'beta' },
+    },
+  ]
   const runtime = createPostgresWorkflowRuntime({
-    connection: raceMapItemsAfterSetLoad(connection, {
+    connection: raceNodeChildrenAfterLoad(connection, {
       runId: run.id,
       nodeName: 'items',
-      items,
-      keys: ['alpha', 'beta'],
+      children,
     }),
   })
 
-  const result = await runtime.store.ensureMapItems({
+  const result = await runtime.store.ensureNodeChildren({
     runId: run.id,
     nodeName: 'items',
-    items,
-    keys: ['alpha', 'beta'],
+    children,
   })
 
   expect(result.created).toBe(false)
-  expect(result.items.map((item) => item.item)).toStrictEqual(items)
+  expect(result.children.map((child) => child.item)).toStrictEqual([
+    { text: 'alpha' },
+    { text: 'beta' },
+  ])
   const rows = await connection.query<{ count: number }>(
-    'SELECT count(*)::int AS count FROM workflow_map_items',
+    'SELECT count(*)::int AS count FROM workflow_node_children',
   )
   expect(rows.rows[0]?.count).toBe(2)
 })
 
-test('rolls back child run creation when child link insert fails', async () => {
+test('rolls back child run creation when the child link update fails', async () => {
   const connection = createPgliteConnection()
   await installPostgresWorkflowSchemaForTesting(connection)
   const setupRuntime = createPostgresWorkflowRuntime({ connection })
@@ -1580,33 +1603,41 @@ test('rolls back child run creation when child link insert fails', async () => {
     name: 'child',
     kind: 'workflow',
   })
+  await setupRuntime.store.ensureNodeChildren({
+    runId: parent.id,
+    nodeName: 'child',
+    children: [{ childKey: '$self', kind: 'workflow' }],
+  })
   const runtime = createPostgresWorkflowRuntime({
-    connection: failChildLinkInsert(connection),
+    connection: failChildRunLinkUpdate(connection),
   })
 
   await expect(
     runtime.store.ensureChildRun({
-      identity: { runId: parent.id, nodeName: 'child' },
+      runId: parent.id,
+      nodeName: 'child',
+      childKey: '$self',
       childKind: 'workflow',
       childName: 'atomic-child-workflow',
       input: { scenario: 'alpha' },
-      parentRunId: parent.id,
-      parentNodeName: 'child',
       rootRunId: parent.rootRunId,
     }),
-  ).rejects.toThrow('forced child link insert failure')
+  ).rejects.toThrow('forced child run link failure')
 
   const runs = await connection.query<{ count: number }>(
     'SELECT count(*)::int AS count FROM workflow_runs',
   )
-  const links = await connection.query<{ count: number }>(
-    'SELECT count(*)::int AS count FROM workflow_child_links',
-  )
+  const children = await connection.query<{
+    child_run_id: string | null
+    status: string
+  }>('SELECT child_run_id, status FROM workflow_node_children')
   expect(runs.rows[0]?.count).toBe(1)
-  expect(links.rows[0]?.count).toBe(0)
+  expect(children.rows).toStrictEqual([
+    { child_run_id: null, status: 'pending' },
+  ])
 })
 
-test('rolls back map item set creation when map item insert fails', async () => {
+test('rolls back the whole child set when one child insert fails', async () => {
   const connection = createPgliteConnection()
   await installPostgresWorkflowSchemaForTesting(connection)
   const setupRuntime = createPostgresWorkflowRuntime({ connection })
@@ -1620,29 +1651,37 @@ test('rolls back map item set creation when map item insert fails', async () => 
     kind: 'mapTask',
   })
   const runtime = createPostgresWorkflowRuntime({
-    connection: failMapItemInsert(connection),
+    connection: failNodeChildInsert(connection, 'item:1'),
   })
 
   await expect(
-    runtime.store.ensureMapItems({
+    runtime.store.ensureNodeChildren({
       runId: run.id,
       nodeName: 'items',
-      items: [{ text: 'alpha' }],
-      keys: ['alpha'],
+      children: [
+        {
+          childKey: 'item:0',
+          kind: 'task',
+          ordinal: 0,
+          item: { text: 'alpha' },
+        },
+        {
+          childKey: 'item:1',
+          kind: 'task',
+          ordinal: 1,
+          item: { text: 'beta' },
+        },
+      ],
     }),
-  ).rejects.toThrow('forced map item insert failure')
+  ).rejects.toThrow('forced node child insert failure')
 
-  const sets = await connection.query<{ count: number }>(
-    'SELECT count(*)::int AS count FROM workflow_map_item_sets',
+  const children = await connection.query<{ count: number }>(
+    'SELECT count(*)::int AS count FROM workflow_node_children',
   )
-  const items = await connection.query<{ count: number }>(
-    'SELECT count(*)::int AS count FROM workflow_map_items',
-  )
-  expect(sets.rows[0]?.count).toBe(0)
-  expect(items.rows[0]?.count).toBe(0)
+  expect(children.rows[0]?.count).toBe(0)
 })
 
-test('rolls back createAttempt when node update fails', async () => {
+test('rolls back createAttempt when the child update fails', async () => {
   const connection = createPgliteConnection()
   await installPostgresWorkflowSchemaForTesting(connection)
   const setupRuntime = createPostgresWorkflowRuntime({ connection })
@@ -1655,33 +1694,43 @@ test('rolls back createAttempt when node update fails', async () => {
     name: 'content',
     kind: 'activity',
   })
+  await setupRuntime.store.ensureNodeChildren({
+    runId: run.id,
+    nodeName: 'content',
+    children: [{ childKey: '$self', kind: 'activity' }],
+  })
   const runtime = createPostgresWorkflowRuntime({
-    connection: failNodeUpdateAfterAttemptInsert(connection),
+    connection: failChildUpdateAfterAttemptInsert(connection),
   })
 
   await expect(
     runtime.store.createAttempt({
       runId: run.id,
       nodeName: 'content',
+      childKey: '$self',
       input: { text: 'alpha' },
     }),
-  ).rejects.toThrow('forced node update failure')
+  ).rejects.toThrow('forced child update failure')
 
   const attempts = await connection.query<{ count: number }>(
     'SELECT count(*)::int AS count FROM workflow_attempts',
   )
-  const nodes = await connection.query<{
+  const children = await connection.query<{
     status: string
     current_attempt_id: string | null
-  }>('SELECT status, current_attempt_id FROM workflow_nodes')
+    attempt_count: number
+  }>(
+    'SELECT status, current_attempt_id, attempt_count FROM workflow_node_children',
+  )
   expect(attempts.rows[0]?.count).toBe(0)
-  expect(nodes.rows[0]).toStrictEqual({
+  expect(children.rows[0]).toStrictEqual({
     status: 'pending',
     current_attempt_id: null,
+    attempt_count: 0,
   })
 })
 
-test('rolls back ensureNodeAttempt when node update fails', async () => {
+test('rolls back ensureChildAttempt when the child update fails', async () => {
   const connection = createPgliteConnection()
   await installPostgresWorkflowSchemaForTesting(connection)
   const setupRuntime = createPostgresWorkflowRuntime({ connection })
@@ -1694,29 +1743,39 @@ test('rolls back ensureNodeAttempt when node update fails', async () => {
     name: 'content',
     kind: 'activity',
   })
+  await setupRuntime.store.ensureNodeChildren({
+    runId: run.id,
+    nodeName: 'content',
+    children: [{ childKey: '$self', kind: 'activity' }],
+  })
   const runtime = createPostgresWorkflowRuntime({
-    connection: failNodeUpdateAfterAttemptInsert(connection),
+    connection: failChildUpdateAfterAttemptInsert(connection),
   })
 
   await expect(
-    runtime.store.ensureNodeAttempt({
-      identity: { runId: run.id, nodeName: 'content' },
-      kind: 'activity',
+    runtime.store.ensureChildAttempt({
+      runId: run.id,
+      nodeName: 'content',
+      childKey: '$self',
       input: { text: 'alpha' },
     }),
-  ).rejects.toThrow('forced node update failure')
+  ).rejects.toThrow('forced child update failure')
 
   const attempts = await connection.query<{ count: number }>(
     'SELECT count(*)::int AS count FROM workflow_attempts',
   )
-  const nodes = await connection.query<{
+  const children = await connection.query<{
     status: string
     current_attempt_id: string | null
-  }>('SELECT status, current_attempt_id FROM workflow_nodes')
+    attempt_count: number
+  }>(
+    'SELECT status, current_attempt_id, attempt_count FROM workflow_node_children',
+  )
   expect(attempts.rows[0]?.count).toBe(0)
-  expect(nodes.rows[0]).toStrictEqual({
+  expect(children.rows[0]).toStrictEqual({
     status: 'pending',
     current_attempt_id: null,
+    attempt_count: 0,
   })
 })
 
@@ -1845,15 +1904,14 @@ test('creates postgres runtime schema with relational constraints', async () => 
       'workflow_runs_root_run_fk',
       'workflow_runs_parent_node_fk',
       'workflow_nodes_run_fk',
-      'workflow_nodes_current_attempt_fk',
       'workflow_attempts_node_fk',
-      'workflow_child_links_parent_node_fk',
-      'workflow_child_links_child_run_fk',
-      'workflow_map_item_sets_node_fk',
-      'workflow_map_items_set_fk',
-      'workflow_map_items_child_run_fk',
-      'workflow_map_items_attempt_fk',
+      'workflow_attempts_child_attempt_key',
+      'workflow_node_children_run_fk',
+      'workflow_node_children_node_fk',
+      'workflow_node_children_child_run_fk',
+      'workflow_node_children_current_attempt_fk',
       'workflow_run_leases_run_fk',
+      'workflow_commands_run_fk',
     ]),
   )
 })
@@ -2043,7 +2101,7 @@ test('verifies postgres schema column definitions', async () => {
   )
 })
 
-test('verifies postgres schema identity uniqueness constraints', async () => {
+test('verifies postgres schema child attempt uniqueness constraints', async () => {
   const connection = createPgliteConnection()
   await installPostgresWorkflowSchemaForTesting(connection)
   await expect(
@@ -2051,20 +2109,20 @@ test('verifies postgres schema identity uniqueness constraints', async () => {
   ).resolves.toBeUndefined()
 
   await connection.query(
-    'ALTER TABLE workflow_attempts DROP CONSTRAINT workflow_attempts_identity_key_key',
+    'ALTER TABLE workflow_attempts DROP CONSTRAINT workflow_attempts_child_attempt_key',
   )
 
   await expect(verifyPostgresWorkflowSchema(connection)).rejects.toThrow(
-    'Missing workflow Postgres schema objects: workflow_attempts_identity_key_key',
+    'Missing workflow Postgres schema objects: workflow_attempts_child_attempt_key',
   )
 
   await installPostgresWorkflowSchemaForTesting(connection)
   await connection.query(
-    'ALTER TABLE workflow_map_items DROP CONSTRAINT workflow_map_items_identity_key_key',
+    'ALTER TABLE workflow_node_children DROP CONSTRAINT workflow_node_children_current_attempt_fk',
   )
 
   await expect(verifyPostgresWorkflowSchema(connection)).rejects.toThrow(
-    'Missing workflow Postgres schema objects: workflow_map_items_identity_key_key',
+    'Missing workflow Postgres schema objects: workflow_node_children_current_attempt_fk',
   )
 })
 
@@ -2076,15 +2134,15 @@ test('verifies postgres schema constraint definitions', async () => {
   ).resolves.toBeUndefined()
 
   await connection.query(
-    'ALTER TABLE workflow_attempts DROP CONSTRAINT workflow_attempts_identity_key_key',
+    'ALTER TABLE workflow_attempts DROP CONSTRAINT workflow_attempts_child_attempt_key',
   )
   await connection.query(`
     ALTER TABLE workflow_attempts
-    ADD CONSTRAINT workflow_attempts_identity_key_key
-    CHECK (identity_key IS NOT NULL)
+    ADD CONSTRAINT workflow_attempts_child_attempt_key
+    CHECK (child_key IS NOT NULL)
   `)
 
   await expect(verifyPostgresWorkflowSchema(connection)).rejects.toThrow(
-    'Invalid workflow Postgres schema constraints: workflow_attempts_identity_key_key',
+    'Invalid workflow Postgres schema constraints: workflow_attempts_child_attempt_key',
   )
 })

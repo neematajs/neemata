@@ -2,6 +2,7 @@ import type { DurationString } from '../../types/index.ts'
 import type { AttemptExecutor, RunCoordinationExecutor } from '../executors.ts'
 import type { StoredAttempt } from '../state.ts'
 import type { WorkflowStore } from '../store.ts'
+import { SELF_CHILD_KEY } from '../child-key.ts'
 import { failNodeAndRun } from './sinks.ts'
 
 const TASK_RUN_NODE_NAME = '$task'
@@ -28,6 +29,11 @@ export async function dispatchTaskRunAttempt(input: {
     nodeName: TASK_RUN_NODE_NAME,
     input: input.taskInput,
   })
+  await input.store.ensureNodeChildren({
+    runId: input.taskRunId,
+    nodeName: TASK_RUN_NODE_NAME,
+    children: [{ childKey: SELF_CHILD_KEY, kind: 'task' }],
+  })
 
   await dispatchTaskAttempt({
     store: input.store,
@@ -37,16 +43,15 @@ export async function dispatchTaskRunAttempt(input: {
     taskName: input.taskName,
     runId: input.taskRunId,
     nodeName: TASK_RUN_NODE_NAME,
+    childKey: SELF_CHILD_KEY,
     timeout: input.timeout,
     runAt: input.startAt,
     throwOnDispatchFailure: input.throwOnDispatchFailure,
     prepareAttempt: async () => {
-      const result = await input.store.ensureNodeAttempt({
-        identity: {
-          runId: input.taskRunId,
-          nodeName: TASK_RUN_NODE_NAME,
-        },
-        kind: 'task',
+      const result = await input.store.ensureChildAttempt({
+        runId: input.taskRunId,
+        nodeName: TASK_RUN_NODE_NAME,
+        childKey: SELF_CHILD_KEY,
         input: input.taskInput,
         idempotencyKey: input.idempotencyKey,
       })
@@ -67,6 +72,7 @@ export async function dispatchActivityAttempt(input: {
   readonly activityName: string
   readonly runId: string
   readonly nodeName: string
+  readonly childKey: string
   readonly throwOnDispatchFailure?: boolean
   readonly prepareAttempt: () => Promise<{
     readonly attempt: StoredAttempt
@@ -81,6 +87,7 @@ export async function dispatchActivityAttempt(input: {
       activityName: input.activityName,
       runId: input.runId,
       nodeName: input.nodeName,
+      childKey: input.childKey,
       attemptId: attempt.id,
       leaseToken: attempt.leaseToken!,
       input: commandInput,
@@ -99,6 +106,7 @@ export async function dispatchTaskAttempt(input: {
   readonly taskName: string
   readonly runId: string
   readonly nodeName: string
+  readonly childKey: string
   readonly timeout?: DurationString
   readonly runAt?: Date
   readonly throwOnDispatchFailure?: boolean
@@ -116,6 +124,7 @@ export async function dispatchTaskAttempt(input: {
         taskName: input.taskName,
         runId: input.runId,
         nodeName: input.nodeName,
+        childKey: input.childKey,
         attemptId: attempt.id,
         leaseToken: attempt.leaseToken!,
         input: commandInput,

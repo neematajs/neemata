@@ -26,8 +26,26 @@ import {
   withDefaultRetentionPruner,
   type WorkerLoopOptions,
   type WorkerLoopResult,
+  type WorkerMaintenanceHook,
 } from './loop.ts'
+import {
+  reapDeadWorkflowCommands,
+  timeoutExpiredWorkflowRuns,
+} from './maintenance.ts'
 import { runTaskAttempt } from './task-attempt.ts'
+
+const DEFAULT_REAPING_EVERY_MS = 30_000
+const DEFAULT_RUN_TIMEOUTS_EVERY_MS = 60_000
+
+export type WorkerReapingOptions = {
+  readonly everyMs?: number
+  readonly batchSize?: number
+}
+
+export type WorkerRunTimeoutsOptions = {
+  readonly everyMs?: number
+  readonly batchSize?: number
+}
 
 type AnyWorkflowImplementation = WorkflowImplementation<
   AnyWorkflowDefinition,
@@ -42,6 +60,8 @@ export type RunWorkflowWorkerInput = WorkerLoopOptions & {
   readonly atomicContinuation?: WorkflowRuntimeAtomicContinuation
   readonly workflows: readonly AnyWorkflowImplementation[]
   readonly container: Pick<Container, 'createContext'>
+  readonly reaping?: false | WorkerReapingOptions
+  readonly runTimeouts?: false | WorkerRunTimeoutsOptions
 }
 
 export type RunActivityWorkerInput = WorkerLoopOptions & {
@@ -52,6 +72,7 @@ export type RunActivityWorkerInput = WorkerLoopOptions & {
   readonly workflows: readonly AnyWorkflowImplementation[]
   readonly activityNames?: readonly string[]
   readonly container: Pick<Container, 'createContext'>
+  readonly reaping?: false | WorkerReapingOptions
 }
 
 export type RunTaskWorkerInput = WorkerLoopOptions & {
@@ -61,6 +82,60 @@ export type RunTaskWorkerInput = WorkerLoopOptions & {
   readonly atomicCompletion?: WorkflowRuntimeAtomicCompletion
   readonly tasks: readonly AnyTaskImplementation[]
   readonly container: Pick<Container, 'createContext'>
+  readonly reaping?: false | WorkerReapingOptions
+}
+
+type MaintenanceDeps = {
+  readonly store: WorkflowStore
+  readonly runCoordinationExecutor: RunCoordinationExecutor
+  readonly maintenance?: readonly WorkerMaintenanceHook[]
+  readonly reaping?: false | WorkerReapingOptions
+}
+
+// Reaping is on by default: a dead-lettered command must fail its run instead
+// of leaving a zombie only the dead-command table knows about.
+function withReapingHook(
+  input: MaintenanceDeps,
+): readonly WorkerMaintenanceHook[] {
+  const hooks = [...(input.maintenance ?? [])]
+  if (input.reaping !== false) {
+    const options = input.reaping
+    hooks.push({
+      everyMs: options?.everyMs ?? DEFAULT_REAPING_EVERY_MS,
+      run: async () => {
+        await reapDeadWorkflowCommands({
+          store: input.store,
+          runCoordinationExecutor: input.runCoordinationExecutor,
+          batchSize: options?.batchSize,
+        })
+      },
+    })
+  }
+  return hooks
+}
+
+function withRunTimeoutsHook(
+  input: RunWorkflowWorkerInput,
+  hooks: readonly WorkerMaintenanceHook[],
+): readonly WorkerMaintenanceHook[] {
+  if (input.runTimeouts === false) return hooks
+  const options = input.runTimeouts
+  return [
+    ...hooks,
+    {
+      everyMs: options?.everyMs ?? DEFAULT_RUN_TIMEOUTS_EVERY_MS,
+      run: async (now: Date) => {
+        await timeoutExpiredWorkflowRuns({
+          store: input.store,
+          attemptExecutor: input.attemptExecutor,
+          runCoordinationExecutor: input.runCoordinationExecutor,
+          workflows: input.workflows,
+          batchSize: options?.batchSize,
+          now,
+        })
+      },
+    },
+  ]
 }
 
 export async function runWorkflowWorker(
@@ -69,45 +144,49 @@ export async function runWorkflowWorker(
   const workflowNames = input.workflows.map(
     (implementation) => implementation.workflow.name,
   )
+  const maintenance = withRunTimeoutsHook(input, withReapingHook(input))
 
-  return runWorkerLoop(withDefaultRetentionPruner(input), async () => {
-    const claimed = await input.runCoordinationExecutor.claim({
-      workerId: input.workerId,
-      workflowNames,
-      leaseMs: input.leaseMs ?? DEFAULT_LEASE_MS,
-    })
-    if (!claimed) return false
+  return runWorkerLoop(
+    withDefaultRetentionPruner({ ...input, maintenance }),
+    async () => {
+      const claimed = await input.runCoordinationExecutor.claim({
+        workerId: input.workerId,
+        workflowNames,
+        leaseMs: input.leaseMs ?? DEFAULT_LEASE_MS,
+      })
+      if (!claimed) return false
 
-    try {
-      return await runAtomicContinuation(input, async (scoped) => {
-        const leaseMs = input.leaseMs ?? DEFAULT_LEASE_MS
-        const result = await continueWorkflowRun({
-          store: scoped.store,
-          runCoordinationExecutor: scoped.runCoordinationExecutor,
-          attemptExecutor: scoped.attemptExecutor,
-          container: input.container,
-          workflows: input.workflows,
-          workerId: input.workerId,
-          command: claimed.command,
-          leaseMs,
+      try {
+        return await runAtomicContinuation(input, async (scoped) => {
+          const leaseMs = input.leaseMs ?? DEFAULT_LEASE_MS
+          const result = await continueWorkflowRun({
+            store: scoped.store,
+            runCoordinationExecutor: scoped.runCoordinationExecutor,
+            attemptExecutor: scoped.attemptExecutor,
+            container: input.container,
+            workflows: input.workflows,
+            workerId: input.workerId,
+            command: claimed.command,
+            leaseMs,
+          })
+          if (result.status !== 'processed') {
+            await scoped.runCoordinationExecutor.release(claimed)
+            return false
+          }
+
+          await scoped.runCoordinationExecutor.ack(claimed)
+          return true
         })
-        if (result.status !== 'processed') {
-          await scoped.runCoordinationExecutor.release(claimed)
+      } catch (error) {
+        if (isStaleWorkflowCommandAck(error)) {
+          await input.runCoordinationExecutor.release(claimed)
           return false
         }
-
-        await scoped.runCoordinationExecutor.ack(claimed)
-        return true
-      })
-    } catch (error) {
-      if (isStaleWorkflowCommandAck(error)) {
-        await input.runCoordinationExecutor.release(claimed)
-        return false
+        await input.runCoordinationExecutor.release(claimed, { error })
+        throw error
       }
-      await input.runCoordinationExecutor.release(claimed, { error })
-      throw error
-    }
-  })
+    },
+  )
 }
 
 export async function runActivityWorker(
@@ -119,31 +198,37 @@ export async function runActivityWorker(
   const activityNames =
     input.activityNames ?? collectWorkflowActivityNames(input.workflows)
 
-  return runWorkerLoop(withDefaultRetentionPruner(input), async () => {
-    const claimed = await input.attemptExecutor.claimActivity({
-      workerId: input.workerId,
-      workflowNames,
-      activityNames,
-      leaseMs: input.leaseMs ?? DEFAULT_LEASE_MS,
-    })
-    if (!claimed) return false
+  return runWorkerLoop(
+    withDefaultRetentionPruner({
+      ...input,
+      maintenance: withReapingHook(input),
+    }),
+    async () => {
+      const claimed = await input.attemptExecutor.claimActivity({
+        workerId: input.workerId,
+        workflowNames,
+        activityNames,
+        leaseMs: input.leaseMs ?? DEFAULT_LEASE_MS,
+      })
+      if (!claimed) return false
 
-    try {
-      const result = await runActivityAttempt({ ...input, claimed })
-      return result.status === 'processed'
-    } catch (error) {
-      if (
-        isStaleWorkflowCommandAck(error) ||
-        isAttemptHeartbeatLeaseLost(error) ||
-        isAttemptShutdown(error)
-      ) {
-        await input.attemptExecutor.release(claimed)
-        return false
+      try {
+        const result = await runActivityAttempt({ ...input, claimed })
+        return result.status === 'processed'
+      } catch (error) {
+        if (
+          isStaleWorkflowCommandAck(error) ||
+          isAttemptHeartbeatLeaseLost(error) ||
+          isAttemptShutdown(error)
+        ) {
+          await input.attemptExecutor.release(claimed)
+          return false
+        }
+        await input.attemptExecutor.release(claimed, { error })
+        throw error
       }
-      await input.attemptExecutor.release(claimed, { error })
-      throw error
-    }
-  })
+    },
+  )
 }
 
 export async function runTaskWorker(
@@ -153,30 +238,36 @@ export async function runTaskWorker(
     (implementation) => implementation.task.name,
   )
 
-  return runWorkerLoop(withDefaultRetentionPruner(input), async () => {
-    const claimed = await input.attemptExecutor.claimTask({
-      workerId: input.workerId,
-      taskNames,
-      leaseMs: input.leaseMs ?? DEFAULT_LEASE_MS,
-    })
-    if (!claimed) return false
+  return runWorkerLoop(
+    withDefaultRetentionPruner({
+      ...input,
+      maintenance: withReapingHook(input),
+    }),
+    async () => {
+      const claimed = await input.attemptExecutor.claimTask({
+        workerId: input.workerId,
+        taskNames,
+        leaseMs: input.leaseMs ?? DEFAULT_LEASE_MS,
+      })
+      if (!claimed) return false
 
-    try {
-      const result = await runTaskAttempt({ ...input, claimed })
-      return result.status === 'processed'
-    } catch (error) {
-      if (
-        isStaleWorkflowCommandAck(error) ||
-        isAttemptHeartbeatLeaseLost(error) ||
-        isAttemptShutdown(error)
-      ) {
-        await input.attemptExecutor.release(claimed)
-        return false
+      try {
+        const result = await runTaskAttempt({ ...input, claimed })
+        return result.status === 'processed'
+      } catch (error) {
+        if (
+          isStaleWorkflowCommandAck(error) ||
+          isAttemptHeartbeatLeaseLost(error) ||
+          isAttemptShutdown(error)
+        ) {
+          await input.attemptExecutor.release(claimed)
+          return false
+        }
+        await input.attemptExecutor.release(claimed, { error })
+        throw error
       }
-      await input.attemptExecutor.release(claimed, { error })
-      throw error
-    }
-  })
+    },
+  )
 }
 
 function collectWorkflowActivityNames(

@@ -97,7 +97,9 @@ describe.skipIf(!postgresTarget.url)(
       const completedTreeIds = [
         ...completedRuns.map((run) => run.id),
         ...completedSnapshots.flatMap((snapshot) =>
-          snapshot.childLinks.map((link) => link.childRunId),
+          snapshot.children
+            .map((child) => child.childRunId)
+            .filter((id): id is string => id !== undefined),
         ),
       ]
       const liveRun = await client.start(liveWorkflow, { text: 'live' })
@@ -538,7 +540,7 @@ describe.skipIf(!postgresTarget.url)(
       })
 
       const cancelledParent = await runtime.store.loadRunSnapshot(parentRun.id)
-      const childRunId = cancelledParent?.childLinks[0]?.childRunId
+      const childRunId = cancelledParent?.children[0]?.childRunId
       expect(childRunId).toBeDefined()
       const cancelledChild = await runtime.store.loadRunSnapshot(childRunId!)
       expect(cancelledParent?.run.status).toBe('cancelled')

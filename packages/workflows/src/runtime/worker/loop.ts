@@ -47,6 +47,11 @@ export type WorkerSchedulingOptions = {
   readonly batchSize?: number
 }
 
+export type WorkerMaintenanceHook = {
+  readonly everyMs: number
+  readonly run: (now: Date) => Promise<void>
+}
+
 export type WorkerLoopOptions = {
   readonly workerId: string
   readonly concurrency?: number
@@ -57,6 +62,7 @@ export type WorkerLoopOptions = {
   readonly retentionPruner?: WorkflowRetentionPruner
   readonly scheduling?: WorkerSchedulingOptions
   readonly scheduler?: WorkflowScheduler
+  readonly maintenance?: readonly WorkerMaintenanceHook[]
   readonly signal?: AbortSignal
 }
 
@@ -104,6 +110,29 @@ export async function runWorkerLoop(
       retentionRunning = false
     }
   }
+  const maintenanceState = (options.maintenance ?? []).map(() => ({
+    lastAt: 0,
+    running: false,
+  }))
+  const runMaintenance = async () => {
+    const hooks = options.maintenance ?? []
+    for (const [index, hook] of hooks.entries()) {
+      const state = maintenanceState[index]!
+      if (!Number.isFinite(hook.everyMs) || hook.everyMs < 0) {
+        throw new Error('Maintenance everyMs must be a non-negative number')
+      }
+      const date = Date.now()
+      if (state.running || date - state.lastAt < hook.everyMs) continue
+
+      state.running = true
+      state.lastAt = date
+      try {
+        await hook.run(new Date(date))
+      } finally {
+        state.running = false
+      }
+    }
+  }
   const runScheduling = async () => {
     if (!options.scheduling || !options.scheduler) return
     const everyMs = options.scheduling.everyMs ?? 1_000
@@ -143,6 +172,7 @@ export async function runWorkerLoop(
           idleClaims += 1
           await runRetentionPrune()
           await runScheduling()
+          await runMaintenance()
           if (idleClaims < maxIdleClaims) {
             await sleep(options.idleDelayMs ?? 0, options.signal)
           }

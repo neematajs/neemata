@@ -9,6 +9,8 @@ export {
   type RunActivityWorkerInput,
   type RunTaskWorkerInput,
   type RunWorkflowWorkerInput,
+  type WorkerReapingOptions,
+  type WorkerRunTimeoutsOptions,
 } from './worker/entry.ts'
 export { WorkflowAttemptTimeoutError } from './worker/heartbeat.ts'
 export type { AttemptAbortReason } from './worker/heartbeat.ts'
@@ -16,6 +18,7 @@ export {
   runWithConcurrency,
   type WorkerLoopOptions,
   type WorkerLoopResult,
+  type WorkerMaintenanceHook,
   type WorkerRetentionOptions,
   type WorkerSchedulingOptions,
 } from './worker/loop.ts'
@@ -29,3 +32,11 @@ export type {
   WorkflowRuntimeOperationContext,
 } from './worker/atomic.ts'
 export type { WorkerCommandResult } from './worker/reconcile.ts'
+export {
+  reapDeadWorkflowCommands,
+  timeoutExpiredWorkflowRuns,
+  type ReapDeadWorkflowCommandsInput,
+  type ReapDeadWorkflowCommandsResult,
+  type TimeoutExpiredWorkflowRunsInput,
+  type TimeoutExpiredWorkflowRunsResult,
+} from './worker/maintenance.ts'

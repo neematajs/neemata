@@ -1,10 +1,14 @@
 import type { ContinueRunCommand } from '../../runtime/commands.ts'
-import type { RunCoordinationExecutor } from '../../runtime/executors.ts'
+import type {
+  CommandReleaseOptions,
+  RunCoordinationExecutor,
+} from '../../runtime/executors.ts'
 import type { WorkflowPostgresConnection } from './connection.ts'
 import { toStoredError } from '../../runtime/errors.ts'
 import {
   MAX_ERROR_BACKOFF_MS,
   RELEASE_BACKOFF_MS,
+  UNROUTABLE_BACKOFF_MS,
   id,
   json,
   one,
@@ -44,9 +48,9 @@ export const createPostgresWorkflowCommandHelpers = (
   const releaseCommand = async (
     commandId: string,
     leaseToken: string,
-    options?: { readonly error?: unknown },
+    options?: CommandReleaseOptions,
   ) => {
-    if (options?.error === undefined) {
+    if (options?.error === undefined && options?.reason === undefined) {
       await db.query(
         `
         UPDATE workflow_commands
@@ -60,6 +64,17 @@ export const createPostgresWorkflowCommandHelpers = (
       )
       return
     }
+
+    // Unroutable commands back off slower than transient errors: nothing can
+    // execute them until a deploy changes the registry, but they must still
+    // count toward dead-lettering instead of looping forever.
+    const backoffBaseMs =
+      options.reason === 'unroutable'
+        ? UNROUTABLE_BACKOFF_MS
+        : RELEASE_BACKOFF_MS
+    const error =
+      options.error ??
+      new Error('No implementation can execute this workflow command')
 
     await db.query(
       `
@@ -82,9 +97,9 @@ export const createPostgresWorkflowCommandHelpers = (
       [
         commandId,
         leaseToken,
-        json(toStoredError(options.error)),
+        json(toStoredError(error)),
         maxDeliveries,
-        RELEASE_BACKOFF_MS,
+        backoffBaseMs,
         MAX_ERROR_BACKOFF_MS,
       ],
     )

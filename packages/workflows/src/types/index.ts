@@ -338,6 +338,11 @@ export type WorkflowDefinition<
   readonly output?: Schema
   readonly nodes: Nodes
   readonly retention?: DurationString
+  /**
+   * Backstop for stuck runs: a non-terminal run older than this is failed by
+   * the worker maintenance sweep and its children are cancelled.
+   */
+  readonly timeout?: DurationString
   readonly tags?: RunTagsBuilder<Input>
   readonly idempotency?: RunIdempotencyBuilder<Input>
   readonly _types?: {

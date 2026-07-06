@@ -49,35 +49,48 @@ export type {
 } from './status.ts'
 export { isTerminalNodeStatus, isTerminalRunStatus } from './status.ts'
 export type {
-  NodeChildIdentity,
+  NodeChildKind,
   RunSnapshot,
   StoredAttempt,
-  StoredChildLink,
   StoredError,
-  StoredMapItem,
   StoredNode,
+  StoredNodeChild,
   StoredRun,
 } from './state.ts'
+export {
+  SELF_CHILD_KEY,
+  caseChildKey,
+  itemChildKey,
+  memberChildKey,
+  parseChildKey,
+} from './child-key.ts'
+export type { ParsedChildKey } from './child-key.ts'
+export {
+  ATTEMPT_TRANSITIONS,
+  NODE_TRANSITIONS,
+  RUN_TRANSITIONS,
+  canTransition,
+  transitionSources,
+} from './transitions.ts'
+export type { TransitionMap } from './transitions.ts'
 export type {
-  CompleteMapItemParams,
   CancelNodeParams,
   CancelNonTerminalRunNodesParams,
   CreateAttemptInput,
   CreateNodeInput,
   CreateRunInput,
   DeadWorkflowCommand,
+  EnsureChildAttemptParams,
+  EnsureChildAttemptResult,
   EnsureChildRunParams,
   EnsureChildRunResult,
-  EnsureChildWorkflowRunParams,
-  EnsureChildWorkflowRunResult,
-  EnsureMapItemsParams,
-  EnsureMapItemsResult,
-  EnsureNodeAttemptParams,
-  EnsureNodeAttemptResult,
-  FailMapItemParams,
+  EnsureNodeChildInput,
+  EnsureNodeChildrenParams,
+  EnsureNodeChildrenResult,
   ListRunsFilter,
   ListRunsResult,
   LoadNodeChildrenParams,
+  NodeChildRef,
   NodeChildrenSnapshot,
   PruneTerminalRunsParams,
   PruneTerminalRunsResult,

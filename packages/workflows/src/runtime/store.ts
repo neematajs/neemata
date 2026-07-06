@@ -1,12 +1,11 @@
 import type { RunKind, WorkflowNodeKind } from '../types/index.ts'
 import type {
-  NodeChildIdentity,
+  NodeChildKind,
   RunSnapshot,
   StoredAttempt,
-  StoredChildLink,
   StoredError,
-  StoredMapItem,
   StoredNode,
+  StoredNodeChild,
   StoredRun,
 } from './state.ts'
 import type { RuntimeRunStatus } from './status.ts'
@@ -39,13 +38,6 @@ export type CreateNodeInput = {
   readonly runId: string
   readonly name: string
   readonly kind: WorkflowNodeKind
-}
-
-export type CreateAttemptInput = {
-  readonly runId: string
-  readonly nodeName: string
-  readonly input: unknown
-  readonly idempotencyKey?: readonly unknown[]
 }
 
 export type ListRunsFilter = {
@@ -97,71 +89,73 @@ export type DeadWorkflowCommand = {
   readonly createdAt: Date
 }
 
-export type EnsureNodeAttemptParams = {
-  readonly identity: NodeChildIdentity
-  readonly kind: 'activity' | 'task'
-  readonly input: unknown
-  readonly idempotencyKey?: readonly unknown[]
+/**
+ * One child record per unit of node execution. The batch is the node's full
+ * child set for fan-out nodes (parallel members, map items) and a single
+ * entry otherwise, so re-entry can detect a conflicting set.
+ */
+export type EnsureNodeChildInput = {
+  readonly childKey: string
+  readonly kind: NodeChildKind
+  readonly ordinal?: number
+  readonly itemKey?: string
+  readonly item?: unknown
 }
 
-export type EnsureNodeAttemptResult = {
-  readonly attempt: StoredAttempt
-  readonly created: boolean
+export type EnsureNodeChildrenParams = {
+  readonly runId: string
+  readonly nodeName: string
+  readonly children: readonly EnsureNodeChildInput[]
 }
 
-export type EnsureChildWorkflowRunParams = {
-  readonly identity: NodeChildIdentity
-  readonly workflowName: string
-  readonly input: unknown
-  readonly parentRunId: string
-  readonly parentNodeName: string
-  readonly rootRunId: string
-  readonly tags?: Readonly<Record<string, string>>
-  readonly idempotencyKey?: readonly unknown[]
-}
-
-export type EnsureChildWorkflowRunResult = {
-  readonly childLink: StoredChildLink
-  readonly childRun: StoredRun
+export type EnsureNodeChildrenResult = {
+  readonly children: readonly StoredNodeChild[]
   readonly created: boolean
 }
 
 export type EnsureChildRunParams = {
-  readonly identity: NodeChildIdentity
+  readonly runId: string
+  readonly nodeName: string
+  readonly childKey: string
   readonly childKind: RunKind
   readonly childName: string
   readonly input: unknown
-  readonly parentRunId: string
-  readonly parentNodeName: string
   readonly rootRunId: string
   readonly tags?: Readonly<Record<string, string>>
   readonly idempotencyKey?: readonly unknown[]
 }
 
 export type EnsureChildRunResult = {
-  readonly childLink: StoredChildLink
+  readonly child: StoredNodeChild
   readonly childRun: StoredRun
   readonly created: boolean
 }
 
-export type EnsureMapItemsParams = {
+export type EnsureChildAttemptParams = {
   readonly runId: string
   readonly nodeName: string
-  readonly items: readonly unknown[]
-  readonly keys?: readonly (string | undefined)[]
+  readonly childKey: string
+  readonly input: unknown
+  readonly idempotencyKey?: readonly unknown[]
 }
 
-export type EnsureMapItemsResult = {
-  readonly items: readonly StoredMapItem[]
+export type EnsureChildAttemptResult = {
+  readonly attempt: StoredAttempt
   readonly created: boolean
 }
 
-export type CompleteMapItemParams = {
+export type CreateAttemptInput = {
   readonly runId: string
   readonly nodeName: string
-  readonly itemIndex: number
-  readonly itemKey?: string
-  readonly output: unknown
+  readonly childKey: string
+  readonly input: unknown
+  readonly idempotencyKey?: readonly unknown[]
+}
+
+export type NodeChildRef = {
+  readonly runId: string
+  readonly nodeName: string
+  readonly childKey: string
 }
 
 export type SelectNodeCaseParams = {
@@ -170,17 +164,14 @@ export type SelectNodeCaseParams = {
   readonly caseKey: string
 }
 
-export type FailMapItemParams = {
-  readonly runId: string
-  readonly nodeName: string
-  readonly itemIndex: number
-  readonly itemKey?: string
-  readonly error: unknown
-}
-
 export type LoadNodeChildrenParams = {
   readonly runId: string
   readonly nodeName: string
+}
+
+export type NodeChildrenSnapshot = {
+  readonly children: readonly StoredNodeChild[]
+  readonly attempts: readonly StoredAttempt[]
 }
 
 export type WaitNodeParams = {
@@ -201,12 +192,6 @@ export type CancelNonTerminalRunNodesParams = {
   readonly runId: string
 }
 
-export type NodeChildrenSnapshot = {
-  readonly attempts: readonly StoredAttempt[]
-  readonly childLinks: readonly StoredChildLink[]
-  readonly mapItems: readonly StoredMapItem[]
-}
-
 export type WorkflowStore = {
   createRun(input: CreateRunInput): Promise<StoredRun>
   listRuns(filter?: ListRunsFilter): Promise<ListRunsResult>
@@ -214,6 +199,13 @@ export type WorkflowStore = {
     params: PruneTerminalRunsParams,
   ): Promise<PruneTerminalRunsResult>
   listDeadCommands(): Promise<readonly DeadWorkflowCommand[]>
+  /**
+   * Atomically takes un-reaped dead commands (marking them reaped) so exactly
+   * one maintenance sweep acts on each. requeueDeadCommand clears the mark.
+   */
+  claimDeadCommands(params?: {
+    readonly limit?: number
+  }): Promise<readonly DeadWorkflowCommand[]>
   requeueDeadCommand(id: string): Promise<void>
   acquireRunLease(params: {
     runId: string
@@ -233,7 +225,36 @@ export type WorkflowStore = {
     nodeName: string
     input: unknown
   }): Promise<StoredNode>
+  selectNodeCase(params: SelectNodeCaseParams): Promise<StoredNode | undefined>
+  /**
+   * Idempotently creates the node's child set. Re-entry with an equal set
+   * returns the stored records; a differing set is a definition conflict and
+   * throws.
+   */
+  ensureNodeChildren(
+    params: EnsureNodeChildrenParams,
+  ): Promise<EnsureNodeChildrenResult>
+  /**
+   * Creates the child run and links it to the child record in one atomic
+   * step. The child record must already exist via ensureNodeChildren.
+   */
+  ensureChildRun(params: EnsureChildRunParams): Promise<EnsureChildRunResult>
+  /**
+   * Idempotently creates the child's first attempt; once the child has any
+   * attempts, returns the current one instead.
+   */
+  ensureChildAttempt(
+    params: EnsureChildAttemptParams,
+  ): Promise<EnsureChildAttemptResult>
+  /**
+   * Creates the child's next attempt (a retry): per-child attempt_number,
+   * child current-attempt fencing, child status back to running.
+   */
   createAttempt(input: CreateAttemptInput): Promise<StoredAttempt>
+  /**
+   * Completes the attempt AND its child record atomically, fenced by the
+   * child's current attempt and the attempt lease.
+   */
   completeCurrentAttempt(params: {
     attemptId: string
     leaseToken: string
@@ -249,6 +270,15 @@ export type WorkflowStore = {
     leaseToken: string
     error: unknown
   }): Promise<StoredAttempt | undefined>
+  completeNodeChild(
+    params: NodeChildRef & { output: unknown },
+  ): Promise<StoredNodeChild | undefined>
+  failNodeChild(
+    params: NodeChildRef & { error: unknown },
+  ): Promise<StoredNodeChild | undefined>
+  loadNodeChildren(
+    params: LoadNodeChildrenParams,
+  ): Promise<NodeChildrenSnapshot>
   completeNode(params: {
     runId: string
     nodeName: string
@@ -259,6 +289,9 @@ export type WorkflowStore = {
     nodeName: string
     error: unknown
   }): Promise<StoredNode | undefined>
+  waitNode(params: WaitNodeParams): Promise<StoredNode | undefined>
+  markRunRunning(params: { runId: string }): Promise<StoredRun | undefined>
+  markRunWaiting(params: { runId: string }): Promise<StoredRun | undefined>
   completeRun(params: {
     runId: string
     output: unknown
@@ -272,24 +305,10 @@ export type WorkflowStore = {
   ): Promise<StoredRun | undefined>
   cancelRun(params: { runId: string }): Promise<StoredRun | undefined>
   cancelNode(params: CancelNodeParams): Promise<StoredNode | undefined>
+  /**
+   * Cancels every non-terminal node AND child record of the run in one sweep.
+   */
   cancelNonTerminalRunNodes(
     params: CancelNonTerminalRunNodesParams,
   ): Promise<readonly StoredNode[]>
-  ensureNodeAttempt(
-    params: EnsureNodeAttemptParams,
-  ): Promise<EnsureNodeAttemptResult>
-  ensureChildWorkflowRun(
-    params: EnsureChildWorkflowRunParams,
-  ): Promise<EnsureChildWorkflowRunResult>
-  ensureChildRun(params: EnsureChildRunParams): Promise<EnsureChildRunResult>
-  selectNodeCase(params: SelectNodeCaseParams): Promise<StoredNode | undefined>
-  ensureMapItems(params: EnsureMapItemsParams): Promise<EnsureMapItemsResult>
-  completeMapItem(
-    params: CompleteMapItemParams,
-  ): Promise<StoredMapItem | undefined>
-  failMapItem(params: FailMapItemParams): Promise<StoredMapItem | undefined>
-  waitNode(params: WaitNodeParams): Promise<StoredNode | undefined>
-  loadNodeChildren(
-    params: LoadNodeChildrenParams,
-  ): Promise<NodeChildrenSnapshot>
 }

@@ -24,12 +24,18 @@ async function createRootWithChild() {
     name: 'child',
     kind: 'workflow',
   })
-  const { childRun } = await runtime.store.ensureChildWorkflowRun({
-    identity: { runId: root.id, nodeName: 'child' },
-    workflowName: 'postgres-prune-child',
+  await runtime.store.ensureNodeChildren({
+    runId: root.id,
+    nodeName: 'child',
+    children: [{ childKey: '$self', kind: 'workflow' }],
+  })
+  const { childRun } = await runtime.store.ensureChildRun({
+    runId: root.id,
+    nodeName: 'child',
+    childKey: '$self',
+    childKind: 'workflow',
+    childName: 'postgres-prune-child',
     input: {},
-    parentRunId: root.id,
-    parentNodeName: 'child',
     rootRunId: root.id,
   })
 

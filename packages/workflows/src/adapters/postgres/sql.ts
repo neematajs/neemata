@@ -1,14 +1,16 @@
 import { randomUUID } from 'node:crypto'
 
 import type {
-  NodeChildIdentity,
   StoredAttempt,
-  StoredChildLink,
-  StoredMapItem,
   StoredNode,
+  StoredNodeChild,
   StoredError,
   StoredRun,
 } from '../../runtime/state.ts'
+import type {
+  RuntimeNodeStatus,
+  RuntimeRunStatus,
+} from '../../runtime/status.ts'
 import type {
   CreateRunInput,
   DeadWorkflowCommand,
@@ -16,10 +18,16 @@ import type {
   TerminalRunStatus,
 } from '../../runtime/store.ts'
 import type { WorkflowPostgresConnection } from './connection.ts'
+import {
+  NODE_TRANSITIONS,
+  RUN_TRANSITIONS,
+  transitionSources,
+} from '../../runtime/transitions.ts'
 
 export type JsonRecord = Record<string, unknown>
 
 export const RELEASE_BACKOFF_MS = 50
+export const UNROUTABLE_BACKOFF_MS = 1_000
 export const MAX_ERROR_BACKOFF_MS = 300_000
 export const DEFAULT_MAX_DELIVERIES = 20
 export const DEFAULT_PRUNE_BATCH_SIZE = 100
@@ -99,15 +107,24 @@ export const isUniqueViolation = (error: unknown) =>
       'duplicate key value violates unique constraint',
     ))
 
-export const identityKey = (identity: NodeChildIdentity) =>
-  JSON.stringify([
-    identity.runId,
-    identity.nodeName,
-    identity.caseKey ?? null,
-    identity.memberKey ?? null,
-    identity.itemIndex ?? null,
-    identity.itemKey ?? null,
-  ])
+// Statuses are static enum literals, so inlining them into SQL is safe.
+export const runStatusSourcesSql = (to: RuntimeRunStatus) =>
+  transitionSources(RUN_TRANSITIONS, to)
+    .map((status) => `'${status}'`)
+    .join(', ')
+
+/**
+ * Legal source statuses for writing `to` on a node or child record; `self`
+ * additionally allows the idempotent self-transition for data-bearing
+ * updates that re-assert an already-reached status.
+ */
+export const nodeStatusSourcesSql = (
+  to: RuntimeNodeStatus,
+  options?: { readonly self?: boolean },
+) =>
+  [...transitionSources(NODE_TRANSITIONS, to), ...(options?.self ? [to] : [])]
+    .map((status) => `'${status}'`)
+    .join(', ')
 
 export const optional = <K extends string, V>(
   key: K,
@@ -152,9 +169,6 @@ export const mapNode = (row: JsonRecord): StoredNode => ({
   ...optional('output', fromOptional(row.output)),
   ...optional('error', fromOptional(row.error) as StoredError | undefined),
   ...optional('selectedCase', row.selected_case as string | undefined),
-  ...optional('currentAttemptId', row.current_attempt_id as string | undefined),
-  ...optional('nextAttemptAt', row.next_attempt_at as Date | undefined),
-  attemptCount: row.attempt_count as number,
   version: row.version as number,
   createdAt: row.created_at as Date,
   updatedAt: row.updated_at as Date,
@@ -164,10 +178,7 @@ export const mapAttempt = (row: JsonRecord): StoredAttempt => ({
   id: row.id as string,
   runId: row.run_id as string,
   nodeName: row.node_name as string,
-  ...optional(
-    'identity',
-    fromOptional(row.identity) as NodeChildIdentity | undefined,
-  ),
+  childKey: row.child_key as string,
   status: row.status as StoredAttempt['status'],
   ...optional('workerId', row.worker_id as string | undefined),
   ...optional('leaseToken', row.lease_token as string | undefined),
@@ -184,33 +195,24 @@ export const mapAttempt = (row: JsonRecord): StoredAttempt => ({
   ...optional('completedAt', row.completed_at as Date | undefined),
 })
 
-export const mapChildLink = (row: JsonRecord): StoredChildLink => ({
-  identity: row.identity as NodeChildIdentity,
-  parentRunId: row.parent_run_id as string,
-  parentNodeName: row.parent_node_name as string,
-  childRunId: row.child_run_id as string,
-  childKind: row.child_kind as StoredChildLink['childKind'],
-  childName: row.child_name as string,
-  workflowName: row.workflow_name as string,
-  ...optional('taskName', row.task_name as string | undefined),
-  ...optional('caseKey', row.case_key as string | undefined),
-  ...optional('memberKey', row.member_key as string | undefined),
-  ...optional('itemIndex', row.item_index as number | undefined),
-  ...optional('itemKey', row.item_key as string | undefined),
-})
-
-export const mapMapItem = (row: JsonRecord): StoredMapItem => ({
-  identity: row.identity as NodeChildIdentity,
+export const mapNodeChild = (row: JsonRecord): StoredNodeChild => ({
   runId: row.run_id as string,
   nodeName: row.node_name as string,
-  index: row.item_index as number,
-  ...optional('key', row.item_key as string | undefined),
-  item: row.item,
-  status: row.status as StoredMapItem['status'],
+  childKey: row.child_key as string,
+  kind: row.kind as StoredNodeChild['kind'],
+  status: row.status as StoredNodeChild['status'],
+  ordinal: row.ordinal as number,
+  ...optional('itemKey', row.item_key as string | undefined),
+  ...optional('item', fromOptional(row.item)),
+  ...optional('input', fromOptional(row.input)),
   ...optional('output', fromOptional(row.output)),
   ...optional('error', fromOptional(row.error) as StoredError | undefined),
   ...optional('childRunId', row.child_run_id as string | undefined),
-  ...optional('attemptId', row.attempt_id as string | undefined),
+  ...optional('currentAttemptId', row.current_attempt_id as string | undefined),
+  attemptCount: row.attempt_count as number,
+  version: row.version as number,
+  createdAt: row.created_at as Date,
+  updatedAt: row.updated_at as Date,
 })
 
 export const mapDeadCommand = (row: JsonRecord): DeadWorkflowCommand => ({
