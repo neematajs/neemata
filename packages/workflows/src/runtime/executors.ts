@@ -12,6 +12,15 @@ import type { RuntimeRunStatus } from './status.ts'
 
 export type CommandReleaseOptions = {
   readonly error?: unknown
+  /**
+   * 'unroutable' — no implementation can execute this command (unknown
+   * workflow/task or unresolvable member). Counts toward dead-lettering with
+   * a longer backoff, so definition drift surfaces in dead commands instead
+   * of an unbounded claim/release loop. A plain release (no error, no reason)
+   * stays uncounted — it means "expected to succeed on redelivery" (worker
+   * shutdown, lease loss).
+   */
+  readonly reason?: 'unroutable'
 }
 
 export type AttemptHeartbeatResult = {

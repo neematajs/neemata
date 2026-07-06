@@ -26,36 +26,42 @@ import {
 import {
   type AttemptCommand,
   type AttemptExecutor,
-  type CompleteMapItemParams,
+  ATTEMPT_TRANSITIONS,
   type ContinueRunCommand,
   type ContinueWorkflowRunResult,
+  type CreateAttemptInput,
   type CreateRunInput,
+  type EnsureChildAttemptParams,
+  type EnsureChildAttemptResult,
   type EnsureChildRunParams,
   type EnsureChildRunResult,
-  type EnsureChildWorkflowRunParams,
-  type EnsureChildWorkflowRunResult,
-  type EnsureMapItemsParams,
-  type EnsureMapItemsResult,
-  type EnsureNodeAttemptParams,
-  type EnsureNodeAttemptResult,
-  type FailMapItemParams,
+  type EnsureNodeChildInput,
+  type EnsureNodeChildrenParams,
+  type EnsureNodeChildrenResult,
   type InMemoryWorkflowRuntime,
   type ListRunsFilter,
   type ListRunsResult,
   type LoadNodeChildrenParams,
-  type NodeChildIdentity,
+  type NodeChildKind,
+  type NodeChildRef,
   type NodeChildrenSnapshot,
+  NODE_TRANSITIONS,
+  type ParsedChildKey,
   type RequestRunCancellationParams,
   type RunCoordinationExecutor,
+  type RunSnapshot,
+  type RuntimeNodeStatus,
   type RuntimeRunStatus,
+  RUN_TRANSITIONS,
+  SELF_CHILD_KEY,
   type SelectNodeCaseParams,
   type SelectNodeCaseParams as RuntimeSelectNodeCaseParams,
   type StartWorkflowRunInput,
   type StoredAttempt,
-  type StoredChildLink,
-  type StoredMapItem,
   type StoredNode,
+  type StoredNodeChild,
   type StoredRun,
+  type TransitionMap,
   type WaitNodeParams,
   type WorkerCommandResult,
   type WorkerLoopOptions,
@@ -65,6 +71,12 @@ import {
   type WorkflowRuntimeAdapter,
   type WorkflowStore,
   type WorkflowAttemptTimeoutError,
+  canTransition,
+  caseChildKey,
+  itemChildKey,
+  memberChildKey,
+  parseChildKey,
+  transitionSources,
 } from '../src/runtime/index.ts'
 import {
   createWorkflowRuntimeRegistry,
@@ -75,19 +87,23 @@ import {
 type SemanticWorkflowStoreMethods = {
   listRuns(params?: ListRunsFilter): Promise<ListRunsResult>
   selectNodeCase(params: SelectNodeCaseParams): Promise<StoredNode | undefined>
-  ensureNodeAttempt(
-    params: EnsureNodeAttemptParams,
-  ): Promise<EnsureNodeAttemptResult>
-  ensureChildWorkflowRun(
-    params: EnsureChildWorkflowRunParams,
-  ): Promise<EnsureChildWorkflowRunResult>
+  ensureNodeChildren(
+    params: EnsureNodeChildrenParams,
+  ): Promise<EnsureNodeChildrenResult>
   ensureChildRun(params: EnsureChildRunParams): Promise<EnsureChildRunResult>
-  ensureMapItems(params: EnsureMapItemsParams): Promise<EnsureMapItemsResult>
-  completeMapItem(
-    params: CompleteMapItemParams,
-  ): Promise<StoredMapItem | undefined>
-  failMapItem(params: FailMapItemParams): Promise<StoredMapItem | undefined>
+  ensureChildAttempt(
+    params: EnsureChildAttemptParams,
+  ): Promise<EnsureChildAttemptResult>
+  createAttempt(input: CreateAttemptInput): Promise<StoredAttempt>
+  completeNodeChild(
+    params: NodeChildRef & { output: unknown },
+  ): Promise<StoredNodeChild | undefined>
+  failNodeChild(
+    params: NodeChildRef & { error: unknown },
+  ): Promise<StoredNodeChild | undefined>
   waitNode(params: WaitNodeParams): Promise<StoredNode | undefined>
+  markRunRunning(params: { runId: string }): Promise<StoredRun | undefined>
+  markRunWaiting(params: { runId: string }): Promise<StoredRun | undefined>
   cancelNode(params: {
     runId: string
     nodeName: string
@@ -276,69 +292,107 @@ describe('workflow runtime interfaces', () => {
       caseKey: string
     }>()
     expectTypeOf<RuntimeSelectNodeCaseParams>().toEqualTypeOf<SelectNodeCaseParams>()
-    expectTypeOf<NodeChildIdentity>().toMatchTypeOf<{
+    expectTypeOf<NodeChildKind>().toEqualTypeOf<
+      'activity' | 'task' | 'workflow'
+    >()
+    expectTypeOf<StoredNodeChild>().toMatchTypeOf<{
       runId: string
       nodeName: string
-      caseKey?: string
-      memberKey?: string
-      itemIndex?: number
+      childKey: string
+      kind: NodeChildKind
+      status: RuntimeNodeStatus
+      ordinal: number
       itemKey?: string
+      childRunId?: string
+      currentAttemptId?: string
+      attemptCount: number
+      version: number
     }>()
-    expectTypeOf<EnsureNodeAttemptParams>().toMatchTypeOf<{
-      identity: NodeChildIdentity
-      kind: 'activity' | 'task'
-      input: unknown
+    expectTypeOf<StoredAttempt>().toMatchTypeOf<{
+      id: string
+      runId: string
+      nodeName: string
+      childKey: string
+      attemptNumber: number
     }>()
-    expectTypeOf<EnsureChildWorkflowRunParams>().toMatchTypeOf<{
-      identity: NodeChildIdentity
-      workflowName: string
-      input: unknown
-      parentRunId: string
-      parentNodeName: string
-      rootRunId: string
+    expectTypeOf<NodeChildRef>().toEqualTypeOf<{
+      readonly runId: string
+      readonly nodeName: string
+      readonly childKey: string
+    }>()
+    expectTypeOf<EnsureNodeChildInput>().toMatchTypeOf<{
+      childKey: string
+      kind: NodeChildKind
+      ordinal?: number
+      itemKey?: string
+      item?: unknown
+    }>()
+    expectTypeOf<EnsureNodeChildrenParams>().toMatchTypeOf<{
+      runId: string
+      nodeName: string
+      children: readonly EnsureNodeChildInput[]
+    }>()
+    expectTypeOf<EnsureNodeChildrenResult>().toMatchTypeOf<{
+      children: readonly StoredNodeChild[]
+      created: boolean
     }>()
     expectTypeOf<EnsureChildRunParams>().toMatchTypeOf<{
-      identity: NodeChildIdentity
+      runId: string
+      nodeName: string
+      childKey: string
       childKind: RunKind
       childName: string
       input: unknown
-      parentRunId: string
-      parentNodeName: string
       rootRunId: string
+      tags?: Readonly<Record<string, string>>
+      idempotencyKey?: readonly unknown[]
     }>()
     expectTypeOf<EnsureChildRunResult>().toMatchTypeOf<{
-      childLink: StoredChildLink
+      child: StoredNodeChild
       childRun: StoredRun
       created: boolean
     }>()
-    expectTypeOf<EnsureMapItemsParams>().toMatchTypeOf<{
+    expectTypeOf<EnsureChildAttemptParams>().toMatchTypeOf<{
       runId: string
       nodeName: string
-      items: readonly unknown[]
-      keys?: readonly (string | undefined)[]
+      childKey: string
+      input: unknown
+      idempotencyKey?: readonly unknown[]
+    }>()
+    expectTypeOf<EnsureChildAttemptResult>().toMatchTypeOf<{
+      attempt: StoredAttempt
+      created: boolean
+    }>()
+    expectTypeOf<CreateAttemptInput>().toMatchTypeOf<{
+      runId: string
+      nodeName: string
+      childKey: string
+      input: unknown
     }>()
     expectTypeOf<NodeChildrenSnapshot>().toMatchTypeOf<{
-      attempts: readonly unknown[]
-      childLinks: readonly unknown[]
-      mapItems: readonly unknown[]
+      children: readonly StoredNodeChild[]
+      attempts: readonly StoredAttempt[]
+    }>()
+    expectTypeOf<RunSnapshot>().toMatchTypeOf<{
+      run: StoredRun
+      nodes: readonly StoredNode[]
+      children: readonly StoredNodeChild[]
+      attempts: readonly StoredAttempt[]
     }>()
     expectTypeOf<WaitNodeParams>().toMatchTypeOf<{
       runId: string
       nodeName: string
     }>()
-    expectTypeOf<StoredChildLink>().toHaveProperty('identity')
-    expectTypeOf<StoredChildLink>().toMatchTypeOf<{
-      childKind: RunKind
-      childName: string
-      workflowName: string
-      taskName?: string
-    }>()
-    expectTypeOf<StoredMapItem>().toHaveProperty('identity')
     expectTypeOf<WorkflowStore>().toHaveProperty('listRuns')
     expectTypeOf<WorkflowStore>().toHaveProperty('selectNodeCase')
     expectTypeOf<WorkflowStore>().toHaveProperty('waitNode')
+    expectTypeOf<WorkflowStore>().toHaveProperty('ensureNodeChildren')
     expectTypeOf<WorkflowStore>().toHaveProperty('ensureChildRun')
-    expectTypeOf<WorkflowStore>().toHaveProperty('ensureChildWorkflowRun')
+    expectTypeOf<WorkflowStore>().toHaveProperty('ensureChildAttempt')
+    expectTypeOf<WorkflowStore>().toHaveProperty('completeNodeChild')
+    expectTypeOf<WorkflowStore>().toHaveProperty('failNodeChild')
+    expectTypeOf<WorkflowStore>().toHaveProperty('markRunRunning')
+    expectTypeOf<WorkflowStore>().toHaveProperty('markRunWaiting')
     expectTypeOf<WorkflowStore>().toHaveProperty('loadNodeChildren')
     expectTypeOf<WorkflowStore>().toMatchTypeOf<WorkflowStoreWithRequiredSemanticMethods>()
     expectTypeOf<
@@ -347,6 +401,54 @@ describe('workflow runtime interfaces', () => {
     const requiredStoreMethods: SemanticWorkflowStoreMethods =
       {} as WorkflowStore
     expect(requiredStoreMethods).toBeDefined()
+  })
+
+  it('exports child-key helpers and transition maps', () => {
+    expect(SELF_CHILD_KEY).toBe('$self')
+    expect(caseChildKey('normal')).toBe('case:normal')
+    expect(memberChildKey('a')).toBe('member:a')
+    expect(itemChildKey(2)).toBe('item:2')
+    expect(parseChildKey(SELF_CHILD_KEY)).toStrictEqual({ kind: 'self' })
+    expect(parseChildKey(caseChildKey('normal'))).toStrictEqual({
+      kind: 'case',
+      caseKey: 'normal',
+    })
+    expect(parseChildKey(memberChildKey('a'))).toStrictEqual({
+      kind: 'member',
+      memberKey: 'a',
+    })
+    expect(parseChildKey(itemChildKey(2))).toStrictEqual({
+      kind: 'item',
+      itemIndex: 2,
+    })
+    expect(parseChildKey('item:-1')).toBeUndefined()
+    expect(parseChildKey('bogus')).toBeUndefined()
+    expectTypeOf(parseChildKey).returns.toEqualTypeOf<
+      ParsedChildKey | undefined
+    >()
+
+    expectTypeOf(RUN_TRANSITIONS).toEqualTypeOf<
+      TransitionMap<RuntimeRunStatus>
+    >()
+    expectTypeOf(NODE_TRANSITIONS).toEqualTypeOf<
+      TransitionMap<RuntimeNodeStatus>
+    >()
+    expect(canTransition(RUN_TRANSITIONS, 'queued', 'running')).toBe(true)
+    // Runs park on children only after starting; queued cannot go waiting.
+    expect(canTransition(RUN_TRANSITIONS, 'queued', 'waiting')).toBe(false)
+    expect(canTransition(RUN_TRANSITIONS, 'completed', 'running')).toBe(false)
+    expect(canTransition(NODE_TRANSITIONS, 'pending', 'running')).toBe(true)
+    expect(canTransition(ATTEMPT_TRANSITIONS, 'started', 'timedOut')).toBe(true)
+    expect(canTransition(ATTEMPT_TRANSITIONS, 'completed', 'failed')).toBe(
+      false,
+    )
+    expect(transitionSources(RUN_TRANSITIONS, 'waiting')).toStrictEqual([
+      'running',
+    ])
+    expect(transitionSources(RUN_TRANSITIONS, 'running')).toStrictEqual([
+      'queued',
+      'waiting',
+    ])
   })
 
   it('routes workflow and task implementations by contract name', () => {

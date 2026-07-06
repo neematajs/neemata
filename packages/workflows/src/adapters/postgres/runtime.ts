@@ -6,6 +6,7 @@ import type {
   WorkflowRuntimeAtomicContinuation,
 } from '../../runtime/worker.ts'
 import type { WorkflowPostgresConnection } from './connection.ts'
+import { SELF_CHILD_KEY } from '../../runtime/child-key.ts'
 import { createAttemptExecutor } from './executor.ts'
 import { createRunCoordinationExecutor } from './queue.ts'
 import { createPostgresWorkflowScheduler } from './schedules.ts'
@@ -75,12 +76,15 @@ export function createPostgresWorkflowRuntime(params: {
           nodeName: TASK_RUN_NODE_NAME,
           input: taskInput,
         })
-        const result = await runtime.store.ensureNodeAttempt({
-          identity: {
-            runId: started.id,
-            nodeName: TASK_RUN_NODE_NAME,
-          },
-          kind: 'task',
+        await runtime.store.ensureNodeChildren({
+          runId: started.id,
+          nodeName: TASK_RUN_NODE_NAME,
+          children: [{ childKey: SELF_CHILD_KEY, kind: 'task' }],
+        })
+        const result = await runtime.store.ensureChildAttempt({
+          runId: started.id,
+          nodeName: TASK_RUN_NODE_NAME,
+          childKey: SELF_CHILD_KEY,
           input: taskInput,
           ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
         })
@@ -91,6 +95,7 @@ export function createPostgresWorkflowRuntime(params: {
             taskName,
             runId: started.id,
             nodeName: TASK_RUN_NODE_NAME,
+            childKey: SELF_CHILD_KEY,
             attemptId: result.attempt.id,
             leaseToken: result.attempt.leaseToken!,
             input: result.created ? taskInput : result.attempt.input,

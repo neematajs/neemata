@@ -211,7 +211,7 @@ describe('workflows Neem integration', () => {
 
       expect(stopElapsedMs).toBeLessThan(150)
       expect(shutdownReason).toStrictEqual({ type: 'shutdown' })
-      expect(snapshot?.run.status).toBe('queued')
+      expect(snapshot?.run.status).toBe('running')
       expect(snapshot?.attempts[0]?.status).toBe('started')
       expect(runtimeAdapter.inspect().taskCommands).toHaveLength(1)
     } finally {

@@ -14,8 +14,8 @@ import type {
 } from '../../types/index.ts'
 import type { ActivityAttemptCommand, ClaimedAttempt } from '../commands.ts'
 import type { AttemptExecutor, RunCoordinationExecutor } from '../executors.ts'
-import type { StoredAttempt, StoredNode } from '../state.ts'
 import type { WorkflowStore } from '../store.ts'
+import { parseChildKey } from '../child-key.ts'
 import { parseDurationMs } from '../duration.ts'
 import { createWorkflowRuntimeRegistry } from '../registry.ts'
 import { isTerminalRunStatus } from '../status.ts'
@@ -84,8 +84,10 @@ export async function runActivityAttempt(
   }
 
   const snapshot = await input.store.loadRunSnapshot(command.runId)
-  const storedNode = snapshot?.nodes.find(
-    (node) => node.name === command.nodeName,
+  const storedChild = snapshot?.children.find(
+    (child) =>
+      child.nodeName === command.nodeName &&
+      child.childKey === command.childKey,
   )
   const storedAttempt = snapshot?.attempts.find(
     (attempt) => attempt.id === command.attemptId,
@@ -94,14 +96,19 @@ export async function runActivityAttempt(
     return await ackTerminalAttempt(input)
   }
 
-  if (!isFreshAttempt(command, storedNode, storedAttempt)) {
+  if (!isFreshAttempt(command, storedChild, storedAttempt)) {
     return await runAtomicCompletion(input, (scoped) =>
-      reconcileStaleAttempt(scoped, command, storedNode, storedAttempt),
+      reconcileStaleAttempt(scoped, command, storedChild, storedAttempt),
     )
   }
 
   if (snapshot?.run.workflowName !== command.workflowName) {
-    await input.attemptExecutor.release(input.claimed)
+    await input.attemptExecutor.release(input.claimed, {
+      reason: 'unroutable',
+      error: new Error(
+        `Run [${command.runId}] workflow does not match command workflow [${command.workflowName}]`,
+      ),
+    })
     return { status: 'released' }
   }
 
@@ -112,29 +119,29 @@ export async function runActivityAttempt(
     | WorkflowImplementation
     | undefined
   if (!workflow) {
-    await input.attemptExecutor.release(input.claimed)
+    await input.attemptExecutor.release(input.claimed, {
+      reason: 'unroutable',
+      error: new Error(
+        `No registered workflow implementation [${command.workflowName}]`,
+      ),
+    })
     return { status: 'released' }
   }
 
-  const node = resolveActivityAttemptNode(
-    workflow,
-    storedNode,
-    storedAttempt,
-    command,
-  )
+  const node = resolveActivityAttemptNode(workflow, command)
   if (!node) {
-    await input.attemptExecutor.release(input.claimed)
+    await input.attemptExecutor.release(input.claimed, {
+      reason: 'unroutable',
+      error: new Error(
+        `No activity implementation for [${command.workflowName}.${command.nodeName}.${command.childKey}]`,
+      ),
+    })
     return { status: 'released' }
   }
 
   let output: unknown
   try {
-    const timeoutMs = resolveActivityAttemptTimeoutMs(
-      workflow,
-      storedNode,
-      storedAttempt,
-      command,
-    )
+    const timeoutMs = resolveActivityAttemptTimeoutMs(workflow, command)
     output = await runWithAttemptHeartbeat(
       input,
       async (lifecycle) => {
@@ -160,12 +167,7 @@ export async function runActivityAttempt(
               }),
           },
     )
-    const outputSchema = resolveActivityAttemptOutputSchema(
-      workflow,
-      storedNode,
-      storedAttempt,
-      command,
-    )
+    const outputSchema = resolveActivityAttemptOutputSchema(workflow, command)
     if (outputSchema) {
       output = decodeSchemaValue(
         outputSchema.schema,
@@ -205,11 +207,19 @@ export async function runActivityAttempt(
           return { status: 'processed' }
         }
 
-        await scoped.store.failNode({
+        await scoped.store.failNodeChild({
           runId: command.runId,
           nodeName: command.nodeName,
+          childKey: command.childKey,
           error,
         })
+        if (shouldCompleteNodeFromAttempt(command.childKey)) {
+          await scoped.store.failNode({
+            runId: command.runId,
+            nodeName: command.nodeName,
+            error,
+          })
+        }
         if (snapshot?.run.kind === 'task') {
           const failed = await scoped.store.failRun({
             runId: command.runId,
@@ -242,7 +252,7 @@ export async function runActivityAttempt(
       return { status: 'processed' }
     }
 
-    if (shouldCompleteNodeFromAttempt(storedNode)) {
+    if (shouldCompleteNodeFromAttempt(command.childKey)) {
       await scoped.store.completeNode({
         runId: command.runId,
         nodeName: command.nodeName,
@@ -255,40 +265,40 @@ export async function runActivityAttempt(
   })
 }
 
+/**
+ * The command's childKey is authoritative: retries carry it, so member
+ * resolution never depends on stored attempt bookkeeping.
+ */
 function resolveActivityAttemptNode(
   workflow: WorkflowImplementation,
-  storedNode: StoredNode | undefined,
-  storedAttempt: StoredAttempt | undefined,
   command: ActivityAttemptCommand,
 ): ActivityAttemptNode | undefined {
-  const direct = workflow.nodes.find(
-    (candidate): candidate is ActivityNodeImplementation =>
-      candidate.kind === 'activity' && candidate.name === command.nodeName,
-  )
-  if (direct) {
+  const parsed = parseChildKey(command.childKey)
+  if (!parsed) return undefined
+
+  if (parsed.kind === 'self') {
+    const direct = workflow.nodes.find(
+      (candidate): candidate is ActivityNodeImplementation =>
+        candidate.kind === 'activity' && candidate.name === command.nodeName,
+    )
+    if (!direct) return undefined
     return direct.activity.name === command.activityName ? direct : undefined
   }
 
-  if (!storedNode) {
-    return undefined
-  }
-
   let selected: WorkflowCaseImplementation | undefined
-  if (storedNode.kind === 'branch' && storedNode.selectedCase !== undefined) {
+  if (parsed.kind === 'case') {
     const branch = workflow.nodes.find(
       (candidate): candidate is BranchNodeImplementation =>
         candidate.kind === 'branch' && candidate.name === command.nodeName,
     )
-    selected = branch?.cases[storedNode.selectedCase]
+    selected = branch?.cases[parsed.caseKey]
   }
-
-  if (storedNode.kind === 'parallel') {
+  if (parsed.kind === 'member') {
     const parallel = workflow.nodes.find(
       (candidate): candidate is ParallelNodeImplementation =>
         candidate.kind === 'parallel' && candidate.name === command.nodeName,
     )
-    const memberKey = storedAttempt?.identity?.memberKey
-    selected = memberKey === undefined ? undefined : parallel?.cases[memberKey]
+    selected = parallel?.cases[parsed.memberKey]
   }
 
   if (selected?.kind !== 'activity') return undefined
@@ -296,10 +306,32 @@ function resolveActivityAttemptNode(
   return selected.activity.name === command.activityName ? selected : undefined
 }
 
+function resolveActivityAttemptCaseDeclaration(
+  workflow: WorkflowImplementation,
+  command: ActivityAttemptCommand,
+): BranchCaseDefinition<'activity'> | undefined {
+  const declaration = workflow.workflow.nodes.find(
+    (candidate) => candidate.name === command.nodeName,
+  )
+  if (!declaration) return undefined
+  if (declaration.kind !== 'branch' && declaration.kind !== 'parallel') {
+    return undefined
+  }
+
+  const parsed = parseChildKey(command.childKey)
+  const key =
+    parsed?.kind === 'case'
+      ? parsed.caseKey
+      : parsed?.kind === 'member'
+        ? parsed.memberKey
+        : undefined
+  const selected = key === undefined ? undefined : declaration.cases[key]
+  if (selected?.kind !== 'activity') return undefined
+  return selected as BranchCaseDefinition<'activity'>
+}
+
 function resolveActivityAttemptTimeoutMs(
   workflow: WorkflowImplementation,
-  storedNode: StoredNode | undefined,
-  storedAttempt: StoredAttempt | undefined,
   command: ActivityAttemptCommand,
 ): number | undefined {
   const declaration = workflow.workflow.nodes.find(
@@ -308,29 +340,15 @@ function resolveActivityAttemptTimeoutMs(
   if (!declaration) return undefined
   if (declaration.kind === 'activity')
     return parseDurationMs(declaration.timeout)
-  if (declaration.kind === 'branch') {
-    const caseKey = storedAttempt?.identity?.caseKey ?? storedNode?.selectedCase
-    const selected =
-      caseKey === undefined ? undefined : declaration.cases[caseKey]
-    if (selected?.kind !== 'activity') return undefined
-    const activityDeclaration = selected as BranchCaseDefinition<'activity'>
-    return parseDurationMs(activityDeclaration.timeout)
-  }
-  if (declaration.kind === 'parallel') {
-    const memberKey = storedAttempt?.identity?.memberKey
-    const selected =
-      memberKey === undefined ? undefined : declaration.cases[memberKey]
-    if (selected?.kind !== 'activity') return undefined
-    const activityDeclaration = selected as BranchCaseDefinition<'activity'>
-    return parseDurationMs(activityDeclaration.timeout)
-  }
-  return undefined
+  const caseDeclaration = resolveActivityAttemptCaseDeclaration(
+    workflow,
+    command,
+  )
+  return caseDeclaration ? parseDurationMs(caseDeclaration.timeout) : undefined
 }
 
 function resolveActivityAttemptOutputSchema(
   workflow: WorkflowImplementation,
-  storedNode: StoredNode | undefined,
-  storedAttempt: StoredAttempt | undefined,
   command: ActivityAttemptCommand,
 ): { readonly schema: Schema; readonly label: string } | undefined {
   const declaration = workflow.workflow.nodes.find(
@@ -343,27 +361,13 @@ function resolveActivityAttemptOutputSchema(
       label: `activity output [${workflow.workflow.name}.${command.nodeName}]`,
     }
   }
-  if (declaration.kind === 'branch') {
-    const caseKey = storedAttempt?.identity?.caseKey ?? storedNode?.selectedCase
-    const selected =
-      caseKey === undefined ? undefined : declaration.cases[caseKey]
-    if (selected?.kind !== 'activity') return undefined
-    const activityDeclaration = selected as BranchCaseDefinition<'activity'>
-    return {
-      schema: activityDeclaration.output,
-      label: `activity output [${workflow.workflow.name}.${command.nodeName}.${caseKey}]`,
-    }
+  const caseDeclaration = resolveActivityAttemptCaseDeclaration(
+    workflow,
+    command,
+  )
+  if (!caseDeclaration) return undefined
+  return {
+    schema: caseDeclaration.output,
+    label: `activity output [${workflow.workflow.name}.${command.nodeName}.${command.childKey}]`,
   }
-  if (declaration.kind === 'parallel') {
-    const memberKey = storedAttempt?.identity?.memberKey
-    const selected =
-      memberKey === undefined ? undefined : declaration.cases[memberKey]
-    if (selected?.kind !== 'activity') return undefined
-    const activityDeclaration = selected as BranchCaseDefinition<'activity'>
-    return {
-      schema: activityDeclaration.output,
-      label: `activity output [${workflow.workflow.name}.${command.nodeName}.${memberKey}]`,
-    }
-  }
-  return undefined
 }

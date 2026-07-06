@@ -26,6 +26,7 @@ export async function retryActivityAttempt(
         activityName: params.command.activityName,
         runId: params.command.runId,
         nodeName: params.command.nodeName,
+        childKey: params.command.childKey,
         attemptId: retryAttempt.id,
         leaseToken: retryAttempt.leaseToken!,
         input: retryAttempt.input,
@@ -54,6 +55,7 @@ export async function retryTaskAttempt(
         taskName: params.command.taskName,
         runId: params.command.runId,
         nodeName: params.command.nodeName,
+        childKey: params.command.childKey,
         attemptId: retryAttempt.id,
         leaseToken: retryAttempt.leaseToken!,
         input: retryAttempt.input,
@@ -86,6 +88,7 @@ async function retryAttemptCore(
   const retryAttempt = await input.store.createAttempt({
     runId: params.command.runId,
     nodeName: params.command.nodeName,
+    childKey: params.command.childKey,
     input: params.failedAttempt.input,
     idempotencyKey: params.failedAttempt.idempotencyKey,
   })

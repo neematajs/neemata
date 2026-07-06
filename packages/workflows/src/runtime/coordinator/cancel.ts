@@ -18,19 +18,20 @@ export async function cancelRunTree(input: {
   await input.store.requestRunCancellation({ runId: input.runId })
   await input.store.cancelNonTerminalRunNodes({ runId: input.runId })
 
-  for (const link of snapshot.childLinks) {
-    const childSnapshot = await input.store.loadRunSnapshot(link.childRunId)
+  for (const child of snapshot.children) {
+    if (child.childRunId === undefined) continue
+    const childSnapshot = await input.store.loadRunSnapshot(child.childRunId)
     if (!childSnapshot || isTerminalRunStatus(childSnapshot.run.status))
       continue
-    await input.store.requestRunCancellation({ runId: link.childRunId })
+    await input.store.requestRunCancellation({ runId: child.childRunId })
     if (childSnapshot.run.kind === 'workflow') {
       await input.runCoordinationExecutor.enqueue({
         kind: 'continueRun',
-        runId: link.childRunId,
-        workflowName: link.workflowName,
+        runId: child.childRunId,
+        workflowName: childSnapshot.run.workflowName,
       })
     }
-    await cancelRunTree({ ...input, runId: link.childRunId })
+    await cancelRunTree({ ...input, runId: child.childRunId })
   }
 
   await input.attemptExecutor.deleteUnclaimed({ runId: input.runId })
@@ -48,19 +49,20 @@ export async function cancelNodeChildRunsAndCommands(input: {
     runId: input.runId,
     nodeName: input.nodeName,
   })
-  for (const link of children.childLinks) {
-    const childSnapshot = await input.store.loadRunSnapshot(link.childRunId)
+  for (const child of children.children) {
+    if (child.childRunId === undefined) continue
+    const childSnapshot = await input.store.loadRunSnapshot(child.childRunId)
     if (!childSnapshot || isTerminalRunStatus(childSnapshot.run.status))
       continue
-    await input.store.requestRunCancellation({ runId: link.childRunId })
+    await input.store.requestRunCancellation({ runId: child.childRunId })
     if (childSnapshot.run.kind === 'workflow') {
       await input.runCoordinationExecutor.enqueue({
         kind: 'continueRun',
-        runId: link.childRunId,
-        workflowName: link.workflowName,
+        runId: child.childRunId,
+        workflowName: childSnapshot.run.workflowName,
       })
     }
-    await cancelRunTree({ ...input, runId: link.childRunId })
+    await cancelRunTree({ ...input, runId: child.childRunId })
   }
   await input.attemptExecutor.deleteUnclaimed({ runId: input.runId })
 }

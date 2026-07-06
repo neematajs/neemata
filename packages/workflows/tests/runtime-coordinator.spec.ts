@@ -236,7 +236,7 @@ describe('workflow runtime coordinator', () => {
     ).resolves.toStrictEqual({ status: 'busy' })
 
     const snapshot = await runtime.store.loadRunSnapshot(run.id)
-    expect(snapshot?.run.status).toBe('queued')
+    expect(snapshot?.run.status).toBe('running')
     expect(snapshot?.run.output).toBeUndefined()
   })
 
@@ -246,7 +246,10 @@ describe('workflow runtime coordinator', () => {
       ['createRun', { workflowName: 'workflow', input: {} }],
       ['createNode', { runId: 'run-1', name: 'node', kind: 'activity' }],
       ['setNodeInput', { runId: 'run-1', nodeName: 'node', input: {} }],
-      ['createAttempt', { runId: 'run-1', nodeName: 'node', input: {} }],
+      [
+        'createAttempt',
+        { runId: 'run-1', nodeName: 'node', childKey: '$self', input: {} },
+      ],
       [
         'completeCurrentAttempt',
         { attemptId: 'attempt-1', leaseToken: 'attempt-lease', output: {} },
@@ -257,6 +260,8 @@ describe('workflow runtime coordinator', () => {
       ],
       ['completeNode', { runId: 'run-1', nodeName: 'node', output: {} }],
       ['failNode', { runId: 'run-1', nodeName: 'node', error: {} }],
+      ['markRunRunning', { runId: 'run-1' }],
+      ['markRunWaiting', { runId: 'run-1' }],
       ['completeRun', { runId: 'run-1', output: {} }],
       ['failRun', { runId: 'run-1', error: {} }],
       ['requestRunCancellation', { runId: 'run-1' }],
@@ -264,45 +269,37 @@ describe('workflow runtime coordinator', () => {
       ['cancelNode', { runId: 'run-1', nodeName: 'node' }],
       ['cancelNonTerminalRunNodes', { runId: 'run-1' }],
       [
-        'ensureNodeAttempt',
+        'ensureNodeChildren',
         {
-          identity: { runId: 'run-1', nodeName: 'node' },
-          kind: 'activity',
-          input: {},
-        },
-      ],
-      [
-        'ensureChildWorkflowRun',
-        {
-          identity: { runId: 'run-1', nodeName: 'node' },
-          workflowName: 'child',
-          input: {},
-          parentRunId: 'run-1',
-          parentNodeName: 'node',
-          rootRunId: 'run-1',
+          runId: 'run-1',
+          nodeName: 'node',
+          children: [{ childKey: '$self', kind: 'activity' }],
         },
       ],
       [
         'ensureChildRun',
         {
-          identity: { runId: 'run-1', nodeName: 'node' },
+          runId: 'run-1',
+          nodeName: 'node',
+          childKey: '$self',
           childKind: 'task',
           childName: 'child',
           input: {},
-          parentRunId: 'run-1',
-          parentNodeName: 'node',
           rootRunId: 'run-1',
         },
       ],
-      ['selectNodeCase', { runId: 'run-1', nodeName: 'node', caseKey: 'a' }],
-      ['ensureMapItems', { runId: 'run-1', nodeName: 'node', items: [] }],
       [
-        'completeMapItem',
-        { runId: 'run-1', nodeName: 'node', itemIndex: 0, output: {} },
+        'ensureChildAttempt',
+        { runId: 'run-1', nodeName: 'node', childKey: '$self', input: {} },
+      ],
+      ['selectNodeCase', { runId: 'run-1', nodeName: 'node', caseKey: 'a' }],
+      [
+        'completeNodeChild',
+        { runId: 'run-1', nodeName: 'node', childKey: '$self', output: {} },
       ],
       [
-        'failMapItem',
-        { runId: 'run-1', nodeName: 'node', itemIndex: 0, error: {} },
+        'failNodeChild',
+        { runId: 'run-1', nodeName: 'node', childKey: '$self', error: {} },
       ],
       ['waitNode', { runId: 'run-1', nodeName: 'node' }],
     ] as const
@@ -535,7 +532,7 @@ describe('workflow runtime coordinator', () => {
       workerId: 'workflow-worker-1',
     })
     const waiting = await client.get(run.id)
-    const childRunId = waiting?.childLinks[0]?.childRunId
+    const childRunId = waiting?.children[0]?.childRunId
     expect(childRunId).toBeTypeOf('string')
     expect(runtime.inspect().taskCommands).toHaveLength(1)
 
@@ -593,7 +590,7 @@ describe('workflow runtime coordinator', () => {
       workflows: [workflowImplementation],
       workerId: 'workflow-worker-1',
     })
-    const childRunId = (await client.get(run.id))?.childLinks[0]?.childRunId
+    const childRunId = (await client.get(run.id))?.children[0]?.childRunId
     const claimed = await runtime.attemptExecutor.claimTask({
       workerId: 'task-worker-1',
       taskNames: [task.name],
@@ -658,7 +655,7 @@ describe('workflow runtime coordinator', () => {
       workflows: [parentImplementation],
       workerId: 'parent-worker-1',
     })
-    const childRunId = (await client.get(run.id))?.childLinks[0]?.childRunId
+    const childRunId = (await client.get(run.id))?.children[0]?.childRunId
     expect(childRunId).toBeTypeOf('string')
 
     await client.cancel(childRunId!)
@@ -870,9 +867,8 @@ describe('workflow runtime coordinator', () => {
           ? {
               ...snapshot,
               nodes: [],
+              children: [],
               attempts: [],
-              childLinks: [],
-              mapItems: [],
             }
           : undefined
       },
@@ -927,8 +923,8 @@ describe('workflow runtime coordinator', () => {
     })
     const store = {
       ...runtime.store,
-      createAttempt: async () => {
-        throw new Error('store createAttempt failed')
+      ensureChildAttempt: async () => {
+        throw new Error('store ensureChildAttempt failed')
       },
     } satisfies WorkflowStore
 
@@ -946,10 +942,10 @@ describe('workflow runtime coordinator', () => {
           workflowName: workflow.name,
         },
       }),
-    ).rejects.toThrow('store createAttempt failed')
+    ).rejects.toThrow('store ensureChildAttempt failed')
 
     const snapshot = await runtime.store.loadRunSnapshot(run.id)
-    expect(snapshot?.run.status).toBe('queued')
+    expect(snapshot?.run.status).toBe('running')
     expect(snapshot?.run.error).toBeUndefined()
     expect(snapshot?.nodes[0]?.status).toBe('running')
     expect(snapshot?.nodes[0]?.error).toBeUndefined()
@@ -975,14 +971,14 @@ describe('workflow runtime coordinator', () => {
     let failed = false
     const failingStore = {
       ...runtime.store,
-      createAttempt: async (
-        ...args: Parameters<typeof runtime.store.createAttempt>
+      ensureChildAttempt: async (
+        ...args: Parameters<typeof runtime.store.ensureChildAttempt>
       ) => {
         if (!failed) {
           failed = true
           throw new Error('attempt insert failed')
         }
-        return runtime.store.createAttempt(...args)
+        return runtime.store.ensureChildAttempt(...args)
       },
     }
     const run = await runtime.store.createRun({
@@ -1223,7 +1219,7 @@ describe('workflow runtime coordinator', () => {
     })
 
     const snapshot = await runtime.store.loadRunSnapshot(run.id)
-    const childRunId = snapshot?.childLinks[0]?.childRunId
+    const childRunId = snapshot?.children[0]?.childRunId
     expect(childRunId).toBeTypeOf('string')
 
     const childSnapshot = await runtime.store.loadRunSnapshot(childRunId!)
@@ -1294,7 +1290,7 @@ describe('workflow runtime coordinator', () => {
 
     const snapshot = await runtime.store.loadRunSnapshot(run.id)
     expect(idempotencyCalls).toBe(1)
-    expect(snapshot?.run.status).toBe('queued')
+    expect(snapshot?.run.status).toBe('waiting')
     expect(snapshot?.nodes[0]?.status).toBe('waiting')
     expect(runtime.inspect().taskCommands).toHaveLength(1)
   })
@@ -1357,7 +1353,7 @@ describe('workflow runtime coordinator', () => {
     })
 
     const snapshot = await runtime.store.loadRunSnapshot(run.id)
-    const childRunId = snapshot?.childLinks[0]?.childRunId
+    const childRunId = snapshot?.children[0]?.childRunId
     expect(idempotencyCalls).toBe(1)
     expect(childRunId).toBeTypeOf('string')
     expect(snapshot?.nodes[0]?.status).toBe('waiting')
@@ -1406,13 +1402,18 @@ describe('workflow runtime coordinator', () => {
       nodeName: 'embedding',
       input: { text: 'alpha' },
     })
+    await runtime.store.ensureNodeChildren({
+      runId: run.id,
+      nodeName: 'embedding',
+      children: [{ childKey: '$self', kind: 'task' }],
+    })
     const child = await runtime.store.ensureChildRun({
-      identity: { runId: run.id, nodeName: 'embedding' },
+      runId: run.id,
+      nodeName: 'embedding',
+      childKey: '$self',
       childKind: 'task',
       childName: task.name,
       input: { text: 'alpha' },
-      parentRunId: run.id,
-      parentNodeName: 'embedding',
       rootRunId: run.rootRunId,
     })
     await runtime.store.createNode({
@@ -1425,9 +1426,15 @@ describe('workflow runtime coordinator', () => {
       nodeName: '$task',
       input: { text: 'alpha' },
     })
-    await runtime.store.ensureNodeAttempt({
-      identity: { runId: child.childRun.id, nodeName: '$task' },
-      kind: 'task',
+    await runtime.store.ensureNodeChildren({
+      runId: child.childRun.id,
+      nodeName: '$task',
+      children: [{ childKey: '$self', kind: 'task' }],
+    })
+    await runtime.store.ensureChildAttempt({
+      runId: child.childRun.id,
+      nodeName: '$task',
+      childKey: '$self',
       input: { text: 'alpha' },
     })
     const command = {
@@ -1670,12 +1677,12 @@ describe('workflow runtime coordinator', () => {
     const afterDispatch = await runtime.store.loadRunSnapshot(run.id)
     const activityCommands = runtime.inspect().activityCommands
     expect(afterDispatch?.nodes[0]?.selectedCase).toBe('normal')
-    expect(afterDispatch?.nodes[0]?.status).toBe('waiting')
+    expect(afterDispatch?.nodes[0]?.status).toBe('running')
     expect(afterDispatch?.attempts).toHaveLength(1)
-    expect(afterDispatch?.attempts[0]?.identity).toStrictEqual({
+    expect(afterDispatch?.attempts[0]).toMatchObject({
       runId: run.id,
       nodeName: 'content',
-      caseKey: 'normal',
+      childKey: 'case:normal',
     })
     expect(activityCommands).toHaveLength(1)
     expect(activityCommands[0]?.payload).toMatchObject({
@@ -1808,10 +1815,10 @@ describe('workflow runtime coordinator', () => {
     expect(selectCalls).toBe(1)
     expect(snapshot?.nodes[0]?.selectedCase).toBe('normal')
     expect(snapshot?.attempts).toHaveLength(1)
-    expect(snapshot?.attempts[0]?.identity).toStrictEqual({
+    expect(snapshot?.attempts[0]).toMatchObject({
       runId: run.id,
       nodeName: 'content',
-      caseKey: 'normal',
+      childKey: 'case:normal',
     })
     expect(activityCommands).toHaveLength(1)
     expect(activityCommands.map((item) => item.payload.attemptId)).toEqual([
@@ -1883,8 +1890,8 @@ describe('workflow runtime coordinator', () => {
     ).resolves.toStrictEqual({ status: 'processed' })
 
     const snapshot = await runtime.store.loadRunSnapshot(run.id)
-    expect(snapshot?.run.status).toBe('queued')
-    expect(snapshot?.nodes[0]?.status).toBe('waiting')
+    expect(snapshot?.run.status).toBe('running')
+    expect(snapshot?.nodes[0]?.status).toBe('running')
     expect(snapshot?.attempts[0]?.status).toBe('started')
     expect(runtime.inspect().activityCommands).toHaveLength(1)
   })
@@ -1963,9 +1970,13 @@ describe('workflow runtime coordinator', () => {
       }),
     ).resolves.toStrictEqual({ status: 'processed' })
 
+    // Attempt completion now settles the child row atomically, so a
+    // re-entering coordinator aggregates it into node/run completion instead
+    // of leaving the node parked; the throwing dispatcher proves there is
+    // still no redispatch.
     const snapshot = await runtime.store.loadRunSnapshot(run.id)
-    expect(snapshot?.run.status).toBe('queued')
-    expect(snapshot?.nodes[0]?.status).toBe('waiting')
+    expect(snapshot?.run.status).toBe('completed')
+    expect(snapshot?.nodes[0]?.status).toBe('completed')
     expect(snapshot?.attempts[0]?.status).toBe('completed')
   })
 
@@ -2177,21 +2188,24 @@ describe('workflow runtime coordinator', () => {
     expect(afterDispatch?.nodes[0]?.selectedCase).toBe('summary')
     expect(afterDispatch?.nodes[0]?.status).toBe('waiting')
     expect(afterDispatch?.attempts).toHaveLength(0)
-    expect(afterDispatch?.childLinks[0]?.identity).toStrictEqual({
+    expect(afterDispatch?.children[0]).toMatchObject({
       runId: run.id,
       nodeName: 'content',
-      caseKey: 'summary',
+      childKey: 'case:summary',
+      kind: 'task',
     })
-    expect(afterDispatch?.childLinks[0]).toMatchObject({
-      childKind: 'task',
-      childName: task.name,
+    const childRunId = afterDispatch!.children[0]!.childRunId!
+    const childRun = await runtime.store.loadRunSnapshot(childRunId)
+    expect(childRun?.run).toMatchObject({
+      kind: 'task',
+      name: task.name,
       taskName: task.name,
     })
-    const childRunId = afterDispatch!.childLinks[0]!.childRunId
     expect(taskCommands[0]?.payload).toMatchObject({
       kind: 'taskAttempt',
       taskName: task.name,
       runId: childRunId,
+      childKey: '$self',
       input: { scenario: 'alpha' },
     })
 
@@ -2296,10 +2310,14 @@ describe('workflow runtime coordinator', () => {
     expect(afterDispatch?.nodes[0]?.status).toBe('waiting')
     expect(afterDispatch?.attempts).toHaveLength(2)
     expect(
-      afterDispatch?.attempts.map((attempt) => attempt.identity),
+      afterDispatch?.attempts.map((attempt) => ({
+        runId: attempt.runId,
+        nodeName: attempt.nodeName,
+        childKey: attempt.childKey,
+      })),
     ).toStrictEqual([
-      { runId: run.id, nodeName: 'sections', memberKey: 'summary' },
-      { runId: run.id, nodeName: 'sections', memberKey: 'review' },
+      { runId: run.id, nodeName: 'sections', childKey: 'member:summary' },
+      { runId: run.id, nodeName: 'sections', childKey: 'member:review' },
     ])
     expect(
       runtime.inspect().activityCommands.map((item) => item.payload),
@@ -2309,6 +2327,7 @@ describe('workflow runtime coordinator', () => {
         activityName: 'sections.summary',
         runId: run.id,
         nodeName: 'sections',
+        childKey: 'member:summary',
         input: { scenario: 'alpha' },
       },
       {
@@ -2316,6 +2335,7 @@ describe('workflow runtime coordinator', () => {
         activityName: 'sections.review',
         runId: run.id,
         nodeName: 'sections',
+        childKey: 'member:review',
         input: { scenario: 'alpha' },
       },
     ])
@@ -2432,7 +2452,7 @@ describe('workflow runtime coordinator', () => {
 
     const snapshot = await runtime.store.loadRunSnapshot(run.id)
     expect(snapshot?.nodes[0]?.status).toBe('waiting')
-    expect(snapshot?.run.status).toBe('queued')
+    expect(snapshot?.run.status).toBe('running')
     expect(
       snapshot?.attempts.filter((attempt) => attempt.status === 'completed'),
     ).toHaveLength(1)
@@ -2522,22 +2542,23 @@ describe('workflow runtime coordinator', () => {
     const afterDispatch = await runtime.store.loadRunSnapshot(run.id)
     expect(afterDispatch?.nodes[0]?.status).toBe('waiting')
     expect(
-      afterDispatch?.attempts.map((attempt) => attempt.identity),
+      afterDispatch?.attempts.map((attempt) => ({
+        runId: attempt.runId,
+        nodeName: attempt.nodeName,
+        childKey: attempt.childKey,
+      })),
     ).toStrictEqual([
-      { runId: run.id, nodeName: 'sections', memberKey: 'summary' },
+      { runId: run.id, nodeName: 'sections', childKey: 'member:summary' },
     ])
     expect(
-      afterDispatch?.childLinks.map((link) => link.identity),
-    ).toStrictEqual([
-      { runId: run.id, nodeName: 'sections', memberKey: 'embedding' },
-      { runId: run.id, nodeName: 'sections', memberKey: 'child' },
-    ])
-    const embeddingRunId = afterDispatch!.childLinks.find(
-      (link) => link.childKind === 'task',
-    )!.childRunId
-    const childRunId = afterDispatch!.childLinks.find(
-      (link) => link.childKind === 'workflow',
-    )!.childRunId
+      afterDispatch?.children.map((child) => child.childKey),
+    ).toStrictEqual(['member:summary', 'member:embedding', 'member:child'])
+    const embeddingRunId = afterDispatch!.children.find(
+      (child) => child.kind === 'task',
+    )!.childRunId!
+    const childRunId = afterDispatch!.children.find(
+      (child) => child.kind === 'workflow',
+    )!.childRunId!
 
     const activityClaim = await runtime.attemptExecutor.claimActivity({
       workerId: 'activity-worker-1',
@@ -2663,8 +2684,9 @@ describe('workflow runtime coordinator', () => {
       workerId: 'coordinator-1',
       command,
     })
-    const childRunId = (await runtime.store.loadRunSnapshot(run.id))
-      ?.childLinks[0]?.childRunId
+    const childRunId = (
+      await runtime.store.loadRunSnapshot(run.id)
+    )?.children.find((child) => child.kind === 'workflow')?.childRunId
     expect(childRunId).toBeTypeOf('string')
 
     const claimed = await runtime.attemptExecutor.claimActivity({
@@ -2775,13 +2797,20 @@ describe('workflow runtime coordinator', () => {
     const waiting = await runtime.store.loadRunSnapshot(run.id)
     expect(itemCalls).toBe(1)
     expect(waiting?.nodes[0]?.status).toBe('waiting')
-    expect(waiting?.mapItems.map((item) => item.item)).toStrictEqual([
+    expect(waiting?.children.map((child) => child.item)).toStrictEqual([
       { id: 'a', text: 'alpha' },
       { id: 'b', text: 'beta' },
     ])
-    expect(waiting?.childLinks.map((link) => link.identity)).toStrictEqual([
-      { runId: run.id, nodeName: 'embeddings', itemIndex: 0 },
-      { runId: run.id, nodeName: 'embeddings', itemIndex: 1 },
+    expect(
+      waiting?.children.map((child) => ({
+        runId: child.runId,
+        nodeName: child.nodeName,
+        childKey: child.childKey,
+        ordinal: child.ordinal,
+      })),
+    ).toStrictEqual([
+      { runId: run.id, nodeName: 'embeddings', childKey: 'item:0', ordinal: 0 },
+      { runId: run.id, nodeName: 'embeddings', childKey: 'item:1', ordinal: 1 },
     ])
     expect(
       runtime.inspect().taskCommands.map((item) => item.payload.input),
@@ -2816,7 +2845,7 @@ describe('workflow runtime coordinator', () => {
     })
 
     const final = await runtime.store.loadRunSnapshot(run.id)
-    const runIds = waiting!.childLinks.map((link) => link.childRunId)
+    const runIds = waiting!.children.map((child) => child.childRunId)
     expect(final?.nodes[0]?.status).toBe('completed')
     expect(final?.nodes[0]?.output).toStrictEqual({
       items: [
@@ -2892,8 +2921,8 @@ describe('workflow runtime coordinator', () => {
       command,
     })
     const waiting = await runtime.store.loadRunSnapshot(run.id)
-    const failedRunId = waiting!.childLinks[0]!.childRunId
-    const siblingRunId = waiting!.childLinks[1]!.childRunId
+    const failedRunId = waiting!.children[0]!.childRunId!
+    const siblingRunId = waiting!.children[1]!.childRunId!
     expect(runtime.inspect().taskCommands).toHaveLength(2)
 
     const claimed = await runtime.attemptExecutor.claimTask({
@@ -2983,12 +3012,14 @@ describe('workflow runtime coordinator', () => {
 
     const firstBatch = await runtime.store.loadRunSnapshot(run.id)
     expect(firstBatch?.nodes[0]?.status).toBe('waiting')
-    expect(firstBatch?.childLinks.map((link) => link.itemIndex)).toStrictEqual([
-      0, 1,
-    ])
+    expect(
+      firstBatch?.children
+        .filter((child) => child.childRunId !== undefined)
+        .map((child) => child.ordinal),
+    ).toStrictEqual([0, 1])
 
     await runtime.store.completeRun({
-      runId: firstBatch!.childLinks[0]!.childRunId,
+      runId: firstBatch!.children[0]!.childRunId!,
       output: { id: 'embedding:alpha' },
     })
 
@@ -3004,16 +3035,18 @@ describe('workflow runtime coordinator', () => {
 
     const secondBatch = await runtime.store.loadRunSnapshot(run.id)
     expect(secondBatch?.nodes[0]?.status).toBe('waiting')
-    expect(secondBatch?.childLinks.map((link) => link.itemIndex)).toStrictEqual(
-      [0, 1, 2],
-    )
+    expect(
+      secondBatch?.children
+        .filter((child) => child.childRunId !== undefined)
+        .map((child) => child.ordinal),
+    ).toStrictEqual([0, 1, 2])
 
     await runtime.store.completeRun({
-      runId: secondBatch!.childLinks[1]!.childRunId,
+      runId: secondBatch!.children[1]!.childRunId!,
       output: { id: 'embedding:beta' },
     })
     await runtime.store.completeRun({
-      runId: secondBatch!.childLinks[2]!.childRunId,
+      runId: secondBatch!.children[2]!.childRunId!,
       output: { id: 'embedding:gamma' },
     })
 
@@ -3028,7 +3061,7 @@ describe('workflow runtime coordinator', () => {
     })
 
     const final = await runtime.store.loadRunSnapshot(run.id)
-    const runIds = final!.childLinks.map((link) => link.childRunId)
+    const runIds = final!.children.map((child) => child.childRunId)
     expect(final?.nodes[0]?.status).toBe('completed')
     expect(final?.nodes[0]?.output).toStrictEqual({
       items: [
@@ -3142,7 +3175,7 @@ describe('workflow runtime coordinator', () => {
     })
 
     const final = await runtime.store.loadRunSnapshot(run.id)
-    const runIds = final!.childLinks.map((link) => link.childRunId)
+    const runIds = final!.children.map((child) => child.childRunId)
     expect(final?.nodes[0]?.status).toBe('completed')
     expect(final?.nodes[0]?.output).toMatchObject({
       items: [
@@ -3217,7 +3250,7 @@ describe('workflow runtime coordinator', () => {
     })
 
     const final = await runtime.store.loadRunSnapshot(run.id)
-    const runIds = final!.childLinks.map((link) => link.childRunId)
+    const runIds = final!.children.map((child) => child.childRunId)
     expect(runtime.inspect().taskCommands).toHaveLength(2)
     expect(final?.nodes[0]?.status).toBe('completed')
     expect(final?.nodes[0]?.output).toStrictEqual({
@@ -3279,9 +3312,11 @@ describe('workflow runtime coordinator', () => {
 
     const firstBatch = await runtime.store.loadRunSnapshot(command.runId)
     expect(firstBatch?.nodes[0]?.status).toBe('waiting')
-    expect(firstBatch?.childLinks.map((link) => link.itemIndex)).toStrictEqual([
-      0,
-    ])
+    expect(
+      firstBatch?.children
+        .filter((child) => child.childRunId !== undefined)
+        .map((child) => child.ordinal),
+    ).toStrictEqual([0])
     expect(
       runtime
         .inspect()
@@ -3301,7 +3336,7 @@ describe('workflow runtime coordinator', () => {
     })
 
     const final = await runtime.store.loadRunSnapshot(command.runId)
-    const runIds = final!.childLinks.map((link) => link.childRunId)
+    const runIds = final!.children.map((child) => child.childRunId)
     expect(final?.nodes[0]?.status).toBe('completed')
     expect(final?.nodes[0]?.output).toStrictEqual({
       items: [
@@ -3380,11 +3415,28 @@ describe('workflow runtime coordinator', () => {
     const waiting = await runtime.store.loadRunSnapshot(parentRun.id)
     expect(itemCalls).toBe(1)
     expect(waiting?.nodes[0]?.status).toBe('waiting')
-    expect(waiting?.childLinks.map((link) => link.identity)).toStrictEqual([
-      { runId: parentRun.id, nodeName: 'children', itemIndex: 0 },
-      { runId: parentRun.id, nodeName: 'children', itemIndex: 1 },
+    expect(
+      waiting?.children.map((child) => ({
+        runId: child.runId,
+        nodeName: child.nodeName,
+        childKey: child.childKey,
+        ordinal: child.ordinal,
+      })),
+    ).toStrictEqual([
+      {
+        runId: parentRun.id,
+        nodeName: 'children',
+        childKey: 'item:0',
+        ordinal: 0,
+      },
+      {
+        runId: parentRun.id,
+        nodeName: 'children',
+        childKey: 'item:1',
+        ordinal: 1,
+      },
     ])
-    const childRunIds = waiting!.childLinks.map((link) => link.childRunId)
+    const childRunIds = waiting!.children.map((child) => child.childRunId!)
 
     for (const childRunId of childRunIds) {
       await continueWorkflowRun({
@@ -3487,12 +3539,14 @@ describe('workflow runtime coordinator', () => {
 
     const firstBatch = await runtime.store.loadRunSnapshot(parentRun.id)
     expect(firstBatch?.nodes[0]?.status).toBe('waiting')
-    expect(firstBatch?.childLinks.map((link) => link.itemIndex)).toStrictEqual([
-      0, 1,
-    ])
+    expect(
+      firstBatch?.children
+        .filter((child) => child.childRunId !== undefined)
+        .map((child) => child.ordinal),
+    ).toStrictEqual([0, 1])
 
     await runtime.store.completeRun({
-      runId: firstBatch!.childLinks[0]!.childRunId,
+      runId: firstBatch!.children[0]!.childRunId!,
       output: { id: 'child:alpha' },
     })
 
@@ -3508,16 +3562,18 @@ describe('workflow runtime coordinator', () => {
 
     const secondBatch = await runtime.store.loadRunSnapshot(parentRun.id)
     expect(secondBatch?.nodes[0]?.status).toBe('waiting')
-    expect(secondBatch?.childLinks.map((link) => link.itemIndex)).toStrictEqual(
-      [0, 1, 2],
-    )
+    expect(
+      secondBatch?.children
+        .filter((child) => child.childRunId !== undefined)
+        .map((child) => child.ordinal),
+    ).toStrictEqual([0, 1, 2])
 
     await runtime.store.completeRun({
-      runId: secondBatch!.childLinks[1]!.childRunId,
+      runId: secondBatch!.children[1]!.childRunId!,
       output: { id: 'child:beta' },
     })
     await runtime.store.completeRun({
-      runId: secondBatch!.childLinks[2]!.childRunId,
+      runId: secondBatch!.children[2]!.childRunId!,
       output: { id: 'child:gamma' },
     })
 
@@ -3532,7 +3588,7 @@ describe('workflow runtime coordinator', () => {
     })
 
     const final = await runtime.store.loadRunSnapshot(parentRun.id)
-    const runIds = final!.childLinks.map((link) => link.childRunId)
+    const runIds = final!.children.map((child) => child.childRunId)
     expect(final?.nodes[0]?.status).toBe('completed')
     expect(final?.nodes[0]?.output).toStrictEqual({
       items: [
@@ -3608,7 +3664,7 @@ describe('workflow runtime coordinator', () => {
     })
 
     const waiting = await runtime.store.loadRunSnapshot(parentRun.id)
-    const childRunIds = waiting!.childLinks.map((link) => link.childRunId)
+    const childRunIds = waiting!.children.map((child) => child.childRunId)
     await runtime.store.completeRun({
       runId: childRunIds[0]!,
       output: { id: 'child:alpha' },
@@ -3703,7 +3759,7 @@ describe('workflow runtime coordinator', () => {
     })
 
     const final = await runtime.store.loadRunSnapshot(run.id)
-    const runIds = final!.childLinks.map((link) => link.childRunId)
+    const runIds = final!.children.map((child) => child.childRunId)
     expect(
       runtime
         .inspect()
@@ -3771,9 +3827,11 @@ describe('workflow runtime coordinator', () => {
 
     const firstBatch = await runtime.store.loadRunSnapshot(command.runId)
     expect(firstBatch?.nodes[0]?.status).toBe('waiting')
-    expect(firstBatch?.childLinks.map((link) => link.itemIndex)).toStrictEqual([
-      0,
-    ])
+    expect(
+      firstBatch?.children
+        .filter((child) => child.childRunId !== undefined)
+        .map((child) => child.ordinal),
+    ).toStrictEqual([0])
     expect(
       runtime
         .inspect()
@@ -3793,7 +3851,7 @@ describe('workflow runtime coordinator', () => {
     })
 
     const final = await runtime.store.loadRunSnapshot(command.runId)
-    const runIds = final!.childLinks.map((link) => link.childRunId)
+    const runIds = final!.children.map((child) => child.childRunId)
     expect(final?.nodes[0]?.status).toBe('completed')
     expect(final?.nodes[0]?.output).toStrictEqual({
       items: [
@@ -3871,14 +3929,14 @@ describe('workflow runtime coordinator', () => {
     })
 
     const snapshot = await runtime.store.loadRunSnapshot(run.id)
-    const childRunId = snapshot!.childLinks[0]!.childRunId
+    const childRunId = snapshot!.children[0]!.childRunId!
     const childSnapshot = await runtime.store.loadRunSnapshot(childRunId)
     const taskCommands = runtime.inspect().taskCommands
     const attemptId = taskCommands[0]?.payload.attemptId
     expect(mapCalls).toBe(1)
     expect(snapshot?.nodes[0]?.input).toStrictEqual({ scenario: 'alpha-1' })
     expect(snapshot?.attempts).toHaveLength(0)
-    expect(snapshot?.childLinks).toHaveLength(1)
+    expect(snapshot?.children).toHaveLength(1)
     expect(childSnapshot?.run.input).toStrictEqual({ scenario: 'alpha-1' })
     expect(childSnapshot?.attempts).toHaveLength(1)
     expect(childSnapshot?.attempts[0]?.input).toStrictEqual({
@@ -3957,9 +4015,9 @@ describe('workflow runtime coordinator', () => {
     ).resolves.toStrictEqual({ status: 'processed' })
 
     const snapshot = await runtime.store.loadRunSnapshot(run.id)
-    const childRunId = snapshot!.childLinks[0]!.childRunId
+    const childRunId = snapshot!.children[0]!.childRunId!
     const childSnapshot = await runtime.store.loadRunSnapshot(childRunId)
-    expect(snapshot?.run.status).toBe('queued')
+    expect(snapshot?.run.status).toBe('waiting')
     expect(snapshot?.nodes[0]?.status).toBe('waiting')
     expect(snapshot?.attempts).toHaveLength(0)
     expect(childSnapshot?.run.status).toBe('queued')
@@ -4025,10 +4083,13 @@ describe('workflow runtime coordinator', () => {
     })
 
     const parentWaiting = await runtime.store.loadRunSnapshot(parentRun.id)
-    const link = parentWaiting!.childLinks[0]!
+    const child = parentWaiting!.children[0]!
     expect(parentWaiting?.nodes[0]?.status).toBe('waiting')
-    expect(link.caseKey).toBe('child')
-    expect(link.workflowName).toBe(childWorkflow.name)
+    expect(child.childKey).toBe('case:child')
+    const linkedChildRun = await runtime.store.loadRunSnapshot(
+      child.childRunId!,
+    )
+    expect(linkedChildRun?.run.workflowName).toBe(childWorkflow.name)
 
     await continueWorkflowRun({
       store: runtime.store,
@@ -4039,7 +4100,7 @@ describe('workflow runtime coordinator', () => {
       workerId: 'child-coordinator',
       command: {
         kind: 'continueRun',
-        runId: link.childRunId,
+        runId: child.childRunId!,
         workflowName: childWorkflow.name,
       },
     })
@@ -4492,9 +4553,9 @@ describe('workflow runtime coordinator', () => {
     })
 
     const snapshot = await runtime.store.loadRunSnapshot(parentRun.id)
-    const childLink = snapshot?.childLinks[0]
+    const childLink = snapshot?.children[0]
     expect(snapshot?.nodes[0]?.selectedCase).toBe('child')
-    expect(snapshot?.childLinks).toHaveLength(1)
+    expect(snapshot?.children).toHaveLength(1)
     expect(
       runtime
         .inspect()
@@ -4568,7 +4629,7 @@ describe('workflow runtime coordinator', () => {
     })
 
     const started = await runtime.store.loadRunSnapshot(parentRun.id)
-    const childRunId = started!.childLinks[0]!.childRunId
+    const childRunId = started!.children[0]!.childRunId!
     let throwParentEnqueue = true
     const runCoordinationExecutor = {
       ...runtime.runCoordinationExecutor,
@@ -4691,10 +4752,10 @@ describe('workflow runtime coordinator', () => {
     })
 
     const snapshot = await runtime.store.loadRunSnapshot(parentRun.id)
-    const childLink = snapshot?.childLinks[0]
+    const childLink = snapshot?.children[0]
     expect(mapCalls).toBe(1)
     expect(snapshot?.nodes[0]).toHaveProperty('input', undefined)
-    expect(snapshot?.childLinks).toHaveLength(1)
+    expect(snapshot?.children).toHaveLength(1)
     expect(runtime.inspect().continueRunCommands).toStrictEqual([
       {
         id: expect.any(String),
@@ -4982,6 +5043,7 @@ describe('workflow runtime coordinator', () => {
     const secondAttempt = await runtime.store.createAttempt({
       runId: run.id,
       nodeName: 'content',
+      childKey: '$self',
       input: { scenario: 'beta' },
     })
 
@@ -5000,7 +5062,7 @@ describe('workflow runtime coordinator', () => {
     const snapshot = await runtime.store.loadRunSnapshot(run.id)
     expect(handlerCalls).toBe(0)
     expect(snapshot?.nodes[0]?.status).toBe('running')
-    expect(snapshot?.nodes[0]?.currentAttemptId).toBe(secondAttempt.id)
+    expect(snapshot?.children[0]?.currentAttemptId).toBe(secondAttempt.id)
     expect(snapshot?.nodes[0]?.output).toBeUndefined()
     expect(runtime.inspect().activityCommands).toHaveLength(0)
     expect(runtime.inspect().continueRunCommands).toHaveLength(0)
@@ -5084,9 +5146,15 @@ describe('workflow runtime coordinator', () => {
       name: 'content',
       kind: 'activity',
     })
+    await runtime.store.ensureNodeChildren({
+      runId: run.id,
+      nodeName: 'content',
+      children: [{ childKey: '$self', kind: 'activity' }],
+    })
     const attempt = await runtime.store.createAttempt({
       runId: run.id,
       nodeName: 'content',
+      childKey: '$self',
       input: { scenario: 'alpha' },
     })
     await runtime.attemptExecutor.dispatchActivity({
@@ -5095,6 +5163,7 @@ describe('workflow runtime coordinator', () => {
       activityName: 'content',
       runId: run.id,
       nodeName: 'content',
+      childKey: '$self',
       attemptId: attempt.id,
       leaseToken: attempt.leaseToken!,
       input: { scenario: 'alpha' },
@@ -5169,7 +5238,7 @@ describe('workflow runtime coordinator', () => {
     ).rejects.toThrow('queue down')
 
     const snapshot = await runtime.store.loadRunSnapshot(run.id)
-    expect(snapshot?.run.status).toBe('queued')
+    expect(snapshot?.run.status).toBe('running')
     expect(snapshot?.nodes[0]?.status).toBe('running')
     expect(snapshot?.attempts[0]?.status).toBe('started')
   })
@@ -5352,18 +5421,17 @@ describe('workflow runtime coordinator', () => {
     })
 
     const parentWaiting = await runtime.store.loadRunSnapshot(run.id)
-    const childLink = parentWaiting?.childLinks[0]
+    const childLink = parentWaiting?.children[0]
     expect(parentWaiting?.nodes[0]?.status).toBe('waiting')
     expect(parentWaiting?.attempts).toHaveLength(0)
     expect(childLink).toMatchObject({
-      childKind: 'task',
-      childName: embeddingTask.name,
-      taskName: embeddingTask.name,
-      parentRunId: run.id,
-      parentNodeName: 'embedding',
+      kind: 'task',
+      runId: run.id,
+      nodeName: 'embedding',
+      childKey: '$self',
     })
 
-    const childRunId = childLink!.childRunId
+    const childRunId = childLink!.childRunId!
     const childWaiting = await runtime.store.loadRunSnapshot(childRunId)
     expect(childWaiting?.run).toMatchObject({
       id: childRunId,
@@ -5507,11 +5575,11 @@ describe('workflow runtime coordinator', () => {
     await runtime.attemptExecutor.release(claimed!)
 
     const parentSnapshot = await runtime.store.loadRunSnapshot(run.id)
-    const childRunId = parentSnapshot!.childLinks[0]!.childRunId
+    const childRunId = parentSnapshot!.children[0]!.childRunId!
     const childSnapshot = await runtime.store.loadRunSnapshot(childRunId)
     expect(handlerCalls).toBe(0)
     expect(parentSnapshot?.nodes[0]?.status).toBe('waiting')
-    expect(childSnapshot?.nodes[0]?.status).toBe('waiting')
+    expect(childSnapshot?.nodes[0]?.status).toBe('running')
     expect(childSnapshot?.attempts[0]?.status).toBe('started')
     expect(runtime.inspect().taskCommands).toHaveLength(0)
     expect(runtime.inspect().continueRunCommands).toHaveLength(0)
@@ -5579,11 +5647,11 @@ describe('workflow runtime coordinator', () => {
     })
 
     const parentSnapshot = await runtime.store.loadRunSnapshot(run.id)
-    const childRunId = parentSnapshot!.childLinks[0]!.childRunId
+    const childRunId = parentSnapshot!.children[0]!.childRunId!
     const childSnapshot = await runtime.store.loadRunSnapshot(childRunId)
     expect(taskCommand.taskName).toBe(embeddingTask.name)
     expect(parentSnapshot?.nodes[0]?.status).toBe('waiting')
-    expect(childSnapshot?.nodes[0]?.status).toBe('waiting')
+    expect(childSnapshot?.nodes[0]?.status).toBe('running')
     expect(childSnapshot?.attempts[0]?.status).toBe('started')
     expect(runtime.inspect().taskCommands).toHaveLength(1)
     expect(runtime.inspect().continueRunCommands).toHaveLength(0)
@@ -5661,7 +5729,7 @@ describe('workflow runtime coordinator', () => {
     await runtime.attemptExecutor.release(claimed!)
 
     const parentSnapshot = await runtime.store.loadRunSnapshot(run.id)
-    const childRunId = parentSnapshot!.childLinks[0]!.childRunId
+    const childRunId = parentSnapshot!.children[0]!.childRunId!
     const childSnapshot = await runtime.store.loadRunSnapshot(childRunId)
     expect(handlerCalls).toBe(0)
     expect(parentSnapshot?.nodes[0]?.status).toBe('waiting')
@@ -5732,18 +5800,24 @@ describe('workflow runtime coordinator', () => {
     })
     expect(claimed).not.toBeNull()
 
-    await runtime.store.completeCurrentAttempt({
-      attemptId: claimed!.command.attemptId,
-      leaseToken: claimed!.command.leaseToken,
-      output: { vector: [5] },
-    })
     const parentWaiting = await runtime.store.loadRunSnapshot(run.id)
-    const childRunId = parentWaiting!.childLinks[0]!.childRunId
+    const childRunId = parentWaiting!.children[0]!.childRunId!
     const secondAttempt = await runtime.store.createAttempt({
       runId: childRunId,
       nodeName: '$task',
+      childKey: '$self',
       input: { text: 'beta' },
     })
+
+    // Current-attempt fencing: the superseded claimed attempt can no longer
+    // complete its child row.
+    await expect(
+      runtime.store.completeCurrentAttempt({
+        attemptId: claimed!.command.attemptId,
+        leaseToken: claimed!.command.leaseToken,
+        output: { vector: [5] },
+      }),
+    ).resolves.toBeUndefined()
 
     await runTaskAttempt({
       store: runtime.store,
@@ -5762,8 +5836,9 @@ describe('workflow runtime coordinator', () => {
     expect(handlerCalls).toBe(0)
     expect(parentSnapshot?.nodes[0]?.status).toBe('waiting')
     expect(childSnapshot?.nodes[0]?.status).toBe('running')
-    expect(childSnapshot?.nodes[0]?.currentAttemptId).toBe(secondAttempt.id)
-    expect(childSnapshot?.nodes[0]?.output).toBeUndefined()
+    expect(childSnapshot?.children[0]?.currentAttemptId).toBe(secondAttempt.id)
+    expect(childSnapshot?.children[0]?.output).toBeUndefined()
+    expect(childSnapshot?.run.status).toBe('queued')
     expect(runtime.inspect().continueRunCommands).toHaveLength(0)
   })
 
@@ -5817,9 +5892,12 @@ describe('workflow runtime coordinator', () => {
     })
 
     const afterStart = await runtime.store.loadRunSnapshot(parentRun.id)
-    const childLink = afterStart?.childLinks[0]
+    const childLink = afterStart?.children[0]
     expect(afterStart?.nodes[0]?.status).toBe('waiting')
-    expect(childLink?.workflowName).toBe(childWorkflow.name)
+    const startedChildRun = await runtime.store.loadRunSnapshot(
+      childLink!.childRunId!,
+    )
+    expect(startedChildRun?.run.workflowName).toBe(childWorkflow.name)
     expect(runtime.inspect().continueRunCommands).toStrictEqual([
       {
         id: expect.any(String),
@@ -5840,7 +5918,7 @@ describe('workflow runtime coordinator', () => {
       workerId: 'child-coordinator',
       command: {
         kind: 'continueRun',
-        runId: childLink!.childRunId,
+        runId: childLink!.childRunId!,
         workflowName: childWorkflow.name,
       },
     })
@@ -5871,7 +5949,7 @@ describe('workflow runtime coordinator', () => {
       workerId: 'child-coordinator',
       command: {
         kind: 'continueRun',
-        runId: childLink!.childRunId,
+        runId: childLink!.childRunId!,
         workflowName: childWorkflow.name,
       },
     })
@@ -5959,7 +6037,7 @@ describe('workflow runtime coordinator', () => {
     })
 
     const started = await runtime.store.loadRunSnapshot(parentRun.id)
-    const childRunId = started!.childLinks[0]!.childRunId
+    const childRunId = started!.children[0]!.childRunId!
     await continueWorkflowRun({
       store: runtime.store,
       runCoordinationExecutor: runtime.runCoordinationExecutor,
@@ -6001,6 +6079,7 @@ describe('workflow runtime coordinator', () => {
           activityName: 'summary',
           runId: parentRun.id,
           nodeName: 'summary',
+          childKey: '$self',
           attemptId: expect.any(String),
           leaseToken: expect.any(String),
           input: { text: 'alpha' },
@@ -6058,7 +6137,7 @@ describe('workflow runtime coordinator', () => {
     })
 
     const snapshot = await runtime.store.loadRunSnapshot(parentRun.id)
-    expect(snapshot?.childLinks).toHaveLength(1)
+    expect(snapshot?.children).toHaveLength(1)
     expect(
       runtime
         .inspect()
@@ -6123,10 +6202,10 @@ describe('workflow runtime coordinator', () => {
     })
 
     const snapshot = await runtime.store.loadRunSnapshot(parentRun.id)
-    const childLink = snapshot?.childLinks[0]
+    const childLink = snapshot?.children[0]
     expect(mapCalls).toBe(1)
     expect(snapshot?.nodes[0]).toHaveProperty('input', undefined)
-    expect(snapshot?.childLinks).toHaveLength(1)
+    expect(snapshot?.children).toHaveLength(1)
     expect(runtime.inspect().continueRunCommands).toStrictEqual([
       {
         id: expect.any(String),
@@ -6206,8 +6285,8 @@ describe('workflow runtime coordinator', () => {
     })
 
     const snapshot = await runtime.store.loadRunSnapshot(parentRun.id)
-    const childLink = snapshot?.childLinks[0]
-    expect(snapshot?.childLinks).toHaveLength(1)
+    const childLink = snapshot?.children[0]
+    expect(snapshot?.children).toHaveLength(1)
     expect(
       runtime
         .inspect()
@@ -6267,7 +6346,7 @@ describe('workflow runtime coordinator', () => {
     })
 
     const started = await runtime.store.loadRunSnapshot(parentRun.id)
-    const childRunId = started!.childLinks[0]!.childRunId
+    const childRunId = started!.children[0]!.childRunId!
     let throwParentEnqueue = true
     const runCoordinationExecutor = {
       ...runtime.runCoordinationExecutor,
@@ -6361,7 +6440,7 @@ describe('workflow runtime coordinator', () => {
     })
 
     const started = await runtime.store.loadRunSnapshot(parentRun.id)
-    const childRunId = started!.childLinks[0]!.childRunId
+    const childRunId = started!.children[0]!.childRunId!
     await runtime.store.failRun({
       runId: childRunId,
       error: new Error('child failed'),
@@ -6407,20 +6486,24 @@ describe('workflow runtime coordinator', () => {
       workflowName: parentWorkflow.name,
       input: { text: 'alpha' },
     })
-    const staleLink = {
-      identity: { runId: parentRun.id, nodeName: 'child' },
-      parentRunId: parentRun.id,
-      parentNodeName: 'child',
+    const staleChild = {
+      runId: parentRun.id,
+      nodeName: 'child',
+      childKey: '$self',
+      kind: 'workflow' as const,
+      status: 'running' as const,
+      ordinal: 0,
       childRunId: 'missing-child-run',
-      childKind: 'workflow' as const,
-      childName: childWorkflow.name,
-      workflowName: childWorkflow.name,
+      attemptCount: 0,
+      version: 1,
+      createdAt: new Date(),
+      updatedAt: new Date(),
     }
     const store = {
       ...runtime.store,
       loadNodeChildren: async (params) =>
         params.runId === parentRun.id && params.nodeName === 'child'
-          ? { attempts: [], childLinks: [staleLink], mapItems: [] }
+          ? { children: [staleChild], attempts: [] }
           : runtime.store.loadNodeChildren(params),
     } satisfies typeof runtime.store
 
@@ -6468,21 +6551,24 @@ describe('workflow runtime coordinator', () => {
       workflowName: parentWorkflow.name,
       input: { text: 'alpha' },
     })
-    const staleLink = {
-      identity: { runId: parentRun.id, nodeName: 'child' },
-      parentRunId: parentRun.id,
-      parentNodeName: 'child',
+    const staleChild = {
+      runId: parentRun.id,
+      nodeName: 'child',
+      childKey: '$self',
+      kind: 'task' as const,
+      status: 'running' as const,
+      ordinal: 0,
       childRunId: 'missing-child-run',
-      childKind: 'task' as const,
-      childName: childTask.name,
-      workflowName: childTask.name,
-      taskName: childTask.name,
+      attemptCount: 0,
+      version: 1,
+      createdAt: new Date(),
+      updatedAt: new Date(),
     }
     const store = {
       ...runtime.store,
       loadNodeChildren: async (params) =>
         params.runId === parentRun.id && params.nodeName === 'child'
-          ? { attempts: [], childLinks: [staleLink], mapItems: [] }
+          ? { children: [staleChild], attempts: [] }
           : runtime.store.loadNodeChildren(params),
     } satisfies typeof runtime.store
 
@@ -6558,7 +6644,7 @@ describe('workflow runtime coordinator', () => {
     })
 
     const started = await runtime.store.loadRunSnapshot(parentRun.id)
-    const childRunId = started!.childLinks[0]!.childRunId
+    const childRunId = started!.children[0]!.childRunId!
     await continueWorkflowRun({
       store: runtime.store,
       runCoordinationExecutor: runtime.runCoordinationExecutor,

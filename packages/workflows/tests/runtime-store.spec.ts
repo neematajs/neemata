@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
-import { createInMemoryWorkflowRuntime } from '../src/runtime/index.ts'
+import {
+  createInMemoryWorkflowRuntime,
+  itemChildKey,
+  memberChildKey,
+  SELF_CHILD_KEY,
+} from '../src/runtime/index.ts'
 
 const waitForReleaseBackoff = () =>
   new Promise((resolve) => setTimeout(resolve, 60))
@@ -80,14 +85,23 @@ describe('in-memory workflow store', () => {
       nodeName: 'content',
       input: { scenario: 'a' },
     })
-    const firstAttempt = await runtime.store.createAttempt({
+    await runtime.store.ensureNodeChildren({
       runId: run.id,
       nodeName: 'content',
-      input: { scenario: 'a' },
+      children: [{ childKey: SELF_CHILD_KEY, kind: 'activity' }],
     })
+    const firstAttempt = (
+      await runtime.store.ensureChildAttempt({
+        runId: run.id,
+        nodeName: 'content',
+        childKey: SELF_CHILD_KEY,
+        input: { scenario: 'a' },
+      })
+    ).attempt
     const secondAttempt = await runtime.store.createAttempt({
       runId: run.id,
       nodeName: 'content',
+      childKey: SELF_CHILD_KEY,
       input: { scenario: 'a' },
     })
 
@@ -117,9 +131,10 @@ describe('in-memory workflow store', () => {
       error: new Error('double fail'),
     })
 
-    expect(sameNode.attemptCount).toBe(0)
+    expect(sameNode.status).toBe('pending')
     expect(firstAttempt.status).toBe('started')
     expect(firstAttempt.leaseToken).toEqual(expect.any(String))
+    expect(firstAttempt.attemptNumber).toBe(1)
     expect(secondAttempt.attemptNumber).toBe(2)
     expect(stale).toBeUndefined()
     expect(wrongToken).toBeUndefined()
@@ -131,12 +146,24 @@ describe('in-memory workflow store', () => {
     expect(snapshot?.nodes).toHaveLength(1)
     expect(snapshot?.nodes[0]?.input).toStrictEqual({ scenario: 'a' })
     expect(snapshot?.nodes[0]?.status).toBe('running')
-    expect(snapshot?.nodes[0]?.currentAttemptId).toBe(secondAttempt.id)
-    expect(snapshot?.nodes[0]?.attemptCount).toBe(2)
     expect(snapshot?.attempts).toHaveLength(2)
     expect(snapshot?.attempts[1]?.output).toStrictEqual({ text: 'fresh' })
-    expect(snapshot?.childLinks).toStrictEqual([])
-    expect(snapshot?.mapItems).toStrictEqual([])
+    expect(snapshot?.children).toHaveLength(1)
+    expect(snapshot?.children[0]?.currentAttemptId).toBe(secondAttempt.id)
+    expect(snapshot?.children[0]?.attemptCount).toBe(2)
+    expect(snapshot?.children[0]?.status).toBe('completed')
+    expect(snapshot?.children[0]?.output).toStrictEqual({ text: 'fresh' })
+
+    await expect(
+      runtime.store.createAttempt({
+        runId: run.id,
+        nodeName: 'content',
+        childKey: SELF_CHILD_KEY,
+        input: { scenario: 'a' },
+      }),
+    ).rejects.toThrow(
+      `Terminal node child [${run.id}.content.${SELF_CHILD_KEY}] cannot create attempt`,
+    )
   })
 
   it('ignores stale failures and treats terminal node and run updates as no-ops', async () => {
@@ -150,14 +177,23 @@ describe('in-memory workflow store', () => {
       name: 'content',
       kind: 'activity',
     })
-    const firstAttempt = await runtime.store.createAttempt({
+    await runtime.store.ensureNodeChildren({
       runId: run.id,
       nodeName: 'content',
-      input: { scenario: 'a' },
+      children: [{ childKey: SELF_CHILD_KEY, kind: 'activity' }],
     })
+    const firstAttempt = (
+      await runtime.store.ensureChildAttempt({
+        runId: run.id,
+        nodeName: 'content',
+        childKey: SELF_CHILD_KEY,
+        input: { scenario: 'a' },
+      })
+    ).attempt
     const secondAttempt = await runtime.store.createAttempt({
       runId: run.id,
       nodeName: 'content',
+      childKey: SELF_CHILD_KEY,
       input: { scenario: 'a' },
     })
 
@@ -207,6 +243,10 @@ describe('in-memory workflow store', () => {
     expect(completedRun?.output).toStrictEqual({ ok: true })
     expect(failedRun?.status).toBe('completed')
     expect(failedRun?.output).toStrictEqual({ ok: true })
+
+    // failCurrentAttempt touches only the attempt; the child stays retryable.
+    const snapshot = await runtime.store.loadRunSnapshot(run.id)
+    expect(snapshot?.children[0]?.status).toBe('running')
   })
 
   it('records timed-out current attempts and ignores stale timeout writes', async () => {
@@ -220,14 +260,23 @@ describe('in-memory workflow store', () => {
       name: 'content',
       kind: 'activity',
     })
-    const firstAttempt = await runtime.store.createAttempt({
+    await runtime.store.ensureNodeChildren({
       runId: run.id,
       nodeName: 'content',
-      input: { scenario: 'a' },
+      children: [{ childKey: SELF_CHILD_KEY, kind: 'activity' }],
     })
+    const firstAttempt = (
+      await runtime.store.ensureChildAttempt({
+        runId: run.id,
+        nodeName: 'content',
+        childKey: SELF_CHILD_KEY,
+        input: { scenario: 'a' },
+      })
+    ).attempt
     const secondAttempt = await runtime.store.createAttempt({
       runId: run.id,
       nodeName: 'content',
+      childKey: SELF_CHILD_KEY,
       input: { scenario: 'a' },
     })
 
@@ -259,7 +308,7 @@ describe('in-memory workflow store', () => {
     expect(failedAfterTimeout).toBeUndefined()
   })
 
-  it('requires an existing parent node before ensuring a node attempt', async () => {
+  it('requires an existing node before children and an existing child before attempts', async () => {
     const runtime = createInMemoryWorkflowRuntime()
     const run = await runtime.store.createRun({
       workflowName: 'case-generation',
@@ -267,15 +316,42 @@ describe('in-memory workflow store', () => {
     })
 
     await expect(
-      runtime.store.ensureNodeAttempt({
-        identity: { runId: run.id, nodeName: 'content' },
-        kind: 'activity',
-        input: { scenario: 'a' },
+      runtime.store.ensureNodeChildren({
+        runId: run.id,
+        nodeName: 'content',
+        children: [{ childKey: SELF_CHILD_KEY, kind: 'activity' }],
       }),
     ).rejects.toThrow(`Missing node [${run.id}.content]`)
+
+    await runtime.store.createNode({
+      runId: run.id,
+      name: 'content',
+      kind: 'activity',
+    })
+
+    await expect(
+      runtime.store.ensureChildAttempt({
+        runId: run.id,
+        nodeName: 'content',
+        childKey: SELF_CHILD_KEY,
+        input: { scenario: 'a' },
+      }),
+    ).rejects.toThrow(
+      `Missing node child [${run.id}.content.${SELF_CHILD_KEY}]`,
+    )
+    await expect(
+      runtime.store.createAttempt({
+        runId: run.id,
+        nodeName: 'content',
+        childKey: SELF_CHILD_KEY,
+        input: { scenario: 'a' },
+      }),
+    ).rejects.toThrow(
+      `Missing node child [${run.id}.content.${SELF_CHILD_KEY}]`,
+    )
   })
 
-  it('ensures node attempts idempotently by structured identity', async () => {
+  it('ensures node children and first attempts idempotently by child key', async () => {
     const runtime = createInMemoryWorkflowRuntime()
     const run = await runtime.store.createRun({
       workflowName: 'case-generation',
@@ -286,33 +362,46 @@ describe('in-memory workflow store', () => {
       name: 'content',
       kind: 'activity',
     })
-    const identity = {
+    const childKey = memberChildKey('member-a')
+
+    const firstEnsure = await runtime.store.ensureNodeChildren({
       runId: run.id,
       nodeName: 'content',
-      caseKey: 'case-a',
-      memberKey: 'member-a',
-    }
-
-    const first = await runtime.store.ensureNodeAttempt({
-      identity,
-      kind: 'activity',
+      children: [{ childKey, kind: 'activity' }],
+    })
+    const secondEnsure = await runtime.store.ensureNodeChildren({
+      runId: run.id,
+      nodeName: 'content',
+      children: [{ childKey, kind: 'activity' }],
+    })
+    const first = await runtime.store.ensureChildAttempt({
+      runId: run.id,
+      nodeName: 'content',
+      childKey,
       input: { scenario: 'a' },
     })
-    const second = await runtime.store.ensureNodeAttempt({
-      identity,
-      kind: 'activity',
+    const second = await runtime.store.ensureChildAttempt({
+      runId: run.id,
+      nodeName: 'content',
+      childKey,
       input: { scenario: 'a' },
     })
     const snapshot = await runtime.store.loadRunSnapshot(run.id)
 
+    expect(firstEnsure.created).toBe(true)
+    expect(secondEnsure.created).toBe(false)
+    expect(secondEnsure.children).toStrictEqual(firstEnsure.children)
     expect(first.created).toBe(true)
     expect(second.created).toBe(false)
     expect(second.attempt.id).toBe(first.attempt.id)
-    expect(first.attempt.identity).toStrictEqual(identity)
-    expect(snapshot?.nodes[0]?.status).toBe('waiting')
+    expect(first.attempt.childKey).toBe(childKey)
+    expect(first.attempt.attemptNumber).toBe(1)
+    expect(snapshot?.children[0]?.status).toBe('running')
+    expect(snapshot?.children[0]?.currentAttemptId).toBe(first.attempt.id)
+    expect(snapshot?.nodes[0]?.status).toBe('running')
   })
 
-  it('rejects primitive node attempt kind mismatches', async () => {
+  it('rejects conflicting node child sets', async () => {
     const runtime = createInMemoryWorkflowRuntime()
     const run = await runtime.store.createRun({
       workflowName: 'case-generation',
@@ -323,46 +412,28 @@ describe('in-memory workflow store', () => {
       name: 'content',
       kind: 'activity',
     })
-
-    await expect(
-      runtime.store.ensureNodeAttempt({
-        identity: { runId: run.id, nodeName: 'content' },
-        kind: 'task',
-        input: { scenario: 'a' },
-      }),
-    ).rejects.toThrow(
-      `Node [${run.id}.content] kind [activity] cannot create [task] attempt`,
-    )
-  })
-
-  it('rejects reused semantic attempt identities with primitive kind mismatches', async () => {
-    const runtime = createInMemoryWorkflowRuntime()
-    const run = await runtime.store.createRun({
-      workflowName: 'case-generation',
-      input: { scenario: 'a' },
-    })
-    await runtime.store.createNode({
+    await runtime.store.ensureNodeChildren({
       runId: run.id,
-      name: 'content',
-      kind: 'activity',
-    })
-    const identity = { runId: run.id, nodeName: 'content' }
-
-    await runtime.store.ensureNodeAttempt({
-      identity,
-      kind: 'activity',
-      input: { scenario: 'a' },
+      nodeName: 'content',
+      children: [{ childKey: SELF_CHILD_KEY, kind: 'activity' }],
     })
 
+    // Same key with another primitive kind is a definition conflict.
     await expect(
-      runtime.store.ensureNodeAttempt({
-        identity,
-        kind: 'task',
-        input: { scenario: 'a' },
+      runtime.store.ensureNodeChildren({
+        runId: run.id,
+        nodeName: 'content',
+        children: [{ childKey: SELF_CHILD_KEY, kind: 'task' }],
       }),
-    ).rejects.toThrow(
-      `Node [${run.id}.content] kind [activity] cannot create [task] attempt`,
-    )
+    ).rejects.toThrow(`Conflicting node children [${run.id}.content]`)
+    // A different child set for the same node is a definition conflict too.
+    await expect(
+      runtime.store.ensureNodeChildren({
+        runId: run.id,
+        nodeName: 'content',
+        children: [{ childKey: memberChildKey('other'), kind: 'activity' }],
+      }),
+    ).rejects.toThrow(`Conflicting node children [${run.id}.content]`)
   })
 
   it('persists selected node case idempotently', async () => {
@@ -449,33 +520,126 @@ describe('in-memory workflow store', () => {
     expect(secondWait?.updatedAt).toBe(firstWait?.updatedAt)
   })
 
-  it('ensures child workflow runs idempotently by identity', async () => {
+  it('numbers attempts per child so parallel members retry independently', async () => {
+    const runtime = createInMemoryWorkflowRuntime()
+    const run = await runtime.store.createRun({
+      workflowName: 'fanout-workflow',
+      input: {},
+    })
+    await runtime.store.createNode({
+      runId: run.id,
+      name: 'fanout',
+      kind: 'parallel',
+    })
+    await runtime.store.ensureNodeChildren({
+      runId: run.id,
+      nodeName: 'fanout',
+      children: [
+        { childKey: memberChildKey('a'), kind: 'activity' },
+        { childKey: memberChildKey('b'), kind: 'activity' },
+      ],
+    })
+
+    const memberA = await runtime.store.ensureChildAttempt({
+      runId: run.id,
+      nodeName: 'fanout',
+      childKey: memberChildKey('a'),
+      input: 'a',
+    })
+    const memberB = await runtime.store.ensureChildAttempt({
+      runId: run.id,
+      nodeName: 'fanout',
+      childKey: memberChildKey('b'),
+      input: 'b',
+    })
+    await runtime.store.failCurrentAttempt({
+      attemptId: memberA.attempt.id,
+      leaseToken: memberA.attempt.leaseToken!,
+      error: new Error('first try failed'),
+    })
+    const memberARetry = await runtime.store.createAttempt({
+      runId: run.id,
+      nodeName: 'fanout',
+      childKey: memberChildKey('a'),
+      input: 'a',
+    })
+
+    // The stale first attempt can no longer settle member a.
+    const staleComplete = await runtime.store.completeCurrentAttempt({
+      attemptId: memberA.attempt.id,
+      leaseToken: memberA.attempt.leaseToken!,
+      output: 'stale',
+    })
+
+    expect(memberA.attempt.attemptNumber).toBe(1)
+    expect(memberB.attempt.attemptNumber).toBe(1)
+    expect(memberARetry.attemptNumber).toBe(2)
+    expect(staleComplete).toBeUndefined()
+
+    const { children } = await runtime.store.loadNodeChildren({
+      runId: run.id,
+      nodeName: 'fanout',
+    })
+    const childA = children.find(
+      (child) => child.childKey === memberChildKey('a'),
+    )
+    const childB = children.find(
+      (child) => child.childKey === memberChildKey('b'),
+    )
+    expect(childA?.attemptCount).toBe(2)
+    expect(childA?.currentAttemptId).toBe(memberARetry.id)
+    expect(childB?.attemptCount).toBe(1)
+  })
+
+  it('ensures child runs idempotently and links them to the child record', async () => {
     const runtime = createInMemoryWorkflowRuntime()
     const run = await runtime.store.createRun({
       workflowName: 'parent',
       input: { scenario: 'a' },
     })
+    await runtime.store.createNode({
+      runId: run.id,
+      name: 'child',
+      kind: 'workflow',
+    })
+    await runtime.store.ensureNodeChildren({
+      runId: run.id,
+      nodeName: 'child',
+      children: [{ childKey: SELF_CHILD_KEY, kind: 'workflow' }],
+    })
     const params = {
-      identity: { runId: run.id, nodeName: 'child', memberKey: 'a' },
-      workflowName: 'child',
+      runId: run.id,
+      nodeName: 'child',
+      childKey: SELF_CHILD_KEY,
+      childKind: 'workflow' as const,
+      childName: 'child',
       input: { scenario: 'a' },
-      parentRunId: run.id,
-      parentNodeName: 'child',
       rootRunId: run.rootRunId,
     }
 
-    const first = await runtime.store.ensureChildWorkflowRun(params)
-    const second = await runtime.store.ensureChildWorkflowRun(params)
+    const first = await runtime.store.ensureChildRun(params)
+    const second = await runtime.store.ensureChildRun(params)
 
     expect(first.created).toBe(true)
     expect(second.created).toBe(false)
-    expect(second.childRun).toBe(first.childRun)
-    expect(second.childLink).toBe(first.childLink)
+    expect(second.childRun.id).toBe(first.childRun.id)
+    expect(second.child.childRunId).toBe(first.childRun.id)
+    expect(first.child.status).toBe('running')
     expect(first.childRun.parentRunId).toBe(run.id)
+    expect(first.childRun.parentNodeName).toBe('child')
     expect(first.childRun.rootRunId).toBe(run.rootRunId)
+
+    await expect(
+      runtime.store.ensureChildRun({
+        ...params,
+        input: { scenario: 'different' },
+      }),
+    ).rejects.toThrow(
+      `Conflicting child run [${run.id}.child.${SELF_CHILD_KEY}]`,
+    )
   })
 
-  it('rejects child workflow identities that do not match the parent node', async () => {
+  it('rejects child runs whose child record was never ensured', async () => {
     const runtime = createInMemoryWorkflowRuntime()
     const run = await runtime.store.createRun({
       workflowName: 'parent',
@@ -483,94 +647,168 @@ describe('in-memory workflow store', () => {
     })
 
     await expect(
-      runtime.store.ensureChildWorkflowRun({
-        identity: { runId: run.id, nodeName: 'other' },
-        workflowName: 'child',
+      runtime.store.ensureChildRun({
+        runId: run.id,
+        nodeName: 'child',
+        childKey: SELF_CHILD_KEY,
+        childKind: 'workflow',
+        childName: 'child',
         input: { scenario: 'a' },
-        parentRunId: run.id,
-        parentNodeName: 'child',
         rootRunId: run.rootRunId,
       }),
-    ).rejects.toThrow(
-      `Child identity does not match parent node [${run.id}.child]`,
-    )
+    ).rejects.toThrow(`Missing node child [${run.id}.child.${SELF_CHILD_KEY}]`)
   })
 
-  it('ensures map items once and rejects conflicting shapes', async () => {
+  it('ensures map item children once and rejects conflicting shapes', async () => {
     const runtime = createInMemoryWorkflowRuntime()
     const run = await runtime.store.createRun({
       workflowName: 'case-generation',
       input: { scenario: 'a' },
     })
-
-    const first = await runtime.store.ensureMapItems({
+    await runtime.store.createNode({
       runId: run.id,
-      nodeName: 'items',
-      items: [{ id: 1 }, { id: 2 }],
-      keys: ['one', 'two'],
+      name: 'items',
+      kind: 'mapTask',
     })
-    const same = await runtime.store.ensureMapItems({
+
+    const first = await runtime.store.ensureNodeChildren({
       runId: run.id,
       nodeName: 'items',
-      items: [{ id: 1 }, { id: 2 }],
-      keys: ['one', 'two'],
+      children: [
+        {
+          childKey: itemChildKey(0),
+          kind: 'task',
+          ordinal: 0,
+          itemKey: 'one',
+          item: { id: 1 },
+        },
+        {
+          childKey: itemChildKey(1),
+          kind: 'task',
+          ordinal: 1,
+          itemKey: 'two',
+          item: { id: 2 },
+        },
+      ],
+    })
+    const same = await runtime.store.ensureNodeChildren({
+      runId: run.id,
+      nodeName: 'items',
+      children: [
+        {
+          childKey: itemChildKey(0),
+          kind: 'task',
+          ordinal: 0,
+          itemKey: 'one',
+          item: { id: 1 },
+        },
+        {
+          childKey: itemChildKey(1),
+          kind: 'task',
+          ordinal: 1,
+          itemKey: 'two',
+          item: { id: 2 },
+        },
+      ],
     })
 
     expect(first.created).toBe(true)
     expect(same.created).toBe(false)
-    expect(same.items).toStrictEqual(first.items)
+    expect(same.children).toStrictEqual(first.children)
+    expect(first.children.map((child) => child.ordinal)).toStrictEqual([0, 1])
+    // Fewer items than the stored set is a conflict.
     await expect(
-      runtime.store.ensureMapItems({
+      runtime.store.ensureNodeChildren({
         runId: run.id,
         nodeName: 'items',
-        items: [{ id: 1 }],
-        keys: ['one'],
+        children: [
+          {
+            childKey: itemChildKey(0),
+            kind: 'task',
+            ordinal: 0,
+            itemKey: 'one',
+            item: { id: 1 },
+          },
+        ],
       }),
-    ).rejects.toThrow('Conflicting map items for [')
+    ).rejects.toThrow('Conflicting node children [')
+    // Same set with a different item key is a conflict.
     await expect(
-      runtime.store.ensureMapItems({
+      runtime.store.ensureNodeChildren({
         runId: run.id,
         nodeName: 'items',
-        items: [{ id: 1 }, { id: 2 }],
-        keys: ['one', 'other'],
+        children: [
+          {
+            childKey: itemChildKey(0),
+            kind: 'task',
+            ordinal: 0,
+            itemKey: 'one',
+            item: { id: 1 },
+          },
+          {
+            childKey: itemChildKey(1),
+            kind: 'task',
+            ordinal: 1,
+            itemKey: 'other',
+            item: { id: 2 },
+          },
+        ],
       }),
-    ).rejects.toThrow('Conflicting map items for [')
+    ).rejects.toThrow('Conflicting node children [')
   })
 
-  it('treats terminal map item updates as no-ops', async () => {
+  it('treats terminal node child updates as no-ops', async () => {
     const runtime = createInMemoryWorkflowRuntime()
     const run = await runtime.store.createRun({
       workflowName: 'case-generation',
       input: { scenario: 'a' },
     })
-    await runtime.store.ensureMapItems({
+    await runtime.store.createNode({
+      runId: run.id,
+      name: 'items',
+      kind: 'mapTask',
+    })
+    await runtime.store.ensureNodeChildren({
       runId: run.id,
       nodeName: 'items',
-      items: [{ id: 1 }, { id: 2 }],
+      children: [
+        {
+          childKey: itemChildKey(0),
+          kind: 'task',
+          ordinal: 0,
+          item: { id: 1 },
+        },
+        {
+          childKey: itemChildKey(1),
+          kind: 'task',
+          ordinal: 1,
+          item: { id: 2 },
+        },
+      ],
     })
 
-    const completed = await runtime.store.completeMapItem({
+    const completed = await runtime.store.completeNodeChild({
       runId: run.id,
       nodeName: 'items',
-      itemIndex: 0,
+      childKey: itemChildKey(0),
       output: { value: 'done' },
     })
-    const failedAfterComplete = await runtime.store.failMapItem({
+    const failedAfterComplete = await runtime.store.failNodeChild({
       runId: run.id,
       nodeName: 'items',
-      itemIndex: 0,
+      childKey: itemChildKey(0),
       error: new Error('too late'),
     })
-    const failed = await runtime.store.failMapItem({
+    const failed = await runtime.store.failNodeChild({
       runId: run.id,
       nodeName: 'items',
-      itemIndex: 1,
+      childKey: itemChildKey(1),
       error: new Error('failed first'),
     })
-    const completedAfterFail = await runtime.store.completeMapItem({
+    const completedAfterFail = await runtime.store.completeNodeChild({
       runId: run.id,
       nodeName: 'items',
-      itemIndex: 1,
+      childKey: itemChildKey(1),
       output: { value: 'too late' },
     })
 
@@ -583,58 +821,77 @@ describe('in-memory workflow store', () => {
     expect(completedAfterFail?.output).toBeUndefined()
   })
 
+  it('transitions run status between running and waiting truthfully', async () => {
+    const runtime = createInMemoryWorkflowRuntime()
+    const run = await runtime.store.createRun({
+      workflowName: 'case-generation',
+      input: { scenario: 'a' },
+    })
+
+    // queued → waiting is not a legal transition; the run stays queued.
+    const waitingBeforeStart = await runtime.store.markRunWaiting({
+      runId: run.id,
+    })
+    const running = await runtime.store.markRunRunning({ runId: run.id })
+    const runningAgain = await runtime.store.markRunRunning({ runId: run.id })
+    const waiting = await runtime.store.markRunWaiting({ runId: run.id })
+    const resumed = await runtime.store.markRunRunning({ runId: run.id })
+
+    expect(waitingBeforeStart?.status).toBe('queued')
+    expect(running?.status).toBe('running')
+    expect(running?.version).toBe(run.version + 1)
+    expect(runningAgain?.status).toBe('running')
+    expect(runningAgain?.version).toBe(running?.version)
+    expect(waiting?.status).toBe('waiting')
+    expect(resumed?.status).toBe('running')
+
+    await runtime.store.completeRun({ runId: run.id, output: { ok: true } })
+    const runningAfterTerminal = await runtime.store.markRunRunning({
+      runId: run.id,
+    })
+    const waitingAfterTerminal = await runtime.store.markRunWaiting({
+      runId: run.id,
+    })
+    expect(runningAfterTerminal?.status).toBe('completed')
+    expect(waitingAfterTerminal?.status).toBe('completed')
+  })
+
   it('loads child state for one node only', async () => {
     const runtime = createInMemoryWorkflowRuntime()
     const run = await runtime.store.createRun({
       workflowName: 'parent',
       input: { scenario: 'a' },
     })
-    await runtime.store.createNode({
-      runId: run.id,
-      name: 'alpha',
-      kind: 'activity',
-    })
-    await runtime.store.createNode({
-      runId: run.id,
-      name: 'beta',
-      kind: 'activity',
-    })
-    await runtime.store.ensureNodeAttempt({
-      identity: { runId: run.id, nodeName: 'alpha' },
-      kind: 'activity',
-      input: 'alpha',
-    })
-    await runtime.store.ensureNodeAttempt({
-      identity: { runId: run.id, nodeName: 'beta' },
-      kind: 'activity',
-      input: 'beta',
-    })
-    await runtime.store.ensureChildWorkflowRun({
-      identity: { runId: run.id, nodeName: 'alpha', memberKey: 'child' },
-      workflowName: 'child',
-      input: 'alpha',
-      parentRunId: run.id,
-      parentNodeName: 'alpha',
-      rootRunId: run.rootRunId,
-    })
-    await runtime.store.ensureChildWorkflowRun({
-      identity: { runId: run.id, nodeName: 'beta', memberKey: 'child' },
-      workflowName: 'child',
-      input: 'beta',
-      parentRunId: run.id,
-      parentNodeName: 'beta',
-      rootRunId: run.rootRunId,
-    })
-    await runtime.store.ensureMapItems({
-      runId: run.id,
-      nodeName: 'alpha',
-      items: ['a'],
-    })
-    await runtime.store.ensureMapItems({
-      runId: run.id,
-      nodeName: 'beta',
-      items: ['b'],
-    })
+    for (const nodeName of ['alpha', 'beta']) {
+      await runtime.store.createNode({
+        runId: run.id,
+        name: nodeName,
+        kind: 'parallel',
+      })
+      await runtime.store.ensureNodeChildren({
+        runId: run.id,
+        nodeName,
+        children: [
+          { childKey: memberChildKey('work'), kind: 'activity', ordinal: 0 },
+          { childKey: memberChildKey('sub'), kind: 'workflow', ordinal: 1 },
+        ],
+      })
+      await runtime.store.ensureChildAttempt({
+        runId: run.id,
+        nodeName,
+        childKey: memberChildKey('work'),
+        input: nodeName,
+      })
+      await runtime.store.ensureChildRun({
+        runId: run.id,
+        nodeName,
+        childKey: memberChildKey('sub'),
+        childKind: 'workflow',
+        childName: 'child',
+        input: nodeName,
+        rootRunId: run.rootRunId,
+      })
+    }
 
     const alphaChildren = await runtime.store.loadNodeChildren({
       runId: run.id,
@@ -643,10 +900,14 @@ describe('in-memory workflow store', () => {
 
     expect(alphaChildren.attempts).toHaveLength(1)
     expect(alphaChildren.attempts[0]?.nodeName).toBe('alpha')
-    expect(alphaChildren.childLinks).toHaveLength(1)
-    expect(alphaChildren.childLinks[0]?.parentNodeName).toBe('alpha')
-    expect(alphaChildren.mapItems).toHaveLength(1)
-    expect(alphaChildren.mapItems[0]?.nodeName).toBe('alpha')
+    expect(alphaChildren.children).toHaveLength(2)
+    expect(
+      alphaChildren.children.every((child) => child.nodeName === 'alpha'),
+    ).toBe(true)
+    const subChild = alphaChildren.children.find(
+      (child) => child.childKey === memberChildKey('sub'),
+    )
+    expect(subChild?.childRunId).toEqual(expect.any(String))
   })
 
   it('queues, claims, acknowledges, and releases run and attempt commands', async () => {
@@ -662,6 +923,7 @@ describe('in-memory workflow store', () => {
       activityName: 'writeContent',
       runId: 'run-1',
       nodeName: 'content',
+      childKey: SELF_CHILD_KEY,
       attemptId: 'attempt-1',
       leaseToken: 'activity-attempt-lease',
       input: { scenario: 'a' },
@@ -672,6 +934,7 @@ describe('in-memory workflow store', () => {
       taskName: 'writeContent',
       runId: 'run-1',
       nodeName: 'content',
+      childKey: SELF_CHILD_KEY,
       attemptId: 'attempt-2',
       leaseToken: 'task-lease',
       input: { scenario: 'a' },

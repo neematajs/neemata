@@ -11,12 +11,21 @@ export type RuntimeDeps = {
   readonly attemptExecutor: AttemptExecutor
 }
 
+/**
+ * What an advance pass left behind, so the coordinator can persist a truthful
+ * run status: 'local' — attempt/coordination commands for this run are pending
+ * or executing (run stays `running`); 'parked' — blocked on child runs or
+ * timers with nothing local to execute (run becomes `waiting`); 'terminal' —
+ * a sink already moved the run to a terminal status.
+ */
+export type AdvanceOutcome = 'local' | 'parked' | 'terminal'
+
 export type AdvanceCtx = RuntimeDeps & {
   readonly workflow: WorkflowImplementation
   readonly workflowCtx: DependencyContext<any>
   readonly run: StoredRun
   readonly outputs: Record<string, unknown>
-  readonly advance: (ctx: AdvanceCtx) => Promise<void>
+  readonly advance: (ctx: AdvanceCtx) => Promise<AdvanceOutcome>
 }
 
 export class WorkflowUserCallbackError extends Error {

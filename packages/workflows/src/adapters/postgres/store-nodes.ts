@@ -1,4 +1,8 @@
-import type { StoredNode, StoredRun } from '../../runtime/state.ts'
+import type {
+  StoredNode,
+  StoredNodeChild,
+  StoredRun,
+} from '../../runtime/state.ts'
 import type { WorkflowStore } from '../../runtime/store.ts'
 import type { WorkflowPostgresConnection } from './connection.ts'
 import { toStoredError } from '../../runtime/errors.ts'
@@ -6,7 +10,17 @@ import {
   isTerminalNodeStatus,
   isTerminalRunStatus,
 } from '../../runtime/status.ts'
-import { id, json, many, mapAttempt, mapNode, mapRun, one } from './sql.ts'
+import {
+  id,
+  json,
+  many,
+  mapAttempt,
+  mapNode,
+  mapRun,
+  nodeStatusSourcesSql,
+  one,
+  runStatusSourcesSql,
+} from './sql.ts'
 
 type PostgresWorkflowNodeStoreContext = {
   readonly db: WorkflowPostgresConnection
@@ -23,6 +37,8 @@ type PostgresWorkflowNodeStore = Pick<
   | 'timeoutCurrentAttempt'
   | 'completeNode'
   | 'failNode'
+  | 'markRunRunning'
+  | 'markRunWaiting'
   | 'completeRun'
   | 'failRun'
   | 'requestRunCancellation'
@@ -31,10 +47,53 @@ type PostgresWorkflowNodeStore = Pick<
   | 'cancelNonTerminalRunNodes'
 >
 
+type AttemptRow = {
+  readonly run_id: string
+  readonly node_name: string
+  readonly child_key: string
+}
+
 export const createPostgresWorkflowNodeStore = (
   ctx: PostgresWorkflowNodeStoreContext,
 ): PostgresWorkflowNodeStore => {
   const { db, ready } = ctx
+
+  /**
+   * Uniform current-attempt fencing: an attempt may only settle while its
+   * child record still points at it and the child is non-terminal.
+   */
+  const loadFencedAttempt = async (attemptId: string, leaseToken: string) => {
+    const attempt = await one(
+      db,
+      'SELECT * FROM workflow_attempts WHERE id = $1',
+      [attemptId],
+    )
+    if (
+      !attempt ||
+      attempt.lease_token !== leaseToken ||
+      attempt.status !== 'started'
+    ) {
+      return undefined
+    }
+    const row = attempt as AttemptRow
+    const child = await one(
+      db,
+      `
+      SELECT *
+      FROM workflow_node_children
+      WHERE run_id = $1 AND node_name = $2 AND child_key = $3
+    `,
+      [row.run_id, row.node_name, row.child_key],
+    )
+    if (
+      !child ||
+      child.current_attempt_id !== attemptId ||
+      isTerminalNodeStatus(child.status as StoredNodeChild['status'])
+    ) {
+      return undefined
+    }
+    return attempt
+  }
 
   return {
     async createNode(input) {
@@ -44,9 +103,9 @@ export const createPostgresWorkflowNodeStore = (
         db,
         `
         INSERT INTO workflow_nodes (
-          run_id, name, kind, status, attempt_count, version, created_at, updated_at
+          run_id, name, kind, status, version, created_at, updated_at
         )
-        VALUES ($1, $2, $3, 'pending', 0, 1, $4, $4)
+        VALUES ($1, $2, $3, 'pending', 1, $4, $4)
         ON CONFLICT (run_id, name) DO UPDATE SET name = workflow_nodes.name
         RETURNING *
       `,
@@ -65,7 +124,7 @@ export const createPostgresWorkflowNodeStore = (
             version = version + 1,
             updated_at = now()
         WHERE run_id = $1 AND name = $2
-          AND status NOT IN ('completed', 'failed', 'cancelled')
+          AND status IN (${nodeStatusSourcesSql('running', { self: true })})
         RETURNING *
       `,
         [runId, nodeName, json(input)],
@@ -82,13 +141,24 @@ export const createPostgresWorkflowNodeStore = (
     async createAttempt(input) {
       await ready
       return db.transaction(async (tx) => {
-        const node = await one(
+        const child = await one(
           tx,
-          'SELECT * FROM workflow_nodes WHERE run_id = $1 AND name = $2',
-          [input.runId, input.nodeName],
+          `
+          SELECT *
+          FROM workflow_node_children
+          WHERE run_id = $1 AND node_name = $2 AND child_key = $3
+        `,
+          [input.runId, input.nodeName, input.childKey],
         )
-        if (!node) {
-          throw new Error(`Missing node [${input.runId}.${input.nodeName}]`)
+        if (!child) {
+          throw new Error(
+            `Missing node child [${input.runId}.${input.nodeName}.${input.childKey}]`,
+          )
+        }
+        if (isTerminalNodeStatus(child.status as StoredNodeChild['status'])) {
+          throw new Error(
+            `Terminal node child [${input.runId}.${input.nodeName}.${input.childKey}] cannot create attempt`,
+          )
         }
 
         const attemptId = id()
@@ -97,11 +167,11 @@ export const createPostgresWorkflowNodeStore = (
           tx,
           `
           INSERT INTO workflow_attempts (
-            id, run_id, node_name, status, lease_token, attempt_number,
-            input, idempotency_key, dispatched_at
+            id, run_id, node_name, child_key, status, lease_token,
+            attempt_number, input, idempotency_key, dispatched_at
           )
           VALUES (
-            $1, $2, $3, 'started', $4, $5, $6::jsonb, $7::jsonb, now()
+            $1, $2, $3, $4, 'started', $5, $6, $7::jsonb, $8::jsonb, now()
           )
           RETURNING *
         `,
@@ -109,100 +179,97 @@ export const createPostgresWorkflowNodeStore = (
             attemptId,
             input.runId,
             input.nodeName,
+            input.childKey,
             leaseToken,
-            (node.attempt_count as number) + 1,
+            (child.attempt_count as number) + 1,
             json(input.input),
             input.idempotencyKey ? json(input.idempotencyKey) : null,
           ],
         )
-        const updatedNode = await one(
+        const updatedChild = await one(
           tx,
           `
-          UPDATE workflow_nodes
-          SET status = 'running',
-              current_attempt_id = $3,
+          UPDATE workflow_node_children
+          SET current_attempt_id = $4,
               attempt_count = attempt_count + 1,
+              status = 'running',
               version = version + 1,
               updated_at = now()
-          WHERE run_id = $1 AND name = $2
-            AND status NOT IN ('completed', 'failed', 'cancelled')
+          WHERE run_id = $1 AND node_name = $2 AND child_key = $3
+            AND status IN (${nodeStatusSourcesSql('running', { self: true })})
           RETURNING *
         `,
-          [input.runId, input.nodeName, attemptId],
+          [input.runId, input.nodeName, input.childKey, attemptId],
         )
-        if (!updatedNode) {
+        if (!updatedChild) {
           throw new Error(
-            `Terminal node [${input.runId}.${input.nodeName}] cannot create attempt`,
+            `Terminal node child [${input.runId}.${input.nodeName}.${input.childKey}] cannot create attempt`,
           )
         }
+        // Aggregate hint only: retrying a child means the node has local work
+        // again, but never fail the retry when the node cannot move.
+        await tx.query(
+          `
+          UPDATE workflow_nodes
+          SET status = 'running', version = version + 1, updated_at = now()
+          WHERE run_id = $1 AND name = $2
+            AND status IN (${nodeStatusSourcesSql('running', { self: true })})
+        `,
+          [input.runId, input.nodeName],
+        )
         return mapAttempt(attempt!)
       })
     },
     async completeCurrentAttempt({ attemptId, leaseToken, output }) {
       await ready
-      const attempt = await one(
-        db,
-        'SELECT * FROM workflow_attempts WHERE id = $1',
-        [attemptId],
-      )
-      if (
-        !attempt ||
-        attempt.lease_token !== leaseToken ||
-        attempt.status !== 'started'
-      ) {
-        return undefined
-      }
-      const node = await one(
-        db,
-        'SELECT * FROM workflow_nodes WHERE run_id = $1 AND name = $2',
-        [attempt.run_id, attempt.node_name],
-      )
-      if (
-        !node ||
-        isTerminalNodeStatus(node.status as StoredNode['status']) ||
-        (node.kind !== 'parallel' && node.current_attempt_id !== attemptId)
-      ) {
-        return undefined
-      }
+      const attempt = await loadFencedAttempt(attemptId, leaseToken)
+      if (!attempt) return undefined
+      const { run_id, node_name, child_key } = attempt as AttemptRow
 
-      const row = await one(
-        db,
-        `
-        UPDATE workflow_attempts
-        SET status = 'completed', output = $3::jsonb, completed_at = now()
-        WHERE id = $1 AND lease_token = $2 AND status = 'started'
-        RETURNING *
-      `,
-        [attemptId, leaseToken, json(output)],
-      )
-      return row ? mapAttempt(row) : undefined
+      // The pre-check above is only a fast path; the fence must hold at write
+      // time, so the child update re-checks it and a miss rolls back the
+      // attempt update — attempt and child settle atomically or not at all.
+      const rolledBack = Symbol('stale-attempt-fence')
+      try {
+        return await db.transaction(async (tx) => {
+          const row = await one(
+            tx,
+            `
+            UPDATE workflow_attempts
+            SET status = 'completed', output = $3::jsonb, completed_at = now()
+            WHERE id = $1 AND lease_token = $2 AND status = 'started'
+            RETURNING *
+          `,
+            [attemptId, leaseToken, json(output)],
+          )
+          if (!row) return undefined
+          const child = await one(
+            tx,
+            `
+            UPDATE workflow_node_children
+            SET status = 'completed',
+                output = $5::jsonb,
+                version = version + 1,
+                updated_at = now()
+            WHERE run_id = $1 AND node_name = $2 AND child_key = $3
+              AND current_attempt_id = $4
+              AND status IN (${nodeStatusSourcesSql('completed')})
+            RETURNING *
+          `,
+            [run_id, node_name, child_key, attemptId, json(output)],
+          )
+          if (!child) throw rolledBack
+          return mapAttempt(row)
+        })
+      } catch (error) {
+        if (error === rolledBack) return undefined
+        throw error
+      }
     },
     async failCurrentAttempt({ attemptId, leaseToken, error }) {
       await ready
-      const attempt = await one(
-        db,
-        'SELECT * FROM workflow_attempts WHERE id = $1',
-        [attemptId],
-      )
-      if (
-        !attempt ||
-        attempt.lease_token !== leaseToken ||
-        attempt.status !== 'started'
-      ) {
-        return undefined
-      }
-      const node = await one(
-        db,
-        'SELECT * FROM workflow_nodes WHERE run_id = $1 AND name = $2',
-        [attempt.run_id, attempt.node_name],
-      )
-      if (
-        !node ||
-        isTerminalNodeStatus(node.status as StoredNode['status']) ||
-        (node.kind !== 'parallel' && node.current_attempt_id !== attemptId)
-      ) {
-        return undefined
-      }
+      const attempt = await loadFencedAttempt(attemptId, leaseToken)
+      if (!attempt) return undefined
 
       const row = await one(
         db,
@@ -218,30 +285,8 @@ export const createPostgresWorkflowNodeStore = (
     },
     async timeoutCurrentAttempt({ attemptId, leaseToken, error }) {
       await ready
-      const attempt = await one(
-        db,
-        'SELECT * FROM workflow_attempts WHERE id = $1',
-        [attemptId],
-      )
-      if (
-        !attempt ||
-        attempt.lease_token !== leaseToken ||
-        attempt.status !== 'started'
-      ) {
-        return undefined
-      }
-      const node = await one(
-        db,
-        'SELECT * FROM workflow_nodes WHERE run_id = $1 AND name = $2',
-        [attempt.run_id, attempt.node_name],
-      )
-      if (
-        !node ||
-        isTerminalNodeStatus(node.status as StoredNode['status']) ||
-        (node.kind !== 'parallel' && node.current_attempt_id !== attemptId)
-      ) {
-        return undefined
-      }
+      const attempt = await loadFencedAttempt(attemptId, leaseToken)
+      if (!attempt) return undefined
 
       const row = await one(
         db,
@@ -275,7 +320,7 @@ export const createPostgresWorkflowNodeStore = (
             version = version + 1,
             updated_at = now()
         WHERE run_id = $1 AND name = $2
-          AND status NOT IN ('completed', 'failed', 'cancelled')
+          AND status IN (${nodeStatusSourcesSql('completed')})
         RETURNING *
       `,
         [runId, nodeName, json(output)],
@@ -308,7 +353,7 @@ export const createPostgresWorkflowNodeStore = (
             version = version + 1,
             updated_at = now()
         WHERE run_id = $1 AND name = $2
-          AND status NOT IN ('completed', 'failed', 'cancelled')
+          AND status IN (${nodeStatusSourcesSql('failed')})
         RETURNING *
       `,
         [runId, nodeName, json(toStoredError(error))],
@@ -320,6 +365,52 @@ export const createPostgresWorkflowNodeStore = (
         [runId, nodeName],
       )
       return current ? mapNode(current) : undefined
+    },
+    async markRunRunning({ runId }) {
+      await ready
+      const row = await one(
+        db,
+        `
+        UPDATE workflow_runs
+        SET status = 'running',
+            version = version + 1,
+            updated_at = now()
+        WHERE id = $1
+          AND status IN (${runStatusSourcesSql('running')})
+        RETURNING *
+      `,
+        [runId],
+      )
+      if (row) return mapRun(row)
+      const current = await one(
+        db,
+        'SELECT * FROM workflow_runs WHERE id = $1',
+        [runId],
+      )
+      return current ? mapRun(current) : undefined
+    },
+    async markRunWaiting({ runId }) {
+      await ready
+      const row = await one(
+        db,
+        `
+        UPDATE workflow_runs
+        SET status = 'waiting',
+            version = version + 1,
+            updated_at = now()
+        WHERE id = $1
+          AND status IN (${runStatusSourcesSql('waiting')})
+        RETURNING *
+      `,
+        [runId],
+      )
+      if (row) return mapRun(row)
+      const current = await one(
+        db,
+        'SELECT * FROM workflow_runs WHERE id = $1',
+        [runId],
+      )
+      return current ? mapRun(current) : undefined
     },
     async completeRun({ runId, output }) {
       await ready
@@ -339,7 +430,7 @@ export const createPostgresWorkflowNodeStore = (
             version = version + 1,
             updated_at = now()
         WHERE id = $1
-          AND status NOT IN ('completed', 'failed', 'cancelled')
+          AND status IN (${runStatusSourcesSql('completed')})
         RETURNING *
       `,
         [runId, json(output)],
@@ -370,7 +461,7 @@ export const createPostgresWorkflowNodeStore = (
             version = version + 1,
             updated_at = now()
         WHERE id = $1
-          AND status NOT IN ('completed', 'failed', 'cancelled')
+          AND status IN (${runStatusSourcesSql('failed')})
         RETURNING *
       `,
         [runId, json(toStoredError(error))],
@@ -398,14 +489,14 @@ export const createPostgresWorkflowNodeStore = (
       const row = await one(
         db,
         `
-	          UPDATE workflow_runs
-	          SET status = 'cancelling',
-	              version = version + 1,
-	              updated_at = now()
-	          WHERE id = $1
-	            AND status NOT IN ('cancelling', 'completed', 'failed', 'cancelled')
-	          RETURNING *
-	        `,
+        UPDATE workflow_runs
+        SET status = 'cancelling',
+            version = version + 1,
+            updated_at = now()
+        WHERE id = $1
+          AND status IN (${runStatusSourcesSql('cancelling')})
+        RETURNING *
+      `,
         [runId],
       )
       if (row) return mapRun(row)
@@ -433,7 +524,7 @@ export const createPostgresWorkflowNodeStore = (
             version = version + 1,
             updated_at = now()
         WHERE id = $1
-          AND status NOT IN ('completed', 'failed', 'cancelled')
+          AND status IN (${runStatusSourcesSql('cancelled')})
         RETURNING *
       `,
         [runId],
@@ -460,14 +551,14 @@ export const createPostgresWorkflowNodeStore = (
       const row = await one(
         db,
         `
-	          UPDATE workflow_nodes
-	          SET status = 'cancelled',
-	              version = version + 1,
-	              updated_at = now()
-	          WHERE run_id = $1 AND name = $2
-	            AND status NOT IN ('completed', 'failed', 'cancelled')
-	          RETURNING *
-	        `,
+        UPDATE workflow_nodes
+        SET status = 'cancelled',
+            version = version + 1,
+            updated_at = now()
+        WHERE run_id = $1 AND name = $2
+          AND status IN (${nodeStatusSourcesSql('cancelled')})
+        RETURNING *
+      `,
         [runId, nodeName],
       )
       if (row) return mapNode(row)
@@ -480,20 +571,33 @@ export const createPostgresWorkflowNodeStore = (
     },
     async cancelNonTerminalRunNodes({ runId }) {
       await ready
-      const rows = await many(
-        db,
-        `
-	          UPDATE workflow_nodes
-	          SET status = 'cancelled',
-	              version = version + 1,
-	              updated_at = now()
-	          WHERE run_id = $1
-	            AND status NOT IN ('completed', 'failed', 'cancelled')
-	          RETURNING *
-	        `,
-        [runId],
-      )
-      return rows.map(mapNode)
+      return db.transaction(async (tx) => {
+        const rows = await many(
+          tx,
+          `
+          UPDATE workflow_nodes
+          SET status = 'cancelled',
+              version = version + 1,
+              updated_at = now()
+          WHERE run_id = $1
+            AND status IN (${nodeStatusSourcesSql('cancelled')})
+          RETURNING *
+        `,
+          [runId],
+        )
+        await tx.query(
+          `
+          UPDATE workflow_node_children
+          SET status = 'cancelled',
+              version = version + 1,
+              updated_at = now()
+          WHERE run_id = $1
+            AND status IN (${nodeStatusSourcesSql('cancelled')})
+        `,
+          [runId],
+        )
+        return rows.map(mapNode)
+      })
     },
   }
 }

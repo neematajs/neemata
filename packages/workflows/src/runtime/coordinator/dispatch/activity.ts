@@ -1,5 +1,6 @@
 import type { ActivityNodeImplementation } from '../../../implement/index.ts'
-import type { AdvanceCtx } from '../context.ts'
+import type { AdvanceCtx, AdvanceOutcome } from '../context.ts'
+import { SELF_CHILD_KEY } from '../../child-key.ts'
 import { isTerminalNodeStatus } from '../../status.ts'
 import { dispatchActivityAttempt } from '../attempt.ts'
 import {
@@ -14,20 +15,13 @@ export async function dispatchActivityNode(
   input: AdvanceCtx & {
     readonly node: ActivityNodeImplementation
   },
-) {
+): Promise<AdvanceOutcome> {
   const existing = await input.store.createNode({
     runId: input.run.id,
     name: input.node.name,
     kind: 'activity',
   })
-  if (isTerminalNodeStatus(existing.status)) return
-  if (existing.status === 'running' || existing.status === 'waiting') {
-    const children = await input.store.loadNodeChildren({
-      runId: input.run.id,
-      nodeName: input.node.name,
-    })
-    if (children.attempts.length > 0) return
-  }
+  if (isTerminalNodeStatus(existing.status)) return 'parked'
 
   const declaration = getWorkflowNodeDeclaration(
     input.workflow,
@@ -60,6 +54,14 @@ export async function dispatchActivityNode(
     })
   }
 
+  const ensured = await input.store.ensureNodeChildren({
+    runId: input.run.id,
+    nodeName: input.node.name,
+    children: [{ childKey: SELF_CHILD_KEY, kind: 'activity' }],
+  })
+  // Once the child has an attempt, its stored state is authoritative — never
+  // re-run the user's idempotency callback on re-entry.
+  const hasAttempt = ensured.children[0]!.attemptCount > 0
   await dispatchActivityAttempt({
     store: input.store,
     attemptExecutor: input.attemptExecutor,
@@ -68,20 +70,28 @@ export async function dispatchActivityNode(
     activityName: input.node.activity.name,
     runId: input.run.id,
     nodeName: input.node.name,
-    prepareAttempt: async () => ({
-      attempt: await input.store.createAttempt({
+    childKey: SELF_CHILD_KEY,
+    prepareAttempt: async () => {
+      const result = await input.store.ensureChildAttempt({
         runId: input.run.id,
         nodeName: input.node.name,
+        childKey: SELF_CHILD_KEY,
         input: nodeInput,
-        idempotencyKey: resolveIdempotency(
-          input.node.idempotency,
-          input.workflowCtx,
-          input.outputs,
-          input.run.input,
-        ),
-      }),
-      commandInput: nodeInput,
-      created: true,
-    }),
+        idempotencyKey: hasAttempt
+          ? undefined
+          : resolveIdempotency(
+              input.node.idempotency,
+              input.workflowCtx,
+              input.outputs,
+              input.run.input,
+            ),
+      })
+      return {
+        attempt: result.attempt,
+        commandInput: result.created ? nodeInput : result.attempt.input,
+        created: result.created,
+      }
+    },
   })
+  return 'local'
 }

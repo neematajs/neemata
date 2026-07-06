@@ -232,8 +232,8 @@ test('rolls back standalone task completion when command ack fails', async () =>
   ).rejects.toThrow('forced command ack failure')
 
   const snapshot = await runtime.store.loadRunSnapshot(run.id)
-  expect(snapshot?.run.status).toBe('queued')
-  expect(snapshot?.nodes[0]?.status).toBe('waiting')
+  expect(snapshot?.run.status).toBe('running')
+  expect(snapshot?.nodes[0]?.status).toBe('running')
   expect(snapshot?.attempts[0]?.status).toBe('started')
   expect(await countRows(connection, 'workflow_commands')).toBe(1)
 })
@@ -269,9 +269,9 @@ test('rolls back standalone task failure when command ack fails', async () => {
   ).rejects.toThrow('forced command ack failure')
 
   const snapshot = await runtime.store.loadRunSnapshot(run.id)
-  expect(snapshot?.run.status).toBe('queued')
+  expect(snapshot?.run.status).toBe('running')
   expect(snapshot?.run.error).toBeUndefined()
-  expect(snapshot?.nodes[0]?.status).toBe('waiting')
+  expect(snapshot?.nodes[0]?.status).toBe('running')
   expect(snapshot?.nodes[0]?.error).toBeUndefined()
   expect(snapshot?.attempts[0]?.status).toBe('started')
   expect(snapshot?.attempts[0]?.error).toBeUndefined()
@@ -324,7 +324,7 @@ test('rolls back activity completion when command ack fails', async () => {
   ).rejects.toThrow('forced command ack failure')
 
   const snapshot = await runtime.store.loadRunSnapshot(run.id)
-  expect(snapshot?.run.status).toBe('queued')
+  expect(snapshot?.run.status).toBe('running')
   expect(snapshot?.nodes[0]?.status).toBe(beforeNodeStatus)
   expect(snapshot?.nodes[0]?.output).toBeUndefined()
   expect(snapshot?.attempts[0]?.status).toBe('started')
@@ -380,7 +380,7 @@ test('rolls back activity completion when command ack lease is stale', async () 
   ).resolves.toStrictEqual({ processed: 0 })
 
   const snapshot = await runtime.store.loadRunSnapshot(run.id)
-  expect(snapshot?.run.status).toBe('queued')
+  expect(snapshot?.run.status).toBe('running')
   expect(snapshot?.nodes[0]?.output).toBeUndefined()
   expect(snapshot?.attempts[0]?.status).toBe('started')
   expect(

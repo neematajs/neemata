@@ -85,7 +85,10 @@ test('runs direct child and mapWorkflow through postgres workers', async () => {
     primaryId: 'child:alpha',
     ids: ['child:child:alpha:one', 'child:child:alpha:two'],
   })
-  expect(snapshot?.childLinks).toHaveLength(3)
+  const childRunIds = snapshot?.children
+    .map((child) => child.childRunId)
+    .filter((id): id is string => id !== undefined)
+  expect(childRunIds).toHaveLength(3)
   expect(snapshot?.nodes.map((node) => node.status)).toStrictEqual([
     'completed',
     'completed',

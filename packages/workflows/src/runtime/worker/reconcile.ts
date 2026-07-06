@@ -4,8 +4,9 @@ import type {
   TaskAttemptCommand,
 } from '../commands.ts'
 import type { AttemptExecutor, RunCoordinationExecutor } from '../executors.ts'
-import type { StoredAttempt, StoredNode } from '../state.ts'
+import type { StoredAttempt, StoredNodeChild } from '../state.ts'
 import type { WorkflowStore } from '../store.ts'
+import { parseChildKey } from '../child-key.ts'
 import { wakeParentRun } from '../wake.ts'
 import { runAtomicCompletion } from './atomic.ts'
 
@@ -27,12 +28,12 @@ export function isFreshAttempt(
     ActivityAttemptCommand | TaskAttemptCommand,
     'attemptId' | 'leaseToken'
   >,
-  storedNode: StoredNode | undefined,
+  child: StoredNodeChild | undefined,
   storedAttempt: StoredAttempt | undefined,
 ): boolean {
   return (
-    storedNode !== undefined &&
-    isCurrentAttemptForNode(storedNode, command.attemptId) &&
+    child !== undefined &&
+    child.currentAttemptId === command.attemptId &&
     storedAttempt !== undefined &&
     storedAttempt.status === 'started' &&
     storedAttempt.leaseToken === command.leaseToken
@@ -51,78 +52,79 @@ export async function ackTerminalAttempt<Input extends RunAttemptInput>(
 export async function reconcileStaleAttempt<Input extends RunAttemptInput>(
   input: Input,
   command: EnqueueContinueRunCommand,
-  storedNode: StoredNode | undefined,
+  child: StoredNodeChild | undefined,
   storedAttempt: StoredAttempt | undefined,
 ): Promise<WorkerCommandResult> {
-  const isCurrentAttempt = isCurrentAttemptForNode(
-    storedNode,
-    command.attemptId,
-  )
+  const isCurrentAttempt = child?.currentAttemptId === command.attemptId
 
-  if (
-    storedNode &&
-    isCurrentAttempt &&
-    storedAttempt?.status === 'completed' &&
-    storedNode.status !== 'completed'
-  ) {
-    if (storedAttempt.runId === command.runId) {
-      const snapshot = await input.store.loadRunSnapshot(command.runId)
-      if (snapshot?.run.kind === 'task') {
-        await input.store.completeNode({
-          runId: command.runId,
-          nodeName: command.nodeName,
-          output: storedAttempt.output,
-        })
-        const completed = await input.store.completeRun({
-          runId: command.runId,
-          output: storedAttempt.output,
-        })
-        await wakeParentRun({
-          store: input.store,
-          runCoordinationExecutor: input.runCoordinationExecutor,
-          run: completed,
-        })
-        await input.attemptExecutor.ack(input.claimed)
-        return { status: 'processed' }
-      }
-    }
+  // Downstream writes are idempotent, so the settled current attempt always
+  // replays its full completion path — a crash after any single write (child,
+  // node, run) is repaired on redelivery.
+  if (child && isCurrentAttempt && storedAttempt?.status === 'completed') {
+    await input.store.completeNodeChild({
+      runId: command.runId,
+      nodeName: command.nodeName,
+      childKey: command.childKey,
+      output: storedAttempt.output,
+    })
 
-    if (!shouldCompleteNodeFromAttempt(storedNode)) {
-      await enqueueContinueRun(input.runCoordinationExecutor, command)
+    const snapshot = await input.store.loadRunSnapshot(command.runId)
+    if (snapshot?.run.kind === 'task') {
+      await input.store.completeNode({
+        runId: command.runId,
+        nodeName: command.nodeName,
+        output: storedAttempt.output,
+      })
+      const completed = await input.store.completeRun({
+        runId: command.runId,
+        output: storedAttempt.output,
+      })
+      await wakeParentRun({
+        store: input.store,
+        runCoordinationExecutor: input.runCoordinationExecutor,
+        run: completed,
+      })
       await input.attemptExecutor.ack(input.claimed)
       return { status: 'processed' }
     }
 
-    await input.store.completeNode({
-      runId: command.runId,
-      nodeName: command.nodeName,
-      output: storedAttempt.output,
-    })
+    if (shouldCompleteNodeFromAttempt(command.childKey)) {
+      await input.store.completeNode({
+        runId: command.runId,
+        nodeName: command.nodeName,
+        output: storedAttempt.output,
+      })
+    }
     await enqueueContinueRun(input.runCoordinationExecutor, command)
     await input.attemptExecutor.ack(input.claimed)
     return { status: 'processed' }
   }
 
   if (
-    storedNode &&
+    child &&
     isCurrentAttempt &&
-    isFailedAttemptStatus(storedAttempt?.status) &&
-    storedNode.status !== 'failed'
+    isFailedAttemptStatus(storedAttempt?.status)
   ) {
+    const error =
+      storedAttempt?.error ??
+      new Error(`Workflow attempt [${command.attemptId}] failed`)
+    await input.store.failNodeChild({
+      runId: command.runId,
+      nodeName: command.nodeName,
+      childKey: command.childKey,
+      error,
+    })
+
     const snapshot = await input.store.loadRunSnapshot(command.runId)
     if (snapshot?.run.kind === 'task') {
       await input.store.failNode({
         runId: command.runId,
         nodeName: command.nodeName,
-        error:
-          storedAttempt.error ??
-          new Error(`Workflow attempt [${command.attemptId}] failed`),
+        error,
       })
       const failed = await input.store.failRun({
         runId: command.runId,
-        error:
-          storedAttempt.error ??
-          new Error(`Workflow attempt [${command.attemptId}] failed`),
+        error,
       })
       await wakeParentRun({
         store: input.store,
@@ -133,25 +135,24 @@ export async function reconcileStaleAttempt<Input extends RunAttemptInput>(
       return { status: 'processed' }
     }
 
-    await input.store.failNode({
-      runId: command.runId,
-      nodeName: command.nodeName,
-      error:
-        storedAttempt.error ??
-        new Error(`Workflow attempt [${command.attemptId}] failed`),
-    })
+    if (shouldCompleteNodeFromAttempt(command.childKey)) {
+      await input.store.failNode({
+        runId: command.runId,
+        nodeName: command.nodeName,
+        error,
+      })
+    }
     await enqueueContinueRun(input.runCoordinationExecutor, command)
     await input.attemptExecutor.ack(input.claimed)
     return { status: 'processed' }
   }
 
   if (
-    storedNode &&
+    child &&
     storedAttempt &&
-    ((storedAttempt.status === 'completed' &&
-      storedNode.status === 'completed') ||
+    ((storedAttempt.status === 'completed' && child.status === 'completed') ||
       (isFailedAttemptStatus(storedAttempt.status) &&
-        storedNode.status === 'failed'))
+        child.status === 'failed'))
   ) {
     await enqueueContinueRun(input.runCoordinationExecutor, command)
   }
@@ -160,22 +161,18 @@ export async function reconcileStaleAttempt<Input extends RunAttemptInput>(
   return { status: 'processed' }
 }
 
-export function shouldCompleteNodeFromAttempt(
-  storedNode: StoredNode | undefined,
-) {
-  return storedNode?.kind !== 'parallel'
+/**
+ * Fan-out members and map items aggregate in the coordinator; only
+ * single-child nodes complete straight from their attempt.
+ */
+export function shouldCompleteNodeFromAttempt(childKey: string): boolean {
+  const parsed = parseChildKey(childKey)
+  return parsed?.kind === 'self' || parsed?.kind === 'case'
 }
 
-function isCurrentAttemptForNode(
-  storedNode: StoredNode | undefined,
-  attemptId: string,
-) {
-  if (!storedNode) return false
-  if (storedNode.kind === 'parallel') return true
-  return storedNode.currentAttemptId === attemptId
-}
-
-function isFailedAttemptStatus(status: StoredAttempt['status'] | undefined) {
+function isFailedAttemptStatus(
+  status: StoredAttempt['status'] | undefined,
+): status is 'failed' | 'timedOut' {
   return status === 'failed' || status === 'timedOut'
 }
 
