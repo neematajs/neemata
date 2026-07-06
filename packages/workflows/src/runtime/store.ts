@@ -44,6 +44,7 @@ export type ListRunsFilter = {
   readonly kind?: RunKind
   readonly name?: string
   readonly status?: RuntimeRunStatus | readonly RuntimeRunStatus[]
+  readonly createdBefore?: Date
   readonly parentRunId?: string
   readonly rootRunId?: string
   readonly tags?: Readonly<Record<string, string>>
@@ -200,12 +201,15 @@ export type WorkflowStore = {
   ): Promise<PruneTerminalRunsResult>
   listDeadCommands(): Promise<readonly DeadWorkflowCommand[]>
   /**
-   * Atomically takes un-reaped dead commands (marking them reaped) so exactly
-   * one maintenance sweep acts on each. requeueDeadCommand clears the mark.
+   * Dead commands the reaper has not settled yet, oldest first. The reaper
+   * marks each one reaped only AFTER producing its recovery outcome, so a
+   * crash mid-batch re-lists the remainder instead of stranding it; the
+   * recovery writes are idempotent, making duplicate processing harmless.
    */
-  claimDeadCommands(params?: {
+  listUnreapedDeadCommands(params?: {
     readonly limit?: number
   }): Promise<readonly DeadWorkflowCommand[]>
+  markDeadCommandReaped(id: string): Promise<void>
   requeueDeadCommand(id: string): Promise<void>
   acquireRunLease(params: {
     runId: string

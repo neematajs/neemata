@@ -206,6 +206,8 @@ export function createInMemoryWorkflowRuntime(
       (filter.kind === undefined || run.kind === filter.kind) &&
       (filter.name === undefined || run.name === filter.name) &&
       (statuses === undefined || statuses.includes(run.status)) &&
+      (filter.createdBefore === undefined ||
+        run.createdAt < filter.createdBefore) &&
       (filter.parentRunId === undefined ||
         run.parentRunId === filter.parentRunId) &&
       (filter.rootRunId === undefined || run.rootRunId === filter.rootRunId) &&
@@ -362,33 +364,48 @@ export function createInMemoryWorkflowRuntime(
         return right.createdAt.getTime() - left.createdAt.getTime()
       })
     },
-    async claimDeadCommands(params) {
+    async listUnreapedDeadCommands(params) {
       const limit = params?.limit ?? Number.POSITIVE_INFINITY
-      const claimed: DeadWorkflowCommand[] = []
-      const take = <T extends { runId: string; workflowName: string }>(
+      const dead: DeadWorkflowCommand[] = []
+      const collect = <T>(
         queue: QueueItem<T>[],
         kind: DeadWorkflowCommand['kind'],
       ) => {
-        for (const [index, item] of queue.entries()) {
-          if (claimed.length >= limit) return
+        for (const item of queue) {
           if (item.deadAt === undefined || item.reapedAt !== undefined) {
             continue
           }
-          const dead = mapDeadCommand(
+          const command = mapDeadCommand(
             item as unknown as QueueItem<
               ContinueRunCommand | ActivityAttemptCommand | TaskAttemptCommand
             >,
             kind,
           )
-          if (dead === undefined) continue
-          queue[index] = { ...item, reapedAt: now() }
-          claimed.push(dead)
+          if (command !== undefined) dead.push(command)
         }
       }
-      take(continueRunCommands, 'continue')
-      take(activityCommands, 'activity')
-      take(taskCommands, 'task')
-      return claimed
+      collect(continueRunCommands, 'continue')
+      collect(activityCommands, 'activity')
+      collect(taskCommands, 'task')
+      return dead
+        .sort((left, right) => left.deadAt.getTime() - right.deadAt.getTime())
+        .slice(0, limit === Number.POSITIVE_INFINITY ? undefined : limit)
+    },
+    async markDeadCommandReaped(commandId) {
+      const mark = <T>(queue: QueueItem<T>[]) => {
+        const index = queue.findIndex(
+          (item) =>
+            item.id === commandId &&
+            item.deadAt !== undefined &&
+            item.reapedAt === undefined,
+        )
+        if (index === -1) return false
+        queue[index] = { ...queue[index]!, reapedAt: now() }
+        return true
+      }
+      if (mark(continueRunCommands)) return
+      if (mark(activityCommands)) return
+      mark(taskCommands)
     },
     async requeueDeadCommand(commandId) {
       if (requeueDead(continueRunCommands, commandId)) return
@@ -812,6 +829,12 @@ export function createInMemoryWorkflowRuntime(
         return { child, childRun, created: false }
       }
 
+      if (isTerminalNodeStatus(child.status)) {
+        throw new Error(
+          `Terminal node child [${childRef(params.runId, params.nodeName, params.childKey)}] cannot start child run`,
+        )
+      }
+
       const childRun = createRunWithState({
         kind: params.childKind,
         name: params.childName,
@@ -968,7 +991,13 @@ export function createInMemoryWorkflowRuntime(
     // observers see progress without deriving it from child rows.
     const key = nodeKey(child.runId, child.nodeName)
     const node = nodes.get(key)
-    if (node && canTransition(NODE_TRANSITIONS, node.status, 'running')) {
+    // Self-inclusive like the postgres guard, so version bumps stay in
+    // lockstep across adapters even when the node is already running.
+    if (
+      node &&
+      (node.status === 'running' ||
+        canTransition(NODE_TRANSITIONS, node.status, 'running'))
+    ) {
       nodes.set(key, {
         ...node,
         status: 'running',

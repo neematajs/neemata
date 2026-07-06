@@ -214,6 +214,10 @@ export const createPostgresWorkflowChildStore = (
       const existing = await loadExistingChildRun(db)
       if (existing) return existing
 
+      // The link UPDATE requires child_run_id IS NULL, so losing a race to
+      // another coordinator rolls back our freshly created run instead of
+      // persisting a duplicate child run.
+      const linkRaced = Symbol('child-run-link-raced')
       try {
         return await db.transaction(async (tx) => {
           const raced = await loadExistingChildRun(tx)
@@ -246,22 +250,22 @@ export const createPostgresWorkflowChildStore = (
                 version = version + 1,
                 updated_at = now()
             WHERE run_id = $1 AND node_name = $2 AND child_key = $3
+              AND child_run_id IS NULL
               AND status IN (${nodeStatusSourcesSql('running', { self: true })})
             RETURNING *
           `,
             [runId, nodeName, childKey, childRun.id],
           )
-          if (!updated) {
-            throw new Error(
-              `Terminal node child [${childRef(runId, nodeName, childKey)}] cannot start child run`,
-            )
-          }
+          if (!updated) throw linkRaced
           return { child: mapNodeChild(updated), childRun, created: true }
         })
       } catch (error) {
-        if (isUniqueViolation(error)) {
+        if (error === linkRaced || isUniqueViolation(error)) {
           const raced = await loadExistingChildRun(db)
           if (raced) return raced
+          throw new Error(
+            `Terminal node child [${childRef(runId, nodeName, childKey)}] cannot start child run`,
+          )
         }
         throw error
       }

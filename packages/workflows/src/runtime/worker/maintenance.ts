@@ -15,6 +15,7 @@ type AnyWorkflowImplementation = WorkflowImplementation<
 
 export type ReapDeadWorkflowCommandsInput = {
   readonly store: WorkflowStore
+  readonly attemptExecutor: AttemptExecutor
   readonly runCoordinationExecutor: RunCoordinationExecutor
   readonly batchSize?: number
 }
@@ -27,15 +28,18 @@ export type ReapDeadWorkflowCommandsResult = {
  * A dead-lettered command means its run can no longer make progress on its
  * own; without this sweep the run parks forever while only the dead-command
  * table knows why. Reaping gives it the same outcome the worker would have
- * produced on a final failure.
+ * produced on a final failure. Each command is marked reaped only AFTER its
+ * outcome is produced — a crash mid-batch re-lists the remainder, and the
+ * recovery writes are idempotent so duplicate processing is harmless.
  */
 export async function reapDeadWorkflowCommands(
   input: ReapDeadWorkflowCommandsInput,
 ): Promise<ReapDeadWorkflowCommandsResult> {
-  const dead = await input.store.claimDeadCommands({
+  const dead = await input.store.listUnreapedDeadCommands({
     limit: input.batchSize,
   })
 
+  let reaped = 0
   for (const command of dead) {
     const error =
       command.lastError ??
@@ -66,9 +70,17 @@ export async function reapDeadWorkflowCommands(
     }
 
     const run = (await input.store.loadRuns([command.runId]))[0]
-    if (!run) continue
+    if (!run) {
+      await input.store.markDeadCommandReaped(command.id)
+      reaped += 1
+      continue
+    }
 
     if (run.kind === 'task' || command.kind === 'continue') {
+      // No coordination pass will run for this run, so cancel its live
+      // descendants and nodes here — a failed run must not leave children
+      // executing or nodes reporting running/waiting.
+      await cancelDescendants(input, command.runId)
       const failed = await input.store.failRun({
         runId: command.runId,
         error,
@@ -78,19 +90,21 @@ export async function reapDeadWorkflowCommands(
         runCoordinationExecutor: input.runCoordinationExecutor,
         run: failed,
       })
-      continue
+    } else {
+      // Workflow runs get a coordination pass: the coordinator sees the
+      // failed node/child and fails the run with fan-in sibling cancellation.
+      await input.runCoordinationExecutor.enqueue({
+        kind: 'continueRun',
+        runId: command.runId,
+        workflowName: command.workflowName ?? run.workflowName,
+      })
     }
 
-    // Workflow runs get a coordination pass: the coordinator sees the failed
-    // node/child and fails the run with fan-in sibling cancellation.
-    await input.runCoordinationExecutor.enqueue({
-      kind: 'continueRun',
-      runId: command.runId,
-      workflowName: command.workflowName ?? run.workflowName,
-    })
+    await input.store.markDeadCommandReaped(command.id)
+    reaped += 1
   }
 
-  return { reaped: dead.length }
+  return { reaped }
 }
 
 function attemptCommandChildKey(
@@ -102,6 +116,27 @@ function attemptCommandChildKey(
     return typeof childKey === 'string' ? childKey : undefined
   }
   return undefined
+}
+
+async function cancelDescendants(
+  input: Pick<
+    ReapDeadWorkflowCommandsInput,
+    'store' | 'attemptExecutor' | 'runCoordinationExecutor'
+  >,
+  runId: string,
+): Promise<void> {
+  const snapshot = await input.store.loadRunSnapshot(runId)
+  for (const child of snapshot?.children ?? []) {
+    if (child.childRunId === undefined) continue
+    await cancelRunTree({
+      store: input.store,
+      attemptExecutor: input.attemptExecutor,
+      runCoordinationExecutor: input.runCoordinationExecutor,
+      runId: child.childRunId,
+    })
+  }
+  await input.attemptExecutor.deleteUnclaimed({ runId })
+  await input.store.cancelNonTerminalRunNodes({ runId })
 }
 
 export type TimeoutExpiredWorkflowRunsInput = {
@@ -131,27 +166,18 @@ export async function timeoutExpiredWorkflowRuns(
     const timeoutMs = parseDurationMs(implementation.workflow.timeout)
     if (timeoutMs === undefined) continue
 
+    // Filtering by creation cutoff in the store keeps the batch limit honest:
+    // every returned run is already expired, so newer runs can never crowd
+    // older expired ones out of the page.
     const { runs } = await input.store.listRuns({
       kind: 'workflow',
       name: implementation.workflow.name,
-      status: ['queued', 'running', 'waiting'],
+      status: ['queued', 'running', 'waiting', 'cancelling'],
+      createdBefore: new Date(now.getTime() - timeoutMs),
       limit: input.batchSize,
     })
     for (const run of runs) {
-      if (run.createdAt.getTime() + timeoutMs > now.getTime()) continue
-
-      const snapshot = await input.store.loadRunSnapshot(run.id)
-      for (const child of snapshot?.children ?? []) {
-        if (child.childRunId === undefined) continue
-        await cancelRunTree({
-          store: input.store,
-          attemptExecutor: input.attemptExecutor,
-          runCoordinationExecutor: input.runCoordinationExecutor,
-          runId: child.childRunId,
-        })
-      }
-      await input.attemptExecutor.deleteUnclaimed({ runId: run.id })
-      await input.store.cancelNonTerminalRunNodes({ runId: run.id })
+      await cancelDescendants(input, run.id)
       const failed = await input.store.failRun({
         runId: run.id,
         error: new Error(

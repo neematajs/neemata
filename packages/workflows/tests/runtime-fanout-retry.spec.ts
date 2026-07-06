@@ -356,6 +356,7 @@ describe('workflow fan-out retry state model', () => {
     // zombie stuck in running/waiting forever.
     const { reaped } = await reapDeadWorkflowCommands({
       store: runtime.store,
+      attemptExecutor: runtime.attemptExecutor,
       runCoordinationExecutor: runtime.runCoordinationExecutor,
     })
     expect(reaped).toBe(1)
@@ -373,9 +374,12 @@ describe('workflow fan-out retry state model', () => {
     expect(snapshot?.nodes[0]?.status).toBe('failed')
     expect(snapshot?.children[0]?.status).toBe('failed')
 
-    // Reaped commands are claimed exactly once.
+    // Reaped commands stay visible for audit/requeue but leave the sweep.
+    expect(await runtime.store.listDeadCommands()).toHaveLength(1)
+    expect(await runtime.store.listUnreapedDeadCommands()).toHaveLength(0)
     const again = await reapDeadWorkflowCommands({
       store: runtime.store,
+      attemptExecutor: runtime.attemptExecutor,
       runCoordinationExecutor: runtime.runCoordinationExecutor,
     })
     expect(again.reaped).toBe(0)

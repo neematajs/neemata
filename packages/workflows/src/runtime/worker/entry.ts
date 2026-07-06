@@ -87,6 +87,7 @@ export type RunTaskWorkerInput = WorkerLoopOptions & {
 
 type MaintenanceDeps = {
   readonly store: WorkflowStore
+  readonly attemptExecutor: AttemptExecutor
   readonly runCoordinationExecutor: RunCoordinationExecutor
   readonly maintenance?: readonly WorkerMaintenanceHook[]
   readonly reaping?: false | WorkerReapingOptions
@@ -105,6 +106,7 @@ function withReapingHook(
       run: async () => {
         await reapDeadWorkflowCommands({
           store: input.store,
+          attemptExecutor: input.attemptExecutor,
           runCoordinationExecutor: input.runCoordinationExecutor,
           batchSize: options?.batchSize,
         })

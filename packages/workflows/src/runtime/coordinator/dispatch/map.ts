@@ -181,11 +181,6 @@ async function dispatchMapRunNode<Declaration extends MapRunNodeDeclaration>(
       ),
       `map item [${input.workflow.workflow.name}.${input.node.name}]`,
     )
-    await input.store.setNodeInput({
-      runId: input.run.id,
-      nodeName: input.node.name,
-      input: items,
-    })
     children = (
       await input.store.ensureNodeChildren({
         runId: input.run.id,
@@ -198,6 +193,14 @@ async function dispatchMapRunNode<Declaration extends MapRunNodeDeclaration>(
         })),
       })
     ).children
+    // Commit marker LAST: if we crash before it, re-entry re-derives the
+    // items and re-ensures idempotently. Marker-first would let a crash
+    // window complete a non-empty map with zero children.
+    await input.store.setNodeInput({
+      runId: input.run.id,
+      nodeName: input.node.name,
+      input: items,
+    })
   }
 
   // Per-item snapshot loads would cost O(items) round-trips on every

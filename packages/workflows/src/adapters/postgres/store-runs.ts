@@ -42,7 +42,8 @@ type PostgresWorkflowRunStore = Pick<
   | 'listRuns'
   | 'pruneTerminalRuns'
   | 'listDeadCommands'
-  | 'claimDeadCommands'
+  | 'listUnreapedDeadCommands'
+  | 'markDeadCommandReaped'
   | 'requeueDeadCommand'
   | 'acquireRunLease'
   | 'renewRunLease'
@@ -226,6 +227,9 @@ export const createPostgresWorkflowRunStore = (
 
       if (filter.kind !== undefined) where.push(`kind = ${push(filter.kind)}`)
       if (filter.name !== undefined) where.push(`name = ${push(filter.name)}`)
+      if (filter.createdBefore !== undefined) {
+        where.push(`created_at < ${push(filter.createdBefore)}`)
+      }
       if (filter.status !== undefined) {
         const statuses = Array.isArray(filter.status)
           ? filter.status
@@ -295,30 +299,37 @@ export const createPostgresWorkflowRunStore = (
         .map((row) => withDateColumns(row, ['dead_at', 'created_at', 'run_at']))
         .map(mapDeadCommand)
     },
-    async claimDeadCommands(params) {
+    async listUnreapedDeadCommands(params) {
       await ready
       const limit = params?.limit
       const rows = await many(
         db,
         `
-        UPDATE workflow_commands
-        SET reaped_at = now()
-        WHERE id IN (
-          SELECT id
-          FROM workflow_commands
-          WHERE dead_at IS NOT NULL
-            AND reaped_at IS NULL
-          ORDER BY dead_at ASC, created_at ASC, id ASC
-          ${limit === undefined ? '' : 'LIMIT $1'}
-          FOR UPDATE SKIP LOCKED
-        )
-        RETURNING *
+        SELECT *
+        FROM workflow_commands
+        WHERE dead_at IS NOT NULL
+          AND reaped_at IS NULL
+        ORDER BY dead_at ASC, created_at ASC, id ASC
+        ${limit === undefined ? '' : 'LIMIT $1'}
       `,
         limit === undefined ? [] : [limit],
       )
       return rows
         .map((row) => withDateColumns(row, ['dead_at', 'created_at', 'run_at']))
         .map(mapDeadCommand)
+    },
+    async markDeadCommandReaped(commandId) {
+      await ready
+      await db.query(
+        `
+        UPDATE workflow_commands
+        SET reaped_at = now()
+        WHERE id = $1
+          AND dead_at IS NOT NULL
+          AND reaped_at IS NULL
+      `,
+        [commandId],
+      )
     },
     async requeueDeadCommand(commandId) {
       await ready

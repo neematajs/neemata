@@ -203,7 +203,12 @@ export const mapNodeChild = (row: JsonRecord): StoredNodeChild => ({
   status: row.status as StoredNodeChild['status'],
   ordinal: row.ordinal as number,
   ...optional('itemKey', row.item_key as string | undefined),
-  ...optional('item', fromOptional(row.item)),
+  // Map items always carry a payload, so a JS null here is JSON null (a
+  // legitimate item value), not SQL NULL — dropping it would diverge from
+  // the in-memory adapter for nullable items.
+  ...((row.child_key as string).startsWith('item:')
+    ? { item: row.item }
+    : optional('item', fromOptional(row.item))),
   ...optional('input', fromOptional(row.input)),
   ...optional('output', fromOptional(row.output)),
   ...optional('error', fromOptional(row.error) as StoredError | undefined),

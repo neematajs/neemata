@@ -1884,6 +1884,106 @@ function workflowRuntimeAdapterContract(
       ).rejects.toThrow('Conflicting child run')
     })
 
+    it('refuses to start a child run on a terminal child record', async () => {
+      const runtime = await createRuntime()
+      const parent = await runtime.store.createRun({
+        workflowName: 'terminal-child-parent',
+        input: { scenario: 'alpha' },
+      })
+      await runtime.store.createNode({
+        runId: parent.id,
+        name: 'child',
+        kind: 'workflow',
+      })
+      await runtime.store.ensureNodeChildren({
+        runId: parent.id,
+        nodeName: 'child',
+        children: [{ childKey: '$self', kind: 'workflow' }],
+      })
+      await runtime.store.cancelNonTerminalRunNodes({ runId: parent.id })
+
+      // A cancelled child must not be resurrected into a fresh child run.
+      await expect(
+        runtime.store.ensureChildRun({
+          runId: parent.id,
+          nodeName: 'child',
+          childKey: '$self',
+          childKind: 'workflow',
+          childName: 'child',
+          input: { scenario: 'alpha' },
+          rootRunId: parent.rootRunId,
+        }),
+      ).rejects.toThrow('Terminal node child')
+      const children = await runtime.store.loadNodeChildren({
+        runId: parent.id,
+        nodeName: 'child',
+      })
+      expect(children.children[0]).toMatchObject({
+        status: 'cancelled',
+      })
+      expect(children.children[0]?.childRunId).toBeUndefined()
+    })
+
+    it('preserves JSON null map item payloads', async () => {
+      const runtime = await createRuntime()
+      const run = await runtime.store.createRun({
+        workflowName: 'null-item-map',
+        input: { scenario: 'alpha' },
+      })
+      await runtime.store.createNode({
+        runId: run.id,
+        name: 'items',
+        kind: 'mapTask',
+      })
+      const ensured = await runtime.store.ensureNodeChildren({
+        runId: run.id,
+        nodeName: 'items',
+        children: [
+          { childKey: 'item:0', kind: 'task', ordinal: 0, item: null },
+          { childKey: 'item:1', kind: 'task', ordinal: 1, item: { id: 1 } },
+        ],
+      })
+
+      // JSON null is a legitimate item value and must survive the round
+      // trip identically on both adapters (SQL NULL must not swallow it).
+      expect(ensured.children[0]?.item).toBeNull()
+      expect(ensured.children[1]?.item).toStrictEqual({ id: 1 })
+      const loaded = await runtime.store.loadNodeChildren({
+        runId: run.id,
+        nodeName: 'items',
+      })
+      expect(loaded.children[0]?.item).toBeNull()
+      const replay = await runtime.store.ensureNodeChildren({
+        runId: run.id,
+        nodeName: 'items',
+        children: [
+          { childKey: 'item:0', kind: 'task', ordinal: 0, item: null },
+          { childKey: 'item:1', kind: 'task', ordinal: 1, item: { id: 1 } },
+        ],
+      })
+      expect(replay.created).toBe(false)
+    })
+
+    it('filters runs by creation cutoff for the timeout sweep', async () => {
+      const runtime = await createRuntime()
+      const run = await runtime.store.createRun({
+        workflowName: 'cutoff-workflow',
+        input: { scenario: 'alpha' },
+      })
+
+      const before = await runtime.store.listRuns({
+        name: 'cutoff-workflow',
+        createdBefore: new Date(run.createdAt.getTime() + 1),
+      })
+      expect(before.runs.map((row) => row.id)).toStrictEqual([run.id])
+
+      const after = await runtime.store.listRuns({
+        name: 'cutoff-workflow',
+        createdBefore: run.createdAt,
+      })
+      expect(after.runs).toHaveLength(0)
+    })
+
     it('settles node children once and ignores later rewrites', async () => {
       const runtime = await createRuntime()
       const run = await runtime.store.createRun({
