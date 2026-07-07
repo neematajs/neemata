@@ -209,3 +209,28 @@ Worker pool options: `threads`, `concurrency`, `leaseMs`, `pollIntervalMs`,
 pin a pool to specific activities. The task pool only spawns when task
 implementations exist. Worker shutdown aborts in-flight handlers with reason
 `shutdown` and releases their commands for redelivery.
+
+`activity` also accepts an array of named pools for capacity isolation —
+latency-sensitive activities get their own claim loop, cadence, and lease
+instead of queueing behind long-running batch attempts:
+
+```ts
+workers: {
+  activity: [
+    {
+      name: 'interactive',
+      activityNames: ['handle-user-request'],
+      threads: 1,
+      concurrency: 20,
+      pollIntervalMs: 25,
+      leaseMs: 6_000,
+    },
+    // at most one pool may omit activityNames: it claims every activity
+    // not selected by a named pool
+    { name: 'batch', threads: 1, concurrency: 50 },
+  ],
+}
+```
+
+Pool names must be unique, an activity name may be claimed by at most one
+pool, and only one catch-all (no `activityNames`) pool is allowed.

@@ -23,7 +23,15 @@ export function defineWorkflowsPlanner<
           'coordinator',
           config.workers.coordinator,
         ),
-        activity: createWorkerData('activity', config.workers.activity),
+        activity: config.workers.activity.flatMap((pool) =>
+          Array.from(
+            { length: normalizeThreadCount('activity', pool.threads) },
+            (): WorkflowsWorkerData => ({
+              role: 'activity',
+              activityPool: pool.name,
+            }),
+          ),
+        ),
         task:
           config.tasks.length > 0
             ? createWorkerData('task', config.workers.task)

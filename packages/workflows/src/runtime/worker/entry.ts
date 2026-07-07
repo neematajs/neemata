@@ -293,8 +293,8 @@ export async function runTaskWorker(
   )
 }
 
-function collectWorkflowActivityNames(
-  workflows: readonly AnyWorkflowImplementation[],
+export function collectWorkflowActivityNames(
+  workflows: readonly Pick<AnyWorkflowImplementation, 'nodes'>[],
 ): readonly string[] {
   const names = new Set<string>()
   for (const workflow of workflows) {

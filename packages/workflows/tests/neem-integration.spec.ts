@@ -22,7 +22,10 @@ import {
   defineWorkflows,
   defineWorkflowsPlanner,
   defineWorkflowsWorker,
+  type WorkflowsNamedActivityWorkerPoolConfig,
 } from '../src/neem/index.ts'
+import { resolveWorkflowsConfig } from '../src/neem/runtime.ts'
+import { resolveActivityPoolClaimNames } from '../src/neem/worker-entry.ts'
 import {
   createInMemoryWorkflowRuntime,
   createWorkflowRuntimeClient,
@@ -73,9 +76,150 @@ describe('workflows Neem integration', () => {
     expect(plan.options).toBeDefined()
     expect(plan.workers).toStrictEqual({
       coordinator: [{ role: 'coordinator' }, { role: 'coordinator' }],
-      activity: [{ role: 'activity' }],
+      activity: [{ role: 'activity', activityPool: 'activity' }],
       task: [],
     })
+  })
+
+  it('plans one worker group per named activity pool', async () => {
+    const config = defineWorkflows({
+      runtime: () => createInMemoryWorkflowRuntime(),
+      workflows: () => [workflowImpl],
+      workers: {
+        activity: [
+          {
+            name: 'interactive',
+            activityNames: ['handle-user-request'],
+            threads: 2,
+            concurrency: 20,
+            pollIntervalMs: 25,
+            leaseMs: 6_000,
+          },
+          { name: 'batch', threads: 1, concurrency: 50 },
+        ],
+      },
+    })
+    const planner = defineWorkflowsPlanner(() => config)
+    const plan = await planner({
+      mode: 'development',
+      name: 'workflows',
+      logger,
+    })
+
+    expect(plan.workers).toStrictEqual({
+      coordinator: [{ role: 'coordinator' }],
+      activity: [
+        { role: 'activity', activityPool: 'interactive' },
+        { role: 'activity', activityPool: 'interactive' },
+        { role: 'activity', activityPool: 'batch' },
+      ],
+      task: [],
+    })
+
+    const resolved = await resolveWorkflowsConfig(config)
+    expect(resolved.workers.activity).toMatchObject([
+      {
+        name: 'interactive',
+        activityNames: ['handle-user-request'],
+        concurrency: 20,
+        pollIntervalMs: 25,
+        leaseMs: 6_000,
+      },
+      { name: 'batch', concurrency: 50, pollIntervalMs: 250 },
+    ])
+    expect(resolved.workers.activity[1]!.activityNames).toBeUndefined()
+  })
+
+  it('rejects invalid activity pool lists', async () => {
+    const reject = async (
+      activity: readonly WorkflowsNamedActivityWorkerPoolConfig[],
+      message: string,
+    ) => {
+      const config = defineWorkflows({
+        runtime: () => createInMemoryWorkflowRuntime(),
+        workflows: () => [workflowImpl],
+        workers: { activity },
+      })
+      await expect(resolveWorkflowsConfig(config)).rejects.toThrow(message)
+    }
+
+    await reject([], 'must not be empty')
+    await reject([{ name: '', activityNames: ['a'] }], 'requires a name')
+    await reject(
+      [
+        { name: 'one', activityNames: ['a'] },
+        { name: 'one', activityNames: ['b'] },
+      ],
+      'Duplicate workflows activity worker pool name [one]',
+    )
+    await reject(
+      [{ name: 'one' }, { name: 'two' }],
+      'only one catch-all pool is allowed',
+    )
+    await reject(
+      [
+        { name: 'one', activityNames: ['a'] },
+        { name: 'two', activityNames: ['a'] },
+      ],
+      'Activity [a] is claimed by both workflows worker pools [one] and [two]',
+    )
+  })
+
+  it('computes catch-all pool claim names as the complement of named pools', async () => {
+    const config = defineWorkflows({
+      runtime: () => createInMemoryWorkflowRuntime(),
+      workflows: () => [],
+      workers: {
+        activity: [
+          { name: 'interactive', activityNames: ['fast'] },
+          { name: 'batch' },
+        ],
+      },
+    })
+    const resolved = await resolveWorkflowsConfig(config)
+    const [interactive, batch] = resolved.workers.activity
+    const workflows = [
+      { nodes: [] },
+    ] as unknown as (typeof resolved)['workflows']
+    const collected = [
+      {
+        nodes: [
+          { kind: 'activity', activity: { name: 'fast' } },
+          { kind: 'activity', activity: { name: 'slow' } },
+          { kind: 'activity', activity: { name: 'bulk' } },
+        ],
+      },
+    ] as unknown as (typeof resolved)['workflows']
+
+    expect(
+      resolveActivityPoolClaimNames(
+        interactive!,
+        resolved.workers.activity,
+        collected,
+      ),
+    ).toStrictEqual(['fast'])
+    expect(
+      resolveActivityPoolClaimNames(
+        batch!,
+        resolved.workers.activity,
+        collected,
+      ),
+    ).toStrictEqual(['slow', 'bulk'])
+
+    // a single catch-all pool claims everything (undefined = no filter)
+    const soloConfig = defineWorkflows({
+      runtime: () => createInMemoryWorkflowRuntime(),
+      workflows: () => [],
+      workers: { activity: [{ name: 'only' }] },
+    })
+    const solo = await resolveWorkflowsConfig(soloConfig)
+    expect(
+      resolveActivityPoolClaimNames(
+        solo.workers.activity[0]!,
+        solo.workers.activity,
+        workflows,
+      ),
+    ).toBeUndefined()
   })
 
   it('accepts task implementations with typed dependencies', async () => {

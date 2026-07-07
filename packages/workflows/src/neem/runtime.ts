@@ -43,9 +43,21 @@ export type WorkflowsActivityWorkerPoolConfig = WorkflowsWorkerPoolConfig & {
   readonly activityNames?: readonly string[]
 }
 
+export type WorkflowsNamedActivityWorkerPoolConfig =
+  WorkflowsActivityWorkerPoolConfig & {
+    readonly name: string
+  }
+
 export type WorkflowsWorkersConfig = {
   readonly coordinator?: WorkflowsWorkerPoolConfig
-  readonly activity?: WorkflowsActivityWorkerPoolConfig
+  /**
+   * Either one shared pool (default) or multiple isolated named pools. With
+   * named pools, each claims only its `activityNames`; at most one pool may
+   * omit `activityNames` to act as the catch-all for unmatched activities.
+   */
+  readonly activity?:
+    | WorkflowsActivityWorkerPoolConfig
+    | readonly WorkflowsNamedActivityWorkerPoolConfig[]
   readonly task?: WorkflowsWorkerPoolConfig
 }
 
@@ -72,16 +84,25 @@ export type ResolvedWorkflowsConfig<
   readonly workflows: readonly TWorkflowImplementation[]
   readonly tasks: readonly TTaskImplementation[]
   readonly schedules: readonly TScheduleDefinition[]
-  readonly workers: Required<{
+  readonly workers: {
     readonly coordinator: Required<WorkflowsWorkerPoolConfig>
-    readonly activity: Required<WorkflowsActivityWorkerPoolConfig>
+    readonly activity: readonly ResolvedActivityWorkerPool[]
     readonly task: Required<WorkflowsWorkerPoolConfig>
-  }>
+  }
+}
+
+export type ResolvedActivityWorkerPool = Required<WorkflowsWorkerPoolConfig> & {
+  readonly name: string
+  readonly activityNames?: readonly string[]
 }
 
 export type WorkflowsWorkerData = {
   readonly role: WorkflowWorkerRole
+  /** Which resolved activity pool this worker serves; activity role only. */
+  readonly activityPool?: string
 }
+
+export const DEFAULT_ACTIVITY_POOL_NAME = 'activity'
 
 const defaultWorkerConfig = {
   threads: 1,
@@ -137,7 +158,7 @@ export async function resolveWorkflowsConfig<
     schedules: (await config.schedules?.()) ?? [],
     workers: {
       coordinator: normalizeWorkerPool(config.workers?.coordinator),
-      activity: normalizeWorkerPool(config.workers?.activity),
+      activity: normalizeActivityWorkerPools(config.workers?.activity),
       task: normalizeWorkerPool(config.workers?.task),
     },
   }
@@ -150,4 +171,72 @@ function normalizeWorkerPool<TConfig extends WorkflowsWorkerPoolConfig>(
     ...defaultWorkerConfig,
     ...config,
   }) as Required<TConfig & WorkflowsWorkerPoolConfig>
+}
+
+function normalizeActivityWorkerPools(
+  config:
+    | WorkflowsActivityWorkerPoolConfig
+    | readonly WorkflowsNamedActivityWorkerPoolConfig[]
+    | undefined,
+): readonly ResolvedActivityWorkerPool[] {
+  if (config === undefined || !Array.isArray(config)) {
+    return [
+      {
+        name: DEFAULT_ACTIVITY_POOL_NAME,
+        ...normalizeWorkerPool(
+          config as WorkflowsActivityWorkerPoolConfig | undefined,
+        ),
+      },
+    ]
+  }
+
+  const pools = config as readonly WorkflowsNamedActivityWorkerPoolConfig[]
+  if (pools.length === 0) {
+    throw new Error('Workflows activity worker pool list must not be empty')
+  }
+
+  const names = new Set<string>()
+  const claimedActivities = new Map<string, string>()
+  let catchAll: string | undefined
+  for (const pool of pools) {
+    if (!pool.name) {
+      throw new Error('Workflows activity worker pool requires a name')
+    }
+    if (names.has(pool.name)) {
+      throw new Error(
+        `Duplicate workflows activity worker pool name [${pool.name}]`,
+      )
+    }
+    names.add(pool.name)
+
+    if (pool.activityNames === undefined) {
+      // two catch-alls would race for the same unmatched activities with
+      // conflicting cadence/lease settings
+      if (catchAll !== undefined) {
+        throw new Error(
+          `Workflows activity worker pools [${catchAll}] and [${pool.name}] both omit activityNames; only one catch-all pool is allowed`,
+        )
+      }
+      catchAll = pool.name
+      continue
+    }
+
+    for (const activityName of pool.activityNames) {
+      const owner = claimedActivities.get(activityName)
+      if (owner !== undefined) {
+        throw new Error(
+          `Activity [${activityName}] is claimed by both workflows worker pools [${owner}] and [${pool.name}]`,
+        )
+      }
+      claimedActivities.set(activityName, pool.name)
+    }
+  }
+
+  return pools.map((pool) => ({
+    ...normalizeWorkerPool(pool),
+    name: pool.name,
+    ...(pool.activityNames === undefined
+      ? {}
+      : { activityNames: pool.activityNames }),
+  }))
 }
