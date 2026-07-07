@@ -165,6 +165,58 @@ describe('workflows Neem integration', () => {
     )
   })
 
+  it('rejects named pools that leave a registered activity uncovered', async () => {
+    const workflowWithActivities = defineWorkflow({
+      name: 'neem.integration.pool-coverage',
+      input: t.object({}),
+      output: t.object({}),
+    })
+      .activity('fast', { input: t.object({}), output: t.object({}) })
+      .activity('slow', { input: t.object({}), output: t.object({}) })
+      .build()
+    const impl = implementWorkflow(workflowWithActivities)
+      .fast(async () => ({}))
+      .slow(async () => ({}))
+      .finish(() => ({}))
+
+    const uncovered = defineWorkflows({
+      runtime: () => createInMemoryWorkflowRuntime(),
+      workflows: () => [impl],
+      workers: {
+        activity: [{ name: 'interactive', activityNames: ['fast'] }],
+      },
+    })
+    await expect(resolveWorkflowsConfig(uncovered)).rejects.toThrow(
+      'Activities [slow] are not claimed by any workflows activity worker pool',
+    )
+
+    // a catch-all pool absorbs the rest — same pools plus catch-all resolves
+    const covered = defineWorkflows({
+      runtime: () => createInMemoryWorkflowRuntime(),
+      workflows: () => [impl],
+      workers: {
+        activity: [
+          { name: 'interactive', activityNames: ['fast'] },
+          { name: 'batch' },
+        ],
+      },
+    })
+    await expect(resolveWorkflowsConfig(covered)).resolves.toBeDefined()
+
+    // full explicit coverage needs no catch-all
+    const explicit = defineWorkflows({
+      runtime: () => createInMemoryWorkflowRuntime(),
+      workflows: () => [impl],
+      workers: {
+        activity: [
+          { name: 'interactive', activityNames: ['fast'] },
+          { name: 'heavy', activityNames: ['slow', 'not-registered'] },
+        ],
+      },
+    })
+    await expect(resolveWorkflowsConfig(explicit)).resolves.toBeDefined()
+  })
+
   it('computes catch-all pool claim names as the complement of named pools', async () => {
     const config = defineWorkflows({
       runtime: () => createInMemoryWorkflowRuntime(),

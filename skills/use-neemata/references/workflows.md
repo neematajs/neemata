@@ -233,4 +233,7 @@ workers: {
 ```
 
 Pool names must be unique, an activity name may be claimed by at most one
-pool, and only one catch-all (no `activityNames`) pool is allowed.
+pool, and only one catch-all (no `activityNames`) pool is allowed. Without a
+catch-all, every activity of the registered workflows must be covered by some
+pool's `activityNames` — an uncovered activity fails config resolution instead
+of silently never being claimed.

@@ -4,6 +4,7 @@ import type {
 } from '../implement/index.ts'
 import type { WorkflowRuntimeAdapter } from '../runtime/client.ts'
 import type { AnyScheduleDefinition, MaybePromise } from '../types/index.ts'
+import { collectWorkflowActivityNames } from '../runtime/worker.ts'
 
 export type AnyWorkflowImplementation = Omit<
   WorkflowImplementation,
@@ -151,14 +152,18 @@ export async function resolveWorkflowsConfig<
     TScheduleDefinition
   >
 > {
+  const workflows = await config.workflows()
   return {
     runtime: config.runtime,
-    workflows: await config.workflows(),
+    workflows,
     tasks: (await config.tasks?.()) ?? [],
     schedules: (await config.schedules?.()) ?? [],
     workers: {
       coordinator: normalizeWorkerPool(config.workers?.coordinator),
-      activity: normalizeActivityWorkerPools(config.workers?.activity),
+      activity: normalizeActivityWorkerPools(
+        config.workers?.activity,
+        workflows,
+      ),
       task: normalizeWorkerPool(config.workers?.task),
     },
   }
@@ -178,6 +183,7 @@ function normalizeActivityWorkerPools(
     | WorkflowsActivityWorkerPoolConfig
     | readonly WorkflowsNamedActivityWorkerPoolConfig[]
     | undefined,
+  workflows: readonly AnyWorkflowImplementation[],
 ): readonly ResolvedActivityWorkerPool[] {
   if (config === undefined || !Array.isArray(config)) {
     return [
@@ -229,6 +235,20 @@ function normalizeActivityWorkerPools(
         )
       }
       claimedActivities.set(activityName, pool.name)
+    }
+  }
+
+  // Without a catch-all, an activity claimed by no pool would stall its
+  // workflows silently forever — fail loudly at startup instead. A selector
+  // naming an unknown activity stays allowed (deploy skew is harmless).
+  if (catchAll === undefined) {
+    const uncovered = collectWorkflowActivityNames(workflows).filter(
+      (name) => !claimedActivities.has(name),
+    )
+    if (uncovered.length > 0) {
+      throw new Error(
+        `Activities [${uncovered.join(', ')}] are not claimed by any workflows activity worker pool; add them to a pool or configure a catch-all pool without activityNames`,
+      )
     }
   }
 
