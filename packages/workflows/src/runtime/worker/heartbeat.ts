@@ -93,6 +93,7 @@ export async function runWithAttemptHeartbeat<T>(
   const heartbeatFailure = new Promise<never>((_resolve, reject) => {
     rejectHeartbeat = reject
   })
+  let beatPending = false
   const beat = () => {
     if (heartbeatRunning || heartbeatFailed) return
     heartbeatRunning = true
@@ -119,15 +120,27 @@ export async function runWithAttemptHeartbeat<T>(
       })
       .finally(() => {
         heartbeatRunning = false
+        if (beatPending) {
+          beatPending = false
+          beat()
+        }
       })
   }
   const interval = setInterval(beat, intervalMs)
   // Cancellation wake hint: run the heartbeat check immediately instead of
   // waiting out the interval. The DB read stays authoritative — a spurious
-  // notification just costs one extra heartbeat query.
+  // notification just costs one extra heartbeat query. A wake arriving while
+  // a heartbeat is in flight is latched: that snapshot may predate the
+  // cancellation commit, so a follow-up check must run once it settles.
   const unsubscribeCancellationWake = input.wakeEvents?.onCancellation(
     input.claimed.command.runId,
-    beat,
+    () => {
+      if (heartbeatRunning) {
+        beatPending = true
+        return
+      }
+      beat()
+    },
   )
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined
   const timeoutFailure =

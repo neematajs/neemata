@@ -57,20 +57,28 @@ export function createPostgresWorkflowWakeEvents(
   let client: WorkflowPostgresListenerClient | undefined
   let reconnectTimer: ReturnType<typeof setTimeout> | undefined
 
+  // shutdown intentionally interrupts in-flight connect/LISTEN work; don't
+  // surface those interruptions as errors
+  const reportError = (error: unknown) => {
+    if (!disposed) params.onError?.(error)
+  }
+
   const fire = (listeners: Set<() => void> | undefined) => {
     if (!listeners) return
     for (const listener of listeners) {
       try {
         listener()
       } catch (error) {
-        params.onError?.(error)
+        reportError(error)
       }
     }
   }
 
   const handleNotification = (message: WorkflowPostgresNotification) => {
     if (message.channel === WORKFLOW_COMMANDS_CHANNEL) {
-      fire(commandListeners.get(message.payload as WorkflowCommandWakeKind))
+      if (message.payload) {
+        fire(commandListeners.get(message.payload as WorkflowCommandWakeKind))
+      }
       return
     }
     if (message.channel === WORKFLOW_CANCELLATIONS_CHANNEL) {
@@ -101,7 +109,7 @@ export function createPostgresWorkflowWakeEvents(
       client = connected
       let lost = false
       const onLost = (error?: unknown) => {
-        if (error) params.onError?.(error)
+        if (error) reportError(error)
         if (lost) return
         lost = true
         client = undefined
@@ -114,7 +122,7 @@ export function createPostgresWorkflowWakeEvents(
         `LISTEN "${WORKFLOW_COMMANDS_CHANNEL}"; LISTEN "${WORKFLOW_CANCELLATIONS_CHANNEL}"`,
       )
     } catch (error) {
-      params.onError?.(error)
+      reportError(error)
       scheduleReconnect()
     }
   }

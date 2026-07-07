@@ -82,7 +82,11 @@ const runtime = createPostgresWorkflowRuntime({ connection, wakeEvents })
 Notifications are fire-and-forget hints: a missed one (disconnect, restart)
 degrades to the existing polling behavior, never to lost work. With wake
 events enabled, generous poll intervals and lease durations keep idle database
-traffic low without sacrificing dispatch or stop latency. The listener
+traffic low without sacrificing dispatch or stop latency. The tradeoff: every
+immediate command enqueue and cancellation adds a `NOTIFY` to its transaction,
+and Postgres serializes commits of notifying transactions — under very high
+dispatch throughput this can reduce commit parallelism. Delayed commands skip
+the hint entirely. The listener
 reconnects automatically after connection loss; `wakeEvents.dispose()` runs as
 part of `runtime.dispose()`.
 

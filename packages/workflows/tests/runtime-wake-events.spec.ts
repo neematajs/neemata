@@ -108,4 +108,61 @@ describe('workflow wake events', () => {
     cancellationWake!()
     await expect(work).rejects.toThrow('observed cancellation')
   })
+
+  it('latches a cancellation wake that fires while a heartbeat is in flight', async () => {
+    const claimed = {
+      id: 'command-2',
+      leaseToken: 'lease-2',
+      command: {
+        kind: 'activityAttempt',
+        workflowName: 'wf',
+        activityName: 'act',
+        runId: 'run-2',
+        nodeName: 'node-2',
+        childKey: 'self',
+        attemptId: 'attempt-2',
+        leaseToken: 'lease-2',
+        input: {},
+      },
+    } as unknown as ClaimedAttempt
+
+    const heartbeats: Array<(result: { runStatus: string }) => void> = []
+    const attemptExecutor = {
+      heartbeat: () =>
+        new Promise<{ runStatus: string }>((resolve) => {
+          heartbeats.push(resolve)
+        }),
+    } as unknown as AttemptExecutor
+
+    let cancellationWake: (() => void) | undefined
+    const work = runWithAttemptHeartbeat(
+      {
+        attemptExecutor,
+        claimed,
+        leaseMs: LONG_DELAY_MS * 3,
+        wakeEvents: {
+          onCancellation: (_runId, listener) => {
+            cancellationWake = listener
+            return () => {}
+          },
+        },
+      },
+      () => new Promise<never>(() => {}),
+    )
+
+    // first wake starts a heartbeat whose snapshot predates the cancellation
+    cancellationWake!()
+    expect(heartbeats.length).toBe(1)
+    // cancellation commits and a second wake fires while it is in flight
+    cancellationWake!()
+    expect(heartbeats.length).toBe(1)
+    heartbeats[0]!({ runStatus: 'running' })
+    // the latched wake must trigger a follow-up check without waiting for
+    // the interval
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(heartbeats.length).toBe(2)
+    heartbeats[1]!({ runStatus: 'cancelling' })
+
+    await expect(work).rejects.toThrow('observed cancellation')
+  })
 })
