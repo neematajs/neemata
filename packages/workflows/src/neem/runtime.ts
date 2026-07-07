@@ -238,11 +238,23 @@ function normalizeActivityWorkerPools(
     }
   }
 
+  // Selectors and implementations resolve from the same config, so an
+  // unknown name is always a typo or a stale entry — with a catch-all it
+  // would silently reroute the real activity there, so fail loudly.
+  const registered = new Set(collectWorkflowActivityNames(workflows))
+  const unknown = [...claimedActivities.keys()].filter(
+    (name) => !registered.has(name),
+  )
+  if (unknown.length > 0) {
+    throw new Error(
+      `Activities [${unknown.join(', ')}] selected by workflows activity worker pools do not exist in the registered workflows`,
+    )
+  }
+
   // Without a catch-all, an activity claimed by no pool would stall its
-  // workflows silently forever — fail loudly at startup instead. A selector
-  // naming an unknown activity stays allowed (deploy skew is harmless).
+  // workflows silently forever — fail loudly at startup instead.
   if (catchAll === undefined) {
-    const uncovered = collectWorkflowActivityNames(workflows).filter(
+    const uncovered = [...registered].filter(
       (name) => !claimedActivities.has(name),
     )
     if (uncovered.length > 0) {
