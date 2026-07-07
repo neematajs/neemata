@@ -3,6 +3,7 @@ export {
   type RunActivityAttemptInput,
 } from './worker/activity-attempt.ts'
 export {
+  collectWorkflowActivityNames,
   runActivityWorker,
   runTaskWorker,
   runWorkflowWorker,

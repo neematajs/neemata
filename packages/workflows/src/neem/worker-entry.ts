@@ -5,11 +5,13 @@ import type { WorkflowRuntimeAdapter } from '../runtime/client.ts'
 import type {
   AnyTaskImplementation,
   AnyWorkflowImplementation,
+  ResolvedActivityWorkerPool,
   ResolvedWorkflowsConfig,
   WorkflowsConfig,
   WorkflowsWorkerData,
 } from './runtime.ts'
 import {
+  collectWorkflowActivityNames,
   runActivityWorker,
   runTaskWorker,
   runWorkflowWorker,
@@ -52,7 +54,7 @@ export function defineWorkflowsWorker<
           }
           workerLoopError = undefined
           workerLoop = runRoleLoop({
-            role: ctx.data.role,
+            data: ctx.data,
             runtime,
             config,
             container,
@@ -92,13 +94,26 @@ const ROLE_WAKE_KIND = {
 } as const
 
 async function runRoleLoop(input: {
-  readonly role: WorkflowsWorkerData['role']
+  readonly data: WorkflowsWorkerData
   readonly runtime: WorkflowRuntimeAdapter
   readonly config: ResolvedWorkflowsConfig
   readonly container: Container
   readonly workerId: string
   readonly signal: AbortSignal
 }): Promise<void> {
+  const role = input.data.role
+  const activityPool =
+    role === 'activity'
+      ? resolveActivityWorkerPool(input.config, input.data)
+      : undefined
+  const activityNames =
+    activityPool === undefined
+      ? undefined
+      : resolveActivityPoolClaimNames(
+          activityPool,
+          input.config.workers.activity,
+          input.config.workflows,
+        )
   // Between loop iterations the poll-interval sleep races the adapter's wake
   // hint (if any), so a fresh command interrupts idle waiting immediately.
   const idleSleep = async (ms: number) => {
@@ -106,7 +121,7 @@ async function runRoleLoop(input: {
     if (!wakeEvents) return sleep(ms, input.signal)
     let unsubscribe = () => {}
     const woken = new Promise<void>((resolve) => {
-      unsubscribe = wakeEvents.onCommand(ROLE_WAKE_KIND[input.role], resolve)
+      unsubscribe = wakeEvents.onCommand(ROLE_WAKE_KIND[role], resolve)
     })
     try {
       await Promise.race([sleep(ms, input.signal), woken])
@@ -116,7 +131,7 @@ async function runRoleLoop(input: {
   }
 
   while (!input.signal.aborted) {
-    switch (input.role) {
+    switch (role) {
       case 'coordinator':
         await runWorkflowWorker({
           ...input.runtime,
@@ -139,15 +154,15 @@ async function runRoleLoop(input: {
           ...input.runtime,
           container: input.container,
           workflows: input.config.workflows,
-          activityNames: input.config.workers.activity.activityNames,
+          activityNames,
           workerId: input.workerId,
-          concurrency: input.config.workers.activity.concurrency,
-          leaseMs: input.config.workers.activity.leaseMs,
-          maxIdleClaims: input.config.workers.activity.maxIdleClaims,
-          idleDelayMs: input.config.workers.activity.pollIntervalMs,
+          concurrency: activityPool!.concurrency,
+          leaseMs: activityPool!.leaseMs,
+          maxIdleClaims: activityPool!.maxIdleClaims,
+          idleDelayMs: activityPool!.pollIntervalMs,
           signal: input.signal,
         })
-        await idleSleep(input.config.workers.activity.pollIntervalMs)
+        await idleSleep(activityPool!.pollIntervalMs)
         continue
 
       case 'task':
@@ -166,6 +181,47 @@ async function runRoleLoop(input: {
         continue
     }
   }
+}
+
+function resolveActivityWorkerPool(
+  config: ResolvedWorkflowsConfig,
+  data: WorkflowsWorkerData,
+): ResolvedActivityWorkerPool {
+  const pools = config.workers.activity
+  if (data.activityPool !== undefined) {
+    const pool = pools.find((candidate) => candidate.name === data.activityPool)
+    if (!pool) {
+      throw new Error(
+        `Unknown workflows activity worker pool [${data.activityPool}]`,
+      )
+    }
+    return pool
+  }
+  // worker data without a pool name (hand-written neem config) is only
+  // unambiguous when a single pool exists
+  if (pools.length === 1) return pools[0]!
+  throw new Error(
+    'Workflows activity worker data must name a pool when multiple activity pools are configured',
+  )
+}
+
+// A catch-all pool must not claim activities selected by sibling pools, or
+// capacity isolation silently breaks; explicit pools claim their list as-is.
+export function resolveActivityPoolClaimNames(
+  pool: ResolvedActivityWorkerPool,
+  pools: readonly ResolvedActivityWorkerPool[],
+  workflows: ResolvedWorkflowsConfig['workflows'],
+): readonly string[] | undefined {
+  if (pool.activityNames !== undefined) return pool.activityNames
+  const claimedElsewhere = new Set(
+    pools.flatMap((sibling) =>
+      sibling.name === pool.name ? [] : (sibling.activityNames ?? []),
+    ),
+  )
+  if (claimedElsewhere.size === 0) return undefined
+  return collectWorkflowActivityNames(workflows).filter(
+    (name) => !claimedElsewhere.has(name),
+  )
 }
 
 async function sleep(ms: number, signal: AbortSignal): Promise<void> {
