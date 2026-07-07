@@ -8,7 +8,7 @@ import type { AttemptExecutor } from '../../runtime/executors.ts'
 import type { StoredRun } from '../../runtime/state.ts'
 import type { PostgresWorkflowCommandContext } from './queue.ts'
 import { createPostgresWorkflowCommandHelpers } from './queue.ts'
-import { id, json, many, one } from './sql.ts'
+import { WORKFLOW_COMMANDS_CHANNEL, id, json, many, one } from './sql.ts'
 
 export const createAttemptExecutor = (
   ctx: PostgresWorkflowCommandContext,
@@ -38,21 +38,27 @@ export const createAttemptExecutor = (
       await ready
       await db.query(
         `
-        INSERT INTO workflow_commands (
-          id,
-          kind,
-          run_id,
-          workflow_name,
-          activity_name,
-          node_name,
-          attempt_id,
-          payload,
-          run_at
+        WITH inserted AS (
+          INSERT INTO workflow_commands (
+            id,
+            kind,
+            run_id,
+            workflow_name,
+            activity_name,
+            node_name,
+            attempt_id,
+            payload,
+            run_at
+          )
+          SELECT $1, 'activity', $2, $3, $4, $5, $6, $7::jsonb, COALESCE($8, now())
+          WHERE NOT EXISTS (
+            SELECT 1 FROM workflow_commands WHERE attempt_id = $6
+          )
+          RETURNING run_at
         )
-        SELECT $1, 'activity', $2, $3, $4, $5, $6, $7::jsonb, COALESCE($8, now())
-        WHERE NOT EXISTS (
-          SELECT 1 FROM workflow_commands WHERE attempt_id = $6
-        )
+        SELECT pg_notify('${WORKFLOW_COMMANDS_CHANNEL}', 'activity')
+        FROM inserted
+        WHERE run_at <= now()
       `,
         [
           id(),
@@ -70,21 +76,27 @@ export const createAttemptExecutor = (
       await ready
       await db.query(
         `
-        INSERT INTO workflow_commands (
-          id,
-          kind,
-          run_id,
-          workflow_name,
-          task_name,
-          node_name,
-          attempt_id,
-          payload,
-          run_at
+        WITH inserted AS (
+          INSERT INTO workflow_commands (
+            id,
+            kind,
+            run_id,
+            workflow_name,
+            task_name,
+            node_name,
+            attempt_id,
+            payload,
+            run_at
+          )
+          SELECT $1, 'task', $2, $3, $4, $5, $6, $7::jsonb, COALESCE($8, now())
+          WHERE NOT EXISTS (
+            SELECT 1 FROM workflow_commands WHERE attempt_id = $6
+          )
+          RETURNING run_at
         )
-        SELECT $1, 'task', $2, $3, $4, $5, $6, $7::jsonb, COALESCE($8, now())
-        WHERE NOT EXISTS (
-          SELECT 1 FROM workflow_commands WHERE attempt_id = $6
-        )
+        SELECT pg_notify('${WORKFLOW_COMMANDS_CHANNEL}', 'task')
+        FROM inserted
+        WHERE run_at <= now()
       `,
         [
           id(),

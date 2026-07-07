@@ -85,6 +85,12 @@ export function defineWorkflowsWorker<
   })
 }
 
+const ROLE_WAKE_KIND = {
+  coordinator: 'continue',
+  activity: 'activity',
+  task: 'task',
+} as const
+
 async function runRoleLoop(input: {
   readonly role: WorkflowsWorkerData['role']
   readonly runtime: WorkflowRuntimeAdapter
@@ -93,6 +99,22 @@ async function runRoleLoop(input: {
   readonly workerId: string
   readonly signal: AbortSignal
 }): Promise<void> {
+  // Between loop iterations the poll-interval sleep races the adapter's wake
+  // hint (if any), so a fresh command interrupts idle waiting immediately.
+  const idleSleep = async (ms: number) => {
+    const wakeEvents = input.runtime.wakeEvents
+    if (!wakeEvents) return sleep(ms, input.signal)
+    let unsubscribe = () => {}
+    const woken = new Promise<void>((resolve) => {
+      unsubscribe = wakeEvents.onCommand(ROLE_WAKE_KIND[input.role], resolve)
+    })
+    try {
+      await Promise.race([sleep(ms, input.signal), woken])
+    } finally {
+      unsubscribe()
+    }
+  }
+
   while (!input.signal.aborted) {
     switch (input.role) {
       case 'coordinator':
@@ -109,10 +131,7 @@ async function runRoleLoop(input: {
             input.config.schedules.length === 0 ? undefined : { everyMs: 1000 },
           signal: input.signal,
         })
-        await sleep(
-          input.config.workers.coordinator.pollIntervalMs,
-          input.signal,
-        )
+        await idleSleep(input.config.workers.coordinator.pollIntervalMs)
         continue
 
       case 'activity':
@@ -128,7 +147,7 @@ async function runRoleLoop(input: {
           idleDelayMs: input.config.workers.activity.pollIntervalMs,
           signal: input.signal,
         })
-        await sleep(input.config.workers.activity.pollIntervalMs, input.signal)
+        await idleSleep(input.config.workers.activity.pollIntervalMs)
         continue
 
       case 'task':
@@ -143,7 +162,7 @@ async function runRoleLoop(input: {
           idleDelayMs: input.config.workers.task.pollIntervalMs,
           signal: input.signal,
         })
-        await sleep(input.config.workers.task.pollIntervalMs, input.signal)
+        await idleSleep(input.config.workers.task.pollIntervalMs)
         continue
     }
   }

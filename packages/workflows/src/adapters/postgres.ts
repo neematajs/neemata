@@ -12,4 +12,11 @@ export {
   WORKFLOW_POSTGRES_SCHEMA_VERSION,
 } from './postgres/manifest.ts'
 export { createPostgresWorkflowRuntime } from './postgres/runtime.ts'
+export {
+  createPostgresWorkflowWakeEvents,
+  type CreatePostgresWorkflowWakeEventsParams,
+  type PostgresWorkflowWakeEvents,
+  type WorkflowPostgresListenerClient,
+  type WorkflowPostgresNotification,
+} from './postgres/wake-events.ts'
 export { verifyPostgresWorkflowSchema } from './postgres/verify.ts'

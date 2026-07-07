@@ -58,6 +58,11 @@ export type WorkerLoopOptions = {
   readonly leaseMs?: number
   readonly maxIdleClaims?: number
   readonly idleDelayMs?: number
+  /**
+   * Push-style wake hint: subscribes a listener that short-circuits the idle
+   * delay when new work may be claimable. Polling stays the fallback.
+   */
+  readonly onWake?: (listener: () => void) => () => void
   readonly retention?: WorkerRetentionOptions
   readonly retentionPruner?: WorkflowRetentionPruner
   readonly scheduling?: WorkerSchedulingOptions
@@ -153,6 +158,35 @@ export async function runWorkerLoop(
       schedulingRunning = false
     }
   }
+  // Wake hints arriving mid-claim must not be lost: latch them and let the
+  // next idle sleep consume the latch instead of waiting out the delay.
+  let wakePending = false
+  const wakeWaiters = new Set<() => void>()
+  const unsubscribeWake = options.onWake?.(() => {
+    wakePending = true
+    for (const waiter of wakeWaiters) waiter()
+  })
+  const idleSleep = async () => {
+    if (wakePending) {
+      wakePending = false
+      return
+    }
+    let waiter: () => void = () => {}
+    const wakeable = new Promise<void>((resolve) => {
+      waiter = resolve
+      wakeWaiters.add(resolve)
+    })
+    try {
+      await Promise.race([
+        sleep(options.idleDelayMs ?? 0, options.signal),
+        wakeable,
+      ])
+    } finally {
+      wakeWaiters.delete(waiter)
+    }
+    wakePending = false
+  }
+
   await Promise.allSettled(
     Array.from({ length: concurrency }, async () => {
       let idleClaims = 0
@@ -174,7 +208,7 @@ export async function runWorkerLoop(
           await runScheduling()
           await runMaintenance()
           if (idleClaims < maxIdleClaims) {
-            await sleep(options.idleDelayMs ?? 0, options.signal)
+            await idleSleep()
           }
         }
       } catch (error) {
@@ -183,6 +217,7 @@ export async function runWorkerLoop(
       }
     }),
   )
+  unsubscribeWake?.()
 
   if (firstError) throw firstError
   return { processed }

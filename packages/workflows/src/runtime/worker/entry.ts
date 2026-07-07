@@ -10,6 +10,10 @@ import type {
 } from '../../types/index.ts'
 import type { AttemptExecutor, RunCoordinationExecutor } from '../executors.ts'
 import type { WorkflowStore } from '../store.ts'
+import type {
+  WorkflowCommandWakeKind,
+  WorkflowWakeEvents,
+} from '../wake-events.ts'
 import { continueWorkflowRun } from '../coordinator.ts'
 import { runActivityAttempt } from './activity-attempt.ts'
 import {
@@ -58,6 +62,7 @@ export type RunWorkflowWorkerInput = WorkerLoopOptions & {
   readonly runCoordinationExecutor: RunCoordinationExecutor
   readonly attemptExecutor: AttemptExecutor
   readonly atomicContinuation?: WorkflowRuntimeAtomicContinuation
+  readonly wakeEvents?: WorkflowWakeEvents
   readonly workflows: readonly AnyWorkflowImplementation[]
   readonly container: Pick<Container, 'createContext'>
   readonly reaping?: false | WorkerReapingOptions
@@ -69,6 +74,7 @@ export type RunActivityWorkerInput = WorkerLoopOptions & {
   readonly runCoordinationExecutor: RunCoordinationExecutor
   readonly attemptExecutor: AttemptExecutor
   readonly atomicCompletion?: WorkflowRuntimeAtomicCompletion
+  readonly wakeEvents?: WorkflowWakeEvents
   readonly workflows: readonly AnyWorkflowImplementation[]
   readonly activityNames?: readonly string[]
   readonly container: Pick<Container, 'createContext'>
@@ -80,6 +86,7 @@ export type RunTaskWorkerInput = WorkerLoopOptions & {
   readonly runCoordinationExecutor: RunCoordinationExecutor
   readonly attemptExecutor: AttemptExecutor
   readonly atomicCompletion?: WorkflowRuntimeAtomicCompletion
+  readonly wakeEvents?: WorkflowWakeEvents
   readonly tasks: readonly AnyTaskImplementation[]
   readonly container: Pick<Container, 'createContext'>
   readonly reaping?: false | WorkerReapingOptions
@@ -140,6 +147,15 @@ function withRunTimeoutsHook(
   ]
 }
 
+
+function commandWake(
+  wakeEvents: WorkflowWakeEvents | undefined,
+  kind: WorkflowCommandWakeKind,
+): ((listener: () => void) => () => void) | undefined {
+  if (!wakeEvents) return undefined
+  return (listener) => wakeEvents.onCommand(kind, listener)
+}
+
 export async function runWorkflowWorker(
   input: RunWorkflowWorkerInput,
 ): Promise<WorkerLoopResult> {
@@ -149,7 +165,11 @@ export async function runWorkflowWorker(
   const maintenance = withRunTimeoutsHook(input, withReapingHook(input))
 
   return runWorkerLoop(
-    withDefaultRetentionPruner({ ...input, maintenance }),
+    withDefaultRetentionPruner({
+      ...input,
+      maintenance,
+      onWake: commandWake(input.wakeEvents, 'continue'),
+    }),
     async () => {
       const claimed = await input.runCoordinationExecutor.claim({
         workerId: input.workerId,
@@ -204,6 +224,7 @@ export async function runActivityWorker(
     withDefaultRetentionPruner({
       ...input,
       maintenance: withReapingHook(input),
+      onWake: commandWake(input.wakeEvents, 'activity'),
     }),
     async () => {
       const claimed = await input.attemptExecutor.claimActivity({
@@ -244,6 +265,7 @@ export async function runTaskWorker(
     withDefaultRetentionPruner({
       ...input,
       maintenance: withReapingHook(input),
+      onWake: commandWake(input.wakeEvents, 'task'),
     }),
     async () => {
       const claimed = await input.attemptExecutor.claimTask({

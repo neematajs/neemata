@@ -23,6 +23,7 @@ import type {
   WorkflowRetentionPruner,
   WorkflowStore,
 } from './store.ts'
+import type { WorkflowWakeEvents } from './wake-events.ts'
 import type {
   WorkflowRuntimeAtomicCompletion,
   WorkflowRuntimeAtomicContinuation,
@@ -48,6 +49,7 @@ export type WorkflowRuntimeAdapter = {
   readonly attemptExecutor: AttemptExecutor
   readonly retentionPruner?: WorkflowRetentionPruner
   readonly scheduler?: WorkflowScheduler
+  readonly wakeEvents?: WorkflowWakeEvents
   readonly atomicStart?: WorkflowRuntimeAtomicStart
   readonly atomicContinuation?: WorkflowRuntimeAtomicContinuation
   readonly atomicCompletion?: WorkflowRuntimeAtomicCompletion

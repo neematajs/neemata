@@ -11,6 +11,7 @@ import {
   isTerminalRunStatus,
 } from '../../runtime/status.ts'
 import {
+  WORKFLOW_CANCELLATIONS_CHANNEL,
   id,
   json,
   many,
@@ -486,16 +487,23 @@ export const createPostgresWorkflowNodeStore = (
       ) {
         return mapRun(run)
       }
+      // pg_notify rides on the status flip so a worker holding the attempt
+      // can abort immediately instead of waiting out its heartbeat cycle.
       const row = await one(
         db,
         `
-        UPDATE workflow_runs
-        SET status = 'cancelling',
-            version = version + 1,
-            updated_at = now()
-        WHERE id = $1
-          AND status IN (${runStatusSourcesSql('cancelling')})
-        RETURNING *
+        WITH updated AS (
+          UPDATE workflow_runs
+          SET status = 'cancelling',
+              version = version + 1,
+              updated_at = now()
+          WHERE id = $1
+            AND status IN (${runStatusSourcesSql('cancelling')})
+          RETURNING *
+        )
+        SELECT updated.*,
+          pg_notify('${WORKFLOW_CANCELLATIONS_CHANNEL}', updated.id::text)
+        FROM updated
       `,
         [runId],
       )
