@@ -147,7 +147,6 @@ function withRunTimeoutsHook(
   ]
 }
 
-
 function commandWake(
   wakeEvents: WorkflowWakeEvents | undefined,
   kind: WorkflowCommandWakeKind,

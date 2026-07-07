@@ -1,8 +1,7 @@
+import type { Pool as PgPool } from 'pg'
 import { t } from '@nmtjs/type'
 import pg from 'pg'
 import { afterEach, describe, expect, it } from 'vitest'
-
-import type { Pool as PgPool } from 'pg'
 
 import {
   createPostgresWorkflowConnection,

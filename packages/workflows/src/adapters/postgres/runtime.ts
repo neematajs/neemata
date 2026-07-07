@@ -1,11 +1,11 @@
 import type { WorkflowRuntimeAdapter } from '../../runtime/client.ts'
 import type { WorkflowRuntimeAtomicStart } from '../../runtime/coordinator.ts'
 import type { PruneTerminalRunsParams } from '../../runtime/store.ts'
+import type { WorkflowWakeEvents } from '../../runtime/wake-events.ts'
 import type {
   WorkflowRuntimeAtomicCompletion,
   WorkflowRuntimeAtomicContinuation,
 } from '../../runtime/worker.ts'
-import type { WorkflowWakeEvents } from '../../runtime/wake-events.ts'
 import type { WorkflowPostgresConnection } from './connection.ts'
 import { SELF_CHILD_KEY } from '../../runtime/child-key.ts'
 import { createAttemptExecutor } from './executor.ts'
