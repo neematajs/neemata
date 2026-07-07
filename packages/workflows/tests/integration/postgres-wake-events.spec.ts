@@ -203,7 +203,7 @@ describe.skipIf(!postgresTarget.url)(
         .hold(async (_ctx, input, lifecycle) => {
           activityStarted()
           await new Promise<never>((_resolve, reject) => {
-            lifecycle.signal.addEventListener(
+            lifecycle?.signal.addEventListener(
               'abort',
               () => reject(new Error('activity aborted')),
               { once: true },
