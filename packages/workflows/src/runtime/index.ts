@@ -74,6 +74,10 @@ export {
 } from './transitions.ts'
 export type { TransitionMap } from './transitions.ts'
 export type {
+  WorkflowCommandWakeKind,
+  WorkflowWakeEvents,
+} from './wake-events.ts'
+export type {
   CancelNodeParams,
   CancelNonTerminalRunNodesParams,
   CreateAttemptInput,

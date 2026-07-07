@@ -1,6 +1,7 @@
 import type { WorkflowRuntimeAdapter } from '../../runtime/client.ts'
 import type { WorkflowRuntimeAtomicStart } from '../../runtime/coordinator.ts'
 import type { PruneTerminalRunsParams } from '../../runtime/store.ts'
+import type { WorkflowWakeEvents } from '../../runtime/wake-events.ts'
 import type {
   WorkflowRuntimeAtomicCompletion,
   WorkflowRuntimeAtomicContinuation,
@@ -24,6 +25,11 @@ type PostgresWorkflowRuntime = WorkflowRuntimeAdapter & {
 export function createPostgresWorkflowRuntime(params: {
   readonly connection: WorkflowPostgresConnection
   readonly maxDeliveries?: number
+  /**
+   * Optional LISTEN/NOTIFY wake-up hints (see createPostgresWorkflowWakeEvents).
+   * Without it dispatch/cancellation latency is bounded by polling alone.
+   */
+  readonly wakeEvents?: WorkflowWakeEvents
 }): PostgresWorkflowRuntime {
   const db = params.connection
   const ready = Promise.resolve()
@@ -164,5 +170,11 @@ export function createPostgresWorkflowRuntime(params: {
     atomicContinuation,
     atomicCompletion,
     connection: db,
+    ...(params.wakeEvents === undefined
+      ? {}
+      : {
+          wakeEvents: params.wakeEvents,
+          dispose: () => params.wakeEvents?.dispose?.(),
+        }),
   }
 }

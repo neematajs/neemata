@@ -1,5 +1,6 @@
 import type { ClaimedAttempt } from '../commands.ts'
 import type { AttemptExecutor } from '../executors.ts'
+import type { WorkflowWakeEvents } from '../wake-events.ts'
 import { isTerminalRunStatus } from '../status.ts'
 import { DEFAULT_LEASE_MS, isAttemptHeartbeatLeaseLost } from './loop.ts'
 
@@ -72,6 +73,7 @@ export async function runWithAttemptHeartbeat<T>(
     readonly claimed: ClaimedAttempt
     readonly leaseMs?: number
     readonly signal?: AbortSignal
+    readonly wakeEvents?: Pick<WorkflowWakeEvents, 'onCancellation'>
   },
   handler: (lifecycle: { readonly signal: AbortSignal }) => Promise<T>,
   timeout?: {
@@ -91,7 +93,8 @@ export async function runWithAttemptHeartbeat<T>(
   const heartbeatFailure = new Promise<never>((_resolve, reject) => {
     rejectHeartbeat = reject
   })
-  const interval = setInterval(() => {
+  let beatPending = false
+  const beat = () => {
     if (heartbeatRunning || heartbeatFailed) return
     heartbeatRunning = true
     void input.attemptExecutor
@@ -117,8 +120,28 @@ export async function runWithAttemptHeartbeat<T>(
       })
       .finally(() => {
         heartbeatRunning = false
+        if (beatPending) {
+          beatPending = false
+          beat()
+        }
       })
-  }, intervalMs)
+  }
+  const interval = setInterval(beat, intervalMs)
+  // Cancellation wake hint: run the heartbeat check immediately instead of
+  // waiting out the interval. The DB read stays authoritative — a spurious
+  // notification just costs one extra heartbeat query. A wake arriving while
+  // a heartbeat is in flight is latched: that snapshot may predate the
+  // cancellation commit, so a follow-up check must run once it settles.
+  const unsubscribeCancellationWake = input.wakeEvents?.onCancellation(
+    input.claimed.command.runId,
+    () => {
+      if (heartbeatRunning) {
+        beatPending = true
+        return
+      }
+      beat()
+    },
+  )
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined
   const timeoutFailure =
     timeout === undefined
@@ -164,6 +187,7 @@ export async function runWithAttemptHeartbeat<T>(
     return await Promise.race(races)
   } finally {
     clearInterval(interval)
+    unsubscribeCancellationWake?.()
     if (timeoutHandle !== undefined) clearTimeout(timeoutHandle)
     removeShutdownListener?.()
   }

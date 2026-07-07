@@ -9,6 +9,7 @@ import {
   MAX_ERROR_BACKOFF_MS,
   RELEASE_BACKOFF_MS,
   UNROUTABLE_BACKOFF_MS,
+  WORKFLOW_COMMANDS_CHANNEL,
   id,
   json,
   one,
@@ -29,17 +30,26 @@ export const createPostgresWorkflowCommandHelpers = (
     command: ContinueRunCommand,
     runAt?: Date,
   ) => {
+    // pg_notify piggybacks on the upsert so no enqueue path can forget the
+    // wake-up hint; inside a transaction it is delivered on commit. Delayed
+    // commands stay poll-only — waking workers for future work is noise.
     await db.query(
       `
-      INSERT INTO workflow_commands (
-        id, kind, run_id, workflow_name, payload, run_at
+      WITH upserted AS (
+        INSERT INTO workflow_commands (
+          id, kind, run_id, workflow_name, payload, run_at
+        )
+        VALUES ($1, 'continue', $2, $3, $4::jsonb, COALESCE($5, now()))
+        ON CONFLICT (run_id) WHERE kind = 'continue' AND lease_token IS NULL
+        DO UPDATE
+        SET run_at = LEAST(workflow_commands.run_at, EXCLUDED.run_at),
+            payload = EXCLUDED.payload,
+            workflow_name = EXCLUDED.workflow_name
+        RETURNING run_at
       )
-      VALUES ($1, 'continue', $2, $3, $4::jsonb, COALESCE($5, now()))
-      ON CONFLICT (run_id) WHERE kind = 'continue' AND lease_token IS NULL
-      DO UPDATE
-      SET run_at = LEAST(workflow_commands.run_at, EXCLUDED.run_at),
-          payload = EXCLUDED.payload,
-          workflow_name = EXCLUDED.workflow_name
+      SELECT pg_notify('${WORKFLOW_COMMANDS_CHANNEL}', 'continue')
+      FROM upserted
+      WHERE run_at <= now()
     `,
       [id(), command.runId, command.workflowName, json(command), runAt ?? null],
     )

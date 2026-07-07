@@ -51,6 +51,45 @@ const runtime = createPostgresWorkflowRuntime({ connection })
 
 Other clients can pass a custom object that satisfies `WorkflowPostgresConnection`.
 
+## Wake Events (LISTEN/NOTIFY)
+
+Command dispatch and cancellation are poll-based by default: dispatch latency
+is bounded by the worker poll interval, cancellation latency by the attempt
+heartbeat cadence (`leaseMs / 3`). The Postgres runtime can layer
+`LISTEN/NOTIFY` wake-up hints on top so idle workers wake immediately when a
+command is enqueued and running attempts observe cancellation right away:
+
+```ts
+import { Client, Pool } from 'pg'
+import {
+  createPostgresWorkflowConnection,
+  createPostgresWorkflowRuntime,
+  createPostgresWorkflowWakeEvents,
+} from '@nmtjs/workflows/postgres'
+
+const wakeEvents = createPostgresWorkflowWakeEvents({
+  // dedicated LISTEN connection, one per worker process
+  connect: async () => {
+    const client = new Client({ connectionString })
+    await client.connect()
+    return client
+  },
+})
+
+const runtime = createPostgresWorkflowRuntime({ connection, wakeEvents })
+```
+
+Notifications are fire-and-forget hints: a missed one (disconnect, restart)
+degrades to the existing polling behavior, never to lost work. With wake
+events enabled, generous poll intervals and lease durations keep idle database
+traffic low without sacrificing dispatch or stop latency. The tradeoff: every
+immediate command enqueue and cancellation adds a `NOTIFY` to its transaction,
+and Postgres serializes commits of notifying transactions — under very high
+dispatch throughput this can reduce commit parallelism. Delayed commands skip
+the hint entirely. The listener
+reconnects automatically after connection loss; `wakeEvents.dispose()` runs as
+part of `runtime.dispose()`.
+
 ## Postgres Schema
 
 Applications own production migrations. The package exports Drizzle schema

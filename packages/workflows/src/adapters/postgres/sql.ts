@@ -38,6 +38,10 @@ export const DEFAULT_PRUNE_STATUSES = [
 ] as const satisfies readonly TerminalRunStatus[]
 
 export const TASK_RUN_NODE_NAME = '$task'
+// LISTEN/NOTIFY wake-up hint channels; payloads are the command kind and the
+// run id respectively. Delivery is best-effort — polling remains the fallback.
+export const WORKFLOW_COMMANDS_CHANNEL = 'workflow_commands'
+export const WORKFLOW_CANCELLATIONS_CHANNEL = 'workflow_run_cancellations'
 export const id = () => randomUUID()
 export const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i

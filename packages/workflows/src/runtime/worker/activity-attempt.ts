@@ -15,6 +15,7 @@ import type {
 import type { ActivityAttemptCommand, ClaimedAttempt } from '../commands.ts'
 import type { AttemptExecutor, RunCoordinationExecutor } from '../executors.ts'
 import type { WorkflowStore } from '../store.ts'
+import type { WorkflowWakeEvents } from '../wake-events.ts'
 import { parseChildKey } from '../child-key.ts'
 import { parseDurationMs } from '../duration.ts'
 import { createWorkflowRuntimeRegistry } from '../registry.ts'
@@ -60,6 +61,7 @@ export type RunActivityAttemptInput = {
   readonly claimed: ClaimedAttempt
   readonly leaseMs?: number
   readonly signal?: AbortSignal
+  readonly wakeEvents?: WorkflowWakeEvents
   readonly container: Pick<Container, 'createContext'>
 }
 
