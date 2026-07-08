@@ -78,6 +78,95 @@ const workflow = defineWorkflow({
   })
   .build()
 
+const metadataTask = defineTask({
+  name: 'metadata-score',
+  title: 'Metadata score task',
+  description: 'Scores text for metadata graph',
+  input: t.object({ text: t.string() }),
+  output: t.object({ text: t.string() }),
+})
+
+const metadataChildWorkflow = defineWorkflow({
+  name: 'metadata-child',
+  title: 'Metadata child workflow',
+  description: 'Enriches text for metadata graph',
+  input: t.object({ text: t.string() }),
+  output: t.object({ text: t.string() }),
+}).build()
+
+const metadataWorkflow = defineWorkflow({
+  name: 'metadata-everything',
+  title: 'Metadata workflow',
+  description: 'Workflow graph with presentation metadata',
+  input: t.object({ text: t.string() }),
+  output: t.object({ text: t.string() }),
+})
+  .activity('extract', {
+    title: 'Extract text',
+    description: 'Extracts text from input',
+    input: t.object({ text: t.string() }),
+    output: t.object({ text: t.string() }),
+  })
+  .task('scoring', metadataTask, {
+    title: 'Score text',
+    description: 'Scores extracted text',
+  })
+  .workflow('enrich', metadataChildWorkflow, {
+    title: 'Enrich text',
+    description: 'Delegates enrichment',
+  })
+  .branch('route', {
+    title: 'Route text',
+    description: 'Chooses inline or delegated work',
+    output: t.object({ text: t.string() }),
+    cases: (helpers) => ({
+      inline: helpers.activity({
+        title: 'Inline route',
+        description: 'Runs inline route',
+        input: t.object({ text: t.string() }),
+        output: t.object({ text: t.string() }),
+      }),
+      scored: helpers.task(metadataTask, {
+        title: 'Task route',
+        description: 'Routes through task',
+      }),
+      delegated: helpers.workflow(metadataChildWorkflow, {
+        title: 'Workflow route',
+        description: 'Routes through workflow',
+      }),
+    }),
+  })
+  .parallel(
+    'fanout',
+    (helpers) => ({
+      scored: helpers.task(metadataTask, {
+        title: 'Parallel task route',
+        description: 'Runs task in parallel',
+      }),
+      enriched: helpers.workflow(metadataChildWorkflow, {
+        title: 'Parallel workflow route',
+        description: 'Runs workflow in parallel',
+      }),
+    }),
+    {
+      title: 'Fan out',
+      description: 'Runs members in parallel',
+    },
+  )
+  .mapTask('scoreAll', metadataTask, {
+    title: 'Score all',
+    description: 'Scores every item',
+    item: t.object({ text: t.string() }),
+    mode: 'wait-all',
+  })
+  .mapWorkflow('enrichAll', metadataChildWorkflow, {
+    title: 'Enrich all',
+    description: 'Enriches every item',
+    item: t.object({ text: t.string() }),
+    mode: 'wait-settled',
+  })
+  .build()
+
 describe('serializeWorkflowGraph', () => {
   it('serializes every node kind to the stable JSON shape', () => {
     expect(serializeWorkflowGraph(workflow)).toEqual({
@@ -138,9 +227,172 @@ describe('serializeWorkflowGraph', () => {
     })
   })
 
+  it('serializes presentation metadata on graphs, nodes, cases, and targets', () => {
+    const graph = serializeWorkflowGraph(metadataWorkflow)
+
+    expect(graph).toEqual({
+      name: 'metadata-everything',
+      title: 'Metadata workflow',
+      description: 'Workflow graph with presentation metadata',
+      nodes: [
+        {
+          name: 'extract',
+          kind: 'activity',
+          title: 'Extract text',
+          description: 'Extracts text from input',
+        },
+        {
+          name: 'scoring',
+          kind: 'task',
+          title: 'Score text',
+          description: 'Scores extracted text',
+          target: {
+            kind: 'task',
+            name: 'metadata-score',
+            title: 'Metadata score task',
+            description: 'Scores text for metadata graph',
+          },
+        },
+        {
+          name: 'enrich',
+          kind: 'workflow',
+          title: 'Enrich text',
+          description: 'Delegates enrichment',
+          target: {
+            kind: 'workflow',
+            name: 'metadata-child',
+            title: 'Metadata child workflow',
+            description: 'Enriches text for metadata graph',
+          },
+        },
+        {
+          name: 'route',
+          kind: 'branch',
+          title: 'Route text',
+          description: 'Chooses inline or delegated work',
+          cases: [
+            {
+              key: 'inline',
+              kind: 'activity',
+              title: 'Inline route',
+              description: 'Runs inline route',
+            },
+            {
+              key: 'scored',
+              kind: 'task',
+              title: 'Task route',
+              description: 'Routes through task',
+              target: {
+                kind: 'task',
+                name: 'metadata-score',
+                title: 'Metadata score task',
+                description: 'Scores text for metadata graph',
+              },
+            },
+            {
+              key: 'delegated',
+              kind: 'workflow',
+              title: 'Workflow route',
+              description: 'Routes through workflow',
+              target: {
+                kind: 'workflow',
+                name: 'metadata-child',
+                title: 'Metadata child workflow',
+                description: 'Enriches text for metadata graph',
+              },
+            },
+          ],
+        },
+        {
+          name: 'fanout',
+          kind: 'parallel',
+          title: 'Fan out',
+          description: 'Runs members in parallel',
+          cases: [
+            {
+              key: 'scored',
+              kind: 'task',
+              title: 'Parallel task route',
+              description: 'Runs task in parallel',
+              target: {
+                kind: 'task',
+                name: 'metadata-score',
+                title: 'Metadata score task',
+                description: 'Scores text for metadata graph',
+              },
+            },
+            {
+              key: 'enriched',
+              kind: 'workflow',
+              title: 'Parallel workflow route',
+              description: 'Runs workflow in parallel',
+              target: {
+                kind: 'workflow',
+                name: 'metadata-child',
+                title: 'Metadata child workflow',
+                description: 'Enriches text for metadata graph',
+              },
+            },
+          ],
+        },
+        {
+          name: 'scoreAll',
+          kind: 'mapTask',
+          title: 'Score all',
+          description: 'Scores every item',
+          target: {
+            kind: 'task',
+            name: 'metadata-score',
+            title: 'Metadata score task',
+            description: 'Scores text for metadata graph',
+          },
+          mode: 'wait-all',
+        },
+        {
+          name: 'enrichAll',
+          kind: 'mapWorkflow',
+          title: 'Enrich all',
+          description: 'Enriches every item',
+          target: {
+            kind: 'workflow',
+            name: 'metadata-child',
+            title: 'Metadata child workflow',
+            description: 'Enriches text for metadata graph',
+          },
+          mode: 'wait-settled',
+        },
+      ],
+    })
+    expect(JSON.parse(JSON.stringify(graph))).toEqual(graph)
+  })
+
   it('survives JSON transport unchanged', () => {
     const graph = serializeWorkflowGraph(workflow)
     expect(JSON.parse(JSON.stringify(graph))).toEqual(graph)
+  })
+
+  it('omits presentation metadata keys when definitions do not provide them', () => {
+    const graph = serializeWorkflowGraph(workflow)
+
+    expect('title' in graph).toBe(false)
+    expect(graph.nodes.every((node) => !('title' in node))).toBe(true)
+    expect(
+      graph.nodes.every(
+        (node) => node.target === undefined || !('title' in node.target),
+      ),
+    ).toBe(true)
+    expect(
+      graph.nodes.every(
+        (node) =>
+          node.cases === undefined ||
+          node.cases.every(
+            (branchCase) =>
+              !('title' in branchCase) &&
+              (branchCase.target === undefined ||
+                !('title' in branchCase.target)),
+          ),
+      ),
+    ).toBe(true)
   })
 })
 
@@ -157,6 +409,20 @@ describe('serializeWorkflowCatalog', () => {
     ])
     expect(catalog.workflows[0]).toEqual(serializeWorkflowGraph(workflow))
     expect(catalog.tasks).toEqual([{ name: 'score' }])
+  })
+
+  it('lists task presentation metadata when present', () => {
+    expect(
+      serializeWorkflowCatalog({
+        tasks: [metadataTask],
+      }).tasks,
+    ).toEqual([
+      {
+        name: 'metadata-score',
+        title: 'Metadata score task',
+        description: 'Scores text for metadata graph',
+      },
+    ])
   })
 
   it('defaults missing inputs to empty lists', () => {
