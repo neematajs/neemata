@@ -1,6 +1,6 @@
 ---
 name: use-neemata
-description: "Use when answering questions or writing code for Neemata RPC applications: contracts, procedures, routers, applications, DI, metadata, guards, middleware, filters, clients, workflows, pubsub, metrics, streaming, blobs, and Neemata runtime integration."
+description: 'Use when answering questions or writing code for Neemata RPC applications: contracts, procedures, routers, applications, DI, metadata, guards, middleware, filters, clients, workflows, pubsub, metrics, streaming, blobs, and Neemata runtime integration.'
 ---
 
 # Use Neemata

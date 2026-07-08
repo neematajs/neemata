@@ -1,6 +1,6 @@
 ---
 name: use-neem
-description: "Use when configuring or running @nmtjs/neem projects: neem.config.ts, runtime discovery, package runtime helpers, CLI build/dev/start lifecycle, artifacts, plugins, metrics, env, proxy, health, and runtime selection."
+description: 'Use when configuring or running @nmtjs/neem projects: neem.config.ts, runtime discovery, package runtime helpers, CLI build/dev/start lifecycle, artifacts, plugins, metrics, env, proxy, health, and runtime selection.'
 ---
 
 # Use Neem
