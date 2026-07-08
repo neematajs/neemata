@@ -276,8 +276,8 @@ describe('workflow API boundaries', () => {
       })
       .finish((_ctx, { normalize, dates }, input) => {
         expectTypeOf(normalize).toEqualTypeOf<Date>()
-        expectTypeOf(dates.items[0]?.item).toMatchTypeOf<Date | undefined>()
-        expectTypeOf(dates.items[0]?.output).toMatchTypeOf<Date | undefined>()
+        expectTypeOf(dates.items[0]?.item).toExtend<Date | undefined>()
+        expectTypeOf(dates.items[0]?.output).toExtend<Date | undefined>()
         expectTypeOf(input).toEqualTypeOf<Date>()
         return normalize.toISOString()
       })

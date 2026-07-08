@@ -128,13 +128,13 @@ type WorkflowStoreWithRequiredSemanticMethods = Omit<
 
 describe('workflow runtime interfaces', () => {
   it('exports adapter-free runtime contracts from the runtime subpath', () => {
-    expectTypeOf<ContinueRunCommand>().toMatchTypeOf<{
+    expectTypeOf<ContinueRunCommand>().toExtend<{
       kind: 'continueRun'
       runId: string
       workflowName: string
     }>()
 
-    expectTypeOf<AttemptCommand>().toMatchTypeOf<{
+    expectTypeOf<AttemptCommand>().toExtend<{
       attemptId: string
       leaseToken: string
       workflowName: string
@@ -147,19 +147,19 @@ describe('workflow runtime interfaces', () => {
     expectTypeOf<AttemptExecutor>().toHaveProperty('deleteUnclaimed')
     expectTypeOf<WorkflowStore>().toHaveProperty('createRun')
     expectTypeOf<WorkflowStore>().toHaveProperty('requestRunCancellation')
-    expectTypeOf<WorkflowRuntimeAdapter>().toMatchTypeOf<{
+    expectTypeOf<WorkflowRuntimeAdapter>().toExtend<{
       store: WorkflowStore
       runCoordinationExecutor: RunCoordinationExecutor
       attemptExecutor: AttemptExecutor
     }>()
-    expectTypeOf<InMemoryWorkflowRuntime>().toMatchTypeOf<WorkflowRuntimeAdapter>()
-    expectTypeOf<CreateRunInput>().toMatchTypeOf<{
+    expectTypeOf<InMemoryWorkflowRuntime>().toExtend<WorkflowRuntimeAdapter>()
+    expectTypeOf<CreateRunInput>().toExtend<{
       kind?: RunKind
       name?: string
       workflowName: string
       taskName?: string
     }>()
-    expectTypeOf<ListRunsFilter>().toMatchTypeOf<{
+    expectTypeOf<ListRunsFilter>().toExtend<{
       kind?: RunKind
       name?: string
       status?: RuntimeRunStatus | readonly RuntimeRunStatus[]
@@ -170,12 +170,12 @@ describe('workflow runtime interfaces', () => {
       limit?: number
       cursor?: string
     }>()
-    expectTypeOf<ListRunsResult>().toMatchTypeOf<{
+    expectTypeOf<ListRunsResult>().toExtend<{
       runs: readonly StoredRun[]
       nextCursor?: string
     }>()
     expectTypeOf<StoredRun>().toHaveProperty('status')
-    expectTypeOf<StoredRun>().toMatchTypeOf<{
+    expectTypeOf<StoredRun>().toExtend<{
       kind: RunKind
       name: string
       workflowName: string
@@ -183,13 +183,13 @@ describe('workflow runtime interfaces', () => {
     }>()
     expectTypeOf<StoredNode>().toHaveProperty('status')
     expectTypeOf<StoredAttempt>().toHaveProperty('status')
-    expectTypeOf<ContinueWorkflowRunResult>().toMatchTypeOf<{
+    expectTypeOf<ContinueWorkflowRunResult>().toExtend<{
       status: 'processed' | 'busy' | 'ignored'
     }>()
-    expectTypeOf<WorkerCommandResult>().toMatchTypeOf<{
+    expectTypeOf<WorkerCommandResult>().toExtend<{
       status: 'processed' | 'released'
     }>()
-    expectTypeOf<WorkerLoopOptions>().toMatchTypeOf<{
+    expectTypeOf<WorkerLoopOptions>().toExtend<{
       workerId: string
       concurrency?: number
       leaseMs?: number
@@ -197,7 +197,7 @@ describe('workflow runtime interfaces', () => {
       idleDelayMs?: number
       signal?: AbortSignal
     }>()
-    expectTypeOf<WorkerLoopResult>().toMatchTypeOf<{ processed: number }>()
+    expectTypeOf<WorkerLoopResult>().toExtend<{ processed: number }>()
     expectTypeOf<WorkflowStatus>().toEqualTypeOf<
       | 'queued'
       | 'running'
@@ -214,7 +214,7 @@ describe('workflow runtime interfaces', () => {
     expectTypeOf<
       SchemaOutput<ReturnType<typeof t.date>>
     >().toEqualTypeOf<Date>()
-    expectTypeOf<WorkflowRuntimeClient['start']>().toMatchTypeOf<{
+    expectTypeOf<WorkflowRuntimeClient['start']>().toExtend<{
       <Workflow extends AnyWorkflowDefinition>(
         workflow: Workflow,
         input: WorkflowInput<Workflow>,
@@ -227,10 +227,10 @@ describe('workflow runtime interfaces', () => {
       ): Promise<TaskRun<Task>>
     }>()
     expectTypeOf<WorkflowRuntimeClient>().toHaveProperty('cancel')
-    expectTypeOf<WorkflowRuntimeClient['cancel']>().toMatchTypeOf<
+    expectTypeOf<WorkflowRuntimeClient['cancel']>().toExtend<
       (runId: string) => Promise<StoredRun | undefined>
     >()
-    expectTypeOf<RequestRunCancellationParams>().toMatchTypeOf<{
+    expectTypeOf<RequestRunCancellationParams>().toExtend<{
       runId: string
     }>()
     expectTypeOf<typeof WorkflowAttemptTimeoutError>().toBeConstructibleWith({
@@ -240,25 +240,25 @@ describe('workflow runtime interfaces', () => {
       timeoutMs: 1,
     })
     expectTypeOf<ActivityImplementation>().toHaveProperty('handler')
-    expectTypeOf<AttemptLifecycle>().toMatchTypeOf<{
+    expectTypeOf<AttemptLifecycle>().toExtend<{
       readonly signal: AbortSignal
     }>()
     expectTypeOf<WorkflowBuilder>().toHaveProperty('build')
     expectTypeOf<RegisteredWorkflowImplementation>().toHaveProperty('workflow')
     expectTypeOf<RegisteredTaskImplementation>().toHaveProperty('task')
-    expectTypeOf<StartWorkflowRunInput<any>>().toMatchTypeOf<{
+    expectTypeOf<StartWorkflowRunInput<any>>().toExtend<{
       workflow: { name: string }
       input: unknown
       tags?: Readonly<Record<string, string>>
       idempotencyKey?: readonly unknown[]
     }>()
-    expectTypeOf<TaskRun>().toMatchTypeOf<{
+    expectTypeOf<TaskRun>().toExtend<{
       id: string
       kind: 'task'
       name: string
       status: WorkflowStatus
     }>()
-    expectTypeOf<RunnableRun>().toMatchTypeOf<
+    expectTypeOf<RunnableRun>().toExtend<
       { kind: 'task' } | { kind: 'workflow' }
     >()
   })
@@ -286,7 +286,7 @@ describe('workflow runtime interfaces', () => {
   })
 
   it('exports semantic orchestration store contracts', () => {
-    expectTypeOf<SelectNodeCaseParams>().toMatchTypeOf<{
+    expectTypeOf<SelectNodeCaseParams>().toExtend<{
       runId: string
       nodeName: string
       caseKey: string
@@ -295,7 +295,7 @@ describe('workflow runtime interfaces', () => {
     expectTypeOf<NodeChildKind>().toEqualTypeOf<
       'activity' | 'task' | 'workflow'
     >()
-    expectTypeOf<StoredNodeChild>().toMatchTypeOf<{
+    expectTypeOf<StoredNodeChild>().toExtend<{
       runId: string
       nodeName: string
       childKey: string
@@ -308,7 +308,7 @@ describe('workflow runtime interfaces', () => {
       attemptCount: number
       version: number
     }>()
-    expectTypeOf<StoredAttempt>().toMatchTypeOf<{
+    expectTypeOf<StoredAttempt>().toExtend<{
       id: string
       runId: string
       nodeName: string
@@ -320,23 +320,23 @@ describe('workflow runtime interfaces', () => {
       readonly nodeName: string
       readonly childKey: string
     }>()
-    expectTypeOf<EnsureNodeChildInput>().toMatchTypeOf<{
+    expectTypeOf<EnsureNodeChildInput>().toExtend<{
       childKey: string
       kind: NodeChildKind
       ordinal?: number
       itemKey?: string
       item?: unknown
     }>()
-    expectTypeOf<EnsureNodeChildrenParams>().toMatchTypeOf<{
+    expectTypeOf<EnsureNodeChildrenParams>().toExtend<{
       runId: string
       nodeName: string
       children: readonly EnsureNodeChildInput[]
     }>()
-    expectTypeOf<EnsureNodeChildrenResult>().toMatchTypeOf<{
+    expectTypeOf<EnsureNodeChildrenResult>().toExtend<{
       children: readonly StoredNodeChild[]
       created: boolean
     }>()
-    expectTypeOf<EnsureChildRunParams>().toMatchTypeOf<{
+    expectTypeOf<EnsureChildRunParams>().toExtend<{
       runId: string
       nodeName: string
       childKey: string
@@ -347,39 +347,39 @@ describe('workflow runtime interfaces', () => {
       tags?: Readonly<Record<string, string>>
       idempotencyKey?: readonly unknown[]
     }>()
-    expectTypeOf<EnsureChildRunResult>().toMatchTypeOf<{
+    expectTypeOf<EnsureChildRunResult>().toExtend<{
       child: StoredNodeChild
       childRun: StoredRun
       created: boolean
     }>()
-    expectTypeOf<EnsureChildAttemptParams>().toMatchTypeOf<{
+    expectTypeOf<EnsureChildAttemptParams>().toExtend<{
       runId: string
       nodeName: string
       childKey: string
       input: unknown
       idempotencyKey?: readonly unknown[]
     }>()
-    expectTypeOf<EnsureChildAttemptResult>().toMatchTypeOf<{
+    expectTypeOf<EnsureChildAttemptResult>().toExtend<{
       attempt: StoredAttempt
       created: boolean
     }>()
-    expectTypeOf<CreateAttemptInput>().toMatchTypeOf<{
+    expectTypeOf<CreateAttemptInput>().toExtend<{
       runId: string
       nodeName: string
       childKey: string
       input: unknown
     }>()
-    expectTypeOf<NodeChildrenSnapshot>().toMatchTypeOf<{
+    expectTypeOf<NodeChildrenSnapshot>().toExtend<{
       children: readonly StoredNodeChild[]
       attempts: readonly StoredAttempt[]
     }>()
-    expectTypeOf<RunSnapshot>().toMatchTypeOf<{
+    expectTypeOf<RunSnapshot>().toExtend<{
       run: StoredRun
       nodes: readonly StoredNode[]
       children: readonly StoredNodeChild[]
       attempts: readonly StoredAttempt[]
     }>()
-    expectTypeOf<WaitNodeParams>().toMatchTypeOf<{
+    expectTypeOf<WaitNodeParams>().toExtend<{
       runId: string
       nodeName: string
     }>()
@@ -394,7 +394,7 @@ describe('workflow runtime interfaces', () => {
     expectTypeOf<WorkflowStore>().toHaveProperty('markRunRunning')
     expectTypeOf<WorkflowStore>().toHaveProperty('markRunWaiting')
     expectTypeOf<WorkflowStore>().toHaveProperty('loadNodeChildren')
-    expectTypeOf<WorkflowStore>().toMatchTypeOf<WorkflowStoreWithRequiredSemanticMethods>()
+    expectTypeOf<WorkflowStore>().toExtend<WorkflowStoreWithRequiredSemanticMethods>()
     expectTypeOf<
       Extract<OptionalKeys<WorkflowStore>, keyof SemanticWorkflowStoreMethods>
     >().toEqualTypeOf<never>()
