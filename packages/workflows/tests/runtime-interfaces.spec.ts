@@ -40,16 +40,21 @@ import {
   type EnsureNodeChildrenResult,
   type InMemoryWorkflowRuntime,
   type ListRunsFilter,
+  type ListRunSummariesResult,
   type ListRunsResult,
   type LoadNodeChildrenParams,
   type NodeChildKind,
   type NodeChildRef,
   type NodeChildrenSnapshot,
+  type NodeSnapshot,
   NODE_TRANSITIONS,
   type ParsedChildKey,
   type RequestRunCancellationParams,
+  type RunDetail,
+  type RunFamilyEntry,
   type RunCoordinationExecutor,
   type RunSnapshot,
+  type RunSummary,
   type RuntimeNodeStatus,
   type RuntimeRunStatus,
   RUN_TRANSITIONS,
@@ -163,7 +168,8 @@ describe('workflow runtime interfaces', () => {
       kind?: RunKind
       name?: string
       status?: RuntimeRunStatus | readonly RuntimeRunStatus[]
-      parentRunId?: string
+      createdBefore?: Date
+      parentRunId?: string | null
       rootRunId?: string
       tags?: Readonly<Record<string, string>>
       input?: unknown
@@ -173,6 +179,23 @@ describe('workflow runtime interfaces', () => {
     expectTypeOf<ListRunsResult>().toExtend<{
       runs: readonly StoredRun[]
       nextCursor?: string
+    }>()
+    expectTypeOf<ListRunSummariesResult>().toExtend<{
+      runs: readonly RunSummary[]
+      nextCursor?: string
+    }>()
+    expectTypeOf<RunDetail>().toExtend<{
+      run: RunSummary
+      childRuns: readonly RunSummary[]
+    }>()
+    expectTypeOf<NodeSnapshot>().toExtend<{
+      node: StoredNode
+      children: readonly StoredNodeChild[]
+      attempts: readonly StoredAttempt[]
+    }>()
+    expectTypeOf<RunFamilyEntry>().toExtend<{
+      run: RunSummary
+      origin?: { readonly nodeName: string; readonly childKey: string }
     }>()
     expectTypeOf<StoredRun>().toHaveProperty('status')
     expectTypeOf<StoredRun>().toExtend<{
@@ -227,6 +250,10 @@ describe('workflow runtime interfaces', () => {
       ): Promise<TaskRun<Task>>
     }>()
     expectTypeOf<WorkflowRuntimeClient>().toHaveProperty('cancel')
+    expectTypeOf<WorkflowRuntimeClient>().toHaveProperty('listSummaries')
+    expectTypeOf<WorkflowRuntimeClient>().toHaveProperty('getDetail')
+    expectTypeOf<WorkflowRuntimeClient>().toHaveProperty('getNode')
+    expectTypeOf<WorkflowRuntimeClient>().toHaveProperty('getFamily')
     expectTypeOf<WorkflowRuntimeClient['cancel']>().toExtend<
       (runId: string) => Promise<StoredRun | undefined>
     >()

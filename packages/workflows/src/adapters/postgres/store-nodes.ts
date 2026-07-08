@@ -5,6 +5,7 @@ import type {
 } from '../../runtime/state.ts'
 import type { WorkflowStore } from '../../runtime/store.ts'
 import type { WorkflowPostgresConnection } from './connection.ts'
+import type { JsonRecord } from './sql.ts'
 import { toStoredError } from '../../runtime/errors.ts'
 import {
   isTerminalNodeStatus,
@@ -13,14 +14,19 @@ import {
 import {
   WORKFLOW_CANCELLATIONS_CHANNEL,
   id,
+  isUuid,
+  jsonRecordArrayColumn,
+  jsonRecordColumn,
   json,
   many,
   mapAttempt,
   mapNode,
+  mapNodeChild,
   mapRun,
   nodeStatusSourcesSql,
   one,
   runStatusSourcesSql,
+  withDateColumns,
 } from './sql.ts'
 
 type PostgresWorkflowNodeStoreContext = {
@@ -32,6 +38,7 @@ type PostgresWorkflowNodeStore = Pick<
   WorkflowStore,
   | 'createNode'
   | 'setNodeInput'
+  | 'loadNodeSnapshot'
   | 'createAttempt'
   | 'completeCurrentAttempt'
   | 'failCurrentAttempt'
@@ -138,6 +145,62 @@ export const createPostgresWorkflowNodeStore = (
       )
       if (!current) throw new Error(`Missing node [${runId}.${nodeName}]`)
       return mapNode(current)
+    },
+    async loadNodeSnapshot({ runId, nodeName }) {
+      await ready
+      if (!isUuid(runId)) return undefined
+      const snapshot = await one<
+        JsonRecord & {
+          node: unknown
+          children: unknown
+          attempts: unknown
+        }
+      >(
+        db,
+        `
+        SELECT
+          (
+            SELECT to_jsonb(n)
+            FROM workflow_nodes n
+            WHERE n.run_id = $1 AND n.name = $2
+          ) AS node,
+          COALESCE(
+            (
+              SELECT jsonb_agg(to_jsonb(c) ORDER BY c.ordinal, c.child_key)
+              FROM workflow_node_children c
+              WHERE c.run_id = $1 AND c.node_name = $2
+            ),
+            '[]'::jsonb
+          ) AS children,
+          COALESCE(
+            (
+              SELECT jsonb_agg(to_jsonb(a) ORDER BY a.dispatched_at, a.id)
+              FROM workflow_attempts a
+              WHERE a.run_id = $1 AND a.node_name = $2
+            ),
+            '[]'::jsonb
+          ) AS attempts
+      `,
+        [runId, nodeName],
+      )
+      const node = jsonRecordColumn(snapshot?.node)
+      if (!node) return undefined
+
+      const children = jsonRecordArrayColumn(snapshot.children).map((child) =>
+        withDateColumns(child, ['created_at', 'updated_at']),
+      )
+      const attempts = jsonRecordArrayColumn(snapshot.attempts).map((attempt) =>
+        withDateColumns(attempt, [
+          'dispatched_at',
+          'heartbeat_at',
+          'completed_at',
+        ]),
+      )
+      return {
+        node: mapNode(withDateColumns(node, ['created_at', 'updated_at'])),
+        children: children.map(mapNodeChild),
+        attempts: attempts.map(mapAttempt),
+      }
     },
     async createAttempt(input) {
       await ready

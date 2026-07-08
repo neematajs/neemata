@@ -17,10 +17,14 @@ import {
   jsonRecordColumn,
   many,
   mapAttempt,
+  mapAttemptSummary,
   mapDeadCommand,
   mapNode,
   mapNodeChild,
+  mapNodeChildSummary,
+  mapNodeSummary,
   mapRun,
+  mapRunSummary,
   DEFAULT_PRUNE_STATUSES,
   normalizePruneBatchSize,
   normalizePruneStatuses,
@@ -40,6 +44,7 @@ type PostgresWorkflowRunStore = Pick<
   WorkflowStore,
   | 'createRun'
   | 'listRuns'
+  | 'listRunSummaries'
   | 'pruneTerminalRuns'
   | 'listDeadCommands'
   | 'listUnreapedDeadCommands'
@@ -49,6 +54,8 @@ type PostgresWorkflowRunStore = Pick<
   | 'renewRunLease'
   | 'releaseRunLease'
   | 'loadRunSnapshot'
+  | 'loadRunDetail'
+  | 'listRunFamily'
   | 'loadRuns'
 >
 
@@ -199,6 +206,129 @@ export const pruneTerminalRunsInTransaction = async (
   return { deleted }
 }
 
+type RunListQueryParts = {
+  readonly params: unknown[]
+  readonly whereSql: string
+  readonly push: (value: unknown) => string
+  readonly offset: number
+  readonly limit: number | null
+  readonly pageLimit: number | null
+}
+
+const runSummaryColumnsSql = (alias: string) => `
+  ${alias}.id,
+  ${alias}.kind,
+  ${alias}.name,
+  ${alias}.workflow_name,
+  ${alias}.task_name,
+  ${alias}.status,
+  ${alias}.error,
+  ${alias}.parent_run_id,
+  ${alias}.parent_node_name,
+  ${alias}.root_run_id,
+  ${alias}.tags,
+  ${alias}.idempotency_key,
+  ${alias}.version,
+  ${alias}.created_at,
+  ${alias}.updated_at,
+  (
+    SELECT count(*)
+    FROM workflow_nodes n
+    WHERE n.run_id = ${alias}.id
+  )::int AS nodes_total,
+  (
+    SELECT count(*)
+    FROM workflow_nodes n
+    WHERE n.run_id = ${alias}.id
+      AND n.status = 'completed'
+  )::int AS nodes_completed
+`
+
+const runSummaryJsonSql = (alias: string) => `
+  to_jsonb(${alias}) - 'input' - 'output' ||
+  jsonb_build_object(
+    'nodes_total',
+    (
+      SELECT count(*)
+      FROM workflow_nodes n
+      WHERE n.run_id = ${alias}.id
+    )::int,
+    'nodes_completed',
+    (
+      SELECT count(*)
+      FROM workflow_nodes n
+      WHERE n.run_id = ${alias}.id
+        AND n.status = 'completed'
+    )::int
+  )
+`
+
+const buildListRunsQueryParts = (
+  filter: ListRunsFilter,
+): RunListQueryParts | undefined => {
+  if (
+    filter.limit !== undefined &&
+    (!Number.isFinite(filter.limit) || filter.limit < 1)
+  ) {
+    return undefined
+  }
+
+  const params: unknown[] = []
+  const where: string[] = []
+  const push = (value: unknown) => {
+    params.push(value)
+    return `$${params.length}`
+  }
+
+  if (filter.kind !== undefined) where.push(`r.kind = ${push(filter.kind)}`)
+  if (filter.name !== undefined) where.push(`r.name = ${push(filter.name)}`)
+  if (filter.createdBefore !== undefined) {
+    where.push(`r.created_at < ${push(filter.createdBefore)}`)
+  }
+  if (filter.status !== undefined) {
+    const statuses = Array.isArray(filter.status)
+      ? filter.status
+      : [filter.status]
+    where.push(
+      `r.status IN (${statuses.map((status) => push(status)).join(', ')})`,
+    )
+  }
+  if (filter.parentRunId !== undefined) {
+    if (filter.parentRunId === null) {
+      where.push('r.parent_run_id IS NULL')
+    } else {
+      if (!isUuid(filter.parentRunId)) return undefined
+      where.push(`r.parent_run_id = ${push(filter.parentRunId)}`)
+    }
+  }
+  if (filter.rootRunId !== undefined) {
+    if (!isUuid(filter.rootRunId)) return undefined
+    where.push(`r.root_run_id = ${push(filter.rootRunId)}`)
+  }
+  if (filter.tags !== undefined) {
+    where.push(`r.tags @> ${push(json(filter.tags))}::jsonb`)
+  }
+  if (filter.input !== undefined) {
+    where.push(`r.input @> ${push(json(filter.input))}::jsonb`)
+  }
+
+  const offset = filter.cursor ? Number.parseInt(filter.cursor, 10) : 0
+  if (!Number.isInteger(offset) || offset < 0) {
+    throw new Error(`Invalid run list cursor [${filter.cursor}]`)
+  }
+
+  const limit = filter.limit ?? null
+  const pageLimit = limit === null ? null : limit + 1
+  return {
+    params,
+    whereSql: where.length === 0 ? '' : `WHERE ${where.join(' AND ')}`,
+    push,
+    offset,
+    limit,
+    pageLimit,
+  }
+}
+
 export const createPostgresWorkflowRunStore = (
   ctx: PostgresWorkflowRunStoreContext,
 ): PostgresWorkflowRunStore => {
@@ -211,72 +341,49 @@ export const createPostgresWorkflowRunStore = (
     },
     async listRuns(filter: ListRunsFilter = {}) {
       await ready
-      if (
-        filter.limit !== undefined &&
-        (!Number.isFinite(filter.limit) || filter.limit < 1)
-      ) {
-        return { runs: [] }
-      }
-
-      const params: unknown[] = []
-      const where: string[] = []
-      const push = (value: unknown) => {
-        params.push(value)
-        return `$${params.length}`
-      }
-
-      if (filter.kind !== undefined) where.push(`kind = ${push(filter.kind)}`)
-      if (filter.name !== undefined) where.push(`name = ${push(filter.name)}`)
-      if (filter.createdBefore !== undefined) {
-        where.push(`created_at < ${push(filter.createdBefore)}`)
-      }
-      if (filter.status !== undefined) {
-        const statuses = Array.isArray(filter.status)
-          ? filter.status
-          : [filter.status]
-        where.push(
-          `status IN (${statuses.map((status) => push(status)).join(', ')})`,
-        )
-      }
-      if (filter.parentRunId !== undefined) {
-        if (!isUuid(filter.parentRunId)) return { runs: [] }
-        where.push(`parent_run_id = ${push(filter.parentRunId)}`)
-      }
-      if (filter.rootRunId !== undefined) {
-        if (!isUuid(filter.rootRunId)) return { runs: [] }
-        where.push(`root_run_id = ${push(filter.rootRunId)}`)
-      }
-      if (filter.tags !== undefined) {
-        where.push(`tags @> ${push(json(filter.tags))}::jsonb`)
-      }
-      if (filter.input !== undefined) {
-        where.push(`input @> ${push(json(filter.input))}::jsonb`)
-      }
-
-      const offset = filter.cursor ? Number.parseInt(filter.cursor, 10) : 0
-      if (!Number.isInteger(offset) || offset < 0) {
-        throw new Error(`Invalid run list cursor [${filter.cursor}]`)
-      }
-
-      const limit = filter.limit ?? null
-      const pageLimit = limit === null ? null : limit + 1
+      const query = buildListRunsQueryParts(filter)
+      if (!query) return { runs: [] }
       const rows = await many(
         db,
         `
-        SELECT *
-        FROM workflow_runs
-        ${where.length === 0 ? '' : `WHERE ${where.join(' AND ')}`}
-        ORDER BY created_at DESC, id DESC
-        ${pageLimit === null ? '' : `LIMIT ${push(pageLimit)}`}
-        OFFSET ${push(offset)}
+        SELECT r.*
+        FROM workflow_runs r
+        ${query.whereSql}
+        ORDER BY r.created_at DESC, r.id DESC
+        ${query.pageLimit === null ? '' : `LIMIT ${query.push(query.pageLimit)}`}
+        OFFSET ${query.push(query.offset)}
       `,
-        params,
+        query.params,
       )
-      const page = limit === null ? rows : rows.slice(0, limit)
+      const page = query.limit === null ? rows : rows.slice(0, query.limit)
       return {
         runs: page.map(mapRun),
-        ...(limit !== null && rows.length > limit
-          ? { nextCursor: String(offset + limit) }
+        ...(query.limit !== null && rows.length > query.limit
+          ? { nextCursor: String(query.offset + query.limit) }
+          : {}),
+      }
+    },
+    async listRunSummaries(filter: ListRunsFilter = {}) {
+      await ready
+      const query = buildListRunsQueryParts(filter)
+      if (!query) return { runs: [] }
+      const rows = await many(
+        db,
+        `
+        SELECT ${runSummaryColumnsSql('r')}
+        FROM workflow_runs r
+        ${query.whereSql}
+        ORDER BY r.created_at DESC, r.id DESC
+        ${query.pageLimit === null ? '' : `LIMIT ${query.push(query.pageLimit)}`}
+        OFFSET ${query.push(query.offset)}
+      `,
+        query.params,
+      )
+      const page = query.limit === null ? rows : rows.slice(0, query.limit)
+      return {
+        runs: page.map(mapRunSummary),
+        ...(query.limit !== null && rows.length > query.limit
+          ? { nextCursor: String(query.offset + query.limit) }
           : {}),
       }
     },
@@ -491,6 +598,136 @@ export const createPostgresWorkflowRunStore = (
         children: children.map(mapNodeChild),
         attempts: attempts.map(mapAttempt),
       } satisfies RunSnapshot
+    },
+    async loadRunDetail(runId) {
+      await ready
+      if (!isUuid(runId)) return undefined
+      const detail = await one<
+        JsonRecord & {
+          run: unknown
+          nodes: unknown
+          children: unknown
+          attempts: unknown
+          child_runs: unknown
+        }
+      >(
+        db,
+        `
+        SELECT
+          (
+            SELECT ${runSummaryJsonSql('r')}
+            FROM workflow_runs r
+            WHERE r.id = $1
+          ) AS run,
+          COALESCE(
+            (
+              SELECT jsonb_agg(to_jsonb(n) - 'input' - 'output')
+              FROM workflow_nodes n
+              WHERE n.run_id = $1
+            ),
+            '[]'::jsonb
+          ) AS nodes,
+          COALESCE(
+            (
+              SELECT jsonb_agg(
+                to_jsonb(c) - 'item' - 'input' - 'output'
+                ORDER BY c.node_name, c.ordinal, c.child_key
+              )
+              FROM workflow_node_children c
+              WHERE c.run_id = $1
+            ),
+            '[]'::jsonb
+          ) AS children,
+          COALESCE(
+            (
+              SELECT jsonb_agg(
+                to_jsonb(a) - 'input' - 'output'
+                ORDER BY a.dispatched_at, a.id
+              )
+              FROM workflow_attempts a
+              WHERE a.run_id = $1
+            ),
+            '[]'::jsonb
+          ) AS attempts,
+          COALESCE(
+            (
+              SELECT jsonb_agg(run_json ORDER BY created_at, id)
+              FROM (
+                SELECT DISTINCT ON (cr.id)
+                  cr.id,
+                  cr.created_at,
+                  ${runSummaryJsonSql('cr')} AS run_json
+                FROM workflow_runs cr
+                JOIN workflow_node_children c
+                  ON c.child_run_id = cr.id
+                 AND c.run_id = $1
+                ORDER BY cr.id, cr.created_at
+              ) child_runs
+            ),
+            '[]'::jsonb
+          ) AS child_runs
+      `,
+        [runId],
+      )
+      const run = jsonRecordColumn(detail?.run)
+      if (!run) return undefined
+
+      const nodes = jsonRecordArrayColumn(detail.nodes).map((node) =>
+        withDateColumns(node, ['created_at', 'updated_at']),
+      )
+      const children = jsonRecordArrayColumn(detail.children).map((child) =>
+        withDateColumns(child, ['created_at', 'updated_at']),
+      )
+      const attempts = jsonRecordArrayColumn(detail.attempts).map((attempt) =>
+        withDateColumns(attempt, [
+          'dispatched_at',
+          'heartbeat_at',
+          'completed_at',
+        ]),
+      )
+      const childRuns = jsonRecordArrayColumn(detail.child_runs).map(
+        (childRun) => withDateColumns(childRun, ['created_at', 'updated_at']),
+      )
+
+      return {
+        run: mapRunSummary(withDateColumns(run, ['created_at', 'updated_at'])),
+        nodes: nodes.map(mapNodeSummary),
+        children: children.map(mapNodeChildSummary),
+        attempts: attempts.map(mapAttemptSummary),
+        childRuns: childRuns.map(mapRunSummary),
+      }
+    },
+    async listRunFamily(runId) {
+      await ready
+      if (!isUuid(runId)) return []
+      const rows = await many(
+        db,
+        `
+        SELECT
+          ${runSummaryColumnsSql('r')},
+          c.node_name AS origin_node_name,
+          c.child_key AS origin_child_key
+        FROM workflow_runs r
+        JOIN workflow_runs target
+          ON target.id = $1
+         AND r.root_run_id = target.root_run_id
+        LEFT JOIN workflow_node_children c
+          ON c.child_run_id = r.id
+        ORDER BY r.created_at ASC, r.id ASC
+      `,
+        [runId],
+      )
+      return rows.map((row) => ({
+        run: mapRunSummary(row),
+        ...(row.origin_node_name === null || row.origin_node_name === undefined
+          ? {}
+          : {
+              origin: {
+                nodeName: row.origin_node_name as string,
+                childKey: row.origin_child_key as string,
+              },
+            }),
+      }))
     },
   }
 }

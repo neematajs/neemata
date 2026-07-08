@@ -17,9 +17,13 @@ import type { RunSnapshot, StoredRun } from './state.ts'
 import type {
   DeadWorkflowCommand,
   ListRunsFilter,
+  ListRunSummariesResult,
   ListRunsResult,
+  NodeSnapshot,
   PruneTerminalRunsParams,
   PruneTerminalRunsResult,
+  RunDetail,
+  RunFamilyEntry,
   WorkflowRetentionPruner,
   WorkflowStore,
 } from './store.ts'
@@ -77,6 +81,15 @@ export type WorkflowRuntimeClient = {
   readonly cancel: (runId: string) => Promise<StoredRun | undefined>
   readonly get: (runId: string) => Promise<RunSnapshot | undefined>
   readonly list: (filter?: ListRunsFilter) => Promise<ListRunsResult>
+  readonly listSummaries: (
+    filter?: ListRunsFilter,
+  ) => Promise<ListRunSummariesResult>
+  readonly getDetail: (runId: string) => Promise<RunDetail | undefined>
+  readonly getNode: (
+    runId: string,
+    nodeName: string,
+  ) => Promise<NodeSnapshot | undefined>
+  readonly getFamily: (runId: string) => Promise<readonly RunFamilyEntry[]>
   readonly pruneRuns: (
     params: PruneTerminalRunsParams,
   ) => Promise<PruneTerminalRunsResult>
@@ -152,6 +165,11 @@ export function createWorkflowRuntimeClient(
     },
     get: (runId) => input.store.loadRunSnapshot(runId),
     list: (filter) => input.store.listRuns(filter),
+    listSummaries: (filter) => input.store.listRunSummaries(filter),
+    getDetail: (runId) => input.store.loadRunDetail(runId),
+    getNode: (runId, nodeName) =>
+      input.store.loadNodeSnapshot({ runId, nodeName }),
+    getFamily: (runId) => input.store.listRunFamily(runId),
     pruneRuns: (params) => pruneRuns(input.store, params),
     listDeadCommands: () => input.store.listDeadCommands(),
     requeueDeadCommand: (id) => input.store.requeueDeadCommand(id),

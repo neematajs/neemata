@@ -45,7 +45,7 @@ export type ListRunsFilter = {
   readonly name?: string
   readonly status?: RuntimeRunStatus | readonly RuntimeRunStatus[]
   readonly createdBefore?: Date
-  readonly parentRunId?: string
+  readonly parentRunId?: string | null
   readonly rootRunId?: string
   readonly tags?: Readonly<Record<string, string>>
   readonly input?: unknown
@@ -56,6 +56,42 @@ export type ListRunsFilter = {
 export type ListRunsResult = {
   readonly runs: readonly StoredRun[]
   readonly nextCursor?: string
+}
+
+export type RunSummary = Omit<StoredRun, 'input' | 'output'> & {
+  readonly nodesTotal: number
+  readonly nodesCompleted: number
+}
+
+export type ListRunSummariesResult = {
+  readonly runs: readonly RunSummary[]
+  readonly nextCursor?: string
+}
+
+export type NodeSummary = Omit<StoredNode, 'input' | 'output'>
+export type NodeChildSummary = Omit<
+  StoredNodeChild,
+  'item' | 'input' | 'output'
+>
+export type AttemptSummary = Omit<StoredAttempt, 'input' | 'output'>
+
+export type RunDetail = {
+  readonly run: RunSummary
+  readonly nodes: readonly NodeSummary[]
+  readonly children: readonly NodeChildSummary[]
+  readonly attempts: readonly AttemptSummary[]
+  readonly childRuns: readonly RunSummary[]
+}
+
+export type NodeSnapshot = {
+  readonly node: StoredNode
+  readonly children: readonly StoredNodeChild[]
+  readonly attempts: readonly StoredAttempt[]
+}
+
+export type RunFamilyEntry = {
+  readonly run: RunSummary
+  readonly origin?: { readonly nodeName: string; readonly childKey: string }
 }
 
 export type PruneTerminalRunsParams = {
@@ -196,6 +232,7 @@ export type CancelNonTerminalRunNodesParams = {
 export type WorkflowStore = {
   createRun(input: CreateRunInput): Promise<StoredRun>
   listRuns(filter?: ListRunsFilter): Promise<ListRunsResult>
+  listRunSummaries(filter?: ListRunsFilter): Promise<ListRunSummariesResult>
   pruneTerminalRuns(
     params: PruneTerminalRunsParams,
   ): Promise<PruneTerminalRunsResult>
@@ -218,6 +255,12 @@ export type WorkflowStore = {
   renewRunLease(lease: RunLease, leaseMs: number): Promise<RunLease | undefined>
   releaseRunLease(lease: RunLease): Promise<void>
   loadRunSnapshot(runId: string): Promise<RunSnapshot | undefined>
+  loadRunDetail(runId: string): Promise<RunDetail | undefined>
+  loadNodeSnapshot(params: {
+    runId: string
+    nodeName: string
+  }): Promise<NodeSnapshot | undefined>
+  listRunFamily(runId: string): Promise<readonly RunFamilyEntry[]>
   /**
    * Loads run rows in first-occurrence order of `runIds`; unknown ids are
    * omitted.

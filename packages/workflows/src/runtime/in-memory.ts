@@ -22,13 +22,19 @@ import type {
   StoredRun,
 } from './state.ts'
 import type {
+  AttemptSummary,
   CreateAttemptInput,
   CreateNodeInput,
   CreateRunInput,
   DeadWorkflowCommand,
   ListRunsFilter,
+  NodeChildSummary,
+  NodeSummary,
+  RunFamilyEntry,
   PruneTerminalRunsParams,
+  RunDetail,
   RunLease,
+  RunSummary,
   TerminalRunStatus,
   WorkflowRetentionPruner,
   WorkflowStore,
@@ -151,6 +157,22 @@ export function createInMemoryWorkflowRuntime(
       if (byOrdinal !== 0) return byOrdinal
       return left.childKey.localeCompare(right.childKey)
     })
+  const compareAttempts = (left: StoredAttempt, right: StoredAttempt) => {
+    const byDispatchedAt =
+      left.dispatchedAt.getTime() - right.dispatchedAt.getTime()
+    if (byDispatchedAt !== 0) return byDispatchedAt
+    return left.id.localeCompare(right.id)
+  }
+  const compareRunsNewest = (left: StoredRun, right: StoredRun) => {
+    const byCreatedAt = right.createdAt.getTime() - left.createdAt.getTime()
+    if (byCreatedAt !== 0) return byCreatedAt
+    return right.id.localeCompare(left.id)
+  }
+  const compareRunsOldest = (left: StoredRun, right: StoredRun) => {
+    const byCreatedAt = left.createdAt.getTime() - right.createdAt.getTime()
+    if (byCreatedAt !== 0) return byCreatedAt
+    return left.id.localeCompare(right.id)
+  }
   const nodeChildren = (runId: string, nodeName: string) =>
     [...children.values()].filter(
       (child) => child.runId === runId && child.nodeName === nodeName,
@@ -209,7 +231,9 @@ export function createInMemoryWorkflowRuntime(
       (filter.createdBefore === undefined ||
         run.createdAt < filter.createdBefore) &&
       (filter.parentRunId === undefined ||
-        run.parentRunId === filter.parentRunId) &&
+        (filter.parentRunId === null
+          ? run.parentRunId === undefined
+          : run.parentRunId === filter.parentRunId)) &&
       (filter.rootRunId === undefined || run.rootRunId === filter.rootRunId) &&
       (filter.tags === undefined ||
         Object.entries(filter.tags).every(
@@ -231,6 +255,43 @@ export function createInMemoryWorkflowRuntime(
     run.parentNodeName === input.parentNodeName &&
     run.rootRunId === (input.rootRunId ?? run.id) &&
     sameValue(run.input, input.input)
+
+  const runSummary = (run: StoredRun): RunSummary => {
+    const { input: omittedInput, output: omittedOutput, ...summary } = run
+    void omittedInput
+    void omittedOutput
+    const runNodes = [...nodes.values()].filter((node) => node.runId === run.id)
+    return {
+      ...summary,
+      nodesTotal: runNodes.length,
+      nodesCompleted: runNodes.filter((node) => node.status === 'completed')
+        .length,
+    }
+  }
+  const nodeSummary = (node: StoredNode): NodeSummary => {
+    const { input: omittedInput, output: omittedOutput, ...summary } = node
+    void omittedInput
+    void omittedOutput
+    return summary
+  }
+  const childSummary = (child: StoredNodeChild): NodeChildSummary => {
+    const {
+      item: omittedItem,
+      input: omittedInput,
+      output: omittedOutput,
+      ...summary
+    } = child
+    void omittedItem
+    void omittedInput
+    void omittedOutput
+    return summary
+  }
+  const attemptSummary = (attempt: StoredAttempt): AttemptSummary => {
+    const { input: omittedInput, output: omittedOutput, ...summary } = attempt
+    void omittedInput
+    void omittedOutput
+    return summary
+  }
 
   const createRunWithState = (
     input: CreateRunInput,
@@ -300,12 +361,7 @@ export function createInMemoryWorkflowRuntime(
 
       const filtered = [...runs.values()]
         .filter((run) => runMatchesFilter(run, filter))
-        .sort((left, right) => {
-          const byCreatedAt =
-            right.createdAt.getTime() - left.createdAt.getTime()
-          if (byCreatedAt !== 0) return byCreatedAt
-          return right.id.localeCompare(left.id)
-        })
+        .sort(compareRunsNewest)
 
       const page = filtered.slice(offset, offset + limit)
       const nextOffset = offset + page.length
@@ -314,6 +370,15 @@ export function createInMemoryWorkflowRuntime(
         ...(nextOffset < filtered.length
           ? { nextCursor: String(nextOffset) }
           : {}),
+      }
+    },
+    async listRunSummaries(filter: ListRunsFilter = {}) {
+      const result = await store.listRuns(filter)
+      return {
+        runs: result.runs.map(runSummary),
+        ...(result.nextCursor === undefined
+          ? {}
+          : { nextCursor: result.nextCursor }),
       }
     },
     async pruneTerminalRuns(params: PruneTerminalRunsParams) {
@@ -465,6 +530,83 @@ export function createInMemoryWorkflowRuntime(
         ),
       }
       return snapshot
+    },
+    async loadRunDetail(runId) {
+      const run = runs.get(runId)
+      if (!run) return undefined
+
+      const detailChildren = [...children.values()]
+        .filter((child) => child.runId === runId)
+        .sort((left, right) => {
+          const byNodeName = left.nodeName.localeCompare(right.nodeName)
+          if (byNodeName !== 0) return byNodeName
+          const byOrdinal = left.ordinal - right.ordinal
+          if (byOrdinal !== 0) return byOrdinal
+          return left.childKey.localeCompare(right.childKey)
+        })
+      const childRunIds = new Set(
+        detailChildren.flatMap((child) =>
+          child.childRunId === undefined ? [] : [child.childRunId],
+        ),
+      )
+      return {
+        run: runSummary(run),
+        nodes: [...nodes.values()]
+          .filter((node) => node.runId === runId)
+          .map(nodeSummary),
+        children: detailChildren.map(childSummary),
+        attempts: [...attempts.values()]
+          .filter((attempt) => attempt.runId === runId)
+          .sort(compareAttempts)
+          .map(attemptSummary),
+        childRuns: [...runs.values()]
+          .filter((childRun) => childRunIds.has(childRun.id))
+          .sort(compareRunsOldest)
+          .map(runSummary),
+      } satisfies RunDetail
+    },
+    async loadNodeSnapshot({ runId, nodeName }) {
+      const node = nodes.get(nodeKey(runId, nodeName))
+      if (!node) return undefined
+
+      return {
+        node,
+        children: sortedChildren(nodeChildren(runId, nodeName)),
+        attempts: [...attempts.values()]
+          .filter(
+            (attempt) =>
+              attempt.runId === runId && attempt.nodeName === nodeName,
+          )
+          .sort(compareAttempts),
+      }
+    },
+    async listRunFamily(runId) {
+      const run = runs.get(runId)
+      if (!run) return []
+
+      const origins = new Map<
+        string,
+        { readonly nodeName: string; readonly childKey: string }
+      >()
+      for (const child of children.values()) {
+        if (child.childRunId !== undefined && !origins.has(child.childRunId)) {
+          origins.set(child.childRunId, {
+            nodeName: child.nodeName,
+            childKey: child.childKey,
+          })
+        }
+      }
+      return [...runs.values()]
+        .filter((familyRun) => familyRun.rootRunId === run.rootRunId)
+        .sort(compareRunsOldest)
+        .map(
+          (familyRun): RunFamilyEntry => ({
+            run: runSummary(familyRun),
+            ...(origins.get(familyRun.id) === undefined
+              ? {}
+              : { origin: origins.get(familyRun.id)! }),
+          }),
+        )
     },
     async createNode(input: CreateNodeInput) {
       const key = nodeKey(input.runId, input.name)

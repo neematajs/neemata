@@ -6,12 +6,22 @@ import type {
   StoredRun,
 } from '../runtime/state.ts'
 import type {
+  AttemptSummary,
+  NodeChildSummary,
+  NodeSnapshot,
+  NodeSummary,
+  RunDetail,
+  RunFamilyEntry,
+  RunSummary,
+} from '../runtime/store.ts'
+import type {
   AnyTaskDefinition,
   AnyWorkflowDefinition,
   BranchCaseKind,
   MapRunMode,
   WorkflowNodeKind,
 } from '../types/index.ts'
+import { parseChildKey, type ParsedChildKey } from '../runtime/child-key.ts'
 
 /**
  * Canonical JSON shape of a workflow definition's topology. Stable by
@@ -183,6 +193,46 @@ export type RunSnapshotDto = {
   readonly attempts: readonly AttemptDto[]
 }
 
+export type NodeUnit = {
+  readonly key: string
+  readonly parsed?: ParsedChildKey
+  readonly child: NodeChildSummary
+  readonly attempts: readonly AttemptSummary[]
+  readonly childRun?: RunSummary
+}
+
+export type RunSummaryDto = WireSafe<RunSummary>
+export type NodeSummaryDto = WireSafe<NodeSummary>
+export type NodeChildSummaryDto = WireSafe<NodeChildSummary>
+export type AttemptSummaryDto = WireSafe<AttemptSummary>
+
+export type RunDetailDto = {
+  readonly run: RunSummaryDto
+  readonly nodes: readonly NodeSummaryDto[]
+  readonly children: readonly NodeChildSummaryDto[]
+  readonly attempts: readonly AttemptSummaryDto[]
+  readonly childRuns: readonly RunSummaryDto[]
+}
+
+export type NodeSnapshotDto = {
+  readonly node: NodeDto
+  readonly children: readonly NodeChildDto[]
+  readonly attempts: readonly AttemptDto[]
+}
+
+export type RunFamilyEntryDto = {
+  readonly run: RunSummaryDto
+  readonly origin?: RunFamilyEntry['origin']
+}
+
+export type NodeUnitDto = {
+  readonly key: string
+  readonly parsed?: ParsedChildKey
+  readonly child: NodeChildSummaryDto
+  readonly attempts: readonly AttemptSummaryDto[]
+  readonly childRun?: RunSummaryDto
+}
+
 export function toRunDto(run: StoredRun): RunDto {
   return convertDates(run, { createdAt: true, updatedAt: true })
 }
@@ -209,5 +259,101 @@ export function toRunSnapshotDto(snapshot: RunSnapshot): RunSnapshotDto {
     nodes: snapshot.nodes.map(toNodeDto),
     children: snapshot.children.map(toNodeChildDto),
     attempts: snapshot.attempts.map(toAttemptDto),
+  }
+}
+
+export function nodeUnits(
+  detail: RunDetail,
+  nodeName: string,
+): readonly NodeUnit[] {
+  const childRuns = new Map(detail.childRuns.map((run) => [run.id, run]))
+  const attemptsByChildKey = new Map<string, AttemptSummary[]>()
+  for (const attempt of detail.attempts) {
+    if (attempt.nodeName !== nodeName) continue
+    const group = attemptsByChildKey.get(attempt.childKey) ?? []
+    group.push(attempt)
+    attemptsByChildKey.set(attempt.childKey, group)
+  }
+  for (const group of attemptsByChildKey.values()) {
+    group.sort((left, right) => left.attemptNumber - right.attemptNumber)
+  }
+
+  return detail.children
+    .filter((child) => child.nodeName === nodeName)
+    .sort((left, right) => {
+      const byOrdinal = left.ordinal - right.ordinal
+      if (byOrdinal !== 0) return byOrdinal
+      return left.childKey.localeCompare(right.childKey)
+    })
+    .map((child) => {
+      const parsed = parseChildKey(child.childKey)
+      const childRun =
+        child.childRunId === undefined
+          ? undefined
+          : childRuns.get(child.childRunId)
+      return {
+        key: child.childKey,
+        ...(parsed === undefined ? {} : { parsed }),
+        child,
+        attempts: attemptsByChildKey.get(child.childKey) ?? [],
+        ...(childRun === undefined ? {} : { childRun }),
+      }
+    })
+}
+
+export function toRunSummaryDto(summary: RunSummary): RunSummaryDto {
+  return convertDates(summary, { createdAt: true, updatedAt: true })
+}
+
+function toNodeSummaryDto(summary: NodeSummary): NodeSummaryDto {
+  return convertDates(summary, { createdAt: true, updatedAt: true })
+}
+
+function toNodeChildSummaryDto(summary: NodeChildSummary): NodeChildSummaryDto {
+  return convertDates(summary, { createdAt: true, updatedAt: true })
+}
+
+function toAttemptSummaryDto(summary: AttemptSummary): AttemptSummaryDto {
+  return convertDates(summary, {
+    dispatchedAt: true,
+    heartbeatAt: true,
+    completedAt: true,
+  })
+}
+
+export function toRunDetailDto(detail: RunDetail): RunDetailDto {
+  return {
+    run: toRunSummaryDto(detail.run),
+    nodes: detail.nodes.map(toNodeSummaryDto),
+    children: detail.children.map(toNodeChildSummaryDto),
+    attempts: detail.attempts.map(toAttemptSummaryDto),
+    childRuns: detail.childRuns.map(toRunSummaryDto),
+  }
+}
+
+export function toNodeSnapshotDto(snapshot: NodeSnapshot): NodeSnapshotDto {
+  return {
+    node: toNodeDto(snapshot.node),
+    children: snapshot.children.map(toNodeChildDto),
+    attempts: snapshot.attempts.map(toAttemptDto),
+  }
+}
+
+export function toRunFamilyEntryDto(entry: RunFamilyEntry): RunFamilyEntryDto {
+  return {
+    run: toRunSummaryDto(entry.run),
+    ...(entry.origin === undefined ? {} : { origin: entry.origin }),
+  }
+}
+
+export function toNodeUnitDto(unit: NodeUnit): NodeUnitDto {
+  return {
+    key: unit.key,
+    ...(unit.parsed === undefined ? {} : { parsed: unit.parsed }),
+    child: toNodeChildSummaryDto(unit.child),
+    attempts: unit.attempts.map(toAttemptSummaryDto),
+    ...(unit.childRun === undefined
+      ? {}
+      : { childRun: toRunSummaryDto(unit.childRun) }),
   }
 }
