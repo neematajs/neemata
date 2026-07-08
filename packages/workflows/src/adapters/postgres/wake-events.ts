@@ -107,8 +107,9 @@ export function createPostgresWorkflowWakeEvents(
 
   const connect = async () => {
     if (disposed || client) return
+    let connected: WorkflowPostgresListenerClient | undefined
     try {
-      const connected = await params.connect()
+      connected = await params.connect()
       if (disposed) {
         await connected.end()
         return
@@ -139,6 +140,15 @@ export function createPostgresWorkflowWakeEvents(
       }
       everListened = true
     } catch (error) {
+      // a LISTEN failure after the slot was claimed must release it, or the
+      // scheduled retry no-ops on the `client` guard and the hub silently
+      // degrades to poll-only forever
+      if (connected !== undefined && client === connected) {
+        client = undefined
+        try {
+          await connected.end()
+        } catch {}
+      }
       reportError(error)
       scheduleReconnect()
     }

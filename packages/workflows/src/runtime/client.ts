@@ -290,7 +290,10 @@ async function* watchRun(params: {
   // one consumption when the window closes (trailing edge). Every wake inside
   // the window still peeks at the run row so a status transition — terminal
   // above all — is consumed without delay: the window only coalesces coarse
-  // change yields, whose downstream refetches are the load being capped.
+  // change yields, whose downstream refetches are the load being capped. The
+  // peek reads themselves are deliberately uncapped (one cheap PK read per
+  // wake, bounded by the window) — capping them would trade terminal latency
+  // for savings on the wrong side of the debounce.
   let lastStatus: string | undefined
   let lastWakeConsumedAt = 0
   const waitForChange = async (): Promise<boolean> => {
