@@ -104,6 +104,8 @@ export type PruneTerminalRunsResult = {
   readonly deleted: number
 }
 
+export type DeleteRunResult = { readonly deleted: boolean }
+
 export type WorkflowRetentionPruner = {
   pruneTerminalRuns(
     params: PruneTerminalRunsParams,
@@ -236,7 +238,13 @@ export type WorkflowStore = {
   pruneTerminalRuns(
     params: PruneTerminalRunsParams,
   ): Promise<PruneTerminalRunsResult>
-  listDeadCommands(): Promise<readonly DeadWorkflowCommand[]>
+  /**
+   * Cascade-deletes one root run and its whole terminal family.
+   */
+  deleteRun(runId: string): Promise<DeleteRunResult>
+  listDeadCommands(params?: {
+    readonly runId?: string
+  }): Promise<readonly DeadWorkflowCommand[]>
   /**
    * Dead commands the reaper has not settled yet, oldest first. The reaper
    * marks each one reaped only AFTER producing its recovery outcome, so a

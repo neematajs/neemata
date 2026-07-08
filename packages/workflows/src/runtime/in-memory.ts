@@ -409,7 +409,33 @@ export function createInMemoryWorkflowRuntime(
       sweepDeadCommands(deadBefore)
       return { deleted: roots.length }
     },
-    async listDeadCommands() {
+    async deleteRun(runId) {
+      const run = runs.get(runId)
+      if (!run) return { deleted: false }
+      if (run.parentRunId !== undefined) {
+        throw new Error(`Run [${runId}] is not a root run`)
+      }
+
+      const familyRunIds = new Set(
+        [...runs.values()]
+          .filter((familyRun) => familyRun.rootRunId === runId)
+          .map((familyRun) => familyRun.id),
+      )
+      if (
+        [...familyRunIds].some((familyRunId) => {
+          const familyRun = runs.get(familyRunId)
+          return (
+            familyRun === undefined || !isTerminalRunStatus(familyRun.status)
+          )
+        })
+      ) {
+        throw new Error(`Run [${runId}] has non-terminal runs`)
+      }
+
+      deleteRunTrees(familyRunIds)
+      return { deleted: true }
+    },
+    async listDeadCommands(params) {
       return [
         ...continueRunCommands.flatMap((item) => {
           const dead = mapDeadCommand(item, 'continue')
@@ -423,11 +449,16 @@ export function createInMemoryWorkflowRuntime(
           const dead = mapDeadCommand(item, 'task')
           return dead === undefined ? [] : [dead]
         }),
-      ].sort((left, right) => {
-        const byDeadAt = right.deadAt.getTime() - left.deadAt.getTime()
-        if (byDeadAt !== 0) return byDeadAt
-        return right.createdAt.getTime() - left.createdAt.getTime()
-      })
+      ]
+        .filter(
+          (command) =>
+            params?.runId === undefined || command.runId === params.runId,
+        )
+        .sort((left, right) => {
+          const byDeadAt = right.deadAt.getTime() - left.deadAt.getTime()
+          if (byDeadAt !== 0) return byDeadAt
+          return right.createdAt.getTime() - left.createdAt.getTime()
+        })
     },
     async listUnreapedDeadCommands(params) {
       const limit = params?.limit ?? Number.POSITIVE_INFINITY

@@ -979,6 +979,261 @@ function workflowRuntimeAdapterContract(
       expect(runs).toHaveLength(5)
     })
 
+    it('returns not deleted when deleting an unknown run', async () => {
+      const runtime = await createRuntime()
+
+      await expect(
+        runtime.store.deleteRun('missing-run-id'),
+      ).resolves.toStrictEqual({ deleted: false })
+      await expect(
+        runtime.store.deleteRun('00000000-0000-4000-8000-000000000000'),
+      ).resolves.toStrictEqual({ deleted: false })
+    })
+
+    it('refuses to delete child runs directly', async () => {
+      const runtime = await createRuntime()
+      const root = await runtime.store.createRun({
+        workflowName: 'delete-child-root',
+        input: {},
+      })
+      await runtime.store.createNode({
+        runId: root.id,
+        name: 'child',
+        kind: 'workflow',
+      })
+      await runtime.store.ensureNodeChildren({
+        runId: root.id,
+        nodeName: 'child',
+        children: [{ childKey: '$self', kind: 'workflow' }],
+      })
+      const { childRun } = await runtime.store.ensureChildRun({
+        runId: root.id,
+        nodeName: 'child',
+        childKey: '$self',
+        childKind: 'workflow',
+        childName: 'delete-child-member',
+        input: {},
+        rootRunId: root.id,
+      })
+
+      await expect(runtime.store.deleteRun(childRun.id)).rejects.toThrow(
+        `Run [${childRun.id}] is not a root run`,
+      )
+    })
+
+    it('refuses to delete run families with non-terminal members', async () => {
+      const runtime = await createRuntime()
+      const root = await runtime.store.createRun({
+        workflowName: 'delete-live-family-root',
+        input: {},
+      })
+      await runtime.store.createNode({
+        runId: root.id,
+        name: 'child',
+        kind: 'workflow',
+      })
+      await runtime.store.ensureNodeChildren({
+        runId: root.id,
+        nodeName: 'child',
+        children: [{ childKey: '$self', kind: 'workflow' }],
+      })
+      const { childRun } = await runtime.store.ensureChildRun({
+        runId: root.id,
+        nodeName: 'child',
+        childKey: '$self',
+        childKind: 'workflow',
+        childName: 'delete-live-family-child',
+        input: {},
+        rootRunId: root.id,
+      })
+      await runtime.store.completeRun({ runId: root.id, output: { ok: true } })
+
+      await expect(runtime.store.deleteRun(root.id)).rejects.toThrow(
+        `Run [${root.id}] has non-terminal runs`,
+      )
+      await expect(
+        runtime.store.loadRunSnapshot(root.id),
+      ).resolves.toBeDefined()
+      await expect(
+        runtime.store.loadRunSnapshot(childRun.id),
+      ).resolves.toBeDefined()
+    })
+
+    it('deletes terminal root run families and associated commands', async () => {
+      const runtime = await createRuntime({ maxDeliveries: 1 })
+      const root = await runtime.store.createRun({
+        workflowName: 'deleted-root-workflow',
+        input: {},
+      })
+      await runtime.store.createNode({
+        runId: root.id,
+        name: 'child',
+        kind: 'workflow',
+      })
+      await runtime.store.createNode({
+        runId: root.id,
+        name: 'content',
+        kind: 'activity',
+      })
+      await runtime.store.ensureNodeChildren({
+        runId: root.id,
+        nodeName: 'child',
+        children: [{ childKey: '$self', kind: 'workflow' }],
+      })
+      const { childRun } = await runtime.store.ensureChildRun({
+        runId: root.id,
+        nodeName: 'child',
+        childKey: '$self',
+        childKind: 'workflow',
+        childName: 'deleted-child-workflow',
+        input: {},
+        rootRunId: root.id,
+      })
+      await runtime.store.ensureNodeChildren({
+        runId: root.id,
+        nodeName: 'content',
+        children: [{ childKey: '$self', kind: 'activity' }],
+      })
+      const attempt = await runtime.store.createAttempt({
+        runId: root.id,
+        nodeName: 'content',
+        childKey: '$self',
+        input: {},
+      })
+      const lease = await runtime.store.acquireRunLease({
+        runId: root.id,
+        leaseMs: 30_000,
+      })
+      await runtime.runCoordinationExecutor.enqueue({
+        kind: 'continueRun',
+        runId: root.id,
+        workflowName: root.workflowName,
+      })
+      await runtime.runCoordinationExecutor.enqueue({
+        kind: 'continueRun',
+        runId: childRun.id,
+        workflowName: childRun.workflowName,
+      })
+      await runtime.attemptExecutor.dispatchActivity({
+        kind: 'activityAttempt',
+        workflowName: root.workflowName,
+        activityName: 'content',
+        runId: root.id,
+        nodeName: 'content',
+        childKey: '$self',
+        attemptId: attempt.id,
+        leaseToken: attempt.leaseToken!,
+        input: {},
+      })
+      const claimed = await runtime.runCoordinationExecutor.claim({
+        workerId: 'delete-dead-letterer',
+        workflowNames: [root.workflowName],
+        leaseMs: 30_000,
+      })
+      await runtime.runCoordinationExecutor.release(claimed!, {
+        error: new Error('delete dead command'),
+      })
+      await runtime.store.completeRun({
+        runId: childRun.id,
+        output: { ok: true },
+      })
+      await runtime.store.completeRun({ runId: root.id, output: { ok: true } })
+
+      await expect(
+        runtime.store.listDeadCommands({ runId: root.id }),
+      ).resolves.toHaveLength(1)
+      await expect(runtime.store.deleteRun(root.id)).resolves.toStrictEqual({
+        deleted: true,
+      })
+      await expect(
+        runtime.store.loadRunSnapshot(root.id),
+      ).resolves.toBeUndefined()
+      await expect(
+        runtime.store.loadRunSnapshot(childRun.id),
+      ).resolves.toBeUndefined()
+      await expect(
+        runtime.store.listDeadCommands({ runId: root.id }),
+      ).resolves.toStrictEqual([])
+      await expect(
+        runtime.runCoordinationExecutor.claim({
+          workerId: 'delete-root-checker',
+          workflowNames: [childRun.workflowName],
+          leaseMs: 30_000,
+        }),
+      ).resolves.toBeNull()
+      await expect(
+        runtime.attemptExecutor.claimActivity({
+          workerId: 'delete-attempt-checker',
+          workflowNames: [root.workflowName],
+          activityNames: ['content'],
+          leaseMs: 30_000,
+        }),
+      ).resolves.toBeNull()
+      await expect(
+        runtime.store.renewRunLease(lease!, 30_000),
+      ).resolves.toBeUndefined()
+    })
+
+    it('filters dead commands by run id', async () => {
+      const runtime = await createRuntime({ maxDeliveries: 1 })
+      const client = createWorkflowRuntimeClient(runtime)
+      const first = await runtime.store.createRun({
+        workflowName: 'filtered-dead-command-workflow-first',
+        input: { index: 1 },
+      })
+      const second = await runtime.store.createRun({
+        workflowName: 'filtered-dead-command-workflow-second',
+        input: { index: 2 },
+      })
+      await runtime.runCoordinationExecutor.enqueue({
+        kind: 'continueRun',
+        runId: first.id,
+        workflowName: first.workflowName,
+      })
+      await runtime.runCoordinationExecutor.enqueue({
+        kind: 'continueRun',
+        runId: second.id,
+        workflowName: second.workflowName,
+      })
+
+      const firstClaim = await runtime.runCoordinationExecutor.claim({
+        workerId: 'dead-filter-worker-1',
+        workflowNames: [first.workflowName],
+        leaseMs: 30_000,
+      })
+      await runtime.runCoordinationExecutor.release(firstClaim!, {
+        error: new Error('first dead command'),
+      })
+      const secondClaim = await runtime.runCoordinationExecutor.claim({
+        workerId: 'dead-filter-worker-2',
+        workflowNames: [second.workflowName],
+        leaseMs: 30_000,
+      })
+      await runtime.runCoordinationExecutor.release(secondClaim!, {
+        error: new Error('second dead command'),
+      })
+
+      await expect(runtime.store.listDeadCommands()).resolves.toHaveLength(2)
+      await expect(
+        runtime.store.listDeadCommands({ runId: first.id }),
+      ).resolves.toMatchObject([
+        {
+          kind: 'continue',
+          runId: first.id,
+          lastError: { message: 'first dead command' },
+        },
+      ])
+      await expect(
+        client.listDeadCommands({ runId: second.id }),
+      ).resolves.toMatchObject([
+        {
+          kind: 'continue',
+          runId: second.id,
+          lastError: { message: 'second dead command' },
+        },
+      ])
+    })
+
     it('threads worker continuation errors into dead-letter metadata', async () => {
       const workflow = defineWorkflow({
         name: 'poison-worker-workflow',
