@@ -20,6 +20,7 @@ import type {
   StoredNode,
   StoredNodeChild,
   StoredRun,
+  StoredRunEvent,
 } from './state.ts'
 import type {
   AttemptSummary,
@@ -39,6 +40,10 @@ import type {
   WorkflowRetentionPruner,
   WorkflowStore,
 } from './store.ts'
+import type {
+  WorkflowCommandWakeKind,
+  WorkflowWakeEvents,
+} from './wake-events.ts'
 import { dispatchTaskRunAttempt } from './coordinator/attempt.ts'
 import { toStoredError } from './errors.ts'
 import {
@@ -47,6 +52,7 @@ import {
   startStoredScheduleRun,
 } from './scheduler.ts'
 import { isTerminalNodeStatus, isTerminalRunStatus } from './status.ts'
+import { assertValidRunEventsCursor } from './store.ts'
 import {
   NODE_TRANSITIONS,
   RUN_TRANSITIONS,
@@ -101,11 +107,13 @@ export type InMemoryWorkflowRuntime = {
     readonly nodes: readonly StoredNode[]
     readonly children: readonly StoredNodeChild[]
     readonly attempts: readonly StoredAttempt[]
+    readonly runEvents: readonly StoredRunEvent[]
     readonly continueRunCommands: readonly InspectQueueItem<ContinueRunCommand>[]
     readonly activityCommands: readonly InspectQueueItem<ActivityAttemptCommand>[]
     readonly taskCommands: readonly InspectQueueItem<TaskAttemptCommand>[]
     readonly schedules: readonly StoredWorkflowSchedule[]
   }
+  readonly wakeEvents: WorkflowWakeEvents
 }
 
 export function createInMemoryWorkflowRuntime(
@@ -114,6 +122,7 @@ export function createInMemoryWorkflowRuntime(
   } = {},
 ): InMemoryWorkflowRuntime {
   let nextId = 1
+  let nextEventId = 1n
   const id = (prefix: string) => `${prefix}-${nextId++}`
   let lastTimestamp = 0
   const now = () => {
@@ -127,6 +136,7 @@ export function createInMemoryWorkflowRuntime(
   const nodes = new Map<string, StoredNode>()
   const attempts = new Map<string, StoredAttempt>()
   const children = new Map<string, StoredNodeChild>()
+  const runEvents: StoredRunEvent[] = []
   const runIdempotencyKeys = new Map<string, string>()
   const runLeases = new Map<string, InMemoryRunLease>()
   const continueRunCommands: QueueItem<ContinueRunCommand>[] = []
@@ -145,12 +155,99 @@ export function createInMemoryWorkflowRuntime(
     ClaimedQueueItem<TaskAttemptCommand>
   >()
   const schedules = new Map<string, StoredWorkflowSchedule>()
+  const commandWakeListeners = new Map<
+    WorkflowCommandWakeKind,
+    Set<() => void>
+  >()
+  const cancellationWakeListeners = new Map<string, Set<() => void>>()
+  const runEventWakeListeners = new Map<string, Set<() => void>>()
 
   const nodeKey = (runId: string, nodeName: string) => `${runId}:${nodeName}`
   const childKey = (runId: string, nodeName: string, key: string) =>
     `${runId}:${nodeName}:${key}`
   const childRef = (runId: string, nodeName: string, key: string) =>
     `${runId}.${nodeName}.${key}`
+  const subscribeWake = <K>(
+    listeners: Map<K, Set<() => void>>,
+    key: K,
+    listener: () => void,
+  ) => {
+    const set = listeners.get(key) ?? new Set<() => void>()
+    listeners.set(key, set)
+    set.add(listener)
+    return () => {
+      set.delete(listener)
+      if (set.size === 0) listeners.delete(key)
+    }
+  }
+  const fireWake = (listeners: Set<() => void> | undefined) => {
+    if (!listeners) return
+    for (const listener of listeners) listener()
+  }
+  const fireRunEventWake = (rootRunId: string) =>
+    fireWake(runEventWakeListeners.get(rootRunId))
+  const runRootId = (runId: string) => runs.get(runId)?.rootRunId ?? runId
+  const appendRunEvent = (event: Omit<StoredRunEvent, 'id' | 'createdAt'>) => {
+    const stored: StoredRunEvent = {
+      ...event,
+      id: String(nextEventId++),
+      createdAt: now(),
+    }
+    runEvents.push(stored)
+    fireRunEventWake(stored.rootRunId)
+  }
+  const emitRunStatusEvent = (run: StoredRun) => {
+    appendRunEvent({
+      runId: run.id,
+      rootRunId: run.rootRunId,
+      kind: 'run',
+      status: run.status,
+      ...(run.error === undefined ? {} : { error: run.error }),
+    })
+  }
+  const emitNodeStatusEvent = (before: StoredNode, after: StoredNode) => {
+    if (before.status === after.status) return
+    appendRunEvent({
+      runId: after.runId,
+      rootRunId: runRootId(after.runId),
+      kind: 'node',
+      status: after.status,
+      nodeName: after.name,
+      ...(after.error === undefined ? {} : { error: after.error }),
+    })
+  }
+  const emitChildStatusEvent = (
+    before: StoredNodeChild,
+    after: StoredNodeChild,
+  ) => {
+    if (before.status === after.status) return
+    appendRunEvent({
+      runId: after.runId,
+      rootRunId: runRootId(after.runId),
+      kind: 'child',
+      status: after.status,
+      nodeName: after.nodeName,
+      childKey: after.childKey,
+      ...(after.error === undefined ? {} : { error: after.error }),
+    })
+  }
+  const emitAttemptStatusEvent = (
+    before: StoredAttempt | undefined,
+    after: StoredAttempt,
+  ) => {
+    if (before?.status === after.status) return
+    appendRunEvent({
+      runId: after.runId,
+      rootRunId: runRootId(after.runId),
+      kind: 'attempt',
+      status: after.status,
+      nodeName: after.nodeName,
+      childKey: after.childKey,
+      attemptId: after.id,
+      attemptNumber: after.attemptNumber,
+      ...(after.error === undefined ? {} : { error: after.error }),
+    })
+  }
   const sortedChildren = (rows: readonly StoredNodeChild[]) =>
     [...rows].sort((left, right) => {
       const byOrdinal = left.ordinal - right.ordinal
@@ -339,12 +436,38 @@ export function createInMemoryWorkflowRuntime(
     if (input.idempotencyKey) {
       runIdempotencyKeys.set(runIdempotencyKey(input.idempotencyKey), run.id)
     }
+    emitRunStatusEvent(run)
     return { run, created: true }
   }
 
   const store: WorkflowStore = {
     async createRun(input: CreateRunInput) {
       return createRunWithState(input).run
+    },
+    async listRunEvents({ runId, family = false, afterEventId, limit }) {
+      const run = runs.get(runId)
+      if (!run) return { events: [] }
+      const normalizedLimit = normalizeEventLimit(limit)
+      if (normalizedLimit !== undefined && normalizedLimit < 1) {
+        return { events: [] }
+      }
+      assertValidRunEventsCursor(afterEventId)
+      const after = afterEventId === undefined ? 0n : BigInt(afterEventId)
+      const filtered = runEvents.filter(
+        (event) =>
+          BigInt(event.id) > after &&
+          (family ? event.rootRunId === run.rootRunId : event.runId === run.id),
+      )
+      const page =
+        normalizedLimit === undefined
+          ? filtered
+          : filtered.slice(0, normalizedLimit)
+      return {
+        events: page,
+        ...(normalizedLimit !== undefined && filtered.length > page.length
+          ? { nextCursor: page.at(-1)?.id }
+          : {}),
+      }
     },
     async listRuns(filter: ListRunsFilter = {}) {
       const limit = filter.limit ?? Number.POSITIVE_INFINITY
@@ -665,7 +788,6 @@ export function createInMemoryWorkflowRuntime(
       const updated: StoredNode = {
         ...node,
         input,
-        status: 'running',
         version: node.version + 1,
         updatedAt: now(),
       }
@@ -720,6 +842,7 @@ export function createInMemoryWorkflowRuntime(
         completedAt: now(),
       }
       attempts.set(attemptId, updated)
+      emitAttemptStatusEvent(attempt, updated)
       const completedChild: StoredNodeChild = {
         ...child,
         status: 'completed',
@@ -731,6 +854,7 @@ export function createInMemoryWorkflowRuntime(
         childKey(child.runId, child.nodeName, child.childKey),
         completedChild,
       )
+      emitChildStatusEvent(child, completedChild)
       return updated
     },
     async failCurrentAttempt({ attemptId, leaseToken, error }) {
@@ -744,6 +868,7 @@ export function createInMemoryWorkflowRuntime(
         completedAt: now(),
       }
       attempts.set(attemptId, updated)
+      emitAttemptStatusEvent(fenced.attempt, updated)
       return updated
     },
     async timeoutCurrentAttempt({ attemptId, leaseToken, error }) {
@@ -757,6 +882,7 @@ export function createInMemoryWorkflowRuntime(
         completedAt: now(),
       }
       attempts.set(attemptId, updated)
+      emitAttemptStatusEvent(fenced.attempt, updated)
       return updated
     },
     async completeNode({ runId, nodeName, output }) {
@@ -773,6 +899,7 @@ export function createInMemoryWorkflowRuntime(
         updatedAt: now(),
       }
       nodes.set(key, updated)
+      emitNodeStatusEvent(node, updated)
       return updated
     },
     async failNode({ runId, nodeName, error }) {
@@ -789,6 +916,7 @@ export function createInMemoryWorkflowRuntime(
         updatedAt: now(),
       }
       nodes.set(key, updated)
+      emitNodeStatusEvent(node, updated)
       return updated
     },
     async markRunRunning({ runId }) {
@@ -803,6 +931,7 @@ export function createInMemoryWorkflowRuntime(
         updatedAt: now(),
       }
       runs.set(runId, updated)
+      emitRunStatusEvent(updated)
       return updated
     },
     async markRunWaiting({ runId }) {
@@ -817,6 +946,7 @@ export function createInMemoryWorkflowRuntime(
         updatedAt: now(),
       }
       runs.set(runId, updated)
+      emitRunStatusEvent(updated)
       return updated
     },
     async completeRun({ runId, output }) {
@@ -832,6 +962,7 @@ export function createInMemoryWorkflowRuntime(
         updatedAt: now(),
       }
       runs.set(runId, updated)
+      emitRunStatusEvent(updated)
       return updated
     },
     async failRun({ runId, error }) {
@@ -847,6 +978,7 @@ export function createInMemoryWorkflowRuntime(
         updatedAt: now(),
       }
       runs.set(runId, updated)
+      emitRunStatusEvent(updated)
       return updated
     },
     async requestRunCancellation({ runId }) {
@@ -863,6 +995,8 @@ export function createInMemoryWorkflowRuntime(
         updatedAt: now(),
       }
       runs.set(runId, updated)
+      emitRunStatusEvent(updated)
+      fireWake(cancellationWakeListeners.get(runId))
       return updated
     },
     async cancelRun({ runId }) {
@@ -877,6 +1011,7 @@ export function createInMemoryWorkflowRuntime(
         updatedAt: now(),
       }
       runs.set(runId, updated)
+      emitRunStatusEvent(updated)
       return updated
     },
     async cancelNode({ runId, nodeName }) {
@@ -892,6 +1027,7 @@ export function createInMemoryWorkflowRuntime(
         updatedAt: now(),
       }
       nodes.set(key, updated)
+      emitNodeStatusEvent(node, updated)
       return updated
     },
     async cancelNonTerminalRunNodes({ runId }) {
@@ -905,18 +1041,24 @@ export function createInMemoryWorkflowRuntime(
           updatedAt: now(),
         }
         nodes.set(nodeKey(node.runId, node.name), cancelled)
+        emitNodeStatusEvent(node, cancelled)
         updated.push(cancelled)
       }
       for (const child of Array.from(children.values())) {
         if (child.runId !== runId || isTerminalNodeStatus(child.status)) {
           continue
         }
-        children.set(childKey(child.runId, child.nodeName, child.childKey), {
+        const cancelled: StoredNodeChild = {
           ...child,
           status: 'cancelled',
           version: child.version + 1,
           updatedAt: now(),
-        })
+        }
+        children.set(
+          childKey(child.runId, child.nodeName, child.childKey),
+          cancelled,
+        )
+        emitChildStatusEvent(child, cancelled)
       }
       return updated
     },
@@ -1029,6 +1171,7 @@ export function createInMemoryWorkflowRuntime(
         updatedAt: now(),
       }
       children.set(key, linked)
+      emitChildStatusEvent(child, linked)
       return { child: linked, childRun, created: true }
     },
     async ensureChildAttempt(params) {
@@ -1088,6 +1231,7 @@ export function createInMemoryWorkflowRuntime(
         updatedAt: now(),
       }
       children.set(mapKey, updated)
+      emitChildStatusEvent(child, updated)
       return updated
     },
     async failNodeChild({ runId, nodeName, childKey: key, error }) {
@@ -1104,6 +1248,7 @@ export function createInMemoryWorkflowRuntime(
         updatedAt: now(),
       }
       children.set(mapKey, updated)
+      emitChildStatusEvent(child, updated)
       return updated
     },
     async waitNode({ runId, nodeName }) {
@@ -1120,6 +1265,7 @@ export function createInMemoryWorkflowRuntime(
         updatedAt: now(),
       }
       nodes.set(key, updated)
+      emitNodeStatusEvent(node, updated)
       return updated
     },
     async loadNodeChildren({ runId, nodeName }) {
@@ -1150,14 +1296,20 @@ export function createInMemoryWorkflowRuntime(
       dispatchedAt: now(),
     }
     attempts.set(attempt.id, attempt)
-    children.set(childKey(child.runId, child.nodeName, child.childKey), {
+    emitAttemptStatusEvent(undefined, attempt)
+    const updatedChild: StoredNodeChild = {
       ...child,
       status: 'running',
       currentAttemptId: attempt.id,
       attemptCount: child.attemptCount + 1,
       version: child.version + 1,
       updatedAt: now(),
-    })
+    }
+    children.set(
+      childKey(child.runId, child.nodeName, child.childKey),
+      updatedChild,
+    )
+    emitChildStatusEvent(child, updatedChild)
 
     // Aggregate hint only: the node mirrors "some child is executing" so
     // observers see progress without deriving it from child rows.
@@ -1170,12 +1322,14 @@ export function createInMemoryWorkflowRuntime(
       (node.status === 'running' ||
         canTransition(NODE_TRANSITIONS, node.status, 'running'))
     ) {
-      nodes.set(key, {
+      const updatedNode: StoredNode = {
         ...node,
         status: 'running',
         version: node.version + 1,
         updatedAt: now(),
-      })
+      }
+      nodes.set(key, updatedNode)
+      emitNodeStatusEvent(node, updatedNode)
     }
     return attempt
   }
@@ -1276,6 +1430,9 @@ export function createInMemoryWorkflowRuntime(
         children.delete(key)
       }
     }
+    for (let index = runEvents.length - 1; index >= 0; index -= 1) {
+      if (treeIds.has(runEvents[index]!.runId)) runEvents.splice(index, 1)
+    }
     deleteQueueItemsForRunIds(continueRunCommands, treeIds)
     deleteQueueItemsForRunIds(activityCommands, treeIds)
     deleteQueueItemsForRunIds(taskCommands, treeIds)
@@ -1354,6 +1511,9 @@ export function createInMemoryWorkflowRuntime(
     )
     if (existingIndex === -1) {
       continueRunCommands.push(queueItem(id('continue'), command, runAt))
+      if (runAt === undefined || runAt <= new Date()) {
+        fireWake(commandWakeListeners.get('continue'))
+      }
       return
     }
 
@@ -1362,6 +1522,9 @@ export function createInMemoryWorkflowRuntime(
       ...existing,
       payload: command,
       runAt: earliestRunAt(existing.runAt, runAt),
+    }
+    if (runAt === undefined || runAt <= new Date()) {
+      fireWake(commandWakeListeners.get('continue'))
     }
   }
   const releaseQueueItem = <T>(
@@ -1527,10 +1690,16 @@ export function createInMemoryWorkflowRuntime(
       activityCommands.push(
         queueItem(id('activity-command'), command, options?.runAt),
       )
+      if (options?.runAt === undefined || options.runAt <= new Date()) {
+        fireWake(commandWakeListeners.get('activity'))
+      }
     },
     async dispatchTask(command, options) {
       if (attemptCommandExists(command.attemptId)) return
       taskCommands.push(queueItem(id('task-command'), command, options?.runAt))
+      if (options?.runAt === undefined || options.runAt <= new Date()) {
+        fireWake(commandWakeListeners.get('task'))
+      }
     },
     async claimActivity(worker) {
       const date = now()
@@ -1768,12 +1937,31 @@ export function createInMemoryWorkflowRuntime(
       nodes: [...nodes.values()],
       children: [...children.values()],
       attempts: [...attempts.values()],
+      runEvents: [...runEvents],
       continueRunCommands: continueRunCommands.map(inspectQueueItem),
       activityCommands: activityCommands.map(inspectQueueItem),
       taskCommands: taskCommands.map(inspectQueueItem),
       schedules: [...schedules.values()],
     }),
+    wakeEvents: {
+      onCommand: (kind, listener) =>
+        subscribeWake(commandWakeListeners, kind, listener),
+      onCancellation: (runId, listener) =>
+        subscribeWake(cancellationWakeListeners, runId, listener),
+      onRunEvent: (rootRunId, listener) =>
+        subscribeWake(runEventWakeListeners, rootRunId, listener),
+      dispose() {
+        commandWakeListeners.clear()
+        cancellationWakeListeners.clear()
+        runEventWakeListeners.clear()
+      },
+    },
   }
+}
+
+function normalizeEventLimit(limit: number | undefined): number | undefined {
+  if (limit === undefined) return undefined
+  return Number.isInteger(limit) && limit > 0 ? limit : 0
 }
 
 function compareSchedulesByDueDate(

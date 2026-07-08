@@ -918,6 +918,211 @@ function workflowRuntimeAdapterContract(
       ).resolves.toStrictEqual([])
     })
 
+    it('records exact status change events and skips idempotent rewrites', async () => {
+      const runtime = await createRuntime()
+      const run = await runtime.store.createRun({
+        workflowName: 'event-history-workflow',
+        input: {},
+        idempotencyKey: ['event-history-workflow'],
+      })
+      await runtime.store.createRun({
+        workflowName: 'event-history-workflow',
+        input: {},
+        idempotencyKey: ['event-history-workflow'],
+      })
+      await runtime.store.markRunWaiting({ runId: run.id })
+      await runtime.store.createNode({
+        runId: run.id,
+        name: 'content',
+        kind: 'activity',
+      })
+      await runtime.store.setNodeInput({
+        runId: run.id,
+        nodeName: 'content',
+        input: { value: 1 },
+      })
+      await runtime.store.ensureNodeChildren({
+        runId: run.id,
+        nodeName: 'content',
+        children: [{ childKey: '$self', kind: 'activity' }],
+      })
+      const firstAttempt = await runtime.store.ensureChildAttempt({
+        runId: run.id,
+        nodeName: 'content',
+        childKey: '$self',
+        input: { value: 1 },
+      })
+      await runtime.store.ensureChildAttempt({
+        runId: run.id,
+        nodeName: 'content',
+        childKey: '$self',
+        input: { value: 1 },
+      })
+      await runtime.store.failCurrentAttempt({
+        attemptId: firstAttempt.attempt.id,
+        leaseToken: firstAttempt.attempt.leaseToken!,
+        error: new Error('retry me'),
+      })
+      const retry = await runtime.store.createAttempt({
+        runId: run.id,
+        nodeName: 'content',
+        childKey: '$self',
+        input: { value: 2 },
+      })
+      await runtime.store.completeCurrentAttempt({
+        attemptId: retry.id,
+        leaseToken: retry.leaseToken!,
+        output: { value: 2 },
+      })
+      await runtime.store.completeNode({
+        runId: run.id,
+        nodeName: 'content',
+        output: { value: 2 },
+      })
+      await runtime.store.markRunRunning({ runId: run.id })
+      await runtime.store.markRunWaiting({ runId: run.id })
+      await runtime.store.markRunRunning({ runId: run.id })
+      await runtime.store.completeRun({ runId: run.id, output: { value: 2 } })
+      await runtime.store.failRun({
+        runId: run.id,
+        error: new Error('too late'),
+      })
+
+      const listed = await runtime.store.listRunEvents({ runId: run.id })
+
+      expect(
+        listed.events.map((event) => [
+          event.kind,
+          event.status,
+          event.nodeName,
+          event.childKey,
+          event.attemptNumber,
+        ]),
+      ).toStrictEqual([
+        ['run', 'queued', undefined, undefined, undefined],
+        ['attempt', 'started', 'content', '$self', 1],
+        ['child', 'running', 'content', '$self', undefined],
+        ['node', 'running', 'content', undefined, undefined],
+        ['attempt', 'failed', 'content', '$self', 1],
+        ['attempt', 'started', 'content', '$self', 2],
+        ['attempt', 'completed', 'content', '$self', 2],
+        ['child', 'completed', 'content', '$self', undefined],
+        ['node', 'completed', 'content', undefined, undefined],
+        ['run', 'running', undefined, undefined, undefined],
+        ['run', 'waiting', undefined, undefined, undefined],
+        ['run', 'running', undefined, undefined, undefined],
+        ['run', 'completed', undefined, undefined, undefined],
+      ])
+      expect(listed.events.map((event) => event.runId)).toEqual(
+        listed.events.map(() => run.id),
+      )
+      expect(listed.events.map((event) => event.rootRunId)).toEqual(
+        listed.events.map(() => run.rootRunId),
+      )
+      expect(
+        listed.events.every((event) => event.createdAt instanceof Date),
+      ).toBe(true)
+      expect(listed.nextCursor).toBeUndefined()
+
+      const firstPage = await runtime.store.listRunEvents({
+        runId: run.id,
+        limit: 3,
+      })
+      const secondPage = await runtime.store.listRunEvents({
+        runId: run.id,
+        afterEventId: firstPage.nextCursor,
+        limit: 50,
+      })
+      expect(firstPage.events).toHaveLength(3)
+      expect(firstPage.nextCursor).toBe(firstPage.events[2]?.id)
+      expect(secondPage.events.map((event) => event.id)).toStrictEqual(
+        listed.events.slice(3).map((event) => event.id),
+      )
+      await expect(
+        runtime.store.listRunEvents({ runId: 'missing-run-id' }),
+      ).resolves.toStrictEqual({ events: [] })
+      await expect(
+        runtime.store.listRunEvents({
+          runId: run.id,
+          afterEventId: 'not-a-run-event-id',
+        }),
+      ).rejects.toThrow('Invalid run events cursor [not-a-run-event-id]')
+      await expect(
+        runtime.store.listRunEvents({ runId: run.id, afterEventId: '0' }),
+      ).rejects.toThrow('Invalid run events cursor [0]')
+    })
+
+    it('lists family event history and removes events with deleted runs', async () => {
+      const runtime = await createRuntime()
+      const root = await runtime.store.createRun({
+        workflowName: 'event-family-root',
+        input: {},
+      })
+      await runtime.store.createNode({
+        runId: root.id,
+        name: 'child',
+        kind: 'workflow',
+      })
+      await runtime.store.ensureNodeChildren({
+        runId: root.id,
+        nodeName: 'child',
+        children: [{ childKey: '$self', kind: 'workflow' }],
+      })
+      const { childRun } = await runtime.store.ensureChildRun({
+        runId: root.id,
+        nodeName: 'child',
+        childKey: '$self',
+        childKind: 'workflow',
+        childName: 'event-family-child',
+        input: {},
+        rootRunId: root.rootRunId,
+      })
+      await runtime.store.completeRun({
+        runId: childRun.id,
+        output: { child: true },
+      })
+      await runtime.store.completeNodeChild({
+        runId: root.id,
+        nodeName: 'child',
+        childKey: '$self',
+        output: { child: true },
+      })
+      await runtime.store.completeNode({
+        runId: root.id,
+        nodeName: 'child',
+        output: { child: true },
+      })
+      await runtime.store.completeRun({ runId: root.id, output: { ok: true } })
+
+      const rootOnly = await runtime.store.listRunEvents({ runId: root.id })
+      const family = await runtime.store.listRunEvents({
+        runId: root.id,
+        family: true,
+      })
+
+      expect(rootOnly.events.every((event) => event.runId === root.id)).toBe(
+        true,
+      )
+      expect(
+        family.events.map((event) => [event.runId, event.kind, event.status]),
+      ).toEqual([
+        [root.id, 'run', 'queued'],
+        [childRun.id, 'run', 'queued'],
+        [root.id, 'child', 'running'],
+        [childRun.id, 'run', 'completed'],
+        [root.id, 'child', 'completed'],
+        [root.id, 'node', 'completed'],
+        [root.id, 'run', 'completed'],
+      ])
+
+      await expect(runtime.store.deleteRun(root.id)).resolves.toStrictEqual({
+        deleted: true,
+      })
+      await expect(
+        runtime.store.listRunEvents({ runId: root.id, family: true }),
+      ).resolves.toStrictEqual({ events: [] })
+    })
+
     it('sweeps old dead commands during pruning', async () => {
       const runtime = await createRuntime({ maxDeliveries: 1 })
       const run = await runtime.store.createRun({
@@ -2479,7 +2684,11 @@ function workflowRuntimeAdapterContract(
       expect(
         settled.attempts
           .map((attempt) => [attempt.childKey, attempt.attemptNumber])
-          .sort(),
+          .sort(
+            (left, right) =>
+              String(left[0]).localeCompare(String(right[0])) ||
+              Number(left[1]) - Number(right[1]),
+          ),
       ).toEqual([
         ['member:a', 1],
         ['member:a', 2],

@@ -13,6 +13,10 @@ import {
 } from '../../runtime/status.ts'
 import {
   WORKFLOW_CANCELLATIONS_CHANNEL,
+  emitAttemptStatusEventSql,
+  emitChildStatusEventSql,
+  emitNodeStatusEventSql,
+  emitRunStatusEventSql,
   id,
   isUuid,
   jsonRecordArrayColumn,
@@ -24,6 +28,7 @@ import {
   mapNodeChild,
   mapRun,
   nodeStatusSourcesSql,
+  notifyRunStatusEventColumnsSql,
   one,
   runStatusSourcesSql,
   withDateColumns,
@@ -128,11 +133,11 @@ export const createPostgresWorkflowNodeStore = (
         `
         UPDATE workflow_nodes
         SET input = $3::jsonb,
-            status = 'running',
             version = version + 1,
             updated_at = now()
-        WHERE run_id = $1 AND name = $2
-          AND status IN (${nodeStatusSourcesSql('running', { self: true })})
+        WHERE run_id = $1
+          AND name = $2
+          AND status NOT IN ('completed', 'failed', 'cancelled')
         RETURNING *
       `,
         [runId, nodeName, json(input)],
@@ -230,6 +235,7 @@ export const createPostgresWorkflowNodeStore = (
         const attempt = await one(
           tx,
           `
+          WITH inserted AS (
           INSERT INTO workflow_attempts (
             id, run_id, node_name, child_key, status, lease_token,
             attempt_number, input, idempotency_key, dispatched_at
@@ -237,7 +243,16 @@ export const createPostgresWorkflowNodeStore = (
           VALUES (
             $1, $2, $3, $4, 'started', $5, $6, $7::jsonb, $8::jsonb, now()
           )
-          RETURNING *
+          RETURNING *, NULL::text AS old_status
+          ),
+          event_source AS (
+            SELECT inserted.*, r.root_run_id
+            FROM inserted
+            JOIN workflow_runs r ON r.id = inserted.run_id
+          ),
+          ${emitAttemptStatusEventSql('event_source', 'attempt_started')}
+          SELECT inserted.*${notifyRunStatusEventColumnsSql('attempt_started')}
+          FROM inserted
         `,
           [
             attemptId,
@@ -253,15 +268,30 @@ export const createPostgresWorkflowNodeStore = (
         const updatedChild = await one(
           tx,
           `
+          WITH candidate AS (
+            SELECT c.run_id, c.node_name, c.child_key,
+              c.status::text AS old_status, r.root_run_id
+            FROM workflow_node_children c
+            JOIN workflow_runs r ON r.id = c.run_id
+            WHERE c.run_id = $1 AND c.node_name = $2 AND c.child_key = $3
+          ),
+          updated AS (
           UPDATE workflow_node_children
           SET current_attempt_id = $4,
               attempt_count = attempt_count + 1,
               status = 'running',
               version = version + 1,
               updated_at = now()
-          WHERE run_id = $1 AND node_name = $2 AND child_key = $3
-            AND status IN (${nodeStatusSourcesSql('running', { self: true })})
-          RETURNING *
+          FROM candidate
+          WHERE workflow_node_children.run_id = candidate.run_id
+            AND workflow_node_children.node_name = candidate.node_name
+            AND workflow_node_children.child_key = candidate.child_key
+            AND workflow_node_children.status IN (${nodeStatusSourcesSql('running', { self: true })})
+          RETURNING workflow_node_children.*, candidate.old_status, candidate.root_run_id
+          ),
+          ${emitChildStatusEventSql('updated', 'child_running')}
+          SELECT updated.*${notifyRunStatusEventColumnsSql('child_running')}
+          FROM updated
         `,
           [input.runId, input.nodeName, input.childKey, attemptId],
         )
@@ -274,10 +304,24 @@ export const createPostgresWorkflowNodeStore = (
         // again, but never fail the retry when the node cannot move.
         await tx.query(
           `
+          WITH candidate AS (
+            SELECT n.run_id, n.name, n.status::text AS old_status, r.root_run_id
+            FROM workflow_nodes n
+            JOIN workflow_runs r ON r.id = n.run_id
+            WHERE n.run_id = $1 AND n.name = $2
+          ),
+          updated AS (
           UPDATE workflow_nodes
           SET status = 'running', version = version + 1, updated_at = now()
-          WHERE run_id = $1 AND name = $2
-            AND status IN (${nodeStatusSourcesSql('running', { self: true })})
+          FROM candidate
+          WHERE workflow_nodes.run_id = candidate.run_id
+            AND workflow_nodes.name = candidate.name
+            AND workflow_nodes.status IN (${nodeStatusSourcesSql('running', { self: true })})
+          RETURNING workflow_nodes.*, candidate.old_status, candidate.root_run_id
+          ),
+          ${emitNodeStatusEventSql('updated', 'node_running')}
+          SELECT count(*)${notifyRunStatusEventColumnsSql('node_running')}
+          FROM updated
         `,
           [input.runId, input.nodeName],
         )
@@ -299,10 +343,22 @@ export const createPostgresWorkflowNodeStore = (
           const row = await one(
             tx,
             `
+            WITH candidate AS (
+              SELECT a.id, a.status::text AS old_status, r.root_run_id
+              FROM workflow_attempts a
+              JOIN workflow_runs r ON r.id = a.run_id
+              WHERE a.id = $1 AND a.lease_token = $2 AND a.status = 'started'
+            ),
+            updated AS (
             UPDATE workflow_attempts
             SET status = 'completed', output = $3::jsonb, completed_at = now()
-            WHERE id = $1 AND lease_token = $2 AND status = 'started'
-            RETURNING *
+            FROM candidate
+            WHERE workflow_attempts.id = candidate.id
+            RETURNING workflow_attempts.*, candidate.old_status, candidate.root_run_id
+            ),
+            ${emitAttemptStatusEventSql('updated', 'attempt_completed')}
+            SELECT updated.*${notifyRunStatusEventColumnsSql('attempt_completed')}
+            FROM updated
           `,
             [attemptId, leaseToken, json(output)],
           )
@@ -310,15 +366,30 @@ export const createPostgresWorkflowNodeStore = (
           const child = await one(
             tx,
             `
+            WITH candidate AS (
+              SELECT c.run_id, c.node_name, c.child_key,
+                c.status::text AS old_status, r.root_run_id
+              FROM workflow_node_children c
+              JOIN workflow_runs r ON r.id = c.run_id
+              WHERE c.run_id = $1 AND c.node_name = $2 AND c.child_key = $3
+                AND c.current_attempt_id = $4
+            ),
+            updated AS (
             UPDATE workflow_node_children
             SET status = 'completed',
                 output = $5::jsonb,
                 version = version + 1,
                 updated_at = now()
-            WHERE run_id = $1 AND node_name = $2 AND child_key = $3
-              AND current_attempt_id = $4
-              AND status IN (${nodeStatusSourcesSql('completed')})
-            RETURNING *
+            FROM candidate
+            WHERE workflow_node_children.run_id = candidate.run_id
+              AND workflow_node_children.node_name = candidate.node_name
+              AND workflow_node_children.child_key = candidate.child_key
+              AND workflow_node_children.status IN (${nodeStatusSourcesSql('completed')})
+            RETURNING workflow_node_children.*, candidate.old_status, candidate.root_run_id
+            ),
+            ${emitChildStatusEventSql('updated', 'child_completed')}
+            SELECT updated.*${notifyRunStatusEventColumnsSql('child_completed')}
+            FROM updated
           `,
             [run_id, node_name, child_key, attemptId, json(output)],
           )
@@ -338,10 +409,22 @@ export const createPostgresWorkflowNodeStore = (
       const row = await one(
         db,
         `
+        WITH candidate AS (
+          SELECT a.id, a.status::text AS old_status, r.root_run_id
+          FROM workflow_attempts a
+          JOIN workflow_runs r ON r.id = a.run_id
+          WHERE a.id = $1 AND a.lease_token = $2 AND a.status = 'started'
+        ),
+        updated AS (
         UPDATE workflow_attempts
         SET status = 'failed', error = $3::jsonb, completed_at = now()
-        WHERE id = $1 AND lease_token = $2 AND status = 'started'
-        RETURNING *
+        FROM candidate
+        WHERE workflow_attempts.id = candidate.id
+        RETURNING workflow_attempts.*, candidate.old_status, candidate.root_run_id
+        ),
+        ${emitAttemptStatusEventSql('updated', 'attempt_failed')}
+        SELECT updated.*${notifyRunStatusEventColumnsSql('attempt_failed')}
+        FROM updated
       `,
         [attemptId, leaseToken, json(toStoredError(error))],
       )
@@ -355,10 +438,22 @@ export const createPostgresWorkflowNodeStore = (
       const row = await one(
         db,
         `
+        WITH candidate AS (
+          SELECT a.id, a.status::text AS old_status, r.root_run_id
+          FROM workflow_attempts a
+          JOIN workflow_runs r ON r.id = a.run_id
+          WHERE a.id = $1 AND a.lease_token = $2 AND a.status = 'started'
+        ),
+        updated AS (
         UPDATE workflow_attempts
         SET status = 'timedOut', error = $3::jsonb, completed_at = now()
-        WHERE id = $1 AND lease_token = $2 AND status = 'started'
-        RETURNING *
+        FROM candidate
+        WHERE workflow_attempts.id = candidate.id
+        RETURNING workflow_attempts.*, candidate.old_status, candidate.root_run_id
+        ),
+        ${emitAttemptStatusEventSql('updated', 'attempt_timed_out')}
+        SELECT updated.*${notifyRunStatusEventColumnsSql('attempt_timed_out')}
+        FROM updated
       `,
         [attemptId, leaseToken, json(toStoredError(error))],
       )
@@ -378,14 +473,27 @@ export const createPostgresWorkflowNodeStore = (
       const row = await one(
         db,
         `
+        WITH candidate AS (
+          SELECT n.run_id, n.name, n.status::text AS old_status, r.root_run_id
+          FROM workflow_nodes n
+          JOIN workflow_runs r ON r.id = n.run_id
+          WHERE n.run_id = $1 AND n.name = $2
+        ),
+        updated AS (
         UPDATE workflow_nodes
         SET status = 'completed',
             output = $3::jsonb,
             version = version + 1,
             updated_at = now()
-        WHERE run_id = $1 AND name = $2
-          AND status IN (${nodeStatusSourcesSql('completed')})
-        RETURNING *
+        FROM candidate
+        WHERE workflow_nodes.run_id = candidate.run_id
+          AND workflow_nodes.name = candidate.name
+          AND workflow_nodes.status IN (${nodeStatusSourcesSql('completed')})
+        RETURNING workflow_nodes.*, candidate.old_status, candidate.root_run_id
+        ),
+        ${emitNodeStatusEventSql('updated', 'node_completed')}
+        SELECT updated.*${notifyRunStatusEventColumnsSql('node_completed')}
+        FROM updated
       `,
         [runId, nodeName, json(output)],
       )
@@ -411,14 +519,27 @@ export const createPostgresWorkflowNodeStore = (
       const row = await one(
         db,
         `
+        WITH candidate AS (
+          SELECT n.run_id, n.name, n.status::text AS old_status, r.root_run_id
+          FROM workflow_nodes n
+          JOIN workflow_runs r ON r.id = n.run_id
+          WHERE n.run_id = $1 AND n.name = $2
+        ),
+        updated AS (
         UPDATE workflow_nodes
         SET status = 'failed',
             error = $3::jsonb,
             version = version + 1,
             updated_at = now()
-        WHERE run_id = $1 AND name = $2
-          AND status IN (${nodeStatusSourcesSql('failed')})
-        RETURNING *
+        FROM candidate
+        WHERE workflow_nodes.run_id = candidate.run_id
+          AND workflow_nodes.name = candidate.name
+          AND workflow_nodes.status IN (${nodeStatusSourcesSql('failed')})
+        RETURNING workflow_nodes.*, candidate.old_status, candidate.root_run_id
+        ),
+        ${emitNodeStatusEventSql('updated', 'node_failed')}
+        SELECT updated.*${notifyRunStatusEventColumnsSql('node_failed')}
+        FROM updated
       `,
         [runId, nodeName, json(toStoredError(error))],
       )
@@ -435,13 +556,24 @@ export const createPostgresWorkflowNodeStore = (
       const row = await one(
         db,
         `
+        WITH candidate AS (
+          SELECT id, status::text AS old_status
+          FROM workflow_runs
+          WHERE id = $1
+        ),
+        updated AS (
         UPDATE workflow_runs
         SET status = 'running',
             version = version + 1,
             updated_at = now()
-        WHERE id = $1
-          AND status IN (${runStatusSourcesSql('running')})
-        RETURNING *
+        FROM candidate
+        WHERE workflow_runs.id = candidate.id
+          AND workflow_runs.status IN (${runStatusSourcesSql('running')})
+        RETURNING workflow_runs.*, candidate.old_status
+        ),
+        ${emitRunStatusEventSql('updated', 'run_running')}
+        SELECT updated.*${notifyRunStatusEventColumnsSql('run_running')}
+        FROM updated
       `,
         [runId],
       )
@@ -458,13 +590,24 @@ export const createPostgresWorkflowNodeStore = (
       const row = await one(
         db,
         `
+        WITH candidate AS (
+          SELECT id, status::text AS old_status
+          FROM workflow_runs
+          WHERE id = $1
+        ),
+        updated AS (
         UPDATE workflow_runs
         SET status = 'waiting',
             version = version + 1,
             updated_at = now()
-        WHERE id = $1
-          AND status IN (${runStatusSourcesSql('waiting')})
-        RETURNING *
+        FROM candidate
+        WHERE workflow_runs.id = candidate.id
+          AND workflow_runs.status IN (${runStatusSourcesSql('waiting')})
+        RETURNING workflow_runs.*, candidate.old_status
+        ),
+        ${emitRunStatusEventSql('updated', 'run_waiting')}
+        SELECT updated.*${notifyRunStatusEventColumnsSql('run_waiting')}
+        FROM updated
       `,
         [runId],
       )
@@ -488,14 +631,25 @@ export const createPostgresWorkflowNodeStore = (
       const row = await one(
         db,
         `
+        WITH candidate AS (
+          SELECT id, status::text AS old_status
+          FROM workflow_runs
+          WHERE id = $1
+        ),
+        updated AS (
         UPDATE workflow_runs
         SET status = 'completed',
             output = $2::jsonb,
             version = version + 1,
             updated_at = now()
-        WHERE id = $1
-          AND status IN (${runStatusSourcesSql('completed')})
-        RETURNING *
+        FROM candidate
+        WHERE workflow_runs.id = candidate.id
+          AND workflow_runs.status IN (${runStatusSourcesSql('completed')})
+        RETURNING workflow_runs.*, candidate.old_status
+        ),
+        ${emitRunStatusEventSql('updated', 'run_completed')}
+        SELECT updated.*${notifyRunStatusEventColumnsSql('run_completed')}
+        FROM updated
       `,
         [runId, json(output)],
       )
@@ -519,14 +673,25 @@ export const createPostgresWorkflowNodeStore = (
       const row = await one(
         db,
         `
+        WITH candidate AS (
+          SELECT id, status::text AS old_status
+          FROM workflow_runs
+          WHERE id = $1
+        ),
+        updated AS (
         UPDATE workflow_runs
         SET status = 'failed',
             error = $2::jsonb,
             version = version + 1,
             updated_at = now()
-        WHERE id = $1
-          AND status IN (${runStatusSourcesSql('failed')})
-        RETURNING *
+        FROM candidate
+        WHERE workflow_runs.id = candidate.id
+          AND workflow_runs.status IN (${runStatusSourcesSql('failed')})
+        RETURNING workflow_runs.*, candidate.old_status
+        ),
+        ${emitRunStatusEventSql('updated', 'run_failed')}
+        SELECT updated.*${notifyRunStatusEventColumnsSql('run_failed')}
+        FROM updated
       `,
         [runId, json(toStoredError(error))],
       )
@@ -556,16 +721,27 @@ export const createPostgresWorkflowNodeStore = (
         db,
         `
         WITH updated AS (
+          WITH candidate AS (
+            SELECT id, status::text AS old_status
+            FROM workflow_runs
+            WHERE id = $1
+          )
           UPDATE workflow_runs
           SET status = 'cancelling',
               version = version + 1,
               updated_at = now()
-          WHERE id = $1
-            AND status IN (${runStatusSourcesSql('cancelling')})
-          RETURNING *
+          FROM candidate
+          WHERE workflow_runs.id = candidate.id
+            AND workflow_runs.status IN (${runStatusSourcesSql('cancelling')})
+          RETURNING workflow_runs.*, candidate.old_status
+        ),
+        ${emitRunStatusEventSql('updated', 'run_cancelling')},
+        cancellation_notified AS (
+          SELECT pg_notify('${WORKFLOW_CANCELLATIONS_CHANNEL}', id::text)
+          FROM updated
         )
-        SELECT updated.*,
-          pg_notify('${WORKFLOW_CANCELLATIONS_CHANNEL}', updated.id::text)
+        SELECT updated.*${notifyRunStatusEventColumnsSql('run_cancelling')},
+          (SELECT count(*) FROM cancellation_notified) AS cancellation_notified
         FROM updated
       `,
         [runId],
@@ -590,13 +766,24 @@ export const createPostgresWorkflowNodeStore = (
       const row = await one(
         db,
         `
+        WITH candidate AS (
+          SELECT id, status::text AS old_status
+          FROM workflow_runs
+          WHERE id = $1
+        ),
+        updated AS (
         UPDATE workflow_runs
         SET status = 'cancelled',
             version = version + 1,
             updated_at = now()
-        WHERE id = $1
-          AND status IN (${runStatusSourcesSql('cancelled')})
-        RETURNING *
+        FROM candidate
+        WHERE workflow_runs.id = candidate.id
+          AND workflow_runs.status IN (${runStatusSourcesSql('cancelled')})
+        RETURNING workflow_runs.*, candidate.old_status
+        ),
+        ${emitRunStatusEventSql('updated', 'run_cancelled')}
+        SELECT updated.*${notifyRunStatusEventColumnsSql('run_cancelled')}
+        FROM updated
       `,
         [runId],
       )
@@ -622,13 +809,26 @@ export const createPostgresWorkflowNodeStore = (
       const row = await one(
         db,
         `
+        WITH candidate AS (
+          SELECT n.run_id, n.name, n.status::text AS old_status, r.root_run_id
+          FROM workflow_nodes n
+          JOIN workflow_runs r ON r.id = n.run_id
+          WHERE n.run_id = $1 AND n.name = $2
+        ),
+        updated AS (
         UPDATE workflow_nodes
         SET status = 'cancelled',
             version = version + 1,
             updated_at = now()
-        WHERE run_id = $1 AND name = $2
-          AND status IN (${nodeStatusSourcesSql('cancelled')})
-        RETURNING *
+        FROM candidate
+        WHERE workflow_nodes.run_id = candidate.run_id
+          AND workflow_nodes.name = candidate.name
+          AND workflow_nodes.status IN (${nodeStatusSourcesSql('cancelled')})
+        RETURNING workflow_nodes.*, candidate.old_status, candidate.root_run_id
+        ),
+        ${emitNodeStatusEventSql('updated', 'node_cancelled')}
+        SELECT updated.*${notifyRunStatusEventColumnsSql('node_cancelled')}
+        FROM updated
       `,
         [runId, nodeName],
       )
@@ -646,24 +846,53 @@ export const createPostgresWorkflowNodeStore = (
         const rows = await many(
           tx,
           `
+          WITH candidate AS (
+            SELECT n.run_id, n.name, n.status::text AS old_status, r.root_run_id
+            FROM workflow_nodes n
+            JOIN workflow_runs r ON r.id = n.run_id
+            WHERE n.run_id = $1
+          ),
+          updated AS (
           UPDATE workflow_nodes
           SET status = 'cancelled',
               version = version + 1,
               updated_at = now()
-          WHERE run_id = $1
-            AND status IN (${nodeStatusSourcesSql('cancelled')})
-          RETURNING *
+          FROM candidate
+          WHERE workflow_nodes.run_id = candidate.run_id
+            AND workflow_nodes.name = candidate.name
+            AND workflow_nodes.status IN (${nodeStatusSourcesSql('cancelled')})
+          RETURNING workflow_nodes.*, candidate.old_status, candidate.root_run_id
+          ),
+          ${emitNodeStatusEventSql('updated', 'nodes_cancelled')}
+          SELECT updated.*${notifyRunStatusEventColumnsSql('nodes_cancelled')}
+          FROM updated
         `,
           [runId],
         )
         await tx.query(
           `
+          WITH candidate AS (
+            SELECT c.run_id, c.node_name, c.child_key,
+              c.status::text AS old_status, r.root_run_id
+            FROM workflow_node_children c
+            JOIN workflow_runs r ON r.id = c.run_id
+            WHERE c.run_id = $1
+          ),
+          updated AS (
           UPDATE workflow_node_children
           SET status = 'cancelled',
               version = version + 1,
               updated_at = now()
-          WHERE run_id = $1
-            AND status IN (${nodeStatusSourcesSql('cancelled')})
+          FROM candidate
+          WHERE workflow_node_children.run_id = candidate.run_id
+            AND workflow_node_children.node_name = candidate.node_name
+            AND workflow_node_children.child_key = candidate.child_key
+            AND workflow_node_children.status IN (${nodeStatusSourcesSql('cancelled')})
+          RETURNING workflow_node_children.*, candidate.old_status, candidate.root_run_id
+          ),
+          ${emitChildStatusEventSql('updated', 'children_cancelled')}
+          SELECT count(*)${notifyRunStatusEventColumnsSql('children_cancelled')}
+          FROM updated
         `,
           [runId],
         )

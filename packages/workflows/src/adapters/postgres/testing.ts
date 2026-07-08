@@ -219,6 +219,21 @@ export async function installPostgresWorkflowSchemaForTesting(
     )
   `)
   await db.query(`
+    CREATE TABLE IF NOT EXISTS workflow_run_events (
+      id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+      run_id uuid NOT NULL,
+      root_run_id uuid NOT NULL,
+      kind text NOT NULL,
+      status text NOT NULL,
+      node_name text,
+      child_key text,
+      attempt_id uuid,
+      attempt_number integer,
+      error jsonb,
+      created_at timestamptz NOT NULL
+    )
+  `)
+  await db.query(`
     CREATE TABLE IF NOT EXISTS workflow_commands (
       id uuid PRIMARY KEY,
       kind workflow_command_kind NOT NULL,
@@ -278,6 +293,14 @@ export async function installPostgresWorkflowSchemaForTesting(
   await db.query(`
     CREATE INDEX IF NOT EXISTS workflow_node_children_child_run_idx
     ON workflow_node_children (child_run_id)
+  `)
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS workflow_run_events_run_idx
+    ON workflow_run_events (run_id, id)
+  `)
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS workflow_run_events_root_idx
+    ON workflow_run_events (root_run_id, id)
   `)
   await db.query(`
     DO $$
@@ -363,6 +386,14 @@ export async function installPostgresWorkflowSchemaForTesting(
       IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'workflow_run_leases_run_fk') THEN
         ALTER TABLE workflow_run_leases
         ADD CONSTRAINT workflow_run_leases_run_fk
+        FOREIGN KEY (run_id)
+        REFERENCES workflow_runs(id)
+        ON DELETE CASCADE;
+      END IF;
+
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'workflow_run_events_run_fk') THEN
+        ALTER TABLE workflow_run_events
+        ADD CONSTRAINT workflow_run_events_run_fk
         FOREIGN KEY (run_id)
         REFERENCES workflow_runs(id)
         ON DELETE CASCADE;

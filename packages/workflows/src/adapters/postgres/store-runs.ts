@@ -10,6 +10,7 @@ import type {
 } from '../../runtime/store.ts'
 import type { WorkflowPostgresConnection } from './connection.ts'
 import type { JsonRecord } from './sql.ts'
+import { assertValidRunEventsCursor } from '../../runtime/store.ts'
 import {
   id,
   isUniqueViolation,
@@ -26,10 +27,13 @@ import {
   mapNodeChildSummary,
   mapNodeSummary,
   mapRun,
+  mapRunEvent,
   mapRunSummary,
   DEFAULT_PRUNE_STATUSES,
+  emitRunStatusEventSql,
   normalizePruneBatchSize,
   normalizePruneStatuses,
+  notifyRunStatusEventColumnsSql,
   now,
   one,
   runnableName,
@@ -46,6 +50,7 @@ type PostgresWorkflowRunStore = Pick<
   WorkflowStore,
   | 'createRun'
   | 'listRuns'
+  | 'listRunEvents'
   | 'listRunSummaries'
   | 'pruneTerminalRuns'
   | 'deleteRun'
@@ -102,6 +107,7 @@ export const createStoredRunWithState = async (
     const row = await one(
       connection,
       `
+      WITH inserted AS (
         INSERT INTO workflow_runs (
           id, kind, name, workflow_name, task_name, status, input,
           parent_run_id, parent_node_name, root_run_id, tags,
@@ -111,7 +117,11 @@ export const createStoredRunWithState = async (
           $1, $2, $3, $4, $5, 'queued', $6::jsonb,
           $7, $8, $9, $10::jsonb, $11::jsonb, 1, $12, $12
         )
-        RETURNING *
+        RETURNING *, NULL::text AS old_status
+      ),
+      ${emitRunStatusEventSql('inserted', 'run_created')}
+      SELECT inserted.*${notifyRunStatusEventColumnsSql('run_created')}
+      FROM inserted
       `,
       [
         runId,
@@ -431,6 +441,49 @@ export const createPostgresWorkflowRunStore = (
         runs: page.map(mapRun),
         ...(query.limit !== null && rows.length > query.limit
           ? { nextCursor: String(query.offset + query.limit) }
+          : {}),
+      }
+    },
+    async listRunEvents({ runId, family = false, afterEventId, limit }) {
+      await ready
+      if (!isUuid(runId)) return { events: [] }
+      const normalizedLimit = normalizeEventLimit(limit)
+      if (normalizedLimit !== undefined && normalizedLimit < 1) {
+        return { events: [] }
+      }
+      assertValidRunEventsCursor(afterEventId)
+
+      const params: unknown[] = [runId, afterEventId ?? '0']
+      const limitSql =
+        normalizedLimit === undefined
+          ? ''
+          : `LIMIT $${params.push(normalizedLimit + 1)}`
+      const rows = await many(
+        db,
+        `
+        SELECT e.*
+        FROM workflow_run_events e
+        JOIN workflow_runs target
+          ON target.id = $1
+        WHERE e.id > $2::bigint
+          AND ${
+            family
+              ? 'e.root_run_id = target.root_run_id'
+              : 'e.run_id = target.id'
+          }
+        ORDER BY e.id ASC
+        ${limitSql}
+      `,
+        params,
+      )
+      const page =
+        normalizedLimit === undefined ? rows : rows.slice(0, normalizedLimit)
+      return {
+        events: page
+          .map((row) => withDateColumns(row, ['created_at']))
+          .map(mapRunEvent),
+        ...(normalizedLimit !== undefined && rows.length > normalizedLimit
+          ? { nextCursor: String(page.at(-1)?.id) }
           : {}),
       }
     },
@@ -814,4 +867,9 @@ export const createPostgresWorkflowRunStore = (
       }))
     },
   }
+}
+
+function normalizeEventLimit(limit: number | undefined): number | undefined {
+  if (limit === undefined) return undefined
+  return Number.isInteger(limit) && limit > 0 ? limit : 0
 }

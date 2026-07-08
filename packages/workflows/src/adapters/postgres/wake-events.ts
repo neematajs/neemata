@@ -5,6 +5,7 @@ import type {
 import {
   WORKFLOW_CANCELLATIONS_CHANNEL,
   WORKFLOW_COMMANDS_CHANNEL,
+  WORKFLOW_RUN_EVENTS_CHANNEL,
 } from './sql.ts'
 
 const DEFAULT_RECONNECT_DELAY_MS = 1_000
@@ -52,6 +53,7 @@ export function createPostgresWorkflowWakeEvents(
   const reconnectDelayMs = params.reconnectDelayMs ?? DEFAULT_RECONNECT_DELAY_MS
   const commandListeners = new Map<WorkflowCommandWakeKind, Set<() => void>>()
   const cancellationListeners = new Map<string, Set<() => void>>()
+  const runEventListeners = new Map<string, Set<() => void>>()
 
   let disposed = false
   let client: WorkflowPostgresListenerClient | undefined
@@ -83,6 +85,10 @@ export function createPostgresWorkflowWakeEvents(
     }
     if (message.channel === WORKFLOW_CANCELLATIONS_CHANNEL) {
       if (message.payload) fire(cancellationListeners.get(message.payload))
+      return
+    }
+    if (message.channel === WORKFLOW_RUN_EVENTS_CHANNEL) {
+      if (message.payload) fire(runEventListeners.get(message.payload))
     }
   }
 
@@ -119,7 +125,7 @@ export function createPostgresWorkflowWakeEvents(
       connected.on('error', onLost)
       connected.on('end', () => onLost())
       await connected.query(
-        `LISTEN "${WORKFLOW_COMMANDS_CHANNEL}"; LISTEN "${WORKFLOW_CANCELLATIONS_CHANNEL}"`,
+        `LISTEN "${WORKFLOW_COMMANDS_CHANNEL}"; LISTEN "${WORKFLOW_CANCELLATIONS_CHANNEL}"; LISTEN "${WORKFLOW_RUN_EVENTS_CHANNEL}"`,
       )
     } catch (error) {
       reportError(error)
@@ -147,11 +153,14 @@ export function createPostgresWorkflowWakeEvents(
     onCommand: (kind, listener) => subscribe(commandListeners, kind, listener),
     onCancellation: (runId, listener) =>
       subscribe(cancellationListeners, runId, listener),
+    onRunEvent: (rootRunId, listener) =>
+      subscribe(runEventListeners, rootRunId, listener),
     async dispose() {
       disposed = true
       if (reconnectTimer) clearTimeout(reconnectTimer)
       commandListeners.clear()
       cancellationListeners.clear()
+      runEventListeners.clear()
       const current = client
       client = undefined
       try {
