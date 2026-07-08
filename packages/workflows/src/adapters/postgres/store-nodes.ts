@@ -28,7 +28,7 @@ import {
   mapNodeChild,
   mapRun,
   nodeStatusSourcesSql,
-  notifyRunStatusEventCountSql,
+  notifyRunStatusEventColumnsSql,
   one,
   runStatusSourcesSql,
   withDateColumns,
@@ -251,11 +251,8 @@ export const createPostgresWorkflowNodeStore = (
             JOIN workflow_runs r ON r.id = inserted.run_id
           ),
           ${emitAttemptStatusEventSql('event_source', 'attempt_started')}
-          SELECT inserted.*
+          SELECT inserted.*${notifyRunStatusEventColumnsSql('attempt_started')}
           FROM inserted
-          CROSS JOIN (
-            SELECT ${notifyRunStatusEventCountSql('attempt_started')}
-          ) emitted
         `,
           [
             attemptId,
@@ -293,11 +290,8 @@ export const createPostgresWorkflowNodeStore = (
           RETURNING workflow_node_children.*, candidate.old_status, candidate.root_run_id
           ),
           ${emitChildStatusEventSql('updated', 'child_running')}
-          SELECT updated.*
+          SELECT updated.*${notifyRunStatusEventColumnsSql('child_running')}
           FROM updated
-          CROSS JOIN (
-            SELECT ${notifyRunStatusEventCountSql('child_running')}
-          ) emitted
         `,
           [input.runId, input.nodeName, input.childKey, attemptId],
         )
@@ -326,7 +320,7 @@ export const createPostgresWorkflowNodeStore = (
           RETURNING workflow_nodes.*, candidate.old_status, candidate.root_run_id
           ),
           ${emitNodeStatusEventSql('updated', 'node_running')}
-          SELECT count(*), ${notifyRunStatusEventCountSql('node_running')}
+          SELECT count(*)${notifyRunStatusEventColumnsSql('node_running')}
           FROM updated
         `,
           [input.runId, input.nodeName],
@@ -363,11 +357,8 @@ export const createPostgresWorkflowNodeStore = (
             RETURNING workflow_attempts.*, candidate.old_status, candidate.root_run_id
             ),
             ${emitAttemptStatusEventSql('updated', 'attempt_completed')}
-            SELECT updated.*
+            SELECT updated.*${notifyRunStatusEventColumnsSql('attempt_completed')}
             FROM updated
-            CROSS JOIN (
-              SELECT ${notifyRunStatusEventCountSql('attempt_completed')}
-            ) emitted
           `,
             [attemptId, leaseToken, json(output)],
           )
@@ -397,11 +388,8 @@ export const createPostgresWorkflowNodeStore = (
             RETURNING workflow_node_children.*, candidate.old_status, candidate.root_run_id
             ),
             ${emitChildStatusEventSql('updated', 'child_completed')}
-            SELECT updated.*
+            SELECT updated.*${notifyRunStatusEventColumnsSql('child_completed')}
             FROM updated
-            CROSS JOIN (
-              SELECT ${notifyRunStatusEventCountSql('child_completed')}
-            ) emitted
           `,
             [run_id, node_name, child_key, attemptId, json(output)],
           )
@@ -435,11 +423,8 @@ export const createPostgresWorkflowNodeStore = (
         RETURNING workflow_attempts.*, candidate.old_status, candidate.root_run_id
         ),
         ${emitAttemptStatusEventSql('updated', 'attempt_failed')}
-        SELECT updated.*
+        SELECT updated.*${notifyRunStatusEventColumnsSql('attempt_failed')}
         FROM updated
-        CROSS JOIN (
-          SELECT ${notifyRunStatusEventCountSql('attempt_failed')}
-        ) emitted
       `,
         [attemptId, leaseToken, json(toStoredError(error))],
       )
@@ -467,11 +452,8 @@ export const createPostgresWorkflowNodeStore = (
         RETURNING workflow_attempts.*, candidate.old_status, candidate.root_run_id
         ),
         ${emitAttemptStatusEventSql('updated', 'attempt_timed_out')}
-        SELECT updated.*
+        SELECT updated.*${notifyRunStatusEventColumnsSql('attempt_timed_out')}
         FROM updated
-        CROSS JOIN (
-          SELECT ${notifyRunStatusEventCountSql('attempt_timed_out')}
-        ) emitted
       `,
         [attemptId, leaseToken, json(toStoredError(error))],
       )
@@ -510,11 +492,8 @@ export const createPostgresWorkflowNodeStore = (
         RETURNING workflow_nodes.*, candidate.old_status, candidate.root_run_id
         ),
         ${emitNodeStatusEventSql('updated', 'node_completed')}
-        SELECT updated.*
+        SELECT updated.*${notifyRunStatusEventColumnsSql('node_completed')}
         FROM updated
-        CROSS JOIN (
-          SELECT ${notifyRunStatusEventCountSql('node_completed')}
-        ) emitted
       `,
         [runId, nodeName, json(output)],
       )
@@ -559,11 +538,8 @@ export const createPostgresWorkflowNodeStore = (
         RETURNING workflow_nodes.*, candidate.old_status, candidate.root_run_id
         ),
         ${emitNodeStatusEventSql('updated', 'node_failed')}
-        SELECT updated.*
+        SELECT updated.*${notifyRunStatusEventColumnsSql('node_failed')}
         FROM updated
-        CROSS JOIN (
-          SELECT ${notifyRunStatusEventCountSql('node_failed')}
-        ) emitted
       `,
         [runId, nodeName, json(toStoredError(error))],
       )
@@ -596,11 +572,8 @@ export const createPostgresWorkflowNodeStore = (
         RETURNING workflow_runs.*, candidate.old_status
         ),
         ${emitRunStatusEventSql('updated', 'run_running')}
-        SELECT updated.*
+        SELECT updated.*${notifyRunStatusEventColumnsSql('run_running')}
         FROM updated
-        CROSS JOIN (
-          SELECT ${notifyRunStatusEventCountSql('run_running')}
-        ) emitted
       `,
         [runId],
       )
@@ -633,11 +606,8 @@ export const createPostgresWorkflowNodeStore = (
         RETURNING workflow_runs.*, candidate.old_status
         ),
         ${emitRunStatusEventSql('updated', 'run_waiting')}
-        SELECT updated.*
+        SELECT updated.*${notifyRunStatusEventColumnsSql('run_waiting')}
         FROM updated
-        CROSS JOIN (
-          SELECT ${notifyRunStatusEventCountSql('run_waiting')}
-        ) emitted
       `,
         [runId],
       )
@@ -678,11 +648,8 @@ export const createPostgresWorkflowNodeStore = (
         RETURNING workflow_runs.*, candidate.old_status
         ),
         ${emitRunStatusEventSql('updated', 'run_completed')}
-        SELECT updated.*
+        SELECT updated.*${notifyRunStatusEventColumnsSql('run_completed')}
         FROM updated
-        CROSS JOIN (
-          SELECT ${notifyRunStatusEventCountSql('run_completed')}
-        ) emitted
       `,
         [runId, json(output)],
       )
@@ -723,11 +690,8 @@ export const createPostgresWorkflowNodeStore = (
         RETURNING workflow_runs.*, candidate.old_status
         ),
         ${emitRunStatusEventSql('updated', 'run_failed')}
-        SELECT updated.*
+        SELECT updated.*${notifyRunStatusEventColumnsSql('run_failed')}
         FROM updated
-        CROSS JOIN (
-          SELECT ${notifyRunStatusEventCountSql('run_failed')}
-        ) emitted
       `,
         [runId, json(toStoredError(error))],
       )
@@ -776,12 +740,9 @@ export const createPostgresWorkflowNodeStore = (
           SELECT pg_notify('${WORKFLOW_CANCELLATIONS_CHANNEL}', id::text)
           FROM updated
         )
-        SELECT updated.*
+        SELECT updated.*${notifyRunStatusEventColumnsSql('run_cancelling')},
+          (SELECT count(*) FROM cancellation_notified) AS cancellation_notified
         FROM updated
-        CROSS JOIN (
-          SELECT ${notifyRunStatusEventCountSql('run_cancelling')},
-            (SELECT count(*) FROM cancellation_notified)
-        ) emitted
       `,
         [runId],
       )
@@ -821,11 +782,8 @@ export const createPostgresWorkflowNodeStore = (
         RETURNING workflow_runs.*, candidate.old_status
         ),
         ${emitRunStatusEventSql('updated', 'run_cancelled')}
-        SELECT updated.*
+        SELECT updated.*${notifyRunStatusEventColumnsSql('run_cancelled')}
         FROM updated
-        CROSS JOIN (
-          SELECT ${notifyRunStatusEventCountSql('run_cancelled')}
-        ) emitted
       `,
         [runId],
       )
@@ -869,11 +827,8 @@ export const createPostgresWorkflowNodeStore = (
         RETURNING workflow_nodes.*, candidate.old_status, candidate.root_run_id
         ),
         ${emitNodeStatusEventSql('updated', 'node_cancelled')}
-        SELECT updated.*
+        SELECT updated.*${notifyRunStatusEventColumnsSql('node_cancelled')}
         FROM updated
-        CROSS JOIN (
-          SELECT ${notifyRunStatusEventCountSql('node_cancelled')}
-        ) emitted
       `,
         [runId, nodeName],
       )
@@ -909,11 +864,8 @@ export const createPostgresWorkflowNodeStore = (
           RETURNING workflow_nodes.*, candidate.old_status, candidate.root_run_id
           ),
           ${emitNodeStatusEventSql('updated', 'nodes_cancelled')}
-          SELECT updated.*
+          SELECT updated.*${notifyRunStatusEventColumnsSql('nodes_cancelled')}
           FROM updated
-          CROSS JOIN (
-            SELECT ${notifyRunStatusEventCountSql('nodes_cancelled')}
-          ) emitted
         `,
           [runId],
         )
@@ -939,7 +891,7 @@ export const createPostgresWorkflowNodeStore = (
           RETURNING workflow_node_children.*, candidate.old_status, candidate.root_run_id
           ),
           ${emitChildStatusEventSql('updated', 'children_cancelled')}
-          SELECT count(*), ${notifyRunStatusEventCountSql('children_cancelled')}
+          SELECT count(*)${notifyRunStatusEventColumnsSql('children_cancelled')}
           FROM updated
         `,
           [runId],

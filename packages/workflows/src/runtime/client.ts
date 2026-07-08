@@ -224,12 +224,50 @@ async function* watchRun(params: {
   const pollIntervalMs = normalizePollInterval(params.options?.pollIntervalMs)
   let afterEventId = params.options?.afterEventId
   let cleanupWait: (() => void) | undefined
+  let resolveWait: (() => void) | undefined
+  let wakePending = false
+  const removeWake = params.wakeEvents?.onRunEvent?.(rootRunId, () => {
+    wakePending = true
+    resolveWait?.()
+  })
 
   const cleanup = () => {
     cleanupWait?.()
     cleanupWait = undefined
+    resolveWait = undefined
   }
 
+  const waitForChange = async () => {
+    if (wakePending) {
+      wakePending = false
+      return
+    }
+    await new Promise<void>((resolve) => {
+      let settled = false
+      const finish = () => {
+        if (settled) return
+        settled = true
+        cleanup()
+        resolve()
+      }
+      const timer = setTimeout(finish, pollIntervalMs)
+      const removeAbort =
+        params.options?.signal === undefined
+          ? undefined
+          : () => params.options?.signal?.removeEventListener('abort', finish)
+      params.options?.signal?.addEventListener('abort', finish, {
+        once: true,
+      })
+      resolveWait = finish
+      cleanupWait = () => {
+        clearTimeout(timer)
+        removeAbort?.()
+      }
+    })
+    wakePending = false
+  }
+
+  let checkedBeforeFirstWait = false
   try {
     while (!params.options?.signal?.aborted) {
       const result = await params.store.listRunEvents({
@@ -251,32 +289,33 @@ async function* watchRun(params: {
         if (params.options?.signal?.aborted) return
       }
 
-      await new Promise<void>((resolve) => {
-        let settled = false
-        const finish = () => {
-          if (settled) return
-          settled = true
-          cleanup()
-          resolve()
+      if (params.options?.signal?.aborted) return
+
+      if (result.events.length === 0 || !checkedBeforeFirstWait) {
+        checkedBeforeFirstWait = true
+        const [latestRun] = await params.store.loadRuns([params.runId])
+        if (latestRun && isTerminalRunStatus(latestRun.status)) {
+          // Event ids are allocated before commit, so concurrent commits can
+          // hide the terminal event behind the cursor; stored status is truth.
+          const finalResult = await params.store.listRunEvents({
+            runId: params.runId,
+            family: params.options?.family,
+            afterEventId,
+          })
+          for (const event of finalResult.events) {
+            afterEventId = event.id
+            yield event
+            if (params.options?.signal?.aborted) return
+          }
+          return
         }
-        const timer = setTimeout(finish, pollIntervalMs)
-        const removeWake = params.wakeEvents?.onRunEvent?.(rootRunId, finish)
-        const removeAbort =
-          params.options?.signal === undefined
-            ? undefined
-            : () => params.options?.signal?.removeEventListener('abort', finish)
-        params.options?.signal?.addEventListener('abort', finish, {
-          once: true,
-        })
-        cleanupWait = () => {
-          clearTimeout(timer)
-          removeWake?.()
-          removeAbort?.()
-        }
-      })
+      }
+
+      await waitForChange()
     }
   } finally {
     cleanup()
+    removeWake?.()
   }
 }
 

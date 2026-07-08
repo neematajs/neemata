@@ -341,8 +341,17 @@ export const notifyRunStatusEventSql = (cteName: string) => `
   )
 `
 
-export const notifyRunStatusEventCountSql = (...cteNames: readonly string[]) =>
-  cteNames.map((name) => `(SELECT count(*) FROM ${name}_notified)`).join(', ')
+// Postgres prunes plain SELECT CTEs that are not referenced from projected
+// output, so pg_notify counts must be output columns for notifications to fire.
+export const notifyRunStatusEventColumnsSql = (
+  ...cteNames: readonly string[]
+) =>
+  cteNames
+    .map(
+      (name) =>
+        `,\n    (SELECT count(*) FROM ${name}_notified) AS ${name}_notified`,
+    )
+    .join('')
 
 export const emitRunStatusEventSql = (sourceAlias: string, cteName: string) => `
   ${cteName}_events AS (

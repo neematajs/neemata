@@ -10,6 +10,7 @@ import type {
 } from '../../runtime/store.ts'
 import type { WorkflowPostgresConnection } from './connection.ts'
 import type { JsonRecord } from './sql.ts'
+import { assertValidRunEventsCursor } from '../../runtime/store.ts'
 import {
   id,
   isUniqueViolation,
@@ -32,7 +33,7 @@ import {
   emitRunStatusEventSql,
   normalizePruneBatchSize,
   normalizePruneStatuses,
-  notifyRunStatusEventCountSql,
+  notifyRunStatusEventColumnsSql,
   now,
   one,
   runnableName,
@@ -119,11 +120,8 @@ export const createStoredRunWithState = async (
         RETURNING *, NULL::text AS old_status
       ),
       ${emitRunStatusEventSql('inserted', 'run_created')}
-      SELECT inserted.*
+      SELECT inserted.*${notifyRunStatusEventColumnsSql('run_created')}
       FROM inserted
-      CROSS JOIN (
-        SELECT ${notifyRunStatusEventCountSql('run_created')}
-      ) emitted
       `,
       [
         runId,
@@ -453,12 +451,7 @@ export const createPostgresWorkflowRunStore = (
       if (normalizedLimit !== undefined && normalizedLimit < 1) {
         return { events: [] }
       }
-      if (
-        afterEventId !== undefined &&
-        (!/^\d+$/.test(afterEventId) || BigInt(afterEventId) < 0n)
-      ) {
-        throw new Error(`Invalid run event cursor [${afterEventId}]`)
-      }
+      assertValidRunEventsCursor(afterEventId)
 
       const params: unknown[] = [runId, afterEventId ?? '0']
       const limitSql =

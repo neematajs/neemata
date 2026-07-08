@@ -738,6 +738,98 @@ describe('workflow runtime client', () => {
     })
   })
 
+  it('ends immediately when watching a terminal run after its terminal event', async () => {
+    vi.useFakeTimers()
+    try {
+      const workflow = defineWorkflow({
+        name: 'client-watch-terminal-cursor-workflow',
+        input: t.object({ scenario: t.string() }),
+        output: t.object({ caseId: t.string() }),
+      }).build()
+      const runtime = createInMemoryWorkflowRuntime()
+      const client = createWorkflowRuntimeClient(runtime)
+      const run = await client.start(workflow, { scenario: 'alpha' })
+      await runtime.store.completeRun({
+        runId: run.id,
+        output: { caseId: 'alpha' },
+      })
+      const terminalEventId = (
+        await runtime.store.listRunEvents({ runId: run.id })
+      ).events.at(-1)?.id
+      const iterator = client
+        .watch(run.id, {
+          afterEventId: String(BigInt(terminalEventId!) + 1n),
+          pollIntervalMs: 60_000,
+        })
+        [Symbol.asyncIterator]()
+
+      const pending = iterator.next()
+      await vi.advanceTimersByTimeAsync(0)
+
+      await expect(
+        Promise.race([pending, Promise.resolve('pending')]),
+      ).resolves.toStrictEqual({ done: true, value: undefined })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps the run-event wake listener registered while polling', async () => {
+    vi.useFakeTimers()
+    const abort = new AbortController()
+    try {
+      const runtime = createInMemoryWorkflowRuntime()
+      const run = await runtime.store.createRun({
+        workflowName: 'client-watch-wake-race',
+        input: {},
+      })
+      const cursor = (
+        await runtime.store.listRunEvents({ runId: run.id })
+      ).events.at(-1)?.id
+      let injected = false
+      const client = createWorkflowRuntimeClient({
+        ...runtime,
+        store: {
+          ...runtime.store,
+          listRunEvents: async (params) => {
+            const result = await runtime.store.listRunEvents(params)
+            if (
+              !injected &&
+              params.runId === run.id &&
+              params.afterEventId === cursor
+            ) {
+              injected = true
+              await runtime.store.markRunRunning({ runId: run.id })
+            }
+            return result
+          },
+        },
+      })
+      const iterator = client
+        .watch(run.id, {
+          afterEventId: cursor,
+          signal: abort.signal,
+          pollIntervalMs: 60_000,
+        })
+        [Symbol.asyncIterator]()
+
+      const pending = iterator.next()
+      await vi.advanceTimersByTimeAsync(0)
+
+      await expect(
+        Promise.race([pending, Promise.resolve('pending')]),
+      ).resolves.toMatchObject({
+        done: false,
+        value: { kind: 'run', status: 'running', runId: run.id },
+      })
+      await iterator.return?.()
+    } finally {
+      abort.abort()
+      await vi.advanceTimersByTimeAsync(0)
+      vi.useRealTimers()
+    }
+  })
+
   it('watches a run family but stops on the watched run terminal event', async () => {
     const runtime = createInMemoryWorkflowRuntime()
     const client = createWorkflowRuntimeClient(runtime)

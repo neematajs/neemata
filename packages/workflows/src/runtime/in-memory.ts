@@ -52,6 +52,7 @@ import {
   startStoredScheduleRun,
 } from './scheduler.ts'
 import { isTerminalNodeStatus, isTerminalRunStatus } from './status.ts'
+import { assertValidRunEventsCursor } from './store.ts'
 import {
   NODE_TRANSITIONS,
   RUN_TRANSITIONS,
@@ -450,6 +451,7 @@ export function createInMemoryWorkflowRuntime(
       if (normalizedLimit !== undefined && normalizedLimit < 1) {
         return { events: [] }
       }
+      assertValidRunEventsCursor(afterEventId)
       const after = afterEventId === undefined ? 0n : BigInt(afterEventId)
       const filtered = runEvents.filter(
         (event) =>

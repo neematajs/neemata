@@ -72,6 +72,15 @@ export type ListRunEventsResult = {
   readonly nextCursor?: string
 }
 
+const runEventsCursorPattern = /^[1-9]\d*$/
+
+export function assertValidRunEventsCursor(afterEventId: string | undefined) {
+  if (afterEventId === undefined) return
+  if (!runEventsCursorPattern.test(afterEventId)) {
+    throw new Error(`Invalid run events cursor [${afterEventId}]`)
+  }
+}
+
 export type RunSummary = Omit<StoredRun, 'input' | 'output'> & {
   readonly nodesTotal: number
   readonly nodesCompleted: number

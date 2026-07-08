@@ -1041,6 +1041,15 @@ function workflowRuntimeAdapterContract(
       await expect(
         runtime.store.listRunEvents({ runId: 'missing-run-id' }),
       ).resolves.toStrictEqual({ events: [] })
+      await expect(
+        runtime.store.listRunEvents({
+          runId: run.id,
+          afterEventId: 'not-a-run-event-id',
+        }),
+      ).rejects.toThrow('Invalid run events cursor [not-a-run-event-id]')
+      await expect(
+        runtime.store.listRunEvents({ runId: run.id, afterEventId: '0' }),
+      ).rejects.toThrow('Invalid run events cursor [0]')
     })
 
     it('lists family event history and removes events with deleted runs', async () => {
