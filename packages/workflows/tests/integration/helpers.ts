@@ -78,6 +78,7 @@ async function truncateWorkflowTables(pool: PgPool) {
       workflow_schedules,
       workflow_commands,
       workflow_run_leases,
+      workflow_run_events,
       workflow_node_children,
       workflow_attempts,
       workflow_nodes,

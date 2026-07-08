@@ -7,6 +7,7 @@ import type {
   StoredNode,
   StoredNodeChild,
   StoredRun,
+  StoredRunEvent,
 } from './state.ts'
 import type { RuntimeRunStatus } from './status.ts'
 
@@ -55,6 +56,19 @@ export type ListRunsFilter = {
 
 export type ListRunsResult = {
   readonly runs: readonly StoredRun[]
+  readonly nextCursor?: string
+}
+
+export type ListRunEventsParams = {
+  readonly runId: string
+  /** Match by rootRunId instead of runId — one cursor over a whole family. */
+  readonly family?: boolean
+  readonly afterEventId?: string
+  readonly limit?: number
+}
+
+export type ListRunEventsResult = {
+  readonly events: readonly StoredRunEvent[]
   readonly nextCursor?: string
 }
 
@@ -234,6 +248,7 @@ export type CancelNonTerminalRunNodesParams = {
 export type WorkflowStore = {
   createRun(input: CreateRunInput): Promise<StoredRun>
   listRuns(filter?: ListRunsFilter): Promise<ListRunsResult>
+  listRunEvents(params: ListRunEventsParams): Promise<ListRunEventsResult>
   listRunSummaries(filter?: ListRunsFilter): Promise<ListRunSummariesResult>
   pruneTerminalRuns(
     params: PruneTerminalRunsParams,

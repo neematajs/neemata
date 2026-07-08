@@ -8,6 +8,9 @@ import type { WorkflowPostgresConnection } from './connection.ts'
 import { toStoredError } from '../../runtime/errors.ts'
 import { isTerminalNodeStatus } from '../../runtime/status.ts'
 import {
+  emitAttemptStatusEventSql,
+  emitChildStatusEventSql,
+  emitNodeStatusEventSql,
   id,
   isUniqueViolation,
   json,
@@ -17,6 +20,7 @@ import {
   mapNodeChild,
   mapRun,
   nodeStatusSourcesSql,
+  notifyRunStatusEventCountSql,
   one,
   sameOptionalValue,
   sameValue,
@@ -244,15 +248,33 @@ export const createPostgresWorkflowChildStore = (
           const updated = await one(
             tx,
             `
+            WITH candidate AS (
+              SELECT c.run_id, c.node_name, c.child_key,
+                c.status::text AS old_status, r.root_run_id
+              FROM workflow_node_children c
+              JOIN workflow_runs r ON r.id = c.run_id
+              WHERE c.run_id = $1 AND c.node_name = $2 AND c.child_key = $3
+            ),
+            updated AS (
             UPDATE workflow_node_children
             SET child_run_id = $4,
                 status = 'running',
                 version = version + 1,
                 updated_at = now()
-            WHERE run_id = $1 AND node_name = $2 AND child_key = $3
-              AND child_run_id IS NULL
-              AND status IN (${nodeStatusSourcesSql('running', { self: true })})
-            RETURNING *
+            FROM candidate
+            WHERE workflow_node_children.run_id = candidate.run_id
+              AND workflow_node_children.node_name = candidate.node_name
+              AND workflow_node_children.child_key = candidate.child_key
+              AND workflow_node_children.child_run_id IS NULL
+              AND workflow_node_children.status IN (${nodeStatusSourcesSql('running', { self: true })})
+            RETURNING workflow_node_children.*, candidate.old_status, candidate.root_run_id
+            ),
+            ${emitChildStatusEventSql('updated', 'child_run_linked')}
+            SELECT updated.*
+            FROM updated
+            CROSS JOIN (
+              SELECT ${notifyRunStatusEventCountSql('child_run_linked')}
+            ) emitted
           `,
             [runId, nodeName, childKey, childRun.id],
           )
@@ -311,12 +333,25 @@ export const createPostgresWorkflowChildStore = (
           const attempt = await one(
             tx,
             `
+            WITH inserted AS (
             INSERT INTO workflow_attempts (
               id, run_id, node_name, child_key, status,
               lease_token, attempt_number, input, idempotency_key, dispatched_at
             )
             VALUES ($1, $2, $3, $4, 'started', $5, 1, $6::jsonb, $7::jsonb, now())
-            RETURNING *
+            RETURNING *, NULL::text AS old_status
+            ),
+            event_source AS (
+              SELECT inserted.*, r.root_run_id
+              FROM inserted
+              JOIN workflow_runs r ON r.id = inserted.run_id
+            ),
+            ${emitAttemptStatusEventSql('event_source', 'attempt_started')}
+            SELECT inserted.*
+            FROM inserted
+            CROSS JOIN (
+              SELECT ${notifyRunStatusEventCountSql('attempt_started')}
+            ) emitted
           `,
             [
               attemptId,
@@ -331,15 +366,33 @@ export const createPostgresWorkflowChildStore = (
           const updatedChild = await one(
             tx,
             `
+            WITH candidate AS (
+              SELECT c.run_id, c.node_name, c.child_key,
+                c.status::text AS old_status, r.root_run_id
+              FROM workflow_node_children c
+              JOIN workflow_runs r ON r.id = c.run_id
+              WHERE c.run_id = $1 AND c.node_name = $2 AND c.child_key = $3
+            ),
+            updated AS (
             UPDATE workflow_node_children
             SET current_attempt_id = $4,
                 attempt_count = 1,
                 status = 'running',
                 version = version + 1,
                 updated_at = now()
-            WHERE run_id = $1 AND node_name = $2 AND child_key = $3
-              AND status IN (${nodeStatusSourcesSql('running', { self: true })})
-            RETURNING *
+            FROM candidate
+            WHERE workflow_node_children.run_id = candidate.run_id
+              AND workflow_node_children.node_name = candidate.node_name
+              AND workflow_node_children.child_key = candidate.child_key
+              AND workflow_node_children.status IN (${nodeStatusSourcesSql('running', { self: true })})
+            RETURNING workflow_node_children.*, candidate.old_status, candidate.root_run_id
+            ),
+            ${emitChildStatusEventSql('updated', 'child_running')}
+            SELECT updated.*
+            FROM updated
+            CROSS JOIN (
+              SELECT ${notifyRunStatusEventCountSql('child_running')}
+            ) emitted
           `,
             [runId, nodeName, childKey, attemptId],
           )
@@ -352,10 +405,24 @@ export const createPostgresWorkflowChildStore = (
           // node parked in another state must not fail the attempt creation.
           await tx.query(
             `
+            WITH candidate AS (
+              SELECT n.run_id, n.name, n.status::text AS old_status, r.root_run_id
+              FROM workflow_nodes n
+              JOIN workflow_runs r ON r.id = n.run_id
+              WHERE n.run_id = $1 AND n.name = $2
+            ),
+            updated AS (
             UPDATE workflow_nodes
             SET status = 'running', version = version + 1, updated_at = now()
-            WHERE run_id = $1 AND name = $2
-              AND status IN (${nodeStatusSourcesSql('running', { self: true })})
+            FROM candidate
+            WHERE workflow_nodes.run_id = candidate.run_id
+              AND workflow_nodes.name = candidate.name
+              AND workflow_nodes.status IN (${nodeStatusSourcesSql('running', { self: true })})
+            RETURNING workflow_nodes.*, candidate.old_status, candidate.root_run_id
+            ),
+            ${emitNodeStatusEventSql('updated', 'node_running')}
+            SELECT count(*), ${notifyRunStatusEventCountSql('node_running')}
+            FROM updated
           `,
             [runId, nodeName],
           )
@@ -424,14 +491,32 @@ export const createPostgresWorkflowChildStore = (
       const row = await one(
         db,
         `
+        WITH candidate AS (
+          SELECT c.run_id, c.node_name, c.child_key,
+            c.status::text AS old_status, r.root_run_id
+          FROM workflow_node_children c
+          JOIN workflow_runs r ON r.id = c.run_id
+          WHERE c.run_id = $1 AND c.node_name = $2 AND c.child_key = $3
+        ),
+        updated AS (
         UPDATE workflow_node_children
         SET status = 'completed',
             output = $4::jsonb,
             version = version + 1,
             updated_at = now()
-        WHERE run_id = $1 AND node_name = $2 AND child_key = $3
-          AND status IN (${nodeStatusSourcesSql('completed')})
-        RETURNING *
+        FROM candidate
+        WHERE workflow_node_children.run_id = candidate.run_id
+          AND workflow_node_children.node_name = candidate.node_name
+          AND workflow_node_children.child_key = candidate.child_key
+          AND workflow_node_children.status IN (${nodeStatusSourcesSql('completed')})
+        RETURNING workflow_node_children.*, candidate.old_status, candidate.root_run_id
+        ),
+        ${emitChildStatusEventSql('updated', 'child_completed')}
+        SELECT updated.*
+        FROM updated
+        CROSS JOIN (
+          SELECT ${notifyRunStatusEventCountSql('child_completed')}
+        ) emitted
       `,
         [runId, nodeName, childKey, json(output)],
       )
@@ -449,14 +534,32 @@ export const createPostgresWorkflowChildStore = (
       const row = await one(
         db,
         `
+        WITH candidate AS (
+          SELECT c.run_id, c.node_name, c.child_key,
+            c.status::text AS old_status, r.root_run_id
+          FROM workflow_node_children c
+          JOIN workflow_runs r ON r.id = c.run_id
+          WHERE c.run_id = $1 AND c.node_name = $2 AND c.child_key = $3
+        ),
+        updated AS (
         UPDATE workflow_node_children
         SET status = 'failed',
             error = $4::jsonb,
             version = version + 1,
             updated_at = now()
-        WHERE run_id = $1 AND node_name = $2 AND child_key = $3
-          AND status IN (${nodeStatusSourcesSql('failed')})
-        RETURNING *
+        FROM candidate
+        WHERE workflow_node_children.run_id = candidate.run_id
+          AND workflow_node_children.node_name = candidate.node_name
+          AND workflow_node_children.child_key = candidate.child_key
+          AND workflow_node_children.status IN (${nodeStatusSourcesSql('failed')})
+        RETURNING workflow_node_children.*, candidate.old_status, candidate.root_run_id
+        ),
+        ${emitChildStatusEventSql('updated', 'child_failed')}
+        SELECT updated.*
+        FROM updated
+        CROSS JOIN (
+          SELECT ${notifyRunStatusEventCountSql('child_failed')}
+        ) emitted
       `,
         [runId, nodeName, childKey, json(toStoredError(error))],
       )
@@ -481,11 +584,27 @@ export const createPostgresWorkflowChildStore = (
       const row = await one(
         db,
         `
+        WITH candidate AS (
+          SELECT n.run_id, n.name, n.status::text AS old_status, r.root_run_id
+          FROM workflow_nodes n
+          JOIN workflow_runs r ON r.id = n.run_id
+          WHERE n.run_id = $1 AND n.name = $2
+        ),
+        updated AS (
         UPDATE workflow_nodes
         SET status = 'waiting', version = version + 1, updated_at = now()
-        WHERE run_id = $1 AND name = $2
-          AND status IN (${nodeStatusSourcesSql('waiting', { self: true })})
-        RETURNING *
+        FROM candidate
+        WHERE workflow_nodes.run_id = candidate.run_id
+          AND workflow_nodes.name = candidate.name
+          AND workflow_nodes.status IN (${nodeStatusSourcesSql('waiting', { self: true })})
+        RETURNING workflow_nodes.*, candidate.old_status, candidate.root_run_id
+        ),
+        ${emitNodeStatusEventSql('updated', 'node_waiting')}
+        SELECT updated.*
+        FROM updated
+        CROSS JOIN (
+          SELECT ${notifyRunStatusEventCountSql('node_waiting')}
+        ) emitted
       `,
         [runId, nodeName],
       )

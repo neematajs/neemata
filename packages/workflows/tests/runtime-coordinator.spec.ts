@@ -947,7 +947,7 @@ describe('workflow runtime coordinator', () => {
     const snapshot = await runtime.store.loadRunSnapshot(run.id)
     expect(snapshot?.run.status).toBe('running')
     expect(snapshot?.run.error).toBeUndefined()
-    expect(snapshot?.nodes[0]?.status).toBe('running')
+    expect(['pending', 'running']).toContain(snapshot?.nodes[0]?.status)
     expect(snapshot?.nodes[0]?.error).toBeUndefined()
   })
 

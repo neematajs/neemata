@@ -621,6 +621,18 @@ test('creates drizzle schema with canonical runtime names', () => {
   expect(schema.tables.commands.runId.columnType).toBe('PgUUID')
   expect(schema.tables.commands.attemptId.columnType).toBe('PgUUID')
   expect(schema.tables.commands.payload.hasDefault).toBe(true)
+  expect(getTableName(schema.tables.runEvents)).toBe('workflow_run_events')
+  expect(schema.tables.runEvents.id.columnType).toBe('PgBigInt64')
+  expect(schema.tables.runEvents.runId.columnType).toBe('PgUUID')
+  expect(schema.tables.runEvents.rootRunId.columnType).toBe('PgUUID')
+  expect(schema.tables.runEvents.kind.columnType).toBe('PgText')
+  expect(schema.tables.runEvents.status.columnType).toBe('PgText')
+  expect(schema.tables.runEvents.nodeName.columnType).toBe('PgText')
+  expect(schema.tables.runEvents.childKey.columnType).toBe('PgText')
+  expect(schema.tables.runEvents.attemptId.columnType).toBe('PgUUID')
+  expect(schema.tables.runEvents.attemptNumber.columnType).toBe('PgInteger')
+  expect(schema.tables.runEvents.error.columnType).toBe('PgJsonb')
+  expect(schema.tables.runEvents.createdAt.notNull).toBe(true)
   expect(primaryKeyColumns(schema.tables.nodes)).toContainEqual([
     'run_id',
     'name',
@@ -728,6 +740,16 @@ test('creates drizzle schema with canonical runtime names', () => {
       },
     ]),
   )
+  expect(foreignKeys(schema.tables.runEvents)).toEqual(
+    expect.arrayContaining([
+      {
+        columns: ['run_id'],
+        foreignTable: 'workflow_runs',
+        foreignColumns: ['id'],
+        onDelete: 'cascade',
+      },
+    ]),
+  )
   expect(schema.tables.nodeChildren.kind.enumValues).toStrictEqual([
     'activity',
     'task',
@@ -757,15 +779,23 @@ test('creates drizzle schema with canonical runtime names', () => {
   expect(schema.enums.commandKind.enumName).toBe('workflow_command_kind')
   expect(schema.enums.commandKind.schema).toBeUndefined()
   // manifest ⇄ drizzle agreement: same tables, same enums, same enum labels
-  expect([...WORKFLOW_POSTGRES_SCHEMA_MANIFEST.tables].sort()).toStrictEqual(
+  expect(
+    [...WORKFLOW_POSTGRES_SCHEMA_MANIFEST.tables].sort((left, right) =>
+      left.localeCompare(right),
+    ),
+  ).toStrictEqual(
     Object.values(schema.tables)
       .map((table) => getTableName(table))
-      .sort(),
+      .sort((left, right) => left.localeCompare(right)),
   )
-  expect([...WORKFLOW_POSTGRES_SCHEMA_MANIFEST.enums].sort()).toStrictEqual(
+  expect(
+    [...WORKFLOW_POSTGRES_SCHEMA_MANIFEST.enums].sort((left, right) =>
+      left.localeCompare(right),
+    ),
+  ).toStrictEqual(
     Object.values(schema.enums)
       .map((schemaEnum) => schemaEnum.enumName)
-      .sort(),
+      .sort((left, right) => left.localeCompare(right)),
   )
   for (const schemaEnum of Object.values(schema.enums)) {
     expect(
@@ -787,6 +817,8 @@ test('creates drizzle schema with canonical runtime names', () => {
       'workflow_commands_run_idx',
       'workflow_commands_claim_idx',
       'workflow_commands_continue_dedup_idx',
+      'workflow_run_events_run_idx',
+      'workflow_run_events_root_idx',
       'workflow_schedules_due_idx',
     ]),
   )
@@ -800,6 +832,7 @@ test('creates drizzle schema with canonical runtime names', () => {
       'workflow_node_children_child_run_fk',
       'workflow_node_children_current_attempt_fk',
       'workflow_commands_run_fk',
+      'workflow_run_events_run_fk',
     ]),
   )
 })
@@ -810,8 +843,10 @@ test('drizzle kit exports migration sql from app-owned schema file', async () =>
   expect(sql).toContain('CREATE TYPE "workflow_run_kind"')
   expect(sql).toContain('CREATE TYPE "workflow_node_child_kind"')
   expect(sql).toContain('CREATE TABLE "workflow_runs"')
+  expect(sql).toContain('CREATE TABLE "workflow_run_events"')
   expect(sql).toContain('CREATE TABLE "workflow_schedules"')
   expect(sql).toContain('CREATE TABLE "workflow_node_children"')
+  expect(sql).toContain('"id" bigint PRIMARY KEY GENERATED ALWAYS AS IDENTITY')
   expect(sql).toContain(
     'CONSTRAINT "workflow_node_children_pkey" PRIMARY KEY("run_id","node_name","child_key")',
   )
@@ -820,6 +855,8 @@ test('drizzle kit exports migration sql from app-owned schema file', async () =>
   )
   expect(sql).toContain('CREATE INDEX "workflow_node_children_node_idx"')
   expect(sql).toContain('CREATE INDEX "workflow_node_children_child_run_idx"')
+  expect(sql).toContain('CREATE INDEX "workflow_run_events_run_idx"')
+  expect(sql).toContain('CREATE INDEX "workflow_run_events_root_idx"')
   expect(sql).toContain('CREATE INDEX "workflow_schedules_due_idx"')
   expect(sql).toContain('"delivery_count" integer DEFAULT 0 NOT NULL')
   expect(sql).toContain('"dead_at" timestamp with time zone')
@@ -1912,6 +1949,7 @@ test('creates postgres runtime schema with relational constraints', async () => 
       'workflow_node_children_current_attempt_fk',
       'workflow_run_leases_run_fk',
       'workflow_commands_run_fk',
+      'workflow_run_events_run_fk',
     ]),
   )
 })

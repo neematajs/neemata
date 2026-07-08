@@ -25,6 +25,7 @@ type TableKey =
   | 'attempts'
   | 'nodeChildren'
   | 'runLeases'
+  | 'runEvents'
   | 'commands'
 
 type EnumKey =
@@ -82,6 +83,7 @@ const tableNames = {
   attempts: 'workflow_attempts',
   nodeChildren: 'workflow_node_children',
   runLeases: 'workflow_run_leases',
+  runEvents: 'workflow_run_events',
   commands: 'workflow_commands',
 } as const satisfies Record<TableKey, string>
 
@@ -332,6 +334,33 @@ export function createSchema() {
       }).onDelete('cascade'),
     ],
   )
+  const runEvents = createTable(
+    tableNames.runEvents,
+    {
+      id: bigint('id', { mode: 'bigint' })
+        .primaryKey()
+        .generatedAlwaysAsIdentity(),
+      runId: uuid('run_id').notNull(),
+      rootRunId: uuid('root_run_id').notNull(),
+      kind: text('kind').notNull(),
+      status: text('status').notNull(),
+      nodeName: text('node_name'),
+      childKey: text('child_key'),
+      attemptId: uuid('attempt_id'),
+      attemptNumber: integer('attempt_number'),
+      error: jsonb('error'),
+      createdAt: timestamp('created_at', { withTimezone: true }).notNull(),
+    },
+    (t) => [
+      index('workflow_run_events_run_idx').on(t.runId, t.id),
+      index('workflow_run_events_root_idx').on(t.rootRunId, t.id),
+      foreignKey({
+        name: 'workflow_run_events_run_fk',
+        columns: [t.runId],
+        foreignColumns: [runs.id],
+      }).onDelete('cascade'),
+    ],
+  )
   const commands = createTable(
     tableNames.commands,
     {
@@ -386,6 +415,7 @@ export function createSchema() {
       attempts,
       nodeChildren,
       runLeases,
+      runEvents,
       commands,
     },
     enums,

@@ -1,5 +1,5 @@
 import { t } from '@nmtjs/type'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import {
   defineSchedule,
@@ -696,5 +696,189 @@ describe('workflow runtime client', () => {
 
     expect(completed?.status).toBe('completed')
     expect(completed?.output).toStrictEqual({ caseId: 'done' })
+  })
+
+  it('watches history and new events until the watched run terminates', async () => {
+    const workflow = defineWorkflow({
+      name: 'client-watch-workflow',
+      input: t.object({ scenario: t.string() }),
+      output: t.object({ caseId: t.string() }),
+    }).build()
+    const runtime = createInMemoryWorkflowRuntime()
+    const client = createWorkflowRuntimeClient(runtime)
+    const run = await client.start(workflow, { scenario: 'alpha' })
+    const queued = await runtime.store.listRunEvents({ runId: run.id })
+
+    const iterator = client
+      .watch(run.id, {
+        afterEventId: queued.events[0]?.id,
+        pollIntervalMs: 60_000,
+      })
+      [Symbol.asyncIterator]()
+
+    const running = iterator.next()
+    await runtime.store.markRunRunning({ runId: run.id })
+    await expect(running).resolves.toMatchObject({
+      done: false,
+      value: { kind: 'run', status: 'running', runId: run.id },
+    })
+
+    const completed = iterator.next()
+    await runtime.store.completeRun({
+      runId: run.id,
+      output: { caseId: 'alpha' },
+    })
+    await expect(completed).resolves.toMatchObject({
+      done: false,
+      value: { kind: 'run', status: 'completed', runId: run.id },
+    })
+    await expect(iterator.next()).resolves.toStrictEqual({
+      done: true,
+      value: undefined,
+    })
+  })
+
+  it('watches a run family but stops on the watched run terminal event', async () => {
+    const runtime = createInMemoryWorkflowRuntime()
+    const client = createWorkflowRuntimeClient(runtime)
+    const root = await runtime.store.createRun({
+      workflowName: 'client-watch-family-root',
+      input: {},
+    })
+    await runtime.store.createNode({
+      runId: root.id,
+      name: 'child',
+      kind: 'workflow',
+    })
+    await runtime.store.ensureNodeChildren({
+      runId: root.id,
+      nodeName: 'child',
+      children: [{ childKey: '$self', kind: 'workflow' }],
+    })
+    const cursor = (
+      await runtime.store.listRunEvents({ runId: root.id })
+    ).events.at(-1)?.id
+
+    const iterator = client
+      .watch(root.id, {
+        family: true,
+        afterEventId: cursor,
+        pollIntervalMs: 60_000,
+      })
+      [Symbol.asyncIterator]()
+    const childQueued = iterator.next()
+    const { childRun } = await runtime.store.ensureChildRun({
+      runId: root.id,
+      nodeName: 'child',
+      childKey: '$self',
+      childKind: 'workflow',
+      childName: 'client-watch-family-child',
+      input: {},
+      rootRunId: root.rootRunId,
+    })
+    await expect(childQueued).resolves.toMatchObject({
+      done: false,
+      value: { kind: 'run', status: 'queued', runId: childRun.id },
+    })
+
+    await expect(iterator.next()).resolves.toMatchObject({
+      done: false,
+      value: { kind: 'child', status: 'running', runId: root.id },
+    })
+
+    const childCompleted = iterator.next()
+    await runtime.store.completeRun({ runId: childRun.id, output: {} })
+    await expect(childCompleted).resolves.toMatchObject({
+      done: false,
+      value: { kind: 'run', status: 'completed', runId: childRun.id },
+    })
+
+    const rootCompleted = iterator.next()
+    await runtime.store.completeRun({ runId: root.id, output: {} })
+    await expect(rootCompleted).resolves.toMatchObject({
+      done: false,
+      value: { kind: 'run', status: 'completed', runId: root.id },
+    })
+    await expect(iterator.next()).resolves.toStrictEqual({
+      done: true,
+      value: undefined,
+    })
+  })
+
+  it('ends watch iteration cleanly on abort and early consumer return', async () => {
+    const runtime = createInMemoryWorkflowRuntime()
+    const client = createWorkflowRuntimeClient(runtime)
+    const run = await runtime.store.createRun({
+      workflowName: 'client-watch-abort',
+      input: {},
+    })
+    const cursor = (
+      await runtime.store.listRunEvents({ runId: run.id })
+    ).events.at(-1)?.id
+    const abort = new AbortController()
+    const iterator = client
+      .watch(run.id, {
+        afterEventId: cursor,
+        signal: abort.signal,
+        pollIntervalMs: 60_000,
+      })
+      [Symbol.asyncIterator]()
+
+    const pending = iterator.next()
+    abort.abort()
+    await expect(pending).resolves.toStrictEqual({
+      done: true,
+      value: undefined,
+    })
+
+    const seen: string[] = []
+    await runtime.store.markRunRunning({ runId: run.id })
+    for await (const event of client.watch(run.id, { afterEventId: cursor })) {
+      seen.push(event.status)
+      break
+    }
+    await runtime.store.completeRun({ runId: run.id, output: {} })
+    await expect(
+      Array.fromAsync(client.watch(run.id, { afterEventId: cursor })),
+    ).resolves.toMatchObject([{ status: 'running' }, { status: 'completed' }])
+    expect(seen).toStrictEqual(['running'])
+  })
+
+  it('falls back to polling when no wake event port is available', async () => {
+    vi.useFakeTimers()
+    try {
+      const runtime = createInMemoryWorkflowRuntime()
+      const client = createWorkflowRuntimeClient({
+        store: runtime.store,
+        runCoordinationExecutor: runtime.runCoordinationExecutor,
+        attemptExecutor: runtime.attemptExecutor,
+      })
+      const run = await runtime.store.createRun({
+        workflowName: 'client-watch-poll',
+        input: {},
+      })
+      const cursor = (
+        await runtime.store.listRunEvents({ runId: run.id })
+      ).events.at(-1)?.id
+      const iterator = client
+        .watch(run.id, { afterEventId: cursor, pollIntervalMs: 25 })
+        [Symbol.asyncIterator]()
+
+      const pending = iterator.next()
+      await vi.advanceTimersByTimeAsync(0)
+      await runtime.store.markRunRunning({ runId: run.id })
+      await vi.advanceTimersByTimeAsync(24)
+      await expect(
+        Promise.race([pending, Promise.resolve('pending')]),
+      ).resolves.toBe('pending')
+      await vi.advanceTimersByTimeAsync(1)
+      await expect(pending).resolves.toMatchObject({
+        done: false,
+        value: { status: 'running' },
+      })
+      await iterator.return?.()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

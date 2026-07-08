@@ -176,6 +176,43 @@ describe.skipIf(!postgresTarget.url)(
       }
     })
 
+    it('watches run events through LISTEN/NOTIFY without waiting for polling', async () => {
+      const harness = await createHarness()
+      const wakeEvents = await createWakeEvents()
+      const runtime = createPostgresWorkflowRuntime({
+        connection: harness.runtime.connection,
+        wakeEvents,
+      })
+      const client = createWorkflowRuntimeClient(runtime)
+      const run = await runtime.store.createRun({
+        workflowName: createTestName('postgres-watch-run-events'),
+        input: {},
+      })
+      const cursor = (
+        await runtime.store.listRunEvents({ runId: run.id })
+      ).events.at(-1)?.id
+      const iterator = client
+        .watch(run.id, {
+          afterEventId: cursor,
+          pollIntervalMs: LONG_DELAY_MS,
+        })
+        [Symbol.asyncIterator]()
+
+      try {
+        const nextEvent = iterator.next()
+        await harness.runtime.store.markRunRunning({ runId: run.id })
+
+        await expect(
+          Promise.race([
+            nextEvent.then((result) => result.value?.status),
+            wait(3_000).then(() => 'timeout'),
+          ]),
+        ).resolves.toBe('running')
+      } finally {
+        await iterator.return?.()
+      }
+    })
+
     it('aborts a running activity on cancel without waiting for the heartbeat cycle', async () => {
       const harness = await createHarness()
       const wakeEvents = await createWakeEvents()

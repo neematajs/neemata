@@ -11,5 +11,7 @@ export type WorkflowWakeEvents = {
   onCommand(kind: WorkflowCommandWakeKind, listener: () => void): () => void
   /** Fires when cancellation has been requested for the given run. */
   onCancellation(runId: string, listener: () => void): () => void
+  /** Fires when new run events may exist for the given root run. */
+  onRunEvent?(rootRunId: string, listener: () => void): () => void
   dispose?(): Promise<void> | void
 }

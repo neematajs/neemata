@@ -6,6 +6,7 @@ import type {
   StoredNodeChild,
   StoredError,
   StoredRun,
+  StoredRunEvent,
 } from '../../runtime/state.ts'
 import type {
   RuntimeNodeStatus,
@@ -46,6 +47,7 @@ export const TASK_RUN_NODE_NAME = '$task'
 // run id respectively. Delivery is best-effort — polling remains the fallback.
 export const WORKFLOW_COMMANDS_CHANNEL = 'workflow_commands'
 export const WORKFLOW_CANCELLATIONS_CHANNEL = 'workflow_run_cancellations'
+export const WORKFLOW_RUN_EVENTS_CHANNEL = 'workflow_run_events'
 export const id = () => randomUUID()
 export const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
@@ -317,6 +319,97 @@ export const mapDeadCommand = (row: JsonRecord): DeadWorkflowCommand => ({
   deadAt: row.dead_at as Date,
   createdAt: row.created_at as Date,
 })
+
+export const mapRunEvent = (row: JsonRecord): StoredRunEvent => ({
+  id: String(row.id),
+  runId: row.run_id as string,
+  rootRunId: row.root_run_id as string,
+  kind: row.kind as StoredRunEvent['kind'],
+  status: row.status as string,
+  ...optional('nodeName', row.node_name as string | undefined),
+  ...optional('childKey', row.child_key as string | undefined),
+  ...optional('attemptId', row.attempt_id as string | undefined),
+  ...optional('attemptNumber', row.attempt_number as number | undefined),
+  ...optional('error', fromOptional(row.error) as StoredError | undefined),
+  createdAt: row.created_at as Date,
+})
+
+export const notifyRunStatusEventSql = (cteName: string) => `
+  ${cteName}_notified AS (
+    SELECT pg_notify('${WORKFLOW_RUN_EVENTS_CHANNEL}', root_run_id::text)
+    FROM ${cteName}_events
+  )
+`
+
+export const notifyRunStatusEventCountSql = (...cteNames: readonly string[]) =>
+  cteNames.map((name) => `(SELECT count(*) FROM ${name}_notified)`).join(', ')
+
+export const emitRunStatusEventSql = (sourceAlias: string, cteName: string) => `
+  ${cteName}_events AS (
+    INSERT INTO workflow_run_events (
+      run_id, root_run_id, kind, status, error, created_at
+    )
+    SELECT
+      id, root_run_id, 'run', status::text, error, now()
+    FROM ${sourceAlias}
+    WHERE old_status IS DISTINCT FROM status::text
+    RETURNING root_run_id
+  ),
+  ${notifyRunStatusEventSql(cteName)}
+`
+
+export const emitNodeStatusEventSql = (
+  sourceAlias: string,
+  cteName: string,
+) => `
+  ${cteName}_events AS (
+    INSERT INTO workflow_run_events (
+      run_id, root_run_id, kind, status, node_name, error, created_at
+    )
+    SELECT
+      run_id, root_run_id, 'node', status::text, name, error, now()
+    FROM ${sourceAlias}
+    WHERE old_status IS DISTINCT FROM status::text
+    RETURNING root_run_id
+  ),
+  ${notifyRunStatusEventSql(cteName)}
+`
+
+export const emitChildStatusEventSql = (
+  sourceAlias: string,
+  cteName: string,
+) => `
+  ${cteName}_events AS (
+    INSERT INTO workflow_run_events (
+      run_id, root_run_id, kind, status, node_name, child_key, error, created_at
+    )
+    SELECT
+      run_id, root_run_id, 'child', status::text, node_name, child_key, error, now()
+    FROM ${sourceAlias}
+    WHERE old_status IS DISTINCT FROM status::text
+    RETURNING root_run_id
+  ),
+  ${notifyRunStatusEventSql(cteName)}
+`
+
+export const emitAttemptStatusEventSql = (
+  sourceAlias: string,
+  cteName: string,
+) => `
+  ${cteName}_events AS (
+    INSERT INTO workflow_run_events (
+      run_id, root_run_id, kind, status, node_name, child_key,
+      attempt_id, attempt_number, error, created_at
+    )
+    SELECT
+      run_id, root_run_id, 'attempt', status::text, node_name, child_key,
+      id, attempt_number, error, now()
+    FROM ${sourceAlias}
+    WHERE old_status IS DISTINCT FROM status::text
+    RETURNING root_run_id
+  ),
+  ${notifyRunStatusEventSql(cteName)}
+`
 
 export const parseJsonColumn = (value: unknown): unknown =>
   typeof value === 'string' ? JSON.parse(value) : value

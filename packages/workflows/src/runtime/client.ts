@@ -13,7 +13,7 @@ import type {
 import type { WorkflowRuntimeAtomicStart } from './coordinator.ts'
 import type { AttemptExecutor, RunCoordinationExecutor } from './executors.ts'
 import type { WorkflowScheduler } from './scheduler.ts'
-import type { RunSnapshot, StoredRun } from './state.ts'
+import type { RunSnapshot, StoredRun, StoredRunEvent } from './state.ts'
 import type {
   DeadWorkflowCommand,
   DeleteRunResult,
@@ -46,6 +46,13 @@ export type WorkflowRuntimeStartOptions = {
   readonly tags?: Readonly<Record<string, string>>
   readonly idempotencyKey?: readonly unknown[]
   readonly startAt?: Date
+}
+
+export type WatchRunOptions = {
+  readonly family?: boolean
+  readonly afterEventId?: string
+  readonly signal?: AbortSignal
+  readonly pollIntervalMs?: number
 }
 
 export type WorkflowRuntimeAdapter = {
@@ -96,6 +103,10 @@ export type WorkflowRuntimeClient = {
     nodeName: string,
   ) => Promise<NodeSnapshot | undefined>
   readonly getFamily: (runId: string) => Promise<readonly RunFamilyEntry[]>
+  readonly watch: (
+    runId: string,
+    options?: WatchRunOptions,
+  ) => AsyncIterable<StoredRunEvent>
   readonly pruneRuns: (
     params: PruneTerminalRunsParams,
   ) => Promise<PruneTerminalRunsResult>
@@ -181,6 +192,13 @@ export function createWorkflowRuntimeClient(
     getNode: (runId, nodeName) =>
       input.store.loadNodeSnapshot({ runId, nodeName }),
     getFamily: (runId) => input.store.listRunFamily(runId),
+    watch: (runId, options) =>
+      watchRun({
+        store: input.store,
+        wakeEvents: input.wakeEvents,
+        runId,
+        options,
+      }),
     pruneRuns: (params) => pruneRuns(input.store, params),
     listDeadCommands: (params) => input.store.listDeadCommands(params),
     requeueDeadCommand: (id) => input.store.requeueDeadCommand(id),
@@ -191,6 +209,75 @@ export function createWorkflowRuntimeClient(
         requireScheduler().setEnabled(name, enabled),
     },
   })
+}
+
+async function* watchRun(params: {
+  readonly store: WorkflowStore
+  readonly wakeEvents?: WorkflowWakeEvents
+  readonly runId: string
+  readonly options?: WatchRunOptions
+}): AsyncIterable<StoredRunEvent> {
+  const [run] = await params.store.loadRuns([params.runId])
+  if (!run) return
+
+  const rootRunId = run.rootRunId
+  const pollIntervalMs = normalizePollInterval(params.options?.pollIntervalMs)
+  let afterEventId = params.options?.afterEventId
+  let cleanupWait: (() => void) | undefined
+
+  const cleanup = () => {
+    cleanupWait?.()
+    cleanupWait = undefined
+  }
+
+  try {
+    while (!params.options?.signal?.aborted) {
+      const result = await params.store.listRunEvents({
+        runId: params.runId,
+        family: params.options?.family,
+        afterEventId,
+      })
+
+      for (const event of result.events) {
+        afterEventId = event.id
+        yield event
+        if (
+          event.kind === 'run' &&
+          event.runId === params.runId &&
+          isTerminalRunStatus(event.status as StoredRun['status'])
+        ) {
+          return
+        }
+        if (params.options?.signal?.aborted) return
+      }
+
+      await new Promise<void>((resolve) => {
+        let settled = false
+        const finish = () => {
+          if (settled) return
+          settled = true
+          cleanup()
+          resolve()
+        }
+        const timer = setTimeout(finish, pollIntervalMs)
+        const removeWake = params.wakeEvents?.onRunEvent?.(rootRunId, finish)
+        const removeAbort =
+          params.options?.signal === undefined
+            ? undefined
+            : () => params.options?.signal?.removeEventListener('abort', finish)
+        params.options?.signal?.addEventListener('abort', finish, {
+          once: true,
+        })
+        cleanupWait = () => {
+          clearTimeout(timer)
+          removeWake?.()
+          removeAbort?.()
+        }
+      })
+    }
+  } finally {
+    cleanup()
+  }
 }
 
 async function pruneRuns(
@@ -255,6 +342,11 @@ function normalizePruneBatchSize(batchSize: number | undefined): number {
   if (batchSize === undefined) return 100
   if (!Number.isInteger(batchSize) || batchSize < 1) return 0
   return batchSize
+}
+
+function normalizePollInterval(intervalMs: number | undefined): number {
+  if (intervalMs === undefined) return 1_000
+  return Number.isFinite(intervalMs) && intervalMs > 0 ? intervalMs : 1_000
 }
 
 function getWorkflowImplementation<WorkflowDef extends AnyWorkflowDefinition>(
