@@ -416,11 +416,7 @@ export function createInMemoryWorkflowRuntime(
         throw new Error(`Run [${runId}] is not a root run`)
       }
 
-      const familyRunIds = new Set(
-        [...runs.values()]
-          .filter((familyRun) => familyRun.rootRunId === runId)
-          .map((familyRun) => familyRun.id),
-      )
+      const familyRunIds = collectRunDescendantIds(runId)
       if (
         [...familyRunIds].some((familyRunId) => {
           const familyRun = runs.get(familyRunId)
@@ -457,7 +453,10 @@ export function createInMemoryWorkflowRuntime(
         .sort((left, right) => {
           const byDeadAt = right.deadAt.getTime() - left.deadAt.getTime()
           if (byDeadAt !== 0) return byDeadAt
-          return right.createdAt.getTime() - left.createdAt.getTime()
+          const byCreatedAt =
+            right.createdAt.getTime() - left.createdAt.getTime()
+          if (byCreatedAt !== 0) return byCreatedAt
+          return left.id.localeCompare(right.id)
         })
     },
     async listUnreapedDeadCommands(params) {
@@ -1235,6 +1234,23 @@ export function createInMemoryWorkflowRuntime(
       }
     }
     return treeIds
+  }
+  const collectRunDescendantIds = (rootId: string) => {
+    const descendantIds = new Set([rootId])
+    let checkedSize = -1
+    while (checkedSize !== descendantIds.size) {
+      checkedSize = descendantIds.size
+      for (const run of runs.values()) {
+        if (
+          (run.parentRunId !== undefined &&
+            descendantIds.has(run.parentRunId)) ||
+          descendantIds.has(run.rootRunId)
+        ) {
+          descendantIds.add(run.id)
+        }
+      }
+    }
+    return descendantIds
   }
   const deleteRunTrees = (treeIds: ReadonlySet<string>) => {
     if (treeIds.size === 0) return

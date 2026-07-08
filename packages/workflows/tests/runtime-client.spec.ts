@@ -382,6 +382,102 @@ describe('workflow runtime client', () => {
     ])
   })
 
+  it('retries workflow runs using the canonical workflow name', async () => {
+    const workflow = defineWorkflow({
+      name: 'client-retry-canonical-workflow',
+      input: t.object({ scenario: t.string() }),
+      output: t.object({ caseId: t.string() }),
+    }).build()
+    const implementation = implementWorkflow(workflow).finish(
+      (_ctx, _outputs, input) => ({ caseId: input.scenario }),
+    )
+    const runtime = createInMemoryWorkflowRuntime()
+    const client = createWorkflowRuntimeClient({
+      ...runtime,
+      workflows: [implementation],
+    })
+    const run = await runtime.store.createRun({
+      name: 'custom display name',
+      workflowName: workflow.name,
+      input: { scenario: 'alpha' },
+    })
+    await runtime.store.completeRun({
+      runId: run.id,
+      output: { caseId: 'alpha' },
+    })
+
+    const retried = await client.retry(run.id)
+
+    expect(retried).toMatchObject({
+      kind: 'workflow',
+      name: workflow.name,
+      workflowName: workflow.name,
+      input: { scenario: 'alpha' },
+    })
+  })
+
+  it('lets retry options override copied workflow tags', async () => {
+    const workflow = defineWorkflow({
+      name: 'client-retry-workflow-tag-override',
+      input: t.object({ scenario: t.string() }),
+      output: t.object({ caseId: t.string() }),
+    }).build()
+    const implementation = implementWorkflow(workflow).finish(
+      (_ctx, _outputs, input) => ({ caseId: input.scenario }),
+    )
+    const runtime = createInMemoryWorkflowRuntime()
+    const client = createWorkflowRuntimeClient({
+      ...runtime,
+      workflows: [implementation],
+    })
+    const run = await client.start(
+      workflow,
+      { scenario: 'alpha' },
+      { tags: { tenantId: 'tenant-1', source: 'original' } },
+    )
+    await runtime.store.completeRun({
+      runId: run.id,
+      output: { caseId: 'alpha' },
+    })
+
+    const retried = await client.retry(run.id, {
+      tags: { tenantId: 'tenant-2' },
+    })
+
+    expect(retried.tags).toStrictEqual({ tenantId: 'tenant-2' })
+  })
+
+  it('lets retry options set a workflow idempotency key', async () => {
+    const workflow = defineWorkflow({
+      name: 'client-retry-workflow-idempotency-override',
+      input: t.object({ scenario: t.string() }),
+      output: t.object({ caseId: t.string() }),
+    }).build()
+    const implementation = implementWorkflow(workflow).finish(
+      (_ctx, _outputs, input) => ({ caseId: input.scenario }),
+    )
+    const runtime = createInMemoryWorkflowRuntime()
+    const client = createWorkflowRuntimeClient({
+      ...runtime,
+      workflows: [implementation],
+    })
+    const run = await client.start(
+      workflow,
+      { scenario: 'alpha' },
+      { idempotencyKey: ['workflow', 'alpha'] },
+    )
+    await runtime.store.completeRun({
+      runId: run.id,
+      output: { caseId: 'alpha' },
+    })
+
+    const retried = await client.retry(run.id, {
+      idempotencyKey: ['retry', 'alpha'],
+    })
+
+    expect(retried.idempotencyKey).toStrictEqual(['retry', 'alpha'])
+  })
+
   it('retries terminal task runs with original input and tags', async () => {
     const task = defineTask({
       name: 'client-retry-task',

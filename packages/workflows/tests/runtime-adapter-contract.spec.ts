@@ -1059,6 +1059,40 @@ function workflowRuntimeAdapterContract(
       ).resolves.toBeDefined()
     })
 
+    it('refuses to delete parent-linked descendants missing the root id', async () => {
+      const runtime = await createRuntime()
+      const root = await runtime.store.createRun({
+        workflowName: 'delete-parent-link-root',
+        input: {},
+      })
+      const child = await runtime.store.createRun({
+        workflowName: 'delete-parent-link-child',
+        input: {},
+        parentRunId: root.id,
+      })
+      await runtime.store.markRunRunning({ runId: child.id })
+      await runtime.store.completeRun({ runId: root.id, output: { ok: true } })
+
+      await expect(runtime.store.deleteRun(root.id)).rejects.toThrow(
+        `Run [${root.id}] has non-terminal runs`,
+      )
+      await expect(
+        runtime.store.loadRunSnapshot(child.id),
+      ).resolves.toBeDefined()
+
+      await runtime.store.completeRun({ runId: child.id, output: { ok: true } })
+
+      await expect(runtime.store.deleteRun(root.id)).resolves.toStrictEqual({
+        deleted: true,
+      })
+      await expect(
+        runtime.store.loadRunSnapshot(root.id),
+      ).resolves.toBeUndefined()
+      await expect(
+        runtime.store.loadRunSnapshot(child.id),
+      ).resolves.toBeUndefined()
+    })
+
     it('deletes terminal root run families and associated commands', async () => {
       const runtime = await createRuntime({ maxDeliveries: 1 })
       const root = await runtime.store.createRun({
@@ -1133,6 +1167,14 @@ function workflowRuntimeAdapterContract(
       await runtime.runCoordinationExecutor.release(claimed!, {
         error: new Error('delete dead command'),
       })
+      const childClaimed = await runtime.runCoordinationExecutor.claim({
+        workerId: 'delete-child-dead-letterer',
+        workflowNames: [childRun.workflowName],
+        leaseMs: 30_000,
+      })
+      await runtime.runCoordinationExecutor.release(childClaimed!, {
+        error: new Error('delete child dead command'),
+      })
       await runtime.store.completeRun({
         runId: childRun.id,
         output: { ok: true },
@@ -1141,6 +1183,9 @@ function workflowRuntimeAdapterContract(
 
       await expect(
         runtime.store.listDeadCommands({ runId: root.id }),
+      ).resolves.toHaveLength(1)
+      await expect(
+        runtime.store.listDeadCommands({ runId: childRun.id }),
       ).resolves.toHaveLength(1)
       await expect(runtime.store.deleteRun(root.id)).resolves.toStrictEqual({
         deleted: true,
@@ -1153,6 +1198,9 @@ function workflowRuntimeAdapterContract(
       ).resolves.toBeUndefined()
       await expect(
         runtime.store.listDeadCommands({ runId: root.id }),
+      ).resolves.toStrictEqual([])
+      await expect(
+        runtime.store.listDeadCommands({ runId: childRun.id }),
       ).resolves.toStrictEqual([])
       await expect(
         runtime.runCoordinationExecutor.claim({

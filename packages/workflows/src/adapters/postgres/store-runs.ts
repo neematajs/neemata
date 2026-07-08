@@ -225,16 +225,36 @@ export const deleteRunInTransaction = async (
     throw new Error(`Run [${runId}] is not a root run`)
   }
 
+  const descendants = await many<{ id: string; status: string }>(
+    connection,
+    `
+      WITH RECURSIVE descendants AS (
+        SELECT id, status
+        FROM workflow_runs
+        WHERE id = $1
+        UNION
+        SELECT r.id, r.status
+        FROM workflow_runs r
+        JOIN descendants d
+          ON (r.parent_run_id = d.id OR r.root_run_id = d.id)
+         AND r.id <> d.id
+      )
+      SELECT id, status
+      FROM descendants
+    `,
+    [runId],
+  )
+  const familyRunIds = descendants.map((run) => run.id)
   const family = await many<{ id: string; status: string }>(
     connection,
     `
       SELECT id, status
       FROM workflow_runs
-      WHERE root_run_id = $1
+      WHERE id = ANY($1::uuid[])
       ORDER BY created_at, id
       FOR UPDATE
     `,
-    [runId],
+    [familyRunIds],
   )
   if (
     family.some(
@@ -245,7 +265,7 @@ export const deleteRunInTransaction = async (
     throw new Error(`Run [${runId}] has non-terminal runs`)
   }
 
-  const familyRunIds = family.map((run) => run.id)
+  // Guards against schema drift if workflow_commands_run_fk stops cascading.
   await connection.query(
     'DELETE FROM workflow_commands WHERE run_id = ANY($1::uuid[])',
     [familyRunIds],

@@ -226,9 +226,11 @@ async function retryRun(
 
   switch (run.kind) {
     case 'workflow': {
-      const implementation = registry.getWorkflow(run.name)
+      const implementation = registry.getWorkflow(run.workflowName)
       if (!implementation) {
-        throw new Error(`No registered workflow implementation [${run.name}]`)
+        throw new Error(
+          `No registered workflow implementation [${run.workflowName}]`,
+        )
       }
       return (await start(implementation.workflow, run.input as never, {
         tags: run.tags,
