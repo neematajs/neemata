@@ -232,4 +232,28 @@ describe('snapshot DTO mappers', () => {
     expect(dto.heartbeatAt).toBe('2026-07-08T10:00:01.000Z')
     expect(dto.completedAt).toBeUndefined()
   })
+
+  it('passes stored errors through untouched', () => {
+    const attempt: StoredAttempt = {
+      id: 'attempt-3',
+      runId: 'run-1',
+      nodeName: 'extract',
+      childKey: '$self',
+      status: 'failed',
+      attemptNumber: 2,
+      input: { text: 'hi' },
+      error: {
+        name: 'Error',
+        message: 'boom',
+        stack: 'Error: boom',
+        cause: { message: 'root cause' },
+      },
+      dispatchedAt: createdAt,
+      completedAt: updatedAt,
+    }
+
+    const dto = toAttemptDto(attempt)
+    expect(dto.error).toEqual(attempt.error)
+    expect(JSON.parse(JSON.stringify(dto))).toEqual(dto)
+  })
 })

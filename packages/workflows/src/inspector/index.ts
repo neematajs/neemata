@@ -138,7 +138,11 @@ export function serializeWorkflowCatalog(input: {
 
 /**
  * Wire-safe counterpart of a stored type: `Date` fields become ISO-8601
- * strings so the value survives JSON transport unchanged.
+ * strings so the value survives JSON transport unchanged. Applies to the
+ * envelope only — payload fields (`input`/`output`/`item`/`error` contents)
+ * are stored JSON values passed through untouched; encoding payload `Date`s
+ * is the schema layer's concern, and persisted payloads have already been
+ * through JSON in any real adapter.
  */
 export type WireSafe<T> = {
   [K in keyof T]: T[K] extends Date
@@ -146,6 +150,25 @@ export type WireSafe<T> = {
     : T[K] extends Date | undefined
       ? string | undefined
       : T[K]
+}
+
+type DateKeys<T> = {
+  [K in keyof T]-?: NonNullable<T[K]> extends Date ? K : never
+}[keyof T]
+
+// Requiring every Date key at the type level makes adding a Date field to a
+// stored type a compile error here instead of a silent Date leaking through
+// a DTO typed as string.
+function convertDates<T extends object>(
+  value: T,
+  dateKeys: Record<DateKeys<T>, true>,
+): WireSafe<T> {
+  const next = { ...value } as Record<string, unknown>
+  for (const key of Object.keys(dateKeys)) {
+    const current = next[key]
+    if (current instanceof Date) next[key] = current.toISOString()
+  }
+  return next as WireSafe<T>
 }
 
 export type RunDto = WireSafe<StoredRun>
@@ -161,36 +184,23 @@ export type RunSnapshotDto = {
 }
 
 export function toRunDto(run: StoredRun): RunDto {
-  return {
-    ...run,
-    createdAt: run.createdAt.toISOString(),
-    updatedAt: run.updatedAt.toISOString(),
-  }
+  return convertDates(run, { createdAt: true, updatedAt: true })
 }
 
 export function toNodeDto(node: StoredNode): NodeDto {
-  return {
-    ...node,
-    createdAt: node.createdAt.toISOString(),
-    updatedAt: node.updatedAt.toISOString(),
-  }
+  return convertDates(node, { createdAt: true, updatedAt: true })
 }
 
 export function toNodeChildDto(child: StoredNodeChild): NodeChildDto {
-  return {
-    ...child,
-    createdAt: child.createdAt.toISOString(),
-    updatedAt: child.updatedAt.toISOString(),
-  }
+  return convertDates(child, { createdAt: true, updatedAt: true })
 }
 
 export function toAttemptDto(attempt: StoredAttempt): AttemptDto {
-  return {
-    ...attempt,
-    dispatchedAt: attempt.dispatchedAt.toISOString(),
-    heartbeatAt: attempt.heartbeatAt?.toISOString(),
-    completedAt: attempt.completedAt?.toISOString(),
-  }
+  return convertDates(attempt, {
+    dispatchedAt: true,
+    heartbeatAt: true,
+    completedAt: true,
+  })
 }
 
 export function toRunSnapshotDto(snapshot: RunSnapshot): RunSnapshotDto {
