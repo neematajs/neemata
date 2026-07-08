@@ -6,7 +6,6 @@ import type {
   StoredAttempt,
   StoredNode,
   StoredNodeChild,
-  StoredRunEvent,
 } from '../src/runtime/state.ts'
 import type {
   AttemptSummary,
@@ -26,7 +25,6 @@ import {
   toNodeSnapshotDto,
   toNodeUnitDto,
   toRunDetailDto,
-  toRunEventDto,
   toRunFamilyEntryDto,
   toRunSnapshotDto,
 } from '../src/inspector/index.ts'
@@ -541,28 +539,6 @@ describe('snapshot DTO mappers', () => {
 
     const dto = toAttemptDto(attempt)
     expect(dto.error).toEqual(attempt.error)
-    expect(JSON.parse(JSON.stringify(dto))).toEqual(dto)
-  })
-
-  it('converts run event dates and round-trips through JSON', () => {
-    const event: StoredRunEvent = {
-      id: '42',
-      runId: 'run-1',
-      rootRunId: 'run-1',
-      kind: 'attempt',
-      status: 'failed',
-      nodeName: 'extract',
-      childKey: '$self',
-      attemptId: 'attempt-1',
-      attemptNumber: 2,
-      error: { name: 'Error', message: 'boom' },
-      createdAt,
-    }
-
-    const dto = toRunEventDto(event)
-
-    expect(dto.createdAt).toBe('2026-07-08T10:00:00.000Z')
-    expect(dto.error).toEqual(event.error)
     expect(JSON.parse(JSON.stringify(dto))).toEqual(dto)
   })
 })

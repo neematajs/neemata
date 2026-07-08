@@ -25,7 +25,6 @@ type TableKey =
   | 'attempts'
   | 'nodeChildren'
   | 'runLeases'
-  | 'runEvents'
   | 'commands'
 
 type EnumKey =
@@ -83,7 +82,6 @@ const tableNames = {
   attempts: 'workflow_attempts',
   nodeChildren: 'workflow_node_children',
   runLeases: 'workflow_run_leases',
-  runEvents: 'workflow_run_events',
   commands: 'workflow_commands',
 } as const satisfies Record<TableKey, string>
 
@@ -109,7 +107,17 @@ function createEnums() {
   }
 }
 
-export function createSchema() {
+export type CreateSchemaOptions = {
+  /**
+   * GIN indexes over `workflow_runs.input`/`tags` for inspector search.
+   * Off by default: they amplify every run insert, and most deployments
+   * never filter by whole payloads.
+   */
+  readonly searchIndexes?: boolean
+}
+
+export function createSchema(options?: CreateSchemaOptions) {
+  const searchIndexes = options?.searchIndexes ?? false
   const enums = createEnums()
   const createTable = pgTable
 
@@ -153,14 +161,23 @@ export function createSchema() {
         .on(t.parentRunId)
         .where(sql.raw('parent_run_id IS NOT NULL')),
       index('workflow_runs_root_idx').on(t.rootRunId),
-      index('workflow_runs_input_gin_idx').using(
-        'gin',
-        t.input.op('jsonb_path_ops'),
-      ),
-      index('workflow_runs_tags_gin_idx').using(
-        'gin',
-        t.tags.op('jsonb_path_ops'),
-      ),
+      // retention prune scans terminal roots by age every tick; without this
+      // the sweep is a seq scan of the biggest table
+      index('workflow_runs_prune_idx')
+        .on(t.status, t.updatedAt)
+        .where(sql.raw('parent_run_id IS NULL')),
+      ...(searchIndexes
+        ? [
+            index('workflow_runs_input_gin_idx').using(
+              'gin',
+              t.input.op('jsonb_path_ops'),
+            ),
+            index('workflow_runs_tags_gin_idx').using(
+              'gin',
+              t.tags.op('jsonb_path_ops'),
+            ),
+          ]
+        : []),
       foreignKey({
         name: 'workflow_runs_parent_run_fk',
         columns: [t.parentRunId],
@@ -334,33 +351,6 @@ export function createSchema() {
       }).onDelete('cascade'),
     ],
   )
-  const runEvents = createTable(
-    tableNames.runEvents,
-    {
-      id: bigint('id', { mode: 'bigint' })
-        .primaryKey()
-        .generatedAlwaysAsIdentity(),
-      runId: uuid('run_id').notNull(),
-      rootRunId: uuid('root_run_id').notNull(),
-      kind: text('kind').notNull(),
-      status: text('status').notNull(),
-      nodeName: text('node_name'),
-      childKey: text('child_key'),
-      attemptId: uuid('attempt_id'),
-      attemptNumber: integer('attempt_number'),
-      error: jsonb('error'),
-      createdAt: timestamp('created_at', { withTimezone: true }).notNull(),
-    },
-    (t) => [
-      index('workflow_run_events_run_idx').on(t.runId, t.id),
-      index('workflow_run_events_root_idx').on(t.rootRunId, t.id),
-      foreignKey({
-        name: 'workflow_run_events_run_fk',
-        columns: [t.runId],
-        foreignColumns: [runs.id],
-      }).onDelete('cascade'),
-    ],
-  )
   const commands = createTable(
     tableNames.commands,
     {
@@ -388,13 +378,14 @@ export function createSchema() {
     },
     (t) => [
       index('workflow_commands_run_idx').on(t.runId),
-      index('workflow_commands_claim_idx').on(
-        t.kind,
-        t.priority.desc(),
-        t.runAt,
-        t.createdAt,
-        t.id,
-      ),
+      // dead-lettered commands accumulate until retention prunes them; keep
+      // them out of the claim scan's index entirely
+      index('workflow_commands_claim_idx')
+        .on(t.kind, t.priority.desc(), t.runAt, t.createdAt, t.id)
+        .where(sql.raw('dead_at IS NULL')),
+      index('workflow_commands_dead_idx')
+        .on(t.deadAt)
+        .where(sql.raw('dead_at IS NOT NULL')),
       uniqueIndex('workflow_commands_continue_dedup_idx')
         .on(t.runId)
         .where(sql.raw("kind = 'continue' AND lease_token IS NULL")),
@@ -415,7 +406,6 @@ export function createSchema() {
       attempts,
       nodeChildren,
       runLeases,
-      runEvents,
       commands,
     },
     enums,

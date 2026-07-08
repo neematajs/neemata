@@ -20,7 +20,6 @@ import type {
   StoredNode,
   StoredNodeChild,
   StoredRun,
-  StoredRunEvent,
 } from './state.ts'
 import type {
   AttemptSummary,
@@ -52,7 +51,6 @@ import {
   startStoredScheduleRun,
 } from './scheduler.ts'
 import { isTerminalNodeStatus, isTerminalRunStatus } from './status.ts'
-import { assertValidRunEventsCursor } from './store.ts'
 import {
   NODE_TRANSITIONS,
   RUN_TRANSITIONS,
@@ -107,7 +105,6 @@ export type InMemoryWorkflowRuntime = {
     readonly nodes: readonly StoredNode[]
     readonly children: readonly StoredNodeChild[]
     readonly attempts: readonly StoredAttempt[]
-    readonly runEvents: readonly StoredRunEvent[]
     readonly continueRunCommands: readonly InspectQueueItem<ContinueRunCommand>[]
     readonly activityCommands: readonly InspectQueueItem<ActivityAttemptCommand>[]
     readonly taskCommands: readonly InspectQueueItem<TaskAttemptCommand>[]
@@ -122,7 +119,6 @@ export function createInMemoryWorkflowRuntime(
   } = {},
 ): InMemoryWorkflowRuntime {
   let nextId = 1
-  let nextEventId = 1n
   const id = (prefix: string) => `${prefix}-${nextId++}`
   let lastTimestamp = 0
   const now = () => {
@@ -136,7 +132,6 @@ export function createInMemoryWorkflowRuntime(
   const nodes = new Map<string, StoredNode>()
   const attempts = new Map<string, StoredAttempt>()
   const children = new Map<string, StoredNodeChild>()
-  const runEvents: StoredRunEvent[] = []
   const runIdempotencyKeys = new Map<string, string>()
   const runLeases = new Map<string, InMemoryRunLease>()
   const continueRunCommands: QueueItem<ContinueRunCommand>[] = []
@@ -187,66 +182,28 @@ export function createInMemoryWorkflowRuntime(
   const fireRunEventWake = (rootRunId: string) =>
     fireWake(runEventWakeListeners.get(rootRunId))
   const runRootId = (runId: string) => runs.get(runId)?.rootRunId ?? runId
-  const appendRunEvent = (event: Omit<StoredRunEvent, 'id' | 'createdAt'>) => {
-    const stored: StoredRunEvent = {
-      ...event,
-      id: String(nextEventId++),
-      createdAt: now(),
-    }
-    runEvents.push(stored)
-    fireRunEventWake(stored.rootRunId)
-  }
+  // Nothing is persisted for status changes: the wake hub is the in-process
+  // twin of the Postgres NOTIFY hint, and watchers re-read state on it.
   const emitRunStatusEvent = (run: StoredRun) => {
-    appendRunEvent({
-      runId: run.id,
-      rootRunId: run.rootRunId,
-      kind: 'run',
-      status: run.status,
-      ...(run.error === undefined ? {} : { error: run.error }),
-    })
+    fireRunEventWake(run.rootRunId)
   }
   const emitNodeStatusEvent = (before: StoredNode, after: StoredNode) => {
     if (before.status === after.status) return
-    appendRunEvent({
-      runId: after.runId,
-      rootRunId: runRootId(after.runId),
-      kind: 'node',
-      status: after.status,
-      nodeName: after.name,
-      ...(after.error === undefined ? {} : { error: after.error }),
-    })
+    fireRunEventWake(runRootId(after.runId))
   }
   const emitChildStatusEvent = (
     before: StoredNodeChild,
     after: StoredNodeChild,
   ) => {
     if (before.status === after.status) return
-    appendRunEvent({
-      runId: after.runId,
-      rootRunId: runRootId(after.runId),
-      kind: 'child',
-      status: after.status,
-      nodeName: after.nodeName,
-      childKey: after.childKey,
-      ...(after.error === undefined ? {} : { error: after.error }),
-    })
+    fireRunEventWake(runRootId(after.runId))
   }
   const emitAttemptStatusEvent = (
     before: StoredAttempt | undefined,
     after: StoredAttempt,
   ) => {
     if (before?.status === after.status) return
-    appendRunEvent({
-      runId: after.runId,
-      rootRunId: runRootId(after.runId),
-      kind: 'attempt',
-      status: after.status,
-      nodeName: after.nodeName,
-      childKey: after.childKey,
-      attemptId: after.id,
-      attemptNumber: after.attemptNumber,
-      ...(after.error === undefined ? {} : { error: after.error }),
-    })
+    fireRunEventWake(runRootId(after.runId))
   }
   const sortedChildren = (rows: readonly StoredNodeChild[]) =>
     [...rows].sort((left, right) => {
@@ -443,31 +400,6 @@ export function createInMemoryWorkflowRuntime(
   const store: WorkflowStore = {
     async createRun(input: CreateRunInput) {
       return createRunWithState(input).run
-    },
-    async listRunEvents({ runId, family = false, afterEventId, limit }) {
-      const run = runs.get(runId)
-      if (!run) return { events: [] }
-      const normalizedLimit = normalizeEventLimit(limit)
-      if (normalizedLimit !== undefined && normalizedLimit < 1) {
-        return { events: [] }
-      }
-      assertValidRunEventsCursor(afterEventId)
-      const after = afterEventId === undefined ? 0n : BigInt(afterEventId)
-      const filtered = runEvents.filter(
-        (event) =>
-          BigInt(event.id) > after &&
-          (family ? event.rootRunId === run.rootRunId : event.runId === run.id),
-      )
-      const page =
-        normalizedLimit === undefined
-          ? filtered
-          : filtered.slice(0, normalizedLimit)
-      return {
-        events: page,
-        ...(normalizedLimit !== undefined && filtered.length > page.length
-          ? { nextCursor: page.at(-1)?.id }
-          : {}),
-      }
     },
     async listRuns(filter: ListRunsFilter = {}) {
       const limit = filter.limit ?? Number.POSITIVE_INFINITY
@@ -1430,9 +1362,6 @@ export function createInMemoryWorkflowRuntime(
         children.delete(key)
       }
     }
-    for (let index = runEvents.length - 1; index >= 0; index -= 1) {
-      if (treeIds.has(runEvents[index]!.runId)) runEvents.splice(index, 1)
-    }
     deleteQueueItemsForRunIds(continueRunCommands, treeIds)
     deleteQueueItemsForRunIds(activityCommands, treeIds)
     deleteQueueItemsForRunIds(taskCommands, treeIds)
@@ -1937,7 +1866,6 @@ export function createInMemoryWorkflowRuntime(
       nodes: [...nodes.values()],
       children: [...children.values()],
       attempts: [...attempts.values()],
-      runEvents: [...runEvents],
       continueRunCommands: continueRunCommands.map(inspectQueueItem),
       activityCommands: activityCommands.map(inspectQueueItem),
       taskCommands: taskCommands.map(inspectQueueItem),
@@ -1957,11 +1885,6 @@ export function createInMemoryWorkflowRuntime(
       },
     },
   }
-}
-
-function normalizeEventLimit(limit: number | undefined): number | undefined {
-  if (limit === undefined) return undefined
-  return Number.isInteger(limit) && limit > 0 ? limit : 0
 }
 
 function compareSchedulesByDueDate(

@@ -144,6 +144,11 @@ export async function installPostgresWorkflowSchemaForTesting(
     ON workflow_runs (root_run_id)
   `)
   await db.query(`
+    CREATE INDEX IF NOT EXISTS workflow_runs_prune_idx
+    ON workflow_runs (status, updated_at)
+    WHERE parent_run_id IS NULL
+  `)
+  await db.query(`
     CREATE INDEX IF NOT EXISTS workflow_runs_input_gin_idx
     ON workflow_runs USING gin (input jsonb_path_ops)
   `)
@@ -218,21 +223,8 @@ export async function installPostgresWorkflowSchemaForTesting(
       expires_at timestamptz NOT NULL
     )
   `)
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS workflow_run_events (
-      id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-      run_id uuid NOT NULL,
-      root_run_id uuid NOT NULL,
-      kind text NOT NULL,
-      status text NOT NULL,
-      node_name text,
-      child_key text,
-      attempt_id uuid,
-      attempt_number integer,
-      error jsonb,
-      created_at timestamptz NOT NULL
-    )
-  `)
+  // dropped in beta.5: run event history is gone; clean stale test databases
+  await db.query('DROP TABLE IF EXISTS workflow_run_events')
   await db.query(`
     CREATE TABLE IF NOT EXISTS workflow_commands (
       id uuid PRIMARY KEY,
@@ -269,9 +261,32 @@ export async function installPostgresWorkflowSchemaForTesting(
     ADD COLUMN IF NOT EXISTS dead_at timestamptz,
     ADD COLUMN IF NOT EXISTS reaped_at timestamptz
   `)
+  // drop-and-create: pre-existing test databases may hold the older
+  // non-partial shape under the same name; the advisory lock serializes
+  // concurrent installers (integration spec files share one database)
   await db.query(`
-    CREATE INDEX IF NOT EXISTS workflow_commands_claim_idx
-    ON workflow_commands (kind, priority DESC, run_at, created_at, id)
+    DO $$
+    BEGIN
+      PERFORM pg_advisory_xact_lock(hashtext('workflow_commands_claim_idx_install'));
+      IF NOT EXISTS (
+        SELECT 1
+        FROM pg_index i
+        JOIN pg_class c ON c.oid = i.indexrelid
+        WHERE c.relname = 'workflow_commands_claim_idx'
+          AND i.indpred IS NOT NULL
+      ) THEN
+        DROP INDEX IF EXISTS workflow_commands_claim_idx;
+        CREATE INDEX workflow_commands_claim_idx
+        ON workflow_commands (kind, priority DESC, run_at, created_at, id)
+        WHERE dead_at IS NULL;
+      END IF;
+    END
+    $$;
+  `)
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS workflow_commands_dead_idx
+    ON workflow_commands (dead_at)
+    WHERE dead_at IS NOT NULL
   `)
   await db.query(`
     CREATE INDEX IF NOT EXISTS workflow_commands_run_idx
@@ -293,14 +308,6 @@ export async function installPostgresWorkflowSchemaForTesting(
   await db.query(`
     CREATE INDEX IF NOT EXISTS workflow_node_children_child_run_idx
     ON workflow_node_children (child_run_id)
-  `)
-  await db.query(`
-    CREATE INDEX IF NOT EXISTS workflow_run_events_run_idx
-    ON workflow_run_events (run_id, id)
-  `)
-  await db.query(`
-    CREATE INDEX IF NOT EXISTS workflow_run_events_root_idx
-    ON workflow_run_events (root_run_id, id)
   `)
   await db.query(`
     DO $$
@@ -386,14 +393,6 @@ export async function installPostgresWorkflowSchemaForTesting(
       IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'workflow_run_leases_run_fk') THEN
         ALTER TABLE workflow_run_leases
         ADD CONSTRAINT workflow_run_leases_run_fk
-        FOREIGN KEY (run_id)
-        REFERENCES workflow_runs(id)
-        ON DELETE CASCADE;
-      END IF;
-
-      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'workflow_run_events_run_fk') THEN
-        ALTER TABLE workflow_run_events
-        ADD CONSTRAINT workflow_run_events_run_fk
         FOREIGN KEY (run_id)
         REFERENCES workflow_runs(id)
         ON DELETE CASCADE;

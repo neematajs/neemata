@@ -698,7 +698,7 @@ describe('workflow runtime client', () => {
     expect(completed?.output).toStrictEqual({ caseId: 'done' })
   })
 
-  it('watches history and new events until the watched run terminates', async () => {
+  it('watches run status changes until the watched run terminates', async () => {
     const workflow = defineWorkflow({
       name: 'client-watch-workflow',
       input: t.object({ scenario: t.string() }),
@@ -707,20 +707,21 @@ describe('workflow runtime client', () => {
     const runtime = createInMemoryWorkflowRuntime()
     const client = createWorkflowRuntimeClient(runtime)
     const run = await client.start(workflow, { scenario: 'alpha' })
-    const queued = await runtime.store.listRunEvents({ runId: run.id })
 
     const iterator = client
-      .watch(run.id, {
-        afterEventId: queued.events[0]?.id,
-        pollIntervalMs: 60_000,
-      })
+      .watch(run.id, { pollIntervalMs: 60_000 })
       [Symbol.asyncIterator]()
+
+    await expect(iterator.next()).resolves.toMatchObject({
+      done: false,
+      value: { kind: 'run', status: 'queued' },
+    })
 
     const running = iterator.next()
     await runtime.store.markRunRunning({ runId: run.id })
     await expect(running).resolves.toMatchObject({
       done: false,
-      value: { kind: 'run', status: 'running', runId: run.id },
+      value: { kind: 'run', status: 'running' },
     })
 
     const completed = iterator.next()
@@ -730,7 +731,7 @@ describe('workflow runtime client', () => {
     })
     await expect(completed).resolves.toMatchObject({
       done: false,
-      value: { kind: 'run', status: 'completed', runId: run.id },
+      value: { kind: 'run', status: 'completed' },
     })
     await expect(iterator.next()).resolves.toStrictEqual({
       done: true,
@@ -738,163 +739,156 @@ describe('workflow runtime client', () => {
     })
   })
 
-  it('ends immediately when watching a terminal run after its terminal event', async () => {
-    vi.useFakeTimers()
-    try {
-      const workflow = defineWorkflow({
-        name: 'client-watch-terminal-cursor-workflow',
-        input: t.object({ scenario: t.string() }),
-        output: t.object({ caseId: t.string() }),
-      }).build()
-      const runtime = createInMemoryWorkflowRuntime()
-      const client = createWorkflowRuntimeClient(runtime)
-      const run = await client.start(workflow, { scenario: 'alpha' })
-      await runtime.store.completeRun({
-        runId: run.id,
-        output: { caseId: 'alpha' },
-      })
-      const terminalEventId = (
-        await runtime.store.listRunEvents({ runId: run.id })
-      ).events.at(-1)?.id
-      const iterator = client
-        .watch(run.id, {
-          afterEventId: String(BigInt(terminalEventId!) + 1n),
-          pollIntervalMs: 60_000,
-        })
-        [Symbol.asyncIterator]()
-
-      const pending = iterator.next()
-      await vi.advanceTimersByTimeAsync(0)
-
-      await expect(
-        Promise.race([pending, Promise.resolve('pending')]),
-      ).resolves.toStrictEqual({ done: true, value: undefined })
-    } finally {
-      vi.useRealTimers()
-    }
-  })
-
-  it('keeps the run-event wake listener registered while polling', async () => {
-    vi.useFakeTimers()
-    const abort = new AbortController()
-    try {
-      const runtime = createInMemoryWorkflowRuntime()
-      const run = await runtime.store.createRun({
-        workflowName: 'client-watch-wake-race',
-        input: {},
-      })
-      const cursor = (
-        await runtime.store.listRunEvents({ runId: run.id })
-      ).events.at(-1)?.id
-      let injected = false
-      const client = createWorkflowRuntimeClient({
-        ...runtime,
-        store: {
-          ...runtime.store,
-          listRunEvents: async (params) => {
-            const result = await runtime.store.listRunEvents(params)
-            if (
-              !injected &&
-              params.runId === run.id &&
-              params.afterEventId === cursor
-            ) {
-              injected = true
-              await runtime.store.markRunRunning({ runId: run.id })
-            }
-            return result
-          },
-        },
-      })
-      const iterator = client
-        .watch(run.id, {
-          afterEventId: cursor,
-          signal: abort.signal,
-          pollIntervalMs: 60_000,
-        })
-        [Symbol.asyncIterator]()
-
-      const pending = iterator.next()
-      await vi.advanceTimersByTimeAsync(0)
-
-      await expect(
-        Promise.race([pending, Promise.resolve('pending')]),
-      ).resolves.toMatchObject({
-        done: false,
-        value: { kind: 'run', status: 'running', runId: run.id },
-      })
-      await iterator.return?.()
-    } finally {
-      abort.abort()
-      await vi.advanceTimersByTimeAsync(0)
-      vi.useRealTimers()
-    }
-  })
-
-  it('watches a run family but stops on the watched run terminal event', async () => {
+  it('yields the terminal status once and ends when watching a terminal run', async () => {
+    const workflow = defineWorkflow({
+      name: 'client-watch-terminal-workflow',
+      input: t.object({ scenario: t.string() }),
+      output: t.object({ caseId: t.string() }),
+    }).build()
     const runtime = createInMemoryWorkflowRuntime()
     const client = createWorkflowRuntimeClient(runtime)
-    const root = await runtime.store.createRun({
-      workflowName: 'client-watch-family-root',
-      input: {},
+    const run = await client.start(workflow, { scenario: 'alpha' })
+    await runtime.store.completeRun({
+      runId: run.id,
+      output: { caseId: 'alpha' },
     })
-    await runtime.store.createNode({
-      runId: root.id,
-      name: 'child',
-      kind: 'workflow',
-    })
-    await runtime.store.ensureNodeChildren({
-      runId: root.id,
-      nodeName: 'child',
-      children: [{ childKey: '$self', kind: 'workflow' }],
-    })
-    const cursor = (
-      await runtime.store.listRunEvents({ runId: root.id })
-    ).events.at(-1)?.id
 
-    const iterator = client
-      .watch(root.id, {
-        family: true,
-        afterEventId: cursor,
-        pollIntervalMs: 60_000,
-      })
-      [Symbol.asyncIterator]()
-    const childQueued = iterator.next()
-    const { childRun } = await runtime.store.ensureChildRun({
-      runId: root.id,
-      nodeName: 'child',
-      childKey: '$self',
-      childKind: 'workflow',
-      childName: 'client-watch-family-child',
+    await expect(
+      Array.fromAsync(client.watch(run.id, { pollIntervalMs: 60_000 })),
+    ).resolves.toStrictEqual([{ kind: 'run', status: 'completed' }])
+  })
+
+  it('latches wakes that fire while a read is in flight', async () => {
+    const runtime = createInMemoryWorkflowRuntime()
+    const run = await runtime.store.createRun({
+      workflowName: 'client-watch-wake-race',
       input: {},
-      rootRunId: root.rootRunId,
     })
-    await expect(childQueued).resolves.toMatchObject({
-      done: false,
-      value: { kind: 'run', status: 'queued', runId: childRun.id },
+    // transition the run right after the post-subscription baseline read
+    // returns: the wake must latch and be consumed without a poll tick
+    let reads = 0
+    const client = createWorkflowRuntimeClient({
+      ...runtime,
+      store: {
+        ...runtime.store,
+        loadRuns: async (runIds) => {
+          const result = await runtime.store.loadRuns(runIds)
+          reads += 1
+          if (reads === 2) {
+            await runtime.store.markRunRunning({ runId: run.id })
+          }
+          return result
+        },
+      },
     })
+    const iterator = client
+      .watch(run.id, { pollIntervalMs: 60_000 })
+      [Symbol.asyncIterator]()
 
     await expect(iterator.next()).resolves.toMatchObject({
       done: false,
-      value: { kind: 'child', status: 'running', runId: root.id },
+      value: { kind: 'run', status: 'queued' },
     })
-
-    const childCompleted = iterator.next()
-    await runtime.store.completeRun({ runId: childRun.id, output: {} })
-    await expect(childCompleted).resolves.toMatchObject({
+    await expect(iterator.next()).resolves.toMatchObject({
       done: false,
-      value: { kind: 'run', status: 'completed', runId: childRun.id },
+      value: { kind: 'run', status: 'running' },
     })
+    await iterator.return?.()
+  })
 
-    const rootCompleted = iterator.next()
-    await runtime.store.completeRun({ runId: root.id, output: {} })
-    await expect(rootCompleted).resolves.toMatchObject({
-      done: false,
-      value: { kind: 'run', status: 'completed', runId: root.id },
-    })
-    await expect(iterator.next()).resolves.toStrictEqual({
-      done: true,
-      value: undefined,
-    })
+  it('debounces coarse wake events with leading and trailing edges', async () => {
+    vi.useFakeTimers()
+    try {
+      const runtime = createInMemoryWorkflowRuntime()
+      const client = createWorkflowRuntimeClient(runtime)
+      const run = await runtime.store.createRun({
+        workflowName: 'client-watch-debounce',
+        input: {},
+      })
+      await runtime.store.createNode({
+        runId: run.id,
+        name: 'step',
+        kind: 'activity',
+      })
+      await runtime.store.ensureNodeChildren({
+        runId: run.id,
+        nodeName: 'step',
+        children: [{ childKey: '$self', kind: 'activity' }],
+      })
+      const iterator = client
+        .watch(run.id, {
+          wake: true,
+          debounceMs: 100,
+          pollIntervalMs: 60_000,
+        })
+        [Symbol.asyncIterator]()
+
+      await expect(iterator.next()).resolves.toMatchObject({
+        done: false,
+        value: { kind: 'run', status: 'queued' },
+      })
+
+      // leading edge: first wake after quiet passes through immediately
+      const leading = iterator.next()
+      await runtime.store.ensureChildAttempt({
+        runId: run.id,
+        nodeName: 'step',
+        childKey: '$self',
+        input: {},
+      })
+      await vi.advanceTimersByTimeAsync(0)
+      await expect(leading).resolves.toStrictEqual({
+        done: false,
+        value: { kind: 'change' },
+      })
+
+      // wakes inside the window coalesce into one trailing yield at close
+      const trailing = iterator.next()
+      await runtime.store.completeNodeChild({
+        runId: run.id,
+        nodeName: 'step',
+        childKey: '$self',
+        output: {},
+      })
+      await runtime.store.completeNode({
+        runId: run.id,
+        nodeName: 'step',
+        output: {},
+      })
+      await vi.advanceTimersByTimeAsync(99)
+      await expect(
+        Promise.race([trailing, Promise.resolve('pending')]),
+      ).resolves.toBe('pending')
+      await vi.advanceTimersByTimeAsync(1)
+      await expect(trailing).resolves.toStrictEqual({
+        done: false,
+        value: { kind: 'change' },
+      })
+
+      // status transitions bypass the debounce window entirely: no timer
+      // advancement between the transition and its yield
+      const running = iterator.next()
+      await runtime.store.markRunRunning({ runId: run.id })
+      await vi.advanceTimersByTimeAsync(0)
+      await expect(running).resolves.toStrictEqual({
+        done: false,
+        value: { kind: 'run', status: 'running' },
+      })
+      const completed = iterator.next()
+      await runtime.store.completeRun({ runId: run.id, output: {} })
+      await vi.advanceTimersByTimeAsync(0)
+      await expect(completed).resolves.toStrictEqual({
+        done: false,
+        value: { kind: 'run', status: 'completed' },
+      })
+      await expect(iterator.next()).resolves.toStrictEqual({
+        done: true,
+        value: undefined,
+      })
+      await iterator.return?.()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('ends watch iteration cleanly on abort and early consumer return', async () => {
@@ -904,18 +898,19 @@ describe('workflow runtime client', () => {
       workflowName: 'client-watch-abort',
       input: {},
     })
-    const cursor = (
-      await runtime.store.listRunEvents({ runId: run.id })
-    ).events.at(-1)?.id
     const abort = new AbortController()
     const iterator = client
       .watch(run.id, {
-        afterEventId: cursor,
         signal: abort.signal,
         pollIntervalMs: 60_000,
       })
       [Symbol.asyncIterator]()
 
+    // the initial status yield happens regardless; abort ends the wait after
+    await expect(iterator.next()).resolves.toMatchObject({
+      done: false,
+      value: { kind: 'run', status: 'queued' },
+    })
     const pending = iterator.next()
     abort.abort()
     await expect(pending).resolves.toStrictEqual({
@@ -925,15 +920,16 @@ describe('workflow runtime client', () => {
 
     const seen: string[] = []
     await runtime.store.markRunRunning({ runId: run.id })
-    for await (const event of client.watch(run.id, { afterEventId: cursor })) {
-      seen.push(event.status)
+    for await (const event of client.watch(run.id)) {
+      if (event.kind === 'run') seen.push(event.status)
       break
     }
-    await runtime.store.completeRun({ runId: run.id, output: {} })
-    await expect(
-      Array.fromAsync(client.watch(run.id, { afterEventId: cursor })),
-    ).resolves.toMatchObject([{ status: 'running' }, { status: 'completed' }])
     expect(seen).toStrictEqual(['running'])
+
+    await runtime.store.completeRun({ runId: run.id, output: {} })
+    await expect(Array.fromAsync(client.watch(run.id))).resolves.toStrictEqual([
+      { kind: 'run', status: 'completed' },
+    ])
   })
 
   it('falls back to polling when no wake event port is available', async () => {
@@ -949,13 +945,16 @@ describe('workflow runtime client', () => {
         workflowName: 'client-watch-poll',
         input: {},
       })
-      const cursor = (
-        await runtime.store.listRunEvents({ runId: run.id })
-      ).events.at(-1)?.id
       const iterator = client
-        .watch(run.id, { afterEventId: cursor, pollIntervalMs: 25 })
+        .watch(run.id, { pollIntervalMs: 25 })
         [Symbol.asyncIterator]()
 
+      const queued = iterator.next()
+      await vi.advanceTimersByTimeAsync(0)
+      await expect(queued).resolves.toMatchObject({
+        done: false,
+        value: { kind: 'run', status: 'queued' },
+      })
       const pending = iterator.next()
       await vi.advanceTimersByTimeAsync(0)
       await runtime.store.markRunRunning({ runId: run.id })

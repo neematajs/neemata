@@ -12,6 +12,7 @@ export type {
 export { createWorkflowRuntimeClient } from './client.ts'
 export type {
   CreateWorkflowRuntimeClientInput,
+  WatchEvent,
   WatchRunOptions,
   WorkflowRuntimeAdapter,
   WorkflowRuntimeClient,
@@ -51,14 +52,12 @@ export type {
 export { isTerminalNodeStatus, isTerminalRunStatus } from './status.ts'
 export type {
   NodeChildKind,
-  RunEventKind,
   RunSnapshot,
   StoredAttempt,
   StoredError,
   StoredNode,
   StoredNodeChild,
   StoredRun,
-  StoredRunEvent,
 } from './state.ts'
 export {
   SELF_CHILD_KEY,
@@ -97,8 +96,6 @@ export type {
   EnsureNodeChildrenParams,
   EnsureNodeChildrenResult,
   ListRunsFilter,
-  ListRunEventsParams,
-  ListRunEventsResult,
   ListRunSummariesResult,
   ListRunsResult,
   LoadNodeChildrenParams,

@@ -12,22 +12,6 @@ export type StoredError = {
   readonly cause?: StoredError
 }
 
-export type RunEventKind = 'run' | 'node' | 'child' | 'attempt'
-
-export type StoredRunEvent = {
-  readonly id: string
-  readonly runId: string
-  readonly rootRunId: string
-  readonly kind: RunEventKind
-  readonly status: string
-  readonly nodeName?: string
-  readonly childKey?: string
-  readonly attemptId?: string
-  readonly attemptNumber?: number
-  readonly error?: StoredError
-  readonly createdAt: Date
-}
-
 export type StoredRun = {
   readonly id: string
   readonly kind: RunKind

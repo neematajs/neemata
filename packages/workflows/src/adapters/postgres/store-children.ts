@@ -8,9 +8,7 @@ import type { WorkflowPostgresConnection } from './connection.ts'
 import { toStoredError } from '../../runtime/errors.ts'
 import { isTerminalNodeStatus } from '../../runtime/status.ts'
 import {
-  emitAttemptStatusEventSql,
-  emitChildStatusEventSql,
-  emitNodeStatusEventSql,
+  emitStatusChangeNotifySql,
   id,
   isUniqueViolation,
   json,
@@ -269,7 +267,7 @@ export const createPostgresWorkflowChildStore = (
               AND workflow_node_children.status IN (${nodeStatusSourcesSql('running', { self: true })})
             RETURNING workflow_node_children.*, candidate.old_status, candidate.root_run_id
             ),
-            ${emitChildStatusEventSql('updated', 'child_run_linked')}
+            ${emitStatusChangeNotifySql('updated', 'child_run_linked')}
             SELECT updated.*${notifyRunStatusEventColumnsSql('child_run_linked')}
             FROM updated
           `,
@@ -343,7 +341,7 @@ export const createPostgresWorkflowChildStore = (
               FROM inserted
               JOIN workflow_runs r ON r.id = inserted.run_id
             ),
-            ${emitAttemptStatusEventSql('event_source', 'attempt_started')}
+            ${emitStatusChangeNotifySql('event_source', 'attempt_started')}
             SELECT inserted.*${notifyRunStatusEventColumnsSql('attempt_started')}
             FROM inserted
           `,
@@ -381,7 +379,7 @@ export const createPostgresWorkflowChildStore = (
               AND workflow_node_children.status IN (${nodeStatusSourcesSql('running', { self: true })})
             RETURNING workflow_node_children.*, candidate.old_status, candidate.root_run_id
             ),
-            ${emitChildStatusEventSql('updated', 'child_running')}
+            ${emitStatusChangeNotifySql('updated', 'child_running')}
             SELECT updated.*${notifyRunStatusEventColumnsSql('child_running')}
             FROM updated
           `,
@@ -411,7 +409,7 @@ export const createPostgresWorkflowChildStore = (
               AND workflow_nodes.status IN (${nodeStatusSourcesSql('running', { self: true })})
             RETURNING workflow_nodes.*, candidate.old_status, candidate.root_run_id
             ),
-            ${emitNodeStatusEventSql('updated', 'node_running')}
+            ${emitStatusChangeNotifySql('updated', 'node_running')}
             SELECT count(*)${notifyRunStatusEventColumnsSql('node_running')}
             FROM updated
           `,
@@ -502,7 +500,7 @@ export const createPostgresWorkflowChildStore = (
           AND workflow_node_children.status IN (${nodeStatusSourcesSql('completed')})
         RETURNING workflow_node_children.*, candidate.old_status, candidate.root_run_id
         ),
-        ${emitChildStatusEventSql('updated', 'child_completed')}
+        ${emitStatusChangeNotifySql('updated', 'child_completed')}
         SELECT updated.*${notifyRunStatusEventColumnsSql('child_completed')}
         FROM updated
       `,
@@ -542,7 +540,7 @@ export const createPostgresWorkflowChildStore = (
           AND workflow_node_children.status IN (${nodeStatusSourcesSql('failed')})
         RETURNING workflow_node_children.*, candidate.old_status, candidate.root_run_id
         ),
-        ${emitChildStatusEventSql('updated', 'child_failed')}
+        ${emitStatusChangeNotifySql('updated', 'child_failed')}
         SELECT updated.*${notifyRunStatusEventColumnsSql('child_failed')}
         FROM updated
       `,
@@ -584,7 +582,7 @@ export const createPostgresWorkflowChildStore = (
           AND workflow_nodes.status IN (${nodeStatusSourcesSql('waiting', { self: true })})
         RETURNING workflow_nodes.*, candidate.old_status, candidate.root_run_id
         ),
-        ${emitNodeStatusEventSql('updated', 'node_waiting')}
+        ${emitStatusChangeNotifySql('updated', 'node_waiting')}
         SELECT updated.*${notifyRunStatusEventColumnsSql('node_waiting')}
         FROM updated
       `,
