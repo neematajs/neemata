@@ -85,6 +85,7 @@ export type {
   CreateNodeInput,
   CreateRunInput,
   DeadWorkflowCommand,
+  DeleteRunResult,
   EnsureChildAttemptParams,
   EnsureChildAttemptResult,
   EnsureChildRunParams,

@@ -1,9 +1,11 @@
 import type { RunSnapshot, StoredRun } from '../../runtime/state.ts'
 import type {
   CreateRunInput,
+  DeleteRunResult,
   ListRunsFilter,
   PruneTerminalRunsParams,
   PruneTerminalRunsResult,
+  TerminalRunStatus,
   WorkflowStore,
 } from '../../runtime/store.ts'
 import type { WorkflowPostgresConnection } from './connection.ts'
@@ -46,6 +48,7 @@ type PostgresWorkflowRunStore = Pick<
   | 'listRuns'
   | 'listRunSummaries'
   | 'pruneTerminalRuns'
+  | 'deleteRun'
   | 'listDeadCommands'
   | 'listUnreapedDeadCommands'
   | 'markDeadCommandReaped'
@@ -204,6 +207,76 @@ export const pruneTerminalRunsInTransaction = async (
   )
 
   return { deleted }
+}
+
+export const deleteRunInTransaction = async (
+  connection: WorkflowPostgresConnection,
+  runId: string,
+): Promise<DeleteRunResult> => {
+  if (!isUuid(runId)) return { deleted: false }
+
+  const target = await one(
+    connection,
+    'SELECT * FROM workflow_runs WHERE id = $1 FOR UPDATE',
+    [runId],
+  )
+  if (!target) return { deleted: false }
+  if (target.parent_run_id !== null && target.parent_run_id !== undefined) {
+    throw new Error(`Run [${runId}] is not a root run`)
+  }
+
+  const descendants = await many<{ id: string; status: string }>(
+    connection,
+    `
+      WITH RECURSIVE descendants AS (
+        SELECT id, status
+        FROM workflow_runs
+        WHERE id = $1
+        UNION
+        SELECT r.id, r.status
+        FROM workflow_runs r
+        JOIN descendants d
+          ON (r.parent_run_id = d.id OR r.root_run_id = d.id)
+         AND r.id <> d.id
+      )
+      SELECT id, status
+      FROM descendants
+    `,
+    [runId],
+  )
+  const familyRunIds = descendants.map((run) => run.id)
+  const family = await many<{ id: string; status: string }>(
+    connection,
+    `
+      SELECT id, status
+      FROM workflow_runs
+      WHERE id = ANY($1::uuid[])
+      ORDER BY created_at, id
+      FOR UPDATE
+    `,
+    [familyRunIds],
+  )
+  if (
+    family.some(
+      (run) =>
+        !DEFAULT_PRUNE_STATUSES.includes(run.status as TerminalRunStatus),
+    )
+  ) {
+    throw new Error(`Run [${runId}] has non-terminal runs`)
+  }
+
+  // Guards against schema drift if workflow_commands_run_fk stops cascading.
+  await connection.query(
+    'DELETE FROM workflow_commands WHERE run_id = ANY($1::uuid[])',
+    [familyRunIds],
+  )
+  const deleted = await many<{ id: string }>(
+    connection,
+    'DELETE FROM workflow_runs WHERE id = $1 RETURNING id',
+    [runId],
+  )
+
+  return { deleted: deleted.length > 0 }
 }
 
 type RunListQueryParts = {
@@ -390,16 +463,23 @@ export const createPostgresWorkflowRunStore = (
       await ready
       return db.transaction((tx) => pruneTerminalRunsInTransaction(tx, params))
     },
-    async listDeadCommands() {
+    async deleteRun(runId) {
       await ready
+      return db.transaction((tx) => deleteRunInTransaction(tx, runId))
+    },
+    async listDeadCommands(params) {
+      await ready
+      if (params?.runId !== undefined && !isUuid(params.runId)) return []
       const rows = await many(
         db,
         `
         SELECT *
         FROM workflow_commands
         WHERE dead_at IS NOT NULL
+        ${params?.runId === undefined ? '' : 'AND run_id = $1'}
         ORDER BY dead_at DESC, created_at DESC, id ASC
       `,
+        params?.runId === undefined ? [] : [params.runId],
       )
       return rows
         .map((row) => withDateColumns(row, ['dead_at', 'created_at', 'run_at']))

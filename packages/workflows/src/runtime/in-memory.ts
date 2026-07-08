@@ -409,7 +409,29 @@ export function createInMemoryWorkflowRuntime(
       sweepDeadCommands(deadBefore)
       return { deleted: roots.length }
     },
-    async listDeadCommands() {
+    async deleteRun(runId) {
+      const run = runs.get(runId)
+      if (!run) return { deleted: false }
+      if (run.parentRunId !== undefined) {
+        throw new Error(`Run [${runId}] is not a root run`)
+      }
+
+      const familyRunIds = collectRunDescendantIds(runId)
+      if (
+        [...familyRunIds].some((familyRunId) => {
+          const familyRun = runs.get(familyRunId)
+          return (
+            familyRun === undefined || !isTerminalRunStatus(familyRun.status)
+          )
+        })
+      ) {
+        throw new Error(`Run [${runId}] has non-terminal runs`)
+      }
+
+      deleteRunTrees(familyRunIds)
+      return { deleted: true }
+    },
+    async listDeadCommands(params) {
       return [
         ...continueRunCommands.flatMap((item) => {
           const dead = mapDeadCommand(item, 'continue')
@@ -423,11 +445,19 @@ export function createInMemoryWorkflowRuntime(
           const dead = mapDeadCommand(item, 'task')
           return dead === undefined ? [] : [dead]
         }),
-      ].sort((left, right) => {
-        const byDeadAt = right.deadAt.getTime() - left.deadAt.getTime()
-        if (byDeadAt !== 0) return byDeadAt
-        return right.createdAt.getTime() - left.createdAt.getTime()
-      })
+      ]
+        .filter(
+          (command) =>
+            params?.runId === undefined || command.runId === params.runId,
+        )
+        .sort((left, right) => {
+          const byDeadAt = right.deadAt.getTime() - left.deadAt.getTime()
+          if (byDeadAt !== 0) return byDeadAt
+          const byCreatedAt =
+            right.createdAt.getTime() - left.createdAt.getTime()
+          if (byCreatedAt !== 0) return byCreatedAt
+          return left.id.localeCompare(right.id)
+        })
     },
     async listUnreapedDeadCommands(params) {
       const limit = params?.limit ?? Number.POSITIVE_INFINITY
@@ -1204,6 +1234,23 @@ export function createInMemoryWorkflowRuntime(
       }
     }
     return treeIds
+  }
+  const collectRunDescendantIds = (rootId: string) => {
+    const descendantIds = new Set([rootId])
+    let checkedSize = -1
+    while (checkedSize !== descendantIds.size) {
+      checkedSize = descendantIds.size
+      for (const run of runs.values()) {
+        if (
+          (run.parentRunId !== undefined &&
+            descendantIds.has(run.parentRunId)) ||
+          descendantIds.has(run.rootRunId)
+        ) {
+          descendantIds.add(run.id)
+        }
+      }
+    }
+    return descendantIds
   }
   const deleteRunTrees = (treeIds: ReadonlySet<string>) => {
     if (treeIds.size === 0) return

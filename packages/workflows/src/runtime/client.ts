@@ -16,6 +16,7 @@ import type { WorkflowScheduler } from './scheduler.ts'
 import type { RunSnapshot, StoredRun } from './state.ts'
 import type {
   DeadWorkflowCommand,
+  DeleteRunResult,
   ListRunsFilter,
   ListRunSummariesResult,
   ListRunsResult,
@@ -79,6 +80,11 @@ export type WorkflowRuntimeClient = {
     ): Promise<TaskRun<Task>>
   }
   readonly cancel: (runId: string) => Promise<StoredRun | undefined>
+  readonly deleteRun: (runId: string) => Promise<DeleteRunResult>
+  readonly retry: (
+    runId: string,
+    options?: WorkflowRuntimeStartOptions,
+  ) => Promise<StoredRun>
   readonly get: (runId: string) => Promise<RunSnapshot | undefined>
   readonly list: (filter?: ListRunsFilter) => Promise<ListRunsResult>
   readonly listSummaries: (
@@ -93,7 +99,9 @@ export type WorkflowRuntimeClient = {
   readonly pruneRuns: (
     params: PruneTerminalRunsParams,
   ) => Promise<PruneTerminalRunsResult>
-  readonly listDeadCommands: () => Promise<readonly DeadWorkflowCommand[]>
+  readonly listDeadCommands: (params?: {
+    readonly runId?: string
+  }) => Promise<readonly DeadWorkflowCommand[]>
   readonly requeueDeadCommand: (id: string) => Promise<void>
   readonly schedules: {
     readonly list: WorkflowScheduler['list']
@@ -152,6 +160,9 @@ export function createWorkflowRuntimeClient(
 
   return Object.freeze({
     start,
+    deleteRun: (runId) => input.store.deleteRun(runId),
+    retry: (runId, options) =>
+      retryRun(input.store, registry, start, runId, options),
     cancel: async (runId) => {
       const run = await input.store.requestRunCancellation({ runId })
       if (!run) return undefined
@@ -171,7 +182,7 @@ export function createWorkflowRuntimeClient(
       input.store.loadNodeSnapshot({ runId, nodeName }),
     getFamily: (runId) => input.store.listRunFamily(runId),
     pruneRuns: (params) => pruneRuns(input.store, params),
-    listDeadCommands: () => input.store.listDeadCommands(),
+    listDeadCommands: (params) => input.store.listDeadCommands(params),
     requeueDeadCommand: (id) => input.store.requeueDeadCommand(id),
     schedules: {
       list: async () => requireScheduler().list(),
@@ -194,6 +205,49 @@ async function pruneRuns(
     const result = await store.pruneTerminalRuns({ ...params, batchSize })
     deleted += result.deleted
     if (result.deleted < batchSize) return { deleted }
+  }
+}
+
+async function retryRun(
+  store: WorkflowStore,
+  registry: WorkflowRuntimeRegistry,
+  start: WorkflowRuntimeClient['start'],
+  runId: string,
+  options?: WorkflowRuntimeStartOptions,
+): Promise<StoredRun> {
+  const [run] = await store.loadRuns([runId])
+  if (!run) throw new Error(`Run [${runId}] not found`)
+  if (!isTerminalRunStatus(run.status)) {
+    throw new Error(`Run [${runId}] is not terminal`)
+  }
+  if (run.parentRunId !== undefined) {
+    throw new Error(`Run [${runId}] is not a root run`)
+  }
+
+  switch (run.kind) {
+    case 'workflow': {
+      const implementation = registry.getWorkflow(run.workflowName)
+      if (!implementation) {
+        throw new Error(
+          `No registered workflow implementation [${run.workflowName}]`,
+        )
+      }
+      return (await start(implementation.workflow, run.input as never, {
+        tags: run.tags,
+        ...options,
+      })) as StoredRun
+    }
+    case 'task': {
+      const taskName = run.taskName ?? run.name
+      const implementation = registry.getTask(taskName)
+      if (!implementation) {
+        throw new Error(`No registered task implementation [${taskName}]`)
+      }
+      return (await start(implementation.task, run.input as never, {
+        tags: run.tags,
+        ...options,
+      })) as StoredRun
+    }
   }
 }
 
