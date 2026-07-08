@@ -1,6 +1,6 @@
 ---
 name: build-neem-runtime
-description: Use when authoring custom @nmtjs/neem runtimes or package runtime helpers: defineRuntime, createRuntime, defineRuntimeHost, defineRuntimeWorker, defineRuntimePlanner, host/worker ports, planner output, lifecycle, and runtime entry validation.
+description: "Use when authoring custom @nmtjs/neem runtimes or package runtime helpers: defineRuntime, createRuntime, defineRuntimeHost, defineRuntimeWorker, defineRuntimePlanner, host/worker ports, planner output, lifecycle, and runtime entry validation."
 ---
 
 # Build Neem Runtime

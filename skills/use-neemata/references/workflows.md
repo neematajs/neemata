@@ -18,6 +18,8 @@ Import rules (no `nmtjs` umbrella exports; always package subpaths):
 - `@nmtjs/workflows/postgres/drizzle` - `createSchema()` so the application
   owns the tables and migrations.
 - `@nmtjs/workflows/postgres/testing` - schema bootstrap helpers for tests.
+- `@nmtjs/workflows/inspector` - UI-facing serialization: workflow graph/
+  catalog JSON, wire-safe DTOs, node unit grouping.
 - `@nmtjs/workflows/neem` - Neem runtime integration (`defineWorkflows`,
   `createWorkflowsRuntime`, `defineWorkflowsPlanner`, `defineWorkflowsWorker`).
 
@@ -34,7 +36,6 @@ export const embedTask = defineTask({
   name: 'content.embed',
   input: t.object({ entityId: t.string(), text: t.string() }),
   output: t.object({ embeddingId: t.string() }),
-  idempotency: (input) => ['content.embed', input.entityId],
   retry: { attempts: 3, backoff: 'exponential' },
   timeout: '30s',
 })
@@ -43,8 +44,6 @@ export const publishWorkflow = defineWorkflow({
   name: 'content.publish',
   input: t.object({ draftId: t.string() }),
   output: t.object({ url: t.string() }),
-  tags: (input) => ({ draftId: input.draftId }),
-  idempotency: (input) => ['content.publish', input.draftId],
 })
   .activity('render', {
     input: t.object({ draftId: t.string() }),
@@ -70,26 +69,33 @@ Builder nodes:
   per-item status), or `'start-only'`.
 - Task-backed nodes accept `retry` / `timeout` overrides; child-workflow nodes
   accept a `cancellation` policy.
+- Everything accepts optional `title` / `description` presentation metadata
+  (workflow/task options, every node's options — `.parallel()` takes them as a
+  third argument — and branch/parallel case helpers). Purely declarative: no
+  effect on execution or identity; surfaced by the inspector serializers.
 
 ## Implementations
 
-`implementTask(definition, { handler })`; workflow implementations chain one
-method per node name and end with `.finish(...)`. Mapper callbacks receive
-`(ctx, outputs, input)` where `outputs` holds prior node results. Run-level
-`tags` / `idempotency` belong on definitions; node-level idempotency belongs on
-workflow node mappers.
+`implementTask(definition, { handler, idempotency? })`; workflow
+implementations chain one method per node name and end with `.finish(...)`.
+Mapper callbacks receive `(ctx, outputs, input)` where `outputs` holds prior
+node results.
 
 ```ts
 import { implementTask, implementWorkflow } from '@nmtjs/workflows'
 
 export const embedTaskImpl = implementTask(embedTask, {
+  idempotency: (_, input) => ['content.embed', input.entityId],
   async handler(_ctx, input, lifecycle) {
     // lifecycle?.signal aborts on timeout/leaseLost/cancelled/shutdown
     return { embeddingId: await embed(input.text, lifecycle?.signal) }
   },
 })
 
-export const publishWorkflowImpl = implementWorkflow(publishWorkflow)
+export const publishWorkflowImpl = implementWorkflow(publishWorkflow, {
+  tags: (_, input) => ({ draftId: input.draftId }),
+  idempotency: (_, input) => ['content.publish', input.draftId],
+})
   .render(async (_, input) => ({ html: await render(input.draftId) }))
   .embedding(embedTask, {
     input: (_, { render }, input) => ({
@@ -105,10 +111,7 @@ export const publishWorkflowImpl = implementWorkflow(publishWorkflow)
 Rules:
 
 - Handlers run at-least-once; make side effects idempotent and use the
-  definition-level `idempotency` builders to deduplicate top-level runs.
-- Use workflow node `idempotency` mappers to deduplicate task/child runs.
-- Schedules inherit runnable definition tags unless `defineSchedule` supplies
-  `tags`; scheduled run idempotency is always schedule-slot based.
+  `idempotency` key builders to deduplicate task/child runs.
 - Branch nodes take `{ select, cases }`; map nodes take
   `{ items, input, idempotency? }` with per-item mappers
   `(ctx, outputs, item, input)`.
@@ -142,16 +145,59 @@ const client = createWorkflowRuntimeClient({
   tasks: [embedTaskImpl],
 })
 
-const run = await client.start(publishWorkflow, { draftId: 'd1' })
+const run = await client.start(
+  publishWorkflow,
+  { draftId: 'd1' },
+  {
+    tags: { draftId: 'd1' },
+    idempotencyKey: ['content.publish', 'd1'],
+  },
+)
 await client.get(run.id) // full run snapshot (nodes, attempts, children)
 await client.cancel(run.id)
 await client.list({ tags: { draftId: 'd1' } })
 ```
 
+Read models (payload-free, built for UI lists/graphs — `get`/`list` return
+full payloads, these don't):
+
+- `client.listSummaries(filter?)` - run summaries with node progress counts;
+  filter supports `parentRunId: null` for top-level runs only.
+- `client.getDetail(runId)` - run + nodes + children + attempts + child-run
+  summaries, all without input/output payloads.
+- `client.getNode(runId, nodeName)` - single node snapshot (with payloads).
+- `client.getFamily(runId)` - whole run tree with origin edges (which
+  node/childKey spawned each run).
+- `nodeUnits(detail, nodeName)` (inspector) - groups a node's children,
+  attempts, and child runs into per-unit view entries.
+
+Management: `client.deleteRun(runId)` deletes a terminal run and its whole
+descendant tree; `client.retry(runId)` starts a fresh run from a stored one —
+copies input and tags but NOT the idempotency key (the old key still points
+at the original run), `options` overrides win.
+
+Live updates: `client.watch(runId, { family?, afterEventId?, signal?,
+pollIntervalMs? })` returns an `AsyncIterable<StoredRunEvent>` — history from
+the cursor, then live status-change events (run/node/child/attempt), ending
+after the watched run's terminal event. Plain async generator: `break`,
+`iterator.return()`, and `signal` all clean up; a stream-procedure handler
+can `return client.watch(runId, { signal })` directly. Caveats: events carry
+no payloads (refetch via read models); under concurrent writers intermediate
+event delivery is best-effort, but terminal delivery/termination is
+guaranteed. Pull-style access: `store.listRunEvents({ runId, family?,
+afterEventId?, limit? })`.
+
 Operational client surface: `pruneRuns(...)` deletes terminal run trees in
 batches (retention), `listDeadCommands()` / `requeueDeadCommand(id)` manage
 poison commands that exhausted delivery attempts. Retention and dead-letter
 requeue are opt-in application concerns.
+
+Low-latency wake-ups (optional, recommended in production):
+`createPostgresWorkflowWakeEvents({ connect })` opens a dedicated LISTEN
+connection; pass the result as `wakeEvents` to
+`createPostgresWorkflowRuntime`. Command dispatch, cancellation, and
+`watch()` then react via NOTIFY instead of waiting out poll intervals —
+purely a latency hint, polling remains the correctness fallback.
 
 For unit tests use `createInMemoryWorkflowRuntime()` from
 `@nmtjs/workflows/runtime` instead of Postgres.
@@ -160,6 +206,22 @@ The application owns the schema: build tables from
 `createSchema()` (`@nmtjs/workflows/postgres/drizzle`) and migrate with the
 app's normal tooling; `verifyPostgresWorkflowSchema` checks the live database
 against the manifest version at startup.
+
+## Inspector (`@nmtjs/workflows/inspector`)
+
+Framework-agnostic serialization for building workflow UIs over any
+transport:
+
+- `serializeWorkflowGraph(definition)` - stable JSON topology (nodes, targets,
+  branch/parallel cases, map modes) incl. `title`/`description` metadata.
+- `serializeWorkflowCatalog({ workflows?, tasks? })` - "what exists" listing.
+- `to*Dto` mappers (`toRunSummaryDto`, `toRunDetailDto`, `toRunSnapshotDto`,
+  `toRunEventDto`, ...) - wire-safe counterparts of runtime values: `Date`
+  fields become ISO strings, everything else passes through. Types are the
+  `*Dto` / `WireSafe<T>` exports.
+
+Caveat: run rows store names only — UIs join runs to graph/catalog by
+workflow name; there is no per-run definition snapshot yet.
 
 ## Neem runtime integration
 
@@ -209,34 +271,3 @@ Worker pool options: `threads`, `concurrency`, `leaseMs`, `pollIntervalMs`,
 pin a pool to specific activities. The task pool only spawns when task
 implementations exist. Worker shutdown aborts in-flight handlers with reason
 `shutdown` and releases their commands for redelivery.
-
-`activity` also accepts an array of named pools for capacity isolation —
-latency-sensitive activities get their own claim loop, cadence, and lease
-instead of queueing behind long-running batch attempts:
-
-```ts
-workers: {
-  activity: [
-    {
-      name: 'interactive',
-      activityNames: ['handle-user-request'],
-      threads: 1,
-      concurrency: 20,
-      pollIntervalMs: 25,
-      leaseMs: 6_000,
-    },
-    // at most one pool may omit activityNames: it claims every activity
-    // not selected by a named pool
-    { name: 'batch', threads: 1, concurrency: 50 },
-  ],
-}
-```
-
-Pool names must be unique, an activity name may be claimed by at most one
-pool, and only one catch-all (no `activityNames`) pool is allowed. Selection
-is validated against the registered workflows at config resolution: an
-`activityNames` entry that matches no registered activity fails resolution
-(it is always a typo or stale entry, and with a catch-all it would silently
-reroute the real activity there), and without a catch-all every registered
-activity must be covered by some pool's `activityNames` — an uncovered
-activity fails resolution instead of silently never being claimed.

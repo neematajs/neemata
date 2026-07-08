@@ -1,6 +1,6 @@
 ---
 name: use-neemata
-description: Use when answering questions or writing code for Neemata RPC applications: contracts, procedures, routers, applications, DI, metadata, guards, middleware, filters, clients, workflows, pubsub, metrics, streaming, blobs, and Neemata runtime integration.
+description: "Use when answering questions or writing code for Neemata RPC applications: contracts, procedures, routers, applications, DI, metadata, guards, middleware, filters, clients, workflows, pubsub, metrics, streaming, blobs, and Neemata runtime integration."
 ---
 
 # Use Neemata
@@ -33,7 +33,8 @@ Exceptions:
 - [Subscriptions](references/subscriptions.md) - typed event/channel contracts.
 - [PubSub](references/pubsub.md) - ephemeral fanout, publish/subscribe.
 - [Workflows](references/workflows.md) - durable orchestration: task/workflow
-  contracts, implementations, postgres runtime, client, Neem integration.
+  contracts, implementations, postgres runtime, client (read models, watch,
+  retry/delete), inspector serialization, Neem integration.
 - [Type System](references/type-system.md) - `t.*` schemas and encode/decode.
 - [Client Usage](references/client-usage.md) - typed clients, transports,
   streams, blobs, cancellation.
