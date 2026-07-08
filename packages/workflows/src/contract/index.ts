@@ -50,6 +50,8 @@ type LeafCaseMap = Record<string, BranchCaseDefinition>
 type BranchActivityCaseOptions<BranchOutput, InputSchema, OutputSchema> = {
   input: InputSchema
   output: OutputSchema
+  title?: string
+  description?: string
   retry?: RetryPolicy
   timeout?: DurationString
 } & (OutputSchema extends Schema
@@ -91,6 +93,8 @@ export type BranchCaseHelpers = {
   >(options: {
     input: InputSchema
     output: OutputSchema
+    title?: string
+    description?: string
     retry?: RetryPolicy
     timeout?: DurationString
   }): BranchCaseDefinition<
@@ -101,6 +105,8 @@ export type BranchCaseHelpers = {
   task<Task extends AnyTaskDefinition>(
     task: Task,
     options?: {
+      title?: string
+      description?: string
       retry?: RetryPolicy
       timeout?: DurationString
     },
@@ -108,6 +114,8 @@ export type BranchCaseHelpers = {
   workflow<Workflow extends AnyWorkflowDefinition>(
     workflow: Workflow,
     options?: {
+      title?: string
+      description?: string
       cancellation?: CancellationPolicy
     },
   ): BranchCaseDefinition<
@@ -134,6 +142,8 @@ export type ConvergedBranchCaseHelpers<BranchOutput> = {
         'task case output does not satisfy branch output'
       >,
     options?: {
+      title?: string
+      description?: string
       retry?: RetryPolicy
       timeout?: DurationString
     },
@@ -146,6 +156,8 @@ export type ConvergedBranchCaseHelpers<BranchOutput> = {
         'workflow case output does not satisfy branch output'
       >,
     options?: {
+      title?: string
+      description?: string
       cancellation?: CancellationPolicy
     },
   ): BranchCaseDefinition<
@@ -176,6 +188,8 @@ export type WorkflowBuilder<
     options: {
       input: InputSchema
       output: OutputSchema
+      title?: string
+      description?: string
       retry?: RetryPolicy
       timeout?: DurationString
     },
@@ -197,6 +211,8 @@ export type WorkflowBuilder<
     name: AvailableNodeName<NodeName>,
     task: Task,
     options?: {
+      title?: string
+      description?: string
       retry?: RetryPolicy
       timeout?: DurationString
     },
@@ -211,6 +227,8 @@ export type WorkflowBuilder<
     name: AvailableNodeName<NodeName>,
     workflow: Workflow,
     options?: {
+      title?: string
+      description?: string
       cancellation?: CancellationPolicy
     },
   ): WorkflowBuilder<
@@ -228,6 +246,8 @@ export type WorkflowBuilder<
     name: AvailableNodeName<NodeName>,
     options: {
       output: OutputSchema
+      title?: string
+      description?: string
       cases: (
         helpers: ConvergedBranchCaseHelpers<SchemaOutput<OutputSchema>>,
       ) => Cases
@@ -242,6 +262,8 @@ export type WorkflowBuilder<
   branch<NodeName extends string, Cases extends LeafCaseMap>(
     name: AvailableNodeName<NodeName>,
     options: {
+      title?: string
+      description?: string
       cases: (helpers: BranchCaseHelpers) => Cases
     },
   ): WorkflowBuilder<
@@ -257,6 +279,10 @@ export type WorkflowBuilder<
   parallel<NodeName extends string, Cases extends LeafCaseMap>(
     name: AvailableNodeName<NodeName>,
     cases: (helpers: BranchCaseHelpers) => Cases,
+    options?: {
+      title?: string
+      description?: string
+    },
   ): WorkflowBuilder<
     Name,
     Input,
@@ -275,6 +301,8 @@ export type WorkflowBuilder<
     options: {
       item: ItemSchema
       mode: Mode
+      title?: string
+      description?: string
       concurrency?: number
       retry?: RetryPolicy
       timeout?: DurationString
@@ -300,6 +328,8 @@ export type WorkflowBuilder<
     options: {
       item: ItemSchema
       mode: Mode
+      title?: string
+      description?: string
       concurrency?: number
       cancellation?: CancellationPolicy
     },
@@ -332,6 +362,8 @@ export type TaskOptions<
   OutputSchema extends Schema,
 > = {
   name: Name
+  title?: string
+  description?: string
   input: InputSchema
   output: OutputSchema
   retry?: RetryPolicy
@@ -360,6 +392,8 @@ export type WorkflowOptions<
   OutputSchema extends Schema | undefined,
 > = {
   name: Name
+  title?: string
+  description?: string
   input: InputSchema
   output?: OutputSchema
   retention?: DurationString
@@ -457,18 +491,26 @@ class WorkflowDraftBuilder<Name extends string> {
       Object.freeze({
         kind: 'branch',
         name,
+        ...(options.title === undefined ? {} : { title: options.title }),
+        ...(options.description === undefined
+          ? {}
+          : { description: options.description }),
         output: options.output,
         cases: Object.freeze(options.cases(createBranchCaseHelpers())),
       }),
     )
   }
 
-  parallel(name: string, casesFactory: any) {
+  parallel(name: string, casesFactory: any, options?: any) {
     assertNodeName(name, this.nodes)
     return this.withNode(
       Object.freeze({
         kind: 'parallel',
         name,
+        ...(options?.title === undefined ? {} : { title: options.title }),
+        ...(options?.description === undefined
+          ? {}
+          : { description: options.description }),
         cases: Object.freeze(casesFactory(createBranchCaseHelpers())),
       }),
     )
@@ -494,6 +536,12 @@ class WorkflowDraftBuilder<Name extends string> {
     return Object.freeze({
       kind: 'workflow',
       name: this.options.name,
+      ...(this.options.title === undefined
+        ? {}
+        : { title: this.options.title }),
+      ...(this.options.description === undefined
+        ? {}
+        : { description: this.options.description }),
       input: this.options.input,
       output: this.options.output,
       nodes: Object.freeze([...this.nodes]),

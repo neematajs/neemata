@@ -31,12 +31,16 @@ import { parseChildKey, type ParsedChildKey } from '../runtime/child-key.ts'
  */
 export type WorkflowGraph = {
   readonly name: string
+  readonly title?: string
+  readonly description?: string
   readonly nodes: readonly WorkflowGraphNode[]
 }
 
 export type WorkflowGraphNode = {
   readonly name: string
   readonly kind: WorkflowNodeKind
+  readonly title?: string
+  readonly description?: string
   /** Referenced task/workflow for task, workflow, mapTask and mapWorkflow nodes. */
   readonly target?: WorkflowGraphTarget
   /** Branch and parallel members, in definition order. */
@@ -48,13 +52,40 @@ export type WorkflowGraphNode = {
 export type WorkflowGraphTarget = {
   readonly kind: 'task' | 'workflow'
   readonly name: string
+  readonly title?: string
+  readonly description?: string
 }
 
 export type WorkflowGraphCase = {
   readonly key: string
   readonly kind: BranchCaseKind
+  readonly title?: string
+  readonly description?: string
   /** Absent for inline activity cases — they have no named target. */
   readonly target?: WorkflowGraphTarget
+}
+
+function presentationMetadata(input: {
+  readonly title?: string
+  readonly description?: string
+}) {
+  return {
+    ...(input.title === undefined ? {} : { title: input.title }),
+    ...(input.description === undefined
+      ? {}
+      : { description: input.description }),
+  }
+}
+
+function serializeWorkflowGraphTarget(
+  kind: WorkflowGraphTarget['kind'],
+  target: AnyTaskDefinition | AnyWorkflowDefinition,
+): WorkflowGraphTarget {
+  return {
+    kind,
+    name: target.name,
+    ...presentationMetadata(target),
+  }
 }
 
 export function serializeWorkflowGraph(
@@ -62,60 +93,72 @@ export function serializeWorkflowGraph(
 ): WorkflowGraph {
   return {
     name: definition.name,
+    ...presentationMetadata(definition),
     nodes: definition.nodes.map((node): WorkflowGraphNode => {
       switch (node.kind) {
         case 'activity':
-          return { name: node.name, kind: node.kind }
+          return {
+            name: node.name,
+            kind: node.kind,
+            ...presentationMetadata(node),
+          }
         case 'task':
           return {
             name: node.name,
             kind: node.kind,
-            target: { kind: 'task', name: node.task.name },
+            ...presentationMetadata(node),
+            target: serializeWorkflowGraphTarget('task', node.task),
           }
         case 'workflow':
           return {
             name: node.name,
             kind: node.kind,
-            target: { kind: 'workflow', name: node.workflow.name },
+            ...presentationMetadata(node),
+            target: serializeWorkflowGraphTarget('workflow', node.workflow),
           }
         case 'branch':
         case 'parallel':
           return {
             name: node.name,
             kind: node.kind,
+            ...presentationMetadata(node),
             cases: Object.entries(node.cases).map(
-              ([key, branchCase]): WorkflowGraphCase =>
-                branchCase.kind === 'activity'
-                  ? { key, kind: branchCase.kind }
-                  : {
-                      key,
-                      kind: branchCase.kind,
-                      target: {
-                        kind: branchCase.kind,
-                        // BranchCaseDefinition's conditional payload doesn't
-                        // narrow on `kind` at the union default, so the cast
-                        // lives here once instead of in every consumer.
-                        name: (
-                          branchCase as unknown as {
-                            target: AnyTaskDefinition | AnyWorkflowDefinition
-                          }
-                        ).target.name,
-                      },
-                    },
+              ([key, branchCase]): WorkflowGraphCase => {
+                const base = {
+                  key,
+                  kind: branchCase.kind,
+                  ...presentationMetadata(branchCase),
+                }
+                if (branchCase.kind === 'activity') return base
+
+                // BranchCaseDefinition's conditional payload doesn't narrow on
+                // `kind` at the union default, so the cast lives here once.
+                const target = (
+                  branchCase as unknown as {
+                    target: AnyTaskDefinition | AnyWorkflowDefinition
+                  }
+                ).target
+                return {
+                  ...base,
+                  target: serializeWorkflowGraphTarget(branchCase.kind, target),
+                }
+              },
             ),
           }
         case 'mapTask':
           return {
             name: node.name,
             kind: node.kind,
-            target: { kind: 'task', name: node.task.name },
+            ...presentationMetadata(node),
+            target: serializeWorkflowGraphTarget('task', node.task),
             mode: node.mode,
           }
         case 'mapWorkflow':
           return {
             name: node.name,
             kind: node.kind,
-            target: { kind: 'workflow', name: node.workflow.name },
+            ...presentationMetadata(node),
+            target: serializeWorkflowGraphTarget('workflow', node.workflow),
             mode: node.mode,
           }
       }
@@ -130,6 +173,8 @@ export type WorkflowCatalog = {
 
 export type WorkflowCatalogTask = {
   readonly name: string
+  readonly title?: string
+  readonly description?: string
 }
 
 /**
@@ -143,7 +188,10 @@ export function serializeWorkflowCatalog(input: {
 }): WorkflowCatalog {
   return {
     workflows: Array.from(input.workflows ?? [], serializeWorkflowGraph),
-    tasks: Array.from(input.tasks ?? [], (task) => ({ name: task.name })),
+    tasks: Array.from(input.tasks ?? [], (task) => ({
+      name: task.name,
+      ...presentationMetadata(task),
+    })),
   }
 }
 

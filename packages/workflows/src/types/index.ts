@@ -61,6 +61,8 @@ export type TaskDefinition<
 > = {
   readonly kind: 'task'
   readonly name: Name
+  readonly title?: string
+  readonly description?: string
   readonly input: Schema
   readonly output: Schema
   readonly retry?: RetryPolicy
@@ -107,6 +109,8 @@ export type WorkflowNodeBase<
 > = {
   readonly kind: Kind
   readonly name: Name
+  readonly title?: string
+  readonly description?: string
 }
 
 export type WorkflowActivityNode<
@@ -275,6 +279,8 @@ export type BranchCaseDefinition<
   Target = unknown,
 > = {
   readonly kind: Kind
+  readonly title?: string
+  readonly description?: string
   readonly _types?: { readonly input: Input; readonly output: Output }
 } & (Kind extends 'activity'
   ? {
@@ -334,6 +340,8 @@ export type WorkflowDefinition<
 > = {
   readonly kind: 'workflow'
   readonly name: Name
+  readonly title?: string
+  readonly description?: string
   readonly input: Schema
   readonly output?: Schema
   readonly nodes: Nodes
