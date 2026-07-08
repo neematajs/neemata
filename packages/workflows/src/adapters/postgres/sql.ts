@@ -13,8 +13,12 @@ import type {
 } from '../../runtime/status.ts'
 import type {
   CreateRunInput,
+  AttemptSummary,
   DeadWorkflowCommand,
+  NodeChildSummary,
+  NodeSummary,
   PruneTerminalRunsParams,
+  RunSummary,
   TerminalRunStatus,
 } from '../../runtime/store.ts'
 import type { WorkflowPostgresConnection } from './connection.ts'
@@ -164,6 +168,29 @@ export const mapRun = (row: JsonRecord): StoredRun => ({
   updatedAt: row.updated_at as Date,
 })
 
+export const mapRunSummary = (row: JsonRecord): RunSummary => ({
+  id: row.id as string,
+  kind: row.kind as RunSummary['kind'],
+  name: row.name as string,
+  workflowName: row.workflow_name as string,
+  ...optional('taskName', row.task_name as string | undefined),
+  status: row.status as RunSummary['status'],
+  ...optional('error', fromOptional(row.error) as StoredError | undefined),
+  ...optional('parentRunId', row.parent_run_id as string | undefined),
+  ...optional('parentNodeName', row.parent_node_name as string | undefined),
+  rootRunId: row.root_run_id as string,
+  tags: (row.tags ?? {}) as Record<string, string>,
+  ...optional(
+    'idempotencyKey',
+    fromOptional(row.idempotency_key) as readonly unknown[] | undefined,
+  ),
+  version: row.version as number,
+  createdAt: row.created_at as Date,
+  updatedAt: row.updated_at as Date,
+  nodesTotal: Number(row.nodes_total ?? 0),
+  nodesCompleted: Number(row.nodes_completed ?? 0),
+})
+
 export const mapNode = (row: JsonRecord): StoredNode => ({
   runId: row.run_id as string,
   name: row.name as string,
@@ -171,6 +198,18 @@ export const mapNode = (row: JsonRecord): StoredNode => ({
   status: row.status as StoredNode['status'],
   ...optional('input', fromOptional(row.input)),
   ...optional('output', fromOptional(row.output)),
+  ...optional('error', fromOptional(row.error) as StoredError | undefined),
+  ...optional('selectedCase', row.selected_case as string | undefined),
+  version: row.version as number,
+  createdAt: row.created_at as Date,
+  updatedAt: row.updated_at as Date,
+})
+
+export const mapNodeSummary = (row: JsonRecord): NodeSummary => ({
+  runId: row.run_id as string,
+  name: row.name as string,
+  kind: row.kind as NodeSummary['kind'],
+  status: row.status as NodeSummary['status'],
   ...optional('error', fromOptional(row.error) as StoredError | undefined),
   ...optional('selectedCase', row.selected_case as string | undefined),
   version: row.version as number,
@@ -199,6 +238,25 @@ export const mapAttempt = (row: JsonRecord): StoredAttempt => ({
   ...optional('completedAt', row.completed_at as Date | undefined),
 })
 
+export const mapAttemptSummary = (row: JsonRecord): AttemptSummary => ({
+  id: row.id as string,
+  runId: row.run_id as string,
+  nodeName: row.node_name as string,
+  childKey: row.child_key as string,
+  status: row.status as AttemptSummary['status'],
+  ...optional('workerId', row.worker_id as string | undefined),
+  ...optional('leaseToken', row.lease_token as string | undefined),
+  attemptNumber: row.attempt_number as number,
+  ...optional(
+    'idempotencyKey',
+    fromOptional(row.idempotency_key) as readonly unknown[] | undefined,
+  ),
+  ...optional('error', fromOptional(row.error) as StoredError | undefined),
+  dispatchedAt: row.dispatched_at as Date,
+  ...optional('heartbeatAt', row.heartbeat_at as Date | undefined),
+  ...optional('completedAt', row.completed_at as Date | undefined),
+})
+
 export const mapNodeChild = (row: JsonRecord): StoredNodeChild => ({
   runId: row.run_id as string,
   nodeName: row.node_name as string,
@@ -215,6 +273,23 @@ export const mapNodeChild = (row: JsonRecord): StoredNodeChild => ({
     : optional('item', fromOptional(row.item))),
   ...optional('input', fromOptional(row.input)),
   ...optional('output', fromOptional(row.output)),
+  ...optional('error', fromOptional(row.error) as StoredError | undefined),
+  ...optional('childRunId', row.child_run_id as string | undefined),
+  ...optional('currentAttemptId', row.current_attempt_id as string | undefined),
+  attemptCount: row.attempt_count as number,
+  version: row.version as number,
+  createdAt: row.created_at as Date,
+  updatedAt: row.updated_at as Date,
+})
+
+export const mapNodeChildSummary = (row: JsonRecord): NodeChildSummary => ({
+  runId: row.run_id as string,
+  nodeName: row.node_name as string,
+  childKey: row.child_key as string,
+  kind: row.kind as NodeChildSummary['kind'],
+  status: row.status as NodeChildSummary['status'],
+  ordinal: row.ordinal as number,
+  ...optional('itemKey', row.item_key as string | undefined),
   ...optional('error', fromOptional(row.error) as StoredError | undefined),
   ...optional('childRunId', row.child_run_id as string | undefined),
   ...optional('currentAttemptId', row.current_attempt_id as string | undefined),

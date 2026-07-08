@@ -2407,6 +2407,302 @@ function workflowRuntimeAdapterContract(
       ).toStrictEqual([[second.id, 'second-node', '$self']])
     })
 
+    it('lists run summaries without payloads and matches listRuns pagination', async () => {
+      const runtime = await createRuntime()
+      const client = createWorkflowRuntimeClient(runtime)
+      const first = await runtime.store.createRun({
+        workflowName: 'summary-root',
+        input: { root: 1 },
+      })
+      await runtime.store.createNode({
+        runId: first.id,
+        name: 'done',
+        kind: 'activity',
+      })
+      await runtime.store.createNode({
+        runId: first.id,
+        name: 'pending',
+        kind: 'activity',
+      })
+      await runtime.store.completeNode({
+        runId: first.id,
+        nodeName: 'done',
+        output: { ok: true },
+      })
+      const child = await runtime.store.createRun({
+        workflowName: 'summary-child',
+        input: { child: true },
+        parentRunId: first.id,
+        parentNodeName: 'done',
+        rootRunId: first.rootRunId,
+      })
+      const second = await runtime.store.createRun({
+        workflowName: 'summary-root',
+        input: { root: 2 },
+      })
+
+      const roots = await runtime.store.listRunSummaries({
+        name: 'summary-root',
+        parentRunId: null,
+      })
+      const childSummaries = await runtime.store.listRunSummaries({
+        parentRunId: first.id,
+      })
+      const runPage = await runtime.store.listRuns({
+        name: 'summary-root',
+        limit: 1,
+      })
+      const summaryPage = await client.listSummaries({
+        name: 'summary-root',
+        limit: 1,
+      })
+      const nextSummaryPage = await client.listSummaries({
+        name: 'summary-root',
+        cursor: summaryPage.nextCursor,
+        limit: 1,
+      })
+
+      expect(roots.runs.map((run) => run.id)).toStrictEqual([
+        second.id,
+        first.id,
+      ])
+      expect(childSummaries.runs.map((run) => run.id)).toStrictEqual([child.id])
+      expect(summaryPage.runs.map((run) => run.id)).toStrictEqual(
+        runPage.runs.map((run) => run.id),
+      )
+      expect(summaryPage.nextCursor).toBe(runPage.nextCursor)
+      expect(nextSummaryPage.runs.map((run) => run.id)).toStrictEqual([
+        first.id,
+      ])
+      const firstSummary = roots.runs.find((run) => run.id === first.id)!
+      expect(firstSummary.nodesTotal).toBe(2)
+      expect(firstSummary.nodesCompleted).toBe(1)
+      expect('input' in firstSummary).toBe(false)
+      expect('output' in firstSummary).toBe(false)
+    })
+
+    it('loads run details and node snapshots with the requested payload shape', async () => {
+      const runtime = await createRuntime()
+      const client = createWorkflowRuntimeClient(runtime)
+      const run = await runtime.store.createRun({
+        workflowName: 'detail-parent',
+        input: { secret: 'run-input' },
+      })
+      await runtime.store.createNode({
+        runId: run.id,
+        name: 'fanout',
+        kind: 'parallel',
+      })
+      await runtime.store.setNodeInput({
+        runId: run.id,
+        nodeName: 'fanout',
+        input: { secret: 'node-input' },
+      })
+      await runtime.store.ensureNodeChildren({
+        runId: run.id,
+        nodeName: 'fanout',
+        children: [
+          { childKey: 'member:a', kind: 'activity' },
+          { childKey: 'member:b', kind: 'workflow' },
+        ],
+      })
+      const failed = await runtime.store.ensureChildAttempt({
+        runId: run.id,
+        nodeName: 'fanout',
+        childKey: 'member:a',
+        input: { secret: 'attempt-input-1' },
+      })
+      await runtime.store.failCurrentAttempt({
+        attemptId: failed.attempt.id,
+        leaseToken: failed.attempt.leaseToken!,
+        error: new Error('first attempt failed'),
+      })
+      const retry = await runtime.store.createAttempt({
+        runId: run.id,
+        nodeName: 'fanout',
+        childKey: 'member:a',
+        input: { secret: 'attempt-input-2' },
+      })
+      await runtime.store.completeCurrentAttempt({
+        attemptId: retry.id,
+        leaseToken: retry.leaseToken!,
+        output: { secret: 'attempt-output' },
+      })
+      const { childRun } = await runtime.store.ensureChildRun({
+        runId: run.id,
+        nodeName: 'fanout',
+        childKey: 'member:b',
+        childKind: 'workflow',
+        childName: 'detail-child',
+        input: { secret: 'child-input' },
+        rootRunId: run.rootRunId,
+      })
+      await runtime.store.completeRun({
+        runId: childRun.id,
+        output: { secret: 'child-output' },
+      })
+      await runtime.store.completeNode({
+        runId: run.id,
+        nodeName: 'fanout',
+        output: { secret: 'node-output' },
+      })
+
+      const detail = await client.getDetail(run.id)
+      const nodeSnapshot = await client.getNode(run.id, 'fanout')
+
+      expect(detail?.run).toMatchObject({
+        id: run.id,
+        nodesTotal: 1,
+        nodesCompleted: 1,
+      })
+      expect('input' in detail!.run).toBe(false)
+      expect('output' in detail!.run).toBe(false)
+      expect(detail?.nodes).toHaveLength(1)
+      expect('input' in detail!.nodes[0]!).toBe(false)
+      expect('output' in detail!.nodes[0]!).toBe(false)
+      expect(detail?.children.map((child) => child.childKey)).toStrictEqual([
+        'member:a',
+        'member:b',
+      ])
+      expect('input' in detail!.children[0]!).toBe(false)
+      expect('output' in detail!.children[0]!).toBe(false)
+      expect('item' in detail!.children[0]!).toBe(false)
+      expect(detail?.attempts).toHaveLength(2)
+      expect(detail?.attempts[0]?.error?.message).toBe('first attempt failed')
+      expect('input' in detail!.attempts[0]!).toBe(false)
+      expect('output' in detail!.attempts[1]!).toBe(false)
+      expect(detail?.childRuns.map((summary) => summary.id)).toStrictEqual([
+        childRun.id,
+      ])
+      expect(detail?.childRuns[0]).toMatchObject({
+        status: 'completed',
+        nodesTotal: 0,
+        nodesCompleted: 0,
+      })
+      expect('input' in detail!.childRuns[0]!).toBe(false)
+      expect('output' in detail!.childRuns[0]!).toBe(false)
+
+      expect(nodeSnapshot?.node.input).toStrictEqual({ secret: 'node-input' })
+      expect(nodeSnapshot?.node.output).toStrictEqual({
+        secret: 'node-output',
+      })
+      expect(nodeSnapshot?.children[0]?.output).toStrictEqual({
+        secret: 'attempt-output',
+      })
+      expect(nodeSnapshot?.attempts.map((attempt) => attempt.input)).toEqual([
+        { secret: 'attempt-input-1' },
+        { secret: 'attempt-input-2' },
+      ])
+      expect(nodeSnapshot?.attempts[1]?.output).toStrictEqual({
+        secret: 'attempt-output',
+      })
+      await expect(
+        client.getDetail('00000000-0000-4000-8000-000000000000'),
+      ).resolves.toBeUndefined()
+      await expect(
+        client.getNode(run.id, 'missing-node'),
+      ).resolves.toBeUndefined()
+    })
+
+    it('lists a run family from any member with child origins', async () => {
+      const runtime = await createRuntime()
+      const client = createWorkflowRuntimeClient(runtime)
+      const root = await runtime.store.createRun({
+        workflowName: 'family-root',
+        input: { root: true },
+      })
+      await runtime.store.createNode({
+        runId: root.id,
+        name: 'members',
+        kind: 'parallel',
+      })
+      await runtime.store.ensureNodeChildren({
+        runId: root.id,
+        nodeName: 'members',
+        children: [{ childKey: 'member:x', kind: 'workflow' }],
+      })
+      const { childRun: member } = await runtime.store.ensureChildRun({
+        runId: root.id,
+        nodeName: 'members',
+        childKey: 'member:x',
+        childKind: 'workflow',
+        childName: 'family-member',
+        input: { member: true },
+        rootRunId: root.rootRunId,
+      })
+      await runtime.store.createNode({
+        runId: root.id,
+        name: 'items',
+        kind: 'mapWorkflow',
+      })
+      await runtime.store.ensureNodeChildren({
+        runId: root.id,
+        nodeName: 'items',
+        children: [
+          {
+            childKey: 'item:0',
+            kind: 'workflow',
+            ordinal: 0,
+            item: { id: 0 },
+          },
+        ],
+      })
+      const { childRun: item } = await runtime.store.ensureChildRun({
+        runId: root.id,
+        nodeName: 'items',
+        childKey: 'item:0',
+        childKind: 'workflow',
+        childName: 'family-item',
+        input: { item: true },
+        rootRunId: root.rootRunId,
+      })
+      await runtime.store.createNode({
+        runId: member.id,
+        name: 'nested',
+        kind: 'workflow',
+      })
+      await runtime.store.ensureNodeChildren({
+        runId: member.id,
+        nodeName: 'nested',
+        children: [{ childKey: '$self', kind: 'workflow' }],
+      })
+      const { childRun: grandchild } = await runtime.store.ensureChildRun({
+        runId: member.id,
+        nodeName: 'nested',
+        childKey: '$self',
+        childKind: 'workflow',
+        childName: 'family-grandchild',
+        input: { grandchild: true },
+        rootRunId: root.rootRunId,
+      })
+
+      const family = await client.getFamily(member.id)
+
+      expect(family.map((entry) => entry.run.id)).toStrictEqual([
+        root.id,
+        member.id,
+        item.id,
+        grandchild.id,
+      ])
+      expect(family[0]?.origin).toBeUndefined()
+      expect(family[1]?.origin).toStrictEqual({
+        nodeName: 'members',
+        childKey: 'member:x',
+      })
+      expect(family[2]?.origin).toStrictEqual({
+        nodeName: 'items',
+        childKey: 'item:0',
+      })
+      expect(family[3]?.origin).toStrictEqual({
+        nodeName: 'nested',
+        childKey: '$self',
+      })
+      expect(family.every((entry) => !('input' in entry.run))).toBe(true)
+      expect(
+        await client.getFamily('00000000-0000-4000-8000-000000000000'),
+      ).toStrictEqual([])
+    })
+
     it('lists runs by structural filters and JSON input containment', async () => {
       const runtime = await createRuntime()
       const workflowRun = await runtime.store.createRun({
@@ -2522,4 +2818,64 @@ workflowRuntimeAdapterContract('postgres', async (options) => {
   const connection = createPgliteConnection()
   await installPostgresWorkflowSchemaForTesting(connection)
   return createPostgresWorkflowRuntime({ connection, ...options })
+})
+
+describe('postgres workflow runtime adapter invariant recovery', () => {
+  it('lists each run family member once when child origins duplicate', async () => {
+    const connection = createPgliteConnection()
+    await installPostgresWorkflowSchemaForTesting(connection)
+    const runtime = createPostgresWorkflowRuntime({ connection })
+    const root = await runtime.store.createRun({
+      workflowName: 'family-duplicate-root',
+      input: { root: true },
+    })
+    await runtime.store.createNode({
+      runId: root.id,
+      name: 'members',
+      kind: 'parallel',
+    })
+    await runtime.store.ensureNodeChildren({
+      runId: root.id,
+      nodeName: 'members',
+      children: [{ childKey: 'member:x', kind: 'workflow' }],
+    })
+    const { childRun: member } = await runtime.store.ensureChildRun({
+      runId: root.id,
+      nodeName: 'members',
+      childKey: 'member:x',
+      childKind: 'workflow',
+      childName: 'family-duplicate-member',
+      input: { member: true },
+      rootRunId: root.rootRunId,
+    })
+    await runtime.store.createNode({
+      runId: root.id,
+      name: 'zzz-duplicate-origin',
+      kind: 'workflow',
+    })
+    await connection.query(
+      `
+        INSERT INTO workflow_node_children (
+          run_id, node_name, child_key, kind, status, ordinal,
+          child_run_id, attempt_count, version, created_at, updated_at
+        )
+        VALUES (
+          $1, 'zzz-duplicate-origin', 'member:z', 'workflow', 'pending', 0,
+          $2, 0, 1, now(), now()
+        )
+      `,
+      [root.id, member.id],
+    )
+
+    const family = await runtime.store.listRunFamily(member.id)
+
+    expect(family.map((entry) => entry.run.id)).toStrictEqual([
+      root.id,
+      member.id,
+    ])
+    expect(family[1]?.origin).toStrictEqual({
+      nodeName: 'members',
+      childKey: 'member:x',
+    })
+  })
 })
