@@ -13,6 +13,11 @@
       "import": "./dist/runtime/index.js",
       "module-sync": "./dist/runtime/index.js"
     },
+    "./inspector": {
+      "types": "./src/inspector/index.ts",
+      "import": "./dist/inspector/index.js",
+      "module-sync": "./dist/inspector/index.js"
+    },
     "./postgres": {
       "types": "./src/adapters/postgres.ts",
       "import": "./dist/adapters/postgres.js",
@@ -55,6 +60,11 @@
         "types": "./dist/runtime/index.d.ts",
         "import": "./dist/runtime/index.js",
         "module-sync": "./dist/runtime/index.js"
+      },
+      "./inspector": {
+        "types": "./dist/inspector/index.d.ts",
+        "import": "./dist/inspector/index.js",
+        "module-sync": "./dist/inspector/index.js"
       },
       "./postgres": {
         "types": "./dist/adapters/postgres.d.ts",
