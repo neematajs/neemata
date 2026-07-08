@@ -2819,3 +2819,63 @@ workflowRuntimeAdapterContract('postgres', async (options) => {
   await installPostgresWorkflowSchemaForTesting(connection)
   return createPostgresWorkflowRuntime({ connection, ...options })
 })
+
+describe('postgres workflow runtime adapter invariant recovery', () => {
+  it('lists each run family member once when child origins duplicate', async () => {
+    const connection = createPgliteConnection()
+    await installPostgresWorkflowSchemaForTesting(connection)
+    const runtime = createPostgresWorkflowRuntime({ connection })
+    const root = await runtime.store.createRun({
+      workflowName: 'family-duplicate-root',
+      input: { root: true },
+    })
+    await runtime.store.createNode({
+      runId: root.id,
+      name: 'members',
+      kind: 'parallel',
+    })
+    await runtime.store.ensureNodeChildren({
+      runId: root.id,
+      nodeName: 'members',
+      children: [{ childKey: 'member:x', kind: 'workflow' }],
+    })
+    const { childRun: member } = await runtime.store.ensureChildRun({
+      runId: root.id,
+      nodeName: 'members',
+      childKey: 'member:x',
+      childKind: 'workflow',
+      childName: 'family-duplicate-member',
+      input: { member: true },
+      rootRunId: root.rootRunId,
+    })
+    await runtime.store.createNode({
+      runId: root.id,
+      name: 'zzz-duplicate-origin',
+      kind: 'workflow',
+    })
+    await connection.query(
+      `
+        INSERT INTO workflow_node_children (
+          run_id, node_name, child_key, kind, status, ordinal,
+          child_run_id, attempt_count, version, created_at, updated_at
+        )
+        VALUES (
+          $1, 'zzz-duplicate-origin', 'member:z', 'workflow', 'pending', 0,
+          $2, 0, 1, now(), now()
+        )
+      `,
+      [root.id, member.id],
+    )
+
+    const family = await runtime.store.listRunFamily(member.id)
+
+    expect(family.map((entry) => entry.run.id)).toStrictEqual([
+      root.id,
+      member.id,
+    ])
+    expect(family[1]?.origin).toStrictEqual({
+      nodeName: 'members',
+      childKey: 'member:x',
+    })
+  })
+})

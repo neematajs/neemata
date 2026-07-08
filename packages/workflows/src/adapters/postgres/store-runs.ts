@@ -215,6 +215,18 @@ type RunListQueryParts = {
   readonly pageLimit: number | null
 }
 
+const runSummaryNodeCountsAlias = (alias: string) => `${alias}_node_counts`
+
+const runSummaryNodeCountsJoinSql = (alias: string) => `
+  LEFT JOIN LATERAL (
+    SELECT
+      count(*)::int AS nodes_total,
+      (count(*) FILTER (WHERE n.status = 'completed'))::int AS nodes_completed
+    FROM workflow_nodes n
+    WHERE n.run_id = ${alias}.id
+  ) ${runSummaryNodeCountsAlias(alias)} ON true
+`
+
 const runSummaryColumnsSql = (alias: string) => `
   ${alias}.id,
   ${alias}.kind,
@@ -231,35 +243,21 @@ const runSummaryColumnsSql = (alias: string) => `
   ${alias}.version,
   ${alias}.created_at,
   ${alias}.updated_at,
-  (
-    SELECT count(*)
-    FROM workflow_nodes n
-    WHERE n.run_id = ${alias}.id
-  )::int AS nodes_total,
-  (
-    SELECT count(*)
-    FROM workflow_nodes n
-    WHERE n.run_id = ${alias}.id
-      AND n.status = 'completed'
-  )::int AS nodes_completed
+  ${runSummaryNodeCountsAlias(alias)}.nodes_total AS nodes_total,
+  ${runSummaryNodeCountsAlias(alias)}.nodes_completed AS nodes_completed
 `
 
 const runSummaryJsonSql = (alias: string) => `
   to_jsonb(${alias}) - 'input' - 'output' ||
-  jsonb_build_object(
-    'nodes_total',
-    (
-      SELECT count(*)
-      FROM workflow_nodes n
-      WHERE n.run_id = ${alias}.id
-    )::int,
-    'nodes_completed',
-    (
-      SELECT count(*)
-      FROM workflow_nodes n
-      WHERE n.run_id = ${alias}.id
-        AND n.status = 'completed'
-    )::int
+  (
+    SELECT jsonb_build_object(
+      'nodes_total',
+      count(*)::int,
+      'nodes_completed',
+      (count(*) FILTER (WHERE n.status = 'completed'))::int
+    )
+    FROM workflow_nodes n
+    WHERE n.run_id = ${alias}.id
   )
 `
 
@@ -372,6 +370,7 @@ export const createPostgresWorkflowRunStore = (
         `
         SELECT ${runSummaryColumnsSql('r')}
         FROM workflow_runs r
+        ${runSummaryNodeCountsJoinSql('r')}
         ${query.whereSql}
         ORDER BY r.created_at DESC, r.id DESC
         ${query.pageLimit === null ? '' : `LIMIT ${query.push(query.pageLimit)}`}
@@ -703,17 +702,22 @@ export const createPostgresWorkflowRunStore = (
       const rows = await many(
         db,
         `
-        SELECT
-          ${runSummaryColumnsSql('r')},
-          c.node_name AS origin_node_name,
-          c.child_key AS origin_child_key
-        FROM workflow_runs r
-        JOIN workflow_runs target
-          ON target.id = $1
-         AND r.root_run_id = target.root_run_id
-        LEFT JOIN workflow_node_children c
-          ON c.child_run_id = r.id
-        ORDER BY r.created_at ASC, r.id ASC
+        SELECT *
+        FROM (
+          SELECT DISTINCT ON (r.id)
+            ${runSummaryColumnsSql('r')},
+            c.node_name AS origin_node_name,
+            c.child_key AS origin_child_key
+          FROM workflow_runs r
+          JOIN workflow_runs target
+            ON target.id = $1
+           AND r.root_run_id = target.root_run_id
+          LEFT JOIN workflow_node_children c
+            ON c.child_run_id = r.id
+          ${runSummaryNodeCountsJoinSql('r')}
+          ORDER BY r.id, c.node_name, c.child_key
+        ) family
+        ORDER BY created_at ASC, id ASC
       `,
         [runId],
       )
