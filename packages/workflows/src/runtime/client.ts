@@ -13,7 +13,7 @@ import type {
 import type { WorkflowRuntimeAtomicStart } from './coordinator.ts'
 import type { AttemptExecutor, RunCoordinationExecutor } from './executors.ts'
 import type { WorkflowScheduler } from './scheduler.ts'
-import type { RunSnapshot, StoredRun, StoredRunEvent } from './state.ts'
+import type { RunSnapshot, StoredError, StoredRun } from './state.ts'
 import type {
   DeadWorkflowCommand,
   DeleteRunResult,
@@ -49,11 +49,34 @@ export type WorkflowRuntimeStartOptions = {
 }
 
 export type WatchRunOptions = {
-  readonly family?: boolean
-  readonly afterEventId?: string
+  /**
+   * Also yield a coarse `{ kind: 'change' }` event on every wake notification
+   * for the watched run's family. Family-granular by construction: the notify
+   * key is the root run id, and node-level transitions don't touch any row a
+   * run-scoped watcher could re-read to self-filter. Coarse events have no
+   * poll backstop — a missed notification is invisible until the next wake or
+   * the terminal transition. Best-effort intermediates; terminal delivery
+   * stays poll-guaranteed.
+   */
+  readonly wake?: boolean
+  /**
+   * Coalesce wake-driven yields: first wake after quiet passes immediately
+   * (leading edge), further wakes inside the window collapse into one more
+   * yield when it closes (trailing edge). Terminal discovery is never
+   * suppressed. 0/absent = raw wakes.
+   */
+  readonly debounceMs?: number
   readonly signal?: AbortSignal
   readonly pollIntervalMs?: number
 }
+
+export type WatchEvent =
+  | { readonly kind: 'change' }
+  | {
+      readonly kind: 'run'
+      readonly status: StoredRun['status']
+      readonly error?: StoredError
+    }
 
 export type WorkflowRuntimeAdapter = {
   readonly store: WorkflowStore
@@ -106,7 +129,7 @@ export type WorkflowRuntimeClient = {
   readonly watch: (
     runId: string,
     options?: WatchRunOptions,
-  ) => AsyncIterable<StoredRunEvent>
+  ) => AsyncIterable<WatchEvent>
   readonly pruneRuns: (
     params: PruneTerminalRunsParams,
   ) => Promise<PruneTerminalRunsResult>
@@ -216,33 +239,31 @@ async function* watchRun(params: {
   readonly wakeEvents?: WorkflowWakeEvents
   readonly runId: string
   readonly options?: WatchRunOptions
-}): AsyncIterable<StoredRunEvent> {
+}): AsyncIterable<WatchEvent> {
   const [run] = await params.store.loadRuns([params.runId])
   if (!run) return
 
-  const rootRunId = run.rootRunId
+  const signal = params.options?.signal
   const pollIntervalMs = normalizePollInterval(params.options?.pollIntervalMs)
-  let afterEventId = params.options?.afterEventId
-  let cleanupWait: (() => void) | undefined
-  let resolveWait: (() => void) | undefined
+  const debounceMs = normalizeDebounce(params.options?.debounceMs)
+  const coarse = params.options?.wake === true
+
+  // Wakes arriving while a read/yield is in flight are latched, never lost.
   let wakePending = false
-  const removeWake = params.wakeEvents?.onRunEvent?.(rootRunId, () => {
+  let resolveWait: (() => void) | undefined
+  const removeWake = params.wakeEvents?.onRunEvent?.(run.rootRunId, () => {
     wakePending = true
     resolveWait?.()
   })
 
+  let cleanupWait: (() => void) | undefined
   const cleanup = () => {
     cleanupWait?.()
     cleanupWait = undefined
     resolveWait = undefined
   }
-
-  const waitForChange = async () => {
-    if (wakePending) {
-      wakePending = false
-      return
-    }
-    await new Promise<void>((resolve) => {
+  const sleep = (ms: number) =>
+    new Promise<void>((resolve) => {
       let settled = false
       const finish = () => {
         if (settled) return
@@ -250,68 +271,67 @@ async function* watchRun(params: {
         cleanup()
         resolve()
       }
-      const timer = setTimeout(finish, pollIntervalMs)
+      const timer = setTimeout(finish, ms)
       const removeAbort =
-        params.options?.signal === undefined
+        signal === undefined
           ? undefined
-          : () => params.options?.signal?.removeEventListener('abort', finish)
-      params.options?.signal?.addEventListener('abort', finish, {
-        once: true,
-      })
+          : () => signal.removeEventListener('abort', finish)
+      signal?.addEventListener('abort', finish, { once: true })
       resolveWait = finish
       cleanupWait = () => {
         clearTimeout(timer)
         removeAbort?.()
       }
     })
+
+  // Returns true when a wake was consumed (vs. a poll tick or abort). The
+  // debounce window is anchored at the last consumed wake: a wake outside the
+  // window passes immediately (leading edge), wakes inside it collapse into
+  // one consumption when the window closes (trailing edge). Every wake inside
+  // the window still peeks at the run row so a status transition — terminal
+  // above all — is consumed without delay: the window only coalesces coarse
+  // change yields, whose downstream refetches are the load being capped.
+  let lastStatus: string | undefined
+  let lastWakeConsumedAt = 0
+  const waitForChange = async (): Promise<boolean> => {
+    if (!wakePending) await sleep(pollIntervalMs)
+    if (signal?.aborted || !wakePending) return false
+    while (!signal?.aborted) {
+      const remaining = lastWakeConsumedAt + debounceMs - Date.now()
+      if (remaining <= 0) break
+      wakePending = false
+      const [current] = await params.store.loadRuns([params.runId])
+      if (!current || current.status !== lastStatus) break
+      if (!wakePending) await sleep(remaining)
+      if (!wakePending) break
+    }
     wakePending = false
+    lastWakeConsumedAt = Date.now()
+    return !signal?.aborted
   }
 
-  let checkedBeforeFirstWait = false
+  // The subscription is in place before this baseline read, so nothing
+  // committed after the read can slip through unnoticed. Coarse events are
+  // NOTIFY-only best-effort; run-status transitions (including terminal) are
+  // additionally guaranteed by the poll backstop re-reading the run row.
+  let woke = false
   try {
-    while (!params.options?.signal?.aborted) {
-      const result = await params.store.listRunEvents({
-        runId: params.runId,
-        family: params.options?.family,
-        afterEventId,
-      })
-
-      for (const event of result.events) {
-        afterEventId = event.id
-        yield event
-        if (
-          event.kind === 'run' &&
-          event.runId === params.runId &&
-          isTerminalRunStatus(event.status as StoredRun['status'])
-        ) {
-          return
+    while (!signal?.aborted) {
+      const [current] = await params.store.loadRuns([params.runId])
+      if (!current) return
+      if (current.status !== lastStatus) {
+        lastStatus = current.status
+        yield {
+          kind: 'run',
+          status: current.status,
+          ...(current.error === undefined ? {} : { error: current.error }),
         }
-        if (params.options?.signal?.aborted) return
+        if (isTerminalRunStatus(current.status)) return
+      } else if (coarse && woke) {
+        yield { kind: 'change' }
       }
-
-      if (params.options?.signal?.aborted) return
-
-      if (result.events.length === 0 || !checkedBeforeFirstWait) {
-        checkedBeforeFirstWait = true
-        const [latestRun] = await params.store.loadRuns([params.runId])
-        if (latestRun && isTerminalRunStatus(latestRun.status)) {
-          // Event ids are allocated before commit, so concurrent commits can
-          // hide the terminal event behind the cursor; stored status is truth.
-          const finalResult = await params.store.listRunEvents({
-            runId: params.runId,
-            family: params.options?.family,
-            afterEventId,
-          })
-          for (const event of finalResult.events) {
-            afterEventId = event.id
-            yield event
-            if (params.options?.signal?.aborted) return
-          }
-          return
-        }
-      }
-
-      await waitForChange()
+      if (signal?.aborted) return
+      woke = await waitForChange()
     }
   } finally {
     cleanup()
@@ -381,6 +401,11 @@ function normalizePruneBatchSize(batchSize: number | undefined): number {
   if (batchSize === undefined) return 100
   if (!Number.isInteger(batchSize) || batchSize < 1) return 0
   return batchSize
+}
+
+function normalizeDebounce(debounceMs: number | undefined): number {
+  if (debounceMs === undefined) return 0
+  return Number.isFinite(debounceMs) && debounceMs > 0 ? debounceMs : 0
 }
 
 function normalizePollInterval(intervalMs: number | undefined): number {

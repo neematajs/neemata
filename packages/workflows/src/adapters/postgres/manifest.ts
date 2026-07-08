@@ -57,7 +57,6 @@ export const WORKFLOW_POSTGRES_SCHEMA_MANIFEST = {
     'workflow_attempts',
     'workflow_node_children',
     'workflow_run_leases',
-    'workflow_run_events',
     'workflow_commands',
   ],
   constraints: [
@@ -72,7 +71,6 @@ export const WORKFLOW_POSTGRES_SCHEMA_MANIFEST = {
     'workflow_attempts_child_attempt_key',
     'workflow_node_children_pkey',
     'workflow_run_leases_pkey',
-    'workflow_run_events_pkey',
     'workflow_commands_pkey',
     'workflow_runs_parent_run_fk',
     'workflow_runs_root_run_fk',
@@ -84,7 +82,6 @@ export const WORKFLOW_POSTGRES_SCHEMA_MANIFEST = {
     'workflow_node_children_child_run_fk',
     'workflow_node_children_current_attempt_fk',
     'workflow_run_leases_run_fk',
-    'workflow_run_events_run_fk',
     'workflow_commands_run_fk',
   ],
   indexes: [
@@ -92,16 +89,20 @@ export const WORKFLOW_POSTGRES_SCHEMA_MANIFEST = {
     'workflow_schedules_due_idx',
     'workflow_runs_parent_idx',
     'workflow_runs_root_idx',
-    'workflow_runs_input_gin_idx',
-    'workflow_runs_tags_gin_idx',
+    'workflow_runs_prune_idx',
     'workflow_attempts_node_idx',
     'workflow_node_children_node_idx',
     'workflow_node_children_child_run_idx',
-    'workflow_run_events_run_idx',
-    'workflow_run_events_root_idx',
     'workflow_commands_run_idx',
     'workflow_commands_claim_idx',
+    'workflow_commands_dead_idx',
     'workflow_commands_continue_dedup_idx',
+  ],
+  // verified when present, allowed to be absent — see createSchema's
+  // searchIndexes option
+  optionalIndexes: [
+    'workflow_runs_input_gin_idx',
+    'workflow_runs_tags_gin_idx',
   ],
   constraintDefinitions: {
     workflow_attempts_child_attempt_key: {
@@ -111,11 +112,6 @@ export const WORKFLOW_POSTGRES_SCHEMA_MANIFEST = {
     },
     workflow_commands_run_fk: {
       table: 'workflow_commands',
-      type: 'f',
-      columns: ['run_id'],
-    },
-    workflow_run_events_run_fk: {
-      table: 'workflow_run_events',
       type: 'f',
       columns: ['run_id'],
     },
@@ -148,6 +144,12 @@ export const WORKFLOW_POSTGRES_SCHEMA_MANIFEST = {
       unique: false,
       columns: ['root_run_id'],
     },
+    workflow_runs_prune_idx: {
+      table: 'workflow_runs',
+      unique: false,
+      columns: ['status', 'updated_at'],
+      predicate: 'parent_run_id IS NULL',
+    },
     workflow_runs_input_gin_idx: {
       table: 'workflow_runs',
       unique: false,
@@ -163,6 +165,13 @@ export const WORKFLOW_POSTGRES_SCHEMA_MANIFEST = {
       unique: false,
       columns: ['kind', 'priority', 'run_at', 'created_at', 'id'],
       directions: ['ASC', 'DESC', 'ASC', 'ASC', 'ASC'],
+      predicate: 'dead_at IS NULL',
+    },
+    workflow_commands_dead_idx: {
+      table: 'workflow_commands',
+      unique: false,
+      columns: ['dead_at'],
+      predicate: 'dead_at IS NOT NULL',
     },
     workflow_commands_run_idx: {
       table: 'workflow_commands',
@@ -190,16 +199,6 @@ export const WORKFLOW_POSTGRES_SCHEMA_MANIFEST = {
       table: 'workflow_node_children',
       unique: false,
       columns: ['child_run_id'],
-    },
-    workflow_run_events_run_idx: {
-      table: 'workflow_run_events',
-      unique: false,
-      columns: ['run_id', 'id'],
-    },
-    workflow_run_events_root_idx: {
-      table: 'workflow_run_events',
-      unique: false,
-      columns: ['root_run_id', 'id'],
     },
   },
   columns: {
@@ -296,19 +295,6 @@ export const WORKFLOW_POSTGRES_SCHEMA_MANIFEST = {
       lease_token: { type: 'text', nullable: false },
       version: { type: 'int4', nullable: false },
       expires_at: { type: 'timestamptz', nullable: false },
-    },
-    workflow_run_events: {
-      id: { type: 'int8', nullable: false },
-      run_id: { type: 'uuid', nullable: false },
-      root_run_id: { type: 'uuid', nullable: false },
-      kind: { type: 'text', nullable: false },
-      status: { type: 'text', nullable: false },
-      node_name: { type: 'text', nullable: true },
-      child_key: { type: 'text', nullable: true },
-      attempt_id: { type: 'uuid', nullable: true },
-      attempt_number: { type: 'int4', nullable: true },
-      error: { type: 'jsonb', nullable: true },
-      created_at: { type: 'timestamptz', nullable: false },
     },
     workflow_commands: {
       id: { type: 'uuid', nullable: false },

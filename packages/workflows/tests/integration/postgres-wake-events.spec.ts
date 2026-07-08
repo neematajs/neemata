@@ -176,7 +176,28 @@ describe.skipIf(!postgresTarget.url)(
       }
     })
 
-    it('watches run events through LISTEN/NOTIFY without waiting for polling', async () => {
+    it('notifies run changes even with run event history disabled', async () => {
+      const { runtime } = await createHarness()
+      const wakeEvents = await createWakeEvents()
+
+      const run = await runtime.store.createRun({
+        workflowName: createTestName('postgres-wake-notify-only'),
+        input: {},
+      })
+      const runChanged = new Promise<void>((resolve) => {
+        wakeEvents.onRunEvent!(run.rootRunId, resolve)
+      })
+      await runtime.store.markRunRunning({ runId: run.id })
+
+      await expect(
+        Promise.race([
+          runChanged.then(() => 'woken'),
+          wait(3_000).then(() => 'timeout'),
+        ]),
+      ).resolves.toBe('woken')
+    })
+
+    it('watches run status and coarse family changes through LISTEN/NOTIFY', async () => {
       const harness = await createHarness()
       const wakeEvents = await createWakeEvents()
       const runtime = createPostgresWorkflowRuntime({
@@ -188,23 +209,52 @@ describe.skipIf(!postgresTarget.url)(
         workflowName: createTestName('postgres-watch-run-events'),
         input: {},
       })
-      const cursor = (
-        await runtime.store.listRunEvents({ runId: run.id })
-      ).events.at(-1)?.id
+      await runtime.store.createNode({
+        runId: run.id,
+        name: 'step',
+        kind: 'activity',
+      })
+      await runtime.store.ensureNodeChildren({
+        runId: run.id,
+        nodeName: 'step',
+        children: [{ childKey: '$self', kind: 'activity' }],
+      })
+      // a poll interval far above the assertion timeout proves every yield
+      // below is NOTIFY-driven
       const iterator = client
-        .watch(run.id, {
-          afterEventId: cursor,
-          pollIntervalMs: LONG_DELAY_MS,
-        })
+        .watch(run.id, { wake: true, pollIntervalMs: LONG_DELAY_MS })
         [Symbol.asyncIterator]()
 
       try {
-        const nextEvent = iterator.next()
-        await harness.runtime.store.markRunRunning({ runId: run.id })
+        expect((await iterator.next()).value).toStrictEqual({
+          kind: 'run',
+          status: 'queued',
+        })
 
+        // node-level transition: run row untouched, coarse change signal
+        const changed = iterator.next()
+        await runtime.store.ensureChildAttempt({
+          runId: run.id,
+          nodeName: 'step',
+          childKey: '$self',
+          input: {},
+        })
         await expect(
           Promise.race([
-            nextEvent.then((result) => result.value?.status),
+            changed.then((result) => result.value),
+            wait(3_000).then(() => 'timeout'),
+          ]),
+        ).resolves.toStrictEqual({ kind: 'change' })
+
+        const running = iterator.next()
+        await runtime.store.markRunRunning({ runId: run.id })
+        await expect(
+          Promise.race([
+            running.then((result) =>
+              result.value && 'status' in result.value
+                ? result.value.status
+                : undefined,
+            ),
             wait(3_000).then(() => 'timeout'),
           ]),
         ).resolves.toBe('running')

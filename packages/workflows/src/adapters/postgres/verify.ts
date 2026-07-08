@@ -284,11 +284,16 @@ export async function verifyPostgresWorkflowSchema(
   const indexDefinitionsByName = new Map(
     indexDefinitions.map((definition) => [definition.name, definition]),
   )
+  const optionalIndexes = new Set<string>(
+    WORKFLOW_POSTGRES_SCHEMA_MANIFEST.optionalIndexes,
+  )
   const invalidIndexes = Object.entries(
     WORKFLOW_POSTGRES_SCHEMA_MANIFEST.indexDefinitions,
   )
     .filter(([name, expected]) => {
       const actual = indexDefinitionsByName.get(name)
+      // optional indexes may be absent, but when present must match
+      if (!actual && optionalIndexes.has(name)) return false
       return (
         !actual ||
         actual.table_name !== expected.table ||

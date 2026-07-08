@@ -4,7 +4,6 @@ import type {
   StoredNode,
   StoredNodeChild,
   StoredRun,
-  StoredRunEvent,
 } from '../runtime/state.ts'
 import type {
   AttemptSummary,
@@ -234,7 +233,6 @@ export type RunDto = WireSafe<StoredRun>
 export type NodeDto = WireSafe<StoredNode>
 export type NodeChildDto = WireSafe<StoredNodeChild>
 export type AttemptDto = WireSafe<StoredAttempt>
-export type RunEventDto = WireSafe<StoredRunEvent>
 
 export type RunSnapshotDto = {
   readonly run: RunDto
@@ -301,10 +299,6 @@ export function toAttemptDto(attempt: StoredAttempt): AttemptDto {
     heartbeatAt: true,
     completedAt: true,
   })
-}
-
-export function toRunEventDto(event: StoredRunEvent): RunEventDto {
-  return convertDates(event, { createdAt: true })
 }
 
 export function toRunSnapshotDto(snapshot: RunSnapshot): RunSnapshotDto {

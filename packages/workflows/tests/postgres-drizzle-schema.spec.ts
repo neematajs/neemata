@@ -621,18 +621,6 @@ test('creates drizzle schema with canonical runtime names', () => {
   expect(schema.tables.commands.runId.columnType).toBe('PgUUID')
   expect(schema.tables.commands.attemptId.columnType).toBe('PgUUID')
   expect(schema.tables.commands.payload.hasDefault).toBe(true)
-  expect(getTableName(schema.tables.runEvents)).toBe('workflow_run_events')
-  expect(schema.tables.runEvents.id.columnType).toBe('PgBigInt64')
-  expect(schema.tables.runEvents.runId.columnType).toBe('PgUUID')
-  expect(schema.tables.runEvents.rootRunId.columnType).toBe('PgUUID')
-  expect(schema.tables.runEvents.kind.columnType).toBe('PgText')
-  expect(schema.tables.runEvents.status.columnType).toBe('PgText')
-  expect(schema.tables.runEvents.nodeName.columnType).toBe('PgText')
-  expect(schema.tables.runEvents.childKey.columnType).toBe('PgText')
-  expect(schema.tables.runEvents.attemptId.columnType).toBe('PgUUID')
-  expect(schema.tables.runEvents.attemptNumber.columnType).toBe('PgInteger')
-  expect(schema.tables.runEvents.error.columnType).toBe('PgJsonb')
-  expect(schema.tables.runEvents.createdAt.notNull).toBe(true)
   expect(primaryKeyColumns(schema.tables.nodes)).toContainEqual([
     'run_id',
     'name',
@@ -740,16 +728,6 @@ test('creates drizzle schema with canonical runtime names', () => {
       },
     ]),
   )
-  expect(foreignKeys(schema.tables.runEvents)).toEqual(
-    expect.arrayContaining([
-      {
-        columns: ['run_id'],
-        foreignTable: 'workflow_runs',
-        foreignColumns: ['id'],
-        onDelete: 'cascade',
-      },
-    ]),
-  )
   expect(schema.tables.nodeChildren.kind.enumValues).toStrictEqual([
     'activity',
     'task',
@@ -809,19 +787,22 @@ test('creates drizzle schema with canonical runtime names', () => {
       'workflow_runs_idempotency_idx',
       'workflow_runs_parent_idx',
       'workflow_runs_root_idx',
-      'workflow_runs_input_gin_idx',
-      'workflow_runs_tags_gin_idx',
+      'workflow_runs_prune_idx',
       'workflow_attempts_node_idx',
       'workflow_node_children_node_idx',
       'workflow_node_children_child_run_idx',
       'workflow_commands_run_idx',
       'workflow_commands_claim_idx',
+      'workflow_commands_dead_idx',
       'workflow_commands_continue_dedup_idx',
-      'workflow_run_events_run_idx',
-      'workflow_run_events_root_idx',
       'workflow_schedules_due_idx',
     ]),
   )
+  // search GIN indexes are opt-in: never required, always definition-checked
+  expect(WORKFLOW_POSTGRES_SCHEMA_MANIFEST.optionalIndexes).toStrictEqual([
+    'workflow_runs_input_gin_idx',
+    'workflow_runs_tags_gin_idx',
+  ])
   expect(WORKFLOW_POSTGRES_SCHEMA_MANIFEST.constraints).toEqual(
     expect.arrayContaining([
       'workflow_schedules_name_key',
@@ -832,7 +813,6 @@ test('creates drizzle schema with canonical runtime names', () => {
       'workflow_node_children_child_run_fk',
       'workflow_node_children_current_attempt_fk',
       'workflow_commands_run_fk',
-      'workflow_run_events_run_fk',
     ]),
   )
 })
@@ -843,10 +823,8 @@ test('drizzle kit exports migration sql from app-owned schema file', async () =>
   expect(sql).toContain('CREATE TYPE "workflow_run_kind"')
   expect(sql).toContain('CREATE TYPE "workflow_node_child_kind"')
   expect(sql).toContain('CREATE TABLE "workflow_runs"')
-  expect(sql).toContain('CREATE TABLE "workflow_run_events"')
   expect(sql).toContain('CREATE TABLE "workflow_schedules"')
   expect(sql).toContain('CREATE TABLE "workflow_node_children"')
-  expect(sql).toContain('"id" bigint PRIMARY KEY GENERATED ALWAYS AS IDENTITY')
   expect(sql).toContain(
     'CONSTRAINT "workflow_node_children_pkey" PRIMARY KEY("run_id","node_name","child_key")',
   )
@@ -855,8 +833,6 @@ test('drizzle kit exports migration sql from app-owned schema file', async () =>
   )
   expect(sql).toContain('CREATE INDEX "workflow_node_children_node_idx"')
   expect(sql).toContain('CREATE INDEX "workflow_node_children_child_run_idx"')
-  expect(sql).toContain('CREATE INDEX "workflow_run_events_run_idx"')
-  expect(sql).toContain('CREATE INDEX "workflow_run_events_root_idx"')
   expect(sql).toContain('CREATE INDEX "workflow_schedules_due_idx"')
   expect(sql).toContain('"delivery_count" integer DEFAULT 0 NOT NULL')
   expect(sql).toContain('"dead_at" timestamp with time zone')
@@ -866,7 +842,18 @@ test('drizzle kit exports migration sql from app-owned schema file', async () =>
   expect(sql).toContain(
     'CREATE INDEX "workflow_runs_parent_idx" ON "workflow_runs" ("parent_run_id") WHERE parent_run_id IS NOT NULL',
   )
-  expect(sql).toContain('CREATE INDEX "workflow_runs_input_gin_idx"')
+  expect(sql).toContain(
+    'CREATE INDEX "workflow_runs_prune_idx" ON "workflow_runs" ("status","updated_at") WHERE parent_run_id IS NULL',
+  )
+  expect(sql).toMatch(
+    /CREATE INDEX "workflow_commands_claim_idx" ON "workflow_commands" \(.+\) WHERE dead_at IS NULL/,
+  )
+  expect(sql).toContain(
+    'CREATE INDEX "workflow_commands_dead_idx" ON "workflow_commands" ("dead_at") WHERE dead_at IS NOT NULL',
+  )
+  // search GIN indexes are opt-in and absent from the default export
+  expect(sql).not.toContain('workflow_runs_input_gin_idx')
+  expect(sql).not.toContain('workflow_runs_tags_gin_idx')
 })
 
 test('drizzle schema passes postgres workflow schema verification', async () => {
@@ -883,6 +870,64 @@ test('drizzle schema passes postgres workflow schema verification', async () => 
   await expect(
     verifyPostgresWorkflowSchema(connection),
   ).resolves.toBeUndefined()
+})
+
+test('drizzle schema includes search GIN indexes only on opt-in', () => {
+  const runIndexNames = (schema: ReturnType<typeof createSchema>) =>
+    getTableConfig(schema.tables.runs).indexes.map((index) => index.config.name)
+
+  expect(runIndexNames(createSchema())).not.toEqual(
+    expect.arrayContaining(['workflow_runs_input_gin_idx']),
+  )
+  expect(runIndexNames(createSchema({ searchIndexes: true }))).toEqual(
+    expect.arrayContaining([
+      'workflow_runs_input_gin_idx',
+      'workflow_runs_tags_gin_idx',
+    ]),
+  )
+})
+
+test('status transitions are notify-only; watch yields run status changes', async () => {
+  const connection = createPgliteConnection()
+  await installPostgresWorkflowSchemaForTesting(connection)
+
+  const runtime = createPostgresWorkflowRuntime({ connection })
+  const run = await runtime.store.createRun({
+    workflowName: 'run-events-notify-only',
+    input: {},
+  })
+  await runtime.store.markRunRunning({ runId: run.id })
+  // nothing persists per transition anymore — the table itself is gone
+  const eventTables = await connection.query<{ tablename: string }>(
+    "SELECT tablename FROM pg_tables WHERE tablename = 'workflow_run_events'",
+  )
+  expect(eventTables.rows).toStrictEqual([])
+
+  const client = createWorkflowRuntimeClient(runtime)
+  const iterator = client
+    .watch(run.id, { pollIntervalMs: 25 })
+    [Symbol.asyncIterator]()
+  try {
+    expect((await iterator.next()).value).toStrictEqual({
+      kind: 'run',
+      status: 'running',
+    })
+    await runtime.store.failRun({
+      runId: run.id,
+      error: new Error('boom'),
+    })
+    const terminal = (await iterator.next()).value
+    expect(terminal?.kind).toBe('run')
+    expect(terminal && 'status' in terminal ? terminal.status : undefined).toBe(
+      'failed',
+    )
+    expect(
+      terminal && 'error' in terminal ? terminal.error?.message : undefined,
+    ).toBe('boom')
+    expect((await iterator.next()).done).toBe(true)
+  } finally {
+    await iterator.return?.()
+  }
 })
 
 test('uses one postgres command table for all command kinds', async () => {
@@ -1949,7 +1994,6 @@ test('creates postgres runtime schema with relational constraints', async () => 
       'workflow_node_children_current_attempt_fk',
       'workflow_run_leases_run_fk',
       'workflow_commands_run_fk',
-      'workflow_run_events_run_fk',
     ]),
   )
 })
@@ -2031,10 +2075,31 @@ test('verifies postgres schema indexes', async () => {
     verifyPostgresWorkflowSchema(connection),
   ).resolves.toBeUndefined()
 
+  // search GIN indexes are optional: dropping them keeps the schema valid
   await connection.query('DROP INDEX workflow_runs_tags_gin_idx')
+  await connection.query('DROP INDEX workflow_runs_input_gin_idx')
+  await expect(
+    verifyPostgresWorkflowSchema(connection),
+  ).resolves.toBeUndefined()
+
+  await connection.query('DROP INDEX workflow_runs_root_idx')
 
   await expect(verifyPostgresWorkflowSchema(connection)).rejects.toThrow(
-    'Missing workflow Postgres schema objects: workflow_runs_tags_gin_idx',
+    'Missing workflow Postgres schema objects: workflow_runs_root_idx',
+  )
+})
+
+test('verifies optional postgres schema indexes when present', async () => {
+  const connection = createPgliteConnection()
+  await installPostgresWorkflowSchemaForTesting(connection)
+
+  await connection.query('DROP INDEX workflow_runs_tags_gin_idx')
+  await connection.query(
+    'CREATE INDEX workflow_runs_tags_gin_idx ON workflow_runs (created_at)',
+  )
+
+  await expect(verifyPostgresWorkflowSchema(connection)).rejects.toThrow(
+    'Invalid workflow Postgres schema indexes: workflow_runs_tags_gin_idx',
   )
 })
 
@@ -2118,8 +2183,9 @@ test('rejects a v2 workflow postgres schema missing v3 command columns and index
     `,
   )
 
+  // dropping dead_at also cascades away the partial claim/dead indexes
   await expect(verifyPostgresWorkflowSchema(connection)).rejects.toThrow(
-    'Missing workflow Postgres schema objects: workflow_runs_parent_idx, workflow_runs_root_idx, workflow_commands_continue_dedup_idx',
+    'Missing workflow Postgres schema objects: workflow_runs_parent_idx, workflow_runs_root_idx, workflow_commands_claim_idx, workflow_commands_dead_idx, workflow_commands_continue_dedup_idx',
   )
 })
 

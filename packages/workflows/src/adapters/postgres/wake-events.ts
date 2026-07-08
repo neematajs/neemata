@@ -58,6 +58,7 @@ export function createPostgresWorkflowWakeEvents(
   let disposed = false
   let client: WorkflowPostgresListenerClient | undefined
   let reconnectTimer: ReturnType<typeof setTimeout> | undefined
+  let everListened = false
 
   // shutdown intentionally interrupts in-flight connect/LISTEN work; don't
   // surface those interruptions as errors
@@ -127,6 +128,16 @@ export function createPostgresWorkflowWakeEvents(
       await connected.query(
         `LISTEN "${WORKFLOW_COMMANDS_CHANNEL}"; LISTEN "${WORKFLOW_CANCELLATIONS_CHANNEL}"; LISTEN "${WORKFLOW_RUN_EVENTS_CHANNEL}"`,
       )
+      // Reconnect pulse: everything notified during the gap is lost, and there
+      // is no history to replay, so tell every subscriber "maybe changed" —
+      // wakes are idempotent, so a spurious one costs one refetch/claim pass,
+      // never correctness. Heals watchers and worker dispatch alike.
+      if (everListened) {
+        for (const listeners of commandListeners.values()) fire(listeners)
+        for (const listeners of cancellationListeners.values()) fire(listeners)
+        for (const listeners of runEventListeners.values()) fire(listeners)
+      }
+      everListened = true
     } catch (error) {
       reportError(error)
       scheduleReconnect()

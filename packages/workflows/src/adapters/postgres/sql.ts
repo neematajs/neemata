@@ -6,7 +6,6 @@ import type {
   StoredNodeChild,
   StoredError,
   StoredRun,
-  StoredRunEvent,
 } from '../../runtime/state.ts'
 import type {
   RuntimeNodeStatus,
@@ -320,20 +319,6 @@ export const mapDeadCommand = (row: JsonRecord): DeadWorkflowCommand => ({
   createdAt: row.created_at as Date,
 })
 
-export const mapRunEvent = (row: JsonRecord): StoredRunEvent => ({
-  id: String(row.id),
-  runId: row.run_id as string,
-  rootRunId: row.root_run_id as string,
-  kind: row.kind as StoredRunEvent['kind'],
-  status: row.status as string,
-  ...optional('nodeName', row.node_name as string | undefined),
-  ...optional('childKey', row.child_key as string | undefined),
-  ...optional('attemptId', row.attempt_id as string | undefined),
-  ...optional('attemptNumber', row.attempt_number as number | undefined),
-  ...optional('error', fromOptional(row.error) as StoredError | undefined),
-  createdAt: row.created_at as Date,
-})
-
 export const notifyRunStatusEventSql = (cteName: string) => `
   ${cteName}_notified AS (
     SELECT pg_notify('${WORKFLOW_RUN_EVENTS_CHANNEL}', root_run_id::text)
@@ -353,69 +338,18 @@ export const notifyRunStatusEventColumnsSql = (
     )
     .join('')
 
-export const emitRunStatusEventSql = (sourceAlias: string, cteName: string) => `
-  ${cteName}_events AS (
-    INSERT INTO workflow_run_events (
-      run_id, root_run_id, kind, status, error, created_at
-    )
-    SELECT
-      id, root_run_id, 'run', status::text, error, now()
-    FROM ${sourceAlias}
-    WHERE old_status IS DISTINCT FROM status::text
-    RETURNING root_run_id
-  ),
-  ${notifyRunStatusEventSql(cteName)}
-`
-
-export const emitNodeStatusEventSql = (
+// Nothing is persisted for status changes: the `_events` CTE is a plain
+// projection of the changed rows feeding the pg_notify CTE, so watchers
+// learn the family changed and re-read state. One shape serves run, node,
+// child, and attempt transitions alike.
+export const emitStatusChangeNotifySql = (
   sourceAlias: string,
   cteName: string,
 ) => `
   ${cteName}_events AS (
-    INSERT INTO workflow_run_events (
-      run_id, root_run_id, kind, status, node_name, error, created_at
-    )
-    SELECT
-      run_id, root_run_id, 'node', status::text, name, error, now()
+    SELECT root_run_id
     FROM ${sourceAlias}
     WHERE old_status IS DISTINCT FROM status::text
-    RETURNING root_run_id
-  ),
-  ${notifyRunStatusEventSql(cteName)}
-`
-
-export const emitChildStatusEventSql = (
-  sourceAlias: string,
-  cteName: string,
-) => `
-  ${cteName}_events AS (
-    INSERT INTO workflow_run_events (
-      run_id, root_run_id, kind, status, node_name, child_key, error, created_at
-    )
-    SELECT
-      run_id, root_run_id, 'child', status::text, node_name, child_key, error, now()
-    FROM ${sourceAlias}
-    WHERE old_status IS DISTINCT FROM status::text
-    RETURNING root_run_id
-  ),
-  ${notifyRunStatusEventSql(cteName)}
-`
-
-export const emitAttemptStatusEventSql = (
-  sourceAlias: string,
-  cteName: string,
-) => `
-  ${cteName}_events AS (
-    INSERT INTO workflow_run_events (
-      run_id, root_run_id, kind, status, node_name, child_key,
-      attempt_id, attempt_number, error, created_at
-    )
-    SELECT
-      run_id, root_run_id, 'attempt', status::text, node_name, child_key,
-      id, attempt_number, error, now()
-    FROM ${sourceAlias}
-    WHERE old_status IS DISTINCT FROM status::text
-    RETURNING root_run_id
   ),
   ${notifyRunStatusEventSql(cteName)}
 `
