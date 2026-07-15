@@ -23,7 +23,11 @@ const statusResponseBuffer = await statusResponse.arrayBuffer()
 
 type UwsResponse = Parameters<
   Parameters<ReturnType<typeof App>['any']>[1]
->[0] & { aborted?: boolean; wakeWritable?: () => void }
+>[0] & {
+  aborted?: boolean
+  wakeWritable?: () => void
+  cancelBody?: () => void
+}
 
 function adapterFactory(params: HttpAdapterParams<'node'>): HttpAdapterServer {
   const server = params.tls
@@ -52,6 +56,7 @@ function adapterFactory(params: HttpAdapterParams<'node'>): HttpAdapterServer {
         aborted = true
         uwsRes.aborted = true
         uwsRes.wakeWritable?.()
+        uwsRes.cancelBody?.()
         requestController.abort()
 
         try {
@@ -216,6 +221,11 @@ export async function handleChunkedStream(
   body: ReadableStream<Uint8Array>,
 ): Promise<void> {
   const reader = body.getReader()
+  // abort must also cancel a pending read(): a stalled source would otherwise
+  // keep the pump and the reader lock alive forever
+  res.cancelBody = () => {
+    reader.cancel().catch(() => {})
+  }
   // uWS honors only the first onWritable registration per response, so a
   // single handler dispatches drain (and abort) events to the pending waiter
   let writableHandlerRegistered = false
@@ -250,6 +260,7 @@ export async function handleChunkedStream(
 
     if (!res.aborted) res.cork(() => res.end())
   } finally {
+    res.cancelBody = undefined
     reader.releaseLock()
   }
 }

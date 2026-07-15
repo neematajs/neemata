@@ -178,9 +178,11 @@ describe('node runtime adapter', () => {
         res,
         fireWritable: () => handler!(0),
         counts: () => ({ writes, ends, registrations }),
+        // mirrors what the route's onAborted handler does
         abort: () => {
           res.aborted = true
           res.wakeWritable?.()
+          res.cancelBody?.()
         },
       }
     }
@@ -258,6 +260,29 @@ describe('node runtime adapter', () => {
       double.abort()
       await expect(pump).rejects.toThrow('Response aborted')
       expect(double.counts()).toEqual({ writes: 2, ends: 0, registrations: 1 })
+    })
+
+    it('abort while read() is stalled cancels the reader and exits the pump', async () => {
+      const double = createResDouble([])
+      let cancelled = false
+      const body = new ReadableStream<Uint8Array>({
+        // source never produces: the pump parks inside reader.read()
+        pull: () => new Promise<never>(() => {}),
+        cancel() {
+          cancelled = true
+        },
+      })
+      const pump = handleChunkedStream(double.res, body)
+
+      await tick()
+      expect(double.counts().writes).toBe(0)
+
+      double.abort()
+      // reader.cancel() resolves the pending read as done and the pump exits
+      // without writing or ending the aborted response
+      await pump
+      expect(cancelled).toBe(true)
+      expect(double.counts()).toEqual({ writes: 0, ends: 0, registrations: 0 })
     })
   })
 })
