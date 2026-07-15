@@ -73,7 +73,9 @@ export class WsTransportServer implements TransportWorker<
     try {
       const result = peer.send(buffer)
       if (typeof result === 'boolean') return result
-      if (typeof result === 'number') return result > 0
+      if (typeof result === 'number') {
+        return this.#server.isSendSuccess?.(result) ?? true
+      }
       return true
     } catch (error) {
       console.error(

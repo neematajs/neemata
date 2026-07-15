@@ -24,6 +24,13 @@ export class ProtocolVersion1 extends ProtocolVersionInterface {
         )
         const procedureOffset =
           MessageByteLength.CallId + MessageByteLength.ProcedureLength
+        // toString/subarray silently clamp to the buffer end, so a truncated
+        // frame would decode into a wrong procedure/payload instead of failing
+        if (procedureOffset + procedureLength > messagePayload.byteLength) {
+          throw new Error(
+            `Malformed RPC message: procedure length ${procedureLength} exceeds frame size`,
+          )
+        }
         const procedure = messagePayload.toString(
           'utf-8',
           procedureOffset,

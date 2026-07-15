@@ -17,10 +17,8 @@ export class ProtocolError extends Error implements BaseProtocolError {
     this.data = data
   }
 
-  get message() {
-    return `${this.code} ${super.message}`
-  }
-
+  // code stays out of `message` so serialization round-trips don't
+  // accumulate "CODE CODE message" prefixes
   toString() {
     return `${this.code} ${this.message}`
   }

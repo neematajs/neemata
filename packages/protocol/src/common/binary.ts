@@ -35,10 +35,13 @@ export const decodeNumber = <T extends keyof BinaryTypes>(
   offset = 0,
   littleEndian = true,
 ): BinaryTypes[T] => {
-  const ab = buffer instanceof ArrayBuffer ? buffer : buffer.buffer
-  const baseOffset = buffer instanceof ArrayBuffer ? 0 : buffer.byteOffset
-  const view = new DataView(ab)
-  return view[`get${type}`](baseOffset + offset, littleEndian) as BinaryTypes[T]
+  // bound the DataView to the passed view, so out-of-range reads throw
+  // instead of silently reading neighboring bytes of the backing buffer
+  const view =
+    buffer instanceof ArrayBuffer
+      ? new DataView(buffer)
+      : new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength)
+  return view[`get${type}`](offset, littleEndian) as BinaryTypes[T]
 }
 
 export const encodeText = (text: string) => utf8encoder.encode(text)
