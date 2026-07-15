@@ -41,9 +41,11 @@ describe('MsgpackFormat', () => {
       const serverDecoded = serverFormat.decode(Buffer.from(clientEncoded))
       expect(serverDecoded).toBeUndefined()
 
-      const serverEncoded = serverFormat.encode(undefined)
-      const clientDecoded = clientFormat.decode(Buffer.from(serverEncoded))
-      expect(clientDecoded).toBeUndefined()
+      // Server encode rejects undefined — a zero-byte frame would be
+      // silently dropped over SSE and break decoding over WS
+      expect(() => serverFormat.encode(undefined)).toThrow(
+        'Cannot encode undefined',
+      )
     })
 
     it('should have consistent encodeRPC/decodeRPC without blobs between client and server', () => {

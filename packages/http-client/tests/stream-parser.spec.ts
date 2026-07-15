@@ -1,3 +1,5 @@
+/// <reference types="node" />
+
 import { Buffer } from 'node:buffer'
 
 import { describe, expect, it } from 'vitest'

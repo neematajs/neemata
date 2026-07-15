@@ -322,7 +322,11 @@ export class HttpTransportServer implements TransportWorker<
         })
       } else {
         // Handle regular responses
-        const buffer = connection.encoder.encode(result)
+        // void results respond with an empty body — encode rejects undefined
+        const buffer =
+          typeof result === 'undefined'
+            ? undefined
+            : connection.encoder.encode(result)
         responseHeaders.set('Content-Type', connection.encoder.contentType)
 
         // @ts-expect-error

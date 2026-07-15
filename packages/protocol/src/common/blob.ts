@@ -70,7 +70,7 @@ export class ProtocolBlob implements ProtocolBlobInterface {
     type?: string
     filename?: string
   }) {
-    if (typeof size !== 'undefined' && size <= 0)
+    if (typeof size !== 'undefined' && (Number.isNaN(size) || size < 0))
       throw new Error('Blob size is invalid')
 
     this.encode = encode
@@ -92,7 +92,9 @@ export class ProtocolBlob implements ProtocolBlobInterface {
     _encode?: (metadata: ProtocolBlobMetadata) => unknown,
   ) {
     let source: any
-    const metadata = { type: 'application/octet-stream', ..._metadata }
+    // No type default here — source-inferred types below must win over it,
+    // the default is applied last, after inference
+    const metadata = { ..._metadata }
 
     if (_source instanceof globalThis.ReadableStream) {
       source = _source
@@ -100,10 +102,11 @@ export class ProtocolBlob implements ProtocolBlobInterface {
       source = _source.stream()
       metadata.size ??= _source.size
       metadata.filename ??= _source.name
+      metadata.type ??= _source.type || undefined
     } else if (_source instanceof globalThis.Blob) {
       source = _source.stream()
       metadata.size ??= _source.size
-      metadata.type ??= _source.type
+      metadata.type ??= _source.type || undefined
     } else if (typeof _source === 'string') {
       const blob = new Blob([_source])
       source = blob.stream()
@@ -121,12 +124,17 @@ export class ProtocolBlob implements ProtocolBlobInterface {
       source = _source
     }
 
+    const resolved: ProtocolBlobMetadata = {
+      ...metadata,
+      type: metadata.type ?? 'application/octet-stream',
+    }
+
     return new ProtocolBlob({
       source,
-      encode: _encode?.bind(null, metadata),
-      size: metadata.size,
-      type: metadata.type,
-      filename: metadata.filename,
+      encode: _encode?.bind(null, resolved),
+      size: resolved.size,
+      type: resolved.type,
+      filename: resolved.filename,
     })
   }
 }

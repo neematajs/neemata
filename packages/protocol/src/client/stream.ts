@@ -152,7 +152,8 @@ export class ProtocolServerBlobStream
   }
 
   get size() {
-    return this.metadata.size || Number.NaN
+    // ?? — zero is a valid size for empty blobs, only unknown size is NaN
+    return this.metadata.size ?? Number.NaN
   }
 
   get type() {

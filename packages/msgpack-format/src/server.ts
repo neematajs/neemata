@@ -28,11 +28,14 @@ export class MsgpackFormat extends BaseServerFormat {
   accept = ['application/msgpack']
 
   encode(data: any) {
-    return typeof data !== 'undefined'
-      ? Buffer.from(
-          encode(data, { extensionCodec, context: {}, ignoreUndefined: true }),
-        )
-      : Buffer.alloc(0)
+    // Encoding undefined would produce a zero-byte frame that gets silently
+    // dropped over SSE and breaks decoding over WS — reject it early instead
+    if (typeof data === 'undefined') {
+      throw new TypeError('Cannot encode undefined')
+    }
+    return Buffer.from(
+      encode(data, { extensionCodec, context: {}, ignoreUndefined: true }),
+    )
   }
 
   encodeBlob(streamId: number, metadata: EncodeRPCStreams[number]) {
