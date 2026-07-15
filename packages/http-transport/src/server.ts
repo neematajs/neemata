@@ -136,9 +136,16 @@ export class HttpTransportServer implements TransportWorker<
     const isBlob = request.headers.get(NEEMATA_BLOB_HEADER) === 'true'
     const contentType = request.headers.get('content-type')
     const accept = request.headers.get('accept') || '*/*'
+    // GET endpoints are reachable via browser navigation, which sends HTML
+    // Accept headers; fall back to the default format only when the client's
+    // Accept can't be negotiated
+    const negotiableAccept =
+      canHaveBody || this.params.formats.supportsEncoder(accept)
+        ? accept
+        : '*/*'
 
     await using connection = await this.params.onConnect({
-      accept: canHaveBody ? accept : '*/*',
+      accept: negotiableAccept,
       contentType: isBlob || !contentType ? '*/*' : contentType,
       data: request,
       protocolVersion: ProtocolVersion.v1,
@@ -178,7 +185,11 @@ export class HttpTransportServer implements TransportWorker<
       } else {
         const querystring = url.searchParams.get('payload')
         if (querystring) {
-          payload = JSON.parse(querystring)
+          try {
+            payload = JSON.parse(querystring)
+          } catch {
+            throw new ProtocolError(ErrorCode.BadRequest, 'Invalid payload')
+          }
         }
       }
 
