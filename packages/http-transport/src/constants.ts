@@ -2,6 +2,9 @@ import type { MetadataKind } from '@nmtjs/application'
 import { createMeta } from '@nmtjs/application'
 import { ErrorCode } from '@nmtjs/protocol'
 
+// Matches Bun's maxRequestBodySize default so all runtimes behave the same
+export const DEFAULT_MAX_REQUEST_BODY_SIZE = 128 * 1024 * 1024
+
 export enum HttpStatus {
   Continue = 100,
   SwitchingProtocols = 101,

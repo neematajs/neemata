@@ -28,16 +28,19 @@ import type {
 } from './types.ts'
 import {
   AllowedHttpMethod,
+  DEFAULT_MAX_REQUEST_BODY_SIZE,
   HttpCodeMap,
   HttpStatus,
   HttpStatusText,
 } from './constants.ts'
 import * as injections from './injectables.ts'
+import { PayloadTooLargeError } from './utils.ts'
 
 const NEEMATA_BLOB_HEADER = 'X-Neemata-Blob'
 const DEFAULT_ALLOWED_METHODS = Object.freeze(['post']) as ('get' | 'post')[]
+// No allowCredentials here: reflecting arbitrary origins with credentials
+// would let any website make cookie-authed requests
 const DEFAULT_CORS_PARAMS = Object.freeze({
-  allowCredentials: 'true',
   allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowHeaders: [
     'Content-Type',
@@ -51,6 +54,11 @@ const DEFAULT_CORS_PARAMS = Object.freeze({
   requestMethod: undefined,
   exposeHeaders: [],
   requestHeaders: [],
+}) satisfies Omit<HttpTransportCorsCustomParams, 'origin'>
+// Credentials are safe to allow when the user explicitly vetted the origin
+const EXPLICIT_ORIGIN_CORS_PARAMS = Object.freeze({
+  ...DEFAULT_CORS_PARAMS,
+  allowCredentials: 'true',
 }) satisfies Omit<HttpTransportCorsCustomParams, 'origin'>
 const CORS_HEADERS_MAP: Record<
   keyof HttpTransportCorsCustomParams | 'origin',
@@ -82,6 +90,7 @@ export class HttpTransportServer implements TransportWorker<
 > {
   #server: HttpAdapterServer
   #corsOptions?: HttpTransportOptions['cors']
+  #maxRequestBodySize: number
 
   params!: TransportWorkerParams<
     ConnectionType.Unidirectional,
@@ -94,6 +103,8 @@ export class HttpTransportServer implements TransportWorker<
   ) {
     this.#server = this.createServer()
     this.#corsOptions = this.options.cors
+    this.#maxRequestBodySize =
+      this.options.maxRequestBodySize ?? DEFAULT_MAX_REQUEST_BODY_SIZE
   }
 
   async start(
@@ -170,7 +181,17 @@ export class HttpTransportServer implements TransportWorker<
           payload = new ProtocolClientStream(-1, { size, type })
           bodyStream.pipe(payload)
         } else {
-          const buffer = Buffer.concat(await bodyStream.toArray())
+          const chunks: Buffer[] = []
+          let received = 0
+          for await (const chunk of bodyStream) {
+            received += chunk.byteLength
+            // Reject mid-stream to avoid buffering unbounded payloads
+            if (received > this.#maxRequestBodySize) {
+              throw new PayloadTooLargeError()
+            }
+            chunks.push(chunk)
+          }
+          const buffer = Buffer.concat(chunks)
           if (buffer.byteLength > 0) {
             payload = connection.decoder.decode(buffer)
           }
@@ -282,6 +303,17 @@ export class HttpTransportServer implements TransportWorker<
         })
       }
     } catch (error) {
+      if (error instanceof PayloadTooLargeError) {
+        const status = HttpStatus.PayloadTooLarge
+        const text = HttpStatusText[status]
+
+        return new Response(text, {
+          status,
+          statusText: text,
+          headers: responseHeaders,
+        })
+      }
+
       if (error instanceof UnsupportedFormatError) {
         const status =
           error instanceof UnsupportedContentTypeError
@@ -347,15 +379,19 @@ export class HttpTransportServer implements TransportWorker<
       params = { ...DEFAULT_CORS_PARAMS }
     } else if (Array.isArray(this.#corsOptions)) {
       if (this.#corsOptions.includes(origin)) {
-        params = { ...DEFAULT_CORS_PARAMS }
+        params = { ...EXPLICIT_ORIGIN_CORS_PARAMS }
       }
     } else if (typeof this.#corsOptions === 'object') {
       if (
         this.#corsOptions.origin === true ||
         this.#corsOptions.origin.includes(origin)
       ) {
-        params = { ...DEFAULT_CORS_PARAMS }
-        for (const key in DEFAULT_CORS_PARAMS) {
+        params =
+          this.#corsOptions.origin === true
+            ? { ...DEFAULT_CORS_PARAMS }
+            : { ...EXPLICIT_ORIGIN_CORS_PARAMS }
+        // Iterating base params also drops allowCredentials for origin: true
+        for (const key in params) {
           const value = this.#corsOptions[key]
           if (value !== undefined) {
             params[key] = value
@@ -366,11 +402,14 @@ export class HttpTransportServer implements TransportWorker<
       const result = this.#corsOptions(origin, request)
       if (typeof result === 'boolean') {
         if (result) {
-          params = { ...DEFAULT_CORS_PARAMS }
+          params = { ...EXPLICIT_ORIGIN_CORS_PARAMS }
         }
       } else if (typeof result === 'object') {
-        params = { ...DEFAULT_CORS_PARAMS }
-        for (const key in DEFAULT_CORS_PARAMS) {
+        params =
+          result.origin === true
+            ? { ...DEFAULT_CORS_PARAMS }
+            : { ...EXPLICIT_ORIGIN_CORS_PARAMS }
+        for (const key in params) {
           const value = result[key]
           if (value !== undefined) {
             params[key] = value

@@ -12,19 +12,41 @@ export type HttpTransportOptions<
   listen: HttpTransportListenOptions
   cors?: HttpTransportCorsOptions
   tls?: HttpTransportTlsOptions
+  /**
+   * Maximum request body size in bytes. Requests exceeding it are rejected
+   * with 413 Payload Too Large. Defaults to 128MiB (Bun's own default, kept
+   * consistent across runtimes).
+   */
+  maxRequestBodySize?: number
   runtime?: HttpTransportRuntimes[R]
 }
 
 export type HttpTransportCorsCustomParams = {
-  origin: true | string[]
   allowMethods?: string[]
   allowHeaders?: string[]
-  allowCredentials?: string
   maxAge?: string
   exposeHeaders?: string[]
   requestHeaders?: string[]
   requestMethod?: string
-}
+} & (
+  | {
+      /**
+       * Reflect any request origin. Credentials are not allowed in this mode:
+       * combining a reflected origin with `Access-Control-Allow-Credentials`
+       * would let any website make credentialed (cookie-authed) requests.
+       */
+      origin: true
+      allowCredentials?: never
+    }
+  | {
+      /**
+       * Explicit origin allowlist. Credentials are enabled by default for
+       * allowlisted origins (set `allowCredentials` to override).
+       */
+      origin: string[]
+      allowCredentials?: string
+    }
+)
 
 export type HttpTransportCorsOptions =
   | true
@@ -83,6 +105,7 @@ export type HttpAdapterParams<
   ) => MaybePromise<Response>
   cors?: HttpTransportCorsOptions
   tls?: HttpTransportTlsOptions
+  maxRequestBodySize?: number
   runtime?: HttpTransportRuntimes[R]
 }
 

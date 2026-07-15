@@ -26,6 +26,9 @@ function adapterFactory(params: HttpAdapterParams<'bun'>): HttpAdapterServer {
 
     return globalThis.Bun.serve({
       ...params.runtime,
+      // Bun's own default (128MiB) applies when neither option is set
+      maxRequestBodySize:
+        params.runtime?.maxRequestBodySize ?? params.maxRequestBodySize,
       unix: params.listen.unix as string,
       port: params.listen.port ?? 0,
       hostname: params.listen.hostname,
