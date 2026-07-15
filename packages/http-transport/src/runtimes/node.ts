@@ -10,12 +10,14 @@ import type {
   HttpAdapterServer,
   HttpTransportOptions,
 } from '../types.ts'
+import { DEFAULT_MAX_REQUEST_BODY_SIZE } from '../constants.ts'
 import * as injectables from '../injectables.ts'
 import { createHTTPTransportWorker } from '../server.ts'
 import {
   InternalServerErrorHttpResponse,
   NotFoundHttpResponse,
   OkResponse,
+  PayloadTooLargeError,
 } from '../utils.ts'
 
 const statusResponse = OkResponse()
@@ -26,6 +28,7 @@ type UwsResponse = Parameters<
 >[0] & { aborted?: boolean }
 
 function adapterFactory(params: HttpAdapterParams<'node'>): HttpAdapterServer {
+  const maxBodySize = params.maxRequestBodySize ?? DEFAULT_MAX_REQUEST_BODY_SIZE
   const server = params.tls
     ? SSLApp({
         passphrase: params.tls.passphrase,
@@ -70,12 +73,22 @@ function adapterFactory(params: HttpAdapterParams<'node'>): HttpAdapterServer {
       const url = new URL(req.getUrl(), `${proto}://${host}`)
       url.search = req.getQuery() ? `?${req.getQuery()}` : ''
       try {
+        // uWS delivers chunks without backpressure, so cap what gets copied
+        // into memory before the whole body arrives
+        let received = 0
+        let capped = false
         const body = new ReadableStream<Buffer>({
           start(controller) {
             bodyController = controller
             res.onDataV2((chunk, maxRemainingBodyLength) => {
-              if (aborted) return
+              if (aborted || capped) return
               if (chunk) {
+                received += chunk.byteLength
+                if (received > maxBodySize) {
+                  capped = true
+                  controller.error(new PayloadTooLargeError())
+                  return
+                }
                 const copy = Buffer.allocUnsafe(chunk.byteLength)
                 copy.set(new Uint8Array(chunk))
                 controller.enqueue(copy)

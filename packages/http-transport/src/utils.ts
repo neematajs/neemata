@@ -26,3 +26,9 @@ export const InternalServerErrorHttpResponse = () =>
   })
 
 export const OkResponse = () => new Response('OK', { status: 200 })
+
+export class PayloadTooLargeError extends Error {
+  constructor(message = 'Payload Too Large') {
+    super(message)
+  }
+}
