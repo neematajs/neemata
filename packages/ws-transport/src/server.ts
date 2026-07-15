@@ -153,7 +153,19 @@ export class WsTransportServer implements TransportWorker<
       },
       open: (peer) => {
         const { connectionId } = peer.context
-        this.clearPendingOpenReap(connectionId)
+        // If the reap already claimed this connection, the gateway side is
+        // gone — close the late peer instead of registering a zombie
+        if (!this.clearPendingOpenReap(connectionId)) {
+          try {
+            peer.close(1001, 'Closed')
+          } catch (error) {
+            console.error(
+              `Failed to close late WebSocket connection ${connectionId}`,
+              error,
+            )
+          }
+          return
+        }
         this.clients.set(connectionId, peer)
       },
       message: async (peer, message) => {
@@ -206,11 +218,14 @@ export class WsTransportServer implements TransportWorker<
     this.pendingOpen.set(connectionId, timer)
   }
 
+  // Returns whether the pending entry was claimed by this caller; false
+  // means the reap timer already fired (or there was no pending entry)
   private clearPendingOpenReap(connectionId: string) {
     const timer = this.pendingOpen.get(connectionId)
-    if (timer === undefined) return
+    if (timer === undefined) return false
     this.pendingOpen.delete(connectionId)
     clearTimeout(timer)
+    return true
   }
 
   private createServer() {

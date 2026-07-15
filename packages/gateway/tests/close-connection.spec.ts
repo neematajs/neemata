@@ -11,7 +11,10 @@ import {
   createTestServerFormat,
 } from './_helpers/test-utils.ts'
 
-const createGateway = (transportOverrides: Record<string, any> = {}) => {
+const createGateway = (
+  transportOverrides: Record<string, any> = {},
+  gatewayOverrides: Record<string, any> = {},
+) => {
   const logger = createTestLogger()
   const container = createTestContainer({ logger })
   const serverFormat = createTestServerFormat()
@@ -42,6 +45,7 @@ const createGateway = (transportOverrides: Record<string, any> = {}) => {
     transports: { test: { transport } },
     api,
     heartbeat: false,
+    ...gatewayOverrides,
   })
 
   const connect = async () => {
@@ -101,5 +105,61 @@ describe('Gateway closeConnection', () => {
     expect(rpcController.signal.aborted).toBe(true)
     expect(disposeSpy).toHaveBeenCalledTimes(1)
     expect(gateway.connections.has(connection.id)).toBe(false)
+  })
+
+  it('stop() waits for a teardown claimed by a concurrent caller', async () => {
+    let resolveClose!: () => void
+    const { gateway, connect, getParams } = createGateway({
+      close: vi.fn(
+        () => new Promise<void>((resolve) => (resolveClose = resolve)),
+      ),
+    })
+
+    const connection = await connect()
+    const disposeSpy = vi.spyOn(connection.container, 'dispose')
+
+    // Disconnect claims the teardown and parks on transport.close
+    const disconnect = getParams().onDisconnect(connection.id)
+
+    let stopped = false
+    const stop = gateway.stop().then(() => {
+      stopped = true
+    })
+
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(stopped).toBe(false)
+    expect(disposeSpy).not.toHaveBeenCalled()
+
+    resolveClose()
+    await Promise.all([disconnect, stop])
+
+    expect(stopped).toBe(true)
+    expect(disposeSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('heartbeat timeout racing disconnect closes and disposes exactly once', async () => {
+    vi.useFakeTimers()
+
+    const { gateway, transport, connect, getParams } = createGateway(
+      {},
+      { heartbeat: { interval: 1000, timeout: 500 } },
+    )
+
+    const connection = await connect()
+    const disposeSpy = vi.spyOn(connection.container, 'dispose')
+
+    // Ping goes out, then a transport disconnect races the pending heartbeat:
+    // stopping the heartbeat rejects the pending Pong future, sending the
+    // heartbeat loop into its timeout path against the claimed teardown
+    await vi.advanceTimersByTimeAsync(1000)
+    const disconnect = getParams().onDisconnect(connection.id)
+    await vi.advanceTimersByTimeAsync(500)
+    await disconnect
+
+    expect(transport.close).toHaveBeenCalledTimes(1)
+    expect(disposeSpy).toHaveBeenCalledTimes(1)
+    expect(gateway.connections.has(connection.id)).toBe(false)
+
+    vi.useRealTimers()
   })
 })

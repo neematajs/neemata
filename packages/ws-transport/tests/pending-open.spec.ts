@@ -70,6 +70,28 @@ describe('WsTransportServer pending-open TTL', () => {
     expect(onDisconnect).not.toHaveBeenCalled()
   })
 
+  it('closes a peer whose open arrives after the reap', async () => {
+    const { server, getHooks } = createServer()
+    const onConnect = vi.fn(async () => ({ id: 'conn-1' }))
+    const onDisconnect = vi.fn(async () => {})
+
+    await server.start({ onConnect, onDisconnect } as any)
+    await getHooks().upgrade!(upgradeRequest)
+
+    await vi.advanceTimersByTimeAsync(WS_PENDING_OPEN_TTL)
+    expect(onDisconnect).toHaveBeenCalledTimes(1)
+
+    const peer = {
+      context: { connectionId: 'conn-1' },
+      close: vi.fn(),
+      send: vi.fn(),
+    } as any
+    getHooks().open!(peer)
+
+    expect(peer.close).toHaveBeenCalledWith(1001, 'Closed')
+    expect(server.clients.has('conn-1')).toBe(false)
+  })
+
   it('cancels the reap timer when close fires before open', async () => {
     const { server, getHooks } = createServer()
     const onConnect = vi.fn(async () => ({ id: 'conn-1' }))
