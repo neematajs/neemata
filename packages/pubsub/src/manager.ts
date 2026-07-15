@@ -101,9 +101,17 @@ export class PubSubManager {
 
     const { adapter } = this.options
 
+    // Owned controller lets destroy() release an adapter iterator that is
+    // blocked waiting for the next message, even without a caller signal.
+    const controller = new AbortController()
+    const finalSignal = signal
+      ? AbortSignal.any([signal, controller.signal])
+      : controller.signal
+
     const stream = this.createMessageStream(
-      adapter.subscribe(channel, signal),
+      adapter.subscribe(channel, finalSignal),
       events,
+      controller,
     )
 
     stream.on('close', () => {
@@ -146,6 +154,7 @@ export class PubSubManager {
   private createMessageStream(
     stream: AsyncIterable<PubSubMessage>,
     events: Map<string, TAnySubscriptionEventContract>,
+    controller: AbortController,
   ): Readable {
     const logger = this.logger
     const iterator = stream[Symbol.asyncIterator]()
@@ -198,8 +207,11 @@ export class PubSubManager {
         }
       },
       destroy(error, callback) {
+        // Abort first: return() alone queues behind a next() that is blocked
+        // waiting for the next message and would never let cleanup run.
+        controller.abort()
         // Best-effort release of the adapter subscription; don't block
-        // destruction on an iterator that only settles on the next message.
+        // destruction on the iterator settling.
         iterator.return?.()?.catch(() => {})
         callback(error)
       },
