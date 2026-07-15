@@ -212,7 +212,12 @@ export class PubSubManager {
         controller.abort()
         // Best-effort release of the adapter subscription; don't block
         // destruction on the iterator settling.
-        iterator.return?.()?.catch(() => {})
+        iterator.return?.()?.catch((error) => {
+          logger.error(
+            { error },
+            'Failed to release pubsub subscription iterator',
+          )
+        })
         callback(error)
       },
     })

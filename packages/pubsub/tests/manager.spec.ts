@@ -141,6 +141,30 @@ describe('PubSubManager subscription stream', () => {
     expect(received).toEqual([{ event: 'message', payload: { text: 'first' } }])
   })
 
+  it('ends the stream gracefully when a caller signal aborts', async () => {
+    const controller = new AbortController()
+    const manager = createManager(async function* (_channel, signal) {
+      yield message('first')
+      // Blocked until the combined signal (caller + manager-owned) aborts
+      await new Promise<never>((_, reject) => {
+        signal?.addEventListener('abort', () => reject(signal.reason), {
+          once: true,
+        })
+      })
+    })
+    const stream = await subscribeStream(manager, controller.signal)
+
+    const received: unknown[] = []
+    const consumed = (async () => {
+      for await (const item of stream) received.push(item)
+    })()
+    await tick()
+    controller.abort()
+    await consumed
+
+    expect(received).toEqual([{ event: 'message', payload: { text: 'first' } }])
+  })
+
   it('aborts an adapter iterator blocked on the next message when destroyed', async () => {
     let finalized = false
     const manager = createManager(async function* (_channel, signal) {
