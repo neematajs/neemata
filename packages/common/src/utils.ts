@@ -63,13 +63,23 @@ export function withTimeout(
   value: Promise<any>,
   timeout: number,
   timeoutError: Error,
+  abortController?: AbortController,
 ) {
+  let timer: ReturnType<typeof globalThis.setTimeout>
   return Promise.race([
     value,
-    new Promise((_, reject) =>
-      globalThis.setTimeout(reject, timeout, timeoutError),
-    ),
-  ])
+    new Promise((_, reject) => {
+      timer = globalThis.setTimeout(() => {
+        // fire the paired signal so in-flight work is actually cancelled,
+        // not just raced away
+        abortController?.abort(timeoutError)
+        reject(timeoutError)
+      }, timeout)
+    }),
+  ]).finally(() => {
+    // otherwise a settled call would still get aborted at the deadline
+    globalThis.clearTimeout(timer)
+  })
 }
 
 export function tryCaptureStackTrace(depth = 0) {

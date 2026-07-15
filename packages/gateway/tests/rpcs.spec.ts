@@ -79,6 +79,28 @@ describe('RpcManager', () => {
       expect(manager.get('conn-1', 1)).toBeUndefined()
       expect(manager.get('conn-1', 2)).toBe(controller2)
     })
+
+    it('should delete when the caller owns the entry', () => {
+      const controller = new AbortController()
+      manager.set('conn-1', 1, controller)
+
+      manager.delete('conn-1', 1, controller)
+
+      expect(manager.get('conn-1', 1)).toBeUndefined()
+    })
+
+    it('should not delete an entry owned by another controller', () => {
+      const controller1 = new AbortController()
+      const controller2 = new AbortController()
+
+      // callId was reused: deleting on behalf of the old controller
+      // must not remove the new call's entry
+      manager.set('conn-1', 1, controller2)
+
+      manager.delete('conn-1', 1, controller1)
+
+      expect(manager.get('conn-1', 1)).toBe(controller2)
+    })
   })
 
   describe('abort', () => {
@@ -101,13 +123,15 @@ describe('RpcManager', () => {
       expect(controller.signal.reason).toBeInstanceOf(DOMException)
     })
 
-    it('should remove the RPC after aborting', () => {
+    it('should keep the reservation after aborting', () => {
       const controller = new AbortController()
       manager.set('conn-1', 1, controller)
 
       manager.abort('conn-1', 1)
 
-      expect(manager.get('conn-1', 1)).toBeUndefined()
+      // an abort-ignoring handler may still be running: the callId must
+      // stay reserved until the call's context is disposed
+      expect(manager.get('conn-1', 1)).toBe(controller)
     })
 
     it('should do nothing for non-existent RPC', () => {

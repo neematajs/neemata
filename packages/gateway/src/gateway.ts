@@ -322,7 +322,7 @@ export class Gateway<
         streamAbortReason,
       )
 
-      this.rpcs.delete(connection.id, callId)
+      this.rpcs.delete(connection.id, callId, controller)
 
       await container.dispose()
     }
@@ -522,6 +522,17 @@ export class Gateway<
             break
           }
           case ClientMessageType.Rpc: {
+            // reusing an active callId would hijack the in-flight call's
+            // abort controller and interleave responses — drop the message
+            // silently, an error response would reject the pending call
+            // on the client side
+            if (this.rpcs.get(connectionId, message.rpc.callId)) {
+              logger.warn(
+                { callId: message.rpc.callId },
+                'Duplicate RPC call id, dropping message',
+              )
+              break
+            }
             const rpcContext = this.createRpcContext(
               connection,
               messageContext,
@@ -866,7 +877,7 @@ export class Gateway<
   }
 }
 
-const gatewayLoggerOptions: ChildLoggerOptions = {
+export const gatewayLoggerOptions: ChildLoggerOptions = {
   serializers: {
     chunk: (chunk) =>
       isTypedArray(chunk) ? `<Buffer length=${chunk.byteLength}>` : chunk,
@@ -876,14 +887,15 @@ const gatewayLoggerOptions: ChildLoggerOptions = {
           return obj.map(traverseObject)
         } else if (isTypedArray(obj)) {
           return `<${obj.constructor.name} length=${obj.byteLength}>`
+        } else if (isBlobInterface(obj)) {
+          // must run before the generic object branch, blobs are objects too
+          return `<ClientBlobStream metadata=${JSON.stringify(obj.metadata)}>`
         } else if (typeof obj === 'object' && obj !== null) {
           const result: Record<string, any> = {}
           for (const [key, value] of Object.entries(obj)) {
             result[key] = traverseObject(value)
           }
           return result
-        } else if (isBlobInterface(obj)) {
-          return `<ClientBlobStream metadata=${JSON.stringify(obj.metadata)}>`
         }
         return obj
       }

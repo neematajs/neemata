@@ -88,9 +88,7 @@ describe('application runtime boundary', () => {
     }
   })
 
-  it('warns when root-composed routers duplicate a top-level route', async () => {
-    const logger = createLogger({ pinoOptions: { enabled: false } }, 'test')
-    const warn = vi.spyOn(logger, 'warn')
+  it('throws when root-composed routers duplicate a top-level route', () => {
     const first = createRouter({
       routes: {
         ping: createProcedure({ handler: async () => ({ ok: true }) }),
@@ -101,23 +99,35 @@ describe('application runtime boundary', () => {
         ping: createProcedure({ handler: async () => ({ ok: true }) }),
       },
     })
-    const runtime = new NeemataApplication(
-      defineApplication({ router: createRootRouter([first, second] as const) }),
-      { logger },
-    )
 
-    try {
-      await expect(runtime.initialize()).rejects.toThrow(
-        'Procedure ping already registered',
-      )
-      expect(warn).toHaveBeenCalledWith(
-        { route: 'ping' },
-        'Duplicate root router route',
-      )
-    } finally {
-      await runtime.dispose()
-      warn.mockRestore()
-    }
+    expect(() => createRootRouter([first, second] as const)).toThrow(
+      'Root router route collision: "ping"',
+    )
+  })
+
+  it('allows routes named after Object.prototype members', () => {
+    const router = createRouter({
+      routes: {
+        toString: createProcedure({ handler: async () => ({ ok: true }) }),
+      },
+    })
+
+    expect(() => createRootRouter([router] as const)).not.toThrow()
+  })
+
+  it('keeps a route literally named "__proto__" as an own route', () => {
+    const procedure = createProcedure({ handler: async () => ({ ok: true }) })
+    const router = createRouter({
+      routes: { ['__proto__']: procedure },
+    })
+
+    const root = createRootRouter([router] as const)
+
+    // a plain accumulator would pass "__proto__" to the legacy prototype
+    // setter, silently dropping the route from own-property enumeration
+    expect(Object.hasOwn(root.routes, '__proto__')).toBe(true)
+    expect(Object.keys(root.routes)).toContain('__proto__')
+    expect(root.routes['__proto__' as string]).toBe(procedure)
   })
 
   it('registers each root-composed source router once in procedure paths', async () => {

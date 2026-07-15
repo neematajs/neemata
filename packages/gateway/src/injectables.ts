@@ -75,12 +75,28 @@ export const rpcStreamAbortSignal = createLazyInjectable<
 >(Scope.Call, 'RPC stream abort signal')
 
 /**
+ * Optional procedure timeout signal.
+ *
+ * Scope: Call
+ *
+ * Provided by the runtime when a procedure/api timeout is configured, and
+ * aborted when the call times out, so handlers stop instead of running past
+ * the timed-out response.
+ * Prefer rpcAbortSignal for general handler cancellation.
+ */
+export const rpcTimeoutSignal = createLazyInjectable<AbortSignal, Scope.Call>(
+  Scope.Call,
+  'RPC timeout signal',
+)
+
+/**
  * Unified RPC cancellation signal derived from other call/connection signals.
  *
  * Scope: Call
  *
  * Combines rpcClientAbortSignal, connectionAbortSignal, and (if present)
- * rpcStreamAbortSignal. This is the recommended signal for procedure logic.
+ * rpcStreamAbortSignal and rpcTimeoutSignal. This is the recommended signal
+ * for procedure logic.
  *
  * Gateway/transport code should provide rpcClientAbortSignal, not
  * rpcAbortSignal directly, so this composition remains intact.
@@ -91,12 +107,14 @@ export const rpcAbortSignal = createFactoryInjectable(
       rpcClientAbortSignal,
       connectionAbortSignal,
       rpcStreamAbortSignal: optional(rpcStreamAbortSignal),
+      rpcTimeoutSignal: optional(rpcTimeoutSignal),
     },
     create: (ctx) =>
       anyAbortSignal(
         ctx.rpcClientAbortSignal,
         ctx.connectionAbortSignal,
         ctx.rpcStreamAbortSignal,
+        ctx.rpcTimeoutSignal,
       ),
   },
   'Any RPC abort signal',
@@ -129,6 +147,7 @@ export const GatewayInjectables = {
   connectionAbortSignal,
   rpcClientAbortSignal,
   rpcStreamAbortSignal,
+  rpcTimeoutSignal,
   rpcAbortSignal,
   createBlob,
   consumeBlob,
