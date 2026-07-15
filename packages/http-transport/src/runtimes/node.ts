@@ -209,7 +209,9 @@ async function handleFixedLengthStream(
   }
 }
 
-async function handleChunkedStream(
+// exported for tests: the waiter dispatch is timing-sensitive and needs
+// deterministic coverage against a controlled response double
+export async function handleChunkedStream(
   res: UwsResponse,
   body: ReadableStream<Uint8Array>,
 ): Promise<void> {
