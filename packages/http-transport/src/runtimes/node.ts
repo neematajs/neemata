@@ -25,7 +25,11 @@ const statusResponseBuffer = await statusResponse.arrayBuffer()
 
 type UwsResponse = Parameters<
   Parameters<ReturnType<typeof App>['any']>[1]
->[0] & { aborted?: boolean }
+>[0] & {
+  aborted?: boolean
+  wakeWritable?: () => void
+  cancelBody?: () => void
+}
 
 function adapterFactory(params: HttpAdapterParams<'node'>): HttpAdapterServer {
   const maxBodySize = params.maxRequestBodySize ?? DEFAULT_MAX_REQUEST_BODY_SIZE
@@ -54,6 +58,8 @@ function adapterFactory(params: HttpAdapterParams<'node'>): HttpAdapterServer {
       res.onAborted(() => {
         aborted = true
         uwsRes.aborted = true
+        uwsRes.wakeWritable?.()
+        uwsRes.cancelBody?.()
         requestController.abort()
 
         try {
@@ -68,8 +74,14 @@ function adapterFactory(params: HttpAdapterParams<'node'>): HttpAdapterServer {
       req.forEach((k, v) => headers.append(k, v))
 
       const host = headers.get('host') || 'localhost'
-      const proto =
-        headers.get('x-forwarded-proto') || params.tls ? 'https' : 'http'
+      const forwardedProto = headers.get('x-forwarded-proto')
+      const proto = forwardedProto
+        ? forwardedProto === 'https'
+          ? 'https'
+          : 'http'
+        : params.tls
+          ? 'https'
+          : 'http'
       const url = new URL(req.getUrl(), `${proto}://${host}`)
       url.search = req.getQuery() ? `?${req.getQuery()}` : ''
       try {
@@ -215,23 +227,53 @@ async function handleFixedLengthStream(
   }
 }
 
-async function handleChunkedStream(
+// exported for tests: the waiter dispatch is timing-sensitive and needs
+// deterministic coverage against a controlled response double
+export async function handleChunkedStream(
   res: UwsResponse,
   body: ReadableStream<Uint8Array>,
 ): Promise<void> {
   const reader = body.getReader()
+  // abort must also cancel a pending read(): a stalled source would otherwise
+  // keep the pump and the reader lock alive forever
+  res.cancelBody = () => {
+    reader.cancel().catch(() => {})
+  }
+  // uWS honors only the first onWritable registration per response, so a
+  // single handler dispatches drain (and abort) events to the pending waiter
+  let writableHandlerRegistered = false
+  const waitWritable = () =>
+    new Promise<void>((resolve, reject) => {
+      if (!writableHandlerRegistered) {
+        writableHandlerRegistered = true
+        res.onWritable(() => {
+          res.wakeWritable?.()
+          return true
+        })
+      }
+      res.wakeWritable = () => {
+        res.wakeWritable = undefined
+        if (res.aborted) reject(new Error('Response aborted'))
+        else resolve()
+      }
+    })
   try {
     while (!res.aborted) {
       const { done, value } = await reader.read()
       if (done) break
       if (value.byteLength === 0) continue
 
-      const ok = res.cork(() => res.write(value))
-      if (!ok) await waitWritable(res)
+      // cork() returns the response object, not write()'s backpressure flag
+      let ok = true
+      res.cork(() => {
+        ok = res.write(value)
+      })
+      if (!ok) await waitWritable()
     }
 
     if (!res.aborted) res.cork(() => res.end())
   } finally {
+    res.cancelBody = undefined
     reader.releaseLock()
   }
 }
@@ -270,20 +312,6 @@ function handleFixedChunk(
     }
 
     write(chunkOffset)
-  })
-}
-
-function waitWritable(res: UwsResponse): Promise<void> {
-  return new Promise((resolve, reject) => {
-    res.onWritable(() => {
-      if (res.aborted) {
-        reject(new Error('Response aborted'))
-        return false
-      }
-
-      resolve()
-      return true
-    })
   })
 }
 
