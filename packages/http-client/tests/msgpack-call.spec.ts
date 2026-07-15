@@ -1,6 +1,5 @@
 import { StaticClient } from '@nmtjs/client'
 import { MsgpackFormat as ClientMsgpackFormat } from '@nmtjs/msgpack-format/client'
-import { MsgpackFormat as ServerMsgpackFormat } from '@nmtjs/msgpack-format/server'
 import { ProtocolVersion } from '@nmtjs/protocol'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -8,7 +7,6 @@ import { HttpTransportFactory } from '../src/index.ts'
 
 describe('HttpTransportClient + MsgpackFormat', () => {
   const format = new ClientMsgpackFormat()
-  const serverFormat = new ServerMsgpackFormat()
 
   const createClient = (responseBody: ArrayBufferView) => {
     const fetchSpy = vi
@@ -37,8 +35,9 @@ describe('HttpTransportClient + MsgpackFormat', () => {
     await expect((client.call as any).probe(undefined)).resolves.toBe(null)
   })
 
-  it('decodes server-encoded top-level undefined (empty payload) as undefined', async () => {
-    const client = createClient(serverFormat.encode(undefined))
+  it('decodes empty payload (server void result) as undefined', async () => {
+    // server responds to void results with an empty body, encode rejects undefined
+    const client = createClient(new Uint8Array(0))
 
     await expect((client.call as any).probe(undefined)).resolves.toBeUndefined()
   })

@@ -25,8 +25,11 @@ describe('Server MsgpackFormat', () => {
         expect(format.decode(buffer)).toEqual(data)
       })
 
-      it('should encode undefined to empty buffer', () => {
-        expect(format.encode(undefined).byteLength).toBe(0)
+      it('should reject undefined', () => {
+        expect(() => format.encode(undefined)).toThrow(TypeError)
+        expect(() => format.encode(undefined)).toThrow(
+          'Cannot encode undefined',
+        )
       })
     })
 
@@ -96,6 +99,30 @@ describe('Server MsgpackFormat', () => {
         const metadata = { type: 'text/plain', size: 50 }
         const payload = {
           data: ProtocolBlob.from('Hello, test!', metadata, () =>
+            format.encodeBlob(streamId, metadata),
+          ),
+        }
+        const streams: EncodeRPCStreams = { [streamId]: metadata }
+
+        const buffer = Buffer.from(
+          format.encodeRPC(payload, streams) as Uint8Array,
+        )
+
+        const mockConsumer = vi.fn()
+        const ctx = {
+          addStream: vi.fn(() => mockConsumer),
+        } as DecodeRPCContext<any>
+        const decoded = format.decodeRPC(buffer, ctx)
+
+        expect(decoded).toEqual({ data: mockConsumer })
+        expect(ctx.addStream).toHaveBeenCalledWith(streamId, metadata)
+      })
+
+      it('should encode RPC with a zero-byte stream', () => {
+        const streamId = 1
+        const metadata = { type: 'text/plain', size: 0 }
+        const payload = {
+          data: ProtocolBlob.from('', metadata, () =>
             format.encodeBlob(streamId, metadata),
           ),
         }
@@ -214,9 +241,11 @@ describe('Server MsgpackFormat', () => {
     })
 
     describe('undefined value handling', () => {
-      it('should encode undefined as empty buffer', () => {
-        const buffer = format.encode(undefined)
-        expect(buffer.byteLength).toBe(0)
+      it('should reject undefined in encode', () => {
+        expect(() => format.encode(undefined)).toThrow(TypeError)
+        expect(() => format.encode(undefined)).toThrow(
+          'Cannot encode undefined',
+        )
       })
 
       it('should encode null as MessagePack nil', () => {

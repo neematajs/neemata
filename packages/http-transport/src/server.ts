@@ -261,7 +261,8 @@ export class HttpTransportServer implements TransportWorker<
 
         responseHeaders.set(NEEMATA_BLOB_HEADER, 'true')
         responseHeaders.set('Content-Type', type)
-        if (metadata.size) {
+        // nullish check — zero is a valid size for empty blobs
+        if (metadata.size !== undefined) {
           responseHeaders.set('Content-Length', metadata.size.toString())
         }
         if (metadata.filename) {
@@ -322,7 +323,11 @@ export class HttpTransportServer implements TransportWorker<
         })
       } else {
         // Handle regular responses
-        const buffer = connection.encoder.encode(result)
+        // void results respond with an empty body — encode rejects undefined
+        const buffer =
+          typeof result === 'undefined'
+            ? undefined
+            : connection.encoder.encode(result)
         responseHeaders.set('Content-Type', connection.encoder.contentType)
 
         // @ts-expect-error

@@ -219,8 +219,11 @@ export class HttpTransportClient implements UnidirectionalTransport {
         const isBlob = !!response.headers.get(NEEMATA_BLOB_HEADER)
         if (isBlob) {
           const contentLength = response.headers.get('content-length')
-          const size =
-            (contentLength && Number.parseInt(contentLength, 10)) || undefined
+          // distinguish a missing header from a valid zero-byte blob size
+          const parsedLength = contentLength
+            ? Number.parseInt(contentLength, 10)
+            : Number.NaN
+          const size = Number.isNaN(parsedLength) ? undefined : parsedLength
           const type =
             response.headers.get('content-type') || 'application/octet-stream'
           const disposition = response.headers.get('content-disposition')

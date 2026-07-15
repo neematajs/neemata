@@ -13,9 +13,12 @@ export class JsonFormat extends BaseServerFormat {
   accept = ['application/json']
 
   encode(data: any) {
-    return typeof data !== 'undefined'
-      ? Buffer.from(JSON.stringify(data), 'utf-8')
-      : Buffer.alloc(0)
+    // Encoding undefined would produce a zero-byte frame that gets silently
+    // dropped over SSE and breaks decoding over WS — reject it early instead
+    if (typeof data === 'undefined') {
+      throw new TypeError('Cannot encode undefined')
+    }
+    return Buffer.from(JSON.stringify(data), 'utf-8')
   }
 
   encodeBlob(streamId: number) {
