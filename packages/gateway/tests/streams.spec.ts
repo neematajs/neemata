@@ -189,6 +189,15 @@ describe('BlobStreamsManager', () => {
         ).toBe(false)
       })
 
+      it('rejects zero-byte pushes as violations', () => {
+        manager.createClientStream('conn-1', 1, 100, { type: 'text/plain' }, {})
+        manager.grantClientStream('conn-1', 100, 10)
+        // an empty push consumes no credit but would refresh the idle timer
+        expect(
+          manager.pushToClientStream('conn-1', 100, new Uint8Array(0)),
+        ).toBe(false)
+      })
+
       it('ignores pushes for non-existent streams', () => {
         expect(
           manager.pushToClientStream('conn-1', 999, new Uint8Array([1])),

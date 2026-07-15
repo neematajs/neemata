@@ -158,6 +158,13 @@ export class ProtocolServerStream {
         this.#buffered = null
 
         if (chunk === null) {
+          // never advance the producer without credit to spend its output on;
+          // an ended-and-drained source may still signal End (frees no data)
+          if (this.#credits <= 0) {
+            if (this.#sourceEnded && this.#source.readableLength === 0)
+              this.#end()
+            return
+          }
           const read = this.#source.read()
           if (read === null) {
             // source drained: either truly finished or waiting for 'readable'

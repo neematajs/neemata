@@ -137,7 +137,8 @@ export class BlobStreamsManager {
 
   /**
    * Returns `false` on a credit violation (push larger than the outstanding
-   * grant) — the caller is expected to abort the stream and notify the peer.
+   * grant, or an empty push — a free idle-timer refresh otherwise) — the
+   * caller is expected to abort the stream and notify the peer.
    */
   pushToClientStream(
     connectionId: string,
@@ -147,7 +148,7 @@ export class BlobStreamsManager {
     const key = this.getKey(connectionId, streamId)
     const state = this.clientStreams.get(key)
     if (!state) return true
-    if (chunk.byteLength > state.granted) return false
+    if (chunk.byteLength === 0 || chunk.byteLength > state.granted) return false
     state.granted -= chunk.byteLength
     state.stream.write(chunk)
     this.touch(state)

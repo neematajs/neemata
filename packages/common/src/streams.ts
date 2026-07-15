@@ -30,7 +30,8 @@ export class DuplexStream<O = unknown, I = O> {
           // the consumer walked away: pending writes can never be read, let
           // them settle instead of deadlocking the writer
           this.releaseParkedWrites()
-          options.cancel?.(reason)
+          // returned so cancel() awaits async cleanup and surfaces rejections
+          return options.cancel?.(reason)
         },
         start: (controller) => {
           // @ts-expect-error

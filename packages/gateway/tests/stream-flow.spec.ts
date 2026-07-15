@@ -229,7 +229,7 @@ describe('RPC stream flow control', () => {
       }
     }
 
-    const { gateway, sentOfType, send } = await createTestGateway({
+    const { gateway, sentOfType, send, connection } = await createTestGateway({
       call: async () => () => handler(),
     })
 
@@ -244,7 +244,7 @@ describe('RPC stream flow control', () => {
 
     expect(finished).toBe(true)
     expect(sentOfType(ServerMessageType.RpcStreamAbort).length).toBe(1)
-    expect(gateway.rpcs.get('any', 1)).toBeUndefined()
+    expect(gateway.rpcs.get(connection.id, 1)).toBeUndefined()
 
     await gateway.stop()
   })
