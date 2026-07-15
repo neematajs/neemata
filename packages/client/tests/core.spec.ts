@@ -225,6 +225,30 @@ describe('ClientCore', () => {
     expect(error.data).toBe(cause)
   })
 
+  it('survives a decode error emitted without any error listeners', async () => {
+    const transport = createBidirectionalTransportDouble()
+    const core = new ClientCore(
+      { protocol: ProtocolVersion.v1, format },
+      transport.transport,
+    )
+
+    core.setMessageContextFactory(() => createMessageContext())
+    ;(core.protocol as any).decodeMessage = vi.fn(() => {
+      throw new Error('malformed frame')
+    })
+
+    const connectPromise = core.connect()
+    transport.open()
+    await connectPromise
+
+    // pins EventTarget-style emit semantics: an unlistened 'error' event must
+    // not throw (unlike Node's EventEmitter) or surface as unhandled rejection
+    expect(() => transport.emitMessage(new Uint8Array([1, 2, 3]))).not.toThrow()
+    await Promise.resolve()
+
+    expect(core.state).toBe('connected')
+  })
+
   it('reconnects after a server disconnect when reconnect is configured', async () => {
     vi.useFakeTimers()
     const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0)

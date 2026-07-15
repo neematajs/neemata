@@ -57,8 +57,8 @@ describe('reconnectPlugin (bidirectional)', () => {
   })
 
   it('applies reconnect jitter outside browser environments', async () => {
-    // max jitter: delay = timeout + floor(timeout * 0.2)
-    vi.spyOn(Math, 'random').mockReturnValue(1)
+    // near-max jitter: delay = timeout + floor(timeout * 0.2 * 0.995) = 1199
+    vi.spyOn(Math, 'random').mockReturnValue(0.995)
 
     const transport = createMockBidirectionalTransport()
     const connectSpy = vi.spyOn(transport.transport, 'connect')
@@ -79,7 +79,7 @@ describe('reconnectPlugin (bidirectional)', () => {
     await vi.advanceTimersByTimeAsync(1000)
     expect(connectSpy).not.toHaveBeenCalled()
 
-    await vi.advanceTimersByTimeAsync(200)
+    await vi.advanceTimersByTimeAsync(199)
     expect(connectSpy).toHaveBeenCalledTimes(1)
   })
 
