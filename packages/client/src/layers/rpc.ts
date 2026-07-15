@@ -603,8 +603,18 @@ export const createRpcLayer = (
         void rpcStreams.end(message.callId).catch(noopFn)
         calls.delete(message.callId)
         break
-      case ServerMessageType.RpcStreamAbort:
-        calls.get(message.callId)?.cleanup?.()
+      case ServerMessageType.RpcStreamAbort: {
+        const call = calls.get(message.callId)
+        call?.cleanup?.()
+        // an abort may arrive before the stream response was processed;
+        // settle the still-pending call or it would hang forever (no-op if
+        // the call already resolved with a stream)
+        call?.reject(
+          new ProtocolError(
+            ErrorCode.ClientRequestError,
+            message.reason ?? 'RPC stream aborted',
+          ),
+        )
         core.emitStreamEvent({
           direction: 'incoming',
           streamType: 'rpc',
@@ -615,6 +625,7 @@ export const createRpcLayer = (
         void rpcStreams.abort(message.callId, message.reason).catch(noopFn)
         calls.delete(message.callId)
         break
+      }
     }
   })
 

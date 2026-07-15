@@ -260,6 +260,36 @@ describe('RPC streams', () => {
     }
   })
 
+  it('rejects a pending call when the stream aborts before the stream response', async () => {
+    const core = new MockCore()
+    const rpcLayer = createRpcLayer(
+      core as any,
+      { addServerBlobStream: vi.fn() } as any,
+      new BaseClientTransformer(),
+    )
+
+    const streamPromise = rpcLayer.call(
+      'users/profile',
+      { userId: '1' },
+      { _stream_response: true },
+    )
+
+    // abort lands while the call is still pending (e.g. server-side idle
+    // timeout before the RpcStreamResponse was ever processed): the call
+    // must settle instead of hanging forever
+    core.emit(
+      'message',
+      {
+        type: ServerMessageType.RpcStreamAbort,
+        callId: 0,
+        reason: 'stream idle timeout',
+      },
+      new Uint8Array([1]),
+    )
+
+    await expect(streamPromise).rejects.toThrow('stream idle timeout')
+  })
+
   it('propagates server abort reasons to stream consumers', async () => {
     const core = new MockCore()
     const rpcLayer = createRpcLayer(
