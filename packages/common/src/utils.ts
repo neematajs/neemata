@@ -63,11 +63,17 @@ export function withTimeout(
   value: Promise<any>,
   timeout: number,
   timeoutError: Error,
+  abortController?: AbortController,
 ) {
   return Promise.race([
     value,
     new Promise((_, reject) =>
-      globalThis.setTimeout(reject, timeout, timeoutError),
+      globalThis.setTimeout(() => {
+        // fire the paired signal so in-flight work is actually cancelled,
+        // not just raced away
+        abortController?.abort(timeoutError)
+        reject(timeoutError)
+      }, timeout),
     ),
   ])
 }

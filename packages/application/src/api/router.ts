@@ -118,7 +118,14 @@ export function createRootRouter<Routers extends readonly AnyRouter[]>(
   >
 > {
   const routes: Record<string, any> = {}
-  for (const router of routers) Object.assign(routes, router.routes)
+  for (const router of routers) {
+    for (const [name, route] of Object.entries(router.routes)) {
+      // Object.assign would silently drop the earlier route
+      if (name in routes)
+        throw new Error(`Root router route collision: "${name}"`)
+      routes[name] = route
+    }
+  }
   const router = createRouter({ routes })
   return Object.freeze({
     ...router,

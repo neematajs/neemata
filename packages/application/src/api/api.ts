@@ -31,6 +31,7 @@ import {
   createGatewayStaticMetaView,
   isAsyncIterable,
   rpcStreamAbortSignal,
+  rpcTimeoutSignal,
 } from '@nmtjs/gateway'
 import { ErrorCode } from '@nmtjs/protocol'
 import { ProtocolError } from '@nmtjs/protocol/server'
@@ -166,6 +167,10 @@ export class ApplicationApi implements GatewayApi<ApplicationResolvedProcedure> 
     })
 
     const timeout = procedure.contract.timeout ?? this.options.timeout
+    // paired with the timeout so a timed out handler is actually aborted,
+    // not just raced away
+    const timeoutController =
+      timeout && timeout > 0 ? new AbortController() : undefined
     const streamTimeoutSignal = procedure.streamTimeout
       ? AbortSignal.timeout(procedure.streamTimeout)
       : undefined
@@ -174,18 +179,24 @@ export class ApplicationApi implements GatewayApi<ApplicationResolvedProcedure> 
       container.provide(rpcStreamAbortSignal, streamTimeoutSignal)
     }
 
+    if (timeoutController) {
+      container.provide(rpcTimeoutSignal, timeoutController.signal)
+    }
+
     try {
       const handle = await this.createProcedureHandler(
         callOptions,
         metaBindings,
       )
-      return timeout
-        ? await this.withTimeout(handle(payload), timeout)
+      return timeoutController
+        ? await this.withTimeout(handle(payload), timeout!, timeoutController)
         : await handle(payload)
     } catch (error) {
       const handled = await this.handleFilters(callOptions, error)
-      if (handled === error && error instanceof ProtocolError === false) {
-        const logError = new Error('Unhandled error', { cause: error })
+      // plain Errors are not wire-safe: log them and respond with a generic
+      // server error instead of leaking internals
+      if (handled instanceof ProtocolError === false) {
+        const logError = new Error('Unhandled error', { cause: handled })
         this.options.logger.error(logError)
         throw new ApiError(
           ErrorCode.InternalServerError,
@@ -327,13 +338,18 @@ export class ApplicationApi implements GatewayApi<ApplicationResolvedProcedure> 
     return result[Symbol.iterator]()
   }
 
-  private withTimeout(response: any, timeout: number): unknown {
+  private withTimeout(
+    response: any,
+    timeout: number,
+    controller: AbortController,
+  ): unknown {
     const applyTimeout = response instanceof Promise && timeout > 0
     if (!applyTimeout) return response
     return withTimeout(
       response,
       timeout,
       new ApiError(ErrorCode.RequestTimeout, 'Request Timeout'),
+      controller,
     )
   }
 
@@ -363,9 +379,10 @@ export class ApplicationApi implements GatewayApi<ApplicationResolvedProcedure> 
       for (const filter of this.options.filters) {
         if (error instanceof filter.errorClass) {
           const ctx = await container.createContext(filter.dependencies)
+          // accept any Error, as the Filter type promises; non-ProtocolError
+          // results are sanitized on the way out by call()
           const handledError = await filter.handler(ctx, error)
-          if (!handledError || handledError instanceof ApiError === false)
-            continue
+          if (!handledError || handledError instanceof Error === false) continue
           return handledError
         }
       }
@@ -396,7 +413,7 @@ export class ApplicationApi implements GatewayApi<ApplicationResolvedProcedure> 
     runtimeConfig: Required<RuntimeConfig>,
   ) {
     if (!isAsyncIterable(response))
-      throw new Error('Response is an async iterable')
+      throw new Error('Response is not an async iterable')
     const chunkType = procedure.contract.output
     if (chunkType instanceof type.NeverType)
       throw new Error('Stream procedure must have a defined output type')

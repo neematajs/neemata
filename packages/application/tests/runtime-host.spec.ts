@@ -88,9 +88,7 @@ describe('application runtime boundary', () => {
     }
   })
 
-  it('warns when root-composed routers duplicate a top-level route', async () => {
-    const logger = createLogger({ pinoOptions: { enabled: false } }, 'test')
-    const warn = vi.spyOn(logger, 'warn')
+  it('throws when root-composed routers duplicate a top-level route', () => {
     const first = createRouter({
       routes: {
         ping: createProcedure({ handler: async () => ({ ok: true }) }),
@@ -101,23 +99,10 @@ describe('application runtime boundary', () => {
         ping: createProcedure({ handler: async () => ({ ok: true }) }),
       },
     })
-    const runtime = new NeemataApplication(
-      defineApplication({ router: createRootRouter([first, second] as const) }),
-      { logger },
-    )
 
-    try {
-      await expect(runtime.initialize()).rejects.toThrow(
-        'Procedure ping already registered',
-      )
-      expect(warn).toHaveBeenCalledWith(
-        { route: 'ping' },
-        'Duplicate root router route',
-      )
-    } finally {
-      await runtime.dispose()
-      warn.mockRestore()
-    }
+    expect(() => createRootRouter([first, second] as const)).toThrow(
+      'Root router route collision: "ping"',
+    )
   })
 
   it('registers each root-composed source router once in procedure paths', async () => {

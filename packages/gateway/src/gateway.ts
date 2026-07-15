@@ -31,6 +31,7 @@ import {
   ClientMessageType,
   ConnectionType,
   createProtocolBlobReference,
+  ErrorCode,
   getProtocolBlobStreamId,
   isBlobInterface,
   ProtocolBlob,
@@ -522,6 +523,27 @@ export class Gateway<
             break
           }
           case ClientMessageType.Rpc: {
+            // reusing an active callId would hijack the in-flight call's
+            // abort controller and interleave responses — reject it instead
+            if (this.rpcs.get(connectionId, message.rpc.callId)) {
+              messageContext.transport.send!(
+                connectionId,
+                connection.protocol.encodeMessage(
+                  messageContext,
+                  ServerMessageType.RpcResponse,
+                  {
+                    callId: message.rpc.callId,
+                    result: null,
+                    streams: {},
+                    error: new ProtocolError(
+                      ErrorCode.ClientRequestError,
+                      'Duplicate call id',
+                    ),
+                  },
+                ),
+              )
+              break
+            }
             const rpcContext = this.createRpcContext(
               connection,
               messageContext,
@@ -866,7 +888,7 @@ export class Gateway<
   }
 }
 
-const gatewayLoggerOptions: ChildLoggerOptions = {
+export const gatewayLoggerOptions: ChildLoggerOptions = {
   serializers: {
     chunk: (chunk) =>
       isTypedArray(chunk) ? `<Buffer length=${chunk.byteLength}>` : chunk,
@@ -876,14 +898,15 @@ const gatewayLoggerOptions: ChildLoggerOptions = {
           return obj.map(traverseObject)
         } else if (isTypedArray(obj)) {
           return `<${obj.constructor.name} length=${obj.byteLength}>`
+        } else if (isBlobInterface(obj)) {
+          // must run before the generic object branch, blobs are objects too
+          return `<ClientBlobStream metadata=${JSON.stringify(obj.metadata)}>`
         } else if (typeof obj === 'object' && obj !== null) {
           const result: Record<string, any> = {}
           for (const [key, value] of Object.entries(obj)) {
             result[key] = traverseObject(value)
           }
           return result
-        } else if (isBlobInterface(obj)) {
-          return `<ClientBlobStream metadata=${JSON.stringify(obj.metadata)}>`
         }
         return obj
       }
