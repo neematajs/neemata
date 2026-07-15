@@ -28,7 +28,14 @@ function adapterFactory(params: WsAdapterParams<'node'>): WsAdapterServer {
     : App()
 
   server
-    .ws('/*', { ...params.runtime?.ws, ...adapter.websocket })
+    .ws('/*', {
+      // uWS defaults to 64KB and DROPS frames above it — the same order of
+      // magnitude as outstanding stream credit; raise the ceiling so
+      // abort-on-drop stays a safety net (user-provided options still win)
+      maxBackpressure: 1024 * 1024,
+      ...params.runtime?.ws,
+      ...adapter.websocket,
+    })
     .get('/healthy', (res) => {
       res.cork(() => {
         res
