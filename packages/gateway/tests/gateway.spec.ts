@@ -5,7 +5,6 @@ import {
   ClientMessageType,
   ConnectionType,
   createProtocolBlobReference,
-  ErrorCode,
   ProtocolVersion,
   ServerMessageType,
 } from '@nmtjs/protocol'
@@ -29,6 +28,13 @@ const encodeRpcMessage = (callId: number, procedure: string, payload: any) => {
   return Buffer.concat([header, name, Buffer.from(JSON.stringify(payload))])
 }
 
+const encodeRpcAbortMessage = (callId: number) => {
+  const buffer = Buffer.alloc(5)
+  buffer.writeUInt8(ClientMessageType.RpcAbort, 0)
+  buffer.writeUInt32LE(callId, 1)
+  return buffer
+}
+
 const decodeRpcResponse = (buffer: Buffer) => ({
   type: buffer.readUInt8(0),
   callId: buffer.readUInt32LE(1),
@@ -36,93 +42,137 @@ const decodeRpcResponse = (buffer: Buffer) => ({
   payload: JSON.parse(buffer.subarray(6).toString('utf-8')),
 })
 
+async function createTestGateway() {
+  const logger = createTestLogger()
+  const container = createTestContainer({ logger })
+  const serverFormat = createTestServerFormat()
+
+  // each api.call stays in flight until its future is resolved by the test
+  const calls: PromiseWithResolvers<unknown>[] = []
+  const api: GatewayApi = {
+    resolve: vi.fn(async () => ({ name: 'test', stream: false })),
+    call: vi.fn(() => {
+      const future = Promise.withResolvers<unknown>()
+      calls.push(future)
+      return future.promise
+    }),
+  }
+
+  let params: any
+  const sent: Buffer[] = []
+
+  const transport = {
+    start: vi.fn(async (_params) => {
+      params = _params
+      return 'test://'
+    }),
+    stop: vi.fn(async () => {}),
+    send: vi.fn((_connectionId: string, buffer: ArrayBufferView) => {
+      sent.push(Buffer.from(buffer as Uint8Array))
+      return true
+    }),
+    close: vi.fn((_connectionId: string) => {}),
+  }
+
+  const gateway = new Gateway({
+    logger,
+    container,
+    hooks: new Hooks(),
+    formats: new ProtocolFormats([serverFormat]),
+    transports: { test: { transport } },
+    api,
+    heartbeat: false,
+  })
+
+  await gateway.start()
+
+  const connection = await params.onConnect({
+    type: ConnectionType.Bidirectional,
+    protocolVersion: ProtocolVersion.v1,
+    accept: serverFormat.contentType,
+    contentType: serverFormat.contentType,
+    data: {},
+  })
+
+  const send = (data: Buffer) =>
+    params.onMessage({ connectionId: connection.id, data })
+
+  return { gateway, api, calls, sent, connection, send }
+}
+
 describe('Gateway RPC handling', () => {
-  it('rejects a duplicate callId without disturbing the in-flight call', async () => {
-    const logger = createTestLogger()
-    const container = createTestContainer({ logger })
-    const serverFormat = createTestServerFormat()
-
-    const firstCall = Promise.withResolvers<unknown>()
-    const api: GatewayApi = {
-      resolve: vi.fn(async () => ({ name: 'test', stream: false })),
-      call: vi.fn(() => firstCall.promise),
-    }
-
-    let params: any
-    const sent: Buffer[] = []
-
-    const transport = {
-      start: vi.fn(async (_params) => {
-        params = _params
-        return 'test://'
-      }),
-      stop: vi.fn(async () => {}),
-      send: vi.fn((_connectionId: string, buffer: ArrayBufferView) => {
-        sent.push(Buffer.from(buffer as Uint8Array))
-        return true
-      }),
-      close: vi.fn((_connectionId: string) => {}),
-    }
-
-    const gateway = new Gateway({
-      logger,
-      container,
-      hooks: new Hooks(),
-      formats: new ProtocolFormats([serverFormat]),
-      transports: { test: { transport } },
-      api,
-      heartbeat: false,
-    })
-
-    await gateway.start()
-
-    const connection = await params.onConnect({
-      type: ConnectionType.Bidirectional,
-      protocolVersion: ProtocolVersion.v1,
-      accept: serverFormat.contentType,
-      contentType: serverFormat.contentType,
-      data: {},
-    })
+  it('drops a duplicate callId without disturbing the in-flight call', async () => {
+    const { gateway, api, calls, sent, connection, send } =
+      await createTestGateway()
 
     // First call stays in flight (api.call promise unresolved)
-    const inFlight = params.onMessage({
-      connectionId: connection.id,
-      data: encodeRpcMessage(1, 'test', {}),
-    })
+    const inFlight = send(encodeRpcMessage(1, 'test', {}))
 
     const controller = gateway.rpcs.get(connection.id, 1)
     expect(controller).toBeDefined()
 
-    // Hostile reuse of the same callId
-    await params.onMessage({
-      connectionId: connection.id,
-      data: encodeRpcMessage(1, 'test', {}),
-    })
+    // Hostile reuse of the same callId must produce NO response: an error
+    // response would reject the pending call on the client side
+    await send(encodeRpcMessage(1, 'test', {}))
 
     expect(api.call).toHaveBeenCalledTimes(1)
-    expect(sent.length).toBe(1)
-
-    const rejection = decodeRpcResponse(sent[0])
-    expect(rejection.type).toBe(ServerMessageType.RpcResponse)
-    expect(rejection.callId).toBe(1)
-    expect(rejection.isError).toBe(true)
-    expect(rejection.payload).toMatchObject({
-      code: ErrorCode.ClientRequestError,
-    })
+    expect(sent.length).toBe(0)
 
     // Original call survives: same controller, not aborted, responds normally
     expect(gateway.rpcs.get(connection.id, 1)).toBe(controller)
     expect(controller!.signal.aborted).toBe(false)
 
-    firstCall.resolve({ ok: true })
+    calls[0].resolve({ ok: true })
     await inFlight
 
-    expect(sent.length).toBe(2)
-    const response = decodeRpcResponse(sent[1])
+    expect(sent.length).toBe(1)
+    const response = decodeRpcResponse(sent[0])
     expect(response.type).toBe(ServerMessageType.RpcResponse)
     expect(response.callId).toBe(1)
     expect(response.isError).toBe(false)
     expect(response.payload).toStrictEqual({ ok: true })
+
+    await gateway.stop()
+  })
+
+  it('keeps an aborted callId reserved until the handler finishes', async () => {
+    const { gateway, api, calls, sent, connection, send } =
+      await createTestGateway()
+
+    const inFlight = send(encodeRpcMessage(1, 'test', {}))
+    const controller = gateway.rpcs.get(connection.id, 1)
+
+    // Abort-ignoring handler: the call promise stays pending after abort
+    await send(encodeRpcAbortMessage(1))
+    expect(controller!.signal.aborted).toBe(true)
+
+    // Immediate reuse must still be dropped, or the old context's disposal
+    // would remove the new call's controller
+    await send(encodeRpcMessage(1, 'test', {}))
+    expect(api.call).toHaveBeenCalledTimes(1)
+    expect(gateway.rpcs.get(connection.id, 1)).toBe(controller)
+
+    // Once the original call truly finishes, the id becomes reusable
+    calls[0].resolve(null)
+    await inFlight
+    expect(gateway.rpcs.get(connection.id, 1)).toBeUndefined()
+
+    const inFlight2 = send(encodeRpcMessage(1, 'test', {}))
+    expect(api.call).toHaveBeenCalledTimes(2)
+
+    const controller2 = gateway.rpcs.get(connection.id, 1)
+    expect(controller2).toBeDefined()
+    expect(controller2).not.toBe(controller)
+    expect(controller2!.signal.aborted).toBe(false)
+
+    // ...and the new call is abortable via its own controller
+    await send(encodeRpcAbortMessage(1))
+    expect(controller2!.signal.aborted).toBe(true)
+
+    calls[1].resolve(null)
+    await inFlight2
+
+    expect(sent.length).toBe(2)
 
     await gateway.stop()
   })

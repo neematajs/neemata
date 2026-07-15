@@ -31,7 +31,6 @@ import {
   ClientMessageType,
   ConnectionType,
   createProtocolBlobReference,
-  ErrorCode,
   getProtocolBlobStreamId,
   isBlobInterface,
   ProtocolBlob,
@@ -323,7 +322,7 @@ export class Gateway<
         streamAbortReason,
       )
 
-      this.rpcs.delete(connection.id, callId)
+      this.rpcs.delete(connection.id, callId, controller)
 
       await container.dispose()
     }
@@ -524,23 +523,13 @@ export class Gateway<
           }
           case ClientMessageType.Rpc: {
             // reusing an active callId would hijack the in-flight call's
-            // abort controller and interleave responses — reject it instead
+            // abort controller and interleave responses — drop the message
+            // silently, an error response would reject the pending call
+            // on the client side
             if (this.rpcs.get(connectionId, message.rpc.callId)) {
-              messageContext.transport.send!(
-                connectionId,
-                connection.protocol.encodeMessage(
-                  messageContext,
-                  ServerMessageType.RpcResponse,
-                  {
-                    callId: message.rpc.callId,
-                    result: null,
-                    streams: {},
-                    error: new ProtocolError(
-                      ErrorCode.ClientRequestError,
-                      'Duplicate call id',
-                    ),
-                  },
-                ),
+              logger.warn(
+                { callId: message.rpc.callId },
+                'Duplicate RPC call id, dropping message',
               )
               break
             }

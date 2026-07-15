@@ -12,18 +12,18 @@ export class RpcManager {
     return this.rpcs.get(key)
   }
 
-  delete(connectionId: string, callId: number) {
+  delete(connectionId: string, callId: number, owner?: AbortController) {
     const key = this.getKey(connectionId, callId)
+    // callId may have been reused since — only remove an entry the caller owns
+    if (owner && this.rpcs.get(key) !== owner) return
     this.rpcs.delete(key)
   }
 
   abort(connectionId: string, callId: number) {
     const key = this.getKey(connectionId, callId)
-    const controller = this.rpcs.get(key)
-    if (controller) {
-      controller.abort()
-      this.rpcs.delete(key)
-    }
+    // keep the reservation until the call's context is disposed, so the id
+    // cannot be reused while an abort-ignoring handler is still running
+    this.rpcs.get(key)?.abort()
   }
 
   close(connectionId: string) {

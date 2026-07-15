@@ -147,19 +147,28 @@ describe('ApplicationApi timeout', () => {
   })
 
   it('does not abort the handler signal when the call completes in time', async () => {
-    let observed: AbortSignal | undefined
-    const procedure = createProcedure({
-      timeout: 1000,
-      dependencies: { signal: GatewayInjectables.rpcAbortSignal },
-      handler: async (ctx) => {
-        observed = ctx.signal
-        return 'done'
-      },
-    })
-    const { call } = createTestApi({ procedure })
+    vi.useFakeTimers()
+    try {
+      let observed: AbortSignal | undefined
+      const procedure = createProcedure({
+        timeout: 1000,
+        dependencies: { signal: GatewayInjectables.rpcAbortSignal },
+        handler: async (ctx) => {
+          observed = ctx.signal
+          return 'done'
+        },
+      })
+      const { call } = createTestApi({ procedure })
 
-    await call()
+      await call()
+      expect(observed?.aborted).toBe(false)
 
-    expect(observed?.aborted).toBe(false)
+      // the timeout timer must be cleared on completion, a late firing
+      // would abort the still-referenced call signal
+      await vi.advanceTimersByTimeAsync(2000)
+      expect(observed?.aborted).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

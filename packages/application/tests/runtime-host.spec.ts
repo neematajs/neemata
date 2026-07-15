@@ -105,6 +105,16 @@ describe('application runtime boundary', () => {
     )
   })
 
+  it('allows routes named after Object.prototype members', () => {
+    const router = createRouter({
+      routes: {
+        toString: createProcedure({ handler: async () => ({ ok: true }) }),
+      },
+    })
+
+    expect(() => createRootRouter([router] as const)).not.toThrow()
+  })
+
   it('registers each root-composed source router once in procedure paths', async () => {
     const logger = createLogger({ pinoOptions: { enabled: false } }, 'test')
     const allowed = createMeta<'get'>()
