@@ -10,15 +10,21 @@ const writeAndClose = async <T>(writable: WritableStream<T>, chunks: T[]) => {
 }
 
 const writeAndAbort = async <T>(
-  writable: WritableStream<T>,
+  stream: DuplexStream<T>,
   chunks: T[],
   error?: Error,
 ) => {
-  const writer = writable.getWriter()
-  for (const chunk of chunks) await writer.write(chunk)
+  const writer = stream.writable.getWriter()
+  const writes = chunks.map((chunk) => writer.write(chunk))
+  // writes park on backpressure without a consumer; abort() waits for the
+  // in-flight write, so parked writes must be released first
+  stream.releaseParkedWrites()
+  await Promise.all(writes)
   await writer.abort(error ?? new Error('Stream aborted'))
   writer.releaseLock()
 }
+
+const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
 
 describe('DuplexStream', () => {
   it('should push and read chunks', async () => {
@@ -111,7 +117,7 @@ describe('DuplexStream', () => {
   it('should abort the stream with error', async () => {
     const stream = new DuplexStream<string>()
 
-    await writeAndAbort(stream.writable, ['hello'], new Error('Test abort'))
+    await writeAndAbort(stream, ['hello'], new Error('Test abort'))
 
     const reader = stream.readable.getReader()
 
@@ -121,7 +127,7 @@ describe('DuplexStream', () => {
   it('should abort with default error message', async () => {
     const stream = new DuplexStream<string>()
 
-    await writeAndAbort(stream.writable, ['hello'])
+    await writeAndAbort(stream, ['hello'])
 
     const reader = stream.readable.getReader()
 
@@ -155,5 +161,123 @@ describe('DuplexStream', () => {
 
     expect(result.done).toBe(true)
     expect(result.value).toBeUndefined()
+  })
+
+  describe('backpressure', () => {
+    it('parks write until the reader reads at hwm 1', async () => {
+      const stream = new DuplexStream<string>({
+        readableStrategy: { highWaterMark: 1 },
+      })
+      const writer = stream.writable.getWriter()
+
+      let settled = false
+      const write = writer.write('a').then(() => {
+        settled = true
+      })
+
+      await tick()
+      expect(settled).toBe(false)
+
+      const reader = stream.readable.getReader()
+      await expect(reader.read()).resolves.toEqual({ done: false, value: 'a' })
+
+      await write
+      expect(settled).toBe(true)
+    })
+
+    it('parks write until the next read request at hwm 0', async () => {
+      const stream = new DuplexStream<string>({
+        readableStrategy: { highWaterMark: 0 },
+      })
+      const writer = stream.writable.getWriter()
+
+      let settled = false
+      const write = writer.write('a').then(() => {
+        settled = true
+      })
+
+      await tick()
+      expect(settled).toBe(false)
+
+      const reader = stream.readable.getReader()
+      // first read is satisfied from the queue and does not replenish credit
+      await expect(reader.read()).resolves.toEqual({ done: false, value: 'a' })
+      await tick()
+      expect(settled).toBe(false)
+
+      // an outstanding read request triggers pull, which releases the write
+      const second = reader.read()
+      await write
+      expect(settled).toBe(true)
+
+      // at hwm 0 this write parks again until yet another read request
+      void writer.write('b').catch(() => {})
+      await expect(second).resolves.toEqual({ done: false, value: 'b' })
+    })
+
+    it('applies parked writes in FIFO order', async () => {
+      const stream = new DuplexStream<string>({
+        readableStrategy: { highWaterMark: 1 },
+      })
+      const writer = stream.writable.getWriter()
+
+      const results: string[] = []
+      void writer.write('a')
+      void writer.write('b')
+      void writer.write('c')
+      void writer.close()
+
+      for await (const chunk of stream.readable as any) {
+        results.push(chunk)
+      }
+      expect(results).toEqual(['a', 'b', 'c'])
+    })
+
+    it('releaseParkedWrites lets abort settle without a consumer', async () => {
+      const stream = new DuplexStream<string>()
+      const writer = stream.writable.getWriter()
+
+      const write = writer.write('a')
+      stream.releaseParkedWrites()
+      await write
+      await writer.abort(new Error('boom'))
+
+      const reader = stream.readable.getReader()
+      await expect(reader.read()).rejects.toThrow('boom')
+    })
+
+    it('releases parked writes when the readable is cancelled', async () => {
+      const stream = new DuplexStream<string>()
+      const writer = stream.writable.getWriter()
+
+      let settled = false
+      const write = writer.write('a').then(() => {
+        settled = true
+      })
+
+      await tick()
+      expect(settled).toBe(false)
+
+      await stream.readable.cancel('gone')
+      await write
+      expect(settled).toBe(true)
+    })
+  })
+
+  describe('transform errors', () => {
+    it('rejects the write and errors the readable', async () => {
+      const stream = new DuplexStream<number, string>({
+        transform: () => {
+          throw new Error('bad chunk')
+        },
+      })
+
+      const reader = stream.readable.getReader()
+      const pending = reader.read()
+
+      const writer = stream.writable.getWriter()
+      await expect(writer.write('x')).rejects.toThrow('bad chunk')
+      await expect(pending).rejects.toThrow('bad chunk')
+    })
   })
 })
