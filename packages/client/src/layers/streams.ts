@@ -241,7 +241,13 @@ export const createStreamLayer = (core: ClientCore): StreamLayerApi => {
           streamId: message.streamId,
           byteLength: message.chunk.byteLength,
         })
-        void serverStreams.push(message.streamId, message.chunk)
+        // not awaited: the writable queue keeps per-stream arrival order and
+        // awaiting would stall other streams' messages; a failed push aborts
+        // the stream on both sides instead of leaking a rejection
+        serverStreams.push(message.streamId, message.chunk).catch((error) => {
+          if (!serverStreams.has(message.streamId)) return
+          abortServerBlob(message.streamId, error)
+        })
         break
       case ServerMessageType.ServerStreamEnd:
         serverBlobInitializers.delete(message.streamId)
@@ -251,7 +257,7 @@ export const createStreamLayer = (core: ClientCore): StreamLayerApi => {
           action: 'end',
           streamId: message.streamId,
         })
-        void serverStreams.end(message.streamId)
+        void serverStreams.end(message.streamId).catch(noopFn)
         break
       case ServerMessageType.ServerStreamAbort:
         serverBlobInitializers.delete(message.streamId)
@@ -262,7 +268,7 @@ export const createStreamLayer = (core: ClientCore): StreamLayerApi => {
           streamId: message.streamId,
           reason: message.reason,
         })
-        void serverStreams.abort(message.streamId, message.reason)
+        void serverStreams.abort(message.streamId, message.reason).catch(noopFn)
         break
       case ServerMessageType.ClientStreamPull:
         core.emitStreamEvent({

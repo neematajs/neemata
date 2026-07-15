@@ -93,6 +93,8 @@ export class ServerStreams<
 
   async abort(streamId: number, reason?: unknown) {
     if (this.has(streamId)) {
+      // a write parked on backpressure would block abort() from settling
+      this.#collection.get(streamId)?.releaseParkedWrites()
       const writer = this.#writers.get(streamId)
       if (writer) {
         await writer.abort(reason)
@@ -110,6 +112,9 @@ export class ServerStreams<
   }
 
   async end(streamId: number) {
+    // no more data is coming: flush parked writes into the readable queue so
+    // close() can settle while the consumer drains at its own pace
+    this.#collection.get(streamId)?.releaseParkedWrites()
     const writer = this.#writers.get(streamId)
     if (writer) {
       await writer.close()
@@ -120,6 +125,9 @@ export class ServerStreams<
 
   async clear(reason?: any) {
     if (reason) {
+      for (const stream of this.#collection.values()) {
+        stream.releaseParkedWrites()
+      }
       const abortPromises = [...this.#writers.values()].map((writer) =>
         writer.abort(reason).finally(() => writer.releaseLock()),
       )
