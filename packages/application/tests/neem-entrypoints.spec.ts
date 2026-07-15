@@ -6,7 +6,7 @@ import { MessageChannel } from 'node:worker_threads'
 import type { TransportWorker } from '@nmtjs/gateway'
 import type { NeemRuntimePlanner, NeemRuntimePlannerContext } from '@nmtjs/neem'
 import { createLogger, createValueInjectable } from '@nmtjs/core'
-import { createTransport, StreamTimeout } from '@nmtjs/gateway'
+import { createTransport } from '@nmtjs/gateway'
 import { t } from '@nmtjs/type'
 import { describe, expect, expectTypeOf, it } from 'vitest'
 
@@ -104,7 +104,7 @@ describe('Neem application entrypoints', () => {
       transports: { http: transport },
       gateway: {
         heartbeat: { interval: 4321, timeout: 8765 },
-        streamTimeouts: { [StreamTimeout.Pull]: 1111 },
+        streamIdleTimeout: 1111,
       },
       identity,
     })
@@ -126,9 +126,7 @@ describe('Neem application entrypoints', () => {
         interval: 4321,
         timeout: 8765,
       })
-      expect(
-        created.host.gateway.options.streamTimeouts[StreamTimeout.Pull],
-      ).toBe(1111)
+      expect(created.host.gateway.options.streamIdleTimeout).toBe(1111)
       expect(created.host.gateway.options.identity).toBe(identity)
     } finally {
       await created.stop()

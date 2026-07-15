@@ -5,43 +5,53 @@ import type {
   ProtocolBlob,
   ProtocolBlobMetadata,
 } from '@nmtjs/protocol'
+import type { ProtocolServerStreamSink } from '@nmtjs/protocol/server'
 import { noopFn } from '@nmtjs/common'
 import {
   ProtocolClientStream,
   ProtocolServerStream,
 } from '@nmtjs/protocol/server'
 
-import { StreamTimeout } from './enums.ts'
+export const STREAM_IDLE_TIMEOUT_REASON = 'stream idle timeout'
+export const STREAM_CREDIT_VIOLATION_REASON = 'stream credit violation'
+export const STREAM_TRANSPORT_DROP_REASON =
+  'transport backpressure overflow (frame dropped)'
 
 export type StreamConfig = {
-  timeouts: {
-    [StreamTimeout.Pull]: number
-    [StreamTimeout.Consume]: number
-    [StreamTimeout.Finish]: number
-  }
+  idleTimeout: number
 }
-
-type StreamTimeouts = Record<StreamTimeout, any>
 
 type ClientStreamState = {
   connectionId: string
   callId: number
   stream: ProtocolClientStream
-  timeouts: StreamTimeouts
+  // outstanding byte credit: incremented per pull sent, decremented per push
+  granted: number
+  idleTimer: ReturnType<typeof setTimeout> | undefined
 }
 
 type ServerStreamState = {
   connectionId: string
   callId: number
   stream: ProtocolServerStream
-  timeouts: StreamTimeouts
+  idleTimer: ReturnType<typeof setTimeout> | undefined
 }
 
 type StreamState = ClientStreamState | ServerStreamState
 
 /**
- * @todo Clarify Pull/Consume timeout semantics - currently ambiguous whether
- *       Pull timeout means "client not pulling" or "server not producing" for server streams
+ * Credit invariants:
+ * - Uploads (client streams): the server grants byte credits by sending
+ *   ClientStreamPull (driven by consumer _read demand); the client spends
+ *   them with ClientStreamPush. A push exceeding the outstanding credit is a
+ *   protocol violation and aborts the stream.
+ * - Downloads (server streams): the client grants byte credits with
+ *   ServerStreamPull; the credit pump emits at most that many bytes.
+ *   A transport-dropped frame aborts the stream (credits keep outstanding
+ *   data far below the transport backpressure limit, so this is a safety
+ *   net, not a flow-control mechanism).
+ * - Every stream has a single idle timeout, reset on any activity in either
+ *   direction; expiry aborts the stream.
  */
 export class BlobStreamsManager {
   readonly clientStreams = new Map<string, ClientStreamState>()
@@ -53,14 +63,10 @@ export class BlobStreamsManager {
   readonly clientCallStreams = new Map<string, Set<number>>()
   readonly serverCallStreams = new Map<string, Set<number>>()
 
-  readonly timeoutDurations: Record<StreamTimeout, number>
+  readonly idleTimeout: number
 
   constructor(config: StreamConfig) {
-    this.timeoutDurations = {
-      [StreamTimeout.Pull]: config.timeouts[StreamTimeout.Pull],
-      [StreamTimeout.Consume]: config.timeouts[StreamTimeout.Consume],
-      [StreamTimeout.Finish]: config.timeouts[StreamTimeout.Finish],
-    }
+    this.idleTimeout = config.idleTimeout
   }
 
   // --- Client Streams (Upload) ---
@@ -80,33 +86,45 @@ export class BlobStreamsManager {
       connectionId,
       callId,
       stream,
-      timeouts: {
-        [StreamTimeout.Pull]: undefined,
-        [StreamTimeout.Consume]: undefined,
-        [StreamTimeout.Finish]: undefined,
-      },
+      granted: 0,
+      idleTimer: undefined,
     }
     this.clientStreams.set(key, state)
     this.trackClientCall(connectionId, callId, streamId)
     this.trackConnectionClientStream(connectionId, streamId)
 
-    this.startTimeout(state, StreamTimeout.Consume)
+    this.touch(state)
 
     return stream
   }
 
+  /** Records a pull about to be sent to the client as outstanding credit. */
+  grantClientStream(connectionId: string, streamId: number, size: number) {
+    const key = this.getKey(connectionId, streamId)
+    const state = this.clientStreams.get(key)
+    if (state) {
+      state.granted += size
+      this.touch(state)
+    }
+  }
+
+  /**
+   * Returns `false` on a credit violation (push larger than the outstanding
+   * grant) — the caller is expected to abort the stream and notify the peer.
+   */
   pushToClientStream(
     connectionId: string,
     streamId: number,
     chunk: ArrayBufferView,
-  ) {
+  ): boolean {
     const key = this.getKey(connectionId, streamId)
     const state = this.clientStreams.get(key)
-    if (state) {
-      state.stream.write(chunk)
-      this.clearTimeout(state, StreamTimeout.Consume)
-      this.startTimeout(state, StreamTimeout.Pull)
-    }
+    if (!state) return true
+    if (chunk.byteLength > state.granted) return false
+    state.granted -= chunk.byteLength
+    state.stream.write(chunk)
+    this.touch(state)
+    return true
   }
 
   endClientStream(connectionId: string, streamId: number) {
@@ -151,9 +169,7 @@ export class BlobStreamsManager {
     const state = this.clientStreams.get(key)
     if (state) {
       this.clientStreams.delete(key)
-      this.clearTimeout(state, StreamTimeout.Finish)
-      this.clearTimeout(state, StreamTimeout.Pull)
-      this.clearTimeout(state, StreamTimeout.Consume)
+      this.clearIdleTimer(state)
       this.untrackClientCall(connectionId, state.callId, streamId)
       this.untrackConnectionClientStream(connectionId, streamId)
     }
@@ -184,41 +200,56 @@ export class BlobStreamsManager {
     callId: number,
     streamId: number,
     blob: ProtocolBlob,
+    sink: ProtocolServerStreamSink,
   ) {
-    const stream = new ProtocolServerStream(streamId, blob)
     const key = this.getKey(connectionId, streamId)
+
+    const stream = new ProtocolServerStream(streamId, blob, {
+      chunk: (chunk) => {
+        const state = this.serverStreams.get(key)
+        if (state) this.touch(state)
+        const sent = sink.chunk(chunk)
+        if (sent === false) {
+          this.abortServerStream(
+            connectionId,
+            streamId,
+            STREAM_TRANSPORT_DROP_REASON,
+          )
+        }
+        return sent
+      },
+      end: () => {
+        this.removeServerStream(connectionId, streamId)
+        sink.end()
+      },
+      error: (error) => {
+        this.removeServerStream(connectionId, streamId)
+        sink.error(error)
+      },
+    })
 
     const state: ServerStreamState = {
       connectionId,
       callId,
       stream,
-      timeouts: {
-        [StreamTimeout.Pull]: undefined,
-        [StreamTimeout.Consume]: undefined,
-        [StreamTimeout.Finish]: undefined,
-      },
+      idleTimer: undefined,
     }
-
-    // Prevent unhandled 'error' events, in case the user did not subscribe to them
-    stream.on('error', noopFn)
 
     this.serverStreams.set(key, state)
     this.trackServerCall(connectionId, callId, streamId)
     this.trackConnectionServerStream(connectionId, streamId)
 
-    this.startTimeout(state, StreamTimeout.Finish)
-    this.startTimeout(state, StreamTimeout.Consume)
+    this.touch(state)
 
     return stream
   }
 
-  pullServerStream(connectionId: string, streamId: number) {
+  pullServerStream(connectionId: string, streamId: number, size: number) {
     const key = this.getKey(connectionId, streamId)
     const state = this.serverStreams.get(key)
     if (state) {
-      state.stream.resume()
-      this.clearTimeout(state, StreamTimeout.Consume)
-      this.startTimeout(state, StreamTimeout.Pull)
+      this.touch(state)
+      state.stream.grant(size)
     }
   }
 
@@ -226,6 +257,8 @@ export class BlobStreamsManager {
     const key = this.getKey(connectionId, streamId)
     const state = this.serverStreams.get(key)
     if (state) {
+      // destroy(error) reports through the stream sink, which removes the
+      // state and notifies the peer
       state.stream.destroy(new Error(error))
       this.removeServerStream(connectionId, streamId)
     }
@@ -236,43 +269,38 @@ export class BlobStreamsManager {
     const state = this.serverStreams.get(key)
     if (state) {
       this.serverStreams.delete(key)
-      this.clearTimeout(state, StreamTimeout.Pull)
-      this.clearTimeout(state, StreamTimeout.Consume)
-      this.clearTimeout(state, StreamTimeout.Finish)
+      this.clearIdleTimer(state)
       this.untrackServerCall(connectionId, state.callId, streamId)
       this.untrackConnectionServerStream(connectionId, streamId)
     }
   }
 
-  // --- Timeouts ---
+  // --- Idle timeout ---
 
-  private startTimeout(state: StreamState, type: StreamTimeout) {
-    this.clearTimeout(state, type)
-    const duration = this.timeoutDurations[type]
-    const timeout = setTimeout(() => {
+  private touch(state: StreamState) {
+    this.clearIdleTimer(state)
+    state.idleTimer = setTimeout(() => {
+      state.idleTimer = undefined
       if (state.stream instanceof ProtocolClientStream) {
         this.abortClientStream(
           state.connectionId,
           state.stream.id,
-          `${type} timeout`,
+          STREAM_IDLE_TIMEOUT_REASON,
         )
       } else {
         this.abortServerStream(
           state.connectionId,
           state.stream.id,
-          `${type} timeout`,
+          STREAM_IDLE_TIMEOUT_REASON,
         )
       }
-      state.timeouts[type] = undefined
-    }, duration)
-    state.timeouts[type] = timeout
+    }, this.idleTimeout)
   }
 
-  private clearTimeout(state: StreamState, type: StreamTimeout) {
-    const timeout = state.timeouts[type]
-    if (timeout) {
-      clearTimeout(timeout)
-      state.timeouts[type] = undefined
+  private clearIdleTimer(state: StreamState) {
+    if (state.idleTimer) {
+      clearTimeout(state.idleTimer)
+      state.idleTimer = undefined
     }
   }
 
