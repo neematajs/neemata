@@ -13,8 +13,8 @@ import { installPostgresWorkflowSchemaForTesting } from '../../src/adapters/post
 import { defineWorkflow, implementWorkflow } from '../../src/index.ts'
 import {
   createWorkflowRuntimeClient,
-  runExecutionWorker,
-  runWorkflowWorker,
+  serveExecutionWorker,
+  serveWorkflowWorker,
 } from '../../src/runtime/index.ts'
 import {
   createTestContainer,
@@ -130,7 +130,7 @@ describe.skipIf(!postgresTarget.url)(
 
       const abort = new AbortController()
       const workers = Promise.allSettled([
-        runWorkflowWorker({
+        serveWorkflowWorker({
           ...runtime,
           container,
           workflows: [implementation],
@@ -140,7 +140,7 @@ describe.skipIf(!postgresTarget.url)(
           runTimeouts: false,
           signal: abort.signal,
         }),
-        runExecutionWorker({
+        serveExecutionWorker({
           tasks: [],
           ...runtime,
           container,
@@ -301,7 +301,7 @@ describe.skipIf(!postgresTarget.url)(
 
       const abort = new AbortController()
       const workers = Promise.allSettled([
-        runWorkflowWorker({
+        serveWorkflowWorker({
           ...runtime,
           container,
           workflows: [implementation],
@@ -311,7 +311,7 @@ describe.skipIf(!postgresTarget.url)(
           runTimeouts: false,
           signal: abort.signal,
         }),
-        runExecutionWorker({
+        serveExecutionWorker({
           tasks: [],
           ...runtime,
           container,

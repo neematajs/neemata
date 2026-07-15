@@ -121,6 +121,8 @@ export {
   runExecutionWorker,
   runTaskAttempt,
   runWorkflowWorker,
+  serveExecutionWorker,
+  serveWorkflowWorker,
   WorkflowAttemptTimeoutError,
 } from './worker.ts'
 export type {

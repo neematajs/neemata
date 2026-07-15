@@ -422,6 +422,7 @@ describe.skipIf(!postgresTarget.url)(
         workerId: 'activity-stale',
         leaseMs: 60,
         idleDelayMs: 20,
+        reaping: false,
       })
       await firstStartedPromise
       await pool.query(
@@ -429,13 +430,14 @@ describe.skipIf(!postgresTarget.url)(
           UPDATE workflow_commands
           SET lease_owner = 'activity-stealer',
               lease_token = 'stolen',
-              lease_expires_at = now() - interval '1 millisecond'
+              lease_expires_at = now() + interval '100 milliseconds'
           WHERE kind = 'activity' AND run_id = $1
         `,
         [run.id],
       )
 
       await expect(staleWorker).resolves.toStrictEqual({ processed: 0 })
+      await wait(120)
       await runExecutionWorker({
         tasks: [],
         ...runtime,

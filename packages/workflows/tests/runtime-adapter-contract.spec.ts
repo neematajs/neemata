@@ -1635,8 +1635,13 @@ function workflowRuntimeAdapterContract(
         input: {},
       }
 
-      await runtime.attemptExecutor.dispatchTask(taskCommand)
-      await runtime.attemptExecutor.dispatchActivity(activityCommand)
+      const firstRunAt = new Date(Date.now() - 2)
+      await runtime.attemptExecutor.dispatchTask(taskCommand, {
+        runAt: firstRunAt,
+      })
+      await runtime.attemptExecutor.dispatchActivity(activityCommand, {
+        runAt: new Date(firstRunAt.getTime() + 1),
+      })
 
       const selectors = {
         workflowNames: ['ordered-workflow'],
