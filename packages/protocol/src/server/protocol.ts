@@ -90,6 +90,7 @@ export type ClientMessageTypePayload = {
     }
   }
   [ClientMessageType.RpcAbort]: { callId: number; reason?: string }
+  [ClientMessageType.RpcStreamPull]: { callId: number; size: number }
   [ClientMessageType.Ping]: { nonce: number }
   [ClientMessageType.Pong]: { nonce: number }
   [ClientMessageType.ClientStreamPush]: {

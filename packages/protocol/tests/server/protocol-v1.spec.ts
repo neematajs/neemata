@@ -20,8 +20,6 @@ const encodeUInt16 = (value: number) => {
   return buffer
 }
 
-const LEGACY_RPC_PULL_MESSAGE_TYPE = 12
-
 function createMockServerContext(version: ProtocolVersion1): MessageContext {
   return {
     connectionId: 'conn',
@@ -122,14 +120,37 @@ describe('ProtocolVersion1 - decodeMessage', () => {
     })
   })
 
-  it('throws on legacy RpcPull payload', () => {
+  it('decodes RpcStreamPull payload', () => {
     const buffer = Buffer.concat([
-      Buffer.from([LEGACY_RPC_PULL_MESSAGE_TYPE]),
+      Buffer.from([ClientMessageType.RpcStreamPull]),
       encodeUInt32(99),
+      encodeUInt32(5),
     ])
 
-    expect(() => version.decodeMessage(context, buffer)).toThrow(
-      /Unsupported message type/,
+    expect(version.decodeMessage(context, buffer)).toEqual({
+      type: ClientMessageType.RpcStreamPull,
+      callId: 99,
+      size: 5,
+    })
+  })
+
+  it('rejects RpcStreamPull frames with unexpected length', () => {
+    const truncated = Buffer.concat([
+      Buffer.from([ClientMessageType.RpcStreamPull]),
+      encodeUInt32(99),
+    ])
+    expect(() => version.decodeMessage(context, truncated)).toThrow(
+      /Malformed RpcStreamPull message/,
+    )
+
+    const oversized = Buffer.concat([
+      Buffer.from([ClientMessageType.RpcStreamPull]),
+      encodeUInt32(99),
+      encodeUInt32(5),
+      Buffer.from([0xff]),
+    ])
+    expect(() => version.decodeMessage(context, oversized)).toThrow(
+      /Malformed RpcStreamPull message/,
     )
   })
 

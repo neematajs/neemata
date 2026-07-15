@@ -54,6 +54,23 @@ export class ProtocolVersion1 extends ProtocolVersionInterface {
           reasonPayload.byteLength > 0 ? decodeText(reasonPayload) : undefined
         return { type: messageType, callId, reason }
       }
+      case ClientMessageType.RpcStreamPull: {
+        // readUInt32LE would silently succeed on an oversized frame; reject
+        // anything that isn't exactly callId+size so garbage can't smuggle in
+        if (
+          messagePayload.byteLength !==
+          MessageByteLength.CallId + MessageByteLength.ChunkSize
+        ) {
+          throw new Error(
+            `Malformed RpcStreamPull message: expected ${
+              MessageByteLength.CallId + MessageByteLength.ChunkSize
+            } bytes, got ${messagePayload.byteLength}`,
+          )
+        }
+        const callId = messagePayload.readUInt32LE(0)
+        const size = messagePayload.readUInt32LE(MessageByteLength.CallId)
+        return { type: messageType, callId, size }
+      }
       case ClientMessageType.Ping: {
         const nonce = messagePayload.readUInt32LE(0)
         return { type: messageType, nonce }
