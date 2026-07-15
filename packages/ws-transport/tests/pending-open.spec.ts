@@ -70,6 +70,22 @@ describe('WsTransportServer pending-open TTL', () => {
     expect(onDisconnect).not.toHaveBeenCalled()
   })
 
+  it('clears the reap timer when the gateway closes a pending-open connection', async () => {
+    const { server, getHooks } = createServer()
+    const onConnect = vi.fn(async () => ({ id: 'conn-1' }))
+    const onDisconnect = vi.fn(async () => {})
+
+    await server.start({ onConnect, onDisconnect } as any)
+    await getHooks().upgrade!(upgradeRequest)
+
+    // Gateway-initiated close (e.g. heartbeat timeout) before `open` fires
+    server.close('conn-1', { code: 1001, reason: 'heartbeat_timeout' })
+
+    await vi.advanceTimersByTimeAsync(WS_PENDING_OPEN_TTL * 2)
+
+    expect(onDisconnect).not.toHaveBeenCalled()
+  })
+
   it('closes a peer whose open arrives after the reap', async () => {
     const { server, getHooks } = createServer()
     const onConnect = vi.fn(async () => ({ id: 'conn-1' }))

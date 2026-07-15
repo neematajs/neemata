@@ -4,7 +4,7 @@ import { ProtocolFormats } from '@nmtjs/protocol/server'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { GatewayApi } from '../src/api.ts'
-import { Gateway } from '../src/gateway.ts'
+import { GATEWAY_TEARDOWN_STEP_TIMEOUT, Gateway } from '../src/gateway.ts'
 import {
   createTestContainer,
   createTestLogger,
@@ -135,6 +135,32 @@ describe('Gateway closeConnection', () => {
 
     expect(stopped).toBe(true)
     expect(disposeSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('completes teardown and stop() when transport.close never settles', async () => {
+    vi.useFakeTimers()
+
+    const { gateway, connect, getParams } = createGateway({
+      close: vi.fn(() => new Promise<void>(() => {})),
+    })
+
+    const connection = await connect()
+    const disposeSpy = vi.spyOn(connection.container, 'dispose')
+
+    const disconnect = getParams().onDisconnect(connection.id)
+    let stopped = false
+    const stop = gateway.stop().then(() => {
+      stopped = true
+    })
+
+    // The step timeout abandons the hung close and teardown moves on
+    await vi.advanceTimersByTimeAsync(GATEWAY_TEARDOWN_STEP_TIMEOUT)
+    await Promise.all([disconnect, stop])
+
+    expect(disposeSpy).toHaveBeenCalledTimes(1)
+    expect(stopped).toBe(true)
+
+    vi.useRealTimers()
   })
 
   it('heartbeat timeout racing disconnect closes and disposes exactly once', async () => {

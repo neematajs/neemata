@@ -100,6 +100,9 @@ export class WsTransportServer implements TransportWorker<
     connectionId: string,
     options: { code?: number; reason?: string } = {},
   ) {
+    // A gateway-initiated close may land before `open` (e.g. heartbeat
+    // timeout); claim the reap timer so it can't fire a redundant disconnect
+    this.clearPendingOpenReap(connectionId)
     const peer = this.clients.get(connectionId)
     if (!peer) return
     this.clients.delete(connectionId)

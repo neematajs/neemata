@@ -80,6 +80,11 @@ export interface GatewayOptions<
 
 const DEFAULT_GATEWAY_HEARTBEAT_INTERVAL = 15000
 const DEFAULT_GATEWAY_HEARTBEAT_TIMEOUT = 5000
+/**
+ * Upper bound per connection teardown step so a never-settling transport
+ * close or container disposal can't hang closeConnection() and stop().
+ */
+export const GATEWAY_TEARDOWN_STEP_TIMEOUT = 10_000
 
 export class Gateway<
   ResolvedProcedure extends GatewayResolvedProcedure = GatewayResolvedProcedure,
@@ -797,10 +802,15 @@ export class Gateway<
   ) {
     const connectionId = connection.id
 
-    // Guard each teardown step so one failure can't skip the rest.
+    // Guard and time-bound each teardown step so one failure or a
+    // never-settling promise can't skip or hang the rest.
     const guard = async (step: () => unknown) => {
       try {
-        await step()
+        await withTimeout(
+          Promise.resolve(step()),
+          GATEWAY_TEARDOWN_STEP_TIMEOUT,
+          new Error('Connection teardown step timed out'),
+        )
       } catch (error) {
         this.logger.error(
           { error, connectionId },
