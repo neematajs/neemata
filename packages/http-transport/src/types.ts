@@ -22,31 +22,23 @@ export type HttpTransportOptions<
 }
 
 export type HttpTransportCorsCustomParams = {
+  /**
+   * `true` reflects any request origin, an array is an explicit allowlist.
+   * Credentials default on only for allowlisted origins.
+   */
+  origin: true | string[]
   allowMethods?: string[]
   allowHeaders?: string[]
+  /**
+   * Explicitly enables credentials when reflecting request origins. Only use
+   * this when the API should accept credentialed requests from any website.
+   */
+  allowCredentials?: string
   maxAge?: string
   exposeHeaders?: string[]
   requestHeaders?: string[]
   requestMethod?: string
-} & (
-  | {
-      /**
-       * `true` reflects any request origin, an array is an explicit
-       * allowlist. Credentials default on for allowlisted origins only.
-       */
-      origin: true | string[]
-      allowCredentials?: never
-    }
-  | {
-      /**
-       * Explicit `allowCredentials` requires an origin allowlist: combining
-       * credentials with a reflected origin (`origin: true`) would let any
-       * website make credentialed (cookie-authed) requests.
-       */
-      origin: string[]
-      allowCredentials?: string
-    }
-)
+}
 
 export type HttpTransportCorsOptions =
   | true

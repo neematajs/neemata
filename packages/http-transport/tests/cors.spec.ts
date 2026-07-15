@@ -46,11 +46,21 @@ describe('CORS credentials defaults', () => {
     expect(response.headers.get(ALLOW_CREDENTIALS)).toBeNull()
   })
 
-  it('omits credentials for custom params with origin: true', async () => {
+  it('omits credentials by default for custom params with origin: true', async () => {
     const response = await preflight({ origin: true })
 
     expect(response.headers.get(ALLOW_ORIGIN)).toBe(ORIGIN)
     expect(response.headers.get(ALLOW_CREDENTIALS)).toBeNull()
+  })
+
+  it('allows explicit credentials with reflected origins', async () => {
+    const response = await preflight({
+      origin: true,
+      allowCredentials: 'true',
+    })
+
+    expect(response.headers.get(ALLOW_ORIGIN)).toBe(ORIGIN)
+    expect(response.headers.get(ALLOW_CREDENTIALS)).toBe('true')
   })
 
   it('enables credentials for custom params with explicit origins', async () => {
@@ -139,7 +149,7 @@ describe('CORS Vary header', () => {
 })
 
 describe('CORS config type surface', () => {
-  it('accepts safe configs and rejects credentials with reflected origin', () => {
+  it('accepts serializable explicit credentials with reflected origins', () => {
     const allowAll = Math.random() >= 0
     const allowedOrigins = [ORIGIN]
 
@@ -151,14 +161,13 @@ describe('CORS config type surface', () => {
       origin: allowedOrigins,
       allowCredentials: 'true',
     }
-    // @ts-expect-error credentials cannot be combined with origin reflection
-    const unsafe: HttpTransportCorsOptions = {
+    const reflectedCredentials: HttpTransportCorsOptions = {
       origin: true,
       allowCredentials: 'true',
     }
 
     expect(composed).toBeDefined()
     expect(credentialed).toBeDefined()
-    expect(unsafe).toBeDefined()
+    expect(reflectedCredentials).toBeDefined()
   })
 })

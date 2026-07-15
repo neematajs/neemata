@@ -438,12 +438,16 @@ export class HttpTransportServer implements TransportWorker<
           this.#corsOptions.origin === true
             ? { ...DEFAULT_CORS_PARAMS }
             : { ...EXPLICIT_ORIGIN_CORS_PARAMS }
-        // Iterating base params also drops allowCredentials for origin: true
         for (const key in params) {
           const value = this.#corsOptions[key]
           if (value !== undefined) {
             params[key] = value
           }
+        }
+        // This explicit opt-in restores credentialed origin reflection without
+        // weakening the safe `cors: true` default.
+        if (this.#corsOptions.allowCredentials !== undefined) {
+          params.allowCredentials = this.#corsOptions.allowCredentials
         }
       }
     } else if (typeof this.#corsOptions === 'function') {
@@ -465,6 +469,9 @@ export class HttpTransportServer implements TransportWorker<
             if (value !== undefined) {
               params[key] = value
             }
+          }
+          if (result.allowCredentials !== undefined) {
+            params.allowCredentials = result.allowCredentials
           }
         }
       }
