@@ -43,6 +43,7 @@ describe('MsgpackFormat', () => {
 
       // Server encode rejects undefined — a zero-byte frame would be
       // silently dropped over SSE and break decoding over WS
+      expect(() => serverFormat.encode(undefined)).toThrow(TypeError)
       expect(() => serverFormat.encode(undefined)).toThrow(
         'Cannot encode undefined',
       )

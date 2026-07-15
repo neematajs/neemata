@@ -20,6 +20,7 @@ describe('Server JsonFormat', () => {
       })
 
       it('should reject undefined', () => {
+        expect(() => format.encode(undefined)).toThrow(TypeError)
         expect(() => format.encode(undefined)).toThrow(
           'Cannot encode undefined',
         )
@@ -173,6 +174,7 @@ describe('Server JsonFormat', () => {
 
     describe('undefined value handling', () => {
       it('should reject undefined in encode', () => {
+        expect(() => format.encode(undefined)).toThrow(TypeError)
         expect(() => format.encode(undefined)).toThrow(
           'Cannot encode undefined',
         )
