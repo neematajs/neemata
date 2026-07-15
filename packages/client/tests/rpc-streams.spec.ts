@@ -13,10 +13,23 @@ import { BaseClientTransformer } from '../src/transformers.ts'
 const encodeJson = (value: unknown) =>
   new TextEncoder().encode(JSON.stringify(value))
 
-// the client package targets browsers, so Node's `process` global is untyped
-const nodeProcess = (globalThis as any).process as {
-  on: (event: 'unhandledRejection', cb: (reason: unknown) => void) => void
-  off: (event: 'unhandledRejection', cb: (reason: unknown) => void) => void
+// these tests also run in browsers, where Node's `process` global does not
+// exist — collect unhandled rejections via whichever API the environment has
+const trackUnhandledRejections = (sink: unknown[]): (() => void) => {
+  const nodeProcess = (globalThis as any).process
+  if (typeof nodeProcess?.on === 'function') {
+    const handler = (reason: unknown) => {
+      sink.push(reason)
+    }
+    nodeProcess.on('unhandledRejection', handler)
+    return () => nodeProcess.off('unhandledRejection', handler)
+  }
+  const handler = (event: PromiseRejectionEvent) => {
+    event.preventDefault()
+    sink.push(event.reason)
+  }
+  globalThis.addEventListener('unhandledrejection', handler)
+  return () => globalThis.removeEventListener('unhandledrejection', handler)
 }
 
 class MockCore extends EventEmitter<{
@@ -200,10 +213,7 @@ describe('RPC streams', () => {
 
   it('aborts the stream on a malformed chunk without unhandled rejections', async () => {
     const unhandled: unknown[] = []
-    const onUnhandled = (reason: unknown) => {
-      unhandled.push(reason)
-    }
-    nodeProcess.on('unhandledRejection', onUnhandled)
+    const untrack = trackUnhandledRejections(unhandled)
 
     try {
       const core = new MockCore()
@@ -256,7 +266,7 @@ describe('RPC streams', () => {
       await new Promise<void>((resolve) => setTimeout(resolve, 0))
       expect(unhandled).toEqual([])
     } finally {
-      nodeProcess.off('unhandledRejection', onUnhandled)
+      untrack()
     }
   })
 
