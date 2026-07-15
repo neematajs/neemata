@@ -16,6 +16,13 @@ import {
   NotFoundHttpResponse,
 } from './utils.ts'
 
+/**
+ * How long an upgraded connection may stay without its `open` hook firing
+ * before it is reaped. Sockets that die between upgrade and open never get a
+ * `close` hook, which would leak the gateway connection and its container.
+ */
+export const WS_PENDING_OPEN_TTL = 10_000
+
 export function createWSTransportWorker(
   adapterFactory: WsAdapterServerFactory<any>,
   options: WsTransportOptions,
@@ -33,6 +40,8 @@ export class WsTransportServer implements TransportWorker<
     ApplicationResolvedProcedure
   >
   clients = new Map<string, Peer>()
+  // Reap timers for upgraded-but-not-opened connections, see WS_PENDING_OPEN_TTL
+  pendingOpen = new Map<string, ReturnType<typeof setTimeout>>()
 
   constructor(
     protected readonly adapterFactory: WsAdapterServerFactory<any>,
@@ -52,6 +61,8 @@ export class WsTransportServer implements TransportWorker<
   }
 
   async stop(): Promise<void> {
+    for (const timer of this.pendingOpen.values()) clearTimeout(timer)
+    this.pendingOpen.clear()
     for (const peer of this.clients.values()) {
       try {
         peer.close(1001, 'Transport stopped')
@@ -91,6 +102,9 @@ export class WsTransportServer implements TransportWorker<
     connectionId: string,
     options: { code?: number; reason?: string } = {},
   ) {
+    // A gateway-initiated close may land before `open` (e.g. heartbeat
+    // timeout); claim the reap timer so it can't fire a redundant disconnect
+    this.clearPendingOpenReap(connectionId)
     const peer = this.clients.get(connectionId)
     if (!peer) return
     this.clients.delete(connectionId)
@@ -134,6 +148,8 @@ export class WsTransportServer implements TransportWorker<
             data: request,
           })
 
+          this.schedulePendingOpenReap(connection.id)
+
           return { context: { connectionId: connection.id } }
         } catch (error) {
           console.error('Failed to upgrade WebSocket connection', error)
@@ -142,6 +158,19 @@ export class WsTransportServer implements TransportWorker<
       },
       open: (peer) => {
         const { connectionId } = peer.context
+        // If the reap already claimed this connection, the gateway side is
+        // gone — close the late peer instead of registering a zombie
+        if (!this.clearPendingOpenReap(connectionId)) {
+          try {
+            peer.close(1001, 'Closed')
+          } catch (error) {
+            console.error(
+              `Failed to close late WebSocket connection ${connectionId}`,
+              error,
+            )
+          }
+          return
+        }
         this.clients.set(connectionId, peer)
       },
       message: async (peer, message) => {
@@ -167,6 +196,7 @@ export class WsTransportServer implements TransportWorker<
         )
       },
       close: async (peer) => {
+        this.clearPendingOpenReap(peer.context.connectionId)
         this.clients.delete(peer.context.connectionId)
         try {
           await this.params.onDisconnect(peer.context.connectionId)
@@ -178,6 +208,29 @@ export class WsTransportServer implements TransportWorker<
         }
       },
     }) as Hooks
+  }
+
+  private schedulePendingOpenReap(connectionId: string) {
+    const timer = setTimeout(() => {
+      this.pendingOpen.delete(connectionId)
+      Promise.resolve(this.params.onDisconnect(connectionId)).catch((error) => {
+        console.error(
+          `Failed to reap never-opened WebSocket connection ${connectionId}`,
+          error,
+        )
+      })
+    }, WS_PENDING_OPEN_TTL)
+    this.pendingOpen.set(connectionId, timer)
+  }
+
+  // Returns whether the pending entry was claimed by this caller; false
+  // means the reap timer already fired (or there was no pending entry)
+  private clearPendingOpenReap(connectionId: string) {
+    const timer = this.pendingOpen.get(connectionId)
+    if (timer === undefined) return false
+    this.pendingOpen.delete(connectionId)
+    clearTimeout(timer)
+    return true
   }
 
   private createServer() {

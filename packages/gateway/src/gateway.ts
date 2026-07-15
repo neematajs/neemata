@@ -80,6 +80,11 @@ export interface GatewayOptions<
 
 const DEFAULT_GATEWAY_HEARTBEAT_INTERVAL = 15000
 const DEFAULT_GATEWAY_HEARTBEAT_TIMEOUT = 5000
+/**
+ * Upper bound per connection teardown step so a never-settling transport
+ * close or container disposal can't hang closeConnection() and stop().
+ */
+export const GATEWAY_TEARDOWN_STEP_TIMEOUT = 10_000
 
 export class Gateway<
   ResolvedProcedure extends GatewayResolvedProcedure = GatewayResolvedProcedure,
@@ -96,6 +101,8 @@ export class Gateway<
       nonce: number
     }
   >()
+  // In-flight teardowns keyed by connection id, see closeConnection
+  private readonly closingConnections = new Map<string, Promise<void>>()
   public options: Required<
     Omit<GatewayOptions<ResolvedProcedure>, 'streamTimeouts'> & {
       streamTimeouts: Required<
@@ -208,14 +215,12 @@ export class Gateway<
           )
         } catch {
           state.pending.delete(nonce)
-          try {
-            await transportWorker.close?.(connection.id, {
-              code: 1001,
-              reason: 'heartbeat_timeout',
-            })
-          } finally {
-            await this.closeConnection(connection.id)
-          }
+          // Route through the single claimed teardown so the transport is
+          // closed exactly once even when a disconnect races in
+          await this.closeConnection(connection.id, {
+            code: 1001,
+            reason: 'heartbeat_timeout',
+          })
           break
         }
       }
@@ -242,6 +247,10 @@ export class Gateway<
     for (const connection of this.connections.getAll()) {
       await this.closeConnection(connection.id)
     }
+
+    // Also wait for teardowns already claimed by concurrent callers
+    // (e.g. transport disconnect) — they are no longer in the map
+    await Promise.all(this.closingConnections.values())
 
     for (const key in this.options.transports) {
       const { transport } = this.options.transports[key]
@@ -776,26 +785,61 @@ export class Gateway<
     }
   }
 
-  protected async closeConnection(connectionId: string) {
-    if (this.connections.has(connectionId)) {
-      const connection = this.connections.get(connectionId)
-      this.stopHeartbeat(connectionId, 'close')
+  protected closeConnection(
+    connectionId: string,
+    close: { code: number; reason: string } = { code: 1001, reason: 'closed' },
+  ): Promise<void> {
+    // Single-flight: the first caller claims the connection by removing it
+    // from the map before any await; concurrent callers (e.g. heartbeat
+    // timeout racing transport disconnect) await the same in-flight teardown
+    // instead of tearing down twice.
+    const inFlight = this.closingConnections.get(connectionId)
+    if (inFlight) return inFlight
+    if (!this.connections.has(connectionId)) return Promise.resolve()
 
-      const transportWorker =
-        this.options.transports[connection.transport]?.transport
-      if (connection.type === ConnectionType.Bidirectional) {
-        await transportWorker?.close?.(connectionId, {
-          code: 1001,
-          reason: 'closed',
-        })
+    const connection = this.connections.get(connectionId)
+    this.connections.remove(connectionId)
+
+    const teardown = this.teardownConnection(connection, close).finally(() => {
+      this.closingConnections.delete(connectionId)
+    })
+    this.closingConnections.set(connectionId, teardown)
+    return teardown
+  }
+
+  private async teardownConnection(
+    connection: GatewayConnection,
+    close: { code: number; reason: string },
+  ) {
+    const connectionId = connection.id
+
+    // Guard and time-bound each teardown step so one failure or a
+    // never-settling promise can't skip or hang the rest.
+    const guard = async (step: () => unknown) => {
+      try {
+        await withTimeout(
+          Promise.resolve(step()),
+          GATEWAY_TEARDOWN_STEP_TIMEOUT,
+          new Error('Connection teardown step timed out'),
+        )
+      } catch (error) {
+        this.logger.error(
+          { error, connectionId },
+          'Error during connection teardown',
+        )
       }
-      connection.abortController.abort()
-      await connection.container.dispose()
     }
 
-    this.rpcs.close(connectionId)
-    this.blobStreams.cleanupConnection(connectionId)
-    this.connections.remove(connectionId)
+    await guard(() => this.stopHeartbeat(connectionId, 'close'))
+    if (connection.type === ConnectionType.Bidirectional) {
+      const transportWorker =
+        this.options.transports[connection.transport]?.transport
+      await guard(() => transportWorker?.close?.(connectionId, close))
+    }
+    await guard(() => connection.abortController.abort())
+    await guard(() => this.rpcs.close(connectionId))
+    await guard(() => this.blobStreams.cleanupConnection(connectionId))
+    await guard(() => connection.container.dispose())
   }
 
   protected createBlobFunction(
