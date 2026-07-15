@@ -1,7 +1,10 @@
 import type { ProtocolBlobMetadata } from '@nmtjs/protocol'
+import { ServerMessageType } from '@nmtjs/protocol'
 import { ProtocolServerStream } from '@nmtjs/protocol/client'
 import { describe, expect, it, vi } from 'vitest'
 
+import { EventEmitter } from '../src/events.ts'
+import { createStreamLayer, toReasonString } from '../src/layers/streams.ts'
 import { ClientStreams, ServerStreams } from '../src/streams.ts'
 
 const metadata: ProtocolBlobMetadata = { type: 'application/octet-stream' }
@@ -281,5 +284,49 @@ describe('ServerStreams', () => {
 
       expect(() => streams.get(1)).toThrow('Stream not found')
     })
+  })
+})
+
+describe('createStreamLayer', () => {
+  it('propagates server abort reasons to blob stream consumers', async () => {
+    const core = Object.assign(new EventEmitter(), {
+      messageContext: {},
+      protocol: { encodeMessage: vi.fn(() => new Uint8Array([0])) },
+      send: vi.fn(async () => {}),
+      emitStreamEvent: vi.fn(),
+      emitClientEvent: vi.fn(),
+    })
+
+    const layer = createStreamLayer(core as any)
+    const { blob, streamId } = layer.addServerBlobStream(metadata)
+    const stream = layer.consumeServerBlob(blob)
+
+    const iterator = stream[Symbol.asyncIterator]()
+    const nextPromise = iterator.next()
+
+    core.emit('message', {
+      type: ServerMessageType.ServerStreamAbort,
+      streamId,
+      reason: 'quota exceeded',
+    })
+
+    await expect(nextPromise).rejects.toBe('quota exceeded')
+  })
+})
+
+describe('toReasonString', () => {
+  it('coerces symbol and function reasons instead of dropping them', () => {
+    expect(toReasonString(Symbol('cancelled'))).toBe('Symbol(cancelled)')
+    expect(toReasonString(() => {})).toBe('[object Function]')
+  })
+
+  it('keeps existing coercions intact', () => {
+    expect(toReasonString('stop')).toBe('stop')
+    expect(toReasonString(new Error('boom'))).toBe('boom')
+    expect(toReasonString({ code: 1 })).toBe('{"code":1}')
+    expect(toReasonString(42)).toBe('42')
+    expect(toReasonString(10n)).toBe('10')
+    expect(toReasonString(undefined)).toBeUndefined()
+    expect(toReasonString(null)).toBeUndefined()
   })
 })

@@ -160,4 +160,41 @@ describe('RPC streams', () => {
       value: undefined,
     })
   })
+
+  it('propagates server abort reasons to stream consumers', async () => {
+    const core = new MockCore()
+    const rpcLayer = createRpcLayer(
+      core as any,
+      { addServerBlobStream: vi.fn() } as any,
+      new BaseClientTransformer(),
+    )
+
+    const streamPromise = rpcLayer.call(
+      'users/profile',
+      { userId: '1' },
+      { _stream_response: true },
+    )
+
+    core.emit(
+      'message',
+      { type: ServerMessageType.RpcStreamResponse, callId: 0 },
+      new Uint8Array([1]),
+    )
+
+    const iterable = await streamPromise
+    const iterator = iterable[Symbol.asyncIterator]()
+    const nextPromise = iterator.next()
+
+    core.emit(
+      'message',
+      {
+        type: ServerMessageType.RpcStreamAbort,
+        callId: 0,
+        reason: 'server cancelled',
+      },
+      new Uint8Array([2]),
+    )
+
+    await expect(nextPromise).rejects.toBe('server cancelled')
+  })
 })

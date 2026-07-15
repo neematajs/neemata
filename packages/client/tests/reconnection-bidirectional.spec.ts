@@ -56,6 +56,33 @@ describe('reconnectPlugin (bidirectional)', () => {
     expect(connectSpy).toHaveBeenCalledTimes(1)
   })
 
+  it('applies reconnect jitter outside browser environments', async () => {
+    // near-max jitter: delay = timeout + floor(timeout * 0.2 * 0.995) = 1199
+    vi.spyOn(Math, 'random').mockReturnValue(0.995)
+
+    const transport = createMockBidirectionalTransport()
+    const connectSpy = vi.spyOn(transport.transport, 'connect')
+
+    const client = new StaticClient(
+      { ...createBaseOptions(), plugins: [reconnectPlugin()] },
+      transport.factory,
+      {},
+    )
+
+    const connectPromise = client.connect()
+    transport.simulateConnect()
+    await connectPromise
+
+    connectSpy.mockClear()
+    transport.simulateDisconnect('server')
+
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(connectSpy).not.toHaveBeenCalled()
+
+    await vi.advanceTimersByTimeAsync(199)
+    expect(connectSpy).toHaveBeenCalledTimes(1)
+  })
+
   it('does not reconnect after client-initiated disconnect', async () => {
     const transport = createMockBidirectionalTransport()
     const connectSpy = vi.spyOn(transport.transport, 'connect')

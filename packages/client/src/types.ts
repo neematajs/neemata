@@ -6,7 +6,16 @@ import type { BaseTypeAny, t } from '@nmtjs/type'
 export const ResolvedType: unique symbol = Symbol('ResolvedType')
 export type ResolvedType = typeof ResolvedType
 
-export type RpcCallOptions = { timeout?: number; signal?: AbortSignal }
+export type RpcCallOptions = {
+  timeout?: number
+  signal?: AbortSignal
+  /**
+   * HTTP transport only: send with fetch keepalive so the request survives
+   * page unload. Browsers cap total in-flight keepalive bytes at ~64KB,
+   * so it is opt-in per call.
+   */
+  keepalive?: boolean
+}
 
 export type StreamCallOptions = RpcCallOptions & { autoReconnect?: boolean }
 

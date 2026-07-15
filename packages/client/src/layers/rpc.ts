@@ -16,6 +16,7 @@ import type { BaseClientTransformer } from '../transformers.ts'
 import type { ClientCallOptions } from '../types.ts'
 import type { StreamLayerApi } from './streams.ts'
 import { ServerStreams } from '../streams.ts'
+import { toReasonString } from './streams.ts'
 
 export type ProtocolClientCall = Future<any> & {
   procedure: string
@@ -31,24 +32,6 @@ export interface RpcLayerApi {
   ): Promise<any>
   readonly pendingCallCount: number
   readonly activeStreamCount: number
-}
-
-const toReasonString = (reason: unknown) => {
-  if (typeof reason === 'string') return reason
-  if (reason === undefined || reason === null) return undefined
-  if (reason instanceof Error) return reason.message
-  try {
-    return JSON.stringify(reason)
-  } catch {}
-  if (
-    typeof reason === 'number' ||
-    typeof reason === 'boolean' ||
-    typeof reason === 'bigint' ||
-    typeof reason === 'symbol'
-  ) {
-    return reason.toString()
-  }
-  return Object.prototype.toString.call(reason)
 }
 
 const toAbortError = (signal: AbortSignal) => {
@@ -576,7 +559,7 @@ export const createRpcLayer = (
           callId: message.callId,
           reason: message.reason,
         })
-        void rpcStreams.abort(message.callId)
+        void rpcStreams.abort(message.callId, message.reason)
         calls.delete(message.callId)
         break
     }
@@ -698,7 +681,11 @@ export const createRpcLayer = (
               contentType: core.format.contentType,
             },
             { callId: currentCallId, procedure, payload: encodedPayload, blob },
-            { signal, streamResponse: callOptions._stream_response },
+            {
+              signal,
+              streamResponse: callOptions._stream_response,
+              keepalive: callOptions.keepalive,
+            },
           )
 
           handleCallResponse(currentCallId, response)

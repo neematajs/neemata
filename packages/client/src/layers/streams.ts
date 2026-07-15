@@ -18,12 +18,14 @@ import { ClientStreams, ServerStreams } from '../streams.ts'
 
 const DEFAULT_PULL_SIZE = 65535
 
-const toReasonString = (reason: unknown) => {
+export const toReasonString = (reason: unknown) => {
   if (typeof reason === 'string') return reason
   if (reason === undefined || reason === null) return undefined
   if (reason instanceof Error) return reason.message
   try {
-    return JSON.stringify(reason)
+    // JSON.stringify returns undefined (does not throw) for symbols/functions
+    const json = JSON.stringify(reason)
+    if (json !== undefined) return json
   } catch {}
   if (
     typeof reason === 'number' ||
@@ -260,7 +262,7 @@ export const createStreamLayer = (core: ClientCore): StreamLayerApi => {
           streamId: message.streamId,
           reason: message.reason,
         })
-        void serverStreams.abort(message.streamId)
+        void serverStreams.abort(message.streamId, message.reason)
         break
       case ServerMessageType.ClientStreamPull:
         core.emitStreamEvent({

@@ -11,12 +11,13 @@ import type {
 import {
   ConnectionType,
   createProtocolBlobReference,
+  ErrorCode,
   ProtocolVersion,
 } from '@nmtjs/protocol'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { TransportConnectParams } from '../src/transport.ts'
-import { ClientCore } from '../src/core.ts'
+import { ClientCore, ClientError } from '../src/core.ts'
 
 const format: BaseClientFormat = {
   contentType: 'application/json',
@@ -187,6 +188,65 @@ describe('ClientCore', () => {
 
     expect(decodeMessage).toHaveBeenCalledWith(context, raw)
     expect(listener).toHaveBeenCalledWith(decodedMessage, raw)
+  })
+
+  it('emits an error event when a server frame fails to decode', async () => {
+    const transport = createBidirectionalTransportDouble()
+    const core = new ClientCore(
+      { protocol: ProtocolVersion.v1, format },
+      transport.transport,
+    )
+
+    core.setMessageContextFactory(() => createMessageContext())
+
+    const cause = new Error('malformed frame')
+    ;(core.protocol as any).decodeMessage = vi.fn(() => {
+      throw cause
+    })
+
+    const messageListener = vi.fn()
+    const errorListener = vi.fn()
+    core.on('message', messageListener)
+    core.on('error', errorListener)
+
+    const connectPromise = core.connect()
+    transport.open()
+    await connectPromise
+
+    transport.emitMessage(new Uint8Array([1, 2, 3]))
+    await Promise.resolve()
+
+    expect(messageListener).not.toHaveBeenCalled()
+    expect(errorListener).toHaveBeenCalledTimes(1)
+
+    const error = errorListener.mock.calls[0][0] as ClientError
+    expect(error).toBeInstanceOf(ClientError)
+    expect(error.code).toBe(ErrorCode.ClientRequestError)
+    expect(error.data).toBe(cause)
+  })
+
+  it('survives a decode error emitted without any error listeners', async () => {
+    const transport = createBidirectionalTransportDouble()
+    const core = new ClientCore(
+      { protocol: ProtocolVersion.v1, format },
+      transport.transport,
+    )
+
+    core.setMessageContextFactory(() => createMessageContext())
+    ;(core.protocol as any).decodeMessage = vi.fn(() => {
+      throw new Error('malformed frame')
+    })
+
+    const connectPromise = core.connect()
+    transport.open()
+    await connectPromise
+
+    // pins EventTarget-style emit semantics: an unlistened 'error' event must
+    // not throw (unlike Node's EventEmitter) or surface as unhandled rejection
+    expect(() => transport.emitMessage(new Uint8Array([1, 2, 3]))).not.toThrow()
+    await Promise.resolve()
+
+    expect(core.state).toBe('connected')
   })
 
   it('reconnects after a server disconnect when reconnect is configured', async () => {

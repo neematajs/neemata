@@ -1,5 +1,5 @@
-import { ProtocolVersion } from '@nmtjs/protocol'
-import { BaseClientFormat } from '@nmtjs/protocol/client'
+import { ErrorCode, ProtocolVersion } from '@nmtjs/protocol'
+import { BaseClientFormat, ProtocolError } from '@nmtjs/protocol/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { WsTransportClient } from '../src/index.ts'
@@ -31,9 +31,12 @@ class FakeWebSocket {
 
   readonly url: URL
   binaryType = 'blob'
+  readyState = 0 // CONNECTING
   readonly send = vi.fn()
   readonly close = vi.fn((code?: number, reason?: string) => {
-    this.emit('close', { code, reason })
+    this.readyState = 2 // CLOSING
+    // real sockets deliver close asynchronously, leaving a CLOSING window
+    setTimeout(() => this.emit('close', { code, reason }), 0)
   })
 
   #listeners = new Map<string, Set<Listener>>()
@@ -50,6 +53,9 @@ class FakeWebSocket {
   }
 
   emit(type: string, init: Record<string, unknown> = {}) {
+    if (type === 'open') this.readyState = 1 // OPEN
+    if (type === 'close') this.readyState = 3 // CLOSED
+
     const event = Object.assign(new Event(type), init)
     for (const listener of this.#listeners.get(type) ?? []) {
       listener(event)
@@ -131,6 +137,70 @@ describe('WsTransportClient', () => {
     await transport.disconnect()
 
     expect(socket.close).toHaveBeenCalledWith(1000, 'client')
+    expect(onDisconnect).toHaveBeenCalledWith('client')
+  })
+
+  it('rejects sends when the socket closes while awaiting connect', async () => {
+    const transport = new WsTransportClient(
+      new TestFormat(),
+      ProtocolVersion.v1,
+      { url: 'http://localhost:4000', WebSocket: FakeWebSocket as any },
+    )
+
+    const connectPromise = transport.connect({
+      onConnect: vi.fn(),
+      onMessage: vi.fn(),
+      onDisconnect: vi.fn(),
+    })
+
+    const socket = FakeWebSocket.instances.at(-1)!
+
+    // send() awaits the pending connect; the socket closes before it resumes
+    const sendPromise = transport.send(new Uint8Array([1]), {})
+    socket.emit('open')
+    socket.emit('close', { reason: 'server_shutdown' })
+    await connectPromise
+
+    await expect(sendPromise).rejects.toSatisfy(
+      (error) =>
+        error instanceof ProtocolError &&
+        error.code === ErrorCode.ConnectionError,
+    )
+    expect(socket.send).not.toHaveBeenCalled()
+  })
+
+  it('rejects sends while the socket is still closing', async () => {
+    const transport = new WsTransportClient(
+      new TestFormat(),
+      ProtocolVersion.v1,
+      { url: 'http://localhost:4000', WebSocket: FakeWebSocket as any },
+    )
+
+    const onDisconnect = vi.fn()
+
+    const connectPromise = transport.connect({
+      onConnect: vi.fn(),
+      onMessage: vi.fn(),
+      onDisconnect,
+    })
+
+    const socket = FakeWebSocket.instances.at(-1)!
+    socket.emit('open')
+    await connectPromise
+
+    // socket is CLOSING (close event not yet delivered) when send resumes
+    const closing = transport.disconnect()
+    expect(socket.readyState).toBe(2)
+
+    await expect(transport.send(new Uint8Array([1]), {})).rejects.toSatisfy(
+      (error) =>
+        error instanceof ProtocolError &&
+        error.code === ErrorCode.ConnectionError,
+    )
+    expect(socket.send).not.toHaveBeenCalled()
+
+    await closing
+    expect(socket.readyState).toBe(3)
     expect(onDisconnect).toHaveBeenCalledWith('client')
   })
 })

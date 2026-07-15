@@ -7,7 +7,11 @@ import type {
 import type { ProtocolVersion } from '@nmtjs/protocol'
 import type { BaseClientFormat } from '@nmtjs/protocol/client'
 import { once } from '@nmtjs/common'
-import { ConnectionType } from '@nmtjs/protocol'
+import { ConnectionType, ErrorCode } from '@nmtjs/protocol'
+import { ProtocolError } from '@nmtjs/protocol/client'
+
+// WebSocket.OPEN without touching the global: a custom implementation may be injected
+const WS_OPEN = 1
 
 export type WsClientTransportOptions = {
   /**
@@ -126,9 +130,23 @@ export class WsTransportClient implements BidirectionalTransport {
   }
 
   async send(message: ArrayBufferView, options: TransportSendOptions) {
-    if (this.webSocket === null) throw new Error('WebSocket is not connected')
+    if (this.webSocket === null) {
+      throw new ProtocolError(
+        ErrorCode.ConnectionError,
+        'WebSocket is not connected',
+      )
+    }
     await this.connecting
-    if (!options.signal?.aborted) this.webSocket!.send(message as any)
+    // the close handler may null the socket, or a concurrent disconnect may
+    // start closing it, while this send is suspended on the await
+    const webSocket = this.webSocket
+    if (webSocket === null || webSocket.readyState !== WS_OPEN) {
+      throw new ProtocolError(
+        ErrorCode.ConnectionError,
+        'WebSocket is not open',
+      )
+    }
+    if (!options.signal?.aborted) webSocket.send(message as any)
   }
 }
 
