@@ -31,17 +31,17 @@ export type HttpTransportCorsCustomParams = {
 } & (
   | {
       /**
-       * Reflect any request origin. Credentials are not allowed in this mode:
-       * combining a reflected origin with `Access-Control-Allow-Credentials`
-       * would let any website make credentialed (cookie-authed) requests.
+       * `true` reflects any request origin, an array is an explicit
+       * allowlist. Credentials default on for allowlisted origins only.
        */
-      origin: true
+      origin: true | string[]
       allowCredentials?: never
     }
   | {
       /**
-       * Explicit origin allowlist. Credentials are enabled by default for
-       * allowlisted origins (set `allowCredentials` to override).
+       * Explicit `allowCredentials` requires an origin allowlist: combining
+       * credentials with a reflected origin (`origin: true`) would let any
+       * website make credentialed (cookie-authed) requests.
        */
       origin: string[]
       allowCredentials?: string

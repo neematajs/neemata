@@ -1,5 +1,6 @@
 import { Buffer } from 'node:buffer'
-import { Duplex, Readable } from 'node:stream'
+import { Duplex, Readable, Transform } from 'node:stream'
+import { pipeline } from 'node:stream/promises'
 
 import type { ApplicationResolvedProcedure } from '@nmtjs/application'
 import type { TransportWorker, TransportWorkerParams } from '@nmtjs/gateway'
@@ -131,6 +132,9 @@ export class HttpTransportServer implements TransportWorker<
     const method = request.method.toLowerCase()
     const origin = request.headers.get('origin')
     const responseHeaders = new Headers()
+    // CORS makes responses origin-dependent (even denials), so shared caches
+    // must key on Origin to avoid serving them across origins
+    if (this.#corsOptions) responseHeaders.append('Vary', 'Origin')
     if (origin) this.applyCors(origin, request, responseHeaders)
 
     // Handle preflight requests
@@ -169,7 +173,6 @@ export class HttpTransportServer implements TransportWorker<
       let payload: any
 
       if (canHaveBody && body) {
-        const bodyStream = Readable.fromWeb(body as any)
         const cannotDecode =
           !contentType || !this.params.formats.supportsDecoder(contentType)
         if (isBlob || cannotDecode) {
@@ -178,12 +181,26 @@ export class HttpTransportServer implements TransportWorker<
           const size = contentLength
             ? Number.parseInt(contentLength, 10)
             : undefined
-          payload = new ProtocolClientStream(-1, { size, type })
-          bodyStream.pipe(payload)
+          // Declared size over the cap: reject before reading anything
+          if (size !== undefined && size > this.#maxRequestBodySize) {
+            throw new PayloadTooLargeError()
+          }
+          const clientStream = new ProtocolClientStream(-1, { size, type })
+          // The rpc may never read the payload; without a handler a capped
+          // upload would crash the process with an unhandled 'error'
+          clientStream.on('error', () => {})
+          payload = clientStream
+          // pipeline (unlike pipe) propagates source errors; the cap error is
+          // re-surfaced on the payload stream so its consumer rejects with it
+          pipeline(
+            Readable.fromWeb(body as any),
+            this.createBodySizeGuard(),
+            clientStream,
+          ).catch((error) => clientStream.destroy(error))
         } else {
           const chunks: Buffer[] = []
           let received = 0
-          for await (const chunk of bodyStream) {
+          for await (const chunk of Readable.fromWeb(body as any)) {
             received += chunk.byteLength
             // Reject mid-stream to avoid buffering unbounded payloads
             if (received > this.#maxRequestBodySize) {
@@ -217,7 +234,9 @@ export class HttpTransportServer implements TransportWorker<
       if (result instanceof Response) {
         const { status, statusText, headers, body } = result
         headers.forEach((value, key) => {
-          responseHeaders.set(key, value)
+          // Merge Vary so the cors Origin entry isn't lost to shared caches
+          if (key.toLowerCase() === 'vary') responseHeaders.append(key, value)
+          else responseHeaders.set(key, value)
         })
 
         return new Response(body, {
@@ -366,6 +385,19 @@ export class HttpTransportServer implements TransportWorker<
     }
   }
 
+  private createBodySizeGuard() {
+    const maxSize = this.#maxRequestBodySize
+    let received = 0
+    return new Transform({
+      transform(chunk: Buffer, _encoding, callback) {
+        received += chunk.byteLength
+        // Enforce the cap even when the declared content-length lies
+        if (received > maxSize) callback(new PayloadTooLargeError())
+        else callback(null, chunk)
+      },
+    })
+  }
+
   private applyCors(
     origin: string,
     request: HttpTransportServerRequest,
@@ -405,14 +437,18 @@ export class HttpTransportServer implements TransportWorker<
           params = { ...EXPLICIT_ORIGIN_CORS_PARAMS }
         }
       } else if (typeof result === 'object') {
-        params =
-          result.origin === true
-            ? { ...DEFAULT_CORS_PARAMS }
-            : { ...EXPLICIT_ORIGIN_CORS_PARAMS }
-        for (const key in params) {
-          const value = result[key]
-          if (value !== undefined) {
-            params[key] = value
+        // Returned params must still match the requesting origin, otherwise
+        // any origin would get reflected (with credentials for allowlists)
+        if (result.origin === true || result.origin.includes(origin)) {
+          params =
+            result.origin === true
+              ? { ...DEFAULT_CORS_PARAMS }
+              : { ...EXPLICIT_ORIGIN_CORS_PARAMS }
+          for (const key in params) {
+            const value = result[key]
+            if (value !== undefined) {
+              params[key] = value
+            }
           }
         }
       }
