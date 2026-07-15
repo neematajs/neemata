@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   BlobStreamsManager,
+  STREAM_CREDIT_VIOLATION_REASON,
   STREAM_IDLE_TIMEOUT_REASON,
   STREAM_TRANSPORT_DROP_REASON,
 } from '../src/streams.ts'
@@ -273,6 +274,41 @@ describe('BlobStreamsManager', () => {
       it('should do nothing for non-existent stream', () => {
         expect(() => manager.abortClientStream('conn-1', 999)).not.toThrow()
       })
+
+      it('notifies the peer at most once, with the abort reason', () => {
+        const notify = vi.fn()
+        manager.createClientStream(
+          'conn-1',
+          1,
+          100,
+          { type: 'text/plain' },
+          {},
+          notify,
+        )
+
+        manager.abortClientStream('conn-1', 100, STREAM_CREDIT_VIOLATION_REASON)
+        manager.abortClientStream('conn-1', 100, 'again')
+
+        expect(notify).toHaveBeenCalledTimes(1)
+        expect(notify).toHaveBeenCalledWith(STREAM_CREDIT_VIOLATION_REASON)
+      })
+
+      it('does not echo peer-originated aborts back', () => {
+        const notify = vi.fn()
+        manager.createClientStream(
+          'conn-1',
+          1,
+          100,
+          { type: 'text/plain' },
+          {},
+          notify,
+        )
+
+        manager.abortClientStream('conn-1', 100, 'client cancelled', false)
+
+        expect(notify).not.toHaveBeenCalled()
+        expect(manager.clientStreams.size).toBe(0)
+      })
     })
 
     describe('consumeClientStream / getClientCallStreamIds', () => {
@@ -537,7 +573,7 @@ describe('BlobStreamsManager', () => {
     })
 
     describe('source errors', () => {
-      it('propagates a source error through the sink', async () => {
+      it('propagates a source error through the sink once granted', async () => {
         const test = createTestSink()
         const source = new Readable({ read() {} })
         manager.createServerStream(
@@ -548,11 +584,66 @@ describe('BlobStreamsManager', () => {
           test.sink,
         )
 
+        manager.pullServerStream('conn-1', 100, 10)
         source.destroy(new Error('source blew up'))
         await flush()
 
         expect(test.sink.error).toHaveBeenCalledWith(
           expect.objectContaining({ message: 'source blew up' }),
+        )
+        expect(manager.serverStreams.size).toBe(0)
+      })
+
+      it('holds a pre-grant source error until the first grant', async () => {
+        const test = createTestSink()
+        const source = new Readable({ read() {} })
+        manager.createServerStream(
+          'conn-1',
+          1,
+          100,
+          new ProtocolBlob({ source, type: 'text/plain' }),
+          test.sink,
+        )
+
+        // source blows up before any grant: the abort frame must not be able
+        // to overtake the RpcResponse referencing this stream
+        source.destroy(new Error('early failure'))
+        await flush()
+        await flush()
+
+        expect(test.sink.error).not.toHaveBeenCalled()
+        // the stream stays registered so the client's pull still lands
+        expect(manager.serverStreams.size).toBe(1)
+
+        manager.pullServerStream('conn-1', 100, 10)
+        await flush()
+
+        expect(test.sink.error).toHaveBeenCalledWith(
+          expect.objectContaining({ message: 'early failure' }),
+        )
+        expect(manager.serverStreams.size).toBe(0)
+      })
+    })
+
+    describe('credit overflow', () => {
+      it('aborts the stream when grants exceed the credit cap', () => {
+        const test = createTestSink()
+        const source = new Readable({ read() {} })
+        manager.createServerStream(
+          'conn-1',
+          1,
+          100,
+          new ProtocolBlob({ source, type: 'text/plain' }),
+          test.sink,
+        )
+
+        manager.pullServerStream('conn-1', 100, 2 ** 32 - 1)
+        expect(test.sink.error).not.toHaveBeenCalled()
+
+        manager.pullServerStream('conn-1', 100, 1)
+
+        expect(test.sink.error).toHaveBeenCalledWith(
+          expect.objectContaining({ message: STREAM_CREDIT_VIOLATION_REASON }),
         )
         expect(manager.serverStreams.size).toBe(0)
       })
@@ -766,14 +857,12 @@ describe('BlobStreamsManager', () => {
 
         manager.cleanupConnection('conn-1')
 
-        expect(test1.sink.error).toHaveBeenCalledWith(
-          expect.objectContaining({ message: 'Connection closed' }),
-        )
-        expect(test2.sink.error).toHaveBeenCalledWith(
-          expect.objectContaining({ message: 'Connection closed' }),
-        )
+        // teardown must not fire peer notifications into a dying transport
+        expect(test1.sink.error).not.toHaveBeenCalled()
+        expect(test2.sink.error).not.toHaveBeenCalled()
         expect(test3.sink.error).not.toHaveBeenCalled()
         expect(manager.serverStreams.size).toBe(1)
+        expect(manager.serverStreams.keys().next().value).toBe('conn-2:100')
       })
 
       it('should handle mixed client and server streams', () => {
@@ -798,7 +887,8 @@ describe('BlobStreamsManager', () => {
         manager.cleanupConnection('conn-1')
 
         expect(destroyClient).toHaveBeenCalled()
-        expect(test.sink.error).toHaveBeenCalled()
+        expect(manager.serverStreams.size).toBe(0)
+        expect(manager.clientStreams.size).toBe(0)
       })
 
       it('should do nothing for non-existent connection', () => {

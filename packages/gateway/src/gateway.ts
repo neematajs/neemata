@@ -36,7 +36,12 @@ import {
   ProtocolBlob,
   ServerMessageType,
 } from '@nmtjs/protocol'
-import { getFormat, ProtocolError, versions } from '@nmtjs/protocol/server'
+import {
+  getFormat,
+  MAX_STREAM_CREDITS,
+  ProtocolError,
+  versions,
+} from '@nmtjs/protocol/server'
 
 import type { GatewayApi, GatewayResolvedProcedure } from './api.ts'
 import type { GatewayConnection } from './connections.ts'
@@ -61,6 +66,10 @@ type RpcStreamCreditState = {
   credits: number
   // resolves the in-flight credit wait; also poked on abort/teardown
   notify: (() => void) | null
+  // resets the stream idle timer (any activity)
+  touch: () => void
+  // fails the whole stream (e.g. credit violation) from the message handler
+  fail: (error: Error) => void
 }
 
 /**
@@ -105,6 +114,21 @@ const DEFAULT_STREAM_IDLE_TIMEOUT = 30_000
  * close or container disposal can't hang closeConnection() and stop().
  */
 export const GATEWAY_TEARDOWN_STEP_TIMEOUT = 10_000
+/**
+ * Upper bound for the RPC stream iterator's return() during cleanup: on
+ * async generators it queues behind a stalled next(), so unwinding is only
+ * cooperative and must not hang the message handler forever.
+ */
+export const RPC_STREAM_CLEANUP_TIMEOUT = 10_000
+/**
+ * Once a terminal stream frame (end/abort) is dropped by the transport,
+ * stream-level recovery is impossible — the peer would wait forever. Closing
+ * the connection guarantees peer-side cleanup via the socket close.
+ */
+const TERMINAL_FRAME_DROP_CLOSE = {
+  code: 1011,
+  reason: 'stream terminal frame dropped',
+}
 
 export class Gateway<
   ResolvedProcedure extends GatewayResolvedProcedure = GatewayResolvedProcedure,
@@ -325,29 +349,12 @@ export class Gateway<
     const container = connection.container.fork(Scope.Call)
 
     const dispose = async () => {
-      const streamAbortReason = 'Blob was not consumed before handler completed'
-
-      const unconsumedStreamIds = this.blobStreams.getClientCallStreamIds(
-        connection.id,
-        callId,
-      )
-
-      for (const streamId of unconsumedStreamIds) {
-        messageContext.transport.send?.(
-          connection.id,
-          connection.protocol.encodeMessage(
-            messageContext,
-            ServerMessageType.ClientStreamAbort,
-            { streamId, reason: streamAbortReason },
-          ),
-        )
-      }
-
-      // Abort streams related to this call
+      // Abort streams related to this call; the per-stream notifier delivers
+      // the wire abort (with reason) at most once
       this.blobStreams.abortClientCallStreams(
         connection.id,
         callId,
-        streamAbortReason,
+        'Blob was not consumed before handler completed',
       )
 
       this.rpcs.delete(connection.id, callId, controller)
@@ -388,7 +395,7 @@ export class Gateway<
       transport,
       streamId,
       addClientStream: ({ streamId, callId, metadata }) => {
-        const stream = this.blobStreams.createClientStream(
+        this.blobStreams.createClientStream(
           connectionId,
           callId,
           streamId,
@@ -403,7 +410,7 @@ export class Gateway<
                 streamId,
                 pullSize,
               )
-              transport.send!(
+              const sent = transport.send!(
                 connectionId,
                 protocol.encodeMessage(
                   this.createMessageContext(connection, transportKey),
@@ -411,21 +418,36 @@ export class Gateway<
                   { streamId, size: pullSize },
                 ),
               )
+              if (sent === false) {
+                // phantom credit would stall both sides: Node won't re-invoke
+                // _read for a pull the client never received
+                this.blobStreams.revokeClientStreamGrant(
+                  connectionId,
+                  streamId,
+                  pullSize,
+                )
+                this.blobStreams.abortClientStream(
+                  connectionId,
+                  streamId,
+                  STREAM_TRANSPORT_DROP_REASON,
+                )
+              }
             },
           },
+          (reason) => {
+            const sent = transport.send!(
+              connectionId,
+              protocol.encodeMessage(
+                this.createMessageContext(connection, transportKey),
+                ServerMessageType.ClientStreamAbort,
+                { streamId, reason },
+              ),
+            )
+            if (sent === false) {
+              void this.closeConnection(connectionId, TERMINAL_FRAME_DROP_CLOSE)
+            }
+          },
         )
-
-        stream.once('error', () => {
-          this.send(
-            transportKey,
-            connectionId,
-            protocol.encodeMessage(
-              this.createMessageContext(connection, transportKey),
-              ServerMessageType.ClientStreamAbort,
-              { streamId },
-            ),
-          )
-        })
 
         return createProtocolBlobReference(streamId, metadata)
       },
@@ -598,10 +620,12 @@ export class Gateway<
             break
           }
           case ClientMessageType.ClientStreamAbort: {
+            // peer-originated: never echo the abort back
             this.blobStreams.abortClientStream(
               connectionId,
               message.streamId,
               message.reason,
+              false,
             )
             break
           }
@@ -616,17 +640,6 @@ export class Gateway<
                 { streamId: message.streamId },
                 'Client stream push exceeds granted credit, aborting stream',
               )
-              messageContext.transport.send?.(
-                connectionId,
-                connection.protocol.encodeMessage(
-                  messageContext,
-                  ServerMessageType.ClientStreamAbort,
-                  {
-                    streamId: message.streamId,
-                    reason: STREAM_CREDIT_VIOLATION_REASON,
-                  },
-                ),
-              )
               this.blobStreams.abortClientStream(
                 connectionId,
                 message.streamId,
@@ -640,14 +653,30 @@ export class Gateway<
             break
           }
           case ClientMessageType.ServerStreamAbort: {
+            // peer-originated: never echo the abort back
             this.blobStreams.abortServerStream(
               connectionId,
               message.streamId,
               message.reason,
+              false,
             )
             break
           }
           case ClientMessageType.ServerStreamPull: {
+            if (message.size === 0) {
+              // zero-size pulls grant nothing but would reset the idle timer
+              // forever — a free keepalive, so treat them as violations
+              logger.warn(
+                { streamId: message.streamId },
+                'Zero-size server stream pull, aborting stream',
+              )
+              this.blobStreams.abortServerStream(
+                connectionId,
+                message.streamId,
+                STREAM_CREDIT_VIOLATION_REASON,
+              )
+              break
+            }
             this.blobStreams.pullServerStream(
               connectionId,
               message.streamId,
@@ -660,7 +689,21 @@ export class Gateway<
               `${connectionId}:${message.callId}`,
             )
             if (credit) {
+              // zero-size pulls are a free keepalive, oversized totals break
+              // the counter — both are violations
+              if (
+                message.size === 0 ||
+                credit.credits + message.size > MAX_STREAM_CREDITS
+              ) {
+                logger.warn(
+                  { callId: message.callId, size: message.size },
+                  'Invalid RPC stream pull size, aborting stream',
+                )
+                credit.fail(new StreamFlowError(STREAM_CREDIT_VIOLATION_REASON))
+                break
+              }
               credit.credits += message.size
+              credit.touch()
               credit.notify?.()
             }
             break
@@ -780,29 +823,77 @@ export class Gateway<
       const response = await this.dispatchRpc(connection, context)
 
       if (typeof response === 'function') {
-        transport.send!(
-          connectionId,
-          protocol.encodeMessage(context, ServerMessageType.RpcStreamResponse, {
-            callId,
-          }),
-        )
+        // don't open a stream for a call aborted while dispatching
+        signal.throwIfAborted()
 
         const creditKey = `${connectionId}:${callId}`
-        const credit: RpcStreamCreditState = { credits: 0, notify: null }
+        // Rejects on abort, idle expiry, or credit violation. EVERY await in
+        // the streaming loop races against it, so a handler stalled inside
+        // next() cannot outlive the call abort or the idle timeout.
+        const flow = createFuture<never>()
+        flow.promise.catch(noopFn)
+        let idleTimer: ReturnType<typeof setTimeout> | undefined
+        const touch = () => {
+          clearTimeout(idleTimer)
+          idleTimer = setTimeout(
+            () => flow.reject(new StreamFlowError(STREAM_IDLE_TIMEOUT_REASON)),
+            this.options.streamIdleTimeout,
+          )
+        }
+        const credit: RpcStreamCreditState = {
+          credits: 0,
+          notify: null,
+          touch,
+          fail: (error) => flow.reject(error),
+        }
+        // installed BEFORE RpcStreamResponse goes out: a synchronous
+        // transport may deliver the first pull re-entrantly during the send
         this.rpcStreamCredits.set(creditKey, credit)
-        // wake a pending credit wait so the loop can observe the abort
-        const wake = () => credit.notify?.()
-        signal.addEventListener('abort', wake, { once: true })
+        const onAbort = () => flow.reject(signal.reason)
+        signal.addEventListener('abort', onAbort, { once: true })
+        touch()
 
+        let iterator: AsyncIterator<unknown> | undefined
         try {
-          for await (const chunk of response()) {
+          const sentResponse = transport.send!(
+            connectionId,
+            protocol.encodeMessage(
+              context,
+              ServerMessageType.RpcStreamResponse,
+              { callId },
+            ),
+          )
+          if (sentResponse === false) {
+            // the client never learns this call is a stream; nothing
+            // stream-level can recover it
+            void this.closeConnection(connectionId, TERMINAL_FRAME_DROP_CLOSE)
+            return
+          }
+          signal.throwIfAborted()
+
+          iterator = (response() as AsyncIterable<unknown>)[
+            Symbol.asyncIterator
+          ]()
+
+          while (true) {
+            const result = (await Promise.race([
+              iterator.next(),
+              flow.promise,
+            ])) as IteratorResult<unknown>
+            if (result.done) break
             signal.throwIfAborted()
             while (credit.credits <= 0) {
-              await this.waitForRpcStreamCredit(credit, signal)
+              const grant = createFuture<void>()
+              credit.notify = grant.resolve
+              try {
+                await Promise.race([grant.promise, flow.promise])
+              } finally {
+                credit.notify = null
+              }
               signal.throwIfAborted()
             }
             credit.credits--
-            const chunkEncoded = encoder.encode(chunk)
+            const chunkEncoded = encoder.encode(result.value)
             const sent = transport.send!(
               connectionId,
               protocol.encodeMessage(
@@ -811,27 +902,27 @@ export class Gateway<
                 { callId, chunk: chunkEncoded },
               ),
             )
-            // for-await invokes the iterator's return() on throw, so the
-            // handler's finally blocks still run
             if (sent === false) {
               throw new StreamFlowError(STREAM_TRANSPORT_DROP_REASON)
             }
+            touch()
           }
 
-          const sent = transport.send!(
+          const sentEnd = transport.send!(
             connectionId,
             protocol.encodeMessage(context, ServerMessageType.RpcStreamEnd, {
               callId,
             }),
           )
-          if (sent === false) {
-            throw new StreamFlowError(STREAM_TRANSPORT_DROP_REASON)
+          if (sentEnd === false) {
+            // terminal frame lost: the client would wait forever
+            void this.closeConnection(connectionId, TERMINAL_FRAME_DROP_CLOSE)
           }
         } catch (error) {
           if (!isAbortError(error) && !(error instanceof StreamFlowError)) {
             this.logger.error(error)
           }
-          transport.send!(
+          const sentAbort = transport.send!(
             connectionId,
             protocol.encodeMessage(context, ServerMessageType.RpcStreamAbort, {
               callId,
@@ -839,9 +930,29 @@ export class Gateway<
                 error instanceof StreamFlowError ? error.message : undefined,
             }),
           )
+          if (sentAbort === false) {
+            void this.closeConnection(connectionId, TERMINAL_FRAME_DROP_CLOSE)
+          }
         } finally {
-          signal.removeEventListener('abort', wake)
+          signal.removeEventListener('abort', onAbort)
+          clearTimeout(idleTimer)
           this.rpcStreamCredits.delete(creditKey)
+          if (iterator) {
+            // cooperative unwind on every exit path; timeboxed because
+            // return() queues behind a stalled next() on async generators
+            try {
+              await withTimeout(
+                Promise.resolve(iterator.return?.()),
+                RPC_STREAM_CLEANUP_TIMEOUT,
+                new Error('RPC stream iterator cleanup timed out'),
+              )
+            } catch (error) {
+              this.logger.warn(
+                { error, callId },
+                'RPC stream iterator cleanup failed',
+              )
+            }
+          }
         }
       } else {
         const streams = this.blobStreams.getServerStreamsMetadata(
@@ -871,27 +982,6 @@ export class Gateway<
       const level = error instanceof ProtocolError ? 'trace' : 'error'
       this.logger[level](error)
     }
-  }
-
-  /**
-   * Blocks until the client grants at least one chunk credit. A consumer
-   * that never pulls counts as idle, so the wait is bounded by the stream
-   * idle timeout; abort/teardown resolves the wait early via notify().
-   */
-  private waitForRpcStreamCredit(
-    credit: RpcStreamCreditState,
-    signal: AbortSignal,
-  ): Promise<void> {
-    if (credit.credits > 0 || signal.aborted) return Promise.resolve()
-    const future = createFuture<void>()
-    credit.notify = future.resolve
-    return withTimeout(
-      future.promise,
-      this.options.streamIdleTimeout,
-      new StreamFlowError(STREAM_IDLE_TIMEOUT_REASON),
-    ).finally(() => {
-      credit.notify = null
-    })
   }
 
   private releaseRpcStreamCredits(connectionId: string) {
@@ -1003,7 +1093,7 @@ export class Gateway<
             )
           },
           end: () => {
-            transport.send!(
+            const sent = transport.send!(
               connectionId,
               protocol.encodeMessage(
                 context,
@@ -1013,9 +1103,14 @@ export class Gateway<
                 },
               ),
             )
+            if (sent === false) {
+              // terminal frame lost after local state removal: the client
+              // would wait forever, only a connection close can recover
+              void this.closeConnection(connectionId, TERMINAL_FRAME_DROP_CLOSE)
+            }
           },
           error: (error) => {
-            transport.send!(
+            const sent = transport.send!(
               connectionId,
               protocol.encodeMessage(
                 context,
@@ -1023,6 +1118,9 @@ export class Gateway<
                 { streamId, reason: error.message },
               ),
             )
+            if (sent === false) {
+              void this.closeConnection(connectionId, TERMINAL_FRAME_DROP_CLOSE)
+            }
           },
         },
       )

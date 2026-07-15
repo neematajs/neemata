@@ -5,6 +5,7 @@ import { Hooks } from '@nmtjs/core'
 import {
   ClientMessageType,
   ConnectionType,
+  createProtocolBlobReference,
   ProtocolVersion,
   ServerMessageType,
 } from '@nmtjs/protocol'
@@ -114,6 +115,8 @@ async function createTestGateway(options?: {
   call?: GatewayApi['call']
   streamIdleTimeout?: number
   sendResult?: (message: SentMessage) => boolean
+  // invoked synchronously inside transport.send, after recording
+  onSend?: (message: SentMessage) => void
 }) {
   const logger = createTestLogger()
   const container = createTestContainer({ logger })
@@ -136,7 +139,9 @@ async function createTestGateway(options?: {
     send: vi.fn((_connectionId: string, buffer: ArrayBufferView) => {
       const message = decodeSent(Buffer.from(buffer as Uint8Array))
       sent.push(message)
-      return options?.sendResult?.(message) ?? true
+      const result = options?.sendResult?.(message) ?? true
+      options?.onSend?.(message)
+      return result
     }),
     close: vi.fn((_connectionId: string) => {}),
   }
@@ -167,8 +172,11 @@ async function createTestGateway(options?: {
 
   const sentOfType = (type: number) => sent.filter((m) => m.type === type)
 
-  return { gateway, api, sent, sentOfType, connection, send }
+  return { gateway, api, sent, sentOfType, connection, send, transport }
 }
+
+const sleep = (ms: number) =>
+  new Promise<void>((resolve) => setTimeout(resolve, ms))
 
 describe('RPC stream flow control', () => {
   it('gates chunks on RpcStreamPull credits', async () => {
@@ -320,6 +328,216 @@ describe('RPC stream flow control', () => {
 
     await gateway.stop()
   })
+
+  it('terminates a handler stalled inside next() on client abort', async () => {
+    let finished = false
+    let releaseStall!: () => void
+    const stall = new Promise<void>((resolve) => {
+      releaseStall = resolve
+    })
+    async function* handler() {
+      try {
+        yield 'first'
+        await stall
+        yield 'second'
+      } finally {
+        finished = true
+      }
+    }
+
+    const { gateway, sentOfType, send } = await createTestGateway({
+      call: async () => () => handler(),
+    })
+
+    const inFlight = send(encodeRpcMessage(1, 'test', {}))
+    await flush()
+    await send(encodeRpcStreamPull(1, 2))
+    await flush()
+
+    // first chunk delivered, second next() is parked on the stalled await
+    expect(sentOfType(ServerMessageType.RpcStreamChunk).length).toBe(1)
+
+    await send(encodeRpcAbort(1))
+    await flush()
+
+    // the abort escapes the stalled next() immediately...
+    expect(sentOfType(ServerMessageType.RpcStreamAbort).length).toBe(1)
+    // ...while the handler itself can only unwind cooperatively
+    expect(finished).toBe(false)
+
+    releaseStall()
+    await inFlight
+    expect(finished).toBe(true)
+
+    await gateway.stop()
+  })
+
+  it('terminates a handler stalled inside next() via the idle timeout', async () => {
+    let finished = false
+    let releaseStall!: () => void
+    const stall = new Promise<void>((resolve) => {
+      releaseStall = resolve
+    })
+    async function* handler() {
+      try {
+        yield 'first'
+        await stall
+        yield 'second'
+      } finally {
+        finished = true
+      }
+    }
+
+    const { gateway, sentOfType, send } = await createTestGateway({
+      call: async () => () => handler(),
+      streamIdleTimeout: 50,
+    })
+
+    const inFlight = send(encodeRpcMessage(1, 'test', {}))
+    await flush()
+    // enough credit that the loop parks in next(), not in the credit wait
+    await send(encodeRpcStreamPull(1, 5))
+    await flush()
+    expect(sentOfType(ServerMessageType.RpcStreamChunk).length).toBe(1)
+
+    await sleep(120)
+
+    const aborts = sentOfType(ServerMessageType.RpcStreamAbort)
+    expect(aborts.length).toBe(1)
+    expect(aborts[0].rest.toString()).toBe(STREAM_IDLE_TIMEOUT_REASON)
+
+    releaseStall()
+    await inFlight
+    expect(finished).toBe(true)
+
+    await gateway.stop()
+  })
+
+  it('closes the connection when the RpcStreamResponse frame is dropped', async () => {
+    let invoked = false
+    async function* handler() {
+      yield 'never'
+    }
+
+    const { gateway, sentOfType, send, transport } = await createTestGateway({
+      call: async () => () => {
+        invoked = true
+        return handler()
+      },
+      sendResult: (message) =>
+        message.type !== ServerMessageType.RpcStreamResponse,
+    })
+
+    await send(encodeRpcMessage(1, 'test', {}))
+    await flush()
+
+    // no streaming loop ran and no stream frames followed
+    expect(invoked).toBe(false)
+    expect(sentOfType(ServerMessageType.RpcStreamChunk).length).toBe(0)
+    expect(sentOfType(ServerMessageType.RpcStreamAbort).length).toBe(0)
+    expect(transport.close).toHaveBeenCalled()
+
+    await gateway.stop()
+  })
+
+  it('does not lose a grant delivered synchronously with the stream response', async () => {
+    async function* handler() {
+      yield 'a'
+    }
+
+    let sendNow: ((data: Buffer) => Promise<void>) | null = null
+
+    const { gateway, sentOfType, send } = await createTestGateway({
+      call: async () => () => handler(),
+      onSend: (message) => {
+        // simulate an in-process transport delivering the first pull
+        // re-entrantly, before the response send even returns
+        if (message.type === ServerMessageType.RpcStreamResponse) {
+          void sendNow?.(encodeRpcStreamPull(1, 1))
+        }
+      },
+    })
+    sendNow = send
+
+    const inFlight = send(encodeRpcMessage(1, 'test', {}))
+    await flush()
+
+    expect(sentOfType(ServerMessageType.RpcStreamChunk).length).toBe(1)
+    expect(sentOfType(ServerMessageType.RpcStreamEnd).length).toBe(1)
+    expect(sentOfType(ServerMessageType.RpcStreamAbort).length).toBe(0)
+
+    await inFlight
+    await gateway.stop()
+  })
+
+  it('aborts the stream on a zero-size RpcStreamPull', async () => {
+    let finished = false
+    async function* handler() {
+      try {
+        while (true) yield 'tick'
+      } finally {
+        finished = true
+      }
+    }
+
+    const { gateway, sentOfType, send } = await createTestGateway({
+      call: async () => () => handler(),
+    })
+
+    const inFlight = send(encodeRpcMessage(1, 'test', {}))
+    await flush()
+
+    await send(encodeRpcStreamPull(1, 0))
+    await inFlight
+
+    expect(finished).toBe(true)
+    const aborts = sentOfType(ServerMessageType.RpcStreamAbort)
+    expect(aborts.length).toBe(1)
+    expect(aborts[0].rest.toString()).toBe(STREAM_CREDIT_VIOLATION_REASON)
+
+    await gateway.stop()
+  })
+
+  it('aborts the stream when pull totals overflow the credit cap', async () => {
+    let finished = false
+    let releaseStall!: () => void
+    const stall = new Promise<void>((resolve) => {
+      releaseStall = resolve
+    })
+    async function* handler() {
+      try {
+        yield 'a'
+        await stall
+      } finally {
+        finished = true
+      }
+    }
+
+    const { gateway, sentOfType, send } = await createTestGateway({
+      call: async () => () => handler(),
+    })
+
+    const inFlight = send(encodeRpcMessage(1, 'test', {}))
+    await flush()
+
+    await send(encodeRpcStreamPull(1, 2 ** 32 - 1))
+    await flush()
+    expect(sentOfType(ServerMessageType.RpcStreamChunk).length).toBe(1)
+    expect(sentOfType(ServerMessageType.RpcStreamAbort).length).toBe(0)
+
+    await send(encodeRpcStreamPull(1, 2 ** 32 - 1))
+    await flush()
+
+    const aborts = sentOfType(ServerMessageType.RpcStreamAbort)
+    expect(aborts.length).toBe(1)
+    expect(aborts[0].rest.toString()).toBe(STREAM_CREDIT_VIOLATION_REASON)
+
+    releaseStall()
+    await inFlight
+    expect(finished).toBe(true)
+
+    await gateway.stop()
+  })
 })
 
 describe('Upload stream flow control', () => {
@@ -348,6 +566,68 @@ describe('Upload stream flow control', () => {
 
     release()
     await inFlight
+
+    // still exactly one wire abort for this stream
+    expect(sentOfType(ServerMessageType.ClientStreamAbort).length).toBe(1)
+
+    await gateway.stop()
+  })
+
+  it('rolls back the grant and aborts when the pull frame is dropped', async () => {
+    const { gateway, sentOfType, send } = await createTestGateway({
+      call: async ({ container }) => {
+        const consumeBlob = await container.resolve(injectables.consumeBlob)
+        const stream = consumeBlob(
+          createProtocolBlobReference(7, { type: 'application/octet-stream' }),
+        )
+        // start consuming: _read demand triggers the (dropped) pull
+        stream.on('data', () => {})
+        stream.on('error', () => {})
+        await new Promise<void>((resolve) => setImmediate(resolve))
+        return null
+      },
+      sendResult: (message) =>
+        message.type !== ServerMessageType.ClientStreamPull,
+    })
+
+    await send(encodeRpcMessage(1, 'test', { __stream: 7 }))
+    await flush()
+
+    expect(sentOfType(ServerMessageType.ClientStreamPull).length).toBe(1)
+    const aborts = sentOfType(ServerMessageType.ClientStreamAbort)
+    expect(aborts.length).toBe(1)
+    expect(aborts[0].id).toBe(7)
+    expect(aborts[0].rest.toString()).toBe(STREAM_TRANSPORT_DROP_REASON)
+    expect(gateway.blobStreams.clientStreams.size).toBe(0)
+
+    await gateway.stop()
+  })
+
+  it('sends the idle timeout reason on the wire, exactly once', async () => {
+    let release!: () => void
+    const pending = new Promise<null>((resolve) => {
+      release = () => resolve(null)
+    })
+
+    const { gateway, sentOfType, send } = await createTestGateway({
+      call: async () => pending,
+      streamIdleTimeout: 50,
+    })
+
+    const inFlight = send(encodeRpcMessage(1, 'test', { __stream: 9 }))
+    await sleep(120)
+
+    let aborts = sentOfType(ServerMessageType.ClientStreamAbort)
+    expect(aborts.length).toBe(1)
+    expect(aborts[0].id).toBe(9)
+    expect(aborts[0].rest.toString()).toBe(STREAM_IDLE_TIMEOUT_REASON)
+
+    // the dispose path must not send a second abort for the same stream
+    release()
+    await inFlight
+    aborts = sentOfType(ServerMessageType.ClientStreamAbort)
+    expect(aborts.length).toBe(1)
+
     await gateway.stop()
   })
 })
@@ -385,6 +665,122 @@ describe('Download stream flow control', () => {
     pushes = sentOfType(ServerMessageType.ServerStreamPush)
     expect(Buffer.concat(pushes.map((p) => p.rest)).byteLength).toBe(100)
     expect(sentOfType(ServerMessageType.ServerStreamEnd).length).toBe(1)
+    expect(gateway.blobStreams.serverStreams.size).toBe(0)
+
+    await gateway.stop()
+  })
+
+  it('closes the connection when a terminal ServerStreamEnd frame is dropped', async () => {
+    const { gateway, sentOfType, send, transport } = await createTestGateway({
+      call: async ({ container }) => {
+        const createBlob = await container.resolve(injectables.createBlob)
+        createBlob(Readable.from([Buffer.alloc(10)]), {
+          type: 'application/octet-stream',
+          size: 10,
+        })
+        return null
+      },
+      sendResult: (message) =>
+        message.type !== ServerMessageType.ServerStreamEnd,
+    })
+
+    await send(encodeRpcMessage(1, 'test', {}))
+    await flush()
+    await send(encodeServerStreamPull(0, 100))
+    await flush()
+
+    expect(sentOfType(ServerMessageType.ServerStreamEnd).length).toBe(1)
+    // the frame was dropped after local cleanup: only a connection close can
+    // stop the client from waiting forever
+    expect(transport.close).toHaveBeenCalled()
+    expect(gateway.blobStreams.serverStreams.size).toBe(0)
+
+    await gateway.stop()
+  })
+
+  it('aborts the stream on a zero-size ServerStreamPull', async () => {
+    const { gateway, sentOfType, send } = await createTestGateway({
+      call: async ({ container }) => {
+        const createBlob = await container.resolve(injectables.createBlob)
+        createBlob(Readable.from([Buffer.alloc(10)]), {
+          type: 'application/octet-stream',
+          size: 10,
+        })
+        return null
+      },
+    })
+
+    await send(encodeRpcMessage(1, 'test', {}))
+    await flush()
+    await send(encodeServerStreamPull(0, 0))
+    await flush()
+
+    expect(sentOfType(ServerMessageType.ServerStreamPush).length).toBe(0)
+    const aborts = sentOfType(ServerMessageType.ServerStreamAbort)
+    expect(aborts.length).toBe(1)
+    expect(aborts[0].rest.toString()).toBe(STREAM_CREDIT_VIOLATION_REASON)
+    expect(gateway.blobStreams.serverStreams.size).toBe(0)
+
+    await gateway.stop()
+  })
+
+  it('aborts the stream when byte-credit grants overflow the cap', async () => {
+    const { gateway, sentOfType, send } = await createTestGateway({
+      call: async ({ container }) => {
+        const createBlob = await container.resolve(injectables.createBlob)
+        // manual source: no data, credits just accumulate
+        createBlob(new Readable({ read() {} }), {
+          type: 'application/octet-stream',
+        })
+        return null
+      },
+    })
+
+    await send(encodeRpcMessage(1, 'test', {}))
+    await flush()
+
+    await send(encodeServerStreamPull(0, 2 ** 32 - 1))
+    await flush()
+    expect(sentOfType(ServerMessageType.ServerStreamAbort).length).toBe(0)
+
+    await send(encodeServerStreamPull(0, 2 ** 32 - 1))
+    await flush()
+
+    const aborts = sentOfType(ServerMessageType.ServerStreamAbort)
+    expect(aborts.length).toBe(1)
+    expect(aborts[0].rest.toString()).toBe(STREAM_CREDIT_VIOLATION_REASON)
+    expect(gateway.blobStreams.serverStreams.size).toBe(0)
+
+    await gateway.stop()
+  })
+
+  it('does not send the abort for a pre-grant source error before the pull', async () => {
+    const source = new Readable({ read() {} })
+
+    const { gateway, sentOfType, send } = await createTestGateway({
+      call: async ({ container }) => {
+        const createBlob = await container.resolve(injectables.createBlob)
+        createBlob(source, { type: 'application/octet-stream' })
+        return null
+      },
+    })
+
+    await send(encodeRpcMessage(1, 'test', {}))
+    await flush()
+    expect(sentOfType(ServerMessageType.RpcResponse).length).toBe(1)
+
+    // the source dies before the client ever pulled
+    source.destroy(new Error('early failure'))
+    await flush()
+    expect(sentOfType(ServerMessageType.ServerStreamAbort).length).toBe(0)
+
+    // the abort is delivered against the first grant instead
+    await send(encodeServerStreamPull(0, 10))
+    await flush()
+
+    const aborts = sentOfType(ServerMessageType.ServerStreamAbort)
+    expect(aborts.length).toBe(1)
+    expect(aborts[0].rest.toString()).toBe('early failure')
     expect(gateway.blobStreams.serverStreams.size).toBe(0)
 
     await gateway.stop()

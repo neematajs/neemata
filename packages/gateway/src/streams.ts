@@ -8,6 +8,7 @@ import type {
 import type { ProtocolServerStreamSink } from '@nmtjs/protocol/server'
 import { noopFn } from '@nmtjs/common'
 import {
+  MAX_STREAM_CREDITS,
   ProtocolClientStream,
   ProtocolServerStream,
 } from '@nmtjs/protocol/server'
@@ -28,6 +29,9 @@ type ClientStreamState = {
   // outstanding byte credit: incremented per pull sent, decremented per push
   granted: number
   idleTimer: ReturnType<typeof setTimeout> | undefined
+  // single wire-abort notification for locally-initiated aborts
+  notify?: (reason: string) => void
+  notified: boolean
 }
 
 type ServerStreamState = {
@@ -35,6 +39,8 @@ type ServerStreamState = {
   callId: number
   stream: ProtocolServerStream
   idleTimer: ReturnType<typeof setTimeout> | undefined
+  // set for peer-originated aborts so the sink error is not echoed back
+  suppressNotify: boolean
 }
 
 type StreamState = ClientStreamState | ServerStreamState
@@ -50,6 +56,10 @@ type StreamState = ClientStreamState | ServerStreamState
  *   A transport-dropped frame aborts the stream (credits keep outstanding
  *   data far below the transport backpressure limit, so this is a safety
  *   net, not a flow-control mechanism).
+ * - Outstanding credit is capped at MAX_STREAM_CREDITS: peer grants beyond
+ *   the cap are violations, server-side upload grants are clamped.
+ * - Every stream sends AT MOST one wire abort; peer-originated aborts are
+ *   never echoed back.
  * - Every stream has a single idle timeout, reset on any activity in either
  *   direction; expiry aborts the stream.
  */
@@ -77,6 +87,7 @@ export class BlobStreamsManager {
     streamId: number,
     metadata: ProtocolBlobMetadata,
     options: Stream.ReadableOptions,
+    notify?: (reason: string) => void,
   ) {
     const stream = new ProtocolClientStream(streamId, metadata, options)
     stream.on('error', noopFn)
@@ -88,6 +99,8 @@ export class BlobStreamsManager {
       stream,
       granted: 0,
       idleTimer: undefined,
+      notify,
+      notified: false,
     }
     this.clientStreams.set(key, state)
     this.trackClientCall(connectionId, callId, streamId)
@@ -103,8 +116,22 @@ export class BlobStreamsManager {
     const key = this.getKey(connectionId, streamId)
     const state = this.clientStreams.get(key)
     if (state) {
-      state.granted += size
+      // pull sizes are server-chosen, so overflow is clamped, not a violation
+      state.granted = Math.min(state.granted + size, MAX_STREAM_CREDITS)
       this.touch(state)
+    }
+  }
+
+  /** Rolls back a grant whose pull frame never made it onto the wire. */
+  revokeClientStreamGrant(
+    connectionId: string,
+    streamId: number,
+    size: number,
+  ) {
+    const key = this.getKey(connectionId, streamId)
+    const state = this.clientStreams.get(key)
+    if (state) {
+      state.granted = Math.max(state.granted - size, 0)
     }
   }
 
@@ -136,10 +163,19 @@ export class BlobStreamsManager {
     }
   }
 
-  abortClientStream(connectionId: string, streamId: number, error = 'Aborted') {
+  abortClientStream(
+    connectionId: string,
+    streamId: number,
+    error = 'Aborted',
+    notifyPeer = true,
+  ) {
     const key = this.getKey(connectionId, streamId)
     const state = this.clientStreams.get(key)
     if (state) {
+      if (notifyPeer && !state.notified) {
+        state.notified = true
+        state.notify?.(error)
+      }
       state.stream.destroy(new Error(error))
       this.removeClientStream(connectionId, streamId)
     }
@@ -223,8 +259,10 @@ export class BlobStreamsManager {
         sink.end()
       },
       error: (error) => {
+        const state = this.serverStreams.get(key)
+        const suppress = state?.suppressNotify ?? false
         this.removeServerStream(connectionId, streamId)
-        sink.error(error)
+        if (!suppress) sink.error(error)
       },
     })
 
@@ -233,6 +271,7 @@ export class BlobStreamsManager {
       callId,
       stream,
       idleTimer: undefined,
+      suppressNotify: false,
     }
 
     this.serverStreams.set(key, state)
@@ -249,16 +288,29 @@ export class BlobStreamsManager {
     const state = this.serverStreams.get(key)
     if (state) {
       this.touch(state)
-      state.stream.grant(size)
+      const granted = state.stream.grant(size)
+      if (!granted) {
+        this.abortServerStream(
+          connectionId,
+          streamId,
+          STREAM_CREDIT_VIOLATION_REASON,
+        )
+      }
     }
   }
 
-  abortServerStream(connectionId: string, streamId: number, error = 'Aborted') {
+  abortServerStream(
+    connectionId: string,
+    streamId: number,
+    error = 'Aborted',
+    notifyPeer = true,
+  ) {
     const key = this.getKey(connectionId, streamId)
     const state = this.serverStreams.get(key)
     if (state) {
+      if (!notifyPeer) state.suppressNotify = true
       // destroy(error) reports through the stream sink, which removes the
-      // state and notifies the peer
+      // state and notifies the peer (unless suppressed)
       state.stream.destroy(new Error(error))
       this.removeServerStream(connectionId, streamId)
     }
@@ -436,14 +488,25 @@ export class BlobStreamsManager {
     const clientStreamIds = this.connectionClientStreams.get(connectionId)
     if (clientStreamIds) {
       for (const streamId of Array.from(clientStreamIds)) {
-        this.abortClientStream(connectionId, streamId, 'Connection closed')
+        // the connection is being torn down: peer notifications go nowhere
+        this.abortClientStream(
+          connectionId,
+          streamId,
+          'Connection closed',
+          false,
+        )
       }
     }
 
     const serverStreamIds = this.connectionServerStreams.get(connectionId)
     if (serverStreamIds) {
       for (const streamId of Array.from(serverStreamIds)) {
-        this.abortServerStream(connectionId, streamId, 'Connection closed')
+        this.abortServerStream(
+          connectionId,
+          streamId,
+          'Connection closed',
+          false,
+        )
       }
     }
   }
