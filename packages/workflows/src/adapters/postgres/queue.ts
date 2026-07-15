@@ -116,26 +116,52 @@ export const createPostgresWorkflowCommandHelpers = (
   }
 
   const claimCommand = async (
-    where: string,
+    where: string | readonly string[],
     params: unknown[],
     workerId: string,
     leaseMs: number,
   ) => {
     const leaseToken = id()
+    const conditions = typeof where === 'string' ? [where] : where
+    const candidateQuery = (condition: string) => `
+      SELECT id, priority, run_at, created_at
+      FROM workflow_commands
+      WHERE run_at <= now()
+        AND (lease_token IS NULL OR lease_expires_at <= now())
+        AND dead_at IS NULL
+        AND (${condition})
+      ORDER BY priority DESC, run_at ASC, created_at ASC, id ASC
+      LIMIT 1
+      FOR UPDATE SKIP LOCKED
+    `
+    const candidateSql =
+      conditions.length === 1
+        ? `candidate AS (${candidateQuery(conditions[0]!)})`
+        : `
+          -- Per-kind probes preserve the existing ordered claim index while
+          -- the final choice keeps activity and task work globally ordered.
+          ${conditions
+            .map(
+              (condition, index) =>
+                `candidate_${index} AS (${candidateQuery(condition)})`,
+            )
+            .join(', ')},
+          eligible_candidates AS (
+            ${conditions
+              .map((_, index) => `SELECT * FROM candidate_${index}`)
+              .join(' UNION ALL ')}
+          ),
+          candidate AS (
+            SELECT id
+            FROM eligible_candidates
+            ORDER BY priority DESC, run_at ASC, created_at ASC, id ASC
+            LIMIT 1
+          )
+        `
     return await one(
       db,
       `
-      WITH candidate AS (
-        SELECT id
-        FROM workflow_commands
-        WHERE run_at <= now()
-          AND (lease_token IS NULL OR lease_expires_at <= now())
-          AND dead_at IS NULL
-          AND (${where})
-        ORDER BY priority DESC, run_at ASC, created_at ASC, id ASC
-        LIMIT 1
-        FOR UPDATE SKIP LOCKED
-      )
+      WITH ${candidateSql}
       UPDATE workflow_commands
       SET lease_owner = $${params.length + 1},
           lease_token = $${params.length + 2},

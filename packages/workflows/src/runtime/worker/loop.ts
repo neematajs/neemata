@@ -52,6 +52,8 @@ export type WorkerLoopOptions = {
 
 export type WorkerDriver<Claimed> = {
   readonly claim: () => Promise<Claimed | null>
+  /** Return a lease acquired after the pool has stopped, before execution. */
+  readonly abandon: (claimed: Claimed) => Promise<void>
   readonly execute: (claimed: Claimed, signal: AbortSignal) => Promise<boolean>
 }
 
@@ -147,6 +149,14 @@ async function runWorkerPool<Claimed>(
         }
         if (claimed === null) {
           queueEmpty = true
+          break
+        }
+        if (lifecycle.signal.aborted) {
+          try {
+            await driver.abandon(claimed)
+          } catch (error) {
+            fail(error)
+          }
           break
         }
 

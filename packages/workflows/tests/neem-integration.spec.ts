@@ -184,6 +184,39 @@ describe('workflows Neem integration', () => {
     )
   })
 
+  it('rejects unknown execution worker routing before starting the runtime', async () => {
+    let runtimeCalls = 0
+    const config = defineWorkflows({
+      runtime: () => {
+        runtimeCalls += 1
+        return createInMemoryWorkflowRuntime()
+      },
+      workflows: () => [workflowImpl],
+      workers: { execution: [{ name: 'primary' }] },
+    })
+    const worker = defineWorkflowsWorker(config)
+    const channel = new MessageChannel()
+    const runtime = await worker.createRuntime({
+      mode: 'development',
+      name: 'workflows:execution:missing',
+      data: { role: 'execution', pool: 'missing' },
+      logger,
+      definition: worker.definition,
+      port: channel.port1,
+    })
+
+    try {
+      await expect(runtime.start()).rejects.toThrow(
+        'Unknown workflows execution worker pool [missing]',
+      )
+      expect(runtimeCalls).toBe(0)
+    } finally {
+      await runtime.stop()
+      channel.port1.close()
+      channel.port2.close()
+    }
+  })
+
   it('rejects named pools that leave a registered activity uncovered', async () => {
     const workflowWithActivities = defineWorkflow({
       name: 'neem.integration.pool-coverage',

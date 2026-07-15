@@ -46,6 +46,10 @@ export function defineWorkflowsWorker<
         finished,
         async start() {
           const config = await resolveWorkflowsConfig(ctx.definition)
+          const executionPool =
+            ctx.data.role === 'execution'
+              ? resolveExecutionWorkerPool(config, ctx.data)
+              : undefined
           runtime = await config.runtime()
           if (ctx.data.role === 'coordinator' && config.schedules.length > 0) {
             if (!runtime.scheduler) {
@@ -59,6 +63,7 @@ export function defineWorkflowsWorker<
             data: ctx.data,
             runtime,
             config,
+            executionPool,
             container,
             workerId: ctx.name,
             signal: abort.signal,
@@ -95,15 +100,12 @@ async function runRoleLoop(input: {
   readonly data: WorkflowsWorkerData
   readonly runtime: WorkflowRuntimeAdapter
   readonly config: ResolvedWorkflowsConfig
+  readonly executionPool?: ResolvedExecutionWorkerPool
   readonly container: Container
   readonly workerId: string
   readonly signal: AbortSignal
 }): Promise<void> {
   const role = input.data.role
-  const executionPool =
-    role === 'execution'
-      ? resolveExecutionWorkerPool(input.config, input.data)
-      : undefined
   switch (role) {
     case 'coordinator':
       await serveWorkflowWorker({
@@ -126,12 +128,12 @@ async function runRoleLoop(input: {
         container: input.container,
         workflows: input.config.workflows,
         tasks: input.config.tasks,
-        activityNames: executionPool!.activityNames,
-        taskNames: executionPool!.taskNames,
+        activityNames: input.executionPool!.activityNames,
+        taskNames: input.executionPool!.taskNames,
         workerId: input.workerId,
-        concurrency: executionPool!.concurrency,
-        leaseMs: executionPool!.leaseMs,
-        idleDelayMs: executionPool!.pollIntervalMs,
+        concurrency: input.executionPool!.concurrency,
+        leaseMs: input.executionPool!.leaseMs,
+        idleDelayMs: input.executionPool!.pollIntervalMs,
         // Coordinators own maintenance so execution capacity is not duplicated
         // across every named pool and thread.
         reaping: false,

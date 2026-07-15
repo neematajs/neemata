@@ -200,6 +200,7 @@ function workflowDriver(
         workflowNames,
         leaseMs: input.leaseMs ?? DEFAULT_LEASE_MS,
       }),
+    abandon: (claimed) => input.runCoordinationExecutor.release(claimed),
     // Continuations stay atomic during shutdown; interrupting coordination
     // mid-write is less safe than waiting for the claimed command to finish.
     async execute(claimed) {
@@ -279,6 +280,7 @@ function executionDriver(
         taskNames,
         leaseMs: input.leaseMs ?? DEFAULT_LEASE_MS,
       }),
+    abandon: (claimed) => input.attemptExecutor.release(claimed),
     async execute(claimed, signal) {
       try {
         const result =

@@ -1023,6 +1023,7 @@ describe('in-memory workflow store', () => {
       taskNames: [],
       workerId: 'worker-1',
       workflowNames: ['case-generation'],
+      activityNames: ['writeContent'],
       leaseMs: 30_000,
     })
     expect(releasedActivity).toBeNull()
@@ -1033,6 +1034,7 @@ describe('in-memory workflow store', () => {
       taskNames: [],
       workerId: 'worker-1',
       workflowNames: ['case-generation'],
+      activityNames: ['writeContent'],
       leaseMs: 30_000,
     })
     expect(delayedReleasedActivity?.leaseToken).not.toBe(

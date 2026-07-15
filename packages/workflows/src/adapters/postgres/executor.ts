@@ -18,7 +18,7 @@ export const createAttemptExecutor = (
     createPostgresWorkflowCommandHelpers(ctx)
 
   const claimAttempt = async (
-    where: string,
+    where: string | readonly string[],
     params: unknown[],
     workerId: string,
     leaseMs: number,
@@ -144,12 +144,7 @@ export const createAttemptExecutor = (
       }
 
       if (eligible.length === 0) return null
-      return claimAttempt(
-        eligible.join(' OR '),
-        params,
-        worker.workerId,
-        worker.leaseMs,
-      )
+      return claimAttempt(eligible, params, worker.workerId, worker.leaseMs)
     },
     async heartbeat(attempt, leaseMs = 30_000) {
       await ready

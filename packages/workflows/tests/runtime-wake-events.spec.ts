@@ -6,6 +6,7 @@ import { runWithAttemptHeartbeat } from '../src/runtime/worker/heartbeat.ts'
 import { drainWorkerPool, serveWorkerPool } from '../src/runtime/worker/loop.ts'
 
 const LONG_DELAY_MS = 30_000
+const ignoreAbandonedClaim = async () => {}
 
 describe('workflow wake events', () => {
   it('short-circuits the worker loop idle delay on wake', async () => {
@@ -25,6 +26,7 @@ describe('workflow wake events', () => {
         },
       },
       {
+        abandon: ignoreAbandonedClaim,
         async claim() {
           claims += 1
           if (claims === 1) setTimeout(() => wake(), 20)
@@ -57,6 +59,7 @@ describe('workflow wake events', () => {
         },
       },
       {
+        abandon: ignoreAbandonedClaim,
         async claim() {
           claims += 1
           // fires before the idle sleep starts — must still be observed
@@ -102,6 +105,7 @@ describe('workflow wake events', () => {
         },
       },
       {
+        abandon: ignoreAbandonedClaim,
         async claim() {
           claims += 1
           if (claims === 1) return 'slow'
@@ -157,6 +161,7 @@ describe('workflow wake events', () => {
         idleDelayMs: 2,
       },
       {
+        abandon: ignoreAbandonedClaim,
         async claim() {
           if (!slowClaimed) {
             slowClaimed = true
@@ -196,6 +201,7 @@ describe('workflow wake events', () => {
     const result = await drainWorkerPool(
       { workerId: 'claim-outcomes' },
       {
+        abandon: ignoreAbandonedClaim,
         async claim() {
           return queued.shift() ?? null
         },
@@ -228,6 +234,7 @@ describe('workflow wake events', () => {
         ],
       },
       {
+        abandon: ignoreAbandonedClaim,
         async claim() {
           if (!queued) return null
           queued = false
@@ -251,6 +258,7 @@ describe('workflow wake events', () => {
     const result = await drainWorkerPool(
       { workerId: 'concurrency-bound', concurrency: 2 },
       {
+        abandon: ignoreAbandonedClaim,
         async claim() {
           return queued.shift() ?? null
         },
@@ -280,6 +288,7 @@ describe('workflow wake events', () => {
     const running = drainWorkerPool(
       { workerId: 'execution-failure', concurrency: 2 },
       {
+        abandon: ignoreAbandonedClaim,
         async claim() {
           return queued.shift() ?? null
         },
@@ -316,6 +325,7 @@ describe('workflow wake events', () => {
         idleDelayMs: 2,
       },
       {
+        abandon: ignoreAbandonedClaim,
         async claim() {
           if (!queued) return null
           queued = false
@@ -329,6 +339,45 @@ describe('workflow wake events', () => {
     )
 
     expect(result.processed).toBe(1)
+  })
+
+  it('abandons a claim that resolves after service shutdown', async () => {
+    const abort = new AbortController()
+    let resolveClaim!: (claimed: string) => void
+    let markClaimStarted!: () => void
+    const claimStarted = new Promise<void>((resolve) => {
+      markClaimStarted = resolve
+    })
+    const pendingClaim = new Promise<string>((resolve) => {
+      resolveClaim = resolve
+    })
+    const abandoned: string[] = []
+    const executed: string[] = []
+
+    const running = serveWorkerPool(
+      { workerId: 'shutdown-during-claim', signal: abort.signal },
+      {
+        async claim() {
+          markClaimStarted()
+          return await pendingClaim
+        },
+        async abandon(claimed) {
+          abandoned.push(claimed)
+        },
+        async execute(claimed) {
+          executed.push(claimed)
+          return true
+        },
+      },
+    )
+
+    await claimStarted
+    abort.abort()
+    resolveClaim('late-claim')
+
+    await expect(running).resolves.toStrictEqual({ processed: 0 })
+    expect(abandoned).toStrictEqual(['late-claim'])
+    expect(executed).toStrictEqual([])
   })
 
   it('aborts and awaits active executions during service shutdown', async () => {
@@ -348,6 +397,7 @@ describe('workflow wake events', () => {
     const running = serveWorkerPool(
       { workerId: 'shutdown', signal: abort.signal },
       {
+        abandon: ignoreAbandonedClaim,
         async claim() {
           if (claimed) return null
           claimed = true
@@ -395,6 +445,7 @@ describe('workflow wake events', () => {
     const running = serveWorkerPool(
       { workerId: 'shutdown-failure', signal: abort.signal },
       {
+        abandon: ignoreAbandonedClaim,
         async claim() {
           if (claimed) return null
           claimed = true
@@ -429,6 +480,7 @@ describe('workflow wake events', () => {
           },
         },
         {
+          abandon: ignoreAbandonedClaim,
           async claim() {
             return null
           },
@@ -465,6 +517,7 @@ describe('workflow wake events', () => {
         ],
       },
       {
+        abandon: ignoreAbandonedClaim,
         async claim() {
           if (claimed) return null
           claimed = true
