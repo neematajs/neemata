@@ -372,7 +372,7 @@ describe('RPC stream flow control', () => {
     await gateway.stop()
   })
 
-  it('terminates a handler stalled inside next() via the idle timeout', async () => {
+  it('does not reap a stalled producer holding outstanding credit', async () => {
     let finished = false
     let releaseStall!: () => void
     const stall = new Promise<void>((resolve) => {
@@ -400,14 +400,47 @@ describe('RPC stream flow control', () => {
     await flush()
     expect(sentOfType(ServerMessageType.RpcStreamChunk).length).toBe(1)
 
+    // sparse producers (e.g. subscription streams) may be silent far longer
+    // than the idle timeout; the client is waiting, so nothing is reaped
     await sleep(120)
-
-    const aborts = sentOfType(ServerMessageType.RpcStreamAbort)
-    expect(aborts.length).toBe(1)
-    expect(aborts[0].rest.toString()).toBe(STREAM_IDLE_TIMEOUT_REASON)
+    expect(sentOfType(ServerMessageType.RpcStreamAbort).length).toBe(0)
+    expect(finished).toBe(false)
 
     releaseStall()
     await inFlight
+    expect(finished).toBe(true)
+    expect(sentOfType(ServerMessageType.RpcStreamChunk).length).toBe(2)
+    expect(sentOfType(ServerMessageType.RpcStreamEnd).length).toBe(1)
+    expect(sentOfType(ServerMessageType.RpcStreamAbort).length).toBe(0)
+
+    await gateway.stop()
+  })
+
+  it('still reaps a consumer that stops pulling mid-stream', async () => {
+    let finished = false
+    async function* handler() {
+      try {
+        while (true) yield 'tick'
+      } finally {
+        finished = true
+      }
+    }
+
+    const { gateway, sentOfType, send } = await createTestGateway({
+      call: async () => () => handler(),
+      streamIdleTimeout: 50,
+    })
+
+    const inFlight = send(encodeRpcMessage(1, 'test', {}))
+    await flush()
+    // consume one chunk, then go silent
+    await send(encodeRpcStreamPull(1, 1))
+    await inFlight
+
+    expect(sentOfType(ServerMessageType.RpcStreamChunk).length).toBe(1)
+    const aborts = sentOfType(ServerMessageType.RpcStreamAbort)
+    expect(aborts.length).toBe(1)
+    expect(aborts[0].rest.toString()).toBe(STREAM_IDLE_TIMEOUT_REASON)
     expect(finished).toBe(true)
 
     await gateway.stop()

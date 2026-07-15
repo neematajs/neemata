@@ -66,8 +66,6 @@ type RpcStreamCreditState = {
   credits: number
   // resolves the in-flight credit wait; also poked on abort/teardown
   notify: (() => void) | null
-  // resets the stream idle timer (any activity)
-  touch: () => void
   // fails the whole stream (e.g. credit violation) from the message handler
   fail: (error: Error) => void
 }
@@ -703,7 +701,6 @@ export class Gateway<
                 break
               }
               credit.credits += message.size
-              credit.touch()
               credit.notify?.()
             }
             break
@@ -827,23 +824,18 @@ export class Gateway<
         signal.throwIfAborted()
 
         const creditKey = `${connectionId}:${callId}`
-        // Rejects on abort, idle expiry, or credit violation. EVERY await in
-        // the streaming loop races against it, so a handler stalled inside
-        // next() cannot outlive the call abort or the idle timeout.
+        // Rejects on call abort or a credit violation. Every await in the
+        // streaming loop races against it, so a handler stalled inside
+        // next() cannot outlive the call (client abort, connection teardown).
+        // Deliberately NOT wired to the idle timer: a silent producer with a
+        // live, waiting client is not a fault (sparse streams, e.g. pubsub
+        // subscriptions) — the client controls cancellation and heartbeat
+        // reaps dead connections into the same abort signal.
         const flow = createFuture<never>()
         flow.promise.catch(noopFn)
-        let idleTimer: ReturnType<typeof setTimeout> | undefined
-        const touch = () => {
-          clearTimeout(idleTimer)
-          idleTimer = setTimeout(
-            () => flow.reject(new StreamFlowError(STREAM_IDLE_TIMEOUT_REASON)),
-            this.options.streamIdleTimeout,
-          )
-        }
         const credit: RpcStreamCreditState = {
           credits: 0,
           notify: null,
-          touch,
           fail: (error) => flow.reject(error),
         }
         // installed BEFORE RpcStreamResponse goes out: a synchronous
@@ -851,7 +843,6 @@ export class Gateway<
         this.rpcStreamCredits.set(creditKey, credit)
         const onAbort = () => flow.reject(signal.reason)
         signal.addEventListener('abort', onAbort, { once: true })
-        touch()
 
         let iterator: AsyncIterator<unknown> | undefined
         try {
@@ -883,11 +874,19 @@ export class Gateway<
             if (result.done) break
             signal.throwIfAborted()
             while (credit.credits <= 0) {
+              // idle detection bounds only consumer inactivity: a chunk is
+              // ready but the client isn't pulling
               const grant = createFuture<void>()
               credit.notify = grant.resolve
+              const idleTimer = setTimeout(
+                () =>
+                  flow.reject(new StreamFlowError(STREAM_IDLE_TIMEOUT_REASON)),
+                this.options.streamIdleTimeout,
+              )
               try {
                 await Promise.race([grant.promise, flow.promise])
               } finally {
+                clearTimeout(idleTimer)
                 credit.notify = null
               }
               signal.throwIfAborted()
@@ -905,7 +904,6 @@ export class Gateway<
             if (sent === false) {
               throw new StreamFlowError(STREAM_TRANSPORT_DROP_REASON)
             }
-            touch()
           }
 
           const sentEnd = transport.send!(
@@ -935,7 +933,6 @@ export class Gateway<
           }
         } finally {
           signal.removeEventListener('abort', onAbort)
-          clearTimeout(idleTimer)
           this.rpcStreamCredits.delete(creditKey)
           if (iterator) {
             // cooperative unwind on every exit path; timeboxed because
