@@ -65,6 +65,9 @@ function adapterFactory(params: WsAdapterParams<'bun'>): WsAdapterServer {
         server = null
       }
     },
+    // Bun send status: >0 = bytes sent, -1 = backpressure applied (will
+    // drain), 0 = dropped — only a drop is a failed delivery
+    isSendSuccess: (status) => status !== 0,
   }
 }
 

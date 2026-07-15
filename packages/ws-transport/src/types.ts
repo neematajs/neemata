@@ -116,6 +116,9 @@ export type WsAdapterParams<
 export interface WsAdapterServer {
   stop: () => MaybePromise<any>
   start: () => MaybePromise<string>
+  // numeric Peer.send() statuses are runtime-specific (uWS vs Bun), so only
+  // the adapter that knows its runtime can interpret them as delivery success
+  isSendSuccess?: (status: number) => boolean
 }
 
 export type WsAdapterServerFactory<

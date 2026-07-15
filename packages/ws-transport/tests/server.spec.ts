@@ -5,6 +5,8 @@ import type {
   WsAdapterServerFactory,
   WsTransportOptions,
 } from '../src/types.ts'
+import { WsTransport as BunWsTransport } from '../src/runtimes/bun.ts'
+import { WsTransport as NodeWsTransport } from '../src/runtimes/node.ts'
 import { WsTransportServer } from '../src/server.ts'
 
 const adapterFactory: WsAdapterServerFactory<any> = () => ({
@@ -14,8 +16,7 @@ const adapterFactory: WsAdapterServerFactory<any> = () => ({
 
 const options = { listen: { port: 0 } } as WsTransportOptions
 
-const withPeer = (send: () => unknown) => {
-  const server = new WsTransportServer(adapterFactory, options)
+const setPeer = (server: WsTransportServer, send: () => unknown) => {
   const peer = {
     send: vi.fn(send),
     close: vi.fn(),
@@ -28,15 +29,37 @@ const withPeer = (send: () => unknown) => {
 describe('WsTransportServer.send', () => {
   const buffer = new Uint8Array([0x01])
 
-  it('maps uWS send codes truthfully: sent(1)/buffered(0) succeed, dropped(2) fails', () => {
-    expect(withPeer(() => 1).send('c1', buffer)).toBe(true)
-    expect(withPeer(() => 0).send('c1', buffer)).toBe(true)
-    expect(withPeer(() => 2).send('c1', buffer)).toBe(false)
+  it('maps uWS (node runtime) statuses truthfully: sent(1)/buffered(0) succeed, dropped(2) fails', () => {
+    const create = () =>
+      NodeWsTransport.factory(options as any) as WsTransportServer
+    expect(setPeer(create(), () => 1).send('c1', buffer)).toBe(true)
+    expect(setPeer(create(), () => 0).send('c1', buffer)).toBe(true)
+    expect(setPeer(create(), () => 2).send('c1', buffer)).toBe(false)
+  })
+
+  it('maps Bun statuses truthfully: bytes sent(>0)/backpressure(-1) succeed, dropped(0) fails', () => {
+    // crossws refuses to create its Bun adapter unless a Bun global exists
+    vi.stubGlobal('Bun', {})
+    try {
+      const create = () =>
+        BunWsTransport.factory(options as any) as WsTransportServer
+      expect(setPeer(create(), () => 2).send('c1', buffer)).toBe(true)
+      expect(setPeer(create(), () => -1).send('c1', buffer)).toBe(true)
+      expect(setPeer(create(), () => 0).send('c1', buffer)).toBe(false)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('treats numeric statuses as success when the adapter has no interpreter', () => {
+    const server = new WsTransportServer(adapterFactory, options)
+    expect(setPeer(server, () => 0).send('c1', buffer)).toBe(true)
   })
 
   it('passes boolean results through', () => {
-    expect(withPeer(() => true).send('c1', buffer)).toBe(true)
-    expect(withPeer(() => false).send('c1', buffer)).toBe(false)
+    const server = new WsTransportServer(adapterFactory, options)
+    expect(setPeer(server, () => true).send('c1', buffer)).toBe(true)
+    expect(setPeer(server, () => false).send('c1', buffer)).toBe(false)
   })
 
   it('returns false for unknown connections', () => {
@@ -45,9 +68,12 @@ describe('WsTransportServer.send', () => {
   })
 
   it('returns false and drops the peer when send throws', () => {
-    const server = withPeer(() => {
-      throw new Error('boom')
-    })
+    const server = setPeer(
+      new WsTransportServer(adapterFactory, options),
+      () => {
+        throw new Error('boom')
+      },
+    )
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
     expect(server.send('c1', buffer)).toBe(false)
     expect(server.clients.has('c1')).toBe(false)

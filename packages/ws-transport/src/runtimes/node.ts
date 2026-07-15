@@ -65,6 +65,9 @@ function adapterFactory(params: WsAdapterParams<'node'>): WsAdapterServer {
     stop: () => {
       server.close()
     },
+    // uWS send status: 1 = sent, 0 = buffered (will drain), 2 = dropped
+    // due to backpressure limit — only a drop is a failed delivery
+    isSendSuccess: (status) => status !== 2,
   }
 }
 
