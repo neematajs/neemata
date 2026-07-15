@@ -5,7 +5,7 @@ import type {
   ProtocolVersionInterface,
 } from '@nmtjs/protocol/client'
 import { noopFn } from '@nmtjs/common'
-import { ConnectionType } from '@nmtjs/protocol'
+import { ConnectionType, ErrorCode } from '@nmtjs/protocol'
 import { ProtocolError, versions } from '@nmtjs/protocol/client'
 
 import type {
@@ -70,12 +70,9 @@ const sleep = (ms: number, signal?: AbortSignal) => {
 }
 
 const computeReconnectDelay = (ms: number) => {
-  if (globalThis.window) {
-    const jitter = Math.floor(ms * 0.2 * Math.random())
-    return ms + jitter
-  }
-
-  return ms
+  // jitter unconditionally: Node fleets would otherwise reconnect in lockstep
+  const jitter = Math.floor(ms * 0.2 * Math.random())
+  return ms + jitter
 }
 
 export class ClientCore extends EventEmitter<{
@@ -84,6 +81,7 @@ export class ClientCore extends EventEmitter<{
   disconnected: [reason: ClientDisconnectReason]
   state_changed: [state: ConnectionState, previous: ConnectionState]
   pong: [nonce: number]
+  error: [error: ClientError]
 }> {
   readonly protocol: ProtocolVersionInterface
   readonly format: BaseClientFormat
@@ -371,7 +369,21 @@ export class ClientCore extends EventEmitter<{
   async #onMessage(buffer: ArrayBufferView) {
     if (!this.messageContext) return
 
-    const message = this.protocol.decodeMessage(this.messageContext, buffer)
+    let message: ReturnType<ProtocolVersionInterface['decodeMessage']>
+    try {
+      message = this.protocol.decodeMessage(this.messageContext, buffer)
+    } catch (cause) {
+      // a malformed server frame must not become an unhandled rejection
+      this.emit(
+        'error',
+        new ClientError(
+          ErrorCode.ClientRequestError,
+          'Unable to decode server message',
+          cause,
+        ),
+      )
+      return
+    }
 
     for (const plugin of this.#plugins) {
       plugin.onServerMessage?.(message, buffer)

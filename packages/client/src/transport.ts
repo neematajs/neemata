@@ -35,6 +35,7 @@ export interface TransportRpcParams {
 export interface TransportCallOptions {
   signal?: AbortSignal
   streamResponse?: boolean
+  keepalive?: boolean
 }
 
 export interface TransportRpcResponse {
