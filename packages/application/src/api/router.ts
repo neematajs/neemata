@@ -117,7 +117,9 @@ export function createRootRouter<Routers extends readonly AnyRouter[]>(
     undefined
   >
 > {
-  const routes: Record<string, any> = {}
+  // null prototype so a route literally named "__proto__" is stored as an
+  // own property instead of going through the legacy prototype setter
+  const routes: Record<string, any> = Object.create(null)
   for (const router of routers) {
     for (const [name, route] of Object.entries(router.routes)) {
       // Object.assign would silently drop the earlier route; hasOwn so that
@@ -185,7 +187,9 @@ export function createRouter<const Routes extends AnyRouterRoutes>(
 ): Router<RouterContractFromRoutes<Routes>> {
   const { routes, guards, middlewares, meta, timeout } = params
 
-  const routesContracts: any = {}
+  // null prototype so a route literally named "__proto__" is stored as an
+  // own property instead of going through the legacy prototype setter
+  const routesContracts: any = Object.create(null)
   for (const [name, route] of Object.entries(routes)) {
     routesContracts[name] = route.contract
   }

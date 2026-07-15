@@ -115,6 +115,21 @@ describe('application runtime boundary', () => {
     expect(() => createRootRouter([router] as const)).not.toThrow()
   })
 
+  it('keeps a route literally named "__proto__" as an own route', () => {
+    const procedure = createProcedure({ handler: async () => ({ ok: true }) })
+    const router = createRouter({
+      routes: { ['__proto__']: procedure },
+    })
+
+    const root = createRootRouter([router] as const)
+
+    // a plain accumulator would pass "__proto__" to the legacy prototype
+    // setter, silently dropping the route from own-property enumeration
+    expect(Object.hasOwn(root.routes, '__proto__')).toBe(true)
+    expect(Object.keys(root.routes)).toContain('__proto__')
+    expect(root.routes['__proto__' as string]).toBe(procedure)
+  })
+
   it('registers each root-composed source router once in procedure paths', async () => {
     const logger = createLogger({ pinoOptions: { enabled: false } }, 'test')
     const allowed = createMeta<'get'>()
