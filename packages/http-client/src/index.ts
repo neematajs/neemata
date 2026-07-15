@@ -17,6 +17,9 @@ type DecodeBase64Function = (data: string) => ArrayBufferView
 const createDecodeBase64 = (
   customFn?: DecodeBase64Function,
 ): DecodeBase64Function => {
+  // caller-supplied decoder must win over built-ins
+  if (customFn) return customFn
+
   return (string: string) => {
     if (
       'fromBase64' in Uint8Array &&
@@ -25,8 +28,6 @@ const createDecodeBase64 = (
       return Uint8Array.fromBase64(string)
     } else if (typeof atob === 'function') {
       return Uint8Array.from(atob(string), (c) => c.charCodeAt(0))
-    } else if (customFn) {
-      return customFn(string)
     } else {
       throw new Error('No base64 decoding function available')
     }
@@ -138,15 +139,23 @@ export class HttpTransportClient implements UnidirectionalTransport {
       )
     }
 
+    // duplex is required by fetch for stream bodies but missing from RequestInit typings
+    const requestInit: RequestInit & { duplex?: 'half' } = {
+      body,
+      method: 'POST',
+      headers: requestHeaders,
+      signal: options.signal,
+      credentials: 'include',
+      // keepalive is opt-in: browsers cap total in-flight keepalive bytes at ~64KB
+      ...(options.keepalive && shouldUseKeepalive(body)
+        ? { keepalive: true }
+        : {}),
+      // undici and Chrome throw on stream request bodies without half-duplex
+      ...(rpc.blob ? { duplex: 'half' as const } : {}),
+    }
+
     if (options.streamResponse) {
-      const response = await fetchImpl(url.toString(), {
-        body,
-        method: 'POST',
-        headers: requestHeaders,
-        signal: options.signal,
-        credentials: 'include',
-        ...(shouldUseKeepalive(body) ? { keepalive: true } : {}),
-      })
+      const response = await fetchImpl(url.toString(), requestInit)
 
       if (!response.ok) {
         return {
@@ -204,14 +213,7 @@ export class HttpTransportClient implements UnidirectionalTransport {
 
       return { type: 'rpc_stream' as const, stream }
     } else {
-      const response = await fetchImpl(url.toString(), {
-        body,
-        method: 'POST',
-        headers: requestHeaders,
-        signal: options.signal,
-        credentials: 'include',
-        ...(shouldUseKeepalive(body) ? { keepalive: true } : {}),
-      })
+      const response = await fetchImpl(url.toString(), requestInit)
 
       if (response.ok) {
         const isBlob = !!response.headers.get(NEEMATA_BLOB_HEADER)

@@ -1,9 +1,9 @@
 import { StaticClient, loggingPlugin } from '@nmtjs/client'
-import { ProtocolVersion } from '@nmtjs/protocol'
+import { ProtocolBlob, ProtocolVersion } from '@nmtjs/protocol'
 import { BaseClientFormat } from '@nmtjs/protocol/client'
 import { describe, expect, it, vi } from 'vitest'
 
-import { HttpTransportFactory } from '../src/index.ts'
+import { HttpTransportClient, HttpTransportFactory } from '../src/index.ts'
 
 class TestJsonFormat extends BaseClientFormat {
   contentType = 'application/json'
@@ -78,7 +78,7 @@ describe('HttpTransportClient + StaticClient', () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1)
   })
 
-  it('uses keepalive for small HTTP request bodies', async () => {
+  it('omits keepalive by default', async () => {
     const format = new TestJsonFormat()
     const fetchSpy = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(format.encode({ ok: true }) as any, {
@@ -96,10 +96,10 @@ describe('HttpTransportClient + StaticClient', () => {
     await (client.call as any).ping({ userId: 'u1' })
 
     expect(fetchSpy).toHaveBeenCalledTimes(1)
-    expect(fetchSpy.mock.calls[0]?.[1]?.keepalive).toBe(true)
+    expect(fetchSpy.mock.calls[0]?.[1]?.keepalive).toBeUndefined()
   })
 
-  it('omits keepalive for large HTTP request bodies', async () => {
+  it('uses keepalive for small bodies when opted in per call', async () => {
     const format = new TestJsonFormat()
     const fetchSpy = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(format.encode({ ok: true }) as any, {
@@ -114,10 +114,76 @@ describe('HttpTransportClient + StaticClient', () => {
       { url: 'http://localhost:4000', fetch: fetchSpy },
     )
 
-    await (client.call as any).ping({ data: 'x'.repeat(64 * 1024) })
+    await (client.call as any).ping({ userId: 'u1' }, { keepalive: true })
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+    expect(fetchSpy.mock.calls[0]?.[1]?.keepalive).toBe(true)
+  })
+
+  it('omits keepalive for large bodies even when opted in', async () => {
+    const format = new TestJsonFormat()
+    const fetchSpy = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(format.encode({ ok: true }) as any, {
+        status: 200,
+        headers: { 'content-type': format.contentType },
+      }),
+    )
+
+    const client = new StaticClient(
+      { contract: {} as any, protocol: ProtocolVersion.v1, format },
+      HttpTransportFactory,
+      { url: 'http://localhost:4000', fetch: fetchSpy },
+    )
+
+    await (client.call as any).ping(
+      { data: 'x'.repeat(64 * 1024) },
+      { keepalive: true },
+    )
 
     expect(fetchSpy).toHaveBeenCalledTimes(1)
     expect(fetchSpy.mock.calls[0]?.[1]?.keepalive).toBeUndefined()
+  })
+
+  it('sends blob uploads as half-duplex stream bodies', async () => {
+    const format = new TestJsonFormat()
+    const fetchSpy = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(format.encode({ ok: true }) as any, {
+        status: 200,
+        headers: { 'content-type': format.contentType },
+      }),
+    )
+
+    const client = new StaticClient(
+      { contract: {} as any, protocol: ProtocolVersion.v1, format },
+      HttpTransportFactory,
+      { url: 'http://localhost:4000', fetch: fetchSpy },
+    )
+
+    await (client.call as any).upload(
+      ProtocolBlob.from(new Uint8Array([1, 2, 3])),
+    )
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+    const init = fetchSpy.mock.calls[0]?.[1] as
+      | (RequestInit & { duplex?: string })
+      | undefined
+    expect(init?.body).toBeInstanceOf(ReadableStream)
+    expect(init?.duplex).toBe('half')
+    expect(init?.keepalive).toBeUndefined()
+  })
+
+  it('prefers a caller-supplied base64 decoder over built-ins', () => {
+    const decoded = new Uint8Array([42])
+    const customDecode = vi.fn(() => decoded)
+
+    const transport = new HttpTransportClient(
+      new TestJsonFormat(),
+      ProtocolVersion.v1,
+      { url: 'http://localhost:4000', decodeBase64: customDecode },
+    )
+
+    expect(transport.decodeBase64('AAECAw==')).toBe(decoded)
+    expect(customDecode).toHaveBeenCalledWith('AAECAw==')
   })
 
   it('emits decoded rpc_response body in logging plugin', async () => {
