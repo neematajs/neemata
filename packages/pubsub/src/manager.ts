@@ -148,27 +148,46 @@ export class PubSubManager {
     events: Map<string, TAnySubscriptionEventContract>,
   ): Readable {
     const logger = this.logger
+    const iterator = stream[Symbol.asyncIterator]()
+    // Node clears `reading` on every push and may re-invoke `read` while the
+    // previous pump is still awaiting; a second concurrent pump would race
+    // over the shared iterator and double-push null at end of stream.
+    let pumping = false
     return new Readable({
       objectMode: true,
       async read() {
+        if (pumping) return
+        pumping = true
         try {
-          for await (const { channel, data } of stream) {
+          while (!this.destroyed) {
+            const { done, value } = await iterator.next()
+            if (done) break
+            if (this.destroyed) break
+            const { channel, data } = value
             const { event, payload } = data
             const contract = events.get(event)
             if (!contract) {
               logger.warn({ channel, event }, 'Unknown subscription event')
               continue
             }
+            let decoded: unknown
             try {
-              this.push({ event, payload: contract.payload.decode(payload) })
+              decoded = { event, payload: contract.payload.decode(payload) }
             } catch (error) {
               logger.error({ error }, 'Unable to decode event payload')
+              continue
+            }
+            if (!this.push(decoded)) {
+              // Backpressure: pause until the consumer drains and Node
+              // invokes `read` again.
+              pumping = false
+              return
             }
           }
-          this.push(null)
+          if (!this.destroyed) this.push(null)
         } catch (error) {
           if (isAbortError(error)) {
-            this.push(null)
+            if (!this.destroyed) this.push(null)
           } else {
             this.destroy(
               Error.isError(error)
@@ -177,6 +196,12 @@ export class PubSubManager {
             )
           }
         }
+      },
+      destroy(error, callback) {
+        // Best-effort release of the adapter subscription; don't block
+        // destruction on an iterator that only settles on the next message.
+        iterator.return?.()?.catch(() => {})
+        callback(error)
       },
     })
   }
