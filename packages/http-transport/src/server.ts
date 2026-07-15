@@ -261,7 +261,8 @@ export class HttpTransportServer implements TransportWorker<
 
         responseHeaders.set(NEEMATA_BLOB_HEADER, 'true')
         responseHeaders.set('Content-Type', type)
-        if (metadata.size) {
+        // nullish check — zero is a valid size for empty blobs
+        if (metadata.size !== undefined) {
           responseHeaders.set('Content-Length', metadata.size.toString())
         }
         if (metadata.filename) {
