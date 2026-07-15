@@ -2,7 +2,17 @@ import type { ReadableOptions } from 'node:stream'
 import { PassThrough, Readable } from 'node:stream'
 import { ReadableStream } from 'node:stream/web'
 
+import { MAX_UINT32 } from '@nmtjs/common'
+
 import type { ProtocolBlob, ProtocolBlobMetadata } from '../common/blob.ts'
+
+/**
+ * Upper bound for outstanding stream credit. Far above any sane consumer's
+ * demand (our client pulls 64KB of bytes / 1 chunk per read) but low enough
+ * that additive grants can never reach unsafe-integer territory where
+ * decrements would silently stop working.
+ */
+export const MAX_STREAM_CREDITS = MAX_UINT32
 
 export class ProtocolClientStream extends PassThrough {
   readonly #read?: ReadableOptions['read']
@@ -52,6 +62,9 @@ export class ProtocolServerStream {
   #granted = false
   // remainder of a source chunk larger than the credits available at the time
   #buffered: Buffer | null = null
+  // source error that arrived before the first grant: held back so the abort
+  // frame cannot precede the RpcResponse referencing this stream
+  #pendingError: Error | null = null
   #sourceEnded = false
   #finished = false
   // sink callbacks may re-enter (abort -> destroy) while the loop is running
@@ -79,6 +92,11 @@ export class ProtocolServerStream {
       this.#pump()
     })
     this.#source.on('error', (error) => {
+      if (!this.#granted && !this.#finished) {
+        this.#pendingError = error
+        this.#source.destroy?.()
+        return
+      }
       this.#fail(error)
     })
   }
@@ -87,12 +105,23 @@ export class ProtocolServerStream {
     return this.#credits
   }
 
-  grant(size: number): void {
-    if (this.#finished) return
-    if (size <= 0) return
+  /**
+   * Adds byte credits and kicks the pump. Returns `false` when the grant
+   * would overflow the credit cap — a protocol violation the owner must
+   * abort on.
+   */
+  grant(size: number): boolean {
+    if (this.#finished) return true
+    if (size <= 0) return true
+    if (this.#credits + size > MAX_STREAM_CREDITS) return false
     this.#granted = true
+    if (this.#pendingError) {
+      this.#fail(this.#pendingError)
+      return true
+    }
     this.#credits += size
     this.#pump()
+    return true
   }
 
   destroy(error?: Error | null): void {
@@ -109,6 +138,7 @@ export class ProtocolServerStream {
     if (this.#finished) return
     this.#finished = true
     this.#buffered = null
+    this.#pendingError = null
     this.#source.destroy?.(error)
     this.#sink.error(error)
   }
