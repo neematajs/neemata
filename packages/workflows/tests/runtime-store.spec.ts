@@ -992,13 +992,16 @@ describe('in-memory workflow store', () => {
     await runtime.attemptExecutor.dispatchTask(taskCommand)
     expect(runtime.inspect().taskCommands).toHaveLength(1)
 
-    const claimedActivity = await runtime.attemptExecutor.claimActivity({
+    const claimedActivity = await runtime.attemptExecutor.claim({
+      taskNames: [],
       workerId: 'worker-1',
       workflowNames: ['case-generation'],
       activityNames: ['writeContent'],
       leaseMs: 30_000,
     })
-    const claimedTask = await runtime.attemptExecutor.claimTask({
+    const claimedTask = await runtime.attemptExecutor.claim({
+      workflowNames: [],
+      activityNames: [],
       workerId: 'worker-1',
       taskNames: ['writeContent'],
       leaseMs: 30_000,
@@ -1016,7 +1019,8 @@ describe('in-memory workflow store', () => {
     await runtime.attemptExecutor.release(claimedActivity!)
     expect(runtime.inspect().activityCommands).toHaveLength(1)
 
-    const releasedActivity = await runtime.attemptExecutor.claimActivity({
+    const releasedActivity = await runtime.attemptExecutor.claim({
+      taskNames: [],
       workerId: 'worker-1',
       workflowNames: ['case-generation'],
       leaseMs: 30_000,
@@ -1025,13 +1029,12 @@ describe('in-memory workflow store', () => {
 
     await waitForReleaseBackoff()
 
-    const delayedReleasedActivity = await runtime.attemptExecutor.claimActivity(
-      {
-        workerId: 'worker-1',
-        workflowNames: ['case-generation'],
-        leaseMs: 30_000,
-      },
-    )
+    const delayedReleasedActivity = await runtime.attemptExecutor.claim({
+      taskNames: [],
+      workerId: 'worker-1',
+      workflowNames: ['case-generation'],
+      leaseMs: 30_000,
+    })
     expect(delayedReleasedActivity?.leaseToken).not.toBe(
       claimedActivity?.leaseToken,
     )

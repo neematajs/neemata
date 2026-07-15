@@ -24,6 +24,7 @@ const workerData = rawWorkerData as RuntimeWorkerData
 let runtime: NeemRuntime | undefined
 let logger: Logger | undefined
 let started = false
+let stopRequested = false
 
 function postMessage(message: WorkerMessage): void {
   port.postMessage(message)
@@ -96,6 +97,7 @@ async function stopRuntime(options: { force?: boolean } = {}): Promise<void> {
 }
 
 async function stopAndExit(): Promise<void> {
+  stopRequested = true
   try {
     await stopRuntime()
     postMessage({ type: 'stopped' })
@@ -107,6 +109,23 @@ async function stopAndExit(): Promise<void> {
     reportError(error, 'runtime')
     process.exit(1)
   }
+}
+
+async function watchRuntimeFinished(current: NeemRuntime): Promise<void> {
+  if (!current.finished) return
+
+  try {
+    await current.finished
+    if (stopRequested) return
+    reportError(
+      new Error('Neem runtime finished before stop was requested'),
+      'runtime',
+    )
+  } catch (error) {
+    if (stopRequested) return
+    reportError(error, 'runtime')
+  }
+  process.exit(1)
 }
 
 port.on('message', (message: ParentMessage) => {
@@ -138,6 +157,7 @@ async function main(): Promise<void> {
     started = true
     logger?.trace({ upstreams: upstreams.length }, 'Neem runtime worker ready')
     postMessage({ type: 'ready', data: { upstreams } })
+    void watchRuntimeFinished(runtime)
   } catch (error) {
     await stopRuntime({ force: true }).catch((cleanupError) => {
       logger?.warn(

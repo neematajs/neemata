@@ -53,15 +53,10 @@ export type RunCoordinationWorkerClaim = {
   readonly leaseMs: number
 }
 
-export type ActivityWorkerClaim = {
+export type ExecutionWorkerClaim = {
   readonly workerId: string
   readonly workflowNames: readonly string[]
   readonly activityNames?: readonly string[]
-  readonly leaseMs: number
-}
-
-export type TaskWorkerClaim = {
-  readonly workerId: string
   readonly taskNames: readonly string[]
   readonly leaseMs: number
 }

@@ -13,7 +13,7 @@ import { installPostgresWorkflowSchemaForTesting } from '../../src/adapters/post
 import { defineWorkflow, implementWorkflow } from '../../src/index.ts'
 import {
   createWorkflowRuntimeClient,
-  runActivityWorker,
+  runExecutionWorker,
   runWorkflowWorker,
 } from '../../src/runtime/index.ts'
 import {
@@ -135,18 +135,17 @@ describe.skipIf(!postgresTarget.url)(
           container,
           workflows: [implementation],
           workerId: 'wake-coordinator',
-          maxIdleClaims: 1_000,
           idleDelayMs: LONG_DELAY_MS,
           reaping: false,
           runTimeouts: false,
           signal: abort.signal,
         }),
-        runActivityWorker({
+        runExecutionWorker({
+          tasks: [],
           ...runtime,
           container,
           workflows: [implementation],
           workerId: 'wake-activity',
-          maxIdleClaims: 1_000,
           idleDelayMs: LONG_DELAY_MS,
           reaping: false,
           signal: abort.signal,
@@ -307,20 +306,19 @@ describe.skipIf(!postgresTarget.url)(
           container,
           workflows: [implementation],
           workerId: 'cancel-coordinator',
-          maxIdleClaims: 1_000,
           idleDelayMs: 25,
           reaping: false,
           runTimeouts: false,
           signal: abort.signal,
         }),
-        runActivityWorker({
+        runExecutionWorker({
+          tasks: [],
           ...runtime,
           container,
           workflows: [implementation],
           workerId: 'cancel-activity',
           // heartbeat interval = leaseMs / 3; far beyond the asserted latency
           leaseMs: LONG_DELAY_MS * 3,
-          maxIdleClaims: 1_000,
           idleDelayMs: 25,
           reaping: false,
           signal: abort.signal,

@@ -195,7 +195,6 @@ function workflowRuntimeAdapterContract(
         container: testContainer,
         workflows: [implementation],
         workerId: 'cancel-worker-1',
-        maxIdleClaims: 3,
       })
 
       const snapshot = await client.get(run.id)
@@ -242,14 +241,12 @@ function workflowRuntimeAdapterContract(
         container: testContainer,
         workflows: [parentImplementation],
         workerId: 'parent-worker-2',
-        maxIdleClaims: 3,
       })
       await runWorkflowWorker({
         ...runtime,
         container: testContainer,
         workflows: [childImplementation],
         workerId: 'child-worker-1',
-        maxIdleClaims: 3,
       })
 
       const parentSnapshot = await client.get(run.id)
@@ -270,7 +267,9 @@ function workflowRuntimeAdapterContract(
 
       const run = await client.start(task, { text: 'alpha' })
       const snapshot = await client.get(run.id)
-      const claimed = await runtime.attemptExecutor.claimTask({
+      const claimed = await runtime.attemptExecutor.claim({
+        workflowNames: [],
+        activityNames: [],
         workerId: 'task-worker-1',
         taskNames: [task.name],
         leaseMs: 30_000,
@@ -325,7 +324,9 @@ function workflowRuntimeAdapterContract(
         run: { id: run.id, status: 'queued' },
       })
       await expect(
-        runtime.attemptExecutor.claimTask({
+        runtime.attemptExecutor.claim({
+          workflowNames: [],
+          activityNames: [],
           workerId: 'task-before-start',
           taskNames: [task.name],
           leaseMs: 30_000,
@@ -367,7 +368,9 @@ function workflowRuntimeAdapterContract(
         },
       ])
       await expect(
-        runtime.attemptExecutor.claimTask({
+        runtime.attemptExecutor.claim({
+          workflowNames: [],
+          activityNames: [],
           workerId: 'task-before-idempotent-start',
           taskNames: [task.name],
           leaseMs: 30_000,
@@ -390,7 +393,9 @@ function workflowRuntimeAdapterContract(
         { text: 'alpha' },
         { idempotencyKey },
       )
-      const claimed = await runtime.attemptExecutor.claimTask({
+      const claimed = await runtime.attemptExecutor.claim({
+        workflowNames: [],
+        activityNames: [],
         workerId: 'task-consume-idempotent-start',
         taskNames: [task.name],
         leaseMs: 30_000,
@@ -404,7 +409,9 @@ function workflowRuntimeAdapterContract(
 
       expect(replay.id).toBe(run.id)
       await expect(
-        runtime.attemptExecutor.claimTask({
+        runtime.attemptExecutor.claim({
+          workflowNames: [],
+          activityNames: [],
           workerId: 'task-after-idempotent-replay',
           taskNames: [task.name],
           leaseMs: 30_000,
@@ -680,7 +687,8 @@ function workflowRuntimeAdapterContract(
         input: {},
       }
       await runtime.attemptExecutor.dispatchActivity(command)
-      const claimed = await runtime.attemptExecutor.claimActivity({
+      const claimed = await runtime.attemptExecutor.claim({
+        taskNames: [],
         workerId: 'activity-worker-1',
         workflowNames: ['dead-attempt-workflow'],
         activityNames: ['content'],
@@ -704,7 +712,8 @@ function workflowRuntimeAdapterContract(
         },
       ])
       await runtime.store.requeueDeadCommand(dead[0]!.id)
-      const requeued = await runtime.attemptExecutor.claimActivity({
+      const requeued = await runtime.attemptExecutor.claim({
+        taskNames: [],
         workerId: 'activity-worker-2',
         workflowNames: ['dead-attempt-workflow'],
         activityNames: ['content'],
@@ -813,7 +822,8 @@ function workflowRuntimeAdapterContract(
         }),
       ).resolves.toBeNull()
       await expect(
-        runtime.attemptExecutor.claimActivity({
+        runtime.attemptExecutor.claim({
+          taskNames: [],
           workerId: 'prune-checker',
           workflowNames: [root.workflowName],
           activityNames: ['content'],
@@ -1299,7 +1309,8 @@ function workflowRuntimeAdapterContract(
         }),
       ).resolves.toBeNull()
       await expect(
-        runtime.attemptExecutor.claimActivity({
+        runtime.attemptExecutor.claim({
+          taskNames: [],
           workerId: 'delete-attempt-checker',
           workflowNames: [root.workflowName],
           activityNames: ['content'],
@@ -1402,7 +1413,6 @@ function workflowRuntimeAdapterContract(
           container: testContainer,
           workflows: [implementation],
           workerId: 'poison-worker-1',
-          maxIdleClaims: 1,
         }),
       ).rejects.toThrow('poison worker continue')
 
@@ -1455,30 +1465,33 @@ function workflowRuntimeAdapterContract(
       await runtime.attemptExecutor.dispatchActivity(activityCommand)
       await runtime.attemptExecutor.dispatchTask(taskCommand)
 
-      const wrongWorkflow = await runtime.attemptExecutor.claimActivity({
+      const wrongWorkflow = await runtime.attemptExecutor.claim({
+        taskNames: [],
         workerId: 'activity-worker-1',
         workflowNames: ['other-workflow'],
         leaseMs: 30_000,
       })
-      const wrongActivity = await runtime.attemptExecutor.claimActivity({
+      const wrongActivity = await runtime.attemptExecutor.claim({
+        taskNames: [],
         workerId: 'activity-worker-1',
         workflowNames: ['attempt-workflow'],
         activityNames: ['other-activity'],
         leaseMs: 30_000,
       })
-      const activity = await runtime.attemptExecutor.claimActivity({
+      const activity = await runtime.attemptExecutor.claim({
+        taskNames: [],
         workerId: 'activity-worker-1',
         workflowNames: ['attempt-workflow'],
         activityNames: ['content'],
         leaseMs: 30_000,
       })
-      const noneWhileActivityClaimed =
-        await runtime.attemptExecutor.claimActivity({
-          workerId: 'activity-worker-2',
-          workflowNames: ['attempt-workflow'],
-          activityNames: ['content'],
-          leaseMs: 30_000,
-        })
+      const noneWhileActivityClaimed = await runtime.attemptExecutor.claim({
+        taskNames: [],
+        workerId: 'activity-worker-2',
+        workflowNames: ['attempt-workflow'],
+        activityNames: ['content'],
+        leaseMs: 30_000,
+      })
 
       expect(wrongWorkflow).toBeNull()
       expect(wrongActivity).toBeNull()
@@ -1500,19 +1513,19 @@ function workflowRuntimeAdapterContract(
       ).rejects.toThrow('Workflow attempt heartbeat lease lost')
       await runtime.attemptExecutor.release(activity!)
 
-      const activityBeforeBackoff = await runtime.attemptExecutor.claimActivity(
-        {
-          workerId: 'activity-worker-2',
-          workflowNames: ['attempt-workflow'],
-          activityNames: ['content'],
-          leaseMs: 30_000,
-        },
-      )
+      const activityBeforeBackoff = await runtime.attemptExecutor.claim({
+        taskNames: [],
+        workerId: 'activity-worker-2',
+        workflowNames: ['attempt-workflow'],
+        activityNames: ['content'],
+        leaseMs: 30_000,
+      })
       expect(activityBeforeBackoff).toBeNull()
 
       await waitForReleaseBackoff()
 
-      const reclaimedActivity = await runtime.attemptExecutor.claimActivity({
+      const reclaimedActivity = await runtime.attemptExecutor.claim({
+        taskNames: [],
         workerId: 'activity-worker-2',
         workflowNames: ['attempt-workflow'],
         activityNames: ['content'],
@@ -1522,7 +1535,8 @@ function workflowRuntimeAdapterContract(
 
       await runtime.attemptExecutor.ack(reclaimedActivity!)
 
-      const activityAfterAck = await runtime.attemptExecutor.claimActivity({
+      const activityAfterAck = await runtime.attemptExecutor.claim({
+        taskNames: [],
         workerId: 'activity-worker-3',
         workflowNames: ['attempt-workflow'],
         activityNames: ['content'],
@@ -1530,12 +1544,16 @@ function workflowRuntimeAdapterContract(
       })
       expect(activityAfterAck).toBeNull()
 
-      const wrongTask = await runtime.attemptExecutor.claimTask({
+      const wrongTask = await runtime.attemptExecutor.claim({
+        workflowNames: [],
+        activityNames: [],
         workerId: 'task-worker-1',
         taskNames: ['other-task'],
         leaseMs: 30_000,
       })
-      const task = await runtime.attemptExecutor.claimTask({
+      const task = await runtime.attemptExecutor.claim({
+        workflowNames: [],
+        activityNames: [],
         workerId: 'task-worker-1',
         taskNames: ['embedding'],
         leaseMs: 30_000,
@@ -1549,7 +1567,9 @@ function workflowRuntimeAdapterContract(
 
       await runtime.attemptExecutor.release(task!)
 
-      const taskBeforeBackoff = await runtime.attemptExecutor.claimTask({
+      const taskBeforeBackoff = await runtime.attemptExecutor.claim({
+        workflowNames: [],
+        activityNames: [],
         workerId: 'task-worker-2',
         taskNames: ['embedding'],
         leaseMs: 30_000,
@@ -1558,7 +1578,9 @@ function workflowRuntimeAdapterContract(
 
       await waitForReleaseBackoff()
 
-      const reclaimedTask = await runtime.attemptExecutor.claimTask({
+      const reclaimedTask = await runtime.attemptExecutor.claim({
+        workflowNames: [],
+        activityNames: [],
         workerId: 'task-worker-2',
         taskNames: ['embedding'],
         leaseMs: 30_000,
@@ -1567,12 +1589,74 @@ function workflowRuntimeAdapterContract(
 
       await runtime.attemptExecutor.ack(reclaimedTask!)
 
-      const taskAfterAck = await runtime.attemptExecutor.claimTask({
+      const taskAfterAck = await runtime.attemptExecutor.claim({
+        workflowNames: [],
+        activityNames: [],
         workerId: 'task-worker-3',
         taskNames: ['embedding'],
         leaseMs: 30_000,
       })
       expect(taskAfterAck).toBeNull()
+    })
+
+    it('claims activities and tasks from one globally ordered queue', async () => {
+      const runtime = await createRuntime()
+      const taskRun = await runtime.store.createRun({
+        kind: 'task',
+        name: 'ordered-task',
+        workflowName: 'ordered-task',
+        taskName: 'ordered-task',
+        input: {},
+      })
+      const activityRun = await runtime.store.createRun({
+        workflowName: 'ordered-workflow',
+        input: {},
+      })
+      const taskCommand = {
+        kind: 'taskAttempt' as const,
+        workflowName: 'ordered-task',
+        taskName: 'ordered-task',
+        runId: taskRun.id,
+        nodeName: '$task',
+        childKey: '$self',
+        attemptId: '00000000-0000-4000-8000-000000000211',
+        leaseToken: 'task-lease',
+        input: {},
+      }
+      const activityCommand = {
+        kind: 'activityAttempt' as const,
+        workflowName: 'ordered-workflow',
+        activityName: 'ordered-activity',
+        runId: activityRun.id,
+        nodeName: 'ordered-activity',
+        childKey: '$self',
+        attemptId: '00000000-0000-4000-8000-000000000212',
+        leaseToken: 'activity-lease',
+        input: {},
+      }
+
+      await runtime.attemptExecutor.dispatchTask(taskCommand)
+      await runtime.attemptExecutor.dispatchActivity(activityCommand)
+
+      const selectors = {
+        workflowNames: ['ordered-workflow'],
+        activityNames: ['ordered-activity'],
+        taskNames: ['ordered-task'],
+        leaseMs: 30_000,
+      }
+      const first = await runtime.attemptExecutor.claim({
+        ...selectors,
+        workerId: 'execution-worker-1',
+      })
+      const second = await runtime.attemptExecutor.claim({
+        ...selectors,
+        workerId: 'execution-worker-1',
+      })
+
+      expect(first?.command).toStrictEqual(taskCommand)
+      expect(second?.command).toStrictEqual(activityCommand)
+      await runtime.attemptExecutor.ack(first!)
+      await runtime.attemptExecutor.ack(second!)
     })
 
     it('leases one coordinator per run and ignores stale lease release', async () => {
@@ -2045,7 +2129,8 @@ function workflowRuntimeAdapterContract(
         command(otherRun.id, '00000000-0000-4000-8000-000000000303'),
         { runAt: new Date(firstRunAt.getTime() + 2) },
       )
-      const claimed = await runtime.attemptExecutor.claimActivity({
+      const claimed = await runtime.attemptExecutor.claim({
+        taskNames: [],
         workerId: 'activity-worker-1',
         workflowNames: ['delete-unclaimed-workflow'],
         activityNames: ['content'],
@@ -2055,7 +2140,8 @@ function workflowRuntimeAdapterContract(
       const deleted = await runtime.attemptExecutor.deleteUnclaimed({
         runId: run.id,
       })
-      const remainingClaim = await runtime.attemptExecutor.claimActivity({
+      const remainingClaim = await runtime.attemptExecutor.claim({
+        taskNames: [],
         workerId: 'activity-worker-2',
         workflowNames: ['delete-unclaimed-workflow'],
         activityNames: ['content'],
@@ -2063,7 +2149,8 @@ function workflowRuntimeAdapterContract(
       })
       await runtime.attemptExecutor.ack(claimed!)
       await runtime.attemptExecutor.ack(remainingClaim!)
-      const emptyClaim = await runtime.attemptExecutor.claimActivity({
+      const emptyClaim = await runtime.attemptExecutor.claim({
+        taskNames: [],
         workerId: 'activity-worker-3',
         workflowNames: ['delete-unclaimed-workflow'],
         activityNames: ['content'],

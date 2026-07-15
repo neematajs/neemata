@@ -116,7 +116,6 @@ export const createPostgresWorkflowCommandHelpers = (
   }
 
   const claimCommand = async (
-    kind: 'continue' | 'activity' | 'task',
     where: string,
     params: unknown[],
     workerId: string,
@@ -129,23 +128,22 @@ export const createPostgresWorkflowCommandHelpers = (
       WITH candidate AS (
         SELECT id
         FROM workflow_commands
-        WHERE kind = $1
-          AND run_at <= now()
+        WHERE run_at <= now()
           AND (lease_token IS NULL OR lease_expires_at <= now())
           AND dead_at IS NULL
-          AND ${where}
+          AND (${where})
         ORDER BY priority DESC, run_at ASC, created_at ASC, id ASC
         LIMIT 1
         FOR UPDATE SKIP LOCKED
       )
       UPDATE workflow_commands
-      SET lease_owner = $${params.length + 2},
-          lease_token = $${params.length + 3},
-          lease_expires_at = now() + ($${params.length + 4}::int * interval '1 millisecond')
+      SET lease_owner = $${params.length + 1},
+          lease_token = $${params.length + 2},
+          lease_expires_at = now() + ($${params.length + 3}::int * interval '1 millisecond')
       WHERE id = (SELECT id FROM candidate)
       RETURNING *
     `,
-      [kind, ...params, workerId, leaseToken, leaseMs],
+      [...params, workerId, leaseToken, leaseMs],
     )
   }
 
@@ -191,11 +189,10 @@ export const createRunCoordinationExecutor = (
       await ready
       if (worker.workflowNames.length === 0) return null
       const workflowList = worker.workflowNames
-        .map((_, index) => `$${index + 2}`)
+        .map((_, index) => `$${index + 1}`)
         .join(', ')
       const claimed = await claimCommand(
-        'continue',
-        `workflow_name IN (${workflowList})`,
+        `kind = 'continue' AND workflow_name IN (${workflowList})`,
         [...worker.workflowNames],
         worker.workerId,
         worker.leaseMs,

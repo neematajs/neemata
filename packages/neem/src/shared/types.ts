@@ -215,6 +215,12 @@ export type NeemRuntimeServerHealth = NeemRuntimeServerSnapshot & {
 export type NeemRuntime = {
   start: () => MaybePromise<readonly NeemRuntimeUpstream[] | undefined>
   stop: () => MaybePromise<void>
+  /**
+   * Settles when long-lived runtime work ends. Completion before a requested
+   * stop is treated as a runtime failure so a ready worker cannot become a
+   * silent zombie.
+   */
+  readonly finished?: PromiseLike<void>
 }
 
 export type NeemRuntimePlan<Options = unknown, Data = unknown> = {

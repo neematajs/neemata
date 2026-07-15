@@ -216,7 +216,6 @@ describe('workflow runtime interfaces', () => {
       workerId: string
       concurrency?: number
       leaseMs?: number
-      maxIdleClaims?: number
       idleDelayMs?: number
       signal?: AbortSignal
     }>()

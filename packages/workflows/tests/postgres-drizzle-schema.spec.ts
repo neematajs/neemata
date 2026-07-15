@@ -1079,7 +1079,8 @@ test('postgres error releases record delivery metadata and cap exponential backo
     input: {},
   }
   await runtime.attemptExecutor.dispatchActivity(command)
-  const claimed = await runtime.attemptExecutor.claimActivity({
+  const claimed = await runtime.attemptExecutor.claim({
+    taskNames: [],
     workerId: 'activity-worker-1',
     workflowNames: ['postgres-error-release-workflow'],
     activityNames: ['content'],
@@ -1155,7 +1156,8 @@ test('returns no activity claim for an empty activity filter', async () => {
   const runtime = createPostgresWorkflowRuntime({ connection })
 
   await expect(
-    runtime.attemptExecutor.claimActivity({
+    runtime.attemptExecutor.claim({
+      taskNames: [],
       workerId: 'activity-worker',
       workflowNames: ['workflow-without-activities'],
       activityNames: [],
@@ -1185,7 +1187,8 @@ test('extends activity command leases with heartbeat', async () => {
   }
 
   await runtime.attemptExecutor.dispatchActivity(command)
-  const claimed = await runtime.attemptExecutor.claimActivity({
+  const claimed = await runtime.attemptExecutor.claim({
+    taskNames: [],
     workerId: 'activity-worker-1',
     workflowNames: [command.workflowName],
     activityNames: [command.activityName],
@@ -1198,7 +1201,8 @@ test('extends activity command leases with heartbeat', async () => {
   await new Promise((resolve) => setTimeout(resolve, 40))
 
   await expect(
-    runtime.attemptExecutor.claimActivity({
+    runtime.attemptExecutor.claim({
+      taskNames: [],
       workerId: 'activity-worker-2',
       workflowNames: [command.workflowName],
       activityNames: [command.activityName],
@@ -1231,7 +1235,8 @@ test('uses postgres-side timestamps for command claim, heartbeat, and release', 
   }
 
   await runtime.attemptExecutor.dispatchActivity(command)
-  const claimed = await runtime.attemptExecutor.claimActivity({
+  const claimed = await runtime.attemptExecutor.claim({
+    taskNames: [],
     workerId: 'activity-worker-1',
     workflowNames: [command.workflowName],
     activityNames: [command.activityName],
@@ -1944,7 +1949,6 @@ test('worker retention pruning takes the Postgres advisory transaction lock', as
     container,
     workflows: [],
     workerId: 'postgres-retention-worker',
-    maxIdleClaims: 1,
     retention: {
       olderThan: '0ms',
       batchSize: 1,

@@ -1,3 +1,5 @@
+import { setTimeout as wait } from 'node:timers/promises'
+
 import type { DurationString } from '../../types/index.ts'
 import type { WorkflowScheduler } from '../scheduler.ts'
 import type {
@@ -8,28 +10,6 @@ import type {
 import { parseDurationMs } from '../duration.ts'
 
 export const DEFAULT_LEASE_MS = 30_000
-
-export async function runWithConcurrency<T>(
-  items: readonly T[],
-  concurrency: number,
-  worker: (item: T) => Promise<void>,
-): Promise<void> {
-  assertPositiveInteger(concurrency, 'Concurrency')
-
-  let nextIndex = 0
-
-  async function runWorker(): Promise<void> {
-    while (nextIndex < items.length) {
-      const item = items[nextIndex]
-      nextIndex += 1
-      await worker(item)
-    }
-  }
-
-  await Promise.all(
-    Array.from({ length: Math.min(concurrency, items.length) }, runWorker),
-  )
-}
 
 export type WorkerLoopResult = {
   readonly processed: number
@@ -56,7 +36,6 @@ export type WorkerLoopOptions = {
   readonly workerId: string
   readonly concurrency?: number
   readonly leaseMs?: number
-  readonly maxIdleClaims?: number
   readonly idleDelayMs?: number
   /**
    * Push-style wake hint: subscribes a listener that short-circuits the idle
@@ -71,156 +50,289 @@ export type WorkerLoopOptions = {
   readonly signal?: AbortSignal
 }
 
-export async function runWorkerLoop(
+export type WorkerDriver<Claimed> = {
+  readonly claim: () => Promise<Claimed | null>
+  readonly execute: (claimed: Claimed, signal: AbortSignal) => Promise<boolean>
+}
+
+export function drainWorkerPool<Claimed>(
   options: WorkerLoopOptions,
-  claimAndRun: () => Promise<boolean>,
+  driver: WorkerDriver<Claimed>,
+): Promise<WorkerLoopResult> {
+  return runWorkerPool(options, driver, 'drain')
+}
+
+export function serveWorkerPool<Claimed>(
+  options: WorkerLoopOptions & { readonly signal: AbortSignal },
+  driver: WorkerDriver<Claimed>,
+): Promise<WorkerLoopResult> {
+  return runWorkerPool(options, driver, 'serve')
+}
+
+type WorkerMode = 'drain' | 'serve'
+
+type PeriodicTask = {
+  readonly everyMs: number
+  readonly run: (now: Date) => Promise<void>
+  nextAt: number
+}
+
+async function runWorkerPool<Claimed>(
+  options: WorkerLoopOptions,
+  driver: WorkerDriver<Claimed>,
+  mode: WorkerMode,
 ): Promise<WorkerLoopResult> {
   const concurrency = options.concurrency ?? 1
-  const maxIdleClaims = options.maxIdleClaims ?? 1
   assertPositiveInteger(concurrency, 'Concurrency')
-  assertPositiveInteger(maxIdleClaims, 'Max idle claims')
+  if (options.idleDelayMs !== undefined) {
+    assertNonNegative(options.idleDelayMs, 'Idle delay')
+  }
+
+  const periodicTasks = resolvePeriodicTasks(options)
 
   let processed = 0
+  let failed = false
   let firstError: unknown
-  let stopped = false
-  let lastRetentionAt = 0
-  let lastSchedulingAt = 0
-  let retentionRunning = false
-  let schedulingRunning = false
-  const runRetentionPrune = async () => {
-    if (!options.retention || !options.retentionPruner) return
-    const everyMs = options.retention.everyMs ?? 60_000
-    if (!Number.isFinite(everyMs) || everyMs < 0) {
-      throw new Error('Retention everyMs must be a non-negative number')
-    }
-    const date = Date.now()
-    if (retentionRunning || date - lastRetentionAt < everyMs) return
+  const lifecycle = new AbortController()
+  const executions = new AbortController()
+  const wake = createWakeSignal(options.onWake)
+  const forwardAbort = () => {
+    lifecycle.abort(options.signal?.reason)
+    executions.abort(options.signal?.reason)
+    wake.notify()
+  }
+  if (options.signal?.aborted) forwardAbort()
+  else options.signal?.addEventListener('abort', forwardAbort, { once: true })
 
+  const active = new Set<Promise<void>>()
+  const fail = (error: unknown) => {
+    if (!failed) firstError = error
+    failed = true
+    // Claimed siblings finish normally so their leases are not needlessly
+    // abandoned and redelivered after an unrelated execution fails.
+    lifecycle.abort(error)
+    wake.notify()
+  }
+  const startExecution = (claimed: Claimed) => {
+    const task = driver
+      .execute(claimed, executions.signal)
+      .then((didProcess) => {
+        if (didProcess) processed += 1
+      })
+      .catch(fail)
+      .finally(() => {
+        active.delete(task)
+        wake.notify()
+      })
+    active.add(task)
+  }
+  const periodic =
+    mode === 'serve' && periodicTasks.length > 0
+      ? runPeriodicLoop(periodicTasks, lifecycle.signal, wake.notify).catch(
+          fail,
+        )
+      : undefined
+
+  let drainPeriodicPending = mode === 'drain' && periodicTasks.length > 0
+  try {
+    while (!lifecycle.signal.aborted) {
+      let queueEmpty = false
+      while (active.size < concurrency && !lifecycle.signal.aborted) {
+        let claimed: Claimed | null
+        try {
+          claimed = await driver.claim()
+        } catch (error) {
+          fail(error)
+          break
+        }
+        if (claimed === null) {
+          queueEmpty = true
+          break
+        }
+
+        startExecution(claimed)
+      }
+      if (lifecycle.signal.aborted) break
+
+      if (queueEmpty) {
+        if (active.size > 0) {
+          // Polling still discovers due work when an adapter has no wake source.
+          await wake.wait(
+            Math.max(1, options.idleDelayMs ?? 250),
+            lifecycle.signal,
+          )
+          continue
+        }
+
+        if (wake.consume()) continue
+
+        if (mode === 'drain') {
+          if (!drainPeriodicPending) break
+          drainPeriodicPending = false
+          try {
+            await runDuePeriodicTasks(periodicTasks)
+          } catch (error) {
+            fail(error)
+            break
+          }
+          // Maintenance can enqueue immediately claimable work.
+          continue
+        }
+
+        await wake.wait(
+          Math.max(1, options.idleDelayMs ?? 250),
+          lifecycle.signal,
+        )
+        continue
+      }
+
+      // A full pool only needs a completion; durable wakes remain claimable.
+      await wake.wait(undefined, lifecycle.signal)
+    }
+  } finally {
+    lifecycle.abort()
+    wake.notify()
+    await Promise.allSettled(active)
+    await periodic
+    wake.dispose()
+    options.signal?.removeEventListener('abort', forwardAbort)
+  }
+
+  if (failed) throw firstError
+  return { processed }
+}
+
+function resolvePeriodicTasks(options: WorkerLoopOptions): PeriodicTask[] {
+  const tasks: PeriodicTask[] = []
+  if (options.retention && options.retentionPruner) {
+    const everyMs = options.retention.everyMs ?? 60_000
+    assertNonNegative(everyMs, 'Retention everyMs')
     const olderThanMs = parseDurationMs(options.retention.olderThan)
     if (olderThanMs === undefined) {
       throw new Error(
         `Invalid retention olderThan duration [${options.retention.olderThan}]`,
       )
     }
-
-    retentionRunning = true
-    lastRetentionAt = date
-    try {
-      await options.retentionPruner.pruneTerminalRuns({
-        olderThan: new Date(date - olderThanMs),
-        batchSize: options.retention.batchSize,
-        statuses: options.retention.statuses,
-      })
-    } finally {
-      retentionRunning = false
-    }
-  }
-  const maintenanceState = (options.maintenance ?? []).map(() => ({
-    lastAt: 0,
-    running: false,
-  }))
-  const runMaintenance = async () => {
-    const hooks = options.maintenance ?? []
-    for (const [index, hook] of hooks.entries()) {
-      const state = maintenanceState[index]!
-      if (!Number.isFinite(hook.everyMs) || hook.everyMs < 0) {
-        throw new Error('Maintenance everyMs must be a non-negative number')
-      }
-      const date = Date.now()
-      if (state.running || date - state.lastAt < hook.everyMs) continue
-
-      state.running = true
-      state.lastAt = date
-      try {
-        await hook.run(new Date(date))
-      } finally {
-        state.running = false
-      }
-    }
-  }
-  const runScheduling = async () => {
-    if (!options.scheduling || !options.scheduler) return
-    const everyMs = options.scheduling.everyMs ?? 1_000
-    if (!Number.isFinite(everyMs) || everyMs < 0) {
-      throw new Error('Scheduling everyMs must be a non-negative number')
-    }
-    const date = Date.now()
-    if (schedulingRunning || date - lastSchedulingAt < everyMs) return
-
-    schedulingRunning = true
-    lastSchedulingAt = date
-    try {
-      await options.scheduler.fireDue({
-        now: new Date(date),
-        limit: options.scheduling.batchSize,
-      })
-    } finally {
-      schedulingRunning = false
-    }
-  }
-  // Wake hints arriving mid-claim must not be lost: latch them and let the
-  // next idle sleep consume the latch instead of waiting out the delay.
-  let wakePending = false
-  const wakeWaiters = new Set<() => void>()
-  const unsubscribeWake = options.onWake?.(() => {
-    wakePending = true
-    for (const waiter of wakeWaiters) waiter()
-  })
-  const idleSleep = async () => {
-    if (wakePending) {
-      wakePending = false
-      return
-    }
-    let waiter: () => void = () => {}
-    const wakeable = new Promise<void>((resolve) => {
-      waiter = resolve
-      wakeWaiters.add(resolve)
+    tasks.push({
+      everyMs,
+      nextAt: 0,
+      run: (now) =>
+        options
+          .retentionPruner!.pruneTerminalRuns({
+            olderThan: new Date(now.getTime() - olderThanMs),
+            batchSize: options.retention!.batchSize,
+            statuses: options.retention!.statuses,
+          })
+          .then(() => undefined),
     })
-    try {
-      await Promise.race([
-        sleep(options.idleDelayMs ?? 0, options.signal),
-        wakeable,
-      ])
-    } finally {
-      wakeWaiters.delete(waiter)
-    }
-    wakePending = false
   }
+  if (options.scheduling && options.scheduler) {
+    const everyMs = options.scheduling.everyMs ?? 1_000
+    assertNonNegative(everyMs, 'Scheduling everyMs')
+    tasks.push({
+      everyMs,
+      nextAt: 0,
+      run: (now) =>
+        options
+          .scheduler!.fireDue({
+            now,
+            limit: options.scheduling!.batchSize,
+          })
+          .then(() => undefined),
+    })
+  }
+  for (const hook of options.maintenance ?? []) {
+    assertNonNegative(hook.everyMs, 'Maintenance everyMs')
+    tasks.push({ ...hook, nextAt: 0 })
+  }
+  return tasks
+}
 
-  await Promise.allSettled(
-    Array.from({ length: concurrency }, async () => {
-      let idleClaims = 0
-      try {
-        while (
-          !stopped &&
-          !options.signal?.aborted &&
-          idleClaims < maxIdleClaims
-        ) {
-          const didWork = await claimAndRun()
-          if (didWork) {
-            processed += 1
-            idleClaims = 0
-            continue
+async function runPeriodicLoop(
+  tasks: PeriodicTask[],
+  signal: AbortSignal,
+  notify: () => void,
+): Promise<void> {
+  while (!signal.aborted) {
+    await runDuePeriodicTasks(tasks)
+    notify()
+    const nextAt = Math.min(...tasks.map((task) => task.nextAt))
+    // A zero interval remains useful for tests and eager maintenance, but a
+    // timer floor prevents it from becoming an unbounded microtask loop.
+    try {
+      await wait(Math.max(1, nextAt - Date.now()), undefined, { signal })
+    } catch (error) {
+      if (!signal.aborted) throw error
+    }
+  }
+}
+
+async function runDuePeriodicTasks(tasks: PeriodicTask[]): Promise<void> {
+  for (const task of tasks) {
+    const date = Date.now()
+    if (date < task.nextAt) continue
+    task.nextAt = date + task.everyMs
+    await task.run(new Date(date))
+  }
+}
+
+function createWakeSignal(subscribe: WorkerLoopOptions['onWake']): {
+  readonly notify: () => void
+  readonly consume: () => boolean
+  readonly wait: (
+    timeoutMs: number | undefined,
+    signal: AbortSignal,
+  ) => Promise<void>
+  readonly dispose: () => void
+} {
+  let pending = false
+  let waiter: (() => void) | undefined
+  const notify = () => {
+    pending = true
+    waiter?.()
+  }
+  const consume = () => {
+    if (!pending) return false
+    pending = false
+    return true
+  }
+  const unsubscribe = subscribe?.(notify)
+
+  return {
+    notify,
+    consume,
+    async wait(timeoutMs, signal) {
+      if (signal.aborted) return
+      if (consume()) return
+
+      const reason = await new Promise<'notified' | 'timeout' | 'aborted'>(
+        (resolve) => {
+          let settled = false
+          let timeout: ReturnType<typeof setTimeout> | undefined
+          const finish = (result: 'notified' | 'timeout' | 'aborted') => {
+            if (settled) return
+            settled = true
+            if (timeout !== undefined) clearTimeout(timeout)
+            if (waiter === onNotify) waiter = undefined
+            signal.removeEventListener('abort', onAbort)
+            resolve(result)
           }
+          const onNotify = () => finish('notified')
+          const onAbort = () => finish('aborted')
 
-          idleClaims += 1
-          await runRetentionPrune()
-          await runScheduling()
-          await runMaintenance()
-          if (idleClaims < maxIdleClaims) {
-            await idleSleep()
+          waiter = onNotify
+          signal.addEventListener('abort', onAbort, { once: true })
+          if (timeoutMs !== undefined) {
+            timeout = setTimeout(() => finish('timeout'), timeoutMs)
           }
-        }
-      } catch (error) {
-        stopped = true
-        firstError ??= error
-      }
-    }),
-  )
-  unsubscribeWake?.()
-
-  if (firstError) throw firstError
-  return { processed }
+        },
+      )
+      if (reason === 'notified') consume()
+    },
+    dispose() {
+      unsubscribe?.()
+    },
+  }
 }
 
 export function withDefaultRetentionPruner<
@@ -230,27 +342,15 @@ export function withDefaultRetentionPruner<
   return { ...input, retentionPruner: input.store }
 }
 
-async function sleep(
-  ms: number,
-  signal: AbortSignal | undefined,
-): Promise<void> {
-  if (ms <= 0 || signal?.aborted) return
-
-  await new Promise<void>((resolve) => {
-    const done = () => {
-      clearTimeout(timeout)
-      signal?.removeEventListener('abort', done)
-      resolve()
-    }
-
-    const timeout = setTimeout(done, ms)
-    signal?.addEventListener('abort', done, { once: true })
-  })
-}
-
 function assertPositiveInteger(value: number, label: string): void {
   if (!Number.isInteger(value) || value < 1) {
     throw new Error(`${label} must be a positive integer`)
+  }
+}
+
+function assertNonNegative(value: number, label: string): void {
+  if (!Number.isFinite(value) || value < 0) {
+    throw new Error(`${label} must be a non-negative number`)
   }
 }
 

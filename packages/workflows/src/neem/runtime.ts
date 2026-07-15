@@ -4,7 +4,11 @@ import type {
 } from '../implement/index.ts'
 import type { WorkflowRuntimeAdapter } from '../runtime/client.ts'
 import type { AnyScheduleDefinition, MaybePromise } from '../types/index.ts'
-import { collectWorkflowActivityNames } from '../runtime/worker.ts'
+import {
+  collectChildWorkflowNames,
+  collectWorkflowActivityNames,
+  collectWorkflowTaskNames,
+} from '../runtime/worker.ts'
 
 export type AnyWorkflowImplementation = Omit<
   WorkflowImplementation,
@@ -30,36 +34,35 @@ export type WorkflowSchedulesFactory<
   Schedule extends AnyScheduleDefinition = AnyScheduleDefinition,
 > = () => MaybePromise<readonly Schedule[]>
 
-export type WorkflowWorkerRole = 'coordinator' | 'activity' | 'task'
+export type WorkflowWorkerRole = 'coordinator' | 'execution'
 
 export type WorkflowsWorkerPoolConfig = {
   readonly threads?: number
   readonly concurrency?: number
   readonly leaseMs?: number
   readonly pollIntervalMs?: number
-  readonly maxIdleClaims?: number
 }
 
-export type WorkflowsActivityWorkerPoolConfig = WorkflowsWorkerPoolConfig & {
+export type WorkflowsExecutionWorkerPoolConfig = WorkflowsWorkerPoolConfig & {
   readonly activityNames?: readonly string[]
+  readonly taskNames?: readonly string[]
 }
 
-export type WorkflowsNamedActivityWorkerPoolConfig =
-  WorkflowsActivityWorkerPoolConfig & {
+export type WorkflowsNamedExecutionWorkerPoolConfig =
+  WorkflowsExecutionWorkerPoolConfig & {
     readonly name: string
   }
 
 export type WorkflowsWorkersConfig = {
   readonly coordinator?: WorkflowsWorkerPoolConfig
   /**
-   * Either one shared pool (default) or multiple isolated named pools. With
-   * named pools, each claims only its `activityNames`; at most one pool may
-   * omit `activityNames` to act as the catch-all for unmatched activities.
+   * One shared execution pool by default, or named pools selected by activity
+   * and task names. At most one named pool may omit both selectors to claim
+   * everything not assigned explicitly elsewhere.
    */
-  readonly activity?:
-    | WorkflowsActivityWorkerPoolConfig
-    | readonly WorkflowsNamedActivityWorkerPoolConfig[]
-  readonly task?: WorkflowsWorkerPoolConfig
+  readonly execution?:
+    | WorkflowsExecutionWorkerPoolConfig
+    | readonly WorkflowsNamedExecutionWorkerPoolConfig[]
 }
 
 export type WorkflowsConfig<
@@ -87,30 +90,30 @@ export type ResolvedWorkflowsConfig<
   readonly schedules: readonly TScheduleDefinition[]
   readonly workers: {
     readonly coordinator: Required<WorkflowsWorkerPoolConfig>
-    readonly activity: readonly ResolvedActivityWorkerPool[]
-    readonly task: Required<WorkflowsWorkerPoolConfig>
+    readonly execution: readonly ResolvedExecutionWorkerPool[]
   }
 }
 
-export type ResolvedActivityWorkerPool = Required<WorkflowsWorkerPoolConfig> & {
-  readonly name: string
-  readonly activityNames?: readonly string[]
-}
+export type ResolvedExecutionWorkerPool =
+  Required<WorkflowsWorkerPoolConfig> & {
+    readonly name: string
+    readonly activityNames: readonly string[]
+    readonly taskNames: readonly string[]
+  }
 
 export type WorkflowsWorkerData = {
   readonly role: WorkflowWorkerRole
-  /** Which resolved activity pool this worker serves; activity role only. */
-  readonly activityPool?: string
+  /** Which resolved execution pool this worker serves; execution role only. */
+  readonly pool?: string
 }
 
-export const DEFAULT_ACTIVITY_POOL_NAME = 'activity'
+export const DEFAULT_EXECUTION_POOL_NAME = 'execution'
 
 const defaultWorkerConfig = {
   threads: 1,
   concurrency: 1,
   leaseMs: 30_000,
   pollIntervalMs: 250,
-  maxIdleClaims: 1,
 } as const
 
 export function defineWorkflows<
@@ -153,18 +156,27 @@ export async function resolveWorkflowsConfig<
   >
 > {
   const workflows = await config.workflows()
+  const tasks = (await config.tasks?.()) ?? []
+  const workerConfig = config.workers as
+    | (WorkflowsWorkersConfig & Record<string, unknown>)
+    | undefined
+  if (workerConfig && ('activity' in workerConfig || 'task' in workerConfig)) {
+    throw new Error(
+      'Workflows workers.activity and workers.task were replaced by workers.execution',
+    )
+  }
   return {
     runtime: config.runtime,
     workflows,
-    tasks: (await config.tasks?.()) ?? [],
+    tasks,
     schedules: (await config.schedules?.()) ?? [],
     workers: {
       coordinator: normalizeWorkerPool(config.workers?.coordinator),
-      activity: normalizeActivityWorkerPools(
-        config.workers?.activity,
+      execution: normalizeExecutionWorkerPools(
+        config.workers?.execution,
         workflows,
+        tasks,
       ),
-      task: normalizeWorkerPool(config.workers?.task),
     },
   }
 }
@@ -178,97 +190,150 @@ function normalizeWorkerPool<TConfig extends WorkflowsWorkerPoolConfig>(
   }) as Required<TConfig & WorkflowsWorkerPoolConfig>
 }
 
-function normalizeActivityWorkerPools(
+function normalizeExecutionWorkerPools(
   config:
-    | WorkflowsActivityWorkerPoolConfig
-    | readonly WorkflowsNamedActivityWorkerPoolConfig[]
+    | WorkflowsExecutionWorkerPoolConfig
+    | readonly WorkflowsNamedExecutionWorkerPoolConfig[]
     | undefined,
   workflows: readonly AnyWorkflowImplementation[],
-): readonly ResolvedActivityWorkerPool[] {
-  if (config === undefined || !Array.isArray(config)) {
-    return [
-      {
-        name: DEFAULT_ACTIVITY_POOL_NAME,
-        ...normalizeWorkerPool(
-          config as WorkflowsActivityWorkerPoolConfig | undefined,
-        ),
-      },
-    ]
-  }
-
-  const pools = config as readonly WorkflowsNamedActivityWorkerPoolConfig[]
+  tasks: readonly AnyTaskImplementation[],
+): readonly ResolvedExecutionWorkerPool[] {
+  const pools: readonly WorkflowsNamedExecutionWorkerPoolConfig[] =
+    config === undefined || !Array.isArray(config)
+      ? [
+          {
+            name: DEFAULT_EXECUTION_POOL_NAME,
+            ...(config as WorkflowsExecutionWorkerPoolConfig | undefined),
+          },
+        ]
+      : (config as readonly WorkflowsNamedExecutionWorkerPoolConfig[])
   if (pools.length === 0) {
-    throw new Error('Workflows activity worker pool list must not be empty')
+    throw new Error('Workflows execution worker pool list must not be empty')
   }
 
   const names = new Set<string>()
   const claimedActivities = new Map<string, string>()
+  const claimedTasks = new Map<string, string>()
   let catchAll: string | undefined
   for (const pool of pools) {
     if (!pool.name) {
-      throw new Error('Workflows activity worker pool requires a name')
+      throw new Error('Workflows execution worker pool requires a name')
     }
     if (names.has(pool.name)) {
       throw new Error(
-        `Duplicate workflows activity worker pool name [${pool.name}]`,
+        `Duplicate workflows execution worker pool name [${pool.name}]`,
       )
     }
     names.add(pool.name)
 
-    if (pool.activityNames === undefined) {
-      // two catch-alls would race for the same unmatched activities with
-      // conflicting cadence/lease settings
+    if (pool.activityNames === undefined && pool.taskNames === undefined) {
+      // A single catch-all keeps routing deterministic across both namespaces.
       if (catchAll !== undefined) {
         throw new Error(
-          `Workflows activity worker pools [${catchAll}] and [${pool.name}] both omit activityNames; only one catch-all pool is allowed`,
+          `Workflows execution worker pools [${catchAll}] and [${pool.name}] both omit activityNames and taskNames; only one catch-all pool is allowed`,
         )
       }
       catchAll = pool.name
       continue
     }
 
-    for (const activityName of pool.activityNames) {
+    for (const activityName of pool.activityNames ?? []) {
       const owner = claimedActivities.get(activityName)
       if (owner !== undefined) {
         throw new Error(
-          `Activity [${activityName}] is claimed by both workflows worker pools [${owner}] and [${pool.name}]`,
+          `Activity [${activityName}] is claimed by both workflows execution pools [${owner}] and [${pool.name}]`,
         )
       }
       claimedActivities.set(activityName, pool.name)
     }
+    for (const taskName of pool.taskNames ?? []) {
+      const owner = claimedTasks.get(taskName)
+      if (owner !== undefined) {
+        throw new Error(
+          `Task [${taskName}] is claimed by both workflows execution pools [${owner}] and [${pool.name}]`,
+        )
+      }
+      claimedTasks.set(taskName, pool.name)
+    }
   }
 
-  // Selectors and implementations resolve from the same config, so an
-  // unknown name is always a typo or a stale entry — with a catch-all it
-  // would silently reroute the real activity there, so fail loudly.
-  const registered = new Set(collectWorkflowActivityNames(workflows))
-  const unknown = [...claimedActivities.keys()].filter(
-    (name) => !registered.has(name),
+  const registeredActivities = new Set(collectWorkflowActivityNames(workflows))
+  const registeredWorkflows = new Set(
+    workflows.map((implementation) => implementation.workflow.name),
   )
-  if (unknown.length > 0) {
+  const missingChildWorkflows = collectChildWorkflowNames(workflows).filter(
+    (name) => !registeredWorkflows.has(name),
+  )
+  if (missingChildWorkflows.length > 0) {
     throw new Error(
-      `Activities [${unknown.join(', ')}] selected by workflows activity worker pools do not exist in the registered workflows`,
+      `Workflows [${missingChildWorkflows.join(', ')}] referenced by registered workflows have no registered implementation`,
+    )
+  }
+  const registeredTasks = new Set(
+    tasks.map((implementation) => implementation.task.name),
+  )
+  const missingTaskImplementations = collectWorkflowTaskNames(workflows).filter(
+    (name) => !registeredTasks.has(name),
+  )
+  if (missingTaskImplementations.length > 0) {
+    throw new Error(
+      `Tasks [${missingTaskImplementations.join(', ')}] referenced by registered workflows have no registered implementation`,
+    )
+  }
+  const unknownActivities = [...claimedActivities.keys()].filter(
+    (name) => !registeredActivities.has(name),
+  )
+  if (unknownActivities.length > 0) {
+    throw new Error(
+      `Activities [${unknownActivities.join(', ')}] selected by workflows execution pools do not exist in the registered workflows`,
+    )
+  }
+  const unknownTasks = [...claimedTasks.keys()].filter(
+    (name) => !registeredTasks.has(name),
+  )
+  if (unknownTasks.length > 0) {
+    throw new Error(
+      `Tasks [${unknownTasks.join(', ')}] selected by workflows execution pools do not exist in the registered tasks`,
     )
   }
 
-  // Without a catch-all, an activity claimed by no pool would stall its
-  // workflows silently forever — fail loudly at startup instead.
+  // Missing coverage would otherwise leave durable commands stalled forever.
   if (catchAll === undefined) {
-    const uncovered = [...registered].filter(
+    const uncoveredActivities = [...registeredActivities].filter(
       (name) => !claimedActivities.has(name),
     )
-    if (uncovered.length > 0) {
+    if (uncoveredActivities.length > 0) {
       throw new Error(
-        `Activities [${uncovered.join(', ')}] are not claimed by any workflows activity worker pool; add them to a pool or configure a catch-all pool without activityNames`,
+        `Activities [${uncoveredActivities.join(', ')}] are not claimed by any workflows execution pool`,
+      )
+    }
+    const uncoveredTasks = [...registeredTasks].filter(
+      (name) => !claimedTasks.has(name),
+    )
+    if (uncoveredTasks.length > 0) {
+      throw new Error(
+        `Tasks [${uncoveredTasks.join(', ')}] are not claimed by any workflows execution pool`,
       )
     }
   }
 
-  return pools.map((pool) => ({
-    ...normalizeWorkerPool(pool),
-    name: pool.name,
-    ...(pool.activityNames === undefined
-      ? {}
-      : { activityNames: pool.activityNames }),
-  }))
+  return pools.map((pool) => {
+    const isCatchAll = pool.name === catchAll
+    return Object.freeze({
+      ...normalizeWorkerPool(pool),
+      name: pool.name,
+      activityNames:
+        pool.activityNames ??
+        (isCatchAll
+          ? [...registeredActivities].filter(
+              (name) => !claimedActivities.has(name),
+            )
+          : []),
+      taskNames:
+        pool.taskNames ??
+        (isCatchAll
+          ? [...registeredTasks].filter((name) => !claimedTasks.has(name))
+          : []),
+    })
+  })
 }

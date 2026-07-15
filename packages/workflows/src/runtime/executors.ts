@@ -1,12 +1,11 @@
 import type {
   ActivityAttemptCommand,
-  ActivityWorkerClaim,
   ClaimedAttempt,
   ClaimedCommand,
   ContinueRunCommand,
+  ExecutionWorkerClaim,
   RunCoordinationWorkerClaim,
   TaskAttemptCommand,
-  TaskWorkerClaim,
 } from './commands.ts'
 import type { RuntimeRunStatus } from './status.ts'
 
@@ -47,8 +46,7 @@ export type AttemptExecutor = {
     command: TaskAttemptCommand,
     options?: { readonly runAt?: Date },
   ): Promise<void>
-  claimActivity(worker: ActivityWorkerClaim): Promise<ClaimedAttempt | null>
-  claimTask(worker: TaskWorkerClaim): Promise<ClaimedAttempt | null>
+  claim(worker: ExecutionWorkerClaim): Promise<ClaimedAttempt | null>
   heartbeat(
     attempt: ClaimedAttempt,
     leaseMs?: number,
