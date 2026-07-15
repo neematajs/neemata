@@ -93,6 +93,23 @@ describe('ProtocolVersion1 - decodeMessage', () => {
     expect(rpcContext!).toMatchObject({ addStream: expect.any(Function) })
   })
 
+  it('rejects RPC frame whose declared procedure length exceeds frame size', () => {
+    const decoder = context.decoder as unknown as {
+      decodeRPC: ReturnType<typeof vi.fn>
+    }
+    const buffer = Buffer.concat([
+      Buffer.from([ClientMessageType.Rpc]),
+      encodeUInt32(1),
+      encodeUInt16(100),
+      Buffer.from('short'),
+    ])
+
+    expect(() => version.decodeMessage(context, buffer)).toThrow(
+      /Malformed RPC message/,
+    )
+    expect(decoder.decodeRPC).not.toHaveBeenCalled()
+  })
+
   it('decodes RpcAbort payload', () => {
     const callId = 99
     const buffer = Buffer.concat([

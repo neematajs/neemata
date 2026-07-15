@@ -73,7 +73,9 @@ export class WsTransportServer implements TransportWorker<
     try {
       const result = peer.send(buffer)
       if (typeof result === 'boolean') return result
-      if (typeof result === 'number') return result > 0
+      // uWS send codes: 1 = sent, 0 = buffered (will drain), 2 = dropped
+      // due to backpressure limit — only a drop is a failed delivery
+      if (typeof result === 'number') return result !== 2
       return true
     } catch (error) {
       console.error(
