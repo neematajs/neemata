@@ -766,25 +766,40 @@ export class Gateway<
   }
 
   protected async closeConnection(connectionId: string) {
-    if (this.connections.has(connectionId)) {
-      const connection = this.connections.get(connectionId)
-      this.stopHeartbeat(connectionId, 'close')
+    // Single-flight: remove from the map before any await so concurrent
+    // callers (e.g. heartbeat timeout racing transport disconnect) no-op
+    // instead of double-closing the transport and container.
+    if (!this.connections.has(connectionId)) return
+    const connection = this.connections.get(connectionId)
+    this.connections.remove(connectionId)
 
-      const transportWorker =
-        this.options.transports[connection.transport]?.transport
-      if (connection.type === ConnectionType.Bidirectional) {
-        await transportWorker?.close?.(connectionId, {
-          code: 1001,
-          reason: 'closed',
-        })
+    // Guard each teardown step so one failure can't skip the rest.
+    const guard = async (step: () => unknown) => {
+      try {
+        await step()
+      } catch (error) {
+        this.logger.error(
+          { error, connectionId },
+          'Error during connection teardown',
+        )
       }
-      connection.abortController.abort()
-      await connection.container.dispose()
     }
 
-    this.rpcs.close(connectionId)
-    this.blobStreams.cleanupConnection(connectionId)
-    this.connections.remove(connectionId)
+    await guard(() => this.stopHeartbeat(connectionId, 'close'))
+    if (connection.type === ConnectionType.Bidirectional) {
+      const transportWorker =
+        this.options.transports[connection.transport]?.transport
+      await guard(() =>
+        transportWorker?.close?.(connectionId, {
+          code: 1001,
+          reason: 'closed',
+        }),
+      )
+    }
+    await guard(() => connection.abortController.abort())
+    await guard(() => this.rpcs.close(connectionId))
+    await guard(() => this.blobStreams.cleanupConnection(connectionId))
+    await guard(() => connection.container.dispose())
   }
 
   protected createBlobFunction(
