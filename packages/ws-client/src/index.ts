@@ -7,7 +7,8 @@ import type {
 import type { ProtocolVersion } from '@nmtjs/protocol'
 import type { BaseClientFormat } from '@nmtjs/protocol/client'
 import { once } from '@nmtjs/common'
-import { ConnectionType } from '@nmtjs/protocol'
+import { ConnectionType, ErrorCode } from '@nmtjs/protocol'
+import { ProtocolError } from '@nmtjs/protocol/client'
 
 export type WsClientTransportOptions = {
   /**
@@ -126,9 +127,21 @@ export class WsTransportClient implements BidirectionalTransport {
   }
 
   async send(message: ArrayBufferView, options: TransportSendOptions) {
-    if (this.webSocket === null) throw new Error('WebSocket is not connected')
+    if (this.webSocket === null) {
+      throw new ProtocolError(
+        ErrorCode.ConnectionError,
+        'WebSocket is not connected',
+      )
+    }
     await this.connecting
-    if (!options.signal?.aborted) this.webSocket!.send(message as any)
+    // the close handler may null the socket while awaiting the connect
+    if (this.webSocket === null) {
+      throw new ProtocolError(
+        ErrorCode.ConnectionError,
+        'WebSocket closed while connecting',
+      )
+    }
+    if (!options.signal?.aborted) this.webSocket.send(message as any)
   }
 }
 

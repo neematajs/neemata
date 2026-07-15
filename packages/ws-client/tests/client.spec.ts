@@ -1,5 +1,5 @@
-import { ProtocolVersion } from '@nmtjs/protocol'
-import { BaseClientFormat } from '@nmtjs/protocol/client'
+import { ErrorCode, ProtocolVersion } from '@nmtjs/protocol'
+import { BaseClientFormat, ProtocolError } from '@nmtjs/protocol/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { WsTransportClient } from '../src/index.ts'
@@ -132,5 +132,34 @@ describe('WsTransportClient', () => {
 
     expect(socket.close).toHaveBeenCalledWith(1000, 'client')
     expect(onDisconnect).toHaveBeenCalledWith('client')
+  })
+
+  it('rejects sends when the socket closes while awaiting connect', async () => {
+    const transport = new WsTransportClient(
+      new TestFormat(),
+      ProtocolVersion.v1,
+      { url: 'http://localhost:4000', WebSocket: FakeWebSocket as any },
+    )
+
+    const connectPromise = transport.connect({
+      onConnect: vi.fn(),
+      onMessage: vi.fn(),
+      onDisconnect: vi.fn(),
+    })
+
+    const socket = FakeWebSocket.instances.at(-1)!
+
+    // send() awaits the pending connect; the socket closes before it resumes
+    const sendPromise = transport.send(new Uint8Array([1]), {})
+    socket.emit('open')
+    socket.emit('close', { reason: 'server_shutdown' })
+    await connectPromise
+
+    await expect(sendPromise).rejects.toSatisfy(
+      (error) =>
+        error instanceof ProtocolError &&
+        error.code === ErrorCode.ConnectionError,
+    )
+    expect(socket.send).not.toHaveBeenCalled()
   })
 })
