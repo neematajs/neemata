@@ -101,9 +101,17 @@ export class PubSubManager {
 
     const { adapter } = this.options
 
+    // Owned controller lets destroy() release an adapter iterator that is
+    // blocked waiting for the next message, even without a caller signal.
+    const controller = new AbortController()
+    const finalSignal = signal
+      ? AbortSignal.any([signal, controller.signal])
+      : controller.signal
+
     const stream = this.createMessageStream(
-      adapter.subscribe(channel, signal),
+      adapter.subscribe(channel, finalSignal),
       events,
+      controller,
     )
 
     stream.on('close', () => {
@@ -146,29 +154,49 @@ export class PubSubManager {
   private createMessageStream(
     stream: AsyncIterable<PubSubMessage>,
     events: Map<string, TAnySubscriptionEventContract>,
+    controller: AbortController,
   ): Readable {
     const logger = this.logger
+    const iterator = stream[Symbol.asyncIterator]()
+    // Node clears `reading` on every push and may re-invoke `read` while the
+    // previous pump is still awaiting; a second concurrent pump would race
+    // over the shared iterator and double-push null at end of stream.
+    let pumping = false
     return new Readable({
       objectMode: true,
       async read() {
+        if (pumping) return
+        pumping = true
         try {
-          for await (const { channel, data } of stream) {
+          while (!this.destroyed) {
+            const { done, value } = await iterator.next()
+            if (done) break
+            if (this.destroyed) break
+            const { channel, data } = value
             const { event, payload } = data
             const contract = events.get(event)
             if (!contract) {
               logger.warn({ channel, event }, 'Unknown subscription event')
               continue
             }
+            let decoded: unknown
             try {
-              this.push({ event, payload: contract.payload.decode(payload) })
+              decoded = { event, payload: contract.payload.decode(payload) }
             } catch (error) {
               logger.error({ error }, 'Unable to decode event payload')
+              continue
+            }
+            if (!this.push(decoded)) {
+              // Backpressure: pause until the consumer drains and Node
+              // invokes `read` again.
+              pumping = false
+              return
             }
           }
-          this.push(null)
+          if (!this.destroyed) this.push(null)
         } catch (error) {
           if (isAbortError(error)) {
-            this.push(null)
+            if (!this.destroyed) this.push(null)
           } else {
             this.destroy(
               Error.isError(error)
@@ -177,6 +205,20 @@ export class PubSubManager {
             )
           }
         }
+      },
+      destroy(error, callback) {
+        // Abort first: return() alone queues behind a next() that is blocked
+        // waiting for the next message and would never let cleanup run.
+        controller.abort()
+        // Best-effort release of the adapter subscription; don't block
+        // destruction on the iterator settling.
+        iterator.return?.()?.catch((error) => {
+          logger.error(
+            { error },
+            'Failed to release pubsub subscription iterator',
+          )
+        })
+        callback(error)
       },
     })
   }
