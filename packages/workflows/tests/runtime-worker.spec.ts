@@ -15,14 +15,12 @@ import {
   type WorkflowStore,
   createInMemoryWorkflowRuntime,
   createWorkflowRuntimeClient,
-  runActivityWorker,
-  runTaskWorker,
+  runExecutionWorker,
   runWorkflowWorker,
   runTaskAttempt,
   startTaskRun,
   WorkflowAttemptTimeoutError,
 } from '../src/runtime/index.ts'
-import { runWithConcurrency } from '../src/runtime/worker.ts'
 
 describe('workflow worker runtime', () => {
   const createTestContainer = () => {
@@ -62,7 +60,9 @@ describe('workflow worker runtime', () => {
       input: { text: 'alpha' },
     })
 
-    const claimed = await runtime.attemptExecutor.claimTask({
+    const claimed = await runtime.attemptExecutor.claim({
+      workflowNames: [],
+      activityNames: [],
       workerId: 'task-worker-1',
       taskNames: [task.name],
       leaseMs: 30_000,
@@ -219,13 +219,13 @@ describe('workflow worker runtime', () => {
       task: completionTask,
       input: { text: 'alpha' },
     })
-    const completionClaimed = await completionRuntime.attemptExecutor.claimTask(
-      {
-        workerId: 'task-worker-1',
-        taskNames: [completionTask.name],
-        leaseMs: 30_000,
-      },
-    )
+    const completionClaimed = await completionRuntime.attemptExecutor.claim({
+      workflowNames: [],
+      activityNames: [],
+      workerId: 'task-worker-1',
+      taskNames: [completionTask.name],
+      leaseMs: 30_000,
+    })
     expect(completionClaimed).not.toBeNull()
     const completionMarker = createAtomicMarker(completionRuntime)
 
@@ -266,7 +266,9 @@ describe('workflow worker runtime', () => {
       task: retryTask,
       input: { text: 'alpha' },
     })
-    const retryClaimed = await retryRuntime.attemptExecutor.claimTask({
+    const retryClaimed = await retryRuntime.attemptExecutor.claim({
+      workflowNames: [],
+      activityNames: [],
       workerId: 'task-worker-1',
       taskNames: [retryTask.name],
       leaseMs: 30_000,
@@ -324,7 +326,9 @@ describe('workflow worker runtime', () => {
       workflows: [reconcileWorkflowImplementation],
       workerId: 'workflow-worker-1',
     })
-    const reconcileClaimed = await reconcileRuntime.attemptExecutor.claimTask({
+    const reconcileClaimed = await reconcileRuntime.attemptExecutor.claim({
+      workflowNames: [],
+      activityNames: [],
       workerId: 'task-worker-1',
       taskNames: [reconcileTask.name],
       leaseMs: 30_000,
@@ -391,7 +395,9 @@ describe('workflow worker runtime', () => {
       workflows: [workflowImplementation],
       workerId: 'workflow-worker-1',
     })
-    const claimed = await runtime.attemptExecutor.claimTask({
+    const claimed = await runtime.attemptExecutor.claim({
+      workflowNames: [],
+      activityNames: [],
       workerId: 'task-worker-1',
       taskNames: [task.name],
       leaseMs: 30_000,
@@ -474,7 +480,6 @@ describe('workflow worker runtime', () => {
       container: createTestContainer(),
       workflows: [],
       workerId: 'retention-worker-1',
-      maxIdleClaims: 1,
       retention: {
         olderThan: '0ms',
         batchSize: 10,
@@ -571,7 +576,6 @@ describe('workflow worker runtime', () => {
       container: createTestContainer(),
       workflows: [implementation],
       workerId: 'workflow-worker-1',
-      maxIdleClaims: 2,
       idleDelayMs: 1,
     })
 
@@ -710,7 +714,8 @@ describe('workflow worker runtime', () => {
       workerId: 'workflow-worker-1',
     })
 
-    const result = await runActivityWorker({
+    const result = await runExecutionWorker({
+      tasks: [],
       store: runtime.store,
       runCoordinationExecutor: runtime.runCoordinationExecutor,
       attemptExecutor: runtime.attemptExecutor,
@@ -796,14 +801,14 @@ describe('workflow worker runtime', () => {
       workflows: [implementation],
       workerId: 'workflow-worker-1',
     })
-    await runActivityWorker({
+    await runExecutionWorker({
+      tasks: [],
       store: runtime.store,
       runCoordinationExecutor: runtime.runCoordinationExecutor,
       attemptExecutor: runtime.attemptExecutor,
       container,
       workflows: [implementation],
       workerId: 'activity-worker-1',
-      maxIdleClaims: 4,
     })
 
     expect(runtime.inspect().continueRunCommands).toHaveLength(1)
@@ -863,14 +868,14 @@ describe('workflow worker runtime', () => {
       workflows: [implementation],
       workerId: 'workflow-worker-1',
     })
-    await runActivityWorker({
+    await runExecutionWorker({
+      tasks: [],
       store: runtime.store,
       runCoordinationExecutor: runtime.runCoordinationExecutor,
       attemptExecutor: runtime.attemptExecutor,
       container,
       workflows: [implementation],
       workerId: 'activity-worker-1',
-      maxIdleClaims: 2,
     })
     await runWorkflowWorker({
       store: runtime.store,
@@ -942,7 +947,8 @@ describe('workflow worker runtime', () => {
       workflows: [implementation],
       workerId: 'workflow-worker-1',
     })
-    await runActivityWorker({
+    await runExecutionWorker({
+      tasks: [],
       store: runtime.store,
       runCoordinationExecutor: runtime.runCoordinationExecutor,
       attemptExecutor: runtime.attemptExecutor,
@@ -1013,8 +1019,8 @@ describe('workflow worker runtime', () => {
     let releaseCount = 0
     const attemptExecutor: AttemptExecutor = {
       ...runtime.attemptExecutor,
-      claimActivity: async (worker) => {
-        const claimed = await runtime.attemptExecutor.claimActivity(worker)
+      claim: async (worker) => {
+        const claimed = await runtime.attemptExecutor.claim(worker)
         if (!claimed) return null
         claimCount += 1
         if (claimCount > 1) throw new Error('claimed released activity again')
@@ -1026,7 +1032,8 @@ describe('workflow worker runtime', () => {
       },
     }
 
-    const result = await runActivityWorker({
+    const result = await runExecutionWorker({
+      tasks: [],
       store: runtime.store,
       runCoordinationExecutor: runtime.runCoordinationExecutor,
       attemptExecutor,
@@ -1034,7 +1041,6 @@ describe('workflow worker runtime', () => {
       workflows: [implementation],
       activityNames: ['missing'],
       workerId: 'activity-worker-1',
-      maxIdleClaims: 2,
     })
 
     expect(result.processed).toBe(0)
@@ -1110,7 +1116,8 @@ describe('workflow worker runtime', () => {
       input: { text: 'alpha' },
     })
 
-    const result = await runTaskWorker({
+    const result = await runExecutionWorker({
+      workflows: [],
       store: runtime.store,
       runCoordinationExecutor: runtime.runCoordinationExecutor,
       attemptExecutor: runtime.attemptExecutor,
@@ -1150,14 +1157,14 @@ describe('workflow worker runtime', () => {
       input: { text: 'alpha' },
     })
 
-    const result = await runTaskWorker({
+    const result = await runExecutionWorker({
+      workflows: [],
       store: runtime.store,
       runCoordinationExecutor: runtime.runCoordinationExecutor,
       attemptExecutor: runtime.attemptExecutor,
       container: createTestContainer(),
       tasks: [implementation],
       workerId: 'task-worker-1',
-      maxIdleClaims: 2,
     })
 
     const completed = await runtime.store.loadRunSnapshot(run.id)
@@ -1212,14 +1219,14 @@ describe('workflow worker runtime', () => {
       input: { text: 'alpha' },
     })
 
-    await runTaskWorker({
+    await runExecutionWorker({
+      workflows: [],
       store: runtime.store,
       runCoordinationExecutor: runtime.runCoordinationExecutor,
       attemptExecutor: runtime.attemptExecutor,
       container: createTestContainer(),
       tasks: [implementation],
       workerId: 'task-worker-1',
-      maxIdleClaims: 2,
     })
     releaseLateHandler()
     await lateHandlerFinished
@@ -1267,7 +1274,8 @@ describe('workflow worker runtime', () => {
       input: { text: 'alpha' },
     })
 
-    await runTaskWorker({
+    await runExecutionWorker({
+      workflows: [],
       store: runtime.store,
       runCoordinationExecutor: runtime.runCoordinationExecutor,
       attemptExecutor: runtime.attemptExecutor,
@@ -1307,7 +1315,8 @@ describe('workflow worker runtime', () => {
         input: { text: 'alpha' },
       })
 
-      await runTaskWorker({
+      await runExecutionWorker({
+        workflows: [],
         store: runtime.store,
         runCoordinationExecutor: runtime.runCoordinationExecutor,
         attemptExecutor: runtime.attemptExecutor,
@@ -1320,7 +1329,8 @@ describe('workflow worker runtime', () => {
       )
 
       vi.setSystemTime(new Date('2026-01-01T00:00:01.000Z'))
-      await runTaskWorker({
+      await runExecutionWorker({
+        workflows: [],
         store: runtime.store,
         runCoordinationExecutor: runtime.runCoordinationExecutor,
         attemptExecutor: runtime.attemptExecutor,
@@ -1333,7 +1343,8 @@ describe('workflow worker runtime', () => {
       )
 
       vi.setSystemTime(new Date('2026-01-01T00:00:03.000Z'))
-      await runTaskWorker({
+      await runExecutionWorker({
+        workflows: [],
         store: runtime.store,
         runCoordinationExecutor: runtime.runCoordinationExecutor,
         attemptExecutor: runtime.attemptExecutor,
@@ -1379,7 +1390,8 @@ describe('workflow worker runtime', () => {
       })
       let heartbeatCount = 0
 
-      const worker = runTaskWorker({
+      const worker = runExecutionWorker({
+        workflows: [],
         store: runtime.store,
         runCoordinationExecutor: runtime.runCoordinationExecutor,
         attemptExecutor: {
@@ -1443,7 +1455,8 @@ describe('workflow worker runtime', () => {
       let acked = false
       let released = false
 
-      const worker = runTaskWorker({
+      const worker = runExecutionWorker({
+        workflows: [],
         store: runtime.store,
         runCoordinationExecutor: runtime.runCoordinationExecutor,
         attemptExecutor: {
@@ -1513,7 +1526,8 @@ describe('workflow worker runtime', () => {
       let released = false
       let retried = false
 
-      const worker = runTaskWorker({
+      const worker = runExecutionWorker({
+        workflows: [],
         store: runtime.store,
         runCoordinationExecutor: runtime.runCoordinationExecutor,
         attemptExecutor: {
@@ -1593,7 +1607,8 @@ describe('workflow worker runtime', () => {
       let acked = false
       let released = false
 
-      const worker = runTaskWorker({
+      const worker = runExecutionWorker({
+        workflows: [],
         store: runtime.store,
         runCoordinationExecutor: runtime.runCoordinationExecutor,
         attemptExecutor: {
@@ -1629,26 +1644,5 @@ describe('workflow worker runtime', () => {
     } finally {
       vi.useRealTimers()
     }
-  })
-
-  it('runs workers without exceeding concurrency', async () => {
-    const items = [1, 2, 3, 4, 5]
-    let active = 0
-    let maxActive = 0
-
-    await runWithConcurrency(items, 2, async () => {
-      active += 1
-      maxActive = Math.max(maxActive, active)
-      await new Promise((resolve) => setTimeout(resolve, 5))
-      active -= 1
-    })
-
-    expect(maxActive).toBe(2)
-  })
-
-  it('rejects invalid concurrency', async () => {
-    await expect(runWithConcurrency([1], 0, async () => {})).rejects.toThrow(
-      'Concurrency must be a positive integer',
-    )
   })
 })

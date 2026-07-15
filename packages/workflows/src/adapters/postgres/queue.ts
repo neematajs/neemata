@@ -116,36 +116,60 @@ export const createPostgresWorkflowCommandHelpers = (
   }
 
   const claimCommand = async (
-    kind: 'continue' | 'activity' | 'task',
-    where: string,
+    where: string | readonly string[],
     params: unknown[],
     workerId: string,
     leaseMs: number,
   ) => {
     const leaseToken = id()
+    const conditions = typeof where === 'string' ? [where] : where
+    const candidateQuery = (condition: string) => `
+      SELECT id, priority, run_at, created_at
+      FROM workflow_commands
+      WHERE run_at <= now()
+        AND (lease_token IS NULL OR lease_expires_at <= now())
+        AND dead_at IS NULL
+        AND (${condition})
+      ORDER BY priority DESC, run_at ASC, created_at ASC, id ASC
+      LIMIT 1
+      FOR UPDATE SKIP LOCKED
+    `
+    const candidateSql =
+      conditions.length === 1
+        ? `candidate AS (${candidateQuery(conditions[0]!)})`
+        : `
+          -- Per-kind probes preserve the existing ordered claim index while
+          -- the final choice keeps activity and task work globally ordered.
+          ${conditions
+            .map(
+              (condition, index) =>
+                `candidate_${index} AS (${candidateQuery(condition)})`,
+            )
+            .join(', ')},
+          eligible_candidates AS (
+            ${conditions
+              .map((_, index) => `SELECT * FROM candidate_${index}`)
+              .join(' UNION ALL ')}
+          ),
+          candidate AS (
+            SELECT id
+            FROM eligible_candidates
+            ORDER BY priority DESC, run_at ASC, created_at ASC, id ASC
+            LIMIT 1
+          )
+        `
     return await one(
       db,
       `
-      WITH candidate AS (
-        SELECT id
-        FROM workflow_commands
-        WHERE kind = $1
-          AND run_at <= now()
-          AND (lease_token IS NULL OR lease_expires_at <= now())
-          AND dead_at IS NULL
-          AND ${where}
-        ORDER BY priority DESC, run_at ASC, created_at ASC, id ASC
-        LIMIT 1
-        FOR UPDATE SKIP LOCKED
-      )
+      WITH ${candidateSql}
       UPDATE workflow_commands
-      SET lease_owner = $${params.length + 2},
-          lease_token = $${params.length + 3},
-          lease_expires_at = now() + ($${params.length + 4}::int * interval '1 millisecond')
+      SET lease_owner = $${params.length + 1},
+          lease_token = $${params.length + 2},
+          lease_expires_at = now() + ($${params.length + 3}::int * interval '1 millisecond')
       WHERE id = (SELECT id FROM candidate)
       RETURNING *
     `,
-      [kind, ...params, workerId, leaseToken, leaseMs],
+      [...params, workerId, leaseToken, leaseMs],
     )
   }
 
@@ -191,11 +215,10 @@ export const createRunCoordinationExecutor = (
       await ready
       if (worker.workflowNames.length === 0) return null
       const workflowList = worker.workflowNames
-        .map((_, index) => `$${index + 2}`)
+        .map((_, index) => `$${index + 1}`)
         .join(', ')
       const claimed = await claimCommand(
-        'continue',
-        `workflow_name IN (${workflowList})`,
+        `kind = 'continue' AND workflow_name IN (${workflowList})`,
         [...worker.workflowNames],
         worker.workerId,
         worker.leaseMs,

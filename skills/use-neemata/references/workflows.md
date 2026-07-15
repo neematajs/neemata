@@ -3,7 +3,7 @@
 Use `@nmtjs/workflows` for durable, contract-first orchestration: multi-step
 processes that must survive crashes, retry safely, fan out to child runs, and
 be observable/cancellable by id. Runs are persisted (Postgres in production),
-executed by coordinator/activity/task workers with at-least-once command
+executed by coordinator and execution workers with at-least-once command
 delivery and exactly-once state transitions.
 
 Import rules (no `nmtjs` umbrella exports; always package subpaths):
@@ -260,14 +260,17 @@ export default defineWorkflows({
   tasks: () => taskImplementations,
   workers: {
     coordinator: { threads: 2, concurrency: 2 },
-    activity: { threads: 2, concurrency: 4 },
-    task: { threads: 2, concurrency: 4 },
+    execution: { threads: 2, concurrency: 4 },
   },
 })
 ```
 
-Worker pool options: `threads`, `concurrency`, `leaseMs`, `pollIntervalMs`,
-`maxIdleClaims`; the activity pool additionally accepts `activityNames` to
-pin a pool to specific activities. The task pool only spawns when task
-implementations exist. Worker shutdown aborts in-flight handlers with reason
-`shutdown` and releases their commands for redelivery.
+Worker pool options are `threads`, `concurrency`, `leaseMs`, and
+`pollIntervalMs`. The execution pool runs both workflow activities and
+standalone tasks. It can instead be an array of named pools with
+`activityNames` and/or `taskNames` selectors; one pool may omit both selectors
+as the catch-all for work not assigned elsewhere. Worker shutdown aborts
+in-flight handlers with reason `shutdown` and releases their commands for
+redelivery. Every task and child workflow referenced by a registered workflow
+must also have an implementation in `tasks` or `workflows`; startup rejects
+incomplete registries before they can create unclaimable work.

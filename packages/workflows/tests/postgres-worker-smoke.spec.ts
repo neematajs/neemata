@@ -76,7 +76,6 @@ test('runs direct child and mapWorkflow through postgres workers', async () => {
     container,
     workflows: [parentImpl, childImpl],
     workerId: 'postgres-smoke-worker',
-    maxIdleClaims: 3,
   })
 
   const snapshot = await client.get(run.id)

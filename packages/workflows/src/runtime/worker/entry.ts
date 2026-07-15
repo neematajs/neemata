@@ -8,6 +8,7 @@ import type {
   AnyTaskDefinition,
   AnyWorkflowDefinition,
 } from '../../types/index.ts'
+import type { ClaimedAttempt, ClaimedCommand } from '../commands.ts'
 import type { AttemptExecutor, RunCoordinationExecutor } from '../executors.ts'
 import type { WorkflowStore } from '../store.ts'
 import type {
@@ -24,10 +25,12 @@ import {
 import { isAttemptShutdown } from './heartbeat.ts'
 import {
   DEFAULT_LEASE_MS,
+  drainWorkerPool,
   isAttemptHeartbeatLeaseLost,
   isStaleWorkflowCommandAck,
-  runWorkerLoop,
+  serveWorkerPool,
   withDefaultRetentionPruner,
+  type WorkerDriver,
   type WorkerLoopOptions,
   type WorkerLoopResult,
   type WorkerMaintenanceHook,
@@ -69,7 +72,7 @@ export type RunWorkflowWorkerInput = WorkerLoopOptions & {
   readonly runTimeouts?: false | WorkerRunTimeoutsOptions
 }
 
-export type RunActivityWorkerInput = WorkerLoopOptions & {
+export type RunExecutionWorkerInput = WorkerLoopOptions & {
   readonly store: WorkflowStore
   readonly runCoordinationExecutor: RunCoordinationExecutor
   readonly attemptExecutor: AttemptExecutor
@@ -77,17 +80,8 @@ export type RunActivityWorkerInput = WorkerLoopOptions & {
   readonly wakeEvents?: WorkflowWakeEvents
   readonly workflows: readonly AnyWorkflowImplementation[]
   readonly activityNames?: readonly string[]
-  readonly container: Pick<Container, 'createContext'>
-  readonly reaping?: false | WorkerReapingOptions
-}
-
-export type RunTaskWorkerInput = WorkerLoopOptions & {
-  readonly store: WorkflowStore
-  readonly runCoordinationExecutor: RunCoordinationExecutor
-  readonly attemptExecutor: AttemptExecutor
-  readonly atomicCompletion?: WorkflowRuntimeAtomicCompletion
-  readonly wakeEvents?: WorkflowWakeEvents
   readonly tasks: readonly AnyTaskImplementation[]
+  readonly taskNames?: readonly string[]
   readonly container: Pick<Container, 'createContext'>
   readonly reaping?: false | WorkerReapingOptions
 }
@@ -155,28 +149,61 @@ function commandWake(
   return (listener) => wakeEvents.onCommand(kind, listener)
 }
 
+function executionWake(
+  wakeEvents: WorkflowWakeEvents | undefined,
+): ((listener: () => void) => () => void) | undefined {
+  if (!wakeEvents) return undefined
+  return (listener) => {
+    const unsubscribeActivity = wakeEvents.onCommand('activity', listener)
+    const unsubscribeTask = wakeEvents.onCommand('task', listener)
+    return () => {
+      unsubscribeActivity()
+      unsubscribeTask()
+    }
+  }
+}
+
 export async function runWorkflowWorker(
   input: RunWorkflowWorkerInput,
 ): Promise<WorkerLoopResult> {
+  return drainWorkerPool(workflowWorkerOptions(input), workflowDriver(input))
+}
+
+export async function serveWorkflowWorker(
+  input: RunWorkflowWorkerInput & { readonly signal: AbortSignal },
+): Promise<WorkerLoopResult> {
+  return serveWorkerPool(
+    { ...workflowWorkerOptions(input), signal: input.signal },
+    workflowDriver(input),
+  )
+}
+
+function workflowWorkerOptions(input: RunWorkflowWorkerInput) {
+  const maintenance = withRunTimeoutsHook(input, withReapingHook(input))
+  return withDefaultRetentionPruner({
+    ...input,
+    maintenance,
+    onWake: commandWake(input.wakeEvents, 'continue'),
+  })
+}
+
+function workflowDriver(
+  input: RunWorkflowWorkerInput,
+): WorkerDriver<ClaimedCommand> {
   const workflowNames = input.workflows.map(
     (implementation) => implementation.workflow.name,
   )
-  const maintenance = withRunTimeoutsHook(input, withReapingHook(input))
-
-  return runWorkerLoop(
-    withDefaultRetentionPruner({
-      ...input,
-      maintenance,
-      onWake: commandWake(input.wakeEvents, 'continue'),
-    }),
-    async () => {
-      const claimed = await input.runCoordinationExecutor.claim({
+  return {
+    claim: () =>
+      input.runCoordinationExecutor.claim({
         workerId: input.workerId,
         workflowNames,
         leaseMs: input.leaseMs ?? DEFAULT_LEASE_MS,
-      })
-      if (!claimed) return false
-
+      }),
+    abandon: (claimed) => input.runCoordinationExecutor.release(claimed),
+    // Continuations stay atomic during shutdown; interrupting coordination
+    // mid-write is less safe than waiting for the claimed command to finish.
+    async execute(claimed) {
       try {
         return await runAtomicContinuation(input, async (scoped) => {
           const leaseMs = input.leaseMs ?? DEFAULT_LEASE_MS
@@ -207,75 +234,59 @@ export async function runWorkflowWorker(
         throw error
       }
     },
+  }
+}
+
+export async function runExecutionWorker(
+  input: RunExecutionWorkerInput,
+): Promise<WorkerLoopResult> {
+  return drainWorkerPool(executionWorkerOptions(input), executionDriver(input))
+}
+
+export async function serveExecutionWorker(
+  input: RunExecutionWorkerInput & { readonly signal: AbortSignal },
+): Promise<WorkerLoopResult> {
+  return serveWorkerPool(
+    { ...executionWorkerOptions(input), signal: input.signal },
+    executionDriver(input),
   )
 }
 
-export async function runActivityWorker(
-  input: RunActivityWorkerInput,
-): Promise<WorkerLoopResult> {
+function executionWorkerOptions(input: RunExecutionWorkerInput) {
+  return withDefaultRetentionPruner({
+    ...input,
+    maintenance: withReapingHook(input),
+    onWake: executionWake(input.wakeEvents),
+  })
+}
+
+function executionDriver(
+  input: RunExecutionWorkerInput,
+): WorkerDriver<ClaimedAttempt> {
   const workflowNames = input.workflows.map(
     (implementation) => implementation.workflow.name,
   )
   const activityNames =
     input.activityNames ?? collectWorkflowActivityNames(input.workflows)
-
-  return runWorkerLoop(
-    withDefaultRetentionPruner({
-      ...input,
-      maintenance: withReapingHook(input),
-      onWake: commandWake(input.wakeEvents, 'activity'),
-    }),
-    async () => {
-      const claimed = await input.attemptExecutor.claimActivity({
+  const taskNames =
+    input.taskNames ??
+    input.tasks.map((implementation) => implementation.task.name)
+  return {
+    claim: () =>
+      input.attemptExecutor.claim({
         workerId: input.workerId,
         workflowNames,
         activityNames,
-        leaseMs: input.leaseMs ?? DEFAULT_LEASE_MS,
-      })
-      if (!claimed) return false
-
-      try {
-        const result = await runActivityAttempt({ ...input, claimed })
-        return result.status === 'processed'
-      } catch (error) {
-        if (
-          isStaleWorkflowCommandAck(error) ||
-          isAttemptHeartbeatLeaseLost(error) ||
-          isAttemptShutdown(error)
-        ) {
-          await input.attemptExecutor.release(claimed)
-          return false
-        }
-        await input.attemptExecutor.release(claimed, { error })
-        throw error
-      }
-    },
-  )
-}
-
-export async function runTaskWorker(
-  input: RunTaskWorkerInput,
-): Promise<WorkerLoopResult> {
-  const taskNames = input.tasks.map(
-    (implementation) => implementation.task.name,
-  )
-
-  return runWorkerLoop(
-    withDefaultRetentionPruner({
-      ...input,
-      maintenance: withReapingHook(input),
-      onWake: commandWake(input.wakeEvents, 'task'),
-    }),
-    async () => {
-      const claimed = await input.attemptExecutor.claimTask({
-        workerId: input.workerId,
         taskNames,
         leaseMs: input.leaseMs ?? DEFAULT_LEASE_MS,
-      })
-      if (!claimed) return false
-
+      }),
+    abandon: (claimed) => input.attemptExecutor.release(claimed),
+    async execute(claimed, signal) {
       try {
-        const result = await runTaskAttempt({ ...input, claimed })
+        const result =
+          claimed.command.kind === 'activityAttempt'
+            ? await runActivityAttempt({ ...input, claimed, signal })
+            : await runTaskAttempt({ ...input, claimed, signal })
         return result.status === 'processed'
       } catch (error) {
         if (
@@ -290,7 +301,7 @@ export async function runTaskWorker(
         throw error
       }
     },
-  )
+  }
 }
 
 export function collectWorkflowActivityNames(
@@ -307,6 +318,50 @@ export function collectWorkflowActivityNames(
       if (node.kind === 'branch' || node.kind === 'parallel') {
         for (const member of Object.values(node.cases)) {
           if (member.kind === 'activity') names.add(member.activity.name)
+        }
+      }
+    }
+  }
+
+  return [...names]
+}
+
+export function collectWorkflowTaskNames(
+  workflows: readonly Pick<AnyWorkflowImplementation, 'nodes'>[],
+): readonly string[] {
+  const names = new Set<string>()
+  for (const workflow of workflows) {
+    for (const node of workflow.nodes) {
+      if (node.kind === 'task' || node.kind === 'mapTask') {
+        names.add(node.target.name)
+        continue
+      }
+
+      if (node.kind === 'branch' || node.kind === 'parallel') {
+        for (const member of Object.values(node.cases)) {
+          if (member.kind === 'task') names.add(member.target.name)
+        }
+      }
+    }
+  }
+
+  return [...names]
+}
+
+export function collectChildWorkflowNames(
+  workflows: readonly Pick<AnyWorkflowImplementation, 'nodes'>[],
+): readonly string[] {
+  const names = new Set<string>()
+  for (const workflow of workflows) {
+    for (const node of workflow.nodes) {
+      if (node.kind === 'workflow' || node.kind === 'mapWorkflow') {
+        names.add(node.target.name)
+        continue
+      }
+
+      if (node.kind === 'branch' || node.kind === 'parallel') {
+        for (const member of Object.values(node.cases)) {
+          if (member.kind === 'workflow') names.add(member.target.name)
         }
       }
     }

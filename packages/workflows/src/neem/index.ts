@@ -1,9 +1,9 @@
 export { createWorkflowsRuntime, defineWorkflowsPlanner } from './planner.ts'
 export { defineWorkflows } from './runtime.ts'
 export type {
-  ResolvedActivityWorkerPool,
-  WorkflowsActivityWorkerPoolConfig,
-  WorkflowsNamedActivityWorkerPoolConfig,
+  ResolvedExecutionWorkerPool,
+  WorkflowsExecutionWorkerPoolConfig,
+  WorkflowsNamedExecutionWorkerPoolConfig,
   WorkflowsConfig,
   WorkflowsImplementationsFactory,
   WorkflowsRuntimeFactory,

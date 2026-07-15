@@ -9,7 +9,7 @@ import {
 } from '../src/adapters/postgres.ts'
 import { installPostgresWorkflowSchemaForTesting } from '../src/adapters/postgres/testing.ts'
 import { defineTask, implementTask } from '../src/index.ts'
-import { runTaskWorker, startTaskRun } from '../src/runtime/index.ts'
+import { runExecutionWorker, startTaskRun } from '../src/runtime/index.ts'
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -78,7 +78,8 @@ describe('postgres retry scheduling', () => {
 
     const firstStartedAt = Date.now()
     activeWorker = new AbortController()
-    await runTaskWorker({
+    await runExecutionWorker({
+      workflows: [],
       ...runtime,
       container: createTestContainer(),
       tasks: [implementation],
@@ -114,7 +115,8 @@ describe('postgres retry scheduling', () => {
       )
       secondStartedAt = Date.now()
       activeWorker = new AbortController()
-      await runTaskWorker({
+      await runExecutionWorker({
+        workflows: [],
         ...runtime,
         container: createTestContainer(),
         tasks: [implementation],

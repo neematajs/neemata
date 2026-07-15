@@ -384,7 +384,6 @@ describe('scheduled workflow worker loop', () => {
       workflows: [implementation],
       workerId: 'scheduled-worker-1',
       scheduling: { everyMs: 0, batchSize: 10 },
-      maxIdleClaims: 3,
     })
 
     const runs = await client.list({ tags: { schedule: 'worker-schedule' } })

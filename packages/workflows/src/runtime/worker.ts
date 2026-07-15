@@ -3,12 +3,14 @@ export {
   type RunActivityAttemptInput,
 } from './worker/activity-attempt.ts'
 export {
+  collectChildWorkflowNames,
   collectWorkflowActivityNames,
-  runActivityWorker,
-  runTaskWorker,
+  collectWorkflowTaskNames,
+  runExecutionWorker,
   runWorkflowWorker,
-  type RunActivityWorkerInput,
-  type RunTaskWorkerInput,
+  serveExecutionWorker,
+  serveWorkflowWorker,
+  type RunExecutionWorkerInput,
   type RunWorkflowWorkerInput,
   type WorkerReapingOptions,
   type WorkerRunTimeoutsOptions,
@@ -16,7 +18,6 @@ export {
 export { WorkflowAttemptTimeoutError } from './worker/heartbeat.ts'
 export type { AttemptAbortReason } from './worker/heartbeat.ts'
 export {
-  runWithConcurrency,
   type WorkerLoopOptions,
   type WorkerLoopResult,
   type WorkerMaintenanceHook,

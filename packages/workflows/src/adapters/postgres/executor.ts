@@ -18,13 +18,12 @@ export const createAttemptExecutor = (
     createPostgresWorkflowCommandHelpers(ctx)
 
   const claimAttempt = async (
-    kind: 'activity' | 'task',
-    where: string,
+    where: string | readonly string[],
     params: unknown[],
     workerId: string,
     leaseMs: number,
   ): Promise<ClaimedAttempt | null> => {
-    const claimed = await claimCommand(kind, where, params, workerId, leaseMs)
+    const claimed = await claimCommand(where, params, workerId, leaseMs)
     if (!claimed) return null
     return {
       id: claimed.id as string,
@@ -110,45 +109,42 @@ export const createAttemptExecutor = (
         ],
       )
     },
-    async claimActivity(worker) {
+    async claim(worker) {
       await ready
-      if (worker.workflowNames.length === 0) return null
-      if (worker.activityNames?.length === 0) return null
-      const params: unknown[] = [...worker.workflowNames]
-      const workflowList = worker.workflowNames
-        .map((_, index) => `$${index + 2}`)
-        .join(', ')
-      const where = [`workflow_name IN (${workflowList})`]
-      if (worker.activityNames !== undefined) {
-        const offset = params.length
-        params.push(...worker.activityNames)
-        where.push(
-          `activity_name IN (${worker.activityNames
-            .map((_, index) => `$${offset + index + 2}`)
-            .join(', ')})`,
+      const params: unknown[] = []
+      const placeholders = (values: readonly string[]) =>
+        values
+          .map((value) => {
+            params.push(value)
+            return `$${params.length}`
+          })
+          .join(', ')
+      const eligible: string[] = []
+
+      if (
+        worker.workflowNames.length > 0 &&
+        worker.activityNames?.length !== 0
+      ) {
+        const activity = [
+          `kind = 'activity'`,
+          `workflow_name IN (${placeholders(worker.workflowNames)})`,
+        ]
+        if (worker.activityNames !== undefined) {
+          activity.push(
+            `activity_name IN (${placeholders(worker.activityNames)})`,
+          )
+        }
+        eligible.push(`(${activity.join(' AND ')})`)
+      }
+
+      if (worker.taskNames.length > 0) {
+        eligible.push(
+          `(kind = 'task' AND task_name IN (${placeholders(worker.taskNames)}))`,
         )
       }
-      return claimAttempt(
-        'activity',
-        where.join(' AND '),
-        params,
-        worker.workerId,
-        worker.leaseMs,
-      )
-    },
-    async claimTask(worker) {
-      await ready
-      if (worker.taskNames.length === 0) return null
-      const taskList = worker.taskNames
-        .map((_, index) => `$${index + 2}`)
-        .join(', ')
-      return claimAttempt(
-        'task',
-        `task_name IN (${taskList})`,
-        [...worker.taskNames],
-        worker.workerId,
-        worker.leaseMs,
-      )
+
+      if (eligible.length === 0) return null
+      return claimAttempt(eligible, params, worker.workerId, worker.leaseMs)
     },
     async heartbeat(attempt, leaseMs = 30_000) {
       await ready

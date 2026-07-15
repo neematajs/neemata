@@ -13,8 +13,8 @@ import { installPostgresWorkflowSchemaForTesting } from '../../src/adapters/post
 import { defineWorkflow, implementWorkflow } from '../../src/index.ts'
 import {
   createWorkflowRuntimeClient,
-  runActivityWorker,
-  runWorkflowWorker,
+  serveExecutionWorker,
+  serveWorkflowWorker,
 } from '../../src/runtime/index.ts'
 import {
   createTestContainer,
@@ -130,23 +130,22 @@ describe.skipIf(!postgresTarget.url)(
 
       const abort = new AbortController()
       const workers = Promise.allSettled([
-        runWorkflowWorker({
+        serveWorkflowWorker({
           ...runtime,
           container,
           workflows: [implementation],
           workerId: 'wake-coordinator',
-          maxIdleClaims: 1_000,
           idleDelayMs: LONG_DELAY_MS,
           reaping: false,
           runTimeouts: false,
           signal: abort.signal,
         }),
-        runActivityWorker({
+        serveExecutionWorker({
+          tasks: [],
           ...runtime,
           container,
           workflows: [implementation],
           workerId: 'wake-activity',
-          maxIdleClaims: 1_000,
           idleDelayMs: LONG_DELAY_MS,
           reaping: false,
           signal: abort.signal,
@@ -302,25 +301,24 @@ describe.skipIf(!postgresTarget.url)(
 
       const abort = new AbortController()
       const workers = Promise.allSettled([
-        runWorkflowWorker({
+        serveWorkflowWorker({
           ...runtime,
           container,
           workflows: [implementation],
           workerId: 'cancel-coordinator',
-          maxIdleClaims: 1_000,
           idleDelayMs: 25,
           reaping: false,
           runTimeouts: false,
           signal: abort.signal,
         }),
-        runActivityWorker({
+        serveExecutionWorker({
+          tasks: [],
           ...runtime,
           container,
           workflows: [implementation],
           workerId: 'cancel-activity',
           // heartbeat interval = leaseMs / 3; far beyond the asserted latency
           leaseMs: LONG_DELAY_MS * 3,
-          maxIdleClaims: 1_000,
           idleDelayMs: 25,
           reaping: false,
           signal: abort.signal,

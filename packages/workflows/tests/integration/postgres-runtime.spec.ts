@@ -14,8 +14,7 @@ import {
 } from '../../src/index.ts'
 import {
   createWorkflowRuntimeClient,
-  runActivityWorker,
-  runTaskWorker,
+  runExecutionWorker,
   runWorkflowWorker,
   type RunSnapshot,
 } from '../../src/runtime/index.ts'
@@ -108,7 +107,6 @@ describe.skipIf(!postgresTarget.url)(
         container,
         workflows: [liveImpl],
         workerId: 'retention-live-worker',
-        maxIdleClaims: 2,
         idleDelayMs: 10,
       })
       const deadCommandRun = await runtime.store.createRun({
@@ -282,7 +280,8 @@ describe.skipIf(!postgresTarget.url)(
         workflows: [workflowImpl],
         workerId: 'coordinator-crash',
       })
-      const claimed = await runtime.attemptExecutor.claimActivity({
+      const claimed = await runtime.attemptExecutor.claim({
+        taskNames: [],
         workerId: 'activity-crashed',
         workflowNames: [workflow.name],
         activityNames: ['content'],
@@ -291,13 +290,13 @@ describe.skipIf(!postgresTarget.url)(
       expect(claimed).not.toBeNull()
 
       await wait(150)
-      await runActivityWorker({
+      await runExecutionWorker({
+        tasks: [],
         ...runtime,
         container,
         workflows: [workflowImpl],
         workerId: 'activity-reclaimer',
         leaseMs: 200,
-        maxIdleClaims: 4,
         idleDelayMs: 20,
       })
       await runWorkflowWorker({
@@ -344,22 +343,22 @@ describe.skipIf(!postgresTarget.url)(
       })
 
       await Promise.all([
-        runActivityWorker({
+        runExecutionWorker({
+          tasks: [],
           ...runtime,
           container,
           workflows: [workflowImpl],
           workerId: 'activity-heartbeat-1',
           leaseMs: 180,
-          maxIdleClaims: 8,
           idleDelayMs: 80,
         }),
-        runActivityWorker({
+        runExecutionWorker({
+          tasks: [],
           ...runtime,
           container,
           workflows: [workflowImpl],
           workerId: 'activity-heartbeat-2',
           leaseMs: 180,
-          maxIdleClaims: 8,
           idleDelayMs: 80,
         }),
       ])
@@ -415,14 +414,15 @@ describe.skipIf(!postgresTarget.url)(
         workerId: 'coordinator-lease-loss',
       })
 
-      const staleWorker = runActivityWorker({
+      const staleWorker = runExecutionWorker({
+        tasks: [],
         ...runtime,
         container,
         workflows: [workflowImpl],
         workerId: 'activity-stale',
         leaseMs: 60,
-        maxIdleClaims: 1,
         idleDelayMs: 20,
+        reaping: false,
       })
       await firstStartedPromise
       await pool.query(
@@ -430,20 +430,21 @@ describe.skipIf(!postgresTarget.url)(
           UPDATE workflow_commands
           SET lease_owner = 'activity-stealer',
               lease_token = 'stolen',
-              lease_expires_at = now() - interval '1 millisecond'
+              lease_expires_at = now() + interval '100 milliseconds'
           WHERE kind = 'activity' AND run_id = $1
         `,
         [run.id],
       )
 
       await expect(staleWorker).resolves.toStrictEqual({ processed: 0 })
-      await runActivityWorker({
+      await wait(120)
+      await runExecutionWorker({
+        tasks: [],
         ...runtime,
         container,
         workflows: [workflowImpl],
         workerId: 'activity-fresh',
         leaseMs: 200,
-        maxIdleClaims: 4,
         idleDelayMs: 20,
       })
       await runWorkflowWorker({
@@ -515,16 +516,15 @@ describe.skipIf(!postgresTarget.url)(
         workflows: [parentImpl, childImpl],
         workerId: 'coordinator-cancel-prime',
         leaseMs: 200,
-        maxIdleClaims: 5,
         idleDelayMs: 10,
       })
-      const activityWorker = runActivityWorker({
+      const activityWorker = runExecutionWorker({
+        tasks: [],
         ...runtime,
         container,
         workflows: [childImpl],
         workerId: 'activity-cancel-late',
         leaseMs: 500,
-        maxIdleClaims: 1,
       })
       await slowStartedPromise
 
@@ -535,7 +535,6 @@ describe.skipIf(!postgresTarget.url)(
         workflows: [parentImpl, childImpl],
         workerId: 'coordinator-cancel',
         leaseMs: 200,
-        maxIdleClaims: 10,
         idleDelayMs: 10,
       })
 
@@ -567,7 +566,6 @@ describe.skipIf(!postgresTarget.url)(
         workflows: [parentImpl, childImpl],
         workerId: 'coordinator-cancel-after-late',
         leaseMs: 200,
-        maxIdleClaims: 5,
         idleDelayMs: 10,
       })
 
@@ -631,13 +629,13 @@ describe.skipIf(!postgresTarget.url)(
         leaseMs,
       })
 
-      const activityWorker = runActivityWorker({
+      const activityWorker = runExecutionWorker({
+        tasks: [],
         ...runtime,
         container,
         workflows: [workflowImpl],
         workerId: 'activity-cancel-signal',
         leaseMs,
-        maxIdleClaims: 1,
       })
       await activityStartedPromise
 
@@ -649,7 +647,6 @@ describe.skipIf(!postgresTarget.url)(
         workflows: [workflowImpl],
         workerId: 'coordinator-cancel-signal',
         leaseMs,
-        maxIdleClaims: 5,
         idleDelayMs: 10,
       })
       await expect(activityWorker).resolves.toStrictEqual({ processed: 1 })
@@ -717,7 +714,6 @@ describe.skipIf(!postgresTarget.url)(
             workflows: [workflowImpl],
             workerId: `coordinator-contention-${index}`,
             leaseMs: 200,
-            maxIdleClaims: 10,
             idleDelayMs: 10,
           }),
         ),
@@ -761,7 +757,6 @@ describe.skipIf(!postgresTarget.url)(
             workflows: [workflowImpl],
             workerId: `schedule-coordinator-${index}`,
             scheduling: { everyMs: 0, batchSize: 10 },
-            maxIdleClaims: 4,
             idleDelayMs: 10,
           }),
         ),
@@ -803,7 +798,6 @@ describe.skipIf(!postgresTarget.url)(
         workflows: [workflowImpl],
         workerId: 'schedule-disable-first',
         scheduling: { everyMs: 0, batchSize: 10 },
-        maxIdleClaims: 4,
         idleDelayMs: 10,
       })
       await runtime.scheduler!.setEnabled(schedule.name, false)
@@ -844,7 +838,6 @@ describe.skipIf(!postgresTarget.url)(
         container,
         workflows: [workflowImpl],
         workerId: 'delayed-start-before',
-        maxIdleClaims: 2,
         idleDelayMs: 20,
       })
       const queued = await runtime.store.loadRunSnapshot(run.id)
@@ -888,31 +881,30 @@ async function runWorkersUntilCompleted(
           workflows: input.workflows,
           workerId: `coordinator-${round}-${index}`,
           leaseMs: input.leaseMs ?? 300,
-          maxIdleClaims: 20,
           idleDelayMs: 10,
         }),
       ),
       ...Array.from({ length: workerCount }, (_, index) =>
-        runActivityWorker({
+        runExecutionWorker({
+          tasks: [],
           ...input.runtime,
           container: input.container,
           workflows: input.workflows,
           workerId: `activity-${round}-${index}`,
           leaseMs: input.leaseMs ?? 300,
-          maxIdleClaims: 20,
           idleDelayMs: 10,
         }),
       ),
       ...Array.from(
         { length: tasks.length === 0 ? 0 : workerCount },
         (_, index) =>
-          runTaskWorker({
+          runExecutionWorker({
+            workflows: [],
             ...input.runtime,
             container: input.container,
             tasks,
             workerId: `task-${round}-${index}`,
             leaseMs: input.leaseMs ?? 300,
-            maxIdleClaims: 20,
             idleDelayMs: 10,
           }),
       ),

@@ -17,8 +17,7 @@ import {
 } from '../src/index.ts'
 import {
   createWorkflowRuntimeClient,
-  runActivityWorker,
-  runTaskWorker,
+  runExecutionWorker,
   runWorkflowWorker,
 } from '../src/runtime/index.ts'
 
@@ -223,7 +222,8 @@ test('rolls back standalone task completion when command ack fails', async () =>
   const run = await client.start(task, { text: 'alpha' })
 
   await expect(
-    runTaskWorker({
+    runExecutionWorker({
+      workflows: [],
       ...failingRuntime,
       tasks: [taskImpl],
       container: createTestContainer(),
@@ -260,7 +260,8 @@ test('rolls back standalone task failure when command ack fails', async () => {
   const run = await client.start(task, { text: 'alpha' })
 
   await expect(
-    runTaskWorker({
+    runExecutionWorker({
+      workflows: [],
       ...failingRuntime,
       tasks: [taskImpl],
       container: createTestContainer(),
@@ -315,7 +316,8 @@ test('rolls back activity completion when command ack fails', async () => {
   ).toBe(1)
 
   await expect(
-    runActivityWorker({
+    runExecutionWorker({
+      tasks: [],
       ...failingRuntime,
       workflows: [workflowImpl],
       container,
@@ -371,7 +373,8 @@ test('rolls back activity completion when command ack lease is stale', async () 
   ).toBe(1)
 
   await expect(
-    runActivityWorker({
+    runExecutionWorker({
+      tasks: [],
       ...staleRuntime,
       workflows: [workflowImpl],
       container,

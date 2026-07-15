@@ -22,10 +22,9 @@ import {
   defineWorkflows,
   defineWorkflowsPlanner,
   defineWorkflowsWorker,
-  type WorkflowsNamedActivityWorkerPoolConfig,
+  type WorkflowsNamedExecutionWorkerPoolConfig,
 } from '../src/neem/index.ts'
 import { resolveWorkflowsConfig } from '../src/neem/runtime.ts'
-import { resolveActivityPoolClaimNames } from '../src/neem/worker-entry.ts'
 import {
   createInMemoryWorkflowRuntime,
   createWorkflowRuntimeClient,
@@ -56,14 +55,13 @@ describe('workflows Neem integration', () => {
     expect(declaration.host?.entry).toBe('@nmtjs/workflows/neem/host')
   })
 
-  it('plans coordinator, activity, and task worker groups', async () => {
+  it('plans coordinator and execution worker groups', async () => {
     const config = defineWorkflows({
       runtime: () => createInMemoryWorkflowRuntime(),
       workflows: () => [workflowImpl],
       workers: {
         coordinator: { threads: 2, concurrency: 3 },
-        activity: { threads: 1 },
-        task: { threads: 4 },
+        execution: { threads: 4 },
       },
     })
     const planner = defineWorkflowsPlanner(() => config)
@@ -76,12 +74,16 @@ describe('workflows Neem integration', () => {
     expect(plan.options).toBeDefined()
     expect(plan.workers).toStrictEqual({
       coordinator: [{ role: 'coordinator' }, { role: 'coordinator' }],
-      activity: [{ role: 'activity', activityPool: 'activity' }],
-      task: [],
+      execution: [
+        { role: 'execution', pool: 'execution' },
+        { role: 'execution', pool: 'execution' },
+        { role: 'execution', pool: 'execution' },
+        { role: 'execution', pool: 'execution' },
+      ],
     })
   })
 
-  it('plans one worker group per named activity pool', async () => {
+  it('plans one worker group per named execution pool', async () => {
     const pooledWorkflow = defineWorkflow({
       name: 'neem.integration.pooled',
       input: t.object({}),
@@ -99,7 +101,7 @@ describe('workflows Neem integration', () => {
       runtime: () => createInMemoryWorkflowRuntime(),
       workflows: () => [pooledImpl],
       workers: {
-        activity: [
+        execution: [
           {
             name: 'interactive',
             activityNames: ['handleUserRequest'],
@@ -121,16 +123,15 @@ describe('workflows Neem integration', () => {
 
     expect(plan.workers).toStrictEqual({
       coordinator: [{ role: 'coordinator' }],
-      activity: [
-        { role: 'activity', activityPool: 'interactive' },
-        { role: 'activity', activityPool: 'interactive' },
-        { role: 'activity', activityPool: 'batch' },
+      execution: [
+        { role: 'execution', pool: 'interactive' },
+        { role: 'execution', pool: 'interactive' },
+        { role: 'execution', pool: 'batch' },
       ],
-      task: [],
     })
 
     const resolved = await resolveWorkflowsConfig(config)
-    expect(resolved.workers.activity).toMatchObject([
+    expect(resolved.workers.execution).toMatchObject([
       {
         name: 'interactive',
         activityNames: ['handleUserRequest'],
@@ -138,20 +139,25 @@ describe('workflows Neem integration', () => {
         pollIntervalMs: 25,
         leaseMs: 6_000,
       },
-      { name: 'batch', concurrency: 50, pollIntervalMs: 250 },
+      {
+        name: 'batch',
+        activityNames: [],
+        taskNames: [],
+        concurrency: 50,
+        pollIntervalMs: 250,
+      },
     ])
-    expect(resolved.workers.activity[1]!.activityNames).toBeUndefined()
   })
 
-  it('rejects invalid activity pool lists', async () => {
+  it('rejects invalid execution pool lists', async () => {
     const reject = async (
-      activity: readonly WorkflowsNamedActivityWorkerPoolConfig[],
+      execution: readonly WorkflowsNamedExecutionWorkerPoolConfig[],
       message: string,
     ) => {
       const config = defineWorkflows({
         runtime: () => createInMemoryWorkflowRuntime(),
         workflows: () => [workflowImpl],
-        workers: { activity },
+        workers: { execution },
       })
       await expect(resolveWorkflowsConfig(config)).rejects.toThrow(message)
     }
@@ -163,7 +169,7 @@ describe('workflows Neem integration', () => {
         { name: 'one', activityNames: ['a'] },
         { name: 'one', activityNames: ['b'] },
       ],
-      'Duplicate workflows activity worker pool name [one]',
+      'Duplicate workflows execution worker pool name [one]',
     )
     await reject(
       [{ name: 'one' }, { name: 'two' }],
@@ -174,8 +180,41 @@ describe('workflows Neem integration', () => {
         { name: 'one', activityNames: ['a'] },
         { name: 'two', activityNames: ['a'] },
       ],
-      'Activity [a] is claimed by both workflows worker pools [one] and [two]',
+      'Activity [a] is claimed by both workflows execution pools [one] and [two]',
     )
+  })
+
+  it('rejects unknown execution worker routing before starting the runtime', async () => {
+    let runtimeCalls = 0
+    const config = defineWorkflows({
+      runtime: () => {
+        runtimeCalls += 1
+        return createInMemoryWorkflowRuntime()
+      },
+      workflows: () => [workflowImpl],
+      workers: { execution: [{ name: 'primary' }] },
+    })
+    const worker = defineWorkflowsWorker(config)
+    const channel = new MessageChannel()
+    const runtime = await worker.createRuntime({
+      mode: 'development',
+      name: 'workflows:execution:missing',
+      data: { role: 'execution', pool: 'missing' },
+      logger,
+      definition: worker.definition,
+      port: channel.port1,
+    })
+
+    try {
+      await expect(runtime.start()).rejects.toThrow(
+        'Unknown workflows execution worker pool [missing]',
+      )
+      expect(runtimeCalls).toBe(0)
+    } finally {
+      await runtime.stop()
+      channel.port1.close()
+      channel.port2.close()
+    }
   })
 
   it('rejects named pools that leave a registered activity uncovered', async () => {
@@ -196,11 +235,11 @@ describe('workflows Neem integration', () => {
       runtime: () => createInMemoryWorkflowRuntime(),
       workflows: () => [impl],
       workers: {
-        activity: [{ name: 'interactive', activityNames: ['fast'] }],
+        execution: [{ name: 'interactive', activityNames: ['fast'] }],
       },
     })
     await expect(resolveWorkflowsConfig(uncovered)).rejects.toThrow(
-      'Activities [slow] are not claimed by any workflows activity worker pool',
+      'Activities [slow] are not claimed by any workflows execution pool',
     )
 
     // a catch-all pool absorbs the rest — same pools plus catch-all resolves
@@ -208,7 +247,7 @@ describe('workflows Neem integration', () => {
       runtime: () => createInMemoryWorkflowRuntime(),
       workflows: () => [impl],
       workers: {
-        activity: [
+        execution: [
           { name: 'interactive', activityNames: ['fast'] },
           { name: 'batch' },
         ],
@@ -221,7 +260,7 @@ describe('workflows Neem integration', () => {
       runtime: () => createInMemoryWorkflowRuntime(),
       workflows: () => [impl],
       workers: {
-        activity: [
+        execution: [
           { name: 'interactive', activityNames: ['fast'] },
           { name: 'heavy', activityNames: ['slow'] },
         ],
@@ -235,18 +274,18 @@ describe('workflows Neem integration', () => {
       runtime: () => createInMemoryWorkflowRuntime(),
       workflows: () => [impl],
       workers: {
-        activity: [
+        execution: [
           { name: 'interactive', activityNames: ['fastt'] },
           { name: 'batch' },
         ],
       },
     })
     await expect(resolveWorkflowsConfig(typo)).rejects.toThrow(
-      'Activities [fastt] selected by workflows activity worker pools do not exist in the registered workflows',
+      'Activities [fastt] selected by workflows execution pools do not exist in the registered workflows',
     )
   })
 
-  it('computes catch-all pool claim names as the complement of named pools', async () => {
+  it('resolves catch-all selectors as the complement of named pools', async () => {
     const workflowWithActivities = defineWorkflow({
       name: 'neem.integration.pool-complement',
       input: t.object({}),
@@ -266,44 +305,131 @@ describe('workflows Neem integration', () => {
       runtime: () => createInMemoryWorkflowRuntime(),
       workflows: () => [impl],
       workers: {
-        activity: [
+        execution: [
           { name: 'interactive', activityNames: ['fast'] },
           { name: 'batch' },
         ],
       },
     })
     const resolved = await resolveWorkflowsConfig(config)
-    const [interactive, batch] = resolved.workers.activity
+    const [interactive, batch] = resolved.workers.execution
 
-    expect(
-      resolveActivityPoolClaimNames(
-        interactive!,
-        resolved.workers.activity,
-        resolved.workflows,
-      ),
-    ).toStrictEqual(['fast'])
-    expect(
-      resolveActivityPoolClaimNames(
-        batch!,
-        resolved.workers.activity,
-        resolved.workflows,
-      ),
-    ).toStrictEqual(['slow', 'bulk'])
+    expect(interactive!.activityNames).toStrictEqual(['fast'])
+    expect(batch!.activityNames).toStrictEqual(['slow', 'bulk'])
 
-    // a single catch-all pool claims everything (undefined = no filter)
+    // A single catch-all resolves to every registered execution name.
     const soloConfig = defineWorkflows({
       runtime: () => createInMemoryWorkflowRuntime(),
       workflows: () => [impl],
-      workers: { activity: [{ name: 'only' }] },
+      workers: { execution: [{ name: 'only' }] },
     })
     const solo = await resolveWorkflowsConfig(soloConfig)
-    expect(
-      resolveActivityPoolClaimNames(
-        solo.workers.activity[0]!,
-        solo.workers.activity,
-        solo.workflows,
+    expect(solo.workers.execution[0]!.activityNames).toStrictEqual([
+      'fast',
+      'slow',
+      'bulk',
+    ])
+  })
+
+  it('rejects child workflows without a registered implementation', async () => {
+    const child = defineWorkflow({
+      name: 'neem.integration.unregistered-child',
+      input: t.object({}),
+      output: t.object({}),
+    }).build()
+    const parent = defineWorkflow({
+      name: 'neem.integration.parent-with-unregistered-child',
+      input: t.object({}),
+      output: t.object({}),
+    })
+      .workflow('child', child)
+      .build()
+    const parentImpl = implementWorkflow(parent)
+      .child(child)
+      .finish(() => ({}))
+
+    await expect(
+      resolveWorkflowsConfig(
+        defineWorkflows({
+          runtime: () => createInMemoryWorkflowRuntime(),
+          workflows: () => [parentImpl],
+        }),
       ),
-    ).toBeUndefined()
+    ).rejects.toThrow(
+      `Workflows [${child.name}] referenced by registered workflows have no registered implementation`,
+    )
+  })
+
+  it('validates and resolves task selectors independently from activities', async () => {
+    const task = defineTask({
+      name: 'neem.integration.routed-task',
+      input: t.object({}),
+      output: t.object({}),
+    })
+    const taskImpl = implementTask(task, { handler: async () => ({}) })
+    const workflowWithTask = defineWorkflow({
+      name: 'neem.integration.workflow-with-routed-task',
+      input: t.object({}),
+      output: t.object({}),
+    })
+      .task('run', task)
+      .build()
+    const workflowWithTaskImpl = implementWorkflow(workflowWithTask)
+      .run(task, { input: () => ({}) })
+      .finish(() => ({}))
+    const resolve = (
+      execution: readonly WorkflowsNamedExecutionWorkerPoolConfig[],
+    ) =>
+      resolveWorkflowsConfig(
+        defineWorkflows({
+          runtime: () => createInMemoryWorkflowRuntime(),
+          workflows: () => [],
+          tasks: () => [taskImpl],
+          workers: { execution },
+        }),
+      )
+
+    await expect(
+      resolveWorkflowsConfig(
+        defineWorkflows({
+          runtime: () => createInMemoryWorkflowRuntime(),
+          workflows: () => [workflowWithTaskImpl],
+        }),
+      ),
+    ).rejects.toThrow(
+      `Tasks [${task.name}] referenced by registered workflows have no registered implementation`,
+    )
+
+    await expect(
+      resolve([{ name: 'activity-only', activityNames: [] }]),
+    ).rejects.toThrow(
+      `Tasks [${task.name}] are not claimed by any workflows execution pool`,
+    )
+    await expect(
+      resolve([
+        { name: 'typo', taskNames: ['missing-task'] },
+        { name: 'remaining' },
+      ]),
+    ).rejects.toThrow(
+      'Tasks [missing-task] selected by workflows execution pools do not exist',
+    )
+    await expect(
+      resolve([
+        { name: 'one', taskNames: [task.name] },
+        { name: 'two', taskNames: [task.name] },
+      ]),
+    ).rejects.toThrow(
+      `Task [${task.name}] is claimed by both workflows execution pools [one] and [two]`,
+    )
+
+    const resolved = await resolve([
+      { name: 'tasks', taskNames: [task.name] },
+      { name: 'remaining' },
+    ])
+    expect(resolved.workers.execution).toMatchObject([
+      { name: 'tasks', activityNames: [], taskNames: [task.name] },
+      { name: 'remaining', activityNames: [], taskNames: [] },
+    ])
   })
 
   it('accepts task implementations with typed dependencies', async () => {
@@ -354,7 +480,7 @@ describe('workflows Neem integration', () => {
       }),
       workflows: () => [workflowImpl],
       workers: {
-        coordinator: { pollIntervalMs: 1, maxIdleClaims: 1 },
+        coordinator: { pollIntervalMs: 1 },
       },
     })
     const worker = defineWorkflowsWorker(config)
@@ -373,6 +499,7 @@ describe('workflows Neem integration', () => {
 
     await runtime.start()
     await runtime.stop()
+    await expect(runtime.finished).resolves.toBeUndefined()
     expect(dispose).toHaveBeenCalledOnce()
     channel.port1.close()
     channel.port2.close()
@@ -415,15 +542,15 @@ describe('workflows Neem integration', () => {
       workflows: () => [],
       tasks: () => [taskImpl],
       workers: {
-        task: { pollIntervalMs: 1, maxIdleClaims: 1, leaseMs: 30 },
+        execution: { pollIntervalMs: 1, leaseMs: 30 },
       },
     })
     const worker = defineWorkflowsWorker(config)
     const channel = new MessageChannel()
     const runtime = await worker.createRuntime({
       mode: 'development',
-      name: 'workflows:task:shutdown',
-      data: { role: 'task' },
+      name: 'workflows:execution:shutdown',
+      data: { role: 'execution' },
       logger,
       definition: worker.definition,
       port: channel.port1,
@@ -465,7 +592,7 @@ describe('workflows Neem integration', () => {
       runtime: () => brokenRuntime,
       workflows: () => [workflowImpl],
       workers: {
-        coordinator: { pollIntervalMs: 1, maxIdleClaims: 1 },
+        coordinator: { pollIntervalMs: 1 },
       },
     })
     const worker = defineWorkflowsWorker(config)
@@ -481,6 +608,7 @@ describe('workflows Neem integration', () => {
 
     await runtime.start()
     await waitFor(() => (errorSpy.mock.calls.length > 0 ? true : undefined))
+    await expect(runtime.finished).rejects.toThrow('coordinator claim failed')
     await expect(runtime.stop()).rejects.toThrow('coordinator claim failed')
     expect(errorSpy).toHaveBeenCalledWith(
       { err: failure },
@@ -491,7 +619,7 @@ describe('workflows Neem integration', () => {
     errorSpy.mockRestore()
   })
 
-  it('runs coordinator, activity, and task role loops end-to-end', async () => {
+  it('runs coordinator and execution role loops end-to-end', async () => {
     const task = defineTask({
       name: 'neem.integration.task',
       input: t.object({ text: t.string() }),
@@ -525,14 +653,13 @@ describe('workflows Neem integration', () => {
       workflows: () => [fullWorkflowImpl],
       tasks: () => [taskImpl],
       workers: {
-        coordinator: { pollIntervalMs: 1, maxIdleClaims: 1 },
-        activity: { pollIntervalMs: 1, maxIdleClaims: 1 },
-        task: { pollIntervalMs: 1, maxIdleClaims: 1 },
+        coordinator: { pollIntervalMs: 1 },
+        execution: { pollIntervalMs: 1 },
       },
     })
     const worker = defineWorkflowsWorker(config)
     const runtimes = await Promise.all(
-      (['coordinator', 'activity', 'task'] as const).map(async (role) => {
+      (['coordinator', 'execution'] as const).map(async (role) => {
         const channel = new MessageChannel()
         const runtime = await worker.createRuntime({
           mode: 'development',
@@ -582,7 +709,7 @@ describe('workflows Neem integration', () => {
       workflows: () => [workflowImpl],
       schedules: () => [schedule],
       workers: {
-        coordinator: { pollIntervalMs: 1, maxIdleClaims: 1 },
+        coordinator: { pollIntervalMs: 1 },
       },
     })
     const worker = defineWorkflowsWorker(config)

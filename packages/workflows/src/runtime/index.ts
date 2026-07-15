@@ -1,13 +1,12 @@
 export type {
   ActivityAttemptCommand,
-  ActivityWorkerClaim,
   AttemptCommand,
   ClaimedAttempt,
   ClaimedCommand,
   ContinueRunCommand,
+  ExecutionWorkerClaim,
   RunCoordinationWorkerClaim,
   TaskAttemptCommand,
-  TaskWorkerClaim,
 } from './commands.ts'
 export { createWorkflowRuntimeClient } from './client.ts'
 export type {
@@ -119,18 +118,18 @@ export type {
 } from './store.ts'
 export {
   runActivityAttempt,
-  runActivityWorker,
+  runExecutionWorker,
   runTaskAttempt,
-  runTaskWorker,
   runWorkflowWorker,
+  serveExecutionWorker,
+  serveWorkflowWorker,
   WorkflowAttemptTimeoutError,
 } from './worker.ts'
 export type {
   AttemptAbortReason,
   RunActivityAttemptInput,
-  RunActivityWorkerInput,
+  RunExecutionWorkerInput,
   RunTaskAttemptInput,
-  RunTaskWorkerInput,
   RunWorkflowWorkerInput,
   WorkerLoopOptions,
   WorkerLoopResult,

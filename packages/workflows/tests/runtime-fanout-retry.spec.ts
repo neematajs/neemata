@@ -6,7 +6,7 @@ import { defineWorkflow, implementWorkflow } from '../src/index.ts'
 import {
   createInMemoryWorkflowRuntime,
   memberChildKey,
-  runActivityWorker,
+  runExecutionWorker,
   runWorkflowWorker,
   startWorkflowRun,
 } from '../src/runtime/index.ts'
@@ -98,7 +98,8 @@ describe('workflow fan-out retry state model', () => {
         workflows: [implementation],
         workerId: `coordinator-${round}`,
       })
-      await runActivityWorker({
+      await runExecutionWorker({
+        tasks: [],
         ...runtime,
         container: createTestContainer(),
         workflows: [implementation],
@@ -228,7 +229,8 @@ describe('workflow fan-out retry state model', () => {
       'running',
     )
 
-    await runActivityWorker({
+    await runExecutionWorker({
+      tasks: [],
       ...runtime,
       container: createTestContainer(),
       workflows: [implementation],
@@ -337,7 +339,8 @@ describe('workflow fan-out retry state model', () => {
     // forever (the old model re-claimed every 50ms indefinitely).
     const command = runtime.inspect().activityCommands[0]?.payload
     expect(command).toBeDefined()
-    await runActivityWorker({
+    await runExecutionWorker({
+      tasks: [],
       ...runtime,
       container: createTestContainer(),
       workflows: [driftedImplementation],
