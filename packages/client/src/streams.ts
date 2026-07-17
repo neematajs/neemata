@@ -32,8 +32,12 @@ export class ClientStreams {
   async abort(streamId: number, reason?: any) {
     const stream = this.#collection.get(streamId)
     if (!stream) return // Stream already cleaned up
-    await stream.abort(reason)
-    this.remove(streamId)
+    try {
+      await stream.abort(reason)
+    } finally {
+      // a rejecting source cancel() must not leak the manager entry
+      this.remove(streamId)
+    }
   }
 
   pull(streamId: number, size: number) {
@@ -51,7 +55,8 @@ export class ClientStreams {
       const abortPromises = [...this.#collection.values()].map((stream) =>
         stream.abort(reason),
       )
-      await Promise.all(abortPromises)
+      // allSettled: one rejecting cancel() must not stop clearing the rest
+      await Promise.allSettled(abortPromises)
     }
     this.#collection.clear()
   }

@@ -5,7 +5,7 @@ export interface DuplexStreamOptions<O = unknown, I = O> {
   pull?: (
     controller: globalThis.ReadableStreamDefaultController<O>,
   ) => MaybePromise<void>
-  cancel?: (reason: unknown) => void
+  cancel?: (reason: unknown) => MaybePromise<void>
   transform?: (chunk: I) => O
   close?: () => void
   readableStrategy?: globalThis.QueuingStrategy<O>

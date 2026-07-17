@@ -65,9 +65,13 @@ export class ProtocolClientBlobStream
   }
 
   async abort(reason = 'Stream aborted') {
-    await this.#reader.cancel(reason)
-    this.#reader.releaseLock()
-    this.#sourceReader?.releaseLock()
+    try {
+      await this.#reader.cancel(reason)
+    } finally {
+      // a rejecting source cancel() must not leave the readers locked
+      this.#reader.releaseLock()
+      this.#sourceReader?.releaseLock()
+    }
   }
 
   async end() {
