@@ -374,10 +374,6 @@ describe('stream flow control over a real WS transport', () => {
 
     const { client } = await createHarness({
       plugins: [pacingObserver],
-      // uWS's default maxPayloadLength (16KiB) is smaller than a granted
-      // 16KiB pull chunk plus the 5-byte frame header, so the connection
-      // would be closed on the first push — raise the receive ceiling
-      runtimeWs: { maxPayloadLength: 1024 * 1024 },
       handlers: {
         upload: async ({ payload, container }) => {
           const consumeBlob = await container.resolve(

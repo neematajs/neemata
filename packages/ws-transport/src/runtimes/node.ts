@@ -33,6 +33,10 @@ function adapterFactory(params: WsAdapterParams<'node'>): WsAdapterServer {
       // magnitude as outstanding stream credit; raise the ceiling so
       // abort-on-drop stays a safety net (user-provided options still win)
       maxBackpressure: 1024 * 1024,
+      // uWS defaults to 16KB and CLOSES the socket on larger frames — the
+      // gateway's own upload credit grants (16KiB) plus the 5-byte frame
+      // header already exceed that, killing every blob upload
+      maxPayloadLength: 1024 * 1024,
       ...params.runtime?.ws,
       ...adapter.websocket,
     })
