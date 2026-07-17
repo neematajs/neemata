@@ -223,7 +223,9 @@ async function handleFixedLengthStream(
 
     if (!responded && !res.aborted) res.cork(() => res.close())
   } finally {
-    reader.releaseLock()
+    // tryEnd reports done without draining the source's final read, so
+    // cancel (not just release) — body finalizers rely on a terminal state
+    reader.cancel().catch(() => {})
   }
 }
 

@@ -4,7 +4,12 @@ import { pipeline } from 'node:stream/promises'
 
 import type { ApplicationResolvedProcedure } from '@nmtjs/application'
 import type { TransportWorker, TransportWorkerParams } from '@nmtjs/gateway'
-import { anyAbortSignal, isAbortError, isAsyncIterable } from '@nmtjs/common'
+import {
+  anyAbortSignal,
+  isAbortError,
+  isAsyncIterable,
+  noopFn,
+} from '@nmtjs/common'
 import { provision } from '@nmtjs/core'
 import {
   ConnectionType,
@@ -159,15 +164,31 @@ export class HttpTransportServer implements TransportWorker<
         ? accept
         : '*/*'
 
-    await using connection = await this.params.onConnect({
-      accept: negotiableAccept,
-      contentType: isBlob || !contentType ? '*/*' : contentType,
-      data: request,
-      protocolVersion: ProtocolVersion.v1,
-      type: ConnectionType.Unidirectional,
-    })
+    // The connection scope (abort signal + connection-scoped DI) must outlive
+    // streamed response bodies, which are consumed after this handler
+    // returns. Buffered paths dispose in the finally below; streamed paths
+    // hand ownership to a body finalizer instead.
+    let connection: Awaited<ReturnType<typeof this.params.onConnect>> | null =
+      null
+    let streamed = false
+    let disposed = false
+    const disposeConnection = async () => {
+      if (disposed || !connection) return
+      disposed = true
+      await connection[Symbol.asyncDispose]()
+    }
 
     try {
+      // Inside the try so format negotiation failures map to 415/406 below
+      // instead of escaping to the runtime as a generic 500
+      connection = await this.params.onConnect({
+        accept: negotiableAccept,
+        contentType: isBlob || !contentType ? '*/*' : contentType,
+        data: request,
+        protocolVersion: ProtocolVersion.v1,
+        type: ConnectionType.Unidirectional,
+      })
+
       const resolved = await this.params.resolve(connection, procedure)
 
       const allowHttpMethod =
@@ -250,7 +271,16 @@ export class HttpTransportServer implements TransportWorker<
           else responseHeaders.set(key, value)
         })
 
-        return new Response(body, {
+        // A handler-built Response may carry a streamed body; runtimes answer
+        // Content-Length: 0 without ever touching it, so an empty body must
+        // not wait on a finalizer that would never fire
+        const streamedBody =
+          body !== null && headers.get('content-length') !== '0'
+        const finalizedBody = streamedBody
+          ? this.finalizeOnBodyEnd(body!, signal, disposeConnection)
+          : body
+        streamed = streamedBody
+        return new Response(finalizedBody, {
           status,
           statusText,
           headers: responseHeaders,
@@ -283,7 +313,15 @@ export class HttpTransportServer implements TransportWorker<
           throw new Error('Invalid stream source')
         }
 
-        return new Response(stream, {
+        // Runtimes answer Content-Length: 0 without ever touching the body,
+        // so an empty blob must not wait on a body finalizer that would
+        // never fire
+        const finalizedBody =
+          metadata.size !== 0
+            ? this.finalizeOnBodyEnd(stream, signal, disposeConnection)
+            : stream
+        streamed = metadata.size !== 0
+        return new Response(finalizedBody, {
           status: HttpStatus.OK,
           statusText: HttpStatusText[HttpStatus.OK],
           headers: responseHeaders,
@@ -296,27 +334,44 @@ export class HttpTransportServer implements TransportWorker<
           connection.encoder.contentType,
         )
         responseHeaders.set('X-Accel-Buffering', 'no')
+        const encoder = connection.encoder
+        const iterator = result[Symbol.asyncIterator]()
+        const sseEncoder = new TextEncoder()
         const stream = new ReadableStream({
-          async start(controller) {
-            const encoder = new TextEncoder()
+          // pull-driven: the consumer's demand paces the generator instead of
+          // an eager pump buffering an unbounded backlog
+          async pull(controller) {
             try {
-              for await (const chunk of result) {
-                const encoded = connection.encoder.encode(chunk)
-                const base64 = Buffer.from(
-                  encoded.buffer,
-                  encoded.byteOffset,
-                  encoded.byteLength,
-                ).toString('base64')
-                controller.enqueue(encoder.encode(`data: ${base64}\n\n`))
+              const { done, value } = await iterator.next()
+              if (done) {
+                controller.close()
+                return
               }
-              controller.close()
+              const encoded = encoder.encode(value)
+              const base64 = Buffer.from(
+                encoded.buffer,
+                encoded.byteOffset,
+                encoded.byteLength,
+              ).toString('base64')
+              controller.enqueue(sseEncoder.encode(`data: ${base64}\n\n`))
             } catch (error) {
               if (isAbortError(error)) controller.close()
               else controller.error(error)
             }
           },
+          // client disconnect must unwind the handler generator, or an
+          // idle-waiting iterator (and its call scope) leaks forever
+          async cancel() {
+            await iterator.return?.()
+          },
         })
-        return new Response(stream, {
+        const finalizedBody = this.finalizeOnBodyEnd(
+          stream,
+          signal,
+          disposeConnection,
+        )
+        streamed = true
+        return new Response(finalizedBody, {
           status: HttpStatus.OK,
           statusText: HttpStatusText[HttpStatus.OK],
           headers: responseHeaders,
@@ -363,7 +418,7 @@ export class HttpTransportServer implements TransportWorker<
         })
       }
 
-      if (error instanceof ProtocolError) {
+      if (connection && error instanceof ProtocolError) {
         const status =
           error.code in HttpCodeMap
             ? HttpCodeMap[error.code]
@@ -384,21 +439,85 @@ export class HttpTransportServer implements TransportWorker<
       // this.logError(error, 'Unknown error while processing HTTP request')
       console.error(error)
 
-      const payload = connection.encoder.encode(
-        new ProtocolError(
-          ErrorCode.InternalServerError,
-          'Internal Server Error',
-        ),
-      )
-      responseHeaders.set('Content-Type', connection.encoder.contentType)
+      if (connection) {
+        const payload = connection.encoder.encode(
+          new ProtocolError(
+            ErrorCode.InternalServerError,
+            'Internal Server Error',
+          ),
+        )
+        responseHeaders.set('Content-Type', connection.encoder.contentType)
 
-      // @ts-expect-error
-      return new Response(payload, {
+        // @ts-expect-error
+        return new Response(payload, {
+          status: HttpStatus.InternalServerError,
+          statusText: HttpStatusText[HttpStatus.InternalServerError],
+          headers: responseHeaders,
+        })
+      }
+
+      // onConnect failed before a format was negotiated — there is no
+      // encoder to build a protocol error with
+      return new Response(HttpStatusText[HttpStatus.InternalServerError], {
         status: HttpStatus.InternalServerError,
         statusText: HttpStatusText[HttpStatus.InternalServerError],
         headers: responseHeaders,
       })
+    } finally {
+      // buffered responses and every error path keep the old
+      // dispose-at-return semantics; streamed bodies own their teardown
+      if (!streamed) await disposeConnection()
     }
+  }
+
+  /**
+   * Streamed bodies outlive httpHandler, so connection teardown must wait for
+   * the body's terminal state: close, error and cancel all funnel into the
+   * same idempotent finalizer. The request abort signal is wired in as a
+   * backstop for runtimes that drop a response without cancelling its body.
+   */
+  private finalizeOnBodyEnd(
+    body: ReadableStream,
+    signal: AbortSignal,
+    finalize: () => Promise<void>,
+  ): ReadableStream {
+    const reader = body.getReader()
+    const onAbort = () => {
+      // finalize first: aborting the connection signal wakes handlers
+      // idle-waiting inside the source, letting cancellation unwind them
+      void finalize()
+      reader.cancel(signal.reason).catch(noopFn)
+    }
+    const settle = () => {
+      signal.removeEventListener('abort', onAbort)
+      return finalize()
+    }
+    if (signal.aborted) onAbort()
+    else signal.addEventListener('abort', onAbort, { once: true })
+
+    return new ReadableStream({
+      async pull(controller) {
+        let result: Awaited<ReturnType<typeof reader.read>>
+        try {
+          result = await reader.read()
+        } catch (error) {
+          await settle()
+          controller.error(error)
+          return
+        }
+        if (result.done) {
+          await settle()
+          controller.close()
+        } else {
+          controller.enqueue(result.value)
+        }
+      },
+      async cancel(reason) {
+        const finalized = settle()
+        await reader.cancel(reason).catch(noopFn)
+        await finalized
+      },
+    })
   }
 
   private createBodySizeGuard() {

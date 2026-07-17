@@ -749,6 +749,21 @@ export class Gateway<
           return result(async () => {
             await rpcContext[Symbol.asyncDispose]()
           })
+        } else if (result instanceof ProtocolBlob) {
+          // the blob body streams after onRpc returns: disposing the call
+          // scope now would kill the source (DI-scoped handles, abort wiring)
+          // mid-stream. The transport ties connection teardown to the response
+          // body's terminal state, so the connection abort doubles as the
+          // body-done signal for the call scope.
+          const dispose = () => {
+            rpcContext[Symbol.asyncDispose]().catch((error) =>
+              logger.error({ error }, 'Error disposing blob call context'),
+            )
+          }
+          const { signal } = connection.abortController
+          if (signal.aborted) dispose()
+          else signal.addEventListener('abort', dispose, { once: true })
+          return result
         } else {
           await rpcContext[Symbol.asyncDispose]()
           return result

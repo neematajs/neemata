@@ -1,5 +1,6 @@
 import { setTimeout as delay } from 'node:timers/promises'
 
+import { ProtocolBlob } from '@nmtjs/protocol'
 import { BaseServerFormat, ProtocolFormats } from '@nmtjs/protocol/server'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -63,6 +64,7 @@ async function startServer(onRpc?: (...args: any[]) => Promise<unknown>) {
   return {
     url,
     requests,
+    connection,
     stop: () => worker.stop(params as any),
   }
 }
@@ -101,6 +103,68 @@ describe('node runtime adapter', () => {
         const response = await fetch(`${url}/test`)
         expect(response.status).toBe(200)
         expect(requests[0]?.url.protocol).toBe('http:')
+      } finally {
+        await stop()
+      }
+    })
+  })
+
+  describe('SSE client disconnect', () => {
+    it('finalizes the handler generator and disposes the connection', async () => {
+      let finalized = false
+      const { url, connection, stop } = await startServer(async () =>
+        (async function* () {
+          try {
+            let n = 0
+            while (true) {
+              yield { n: n++ }
+              await delay(5)
+            }
+          } finally {
+            finalized = true
+          }
+        })(),
+      )
+      const dispose = vi.fn(async () => {})
+      ;(connection as any)[Symbol.asyncDispose] = dispose
+
+      try {
+        const controller = new AbortController()
+        const response = await fetch(`${url}/test`, {
+          signal: controller.signal,
+        })
+        expect(response.headers.get('content-type')).toBe('text/event-stream')
+
+        const reader = response.body!.getReader()
+        await reader.read()
+        controller.abort()
+
+        await vi.waitFor(() => {
+          expect(finalized).toBe(true)
+          expect(dispose).toHaveBeenCalled()
+        })
+      } finally {
+        await stop()
+      }
+    })
+  })
+
+  describe('blob download connection lifetime', () => {
+    it('disposes the connection after a fixed-length body is fully served', async () => {
+      const { url, connection, stop } = await startServer(async () =>
+        ProtocolBlob.from('hello world'),
+      )
+      const dispose = vi.fn(async () => {})
+      ;(connection as any)[Symbol.asyncDispose] = dispose
+
+      try {
+        const response = await fetch(`${url}/test`, { method: 'POST' })
+        expect(response.headers.get('content-length')).toBe('11')
+        expect(await response.text()).toBe('hello world')
+
+        // the fixed-length pump ends at tryEnd-done: the body finalizer must
+        // still reach its terminal state and tear the connection down
+        await vi.waitFor(() => expect(dispose).toHaveBeenCalled())
       } finally {
         await stop()
       }
