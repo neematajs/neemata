@@ -705,6 +705,21 @@ export const createRpcLayer = (
 
     const currentCallId = nextCallId()
     const call = createFuture() as ProtocolClientCall
+    // pending-phase wiring must be released synchronously at settle: a
+    // response can be processed while send() is still in flight, and in that
+    // window the pending listener would race the stream's own (double
+    // RpcAbort) and a stale request timeout could kill the established stream
+    const { resolve, reject } = call
+    call.resolve = (value) => {
+      removePendingAbortListener()
+      detachTimeout()
+      resolve(value)
+    }
+    call.reject = (reason) => {
+      removePendingAbortListener()
+      detachTimeout()
+      reject(reason)
+    }
     call.procedure = procedure
     call.signal = signal
     call.detachSignals = detachAll
@@ -819,12 +834,8 @@ export const createRpcLayer = (
     return call.promise
       .then((value) => {
         if (value instanceof ProtocolServerRPCStream) {
-          // streaming phase: the stream-specific abort listener owns aborts
-          // from here on, and the request timeout must not outlive pending —
-          // a configured timeout would otherwise kill a healthy stream
-          removePendingAbortListener()
-          detachTimeout()
-
+          // streaming phase: pending wiring was released at settle, the
+          // stream-specific abort listener owns aborts from here on
           const stream = createManagedAsyncIterable(value, {
             onDone: () => {
               call.cleanup?.()
@@ -855,8 +866,6 @@ export const createRpcLayer = (
         }
 
         if (isBlobInterface(value)) {
-          removePendingAbortListener()
-          detachTimeout()
           if (core.transportType === ConnectionType.Bidirectional) {
             // WS blob consumption is message-driven with its own subscription
             // signal — the call signal guards nothing once the call settled
@@ -871,12 +880,10 @@ export const createRpcLayer = (
         // settled unary call: nothing left for the signal to guard — tear
         // down by removing listeners; abort()ing here used to emit one stale
         // RpcAbort frame per settled call
-        removePendingAbortListener()
         detachAll()
         return value
       })
       .catch((error) => {
-        removePendingAbortListener()
         detachAll()
         throw error
       })

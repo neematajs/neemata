@@ -56,6 +56,22 @@ class MockCore extends EventEmitter<{
       ([, type]: [unknown, number]) => type === ClientMessageType.RpcAbort,
     ).length
   }
+
+  countSentRpcCalls() {
+    return this.protocol.encodeMessage.mock.calls.filter(
+      ([, type]: [unknown, number]) => type === ClientMessageType.Rpc,
+    ).length
+  }
+
+  // send() that stays in flight until released, so a server response can be
+  // processed before the send promise settles
+  deferNextSend() {
+    let release!: () => void
+    this.send.mockImplementationOnce(
+      () => new Promise<void>((resolve) => (release = resolve)),
+    )
+    return () => release()
+  }
 }
 
 const createLayer = (core: MockCore, streams?: unknown) =>
@@ -273,6 +289,134 @@ describe('RPC call signal lifecycle', () => {
     // emit a frame for the already-deleted callId
     abortController.abort('done with all calls')
     await wait(10)
+    expect(core.countSentAborts()).toBe(0)
+  })
+
+  it('does not kill a stream established while send() is still in flight', async () => {
+    const core = new MockCore()
+    const releaseSend = core.deferNextSend()
+    const rpcLayer = createLayer(core)
+
+    const streamPromise = rpcLayer.call(
+      'users/feed',
+      {},
+      { _stream_response: true, timeout: 30 },
+    )
+
+    // response is processed before the send promise settles
+    core.emit(
+      'message',
+      { type: ServerMessageType.RpcStreamResponse, callId: 0 },
+      new Uint8Array([1]),
+    )
+
+    // the request timeout elapses inside that window: the already-established
+    // stream must survive and no abort frame may be emitted
+    await wait(60)
+    releaseSend()
+
+    const iterable = await streamPromise
+    const iterator = iterable[Symbol.asyncIterator]()
+
+    const chunkPromise = iterator.next()
+    await Promise.resolve()
+    core.emit(
+      'message',
+      {
+        type: ServerMessageType.RpcStreamChunk,
+        callId: 0,
+        chunk: encodeJson({ n: 1 }),
+      },
+      new Uint8Array([2]),
+    )
+
+    await expect(chunkPromise).resolves.toEqual({
+      done: false,
+      value: { n: 1 },
+    })
+    expect(core.countSentAborts()).toBe(0)
+  })
+
+  it('sends a single RpcAbort for an abort landing after the response but before send() settles', async () => {
+    const core = new MockCore()
+    const releaseSend = core.deferNextSend()
+    const rpcLayer = createLayer(core)
+    const abortController = new AbortController()
+
+    const streamPromise = rpcLayer.call(
+      'users/feed',
+      {},
+      { _stream_response: true, signal: abortController.signal },
+    )
+
+    core.emit(
+      'message',
+      { type: ServerMessageType.RpcStreamResponse, callId: 0 },
+      new Uint8Array([1]),
+    )
+
+    // only the stream-specific listener may emit a frame here: the pending
+    // one must be gone the moment the call settled with a stream
+    abortController.abort('user cancelled')
+    releaseSend()
+    await streamPromise
+
+    await wait(10)
+    expect(core.countSentAborts()).toBe(1)
+  })
+
+  it('retries with fresh lifecycle wiring when autoReconnect kicks in after a disconnect', async () => {
+    const core = new MockCore()
+    const rpcLayer = createLayer(core)
+
+    const streamPromise = rpcLayer.call(
+      'users/feed',
+      {},
+      { _stream_response: true, autoReconnect: true, timeout: 30 },
+    )
+
+    core.emit(
+      'message',
+      { type: ServerMessageType.RpcStreamResponse, callId: 0 },
+      new Uint8Array([1]),
+    )
+
+    const iterable = await streamPromise
+    const iterator = iterable[Symbol.asyncIterator]()
+    const chunkPromise = iterator.next()
+    await Promise.resolve()
+
+    // drop the connection mid-stream: the wrapper must issue a second call;
+    // poll fast enough that the retry cannot time out while we wait
+    core.emit('disconnected', 'connection lost')
+    await vi.waitFor(() => expect(core.countSentRpcCalls()).toBe(2), {
+      interval: 1,
+    })
+
+    core.emit(
+      'message',
+      { type: ServerMessageType.RpcStreamResponse, callId: 1 },
+      new Uint8Array([1]),
+    )
+
+    // past the initial attempt's timeout: neither the stale initial timer nor
+    // a reused signal may kill the retried stream
+    await wait(60)
+
+    core.emit(
+      'message',
+      {
+        type: ServerMessageType.RpcStreamChunk,
+        callId: 1,
+        chunk: encodeJson({ n: 1 }),
+      },
+      new Uint8Array([2]),
+    )
+
+    await expect(chunkPromise).resolves.toEqual({
+      done: false,
+      value: { n: 1 },
+    })
     expect(core.countSentAborts()).toBe(0)
   })
 
