@@ -1,4 +1,8 @@
-import { ErrorCode, ProtocolVersion } from '@nmtjs/protocol'
+import {
+  encodeWsAuthSubprotocol,
+  ErrorCode,
+  ProtocolVersion,
+} from '@nmtjs/protocol'
 import { BaseClientFormat, ProtocolError } from '@nmtjs/protocol/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -30,6 +34,7 @@ class FakeWebSocket {
   static instances: FakeWebSocket[] = []
 
   readonly url: URL
+  readonly protocols: string[]
   binaryType = 'blob'
   readyState = 0 // CONNECTING
   readonly send = vi.fn()
@@ -41,8 +46,9 @@ class FakeWebSocket {
 
   #listeners = new Map<string, Set<Listener>>()
 
-  constructor(url: string | URL) {
+  constructor(url: string | URL, protocols: string | string[] = []) {
     this.url = url instanceof URL ? url : new URL(url)
+    this.protocols = Array.isArray(protocols) ? protocols : [protocols]
     FakeWebSocket.instances.push(this)
   }
 
@@ -91,7 +97,10 @@ describe('WsTransportClient', () => {
     const socket = FakeWebSocket.instances.at(-1)
     expect(socket).toBeDefined()
     expect(socket?.url.toString()).toContain('/demo')
-    expect(socket?.url.searchParams.get('auth')).toBe('Bearer t')
+    // the token rides the subprotocol, never the URL (proxy/access logs)
+    expect(socket?.url.toString()).not.toContain('Bearer')
+    expect(socket?.url.searchParams.get('auth')).toBeNull()
+    expect(socket?.protocols).toEqual([encodeWsAuthSubprotocol('Bearer t')])
 
     socket!.emit('open')
     await connectPromise
@@ -107,6 +116,33 @@ describe('WsTransportClient', () => {
 
     socket!.emit('close', { reason: 'server_shutdown' })
     expect(onDisconnect).toHaveBeenCalledWith('server')
+  })
+
+  it('sends the auth query param only with the deprecated opt-in', async () => {
+    const transport = new WsTransportClient(
+      new TestFormat(),
+      ProtocolVersion.v1,
+      {
+        url: 'http://localhost:4000',
+        WebSocket: FakeWebSocket as any,
+        authQueryParam: true,
+      },
+    )
+
+    const connectPromise = transport.connect({
+      auth: 'Bearer t',
+      onConnect: vi.fn(),
+      onMessage: vi.fn(),
+      onDisconnect: vi.fn(),
+    })
+
+    const socket = FakeWebSocket.instances.at(-1)!
+    // legacy servers read the URL, new ones the subprotocol — send both
+    expect(socket.url.searchParams.get('auth')).toBe('Bearer t')
+    expect(socket.protocols).toEqual([encodeWsAuthSubprotocol('Bearer t')])
+
+    socket.emit('open')
+    await connectPromise
   })
 
   it('closes with client reason and respects aborted sends', async () => {

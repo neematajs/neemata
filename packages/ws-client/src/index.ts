@@ -7,7 +7,11 @@ import type {
 import type { ProtocolVersion } from '@nmtjs/protocol'
 import type { BaseClientFormat } from '@nmtjs/protocol/client'
 import { once } from '@nmtjs/common'
-import { ConnectionType, ErrorCode } from '@nmtjs/protocol'
+import {
+  ConnectionType,
+  encodeWsAuthSubprotocol,
+  ErrorCode,
+} from '@nmtjs/protocol'
 import { ProtocolError } from '@nmtjs/protocol/client'
 
 // WebSocket.OPEN without touching the global: a custom implementation may be injected
@@ -26,6 +30,15 @@ export type WsClientTransportOptions = {
    * @default globalThis.WebSocket
    */
   WebSocket?: typeof WebSocket
+
+  /**
+   * Also send the auth token as the `auth` URL query parameter, for servers
+   * that predate subprotocol auth.
+   * @deprecated tokens in URLs leak into proxy/access logs; scheduled for
+   * removal in the next release
+   * @default false
+   */
+  authQueryParam?: boolean
 }
 
 export class WsTransportClient implements BidirectionalTransport {
@@ -56,13 +69,22 @@ export class WsTransportClient implements BidirectionalTransport {
     url.searchParams.set('content-type', this.format.contentType)
     url.searchParams.set('accept', this.format.contentType)
 
+    const protocols: string[] = []
+
     if (params.auth) {
-      url.searchParams.set('auth', params.auth)
+      // Sec-WebSocket-Protocol is the only handshake header browsers let a
+      // WebSocket set — carrying the token there keeps it out of URLs, where
+      // it would leak into proxy/access logs, history and Referer
+      protocols.push(encodeWsAuthSubprotocol(params.auth))
+      // deprecated: pre-subprotocol servers read the token from the URL
+      if (this.options.authQueryParam) {
+        url.searchParams.set('auth', params.auth)
+      }
     }
 
     const ws = this.options.WebSocket
-      ? new this.options.WebSocket(url)
-      : new WebSocket(url.toString())
+      ? new this.options.WebSocket(url, protocols)
+      : new WebSocket(url.toString(), protocols)
 
     ws.binaryType = 'arraybuffer'
 
