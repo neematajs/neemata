@@ -19,7 +19,12 @@ import {
 } from '@nmtjs/protocol'
 import { BaseClientFormat } from '@nmtjs/protocol/client'
 
-import { deserializeStreamId, isStreamId, serializeStreamId } from './common.ts'
+import {
+  createStreamReviver,
+  escapeStreamLikeString,
+  needsEscaping,
+  serializeStreamId,
+} from './common.ts'
 
 /**
  * Custom JSON encoding format with support for Neemata streams.
@@ -51,6 +56,11 @@ export class JsonFormat extends BaseClientFormat {
         const stream = context.addStream(value)
         streams[stream.id] = stream.metadata
         return serializeStreamId(stream.id)
+      }
+      // user strings that could be misread as stream refs are escaped so they
+      // can never mint stream state on the server
+      if (typeof value === 'string' && needsEscaping(value)) {
+        return escapeStreamLikeString(value)
       }
       return value
     }
@@ -108,17 +118,14 @@ export class JsonFormat extends BaseClientFormat {
         ) as EncodeRPCStreams)
       : {}
 
-    const replacer = (_key: string, value: any) => {
-      if (typeof value === 'string' && isStreamId(value)) {
-        const id = deserializeStreamId(value)
-        const metadata = streams[id]
-        return context.addStream(id, metadata)
-      }
-      return value
-    }
-
     if (!hasPayload) return undefined
-    else if (hasStreams) return this.decode(payloadBuffer, replacer)
-    else return this.decode(payloadBuffer)
+    // the reviver also unescapes stream-like user strings, so it applies even
+    // when no streams are declared
+    return this.decode(
+      payloadBuffer,
+      createStreamReviver(streams, (id, metadata) =>
+        context.addStream(id, metadata),
+      ),
+    )
   }
 }

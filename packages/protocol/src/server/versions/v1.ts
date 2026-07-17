@@ -9,6 +9,7 @@ import {
   ProtocolVersion,
   ServerMessageType,
 } from '../../common/enums.ts'
+import { toProtocolError } from '../../common/error.ts'
 import { ProtocolVersionInterface } from '../protocol.ts'
 
 export class ProtocolVersion1 extends ProtocolVersionInterface {
@@ -137,8 +138,11 @@ export class ProtocolVersion1 extends ProtocolVersionInterface {
           encodeNumber(messageType, 'Uint8'),
           encodeNumber(callId, 'Uint32'),
           encodeNumber(error ? 1 : 0, 'Uint8'),
+          // normalize at the single encode choke point: gateway paths outside
+          // the application layer can throw raw Errors, which JSON would
+          // serialize to `{}`, leaving the client with no code or message
           error
-            ? context.encoder.encode(error)
+            ? context.encoder.encode(toProtocolError(error))
             : context.encoder.encodeRPC(result, streams),
         )
       }
