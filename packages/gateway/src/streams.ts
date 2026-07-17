@@ -89,10 +89,17 @@ export class BlobStreamsManager {
     options: Stream.ReadableOptions,
     notify?: (reason: string) => void,
   ) {
+    const key = this.getKey(connectionId, streamId)
+    // redeclaring a still-active id (across messages, or via duplicate msgpack
+    // exts within one) would overwrite the live state and orphan its stream —
+    // the armed idle timer would then abort the impostor instead
+    if (this.clientStreams.has(key)) {
+      throw new Error(`Stream ${streamId} already exists`)
+    }
+
     const stream = new ProtocolClientStream(streamId, metadata, options)
     stream.on('error', noopFn)
 
-    const key = this.getKey(connectionId, streamId)
     const state: ClientStreamState = {
       connectionId,
       callId,

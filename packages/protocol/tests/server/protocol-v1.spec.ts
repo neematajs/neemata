@@ -4,7 +4,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { MessageContext } from '../../src/server/types.ts'
 import { kBlobKey } from '../../src/common/constants.ts'
-import { ClientMessageType, ServerMessageType } from '../../src/common/enums.ts'
+import {
+  ClientMessageType,
+  ErrorCode,
+  ServerMessageType,
+} from '../../src/common/enums.ts'
+import { ProtocolError } from '../../src/common/error.ts'
 import { ProtocolClientStream } from '../../src/server/stream.ts'
 import { ProtocolVersion1 } from '../../src/server/versions/v1.ts'
 
@@ -298,6 +303,42 @@ describe('ProtocolVersion1 - encodeMessage', () => {
     expect(buffer[5]).toBe(1)
     expect(buffer.subarray(6)).toEqual(Buffer.from([0xbb]))
     expect(encoder.encode).toHaveBeenCalled()
+  })
+
+  it('normalizes raw errors before they reach the encoder', () => {
+    const encoder = context.encoder as unknown as {
+      encode: ReturnType<typeof vi.fn>
+    }
+    encoder.encode.mockReturnValue(Buffer.from([0xcc]))
+
+    version.encodeMessage(context, ServerMessageType.RpcResponse, {
+      callId: 10,
+      result: null,
+      streams: {},
+      error: new Error('secret internals'),
+    })
+
+    const encoded = encoder.encode.mock.calls[0][0]
+    expect(encoded).toBeInstanceOf(ProtocolError)
+    expect(encoded.code).toBe(ErrorCode.InternalServerError)
+    expect(encoded.message).not.toContain('secret internals')
+  })
+
+  it('passes ProtocolError to the encoder unchanged', () => {
+    const encoder = context.encoder as unknown as {
+      encode: ReturnType<typeof vi.fn>
+    }
+    encoder.encode.mockReturnValue(Buffer.from([0xcc]))
+    const error = new ProtocolError(ErrorCode.NotFound, 'missing')
+
+    version.encodeMessage(context, ServerMessageType.RpcResponse, {
+      callId: 10,
+      result: null,
+      streams: {},
+      error,
+    })
+
+    expect(encoder.encode).toHaveBeenCalledWith(error)
   })
 
   it('encodes Pong payload', () => {

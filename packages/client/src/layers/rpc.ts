@@ -34,7 +34,14 @@ export interface RpcLayerApi {
   readonly activeStreamCount: number
 }
 
+// a response frame the server never sent (or one the client failed to decode,
+// which cannot be attributed to a callId) must not pin a default no-timeout
+// call forever — cap the wait for the response itself
+const DEFAULT_RESPONSE_TIMEOUT = 30_000
+
 const toAbortError = (signal: AbortSignal) => {
+  // e.g. the response-deadline reason — re-wrapping would garble code/message
+  if (signal.reason instanceof ProtocolError) return signal.reason
   return new ProtocolError(ErrorCode.ClientRequestError, String(signal.reason))
 }
 
@@ -656,6 +663,19 @@ export const createRpcLayer = (
     if (callOptions.signal) signals.push(callOptions.signal)
     if (core.connectionSignal) signals.push(core.connectionSignal)
 
+    // default response deadline, cleared once the call settles — long-lived
+    // streams stay unaffected, and `timeout: 0` still opts out entirely
+    let responseDeadline: ReturnType<typeof setTimeout> | undefined
+    if (timeout === undefined) {
+      const deadline = new AbortController()
+      signals.push(deadline.signal)
+      responseDeadline = setTimeout(() => {
+        deadline.abort(
+          new ProtocolError(ErrorCode.RequestTimeout, 'Response timeout'),
+        )
+      }, DEFAULT_RESPONSE_TIMEOUT)
+    }
+
     const signal = signals.length ? anyAbortSignal(...signals) : undefined
     const currentCallId = nextCallId()
     const call = createFuture() as ProtocolClientCall
@@ -809,6 +829,7 @@ export const createRpcLayer = (
         throw error
       })
       .finally(() => {
+        clearTimeout(responseDeadline)
         calls.delete(currentCallId)
       })
   }

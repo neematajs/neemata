@@ -3,35 +3,13 @@ import type {
   ProtocolVersion,
   ServerMessageType,
 } from '../common/enums.ts'
-import type { BaseProtocolError, EncodeRPCStreams } from '../common/types.ts'
+import type { EncodeRPCStreams } from '../common/types.ts'
 import type { MessageContext } from './types.ts'
 import { concat } from '../common/binary.ts'
 
-export class ProtocolError extends Error implements BaseProtocolError {
-  code: string
-  data?: any
-
-  constructor(code: string, message?: string, data?: any) {
-    super(message)
-    this.code = code
-    this.data = data
-  }
-
-  // code stays out of `message` so serialization round-trips don't
-  // accumulate "CODE CODE message" prefixes
-  toString() {
-    return `${this.code} ${this.message}`
-  }
-
-  toJSON() {
-    return {
-      name: this.code,
-      message: this.message,
-      data: this.data,
-      code: this.code,
-    }
-  }
-}
+// the single ProtocolError lives in common — server and client used to carry
+// duplicated copies that drifted apart
+export { ProtocolError, toProtocolError } from '../common/error.ts'
 
 export abstract class ProtocolVersionInterface {
   abstract version: ProtocolVersion
