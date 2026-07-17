@@ -120,6 +120,22 @@ describe('ClientStreams', () => {
 
       expect(cancel).toHaveBeenCalled()
     })
+
+    it('removes the stream even when the source cancel rejects', async () => {
+      const cancel = vi.fn(() => {
+        throw new Error('cancel failed')
+      })
+      const source = createReadable([new Uint8Array([1])], cancel)
+      const streams = new ClientStreams()
+      streams.add(source, 5, metadata)
+
+      // e.g. a server-initiated abort against a source with broken cleanup:
+      // the failure surfaces, but the manager entry must not leak
+      await expect(streams.abort(5, 'server abort')).rejects.toThrow(
+        'cancel failed',
+      )
+      expect(() => streams.get(5)).toThrow('Stream not found')
+    })
   })
 
   describe('clear', () => {
@@ -150,6 +166,31 @@ describe('ClientStreams', () => {
 
       expect(() => streams.get(1)).toThrow('Stream not found')
       expect(() => streams.get(2)).toThrow('Stream not found')
+    })
+
+    it('clears the rest even when one source cancel rejects', async () => {
+      const rejectingCancel = vi.fn(() => {
+        throw new Error('cancel failed')
+      })
+      const healthyCancel = vi.fn()
+      const streams = new ClientStreams()
+      streams.add(
+        createReadable([new Uint8Array([1])], rejectingCancel),
+        7,
+        metadata,
+      )
+      streams.add(
+        createReadable([new Uint8Array([2])], healthyCancel),
+        8,
+        metadata,
+      )
+
+      await streams.clear(new Error('shutdown'))
+
+      expect(rejectingCancel).toHaveBeenCalledTimes(1)
+      expect(healthyCancel).toHaveBeenCalledTimes(1)
+      expect(() => streams.get(7)).toThrow('Stream not found')
+      expect(() => streams.get(8)).toThrow('Stream not found')
     })
   })
 })

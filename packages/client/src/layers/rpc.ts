@@ -304,6 +304,26 @@ export const createRpcLayer = (
 
     const { procedure, signal } = call
     const stream = new ProtocolServerRPCStream({
+      // one chunk credit per consumer read (hwm 0): the server sends nothing
+      // until the consumer actually iterates
+      pull: () => {
+        if (!core.messageContext) return
+
+        core.emitStreamEvent({
+          direction: 'outgoing',
+          streamType: 'rpc',
+          action: 'pull',
+          callId: message.callId,
+        })
+
+        const buffer = core.protocol.encodeMessage(
+          core.messageContext,
+          ClientMessageType.RpcStreamPull,
+          { callId: message.callId, size: 1 },
+        )
+
+        core.send(buffer).catch(noopFn)
+      },
       start: (controller) => {
         if (!signal) return
 
@@ -521,6 +541,34 @@ export const createRpcLayer = (
     }
   }
 
+  // A failed local push (e.g. transform/decode error) must surface as a
+  // stream abort on both sides, never as an unhandled rejection.
+  const abortRpcStreamOnPushFailure = (callId: number, reason: unknown) => {
+    if (!rpcStreams.has(callId)) return
+
+    calls.get(callId)?.cleanup?.()
+    calls.delete(callId)
+    void rpcStreams.abort(callId, reason).catch(noopFn)
+
+    if (core.messageContext) {
+      core.emitStreamEvent({
+        direction: 'outgoing',
+        streamType: 'rpc',
+        action: 'abort',
+        callId,
+        reason: toReasonString(reason),
+      })
+
+      const buffer = core.protocol.encodeMessage(
+        core.messageContext,
+        ClientMessageType.RpcAbort,
+        { callId, reason: toReasonString(reason) },
+      )
+
+      core.send(buffer).catch(noopFn)
+    }
+  }
+
   core.on('message', (message: any) => {
     switch (message.type) {
       case ServerMessageType.RpcResponse:
@@ -537,7 +585,12 @@ export const createRpcLayer = (
           callId: message.callId,
           byteLength: message.chunk.byteLength,
         })
-        void rpcStreams.push(message.callId, message.chunk)
+        // push is intentionally not awaited: writes apply in arrival order
+        // via the writable queue, and awaiting here would stall messages of
+        // unrelated streams behind this one's backpressure
+        rpcStreams
+          .push(message.callId, message.chunk)
+          .catch((error) => abortRpcStreamOnPushFailure(message.callId, error))
         break
       case ServerMessageType.RpcStreamEnd:
         calls.get(message.callId)?.cleanup?.()
@@ -547,11 +600,21 @@ export const createRpcLayer = (
           action: 'end',
           callId: message.callId,
         })
-        void rpcStreams.end(message.callId)
+        void rpcStreams.end(message.callId).catch(noopFn)
         calls.delete(message.callId)
         break
-      case ServerMessageType.RpcStreamAbort:
-        calls.get(message.callId)?.cleanup?.()
+      case ServerMessageType.RpcStreamAbort: {
+        const call = calls.get(message.callId)
+        call?.cleanup?.()
+        // an abort may arrive before the stream response was processed;
+        // settle the still-pending call or it would hang forever (no-op if
+        // the call already resolved with a stream)
+        call?.reject(
+          new ProtocolError(
+            ErrorCode.ClientRequestError,
+            message.reason ?? 'RPC stream aborted',
+          ),
+        )
         core.emitStreamEvent({
           direction: 'incoming',
           streamType: 'rpc',
@@ -559,9 +622,10 @@ export const createRpcLayer = (
           callId: message.callId,
           reason: message.reason,
         })
-        void rpcStreams.abort(message.callId, message.reason)
+        void rpcStreams.abort(message.callId, message.reason).catch(noopFn)
         calls.delete(message.callId)
         break
+      }
     }
   })
 

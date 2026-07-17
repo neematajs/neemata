@@ -32,8 +32,12 @@ export class ClientStreams {
   async abort(streamId: number, reason?: any) {
     const stream = this.#collection.get(streamId)
     if (!stream) return // Stream already cleaned up
-    await stream.abort(reason)
-    this.remove(streamId)
+    try {
+      await stream.abort(reason)
+    } finally {
+      // a rejecting source cancel() must not leak the manager entry
+      this.remove(streamId)
+    }
   }
 
   pull(streamId: number, size: number) {
@@ -51,7 +55,8 @@ export class ClientStreams {
       const abortPromises = [...this.#collection.values()].map((stream) =>
         stream.abort(reason),
       )
-      await Promise.all(abortPromises)
+      // allSettled: one rejecting cancel() must not stop clearing the rest
+      await Promise.allSettled(abortPromises)
     }
     this.#collection.clear()
   }
@@ -93,6 +98,8 @@ export class ServerStreams<
 
   async abort(streamId: number, reason?: unknown) {
     if (this.has(streamId)) {
+      // a write parked on backpressure would block abort() from settling
+      this.#collection.get(streamId)?.releaseParkedWrites()
       const writer = this.#writers.get(streamId)
       if (writer) {
         await writer.abort(reason)
@@ -110,6 +117,9 @@ export class ServerStreams<
   }
 
   async end(streamId: number) {
+    // no more data is coming: flush parked writes into the readable queue so
+    // close() can settle while the consumer drains at its own pace
+    this.#collection.get(streamId)?.releaseParkedWrites()
     const writer = this.#writers.get(streamId)
     if (writer) {
       await writer.close()
@@ -120,6 +130,9 @@ export class ServerStreams<
 
   async clear(reason?: any) {
     if (reason) {
+      for (const stream of this.#collection.values()) {
+        stream.releaseParkedWrites()
+      }
       const abortPromises = [...this.#writers.values()].map((writer) =>
         writer.abort(reason).finally(() => writer.releaseLock()),
       )

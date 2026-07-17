@@ -66,6 +66,15 @@ export type WsTransportRuntimeBun = {
 }
 
 export type WsTransportRuntimeNode = {
+  /**
+   * Raw uWS websocket behavior overrides. Unless set, the transport applies
+   * its own defaults for `maxPayloadLength` and `maxBackpressure` (1 MiB
+   * each): inline WS payloads are capped at 1 MiB — larger data should ride
+   * blob streams, which are chunked at credit size — and the value is
+   * deliberately above the largest upload frame (64KiB credit grant plus the
+   * frame header), since uWS closes the socket on oversized frames and drops
+   * frames over the backpressure limit.
+   */
   ws?: Partial<
     Pick<
       import('uWebSockets.js').WebSocketBehavior<import('crossws').PeerContext>,

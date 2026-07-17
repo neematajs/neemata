@@ -5,6 +5,7 @@ export enum ProtocolVersion {
 export enum ClientMessageType {
   Rpc = 10,
   RpcAbort = 11,
+  RpcStreamPull = 12,
 
   Ping = 13,
   Pong = 14,

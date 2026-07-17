@@ -41,7 +41,7 @@ export interface ApplicationHostDefinition<
   transports: Transports
   gateway?: Pick<
     GatewayOptions<ApplicationResolvedProcedure>,
-    'streamTimeouts' | 'heartbeat'
+    'streamIdleTimeout' | 'heartbeat'
   >
   identity?: ConnectionIdentity
 }
@@ -57,7 +57,7 @@ export type ApplicationHostDefinitionOptions<
   transports: Transports
   gateway?: Pick<
     GatewayOptions<ApplicationResolvedProcedure>,
-    'streamTimeouts' | 'heartbeat'
+    'streamIdleTimeout' | 'heartbeat'
   >
   identity?: ConnectionIdentity
 }
@@ -75,7 +75,7 @@ export interface ApplicationHostOptions<
   transports: ApplicationHostTransportConfig<Transports>
   gateway?: Pick<
     GatewayOptions<ApplicationResolvedProcedure>,
-    'streamTimeouts' | 'heartbeat'
+    'streamIdleTimeout' | 'heartbeat'
   >
   identity?: ConnectionIdentity
 }

@@ -1,7 +1,7 @@
 import type { TransportWorker, TransportWorkerParams } from '@nmtjs/gateway'
 import type { ProtocolFormats } from '@nmtjs/protocol/server'
 import { createFactoryInjectable, createLogger } from '@nmtjs/core'
-import { createTransport, StreamTimeout } from '@nmtjs/gateway'
+import { createTransport } from '@nmtjs/gateway'
 import { t } from '@nmtjs/type'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -283,7 +283,7 @@ describe('application runtime boundary', () => {
       transports: { http: { transport: http.transport, options: httpOptions } },
       gateway: {
         heartbeat: false,
-        streamTimeouts: { [StreamTimeout.Pull]: 100 },
+        streamIdleTimeout: 100,
       },
     })
     const memoryHost = createApplicationHost(app, {
@@ -305,9 +305,7 @@ describe('application runtime boundary', () => {
       expect(http.state.startParams[0].formats).toBe(formats)
       expect(memory.state.startParams[0].formats).toBe(formats)
       expect(httpHost.gateway.options.heartbeat).toBe(false)
-      expect(httpHost.gateway.options.streamTimeouts[StreamTimeout.Pull]).toBe(
-        100,
-      )
+      expect(httpHost.gateway.options.streamIdleTimeout).toBe(100)
     } finally {
       await memoryHost.stop()
       await httpHost.stop()

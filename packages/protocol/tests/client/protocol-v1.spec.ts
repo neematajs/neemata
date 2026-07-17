@@ -318,6 +318,19 @@ describe('ProtocolVersion1 (client) - encodeMessage', () => {
     expect(buffer.readUInt32LE(1)).toBe(55)
   })
 
+  it('encodes RpcStreamPull', () => {
+    const buffer = toBuffer(
+      version.encodeMessage(context, ClientMessageType.RpcStreamPull, {
+        callId: 42,
+        size: 1,
+      }),
+    )
+    expect(buffer[0]).toBe(ClientMessageType.RpcStreamPull)
+    expect(buffer.byteLength).toBe(9)
+    expect(buffer.readUInt32LE(1)).toBe(42)
+    expect(buffer.readUInt32LE(5)).toBe(1)
+  })
+
   it('encodes client stream push/end/abort', () => {
     const pushBuffer = toBuffer(
       version.encodeMessage(context, ClientMessageType.ClientStreamPush, {
