@@ -7,7 +7,7 @@ on:
 
 jobs:
   lint:
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -42,8 +42,8 @@ jobs:
         node:
           - 24
         os:
-          - blacksmith-4vcpu-ubuntu-2404
-          - blacksmith-6vcpu-macos-26
+          - ubuntu-24.04
+          - macos-26
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
@@ -69,11 +69,11 @@ jobs:
             ${{ runner.os }}-pnpm-store-
       - run: pnpm install
       - name: Install Playwright browser (Linux)
-        if: matrix.os == 'blacksmith-4vcpu-ubuntu-2404'
+        if: runner.os == 'Linux'
         run: |
           pnpm exec playwright install --with-deps chromium firefox webkit
       - name: Install Playwright browser (macOS)
-        if: matrix.os == 'blacksmith-6vcpu-macos-26'
+        if: runner.os == 'macOS'
         run: |
           pnpm exec playwright install chromium firefox webkit
       - run: |
@@ -83,7 +83,7 @@ jobs:
 
   tests-integration-services:
     needs: [ lint ]
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     services:
       redis:
         image: redis:8-alpine
