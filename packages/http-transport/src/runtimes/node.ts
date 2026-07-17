@@ -201,12 +201,41 @@ async function handleResponseBody(
   await handleChunkedStream(res, response.body)
 }
 
-async function handleFixedLengthStream(
+// uWS honors only the first onWritable registration per response, so a
+// single handler dispatches drain (and abort) events to the pending waiter
+function createWritableWaiter(res: UwsResponse): () => Promise<void> {
+  let writableHandlerRegistered = false
+  return () =>
+    new Promise<void>((resolve, reject) => {
+      if (!writableHandlerRegistered) {
+        writableHandlerRegistered = true
+        res.onWritable(() => {
+          res.wakeWritable?.()
+          return true
+        })
+      }
+      res.wakeWritable = () => {
+        res.wakeWritable = undefined
+        if (res.aborted) reject(new Error('Response aborted'))
+        else resolve()
+      }
+    })
+}
+
+// exported for tests: the waiter dispatch is timing-sensitive and needs
+// deterministic coverage against a controlled response double
+export async function handleFixedLengthStream(
   res: UwsResponse,
   body: ReadableStream<Uint8Array>,
   totalSize: number,
 ): Promise<void> {
   const reader = body.getReader()
+  // abort must also cancel a pending read(): a stalled source would otherwise
+  // keep the pump and the reader lock alive forever
+  res.cancelBody = () => {
+    reader.cancel().catch(() => {})
+  }
+  const waitWritable = createWritableWaiter(res)
   try {
     if (totalSize === 0) {
       if (!res.aborted) res.cork(() => res.endWithoutBody(0))
@@ -218,11 +247,16 @@ async function handleFixedLengthStream(
       const { done, value } = await reader.read()
       if (done) break
       if (value.byteLength === 0) continue
-      responded = await handleFixedChunk(res, value, totalSize)
+      responded = await handleFixedChunk(res, value, totalSize, waitWritable)
     }
 
     if (!responded && !res.aborted) res.cork(() => res.close())
   } finally {
+    res.cancelBody = undefined
+    // non-abort early exits (zero-length response, tryEnd done while the
+    // source is still open) must also cancel the source so its resources are
+    // released; no-op when the stream already closed or was cancelled on abort
+    reader.cancel().catch(() => {})
     reader.releaseLock()
   }
 }
@@ -239,24 +273,7 @@ export async function handleChunkedStream(
   res.cancelBody = () => {
     reader.cancel().catch(() => {})
   }
-  // uWS honors only the first onWritable registration per response, so a
-  // single handler dispatches drain (and abort) events to the pending waiter
-  let writableHandlerRegistered = false
-  const waitWritable = () =>
-    new Promise<void>((resolve, reject) => {
-      if (!writableHandlerRegistered) {
-        writableHandlerRegistered = true
-        res.onWritable(() => {
-          res.wakeWritable?.()
-          return true
-        })
-      }
-      res.wakeWritable = () => {
-        res.wakeWritable = undefined
-        if (res.aborted) reject(new Error('Response aborted'))
-        else resolve()
-      }
-    })
+  const waitWritable = createWritableWaiter(res)
   try {
     while (!res.aborted) {
       const { done, value } = await reader.read()
@@ -278,41 +295,33 @@ export async function handleChunkedStream(
   }
 }
 
-function handleFixedChunk(
+async function handleFixedChunk(
   res: UwsResponse,
   chunk: Uint8Array,
   totalSize: number,
+  waitWritable: () => Promise<void>,
 ): Promise<boolean> {
-  return new Promise((resolve, reject) => {
-    const chunkOffset = res.getWriteOffset()
+  const chunkOffset = res.getWriteOffset()
 
-    const write = (offset: number) => {
-      if (res.aborted) {
-        reject(new Error('Response aborted'))
-        return false
-      }
+  while (true) {
+    if (res.aborted) throw new Error('Response aborted')
 
-      const relativeOffset = offset - chunkOffset
-      const remaining =
-        relativeOffset > 0 ? chunk.subarray(relativeOffset) : chunk
+    // on retry after a drain the write offset tells how much of this chunk
+    // uWS already buffered
+    const relativeOffset = res.getWriteOffset() - chunkOffset
+    const remaining =
+      relativeOffset > 0 ? chunk.subarray(relativeOffset) : chunk
 
-      let ok = false
-      let done = false
-      res.cork(() => {
-        ;[ok, done] = res.tryEnd(remaining, totalSize)
-      })
+    // cork() returns the response object, not tryEnd()'s flags
+    let ok = false
+    let done = false
+    res.cork(() => {
+      ;[ok, done] = res.tryEnd(remaining, totalSize)
+    })
 
-      if (done || ok) {
-        resolve(done)
-        return ok
-      }
-
-      res.onWritable(write)
-      return ok
-    }
-
-    write(chunkOffset)
-  })
+    if (done || ok) return done
+    await waitWritable()
+  }
 }
 
 function getContentLength(headers: Headers): number | undefined {
