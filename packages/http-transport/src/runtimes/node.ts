@@ -253,6 +253,10 @@ export async function handleFixedLengthStream(
     if (!responded && !res.aborted) res.cork(() => res.close())
   } finally {
     res.cancelBody = undefined
+    // non-abort early exits (zero-length response, tryEnd done while the
+    // source is still open) must also cancel the source so its resources are
+    // released; no-op when the stream already closed or was cancelled on abort
+    reader.cancel().catch(() => {})
     reader.releaseLock()
   }
 }

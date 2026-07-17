@@ -467,5 +467,38 @@ describe('node runtime adapter', () => {
       expect(cancelled).toBe(true)
       expect(double.counts()).toEqual({ registrations: 0, closes: 0 })
     })
+
+    it('zero-length response cancels the source stream', async () => {
+      const double = createResDouble([])
+      let cancelled = false
+      const body = new ReadableStream<Uint8Array>({
+        cancel() {
+          cancelled = true
+        },
+      })
+
+      await handleFixedLengthStream(double.res, body, 0)
+      expect(cancelled).toBe(true)
+      expect(() => body.getReader()).not.toThrow()
+    })
+
+    it('response done before the source closes cancels the source', async () => {
+      // app stream longer than its content-length: tryEnd reports done on the
+      // first chunk while the source is still open
+      const double = createResDouble([{ accept: 8, ok: true, done: true }])
+      let cancelled = false
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new Uint8Array(8))
+        },
+        cancel() {
+          cancelled = true
+        },
+      })
+
+      await handleFixedLengthStream(double.res, body, 8)
+      expect(cancelled).toBe(true)
+      expect(() => body.getReader()).not.toThrow()
+    })
   })
 })
