@@ -115,6 +115,46 @@ describe('BlobStreamsManager', () => {
         expect(stream1.id).toBe(100)
         expect(stream2.id).toBe(101)
       })
+
+      it('rejects redeclaring a still-active stream id', () => {
+        const original = manager.createClientStream(
+          'conn-1',
+          1,
+          100,
+          { type: 'text/plain' },
+          {},
+        )
+
+        // a duplicate declaration (another message, or repeated msgpack exts
+        // within one) must not overwrite and orphan the live stream state
+        expect(() =>
+          manager.createClientStream(
+            'conn-1',
+            2,
+            100,
+            { type: 'image/png' },
+            {},
+          ),
+        ).toThrow('already exists')
+
+        expect(manager.getClientStream('conn-1', 100)).toBe(original)
+        expect(manager.getClientCallStreamIds('conn-1', 1)).toEqual([100])
+        expect(manager.getClientCallStreamIds('conn-1', 2)).toEqual([])
+      })
+
+      it('allows reusing a stream id after the previous stream is gone', () => {
+        manager.createClientStream('conn-1', 1, 100, { type: 'text/plain' }, {})
+        manager.endClientStream('conn-1', 100)
+
+        const stream = manager.createClientStream(
+          'conn-1',
+          2,
+          100,
+          { type: 'text/plain' },
+          {},
+        )
+        expect(stream.id).toBe(100)
+      })
     })
 
     describe('credit accounting', () => {

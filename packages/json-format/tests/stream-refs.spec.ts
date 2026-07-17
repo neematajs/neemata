@@ -75,6 +75,52 @@ describe('stream ref injection (server decode)', () => {
     expect(decoded.junk).toBe(junk)
   })
 
+  it('ignores refs whose id is not in canonical Uint32 form', () => {
+    // parseInt would collapse these onto declared keys: "07" → 7,
+    // "9007199254740993" → …92 (float precision), "4294967296" > Uint32
+    const prefix = serializeStreamId(0).slice(0, -1)
+    const refs = {
+      leadingZero: `${prefix}07`,
+      unsafe: `${prefix}9007199254740993`,
+      overflow: `${prefix}4294967296`,
+    }
+    const frame = craftFrame(
+      { 7: metadata, 9007199254740992: metadata, 4294967296: metadata },
+      refs,
+    )
+
+    const addStream = vi.fn()
+    const decoded = serverFormat.decodeRPC(frame, { addStream }) as any
+
+    expect(addStream).not.toHaveBeenCalled()
+    expect(decoded).toEqual(refs)
+  })
+
+  it('mints the maximum canonical Uint32 id', () => {
+    const frame = craftFrame(
+      { 4294967295: metadata },
+      { ref: serializeStreamId(4294967295) },
+    )
+
+    const stream: any = {}
+    const addStream = vi.fn(() => stream)
+    const decoded = serverFormat.decodeRPC(frame, { addStream }) as any
+
+    expect(addStream).toHaveBeenCalledWith(4294967295, metadata)
+    expect(decoded.ref).toBe(stream)
+  })
+
+  it('rejects a streams section that is not a metadata record', () => {
+    // strings and arrays have numeric own properties, so they could otherwise
+    // pass the declared-id gate and mint stream state from garbage
+    for (const section of ['x', [metadata], 42, true, null] as any[]) {
+      const frame = craftFrame(section, { ref: serializeStreamId(0) })
+      expect(() =>
+        serverFormat.decodeRPC(frame, { addStream: vi.fn() }),
+      ).toThrow('Malformed streams metadata section')
+    }
+  })
+
   it('ignores refs when no streams are declared at all', () => {
     const frame = craftFrame({}, { injected: serializeStreamId(0) })
 
@@ -103,6 +149,13 @@ describe('stream ref injection (client decode)', () => {
     expect(decoded.real).toBe(stream)
     expect(decoded.injected).toBe(serializeStreamId(7))
   })
+
+  it('rejects a streams section that is not a metadata record', () => {
+    const frame = craftFrame('x' as any, { ref: serializeStreamId(0) })
+    expect(() => clientFormat.decodeRPC(frame, { addStream: vi.fn() })).toThrow(
+      'Malformed streams metadata section',
+    )
+  })
 })
 
 describe('stream-like user data round trip', () => {
@@ -110,6 +163,9 @@ describe('stream-like user data round trip', () => {
     ref: serializeStreamId(0),
     prefixed: `${serializeStreamId(3)} not a stream`,
     nested: { deep: [serializeStreamId(42)] },
+    // literal wire constant: user data already carrying the escape prefix
+    // must not lose it (or gain another) across round trips
+    escaped: '%neemata:escape:%\ffoo',
   }
 
   it('survives client → server without streams', () => {

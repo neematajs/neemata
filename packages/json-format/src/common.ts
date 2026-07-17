@@ -1,4 +1,5 @@
 import type { ProtocolBlobMetadata } from '@nmtjs/protocol'
+import { MAX_UINT32 } from '@nmtjs/common'
 
 // TODO: is this a good way to serialize streams within json?
 const STREAM_SERIALIZE_KEY = '%neemata:stream:%\f'
@@ -13,8 +14,13 @@ export const serializeStreamId = (id: number) => {
 
 export const deserializeStreamId = (value: string) => {
   const streamId = value.slice(STREAM_SERIALIZE_KEY.length)
-  // parseInt would accept trailing garbage like "1abc"
-  return /^\d+$/.test(streamId) ? Number.parseInt(streamId) : null
+  // only the canonical decimal form emitted by serializeStreamId counts:
+  // parseInt would accept trailing garbage, leading zeros alias another
+  // spelling of a declared key, and overlong digit runs lose precision —
+  // and wire stream ids are Uint32, so anything larger is never a real stream
+  if (!/^(?:0|[1-9]\d{0,9})$/.test(streamId)) return null
+  const id = Number.parseInt(streamId)
+  return id <= MAX_UINT32 ? id : null
 }
 
 export const isStreamId = (value: any): value is string => {
@@ -39,6 +45,16 @@ export const unescapeStreamLikeString = (value: string) => {
 }
 
 export type StreamsMetadata = Record<number, ProtocolBlobMetadata>
+
+// strings and arrays have numeric own properties too, so a crafted non-record
+// streams section would still pass the declared-id gate in the reviver —
+// reject anything that is not a plain metadata record outright
+export const assertStreamsMetadata = (value: unknown): StreamsMetadata => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new TypeError('Malformed streams metadata section')
+  }
+  return value as StreamsMetadata
+}
 
 // Stream ids are declared out of band in the message's streams map; the
 // in-band ref only marks a position. Only declared ids may mint stream state,

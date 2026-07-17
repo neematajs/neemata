@@ -20,6 +20,7 @@ import {
 import { BaseClientFormat } from '@nmtjs/protocol/client'
 
 import {
+  assertStreamsMetadata,
   createStreamReviver,
   escapeStreamLikeString,
   needsEscaping,
@@ -110,12 +111,14 @@ export class JsonFormat extends BaseClientFormat {
     const hasPayload = payloadBuffer.byteLength > 0
 
     const streams = hasStreams
-      ? (this.decode(
-          buffer.subarray(
-            Uint32Array.BYTES_PER_ELEMENT,
-            Uint32Array.BYTES_PER_ELEMENT + streamsLength,
+      ? assertStreamsMetadata(
+          this.decode(
+            buffer.subarray(
+              Uint32Array.BYTES_PER_ELEMENT,
+              Uint32Array.BYTES_PER_ELEMENT + streamsLength,
+            ),
           ),
-        ) as EncodeRPCStreams)
+        )
       : {}
 
     if (!hasPayload) return undefined

@@ -12,6 +12,7 @@ import {
 import { BaseServerFormat } from '@nmtjs/protocol/server'
 
 import {
+  assertStreamsMetadata,
   createStreamReviver,
   escapeStreamLikeString,
   needsEscaping,
@@ -82,10 +83,12 @@ export class JsonFormat extends BaseServerFormat {
     let streams: EncodeRPCStreams = {}
 
     if (hasStreams) {
-      streams = this.decode(
-        buffer.subarray(
-          Uint32Array.BYTES_PER_ELEMENT,
-          Uint32Array.BYTES_PER_ELEMENT + streamsLength,
+      streams = assertStreamsMetadata(
+        this.decode(
+          buffer.subarray(
+            Uint32Array.BYTES_PER_ELEMENT,
+            Uint32Array.BYTES_PER_ELEMENT + streamsLength,
+          ),
         ),
       )
     }
