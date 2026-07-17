@@ -18,6 +18,7 @@ const createMockConnection = (
   encoder: {} as GatewayConnection['encoder'],
   decoder: {} as GatewayConnection['decoder'],
   abortController: new AbortController(),
+  deferredCallDisposals: new Set(),
   ...overrides,
 })
 

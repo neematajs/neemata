@@ -171,11 +171,13 @@ export class HttpTransportServer implements TransportWorker<
     let connection: Awaited<ReturnType<typeof this.params.onConnect>> | null =
       null
     let streamed = false
-    let disposed = false
-    const disposeConnection = async () => {
-      if (disposed || !connection) return
-      disposed = true
-      await connection[Symbol.asyncDispose]()
+    let disposal: Promise<void> | null = null
+    const disposeConnection = () => {
+      // single-flight: a finalizer racing another (abort backstop vs body
+      // cancel/close) must await the same in-flight teardown instead of
+      // resolving while it is still running
+      if (!connection) return Promise.resolve()
+      return (disposal ??= Promise.resolve(connection[Symbol.asyncDispose]()))
     }
 
     try {
@@ -355,6 +357,13 @@ export class HttpTransportServer implements TransportWorker<
               ).toString('base64')
               controller.enqueue(sseEncoder.encode(`data: ${base64}\n\n`))
             } catch (error) {
+              // nothing cancels a closed/errored stream, so unwind the
+              // generator here (e.g. on encode failure) or a handler
+              // suspended at yield leaks with its call scope forever;
+              // a no-op when the failure came from next() itself
+              try {
+                await iterator.return?.()
+              } catch {}
               if (isAbortError(error)) controller.close()
               else controller.error(error)
             }
@@ -485,7 +494,7 @@ export class HttpTransportServer implements TransportWorker<
     const onAbort = () => {
       // finalize first: aborting the connection signal wakes handlers
       // idle-waiting inside the source, letting cancellation unwind them
-      void finalize()
+      finalize().catch(noopFn)
       reader.cancel(signal.reason).catch(noopFn)
     }
     const settle = () => {

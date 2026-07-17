@@ -1,4 +1,5 @@
 import { Buffer } from 'node:buffer'
+import { setTimeout as delay } from 'node:timers/promises'
 
 import { createFactoryInjectable, Hooks, Scope } from '@nmtjs/core'
 import {
@@ -252,6 +253,82 @@ describe('Gateway HTTP onRpc call-scope lifetime', () => {
 
     await params.onDisconnect(connection.id)
     await vi.waitFor(() => expect(disposeSpy).toHaveBeenCalledTimes(1))
+
+    await gateway.stop()
+  })
+
+  it('keeps the call scope alive for streamed Response results until connection teardown', async () => {
+    const disposeSpy = vi.fn()
+    const callScoped = createFactoryInjectable({
+      scope: Scope.Call,
+      create: () => 'resource',
+      dispose: disposeSpy,
+    })
+
+    const { gateway, params, connection } = await createHttpGateway(
+      async (container) => {
+        await container.resolve(callScoped)
+        // a handler-built Response whose body streams from a call-scoped
+        // resource — same lifetime class as a blob download
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new Uint8Array(8))
+              controller.close()
+            },
+          }),
+        )
+      },
+    )
+
+    const result = await params.onRpc(
+      connection,
+      rpc,
+      new AbortController().signal,
+    )
+
+    expect(result).toBeInstanceOf(Response)
+    expect(disposeSpy).not.toHaveBeenCalled()
+
+    await params.onDisconnect(connection.id)
+    await vi.waitFor(() => expect(disposeSpy).toHaveBeenCalledTimes(1))
+
+    await gateway.stop()
+  })
+
+  it('finishes deferred call-scope disposal before the connection container', async () => {
+    const order: string[] = []
+    const callScoped = createFactoryInjectable({
+      scope: Scope.Call,
+      create: () => 'call',
+      dispose: async () => {
+        order.push('call:start')
+        await delay(20)
+        order.push('call:end')
+      },
+    })
+    const connectionScoped = createFactoryInjectable({
+      scope: Scope.Connection,
+      create: () => 'connection',
+      dispose: () => {
+        order.push('connection')
+      },
+    })
+
+    const { gateway, params, connection } = await createHttpGateway(
+      async (container) => {
+        await container.resolve(callScoped)
+        await container.resolve(connectionScoped)
+        return ProtocolBlob.from('data')
+      },
+    )
+
+    await params.onRpc(connection, rpc, new AbortController().signal)
+    await params.onDisconnect(connection.id)
+
+    // a call-scoped disposer may still be using connection-scoped deps:
+    // teardown must not dispose the connection container underneath it
+    expect(order).toEqual(['call:start', 'call:end', 'connection'])
 
     await gateway.stop()
   })

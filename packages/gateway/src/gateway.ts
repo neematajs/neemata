@@ -494,6 +494,7 @@ export class Gateway<
           encoder,
           decoder,
           abortController,
+          deferredCallDisposals: new Set(),
         }
 
         this.connections.add(connection)
@@ -749,15 +750,25 @@ export class Gateway<
           return result(async () => {
             await rpcContext[Symbol.asyncDispose]()
           })
-        } else if (result instanceof ProtocolBlob) {
-          // the blob body streams after onRpc returns: disposing the call
-          // scope now would kill the source (DI-scoped handles, abort wiring)
-          // mid-stream. The transport ties connection teardown to the response
-          // body's terminal state, so the connection abort doubles as the
-          // body-done signal for the call scope.
+        } else if (
+          result instanceof ProtocolBlob ||
+          (result instanceof Response && result.body !== null)
+        ) {
+          // blob and handler-built Response bodies stream after onRpc
+          // returns: disposing the call scope now would kill the source
+          // (DI-scoped handles, abort wiring) mid-stream. The transport ties
+          // connection teardown to the response body's terminal state, so the
+          // connection abort doubles as the body-done signal for the call
+          // scope; teardown awaits the tracked promise so the call scope
+          // settles before the connection container is disposed.
           const dispose = () => {
-            rpcContext[Symbol.asyncDispose]().catch((error) =>
-              logger.error({ error }, 'Error disposing blob call context'),
+            connection.deferredCallDisposals.add(
+              rpcContext[Symbol.asyncDispose]().catch((error) =>
+                logger.error(
+                  { error },
+                  'Error disposing streamed call context',
+                ),
+              ),
             )
           }
           const { signal } = connection.abortController
@@ -1070,6 +1081,10 @@ export class Gateway<
       await guard(() => transportWorker?.close?.(connectionId, close))
     }
     await guard(() => connection.abortController.abort())
+    // the abort above triggers deferred call-scope disposal (streamed HTTP
+    // bodies); await it so call-scoped disposers finish before their parent
+    // connection container goes down
+    await guard(() => Promise.all(connection.deferredCallDisposals))
     await guard(() => this.rpcs.close(connectionId))
     await guard(() => this.releaseRpcStreamCredits(connectionId))
     await guard(() => this.blobStreams.cleanupConnection(connectionId))

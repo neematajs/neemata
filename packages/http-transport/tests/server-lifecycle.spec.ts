@@ -102,6 +102,44 @@ describe('connection lifetime vs response body lifetime', () => {
       expect(dispose).toHaveBeenCalledTimes(1)
     })
 
+    it('makes concurrent finalizers await the same in-flight disposal', async () => {
+      let resolveDisposal!: () => void
+      const { params, connection } = createTestParams(
+        vi.fn(async () => ProtocolBlob.from('hello world')) as any,
+      )
+      const dispose = vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveDisposal = resolve
+          }),
+      )
+      ;(connection as any)[Symbol.asyncDispose] = dispose
+      const server = await createTestServer({}, params)
+
+      const abortController = new AbortController()
+      const response = await server.httpHandler(
+        createTestRequest({}),
+        null,
+        abortController.signal,
+      )
+
+      // abort backstop starts the (slow) disposal…
+      abortController.abort()
+      expect(dispose).toHaveBeenCalledTimes(1)
+
+      // …and a racing cancel must ride it instead of resolving early
+      let cancelled = false
+      const cancelPromise = response.body!.cancel().then(() => {
+        cancelled = true
+      })
+      await tick()
+      expect(cancelled).toBe(false)
+
+      resolveDisposal()
+      await cancelPromise
+      expect(dispose).toHaveBeenCalledTimes(1)
+    })
+
     it('disposes the connection at return for zero-byte blobs', async () => {
       // runtimes answer Content-Length: 0 without touching the body, so the
       // connection must not wait on a body finalizer that would never fire
@@ -195,6 +233,75 @@ describe('connection lifetime vs response body lifetime', () => {
 
       expect(finalized).toBe(true)
       expect(dispose).toHaveBeenCalledTimes(1)
+    })
+
+    it('unwinds the generator when encoding a chunk fails', async () => {
+      let finalized = false
+      const { server, dispose } = await createLifecycleServer(async () =>
+        (async function* () {
+          try {
+            // the JSON test encoder rejects BigInt: encode throws while the
+            // generator is suspended at this yield
+            yield { n: 1n }
+            yield { n: 2 }
+          } finally {
+            finalized = true
+          }
+        })(),
+      )
+
+      const response = await server.httpHandler(
+        createTestRequest({}),
+        null,
+        new AbortController().signal,
+      )
+
+      // nothing cancels an errored stream — the pull path itself must
+      // return the generator or it leaks suspended forever
+      await expect(response.text()).rejects.toThrow()
+      expect(finalized).toBe(true)
+      expect(dispose).toHaveBeenCalledTimes(1)
+    })
+
+    it('unwinds a generator blocked inside next() when the request aborts', async () => {
+      let finalized = false
+      const { server, dispose } = await createLifecycleServer(
+        async (_connection: any, _rpc: any, signal: AbortSignal) =>
+          (async function* () {
+            try {
+              yield { ready: true }
+              // idle-wait for an event that never comes; only the rpc abort
+              // signal can wake it — the finalizer must fire it before
+              // cancelling the body so the queued return() can complete
+              await new Promise((_, reject) => {
+                signal.addEventListener('abort', () => reject(signal.reason), {
+                  once: true,
+                })
+              })
+            } finally {
+              finalized = true
+            }
+          })(),
+      )
+
+      const abortController = new AbortController()
+      const response = await server.httpHandler(
+        createTestRequest({}),
+        null,
+        abortController.signal,
+      )
+
+      const reader = response.body!.getReader()
+      await reader.read()
+      // park the source inside iterator.next() before disconnecting
+      const pending = reader.read().catch(() => {})
+      abortController.abort()
+
+      await pending
+      await vi.waitFor(() => {
+        expect(finalized).toBe(true)
+        expect(dispose).toHaveBeenCalledTimes(1)
+      })
     })
 
     it('finalizes on request abort even when the body is never consumed', async () => {
