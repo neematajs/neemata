@@ -181,10 +181,14 @@ const sleep = (ms: number) =>
 describe('RPC stream flow control', () => {
   it('gates chunks on RpcStreamPull credits', async () => {
     let finished = false
+    let advanced = 0
     async function* handler() {
       try {
+        advanced++
         yield 'a'
+        advanced++
         yield 'b'
+        advanced++
         yield 'c'
       } finally {
         finished = true
@@ -199,8 +203,10 @@ describe('RPC stream flow control', () => {
     await flush()
 
     expect(sentOfType(ServerMessageType.RpcStreamResponse).length).toBe(1)
-    // no credit yet: no chunk may be sent
+    // no credit yet: no chunk may be sent and the producer must not even
+    // have been advanced (no prefetch before the first pull)
     expect(sentOfType(ServerMessageType.RpcStreamChunk).length).toBe(0)
+    expect(advanced).toBe(0)
 
     await send(encodeRpcStreamPull(1, 1))
     await flush()
@@ -208,10 +214,17 @@ describe('RPC stream flow control', () => {
     expect(
       JSON.parse(sentOfType(ServerMessageType.RpcStreamChunk)[0].rest as any),
     ).toBe('a')
+    // exactly one credit = exactly one producer advance
+    expect(advanced).toBe(1)
 
     await send(encodeRpcStreamPull(1, 2))
     await flush()
     expect(sentOfType(ServerMessageType.RpcStreamChunk).length).toBe(3)
+    // the End still needs one more credit: the consumer's final read
+    expect(sentOfType(ServerMessageType.RpcStreamEnd).length).toBe(0)
+
+    await send(encodeRpcStreamPull(1, 1))
+    await flush()
     expect(sentOfType(ServerMessageType.RpcStreamEnd).length).toBe(1)
     expect(finished).toBe(true)
 
@@ -265,8 +278,11 @@ describe('RPC stream flow control', () => {
 
     const inFlight = send(encodeRpcMessage(1, 'test', {}))
     await flush()
+    // one credit so the generator actually starts (and has cleanup to run)
+    await send(encodeRpcStreamPull(1, 1))
+    await flush()
 
-    // handler is parked waiting for credit; teardown must release it
+    // the loop is parked waiting for more credit; teardown must release it
     await gateway.stop()
     await inFlight
 
@@ -304,16 +320,16 @@ describe('RPC stream flow control', () => {
   })
 
   it('reaps a stream whose consumer never pulls via the idle timeout', async () => {
-    let finished = false
+    let advanced = false
+    // never-yielding producer + never-iterating client: without the credit
+    // gate before next() this state had no timer and leaked forever
     async function* handler() {
-      try {
-        while (true) yield 'tick'
-      } finally {
-        finished = true
-      }
+      advanced = true
+      await new Promise(() => {})
+      yield 'never'
     }
 
-    const { gateway, sentOfType, send } = await createTestGateway({
+    const { gateway, sentOfType, send, connection } = await createTestGateway({
       call: async () => () => handler(),
       streamIdleTimeout: 50,
     })
@@ -321,10 +337,12 @@ describe('RPC stream flow control', () => {
     const inFlight = send(encodeRpcMessage(1, 'test', {}))
     await inFlight
 
-    expect(finished).toBe(true)
     const aborts = sentOfType(ServerMessageType.RpcStreamAbort)
     expect(aborts.length).toBe(1)
     expect(aborts[0].rest.toString()).toBe(STREAM_IDLE_TIMEOUT_REASON)
+    // the producer was never advanced and the reservation is released
+    expect(advanced).toBe(false)
+    expect(gateway.rpcs.get(connection.id, 1)).toBeUndefined()
 
     await gateway.stop()
   })
@@ -483,9 +501,13 @@ describe('RPC stream flow control', () => {
     const { gateway, sentOfType, send } = await createTestGateway({
       call: async () => () => handler(),
       onSend: (message) => {
-        // simulate an in-process transport delivering the first pull
-        // re-entrantly, before the response send even returns
-        if (message.type === ServerMessageType.RpcStreamResponse) {
+        // simulate an in-process transport delivering pulls re-entrantly:
+        // the first before the response send even returns, the next one
+        // (the consumer's final read) inside the chunk send
+        if (
+          message.type === ServerMessageType.RpcStreamResponse ||
+          message.type === ServerMessageType.RpcStreamChunk
+        ) {
           void sendNow?.(encodeRpcStreamPull(1, 1))
         }
       },
@@ -519,6 +541,10 @@ describe('RPC stream flow control', () => {
 
     const inFlight = send(encodeRpcMessage(1, 'test', {}))
     await flush()
+    // a valid credit first, so the generator starts and has cleanup to run
+    await send(encodeRpcStreamPull(1, 1))
+    await flush()
+    expect(sentOfType(ServerMessageType.RpcStreamChunk).length).toBe(1)
 
     await send(encodeRpcStreamPull(1, 0))
     await inFlight

@@ -92,8 +92,12 @@ export interface GatewayOptions<
   }
   identity?: ConnectionIdentity
   /**
-   * Aborts any stream (blob or RPC) with no activity in either direction for
-   * this long. Activity = chunk sent/received, credit granted/received.
+   * Bounds peer inactivity per stream. For RPC streams it caps only how long
+   * the server waits for consumer credit (a client that isn't pulling);
+   * producer stalls with a live, waiting consumer are allowed indefinitely
+   * (sparse streams, e.g. pubsub subscriptions). For blob streams it bounds
+   * inactivity in either direction (chunk sent/received, credit
+   * granted/received). Expiry aborts the stream.
    */
   streamIdleTimeout?: number
 
@@ -867,15 +871,15 @@ export class Gateway<
           ]()
 
           while (true) {
-            const result = (await Promise.race([
-              iterator.next(),
-              flow.promise,
-            ])) as IteratorResult<unknown>
-            if (result.done) break
-            signal.throwIfAborted()
+            // The credit wait comes BEFORE next(): a consumer that never
+            // iterates must not pin the generator, call container and
+            // reservation forever — with zero credit the producer is never
+            // advanced and the wait's idle timer reaps the stream. Sparse
+            // producers stay safe: a waiting consumer has already granted
+            // credit before the silence, and next() races only the abort.
             while (credit.credits <= 0) {
-              // idle detection bounds only consumer inactivity: a chunk is
-              // ready but the client isn't pulling
+              // idle detection bounds only consumer inactivity: the producer
+              // is ready but the client isn't pulling
               const grant = createFuture<void>()
               credit.notify = grant.resolve
               const idleTimer = setTimeout(
@@ -891,6 +895,14 @@ export class Gateway<
               }
               signal.throwIfAborted()
             }
+            const result = (await Promise.race([
+              iterator.next(),
+              flow.promise,
+            ])) as IteratorResult<unknown>
+            // the last credit is answered by End instead of a chunk: the
+            // consumer's final read resolves done
+            if (result.done) break
+            signal.throwIfAborted()
             credit.credits--
             const chunkEncoded = encoder.encode(result.value)
             const sent = transport.send!(
