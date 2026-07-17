@@ -32,8 +32,10 @@ export type WsClientTransportOptions = {
   WebSocket?: typeof WebSocket
 
   /**
-   * Also send the auth token as the `auth` URL query parameter, for servers
-   * that predate subprotocol auth.
+   * Send the auth token as the `auth` URL query parameter instead of the
+   * subprotocol, for servers that predate subprotocol auth — those never
+   * echo an offered subprotocol back, which spec-enforcing clients treat
+   * as a failed handshake.
    * @deprecated tokens in URLs leak into proxy/access logs; scheduled for
    * removal in the next release
    * @default false
@@ -72,13 +74,16 @@ export class WsTransportClient implements BidirectionalTransport {
     const protocols: string[] = []
 
     if (params.auth) {
-      // Sec-WebSocket-Protocol is the only handshake header browsers let a
-      // WebSocket set — carrying the token there keeps it out of URLs, where
-      // it would leak into proxy/access logs, history and Referer
-      protocols.push(encodeWsAuthSubprotocol(params.auth))
-      // deprecated: pre-subprotocol servers read the token from the URL
       if (this.options.authQueryParam) {
+        // deprecated: pre-subprotocol servers read the token from the URL and
+        // never echo a subprotocol back, so offering one here would fail the
+        // handshake — the query param must replace it, not supplement it
         url.searchParams.set('auth', params.auth)
+      } else {
+        // Sec-WebSocket-Protocol is the only handshake header browsers let a
+        // WebSocket set — carrying the token there keeps it out of URLs, where
+        // it would leak into proxy/access logs, history and Referer
+        protocols.push(encodeWsAuthSubprotocol(params.auth))
       }
     }
 

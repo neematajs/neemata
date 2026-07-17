@@ -1,5 +1,11 @@
+import type { AddressInfo } from 'node:net'
+import { createHash } from 'node:crypto'
+import { createServer as createHttpServer } from 'node:http'
+
 import type { Hooks } from 'crossws'
-import { encodeWsAuthSubprotocol } from '@nmtjs/protocol'
+import { JsonFormat } from '@nmtjs/json-format/client'
+import { encodeWsAuthSubprotocol, ProtocolVersion } from '@nmtjs/protocol'
+import { WsTransportClient } from '@nmtjs/ws-client'
 import { describe, expect, it, vi } from 'vitest'
 
 import { WsTransport } from '../src/runtimes/node.ts'
@@ -169,6 +175,61 @@ describe('auth subprotocol handshake over a real uWS transport', () => {
     } finally {
       ws.close()
       await server.stop()
+    }
+  })
+})
+
+describe('deprecated authQueryParam against a pre-subprotocol server', () => {
+  // a legacy (pre-subprotocol) server completes the upgrade without echoing
+  // Sec-WebSocket-Protocol, and spec-enforcing clients fail any handshake
+  // whose subprotocol offer went unanswered — so the opt-in must put the
+  // token in the URL instead of offering a subprotocol
+  it('completes the handshake and carries the token in the URL', async () => {
+    const offeredSubprotocols: (string | undefined)[] = []
+    const authParams: (string | null)[] = []
+
+    const server = createHttpServer()
+    server.on('upgrade', (req, socket) => {
+      offeredSubprotocols.push(req.headers['sec-websocket-protocol'])
+      authParams.push(
+        new URL(req.url!, 'http://localhost').searchParams.get('auth'),
+      )
+      const accept = createHash('sha1')
+        .update(
+          `${req.headers['sec-websocket-key']}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`,
+        )
+        .digest('base64')
+      socket.write(
+        'HTTP/1.1 101 Switching Protocols\r\n' +
+          'Upgrade: websocket\r\n' +
+          'Connection: Upgrade\r\n' +
+          `Sec-WebSocket-Accept: ${accept}\r\n\r\n`,
+      )
+      // the closing handshake is irrelevant here — drop the TCP connection
+      // on the client's close frame so disconnect() can settle
+      socket.on('data', () => socket.destroy())
+    })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const { port } = server.address() as AddressInfo
+
+    const transport = new WsTransportClient(
+      new JsonFormat(),
+      ProtocolVersion.v1,
+      { url: `ws://127.0.0.1:${port}`, authQueryParam: true },
+    )
+
+    try {
+      await transport.connect({
+        auth: 'legacy-token',
+        onConnect: vi.fn(),
+        onMessage: vi.fn(),
+        onDisconnect: vi.fn(),
+      })
+      expect(authParams).toEqual(['legacy-token'])
+      expect(offeredSubprotocols).toEqual([undefined])
+    } finally {
+      await transport.disconnect()
+      await new Promise<void>((resolve) => server.close(() => resolve()))
     }
   })
 })

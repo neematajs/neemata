@@ -118,7 +118,7 @@ describe('WsTransportClient', () => {
     expect(onDisconnect).toHaveBeenCalledWith('server')
   })
 
-  it('sends the auth query param only with the deprecated opt-in', async () => {
+  it('replaces the subprotocol with the auth query param on the deprecated opt-in', async () => {
     const transport = new WsTransportClient(
       new TestFormat(),
       ProtocolVersion.v1,
@@ -137,9 +137,11 @@ describe('WsTransportClient', () => {
     })
 
     const socket = FakeWebSocket.instances.at(-1)!
-    // legacy servers read the URL, new ones the subprotocol — send both
     expect(socket.url.searchParams.get('auth')).toBe('Bearer t')
-    expect(socket.protocols).toEqual([encodeWsAuthSubprotocol('Bearer t')])
+    // pre-subprotocol servers never echo an offered subprotocol back, and
+    // spec-enforcing clients fail the handshake on an unanswered offer —
+    // so none may be offered at all
+    expect(socket.protocols).toEqual([])
 
     socket.emit('open')
     await connectPromise
