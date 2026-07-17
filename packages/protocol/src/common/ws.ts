@@ -48,7 +48,10 @@ export const matchWsAuthSubprotocol = (
       .replaceAll('_', '/')
     try {
       const bytes = Uint8Array.from(atob(payload), (char) => char.charCodeAt(0))
-      return { auth: new TextDecoder().decode(bytes), subprotocol }
+      // lossy decoding (BOM stripping, U+FFFD substitution) could collapse
+      // distinct credentials into the same decoded identity
+      const decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
+      return { auth: decoder.decode(bytes), subprotocol }
     } catch {
       // malformed payload — treat as a foreign subprotocol
     }

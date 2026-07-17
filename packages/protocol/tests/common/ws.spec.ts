@@ -56,4 +56,19 @@ describe('matchWsAuthSubprotocol', () => {
       matchWsAuthSubprotocol(`${WS_AUTH_SUBPROTOCOL_PREFIX}!!!not-base64!!!`),
     ).toBeNull()
   })
+
+  it('round-trips a BOM-prefixed credential without stripping the BOM', () => {
+    // a lossy decoder would collapse '﻿secret' and 'secret' into one
+    const token = '﻿secret'
+    const subprotocol = encodeWsAuthSubprotocol(token)
+    expect(matchWsAuthSubprotocol(subprotocol)).toEqual({
+      auth: token,
+      subprotocol,
+    })
+  })
+
+  it('rejects valid base64url that is not valid UTF-8', () => {
+    // '_w' decodes to the lone byte 0xff — must not become U+FFFD
+    expect(matchWsAuthSubprotocol(`${WS_AUTH_SUBPROTOCOL_PREFIX}_w`)).toBeNull()
+  })
 })
