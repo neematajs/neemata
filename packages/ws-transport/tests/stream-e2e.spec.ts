@@ -69,6 +69,10 @@ const contract = c.router({
 const sleep = (ms: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, ms))
 
+// distinguishable from real failures, so a test can tell "the operation
+// hung" apart from "the operation failed as expected"
+class DeadlineExceededError extends Error {}
+
 const withDeadline = async <T>(
   promise: Promise<T>,
   ms: number,
@@ -76,12 +80,39 @@ const withDeadline = async <T>(
 ) => {
   let timer!: ReturnType<typeof setTimeout>
   const deadline = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(message)), ms)
+    timer = setTimeout(() => reject(new DeadlineExceededError(message)), ms)
   })
   try {
     return await Promise.race([promise, deadline])
   } finally {
     clearTimeout(timer)
+  }
+}
+
+/**
+ * Deadline-polled quiescence: resolves once the sampled value has stopped
+ * changing for `stableMs`. Used instead of fixed sleeps so pacing asserts
+ * observe a settled network, not a lucky race.
+ */
+const waitQuiescent = async (
+  sample: () => unknown,
+  { stableMs = 200, deadlineMs = 5000 } = {},
+) => {
+  const deadline = Date.now() + deadlineMs
+  let last = sample()
+  let stableSince = Date.now()
+  while (true) {
+    await sleep(20)
+    const current = sample()
+    if (current !== last) {
+      last = current
+      stableSince = Date.now()
+    } else if (Date.now() - stableSince >= stableMs) {
+      return
+    }
+    if (Date.now() > deadline) {
+      throw new Error('waitQuiescent: value never settled')
+    }
   }
 }
 
@@ -225,29 +256,35 @@ describe('stream flow control over a real WS transport', () => {
 
     const blob = await client.call.download({})
     const stream = client.consumeBlob(blob)
+    const iterator = stream[Symbol.asyncIterator]()
 
-    const received: Uint8Array[] = []
-    let consumed = 0
-    let maxLead = 0
-    let checkedMidway = false
-    for await (const chunk of stream) {
-      received.push(chunk as Uint8Array)
-      consumed += chunk.byteLength
-      maxLead = Math.max(maxLead, sourceBytes - consumed)
-      if (!checkedMidway && consumed >= BLOB_SIZE / 2) {
-        checkedMidway = true
-        // pacing: halfway through, the server must not have drained the source
-        expect(sourceBytes).toBeLessThan(BLOB_SIZE)
-      }
-      await sleep(5)
+    // consume exactly one chunk, then pause behind the barrier
+    const first = await iterator.next()
+    expect(first.done).toBe(false)
+    const firstChunk = first.value as Uint8Array
+    const received: Uint8Array[] = [firstChunk]
+    expect(firstChunk.byteLength).toBe(PULL_SIZE)
+
+    // with the consumer paused, the source lead is exact and deterministic:
+    // the granted chunk (sent) plus exactly two chunks of read-ahead —
+    // source.read() drains-and-tops-off in one call (the pump keeps the
+    // un-credited remainder sliced off in its own buffer) and Node's hwm-1
+    // refill stages one more. sourceBytes is server-internal
+    // instrumentation, no socket buffering blurs it.
+    await waitQuiescent(() => sourceBytes)
+    expect(sourceBytes).toBe(firstChunk.byteLength + 2 * PULL_SIZE)
+
+    // release the consumer and drain the rest
+    while (true) {
+      const { done, value } = await iterator.next()
+      if (done) break
+      received.push(value as Uint8Array)
     }
 
     const data = Buffer.concat(received)
     expect(data.byteLength).toBe(BLOB_SIZE)
     expect(data.equals(pattern)).toBe(true)
-    expect(checkedMidway).toBe(true)
-    // socket buffers blur exact in-flight counts: assert bounded lead only
-    expect(maxLead).toBeLessThanOrEqual(5 * PULL_SIZE)
+    expect(sourceBytes).toBe(BLOB_SIZE)
   })
 
   it('never lets an RPC stream producer run ahead of the consumer', async () => {
@@ -272,13 +309,24 @@ describe('stream flow control over a real WS transport', () => {
     })
 
     const stream = await client.stream.chunks({})
-    const received: string[] = []
-    for await (const chunk of stream) {
-      received.push(chunk)
-      // one chunk credit per consumer read: the generator may only ever be
-      // marginally ahead of what the client has consumed
-      expect(yielded).toBeLessThanOrEqual(received.length + 2)
-      if (received.length % 5 === 0) await sleep(10)
+    const iterator = stream[Symbol.asyncIterator]()
+
+    // consume one chunk, then pause: the producer must have advanced exactly
+    // once — one credit, one yield, no prefetch (yielded is server-internal
+    // instrumentation, exact by construction)
+    const first = await iterator.next()
+    expect(first.value).toBe('chunk-0')
+    await waitQuiescent(() => yielded)
+    expect(yielded).toBe(1)
+
+    const received: string[] = [first.value]
+    while (true) {
+      const { done, value } = await iterator.next()
+      if (done) break
+      received.push(value)
+      // strict lockstep: the next credit is only granted by the next read,
+      // so the generator can never be ahead of what the client consumed
+      expect(yielded).toBe(received.length)
     }
 
     expect(received).toEqual(
@@ -353,23 +401,33 @@ describe('stream flow control over a real WS transport', () => {
     const BLOB_SIZE = 8 * 65536
     const pattern = buildPattern(BLOB_SIZE)
     let pushedBytes = 0
+    let grantedBytes = 0
+    let maxPullSize = 0
     let serverConsumed = 0
-    let maxLead = 0
 
-    // observes outgoing pushes on the wire; sampling at push time catches the
-    // widest client-ahead-of-server window
+    // counts wire-level credit traffic on the client: grants received
+    // (incoming pulls) and pushes sent against them
     const pacingObserver: ClientPlugin = () => ({
       onClientEvent: (event) => {
-        if (
-          event.kind === 'stream_event' &&
-          event.direction === 'outgoing' &&
-          event.streamType === 'client_blob' &&
-          event.action === 'push'
-        ) {
+        if (event.kind !== 'stream_event') return
+        if (event.streamType !== 'client_blob') return
+        if (event.direction === 'outgoing' && event.action === 'push') {
           pushedBytes += event.byteLength ?? 0
-          maxLead = Math.max(maxLead, pushedBytes - serverConsumed)
+        }
+        if (event.direction === 'incoming' && event.action === 'pull') {
+          grantedBytes += event.byteLength ?? 0
+          maxPullSize = Math.max(maxPullSize, event.byteLength ?? 0)
         }
       },
+    })
+
+    let releaseServer!: () => void
+    const serverBarrier = new Promise<void>((resolve) => {
+      releaseServer = resolve
+    })
+    let firstChunkConsumed!: () => void
+    const firstChunk = new Promise<void>((resolve) => {
+      firstChunkConsumed = resolve
     })
 
     const { client } = await createHarness({
@@ -381,10 +439,16 @@ describe('stream flow control over a real WS transport', () => {
           )
           const stream = consumeBlob(payload.blob)
           const parts: Buffer[] = []
+          let first = true
           for await (const chunk of stream) {
             parts.push(chunk)
             serverConsumed += chunk.byteLength
-            await sleep(2)
+            if (first) {
+              first = false
+              firstChunkConsumed()
+              // consumer pauses behind the barrier: grants must dry up
+              await serverBarrier
+            }
           }
           const data = Buffer.concat(parts)
           return { bytes: data.byteLength, ok: data.equals(pattern) }
@@ -395,18 +459,34 @@ describe('stream flow control over a real WS transport', () => {
     const blob = client.createBlob(new Blob([pattern]), {
       type: 'application/octet-stream',
     })
-    const result = await client.call.upload({ blob })
+    const resultPromise = client.call.upload({ blob })
+
+    await withDeadline(firstChunk, 5000, 'server never consumed a chunk')
+    // wait for the credit traffic to settle with the consumer paused
+    await waitQuiescent(() => `${grantedBytes}:${pushedBytes}`)
+
+    // credit conformance is exact: both counters live on the client, so no
+    // kernel buffering is in the measurement path — every granted byte was
+    // answered, and not one byte more was pushed
+    expect(pushedBytes).toBe(grantedBytes)
+    expect(pushedBytes).toBeGreaterThan(0)
+    expect(pushedBytes).toBeLessThan(BLOB_SIZE)
+    // outstanding grants are bounded by the server-side stream buffers
+    // (readable + writable high-water marks plus one in-flight grant) — the
+    // only slack in this assert is Node's own buffering, not the network
+    expect(grantedBytes - serverConsumed).toBeLessThanOrEqual(3 * maxPullSize)
+
+    releaseServer()
+    const result = await resultPromise
 
     expect(result).toEqual({ bytes: BLOB_SIZE, ok: true })
     expect(pushedBytes).toBe(BLOB_SIZE)
-    // pushes are gated by server-granted byte credits; allow generous slack
-    // for the server-side stream buffer and frames in flight
-    expect(maxLead).toBeLessThanOrEqual(4 * 65536)
   })
 
   it('aborts a download instead of corrupting it when uWS drops a frame', async () => {
     const BLOB_SIZE = 8 * 1024 * 1024
     const data = Buffer.alloc(BLOB_SIZE, 0xab)
+    let sourceBytes = 0
 
     const { client } = await createHarness({
       // any buffered backpressure beyond 1KiB makes uWS drop the frame
@@ -419,10 +499,12 @@ describe('stream flow control over a real WS transport', () => {
           // single in-memory chunk: the credit pump emits it as one 8MiB
           // frame the moment credit arrives, far beyond what the kernel
           // socket buffer absorbs synchronously
-          return createBlob(Readable.from([data]), {
-            type: 'application/octet-stream',
-            size: BLOB_SIZE,
-          })
+          return createBlob(
+            trackedSource(data, BLOB_SIZE, (total) => {
+              sourceBytes = total
+            }),
+            { type: 'application/octet-stream', size: BLOB_SIZE },
+          )
         },
       },
     })
@@ -440,10 +522,39 @@ describe('stream flow control over a real WS transport', () => {
     )
     await core.send(pull)
 
-    // the dropped frame must surface as a stream error (transport drop abort
-    // or connection close), never as truncated/corrupt data
-    await expect(
-      withDeadline(stream.bytes(), 10_000, 'download neither failed nor ended'),
-    ).rejects.toBeDefined()
+    // the dropped frame must surface as a stream error, never as truncated /
+    // corrupt data and never as a silent hang
+    const outcome = await withDeadline(
+      stream.bytes(),
+      10_000,
+      'download neither failed nor ended',
+    ).then(
+      () => ({ failed: false as const }),
+      (error: unknown) => ({ failed: true as const, error }),
+    )
+
+    if (!outcome.failed) {
+      expect.unreachable('download completed despite the dropped frame')
+    }
+    if (outcome.error instanceof DeadlineExceededError) {
+      expect.unreachable(
+        'download hung: neither a transport-drop abort nor a connection close surfaced',
+      )
+    }
+
+    // the oversized push was actually attempted: the pump drained the source
+    expect(sourceBytes).toBe(BLOB_SIZE)
+
+    // and the failure is the real surface: the transport-drop abort reason,
+    // or the connection-close/disconnect error when the abort frame itself
+    // was also dropped
+    const message =
+      outcome.error instanceof Error
+        ? outcome.error.message
+        : String(outcome.error)
+    expect(
+      message.includes('transport backpressure overflow') ||
+        /disconnect|closed|server/i.test(message),
+    ).toBe(true)
   })
 })
