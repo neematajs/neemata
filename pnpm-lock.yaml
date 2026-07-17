@@ -448,12 +448,24 @@ importers:
       '@nmtjs/common':
         specifier: workspace:*
         version: link:../common
+      '@nmtjs/contract':
+        specifier: workspace:*
+        version: link:../contract
       '@nmtjs/gateway':
         specifier: workspace:*
         version: link:../gateway
+      '@nmtjs/json-format':
+        specifier: workspace:*
+        version: link:../json-format
       '@nmtjs/protocol':
         specifier: workspace:*
         version: link:../protocol
+      '@nmtjs/type':
+        specifier: workspace:*
+        version: link:../type
+      '@nmtjs/ws-client':
+        specifier: workspace:*
+        version: link:../ws-client
       uWebSockets.js:
         specifier: github:uNetworking/uWebSockets.js#v20.67.0
         version: https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/e0f56ebb4b349017f006e14d1cd29052f2a7121d

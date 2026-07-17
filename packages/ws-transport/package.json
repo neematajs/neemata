@@ -55,8 +55,12 @@
     "@nmtjs/application": "workspace:*",
     "@nmtjs/client": "workspace:*",
     "@nmtjs/common": "workspace:*",
+    "@nmtjs/contract": "workspace:*",
     "@nmtjs/gateway": "workspace:*",
+    "@nmtjs/json-format": "workspace:*",
     "@nmtjs/protocol": "workspace:*",
+    "@nmtjs/type": "workspace:*",
+    "@nmtjs/ws-client": "workspace:*",
     "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.67.0"
   },
   "peerDependencies": {
