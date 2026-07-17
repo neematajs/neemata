@@ -55,6 +55,9 @@ export interface StreamLayerApi {
         stream: ProtocolServerBlobStream,
         options?: { signal?: AbortSignal },
       ) => void
+      // fires when the pumped source settles (end or abort): the body can no
+      // longer be aborted, so callers may release abort wiring tied to it
+      onSourceSettled?: () => void
     },
   ) => {
     blob: ProtocolBlobInterface
@@ -153,6 +156,7 @@ export const createStreamLayer = (core: ClientCore): StreamLayerApi => {
         stream: ProtocolServerBlobStream,
         options?: { signal?: AbortSignal },
       ) => void
+      onSourceSettled?: () => void
     },
   ) => {
     const id = getStreamId()
@@ -171,7 +175,13 @@ export const createStreamLayer = (core: ClientCore): StreamLayerApi => {
       serverBlobInitializers.set(id, (subscriptionOptions) => {
         if (started) return
         started = true
-        void pumpServerBlobSource(id, options.source!, subscriptionOptions)
+        // pump never rejects (errors abort the stream inside), so finally
+        // here means "the body settled" for both graceful and failed ends
+        void pumpServerBlobSource(
+          id,
+          options.source!,
+          subscriptionOptions,
+        ).finally(() => options.onSourceSettled?.())
       })
     }
 

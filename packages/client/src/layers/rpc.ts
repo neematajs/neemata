@@ -1,6 +1,6 @@
 import type { Future } from '@nmtjs/common'
 import type { ServerMessageTypePayload } from '@nmtjs/protocol/client'
-import { anyAbortSignal, createFuture, MAX_UINT32, noopFn } from '@nmtjs/common'
+import { createFuture, MAX_UINT32, noopFn } from '@nmtjs/common'
 import {
   ClientMessageType,
   ConnectionType,
@@ -22,6 +22,9 @@ export type ProtocolClientCall = Future<any> & {
   procedure: string
   signal?: AbortSignal
   cleanup?: () => void
+  // releases the composed per-call signal from its sources; exposed on the
+  // call so response handling can defer it past settle (HTTP blob bodies)
+  detachSignals?: () => void
 }
 
 export interface RpcLayerApi {
@@ -162,11 +165,18 @@ const createManagedAsyncIterable = <T>(
 
       return {
         async next() {
-          const result = await iterator.next()
-          if (result.done) {
+          try {
+            const result = await iterator.next()
+            if (result.done) {
+              finish()
+            }
+            return result
+          } catch (error) {
+            // a failed read ends the iteration too: lifecycle cleanup
+            // (listener teardown) must not depend on a graceful end
             finish()
+            throw error
           }
-          return result
         },
         async return(value) {
           options.onReturn?.(value)
@@ -501,6 +511,10 @@ export const createRpcLayer = (
 
       const { blob } = streams.addServerBlobStream(response.metadata, {
         source: response.source,
+        // once the body settles nothing is left for the call signal to
+        // abort — release its source listeners (kept wired past settle so
+        // an abort can still kill the in-flight fetch body)
+        onSourceSettled: () => call.detachSignals?.(),
       })
       call.resolve(blob)
       return
@@ -648,19 +662,67 @@ export const createRpcLayer = (
     callOptions: ClientCallOptions = {},
   ) => {
     const timeout = callOptions.timeout ?? options.timeout
-    const controller = new AbortController()
+    // genuine cancel channel: aborting it must reach the server as a real
+    // RpcAbort (early consumer exit from a stream), unlike lifecycle cleanup
+    const cancelController = new AbortController()
 
-    const signals: AbortSignal[] = [controller.signal]
+    // the per-call signal is composed by hand instead of AbortSignal.any so
+    // inputs are detachable: the request timeout must cover only the pending
+    // phase, and a settled call must tear down without abort()ing
+    const composed = new AbortController()
+    const detachers = new Set<() => void>()
+    const attach = (source: AbortSignal) => {
+      if (composed.signal.aborted) return noopFn
+      if (source.aborted) {
+        composed.abort(source.reason)
+        return noopFn
+      }
+      const onAbort = () => composed.abort(source.reason)
+      source.addEventListener('abort', onAbort, { once: true })
+      const detach = () => {
+        source.removeEventListener('abort', onAbort)
+        detachers.delete(detach)
+      }
+      detachers.add(detach)
+      return detach
+    }
 
-    if (timeout) signals.push(AbortSignal.timeout(timeout))
-    if (callOptions.signal) signals.push(callOptions.signal)
-    if (core.connectionSignal) signals.push(core.connectionSignal)
+    attach(cancelController.signal)
+    const detachTimeout = timeout
+      ? attach(AbortSignal.timeout(timeout))
+      : noopFn
+    if (callOptions.signal) attach(callOptions.signal)
+    if (core.connectionSignal) attach(core.connectionSignal)
 
-    const signal = signals.length ? anyAbortSignal(...signals) : undefined
+    const signal = composed.signal
+    const detachAll = () => {
+      for (const detach of [...detachers]) detach()
+    }
+    // an aborted composed signal can never abort again: whatever path aborts
+    // it, the source listeners are dead weight from that point on
+    signal.addEventListener('abort', detachAll, { once: true })
+    let removePendingAbortListener = noopFn
+
     const currentCallId = nextCallId()
     const call = createFuture() as ProtocolClientCall
+    // pending-phase wiring must be released synchronously at settle: a
+    // response can be processed while send() is still in flight, and in that
+    // window the pending listener would race the stream's own (double
+    // RpcAbort) and a stale request timeout could kill the established stream
+    const { resolve, reject } = call
+    call.resolve = (value) => {
+      removePendingAbortListener()
+      detachTimeout()
+      resolve(value)
+    }
+    call.reject = (reason) => {
+      removePendingAbortListener()
+      detachTimeout()
+      reject(reason)
+    }
     call.procedure = procedure
     call.signal = signal
+    call.detachSignals = detachAll
 
     calls.set(currentCallId, call)
     core.emitClientEvent({
@@ -683,28 +745,31 @@ export const createRpcLayer = (
           throw toAbortError(signal)
         }
 
-        signal?.addEventListener(
-          'abort',
-          () => {
-            call.reject(toAbortError(signal))
+        // pending phase only: once the call settles this listener is removed
+        // explicitly — for streams the stream-specific listener takes over
+        const onPendingAbort = () => {
+          call.reject(toAbortError(signal))
 
-            if (
-              core.transportType === ConnectionType.Bidirectional &&
-              core.messageContext
-            ) {
-              const buffer = core.protocol.encodeMessage(
-                core.messageContext,
-                ClientMessageType.RpcAbort,
-                {
-                  callId: currentCallId,
-                  reason: toReasonString(signal.reason),
-                },
-              )
-              core.send(buffer).catch(noopFn)
-            }
-          },
-          { once: true },
-        )
+          if (
+            core.transportType === ConnectionType.Bidirectional &&
+            core.messageContext
+          ) {
+            const buffer = core.protocol.encodeMessage(
+              core.messageContext,
+              ClientMessageType.RpcAbort,
+              {
+                callId: currentCallId,
+                reason: toReasonString(signal.reason),
+              },
+            )
+            core.send(buffer).catch(noopFn)
+          }
+        }
+
+        signal.addEventListener('abort', onPendingAbort, { once: true })
+        removePendingAbortListener = () => {
+          signal.removeEventListener('abort', onPendingAbort)
+        }
 
         const transformedPayload = transformer.encode(procedure, payload)
 
@@ -769,15 +834,18 @@ export const createRpcLayer = (
     return call.promise
       .then((value) => {
         if (value instanceof ProtocolServerRPCStream) {
+          // streaming phase: pending wiring was released at settle, the
+          // stream-specific abort listener owns aborts from here on
           const stream = createManagedAsyncIterable(value, {
             onDone: () => {
               call.cleanup?.()
+              detachAll()
             },
             onReturn: (reason) => {
-              controller.abort(reason)
+              cancelController.abort(reason)
             },
             onThrow: (error) => {
-              controller.abort(error)
+              cancelController.abort(error)
             },
           })
 
@@ -798,14 +866,25 @@ export const createRpcLayer = (
         }
 
         if (isBlobInterface(value)) {
+          if (core.transportType === ConnectionType.Bidirectional) {
+            // WS blob consumption is message-driven with its own subscription
+            // signal — the call signal guards nothing once the call settled
+            detachAll()
+          }
+          // HTTP: sources stay wired so an abort can still kill the in-flight
+          // fetch body; detached when the pumped body settles (onSourceSettled
+          // in handleCallResponse) or when the composed signal aborts
           return value
         }
 
-        controller.abort()
+        // settled unary call: nothing left for the signal to guard — tear
+        // down by removing listeners; abort()ing here used to emit one stale
+        // RpcAbort frame per settled call
+        detachAll()
         return value
       })
       .catch((error) => {
-        controller.abort()
+        detachAll()
         throw error
       })
       .finally(() => {
