@@ -2,6 +2,7 @@ import type { BaseClientFormat } from '@nmtjs/protocol/client'
 import {
   ClientMessageType,
   ConnectionType,
+  createProtocolBlobReference,
   ServerMessageType,
 } from '@nmtjs/protocol'
 import { describe, expect, it, vi } from 'vitest'
@@ -57,12 +58,33 @@ class MockCore extends EventEmitter<{
   }
 }
 
-const createLayer = (core: MockCore) =>
+const createLayer = (core: MockCore, streams?: unknown) =>
   createRpcLayer(
     core as any,
-    { addServerBlobStream: vi.fn() } as any,
+    (streams ?? { addServerBlobStream: vi.fn() }) as any,
     new BaseClientTransformer(),
   )
+
+// net 'abort' listeners currently registered on the signal; once-listeners
+// never fire in these tests, so adds/removes account for everything
+const trackAbortListeners = (signal: AbortSignal) => {
+  const listeners = new Set<unknown>()
+  const add = signal.addEventListener.bind(signal)
+  const remove = signal.removeEventListener.bind(signal)
+  vi.spyOn(signal, 'addEventListener').mockImplementation(
+    (type, listener, options) => {
+      listeners.add(listener)
+      add(type, listener as any, options)
+    },
+  )
+  vi.spyOn(signal, 'removeEventListener').mockImplementation(
+    (type, listener, options) => {
+      listeners.delete(listener)
+      remove(type, listener as any, options)
+    },
+  )
+  return () => listeners.size
+}
 
 describe('RPC call signal lifecycle', () => {
   it('sends no RpcAbort for settled unary calls, even with a timeout configured', async () => {
@@ -292,5 +314,134 @@ describe('RPC call signal lifecycle', () => {
       value: { n: 1 },
     })
     expect(core.countSentAborts()).toBe(0)
+  })
+
+  it('still cancels the fetch reader when the user signal aborts mid-stream (unidirectional)', async () => {
+    let bodyController!: ReadableStreamDefaultController<Uint8Array>
+    let cancelled: unknown = null
+    const body = new ReadableStream<Uint8Array>({
+      start: (controller) => {
+        bodyController = controller
+      },
+      cancel: (reason) => {
+        cancelled = reason ?? 'cancelled'
+      },
+    })
+
+    const core = new MockCore(ConnectionType.Unidirectional)
+    core.transportCall.mockResolvedValue({ type: 'rpc_stream', stream: body })
+    const rpcLayer = createLayer(core)
+    const abortController = new AbortController()
+
+    const iterable = await rpcLayer.call(
+      'users/feed',
+      {},
+      { _stream_response: true, signal: abortController.signal },
+    )
+    const iterator = iterable[Symbol.asyncIterator]()
+
+    const chunkPromise = iterator.next()
+    bodyController.enqueue(encodeJson({ n: 1 }))
+    await expect(chunkPromise).resolves.toEqual({
+      done: false,
+      value: { n: 1 },
+    })
+
+    // a genuine abort must still reach the fetch body reader
+    abortController.abort('user cancelled')
+    await wait(10)
+    expect(cancelled).toBe('user cancelled')
+  })
+
+  it('still cancels the fetch reader when the consumer returns early (unidirectional)', async () => {
+    let cancelled: unknown = null
+    const body = new ReadableStream<Uint8Array>({
+      cancel: (reason) => {
+        cancelled = reason ?? 'cancelled'
+      },
+    })
+
+    const core = new MockCore(ConnectionType.Unidirectional)
+    core.transportCall.mockResolvedValue({ type: 'rpc_stream', stream: body })
+    const rpcLayer = createLayer(core)
+
+    const iterable = await rpcLayer.call(
+      'users/feed',
+      {},
+      { _stream_response: true },
+    )
+    const iterator = iterable[Symbol.asyncIterator]()
+
+    await iterator.return?.(undefined)
+    await wait(10)
+    expect(cancelled).not.toBeNull()
+  })
+
+  it('detaches user-signal listeners once a unidirectional blob body settles', async () => {
+    let onSourceSettled: (() => void) | undefined
+    const streams = {
+      addServerBlobStream: vi.fn((metadata: any, options: any) => {
+        onSourceSettled = options?.onSourceSettled
+        return {
+          blob: createProtocolBlobReference(0, metadata),
+          streamId: 0,
+          stream: {},
+        }
+      }),
+    }
+
+    const core = new MockCore(ConnectionType.Unidirectional)
+    core.transportCall.mockResolvedValue({
+      type: 'blob',
+      metadata: { type: 'application/octet-stream' },
+      source: new ReadableStream(),
+    })
+    const rpcLayer = createLayer(core, streams)
+
+    const abortController = new AbortController()
+    const activeListeners = trackAbortListeners(abortController.signal)
+
+    await rpcLayer.call(
+      'files/download',
+      {},
+      { signal: abortController.signal },
+    )
+
+    // the body may still be downloading: the user signal must stay wired so
+    // it can abort the in-flight fetch body
+    expect(activeListeners()).toBeGreaterThan(0)
+
+    onSourceSettled?.()
+    expect(activeListeners()).toBe(0)
+  })
+
+  it('detaches user-signal listeners as soon as a bidirectional call settles with a blob', async () => {
+    const core = new MockCore()
+    const rpcLayer = createLayer(core)
+
+    const abortController = new AbortController()
+    const activeListeners = trackAbortListeners(abortController.signal)
+
+    const promise = rpcLayer.call(
+      'files/download',
+      {},
+      { signal: abortController.signal },
+    )
+    core.emit(
+      'message',
+      {
+        type: ServerMessageType.RpcResponse,
+        callId: 0,
+        result: createProtocolBlobReference(0, {
+          type: 'application/octet-stream',
+        }),
+      },
+      new Uint8Array([1]),
+    )
+    await promise
+
+    // WS blob consumption has its own subscription signal: nothing of this
+    // call may keep listening on the reused user signal
+    expect(activeListeners()).toBe(0)
   })
 })

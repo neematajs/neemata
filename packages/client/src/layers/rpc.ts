@@ -22,6 +22,9 @@ export type ProtocolClientCall = Future<any> & {
   procedure: string
   signal?: AbortSignal
   cleanup?: () => void
+  // releases the composed per-call signal from its sources; exposed on the
+  // call so response handling can defer it past settle (HTTP blob bodies)
+  detachSignals?: () => void
 }
 
 export interface RpcLayerApi {
@@ -508,6 +511,10 @@ export const createRpcLayer = (
 
       const { blob } = streams.addServerBlobStream(response.metadata, {
         source: response.source,
+        // once the body settles nothing is left for the call signal to
+        // abort — release its source listeners (kept wired past settle so
+        // an abort can still kill the in-flight fetch body)
+        onSourceSettled: () => call.detachSignals?.(),
       })
       call.resolve(blob)
       return
@@ -691,12 +698,16 @@ export const createRpcLayer = (
     const detachAll = () => {
       for (const detach of [...detachers]) detach()
     }
+    // an aborted composed signal can never abort again: whatever path aborts
+    // it, the source listeners are dead weight from that point on
+    signal.addEventListener('abort', detachAll, { once: true })
     let removePendingAbortListener = noopFn
 
     const currentCallId = nextCallId()
     const call = createFuture() as ProtocolClientCall
     call.procedure = procedure
     call.signal = signal
+    call.detachSignals = detachAll
 
     calls.set(currentCallId, call)
     core.emitClientEvent({
@@ -844,11 +855,16 @@ export const createRpcLayer = (
         }
 
         if (isBlobInterface(value)) {
-          // the blob body may still be downloading: keep cancel sources wired
-          // (e.g. HTTP aborts the fetch body), but drop the pending-phase
-          // listener and timeout — the call itself has settled
           removePendingAbortListener()
           detachTimeout()
+          if (core.transportType === ConnectionType.Bidirectional) {
+            // WS blob consumption is message-driven with its own subscription
+            // signal — the call signal guards nothing once the call settled
+            detachAll()
+          }
+          // HTTP: sources stay wired so an abort can still kill the in-flight
+          // fetch body; detached when the pumped body settles (onSourceSettled
+          // in handleCallResponse) or when the composed signal aborts
           return value
         }
 
