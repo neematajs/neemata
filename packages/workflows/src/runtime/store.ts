@@ -1,4 +1,8 @@
-import type { RunKind, WorkflowNodeKind } from '../types/index.ts'
+import type {
+  ResolvedRunUnique,
+  RunKind,
+  WorkflowNodeKind,
+} from '../types/index.ts'
 import type {
   NodeChildKind,
   RunSnapshot,
@@ -32,6 +36,7 @@ export type CreateRunInput = {
   readonly rootRunId?: string
   readonly tags?: Readonly<Record<string, string>>
   readonly idempotencyKey?: readonly unknown[]
+  readonly unique?: ResolvedRunUnique
 }
 
 export type CreateNodeInput = {

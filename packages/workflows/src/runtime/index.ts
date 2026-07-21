@@ -35,6 +35,7 @@ export type {
   CommandReleaseOptions,
   RunCoordinationExecutor,
 } from './executors.ts'
+export { WorkflowRunConflictError } from './errors.ts'
 export { createInMemoryWorkflowRuntime } from './in-memory.ts'
 export type { InMemoryWorkflowRuntime } from './in-memory.ts'
 export type {

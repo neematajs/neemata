@@ -149,6 +149,9 @@ export function createSchema(options?: CreateSchemaOptions) {
       rootRunId: uuid('root_run_id').notNull(),
       tags: jsonb('tags').notNull().default({}),
       idempotencyKey: jsonb('idempotency_key'),
+      uniqueKey: jsonb('unique_key'),
+      uniqueScope: text('unique_scope'),
+      uniqueBehavior: text('unique_behavior'),
       version: integer('version').notNull(),
       createdAt: timestamp('created_at', { withTimezone: true }).notNull(),
       updatedAt: timestamp('updated_at', { withTimezone: true }).notNull(),
@@ -157,6 +160,19 @@ export function createSchema(options?: CreateSchemaOptions) {
       uniqueIndex('workflow_runs_idempotency_idx')
         .on(t.idempotencyKey)
         .where(sql.raw('idempotency_key IS NOT NULL')),
+      // the partial predicates ARE the uniqueness guarantees: at most one
+      // non-terminal run per active-scoped key, one run ever per all-scoped
+      // key; terminal statuses are frozen into the predicate by design
+      uniqueIndex('workflow_runs_unique_active_idx')
+        .on(t.uniqueKey)
+        .where(
+          sql.raw(
+            "unique_key IS NOT NULL AND unique_scope = 'active' AND status NOT IN ('completed', 'cancelled', 'failed')",
+          ),
+        ),
+      uniqueIndex('workflow_runs_unique_all_idx')
+        .on(t.uniqueKey)
+        .where(sql.raw("unique_key IS NOT NULL AND unique_scope = 'all'")),
       index('workflow_runs_parent_idx')
         .on(t.parentRunId)
         .where(sql.raw('parent_run_id IS NOT NULL')),

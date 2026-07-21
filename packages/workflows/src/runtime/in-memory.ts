@@ -44,7 +44,7 @@ import type {
   WorkflowWakeEvents,
 } from './wake-events.ts'
 import { dispatchTaskRunAttempt } from './coordinator/attempt.ts'
-import { toStoredError } from './errors.ts'
+import { WorkflowRunConflictError, toStoredError } from './errors.ts'
 import {
   nextStoredScheduleRunAt,
   normalizeScheduleDefinitions,
@@ -133,6 +133,10 @@ export function createInMemoryWorkflowRuntime(
   const attempts = new Map<string, StoredAttempt>()
   const children = new Map<string, StoredNodeChild>()
   const runIdempotencyKeys = new Map<string, string>()
+  // in-process twins of the partial unique indexes: active entries are
+  // released on terminal transitions, all-scope entries live with the run
+  const activeUniqueRunKeys = new Map<string, string>()
+  const allUniqueRunKeys = new Map<string, string>()
   const runLeases = new Map<string, InMemoryRunLease>()
   const continueRunCommands: QueueItem<ContinueRunCommand>[] = []
   const attemptCommands: QueueItem<AttemptCommand>[] = []
@@ -244,6 +248,15 @@ export function createInMemoryWorkflowRuntime(
     left === undefined && right === undefined
       ? true
       : left !== undefined && right !== undefined && sameValue(left, right)
+  // mirrors the partial index predicate: a terminal run leaves the active
+  // uniqueness scope and frees its key
+  const releaseActiveUniqueKey = (run: StoredRun) => {
+    if (run.unique?.scope !== 'active') return
+    const key = valueKey(run.unique.key)
+    if (activeUniqueRunKeys.get(key) === run.id) {
+      activeUniqueRunKeys.delete(key)
+    }
+  }
   const jsonContains = (target: unknown, expected: unknown): boolean => {
     if (expected === undefined) return true
     if (Array.isArray(expected)) {
@@ -359,6 +372,25 @@ export function createInMemoryWorkflowRuntime(
       }
     }
 
+    if (input.unique) {
+      const uniqueKeys =
+        input.unique.scope === 'all' ? allUniqueRunKeys : activeUniqueRunKeys
+      const conflictingRunId = uniqueKeys.get(valueKey(input.unique.key))
+      const conflicting =
+        conflictingRunId === undefined ? undefined : runs.get(conflictingRunId)
+      if (conflicting) {
+        if (input.unique.behavior === 'join') {
+          return { run: conflicting, created: false }
+        }
+        throw new WorkflowRunConflictError({
+          runId: conflicting.id,
+          status: conflicting.status,
+          key: input.unique.key,
+          scope: input.unique.scope,
+        })
+      }
+    }
+
     const date = now()
     const runId = id('run')
     const run: StoredRun = {
@@ -380,6 +412,7 @@ export function createInMemoryWorkflowRuntime(
       ...(input.idempotencyKey === undefined
         ? {}
         : { idempotencyKey: input.idempotencyKey }),
+      ...(input.unique === undefined ? {} : { unique: input.unique }),
       version: 1,
       createdAt: date,
       updatedAt: date,
@@ -387,6 +420,11 @@ export function createInMemoryWorkflowRuntime(
     runs.set(run.id, run)
     if (input.idempotencyKey) {
       runIdempotencyKeys.set(runIdempotencyKey(input.idempotencyKey), run.id)
+    }
+    if (input.unique) {
+      const uniqueKeys =
+        input.unique.scope === 'all' ? allUniqueRunKeys : activeUniqueRunKeys
+      uniqueKeys.set(valueKey(input.unique.key), run.id)
     }
     emitRunStatusEvent(run)
     return { run, created: true }
@@ -892,6 +930,7 @@ export function createInMemoryWorkflowRuntime(
         updatedAt: now(),
       }
       runs.set(runId, updated)
+      releaseActiveUniqueKey(updated)
       emitRunStatusEvent(updated)
       return updated
     },
@@ -908,6 +947,7 @@ export function createInMemoryWorkflowRuntime(
         updatedAt: now(),
       }
       runs.set(runId, updated)
+      releaseActiveUniqueKey(updated)
       emitRunStatusEvent(updated)
       return updated
     },
@@ -941,6 +981,7 @@ export function createInMemoryWorkflowRuntime(
         updatedAt: now(),
       }
       runs.set(runId, updated)
+      releaseActiveUniqueKey(updated)
       emitRunStatusEvent(updated)
       return updated
     },
@@ -1346,6 +1387,12 @@ export function createInMemoryWorkflowRuntime(
     for (const [key, runId] of runIdempotencyKeys) {
       if (treeIds.has(runId)) runIdempotencyKeys.delete(key)
     }
+    for (const [key, runId] of activeUniqueRunKeys) {
+      if (treeIds.has(runId)) activeUniqueRunKeys.delete(key)
+    }
+    for (const [key, runId] of allUniqueRunKeys) {
+      if (treeIds.has(runId)) allUniqueRunKeys.delete(key)
+    }
     for (const [key, node] of nodes) {
       if (treeIds.has(node.runId)) nodes.delete(key)
     }
@@ -1715,6 +1762,9 @@ export function createInMemoryWorkflowRuntime(
     },
   }
 
+  // Caller-provided connections are ignored: there is no transaction to join
+  // in-process, and rejecting them would break postgres-facing code paths
+  // running against this runtime as a drop-in test double.
   const atomicStart: WorkflowRuntimeAtomicStart = {
     async startWorkflowRun({ run, startAt }) {
       const started = createRunWithState(run)

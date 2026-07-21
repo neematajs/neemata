@@ -10,9 +10,9 @@ import type {
 } from '../../runtime/store.ts'
 import type { WorkflowPostgresConnection } from './connection.ts'
 import type { JsonRecord } from './sql.ts'
+import { WorkflowRunConflictError } from '../../runtime/errors.ts'
 import {
   id,
-  isUniqueViolation,
   isUuid,
   json,
   jsonRecordArrayColumn,
@@ -99,12 +99,49 @@ export const createStoredRunWithState = async (
     }
     return undefined
   }
+  const loadUniqueRun = async () => {
+    if (!input.unique) return undefined
+    const statusFilter =
+      input.unique.scope === 'active'
+        ? `AND status NOT IN (${DEFAULT_PRUNE_STATUSES.map(
+            (status) => `'${status}'`,
+          ).join(', ')})`
+        : ''
+    const existing = await one(
+      connection,
+      `
+        SELECT * FROM workflow_runs
+        WHERE unique_key = $1::jsonb AND unique_scope = $2 ${statusFilter}
+      `,
+      [json(input.unique.key), input.unique.scope],
+    )
+    return existing ? mapRun(existing) : undefined
+  }
+  const resolveUniqueConflict = (
+    run: StoredRun,
+  ): { readonly run: StoredRun; readonly created: false } => {
+    const unique = input.unique!
+    if (unique.behavior === 'join') return { run, created: false }
+    throw new WorkflowRunConflictError({
+      runId: run.id,
+      status: run.status,
+      key: unique.key,
+      scope: unique.scope,
+    })
+  }
+
   const existing = await loadIdempotentRun()
   if (existing) return { run: existing, created: false }
+  const conflicting = await loadUniqueRun()
+  if (conflicting) return resolveUniqueConflict(conflicting)
 
-  const date = now()
-  const runId = id()
-  try {
+  // ON CONFLICT DO NOTHING turns a lost race into zero rows instead of an
+  // error, so the recovery reads below stay legal inside any transaction —
+  // including a caller-provided one. The retry covers a holder leaving its
+  // uniqueness scope between the conflict and the recovery read.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const date = now()
+    const runId = id()
     const row = await one(
       connection,
       `
@@ -112,12 +149,15 @@ export const createStoredRunWithState = async (
         INSERT INTO workflow_runs (
           id, kind, name, workflow_name, task_name, status, input,
           parent_run_id, parent_node_name, root_run_id, tags,
-          idempotency_key, version, created_at, updated_at
+          idempotency_key, unique_key, unique_scope, unique_behavior,
+          version, created_at, updated_at
         )
         VALUES (
           $1, $2, $3, $4, $5, 'queued', $6::jsonb,
-          $7, $8, $9, $10::jsonb, $11::jsonb, 1, $12, $12
+          $7, $8, $9, $10::jsonb, $11::jsonb, $12::jsonb, $13, $14,
+          1, $15, $15
         )
+        ON CONFLICT DO NOTHING
         RETURNING *, NULL::text AS old_status
       ),
       ${emitStatusChangeNotifySql('inserted', 'run_created')}
@@ -136,20 +176,38 @@ export const createStoredRunWithState = async (
         input.rootRunId ?? runId,
         json(input.tags ?? {}),
         input.idempotencyKey ? json(input.idempotencyKey) : null,
+        input.unique ? json(input.unique.key) : null,
+        input.unique?.scope ?? null,
+        input.unique?.behavior ?? null,
         date,
       ],
     )
-    return { run: mapRun(row!), created: true }
-  } catch (error) {
-    if (
-      recoverUniqueViolation &&
-      input.idempotencyKey &&
-      isUniqueViolation(error)
-    ) {
+    if (row) return { run: mapRun(row), created: true }
+
+    if (recoverUniqueViolation && input.idempotencyKey) {
       const raced = await loadIdempotentRun()
       if (raced) return { run: raced, created: false }
     }
-    throw error
+    if (input.unique) {
+      const raced = await loadUniqueRun()
+      if (raced) return resolveUniqueConflict(raced)
+    }
+    // callers opting out of recovery resolve the race outside their own
+    // transaction, after it rolls back
+    if (!recoverUniqueViolation) break
+  }
+  throw new WorkflowRunInsertConflict(runnableName(input))
+}
+
+/**
+ * Adapter-internal signal: the run insert conflicted and inline recovery was
+ * declined or found nothing. Callers owning the enclosing transaction catch
+ * it after rollback and re-read on the base connection.
+ */
+export class WorkflowRunInsertConflict extends Error {
+  constructor(name: string) {
+    super(`Workflow run insert conflicted [${name}]`)
+    this.name = 'WorkflowRunInsertConflict'
   }
 }
 

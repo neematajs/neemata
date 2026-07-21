@@ -124,15 +124,35 @@ export async function installPostgresWorkflowSchemaForTesting(
       root_run_id uuid NOT NULL,
       tags jsonb NOT NULL DEFAULT '{}'::jsonb,
       idempotency_key jsonb,
+      unique_key jsonb,
+      unique_scope text,
+      unique_behavior text,
       version integer NOT NULL,
       created_at timestamptz NOT NULL,
       updated_at timestamptz NOT NULL
     )
   `)
   await db.query(`
+    ALTER TABLE workflow_runs
+    ADD COLUMN IF NOT EXISTS unique_key jsonb,
+    ADD COLUMN IF NOT EXISTS unique_scope text,
+    ADD COLUMN IF NOT EXISTS unique_behavior text
+  `)
+  await db.query(`
     CREATE UNIQUE INDEX IF NOT EXISTS workflow_runs_idempotency_idx
     ON workflow_runs (idempotency_key)
     WHERE idempotency_key IS NOT NULL
+  `)
+  await db.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS workflow_runs_unique_active_idx
+    ON workflow_runs (unique_key)
+    WHERE unique_key IS NOT NULL AND unique_scope = 'active'
+      AND status NOT IN ('completed', 'cancelled', 'failed')
+  `)
+  await db.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS workflow_runs_unique_all_idx
+    ON workflow_runs (unique_key)
+    WHERE unique_key IS NOT NULL AND unique_scope = 'all'
   `)
   await db.query(`
     CREATE INDEX IF NOT EXISTS workflow_runs_parent_idx

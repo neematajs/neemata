@@ -11,6 +11,7 @@ import type {
   MapRunMode,
   RunIdempotencyBuilder,
   RunTagsBuilder,
+  RunUniqueBuilder,
   RetryPolicy,
   RunnableDefinition,
   RunnableInput,
@@ -370,6 +371,7 @@ export type TaskOptions<
   timeout?: DurationString
   tags?: RunTagsBuilder<SchemaSides<InputSchema>>
   idempotency?: RunIdempotencyBuilder<SchemaSides<InputSchema>>
+  unique?: RunUniqueBuilder<SchemaSides<InputSchema>>
 }
 
 export function defineTask<
@@ -401,6 +403,7 @@ export type WorkflowOptions<
   timeout?: DurationString
   tags?: RunTagsBuilder<SchemaSides<InputSchema>>
   idempotency?: RunIdempotencyBuilder<SchemaSides<InputSchema>>
+  unique?: RunUniqueBuilder<SchemaSides<InputSchema>>
 }
 
 export type ScheduleOptions<
@@ -549,6 +552,7 @@ class WorkflowDraftBuilder<Name extends string> {
       timeout: this.options.timeout,
       tags: this.options.tags,
       idempotency: this.options.idempotency,
+      unique: this.options.unique,
     }) as any
   }
 

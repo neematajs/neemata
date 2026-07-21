@@ -175,25 +175,25 @@ function raceIdempotentRunInsert(
   connection: WorkflowPostgresConnection,
 ): WorkflowPostgresConnection {
   let raced = false
-  const duplicateError = Object.assign(
-    new Error('duplicate key value violates unique constraint'),
-    { code: '23505' },
-  )
-  return {
+  const wrap = (
+    target: WorkflowPostgresConnection,
+  ): WorkflowPostgresConnection => ({
     async query<T extends Record<string, unknown> = Record<string, unknown>>(
       sql: string,
       params: readonly unknown[] = [],
     ): Promise<WorkflowPostgresQueryResult<T>> {
+      // a concurrent starter wins the race first; the intercepted insert then
+      // genuinely conflicts (ON CONFLICT DO NOTHING → zero rows)
       if (!raced && /INSERT\s+INTO\s+workflow_runs/i.test(sql)) {
         raced = true
         await connection.query(sql, params)
-        throw duplicateError
       }
-      return connection.query<T>(sql, params)
+      return target.query<T>(sql, params)
     },
-    transaction: (handler) =>
-      connection.transaction((tx) => handler(raceIdempotentRunInsert(tx))),
-  }
+    transaction: (handler) => target.transaction((tx) => handler(wrap(tx))),
+  })
+
+  return wrap(connection)
 }
 
 function raceChildAttemptInsert(

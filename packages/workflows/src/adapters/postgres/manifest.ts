@@ -86,6 +86,8 @@ export const WORKFLOW_POSTGRES_SCHEMA_MANIFEST = {
   ],
   indexes: [
     'workflow_runs_idempotency_idx',
+    'workflow_runs_unique_active_idx',
+    'workflow_runs_unique_all_idx',
     'workflow_schedules_due_idx',
     'workflow_runs_parent_idx',
     'workflow_runs_root_idx',
@@ -132,6 +134,20 @@ export const WORKFLOW_POSTGRES_SCHEMA_MANIFEST = {
       unique: true,
       columns: ['idempotency_key'],
       predicate: 'idempotency_key IS NOT NULL',
+    },
+    workflow_runs_unique_active_idx: {
+      table: 'workflow_runs',
+      unique: true,
+      columns: ['unique_key'],
+      // matches pg_get_expr rendering: NOT IN over an enum comes back as <> ALL
+      predicate:
+        "unique_key IS NOT NULL AND unique_scope = 'active'::text AND status <> ALL (ARRAY['completed'::workflow_run_status, 'cancelled'::workflow_run_status, 'failed'::workflow_run_status])",
+    },
+    workflow_runs_unique_all_idx: {
+      table: 'workflow_runs',
+      unique: true,
+      columns: ['unique_key'],
+      predicate: "unique_key IS NOT NULL AND unique_scope = 'all'::text",
     },
     workflow_runs_parent_idx: {
       table: 'workflow_runs',
@@ -237,6 +253,9 @@ export const WORKFLOW_POSTGRES_SCHEMA_MANIFEST = {
       root_run_id: { type: 'uuid', nullable: false },
       tags: { type: 'jsonb', nullable: false },
       idempotency_key: { type: 'jsonb', nullable: true },
+      unique_key: { type: 'jsonb', nullable: true },
+      unique_scope: { type: 'text', nullable: true },
+      unique_behavior: { type: 'text', nullable: true },
       version: { type: 'int4', nullable: false },
       created_at: { type: 'timestamptz', nullable: false },
       updated_at: { type: 'timestamptz', nullable: false },
