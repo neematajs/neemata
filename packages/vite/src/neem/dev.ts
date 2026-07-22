@@ -135,8 +135,11 @@ function createViteLoggerBridge(
   const loggedErrors = new WeakSet<object>()
   const bridge: ViteLogger = {
     hasWarned: false,
+    // Vite's logger has no debug level and its info stream is per-interaction
+    // chatter (hmr updates, reloads, re-optimizations); the lifecycle facts
+    // worth info are logged by the preset itself.
     info(msg) {
-      logger.info(msg)
+      logger.debug(msg)
     },
     warn(msg) {
       bridge.hasWarned = true
