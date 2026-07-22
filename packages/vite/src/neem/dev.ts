@@ -1,7 +1,12 @@
-import type { Plugin as VitePlugin, ResolvedConfig, ViteDevServer } from 'vite'
+import type {
+  Logger as ViteLogger,
+  Plugin as VitePlugin,
+  ResolvedConfig,
+  ViteDevServer,
+} from 'vite'
 import { getRandomPort } from 'get-port-please'
 
-import type { NeemViteRuntimeFactory } from '../types.ts'
+import type { NeemViteRuntimeFactory, NeemViteWorkerContext } from '../types.ts'
 import {
   assertRoutingBase,
   importViteFrom,
@@ -38,6 +43,11 @@ const createViteDevRuntime: NeemViteRuntimeFactory = (ctx, options) => {
       })
       for (const warning of loaded.warnings) ctx.logger.warn(warning)
       assertRoutingBase(options.routing, loaded.base)
+
+      // Route vite's server output through the Neem logger so dev logs are
+      // uniformly formatted and runtime-tagged; an app-provided customLogger
+      // is explicit user intent and wins.
+      loaded.config.customLogger ??= createViteLoggerBridge(ctx.logger)
 
       // Vite treats port 0 as unset (falls back to 5173), and self-restarts
       // must rebind the same port so the upstream the proxy holds stays
@@ -116,6 +126,40 @@ function proxyBasePlugin(base: string): VitePlugin {
       })
     },
   }
+}
+
+function createViteLoggerBridge(
+  logger: NeemViteWorkerContext['logger'],
+): ViteLogger {
+  const warnedOnce = new Set<string>()
+  const loggedErrors = new WeakSet<object>()
+  const bridge: ViteLogger = {
+    hasWarned: false,
+    info(msg) {
+      logger.info(msg)
+    },
+    warn(msg) {
+      bridge.hasWarned = true
+      logger.warn(msg)
+    },
+    warnOnce(msg) {
+      if (warnedOnce.has(msg)) return
+      warnedOnce.add(msg)
+      bridge.hasWarned = true
+      logger.warn(msg)
+    },
+    error(msg, errorOptions) {
+      const error = errorOptions?.error
+      if (error) loggedErrors.add(error)
+      if (error) logger.error({ err: error }, msg)
+      else logger.error(msg)
+    },
+    clearScreen() {},
+    hasErrorLogged(error) {
+      return loggedErrors.has(error)
+    },
+  }
+  return bridge
 }
 
 function assertProxySafeResolvedConfig(
