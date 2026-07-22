@@ -139,10 +139,21 @@ const connection = createPostgresWorkflowConnection(
 await verifyPostgresWorkflowSchema(connection) // fail fast on schema drift
 const runtime = createPostgresWorkflowRuntime({ connection })
 
+// Execution-side client: implementations registered for the workers.
 const client = createWorkflowRuntimeClient({
   ...runtime,
   workflows: [publishWorkflowImpl],
   tasks: [embedTaskImpl],
+})
+
+// Enqueue/query-side client: registry-free — implementations are never
+// needed to start runs (start resolves schemas/tags/idempotency/unique from
+// the definition argument), so callers that only enqueue don't import the
+// implementation graph and can't form import cycles with it. `definitions`
+// is only consulted by retry(), which resolves stored runs by name.
+const enqueueClient = createWorkflowRuntimeClient({
+  ...runtime,
+  definitions: [publishWorkflow, embedTask],
 })
 
 const run = await client.start(
@@ -174,7 +185,10 @@ full payloads, these don't):
 Management: `client.deleteRun(runId)` deletes a terminal run and its whole
 descendant tree; `client.retry(runId)` starts a fresh run from a stored one —
 copies input and tags but NOT the idempotency key (the old key still points
-at the original run), `options` overrides win.
+at the original run), `options` overrides win. Retry is the only by-name
+operation: it maps the stored `workflowName`/`taskName` back to a definition,
+so the client needs that name in `definitions` (or a registered
+implementation) and fails with a specific error otherwise.
 
 Live updates: `client.watch(runId, { family?, afterEventId?, signal?,
 pollIntervalMs? })` returns an `AsyncIterable<StoredRunEvent>` — history from

@@ -5,6 +5,7 @@ import type {
 import type {
   AnyTaskDefinition,
   AnyWorkflowDefinition,
+  RunnableDefinition,
   RunUniqueConstraint,
   TaskInput,
   TaskRun,
@@ -110,8 +111,21 @@ export type WorkflowRuntimeAdapter<Connection = never> = {
 
 export type CreateWorkflowRuntimeClientInput<Connection = never> =
   WorkflowRuntimeAdapter<Connection> & {
+    /**
+     * Implementations are consulted only to cross-check `start()` targets and
+     * to resolve `retry()` by name — enqueueing itself never executes them.
+     * Omit them on enqueue-only surfaces so importing the client never drags
+     * the implementation graph into the caller's import closure (an
+     * implementation that enqueues would otherwise form a cycle).
+     */
     readonly workflows?: readonly RegisteredWorkflowImplementation[]
     readonly tasks?: readonly RegisteredTaskImplementation[]
+    /**
+     * Name→definition source for `retry()` and future by-name operations.
+     * Definitions live in leaf modules both sides can import, so management
+     * surfaces resolve stored names without touching implementation code.
+     */
+    readonly definitions?: readonly RunnableDefinition[]
   }
 
 export type WorkflowRuntimeClient<Connection = never> = {
@@ -162,6 +176,14 @@ export type WorkflowRuntimeClient<Connection = never> = {
   }
 }
 
+/**
+ * Constructible from the adapter alone: every operation except `retry()` is
+ * registry-free. `start()` reads everything it needs (input schema, `tags`,
+ * `idempotency`, `unique`) off the definition it receives, and execution is
+ * handled by workers that own the implementations. Only `retry()` resolves a
+ * stored run back to something startable by name, and accepts `definitions`
+ * for that so enqueue/management surfaces never import implementation code.
+ */
 export function createWorkflowRuntimeClient<Connection = never>(
   input: CreateWorkflowRuntimeClientInput<Connection>,
 ): WorkflowRuntimeClient<Connection> {
@@ -169,6 +191,7 @@ export function createWorkflowRuntimeClient<Connection = never>(
     workflows: input.workflows,
     tasks: input.tasks,
   })
+  const definitions = createDefinitionIndex(registry, input.definitions)
 
   const start = (async (
     runnable: AnyWorkflowDefinition | AnyTaskDefinition,
@@ -218,7 +241,7 @@ export function createWorkflowRuntimeClient<Connection = never>(
     start,
     deleteRun: (runId) => input.store.deleteRun(runId),
     retry: (runId, options) =>
-      retryRun(input.store, registry, start, runId, options),
+      retryRun(input.store, definitions, start, runId, options),
     cancel: async (runId) => {
       const run = await input.store.requestRunCancellation({ runId })
       if (!run) return undefined
@@ -379,9 +402,63 @@ async function pruneRuns(
   }
 }
 
+/**
+ * Name→definition maps backing `retry()`. Seeded from registered
+ * implementations (their definitions ride along anyway) and extended by the
+ * explicit `definitions` input, so retry works identically whether the client
+ * was built for execution or as a registry-free enqueue/management surface.
+ */
+type WorkflowDefinitionIndex = {
+  readonly workflows: ReadonlyMap<string, AnyWorkflowDefinition>
+  readonly tasks: ReadonlyMap<string, AnyTaskDefinition>
+}
+
+function createDefinitionIndex(
+  registry: WorkflowRuntimeRegistry,
+  definitions: readonly RunnableDefinition[] | undefined,
+): WorkflowDefinitionIndex {
+  const workflows = new Map<string, AnyWorkflowDefinition>()
+  const tasks = new Map<string, AnyTaskDefinition>()
+
+  for (const implementation of registry.workflows.values()) {
+    workflows.set(implementation.workflow.name, implementation.workflow)
+  }
+  for (const implementation of registry.tasks.values()) {
+    tasks.set(implementation.task.name, implementation.task)
+  }
+  for (const definition of definitions ?? []) {
+    // Two objects under one name would make by-name resolution ambiguous and
+    // `start()`'s definition↔implementation identity check a coin toss.
+    switch (definition.kind) {
+      case 'workflow': {
+        const existing = workflows.get(definition.name)
+        if (existing && existing !== definition) {
+          throw new Error(
+            `Conflicting workflow definition [${definition.name}]: another definition or registered implementation uses the same name`,
+          )
+        }
+        workflows.set(definition.name, definition)
+        break
+      }
+      case 'task': {
+        const existing = tasks.get(definition.name)
+        if (existing && existing !== definition) {
+          throw new Error(
+            `Conflicting task definition [${definition.name}]: another definition or registered implementation uses the same name`,
+          )
+        }
+        tasks.set(definition.name, definition)
+        break
+      }
+    }
+  }
+
+  return { workflows, tasks }
+}
+
 async function retryRun<Connection>(
   store: WorkflowStore,
-  registry: WorkflowRuntimeRegistry,
+  definitions: WorkflowDefinitionIndex,
   start: WorkflowRuntimeClient<Connection>['start'],
   runId: string,
   options?: WorkflowRuntimeStartOptions<Connection>,
@@ -397,13 +474,13 @@ async function retryRun<Connection>(
 
   switch (run.kind) {
     case 'workflow': {
-      const implementation = registry.getWorkflow(run.workflowName)
-      if (!implementation) {
+      const workflow = definitions.workflows.get(run.workflowName)
+      if (!workflow) {
         throw new Error(
-          `No registered workflow implementation [${run.workflowName}]`,
+          `Cannot retry run [${runId}]: no workflow definition [${run.workflowName}] is known to this client — pass it via 'definitions' (or its implementation via 'workflows') to createWorkflowRuntimeClient`,
         )
       }
-      return (await start(implementation.workflow, run.input as never, {
+      return (await start(workflow, run.input as never, {
         tags: run.tags,
         // scope 'all' constraints conflict with the terminal run itself on
         // retry — surfaced honestly; override via options.unique if intended
@@ -413,11 +490,13 @@ async function retryRun<Connection>(
     }
     case 'task': {
       const taskName = run.taskName ?? run.name
-      const implementation = registry.getTask(taskName)
-      if (!implementation) {
-        throw new Error(`No registered task implementation [${taskName}]`)
+      const task = definitions.tasks.get(taskName)
+      if (!task) {
+        throw new Error(
+          `Cannot retry run [${runId}]: no task definition [${taskName}] is known to this client — pass it via 'definitions' (or its implementation via 'tasks') to createWorkflowRuntimeClient`,
+        )
       }
-      return (await start(implementation.task, run.input as never, {
+      return (await start(task, run.input as never, {
         tags: run.tags,
         ...(run.unique === undefined ? {} : { unique: run.unique }),
         ...options,
