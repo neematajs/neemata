@@ -20,6 +20,40 @@ export type RunIdempotencyBuilder<Input> = (
   input: BoundaryOutput<Input>,
 ) => IdempotencyKey
 
+export type RunUniqueScope = 'active' | 'all'
+
+export type RunUniqueBehavior = 'reject' | 'join'
+
+/**
+ * Start-time uniqueness constraint over root runs. `scope: 'active'` allows
+ * at most one non-terminal run per key — the key frees up once that run
+ * completes, fails or cancels (a `cancelling` run still holds it). `scope:
+ * 'all'` allows one run per key ever. On conflict, `reject` throws a
+ * WorkflowRunConflictError and `join` returns the conflicting run — without
+ * comparing inputs, unlike `idempotencyKey`.
+ */
+export type RunUniqueConstraint = {
+  readonly key: readonly unknown[]
+  /** @default 'active' */
+  readonly scope?: RunUniqueScope
+  /** @default 'reject' */
+  readonly behavior?: RunUniqueBehavior
+}
+
+export type ResolvedRunUnique = {
+  readonly key: readonly unknown[]
+  readonly scope: RunUniqueScope
+  readonly behavior: RunUniqueBehavior
+}
+
+export type RunUniqueBuilder<Input> =
+  | ((input: BoundaryOutput<Input>) => readonly unknown[])
+  | {
+      readonly key: (input: BoundaryOutput<Input>) => readonly unknown[]
+      readonly scope?: RunUniqueScope
+      readonly behavior?: RunUniqueBehavior
+    }
+
 export type CancellationPolicy = 'propagate' | 'detach'
 
 export type WorkflowStatus =
@@ -70,6 +104,8 @@ export type TaskDefinition<
   readonly timeout?: DurationString
   readonly tags?: RunTagsBuilder<Input>
   readonly idempotency?: RunIdempotencyBuilder<Input>
+  /** Enforced for root starts through the runtime client; child dispatch is unaffected. */
+  readonly unique?: RunUniqueBuilder<Input>
   readonly _types?: { readonly input: Input; readonly output: Output }
 }
 
@@ -353,6 +389,8 @@ export type WorkflowDefinition<
   readonly timeout?: DurationString
   readonly tags?: RunTagsBuilder<Input>
   readonly idempotency?: RunIdempotencyBuilder<Input>
+  /** Enforced for root starts through the runtime client; child dispatch is unaffected. */
+  readonly unique?: RunUniqueBuilder<Input>
   readonly _types?: {
     readonly input: Input
     readonly output: Output
@@ -398,6 +436,7 @@ export type WorkflowRun<
   readonly rootRunId: string
   readonly tags: Readonly<Record<string, string>>
   readonly idempotencyKey?: readonly unknown[]
+  readonly unique?: ResolvedRunUnique
   readonly version: number
   readonly createdAt: Date
   readonly updatedAt: Date
@@ -416,6 +455,7 @@ export type TaskRun<Task extends AnyTaskDefinition = AnyTaskDefinition> = {
   readonly rootRunId: string
   readonly tags: Readonly<Record<string, string>>
   readonly idempotencyKey?: readonly unknown[]
+  readonly unique?: ResolvedRunUnique
   readonly version: number
   readonly createdAt: Date
   readonly updatedAt: Date

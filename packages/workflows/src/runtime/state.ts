@@ -1,4 +1,8 @@
-import type { RunKind, WorkflowNodeKind } from '../types/index.ts'
+import type {
+  ResolvedRunUnique,
+  RunKind,
+  WorkflowNodeKind,
+} from '../types/index.ts'
 import type {
   RuntimeAttemptStatus,
   RuntimeNodeStatus,
@@ -27,6 +31,7 @@ export type StoredRun = {
   readonly rootRunId: string
   readonly tags: Readonly<Record<string, string>>
   readonly idempotencyKey?: readonly unknown[]
+  readonly unique?: ResolvedRunUnique
   readonly version: number
   readonly createdAt: Date
   readonly updatedAt: Date

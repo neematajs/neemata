@@ -2,7 +2,12 @@ import type {
   MapNodeImplementation,
   WorkflowImplementation,
 } from '../../implement/index.ts'
-import type { Schema, WorkflowNode } from '../../types/index.ts'
+import type {
+  ResolvedRunUnique,
+  RunUniqueConstraint,
+  Schema,
+  WorkflowNode,
+} from '../../types/index.ts'
 import { runWorkflowUserCallback } from './context.ts'
 
 export function hasStoredNodeInput(node: {
@@ -80,6 +85,49 @@ export function resolveIdempotency(
   }
 
   throw new Error('Invalid idempotency definition')
+}
+
+export function resolveUnique(
+  unique: unknown,
+  ...args: readonly unknown[]
+): RunUniqueConstraint | undefined {
+  if (!unique) return undefined
+  if (typeof unique === 'function') {
+    return {
+      key: runWorkflowUserCallback(() => unique(...args) as readonly unknown[]),
+    }
+  }
+
+  if (
+    typeof unique === 'object' &&
+    unique !== null &&
+    'key' in unique &&
+    typeof unique.key === 'function'
+  ) {
+    const { key, scope, behavior } = unique as {
+      key: (...args: readonly unknown[]) => readonly unknown[]
+      scope?: RunUniqueConstraint['scope']
+      behavior?: RunUniqueConstraint['behavior']
+    }
+    return {
+      key: runWorkflowUserCallback(() => key(...args)),
+      ...(scope === undefined ? {} : { scope }),
+      ...(behavior === undefined ? {} : { behavior }),
+    }
+  }
+
+  throw new Error('Invalid unique definition')
+}
+
+export function normalizeRunUnique(
+  unique: RunUniqueConstraint | undefined,
+): ResolvedRunUnique | undefined {
+  if (!unique) return undefined
+  return {
+    key: unique.key,
+    scope: unique.scope ?? 'active',
+    behavior: unique.behavior ?? 'reject',
+  }
 }
 
 export function resolveTags(

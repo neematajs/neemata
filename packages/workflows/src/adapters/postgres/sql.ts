@@ -21,6 +21,7 @@ import type {
   RunSummary,
   TerminalRunStatus,
 } from '../../runtime/store.ts'
+import type { ResolvedRunUnique } from '../../types/index.ts'
 import type { WorkflowPostgresConnection } from './connection.ts'
 import {
   NODE_TRANSITIONS,
@@ -164,6 +165,15 @@ export const mapRun = (row: JsonRecord): StoredRun => ({
     'idempotencyKey',
     fromOptional(row.idempotency_key) as readonly unknown[] | undefined,
   ),
+  ...(fromOptional(row.unique_key) === undefined
+    ? {}
+    : {
+        unique: {
+          key: row.unique_key as readonly unknown[],
+          scope: row.unique_scope as ResolvedRunUnique['scope'],
+          behavior: row.unique_behavior as ResolvedRunUnique['behavior'],
+        },
+      }),
   version: row.version as number,
   createdAt: row.created_at as Date,
   updatedAt: row.updated_at as Date,

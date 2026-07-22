@@ -23,6 +23,7 @@ import {
   sameOptionalValue,
   sameValue,
 } from './sql.ts'
+import { WorkflowRunInsertConflict } from './store-runs.ts'
 
 type CreateStoredRun = (
   connection: WorkflowPostgresConnection,
@@ -277,7 +278,11 @@ export const createPostgresWorkflowChildStore = (
           return { child: mapNodeChild(updated), childRun, created: true }
         })
       } catch (error) {
-        if (error === linkRaced || isUniqueViolation(error)) {
+        if (
+          error === linkRaced ||
+          error instanceof WorkflowRunInsertConflict ||
+          isUniqueViolation(error)
+        ) {
           const raced = await loadExistingChildRun(db)
           if (raced) return raced
           throw new Error(

@@ -18,9 +18,10 @@ import {
   pruneTerminalRunsInTransaction,
 } from './store.ts'
 
-type PostgresWorkflowRuntime = WorkflowRuntimeAdapter & {
-  readonly connection: WorkflowPostgresConnection
-}
+type PostgresWorkflowRuntime =
+  WorkflowRuntimeAdapter<WorkflowPostgresConnection> & {
+    readonly connection: WorkflowPostgresConnection
+  }
 
 export function createPostgresWorkflowRuntime(params: {
   readonly connection: WorkflowPostgresConnection
@@ -41,9 +42,13 @@ export function createPostgresWorkflowRuntime(params: {
   const runCoordinationExecutor = createRunCoordinationExecutor(commandContext)
   const attemptExecutor = createAttemptExecutor(commandContext)
 
-  const atomicStart: WorkflowRuntimeAtomicStart = {
-    startWorkflowRun: ({ run, startAt }) =>
-      db.transaction(async (tx) => {
+  // A caller-provided connection rides the caller's open transaction:
+  // transaction() delegates to the client's own nested-transaction support
+  // (or joins the same scope), so the run and its command become visible
+  // only when the caller commits.
+  const atomicStart: WorkflowRuntimeAtomicStart<WorkflowPostgresConnection> = {
+    startWorkflowRun: ({ run, startAt, connection }) =>
+      (connection ?? db).transaction(async (tx) => {
         const runtime = createPostgresWorkflowRuntime({ connection: tx })
         const { run: started, created } = await createStoredRunWithState(
           tx,
@@ -63,8 +68,15 @@ export function createPostgresWorkflowRuntime(params: {
         }
         return started
       }),
-    startTaskRun: ({ run, taskName, taskInput, idempotencyKey, startAt }) =>
-      db.transaction(async (tx) => {
+    startTaskRun: ({
+      run,
+      taskName,
+      taskInput,
+      idempotencyKey,
+      startAt,
+      connection,
+    }) =>
+      (connection ?? db).transaction(async (tx) => {
         const runtime = createPostgresWorkflowRuntime({ connection: tx })
         const { run: started, created } = await createStoredRunWithState(
           tx,

@@ -5,6 +5,7 @@ import type {
 import type {
   AnyTaskDefinition,
   AnyWorkflowDefinition,
+  RunUniqueConstraint,
   TaskInput,
   TaskRun,
   WorkflowInput,
@@ -42,10 +43,26 @@ import {
 } from './registry.ts'
 import { isTerminalRunStatus } from './status.ts'
 
-export type WorkflowRuntimeStartOptions = {
+export type WorkflowRuntimeStartOptions<Connection = never> = {
   readonly tags?: Readonly<Record<string, string>>
   readonly idempotencyKey?: readonly unknown[]
+  /**
+   * Overrides the definition-level `unique` builder. See RunUniqueConstraint;
+   * `retry()` re-applies the stored run's constraint unless overridden here.
+   */
+  readonly unique?: RunUniqueConstraint
   readonly startAt?: Date
+  /**
+   * Adapter connection already inside the caller's open transaction (the one
+   * handed to `transaction()`'s handler, or built over an external client
+   * whose own `transaction` nests) — run creation and dispatch then commit or
+   * roll back with the caller's writes. The returned snapshot is provisional
+   * until that commit. Never wrap a bare query client that is mid-transaction:
+   * without a nesting-aware `transaction`, its COMMIT would end the caller's
+   * transaction early. The in-memory runtime ignores this option so
+   * postgres-facing code paths run against it unchanged.
+   */
+  readonly connection?: Connection
 }
 
 export type WatchRunOptions = {
@@ -78,42 +95,43 @@ export type WatchEvent =
       readonly error?: StoredError
     }
 
-export type WorkflowRuntimeAdapter = {
+export type WorkflowRuntimeAdapter<Connection = never> = {
   readonly store: WorkflowStore
   readonly runCoordinationExecutor: RunCoordinationExecutor
   readonly attemptExecutor: AttemptExecutor
   readonly retentionPruner?: WorkflowRetentionPruner
   readonly scheduler?: WorkflowScheduler
   readonly wakeEvents?: WorkflowWakeEvents
-  readonly atomicStart?: WorkflowRuntimeAtomicStart
+  readonly atomicStart?: WorkflowRuntimeAtomicStart<Connection>
   readonly atomicContinuation?: WorkflowRuntimeAtomicContinuation
   readonly atomicCompletion?: WorkflowRuntimeAtomicCompletion
   readonly dispose?: () => Promise<void> | void
 }
 
-export type CreateWorkflowRuntimeClientInput = WorkflowRuntimeAdapter & {
-  readonly workflows?: readonly RegisteredWorkflowImplementation[]
-  readonly tasks?: readonly RegisteredTaskImplementation[]
-}
+export type CreateWorkflowRuntimeClientInput<Connection = never> =
+  WorkflowRuntimeAdapter<Connection> & {
+    readonly workflows?: readonly RegisteredWorkflowImplementation[]
+    readonly tasks?: readonly RegisteredTaskImplementation[]
+  }
 
-export type WorkflowRuntimeClient = {
+export type WorkflowRuntimeClient<Connection = never> = {
   readonly start: {
     <Workflow extends AnyWorkflowDefinition>(
       workflow: Workflow,
       input: WorkflowInput<Workflow>,
-      options?: WorkflowRuntimeStartOptions,
+      options?: WorkflowRuntimeStartOptions<Connection>,
     ): Promise<WorkflowRun<Workflow>>
     <Task extends AnyTaskDefinition>(
       task: Task,
       input: TaskInput<Task>,
-      options?: WorkflowRuntimeStartOptions,
+      options?: WorkflowRuntimeStartOptions<Connection>,
     ): Promise<TaskRun<Task>>
   }
   readonly cancel: (runId: string) => Promise<StoredRun | undefined>
   readonly deleteRun: (runId: string) => Promise<DeleteRunResult>
   readonly retry: (
     runId: string,
-    options?: WorkflowRuntimeStartOptions,
+    options?: WorkflowRuntimeStartOptions<Connection>,
   ) => Promise<StoredRun>
   readonly get: (runId: string) => Promise<RunSnapshot | undefined>
   readonly list: (filter?: ListRunsFilter) => Promise<ListRunsResult>
@@ -144,9 +162,9 @@ export type WorkflowRuntimeClient = {
   }
 }
 
-export function createWorkflowRuntimeClient(
-  input: CreateWorkflowRuntimeClientInput,
-): WorkflowRuntimeClient {
+export function createWorkflowRuntimeClient<Connection = never>(
+  input: CreateWorkflowRuntimeClientInput<Connection>,
+): WorkflowRuntimeClient<Connection> {
   const registry = createWorkflowRuntimeRegistry({
     workflows: input.workflows,
     tasks: input.tasks,
@@ -155,7 +173,7 @@ export function createWorkflowRuntimeClient(
   const start = (async (
     runnable: AnyWorkflowDefinition | AnyTaskDefinition,
     runnableInput: unknown,
-    options?: WorkflowRuntimeStartOptions,
+    options?: WorkflowRuntimeStartOptions<Connection>,
   ) => {
     switch (runnable.kind) {
       case 'workflow':
@@ -168,7 +186,9 @@ export function createWorkflowRuntimeClient(
           input: runnableInput,
           tags: options?.tags,
           idempotencyKey: options?.idempotencyKey,
+          unique: options?.unique,
           startAt: options?.startAt,
+          connection: options?.connection,
         })) as WorkflowRun<typeof runnable>
       case 'task':
         return (await startTaskRun({
@@ -181,10 +201,12 @@ export function createWorkflowRuntimeClient(
           input: runnableInput,
           tags: options?.tags,
           idempotencyKey: options?.idempotencyKey,
+          unique: options?.unique,
           startAt: options?.startAt,
+          connection: options?.connection,
         })) as TaskRun<typeof runnable>
     }
-  }) as WorkflowRuntimeClient['start']
+  }) as WorkflowRuntimeClient<Connection>['start']
   const requireScheduler = () => {
     if (!input.scheduler) {
       throw new Error('Workflow runtime adapter does not support schedules')
@@ -357,12 +379,12 @@ async function pruneRuns(
   }
 }
 
-async function retryRun(
+async function retryRun<Connection>(
   store: WorkflowStore,
   registry: WorkflowRuntimeRegistry,
-  start: WorkflowRuntimeClient['start'],
+  start: WorkflowRuntimeClient<Connection>['start'],
   runId: string,
-  options?: WorkflowRuntimeStartOptions,
+  options?: WorkflowRuntimeStartOptions<Connection>,
 ): Promise<StoredRun> {
   const [run] = await store.loadRuns([runId])
   if (!run) throw new Error(`Run [${runId}] not found`)
@@ -383,6 +405,9 @@ async function retryRun(
       }
       return (await start(implementation.workflow, run.input as never, {
         tags: run.tags,
+        // scope 'all' constraints conflict with the terminal run itself on
+        // retry — surfaced honestly; override via options.unique if intended
+        ...(run.unique === undefined ? {} : { unique: run.unique }),
         ...options,
       })) as StoredRun
     }
@@ -394,6 +419,7 @@ async function retryRun(
       }
       return (await start(implementation.task, run.input as never, {
         tags: run.tags,
+        ...(run.unique === undefined ? {} : { unique: run.unique }),
         ...options,
       })) as StoredRun
     }
