@@ -1,0 +1,68 @@
+{
+  "name": "@nmtjs/vite",
+  "description": "Neem runtime preset for hosting Vite-powered apps.",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -b tsconfig.build.json",
+    "clean-build": "rm -rf ./dist",
+    "check:type": "tsc -p tsconfig.json --noEmit",
+    "playground:dev": "cd playground && neem dev",
+    "playground:build": "cd playground && neem build",
+    "playground:start": "cd playground && neem start"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./dist/index.js",
+      "module-sync": "./dist/index.js"
+    },
+    "./neem/worker": {
+      "types": "./src/neem/worker.ts",
+      "import": "./dist/neem/worker.js",
+      "module-sync": "./dist/neem/worker.js"
+    },
+    "./neem/planner": {
+      "types": "./src/neem/planner.ts",
+      "import": "./dist/neem/planner.js",
+      "module-sync": "./dist/neem/planner.js"
+    }
+  },
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js",
+        "module-sync": "./dist/index.js"
+      },
+      "./neem/worker": {
+        "types": "./dist/neem/worker.d.ts",
+        "import": "./dist/neem/worker.js",
+        "module-sync": "./dist/neem/worker.js"
+      },
+      "./neem/planner": {
+        "types": "./dist/neem/planner.d.ts",
+        "import": "./dist/neem/planner.js",
+        "module-sync": "./dist/neem/planner.js"
+      }
+    }
+  },
+  "dependencies": {
+    "@nmtjs/neem": "workspace:*",
+    "get-port-please": "^3.2.0",
+    "srvx": "^0.11.22"
+  },
+  "peerDependencies": {
+    "vite": ">=7.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.2",
+    "rolldown": "^1.1.2",
+    "vite": "catalog:"
+  },
+  "files": [
+    "dist",
+    "src",
+    "LICENSE.md",
+    "README.md"
+  ]
+}
