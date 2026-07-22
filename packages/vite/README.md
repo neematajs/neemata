@@ -27,4 +27,4 @@ The dev/prod split is done at bundle time: the plugin resolves the
 mode's code or any mode flags.
 
 See `playground/` for a runnable example (`pnpm run playground:dev`,
-`playground:build`, `playground:start`).
+`pnpm run playground:build`, `pnpm run playground:start`).

@@ -109,7 +109,6 @@ function withStaticPolicy(
 ): ServerMiddleware {
   return async (request, next) => {
     let pathname = new URL(request.url).pathname
-    let effectiveRequest = request
     if (
       stripPrefix &&
       (pathname === stripPrefix || pathname.startsWith(`${stripPrefix}/`))
@@ -117,10 +116,13 @@ function withStaticPolicy(
       const url = new URL(request.url)
       pathname = pathname.slice(stripPrefix.length) || '/'
       url.pathname = pathname
-      effectiveRequest = new Request(url.href, request) as typeof request
+      // ServerRequest#_url is srvx's documented parsed-URL slot and
+      // serveStatic reads it before falling back to request.url — setting it
+      // strips the prefix without reconstructing a Request from the proxy.
+      request._url = url
     }
 
-    const response = await inner(effectiveRequest, next)
+    const response = await inner(request, next)
     if (response.ok) {
       if (pathname.endsWith('.wasm')) {
         response.headers.set('content-type', 'application/wasm')
