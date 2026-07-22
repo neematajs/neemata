@@ -1,10 +1,15 @@
 import { setTimeout as delay } from 'node:timers/promises'
 
+import { ProtocolBlob } from '@nmtjs/protocol'
 import { BaseServerFormat, ProtocolFormats } from '@nmtjs/protocol/server'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { HttpTransportServerRequest } from '../src/types.ts'
-import { handleChunkedStream, HttpTransport } from '../src/runtimes/node.ts'
+import {
+  handleChunkedStream,
+  handleFixedLengthStream,
+  HttpTransport,
+} from '../src/runtimes/node.ts'
 
 class TestJsonFormat extends BaseServerFormat {
   accept = ['application/json']
@@ -63,6 +68,7 @@ async function startServer(onRpc?: (...args: any[]) => Promise<unknown>) {
   return {
     url,
     requests,
+    connection,
     stop: () => worker.stop(params as any),
   }
 }
@@ -107,6 +113,68 @@ describe('node runtime adapter', () => {
     })
   })
 
+  describe('SSE client disconnect', () => {
+    it('finalizes the handler generator and disposes the connection', async () => {
+      let finalized = false
+      const { url, connection, stop } = await startServer(async () =>
+        (async function* () {
+          try {
+            let n = 0
+            while (true) {
+              yield { n: n++ }
+              await delay(5)
+            }
+          } finally {
+            finalized = true
+          }
+        })(),
+      )
+      const dispose = vi.fn(async () => {})
+      ;(connection as any)[Symbol.asyncDispose] = dispose
+
+      try {
+        const controller = new AbortController()
+        const response = await fetch(`${url}/test`, {
+          signal: controller.signal,
+        })
+        expect(response.headers.get('content-type')).toBe('text/event-stream')
+
+        const reader = response.body!.getReader()
+        await reader.read()
+        controller.abort()
+
+        await vi.waitFor(() => {
+          expect(finalized).toBe(true)
+          expect(dispose).toHaveBeenCalled()
+        })
+      } finally {
+        await stop()
+      }
+    })
+  })
+
+  describe('blob download connection lifetime', () => {
+    it('disposes the connection after a fixed-length body is fully served', async () => {
+      const { url, connection, stop } = await startServer(async () =>
+        ProtocolBlob.from('hello world'),
+      )
+      const dispose = vi.fn(async () => {})
+      ;(connection as any)[Symbol.asyncDispose] = dispose
+
+      try {
+        const response = await fetch(`${url}/test`, { method: 'POST' })
+        expect(response.headers.get('content-length')).toBe('11')
+        expect(await response.text()).toBe('hello world')
+
+        // the fixed-length pump ends at tryEnd-done: the body finalizer must
+        // still reach its terminal state and tear the connection down
+        await vi.waitFor(() => expect(dispose).toHaveBeenCalled())
+      } finally {
+        await stop()
+      }
+    })
+  })
+
   describe('chunked stream backpressure', () => {
     it('pauses reading the source stream when the client does not consume', async () => {
       const chunkSize = 256 * 1024
@@ -141,6 +209,53 @@ describe('node runtime adapter', () => {
       } finally {
         await stop()
       }
+    })
+  })
+
+  describe('handleFixedLengthStream abort during backpressure', () => {
+    const tick = () => new Promise((resolve) => setImmediate(resolve))
+
+    it('settles the pump and cancels the reader when the client aborts', async () => {
+      let cancelled = false
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new Uint8Array(8))
+        },
+        cancel() {
+          cancelled = true
+        },
+      })
+      let registrations = 0
+      const res: any = {
+        aborted: false,
+        wakeWritable: undefined,
+        cork(cb: () => void) {
+          cb()
+          return res
+        },
+        getWriteOffset: () => 0,
+        // backpressured and not done: the pump parks waiting for a drain
+        // that never comes once the client disconnects
+        tryEnd: () => [false, false],
+        onWritable() {
+          registrations++
+          return res
+        },
+      }
+
+      const pump = handleFixedLengthStream(res, body, 16)
+      await tick()
+      expect(registrations).toBe(1)
+
+      // mirrors what the route's onAborted handler does
+      res.aborted = true
+      res.wakeWritable?.()
+      res.cancelBody?.()
+
+      await expect(pump).rejects.toThrow('Response aborted')
+      // the finally must reach reader.cancel so wrapped bodies (and their
+      // connection finalizers) still hit a terminal state
+      expect(cancelled).toBe(true)
     })
   })
 
