@@ -1,5 +1,5 @@
-import { getRandomPort } from 'get-port-please'
 import type { Plugin as VitePlugin, ResolvedConfig, ViteDevServer } from 'vite'
+import { getRandomPort } from 'get-port-please'
 
 import type { NeemViteRuntimeFactory } from '../types.ts'
 import {
