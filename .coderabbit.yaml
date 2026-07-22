@@ -1,0 +1,47 @@
+# yaml-language-server: $schema=https://storage.googleapis.com/coderabbit_public_assets/schema.v2.json
+language: en-US
+tone_instructions: >-
+  Focus exclusively on correctness: bugs, logic errors, race conditions, data
+  loss, and security issues. Do not comment on formatting, naming, code style,
+  or aesthetics.
+
+reviews:
+  profile: chill
+  poem: false
+  sequence_diagrams: false
+  estimate_code_review_effort: false
+  suggested_labels: false
+  suggested_reviewers: false
+  path_instructions:
+    - path: '**'
+      instructions: |
+        Only flag issues that affect runtime behavior or correctness:
+        - logic errors, wrong conditions, off-by-one mistakes
+        - concurrency bugs, race conditions, unhandled promise rejections
+        - resource leaks, missing cleanup, gaps in error handling
+        - protocol/API contract violations, unsound type assertions
+        - security vulnerabilities
+
+        Do NOT comment on: formatting, whitespace, naming preferences, import
+        ordering, comment or documentation wording, or stylistic refactors that
+        do not change behavior. Linting and formatting are already enforced by
+        oxlint in CI.
+  finishing_touches:
+    docstrings:
+      enabled: false
+  pre_merge_checks:
+    docstrings:
+      mode: 'off'
+  tools:
+    # style/prose linters — not correctness, covered locally or irrelevant
+    markdownlint:
+      enabled: false
+    languagetool:
+      enabled: false
+    yamllint:
+      enabled: false
+    # already enforced via oxlint in CI, avoid duplicate noise
+    oxc:
+      enabled: false
+    biome:
+      enabled: false
