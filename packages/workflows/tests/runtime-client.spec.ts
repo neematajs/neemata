@@ -575,7 +575,7 @@ describe('workflow runtime client', () => {
     )
   })
 
-  it('refuses to retry runs without a registered implementation', async () => {
+  it('refuses to retry runs whose definition is unknown to the client', async () => {
     const workflow = defineWorkflow({
       name: 'client-retry-unregistered-workflow',
       input: t.object({ scenario: t.string() }),
@@ -590,8 +590,91 @@ describe('workflow runtime client', () => {
     })
 
     await expect(client.retry(run.id)).rejects.toThrow(
-      `No registered workflow implementation [${workflow.name}]`,
+      `Cannot retry run [${run.id}]: no workflow definition [${workflow.name}] is known to this client`,
     )
+  })
+
+  it('retries workflow runs resolved from definitions without implementations', async () => {
+    const workflow = defineWorkflow({
+      name: 'client-retry-definition-workflow',
+      input: t.object({ scenario: t.string() }),
+      output: t.object({ caseId: t.string() }),
+    }).build()
+    const runtime = createInMemoryWorkflowRuntime()
+    const client = createWorkflowRuntimeClient({
+      ...runtime,
+      definitions: [workflow],
+    })
+    const run = await client.start(
+      workflow,
+      { scenario: 'alpha' },
+      { tags: { tenantId: 'tenant-1' } },
+    )
+    await runtime.store.completeRun({
+      runId: run.id,
+      output: { caseId: 'alpha' },
+    })
+
+    const retried = await client.retry(run.id)
+
+    expect(retried).toMatchObject({
+      kind: 'workflow',
+      workflowName: workflow.name,
+      status: 'queued',
+      input: { scenario: 'alpha' },
+      tags: { tenantId: 'tenant-1' },
+    })
+    expect(retried.id).not.toBe(run.id)
+  })
+
+  it('retries task runs resolved from definitions without implementations', async () => {
+    const task = defineTask({
+      name: 'client-retry-definition-task',
+      input: t.object({ text: t.string() }),
+      output: t.object({ id: t.string() }),
+    })
+    const runtime = createInMemoryWorkflowRuntime()
+    const client = createWorkflowRuntimeClient({
+      ...runtime,
+      definitions: [task],
+    })
+    const run = await client.start(task, { text: 'alpha' })
+    await runtime.store.completeRun({ runId: run.id, output: { id: 'alpha' } })
+
+    const retried = await client.retry(run.id)
+
+    expect(retried).toMatchObject({
+      kind: 'task',
+      taskName: task.name,
+      status: 'queued',
+      input: { text: 'alpha' },
+    })
+    expect(retried.id).not.toBe(run.id)
+  })
+
+  it('rejects conflicting definitions under one name at construction', async () => {
+    const workflow = defineWorkflow({
+      name: 'client-conflicting-definition',
+      input: t.object({ scenario: t.string() }),
+      output: t.object({ caseId: t.string() }),
+    }).build()
+    const shadow = defineWorkflow({
+      name: 'client-conflicting-definition',
+      input: t.object({ scenario: t.string() }),
+      output: t.object({ caseId: t.string() }),
+    }).build()
+    const implementation = implementWorkflow(workflow).finish(
+      (_ctx, _outputs, input) => ({ caseId: input.scenario }),
+    )
+    const runtime = createInMemoryWorkflowRuntime()
+
+    expect(() =>
+      createWorkflowRuntimeClient({
+        ...runtime,
+        workflows: [implementation],
+        definitions: [shadow],
+      }),
+    ).toThrow('Conflicting workflow definition [client-conflicting-definition]')
   })
 
   it('manages schedules through the adapter scheduler', async () => {
