@@ -5,6 +5,11 @@ export type WsTransportServerRequest = {
   url: URL
   method: string
   headers: Headers
+  /**
+   * Auth token offered by the client: taken from the `nmt.auth.*`
+   * subprotocol, falling back to the deprecated `auth` query parameter.
+   */
+  auth: string | null
 }
 
 export type WsTransportPeerContext = { connectionId: string }
