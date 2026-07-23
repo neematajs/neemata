@@ -24,9 +24,6 @@ export type kFactoryInjectable = typeof kFactoryInjectable
 export const kProvider: unique symbol = Symbol.for('neemata:ProviderKey')
 export type kProvider = typeof kProvider
 
-export const kPlugin: unique symbol = Symbol.for('neemata:PluginKey')
-export type kPlugin = typeof kPlugin
-
 export const kMetadata: unique symbol = Symbol.for('neemata:MetadataKey')
 export type kMetadata = typeof kMetadata
 

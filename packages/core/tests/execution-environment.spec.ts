@@ -1,13 +1,20 @@
 import { describe, expect, it, vi } from 'vitest'
 
+import type { ExecutionEnvironmentLifecycleHookTypes } from '../src/execution-environment.ts'
 import type { Dependant } from '../src/injectables.ts'
 import { Container } from '../src/container.ts'
-import { ExecutionEnvironment } from '../src/execution-environment.ts'
+import {
+  ExecutionEnvironment,
+  ExecutionEnvironmentLifecycleHook,
+} from '../src/execution-environment.ts'
 import {
   CoreInjectables,
   createFactoryInjectable,
+  createLazyInjectable,
   createValueInjectable,
+  provision,
 } from '../src/injectables.ts'
+import { createPlugin } from '../src/plugin.ts'
 import { testLogger } from './_utils.ts'
 
 describe('ExecutionEnvironment', () => {
@@ -58,5 +65,60 @@ describe('ExecutionEnvironment', () => {
     }
 
     expect(dispose).toHaveBeenCalledOnce()
+  })
+
+  it('registers plugin provisions and lifecycle hooks', async () => {
+    const initialized = vi.fn()
+    const childHook = vi.fn()
+    const dependency = createLazyInjectable<string>()
+    interface TestLifecycleHookTypes extends ExecutionEnvironmentLifecycleHookTypes {
+      'test:ready': () => any
+    }
+    const environment = new ExecutionEnvironment<TestLifecycleHookTypes>({
+      logger: testLogger(),
+      plugins: [
+        createPlugin({
+          name: 'test',
+          provisions: [provision(dependency, 'provided')],
+          hooks: {
+            [ExecutionEnvironmentLifecycleHook.BeforeInitialize]: initialized,
+            'test:ready': childHook,
+          },
+        }),
+      ],
+    })
+
+    await environment.initialize([{ dependencies: { dependency } }])
+
+    await expect(
+      environment.container.createContext({ dependency }),
+    ).resolves.toEqual({ dependency: 'provided' })
+    await environment.lifecycleHooks.callHook(
+      ExecutionEnvironmentLifecycleHook.BeforeInitialize,
+      environment,
+    )
+    expect(initialized).toHaveBeenCalledOnce()
+    await environment.lifecycleHooks.callHook('test:ready')
+    expect(childHook).toHaveBeenCalledOnce()
+
+    await environment.dispose()
+    await environment.lifecycleHooks.callHook(
+      ExecutionEnvironmentLifecycleHook.BeforeInitialize,
+      environment,
+    )
+    expect(initialized).toHaveBeenCalledOnce()
+    await environment.lifecycleHooks.callHook('test:ready')
+    expect(childHook).toHaveBeenCalledOnce()
+  })
+
+  it('keeps the established lifecycle hook names stable', () => {
+    expect(ExecutionEnvironmentLifecycleHook).toEqual({
+      BeforeInitialize: 'lifecycle:beforeInitialize',
+      AfterInitialize: 'lifecycle:afterInitialize',
+      BeforeDispose: 'lifecycle:beforeDispose',
+      AfterDispose: 'lifecycle:afterDispose',
+      Stop: 'lifecycle:stop',
+      Start: 'lifecycle:start',
+    })
   })
 })

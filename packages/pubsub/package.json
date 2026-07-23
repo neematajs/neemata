@@ -34,12 +34,12 @@
     }
   },
   "dependencies": {
-    "@nmtjs/application": "workspace:*",
     "@nmtjs/common": "workspace:*",
     "@nmtjs/contract": "workspace:*",
     "@nmtjs/core": "workspace:*"
   },
   "devDependencies": {
+    "@nmtjs/application": "workspace:*",
     "@nmtjs/type": "workspace:*",
     "ioredis": "^5.11.1",
     "iovalkey": "^0.3.3"

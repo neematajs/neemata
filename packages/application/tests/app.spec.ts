@@ -1,4 +1,4 @@
-import { createLogger } from '@nmtjs/core'
+import { createLogger, ExecutionEnvironmentLifecycleHook } from '@nmtjs/core'
 import { ProxyableTransportType } from '@nmtjs/gateway'
 import { JsonFormat } from '@nmtjs/json-format/server'
 import { MsgpackFormat } from '@nmtjs/msgpack-format/server'
@@ -40,7 +40,29 @@ describe('Neemata application runtime', () => {
       { listen: { hostname: string; port: number } }
     >
 
-    const config = defineApplication({ router: createRootRouter([]) })
+    const config = defineApplication({
+      router: createRootRouter([]),
+      lifecycleHooks: {
+        [ExecutionEnvironmentLifecycleHook.BeforeInitialize]: () => {
+          events.push('before-initialize')
+        },
+        [ExecutionEnvironmentLifecycleHook.AfterInitialize]: () => {
+          events.push('after-initialize')
+        },
+        [ExecutionEnvironmentLifecycleHook.Start]: () => {
+          events.push('start-hook')
+        },
+        [ExecutionEnvironmentLifecycleHook.Stop]: () => {
+          events.push('stop-hook')
+        },
+        [ExecutionEnvironmentLifecycleHook.BeforeDispose]: () => {
+          events.push('before-dispose')
+        },
+        [ExecutionEnvironmentLifecycleHook.AfterDispose]: () => {
+          events.push('after-dispose')
+        },
+      },
+    })
 
     const host = createApplicationHost(config, {
       logger,
@@ -59,7 +81,17 @@ describe('Neemata application runtime', () => {
     expect(upstreams).toStrictEqual([
       { type: ProxyableTransportType.HTTP, url: 'http://127.0.0.1:3000' },
     ])
-    expect(events).toStrictEqual(['factory:3000', 'start', 'stop'])
+    expect(events).toStrictEqual([
+      'before-initialize',
+      'after-initialize',
+      'factory:3000',
+      'start',
+      'start-hook',
+      'stop',
+      'stop-hook',
+      'before-dispose',
+      'after-dispose',
+    ])
   })
 
   it('preserves root-composed router metadata without changing procedure names', async () => {

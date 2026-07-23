@@ -1,6 +1,14 @@
 import { MessageChannel } from 'node:worker_threads'
 
-import { createLogger, createValueInjectable } from '@nmtjs/core'
+import {
+  createFactoryInjectable,
+  createLazyInjectable,
+  createLogger,
+  createPlugin,
+  createValueInjectable,
+  ExecutionEnvironmentLifecycleHook,
+  provision,
+} from '@nmtjs/core'
 import {
   isNeemRuntimeDeclaration,
   isNeemRuntimeHostFactory,
@@ -620,6 +628,14 @@ describe('workflows Neem integration', () => {
   })
 
   it('runs coordinator and execution role loops end-to-end', async () => {
+    const disposePluginDependency = vi.fn()
+    const beforeInitialize = vi.fn()
+    const afterDispose = vi.fn()
+    const pluginDependency = createLazyInjectable<string>()
+    const pluginDependencyFactory = createFactoryInjectable({
+      create: () => 'plugin',
+      dispose: disposePluginDependency,
+    })
     const task = defineTask({
       name: 'neem.integration.task',
       input: t.object({ text: t.string() }),
@@ -637,7 +653,10 @@ describe('workflows Neem integration', () => {
       .task('task', task)
       .build()
     const taskImpl = implementTask(task, {
-      handler: async (_ctx, input) => ({ text: `${input.text}:task` }),
+      dependencies: { pluginDependency },
+      handler: async ({ pluginDependency }, input) => ({
+        text: `${pluginDependency}:${input.text}:task`,
+      }),
     })
     const fullWorkflowImpl = implementWorkflow(fullWorkflow)
       .activity(async (_ctx, input) => ({ text: `${input.text}:activity` }), {
@@ -652,6 +671,17 @@ describe('workflows Neem integration', () => {
       runtime: () => runtimeAdapter,
       workflows: () => [fullWorkflowImpl],
       tasks: () => [taskImpl],
+      plugins: [
+        createPlugin({
+          name: 'workflow-test',
+          provisions: [provision(pluginDependency, pluginDependencyFactory)],
+          hooks: {
+            [ExecutionEnvironmentLifecycleHook.BeforeInitialize]:
+              beforeInitialize,
+            [ExecutionEnvironmentLifecycleHook.AfterDispose]: afterDispose,
+          },
+        }),
+      ],
       workers: {
         coordinator: { pollIntervalMs: 1 },
         execution: { pollIntervalMs: 1 },
@@ -683,7 +713,9 @@ describe('workflows Neem integration', () => {
         const current = await runtimeAdapter.store.loadRunSnapshot(run.id)
         return current?.run.status === 'completed' ? current : undefined
       })
-      expect(snapshot.run.output).toStrictEqual({ text: 'alpha:activity:task' })
+      expect(snapshot.run.output).toStrictEqual({
+        text: 'plugin:alpha:activity:task',
+      })
     } finally {
       await Promise.allSettled(
         runtimes.map(({ runtime }) => Promise.resolve(runtime.stop())),
@@ -693,6 +725,10 @@ describe('workflows Neem integration', () => {
         channel.port2.close()
       }
     }
+
+    expect(disposePluginDependency).toHaveBeenCalledOnce()
+    expect(beforeInitialize).toHaveBeenCalledTimes(2)
+    expect(afterDispose).toHaveBeenCalledTimes(2)
   })
 
   it('reconciles schedules once and fires them from coordinator workers', async () => {

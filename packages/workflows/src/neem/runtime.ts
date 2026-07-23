@@ -1,3 +1,5 @@
+import type { ExecutionEnvironmentPlugin } from '@nmtjs/core'
+
 import type {
   TaskImplementation,
   WorkflowImplementation,
@@ -76,6 +78,7 @@ export type WorkflowsConfig<
   readonly tasks?: WorkflowTaskImplementationsFactory<TTaskImplementation>
   readonly schedules?: WorkflowSchedulesFactory<TScheduleDefinition>
   readonly workers?: WorkflowsWorkersConfig
+  readonly plugins?: readonly ExecutionEnvironmentPlugin[]
 }
 
 export type ResolvedWorkflowsConfig<
@@ -88,6 +91,7 @@ export type ResolvedWorkflowsConfig<
   readonly workflows: readonly TWorkflowImplementation[]
   readonly tasks: readonly TTaskImplementation[]
   readonly schedules: readonly TScheduleDefinition[]
+  readonly plugins: readonly ExecutionEnvironmentPlugin[]
   readonly workers: {
     readonly coordinator: Required<WorkflowsWorkerPoolConfig>
     readonly execution: readonly ResolvedExecutionWorkerPool[]
@@ -170,6 +174,7 @@ export async function resolveWorkflowsConfig<
     workflows,
     tasks,
     schedules: (await config.schedules?.()) ?? [],
+    plugins: config.plugins ?? [],
     workers: {
       coordinator: normalizeWorkerPool(config.workers?.coordinator),
       execution: normalizeExecutionWorkerPools(
