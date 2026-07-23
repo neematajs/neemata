@@ -64,6 +64,8 @@ import {
 
 type RpcStreamCreditState = {
   credits: number
+  // credits granted since the previous idle wait
+  idleCredits: number
   // resolves the in-flight credit wait; also poked on abort/teardown
   notify: (() => void) | null
   // fails the whole stream (e.g. credit violation) from the message handler
@@ -93,9 +95,12 @@ export interface GatewayOptions<
   identity?: ConnectionIdentity
   /**
    * Bounds peer inactivity per stream. For RPC streams it caps only how long
-   * the server waits for consumer credit (a client that isn't pulling);
-   * producer stalls with a live, waiting consumer are allowed indefinitely
-   * (sparse streams, e.g. pubsub subscriptions). For blob streams it bounds
+   * the server waits for consumer credit (a client that isn't pulling). The
+   * allowance applies per exhausted chunk credit, so a batched grant does not
+   * reduce the time available to consume each chunk. Producer stalls with a
+   * live, waiting consumer are allowed indefinitely (sparse streams, e.g.
+   * pubsub subscriptions). Consequently, a larger RPC window also allows an
+   * inactive consumer to retain the stream longer. For blob streams it bounds
    * inactivity in either direction (chunk sent/received, credit
    * granted/received). Expiry aborts the stream.
    */
@@ -111,6 +116,9 @@ export interface GatewayOptions<
 const DEFAULT_GATEWAY_HEARTBEAT_INTERVAL = 15000
 const DEFAULT_GATEWAY_HEARTBEAT_TIMEOUT = 5000
 const DEFAULT_STREAM_IDLE_TIMEOUT = 30_000
+// Node clamps larger timer delays to 1ms, which would invert a large credit
+// window into an immediate timeout.
+const MAX_TIMER_DELAY = 2 ** 31 - 1
 /**
  * Upper bound per connection teardown step so a never-settling transport
  * close or container disposal can't hang closeConnection() and stop().
@@ -705,6 +713,10 @@ export class Gateway<
                 break
               }
               credit.credits += message.size
+              credit.idleCredits = Math.min(
+                credit.idleCredits + message.size,
+                MAX_STREAM_CREDITS,
+              )
               credit.notify?.()
             }
             break
@@ -839,6 +851,7 @@ export class Gateway<
         flow.promise.catch(noopFn)
         const credit: RpcStreamCreditState = {
           credits: 0,
+          idleCredits: 0,
           notify: null,
           fail: (error) => flow.reject(error),
         }
@@ -880,12 +893,18 @@ export class Gateway<
             while (credit.credits <= 0) {
               // idle detection bounds only consumer inactivity: the producer
               // is ready but the client isn't pulling
+              const idleTimeout = Math.min(
+                this.options.streamIdleTimeout *
+                  Math.max(credit.idleCredits, 1),
+                MAX_TIMER_DELAY,
+              )
+              credit.idleCredits = 0
               const grant = createFuture<void>()
               credit.notify = grant.resolve
               const idleTimer = setTimeout(
                 () =>
                   flow.reject(new StreamFlowError(STREAM_IDLE_TIMEOUT_REASON)),
-                this.options.streamIdleTimeout,
+                idleTimeout,
               )
               try {
                 await Promise.race([grant.promise, flow.promise])

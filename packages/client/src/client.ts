@@ -21,6 +21,7 @@ import type { BaseClientTransformer } from './transformers.ts'
 import type { ClientTransportFactory } from './transport.ts'
 import type {
   AnyResolvedContractRouter,
+  ClientBackpressureOptions,
   ClientCallers,
   ResolveAPIRouterRoutes,
 } from './types.ts'
@@ -39,6 +40,11 @@ export interface ClientOptions<
   application?: string
   autoConnect?: boolean
   timeout?: number
+  /**
+   * Backpressure defaults for streaming responses; individual calls override
+   * them.
+   */
+  backpressure?: ClientBackpressureOptions
   plugins?: ClientPlugin[]
   safe?: SafeCall
 }
@@ -134,6 +140,7 @@ export class Client<
     this.streamLayer = createStreamLayer(this.core)
     this.rpcLayer = createRpcLayer(this.core, this.streamLayer, transformer, {
       timeout: this.options.timeout,
+      rpcStreamWindow: this.options.backpressure?.rpc?.window,
       safe: this.options.safe,
     })
     this.pingLayer = createPingLayer(this.core)

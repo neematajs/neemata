@@ -21,6 +21,7 @@ import { toReasonString } from './streams.ts'
 export type ProtocolClientCall = Future<any> & {
   procedure: string
   signal?: AbortSignal
+  rpcStreamWindow: number
   cleanup?: () => void
 }
 
@@ -32,6 +33,19 @@ export interface RpcLayerApi {
   ): Promise<any>
   readonly pendingCallCount: number
   readonly activeStreamCount: number
+}
+
+const DEFAULT_RPC_STREAM_WINDOW = 16
+
+const resolveRpcStreamWindow = (
+  value: number | undefined = DEFAULT_RPC_STREAM_WINDOW,
+) => {
+  if (!Number.isInteger(value) || value < 1 || value > MAX_UINT32) {
+    throw new RangeError(
+      'backpressure.rpc.window must be a positive uint32 integer',
+    )
+  }
+  return value
 }
 
 const toAbortError = (signal: AbortSignal) => {
@@ -187,10 +201,15 @@ export const createRpcLayer = (
   core: ClientCore,
   streams: StreamLayerApi,
   transformer: BaseClientTransformer,
-  options: { timeout?: number; safe?: boolean } = {},
+  options: {
+    timeout?: number
+    rpcStreamWindow?: number
+    safe?: boolean
+  } = {},
 ): RpcLayerApi => {
   const calls = new Map<number, ProtocolClientCall>()
   const rpcStreams = new ServerStreams<ProtocolServerRPCStream>()
+  const defaultRpcStreamWindow = resolveRpcStreamWindow(options.rpcStreamWindow)
 
   let callId = 0
 
@@ -302,13 +321,27 @@ export const createRpcLayer = (
       stream: true,
     })
 
-    const { procedure, signal } = call
+    const { procedure, signal, rpcStreamWindow } = call
+    const rpcStreamRefill = Math.ceil(rpcStreamWindow / 2)
+    let initialCreditGrant = true
+    let pullsUntilRefill = rpcStreamRefill
     const stream = new ProtocolServerRPCStream({
-      // one chunk credit per consumer read (hwm 0): the server sends nothing
-      // until the consumer actually iterates
       pull: () => {
         if (!core.messageContext) return
 
+        let size: number
+        if (initialCreditGrant) {
+          initialCreditGrant = false
+          size = rpcStreamWindow
+        } else {
+          pullsUntilRefill--
+          if (pullsUntilRefill > 0) return
+          pullsUntilRefill = rpcStreamRefill
+          size = rpcStreamRefill
+        }
+
+        // Batch refills preserve a bounded producer lead without putting a
+        // wire round trip on every consumer read.
         core.emitStreamEvent({
           direction: 'outgoing',
           streamType: 'rpc',
@@ -319,7 +352,7 @@ export const createRpcLayer = (
         const buffer = core.protocol.encodeMessage(
           core.messageContext,
           ClientMessageType.RpcStreamPull,
-          { callId: message.callId, size: 1 },
+          { callId: message.callId, size },
         )
 
         core.send(buffer).catch(noopFn)
@@ -647,6 +680,9 @@ export const createRpcLayer = (
     payload: any,
     callOptions: ClientCallOptions = {},
   ) => {
+    const rpcStreamWindow = resolveRpcStreamWindow(
+      callOptions.backpressure?.rpc?.window ?? defaultRpcStreamWindow,
+    )
     const timeout = callOptions.timeout ?? options.timeout
     const controller = new AbortController()
 
@@ -661,6 +697,7 @@ export const createRpcLayer = (
     const call = createFuture() as ProtocolClientCall
     call.procedure = procedure
     call.signal = signal
+    call.rpcStreamWindow = rpcStreamWindow
 
     calls.set(currentCallId, call)
     core.emitClientEvent({
