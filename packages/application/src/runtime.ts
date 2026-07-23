@@ -1,6 +1,10 @@
 import type { Container, Dependant, Logger } from '@nmtjs/core'
 import type { GatewayApi } from '@nmtjs/gateway'
-import { ExecutionEnvironment, forkLogger } from '@nmtjs/core'
+import {
+  ExecutionEnvironment,
+  ExecutionEnvironmentLifecycleHook,
+  forkLogger,
+} from '@nmtjs/core'
 
 import type { ApiOptions, ApplicationResolvedProcedure } from './api/api.ts'
 import type { AnyFilter } from './api/filters.ts'
@@ -13,9 +17,7 @@ import { ApplicationApi } from './api/api.ts'
 import { kRootRouterSources } from './api/constants.ts'
 import { isProcedure } from './api/procedure.ts'
 import { isRootRouter, isRouter } from './api/router.ts'
-import { LifecycleHook } from './enums.ts'
 import { ApplicationHooks } from './hooks.ts'
-import { LifecycleHooks } from './lifecycle.ts'
 
 export interface NeemataApplicationOptions {
   logger: Logger
@@ -25,7 +27,6 @@ export interface NeemataApplicationOptions {
 
 export class NeemataApplication {
   protected readonly execution: ExecutionEnvironment
-  readonly lifecycleHooks = new LifecycleHooks()
   readonly applicationHooks = new ApplicationHooks()
   readonly api: GatewayApi<ApplicationResolvedProcedure>
 
@@ -51,6 +52,8 @@ export class NeemataApplication {
       logger,
       container: options.container,
       label: 'NeemataApplication',
+      lifecycleHooks: this.appConfig.lifecycleHooks,
+      plugins: this.appConfig.plugins,
     })
 
     this.api = new ApplicationApi({
@@ -73,23 +76,35 @@ export class NeemataApplication {
     return this.execution.container
   }
 
+  get lifecycleHooks() {
+    return this.execution.lifecycleHooks
+  }
+
   async initialize(): Promise<void> {
     this.registerApi()
-    this.lifecycleHooks.addHooks(this.appConfig.lifecycleHooks)
-    await this.initializePlugins()
     await this.initializeExecutionEnv()
-    await this.lifecycleHooks.callHook(LifecycleHook.BeforeInitialize, this)
+    await this.lifecycleHooks.callHook(
+      ExecutionEnvironmentLifecycleHook.BeforeInitialize,
+      this,
+    )
     await this.initializeApplicationHooks()
-    await this.lifecycleHooks.callHook(LifecycleHook.AfterInitialize, this)
+    await this.lifecycleHooks.callHook(
+      ExecutionEnvironmentLifecycleHook.AfterInitialize,
+      this,
+    )
   }
 
   async dispose(): Promise<void> {
-    await this.lifecycleHooks.callHook(LifecycleHook.BeforeDispose, this)
+    await this.lifecycleHooks.callHook(
+      ExecutionEnvironmentLifecycleHook.BeforeDispose,
+      this,
+    )
     this.applicationHooks.removeAllHooks()
-    await this.lifecycleHooks.callHook(LifecycleHook.AfterDispose, this)
+    await this.lifecycleHooks.callHook(
+      ExecutionEnvironmentLifecycleHook.AfterDispose,
+      this,
+    )
     await this.disposeExecutionEnv()
-    await this.disposePlugins()
-    this.lifecycleHooks.removeHooks(this.appConfig.lifecycleHooks)
     this.filters.clear()
     this.middlewares.clear()
     this.guards.clear()
@@ -103,24 +118,6 @@ export class NeemataApplication {
         const ctx = await this.container.createContext(hook.dependencies)
         await hook.handler(ctx, ...args)
       })
-    }
-  }
-
-  protected async initializePlugins(): Promise<void> {
-    for (const { hooks, injections } of this.appConfig.plugins) {
-      if (injections) this.container.provide(injections)
-      if (hooks) this.lifecycleHooks.addHooks(hooks)
-    }
-  }
-
-  protected async disposePlugins(): Promise<void> {
-    for (const { hooks, injections } of this.appConfig.plugins) {
-      if (hooks) this.lifecycleHooks.removeHooks(hooks)
-      if (injections) {
-        for (const injection of injections) {
-          await this.container.disposeInjectableInstances(injection.token)
-        }
-      }
     }
   }
 

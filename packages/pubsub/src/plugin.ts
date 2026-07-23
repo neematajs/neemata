@@ -1,5 +1,4 @@
-import type { RuntimePlugin } from '@nmtjs/application'
-import type { AnyInjectable } from '@nmtjs/core'
+import type { AnyInjectable, ExecutionEnvironmentPlugin } from '@nmtjs/core'
 import {
   CoreInjectables,
   createFactoryInjectable,
@@ -14,7 +13,7 @@ export type PubSubPluginOptions = { adapter: AnyInjectable<PubSubAdapter> }
 
 export function createPubSubPlugin(
   options: PubSubPluginOptions,
-): RuntimePlugin {
+): ExecutionEnvironmentPlugin {
   const manager = createFactoryInjectable({
     dependencies: {
       adapter: options.adapter,
@@ -25,7 +24,7 @@ export function createPubSubPlugin(
 
   return {
     name: 'pubsub',
-    injections: [
+    provisions: [
       provision(pubsubAdapter, options.adapter),
       provision(
         publish,

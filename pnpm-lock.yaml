@@ -335,9 +335,6 @@ importers:
 
   packages/pubsub:
     dependencies:
-      '@nmtjs/application':
-        specifier: workspace:*
-        version: link:../application
       '@nmtjs/common':
         specifier: workspace:*
         version: link:../common
@@ -348,6 +345,9 @@ importers:
         specifier: workspace:*
         version: link:../core
     devDependencies:
+      '@nmtjs/application':
+        specifier: workspace:*
+        version: link:../application
       '@nmtjs/type':
         specifier: workspace:*
         version: link:../type

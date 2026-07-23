@@ -1,4 +1,8 @@
-import { Container, provision, CoreInjectables } from '@nmtjs/core'
+import type { Container } from '@nmtjs/core'
+import {
+  ExecutionEnvironment,
+  ExecutionEnvironmentLifecycleHook,
+} from '@nmtjs/core'
 import { defineRuntimeWorker } from '@nmtjs/neem'
 
 import type { WorkflowRuntimeAdapter } from '../runtime/client.ts'
@@ -28,9 +32,9 @@ export function defineWorkflowsWorker<
     definition: config,
     createRuntime(ctx) {
       const abort = new AbortController()
-      const container = new Container({ logger: ctx.logger })
       let workerLoop: Promise<void> | undefined
       let runtime: WorkflowRuntimeAdapter | undefined
+      let execution: ExecutionEnvironment | undefined
       let resolveFinished!: () => void
       let rejectFinished!: (error: unknown) => void
       const finished = new Promise<void>((resolve, reject) => {
@@ -40,8 +44,6 @@ export function defineWorkflowsWorker<
       // Older hosts may not observe the lifecycle promise.
       void finished.catch(() => {})
 
-      container.provide([provision(CoreInjectables.logger, ctx.logger)])
-
       return {
         finished,
         async start() {
@@ -50,6 +52,16 @@ export function defineWorkflowsWorker<
             ctx.data.role === 'execution'
               ? resolveExecutionWorkerPool(config, ctx.data)
               : undefined
+          execution = new ExecutionEnvironment({
+            logger: ctx.logger,
+            label: 'Workflows',
+            plugins: config.plugins,
+          })
+          await execution.initialize()
+          await execution.lifecycleHooks.callHook(
+            ExecutionEnvironmentLifecycleHook.BeforeInitialize,
+            execution,
+          )
           runtime = await config.runtime()
           if (ctx.data.role === 'coordinator' && config.schedules.length > 0) {
             if (!runtime.scheduler) {
@@ -59,12 +71,16 @@ export function defineWorkflowsWorker<
             }
             await runtime.scheduler.reconcile(config.schedules)
           }
+          await execution.lifecycleHooks.callHook(
+            ExecutionEnvironmentLifecycleHook.AfterInitialize,
+            execution,
+          )
           workerLoop = runRoleLoop({
             data: ctx.data,
             runtime,
             config,
             executionPool,
-            container,
+            container: execution.container,
             workerId: ctx.name,
             signal: abort.signal,
           })
@@ -75,21 +91,52 @@ export function defineWorkflowsWorker<
             )
             rejectFinished(error)
           })
+          await execution.lifecycleHooks.callHook(
+            ExecutionEnvironmentLifecycleHook.Start,
+          )
         },
         async stop() {
           abort.abort()
-          let workerLoopFailed = false
-          let workerLoopError: unknown
-          try {
-            await workerLoop
-          } catch (error) {
-            workerLoopFailed = true
-            workerLoopError = error
+          let failure: unknown
+          const attempt = async (operation: () => unknown) => {
+            try {
+              await operation()
+            } catch (error) {
+              failure ??= error
+            }
           }
-          await runtime?.dispose?.()
+
+          await attempt(async () => await workerLoop)
+          if (workerLoop) {
+            await attempt(async () => {
+              await execution?.lifecycleHooks.callHook(
+                ExecutionEnvironmentLifecycleHook.Stop,
+              )
+            })
+          }
+          if (execution) {
+            await attempt(async () => {
+              await execution?.lifecycleHooks.callHook(
+                ExecutionEnvironmentLifecycleHook.BeforeDispose,
+                execution,
+              )
+            })
+          }
+          await attempt(async () => await runtime?.dispose?.())
+          if (execution) {
+            await attempt(async () => {
+              await execution?.lifecycleHooks.callHook(
+                ExecutionEnvironmentLifecycleHook.AfterDispose,
+                execution,
+              )
+            })
+            await attempt(async () => await execution?.dispose())
+          }
+
           workerLoop = undefined
           runtime = undefined
-          if (workerLoopFailed) throw workerLoopError
+          execution = undefined
+          if (failure) throw failure
         },
       }
     },

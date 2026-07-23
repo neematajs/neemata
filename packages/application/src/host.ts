@@ -5,6 +5,7 @@ import type {
   Transport,
 } from '@nmtjs/gateway'
 import type { ProtocolFormats } from '@nmtjs/protocol/server'
+import { ExecutionEnvironmentLifecycleHook } from '@nmtjs/core'
 import { Gateway } from '@nmtjs/gateway'
 
 import type { ApplicationResolvedProcedure } from './api/api.ts'
@@ -14,7 +15,6 @@ import type {
   ApplicationTransport,
 } from './config.ts'
 import { kApplicationHostDefinition } from './constants.ts'
-import { LifecycleHook } from './enums.ts'
 import { NeemataApplication } from './runtime.ts'
 
 export type TransportOptionsOf<T> =
@@ -110,13 +110,17 @@ export class ApplicationHost<
     })
 
     return await this.gateway.start().finally(async () => {
-      await this.application.lifecycleHooks.callHook(LifecycleHook.Start)
+      await this.application.lifecycleHooks.callHook(
+        ExecutionEnvironmentLifecycleHook.Start,
+      )
     })
   }
 
   async stop(): Promise<void> {
     await this.gateway.stop()
-    await this.application.lifecycleHooks.callHook(LifecycleHook.Stop)
+    await this.application.lifecycleHooks.callHook(
+      ExecutionEnvironmentLifecycleHook.Stop,
+    )
     await this.application.dispose()
   }
 

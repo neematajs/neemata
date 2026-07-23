@@ -1,4 +1,9 @@
-import type { LazyInjectable, Scope } from '@nmtjs/core'
+import type {
+  ExecutionEnvironmentLifecycleHooks,
+  ExecutionEnvironmentPlugin,
+  LazyInjectable,
+  Scope,
+} from '@nmtjs/core'
 import type { ProxyableTransportType, Transport } from '@nmtjs/gateway'
 import type { ConnectionType } from '@nmtjs/protocol'
 import { assertUniqueMetaBindings } from '@nmtjs/core'
@@ -9,8 +14,6 @@ import type { AnyGuard } from './api/guards.ts'
 import type { AnyMiddleware } from './api/middlewares.ts'
 import type { AnyRootRouter, AnyRouterMetaBinding } from './api/router.ts'
 import type { AnyHook } from './hook.ts'
-import type { LifecycleHooks } from './lifecycle.ts'
-import type { RuntimePlugin } from './plugin.ts'
 import { kApplicationConfig } from './constants.ts'
 
 export type AnyApplicationConfig = ApplicationConfig<AnyRootRouter>
@@ -38,13 +41,13 @@ export interface ApplicationConfig<
   [kApplicationConfig]: any
   router: Router
   api: Pick<ApiOptions, 'timeout'>
-  plugins: RuntimePlugin[]
+  plugins: ExecutionEnvironmentPlugin[]
   filters: AnyFilter[]
   middlewares: AnyMiddleware[]
   guards: AnyGuard[]
   meta: AnyRouterMetaBinding[]
   hooks: AnyHook[]
-  lifecycleHooks: LifecycleHooks['_']['config']
+  lifecycleHooks: ExecutionEnvironmentLifecycleHooks['_']['config']
 }
 
 export function defineApplication<R extends AnyRootRouter>(
