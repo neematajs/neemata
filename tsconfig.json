@@ -49,6 +49,9 @@
       "path": "./packages/type/tsconfig.json"
     },
     {
+      "path": "./packages/vite/tsconfig.json"
+    },
+    {
       "path": "./packages/workflows/tsconfig.json"
     },
     {
