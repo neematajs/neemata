@@ -162,6 +162,7 @@ afterEach(async () => {
 async function createHarness(options: {
   handlers: Handlers
   streamIdleTimeout?: number
+  rpcBackpressureWindow?: number
   runtimeWs?: WsTransportRuntimeNode['ws']
   plugins?: ClientPlugin[]
 }) {
@@ -214,6 +215,9 @@ async function createHarness(options: {
       contract,
       protocol: ProtocolVersion.v1,
       format: new ClientJsonFormat(),
+      backpressure: {
+        rpc: { window: options.rpcBackpressureWindow },
+      },
       plugins: options.plugins,
     },
     WsTransportFactory,
@@ -287,12 +291,26 @@ describe('stream flow control over a real WS transport', () => {
     expect(sourceBytes).toBe(BLOB_SIZE)
   })
 
-  it('never lets an RPC stream producer run ahead of the consumer', async () => {
+  it('delivers an RPC chunk batch from one pull grant', async () => {
     const TOTAL = 30
+    const CREDIT_SIZE = 12
+    const REFILL_SIZE = 6
     let yielded = 0
     let finished = false
+    let pulls = 0
+    let pushes = 0
+
+    const pacingObserver: ClientPlugin = () => ({
+      onClientEvent: (event) => {
+        if (event.kind !== 'stream_event' || event.streamType !== 'rpc') return
+        if (event.direction === 'outgoing' && event.action === 'pull') pulls++
+        if (event.direction === 'incoming' && event.action === 'push') pushes++
+      },
+    })
 
     const { client } = await createHarness({
+      plugins: [pacingObserver],
+      rpcBackpressureWindow: CREDIT_SIZE,
       handlers: {
         chunks: async () => () =>
           (async function* () {
@@ -311,28 +329,71 @@ describe('stream flow control over a real WS transport', () => {
     const stream = await client.stream.chunks({})
     const iterator = stream[Symbol.asyncIterator]()
 
-    // consume one chunk, then pause: the producer must have advanced exactly
-    // once — one credit, one yield, no prefetch (yielded is server-internal
-    // instrumentation, exact by construction)
+    // Consume one chunk, then pause. The first pull grants a whole batch, so
+    // the server can deliver the remaining chunks without another round trip.
     const first = await iterator.next()
     expect(first.value).toBe('chunk-0')
-    await waitQuiescent(() => yielded)
-    expect(yielded).toBe(1)
+    await waitQuiescent(() => `${yielded}:${pushes}:${pulls}`)
+    expect({ pulls, pushes, yielded }).toEqual({
+      pulls: 1,
+      pushes: CREDIT_SIZE,
+      yielded: CREDIT_SIZE,
+    })
+    expect(finished).toBe(false)
 
     const received: string[] = [first.value]
+    while (received.length < REFILL_SIZE) {
+      const { value } = await iterator.next()
+      received.push(value)
+    }
+    expect(pulls).toBe(1)
+
+    const nextAfterRefill = await iterator.next()
+    received.push(nextAfterRefill.value)
+    await waitQuiescent(() => `${yielded}:${pushes}:${pulls}`)
+    expect({ pulls, pushes, yielded }).toEqual({
+      pulls: 2,
+      pushes: CREDIT_SIZE + REFILL_SIZE,
+      yielded: CREDIT_SIZE + REFILL_SIZE,
+    })
+
     while (true) {
       const { done, value } = await iterator.next()
       if (done) break
       received.push(value)
-      // strict lockstep: the next credit is only granted by the next read,
-      // so the generator can never be ahead of what the client consumed
-      expect(yielded).toBe(received.length)
     }
 
     expect(received).toEqual(
       Array.from({ length: TOTAL }, (_, i) => `chunk-${i}`),
     )
     expect(finished).toBe(true)
+  })
+
+  it('keeps a slowly consumed batched RPC stream alive', async () => {
+    const IDLE_TIMEOUT = 50
+    const CONSUME_DELAY = 35
+    const TOTAL = 6
+
+    const { client } = await createHarness({
+      streamIdleTimeout: IDLE_TIMEOUT,
+      rpcBackpressureWindow: 4,
+      handlers: {
+        chunks: async () => () =>
+          (async function* () {
+            for (let i = 0; i < TOTAL; i++) yield `chunk-${i}`
+          })(),
+      },
+    })
+
+    const received: string[] = []
+    for await (const chunk of await client.stream.chunks({})) {
+      received.push(chunk)
+      await sleep(CONSUME_DELAY)
+    }
+
+    expect(received).toEqual(
+      Array.from({ length: TOTAL }, (_, i) => `chunk-${i}`),
+    )
   })
 
   it('keeps a sparse producer alive across silences beyond the idle timeout', async () => {

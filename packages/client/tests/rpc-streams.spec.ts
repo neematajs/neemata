@@ -65,7 +65,27 @@ class MockCore extends EventEmitter<{
 }
 
 describe('RPC streams', () => {
-  it('sends exactly one RpcStreamPull per consumed chunk and nothing else', async () => {
+  it('rejects invalid RPC backpressure windows', async () => {
+    const core = new MockCore()
+    const rpcLayer = createRpcLayer(
+      core as any,
+      { addServerBlobStream: vi.fn() } as any,
+      new BaseClientTransformer(),
+    )
+
+    await expect(
+      rpcLayer.call(
+        'users/profile',
+        { userId: '1' },
+        { _stream_response: true, backpressure: { rpc: { window: 0 } } },
+      ),
+    ).rejects.toThrow(
+      'backpressure.rpc.window must be a positive uint32 integer',
+    )
+    expect(core.send).not.toHaveBeenCalled()
+  })
+
+  it('batches RPC credits and refills after eight reads', async () => {
     const core = new MockCore()
     const rpcLayer = createRpcLayer(
       core as any,
@@ -98,51 +118,53 @@ describe('RPC streams', () => {
     const firstChunkPromise = iterator.next()
 
     await Promise.resolve()
-    // the read triggers one single-chunk credit grant
+    // One read opens enough credit for a short burst from the server.
     expect(core.send).toHaveBeenCalledTimes(1)
     expect(core.protocol.encodeMessage).toHaveBeenCalledWith(
       expect.anything(),
       ClientMessageType.RpcStreamPull,
-      { callId: 0, size: 1 },
+      { callId: 0, size: 16 },
     )
+    core.emitStreamEvent.mockClear()
 
-    core.emit(
-      'message',
-      {
-        type: ServerMessageType.RpcStreamChunk,
-        callId: 0,
-        chunk: encodeJson({ ok: true, echoed: { userId: '1' } }),
-      },
-      new Uint8Array([2]),
-    )
-
+    for (let sequence = 1; sequence <= 9; sequence++) {
+      core.emit(
+        'message',
+        {
+          type: ServerMessageType.RpcStreamChunk,
+          callId: 0,
+          chunk: encodeJson({ sequence }),
+        },
+        new Uint8Array([2]),
+      )
+    }
     await expect(firstChunkPromise).resolves.toEqual({
       done: false,
-      value: { ok: true, echoed: { userId: '1' } },
+      value: { sequence: 1 },
     })
-    // receiving the chunk itself grants nothing
+    // Receiving the rest of the granted burst does not send another pull.
+    expect(core.send).toHaveBeenCalledTimes(1)
+    expect(core.emitStreamEvent).toHaveBeenCalledTimes(9)
+
+    for (let sequence = 2; sequence <= 8; sequence++) {
+      await expect(iterator.next()).resolves.toEqual({
+        done: false,
+        value: { sequence },
+      })
+    }
     expect(core.send).toHaveBeenCalledTimes(1)
 
-    const secondChunkPromise = iterator.next()
-    await Promise.resolve()
+    const ninthChunkPromise = iterator.next()
+    await expect(ninthChunkPromise).resolves.toEqual({
+      done: false,
+      value: { sequence: 9 },
+    })
     expect(core.send).toHaveBeenCalledTimes(2)
     expect(core.protocol.encodeMessage).toHaveBeenLastCalledWith(
       expect.anything(),
       ClientMessageType.RpcStreamPull,
-      { callId: 0, size: 1 },
+      { callId: 0, size: 8 },
     )
-
-    core.emit(
-      'message',
-      { type: ServerMessageType.RpcStreamEnd, callId: 0 },
-      new Uint8Array([3]),
-    )
-
-    await expect(secondChunkPromise).resolves.toEqual({
-      done: true,
-      value: undefined,
-    })
-    expect(core.send).toHaveBeenCalledTimes(2)
   })
 
   it('reuses the initial stream when autoReconnect is enabled', async () => {
@@ -179,7 +201,7 @@ describe('RPC streams', () => {
     expect(core.protocol.encodeMessage).toHaveBeenLastCalledWith(
       expect.anything(),
       ClientMessageType.RpcStreamPull,
-      { callId: 0, size: 1 },
+      { callId: 0, size: 16 },
     )
 
     core.emit(

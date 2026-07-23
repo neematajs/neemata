@@ -17,7 +17,30 @@ export type RpcCallOptions = {
   keepalive?: boolean
 }
 
-export type StreamCallOptions = RpcCallOptions & { autoReconnect?: boolean }
+export type ClientBackpressureOptions = {
+  rpc?: {
+    /**
+     * Maximum number of chunks a bidirectional RPC response stream may
+     * produce ahead of the consumer. Credits count chunks, not bytes, so a
+     * side-effectful producer may advance by up to this amount before client
+     * cancellation arrives.
+     *
+     * Unidirectional transports use their native stream backpressure instead.
+     * Larger windows proportionally extend the gateway's idle allowance once
+     * the granted batch has been exhausted.
+     * @default 16
+     */
+    window?: number
+  }
+}
+
+export type StreamCallOptions = RpcCallOptions & {
+  autoReconnect?: boolean
+  /**
+   * Overrides the client backpressure defaults for this stream.
+   */
+  backpressure?: ClientBackpressureOptions
+}
 
 export type ClientCallOptions = StreamCallOptions & {
   /**

@@ -7,10 +7,9 @@ import { MAX_UINT32 } from '@nmtjs/common'
 import type { ProtocolBlob, ProtocolBlobMetadata } from '../common/blob.ts'
 
 /**
- * Upper bound for outstanding stream credit. Far above any sane consumer's
- * demand (our client pulls 64KB of bytes / 1 chunk per read) but low enough
- * that additive grants can never reach unsafe-integer territory where
- * decrements would silently stop working.
+ * Upper bound for outstanding stream credit. Credits represent bytes for blob
+ * streams and chunks for RPC streams. The bound keeps additive grants below
+ * unsafe-integer territory where decrements would silently stop working.
  */
 export const MAX_STREAM_CREDITS = MAX_UINT32
 

@@ -158,7 +158,10 @@ describe('public clients', () => {
       })
       .mockReturnValueOnce({ type: ServerMessageType.RpcStreamEnd, callId: 0 })
 
-    const streamPromise = client.stream.admin.audit.feed({ limit: 2 })
+    const streamPromise = client.stream.admin.audit.feed(
+      { limit: 2 },
+      { backpressure: { rpc: { window: 4 } } },
+    )
 
     expect(encodedMessages.at(-1)).toMatchObject({
       procedure: 'admin/audit/feed',
@@ -172,6 +175,7 @@ describe('public clients', () => {
 
     const firstChunk = iterator.next()
     await Promise.resolve()
+    expect(encodedMessages.at(-1)).toEqual({ callId: 0, size: 4 })
     transport.emitMessage(new Uint8Array([2]))
     await expect(firstChunk).resolves.toEqual({
       done: false,
