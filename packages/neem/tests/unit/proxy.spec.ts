@@ -1,12 +1,28 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
+import type { RuntimeSnapshot } from '../../src/internal/manifest/snapshot.ts'
 import type { NeemProxyConfig } from '../../src/shared/types.ts'
 import {
   createDesiredUpstreams,
   createNativeProxyOptions,
+  formatProxyListenUrl,
   normalizeRuntimeUpstream,
+  ProxyController,
   toProxyUpstream,
 } from '../../src/internal/host/proxy.ts'
+
+vi.mock('@nmtjs/proxy', () => ({
+  Proxy: class {
+    async start() {}
+    async stop() {}
+    // stands in for the port the OS picks when `port: 0` is configured
+    address() {
+      return { hostname: '127.0.0.1', port: 54321 }
+    }
+    async addUpstream() {}
+    async removeUpstream() {}
+  },
+}))
 
 describe('Neem proxy helpers', () => {
   it('normalizes wildcard runtime upstreams to loopback', () => {
@@ -106,6 +122,53 @@ describe('Neem proxy helpers', () => {
         { api: {}, jobs: {} },
       ).applications,
     ).toEqual([])
+  })
+
+  it('formats the bound proxy listen address', () => {
+    expect(
+      formatProxyListenUrl({ hostname: '127.0.0.1', port: 8080 }, false),
+    ).toBe('http://127.0.0.1:8080')
+    expect(formatProxyListenUrl({ hostname: '0.0.0.0', port: 443 }, true)).toBe(
+      'https://0.0.0.0:443',
+    )
+    expect(formatProxyListenUrl({ hostname: '::1', port: 8080 }, false)).toBe(
+      'http://[::1]:8080',
+    )
+  })
+
+  it('logs the bound listen address instead of the configured port', async () => {
+    const messages: string[] = []
+    const noop = () => {}
+    const logger = {
+      info: (message: string) => {
+        messages.push(message)
+      },
+      debug: noop,
+      trace: noop,
+      warn: noop,
+      // annotated to keep the self-reference out of type inference
+      child: (): unknown => logger,
+    }
+
+    const controller = new ProxyController({
+      logger,
+      config: {
+        proxy: { hostname: '0.0.0.0', port: 0 },
+        runtimes: { api: { proxy: { routing: { type: 'default' } } } },
+      },
+    } as unknown as RuntimeSnapshot)
+
+    await controller.start([
+      {
+        runtimeName: 'api',
+        upstreams: [{ type: 'http', url: 'http://0.0.0.0:3000' }],
+      },
+    ])
+    await controller.stop()
+
+    expect(messages).toContain(
+      'Neem proxy listening on [http://127.0.0.1:54321]',
+    )
   })
 
   it('rejects multiple default proxy routes', () => {

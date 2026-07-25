@@ -85,12 +85,10 @@ export class ProxyController {
       }
       await this.proxy.start()
       this.running = true
-      this.logger.debug('Neem proxy started')
+      const listen = this.resolveListenUrl()
+      this.logger.info(`Neem proxy listening on [${listen}]`)
       this.logger.trace(
-        {
-          listen: `${this.config.hostname}:${this.config.port}`,
-          upstreams: this.desired.size,
-        },
+        { listen, upstreams: this.desired.size },
         'Neem proxy upstreams',
       )
     } catch (error) {
@@ -161,6 +159,25 @@ export class ProxyController {
       failedUpstreams,
       lastError: failedUpstreams.at(-1)?.error,
     }
+  }
+
+  /**
+   * The configured port may be 0, so only the bound address tells operators
+   * where the proxy actually accepts traffic. Never let reporting break start.
+   */
+  private resolveListenUrl(): string {
+    let address: { hostname: string; port: number } | null = null
+    try {
+      address = this.proxy?.address() ?? null
+    } catch (error) {
+      this.logger.debug(
+        new Error('Failed to read Neem proxy listen address', { cause: error }),
+      )
+    }
+    return formatProxyListenUrl(
+      address ?? { hostname: this.config.hostname, port: this.config.port },
+      Boolean(this.config.tls),
+    )
   }
 
   private async reconcile(): Promise<void> {
@@ -296,6 +313,17 @@ export function toProxyUpstream(
     hostname: url.hostname,
     port,
   }
+}
+
+export function formatProxyListenUrl(
+  address: { hostname: string; port: number },
+  secure: boolean,
+): string {
+  // Bare IPv6 addresses need brackets to stay a valid URL authority
+  const hostname = address.hostname.includes(':')
+    ? `[${address.hostname}]`
+    : address.hostname
+  return `${secure ? 'https' : 'http'}://${hostname}:${address.port}`
 }
 
 export function createNativeProxyOptions(
