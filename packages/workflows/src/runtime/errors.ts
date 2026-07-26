@@ -32,6 +32,19 @@ export class WorkflowRunConflictError extends Error {
   }
 }
 
+/**
+ * Recorded as `last_error` when a claim takes over an expired lease and no
+ * real error is stored yet. The dying worker persisted nothing, so this
+ * synthetic error is the only trace of WHY the delivery is being counted.
+ * A pre-serialized constant without a stack: capturing one would point at
+ * the claiming worker, not the crash, and would misdirect an incident.
+ */
+export const COMMAND_LEASE_EXPIRED_ERROR: StoredError = {
+  name: 'Error',
+  message:
+    'Workflow command lease expired without release — the worker likely crashed mid-delivery',
+}
+
 const MAX_STORED_ERROR_CAUSE_DEPTH = 5
 
 export function toStoredError(

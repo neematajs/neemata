@@ -4,7 +4,10 @@ import type {
   RunCoordinationExecutor,
 } from '../../runtime/executors.ts'
 import type { WorkflowPostgresConnection } from './connection.ts'
-import { toStoredError } from '../../runtime/errors.ts'
+import {
+  COMMAND_LEASE_EXPIRED_ERROR,
+  toStoredError,
+} from '../../runtime/errors.ts'
 import {
   MAX_ERROR_BACKOFF_MS,
   RELEASE_BACKOFF_MS,
@@ -20,6 +23,16 @@ export type PostgresWorkflowCommandContext = {
   readonly ready: Promise<void>
   readonly maxDeliveries: number
 }
+
+// One source for the dead-letter threshold so the release path and the
+// claim-time takeover cannot drift apart.
+const atDeadLetterThreshold = (maxDeliveriesParam: string) =>
+  `delivery_count + 1 >= ${maxDeliveriesParam}`
+
+// Bounds the dead-letter drain inside a single claim call: a backlog of
+// at-threshold expired commands (e.g. after a fleet-wide crash) must not
+// stall one claimer for its full length — the poll loop retries shortly.
+const MAX_DEAD_LETTERED_PER_CLAIM = 16
 
 export const createPostgresWorkflowCommandHelpers = (
   ctx: PostgresWorkflowCommandContext,
@@ -95,7 +108,7 @@ export const createPostgresWorkflowCommandHelpers = (
           delivery_count = delivery_count + 1,
           last_error = $3::jsonb,
           dead_at = CASE
-            WHEN delivery_count + 1 >= $4 THEN now()
+            WHEN ${atDeadLetterThreshold('$4')} THEN now()
             ELSE dead_at
           END,
           run_at = now() + (
@@ -121,7 +134,6 @@ export const createPostgresWorkflowCommandHelpers = (
     workerId: string,
     leaseMs: number,
   ) => {
-    const leaseToken = id()
     const conditions = typeof where === 'string' ? [where] : where
     const candidateQuery = (condition: string) => `
       SELECT id, priority, run_at, created_at
@@ -158,19 +170,52 @@ export const createPostgresWorkflowCommandHelpers = (
             LIMIT 1
           )
         `
-    return await one(
-      db,
-      `
+    // Taking over an expired lease means the previous delivery died without
+    // any release — the one failure mode release-time counting can never see
+    // (a crashed worker persists nothing). Counting it here is what makes
+    // poison commands reach `dead_at` instead of crash-looping forever; at
+    // the threshold the row is dead-lettered instead of delivered. SET
+    // expressions read pre-update values, so `lease_token IS NOT NULL`
+    // identifies a takeover (the candidate filter already proved expiry).
+    // The lease fields are written even on the dead branch: a dead row with
+    // lease_token NULL would enter the continue-dedup partial unique index
+    // and collide with a coexisting fresh continue row for the same run.
+    // last_error only fills a gap — a real error from a prior release is
+    // better dead-letter diagnostics than the synthetic lease message.
+    const takeover = 'lease_token IS NOT NULL'
+    const takeoverDead = `${takeover} AND ${atDeadLetterThreshold(`$${params.length + 4}`)}`
+    const claimSql = `
       WITH ${candidateSql}
       UPDATE workflow_commands
-      SET lease_owner = $${params.length + 1},
+      SET delivery_count = delivery_count
+            + CASE WHEN ${takeover} THEN 1 ELSE 0 END,
+          last_error = CASE
+            WHEN ${takeover} AND last_error IS NULL THEN $${params.length + 5}::jsonb
+            ELSE last_error
+          END,
+          dead_at = CASE WHEN ${takeoverDead} THEN now() ELSE dead_at END,
+          lease_owner = $${params.length + 1},
           lease_token = $${params.length + 2},
           lease_expires_at = now() + ($${params.length + 3}::int * interval '1 millisecond')
       WHERE id = (SELECT id FROM candidate)
       RETURNING *
-    `,
-      [...params, workerId, leaseToken, leaseMs],
-    )
+    `
+    const leaseExpiredErrorJson = json(COMMAND_LEASE_EXPIRED_ERROR)
+    for (let drained = 0; drained <= MAX_DEAD_LETTERED_PER_CLAIM; drained++) {
+      const claimed = await one(db, claimSql, [
+        ...params,
+        workerId,
+        id(),
+        leaseMs,
+        maxDeliveries,
+        leaseExpiredErrorJson,
+      ])
+      if (!claimed) return null
+      if (claimed.dead_at == null) return claimed
+      // The candidate was dead-lettered, not delivered — keep claiming so a
+      // single poison command can't starve the worker of the work behind it.
+    }
+    return null
   }
 
   const ackCommand = async (commandId: string, leaseToken: string) => {

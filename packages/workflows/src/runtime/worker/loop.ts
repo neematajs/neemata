@@ -9,7 +9,7 @@ import type {
 } from '../store.ts'
 import { parseDurationMs } from '../duration.ts'
 
-export const DEFAULT_LEASE_MS = 30_000
+export { DEFAULT_LEASE_MS } from '../executors.ts'
 
 export type WorkerLoopResult = {
   readonly processed: number

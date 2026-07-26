@@ -9,6 +9,13 @@ import type {
 } from './commands.ts'
 import type { RuntimeRunStatus } from './status.ts'
 
+/**
+ * Single home for the fallback lease duration so the worker loop and both
+ * adapters' heartbeat defaults cannot drift apart — the value now decides
+ * when an expired lease counts as a lost delivery.
+ */
+export const DEFAULT_LEASE_MS = 30_000
+
 export type CommandReleaseOptions = {
   readonly error?: unknown
   /**
@@ -17,7 +24,9 @@ export type CommandReleaseOptions = {
    * a longer backoff, so definition drift surfaces in dead commands instead
    * of an unbounded claim/release loop. A plain release (no error, no reason)
    * stays uncounted — it means "expected to succeed on redelivery" (worker
-   * shutdown, lease loss).
+   * shutdown, lease loss). Crashed deliveries never release at all: claiming
+   * a command whose lease expired counts the lost delivery instead, so poison
+   * commands that keep killing workers still reach dead-lettering.
    */
   readonly reason?: 'unroutable'
 }
@@ -29,6 +38,14 @@ export type AttemptHeartbeatResult = {
 export type RunCoordinationExecutor = {
   enqueue(command: ContinueRunCommand): Promise<void>
   enqueueDelayed(command: ContinueRunCommand, runAt: Date): Promise<void>
+  /**
+   * Continue commands have no heartbeat, so a continuation that outlives
+   * `leaseMs` loses its lease and the takeover counts a delivery even though
+   * the worker is healthy. Accumulation is bounded (~1 per slow pass — the
+   * original executor still advances run state, so redelivered copies no-op
+   * and ack), but `leaseMs` must comfortably exceed the worst-case
+   * continuation time relative to `maxDeliveries`.
+   */
   claim(worker: RunCoordinationWorkerClaim): Promise<ClaimedCommand | null>
   ack(command: ClaimedCommand): Promise<void>
   release(
