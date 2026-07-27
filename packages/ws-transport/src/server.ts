@@ -1,7 +1,11 @@
 import type { ApplicationResolvedProcedure } from '@nmtjs/application'
 import type { TransportWorker, TransportWorkerParams } from '@nmtjs/gateway'
 import type { Hooks, Peer } from 'crossws'
-import { ConnectionType, ProtocolVersion } from '@nmtjs/protocol'
+import {
+  ConnectionType,
+  matchWsAuthSubprotocol,
+  ProtocolVersion,
+} from '@nmtjs/protocol'
 import { defineHooks } from 'crossws'
 
 import type {
@@ -127,10 +131,18 @@ export class WsTransportServer implements TransportWorker<
           return NotFoundHttpResponse()
         }
 
+        const authSubprotocol = matchWsAuthSubprotocol(
+          req.headers.get('sec-websocket-protocol'),
+        )
+        // the query param is a deprecated fallback for pre-subprotocol
+        // clients; scheduled for removal in the next release
+        const auth = authSubprotocol?.auth ?? url.searchParams.get('auth')
+
         const request: WsTransportServerRequest = {
           url,
           headers: req.headers,
           method: req.method,
+          auth,
         }
 
         const accept =
@@ -150,7 +162,14 @@ export class WsTransportServer implements TransportWorker<
 
           this.schedulePendingOpenReap(connection.id)
 
-          return { context: { connectionId: connection.id } }
+          return {
+            context: { connectionId: connection.id },
+            // browsers fail the handshake unless the server echoes one of
+            // the offered subprotocols back
+            headers: authSubprotocol
+              ? { 'sec-websocket-protocol': authSubprotocol.subprotocol }
+              : undefined,
+          }
         } catch (error) {
           console.error('Failed to upgrade WebSocket connection', error)
           return InternalServerErrorHttpResponse()
