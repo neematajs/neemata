@@ -1591,14 +1591,19 @@ export function createInMemoryWorkflowRuntime(
   // can never see), so requeueing must count it — otherwise a poison command
   // whose processing kills the claimer crash-loops with deliveryCount stuck
   // at 0 and deadAt unreachable. At the threshold the item dead-letters
-  // instead of becoming claimable again.
+  // instead of becoming claimable again. Only leases the polling worker is
+  // eligible to redeliver are reclaimed — in postgres the takeover happens
+  // inside the eligible claim itself, and an unrelated worker must not
+  // revoke (or dead-letter) work it cannot execute while the original
+  // claimer may still finish and ack.
   const reclaimExpiredLeases = <T>(
     claimed: Map<string, ClaimedQueueItem<T>>,
     queue: QueueItem<T>[],
+    eligible: (payload: T) => boolean,
   ) => {
     const date = now()
     for (const [key, item] of claimed) {
-      if (item.leaseExpiresAt > date) continue
+      if (item.leaseExpiresAt > date || !eligible(item.payload)) continue
       claimed.delete(key)
       const { leaseToken: _token, leaseExpiresAt: _expires, ...released } = item
       // A real error from a prior release beats the synthetic lease message
@@ -1671,12 +1676,18 @@ export function createInMemoryWorkflowRuntime(
       enqueueContinue(command, runAt)
     },
     async claim(worker) {
-      reclaimExpiredLeases(claimedContinueRunCommands, continueRunCommands)
+      const eligible = (command: ContinueRunCommand) =>
+        worker.workflowNames.includes(command.workflowName)
+      reclaimExpiredLeases(
+        claimedContinueRunCommands,
+        continueRunCommands,
+        eligible,
+      )
       const date = now()
       const item = claimQueued(
         continueRunCommands,
         (queued) =>
-          worker.workflowNames.includes(queued.payload.workflowName) &&
+          eligible(queued.payload) &&
           (queued.runAt === undefined || queued.runAt <= date),
       )
       if (!item) return null
@@ -1756,23 +1767,24 @@ export function createInMemoryWorkflowRuntime(
       }
     },
     async claim(worker) {
-      reclaimExpiredLeases(claimedAttemptCommands, attemptCommands)
+      const eligible = (command: AttemptCommand) => {
+        if (command.kind === 'taskAttempt') {
+          return worker.taskNames.includes(command.taskName)
+        }
+        return (
+          worker.workflowNames.includes(command.workflowName) &&
+          (worker.activityNames === undefined ||
+            worker.activityNames.includes(command.activityName))
+        )
+      }
+      reclaimExpiredLeases(claimedAttemptCommands, attemptCommands, eligible)
       const date = now()
       const claimed = claimedAttempt(
         claimQueued(
           attemptCommands,
-          (queued) => {
-            const command = queued.payload
-            if (queued.runAt !== undefined && queued.runAt > date) return false
-            if (command.kind === 'taskAttempt') {
-              return worker.taskNames.includes(command.taskName)
-            }
-            return (
-              worker.workflowNames.includes(command.workflowName) &&
-              (worker.activityNames === undefined ||
-                worker.activityNames.includes(command.activityName))
-            )
-          },
+          (queued) =>
+            (queued.runAt === undefined || queued.runAt <= date) &&
+            eligible(queued.payload),
           compareAttemptCommands,
         ),
         worker.leaseMs,

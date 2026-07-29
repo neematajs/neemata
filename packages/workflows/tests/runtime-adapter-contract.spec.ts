@@ -793,22 +793,20 @@ function workflowRuntimeAdapterContract(
           leaseMs: 30,
         })
 
-      await runtime.runCoordinationExecutor.enqueue({
-        kind: 'continueRun',
+      const staleCommand = {
+        kind: 'continueRun' as const,
         runId: run.id,
         workflowName: 'coexisting-dead-continue-workflow',
         generation: 1,
-      })
+      }
+      const freshCommand = { ...staleCommand, generation: 2 }
+
+      await runtime.runCoordinationExecutor.enqueue(staleCommand)
       const first = await claimWorker('crashing-worker')
       expect(first).not.toBeNull()
       // While the first command is leased, a fresh continue for the same run
       // legally coexists (the continue dedupe only covers unleased commands).
-      await runtime.runCoordinationExecutor.enqueue({
-        kind: 'continueRun',
-        runId: run.id,
-        workflowName: 'coexisting-dead-continue-workflow',
-        generation: 2,
-      })
+      await runtime.runCoordinationExecutor.enqueue(freshCommand)
       await waitForLeaseExpiry()
 
       // The takeover dead-letters the expired command at the threshold and
@@ -821,6 +819,44 @@ function workflowRuntimeAdapterContract(
       expect(dead).toMatchObject([
         { kind: 'continue', runId: run.id, deliveryCount: 1 },
       ])
+    })
+
+    it('leaves expired leases alone for workers that cannot execute them', async () => {
+      const runtime = await createRuntime({ maxDeliveries: 1 })
+      const run = await runtime.store.createRun({
+        workflowName: 'eligible-reclaim-workflow',
+        input: {},
+      })
+      await runtime.runCoordinationExecutor.enqueue({
+        kind: 'continueRun',
+        runId: run.id,
+        workflowName: 'eligible-reclaim-workflow',
+      })
+      const claimed = await runtime.runCoordinationExecutor.claim({
+        workerId: 'stalled-worker',
+        workflowNames: ['eligible-reclaim-workflow'],
+        leaseMs: 30,
+      })
+      expect(claimed).not.toBeNull()
+      await waitForLeaseExpiry()
+
+      // A worker for an unrelated workflow polls past the expired lease: it
+      // must neither count the lost delivery nor dead-letter work it cannot
+      // execute.
+      await expect(
+        runtime.runCoordinationExecutor.claim({
+          workerId: 'unrelated-worker',
+          workflowNames: ['some-other-workflow'],
+          leaseMs: 30,
+        }),
+      ).resolves.toBeNull()
+      await expect(runtime.store.listDeadCommands()).resolves.toStrictEqual([])
+
+      // Nobody eligible took the command over, so the stalled-but-alive
+      // claimer can still finish and ack.
+      await expect(
+        runtime.runCoordinationExecutor.ack(claimed!),
+      ).resolves.toBeUndefined()
     })
 
     it('keeps the last real error when a crashed delivery dead-letters a command', async () => {
