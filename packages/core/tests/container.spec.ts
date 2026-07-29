@@ -473,6 +473,44 @@ describe('Container', () => {
     await expect(container.resolve(injectable)).resolves.toBeUndefined()
   })
 
+  it('should resolve optional dependency to undefined in a forked container', async () => {
+    const lazyInjectable = createLazyInjectable()
+    const injectable = createFactoryInjectable({
+      scope: Scope.Call,
+      dependencies: { dep: createOptionalInjectable(lazyInjectable) },
+      create: (deps) => ({ ...deps }),
+    })
+    const scopeContainer = container.fork(Scope.Call)
+    await expect(scopeContainer.resolve(injectable)).resolves.toEqual({
+      dep: undefined,
+    })
+    await scopeContainer.dispose()
+  })
+
+  it('should not fail initialization on unfulfilled optional dependencies', async () => {
+    const lazyInjectable = createLazyInjectable()
+    const dependant = createFactoryInjectable({
+      dependencies: { dep: createOptionalInjectable(lazyInjectable) },
+      create: noopFn,
+    })
+    await expect(container.initialize([dependant])).resolves.toBeDefined()
+  })
+
+  it('should fail initialization when an optional dependency is required elsewhere', async () => {
+    const lazyInjectable = createLazyInjectable()
+    const optionalDependant = createFactoryInjectable({
+      dependencies: { dep: createOptionalInjectable(lazyInjectable) },
+      create: noopFn,
+    })
+    const requiredDependant = createFactoryInjectable({
+      dependencies: { dep: lazyInjectable },
+      create: noopFn,
+    })
+    await expect(
+      container.initialize([optionalDependant, requiredDependant]),
+    ).rejects.toThrow('No instance provided')
+  })
+
   it('should inject and dispose', async () => {
     const inject = container.get(CoreInjectables.inject)
     const dispose = container.get(CoreInjectables.dispose)
@@ -494,6 +532,87 @@ describe('Container', () => {
     await expect(
       inject.explicit(injectable, { dep: 'ped' }),
     ).resolves.toHaveProperty('instance', value)
+  })
+
+  describe('Explicit Injection Disposal', () => {
+    it('should dispose the injected instance via the explicit handle', async () => {
+      const disposeSpy = vi.fn()
+      const injectable = createFactoryInjectable({
+        create: () => ({ value: 'explicit' }),
+        dispose: disposeSpy,
+      })
+      const inject = container.get(CoreInjectables.inject)
+      const before = container.instances.size
+      const handle = await inject.explicit(injectable, {})
+      await handle[Symbol.asyncDispose]()
+      expect(disposeSpy).toHaveBeenCalledTimes(1)
+      expect(disposeSpy).toHaveBeenCalledWith(
+        handle.instance,
+        expect.anything(),
+      )
+      // the transient wrapper must not linger in the container
+      expect(container.instances.size).toBe(before)
+    })
+
+    it('should not dispose a cached singleton of the same injectable', async () => {
+      const disposeSpy = vi.fn()
+      const injectable = createFactoryInjectable({
+        create: () => ({ value: Math.random() }),
+        dispose: disposeSpy,
+      })
+      const singleton = await container.resolve(injectable)
+      const inject = container.get(CoreInjectables.inject)
+      const handle = await inject.explicit(injectable, {})
+      await handle[Symbol.asyncDispose]()
+      expect(disposeSpy).not.toHaveBeenCalledWith(singleton, expect.anything())
+      expect(container.owns(injectable)).toBe(true)
+      expect(container.get(injectable)).toBe(singleton)
+    })
+
+    it('should create and dispose the instance in the container of the requested scope', async () => {
+      const injectable = createFactoryInjectable({ create: () => ({}) })
+      const scopeContainer = container.fork(Scope.Call)
+      const inject = scopeContainer.get(CoreInjectables.inject)
+      const globalBefore = container.instances.size
+      const callBefore = scopeContainer.instances.size
+      const handle = await inject.explicit(injectable, {}, Scope.Global)
+      expect(container.instances.size).toBe(globalBefore + 1)
+      expect(scopeContainer.instances.size).toBe(callBefore)
+      await handle[Symbol.asyncDispose]()
+      expect(container.instances.size).toBe(globalBefore)
+      await scopeContainer.dispose()
+    })
+  })
+
+  describe('Circular Dependency Detection', () => {
+    const createCycle = () => {
+      const a = createFactoryInjectable({ create: () => 'a' }, 'a')
+      const b = createFactoryInjectable(
+        { dependencies: { a }, create: () => 'b' },
+        'b',
+      )
+      // injectables are frozen, but dependencies objects are not
+      Object.assign(a.dependencies, { b })
+      return { a, b }
+    }
+
+    it('should reject resolution of circular dependencies', async () => {
+      const { a } = createCycle()
+      await expect(container.resolve(a)).rejects.toThrow(
+        'Circular dependency detected: a -> b -> a',
+      )
+    })
+
+    it('should reject initialization over circular dependencies', async () => {
+      const { a } = createCycle()
+      const dependant = createFactoryInjectable({
+        dependencies: { a },
+        create: noopFn,
+      })
+      await expect(container.initialize([dependant])).rejects.toThrow(
+        'Circular dependency detected',
+      )
+    })
   })
 
   describe('Race Condition Prevention', () => {
@@ -659,6 +778,25 @@ describe('Container', () => {
 
       // Wait for disposal to complete
       await disposalPromise
+    })
+
+    it('should dispose instances from in-flight resolutions', async () => {
+      const disposeSpy = vi.fn()
+      const injectable = createFactoryInjectable({
+        create: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 30))
+          return { value: 'slow' }
+        },
+        dispose: disposeSpy,
+      })
+
+      const pending = container.resolve(injectable)
+      await new Promise((resolve) => setTimeout(resolve, 5))
+      await container.dispose()
+
+      await expect(pending).resolves.toEqual({ value: 'slow' })
+      expect(disposeSpy).toHaveBeenCalledTimes(1)
+      expect(container.instances.size).toBe(0)
     })
 
     it('should allow resolution in new container after disposal', async () => {

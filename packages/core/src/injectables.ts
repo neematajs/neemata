@@ -176,13 +176,20 @@ export const isOptionalInjectable = (
   injectable: any,
 ): injectable is DependencyOptional<any> => injectable[kOptionalDependency]
 
-export function getInjectableScope(injectable: AnyInjectable) {
+export function getInjectableScope(
+  injectable: AnyInjectable,
+  visited = new Set<AnyInjectable>(),
+) {
   let scope = injectable.scope
+  // revisits return the shallow scope: on diamonds the first traversal already
+  // propagated the effective scope, on cycles this terminates the recursion
+  if (visited.has(injectable)) return scope
+  visited.add(injectable)
   const deps = injectable.dependencies as Dependencies
   for (const key in deps) {
     const dependency = deps[key]
     const injectable = getDepedencencyInjectable(dependency)
-    const dependencyScope = getInjectableScope(injectable)
+    const dependencyScope = getInjectableScope(injectable, visited)
     if (
       dependencyScope !== Scope.Transient &&
       scope !== Scope.Transient &&
