@@ -58,8 +58,7 @@
   "devDependencies": {
     "@types/node": "^24.13.2",
     "nuxt": "^4.5.1",
-    "rolldown": "^1.1.2",
-    "vitest": "4.1.9"
+    "rolldown": "^1.1.2"
   },
   "files": [
     "dist",
