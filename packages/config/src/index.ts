@@ -63,14 +63,18 @@ export async function resolveEnvConfig<Variables extends EnvConfigVariables>(
     const { name, schema } = isConfigSchema(variable)
       ? { name: key, schema: variable }
       : variable
-    // Standard Schema allows async validation, so resolution is async even
-    // though most validators (including @nmtjs/type) are synchronous.
-    let result = schema['~standard'].validate(source[name])
-    if (result instanceof Promise) result = await result
+    // Awaited unconditionally: Standard Schema allows async validation, and
+    // `instanceof Promise` would misclassify cross-realm promises/thenables.
+    const result = await schema['~standard'].validate(source[name])
     // Collect issues across all variables instead of failing on the first
     // one, so a misconfigured environment is reported in a single pass.
-    if (result.issues) issues[name] = result.issues
-    else config[key] = result.value
+    // Merged rather than assigned: multiple config keys may read the same
+    // environment variable, and each schema's issues must survive.
+    if (result.issues) {
+      issues[name] = [...(issues[name] ?? []), ...result.issues]
+    } else {
+      config[key] = result.value
+    }
   }
 
   if (Object.keys(issues).length > 0) throw new EnvConfigError(issues)

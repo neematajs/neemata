@@ -90,6 +90,26 @@ describe('resolveEnvConfig', () => {
     expect(error.message).toContain('RETRIES: expected integer')
   })
 
+  it('merges issues from multiple keys reading the same variable', async () => {
+    const failing = (message: string) =>
+      schema(() => ({ issues: [{ message }] }))
+    const error = await resolveEnvConfig(
+      {
+        a: { name: 'SHARED', schema: failing('first') },
+        b: { name: 'SHARED', schema: failing('second') },
+      },
+      {},
+    ).then(
+      () => null,
+      (e) => e,
+    )
+
+    expect(error.issues.SHARED.map((issue: any) => issue.message)).toEqual([
+      'first',
+      'second',
+    ])
+  })
+
   it('includes issue paths for structured variables', async () => {
     const error = await resolveEnvConfig(
       {
