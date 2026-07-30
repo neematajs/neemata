@@ -102,6 +102,25 @@ importers:
 
   packages/common: {}
 
+  packages/config:
+    dependencies:
+      '@nmtjs/core':
+        specifier: workspace:*
+        version: link:../core
+      '@standard-schema/spec':
+        specifier: ^1.1.0
+        version: 1.1.0
+    devDependencies:
+      '@nmtjs/common':
+        specifier: workspace:*
+        version: link:../common
+      '@nmtjs/type':
+        specifier: workspace:*
+        version: link:../type
+      '@types/node':
+        specifier: ^24.13.2
+        version: 24.13.2
+
   packages/contract:
     dependencies:
       '@nmtjs/protocol':
