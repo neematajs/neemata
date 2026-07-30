@@ -74,6 +74,7 @@ describe('http + ws transports on a shared server', () => {
     // gateway hands to the proxy for both upstream types
     expect(wsUrl).toBe(httpUrl)
 
+    let httpStopped = false
     try {
       const response = await fetch(`${httpUrl}/procedure`, {
         method: 'POST',
@@ -92,11 +93,16 @@ describe('http + ws transports on a shared server', () => {
       expect(new Uint8Array(data)).toEqual(new Uint8Array([1, 2, 3]))
       ws.close()
       await vi.waitFor(() => expect(wsParams.onDisconnect).toHaveBeenCalled())
-    } finally {
+
       // one worker stopping must not kill the other's socket
       await httpWorker.stop(httpParams)
+      httpStopped = true
       const wsStillUp = await openSocket(httpUrl.replace('http', 'ws'))
       wsStillUp.close()
+    } finally {
+      // teardown must run even when the liveness probe above fails, or the
+      // bound host leaks into the rest of the suite
+      if (!httpStopped) await httpWorker.stop(httpParams)
       await wsWorker.stop(wsParams)
     }
 

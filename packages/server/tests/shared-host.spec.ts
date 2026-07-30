@@ -69,6 +69,29 @@ describe('shared node server host', () => {
     await expect(fetch(`${first}/healthy`)).rejects.toThrow()
   })
 
+  it('start racing an in-flight final stop reclaims the live socket', async () => {
+    const host = createServerHost({
+      listen: { port: 0, hostname: '127.0.0.1' },
+    })
+    host.setFetchHandler(async () => new Response('ok'))
+
+    const first = await host.start()
+    // final stop() not awaited: the racing start() must join the still-bound
+    // socket instead of binding a second server the stop then orphans
+    const stopping = host.stop()
+    const second = await host.start()
+    await stopping
+
+    expect(second).toBe(first)
+    try {
+      const response = await fetch(`${first}/healthy`)
+      expect(response.status).toBe(200)
+    } finally {
+      await host.stop()
+    }
+    await expect(fetch(`${first}/healthy`)).rejects.toThrow()
+  })
+
   it('rebinds after a full stop', async () => {
     const host = createServerHost({
       listen: { port: 0, hostname: '127.0.0.1' },

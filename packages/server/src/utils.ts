@@ -12,6 +12,12 @@ export const InternalServerErrorHttpResponse = () =>
 
 export const OkResponse = () => new Response('OK', { status: 200 })
 
+export const PayloadTooLargeHttpResponse = () =>
+  new Response('Payload Too Large', {
+    status: 413,
+    headers: { 'Content-Type': 'text/plain' },
+  })
+
 /**
  * Shared error class: thrown inside runtime body translation and matched by
  * `instanceof` in transports to map onto 413 responses — both sides must see

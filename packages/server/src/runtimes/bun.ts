@@ -56,8 +56,10 @@ class BunServerHost extends BaseServerHost<'bun'> {
           }
         : undefined,
       websocket: adapter ? { ...wsOptions, ...adapter.websocket } : undefined,
+      // bare handler instead of a method map: health probes may use HEAD,
+      // keep the route method-agnostic like the other runtime hosts
       routes: Object.assign({}, routes, {
-        '/healthy': { GET: OkResponse },
+        '/healthy': OkResponse,
       }) as any,
       async fetch(request: Request, server: Bun.Server<any>) {
         try {
@@ -81,6 +83,11 @@ class BunServerHost extends BaseServerHost<'bun'> {
       },
     } as any)
 
+    // Bun reports unix sockets as `unix:///path`; keep the cross-runtime
+    // `proto+unix://` contract instead
+    if (listen.unix) {
+      return `${tls ? 'https' : 'http'}+unix://${listen.unix}`
+    }
     return this.#server!.url.href
   }
 

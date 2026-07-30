@@ -25,6 +25,7 @@ export abstract class BaseServerHost<
   protected webSocket?: ServerWebSocketRegistration<R>
   #refs = 0
   #bound: Promise<string> | null = null
+  #closing: Promise<void> | null = null
 
   constructor(protected readonly options: ServerHostOptions<R>) {}
 
@@ -59,6 +60,8 @@ export abstract class BaseServerHost<
   async start(): Promise<string> {
     this.#refs++
     try {
+      // a rebind must not race a close() still tearing the old socket down
+      if (this.#closing) await this.#closing.catch(() => undefined)
       this.#bound ??= this.bind()
       return await this.#bound
     } catch (error) {
@@ -76,11 +79,18 @@ export abstract class BaseServerHost<
     // the socket closes only after every registrant has stopped
     if (this.#refs > 0) return
     const bound = this.#bound
+    if (!bound) return
+    // a concurrent in-flight bind must settle before closing; #bound stays
+    // claimed for the whole wait so a racing start() joins the live socket
+    // instead of binding a second one
+    await bound.catch(() => undefined)
+    if (this.#refs > 0 || this.#bound !== bound) return
     this.#bound = null
-    if (bound) {
-      // a concurrent in-flight bind must settle before closing
-      await bound.catch(() => undefined)
-      await this.close()
+    this.#closing = Promise.resolve(this.close())
+    try {
+      await this.#closing
+    } finally {
+      this.#closing = null
     }
   }
 

@@ -79,8 +79,20 @@ describe('Neem proxy with a shared transport server', () => {
           const ws = new WebSocket(
             `ws://127.0.0.1:${proxyPort}/?accept=application/json&content-type=application/json`,
           )
-          ws.onopen = () => resolve(ws)
-          ws.onerror = () => resolve(false)
+          // bound per attempt: a socket that neither opens nor errors would
+          // otherwise pin waitFor past its own deadline
+          const timeout = setTimeout(() => {
+            ws.close()
+            resolve(false)
+          }, 1_000)
+          ws.onopen = () => {
+            clearTimeout(timeout)
+            resolve(ws)
+          }
+          ws.onerror = () => {
+            clearTimeout(timeout)
+            resolve(false)
+          }
         }),
       30_000,
       details,

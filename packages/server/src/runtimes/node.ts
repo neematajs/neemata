@@ -16,6 +16,7 @@ import {
   NotFoundHttpResponse,
   OkResponse,
   PayloadTooLargeError,
+  PayloadTooLargeHttpResponse,
 } from '../utils.ts'
 
 const statusResponse = OkResponse()
@@ -91,7 +92,9 @@ class NodeServerHost extends BaseServerHost<'node'> {
     }
 
     server
-      .get('/healthy', (res) => {
+      // any() instead of get(): health probes may use HEAD, keep the route
+      // method-agnostic like the other runtime hosts
+      .any('/healthy', (res) => {
         res.cork(() => {
           res
             .writeStatus(
@@ -210,9 +213,15 @@ class NodeServerHost extends BaseServerHost<'node'> {
           requestController.signal,
         )
       } catch (err) {
-        // TODO: proper logging
-        console.error(err)
-        response = InternalServerErrorHttpResponse()
+        // a tenant that consumed the capped body without mapping the error
+        // itself must still produce a 413, not a generic 500
+        if (err instanceof PayloadTooLargeError) {
+          response = PayloadTooLargeHttpResponse()
+        } else {
+          // TODO: proper logging
+          console.error(err)
+          response = InternalServerErrorHttpResponse()
+        }
       }
     }
     if (aborted) return undefined
