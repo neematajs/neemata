@@ -49,6 +49,9 @@
       "path": "./packages/pubsub/tsconfig.build.json"
     },
     {
+      "path": "./packages/server/tsconfig.build.json"
+    },
+    {
       "path": "./packages/type/tsconfig.build.json"
     },
     {

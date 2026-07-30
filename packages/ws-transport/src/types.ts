@@ -1,11 +1,16 @@
 import type { MaybePromise, OneOf } from '@nmtjs/common'
+import type {
+  ServerHost,
+  ServerListenOptions,
+  ServerRequest,
+  ServerRuntimeName,
+  ServerRuntimeOptions,
+  ServerTlsOptions,
+  ServerWebSocketRuntimeOptions,
+} from '@nmtjs/server'
 import type { Hooks } from 'crossws'
 
-export type WsTransportServerRequest = {
-  url: URL
-  method: string
-  headers: Headers
-}
+export type WsTransportServerRequest = ServerRequest
 
 export type WsTransportPeerContext = { connectionId: string }
 
@@ -13,114 +18,46 @@ declare module 'crossws' {
   interface PeerContext extends WsTransportPeerContext {}
 }
 
+export type WsTransportListenOptions = ServerListenOptions
+
+export type WsTransportTlsOptions = ServerTlsOptions
+
+export type WsTransportRuntimes = ServerRuntimeOptions
+
+/**
+ * The transport either owns its socket (`listen` mode) or mounts onto a
+ * shared `ServerHost` (`server` mode), so one HTTP server can carry
+ * multiple transports (e.g. HTTP and WS on a single listen address).
+ */
 export type WsTransportOptions<
-  R extends keyof WsTransportRuntimes = keyof WsTransportRuntimes,
+  R extends ServerRuntimeName = ServerRuntimeName,
 > = {
-  listen: WsTransportListenOptions
-  cors?: WsTransportCorsOptions
-  tls?: WsTransportTlsOptions
-  runtime?: WsTransportRuntimes[R]
-}
-
-export type WsTransportCorsCustomParams = {
-  allowMethods?: string[]
-  allowHeaders?: string[]
-  allowCredentials?: string
-  maxAge?: string
-  exposeHeaders?: string[]
-  requestHeaders?: string[]
-  requestMethod?: string
-}
-
-export type WsTransportCorsOptions =
-  | true
-  | string[]
-  | WsTransportCorsCustomParams
-  | ((
-      origin: string,
-      request: WsTransportServerRequest,
-    ) => boolean | WsTransportCorsCustomParams)
-
-export type WsTransportListenOptions = OneOf<
-  [{ port: number; hostname?: string; reusePort?: boolean }, { unix: string }]
+  /**
+   * Raw websocket behavior overrides for the runtime. Unless set, the
+   * transport applies its own defaults — on Node (uWS),
+   * `maxPayloadLength` and `maxBackpressure` default to 1 MiB each: inline
+   * WS payloads are capped at 1 MiB — larger data should ride blob
+   * streams, which are chunked at credit size — and the value is
+   * deliberately above the largest upload frame (64KiB credit grant plus
+   * the frame header), since uWS closes the socket on oversized frames and
+   * drops frames over the backpressure limit.
+   */
+  ws?: ServerWebSocketRuntimeOptions[R]
+} & OneOf<
+  [
+    {
+      listen: WsTransportListenOptions
+      tls?: WsTransportTlsOptions
+      runtime?: WsTransportRuntimes[R]
+    },
+    { server: ServerHost<R> },
+  ]
 >
 
-export type WsTransportRuntimeBun = {
-  ws?: Partial<
-    Pick<
-      import('bun').WebSocketHandler<import('crossws').PeerContext>,
-      | 'backpressureLimit'
-      | 'maxPayloadLength'
-      | 'closeOnBackpressureLimit'
-      | 'idleTimeout'
-      | 'perMessageDeflate'
-      | 'sendPings'
-    >
-  >
-  server?: Partial<
-    Pick<
-      import('bun').Serve.Options<any, any>,
-      'development' | 'id' | 'maxRequestBodySize' | 'idleTimeout' | 'ipv6Only'
-    >
-  >
-}
-
-export type WsTransportRuntimeNode = {
-  /**
-   * Raw uWS websocket behavior overrides. Unless set, the transport applies
-   * its own defaults for `maxPayloadLength` and `maxBackpressure` (1 MiB
-   * each): inline WS payloads are capped at 1 MiB — larger data should ride
-   * blob streams, which are chunked at credit size — and the value is
-   * deliberately above the largest upload frame (64KiB credit grant plus the
-   * frame header), since uWS closes the socket on oversized frames and drops
-   * frames over the backpressure limit.
-   */
-  ws?: Partial<
-    Pick<
-      import('uWebSockets.js').WebSocketBehavior<import('crossws').PeerContext>,
-      | 'maxBackpressure'
-      | 'maxPayloadLength'
-      | 'maxLifetime'
-      | 'closeOnBackpressureLimit'
-      | 'idleTimeout'
-      | 'compression'
-      | 'sendPingsAutomatically'
-    >
-  >
-}
-
-export type WsTransportRuntimeDeno = { server?: {} }
-
-export type WsTransportRuntimes = {
-  bun: WsTransportRuntimeBun
-  node: WsTransportRuntimeNode
-  deno: WsTransportRuntimeDeno
-}
-
-export type WsTransportTlsOptions = {
-  /**
-   * File path or inlined TLS certificate in PEM format (required).
-   */
-  cert?: string
-  /**
-   * File path or inlined TLS private key in PEM format (required).
-   */
-  key?: string
-  /**
-   * Passphrase for the private key (optional).
-   */
-  passphrase?: string
-}
-
-export type WsAdapterParams<
-  R extends keyof WsTransportRuntimes = keyof WsTransportRuntimes,
-> = {
-  listen: WsTransportListenOptions
-  wsHooks: Hooks
-  cors?: WsTransportCorsOptions
-  tls?: WsTransportTlsOptions
-  runtime?: WsTransportRuntimes[R]
-}
+export type WsAdapterParams<R extends ServerRuntimeName = ServerRuntimeName> =
+  WsTransportOptions<R> & {
+    wsHooks: Hooks
+  }
 
 export interface WsAdapterServer {
   stop: () => MaybePromise<any>
@@ -131,5 +68,5 @@ export interface WsAdapterServer {
 }
 
 export type WsAdapterServerFactory<
-  R extends keyof WsTransportRuntimes = keyof WsTransportRuntimes,
+  R extends ServerRuntimeName = ServerRuntimeName,
 > = (params: WsAdapterParams<R>) => WsAdapterServer

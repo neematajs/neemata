@@ -9,6 +9,7 @@ import type {
   TransportWorker,
 } from '@nmtjs/gateway'
 import type { ConnectionType } from '@nmtjs/protocol'
+import type { ServerWebSocketRuntimeOptions } from '@nmtjs/server'
 import { RuntimeClient } from '@nmtjs/client'
 import { blobType, c } from '@nmtjs/contract'
 import { Container, createLogger, Hooks } from '@nmtjs/core'
@@ -29,7 +30,6 @@ import { t } from '@nmtjs/type'
 import { WsTransportFactory } from '@nmtjs/ws-client'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import type { WsTransportRuntimeNode } from '../src/types.ts'
 import { WsTransport } from '../src/runtimes/node.ts'
 
 /**
@@ -163,7 +163,7 @@ async function createHarness(options: {
   handlers: Handlers
   streamIdleTimeout?: number
   rpcBackpressureWindow?: number
-  runtimeWs?: WsTransportRuntimeNode['ws']
+  runtimeWs?: ServerWebSocketRuntimeOptions['node']
   plugins?: ClientPlugin[]
 }) {
   const logger = createLogger({ pinoOptions: { enabled: false } }, 'stream-e2e')
@@ -181,7 +181,7 @@ async function createHarness(options: {
 
   const transport = WsTransport.factory({
     listen: { port: 0, hostname: '127.0.0.1' },
-    runtime: options.runtimeWs ? { ws: options.runtimeWs } : undefined,
+    ws: options.runtimeWs,
   })
 
   const gateway = new Gateway({
