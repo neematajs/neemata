@@ -27,8 +27,12 @@ type RuntimeFactory = (
 const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
-const waitForReleaseBackoff = () =>
-  new Promise((resolve) => setTimeout(resolve, 60))
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+const waitForReleaseBackoff = () => wait(60)
+
+// Comfortably past the 30 ms claim leases used by the crash-loop tests.
+const waitForLeaseExpiry = () => wait(80)
 
 const createPgliteConnection = () =>
   createPostgresWorkflowConnection(new PGlite())
@@ -720,6 +724,279 @@ function workflowRuntimeAdapterContract(
         leaseMs: 30_000,
       })
       expect(requeued?.command).toStrictEqual(command)
+    })
+
+    it('counts lease-expired continue redeliveries toward dead-lettering', async () => {
+      const runtime = await createRuntime({ maxDeliveries: 2 })
+      const run = await runtime.store.createRun({
+        workflowName: 'crash-loop-continue-workflow',
+        input: {},
+      })
+      await runtime.runCoordinationExecutor.enqueue({
+        kind: 'continueRun',
+        runId: run.id,
+        workflowName: 'crash-loop-continue-workflow',
+      })
+      const claimWorker = (workerId: string) =>
+        runtime.runCoordinationExecutor.claim({
+          workerId,
+          workflowNames: ['crash-loop-continue-workflow'],
+          leaseMs: 30,
+        })
+
+      // Delivery 1 "crashes": no ack, no release — only the lease expires.
+      const first = await claimWorker('crashing-worker-1')
+      expect(first?.command.runId).toBe(run.id)
+      await waitForLeaseExpiry()
+
+      // The takeover claim counts the lost delivery but still redelivers
+      // (1 of maxDeliveries 2 spent).
+      const second = await claimWorker('crashing-worker-2')
+      expect(second?.command.runId).toBe(run.id)
+      expect(second?.id).toBe(first?.id)
+      await expect(runtime.store.listDeadCommands()).resolves.toStrictEqual([])
+      await waitForLeaseExpiry()
+
+      // Second crashed delivery reaches the threshold: the command
+      // dead-letters at claim time instead of being delivered again.
+      await expect(claimWorker('crashing-worker-3')).resolves.toBeNull()
+      const dead = await runtime.store.listDeadCommands()
+      expect(dead).toMatchObject([
+        {
+          kind: 'continue',
+          runId: run.id,
+          workflowName: 'crash-loop-continue-workflow',
+          deliveryCount: 2,
+          lastError: {
+            name: 'Error',
+            message: expect.stringContaining('lease expired without release'),
+          },
+        },
+      ])
+      expect(dead[0]?.deadAt).toBeInstanceOf(Date)
+
+      await runtime.store.requeueDeadCommand(dead[0]!.id)
+      const requeued = await claimWorker('recovered-worker')
+      expect(requeued?.command.runId).toBe(run.id)
+    })
+
+    it('dead-letters an expired continue lease alongside a coexisting fresh continue', async () => {
+      const runtime = await createRuntime({ maxDeliveries: 1 })
+      const run = await runtime.store.createRun({
+        workflowName: 'coexisting-dead-continue-workflow',
+        input: {},
+      })
+      const claimWorker = (workerId: string) =>
+        runtime.runCoordinationExecutor.claim({
+          workerId,
+          workflowNames: ['coexisting-dead-continue-workflow'],
+          leaseMs: 30,
+        })
+
+      const staleCommand = {
+        kind: 'continueRun' as const,
+        runId: run.id,
+        workflowName: 'coexisting-dead-continue-workflow',
+        generation: 1,
+      }
+      const freshCommand = { ...staleCommand, generation: 2 }
+
+      await runtime.runCoordinationExecutor.enqueue(staleCommand)
+      const first = await claimWorker('crashing-worker')
+      expect(first).not.toBeNull()
+      // While the first command is leased, a fresh continue for the same run
+      // legally coexists (the continue dedupe only covers unleased commands).
+      await runtime.runCoordinationExecutor.enqueue(freshCommand)
+      await waitForLeaseExpiry()
+
+      // The takeover dead-letters the expired command at the threshold and
+      // must still deliver the fresh one — not trip over the continue-dedup
+      // uniqueness or swallow the run's pending work.
+      const second = await claimWorker('worker-2')
+      expect(second?.id).not.toBe(first?.id)
+      expect(second?.command).toMatchObject({ runId: run.id, generation: 2 })
+      const dead = await runtime.store.listDeadCommands()
+      expect(dead).toMatchObject([
+        { kind: 'continue', runId: run.id, deliveryCount: 1 },
+      ])
+    })
+
+    it('leaves expired leases alone for workers that cannot execute them', async () => {
+      const runtime = await createRuntime({ maxDeliveries: 1 })
+      const run = await runtime.store.createRun({
+        workflowName: 'eligible-reclaim-workflow',
+        input: {},
+      })
+      await runtime.runCoordinationExecutor.enqueue({
+        kind: 'continueRun',
+        runId: run.id,
+        workflowName: 'eligible-reclaim-workflow',
+      })
+      const claimed = await runtime.runCoordinationExecutor.claim({
+        workerId: 'stalled-worker',
+        workflowNames: ['eligible-reclaim-workflow'],
+        leaseMs: 30,
+      })
+      expect(claimed).not.toBeNull()
+      await waitForLeaseExpiry()
+
+      // A worker for an unrelated workflow polls past the expired lease: it
+      // must neither count the lost delivery nor dead-letter work it cannot
+      // execute.
+      await expect(
+        runtime.runCoordinationExecutor.claim({
+          workerId: 'unrelated-worker',
+          workflowNames: ['some-other-workflow'],
+          leaseMs: 30,
+        }),
+      ).resolves.toBeNull()
+      await expect(runtime.store.listDeadCommands()).resolves.toStrictEqual([])
+
+      // Nobody eligible took the command over, so the stalled-but-alive
+      // claimer can still finish and ack.
+      await expect(
+        runtime.runCoordinationExecutor.ack(claimed!),
+      ).resolves.toBeUndefined()
+    })
+
+    it('keeps the last real error when a crashed delivery dead-letters a command', async () => {
+      const runtime = await createRuntime({ maxDeliveries: 2 })
+      const run = await runtime.store.createRun({
+        workflowName: 'real-error-dead-workflow',
+        input: {},
+      })
+      await runtime.runCoordinationExecutor.enqueue({
+        kind: 'continueRun',
+        runId: run.id,
+        workflowName: 'real-error-dead-workflow',
+      })
+      const claimWorker = (workerId: string) =>
+        runtime.runCoordinationExecutor.claim({
+          workerId,
+          workflowNames: ['real-error-dead-workflow'],
+          leaseMs: 30,
+        })
+
+      const first = await claimWorker('worker-1')
+      await runtime.runCoordinationExecutor.release(first!, {
+        error: new Error('real poison failure'),
+      })
+      // First counted delivery backs off exponentially (2^1 * 50 ms).
+      await wait(200)
+      const second = await claimWorker('crashing-worker')
+      expect(second).not.toBeNull()
+      await waitForLeaseExpiry()
+
+      // The crashed delivery reaches the threshold, but the synthetic lease
+      // error must not clobber the real error a prior release recorded.
+      await expect(claimWorker('worker-3')).resolves.toBeNull()
+      const dead = await runtime.store.listDeadCommands()
+      expect(dead).toMatchObject([
+        {
+          kind: 'continue',
+          runId: run.id,
+          deliveryCount: 2,
+          lastError: { name: 'Error', message: 'real poison failure' },
+        },
+      ])
+    })
+
+    it('counts lease-expired attempt redeliveries toward dead-lettering', async () => {
+      const runtime = await createRuntime({ maxDeliveries: 1 })
+      const run = await runtime.store.createRun({
+        workflowName: 'crash-loop-attempt-workflow',
+        input: {},
+      })
+      const command = {
+        kind: 'activityAttempt' as const,
+        workflowName: 'crash-loop-attempt-workflow',
+        activityName: 'content',
+        runId: run.id,
+        nodeName: 'content',
+        childKey: '$self',
+        attemptId: '00000000-0000-4000-8000-000000000213',
+        leaseToken: 'attempt-lease',
+        input: {},
+      }
+      await runtime.attemptExecutor.dispatchActivity(command)
+      const claimWorker = (workerId: string) =>
+        runtime.attemptExecutor.claim({
+          taskNames: [],
+          workerId,
+          workflowNames: ['crash-loop-attempt-workflow'],
+          activityNames: ['content'],
+          leaseMs: 30,
+        })
+
+      const claimed = await claimWorker('crashing-activity-worker')
+      expect(claimed?.command).toStrictEqual(command)
+      await waitForLeaseExpiry()
+
+      await expect(claimWorker('activity-worker-2')).resolves.toBeNull()
+      const dead = await runtime.store.listDeadCommands()
+      expect(dead).toMatchObject([
+        {
+          kind: 'activity',
+          runId: run.id,
+          workflowName: 'crash-loop-attempt-workflow',
+          activityName: 'content',
+          attemptId: command.attemptId,
+          deliveryCount: 1,
+          lastError: {
+            name: 'Error',
+            message: expect.stringContaining('lease expired without release'),
+          },
+        },
+      ])
+      // The crashed claimer's lease was consumed by the takeover.
+      await expect(runtime.attemptExecutor.ack(claimed!)).rejects.toThrow(
+        'Stale workflow command ack',
+      )
+
+      await runtime.store.requeueDeadCommand(dead[0]!.id)
+      const requeued = await claimWorker('activity-worker-3')
+      expect(requeued?.command).toStrictEqual(command)
+    })
+
+    it('keeps heartbeated attempt leases from expiring into redelivery', async () => {
+      const runtime = await createRuntime({ maxDeliveries: 1 })
+      const run = await runtime.store.createRun({
+        workflowName: 'heartbeat-lease-workflow',
+        input: {},
+      })
+      await runtime.attemptExecutor.dispatchActivity({
+        kind: 'activityAttempt',
+        workflowName: 'heartbeat-lease-workflow',
+        activityName: 'content',
+        runId: run.id,
+        nodeName: 'content',
+        childKey: '$self',
+        attemptId: '00000000-0000-4000-8000-000000000214',
+        leaseToken: 'attempt-lease',
+        input: {},
+      })
+      const claimWorker = (workerId: string) =>
+        runtime.attemptExecutor.claim({
+          taskNames: [],
+          workerId,
+          workflowNames: ['heartbeat-lease-workflow'],
+          activityNames: ['content'],
+          leaseMs: 500,
+        })
+
+      const claimed = await claimWorker('slow-activity-worker')
+      expect(claimed).not.toBeNull()
+      await wait(200)
+      await runtime.attemptExecutor.heartbeat(claimed!, 30_000)
+      await wait(400)
+
+      // Past the original 500 ms lease, but the heartbeat extended it — the
+      // attempt must be neither redelivered nor counted as a lost delivery.
+      await expect(claimWorker('stealing-worker')).resolves.toBeNull()
+      await expect(runtime.store.listDeadCommands()).resolves.toStrictEqual([])
+      await expect(
+        runtime.attemptExecutor.ack(claimed!),
+      ).resolves.toBeUndefined()
     })
 
     it('prunes old terminal root run trees and associated commands', async () => {

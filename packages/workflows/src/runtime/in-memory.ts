@@ -44,7 +44,12 @@ import type {
   WorkflowWakeEvents,
 } from './wake-events.ts'
 import { dispatchTaskRunAttempt } from './coordinator/attempt.ts'
-import { WorkflowRunConflictError, toStoredError } from './errors.ts'
+import {
+  COMMAND_LEASE_EXPIRED_ERROR,
+  WorkflowRunConflictError,
+  toStoredError,
+} from './errors.ts'
+import { DEFAULT_LEASE_MS } from './executors.ts'
 import {
   nextStoredScheduleRunAt,
   normalizeScheduleDefinitions,
@@ -80,6 +85,7 @@ type InspectQueueItem<T> = {
 
 type ClaimedQueueItem<T> = QueueItem<T> & {
   readonly leaseToken: string
+  readonly leaseExpiresAt: Date
 }
 
 const RELEASE_BACKOFF_MS = 50
@@ -1507,8 +1513,13 @@ export function createInMemoryWorkflowRuntime(
     return left <= right ? left : right
   }
   const enqueueContinue = (command: ContinueRunCommand, runAt?: Date) => {
+    // Dead items must not absorb fresh enqueues — a dead-lettered continue
+    // command would otherwise silently swallow every later wake-up for its
+    // run. Mirrors postgres, where claim-time dead rows keep their lease
+    // token and therefore stay outside the continue-dedup partial index.
     const existingIndex = continueRunCommands.findIndex(
-      (item) => item.payload.runId === command.runId,
+      (item) =>
+        item.deadAt === undefined && item.payload.runId === command.runId,
     )
     if (existingIndex === -1) {
       continueRunCommands.push(queueItem(id('continue'), command, runAt))
@@ -1526,6 +1537,19 @@ export function createInMemoryWorkflowRuntime(
     }
     if (runAt === undefined || runAt <= new Date()) {
       fireWake(commandWakeListeners.get('continue'))
+    }
+  }
+  // Shared dead-letter bookkeeping for both failure paths — error releases
+  // and expired-lease takeovers — so the threshold rule cannot drift.
+  const countFailedDelivery = <T>(
+    item: QueueItem<T>,
+    error: StoredError,
+  ): Pick<QueueItem<T>, 'deliveryCount' | 'lastError' | 'deadAt'> => {
+    const deliveryCount = item.deliveryCount + 1
+    return {
+      deliveryCount,
+      lastError: error,
+      ...(deliveryCount >= maxDeliveries ? { deadAt: now() } : {}),
     }
   }
   const releaseQueueItem = <T>(
@@ -1549,16 +1573,48 @@ export function createInMemoryWorkflowRuntime(
     const error =
       options.error ??
       new Error('No implementation can execute this workflow command')
-    const deliveryCount = item.deliveryCount + 1
+    const counted = countFailedDelivery(item, toStoredError(error))
     return {
       ...item,
-      deliveryCount,
-      lastError: toStoredError(error),
-      ...(deliveryCount >= maxDeliveries ? { deadAt: now() } : {}),
+      ...counted,
       runAt: new Date(
         Date.now() +
-          Math.min(2 ** deliveryCount * backoffBaseMs, MAX_ERROR_BACKOFF_MS),
+          Math.min(
+            2 ** counted.deliveryCount * backoffBaseMs,
+            MAX_ERROR_BACKOFF_MS,
+          ),
       ),
+    }
+  }
+  // Mirrors the postgres claim-time takeover: an expired lease means the
+  // delivery died without any release (the only failure release-time counting
+  // can never see), so requeueing must count it — otherwise a poison command
+  // whose processing kills the claimer crash-loops with deliveryCount stuck
+  // at 0 and deadAt unreachable. At the threshold the item dead-letters
+  // instead of becoming claimable again. Only leases the polling worker is
+  // eligible to redeliver are reclaimed — in postgres the takeover happens
+  // inside the eligible claim itself, and an unrelated worker must not
+  // revoke (or dead-letter) work it cannot execute while the original
+  // claimer may still finish and ack.
+  const reclaimExpiredLeases = <T>(
+    claimed: Map<string, ClaimedQueueItem<T>>,
+    queue: QueueItem<T>[],
+    eligible: (payload: T) => boolean,
+  ) => {
+    const date = now()
+    for (const [key, item] of claimed) {
+      if (item.leaseExpiresAt > date || !eligible(item.payload)) continue
+      claimed.delete(key)
+      const { leaseToken: _token, leaseExpiresAt: _expires, ...released } = item
+      // A real error from a prior release beats the synthetic lease message
+      // as dead-letter diagnostics, so the takeover only fills a gap.
+      queue.push({
+        ...released,
+        ...countFailedDelivery(
+          item,
+          item.lastError ?? COMMAND_LEASE_EXPIRED_ERROR,
+        ),
+      })
     }
   }
   const mapDeadCommand = (
@@ -1620,11 +1676,18 @@ export function createInMemoryWorkflowRuntime(
       enqueueContinue(command, runAt)
     },
     async claim(worker) {
+      const eligible = (command: ContinueRunCommand) =>
+        worker.workflowNames.includes(command.workflowName)
+      reclaimExpiredLeases(
+        claimedContinueRunCommands,
+        continueRunCommands,
+        eligible,
+      )
       const date = now()
       const item = claimQueued(
         continueRunCommands,
         (queued) =>
-          worker.workflowNames.includes(queued.payload.workflowName) &&
+          eligible(queued.payload) &&
           (queued.runAt === undefined || queued.runAt <= date),
       )
       if (!item) return null
@@ -1637,6 +1700,7 @@ export function createInMemoryWorkflowRuntime(
       claimedContinueRunCommands.set(claim.id, {
         ...item,
         leaseToken: claim.leaseToken,
+        leaseExpiresAt: new Date(date.getTime() + worker.leaseMs),
       })
       return claim
     },
@@ -1659,6 +1723,7 @@ export function createInMemoryWorkflowRuntime(
 
   const claimedAttempt = (
     item: QueueItem<AttemptCommand> | undefined,
+    leaseMs: number,
   ):
     | {
         readonly claim: ClaimedAttempt
@@ -1677,6 +1742,7 @@ export function createInMemoryWorkflowRuntime(
       item: {
         ...item,
         leaseToken,
+        leaseExpiresAt: new Date(now().getTime() + leaseMs),
       },
     }
   }
@@ -1701,33 +1767,41 @@ export function createInMemoryWorkflowRuntime(
       }
     },
     async claim(worker) {
+      const eligible = (command: AttemptCommand) => {
+        if (command.kind === 'taskAttempt') {
+          return worker.taskNames.includes(command.taskName)
+        }
+        return (
+          worker.workflowNames.includes(command.workflowName) &&
+          (worker.activityNames === undefined ||
+            worker.activityNames.includes(command.activityName))
+        )
+      }
+      reclaimExpiredLeases(claimedAttemptCommands, attemptCommands, eligible)
       const date = now()
       const claimed = claimedAttempt(
         claimQueued(
           attemptCommands,
-          (queued) => {
-            const command = queued.payload
-            if (queued.runAt !== undefined && queued.runAt > date) return false
-            if (command.kind === 'taskAttempt') {
-              return worker.taskNames.includes(command.taskName)
-            }
-            return (
-              worker.workflowNames.includes(command.workflowName) &&
-              (worker.activityNames === undefined ||
-                worker.activityNames.includes(command.activityName))
-            )
-          },
+          (queued) =>
+            (queued.runAt === undefined || queued.runAt <= date) &&
+            eligible(queued.payload),
           compareAttemptCommands,
         ),
+        worker.leaseMs,
       )
       if (!claimed) return null
       claimedAttemptCommands.set(claimed.claim.id, claimed.item)
       return claimed.claim
     },
-    async heartbeat(attempt) {
-      if (!matchesClaim(claimedAttemptCommands.get(attempt.id), attempt)) {
+    async heartbeat(attempt, leaseMs = DEFAULT_LEASE_MS) {
+      const claimed = claimedAttemptCommands.get(attempt.id)
+      if (!claimed || !matchesClaim(claimed, attempt)) {
         throw new Error('Workflow attempt heartbeat lease lost')
       }
+      claimedAttemptCommands.set(attempt.id, {
+        ...claimed,
+        leaseExpiresAt: new Date(now().getTime() + leaseMs),
+      })
       return { runStatus: runs.get(attempt.command.runId)?.status ?? 'queued' }
     },
     async ack(attempt) {

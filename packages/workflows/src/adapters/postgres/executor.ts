@@ -7,6 +7,7 @@ import type {
 import type { AttemptExecutor } from '../../runtime/executors.ts'
 import type { StoredRun } from '../../runtime/state.ts'
 import type { PostgresWorkflowCommandContext } from './queue.ts'
+import { DEFAULT_LEASE_MS } from '../../runtime/executors.ts'
 import { createPostgresWorkflowCommandHelpers } from './queue.ts'
 import { WORKFLOW_COMMANDS_CHANNEL, id, json, many, one } from './sql.ts'
 
@@ -146,7 +147,7 @@ export const createAttemptExecutor = (
       if (eligible.length === 0) return null
       return claimAttempt(eligible, params, worker.workerId, worker.leaseMs)
     },
-    async heartbeat(attempt, leaseMs = 30_000) {
+    async heartbeat(attempt, leaseMs = DEFAULT_LEASE_MS) {
       await ready
       const updated = await one<{
         id: string
