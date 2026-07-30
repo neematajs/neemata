@@ -10,6 +10,9 @@
       "path": "./packages/common/tsconfig.build.json"
     },
     {
+      "path": "./packages/config/tsconfig.build.json"
+    },
+    {
       "path": "./packages/contract/tsconfig.build.json"
     },
     {
