@@ -14,6 +14,8 @@ import {
   contractProcedure,
   contractRouter,
   CoreInjectables,
+  envConfig,
+  EnvConfigError,
   ErrorCode,
   ExecutionEnvironmentLifecycleHook,
   factory,
@@ -56,8 +58,8 @@ import {
 - Use direct package subpaths for clients, transports, formats, adapters, and
   runtime helpers: `@nmtjs/client`, `@nmtjs/http-transport/node`,
   `@nmtjs/application/neem/runtime`, `@nmtjs/pubsub/redis`, etc.
-- Avoid direct `@nmtjs/core`, `@nmtjs/type`, `@nmtjs/contract`, or
-  `@nmtjs/pubsub` imports in end-user examples when
+- Avoid direct `@nmtjs/core`, `@nmtjs/type`, `@nmtjs/contract`,
+  `@nmtjs/config`, or `@nmtjs/pubsub` imports in end-user examples when
   `nmtjs` exposes the same symbol.
 
 ## Common Builders
@@ -95,6 +97,18 @@ import {
   the namespace.
 - `Scope` - `Global`, `Connection`, `Call`, `Transient`.
 - `meta()` and `MetadataKind` - typed metadata tokens and static constraints.
+
+## Config
+
+- `envConfig(variables, { source? }?)` - global injectable resolving and
+  validating environment variables on first injection. Each record key is the
+  env variable name and maps to a Standard Schema validator (`t.*` schemas
+  qualify); the `{ name, schema }` value form decouples config key from env
+  variable name.
+- `EnvConfigError` - thrown with validation failures aggregated across all
+  variables, keyed by env variable name in `error.issues`.
+- `resolveEnvConfig(variables, source?)` - non-DI resolver, direct import from
+  `@nmtjs/config`.
 
 ## PubSub
 

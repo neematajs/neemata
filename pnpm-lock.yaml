@@ -311,6 +311,9 @@ importers:
       '@nmtjs/application':
         specifier: workspace:*
         version: link:../application
+      '@nmtjs/config':
+        specifier: workspace:*
+        version: link:../config
       '@nmtjs/contract':
         specifier: workspace:*
         version: link:../contract
