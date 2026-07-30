@@ -1,5 +1,5 @@
-import type { ZodMiniString } from 'zod/mini'
-import { iso, regex, string } from 'zod/mini'
+import type { ZodMiniString, ZodMiniType } from 'zod/mini'
+import { custom as zodCustom, iso, regex, string } from 'zod/mini'
 
 import { CustomType, TransformType } from './custom.ts'
 
@@ -31,6 +31,22 @@ const createTemporalTransformer = <T extends typeof Temporal, U extends Types>(
 }
 
 type EncodeType = ZodMiniString<string>
+type DomainTypes = Types | 'Instant'
+
+const temporalType = <T extends typeof Temporal, U extends DomainTypes>(
+  implementation: T,
+  type: U,
+  error: string,
+): ZodMiniType<InstanceType<T[U]>, InstanceType<T[U]>> => {
+  const Constructor = implementation[type] as unknown as abstract new (
+    ...args: any[]
+  ) => InstanceType<T[U]>
+
+  return zodCustom<InstanceType<T[U]>>(
+    (value) => value instanceof Constructor,
+    error,
+  )
+}
 
 export class PlainDateType<
   T extends typeof Temporal = typeof Temporal,
@@ -43,6 +59,11 @@ export class PlainDateType<
       decode: transformer.decode,
       encode: transformer.encode,
       type: iso.date(),
+      decodedType: temporalType(
+        implementation,
+        'PlainDate',
+        'Invalid PlainDate',
+      ),
       error: 'Invalid date format',
     })
   }
@@ -62,6 +83,11 @@ export class PlainDateTimeType<
       decode: transformer.decode,
       encode: transformer.encode,
       type: iso.datetime({ local: true }),
+      decodedType: temporalType(
+        implementation,
+        'PlainDateTime',
+        'Invalid PlainDateTime',
+      ),
       error: 'Invalid datetime format',
     })
   }
@@ -83,6 +109,11 @@ export class ZonedDateTimeType<
       decode: transformer.decode,
       encode: transformer.encode,
       type: string(),
+      decodedType: temporalType(
+        implementation,
+        'ZonedDateTime',
+        'Invalid ZonedDateTime',
+      ),
       error: 'Invalid zoned datetime format',
     })
   }
@@ -100,6 +131,7 @@ export class InstantType<
       decode,
       encode,
       type: iso.datetime(),
+      decodedType: temporalType(implementation, 'Instant', 'Invalid Instant'),
       error: 'Invalid instant format',
     }) as InstantType<T>
   }
@@ -116,6 +148,11 @@ export class PlainTimeType<
       decode: transformer.decode,
       encode: transformer.encode,
       type: iso.time(),
+      decodedType: temporalType(
+        implementation,
+        'PlainTime',
+        'Invalid PlainTime',
+      ),
       error: 'Invalid time format',
     })
   }
@@ -132,6 +169,7 @@ export class DurationType<
       decode: transformer.decode,
       encode: transformer.encode,
       type: iso.duration(),
+      decodedType: temporalType(implementation, 'Duration', 'Invalid Duration'),
       error: 'Invalid duration format',
     })
   }
@@ -151,6 +189,11 @@ export class PlainYearMonthType<
       decode: transformer.decode,
       encode: transformer.encode,
       type: string().check(regex(/^\d{4}-\d{2}$/)),
+      decodedType: temporalType(
+        implementation,
+        'PlainYearMonth',
+        'Invalid PlainYearMonth',
+      ),
       error: 'Invalid year-month format',
     })
   }
@@ -170,6 +213,11 @@ export class PlainMonthDayType<
       decode: transformer.decode,
       encode: transformer.encode,
       type: string().check(regex(/^\d{2}-\d{2}$/)),
+      decodedType: temporalType(
+        implementation,
+        'PlainMonthDay',
+        'Invalid PlainMonthDay',
+      ),
       error: 'Invalid month-day format',
     })
   }

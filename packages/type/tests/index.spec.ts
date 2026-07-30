@@ -91,7 +91,11 @@ describe('Simple type with defaults', () => {
     }
 
     const result = schema.decode(value)
-    expect(result.prop9).toBeDefined()
+    expect(result.prop9).toEqual([
+      {
+        prop1: [{ prop1: 'default', prop2: 42 }],
+      },
+    ])
   })
 
   it('should encode', () => {
@@ -107,7 +111,56 @@ describe('Simple type with defaults', () => {
     }
 
     const result = schema.encode(value)
-    expect(result.prop9).toBeDefined()
+    expect(result.prop9).toEqual([
+      {
+        prop1: [{ prop1: 'default', prop2: 42 }],
+      },
+    ])
+  })
+
+  it('applies transformed defaults through both directions', () => {
+    const defaultDate = new Date('2024-02-03T04:05:06.000Z')
+    const transformed = t
+      .object({
+        createdAt: t.date().default(defaultDate),
+        count: t.bigInt().default(42n),
+      })
+      .default({})
+
+    expect(transformed.decode(undefined)).toEqual({
+      createdAt: defaultDate,
+      count: 42n,
+    })
+    expect(transformed.encode(undefined)).toEqual({
+      createdAt: '2024-02-03T04:05:06.000Z',
+      count: '42',
+    })
+  })
+
+  it('validates defaults instead of returning them unchecked', () => {
+    expect(() => t.number().default(Number.NaN)).toThrow(t.NeemataTypeError)
+  })
+})
+
+describe('Error input reporting', () => {
+  it('omits rejected input by default', () => {
+    try {
+      t.string().decode(42 as any)
+      throw new Error('Expected validation to fail')
+    } catch (error) {
+      if (!(error instanceof t.NeemataTypeError)) throw error
+      expect(error.issues[0]).not.toHaveProperty('input')
+    }
+  })
+
+  it('allows callers to explicitly include rejected input', () => {
+    try {
+      t.string().decode(42 as any, { reportInput: true })
+      throw new Error('Expected validation to fail')
+    } catch (error) {
+      if (!(error instanceof t.NeemataTypeError)) throw error
+      expect(error.issues[0]).toHaveProperty('input', 42)
+    }
   })
 })
 

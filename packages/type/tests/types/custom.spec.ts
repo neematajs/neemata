@@ -1,6 +1,32 @@
 import { describe, expect, it } from 'vitest'
+import { number as zodNumber, string as zodString } from 'zod/mini'
 
 import { t } from '../../src/index.ts'
+
+describe('CustomType - codec engine', () => {
+  const numericString = t.custom({
+    type: zodString(),
+    decodedType: zodNumber(),
+    decode: (value) => {
+      if (value === 'explode') throw new Error('conversion failed')
+      return Number(value)
+    },
+    encode: (value) => String(value),
+  })
+
+  it('validates the decoded and encoded endpoints', () => {
+    expect(numericString.decode('42')).toBe(42)
+    expect(numericString.encode(42)).toBe('42')
+    expect(() => numericString.decode('not-a-number')).toThrow(
+      t.NeemataTypeError,
+    )
+    expect(() => numericString.encode('42' as any)).toThrow(t.NeemataTypeError)
+  })
+
+  it('turns conversion exceptions into structured issues', () => {
+    expect(() => numericString.decode('explode')).toThrow(t.NeemataTypeError)
+  })
+})
 
 describe('CustomType - Date', () => {
   const dateType = t.date()
@@ -34,6 +60,18 @@ describe('CustomType - Date', () => {
 
       expect(typeof result).toBe('string')
       expect(result).toBe('2021-01-01T12:30:45.123Z')
+    })
+
+    it('should reject a non-Date with a structured validation error', () => {
+      expect(() => dateType.encode('2021-01-01' as any)).toThrow(
+        t.NeemataTypeError,
+      )
+    })
+
+    it('should reject an invalid Date with a structured validation error', () => {
+      expect(() => dateType.encode(new Date('invalid'))).toThrow(
+        t.NeemataTypeError,
+      )
     })
   })
 })
@@ -82,6 +120,10 @@ describe('CustomType - BigInt', () => {
 
       expect(typeof result).toBe('string')
       expect(result).toBe('-987654321098765432109876543210')
+    })
+
+    it('should reject non-bigint values instead of coercing them', () => {
+      expect(() => bigIntType.encode(123 as any)).toThrow(t.NeemataTypeError)
     })
   })
 })

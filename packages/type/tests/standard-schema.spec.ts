@@ -54,6 +54,14 @@ describe('Standard schema', () => {
 
     expect(result.value.id).toBe('123')
     expect(result.value.createdAt).toBe('2021-01-01T00:00:00.000Z')
+
+    const invalid = await standard.validate({
+      id: 123,
+      createdAt: '2021-01-01',
+      name: 'Ada',
+    } as any)
+
+    expect('issues' in invalid).toBe(true)
   })
 
   it('exposes JSON schema helpers', () => {
