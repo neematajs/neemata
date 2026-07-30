@@ -9,6 +9,7 @@ import {
   vi,
 } from 'vitest'
 
+import type { ResolutionEvent } from '../src/container.ts'
 import type { DependencyOptional, LazyInjectable } from '../src/injectables.ts'
 import {
   kFactoryInjectable,
@@ -197,7 +198,6 @@ describe('Injectable', () => {
 
 describe('Container', () => {
   const logger = testLogger()
-  const defaultInjectionsNumber = new Container({ logger }).instances.size
   let container: Container
 
   beforeEach(async () => {
@@ -473,6 +473,44 @@ describe('Container', () => {
     await expect(container.resolve(injectable)).resolves.toBeUndefined()
   })
 
+  it('should resolve optional dependency to undefined in a forked container', async () => {
+    const lazyInjectable = createLazyInjectable()
+    const injectable = createFactoryInjectable({
+      scope: Scope.Call,
+      dependencies: { dep: createOptionalInjectable(lazyInjectable) },
+      create: (deps) => ({ ...deps }),
+    })
+    const scopeContainer = container.fork(Scope.Call)
+    await expect(scopeContainer.resolve(injectable)).resolves.toEqual({
+      dep: undefined,
+    })
+    await scopeContainer.dispose()
+  })
+
+  it('should not fail initialization on unfulfilled optional dependencies', async () => {
+    const lazyInjectable = createLazyInjectable()
+    const dependant = createFactoryInjectable({
+      dependencies: { dep: createOptionalInjectable(lazyInjectable) },
+      create: noopFn,
+    })
+    await expect(container.initialize([dependant])).resolves.toBeUndefined()
+  })
+
+  it('should fail initialization when an optional dependency is required elsewhere', async () => {
+    const lazyInjectable = createLazyInjectable()
+    const optionalDependant = createFactoryInjectable({
+      dependencies: { dep: createOptionalInjectable(lazyInjectable) },
+      create: noopFn,
+    })
+    const requiredDependant = createFactoryInjectable({
+      dependencies: { dep: lazyInjectable },
+      create: noopFn,
+    })
+    await expect(
+      container.initialize([optionalDependant, requiredDependant]),
+    ).rejects.toThrow('No instance provided')
+  })
+
   it('should inject and dispose', async () => {
     const inject = container.get(CoreInjectables.inject)
     const dispose = container.get(CoreInjectables.dispose)
@@ -494,6 +532,243 @@ describe('Container', () => {
     await expect(
       inject.explicit(injectable, { dep: 'ped' }),
     ).resolves.toHaveProperty('instance', value)
+  })
+
+  describe('Explicit Injection Disposal', () => {
+    it('should dispose the injected instance via the explicit handle', async () => {
+      const disposeSpy = vi.fn()
+      const injectable = createFactoryInjectable({
+        create: () => ({ value: 'explicit' }),
+        dispose: disposeSpy,
+      })
+      const inject = container.get(CoreInjectables.inject)
+      const before = container.instances.size
+      const handle = await inject.explicit(injectable, {})
+      await handle[Symbol.asyncDispose]()
+      expect(disposeSpy).toHaveBeenCalledTimes(1)
+      expect(disposeSpy).toHaveBeenCalledWith(
+        handle.instance,
+        expect.anything(),
+      )
+      // the transient wrapper must not linger in the container
+      expect(container.instances.size).toBe(before)
+    })
+
+    it('should not dispose a cached singleton of the same injectable', async () => {
+      const disposeSpy = vi.fn()
+      const injectable = createFactoryInjectable({
+        create: () => ({ value: Math.random() }),
+        dispose: disposeSpy,
+      })
+      const singleton = await container.resolve(injectable)
+      const inject = container.get(CoreInjectables.inject)
+      const handle = await inject.explicit(injectable, {})
+      await handle[Symbol.asyncDispose]()
+      expect(disposeSpy).not.toHaveBeenCalledWith(singleton, expect.anything())
+      expect(container.owns(injectable)).toBe(true)
+      expect(container.get(injectable)).toBe(singleton)
+    })
+
+    it('should create and dispose the instance in the container of the requested scope', async () => {
+      const disposeSpy = vi.fn()
+      const injectable = createFactoryInjectable({
+        create: () => ({}),
+        dispose: disposeSpy,
+      })
+      const scopeContainer = container.fork(Scope.Call)
+      const inject = scopeContainer.get(CoreInjectables.inject)
+      const globalBefore = container.instances.size
+      const callBefore = scopeContainer.instances.size
+      const handle = await inject.explicit(injectable, {}, Scope.Global)
+      expect(container.instances.size).toBe(globalBefore + 1)
+      expect(scopeContainer.instances.size).toBe(callBefore)
+      await handle[Symbol.asyncDispose]()
+      expect(disposeSpy).toHaveBeenCalledTimes(1)
+      expect(container.instances.size).toBe(globalBefore)
+      await scopeContainer.dispose()
+    })
+  })
+
+  describe('Circular Dependency Detection', () => {
+    it('should prevent constructing direct dependency cycles', () => {
+      const a = createFactoryInjectable({ create: noopFn })
+      const b = createFactoryInjectable({ dependencies: { a }, create: noopFn })
+      // dependency records are frozen, so the declared graph stays acyclic
+      expect(() => Object.assign(a.dependencies, { b })).toThrow(TypeError)
+      expect(b.dependencies).toHaveProperty('a', a)
+    })
+
+    it('should reject resolution through a circular provision alias', async () => {
+      const token = createLazyInjectable(Scope.Global, 'token')
+      const injectable = createFactoryInjectable(
+        { dependencies: { dep: token }, create: noopFn },
+        'injectable',
+      )
+      container.provide(token, injectable)
+      await expect(container.resolve(injectable)).rejects.toThrow(
+        'Circular dependency detected: injectable -> token -> injectable',
+      )
+    })
+
+    it('should reject initialization over a circular provision alias', async () => {
+      const token = createLazyInjectable(Scope.Global, 'token')
+      const injectable = createFactoryInjectable(
+        { dependencies: { dep: token }, create: noopFn },
+        'injectable',
+      )
+      container.provide(token, injectable)
+      const dependant = createFactoryInjectable({
+        dependencies: { injectable },
+        create: noopFn,
+      })
+      await expect(container.initialize([dependant])).rejects.toThrow(
+        'Circular dependency detected',
+      )
+    })
+  })
+
+  describe('Scope Enforcement', () => {
+    it('should reject resolving a stricter-scoped injectable on a looser container', async () => {
+      const callScoped = createFactoryInjectable({
+        scope: Scope.Call,
+        create: () => ({}),
+      })
+      await expect(container.resolve(callScoped)).rejects.toThrow(
+        'is stricter than the container scope',
+      )
+      expect(container.owns(callScoped)).toBe(false)
+    })
+
+    it('should allow a stricter container to host looser-scoped injectables', async () => {
+      const connectionScoped = createFactoryInjectable({
+        scope: Scope.Connection,
+        create: () => ({}),
+      })
+      const callContainer = container.fork(Scope.Call)
+      await expect(callContainer.resolve(connectionScoped)).resolves.toEqual({})
+      await callContainer.dispose()
+    })
+
+    it('should reject declaring a scope laundered through a transient', () => {
+      const callScoped = createFactoryInjectable({
+        scope: Scope.Call,
+        create: () => ({}),
+      })
+      const transient = createFactoryInjectable({
+        scope: Scope.Transient,
+        dependencies: { callScoped },
+        create: (deps) => deps,
+      })
+      // the transient contributes no scope itself, but its dependencies do
+      expect(() =>
+        createFactoryInjectable({
+          scope: Scope.Global,
+          dependencies: { transient },
+          create: (deps) => deps,
+        }),
+      ).toThrow('dependencies have stricter scope')
+    })
+
+    it('should enforce the effective scope of transients at resolution', async () => {
+      const callScoped = createFactoryInjectable({
+        scope: Scope.Call,
+        create: () => ({}),
+      })
+      const transient = createFactoryInjectable({
+        scope: Scope.Transient,
+        dependencies: { callScoped },
+        create: (deps) => deps,
+      })
+
+      await expect(container.resolve(transient)).rejects.toThrow(
+        'is stricter than the container scope',
+      )
+
+      const callContainer = container.fork(Scope.Call)
+      await expect(callContainer.resolve(transient)).resolves.toHaveProperty(
+        'callScoped',
+      )
+      await callContainer.dispose()
+    })
+
+    it('should reject providing a stricter-scoped injectable as a provision value', async () => {
+      const token = createLazyInjectable()
+      const callScoped = createFactoryInjectable({
+        scope: Scope.Call,
+        create: () => ({}),
+      })
+      expect(() => container.provide(token, callScoped)).toThrow(
+        'is stricter than the container scope',
+      )
+    })
+  })
+
+  describe('Resolution Observability', () => {
+    it('should report resolutions via the onResolution hook', async () => {
+      const events: ResolutionEvent[] = []
+      const observed = new Container({
+        logger: testLogger(),
+        onResolution: (event) => events.push(event),
+      })
+
+      const injectable = createFactoryInjectable(
+        { create: () => ({}) },
+        'observed',
+      )
+      await observed.resolve(injectable)
+      await observed.resolve(injectable)
+
+      // cache hits do not emit — only actual instantiations
+      expect(events).toHaveLength(1)
+      expect(events[0].injectable).toBe(injectable)
+      expect(events[0].scope).toBe(Scope.Global)
+      expect(events[0].durationMs).toBeGreaterThanOrEqual(0)
+      expect(events[0].error).toBeUndefined()
+
+      const failing = createFactoryInjectable({
+        create: (): string => {
+          throw new Error('boom')
+        },
+      })
+      await expect(observed.resolve(failing)).rejects.toThrow('boom')
+      expect(events).toHaveLength(2)
+      expect(events[1].error).toBeInstanceOf(Error)
+
+      await observed.dispose()
+    })
+
+    it('should not fail resolution when the onResolution hook throws', async () => {
+      const observed = new Container({
+        logger: testLogger(),
+        onResolution: () => {
+          throw new Error('hook error')
+        },
+      })
+      const injectable = createFactoryInjectable({ create: () => 'value' })
+      await expect(observed.resolve(injectable)).resolves.toBe('value')
+      await observed.dispose()
+    })
+
+    it('should trace-log resolutions', async () => {
+      const observedLogger = testLogger()
+      const traceSpy = vi.spyOn(observedLogger, 'trace')
+      const observed = new Container({ logger: observedLogger })
+
+      const injectable = createFactoryInjectable(
+        { create: () => ({}) },
+        'traced',
+      )
+      await observed.resolve(injectable)
+
+      expect(traceSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Resolved %s injectable'),
+        'traced',
+        Scope.Global,
+        expect.any(Number),
+      )
+
+      await observed.dispose()
+    })
   })
 
   describe('Race Condition Prevention', () => {
@@ -659,6 +934,25 @@ describe('Container', () => {
 
       // Wait for disposal to complete
       await disposalPromise
+    })
+
+    it('should dispose instances from in-flight resolutions', async () => {
+      const disposeSpy = vi.fn()
+      const injectable = createFactoryInjectable({
+        create: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 30))
+          return { value: 'slow' }
+        },
+        dispose: disposeSpy,
+      })
+
+      const pending = container.resolve(injectable)
+      await new Promise((resolve) => setTimeout(resolve, 5))
+      await container.dispose()
+
+      await expect(pending).resolves.toEqual({ value: 'slow' })
+      expect(disposeSpy).toHaveBeenCalledTimes(1)
+      expect(container.instances.size).toBe(0)
     })
 
     it('should allow resolution in new container after disposal', async () => {
@@ -1003,28 +1297,11 @@ describe('Container', () => {
       const connectionContainer = container.fork(Scope.Connection)
       await connectionContainer.resolve(childDep)
 
-      // Verify what instances each container has
-      expect(container.instances.has(parentDep)).toBe(true)
-      expect(container.instances.has(childDep)).toBe(false)
-      expect(connectionContainer.instances.has(parentDep)).toBe(false)
-      expect(connectionContainer.instances.has(childDep)).toBe(true)
-
-      // Get disposal order for child container
-      const childDisposalOrder = (connectionContainer as any).getDisposalOrder()
-
-      // Child container should include:
-      // 1. childDep (our test dependency)
-      // 2. CoreInjectables.inject (provided to every container)
-      // 3. CoreInjectables.dispose (provided to every container)
-      // 4. CoreInjectables.registry (provided to every container)
-      // It should NOT include parentDep (that belongs to parent container)
-      expect(
-        childDisposalOrder.filter((dep: any) => dep === childDep),
-      ).toHaveLength(1)
-      expect(
-        childDisposalOrder.filter((dep: any) => dep === parentDep),
-      ).toHaveLength(0)
-      expect(childDisposalOrder).toHaveLength(defaultInjectionsNumber + 1) // childDep + inject function
+      // Instance ownership stays with the container matching each scope
+      expect(container.has(parentDep)).toBe(true)
+      expect(container.has(childDep)).toBe(false)
+      expect(connectionContainer.has(parentDep)).toBe(false)
+      expect(connectionContainer.has(childDep)).toBe(true)
     })
   })
 
@@ -1349,9 +1626,65 @@ describe('Container', () => {
       expect(instance1).not.toBe(instance2)
       expect(factorySpy).toHaveBeenCalledTimes(2)
 
-      // Transient injectables are stored for disposal tracking but not reused
-      expect(container.contains(transientInjectable)).toBe(true)
+      // dispose-less transient instances are not tracked at all, so they
+      // never accumulate in long-lived containers
+      expect(container.contains(transientInjectable)).toBe(false)
+      expect(container.owns(transientInjectable)).toBe(false)
+    })
+
+    it('should track disposable transient instances until disposed', async () => {
+      const transientInjectable = createFactoryInjectable({
+        create: () => ({}),
+        dispose: noopFn,
+        scope: Scope.Transient,
+      })
+
+      const instance = await container.resolve(transientInjectable)
       expect(container.owns(transientInjectable)).toBe(true)
+
+      const dispose = container.get(CoreInjectables.dispose)
+      await dispose(transientInjectable, instance)
+      expect(container.owns(transientInjectable)).toBe(false)
+    })
+
+    it('should dispose every transient wrapper sharing a public instance', async () => {
+      const shared = { public: true }
+      const disposeSpy = vi.fn()
+      const transientInjectable = createFactoryInjectable({
+        scope: Scope.Transient,
+        create: () => ({ inner: Math.random() }),
+        pick: () => shared,
+        dispose: disposeSpy,
+      })
+      await container.resolve(transientInjectable)
+      await container.resolve(transientInjectable)
+
+      const dispose = container.get(CoreInjectables.dispose)
+      await dispose(transientInjectable, shared)
+
+      expect(disposeSpy).toHaveBeenCalledTimes(2)
+      expect(container.has(transientInjectable)).toBe(false)
+    })
+
+    it('should keep child-resolved transient instances in the child container', async () => {
+      const disposeSpy = vi.fn()
+      const transientInjectable = createFactoryInjectable({
+        scope: Scope.Transient,
+        create: () => ({}),
+        dispose: disposeSpy,
+      })
+
+      await container.resolve(transientInjectable)
+      const child = container.fork(Scope.Call)
+      await child.resolve(transientInjectable)
+
+      // transients belong to the requesting container, even when an
+      // ancestor holds instances of the same injectable
+      expect(child.has(transientInjectable)).toBe(true)
+
+      await child.dispose()
+      expect(disposeSpy).toHaveBeenCalledTimes(1)
+      expect(container.has(transientInjectable)).toBe(true)
     })
 
     it('should dispose transient injectable instances individually', async () => {
@@ -1700,6 +2033,20 @@ describe('Container', () => {
       container.provide(token, value)
 
       // get() should return the value directly
+      expect(container.get(token)).toBe(value)
+    })
+
+    it('should expose resolved injectable provisions via get()', async () => {
+      const value = { foo: 'bar' }
+      const factory = createFactoryInjectable({ create: () => value })
+      const token = createLazyInjectable()
+
+      container.provide(token, factory)
+
+      // not resolved yet — there is no instance to return
+      expect(() => container.get(token)).toThrow('No instance found')
+
+      await container.resolve(token)
       expect(container.get(token)).toBe(value)
     })
 
