@@ -1,7 +1,7 @@
-import { cp, mkdtemp, rm } from 'node:fs/promises'
+import { cp, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { request } from 'node:http'
 import { tmpdir } from 'node:os'
-import { relative, resolve } from 'node:path'
+import { join, relative, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 import { afterEach, describe, expect, it } from 'vitest'
@@ -138,6 +138,18 @@ async function createArtifact(withServer: boolean): Promise<{
     filter: (source) => !source.endsWith('.map'),
     recursive: true,
   })
+  // The copied files still reference the excluded maps; drop the comments so
+  // vitest's module loader does not log an ENOENT for every import.
+  for (const entry of await readdir(distDir, {
+    recursive: true,
+    withFileTypes: true,
+  })) {
+    if (!entry.isFile() || !entry.name.endsWith('.js')) continue
+    const path = join(entry.parentPath, entry.name)
+    const content = await readFile(path, 'utf8')
+    const stripped = content.replace(/^\/\/# sourceMappingURL=.*$/m, '')
+    if (stripped !== content) await writeFile(path, stripped)
+  }
   const appDir = resolve(distDir, 'neem/app')
   const fixtureDir = resolve(import.meta.dirname, '../fixtures/prod-app')
   await cp(fixtureDir, appDir, {
