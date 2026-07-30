@@ -1,6 +1,6 @@
 ---
 name: use-neemata
-description: 'Use when answering questions or writing code for Neemata RPC applications: contracts, procedures, routers, applications, DI, metadata, guards, middleware, filters, clients, workflows, pubsub, metrics, streaming, blobs, and Neemata runtime integration.'
+description: 'Use when answering questions or writing code for Neemata RPC applications: contracts, procedures, routers, applications, DI, env config, metadata, guards, middleware, filters, clients, workflows, pubsub, metrics, streaming, blobs, and Neemata runtime integration.'
 ---
 
 # Use Neemata
@@ -29,7 +29,7 @@ Exceptions:
 - [Implementations](references/implementations.md) - contract-backed handlers,
   routers, and `implementRouter(...)`.
 - [Injectables](references/injectables.md) - values, lazy tokens, factories,
-  scopes, built-ins.
+  scopes, built-ins, env config.
 - [Subscriptions](references/subscriptions.md) - typed event/channel contracts.
 - [PubSub](references/pubsub.md) - ephemeral fanout, publish/subscribe.
 - [Workflows](references/workflows.md) - durable orchestration: task/workflow
