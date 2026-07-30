@@ -519,15 +519,21 @@ export class Container {
     started: number,
     error?: unknown,
   ) {
+    const durationMs = performance.now() - started
+
+    this.runtime.logger.trace(
+      error
+        ? 'Failed to resolve %s injectable in [%s] scope after %dms'
+        : 'Resolved %s injectable in [%s] scope in %dms',
+      label(injectable),
+      this.scope,
+      durationMs,
+    )
+
     const { onResolution } = this.runtime
     if (!onResolution) return
     try {
-      onResolution({
-        injectable,
-        scope: this.scope,
-        durationMs: performance.now() - started,
-        error,
-      })
+      onResolution({ injectable, scope: this.scope, durationMs, error })
     } catch (hookError) {
       this.runtime.logger.error(
         { error: hookError },

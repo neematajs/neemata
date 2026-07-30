@@ -9,6 +9,7 @@ import {
   vi,
 } from 'vitest'
 
+import type { ResolutionEvent } from '../src/container.ts'
 import type { DependencyOptional, LazyInjectable } from '../src/injectables.ts'
 import {
   kFactoryInjectable,
@@ -699,6 +700,74 @@ describe('Container', () => {
       expect(() => container.provide(token, callScoped)).toThrow(
         'is stricter than the container scope',
       )
+    })
+  })
+
+  describe('Resolution Observability', () => {
+    it('should report resolutions via the onResolution hook', async () => {
+      const events: ResolutionEvent[] = []
+      const observed = new Container({
+        logger: testLogger(),
+        onResolution: (event) => events.push(event),
+      })
+
+      const injectable = createFactoryInjectable(
+        { create: () => ({}) },
+        'observed',
+      )
+      await observed.resolve(injectable)
+      await observed.resolve(injectable)
+
+      // cache hits do not emit — only actual instantiations
+      expect(events).toHaveLength(1)
+      expect(events[0].injectable).toBe(injectable)
+      expect(events[0].scope).toBe(Scope.Global)
+      expect(events[0].durationMs).toBeGreaterThanOrEqual(0)
+      expect(events[0].error).toBeUndefined()
+
+      const failing = createFactoryInjectable({
+        create: (): string => {
+          throw new Error('boom')
+        },
+      })
+      await expect(observed.resolve(failing)).rejects.toThrow('boom')
+      expect(events).toHaveLength(2)
+      expect(events[1].error).toBeInstanceOf(Error)
+
+      await observed.dispose()
+    })
+
+    it('should not fail resolution when the onResolution hook throws', async () => {
+      const observed = new Container({
+        logger: testLogger(),
+        onResolution: () => {
+          throw new Error('hook error')
+        },
+      })
+      const injectable = createFactoryInjectable({ create: () => 'value' })
+      await expect(observed.resolve(injectable)).resolves.toBe('value')
+      await observed.dispose()
+    })
+
+    it('should trace-log resolutions', async () => {
+      const observedLogger = testLogger()
+      const traceSpy = vi.spyOn(observedLogger, 'trace')
+      const observed = new Container({ logger: observedLogger })
+
+      const injectable = createFactoryInjectable(
+        { create: () => ({}) },
+        'traced',
+      )
+      await observed.resolve(injectable)
+
+      expect(traceSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Resolved %s injectable'),
+        'traced',
+        Scope.Global,
+        expect.any(Number),
+      )
+
+      await observed.dispose()
     })
   })
 
