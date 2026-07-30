@@ -5,7 +5,11 @@ import type { Logger, LoggingOptions } from '@nmtjs/core'
 import type { Hookable } from 'hookable'
 import type { OutputOptions, RolldownOptions } from 'rolldown'
 
-export type { RolldownOptions, RolldownPluginOption } from 'rolldown'
+export type {
+  Plugin as RolldownPlugin,
+  RolldownOptions,
+  RolldownPluginOption,
+} from 'rolldown'
 
 export type NeemArtifactKind = 'worker' | 'module'
 

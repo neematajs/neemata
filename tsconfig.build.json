@@ -40,6 +40,9 @@
       "path": "./packages/nmtjs/tsconfig.build.json"
     },
     {
+      "path": "./packages/nuxt/tsconfig.build.json"
+    },
+    {
       "path": "./packages/protocol/tsconfig.build.json"
     },
     {
