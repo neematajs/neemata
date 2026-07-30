@@ -17,6 +17,9 @@ export interface GatewayConnection {
   readonly encoder: BaseServerEncoder
   readonly decoder: BaseServerDecoder
   readonly abortController: AbortController
+  // call scopes deferred past onRpc (streamed HTTP bodies): teardown awaits
+  // these so call-scoped disposers finish before the connection container
+  readonly deferredCallDisposals: Set<Promise<void>>
 }
 
 export class ConnectionManager {

@@ -201,7 +201,9 @@ async function handleResponseBody(
   await handleChunkedStream(res, response.body)
 }
 
-async function handleFixedLengthStream(
+// exported for tests: the abort-during-backpressure path needs deterministic
+// coverage against a controlled response double
+export async function handleFixedLengthStream(
   res: UwsResponse,
   body: ReadableStream<Uint8Array>,
   totalSize: number,
@@ -223,7 +225,9 @@ async function handleFixedLengthStream(
 
     if (!responded && !res.aborted) res.cork(() => res.close())
   } finally {
-    reader.releaseLock()
+    // tryEnd reports done without draining the source's final read, so
+    // cancel (not just release) — body finalizers rely on a terminal state
+    reader.cancel().catch(() => {})
   }
 }
 
@@ -288,6 +292,7 @@ function handleFixedChunk(
 
     const write = (offset: number) => {
       if (res.aborted) {
+        res.wakeWritable = undefined
         reject(new Error('Response aborted'))
         return false
       }
@@ -303,11 +308,18 @@ function handleFixedChunk(
       })
 
       if (done || ok) {
+        res.wakeWritable = undefined
         resolve(done)
         return ok
       }
 
       res.onWritable(write)
+      // uWS never fires onWritable after abort: hook the abort waker so a
+      // disconnect settles the wait instead of leaking the pump forever
+      res.wakeWritable = () => {
+        res.wakeWritable = undefined
+        reject(new Error('Response aborted'))
+      }
       return ok
     }
 
