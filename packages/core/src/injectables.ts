@@ -1,4 +1,4 @@
-import type { MaybePromise } from '@nmtjs/common'
+import type { MaybePromise, StackTraceAnchor } from '@nmtjs/common'
 import { tryCaptureStackTrace } from '@nmtjs/common'
 
 import type { DisposeFn, InjectFn } from './container.ts'
@@ -13,12 +13,15 @@ import {
 import { Scope } from './enums.ts'
 import { forkLogger } from './logger.ts'
 
-const ScopeStrictness = {
-  [Scope.Transient]: Number.NaN, // this should make it always fail to compare with other scopes
+// Transient is a lifetime, not a position in the scope ordering — it is
+// deliberately absent here so it can never silently pass a comparison
+const ScopeOrder: Record<Exclude<Scope, Scope.Transient>, number> = {
   [Scope.Global]: 1,
   [Scope.Connection]: 2,
   [Scope.Call]: 3,
 }
+
+const EMPTY_DEPENDENCIES = Object.freeze({})
 
 export type DependencyOptional<T extends AnyInjectable = AnyInjectable> = {
   [kOptionalDependency]: any
@@ -176,28 +179,43 @@ export const isOptionalInjectable = (
   injectable: any,
 ): injectable is DependencyOptional<any> => injectable[kOptionalDependency]
 
-export function getInjectableScope(
+export function getInjectableScope(injectable: AnyInjectable): Scope {
+  if (injectable.scope === Scope.Transient) return Scope.Transient
+  return getEffectiveInjectableScope(injectable)
+}
+
+// dependency records are frozen at creation, so the effective scope of an
+// injectable can never change — safe to memoize for the process lifetime
+const effectiveScopeCache = new WeakMap<
+  AnyInjectable,
+  Exclude<Scope, Scope.Transient>
+>()
+
+/**
+ * The positional scope an injectable actually requires: the strictest scope
+ * among its own (for non-transients) and all transitive dependencies.
+ * Transients contribute no position themselves, but their dependencies do —
+ * a transient over Call-scoped dependencies still requires a Call container.
+ */
+export function getEffectiveInjectableScope(
   injectable: AnyInjectable,
-  visited = new Set<AnyInjectable>(),
-) {
-  let scope = injectable.scope
-  // revisits return the shallow scope: on diamonds the first traversal already
-  // propagated the effective scope, on cycles this terminates the recursion
-  if (visited.has(injectable)) return scope
-  visited.add(injectable)
+): Exclude<Scope, Scope.Transient> {
+  const cached = effectiveScopeCache.get(injectable)
+  if (cached) return cached
+  let scope: Exclude<Scope, Scope.Transient> =
+    injectable.scope === Scope.Transient
+      ? Scope.Global
+      : (injectable.scope as Exclude<Scope, Scope.Transient>)
   const deps = injectable.dependencies as Dependencies
   for (const key in deps) {
-    const dependency = deps[key]
-    const injectable = getDepedencencyInjectable(dependency)
-    const dependencyScope = getInjectableScope(injectable, visited)
-    if (
-      dependencyScope !== Scope.Transient &&
-      scope !== Scope.Transient &&
-      compareScope(dependencyScope, '>', scope)
-    ) {
+    const dependencyScope = getEffectiveInjectableScope(
+      getDepedencencyInjectable(deps[key]),
+    )
+    if (compareScope(dependencyScope, '>', scope)) {
       scope = dependencyScope
     }
   }
+  effectiveScopeCache.set(injectable, scope)
   return scope
 }
 
@@ -228,16 +246,29 @@ export function optional<T, S extends Scope>(
   return createOptionalInjectable(injectable)
 }
 
+/**
+ * Where an injectable was declared. A string is a precomputed location
+ * (e.g. injected at build time); a function is a capture anchor — the
+ * location of whoever called it is captured at creation.
+ */
+export type InjectableOrigin = string | StackTraceAnchor
+
+const resolveOrigin = (
+  origin: InjectableOrigin | undefined,
+  anchor: StackTraceAnchor,
+) =>
+  typeof origin === 'string' ? origin : tryCaptureStackTrace(origin ?? anchor)
+
 export function createLazyInjectable<T, S extends Scope = Scope.Global>(
   scope = Scope.Global as S,
   label?: string,
-  stackTraceDepth = 0,
+  origin?: InjectableOrigin,
 ): LazyInjectable<T, S> {
   const injectable = Object.freeze({
     scope,
-    dependencies: {},
+    dependencies: EMPTY_DEPENDENCIES,
     label,
-    stack: tryCaptureStackTrace(stackTraceDepth),
+    stack: resolveOrigin(origin, createLazyInjectable),
     $withType: () => injectable as any,
     [kInjectable]: true,
     [kLazyInjectable]: true as unknown as T,
@@ -248,14 +279,14 @@ export function createLazyInjectable<T, S extends Scope = Scope.Global>(
 export function createValueInjectable<T>(
   value: T,
   label?: string,
-  stackTraceDepth = 0,
+  origin?: InjectableOrigin,
 ): ValueInjectable<T> {
   return Object.freeze({
     value,
     scope: Scope.Global,
-    dependencies: {},
+    dependencies: EMPTY_DEPENDENCIES,
     label,
-    stack: tryCaptureStackTrace(stackTraceDepth),
+    stack: resolveOrigin(origin, createValueInjectable),
     [kInjectable]: true,
     [kValueInjectable]: true,
   })
@@ -277,18 +308,20 @@ export function createFactoryInjectable<
       }
     | InjectableFactoryType<P, D>,
   label?: string,
-  stackTraceDepth = 0,
+  origin?: InjectableOrigin,
 ): FactoryInjectable<null extends T ? P : T, D, S, P> {
   const isFactory = typeof paramsOrFactory === 'function'
   const params = isFactory ? { create: paramsOrFactory } : paramsOrFactory
   const injectable = {
-    dependencies: (params.dependencies ?? {}) as D,
+    // freezing keeps the dependency graph acyclic by construction and makes
+    // the effective scope safe to memoize
+    dependencies: Object.freeze({ ...(params.dependencies ?? {}) }) as D,
     scope: (params.scope ?? Scope.Global) as S,
     create: params.create,
     dispose: params.dispose,
     pick: params.pick ?? ((instance: P) => instance as unknown as T),
     label,
-    stack: tryCaptureStackTrace(stackTraceDepth),
+    stack: resolveOrigin(origin, createFactoryInjectable),
     [kInjectable]: true,
     [kFactoryInjectable]: true,
   }
@@ -308,10 +341,12 @@ export type DependenciesSubstitution<T extends Dependencies> = {
 export function substitute<T extends FactoryInjectable<any, any, Scope>>(
   injectable: T,
   substitution: DependenciesSubstitution<T['dependencies']>,
-  stackTraceDepth = 0,
+  origin?: InjectableOrigin,
 ): T {
+  // capture once at the API boundary and pass the value down, so nested
+  // substitutions all attribute to the original call site
+  const stack = resolveOrigin(origin, substitute)
   const dependencies = { ...injectable.dependencies }
-  const depth = stackTraceDepth + 1
   for (const key in substitution) {
     const value = substitution[key]!
     if (key in dependencies) {
@@ -319,7 +354,7 @@ export function substitute<T extends FactoryInjectable<any, any, Scope>>(
       if (isInjectable(value)) {
         dependencies[key] = value
       } else if (isFactoryInjectable(original)) {
-        dependencies[key] = substitute(original, value, depth)
+        dependencies[key] = substitute(original, value, stack)
       }
     }
   }
@@ -329,7 +364,7 @@ export function substitute<T extends FactoryInjectable<any, any, Scope>>(
     return createFactoryInjectable(
       { ...injectable, dependencies },
       injectable.label,
-      depth,
+      stack,
     )
   }
 
@@ -341,8 +376,13 @@ export function compareScope(
   operator: '>' | '<' | '>=' | '<=' | '=' | '!=',
   right: Scope,
 ) {
-  const leftScope = ScopeStrictness[left]
-  const rightScope = ScopeStrictness[right]
+  const leftScope = ScopeOrder[left as Exclude<Scope, Scope.Transient>]
+  const rightScope = ScopeOrder[right as Exclude<Scope, Scope.Transient>]
+  if (leftScope === undefined || rightScope === undefined) {
+    throw new Error(
+      'Transient scope is a lifetime, not a position — it cannot be compared',
+    )
+  }
   switch (operator) {
     case '=':
       return leftScope === rightScope
@@ -388,7 +428,8 @@ function resolveInjectableScope(
   isDefaultScope: boolean,
   injectable: AnyInjectable,
 ) {
-  const actualScope = getInjectableScope(injectable)
+  if (injectable.scope === Scope.Transient) return Scope.Transient
+  const actualScope = getEffectiveInjectableScope(injectable)
   if (!isDefaultScope && compareScope(actualScope, '>', injectable.scope))
     throw new Error(
       `Invalid scope ${injectable.scope} for an injectable: dependencies have stricter scope - ${actualScope}`,
@@ -418,3 +459,7 @@ export const provision = <
 ): Provision<T> => {
   return { token, value }
 }
+
+// preferred spellings; the misspelled originals are kept for compatibility
+export type Dependency = Depedency
+export const getDependencyInjectable = getDepedencencyInjectable
