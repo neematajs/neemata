@@ -35,6 +35,7 @@ export {
   defineApplicationHost as host,
   implement as implementRouter,
 } from '@nmtjs/application'
+export { createEnvConfig as envConfig, EnvConfigError } from '@nmtjs/config'
 export { blobType, c } from '@nmtjs/contract'
 export {
   CoreInjectables,

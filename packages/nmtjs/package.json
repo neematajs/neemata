@@ -20,6 +20,7 @@
   },
   "dependencies": {
     "@nmtjs/application": "workspace:*",
+    "@nmtjs/config": "workspace:*",
     "@nmtjs/contract": "workspace:*",
     "@nmtjs/core": "workspace:*",
     "@nmtjs/gateway": "workspace:*",

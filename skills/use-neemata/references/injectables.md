@@ -253,6 +253,34 @@ export const resolveMessage = factory({
 `inject.inject.explicit(...)` returns `{ instance, [Symbol.asyncDispose] }` for
 explicit resource blocks when `using` is supported.
 
+## Environment Config
+
+`envConfig(...)` creates a global factory injectable that reads, validates, and
+types environment variables on first injection. Values are validated by any
+Standard Schema validator — `t.*` schemas qualify, as do third-party validators
+(zod, valibot, arktype), including their string-coercion helpers.
+
+```ts
+import { envConfig, procedure, t } from 'nmtjs'
+
+const config = envConfig({
+  HOST: t.string(),
+  dbUrl: { name: 'DATABASE_URL', schema: t.string() },
+})
+
+export const status = procedure({
+  dependencies: { config },
+  handler: ({ config }) => ({ host: config.HOST }),
+})
+```
+
+- Record keys double as env variable names; the `{ name, schema }` form decouples
+  the config key from the variable name.
+- All invalid variables are reported together in a single `EnvConfigError`
+  (issues keyed by variable name), not one at a time.
+- `resolveEnvConfig(variables, source?)` from `@nmtjs/config` resolves the same
+  shape outside DI; `source` defaults to `process.env`.
+
 ## Built-In Tokens
 
 Prefer merged `inject.*` tokens in application code:
