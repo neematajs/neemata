@@ -68,6 +68,7 @@ export type {
   NeemWorkerPoolState,
   NeemWorkerState,
   RolldownOptions,
+  RolldownPlugin,
   RolldownPluginOption,
 } from '../shared/types.ts'
 export {
