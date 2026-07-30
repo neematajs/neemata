@@ -2,8 +2,8 @@ import type { NeemMarkedRuntimeDeclaration } from '@nmtjs/neem'
 import { defineRuntime } from '@nmtjs/neem'
 
 import type { NeemNuxtRuntimeOptions } from './types.ts'
-import { neemNuxtArtifactPlugin } from './plugin.ts'
 import { normalizeBase } from './nuxt-loader.ts'
+import { neemNuxtArtifactPlugin } from './plugin.ts'
 
 export type {
   NeemNuxtBakedOptions,

@@ -2,7 +2,8 @@ import type { Stats } from 'node:fs'
 import type { IncomingMessage, Server, ServerResponse } from 'node:http'
 import { createReadStream, existsSync, statSync } from 'node:fs'
 import { createServer } from 'node:http'
-import { extname, join, normalize } from 'node:path'
+import { extname, join, resolve, sep } from 'node:path'
+import { pipeline } from 'node:stream'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import type { NeemNuxtRuntimeFactory } from '../types.ts'
@@ -59,7 +60,10 @@ const createNuxtProdRuntime: NeemNuxtRuntimeFactory = (ctx, options) => {
         // (its router mounts under app.baseURL), so restore what a
         // path-routed proxy stripped before falling through.
         const stripped = staticPath(req, base, options.routing === 'path')
-        if (stripped && serveStaticFile(req, res, publicDir, stripped, assetsDir)) {
+        if (
+          stripped &&
+          serveStaticFile(req, res, publicDir, stripped, assetsDir)
+        ) {
           return
         }
         if (options.routing === 'path') restoreBase(req, base)
@@ -73,8 +77,17 @@ const createNuxtProdRuntime: NeemNuxtRuntimeFactory = (ctx, options) => {
       instance.on('upgrade', (_req, socket) => socket.destroy())
 
       await new Promise<void>((resolve, reject) => {
+        // Only listener on the server at this point; dropped once bound.
         instance.once('error', reject)
-        instance.listen(0, '127.0.0.1', resolve)
+        instance.listen(0, '127.0.0.1', () => {
+          instance.removeAllListeners('error')
+          resolve()
+        })
+      })
+      // The startup rejection above is settled; a late socket error must fail
+      // the runtime instead of crashing the worker as an uncaught exception.
+      instance.on('error', (error) => {
+        if (!stopping) failListener(error)
       })
       const address = instance.address()
       if (!address || typeof address === 'string') {
@@ -156,12 +169,14 @@ function serveStaticFile(
   pathname: string,
   assetsDir: string,
 ): boolean {
-  const normalized = normalize(pathname)
-  if (normalized.includes('..')) return false
+  // Containment on the resolved path covers `..` in any encoding and any
+  // separator style, unlike a substring check on the raw pathname.
+  const target = resolve(publicDir, pathname.slice(1))
+  if (target !== publicDir && !target.startsWith(publicDir + sep)) return false
   // Prerendered pages (routeRules prerender) are emitted as
   // `<route>/index.html` and removed from the server routes — nitro relies
   // on the static layer for them, so directory hits resolve to their index.
-  const file = resolveFile(join(publicDir, normalized))
+  const file = resolveFile(target)
   if (!file) return false
 
   const type = MIME[extname(file.path)]
@@ -178,13 +193,14 @@ function serveStaticFile(
     res.end()
     return true
   }
-  createReadStream(file.path).pipe(res)
+  // pipeline destroys both sides on failure: a client abort must not leak
+  // the file descriptor and an open/read race must not become an uncaught
+  // exception in the worker — either way the response is already doomed.
+  pipeline(createReadStream(file.path), res, () => {})
   return true
 }
 
-function resolveFile(
-  path: string,
-): { path: string; stats: Stats } | undefined {
+function resolveFile(path: string): { path: string; stats: Stats } | undefined {
   let stats: Stats
   try {
     stats = statSync(path)

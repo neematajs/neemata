@@ -41,6 +41,10 @@ type ResolvedAppInfo = {
 export function neemNuxtArtifactPlugin(
   options: NeemNuxtArtifactPluginOptions,
 ): RolldownPluginOption {
+  // createNuxtRuntime already normalizes, but the plugin is exported on its
+  // own — normalize here too so restoreBase's trailing-slash invariant holds
+  // for direct consumers.
+  const explicitBase = options.base ? normalizeBase(options.base) : undefined
   // Needed twice in a build (baked options + nitro build); resolve once.
   let appInfo: Promise<ResolvedAppInfo> | undefined
   const resolveAppInfo = () => {
@@ -48,7 +52,7 @@ export function neemNuxtArtifactPlugin(
       const kit = await importKitFrom(options.root)
       const config = await kit.loadNuxtConfig({ cwd: options.root })
       return {
-        base: options.base ?? normalizeBase(config.app?.baseURL ?? '/'),
+        base: explicitBase ?? normalizeBase(config.app?.baseURL ?? '/'),
         assetsDir: config.app?.buildAssetsDir ?? '/_nuxt/',
       }
     })()
@@ -69,7 +73,7 @@ export function neemNuxtArtifactPlugin(
       if (this.meta.watchMode) {
         return bakedOptionsModule({
           root: options.root,
-          base: options.base,
+          base: explicitBase,
           routing: options.routing,
         })
       }
@@ -96,7 +100,7 @@ export function neemNuxtArtifactPlugin(
         overrides: {
           telemetry: false,
           nitro: { preset: 'node', output: { dir: appOutDir } },
-          ...(options.base ? { app: { baseURL: base } } : {}),
+          ...(explicitBase ? { app: { baseURL: base } } : {}),
         },
       })
       try {

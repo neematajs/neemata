@@ -2,9 +2,12 @@ import type { IncomingMessage, Server, ServerResponse } from 'node:http'
 import type { Duplex } from 'node:stream'
 import { createServer } from 'node:http'
 
+import type {
+  ConsolaLike,
+  ConsolaLogObject,
+  NuxtInstance,
+} from '../nuxt-loader.ts'
 import type { NeemNuxtRuntimeFactory, NeemNuxtWorkerContext } from '../types.ts'
-import type { NuxtInstance } from '../nuxt-loader.ts'
-import type { ConsolaLike, ConsolaLogObject } from '../nuxt-loader.ts'
 import {
   assertRoutingBase,
   importConsolaFrom,
@@ -75,8 +78,17 @@ const createNuxtDevRuntime: NeemNuxtRuntimeFactory = (ctx, options) => {
       const httpServer = createServer((req, res) => handler(req, res))
       server = httpServer
       await new Promise<void>((resolve, reject) => {
+        // Only listener on the server at this point; dropped once bound.
         httpServer.once('error', reject)
-        httpServer.listen(0, '127.0.0.1', resolve)
+        httpServer.listen(0, '127.0.0.1', () => {
+          httpServer.removeAllListeners('error')
+          resolve()
+        })
+      })
+      // The startup rejection above is settled; a late socket error must fail
+      // the runtime instead of crashing the worker as an uncaught exception.
+      httpServer.on('error', (error) => {
+        if (!stopping) failListener(error)
       })
       const address = httpServer.address()
       if (!address || typeof address === 'string') {
@@ -255,7 +267,7 @@ function formatConsolaArgs(logObj: ConsolaLogObject): string {
   const text = logObj.args
     .map((arg) => {
       if (typeof arg === 'string') return arg
-      if (arg instanceof Error) return (arg.stack ?? arg.message)
+      if (arg instanceof Error) return arg.stack ?? arg.message
       try {
         return JSON.stringify(arg)
       } catch {

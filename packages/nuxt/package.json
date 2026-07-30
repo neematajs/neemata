@@ -53,7 +53,7 @@
     "@nmtjs/neem": "workspace:*"
   },
   "peerDependencies": {
-    "nuxt": ">=4.0.0"
+    "nuxt": ">=4.0.0 <5"
   },
   "devDependencies": {
     "@types/node": "^24.13.2",

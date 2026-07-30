@@ -84,7 +84,9 @@ try {
   if (!(error instanceof Error) || !error.message.includes('is nuxt installed')) process.exitCode = 1
 }`,
       ],
-      { encoding: 'utf8', env },
+      // spawnSync blocks the event loop, so vitest's own timeout cannot
+      // preempt a stuck child.
+      { encoding: 'utf8', env, timeout: 30_000 },
     )
 
     if (result.status !== 0) {
