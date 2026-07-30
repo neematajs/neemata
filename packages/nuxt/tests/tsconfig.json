@@ -1,0 +1,15 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "..",
+    "types": ["node"]
+  },
+  "include": [
+    "../src/**/*",
+    "../vitest.*.config.ts",
+    "unit/**/*.spec.ts",
+    "e2e/**/*.spec.ts",
+    "e2e/support/support.ts"
+  ],
+  "exclude": ["fixtures/**/*", "e2e/support/*.mjs"]
+}
