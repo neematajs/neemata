@@ -1,0 +1,82 @@
+{
+  "name": "@nmtjs/unplugin-labels",
+  "description": "Build-time plugin that labels Neemata injectables with the variable name they are assigned to.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./dist/index.js",
+      "module-sync": "./dist/index.js"
+    },
+    "./rolldown": {
+      "types": "./src/rolldown.ts",
+      "import": "./dist/rolldown.js",
+      "module-sync": "./dist/rolldown.js"
+    },
+    "./vite": {
+      "types": "./src/vite.ts",
+      "import": "./dist/vite.js",
+      "module-sync": "./dist/vite.js"
+    },
+    "./rollup": {
+      "types": "./src/rollup.ts",
+      "import": "./dist/rollup.js",
+      "module-sync": "./dist/rollup.js"
+    },
+    "./esbuild": {
+      "types": "./src/esbuild.ts",
+      "import": "./dist/esbuild.js",
+      "module-sync": "./dist/esbuild.js"
+    },
+    "./webpack": {
+      "types": "./src/webpack.ts",
+      "import": "./dist/webpack.js",
+      "module-sync": "./dist/webpack.js"
+    }
+  },
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js",
+        "module-sync": "./dist/index.js"
+      },
+      "./rolldown": {
+        "types": "./dist/rolldown.d.ts",
+        "import": "./dist/rolldown.js",
+        "module-sync": "./dist/rolldown.js"
+      },
+      "./vite": {
+        "types": "./dist/vite.d.ts",
+        "import": "./dist/vite.js",
+        "module-sync": "./dist/vite.js"
+      },
+      "./rollup": {
+        "types": "./dist/rollup.d.ts",
+        "import": "./dist/rollup.js",
+        "module-sync": "./dist/rollup.js"
+      },
+      "./esbuild": {
+        "types": "./dist/esbuild.d.ts",
+        "import": "./dist/esbuild.js",
+        "module-sync": "./dist/esbuild.js"
+      },
+      "./webpack": {
+        "types": "./dist/webpack.d.ts",
+        "import": "./dist/webpack.js",
+        "module-sync": "./dist/webpack.js"
+      }
+    }
+  },
+  "dependencies": {
+    "magic-string": "^0.30.21",
+    "oxc-parser": "^0.98.0",
+    "unplugin": "^2.3.11"
+  },
+  "files": [
+    "dist",
+    "src",
+    "LICENSE.md",
+    "README.md"
+  ]
+}

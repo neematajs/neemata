@@ -43,6 +43,7 @@
   "dependencies": {
     "@nmtjs/common": "workspace:*",
     "@nmtjs/core": "workspace:*",
+    "@nmtjs/unplugin-labels": "workspace:*",
     "citty": "^0.2.2",
     "consola": "^3.4.2",
     "defu": "^6.1.7",
