@@ -59,7 +59,7 @@ export async function createTestServer(
   const server = new HttpTransportServer(stubAdapterFactory, {
     listen: { port: 0 },
     ...options,
-  })
+  } as HttpTransportOptions)
   await server.start(params)
   return server
 }

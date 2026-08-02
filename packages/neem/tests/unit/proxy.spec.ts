@@ -73,6 +73,36 @@ describe('Neem proxy helpers', () => {
     ])
   })
 
+  it('keeps http and ws upstreams sharing one URL as distinct entries', () => {
+    // a shared-server transport setup reports the same bound address under
+    // both proxyable types; merging them would drop one routing table entry
+    const url = 'http://127.0.0.1:3000/'
+    const desired = createDesiredUpstreams([
+      {
+        runtimeName: 'api',
+        upstreams: [
+          { type: 'http', url },
+          { type: 'ws', url },
+        ],
+      },
+    ])
+
+    expect([...desired.values()]).toEqual([
+      expect.objectContaining({
+        runtimeName: 'api',
+        count: 1,
+        upstream: { type: 'http', url },
+        proxyUpstream: expect.objectContaining({ transport: 'http' }),
+      }),
+      expect.objectContaining({
+        runtimeName: 'api',
+        count: 1,
+        upstream: { type: 'ws', url },
+        proxyUpstream: expect.objectContaining({ transport: 'ws' }),
+      }),
+    ])
+  })
+
   it('creates native proxy options from active manifest runtimes', () => {
     const config: NeemProxyConfig = {
       hostname: '127.0.0.1',

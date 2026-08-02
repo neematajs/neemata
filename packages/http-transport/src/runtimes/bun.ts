@@ -1,86 +1,15 @@
 import type { ApplicationTransport } from '@nmtjs/application'
 import type { ConnectionType } from '@nmtjs/protocol'
 import { ProxyableTransportType } from '@nmtjs/gateway'
+import { createServerHost } from '@nmtjs/server/bun'
 
-import type {
-  HttpAdapterParams,
-  HttpAdapterServer,
-  HttpTransportOptions,
-} from '../types.ts'
+import type { HttpAdapterParams, HttpTransportOptions } from '../types.ts'
+import { createHostAdapter } from '../adapter.ts'
 import * as injectables from '../injectables.ts'
 import { createHTTPTransportWorker } from '../server.ts'
-import {
-  InternalServerErrorHttpResponse,
-  NotFoundHttpResponse,
-  OkResponse,
-} from '../utils.ts'
 
-function adapterFactory(params: HttpAdapterParams<'bun'>): HttpAdapterServer {
-  let server: Bun.Server<undefined> | null = null
-
-  function createServer() {
-    const routes =
-      typeof params.runtime?.routes === 'object' && params.runtime.routes
-        ? params.runtime.routes
-        : {}
-
-    return globalThis.Bun.serve({
-      ...params.runtime,
-      // Bun's own default (128MiB) applies when neither option is set
-      maxRequestBodySize:
-        params.runtime?.maxRequestBodySize ?? params.maxRequestBodySize,
-      unix: params.listen.unix as string,
-      port: params.listen.port ?? 0,
-      hostname: params.listen.hostname,
-      reusePort: params.listen.reusePort,
-      tls: params.tls
-        ? {
-            cert: params.tls.cert,
-            key: params.tls.key,
-            passphrase: params.tls.passphrase,
-          }
-        : undefined,
-      routes: Object.assign({}, routes, {
-        '/healthy': { GET: OkResponse },
-      }) as any,
-      async fetch(request) {
-        const url = new URL(request.url)
-        try {
-          if (request.headers.get('upgrade') === 'websocket')
-            return NotFoundHttpResponse()
-          const { body, headers, method } = request
-          return await params.fetchHandler(
-            { url, method, headers },
-            body,
-            request.signal,
-          )
-        } catch (err) {
-          // TODO: proper logging
-          console.error(err)
-          // params.logger.error({ err }, 'Error in fetch handler')
-          return InternalServerErrorHttpResponse()
-        }
-      },
-    } as any)
-  }
-
-  return {
-    runtime: {
-      get bun() {
-        return server!
-      },
-    },
-    start: async () => {
-      server = createServer()
-      return server!.url.href
-    },
-    stop: async () => {
-      if (server) {
-        await server.stop()
-        server = null
-      }
-    },
-  }
+function adapterFactory(params: HttpAdapterParams<'bun'>) {
+  return createHostAdapter(createServerHost, params)
 }
 
 export const HttpTransport: ApplicationTransport<

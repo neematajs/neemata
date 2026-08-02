@@ -1,6 +1,16 @@
 import { ErrorCode } from '@nmtjs/protocol'
 import { ProtocolError } from '@nmtjs/protocol/server'
 
+// Response helpers and PayloadTooLargeError live in @nmtjs/server: the
+// runtime hosts throw/build them, and instanceof matching in this package
+// requires the same class identity
+export {
+  InternalServerErrorHttpResponse,
+  NotFoundHttpResponse,
+  OkResponse,
+  PayloadTooLargeError,
+} from '@nmtjs/server'
+
 export const InternalError = (message = 'Internal Server Error') =>
   new ProtocolError(ErrorCode.InternalServerError, message)
 
@@ -12,23 +22,3 @@ export const ForbiddenError = (message = 'Forbidden') =>
 
 export const RequestTimeoutError = (message = 'Request Timeout') =>
   new ProtocolError(ErrorCode.RequestTimeout, message)
-
-export const NotFoundHttpResponse = () =>
-  new Response('Not Found', {
-    status: 404,
-    headers: { 'Content-Type': 'text/plain' },
-  })
-
-export const InternalServerErrorHttpResponse = () =>
-  new Response('Internal Server Error', {
-    status: 500,
-    headers: { 'Content-Type': 'text/plain' },
-  })
-
-export const OkResponse = () => new Response('OK', { status: 200 })
-
-export class PayloadTooLargeError extends Error {
-  constructor(message = 'Payload Too Large') {
-    super(message)
-  }
-}
