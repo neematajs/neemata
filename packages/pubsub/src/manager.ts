@@ -119,6 +119,8 @@ export class PubSubManager {
     })
 
     stream.on('error', (error) => {
+      if (isAbortError(error)) return
+
       this.logger.error({ channel, error }, 'Pubsub channel stream failed')
     })
 

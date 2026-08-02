@@ -4,7 +4,7 @@ import { setImmediate as tick } from 'node:timers/promises'
 import { EventContract, SubscriptionContract } from '@nmtjs/contract'
 import { createLogger } from '@nmtjs/core'
 import { t } from '@nmtjs/type'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import type { PubSubAdapter, PubSubMessage } from '../src/adapter.ts'
 import { PubSubManager } from '../src/manager.ts'
@@ -111,6 +111,7 @@ describe('PubSubManager subscription stream', () => {
       throw failure
     })
     const stream = await subscribeStream(manager)
+    const logError = vi.spyOn(manager['logger'], 'error')
 
     const received: unknown[] = []
     await expect(async () => {
@@ -122,6 +123,24 @@ describe('PubSubManager subscription stream', () => {
 
     expect(received).toEqual([{ event: 'message', payload: { text: 'first' } }])
     expect(stream.destroyed).toBe(true)
+    expect(logError).toHaveBeenCalledWith(
+      { channel: 'chat:general', error: failure },
+      'Pubsub channel stream failed',
+    )
+  })
+
+  it('does not log expected cancellation when iteration stops early', async () => {
+    const manager = createManager(async function* () {
+      yield message('first')
+    })
+    const stream = await subscribeStream(manager)
+    const logError = vi.spyOn(manager['logger'], 'error')
+
+    for await (const _item of stream) break
+    await tick()
+
+    expect(stream.destroyed).toBe(true)
+    expect(logError).not.toHaveBeenCalled()
   })
 
   it('ends the stream gracefully when the adapter iterator aborts', async () => {
