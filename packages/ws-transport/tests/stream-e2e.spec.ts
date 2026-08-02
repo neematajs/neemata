@@ -9,7 +9,7 @@ import type {
   TransportWorker,
 } from '@nmtjs/gateway'
 import type { ConnectionType } from '@nmtjs/protocol'
-import type { ServerWebSocketRuntimeOptions } from '@nmtjs/server'
+import type { ServerWebSocketRuntimeOptions } from '@nmtjs/server-host'
 import { RuntimeClient } from '@nmtjs/client'
 import { blobType, c } from '@nmtjs/contract'
 import { Container, createLogger, Hooks } from '@nmtjs/core'

@@ -1,12 +1,12 @@
 import { ErrorCode } from '@nmtjs/protocol'
 import { ProtocolError } from '@nmtjs/protocol/server'
 
-// Response helpers live in @nmtjs/server, shared by every runtime host
+// Response helpers live in @nmtjs/server-host, shared by every runtime host
 export {
   InternalServerErrorHttpResponse,
   NotFoundHttpResponse,
   OkResponse as StatusResponse,
-} from '@nmtjs/server'
+} from '@nmtjs/server-host'
 
 export const InternalError = (message = 'Internal Server Error') =>
   new ProtocolError(ErrorCode.InternalServerError, message)

@@ -11,7 +11,7 @@ import { HttpTransport } from '@nmtjs/http-transport/node'
 import { JsonFormat } from '@nmtjs/json-format/server'
 import { defineRuntimeWorker } from '@nmtjs/neem'
 import { ProtocolFormats } from '@nmtjs/protocol/server'
-import { createServerHost } from '@nmtjs/server/node'
+import { createServerHost } from '@nmtjs/server-host/node'
 import { WsTransport } from '@nmtjs/ws-transport/node'
 
 import { record } from '../../shared/support/_events.ts'

@@ -1,5 +1,5 @@
 import { HttpTransport } from '@nmtjs/http-transport/node'
-import { createServerHost } from '@nmtjs/server/node'
+import { createServerHost } from '@nmtjs/server-host/node'
 import { describe, expect, it, vi } from 'vitest'
 
 import { WsTransport } from '../src/runtimes/node.ts'

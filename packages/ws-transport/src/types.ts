@@ -7,7 +7,7 @@ import type {
   ServerRuntimeOptions,
   ServerTlsOptions,
   ServerWebSocketRuntimeOptions,
-} from '@nmtjs/server'
+} from '@nmtjs/server-host'
 import type { Hooks } from 'crossws'
 
 export type WsTransportServerRequest = ServerRequest

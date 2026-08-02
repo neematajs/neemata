@@ -1,7 +1,7 @@
 import type { ApplicationTransport } from '@nmtjs/application'
 import type { ConnectionType } from '@nmtjs/protocol'
 import { ProxyableTransportType } from '@nmtjs/gateway'
-import { createServerHost } from '@nmtjs/server/bun'
+import { createServerHost } from '@nmtjs/server-host/bun'
 
 import type { WsAdapterParams, WsTransportOptions } from '../types.ts'
 import { createHostAdapter } from '../adapter.ts'
