@@ -1,7 +1,7 @@
 import type { ApplicationTransport } from '@nmtjs/application'
 import type { ConnectionType } from '@nmtjs/protocol'
 import { ProxyableTransportType } from '@nmtjs/gateway'
-import { createServerHost } from '@nmtjs/server/node'
+import { createServerHost } from '@nmtjs/server-host/node'
 
 import type { WsAdapterParams, WsTransportOptions } from '../types.ts'
 import { createHostAdapter } from '../adapter.ts'
@@ -14,7 +14,7 @@ export {
   DEFAULT_WS_MAX_BACKPRESSURE,
   DEFAULT_WS_MAX_PAYLOAD,
   resolveUwsWsOptions,
-} from '@nmtjs/server/node'
+} from '@nmtjs/server-host/node'
 
 function adapterFactory(params: WsAdapterParams<'node'>) {
   return createHostAdapter(createServerHost, params)

@@ -2,8 +2,8 @@ import type { MetadataKind } from '@nmtjs/application'
 import { createMeta } from '@nmtjs/application'
 import { ErrorCode } from '@nmtjs/protocol'
 
-// Single source in @nmtjs/server: the host enforces the same default bound
-export { DEFAULT_MAX_REQUEST_BODY_SIZE } from '@nmtjs/server'
+// Single source in @nmtjs/server-host: the host enforces the same default bound
+export { DEFAULT_MAX_REQUEST_BODY_SIZE } from '@nmtjs/server-host'
 
 export enum HttpStatus {
   Continue = 100,

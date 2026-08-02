@@ -223,7 +223,7 @@ importers:
       '@nmtjs/protocol':
         specifier: workspace:*
         version: link:../protocol
-      '@nmtjs/server':
+      '@nmtjs/server-host':
         specifier: workspace:*
         version: link:../server
       uWebSockets.js:
@@ -317,7 +317,7 @@ importers:
       '@nmtjs/proxy':
         specifier: 1.0.0-beta.7
         version: 1.0.0-beta.7
-      '@nmtjs/server':
+      '@nmtjs/server-host':
         specifier: workspace:*
         version: link:../server
       '@nmtjs/ws-transport':
@@ -584,7 +584,7 @@ importers:
       '@nmtjs/protocol':
         specifier: workspace:*
         version: link:../protocol
-      '@nmtjs/server':
+      '@nmtjs/server-host':
         specifier: workspace:*
         version: link:../server
       '@nmtjs/type':

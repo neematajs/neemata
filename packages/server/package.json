@@ -1,5 +1,5 @@
 {
-  "name": "@nmtjs/server",
+  "name": "@nmtjs/server-host",
   "description": "Shared HTTP server host for Neemata transports across runtimes.",
   "type": "module",
   "exports": {

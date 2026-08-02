@@ -2,7 +2,7 @@ import type {
   ServerHost,
   ServerHostOptions,
   ServerRuntimeName,
-} from '@nmtjs/server'
+} from '@nmtjs/server-host'
 
 import type { HttpAdapterParams, HttpAdapterServer } from './types.ts'
 

@@ -54,7 +54,7 @@
     "@nmtjs/common": "workspace:*",
     "@nmtjs/gateway": "workspace:*",
     "@nmtjs/protocol": "workspace:*",
-    "@nmtjs/server": "workspace:*",
+    "@nmtjs/server-host": "workspace:*",
     "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.67.0"
   },
   "peerDependencies": {
@@ -63,7 +63,7 @@
     "@nmtjs/core": "workspace:*",
     "@nmtjs/gateway": "workspace:*",
     "@nmtjs/protocol": "workspace:*",
-    "@nmtjs/server": "workspace:*",
+    "@nmtjs/server-host": "workspace:*",
     "@types/bun": "^1.3.0",
     "@types/deno": "^2.3.0",
     "@types/node": "^24.13.2",

@@ -9,7 +9,7 @@ import type {
   ServerRuntimeName,
   ServerRuntimeOptions,
   ServerTlsOptions,
-} from '@nmtjs/server'
+} from '@nmtjs/server-host'
 
 export type { DenoServer }
 
