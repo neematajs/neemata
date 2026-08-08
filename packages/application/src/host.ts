@@ -5,6 +5,7 @@ import type {
   Transport,
 } from '@nmtjs/gateway'
 import type { ProtocolFormats } from '@nmtjs/protocol/server'
+import { Lifecycle, TeardownStack } from '@nmtjs/common'
 import { ExecutionEnvironmentLifecycleHook } from '@nmtjs/core'
 import { Gateway } from '@nmtjs/gateway'
 
@@ -89,6 +90,9 @@ export class ApplicationHost<
   application!: NeemataApplication
   gateway!: Gateway<ApplicationResolvedProcedure>
   transports!: GatewayOptions<ApplicationResolvedProcedure>['transports']
+  readonly #lifecycle = new Lifecycle<
+    Awaited<ReturnType<Gateway<ApplicationResolvedProcedure>['start']>>
+  >('application host')
 
   constructor(
     protected appConfig: ApplicationConfig,
@@ -96,32 +100,74 @@ export class ApplicationHost<
   ) {}
 
   async start() {
-    this.application = await this.createApplication(this.appConfig)
-    this.transports = await this.createTransports()
-    this.gateway = new Gateway({
-      ...this.options.gateway,
-      logger: this.options.logger,
-      container: this.application.container,
-      hooks: this.application.lifecycleHooks,
-      formats: this.options.formats,
-      transports: this.transports,
-      api: this.application.api,
-      identity: this.options.identity,
-    })
+    return await this.#lifecycle.start(async (defer) => {
+      this.application = await this.createApplication(this.appConfig)
+      defer(() => this.application.dispose())
 
-    return await this.gateway.start().finally(async () => {
-      await this.application.lifecycleHooks.callHook(
-        ExecutionEnvironmentLifecycleHook.Start,
+      // Application services acquired by Start hooks unwind after the
+      // gateway has stopped accepting (connections drained) but before the
+      // application container is disposed.
+      const appServices = new TeardownStack()
+      defer(async () => {
+        const errors = await appServices.unwind()
+        if (errors.length) {
+          throw new AggregateError(
+            errors,
+            'Failed to stop application services',
+          )
+        }
+      })
+
+      this.transports = await this.createTransports()
+      this.gateway = new Gateway({
+        ...this.options.gateway,
+        logger: this.options.logger,
+        container: this.application.container,
+        hooks: this.application.lifecycleHooks,
+        formats: this.options.formats,
+        transports: this.transports,
+        api: this.application.api,
+        identity: this.options.identity,
+      })
+
+      // Gateway.start rolls back its own partially-started transports, so it
+      // is deferred only once fully started.
+      const hosts = await this.gateway.start()
+      defer(() => this.gateway.stop())
+
+      // Stop hooks pair with Start having been attempted; registered before
+      // the Start pass so effect teardowns (registered during it) run first.
+      appServices.defer(() =>
+        this.application.lifecycleHooks.callHook(
+          ExecutionEnvironmentLifecycleHook.Stop,
+        ),
       )
+      await this.runStartHooks(appServices)
+
+      return hosts
     })
   }
 
   async stop(): Promise<void> {
-    await this.gateway.stop()
-    await this.application.lifecycleHooks.callHook(
-      ExecutionEnvironmentLifecycleHook.Stop,
+    await this.#lifecycle.stop()
+  }
+
+  /**
+   * Runs Start hooks serially; a hook may return a teardown, which unwinds
+   * on stop (or on a failed start) only if that hook actually ran — unlike
+   * the global Stop hook list, which cannot know which Start hooks completed.
+   */
+  protected async runStartHooks(appServices: TeardownStack): Promise<void> {
+    await this.application.lifecycleHooks.callHookWith(
+      async (hooks) => {
+        for (const hook of hooks) {
+          const teardown = await hook()
+          if (typeof teardown === 'function') appServices.defer(teardown)
+        }
+      },
+      ExecutionEnvironmentLifecycleHook.Start,
+      [],
     )
-    await this.application.dispose()
   }
 
   async reload(

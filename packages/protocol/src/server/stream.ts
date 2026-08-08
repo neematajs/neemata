@@ -5,6 +5,7 @@ import { ReadableStream } from 'node:stream/web'
 import { MAX_UINT32 } from '@nmtjs/common'
 
 import type { ProtocolBlob, ProtocolBlobMetadata } from '../common/blob.ts'
+import type { SendResult } from './types.ts'
 
 /**
  * Upper bound for outstanding stream credit. Credits represent bytes for blob
@@ -36,10 +37,10 @@ export class ProtocolClientStream extends PassThrough {
 
 export type ProtocolServerStreamSink = {
   /**
-   * Delivery of one chunk; returning `false` signals the transport dropped
+   * Delivery of one chunk; returning `'dropped'` signals the transport lost
    * the frame and the stream must be aborted by the owner.
    */
-  chunk: (chunk: Buffer) => boolean | null | undefined | void
+  chunk: (chunk: Buffer) => SendResult | undefined | void
   end: () => void
   error: (error: Error) => void
 }

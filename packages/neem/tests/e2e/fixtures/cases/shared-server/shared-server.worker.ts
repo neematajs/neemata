@@ -1,25 +1,25 @@
 import type {
   GatewayApi,
   GatewayResolvedProcedure,
-  TransportWorker,
+  GatewayStaticMetaView,
 } from '@nmtjs/gateway'
 import type { NeemRuntimeUpstream, NeemRuntimeWorkerContext } from '@nmtjs/neem'
-import type { ConnectionType } from '@nmtjs/protocol'
 import { Container, createLogger, Hooks } from '@nmtjs/core'
-import { Gateway, ProxyableTransportType } from '@nmtjs/gateway'
-import { HttpTransport } from '@nmtjs/http-transport/node'
+import { Gateway } from '@nmtjs/gateway'
+import { neemataHttp } from '@nmtjs/http-transport'
 import { JsonFormat } from '@nmtjs/json-format/server'
 import { defineRuntimeWorker } from '@nmtjs/neem'
 import { ProtocolFormats } from '@nmtjs/protocol/server'
+import { createServerTransport } from '@nmtjs/server-host'
 import { createServerHost } from '@nmtjs/server-host/node'
-import { WsTransport } from '@nmtjs/ws-transport/node'
+import { neemataWebSocket } from '@nmtjs/ws-transport'
 
 import { record } from '../../shared/support/_events.ts'
 
 // resolved procedures carry an empty meta view: the HTTP transport reads the
 // allowed-methods meta from it and falls back to its POST-only default
 type ResolvedProcedure = GatewayResolvedProcedure & {
-  meta: Map<unknown, unknown>
+  meta: Pick<GatewayStaticMetaView, 'get'>
 }
 
 export default defineRuntimeWorker({
@@ -35,19 +35,25 @@ export default defineRuntimeWorker({
         )
         const container = new Container({ logger })
 
-        // both transports mount onto one socket: the gateway then reports
+        // both handlers mount onto one socket: the gateway then reports
         // the same bound URL under both proxyable types
-        const host = createServerHost({
-          listen: { port: 0, hostname: '127.0.0.1' },
+        const ServerTransport = createServerTransport({
+          host: createServerHost,
+          handlers: {
+            http: neemataHttp(),
+            ws: neemataWebSocket(),
+          },
         })
-        const http = await HttpTransport.factory({ server: host })
-        const ws = await WsTransport.factory({ server: host })
+        const server = await ServerTransport.factory({
+          listen: { port: 0, hostname: '127.0.0.1' },
+          handlers: { http: { path: '/' }, ws: { path: '/' } },
+        })
 
         const api: GatewayApi<ResolvedProcedure> = {
           resolve: async ({ procedure }) => ({
             name: procedure,
             stream: false,
-            meta: new Map(),
+            meta: { get: () => undefined },
           }),
           call: async ({ procedure, payload }) => ({
             procedure,
@@ -62,21 +68,9 @@ export default defineRuntimeWorker({
           hooks: new Hooks(),
           formats: new ProtocolFormats([new JsonFormat()]),
           transports: {
-            http: {
-              // variance-only cast, same as the transports' own e2e suites:
-              // this api's resolve() satisfies what each worker consumes
-              transport: http as unknown as TransportWorker<
-                ConnectionType,
-                ResolvedProcedure
-              >,
-              proxyable: ProxyableTransportType.HTTP,
-            },
-            ws: {
-              transport: ws as unknown as TransportWorker<
-                ConnectionType,
-                ResolvedProcedure
-              >,
-              proxyable: ProxyableTransportType.WS,
+            server: {
+              transport: server,
+              proxyable: ServerTransport.proxyable,
             },
           },
           api,

@@ -54,7 +54,7 @@ describe('Gateway heartbeat', () => {
       stop: vi.fn(async () => {}),
       send: vi.fn((connectionId: string, buffer: ArrayBufferView) => {
         sent.push(Buffer.from(buffer as Uint8Array))
-        return true
+        return 'delivered' as const
       }),
       close: vi.fn((_connectionId: string) => {}),
     }
@@ -122,7 +122,10 @@ describe('Gateway heartbeat', () => {
         return 'test://'
       }),
       stop: vi.fn(async () => {}),
-      send: vi.fn((_connectionId: string, _buffer: ArrayBufferView) => true),
+      send: vi.fn(
+        (_connectionId: string, _buffer: ArrayBufferView) =>
+          'delivered' as const,
+      ),
       close: vi.fn((_connectionId: string) => {}),
     }
 

@@ -6,11 +6,9 @@ import type {
   ServerNativeHandles,
 } from '../types.ts'
 import { BaseServerHost } from '../host.ts'
-import {
-  InternalServerErrorHttpResponse,
-  NotFoundHttpResponse,
-  OkResponse,
-} from '../utils.ts'
+
+/** Bun.serve's own default inbound WebSocket frame cap. */
+const BUN_DEFAULT_WS_MAX_PAYLOAD = 1024 * 1024 * 16
 
 class BunServerHost extends BaseServerHost<'bun'> {
   readonly runtime = 'bun' as const
@@ -26,18 +24,29 @@ class BunServerHost extends BaseServerHost<'bun'> {
     return status !== 0
   }
 
+  override get maxRequestBodySize(): number {
+    return this.options.runtime?.maxRequestBodySize ?? super.maxRequestBodySize
+  }
+
+  protected override get effectiveWsMaxPayloadLength(): number | undefined {
+    return (
+      this.options.webSocket?.maxPayloadLength ?? BUN_DEFAULT_WS_MAX_PAYLOAD
+    )
+  }
+
   protected async bind(): Promise<string> {
     const { listen, tls, runtime } = this.options
-    const adapter = this.webSocket
-      ? createAdapter({ hooks: this.webSocket.hooks })
+    const adapter = this.hasWebSockets
+      ? createAdapter(this.createWsAdapterConfig())
       : null
-    const wsOptions = this.webSocket?.options
-    const fetchHandler = this.fetchHandler
 
     const routes =
       typeof runtime?.routes === 'object' && runtime.routes
         ? runtime.routes
         : {}
+
+    const dispatchFetch = this.dispatchFetch.bind(this)
+    const respondToUpgrade = this.respondToUpgrade.bind(this)
 
     this.#server = globalThis.Bun.serve({
       ...runtime,
@@ -55,31 +64,22 @@ class BunServerHost extends BaseServerHost<'bun'> {
             passphrase: tls.passphrase,
           }
         : undefined,
-      websocket: adapter ? { ...wsOptions, ...adapter.websocket } : undefined,
-      // bare handler instead of a method map: health probes may use HEAD,
-      // keep the route method-agnostic like the other runtime hosts
-      routes: Object.assign({}, routes, {
-        '/healthy': OkResponse,
-      }) as any,
+      websocket: adapter
+        ? { ...this.options.webSocket, ...adapter.websocket }
+        : undefined,
+      routes: routes as any,
       async fetch(request: Request, server: Bun.Server<any>) {
-        try {
-          if (request.headers.get('upgrade') === 'websocket') {
-            if (!adapter) return NotFoundHttpResponse()
-            return await adapter.handleUpgrade(request, server)
-          }
-          if (!fetchHandler) return NotFoundHttpResponse()
-          const url = new URL(request.url)
-          const { body, headers, method } = request
-          return await fetchHandler(
-            { url, method, headers },
-            body,
-            request.signal,
-          )
-        } catch (err) {
-          // TODO: proper logging
-          console.error(err)
-          return InternalServerErrorHttpResponse()
+        const url = new URL(request.url)
+        if (request.headers.get('upgrade') === 'websocket') {
+          if (!adapter) return respondToUpgrade(url.pathname)
+          return await adapter.handleUpgrade(request, server)
         }
+        const { body, headers, method } = request
+        return await dispatchFetch(
+          { url, method, headers },
+          body,
+          request.signal,
+        )
       },
     } as any)
 

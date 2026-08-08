@@ -1,6 +1,6 @@
 import { connectionData as connectionDataInjectable } from '@nmtjs/gateway'
 
-import type { WsTransportServerRequest } from './types.ts'
+import type { NeemataWebSocketRequest } from './types.ts'
 
 export const connectionData =
-  connectionDataInjectable.$withType<WsTransportServerRequest>()
+  connectionDataInjectable.$withType<NeemataWebSocketRequest>()

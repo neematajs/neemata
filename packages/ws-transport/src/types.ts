@@ -1,16 +1,6 @@
-import type { MaybePromise, OneOf } from '@nmtjs/common'
-import type {
-  ServerHost,
-  ServerListenOptions,
-  ServerRequest,
-  ServerRuntimeName,
-  ServerRuntimeOptions,
-  ServerTlsOptions,
-  ServerWebSocketRuntimeOptions,
-} from '@nmtjs/server-host'
-import type { Hooks } from 'crossws'
+import type { ServerRequest } from '@nmtjs/server-host'
 
-export type WsTransportServerRequest = ServerRequest
+export type NeemataWebSocketRequest = ServerRequest
 
 export type WsTransportPeerContext = { connectionId: string }
 
@@ -18,55 +8,14 @@ declare module 'crossws' {
   interface PeerContext extends WsTransportPeerContext {}
 }
 
-export type WsTransportListenOptions = ServerListenOptions
-
-export type WsTransportTlsOptions = ServerTlsOptions
-
-export type WsTransportRuntimes = ServerRuntimeOptions
-
-/**
- * The transport either owns its socket (`listen` mode) or mounts onto a
- * shared `ServerHost` (`server` mode), so one HTTP server can carry
- * multiple transports (e.g. HTTP and WS on a single listen address).
- */
-export type WsTransportOptions<
-  R extends ServerRuntimeName = ServerRuntimeName,
-> = {
+export interface NeemataWebSocketHandlerOptions {
   /**
-   * Raw websocket behavior overrides for the runtime. Unless set, the
-   * transport applies its own defaults — on Node (uWS),
-   * `maxPayloadLength` and `maxBackpressure` default to 1 MiB each: inline
-   * WS payloads are capped at 1 MiB — larger data should ride blob
-   * streams, which are chunked at credit size — and the value is
-   * deliberately above the largest upload frame (64KiB credit grant plus
-   * the frame header), since uWS closes the socket on oversized frames and
-   * drops frames over the backpressure limit.
+   * Mount path; claims this pathname and every descendant path segment.
+   * WebSocket runtime behavior (payload caps, backpressure, timeouts) is
+   * host-wide — see `ServerHostOptions.webSocket` — because Bun and uWS
+   * accept one WebSocket configuration per native server. This handler
+   * declares its protocol floors via registration requirements, so a host
+   * configured below them fails at start instead of dropping frames.
    */
-  ws?: ServerWebSocketRuntimeOptions[R]
-} & OneOf<
-  [
-    {
-      listen: WsTransportListenOptions
-      tls?: WsTransportTlsOptions
-      runtime?: WsTransportRuntimes[R]
-    },
-    { server: ServerHost<R> },
-  ]
->
-
-export type WsAdapterParams<R extends ServerRuntimeName = ServerRuntimeName> =
-  WsTransportOptions<R> & {
-    wsHooks: Hooks
-  }
-
-export interface WsAdapterServer {
-  stop: () => MaybePromise<any>
-  start: () => MaybePromise<string>
-  // numeric Peer.send() statuses are runtime-specific (uWS vs Bun), so only
-  // the adapter that knows its runtime can interpret them as delivery success
-  isSendSuccess?: (status: number) => boolean
+  path: `/${string}`
 }
-
-export type WsAdapterServerFactory<
-  R extends ServerRuntimeName = ServerRuntimeName,
-> = (params: WsAdapterParams<R>) => WsAdapterServer

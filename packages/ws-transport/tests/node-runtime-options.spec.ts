@@ -1,10 +1,9 @@
-import { describe, expect, it } from 'vitest'
-
 import {
   DEFAULT_WS_MAX_BACKPRESSURE,
   DEFAULT_WS_MAX_PAYLOAD,
   resolveUwsWsOptions,
-} from '../src/runtimes/node.ts'
+} from '@nmtjs/server-host/node'
+import { describe, expect, it } from 'vitest'
 
 describe('resolveUwsWsOptions', () => {
   it('applies both defaults when no runtime options are given', () => {

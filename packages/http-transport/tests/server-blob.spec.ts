@@ -1,15 +1,10 @@
 import { ProtocolBlob } from '@nmtjs/protocol'
 import { describe, expect, it } from 'vitest'
 
-import { HttpTransportServer } from '../src/server.ts'
+import { NeemataHttpHandler } from '../src/server.ts'
 
 const createServer = (result: unknown) => {
-  const server = new HttpTransportServer(
-    () => ({ start: async () => {}, stop: async () => {} }) as any,
-    { listen: { port: 0 } },
-  )
-
-  server.params = {
+  const params = {
     formats: { supportsDecoder: () => false },
     onConnect: async () => ({
       encoder: { contentType: 'application/json' },
@@ -21,12 +16,11 @@ const createServer = (result: unknown) => {
     resolve: async () => ({ meta: new Map() }),
     onRpc: async () => result,
   } as any
-
-  return server
+  return new NeemataHttpHandler(params, { path: '/' })
 }
 
-const handle = (server: HttpTransportServer) =>
-  server.httpHandler(
+const handle = (server: NeemataHttpHandler) =>
+  server.handle(
     {
       url: new URL('http://localhost/procedure'),
       method: 'POST',
@@ -36,7 +30,7 @@ const handle = (server: HttpTransportServer) =>
     new AbortController().signal,
   )
 
-describe('HttpTransportServer blob responses', () => {
+describe('NeemataHttpHandler blob responses', () => {
   it('sends Content-Length: 0 for a zero-byte blob', async () => {
     const response = await handle(createServer(ProtocolBlob.from(new Blob([]))))
 

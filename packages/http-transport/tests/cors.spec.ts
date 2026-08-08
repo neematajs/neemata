@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import type { HttpTransportCorsOptions } from '../src/types.ts'
+import type { HttpHandlerCorsOptions } from '../src/types.ts'
 import {
   createTestParams,
   createTestRequest,
@@ -12,12 +12,12 @@ const ALLOW_ORIGIN = 'Access-Control-Allow-Origin'
 const ALLOW_CREDENTIALS = 'Access-Control-Allow-Credentials'
 
 async function preflight(
-  cors: HttpTransportCorsOptions,
+  cors: HttpHandlerCorsOptions,
   origin: string | null = ORIGIN,
 ) {
   const { params } = createTestParams()
   const server = await createTestServer({ cors }, params)
-  return await server.httpHandler(
+  return await server.handle(
     createTestRequest(origin === null ? {} : { origin }, 'OPTIONS'),
     null,
     new AbortController().signal,
@@ -124,7 +124,7 @@ describe('CORS Vary header', () => {
   it('omits Vary: Origin when cors is not configured', async () => {
     const { params } = createTestParams()
     const server = await createTestServer({}, params)
-    const response = await server.httpHandler(
+    const response = await server.handle(
       createTestRequest({ origin: ORIGIN }, 'OPTIONS'),
       null,
       new AbortController().signal,
@@ -138,7 +138,7 @@ describe('CORS Vary header', () => {
     params.onRpc = async () =>
       new Response(null, { headers: { Vary: 'Accept-Encoding' } })
     const server = await createTestServer({ cors: true }, params)
-    const response = await server.httpHandler(
+    const response = await server.handle(
       createTestRequest({ origin: ORIGIN }),
       null,
       new AbortController().signal,
@@ -154,14 +154,14 @@ describe('CORS config type surface', () => {
     const allowedOrigins = [ORIGIN]
 
     // Composing origin as `true | string[]` without credentials must be valid
-    const composed: HttpTransportCorsOptions = {
+    const composed: HttpHandlerCorsOptions = {
       origin: allowAll ? true : allowedOrigins,
     }
-    const credentialed: HttpTransportCorsOptions = {
+    const credentialed: HttpHandlerCorsOptions = {
       origin: allowedOrigins,
       allowCredentials: 'true',
     }
-    const reflectedCredentials: HttpTransportCorsOptions = {
+    const reflectedCredentials: HttpHandlerCorsOptions = {
       origin: true,
       allowCredentials: 'true',
     }

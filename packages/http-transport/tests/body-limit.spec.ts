@@ -1,11 +1,18 @@
+import { createServerTransport } from '@nmtjs/server-host'
+import { createServerHost } from '@nmtjs/server-host/node'
 import { describe, expect, it, vi } from 'vitest'
 
-import { HttpTransport } from '../src/runtimes/node.ts'
+import { neemataHttp } from '../src/server.ts'
 import {
   createTestParams,
   createTestRequest,
   createTestServer,
 } from './_helpers/test-utils.ts'
+
+const Server = createServerTransport({
+  host: createServerHost,
+  handlers: { http: neemataHttp() },
+})
 
 const JSON_HEADERS = { 'content-type': 'application/json' }
 const BLOB_HEADERS = {
@@ -45,7 +52,7 @@ describe('request body size limit', () => {
 
     const { body, getPulls } = createCountingBody(64 * 1024, 100)
 
-    const response = await server.httpHandler(
+    const response = await server.handle(
       createTestRequest(JSON_HEADERS),
       body,
       new AbortController().signal,
@@ -68,7 +75,7 @@ describe('request body size limit', () => {
 
     // No content-length: forces enforcement while streaming, not up-front
     const { body, getPulls } = createCountingBody(64 * 1024, 100)
-    const response = await server.httpHandler(
+    const response = await server.handle(
       createTestRequest(BLOB_HEADERS),
       body,
       new AbortController().signal,
@@ -78,7 +85,7 @@ describe('request body size limit', () => {
     expect(getPulls()).toBeLessThan(20)
 
     // Same server instance must still serve subsequent requests
-    const ok = await server.httpHandler(
+    const ok = await server.handle(
       createTestRequest(JSON_HEADERS),
       new Response(JSON.stringify({ hello: 'world' })).body!,
       new AbortController().signal,
@@ -95,7 +102,7 @@ describe('request body size limit', () => {
     )
 
     const { body } = createCountingBody(64 * 1024, 100)
-    const response = await server.httpHandler(
+    const response = await server.handle(
       createTestRequest({ 'content-type': 'text/unsupported' }),
       body,
       new AbortController().signal,
@@ -109,7 +116,7 @@ describe('request body size limit', () => {
     const server = await createTestServer({ maxRequestBodySize: 1024 }, params)
 
     const { body, getPulls } = createCountingBody(64 * 1024, 1)
-    const response = await server.httpHandler(
+    const response = await server.handle(
       createTestRequest({ ...BLOB_HEADERS, 'content-length': '65536' }),
       body,
       new AbortController().signal,
@@ -136,7 +143,7 @@ describe('request body size limit', () => {
       },
     })
 
-    const response = await server.httpHandler(
+    const response = await server.handle(
       createTestRequest(JSON_HEADERS),
       body,
       new AbortController().signal,
@@ -148,14 +155,67 @@ describe('request body size limit', () => {
       payload: { hello: 'world' },
     })
   })
+
+  it('inherits the host limit when the handler limit is unset', async () => {
+    const { params, onRpc } = createTestParams()
+    const server = await createTestServer({}, params, 1024)
+    const { body } = createCountingBody(1024, 2)
+
+    const response = await server.handle(
+      createTestRequest(JSON_HEADERS),
+      body,
+      new AbortController().signal,
+    )
+
+    expect(response.status).toBe(413)
+    expect(onRpc).not.toHaveBeenCalled()
+
+    const accepted = await server.handle(
+      createTestRequest(JSON_HEADERS),
+      new Response('{}').body!,
+      new AbortController().signal,
+    )
+    expect(accepted.status).toBe(200)
+    expect(onRpc).toHaveBeenCalledOnce()
+  })
+
+  it('rejects a handler limit above the host limit at mount time', () => {
+    const { params } = createTestParams()
+    // A stub host is enough: the check must fire before anything mounts
+    const host = {
+      maxRequestBodySize: 1024,
+      mountFetchHandler: () => () => {},
+    } as any
+
+    expect(() =>
+      neemataHttp().mount(
+        { host, gateway: params as any },
+        { path: '/', maxRequestBodySize: 2048 },
+      ),
+    ).toThrow(/exceeds the host limit/)
+  })
+
+  it('rejects a handler limit above the host limit on transport start', async () => {
+    const { params } = createTestParams()
+    const worker = await Server.factory({
+      listen: { port: 0 },
+      maxRequestBodySize: 1024,
+      handlers: { http: { path: '/', maxRequestBodySize: 2048 } },
+    })
+
+    await expect(worker.start(params as any)).rejects.toThrow(
+      /exceeds the host limit/,
+    )
+  })
 })
 
 describe('request body size limit (node runtime)', () => {
   it('caps request bodies on the node adapter', async () => {
     const { params, onRpc } = createTestParams()
-    const worker = await HttpTransport.factory({
+    const worker = await Server.factory({
       listen: { port: 0 },
       maxRequestBodySize: 1024,
+      handlers: { http: { path: '/', maxRequestBodySize: 1024 } },
     })
     const url = await worker.start(params as any)
 
@@ -183,9 +243,10 @@ describe('request body size limit (node runtime)', () => {
   it('caps blob bodies on the node adapter and survives', async () => {
     const onRpc = consumingRpc()
     const { params } = createTestParams(onRpc)
-    const worker = await HttpTransport.factory({
+    const worker = await Server.factory({
       listen: { port: 0 },
       maxRequestBodySize: 1024,
+      handlers: { http: { path: '/', maxRequestBodySize: 1024 } },
     })
     const url = await worker.start(params as any)
 

@@ -3,11 +3,8 @@ import type { ConnectionType } from '@nmtjs/protocol'
 import type { Mock } from 'vitest'
 import { vi } from 'vitest'
 
-import type {
-  HttpAdapterServerFactory,
-  HttpTransportOptions,
-} from '../../src/types.ts'
-import { HttpTransportServer } from '../../src/server.ts'
+import type { NeemataHttpHandlerOptions } from '../../src/types.ts'
+import { NeemataHttpHandler } from '../../src/server.ts'
 
 const textEncoder = new TextEncoder()
 const textDecoder = new TextDecoder()
@@ -46,22 +43,16 @@ export function createTestParams(
   return { params, onRpc, connection }
 }
 
-const stubAdapterFactory: HttpAdapterServerFactory<any> = () => ({
-  runtime: {},
-  start: () => 'http://127.0.0.1:0',
-  stop: () => {},
-})
-
 export async function createTestServer(
-  options: Partial<HttpTransportOptions>,
+  options: Partial<NeemataHttpHandlerOptions>,
   params: TestParams,
+  hostMaxRequestBodySize?: number,
 ) {
-  const server = new HttpTransportServer(stubAdapterFactory, {
-    listen: { port: 0 },
-    ...options,
-  } as HttpTransportOptions)
-  await server.start(params)
-  return server
+  return new NeemataHttpHandler(
+    params as any,
+    { path: '/', ...options },
+    hostMaxRequestBodySize,
+  )
 }
 
 export function createTestRequest(

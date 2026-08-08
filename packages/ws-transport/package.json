@@ -1,27 +1,12 @@
 {
   "name": "@nmtjs/ws-transport",
-  "description": "WebSocket server transport for Neemata runtimes.",
+  "description": "Neemata WebSocket handler for shared server transports.",
   "type": "module",
   "exports": {
     ".": {
       "types": "./src/index.ts",
       "import": "./dist/index.js",
       "module-sync": "./dist/index.js"
-    },
-    "./bun": {
-      "types": "./src/runtimes/bun.ts",
-      "import": "./dist/runtimes/bun.js",
-      "module-sync": "./dist/runtimes/bun.js"
-    },
-    "./deno": {
-      "types": "./src/runtimes/deno.ts",
-      "import": "./dist/runtimes/deno.js",
-      "module-sync": "./dist/runtimes/deno.js"
-    },
-    "./node": {
-      "types": "./src/runtimes/node.ts",
-      "import": "./dist/runtimes/node.js",
-      "module-sync": "./dist/runtimes/node.js"
     }
   },
   "publishConfig": {
@@ -30,21 +15,6 @@
         "types": "./dist/index.d.ts",
         "import": "./dist/index.js",
         "module-sync": "./dist/index.js"
-      },
-      "./bun": {
-        "types": "./dist/runtimes/bun.d.ts",
-        "import": "./dist/runtimes/bun.js",
-        "module-sync": "./dist/runtimes/bun.js"
-      },
-      "./deno": {
-        "types": "./dist/runtimes/deno.d.ts",
-        "import": "./dist/runtimes/deno.js",
-        "module-sync": "./dist/runtimes/deno.js"
-      },
-      "./node": {
-        "types": "./dist/runtimes/node.d.ts",
-        "import": "./dist/runtimes/node.js",
-        "module-sync": "./dist/runtimes/node.js"
       }
     }
   },
@@ -62,8 +32,7 @@
     "@nmtjs/protocol": "workspace:*",
     "@nmtjs/server-host": "workspace:*",
     "@nmtjs/type": "workspace:*",
-    "@nmtjs/ws-client": "workspace:*",
-    "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.67.0"
+    "@nmtjs/ws-client": "workspace:*"
   },
   "peerDependencies": {
     "@nmtjs/application": "workspace:*",
@@ -72,18 +41,9 @@
     "@nmtjs/gateway": "workspace:*",
     "@nmtjs/protocol": "workspace:*",
     "@nmtjs/server-host": "workspace:*",
-    "@types/bun": "^1.3.0",
-    "@types/deno": "^2.3.0",
-    "@types/node": "^24.13.2",
-    "uWebSockets.js": "^20.67.0"
+    "@types/node": "^24.13.2"
   },
   "peerDependenciesMeta": {
-    "@types/bun": {
-      "optional": true
-    },
-    "@types/deno": {
-      "optional": true
-    },
     "@types/node": {
       "optional": true
     }

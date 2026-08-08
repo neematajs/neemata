@@ -1,23 +1,16 @@
-import type { Hooks } from 'crossws'
+import type { ServerHost } from '@nmtjs/server-host'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { WS_PENDING_OPEN_TTL, WsTransportServer } from '../src/server.ts'
+import { NeemataWebSocketHandler, WS_PENDING_OPEN_TTL } from '../src/server.ts'
 
-const createServer = () => {
-  let hooks: Hooks
-  const adapterFactory = vi.fn((params: any) => {
-    hooks = params.wsHooks
-    return {
-      start: vi.fn(async () => 'ws://test'),
-      stop: vi.fn(async () => {}),
-    }
-  })
-
-  const server = new WsTransportServer(adapterFactory, {
-    listen: { port: 0 },
-  })
-
-  return { server, getHooks: () => hooks! }
+const createHandler = () => {
+  const onConnect = vi.fn(async () => ({ id: 'conn-1' }))
+  const onDisconnect = vi.fn(async () => {})
+  const handler = new NeemataWebSocketHandler(
+    { onConnect, onDisconnect } as any,
+    { isSendSuccess: () => true } as unknown as ServerHost,
+  )
+  return { handler, hooks: handler.hooks, onConnect, onDisconnect }
 }
 
 const upgradeRequest = {
@@ -26,7 +19,7 @@ const upgradeRequest = {
   method: 'GET',
 } as any
 
-describe('WsTransportServer pending-open TTL', () => {
+describe('NeemataWebSocketHandler pending-open TTL', () => {
   beforeEach(() => {
     vi.useFakeTimers()
   })
@@ -36,12 +29,8 @@ describe('WsTransportServer pending-open TTL', () => {
   })
 
   it('reaps a connection whose open hook never fires', async () => {
-    const { server, getHooks } = createServer()
-    const onConnect = vi.fn(async () => ({ id: 'conn-1' }))
-    const onDisconnect = vi.fn(async () => {})
-
-    await server.start({ onConnect, onDisconnect } as any)
-    await getHooks().upgrade!(upgradeRequest)
+    const { hooks, onConnect, onDisconnect } = createHandler()
+    await hooks.upgrade!(upgradeRequest)
 
     expect(onConnect).toHaveBeenCalledTimes(1)
     expect(onDisconnect).not.toHaveBeenCalled()
@@ -53,14 +42,10 @@ describe('WsTransportServer pending-open TTL', () => {
   })
 
   it('does not reap a connection once open fires', async () => {
-    const { server, getHooks } = createServer()
-    const onConnect = vi.fn(async () => ({ id: 'conn-1' }))
-    const onDisconnect = vi.fn(async () => {})
+    const { hooks, onDisconnect } = createHandler()
+    await hooks.upgrade!(upgradeRequest)
 
-    await server.start({ onConnect, onDisconnect } as any)
-    await getHooks().upgrade!(upgradeRequest)
-
-    getHooks().open!({
+    await hooks.open!({
       context: { connectionId: 'conn-1' },
       send: vi.fn(),
     } as any)
@@ -71,28 +56,23 @@ describe('WsTransportServer pending-open TTL', () => {
   })
 
   it('clears the reap timer when the gateway closes a pending-open connection', async () => {
-    const { server, getHooks } = createServer()
-    const onConnect = vi.fn(async () => ({ id: 'conn-1' }))
-    const onDisconnect = vi.fn(async () => {})
+    const { handler, hooks, onDisconnect } = createHandler()
+    await hooks.upgrade!(upgradeRequest)
 
-    await server.start({ onConnect, onDisconnect } as any)
-    await getHooks().upgrade!(upgradeRequest)
-
-    // Gateway-initiated close (e.g. heartbeat timeout) before `open` fires
-    server.close('conn-1', { code: 1001, reason: 'heartbeat_timeout' })
+    // Gateway-initiated close (e.g. heartbeat timeout) before `open` fires:
+    // the gateway owns this teardown, so the handler only claims the entry
+    handler.close('conn-1', { code: 1001, reason: 'heartbeat_timeout' })
+    expect(onDisconnect).not.toHaveBeenCalled()
 
     await vi.advanceTimersByTimeAsync(WS_PENDING_OPEN_TTL * 2)
 
+    // the claimed reap timer must not deliver a late disconnect either
     expect(onDisconnect).not.toHaveBeenCalled()
   })
 
   it('closes a peer whose open arrives after the reap', async () => {
-    const { server, getHooks } = createServer()
-    const onConnect = vi.fn(async () => ({ id: 'conn-1' }))
-    const onDisconnect = vi.fn(async () => {})
-
-    await server.start({ onConnect, onDisconnect } as any)
-    await getHooks().upgrade!(upgradeRequest)
+    const { handler, hooks, onDisconnect } = createHandler()
+    await hooks.upgrade!(upgradeRequest)
 
     await vi.advanceTimersByTimeAsync(WS_PENDING_OPEN_TTL)
     expect(onDisconnect).toHaveBeenCalledTimes(1)
@@ -102,25 +82,88 @@ describe('WsTransportServer pending-open TTL', () => {
       close: vi.fn(),
       send: vi.fn(),
     } as any
-    getHooks().open!(peer)
+    await hooks.open!(peer)
 
     expect(peer.close).toHaveBeenCalledWith(1001, 'Closed')
-    expect(server.clients.has('conn-1')).toBe(false)
+    expect(handler.connections.peer('conn-1')).toBeUndefined()
   })
 
   it('cancels the reap timer when close fires before open', async () => {
-    const { server, getHooks } = createServer()
-    const onConnect = vi.fn(async () => ({ id: 'conn-1' }))
-    const onDisconnect = vi.fn(async () => {})
+    const { hooks, onDisconnect } = createHandler()
+    await hooks.upgrade!(upgradeRequest)
 
-    await server.start({ onConnect, onDisconnect } as any)
-    await getHooks().upgrade!(upgradeRequest)
-
-    await getHooks().close!({ context: { connectionId: 'conn-1' } } as any, {})
+    await hooks.close!({ context: { connectionId: 'conn-1' } } as any, {})
 
     await vi.advanceTimersByTimeAsync(WS_PENDING_OPEN_TTL * 2)
 
     // Only the close hook itself disconnects; the timer must not fire again
     expect(onDisconnect).toHaveBeenCalledTimes(1)
+  })
+
+  it('disconnects a pending-open connection during disposal', async () => {
+    const { handler, hooks, onDisconnect } = createHandler()
+    await hooks.upgrade!(upgradeRequest)
+
+    await handler.dispose()
+    await vi.advanceTimersByTimeAsync(WS_PENDING_OPEN_TTL * 2)
+
+    expect(onDisconnect).toHaveBeenCalledOnce()
+    expect(onDisconnect).toHaveBeenCalledWith('conn-1')
+  })
+
+  it('disconnects an open peer exactly once during disposal', async () => {
+    const { handler, hooks, onDisconnect } = createHandler()
+    await hooks.upgrade!(upgradeRequest)
+    const peer = {
+      context: { connectionId: 'conn-1' },
+      close: vi.fn(),
+      send: vi.fn(),
+    } as any
+    await hooks.open!(peer)
+
+    await handler.dispose()
+    // the runtime still fires the close hook for the peer dispose() closed;
+    // the registry already claimed the connection, so it must be a no-op
+    await hooks.close!(peer, {})
+
+    expect(peer.close).toHaveBeenCalledWith(1001, 'Handler stopped')
+    expect(onDisconnect).toHaveBeenCalledOnce()
+    expect(onDisconnect).toHaveBeenCalledWith('conn-1')
+  })
+
+  it('waits for and disconnects an upgrade in flight during disposal', async () => {
+    let resolveConnect!: (connection: { id: string }) => void
+    const connection = new Promise<{ id: string }>((resolve) => {
+      resolveConnect = resolve
+    })
+    const onConnect = vi.fn(() => connection)
+    const onDisconnect = vi.fn(async () => {})
+    const handler = new NeemataWebSocketHandler(
+      { onConnect, onDisconnect } as any,
+      { isSendSuccess: () => true } as unknown as ServerHost,
+    )
+
+    const upgrading = handler.hooks.upgrade!(upgradeRequest)
+    await Promise.resolve()
+    const disposing = handler.dispose()
+    let disposed = false
+    void disposing.then(() => {
+      disposed = true
+    })
+    await Promise.resolve()
+    expect(disposed).toBe(false)
+
+    resolveConnect({ id: 'conn-1' })
+    const response = await upgrading
+    await disposing
+
+    expect(response).toBeInstanceOf(Response)
+    expect((response as Response).status).toBe(500)
+    expect(onDisconnect).toHaveBeenCalledOnce()
+    expect(onDisconnect).toHaveBeenCalledWith('conn-1')
+    // nothing was admitted: no reap timer left behind to double-fire
+    expect(handler.connections.peer('conn-1')).toBeUndefined()
+    await vi.advanceTimersByTimeAsync(WS_PENDING_OPEN_TTL * 2)
+    expect(onDisconnect).toHaveBeenCalledOnce()
   })
 })

@@ -34,10 +34,38 @@ export type ServerFetchHandler = (
   signal: AbortSignal,
 ) => MaybePromise<Response>
 
+export type ServerFetchRegistration = {
+  /** Claims this pathname and every descendant path segment. */
+  path: `/${string}`
+  handler: ServerFetchHandler
+}
+
 /**
- * WebSocket behavior overrides per runtime. These belong to the WebSocket
- * tenant of a host, not the host itself — though Bun applies them
- * server-wide, since `Bun.serve` accepts a single `websocket` config.
+ * Protocol floors a WebSocket handler declares at mount time. The host
+ * validates them against its runtime-wide `webSocket` configuration at
+ * start, so a config conflict is a loud startup error instead of frames
+ * silently dropped (or sockets killed) at runtime.
+ */
+export type ServerWebSocketRequirements = {
+  /**
+   * Smallest inbound frame size the handler's protocol needs the host to
+   * accept (bytes).
+   */
+  minPayloadLength?: number
+}
+
+export type ServerWebSocketRegistration = {
+  /** Claims this pathname and every descendant path segment. */
+  path: `/${string}`
+  hooks: Partial<Hooks>
+  requirements?: ServerWebSocketRequirements
+}
+
+/**
+ * Host-wide WebSocket behavior overrides per runtime. Bun and uWS accept one
+ * WebSocket configuration per native server, so these cannot vary by
+ * handler; handlers instead declare `requirements` on their registration and
+ * the host rejects a configuration below any mounted handler's floor.
  */
 export type ServerWebSocketRuntimeOptions = {
   node: Partial<
@@ -66,13 +94,6 @@ export type ServerWebSocketRuntimeOptions = {
   deno: {}
 }
 
-export type ServerWebSocketRegistration<
-  R extends ServerRuntimeName = ServerRuntimeName,
-> = {
-  hooks: Partial<Hooks>
-  options?: ServerWebSocketRuntimeOptions[R]
-}
-
 /**
  * Server-level runtime options: settings that configure the socket/server
  * itself rather than any single protocol mounted on it.
@@ -96,10 +117,11 @@ export type ServerHostOptions<R extends ServerRuntimeName = ServerRuntimeName> =
     /**
      * Maximum request body size in bytes accepted by the host before the
      * request is rejected/aborted. Defaults to 128MiB (Bun's own default, kept
-     * consistent across runtimes). Transports may enforce stricter caps of
-     * their own on top of this bound.
+     * consistent across runtimes). Handlers inherit this bound and may only
+     * tighten it.
      */
     maxRequestBodySize?: number
+    webSocket?: ServerWebSocketRuntimeOptions[R]
     runtime?: ServerRuntimeOptions[R]
   }
 
@@ -112,13 +134,14 @@ export type ServerNativeHandles = {
 }
 
 /**
- * A runtime HTTP server that transports mount onto instead of owning a
- * socket. One host can carry both an HTTP fetch handler and a WebSocket
- * upgrade handler, so multiple transports share a single listen address.
+ * A runtime HTTP server that handlers mount onto instead of owning a socket.
+ * One host can carry HTTP path prefixes and WebSocket upgrade handlers on a
+ * single listen address.
  *
- * Lifecycle is reference-counted: every registrant calls start()/stop()
- * through its own lifecycle, the socket binds on the first start() and
- * closes on the last stop().
+ * A ServerTransport owns this lifecycle and mounts protocol handlers before
+ * binding the socket. Every routing decision — reserved paths, WebSocket vs
+ * fetch, longest-prefix match, 404 — is made by one router shared by all
+ * runtimes, so observable behavior cannot diverge between them.
  */
 export interface ServerHost<R extends ServerRuntimeName = ServerRuntimeName> {
   readonly runtime: R
@@ -126,8 +149,13 @@ export interface ServerHost<R extends ServerRuntimeName = ServerRuntimeName> {
    * Raw runtime server handle; populated only while the host is bound.
    */
   readonly native: ServerNativeHandles
-  setFetchHandler(handler: ServerFetchHandler): void
-  setWebSocket(registration: ServerWebSocketRegistration<R>): void
+  /**
+   * Effective request body cap handlers inherit; see
+   * `ServerHostOptions.maxRequestBodySize`.
+   */
+  readonly maxRequestBodySize: number
+  mountFetchHandler(registration: ServerFetchRegistration): () => void
+  mountWebSocket(registration: ServerWebSocketRegistration): () => void
   /**
    * Numeric WebSocket peer send() statuses are runtime-specific (uWS vs
    * Bun), so only the host knows whether one means a dropped frame.

@@ -55,9 +55,10 @@ import {
 - Use `nmtjs` for app definitions, procedures, routers, contracts via `c`,
   schemas via `t`, DI, built-in injectables via `inject`, pubsub
   plugins, protocol enums/classes exported above.
-- Use direct package subpaths for clients, transports, formats, adapters, and
-  runtime helpers: `@nmtjs/client`, `@nmtjs/http-transport/node`,
-  `@nmtjs/application/neem/runtime`, `@nmtjs/pubsub/redis`, etc.
+- Use direct packages for clients, server handlers, hosts, formats, adapters,
+  and runtime helpers: `@nmtjs/client`, `@nmtjs/http-transport`,
+  `@nmtjs/server-host/node`, `@nmtjs/application/neem/runtime`,
+  `@nmtjs/pubsub/redis`, etc.
 - Avoid direct `@nmtjs/core`, `@nmtjs/type`, `@nmtjs/contract`,
   `@nmtjs/config`, or `@nmtjs/pubsub` imports in end-user examples when
   `nmtjs` exposes the same symbol.

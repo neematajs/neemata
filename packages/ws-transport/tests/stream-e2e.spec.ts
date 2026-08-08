@@ -2,22 +2,12 @@ import { Buffer } from 'node:buffer'
 import { Readable } from 'node:stream'
 
 import type { ClientPlugin } from '@nmtjs/client'
-import type {
-  GatewayApi,
-  GatewayApiCallOptions,
-  GatewayResolvedProcedure,
-  TransportWorker,
-} from '@nmtjs/gateway'
-import type { ConnectionType } from '@nmtjs/protocol'
+import type { GatewayApi, GatewayApiCallOptions } from '@nmtjs/gateway'
 import type { ServerWebSocketRuntimeOptions } from '@nmtjs/server-host'
 import { RuntimeClient } from '@nmtjs/client'
 import { blobType, c } from '@nmtjs/contract'
 import { Container, createLogger, Hooks } from '@nmtjs/core'
-import {
-  Gateway,
-  GatewayInjectables,
-  ProxyableTransportType,
-} from '@nmtjs/gateway'
+import { Gateway, GatewayInjectables } from '@nmtjs/gateway'
 import { JsonFormat as ClientJsonFormat } from '@nmtjs/json-format/client'
 import { JsonFormat as ServerJsonFormat } from '@nmtjs/json-format/server'
 import {
@@ -26,11 +16,13 @@ import {
   ProtocolVersion,
 } from '@nmtjs/protocol'
 import { ProtocolFormats } from '@nmtjs/protocol/server'
+import { createServerTransport } from '@nmtjs/server-host'
+import { createServerHost } from '@nmtjs/server-host/node'
 import { t } from '@nmtjs/type'
 import { WsTransportFactory } from '@nmtjs/ws-client'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { WsTransport } from '../src/runtimes/node.ts'
+import { neemataWebSocket } from '../src/server.ts'
 
 /**
  * End-to-end flow control suite: a real Gateway behind the real uWS transport
@@ -179,9 +171,14 @@ async function createHarness(options: {
     },
   }
 
-  const transport = WsTransport.factory({
+  const Server = createServerTransport({
+    host: createServerHost,
+    handlers: { ws: neemataWebSocket() },
+  })
+  const transport = await Server.factory({
     listen: { port: 0, hostname: '127.0.0.1' },
-    ws: options.runtimeWs,
+    webSocket: options.runtimeWs,
+    handlers: { ws: { path: '/' } },
   })
 
   const gateway = new Gateway({
@@ -191,13 +188,8 @@ async function createHarness(options: {
     formats: new ProtocolFormats([new ServerJsonFormat()]),
     transports: {
       ws: {
-        // variance-only cast: the WS worker never calls resolve(), which is
-        // the sole member typed against ApplicationResolvedProcedure
-        transport: transport as unknown as TransportWorker<
-          ConnectionType,
-          GatewayResolvedProcedure
-        >,
-        proxyable: ProxyableTransportType.WS,
+        transport,
+        proxyable: Server.proxyable,
       },
     },
     api,

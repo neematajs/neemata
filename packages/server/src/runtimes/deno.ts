@@ -7,11 +7,6 @@ import type {
   ServerNativeHandles,
 } from '../types.ts'
 import { BaseServerHost } from '../host.ts'
-import {
-  InternalServerErrorHttpResponse,
-  NotFoundHttpResponse,
-  OkResponse,
-} from '../utils.ts'
 
 interface DenoNetAddr {
   transport: 'tcp' | 'udp'
@@ -42,10 +37,9 @@ class DenoServerHost extends BaseServerHost<'deno'> {
 
   protected bind(): Promise<string> {
     const { listen, tls } = this.options
-    const adapter = this.webSocket
-      ? createAdapter({ hooks: this.webSocket.hooks })
+    const adapter = this.hasWebSockets
+      ? createAdapter(this.createWsAdapterConfig())
       : null
-    const fetchHandler = this.fetchHandler
 
     const listenOptions = listen.unix
       ? { path: listen.unix }
@@ -71,24 +65,16 @@ class DenoServerHost extends BaseServerHost<'deno'> {
         ...options,
         handler: async (request: Request, info: any) => {
           const url = new URL(request.url)
-          if (url.pathname === '/healthy') return OkResponse()
-          try {
-            if (request.headers.get('upgrade') === 'websocket') {
-              if (!adapter) return NotFoundHttpResponse()
-              return await adapter.handleUpgrade(request, info as any)
-            }
-            if (!fetchHandler) return NotFoundHttpResponse()
-            const { headers, method, body } = request
-            return await fetchHandler(
-              { url, method, headers },
-              body,
-              request.signal,
-            )
-          } catch (err) {
-            // TODO: proper logging
-            console.error(err)
-            return InternalServerErrorHttpResponse()
+          if (request.headers.get('upgrade') === 'websocket') {
+            if (!adapter) return this.respondToUpgrade(url.pathname)
+            return await adapter.handleUpgrade(request, info as any)
           }
+          const { headers, method, body } = request
+          return await this.dispatchFetch(
+            { url, method, headers },
+            body,
+            request.signal,
+          )
         },
         onListen: (addr: DenoAddr) => {
           this.#server = server

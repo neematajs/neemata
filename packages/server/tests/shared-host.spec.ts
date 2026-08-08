@@ -1,5 +1,7 @@
+import { request } from 'node:http'
+
 import { defineHooks } from 'crossws'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { createServerHost } from '../src/runtimes/node.ts'
 
@@ -10,159 +12,243 @@ const openSocket = (url: string) =>
     ws.onerror = () => reject(new Error('WebSocket failed to connect'))
   })
 
-const echoHooks = () =>
+/**
+ * Raw WebSocket handshake request that surfaces the plain HTTP status a
+ * non-101 answer carries — the WebSocket client API hides it behind a
+ * generic connection error.
+ */
+const upgradeStatus = (url: string, path: string) =>
+  new Promise<number>((resolve, reject) => {
+    const { hostname, port } = new URL(url)
+    const req = request({
+      hostname,
+      port,
+      path,
+      headers: {
+        connection: 'Upgrade',
+        upgrade: 'websocket',
+        'sec-websocket-version': '13',
+        'sec-websocket-key': 'dGhlIHNhbXBsZSBub25jZQ==',
+      },
+    })
+    req.on('response', (response) => {
+      response.resume()
+      resolve(response.statusCode ?? 0)
+      req.destroy()
+    })
+    req.on('upgrade', (_response, socket) => {
+      socket.destroy()
+      reject(new Error('Request was unexpectedly upgraded'))
+    })
+    req.on('error', reject)
+    req.end()
+  })
+
+const echoHooks = (prefix: string) =>
   defineHooks({
     message(peer, message) {
-      peer.send(`echo:${message.text()}`)
+      peer.send(`${prefix}:${message.text()}`)
     },
   })
 
-describe('shared node server host', () => {
-  it('serves HTTP, WebSocket and /healthy on a single socket', async () => {
+describe('node server host', () => {
+  it('serves mounted HTTP and WebSocket handlers plus /healthy', async () => {
     const host = createServerHost({
       listen: { port: 0, hostname: '127.0.0.1' },
     })
-    host.setFetchHandler(
-      async (request) => new Response(`hello:${request.url.pathname}`),
-    )
-    host.setWebSocket({ hooks: echoHooks() })
+    host.mountFetchHandler({
+      path: '/',
+      handler: async (request) =>
+        new Response(`fallback:${request.url.pathname}`),
+    })
+    host.mountFetchHandler({
+      path: '/rpc',
+      handler: async (request) => new Response(`rpc:${request.url.pathname}`),
+    })
+    host.mountWebSocket({ path: '/ws', hooks: echoHooks('ws') })
+    host.mountWebSocket({ path: '/ws/admin', hooks: echoHooks('admin') })
+    host.mountWebSocket({ path: '/events', hooks: echoHooks('events') })
 
     const url = await host.start()
     try {
-      const response = await fetch(`${url}/route`)
-      expect(response.status).toBe(200)
-      expect(await response.text()).toBe('hello:/route')
+      await expect(
+        fetch(`${url}/rpc`).then((response) => response.text()),
+      ).resolves.toBe('rpc:/rpc')
+      await expect(
+        fetch(`${url}/rpc/nested`).then((response) => response.text()),
+      ).resolves.toBe('rpc:/rpc/nested')
+      await expect(
+        fetch(`${url}/rpcish`).then((response) => response.text()),
+      ).resolves.toBe('fallback:/rpcish')
+      expect((await fetch(`${url}/healthy`)).status).toBe(200)
 
-      const healthy = await fetch(`${url}/healthy`)
-      expect(healthy.status).toBe(200)
-
-      const ws = await openSocket(url.replace('http', 'ws'))
-      const reply = new Promise<string>((resolve) => {
-        ws.onmessage = (event) => resolve(String(event.data))
-      })
-      ws.send('ping')
-      expect(await reply).toBe('echo:ping')
-      ws.close()
+      for (const [path, prefix] of [
+        ['/ws', 'ws'],
+        ['/ws/room-1', 'ws'],
+        ['/ws/admin/room-1', 'admin'],
+        ['/events', 'events'],
+      ] as const) {
+        const socket = await openSocket(`${url.replace('http', 'ws')}${path}`)
+        const reply = new Promise<string>((resolve) => {
+          socket.onmessage = (event) => resolve(String(event.data))
+        })
+        socket.send('ping')
+        expect(await reply).toBe(`${prefix}:ping`)
+        socket.close()
+      }
+      await expect(
+        openSocket(`${url.replace('http', 'ws')}/missing`),
+      ).rejects.toThrow()
+      await expect(
+        openSocket(`${url.replace('http', 'ws')}/wsish`),
+      ).rejects.toThrow()
     } finally {
       await host.stop()
     }
   })
 
-  it('closes the socket only after the last registrant stops', async () => {
+  it('starts idempotently and one stop closes the socket', async () => {
     const host = createServerHost({
       listen: { port: 0, hostname: '127.0.0.1' },
     })
-    host.setFetchHandler(async () => new Response('ok'))
-    host.setWebSocket({ hooks: echoHooks() })
-
-    // two registrants claim the same bound socket
     const first = await host.start()
-    const second = await host.start()
-    expect(second).toBe(first)
-
-    await host.stop()
-    // one registrant remains: still serving
-    const response = await fetch(`${first}/healthy`)
-    expect(response.status).toBe(200)
-
+    expect(await host.start()).toBe(first)
+    // upgrade attempts without any WebSocket mount still get the reserved
+    // /healthy answer from the shared router
+    expect(await upgradeStatus(first, '/healthy')).toBe(200)
     await host.stop()
     await expect(fetch(`${first}/healthy`)).rejects.toThrow()
   })
 
-  it('start racing an in-flight final stop reclaims the live socket', async () => {
+  it('keeps /healthy outside a root WebSocket mount', async () => {
+    const upgrade = vi.fn()
     const host = createServerHost({
       listen: { port: 0, hostname: '127.0.0.1' },
     })
-    host.setFetchHandler(async () => new Response('ok'))
+    host.mountWebSocket({ path: '/', hooks: defineHooks({ upgrade }) })
 
-    const first = await host.start()
-    // final stop() not awaited: the racing start() must join the still-bound
-    // socket instead of binding a second server the stop then orphans
-    const stopping = host.stop()
-    const second = await host.start()
-    await stopping
-
-    expect(second).toBe(first)
+    const url = await host.start()
     try {
-      const response = await fetch(`${first}/healthy`)
-      expect(response.status).toBe(200)
+      expect((await fetch(`${url}/healthy`)).status).toBe(200)
+      // an upgrade attempt gets the plain 200 reserved response, not a 101
+      expect(await upgradeStatus(url, '/healthy')).toBe(200)
+      await expect(
+        openSocket(`${url.replace('http', 'ws')}/healthy`),
+      ).rejects.toThrow()
+      expect(upgrade).not.toHaveBeenCalled()
     } finally {
       await host.stop()
     }
-    await expect(fetch(`${first}/healthy`)).rejects.toThrow()
   })
 
   it('rebinds after a full stop', async () => {
     const host = createServerHost({
       listen: { port: 0, hostname: '127.0.0.1' },
     })
-    host.setFetchHandler(async () => new Response('ok'))
-
     const first = await host.start()
     await host.stop()
-
     const second = await host.start()
     try {
-      const response = await fetch(`${second}/healthy`)
-      expect(response.status).toBe(200)
+      expect((await fetch(`${second}/healthy`)).status).toBe(200)
     } finally {
       await host.stop()
     }
-    // port 0 means the rebound socket may live elsewhere; only liveness
-    // of the second URL matters
-    expect(second).not.toBe('')
     expect(first).not.toBe('')
+    expect(second).not.toBe('')
   })
 
-  it('rejects upgrade requests without a WebSocket tenant', async () => {
+  it('rejects duplicate, reserved, and late mounts', async () => {
     const host = createServerHost({
       listen: { port: 0, hostname: '127.0.0.1' },
     })
-    host.setFetchHandler(async () => new Response('ok'))
-
-    const url = await host.start()
-    try {
-      await expect(openSocket(url.replace('http', 'ws'))).rejects.toThrow()
-      // plain HTTP is unaffected
-      const response = await fetch(url)
-      expect(response.status).toBe(200)
-    } finally {
-      await host.stop()
-    }
-  })
-
-  it('serves 404 for plain HTTP without a fetch tenant', async () => {
-    const host = createServerHost({
-      listen: { port: 0, hostname: '127.0.0.1' },
+    host.mountFetchHandler({
+      path: '/',
+      handler: async () => new Response('ok'),
     })
-    host.setWebSocket({ hooks: echoHooks() })
-
-    const url = await host.start()
-    try {
-      const response = await fetch(`${url}/anything`)
-      expect(response.status).toBe(404)
-      // health stays host-owned
-      const healthy = await fetch(`${url}/healthy`)
-      expect(healthy.status).toBe(200)
-    } finally {
-      await host.stop()
-    }
-  })
-
-  it('rejects duplicate registrations and registration after start', async () => {
-    const host = createServerHost({
-      listen: { port: 0, hostname: '127.0.0.1' },
+    expect(() =>
+      host.mountFetchHandler({
+        path: '/',
+        handler: async () => new Response('no'),
+      }),
+    ).toThrow('already mounted')
+    host.mountFetchHandler({
+      path: '/rpc',
+      handler: async () => new Response('rpc'),
     })
-    host.setFetchHandler(async () => new Response('ok'))
-    expect(() => host.setFetchHandler(async () => new Response('no'))).toThrow(
-      'already registered',
+    expect(() =>
+      host.mountFetchHandler({
+        path: '/rpc',
+        handler: async () => new Response('duplicate'),
+      }),
+    ).toThrow('already mounted')
+    expect(() =>
+      host.mountFetchHandler({
+        path: '/healthy',
+        handler: async () => new Response('no'),
+      }),
+    ).toThrow('owned by the server host')
+    expect(() => host.mountWebSocket({ path: '/healthy', hooks: {} })).toThrow(
+      'owned by the server host',
+    )
+    host.mountWebSocket({ path: '/ws', hooks: {} })
+    expect(() => host.mountWebSocket({ path: '/ws', hooks: {} })).toThrow(
+      'already mounted',
     )
 
     await host.start()
     try {
-      expect(() => host.setWebSocket({ hooks: echoHooks() })).toThrow(
+      expect(() => host.mountWebSocket({ path: '/late', hooks: {} })).toThrow(
         'started server',
       )
+    } finally {
+      await host.stop()
+    }
+  })
+
+  it('rejects start when the payload cap is below a handler requirement', async () => {
+    const host = createServerHost({
+      listen: { port: 0, hostname: '127.0.0.1' },
+      webSocket: { maxPayloadLength: 16384 },
+    })
+    host.mountWebSocket({
+      path: '/ws',
+      hooks: {},
+      requirements: { minPayloadLength: 65536 + 1024 },
+    })
+
+    await expect(host.start()).rejects.toThrow(
+      'The WebSocket handler on [/ws] requires maxPayloadLength >= 66560, ' +
+        'but the host is configured with 16384',
+    )
+    // validation fired before binding: no socket to expose or leak
+    expect(host.native.node).toBeUndefined()
+  })
+
+  it('does not expose an unbound native app after a failed start', async () => {
+    const host = createServerHost({ listen: {} } as any)
+
+    await expect(host.start()).rejects.toThrow('Invalid listen parameters')
+    expect(host.native.node).toBeUndefined()
+  })
+
+  it('unmounts handlers while stopped', async () => {
+    const host = createServerHost({
+      listen: { port: 0, hostname: '127.0.0.1' },
+    })
+    const unmount = host.mountFetchHandler({
+      path: '/rpc',
+      handler: async () => new Response('first'),
+    })
+    unmount()
+    host.mountFetchHandler({
+      path: '/rpc',
+      handler: async () => new Response('second'),
+    })
+    const url = await host.start()
+    try {
+      await expect(
+        fetch(`${url}/rpc`).then((response) => response.text()),
+      ).resolves.toBe('second')
     } finally {
       await host.stop()
     }

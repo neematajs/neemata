@@ -2,10 +2,15 @@ import { Buffer } from 'node:buffer'
 import { Duplex, Readable, Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 
-import type { ApplicationResolvedProcedure } from '@nmtjs/application'
-import type { TransportWorker, TransportWorkerParams } from '@nmtjs/gateway'
+import type {
+  GatewayResolvedProcedure,
+  GatewayStaticMetaView,
+  TransportWorkerParams,
+} from '@nmtjs/gateway'
+import type { ServerHandler } from '@nmtjs/server-host'
 import { anyAbortSignal, isAbortError, isAsyncIterable } from '@nmtjs/common'
 import { provision } from '@nmtjs/core'
+import { ProxyableTransportType } from '@nmtjs/gateway'
 import {
   ConnectionType,
   ErrorCode,
@@ -20,12 +25,9 @@ import {
 } from '@nmtjs/protocol/server'
 
 import type {
-  HttpAdapterParams,
-  HttpAdapterServer,
-  HttpAdapterServerFactory,
-  HttpTransportCorsCustomParams,
-  HttpTransportOptions,
-  HttpTransportServerRequest,
+  HttpHandlerCorsCustomOptions,
+  NeemataHttpHandlerOptions,
+  NeemataHttpRequest,
 } from './types.ts'
 import {
   AllowedHttpMethod,
@@ -55,14 +57,14 @@ const DEFAULT_CORS_PARAMS = Object.freeze({
   requestMethod: undefined,
   exposeHeaders: [],
   requestHeaders: [],
-}) satisfies Omit<HttpTransportCorsCustomParams, 'origin'>
+}) satisfies Omit<HttpHandlerCorsCustomOptions, 'origin'>
 // Credentials are safe to allow when the user explicitly vetted the origin
 const EXPLICIT_ORIGIN_CORS_PARAMS = Object.freeze({
   ...DEFAULT_CORS_PARAMS,
   allowCredentials: 'true',
-}) satisfies Omit<HttpTransportCorsCustomParams, 'origin'>
+}) satisfies Omit<HttpHandlerCorsCustomOptions, 'origin'>
 const CORS_HEADERS_MAP: Record<
-  keyof HttpTransportCorsCustomParams | 'origin',
+  keyof HttpHandlerCorsCustomOptions | 'origin',
   string
 > = {
   origin: 'Access-Control-Allow-Origin',
@@ -75,60 +77,69 @@ const CORS_HEADERS_MAP: Record<
   requestMethod: 'Access-Control-Request-Method',
 }
 
-export function createHTTPTransportWorker(
-  adapterFactory: HttpAdapterServerFactory<any>,
-  options: HttpTransportOptions,
-): TransportWorker<
+export function neemataHttp(): ServerHandler<
   ConnectionType.Unidirectional,
-  ApplicationResolvedProcedure
+  NeemataHttpHandlerOptions,
+  typeof injections,
+  readonly [ProxyableTransportType.HTTP],
+  NeemataHttpResolvedProcedure
 > {
-  return new HttpTransportServer(adapterFactory, options)
+  return {
+    proxyable: [ProxyableTransportType.HTTP],
+    injectables: injections,
+    mount({ host, gateway }, options) {
+      // A handler cap above the host bound could never take effect (the
+      // host rejects such bodies first) — fail loudly instead of letting
+      // the config lie
+      if (
+        options.maxRequestBodySize !== undefined &&
+        options.maxRequestBodySize > host.maxRequestBodySize
+      ) {
+        throw new Error(
+          `HTTP handler maxRequestBodySize (${options.maxRequestBodySize}) ` +
+            `exceeds the host limit (${host.maxRequestBodySize})`,
+        )
+      }
+      const handler = new NeemataHttpHandler(
+        gateway,
+        options,
+        host.maxRequestBodySize,
+      )
+      const unmount = host.mountFetchHandler({
+        path: options.path,
+        handler: handler.handle.bind(handler),
+      })
+      return { dispose: unmount }
+    },
+  }
 }
 
-export class HttpTransportServer implements TransportWorker<
-  ConnectionType.Unidirectional,
-  ApplicationResolvedProcedure
-> {
-  #server: HttpAdapterServer
-  #corsOptions?: HttpTransportOptions['cors']
+export class NeemataHttpHandler {
+  #corsOptions?: NeemataHttpHandlerOptions['cors']
   #maxRequestBodySize: number
 
-  params!: TransportWorkerParams<
-    ConnectionType.Unidirectional,
-    ApplicationResolvedProcedure
-  >
-
   constructor(
-    protected readonly adapterFactory: HttpAdapterServerFactory<any>,
-    protected readonly options: HttpTransportOptions,
-  ) {
-    this.#server = this.createServer()
-    this.#corsOptions = this.options.cors
-    this.#maxRequestBodySize =
-      this.options.maxRequestBodySize ?? DEFAULT_MAX_REQUEST_BODY_SIZE
-  }
-
-  async start(
-    hooks: TransportWorkerParams<
+    readonly params: TransportWorkerParams<
       ConnectionType.Unidirectional,
-      ApplicationResolvedProcedure
+      NeemataHttpResolvedProcedure
     >,
+    readonly options: NeemataHttpHandlerOptions,
+    hostMaxRequestBodySize = DEFAULT_MAX_REQUEST_BODY_SIZE,
   ) {
-    this.params = hooks
-    return await this.#server.start()
+    this.#corsOptions = options.cors
+    this.#maxRequestBodySize =
+      options.maxRequestBodySize ?? hostMaxRequestBodySize
   }
 
-  async stop() {
-    await this.#server.stop()
-  }
-
-  async httpHandler(
-    request: HttpTransportServerRequest,
+  async handle(
+    request: NeemataHttpRequest,
     body: ReadableStream | null,
     requestSignal: AbortSignal,
   ): Promise<Response> {
     const url = new URL(request.url)
-    const procedure = url.pathname.slice(1) // remove leading '/'
+    const procedure = url.pathname.slice(
+      this.options.path === '/' ? 1 : this.options.path.length + 1,
+    )
     const method = request.method.toLowerCase()
     const origin = request.headers.get('origin')
     const responseHeaders = new Headers()
@@ -416,12 +427,12 @@ export class HttpTransportServer implements TransportWorker<
 
   private applyCors(
     origin: string,
-    request: HttpTransportServerRequest,
+    request: NeemataHttpRequest,
     headers: Headers,
   ) {
     if (!this.#corsOptions) return
 
-    let params: Omit<HttpTransportCorsCustomParams, 'origin'> | null = null
+    let params: Omit<HttpHandlerCorsCustomOptions, 'origin'> | null = null
 
     if (this.#corsOptions === true) {
       params = { ...DEFAULT_CORS_PARAMS }
@@ -490,14 +501,8 @@ export class HttpTransportServer implements TransportWorker<
       }
     }
   }
+}
 
-  private createServer() {
-    // const hooks = this.createWsHooks()
-    const opts: HttpAdapterParams = {
-      ...this.options,
-      // logger: forkLogger(this.logger, 'WsServer'),
-      fetchHandler: this.httpHandler.bind(this),
-    }
-    return this.adapterFactory(opts)
-  }
+export interface NeemataHttpResolvedProcedure extends GatewayResolvedProcedure {
+  readonly meta: Pick<GatewayStaticMetaView, 'get'>
 }

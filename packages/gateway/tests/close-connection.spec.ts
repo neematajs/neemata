@@ -32,7 +32,9 @@ const createGateway = (
       return 'test://'
     }),
     stop: vi.fn(async () => {}),
-    send: vi.fn((_connectionId: string, _buffer: ArrayBufferView) => true),
+    send: vi.fn(
+      (_connectionId: string, _buffer: ArrayBufferView) => 'delivered' as const,
+    ),
     close: vi.fn((_connectionId: string) => {}),
     ...transportOverrides,
   }

@@ -1,10 +1,12 @@
 import { setTimeout as delay } from 'node:timers/promises'
 
 import { BaseServerFormat, ProtocolFormats } from '@nmtjs/protocol/server'
+import { createServerTransport } from '@nmtjs/server-host'
+import { createServerHost } from '@nmtjs/server-host/node'
 import { describe, expect, it, vi } from 'vitest'
 
-import type { HttpTransportServerRequest } from '../src/types.ts'
-import { HttpTransport } from '../src/runtimes/node.ts'
+import type { NeemataHttpRequest } from '../src/types.ts'
+import { neemataHttp } from '../src/server.ts'
 
 class TestJsonFormat extends BaseServerFormat {
   accept = ['application/json']
@@ -42,11 +44,11 @@ async function startServer(onRpc?: (...args: any[]) => Promise<unknown>) {
     decoder: format,
     [Symbol.asyncDispose]: () => Promise.resolve(),
   }
-  const requests: HttpTransportServerRequest[] = []
+  const requests: NeemataHttpRequest[] = []
   const params = {
     formats: new ProtocolFormats([format]),
     onConnect: vi.fn(async (options: { data: unknown }) => {
-      requests.push(options.data as HttpTransportServerRequest)
+      requests.push(options.data as NeemataHttpRequest)
       return connection
     }),
     resolve: async () => ({ meta: { get: () => ['get', 'post'] } }),
@@ -55,8 +57,13 @@ async function startServer(onRpc?: (...args: any[]) => Promise<unknown>) {
     onMessage: async () => {},
   }
 
-  const worker = await HttpTransport.factory({
+  const Server = createServerTransport({
+    host: createServerHost,
+    handlers: { http: neemataHttp() },
+  })
+  const worker = await Server.factory({
     listen: { port: 0, hostname: '127.0.0.1' },
+    handlers: { http: { path: '/' } },
   })
   const url = await worker.start(params as any)
 

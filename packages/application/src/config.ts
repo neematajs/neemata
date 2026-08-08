@@ -24,8 +24,8 @@ export type ApplicationTransport<
   Injections extends {
     [key: string]: LazyInjectable<any, Scope.Connection | Scope.Call>
   } = { [key: string]: LazyInjectable<any, Scope.Connection | Scope.Call> },
-  Proxyable extends ProxyableTransportType | undefined =
-    | ProxyableTransportType
+  Proxyable extends readonly ProxyableTransportType[] | undefined =
+    | readonly ProxyableTransportType[]
     | undefined,
 > = Transport<
   Type,

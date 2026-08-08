@@ -1,20 +1,20 @@
-import type { ApplicationResolvedProcedure } from '@nmtjs/application'
-import type { TransportWorker, TransportWorkerParams } from '@nmtjs/gateway'
+import type {
+  GatewayResolvedProcedure,
+  SendResult,
+  TransportWorkerParams,
+} from '@nmtjs/gateway'
+import type { ServerHandler, ServerHost } from '@nmtjs/server-host'
 import type { Hooks, Peer } from 'crossws'
+import { ProxyableTransportType } from '@nmtjs/gateway'
 import { ConnectionType, ProtocolVersion } from '@nmtjs/protocol'
 import { defineHooks } from 'crossws'
 
 import type {
-  WsAdapterParams,
-  WsAdapterServer,
-  WsAdapterServerFactory,
-  WsTransportOptions,
-  WsTransportServerRequest,
+  NeemataWebSocketHandlerOptions,
+  NeemataWebSocketRequest,
 } from './types.ts'
-import {
-  InternalServerErrorHttpResponse,
-  NotFoundHttpResponse,
-} from './utils.ts'
+import * as injections from './injectables.ts'
+import { InternalServerErrorHttpResponse } from './utils.ts'
 
 /**
  * How long an upgraded connection may stay without its `open` hook firing
@@ -23,78 +23,194 @@ import {
  */
 export const WS_PENDING_OPEN_TTL = 10_000
 
-export function createWSTransportWorker(
-  adapterFactory: WsAdapterServerFactory<any>,
-  options: WsTransportOptions,
-): TransportWorker<ConnectionType.Bidirectional, ApplicationResolvedProcedure> {
-  return new WsTransportServer(adapterFactory, options)
-}
+/**
+ * Smallest inbound frame the Neemata protocol needs the host to accept: the
+ * gateway grants upload credits in 64KiB chunks, and each frame carries a
+ * small protocol header on top. Declared as a registration requirement so a
+ * host-wide `webSocket.maxPayloadLength` below it fails at start instead of
+ * killing every blob upload at runtime.
+ */
+export const WS_MIN_INBOUND_PAYLOAD = 64 * 1024 + 1024
 
-export class WsTransportServer implements TransportWorker<
-  ConnectionType.Bidirectional,
-  ApplicationResolvedProcedure
-> {
-  #server: WsAdapterServer
-  params!: TransportWorkerParams<
-    ConnectionType.Bidirectional,
-    ApplicationResolvedProcedure
-  >
-  clients = new Map<string, Peer>()
-  // Reap timers for upgraded-but-not-opened connections, see WS_PENDING_OPEN_TTL
-  pendingOpen = new Map<string, ReturnType<typeof setTimeout>>()
+type OnDisconnect = (connectionId: string) => Promise<void>
 
-  constructor(
-    protected readonly adapterFactory: WsAdapterServerFactory<any>,
-    protected readonly options: WsTransportOptions,
-  ) {
-    this.#server = this.createServer()
+/**
+ * Single owner of connection teardown. Every path that ends a connection —
+ * reap timer, crossws close hook, gateway-initiated close, handler dispose —
+ * goes through disconnect(), which claims the connection from whichever map
+ * holds it before acting; a second caller finds nothing to claim and no-ops.
+ * Exactly-once delivery of onDisconnect is therefore structural, not a
+ * convention each call site must remember.
+ */
+class WsConnectionRegistry {
+  readonly #pending = new Map<string, ReturnType<typeof setTimeout>>()
+  readonly #open = new Map<string, Peer>()
+
+  constructor(private readonly onDisconnect: OnDisconnect) {}
+
+  /** Track an upgraded-but-not-yet-opened connection; reaped after the TTL. */
+  admit(connectionId: string): void {
+    const timer = setTimeout(() => {
+      void this.disconnect(connectionId)
+    }, WS_PENDING_OPEN_TTL)
+    this.#pending.set(connectionId, timer)
   }
 
-  async start(
-    hooks: TransportWorkerParams<
-      ConnectionType.Bidirectional,
-      ApplicationResolvedProcedure
-    >,
-  ): Promise<string> {
-    this.params = hooks
-    return await this.#server.start()
+  /**
+   * Claim a pending connection for its opened peer. Returns false when the
+   * reap (or a disconnect) already claimed it — the late peer must be
+   * closed by the caller instead of registered as a zombie.
+   */
+  opened(connectionId: string, peer: Peer): boolean {
+    if (!this.#claimPending(connectionId)) return false
+    this.#open.set(connectionId, peer)
+    return true
   }
 
-  async stop(): Promise<void> {
-    for (const timer of this.pendingOpen.values()) clearTimeout(timer)
-    this.pendingOpen.clear()
-    for (const peer of this.clients.values()) {
+  peer(connectionId: string): Peer | undefined {
+    return this.#open.get(connectionId)
+  }
+
+  async disconnect(
+    connectionId: string,
+    close?: { code?: number; reason?: string },
+  ): Promise<void> {
+    if (!this.#claim(connectionId, close)) return
+    try {
+      await this.onDisconnect(connectionId)
+    } catch (error) {
+      console.error(
+        `Failed to dispose WebSocket connection ${connectionId}`,
+        error,
+      )
+    }
+  }
+
+  /**
+   * Claim and close without delivering onDisconnect — for the
+   * gateway-initiated path only: the gateway calls it from inside its own
+   * connection teardown, so notifying back would await that in-flight
+   * teardown from within itself and stall until the gateway's step watchdog
+   * fires. Exactly-once still holds: eviction shares the claim with
+   * disconnect(), so a later close-hook echo finds nothing to act on.
+   */
+  evict(
+    connectionId: string,
+    close?: { code?: number; reason?: string },
+  ): void {
+    this.#claim(connectionId, close)
+  }
+
+  #claim(
+    connectionId: string,
+    close?: { code?: number; reason?: string },
+  ): boolean {
+    const pending = this.#claimPending(connectionId)
+    const peer = this.#open.get(connectionId)
+    if (peer) this.#open.delete(connectionId)
+    // nothing claimed: teardown already ran (or the id was never admitted)
+    if (!pending && !peer) return false
+    if (peer && close) {
       try {
-        peer.close(1001, 'Transport stopped')
+        peer.close(close.code ?? 1001, close.reason ?? 'Closed')
       } catch (error) {
         console.error(
-          `Failed to close WebSocket connection ${peer.context.connectionId}`,
+          `Failed to close WebSocket connection ${connectionId}`,
           error,
         )
       }
     }
-    this.clients.clear()
-    await this.#server.stop()
+    return true
   }
 
-  send(connectionId: string, buffer: ArrayBufferView) {
-    const peer = this.clients.get(connectionId)
-    if (!peer) return false
+  async disposeAll(close: { code: number; reason: string }): Promise<void> {
+    const ids = new Set([...this.#pending.keys(), ...this.#open.keys()])
+    for (const connectionId of ids) {
+      await this.disconnect(connectionId, close)
+    }
+  }
+
+  #claimPending(connectionId: string): boolean {
+    const timer = this.#pending.get(connectionId)
+    if (timer === undefined) return false
+    this.#pending.delete(connectionId)
+    clearTimeout(timer)
+    return true
+  }
+}
+
+export function neemataWebSocket(): ServerHandler<
+  ConnectionType.Bidirectional,
+  NeemataWebSocketHandlerOptions,
+  typeof injections,
+  readonly [ProxyableTransportType.WS],
+  GatewayResolvedProcedure
+> {
+  return {
+    proxyable: [ProxyableTransportType.WS],
+    injectables: injections,
+    mount({ host, gateway }, options) {
+      const handler = new NeemataWebSocketHandler(gateway, host)
+      handler.unmount = host.mountWebSocket({
+        path: options.path,
+        hooks: handler.hooks,
+        requirements: { minPayloadLength: WS_MIN_INBOUND_PAYLOAD },
+      })
+      return handler
+    },
+  }
+}
+
+export class NeemataWebSocketHandler {
+  readonly connections: WsConnectionRegistry
+  readonly hooks: Hooks
+  unmount: () => void = () => {}
+  #disposed = false
+  #pendingUpgrades = new Set<Promise<unknown>>()
+
+  constructor(
+    readonly params: TransportWorkerParams<
+      ConnectionType.Bidirectional,
+      GatewayResolvedProcedure
+    >,
+    readonly host: ServerHost,
+  ) {
+    this.connections = new WsConnectionRegistry((connectionId) =>
+      Promise.resolve(this.params.onDisconnect(connectionId)),
+    )
+    this.hooks = this.createHooks()
+  }
+
+  async dispose(): Promise<void> {
+    this.#disposed = true
+    this.unmount()
+    // upgrades whose onConnect is in flight either register before the sweep
+    // below or observe #disposed and self-clean — no admission can slip past
+    await Promise.allSettled(this.#pendingUpgrades)
+    await this.connections.disposeAll({ code: 1001, reason: 'Handler stopped' })
+  }
+
+  send(connectionId: string, buffer: ArrayBufferView): SendResult {
+    const peer = this.connections.peer(connectionId)
+    if (!peer) return 'dropped'
 
     try {
       const result = peer.send(buffer)
-      if (typeof result === 'boolean') return result
-      if (typeof result === 'number') {
-        return this.#server.isSendSuccess?.(result) ?? true
+      if (typeof result === 'boolean') {
+        return result ? 'delivered' : 'dropped'
       }
-      return true
+      if (typeof result === 'number') {
+        return this.host.isSendSuccess(result) ? 'delivered' : 'dropped'
+      }
+      // runtimes with a void send (Deno) give no delivery feedback; this
+      // must not read as a drop or every send would abort streams
+      return 'unknown'
     } catch (error) {
       console.error(
         `Failed to send data over WebSocket connection ${connectionId}`,
         error,
       )
-      this.clients.delete(connectionId)
-      return false
+      return 'dropped'
     }
   }
 
@@ -102,65 +218,27 @@ export class WsTransportServer implements TransportWorker<
     connectionId: string,
     options: { code?: number; reason?: string } = {},
   ) {
-    // A gateway-initiated close may land before `open` (e.g. heartbeat
-    // timeout); claim the reap timer so it can't fire a redundant disconnect
-    this.clearPendingOpenReap(connectionId)
-    const peer = this.clients.get(connectionId)
-    if (!peer) return
-    this.clients.delete(connectionId)
-    try {
-      peer.close(options.code ?? 1001, options.reason ?? 'Closed')
-    } catch (error) {
-      console.error(
-        `Failed to close WebSocket connection ${connectionId}`,
-        error,
-      )
-    }
+    // The gateway calls this from inside its own connection teardown and
+    // owns the disconnect; evict() closes the socket without notifying back
+    this.connections.evict(connectionId, {
+      code: options.code ?? 1001,
+      reason: options.reason ?? 'Closed',
+    })
   }
 
-  private createWsHooks(): Hooks {
+  private createHooks(): Hooks {
     return defineHooks({
-      upgrade: async (req) => {
-        const url = new URL(req.url)
-
-        if (url.pathname !== '/') {
-          return NotFoundHttpResponse()
-        }
-
-        const request: WsTransportServerRequest = {
-          url,
-          headers: req.headers,
-          method: req.method,
-        }
-
-        const accept =
-          url.searchParams.get('accept') ?? req.headers.get('accept')
-        const contentType =
-          url.searchParams.get('content-type') ??
-          req.headers.get('content-type')
-
-        try {
-          const connection = await this.params.onConnect({
-            type: ConnectionType.Bidirectional,
-            protocolVersion: ProtocolVersion.v1,
-            accept,
-            contentType,
-            data: request,
-          })
-
-          this.schedulePendingOpenReap(connection.id)
-
-          return { context: { connectionId: connection.id } }
-        } catch (error) {
-          console.error('Failed to upgrade WebSocket connection', error)
-          return InternalServerErrorHttpResponse()
-        }
+      upgrade: (req) => {
+        const upgrade = this.upgrade(req)
+        this.#pendingUpgrades.add(upgrade)
+        return upgrade.finally(() => this.#pendingUpgrades.delete(upgrade))
       },
       open: (peer) => {
         const { connectionId } = peer.context
-        // If the reap already claimed this connection, the gateway side is
-        // gone — close the late peer instead of registering a zombie
-        if (!this.clearPendingOpenReap(connectionId)) {
+        // the reap (or dispose) already claimed this connection — the
+        // gateway side is gone, close the late peer instead of registering
+        // a zombie
+        if (!this.connections.opened(connectionId, peer)) {
           try {
             peer.close(1001, 'Closed')
           } catch (error) {
@@ -169,9 +247,7 @@ export class WsTransportServer implements TransportWorker<
               error,
             )
           }
-          return
         }
-        this.clients.set(connectionId, peer)
       },
       message: async (peer, message) => {
         const data = message.arrayBuffer().slice() as ArrayBuffer
@@ -185,7 +261,8 @@ export class WsTransportServer implements TransportWorker<
             `Error while processing message from ${peer.context.connectionId}`,
             error,
           )
-          this.clients.delete(peer.context.connectionId)
+          // close the socket only: the close hook owns the disconnect, so
+          // removing state here would orphan the gateway connection
           peer.close(1011, 'Internal error')
         }
       },
@@ -195,47 +272,42 @@ export class WsTransportServer implements TransportWorker<
           error,
         )
       },
-      close: async (peer) => {
-        this.clearPendingOpenReap(peer.context.connectionId)
-        this.clients.delete(peer.context.connectionId)
-        try {
-          await this.params.onDisconnect(peer.context.connectionId)
-        } catch (error) {
-          console.error(
-            `Failed to dispose WebSocket connection ${peer.context.connectionId}`,
-            error,
-          )
-        }
+      close: (peer) => {
+        return this.connections.disconnect(peer.context.connectionId)
       },
     }) as Hooks
   }
 
-  private schedulePendingOpenReap(connectionId: string) {
-    const timer = setTimeout(() => {
-      this.pendingOpen.delete(connectionId)
-      Promise.resolve(this.params.onDisconnect(connectionId)).catch((error) => {
-        console.error(
-          `Failed to reap never-opened WebSocket connection ${connectionId}`,
-          error,
-        )
+  private async upgrade(req: Parameters<NonNullable<Hooks['upgrade']>>[0]) {
+    const url = new URL(req.url)
+    const request: NeemataWebSocketRequest = {
+      url,
+      headers: req.headers,
+      method: req.method,
+    }
+    const accept = url.searchParams.get('accept') ?? req.headers.get('accept')
+    const contentType =
+      url.searchParams.get('content-type') ?? req.headers.get('content-type')
+
+    try {
+      const connection = await this.params.onConnect({
+        type: ConnectionType.Bidirectional,
+        protocolVersion: ProtocolVersion.v1,
+        accept,
+        contentType,
+        data: request,
       })
-    }, WS_PENDING_OPEN_TTL)
-    this.pendingOpen.set(connectionId, timer)
-  }
-
-  // Returns whether the pending entry was claimed by this caller; false
-  // means the reap timer already fired (or there was no pending entry)
-  private clearPendingOpenReap(connectionId: string) {
-    const timer = this.pendingOpen.get(connectionId)
-    if (timer === undefined) return false
-    this.pendingOpen.delete(connectionId)
-    clearTimeout(timer)
-    return true
-  }
-
-  private createServer() {
-    const hooks = this.createWsHooks()
-    const opts: WsAdapterParams = { ...this.options, wsHooks: hooks }
-    return this.adapterFactory(opts)
+      if (this.#disposed) {
+        // never admitted to the registry, so the gateway connection is
+        // released directly; the gateway absorbs any duplicate
+        await this.params.onDisconnect(connection.id)
+        return InternalServerErrorHttpResponse()
+      }
+      this.connections.admit(connection.id)
+      return { context: { connectionId: connection.id } }
+    } catch (error) {
+      console.error('Failed to upgrade WebSocket connection', error)
+      return InternalServerErrorHttpResponse()
+    }
   }
 }

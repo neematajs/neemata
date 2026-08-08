@@ -1,11 +1,8 @@
 import { BaseServerFormat, ProtocolFormats } from '@nmtjs/protocol/server'
 import { describe, expect, it, vi } from 'vitest'
 
-import type {
-  HttpAdapterServer,
-  HttpTransportServerRequest,
-} from '../src/types.ts'
-import { HttpTransportServer } from '../src/server.ts'
+import type { NeemataHttpRequest } from '../src/types.ts'
+import { NeemataHttpHandler } from '../src/server.ts'
 
 class TestJsonFormat extends BaseServerFormat {
   accept = ['application/json']
@@ -36,12 +33,6 @@ class TestJsonFormat extends BaseServerFormat {
   }
 }
 
-const adapterFactory = (): HttpAdapterServer => ({
-  runtime: {},
-  start: () => 'http://127.0.0.1:0',
-  stop: () => {},
-})
-
 async function createServer() {
   const format = new TestJsonFormat()
   const connection = {
@@ -63,10 +54,7 @@ async function createServer() {
     onMessage: async () => {},
   }
 
-  const server = new HttpTransportServer(adapterFactory, {
-    listen: { port: 0 },
-  })
-  await server.start(params as any)
+  const server = new NeemataHttpHandler(params as any, { path: '/' })
 
   return { server, onConnect, resolve, onRpc }
 }
@@ -75,18 +63,18 @@ const makeRequest = (
   url: string,
   headers: Record<string, string> = {},
   method = 'GET',
-): HttpTransportServerRequest => ({
+): NeemataHttpRequest => ({
   url: new URL(url),
   method,
   headers: new Headers(headers),
 })
 
-describe('HttpTransportServer.httpHandler', () => {
+describe('NeemataHttpHandler.handle', () => {
   describe('GET ?payload parsing', () => {
     it('responds 400 to malformed payload JSON', async () => {
       const { server, onRpc } = await createServer()
 
-      const response = await server.httpHandler(
+      const response = await server.handle(
         makeRequest('http://localhost/test?payload={bad', {
           accept: 'application/json',
         }),
@@ -101,7 +89,7 @@ describe('HttpTransportServer.httpHandler', () => {
     it('passes valid payload JSON to rpc handler', async () => {
       const { server, onRpc } = await createServer()
 
-      const response = await server.httpHandler(
+      const response = await server.handle(
         makeRequest(
           `http://localhost/test?payload=${encodeURIComponent('{"a":1}')}`,
           { accept: 'application/json' },
@@ -124,7 +112,7 @@ describe('HttpTransportServer.httpHandler', () => {
     it('keeps a supported Accept header', async () => {
       const { server, onConnect } = await createServer()
 
-      await server.httpHandler(
+      await server.handle(
         makeRequest('http://localhost/test', { accept: 'application/json' }),
         null,
         new AbortController().signal,
@@ -138,7 +126,7 @@ describe('HttpTransportServer.httpHandler', () => {
     it('falls back to */* when Accept is not negotiable', async () => {
       const { server, onConnect } = await createServer()
 
-      await server.httpHandler(
+      await server.handle(
         makeRequest('http://localhost/test', { accept: 'text/html' }),
         null,
         new AbortController().signal,
@@ -152,7 +140,7 @@ describe('HttpTransportServer.httpHandler', () => {
     it('keeps non-negotiable Accept for non-GET requests', async () => {
       const { server, onConnect } = await createServer()
 
-      await server.httpHandler(
+      await server.handle(
         makeRequest('http://localhost/test', { accept: 'text/html' }, 'POST'),
         null,
         new AbortController().signal,

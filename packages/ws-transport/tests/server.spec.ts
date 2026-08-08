@@ -1,82 +1,146 @@
+import type { ServerHost } from '@nmtjs/server-host'
 import type { Peer } from 'crossws'
 import { describe, expect, it, vi } from 'vitest'
 
-import type {
-  WsAdapterServerFactory,
-  WsTransportOptions,
-} from '../src/types.ts'
-import { WsTransport as BunWsTransport } from '../src/runtimes/bun.ts'
-import { WsTransport as NodeWsTransport } from '../src/runtimes/node.ts'
-import { WsTransportServer } from '../src/server.ts'
+import { NeemataWebSocketHandler } from '../src/server.ts'
 
-const adapterFactory: WsAdapterServerFactory<any> = () => ({
-  start: vi.fn(async () => 'ws://localhost'),
-  stop: vi.fn(async () => {}),
-})
+const createHost = (isSendSuccess: (status: number) => boolean = () => true) =>
+  ({ isSendSuccess }) as unknown as ServerHost
 
-const options = { listen: { port: 0 } } as WsTransportOptions
+const createHandler = (
+  isSendSuccess?: (status: number) => boolean,
+  params: Record<string, unknown> = {},
+) => new NeemataWebSocketHandler(params as any, createHost(isSendSuccess))
 
-const setPeer = (server: WsTransportServer, send: () => unknown) => {
+const setPeer = (handler: NeemataWebSocketHandler, send: () => unknown) => {
+  const close = vi.fn()
   const peer = {
     send: vi.fn(send),
-    close: vi.fn(),
+    close,
     context: { connectionId: 'c1' },
   } as unknown as Peer
-  server.clients.set('c1', peer)
-  return server
+  // register through the registry's own admission path; opened() claims the
+  // pending entry, so no reap timer is left running behind the test
+  handler.connections.admit('c1')
+  handler.connections.opened('c1', peer)
+  return { handler, peer, close }
 }
 
-describe('WsTransportServer.send', () => {
+describe('NeemataWebSocketHandler.send', () => {
   const buffer = new Uint8Array([0x01])
 
-  it('maps uWS (node runtime) statuses truthfully: sent(1)/buffered(0) succeed, dropped(2) fails', () => {
-    const create = () =>
-      NodeWsTransport.factory(options as any) as WsTransportServer
-    expect(setPeer(create(), () => 1).send('c1', buffer)).toBe(true)
-    expect(setPeer(create(), () => 0).send('c1', buffer)).toBe(true)
-    expect(setPeer(create(), () => 2).send('c1', buffer)).toBe(false)
-  })
-
-  it('maps Bun statuses truthfully: bytes sent(>0)/backpressure(-1) succeed, dropped(0) fails', () => {
-    // crossws refuses to create its Bun adapter unless a Bun global exists
-    vi.stubGlobal('Bun', {})
-    try {
-      const create = () =>
-        BunWsTransport.factory(options as any) as WsTransportServer
-      expect(setPeer(create(), () => 2).send('c1', buffer)).toBe(true)
-      expect(setPeer(create(), () => -1).send('c1', buffer)).toBe(true)
-      expect(setPeer(create(), () => 0).send('c1', buffer)).toBe(false)
-    } finally {
-      vi.unstubAllGlobals()
-    }
-  })
-
-  it('treats numeric statuses as success when the adapter has no interpreter', () => {
-    const server = new WsTransportServer(adapterFactory, options)
-    expect(setPeer(server, () => 0).send('c1', buffer)).toBe(true)
+  it('delegates numeric send status interpretation to the host', () => {
+    const isSendSuccess = (status: number) => status !== 2
+    expect(
+      setPeer(createHandler(isSendSuccess), () => 2).handler.send('c1', buffer),
+    ).toBe('dropped')
+    expect(
+      setPeer(createHandler(isSendSuccess), () => 1).handler.send('c1', buffer),
+    ).toBe('delivered')
+    expect(
+      setPeer(createHandler(isSendSuccess), () => 0).handler.send('c1', buffer),
+    ).toBe('delivered')
   })
 
   it('passes boolean results through', () => {
-    const server = new WsTransportServer(adapterFactory, options)
-    expect(setPeer(server, () => true).send('c1', buffer)).toBe(true)
-    expect(setPeer(server, () => false).send('c1', buffer)).toBe(false)
+    expect(
+      setPeer(createHandler(), () => true).handler.send('c1', buffer),
+    ).toBe('delivered')
+    expect(
+      setPeer(createHandler(), () => false).handler.send('c1', buffer),
+    ).toBe('dropped')
   })
 
-  it('returns false for unknown connections', () => {
-    const server = new WsTransportServer(adapterFactory, options)
-    expect(server.send('missing', buffer)).toBe(false)
+  it('reports no delivery feedback for a void send result', () => {
+    // Deno's peer.send returns void; that must not read as a drop or every
+    // send over that runtime would abort streams
+    expect(
+      setPeer(createHandler(), () => undefined).handler.send('c1', buffer),
+    ).toBe('unknown')
   })
 
-  it('returns false and drops the peer when send throws', () => {
-    const server = setPeer(
-      new WsTransportServer(adapterFactory, options),
+  it('drops sends to unknown connections', () => {
+    expect(createHandler().send('missing', buffer)).toBe('dropped')
+  })
+
+  it('leaves disconnect ownership to the close hook when send throws', async () => {
+    const onDisconnect = vi.fn(async () => {})
+    const { handler, peer } = setPeer(
+      createHandler(undefined, { onDisconnect }),
       () => {
         throw new Error('boom')
       },
     )
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
-    expect(server.send('c1', buffer)).toBe(false)
-    expect(server.clients.has('c1')).toBe(false)
+    expect(handler.send('c1', buffer)).toBe('dropped')
+    expect(handler.connections.peer('c1')).toBe(peer)
+
+    await handler.hooks.close!(peer, {})
+
+    expect(handler.connections.peer('c1')).toBeUndefined()
+    expect(onDisconnect).toHaveBeenCalledOnce()
     consoleError.mockRestore()
+  })
+})
+
+describe('NeemataWebSocketHandler.message', () => {
+  it('leaves disconnect ownership to the close hook after a message error', async () => {
+    const onMessage = vi.fn(async () => {
+      throw new Error('boom')
+    })
+    const onDisconnect = vi.fn(async () => {})
+    const { handler, peer, close } = setPeer(
+      createHandler(undefined, { onMessage, onDisconnect }),
+      () => true,
+    )
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    await handler.hooks.message!(peer, {
+      arrayBuffer: () => new ArrayBuffer(0),
+    } as any)
+
+    expect(close).toHaveBeenCalledWith(1011, 'Internal error')
+    expect(handler.connections.peer('c1')).toBe(peer)
+    await handler.hooks.close!(peer, {})
+    expect(handler.connections.peer('c1')).toBeUndefined()
+    expect(onDisconnect).toHaveBeenCalledOnce()
+    consoleError.mockRestore()
+  })
+})
+
+describe('NeemataWebSocketHandler.close', () => {
+  it('evicts the peer without notifying the gateway back', async () => {
+    const onDisconnect = vi.fn(async () => {})
+    const { handler, peer, close } = setPeer(
+      createHandler(undefined, { onDisconnect }),
+      () => true,
+    )
+
+    // gateway-initiated close runs inside the gateway's own connection
+    // teardown: the handler closes the socket but must not deliver
+    // onDisconnect, or the teardown would await itself
+    handler.close('c1', { code: 4000, reason: 'bye' })
+
+    expect(close).toHaveBeenCalledWith(4000, 'bye')
+    expect(onDisconnect).not.toHaveBeenCalled()
+    expect(handler.connections.peer('c1')).toBeUndefined()
+
+    // the runtime close hook fires later for the peer we just closed; the
+    // eviction already claimed it, so no late onDisconnect either
+    await handler.hooks.close!(peer, {})
+    expect(onDisconnect).not.toHaveBeenCalled()
+  })
+
+  it('applies the default close code and reason', async () => {
+    const onDisconnect = vi.fn(async () => {})
+    const { handler, close } = setPeer(
+      createHandler(undefined, { onDisconnect }),
+      () => true,
+    )
+
+    handler.close('c1')
+
+    expect(close).toHaveBeenCalledWith(1001, 'Closed')
+    expect(onDisconnect).not.toHaveBeenCalled()
   })
 })
