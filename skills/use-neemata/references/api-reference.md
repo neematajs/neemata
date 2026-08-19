@@ -56,8 +56,8 @@ import {
   schemas via `t`, DI, built-in injectables via `inject`, pubsub
   plugins, protocol enums/classes exported above.
 - Use direct packages for clients, server handlers, hosts, formats, adapters,
-  and runtime helpers: `@nmtjs/client`, `@nmtjs/http-transport`,
-  `@nmtjs/server-host/node`, `@nmtjs/application/neem/runtime`,
+  and runtime helpers: `@nmtjs/client`, `@nmtjs/transports/http`,
+  `@nmtjs/transports/host/node`, `@nmtjs/application/neem/runtime`,
   `@nmtjs/pubsub/redis`, etc.
 - Avoid direct `@nmtjs/core`, `@nmtjs/type`, `@nmtjs/contract`,
   `@nmtjs/config`, or `@nmtjs/pubsub` imports in end-user examples when

@@ -23,13 +23,19 @@ describe.sequential('Format', () => {
 
   it('should support a decoder', () => {
     expect(formats.supportsDecoder('application/json')).toBeNull()
-    expect(formats.supportsDecoder('test')).toBeInstanceOf(BaseServerFormat)
-    expect(formats.supportsDecoder('my-test')).toBeInstanceOf(BaseServerFormat)
+    expect(formats.supportsDecoder('application/test')).toBeInstanceOf(
+      BaseServerFormat,
+    )
+    expect(formats.supportsDecoder('application/my-test')).toBeInstanceOf(
+      BaseServerFormat,
+    )
   })
 
   it('should support an encoder', () => {
     expect(formats.supportsEncoder('application/json')).toBeNull()
-    expect(formats.supportsEncoder('test')).toBeInstanceOf(BaseServerFormat)
+    expect(formats.supportsEncoder('application/test')).toBeInstanceOf(
+      BaseServerFormat,
+    )
   })
 
   it('should throw when encoder/decoder unsupported and flag is set', () => {
@@ -51,5 +57,17 @@ describe('parseContentTypes', () => {
 
   it('should return wildcard when explicitly requested', () => {
     expect(parseContentTypes('*/*')).toEqual(['*/*'])
+  })
+
+  it('parses quoted MIME parameters without treating delimiters as syntax', () => {
+    expect(
+      parseContentTypes(
+        'application/json; profile="https://example.com/a;b=c"; q=0.5',
+      ),
+    ).toEqual(['application/json'])
+  })
+
+  it('rejects values that are not valid MIME types', () => {
+    expect(() => parseContentTypes('test')).toThrow(TypeError)
   })
 })

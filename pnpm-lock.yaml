@@ -193,31 +193,6 @@ importers:
         specifier: workspace:*
         version: link:../msgpack-format
 
-  packages/http-transport:
-    dependencies:
-      '@nmtjs/core':
-        specifier: workspace:*
-        version: link:../core
-      '@types/node':
-        specifier: ^24.13.2
-        version: 24.13.2
-    devDependencies:
-      '@nmtjs/application':
-        specifier: workspace:*
-        version: link:../application
-      '@nmtjs/common':
-        specifier: workspace:*
-        version: link:../common
-      '@nmtjs/gateway':
-        specifier: workspace:*
-        version: link:../gateway
-      '@nmtjs/protocol':
-        specifier: workspace:*
-        version: link:../protocol
-      '@nmtjs/server-host':
-        specifier: workspace:*
-        version: link:../server
-
   packages/json-format:
     dependencies:
       '@nmtjs/common':
@@ -290,9 +265,6 @@ importers:
       '@nmtjs/gateway':
         specifier: workspace:*
         version: link:../gateway
-      '@nmtjs/http-transport':
-        specifier: workspace:*
-        version: link:../http-transport
       '@nmtjs/json-format':
         specifier: workspace:*
         version: link:../json-format
@@ -305,12 +277,9 @@ importers:
       '@nmtjs/proxy':
         specifier: 1.0.0-beta.7
         version: 1.0.0-beta.7
-      '@nmtjs/server-host':
+      '@nmtjs/transports':
         specifier: workspace:*
-        version: link:../server
-      '@nmtjs/ws-transport':
-        specifier: workspace:*
-        version: link:../ws-transport
+        version: link:../transports
       '@types/node':
         specifier: ^24.13.2
         version: 24.13.2
@@ -411,7 +380,7 @@ importers:
         specifier: ^0.3.3
         version: 0.3.3
 
-  packages/server:
+  packages/transports:
     dependencies:
       '@nmtjs/common':
         specifier: workspace:*
@@ -432,12 +401,30 @@ importers:
         specifier: 0.4.6
         version: 0.4.6(srvx@0.12.4)
     devDependencies:
+      '@nmtjs/application':
+        specifier: workspace:*
+        version: link:../application
+      '@nmtjs/client':
+        specifier: workspace:*
+        version: link:../client
+      '@nmtjs/contract':
+        specifier: workspace:*
+        version: link:../contract
       '@nmtjs/core':
         specifier: workspace:*
         version: link:../core
       '@nmtjs/gateway':
         specifier: workspace:*
         version: link:../gateway
+      '@nmtjs/json-format':
+        specifier: workspace:*
+        version: link:../json-format
+      '@nmtjs/type':
+        specifier: workspace:*
+        version: link:../type
+      '@nmtjs/ws-client':
+        specifier: workspace:*
+        version: link:../ws-client
       uWebSockets.js:
         specifier: github:uNetworking/uWebSockets.js#v20.67.0
         version: https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/e0f56ebb4b349017f006e14d1cd29052f2a7121d
@@ -538,52 +525,6 @@ importers:
       '@nmtjs/protocol':
         specifier: workspace:*
         version: link:../protocol
-
-  packages/ws-transport:
-    dependencies:
-      '@nmtjs/core':
-        specifier: workspace:*
-        version: link:../core
-      '@types/node':
-        specifier: ^24.13.2
-        version: 24.13.2
-      crossws:
-        specifier: 0.4.6
-        version: 0.4.6(srvx@0.12.4)
-    devDependencies:
-      '@nmtjs/application':
-        specifier: workspace:*
-        version: link:../application
-      '@nmtjs/client':
-        specifier: workspace:*
-        version: link:../client
-      '@nmtjs/common':
-        specifier: workspace:*
-        version: link:../common
-      '@nmtjs/contract':
-        specifier: workspace:*
-        version: link:../contract
-      '@nmtjs/gateway':
-        specifier: workspace:*
-        version: link:../gateway
-      '@nmtjs/http-transport':
-        specifier: workspace:*
-        version: link:../http-transport
-      '@nmtjs/json-format':
-        specifier: workspace:*
-        version: link:../json-format
-      '@nmtjs/protocol':
-        specifier: workspace:*
-        version: link:../protocol
-      '@nmtjs/server-host':
-        specifier: workspace:*
-        version: link:../server
-      '@nmtjs/type':
-        specifier: workspace:*
-        version: link:../type
-      '@nmtjs/ws-client':
-        specifier: workspace:*
-        version: link:../ws-client
 
 packages:
 

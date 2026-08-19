@@ -6,13 +6,13 @@ import type {
 import type { NeemRuntimeUpstream, NeemRuntimeWorkerContext } from '@nmtjs/neem'
 import { Container, createLogger, Hooks } from '@nmtjs/core'
 import { Gateway } from '@nmtjs/gateway'
-import { neemataHttp } from '@nmtjs/http-transport'
 import { JsonFormat } from '@nmtjs/json-format/server'
 import { defineRuntimeWorker } from '@nmtjs/neem'
 import { ProtocolFormats } from '@nmtjs/protocol/server'
-import { createServerTransport } from '@nmtjs/server-host'
-import { createServerHost } from '@nmtjs/server-host/node'
-import { neemataWebSocket } from '@nmtjs/ws-transport'
+import { createServerTransport } from '@nmtjs/transports'
+import { createServerHost } from '@nmtjs/transports/host/node'
+import { neemataHttp } from '@nmtjs/transports/http'
+import { neemataWebSocket } from '@nmtjs/transports/ws'
 
 import { record } from '../../shared/support/_events.ts'
 

@@ -1,3 +1,5 @@
+import { MIMEType } from 'node:util'
+
 import type { Pattern } from '@nmtjs/common'
 import { match } from '@nmtjs/common'
 
@@ -50,19 +52,10 @@ export const parseContentTypes = (types: string) => {
     .split(',')
     .map((t) => t.trim())
     .map((t) => {
-      const [rawType, ...rest] = t.split(';')
-      const params = new Map(
-        rest.map((p) =>
-          p
-            .trim()
-            .split('=')
-            .slice(0, 2)
-            .map((part) => part.trim()),
-        ) as [string, string][],
-      )
+      const mime = new MIMEType(t)
       return {
-        type: rawType.trim(),
-        q: params.has('q') ? Number.parseFloat(params.get('q')!) : 1,
+        type: mime.essence,
+        q: Number.parseFloat(mime.params.get('q') ?? '1'),
       }
     })
     .sort((a, b) => {
@@ -102,7 +95,6 @@ export class ProtocolFormats {
     contentType: string,
     throwIfUnsupported = false,
   ): T | null {
-    // TODO: Use node:utils.MIMEType (not implemented yet in Deno and Bun yet)
     const types = parseContentTypes(contentType)
 
     for (const type of types) {

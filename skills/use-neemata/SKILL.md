@@ -12,9 +12,9 @@ the needed symbol is exported there.
 Exceptions:
 
 - Client code imports from `@nmtjs/client`, client transports, and formats.
-- Server handlers import from `@nmtjs/http-transport` and
-  `@nmtjs/ws-transport`; runtime hosts import from
-  `@nmtjs/server-host/node`, `/bun`, or `/deno`.
+- Server handlers import from `@nmtjs/transports/http` and
+  `@nmtjs/transports/ws`; runtime hosts import from
+  `@nmtjs/transports/host/node`, `/bun`, or `/deno`.
 - Neem runtime helpers import from package `/neem` subpaths.
 - Adapters import from package adapter subpaths such as `@nmtjs/pubsub/redis`.
 

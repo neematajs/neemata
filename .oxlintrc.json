@@ -34,8 +34,7 @@
     {
       "files": [
         "packages/protocol/src/server/protocol.ts",
-        "packages/http-transport/src/runtimes/deno.ts",
-        "packages/ws-transport/src/runtimes/deno.ts"
+        "packages/transports/src/host/deno.ts"
       ],
       "rules": {
         "typescript/no-redundant-type-constituents": "off"

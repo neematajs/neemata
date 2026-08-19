@@ -7,9 +7,9 @@ runtime files.
 
 ```ts
 import { app, host, pubsubPlugin } from 'nmtjs'
-import { neemataHttp } from '@nmtjs/http-transport'
-import { createServerTransport } from '@nmtjs/server-host'
-import { createServerHost } from '@nmtjs/server-host/node'
+import { neemataHttp } from '@nmtjs/transports/http'
+import { createServerTransport } from '@nmtjs/transports'
+import { createServerHost } from '@nmtjs/transports/host/node'
 
 import { api } from './router.ts'
 
