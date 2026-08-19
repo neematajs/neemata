@@ -1,7 +1,12 @@
 import type { MaybePromise } from '@nmtjs/common'
 import type { AnyInjectable } from '@nmtjs/core'
 import { IsStreamProcedureContract } from '@nmtjs/contract'
-import { CoreInjectables, loggerLocalStorage } from '@nmtjs/core'
+import {
+  CoreInjectables,
+  createFactoryInjectable,
+  forkLogger,
+  loggerLocalStorage,
+} from '@nmtjs/core'
 
 import type { AnyMiddleware } from './middlewares.ts'
 import type { ApiCallContext } from './types.ts'
@@ -24,6 +29,12 @@ const CALL_LOG_REDACT_PATHS = [
   'error.headers.cookie',
   'error.headers["set-cookie"]',
 ]
+
+const callLogger = createFactoryInjectable({
+  dependencies: { logger: CoreInjectables.logger },
+  create: ({ logger }) =>
+    forkLogger(logger, 'rpc', { redact: CALL_LOG_REDACT_PATHS }),
+})
 
 export type LoggingCallContextBuilder = (
   call: ApiCallContext,
@@ -56,9 +67,7 @@ export const LoggingCallMiddleware = (
 ): AnyMiddleware =>
   createMiddleware({
     dependencies: {
-      logger: CoreInjectables.logger('rpc', {
-        redact: CALL_LOG_REDACT_PATHS,
-      }),
+      logger: callLogger,
       options,
     },
     handler: async ({ logger, options }, call, next, payload) => {
