@@ -1,51 +1,76 @@
 import type { MaybePromise } from '@nmtjs/common'
+import type { AnyInjectable } from '@nmtjs/core'
 import { IsStreamProcedureContract } from '@nmtjs/contract'
-import { CoreInjectables, loggerLocalStorage } from '@nmtjs/core'
+import {
+  CoreInjectables,
+  createFactoryInjectable,
+  forkLogger,
+  loggerLocalStorage,
+} from '@nmtjs/core'
 
 import type { AnyMiddleware } from './middlewares.ts'
 import type { ApiCallContext } from './types.ts'
 import { createMiddleware } from './middlewares.ts'
 
-const defaultContext = (options: ApiCallContext) => {
-  return {
-    callId: options.callId,
-    connection: {
-      id: options.connection.id,
-      type: options.connection.type,
-      transport: options.connection.transport,
-      protocol: options.connection.protocol,
-      identity: options.connection.identity,
-    },
-  }
-}
+const CALL_LOG_REDACT_PATHS = [
+  'headers.authorization',
+  'headers.cookie',
+  'headers["set-cookie"]',
+  'payload.headers.authorization',
+  'payload.headers.cookie',
+  'payload.headers["set-cookie"]',
+  'response.headers.authorization',
+  'response.headers.cookie',
+  'response.headers["set-cookie"]',
+  'chunk.headers.authorization',
+  'chunk.headers.cookie',
+  'chunk.headers["set-cookie"]',
+  'error.headers.authorization',
+  'error.headers.cookie',
+  'error.headers["set-cookie"]',
+]
+
+const callLogger = createFactoryInjectable({
+  dependencies: { logger: CoreInjectables.logger },
+  create: ({ logger }) =>
+    forkLogger(logger, 'rpc', { redact: CALL_LOG_REDACT_PATHS }),
+})
+
+export type LoggingCallContextBuilder = (
+  call: ApiCallContext,
+  payload: unknown,
+) => MaybePromise<object>
 
 export const LoggingCallContextMiddleware = (
-  cb: (
-    options: ApiCallContext,
-    payload: unknown,
-  ) => MaybePromise<object> = defaultContext,
+  builder: AnyInjectable<LoggingCallContextBuilder>,
 ): AnyMiddleware =>
   createMiddleware({
-    handler: async (_, call, next, payload) => {
-      const loggingContext = await cb(call, payload)
+    dependencies: { builder },
+    handler: async ({ builder }, call, next, payload) => {
+      const loggingContext = await builder(call, payload)
       return loggerLocalStorage.run(loggingContext, async () => {
         return next()
       })
     },
   })
 
+export type LoggingCallMiddlewareOptions = {
+  level?: 'info' | 'debug' | 'trace'
+  errorLevel?: 'warn' | 'error' | 'fatal'
+  includePayload?: boolean
+  includeResponse?: boolean
+  includeStreamChunks?: boolean
+}
+
 export const LoggingCallMiddleware = (
-  options: {
-    level?: 'info' | 'debug' | 'trace'
-    errorLevel?: 'warn' | 'error' | 'fatal'
-    includePayload?: boolean
-    includeResponse?: boolean
-    includeStreamChunks?: boolean
-  } = {},
+  options: AnyInjectable<LoggingCallMiddlewareOptions>,
 ): AnyMiddleware =>
   createMiddleware({
-    dependencies: { logger: CoreInjectables.logger('rpc') },
-    handler: async ({ logger }, call, next, payload) => {
+    dependencies: {
+      logger: callLogger,
+      options,
+    },
+    handler: async ({ logger, options }, call, next, payload) => {
       const {
         includePayload,
         includeResponse,
