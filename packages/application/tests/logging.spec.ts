@@ -10,6 +10,7 @@ import { describe, expect, it } from 'vitest'
 
 import type {
   AnyMiddleware,
+  LoggingCallContextBuilder,
   LoggingCallMiddlewareOptions,
 } from '../src/index.ts'
 import {
@@ -138,11 +139,17 @@ describe('LoggingCallMiddleware', () => {
 })
 
 describe('LoggingCallContextMiddleware', () => {
-  it('keeps the default logging context', async () => {
+  it('accepts a static context builder injectable', async () => {
     const logs: Record<string, unknown>[] = []
+    const builder = createValueInjectable<LoggingCallContextBuilder>(
+      (call) => ({
+        callId: call.callId,
+        connection: { id: call.connection.id },
+      }),
+    )
     const runtime = createTestRuntime(
       [
-        LoggingCallContextMiddleware(),
+        LoggingCallContextMiddleware(builder),
         LoggingCallMiddleware(createValueInjectable({})),
       ],
       logs,
@@ -170,28 +177,27 @@ describe('LoggingCallContextMiddleware', () => {
     const logs: Record<string, unknown>[] = []
     let resolutions = 0
     let disposals = 0
-    const context = createFactoryInjectable<{ tenant: string }, {}, Scope.Call>(
-      {
-        scope: Scope.Call,
-        create: () => {
-          resolutions++
-          return { tenant: 'tenant-1' }
-        },
-        dispose: () => {
-          disposals++
-        },
+    const builder = createFactoryInjectable<
+      LoggingCallContextBuilder,
+      {},
+      Scope.Call
+    >({
+      scope: Scope.Call,
+      create: () => {
+        resolutions++
+        return (call, payload) => ({
+          callId: call.callId,
+          request: payload,
+          tenant: 'tenant-1',
+        })
       },
-    )
+      dispose: () => {
+        disposals++
+      },
+    })
     const runtime = createTestRuntime(
       [
-        LoggingCallContextMiddleware({
-          dependencies: { context },
-          handler: ({ context }, call, payload) => ({
-            callId: call.callId,
-            request: payload,
-            tenant: context.tenant,
-          }),
-        }),
+        LoggingCallContextMiddleware(builder),
         LoggingCallMiddleware(createValueInjectable({})),
       ],
       logs,

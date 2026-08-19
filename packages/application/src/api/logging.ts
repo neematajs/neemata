@@ -1,59 +1,29 @@
-import type {
-  AnyInjectable,
-  Dependencies,
-  HandlerFn,
-  HandlerInput,
-} from '@nmtjs/core'
+import type { MaybePromise } from '@nmtjs/common'
+import type { AnyInjectable } from '@nmtjs/core'
 import { IsStreamProcedureContract } from '@nmtjs/contract'
 import { CoreInjectables, loggerLocalStorage } from '@nmtjs/core'
 
-import type { AnyMiddleware, Middleware } from './middlewares.ts'
+import type { AnyMiddleware } from './middlewares.ts'
 import type { ApiCallContext } from './types.ts'
 import { createMiddleware } from './middlewares.ts'
 
-export type LoggingCallContextHandlerFn<Deps extends Dependencies> = HandlerFn<
-  Deps,
-  [call: ApiCallContext, payload: unknown],
-  object
->
+export type LoggingCallContextBuilder = (
+  call: ApiCallContext,
+  payload: unknown,
+) => MaybePromise<object>
 
-export type LoggingCallContextParams<Deps extends Dependencies> = HandlerInput<
-  Deps,
-  [call: ApiCallContext, payload: unknown],
-  object
->
-
-const defaultContext = (_: object, options: ApiCallContext) => {
-  return {
-    callId: options.callId,
-    connection: {
-      id: options.connection.id,
-      type: options.connection.type,
-      transport: options.connection.transport,
-      protocol: options.connection.protocol,
-      identity: options.connection.identity,
-    },
-  }
-}
-
-export const LoggingCallContextMiddleware = <Deps extends Dependencies = {}>(
-  paramsOrHandler: LoggingCallContextParams<Deps> = defaultContext,
-): Middleware<Deps> => {
-  const { dependencies = {} as Deps, handler } =
-    typeof paramsOrHandler === 'function'
-      ? { handler: paramsOrHandler }
-      : paramsOrHandler
-
-  return createMiddleware({
-    dependencies,
-    handler: async (ctx, call, next, payload) => {
-      const loggingContext = await handler(ctx, call, payload)
+export const LoggingCallContextMiddleware = (
+  builder: AnyInjectable<LoggingCallContextBuilder>,
+): AnyMiddleware =>
+  createMiddleware({
+    dependencies: { builder },
+    handler: async ({ builder }, call, next, payload) => {
+      const loggingContext = await builder(call, payload)
       return loggerLocalStorage.run(loggingContext, async () => {
         return next()
       })
     },
   })
-}
 
 export type LoggingCallMiddlewareOptions = {
   level?: 'info' | 'debug' | 'trace'
