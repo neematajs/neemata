@@ -1,13 +1,29 @@
-import type { MaybePromise } from '@nmtjs/common'
-import type { AnyInjectable } from '@nmtjs/core'
+import type {
+  AnyInjectable,
+  Dependencies,
+  HandlerFn,
+  HandlerInput,
+} from '@nmtjs/core'
 import { IsStreamProcedureContract } from '@nmtjs/contract'
 import { CoreInjectables, loggerLocalStorage } from '@nmtjs/core'
 
-import type { AnyMiddleware } from './middlewares.ts'
+import type { AnyMiddleware, Middleware } from './middlewares.ts'
 import type { ApiCallContext } from './types.ts'
 import { createMiddleware } from './middlewares.ts'
 
-const defaultContext = (options: ApiCallContext) => {
+export type LoggingCallContextHandlerFn<Deps extends Dependencies> = HandlerFn<
+  Deps,
+  [call: ApiCallContext, payload: unknown],
+  object
+>
+
+export type LoggingCallContextParams<Deps extends Dependencies> = HandlerInput<
+  Deps,
+  [call: ApiCallContext, payload: unknown],
+  object
+>
+
+const defaultContext = (_: object, options: ApiCallContext) => {
   return {
     callId: options.callId,
     connection: {
@@ -20,20 +36,24 @@ const defaultContext = (options: ApiCallContext) => {
   }
 }
 
-export const LoggingCallContextMiddleware = (
-  cb: (
-    options: ApiCallContext,
-    payload: unknown,
-  ) => MaybePromise<object> = defaultContext,
-): AnyMiddleware =>
-  createMiddleware({
-    handler: async (_, call, next, payload) => {
-      const loggingContext = await cb(call, payload)
+export const LoggingCallContextMiddleware = <Deps extends Dependencies = {}>(
+  paramsOrHandler: LoggingCallContextParams<Deps> = defaultContext,
+): Middleware<Deps> => {
+  const { dependencies = {} as Deps, handler } =
+    typeof paramsOrHandler === 'function'
+      ? { handler: paramsOrHandler }
+      : paramsOrHandler
+
+  return createMiddleware({
+    dependencies,
+    handler: async (ctx, call, next, payload) => {
+      const loggingContext = await handler(ctx, call, payload)
       return loggerLocalStorage.run(loggingContext, async () => {
         return next()
       })
     },
   })
+}
 
 export type LoggingCallMiddlewareOptions = {
   level?: 'info' | 'debug' | 'trace'
