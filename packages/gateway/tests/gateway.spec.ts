@@ -69,7 +69,7 @@ async function createTestGateway() {
     stop: vi.fn(async () => {}),
     send: vi.fn((_connectionId: string, buffer: ArrayBufferView) => {
       sent.push(Buffer.from(buffer as Uint8Array))
-      return true
+      return 'delivered' as const
     }),
     close: vi.fn((_connectionId: string) => {}),
   }

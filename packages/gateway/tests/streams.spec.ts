@@ -1,5 +1,6 @@
 import { Readable } from 'node:stream'
 
+import type { SendResult } from '@nmtjs/protocol/server'
 import type { Mock } from 'vitest'
 import { ProtocolBlob } from '@nmtjs/protocol'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -21,9 +22,9 @@ type TestSink = {
   chunks: Buffer[]
   ended: boolean
   errors: Error[]
-  sendResult: boolean
+  sendResult: SendResult
   sink: {
-    chunk: Mock<(chunk: Buffer) => boolean>
+    chunk: Mock<(chunk: Buffer) => SendResult>
     end: Mock<() => void>
     error: Mock<(error: Error) => void>
   }
@@ -34,9 +35,9 @@ const createTestSink = (): TestSink => {
     chunks: [],
     ended: false,
     errors: [],
-    sendResult: true,
+    sendResult: 'delivered',
     sink: {
-      chunk: vi.fn((chunk: Buffer): boolean => {
+      chunk: vi.fn((chunk: Buffer): SendResult => {
         state.chunks.push(Buffer.from(chunk))
         return state.sendResult
       }),
@@ -518,7 +519,7 @@ describe('BlobStreamsManager', () => {
     describe('transport drop', () => {
       it('aborts the stream and cleans up local state on a dropped frame', async () => {
         const test = createTestSink()
-        test.sendResult = false
+        test.sendResult = 'dropped'
         manager.createServerStream(
           'conn-1',
           1,

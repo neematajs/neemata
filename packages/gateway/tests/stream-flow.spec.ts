@@ -1,6 +1,7 @@
 import { Buffer } from 'node:buffer'
 import { Readable } from 'node:stream'
 
+import type { SendResult } from '@nmtjs/protocol/server'
 import { Hooks } from '@nmtjs/core'
 import {
   ClientMessageType,
@@ -114,7 +115,7 @@ const flush = async (rounds = 5) => {
 async function createTestGateway(options?: {
   call?: GatewayApi['call']
   streamIdleTimeout?: number
-  sendResult?: (message: SentMessage) => boolean
+  sendResult?: (message: SentMessage) => SendResult
   // invoked synchronously inside transport.send, after recording
   onSend?: (message: SentMessage) => void
 }) {
@@ -139,7 +140,7 @@ async function createTestGateway(options?: {
     send: vi.fn((_connectionId: string, buffer: ArrayBufferView) => {
       const message = decodeSent(Buffer.from(buffer as Uint8Array))
       sent.push(message)
-      const result = options?.sendResult?.(message) ?? true
+      const result = options?.sendResult?.(message) ?? 'delivered'
       options?.onSend?.(message)
       return result
     }),
@@ -302,7 +303,9 @@ describe('RPC stream flow control', () => {
     const { gateway, sentOfType, send } = await createTestGateway({
       call: async () => () => handler(),
       sendResult: (message) =>
-        message.type !== ServerMessageType.RpcStreamChunk,
+        message.type === ServerMessageType.RpcStreamChunk
+          ? 'dropped'
+          : 'delivered',
     })
 
     const inFlight = send(encodeRpcMessage(1, 'test', {}))
@@ -476,7 +479,9 @@ describe('RPC stream flow control', () => {
         return handler()
       },
       sendResult: (message) =>
-        message.type !== ServerMessageType.RpcStreamResponse,
+        message.type === ServerMessageType.RpcStreamResponse
+          ? 'dropped'
+          : 'delivered',
     })
 
     await send(encodeRpcMessage(1, 'test', {}))
@@ -646,7 +651,9 @@ describe('Upload stream flow control', () => {
         return null
       },
       sendResult: (message) =>
-        message.type !== ServerMessageType.ClientStreamPull,
+        message.type === ServerMessageType.ClientStreamPull
+          ? 'dropped'
+          : 'delivered',
     })
 
     await send(encodeRpcMessage(1, 'test', { __stream: 7 }))
@@ -740,7 +747,9 @@ describe('Download stream flow control', () => {
         return null
       },
       sendResult: (message) =>
-        message.type !== ServerMessageType.ServerStreamEnd,
+        message.type === ServerMessageType.ServerStreamEnd
+          ? 'dropped'
+          : 'delivered',
     })
 
     await send(encodeRpcMessage(1, 'test', {}))

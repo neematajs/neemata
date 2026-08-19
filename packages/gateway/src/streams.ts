@@ -246,7 +246,7 @@ export class BlobStreamsManager {
         const state = this.serverStreams.get(key)
         if (state) this.touch(state)
         const sent = sink.chunk(chunk)
-        if (sent === false) {
+        if (sent === 'dropped') {
           this.abortServerStream(
             connectionId,
             streamId,

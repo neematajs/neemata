@@ -12,11 +12,11 @@ describe('getFormat', () => {
   it('should resolve both encoder and decoder', () => {
     const formats = new ProtocolFormats([testFormat()])
     const { encoder, decoder } = getFormat(formats, {
-      contentType: 'test',
-      accept: 'test',
+      contentType: 'application/test',
+      accept: 'application/test',
     })
-    expect(encoder.contentType).toBe('test')
-    expect(decoder.accept).toContainEqual('test')
+    expect(encoder.contentType).toBe('application/test')
+    expect(decoder.accept).toContainEqual('application/test')
   })
 
   it('should resolve encoder from accept and decoder from content-type', () => {
@@ -41,14 +41,20 @@ describe('getFormat', () => {
   it('should throw when encoder unsupported', () => {
     const formats = new ProtocolFormats([testFormat()])
     expect(() =>
-      getFormat(formats, { contentType: 'test', accept: 'application/json' }),
+      getFormat(formats, {
+        contentType: 'application/test',
+        accept: 'application/json',
+      }),
     ).toThrow(UnsupportedAcceptTypeError)
   })
 
   it('should throw when decoder unsupported', () => {
     const formats = new ProtocolFormats([testFormat()])
     expect(() =>
-      getFormat(formats, { contentType: 'application/json', accept: 'test' }),
+      getFormat(formats, {
+        contentType: 'application/json',
+        accept: 'application/test',
+      }),
     ).toThrow(UnsupportedContentTypeError)
   })
 })

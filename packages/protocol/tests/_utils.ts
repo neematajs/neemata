@@ -17,14 +17,14 @@ import { BaseServerFormat } from '../src/server/format.ts'
 
 export class TestFormat extends BaseServerFormat {
   accept: Pattern[] = [
-    'test',
+    'application/test',
     '*es*',
     '*test',
-    'test*',
-    (t) => t === 'test',
+    'application/test*',
+    (t) => t === 'application/test',
     /test/,
   ]
-  contentType = 'test'
+  contentType = 'application/test'
 
   encode(data: any): ArrayBufferView {
     return serialize(data) as ArrayBufferView

@@ -22,7 +22,7 @@ describe('Neemata application runtime', () => {
     const logger = createLogger({ pinoOptions: { enabled: false } }, 'test')
 
     const httpTransport = {
-      proxyable: ProxyableTransportType.HTTP,
+      proxyable: [ProxyableTransportType.HTTP],
       async factory(options: { listen: { hostname: string; port: number } }) {
         events.push(`factory:${options.listen.port}`)
         return {
@@ -94,6 +94,169 @@ describe('Neemata application runtime', () => {
     ])
   })
 
+  it('runs effect teardowns before classic Stop hooks on stop', async () => {
+    const events: string[] = []
+    const logger = createLogger({ pinoOptions: { enabled: false } }, 'test')
+    const host = createApplicationHost(
+      defineApplication({
+        router: createRootRouter([]),
+        lifecycleHooks: {
+          [ExecutionEnvironmentLifecycleHook.Start]: () => {
+            events.push('hook:start')
+            return () => {
+              events.push('effect:hook')
+            }
+          },
+          [ExecutionEnvironmentLifecycleHook.Stop]: () => {
+            events.push('hook:stop')
+          },
+        },
+        plugins: [
+          {
+            name: 'effectful',
+            hooks: {
+              [ExecutionEnvironmentLifecycleHook.Start]: () => {
+                events.push('plugin:start')
+                return () => {
+                  events.push('effect:plugin')
+                }
+              },
+              [ExecutionEnvironmentLifecycleHook.Stop]: () => {
+                events.push('plugin:stop')
+              },
+            },
+          },
+        ],
+      }),
+      {
+        logger,
+        formats: createFormats(),
+        transports: {
+          server: { transport: createEventsTransport(events), options: {} },
+        },
+      },
+    )
+
+    await host.start()
+    await host.stop()
+
+    // effect teardowns unwind LIFO after the transport drains, before the
+    // classic Stop hook list fires in registration order
+    expect(events).toStrictEqual([
+      'transport:start',
+      'hook:start',
+      'plugin:start',
+      'transport:stop',
+      'effect:plugin',
+      'effect:hook',
+      'hook:stop',
+      'plugin:stop',
+    ])
+  })
+
+  it('stops transports and disposes the application when a start hook fails', async () => {
+    const events: string[] = []
+    const failure = new Error('start hook failed')
+    const logger = createLogger({ pinoOptions: { enabled: false } }, 'test')
+    const host = createApplicationHost(
+      defineApplication({
+        router: createRootRouter([]),
+        lifecycleHooks: {
+          [ExecutionEnvironmentLifecycleHook.Start]: () => {
+            events.push('hook:start')
+            return () => {
+              events.push('effect:hook')
+            }
+          },
+          [ExecutionEnvironmentLifecycleHook.Stop]: () => {
+            events.push('hook:stop')
+          },
+          [ExecutionEnvironmentLifecycleHook.BeforeDispose]: () => {
+            events.push('application:dispose')
+          },
+        },
+        plugins: [
+          {
+            name: 'failing-start',
+            hooks: {
+              [ExecutionEnvironmentLifecycleHook.Start]: () => {
+                events.push('plugin:start')
+                throw failure
+              },
+              [ExecutionEnvironmentLifecycleHook.Stop]: () => {
+                events.push('plugin:stop')
+              },
+            },
+          },
+          {
+            name: 'never-started',
+            hooks: {
+              [ExecutionEnvironmentLifecycleHook.Start]: () => {
+                events.push('unreached:start')
+                return () => {
+                  events.push('effect:unreached')
+                }
+              },
+              [ExecutionEnvironmentLifecycleHook.Stop]: () => {
+                events.push('unreached:stop')
+              },
+            },
+          },
+        ],
+      }),
+      {
+        logger,
+        formats: createFormats(),
+        transports: {
+          server: { transport: createEventsTransport(events), options: {} },
+        },
+      },
+    )
+
+    // rollback is clean, so the original error surfaces bare
+    await expect(host.start()).rejects.toBe(failure)
+    // only the completed Start hook contributed an effect teardown; classic
+    // Stop hooks all fire regardless, and the application disposes last
+    expect(events).toStrictEqual([
+      'transport:start',
+      'hook:start',
+      'plugin:start',
+      'transport:stop',
+      'effect:hook',
+      'hook:stop',
+      'plugin:stop',
+      'unreached:stop',
+      'application:dispose',
+    ])
+  })
+
+  it('rejects a second start and no-ops stop before start', async () => {
+    const events: string[] = []
+    const logger = createLogger({ pinoOptions: { enabled: false } }, 'test')
+    const host = createApplicationHost(
+      defineApplication({ router: createRootRouter([]) }),
+      {
+        logger,
+        formats: createFormats(),
+        transports: {
+          server: { transport: createEventsTransport(events), options: {} },
+        },
+      },
+    )
+
+    // stop() on a never-started host is a no-op
+    await host.stop()
+    expect(events).toStrictEqual([])
+
+    await host.start()
+    await expect(host.start()).rejects.toThrow(
+      'The application host is already started',
+    )
+
+    await host.stop()
+    expect(events).toStrictEqual(['transport:start', 'transport:stop'])
+  })
+
   it('preserves root-composed router metadata without changing procedure names', async () => {
     const logger = createLogger({ pinoOptions: { enabled: false } }, 'test')
     const allowed = createMeta<'get'>()
@@ -104,7 +267,7 @@ describe('Neemata application runtime', () => {
       routes: { ping: procedure },
     })
     const transport = {
-      proxyable: ProxyableTransportType.HTTP,
+      proxyable: [ProxyableTransportType.HTTP],
       async factory() {
         return {
           start(next) {
@@ -147,4 +310,21 @@ describe('Neemata application runtime', () => {
 
 function createFormats() {
   return new ProtocolFormats([new JsonFormat(), new MsgpackFormat()])
+}
+
+function createEventsTransport(events: string[]) {
+  return {
+    proxyable: undefined,
+    async factory() {
+      return {
+        async start() {
+          events.push('transport:start')
+          return 'test://'
+        },
+        async stop() {
+          events.push('transport:stop')
+        },
+      }
+    },
+  } satisfies ApplicationTransport
 }

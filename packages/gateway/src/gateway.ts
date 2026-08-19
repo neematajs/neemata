@@ -19,6 +19,7 @@ import {
   createFuture,
   isAbortError,
   noopFn,
+  TeardownStack,
   withTimeout,
 } from '@nmtjs/common'
 import {
@@ -89,7 +90,7 @@ export interface GatewayOptions<
   transports: {
     [key: string]: {
       transport: TransportWorker<ConnectionType, ResolvedProcedure>
-      proxyable?: ProxyableTransportType
+      proxyable?: readonly ProxyableTransportType[]
     }
   }
   identity?: ConnectionIdentity
@@ -157,6 +158,7 @@ export class Gateway<
   >()
   // In-flight teardowns keyed by connection id, see closeConnection
   private readonly closingConnections = new Map<string, Promise<void>>()
+  readonly #startedTransports = new TeardownStack()
   /**
    * Chunk-count credits for in-flight RPC streaming responses, keyed by
    * connectionId:callId. Entries live strictly within handleRpcMessage's
@@ -194,18 +196,34 @@ export class Gateway<
 
   async start() {
     const hosts: { url: string; type: ProxyableTransportType }[] = []
-    for (const transportKey in this.options.transports) {
-      const { transport, proxyable } = this.options.transports[transportKey]
-      const url = await transport.start({
-        formats: this.options.formats,
-        onConnect: this.onConnect(transportKey),
-        onDisconnect: this.onDisconnect(transportKey),
-        onMessage: this.onMessage(transportKey),
-        resolve: this.resolve(transportKey),
-        onRpc: this.onRpc(transportKey),
-      })
-      this.logger.info(`Transport [${transportKey}] started on [${url}]`)
-      if (proxyable) hosts.push({ url, type: proxyable })
+    try {
+      for (const transportKey in this.options.transports) {
+        const { transport, proxyable } = this.options.transports[transportKey]
+        const url = await transport.start({
+          formats: this.options.formats,
+          onConnect: this.onConnect(transportKey),
+          onDisconnect: this.onDisconnect(transportKey),
+          onMessage: this.onMessage(transportKey),
+          resolve: this.resolve(transportKey),
+          onRpc: this.onRpc(transportKey),
+        })
+        this.#startedTransports.defer(async () => {
+          await transport.stop({ formats: this.options.formats })
+          this.logger.debug(`Transport [${transportKey}] stopped`)
+        })
+        this.logger.info(`Transport [${transportKey}] started on [${url}]`)
+
+        for (const type of new Set(proxyable ?? [])) hosts.push({ url, type })
+      }
+    } catch (error) {
+      const rollbackErrors = await this.#startedTransports.unwind()
+      if (rollbackErrors.length) {
+        throw new AggregateError(
+          [error, ...rollbackErrors],
+          'Failed to start gateway and roll back transports',
+        )
+      }
+      throw error
     }
     return hosts
   }
@@ -305,10 +323,10 @@ export class Gateway<
     // (e.g. transport disconnect) — they are no longer in the map
     await Promise.all(this.closingConnections.values())
 
-    for (const key in this.options.transports) {
-      const { transport } = this.options.transports[key]
-      await transport.stop({ formats: this.options.formats })
-      this.logger.debug(`Transport [${key}] stopped`)
+    // stops exactly the transports that started, in reverse start order
+    const errors = await this.#startedTransports.unwind()
+    if (errors.length) {
+      throw new AggregateError(errors, 'Failed to stop gateway transports')
     }
   }
 
@@ -428,7 +446,7 @@ export class Gateway<
                   { streamId, size: pullSize },
                 ),
               )
-              if (sent === false) {
+              if (sent === 'dropped') {
                 // phantom credit would stall both sides: Node won't re-invoke
                 // _read for a pull the client never received
                 this.blobStreams.revokeClientStreamGrant(
@@ -453,7 +471,7 @@ export class Gateway<
                 { streamId, reason },
               ),
             )
-            if (sent === false) {
+            if (sent === 'dropped') {
               void this.closeConnection(connectionId, TERMINAL_FRAME_DROP_CLOSE)
             }
           },
@@ -871,7 +889,7 @@ export class Gateway<
               { callId },
             ),
           )
-          if (sentResponse === false) {
+          if (sentResponse === 'dropped') {
             // the client never learns this call is a stream; nothing
             // stream-level can recover it
             void this.closeConnection(connectionId, TERMINAL_FRAME_DROP_CLOSE)
@@ -932,7 +950,7 @@ export class Gateway<
                 { callId, chunk: chunkEncoded },
               ),
             )
-            if (sent === false) {
+            if (sent === 'dropped') {
               throw new StreamFlowError(STREAM_TRANSPORT_DROP_REASON)
             }
           }
@@ -943,7 +961,7 @@ export class Gateway<
               callId,
             }),
           )
-          if (sentEnd === false) {
+          if (sentEnd === 'dropped') {
             // terminal frame lost: the client would wait forever
             void this.closeConnection(connectionId, TERMINAL_FRAME_DROP_CLOSE)
           }
@@ -959,7 +977,7 @@ export class Gateway<
                 error instanceof StreamFlowError ? error.message : undefined,
             }),
           )
-          if (sentAbort === false) {
+          if (sentAbort === 'dropped') {
             void this.closeConnection(connectionId, TERMINAL_FRAME_DROP_CLOSE)
           }
         } finally {
@@ -1131,7 +1149,7 @@ export class Gateway<
                 },
               ),
             )
-            if (sent === false) {
+            if (sent === 'dropped') {
               // terminal frame lost after local state removal: the client
               // would wait forever, only a connection close can recover
               void this.closeConnection(connectionId, TERMINAL_FRAME_DROP_CLOSE)
@@ -1146,7 +1164,7 @@ export class Gateway<
                 { streamId, reason: error.message },
               ),
             )
-            if (sent === false) {
+            if (sent === 'dropped') {
               void this.closeConnection(connectionId, TERMINAL_FRAME_DROP_CLOSE)
             }
           },

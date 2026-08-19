@@ -24,12 +24,16 @@ function createMockServerContext(version: ProtocolVersion1): MessageContext {
   return {
     connectionId: 'conn',
     streamId: vi.fn().mockReturnValue(1),
-    decoder: { decode: vi.fn(), decodeRPC: vi.fn(), accept: ['test'] },
+    decoder: {
+      decode: vi.fn(),
+      decodeRPC: vi.fn(),
+      accept: ['application/test'],
+    },
     encoder: {
       encode: vi.fn(),
       encodeRPC: vi.fn(),
       encodeBlob: vi.fn((streamId, metadata) => ({ streamId, metadata })),
-      contentType: 'test',
+      contentType: 'application/test',
     },
     protocol: version,
     addClientStream: vi.fn(({ streamId, metadata }) => {

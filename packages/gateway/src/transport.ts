@@ -1,7 +1,7 @@
 import type { MaybePromise } from '@nmtjs/common'
 import type { LazyInjectable, Provision, Scope } from '@nmtjs/core'
 import type { ConnectionType, ProtocolVersion } from '@nmtjs/protocol'
-import type { ProtocolFormats } from '@nmtjs/protocol/server'
+import type { ProtocolFormats, SendResult } from '@nmtjs/protocol/server'
 
 import type { GatewayResolvedProcedure } from './api.ts'
 import type { GatewayConnection } from './connections.ts'
@@ -12,6 +12,8 @@ export interface TransportConnection {
   connectionId: string
   type: ConnectionType
 }
+
+export type { SendResult } from '@nmtjs/protocol/server'
 
 export interface TransportOnConnectOptions<
   Type extends ConnectionType = ConnectionType,
@@ -75,7 +77,7 @@ export interface TransportWorker<
   ) => MaybePromise<void>
   send?: Type extends 'unidirectional'
     ? never
-    : (connectionId: string, buffer: ArrayBufferView) => boolean | null
+    : (connectionId: string, buffer: ArrayBufferView) => SendResult
   close?: Type extends 'unidirectional'
     ? never
     : (
@@ -90,8 +92,8 @@ export interface Transport<
   Injections extends {
     [key: string]: LazyInjectable<any, Scope.Connection | Scope.Call>
   } = { [key: string]: LazyInjectable<any, Scope.Connection | Scope.Call> },
-  Proxyable extends ProxyableTransportType | undefined =
-    | ProxyableTransportType
+  Proxyable extends readonly ProxyableTransportType[] | undefined =
+    | readonly ProxyableTransportType[]
     | undefined,
   ResolvedProcedure extends GatewayResolvedProcedure = GatewayResolvedProcedure,
 > {
@@ -108,8 +110,8 @@ export function createTransport<
   Injections extends {
     [key: string]: LazyInjectable<any, Scope.Connection | Scope.Call>
   } = { [key: string]: LazyInjectable<any, Scope.Connection | Scope.Call> },
-  Proxyable extends ProxyableTransportType | undefined =
-    | ProxyableTransportType
+  Proxyable extends readonly ProxyableTransportType[] | undefined =
+    | readonly ProxyableTransportType[]
     | undefined,
   ResolvedProcedure extends GatewayResolvedProcedure = GatewayResolvedProcedure,
 >(
