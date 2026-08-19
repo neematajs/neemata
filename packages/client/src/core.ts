@@ -144,6 +144,7 @@ export class ClientCore extends EventEmitter<{
       this.autoConnect &&
       !this.#disposed &&
       this.#lastDisconnectReason !== 'client' &&
+      (this.#state === 'connecting' || !this.#reconnectPromise) &&
       (this.#state === 'idle' ||
         this.#state === 'connecting' ||
         this.#state === 'disconnected')
