@@ -1,4 +1,5 @@
 import type { MaybePromise } from '@nmtjs/common'
+import type { AnyInjectable } from '@nmtjs/core'
 import { IsStreamProcedureContract } from '@nmtjs/contract'
 import { CoreInjectables, loggerLocalStorage } from '@nmtjs/core'
 
@@ -34,18 +35,20 @@ export const LoggingCallContextMiddleware = (
     },
   })
 
+export type LoggingCallMiddlewareOptions = {
+  level?: 'info' | 'debug' | 'trace'
+  errorLevel?: 'warn' | 'error' | 'fatal'
+  includePayload?: boolean
+  includeResponse?: boolean
+  includeStreamChunks?: boolean
+}
+
 export const LoggingCallMiddleware = (
-  options: {
-    level?: 'info' | 'debug' | 'trace'
-    errorLevel?: 'warn' | 'error' | 'fatal'
-    includePayload?: boolean
-    includeResponse?: boolean
-    includeStreamChunks?: boolean
-  } = {},
+  options: AnyInjectable<LoggingCallMiddlewareOptions>,
 ): AnyMiddleware =>
   createMiddleware({
-    dependencies: { logger: CoreInjectables.logger('rpc') },
-    handler: async ({ logger }, call, next, payload) => {
+    dependencies: { logger: CoreInjectables.logger('rpc'), options },
+    handler: async ({ logger, options }, call, next, payload) => {
       const {
         includePayload,
         includeResponse,
