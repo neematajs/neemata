@@ -26,6 +26,7 @@ import {
 const createTestRuntime = (
   middlewares: AnyMiddleware[],
   logs: Record<string, unknown>[],
+  response: unknown = 'pong',
 ) => {
   const stream = new Writable({
     write(chunk, _encoding, callback) {
@@ -40,7 +41,7 @@ const createTestRuntime = (
   const router = createRootRouter([
     createRouter({
       routes: {
-        ping: createProcedure({ handler: () => 'pong' }),
+        ping: createProcedure({ handler: () => response }),
       },
     }),
   ])
@@ -132,6 +133,52 @@ describe('LoggingCallMiddleware', () => {
           }),
         ]),
       )
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
+  it('redacts sensitive headers from call logs', async () => {
+    const logs: Record<string, unknown>[] = []
+    const headers = {
+      accept: 'application/json',
+      authorization: 'Bearer secret',
+      cookie: 'session=secret',
+      'set-cookie': 'session=secret; HttpOnly',
+    }
+    const runtime = createTestRuntime(
+      [LoggingCallMiddleware(createValueInjectable({}))],
+      logs,
+      { headers },
+    )
+
+    try {
+      await runtime.initialize()
+      await call(runtime, { headers })
+
+      const callLog = logs.find((entry) => entry.msg === 'RPC call')
+      const responseLog = logs.find((entry) => entry.msg === 'RPC response')
+
+      expect(callLog).toMatchObject({
+        payload: {
+          headers: {
+            accept: 'application/json',
+            authorization: '[Redacted]',
+            cookie: '[Redacted]',
+            'set-cookie': '[Redacted]',
+          },
+        },
+      })
+      expect(responseLog).toMatchObject({
+        response: {
+          headers: {
+            accept: 'application/json',
+            authorization: '[Redacted]',
+            cookie: '[Redacted]',
+            'set-cookie': '[Redacted]',
+          },
+        },
+      })
     } finally {
       await runtime.dispose()
     }

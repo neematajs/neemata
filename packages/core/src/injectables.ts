@@ -412,6 +412,7 @@ const loggerInjectable = Object.assign(
   createLazyInjectable<Logger>(Scope.Global, 'Logger'),
 ) as unknown as ((
   label: string,
+  options?: ChildLoggerOptions,
 ) => FactoryInjectable<Logger, { logger: LazyInjectable<Logger> }>) &
   LazyInjectable<Logger>
 

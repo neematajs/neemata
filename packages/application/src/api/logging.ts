@@ -7,6 +7,24 @@ import type { AnyMiddleware } from './middlewares.ts'
 import type { ApiCallContext } from './types.ts'
 import { createMiddleware } from './middlewares.ts'
 
+const CALL_LOG_REDACT_PATHS = [
+  'headers.authorization',
+  'headers.cookie',
+  'headers["set-cookie"]',
+  'payload.headers.authorization',
+  'payload.headers.cookie',
+  'payload.headers["set-cookie"]',
+  'response.headers.authorization',
+  'response.headers.cookie',
+  'response.headers["set-cookie"]',
+  'chunk.headers.authorization',
+  'chunk.headers.cookie',
+  'chunk.headers["set-cookie"]',
+  'error.headers.authorization',
+  'error.headers.cookie',
+  'error.headers["set-cookie"]',
+]
+
 export type LoggingCallContextBuilder = (
   call: ApiCallContext,
   payload: unknown,
@@ -37,7 +55,12 @@ export const LoggingCallMiddleware = (
   options: AnyInjectable<LoggingCallMiddlewareOptions>,
 ): AnyMiddleware =>
   createMiddleware({
-    dependencies: { logger: CoreInjectables.logger('rpc'), options },
+    dependencies: {
+      logger: CoreInjectables.logger('rpc', {
+        redact: CALL_LOG_REDACT_PATHS,
+      }),
+      options,
+    },
     handler: async ({ logger, options }, call, next, payload) => {
       const {
         includePayload,
