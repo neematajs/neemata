@@ -1,7 +1,7 @@
 # Application Interfaces — Refactor Plan
 
-Status: direction approved (v2) — the out-of-Neemata consumer API (Slice E) is
-approved in direction but its exact shape may still be revised
+Status: direction approved (v2) — Slices A–D implemented; Slice E split out as
+a separate task (direction approved, surface provisional); Slice F remaining
 Date: 2026-08-21
 Baseline: `784a1d77`
 
@@ -223,6 +223,10 @@ Neem thread options remain plain values (they cross a worker boundary) and
 are wrapped at the Neem worker seam.
 
 ## Slice E — Standalone consumption (external HTTP apps and beyond)
+
+**SPLIT OUT (2026-08-21)** — approved in direction but out of the current
+refactor's scope; tracked as its own task. The design below is the starting
+point for that work, not a commitment of this plan.
 
 Branch: `dev/standalone-runtime` · Packages: core (exposure), application, nmtjs
 umbrella · **API shape provisional — direction approved, surface may be revised**
