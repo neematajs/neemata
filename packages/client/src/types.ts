@@ -1,5 +1,10 @@
 import type { CallTypeProvider, OneOf, TypeProvider } from '@nmtjs/common'
-import type { TAnyProcedureContract, TAnyRouterContract } from '@nmtjs/contract'
+import type {
+  TAnyCallableContract,
+  TAnyProcedureContract,
+  TAnyRouterContract,
+  TAnyStreamContract,
+} from '@nmtjs/contract'
 import type { ProtocolError } from '@nmtjs/protocol/client'
 import type { BaseTypeAny, t } from '@nmtjs/type'
 
@@ -79,7 +84,7 @@ export interface RuntimeOutputContractTypeProvider extends TypeProvider {
 
 export type AnyResolvedContractProcedure = {
   [ResolvedType]: 'procedure'
-  contract: TAnyProcedureContract
+  contract: TAnyCallableContract
   stream: boolean
   input: any
   output: any
@@ -95,25 +100,31 @@ export type ResolveAPIRouterRoutes<
   InputTypeProvider extends TypeProvider = TypeProvider,
   OutputTypeProvider extends TypeProvider = TypeProvider,
 > = { [ResolvedType]: 'router' } & {
-  [K in keyof T['routes']]: T['routes'][K] extends TAnyProcedureContract
+  [K in keyof T['routes']]: T['routes'][K] extends TAnyStreamContract
     ? {
         [ResolvedType]: 'procedure'
         contract: T['routes'][K]
-        stream: T['routes'][K]['stream'] extends true ? true : false
+        stream: true
         input: CallTypeProvider<InputTypeProvider, T['routes'][K]['input']>
-        output: T['routes'][K]['stream'] extends true
-          ? AsyncIterable<
-              CallTypeProvider<OutputTypeProvider, T['routes'][K]['output']>
-            >
-          : CallTypeProvider<OutputTypeProvider, T['routes'][K]['output']>
-      }
-    : T['routes'][K] extends TAnyRouterContract
-      ? ResolveAPIRouterRoutes<
-          T['routes'][K],
-          InputTypeProvider,
-          OutputTypeProvider
+        output: AsyncIterable<
+          CallTypeProvider<OutputTypeProvider, T['routes'][K]['output']>
         >
-      : never
+      }
+    : T['routes'][K] extends TAnyProcedureContract
+      ? {
+          [ResolvedType]: 'procedure'
+          contract: T['routes'][K]
+          stream: false
+          input: CallTypeProvider<InputTypeProvider, T['routes'][K]['input']>
+          output: CallTypeProvider<OutputTypeProvider, T['routes'][K]['output']>
+        }
+      : T['routes'][K] extends TAnyRouterContract
+        ? ResolveAPIRouterRoutes<
+            T['routes'][K],
+            InputTypeProvider,
+            OutputTypeProvider
+          >
+        : never
 }
 
 export type ResolveContract<

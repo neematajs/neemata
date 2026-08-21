@@ -27,10 +27,9 @@ const staticContract = c.router({
       routes: {
         audit: c.router({
           routes: {
-            feed: c.procedure({
+            feed: c.stream({
               input: t.object({ limit: t.number() }),
               output: t.object({ seq: t.number() }),
-              stream: true,
             }),
           },
         }),
@@ -56,10 +55,9 @@ const runtimeContract = c.router({
           input: t.object({ id: t.bigInt(), createdAt: t.date() }),
           output: t.object({ id: t.bigInt(), createdAt: t.date() }),
         }),
-        feed: c.procedure({
+        feed: c.stream({
           input: t.object({ since: t.date() }),
           output: t.object({ id: t.bigInt(), createdAt: t.date() }),
-          stream: true,
         }),
       },
     }),

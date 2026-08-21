@@ -1,4 +1,4 @@
-import type { TProcedureContract } from '@nmtjs/contract'
+import type { TProcedureContract, TStreamContract } from '@nmtjs/contract'
 import type { Container } from '@nmtjs/core'
 import type { GatewayConnection } from '@nmtjs/gateway'
 import type { AnyCompatibleType, BaseTypeAny } from '@nmtjs/type'
@@ -12,12 +12,16 @@ export type ApiCallContext<Payload = unknown> = Readonly<{
   container: Container
   path: AnyRouter[]
   procedure: Procedure<
-    TProcedureContract<
-      AnyCompatibleType<any, Payload>,
-      BaseTypeAny,
-      true | undefined,
-      string | undefined
-    >,
+    | TProcedureContract<
+        AnyCompatibleType<any, Payload>,
+        BaseTypeAny,
+        string | undefined
+      >
+    | TStreamContract<
+        AnyCompatibleType<any, Payload>,
+        BaseTypeAny,
+        string | undefined
+      >,
     any
   >
 }>

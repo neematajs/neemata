@@ -6,28 +6,28 @@ import type { ContractSchemaOptions } from '../utils.ts'
 import { Kind } from '../constants.ts'
 import { createSchema } from '../utils.ts'
 
-export type TAnyProcedureContract = TProcedureContract<
+export type TAnyStreamContract = TStreamContract<
   BaseType,
   BaseType,
   string | undefined
 >
 
-export const ProcedureKind = Symbol('NeemataProcedure')
+export const StreamKind = Symbol('NeemataStream')
 
-export interface TProcedureContract<
+export interface TStreamContract<
   Input extends BaseType,
   Output extends BaseType,
   Name extends string | undefined = undefined,
 > {
-  readonly [Kind]: typeof ProcedureKind
-  readonly type: 'neemata:procedure'
+  readonly [Kind]: typeof StreamKind
+  readonly type: 'neemata:stream'
   readonly name: Name
   readonly input: Input
   readonly output: Output
   readonly timeout?: number
 }
 
-export const ProcedureContract = <
+export const StreamContract = <
   const Options extends {
     input?: BaseType
     output?: BaseType
@@ -37,7 +37,7 @@ export const ProcedureContract = <
   },
 >(
   options: Options,
-): TProcedureContract<
+): TStreamContract<
   Options['input'] extends BaseType ? Options['input'] : NeverType,
   Options['output'] extends BaseType ? Options['output'] : NeverType,
   Options['name'] extends string ? Options['name'] : undefined
@@ -51,8 +51,8 @@ export const ProcedureContract = <
   } = options
   return createSchema({
     ...schemaOptions,
-    [Kind]: ProcedureKind,
-    type: 'neemata:procedure',
+    [Kind]: StreamKind,
+    type: 'neemata:stream',
     input,
     output,
     name,
@@ -60,8 +60,8 @@ export const ProcedureContract = <
   })
 }
 
-export function IsProcedureContract(
+export function IsStreamContract(
   contract: any,
-): contract is TAnyProcedureContract {
-  return Kind in contract && contract[Kind] === ProcedureKind
+): contract is TAnyStreamContract {
+  return Kind in contract && contract[Kind] === StreamKind
 }

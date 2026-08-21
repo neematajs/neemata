@@ -1,8 +1,7 @@
 import type { Callback } from '@nmtjs/common'
 import type {
-  TAnyProcedureContract,
+  TAnyCallableContract,
   TAnyRouterContract,
-  TProcedureContract,
   TRouteContract,
   TRouterContract,
 } from '@nmtjs/contract'
@@ -22,7 +21,7 @@ export type AnyRouterMetaBinding = AnyCompatibleMetaBinding
 export type AnyRouterRoutes = Record<string, AnyProcedure<any> | AnyRouter>
 export type AnyRouterContractRoutes = Record<
   string,
-  TAnyProcedureContract | TAnyRouterContract
+  TAnyCallableContract | TAnyRouterContract
 >
 
 export interface AnyRouter {
@@ -46,15 +45,8 @@ export interface Router<Contract extends TAnyRouterContract> extends AnyRouter {
   routes: {
     [K in keyof Contract['routes']]: Contract['routes'][K] extends TAnyRouterContract
       ? Router<Contract['routes'][K]>
-      : Contract['routes'][K] extends TAnyProcedureContract
-        ? AnyProcedure<
-            TProcedureContract<
-              Contract['routes'][K]['input'],
-              Contract['routes'][K]['output'],
-              Contract['routes'][K]['stream'],
-              Contract['routes'][K]['name']
-            >
-          >
+      : Contract['routes'][K] extends TAnyCallableContract
+        ? AnyProcedure<Contract['routes'][K]>
         : never
   }
   guards: Set<AnyGuard>
@@ -141,7 +133,7 @@ export type FlattenRouterContractInput<Routes extends AnyRouterContractRoutes> =
   {
     [K in keyof Routes]: Routes[K] extends TAnyRouterContract
       ? FlattenRouterContractInput<Routes[K]['routes']>
-      : Routes[K] extends TAnyProcedureContract
+      : Routes[K] extends TAnyCallableContract
         ? Routes[K]['input']
         : never
   }[keyof Routes]
@@ -172,7 +164,7 @@ export interface CreateContractRouterParams<
   routes: {
     [K in keyof Contract['routes']]: Contract['routes'][K] extends TAnyRouterContract
       ? Router<Contract['routes'][K]>
-      : Contract['routes'][K] extends TAnyProcedureContract
+      : Contract['routes'][K] extends TAnyCallableContract
         ? AnyProcedure<Contract['routes'][K]>
         : never
   }

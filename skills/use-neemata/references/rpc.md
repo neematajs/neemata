@@ -92,13 +92,12 @@ Rules:
 ## Streaming
 
 ```ts
-import { inject, procedure, t } from 'nmtjs'
+import { inject, stream, t } from 'nmtjs'
 
-export const feed = procedure({
+export const feed = stream({
   dependencies: { signal: inject.rpcAbortSignal },
   input: t.object({ limit: t.number() }),
   output: t.object({ value: t.number() }),
-  stream: true,
   async *handler({ signal }, input) {
     for (let value = 0; value < input.limit && !signal.aborted; value++) {
       yield { value }
@@ -109,11 +108,11 @@ export const feed = procedure({
 
 Rules:
 
-- `stream: true` exposes procedure under `client.stream.*`.
-- Non-stream procedures expose under `client.call.*`.
-- `stream: <milliseconds>` adds explicit stream timeout behavior and exposes
-  `inject.rpcStreamAbortSignal`.
-- Public contract stores numeric stream config as `stream: true`; timeout is
+- `stream({ ... })` declares a stream route, exposed under `client.stream.*`.
+- `procedure({ ... })` routes expose under `client.call.*`.
+- `streamTimeout: <milliseconds>` on `stream({ ... })` adds explicit stream
+  timeout behavior and exposes `inject.rpcStreamAbortSignal`.
+- The public contract records only the route kind; timeouts are
   implementation behavior.
 - Stream chunks are output-encoded/validated unless output serialization is
   disabled by config metadata.

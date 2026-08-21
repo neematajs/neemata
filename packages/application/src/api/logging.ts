@@ -1,6 +1,6 @@
 import type { MaybePromise } from '@nmtjs/common'
 import type { AnyInjectable } from '@nmtjs/core'
-import { IsStreamProcedureContract } from '@nmtjs/contract'
+import { IsStreamContract } from '@nmtjs/contract'
 import {
   CoreInjectables,
   createFactoryInjectable,
@@ -96,9 +96,7 @@ export const LoggingCallMiddleware = (
         'RPC call',
       )
 
-      const isIterableProcedure = IsStreamProcedureContract(
-        call.procedure.contract,
-      )
+      const isIterableProcedure = IsStreamContract(call.procedure.contract)
 
       try {
         const response = await next()

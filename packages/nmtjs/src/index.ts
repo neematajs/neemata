@@ -30,6 +30,7 @@ export {
   createMiddleware as middleware,
   createProcedure as procedure,
   createRootRouter as rootRouter,
+  createStream as stream,
   createRouter as router,
   defineApplication as app,
   defineApplicationHost as host,

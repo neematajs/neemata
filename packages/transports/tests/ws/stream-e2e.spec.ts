@@ -35,20 +35,17 @@ const PULL_SIZE = 65535
 const contract = c.router({
   routes: {
     download: c.procedure({ input: t.object({}), output: blobType() }),
-    chunks: c.procedure({
+    chunks: c.stream({
       input: t.object({}),
       output: t.string(),
-      stream: true,
     }),
-    sparse: c.procedure({
+    sparse: c.stream({
       input: t.object({}),
       output: t.string(),
-      stream: true,
     }),
-    ticks: c.procedure({
+    ticks: c.stream({
       input: t.object({}),
       output: t.string(),
-      stream: true,
     }),
     upload: c.procedure({
       input: t.object({ blob: blobType() }),

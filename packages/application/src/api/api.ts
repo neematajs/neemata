@@ -2,7 +2,7 @@ import assert from 'node:assert'
 import { randomUUID } from 'node:crypto'
 import { inspect } from 'node:util'
 
-import type { TAnyProcedureContract, TAnyRouterContract } from '@nmtjs/contract'
+import type { TAnyCallableContract, TAnyRouterContract } from '@nmtjs/contract'
 import type {
   AnyFactoryMetaBinding,
   AnyMetaBinding,
@@ -20,7 +20,7 @@ import type {
   GatewayStaticMetaView,
 } from '@nmtjs/gateway'
 import { withTimeout } from '@nmtjs/common'
-import { IsStreamProcedureContract } from '@nmtjs/contract'
+import { IsStreamContract } from '@nmtjs/contract'
 import {
   getMetaBindingMeta,
   getStaticMetaValue,
@@ -67,7 +67,7 @@ export type ApplicationResolvedRouter = Readonly<{
 
 export type ApplicationResolvedProcedureDescriptor = Readonly<{
   name: string
-  contract: TAnyProcedureContract
+  contract: TAnyCallableContract
   stream: boolean
   streamTimeout?: number
 }>
@@ -121,7 +121,7 @@ export class ApplicationApi implements GatewayApi<ApplicationResolvedProcedure> 
     const { procedure, path } = this.find(options.procedure)
 
     const metaBindings = this.resolveMetaBindings(path, procedure)
-    const stream = IsStreamProcedureContract(procedure.contract)
+    const stream = IsStreamContract(procedure.contract)
     const name = procedure.contract.name ?? options.procedure
 
     return Object.freeze({
@@ -221,7 +221,7 @@ export class ApplicationApi implements GatewayApi<ApplicationResolvedProcedure> 
       procedure,
     })
 
-    const isIterableProcedure = IsStreamProcedureContract(procedure.contract)
+    const isIterableProcedure = IsStreamContract(procedure.contract)
 
     this.applyStaticMetaBindings(container, metaBindings.static)
 
