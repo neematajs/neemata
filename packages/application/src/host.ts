@@ -1,4 +1,4 @@
-import type { Container, Logger } from '@nmtjs/core'
+import type { AnyInjectable, Container, Logger } from '@nmtjs/core'
 import type {
   ConnectionIdentity,
   GatewayOptions,
@@ -26,7 +26,13 @@ export type ApplicationHostTransportConfig<
 > = {
   [K in keyof Transports]: {
     transport: Transports[K]
-    options: TransportOptionsOf<Transports[K]>
+    /**
+     * Injectable resolved against the initialized application container
+     * right before the transport is created — options may depend on
+     * application services (config, auth verifiers, secrets). Wrap static
+     * options with `createValueInjectable(...)`.
+     */
+    options: AnyInjectable<TransportOptionsOf<Transports[K]>>
   }
 }
 
@@ -204,8 +210,9 @@ export class ApplicationHost<
 
     for (const key in this.options.transports) {
       const config = this.options.transports[key]
+      const options = await this.application.container.resolve(config.options)
       transports[key] = {
-        transport: await config.transport.factory(config.options),
+        transport: await config.transport.factory(options),
         proxyable: config.transport.proxyable,
       }
     }

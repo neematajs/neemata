@@ -1,6 +1,10 @@
 import type { TransportWorker, TransportWorkerParams } from '@nmtjs/gateway'
 import type { ProtocolFormats } from '@nmtjs/protocol/server'
-import { createFactoryInjectable, createLogger } from '@nmtjs/core'
+import {
+  createFactoryInjectable,
+  createLogger,
+  createValueInjectable,
+} from '@nmtjs/core'
 import { createTransport } from '@nmtjs/gateway'
 import { t } from '@nmtjs/type'
 import { describe, expect, it, vi } from 'vitest'
@@ -266,6 +270,35 @@ describe('application runtime boundary', () => {
     }
   })
 
+  it('resolves transport options through the application container', async () => {
+    const logger = createLogger({ pinoOptions: { enabled: false } }, 'test')
+    const app = createApp()
+    const formats = createFormats()
+    type Options = { listen: { port: number }; secret: string }
+    const transport = createTestTransport<Options>('http://127.0.0.1:3000')
+
+    const secret = createValueInjectable('from-di')
+    const options = createFactoryInjectable({
+      dependencies: { secret },
+      create: ({ secret }) => ({ listen: { port: 3000 }, secret }),
+    })
+
+    const host = createApplicationHost(app, {
+      logger,
+      formats,
+      transports: { http: { transport: transport.transport, options } },
+    })
+
+    try {
+      await host.start()
+      expect(transport.state.factoryOptions).toEqual([
+        { listen: { port: 3000 }, secret: 'from-di' },
+      ])
+    } finally {
+      await host.stop()
+    }
+  })
+
   it('hosts one application definition on different serving surfaces', async () => {
     const logger = createLogger({ pinoOptions: { enabled: false } }, 'test')
     const app = createApp()
@@ -280,7 +313,12 @@ describe('application runtime boundary', () => {
     const httpHost = createApplicationHost(app, {
       logger,
       formats,
-      transports: { http: { transport: http.transport, options: httpOptions } },
+      transports: {
+        http: {
+          transport: http.transport,
+          options: createValueInjectable(httpOptions),
+        },
+      },
       gateway: {
         heartbeat: false,
         streamIdleTimeout: 100,
@@ -290,7 +328,10 @@ describe('application runtime boundary', () => {
       logger,
       formats,
       transports: {
-        memory: { transport: memory.transport, options: memoryOptions },
+        memory: {
+          transport: memory.transport,
+          options: createValueInjectable(memoryOptions),
+        },
       },
     })
 

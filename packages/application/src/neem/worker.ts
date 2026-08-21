@@ -1,4 +1,5 @@
 import type { NeemRuntime } from '@nmtjs/neem'
+import { createValueInjectable } from '@nmtjs/core'
 import { JsonFormat } from '@nmtjs/json-format/server'
 import { MsgpackFormat } from '@nmtjs/msgpack-format/server'
 import { defineRuntimeWorker } from '@nmtjs/neem'
@@ -74,7 +75,12 @@ function createHostTransportConfig<
   const config = {} as ApplicationHostTransportConfig<Transports>
 
   for (const key in transports) {
-    config[key] = { transport: transports[key], options: options[key] }
+    // Neem thread options cross a worker boundary as plain values; the host
+    // config expects injectables, so wrap them here
+    config[key] = {
+      transport: transports[key],
+      options: createValueInjectable(options[key]),
+    }
   }
 
   return config

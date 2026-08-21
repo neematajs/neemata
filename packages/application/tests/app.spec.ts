@@ -1,4 +1,8 @@
-import { createLogger, ExecutionEnvironmentLifecycleHook } from '@nmtjs/core'
+import {
+  createLogger,
+  createValueInjectable,
+  ExecutionEnvironmentLifecycleHook,
+} from '@nmtjs/core'
 import { ProxyableTransportType } from '@nmtjs/gateway'
 import { JsonFormat } from '@nmtjs/json-format/server'
 import { MsgpackFormat } from '@nmtjs/msgpack-format/server'
@@ -70,7 +74,9 @@ describe('Neemata application runtime', () => {
       transports: {
         http: {
           transport: httpTransport,
-          options: { listen: { hostname: '127.0.0.1', port: 3000 } },
+          options: createValueInjectable({
+            listen: { hostname: '127.0.0.1', port: 3000 },
+          }),
         },
       },
     })
@@ -132,7 +138,10 @@ describe('Neemata application runtime', () => {
         logger,
         formats: createFormats(),
         transports: {
-          server: { transport: createEventsTransport(events), options: {} },
+          server: {
+            transport: createEventsTransport(events),
+            options: createValueInjectable({}),
+          },
         },
       },
     )
@@ -208,7 +217,10 @@ describe('Neemata application runtime', () => {
         logger,
         formats: createFormats(),
         transports: {
-          server: { transport: createEventsTransport(events), options: {} },
+          server: {
+            transport: createEventsTransport(events),
+            options: createValueInjectable({}),
+          },
         },
       },
     )
@@ -239,7 +251,10 @@ describe('Neemata application runtime', () => {
         logger,
         formats: createFormats(),
         transports: {
-          server: { transport: createEventsTransport(events), options: {} },
+          server: {
+            transport: createEventsTransport(events),
+            options: createValueInjectable({}),
+          },
         },
       },
     )
@@ -284,7 +299,7 @@ describe('Neemata application runtime', () => {
       {
         logger,
         formats: createFormats(),
-        transports: { http: { transport, options: {} } },
+        transports: { http: { transport, options: createValueInjectable({}) } },
       },
     )
 

@@ -266,7 +266,7 @@ export class JsonRpcHandler {
   }
 }
 
-type ValidatedEntry =
+export type ValidatedEntry =
   | { error: JsonRpcResponse }
   | {
       id: JsonRpcId
@@ -275,7 +275,7 @@ type ValidatedEntry =
       notification: boolean
     }
 
-function validateEntry(entry: unknown): ValidatedEntry {
+export function validateEntry(entry: unknown): ValidatedEntry {
   if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
     return { error: invalidRequest(null) }
   }
@@ -322,7 +322,7 @@ function invalidRequest(id: JsonRpcId, message = 'Invalid Request') {
   } satisfies JsonRpcResponse
 }
 
-function mapError(error: unknown): JsonRpcErrorObject {
+export function mapError(error: unknown): JsonRpcErrorObject {
   if (error instanceof ProtocolError) {
     const code =
       ProtocolToJsonRpcCode[error.code] ?? JsonRpcErrorCode.InternalError
