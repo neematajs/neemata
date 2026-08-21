@@ -152,6 +152,16 @@ Structural projection of the router — no new application-layer concepts:
 
 ## Slice C — JSON Schema emission from `@nmtjs/type`
 
+**POSTPONED (2026-08-21)** — schema/API-description emission as a *public
+capability* is cross-cutting (generated docs, wire-format documentation,
+possibly proto) and will be designed as one thing rather than an MCP-shaped
+one-off. Design rule when resumed: anchor against at least two named consumers
+— generality without a forcing consumer is the failure mode Appendix A
+documents. **Slice D is NOT gated**: MCP's schema need is protocol-mechanical
+and satisfied by a private, unexported helper inside the MCP handler package;
+the moment a second consumer wants that helper is the moment this design
+happens instead of a copy-paste.
+
 Branch: `dev/type-json-schema` · Parallel to A/B
 
 - `t.toJSONSchema(type)`: wrapper over zod's native emission plus handlers for Neemata
