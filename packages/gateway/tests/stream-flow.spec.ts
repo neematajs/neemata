@@ -83,17 +83,17 @@ const encodeRpcStreamPull = (callId: number, size: number) => {
   return buffer
 }
 
-const encodeServerStreamPull = (streamId: number, size: number) => {
+const encodeServerBlobPull = (streamId: number, size: number) => {
   const buffer = Buffer.alloc(9)
-  buffer.writeUInt8(ClientMessageType.ServerStreamPull, 0)
+  buffer.writeUInt8(ClientMessageType.ServerBlobPull, 0)
   buffer.writeUInt32LE(streamId, 1)
   buffer.writeUInt32LE(size, 5)
   return buffer
 }
 
-const encodeClientStreamPush = (streamId: number, chunk: Buffer) => {
+const encodeClientBlobPush = (streamId: number, chunk: Buffer) => {
   const header = Buffer.alloc(5)
-  header.writeUInt8(ClientMessageType.ClientStreamPush, 0)
+  header.writeUInt8(ClientMessageType.ClientBlobPush, 0)
   header.writeUInt32LE(streamId, 1)
   return Buffer.concat([header, chunk])
 }
@@ -619,10 +619,10 @@ describe('Upload stream flow control', () => {
     const inFlight = send(encodeRpcMessage(1, 'test', { __stream: 7 }))
     await flush()
 
-    // no ClientStreamPull was ever sent: any push violates the credit
-    await send(encodeClientStreamPush(7, Buffer.from('overflow')))
+    // no ClientBlobPull was ever sent: any push violates the credit
+    await send(encodeClientBlobPush(7, Buffer.from('overflow')))
 
-    const aborts = sentOfType(ServerMessageType.ClientStreamAbort)
+    const aborts = sentOfType(ServerMessageType.ClientBlobAbort)
     expect(aborts.length).toBe(1)
     expect(aborts[0].id).toBe(7)
     expect(aborts[0].rest.toString()).toBe(STREAM_CREDIT_VIOLATION_REASON)
@@ -632,7 +632,7 @@ describe('Upload stream flow control', () => {
     await inFlight
 
     // still exactly one wire abort for this stream
-    expect(sentOfType(ServerMessageType.ClientStreamAbort).length).toBe(1)
+    expect(sentOfType(ServerMessageType.ClientBlobAbort).length).toBe(1)
 
     await gateway.stop()
   })
@@ -651,7 +651,7 @@ describe('Upload stream flow control', () => {
         return null
       },
       sendResult: (message) =>
-        message.type === ServerMessageType.ClientStreamPull
+        message.type === ServerMessageType.ClientBlobPull
           ? 'dropped'
           : 'delivered',
     })
@@ -659,8 +659,8 @@ describe('Upload stream flow control', () => {
     await send(encodeRpcMessage(1, 'test', { __stream: 7 }))
     await flush()
 
-    expect(sentOfType(ServerMessageType.ClientStreamPull).length).toBe(1)
-    const aborts = sentOfType(ServerMessageType.ClientStreamAbort)
+    expect(sentOfType(ServerMessageType.ClientBlobPull).length).toBe(1)
+    const aborts = sentOfType(ServerMessageType.ClientBlobAbort)
     expect(aborts.length).toBe(1)
     expect(aborts[0].id).toBe(7)
     expect(aborts[0].rest.toString()).toBe(STREAM_TRANSPORT_DROP_REASON)
@@ -683,7 +683,7 @@ describe('Upload stream flow control', () => {
     const inFlight = send(encodeRpcMessage(1, 'test', { __stream: 9 }))
     await sleep(120)
 
-    let aborts = sentOfType(ServerMessageType.ClientStreamAbort)
+    let aborts = sentOfType(ServerMessageType.ClientBlobAbort)
     expect(aborts.length).toBe(1)
     expect(aborts[0].id).toBe(9)
     expect(aborts[0].rest.toString()).toBe(STREAM_IDLE_TIMEOUT_REASON)
@@ -691,7 +691,7 @@ describe('Upload stream flow control', () => {
     // the dispose path must not send a second abort for the same stream
     release()
     await inFlight
-    aborts = sentOfType(ServerMessageType.ClientStreamAbort)
+    aborts = sentOfType(ServerMessageType.ClientBlobAbort)
     expect(aborts.length).toBe(1)
 
     await gateway.stop()
@@ -716,27 +716,27 @@ describe('Download stream flow control', () => {
 
     expect(sentOfType(ServerMessageType.RpcResponse).length).toBe(1)
     // slow consumer: nothing in flight until the client grants credit
-    expect(sentOfType(ServerMessageType.ServerStreamPush).length).toBe(0)
+    expect(sentOfType(ServerMessageType.ServerBlobPush).length).toBe(0)
 
-    await send(encodeServerStreamPull(0, 10))
+    await send(encodeServerBlobPull(0, 10))
     await flush()
 
-    let pushes = sentOfType(ServerMessageType.ServerStreamPush)
+    let pushes = sentOfType(ServerMessageType.ServerBlobPush)
     expect(pushes.length).toBe(1)
     expect(pushes[0].rest.byteLength).toBe(10)
 
-    await send(encodeServerStreamPull(0, 90))
+    await send(encodeServerBlobPull(0, 90))
     await flush()
 
-    pushes = sentOfType(ServerMessageType.ServerStreamPush)
+    pushes = sentOfType(ServerMessageType.ServerBlobPush)
     expect(Buffer.concat(pushes.map((p) => p.rest)).byteLength).toBe(100)
-    expect(sentOfType(ServerMessageType.ServerStreamEnd).length).toBe(1)
+    expect(sentOfType(ServerMessageType.ServerBlobEnd).length).toBe(1)
     expect(gateway.blobStreams.serverStreams.size).toBe(0)
 
     await gateway.stop()
   })
 
-  it('closes the connection when a terminal ServerStreamEnd frame is dropped', async () => {
+  it('closes the connection when a terminal ServerBlobEnd frame is dropped', async () => {
     const { gateway, sentOfType, send, transport } = await createTestGateway({
       call: async ({ container }) => {
         const createBlob = await container.resolve(injectables.createBlob)
@@ -747,17 +747,17 @@ describe('Download stream flow control', () => {
         return null
       },
       sendResult: (message) =>
-        message.type === ServerMessageType.ServerStreamEnd
+        message.type === ServerMessageType.ServerBlobEnd
           ? 'dropped'
           : 'delivered',
     })
 
     await send(encodeRpcMessage(1, 'test', {}))
     await flush()
-    await send(encodeServerStreamPull(0, 100))
+    await send(encodeServerBlobPull(0, 100))
     await flush()
 
-    expect(sentOfType(ServerMessageType.ServerStreamEnd).length).toBe(1)
+    expect(sentOfType(ServerMessageType.ServerBlobEnd).length).toBe(1)
     // the frame was dropped after local cleanup: only a connection close can
     // stop the client from waiting forever
     expect(transport.close).toHaveBeenCalled()
@@ -766,7 +766,7 @@ describe('Download stream flow control', () => {
     await gateway.stop()
   })
 
-  it('aborts the stream on a zero-size ServerStreamPull', async () => {
+  it('aborts the stream on a zero-size ServerBlobPull', async () => {
     const { gateway, sentOfType, send } = await createTestGateway({
       call: async ({ container }) => {
         const createBlob = await container.resolve(injectables.createBlob)
@@ -780,11 +780,11 @@ describe('Download stream flow control', () => {
 
     await send(encodeRpcMessage(1, 'test', {}))
     await flush()
-    await send(encodeServerStreamPull(0, 0))
+    await send(encodeServerBlobPull(0, 0))
     await flush()
 
-    expect(sentOfType(ServerMessageType.ServerStreamPush).length).toBe(0)
-    const aborts = sentOfType(ServerMessageType.ServerStreamAbort)
+    expect(sentOfType(ServerMessageType.ServerBlobPush).length).toBe(0)
+    const aborts = sentOfType(ServerMessageType.ServerBlobAbort)
     expect(aborts.length).toBe(1)
     expect(aborts[0].rest.toString()).toBe(STREAM_CREDIT_VIOLATION_REASON)
     expect(gateway.blobStreams.serverStreams.size).toBe(0)
@@ -807,14 +807,14 @@ describe('Download stream flow control', () => {
     await send(encodeRpcMessage(1, 'test', {}))
     await flush()
 
-    await send(encodeServerStreamPull(0, 2 ** 32 - 1))
+    await send(encodeServerBlobPull(0, 2 ** 32 - 1))
     await flush()
-    expect(sentOfType(ServerMessageType.ServerStreamAbort).length).toBe(0)
+    expect(sentOfType(ServerMessageType.ServerBlobAbort).length).toBe(0)
 
-    await send(encodeServerStreamPull(0, 2 ** 32 - 1))
+    await send(encodeServerBlobPull(0, 2 ** 32 - 1))
     await flush()
 
-    const aborts = sentOfType(ServerMessageType.ServerStreamAbort)
+    const aborts = sentOfType(ServerMessageType.ServerBlobAbort)
     expect(aborts.length).toBe(1)
     expect(aborts[0].rest.toString()).toBe(STREAM_CREDIT_VIOLATION_REASON)
     expect(gateway.blobStreams.serverStreams.size).toBe(0)
@@ -840,13 +840,13 @@ describe('Download stream flow control', () => {
     // the source dies before the client ever pulled
     source.destroy(new Error('early failure'))
     await flush()
-    expect(sentOfType(ServerMessageType.ServerStreamAbort).length).toBe(0)
+    expect(sentOfType(ServerMessageType.ServerBlobAbort).length).toBe(0)
 
     // the abort is delivered against the first grant instead
-    await send(encodeServerStreamPull(0, 10))
+    await send(encodeServerBlobPull(0, 10))
     await flush()
 
-    const aborts = sentOfType(ServerMessageType.ServerStreamAbort)
+    const aborts = sentOfType(ServerMessageType.ServerBlobAbort)
     expect(aborts.length).toBe(1)
     expect(aborts[0].rest.toString()).toBe('early failure')
     expect(gateway.blobStreams.serverStreams.size).toBe(0)

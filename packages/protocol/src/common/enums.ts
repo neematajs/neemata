@@ -10,17 +10,15 @@ export enum ClientMessageType {
   Ping = 13,
   Pong = 14,
 
-  ClientStreamPush = 20,
-  ClientStreamEnd = 21,
-  ClientStreamAbort = 22,
+  ClientBlobPush = 20,
+  ClientBlobEnd = 21,
+  ClientBlobAbort = 22,
 
-  ServerStreamAbort = 33,
-  ServerStreamPull = 34,
+  ServerBlobAbort = 33,
+  ServerBlobPull = 34,
 }
 
 export enum ServerMessageType {
-  // Event = 1,
-
   RpcResponse = 10,
   RpcStreamResponse = 11,
   RpcStreamChunk = 12,
@@ -30,12 +28,12 @@ export enum ServerMessageType {
   Pong = 15,
   Ping = 16,
 
-  ServerStreamPush = 20,
-  ServerStreamEnd = 21,
-  ServerStreamAbort = 22,
+  ServerBlobPush = 20,
+  ServerBlobEnd = 21,
+  ServerBlobAbort = 22,
 
-  ClientStreamAbort = 33,
-  ClientStreamPull = 34,
+  ClientBlobAbort = 33,
+  ClientBlobPull = 34,
 }
 
 export enum ConnectionType {

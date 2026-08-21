@@ -48,11 +48,11 @@ type StreamState = ClientStreamState | ServerStreamState
 /**
  * Credit invariants:
  * - Uploads (client streams): the server grants byte credits by sending
- *   ClientStreamPull (driven by consumer _read demand); the client spends
- *   them with ClientStreamPush. A push exceeding the outstanding credit is a
+ *   ClientBlobPull (driven by consumer _read demand); the client spends
+ *   them with ClientBlobPush. A push exceeding the outstanding credit is a
  *   protocol violation and aborts the stream.
  * - Downloads (server streams): the client grants byte credits with
- *   ServerStreamPull; the credit pump emits at most that many bytes.
+ *   ServerBlobPull; the credit pump emits at most that many bytes.
  *   A transport-dropped frame aborts the stream (credits keep outstanding
  *   data far below the transport backpressure limit, so this is a safety
  *   net, not a flow-control mechanism).

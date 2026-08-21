@@ -442,7 +442,7 @@ export class Gateway<
                 connectionId,
                 protocol.encodeMessage(
                   this.createMessageContext(connection, transportKey),
-                  ServerMessageType.ClientStreamPull,
+                  ServerMessageType.ClientBlobPull,
                   { streamId, size: pullSize },
                 ),
               )
@@ -467,7 +467,7 @@ export class Gateway<
               connectionId,
               protocol.encodeMessage(
                 this.createMessageContext(connection, transportKey),
-                ServerMessageType.ClientStreamAbort,
+                ServerMessageType.ClientBlobAbort,
                 { streamId, reason },
               ),
             )
@@ -647,7 +647,7 @@ export class Gateway<
             this.rpcs.abort(connectionId, message.callId)
             break
           }
-          case ClientMessageType.ClientStreamAbort: {
+          case ClientMessageType.ClientBlobAbort: {
             // peer-originated: never echo the abort back
             this.blobStreams.abortClientStream(
               connectionId,
@@ -657,7 +657,7 @@ export class Gateway<
             )
             break
           }
-          case ClientMessageType.ClientStreamPush: {
+          case ClientMessageType.ClientBlobPush: {
             const accepted = this.blobStreams.pushToClientStream(
               connectionId,
               message.streamId,
@@ -676,11 +676,11 @@ export class Gateway<
             }
             break
           }
-          case ClientMessageType.ClientStreamEnd: {
+          case ClientMessageType.ClientBlobEnd: {
             this.blobStreams.endClientStream(connectionId, message.streamId)
             break
           }
-          case ClientMessageType.ServerStreamAbort: {
+          case ClientMessageType.ServerBlobAbort: {
             // peer-originated: never echo the abort back
             this.blobStreams.abortServerStream(
               connectionId,
@@ -690,7 +690,7 @@ export class Gateway<
             )
             break
           }
-          case ClientMessageType.ServerStreamPull: {
+          case ClientMessageType.ServerBlobPull: {
             if (message.size === 0) {
               // zero-size pulls grant nothing but would reset the idle timer
               // forever — a free keepalive, so treat them as violations
@@ -814,7 +814,7 @@ export class Gateway<
    * The WS path passes `undefined` because onMessage already provisioned those
    * before calling handleRpcMessage. This divergence — WS omits blob injectables
    * at this dispatch point — is suspected to be a gap but is intentionally
-   * preserved pending a decision.
+   * preserved pending a decision (neematajs/neemata#317).
    */
   private dispatchRpc(
     connection: GatewayConnection,
@@ -1133,7 +1133,7 @@ export class Gateway<
               connectionId,
               protocol.encodeMessage(
                 context,
-                ServerMessageType.ServerStreamPush,
+                ServerMessageType.ServerBlobPush,
                 { streamId, chunk },
               ),
             )
@@ -1141,13 +1141,9 @@ export class Gateway<
           end: () => {
             const sent = transport.send!(
               connectionId,
-              protocol.encodeMessage(
-                context,
-                ServerMessageType.ServerStreamEnd,
-                {
-                  streamId,
-                },
-              ),
+              protocol.encodeMessage(context, ServerMessageType.ServerBlobEnd, {
+                streamId,
+              }),
             )
             if (sent === 'dropped') {
               // terminal frame lost after local state removal: the client
@@ -1160,7 +1156,7 @@ export class Gateway<
               connectionId,
               protocol.encodeMessage(
                 context,
-                ServerMessageType.ServerStreamAbort,
+                ServerMessageType.ServerBlobAbort,
                 { streamId, reason: error.message },
               ),
             )

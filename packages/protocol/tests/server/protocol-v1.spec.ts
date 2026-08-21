@@ -187,31 +187,31 @@ describe('ProtocolVersion1 - decodeMessage', () => {
     const chunk = Buffer.from('hello')
 
     const pushBuffer = Buffer.concat([
-      Buffer.from([ClientMessageType.ClientStreamPush]),
+      Buffer.from([ClientMessageType.ClientBlobPush]),
       encodeUInt32(streamId),
       chunk,
     ])
     expect(version.decodeMessage(context, pushBuffer)).toEqual({
-      type: ClientMessageType.ClientStreamPush,
+      type: ClientMessageType.ClientBlobPush,
       streamId,
       chunk,
     })
 
     const endBuffer = Buffer.concat([
-      Buffer.from([ClientMessageType.ClientStreamEnd]),
+      Buffer.from([ClientMessageType.ClientBlobEnd]),
       encodeUInt32(streamId),
     ])
     expect(version.decodeMessage(context, endBuffer)).toEqual({
-      type: ClientMessageType.ClientStreamEnd,
+      type: ClientMessageType.ClientBlobEnd,
       streamId,
     })
 
     const abortBuffer = Buffer.concat([
-      Buffer.from([ClientMessageType.ClientStreamAbort]),
+      Buffer.from([ClientMessageType.ClientBlobAbort]),
       encodeUInt32(streamId),
     ])
     expect(version.decodeMessage(context, abortBuffer)).toEqual({
-      type: ClientMessageType.ClientStreamAbort,
+      type: ClientMessageType.ClientBlobAbort,
       streamId,
       reason: undefined,
     })
@@ -222,22 +222,22 @@ describe('ProtocolVersion1 - decodeMessage', () => {
     const size = 2048
 
     const pullBuffer = Buffer.concat([
-      Buffer.from([ClientMessageType.ServerStreamPull]),
+      Buffer.from([ClientMessageType.ServerBlobPull]),
       encodeUInt32(streamId),
       encodeUInt32(size),
     ])
     expect(version.decodeMessage(context, pullBuffer)).toEqual({
-      type: ClientMessageType.ServerStreamPull,
+      type: ClientMessageType.ServerBlobPull,
       streamId,
       size,
     })
 
     const abortBuffer = Buffer.concat([
-      Buffer.from([ClientMessageType.ServerStreamAbort]),
+      Buffer.from([ClientMessageType.ServerBlobAbort]),
       encodeUInt32(streamId),
     ])
     expect(version.decodeMessage(context, abortBuffer)).toEqual({
-      type: ClientMessageType.ServerStreamAbort,
+      type: ClientMessageType.ServerBlobAbort,
       streamId,
       reason: undefined,
     })
@@ -378,24 +378,24 @@ describe('ProtocolVersion1 - encodeMessage', () => {
 
   it('encodes client/server stream control messages', () => {
     const pullBuffer = toBuffer(
-      version.encodeMessage(context, ServerMessageType.ClientStreamPull, {
+      version.encodeMessage(context, ServerMessageType.ClientBlobPull, {
         streamId: 55,
         size: 4096,
       }),
     )
-    expect(pullBuffer[0]).toBe(ServerMessageType.ClientStreamPull)
+    expect(pullBuffer[0]).toBe(ServerMessageType.ClientBlobPull)
     expect(pullBuffer.readUInt32LE(1)).toBe(55)
     expect(pullBuffer.readUInt32LE(5)).toBe(4096)
 
     const clientAbort = toBuffer(
-      version.encodeMessage(context, ServerMessageType.ClientStreamAbort, {
+      version.encodeMessage(context, ServerMessageType.ClientBlobAbort, {
         streamId: 55,
       }),
     )
-    expect(clientAbort[0]).toBe(ServerMessageType.ClientStreamAbort)
+    expect(clientAbort[0]).toBe(ServerMessageType.ClientBlobAbort)
 
     const pushBuffer = toBuffer(
-      version.encodeMessage(context, ServerMessageType.ServerStreamPush, {
+      version.encodeMessage(context, ServerMessageType.ServerBlobPush, {
         streamId: 77,
         chunk: Buffer.from([0x01]),
       }),
@@ -403,14 +403,14 @@ describe('ProtocolVersion1 - encodeMessage', () => {
     expect(pushBuffer.subarray(5)).toEqual(Buffer.from([0x01]))
 
     const endBuffer = toBuffer(
-      version.encodeMessage(context, ServerMessageType.ServerStreamEnd, {
+      version.encodeMessage(context, ServerMessageType.ServerBlobEnd, {
         streamId: 77,
       }),
     )
     expect(endBuffer.readUInt32LE(1)).toBe(77)
 
     const abortBuffer = toBuffer(
-      version.encodeMessage(context, ServerMessageType.ServerStreamAbort, {
+      version.encodeMessage(context, ServerMessageType.ServerBlobAbort, {
         streamId: 77,
       }),
     )

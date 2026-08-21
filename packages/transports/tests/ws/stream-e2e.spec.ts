@@ -566,7 +566,7 @@ describe('stream flow control over a real WS transport', () => {
     const core = client.core
     const pull = core.protocol.encodeMessage(
       core.messageContext!,
-      ClientMessageType.ServerStreamPull,
+      ClientMessageType.ServerBlobPull,
       { streamId: getProtocolBlobStreamId(blob), size: BLOB_SIZE },
     )
     await core.send(pull)

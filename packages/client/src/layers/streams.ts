@@ -102,7 +102,7 @@ export const createStreamLayer = (core: ClientCore): StreamLayerApi => {
 
       const buffer = core.protocol.encodeMessage(
         core.messageContext,
-        ClientMessageType.ServerStreamAbort,
+        ClientMessageType.ServerBlobAbort,
         { streamId, reason: toReasonString(reason) },
       )
 
@@ -127,7 +127,7 @@ export const createStreamLayer = (core: ClientCore): StreamLayerApi => {
 
         const buffer = core.protocol.encodeMessage(
           core.messageContext,
-          ClientMessageType.ServerStreamPull,
+          ClientMessageType.ServerBlobPull,
           { streamId: id, size: DEFAULT_PULL_SIZE },
         )
 
@@ -233,7 +233,7 @@ export const createStreamLayer = (core: ClientCore): StreamLayerApi => {
 
   core.on('message', (message: any) => {
     switch (message.type) {
-      case ServerMessageType.ServerStreamPush:
+      case ServerMessageType.ServerBlobPush:
         core.emitStreamEvent({
           direction: 'incoming',
           streamType: 'server_blob',
@@ -249,7 +249,7 @@ export const createStreamLayer = (core: ClientCore): StreamLayerApi => {
           abortServerBlob(message.streamId, error)
         })
         break
-      case ServerMessageType.ServerStreamEnd:
+      case ServerMessageType.ServerBlobEnd:
         serverBlobInitializers.delete(message.streamId)
         core.emitStreamEvent({
           direction: 'incoming',
@@ -259,7 +259,7 @@ export const createStreamLayer = (core: ClientCore): StreamLayerApi => {
         })
         void serverStreams.end(message.streamId).catch(noopFn)
         break
-      case ServerMessageType.ServerStreamAbort:
+      case ServerMessageType.ServerBlobAbort:
         serverBlobInitializers.delete(message.streamId)
         core.emitStreamEvent({
           direction: 'incoming',
@@ -270,7 +270,7 @@ export const createStreamLayer = (core: ClientCore): StreamLayerApi => {
         })
         void serverStreams.abort(message.streamId, message.reason).catch(noopFn)
         break
-      case ServerMessageType.ClientStreamPull:
+      case ServerMessageType.ClientBlobPull:
         core.emitStreamEvent({
           direction: 'incoming',
           streamType: 'client_blob',
@@ -294,7 +294,7 @@ export const createStreamLayer = (core: ClientCore): StreamLayerApi => {
 
               const buffer = core.protocol.encodeMessage(
                 core.messageContext,
-                ClientMessageType.ClientStreamPush,
+                ClientMessageType.ClientBlobPush,
                 { streamId: message.streamId, chunk },
               )
 
@@ -311,7 +311,7 @@ export const createStreamLayer = (core: ClientCore): StreamLayerApi => {
 
             const buffer = core.protocol.encodeMessage(
               core.messageContext,
-              ClientMessageType.ClientStreamEnd,
+              ClientMessageType.ClientBlobEnd,
               { streamId: message.streamId },
             )
 
@@ -330,7 +330,7 @@ export const createStreamLayer = (core: ClientCore): StreamLayerApi => {
 
             const buffer = core.protocol.encodeMessage(
               core.messageContext,
-              ClientMessageType.ClientStreamAbort,
+              ClientMessageType.ClientBlobAbort,
               { streamId: message.streamId },
             )
 
@@ -339,7 +339,7 @@ export const createStreamLayer = (core: ClientCore): StreamLayerApi => {
           },
         )
         break
-      case ServerMessageType.ClientStreamAbort:
+      case ServerMessageType.ClientBlobAbort:
         core.emitStreamEvent({
           direction: 'incoming',
           streamType: 'client_blob',

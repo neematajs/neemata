@@ -290,7 +290,7 @@ describe('loggingPlugin', () => {
     await connectPromise
 
     ;(client.core.protocol as any).decodeMessage = () => ({
-      type: ServerMessageType.ServerStreamPush,
+      type: ServerMessageType.ServerBlobPush,
       streamId: 7,
       chunk: new Uint8Array([1, 2, 3]),
     })
