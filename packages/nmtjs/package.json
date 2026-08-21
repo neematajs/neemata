@@ -28,7 +28,9 @@
     "@nmtjs/protocol": "workspace:*",
     "@nmtjs/pubsub": "workspace:*",
     "@nmtjs/type": "workspace:*",
-    "@nmtjs/workflows": "workspace:*"
+    "@nmtjs/workflows": "workspace:*",
+    "@nmtjs/json-format": "workspace:*",
+    "@nmtjs/msgpack-format": "workspace:*"
   },
   "files": [
     "dist",

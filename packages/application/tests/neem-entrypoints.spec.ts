@@ -102,6 +102,7 @@ describe('Neem application entrypoints', () => {
     })
     const host = defineApplicationHost(app, {
       transports: { http: transport },
+      formats: {} as import('@nmtjs/protocol/server').ProtocolFormats,
       gateway: {
         heartbeat: { interval: 4321, timeout: 8765 },
         streamIdleTimeout: 1111,

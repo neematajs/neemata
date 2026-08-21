@@ -143,10 +143,11 @@ export class McpHandler {
       authInfo = gated
     }
 
+    // fixed encoding (the MCP SDK owns the wire format): the pipeline
+    // connection carries no negotiated codecs
     const connection = await this.params.onConnect(
       {
-        accept: JSON_CONTENT_TYPE,
-        contentType: JSON_CONTENT_TYPE,
+        codecs: false,
         data: request,
         protocolVersion: ProtocolVersion.v1,
         type: ConnectionType.Unidirectional,

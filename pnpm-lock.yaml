@@ -65,12 +65,6 @@ importers:
       '@nmtjs/gateway':
         specifier: workspace:*
         version: link:../gateway
-      '@nmtjs/json-format':
-        specifier: workspace:*
-        version: link:../json-format
-      '@nmtjs/msgpack-format':
-        specifier: workspace:*
-        version: link:../msgpack-format
       '@nmtjs/neem':
         specifier: workspace:*
         version: link:../neem
@@ -81,6 +75,12 @@ importers:
         specifier: workspace:*
         version: link:../type
     devDependencies:
+      '@nmtjs/json-format':
+        specifier: workspace:*
+        version: link:../json-format
+      '@nmtjs/msgpack-format':
+        specifier: workspace:*
+        version: link:../msgpack-format
       zod:
         specifier: 'catalog:'
         version: 4.4.3
@@ -304,9 +304,15 @@ importers:
       '@nmtjs/gateway':
         specifier: workspace:*
         version: link:../gateway
+      '@nmtjs/json-format':
+        specifier: workspace:*
+        version: link:../json-format
       '@nmtjs/metrics':
         specifier: workspace:*
         version: link:../metrics
+      '@nmtjs/msgpack-format':
+        specifier: workspace:*
+        version: link:../msgpack-format
       '@nmtjs/protocol':
         specifier: workspace:*
         version: link:../protocol

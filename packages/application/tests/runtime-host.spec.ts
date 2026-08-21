@@ -41,7 +41,7 @@ function createTestTransport<Options>(url: string) {
   const state = {
     factoryOptions: [] as Options[],
     startParams: [] as TransportWorkerParams[],
-    stopParams: [] as Pick<TransportWorkerParams, 'formats'>[],
+    stopCalls: 0,
   }
 
   const worker: TransportWorker = {
@@ -49,8 +49,8 @@ function createTestTransport<Options>(url: string) {
       state.startParams.push(params)
       return url
     },
-    stop: async (params) => {
-      state.stopParams.push(params)
+    stop: async () => {
+      state.stopCalls++
     },
   }
 
@@ -352,9 +352,7 @@ describe('application runtime boundary', () => {
       await httpHost.stop()
     }
 
-    expect(http.state.stopParams).toHaveLength(1)
-    expect(memory.state.stopParams).toHaveLength(1)
-    expect(http.state.stopParams[0].formats).toBe(formats)
-    expect(memory.state.stopParams[0].formats).toBe(formats)
+    expect(http.state.stopCalls).toBe(1)
+    expect(memory.state.stopCalls).toBe(1)
   })
 })

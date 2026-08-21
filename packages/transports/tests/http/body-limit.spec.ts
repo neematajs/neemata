@@ -215,7 +215,7 @@ describe('request body size limit (node runtime)', () => {
       expect(ok.status).toBe(200)
       expect(onRpc).toHaveBeenCalledTimes(1)
     } finally {
-      await worker.stop(params as any)
+      await worker.stop()
     }
   })
 
@@ -244,7 +244,7 @@ describe('request body size limit (node runtime)', () => {
       })
       expect(ok.status).toBe(200)
     } finally {
-      await worker.stop(params as any)
+      await worker.stop()
     }
   })
 })

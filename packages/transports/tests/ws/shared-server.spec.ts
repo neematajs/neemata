@@ -86,7 +86,7 @@ describe('http + ws transports on a shared server', () => {
       await vi.waitFor(() => expect(params.onDisconnect).toHaveBeenCalled())
       expect(params.onConnect).toHaveBeenCalledTimes(2)
     } finally {
-      await worker.stop(params)
+      await worker.stop()
     }
 
     await expect(fetch(`${url}/healthy`)).rejects.toThrow()

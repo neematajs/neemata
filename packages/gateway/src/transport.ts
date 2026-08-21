@@ -15,17 +15,25 @@ export interface TransportConnection {
 
 export type { SendResult } from '@nmtjs/protocol/server'
 
-export interface TransportOnConnectOptions<
+/**
+ * Codec selection for a new connection. Native handlers negotiate against
+ * the registered codec registry via accept/content-type; fixed-encoding
+ * handlers (JSON-RPC, MCP) pass `codecs: false` — the connection then
+ * carries no negotiated codecs and any use of them throws.
+ */
+export type TransportConnectionCodecs =
+  | { codecs?: true; accept: string | null; contentType: string | null }
+  | { codecs: false; accept?: undefined; contentType?: undefined }
+
+export type TransportOnConnectOptions<
   Type extends ConnectionType = ConnectionType,
-> {
+> = {
   type: Type extends ConnectionType.Bidirectional
     ? Type
     : ConnectionType.Unidirectional
   protocolVersion: ProtocolVersion
-  accept: string | null
-  contentType: string | null
   data: unknown
-}
+} & TransportConnectionCodecs
 
 export interface TransportOnMessageOptions {
   connectionId: string
@@ -72,9 +80,7 @@ export interface TransportWorker<
   start: (
     params: TransportWorkerParams<Type, ResolvedProcedure>,
   ) => MaybePromise<string>
-  stop: (
-    params: Pick<TransportWorkerParams<Type, ResolvedProcedure>, 'formats'>,
-  ) => MaybePromise<void>
+  stop: () => MaybePromise<void>
   send?: Type extends 'unidirectional'
     ? never
     : (connectionId: string, buffer: ArrayBufferView) => SendResult

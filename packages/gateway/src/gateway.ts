@@ -38,6 +38,7 @@ import {
   ServerMessageType,
 } from '@nmtjs/protocol'
 import {
+  BaseServerFormat,
   getFormat,
   MAX_STREAM_CREDITS,
   ProtocolError,
@@ -78,6 +79,30 @@ type RpcStreamCreditState = {
  * stream abort reason) rather than logged as a server error.
  */
 class StreamFlowError extends Error {}
+
+/**
+ * Codec stub for connections opened with `codecs: false` — handlers that own
+ * a fixed wire encoding never consult connection codecs, so any use is a bug.
+ */
+const NO_CODEC: BaseServerFormat = new (class extends BaseServerFormat {
+  accept = []
+  contentType = 'application/x-neemata-none'
+  encode(): never {
+    throw new Error('Connection was opened without codec negotiation')
+  }
+  encodeRPC(): never {
+    throw new Error('Connection was opened without codec negotiation')
+  }
+  encodeBlob(): never {
+    throw new Error('Connection was opened without codec negotiation')
+  }
+  decode(): never {
+    throw new Error('Connection was opened without codec negotiation')
+  }
+  decodeRPC(): never {
+    throw new Error('Connection was opened without codec negotiation')
+  }
+})()
 
 export interface GatewayOptions<
   ResolvedProcedure extends GatewayResolvedProcedure = GatewayResolvedProcedure,
@@ -208,7 +233,7 @@ export class Gateway<
           onRpc: this.onRpc(transportKey),
         })
         this.#startedTransports.defer(async () => {
-          await transport.stop({ formats: this.options.formats })
+          await transport.stop()
           this.logger.debug(`Transport [${transportKey}] stopped`)
         })
         this.logger.info(`Transport [${transportKey}] started on [${url}]`)
@@ -503,10 +528,12 @@ export class Gateway<
         const identity = await container.resolve(this.options.identity)
 
         const { accept, contentType, type } = options
-        const { decoder, encoder } = getFormat(this.options.formats, {
-          accept,
-          contentType,
-        })
+        // Fixed-encoding handlers (JSON-RPC, MCP) own their wire format and
+        // open pipeline connections without touching the codec registry
+        const { decoder, encoder } =
+          options.codecs === false
+            ? { decoder: NO_CODEC, encoder: NO_CODEC }
+            : getFormat(this.options.formats, { accept, contentType })
 
         const abortController = new AbortController()
 

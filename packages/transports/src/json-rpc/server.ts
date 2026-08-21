@@ -9,7 +9,7 @@ import type {
 import { anyAbortSignal, isAsyncIterable } from '@nmtjs/common'
 import { ProxyableTransportType } from '@nmtjs/gateway'
 import { ConnectionType, ProtocolBlob, ProtocolVersion } from '@nmtjs/protocol'
-import { ProtocolError, UnsupportedFormatError } from '@nmtjs/protocol/server'
+import { ProtocolError } from '@nmtjs/protocol/server'
 
 import type { ServerHandler } from '../transport.ts'
 import type {
@@ -94,28 +94,26 @@ export class JsonRpcHandler {
       })
     }
 
+    // JSON-RPC is JSON by definition (the handler owns its encoding);
+    // reject other declared media types up front
+    const requestContentType = request.headers.get('content-type')
+    if (
+      requestContentType !== null &&
+      !requestContentType.toLowerCase().includes(JSON_CONTENT_TYPE)
+    ) {
+      return new Response(null, { status: 415 })
+    }
+
     const controller = new AbortController()
     const signal = anyAbortSignal(request.signal, controller.signal)
 
-    let connection: (GatewayConnection & AsyncDisposable) | undefined
-    try {
-      connection = await this.params.onConnect({
-        accept: JSON_CONTENT_TYPE,
-        contentType: JSON_CONTENT_TYPE,
-        data: request,
-        protocolVersion: ProtocolVersion.v1,
-        type: ConnectionType.Unidirectional,
-      })
-    } catch (error) {
-      if (error instanceof UnsupportedFormatError) {
-        // The gateway has no JSON format registered — the handler cannot
-        // speak JSON-RPC at all
-        return new Response(null, { status: 415 })
-      }
-      throw error
-    }
-
-    await using _connection = connection
+    // fixed encoding: the pipeline connection carries no negotiated codecs
+    await using connection = await this.params.onConnect({
+      codecs: false,
+      data: request,
+      protocolVersion: ProtocolVersion.v1,
+      type: ConnectionType.Unidirectional,
+    })
 
     let body: Buffer
     try {
@@ -130,7 +128,7 @@ export class JsonRpcHandler {
     let envelope: unknown
     try {
       if (body.byteLength === 0) throw new Error('Empty body')
-      envelope = connection.decoder.decode(body)
+      envelope = JSON.parse(body.toString('utf-8'))
     } catch {
       return this.respond(connection, {
         jsonrpc: '2.0',
@@ -237,11 +235,10 @@ export class JsonRpcHandler {
     return name
   }
 
-  private respond(connection: GatewayConnection, payload: unknown): Response {
-    const buffer = connection.encoder.encode(payload)
-    return new Response(buffer as BodyInit, {
+  private respond(_connection: GatewayConnection, payload: unknown): Response {
+    return new Response(JSON.stringify(payload), {
       status: 200,
-      headers: { 'Content-Type': connection.encoder.contentType },
+      headers: { 'Content-Type': JSON_CONTENT_TYPE },
     })
   }
 

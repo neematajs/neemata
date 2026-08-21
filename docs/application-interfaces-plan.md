@@ -281,6 +281,37 @@ stream-to-SSE, invoke) with lifecycle start/stop under Neem; resolution-time err
 message test for a non-portable guard; `application.invoke` used by at least one of
 the workspace's own test suites in place of a transport.
 
+## Slice G — Format ownership (tier 1)
+
+Decision (D13): **Formats are capabilities of a protocol projection. The
+gateway consumes canonical calls and runtime values; it does not globally
+select wire representations.** The native projection negotiates its codec
+registry; fixed-format protocols (JSON-RPC, MCP, future gRPC) own their
+prescribed encoding internally. No universal Format abstraction is
+introduced — the existing codec classes are native-protocol machinery
+(blob references, RPC framing), not generic serializers.
+
+Tier 1 (implemented now — mechanical, no gateway restructuring):
+
+- `Gateway.onConnect` accepts `codecs: false`: fixed-encoding handlers open
+  pipeline connections without content negotiation; the connection carries
+  throwing codec stubs.
+- JSON-RPC owns plain, spec-compliant `JSON.parse`/`stringify` for its
+  envelope (415 for non-JSON content types); MCP relies solely on its SDK's
+  encoding. Neither fakes native accept/content-type any more.
+- `TransportWorker.stop()` no longer receives the format registry.
+- The neem worker no longer hardcodes JSON+MessagePack: native codecs are
+  configured on `defineApplicationHost` (`formats`), with the `nmtjs`
+  umbrella defaulting to JSON+MessagePack; `@nmtjs/application` drops its
+  dependencies on the concrete format packages.
+
+Tier 2 (**deferred behind a forcing consumer** — the standalone-runtime task
+or a second native transport): extracting the native protocol session engine
+(frame decoding, heartbeats, stream credits, blob control) out of `Gateway`
+into a native-projection layer, and removing `formats` from
+`TransportWorkerParams` entirely. Recording the boundary above is the
+commitment; the split waits until something needs it.
+
 ## Slice F — Wire-naming cleanup
 
 Fold into A or land independently. Source-level renames only (enum values unchanged,

@@ -19,6 +19,17 @@ type Metrics = Readonly<{
   summary: typeof createSummaryMetric
 }>
 
+import type {
+  ApplicationConfig,
+  ApplicationHostDefinition,
+  ApplicationHostDefinitionOptions,
+  ApplicationTransport,
+} from '@nmtjs/application'
+import { defineApplicationHost } from '@nmtjs/application'
+import { JsonFormat } from '@nmtjs/json-format/server'
+import { MsgpackFormat } from '@nmtjs/msgpack-format/server'
+import { ProtocolFormats } from '@nmtjs/protocol/server'
+
 export {
   ApiError,
   createContractProcedure as contractProcedure,
@@ -33,7 +44,6 @@ export {
   createStream as stream,
   createRouter as router,
   defineApplication as app,
-  defineApplicationHost as host,
   implement as implementRouter,
 } from '@nmtjs/application'
 export { createEnvConfig as envConfig, EnvConfigError } from '@nmtjs/config'
@@ -88,3 +98,23 @@ export const inject: Injectables = Object.freeze({
   ...GatewayInjectables,
   ...PubSubInjectables,
 })
+
+/**
+ * Defines an application host with the default native codec registry
+ * (JSON + MessagePack) when `formats` is not provided — native codecs are
+ * owned by the host composition (see the application-interfaces plan, D13).
+ */
+export function host<
+  const App extends ApplicationConfig,
+  const Transports extends Record<string, ApplicationTransport>,
+>(
+  application: App,
+  options: ApplicationHostDefinitionOptions<Transports>,
+): ApplicationHostDefinition<App, Transports> {
+  return defineApplicationHost(application, {
+    ...options,
+    formats:
+      options.formats ??
+      new ProtocolFormats([new JsonFormat(), new MsgpackFormat()]),
+  })
+}

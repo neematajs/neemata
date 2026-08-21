@@ -70,7 +70,7 @@ async function startServer(onRpc?: (...args: any[]) => Promise<unknown>) {
   return {
     url,
     requests,
-    stop: () => worker.stop(params as any),
+    stop: () => worker.stop(),
   }
 }
 

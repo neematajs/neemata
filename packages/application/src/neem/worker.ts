@@ -1,9 +1,6 @@
 import type { NeemRuntime } from '@nmtjs/neem'
 import { createValueInjectable } from '@nmtjs/core'
-import { JsonFormat } from '@nmtjs/json-format/server'
-import { MsgpackFormat } from '@nmtjs/msgpack-format/server'
 import { defineRuntimeWorker } from '@nmtjs/neem'
-import { ProtocolFormats } from '@nmtjs/protocol/server'
 
 import type { ApplicationTransport } from '../config.ts'
 import type {
@@ -33,10 +30,19 @@ export class NeemataApplicationRuntime<
   readonly host: ApplicationHost<THost['transports']>
 
   constructor(readonly ctx: NeemataRuntimeContext<THost>) {
+    const formats = ctx.definition.formats
+    if (!formats) {
+      // native codecs are owned by the host composition (D13); the nmtjs
+      // umbrella's `host` helper fills in the JSON+MessagePack default
+      throw new Error(
+        'Application host definition has no formats. Define the host via ' +
+          "the nmtjs umbrella's host() helper or pass formats explicitly.",
+      )
+    }
     this.host = createApplicationHost(ctx.definition.application, {
       name: ctx.name,
       logger: ctx.logger,
-      formats: new ProtocolFormats([new JsonFormat(), new MsgpackFormat()]),
+      formats,
       transports: createHostTransportConfig(
         ctx.definition.transports,
         ctx.data,

@@ -46,6 +46,7 @@ export interface ApplicationHostDefinition<
   [kApplicationHostDefinition]: any
   application: App
   transports: Transports
+  formats?: ProtocolFormats
   gateway?: Pick<
     GatewayOptions<ApplicationResolvedProcedure>,
     'streamIdleTimeout' | 'heartbeat'
@@ -62,6 +63,12 @@ export type ApplicationHostDefinitionOptions<
   Transports extends Record<string, ApplicationTransport>,
 > = {
   transports: Transports
+  /**
+   * Native protocol codec registry used by the native transports. Owned by
+   * the user-authored host composition (D13); the `nmtjs` umbrella's `host`
+   * helper defaults it to JSON + MessagePack.
+   */
+  formats?: ProtocolFormats
   gateway?: Pick<
     GatewayOptions<ApplicationResolvedProcedure>,
     'streamIdleTimeout' | 'heartbeat'

@@ -110,7 +110,7 @@ describe('server transport handlers', () => {
     expect(params.onDisconnect).toHaveBeenCalledWith('connection')
     expect(worker.send?.('connection', buffer)).toBe('dropped')
 
-    await worker.stop(params)
+    await worker.stop()
     expect(stopHost).toHaveBeenCalledOnce()
     expect(events).toStrictEqual([
       'mount:http:true',
@@ -182,8 +182,8 @@ describe('server transport handlers', () => {
 
     const firstStart = worker.start(params)
     const overlappingStart = worker.start(params)
-    const firstStop = worker.stop(params)
-    const overlappingStop = worker.stop(params)
+    const firstStop = worker.stop()
+    const overlappingStop = worker.stop()
     releaseMount()
 
     await expect(firstStart).resolves.toBe('http://127.0.0.1:3000')
@@ -266,7 +266,7 @@ describe('server transport handlers', () => {
     expect(stopHost).toHaveBeenCalledTimes(2)
 
     await expect(worker.start(params)).resolves.toBe('http://127.0.0.1:3000')
-    await worker.stop(params)
+    await worker.stop()
     expect(events).toStrictEqual([
       'mount:first',
       'mount:second',
