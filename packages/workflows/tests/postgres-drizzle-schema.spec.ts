@@ -1192,13 +1192,32 @@ test('extends activity command leases with heartbeat', async () => {
     workerId: 'activity-worker-1',
     workflowNames: [command.workflowName],
     activityNames: [command.activityName],
-    leaseMs: 20,
+    leaseMs: 1000,
   })
   expect(claimed).not.toBeNull()
 
-  await new Promise((resolve) => setTimeout(resolve, 10))
-  await runtime.attemptExecutor.heartbeat(claimed!, 100)
-  await new Promise((resolve) => setTimeout(resolve, 40))
+  const claimedLease = await connection.query<{ lease_expires_at: Date }>(
+    `
+      SELECT lease_expires_at
+      FROM workflow_commands
+      WHERE attempt_id = $1
+    `,
+    [command.attemptId],
+  )
+
+  await runtime.attemptExecutor.heartbeat(claimed!, 10_000)
+
+  const heartbeatLease = await connection.query<{ lease_expires_at: Date }>(
+    `
+      SELECT lease_expires_at
+      FROM workflow_commands
+      WHERE attempt_id = $1
+    `,
+    [command.attemptId],
+  )
+  expect(heartbeatLease.rows[0]!.lease_expires_at.getTime()).toBeGreaterThan(
+    claimedLease.rows[0]!.lease_expires_at.getTime(),
+  )
 
   await expect(
     runtime.attemptExecutor.claim({
@@ -1206,7 +1225,7 @@ test('extends activity command leases with heartbeat', async () => {
       workerId: 'activity-worker-2',
       workflowNames: [command.workflowName],
       activityNames: [command.activityName],
-      leaseMs: 20,
+      leaseMs: 1000,
     }),
   ).resolves.toBeNull()
 })
