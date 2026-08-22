@@ -30,7 +30,6 @@ import type {
   NeemataHttpHandlerOptions,
   NeemataHttpRequest,
 } from './types.ts'
-import { createDefaultFormats } from '../formats.ts'
 import {
   AllowedHttpMethod,
   DEFAULT_MAX_REQUEST_BODY_SIZE,
@@ -128,7 +127,7 @@ export class NeemataHttpHandler {
     this.#corsOptions = options.cors
     this.#maxRequestBodySize =
       options.maxRequestBodySize ?? hostMaxRequestBodySize
-    this.#formats = options.formats ?? createDefaultFormats()
+    this.#formats = options.formats
   }
 
   async handle(request: NeemataHttpRequest): Promise<Response> {

@@ -1,4 +1,6 @@
 import type { ServerHost } from '@nmtjs/transports'
+import { JsonFormat } from '@nmtjs/json-format/server'
+import { ProtocolFormats } from '@nmtjs/protocol/server'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
@@ -6,13 +8,15 @@ import {
   WS_PENDING_OPEN_TTL,
 } from '../../src/ws/server.ts'
 
+const createTestFormats = () => new ProtocolFormats([new JsonFormat()])
+
 const createHandler = () => {
   const onConnect = vi.fn(async (_options: any) => ({ id: 'conn-1' }))
   const onDisconnect = vi.fn(async () => {})
   const handler = new NeemataWebSocketHandler(
     { onConnect, onDisconnect } as any,
     { isSendSuccess: () => true } as unknown as ServerHost,
-    { path: '/', heartbeat: false },
+    { path: '/', formats: createTestFormats(), heartbeat: false },
   )
   return { handler, hooks: handler.hooks, onConnect, onDisconnect }
 }
@@ -152,7 +156,7 @@ describe('NeemataWebSocketHandler pending-open TTL', () => {
     const handler = new NeemataWebSocketHandler(
       { onConnect, onDisconnect } as any,
       { isSendSuccess: () => true } as unknown as ServerHost,
-      { path: '/', heartbeat: false },
+      { path: '/', formats: createTestFormats(), heartbeat: false },
     )
 
     const upgrading = handler.hooks.upgrade!(upgradeRequest)

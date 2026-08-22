@@ -1,8 +1,12 @@
 import type { ServerHost } from '@nmtjs/transports'
 import type { Peer } from 'crossws'
+import { JsonFormat } from '@nmtjs/json-format/server'
+import { ProtocolFormats } from '@nmtjs/protocol/server'
 import { describe, expect, it, vi } from 'vitest'
 
 import { NeemataWebSocketHandler } from '../../src/ws/server.ts'
+
+const createTestFormats = () => new ProtocolFormats([new JsonFormat()])
 
 const createHost = (isSendSuccess: (status: number) => boolean = () => true) =>
   ({ isSendSuccess }) as unknown as ServerHost
@@ -13,6 +17,7 @@ const createHandler = (
 ) =>
   new NeemataWebSocketHandler(params as any, createHost(isSendSuccess), {
     path: '/',
+    formats: createTestFormats(),
     heartbeat: false,
   })
 

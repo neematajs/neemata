@@ -1,11 +1,15 @@
 import { Buffer } from 'node:buffer'
 
+import { JsonFormat } from '@nmtjs/json-format/server'
 import { ClientMessageType, ServerMessageType } from '@nmtjs/protocol'
+import { ProtocolFormats } from '@nmtjs/protocol/server'
 import { createServerTransport } from '@nmtjs/transports'
 import { createServerHost } from '@nmtjs/transports/host/node'
 import { neemataHttp } from '@nmtjs/transports/http'
 import { neemataWebSocket } from '@nmtjs/transports/ws'
 import { describe, expect, it, vi } from 'vitest'
+
+const createTestFormats = () => new ProtocolFormats([new JsonFormat()])
 
 function createParams() {
   return {
@@ -47,7 +51,10 @@ describe('http + ws transports on a shared server', () => {
     })
     const worker = await ServerTransport.factory({
       listen: { port: 0, hostname: '127.0.0.1' },
-      handlers: { http: { path: '/api' }, ws: { path: '/ws' } },
+      handlers: {
+        http: { path: '/api', formats: createTestFormats() },
+        ws: { path: '/ws', formats: createTestFormats() },
+      },
     })
     const params = createParams()
     const url = await worker.start(params)

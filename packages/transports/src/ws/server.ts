@@ -15,7 +15,6 @@ import type {
   NeemataWebSocketHandlerOptions,
   NeemataWebSocketRequest,
 } from './types.ts'
-import { createDefaultFormats } from '../formats.ts'
 import * as injections from './injectables.ts'
 import { WsSessionEngine } from './session.ts'
 import { InternalServerErrorHttpResponse } from './utils.ts'
@@ -164,7 +163,7 @@ export class NeemataWebSocketHandler {
     readonly host: ServerHost,
     readonly options: NeemataWebSocketHandlerOptions,
   ) {
-    this.#formats = options.formats ?? createDefaultFormats()
+    this.#formats = options.formats
     this.connections = new WsConnectionRegistry(async (connectionId) => {
       // wire state first, so in-flight calls observe their wire aborts
       // before the gateway aborts and disposes the application scope

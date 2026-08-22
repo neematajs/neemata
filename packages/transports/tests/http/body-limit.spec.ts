@@ -4,6 +4,7 @@ import { neemataHttp } from '@nmtjs/transports/http'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
+  createTestFormats,
   createTestParams,
   createTestRequest,
   createTestServer,
@@ -169,7 +170,7 @@ describe('request body size limit', () => {
     expect(() =>
       neemataHttp().mount(
         { host, gateway: params as any },
-        { path: '/', maxRequestBodySize: 2048 },
+        { path: '/', formats: createTestFormats(), maxRequestBodySize: 2048 },
       ),
     ).toThrow(/exceeds the host limit/)
   })
@@ -179,7 +180,13 @@ describe('request body size limit', () => {
     const worker = await Server.factory({
       listen: { port: 0 },
       maxRequestBodySize: 1024,
-      handlers: { http: { path: '/', maxRequestBodySize: 2048 } },
+      handlers: {
+        http: {
+          path: '/',
+          formats: createTestFormats(),
+          maxRequestBodySize: 2048,
+        },
+      },
     })
 
     await expect(worker.start(params as any)).rejects.toThrow(
@@ -194,7 +201,13 @@ describe('request body size limit (node runtime)', () => {
     const worker = await Server.factory({
       listen: { port: 0 },
       maxRequestBodySize: 1024,
-      handlers: { http: { path: '/', maxRequestBodySize: 1024 } },
+      handlers: {
+        http: {
+          path: '/',
+          formats: createTestFormats(),
+          maxRequestBodySize: 1024,
+        },
+      },
     })
     const url = await worker.start(params as any)
 
@@ -225,7 +238,13 @@ describe('request body size limit (node runtime)', () => {
     const worker = await Server.factory({
       listen: { port: 0 },
       maxRequestBodySize: 1024,
-      handlers: { http: { path: '/', maxRequestBodySize: 1024 } },
+      handlers: {
+        http: {
+          path: '/',
+          formats: createTestFormats(),
+          maxRequestBodySize: 1024,
+        },
+      },
     })
     const url = await worker.start(params as any)
 

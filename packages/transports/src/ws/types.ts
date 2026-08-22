@@ -22,10 +22,9 @@ export interface NeemataWebSocketHandlerOptions {
   path: `/${string}`
   /**
    * Native codec registry this handler negotiates against per connection
-   * (accept/content-type on the upgrade request). Defaults to
-   * JSON + MessagePack.
+   * (accept/content-type on the upgrade request).
    */
-  formats?: ProtocolFormats
+  formats: ProtocolFormats
   /**
    * Bounds peer inactivity per stream; see the session engine for exact
    * semantics. Defaults to 30s.

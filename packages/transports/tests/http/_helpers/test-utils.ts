@@ -1,11 +1,17 @@
 import type { TransportWorkerParams } from '@nmtjs/gateway'
 import type { Mock } from 'vitest'
+import { JsonFormat } from '@nmtjs/json-format/server'
+import { ProtocolFormats } from '@nmtjs/protocol/server'
 import { vi } from 'vitest'
 
 import type { NeemataHttpHandlerOptions } from '../../../src/http/types.ts'
 import { NeemataHttpHandler } from '../../../src/http/server.ts'
 
 export type TestParams = TransportWorkerParams<any>
+
+export function createTestFormats() {
+  return new ProtocolFormats([new JsonFormat()])
+}
 
 export function createTestParams(
   onRpc: Mock = vi.fn(async () => ({ ok: true })),
@@ -30,7 +36,7 @@ export async function createTestServer(
 ) {
   return new NeemataHttpHandler(
     params as any,
-    { path: '/', ...options },
+    { path: '/', formats: createTestFormats(), ...options },
     hostMaxRequestBodySize,
   )
 }

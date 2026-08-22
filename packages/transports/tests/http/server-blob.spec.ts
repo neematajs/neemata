@@ -2,6 +2,7 @@ import { ProtocolBlob } from '@nmtjs/protocol'
 import { describe, expect, it } from 'vitest'
 
 import { NeemataHttpHandler } from '../../src/http/server.ts'
+import { createTestFormats } from './_helpers/test-utils.ts'
 
 const createServer = (result: unknown) => {
   const params = {
@@ -12,7 +13,10 @@ const createServer = (result: unknown) => {
     resolve: async () => ({ meta: new Map() }),
     onRpc: async () => result,
   } as any
-  return new NeemataHttpHandler(params, { path: '/' })
+  return new NeemataHttpHandler(params, {
+    path: '/',
+    formats: createTestFormats(),
+  })
 }
 
 const handle = (server: NeemataHttpHandler) =>

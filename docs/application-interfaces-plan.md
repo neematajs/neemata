@@ -314,9 +314,11 @@ together** as the full ownership refactor:
   socket-close initiation are all handler-owned. The wire protocol is
   unchanged — the machinery relocated, not redesigned.
 - **Formats are per-handler options**: `neemataHttp({ formats })` and
-  `neemataWebSocket({ formats })` negotiate per request/upgrade, defaulting
-  to JSON + MessagePack (owned by `@nmtjs/transports`). `heartbeat` and
-  `streamIdleTimeout` are `neemataWebSocket` options. JSON-RPC owns plain
+  `neemataWebSocket({ formats })` negotiate per request/upgrade. The
+  registry is required — there is no built-in default, so the composition
+  that mounts a native handler states its codecs explicitly and
+  `@nmtjs/transports` carries no format-package dependencies. `heartbeat`
+  and `streamIdleTimeout` are `neemataWebSocket` options. JSON-RPC owns plain
   spec-compliant `JSON.parse`/`stringify` (415 for non-JSON content types);
   MCP relies solely on its SDK's encoding.
 - **Blob capabilities are projection-owned**: `createBlob`/`consumeBlob`

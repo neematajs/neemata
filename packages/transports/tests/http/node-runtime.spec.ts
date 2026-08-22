@@ -37,6 +37,8 @@ class TestJsonFormat extends BaseServerFormat {
   }
 }
 
+const createTestFormats = () => new ProtocolFormats([new TestJsonFormat()])
+
 async function startServer(onRpc?: (...args: any[]) => Promise<unknown>) {
   const format = new TestJsonFormat()
   const connection = {
@@ -63,7 +65,7 @@ async function startServer(onRpc?: (...args: any[]) => Promise<unknown>) {
   })
   const worker = await Server.factory({
     listen: { port: 0, hostname: '127.0.0.1' },
-    handlers: { http: { path: '/' } },
+    handlers: { http: { path: '/', formats: createTestFormats() } },
   })
   const url = await worker.start(params as any)
 

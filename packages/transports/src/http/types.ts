@@ -7,9 +7,9 @@ export interface NeemataHttpHandlerOptions {
   cors?: HttpHandlerCorsOptions
   /**
    * Native codec registry this handler negotiates against per request
-   * (Accept/Content-Type). Defaults to JSON + MessagePack.
+   * (Accept/Content-Type).
    */
-  formats?: ProtocolFormats
+  formats: ProtocolFormats
   /**
    * Inherits the host limit when omitted; lower values add a stricter cap.
    * A value above the host limit is a mount-time error — the host would
