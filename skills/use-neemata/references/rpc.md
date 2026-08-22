@@ -53,7 +53,8 @@ export const api = rootRouter([usersRouter] as const)
 Rules:
 
 - Route object keys are RPC path segments and client property names.
-- `rootRouter([...])` merges top-level routes; duplicate keys overwrite.
+- `rootRouter([...])` merges top-level routes; a duplicate top-level key is a
+  startup error (`Root router route collision`).
 - Router `name` is not a root mount prefix. Mounted route keys win.
 - Router guards, middleware, meta, and timeout are behavior, not path shape.
 
@@ -64,7 +65,7 @@ import { guard, inject, middleware, procedure, t } from 'nmtjs'
 
 const requireConnection = guard({
   dependencies: { connection: inject.connection },
-  can: ({ connection }, call) => Boolean(connection && call.payload),
+  handler: ({ connection }, call) => Boolean(connection && call.payload),
 })
 
 const timing = middleware(async (_ctx, _call, next, payload) => {
@@ -167,7 +168,7 @@ export const item = procedure({
     area.static('admin'),
     decodedInput.factory({
       phase: 'afterDecode',
-      resolve: (_ctx, _call, input) => input,
+      handler: (_ctx, _call, input) => input,
     }),
   ],
   dependencies: { decoded: decodedInput },
@@ -190,7 +191,7 @@ import { ApiError, ErrorCode, filter } from 'nmtjs'
 
 const notFoundFilter = filter({
   errorClass: NotFoundError,
-  catch: (_ctx, error) => new ApiError(ErrorCode.NotFound, error.message),
+  handler: (_ctx, error) => new ApiError(ErrorCode.NotFound, error.message),
 })
 ```
 

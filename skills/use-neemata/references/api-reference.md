@@ -43,6 +43,7 @@ import {
   rootRouter,
   router,
   Scope,
+  stream,
   t,
   transport,
   value,
@@ -66,12 +67,15 @@ import {
 ## Common Builders
 
 - `procedure(options | handler)` - define procedure and infer contract.
+- `stream(options)` - define a server-stream route (async-iterable output,
+  exposed on `client.stream.*`; optional `streamTimeout`).
 - `contractProcedure(contract, options | handler)` - implement procedure
   contract.
 - `implementRouter(contract)` - callable contract implementation builder.
 - `router({ routes, guards?, middlewares?, meta?, timeout? })` - group routes.
 - `contractRouter(contract, { routes, ... })` - implement router contract.
-- `rootRouter([routerA, routerB], defaultProcedure?)` - compose root API.
+- `rootRouter([routerA, routerB])` - compose root API; duplicate top-level
+  route keys throw at composition time.
 - `app({ router, guards?, middlewares?, filters?, plugins?, hooks?, meta? })` -
   pure application definition.
 - `host(application, { transports })` - bind app to serving surfaces.
@@ -80,7 +84,7 @@ import {
 ## Contracts And Types
 
 - `t` - schema builders with decode and encode modes.
-- `c.procedure(...)`, `c.router(...)`, `c.event(...)`,
+- `c.procedure(...)`, `c.stream(...)`, `c.router(...)`, `c.event(...)`,
   `c.subscription(...)` - public API contracts.
 - `blobType()` - protocol blob marker type for input/output schemas.
 - `ProtocolBlob`, `ConnectionType`, `ErrorCode` - protocol helpers.

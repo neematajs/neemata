@@ -44,6 +44,10 @@ Rules:
 - `host(app, { transports })` binds the app to transport factories.
 - Server hosts and handlers stay direct imports because they are separate
   runtime dependencies.
+- `neemataWebSocket({ codecs })` from `@nmtjs/transports/neemata/ws` follows
+  the same shape: codecs are a construction option; `path` (plus optional
+  `heartbeat` and `streamIdleTimeout`) are per-mount handler options supplied
+  through the planner/factory `handlers` record.
 - App-level static metadata merges with router and procedure metadata.
 
 ## Neemata Runtime Files
