@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 import type { NeemNuxtRoutingKind } from './types.ts'
@@ -175,15 +175,19 @@ function pickImportCondition(entry: unknown): string | undefined {
 }
 
 function resolveNuxtPackage(root: string): string {
-  const require = createRequire(join(root, 'package.json'))
-  try {
-    return require.resolve('nuxt/package.json')
-  } catch (error) {
-    throw new Error(
-      `Failed to resolve [nuxt] from app root [${root}]; is nuxt installed for that app?`,
-      { cause: error },
-    )
+  let dir = resolve(root)
+  while (true) {
+    const candidate = join(dir, 'node_modules/nuxt/package.json')
+    if (existsSync(candidate)) return realpathSync(candidate)
+
+    const parent = dirname(dir)
+    if (parent === dir) break
+    dir = parent
   }
+
+  throw new Error(
+    `Failed to resolve [nuxt] from app root [${root}]; is nuxt installed for that app?`,
+  )
 }
 
 /**

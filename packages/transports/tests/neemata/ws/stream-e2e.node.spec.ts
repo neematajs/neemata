@@ -264,14 +264,15 @@ describe('stream flow control over a real WS transport', () => {
     const received: Uint8Array[] = [firstChunk]
     expect(firstChunk.byteLength).toBe(PULL_SIZE)
 
-    // with the consumer paused, the source lead is exact and deterministic:
-    // the granted chunk (sent) plus exactly two chunks of read-ahead —
-    // source.read() drains-and-tops-off in one call (the pump keeps the
-    // un-credited remainder sliced off in its own buffer) and Node's hwm-1
-    // refill stages one more. sourceBytes is server-internal
-    // instrumentation, no socket buffering blurs it.
+    // With the consumer paused, credit keeps source advancement bounded to the
+    // granted chunk plus Node's internal Readable read-ahead. Node 24 stages
+    // two extra chunks here while Node 26 stages one; neither may consume the
+    // remaining payload before the client asks for it.
     await waitQuiescent(() => sourceBytes)
-    expect(sourceBytes).toBe(firstChunk.byteLength + 2 * PULL_SIZE)
+    expect(sourceBytes).toBeGreaterThanOrEqual(firstChunk.byteLength)
+    expect(sourceBytes).toBeLessThanOrEqual(
+      firstChunk.byteLength + 2 * PULL_SIZE,
+    )
 
     // release the consumer and drain the rest
     while (true) {

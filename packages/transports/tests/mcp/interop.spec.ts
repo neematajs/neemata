@@ -1,5 +1,9 @@
 import type { AuthInfo } from '@modelcontextprotocol/server'
 import type { GatewayApi, GatewayApiCallOptions } from '@nmtjs/gateway'
+import type {
+  ServerHost,
+  ServerHostOptions,
+} from '@nmtjs/transports/http-server'
 import {
   Client,
   StreamableHTTPClientTransport,
@@ -10,12 +14,19 @@ import { Gateway } from '@nmtjs/gateway'
 import { ErrorCode } from '@nmtjs/protocol'
 import { ProtocolError } from '@nmtjs/protocol/server'
 import { createServerTransport } from '@nmtjs/transports/http-server'
-import { createServerHost } from '@nmtjs/transports/http-server/node'
 import { mcp } from '@nmtjs/transports/mcp'
 import { t } from '@nmtjs/type'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import type { McpAuthOptions } from '../../src/mcp/types.ts'
+
+const { createServerHost: runtimeCreateServerHost } = globalThis.Bun
+  ? await import('@nmtjs/transports/http-server/bun')
+  : await import('@nmtjs/transports/http-server/node')
+// This suite passes only the options shared by both runtime hosts.
+const createServerHost = runtimeCreateServerHost as (
+  options: ServerHostOptions,
+) => ServerHost
 
 /**
  * Interop: the MCP handler (2026-07-28, SDK-backed) consumed by the official

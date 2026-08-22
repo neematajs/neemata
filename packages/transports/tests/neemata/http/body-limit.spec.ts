@@ -1,5 +1,8 @@
+import type {
+  ServerHost,
+  ServerHostOptions,
+} from '@nmtjs/transports/http-server'
 import { createServerTransport } from '@nmtjs/transports/http-server'
-import { createServerHost } from '@nmtjs/transports/http-server/node'
 import { neemataHttp } from '@nmtjs/transports/neemata/http'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -9,6 +12,14 @@ import {
   createTestRequest,
   createTestServer,
 } from './_helpers/test-utils.ts'
+
+const { createServerHost: runtimeCreateServerHost } = globalThis.Bun
+  ? await import('@nmtjs/transports/http-server/bun')
+  : await import('@nmtjs/transports/http-server/node')
+// This suite passes only the options shared by both runtime hosts.
+const createServerHost = runtimeCreateServerHost as (
+  options: ServerHostOptions,
+) => ServerHost
 
 const Server = createServerTransport({
   host: createServerHost,
