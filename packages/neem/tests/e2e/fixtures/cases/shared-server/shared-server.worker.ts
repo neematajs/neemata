@@ -6,9 +6,7 @@ import type {
 import type { NeemRuntimeUpstream, NeemRuntimeWorkerContext } from '@nmtjs/neem'
 import { Container, createLogger, Hooks } from '@nmtjs/core'
 import { Gateway } from '@nmtjs/gateway'
-import { JsonFormat } from '@nmtjs/json-format/server'
 import { defineRuntimeWorker } from '@nmtjs/neem'
-import { ProtocolFormats } from '@nmtjs/protocol/server'
 import { createServerTransport } from '@nmtjs/transports'
 import { createServerHost } from '@nmtjs/transports/host/node'
 import { neemataHttp } from '@nmtjs/transports/http'
@@ -66,7 +64,6 @@ export default defineRuntimeWorker({
           logger,
           container,
           hooks: new Hooks(),
-          formats: new ProtocolFormats([new JsonFormat()]),
           transports: {
             server: {
               transport: server,
@@ -74,7 +71,6 @@ export default defineRuntimeWorker({
             },
           },
           api,
-          heartbeat: false,
         })
 
         const hosts = await gateway.start()

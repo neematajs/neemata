@@ -1,3 +1,7 @@
+import type { ProtocolFormats } from '@nmtjs/protocol/server'
+
+import type { WsSessionHeartbeatOptions } from './session.ts'
+
 export type NeemataWebSocketRequest = Request
 
 export type WsTransportPeerContext = { connectionId: string }
@@ -16,4 +20,20 @@ export interface NeemataWebSocketHandlerOptions {
    * configured below them fails at start instead of dropping frames.
    */
   path: `/${string}`
+  /**
+   * Native codec registry this handler negotiates against per connection
+   * (accept/content-type on the upgrade request). Defaults to
+   * JSON + MessagePack.
+   */
+  formats?: ProtocolFormats
+  /**
+   * Bounds peer inactivity per stream; see the session engine for exact
+   * semantics. Defaults to 30s.
+   */
+  streamIdleTimeout?: number
+  /**
+   * Server-initiated protocol heartbeat (Ping/Pong). `false` disables it;
+   * a missed Pong closes the connection.
+   */
+  heartbeat?: WsSessionHeartbeatOptions
 }

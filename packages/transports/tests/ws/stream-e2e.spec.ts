@@ -174,14 +174,20 @@ async function createHarness(options: {
   const transport = await Server.factory({
     listen: { port: 0, hostname: '127.0.0.1' },
     webSocket: options.runtimeWs,
-    handlers: { ws: { path: '/' } },
+    handlers: {
+      ws: {
+        path: '/',
+        formats: new ProtocolFormats([new ServerJsonFormat()]),
+        heartbeat: false,
+        streamIdleTimeout: options.streamIdleTimeout,
+      },
+    },
   })
 
   const gateway = new Gateway({
     logger,
     container,
     hooks: new Hooks(),
-    formats: new ProtocolFormats([new ServerJsonFormat()]),
     transports: {
       ws: {
         transport,
@@ -189,8 +195,6 @@ async function createHarness(options: {
       },
     },
     api,
-    heartbeat: false,
-    streamIdleTimeout: options.streamIdleTimeout,
   })
 
   // listening on port 0: the uWS listen callback reports the real bound port

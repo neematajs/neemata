@@ -36,25 +36,24 @@ class TestJsonFormat extends BaseServerFormat {
 async function createServer() {
   const format = new TestJsonFormat()
   const connection = {
-    encoder: format,
-    decoder: format,
     [Symbol.asyncDispose]: () => Promise.resolve(),
   }
   const onConnect = vi.fn(async () => connection)
   const resolve = vi.fn(async () => ({
     meta: { get: () => ['get', 'post'] },
   }))
-  const onRpc = vi.fn(async () => ({ ok: true }))
+  const onRpc = vi.fn(async (..._args: unknown[]) => ({ ok: true }))
   const params = {
-    formats: new ProtocolFormats([format]),
     onConnect,
     resolve,
     onRpc,
     onDisconnect: async () => {},
-    onMessage: async () => {},
   }
 
-  const server = new NeemataHttpHandler(params as any, { path: '/' })
+  const server = new NeemataHttpHandler(params as any, {
+    path: '/',
+    formats: new ProtocolFormats([format]),
+  })
 
   return { server, onConnect, resolve, onRpc }
 }
@@ -91,50 +90,48 @@ describe('NeemataHttpHandler.handle', () => {
       )
 
       expect(response.status).toBe(200)
-      expect(onRpc).toHaveBeenCalledWith(
-        expect.anything(),
-        expect.objectContaining({ payload: { a: 1 } }),
-        expect.anything(),
-        expect.anything(),
-      )
+      expect(onRpc).toHaveBeenCalledOnce()
+      expect(onRpc.mock.calls[0]![1]).toEqual({
+        payload: { a: 1 },
+        procedure: 'test',
+      })
     })
   })
 
   describe('GET Accept negotiation', () => {
     it('keeps a supported Accept header', async () => {
-      const { server, onConnect } = await createServer()
+      const { server } = await createServer()
 
-      await server.handle(
+      const response = await server.handle(
         makeRequest('http://localhost/test', { accept: 'application/json' }),
       )
 
-      expect(onConnect).toHaveBeenCalledWith(
-        expect.objectContaining({ accept: 'application/json' }),
-      )
+      expect(response.status).toBe(200)
+      expect(response.headers.get('content-type')).toBe('application/json')
     })
 
-    it('falls back to */* when Accept is not negotiable', async () => {
-      const { server, onConnect } = await createServer()
+    it('falls back to the default format when Accept is not negotiable', async () => {
+      const { server } = await createServer()
 
-      await server.handle(
+      const response = await server.handle(
         makeRequest('http://localhost/test', { accept: 'text/html' }),
       )
 
-      expect(onConnect).toHaveBeenCalledWith(
-        expect.objectContaining({ accept: '*/*' }),
-      )
+      // browser navigation sends HTML Accept headers; GET falls back to the
+      // registry default instead of failing negotiation
+      expect(response.status).toBe(200)
+      expect(response.headers.get('content-type')).toBe('application/json')
     })
 
-    it('keeps non-negotiable Accept for non-GET requests', async () => {
-      const { server, onConnect } = await createServer()
+    it('rejects a non-negotiable Accept for non-GET requests', async () => {
+      const { server, onRpc } = await createServer()
 
-      await server.handle(
+      const response = await server.handle(
         makeRequest('http://localhost/test', { accept: 'text/html' }, 'POST'),
       )
 
-      expect(onConnect).toHaveBeenCalledWith(
-        expect.objectContaining({ accept: 'text/html' }),
-      )
+      expect(response.status).toBe(406)
+      expect(onRpc).not.toHaveBeenCalled()
     })
   })
 })

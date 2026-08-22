@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import { RpcManager } from '../src/rpcs.ts'
+import { RpcManager } from '../../src/ws/rpcs.ts'
 
 describe('RpcManager', () => {
   let manager: RpcManager

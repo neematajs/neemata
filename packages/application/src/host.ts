@@ -4,7 +4,6 @@ import type {
   GatewayOptions,
   Transport,
 } from '@nmtjs/gateway'
-import type { ProtocolFormats } from '@nmtjs/protocol/server'
 import { Lifecycle, TeardownStack } from '@nmtjs/common'
 import { ExecutionEnvironmentLifecycleHook } from '@nmtjs/core'
 import { Gateway } from '@nmtjs/gateway'
@@ -19,7 +18,7 @@ import { kApplicationHostDefinition } from './constants.ts'
 import { NeemataApplication } from './runtime.ts'
 
 export type TransportOptionsOf<T> =
-  T extends Transport<any, infer Options, any, any, any> ? Options : never
+  T extends Transport<infer Options, any, any, any> ? Options : never
 
 export type ApplicationHostTransportConfig<
   Transports extends Record<string, ApplicationTransport>,
@@ -46,11 +45,6 @@ export interface ApplicationHostDefinition<
   [kApplicationHostDefinition]: any
   application: App
   transports: Transports
-  formats?: ProtocolFormats
-  gateway?: Pick<
-    GatewayOptions<ApplicationResolvedProcedure>,
-    'streamIdleTimeout' | 'heartbeat'
-  >
   identity?: ConnectionIdentity
 }
 
@@ -63,16 +57,6 @@ export type ApplicationHostDefinitionOptions<
   Transports extends Record<string, ApplicationTransport>,
 > = {
   transports: Transports
-  /**
-   * Native protocol codec registry used by the native transports. Owned by
-   * the user-authored host composition (D13); the `nmtjs` umbrella's `host`
-   * helper defaults it to JSON + MessagePack.
-   */
-  formats?: ProtocolFormats
-  gateway?: Pick<
-    GatewayOptions<ApplicationResolvedProcedure>,
-    'streamIdleTimeout' | 'heartbeat'
-  >
   identity?: ConnectionIdentity
 }
 
@@ -85,12 +69,7 @@ export interface ApplicationHostOptions<
   name?: string
   logger: Logger
   container?: Container
-  formats: ProtocolFormats
   transports: ApplicationHostTransportConfig<Transports>
-  gateway?: Pick<
-    GatewayOptions<ApplicationResolvedProcedure>,
-    'streamIdleTimeout' | 'heartbeat'
-  >
   identity?: ConnectionIdentity
 }
 
@@ -133,11 +112,9 @@ export class ApplicationHost<
 
       this.transports = await this.createTransports()
       this.gateway = new Gateway({
-        ...this.options.gateway,
         logger: this.options.logger,
         container: this.application.container,
         hooks: this.application.lifecycleHooks,
-        formats: this.options.formats,
         transports: this.transports,
         api: this.application.api,
         identity: this.options.identity,

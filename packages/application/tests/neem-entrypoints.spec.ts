@@ -29,7 +29,7 @@ const testDir = dirname(fileURLToPath(import.meta.url))
 type HttpOptions = { listen: { hostname: string; port: number } }
 type TestHost = ApplicationHostDefinition<
   any,
-  { http: ApplicationTransport<any, HttpOptions> }
+  { http: ApplicationTransport<HttpOptions> }
 >
 
 describe('Neem application entrypoints', () => {
@@ -76,7 +76,7 @@ describe('Neem application entrypoints', () => {
     >()
   })
 
-  it('propagates host gateway and identity options through Neem worker runtime', async () => {
+  it('propagates host identity options through Neem worker runtime', async () => {
     const logger = createLogger({ pinoOptions: { enabled: false } }, 'test')
     const identity = createValueInjectable('worker-identity')
     const transportWorker: TransportWorker = {
@@ -102,11 +102,6 @@ describe('Neem application entrypoints', () => {
     })
     const host = defineApplicationHost(app, {
       transports: { http: transport },
-      formats: {} as import('@nmtjs/protocol/server').ProtocolFormats,
-      gateway: {
-        heartbeat: { interval: 4321, timeout: 8765 },
-        streamIdleTimeout: 1111,
-      },
       identity,
     })
     const runtimeWorker = worker.defineNeemataWorker(host)
@@ -123,11 +118,6 @@ describe('Neem application entrypoints', () => {
     try {
       await created.start()
 
-      expect(created.host.gateway.options.heartbeat).toEqual({
-        interval: 4321,
-        timeout: 8765,
-      })
-      expect(created.host.gateway.options.streamIdleTimeout).toBe(1111)
       expect(created.host.gateway.options.identity).toBe(identity)
     } finally {
       await created.stop()

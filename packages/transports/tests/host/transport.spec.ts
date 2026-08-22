@@ -1,6 +1,4 @@
-import type { SendResult } from '@nmtjs/gateway'
 import { ProxyableTransportType } from '@nmtjs/gateway'
-import { ConnectionType } from '@nmtjs/protocol'
 import { describe, expect, expectTypeOf, it, vi } from 'vitest'
 
 import type { ServerHandler } from '../../src/transport.ts'
@@ -18,12 +16,9 @@ describe('server transport handlers', () => {
   it('infers keyed options and owns the host lifecycle', async () => {
     const { host, startHost, stopHost } = createHost()
     const events: string[] = []
-    const wsSend = vi.fn((): SendResult => 'delivered')
-    const wsClose = vi.fn()
     let wsGateway: any
 
     const http: ServerHandler<
-      ConnectionType.Unidirectional,
       { cors: boolean },
       {},
       readonly [ProxyableTransportType.HTTP]
@@ -39,7 +34,6 @@ describe('server transport handlers', () => {
       },
     }
     const ws: ServerHandler<
-      ConnectionType.Bidirectional,
       { path: `/${string}` },
       {},
       readonly [ProxyableTransportType.WS]
@@ -49,8 +43,6 @@ describe('server transport handlers', () => {
         wsGateway = gateway
         events.push(`mount:ws:${options.path}`)
         return {
-          send: wsSend,
-          close: wsClose,
           dispose: () => {
             events.push('dispose:ws')
           },
@@ -85,30 +77,8 @@ describe('server transport handlers', () => {
     await expect(worker.start(params)).resolves.toBe('http://127.0.0.1:3000')
     expect(startHost).toHaveBeenCalledOnce()
 
-    await wsGateway.onConnect({ type: ConnectionType.Bidirectional })
-    const buffer = new Uint8Array([1])
-    expect(worker.send?.('connection', buffer)).toBe('delivered')
-    expect(wsSend).toHaveBeenCalledWith('connection', buffer)
-    // a handler's 'unknown' verdict passes through untouched
-    wsSend.mockReturnValueOnce('unknown')
-    expect(worker.send?.('connection', buffer)).toBe('unknown')
-    // an untracked connection cannot be delivered to
-    expect(worker.send?.('untracked', buffer)).toBe('dropped')
-
-    await worker.close?.('connection', { code: 1000, reason: 'done' })
-    expect(wsClose).toHaveBeenCalledWith('connection', {
-      code: 1000,
-      reason: 'done',
-    })
-    // close released the ownership record, so later sends have no owner
-    expect(worker.send?.('connection', buffer)).toBe('dropped')
-
-    // a gateway disconnect releases ownership just like close does
-    await wsGateway.onConnect({ type: ConnectionType.Bidirectional })
-    expect(worker.send?.('connection', buffer)).toBe('delivered')
-    await wsGateway.onDisconnect('connection')
-    expect(params.onDisconnect).toHaveBeenCalledWith('connection')
-    expect(worker.send?.('connection', buffer)).toBe('dropped')
+    // handlers receive the gateway surface untouched — no interposed routing
+    expect(wsGateway).toBe(params)
 
     await worker.stop()
     expect(stopHost).toHaveBeenCalledOnce()
@@ -118,30 +88,6 @@ describe('server transport handlers', () => {
       'dispose:ws',
       'dispose:http',
     ])
-  })
-
-  it('drops sends for connections owned by a handler without send', async () => {
-    const { host } = createHost()
-    let gateway: any
-    const handler: ServerHandler<ConnectionType, {}> = {
-      proxyable: [],
-      mount(context) {
-        gateway = context.gateway
-        return { dispose() {} }
-      },
-    }
-    const Server = createServerTransport({
-      host: () => host,
-      handlers: { handler },
-    })
-    const worker = await Server.factory({
-      listen: { port: 0 },
-      handlers: { handler: {} },
-    })
-    await worker.start(createParams())
-
-    await gateway.onConnect({ type: ConnectionType.Bidirectional })
-    expect(worker.send?.('connection', new Uint8Array([1]))).toBe('dropped')
   })
 
   it('serializes overlapping lifecycle calls and disposes before host stop', async () => {
@@ -158,7 +104,7 @@ describe('server transport handlers', () => {
     stopHost.mockImplementation(async () => {
       events.push('stop:host')
     })
-    const handler: ServerHandler<ConnectionType, {}> = {
+    const handler: ServerHandler<{}> = {
       proxyable: [],
       async mount() {
         events.push('mount:handler')
@@ -205,7 +151,7 @@ describe('server transport handlers', () => {
     const bindFailure = new Error('host failed to bind')
     let failMount = true
     const { host, startHost, stopHost } = createHost()
-    const first: ServerHandler<ConnectionType, {}> = {
+    const first: ServerHandler<{}> = {
       proxyable: [],
       mount() {
         events.push('mount:first')
@@ -216,7 +162,7 @@ describe('server transport handlers', () => {
         }
       },
     }
-    const second: ServerHandler<ConnectionType, {}> = {
+    const second: ServerHandler<{}> = {
       proxyable: [],
       mount() {
         events.push('mount:second')
@@ -327,13 +273,11 @@ function createHost() {
 
 function createParams() {
   return {
-    formats: {},
     onConnect: vi.fn(async () => ({
       id: 'connection',
       [Symbol.asyncDispose]: async () => {},
     })),
     onDisconnect: vi.fn(async () => {}),
-    onMessage: vi.fn(async () => {}),
     resolve: vi.fn(),
     onRpc: vi.fn(),
   } as any

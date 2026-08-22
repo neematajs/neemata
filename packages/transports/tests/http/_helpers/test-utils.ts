@@ -1,42 +1,22 @@
 import type { TransportWorkerParams } from '@nmtjs/gateway'
-import type { ConnectionType } from '@nmtjs/protocol'
 import type { Mock } from 'vitest'
 import { vi } from 'vitest'
 
 import type { NeemataHttpHandlerOptions } from '../../../src/http/types.ts'
 import { NeemataHttpHandler } from '../../../src/http/server.ts'
 
-const textEncoder = new TextEncoder()
-const textDecoder = new TextDecoder()
-
-export type TestParams = TransportWorkerParams<
-  ConnectionType.Unidirectional,
-  any
->
+export type TestParams = TransportWorkerParams<any>
 
 export function createTestParams(
   onRpc: Mock = vi.fn(async () => ({ ok: true })),
 ) {
   const connection = {
     id: 'test-connection',
-    encoder: {
-      contentType: 'application/json',
-      encode: (data: unknown) =>
-        textEncoder.encode(JSON.stringify(data ?? null)),
-    },
-    decoder: {
-      decode: (buffer: Uint8Array) => JSON.parse(textDecoder.decode(buffer)),
-    },
     [Symbol.asyncDispose]: async () => {},
   }
   const params = {
-    formats: {
-      supportsDecoder: (contentType: string) =>
-        contentType.startsWith('application/json'),
-    },
     onConnect: vi.fn(async () => connection),
     onDisconnect: vi.fn(async () => {}),
-    onMessage: vi.fn(async () => {}),
     resolve: vi.fn(async () => ({ meta: new Map() })),
     onRpc,
   } as unknown as TestParams

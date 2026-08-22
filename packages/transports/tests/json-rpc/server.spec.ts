@@ -1,9 +1,5 @@
 import { ErrorCode } from '@nmtjs/protocol'
-import {
-  BaseServerFormat,
-  ProtocolError,
-  ProtocolFormats,
-} from '@nmtjs/protocol/server'
+import { BaseServerFormat, ProtocolError } from '@nmtjs/protocol/server'
 import { describe, expect, it, vi } from 'vitest'
 
 import { JsonRpcHandler } from '../../src/json-rpc/server.ts'
@@ -61,12 +57,10 @@ function createServer(overrides: ServerOverrides = {}) {
   )
   const onRpc = vi.fn(overrides.onRpc ?? (async () => ({ ok: true })))
   const params = {
-    formats: new ProtocolFormats([format]),
     onConnect,
     resolve,
     onRpc,
     onDisconnect: async () => {},
-    onMessage: async () => {},
   }
 
   const server = new JsonRpcHandler(

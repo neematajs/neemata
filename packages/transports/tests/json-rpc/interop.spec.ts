@@ -1,9 +1,8 @@
 import type { GatewayApi, GatewayApiCallOptions } from '@nmtjs/gateway'
 import { Container, createLogger, Hooks } from '@nmtjs/core'
 import { Gateway } from '@nmtjs/gateway'
-import { JsonFormat as ServerJsonFormat } from '@nmtjs/json-format/server'
 import { ErrorCode } from '@nmtjs/protocol'
-import { ProtocolError, ProtocolFormats } from '@nmtjs/protocol/server'
+import { ProtocolError } from '@nmtjs/protocol/server'
 import { createServerTransport } from '@nmtjs/transports'
 import { createServerHost } from '@nmtjs/transports/host/node'
 import { jsonRpc } from '@nmtjs/transports/json-rpc'
@@ -51,10 +50,8 @@ async function createHarness(handlers: Handlers) {
     logger,
     container,
     hooks: new Hooks(),
-    formats: new ProtocolFormats([new ServerJsonFormat()]),
     transports: { server: { transport, proxyable: Server.proxyable } },
     api,
-    heartbeat: false,
   })
 
   const hosts = await gateway.start()

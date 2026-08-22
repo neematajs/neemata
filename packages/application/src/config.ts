@@ -5,7 +5,6 @@ import type {
   Scope,
 } from '@nmtjs/core'
 import type { ProxyableTransportType, Transport } from '@nmtjs/gateway'
-import type { ConnectionType } from '@nmtjs/protocol'
 import { assertUniqueMetaBindings } from '@nmtjs/core'
 
 import type { ApiOptions, ApplicationResolvedProcedure } from './api/api.ts'
@@ -19,7 +18,6 @@ import { kApplicationConfig } from './constants.ts'
 export type AnyApplicationConfig = ApplicationConfig<AnyRootRouter>
 
 export type ApplicationTransport<
-  Type extends ConnectionType = ConnectionType,
   TransportOptions = any,
   Injections extends {
     [key: string]: LazyInjectable<any, Scope.Connection | Scope.Call>
@@ -28,7 +26,6 @@ export type ApplicationTransport<
     | readonly ProxyableTransportType[]
     | undefined,
 > = Transport<
-  Type,
   TransportOptions,
   Injections,
   Proxyable,

@@ -90,6 +90,8 @@
   },
   "dependencies": {
     "@nmtjs/common": "workspace:*",
+    "@nmtjs/json-format": "workspace:*",
+    "@nmtjs/msgpack-format": "workspace:*",
     "@nmtjs/protocol": "workspace:*",
     "crossws": "0.4.6",
     "zod": "catalog:"
@@ -102,7 +104,6 @@
     "@nmtjs/contract": "workspace:*",
     "@nmtjs/core": "workspace:*",
     "@nmtjs/gateway": "workspace:*",
-    "@nmtjs/json-format": "workspace:*",
     "@nmtjs/type": "workspace:*",
     "@nmtjs/ws-client": "workspace:*",
     "jayson": "^4.3.0",

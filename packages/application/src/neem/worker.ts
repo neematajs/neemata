@@ -30,24 +30,13 @@ export class NeemataApplicationRuntime<
   readonly host: ApplicationHost<THost['transports']>
 
   constructor(readonly ctx: NeemataRuntimeContext<THost>) {
-    const formats = ctx.definition.formats
-    if (!formats) {
-      // native codecs are owned by the host composition (D13); the nmtjs
-      // umbrella's `host` helper fills in the JSON+MessagePack default
-      throw new Error(
-        'Application host definition has no formats. Define the host via ' +
-          "the nmtjs umbrella's host() helper or pass formats explicitly.",
-      )
-    }
     this.host = createApplicationHost(ctx.definition.application, {
       name: ctx.name,
       logger: ctx.logger,
-      formats,
       transports: createHostTransportConfig(
         ctx.definition.transports,
         ctx.data,
       ),
-      gateway: ctx.definition.gateway,
       identity: ctx.definition.identity,
     })
   }

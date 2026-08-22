@@ -1,37 +1,19 @@
-import { ConnectionType } from '@nmtjs/protocol'
+import { Buffer } from 'node:buffer'
+
+import { ClientMessageType, ServerMessageType } from '@nmtjs/protocol'
 import { createServerTransport } from '@nmtjs/transports'
 import { createServerHost } from '@nmtjs/transports/host/node'
 import { neemataHttp } from '@nmtjs/transports/http'
 import { neemataWebSocket } from '@nmtjs/transports/ws'
 import { describe, expect, it, vi } from 'vitest'
 
-const textEncoder = new TextEncoder()
-const textDecoder = new TextDecoder()
-
 function createParams() {
   return {
-    formats: {
-      supportsDecoder: (contentType: string) =>
-        contentType.startsWith('application/json'),
-      supportsEncoder: () => true,
-    },
-    onConnect: vi.fn(async ({ type }) => ({
-      id:
-        type === ConnectionType.Bidirectional
-          ? 'ws-connection'
-          : 'http-connection',
-      encoder: {
-        contentType: 'application/json',
-        encode: (data: unknown) =>
-          textEncoder.encode(JSON.stringify(data ?? null)),
-      },
-      decoder: {
-        decode: (buffer: Uint8Array) => JSON.parse(textDecoder.decode(buffer)),
-      },
+    onConnect: vi.fn(async () => ({
+      id: `connection-${Math.random()}`,
       [Symbol.asyncDispose]: async () => {},
     })),
     onDisconnect: vi.fn(async () => {}),
-    onMessage: vi.fn(async () => {}),
     resolve: vi.fn(async () => ({ meta: new Map() })),
     onRpc: vi.fn(async () => ({ ok: true })),
   } as any
@@ -40,9 +22,17 @@ function createParams() {
 const openSocket = (url: string) =>
   new Promise<WebSocket>((resolve, reject) => {
     const ws = new WebSocket(url)
+    ws.binaryType = 'arraybuffer'
     ws.onopen = () => resolve(ws)
     ws.onerror = () => reject(new Error('WebSocket failed to connect'))
   })
+
+const encodePing = (nonce: number) => {
+  const buffer = Buffer.alloc(5)
+  buffer.writeUInt8(ClientMessageType.Ping, 0)
+  buffer.writeUInt32LE(nonce, 1)
+  return buffer
+}
 
 describe('http + ws transports on a shared server', () => {
   it('serves both protocols through one host-owned transport', async () => {
@@ -77,11 +67,19 @@ describe('http + ws transports on a shared server', () => {
       )
       expect((await fetch(`${url}/procedure`)).status).toBe(404)
 
-      const ws = await openSocket(`${url.replace('http', 'ws')}/ws`)
-      ws.send(new Uint8Array([1, 2, 3]))
-      await vi.waitFor(() => expect(params.onMessage).toHaveBeenCalled())
-      const { data } = params.onMessage.mock.calls[0][0]
-      expect(new Uint8Array(data)).toEqual(new Uint8Array([1, 2, 3]))
+      const ws = await openSocket(
+        `${url.replace('http', 'ws')}/ws?accept=application/json&content-type=application/json`,
+      )
+      // a protocol Ping flowing through the session engine and answered
+      // with a Pong proves the frame loop is wired to this socket
+      const pong = new Promise<Buffer>((resolve) => {
+        ws.onmessage = (event) => resolve(Buffer.from(event.data))
+      })
+      ws.send(encodePing(7))
+      const reply = await pong
+      expect(reply.readUInt8(0)).toBe(ServerMessageType.Pong)
+      expect(reply.readUInt32LE(1)).toBe(7)
+
       ws.close()
       await vi.waitFor(() => expect(params.onDisconnect).toHaveBeenCalled())
       expect(params.onConnect).toHaveBeenCalledTimes(2)

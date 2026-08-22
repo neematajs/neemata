@@ -281,7 +281,7 @@ stream-to-SSE, invoke) with lifecycle start/stop under Neem; resolution-time err
 message test for a non-portable guard; `application.invoke` used by at least one of
 the workspace's own test suites in place of a transport.
 
-## Slice G — Format ownership (tier 1)
+## Slice G — Format & session-engine ownership (implemented)
 
 Decision (D13): **Formats are capabilities of a protocol projection. The
 gateway consumes canonical calls and runtime values; it does not globally
@@ -291,26 +291,50 @@ prescribed encoding internally. No universal Format abstraction is
 introduced — the existing codec classes are native-protocol machinery
 (blob references, RPC framing), not generic serializers.
 
-Tier 1 (implemented now — mechanical, no gateway restructuring):
+Originally planned as two tiers (tier 1: mechanical `codecs: false` opt-out
+with a host-level registry; tier 2: full session-engine extraction,
+deferred). Since the branch was unreleased, shipping the transitional tier-1
+surface (`codecs: false`, throwing codec stubs, host-level `formats`) as
+public API was worse than finishing the split, so **both tiers landed
+together** as the full ownership refactor:
 
-- `Gateway.onConnect` accepts `codecs: false`: fixed-encoding handlers open
-  pipeline connections without content negotiation; the connection carries
-  throwing codec stubs.
-- JSON-RPC owns plain, spec-compliant `JSON.parse`/`stringify` for its
-  envelope (415 for non-JSON content types); MCP relies solely on its SDK's
-  encoding. Neither fakes native accept/content-type any more.
-- `TransportWorker.stop()` no longer receives the format registry.
-- The neem worker no longer hardcodes JSON+MessagePack: native codecs are
-  configured on `defineApplicationHost` (`formats`), with the `nmtjs`
-  umbrella defaulting to JSON+MessagePack; `@nmtjs/application` drops its
-  dependencies on the concrete format packages.
-
-Tier 2 (**deferred behind a forcing consumer** — the standalone-runtime task
-or a second native transport): extracting the native protocol session engine
-(frame decoding, heartbeats, stream credits, blob control) out of `Gateway`
-into a native-projection layer, and removing `formats` from
-`TransportWorkerParams` entirely. Recording the boundary above is the
-commitment; the split waits until something needs it.
+- **Gateway is a pure application-session kernel.** Its handler-facing
+  surface is exactly `onConnect` / `onDisconnect` / `resolve` / `onRpc` —
+  runtime values only, no wire concept crosses it. `GatewayConnection` is a
+  neutral handle (`id`, `identity`, `container`, `abortController`); the
+  handler decides what one connection represents (an HTTP request, a WS
+  session, an MCP request). The gateway tracks outstanding calls per
+  connection and aborts them on disconnect; wire call ids stay in the
+  transport.
+- **The native WebSocket session engine lives in
+  `@nmtjs/transports/ws` (`WsSessionEngine`).** Frame dispatch, protocol
+  codec use, wire callId reservation/dedup, RPC stream chunk credits, blob
+  streams with byte credits (`RpcManager`, `BlobStreamsManager` moved from
+  `@nmtjs/gateway`), heartbeats, terminal-frame drop policy, and
+  socket-close initiation are all handler-owned. The wire protocol is
+  unchanged — the machinery relocated, not redesigned.
+- **Formats are per-handler options**: `neemataHttp({ formats })` and
+  `neemataWebSocket({ formats })` negotiate per request/upgrade, defaulting
+  to JSON + MessagePack (owned by `@nmtjs/transports`). `heartbeat` and
+  `streamIdleTimeout` are `neemataWebSocket` options. JSON-RPC owns plain
+  spec-compliant `JSON.parse`/`stringify` (415 for non-JSON content types);
+  MCP relies solely on its SDK's encoding.
+- **Blob capabilities are projection-owned**: `createBlob`/`consumeBlob`
+  remain gateway-defined injectable tokens, but their implementations are
+  provisioned by the handler through `onRpc` — native WS provides the
+  streamed wire implementation, native HTTP provides body-based ones,
+  JSON-RPC/MCP provide none. This also resolved the WS/HTTP blob-injectable
+  provisioning divergence (neematajs/neemata#317): both paths provision at
+  the same dispatch point now.
+- **Deleted plumbing**: `GatewayOptions.formats`/`heartbeat`/
+  `streamIdleTimeout`, `TransportWorkerParams.formats`/`onMessage`,
+  `TransportWorker.send`/`close`, `codecs: false` and the throwing codec
+  stubs, the shared-server `owners` reverse-routing map and `evict()`
+  teardown cycle, host-level `formats` on
+  `defineApplicationHost`/`ApplicationHost`, the `nmtjs` `host()` formats
+  wrapper (now a plain alias), and the gateway's physical-socket close
+  logic. Teardown flows one direction: socket close → handler disconnect →
+  gateway scope disposal.
 
 ## Slice F — Wire-naming cleanup
 
@@ -318,7 +342,9 @@ Fold into A or land independently. Source-level renames only (enum values unchan
 not wire-breaking): `ClientStream*`/`ServerStream*` wire message names → `Blob*` to
 match the API surface (`ProtocolBlob`, `createBlob`/`consumeBlob`); delete the
 commented-out `// Event = 1` remnant (protocol/src/common/enums.ts:22). Resolve or
-ticket the documented WS/HTTP blob-injectable divergence (gateway.ts:805-818).
+ticket the documented WS/HTTP blob-injectable divergence — ticketed as
+neematajs/neemata#317 and since resolved by Slice G's projection-owned blob
+provisioning.
 
 ---
 

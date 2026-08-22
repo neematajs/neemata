@@ -1,126 +1,112 @@
 import { Hooks } from '@nmtjs/core'
-import { ConnectionType, ProtocolVersion } from '@nmtjs/protocol'
-import { ProtocolFormats } from '@nmtjs/protocol/server'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { GatewayApi } from '../src/api.ts'
 import { GATEWAY_TEARDOWN_STEP_TIMEOUT, Gateway } from '../src/gateway.ts'
-import {
-  createTestContainer,
-  createTestLogger,
-  createTestServerFormat,
-} from './_helpers/test-utils.ts'
+import { createTestContainer, createTestLogger } from './_helpers/test-utils.ts'
 
-const createGateway = (
-  transportOverrides: Record<string, any> = {},
-  gatewayOverrides: Record<string, any> = {},
-) => {
+const createGateway = (options?: { call?: GatewayApi['call'] }) => {
   const logger = createTestLogger()
   const container = createTestContainer({ logger })
-  const serverFormat = createTestServerFormat()
 
   const api: GatewayApi = {
     resolve: vi.fn(async () => ({ name: 'close/test', stream: false })),
-    call: vi.fn(async () => undefined),
+    call: vi.fn(options?.call ?? (async () => undefined)),
   }
 
   let params: any
 
   const transport = {
-    start: vi.fn(async (_params) => {
+    start: vi.fn(async (_params: any) => {
       params = _params
       return 'test://'
     }),
     stop: vi.fn(async () => {}),
-    send: vi.fn(
-      (_connectionId: string, _buffer: ArrayBufferView) => 'delivered' as const,
-    ),
-    close: vi.fn((_connectionId: string) => {}),
-    ...transportOverrides,
   }
 
   const gateway = new Gateway({
     logger,
     container,
     hooks: new Hooks(),
-    formats: new ProtocolFormats([serverFormat]),
     transports: { test: { transport } },
     api,
-    heartbeat: false,
-    ...gatewayOverrides,
   })
 
   const connect = async () => {
     await gateway.start()
-    return params.onConnect({
-      type: ConnectionType.Bidirectional,
-      protocolVersion: ProtocolVersion.v1,
-      accept: serverFormat.contentType,
-      contentType: serverFormat.contentType,
-      data: {},
-    })
+    return params.onConnect({ data: {} })
   }
 
-  return { gateway, transport, connect, getParams: () => params }
+  return { gateway, api, transport, connect, getParams: () => params }
 }
 
 describe('Gateway closeConnection', () => {
   it('disposes exactly once for concurrent close calls', async () => {
-    const { gateway, transport, connect, getParams } = createGateway({
-      // Suspend teardown across an await point so both callers overlap
-      close: vi.fn(
-        () => new Promise<void>((resolve) => setTimeout(resolve, 10)),
-      ),
-    })
+    const { gateway, connect, getParams } = createGateway()
 
     const connection = await connect()
-    const disposeSpy = vi.spyOn(connection.container, 'dispose')
+    // Suspend teardown across an await point so both callers overlap
+    const disposeSpy = vi
+      .spyOn(connection.container, 'dispose')
+      .mockImplementation(
+        () => new Promise<void>((resolve) => setTimeout(resolve, 10)),
+      )
 
     await Promise.all([
       getParams().onDisconnect(connection.id),
       getParams().onDisconnect(connection.id),
     ])
 
-    expect(transport.close).toHaveBeenCalledTimes(1)
     expect(disposeSpy).toHaveBeenCalledTimes(1)
     expect(gateway.connections.has(connection.id)).toBe(false)
+
+    await gateway.stop()
   })
 
-  it('still disposes container and aborts RPCs when transport.close throws', async () => {
+  it('aborts outstanding calls and the connection signal on disconnect', async () => {
+    let callSignal: AbortSignal | undefined
     const { gateway, connect, getParams } = createGateway({
-      close: vi.fn(async () => {
-        throw new Error('close failed')
-      }),
+      // abort-ignoring handler: never settles on its own
+      call: async ({ signal }) => {
+        callSignal = signal
+        return new Promise(() => {})
+      },
     })
 
     const connection = await connect()
     const disposeSpy = vi.spyOn(connection.container, 'dispose')
 
-    const rpcController = new AbortController()
-    gateway.rpcs.set(connection.id, 1, rpcController)
+    void getParams().onRpc(
+      connection,
+      { procedure: 'test', payload: {} },
+      new AbortController().signal,
+    )
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(callSignal).toBeDefined()
+    expect(callSignal!.aborted).toBe(false)
 
-    await expect(
-      getParams().onDisconnect(connection.id),
-    ).resolves.toBeUndefined()
+    await getParams().onDisconnect(connection.id)
 
     expect(connection.abortController.signal.aborted).toBe(true)
-    expect(rpcController.signal.aborted).toBe(true)
+    expect(callSignal!.aborted).toBe(true)
     expect(disposeSpy).toHaveBeenCalledTimes(1)
     expect(gateway.connections.has(connection.id)).toBe(false)
+
+    await gateway.stop()
   })
 
   it('stop() waits for a teardown claimed by a concurrent caller', async () => {
-    let resolveClose!: () => void
-    const { gateway, connect, getParams } = createGateway({
-      close: vi.fn(
-        () => new Promise<void>((resolve) => (resolveClose = resolve)),
-      ),
-    })
+    const { gateway, connect, getParams } = createGateway()
 
     const connection = await connect()
-    const disposeSpy = vi.spyOn(connection.container, 'dispose')
+    let resolveDispose!: () => void
+    const disposeSpy = vi
+      .spyOn(connection.container, 'dispose')
+      .mockImplementation(
+        () => new Promise<void>((resolve) => (resolveDispose = resolve)),
+      )
 
-    // Disconnect claims the teardown and parks on transport.close
+    // Disconnect claims the teardown and parks on container.dispose
     const disconnect = getParams().onDisconnect(connection.id)
 
     let stopped = false
@@ -130,24 +116,23 @@ describe('Gateway closeConnection', () => {
 
     await new Promise((resolve) => setTimeout(resolve, 10))
     expect(stopped).toBe(false)
-    expect(disposeSpy).not.toHaveBeenCalled()
 
-    resolveClose()
+    resolveDispose()
     await Promise.all([disconnect, stop])
 
     expect(stopped).toBe(true)
     expect(disposeSpy).toHaveBeenCalledTimes(1)
   })
 
-  it('completes teardown and stop() when transport.close never settles', async () => {
+  it('completes teardown and stop() when container disposal never settles', async () => {
     vi.useFakeTimers()
 
-    const { gateway, connect, getParams } = createGateway({
-      close: vi.fn(() => new Promise<void>(() => {})),
-    })
+    const { gateway, connect, getParams } = createGateway()
 
     const connection = await connect()
-    const disposeSpy = vi.spyOn(connection.container, 'dispose')
+    const disposeSpy = vi
+      .spyOn(connection.container, 'dispose')
+      .mockImplementation(() => new Promise<void>(() => {}))
 
     const disconnect = getParams().onDisconnect(connection.id)
     let stopped = false
@@ -155,7 +140,7 @@ describe('Gateway closeConnection', () => {
       stopped = true
     })
 
-    // The step timeout abandons the hung close and teardown moves on
+    // The step timeout abandons the hung disposal and teardown moves on
     await vi.advanceTimersByTimeAsync(GATEWAY_TEARDOWN_STEP_TIMEOUT)
     await Promise.all([disconnect, stop])
 
@@ -165,29 +150,15 @@ describe('Gateway closeConnection', () => {
     vi.useRealTimers()
   })
 
-  it('heartbeat timeout racing disconnect closes and disposes exactly once', async () => {
-    vi.useFakeTimers()
-
-    const { gateway, transport, connect, getParams } = createGateway(
-      {},
-      { heartbeat: { interval: 1000, timeout: 500 } },
-    )
+  it('sweeps connections whose transport never reported a disconnect on stop()', async () => {
+    const { gateway, connect } = createGateway()
 
     const connection = await connect()
     const disposeSpy = vi.spyOn(connection.container, 'dispose')
 
-    // Ping goes out, then a transport disconnect races the pending heartbeat:
-    // stopping the heartbeat rejects the pending Pong future, sending the
-    // heartbeat loop into its timeout path against the claimed teardown
-    await vi.advanceTimersByTimeAsync(1000)
-    const disconnect = getParams().onDisconnect(connection.id)
-    await vi.advanceTimersByTimeAsync(500)
-    await disconnect
+    await gateway.stop()
 
-    expect(transport.close).toHaveBeenCalledTimes(1)
     expect(disposeSpy).toHaveBeenCalledTimes(1)
     expect(gateway.connections.has(connection.id)).toBe(false)
-
-    vi.useRealTimers()
   })
 })

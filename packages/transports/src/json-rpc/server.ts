@@ -8,7 +8,7 @@ import type {
 } from '@nmtjs/gateway'
 import { anyAbortSignal, isAsyncIterable } from '@nmtjs/common'
 import { ProxyableTransportType } from '@nmtjs/gateway'
-import { ConnectionType, ProtocolBlob, ProtocolVersion } from '@nmtjs/protocol'
+import { ProtocolBlob } from '@nmtjs/protocol'
 import { ProtocolError } from '@nmtjs/protocol/server'
 
 import type { ServerHandler } from '../transport.ts'
@@ -31,7 +31,6 @@ import {
 const JSON_CONTENT_TYPE = 'application/json'
 
 export function jsonRpc(): ServerHandler<
-  ConnectionType.Unidirectional,
   JsonRpcHandlerOptions,
   {},
   readonly [ProxyableTransportType.HTTP]
@@ -69,10 +68,7 @@ export class JsonRpcHandler {
   #exclude?: string[]
 
   constructor(
-    readonly params: TransportWorkerParams<
-      ConnectionType.Unidirectional,
-      GatewayResolvedProcedure
-    >,
+    readonly params: TransportWorkerParams<GatewayResolvedProcedure>,
     readonly options: JsonRpcHandlerOptions,
     hostMaxRequestBodySize = Number.POSITIVE_INFINITY,
   ) {
@@ -107,13 +103,7 @@ export class JsonRpcHandler {
     const controller = new AbortController()
     const signal = anyAbortSignal(request.signal, controller.signal)
 
-    // fixed encoding: the pipeline connection carries no negotiated codecs
-    await using connection = await this.params.onConnect({
-      codecs: false,
-      data: request,
-      protocolVersion: ProtocolVersion.v1,
-      type: ConnectionType.Unidirectional,
-    })
+    await using connection = await this.params.onConnect({ data: request })
 
     let body: Buffer
     try {
@@ -153,7 +143,7 @@ export class JsonRpcHandler {
       const results = await runWithConcurrency(
         envelope,
         BATCH_CONCURRENCY,
-        (entry, index) => this.runEntry(connection, entry, index, signal),
+        (entry) => this.runEntry(connection, entry, signal),
       )
       const responses = results.filter(
         (response): response is JsonRpcResponse => response !== undefined,
@@ -163,7 +153,7 @@ export class JsonRpcHandler {
       return this.respond(connection, responses)
     }
 
-    const response = await this.runEntry(connection, envelope, 0, signal)
+    const response = await this.runEntry(connection, envelope, signal)
     if (response === undefined) return new Response(null, { status: 204 })
     return this.respond(connection, response)
   }
@@ -171,7 +161,6 @@ export class JsonRpcHandler {
   private async runEntry(
     connection: GatewayConnection,
     entry: unknown,
-    callId: number,
     signal: AbortSignal,
   ): Promise<JsonRpcResponse | undefined> {
     const validation = validateEntry(entry)
@@ -187,7 +176,7 @@ export class JsonRpcHandler {
 
       const result = await this.params.onRpc(
         connection,
-        { callId, payload: params, procedure },
+        { payload: params, procedure },
         signal,
       )
 

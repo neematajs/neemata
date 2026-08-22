@@ -1,14 +1,9 @@
 import { Hooks } from '@nmtjs/core'
-import { ProtocolFormats } from '@nmtjs/protocol/server'
 import { describe, expect, it, vi } from 'vitest'
 
 import { ProxyableTransportType } from '../src/enums.ts'
 import { Gateway } from '../src/gateway.ts'
-import {
-  createTestContainer,
-  createTestLogger,
-  createTestServerFormat,
-} from './_helpers/test-utils.ts'
+import { createTestContainer, createTestLogger } from './_helpers/test-utils.ts'
 
 function createGateway(
   transports: ConstructorParameters<typeof Gateway>[0]['transports'],
@@ -18,13 +13,11 @@ function createGateway(
     logger,
     container: createTestContainer({ logger }),
     hooks: new Hooks(),
-    formats: new ProtocolFormats([createTestServerFormat()]),
     transports,
     api: {
       resolve: vi.fn(),
       call: vi.fn(),
     },
-    heartbeat: false,
   })
 }
 

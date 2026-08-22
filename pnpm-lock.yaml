@@ -304,15 +304,9 @@ importers:
       '@nmtjs/gateway':
         specifier: workspace:*
         version: link:../gateway
-      '@nmtjs/json-format':
-        specifier: workspace:*
-        version: link:../json-format
       '@nmtjs/metrics':
         specifier: workspace:*
         version: link:../metrics
-      '@nmtjs/msgpack-format':
-        specifier: workspace:*
-        version: link:../msgpack-format
       '@nmtjs/protocol':
         specifier: workspace:*
         version: link:../protocol
@@ -391,6 +385,12 @@ importers:
       '@nmtjs/common':
         specifier: workspace:*
         version: link:../common
+      '@nmtjs/json-format':
+        specifier: workspace:*
+        version: link:../json-format
+      '@nmtjs/msgpack-format':
+        specifier: workspace:*
+        version: link:../msgpack-format
       '@nmtjs/protocol':
         specifier: workspace:*
         version: link:../protocol
@@ -431,9 +431,6 @@ importers:
       '@nmtjs/gateway':
         specifier: workspace:*
         version: link:../gateway
-      '@nmtjs/json-format':
-        specifier: workspace:*
-        version: link:../json-format
       '@nmtjs/type':
         specifier: workspace:*
         version: link:../type

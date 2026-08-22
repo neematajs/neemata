@@ -7,16 +7,17 @@ import type {
   GatewayStaticMetaView,
   TransportWorkerParams,
 } from '@nmtjs/gateway'
+import type {
+  BaseServerDecoder,
+  BaseServerEncoder,
+  ProtocolFormats,
+} from '@nmtjs/protocol/server'
 import { anyAbortSignal, isAbortError, isAsyncIterable } from '@nmtjs/common'
 import { provision } from '@nmtjs/core'
-import { ProxyableTransportType } from '@nmtjs/gateway'
+import { GatewayInjectables, ProxyableTransportType } from '@nmtjs/gateway'
+import { ErrorCode, ProtocolBlob } from '@nmtjs/protocol'
 import {
-  ConnectionType,
-  ErrorCode,
-  ProtocolBlob,
-  ProtocolVersion,
-} from '@nmtjs/protocol'
-import {
+  getFormat,
   ProtocolClientStream,
   ProtocolError,
   UnsupportedContentTypeError,
@@ -29,6 +30,7 @@ import type {
   NeemataHttpHandlerOptions,
   NeemataHttpRequest,
 } from './types.ts'
+import { createDefaultFormats } from '../formats.ts'
 import {
   AllowedHttpMethod,
   DEFAULT_MAX_REQUEST_BODY_SIZE,
@@ -78,7 +80,6 @@ const CORS_HEADERS_MAP: Record<
 }
 
 export function neemataHttp(): ServerHandler<
-  ConnectionType.Unidirectional,
   NeemataHttpHandlerOptions,
   typeof injections,
   readonly [ProxyableTransportType.HTTP],
@@ -117,18 +118,17 @@ export function neemataHttp(): ServerHandler<
 export class NeemataHttpHandler {
   #corsOptions?: NeemataHttpHandlerOptions['cors']
   #maxRequestBodySize: number
+  #formats: ProtocolFormats
 
   constructor(
-    readonly params: TransportWorkerParams<
-      ConnectionType.Unidirectional,
-      NeemataHttpResolvedProcedure
-    >,
+    readonly params: TransportWorkerParams<NeemataHttpResolvedProcedure>,
     readonly options: NeemataHttpHandlerOptions,
     hostMaxRequestBodySize = DEFAULT_MAX_REQUEST_BODY_SIZE,
   ) {
     this.#corsOptions = options.cors
     this.#maxRequestBodySize =
       options.maxRequestBodySize ?? hostMaxRequestBodySize
+    this.#formats = options.formats ?? createDefaultFormats()
   }
 
   async handle(request: NeemataHttpRequest): Promise<Response> {
@@ -162,17 +162,40 @@ export class NeemataHttpHandler {
     // Accept headers; fall back to the default format only when the client's
     // Accept can't be negotiated
     const negotiableAccept =
-      canHaveBody || this.params.formats.supportsEncoder(accept)
-        ? accept
-        : '*/*'
+      canHaveBody || this.#formats.supportsEncoder(accept) ? accept : '*/*'
 
-    await using connection = await this.params.onConnect({
-      accept: negotiableAccept,
-      contentType: isBlob || !contentType ? '*/*' : contentType,
-      data: request,
-      protocolVersion: ProtocolVersion.v1,
-      type: ConnectionType.Unidirectional,
-    })
+    // The handler owns codec negotiation (formats are a projection
+    // capability); the gateway sees only decoded runtime values. An
+    // undecodable content-type is not an error: the body is passed through
+    // as a raw blob stream payload, so only Accept can fail negotiation.
+    const decodable =
+      !isBlob && contentType !== null
+        ? this.#formats.supportsDecoder(contentType) !== null
+        : false
+    let encoder: BaseServerEncoder
+    let decoder: BaseServerDecoder
+    try {
+      ;({ encoder, decoder } = getFormat(this.#formats, {
+        accept: negotiableAccept,
+        contentType: decodable ? contentType : '*/*',
+      }))
+    } catch (error) {
+      if (error instanceof UnsupportedFormatError) {
+        const status =
+          error instanceof UnsupportedContentTypeError
+            ? HttpStatus.UnsupportedMediaType
+            : HttpStatus.NotAcceptable
+        const text = HttpStatusText[status]
+        return new Response(text, {
+          status,
+          statusText: text,
+          headers: responseHeaders,
+        })
+      }
+      throw error
+    }
+
+    await using connection = await this.params.onConnect({ data: request })
 
     try {
       const resolved = await this.params.resolve(connection, procedure)
@@ -188,7 +211,7 @@ export class NeemataHttpHandler {
 
       if (canHaveBody && request.body) {
         const cannotDecode =
-          !contentType || !this.params.formats.supportsDecoder(contentType)
+          !contentType || !this.#formats.supportsDecoder(contentType)
         if (isBlob || cannotDecode) {
           const type = contentType || 'application/octet-stream'
           const contentLength = request.headers.get('content-length')
@@ -224,7 +247,7 @@ export class NeemataHttpHandler {
           }
           const buffer = Buffer.concat(chunks)
           if (buffer.byteLength > 0) {
-            payload = connection.decoder.decode(buffer)
+            payload = decoder.decode(buffer)
           }
         }
       } else {
@@ -240,13 +263,19 @@ export class NeemataHttpHandler {
 
       const result = await this.params.onRpc(
         connection,
-        {
-          callId: 0, // since the connection is closed after the call, only one call exists per connection
-          payload,
-          procedure,
-        },
+        { payload, procedure },
         signal,
         provision(injections.httpResponseHeaders, responseHeaders),
+        // Blob capabilities are projection-owned: HTTP represents a server
+        // blob as the response body, so createBlob is a plain wrapper and
+        // consumeBlob has nothing to look up (the request body already
+        // arrives as a stream payload)
+        provision(GatewayInjectables.createBlob, (source, metadata) =>
+          ProtocolBlob.from(source, metadata),
+        ),
+        provision(GatewayInjectables.consumeBlob, () => {
+          throw new Error('Stream not found')
+        }),
       )
 
       if (result instanceof Response) {
@@ -298,23 +327,20 @@ export class NeemataHttpHandler {
       } else if (isAsyncIterable(result)) {
         responseHeaders.set('Content-Type', 'text/event-stream')
         responseHeaders.set('Cache-Control', 'no-cache, no-transform')
-        responseHeaders.set(
-          'X-Stream-Content-Type',
-          connection.encoder.contentType,
-        )
+        responseHeaders.set('X-Stream-Content-Type', encoder.contentType)
         responseHeaders.set('X-Accel-Buffering', 'no')
         const stream = new ReadableStream({
           async start(controller) {
-            const encoder = new TextEncoder()
+            const sse = new TextEncoder()
             try {
               for await (const chunk of result) {
-                const encoded = connection.encoder.encode(chunk)
+                const encoded = encoder.encode(chunk)
                 const base64 = Buffer.from(
                   encoded.buffer,
                   encoded.byteOffset,
                   encoded.byteLength,
                 ).toString('base64')
-                controller.enqueue(encoder.encode(`data: ${base64}\n\n`))
+                controller.enqueue(sse.encode(`data: ${base64}\n\n`))
               }
               controller.close()
             } catch (error) {
@@ -332,10 +358,8 @@ export class NeemataHttpHandler {
         // Handle regular responses
         // void results respond with an empty body — encode rejects undefined
         const buffer =
-          typeof result === 'undefined'
-            ? undefined
-            : connection.encoder.encode(result)
-        responseHeaders.set('Content-Type', connection.encoder.contentType)
+          typeof result === 'undefined' ? undefined : encoder.encode(result)
+        responseHeaders.set('Content-Type', encoder.contentType)
 
         // @ts-expect-error
         return new Response(buffer, {
@@ -376,8 +400,8 @@ export class NeemataHttpHandler {
             ? HttpCodeMap[error.code]
             : HttpStatus.InternalServerError
         const text = HttpStatusText[status]
-        const payload = connection.encoder.encode(error)
-        responseHeaders.set('Content-Type', connection.encoder.contentType)
+        const payload = encoder.encode(error)
+        responseHeaders.set('Content-Type', encoder.contentType)
 
         // @ts-expect-error
         return new Response(payload, {
@@ -391,13 +415,13 @@ export class NeemataHttpHandler {
       // this.logError(error, 'Unknown error while processing HTTP request')
       console.error(error)
 
-      const payload = connection.encoder.encode(
+      const payload = encoder.encode(
         new ProtocolError(
           ErrorCode.InternalServerError,
           'Internal Server Error',
         ),
       )
-      responseHeaders.set('Content-Type', connection.encoder.contentType)
+      responseHeaders.set('Content-Type', encoder.contentType)
 
       // @ts-expect-error
       return new Response(payload, {

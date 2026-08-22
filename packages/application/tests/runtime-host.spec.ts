@@ -1,5 +1,4 @@
 import type { TransportWorker, TransportWorkerParams } from '@nmtjs/gateway'
-import type { ProtocolFormats } from '@nmtjs/protocol/server'
 import {
   createFactoryInjectable,
   createLogger,
@@ -7,7 +6,7 @@ import {
 } from '@nmtjs/core'
 import { createTransport } from '@nmtjs/gateway'
 import { t } from '@nmtjs/type'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 
 import {
   createApplicationHost,
@@ -64,10 +63,6 @@ function createTestTransport<Options>(url: string) {
     }),
     state,
   }
-}
-
-function createFormats() {
-  return {} as ProtocolFormats
 }
 
 describe('application runtime boundary', () => {
@@ -273,7 +268,6 @@ describe('application runtime boundary', () => {
   it('resolves transport options through the application container', async () => {
     const logger = createLogger({ pinoOptions: { enabled: false } }, 'test')
     const app = createApp()
-    const formats = createFormats()
     type Options = { listen: { port: number }; secret: string }
     const transport = createTestTransport<Options>('http://127.0.0.1:3000')
 
@@ -285,7 +279,6 @@ describe('application runtime boundary', () => {
 
     const host = createApplicationHost(app, {
       logger,
-      formats,
       transports: { http: { transport: transport.transport, options } },
     })
 
@@ -302,7 +295,6 @@ describe('application runtime boundary', () => {
   it('hosts one application definition on different serving surfaces', async () => {
     const logger = createLogger({ pinoOptions: { enabled: false } }, 'test')
     const app = createApp()
-    const formats = createFormats()
     const httpOptions = { listen: { port: 3000 }, cors: true }
     const memoryOptions = { id: 'test-memory' }
     const http = createTestTransport<typeof httpOptions>(
@@ -312,21 +304,15 @@ describe('application runtime boundary', () => {
 
     const httpHost = createApplicationHost(app, {
       logger,
-      formats,
       transports: {
         http: {
           transport: http.transport,
           options: createValueInjectable(httpOptions),
         },
       },
-      gateway: {
-        heartbeat: false,
-        streamIdleTimeout: 100,
-      },
     })
     const memoryHost = createApplicationHost(app, {
       logger,
-      formats,
       transports: {
         memory: {
           transport: memory.transport,
@@ -343,10 +329,6 @@ describe('application runtime boundary', () => {
       expect(memory.state.factoryOptions).toEqual([memoryOptions])
       expect(http.state.startParams).toHaveLength(1)
       expect(memory.state.startParams).toHaveLength(1)
-      expect(http.state.startParams[0].formats).toBe(formats)
-      expect(memory.state.startParams[0].formats).toBe(formats)
-      expect(httpHost.gateway.options.heartbeat).toBe(false)
-      expect(httpHost.gateway.options.streamIdleTimeout).toBe(100)
     } finally {
       await memoryHost.stop()
       await httpHost.stop()

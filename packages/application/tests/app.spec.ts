@@ -4,10 +4,6 @@ import {
   ExecutionEnvironmentLifecycleHook,
 } from '@nmtjs/core'
 import { ProxyableTransportType } from '@nmtjs/gateway'
-import { JsonFormat } from '@nmtjs/json-format/server'
-import { MsgpackFormat } from '@nmtjs/msgpack-format/server'
-import { ConnectionType, ProtocolVersion } from '@nmtjs/protocol'
-import { ProtocolFormats } from '@nmtjs/protocol/server'
 import { describe, expect, it } from 'vitest'
 
 import type { ApplicationTransport } from '../src/index.ts'
@@ -39,10 +35,9 @@ describe('Neemata application runtime', () => {
           },
         }
       },
-    } satisfies ApplicationTransport<
-      any,
-      { listen: { hostname: string; port: number } }
-    >
+    } satisfies ApplicationTransport<{
+      listen: { hostname: string; port: number }
+    }>
 
     const config = defineApplication({
       router: createRootRouter([]),
@@ -70,7 +65,6 @@ describe('Neemata application runtime', () => {
 
     const host = createApplicationHost(config, {
       logger,
-      formats: createFormats(),
       transports: {
         http: {
           transport: httpTransport,
@@ -136,7 +130,6 @@ describe('Neemata application runtime', () => {
       }),
       {
         logger,
-        formats: createFormats(),
         transports: {
           server: {
             transport: createEventsTransport(events),
@@ -215,7 +208,6 @@ describe('Neemata application runtime', () => {
       }),
       {
         logger,
-        formats: createFormats(),
         transports: {
           server: {
             transport: createEventsTransport(events),
@@ -249,7 +241,6 @@ describe('Neemata application runtime', () => {
       defineApplication({ router: createRootRouter([]) }),
       {
         logger,
-        formats: createFormats(),
         transports: {
           server: {
             transport: createEventsTransport(events),
@@ -292,26 +283,19 @@ describe('Neemata application runtime', () => {
           stop() {},
         }
       },
-    } satisfies ApplicationTransport<ConnectionType.Unidirectional, {}>
+    } satisfies ApplicationTransport<{}>
 
     const host = createApplicationHost(
       defineApplication({ router: createRootRouter([route]) }),
       {
         logger,
-        formats: createFormats(),
         transports: { http: { transport, options: createValueInjectable({}) } },
       },
     )
 
     await host.start()
     try {
-      const connection = await params.onConnect({
-        accept: '*/*',
-        contentType: '*/*',
-        data: {},
-        protocolVersion: ProtocolVersion.v1,
-        type: ConnectionType.Unidirectional,
-      })
+      const connection = await params.onConnect({ data: {} })
       await using disposableConnection = connection
       const resolved = await params.resolve(connection, 'ping')
 
@@ -322,10 +306,6 @@ describe('Neemata application runtime', () => {
     }
   })
 })
-
-function createFormats() {
-  return new ProtocolFormats([new JsonFormat(), new MsgpackFormat()])
-}
 
 function createEventsTransport(events: string[]) {
   return {

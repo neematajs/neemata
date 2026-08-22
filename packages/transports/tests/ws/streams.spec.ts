@@ -10,7 +10,7 @@ import {
   STREAM_CREDIT_VIOLATION_REASON,
   STREAM_IDLE_TIMEOUT_REASON,
   STREAM_TRANSPORT_DROP_REASON,
-} from '../src/streams.ts'
+} from '../../src/ws/streams.ts'
 
 const IDLE_TIMEOUT = 5000
 

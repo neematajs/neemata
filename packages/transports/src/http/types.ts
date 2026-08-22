@@ -1,8 +1,15 @@
+import type { ProtocolFormats } from '@nmtjs/protocol/server'
+
 export type NeemataHttpRequest = Request
 
 export interface NeemataHttpHandlerOptions {
   path: `/${string}`
   cors?: HttpHandlerCorsOptions
+  /**
+   * Native codec registry this handler negotiates against per request
+   * (Accept/Content-Type). Defaults to JSON + MessagePack.
+   */
+  formats?: ProtocolFormats
   /**
    * Inherits the host limit when omitted; lower values add a stricter cap.
    * A value above the host limit is a mount-time error — the host would

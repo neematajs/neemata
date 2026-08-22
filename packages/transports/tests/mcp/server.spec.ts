@@ -1,6 +1,6 @@
 import type { AuthInfo } from '@modelcontextprotocol/server'
 import { OAuthError, OAuthErrorCode } from '@modelcontextprotocol/server'
-import { BaseServerFormat, ProtocolFormats } from '@nmtjs/protocol/server'
+import { BaseServerFormat } from '@nmtjs/protocol/server'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { McpToolConfig } from '../../src/mcp/types.ts'
@@ -52,12 +52,10 @@ function createServer(overrides: Overrides = {}) {
   }
   const onConnect = vi.fn(async () => connection)
   const params = {
-    formats: new ProtocolFormats([format]),
     onConnect,
     resolve: vi.fn(),
     onRpc: vi.fn(),
     onDisconnect: async () => {},
-    onMessage: async () => {},
   }
 
   const server = new McpHandler(params as any, {

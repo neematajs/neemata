@@ -3,13 +3,10 @@ import type { LazyInjectable, Scope } from '@nmtjs/core'
 import type {
   GatewayResolvedProcedure,
   ProxyableTransportType,
-  SendResult,
   Transport,
   TransportWorkerParams,
 } from '@nmtjs/gateway'
-import type { ConnectionType } from '@nmtjs/protocol'
 import { Lifecycle } from '@nmtjs/common'
-import { ConnectionType as ConnectionTypeValue } from '@nmtjs/protocol'
 
 import type {
   ServerHost,
@@ -24,24 +21,17 @@ type AnyInjections = Record<
 
 export interface ServerHandlerContext<
   R extends ServerRuntimeName = ServerRuntimeName,
-  Type extends ConnectionType = ConnectionType,
   ResolvedProcedure extends GatewayResolvedProcedure = GatewayResolvedProcedure,
 > {
   host: ServerHost<R>
-  gateway: TransportWorkerParams<Type, ResolvedProcedure>
+  gateway: TransportWorkerParams<ResolvedProcedure>
 }
 
 export interface MountedServerHandler {
   dispose(): MaybePromise<void>
-  send?(connectionId: string, buffer: ArrayBufferView): SendResult
-  close?(
-    connectionId: string,
-    options?: { code?: number; reason?: string },
-  ): MaybePromise<void>
 }
 
 export interface ServerHandler<
-  Type extends ConnectionType = ConnectionType,
   Options = unknown,
   Injections extends AnyInjections = AnyInjections,
   Proxyable extends readonly ProxyableTransportType[] =
@@ -51,28 +41,26 @@ export interface ServerHandler<
   readonly proxyable: Proxyable
   readonly injectables?: Injections
   mount<R extends ServerRuntimeName>(
-    context: ServerHandlerContext<R, Type, ResolvedProcedure>,
+    context: ServerHandlerContext<R, ResolvedProcedure>,
     options: Options,
   ): MaybePromise<MountedServerHandler>
 }
 
-type AnyServerHandler = ServerHandler<any, any, any, any, any>
+type AnyServerHandler = ServerHandler<any, any, any, any>
 
 type HandlerOptionsOf<T> =
-  T extends ServerHandler<any, infer Options, any, any, any> ? Options : never
+  T extends ServerHandler<infer Options, any, any, any> ? Options : never
 
 type HandlerInjectionsOf<T> =
-  T extends ServerHandler<any, any, infer Injections, any, any>
-    ? Injections
-    : never
+  T extends ServerHandler<any, infer Injections, any, any> ? Injections : never
 
 type HandlerProxyableOf<T> =
-  T extends ServerHandler<any, any, any, infer Proxyable, any>
+  T extends ServerHandler<any, any, infer Proxyable, any>
     ? Proxyable[number]
     : never
 
 type HandlerResolvedProcedureOf<T> =
-  T extends ServerHandler<any, any, any, any, infer ResolvedProcedure>
+  T extends ServerHandler<any, any, any, infer ResolvedProcedure>
     ? ResolvedProcedure
     : never
 
@@ -112,7 +100,6 @@ export type ServerTransport<
   R extends ServerRuntimeName,
   Handlers extends Record<string, AnyServerHandler>,
 > = Transport<
-  ConnectionType,
   ServerTransportOptions<R, Handlers>,
   CombinedHandlerInjections<Handlers>,
   readonly HandlerProxyableOf<Handlers[keyof Handlers]>[],
@@ -141,8 +128,6 @@ export function createServerTransport<
       const { handlers: handlerOptions, ...hostOptions } = options
       const host = config.host(hostOptions)
       const lifecycle = new Lifecycle<string>('server transport')
-      const mounted: Record<string, MountedServerHandler> = {}
-      const owners = new Map<string, string>()
 
       return {
         start(params) {
@@ -152,20 +137,14 @@ export function createServerTransport<
             // would otherwise make a graceful runtime stop wait forever);
             // stop() on a never-started host is a no-op
             defer(async () => {
-              owners.clear()
               await host.stop()
             })
             for (const key in config.handlers) {
               const handler = await config.handlers[key].mount(
-                {
-                  host,
-                  gateway: createHandlerParams(key, params, owners),
-                },
+                { host, gateway: params },
                 handlerOptions[key],
               )
-              mounted[key] = handler
               defer(async () => {
-                delete mounted[key]
                 await handler.dispose()
               })
             }
@@ -175,39 +154,7 @@ export function createServerTransport<
         stop() {
           return lifecycle.stop()
         },
-        send(connectionId, buffer): SendResult {
-          const owner = owners.get(connectionId)
-          if (!owner) return 'dropped'
-          const handler = mounted[owner]
-          return handler?.send ? handler.send(connectionId, buffer) : 'dropped'
-        },
-        close(connectionId, options) {
-          const owner = owners.get(connectionId)
-          owners.delete(connectionId)
-          if (owner) return mounted[owner]?.close?.(connectionId, options)
-        },
       }
-    },
-  }
-}
-
-function createHandlerParams(
-  key: string,
-  params: TransportWorkerParams<any, any>,
-  owners: Map<string, string>,
-): TransportWorkerParams<any, any> {
-  return {
-    ...params,
-    async onConnect(options, ...injections) {
-      const connection = await params.onConnect(options, ...injections)
-      if (options.type === ConnectionTypeValue.Bidirectional) {
-        owners.set(connection.id, key)
-      }
-      return connection
-    },
-    async onDisconnect(connectionId) {
-      owners.delete(connectionId)
-      await params.onDisconnect(connectionId)
     },
   }
 }

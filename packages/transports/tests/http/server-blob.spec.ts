@@ -5,14 +5,10 @@ import { NeemataHttpHandler } from '../../src/http/server.ts'
 
 const createServer = (result: unknown) => {
   const params = {
-    formats: { supportsDecoder: () => false },
     onConnect: async () => ({
-      encoder: { contentType: 'application/json' },
-      decoder: {},
       [Symbol.asyncDispose]: async () => {},
     }),
     onDisconnect: async () => {},
-    onMessage: async () => {},
     resolve: async () => ({ meta: new Map() }),
     onRpc: async () => result,
   } as any

@@ -18,7 +18,6 @@ import {
 } from '@modelcontextprotocol/server'
 import { createLazyInjectable, provision, Scope } from '@nmtjs/core'
 import { ProxyableTransportType } from '@nmtjs/gateway'
-import { ConnectionType, ProtocolVersion } from '@nmtjs/protocol'
 import { ProtocolError } from '@nmtjs/protocol/server'
 
 import type { ServerHandler } from '../transport.ts'
@@ -51,7 +50,6 @@ export interface McpResolvedProcedure extends GatewayResolvedProcedure {
 const injectables = { mcpAuthInfo }
 
 export function mcp(): ServerHandler<
-  ConnectionType.Unidirectional,
   McpHandlerOptions,
   typeof injectables,
   readonly [ProxyableTransportType.HTTP],
@@ -92,7 +90,6 @@ export function mcp(): ServerHandler<
 
 type RequestState = {
   connection: GatewayConnection & AsyncDisposable
-  nextCallId: number
 }
 
 export class McpHandler {
@@ -103,10 +100,7 @@ export class McpHandler {
   #states = new WeakMap<Request, RequestState>()
 
   constructor(
-    readonly params: TransportWorkerParams<
-      ConnectionType.Unidirectional,
-      McpResolvedProcedure
-    >,
+    readonly params: TransportWorkerParams<McpResolvedProcedure>,
     readonly options: McpHandlerOptions,
   ) {
     for (const tool of options.tools) {
@@ -143,20 +137,13 @@ export class McpHandler {
       authInfo = gated
     }
 
-    // fixed encoding (the MCP SDK owns the wire format): the pipeline
-    // connection carries no negotiated codecs
     const connection = await this.params.onConnect(
-      {
-        codecs: false,
-        data: request,
-        protocolVersion: ProtocolVersion.v1,
-        type: ConnectionType.Unidirectional,
-      },
+      { data: request },
       ...(authInfo ? [provision(mcpAuthInfo, authInfo)] : []),
     )
 
     try {
-      this.#states.set(request, { connection, nextCallId: 0 })
+      this.#states.set(request, { connection })
       return await this.#mcp.fetch(request, { authInfo })
     } finally {
       this.#states.delete(request)
@@ -204,7 +191,6 @@ export class McpHandler {
             const result = await this.params.onRpc(
               state.connection,
               {
-                callId: state.nextCallId++,
                 payload: input.kind === 'none' ? undefined : args,
                 procedure: config.procedure,
               },

@@ -1,183 +1,25 @@
 import { Buffer } from 'node:buffer'
 import { Readable } from 'node:stream'
 
-import type { SendResult } from '@nmtjs/protocol/server'
-import { Hooks } from '@nmtjs/core'
-import {
-  ClientMessageType,
-  ConnectionType,
-  createProtocolBlobReference,
-  ProtocolVersion,
-  ServerMessageType,
-} from '@nmtjs/protocol'
-import { BaseServerFormat, ProtocolFormats } from '@nmtjs/protocol/server'
-import { describe, expect, it, vi } from 'vitest'
+import { GatewayInjectables as injectables } from '@nmtjs/gateway'
+import { createProtocolBlobReference, ServerMessageType } from '@nmtjs/protocol'
+import { describe, expect, it } from 'vitest'
 
-import type { GatewayApi } from '../src/api.ts'
-import { Gateway } from '../src/gateway.ts'
-import * as injectables from '../src/injectables.ts'
 import {
   STREAM_CREDIT_VIOLATION_REASON,
   STREAM_IDLE_TIMEOUT_REASON,
   STREAM_TRANSPORT_DROP_REASON,
-} from '../src/streams.ts'
-import { createTestContainer, createTestLogger } from './_helpers/test-utils.ts'
-
-const encoder = new TextEncoder()
-const decoder = new TextDecoder()
-
-/**
- * JSON format that registers a client (upload) stream when the RPC payload
- * carries a `__stream` marker, mirroring what real formats do for blobs.
- */
-class StreamTestFormat extends BaseServerFormat {
-  accept = ['application/json']
-  contentType = 'application/json'
-
-  encode(data: unknown): ArrayBufferView {
-    return encoder.encode(JSON.stringify(data))
-  }
-
-  encodeRPC(data: unknown): ArrayBufferView {
-    return this.encode(data ?? null)
-  }
-
-  encodeBlob(streamId: number, metadata: unknown) {
-    return { streamId, metadata }
-  }
-
-  decode(buffer: ArrayBufferView) {
-    return JSON.parse(decoder.decode(buffer))
-  }
-
-  decodeRPC(buffer: ArrayBufferView, context: any) {
-    const data = this.decode(buffer)
-    if (data && typeof data === 'object' && data.__stream !== undefined) {
-      context.addStream(data.__stream, { type: 'application/octet-stream' })
-    }
-    return data
-  }
-}
-
-const encodeRpcMessage = (callId: number, procedure: string, payload: any) => {
-  const name = Buffer.from(procedure, 'utf-8')
-  const header = Buffer.alloc(7)
-  header.writeUInt8(ClientMessageType.Rpc, 0)
-  header.writeUInt32LE(callId, 1)
-  header.writeUInt16LE(name.byteLength, 5)
-  return Buffer.concat([header, name, Buffer.from(JSON.stringify(payload))])
-}
-
-const encodeRpcAbort = (callId: number) => {
-  const buffer = Buffer.alloc(5)
-  buffer.writeUInt8(ClientMessageType.RpcAbort, 0)
-  buffer.writeUInt32LE(callId, 1)
-  return buffer
-}
-
-const encodeRpcStreamPull = (callId: number, size: number) => {
-  const buffer = Buffer.alloc(9)
-  buffer.writeUInt8(ClientMessageType.RpcStreamPull, 0)
-  buffer.writeUInt32LE(callId, 1)
-  buffer.writeUInt32LE(size, 5)
-  return buffer
-}
-
-const encodeServerBlobPull = (streamId: number, size: number) => {
-  const buffer = Buffer.alloc(9)
-  buffer.writeUInt8(ClientMessageType.ServerBlobPull, 0)
-  buffer.writeUInt32LE(streamId, 1)
-  buffer.writeUInt32LE(size, 5)
-  return buffer
-}
-
-const encodeClientBlobPush = (streamId: number, chunk: Buffer) => {
-  const header = Buffer.alloc(5)
-  header.writeUInt8(ClientMessageType.ClientBlobPush, 0)
-  header.writeUInt32LE(streamId, 1)
-  return Buffer.concat([header, chunk])
-}
-
-type SentMessage = { type: number; id: number; rest: Buffer }
-
-const decodeSent = (buffer: Buffer): SentMessage => ({
-  type: buffer.readUInt8(0),
-  id: buffer.readUInt32LE(1),
-  rest: buffer.subarray(5),
-})
-
-const flush = async (rounds = 5) => {
-  for (let i = 0; i < rounds; i++) {
-    await new Promise<void>((resolve) => setImmediate(resolve))
-  }
-}
-
-async function createTestGateway(options?: {
-  call?: GatewayApi['call']
-  streamIdleTimeout?: number
-  sendResult?: (message: SentMessage) => SendResult
-  // invoked synchronously inside transport.send, after recording
-  onSend?: (message: SentMessage) => void
-}) {
-  const logger = createTestLogger()
-  const container = createTestContainer({ logger })
-  const serverFormat = new StreamTestFormat()
-
-  const api: GatewayApi = {
-    resolve: vi.fn(async () => ({ name: 'test', stream: false })),
-    call: vi.fn(options?.call ?? (async () => null)),
-  }
-
-  let params: any
-  const sent: SentMessage[] = []
-
-  const transport = {
-    start: vi.fn(async (_params) => {
-      params = _params
-      return 'test://'
-    }),
-    stop: vi.fn(async () => {}),
-    send: vi.fn((_connectionId: string, buffer: ArrayBufferView) => {
-      const message = decodeSent(Buffer.from(buffer as Uint8Array))
-      sent.push(message)
-      const result = options?.sendResult?.(message) ?? 'delivered'
-      options?.onSend?.(message)
-      return result
-    }),
-    close: vi.fn((_connectionId: string) => {}),
-  }
-
-  const gateway = new Gateway({
-    logger,
-    container,
-    hooks: new Hooks(),
-    formats: new ProtocolFormats([serverFormat]),
-    transports: { test: { transport } },
-    api,
-    heartbeat: false,
-    streamIdleTimeout: options?.streamIdleTimeout,
-  })
-
-  await gateway.start()
-
-  const connection = await params.onConnect({
-    type: ConnectionType.Bidirectional,
-    protocolVersion: ProtocolVersion.v1,
-    accept: serverFormat.contentType,
-    contentType: serverFormat.contentType,
-    data: {},
-  })
-
-  const send = (data: Buffer) =>
-    params.onMessage({ connectionId: connection.id, data })
-
-  const sentOfType = (type: number) => sent.filter((m) => m.type === type)
-
-  return { gateway, api, sent, sentOfType, connection, send, transport }
-}
-
-const sleep = (ms: number) =>
-  new Promise<void>((resolve) => setTimeout(resolve, ms))
+} from '../../src/ws/streams.ts'
+import {
+  createEngineHarness as createTestGateway,
+  encodeClientBlobPush,
+  encodeRpcAbort,
+  encodeRpcMessage,
+  encodeRpcStreamPull,
+  encodeServerBlobPull,
+  flush,
+  sleep,
+} from './_helpers/engine.ts'
 
 describe('RPC stream flow control', () => {
   it('gates chunks on RpcStreamPull credits', async () => {
@@ -196,7 +38,7 @@ describe('RPC stream flow control', () => {
       }
     }
 
-    const { gateway, sentOfType, send } = await createTestGateway({
+    const { sentOfType, send, stop } = await createTestGateway({
       call: async () => () => handler(),
     })
 
@@ -230,7 +72,7 @@ describe('RPC stream flow control', () => {
     expect(finished).toBe(true)
 
     await inFlight
-    await gateway.stop()
+    await stop()
   })
 
   it('runs the handler cleanup when the client aborts mid-stream', async () => {
@@ -243,9 +85,10 @@ describe('RPC stream flow control', () => {
       }
     }
 
-    const { gateway, sentOfType, send, connection } = await createTestGateway({
-      call: async () => () => handler(),
-    })
+    const { engine, sentOfType, send, connection, stop } =
+      await createTestGateway({
+        call: async () => () => handler(),
+      })
 
     const inFlight = send(encodeRpcMessage(1, 'test', {}))
     await flush()
@@ -258,9 +101,9 @@ describe('RPC stream flow control', () => {
 
     expect(finished).toBe(true)
     expect(sentOfType(ServerMessageType.RpcStreamAbort).length).toBe(1)
-    expect(gateway.rpcs.get(connection.id, 1)).toBeUndefined()
+    expect(engine.rpcs.get(connection.id, 1)).toBeUndefined()
 
-    await gateway.stop()
+    await stop()
   })
 
   it('runs the handler cleanup on connection teardown', async () => {
@@ -273,7 +116,7 @@ describe('RPC stream flow control', () => {
       }
     }
 
-    const { gateway, send } = await createTestGateway({
+    const { send, stop } = await createTestGateway({
       call: async () => () => handler(),
     })
 
@@ -284,7 +127,7 @@ describe('RPC stream flow control', () => {
     await flush()
 
     // the loop is parked waiting for more credit; teardown must release it
-    await gateway.stop()
+    await stop()
     await inFlight
 
     expect(finished).toBe(true)
@@ -300,7 +143,7 @@ describe('RPC stream flow control', () => {
       }
     }
 
-    const { gateway, sentOfType, send } = await createTestGateway({
+    const { sentOfType, send, stop } = await createTestGateway({
       call: async () => () => handler(),
       sendResult: (message) =>
         message.type === ServerMessageType.RpcStreamChunk
@@ -319,7 +162,7 @@ describe('RPC stream flow control', () => {
     expect(aborts.length).toBe(1)
     expect(aborts[0].rest.toString()).toBe(STREAM_TRANSPORT_DROP_REASON)
 
-    await gateway.stop()
+    await stop()
   })
 
   it('reaps a stream whose consumer never pulls via the idle timeout', async () => {
@@ -332,10 +175,11 @@ describe('RPC stream flow control', () => {
       yield 'never'
     }
 
-    const { gateway, sentOfType, send, connection } = await createTestGateway({
-      call: async () => () => handler(),
-      streamIdleTimeout: 50,
-    })
+    const { engine, sentOfType, send, connection, stop } =
+      await createTestGateway({
+        call: async () => () => handler(),
+        streamIdleTimeout: 50,
+      })
 
     const inFlight = send(encodeRpcMessage(1, 'test', {}))
     await inFlight
@@ -345,9 +189,9 @@ describe('RPC stream flow control', () => {
     expect(aborts[0].rest.toString()).toBe(STREAM_IDLE_TIMEOUT_REASON)
     // the producer was never advanced and the reservation is released
     expect(advanced).toBe(false)
-    expect(gateway.rpcs.get(connection.id, 1)).toBeUndefined()
+    expect(engine.rpcs.get(connection.id, 1)).toBeUndefined()
 
-    await gateway.stop()
+    await stop()
   })
 
   it('terminates a handler stalled inside next() on client abort', async () => {
@@ -366,7 +210,7 @@ describe('RPC stream flow control', () => {
       }
     }
 
-    const { gateway, sentOfType, send } = await createTestGateway({
+    const { sentOfType, send, stop } = await createTestGateway({
       call: async () => () => handler(),
     })
 
@@ -390,7 +234,7 @@ describe('RPC stream flow control', () => {
     await inFlight
     expect(finished).toBe(true)
 
-    await gateway.stop()
+    await stop()
   })
 
   it('does not reap a stalled producer holding outstanding credit', async () => {
@@ -409,7 +253,7 @@ describe('RPC stream flow control', () => {
       }
     }
 
-    const { gateway, sentOfType, send } = await createTestGateway({
+    const { sentOfType, send, stop } = await createTestGateway({
       call: async () => () => handler(),
       streamIdleTimeout: 50,
     })
@@ -434,7 +278,7 @@ describe('RPC stream flow control', () => {
     expect(sentOfType(ServerMessageType.RpcStreamEnd).length).toBe(1)
     expect(sentOfType(ServerMessageType.RpcStreamAbort).length).toBe(0)
 
-    await gateway.stop()
+    await stop()
   })
 
   it('still reaps a consumer that stops pulling mid-stream', async () => {
@@ -447,7 +291,7 @@ describe('RPC stream flow control', () => {
       }
     }
 
-    const { gateway, sentOfType, send } = await createTestGateway({
+    const { sentOfType, send, stop } = await createTestGateway({
       call: async () => () => handler(),
       streamIdleTimeout: 50,
     })
@@ -464,20 +308,18 @@ describe('RPC stream flow control', () => {
     expect(aborts[0].rest.toString()).toBe(STREAM_IDLE_TIMEOUT_REASON)
     expect(finished).toBe(true)
 
-    await gateway.stop()
+    await stop()
   })
 
   it('closes the connection when the RpcStreamResponse frame is dropped', async () => {
-    let invoked = false
+    let started = false
     async function* handler() {
+      started = true
       yield 'never'
     }
 
-    const { gateway, sentOfType, send, transport } = await createTestGateway({
-      call: async () => () => {
-        invoked = true
-        return handler()
-      },
+    const { sentOfType, send, close, stop } = await createTestGateway({
+      call: async () => () => handler(),
       sendResult: (message) =>
         message.type === ServerMessageType.RpcStreamResponse
           ? 'dropped'
@@ -487,13 +329,13 @@ describe('RPC stream flow control', () => {
     await send(encodeRpcMessage(1, 'test', {}))
     await flush()
 
-    // no streaming loop ran and no stream frames followed
-    expect(invoked).toBe(false)
+    // the producer was never advanced and no stream frames followed
+    expect(started).toBe(false)
     expect(sentOfType(ServerMessageType.RpcStreamChunk).length).toBe(0)
     expect(sentOfType(ServerMessageType.RpcStreamAbort).length).toBe(0)
-    expect(transport.close).toHaveBeenCalled()
+    expect(close).toHaveBeenCalled()
 
-    await gateway.stop()
+    await stop()
   })
 
   it('does not lose a grant delivered synchronously with the stream response', async () => {
@@ -503,7 +345,7 @@ describe('RPC stream flow control', () => {
 
     let sendNow: ((data: Buffer) => Promise<void>) | null = null
 
-    const { gateway, sentOfType, send } = await createTestGateway({
+    const { sentOfType, send, stop } = await createTestGateway({
       call: async () => () => handler(),
       onSend: (message) => {
         // simulate an in-process transport delivering pulls re-entrantly:
@@ -527,7 +369,7 @@ describe('RPC stream flow control', () => {
     expect(sentOfType(ServerMessageType.RpcStreamAbort).length).toBe(0)
 
     await inFlight
-    await gateway.stop()
+    await stop()
   })
 
   it('aborts the stream on a zero-size RpcStreamPull', async () => {
@@ -540,7 +382,7 @@ describe('RPC stream flow control', () => {
       }
     }
 
-    const { gateway, sentOfType, send } = await createTestGateway({
+    const { sentOfType, send, stop } = await createTestGateway({
       call: async () => () => handler(),
     })
 
@@ -559,7 +401,7 @@ describe('RPC stream flow control', () => {
     expect(aborts.length).toBe(1)
     expect(aborts[0].rest.toString()).toBe(STREAM_CREDIT_VIOLATION_REASON)
 
-    await gateway.stop()
+    await stop()
   })
 
   it('aborts the stream when pull totals overflow the credit cap', async () => {
@@ -577,7 +419,7 @@ describe('RPC stream flow control', () => {
       }
     }
 
-    const { gateway, sentOfType, send } = await createTestGateway({
+    const { sentOfType, send, stop } = await createTestGateway({
       call: async () => () => handler(),
     })
 
@@ -600,7 +442,7 @@ describe('RPC stream flow control', () => {
     await inFlight
     expect(finished).toBe(true)
 
-    await gateway.stop()
+    await stop()
   })
 })
 
@@ -612,7 +454,7 @@ describe('Upload stream flow control', () => {
       release = () => resolve(null)
     })
 
-    const { gateway, sentOfType, send } = await createTestGateway({
+    const { engine, sentOfType, send, stop } = await createTestGateway({
       call: async () => pending,
     })
 
@@ -626,7 +468,7 @@ describe('Upload stream flow control', () => {
     expect(aborts.length).toBe(1)
     expect(aborts[0].id).toBe(7)
     expect(aborts[0].rest.toString()).toBe(STREAM_CREDIT_VIOLATION_REASON)
-    expect(gateway.blobStreams.clientStreams.size).toBe(0)
+    expect(engine.blobStreams.clientStreams.size).toBe(0)
 
     release()
     await inFlight
@@ -634,11 +476,11 @@ describe('Upload stream flow control', () => {
     // still exactly one wire abort for this stream
     expect(sentOfType(ServerMessageType.ClientBlobAbort).length).toBe(1)
 
-    await gateway.stop()
+    await stop()
   })
 
   it('rolls back the grant and aborts when the pull frame is dropped', async () => {
-    const { gateway, sentOfType, send } = await createTestGateway({
+    const { engine, sentOfType, send, stop } = await createTestGateway({
       call: async ({ container }) => {
         const consumeBlob = await container.resolve(injectables.consumeBlob)
         const stream = consumeBlob(
@@ -664,9 +506,9 @@ describe('Upload stream flow control', () => {
     expect(aborts.length).toBe(1)
     expect(aborts[0].id).toBe(7)
     expect(aborts[0].rest.toString()).toBe(STREAM_TRANSPORT_DROP_REASON)
-    expect(gateway.blobStreams.clientStreams.size).toBe(0)
+    expect(engine.blobStreams.clientStreams.size).toBe(0)
 
-    await gateway.stop()
+    await stop()
   })
 
   it('sends the idle timeout reason on the wire, exactly once', async () => {
@@ -675,7 +517,7 @@ describe('Upload stream flow control', () => {
       release = () => resolve(null)
     })
 
-    const { gateway, sentOfType, send } = await createTestGateway({
+    const { sentOfType, send, stop } = await createTestGateway({
       call: async () => pending,
       streamIdleTimeout: 50,
     })
@@ -694,13 +536,13 @@ describe('Upload stream flow control', () => {
     aborts = sentOfType(ServerMessageType.ClientBlobAbort)
     expect(aborts.length).toBe(1)
 
-    await gateway.stop()
+    await stop()
   })
 })
 
 describe('Download stream flow control', () => {
   it('sends pushes only against granted byte credits', async () => {
-    const { gateway, sentOfType, send } = await createTestGateway({
+    const { engine, sentOfType, send, stop } = await createTestGateway({
       call: async ({ container }) => {
         const createBlob = await container.resolve(injectables.createBlob)
         createBlob(Readable.from([Buffer.alloc(100, 0xcd)]), {
@@ -731,13 +573,13 @@ describe('Download stream flow control', () => {
     pushes = sentOfType(ServerMessageType.ServerBlobPush)
     expect(Buffer.concat(pushes.map((p) => p.rest)).byteLength).toBe(100)
     expect(sentOfType(ServerMessageType.ServerBlobEnd).length).toBe(1)
-    expect(gateway.blobStreams.serverStreams.size).toBe(0)
+    expect(engine.blobStreams.serverStreams.size).toBe(0)
 
-    await gateway.stop()
+    await stop()
   })
 
   it('closes the connection when a terminal ServerBlobEnd frame is dropped', async () => {
-    const { gateway, sentOfType, send, transport } = await createTestGateway({
+    const { engine, sentOfType, send, close, stop } = await createTestGateway({
       call: async ({ container }) => {
         const createBlob = await container.resolve(injectables.createBlob)
         createBlob(Readable.from([Buffer.alloc(10)]), {
@@ -760,14 +602,14 @@ describe('Download stream flow control', () => {
     expect(sentOfType(ServerMessageType.ServerBlobEnd).length).toBe(1)
     // the frame was dropped after local cleanup: only a connection close can
     // stop the client from waiting forever
-    expect(transport.close).toHaveBeenCalled()
-    expect(gateway.blobStreams.serverStreams.size).toBe(0)
+    expect(close).toHaveBeenCalled()
+    expect(engine.blobStreams.serverStreams.size).toBe(0)
 
-    await gateway.stop()
+    await stop()
   })
 
   it('aborts the stream on a zero-size ServerBlobPull', async () => {
-    const { gateway, sentOfType, send } = await createTestGateway({
+    const { engine, sentOfType, send, stop } = await createTestGateway({
       call: async ({ container }) => {
         const createBlob = await container.resolve(injectables.createBlob)
         createBlob(Readable.from([Buffer.alloc(10)]), {
@@ -787,13 +629,13 @@ describe('Download stream flow control', () => {
     const aborts = sentOfType(ServerMessageType.ServerBlobAbort)
     expect(aborts.length).toBe(1)
     expect(aborts[0].rest.toString()).toBe(STREAM_CREDIT_VIOLATION_REASON)
-    expect(gateway.blobStreams.serverStreams.size).toBe(0)
+    expect(engine.blobStreams.serverStreams.size).toBe(0)
 
-    await gateway.stop()
+    await stop()
   })
 
   it('aborts the stream when byte-credit grants overflow the cap', async () => {
-    const { gateway, sentOfType, send } = await createTestGateway({
+    const { engine, sentOfType, send, stop } = await createTestGateway({
       call: async ({ container }) => {
         const createBlob = await container.resolve(injectables.createBlob)
         // manual source: no data, credits just accumulate
@@ -817,15 +659,15 @@ describe('Download stream flow control', () => {
     const aborts = sentOfType(ServerMessageType.ServerBlobAbort)
     expect(aborts.length).toBe(1)
     expect(aborts[0].rest.toString()).toBe(STREAM_CREDIT_VIOLATION_REASON)
-    expect(gateway.blobStreams.serverStreams.size).toBe(0)
+    expect(engine.blobStreams.serverStreams.size).toBe(0)
 
-    await gateway.stop()
+    await stop()
   })
 
   it('does not send the abort for a pre-grant source error before the pull', async () => {
     const source = new Readable({ read() {} })
 
-    const { gateway, sentOfType, send } = await createTestGateway({
+    const { engine, sentOfType, send, stop } = await createTestGateway({
       call: async ({ container }) => {
         const createBlob = await container.resolve(injectables.createBlob)
         createBlob(source, { type: 'application/octet-stream' })
@@ -849,8 +691,8 @@ describe('Download stream flow control', () => {
     const aborts = sentOfType(ServerMessageType.ServerBlobAbort)
     expect(aborts.length).toBe(1)
     expect(aborts[0].rest.toString()).toBe('early failure')
-    expect(gateway.blobStreams.serverStreams.size).toBe(0)
+    expect(engine.blobStreams.serverStreams.size).toBe(0)
 
-    await gateway.stop()
+    await stop()
   })
 })

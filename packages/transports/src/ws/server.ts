@@ -1,11 +1,12 @@
 import type {
   GatewayResolvedProcedure,
-  SendResult,
   TransportWorkerParams,
 } from '@nmtjs/gateway'
+import type { ProtocolFormats, SendResult } from '@nmtjs/protocol/server'
 import type { Hooks, Peer } from 'crossws'
 import { ProxyableTransportType } from '@nmtjs/gateway'
-import { ConnectionType, ProtocolVersion } from '@nmtjs/protocol'
+import { ProtocolVersion } from '@nmtjs/protocol'
+import { getFormat } from '@nmtjs/protocol/server'
 import { defineHooks } from 'crossws'
 
 import type { ServerHandler } from '../transport.ts'
@@ -14,7 +15,9 @@ import type {
   NeemataWebSocketHandlerOptions,
   NeemataWebSocketRequest,
 } from './types.ts'
+import { createDefaultFormats } from '../formats.ts'
 import * as injections from './injectables.ts'
+import { WsSessionEngine } from './session.ts'
 import { InternalServerErrorHttpResponse } from './utils.ts'
 
 /**
@@ -26,10 +29,10 @@ export const WS_PENDING_OPEN_TTL = 10_000
 
 /**
  * Smallest inbound frame the Neemata protocol needs the host to accept: the
- * gateway grants upload credits in 64KiB chunks, and each frame carries a
- * small protocol header on top. Declared as a registration requirement so a
- * host-wide `webSocket.maxPayloadLength` below it fails at start instead of
- * killing every blob upload at runtime.
+ * session engine grants upload credits in 64KiB chunks, and each frame
+ * carries a small protocol header on top. Declared as a registration
+ * requirement so a host-wide `webSocket.maxPayloadLength` below it fails at
+ * start instead of killing every blob upload at runtime.
  */
 export const WS_MIN_INBOUND_PAYLOAD = 64 * 1024 + 1024
 
@@ -37,9 +40,10 @@ type OnDisconnect = (connectionId: string) => Promise<void>
 
 /**
  * Single owner of connection teardown. Every path that ends a connection —
- * reap timer, crossws close hook, gateway-initiated close, handler dispose —
- * goes through disconnect(), which claims the connection from whichever map
- * holds it before acting; a second caller finds nothing to claim and no-ops.
+ * reap timer, crossws close hook, session-initiated termination (heartbeat
+ * timeout, dropped terminal frames), handler dispose — goes through
+ * disconnect(), which claims the connection from whichever map holds it
+ * before acting; a second caller finds nothing to claim and no-ops.
  * Exactly-once delivery of onDisconnect is therefore structural, not a
  * convention each call site must remember.
  */
@@ -87,21 +91,6 @@ class WsConnectionRegistry {
     }
   }
 
-  /**
-   * Claim and close without delivering onDisconnect — for the
-   * gateway-initiated path only: the gateway calls it from inside its own
-   * connection teardown, so notifying back would await that in-flight
-   * teardown from within itself and stall until the gateway's step watchdog
-   * fires. Exactly-once still holds: eviction shares the claim with
-   * disconnect(), so a later close-hook echo finds nothing to act on.
-   */
-  evict(
-    connectionId: string,
-    close?: { code?: number; reason?: string },
-  ): void {
-    this.#claim(connectionId, close)
-  }
-
   #claim(
     connectionId: string,
     close?: { code?: number; reason?: string },
@@ -141,7 +130,6 @@ class WsConnectionRegistry {
 }
 
 export function neemataWebSocket(): ServerHandler<
-  ConnectionType.Bidirectional,
   NeemataWebSocketHandlerOptions,
   typeof injections,
   readonly [ProxyableTransportType.WS],
@@ -151,7 +139,7 @@ export function neemataWebSocket(): ServerHandler<
     proxyable: [ProxyableTransportType.WS],
     injectables: injections,
     mount({ host, gateway }, options) {
-      const handler = new NeemataWebSocketHandler(gateway, host)
+      const handler = new NeemataWebSocketHandler(gateway, host, options)
       handler.unmount = host.mountWebSocket({
         path: options.path,
         hooks: handler.hooks,
@@ -164,21 +152,32 @@ export function neemataWebSocket(): ServerHandler<
 
 export class NeemataWebSocketHandler {
   readonly connections: WsConnectionRegistry
+  readonly engine: WsSessionEngine
   readonly hooks: Hooks
+  readonly #formats: ProtocolFormats
   unmount: () => void = () => {}
   #disposed = false
   #pendingUpgrades = new Set<Promise<unknown>>()
 
   constructor(
-    readonly params: TransportWorkerParams<
-      ConnectionType.Bidirectional,
-      GatewayResolvedProcedure
-    >,
+    readonly params: TransportWorkerParams<GatewayResolvedProcedure>,
     readonly host: ServerHost,
+    readonly options: NeemataWebSocketHandlerOptions,
   ) {
-    this.connections = new WsConnectionRegistry((connectionId) =>
-      Promise.resolve(this.params.onDisconnect(connectionId)),
-    )
+    this.#formats = options.formats ?? createDefaultFormats()
+    this.connections = new WsConnectionRegistry(async (connectionId) => {
+      // wire state first, so in-flight calls observe their wire aborts
+      // before the gateway aborts and disposes the application scope
+      this.engine.close(connectionId)
+      await this.params.onDisconnect(connectionId)
+    })
+    this.engine = new WsSessionEngine(this.params, {
+      streamIdleTimeout: options.streamIdleTimeout,
+      heartbeat: options.heartbeat,
+      send: this.send.bind(this),
+      terminate: (connectionId, close) =>
+        this.connections.disconnect(connectionId, close),
+    })
     this.hooks = this.createHooks()
   }
 
@@ -215,18 +214,6 @@ export class NeemataWebSocketHandler {
     }
   }
 
-  close(
-    connectionId: string,
-    options: { code?: number; reason?: string } = {},
-  ) {
-    // The gateway calls this from inside its own connection teardown and
-    // owns the disconnect; evict() closes the socket without notifying back
-    this.connections.evict(connectionId, {
-      code: options.code ?? 1001,
-      reason: options.reason ?? 'Closed',
-    })
-  }
-
   private createHooks(): Hooks {
     return defineHooks({
       upgrade: (req) => {
@@ -253,10 +240,7 @@ export class NeemataWebSocketHandler {
       message: async (peer, message) => {
         const data = message.arrayBuffer().slice() as ArrayBuffer
         try {
-          await this.params.onMessage({
-            connectionId: peer.context.connectionId,
-            data,
-          })
+          await this.engine.receive(peer.context.connectionId, data)
         } catch (error) {
           console.error(
             `Error while processing message from ${peer.context.connectionId}`,
@@ -293,19 +277,25 @@ export class NeemataWebSocketHandler {
       url.searchParams.get('content-type') ?? req.headers.get('content-type')
 
     try {
-      const connection = await this.params.onConnect({
-        type: ConnectionType.Bidirectional,
-        protocolVersion: ProtocolVersion.v1,
+      // the handler owns codec negotiation: an unsupported accept or
+      // content-type fails the upgrade before any gateway state exists
+      const { encoder, decoder } = getFormat(this.#formats, {
         accept,
         contentType,
-        data: request,
       })
+
+      const connection = await this.params.onConnect({ data: request })
       if (this.#disposed) {
         // never admitted to the registry, so the gateway connection is
         // released directly; the gateway absorbs any duplicate
         await this.params.onDisconnect(connection.id)
         return InternalServerErrorHttpResponse()
       }
+      this.engine.open(connection, {
+        protocolVersion: ProtocolVersion.v1,
+        encoder,
+        decoder,
+      })
       this.connections.admit(connection.id)
       return { context: { connectionId: connection.id } }
     } catch (error) {

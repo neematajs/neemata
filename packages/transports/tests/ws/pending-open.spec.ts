@@ -12,13 +12,17 @@ const createHandler = () => {
   const handler = new NeemataWebSocketHandler(
     { onConnect, onDisconnect } as any,
     { isSendSuccess: () => true } as unknown as ServerHost,
+    { path: '/', heartbeat: false },
   )
   return { handler, hooks: handler.hooks, onConnect, onDisconnect }
 }
 
 const upgradeRequest = {
   url: 'http://localhost/',
-  headers: new Headers(),
+  headers: new Headers({
+    accept: 'application/json',
+    'content-type': 'application/json',
+  }),
   method: 'GET',
 } as any
 
@@ -59,19 +63,22 @@ describe('NeemataWebSocketHandler pending-open TTL', () => {
     expect(onDisconnect).not.toHaveBeenCalled()
   })
 
-  it('clears the reap timer when the gateway closes a pending-open connection', async () => {
+  it('clears the reap timer when a pending-open connection is terminated', async () => {
     const { handler, hooks, onDisconnect } = createHandler()
     await hooks.upgrade!(upgradeRequest)
 
-    // Gateway-initiated close (e.g. heartbeat timeout) before `open` fires:
-    // the gateway owns this teardown, so the handler only claims the entry
-    handler.close('conn-1', { code: 1001, reason: 'heartbeat_timeout' })
-    expect(onDisconnect).not.toHaveBeenCalled()
+    // Session-initiated termination (e.g. heartbeat timeout) before `open`
+    // fires: the registry claims the entry and delivers the one disconnect
+    await handler.connections.disconnect('conn-1', {
+      code: 1001,
+      reason: 'heartbeat_timeout',
+    })
+    expect(onDisconnect).toHaveBeenCalledTimes(1)
 
     await vi.advanceTimersByTimeAsync(WS_PENDING_OPEN_TTL * 2)
 
     // the claimed reap timer must not deliver a late disconnect either
-    expect(onDisconnect).not.toHaveBeenCalled()
+    expect(onDisconnect).toHaveBeenCalledTimes(1)
   })
 
   it('closes a peer whose open arrives after the reap', async () => {
@@ -145,6 +152,7 @@ describe('NeemataWebSocketHandler pending-open TTL', () => {
     const handler = new NeemataWebSocketHandler(
       { onConnect, onDisconnect } as any,
       { isSendSuccess: () => true } as unknown as ServerHost,
+      { path: '/', heartbeat: false },
     )
 
     const upgrading = handler.hooks.upgrade!(upgradeRequest)

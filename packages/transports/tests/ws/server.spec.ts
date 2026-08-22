@@ -10,7 +10,11 @@ const createHost = (isSendSuccess: (status: number) => boolean = () => true) =>
 const createHandler = (
   isSendSuccess?: (status: number) => boolean,
   params: Record<string, unknown> = {},
-) => new NeemataWebSocketHandler(params as any, createHost(isSendSuccess))
+) =>
+  new NeemataWebSocketHandler(params as any, createHost(isSendSuccess), {
+    path: '/',
+    heartbeat: false,
+  })
 
 const setPeer = (handler: NeemataWebSocketHandler, send: () => unknown) => {
   const close = vi.fn()
@@ -85,12 +89,9 @@ describe('NeemataWebSocketHandler.send', () => {
 
 describe('NeemataWebSocketHandler.message', () => {
   it('leaves disconnect ownership to the close hook after a message error', async () => {
-    const onMessage = vi.fn(async () => {
-      throw new Error('boom')
-    })
     const onDisconnect = vi.fn(async () => {})
     const { handler, peer, close } = setPeer(
-      createHandler(undefined, { onMessage, onDisconnect }),
+      createHandler(undefined, { onDisconnect }),
       () => true,
     )
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
@@ -122,7 +123,13 @@ describe('NeemataWebSocketHandler.upgrade', () => {
     const controller = new AbortController()
 
     await handler.hooks.upgrade!(
-      new Request('http://localhost/ws', { signal: controller.signal }),
+      new Request('http://localhost/ws', {
+        headers: {
+          accept: 'application/json',
+          'content-type': 'application/json',
+        },
+        signal: controller.signal,
+      }),
     )
     controller.abort()
 
@@ -132,39 +139,25 @@ describe('NeemataWebSocketHandler.upgrade', () => {
   })
 })
 
-describe('NeemataWebSocketHandler.close', () => {
-  it('evicts the peer without notifying the gateway back', async () => {
+describe('NeemataWebSocketHandler termination', () => {
+  it('delivers exactly one disconnect for a session-initiated close', async () => {
     const onDisconnect = vi.fn(async () => {})
     const { handler, peer, close } = setPeer(
       createHandler(undefined, { onDisconnect }),
       () => true,
     )
 
-    // gateway-initiated close runs inside the gateway's own connection
-    // teardown: the handler closes the socket but must not deliver
-    // onDisconnect, or the teardown would await itself
-    handler.close('c1', { code: 4000, reason: 'bye' })
+    // session-initiated termination (heartbeat timeout, dropped terminal
+    // frame) closes the socket and owns the disconnect
+    await handler.connections.disconnect('c1', { code: 4000, reason: 'bye' })
 
     expect(close).toHaveBeenCalledWith(4000, 'bye')
-    expect(onDisconnect).not.toHaveBeenCalled()
+    expect(onDisconnect).toHaveBeenCalledOnce()
     expect(handler.connections.peer('c1')).toBeUndefined()
 
     // the runtime close hook fires later for the peer we just closed; the
-    // eviction already claimed it, so no late onDisconnect either
+    // termination already claimed it, so no duplicate onDisconnect
     await handler.hooks.close!(peer, {})
-    expect(onDisconnect).not.toHaveBeenCalled()
-  })
-
-  it('applies the default close code and reason', async () => {
-    const onDisconnect = vi.fn(async () => {})
-    const { handler, close } = setPeer(
-      createHandler(undefined, { onDisconnect }),
-      () => true,
-    )
-
-    handler.close('c1')
-
-    expect(close).toHaveBeenCalledWith(1001, 'Closed')
-    expect(onDisconnect).not.toHaveBeenCalled()
+    expect(onDisconnect).toHaveBeenCalledOnce()
   })
 })
