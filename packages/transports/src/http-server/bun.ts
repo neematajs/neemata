@@ -36,6 +36,10 @@ class BunServerHost extends BaseServerHost<'bun'> {
 
   protected async bind(): Promise<string> {
     const { listen, tls, runtime } = this.options
+    if (!listen.unix && typeof listen.port !== 'number') {
+      throw new Error('Invalid listen parameters')
+    }
+
     const adapter = this.hasWebSockets
       ? createAdapter(this.createWsAdapterConfig())
       : null
@@ -83,7 +87,7 @@ class BunServerHost extends BaseServerHost<'bun'> {
     if (listen.unix) {
       return `${tls ? 'https' : 'http'}+unix://${listen.unix}`
     }
-    return this.#server!.url.href
+    return this.#server!.url.origin
   }
 
   protected async close(): Promise<void> {

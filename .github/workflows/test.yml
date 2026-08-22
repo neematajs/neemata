@@ -36,11 +36,13 @@ jobs:
 
   tests:
     needs: [ lint ]
+    name: Tests (Node ${{ matrix.node }}, ${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
         node:
           - 24
+          - 26
         os:
           - ubuntu-24.04
           - macos-26
@@ -77,9 +79,46 @@ jobs:
         run: |
           pnpm exec playwright install chromium firefox webkit
       - run: |
-          pnpm run test
-          pnpm --filter @nmtjs/neem run test:e2e
-          pnpm run test:browser:client
+          pnpm run test --reporter=agent
+          pnpm --filter @nmtjs/neem run test:e2e --reporter=agent
+          pnpm run test:browser:client --reporter=agent
+
+  tests-bun:
+    needs: [ lint ]
+    name: Tests (Bun ${{ matrix.bun }}, ${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        bun:
+          - 1.4.0
+        os:
+          - ubuntu-24.04
+          - macos-26
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Use Bun ${{ matrix.bun }}
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ matrix.bun }}
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+      - name: Get pnpm store directory
+        shell: bash
+        run: |
+          echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+      - uses: actions/cache@v4
+        name: Setup pnpm cache
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+      - run: pnpm install
+      - run: bun run --bun test --reporter=agent
 
   tests-integration-services:
     needs: [ lint ]

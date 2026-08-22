@@ -1,13 +1,24 @@
 import { Buffer } from 'node:buffer'
 
+import type {
+  ServerHost,
+  ServerHostOptions,
+} from '@nmtjs/transports/http-server'
 import { ClientMessageType, ServerMessageType } from '@nmtjs/protocol'
 import { JsonCodec } from '@nmtjs/protocol/json/server'
 import { ProtocolCodecRegistry } from '@nmtjs/protocol/server'
 import { createServerTransport } from '@nmtjs/transports/http-server'
-import { createServerHost } from '@nmtjs/transports/http-server/node'
 import { neemataHttp } from '@nmtjs/transports/neemata/http'
 import { neemataWebSocket } from '@nmtjs/transports/neemata/ws'
 import { describe, expect, it, vi } from 'vitest'
+
+const { createServerHost: runtimeCreateServerHost } = globalThis.Bun
+  ? await import('@nmtjs/transports/http-server/bun')
+  : await import('@nmtjs/transports/http-server/node')
+// This suite passes only the options shared by both runtime hosts.
+const createServerHost = runtimeCreateServerHost as (
+  options: ServerHostOptions,
+) => ServerHost
 
 const createTestCodecs = () => new ProtocolCodecRegistry([new JsonCodec()])
 
