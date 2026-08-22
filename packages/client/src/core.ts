@@ -1,6 +1,6 @@
 import type { ProtocolVersion } from '@nmtjs/protocol'
 import type {
-  BaseClientFormat,
+  BaseClientCodec,
   MessageContext,
   ProtocolVersionInterface,
 } from '@nmtjs/protocol/client'
@@ -41,7 +41,7 @@ export type ConnectionState =
 
 export interface ClientCoreOptions {
   protocol: ProtocolVersion
-  format: BaseClientFormat
+  codec: BaseClientCodec
   application?: string
   autoConnect?: boolean
   plugins?: ClientPlugin[]
@@ -84,7 +84,7 @@ export class ClientCore extends EventEmitter<{
   error: [error: ClientError]
 }> {
   readonly protocol: ProtocolVersionInterface
-  readonly format: BaseClientFormat
+  readonly codec: BaseClientCodec
   readonly application?: string
   readonly autoConnect: boolean
 
@@ -114,7 +114,7 @@ export class ClientCore extends EventEmitter<{
     super()
 
     this.protocol = versions[options.protocol]
-    this.format = options.format
+    this.codec = options.codec
     this.application = options.application
     this.autoConnect = options.autoConnect ?? false
   }

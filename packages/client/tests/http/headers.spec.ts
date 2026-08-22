@@ -1,0 +1,89 @@
+import type { EncodeRPCContext } from '@nmtjs/protocol/client'
+import { ProtocolVersion } from '@nmtjs/protocol'
+import { BaseClientCodec } from '@nmtjs/protocol/client'
+import { describe, expect, it, vi } from 'vitest'
+
+import { HttpTransportClient } from '../../src/transports/http/index.ts'
+
+class TestCodec extends BaseClientCodec {
+  contentType = 'application/x-test-codec'
+
+  encode(data: unknown): ArrayBufferView {
+    return new Uint8Array([data ? 1 : 0])
+  }
+
+  encodeRPC(_data: unknown, _context: EncodeRPCContext): ArrayBufferView {
+    return new Uint8Array([1])
+  }
+
+  decode(_buffer: ArrayBufferView): unknown {
+    return null
+  }
+
+  decodeRPC(_buffer: ArrayBufferView, _context: any): unknown {
+    return null
+  }
+}
+
+describe('HttpTransportClient headers', () => {
+  it('sends Accept header based on client codec content type', async () => {
+    const codec = new TestCodec()
+    const fetchSpy = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(new Response(new Uint8Array([1]), { status: 200 }))
+
+    const transport = new HttpTransportClient(codec, ProtocolVersion.v1, {
+      url: 'http://localhost:4000',
+      fetch: fetchSpy,
+    })
+
+    await transport.call(
+      { contentType: codec.contentType },
+      { callId: 1, procedure: 'ping', payload: new Uint8Array([1]) },
+      {},
+    )
+
+    const [, requestInit] = fetchSpy.mock.calls[0]
+    const headers = requestInit?.headers as Headers
+
+    expect(headers.get('accept')).toBe(codec.contentType)
+    expect(headers.get('content-type')).toBe(codec.contentType)
+  })
+
+  it('sends blob upload requests with blob content type header', async () => {
+    const codec = new TestCodec()
+    const fetchSpy = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(new Response(new Uint8Array([1]), { status: 200 }))
+
+    const transport = new HttpTransportClient(codec, ProtocolVersion.v1, {
+      url: 'http://localhost:4000',
+      fetch: fetchSpy,
+    })
+
+    const source = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array([9]))
+        controller.close()
+      },
+    })
+
+    await transport.call(
+      { contentType: codec.contentType },
+      {
+        callId: 1,
+        procedure: 'upload',
+        payload: new Uint8Array(0),
+        blob: { source, metadata: { type: 'application/octet-stream' } },
+      },
+      {},
+    )
+
+    const [, requestInit] = fetchSpy.mock.calls[0]
+    const headers = requestInit?.headers as Headers
+
+    expect(headers.get('content-type')).toBe('application/octet-stream')
+    expect(headers.get('x-neemata-blob')).toBe('true')
+    expect(requestInit?.body).toBe(source)
+  })
+})

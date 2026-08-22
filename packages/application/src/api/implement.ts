@@ -1,10 +1,10 @@
 import type {
-  TAnyProcedureContract,
+  TAnyCallableContract,
   TAnyRouterContract,
   TRouteContract,
 } from '@nmtjs/contract'
 import type { Dependencies } from '@nmtjs/core'
-import { IsProcedureContract, IsRouterContract } from '@nmtjs/contract'
+import { IsCallableContract, IsRouterContract } from '@nmtjs/contract'
 
 import type { CreateProcedureParams, Procedure } from './procedure.ts'
 import type {
@@ -16,7 +16,7 @@ import { kRootRouter, kRootRouterSources } from './constants.ts'
 import { createContractProcedure } from './procedure.ts'
 import { createContractRouter } from './router.ts'
 
-export type ProcedureImplementer<Contract extends TAnyProcedureContract> = <
+export type ProcedureImplementer<Contract extends TAnyCallableContract> = <
   Deps extends Dependencies,
 >(
   paramsOrHandler: CreateProcedureParams<Contract, Deps>,
@@ -37,14 +37,14 @@ export type RouterImplementer<
 export type RouteImplementer<Contract extends TRouteContract> =
   Contract extends TAnyRouterContract
     ? RouterImplementer<Contract>
-    : Contract extends TAnyProcedureContract
+    : Contract extends TAnyCallableContract
       ? ProcedureImplementer<Contract>
       : never
 
 export type ImplementedRoutes<Contract extends TAnyRouterContract> = {
   [K in keyof Contract['routes']]: Contract['routes'][K] extends TAnyRouterContract
     ? Router<Contract['routes'][K]>
-    : Contract['routes'][K] extends TAnyProcedureContract
+    : Contract['routes'][K] extends TAnyCallableContract
       ? Procedure<Contract['routes'][K], any>
       : never
 }
@@ -57,20 +57,20 @@ export type ImplementRouterParams<Contract extends TAnyRouterContract> = Omit<
 export function implement<Contract extends TAnyRouterContract>(
   contract: Contract,
 ): RouterImplementer<Contract, true>
-export function implement<Contract extends TAnyProcedureContract>(
+export function implement<Contract extends TAnyCallableContract>(
   contract: Contract,
 ): ProcedureImplementer<Contract>
 export function implement(
-  contract: TAnyRouterContract | TAnyProcedureContract,
+  contract: TAnyRouterContract | TAnyCallableContract,
 ): RouterImplementer<any, true> | ProcedureImplementer<any> {
   return createImplementer(contract, true) as any
 }
 
 function createImplementer(
-  contract: TAnyRouterContract | TAnyProcedureContract,
+  contract: TAnyRouterContract | TAnyCallableContract,
   isRoot: boolean,
 ) {
-  if (IsProcedureContract(contract)) {
+  if (IsCallableContract(contract)) {
     return (paramsOrHandler: CreateProcedureParams<any, any>) =>
       createContractProcedure(contract, paramsOrHandler)
   }

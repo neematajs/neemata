@@ -7,9 +7,11 @@ runtime files.
 
 ```ts
 import { app, host, pubsubPlugin } from 'nmtjs'
-import { neemataHttp } from '@nmtjs/transports/http'
-import { createServerTransport } from '@nmtjs/transports'
-import { createServerHost } from '@nmtjs/transports/host/node'
+import { neemataHttp } from '@nmtjs/transports/neemata/http'
+import { createServerTransport } from '@nmtjs/transports/http-server'
+import { createServerHost } from '@nmtjs/transports/http-server/node'
+import { JsonCodec } from '@nmtjs/protocol/json/server'
+import { ProtocolCodecRegistry } from '@nmtjs/protocol/server'
 
 import { api } from './router.ts'
 
@@ -20,7 +22,11 @@ export const application = app({
 
 const Server = createServerTransport({
   host: createServerHost,
-  handlers: { api: neemataHttp() },
+  handlers: {
+    api: neemataHttp({
+      codecs: new ProtocolCodecRegistry([new JsonCodec()]),
+    }),
+  },
 })
 
 export default host(application, {
@@ -37,7 +43,9 @@ Rules:
   each handler with its typed runtime options.
 - `host(app, { transports })` binds the app to transport factories.
 - Server hosts and handlers stay direct imports because they are separate
-  runtime dependencies.
+  runtime dependencies. Handler construction options, per-mount options, and
+  the JSON-RPC/MCP projections are covered in
+  [Transports](transports.md).
 - App-level static metadata merges with router and procedure metadata.
 
 ## Neemata Runtime Files

@@ -1,20 +1,20 @@
-import type { ProtocolFormats } from './format.ts'
-import type { ResolveFormatParams } from './types.ts'
+import type { ProtocolCodecRegistry } from './codec.ts'
+import type { ResolveCodecParams } from './types.ts'
 
-export class UnsupportedFormatError extends Error {}
+export class CodecNegotiationError extends Error {}
 
-export class UnsupportedContentTypeError extends UnsupportedFormatError {}
+export class UnsupportedContentTypeError extends CodecNegotiationError {}
 
-export class UnsupportedAcceptTypeError extends UnsupportedFormatError {}
+export class UnsupportedAcceptTypeError extends CodecNegotiationError {}
 
-export const getFormat = (
-  format: ProtocolFormats,
-  { accept, contentType }: ResolveFormatParams,
+export const negotiateCodecs = (
+  codecs: ProtocolCodecRegistry,
+  { accept, contentType }: ResolveCodecParams,
 ) => {
-  const encoder = accept ? format.supportsEncoder(accept) : undefined
+  const encoder = accept ? codecs.supportsEncoder(accept) : undefined
   if (!encoder) throw new UnsupportedAcceptTypeError('Unsupported Accept type')
 
-  const decoder = contentType ? format.supportsDecoder(contentType) : undefined
+  const decoder = contentType ? codecs.supportsDecoder(contentType) : undefined
   if (!decoder)
     throw new UnsupportedContentTypeError('Unsupported Content type')
 

@@ -63,6 +63,7 @@ describe('Neem compiler', () => {
       dir: resolve(root, 'dist/runtime'),
       entryFileNames: '[name].js',
     })
+    expect(infraOptions.treeshake).toBeUndefined()
     // The default deps group must not swallow the grouped entry modules: when
     // Neem is installed as a dependency they resolve under node_modules, and
     // merging worker/runner entry code into the shared deps chunk breaks the
@@ -107,11 +108,13 @@ describe('Neem compiler', () => {
     rolldownMock.build.mockResolvedValue(output)
 
     const compiled = await compileTarget(target)
+    const options = rolldownMock.build.mock.calls[0]?.[0] as BuildOptions
 
     expect(compiled.artifact.file).toBe(
       resolve(target.outDir, 'compiled-entry.js'),
     )
     expect(compiled.bundle).toBeUndefined()
+    expect(options.treeshake).toBeUndefined()
   })
 
   it('appends default deps chunk group after user chunk groups', async () => {

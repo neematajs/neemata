@@ -16,10 +16,9 @@ export const users = c.router({
       input: t.object({ organizationId: t.string() }),
       output: t.object({ ids: t.array(t.string()) }),
     }),
-    stream: c.procedure({
+    stream: c.stream({
       input: t.object({ organizationId: t.string() }),
       output: t.object({ id: t.string() }),
-      stream: true,
     }),
   },
 })
@@ -28,8 +27,9 @@ export const users = c.router({
 Rules:
 
 - `c.procedure(...)` defaults missing `input` and `output` to `t.never()`.
-- `stream: true` marks the route as a stream contract. Numeric stream timeouts
-  are implementation behavior, not public contract shape.
+- `c.stream(...)` declares a stream route contract (server-to-client async
+  iterable). Stream timeouts are implementation behavior, not public contract
+  shape.
 - `timeout` is contract metadata and can be inherited through routers.
 - Router route keys become path segments and typed client property names.
 - Child names are recomputed from route keys. Router `name` is not a mount

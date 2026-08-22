@@ -2,7 +2,7 @@ import type {
   ProtocolBlobInterface,
   ProtocolBlobMetadata,
 } from '../common/blob.ts'
-import type { BaseServerDecoder, BaseServerEncoder } from './format.ts'
+import type { BaseServerDecoder, BaseServerEncoder } from './codec.ts'
 import type { ProtocolVersionInterface } from './protocol.ts'
 
 /**
@@ -29,7 +29,7 @@ export type MessageContext = {
   }
 }
 
-export type ResolveFormatParams = {
+export type ResolveCodecParams = {
   contentType?: string | null
   accept?: string | null
 }

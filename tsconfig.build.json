@@ -22,15 +22,6 @@
       "path": "./packages/gateway/tsconfig.build.json"
     },
     {
-      "path": "./packages/http-client/tsconfig.build.json"
-    },
-    {
-      "path": "./packages/json-format/tsconfig.build.json"
-    },
-    {
-      "path": "./packages/msgpack-format/tsconfig.build.json"
-    },
-    {
       "path": "./packages/metrics/tsconfig.build.json"
     },
     {
@@ -62,9 +53,6 @@
     },
     {
       "path": "./packages/workflows/tsconfig.build.json"
-    },
-    {
-      "path": "./packages/ws-client/tsconfig.build.json"
     }
   ],
   "include": []

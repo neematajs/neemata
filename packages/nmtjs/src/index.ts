@@ -19,6 +19,7 @@ type Metrics = Readonly<{
   summary: typeof createSummaryMetric
 }>
 
+export { defineApplicationHost as host } from '@nmtjs/application'
 export {
   ApiError,
   createContractProcedure as contractProcedure,
@@ -30,9 +31,9 @@ export {
   createMiddleware as middleware,
   createProcedure as procedure,
   createRootRouter as rootRouter,
+  createStream as stream,
   createRouter as router,
   defineApplication as app,
-  defineApplicationHost as host,
   implement as implementRouter,
 } from '@nmtjs/application'
 export { createEnvConfig as envConfig, EnvConfigError } from '@nmtjs/config'

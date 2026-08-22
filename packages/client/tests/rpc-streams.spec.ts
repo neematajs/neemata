@@ -1,4 +1,4 @@
-import type { BaseClientFormat } from '@nmtjs/protocol/client'
+import type { BaseClientCodec } from '@nmtjs/protocol/client'
 import {
   ClientMessageType,
   ConnectionType,
@@ -46,13 +46,13 @@ class MockCore extends EventEmitter<{
   readonly connectionSignal = undefined
   readonly messageContext = {} as any
 
-  readonly format: BaseClientFormat = {
+  readonly codec: BaseClientCodec = {
     contentType: 'application/json',
     encode: vi.fn(encodeJson),
     decode: vi.fn((chunk) => JSON.parse(new TextDecoder().decode(chunk))),
     encodeRPC: vi.fn(encodeJson),
     decodeRPC: vi.fn((chunk) => JSON.parse(new TextDecoder().decode(chunk))),
-  } as BaseClientFormat
+  } as BaseClientCodec
 
   readonly protocol = {
     encodeMessage: vi.fn((_context, type) => new Uint8Array([type])),
@@ -263,7 +263,7 @@ describe('RPC streams', () => {
 
       core.protocol.encodeMessage.mockClear()
 
-      // invalid JSON: the stream transform (format.decode) throws
+      // invalid JSON: the stream transform (codec.decode) throws
       core.emit(
         'message',
         {

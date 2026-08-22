@@ -33,8 +33,6 @@
     "@nmtjs/contract": "workspace:*",
     "@nmtjs/core": "workspace:*",
     "@nmtjs/gateway": "workspace:*",
-    "@nmtjs/json-format": "workspace:*",
-    "@nmtjs/msgpack-format": "workspace:*",
     "@nmtjs/protocol": "workspace:*",
     "@nmtjs/type": "workspace:*",
     "@nmtjs/neem": "workspace:*"
@@ -47,8 +45,6 @@
     "@nmtjs/contract": "workspace:*",
     "@nmtjs/core": "workspace:*",
     "@nmtjs/gateway": "workspace:*",
-    "@nmtjs/json-format": "workspace:*",
-    "@nmtjs/msgpack-format": "workspace:*",
     "@nmtjs/protocol": "workspace:*",
     "@nmtjs/type": "workspace:*",
     "@nmtjs/neem": "workspace:*",

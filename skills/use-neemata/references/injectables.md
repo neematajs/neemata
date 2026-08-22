@@ -289,7 +289,8 @@ Prefer merged `inject.*` tokens in application code:
 - Gateway: `inject.connection`, `inject.connectionId`,
   `inject.connectionData`, `inject.connectionAbortSignal`,
   `inject.rpcAbortSignal`, `inject.rpcClientAbortSignal`,
-  `inject.rpcStreamAbortSignal`, `inject.createBlob`, `inject.consumeBlob`.
+  `inject.rpcStreamAbortSignal`, `inject.rpcTimeoutSignal`,
+  `inject.createBlob`, `inject.consumeBlob`.
 - PubSub: `inject.pubsubAdapter`, `inject.publish`, `inject.subscribe`.
 
 `CoreInjectables`, `GatewayInjectables`, and

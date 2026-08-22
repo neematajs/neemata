@@ -1,10 +1,18 @@
 import type { ContractSchemaOptions } from '../utils.ts'
 import type { TAnyProcedureContract, TProcedureContract } from './procedure.ts'
+import type { TAnyStreamContract, TStreamContract } from './stream.ts'
 import { Kind } from '../constants.ts'
 import { concatFullName, createSchema } from '../utils.ts'
 import { IsProcedureContract } from './procedure.ts'
+import { IsStreamContract } from './stream.ts'
 
 export const RouterKind = Symbol('NeemataRouter')
+
+export type TAnyCallableContract = TAnyProcedureContract | TAnyStreamContract
+
+export function IsCallableContract(value: any): value is TAnyCallableContract {
+  return IsProcedureContract(value) || IsStreamContract(value)
+}
 
 export type TAnyRouterContract<
   RouteContracts extends Record<string, TRouteContract> = Record<
@@ -15,7 +23,7 @@ export type TAnyRouterContract<
 > = TRouterContract<RouteContracts, RouterName>
 
 export type TRouteContract =
-  | TAnyProcedureContract
+  | TAnyCallableContract
   | TRouterContract<Record<string, TRouteContract>, string | undefined>
 
 export interface TRouterContract<
@@ -25,12 +33,6 @@ export interface TRouterContract<
   readonly [Kind]: typeof RouterKind
   readonly type: 'neemata:router'
   readonly name: Name
-  readonly default?: TProcedureContract<
-    any,
-    any,
-    true | undefined,
-    string | undefined
-  >
   readonly routes: {
     [K in keyof Routes]: Routes[K] extends TAnyRouterContract
       ? TRouterContract<
@@ -39,16 +41,23 @@ export interface TRouterContract<
             ? `${Name}/${Extract<K, string>}`
             : Extract<K, string>
         >
-      : Routes[K] extends TAnyProcedureContract
-        ? TProcedureContract<
+      : Routes[K] extends TAnyStreamContract
+        ? TStreamContract<
             Routes[K]['input'],
             Routes[K]['output'],
-            Routes[K]['stream'],
             Name extends string
               ? `${Name}/${Extract<K, string>}`
               : Extract<K, string>
           >
-        : never
+        : Routes[K] extends TAnyProcedureContract
+          ? TProcedureContract<
+              Routes[K]['input'],
+              Routes[K]['output'],
+              Name extends string
+                ? `${Name}/${Extract<K, string>}`
+                : Extract<K, string>
+            >
+          : never
   }
   readonly timeout?: number
 }
@@ -87,9 +96,9 @@ export const RouterContract = <
 }
 
 function processNestedRoutes(
-  routes: Record<string, TAnyRouterContract | TAnyProcedureContract>,
+  routes: Record<string, TRouteContract>,
   parentName: string | undefined,
-): Record<string, TAnyRouterContract | TAnyProcedureContract> {
+): Record<string, TRouteContract> {
   const processed: Record<string, any> = {}
 
   for (const routeName in routes) {
@@ -102,7 +111,7 @@ function processNestedRoutes(
         name: nestedName,
         routes: processNestedRoutes(route.routes, nestedName),
       })
-    } else if (IsProcedureContract(route)) {
+    } else if (IsCallableContract(route)) {
       const fullName = concatFullName(parentName, routeName)
       processed[routeName] = createSchema({ ...route, name: fullName })
     } else {

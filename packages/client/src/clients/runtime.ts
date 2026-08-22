@@ -1,9 +1,13 @@
 import type {
-  TAnyProcedureContract,
+  TAnyCallableContract,
   TAnyRouterContract,
   TRouteContract,
 } from '@nmtjs/contract'
-import { IsProcedureContract, IsRouterContract } from '@nmtjs/contract'
+import {
+  IsCallableContract,
+  IsRouterContract,
+  IsStreamContract,
+} from '@nmtjs/contract'
 
 import type { BaseClientOptions } from '../client.ts'
 import type { RpcLayerApi } from '../layers/rpc.ts'
@@ -16,7 +20,7 @@ import type {
 import { Client } from '../client.ts'
 
 export class RuntimeContractTransformer {
-  #procedures = new Map<string, TAnyProcedureContract>()
+  #procedures = new Map<string, TAnyCallableContract>()
 
   constructor(router: TAnyRouterContract) {
     const registerProcedures = (route: TRouteContract, path: string[] = []) => {
@@ -27,7 +31,7 @@ export class RuntimeContractTransformer {
         return
       }
 
-      if (IsProcedureContract(route)) {
+      if (IsCallableContract(route)) {
         this.#procedures.set(path.join('/'), route)
       }
     }
@@ -71,7 +75,7 @@ const buildRuntimeCallers = (
   rpc: RpcLayerApi,
   contract: TAnyRouterContract,
 ) => {
-  const procedures = new Map<string, TAnyProcedureContract>()
+  const procedures = new Map<string, TAnyCallableContract>()
 
   const resolveProcedures = (
     router: TAnyRouterContract,
@@ -80,7 +84,7 @@ const buildRuntimeCallers = (
     for (const [key, route] of Object.entries(router.routes)) {
       if (IsRouterContract(route)) {
         resolveProcedures(route, [...path, key])
-      } else if (IsProcedureContract(route)) {
+      } else if (IsCallableContract(route)) {
         procedures.set([...path, key].join('/'), route)
       }
     }
@@ -92,17 +96,18 @@ const buildRuntimeCallers = (
   const streams: Record<string, any> = Object.create(null)
 
   for (const [name, procedure] of procedures) {
+    const isStream = IsStreamContract(procedure)
     const invoke = (
       payload?: unknown,
       options?: Partial<ClientCallOptions>,
     ) => {
       return rpc.call(name, payload, {
         ...options,
-        _stream_response: !!procedure.stream,
+        _stream_response: isStream,
       })
     }
 
-    if (procedure.stream) {
+    if (isStream) {
       assignNested(streams, name, invoke)
     } else {
       assignNested(callers, name, invoke)

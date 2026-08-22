@@ -1,5 +1,5 @@
 import type { TAnyRouterContract } from '@nmtjs/contract'
-import type { BaseClientFormat } from '@nmtjs/protocol/client'
+import type { BaseClientCodec } from '@nmtjs/protocol/client'
 import { ConnectionType, ProtocolVersion } from '@nmtjs/protocol'
 
 import type { BaseClientOptions } from '../../src/client.ts'
@@ -56,7 +56,7 @@ export interface MockUnidirectionalTransportControl {
   }
 }
 
-export const mockFormat: BaseClientFormat = {
+export const mockCodec: BaseClientCodec = {
   contentType: 'application/json',
   encode: (data) => new TextEncoder().encode(JSON.stringify(data)),
   decode: (data) =>
@@ -64,7 +64,7 @@ export const mockFormat: BaseClientFormat = {
   encodeRPC: (data) => new TextEncoder().encode(JSON.stringify(data)),
   decodeRPC: (data) =>
     JSON.parse(new TextDecoder().decode(data as ArrayBufferView)),
-} as BaseClientFormat
+} as BaseClientCodec
 
 export const createBaseOptions = <
   RouterContract extends TAnyRouterContract = TAnyRouterContract,
@@ -75,7 +75,7 @@ export const createBaseOptions = <
   ({
     contract: (overrides.contract ?? ({} as RouterContract)) as RouterContract,
     protocol: ProtocolVersion.v1,
-    format: mockFormat,
+    codec: mockCodec,
     ...overrides,
   }) as BaseClientOptions<RouterContract, SafeCall>
 
@@ -158,9 +158,9 @@ export const createMockUnidirectionalTransport = (
 
       return {
         type: 'rpc' as const,
-        result: mockFormat.encode({
+        result: mockCodec.encode({
           ok: true,
-          echoed: mockFormat.decode(rpc.payload),
+          echoed: mockCodec.decode(rpc.payload),
         }),
       }
     },

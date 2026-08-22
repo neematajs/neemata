@@ -1,10 +1,9 @@
-import type { Container, Logger } from '@nmtjs/core'
+import type { AnyInjectable, Container, Logger } from '@nmtjs/core'
 import type {
   ConnectionIdentity,
   GatewayOptions,
   Transport,
 } from '@nmtjs/gateway'
-import type { ProtocolFormats } from '@nmtjs/protocol/server'
 import { Lifecycle, TeardownStack } from '@nmtjs/common'
 import { ExecutionEnvironmentLifecycleHook } from '@nmtjs/core'
 import { Gateway } from '@nmtjs/gateway'
@@ -19,14 +18,20 @@ import { kApplicationHostDefinition } from './constants.ts'
 import { NeemataApplication } from './runtime.ts'
 
 export type TransportOptionsOf<T> =
-  T extends Transport<any, infer Options, any, any, any> ? Options : never
+  T extends Transport<infer Options, any, any, any> ? Options : never
 
 export type ApplicationHostTransportConfig<
   Transports extends Record<string, ApplicationTransport>,
 > = {
   [K in keyof Transports]: {
     transport: Transports[K]
-    options: TransportOptionsOf<Transports[K]>
+    /**
+     * Injectable resolved against the initialized application container
+     * right before the transport is created — options may depend on
+     * application services (config, auth verifiers, secrets). Wrap static
+     * options with `createValueInjectable(...)`.
+     */
+    options: AnyInjectable<TransportOptionsOf<Transports[K]>>
   }
 }
 
@@ -40,10 +45,6 @@ export interface ApplicationHostDefinition<
   [kApplicationHostDefinition]: any
   application: App
   transports: Transports
-  gateway?: Pick<
-    GatewayOptions<ApplicationResolvedProcedure>,
-    'streamIdleTimeout' | 'heartbeat'
-  >
   identity?: ConnectionIdentity
 }
 
@@ -56,10 +57,6 @@ export type ApplicationHostDefinitionOptions<
   Transports extends Record<string, ApplicationTransport>,
 > = {
   transports: Transports
-  gateway?: Pick<
-    GatewayOptions<ApplicationResolvedProcedure>,
-    'streamIdleTimeout' | 'heartbeat'
-  >
   identity?: ConnectionIdentity
 }
 
@@ -72,12 +69,7 @@ export interface ApplicationHostOptions<
   name?: string
   logger: Logger
   container?: Container
-  formats: ProtocolFormats
   transports: ApplicationHostTransportConfig<Transports>
-  gateway?: Pick<
-    GatewayOptions<ApplicationResolvedProcedure>,
-    'streamIdleTimeout' | 'heartbeat'
-  >
   identity?: ConnectionIdentity
 }
 
@@ -120,11 +112,9 @@ export class ApplicationHost<
 
       this.transports = await this.createTransports()
       this.gateway = new Gateway({
-        ...this.options.gateway,
         logger: this.options.logger,
         container: this.application.container,
         hooks: this.application.lifecycleHooks,
-        formats: this.options.formats,
         transports: this.transports,
         api: this.application.api,
         identity: this.options.identity,
@@ -204,8 +194,9 @@ export class ApplicationHost<
 
     for (const key in this.options.transports) {
       const config = this.options.transports[key]
+      const options = await this.application.container.resolve(config.options)
       transports[key] = {
-        transport: await config.transport.factory(config.options),
+        transport: await config.transport.factory(options),
         proxyable: config.transport.proxyable,
       }
     }

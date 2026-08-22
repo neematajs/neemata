@@ -65,8 +65,8 @@ export const rpcClientAbortSignal = createLazyInjectable<
  * Scope: Call
  *
  * This is provided only when stream timeout logic is enabled by the runtime
- * for the procedure (i.e. when the procedure uses a numeric stream timeout,
- * such as `stream: 5_000`).
+ * for the procedure (i.e. when the stream procedure uses a numeric
+ * `streamTimeout`).
  * Prefer rpcAbortSignal for general handler cancellation.
  */
 export const rpcStreamAbortSignal = createLazyInjectable<

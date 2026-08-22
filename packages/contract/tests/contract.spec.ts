@@ -2,15 +2,19 @@ import { t } from '@nmtjs/type'
 import { describe, expect, expectTypeOf, it } from 'vitest'
 
 import type { TRouterContract } from '../src/index.ts'
-import type { TProcedureContract } from '../src/schemas/procedure.ts'
+import type {
+  TAnyProcedureContract,
+  TProcedureContract,
+} from '../src/schemas/procedure.ts'
+import type { TStreamContract } from '../src/schemas/stream.ts'
 import type { SubscriptionEventMessage } from '../src/schemas/subscription.ts'
 import { c, IsRouterContract, RouterContract } from '../src/index.ts'
 import { EventContract, IsEventContract } from '../src/schemas/event.ts'
 import {
   IsProcedureContract,
-  IsStreamProcedureContract,
   ProcedureContract,
 } from '../src/schemas/procedure.ts'
+import { IsStreamContract, StreamContract } from '../src/schemas/stream.ts'
 import {
   IsSubscriptionContract,
   SubscriptionContract,
@@ -138,7 +142,6 @@ describe('Contract — Procedure', { sequential: true }, () => {
     it('should create a Procedure contract', () => {
       const inputType = t.any()
       const outputType = t.any()
-      const streamType = true
       const unnamedProcedure = c.procedure({
         input: inputType,
         output: outputType,
@@ -149,15 +152,13 @@ describe('Contract — Procedure', { sequential: true }, () => {
       expect(unnamedProcedure).toHaveProperty('type', 'neemata:procedure')
       expect(unnamedProcedure).toHaveProperty('input', inputType)
       expect(unnamedProcedure).toHaveProperty('output', outputType)
-      expect(unnamedProcedure).toHaveProperty('stream', undefined)
       expect(IsProcedureContract(unnamedProcedure)).toBe(true)
-      expect(IsStreamProcedureContract(unnamedProcedure)).toBe(false)
+      expect(IsStreamContract(unnamedProcedure)).toBe(false)
 
       const namedProcedure = c.procedure({
         name: 'testProcedure',
         input: inputType,
         output: outputType,
-        stream: true,
       })
 
       expect(namedProcedure).toBeDefined()
@@ -165,9 +166,31 @@ describe('Contract — Procedure', { sequential: true }, () => {
       expect(namedProcedure).toHaveProperty('type', 'neemata:procedure')
       expect(namedProcedure).toHaveProperty('input', inputType)
       expect(namedProcedure).toHaveProperty('output', outputType)
-      expect(namedProcedure).toHaveProperty('stream', streamType)
       expect(IsProcedureContract(namedProcedure)).toBe(true)
-      expect(IsStreamProcedureContract(namedProcedure)).toBe(true)
+      expect(IsStreamContract(namedProcedure)).toBe(false)
+    })
+
+    it('should create a Stream contract', () => {
+      const inputType = t.any()
+      const outputType = t.any()
+      const streamContract = c.stream({
+        name: 'testStream',
+        input: inputType,
+        output: outputType,
+      })
+
+      expect(streamContract).toBeDefined()
+      expect(streamContract).toHaveProperty('name', 'testStream')
+      expect(streamContract).toHaveProperty('type', 'neemata:stream')
+      expect(streamContract).toHaveProperty('input', inputType)
+      expect(streamContract).toHaveProperty('output', outputType)
+      expect(IsStreamContract(streamContract)).toBe(true)
+      expect(IsProcedureContract(streamContract)).toBe(false)
+      expect(c).toHaveProperty('stream', StreamContract)
+
+      // a stream contract must never be assignable where a procedure
+      // contract is required — the kind split is a type-level boundary
+      expectTypeOf(streamContract).not.toExtend<TAnyProcedureContract>()
     })
   })
 
@@ -180,30 +203,28 @@ describe('Contract — Procedure', { sequential: true }, () => {
 
       const namedProcedure = c.procedure({ name: 'testProcedure' })
 
-      const streamProcedure = c.procedure({
+      const streamContract = c.stream({
         input: t.object({ name: t.string(), age: t.number() }),
         output: t.object({ greeting: t.string() }),
-        stream: true,
       })
 
       expectTypeOf(simpleProcedure.name).toEqualTypeOf<undefined>()
       expectTypeOf(simpleProcedure.input).toEqualTypeOf<t.StringType>()
       expectTypeOf(simpleProcedure.output).toEqualTypeOf<t.StringType>()
-      expectTypeOf(simpleProcedure.stream).toEqualTypeOf<undefined>()
+      expectTypeOf(simpleProcedure.type).toEqualTypeOf<'neemata:procedure'>()
 
-      expectTypeOf(streamProcedure.name).toEqualTypeOf<undefined>()
-      expectTypeOf(streamProcedure.input).toEqualTypeOf<
+      expectTypeOf(streamContract.name).toEqualTypeOf<undefined>()
+      expectTypeOf(streamContract.input).toEqualTypeOf<
         t.ObjectType<{ name: t.StringType; age: t.NumberType }>
       >()
-      expectTypeOf(streamProcedure.output).toEqualTypeOf<
+      expectTypeOf(streamContract.output).toEqualTypeOf<
         t.ObjectType<{ greeting: t.StringType }>
       >()
-      expectTypeOf(streamProcedure.stream).toEqualTypeOf<true>()
+      expectTypeOf(streamContract.type).toEqualTypeOf<'neemata:stream'>()
 
       expectTypeOf(namedProcedure.name).toEqualTypeOf<'testProcedure'>()
       expectTypeOf(namedProcedure.input).toEqualTypeOf<t.NeverType>()
       expectTypeOf(namedProcedure.output).toEqualTypeOf<t.NeverType>()
-      expectTypeOf(namedProcedure.stream).toEqualTypeOf<undefined>()
     })
   })
 })
@@ -231,10 +252,9 @@ describe('Contract — Router', { sequential: true }, () => {
         routes: {
           variableProcedure: procedure,
           inlineProcedure: c.procedure({ input: t.any(), output: t.any() }),
-          inlineProcedureWithStream: c.procedure({
+          inlineStream: c.stream({
             input: t.any(),
             output: t.any(),
-            stream: true,
           }),
           nested: nestedRouter,
         },
@@ -252,9 +272,7 @@ describe('Contract — Router', { sequential: true }, () => {
       expect(IsRouterContract(router)).toBe(true)
 
       expect(IsProcedureContract(router.routes.inlineProcedure)).toBe(true)
-      expect(IsProcedureContract(router.routes.inlineProcedureWithStream)).toBe(
-        true,
-      )
+      expect(IsStreamContract(router.routes.inlineStream)).toBe(true)
       expect(IsProcedureContract(router.routes.variableProcedure)).toBe(true)
       expect(IsRouterContract(router.routes.nested)).toBe(true)
     })
@@ -277,10 +295,9 @@ describe('Contract — Router', { sequential: true }, () => {
         routes: {
           simpleProcedure,
           inlineProcedure: c.procedure({ input: t.any(), output: t.any() }),
-          inlineProcedureWithStream: c.procedure({
+          inlineStream: c.stream({
             input: t.any(),
             output: t.string(),
-            stream: true,
           }),
           nested: nestedRouter,
         },
@@ -288,26 +305,14 @@ describe('Contract — Router', { sequential: true }, () => {
 
       expectTypeOf(routerContract.name).toEqualTypeOf<undefined>()
       expectTypeOf(routerContract.routes.simpleProcedure).toEqualTypeOf<
-        TProcedureContract<
-          t.StringType,
-          t.StringType,
-          undefined,
-          'simpleProcedure'
-        >
+        TProcedureContract<t.StringType, t.StringType, 'simpleProcedure'>
       >()
       expectTypeOf(routerContract.routes.inlineProcedure).toEqualTypeOf<
-        TProcedureContract<t.AnyType, t.AnyType, undefined, 'inlineProcedure'>
+        TProcedureContract<t.AnyType, t.AnyType, 'inlineProcedure'>
       >()
 
-      expectTypeOf(
-        routerContract.routes.inlineProcedureWithStream,
-      ).toEqualTypeOf<
-        TProcedureContract<
-          t.AnyType,
-          t.StringType,
-          true,
-          'inlineProcedureWithStream'
-        >
+      expectTypeOf(routerContract.routes.inlineStream).toEqualTypeOf<
+        TStreamContract<t.AnyType, t.StringType, 'inlineStream'>
       >()
 
       expectTypeOf(routerContract.routes.nested).toEqualTypeOf<
@@ -316,7 +321,6 @@ describe('Contract — Router', { sequential: true }, () => {
             readonly nestedProcedure: TProcedureContract<
               t.AnyType,
               t.AnyType,
-              undefined,
               'nested/nestedProcedure'
             >
           },
@@ -358,12 +362,7 @@ describe('Contract — Router', { sequential: true }, () => {
 
       expectTypeOf(router.name).toEqualTypeOf<'root'>()
       expectTypeOf(router.routes.testProcedure).toEqualTypeOf<
-        TProcedureContract<
-          t.StringType,
-          t.StringType,
-          undefined,
-          'root/testProcedure'
-        >
+        TProcedureContract<t.StringType, t.StringType, 'root/testProcedure'>
       >()
     })
   })

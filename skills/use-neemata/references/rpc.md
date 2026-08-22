@@ -53,7 +53,8 @@ export const api = rootRouter([usersRouter] as const)
 Rules:
 
 - Route object keys are RPC path segments and client property names.
-- `rootRouter([...])` merges top-level routes; duplicate keys overwrite.
+- `rootRouter([...])` merges top-level routes; a duplicate top-level key is a
+  startup error (`Root router route collision`).
 - Router `name` is not a root mount prefix. Mounted route keys win.
 - Router guards, middleware, meta, and timeout are behavior, not path shape.
 
@@ -64,7 +65,7 @@ import { guard, inject, middleware, procedure, t } from 'nmtjs'
 
 const requireConnection = guard({
   dependencies: { connection: inject.connection },
-  can: ({ connection }, call) => Boolean(connection && call.payload),
+  handler: ({ connection }, call) => Boolean(connection && call.payload),
 })
 
 const timing = middleware(async (_ctx, _call, next, payload) => {
@@ -92,13 +93,12 @@ Rules:
 ## Streaming
 
 ```ts
-import { inject, procedure, t } from 'nmtjs'
+import { inject, stream, t } from 'nmtjs'
 
-export const feed = procedure({
+export const feed = stream({
   dependencies: { signal: inject.rpcAbortSignal },
   input: t.object({ limit: t.number() }),
   output: t.object({ value: t.number() }),
-  stream: true,
   async *handler({ signal }, input) {
     for (let value = 0; value < input.limit && !signal.aborted; value++) {
       yield { value }
@@ -109,11 +109,11 @@ export const feed = procedure({
 
 Rules:
 
-- `stream: true` exposes procedure under `client.stream.*`.
-- Non-stream procedures expose under `client.call.*`.
-- `stream: <milliseconds>` adds explicit stream timeout behavior and exposes
-  `inject.rpcStreamAbortSignal`.
-- Public contract stores numeric stream config as `stream: true`; timeout is
+- `stream({ ... })` declares a stream route, exposed under `client.stream.*`.
+- `procedure({ ... })` routes expose under `client.call.*`.
+- `streamTimeout: <milliseconds>` on `stream({ ... })` adds explicit stream
+  timeout behavior and exposes `inject.rpcStreamAbortSignal`.
+- The public contract records only the route kind; timeouts are
   implementation behavior.
 - Stream chunks are output-encoded/validated unless output serialization is
   disabled by config metadata.
@@ -168,7 +168,7 @@ export const item = procedure({
     area.static('admin'),
     decodedInput.factory({
       phase: 'afterDecode',
-      resolve: (_ctx, _call, input) => input,
+      handler: (_ctx, _call, input) => input,
     }),
   ],
   dependencies: { decoded: decodedInput },
@@ -191,7 +191,7 @@ import { ApiError, ErrorCode, filter } from 'nmtjs'
 
 const notFoundFilter = filter({
   errorClass: NotFoundError,
-  catch: (_ctx, error) => new ApiError(ErrorCode.NotFound, error.message),
+  handler: (_ctx, error) => new ApiError(ErrorCode.NotFound, error.message),
 })
 ```
 

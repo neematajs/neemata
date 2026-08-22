@@ -1,11 +1,11 @@
 import type { LoggingOptions } from '@nmtjs/core'
 import { Container, createLogger } from '@nmtjs/core'
-import { BaseServerFormat } from '@nmtjs/protocol/server'
+import { BaseServerCodec } from '@nmtjs/protocol/server'
 
 const encoder = new TextEncoder()
 const decoder = new TextDecoder()
 
-class TestServerFormat extends BaseServerFormat {
+class TestServerCodec extends BaseServerCodec {
   accept = ['application/json']
   contentType = 'application/json'
 
@@ -45,6 +45,6 @@ export function createTestContainer(
   return new Container(options)
 }
 
-export function createTestServerFormat() {
-  return new TestServerFormat()
+export function createTestServerCodec() {
+  return new TestServerCodec()
 }

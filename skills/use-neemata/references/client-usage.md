@@ -3,16 +3,16 @@
 ## Client Setup
 
 - Base client API, both client classes, shared types, and plugins: `@nmtjs/client`
-- Transport implementations: `@nmtjs/ws-client`, `@nmtjs/http-client`
-- Client formats: `@nmtjs/json-format/client`, `@nmtjs/msgpack-format/client`
+- Transport implementations: `@nmtjs/client/ws`, `@nmtjs/client/http`
+- Client codecs: `@nmtjs/protocol/json/client`, `@nmtjs/protocol/msgpack/client`
 
 ## StaticClient Setup
 
 ```ts
 import { reconnectPlugin } from '@nmtjs/client'
 import { StaticClient } from '@nmtjs/client'
-import { WsTransportClient } from '@nmtjs/ws-client'
-import { JsonFormat } from '@nmtjs/json-format/client'
+import { WsTransportFactory } from '@nmtjs/client/ws'
+import { JsonCodec } from '@nmtjs/protocol/json/client'
 import { ProtocolVersion } from '@nmtjs/protocol'
 import { appContract } from './contracts.ts'
 
@@ -20,12 +20,12 @@ const client = new StaticClient<typeof appContract>(
   {
     contract: appContract,
     protocol: ProtocolVersion.v1,
-    format: new JsonFormat(),
+    codec: new JsonCodec(),
     autoConnect: true,
     timeout: 5000,
     plugins: [reconnectPlugin()],
   },
-  WsTransportClient,
+  WsTransportFactory,
   { url: 'ws://localhost:4000' },
 )
 ```
@@ -33,15 +33,15 @@ const client = new StaticClient<typeof appContract>(
 - `StaticClient` is proxy-based and resolves procedure paths lazily from property access.
 - `autoConnect: true` lets the client connect on the first call/stream instead of requiring an explicit `await client.connect()`.
 - After an explicit `await client.disconnect()`, implicit reconnection is suppressed until you connect again manually.
-- Use `client.call.*` for non-stream procedures and `client.stream.*` for procedures declared with `stream: true` or a numeric `stream` timeout such as `stream: 5_000`.
+- Use `client.call.*` for `procedure({ ... })` routes and `client.stream.*` for routes declared with `stream({ ... })`.
 
 ## RuntimeClient Setup
 
 ```ts
 import { reconnectPlugin } from '@nmtjs/client'
 import { RuntimeClient } from '@nmtjs/client'
-import { HttpTransportClient } from '@nmtjs/http-client'
-import { JsonFormat } from '@nmtjs/json-format/client'
+import { HttpTransportFactory } from '@nmtjs/client/http'
+import { JsonCodec } from '@nmtjs/protocol/json/client'
 import { ProtocolVersion } from '@nmtjs/protocol'
 import { appContract } from './contracts.ts'
 
@@ -49,22 +49,12 @@ const client = new RuntimeClient<typeof appContract>(
   {
     contract: appContract,
     protocol: ProtocolVersion.v1,
-    format: new JsonFormat(),
+    codec: new JsonCodec(),
     autoConnect: true,
     plugins: [reconnectPlugin()],
   },
-  HttpTransportClient,
-  {
-    url: 'http://localhost:4000',
-    affinity: {
-      // Optional: custom proxy affinity header key
-      key: 'session-key-123',
-      // Optional: custom header name (default: x-nmt-affinity-key)
-      headerName: 'x-nmt-affinity-key',
-      // Optional: cookie forwarding mode for proxy sticky cookie
-      credentials: 'include',
-    },
-  },
+  HttpTransportFactory,
+  { url: 'http://localhost:4000' },
 )
 ```
 
@@ -83,8 +73,8 @@ import {
   reconnectPlugin,
 } from '@nmtjs/client'
 import { StaticClient } from '@nmtjs/client'
-import { WsTransportClient } from '@nmtjs/ws-client'
-import { JsonFormat } from '@nmtjs/json-format/client'
+import { WsTransportFactory } from '@nmtjs/client/ws'
+import { JsonCodec } from '@nmtjs/protocol/json/client'
 import { ProtocolVersion } from '@nmtjs/protocol'
 import { appContract } from './contracts.ts'
 
@@ -92,7 +82,7 @@ const client = new StaticClient(
   {
     contract: appContract,
     protocol: ProtocolVersion.v1,
-    format: new JsonFormat(),
+    codec: new JsonCodec(),
     plugins: [
       reconnectPlugin(),
       browserConnectivityPlugin(),
@@ -102,7 +92,7 @@ const client = new StaticClient(
       }),
     ],
   },
-  WsTransportClient,
+  WsTransportFactory,
   { url: 'ws://localhost:4000' },
 )
 ```
@@ -176,7 +166,7 @@ const blob = client.createBlob('file contents', {
 await client.call.upload({ file: blob })
 
 // client.createBlob(...) accepts:
-//   ReadableStream, File, Blob, string, ArrayBuffer, Uint8Array
+//   Blob (and File), ReadableStream, string, AsyncIterable<Uint8Array>
 ```
 
 ## Blob Download

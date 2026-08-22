@@ -346,7 +346,7 @@ describe('createStreamLayer', () => {
     const nextPromise = iterator.next()
 
     core.emit('message', {
-      type: ServerMessageType.ServerStreamAbort,
+      type: ServerMessageType.ServerBlobAbort,
       streamId,
       reason: 'quota exceeded',
     })

@@ -5,9 +5,9 @@ import type { AnyProcedure, AnyRouter, MetadataKind } from '../src/index.ts'
 import {
   ApplicationApi,
   createMeta,
-  createProcedure,
   createRootRouter,
   createRouter,
+  createStream,
   isProcedure,
   isRouter,
 } from '../src/index.ts'
@@ -38,8 +38,8 @@ describe('application resolve descriptor', () => {
     const container = new Container({ logger })
     const allowed = createMeta<'get' | 'post', MetadataKind.STATIC>()
 
-    const procedure = createProcedure({
-      stream: 250,
+    const procedure = createStream({
+      streamTimeout: 250,
       meta: [allowed.static('get')],
       handler: async function* () {
         yield 'ok'
