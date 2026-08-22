@@ -1,15 +1,26 @@
 import type { GatewayApi, GatewayApiCallOptions } from '@nmtjs/gateway'
+import type {
+  ServerHost,
+  ServerHostOptions,
+} from '@nmtjs/transports/http-server'
 import { Container, createLogger, Hooks } from '@nmtjs/core'
 import { Gateway } from '@nmtjs/gateway'
 import { ErrorCode } from '@nmtjs/protocol'
 import { ProtocolError } from '@nmtjs/protocol/server'
 import { createServerTransport } from '@nmtjs/transports/http-server'
-import { createServerHost } from '@nmtjs/transports/http-server/node'
 import { jsonRpc } from '@nmtjs/transports/json-rpc'
 import { afterEach, describe, expect, it } from 'vitest'
 
+const { createServerHost: runtimeCreateServerHost } = globalThis.Bun
+  ? await import('@nmtjs/transports/http-server/bun')
+  : await import('@nmtjs/transports/http-server/node')
+// This suite passes only the options shared by both runtime hosts.
+const createServerHost = runtimeCreateServerHost as (
+  options: ServerHostOptions,
+) => ServerHost
+
 /**
- * End-to-end: a real Gateway behind the real uWS host with the JSON-RPC
+ * End-to-end: a real Gateway behind the runtime HTTP host with the JSON-RPC
  * handler mounted, consumed by plain fetch — the "stock client" contract.
  */
 
