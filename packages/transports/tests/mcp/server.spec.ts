@@ -1,12 +1,12 @@
 import type { AuthInfo } from '@modelcontextprotocol/server'
 import { OAuthError, OAuthErrorCode } from '@modelcontextprotocol/server'
-import { BaseServerFormat } from '@nmtjs/protocol/server'
+import { BaseServerCodec } from '@nmtjs/protocol/server'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { McpToolConfig } from '../../src/mcp/types.ts'
 import { McpHandler, mcpAuthInfo } from '../../src/mcp/server.ts'
 
-class TestJsonFormat extends BaseServerFormat {
+class TestJsonCodec extends BaseServerCodec {
   accept = ['application/json']
   contentType = 'application/json'
 
@@ -44,10 +44,10 @@ type Overrides = {
 }
 
 function createServer(overrides: Overrides = {}) {
-  const format = new TestJsonFormat()
+  const codec = new TestJsonCodec()
   const connection = {
-    encoder: format,
-    decoder: format,
+    encoder: codec,
+    decoder: codec,
     [Symbol.asyncDispose]: vi.fn(() => Promise.resolve()),
   }
   const onConnect = vi.fn(async () => connection)

@@ -13,9 +13,9 @@ import type {
   EncodeRPCStreams,
   ProtocolRPCPayload,
 } from '../src/common/types.ts'
-import { BaseServerFormat } from '../src/server/format.ts'
+import { BaseServerCodec } from '../src/server/codec.ts'
 
-export class TestFormat extends BaseServerFormat {
+export class TestCodec extends BaseServerCodec {
   accept: Pattern[] = [
     'application/test',
     '*es*',
@@ -61,4 +61,4 @@ export class TestFormat extends BaseServerFormat {
 export const testLogger = () =>
   createLogger({ pinoOptions: { enabled: false } }, 'test')
 
-export const testFormat = () => new TestFormat()
+export const testCodec = () => new TestCodec()

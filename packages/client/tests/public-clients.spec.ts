@@ -10,7 +10,7 @@ import {
   createBaseOptions,
   createMockBidirectionalTransport,
   createMockUnidirectionalTransport,
-  mockFormat,
+  mockCodec,
 } from './_helpers/transports.ts'
 
 const staticContract = c.router({
@@ -94,14 +94,14 @@ describe('public clients', () => {
   it('StaticClient routes nested call procedures through the public call API', async () => {
     const { factory } = createMockUnidirectionalTransport(
       async (context, rpc, options) => {
-        expect(context.contentType).toBe(mockFormat.contentType)
+        expect(context.contentType).toBe(mockCodec.contentType)
         expect(rpc.procedure).toBe('users/profile')
-        expect(mockFormat.decode(rpc.payload)).toEqual({ userId: 'u1' })
+        expect(mockCodec.decode(rpc.payload)).toEqual({ userId: 'u1' })
         expect(options.streamResponse).toBeUndefined()
 
         return {
           type: 'rpc' as const,
-          result: mockFormat.encode({ ok: true, userId: 'u1' }),
+          result: mockCodec.encode({ ok: true, userId: 'u1' }),
         }
       },
     )
@@ -147,12 +147,12 @@ describe('public clients', () => {
       .mockReturnValueOnce({
         type: ServerMessageType.RpcStreamChunk,
         callId: 0,
-        chunk: mockFormat.encode({ seq: 1 }),
+        chunk: mockCodec.encode({ seq: 1 }),
       })
       .mockReturnValueOnce({
         type: ServerMessageType.RpcStreamChunk,
         callId: 0,
-        chunk: mockFormat.encode({ seq: 2 }),
+        chunk: mockCodec.encode({ seq: 2 }),
       })
       .mockReturnValueOnce({ type: ServerMessageType.RpcStreamEnd, callId: 0 })
 
@@ -235,7 +235,7 @@ describe('public clients', () => {
     const { factory } = createMockUnidirectionalTransport(
       async (_context, rpc, options) => {
         expect(rpc.procedure).toBe('events/create')
-        expect(mockFormat.decode(rpc.payload)).toEqual({
+        expect(mockCodec.decode(rpc.payload)).toEqual({
           id: '42',
           createdAt: inputDate.toISOString(),
         })
@@ -243,7 +243,7 @@ describe('public clients', () => {
 
         return {
           type: 'rpc' as const,
-          result: mockFormat.encode({ id: '99', createdAt: outputDate }),
+          result: mockCodec.encode({ id: '99', createdAt: outputDate }),
         }
       },
     )
@@ -298,7 +298,7 @@ describe('public clients', () => {
       .mockReturnValueOnce({
         type: ServerMessageType.RpcStreamChunk,
         callId: 0,
-        chunk: mockFormat.encode({ id: '7', createdAt: outputDate }),
+        chunk: mockCodec.encode({ id: '7', createdAt: outputDate }),
       })
       .mockReturnValueOnce({ type: ServerMessageType.RpcStreamEnd, callId: 0 })
 

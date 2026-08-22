@@ -1,10 +1,10 @@
 import { ErrorCode } from '@nmtjs/protocol'
-import { BaseServerFormat, ProtocolError } from '@nmtjs/protocol/server'
+import { BaseServerCodec, ProtocolError } from '@nmtjs/protocol/server'
 import { describe, expect, it, vi } from 'vitest'
 
 import { JsonRpcHandler } from '../../src/json-rpc/server.ts'
 
-class TestJsonFormat extends BaseServerFormat {
+class TestJsonCodec extends BaseServerCodec {
   accept = ['application/json']
   contentType = 'application/json'
 
@@ -41,10 +41,10 @@ type ServerOverrides = {
 }
 
 function createServer(overrides: ServerOverrides = {}) {
-  const format = new TestJsonFormat()
+  const codec = new TestJsonCodec()
   const connection = {
-    encoder: format,
-    decoder: format,
+    encoder: codec,
+    decoder: codec,
     [Symbol.asyncDispose]: () => Promise.resolve(),
   }
   const onConnect = vi.fn(async () => connection)

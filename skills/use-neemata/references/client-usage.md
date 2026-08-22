@@ -3,16 +3,16 @@
 ## Client Setup
 
 - Base client API, both client classes, shared types, and plugins: `@nmtjs/client`
-- Transport implementations: `@nmtjs/ws-client`, `@nmtjs/http-client`
-- Client formats: `@nmtjs/json-format/client`, `@nmtjs/msgpack-format/client`
+- Transport implementations: `@nmtjs/client/ws`, `@nmtjs/client/http`
+- Client codecs: `@nmtjs/protocol/json/client`, `@nmtjs/protocol/msgpack/client`
 
 ## StaticClient Setup
 
 ```ts
 import { reconnectPlugin } from '@nmtjs/client'
 import { StaticClient } from '@nmtjs/client'
-import { WsTransportClient } from '@nmtjs/ws-client'
-import { JsonFormat } from '@nmtjs/json-format/client'
+import { WsTransportFactory } from '@nmtjs/client/ws'
+import { JsonCodec } from '@nmtjs/protocol/json/client'
 import { ProtocolVersion } from '@nmtjs/protocol'
 import { appContract } from './contracts.ts'
 
@@ -20,12 +20,12 @@ const client = new StaticClient<typeof appContract>(
   {
     contract: appContract,
     protocol: ProtocolVersion.v1,
-    format: new JsonFormat(),
+    codec: new JsonCodec(),
     autoConnect: true,
     timeout: 5000,
     plugins: [reconnectPlugin()],
   },
-  WsTransportClient,
+  WsTransportFactory,
   { url: 'ws://localhost:4000' },
 )
 ```
@@ -40,8 +40,8 @@ const client = new StaticClient<typeof appContract>(
 ```ts
 import { reconnectPlugin } from '@nmtjs/client'
 import { RuntimeClient } from '@nmtjs/client'
-import { HttpTransportClient } from '@nmtjs/http-client'
-import { JsonFormat } from '@nmtjs/json-format/client'
+import { HttpTransportFactory } from '@nmtjs/client/http'
+import { JsonCodec } from '@nmtjs/protocol/json/client'
 import { ProtocolVersion } from '@nmtjs/protocol'
 import { appContract } from './contracts.ts'
 
@@ -49,11 +49,11 @@ const client = new RuntimeClient<typeof appContract>(
   {
     contract: appContract,
     protocol: ProtocolVersion.v1,
-    format: new JsonFormat(),
+    codec: new JsonCodec(),
     autoConnect: true,
     plugins: [reconnectPlugin()],
   },
-  HttpTransportClient,
+  HttpTransportFactory,
   {
     url: 'http://localhost:4000',
     affinity: {
@@ -83,8 +83,8 @@ import {
   reconnectPlugin,
 } from '@nmtjs/client'
 import { StaticClient } from '@nmtjs/client'
-import { WsTransportClient } from '@nmtjs/ws-client'
-import { JsonFormat } from '@nmtjs/json-format/client'
+import { WsTransportFactory } from '@nmtjs/client/ws'
+import { JsonCodec } from '@nmtjs/protocol/json/client'
 import { ProtocolVersion } from '@nmtjs/protocol'
 import { appContract } from './contracts.ts'
 
@@ -92,7 +92,7 @@ const client = new StaticClient(
   {
     contract: appContract,
     protocol: ProtocolVersion.v1,
-    format: new JsonFormat(),
+    codec: new JsonCodec(),
     plugins: [
       reconnectPlugin(),
       browserConnectivityPlugin(),
@@ -102,7 +102,7 @@ const client = new StaticClient(
       }),
     ],
   },
-  WsTransportClient,
+  WsTransportFactory,
   { url: 'ws://localhost:4000' },
 )
 ```

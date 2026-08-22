@@ -20,7 +20,7 @@ import { createLazyInjectable, provision, Scope } from '@nmtjs/core'
 import { ProxyableTransportType } from '@nmtjs/gateway'
 import { ProtocolError } from '@nmtjs/protocol/server'
 
-import type { ServerHandler } from '../transport.ts'
+import type { ServerHandler } from '../http-server/transport.ts'
 import type { ToolInputSchema } from './schema.ts'
 import type { McpHandlerOptions, McpToolConfig } from './types.ts'
 import { emitToolInputSchema } from './schema.ts'

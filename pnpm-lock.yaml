@@ -75,12 +75,6 @@ importers:
         specifier: workspace:*
         version: link:../type
     devDependencies:
-      '@nmtjs/json-format':
-        specifier: workspace:*
-        version: link:../json-format
-      '@nmtjs/msgpack-format':
-        specifier: workspace:*
-        version: link:../msgpack-format
       zod:
         specifier: 'catalog:'
         version: 4.4.3
@@ -177,31 +171,6 @@ importers:
         specifier: 6.1.1
         version: 6.1.1
 
-  packages/http-client:
-    dependencies:
-      '@nmtjs/client':
-        specifier: workspace:*
-        version: link:../client
-      '@nmtjs/common':
-        specifier: workspace:*
-        version: link:../common
-      '@nmtjs/protocol':
-        specifier: workspace:*
-        version: link:../protocol
-    devDependencies:
-      '@nmtjs/msgpack-format':
-        specifier: workspace:*
-        version: link:../msgpack-format
-
-  packages/json-format:
-    dependencies:
-      '@nmtjs/common':
-        specifier: workspace:*
-        version: link:../common
-      '@nmtjs/protocol':
-        specifier: workspace:*
-        version: link:../protocol
-
   packages/metrics:
     dependencies:
       '@nmtjs/common':
@@ -216,18 +185,6 @@ importers:
       '@nmtjs/prom-client':
         specifier: 1.0.1
         version: 1.0.1
-
-  packages/msgpack-format:
-    dependencies:
-      '@msgpack/msgpack':
-        specifier: ^3.1.3
-        version: 3.1.3
-      '@nmtjs/common':
-        specifier: workspace:*
-        version: link:../common
-      '@nmtjs/protocol':
-        specifier: workspace:*
-        version: link:../protocol
 
   packages/neem:
     dependencies:
@@ -265,9 +222,6 @@ importers:
       '@nmtjs/gateway':
         specifier: workspace:*
         version: link:../gateway
-      '@nmtjs/json-format':
-        specifier: workspace:*
-        version: link:../json-format
       '@nmtjs/metrics':
         specifier: workspace:*
         version: link:../metrics
@@ -335,18 +289,12 @@ importers:
 
   packages/protocol:
     dependencies:
+      '@msgpack/msgpack':
+        specifier: ^3.1.3
+        version: 3.1.3
       '@nmtjs/common':
         specifier: workspace:*
         version: link:../common
-      '@nmtjs/contract':
-        specifier: workspace:*
-        version: link:../contract
-      '@nmtjs/type':
-        specifier: workspace:*
-        version: link:../type
-      hookable:
-        specifier: 6.1.1
-        version: 6.1.1
     devDependencies:
       '@nmtjs/client':
         specifier: workspace:*
@@ -425,15 +373,9 @@ importers:
       '@nmtjs/gateway':
         specifier: workspace:*
         version: link:../gateway
-      '@nmtjs/json-format':
-        specifier: workspace:*
-        version: link:../json-format
       '@nmtjs/type':
         specifier: workspace:*
         version: link:../type
-      '@nmtjs/ws-client':
-        specifier: workspace:*
-        version: link:../ws-client
       jayson:
         specifier: ^4.3.0
         version: 4.3.0
@@ -527,19 +469,6 @@ importers:
       pg:
         specifier: ^8.22.0
         version: 8.22.0
-
-  packages/ws-client:
-    dependencies:
-      '@nmtjs/client':
-        specifier: workspace:*
-        version: link:../client
-      '@nmtjs/common':
-        specifier: workspace:*
-        version: link:../common
-    devDependencies:
-      '@nmtjs/protocol':
-        specifier: workspace:*
-        version: link:../protocol
 
 packages:
 

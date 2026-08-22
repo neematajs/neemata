@@ -390,7 +390,7 @@ export const createRpcLayer = (
         }
       },
       transform: (chunk) => {
-        return transformer.decode(procedure, core.format.decode(chunk))
+        return transformer.decode(procedure, core.codec.decode(chunk))
       },
       readableStrategy: { highWaterMark: 0 },
     })
@@ -412,7 +412,7 @@ export const createRpcLayer = (
     let error: ProtocolError
 
     try {
-      const decoded = core.format.decode(response.error) as {
+      const decoded = core.codec.decode(response.error) as {
         code?: string
         message?: string
         data?: unknown
@@ -489,7 +489,7 @@ export const createRpcLayer = (
           }
         },
         transform: (chunk) => {
-          return transformer.decode(call.procedure, core.format.decode(chunk))
+          return transformer.decode(call.procedure, core.codec.decode(chunk))
         },
         readableStrategy: { highWaterMark: 0 },
       })
@@ -545,7 +545,7 @@ export const createRpcLayer = (
       const decodedPayload =
         response.result.byteLength === 0
           ? undefined
-          : core.format.decode(response.result)
+          : core.codec.decode(response.result)
 
       const transformed = transformer.decode(call.procedure, decodedPayload)
       core.emitClientEvent({
@@ -773,13 +773,13 @@ export const createRpcLayer = (
             ? new Uint8Array(0)
             : transformedPayload === undefined
               ? new Uint8Array(0)
-              : core.format.encode(transformedPayload)
+              : core.codec.encode(transformedPayload)
 
           const response = await core.transportCall(
             {
               application: core.application,
               auth: core.auth,
-              contentType: core.format.contentType,
+              contentType: core.codec.contentType,
             },
             { callId: currentCallId, procedure, payload: encodedPayload, blob },
             {

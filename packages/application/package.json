@@ -38,9 +38,7 @@
     "@nmtjs/neem": "workspace:*"
   },
   "devDependencies": {
-    "zod": "catalog:",
-    "@nmtjs/json-format": "workspace:*",
-    "@nmtjs/msgpack-format": "workspace:*"
+    "zod": "catalog:"
   },
   "peerDependencies": {
     "@nmtjs/common": "workspace:*",

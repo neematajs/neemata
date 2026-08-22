@@ -3,30 +3,30 @@
   "description": "First-party transports, server hosts, and protocol handlers for Neemata.",
   "type": "module",
   "exports": {
-    ".": {
-      "types": "./src/index.ts",
-      "import": "./dist/index.js",
-      "module-sync": "./dist/index.js"
+    "./http-server": {
+      "types": "./src/http-server/index.ts",
+      "import": "./dist/http-server/index.js",
+      "module-sync": "./dist/http-server/index.js"
     },
-    "./host/bun": {
-      "types": "./src/host/bun.ts",
-      "import": "./dist/host/bun.js",
-      "module-sync": "./dist/host/bun.js"
+    "./http-server/bun": {
+      "types": "./src/http-server/bun.ts",
+      "import": "./dist/http-server/bun.js",
+      "module-sync": "./dist/http-server/bun.js"
     },
-    "./host/deno": {
-      "types": "./src/host/deno.ts",
-      "import": "./dist/host/deno.js",
-      "module-sync": "./dist/host/deno.js"
+    "./http-server/deno": {
+      "types": "./src/http-server/deno.ts",
+      "import": "./dist/http-server/deno.js",
+      "module-sync": "./dist/http-server/deno.js"
     },
-    "./host/node": {
-      "types": "./src/host/node.ts",
-      "import": "./dist/host/node.js",
-      "module-sync": "./dist/host/node.js"
+    "./http-server/node": {
+      "types": "./src/http-server/node.ts",
+      "import": "./dist/http-server/node.js",
+      "module-sync": "./dist/http-server/node.js"
     },
-    "./http": {
-      "types": "./src/http/index.ts",
-      "import": "./dist/http/index.js",
-      "module-sync": "./dist/http/index.js"
+    "./neemata/http": {
+      "types": "./src/neemata/http/index.ts",
+      "import": "./dist/neemata/http/index.js",
+      "module-sync": "./dist/neemata/http/index.js"
     },
     "./json-rpc": {
       "types": "./src/json-rpc/index.ts",
@@ -38,38 +38,38 @@
       "import": "./dist/mcp/index.js",
       "module-sync": "./dist/mcp/index.js"
     },
-    "./ws": {
-      "types": "./src/ws/index.ts",
-      "import": "./dist/ws/index.js",
-      "module-sync": "./dist/ws/index.js"
+    "./neemata/ws": {
+      "types": "./src/neemata/ws/index.ts",
+      "import": "./dist/neemata/ws/index.js",
+      "module-sync": "./dist/neemata/ws/index.js"
     }
   },
   "publishConfig": {
     "exports": {
-      ".": {
-        "types": "./dist/index.d.ts",
-        "import": "./dist/index.js",
-        "module-sync": "./dist/index.js"
+      "./http-server": {
+        "types": "./dist/http-server/index.d.ts",
+        "import": "./dist/http-server/index.js",
+        "module-sync": "./dist/http-server/index.js"
       },
-      "./host/bun": {
-        "types": "./dist/host/bun.d.ts",
-        "import": "./dist/host/bun.js",
-        "module-sync": "./dist/host/bun.js"
+      "./http-server/bun": {
+        "types": "./dist/http-server/bun.d.ts",
+        "import": "./dist/http-server/bun.js",
+        "module-sync": "./dist/http-server/bun.js"
       },
-      "./host/deno": {
-        "types": "./dist/host/deno.d.ts",
-        "import": "./dist/host/deno.js",
-        "module-sync": "./dist/host/deno.js"
+      "./http-server/deno": {
+        "types": "./dist/http-server/deno.d.ts",
+        "import": "./dist/http-server/deno.js",
+        "module-sync": "./dist/http-server/deno.js"
       },
-      "./host/node": {
-        "types": "./dist/host/node.d.ts",
-        "import": "./dist/host/node.js",
-        "module-sync": "./dist/host/node.js"
+      "./http-server/node": {
+        "types": "./dist/http-server/node.d.ts",
+        "import": "./dist/http-server/node.js",
+        "module-sync": "./dist/http-server/node.js"
       },
-      "./http": {
-        "types": "./dist/http/index.d.ts",
-        "import": "./dist/http/index.js",
-        "module-sync": "./dist/http/index.js"
+      "./neemata/http": {
+        "types": "./dist/neemata/http/index.d.ts",
+        "import": "./dist/neemata/http/index.js",
+        "module-sync": "./dist/neemata/http/index.js"
       },
       "./json-rpc": {
         "types": "./dist/json-rpc/index.d.ts",
@@ -81,10 +81,10 @@
         "import": "./dist/mcp/index.js",
         "module-sync": "./dist/mcp/index.js"
       },
-      "./ws": {
-        "types": "./dist/ws/index.d.ts",
-        "import": "./dist/ws/index.js",
-        "module-sync": "./dist/ws/index.js"
+      "./neemata/ws": {
+        "types": "./dist/neemata/ws/index.d.ts",
+        "import": "./dist/neemata/ws/index.js",
+        "module-sync": "./dist/neemata/ws/index.js"
       }
     }
   },
@@ -102,9 +102,7 @@
     "@nmtjs/contract": "workspace:*",
     "@nmtjs/core": "workspace:*",
     "@nmtjs/gateway": "workspace:*",
-    "@nmtjs/json-format": "workspace:*",
     "@nmtjs/type": "workspace:*",
-    "@nmtjs/ws-client": "workspace:*",
     "jayson": "^4.3.0",
     "json-rpc-2.0": "^1.7.1",
     "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.67.0"

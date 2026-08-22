@@ -6,13 +6,13 @@ import type {
 import type { NeemRuntimeUpstream, NeemRuntimeWorkerContext } from '@nmtjs/neem'
 import { Container, createLogger, Hooks } from '@nmtjs/core'
 import { Gateway } from '@nmtjs/gateway'
-import { JsonFormat } from '@nmtjs/json-format/server'
 import { defineRuntimeWorker } from '@nmtjs/neem'
-import { ProtocolFormats } from '@nmtjs/protocol/server'
-import { createServerTransport } from '@nmtjs/transports'
-import { createServerHost } from '@nmtjs/transports/host/node'
-import { neemataHttp } from '@nmtjs/transports/http'
-import { neemataWebSocket } from '@nmtjs/transports/ws'
+import { JsonCodec } from '@nmtjs/protocol/json/server'
+import { ProtocolCodecRegistry } from '@nmtjs/protocol/server'
+import { createServerTransport } from '@nmtjs/transports/http-server'
+import { createServerHost } from '@nmtjs/transports/http-server/node'
+import { neemataHttp } from '@nmtjs/transports/neemata/http'
+import { neemataWebSocket } from '@nmtjs/transports/neemata/ws'
 
 import { record } from '../../shared/support/_events.ts'
 
@@ -40,21 +40,19 @@ export default defineRuntimeWorker({
         const ServerTransport = createServerTransport({
           host: createServerHost,
           handlers: {
-            http: neemataHttp(),
-            ws: neemataWebSocket(),
+            http: neemataHttp({
+              codecs: new ProtocolCodecRegistry([new JsonCodec()]),
+            }),
+            ws: neemataWebSocket({
+              codecs: new ProtocolCodecRegistry([new JsonCodec()]),
+            }),
           },
         })
         const server = await ServerTransport.factory({
           listen: { port: 0, hostname: '127.0.0.1' },
           handlers: {
-            http: {
-              path: '/',
-              formats: new ProtocolFormats([new JsonFormat()]),
-            },
-            ws: {
-              path: '/',
-              formats: new ProtocolFormats([new JsonFormat()]),
-            },
+            http: { path: '/' },
+            ws: { path: '/' },
           },
         })
 

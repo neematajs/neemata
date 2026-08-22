@@ -47,7 +47,7 @@ A strict layering; each level adds exactly one concern:
        (different policy chains) is legal
     Projections             native (structural, expose-all), JSON-RPC (structural,
     └─ handler-level config), MCP (curated handler-level map)
-    Transport handlers      @nmtjs/transports — wire protocols on the shared ServerHost
+    Transport handlers      @nmtjs/transports/* — wire protocols on the shared HTTP server
     ServerHost              unchanged (PR #314 model)
 
 There is **no binding mechanism**: no tokens, no router `.bind`, no surface objects,
@@ -117,7 +117,7 @@ Branch: `dev/route-kinds` · Packages: contract, application, client, gateway (t
 ## Slice B — JSON-RPC handler
 
 Branch: `dev/json-rpc` · Packages: transports (new `./json-rpc` subpath, per the #314
-consolidation), json-format
+consolidation), protocol/json
 
 Structural projection of the router — no new application-layer concepts:
 
@@ -281,20 +281,20 @@ stream-to-SSE, invoke) with lifecycle start/stop under Neem; resolution-time err
 message test for a non-portable guard; `application.invoke` used by at least one of
 the workspace's own test suites in place of a transport.
 
-## Slice G — Format & session-engine ownership (implemented)
+## Slice G — Codec & session-engine ownership (implemented)
 
-Decision (D13): **Formats are capabilities of a protocol projection. The
+Decision (D13): **Codecs are capabilities of a protocol projection. The
 gateway consumes canonical calls and runtime values; it does not globally
 select wire representations.** The native projection negotiates its codec
 registry; fixed-format protocols (JSON-RPC, MCP, future gRPC) own their
-prescribed encoding internally. No universal Format abstraction is
+prescribed encoding internally. No universal codec abstraction is
 introduced — the existing codec classes are native-protocol machinery
 (blob references, RPC framing), not generic serializers.
 
 Originally planned as two tiers (tier 1: mechanical `codecs: false` opt-out
 with a host-level registry; tier 2: full session-engine extraction,
 deferred). Since the branch was unreleased, shipping the transitional tier-1
-surface (`codecs: false`, throwing codec stubs, host-level `formats`) as
+surface (`codecs: false`, throwing codec stubs, host-level codec registries) as
 public API was worse than finishing the split, so **both tiers landed
 together** as the full ownership refactor:
 
@@ -307,18 +307,18 @@ together** as the full ownership refactor:
   connection and aborts them on disconnect; wire call ids stay in the
   transport.
 - **The native WebSocket session engine lives in
-  `@nmtjs/transports/ws` (`WsSessionEngine`).** Frame dispatch, protocol
+  `@nmtjs/transports/neemata/ws` (`WsSessionEngine`).** Frame dispatch, protocol
   codec use, wire callId reservation/dedup, RPC stream chunk credits, blob
   streams with byte credits (`RpcManager`, `BlobStreamsManager` moved from
   `@nmtjs/gateway`), heartbeats, terminal-frame drop policy, and
   socket-close initiation are all handler-owned. The wire protocol is
   unchanged — the machinery relocated, not redesigned.
-- **Formats are per-handler options**: `neemataHttp({ formats })` and
-  `neemataWebSocket({ formats })` negotiate per request/upgrade. The
+- **Codecs are handler-construction options**: `neemataHttp({ codecs })` and
+  `neemataWebSocket({ codecs })` negotiate per request/upgrade. The
   registry is required — there is no built-in default, so the composition
   that mounts a native handler states its codecs explicitly and
-  `@nmtjs/transports` carries no format-package dependencies. `heartbeat`
-  and `streamIdleTimeout` are `neemataWebSocket` options. JSON-RPC owns plain
+  `@nmtjs/transports` imports no concrete codec subpath. `heartbeat`
+  and `streamIdleTimeout` remain mount options. JSON-RPC owns plain
   spec-compliant `JSON.parse`/`stringify` (415 for non-JSON content types);
   MCP relies solely on its SDK's encoding.
 - **Blob capabilities are projection-owned**: `createBlob`/`consumeBlob`
@@ -328,12 +328,12 @@ together** as the full ownership refactor:
   JSON-RPC/MCP provide none. This also resolved the WS/HTTP blob-injectable
   provisioning divergence (neematajs/neemata#317): both paths provision at
   the same dispatch point now.
-- **Deleted plumbing**: `GatewayOptions.formats`/`heartbeat`/
-  `streamIdleTimeout`, `TransportWorkerParams.formats`/`onMessage`,
+- **Deleted plumbing**: gateway codec registries/heartbeat/
+  stream-idle settings and `TransportWorkerParams.onMessage`,
   `TransportWorker.send`/`close`, `codecs: false` and the throwing codec
   stubs, the shared-server `owners` reverse-routing map and `evict()`
-  teardown cycle, host-level `formats` on
-  `defineApplicationHost`/`ApplicationHost`, the `nmtjs` `host()` formats
+  teardown cycle, host-level codec registries on
+  `defineApplicationHost`/`ApplicationHost`, the `nmtjs` `host()` codec
   wrapper (now a plain alias), and the gateway's physical-socket close
   logic. Teardown flows one direction: socket close → handler disconnect →
   gateway scope disposal.
@@ -366,7 +366,7 @@ provisioning.
 - **Adapter packages** (`@nmtjs/hono` etc.) — documented patterns first; packages
   only on demonstrated demand.
 - The existing native `neemataHttp` transport **stays as-is** — it is the native
-  protocol over HTTP for `@nmtjs/http-client`, not an HTTP-native interface.
+  protocol over HTTP for `@nmtjs/client/http`, not an HTTP-native interface.
 
 ## Invariants (updated)
 

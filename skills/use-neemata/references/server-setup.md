@@ -7,9 +7,11 @@ runtime files.
 
 ```ts
 import { app, host, pubsubPlugin } from 'nmtjs'
-import { neemataHttp } from '@nmtjs/transports/http'
-import { createServerTransport } from '@nmtjs/transports'
-import { createServerHost } from '@nmtjs/transports/host/node'
+import { neemataHttp } from '@nmtjs/transports/neemata/http'
+import { createServerTransport } from '@nmtjs/transports/http-server'
+import { createServerHost } from '@nmtjs/transports/http-server/node'
+import { JsonCodec } from '@nmtjs/protocol/json/server'
+import { ProtocolCodecRegistry } from '@nmtjs/protocol/server'
 
 import { api } from './router.ts'
 
@@ -20,7 +22,11 @@ export const application = app({
 
 const Server = createServerTransport({
   host: createServerHost,
-  handlers: { api: neemataHttp() },
+  handlers: {
+    api: neemataHttp({
+      codecs: new ProtocolCodecRegistry([new JsonCodec()]),
+    }),
+  },
 })
 
 export default host(application, {

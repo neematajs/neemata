@@ -9,7 +9,7 @@ import type {
   ServerMessageType,
 } from '../common/enums.ts'
 import type { BaseProtocolError, EncodeRPCStreams } from '../common/types.ts'
-import type { BaseClientDecoder, BaseClientEncoder } from './format.ts'
+import type { BaseClientDecoder, BaseClientEncoder } from './codec.ts'
 import type { ProtocolClientBlobStream } from './stream.ts'
 import { concat } from '../common/binary.ts'
 

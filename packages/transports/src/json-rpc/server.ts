@@ -11,14 +11,14 @@ import { ProxyableTransportType } from '@nmtjs/gateway'
 import { ProtocolBlob } from '@nmtjs/protocol'
 import { ProtocolError } from '@nmtjs/protocol/server'
 
-import type { ServerHandler } from '../transport.ts'
+import type { ServerHandler } from '../http-server/transport.ts'
 import type {
   JsonRpcErrorObject,
   JsonRpcHandlerOptions,
   JsonRpcId,
   JsonRpcResponse,
 } from './types.ts'
-import { PayloadTooLargeError } from '../http/utils.ts'
+import { PayloadTooLargeError } from '../http-server/utils.ts'
 import {
   BATCH_CONCURRENCY,
   DEFAULT_MAX_BATCH_SIZE,

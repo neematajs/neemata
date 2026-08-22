@@ -56,6 +56,7 @@ describe('Neem config signal watcher', () => {
       '/app/neem.config.ts',
       '/app/api.runtime.ts',
     ])
+    expect(options.treeshake).toBeUndefined()
     expect(options.watch).toMatchObject({ skipWrite: true })
   })
 })
