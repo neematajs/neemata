@@ -1,13 +1,12 @@
-/// <reference types="node" />
-
-import { Buffer } from 'node:buffer'
-
 import { describe, expect, it } from 'vitest'
 
 import { HttpStreamParser } from '../../src/transports/http/stream-parser.ts'
 
 const createBase64 = (chunk: Uint8Array) =>
-  Buffer.from(chunk).toString('base64')
+  btoa(Array.from(chunk, (byte) => String.fromCharCode(byte)).join(''))
+
+const decodeBase64 = (chunk: string) =>
+  Uint8Array.from(atob(chunk), (character) => character.charCodeAt(0))
 
 const parseFromParts = (parts: string[]) => {
   const parser = new HttpStreamParser()
@@ -23,7 +22,7 @@ const parseFromParts = (parts: string[]) => {
     chunks.push(data)
   })
 
-  return chunks.map((chunk) => Uint8Array.from(Buffer.from(chunk, 'base64')))
+  return chunks.map(decodeBase64)
 }
 
 describe('HttpStreamParser', () => {
