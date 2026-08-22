@@ -24,6 +24,8 @@ Exceptions:
 - [API Reference](references/api-reference.md) - umbrella exports and import rules.
 - [Application Setup](references/server-setup.md) - app, host, transports,
   Neemata runtime files.
+- [Transports](references/transports.md) - server host, native HTTP/WS
+  handlers, codecs, JSON-RPC and MCP projections.
 - [Contracts](references/contracts.md) - RPC, event, subscription, and blob
   public API shapes.
 - [RPC](references/rpc.md) - procedures, routers, execution pipeline,
