@@ -55,6 +55,7 @@ export interface StreamLayerApi {
         stream: ProtocolServerBlobStream,
         options?: { signal?: AbortSignal },
       ) => void
+      onSourceSettled?: () => void
     },
   ) => {
     blob: ProtocolBlobInterface
@@ -153,6 +154,7 @@ export const createStreamLayer = (core: ClientCore): StreamLayerApi => {
         stream: ProtocolServerBlobStream,
         options?: { signal?: AbortSignal },
       ) => void
+      onSourceSettled?: () => void
     },
   ) => {
     const id = getStreamId()
@@ -171,7 +173,11 @@ export const createStreamLayer = (core: ClientCore): StreamLayerApi => {
       serverBlobInitializers.set(id, (subscriptionOptions) => {
         if (started) return
         started = true
-        void pumpServerBlobSource(id, options.source!, subscriptionOptions)
+        void pumpServerBlobSource(
+          id,
+          options.source!,
+          subscriptionOptions,
+        ).finally(() => options.onSourceSettled?.())
       })
     }
 
@@ -197,6 +203,9 @@ export const createStreamLayer = (core: ClientCore): StreamLayerApi => {
       }
       await serverStreams.end(id)
     } catch (error) {
+      // Stop the underlying body before source settlement releases the call's
+      // remaining cancellation wiring.
+      await reader.cancel(error).catch(noopFn)
       await serverStreams.abort(id, error).catch(noopFn)
     } finally {
       reader.releaseLock()
@@ -209,6 +218,11 @@ export const createStreamLayer = (core: ClientCore): StreamLayerApi => {
   ) => {
     const id = getProtocolBlobStreamId(blob)
     const stream = serverStreams.get(id)
+    // Starting before the early-abort return guarantees the source's terminal
+    // callback releases call-level signal wiring on every subscription path.
+    const initialize = serverBlobInitializers.get(id)
+    serverBlobInitializers.delete(id)
+    initialize?.(options)
 
     if (options?.signal?.aborted) {
       abortServerBlob(id, options.signal.reason)
@@ -224,9 +238,6 @@ export const createStreamLayer = (core: ClientCore): StreamLayerApi => {
         { once: true },
       )
     }
-
-    serverBlobInitializers.get(id)?.(options)
-    serverBlobInitializers.delete(id)
 
     return stream
   }

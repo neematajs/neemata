@@ -1,6 +1,6 @@
 import type { Future } from '@nmtjs/common'
 import type { ServerMessageTypePayload } from '@nmtjs/protocol/client'
-import { anyAbortSignal, createFuture, MAX_UINT32, noopFn } from '@nmtjs/common'
+import { createFuture, MAX_UINT32, noopFn } from '@nmtjs/common'
 import {
   ClientMessageType,
   ConnectionType,
@@ -23,6 +23,7 @@ export type ProtocolClientCall = Future<any> & {
   signal?: AbortSignal
   rpcStreamWindow: number
   cleanup?: () => void
+  detachSignals?: () => void
 }
 
 export interface RpcLayerApi {
@@ -176,11 +177,16 @@ const createManagedAsyncIterable = <T>(
 
       return {
         async next() {
-          const result = await iterator.next()
-          if (result.done) {
+          try {
+            const result = await iterator.next()
+            if (result.done) {
+              finish()
+            }
+            return result
+          } catch (error) {
             finish()
+            throw error
           }
-          return result
         },
         async return(value) {
           options.onReturn?.(value)
@@ -534,6 +540,7 @@ export const createRpcLayer = (
 
       const { blob } = streams.addServerBlobStream(response.metadata, {
         source: response.source,
+        onSourceSettled: () => call.detachSignals?.(),
       })
       call.resolve(blob)
       return
@@ -684,20 +691,60 @@ export const createRpcLayer = (
       callOptions.backpressure?.rpc?.window ?? defaultRpcStreamWindow,
     )
     const timeout = callOptions.timeout ?? options.timeout
-    const controller = new AbortController()
+    // Cleanup must detach source signals without masquerading as a user cancel.
+    const cancelController = new AbortController()
+    const composed = new AbortController()
+    const detachers = new Set<() => void>()
+    const attach = (source: AbortSignal) => {
+      if (composed.signal.aborted) return noopFn
+      if (source.aborted) {
+        composed.abort(source.reason)
+        return noopFn
+      }
 
-    const signals: AbortSignal[] = [controller.signal]
+      const onAbort = () => composed.abort(source.reason)
+      source.addEventListener('abort', onAbort, { once: true })
+      const detach = () => {
+        source.removeEventListener('abort', onAbort)
+        detachers.delete(detach)
+      }
+      detachers.add(detach)
+      return detach
+    }
 
-    if (timeout) signals.push(AbortSignal.timeout(timeout))
-    if (callOptions.signal) signals.push(callOptions.signal)
-    if (core.connectionSignal) signals.push(core.connectionSignal)
+    attach(cancelController.signal)
+    const detachTimeout = timeout
+      ? attach(AbortSignal.timeout(timeout))
+      : noopFn
+    if (callOptions.signal) attach(callOptions.signal)
+    if (core.connectionSignal) attach(core.connectionSignal)
 
-    const signal = signals.length ? anyAbortSignal(...signals) : undefined
+    const signal = composed.signal
+    const detachAll = () => {
+      for (const detach of detachers) detach()
+    }
+    signal.addEventListener('abort', detachAll, { once: true })
+    let removePendingAbortListener = noopFn
+
     const currentCallId = nextCallId()
     const call = createFuture() as ProtocolClientCall
+    const { resolve, reject } = call
+    // A response can settle while send() is still in flight, so release the
+    // pending phase synchronously instead of waiting for promise callbacks.
+    call.resolve = (value) => {
+      removePendingAbortListener()
+      detachTimeout()
+      resolve(value)
+    }
+    call.reject = (reason) => {
+      removePendingAbortListener()
+      detachTimeout()
+      reject(reason)
+    }
     call.procedure = procedure
     call.signal = signal
     call.rpcStreamWindow = rpcStreamWindow
+    call.detachSignals = detachAll
 
     calls.set(currentCallId, call)
     core.emitClientEvent({
@@ -708,7 +755,7 @@ export const createRpcLayer = (
       body: payload,
     })
 
-    if (signal?.aborted) {
+    if (signal.aborted) {
       call.reject(toAbortError(signal))
     } else {
       try {
@@ -716,32 +763,34 @@ export const createRpcLayer = (
           await ensureConnectedForCall(core, signal)
         }
 
-        if (signal?.aborted) {
+        if (signal.aborted) {
           throw toAbortError(signal)
         }
 
-        signal?.addEventListener(
-          'abort',
-          () => {
-            call.reject(toAbortError(signal))
+        // Streaming installs its own abort handler after this listener is gone.
+        const onPendingAbort = () => {
+          call.reject(toAbortError(signal))
 
-            if (
-              core.transportType === ConnectionType.Bidirectional &&
-              core.messageContext
-            ) {
-              const buffer = core.protocol.encodeMessage(
-                core.messageContext,
-                ClientMessageType.RpcAbort,
-                {
-                  callId: currentCallId,
-                  reason: toReasonString(signal.reason),
-                },
-              )
-              core.send(buffer).catch(noopFn)
-            }
-          },
-          { once: true },
-        )
+          if (
+            core.transportType === ConnectionType.Bidirectional &&
+            core.messageContext
+          ) {
+            const buffer = core.protocol.encodeMessage(
+              core.messageContext,
+              ClientMessageType.RpcAbort,
+              {
+                callId: currentCallId,
+                reason: toReasonString(signal.reason),
+              },
+            )
+            core.send(buffer).catch(noopFn)
+          }
+        }
+
+        signal.addEventListener('abort', onPendingAbort, { once: true })
+        removePendingAbortListener = () => {
+          signal.removeEventListener('abort', onPendingAbort)
+        }
 
         const transformedPayload = transformer.encode(procedure, payload)
 
@@ -809,12 +858,13 @@ export const createRpcLayer = (
           const stream = createManagedAsyncIterable(value, {
             onDone: () => {
               call.cleanup?.()
+              detachAll()
             },
             onReturn: (reason) => {
-              controller.abort(reason)
+              cancelController.abort(reason)
             },
             onThrow: (error) => {
-              controller.abort(error)
+              cancelController.abort(error)
             },
           })
 
@@ -835,14 +885,17 @@ export const createRpcLayer = (
         }
 
         if (isBlobInterface(value)) {
+          if (core.transportType === ConnectionType.Bidirectional) {
+            detachAll()
+          }
           return value
         }
 
-        controller.abort()
+        detachAll()
         return value
       })
       .catch((error) => {
-        controller.abort()
+        detachAll()
         throw error
       })
       .finally(() => {
