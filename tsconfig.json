@@ -22,6 +22,9 @@
       "path": "./packages/gateway/tsconfig.json"
     },
     {
+      "path": "./packages/fastify/tsconfig.json"
+    },
+    {
       "path": "./packages/metrics/tsconfig.json"
     },
     {
