@@ -2,6 +2,11 @@ import type { ProtocolCodecRegistry } from '@nmtjs/protocol/server'
 
 import type { WsSessionHeartbeatOptions } from './session.ts'
 
+/**
+ * Standard upgrade Request exposed as connection data. Auth from the Neemata
+ * subprotocol is available through its `Authorization` header, matching the
+ * HTTP transport convention.
+ */
 export type NeemataWebSocketRequest = Request
 
 export type WsTransportPeerContext = { connectionId: string }

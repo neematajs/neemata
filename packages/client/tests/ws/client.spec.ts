@@ -1,4 +1,8 @@
-import { ErrorCode, ProtocolVersion } from '@nmtjs/protocol'
+import {
+  encodeWsAuthSubprotocol,
+  ErrorCode,
+  ProtocolVersion,
+} from '@nmtjs/protocol'
 import { BaseClientCodec, ProtocolError } from '@nmtjs/protocol/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -30,6 +34,7 @@ class FakeWebSocket {
   static instances: FakeWebSocket[] = []
 
   readonly url: URL
+  readonly protocols: string[]
   binaryType = 'blob'
   readyState = 0 // CONNECTING
   readonly send = vi.fn()
@@ -41,8 +46,9 @@ class FakeWebSocket {
 
   #listeners = new Map<string, Set<Listener>>()
 
-  constructor(url: string | URL) {
+  constructor(url: string | URL, protocols: string | string[] = []) {
     this.url = url instanceof URL ? url : new URL(url)
+    this.protocols = Array.isArray(protocols) ? protocols : [protocols]
     FakeWebSocket.instances.push(this)
   }
 
@@ -91,7 +97,8 @@ describe('WsTransportClient', () => {
     const socket = FakeWebSocket.instances.at(-1)
     expect(socket).toBeDefined()
     expect(socket?.url.toString()).toContain('/demo')
-    expect(socket?.url.searchParams.get('auth')).toBe('Bearer t')
+    expect(socket?.url.searchParams.get('auth')).toBeNull()
+    expect(socket?.protocols).toEqual([encodeWsAuthSubprotocol('Bearer t')])
 
     socket!.emit('open')
     await connectPromise

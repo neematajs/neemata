@@ -1,7 +1,11 @@
 import type { ProtocolVersion } from '@nmtjs/protocol'
 import type { BaseClientCodec } from '@nmtjs/protocol/client'
 import { once } from '@nmtjs/common'
-import { ConnectionType, ErrorCode } from '@nmtjs/protocol'
+import {
+  ConnectionType,
+  encodeWsAuthSubprotocol,
+  ErrorCode,
+} from '@nmtjs/protocol'
 import { ProtocolError } from '@nmtjs/protocol/client'
 
 import type {
@@ -57,13 +61,15 @@ export class WsTransportClient implements BidirectionalTransport {
     url.searchParams.set('content-type', this.codec.contentType)
     url.searchParams.set('accept', this.codec.contentType)
 
+    const protocols: string[] = []
+
     if (params.auth) {
-      url.searchParams.set('auth', params.auth)
+      protocols.push(encodeWsAuthSubprotocol(params.auth))
     }
 
     const ws = this.options.WebSocket
-      ? new this.options.WebSocket(url)
-      : new WebSocket(url.toString())
+      ? new this.options.WebSocket(url, protocols)
+      : new WebSocket(url.toString(), protocols)
 
     ws.binaryType = 'arraybuffer'
 
