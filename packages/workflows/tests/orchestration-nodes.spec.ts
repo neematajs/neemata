@@ -75,8 +75,7 @@ describe('workflow orchestration nodes', () => {
         items: (_ctx, { load }) => load.scenarios,
         input: (_ctx, _outputs, item) => {
           const text: string = item.text
-          // @ts-expect-error map item mapper is inferred from item schema
-          void item.missing
+          expectTypeOf(item).toEqualTypeOf<{ id: string; text: string }>()
           return { scenario: text }
         },
       })
