@@ -1,13 +1,17 @@
-import { IsProcedureContract, IsStreamContract } from '@nmtjs/contract'
+import type { TAnyProcedureContract, TAnyStreamContract } from '@nmtjs/contract'
+import { c, IsProcedureContract, IsStreamContract } from '@nmtjs/contract'
 import { createLogger } from '@nmtjs/core'
 import { t } from '@nmtjs/type'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, expectTypeOf, it } from 'vitest'
 
+import type { CreateProcedureParams, CreateStreamParams } from '../src/index.ts'
 import {
   createProcedure,
-  createRootRouter,
-  createRouter,
+  createContractProcedure,
   createStream,
+  createContractStream,
+  createRouter,
+  createRootRouter,
   defineApplication,
   NeemataApplication,
 } from '../src/index.ts'
@@ -82,6 +86,42 @@ describe('route kinds', () => {
         },
       }),
     ).toThrow('Stream timeout must be a positive integer')
+  })
+
+  it('implements procedure and stream contracts through separate helpers', () => {
+    const procedureContract = c.procedure({ output: t.string() })
+    const streamContract = c.stream({ output: t.number() })
+
+    const proc = createContractProcedure(procedureContract, () => 'ok')
+    const strm = createContractStream(streamContract, {
+      streamTimeout: 500,
+      handler: async function* () {
+        yield 1
+      },
+    })
+
+    expect(proc.contract).toBe(procedureContract)
+    expect(proc.streamTimeout).toBeUndefined()
+    expect(strm.contract).toBe(streamContract)
+    expect(strm.streamTimeout).toBe(500)
+
+    expectTypeOf(createContractProcedure)
+      .parameter(0)
+      .toExtend<TAnyProcedureContract>()
+    expectTypeOf(createContractStream)
+      .parameter(0)
+      .toExtend<TAnyStreamContract>()
+
+    type ProcedureOptions = Extract<
+      CreateProcedureParams<typeof procedureContract, {}>,
+      { handler: unknown }
+    >
+    type StreamOptions = Extract<
+      CreateStreamParams<typeof streamContract, {}>,
+      { handler: unknown }
+    >
+    expectTypeOf<ProcedureOptions>().not.toHaveProperty('streamTimeout')
+    expectTypeOf<StreamOptions>().toHaveProperty('streamTimeout')
   })
 })
 
