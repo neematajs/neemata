@@ -304,7 +304,8 @@ async function handleResponseBody(
   await handleChunkedStream(res, response.body)
 }
 
-// single handler dispatches drain (and abort) events to the pending waiter
+// uWS honors only the first onWritable registration per response, so a single
+// handler dispatches drain (and abort) events to the pending waiter
 function createWritableWaiter(res: UwsResponse): () => Promise<void> {
   let writableHandlerRegistered = false
   return () =>
@@ -344,15 +345,14 @@ export async function handleFixedLengthStream(
       return
     }
 
-    let responded = false
-    while (!res.aborted && !responded) {
+    while (!res.aborted) {
       const { done, value } = await reader.read()
       if (done) break
       if (value.byteLength === 0) continue
-      responded = await handleFixedChunk(res, value, totalSize, waitWritable)
+      if (await handleFixedChunk(res, value, totalSize, waitWritable)) return
     }
 
-    if (!responded && !res.aborted) res.cork(() => res.close())
+    if (!res.aborted) res.cork(() => res.close())
   } finally {
     res.cancelBody = undefined
     // non-abort early exits (zero-length response, tryEnd done while the
