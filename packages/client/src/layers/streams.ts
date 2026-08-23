@@ -203,6 +203,9 @@ export const createStreamLayer = (core: ClientCore): StreamLayerApi => {
       }
       await serverStreams.end(id)
     } catch (error) {
+      // Stop the underlying body before source settlement releases the call's
+      // remaining cancellation wiring.
+      await reader.cancel(error).catch(noopFn)
       await serverStreams.abort(id, error).catch(noopFn)
     } finally {
       reader.releaseLock()

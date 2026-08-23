@@ -573,16 +573,24 @@ describe('RPC call signal lifecycle', () => {
   it('settles an HTTP blob source when its consumer is already aborted', async () => {
     const core = new MockCore(ConnectionType.Unidirectional)
     const streams = createStreamLayer(core as any)
-    const source = new ReadableStream<ArrayBufferView>()
-    const getReader = vi.spyOn(source, 'getReader')
+    const consumer = new AbortController()
+    consumer.abort('cancelled before subscription')
+    const callSignal = new AbortController()
+    const activeListeners = trackAbortListeners(callSignal.signal)
+    let cancelReason: unknown
+    let listenersAtCancel: number | undefined
+    const source = new ReadableStream<ArrayBufferView>({
+      cancel: (reason) => {
+        cancelReason = reason
+        listenersAtCancel = activeListeners()
+      },
+    })
     core.transportCall.mockResolvedValue({
       type: 'blob',
       metadata: { type: 'application/octet-stream' },
       source,
     })
 
-    const callSignal = new AbortController()
-    const activeListeners = trackAbortListeners(callSignal.signal)
     const blob = await createLayer(core, streams).call(
       'files/download',
       {},
@@ -590,12 +598,13 @@ describe('RPC call signal lifecycle', () => {
     )
     expect(activeListeners()).toBeGreaterThan(0)
 
-    const consumer = new AbortController()
-    consumer.abort('cancelled before subscription')
     streams.consumeServerBlob(blob, { signal: consumer.signal })
 
+    await vi.waitFor(() => {
+      expect(cancelReason).toBe('cancelled before subscription')
+    })
+    expect(listenersAtCancel).toBeGreaterThan(0)
     await vi.waitFor(() => expect(activeListeners()).toBe(0))
-    expect(getReader).toHaveBeenCalledOnce()
   })
 
   it('detaches user-signal listeners as soon as a bidirectional call settles with a blob', async () => {
