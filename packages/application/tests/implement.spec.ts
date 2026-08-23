@@ -144,6 +144,12 @@ describe('contract implementation helper', () => {
     })
     const router = api({ feed })
 
+    type StreamOptions = Extract<
+      Parameters<typeof api.feed>[0],
+      { handler: unknown }
+    >
+    expectTypeOf<StreamOptions>().toHaveProperty('streamTimeout')
+
     expect(feed.contract).toBe(streamContract.routes.feed)
     expect(feed.streamTimeout).toBe(500)
 
@@ -174,15 +180,12 @@ describe('contract implementation helper', () => {
       await runtime.dispose()
     }
 
-    const assertImplementerTypes = () => {
-      const procedureApi = implement(c.procedure({ output: t.string() }))
-      procedureApi({
-        // @ts-expect-error streamTimeout is unavailable on procedure builders.
-        streamTimeout: 500,
-        handler: () => 'ok',
-      })
-    }
-    void assertImplementerTypes
+    const procedureApi = implement(c.procedure({ output: t.string() }))
+    type ProcedureOptions = Extract<
+      Parameters<typeof procedureApi>[0],
+      { handler: unknown }
+    >
+    expectTypeOf<ProcedureOptions>().not.toHaveProperty('streamTimeout')
   })
 
   it('rejects missing, extra, and wrong route implementations', () => {

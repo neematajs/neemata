@@ -1,8 +1,10 @@
+import type { TAnyProcedureContract, TAnyStreamContract } from '@nmtjs/contract'
 import { c, IsProcedureContract, IsStreamContract } from '@nmtjs/contract'
 import { createLogger } from '@nmtjs/core'
 import { t } from '@nmtjs/type'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, expectTypeOf, it } from 'vitest'
 
+import type { CreateProcedureParams, CreateStreamParams } from '../src/index.ts'
 import {
   createProcedure,
   createContractProcedure,
@@ -103,20 +105,23 @@ describe('route kinds', () => {
     expect(strm.contract).toBe(streamContract)
     expect(strm.streamTimeout).toBe(500)
 
-    const assertContractHelperTypes = () => {
-      // @ts-expect-error Stream contracts must use createContractStream.
-      createContractProcedure(streamContract, async function* () {
-        yield 1
-      })
-      // @ts-expect-error Procedure contracts must use createContractProcedure.
-      createContractStream(procedureContract, () => 'ok')
-      createContractProcedure(procedureContract, {
-        // @ts-expect-error streamTimeout is stream-only implementation behavior.
-        streamTimeout: 500,
-        handler: () => 'ok',
-      })
-    }
-    void assertContractHelperTypes
+    expectTypeOf(createContractProcedure)
+      .parameter(0)
+      .toExtend<TAnyProcedureContract>()
+    expectTypeOf(createContractStream)
+      .parameter(0)
+      .toExtend<TAnyStreamContract>()
+
+    type ProcedureOptions = Extract<
+      CreateProcedureParams<typeof procedureContract, {}>,
+      { handler: unknown }
+    >
+    type StreamOptions = Extract<
+      CreateStreamParams<typeof streamContract, {}>,
+      { handler: unknown }
+    >
+    expectTypeOf<ProcedureOptions>().not.toHaveProperty('streamTimeout')
+    expectTypeOf<StreamOptions>().toHaveProperty('streamTimeout')
   })
 })
 
