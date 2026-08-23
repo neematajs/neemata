@@ -1,9 +1,11 @@
-import { request } from 'node:http'
+import { connect } from 'node:net'
 
 import { defineHooks } from 'crossws'
 import { describe, expect, it, vi } from 'vitest'
 
-import { createServerHost } from '../../src/http-server/node.ts'
+const { createServerHost } = globalThis.Bun
+  ? await import('../../src/http-server/bun.ts')
+  : await import('../../src/http-server/node.ts')
 
 const openSocket = (url: string) =>
   new Promise<WebSocket>((resolve, reject) => {
@@ -20,28 +22,45 @@ const openSocket = (url: string) =>
 const upgradeStatus = (url: string, path: string) =>
   new Promise<number>((resolve, reject) => {
     const { hostname, port } = new URL(url)
-    const req = request({
-      hostname,
-      port,
-      path,
-      headers: {
-        connection: 'Upgrade',
-        upgrade: 'websocket',
-        'sec-websocket-version': '13',
-        'sec-websocket-key': 'dGhlIHNhbXBsZSBub25jZQ==',
-      },
-    })
-    req.on('response', (response) => {
-      response.resume()
-      resolve(response.statusCode ?? 0)
-      req.destroy()
-    })
-    req.on('upgrade', (_response, socket) => {
+    const socket = connect({ host: hostname, port: Number(port) })
+    let response = ''
+    let settled = false
+
+    const settle = (callback: () => void) => {
+      if (settled) return
+      settled = true
       socket.destroy()
-      reject(new Error('Request was unexpectedly upgraded'))
+      callback()
+    }
+    const rejectIncompleteResponse = () =>
+      settle(() =>
+        reject(new Error('Socket closed before returning an HTTP status')),
+      )
+
+    socket.setEncoding('utf8')
+    socket.once('error', (error) => settle(() => reject(error)))
+    socket.once('end', rejectIncompleteResponse)
+    socket.once('close', rejectIncompleteResponse)
+    socket.once('connect', () => {
+      socket.write(
+        [
+          `GET ${path} HTTP/1.1`,
+          `Host: ${hostname}:${port}`,
+          'Connection: Upgrade',
+          'Upgrade: websocket',
+          'Sec-WebSocket-Version: 13',
+          'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==',
+          '',
+          '',
+        ].join('\r\n'),
+      )
     })
-    req.on('error', reject)
-    req.end()
+    socket.on('data', (chunk) => {
+      response += chunk
+      const match = response.match(/^HTTP\/1\.1 (\d{3})/)
+      if (!match) return
+      settle(() => resolve(Number(match[1])))
+    })
   })
 
 const echoHooks = (prefix: string) =>
@@ -51,7 +70,7 @@ const echoHooks = (prefix: string) =>
     },
   })
 
-describe('node server host', () => {
+describe('server host', () => {
   it('serves mounted HTTP and WebSocket handlers plus /healthy', async () => {
     const host = createServerHost({
       listen: { port: 0, hostname: '127.0.0.1' },
@@ -113,11 +132,13 @@ describe('node server host', () => {
       listen: { port: 0, hostname: '127.0.0.1' },
     })
     const first = await host.start()
+    expect(host.native[host.runtime]).toBeDefined()
     expect(await host.start()).toBe(first)
     // upgrade attempts without any WebSocket mount still get the reserved
     // /healthy answer from the shared router
     expect(await upgradeStatus(first, '/healthy')).toBe(200)
     await host.stop()
+    expect(host.native[host.runtime]).toBeUndefined()
     await expect(fetch(`${first}/healthy`)).rejects.toThrow()
   })
 
@@ -222,14 +243,14 @@ describe('node server host', () => {
         'but the host is configured with 16384',
     )
     // validation fired before binding: no socket to expose or leak
-    expect(host.native.node).toBeUndefined()
+    expect(host.native[host.runtime]).toBeUndefined()
   })
 
   it('does not expose an unbound native app after a failed start', async () => {
     const host = createServerHost({ listen: {} } as any)
 
     await expect(host.start()).rejects.toThrow('Invalid listen parameters')
-    expect(host.native.node).toBeUndefined()
+    expect(host.native[host.runtime]).toBeUndefined()
   })
 
   it('unmounts handlers while stopped', async () => {

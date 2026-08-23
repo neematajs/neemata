@@ -63,24 +63,18 @@ describe('Nuxt runtime through Neem CLI and proxy', () => {
       buildResult.code,
       `stdout:\n${buildResult.stdout}\nstderr:\n${buildResult.stderr}`,
     ).toBe(0)
-    await expect(
-      access(
-        resolve(fixtureDir, 'dist/runtime/web/worker/app/server/index.mjs'),
+    await access(
+      resolve(fixtureDir, 'dist/runtime/web/worker/app/server/index.mjs'),
+    )
+    await access(
+      resolve(fixtureDir, 'dist/runtime/admin/worker/app/server/index.mjs'),
+    )
+    await access(
+      resolve(
+        fixtureDir,
+        'dist/runtime/web/worker/app/public/about/index.html',
       ),
-    ).resolves.toBeUndefined()
-    await expect(
-      access(
-        resolve(fixtureDir, 'dist/runtime/admin/worker/app/server/index.mjs'),
-      ),
-    ).resolves.toBeUndefined()
-    await expect(
-      access(
-        resolve(
-          fixtureDir,
-          'dist/runtime/web/worker/app/public/about/index.html',
-        ),
-      ),
-    ).resolves.toBeUndefined()
+    )
   })
 
   it('serves SSR, prerendered, API, and immutable assets through neem start', async () => {
