@@ -189,4 +189,45 @@ describe('node runtime adapter', () => {
       }
     })
   })
+
+  describe('fixed-length stream backpressure', () => {
+    it('pauses reading the source stream when the client does not consume', async () => {
+      const chunkSize = 256 * 1024
+      const totalChunks = 100
+      const chunk = new Uint8Array(chunkSize).fill(97)
+      let pulled = 0
+
+      const { url, stop } = await startServer(async () => {
+        // Explicit content-length exercises uWS's fixed-length tryEnd path.
+        const stream = new ReadableStream<Uint8Array>({
+          pull(controller) {
+            pulled++
+            controller.enqueue(chunk)
+            if (pulled >= totalChunks) controller.close()
+          },
+        })
+        return new Response(stream, {
+          headers: { 'content-length': String(chunkSize * totalChunks) },
+        })
+      })
+
+      try {
+        const response = await fetch(`${url}/test`)
+        expect(response.status).toBe(200)
+        expect(response.headers.get('content-length')).toBe(
+          String(chunkSize * totalChunks),
+        )
+
+        // Leave the body unread long enough for the server buffer to fill.
+        await delay(500)
+        expect(pulled).toBeLessThan(totalChunks)
+
+        const body = new Uint8Array(await response.arrayBuffer())
+        expect(pulled).toBe(totalChunks)
+        expect(body.byteLength).toBe(chunkSize * totalChunks)
+      } finally {
+        await stop()
+      }
+    })
+  })
 })
