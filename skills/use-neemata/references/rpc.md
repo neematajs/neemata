@@ -109,8 +109,11 @@ export const feed = stream({
 
 Rules:
 
-- `stream({ ... })` declares a stream route, exposed under `client.stream.*`.
 - `procedure({ ... })` routes expose under `client.call.*`.
+- `contractProcedure(c.procedure(...), ...)` implements an authored procedure
+  contract.
+- `stream({ ... })` declares a stream route, exposed under `client.stream.*`.
+- `contractStream(c.stream(...), ...)` implements an authored stream contract.
 - `streamTimeout: <milliseconds>` on `stream({ ... })` adds explicit stream
   timeout behavior and exposes `inject.rpcStreamAbortSignal`.
 - The public contract records only the route kind; timeouts are

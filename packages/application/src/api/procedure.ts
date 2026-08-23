@@ -1,5 +1,6 @@
 import type {
   TAnyCallableContract,
+  TAnyProcedureContract,
   TAnyStreamContract,
   TProcedureContract,
   TStreamContract,
@@ -70,7 +71,7 @@ export type AnyProcedure<
 > = BaseProcedure<Contract, Dependencies>
 
 export type CreateProcedureParams<
-  ProcedureContract extends TAnyCallableContract,
+  ProcedureContract extends TAnyProcedureContract,
   ProcedureDeps extends Dependencies,
 > =
   | {
@@ -80,21 +81,40 @@ export type CreateProcedureParams<
       meta?: ProcedureMetaBinding<
         ProcedureContractDecodedInput<ProcedureContract>
       >[]
-      streamTimeout?: number
       handler: ProcedureHandlerType<
         ProcedureContractDecodedInput<ProcedureContract>,
-        ProcedureContract extends TAnyStreamContract
-          ? AsyncIterable<t.infer.encode.input<ProcedureContract['output']>>
-          : t.infer.encode.input<ProcedureContract['output']>,
+        t.infer.encode.input<ProcedureContract['output']>,
         ProcedureDeps
       >
     }
   | ProcedureHandlerType<
       ProcedureContractDecodedInput<ProcedureContract>,
-      ProcedureContract extends TAnyStreamContract
-        ? AsyncIterable<t.infer.encode.input<ProcedureContract['output']>>
-        : t.infer.decode.input<ProcedureContract['output']>,
+      t.infer.encode.input<ProcedureContract['output']>,
       ProcedureDeps
+    >
+
+export type CreateStreamParams<
+  StreamContract extends TAnyStreamContract,
+  StreamDeps extends Dependencies,
+> =
+  | {
+      dependencies?: StreamDeps
+      guards?: AnyGuard[]
+      middlewares?: AnyMiddleware[]
+      meta?: ProcedureMetaBinding<
+        ProcedureContractDecodedInput<StreamContract>
+      >[]
+      streamTimeout?: number
+      handler: ProcedureHandlerType<
+        ProcedureContractDecodedInput<StreamContract>,
+        AsyncIterable<t.infer.encode.input<StreamContract['output']>>,
+        StreamDeps
+      >
+    }
+  | ProcedureHandlerType<
+      ProcedureContractDecodedInput<StreamContract>,
+      AsyncIterable<t.infer.encode.input<StreamContract['output']>>,
+      StreamDeps
     >
 
 export function _createBaseProcedure<
@@ -123,24 +143,6 @@ export function _createBaseProcedure<
   assertUniqueMetaBindings(meta, 'procedure config')
 
   return { contract, dependencies, middlewares, guards, meta, streamTimeout }
-}
-
-export function createContractProcedure<
-  ProcedureContract extends TAnyCallableContract,
-  ProcedureDeps extends Dependencies,
->(
-  contract: ProcedureContract,
-  paramsOrHandler: CreateProcedureParams<ProcedureContract, ProcedureDeps>,
-): Procedure<ProcedureContract, ProcedureDeps> {
-  const { handler, ...params } =
-    typeof paramsOrHandler === 'function'
-      ? { handler: paramsOrHandler }
-      : paramsOrHandler
-
-  return Object.assign(_createBaseProcedure(contract, params), {
-    handler,
-    [kProcedure]: true,
-  }) as any
 }
 
 interface CreateCallableOptions<
@@ -231,6 +233,24 @@ export function createProcedure<
   )
 }
 
+export function createContractProcedure<
+  ProcedureContract extends TAnyProcedureContract,
+  ProcedureDeps extends Dependencies,
+>(
+  contract: ProcedureContract,
+  paramsOrHandler: CreateProcedureParams<ProcedureContract, ProcedureDeps>,
+): Procedure<ProcedureContract, ProcedureDeps> {
+  const { handler, ...params } =
+    typeof paramsOrHandler === 'function'
+      ? { handler: paramsOrHandler }
+      : paramsOrHandler
+
+  return Object.assign(_createBaseProcedure(contract, params), {
+    handler,
+    [kProcedure]: true,
+  }) as any
+}
+
 export function createStream<
   Return,
   TInput extends BaseType | undefined = undefined,
@@ -267,7 +287,7 @@ export function createStream<
     streamTimeout,
   } = params
 
-  return createContractProcedure(
+  return createContractStream(
     c.stream({
       input,
       output,
@@ -283,6 +303,24 @@ export function createStream<
       streamTimeout,
     },
   )
+}
+
+export function createContractStream<
+  StreamContract extends TAnyStreamContract,
+  StreamDeps extends Dependencies,
+>(
+  contract: StreamContract,
+  paramsOrHandler: CreateStreamParams<StreamContract, StreamDeps>,
+): Procedure<StreamContract, StreamDeps> {
+  const { handler, ...params } =
+    typeof paramsOrHandler === 'function'
+      ? { handler: paramsOrHandler }
+      : paramsOrHandler
+
+  return Object.assign(_createBaseProcedure(contract, params), {
+    handler,
+    [kProcedure]: true,
+  }) as any
 }
 
 export const isProcedure = (value: any): value is AnyProcedure =>

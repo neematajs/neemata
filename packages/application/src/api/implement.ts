@@ -1,25 +1,40 @@
 import type {
-  TAnyCallableContract,
+  TAnyProcedureContract,
   TAnyRouterContract,
+  TAnyStreamContract,
   TRouteContract,
 } from '@nmtjs/contract'
 import type { Dependencies } from '@nmtjs/core'
-import { IsCallableContract, IsRouterContract } from '@nmtjs/contract'
+import {
+  IsProcedureContract,
+  IsRouterContract,
+  IsStreamContract,
+} from '@nmtjs/contract'
 
-import type { CreateProcedureParams, Procedure } from './procedure.ts'
+import type {
+  CreateProcedureParams,
+  CreateStreamParams,
+  Procedure,
+} from './procedure.ts'
 import type {
   CreateContractRouterParams,
   RootRouter,
   Router,
 } from './router.ts'
 import { kRootRouter, kRootRouterSources } from './constants.ts'
-import { createContractProcedure } from './procedure.ts'
+import { createContractProcedure, createContractStream } from './procedure.ts'
 import { createContractRouter } from './router.ts'
 
-export type ProcedureImplementer<Contract extends TAnyCallableContract> = <
+export type ProcedureImplementer<Contract extends TAnyProcedureContract> = <
   Deps extends Dependencies,
 >(
   paramsOrHandler: CreateProcedureParams<Contract, Deps>,
+) => Procedure<Contract, Deps>
+
+export type StreamImplementer<Contract extends TAnyStreamContract> = <
+  Deps extends Dependencies,
+>(
+  paramsOrHandler: CreateStreamParams<Contract, Deps>,
 ) => Procedure<Contract, Deps>
 
 export type RouterImplementer<
@@ -37,14 +52,16 @@ export type RouterImplementer<
 export type RouteImplementer<Contract extends TRouteContract> =
   Contract extends TAnyRouterContract
     ? RouterImplementer<Contract>
-    : Contract extends TAnyCallableContract
-      ? ProcedureImplementer<Contract>
-      : never
+    : Contract extends TAnyStreamContract
+      ? StreamImplementer<Contract>
+      : Contract extends TAnyProcedureContract
+        ? ProcedureImplementer<Contract>
+        : never
 
 export type ImplementedRoutes<Contract extends TAnyRouterContract> = {
   [K in keyof Contract['routes']]: Contract['routes'][K] extends TAnyRouterContract
     ? Router<Contract['routes'][K]>
-    : Contract['routes'][K] extends TAnyCallableContract
+    : Contract['routes'][K] extends TAnyStreamContract | TAnyProcedureContract
       ? Procedure<Contract['routes'][K], any>
       : never
 }
@@ -57,22 +74,33 @@ export type ImplementRouterParams<Contract extends TAnyRouterContract> = Omit<
 export function implement<Contract extends TAnyRouterContract>(
   contract: Contract,
 ): RouterImplementer<Contract, true>
-export function implement<Contract extends TAnyCallableContract>(
+export function implement<Contract extends TAnyProcedureContract>(
   contract: Contract,
 ): ProcedureImplementer<Contract>
+export function implement<Contract extends TAnyStreamContract>(
+  contract: Contract,
+): StreamImplementer<Contract>
 export function implement(
-  contract: TAnyRouterContract | TAnyCallableContract,
-): RouterImplementer<any, true> | ProcedureImplementer<any> {
+  contract: TAnyRouterContract | TAnyProcedureContract | TAnyStreamContract,
+):
+  | RouterImplementer<any, true>
+  | ProcedureImplementer<any>
+  | StreamImplementer<any> {
   return createImplementer(contract, true) as any
 }
 
 function createImplementer(
-  contract: TAnyRouterContract | TAnyCallableContract,
+  contract: TAnyRouterContract | TAnyProcedureContract | TAnyStreamContract,
   isRoot: boolean,
 ) {
-  if (IsCallableContract(contract)) {
+  if (IsProcedureContract(contract)) {
     return (paramsOrHandler: CreateProcedureParams<any, any>) =>
       createContractProcedure(contract, paramsOrHandler)
+  }
+
+  if (IsStreamContract(contract)) {
+    return (paramsOrHandler: CreateStreamParams<any, any>) =>
+      createContractStream(contract, paramsOrHandler)
   }
 
   if (!IsRouterContract(contract)) throw new Error('Invalid contract')

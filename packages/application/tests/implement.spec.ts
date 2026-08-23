@@ -125,6 +125,66 @@ describe('contract implementation helper', () => {
     expect(router.routes.users.guards).toHaveLength(0)
   })
 
+  it('implements contract stream routes with stream-specific options', async () => {
+    const streamContract = c.router({
+      routes: {
+        feed: c.stream({
+          input: t.object({ limit: t.number() }),
+          output: t.number(),
+        }),
+      },
+    })
+    const api = implement(streamContract)
+    const feed = api.feed({
+      streamTimeout: 500,
+      handler: async function* (_ctx, input) {
+        expectTypeOf(input.limit).toEqualTypeOf<number>()
+        for (let value = 0; value < input.limit; value++) yield value
+      },
+    })
+    const router = api({ feed })
+
+    expect(feed.contract).toBe(streamContract.routes.feed)
+    expect(feed.streamTimeout).toBe(500)
+
+    const runtime = new NeemataApplication(defineApplication({ router }), {
+      logger: createLogger({ pinoOptions: { enabled: false } }, 'test'),
+    })
+    try {
+      await runtime.initialize()
+      const callContainer = runtime.container.fork(Scope.Call)
+      try {
+        const result = await runtime.api.call({
+          connection: { id: 'connection-1' } as any,
+          container: callContainer,
+          payload: { limit: 3 },
+          procedure: 'feed',
+          signal: new AbortController().signal,
+        })
+        const chunks: number[] = []
+        const stream = (result as () => AsyncIterable<number>)()
+        for await (const chunk of stream) {
+          chunks.push(chunk)
+        }
+        expect(chunks).toEqual([0, 1, 2])
+      } finally {
+        await callContainer.dispose()
+      }
+    } finally {
+      await runtime.dispose()
+    }
+
+    const assertImplementerTypes = () => {
+      const procedureApi = implement(c.procedure({ output: t.string() }))
+      procedureApi({
+        // @ts-expect-error streamTimeout is unavailable on procedure builders.
+        streamTimeout: 500,
+        handler: () => 'ok',
+      })
+    }
+    void assertImplementerTypes
+  })
+
   it('rejects missing, extra, and wrong route implementations', () => {
     const api = implement(contract)
     const health = api.health(() => ({ ok: true }))

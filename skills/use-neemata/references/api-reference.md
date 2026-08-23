@@ -11,8 +11,6 @@ import {
   blobType,
   c,
   ConnectionType,
-  contractProcedure,
-  contractRouter,
   CoreInjectables,
   envConfig,
   EnvConfigError,
@@ -25,7 +23,6 @@ import {
   guard,
   hook,
   host,
-  implementRouter,
   inject,
   lazy,
   logging,
@@ -36,14 +33,18 @@ import {
   optional,
   plugin,
   procedure,
+  contractProcedure,
+  stream,
+  contractStream,
+  router,
+  contractRouter,
+  rootRouter,
+  implementRouter,
   ProtocolBlob,
   ProxyableTransportType,
   PubSubInjectables,
   pubsubPlugin,
-  rootRouter,
-  router,
   Scope,
-  stream,
   t,
   transport,
   value,
@@ -67,15 +68,17 @@ import {
 ## Common Builders
 
 - `procedure(options | handler)` - define procedure and infer contract.
-- `stream(options)` - define a server-stream route (async-iterable output,
-  exposed on `client.stream.*`; optional `streamTimeout`).
 - `contractProcedure(contract, options | handler)` - implement procedure
   contract.
-- `implementRouter(contract)` - callable contract implementation builder.
+- `stream(options)` - define a server-stream route (async-iterable output,
+  exposed on `client.stream.*`; optional `streamTimeout`).
+- `contractStream(contract, options | handler)` - implement stream contract;
+  options may include `streamTimeout`.
 - `router({ routes, guards?, middlewares?, meta?, timeout? })` - group routes.
 - `contractRouter(contract, { routes, ... })` - implement router contract.
 - `rootRouter([routerA, routerB])` - compose root API; duplicate top-level
   route keys throw at composition time.
+- `implementRouter(contract)` - callable contract implementation builder.
 - `app({ router, guards?, middlewares?, filters?, plugins?, hooks?, meta? })` -
   pure application definition.
 - `host(application, { transports })` - bind app to serving surfaces.
