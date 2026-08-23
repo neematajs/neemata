@@ -9,6 +9,7 @@ import {
   ProtocolVersion,
   ServerMessageType,
 } from '../../common/enums.ts'
+import { toProtocolError } from '../../common/error.ts'
 import { ProtocolVersionInterface } from '../protocol.ts'
 
 export class ProtocolVersion1 extends ProtocolVersionInterface {
@@ -138,7 +139,7 @@ export class ProtocolVersion1 extends ProtocolVersionInterface {
           encodeNumber(callId, 'Uint32'),
           encodeNumber(error ? 1 : 0, 'Uint8'),
           error
-            ? context.encoder.encode(error)
+            ? context.encoder.encode(toProtocolError(error))
             : context.encoder.encodeRPC(result, streams),
         )
       }

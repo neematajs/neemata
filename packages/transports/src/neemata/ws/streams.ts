@@ -89,10 +89,16 @@ export class BlobStreamsManager {
     options: Stream.ReadableOptions,
     notify?: (reason: string) => void,
   ) {
+    const key = this.getKey(connectionId, streamId)
+    // Overwriting active state would orphan the original stream while its
+    // timer and call indexes continue to reference the duplicate id.
+    if (this.clientStreams.has(key)) {
+      throw new Error(`Stream ${streamId} already exists`)
+    }
+
     const stream = new ProtocolClientStream(streamId, metadata, options)
     stream.on('error', noopFn)
 
-    const key = this.getKey(connectionId, streamId)
     const state: ClientStreamState = {
       connectionId,
       callId,
