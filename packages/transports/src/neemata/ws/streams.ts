@@ -72,6 +72,7 @@ export class BlobStreamsManager {
   readonly connectionServerStreams = new Map<string, Set<number>>()
   readonly clientCallStreams = new Map<string, Set<number>>()
   readonly serverCallStreams = new Map<string, Set<number>>()
+  readonly serverCallDisposals = new Map<string, () => Promise<void>>()
 
   readonly idleTimeout: number
 
@@ -328,6 +329,19 @@ export class BlobStreamsManager {
     }
   }
 
+  deferServerCallDisposal(
+    connectionId: string,
+    callId: number,
+    dispose: () => Promise<void>,
+  ) {
+    const key = this.getCallKey(connectionId, callId)
+    if (!this.serverCallStreams.get(key)?.size) {
+      void dispose().catch(noopFn)
+      return
+    }
+    this.serverCallDisposals.set(key, dispose)
+  }
+
   // --- Idle timeout ---
 
   private touch(state: StreamState) {
@@ -421,6 +435,11 @@ export class BlobStreamsManager {
       set.delete(streamId)
       if (set.size === 0) {
         this.serverCallStreams.delete(key)
+        const dispose = this.serverCallDisposals.get(key)
+        if (dispose) {
+          this.serverCallDisposals.delete(key)
+          void dispose().catch(noopFn)
+        }
       }
     }
   }

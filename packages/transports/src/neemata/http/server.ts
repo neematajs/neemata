@@ -215,9 +215,14 @@ export class NeemataHttpHandler {
       null
     let streamed = false
     let disposal: Promise<void> | null = null
+    let disposeResult: () => Promise<void> = () => Promise.resolve()
     const disposeConnection = () => {
       if (!connection) return Promise.resolve()
       return (disposal ??= Promise.resolve(connection[Symbol.asyncDispose]()))
+    }
+    const disposeResponse = async () => {
+      await disposeResult()
+      await disposeConnection()
     }
 
     try {
@@ -290,6 +295,10 @@ export class NeemataHttpHandler {
         { payload, procedure },
         signal,
         provision(injections.httpResponseHeaders, responseHeaders),
+        provision(
+          GatewayInjectables.deferRpcResultDisposal,
+          (dispose) => (disposeResult = dispose),
+        ),
         // Blob capabilities are projection-owned: HTTP represents a server
         // blob as the response body, so createBlob is a plain wrapper and
         // consumeBlob has nothing to look up (the request body already
@@ -313,7 +322,7 @@ export class NeemataHttpHandler {
         const streamedBody =
           body !== null && headers.get('content-length') !== '0'
         const finalizedBody = streamedBody
-          ? this.finalizeOnBodyEnd(body, signal, disposeConnection)
+          ? this.finalizeOnBodyEnd(body, signal, disposeResponse)
           : body
         streamed = streamedBody
 
@@ -352,7 +361,7 @@ export class NeemataHttpHandler {
 
         const finalizedBody =
           metadata.size !== 0
-            ? this.finalizeOnBodyEnd(stream, signal, disposeConnection)
+            ? this.finalizeOnBodyEnd(stream, signal, disposeResponse)
             : stream
         streamed = metadata.size !== 0
 
@@ -405,7 +414,7 @@ export class NeemataHttpHandler {
         const finalizedBody = this.finalizeOnBodyEnd(
           stream,
           signal,
-          disposeConnection,
+          disposeResponse,
         )
         streamed = true
 
@@ -490,7 +499,7 @@ export class NeemataHttpHandler {
         headers: responseHeaders,
       })
     } finally {
-      if (!streamed) await disposeConnection()
+      if (!streamed) await disposeResponse()
     }
   }
 

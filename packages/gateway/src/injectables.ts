@@ -60,6 +60,16 @@ export const rpcClientAbortSignal = createLazyInjectable<
 >(Scope.Call, 'RPC client abort signal')
 
 /**
+ * Transport-owned completion hook for results whose physical body outlives
+ * onRpc. The gateway supplies the idempotent call-scope disposer; the
+ * transport invokes it when its body/blob reaches a terminal state.
+ */
+export const deferRpcResultDisposal = createLazyInjectable<
+  (dispose: () => Promise<void>) => void,
+  Scope.Call
+>(Scope.Call, 'Defer RPC result disposal')
+
+/**
  * Optional stream-specific timeout/cancellation signal.
  *
  * Scope: Call
@@ -146,6 +156,7 @@ export const GatewayInjectables = {
   connectionData,
   connectionAbortSignal,
   rpcClientAbortSignal,
+  deferRpcResultDisposal,
   rpcStreamAbortSignal,
   rpcTimeoutSignal,
   rpcAbortSignal,

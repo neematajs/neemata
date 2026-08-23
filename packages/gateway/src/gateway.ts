@@ -272,17 +272,24 @@ export class Gateway<
         // the call scope must stay alive until the returned iterable
         // completes, fails, or is cancelled — the transport pumps it
         if (typeof result === 'function') {
-          this.trackCallDisposal(connection.id, dispose)
+          if (!this.trackCallDisposal(connection.id, dispose)) {
+            await dispose()
+          }
           return result(dispose)
         }
         if (
-          isBlobInterface(result) ||
-          (result instanceof Response && result.body !== null)
+          (isBlobInterface(result) ||
+            (result instanceof Response && result.body !== null)) &&
+          container.owns(injectables.deferRpcResultDisposal)
         ) {
-          // These bodies are consumed after onRpc returns. The HTTP handler
-          // closes the connection at body termination, which drains this
-          // call scope before the parent connection scope.
-          this.trackCallDisposal(connection.id, dispose)
+          // Body-owning transports claim the disposer and invoke it at their
+          // terminal state. The connection set remains the disconnect/stop
+          // fallback when that terminal callback cannot run.
+          if (!this.trackCallDisposal(connection.id, dispose)) {
+            await dispose()
+            return result
+          }
+          container.get(injectables.deferRpcResultDisposal)(dispose)
           return result
         }
         await dispose()
@@ -333,8 +340,8 @@ export class Gateway<
     }
 
     await guard(() => connection.abortController.abort())
-    await guard(() => this.abortCalls(connectionId))
     await guard(() => this.disposeDeferredCalls(connectionId))
+    await guard(() => this.abortCalls(connectionId))
     await guard(() => connection.container.dispose())
   }
 
@@ -358,13 +365,18 @@ export class Gateway<
   private trackCallDisposal(
     connectionId: string,
     dispose: () => Promise<void>,
-  ) {
+  ): boolean {
+    // closeConnection removes the connection synchronously before awaiting
+    // teardown. A call resolving afterwards must dispose immediately instead
+    // of registering work nobody will ever drain.
+    if (!this.connections.has(connectionId)) return false
     let disposals = this.deferredCallDisposals.get(connectionId)
     if (!disposals) {
       disposals = new Set()
       this.deferredCallDisposals.set(connectionId, disposals)
     }
     disposals.add(dispose)
+    return true
   }
 
   private untrackCallDisposal(

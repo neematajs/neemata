@@ -1,5 +1,6 @@
 import { setImmediate as tick } from 'node:timers/promises'
 
+import { GatewayInjectables } from '@nmtjs/gateway'
 import { ProtocolBlob } from '@nmtjs/protocol'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -46,6 +47,32 @@ describe('HTTP response body lifecycle', () => {
       await expect(response.text()).resolves.toMatch(/body$/)
       expect(dispose).toHaveBeenCalledOnce()
     }
+  })
+
+  it('disposes the body call before its HTTP connection', async () => {
+    const events: string[] = []
+    const callDispose = vi.fn(async () => {
+      events.push('call')
+    })
+    const { params, connection } = createTestParams(
+      vi.fn(async (...args: any[]) => {
+        const registrar = args.find(
+          (value) => value?.token === GatewayInjectables.deferRpcResultDisposal,
+        )
+        registrar.value(callDispose)
+        return new Response('response body')
+      }) as any,
+    )
+    connection[Symbol.asyncDispose] = vi.fn(async () => {
+      events.push('connection')
+    })
+    const handler = await createTestServer({}, params)
+
+    const response = await handler.handle(createTestRequest({}))
+    expect(events).toEqual([])
+
+    await expect(response.text()).resolves.toBe('response body')
+    expect(events).toEqual(['call', 'connection'])
   })
 
   it('disposes when a response body errors', async () => {
