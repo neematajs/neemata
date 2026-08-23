@@ -24,9 +24,23 @@ const upgradeStatus = (url: string, path: string) =>
     const { hostname, port } = new URL(url)
     const socket = connect({ host: hostname, port: Number(port) })
     let response = ''
+    let settled = false
+
+    const settle = (callback: () => void) => {
+      if (settled) return
+      settled = true
+      socket.destroy()
+      callback()
+    }
+    const rejectIncompleteResponse = () =>
+      settle(() =>
+        reject(new Error('Socket closed before returning an HTTP status')),
+      )
 
     socket.setEncoding('utf8')
-    socket.once('error', reject)
+    socket.once('error', (error) => settle(() => reject(error)))
+    socket.once('end', rejectIncompleteResponse)
+    socket.once('close', rejectIncompleteResponse)
     socket.once('connect', () => {
       socket.write(
         [
@@ -45,8 +59,7 @@ const upgradeStatus = (url: string, path: string) =>
       response += chunk
       const match = response.match(/^HTTP\/1\.1 (\d{3})/)
       if (!match) return
-      socket.destroy()
-      resolve(Number(match[1]))
+      settle(() => resolve(Number(match[1])))
     })
   })
 

@@ -81,7 +81,7 @@ try {
   await importKitFrom(${JSON.stringify(dir)})
   process.exitCode = 1
 } catch (error) {
-  if (!(error instanceof Error) || !error.message.includes('is nuxt installed')) process.exitCode = 1
+  if (!(error instanceof Error) || !error.message.includes('is nuxt installed') || !(error.cause instanceof Error)) process.exitCode = 1
 }`,
       ],
       // spawnSync blocks the event loop, so vitest's own timeout cannot
@@ -95,6 +95,39 @@ try {
       )
     }
   })
+
+  it.runIf(!globalThis.Bun)(
+    'falls back to the runtime resolver for non-node_modules layouts',
+    async () => {
+      const dir = await mkdtemp(resolve(tmpdir(), 'nmtjs-nuxt-loader-'))
+      tempDirs.push(dir)
+      const source = pathToFileURL(
+        resolve(import.meta.dirname, '../../src/nuxt-loader.ts'),
+      ).href
+      const env = {
+        ...process.env,
+        NODE_PATH: resolve(import.meta.dirname, '../../node_modules'),
+      }
+      delete env.NODE_OPTIONS
+      const result = spawnSync(
+        process.execPath,
+        [
+          '--input-type=module',
+          '--eval',
+          `import { importKitFrom } from ${JSON.stringify(source)}
+const kit = await importKitFrom(${JSON.stringify(dir)})
+if (typeof kit.loadNuxt !== 'function') process.exitCode = 1`,
+        ],
+        { encoding: 'utf8', env, timeout: 30_000 },
+      )
+
+      if (result.status !== 0) {
+        throw new Error(
+          `Nuxt runtime resolution fallback check failed:\n${result.stderr}`,
+        )
+      }
+    },
+  )
 
   it('loads Nuxt kit through the fixture app installation', async () => {
     const kit = await importKitFrom(fixtureRoot)

@@ -176,17 +176,42 @@ function pickImportCondition(entry: unknown): string | undefined {
 
 function resolveNuxtPackage(root: string): string {
   let dir = resolve(root)
+  let resolutionError: unknown
   while (true) {
     const candidate = join(dir, 'node_modules/nuxt/package.json')
-    if (existsSync(candidate)) return realpathSync(candidate)
+    if (existsSync(candidate)) {
+      try {
+        return realpathSync(candidate)
+      } catch (error) {
+        resolutionError = error
+        break
+      }
+    }
 
     const parent = dirname(dir)
     if (parent === dir) break
     dir = parent
   }
 
+  // Bun resolves missing packages from its global cache, which would escape
+  // the app boundary this loader is responsible for preserving.
+  if (!globalThis.Bun) {
+    try {
+      return createRequire(join(root, 'package.json')).resolve(
+        'nuxt/package.json',
+      )
+    } catch (error) {
+      resolutionError ??= error
+    }
+  }
+
+  resolutionError ??= new Error(
+    `No physical Nuxt installation was found from app root [${root}]`,
+  )
+
   throw new Error(
     `Failed to resolve [nuxt] from app root [${root}]; is nuxt installed for that app?`,
+    { cause: resolutionError },
   )
 }
 

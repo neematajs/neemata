@@ -35,7 +35,7 @@ jobs:
       - run: pnpm check
 
   tests:
-    needs: [ lint ]
+    needs: [lint]
     name: Tests (Node ${{ matrix.node }}, ${{ matrix.os }})
     strategy:
       fail-fast: false
@@ -79,12 +79,12 @@ jobs:
         run: |
           pnpm exec playwright install chromium firefox webkit
       - run: |
-          pnpm run test --reporter=agent
-          pnpm --filter @nmtjs/neem run test:e2e --reporter=agent
-          pnpm run test:browser:client --reporter=agent
+          pnpm run test --reporter=agent --reporter=github-actions
+          pnpm --filter @nmtjs/neem run test:e2e --reporter=agent --reporter=github-actions
+          pnpm run test:browser:client --reporter=agent --reporter=github-actions
 
   tests-bun:
-    needs: [ lint ]
+    needs: [lint]
     name: Tests (Bun ${{ matrix.bun }}, ${{ matrix.os }})
     strategy:
       fail-fast: false
@@ -118,10 +118,10 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pnpm-store-
       - run: pnpm install
-      - run: bun run --bun test --reporter=agent
+      - run: bun run --bun test --reporter=agent --reporter=github-actions
 
   tests-integration-services:
-    needs: [ lint ]
+    needs: [lint]
     runs-on: ubuntu-24.04
     services:
       redis:
@@ -181,7 +181,7 @@ jobs:
       - run: pnpm build
       - run: pnpm run test:integration:services
         env:
-          NMTJS_REQUIRE_SERVICE_TESTS: "1"
+          NMTJS_REQUIRE_SERVICE_TESTS: '1'
           REDIS_URL: redis://localhost:6379
           VALKEY_URL: redis://localhost:6380
           POSTGRES_URL: postgres://neemata:neemata@localhost:5432/neemata

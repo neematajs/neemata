@@ -1,4 +1,4 @@
-import { defineProject } from 'vitest/config'
+import { configDefaults, defineProject } from 'vitest/config'
 
 const runtimeSpecificExclude = globalThis.Bun
   ? ['tests/**/*.node.spec.ts']
@@ -8,6 +8,6 @@ export default defineProject({
   test: {
     environment: 'node',
     include: ['tests/**/*.spec.ts'],
-    exclude: runtimeSpecificExclude,
+    exclude: [...configDefaults.exclude, ...runtimeSpecificExclude],
   },
 })

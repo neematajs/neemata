@@ -126,14 +126,7 @@ export function tryCaptureStackTrace(
     return undefined
   }
 
-  const captured = findLocation(holder.stack)
-  if (captured || typeof captureStackTrace !== 'function') return captured
-
-  // Bun exposes Error.captureStackTrace but can remove every frame when an
-  // anchor is supplied. Its ordinary stack still identifies the external
-  // caller, so retain useful origin metadata instead of returning undefined.
-  const fallback = new Error().stack?.split('\n').slice(1).join('\n')
-  return findLocation(fallback)
+  return findLocation(holder.stack)
 }
 
 export function isGeneratorFunction(value: any): value is GeneratorFunction {
