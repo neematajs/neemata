@@ -4,7 +4,11 @@ import type {
   ServerHost,
   ServerHostOptions,
 } from '@nmtjs/transports/http-server'
-import { ClientMessageType, ServerMessageType } from '@nmtjs/protocol'
+import {
+  ClientMessageType,
+  encodeWsAuthSubprotocol,
+  ServerMessageType,
+} from '@nmtjs/protocol'
 import { JsonCodec } from '@nmtjs/protocol/json/server'
 import { ProtocolCodecRegistry } from '@nmtjs/protocol/server'
 import { createServerTransport } from '@nmtjs/transports/http-server'
@@ -34,9 +38,9 @@ function createParams() {
   } as any
 }
 
-const openSocket = (url: string) =>
+const openSocket = (url: string, protocols: string[] = []) =>
   new Promise<WebSocket>((resolve, reject) => {
-    const ws = new WebSocket(url)
+    const ws = new WebSocket(url, protocols)
     ws.binaryType = 'arraybuffer'
     ws.onopen = () => resolve(ws)
     ws.onerror = () => reject(new Error('WebSocket failed to connect'))
@@ -50,6 +54,43 @@ const encodePing = (nonce: number) => {
 }
 
 describe('http + ws transports on a shared server', () => {
+  it('echoes the exact auth subprotocol over the shared host', async () => {
+    const ServerTransport = createServerTransport({
+      host: createServerHost,
+      handlers: {
+        ws: neemataWebSocket({ codecs: createTestCodecs() }),
+      },
+    })
+    const worker = await ServerTransport.factory({
+      listen: { port: 0, hostname: '127.0.0.1' },
+      handlers: { ws: { path: '/ws' } },
+    })
+    const params = createParams()
+    const url = await worker.start(params)
+    const subprotocol = encodeWsAuthSubprotocol('Bearer shared-host')
+
+    try {
+      // A standards-enforcing client rejects a missing or non-offered echo;
+      // putting auth second also proves the handler selected the exact entry.
+      const ws = await openSocket(
+        `${url.replace('http', 'ws')}/ws?accept=application/json&content-type=application/json`,
+        ['chat', subprotocol],
+      )
+      expect(ws.protocol).toBe(subprotocol)
+      expect(
+        (params.onConnect.mock.calls[0]![0].data as Request).headers.get(
+          'authorization',
+        ),
+      ).toBe('Bearer shared-host')
+      expect(
+        (params.onConnect.mock.calls[0]![0].data as Request).url,
+      ).not.toContain('shared-host')
+      ws.close()
+    } finally {
+      await worker.stop()
+    }
+  })
+
   it('serves both protocols through one host-owned transport', async () => {
     // both handlers re-export the gateway's connectionData token; the shared
     // key must not trip the injectable collision guard at creation

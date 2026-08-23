@@ -1,5 +1,6 @@
 import type { ServerHost } from '@nmtjs/transports/http-server'
 import type { Peer } from 'crossws'
+import { encodeWsAuthSubprotocol } from '@nmtjs/protocol'
 import { JsonCodec } from '@nmtjs/protocol/json/server'
 import { ProtocolCodecRegistry } from '@nmtjs/protocol/server'
 import { describe, expect, it, vi } from 'vitest'
@@ -141,6 +142,60 @@ describe('NeemataWebSocketHandler.upgrade', () => {
 
     expect(connectionData).toBeInstanceOf(Request)
     expect(connectionData?.signal.aborted).toBe(true)
+    await handler.dispose()
+  })
+
+  it('exposes subprotocol auth through Authorization and echoes it exactly', async () => {
+    let connectionData: Request | undefined
+    const handler = createHandler(undefined, {
+      onConnect: vi.fn(async (options) => {
+        connectionData = options.data
+        return { id: 'c1' }
+      }),
+      onDisconnect: vi.fn(async () => {}),
+    })
+    const subprotocol = encodeWsAuthSubprotocol('Bearer secret')
+
+    const result = await handler.hooks.upgrade!(
+      new Request('http://localhost/ws', {
+        headers: {
+          accept: 'application/json',
+          'content-type': 'application/json',
+          'sec-websocket-protocol': `chat, ${subprotocol}`,
+        },
+      }),
+    )
+
+    expect(connectionData).toBeInstanceOf(Request)
+    expect(connectionData?.headers.get('authorization')).toBe('Bearer secret')
+    expect(result).toMatchObject({
+      headers: { 'sec-websocket-protocol': subprotocol },
+    })
+    await handler.dispose()
+  })
+
+  it('leaves foreign subprotocol offers unselected', async () => {
+    let connectionData: Request | undefined
+    const handler = createHandler(undefined, {
+      onConnect: vi.fn(async (options) => {
+        connectionData = options.data
+        return { id: 'c1' }
+      }),
+      onDisconnect: vi.fn(async () => {}),
+    })
+
+    const result = await handler.hooks.upgrade!(
+      new Request('http://localhost/ws', {
+        headers: {
+          accept: 'application/json',
+          'content-type': 'application/json',
+          'sec-websocket-protocol': 'chat, graphql-ws',
+        },
+      }),
+    )
+
+    expect(connectionData?.headers.get('authorization')).toBeNull()
+    expect((result as { headers?: unknown }).headers).toBeUndefined()
     await handler.dispose()
   })
 })

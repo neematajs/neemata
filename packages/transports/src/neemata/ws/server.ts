@@ -5,7 +5,7 @@ import type {
 import type { ProtocolCodecRegistry, SendResult } from '@nmtjs/protocol/server'
 import type { Hooks, Peer } from 'crossws'
 import { ProxyableTransportType } from '@nmtjs/gateway'
-import { ProtocolVersion } from '@nmtjs/protocol'
+import { matchWsAuthSubprotocol, ProtocolVersion } from '@nmtjs/protocol'
 import { negotiateCodecs } from '@nmtjs/protocol/server'
 import { defineHooks } from 'crossws'
 
@@ -272,14 +272,24 @@ export class NeemataWebSocketHandler {
   }
 
   private async upgrade(req: Parameters<NonNullable<Hooks['upgrade']>>[0]) {
+    const url = new URL(req.url)
+    const authSubprotocol = matchWsAuthSubprotocol(
+      req.headers.get('sec-websocket-protocol'),
+    )
+    const headers = new Headers(req.headers)
+    // HTTP and WebSocket handlers now expose auth through the same standard
+    // Request convention, without widening connectionData beyond Request.
+    if (authSubprotocol) {
+      headers.set('authorization', authSubprotocol.auth)
+    }
+
     const request: NeemataWebSocketRequest = new Request(req.url, {
-      headers: req.headers,
+      headers,
       method: req.method,
       // Preserve disconnect propagation while materializing crossws' request
       // proxy as a standards-compliant Request for application consumers.
       signal: req.signal,
     })
-    const url = new URL(request.url)
     const accept = url.searchParams.get('accept') ?? req.headers.get('accept')
     const contentType =
       url.searchParams.get('content-type') ?? req.headers.get('content-type')
@@ -305,7 +315,14 @@ export class NeemataWebSocketHandler {
         decoder,
       })
       this.connections.admit(connection.id)
-      return { context: { connectionId: connection.id } }
+      return {
+        context: { connectionId: connection.id },
+        // Browsers reject a handshake unless the server echoes one exact
+        // offered subprotocol.
+        headers: authSubprotocol
+          ? { 'sec-websocket-protocol': authSubprotocol.subprotocol }
+          : undefined,
+      }
     } catch (error) {
       console.error('Failed to upgrade WebSocket connection', error)
       return InternalServerErrorHttpResponse()
