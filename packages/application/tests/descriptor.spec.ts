@@ -1,5 +1,5 @@
 import { Container, createLogger, Scope } from '@nmtjs/core'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, expectTypeOf, it } from 'vitest'
 
 import type { AnyProcedure, AnyRouter, MetadataKind } from '../src/index.ts'
 import {
@@ -86,10 +86,10 @@ describe('application resolve descriptor', () => {
       expect(mountedApiContract.routes.status.name).toBe('api/status')
       expect(resolved.path[1]?.timeout).toBe(1000)
 
-      // @ts-expect-error handler is intentionally hidden from transport descriptor
-      expect(resolved.procedure.handler).toBeUndefined()
-      // @ts-expect-error dependencies are intentionally hidden from transport descriptor
-      expect(resolved.procedure.dependencies).toBeUndefined()
+      expectTypeOf(resolved.procedure).not.toHaveProperty('handler')
+      expectTypeOf(resolved.procedure).not.toHaveProperty('dependencies')
+      expect(resolved.procedure).not.toHaveProperty('handler')
+      expect(resolved.procedure).not.toHaveProperty('dependencies')
     } finally {
       await connectionContainer.dispose()
       await container.dispose()
