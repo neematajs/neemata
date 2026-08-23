@@ -18,16 +18,15 @@ const toServerBuffer = (view: ArrayBufferView) =>
   Buffer.from(view.buffer, view.byteOffset, view.byteLength)
 
 // Hostile peers bypass the encoder, so refs and escape prefixes arrive raw.
-const craftFrame = (streams: unknown, payload: unknown) => {
+const craftRawFrame = (streams: unknown, payloadJson: string) => {
   const streamsBuffer = Buffer.from(JSON.stringify(streams))
   const length = Buffer.alloc(4)
   length.writeUInt32LE(streamsBuffer.byteLength)
-  return Buffer.concat([
-    length,
-    streamsBuffer,
-    Buffer.from(JSON.stringify(payload)),
-  ])
+  return Buffer.concat([length, streamsBuffer, Buffer.from(payloadJson)])
 }
+
+const craftFrame = (streams: unknown, payload: unknown) =>
+  craftRawFrame(streams, JSON.stringify(payload))
 
 describe('stream ref injection (server decode)', () => {
   const metadata = { type: 'text/plain' }
@@ -122,6 +121,19 @@ describe('stream ref injection (server decode)', () => {
       raw,
     })
   })
+
+  it('resolves a ref whose prefix is Unicode-escaped on the wire', () => {
+    const payloadJson = JSON.stringify({ ref: serializeStreamId(0) }).replace(
+      '%',
+      '\\u0025',
+    )
+    const frame = craftRawFrame({ 0: metadata }, payloadJson)
+    const stream = createProtocolBlobReference(0, metadata)
+    const addStream = vi.fn(() => stream)
+
+    expect(serverCodec.decodeRPC(frame, { addStream })).toEqual({ ref: stream })
+    expect(addStream).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe('stream ref injection (client decode)', () => {
@@ -162,6 +174,19 @@ describe('stream ref injection (client decode)', () => {
     expect(clientCodec.decodeRPC(frame, { addStream: vi.fn() })).toEqual({
       raw,
     })
+  })
+
+  it('resolves a ref whose prefix is Unicode-escaped on the wire', () => {
+    const payloadJson = JSON.stringify({ ref: serializeStreamId(0) }).replace(
+      '%',
+      '\\u0025',
+    )
+    const frame = craftRawFrame({ 0: metadata }, payloadJson)
+    const stream = createProtocolBlobReference(0, metadata)
+    const addStream = vi.fn(() => stream)
+
+    expect(clientCodec.decodeRPC(frame, { addStream })).toEqual({ ref: stream })
+    expect(addStream).toHaveBeenCalledTimes(1)
   })
 })
 

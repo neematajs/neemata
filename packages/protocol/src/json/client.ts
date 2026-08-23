@@ -22,6 +22,7 @@ import {
   assertStreamsMetadata,
   createStreamReviver,
   escapeStreamLikeString,
+  mayContainStreamLikeJson,
   needsEscaping,
   serializeStreamId,
 } from './common.ts'
@@ -119,6 +120,9 @@ export class JsonCodec extends BaseClientCodec {
       : {}
 
     if (!hasPayload) return undefined
+    if (!mayContainStreamLikeJson(payloadBuffer)) {
+      return this.decode(payloadBuffer)
+    }
     return this.decode(
       payloadBuffer,
       createStreamReviver(streams, (id, metadata) =>

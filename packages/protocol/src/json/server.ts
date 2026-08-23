@@ -14,6 +14,7 @@ import {
   assertStreamsMetadata,
   createStreamReviver,
   escapeStreamLikeString,
+  mayContainStreamLikeJson,
   needsEscaping,
   serializeStreamId,
 } from './common.ts'
@@ -59,7 +60,18 @@ export class JsonCodec extends BaseServerCodec {
     }
 
     if (typeof data !== 'undefined') {
-      buffers.push(this.encode(data, escapeReplacer))
+      if (hasStreams) {
+        buffers.push(this.encode(data, escapeReplacer))
+      } else {
+        // Ordinary payloads avoid replacer overhead; suspicious output is
+        // encoded again so the holder can distinguish real refs from data.
+        const encoded = this.encode(data)
+        buffers.push(
+          mayContainStreamLikeJson(encoded)
+            ? this.encode(data, escapeReplacer)
+            : encoded,
+        )
+      }
     }
 
     return concat(...buffers)
@@ -91,6 +103,9 @@ export class JsonCodec extends BaseServerCodec {
     }
 
     if (!hasPayload) return undefined
+    if (!mayContainStreamLikeJson(payloadBuffer)) {
+      return this.decode(payloadBuffer)
+    }
     return this.decode(
       payloadBuffer,
       createStreamReviver(streams, (id, metadata) =>
