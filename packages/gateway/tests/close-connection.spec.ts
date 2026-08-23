@@ -1,8 +1,10 @@
-import { Hooks } from '@nmtjs/core'
+import { Hooks, provision } from '@nmtjs/core'
+import { ProtocolBlob } from '@nmtjs/protocol'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { GatewayApi } from '../src/api.ts'
 import { GATEWAY_TEARDOWN_STEP_TIMEOUT, Gateway } from '../src/gateway.ts'
+import { deferRpcResultDisposal } from '../src/injectables.ts'
 import { createTestContainer, createTestLogger } from './_helpers/test-utils.ts'
 
 const createGateway = (options?: { call?: GatewayApi['call'] }) => {
@@ -160,5 +162,177 @@ describe('Gateway closeConnection', () => {
 
     expect(disposeSpy).toHaveBeenCalledTimes(1)
     expect(gateway.connections.has(connection.id)).toBe(false)
+  })
+
+  it.each([
+    ['ProtocolBlob', () => ProtocolBlob.from('body')],
+    ['Response', () => new Response('body')],
+  ])(
+    'keeps the %s call scope alive and disposes it before the connection scope',
+    async (_label, createResult) => {
+      const events: string[] = []
+      const { gateway, connect, getParams } = createGateway({
+        call: async () => createResult(),
+      })
+      const connection = await connect()
+      const originalFork = connection.container.fork.bind(connection.container)
+      const callDispose = vi.fn(async () => {
+        events.push('call')
+      })
+      vi.spyOn(connection.container, 'fork').mockImplementation((scope) => {
+        const callContainer = originalFork(scope)
+        vi.spyOn(callContainer, 'dispose').mockImplementation(callDispose)
+        return callContainer
+      })
+      const connectionDispose = vi
+        .spyOn(connection.container, 'dispose')
+        .mockImplementation(async () => {
+          events.push('connection')
+        })
+      let disposeResult: (() => Promise<void>) | undefined
+
+      await getParams().onRpc(
+        connection,
+        { procedure: 'test', payload: {} },
+        new AbortController().signal,
+        provision(
+          deferRpcResultDisposal,
+          (dispose) => (disposeResult = dispose),
+        ),
+      )
+
+      expect(callDispose).not.toHaveBeenCalled()
+      expect(disposeResult).toBeDefined()
+      await getParams().onDisconnect(connection.id)
+
+      expect(callDispose).toHaveBeenCalledOnce()
+      expect(connectionDispose).toHaveBeenCalledOnce()
+      expect(events).toEqual(['call', 'connection'])
+
+      await gateway.stop()
+    },
+  )
+
+  it('disposes an abort-ignoring call that resolves after connection teardown', async () => {
+    let markStarted!: () => void
+    const started = new Promise<void>((resolve) => (markStarted = resolve))
+    let resolveCall!: () => void
+    const callBarrier = new Promise<void>((resolve) => (resolveCall = resolve))
+    const { gateway, connect, getParams } = createGateway({
+      call: async () => {
+        markStarted()
+        await callBarrier
+        return new Response('late result')
+      },
+    })
+    const connection = await connect()
+    const originalFork = connection.container.fork.bind(connection.container)
+    const callDispose = vi.fn(async () => {})
+    vi.spyOn(connection.container, 'fork').mockImplementation((scope) => {
+      const callContainer = originalFork(scope)
+      vi.spyOn(callContainer, 'dispose').mockImplementation(callDispose)
+      return callContainer
+    })
+    const registerDisposal = vi.fn()
+
+    const call = getParams().onRpc(
+      connection,
+      { procedure: 'test', payload: {} },
+      new AbortController().signal,
+      provision(deferRpcResultDisposal, registerDisposal),
+    )
+    await started
+    await getParams().onDisconnect(connection.id)
+
+    resolveCall()
+    await expect(call).resolves.toBeInstanceOf(Response)
+
+    expect(registerDisposal).not.toHaveBeenCalled()
+    expect(callDispose).toHaveBeenCalledOnce()
+    await gateway.stop()
+  })
+
+  it('does not abort the client signal for a normally completed body result', async () => {
+    let callSignal: AbortSignal | undefined
+    const { gateway, connect, getParams } = createGateway({
+      call: async ({ signal }) => {
+        callSignal = signal
+        return ProtocolBlob.from('body')
+      },
+    })
+    const connection = await connect()
+    let disposeResult: (() => Promise<void>) | undefined
+
+    await getParams().onRpc(
+      connection,
+      { procedure: 'test', payload: {} },
+      new AbortController().signal,
+      provision(deferRpcResultDisposal, (dispose) => (disposeResult = dispose)),
+    )
+    expect(callSignal?.aborted).toBe(false)
+
+    await disposeResult!()
+    await getParams().onDisconnect(connection.id)
+
+    expect(callSignal?.aborted).toBe(false)
+    await gateway.stop()
+  })
+
+  it('tracks an asynchronous stream onDone disposer before parent disposal', async () => {
+    const events: string[] = []
+    const { gateway, connect, getParams } = createGateway({
+      call: async () => (onDone: () => Promise<void>) =>
+        (async function* () {
+          try {
+            yield 'event'
+          } finally {
+            await onDone()
+          }
+        })(),
+    })
+    const connection = await connect()
+    const originalFork = connection.container.fork.bind(connection.container)
+    let releaseCallDispose!: () => void
+    const callDispose = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          events.push('call:start')
+          releaseCallDispose = () => {
+            events.push('call:end')
+            resolve()
+          }
+        }),
+    )
+    vi.spyOn(connection.container, 'fork').mockImplementation((scope) => {
+      const callContainer = originalFork(scope)
+      vi.spyOn(callContainer, 'dispose').mockImplementation(callDispose)
+      return callContainer
+    })
+    const connectionDispose = vi
+      .spyOn(connection.container, 'dispose')
+      .mockImplementation(async () => {
+        events.push('connection')
+      })
+
+    const iterable = (await getParams().onRpc(
+      connection,
+      { procedure: 'test', payload: {} },
+      new AbortController().signal,
+    )) as AsyncIterable<string>
+    expect(callDispose).not.toHaveBeenCalled()
+    const iterator = iterable[Symbol.asyncIterator]()
+    await iterator.next()
+
+    const finish = iterator.return!()
+    await vi.waitFor(() => expect(callDispose).toHaveBeenCalledOnce())
+    const disconnect = getParams().onDisconnect(connection.id)
+    await new Promise((resolve) => setImmediate(resolve))
+
+    expect(connectionDispose).not.toHaveBeenCalled()
+    releaseCallDispose()
+    await Promise.all([finish, disconnect])
+
+    expect(events).toEqual(['call:start', 'call:end', 'connection'])
+    await gateway.stop()
   })
 })

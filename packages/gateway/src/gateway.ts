@@ -62,6 +62,15 @@ export class Gateway<
    * never fires (e.g. an abort-ignoring peer).
    */
   private readonly connectionCalls = new Map<string, Set<AbortController>>()
+  /**
+   * Call scopes whose results outlive onRpc (RPC iterables and HTTP response
+   * bodies). Connection teardown drains these before disposing their parent
+   * connection scope.
+   */
+  private readonly deferredCallDisposals = new Map<
+    string,
+    Set<() => Promise<void>>
+  >()
   readonly #startedTransports = new TeardownStack()
   public options: Required<GatewayOptions<ResolvedProcedure>>
 
@@ -233,9 +242,16 @@ export class Gateway<
 
       const container = connection.container.fork(Scope.Call)
 
+      let disposal: Promise<void> | undefined
       const dispose = async () => {
-        this.untrackCall(connection.id, controller)
-        await container.dispose()
+        return (disposal ??= (async () => {
+          this.untrackCall(connection.id, controller)
+          try {
+            await container.dispose()
+          } finally {
+            this.untrackCallDisposal(connection.id, dispose)
+          }
+        })())
       }
 
       try {
@@ -256,7 +272,25 @@ export class Gateway<
         // the call scope must stay alive until the returned iterable
         // completes, fails, or is cancelled — the transport pumps it
         if (typeof result === 'function') {
+          if (!this.trackCallDisposal(connection.id, dispose)) {
+            await dispose()
+          }
           return result(dispose)
+        }
+        if (
+          (isBlobInterface(result) ||
+            (result instanceof Response && result.body !== null)) &&
+          container.owns(injectables.deferRpcResultDisposal)
+        ) {
+          // Body-owning transports claim the disposer and invoke it at their
+          // terminal state. The connection set remains the disconnect/stop
+          // fallback when that terminal callback cannot run.
+          if (!this.trackCallDisposal(connection.id, dispose)) {
+            await dispose()
+            return result
+          }
+          container.get(injectables.deferRpcResultDisposal)(dispose)
+          return result
         }
         await dispose()
         return result
@@ -306,6 +340,7 @@ export class Gateway<
     }
 
     await guard(() => connection.abortController.abort())
+    await guard(() => this.disposeDeferredCalls(connectionId))
     await guard(() => this.abortCalls(connectionId))
     await guard(() => connection.container.dispose())
   }
@@ -325,6 +360,40 @@ export class Gateway<
       calls.delete(controller)
       if (calls.size === 0) this.connectionCalls.delete(connectionId)
     }
+  }
+
+  private trackCallDisposal(
+    connectionId: string,
+    dispose: () => Promise<void>,
+  ): boolean {
+    // closeConnection removes the connection synchronously before awaiting
+    // teardown. A call resolving afterwards must dispose immediately instead
+    // of registering work nobody will ever drain.
+    if (!this.connections.has(connectionId)) return false
+    let disposals = this.deferredCallDisposals.get(connectionId)
+    if (!disposals) {
+      disposals = new Set()
+      this.deferredCallDisposals.set(connectionId, disposals)
+    }
+    disposals.add(dispose)
+    return true
+  }
+
+  private untrackCallDisposal(
+    connectionId: string,
+    dispose: () => Promise<void>,
+  ) {
+    const disposals = this.deferredCallDisposals.get(connectionId)
+    if (disposals) {
+      disposals.delete(dispose)
+      if (disposals.size === 0) this.deferredCallDisposals.delete(connectionId)
+    }
+  }
+
+  private async disposeDeferredCalls(connectionId: string) {
+    const disposals = this.deferredCallDisposals.get(connectionId)
+    if (!disposals) return
+    await Promise.all([...disposals].map((dispose) => dispose()))
   }
 
   private abortCalls(connectionId: string) {

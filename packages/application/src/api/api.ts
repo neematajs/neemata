@@ -2,6 +2,7 @@ import assert from 'node:assert'
 import { randomUUID } from 'node:crypto'
 import { inspect } from 'node:util'
 
+import type { MaybePromise } from '@nmtjs/common'
 import type { TAnyCallableContract, TAnyRouterContract } from '@nmtjs/contract'
 import type {
   AnyFactoryMetaBinding,
@@ -418,7 +419,7 @@ export class ApplicationApi implements GatewayApi<ApplicationResolvedProcedure> 
     if (chunkType instanceof type.NeverType)
       throw new Error('Stream procedure must have a defined output type')
 
-    return async function* (onDone?: () => void) {
+    return async function* (onDone?: () => MaybePromise<void>) {
       try {
         if (runtimeConfig.serializeOutput === false) {
           yield* response
@@ -430,7 +431,7 @@ export class ApplicationApi implements GatewayApi<ApplicationResolvedProcedure> 
           yield* response
         }
       } finally {
-        onDone?.()
+        await onDone?.()
       }
     }
   }

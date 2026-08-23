@@ -24,7 +24,7 @@ import {
   withTimeout,
 } from '@nmtjs/common'
 import { provision } from '@nmtjs/core'
-import { consumeBlob, createBlob } from '@nmtjs/gateway'
+import { consumeBlob, createBlob, deferRpcResultDisposal } from '@nmtjs/gateway'
 import {
   ClientMessageType,
   createProtocolBlobReference,
@@ -376,12 +376,18 @@ export class WsSessionEngine {
     const { connection, protocol, encoder } = session
     const connectionId = connection.id
     const { callId } = rpc
+    let disposeResult: () => Promise<void> = () => Promise.resolve()
+    let disposalTransferred = false
 
     try {
       const response = await this.params.onRpc(
         connection,
         { procedure: rpc.procedure, payload: rpc.payload },
         signal,
+        provision(
+          deferRpcResultDisposal,
+          (dispose) => (disposeResult = dispose),
+        ),
         provision(
           createBlob,
           this.createBlobFunction(session, context, callId),
@@ -552,6 +558,12 @@ export class WsSessionEngine {
             error: null,
           }),
         )
+        this.blobStreams.deferServerCallDisposal(
+          connectionId,
+          callId,
+          disposeResult,
+        )
+        disposalTransferred = true
       }
     } catch (error) {
       this.send(
@@ -564,6 +576,8 @@ export class WsSessionEngine {
         }),
       )
       if (!(error instanceof ProtocolError)) this.logger.error(error)
+    } finally {
+      if (!disposalTransferred) await disposeResult()
     }
   }
 

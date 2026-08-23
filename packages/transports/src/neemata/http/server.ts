@@ -12,7 +12,13 @@ import type {
   BaseServerEncoder,
   ProtocolCodecRegistry,
 } from '@nmtjs/protocol/server'
-import { anyAbortSignal, isAbortError, isAsyncIterable } from '@nmtjs/common'
+import {
+  anyAbortSignal,
+  isAbortError,
+  isAsyncIterable,
+  noopFn,
+  withTimeout,
+} from '@nmtjs/common'
 import { provision } from '@nmtjs/core'
 import { GatewayInjectables, ProxyableTransportType } from '@nmtjs/gateway'
 import { ErrorCode, ProtocolBlob } from '@nmtjs/protocol'
@@ -42,6 +48,9 @@ import * as injections from './injectables.ts'
 import { PayloadTooLargeError } from './utils.ts'
 
 const NEEMATA_BLOB_HEADER = 'X-Neemata-Blob'
+// Async-generator return() queues behind a stalled next(), so SSE cleanup
+// must be cooperative without holding body cancellation open indefinitely.
+const SSE_ITERATOR_CLEANUP_TIMEOUT = 10_000
 const DEFAULT_ALLOWED_METHODS = Object.freeze(['post']) as ('get' | 'post')[]
 // No allowCredentials here: reflecting arbitrary origins with credentials
 // would let any website make cookie-authed requests
@@ -199,9 +208,25 @@ export class NeemataHttpHandler {
       throw error
     }
 
-    await using connection = await this.params.onConnect({ data: request })
+    // Streamed response bodies are consumed after handle() returns, so they
+    // take ownership of connection teardown. Buffered and error paths retain
+    // dispose-at-return behavior.
+    let connection: Awaited<ReturnType<typeof this.params.onConnect>> | null =
+      null
+    let streamed = false
+    let disposal: Promise<void> | null = null
+    let disposeResult: () => Promise<void> = () => Promise.resolve()
+    const disposeConnection = () => {
+      if (!connection) return Promise.resolve()
+      return (disposal ??= Promise.resolve(connection[Symbol.asyncDispose]()))
+    }
+    const disposeResponse = async () => {
+      await disposeResult()
+      await disposeConnection()
+    }
 
     try {
+      connection = await this.params.onConnect({ data: request })
       const resolved = await this.params.resolve(connection, procedure)
 
       const allowHttpMethod =
@@ -270,6 +295,10 @@ export class NeemataHttpHandler {
         { payload, procedure },
         signal,
         provision(injections.httpResponseHeaders, responseHeaders),
+        provision(
+          GatewayInjectables.deferRpcResultDisposal,
+          (dispose) => (disposeResult = dispose),
+        ),
         // Blob capabilities are projection-owned: HTTP represents a server
         // blob as the response body, so createBlob is a plain wrapper and
         // consumeBlob has nothing to look up (the request body already
@@ -290,7 +319,14 @@ export class NeemataHttpHandler {
           else responseHeaders.set(key, value)
         })
 
-        return new Response(body, {
+        const streamedBody =
+          body !== null && headers.get('content-length') !== '0'
+        const finalizedBody = streamedBody
+          ? this.finalizeOnBodyEnd(body, signal, disposeResponse)
+          : body
+        streamed = streamedBody
+
+        return new Response(finalizedBody, {
           status,
           statusText,
           headers: responseHeaders,
@@ -323,7 +359,13 @@ export class NeemataHttpHandler {
           throw new Error('Invalid stream source')
         }
 
-        return new Response(stream, {
+        const finalizedBody =
+          metadata.size !== 0
+            ? this.finalizeOnBodyEnd(stream, signal, disposeResponse)
+            : stream
+        streamed = metadata.size !== 0
+
+        return new Response(finalizedBody, {
           status: HttpStatus.OK,
           statusText: HttpStatusText[HttpStatus.OK],
           headers: responseHeaders,
@@ -333,27 +375,50 @@ export class NeemataHttpHandler {
         responseHeaders.set('Cache-Control', 'no-cache, no-transform')
         responseHeaders.set('X-Stream-Content-Type', encoder.contentType)
         responseHeaders.set('X-Accel-Buffering', 'no')
+        const iterator = result[Symbol.asyncIterator]()
+        const sse = new TextEncoder()
+        const cleanupIterator = async () => {
+          try {
+            await withTimeout(
+              Promise.resolve(iterator.return?.()),
+              SSE_ITERATOR_CLEANUP_TIMEOUT,
+              new Error('SSE iterator cleanup timed out'),
+            )
+          } catch {}
+        }
         const stream = new ReadableStream({
-          async start(controller) {
-            const sse = new TextEncoder()
+          async pull(controller) {
             try {
-              for await (const chunk of result) {
-                const encoded = encoder.encode(chunk)
-                const base64 = Buffer.from(
-                  encoded.buffer,
-                  encoded.byteOffset,
-                  encoded.byteLength,
-                ).toString('base64')
-                controller.enqueue(sse.encode(`data: ${base64}\n\n`))
+              const { done, value } = await iterator.next()
+              if (done) {
+                controller.close()
+                return
               }
-              controller.close()
+              const encoded = encoder.encode(value)
+              const base64 = Buffer.from(
+                encoded.buffer,
+                encoded.byteOffset,
+                encoded.byteLength,
+              ).toString('base64')
+              controller.enqueue(sse.encode(`data: ${base64}\n\n`))
             } catch (error) {
+              await cleanupIterator()
               if (isAbortError(error)) controller.close()
               else controller.error(error)
             }
           },
+          async cancel() {
+            await cleanupIterator()
+          },
         })
-        return new Response(stream, {
+        const finalizedBody = this.finalizeOnBodyEnd(
+          stream,
+          signal,
+          disposeResponse,
+        )
+        streamed = true
+
+        return new Response(finalizedBody, {
           status: HttpStatus.OK,
           statusText: HttpStatusText[HttpStatus.OK],
           headers: responseHeaders,
@@ -433,7 +498,52 @@ export class NeemataHttpHandler {
         statusText: HttpStatusText[HttpStatus.InternalServerError],
         headers: responseHeaders,
       })
+    } finally {
+      if (!streamed) await disposeResponse()
     }
+  }
+
+  private finalizeOnBodyEnd(
+    body: ReadableStream,
+    signal: AbortSignal,
+    finalize: () => Promise<void>,
+  ): ReadableStream {
+    const reader = body.getReader()
+    const settle = () => {
+      signal.removeEventListener('abort', onAbort)
+      return finalize()
+    }
+    const onAbort = () => {
+      // Closing the connection first aborts call signals, which gives
+      // cooperative sources a chance to leave a pending read.
+      settle().catch(noopFn)
+      reader.cancel(signal.reason).catch(noopFn)
+    }
+
+    if (signal.aborted) onAbort()
+    else signal.addEventListener('abort', onAbort, { once: true })
+
+    return new ReadableStream({
+      async pull(controller) {
+        try {
+          const result = await reader.read()
+          if (result.done) {
+            await settle()
+            controller.close()
+          } else {
+            controller.enqueue(result.value)
+          }
+        } catch (error) {
+          await settle()
+          controller.error(error)
+        }
+      },
+      async cancel(reason) {
+        const finalized = settle()
+        await reader.cancel(reason).catch(noopFn)
+        await finalized
+      },
+    })
   }
 
   private createBodySizeGuard() {

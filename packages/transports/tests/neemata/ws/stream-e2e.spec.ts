@@ -7,7 +7,13 @@ import type { ServerWebSocketRuntimeOptions } from '@nmtjs/transports/http-serve
 import { RuntimeClient } from '@nmtjs/client'
 import { WsTransportFactory } from '@nmtjs/client/ws'
 import { blobType, c } from '@nmtjs/contract'
-import { Container, createLogger, Hooks } from '@nmtjs/core'
+import {
+  Container,
+  createFactoryInjectable,
+  createLogger,
+  Hooks,
+  Scope,
+} from '@nmtjs/core'
 import { Gateway, GatewayInjectables } from '@nmtjs/gateway'
 import {
   ClientMessageType,
@@ -284,6 +290,52 @@ describe('stream flow control over a real WS transport', () => {
     expect(data.byteLength).toBe(BLOB_SIZE)
     expect(data.equals(pattern)).toBe(true)
     expect(sourceBytes).toBe(BLOB_SIZE)
+  })
+
+  it('disposes a blob call scope when the WS blob ends, before disconnect', async () => {
+    let disposed = 0
+    let markDisposed!: () => void
+    const disposedPromise = new Promise<void>(
+      (resolve) => (markDisposed = resolve),
+    )
+    const callResource = createFactoryInjectable({
+      scope: Scope.Call,
+      create: () => ({}),
+      dispose: () => {
+        disposed++
+        markDisposed()
+      },
+    })
+    const payload = Buffer.from('blob call scope')
+
+    const { client, gateway } = await createHarness({
+      handlers: {
+        download: async ({ container }) => {
+          await container.resolve(callResource)
+          const createBlob = await container.resolve(
+            GatewayInjectables.createBlob,
+          )
+          return createBlob(payload, {
+            size: payload.byteLength,
+            type: 'application/octet-stream',
+          })
+        },
+      },
+    })
+
+    const blob = await client.call.download({})
+    expect(disposed).toBe(0)
+
+    const received = await client.consumeBlob(blob).bytes()
+    expect(Buffer.from(received).equals(payload)).toBe(true)
+    await withDeadline(
+      disposedPromise,
+      5000,
+      'blob call scope was not disposed after stream completion',
+    )
+
+    expect(disposed).toBe(1)
+    expect([...gateway.connections.getAll()]).toHaveLength(1)
   })
 
   it('delivers an RPC chunk batch from one pull grant', async () => {

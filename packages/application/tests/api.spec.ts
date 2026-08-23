@@ -11,6 +11,7 @@ import {
   ApplicationApi,
   createFilter,
   createProcedure,
+  createStream,
 } from '../src/index.ts'
 
 class DomainError extends Error {}
@@ -170,5 +171,41 @@ describe('ApplicationApi timeout', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+describe('ApplicationApi stream cleanup', () => {
+  it('awaits an asynchronous onDone callback before completing the stream', async () => {
+    const procedure = createStream({
+      handler: async function* () {
+        yield 'done'
+      },
+    })
+    const { call } = createTestApi({ procedure })
+    const createIterable = (await call()) as (
+      onDone: () => Promise<void>,
+    ) => AsyncIterable<unknown>
+    let release!: () => void
+    const onDone = vi.fn(
+      () => new Promise<void>((resolve) => (release = resolve)),
+    )
+    const iterator = createIterable(onDone)[Symbol.asyncIterator]()
+
+    await expect(iterator.next()).resolves.toEqual({
+      done: false,
+      value: 'done',
+    })
+    let completed = false
+    const completion = iterator.next().then((result) => {
+      completed = true
+      return result
+    })
+    await new Promise((resolve) => setImmediate(resolve))
+
+    expect(onDone).toHaveBeenCalledOnce()
+    expect(completed).toBe(false)
+
+    release()
+    await expect(completion).resolves.toEqual({ done: true, value: undefined })
   })
 })
