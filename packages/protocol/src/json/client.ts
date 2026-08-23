@@ -18,7 +18,13 @@ import {
   encodeText,
   ProtocolBlob,
 } from '../common/index.ts'
-import { deserializeStreamId, isStreamId, serializeStreamId } from './common.ts'
+import {
+  assertStreamsMetadata,
+  createStreamReviver,
+  escapeStreamLikeString,
+  needsEscaping,
+  serializeStreamId,
+} from './common.ts'
 
 /**
  * JSON codec with support for Neemata streams.
@@ -50,6 +56,9 @@ export class JsonCodec extends BaseClientCodec {
         const stream = context.addStream(value)
         streams[stream.id] = stream.metadata
         return serializeStreamId(stream.id)
+      }
+      if (typeof value === 'string' && needsEscaping(value)) {
+        return escapeStreamLikeString(value)
       }
       return value
     }
@@ -99,25 +108,22 @@ export class JsonCodec extends BaseClientCodec {
     const hasPayload = payloadBuffer.byteLength > 0
 
     const streams = hasStreams
-      ? (this.decode(
-          buffer.subarray(
-            Uint32Array.BYTES_PER_ELEMENT,
-            Uint32Array.BYTES_PER_ELEMENT + streamsLength,
+      ? assertStreamsMetadata(
+          this.decode(
+            buffer.subarray(
+              Uint32Array.BYTES_PER_ELEMENT,
+              Uint32Array.BYTES_PER_ELEMENT + streamsLength,
+            ),
           ),
-        ) as EncodeRPCStreams)
+        )
       : {}
 
-    const replacer = (_key: string, value: any) => {
-      if (typeof value === 'string' && isStreamId(value)) {
-        const id = deserializeStreamId(value)
-        const metadata = streams[id]
-        return context.addStream(id, metadata)
-      }
-      return value
-    }
-
     if (!hasPayload) return undefined
-    else if (hasStreams) return this.decode(payloadBuffer, replacer)
-    else return this.decode(payloadBuffer)
+    return this.decode(
+      payloadBuffer,
+      createStreamReviver(streams, (id, metadata) =>
+        context.addStream(id, metadata),
+      ),
+    )
   }
 }
