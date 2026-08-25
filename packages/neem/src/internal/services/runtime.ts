@@ -1,9 +1,10 @@
 import { resolve } from 'node:path'
 
 import type { Logger } from '@nmtjs/core'
+import type { BindingClientHmrUpdate } from 'rolldown/experimental'
 
 import type { NeemMode, NeemRuntimeServerHealth } from '../../shared/types.ts'
-import type { RuntimeEvent } from './protocol.ts'
+import type { RuntimeEvent, RuntimeHmrResult } from './protocol.ts'
 import { HostController } from '../host/controller.ts'
 import { resolveManifestLogger } from '../logger.ts'
 import {
@@ -97,6 +98,13 @@ export class RuntimeService {
     )
     await controller.reloadRuntime(runtimeName, snapshot)
     return controller.getHealth()
+  }
+
+  async applyHmr(
+    runtimeName: string,
+    updates: readonly BindingClientHmrUpdate[],
+  ): Promise<RuntimeHmrResult> {
+    return this.requireController().applyHmr(runtimeName, updates)
   }
 
   async stop(): Promise<void> {

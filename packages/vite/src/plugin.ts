@@ -2,8 +2,7 @@ import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import type { RolldownPluginOption } from '@nmtjs/neem'
-import type { Plugin as RolldownPlugin } from 'rolldown'
+import type { RolldownPlugin, RolldownPluginOption } from '@nmtjs/neem'
 
 import type { NeemViteRoutingKind } from './types.ts'
 import type { LoadedAppViteConfig } from './vite-loader.ts'

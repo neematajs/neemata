@@ -1,5 +1,6 @@
 import { performance } from 'node:perf_hooks'
 
+import type { BindingClientHmrUpdate } from 'rolldown/experimental'
 import { OperationQueue } from '@nmtjs/common'
 
 import type {
@@ -242,6 +243,27 @@ export class HostController {
         )
         await this.callServerFailHook(normalized)
       }
+    })
+  }
+
+  applyHmr(
+    runtimeName: string,
+    updates: readonly BindingClientHmrUpdate[],
+  ): Promise<{
+    accepted: boolean
+    deliveredFiles: readonly string[]
+    reason?: string
+  }> {
+    return this.operations.run(async () => {
+      const runtime = this.runtimes.get(runtimeName)
+      if (!runtime) {
+        return {
+          accepted: false,
+          deliveredFiles: [],
+          reason: `Runtime [${runtimeName}] is not running`,
+        }
+      }
+      return runtime.applyHmr(updates)
     })
   }
 
