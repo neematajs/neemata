@@ -83,6 +83,8 @@ export type NeemBuildConfig = {
   minify?: boolean | 'dce-only'
   define?: Record<string, string>
   watch?: NeemBuildWatchConfig
+  /** Use Rolldown's experimental DevEngine for runtime worker HMR. */
+  experimentalDev?: boolean
 }
 
 export type NeemBuildWatchConfig = {
@@ -216,9 +218,11 @@ export type NeemRuntimeServerHealth = NeemRuntimeServerSnapshot & {
   proxy: NeemProxyHealth
 }
 
-export type NeemRuntime = {
+export type NeemRuntime<Definition = unknown> = {
   start: () => MaybePromise<readonly NeemRuntimeUpstream[] | undefined>
   stop: () => MaybePromise<void>
+  /** Adopt a freshly compiled worker definition without replacing the thread. */
+  reload?: (definition: Definition) => MaybePromise<void>
   /**
    * Settles when long-lived runtime work ends. Completion before a requested
    * stop is treated as a runtime failure so a ready worker cannot become a
@@ -399,7 +403,7 @@ export type NeemRuntimeWorker<Data = unknown, Definition = unknown> = {
   definition: Definition
   createRuntime: (
     ctx: NeemRuntimeWorkerContext<Data, Definition>,
-  ) => MaybePromise<NeemRuntime>
+  ) => MaybePromise<NeemRuntime<Definition>>
 }
 
 export type InferNeemRuntimeWorkerData<TWorker> = TWorker extends {

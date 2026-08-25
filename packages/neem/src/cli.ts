@@ -213,6 +213,7 @@ class DevSupervisor {
   private runtime: RuntimeClient | undefined
   private manifestFile: string | undefined
   private manifestRevision = 0
+  private hmrClients = new Map<string, readonly string[]>()
   private stopped = false
 
   constructor(private readonly options: DevSupervisorOptions) {
@@ -241,6 +242,9 @@ class DevSupervisor {
     const watcher = this.watcher
     const configSignalWatcher = this.configSignalWatcher
     const runtime = this.runtime
+    await this.clearAllHmrClients(watcher).catch((error) =>
+      this.reportWatcherError(error),
+    )
     this.watcher = undefined
     this.configSignalWatcher = undefined
     this.runtime = undefined
@@ -302,6 +306,12 @@ class DevSupervisor {
         if (!this.acceptManifest(event)) return
         await this.reloadRuntime(event.runtimeName)
         return
+      case 'runtime-hmr-update':
+        await this.applyRuntimeHmr(event.runtimeName, event.updates)
+        return
+      case 'runtime-hmr-fallback':
+        await this.fallbackRuntimeHmr(event.runtimeName, event.reason)
+        return
       case 'plugin-changed':
       case 'logger-changed':
         if (!this.acceptManifest(event)) return
@@ -315,6 +325,9 @@ class DevSupervisor {
   private async replaceWatcher(): Promise<void> {
     const previousWatcher = this.watcher
     const previousSignalFiles = this.configSignalFiles
+    await this.clearAllHmrClients(previousWatcher).catch((error) =>
+      this.reportWatcherError(error),
+    )
     this.watcher = undefined
     await this.stopRuntime()
     await this.stopConfigSignalWatcher()
@@ -386,27 +399,174 @@ class DevSupervisor {
       onFailure: (error) => this.closedFuture.reject(error),
     })
     this.runtime = runtime
-    await runtime.request({
+    const result = await runtime.request({
       type: 'start',
       mode: 'development',
       outDir: this.options.outDir,
       manifestFile: this.manifestFile,
       runtimes: this.options.runtimes,
     })
+    if (result?.health) await this.syncHmrClients(result.health)
   }
 
   private async reloadRuntime(runtimeName: string): Promise<void> {
     if (!this.runtime || !this.manifestFile) return
-    await this.runtime.request({
+    await this.clearRuntimeHmrClients(runtimeName).catch((error) =>
+      this.reportWatcherError(error),
+    )
+    const result = await this.runtime.request({
       type: 'reload-runtime',
       runtimeName,
       manifestFile: this.manifestFile,
     })
+    if (result?.health) await this.syncHmrClients(result.health)
+  }
+
+  private async applyRuntimeHmr(
+    runtimeName: string,
+    updates: Extract<WatcherEvent, { type: 'runtime-hmr-update' }>['updates'],
+  ): Promise<void> {
+    if (!this.runtime) {
+      await this.fallbackRuntimeHmr(
+        runtimeName,
+        'Runtime service is not running',
+      )
+      return
+    }
+    if (updates.length === 0) {
+      await this.fallbackRuntimeHmr(runtimeName, 'No active HMR clients')
+      return
+    }
+
+    let hmr: RuntimeResult['hmr']
+    try {
+      const result = await this.runtime.request({
+        type: 'apply-hmr',
+        runtimeName,
+        updates,
+      })
+      hmr = result?.hmr
+    } catch (error) {
+      await this.fallbackRuntimeHmr(runtimeName, normalizeError(error).message)
+      return
+    }
+
+    if (!hmr) {
+      await this.fallbackRuntimeHmr(
+        runtimeName,
+        'Runtime service returned no HMR result',
+      )
+      return
+    }
+
+    if (hmr.deliveredFiles.length > 0 && this.watcher) {
+      try {
+        await this.watcher.request({
+          type: 'hmr-delivered',
+          runtimeName,
+          filenames: hmr.deliveredFiles,
+        })
+      } catch (error) {
+        await this.fallbackRuntimeHmr(
+          runtimeName,
+          normalizeError(error).message,
+        )
+        return
+      }
+    }
+    if (hmr.accepted) return
+    await this.fallbackRuntimeHmr(
+      runtimeName,
+      hmr.reason ?? 'Runtime rejected the HMR update',
+    )
+  }
+
+  private async fallbackRuntimeHmr(
+    runtimeName: string,
+    reason: string,
+  ): Promise<void> {
+    const watcher = this.watcher
+    if (!watcher) return
+    this.options.probe?.emit('runtime:hmr-fallback', { runtimeName, reason })
+
+    await this.clearRuntimeHmrClients(runtimeName, watcher).catch((error) =>
+      this.reportWatcherError(error),
+    )
+    try {
+      // Patch-only mode intentionally leaves the full bundle untouched. This
+      // callback re-enters Neem's existing manifest and runtime reload path.
+      await watcher.request({
+        type: 'prepare-hmr-fallback',
+        runtimeName,
+      })
+    } catch (error) {
+      this.reportWatcherError(error)
+      // A failed full rebuild leaves the previous bundle intact. Replace a
+      // potentially half-updated worker with that last known-good artifact.
+      await this.reloadRuntime(runtimeName)
+    }
+  }
+
+  private async syncHmrClients(
+    health: NonNullable<RuntimeResult['health']>,
+  ): Promise<void> {
+    const watcher = this.watcher
+    if (!watcher) return
+    const next = new Map(
+      health.runtimes.map((runtime) => [
+        runtime.name,
+        runtime.threads.map((thread) => thread.id),
+      ]),
+    )
+    const names = new Set([...this.hmrClients.keys(), ...next.keys()])
+    await Promise.all(
+      [...names].map(async (runtimeName) => {
+        const clientIds = next.get(runtimeName) ?? []
+        if (sameStrings(this.hmrClients.get(runtimeName), clientIds)) return
+        await watcher.request({
+          type: 'sync-hmr-clients',
+          runtimeName,
+          clientIds,
+        })
+      }),
+    )
+    this.hmrClients = next
+  }
+
+  private async clearRuntimeHmrClients(
+    runtimeName: string,
+    watcher = this.watcher,
+  ): Promise<void> {
+    this.hmrClients.delete(runtimeName)
+    if (!watcher) return
+    await watcher.request({
+      type: 'sync-hmr-clients',
+      runtimeName,
+      clientIds: [],
+    })
+  }
+
+  private async clearAllHmrClients(watcher = this.watcher): Promise<void> {
+    const runtimeNames = [...this.hmrClients.keys()]
+    this.hmrClients.clear()
+    if (!watcher) return
+    await Promise.all(
+      runtimeNames.map((runtimeName) =>
+        watcher.request({
+          type: 'sync-hmr-clients',
+          runtimeName,
+          clientIds: [],
+        }),
+      ),
+    )
   }
 
   private async stopRuntime(): Promise<void> {
     const runtime = this.runtime
     this.runtime = undefined
+    await this.clearAllHmrClients().catch((error) =>
+      this.reportWatcherError(error),
+    )
     await runtime?.stop()
   }
 
@@ -520,5 +680,15 @@ function isSerializedError(
     typeof value === 'object' &&
     value !== null &&
     typeof (value as { message?: unknown }).message === 'string'
+  )
+}
+
+function sameStrings(
+  current: readonly string[] | undefined,
+  next: readonly string[],
+): boolean {
+  return (
+    current?.length === next.length &&
+    current.every((value, index) => value === next[index])
   )
 }

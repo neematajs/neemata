@@ -6,6 +6,10 @@ import type { MaybePromise } from '@nmtjs/common'
 import type { Logger } from '@nmtjs/core'
 import { OperationQueue } from '@nmtjs/common'
 
+import type {
+  GraphWatcher as ExperimentalGraphWatcher,
+  TargetHmrUpdate,
+} from '../../experiment/internal/compiler.ts'
 import type { NeemConfig } from '../../shared/types.ts'
 import type { GraphWatcher, TargetChange } from '../build/compiler.ts'
 import type { BuildGraph, BuildTarget } from '../build/graph.ts'
@@ -15,6 +19,7 @@ import type {
   WatcherManifestIdentity,
   WatcherResult,
 } from './protocol.ts'
+import { watchGraph as watchExperimentalGraph } from '../../experiment/internal/compiler.ts'
 import { assertSafeNeemOutDir, cleanNeemOutDir } from '../build/clean.ts'
 import { watchGraph } from '../build/compiler.ts'
 import { resolveNeemRuntimeDeclarations } from '../build/declarations.ts'
@@ -38,7 +43,7 @@ type WatcherManifestChangeInput =
 
 export class WatcherService {
   private readonly changes = new OperationQueue()
-  private graphWatcher: GraphWatcher | undefined
+  private graphWatcher: GraphWatcher | ExperimentalGraphWatcher | undefined
   private manifestFile: string | undefined
   private manifestRevision = 0
   private logger: Logger | undefined
@@ -75,6 +80,30 @@ export class WatcherService {
     await graphWatcher?.close()
     await this.changes.waitIdle()
     this.logger?.debug('Neem watcher stopped')
+  }
+
+  async syncHmrClients(
+    runtimeName: string,
+    clientIds: readonly string[],
+  ): Promise<void> {
+    await this.getExperimentalWatcher()?.syncHmrClients(runtimeName, clientIds)
+  }
+
+  async notifyHmrDelivered(
+    runtimeName: string,
+    filenames: readonly string[],
+  ): Promise<void> {
+    const watcher = this.getExperimentalWatcher()
+    if (!watcher) return
+    await Promise.all(
+      [...new Set(filenames)].map((filename) =>
+        watcher.notifyHmrPayloadDelivered(runtimeName, filename),
+      ),
+    )
+  }
+
+  async prepareHmrFallback(runtimeName: string): Promise<void> {
+    await this.getExperimentalWatcher()?.ensureLatestHmrOutput(runtimeName)
   }
 
   private async createGraph(): Promise<BuildGraph> {
@@ -123,9 +152,14 @@ export class WatcherService {
       configDir: dirname(this.options.configFile),
     })
     await cleanNeemOutDir(this.options.outDir)
-    const graphWatcher = await watchGraph(graph, {
-      onChange: (change) => this.handleChange(change),
-    })
+    const graphWatcher = graph.config.build?.experimentalDev
+      ? await watchExperimentalGraph(graph, {
+          onChange: (change) => this.handleChange(change),
+          onHmrUpdate: (update) => this.handleHmrUpdate(update),
+        })
+      : await watchGraph(graph, {
+          onChange: (change) => this.handleChange(change),
+        })
 
     const compiled = await graphWatcher.ready
     this.graphWatcher = graphWatcher
@@ -136,6 +170,29 @@ export class WatcherService {
   private async handleChange(change: TargetChange): Promise<void> {
     if (this.stopped || !this.graphWatcher) return
     await this.changes.run(() => this.applyChange(change))
+  }
+
+  private async handleHmrUpdate(update: TargetHmrUpdate): Promise<void> {
+    if (this.stopped || !this.graphWatcher) return
+    await this.changes.run(async () => {
+      const runtimeName = getRuntimeName(update)
+      if (update.error) {
+        await this.emit({ type: 'error', error: serializeError(update.error) })
+        if (update.requiresFallback) {
+          await this.emit({
+            type: 'runtime-hmr-fallback',
+            runtimeName,
+            reason: update.error.message,
+          })
+        }
+        return
+      }
+      await this.emit({
+        type: 'runtime-hmr-update',
+        runtimeName,
+        updates: update.updates,
+      })
+    })
   }
 
   private async applyChange(change: TargetChange): Promise<void> {
@@ -163,6 +220,11 @@ export class WatcherService {
 
   private async emit(event: WatcherEvent): Promise<void> {
     if (!this.stopped) await this.options.emit(event)
+  }
+
+  private getExperimentalWatcher(): ExperimentalGraphWatcher | undefined {
+    const watcher = this.graphWatcher
+    return watcher && 'syncHmrClients' in watcher ? watcher : undefined
   }
 
   private getConfigSignalFiles(graph: BuildGraph): string[] {
@@ -233,7 +295,7 @@ async function hashFile(file: string): Promise<string> {
     .digest('hex')
 }
 
-function getRuntimeName(change: TargetChange): string {
+function getRuntimeName(change: Pick<TargetChange, 'target'>): string {
   const owner = change.target.owner
   return owner.type === 'runtime' ? owner.name : 'unknown'
 }

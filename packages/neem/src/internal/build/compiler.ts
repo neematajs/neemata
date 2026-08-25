@@ -27,7 +27,7 @@ import { toFilePath } from '../utils.ts'
 
 type ArtifactInput = { entry: string; input: string; targetKey?: string }
 
-type ArtifactBuildMetadata = {
+export type ArtifactBuildMetadata = {
   entryFileName?: string
   entryFileNames?: Map<string, string | undefined>
   watch: boolean
@@ -156,12 +156,12 @@ export async function watchGraph(
   }
 }
 
-type BuildGroupWatcher = {
+export type BuildGroupWatcher = {
   ready: Promise<readonly CompiledTarget[]>
   close: () => Promise<void>
 }
 
-async function watchBuildGroup(
+export async function watchBuildGroup(
   group: BuildGroup,
   handlers: { onRebuild?: (change: TargetChange) => MaybePromise<void> } = {},
   watchConfig?: NeemBuildWatchConfig,
@@ -360,7 +360,7 @@ export function createCompiledGraph(
   return { graph, runtimes, plugins, targets }
 }
 
-function createRolldownOptions(
+export function createRolldownOptions(
   target: BuildTarget,
   metadata: ArtifactBuildMetadata,
 ): rolldown.BuildOptions {
@@ -539,7 +539,7 @@ function getArtifactInputName(target: BuildTarget): string {
   }
 }
 
-function createResolvedArtifact(
+export function createResolvedArtifact(
   target: BuildTarget,
   bundle: RolldownOutput | undefined,
   metadata: ArtifactBuildMetadata,
