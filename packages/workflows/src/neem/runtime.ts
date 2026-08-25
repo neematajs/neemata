@@ -105,6 +105,18 @@ export type ResolvedExecutionWorkerPool =
     readonly taskNames: readonly string[]
   }
 
+export type ResolvedWorkflowsWorkerTopology = {
+  readonly coordinator: Required<WorkflowsWorkerPoolConfig>
+  readonly execution: readonly ResolvedExecutionWorkerPoolTopology[]
+}
+
+type ResolvedExecutionWorkerPoolTopology =
+  Required<WorkflowsWorkerPoolConfig> & {
+    readonly name: string
+    readonly activityNames?: readonly string[]
+    readonly taskNames?: readonly string[]
+  }
+
 export type WorkflowsWorkerData = {
   readonly role: WorkflowWorkerRole
   /** Which resolved execution pool this worker serves; execution role only. */
@@ -161,17 +173,12 @@ export async function resolveWorkflowsConfig<
 > {
   const workflows = await config.workflows()
   const tasks = (await config.tasks?.()) ?? []
-  const { workers } = config
-  if (workers && ('activity' in workers || 'task' in workers)) {
-    throw new Error(
-      'Workflows workers.activity and workers.task were replaced by workers.execution',
-    )
-  }
+  const workerTopology = resolveWorkflowsWorkerTopology(config.workers)
   const schedules = (await config.schedules?.()) ?? []
   const plugins = config.plugins ?? []
-  const coordinator = normalizePool(workers?.coordinator)
-  const execution = normalizeExecutionPools(
-    workers?.execution,
+  const coordinator = workerTopology.coordinator
+  const execution = resolveExecutionWorkerPools(
+    workerTopology.execution,
     workflows,
     tasks,
   )
@@ -186,6 +193,21 @@ export async function resolveWorkflowsConfig<
   }
 }
 
+export function resolveWorkflowsWorkerTopology(
+  config: WorkflowsWorkersConfig | undefined,
+): ResolvedWorkflowsWorkerTopology {
+  if (config && ('activity' in config || 'task' in config)) {
+    throw new Error(
+      'Workflows workers.activity and workers.task were replaced by workers.execution',
+    )
+  }
+
+  return {
+    coordinator: normalizePool(config?.coordinator),
+    execution: normalizeExecutionWorkerTopology(config?.execution),
+  }
+}
+
 function normalizePool<T extends WorkflowsWorkerPoolConfig>(
   config: T | undefined,
 ) {
@@ -195,14 +217,12 @@ function normalizePool<T extends WorkflowsWorkerPoolConfig>(
   })
 }
 
-function normalizeExecutionPools(
+function normalizeExecutionWorkerTopology(
   config:
     | WorkflowsExecutionWorkerPoolConfig
     | readonly WorkflowsNamedExecutionWorkerPoolConfig[]
     | undefined,
-  workflows: readonly AnyWorkflowImplementation[],
-  tasks: readonly AnyTaskImplementation[],
-): readonly ResolvedExecutionWorkerPool[] {
+): readonly ResolvedExecutionWorkerPoolTopology[] {
   let pools: readonly WorkflowsNamedExecutionWorkerPoolConfig[]
   if (Array.isArray(config)) {
     pools = config
@@ -260,6 +280,34 @@ function normalizeExecutionPools(
           `Task [${taskName}] is claimed by both workflows execution pools [${owner}] and [${pool.name}]`,
         )
       }
+      claimedTasks.set(taskName, pool.name)
+    }
+  }
+
+  return pools.map((pool) =>
+    Object.freeze({
+      ...normalizePool(pool),
+      name: pool.name,
+    }),
+  )
+}
+
+function resolveExecutionWorkerPools(
+  pools: readonly ResolvedExecutionWorkerPoolTopology[],
+  workflows: readonly AnyWorkflowImplementation[],
+  tasks: readonly AnyTaskImplementation[],
+): readonly ResolvedExecutionWorkerPool[] {
+  const claimedActivities = new Map<string, string>()
+  const claimedTasks = new Map<string, string>()
+  let catchAll: string | undefined
+  for (const pool of pools) {
+    if (pool.activityNames === undefined && pool.taskNames === undefined) {
+      catchAll = pool.name
+    }
+    for (const activityName of pool.activityNames ?? []) {
+      claimedActivities.set(activityName, pool.name)
+    }
+    for (const taskName of pool.taskNames ?? []) {
       claimedTasks.set(taskName, pool.name)
     }
   }

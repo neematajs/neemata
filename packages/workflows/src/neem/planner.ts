@@ -3,26 +3,30 @@ import { createRuntime, defineRuntimePlanner } from '@nmtjs/neem'
 import type {
   WorkflowsConfig,
   WorkflowsWorkerData,
+  WorkflowsWorkersConfig,
   WorkflowWorkerRole,
 } from './runtime.ts'
-import { resolveWorkflowsConfig } from './runtime.ts'
+import {
+  resolveWorkflowsConfig,
+  resolveWorkflowsWorkerTopology,
+} from './runtime.ts'
 
 export function createWorkflowsRuntime() {
   return createRuntime({ host: { entry: '@nmtjs/workflows/neem/host' } })
 }
 
 export function defineWorkflowsPlanner<
-  const TConfig extends WorkflowsConfig = WorkflowsConfig,
->(factory: () => TConfig | Promise<TConfig>) {
+  const TInput extends WorkflowsPlannerInput = WorkflowsPlannerInput,
+>(factory: () => TInput | Promise<TInput>) {
   return defineRuntimePlanner<typeof factory, WorkflowsWorkerData>(async () => {
-    const config = await resolveWorkflowsConfig(await factory())
-    const coordinator = createWorkerData(
-      'coordinator',
-      config.workers.coordinator,
-    )
+    const input = await factory()
+    const workers = isWorkflowsConfig(input)
+      ? (await resolveWorkflowsConfig(input)).workers
+      : resolveWorkflowsWorkerTopology(input)
+    const coordinator = createWorkerData('coordinator', workers.coordinator)
     const execution: WorkflowsWorkerData[] = []
 
-    for (const pool of config.workers.execution) {
+    for (const pool of workers.execution) {
       const threads = normalizeThreadCount('execution', pool.threads)
       for (let index = 0; index < threads; index++) {
         execution.push({ role: 'execution', pool: pool.name })
@@ -34,6 +38,17 @@ export function defineWorkflowsPlanner<
       options: factory,
     }
   })
+}
+
+export type WorkflowsPlannerInput =
+  | WorkflowsConfig
+  | WorkflowsWorkersConfig
+  | undefined
+
+function isWorkflowsConfig(
+  input: WorkflowsPlannerInput,
+): input is WorkflowsConfig {
+  return Boolean(input && 'runtime' in input && 'workflows' in input)
 }
 
 function createWorkerData(
