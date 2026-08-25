@@ -53,11 +53,20 @@ defineRuntimeWorker({
 })
 ```
 
+The Neemata application runtime implements this boundary by replacing its
+application API and dependency container while keeping gateway transports
+listening. The workflows runtime drains its current worker generation and
+starts the updated implementations in the same Neem worker thread. Vite and
+Nuxt continue to own their application module graphs and use their native HMR;
+Neem does not rebuild their app source.
+
 Config, planner, host, logger, plugin, and infrastructure artifacts retain the
 normal watcher and restart behavior. If a worker cannot accept an update, Neem
 refreshes the complete output and replaces the runtime through its existing
 reload path. The feature remains opt-in because Rolldown exposes DevEngine as
-an experimental API.
+an experimental API. For workflows, keep pool/thread topology in a small
+planner-only module; importing the executable workflow config into the planner
+correctly makes implementation edits planner changes that require a restart.
 
 ## Service integration tests
 

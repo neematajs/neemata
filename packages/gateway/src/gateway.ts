@@ -1,8 +1,19 @@
 import { randomUUID } from 'node:crypto'
 import { isTypedArray } from 'node:util/types'
 
-import type { ChildLoggerOptions, Container, Hooks, Logger } from '@nmtjs/core'
-import { anyAbortSignal, TeardownStack, withTimeout } from '@nmtjs/common'
+import type {
+  ChildLoggerOptions,
+  Container,
+  Hooks,
+  Logger,
+  Provision,
+} from '@nmtjs/core'
+import {
+  anyAbortSignal,
+  createFuture,
+  TeardownStack,
+  withTimeout,
+} from '@nmtjs/common'
 import {
   createFactoryInjectable,
   forkLogger,
@@ -18,6 +29,16 @@ import type { TransportWorker, TransportWorkerParams } from './transport.ts'
 import type { ConnectionIdentity } from './types.ts'
 import { ConnectionManager } from './connections.ts'
 import * as injectables from './injectables.ts'
+
+type ConnectionInput = {
+  data: unknown
+  injections: readonly Provision[]
+}
+
+type ConnectionCall = {
+  controller: AbortController
+  finished: Promise<void>
+}
 
 export interface GatewayOptions<
   ResolvedProcedure extends GatewayResolvedProcedure = GatewayResolvedProcedure,
@@ -61,8 +82,11 @@ export class Gateway<
    * every in-flight call even when the transport's own per-call signal
    * never fires (e.g. an abort-ignoring peer).
    */
-  private readonly connectionCalls = new Map<string, Set<AbortController>>()
+  private readonly connectionCalls = new Map<string, Set<ConnectionCall>>()
+  private readonly connectionInputs = new Map<string, ConnectionInput>()
   readonly #startedTransports = new TeardownStack()
+  private reloadBarrier: Promise<void> = Promise.resolve()
+  private pendingReloads = 0
   public options: Required<GatewayOptions<ResolvedProcedure>>
 
   constructor(options: GatewayOptions<ResolvedProcedure>) {
@@ -112,6 +136,7 @@ export class Gateway<
   }
 
   async stop() {
+    if (this.pendingReloads > 0) await this.reloadBarrier
     // Transports stop first: handlers close their physical sessions, which
     // delivers a disconnect per connection through the normal path
     const errors = await this.#startedTransports.unwind()
@@ -130,24 +155,25 @@ export class Gateway<
     }
   }
 
-  async reload(
+  reload(
     options?: Pick<
       GatewayOptions<ResolvedProcedure>,
       'api' | 'container' | 'hooks' | 'identity'
     >,
-  ) {
-    // Own the hot-swap of these options internally so callers don't reach into
-    // `this.options` directly; identity falls back to the current one.
-    if (options) {
-      this.options.api = options.api
-      this.options.container = options.container
-      this.options.hooks = options.hooks
-      this.options.identity = options.identity ?? this.options.identity
-    }
-
-    for (const connections of this.connections.connections.values()) {
-      await connections.container.dispose()
-    }
+  ): Promise<void> {
+    this.pendingReloads++
+    const reload = this.reloadBarrier.then(() => this.performReload(options))
+    // Connection callbacks wait on a non-rejecting copy so one failed reload
+    // does not poison future traffic or a later recovery reload.
+    this.reloadBarrier = reload.then(
+      () => undefined,
+      () => undefined,
+    )
+    void reload.then(
+      () => this.pendingReloads--,
+      () => this.pendingReloads--,
+    )
+    return reload
   }
 
   protected onConnect(transport: string): TransportWorkerParams['onConnect'] {
@@ -156,47 +182,63 @@ export class Gateway<
       logger.trace('Initiating new connection')
 
       const id = randomUUID()
-      const container = this.options.container.fork(Scope.Connection)
+      while (true) {
+        const barrier = this.reloadBarrier
+        if (this.pendingReloads > 0) await barrier
+        const container = this.options.container.fork(Scope.Connection)
 
-      try {
-        container.provide([
-          provision(injectables.connectionData, options.data),
-          provision(injectables.connectionId, id),
-        ])
-        container.provide(injections)
+        try {
+          container.provide([
+            provision(injectables.connectionData, options.data),
+            provision(injectables.connectionId, id),
+          ])
+          container.provide(injections)
 
-        const identity = await container.resolve(this.options.identity)
+          const identity = await container.resolve(this.options.identity)
 
-        const abortController = new AbortController()
+          // Identity resolution can yield while a reload starts. Retry under
+          // the replacement root so no new connection retains the old scope.
+          if (barrier !== this.reloadBarrier) {
+            await container.dispose()
+            continue
+          }
 
-        const connection: GatewayConnection = {
-          id,
-          identity,
-          container,
-          abortController,
+          const abortController = new AbortController()
+          const connection: GatewayConnection = {
+            id,
+            identity,
+            container,
+            abortController,
+          }
+
+          container.provide([
+            provision(injectables.connection, connection),
+            provision(
+              injectables.connectionAbortSignal,
+              abortController.signal,
+            ),
+          ])
+          this.connections.add(connection)
+          this.connectionInputs.set(id, {
+            data: options.data,
+            injections: [...injections],
+          })
+
+          logger.debug(
+            { id, identity, transportData: options.data },
+            'Connection established',
+          )
+
+          return Object.assign(connection, {
+            [Symbol.asyncDispose]: async () => {
+              await this.onDisconnect(transport)(connection.id)
+            },
+          })
+        } catch (error) {
+          logger.error({ error }, 'Error establishing connection')
+          await container.dispose()
+          throw error
         }
-
-        this.connections.add(connection)
-
-        container.provide([
-          provision(injectables.connection, connection),
-          provision(injectables.connectionAbortSignal, abortController.signal),
-        ])
-
-        logger.debug(
-          { id, identity, transportData: options.data },
-          'Connection established',
-        )
-
-        return Object.assign(connection, {
-          [Symbol.asyncDispose]: async () => {
-            await this.onDisconnect(transport)(connection.id)
-          },
-        })
-      } catch (error) {
-        logger.error({ error }, 'Error establishing connection')
-        await container.dispose()
-        throw error
       }
     }
   }
@@ -206,6 +248,7 @@ export class Gateway<
   ): TransportWorkerParams['onDisconnect'] {
     const logger = forkLogger(this.logger, undefined, undefined, { transport })
     return async (connectionId) => {
+      if (this.pendingReloads > 0) await this.reloadBarrier
       logger.debug({ connectionId }, 'Disconnecting connection')
       await this.closeConnection(connectionId)
     }
@@ -217,6 +260,7 @@ export class Gateway<
     const _logger = forkLogger(this.logger, undefined, undefined, { transport })
 
     return async (connection, procedure) => {
+      if (this.pendingReloads > 0) await this.reloadBarrier
       _logger.trace({ connectionId: connection.id, procedure }, 'Resolving RPC')
 
       return this.options.api.resolve({ connection, procedure })
@@ -227,15 +271,21 @@ export class Gateway<
     const _logger = forkLogger(this.logger, undefined, undefined, { transport })
 
     return async (connection, rpc, signal, ...injections) => {
+      if (this.pendingReloads > 0) await this.reloadBarrier
       const controller = new AbortController()
-      this.trackCall(connection.id, controller)
+      const finished = createFuture<void>()
+      const call = { controller, finished: finished.promise }
+      this.trackCall(connection.id, call)
       const callSignal = anyAbortSignal(signal, controller.signal)
 
       const container = connection.container.fork(Scope.Call)
-
-      const dispose = async () => {
-        this.untrackCall(connection.id, controller)
-        await container.dispose()
+      let disposal: Promise<void> | undefined
+      const dispose = () => {
+        disposal ??= container.dispose().finally(() => {
+          this.untrackCall(connection.id, call)
+          finished.resolve()
+        })
+        return disposal
       }
 
       try {
@@ -277,6 +327,7 @@ export class Gateway<
 
     const connection = this.connections.get(connectionId)
     this.connections.remove(connectionId)
+    this.connectionInputs.delete(connectionId)
 
     const teardown = this.teardownConnection(connection).finally(() => {
       this.closingConnections.delete(connectionId)
@@ -306,23 +357,105 @@ export class Gateway<
     }
 
     await guard(() => connection.abortController.abort())
-    await guard(() => this.abortCalls(connectionId))
+    await guard(() => {
+      this.abortCalls(connectionId)
+      this.connectionCalls.delete(connectionId)
+    })
     await guard(() => connection.container.dispose())
   }
 
-  private trackCall(connectionId: string, controller: AbortController) {
+  private async performReload(
+    options?: Pick<
+      GatewayOptions<ResolvedProcedure>,
+      'api' | 'container' | 'hooks' | 'identity'
+    >,
+  ): Promise<void> {
+    const next = {
+      api: options?.api ?? this.options.api,
+      container: options?.container ?? this.options.container,
+      hooks: options?.hooks ?? this.options.hooks,
+      identity: options?.identity ?? this.options.identity,
+    }
+    const replacements: Array<{
+      connection: GatewayConnection
+      container: Container
+      identity: string
+    }> = []
+
+    try {
+      for (const connection of this.connections.getAll()) {
+        const input = this.connectionInputs.get(connection.id)
+        if (!input) {
+          throw new Error(
+            `Cannot reload gateway connection [${connection.id}] without its connection inputs`,
+          )
+        }
+
+        const container = next.container.fork(Scope.Connection)
+        try {
+          container.provide([
+            provision(injectables.connectionData, input.data),
+            provision(injectables.connectionId, connection.id),
+            ...input.injections,
+          ])
+          const identity = await container.resolve(next.identity)
+          container.provide([
+            provision(injectables.connection, connection),
+            provision(
+              injectables.connectionAbortSignal,
+              connection.abortController.signal,
+            ),
+          ])
+          replacements.push({ connection, container, identity })
+        } catch (error) {
+          await container.dispose()
+          throw error
+        }
+      }
+
+      for (const { connection } of replacements) {
+        this.abortCalls(connection.id)
+      }
+      await Promise.all(
+        replacements.map(({ connection }) =>
+          this.waitForCallsToDrain(connection.id),
+        ),
+      )
+    } catch (error) {
+      await Promise.allSettled(
+        replacements.map(({ container }) => container.dispose()),
+      )
+      throw error
+    }
+
+    this.options.api = next.api
+    this.options.container = next.container
+    this.options.hooks = next.hooks
+    this.options.identity = next.identity
+
+    await Promise.all(
+      replacements.map(async ({ connection, container, identity }) => {
+        const previous = connection.container
+        connection.container = container
+        connection.identity = identity
+        await previous.dispose()
+      }),
+    )
+  }
+
+  private trackCall(connectionId: string, call: ConnectionCall) {
     let calls = this.connectionCalls.get(connectionId)
     if (!calls) {
       calls = new Set()
       this.connectionCalls.set(connectionId, calls)
     }
-    calls.add(controller)
+    calls.add(call)
   }
 
-  private untrackCall(connectionId: string, controller: AbortController) {
+  private untrackCall(connectionId: string, call: ConnectionCall) {
     const calls = this.connectionCalls.get(connectionId)
     if (calls) {
-      calls.delete(controller)
+      calls.delete(call)
       if (calls.size === 0) this.connectionCalls.delete(connectionId)
     }
   }
@@ -330,9 +463,21 @@ export class Gateway<
   private abortCalls(connectionId: string) {
     const calls = this.connectionCalls.get(connectionId)
     if (calls) {
-      this.connectionCalls.delete(connectionId)
-      for (const controller of calls) controller.abort()
+      for (const call of calls) call.controller.abort()
     }
+  }
+
+  private async waitForCallsToDrain(connectionId: string): Promise<void> {
+    const calls = this.connectionCalls.get(connectionId)
+    if (!calls?.size) return
+
+    await withTimeout(
+      Promise.allSettled([...calls].map((call) => call.finished)),
+      GATEWAY_TEARDOWN_STEP_TIMEOUT,
+      new Error(
+        `Connection [${connectionId}] calls did not drain before gateway reload`,
+      ),
+    )
   }
 }
 

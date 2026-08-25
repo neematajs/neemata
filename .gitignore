@@ -8,6 +8,8 @@ __screenshots__/
 test.*
 _dev/
 packages/neem/tests/e2e/.tmp/
+packages/application/tests/.tmp/
+packages/workflows/tests/.tmp/
 packages/_neem_old
 *.sock
 

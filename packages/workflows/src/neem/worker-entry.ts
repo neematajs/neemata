@@ -31,7 +31,8 @@ export function defineWorkflowsWorker<
   return defineRuntimeWorker<WorkflowsWorkerData, WorkflowsWorkerConfig>({
     definition: config,
     createRuntime(ctx) {
-      const abort = new AbortController()
+      let definition = ctx.definition
+      let abort: AbortController | undefined
       let workerLoop: Promise<void> | undefined
       let runtime: WorkflowRuntimeAdapter | undefined
       let execution: ExecutionEnvironment | undefined
@@ -44,99 +45,139 @@ export function defineWorkflowsWorker<
       // Older hosts may not observe the lifecycle promise.
       void finished.catch(() => {})
 
-      return {
-        finished,
-        async start() {
-          const config = await resolveWorkflowsConfig(ctx.definition)
-          const executionPool =
-            ctx.data.role === 'execution'
-              ? resolveExecutionWorkerPool(config, ctx.data)
-              : undefined
-          execution = new ExecutionEnvironment({
-            logger: ctx.logger,
-            label: 'Workflows',
-            plugins: config.plugins,
-          })
-          await execution.initialize()
-          await execution.lifecycleHooks.callHook(
-            ExecutionEnvironmentLifecycleHook.BeforeInitialize,
-            execution,
-          )
-          runtime = await config.runtime()
-          if (ctx.data.role === 'coordinator' && config.schedules.length > 0) {
-            if (!runtime.scheduler) {
-              throw new Error(
-                'Workflow runtime adapter does not support schedules',
-              )
-            }
-            await runtime.scheduler.reconcile(config.schedules)
+      const startGeneration = async (): Promise<undefined> => {
+        const resolved = await resolveWorkflowsConfig(definition)
+        const executionPool =
+          ctx.data.role === 'execution'
+            ? resolveExecutionWorkerPool(resolved, ctx.data)
+            : undefined
+        const generationAbort = new AbortController()
+        abort = generationAbort
+        execution = new ExecutionEnvironment({
+          logger: ctx.logger,
+          label: 'Workflows',
+          plugins: resolved.plugins,
+        })
+        await execution.initialize()
+        await execution.lifecycleHooks.callHook(
+          ExecutionEnvironmentLifecycleHook.BeforeInitialize,
+          execution,
+        )
+        runtime = await resolved.runtime()
+        if (ctx.data.role === 'coordinator' && resolved.schedules.length > 0) {
+          if (!runtime.scheduler) {
+            throw new Error(
+              'Workflow runtime adapter does not support schedules',
+            )
           }
-          await execution.lifecycleHooks.callHook(
-            ExecutionEnvironmentLifecycleHook.AfterInitialize,
-            execution,
-          )
-          workerLoop = runRoleLoop({
-            data: ctx.data,
-            runtime,
-            config,
-            executionPool,
-            container: execution.container,
-            workerId: ctx.name,
-            signal: abort.signal,
-          })
-          workerLoop.then(resolveFinished, (error: unknown) => {
+          await runtime.scheduler.reconcile(resolved.schedules)
+        }
+        await execution.lifecycleHooks.callHook(
+          ExecutionEnvironmentLifecycleHook.AfterInitialize,
+          execution,
+        )
+        const loop = runRoleLoop({
+          data: ctx.data,
+          runtime,
+          config: resolved,
+          executionPool,
+          container: execution.container,
+          workerId: ctx.name,
+          signal: generationAbort.signal,
+        })
+        workerLoop = loop
+        void loop.then(
+          () => {
+            // A reload intentionally ends one generation while the Neem
+            // worker itself remains healthy and starts the replacement.
+            if (!generationAbort.signal.aborted) resolveFinished()
+          },
+          (error: unknown) => {
+            if (generationAbort.signal.aborted) return
             ctx.logger.error(
               { err: error },
               'Neem workflows worker loop failed',
             )
             rejectFinished(error)
+          },
+        )
+        await execution.lifecycleHooks.callHook(
+          ExecutionEnvironmentLifecycleHook.Start,
+        )
+        return undefined
+      }
+
+      const stopGeneration = async (final: boolean) => {
+        abort?.abort()
+        let failure: unknown
+        const attempt = async (operation: () => unknown) => {
+          try {
+            await operation()
+          } catch (error) {
+            failure ??= error
+          }
+        }
+
+        await attempt(async () => await workerLoop)
+        if (workerLoop) {
+          await attempt(async () => {
+            await execution?.lifecycleHooks.callHook(
+              ExecutionEnvironmentLifecycleHook.Stop,
+            )
           })
-          await execution.lifecycleHooks.callHook(
-            ExecutionEnvironmentLifecycleHook.Start,
-          )
+        }
+        if (execution) {
+          await attempt(async () => {
+            await execution?.lifecycleHooks.callHook(
+              ExecutionEnvironmentLifecycleHook.BeforeDispose,
+              execution,
+            )
+          })
+        }
+        await attempt(async () => await runtime?.dispose?.())
+        if (execution) {
+          await attempt(async () => {
+            await execution?.lifecycleHooks.callHook(
+              ExecutionEnvironmentLifecycleHook.AfterDispose,
+              execution,
+            )
+          })
+          await attempt(async () => await execution?.dispose())
+        }
+
+        abort = undefined
+        workerLoop = undefined
+        runtime = undefined
+        execution = undefined
+        if (final) {
+          if (failure) rejectFinished(failure)
+          else resolveFinished()
+        }
+        if (failure) throw failure
+      }
+
+      return {
+        finished,
+        start: startGeneration,
+        async reload(nextDefinition) {
+          await stopGeneration(false)
+          definition = nextDefinition
+          try {
+            await startGeneration()
+          } catch (error) {
+            try {
+              await stopGeneration(false)
+            } catch (cleanupError) {
+              throw new AggregateError(
+                [error, cleanupError],
+                'Failed to reload workflows and clean up the replacement generation',
+              )
+            }
+            throw error
+          }
         },
         async stop() {
-          abort.abort()
-          let failure: unknown
-          const attempt = async (operation: () => unknown) => {
-            try {
-              await operation()
-            } catch (error) {
-              failure ??= error
-            }
-          }
-
-          await attempt(async () => await workerLoop)
-          if (workerLoop) {
-            await attempt(async () => {
-              await execution?.lifecycleHooks.callHook(
-                ExecutionEnvironmentLifecycleHook.Stop,
-              )
-            })
-          }
-          if (execution) {
-            await attempt(async () => {
-              await execution?.lifecycleHooks.callHook(
-                ExecutionEnvironmentLifecycleHook.BeforeDispose,
-                execution,
-              )
-            })
-          }
-          await attempt(async () => await runtime?.dispose?.())
-          if (execution) {
-            await attempt(async () => {
-              await execution?.lifecycleHooks.callHook(
-                ExecutionEnvironmentLifecycleHook.AfterDispose,
-                execution,
-              )
-            })
-            await attempt(async () => await execution?.dispose())
-          }
-
-          workerLoop = undefined
-          runtime = undefined
-          execution = undefined
-          if (failure) throw failure
+          await stopGeneration(true)
         },
       }
     },

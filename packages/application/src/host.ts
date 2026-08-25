@@ -73,6 +73,11 @@ export interface ApplicationHostOptions<
   identity?: ConnectionIdentity
 }
 
+type ActiveApplication = {
+  application: NeemataApplication
+  services: TeardownStack
+}
+
 export class ApplicationHost<
   Transports extends Record<string, ApplicationTransport> = Record<
     string,
@@ -85,6 +90,7 @@ export class ApplicationHost<
   readonly #lifecycle = new Lifecycle<
     Awaited<ReturnType<Gateway<ApplicationResolvedProcedure>['start']>>
   >('application host')
+  #activeApplication: ActiveApplication | undefined
 
   constructor(
     protected appConfig: ApplicationConfig,
@@ -93,22 +99,14 @@ export class ApplicationHost<
 
   async start() {
     return await this.#lifecycle.start(async (defer) => {
-      this.application = await this.createApplication(this.appConfig)
-      defer(() => this.application.dispose())
-
-      // Application services acquired by Start hooks unwind after the
-      // gateway has stopped accepting (connections drained) but before the
-      // application container is disposed.
-      const appServices = new TeardownStack()
-      defer(async () => {
-        const errors = await appServices.unwind()
-        if (errors.length) {
-          throw new AggregateError(
-            errors,
-            'Failed to stop application services',
-          )
-        }
-      })
+      const active = {
+        application: await this.createApplication(this.appConfig),
+        services: new TeardownStack(),
+      }
+      this.setActiveApplication(active)
+      // This resolves the current application at stop time because a hot
+      // reload may replace the initial one while transports stay alive.
+      defer(() => this.stopActiveApplication())
 
       this.transports = await this.createTransports()
       this.gateway = new Gateway({
@@ -125,14 +123,7 @@ export class ApplicationHost<
       const hosts = await this.gateway.start()
       defer(() => this.gateway.stop())
 
-      // Stop hooks pair with Start having been attempted; registered before
-      // the Start pass so effect teardowns (registered during it) run first.
-      appServices.defer(() =>
-        this.application.lifecycleHooks.callHook(
-          ExecutionEnvironmentLifecycleHook.Stop,
-        ),
-      )
-      await this.runStartHooks(appServices)
+      await this.startApplication(active)
 
       return hosts
     })
@@ -147,8 +138,11 @@ export class ApplicationHost<
    * on stop (or on a failed start) only if that hook actually ran — unlike
    * the global Stop hook list, which cannot know which Start hooks completed.
    */
-  protected async runStartHooks(appServices: TeardownStack): Promise<void> {
-    await this.application.lifecycleHooks.callHookWith(
+  protected async runStartHooks(
+    appServices: TeardownStack,
+    application = this.application,
+  ): Promise<void> {
+    await application.lifecycleHooks.callHookWith(
       async (hooks) => {
         for (const hook of hooks) {
           const teardown = await hook()
@@ -167,15 +161,82 @@ export class ApplicationHost<
   }
 
   async reloadApplication(appConfig: ApplicationConfig): Promise<void> {
-    await this.application.dispose()
+    const previous = this.#activeApplication
+    if (!previous || this.#lifecycle.state !== 'running') {
+      throw new Error('The application host must be started before reload')
+    }
+
+    const next = {
+      application: await this.createApplication(appConfig),
+      services: new TeardownStack(),
+    }
+    try {
+      await this.startApplication(next)
+      await this.gateway.reload({
+        api: next.application.api,
+        container: next.application.container,
+        hooks: next.application.lifecycleHooks,
+        identity: this.options.identity,
+      })
+    } catch (error) {
+      const cleanupErrors = await this.disposeApplication(next)
+      if (cleanupErrors.length) {
+        throw new AggregateError(
+          [error, ...cleanupErrors],
+          'Failed to reload the application and clean up the replacement',
+        )
+      }
+      throw error
+    }
+
     this.appConfig = appConfig
-    this.application = await this.createApplication(appConfig)
-    await this.gateway.reload({
-      api: this.application.api,
-      container: this.application.container,
-      hooks: this.application.lifecycleHooks,
-      identity: this.options.identity,
-    })
+    this.setActiveApplication(next)
+    const cleanupErrors = await this.disposeApplication(previous)
+    if (cleanupErrors.length) {
+      throw new AggregateError(
+        cleanupErrors,
+        'Failed to dispose the previous application after reload',
+      )
+    }
+  }
+
+  private async startApplication(active: ActiveApplication): Promise<void> {
+    // Stop hooks pair with Start having been attempted; registered before the
+    // Start pass so effect teardowns (registered during it) run first.
+    active.services.defer(() =>
+      active.application.lifecycleHooks.callHook(
+        ExecutionEnvironmentLifecycleHook.Stop,
+      ),
+    )
+    await this.runStartHooks(active.services, active.application)
+  }
+
+  private setActiveApplication(active: ActiveApplication): void {
+    this.#activeApplication = active
+    this.application = active.application
+  }
+
+  private async stopActiveApplication(): Promise<void> {
+    const active = this.#activeApplication
+    this.#activeApplication = undefined
+    if (!active) return
+
+    const errors = await this.disposeApplication(active)
+    if (errors.length) {
+      throw new AggregateError(errors, 'Failed to stop the application')
+    }
+  }
+
+  private async disposeApplication(
+    active: ActiveApplication,
+  ): Promise<unknown[]> {
+    const errors = await active.services.unwind()
+    try {
+      await active.application.dispose()
+    } catch (error) {
+      errors.push(error)
+    }
+    return errors
   }
 
   protected async createApplication(appConfig: ApplicationConfig) {
