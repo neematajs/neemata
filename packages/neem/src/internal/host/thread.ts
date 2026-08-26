@@ -138,7 +138,7 @@ export class ThreadController {
   ): Promise<WorkerHmrResult> {
     const url =
       update.type === 'Patch'
-        ? `${pathToFileURL(resolve(this.artifact.outDir, update.filename)).href}?seq=${update.seq}`
+        ? pathToFileURL(resolve(this.artifact.outDir, update.filename)).href
         : undefined
     const result = await this.hmr.request({ type: 'hmr-update', update, url })
     return (
