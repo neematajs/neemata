@@ -4,11 +4,12 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  readdir,
   rename,
   rm,
   writeFile,
 } from 'node:fs/promises'
-import { resolve } from 'node:path'
+import { basename, resolve } from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
@@ -47,6 +48,39 @@ describe('Neem workflows HMR', () => {
     )
     expect(updatedStarts).toHaveLength(2)
     expect(updatedStarts.map((event) => event.generation)).toStrictEqual([2, 2])
+  }, 60_000)
+
+  it('removes the workflows HMR adapter from production artifacts', async () => {
+    const fixture = await createFixture()
+    fixtures.push(fixture)
+    const neem = spawnNeem([
+      'build',
+      '--config',
+      fixture.configFile,
+      '--outDir',
+      fixture.outDir,
+    ])
+    spawned.push(neem)
+
+    const exit = await neem.waitForExit()
+    expect(exit.code, neem.diagnostics()).toBe(0)
+
+    const files = await listJavaScriptFiles(fixture.outDir)
+    const output = (
+      await Promise.all(files.map((file) => readFile(file, 'utf8')))
+    ).join('\n')
+    expect(files.map((file) => basename(file))).not.toEqual(
+      expect.arrayContaining([expect.stringContaining('hmr')]),
+    )
+    for (const marker of [
+      '__neem_accept_worker__',
+      'workflowsHmrAdapter',
+      'ReloadableWorkflowsRuntime',
+      'Workflows runtime was not created by its HMR adapter',
+      'import.meta.hot',
+    ]) {
+      expect(output.includes(marker), marker).toBe(false)
+    }
   }, 60_000)
 })
 
@@ -115,7 +149,7 @@ function spawnNeem(args: readonly string[]) {
     | undefined
   child.stdout?.on('data', (chunk) => (stdout += String(chunk)))
   child.stderr?.on('data', (chunk) => (stderr += String(chunk)))
-  const exit = new Promise<typeof exitState>((resolveExit) => {
+  const exit = new Promise<NonNullable<typeof exitState>>((resolveExit) => {
     child.once('exit', (code, signal) => {
       exitState = { code, signal }
       resolveExit(exitState)
@@ -126,6 +160,7 @@ function spawnNeem(args: readonly string[]) {
     diagnostics: () => `stdout:\n${stdout}\nstderr:\n${stderr}`,
     exited: () => exitState,
     stdout: () => stdout,
+    waitForExit: () => exit,
     async stop() {
       if (!exitState) child.kill('SIGTERM')
       if (!(await settlesWithin(exit, 2_000)) && !exitState) {
@@ -134,6 +169,16 @@ function spawnNeem(args: readonly string[]) {
       await exit
     },
   }
+}
+
+async function listJavaScriptFiles(dir: string): Promise<string[]> {
+  const files: string[] = []
+  for (const entry of await readdir(dir, { withFileTypes: true })) {
+    const file = resolve(dir, entry.name)
+    if (entry.isDirectory()) files.push(...(await listJavaScriptFiles(file)))
+    else if (entry.isFile() && entry.name.endsWith('.js')) files.push(file)
+  }
+  return files
 }
 
 function readRuntimeEvents(neem: SpawnedNeem): RuntimeEvent[] {

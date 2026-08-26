@@ -1,20 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import { isTypedArray } from 'node:util/types'
 
-import type {
-  ChildLoggerOptions,
-  Container,
-  Hooks,
-  Logger,
-  Provision,
-} from '@nmtjs/core'
-import {
-  anyAbortSignal,
-  createFuture,
-  OperationQueue,
-  TeardownStack,
-  withTimeout,
-} from '@nmtjs/common'
+import type { ChildLoggerOptions, Container, Hooks, Logger } from '@nmtjs/core'
+import { anyAbortSignal, TeardownStack, withTimeout } from '@nmtjs/common'
 import {
   createFactoryInjectable,
   forkLogger,
@@ -30,16 +18,6 @@ import type { TransportWorker, TransportWorkerParams } from './transport.ts'
 import type { ConnectionIdentity } from './types.ts'
 import { ConnectionManager } from './connections.ts'
 import * as injectables from './injectables.ts'
-
-type ConnectionInput = {
-  data: unknown
-  injections: readonly Provision[]
-}
-
-type ConnectionCall = {
-  controller: AbortController
-  finished: Promise<void>
-}
 
 export interface GatewayOptions<
   ResolvedProcedure extends GatewayResolvedProcedure = GatewayResolvedProcedure,
@@ -83,10 +61,8 @@ export class Gateway<
    * every in-flight call even when the transport's own per-call signal
    * never fires (e.g. an abort-ignoring peer).
    */
-  private readonly connectionCalls = new Map<string, Set<ConnectionCall>>()
-  private readonly connectionInputs = new Map<string, ConnectionInput>()
+  private readonly connectionCalls = new Map<string, Set<AbortController>>()
   readonly #startedTransports = new TeardownStack()
-  private readonly reloads = new OperationQueue()
   public options: Required<GatewayOptions<ResolvedProcedure>>
 
   constructor(options: GatewayOptions<ResolvedProcedure>) {
@@ -136,7 +112,6 @@ export class Gateway<
   }
 
   async stop() {
-    if (this.reloads.busy) await this.reloads.waitIdle()
     // Transports stop first: handlers close their physical sessions, which
     // delivers a disconnect per connection through the normal path
     const errors = await this.#startedTransports.unwind()
@@ -155,83 +130,53 @@ export class Gateway<
     }
   }
 
-  reload(
-    options?: Pick<
-      GatewayOptions<ResolvedProcedure>,
-      'api' | 'container' | 'hooks' | 'identity'
-    >,
-  ): Promise<void> {
-    return this.reloads.run(() => this.performReload(options))
-  }
-
   protected onConnect(transport: string): TransportWorkerParams['onConnect'] {
     const logger = forkLogger(this.logger, undefined, undefined, { transport })
     return async (options, ...injections) => {
       logger.trace('Initiating new connection')
 
       const id = randomUUID()
-      while (true) {
-        if (this.reloads.busy) await this.reloads.waitIdle()
-        const rootContainer = this.options.container
-        const identityDefinition = this.options.identity
-        const container = rootContainer.fork(Scope.Connection)
+      const container = this.options.container.fork(Scope.Connection)
 
-        try {
-          container.provide([
-            provision(injectables.connectionData, options.data),
-            provision(injectables.connectionId, id),
-          ])
-          container.provide(injections)
+      try {
+        container.provide([
+          provision(injectables.connectionData, options.data),
+          provision(injectables.connectionId, id),
+        ])
+        container.provide(injections)
 
-          const identity = await container.resolve(identityDefinition)
+        const identity = await container.resolve(this.options.identity)
 
-          // Identity resolution can yield while a reload starts or completes.
-          // Retry so no new connection retains the superseded application.
-          if (
-            this.reloads.busy ||
-            rootContainer !== this.options.container ||
-            identityDefinition !== this.options.identity
-          ) {
-            await container.dispose()
-            continue
-          }
+        const abortController = new AbortController()
 
-          const abortController = new AbortController()
-          const connection: GatewayConnection = {
-            id,
-            identity,
-            container,
-            abortController,
-          }
-
-          container.provide([
-            provision(injectables.connection, connection),
-            provision(
-              injectables.connectionAbortSignal,
-              abortController.signal,
-            ),
-          ])
-          this.connections.add(connection)
-          this.connectionInputs.set(id, {
-            data: options.data,
-            injections: [...injections],
-          })
-
-          logger.debug(
-            { id, identity, transportData: options.data },
-            'Connection established',
-          )
-
-          return Object.assign(connection, {
-            [Symbol.asyncDispose]: async () => {
-              await this.onDisconnect(transport)(connection.id)
-            },
-          })
-        } catch (error) {
-          logger.error({ error }, 'Error establishing connection')
-          await container.dispose()
-          throw error
+        const connection: GatewayConnection = {
+          id,
+          identity,
+          container,
+          abortController,
         }
+
+        this.connections.add(connection)
+
+        container.provide([
+          provision(injectables.connection, connection),
+          provision(injectables.connectionAbortSignal, abortController.signal),
+        ])
+
+        logger.debug(
+          { id, identity, transportData: options.data },
+          'Connection established',
+        )
+
+        return Object.assign(connection, {
+          [Symbol.asyncDispose]: async () => {
+            await this.onDisconnect(transport)(connection.id)
+          },
+        })
+      } catch (error) {
+        logger.error({ error }, 'Error establishing connection')
+        await container.dispose()
+        throw error
       }
     }
   }
@@ -241,7 +186,6 @@ export class Gateway<
   ): TransportWorkerParams['onDisconnect'] {
     const logger = forkLogger(this.logger, undefined, undefined, { transport })
     return async (connectionId) => {
-      if (this.reloads.busy) await this.reloads.waitIdle()
       logger.debug({ connectionId }, 'Disconnecting connection')
       await this.closeConnection(connectionId)
     }
@@ -253,7 +197,6 @@ export class Gateway<
     const _logger = forkLogger(this.logger, undefined, undefined, { transport })
 
     return async (connection, procedure) => {
-      if (this.reloads.busy) await this.reloads.waitIdle()
       _logger.trace({ connectionId: connection.id, procedure }, 'Resolving RPC')
 
       return this.options.api.resolve({ connection, procedure })
@@ -264,21 +207,15 @@ export class Gateway<
     const _logger = forkLogger(this.logger, undefined, undefined, { transport })
 
     return async (connection, rpc, signal, ...injections) => {
-      if (this.reloads.busy) await this.reloads.waitIdle()
       const controller = new AbortController()
-      const finished = createFuture<void>()
-      const call = { controller, finished: finished.promise }
-      this.trackCall(connection.id, call)
+      this.trackCall(connection.id, controller)
       const callSignal = anyAbortSignal(signal, controller.signal)
 
       const container = connection.container.fork(Scope.Call)
-      let disposal: Promise<void> | undefined
-      const dispose = () => {
-        disposal ??= container.dispose().finally(() => {
-          this.untrackCall(connection.id, call)
-          finished.resolve()
-        })
-        return disposal
+
+      const dispose = async () => {
+        this.untrackCall(connection.id, controller)
+        await container.dispose()
       }
 
       try {
@@ -320,7 +257,6 @@ export class Gateway<
 
     const connection = this.connections.get(connectionId)
     this.connections.remove(connectionId)
-    this.connectionInputs.delete(connectionId)
 
     const teardown = this.teardownConnection(connection).finally(() => {
       this.closingConnections.delete(connectionId)
@@ -350,123 +286,23 @@ export class Gateway<
     }
 
     await guard(() => connection.abortController.abort())
-    await guard(() => {
-      this.abortCalls(connectionId)
-      this.connectionCalls.delete(connectionId)
-    })
+    await guard(() => this.abortCalls(connectionId))
     await guard(() => connection.container.dispose())
   }
 
-  private async performReload(
-    options?: Pick<
-      GatewayOptions<ResolvedProcedure>,
-      'api' | 'container' | 'hooks' | 'identity'
-    >,
-  ): Promise<void> {
-    const next = {
-      api: options?.api ?? this.options.api,
-      container: options?.container ?? this.options.container,
-      hooks: options?.hooks ?? this.options.hooks,
-      identity: options?.identity ?? this.options.identity,
-    }
-    const replacements: Array<{
-      connection: GatewayConnection
-      container: Container
-      identity: string
-    }> = []
-
-    try {
-      for (const connection of this.connections.getAll()) {
-        const input = this.connectionInputs.get(connection.id)
-        if (!input) {
-          throw new Error(
-            `Cannot reload gateway connection [${connection.id}] without its connection inputs`,
-          )
-        }
-
-        const container = next.container.fork(Scope.Connection)
-        try {
-          container.provide([
-            provision(injectables.connectionData, input.data),
-            provision(injectables.connectionId, connection.id),
-            ...input.injections,
-          ])
-          const identity = await container.resolve(next.identity)
-          container.provide([
-            provision(injectables.connection, connection),
-            provision(
-              injectables.connectionAbortSignal,
-              connection.abortController.signal,
-            ),
-          ])
-          replacements.push({ connection, container, identity })
-        } catch (error) {
-          await container.dispose()
-          throw error
-        }
-      }
-
-      for (const { connection } of replacements) {
-        this.abortCalls(connection.id)
-      }
-      await Promise.all(
-        replacements.map(({ connection }) =>
-          this.waitForCallsToDrain(connection.id),
-        ),
-      )
-    } catch (error) {
-      await Promise.allSettled(
-        replacements.map(({ container }) => container.dispose()),
-      )
-      throw error
-    }
-
-    this.options.api = next.api
-    this.options.container = next.container
-    this.options.hooks = next.hooks
-    this.options.identity = next.identity
-
-    const previousScopes = replacements.map(
-      ({ connection, container, identity }) => {
-        const previous = connection.container
-        connection.container = container
-        connection.identity = identity
-        return { connectionId: connection.id, container: previous }
-      },
-    )
-
-    // The replacement is committed. Old-scope cleanup must not make callers
-    // roll back the application that the gateway now serves.
-    const cleanupResults = await Promise.allSettled(
-      previousScopes.map(({ container }) => container.dispose()),
-    )
-    for (let i = 0; i < cleanupResults.length; i++) {
-      const result = cleanupResults[i]
-      if (result.status === 'rejected') {
-        this.logger.error(
-          {
-            error: result.reason,
-            connectionId: previousScopes[i].connectionId,
-          },
-          'Error disposing previous connection scope after gateway reload',
-        )
-      }
-    }
-  }
-
-  private trackCall(connectionId: string, call: ConnectionCall) {
+  private trackCall(connectionId: string, controller: AbortController) {
     let calls = this.connectionCalls.get(connectionId)
     if (!calls) {
       calls = new Set()
       this.connectionCalls.set(connectionId, calls)
     }
-    calls.add(call)
+    calls.add(controller)
   }
 
-  private untrackCall(connectionId: string, call: ConnectionCall) {
+  private untrackCall(connectionId: string, controller: AbortController) {
     const calls = this.connectionCalls.get(connectionId)
     if (calls) {
-      calls.delete(call)
+      calls.delete(controller)
       if (calls.size === 0) this.connectionCalls.delete(connectionId)
     }
   }
@@ -474,21 +310,9 @@ export class Gateway<
   private abortCalls(connectionId: string) {
     const calls = this.connectionCalls.get(connectionId)
     if (calls) {
-      for (const call of calls) call.controller.abort()
+      this.connectionCalls.delete(connectionId)
+      for (const controller of calls) controller.abort()
     }
-  }
-
-  private async waitForCallsToDrain(connectionId: string): Promise<void> {
-    const calls = this.connectionCalls.get(connectionId)
-    if (!calls?.size) return
-
-    await withTimeout(
-      Promise.allSettled([...calls].map((call) => call.finished)),
-      GATEWAY_TEARDOWN_STEP_TIMEOUT,
-      new Error(
-        `Connection [${connectionId}] calls did not drain before gateway reload`,
-      ),
-    )
   }
 }
 

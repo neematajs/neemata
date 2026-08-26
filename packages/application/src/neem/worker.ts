@@ -26,12 +26,10 @@ export type {
 
 export class NeemataApplicationRuntime<
   THost extends AnyApplicationHostDefinition = AnyApplicationHostDefinition,
-> implements NeemRuntime<THost> {
+> implements NeemRuntime {
   readonly host: ApplicationHost<THost['transports']>
-  private definition: THost
 
   constructor(readonly ctx: NeemataRuntimeContext<THost>) {
-    this.definition = ctx.definition
     this.host = createApplicationHost(ctx.definition.application, {
       name: ctx.name,
       logger: ctx.logger,
@@ -50,22 +48,6 @@ export class NeemataApplicationRuntime<
   async stop() {
     return this.host.stop()
   }
-
-  async reload(definition: THost) {
-    if (
-      definition.identity !== this.definition.identity ||
-      !haveSameTransports(definition.transports, this.definition.transports)
-    ) {
-      // The running gateway can replace application state, but changing its
-      // wire boundary requires Neem to recreate and re-advertise the worker.
-      throw new Error(
-        'Application identity or transport changes require a full runtime reload',
-      )
-    }
-
-    await this.host.reload(definition)
-    this.definition = definition
-  }
 }
 
 export function defineNeemataWorker<
@@ -76,6 +58,15 @@ export function defineNeemataWorker<
     createRuntime(ctx) {
       return new NeemataApplicationRuntime(ctx)
     },
+    ...((import.meta as ImportMeta & { readonly hot?: unknown }).hot
+      ? {
+          async hmr() {
+            const { createNeemataHmrAdapter } =
+              await import('../internal/neem-hmr.ts')
+            return createNeemataHmrAdapter<THost>()
+          },
+        }
+      : {}),
   })
 }
 
@@ -97,15 +88,4 @@ function createHostTransportConfig<
   }
 
   return config
-}
-
-function haveSameTransports(
-  next: Record<string, ApplicationTransport>,
-  current: Record<string, ApplicationTransport>,
-): boolean {
-  const keys = Object.keys(next)
-  return (
-    keys.length === Object.keys(current).length &&
-    keys.every((key) => next[key] === current[key])
-  )
 }

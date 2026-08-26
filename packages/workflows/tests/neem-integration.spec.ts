@@ -24,6 +24,7 @@ import {
   implementTask,
   implementWorkflow,
 } from '../src/index.ts'
+import { workflowsHmrAdapter } from '../src/neem/hmr.ts'
 import workflowsHost from '../src/neem/host.ts'
 import {
   createWorkflowsRuntime,
@@ -562,7 +563,7 @@ describe('workflows Neem integration', () => {
     const initial = createConfig('v1')
     const worker = defineWorkflowsWorker(initial)
     const channel = new MessageChannel()
-    const runtime = await worker.createRuntime({
+    const runtime = await workflowsHmrAdapter.createRuntime(worker, {
       mode: 'development',
       name: 'workflows:execution:hmr',
       data: { role: 'execution', pool: 'execution' },
@@ -585,7 +586,10 @@ describe('workflows Neem integration', () => {
       })
       expect(firstSnapshot.run.output).toStrictEqual({ text: 'v1:first' })
 
-      await runtime.reload?.(createConfig('v2'))
+      const next = defineWorkflowsWorker(createConfig('v2'))
+      await expect(
+        workflowsHmrAdapter.apply(runtime, worker, next),
+      ).resolves.toStrictEqual({ accepted: true })
       await new Promise<void>((resolve) => setImmediate(resolve))
       expect(finished).toBe(false)
 

@@ -8,7 +8,7 @@ import type { NeemRuntimePlanner, NeemRuntimePlannerContext } from '@nmtjs/neem'
 import { createLogger, createValueInjectable } from '@nmtjs/core'
 import { createTransport } from '@nmtjs/gateway'
 import { t } from '@nmtjs/type'
-import { describe, expect, expectTypeOf, it, vi } from 'vitest'
+import { describe, expect, expectTypeOf, it } from 'vitest'
 
 import type { ApplicationTransport } from '../src/config.ts'
 import type { ApplicationHostDefinition } from '../src/host.ts'
@@ -119,18 +119,9 @@ describe('Neem application entrypoints', () => {
       await created.start()
 
       expect(created.host.gateway.options.identity).toBe(identity)
-      const reload = vi.spyOn(created.host, 'reload').mockResolvedValue()
-      await created.reload(host)
-      expect(reload).toHaveBeenCalledWith(host)
-
-      const changedBoundary = defineApplicationHost(app, {
-        transports: { http: transport },
-        identity: createValueInjectable('changed-identity'),
-      })
-      await expect(created.reload(changedBoundary)).rejects.toThrow(
-        'Application identity or transport changes require a full runtime reload',
-      )
-      expect(reload).toHaveBeenCalledTimes(1)
+      expect(created).not.toHaveProperty('reload')
+      expect(created.host).not.toHaveProperty('reload')
+      expect(created.host.gateway).not.toHaveProperty('reload')
     } finally {
       await created.stop()
       channel.port1.close()
