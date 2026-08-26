@@ -25,6 +25,9 @@ concurrency:
 jobs:
   regression:
     if: github.event_name != 'schedule'
+    permissions:
+      contents: read
+      pull-requests: write
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -138,6 +141,52 @@ jobs:
           path: ${{ runner.temp }}/benchmark-regression
           if-no-files-found: warn
           retention-days: 90
+
+      - name: Publish pull request comment
+        if: >-
+          always() &&
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository
+        continue-on-error: true
+        uses: actions/github-script@v7
+        env:
+          SUMMARY_PATH: ${{ runner.temp }}/benchmark-regression/summary.md
+          ARTIFACT_NAME: benchmark-regression-${{ github.run_id }}-${{ github.run_attempt }}
+        with:
+          script: |
+            const fs = require('node:fs')
+            const marker = '<!-- benchmark-regression-report -->'
+            const summary = fs.existsSync(process.env.SUMMARY_PATH)
+              ? fs.readFileSync(process.env.SUMMARY_PATH, 'utf8').trim()
+              : 'Benchmark execution ended before a comparison summary was produced.'
+            const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`
+            const body = [
+              marker,
+              summary,
+              '',
+              `[Workflow run](${runUrl}) · [Raw per-round JSON reports](${runUrl}#artifacts) (\`${process.env.ARTIFACT_NAME}\`)`,
+            ].join('\n')
+            const issue = {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+            }
+            const comments = await github.paginate(github.rest.issues.listComments, issue)
+            const existing = comments.find(
+              (comment) =>
+                comment.user?.login === 'github-actions[bot]' && comment.body?.includes(marker),
+            )
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: issue.owner,
+                repo: issue.repo,
+                comment_id: existing.id,
+                body,
+              })
+            } else {
+              await github.rest.issues.createComment({ ...issue, body })
+            }
 
   integration:
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.run_integration)

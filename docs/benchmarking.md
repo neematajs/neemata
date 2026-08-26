@@ -88,6 +88,11 @@ definition is present on the base branch. This prevents comparisons between diff
 workloads. When no benchmark-capable base exists yet, the CI summary still shows the
 candidate median for every case in expandable suite sections.
 
+For same-repository pull requests, the workflow also creates one benchmark report
+comment and updates it on later runs, so results stay visible without accumulating
+duplicate comments. Fork pull requests retain the job summary and artifact because
+their workflow tokens are intentionally read-only.
+
 ## Evidence and maintenance
 
 Every CI run uploads normalized reports, the full comparison JSON, and a concise job
