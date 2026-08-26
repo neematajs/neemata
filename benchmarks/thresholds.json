@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "minimumRounds": 3,
+  "categories": {
+    "runtime": {
+      "warnPercent": 8,
+      "failPercent": 15,
+      "maximumRelativeMarginOfError": 5,
+      "enforce": true
+    },
+    "type-count": {
+      "warnPercent": 3,
+      "failPercent": 5,
+      "enforce": true
+    },
+    "type-time": {
+      "warnPercent": 10,
+      "failPercent": 20,
+      "enforce": true
+    },
+    "type-memory": {
+      "warnPercent": 10,
+      "failPercent": 20,
+      "enforce": true
+    },
+    "size-bytes": {
+      "warnPercent": 2,
+      "failPercent": 5,
+      "enforce": true
+    },
+    "size-files": {
+      "warnPercent": 5,
+      "failPercent": 10,
+      "enforce": false
+    },
+    "integration": {
+      "warnPercent": 15,
+      "failPercent": 25,
+      "maximumRelativeMarginOfError": 15,
+      "enforce": false
+    }
+  }
+}

@@ -1,0 +1,221 @@
+name: Benchmark
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: '23 3 * * *'
+  workflow_dispatch:
+    inputs:
+      run_integration:
+        description: 'Run the service-backed integration benchmark suite'
+        type: boolean
+        required: true
+        default: true
+
+concurrency:
+  group: benchmark-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  regression:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout candidate
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+
+      - name: Resolve comparison base
+        id: comparison-base
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if [[ -n "$BASE_SHA" && ! "$BASE_SHA" =~ ^0+$ ]]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+            echo "sha=$BASE_SHA" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout comparison base
+        if: steps.comparison-base.outputs.available == 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.comparison-base.outputs.sha }}
+          path: .benchmark/base
+
+      - name: Detect benchmark baseline
+        id: benchmark-base
+        shell: bash
+        run: |
+          if [[ -f .benchmark/base/scripts/benchmarks/run.mjs && -f .benchmark/base/benchmarks/thresholds.json ]]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Use canonical Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: Get pnpm store directory
+        shell: bash
+        run: echo "STORE_PATH=$(pnpm store path --silent)" >> "$GITHUB_ENV"
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: benchmark-${{ runner.os }}-${{ runner.arch }}-node-${{ hashFiles('.node-version') }}-pnpm-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            benchmark-${{ runner.os }}-${{ runner.arch }}-node-
+
+      - name: Install candidate dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install base dependencies
+        if: steps.benchmark-base.outputs.available == 'true'
+        run: pnpm --dir .benchmark/base install --frozen-lockfile
+
+      - name: Build candidate
+        run: pnpm exec tsc -b tsconfig.build.json --pretty false
+
+      - name: Build base
+        if: steps.benchmark-base.outputs.available == 'true'
+        run: pnpm --dir .benchmark/base exec tsc -b tsconfig.build.json --pretty false
+
+      - name: Run paired regression benchmarks
+        shell: bash
+        run: |
+          args=(
+            --head "$GITHUB_WORKSPACE"
+            --output "$RUNNER_TEMP/benchmark-regression"
+            --rounds 3
+            --suites runtime,types,sizes
+            --enforce
+          )
+          if [[ "${{ steps.benchmark-base.outputs.available }}" == "true" ]]; then
+            args+=(
+              --base "$GITHUB_WORKSPACE/.benchmark/base"
+              --thresholds "$GITHUB_WORKSPACE/.benchmark/base/benchmarks/thresholds.json"
+            )
+          fi
+          node scripts/benchmarks/paired.mjs "${args[@]}"
+
+      - name: Publish job summary
+        if: always()
+        shell: bash
+        run: |
+          if [[ -f "$RUNNER_TEMP/benchmark-regression/summary.md" ]]; then
+            cat "$RUNNER_TEMP/benchmark-regression/summary.md" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Benchmark execution ended before a comparison summary was produced." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload benchmark evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-regression-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/benchmark-regression
+          if-no-files-found: warn
+          retention-days: 90
+
+  integration:
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.run_integration)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      redis:
+        image: redis:8-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      valkey:
+        image: valkey/valkey:9-alpine
+        ports:
+          - 6380:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      postgres:
+        image: postgres:17-alpine
+        ports:
+          - 5432:5432
+        env:
+          POSTGRES_USER: neemata
+          POSTGRES_PASSWORD: neemata
+          POSTGRES_DB: neemata
+        options: >-
+          --health-cmd "pg_isready -U neemata"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Use canonical Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: Get pnpm store directory
+        shell: bash
+        run: echo "STORE_PATH=$(pnpm store path --silent)" >> "$GITHUB_ENV"
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: benchmark-${{ runner.os }}-${{ runner.arch }}-node-${{ hashFiles('.node-version') }}-pnpm-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            benchmark-${{ runner.os }}-${{ runner.arch }}-node-
+
+      - name: Install and build
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm exec tsc -b tsconfig.build.json --pretty false
+
+      - name: Run service-backed benchmarks
+        env:
+          NMTJS_REQUIRE_SERVICE_TESTS: '1'
+          POSTGRES_URL: postgres://neemata:neemata@localhost:5432/neemata
+          REDIS_URL: redis://localhost:6379
+          VALKEY_URL: redis://localhost:6380
+        run: node scripts/benchmarks/run.mjs integration --output "$RUNNER_TEMP/benchmark-integration/integration.json"
+
+      - name: Upload benchmark history
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-integration-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/benchmark-integration
+          if-no-files-found: error
+          retention-days: 90
