@@ -15,7 +15,7 @@
     "test:browser:client": "vitest run -c packages/client/vitest.browser.config.ts",
     "test:benchmark-tools": "node --test scripts/benchmarks/*.test.mjs",
     "test:dev": "vitest dev --ui --coverage",
-    "bench": "pnpm build && pnpm run bench:runtime && pnpm run bench:types && pnpm run bench:sizes",
+    "bench": "pnpm run bench:runtime && pnpm run bench:types && pnpm run bench:sizes",
     "bench:runtime": "node scripts/benchmarks/run.mjs runtime",
     "bench:types": "node scripts/benchmarks/run.mjs types",
     "bench:sizes": "node scripts/benchmarks/run.mjs sizes",

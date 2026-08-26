@@ -14,13 +14,16 @@ regressions without comparing unrelated CI machines.
 - `integration` measures loopback transports and service-backed Postgres, Redis, and
   Valkey paths. It is scheduled and informational because sockets and services add noise.
 
-Run the fast suites, including the required build, with:
+Run the fast suites against the currently built package artifacts with:
 
 ```sh
 pnpm bench
 ```
 
-After an existing build, individual suites can be run with:
+The benchmark command does not build packages. Run `pnpm build` separately when
+published artifacts are absent or stale.
+
+Individual suites can be run with:
 
 ```sh
 pnpm bench:runtime
