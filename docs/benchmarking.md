@@ -8,7 +8,8 @@ unrelated CI machines.
 - `runtime` contains deterministic in-memory benchmarks for protocol codecs, dependency
   injection, the application API pipeline, and workflow storage operations.
 - `integration` measures loopback transports and service-backed Postgres, Redis, and
-  Valkey paths. It is scheduled and informational because sockets and services add noise.
+  Valkey paths. It runs on pull requests but remains informational because sockets and
+  services add noise.
 
 Run the deterministic runtime benchmarks directly through Vitest with:
 
@@ -44,8 +45,8 @@ pnpm bench:integration
 ```
 
 Without the service variables, service-backed cases skip cleanly; loopback cases still
-run. CI runs the complete integration suite every day and retains the raw report for 90
-days.
+run. CI runs the complete integration suite for every pull request and retains the raw
+report for 90 days.
 
 ## Pull request comparisons
 
@@ -79,6 +80,9 @@ For same-repository pull requests, the workflow also creates one benchmark repor
 comment and updates it on later runs, so results stay visible without accumulating
 duplicate comments. Fork pull requests retain the job summary and artifact because
 their workflow tokens are intentionally read-only.
+
+When a pull request receives a new commit, GitHub cancels its older Test and Benchmark
+workflow runs so only checks for the latest revision continue consuming runners.
 
 ## Evidence and maintenance
 

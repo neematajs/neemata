@@ -8,8 +8,6 @@ on:
   push:
     branches:
       - main
-  schedule:
-    - cron: '23 3 * * *'
   workflow_dispatch:
     inputs:
       run_integration:
@@ -24,7 +22,6 @@ concurrency:
 
 jobs:
   regression:
-    if: github.event_name != 'schedule'
     permissions:
       contents: read
       pull-requests: write
@@ -189,7 +186,7 @@ jobs:
             }
 
   integration:
-    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.run_integration)
+    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.run_integration)
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     services:
