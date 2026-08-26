@@ -27,6 +27,38 @@ jobs:
       pull-requests: write
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    services:
+      redis:
+        image: redis:8-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      valkey:
+        image: valkey/valkey:9-alpine
+        ports:
+          - 6380:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      postgres:
+        image: postgres:17-alpine
+        ports:
+          - 5432:5432
+        env:
+          POSTGRES_USER: neemata
+          POSTGRES_PASSWORD: neemata
+          POSTGRES_DB: neemata
+        options: >-
+          --health-cmd "pg_isready -U neemata"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - name: Checkout candidate
         uses: actions/checkout@v4
@@ -101,12 +133,22 @@ jobs:
 
       - name: Run paired regression benchmarks
         shell: bash
+        env:
+          NMTJS_REQUIRE_SERVICE_TESTS: '1'
+          POSTGRES_URL: postgres://neemata:neemata@localhost:5432/neemata
+          REDIS_URL: redis://localhost:6379
+          RUN_INTEGRATION: ${{ github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.run_integration) }}
+          VALKEY_URL: redis://localhost:6380
         run: |
+          suites="runtime"
+          if [[ "$RUN_INTEGRATION" == "true" ]]; then
+            suites="runtime,integration"
+          fi
           args=(
             --head "$GITHUB_WORKSPACE"
             --output "$RUNNER_TEMP/benchmark-regression"
             --rounds 3
-            --suites runtime
+            --suites "$suites"
             --enforce
           )
           if [[ "${{ steps.benchmark-base.outputs.available }}" == "true" ]]; then
@@ -184,87 +226,3 @@ jobs:
             } else {
               await github.rest.issues.createComment({ ...issue, body })
             }
-
-  integration:
-    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.run_integration)
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    services:
-      redis:
-        image: redis:8-alpine
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-      valkey:
-        image: valkey/valkey:9-alpine
-        ports:
-          - 6380:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-      postgres:
-        image: postgres:17-alpine
-        ports:
-          - 5432:5432
-        env:
-          POSTGRES_USER: neemata
-          POSTGRES_PASSWORD: neemata
-          POSTGRES_DB: neemata
-        options: >-
-          --health-cmd "pg_isready -U neemata"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Use canonical Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version-file: .node-version
-
-      - name: Install pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          run_install: false
-
-      - name: Get pnpm store directory
-        shell: bash
-        run: echo "STORE_PATH=$(pnpm store path --silent)" >> "$GITHUB_ENV"
-
-      - name: Cache pnpm store
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.STORE_PATH }}
-          key: benchmark-${{ runner.os }}-${{ runner.arch }}-node-${{ hashFiles('.node-version') }}-pnpm-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: |
-            benchmark-${{ runner.os }}-${{ runner.arch }}-node-
-
-      - name: Install and build
-        run: |
-          pnpm install --frozen-lockfile
-          pnpm exec tsc -b tsconfig.build.json --pretty false
-
-      - name: Run service-backed benchmarks
-        env:
-          NMTJS_REQUIRE_SERVICE_TESTS: '1'
-          POSTGRES_URL: postgres://neemata:neemata@localhost:5432/neemata
-          REDIS_URL: redis://localhost:6379
-          VALKEY_URL: redis://localhost:6380
-        run: node scripts/benchmarks/run.js integration --output "$RUNNER_TEMP/benchmark-integration/integration.json"
-
-      - name: Upload benchmark history
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: benchmark-integration-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/benchmark-integration
-          if-no-files-found: error
-          retention-days: 90

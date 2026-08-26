@@ -248,7 +248,7 @@ describe('Neem compiler', () => {
       'runner-entry.js': outputChunk('runner-entry.js', graph.hostRunnerEntry),
     })
     for (
-      let index = 1;
+      let index = 0;
       index < rolldownMock.watch.mock.results.length;
       index++
     ) {
