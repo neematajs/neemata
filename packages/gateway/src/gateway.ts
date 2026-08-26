@@ -426,14 +426,32 @@ export class Gateway<
     this.options.hooks = next.hooks
     this.options.identity = next.identity
 
-    await Promise.all(
-      replacements.map(async ({ connection, container, identity }) => {
+    const previousScopes = replacements.map(
+      ({ connection, container, identity }) => {
         const previous = connection.container
         connection.container = container
         connection.identity = identity
-        await previous.dispose()
-      }),
+        return { connectionId: connection.id, container: previous }
+      },
     )
+
+    // The replacement is committed. Old-scope cleanup must not make callers
+    // roll back the application that the gateway now serves.
+    const cleanupResults = await Promise.allSettled(
+      previousScopes.map(({ container }) => container.dispose()),
+    )
+    for (let i = 0; i < cleanupResults.length; i++) {
+      const result = cleanupResults[i]
+      if (result.status === 'rejected') {
+        this.logger.error(
+          {
+            error: result.reason,
+            connectionId: previousScopes[i].connectionId,
+          },
+          'Error disposing previous connection scope after gateway reload',
+        )
+      }
+    }
   }
 
   private trackCall(connectionId: string, call: ConnectionCall) {

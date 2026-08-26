@@ -57,6 +57,35 @@ describe('Gateway reload', () => {
     await setup.dispose()
   })
 
+  it('keeps the replacement committed when old scope cleanup fails', async () => {
+    const setup = createReloadableGateway(createValueInjectable('old'))
+    await setup.gateway.start()
+    const connection = await setup.params().onConnect({ data: {} })
+    const previousContainer = connection.container
+    const dispose = vi
+      .spyOn(previousContainer, 'dispose')
+      .mockRejectedValueOnce(new Error('cleanup failed'))
+
+    await expect(
+      setup.gateway.reload({
+        ...setup.gateway.options,
+        container: setup.nextContainer,
+        identity: createValueInjectable('new'),
+      }),
+    ).resolves.toBeUndefined()
+
+    expect(dispose).toHaveBeenCalledOnce()
+    expect(setup.gateway.options.container).toBe(setup.nextContainer)
+    expect(connection.identity).toBe('new')
+    expect(connection.container.find(Scope.Global)).toBe(setup.nextContainer)
+
+    dispose.mockRestore()
+    await previousContainer.dispose()
+    await connection[Symbol.asyncDispose]()
+    await setup.gateway.stop()
+    await setup.dispose()
+  })
+
   it('retries a connection created while reload is in progress', async () => {
     let identityStarted!: () => void
     let releaseIdentity!: () => void
