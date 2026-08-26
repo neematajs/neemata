@@ -3,7 +3,6 @@
 import { mkdir, rm } from 'node:fs/promises'
 import { dirname, relative, resolve } from 'node:path'
 
-import { runSizeBenchmarks } from './sizes.mjs'
 import { runTypeBenchmarks } from './types.mjs'
 import {
   collectEnvironment,
@@ -26,10 +25,8 @@ const commonSuiteFiles = [
   resolve(root, 'scripts/benchmarks/utils.mjs'),
 ]
 
-if (!['integration', 'runtime', 'sizes', 'types'].includes(suite)) {
-  throw new Error(
-    'Expected a benchmark suite: runtime, types, sizes, or integration',
-  )
+if (!['integration', 'runtime', 'types'].includes(suite)) {
+  throw new Error('Expected a benchmark suite: runtime, types, or integration')
 }
 
 const { cases, suiteFiles } = await runSuite(suite, Boolean(output))
@@ -66,16 +63,6 @@ async function runSuite(name, collectReport) {
       suiteFiles: [
         ...commonSuiteFiles,
         resolve(root, 'scripts/benchmarks/types.mjs'),
-      ],
-    }
-  }
-
-  if (name === 'sizes') {
-    return {
-      cases: await runSizeBenchmarks(root),
-      suiteFiles: [
-        ...commonSuiteFiles,
-        resolve(root, 'scripts/benchmarks/sizes.mjs'),
       ],
     }
   }

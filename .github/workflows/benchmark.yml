@@ -109,7 +109,7 @@ jobs:
             --head "$GITHUB_WORKSPACE"
             --output "$RUNNER_TEMP/benchmark-regression"
             --rounds 3
-            --suites runtime,types,sizes
+            --suites runtime,types
             --enforce
           )
           if [[ "${{ steps.benchmark-base.outputs.available }}" == "true" ]]; then

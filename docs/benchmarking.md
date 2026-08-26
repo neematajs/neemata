@@ -1,7 +1,7 @@
 # Benchmarking
 
-Neemata's benchmark system detects performance, type-complexity, and published-size
-regressions without comparing unrelated CI machines.
+Neemata's benchmark system detects performance and type-complexity regressions without
+comparing unrelated CI machines.
 
 ## Suites
 
@@ -9,8 +9,6 @@ regressions without comparing unrelated CI machines.
   injection, the application API pipeline, and workflow storage operations.
 - `types` generates representative linear, branch, parallel, and map workflow programs
   and records TypeScript type counts, instantiations, check time, total time, and memory.
-- `sizes` records the raw bytes, per-file gzip bytes, and file count of each package's
-  published file set after a build.
 - `integration` measures loopback transports and service-backed Postgres, Redis, and
   Valkey paths. It is scheduled and informational because sockets and services add noise.
 
@@ -28,7 +26,6 @@ Individual suites can be run with:
 ```sh
 pnpm bench:runtime
 pnpm bench:types
-pnpm bench:sizes
 ```
 
 Local benchmark commands print results, run once, and exit without writing report files.
@@ -79,8 +76,8 @@ false regression failure.
 
 Thresholds live in `benchmarks/thresholds.json`. Pull requests always use the file from
 the base revision, so a candidate cannot loosen its own gate. Runtime, deterministic
-type counts, compiler timings, compiler memory, and package bytes have separate budgets.
-Integration and package file-count changes remain informational.
+type counts, compiler timings, and compiler memory have separate budgets. Integration
+changes remain informational.
 
 Benchmark source and configuration files are hashed into each report. When a pull
 request changes a benchmark definition, that suite becomes `PENDING` until the changed
