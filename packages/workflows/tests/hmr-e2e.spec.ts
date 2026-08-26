@@ -15,6 +15,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 type RuntimeEvent = { event: string; [key: string]: unknown }
 type SpawnedNeem = ReturnType<typeof spawnNeem>
 
+const runtimeEventPrefix = 'NEEM_RUNTIME_EVENT '
 const fixtures: Array<{ cleanup: () => Promise<void> }> = []
 const spawned: SpawnedNeem[] = []
 
@@ -27,18 +28,21 @@ describe('Neem workflows HMR', () => {
   it('rotates worker generations without rebuilding planner topology', async () => {
     const fixture = await createFixture()
     fixtures.push(fixture)
-    const neem = spawnNeem(
-      ['dev', '--config', fixture.configFile, '--outDir', fixture.outDir],
-      { env: { NEEM_RUNTIME_EVENTS_FILE: fixture.eventsFile } },
-    )
+    const neem = spawnNeem([
+      'dev',
+      '--config',
+      fixture.configFile,
+      '--outDir',
+      fixture.outDir,
+    ])
     spawned.push(neem)
 
-    await waitForGeneration(fixture.eventsFile, 'v1', 1, 2, neem)
+    await waitForGeneration('v1', 1, 2, neem)
     await replaceInFile(fixture.markerFile, "'v1'", "'v2'")
-    await waitForGeneration(fixture.eventsFile, 'v2', 2, 2, neem)
+    await waitForGeneration('v2', 2, 2, neem)
     await new Promise((resolve) => setTimeout(resolve, 250))
 
-    const updatedStarts = (await readRuntimeEvents(fixture.eventsFile)).filter(
+    const updatedStarts = readRuntimeEvents(neem).filter(
       (event) => event.event === 'workflows:start' && event.marker === 'v2',
     )
     expect(updatedStarts).toHaveLength(2)
@@ -59,7 +63,6 @@ async function createFixture() {
     configFile: resolve(fixtureDir, 'neem.config.ts'),
     markerFile: resolve(fixtureDir, 'marker.ts'),
     outDir: resolve(dir, '.neem'),
-    eventsFile: resolve(dir, 'events.jsonl'),
     cleanup: () => rm(dir, { recursive: true, force: true }),
   }
 }
@@ -76,15 +79,14 @@ async function replaceInFile(
 }
 
 async function waitForGeneration(
-  file: string,
   marker: string,
   generation: number,
   count: number,
   neem: SpawnedNeem,
 ): Promise<RuntimeEvent[]> {
   return waitFor(
-    async () => {
-      const events = (await readRuntimeEvents(file)).filter(
+    () => {
+      const events = readRuntimeEvents(neem).filter(
         (event) =>
           event.event === 'workflows:start' &&
           event.marker === marker &&
@@ -97,15 +99,12 @@ async function waitForGeneration(
   )
 }
 
-function spawnNeem(
-  args: readonly string[],
-  options: { env?: NodeJS.ProcessEnv } = {},
-) {
+function spawnNeem(args: readonly string[]) {
   const child = spawn(
     process.execPath,
     [resolve(import.meta.dirname, '../../neem/bin/neem.js'), ...args],
     {
-      env: { ...process.env, NODE_ENV: 'test', ...options.env },
+      env: { ...process.env, NODE_ENV: 'test' },
       stdio: ['ignore', 'pipe', 'pipe'],
     },
   )
@@ -126,6 +125,7 @@ function spawnNeem(
   return {
     diagnostics: () => `stdout:\n${stdout}\nstderr:\n${stderr}`,
     exited: () => exitState,
+    stdout: () => stdout,
     async stop() {
       if (!exitState) child.kill('SIGTERM')
       if (!(await settlesWithin(exit, 2_000)) && !exitState) {
@@ -136,15 +136,16 @@ function spawnNeem(
   }
 }
 
-async function readRuntimeEvents(file: string): Promise<RuntimeEvent[]> {
-  const content = await readFile(file, 'utf8').catch((error) => {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return ''
-    throw error
-  })
-  return content
+function readRuntimeEvents(neem: SpawnedNeem): RuntimeEvent[] {
+  return neem
+    .stdout()
     .split('\n')
-    .filter(Boolean)
-    .map((line) => JSON.parse(line) as RuntimeEvent)
+    .slice(0, -1)
+    .filter((line) => line.startsWith(runtimeEventPrefix))
+    .map(
+      (line) =>
+        JSON.parse(line.slice(runtimeEventPrefix.length)) as RuntimeEvent,
+    )
 }
 
 async function updateFileAtomically(
