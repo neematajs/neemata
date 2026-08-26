@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
-import { rm } from 'node:fs/promises'
-import { relative, resolve } from 'node:path'
+import { mkdir, rm } from 'node:fs/promises'
+import { dirname, relative, resolve } from 'node:path'
 
 import { runSizeBenchmarks } from './sizes.mjs'
 import { runTypeBenchmarks } from './types.mjs'
@@ -20,10 +20,7 @@ import {
 const args = parseArguments(process.argv.slice(2))
 const suite = args._[0]
 const root = resolve(args.root || process.cwd())
-const output = resolve(
-  root,
-  args.output || `benchmark-results/${suite || 'unknown'}.json`,
-)
+const output = args.output ? resolve(root, args.output) : undefined
 const commonSuiteFiles = [
   resolve(root, 'scripts/benchmarks/run.mjs'),
   resolve(root, 'scripts/benchmarks/utils.mjs'),
@@ -35,28 +32,34 @@ if (!['integration', 'runtime', 'sizes', 'types'].includes(suite)) {
   )
 }
 
-const { cases, suiteFiles } = await runSuite(suite)
-if (cases.length === 0)
+const { cases, suiteFiles } = await runSuite(suite, Boolean(output))
+if (cases?.length === 0)
   throw new Error(`Benchmark suite ${suite} produced no cases`)
 
-const report = {
-  schemaVersion: 1,
-  suite,
-  generatedAt: new Date().toISOString(),
-  environment: await collectEnvironment(root),
-  source: {
-    commit: gitCommit(root),
-    suiteHash: await hashFiles(root, suiteFiles),
-  },
-  cases,
+if (output) {
+  if (!cases) throw new Error(`Benchmark suite ${suite} produced no report`)
+  const report = {
+    schemaVersion: 1,
+    suite,
+    generatedAt: new Date().toISOString(),
+    environment: await collectEnvironment(root),
+    source: {
+      commit: gitCommit(root),
+      suiteHash: await hashFiles(root, suiteFiles),
+    },
+    cases,
+  }
+
+  await writeJson(output, report)
+  console.log(
+    `Benchmark report written to ${toPosixPath(relative(root, output))}`,
+  )
+} else {
+  if (cases) printLocalResults(suite, cases)
+  console.log(`Benchmark suite ${suite} completed; no report was written.`)
 }
 
-await writeJson(output, report)
-console.log(
-  `Benchmark report written to ${toPosixPath(relative(root, output))}`,
-)
-
-async function runSuite(name) {
+async function runSuite(name, collectReport) {
   if (name === 'types') {
     return {
       cases: await runTypeBenchmarks(root),
@@ -81,21 +84,24 @@ async function runSuite(name) {
   const config = integration
     ? 'vitest.bench.integration.config.ts'
     : 'vitest.bench.config.ts'
+  const vitestArguments = [
+    'exec',
+    'vitest',
+    'bench',
+    '--run',
+    '--config',
+    config,
+  ]
+  if (!collectReport) {
+    await runCommand('pnpm', vitestArguments, { cwd: root })
+    return { cases: undefined, suiteFiles: [] }
+  }
+
+  await mkdir(dirname(output), { recursive: true })
   const rawOutput = `${output}.vitest.json`
-  await runCommand(
-    'pnpm',
-    [
-      'exec',
-      'vitest',
-      'bench',
-      '--run',
-      '--config',
-      config,
-      '--outputJson',
-      rawOutput,
-    ],
-    { cwd: root },
-  )
+  await runCommand('pnpm', [...vitestArguments, '--outputJson', rawOutput], {
+    cwd: root,
+  })
 
   const rawReport = await readJson(rawOutput)
   await rm(rawOutput, { force: true })
@@ -110,6 +116,18 @@ async function runSuite(name) {
   )
   suiteFiles.push(...commonSuiteFiles, resolve(root, config))
   return { cases, suiteFiles }
+}
+
+function printLocalResults(name, cases) {
+  const formatter = new Intl.NumberFormat('en-US', {
+    maximumFractionDigits: 6,
+  })
+  console.log(`\n${name} benchmark results`)
+  for (const benchmarkCase of cases) {
+    console.log(
+      `- ${benchmarkCase.name}: ${formatter.format(benchmarkCase.value)} ${benchmarkCase.unit}`,
+    )
+  }
 }
 
 function normalizeVitestReport(report, integration) {

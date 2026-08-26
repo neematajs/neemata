@@ -28,8 +28,15 @@ pnpm bench:types
 pnpm bench:sizes
 ```
 
-Reports are written under `benchmark-results/`, which is intentionally ignored by Git.
-All benchmark scripts run once and exit; they do not enter Vitest's watcher mode.
+Local benchmark commands print results, run once, and exit without writing report files.
+CI and other jobs opt into normalized JSON persistence with `--output`; repository-local
+outputs conventionally belong under the ignored `benchmark-results/` directory.
+Paired local comparisons likewise use temporary reports unless an output directory is
+requested explicitly.
+
+```sh
+node scripts/benchmarks/run.mjs runtime --output benchmark-results/runtime.json
+```
 
 ## Integration benchmarks
 

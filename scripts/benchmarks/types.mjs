@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
 /** @type {Array<readonly [string, () => string]>} */
@@ -22,8 +22,17 @@ export async function runTypeBenchmarks(root) {
     root,
     'packages/workflows/bench/.generated-types',
   )
+  await rm(generatedDirectory, { force: true, recursive: true })
   await mkdir(generatedDirectory, { recursive: true })
 
+  try {
+    return await collectTypeBenchmarkCases(root, generatedDirectory)
+  } finally {
+    await rm(generatedDirectory, { force: true, recursive: true })
+  }
+}
+
+async function collectTypeBenchmarkCases(root, generatedDirectory) {
   const cases = []
   for (const [name, createSource] of CASES) {
     const sourcePath = resolve(generatedDirectory, `${name}.ts`)
