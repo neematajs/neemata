@@ -56,7 +56,25 @@ void test('marks changed benchmark definitions as baseline pending', async () =>
 
   assert.equal(result.failed, false)
   assert.equal(result.comparison.results[0].status, 'pending')
+  assert.equal(result.comparison.results[0].baseMedian, 100)
+  assert.equal(result.comparison.results[0].headMedian, 200)
   assert.match(result.comparison.results[0].reason, /definition changed/)
+})
+
+void test('shows candidate medians when no base suite exists', async () => {
+  const result = await compareScenario({
+    base: [],
+    head: [101, 103, 102],
+  })
+
+  assert.equal(result.failed, false)
+  assert.equal(result.comparison.results[0].status, 'pending')
+  assert.equal(result.comparison.results[0].baseMedian, undefined)
+  assert.equal(result.comparison.results[0].headMedian, 102)
+  assert.match(result.summary, /Benchmark candidate baseline/)
+  assert.match(result.summary, /Runtime \(1 cases\)/)
+  assert.match(result.summary, /\| case \| 102 ms\/op \|/)
+  assert.doesNotMatch(result.summary, /without a confirmed regression/)
 })
 
 void test('marks imprecise runtime measurements as unstable', async () => {

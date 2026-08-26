@@ -29,6 +29,7 @@ pnpm bench:sizes
 ```
 
 Reports are written under `benchmark-results/`, which is intentionally ignored by Git.
+All benchmark scripts run once and exit; they do not enter Vitest's watcher mode.
 
 ## Integration benchmarks
 
@@ -74,7 +75,8 @@ Integration and package file-count changes remain informational.
 Benchmark source and configuration files are hashed into each report. When a pull
 request changes a benchmark definition, that suite becomes `PENDING` until the changed
 definition is present on the base branch. This prevents comparisons between different
-workloads.
+workloads. When no benchmark-capable base exists yet, the CI summary still shows the
+candidate median for every case in expandable suite sections.
 
 ## Evidence and maintenance
 

@@ -123,6 +123,9 @@ jobs:
         run: |
           if [[ -f "$RUNNER_TEMP/benchmark-regression/summary.md" ]]; then
             cat "$RUNNER_TEMP/benchmark-regression/summary.md" >> "$GITHUB_STEP_SUMMARY"
+            artifact_name="benchmark-regression-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+            printf '\nRaw per-round JSON reports: [`%s`](https://github.com/%s/actions/runs/%s#artifacts).\n' \
+              "$artifact_name" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" >> "$GITHUB_STEP_SUMMARY"
           else
             echo "Benchmark execution ended before a comparison summary was produced." >> "$GITHUB_STEP_SUMMARY"
           fi

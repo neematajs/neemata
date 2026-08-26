@@ -78,6 +78,12 @@ function compareSuite(suite, reports, thresholds) {
       const head = headCases[round].get(id)
       if (base && head) paired.push({ base, head })
     }
+    const availableBaseValues = baseCases
+      .map((cases) => cases.get(id)?.value)
+      .filter(Number.isFinite)
+    const availableHeadValues = headCases
+      .map((cases) => cases.get(id)?.value)
+      .filter(Number.isFinite)
 
     const pendingReason =
       reports.base.length === 0
@@ -92,9 +98,12 @@ function compareSuite(suite, reports, thresholds) {
 
     if (pendingReason) {
       results.push({
+        baseMedian: median(availableBaseValues),
         category: representative.category,
+        headMedian: median(availableHeadValues),
         id,
         name: representative.name,
+        rounds: availableHeadValues.length,
         status: 'pending',
         suite,
         unit: representative.unit,
@@ -251,14 +260,27 @@ function countStatuses(results) {
 
 function renderSummary(results, headReports, enforce) {
   const counts = countStatuses(results)
-  const outcome = counts.fail
-    ? `failed with ${counts.fail} regression${counts.fail === 1 ? '' : 's'}`
-    : 'completed without a confirmed regression'
+  const baselineInitialization =
+    results.length > 0 &&
+    results.every(
+      (result) =>
+        result.status === 'pending' &&
+        result.reason === 'No base benchmark suite is available yet',
+    )
+  const outcome = baselineInitialization
+    ? 'recorded candidate measurements; no base revision is available for comparison'
+    : counts.fail
+      ? `failed with ${counts.fail} regression${counts.fail === 1 ? '' : 's'}`
+      : 'completed without a confirmed regression'
   const environment = headReports[0]?.environment
   const lines = [
-    '# Benchmark regression report',
+    baselineInitialization
+      ? '# Benchmark candidate baseline'
+      : '# Benchmark regression report',
     '',
-    `Benchmark comparison ${outcome}${enforce ? '.' : ' (shadow mode).'}`,
+    baselineInitialization
+      ? `Benchmark run ${outcome}.`
+      : `Benchmark comparison ${outcome}${enforce ? '.' : ' (shadow mode).'}`,
     '',
     environment
       ? `Environment: ${environment.platform}/${environment.architecture}, Node ${environment.node}, ${environment.cpu}.`
@@ -269,6 +291,20 @@ function renderSummary(results, headReports, enforce) {
       .join(', ')}.`,
     '',
   ]
+
+  if (baselineInitialization) {
+    const measuredRounds = Math.max(...results.map((result) => result.rounds))
+    lines.push(
+      `This run measured the candidate ${measuredRounds} time${measuredRounds === 1 ? '' : 's'}. The values below are per-case medians; no regression decision was made.`,
+      '',
+    )
+    appendCandidateSuites(lines, results)
+    lines.push(
+      'The next run whose base revision contains this benchmark system can report base/head changes and enforce thresholds.',
+      '',
+    )
+    return `${lines.join('\n')}\n`
+  }
 
   const notable = results.filter((result) => result.status !== 'pass')
   if (notable.length === 0) {
@@ -293,6 +329,40 @@ function renderSummary(results, headReports, enforce) {
   }
   lines.push('')
   return `${lines.join('\n')}\n`
+}
+
+function appendCandidateSuites(lines, results) {
+  const suiteOrder = ['runtime', 'types', 'sizes', 'integration']
+  const grouped = Map.groupBy(results, (result) => result.suite)
+  const suites = [...grouped.keys()].sort(
+    (left, right) => suiteOrder.indexOf(left) - suiteOrder.indexOf(right),
+  )
+
+  for (const suite of suites) {
+    const suiteResults = grouped.get(suite)
+    lines.push(
+      '<details>',
+      `<summary><strong>${suiteLabel(suite)} (${suiteResults.length} cases)</strong></summary>`,
+      '',
+      '| Benchmark | Candidate median |',
+      '| --- | ---: |',
+    )
+    for (const result of suiteResults) {
+      lines.push(
+        `| ${escapeCell(result.name)} | ${formatValue(result.headMedian, result.unit)} |`,
+      )
+    }
+    lines.push('', '</details>', '')
+  }
+}
+
+function suiteLabel(suite) {
+  return {
+    integration: 'Integration',
+    runtime: 'Runtime',
+    sizes: 'Published package sizes',
+    types: 'TypeScript complexity',
+  }[suite]
 }
 
 function statusLabel(status) {

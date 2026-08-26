@@ -84,7 +84,16 @@ async function runSuite(name) {
   const rawOutput = `${output}.vitest.json`
   await runCommand(
     'pnpm',
-    ['exec', 'vitest', 'bench', '--config', config, '--outputJson', rawOutput],
+    [
+      'exec',
+      'vitest',
+      'bench',
+      '--run',
+      '--config',
+      config,
+      '--outputJson',
+      rawOutput,
+    ],
     { cwd: root },
   )
 
