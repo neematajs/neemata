@@ -5,6 +5,7 @@ import { GatewayInjectables as injectables } from '@nmtjs/gateway'
 import { createProtocolBlobReference, ServerMessageType } from '@nmtjs/protocol'
 import { describe, expect, it } from 'vitest'
 
+import { DEFAULT_BLOB_UPLOAD_WINDOW } from '../../../src/neemata/ws/session.ts'
 import {
   STREAM_CREDIT_VIOLATION_REASON,
   STREAM_IDLE_TIMEOUT_REASON,
@@ -502,6 +503,9 @@ describe('Upload stream flow control', () => {
     await flush()
 
     expect(sentOfType(ServerMessageType.ClientBlobPull).length).toBe(1)
+    expect(
+      sentOfType(ServerMessageType.ClientBlobPull)[0].rest.readUInt32LE(0),
+    ).toBe(DEFAULT_BLOB_UPLOAD_WINDOW)
     const aborts = sentOfType(ServerMessageType.ClientBlobAbort)
     expect(aborts.length).toBe(1)
     expect(aborts[0].id).toBe(7)

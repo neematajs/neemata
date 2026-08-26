@@ -23,6 +23,8 @@ import { neemataWebSocket } from '@nmtjs/transports/neemata/ws'
 import { t } from '@nmtjs/type'
 import { afterEach, describe, expect, it } from 'vitest'
 
+import { DEFAULT_BLOB_UPLOAD_WINDOW } from '../../../src/neemata/ws/session.ts'
+
 /**
  * End-to-end flow control suite: a real Gateway behind the real uWS transport
  * on an ephemeral loopback port, consumed by the real client stack over TCP.
@@ -455,11 +457,12 @@ describe('stream flow control over a real WS transport', () => {
   })
 
   it('paces a blob upload to a slow server consumer and delivers it intact', async () => {
-    const BLOB_SIZE = 8 * 65536
+    const BLOB_SIZE = 2 * DEFAULT_BLOB_UPLOAD_WINDOW
     const pattern = buildPattern(BLOB_SIZE)
     let pushedBytes = 0
     let grantedBytes = 0
     let maxPullSize = 0
+    const pullSizes: number[] = []
     let serverConsumed = 0
 
     // counts wire-level credit traffic on the client: grants received
@@ -472,8 +475,10 @@ describe('stream flow control over a real WS transport', () => {
           pushedBytes += event.byteLength ?? 0
         }
         if (event.direction === 'incoming' && event.action === 'pull') {
-          grantedBytes += event.byteLength ?? 0
-          maxPullSize = Math.max(maxPullSize, event.byteLength ?? 0)
+          const size = event.byteLength ?? 0
+          pullSizes.push(size)
+          grantedBytes += size
+          maxPullSize = Math.max(maxPullSize, size)
         }
       },
     })
@@ -526,7 +531,7 @@ describe('stream flow control over a real WS transport', () => {
     // kernel buffering is in the measurement path — every granted byte was
     // answered, and not one byte more was pushed
     expect(pushedBytes).toBe(grantedBytes)
-    expect(pushedBytes).toBeGreaterThan(0)
+    expect(pushedBytes).toBe(DEFAULT_BLOB_UPLOAD_WINDOW)
     expect(pushedBytes).toBeLessThan(BLOB_SIZE)
     // outstanding grants are bounded by the server-side stream buffers
     // (readable + writable high-water marks plus one in-flight grant) — the
@@ -538,6 +543,9 @@ describe('stream flow control over a real WS transport', () => {
 
     expect(result).toEqual({ bytes: BLOB_SIZE, ok: true })
     expect(pushedBytes).toBe(BLOB_SIZE)
+    expect(pullSizes[0]).toBe(DEFAULT_BLOB_UPLOAD_WINDOW)
+    expect(pullSizes.slice(1).every((size) => size >= 512 * 1024)).toBe(true)
+    expect(pullSizes.length).toBeLessThan(BLOB_SIZE / PULL_SIZE)
   })
 
   it('aborts a download instead of corrupting it when uWS drops a frame', async () => {

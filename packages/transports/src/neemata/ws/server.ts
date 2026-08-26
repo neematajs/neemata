@@ -29,8 +29,8 @@ export const WS_PENDING_OPEN_TTL = 10_000
 
 /**
  * Smallest inbound frame the Neemata protocol needs the host to accept: the
- * session engine grants upload credits in 64KiB chunks, and each frame
- * carries a small protocol header on top. Declared as a registration
+ * client upload pump keeps individual frames at roughly 64KiB, and each
+ * frame carries a small protocol header on top. Declared as a registration
  * requirement so a host-wide `webSocket.maxPayloadLength` below it fails at
  * start instead of killing every blob upload at runtime.
  */

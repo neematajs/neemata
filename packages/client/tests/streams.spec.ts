@@ -1,5 +1,9 @@
 import type { ProtocolBlobMetadata } from '@nmtjs/protocol'
-import { ServerMessageType } from '@nmtjs/protocol'
+import {
+  ClientMessageType,
+  ProtocolBlob,
+  ServerMessageType,
+} from '@nmtjs/protocol'
 import { ProtocolServerStream } from '@nmtjs/protocol/client'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -329,14 +333,157 @@ describe('ServerStreams', () => {
 })
 
 describe('createStreamLayer', () => {
-  it('propagates server abort reasons to blob stream consumers', async () => {
-    const core = Object.assign(new EventEmitter(), {
+  const createCore = () =>
+    Object.assign(new EventEmitter(), {
       messageContext: {},
-      protocol: { encodeMessage: vi.fn(() => new Uint8Array([0])) },
+      protocol: {
+        encodeMessage: vi.fn(
+          (_context, type, payload) => ({ type, payload }) as any,
+        ),
+      },
       send: vi.fn(async () => {}),
       emitStreamEvent: vi.fn(),
       emitClientEvent: vi.fn(),
     })
+
+  it('spends one byte-credit grant across multiple bounded upload frames', async () => {
+    const core = createCore()
+    const layer = createStreamLayer(core as any)
+    const granted = 2 * 65535 + 17
+    const stream = layer.addClientStream(
+      ProtocolBlob.from(createReadable([new Uint8Array(granted)]), metadata),
+    )
+
+    core.emit('message', {
+      type: ServerMessageType.ClientBlobPull,
+      streamId: stream.id,
+      size: granted,
+    })
+
+    await vi.waitFor(() => expect(core.send).toHaveBeenCalledTimes(3))
+
+    const pushes = core.protocol.encodeMessage.mock.calls.filter(
+      ([, type]) => type === ClientMessageType.ClientBlobPush,
+    )
+    expect(pushes).toHaveLength(3)
+    expect(
+      pushes.reduce((total, call) => total + call[2].chunk.byteLength, 0),
+    ).toBe(granted)
+    expect(
+      Math.max(...pushes.map((call) => call[2].chunk.byteLength)),
+    ).toBeLessThanOrEqual(65535)
+  })
+
+  it('accumulates grants behind one pump and emits one terminal frame', async () => {
+    const core = createCore()
+    const layer = createStreamLayer(core as any)
+    const stream = layer.addClientStream(
+      ProtocolBlob.from(createReadable([new Uint8Array(100_000)]), metadata),
+    )
+
+    core.emit('message', {
+      type: ServerMessageType.ClientBlobPull,
+      streamId: stream.id,
+      size: 65535,
+    })
+    core.emit('message', {
+      type: ServerMessageType.ClientBlobPull,
+      streamId: stream.id,
+      size: 65535,
+    })
+
+    await vi.waitFor(() => {
+      expect(
+        core.protocol.encodeMessage.mock.calls.filter(
+          ([, type]) => type === ClientMessageType.ClientBlobEnd,
+        ),
+      ).toHaveLength(1)
+    })
+
+    const pushes = core.protocol.encodeMessage.mock.calls.filter(
+      ([, type]) => type === ClientMessageType.ClientBlobPush,
+    )
+    expect(
+      pushes.reduce((total, call) => total + call[2].chunk.byteLength, 0),
+    ).toBe(100_000)
+    expect(() => layer.clientStreams.get(stream.id)).toThrow('Stream not found')
+  })
+
+  it('skips empty source chunks without spending credit or aborting', async () => {
+    const core = createCore()
+    const layer = createStreamLayer(core as any)
+    const stream = layer.addClientStream(
+      ProtocolBlob.from(
+        createReadable([new Uint8Array(0), new Uint8Array([1, 2, 3])]),
+        metadata,
+      ),
+    )
+
+    core.emit('message', {
+      type: ServerMessageType.ClientBlobPull,
+      streamId: stream.id,
+      size: 10,
+    })
+
+    await vi.waitFor(() => {
+      expect(
+        core.protocol.encodeMessage.mock.calls.filter(
+          ([, type]) => type === ClientMessageType.ClientBlobEnd,
+        ),
+      ).toHaveLength(1)
+    })
+
+    const pushes = core.protocol.encodeMessage.mock.calls.filter(
+      ([, type]) => type === ClientMessageType.ClientBlobPush,
+    )
+    expect(pushes).toHaveLength(1)
+    expect(pushes[0][2].chunk).toEqual(new Uint8Array([1, 2, 3]))
+    expect(
+      core.protocol.encodeMessage.mock.calls.filter(
+        ([, type]) => type === ClientMessageType.ClientBlobAbort,
+      ),
+    ).toHaveLength(0)
+  })
+
+  it('does not echo End when a peer abort settles the pending upload read', async () => {
+    const cancel = vi.fn()
+    const pull = vi.fn(() => new Promise<never>(() => {}))
+    const source = new ReadableStream<ArrayBufferView>({ pull, cancel })
+    const core = createCore()
+    const layer = createStreamLayer(core as any)
+    const stream = layer.addClientStream(ProtocolBlob.from(source, metadata))
+
+    core.emit('message', {
+      type: ServerMessageType.ClientBlobPull,
+      streamId: stream.id,
+      size: 65535,
+    })
+    await vi.waitFor(() => expect(pull).toHaveBeenCalled())
+
+    core.emit('message', {
+      type: ServerMessageType.ClientBlobAbort,
+      streamId: stream.id,
+      reason: 'server rejected upload',
+    })
+
+    await vi.waitFor(() => expect(cancel).toHaveBeenCalledTimes(1))
+    expect(core.send).not.toHaveBeenCalled()
+  })
+
+  it('forwards a registered server blob source when it is consumed', async () => {
+    const core = createCore()
+    const layer = createStreamLayer(core as any)
+    const { blob } = layer.addServerBlobStream(metadata, {
+      source: createReadable([new Uint8Array([1, 2]), new Uint8Array([3, 4])]),
+    })
+
+    await expect(layer.consumeServerBlob(blob).bytes()).resolves.toEqual(
+      new Uint8Array([1, 2, 3, 4]),
+    )
+  })
+
+  it('propagates server abort reasons to blob stream consumers', async () => {
+    const core = createCore()
 
     const layer = createStreamLayer(core as any)
     const { blob, streamId } = layer.addServerBlobStream(metadata)

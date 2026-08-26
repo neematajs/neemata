@@ -65,6 +65,9 @@ class StreamFlowError extends Error {}
 export const DEFAULT_WS_HEARTBEAT_INTERVAL = 15000
 export const DEFAULT_WS_HEARTBEAT_TIMEOUT = 5000
 export const DEFAULT_STREAM_IDLE_TIMEOUT = 30_000
+export const DEFAULT_BLOB_UPLOAD_WINDOW = 1024 * 1024
+const BLOB_UPLOAD_REFILL_SIZE = DEFAULT_BLOB_UPLOAD_WINDOW / 2
+const DEFAULT_BLOB_CHUNK_SIZE = 65535
 // Node clamps larger timer delays to 1ms, which would invert a large credit
 // window into an immediate timeout.
 const MAX_TIMER_DELAY = 2 ** 31 - 1
@@ -588,6 +591,36 @@ export class WsSessionEngine {
         return streamId
       },
       addClientStream: ({ streamId, callId, metadata }) => {
+        let initialGrant = true
+        let pendingRefill = 0
+
+        const grant = (size: number) => {
+          // Record the grant before it goes on the wire so a push racing in
+          // can never be flagged as a credit violation.
+          this.blobStreams.grantClientStream(connectionId, streamId, size)
+          const sent = this.send(
+            session,
+            protocol.encodeMessage(context, ServerMessageType.ClientBlobPull, {
+              streamId,
+              size,
+            }),
+          )
+          if (sent === 'dropped') {
+            // Phantom credit would stall both sides because the client never
+            // received the grant it needs to continue its upload pump.
+            this.blobStreams.revokeClientStreamGrant(
+              connectionId,
+              streamId,
+              size,
+            )
+            this.blobStreams.abortClientStream(
+              connectionId,
+              streamId,
+              STREAM_TRANSPORT_DROP_REASON,
+            )
+          }
+        }
+
         this.blobStreams.createClientStream(
           connectionId,
           callId,
@@ -595,36 +628,18 @@ export class WsSessionEngine {
           metadata,
           {
             read: (size) => {
-              // record the grant before it goes on the wire so a push racing
-              // in can never be flagged as a credit violation
-              const pullSize = size || 65535
-              this.blobStreams.grantClientStream(
-                connectionId,
-                streamId,
-                pullSize,
-              )
-              const sent = this.send(
-                session,
-                protocol.encodeMessage(
-                  context,
-                  ServerMessageType.ClientBlobPull,
-                  { streamId, size: pullSize },
-                ),
-              )
-              if (sent === 'dropped') {
-                // phantom credit would stall both sides: Node won't re-invoke
-                // _read for a pull the client never received
-                this.blobStreams.revokeClientStreamGrant(
-                  connectionId,
-                  streamId,
-                  pullSize,
-                )
-                this.blobStreams.abortClientStream(
-                  connectionId,
-                  streamId,
-                  STREAM_TRANSPORT_DROP_REASON,
-                )
+              if (initialGrant) {
+                initialGrant = false
+                grant(DEFAULT_BLOB_UPLOAD_WINDOW)
+                return
               }
+
+              pendingRefill += size || DEFAULT_BLOB_CHUNK_SIZE
+              if (pendingRefill < BLOB_UPLOAD_REFILL_SIZE) return
+
+              const refill = pendingRefill
+              pendingRefill = 0
+              grant(refill)
             },
           },
           (reason) => {
