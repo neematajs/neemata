@@ -1,3 +1,4 @@
+import { createFuture } from '@nmtjs/common'
 import {
   createFactoryInjectable,
   createValueInjectable,
@@ -11,6 +12,7 @@ import type { GatewayApi } from '../src/api.ts'
 import type { TransportWorkerParams } from '../src/transport.ts'
 import type { ConnectionIdentity } from '../src/types.ts'
 import { Gateway, gatewayLoggerOptions } from '../src/gateway.ts'
+import * as injectables from '../src/injectables.ts'
 import { createTestContainer, createTestLogger } from './_helpers/test-utils.ts'
 
 describe('Gateway logger payload serializer', () => {
@@ -88,6 +90,64 @@ describe('Gateway reload', () => {
     expect(connection.container.find(Scope.Global)).toBe(setup.nextContainer)
 
     await connection[Symbol.asyncDispose]()
+    await setup.gateway.stop()
+    await setup.dispose()
+  })
+
+  it('waits for a preparing reload before accepting a connection', async () => {
+    let identityResolutionCount = 0
+    const connectionStarted = createFuture<void>()
+    const connectionRelease = createFuture<void>()
+    const identity = createFactoryInjectable({
+      dependencies: { connectionId: injectables.connectionId },
+      async create() {
+        identityResolutionCount++
+        if (identityResolutionCount === 2) {
+          connectionStarted.resolve()
+          await connectionRelease.promise
+        }
+        return 'old'
+      },
+    })
+    const reloadStarted = createFuture<void>()
+    const reloadRelease = createFuture<void>()
+    const nextIdentity = createFactoryInjectable({
+      dependencies: { connectionId: injectables.connectionId },
+      async create() {
+        reloadStarted.resolve()
+        await reloadRelease.promise
+        return 'new'
+      },
+    })
+    const setup = createReloadableGateway(identity)
+    await setup.gateway.start()
+    const existing = await setup.params().onConnect({ data: { id: 1 } })
+    const connecting = setup.params().onConnect({ data: { id: 2 } })
+    await connectionStarted.promise
+
+    const reload = setup.gateway.reload({
+      ...setup.gateway.options,
+      container: setup.nextContainer,
+      identity: nextIdentity,
+    })
+    await reloadStarted.promise
+    let connectionSettled = false
+    void connecting.then(() => {
+      connectionSettled = true
+    })
+    connectionRelease.resolve()
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(connectionSettled).toBe(false)
+
+    reloadRelease.resolve()
+    const [, connection] = await Promise.all([reload, connecting])
+    expect(connection.identity).toBe('new')
+    expect(connection.container.find(Scope.Global)).toBe(setup.nextContainer)
+
+    await Promise.all([
+      existing[Symbol.asyncDispose](),
+      connection[Symbol.asyncDispose](),
+    ])
     await setup.gateway.stop()
     await setup.dispose()
   })

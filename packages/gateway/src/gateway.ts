@@ -11,6 +11,7 @@ import type {
 import {
   anyAbortSignal,
   createFuture,
+  OperationQueue,
   TeardownStack,
   withTimeout,
 } from '@nmtjs/common'
@@ -85,8 +86,7 @@ export class Gateway<
   private readonly connectionCalls = new Map<string, Set<ConnectionCall>>()
   private readonly connectionInputs = new Map<string, ConnectionInput>()
   readonly #startedTransports = new TeardownStack()
-  private reloadBarrier: Promise<void> = Promise.resolve()
-  private pendingReloads = 0
+  private readonly reloads = new OperationQueue()
   public options: Required<GatewayOptions<ResolvedProcedure>>
 
   constructor(options: GatewayOptions<ResolvedProcedure>) {
@@ -136,7 +136,7 @@ export class Gateway<
   }
 
   async stop() {
-    if (this.pendingReloads > 0) await this.reloadBarrier
+    if (this.reloads.busy) await this.reloads.waitIdle()
     // Transports stop first: handlers close their physical sessions, which
     // delivers a disconnect per connection through the normal path
     const errors = await this.#startedTransports.unwind()
@@ -161,19 +161,7 @@ export class Gateway<
       'api' | 'container' | 'hooks' | 'identity'
     >,
   ): Promise<void> {
-    this.pendingReloads++
-    const reload = this.reloadBarrier.then(() => this.performReload(options))
-    // Connection callbacks wait on a non-rejecting copy so one failed reload
-    // does not poison future traffic or a later recovery reload.
-    this.reloadBarrier = reload.then(
-      () => undefined,
-      () => undefined,
-    )
-    void reload.then(
-      () => this.pendingReloads--,
-      () => this.pendingReloads--,
-    )
-    return reload
+    return this.reloads.run(() => this.performReload(options))
   }
 
   protected onConnect(transport: string): TransportWorkerParams['onConnect'] {
@@ -183,9 +171,10 @@ export class Gateway<
 
       const id = randomUUID()
       while (true) {
-        const barrier = this.reloadBarrier
-        if (this.pendingReloads > 0) await barrier
-        const container = this.options.container.fork(Scope.Connection)
+        if (this.reloads.busy) await this.reloads.waitIdle()
+        const rootContainer = this.options.container
+        const identityDefinition = this.options.identity
+        const container = rootContainer.fork(Scope.Connection)
 
         try {
           container.provide([
@@ -194,11 +183,15 @@ export class Gateway<
           ])
           container.provide(injections)
 
-          const identity = await container.resolve(this.options.identity)
+          const identity = await container.resolve(identityDefinition)
 
-          // Identity resolution can yield while a reload starts. Retry under
-          // the replacement root so no new connection retains the old scope.
-          if (barrier !== this.reloadBarrier) {
+          // Identity resolution can yield while a reload starts or completes.
+          // Retry so no new connection retains the superseded application.
+          if (
+            this.reloads.busy ||
+            rootContainer !== this.options.container ||
+            identityDefinition !== this.options.identity
+          ) {
             await container.dispose()
             continue
           }
@@ -248,7 +241,7 @@ export class Gateway<
   ): TransportWorkerParams['onDisconnect'] {
     const logger = forkLogger(this.logger, undefined, undefined, { transport })
     return async (connectionId) => {
-      if (this.pendingReloads > 0) await this.reloadBarrier
+      if (this.reloads.busy) await this.reloads.waitIdle()
       logger.debug({ connectionId }, 'Disconnecting connection')
       await this.closeConnection(connectionId)
     }
@@ -260,7 +253,7 @@ export class Gateway<
     const _logger = forkLogger(this.logger, undefined, undefined, { transport })
 
     return async (connection, procedure) => {
-      if (this.pendingReloads > 0) await this.reloadBarrier
+      if (this.reloads.busy) await this.reloads.waitIdle()
       _logger.trace({ connectionId: connection.id, procedure }, 'Resolving RPC')
 
       return this.options.api.resolve({ connection, procedure })
@@ -271,7 +264,7 @@ export class Gateway<
     const _logger = forkLogger(this.logger, undefined, undefined, { transport })
 
     return async (connection, rpc, signal, ...injections) => {
-      if (this.pendingReloads > 0) await this.reloadBarrier
+      if (this.reloads.busy) await this.reloads.waitIdle()
       const controller = new AbortController()
       const finished = createFuture<void>()
       const call = { controller, finished: finished.promise }
