@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { afterEach, test } from 'node:test'
 
-import { compareReports } from './compare.mjs'
+import { compareReports } from './compare.js'
 
 const temporaryDirectories = []
 

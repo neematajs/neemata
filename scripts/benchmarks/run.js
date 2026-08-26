@@ -13,15 +13,15 @@ import {
   runCommand,
   toPosixPath,
   writeJson,
-} from './utils.mjs'
+} from './utils.js'
 
 const args = parseArguments(process.argv.slice(2))
 const suite = args._[0]
 const root = resolve(args.root || process.cwd())
 const output = args.output ? resolve(root, args.output) : undefined
 const commonSuiteFiles = [
-  resolve(root, 'scripts/benchmarks/run.mjs'),
-  resolve(root, 'scripts/benchmarks/utils.mjs'),
+  resolve(root, 'scripts/benchmarks/run.js'),
+  resolve(root, 'scripts/benchmarks/utils.js'),
 ]
 
 if (!['integration', 'runtime'].includes(suite)) {

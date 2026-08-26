@@ -26,7 +26,7 @@ Paired local comparisons likewise use temporary reports unless an output directo
 requested explicitly.
 
 ```sh
-node scripts/benchmarks/run.mjs runtime --output benchmark-results/runtime.json
+node scripts/benchmarks/run.js runtime --output benchmark-results/runtime.json
 ```
 
 ## Integration benchmarks

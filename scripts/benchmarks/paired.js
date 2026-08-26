@@ -4,8 +4,8 @@ import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 
-import { compareReports } from './compare.mjs'
-import { parseArguments, pathExists, runCommand, writeJson } from './utils.mjs'
+import { compareReports } from './compare.js'
+import { parseArguments, pathExists, runCommand, writeJson } from './utils.js'
 
 const args = parseArguments(process.argv.slice(2))
 const headRoot = resolve(args.head || process.cwd())
@@ -28,11 +28,11 @@ for (const suite of suites) {
 }
 
 const baseRunner = requestedBaseRoot
-  ? resolve(requestedBaseRoot, 'scripts/benchmarks/run.mjs')
+  ? resolve(requestedBaseRoot, 'scripts/benchmarks/run.js')
   : undefined
 const baseRoot =
   baseRunner && (await pathExists(baseRunner)) ? requestedBaseRoot : undefined
-const headRunner = resolve(headRoot, 'scripts/benchmarks/run.mjs')
+const headRunner = resolve(headRoot, 'scripts/benchmarks/run.js')
 if (!(await pathExists(headRunner))) {
   throw new Error(`Head benchmark runner is missing: ${headRunner}`)
 }

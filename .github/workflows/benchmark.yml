@@ -60,7 +60,7 @@ jobs:
         id: benchmark-base
         shell: bash
         run: |
-          if [[ -f .benchmark/base/scripts/benchmarks/run.mjs && -f .benchmark/base/benchmarks/thresholds.json ]]; then
+          if [[ -f .benchmark/base/scripts/benchmarks/run.js && -f .benchmark/base/benchmarks/thresholds.json ]]; then
             echo "available=true" >> "$GITHUB_OUTPUT"
           else
             echo "available=false" >> "$GITHUB_OUTPUT"
@@ -118,7 +118,7 @@ jobs:
               --thresholds "$GITHUB_WORKSPACE/.benchmark/base/benchmarks/thresholds.json"
             )
           fi
-          node scripts/benchmarks/paired.mjs "${args[@]}"
+          node scripts/benchmarks/paired.js "${args[@]}"
 
       - name: Publish job summary
         if: always()
@@ -261,7 +261,7 @@ jobs:
           POSTGRES_URL: postgres://neemata:neemata@localhost:5432/neemata
           REDIS_URL: redis://localhost:6379
           VALKEY_URL: redis://localhost:6380
-        run: node scripts/benchmarks/run.mjs integration --output "$RUNNER_TEMP/benchmark-integration/integration.json"
+        run: node scripts/benchmarks/run.js integration --output "$RUNNER_TEMP/benchmark-integration/integration.json"
 
       - name: Upload benchmark history
         if: always()

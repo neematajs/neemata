@@ -10,7 +10,7 @@ import {
   readJson,
   writeJson,
   writeText,
-} from './utils.mjs'
+} from './utils.js'
 
 export async function compareReports(options) {
   const thresholds = await readJson(options.thresholds)
