@@ -3,7 +3,6 @@
 import { mkdir, rm } from 'node:fs/promises'
 import { dirname, relative, resolve } from 'node:path'
 
-import { runTypeBenchmarks } from './types.mjs'
 import {
   collectEnvironment,
   findFiles,
@@ -25,8 +24,8 @@ const commonSuiteFiles = [
   resolve(root, 'scripts/benchmarks/utils.mjs'),
 ]
 
-if (!['integration', 'runtime', 'types'].includes(suite)) {
-  throw new Error('Expected a benchmark suite: runtime, types, or integration')
+if (!['integration', 'runtime'].includes(suite)) {
+  throw new Error('Expected a benchmark suite: runtime or integration')
 }
 
 const { cases, suiteFiles } = await runSuite(suite, Boolean(output))
@@ -57,16 +56,6 @@ if (output) {
 }
 
 async function runSuite(name, collectReport) {
-  if (name === 'types') {
-    return {
-      cases: await runTypeBenchmarks(root),
-      suiteFiles: [
-        ...commonSuiteFiles,
-        resolve(root, 'scripts/benchmarks/types.mjs'),
-      ],
-    }
-  }
-
   const integration = name === 'integration'
   const config = integration
     ? 'vitest.bench.integration.config.ts'

@@ -332,7 +332,7 @@ function renderSummary(results, headReports, enforce) {
 }
 
 function appendCandidateSuites(lines, results) {
-  const suiteOrder = ['runtime', 'types', 'integration']
+  const suiteOrder = ['runtime', 'integration']
   const grouped = Map.groupBy(results, (result) => result.suite)
   const suites = [...grouped.keys()].sort(
     (left, right) => suiteOrder.indexOf(left) - suiteOrder.indexOf(right),
@@ -360,7 +360,6 @@ function suiteLabel(suite) {
   return {
     integration: 'Integration',
     runtime: 'Runtime',
-    types: 'TypeScript complexity',
   }[suite]
 }
 

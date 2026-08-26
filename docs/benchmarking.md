@@ -1,32 +1,23 @@
 # Benchmarking
 
-Neemata's benchmark system detects performance and type-complexity regressions without
-comparing unrelated CI machines.
+Neemata's benchmark system detects runtime performance regressions without comparing
+unrelated CI machines.
 
 ## Suites
 
 - `runtime` contains deterministic in-memory benchmarks for protocol codecs, dependency
   injection, the application API pipeline, and workflow storage operations.
-- `types` generates representative linear, branch, parallel, and map workflow programs
-  and records TypeScript type counts, instantiations, check time, total time, and memory.
 - `integration` measures loopback transports and service-backed Postgres, Redis, and
   Valkey paths. It is scheduled and informational because sockets and services add noise.
 
-Run the fast suites against the currently built package artifacts with:
+Run the deterministic runtime benchmarks directly through Vitest with:
 
 ```sh
 pnpm bench
 ```
 
-The benchmark command does not build packages. Run `pnpm build` separately when
-published artifacts are absent or stale.
-
-Individual suites can be run with:
-
-```sh
-pnpm bench:runtime
-pnpm bench:types
-```
+The benchmark command runs once, does not build packages, and does not write a report.
+Run `pnpm build` separately when package artifacts are absent or stale.
 
 Local benchmark commands print results, run once, and exit without writing report files.
 CI and other jobs opt into normalized JSON persistence with `--output`; repository-local
@@ -75,9 +66,8 @@ case whose relative margin of error exceeds its configured ceiling is `UNSTABLE`
 false regression failure.
 
 Thresholds live in `benchmarks/thresholds.json`. Pull requests always use the file from
-the base revision, so a candidate cannot loosen its own gate. Runtime, deterministic
-type counts, compiler timings, and compiler memory have separate budgets. Integration
-changes remain informational.
+the base revision, so a candidate cannot loosen its own gate. Runtime regressions are
+enforced; integration changes remain informational.
 
 Benchmark source and configuration files are hashed into each report. When a pull
 request changes a benchmark definition, that suite becomes `PENDING` until the changed

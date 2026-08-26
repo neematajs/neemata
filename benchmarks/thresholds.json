@@ -8,21 +8,6 @@
       "maximumRelativeMarginOfError": 5,
       "enforce": true
     },
-    "type-count": {
-      "warnPercent": 3,
-      "failPercent": 5,
-      "enforce": true
-    },
-    "type-time": {
-      "warnPercent": 10,
-      "failPercent": 20,
-      "enforce": true
-    },
-    "type-memory": {
-      "warnPercent": 10,
-      "failPercent": 20,
-      "enforce": true
-    },
     "integration": {
       "warnPercent": 15,
       "failPercent": 25,

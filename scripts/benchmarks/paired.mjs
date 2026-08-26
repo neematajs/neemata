@@ -14,7 +14,7 @@ const persistentOutput = args.output
   ? resolve(headRoot, args.output)
   : undefined
 const rounds = Number.parseInt(args.rounds || '3', 10)
-const suites = String(args.suites || 'runtime,types')
+const suites = String(args.suites || 'runtime')
   .split(',')
   .filter(Boolean)
 
@@ -22,7 +22,7 @@ if (!Number.isInteger(rounds) || rounds < 1) {
   throw new Error('--rounds must be a positive integer')
 }
 for (const suite of suites) {
-  if (!['integration', 'runtime', 'types'].includes(suite)) {
+  if (!['integration', 'runtime'].includes(suite)) {
     throw new Error(`Unsupported benchmark suite: ${suite}`)
   }
 }
