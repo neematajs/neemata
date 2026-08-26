@@ -87,10 +87,10 @@ export class ApplicationHost<
   application!: NeemataApplication
   gateway!: Gateway<ApplicationResolvedProcedure>
   transports!: GatewayOptions<ApplicationResolvedProcedure>['transports']
-  readonly #lifecycle = new Lifecycle<
+  protected readonly lifecycle = new Lifecycle<
     Awaited<ReturnType<Gateway<ApplicationResolvedProcedure>['start']>>
   >('application host')
-  #activeApplication: ActiveApplication | undefined
+  protected activeApplication: ActiveApplication | undefined
 
   constructor(
     protected appConfig: ApplicationConfig,
@@ -98,18 +98,16 @@ export class ApplicationHost<
   ) {}
 
   async start() {
-    return await this.#lifecycle.start(async (defer) => {
+    return await this.lifecycle.start(async (defer) => {
       const active = {
         application: await this.createApplication(this.appConfig),
         services: new TeardownStack(),
       }
       this.setActiveApplication(active)
-      // This resolves the current application at stop time because a hot
-      // reload may replace the initial one while transports stay alive.
       defer(() => this.stopActiveApplication())
 
       this.transports = await this.createTransports()
-      this.gateway = new Gateway({
+      this.gateway = this.createGateway({
         logger: this.options.logger,
         container: this.application.container,
         hooks: this.application.lifecycleHooks,
@@ -130,7 +128,7 @@ export class ApplicationHost<
   }
 
   async stop(): Promise<void> {
-    await this.#lifecycle.stop()
+    await this.lifecycle.stop()
   }
 
   /**
@@ -154,53 +152,7 @@ export class ApplicationHost<
     )
   }
 
-  async reload(
-    hostDefinition: ApplicationHostDefinition<any, Transports>,
-  ): Promise<void> {
-    await this.reloadApplication(hostDefinition.application)
-  }
-
-  async reloadApplication(appConfig: ApplicationConfig): Promise<void> {
-    const previous = this.#activeApplication
-    if (!previous || this.#lifecycle.state !== 'running') {
-      throw new Error('The application host must be started before reload')
-    }
-
-    const next = {
-      application: await this.createApplication(appConfig),
-      services: new TeardownStack(),
-    }
-    try {
-      await this.startApplication(next)
-      await this.gateway.reload({
-        api: next.application.api,
-        container: next.application.container,
-        hooks: next.application.lifecycleHooks,
-        identity: this.options.identity,
-      })
-    } catch (error) {
-      const cleanupErrors = await this.disposeApplication(next)
-      if (cleanupErrors.length) {
-        throw new AggregateError(
-          [error, ...cleanupErrors],
-          'Failed to reload the application and clean up the replacement',
-        )
-      }
-      throw error
-    }
-
-    this.appConfig = appConfig
-    this.setActiveApplication(next)
-    const cleanupErrors = await this.disposeApplication(previous)
-    if (cleanupErrors.length) {
-      throw new AggregateError(
-        cleanupErrors,
-        'Failed to dispose the previous application after reload',
-      )
-    }
-  }
-
-  private async startApplication(active: ActiveApplication): Promise<void> {
+  protected async startApplication(active: ActiveApplication): Promise<void> {
     // Stop hooks pair with Start having been attempted; registered before the
     // Start pass so effect teardowns (registered during it) run first.
     active.services.defer(() =>
@@ -211,14 +163,14 @@ export class ApplicationHost<
     await this.runStartHooks(active.services, active.application)
   }
 
-  private setActiveApplication(active: ActiveApplication): void {
-    this.#activeApplication = active
+  protected setActiveApplication(active: ActiveApplication): void {
+    this.activeApplication = active
     this.application = active.application
   }
 
-  private async stopActiveApplication(): Promise<void> {
-    const active = this.#activeApplication
-    this.#activeApplication = undefined
+  protected async stopActiveApplication(): Promise<void> {
+    const active = this.activeApplication
+    this.activeApplication = undefined
     if (!active) return
 
     const errors = await this.disposeApplication(active)
@@ -227,7 +179,7 @@ export class ApplicationHost<
     }
   }
 
-  private async disposeApplication(
+  protected async disposeApplication(
     active: ActiveApplication,
   ): Promise<unknown[]> {
     const errors = await active.services.unwind()
@@ -247,6 +199,12 @@ export class ApplicationHost<
     })
     await application.initialize()
     return application
+  }
+
+  protected createGateway(
+    options: GatewayOptions<ApplicationResolvedProcedure>,
+  ): Gateway<ApplicationResolvedProcedure> {
+    return new Gateway(options)
   }
 
   protected async createTransports() {

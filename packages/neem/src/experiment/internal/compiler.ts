@@ -96,7 +96,12 @@ export async function watchGraph(
         await handlers.onChange?.(change)
       }
       if (group.kind !== 'target' || group.target.kind !== 'runtime-worker') {
-        return watchBuildGroup(group, { onRebuild }, watchConfig)
+        return watchBuildGroup(
+          group,
+          { onRebuild },
+          watchConfig,
+          group.kind === 'infra' ? 'bootstrap' : 'disabled',
+        )
       }
 
       const watcher = await watchExperimentalTarget(
@@ -255,7 +260,7 @@ function createExperimentalRolldownOptions(
   target: BuildTarget,
   metadata: ArtifactBuildMetadata,
 ) {
-  const options = createRolldownOptions(target, metadata)
+  const options = createRolldownOptions(target, metadata, 'runtime')
   const plugins = options.plugins
   options.experimental = {
     ...options.experimental,

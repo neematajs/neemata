@@ -218,11 +218,9 @@ export type NeemRuntimeServerHealth = NeemRuntimeServerSnapshot & {
   proxy: NeemProxyHealth
 }
 
-export type NeemRuntime<Definition = unknown> = {
+export type NeemRuntime = {
   start: () => MaybePromise<readonly NeemRuntimeUpstream[] | undefined>
   stop: () => MaybePromise<void>
-  /** Adopt a freshly compiled worker definition without replacing the thread. */
-  reload?: (definition: Definition) => MaybePromise<void>
   /**
    * Settles when long-lived runtime work ends. Completion before a requested
    * stop is treated as a runtime failure so a ready worker cannot become a
@@ -398,12 +396,37 @@ export type NeemRuntimeWorkerContext<Data = unknown, Definition = unknown> = {
   port: MessagePort
 }
 
+export type NeemRuntimeHmrResult =
+  | { accepted: true }
+  | { accepted: false; reason?: string }
+
+/**
+ * Development-only policy for adopting a freshly compiled worker module.
+ * Returning `accepted: false` asks Neem to replace the whole runtime instead.
+ */
+export type NeemRuntimeHmrAdapter<Data = unknown, Definition = unknown> = {
+  createRuntime: (
+    worker: NeemRuntimeWorker<Data, Definition>,
+    ctx: NeemRuntimeWorkerContext<Data, Definition>,
+  ) => MaybePromise<NeemRuntime>
+  apply: (
+    runtime: NeemRuntime,
+    current: NeemRuntimeWorker<Data, Definition>,
+    next: NeemRuntimeWorker<Data, Definition>,
+  ) => MaybePromise<NeemRuntimeHmrResult>
+}
+
 export type NeemRuntimeWorker<Data = unknown, Definition = unknown> = {
   readonly _?: { data: Data; definition: Definition }
   definition: Definition
   createRuntime: (
     ctx: NeemRuntimeWorkerContext<Data, Definition>,
-  ) => MaybePromise<NeemRuntime<Definition>>
+  ) => MaybePromise<NeemRuntime>
+  /**
+   * Load this behind `import.meta.hot`; normal Neem builds replace that value
+   * with `undefined`, removing both the branch and its adapter chunk.
+   */
+  hmr?: () => MaybePromise<NeemRuntimeHmrAdapter<Data, Definition>>
 }
 
 export type InferNeemRuntimeWorkerData<TWorker> = TWorker extends {

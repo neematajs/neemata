@@ -10,8 +10,8 @@ import { throwError } from '@nmtjs/common'
  */
 export interface GatewayConnection {
   readonly id: string
-  identity: string
-  container: Container
+  readonly identity: string
+  readonly container: Container
   readonly abortController: AbortController
 }
 

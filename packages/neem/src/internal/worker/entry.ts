@@ -2,7 +2,11 @@ import { parentPort, workerData as rawWorkerData } from 'node:worker_threads'
 
 import type { Logger } from '@nmtjs/core'
 
-import type { NeemRuntime, NeemRuntimeWorker } from '../../shared/types.ts'
+import type {
+  NeemRuntime,
+  NeemRuntimeWorker,
+  NeemRuntimeWorkerContext,
+} from '../../shared/types.ts'
 import type {
   ParentMessage,
   RuntimeWorkerData,
@@ -21,25 +25,17 @@ if (!parentPort) {
 const port = parentPort
 const workerData = rawWorkerData as RuntimeWorkerData
 
-type NeemHmrGlobal = typeof globalThis & {
-  __neem_hmr_client_id__?: string
-  __neem_hmr__?: {
-    clientId: string
-    apply: (
-      update: Extract<ParentMessage, { type: 'hmr-update' }>['update'],
-      url: string | undefined,
-    ) => Promise<{ accepted: boolean; delivered: boolean; reason?: string }>
-  }
-  __neem_accept_worker__?: (worker: unknown) => Promise<void>
-}
-
-const hmrGlobal = globalThis as NeemHmrGlobal
-hmrGlobal.__neem_hmr_client_id__ = workerData.hmrClientId
+type RuntimeWorker = NeemRuntimeWorker<unknown, unknown>
 
 let runtime: NeemRuntime | undefined
 let logger: Logger | undefined
 let started = false
 let stopRequested = false
+
+if ((import.meta as ImportMeta & { readonly hot?: unknown }).hot) {
+  const { initializeWorkerHmr } = await import('./hmr.ts')
+  initializeWorkerHmr({ port, workerData })
+}
 
 function postMessage(message: WorkerMessage): void {
   port.postMessage(message)
@@ -68,23 +64,26 @@ async function createRuntime(data: RuntimeWorkerData): Promise<NeemRuntime> {
     { artifactId: data.artifact.id, file: data.artifact.file },
     'Neem runtime worker initializing',
   )
-  const worker = await importDefault<NeemRuntimeWorker<unknown, unknown>>(
-    data.artifact.file,
-  )
+  const worker = await importDefault<RuntimeWorker>(data.artifact.file)
   if (!isNeemRuntimeWorker(worker)) {
     throw new Error(
       `Runtime worker file [${data.artifact.file}] default export must be a marked runtime worker produced by defineRuntimeWorker`,
     )
   }
 
-  const created = worker.createRuntime({
+  const context: NeemRuntimeWorkerContext<unknown, unknown> = {
     mode: data.mode,
     name: data.name,
     data: data.data,
     logger,
     definition: worker.definition,
     port: data.port,
-  })
+  }
+  if ((import.meta as ImportMeta & { readonly hot?: unknown }).hot) {
+    const { createHmrRuntime } = await import('./hmr.ts')
+    return createHmrRuntime(worker, context)
+  }
+  const created = worker.createRuntime(context)
   logger.trace('Neem runtime worker initialized')
   return created
 }
@@ -126,51 +125,6 @@ async function stopAndExit(): Promise<void> {
   }
 }
 
-async function acceptWorker(next: unknown): Promise<void> {
-  if (!isNeemRuntimeWorker(next)) {
-    throw new Error('HMR worker default export is not a marked runtime worker')
-  }
-  if (!runtime?.reload) {
-    throw new Error('Runtime does not implement the experimental reload hook')
-  }
-  await runtime.reload(next.definition)
-}
-
-hmrGlobal.__neem_accept_worker__ = acceptWorker
-
-async function applyHmrUpdate(
-  message: Extract<ParentMessage, { type: 'hmr-update' }>,
-): Promise<void> {
-  const client = hmrGlobal.__neem_hmr__
-  if (!client) {
-    postMessage({
-      id: message.id,
-      type: 'result',
-      data: {
-        accepted: false,
-        delivered: false,
-        reason: 'Worker artifact was not built with Rolldown DevEngine',
-      },
-    })
-    return
-  }
-
-  try {
-    const result = await client.apply(message.update, message.url)
-    postMessage({ id: message.id, type: 'result', data: result })
-  } catch (error) {
-    postMessage({
-      id: message.id,
-      type: 'result',
-      data: {
-        accepted: false,
-        delivered: false,
-        reason: normalizeError(error).message,
-      },
-    })
-  }
-}
-
 async function watchRuntimeFinished(current: NeemRuntime): Promise<void> {
   if (!current.finished) return
 
@@ -190,7 +144,6 @@ async function watchRuntimeFinished(current: NeemRuntime): Promise<void> {
 
 port.on('message', (message: ParentMessage) => {
   if (message?.type === 'stop') void stopAndExit()
-  if (message?.type === 'hmr-update') void applyHmrUpdate(message)
 })
 
 process.on('uncaughtException', (error) => {

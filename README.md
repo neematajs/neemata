@@ -36,35 +36,43 @@ export default defineConfig({
 })
 ```
 
-Workers accept an update in-process through an optional semantic reload hook:
+Runtime packages can opt into in-process updates with a development-only
+adapter. Keep its loader behind `import.meta.hot` so normal builds remove the
+branch and adapter chunk:
 
 ```ts
 defineRuntimeWorker({
   definition,
-  createRuntime() {
-    return {
-      start() {},
-      reload(nextDefinition) {
-        // Adopt the definition while preserving worker-owned state and IO.
-      },
-      stop() {},
-    }
+  createRuntime(ctx) {
+    return createProductionRuntime(ctx)
   },
+  ...(import.meta.hot
+    ? {
+        async hmr() {
+          return (await import('./runtime.hmr.ts')).adapter
+        },
+      }
+    : {}),
 })
 ```
 
-The Neemata application runtime implements this boundary by replacing its
-application API and dependency container while keeping gateway transports
-listening. The workflows runtime drains its current worker generation and
+An adapter implements `NeemRuntimeHmrAdapter<Data, Definition>`: it receives
+the complete current and replacement worker descriptors, creates its own
+development runtime, and either accepts the update or asks Neem to replace the
+complete runtime. The Neemata application adapter replaces
+its application API and dependency container while keeping gateway transports
+listening. The workflows adapter drains its current worker generation and
 starts the updated implementations in the same Neem worker thread. Vite and
-Nuxt continue to own their application module graphs and use their native HMR;
-Neem does not rebuild their app source.
+Nuxt omit this adapter: they continue to own their application module graphs
+and use their native HMR, while an unaccepted worker update falls back to
+Neem's existing runtime replacement path.
 
 Config, planner, host, logger, plugin, and infrastructure artifacts retain the
-normal watcher and restart behavior. If a worker cannot accept an update, Neem
-refreshes the complete output and replaces the runtime through its existing
-reload path. The feature remains opt-in because Rolldown exposes DevEngine as
-an experimental API. For workflows, keep pool/thread topology in a small
+normal watcher and restart behavior. Production builds force
+`import.meta.hot` to `undefined`, so the worker HMR bootstrap and package
+adapters are absent from their output. The feature remains opt-in because
+Rolldown exposes DevEngine as an experimental API. For workflows, keep
+pool/thread topology in a small
 planner-only module; importing the executable workflow config into the planner
 correctly makes implementation edits planner changes that require a restart.
 

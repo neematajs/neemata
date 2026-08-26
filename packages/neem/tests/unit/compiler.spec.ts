@@ -11,6 +11,7 @@ import type { BuildTarget } from '../../src/internal/build/graph.ts'
 import {
   compileGraph,
   compileTarget,
+  createRolldownOptions,
   watchGraph,
   watchTarget,
 } from '../../src/internal/build/compiler.ts'
@@ -115,6 +116,29 @@ describe('Neem compiler', () => {
     )
     expect(compiled.bundle).toBeUndefined()
     expect(options.treeshake).toBeUndefined()
+  })
+
+  it('reserves import.meta.hot for production, bootstrap, and DevEngine builds', async () => {
+    const target = await createTarget()
+    target.artifact.rolldown = {
+      transform: {
+        define: { USER_FLAG: 'true', 'import.meta.hot': '"user"' },
+      },
+    }
+
+    expect(
+      createRolldownOptions(target, { watch: false }, 'disabled').transform,
+    ).toMatchObject({
+      define: { USER_FLAG: 'true', 'import.meta.hot': 'undefined' },
+    })
+    expect(
+      createRolldownOptions(target, { watch: true }, 'bootstrap').transform,
+    ).toMatchObject({
+      define: { USER_FLAG: 'true', 'import.meta.hot': 'true' },
+    })
+    expect(
+      createRolldownOptions(target, { watch: true }, 'runtime').transform,
+    ).toStrictEqual({ define: { USER_FLAG: 'true' } })
   })
 
   it('appends default deps chunk group after user chunk groups', async () => {

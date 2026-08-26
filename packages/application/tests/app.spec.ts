@@ -1,9 +1,7 @@
-import type { TransportWorkerParams } from '@nmtjs/gateway'
 import {
   createLogger,
   createValueInjectable,
   ExecutionEnvironmentLifecycleHook,
-  Scope,
 } from '@nmtjs/core'
 import { ProxyableTransportType } from '@nmtjs/gateway'
 import { describe, expect, it } from 'vitest'
@@ -158,89 +156,6 @@ describe('Neemata application runtime', () => {
     ])
   })
 
-  it('reloads application state without restarting transports', async () => {
-    const events: string[] = []
-    let transportParams: TransportWorkerParams | undefined
-    const logger = createLogger({ pinoOptions: { enabled: false } }, 'test')
-    const createConfig = (label: string) =>
-      defineApplication({
-        router: createRootRouter([
-          createRouter({
-            routes: {
-              [label]: createProcedure({ handler: () => ({ label }) }),
-            },
-          }),
-        ]),
-        lifecycleHooks: {
-          [ExecutionEnvironmentLifecycleHook.BeforeInitialize]: () => {
-            events.push(`${label}:before-initialize`)
-          },
-          [ExecutionEnvironmentLifecycleHook.AfterInitialize]: () => {
-            events.push(`${label}:after-initialize`)
-          },
-          [ExecutionEnvironmentLifecycleHook.Start]: () => {
-            events.push(`${label}:start`)
-            return () => events.push(`${label}:effect`)
-          },
-          [ExecutionEnvironmentLifecycleHook.Stop]: () => {
-            events.push(`${label}:stop`)
-          },
-          [ExecutionEnvironmentLifecycleHook.BeforeDispose]: () => {
-            events.push(`${label}:before-dispose`)
-          },
-          [ExecutionEnvironmentLifecycleHook.AfterDispose]: () => {
-            events.push(`${label}:after-dispose`)
-          },
-        },
-      })
-    const host = createApplicationHost(createConfig('old'), {
-      logger,
-      transports: {
-        server: {
-          transport: createEventsTransport(events, (params) => {
-            transportParams = params
-          }),
-          options: createValueInjectable({}),
-        },
-      },
-    })
-
-    await host.start()
-    const gateway = host.gateway
-    const connection = await transportParams!.onConnect({ data: {} })
-    const previousConnectionContainer = connection.container
-    await host.reloadApplication(createConfig('new'))
-
-    expect(host.gateway).toBe(gateway)
-    expect(host.application.procedures.has('old')).toBe(false)
-    expect(host.application.procedures.has('new')).toBe(true)
-    expect(connection.container).not.toBe(previousConnectionContainer)
-    expect(connection.container.find(Scope.Global)).toBe(
-      host.application.container,
-    )
-
-    await connection[Symbol.asyncDispose]()
-    await host.stop()
-    expect(events).toStrictEqual([
-      'old:before-initialize',
-      'old:after-initialize',
-      'transport:start',
-      'old:start',
-      'new:before-initialize',
-      'new:after-initialize',
-      'new:start',
-      'old:effect',
-      'old:stop',
-      'old:before-dispose',
-      'old:after-dispose',
-      'transport:stop',
-      'new:effect',
-      'new:stop',
-      'new:before-dispose',
-      'new:after-dispose',
-    ])
-  })
-
   it('stops transports and disposes the application when a start hook fails', async () => {
     const events: string[] = []
     const failure = new Error('start hook failed')
@@ -392,16 +307,12 @@ describe('Neemata application runtime', () => {
   })
 })
 
-function createEventsTransport(
-  events: string[],
-  captureParams?: (params: TransportWorkerParams) => void,
-) {
+function createEventsTransport(events: string[]) {
   return {
     proxyable: undefined,
     async factory() {
       return {
-        async start(params: TransportWorkerParams) {
-          captureParams?.(params)
+        async start() {
           events.push('transport:start')
           return 'test://'
         },
