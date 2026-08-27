@@ -1,6 +1,7 @@
 import type Stream from 'node:stream'
 
 import type {
+  CreditWindowOptions,
   EncodeRPCStreams,
   ProtocolBlob,
   ProtocolBlobMetadata,
@@ -8,26 +9,32 @@ import type {
 import type { ProtocolServerStreamSink } from '@nmtjs/protocol/server'
 import { noopFn } from '@nmtjs/common'
 import {
-  MAX_STREAM_CREDITS,
+  DEFAULT_BLOB_CHUNK_SIZE,
+  ReceiveCreditWindow,
+  STREAM_FLOW_CONTROL_VIOLATION_REASON,
+} from '@nmtjs/protocol'
+import {
   ProtocolClientStream,
   ProtocolServerStream,
 } from '@nmtjs/protocol/server'
 
 export const STREAM_IDLE_TIMEOUT_REASON = 'stream idle timeout'
-export const STREAM_CREDIT_VIOLATION_REASON = 'stream credit violation'
 export const STREAM_TRANSPORT_DROP_REASON =
   'transport backpressure overflow (frame dropped)'
 
+const MAX_TIMER_DELAY = 2 ** 31 - 1
+
 export type StreamConfig = {
   idleTimeout: number
+  clientStreamWindow: CreditWindowOptions
 }
 
 type ClientStreamState = {
   connectionId: string
   callId: number
   stream: ProtocolClientStream
-  // outstanding byte credit: incremented per pull sent, decremented per push
-  granted: number
+  credits: ReceiveCreditWindow
+  acceptedSinceDemand: number
   idleTimer: ReturnType<typeof setTimeout> | undefined
   // single wire-abort notification for locally-initiated aborts
   notify?: (reason: string) => void
@@ -39,6 +46,7 @@ type ServerStreamState = {
   callId: number
   stream: ProtocolServerStream
   idleTimer: ReturnType<typeof setTimeout> | undefined
+  pendingConsumerChunks: number
   // set for peer-originated aborts so the sink error is not echoed back
   suppressNotify: boolean
 }
@@ -56,8 +64,8 @@ type StreamState = ClientStreamState | ServerStreamState
  *   A transport-dropped frame aborts the stream (credits keep outstanding
  *   data far below the transport backpressure limit, so this is a safety
  *   net, not a flow-control mechanism).
- * - Outstanding credit is capped at MAX_STREAM_CREDITS: peer grants beyond
- *   the cap are violations, server-side upload grants are clamped.
+ * - Outstanding credit is bounded by the configured upload window; peer
+ *   grants beyond the protocol cap are violations.
  * - Every stream sends AT MOST one wire abort; peer-originated aborts are
  *   never echoed back.
  * - Every stream has a single idle timeout, reset on any activity in either
@@ -74,9 +82,11 @@ export class BlobStreamsManager {
   readonly serverCallStreams = new Map<string, Set<number>>()
 
   readonly idleTimeout: number
+  readonly clientStreamWindow: CreditWindowOptions
 
   constructor(config: StreamConfig) {
     this.idleTimeout = config.idleTimeout
+    this.clientStreamWindow = config.clientStreamWindow
   }
 
   // --- Client Streams (Upload) ---
@@ -97,7 +107,8 @@ export class BlobStreamsManager {
       connectionId,
       callId,
       stream,
-      granted: 0,
+      credits: new ReceiveCreditWindow(this.clientStreamWindow),
+      acceptedSinceDemand: 0,
       idleTimer: undefined,
       notify,
       notified: false,
@@ -111,15 +122,16 @@ export class BlobStreamsManager {
     return stream
   }
 
-  /** Records a pull about to be sent to the client as outstanding credit. */
-  grantClientStream(connectionId: string, streamId: number, size: number) {
+  /** Returns the next upload grant, or zero while demand is below refill. */
+  requestClientStreamCredit(connectionId: string, streamId: number) {
     const key = this.getKey(connectionId, streamId)
     const state = this.clientStreams.get(key)
-    if (state) {
-      // pull sizes are server-chosen, so overflow is clamped, not a violation
-      state.granted = Math.min(state.granted + size, MAX_STREAM_CREDITS)
-      this.touch(state)
-    }
+    if (!state) return 0
+
+    const grant = state.credits.onDemand(state.acceptedSinceDemand)
+    state.acceptedSinceDemand = 0
+    this.touch(state)
+    return grant
   }
 
   /** Rolls back a grant whose pull frame never made it onto the wire. */
@@ -130,9 +142,7 @@ export class BlobStreamsManager {
   ) {
     const key = this.getKey(connectionId, streamId)
     const state = this.clientStreams.get(key)
-    if (state) {
-      state.granted = Math.max(state.granted - size, 0)
-    }
+    state?.credits.revoke(size)
   }
 
   /**
@@ -148,8 +158,11 @@ export class BlobStreamsManager {
     const key = this.getKey(connectionId, streamId)
     const state = this.clientStreams.get(key)
     if (!state) return true
-    if (chunk.byteLength === 0 || chunk.byteLength > state.granted) return false
-    state.granted -= chunk.byteLength
+    if (!state.credits.accept(chunk.byteLength)) return false
+    state.acceptedSinceDemand = Math.min(
+      state.acceptedSinceDemand + chunk.byteLength,
+      state.credits.capacity,
+    )
     state.stream.write(chunk)
     this.touch(state)
     return true
@@ -244,7 +257,6 @@ export class BlobStreamsManager {
     const stream = new ProtocolServerStream(streamId, blob, {
       chunk: (chunk) => {
         const state = this.serverStreams.get(key)
-        if (state) this.touch(state)
         const sent = sink.chunk(chunk)
         if (sent === 'dropped') {
           this.abortServerStream(
@@ -252,6 +264,9 @@ export class BlobStreamsManager {
             streamId,
             STREAM_TRANSPORT_DROP_REASON,
           )
+        } else if (state) {
+          state.pendingConsumerChunks++
+          this.touch(state, state.pendingConsumerChunks)
         }
         return sent
       },
@@ -272,6 +287,7 @@ export class BlobStreamsManager {
       callId,
       stream,
       idleTimer: undefined,
+      pendingConsumerChunks: 0,
       suppressNotify: false,
     }
 
@@ -288,13 +304,18 @@ export class BlobStreamsManager {
     const key = this.getKey(connectionId, streamId)
     const state = this.serverStreams.get(key)
     if (state) {
-      this.touch(state)
+      const acknowledgedChunks = Math.ceil(size / DEFAULT_BLOB_CHUNK_SIZE)
+      state.pendingConsumerChunks = Math.max(
+        state.pendingConsumerChunks - acknowledgedChunks,
+        0,
+      )
+      this.touch(state, Math.max(state.pendingConsumerChunks, 1))
       const granted = state.stream.grant(size)
       if (!granted) {
         this.abortServerStream(
           connectionId,
           streamId,
-          STREAM_CREDIT_VIOLATION_REASON,
+          STREAM_FLOW_CONTROL_VIOLATION_REASON,
         )
       }
     }
@@ -330,24 +351,27 @@ export class BlobStreamsManager {
 
   // --- Idle timeout ---
 
-  private touch(state: StreamState) {
+  private touch(state: StreamState, timeoutMultiplier = 1) {
     this.clearIdleTimer(state)
-    state.idleTimer = setTimeout(() => {
-      state.idleTimer = undefined
-      if (state.stream instanceof ProtocolClientStream) {
-        this.abortClientStream(
-          state.connectionId,
-          state.stream.id,
-          STREAM_IDLE_TIMEOUT_REASON,
-        )
-      } else {
-        this.abortServerStream(
-          state.connectionId,
-          state.stream.id,
-          STREAM_IDLE_TIMEOUT_REASON,
-        )
-      }
-    }, this.idleTimeout)
+    state.idleTimer = setTimeout(
+      () => {
+        state.idleTimer = undefined
+        if (state.stream instanceof ProtocolClientStream) {
+          this.abortClientStream(
+            state.connectionId,
+            state.stream.id,
+            STREAM_IDLE_TIMEOUT_REASON,
+          )
+        } else {
+          this.abortServerStream(
+            state.connectionId,
+            state.stream.id,
+            STREAM_IDLE_TIMEOUT_REASON,
+          )
+        }
+      },
+      Math.min(this.idleTimeout * timeoutMultiplier, MAX_TIMER_DELAY),
+    )
   }
 
   private clearIdleTimer(state: StreamState) {

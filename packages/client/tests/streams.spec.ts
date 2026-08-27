@@ -1,8 +1,11 @@
 import type { ProtocolBlobMetadata } from '@nmtjs/protocol'
 import {
   ClientMessageType,
+  DEFAULT_BLOB_CHUNK_SIZE,
+  DEFAULT_BLOB_CREDIT_REFILL,
   ProtocolBlob,
   ServerMessageType,
+  STREAM_FLOW_CONTROL_VIOLATION_REASON,
 } from '@nmtjs/protocol'
 import { ProtocolServerStream } from '@nmtjs/protocol/client'
 import { describe, expect, it, vi } from 'vitest'
@@ -349,7 +352,7 @@ describe('createStreamLayer', () => {
   it('spends one byte-credit grant across multiple bounded upload frames', async () => {
     const core = createCore()
     const layer = createStreamLayer(core as any)
-    const granted = 2 * 65535 + 17
+    const granted = 2 * DEFAULT_BLOB_CHUNK_SIZE + 17
     const stream = layer.addClientStream(
       ProtocolBlob.from(createReadable([new Uint8Array(granted)]), metadata),
     )
@@ -371,7 +374,7 @@ describe('createStreamLayer', () => {
     ).toBe(granted)
     expect(
       Math.max(...pushes.map((call) => call[2].chunk.byteLength)),
-    ).toBeLessThanOrEqual(65535)
+    ).toBeLessThanOrEqual(DEFAULT_BLOB_CHUNK_SIZE)
   })
 
   it('accumulates grants behind one pump and emits one terminal frame', async () => {
@@ -384,12 +387,12 @@ describe('createStreamLayer', () => {
     core.emit('message', {
       type: ServerMessageType.ClientBlobPull,
       streamId: stream.id,
-      size: 65535,
+      size: DEFAULT_BLOB_CHUNK_SIZE,
     })
     core.emit('message', {
       type: ServerMessageType.ClientBlobPull,
       streamId: stream.id,
-      size: 65535,
+      size: DEFAULT_BLOB_CHUNK_SIZE,
     })
 
     await vi.waitFor(() => {
@@ -456,7 +459,7 @@ describe('createStreamLayer', () => {
     core.emit('message', {
       type: ServerMessageType.ClientBlobPull,
       streamId: stream.id,
-      size: 65535,
+      size: DEFAULT_BLOB_CHUNK_SIZE,
     })
     await vi.waitFor(() => expect(pull).toHaveBeenCalled())
 
@@ -499,6 +502,68 @@ describe('createStreamLayer', () => {
     })
 
     await expect(nextPromise).rejects.toBe('quota exceeded')
+  })
+
+  it('refills a server blob download before its byte window is exhausted', async () => {
+    const core = createCore()
+    const layer = createStreamLayer(core as any)
+    const blob = layer.createServerBlob(7, metadata)
+    const iterator = layer.consumeServerBlob(blob)[Symbol.asyncIterator]()
+
+    let nextChunk = iterator.next()
+    await vi.waitFor(() => expect(core.send).toHaveBeenCalledTimes(1))
+
+    const pulls = () =>
+      core.protocol.encodeMessage.mock.calls.filter(
+        ([, type]) => type === ClientMessageType.ServerBlobPull,
+      )
+    expect(pulls()[0][2]).toEqual({ streamId: 7, size: 1024 * 1024 })
+
+    for (let index = 0; index < 9; index++) {
+      const chunk = new Uint8Array(DEFAULT_BLOB_CHUNK_SIZE)
+      core.emit('message', {
+        type: ServerMessageType.ServerBlobPush,
+        streamId: 7,
+        chunk,
+      })
+      await expect(nextChunk).resolves.toEqual({ done: false, value: chunk })
+      if (index < 8) nextChunk = iterator.next()
+    }
+
+    await vi.waitFor(() => expect(pulls()).toHaveLength(2))
+    expect(pulls()[1][2]).toEqual({
+      streamId: 7,
+      size: DEFAULT_BLOB_CREDIT_REFILL,
+    })
+
+    core.emit('message', {
+      type: ServerMessageType.ServerBlobEnd,
+      streamId: 7,
+    })
+  })
+
+  it('aborts a server blob download that exceeds granted credit', async () => {
+    const core = createCore()
+    const layer = createStreamLayer(core as any)
+    const blob = layer.createServerBlob(8, metadata)
+    const nextChunk = layer
+      .consumeServerBlob(blob)
+      [Symbol.asyncIterator]()
+      .next()
+
+    await vi.waitFor(() => expect(core.send).toHaveBeenCalledTimes(1))
+    core.emit('message', {
+      type: ServerMessageType.ServerBlobPush,
+      streamId: 8,
+      chunk: new Uint8Array(1024 * 1024 + 1),
+    })
+
+    await expect(nextChunk).rejects.toBe(STREAM_FLOW_CONTROL_VIOLATION_REASON)
+    expect(core.protocol.encodeMessage).toHaveBeenCalledWith(
+      expect.anything(),
+      ClientMessageType.ServerBlobAbort,
+      { streamId: 8, reason: STREAM_FLOW_CONTROL_VIOLATION_REASON },
+    )
   })
 })
 

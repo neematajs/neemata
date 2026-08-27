@@ -3,6 +3,7 @@ import {
   ClientMessageType,
   ConnectionType,
   ServerMessageType,
+  STREAM_FLOW_CONTROL_VIOLATION_REASON,
 } from '@nmtjs/protocol'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -165,6 +166,46 @@ describe('RPC streams', () => {
       ClientMessageType.RpcStreamPull,
       { callId: 0, size: 8 },
     )
+  })
+
+  it('aborts an RPC stream that sends a chunk without credit', async () => {
+    const core = new MockCore()
+    const rpcLayer = createRpcLayer(
+      core as any,
+      { addServerBlobStream: vi.fn() } as any,
+      new BaseClientTransformer(),
+    )
+
+    const streamPromise = rpcLayer.call(
+      'users/profile',
+      { userId: '1' },
+      { _stream_response: true },
+    )
+    core.emit(
+      'message',
+      { type: ServerMessageType.RpcStreamResponse, callId: 0 },
+      new Uint8Array([1]),
+    )
+    await streamPromise
+    core.protocol.encodeMessage.mockClear()
+
+    core.emit(
+      'message',
+      {
+        type: ServerMessageType.RpcStreamChunk,
+        callId: 0,
+        chunk: encodeJson({ sequence: 1 }),
+      },
+      new Uint8Array([2]),
+    )
+
+    await vi.waitFor(() => {
+      expect(core.protocol.encodeMessage).toHaveBeenCalledWith(
+        expect.anything(),
+        ClientMessageType.RpcAbort,
+        { callId: 0, reason: STREAM_FLOW_CONTROL_VIOLATION_REASON },
+      )
+    })
   })
 
   it('reuses the initial stream when autoReconnect is enabled', async () => {

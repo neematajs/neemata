@@ -114,6 +114,27 @@ describe('DuplexStream', () => {
     expect(pull).toHaveBeenCalled()
   })
 
+  it('reports the chunk consumed before each pull', async () => {
+    const consumed: Array<string | undefined> = []
+    const stream = new DuplexStream<string>({
+      pull: (_controller, chunk) => {
+        consumed.push(chunk)
+      },
+      readableStrategy: { highWaterMark: 1 },
+    })
+    const writer = stream.writable.getWriter()
+    const reader = stream.readable.getReader()
+
+    const firstRead = reader.read()
+    await writer.write('a')
+    await firstRead
+    const secondRead = reader.read()
+    await writer.write('b')
+    await secondRead
+
+    expect(consumed.filter((chunk) => chunk !== undefined)).toEqual(['a', 'b'])
+  })
+
   it('should abort the stream with error', async () => {
     const stream = new DuplexStream<string>()
 

@@ -2,12 +2,15 @@ import { Buffer } from 'node:buffer'
 import { Readable } from 'node:stream'
 
 import { GatewayInjectables as injectables } from '@nmtjs/gateway'
-import { createProtocolBlobReference, ServerMessageType } from '@nmtjs/protocol'
+import {
+  createProtocolBlobReference,
+  DEFAULT_BLOB_CREDIT_WINDOW,
+  ServerMessageType,
+  STREAM_FLOW_CONTROL_VIOLATION_REASON,
+} from '@nmtjs/protocol'
 import { describe, expect, it } from 'vitest'
 
-import { DEFAULT_BLOB_UPLOAD_WINDOW } from '../../../src/neemata/ws/session.ts'
 import {
-  STREAM_CREDIT_VIOLATION_REASON,
   STREAM_IDLE_TIMEOUT_REASON,
   STREAM_TRANSPORT_DROP_REASON,
 } from '../../../src/neemata/ws/streams.ts'
@@ -400,7 +403,7 @@ describe('RPC stream flow control', () => {
     expect(finished).toBe(true)
     const aborts = sentOfType(ServerMessageType.RpcStreamAbort)
     expect(aborts.length).toBe(1)
-    expect(aborts[0].rest.toString()).toBe(STREAM_CREDIT_VIOLATION_REASON)
+    expect(aborts[0].rest.toString()).toBe(STREAM_FLOW_CONTROL_VIOLATION_REASON)
 
     await stop()
   })
@@ -437,7 +440,7 @@ describe('RPC stream flow control', () => {
 
     const aborts = sentOfType(ServerMessageType.RpcStreamAbort)
     expect(aborts.length).toBe(1)
-    expect(aborts[0].rest.toString()).toBe(STREAM_CREDIT_VIOLATION_REASON)
+    expect(aborts[0].rest.toString()).toBe(STREAM_FLOW_CONTROL_VIOLATION_REASON)
 
     releaseStall()
     await inFlight
@@ -468,7 +471,7 @@ describe('Upload stream flow control', () => {
     const aborts = sentOfType(ServerMessageType.ClientBlobAbort)
     expect(aborts.length).toBe(1)
     expect(aborts[0].id).toBe(7)
-    expect(aborts[0].rest.toString()).toBe(STREAM_CREDIT_VIOLATION_REASON)
+    expect(aborts[0].rest.toString()).toBe(STREAM_FLOW_CONTROL_VIOLATION_REASON)
     expect(engine.blobStreams.clientStreams.size).toBe(0)
 
     release()
@@ -505,7 +508,7 @@ describe('Upload stream flow control', () => {
     expect(sentOfType(ServerMessageType.ClientBlobPull).length).toBe(1)
     expect(
       sentOfType(ServerMessageType.ClientBlobPull)[0].rest.readUInt32LE(0),
-    ).toBe(DEFAULT_BLOB_UPLOAD_WINDOW)
+    ).toBe(DEFAULT_BLOB_CREDIT_WINDOW)
     const aborts = sentOfType(ServerMessageType.ClientBlobAbort)
     expect(aborts.length).toBe(1)
     expect(aborts[0].id).toBe(7)
@@ -632,7 +635,7 @@ describe('Download stream flow control', () => {
     expect(sentOfType(ServerMessageType.ServerBlobPush).length).toBe(0)
     const aborts = sentOfType(ServerMessageType.ServerBlobAbort)
     expect(aborts.length).toBe(1)
-    expect(aborts[0].rest.toString()).toBe(STREAM_CREDIT_VIOLATION_REASON)
+    expect(aborts[0].rest.toString()).toBe(STREAM_FLOW_CONTROL_VIOLATION_REASON)
     expect(engine.blobStreams.serverStreams.size).toBe(0)
 
     await stop()
@@ -662,7 +665,7 @@ describe('Download stream flow control', () => {
 
     const aborts = sentOfType(ServerMessageType.ServerBlobAbort)
     expect(aborts.length).toBe(1)
-    expect(aborts[0].rest.toString()).toBe(STREAM_CREDIT_VIOLATION_REASON)
+    expect(aborts[0].rest.toString()).toBe(STREAM_FLOW_CONTROL_VIOLATION_REASON)
     expect(engine.blobStreams.serverStreams.size).toBe(0)
 
     await stop()
