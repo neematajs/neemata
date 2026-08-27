@@ -14,9 +14,9 @@ import {
 } from '../tests/integration/helpers.ts'
 
 const benchmarkOptions = {
-  iterations: 50,
+  iterations: 500,
   time: 0,
-  warmupIterations: 10,
+  warmupIterations: 100,
   warmupTime: 0,
 }
 const messagesPerSample = 20

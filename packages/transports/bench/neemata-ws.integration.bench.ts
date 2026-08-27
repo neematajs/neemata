@@ -106,9 +106,9 @@ describe('Neemata WebSocket loopback', () => {
       }
     },
     {
-      iterations: 60,
+      iterations: 600,
       time: 0,
-      warmupIterations: 10,
+      warmupIterations: 100,
       warmupTime: 0,
       setup,
       teardown: (_task, mode) => {
