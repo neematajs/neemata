@@ -317,8 +317,9 @@ function renderSummary(results, headReports, enforce) {
     '| --- | --- | ---: | ---: | ---: | ---: | --- |',
   )
   for (const result of notable.slice(0, 50)) {
+    const referenceValues = [result.baseMedian, result.headMedian]
     lines.push(
-      `| ${statusLabel(result.status)} | ${escapeCell(result.id)} | ${formatValue(result.baseMedian, result.unit)} | ${formatValue(result.headMedian, result.unit)} | ${formatPercent(result.deltaPercent)} | ${formatPercent(result.deviationPercent)} | ${escapeCell(result.reason ?? '')} |`,
+      `| ${statusLabel(result.status)} | ${escapeCell(result.id)} | ${formatBenchmarkValue(result.baseMedian, result.unit, referenceValues)} | ${formatBenchmarkValue(result.headMedian, result.unit, referenceValues)} | ${formatPercent(result.deltaPercent)} | ${formatPercent(result.deviationPercent)} | ${escapeCell(result.reason ?? '')} |`,
     )
   }
   if (notable.length > 50) {
@@ -349,7 +350,7 @@ function appendCandidateSuites(lines, results) {
     )
     for (const result of suiteResults) {
       lines.push(
-        `| ${escapeCell(result.name)} | ${formatValue(result.headMedian, result.unit)} |`,
+        `| ${escapeCell(result.name)} | ${formatBenchmarkValue(result.headMedian, result.unit)} |`,
       )
     }
     lines.push('', '</details>', '')
@@ -373,15 +374,31 @@ function statusLabel(status) {
   }[status]
 }
 
-function formatValue(value, unit) {
+function formatBenchmarkValue(value, unit, referenceValues = [value]) {
   if (!Number.isFinite(value)) return '—'
-  const formatted =
-    Math.abs(value) >= 100
-      ? value.toFixed(0)
-      : Math.abs(value) >= 1
-        ? value.toFixed(2)
-        : value.toPrecision(4)
-  return `${formatted} ${unit}`
+
+  const scale = selectTimeScale(unit, referenceValues)
+  const formatter = new Intl.NumberFormat('en-US', {
+    maximumSignificantDigits: 4,
+  })
+  return `${formatter.format(value * scale.multiplier)} ${scale.unit}`
+}
+
+function selectTimeScale(unit, values) {
+  if (unit !== 'ms/op') return { multiplier: 1, unit }
+
+  const magnitude = Math.max(
+    0,
+    ...values.filter(Number.isFinite).map((value) => Math.abs(value)),
+  )
+
+  if (magnitude >= 1_000) return { multiplier: 1 / 1_000, unit: 's/op' }
+  if (magnitude >= 1) return { multiplier: 1, unit }
+  if (magnitude >= 1 / 1_000) {
+    return { multiplier: 1_000, unit: 'µs/op' }
+  }
+  if (magnitude > 0) return { multiplier: 1_000_000, unit: 'ns/op' }
+  return { multiplier: 1, unit }
 }
 
 function formatPercent(value) {
