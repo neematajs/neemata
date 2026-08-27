@@ -21,10 +21,11 @@ import {
 } from '../src/adapters/postgres.ts'
 import { createSchema } from '../src/adapters/postgres/drizzle.ts'
 import { installPostgresWorkflowSchemaForTesting } from '../src/adapters/postgres/testing.ts'
-import { defineTask, defineWorkflow } from '../src/index.ts'
+import { defineTask, defineWorkflow, implementWorkflow } from '../src/index.ts'
 import {
   createWorkflowRuntimeClient,
   runWorkflowWorker,
+  type WorkflowRuntimeAtomicContinuation,
 } from '../src/runtime/index.ts'
 
 const createPgliteConnection = (db = new PGlite()) =>
@@ -1054,6 +1055,370 @@ test('postgres continue enqueue allows leased and fresh continue commands to coe
   })
   expect(leased?.command).toStrictEqual(first)
   expect(fresh?.command).toStrictEqual(second)
+})
+
+test.each([
+  {
+    expectedDeliveryCount: 0,
+    expectedErrorMessage: null,
+    name: 'normal',
+    releaseOptions: undefined,
+  },
+  {
+    expectedDeliveryCount: 1,
+    expectedErrorMessage: 'continue dispatch failed',
+    name: 'error',
+    releaseOptions: { error: new Error('continue dispatch failed') },
+  },
+])(
+  'postgres $name release coalesces a leased continue with a fresh continue',
+  async ({ expectedDeliveryCount, expectedErrorMessage, releaseOptions }) => {
+    const connection = createPgliteConnection()
+    await installPostgresWorkflowSchemaForTesting(connection)
+    const runtime = createPostgresWorkflowRuntime({ connection })
+    const run = await runtime.store.createRun({
+      workflowName: 'postgres-release-continue-workflow',
+      input: {},
+    })
+    const first = {
+      kind: 'continueRun' as const,
+      runId: run.id,
+      workflowName: 'postgres-release-continue-workflow',
+      generation: 1,
+    }
+    const second = {
+      kind: 'continueRun' as const,
+      runId: run.id,
+      workflowName: 'postgres-release-continue-workflow',
+      generation: 2,
+    }
+    const delayedUntil = new Date(Date.now() + 60_000)
+
+    await runtime.runCoordinationExecutor.enqueue(first)
+    const leased = await runtime.runCoordinationExecutor.claim({
+      workerId: 'worker-1',
+      workflowNames: ['postgres-release-continue-workflow'],
+      leaseMs: 30_000,
+    })
+    await runtime.runCoordinationExecutor.enqueueDelayed(second, delayedUntil)
+
+    await runtime.runCoordinationExecutor.release(leased!, releaseOptions)
+
+    const commands = await connection.query<{
+      delivery_count: number
+      last_error: { message: string } | null
+      lease_token: string | null
+      payload: unknown
+      run_at: Date
+    }>(
+      `
+        SELECT
+          delivery_count,
+          last_error,
+          lease_token,
+          payload,
+          run_at
+        FROM workflow_commands
+        WHERE run_id = $1 AND kind = 'continue'
+      `,
+      [run.id],
+    )
+    expect(commands.rows).toStrictEqual([
+      {
+        delivery_count: expectedDeliveryCount,
+        last_error:
+          expectedErrorMessage === null
+            ? null
+            : expect.objectContaining({ message: expectedErrorMessage }),
+        lease_token: null,
+        payload: second,
+        run_at: expect.any(Date),
+      },
+    ])
+    expect(commands.rows[0]!.run_at.getTime()).toBeLessThan(
+      delayedUntil.getTime(),
+    )
+  },
+)
+
+test('postgres continue release keeps the pending error when delivery counts tie', async () => {
+  const connection = createPgliteConnection()
+  await installPostgresWorkflowSchemaForTesting(connection)
+  const runtime = createPostgresWorkflowRuntime({ connection })
+  const run = await runtime.store.createRun({
+    workflowName: 'postgres-release-error-tie-workflow',
+    input: {},
+  })
+  const first = {
+    kind: 'continueRun' as const,
+    runId: run.id,
+    workflowName: 'postgres-release-error-tie-workflow',
+    generation: 1,
+  }
+  const second = {
+    kind: 'continueRun' as const,
+    runId: run.id,
+    workflowName: 'postgres-release-error-tie-workflow',
+    generation: 2,
+  }
+
+  await runtime.runCoordinationExecutor.enqueue(first)
+  const leased = await runtime.runCoordinationExecutor.claim({
+    workerId: 'worker-1',
+    workflowNames: ['postgres-release-error-tie-workflow'],
+    leaseMs: 30_000,
+  })
+  await connection.query(
+    `
+      UPDATE workflow_commands
+      SET delivery_count = 1,
+          last_error = '{"message":"older released error"}'::jsonb
+      WHERE id = $1
+    `,
+    [leased!.id],
+  )
+  await runtime.runCoordinationExecutor.enqueue(second)
+  await connection.query(
+    `
+      UPDATE workflow_commands
+      SET delivery_count = 1,
+          last_error = '{"message":"newer pending error"}'::jsonb
+      WHERE run_id = $1 AND lease_token IS NULL
+    `,
+    [run.id],
+  )
+
+  await runtime.runCoordinationExecutor.release(leased!)
+
+  const rows = await connection.query<{
+    last_error: { message: string }
+    payload: unknown
+  }>(
+    `
+      SELECT last_error, payload
+      FROM workflow_commands
+      WHERE run_id = $1 AND kind = 'continue'
+    `,
+    [run.id],
+  )
+  expect(rows.rows).toStrictEqual([
+    { last_error: { message: 'newer pending error' }, payload: second },
+  ])
+})
+
+test('postgres continue release bypasses a legacy unleased dead continue', async () => {
+  const connection = createPgliteConnection()
+  await installPostgresWorkflowSchemaForTesting(connection)
+  const runtime = createPostgresWorkflowRuntime({ connection })
+  const run = await runtime.store.createRun({
+    workflowName: 'postgres-release-legacy-dead-workflow',
+    input: {},
+  })
+  const command = {
+    kind: 'continueRun' as const,
+    runId: run.id,
+    workflowName: 'postgres-release-legacy-dead-workflow',
+  }
+
+  await runtime.runCoordinationExecutor.enqueue(command)
+  const leased = await runtime.runCoordinationExecutor.claim({
+    workerId: 'worker-1',
+    workflowNames: ['postgres-release-legacy-dead-workflow'],
+    leaseMs: 30_000,
+  })
+  const deadId = randomUUID()
+  await connection.query(
+    `
+      INSERT INTO workflow_commands (
+        id, kind, run_id, workflow_name, payload, delivery_count, dead_at
+      )
+      VALUES ($1, 'continue', $2, $3, $4::jsonb, 1, now())
+    `,
+    [deadId, run.id, command.workflowName, JSON.stringify(command)],
+  )
+
+  await runtime.runCoordinationExecutor.release(leased!)
+
+  const rows = await connection.query<{
+    dead_at: Date | null
+    lease_token: string | null
+  }>(
+    `
+      SELECT dead_at, lease_token
+      FROM workflow_commands
+      WHERE run_id = $1 AND kind = 'continue'
+      ORDER BY dead_at NULLS FIRST
+    `,
+    [run.id],
+  )
+  expect(rows.rows).toHaveLength(2)
+  expect(rows.rows[0]).toStrictEqual({ dead_at: null, lease_token: null })
+  expect(rows.rows[1]).toMatchObject({
+    dead_at: expect.any(Date),
+    lease_token: `dead:${deadId}`,
+  })
+  await new Promise((resolve) => setTimeout(resolve, 60))
+  await expect(
+    runtime.runCoordinationExecutor.claim({
+      workerId: 'worker-2',
+      workflowNames: ['postgres-release-legacy-dead-workflow'],
+      leaseMs: 30_000,
+    }),
+  ).resolves.toMatchObject({ command })
+})
+
+test('postgres terminal continue release preserves the dead record and fresh wakeup', async () => {
+  const connection = createPgliteConnection()
+  await installPostgresWorkflowSchemaForTesting(connection)
+  const runtime = createPostgresWorkflowRuntime({
+    connection,
+    maxDeliveries: 1,
+  })
+  const run = await runtime.store.createRun({
+    workflowName: 'postgres-dead-release-continue-workflow',
+    input: {},
+  })
+  const first = {
+    kind: 'continueRun' as const,
+    runId: run.id,
+    workflowName: 'postgres-dead-release-continue-workflow',
+    generation: 1,
+  }
+  const second = {
+    kind: 'continueRun' as const,
+    runId: run.id,
+    workflowName: 'postgres-dead-release-continue-workflow',
+    generation: 2,
+  }
+
+  await runtime.runCoordinationExecutor.enqueue(first)
+  const leased = await runtime.runCoordinationExecutor.claim({
+    workerId: 'worker-1',
+    workflowNames: ['postgres-dead-release-continue-workflow'],
+    leaseMs: 30_000,
+  })
+  await runtime.runCoordinationExecutor.enqueue(second)
+
+  await runtime.runCoordinationExecutor.release(leased!, {
+    error: new Error('terminal continue failure'),
+  })
+
+  const rows = await connection.query<{
+    dead_at: Date | null
+    delivery_count: number
+    last_error: { message: string } | null
+    lease_token: string | null
+    payload: unknown
+  }>(
+    `
+      SELECT dead_at, delivery_count, last_error, lease_token, payload
+      FROM workflow_commands
+      WHERE run_id = $1 AND kind = 'continue'
+      ORDER BY dead_at NULLS FIRST
+    `,
+    [run.id],
+  )
+  expect(rows.rows).toHaveLength(2)
+  expect(rows.rows[0]).toStrictEqual({
+    dead_at: null,
+    delivery_count: 0,
+    last_error: null,
+    lease_token: null,
+    payload: second,
+  })
+  expect(rows.rows[1]).toMatchObject({
+    dead_at: expect.any(Date),
+    delivery_count: 1,
+    last_error: { message: 'terminal continue failure' },
+    lease_token: leased!.leaseToken,
+    payload: first,
+  })
+
+  await expect(runtime.store.listDeadCommands()).resolves.toHaveLength(1)
+  const pending = await runtime.runCoordinationExecutor.claim({
+    workerId: 'worker-2',
+    workflowNames: ['postgres-dead-release-continue-workflow'],
+    leaseMs: 30_000,
+  })
+  expect(pending?.command).toStrictEqual(second)
+})
+
+test('postgres workflow worker survives a release racing a fresh continue', async () => {
+  const connection = createPgliteConnection()
+  await installPostgresWorkflowSchemaForTesting(connection)
+  const runtime = createPostgresWorkflowRuntime({ connection })
+  const workflow = defineWorkflow({
+    name: 'postgres-release-race-worker',
+    input: t.object({ text: t.string() }),
+    output: t.object({ text: t.string() }),
+  }).build()
+  const implementation = implementWorkflow(workflow).finish(
+    (_ctx, _outputs, input) => input,
+  )
+  const run = await runtime.store.createRun({
+    workflowName: workflow.name,
+    input: { text: 'alpha' },
+  })
+  await runtime.runCoordinationExecutor.enqueue({
+    kind: 'continueRun',
+    runId: run.id,
+    workflowName: workflow.name,
+  })
+
+  let leaseAttempts = 0
+  const runtimeAtomicContinuation = runtime.atomicContinuation
+  expect(runtimeAtomicContinuation).toBeDefined()
+  if (!runtimeAtomicContinuation) throw new Error('Missing atomic continuation')
+  const atomicContinuation: WorkflowRuntimeAtomicContinuation = {
+    run: (handler) =>
+      runtimeAtomicContinuation.run(async (scoped) => {
+        const store = {
+          ...scoped.store,
+          async acquireRunLease(
+            params: Parameters<typeof scoped.store.acquireRunLease>[0],
+          ) {
+            leaseAttempts += 1
+            if (leaseAttempts === 1) {
+              await scoped.runCoordinationExecutor.enqueue({
+                kind: 'continueRun',
+                runId: run.id,
+                workflowName: workflow.name,
+              })
+              return undefined
+            }
+            return scoped.store.acquireRunLease(params)
+          },
+        }
+        return handler({ ...scoped, store })
+      }),
+  }
+  const logger = createLogger({ pinoOptions: { enabled: false } }, 'test')
+  const container = new Container({ logger })
+
+  const result = await runWorkflowWorker({
+    store: runtime.store,
+    runCoordinationExecutor: runtime.runCoordinationExecutor,
+    attemptExecutor: runtime.attemptExecutor,
+    atomicContinuation,
+    container,
+    workflows: [implementation],
+    workerId: 'postgres-release-race-worker',
+  })
+
+  expect(result.processed).toBe(1)
+  expect(leaseAttempts).toBe(2)
+  await expect(runtime.store.loadRunSnapshot(run.id)).resolves.toMatchObject({
+    run: { status: 'completed', output: { text: 'alpha' } },
+  })
+  const commands = await connection.query<{ count: number }>(
+    `
+      SELECT count(*)::int AS count
+      FROM workflow_commands
+      WHERE run_id = $1 AND kind = 'continue'
+    `,
+    [run.id],
+  )
+  expect(commands.rows[0]?.count).toBe(0)
 })
 
 test('postgres error releases record delivery metadata and cap exponential backoff', async () => {
