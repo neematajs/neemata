@@ -11,6 +11,9 @@ import { Container, createLogger, Hooks } from '@nmtjs/core'
 import { Gateway, GatewayInjectables } from '@nmtjs/gateway'
 import {
   ClientMessageType,
+  DEFAULT_BLOB_CHUNK_SIZE,
+  DEFAULT_BLOB_CREDIT_REFILL,
+  DEFAULT_BLOB_CREDIT_WINDOW,
   getProtocolBlobStreamId,
   ProtocolVersion,
 } from '@nmtjs/protocol'
@@ -29,8 +32,8 @@ import { afterEach, describe, expect, it } from 'vitest'
  * Routing is not under test, so the API is a plain per-procedure dispatch.
  */
 
-// mirrors the client stream layer's DEFAULT_PULL_SIZE byte-credit grant
-const PULL_SIZE = 65535
+const PULL_SIZE = DEFAULT_BLOB_CHUNK_SIZE
+const BLOB_WINDOW = DEFAULT_BLOB_CREDIT_WINDOW
 
 const contract = c.router({
   routes: {
@@ -232,7 +235,7 @@ async function createHarness(options: {
 
 describe('stream flow control over a real WS transport', () => {
   it('paces a blob download to a slow consumer and delivers it intact', async () => {
-    const CHUNKS = 12
+    const CHUNKS = 24
     const BLOB_SIZE = PULL_SIZE * CHUNKS
     const pattern = buildPattern(BLOB_SIZE)
     let sourceBytes = 0
@@ -264,15 +267,12 @@ describe('stream flow control over a real WS transport', () => {
     const received: Uint8Array[] = [firstChunk]
     expect(firstChunk.byteLength).toBe(PULL_SIZE)
 
-    // With the consumer paused, credit keeps source advancement bounded to the
-    // granted chunk plus Node's internal Readable read-ahead. Node 24 stages
-    // two extra chunks here while Node 26 stages one; neither may consume the
-    // remaining payload before the client asks for it.
+    // The initial window hides network latency, but it still bounds source
+    // advancement while the consumer is paused. Node may stage two additional
+    // source chunks internally beyond the bytes granted on the wire.
     await waitQuiescent(() => sourceBytes)
     expect(sourceBytes).toBeGreaterThanOrEqual(firstChunk.byteLength)
-    expect(sourceBytes).toBeLessThanOrEqual(
-      firstChunk.byteLength + 2 * PULL_SIZE,
-    )
+    expect(sourceBytes).toBeLessThanOrEqual(BLOB_WINDOW + 2 * PULL_SIZE)
 
     // release the consumer and drain the rest
     while (true) {
@@ -455,11 +455,11 @@ describe('stream flow control over a real WS transport', () => {
   })
 
   it('paces a blob upload to a slow server consumer and delivers it intact', async () => {
-    const BLOB_SIZE = 8 * 65536
+    const BLOB_SIZE = 2 * DEFAULT_BLOB_CREDIT_WINDOW
     const pattern = buildPattern(BLOB_SIZE)
     let pushedBytes = 0
     let grantedBytes = 0
-    let maxPullSize = 0
+    const pullSizes: number[] = []
     let serverConsumed = 0
 
     // counts wire-level credit traffic on the client: grants received
@@ -472,8 +472,9 @@ describe('stream flow control over a real WS transport', () => {
           pushedBytes += event.byteLength ?? 0
         }
         if (event.direction === 'incoming' && event.action === 'pull') {
-          grantedBytes += event.byteLength ?? 0
-          maxPullSize = Math.max(maxPullSize, event.byteLength ?? 0)
+          const size = event.byteLength ?? 0
+          pullSizes.push(size)
+          grantedBytes += size
         }
       },
     })
@@ -526,18 +527,23 @@ describe('stream flow control over a real WS transport', () => {
     // kernel buffering is in the measurement path — every granted byte was
     // answered, and not one byte more was pushed
     expect(pushedBytes).toBe(grantedBytes)
-    expect(pushedBytes).toBeGreaterThan(0)
+    expect(pushedBytes).toBe(DEFAULT_BLOB_CREDIT_WINDOW)
     expect(pushedBytes).toBeLessThan(BLOB_SIZE)
-    // outstanding grants are bounded by the server-side stream buffers
-    // (readable + writable high-water marks plus one in-flight grant) — the
-    // only slack in this assert is Node's own buffering, not the network
-    expect(grantedBytes - serverConsumed).toBeLessThanOrEqual(3 * maxPullSize)
+    // Pausing the consumer cannot open more than one application-level window.
+    expect(grantedBytes - serverConsumed).toBeLessThanOrEqual(
+      DEFAULT_BLOB_CREDIT_WINDOW,
+    )
 
     releaseServer()
     const result = await resultPromise
 
     expect(result).toEqual({ bytes: BLOB_SIZE, ok: true })
     expect(pushedBytes).toBe(BLOB_SIZE)
+    expect(pullSizes[0]).toBe(DEFAULT_BLOB_CREDIT_WINDOW)
+    expect(
+      pullSizes.slice(1).every((size) => size >= DEFAULT_BLOB_CREDIT_REFILL),
+    ).toBe(true)
+    expect(pullSizes.length).toBeLessThan(BLOB_SIZE / PULL_SIZE)
   })
 
   it('aborts a download instead of corrupting it when uWS drops a frame', async () => {

@@ -2,17 +2,21 @@ import { Readable } from 'node:stream'
 
 import type { SendResult } from '@nmtjs/protocol/server'
 import type { Mock } from 'vitest'
-import { ProtocolBlob } from '@nmtjs/protocol'
+import {
+  DEFAULT_BLOB_CHUNK_SIZE,
+  ProtocolBlob,
+  STREAM_FLOW_CONTROL_VIOLATION_REASON,
+} from '@nmtjs/protocol'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   BlobStreamsManager,
-  STREAM_CREDIT_VIOLATION_REASON,
   STREAM_IDLE_TIMEOUT_REASON,
   STREAM_TRANSPORT_DROP_REASON,
 } from '../../../src/neemata/ws/streams.ts'
 
 const IDLE_TIMEOUT = 5000
+const CLIENT_STREAM_WINDOW = { capacity: 100, refill: 50 }
 
 // stream data flows on nextTick ('readable' emission), which fake timers do
 // not intercept
@@ -71,7 +75,10 @@ describe('BlobStreamsManager', () => {
 
   beforeEach(() => {
     vi.useFakeTimers()
-    manager = new BlobStreamsManager({ idleTimeout: IDLE_TIMEOUT })
+    manager = new BlobStreamsManager({
+      idleTimeout: IDLE_TIMEOUT,
+      clientStreamWindow: CLIENT_STREAM_WINDOW,
+    })
   })
 
   afterEach(() => {
@@ -129,7 +136,7 @@ describe('BlobStreamsManager', () => {
         )
         const writeSpy = vi.spyOn(stream, 'write')
 
-        manager.grantClientStream('conn-1', 100, 10)
+        expect(manager.requestClientStreamCredit('conn-1', 100)).toBe(100)
         const chunk = new Uint8Array([1, 2, 3])
         const accepted = manager.pushToClientStream('conn-1', 100, chunk)
 
@@ -160,9 +167,9 @@ describe('BlobStreamsManager', () => {
       it('rejects a push exceeding the remaining grant', () => {
         manager.createClientStream('conn-1', 1, 100, { type: 'text/plain' }, {})
 
-        manager.grantClientStream('conn-1', 100, 4)
+        manager.requestClientStreamCredit('conn-1', 100)
         expect(
-          manager.pushToClientStream('conn-1', 100, new Uint8Array(3)),
+          manager.pushToClientStream('conn-1', 100, new Uint8Array(99)),
         ).toBe(true)
         // 1 byte of credit left
         expect(
@@ -173,17 +180,16 @@ describe('BlobStreamsManager', () => {
         ).toBe(true)
       })
 
-      it('keeps leftover credit valid across grants', () => {
+      it('refills a large accepted frame from one demand signal', () => {
         manager.createClientStream('conn-1', 1, 100, { type: 'text/plain' }, {})
 
-        manager.grantClientStream('conn-1', 100, 10)
+        expect(manager.requestClientStreamCredit('conn-1', 100)).toBe(100)
         expect(
-          manager.pushToClientStream('conn-1', 100, new Uint8Array(4)),
+          manager.pushToClientStream('conn-1', 100, new Uint8Array(100)),
         ).toBe(true)
-        manager.grantClientStream('conn-1', 100, 10)
-        // 6 + 10 outstanding
+        expect(manager.requestClientStreamCredit('conn-1', 100)).toBe(100)
         expect(
-          manager.pushToClientStream('conn-1', 100, new Uint8Array(16)),
+          manager.pushToClientStream('conn-1', 100, new Uint8Array(100)),
         ).toBe(true)
         expect(
           manager.pushToClientStream('conn-1', 100, new Uint8Array(1)),
@@ -192,7 +198,7 @@ describe('BlobStreamsManager', () => {
 
       it('rejects zero-byte pushes as violations', () => {
         manager.createClientStream('conn-1', 1, 100, { type: 'text/plain' }, {})
-        manager.grantClientStream('conn-1', 100, 10)
+        manager.requestClientStreamCredit('conn-1', 100)
         // an empty push consumes no credit but would refresh the idle timer
         expect(
           manager.pushToClientStream('conn-1', 100, new Uint8Array(0)),
@@ -296,11 +302,17 @@ describe('BlobStreamsManager', () => {
           notify,
         )
 
-        manager.abortClientStream('conn-1', 100, STREAM_CREDIT_VIOLATION_REASON)
+        manager.abortClientStream(
+          'conn-1',
+          100,
+          STREAM_FLOW_CONTROL_VIOLATION_REASON,
+        )
         manager.abortClientStream('conn-1', 100, 'again')
 
         expect(notify).toHaveBeenCalledTimes(1)
-        expect(notify).toHaveBeenCalledWith(STREAM_CREDIT_VIOLATION_REASON)
+        expect(notify).toHaveBeenCalledWith(
+          STREAM_FLOW_CONTROL_VIOLATION_REASON,
+        )
       })
 
       it('does not echo peer-originated aborts back', () => {
@@ -365,7 +377,7 @@ describe('BlobStreamsManager', () => {
 
         // grant (outgoing activity) resets the timer
         vi.advanceTimersByTime(IDLE_TIMEOUT - 1000)
-        manager.grantClientStream('conn-1', 100, 100)
+        manager.requestClientStreamCredit('conn-1', 100)
         vi.advanceTimersByTime(IDLE_TIMEOUT - 1000)
         expect(destroySpy).not.toHaveBeenCalled()
 
@@ -375,6 +387,30 @@ describe('BlobStreamsManager', () => {
         expect(destroySpy).not.toHaveBeenCalled()
 
         // true inactivity finally aborts
+        vi.advanceTimersByTime(1000)
+        expect(destroySpy).toHaveBeenCalledWith(
+          expect.objectContaining({ message: STREAM_IDLE_TIMEOUT_REASON }),
+        )
+      })
+
+      it('resets when the consumer is active before a refill is due', () => {
+        const stream = manager.createClientStream(
+          'conn-1',
+          1,
+          100,
+          { type: 'text/plain' },
+          {},
+        )
+        const destroySpy = vi.spyOn(stream, 'destroy')
+
+        manager.requestClientStreamCredit('conn-1', 100)
+        manager.pushToClientStream('conn-1', 100, new Uint8Array(10))
+        vi.advanceTimersByTime(IDLE_TIMEOUT - 1000)
+
+        expect(manager.requestClientStreamCredit('conn-1', 100)).toBe(0)
+        vi.advanceTimersByTime(IDLE_TIMEOUT - 1000)
+        expect(destroySpy).not.toHaveBeenCalled()
+
         vi.advanceTimersByTime(1000)
         expect(destroySpy).toHaveBeenCalledWith(
           expect.objectContaining({ message: STREAM_IDLE_TIMEOUT_REASON }),
@@ -509,6 +545,49 @@ describe('BlobStreamsManager', () => {
 
         expect(test.sink.chunk).not.toHaveBeenCalled()
         expect(test.sink.end).toHaveBeenCalledTimes(1)
+      })
+
+      it('does not emit zero-byte source chunks', async () => {
+        const test = createTestSink()
+        const source = new Readable({
+          read() {
+            this.push(Buffer.alloc(0))
+            this.push(Buffer.from('abc'))
+            this.push(null)
+          },
+        })
+        manager.createServerStream(
+          'conn-1',
+          1,
+          100,
+          new ProtocolBlob({ source, type: 'text/plain' }),
+          test.sink,
+        )
+
+        manager.pullServerStream('conn-1', 100, 3)
+        await flush()
+        await flush()
+
+        expect(test.chunks).toEqual([Buffer.from('abc')])
+        expect(test.sink.end).toHaveBeenCalledTimes(1)
+      })
+
+      it('keeps a 64 KiB source chunk in one frame', async () => {
+        const test = createTestSink()
+        manager.createServerStream(
+          'conn-1',
+          1,
+          100,
+          blobFromBytes(Buffer.alloc(DEFAULT_BLOB_CHUNK_SIZE)),
+          test.sink,
+        )
+
+        manager.pullServerStream('conn-1', 100, DEFAULT_BLOB_CHUNK_SIZE)
+        await flush()
+        await flush()
+
+        expect(test.chunks).toHaveLength(1)
+        expect(test.chunks[0].byteLength).toBe(DEFAULT_BLOB_CHUNK_SIZE)
       })
 
       it('should do nothing for non-existent stream', () => {
@@ -653,7 +732,9 @@ describe('BlobStreamsManager', () => {
         manager.pullServerStream('conn-1', 100, 1)
 
         expect(test.sink.error).toHaveBeenCalledWith(
-          expect.objectContaining({ message: STREAM_CREDIT_VIOLATION_REASON }),
+          expect.objectContaining({
+            message: STREAM_FLOW_CONTROL_VIOLATION_REASON,
+          }),
         )
         expect(manager.serverStreams.size).toBe(0)
       })
@@ -676,6 +757,31 @@ describe('BlobStreamsManager', () => {
           expect.objectContaining({ message: STREAM_IDLE_TIMEOUT_REASON }),
         )
         expect(manager.serverStreams.size).toBe(0)
+      })
+
+      it('allows time to consume every chunk sent in a credit batch', async () => {
+        const test = createTestSink()
+        const source = new Readable({ read() {} })
+        manager.createServerStream(
+          'conn-1',
+          1,
+          100,
+          new ProtocolBlob({ source, type: 'text/plain' }),
+          test.sink,
+        )
+
+        manager.pullServerStream('conn-1', 100, 4 * DEFAULT_BLOB_CHUNK_SIZE)
+        source.push(Buffer.alloc(4 * DEFAULT_BLOB_CHUNK_SIZE))
+        await flush()
+
+        expect(test.chunks).toHaveLength(4)
+        vi.advanceTimersByTime(4 * IDLE_TIMEOUT - 1)
+        expect(test.sink.error).not.toHaveBeenCalled()
+
+        vi.advanceTimersByTime(1)
+        expect(test.sink.error).toHaveBeenCalledWith(
+          expect.objectContaining({ message: STREAM_IDLE_TIMEOUT_REASON }),
+        )
       })
 
       it('resets on pulls and on chunks sent', async () => {
@@ -909,7 +1015,10 @@ describe('BlobStreamsManager', () => {
 
   describe('Custom idle timeout', () => {
     it('uses the configured duration', () => {
-      const customManager = new BlobStreamsManager({ idleTimeout: 1000 })
+      const customManager = new BlobStreamsManager({
+        idleTimeout: 1000,
+        clientStreamWindow: CLIENT_STREAM_WINDOW,
+      })
 
       const stream = customManager.createClientStream(
         'conn-1',

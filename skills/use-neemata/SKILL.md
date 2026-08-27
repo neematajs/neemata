@@ -41,4 +41,4 @@ Exceptions:
   retry/delete), inspector serialization, Neem integration.
 - [Type System](references/type-system.md) - `t.*` schemas and encode/decode.
 - [Client Usage](references/client-usage.md) - typed clients, transports,
-  streams, blobs, cancellation.
+  streams, blobs, flow control, cancellation.

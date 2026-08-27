@@ -7,7 +7,9 @@ import {
   ErrorCode,
   isBlobInterface,
   ProtocolBlob,
+  ReceiveCreditWindow,
   ServerMessageType,
+  STREAM_FLOW_CONTROL_VIOLATION_REASON,
 } from '@nmtjs/protocol'
 import { ProtocolError, ProtocolServerRPCStream } from '@nmtjs/protocol/client'
 
@@ -36,7 +38,6 @@ export interface RpcLayerApi {
 }
 
 const DEFAULT_RPC_STREAM_WINDOW = 16
-
 const resolveRpcStreamWindow = (
   value: number | undefined = DEFAULT_RPC_STREAM_WINDOW,
 ) => {
@@ -209,6 +210,7 @@ export const createRpcLayer = (
 ): RpcLayerApi => {
   const calls = new Map<number, ProtocolClientCall>()
   const rpcStreams = new ServerStreams<ProtocolServerRPCStream>()
+  const rpcStreamCredits = new Map<number, ReceiveCreditWindow>()
   const defaultRpcStreamWindow = resolveRpcStreamWindow(options.rpcStreamWindow)
 
   let callId = 0
@@ -323,22 +325,16 @@ export const createRpcLayer = (
 
     const { procedure, signal, rpcStreamWindow } = call
     const rpcStreamRefill = Math.ceil(rpcStreamWindow / 2)
-    let initialCreditGrant = true
-    let pullsUntilRefill = rpcStreamRefill
+    const credits = new ReceiveCreditWindow({
+      capacity: rpcStreamWindow,
+      refill: rpcStreamRefill,
+    })
     const stream = new ProtocolServerRPCStream({
-      pull: () => {
+      pull: (_controller, consumed) => {
         if (!core.messageContext) return
 
-        let size: number
-        if (initialCreditGrant) {
-          initialCreditGrant = false
-          size = rpcStreamWindow
-        } else {
-          pullsUntilRefill--
-          if (pullsUntilRefill > 0) return
-          pullsUntilRefill = rpcStreamRefill
-          size = rpcStreamRefill
-        }
+        const size = credits.onDemand(consumed === undefined ? 0 : 1)
+        if (size === 0) return
 
         // Batch refills preserve a bounded producer lead without putting a
         // wire round trip on every consumer read.
@@ -355,7 +351,10 @@ export const createRpcLayer = (
           { callId: message.callId, size },
         )
 
-        core.send(buffer).catch(noopFn)
+        core.send(buffer).catch((error) => {
+          credits.revoke(size)
+          abortRpcStreamOnPushFailure(message.callId, error)
+        })
       },
       start: (controller) => {
         if (!signal) return
@@ -366,6 +365,7 @@ export const createRpcLayer = (
         }
 
         const onAbort = () => {
+          rpcStreamCredits.delete(message.callId)
           controller.error(signal.reason)
 
           if (rpcStreams.has(message.callId)) {
@@ -396,6 +396,7 @@ export const createRpcLayer = (
     })
 
     rpcStreams.add(message.callId, stream)
+    rpcStreamCredits.set(message.callId, credits)
     call.resolve(stream)
   }
 
@@ -579,6 +580,7 @@ export const createRpcLayer = (
   const abortRpcStreamOnPushFailure = (callId: number, reason: unknown) => {
     if (!rpcStreams.has(callId)) return
 
+    rpcStreamCredits.delete(callId)
     calls.get(callId)?.cleanup?.()
     calls.delete(callId)
     void rpcStreams.abort(callId, reason).catch(noopFn)
@@ -611,6 +613,18 @@ export const createRpcLayer = (
         handleRPCStreamResponseMessage(message)
         break
       case ServerMessageType.RpcStreamChunk:
+        {
+          const credits = rpcStreamCredits.get(message.callId)
+          if (!credits) break
+          if (!credits.accept(1)) {
+            abortRpcStreamOnPushFailure(
+              message.callId,
+              STREAM_FLOW_CONTROL_VIOLATION_REASON,
+            )
+            break
+          }
+        }
+
         core.emitStreamEvent({
           direction: 'incoming',
           streamType: 'rpc',
@@ -626,6 +640,7 @@ export const createRpcLayer = (
           .catch((error) => abortRpcStreamOnPushFailure(message.callId, error))
         break
       case ServerMessageType.RpcStreamEnd:
+        rpcStreamCredits.delete(message.callId)
         calls.get(message.callId)?.cleanup?.()
         core.emitStreamEvent({
           direction: 'incoming',
@@ -637,6 +652,7 @@ export const createRpcLayer = (
         calls.delete(message.callId)
         break
       case ServerMessageType.RpcStreamAbort: {
+        rpcStreamCredits.delete(message.callId)
         const call = calls.get(message.callId)
         call?.cleanup?.()
         // an abort may arrive before the stream response was processed;
@@ -672,6 +688,7 @@ export const createRpcLayer = (
       call.reject(error)
     }
     calls.clear()
+    rpcStreamCredits.clear()
     void rpcStreams.clear(error).catch(noopFn)
   })
 
@@ -808,6 +825,7 @@ export const createRpcLayer = (
         if (value instanceof ProtocolServerRPCStream) {
           const stream = createManagedAsyncIterable(value, {
             onDone: () => {
+              rpcStreamCredits.delete(currentCallId)
               call.cleanup?.()
             },
             onReturn: (reason) => {

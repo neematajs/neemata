@@ -28,26 +28,25 @@ import { consumeBlob, createBlob } from '@nmtjs/gateway'
 import {
   ClientMessageType,
   createProtocolBlobReference,
+  DEFAULT_BLOB_CREDIT_REFILL,
+  DEFAULT_BLOB_CREDIT_WINDOW,
   getProtocolBlobStreamId,
   ProtocolBlob,
+  SendCredits,
   ServerMessageType,
+  STREAM_FLOW_CONTROL_VIOLATION_REASON,
 } from '@nmtjs/protocol'
-import {
-  MAX_STREAM_CREDITS,
-  ProtocolError,
-  versions,
-} from '@nmtjs/protocol/server'
+import { ProtocolError, versions } from '@nmtjs/protocol/server'
 
 import { RpcManager } from './rpcs.ts'
 import {
   BlobStreamsManager,
-  STREAM_CREDIT_VIOLATION_REASON,
   STREAM_IDLE_TIMEOUT_REASON,
   STREAM_TRANSPORT_DROP_REASON,
 } from './streams.ts'
 
 type RpcStreamCreditState = {
-  credits: number
+  credits: SendCredits
   // credits granted since the previous idle wait
   idleCredits: number
   // resolves the in-flight credit wait; also poked on abort/teardown
@@ -171,6 +170,10 @@ export class WsSessionEngine {
       options.streamIdleTimeout ?? DEFAULT_STREAM_IDLE_TIMEOUT
     this.blobStreams = new BlobStreamsManager({
       idleTimeout: this.streamIdleTimeout,
+      clientStreamWindow: {
+        capacity: DEFAULT_BLOB_CREDIT_WINDOW,
+        refill: DEFAULT_BLOB_CREDIT_REFILL,
+      },
     })
     this.logger = options.logger ?? console
   }
@@ -296,7 +299,7 @@ export class WsSessionEngine {
           this.blobStreams.abortClientStream(
             connectionId,
             message.streamId,
-            STREAM_CREDIT_VIOLATION_REASON,
+            STREAM_FLOW_CONTROL_VIOLATION_REASON,
           )
         }
         break
@@ -325,7 +328,7 @@ export class WsSessionEngine {
           this.blobStreams.abortServerStream(
             connectionId,
             message.streamId,
-            STREAM_CREDIT_VIOLATION_REASON,
+            STREAM_FLOW_CONTROL_VIOLATION_REASON,
           )
           break
         }
@@ -343,20 +346,18 @@ export class WsSessionEngine {
         if (credit) {
           // zero-size pulls are a free keepalive, oversized totals break
           // the counter — both are violations
-          if (
-            message.size === 0 ||
-            credit.credits + message.size > MAX_STREAM_CREDITS
-          ) {
+          if (message.size === 0 || !credit.credits.grant(message.size)) {
             this.logger.warn(
               `Invalid RPC stream pull size ${message.size} for call ${message.callId}, aborting stream`,
             )
-            credit.fail(new StreamFlowError(STREAM_CREDIT_VIOLATION_REASON))
+            credit.fail(
+              new StreamFlowError(STREAM_FLOW_CONTROL_VIOLATION_REASON),
+            )
             break
           }
-          credit.credits += message.size
           credit.idleCredits = Math.min(
             credit.idleCredits + message.size,
-            MAX_STREAM_CREDITS,
+            MAX_UINT32,
           )
           credit.notify?.()
         }
@@ -404,7 +405,7 @@ export class WsSessionEngine {
         const flow = createFuture<never>()
         flow.promise.catch(noopFn)
         const credit: RpcStreamCreditState = {
-          credits: 0,
+          credits: new SendCredits(),
           idleCredits: 0,
           notify: null,
           fail: (error) => flow.reject(error),
@@ -444,7 +445,7 @@ export class WsSessionEngine {
             // advanced and the wait's idle timer reaps the stream. Sparse
             // producers stay safe: a waiting consumer has already granted
             // credit before the silence, and next() races only the abort.
-            while (credit.credits <= 0) {
+            while (credit.credits.available <= 0) {
               // idle detection bounds only consumer inactivity: the producer
               // is ready but the client isn't pulling
               const idleTimeout = Math.min(
@@ -475,7 +476,7 @@ export class WsSessionEngine {
             // consumer's final read resolves done
             if (result.done) break
             signal.throwIfAborted()
-            credit.credits--
+            credit.credits.spend(1)
             const chunkEncoded = encoder.encode(result.value)
             const sent = this.send(
               session,
@@ -588,43 +589,42 @@ export class WsSessionEngine {
         return streamId
       },
       addClientStream: ({ streamId, callId, metadata }) => {
+        const sendGrant = (size: number) => {
+          const sent = this.send(
+            session,
+            protocol.encodeMessage(context, ServerMessageType.ClientBlobPull, {
+              streamId,
+              size,
+            }),
+          )
+          if (sent === 'dropped') {
+            // Phantom credit would stall both sides because the client never
+            // received the grant it needs to continue its upload pump.
+            this.blobStreams.revokeClientStreamGrant(
+              connectionId,
+              streamId,
+              size,
+            )
+            this.blobStreams.abortClientStream(
+              connectionId,
+              streamId,
+              STREAM_TRANSPORT_DROP_REASON,
+            )
+          }
+        }
+
         this.blobStreams.createClientStream(
           connectionId,
           callId,
           streamId,
           metadata,
           {
-            read: (size) => {
-              // record the grant before it goes on the wire so a push racing
-              // in can never be flagged as a credit violation
-              const pullSize = size || 65535
-              this.blobStreams.grantClientStream(
+            read: () => {
+              const grant = this.blobStreams.requestClientStreamCredit(
                 connectionId,
                 streamId,
-                pullSize,
               )
-              const sent = this.send(
-                session,
-                protocol.encodeMessage(
-                  context,
-                  ServerMessageType.ClientBlobPull,
-                  { streamId, size: pullSize },
-                ),
-              )
-              if (sent === 'dropped') {
-                // phantom credit would stall both sides: Node won't re-invoke
-                // _read for a pull the client never received
-                this.blobStreams.revokeClientStreamGrant(
-                  connectionId,
-                  streamId,
-                  pullSize,
-                )
-                this.blobStreams.abortClientStream(
-                  connectionId,
-                  streamId,
-                  STREAM_TRANSPORT_DROP_REASON,
-                )
-              }
+              if (grant > 0) sendGrant(grant)
             },
           },
           (reason) => {

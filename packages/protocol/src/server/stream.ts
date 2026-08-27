@@ -2,17 +2,9 @@ import type { ReadableOptions } from 'node:stream'
 import { PassThrough, Readable } from 'node:stream'
 import { ReadableStream } from 'node:stream/web'
 
-import { MAX_UINT32 } from '@nmtjs/common'
-
 import type { ProtocolBlob, ProtocolBlobMetadata } from '../common/blob.ts'
 import type { SendResult } from './types.ts'
-
-/**
- * Upper bound for outstanding stream credit. Credits represent bytes for blob
- * streams and chunks for RPC streams. The bound keeps additive grants below
- * unsafe-integer territory where decrements would silently stop working.
- */
-export const MAX_STREAM_CREDITS = MAX_UINT32
+import { DEFAULT_BLOB_CHUNK_SIZE, SendCredits } from '../common/flow-control.ts'
 
 export class ProtocolClientStream extends PassThrough {
   readonly #read?: ReadableOptions['read']
@@ -58,9 +50,10 @@ export class ProtocolServerStream {
   readonly #source: Readable
   readonly #sink: ProtocolServerStreamSink
 
-  #credits = 0
+  #credits = new SendCredits()
   #granted = false
-  // remainder of a source chunk larger than the credits available at the time
+  // A Readable may return more than read(size), so retain the excess rather
+  // than exceeding the peer's credit or emitting oversized wire frames.
   #buffered: Buffer | null = null
   // source error that arrived before the first grant: held back so the abort
   // frame cannot precede the RpcResponse referencing this stream
@@ -102,7 +95,7 @@ export class ProtocolServerStream {
   }
 
   get credits() {
-    return this.#credits
+    return this.#credits.available
   }
 
   /**
@@ -113,13 +106,12 @@ export class ProtocolServerStream {
   grant(size: number): boolean {
     if (this.#finished) return true
     if (size <= 0) return true
-    if (this.#credits + size > MAX_STREAM_CREDITS) return false
+    if (!this.#credits.grant(size)) return false
     this.#granted = true
     if (this.#pendingError) {
       this.#fail(this.#pendingError)
       return true
     }
-    this.#credits += size
     this.#pump()
     return true
   }
@@ -137,8 +129,8 @@ export class ProtocolServerStream {
   #fail(error: Error): void {
     if (this.#finished) return
     this.#finished = true
-    this.#buffered = null
     this.#pendingError = null
+    this.#buffered = null
     this.#source.destroy?.(error)
     this.#sink.error(error)
   }
@@ -154,38 +146,46 @@ export class ProtocolServerStream {
     this.#pumping = true
     try {
       while (!this.#finished) {
+        // never advance the producer without credit to spend its output on;
+        // an ended-and-drained source may still signal End (frees no data)
+        if (this.#credits.available <= 0) {
+          if (
+            this.#buffered === null &&
+            this.#sourceEnded &&
+            this.#source.readableLength === 0
+          )
+            this.#end()
+          return
+        }
+
         let chunk = this.#buffered
         this.#buffered = null
 
         if (chunk === null) {
-          // never advance the producer without credit to spend its output on;
-          // an ended-and-drained source may still signal End (frees no data)
-          if (this.#credits <= 0) {
-            if (this.#sourceEnded && this.#source.readableLength === 0)
-              this.#end()
-            return
-          }
           const read = this.#source.read()
           if (read === null) {
             // source drained: either truly finished or waiting for 'readable'
             if (this.#sourceEnded) this.#end()
             return
           }
+
           chunk = Buffer.isBuffer(read) ? read : Buffer.from(read)
         }
 
-        if (this.#credits <= 0) {
-          this.#buffered = chunk
-          return
+        if (chunk.byteLength === 0) continue
+
+        const sendSize = Math.min(
+          chunk.byteLength,
+          this.#credits.available,
+          DEFAULT_BLOB_CHUNK_SIZE,
+        )
+        if (sendSize < chunk.byteLength) {
+          this.#buffered = chunk.subarray(sendSize)
         }
 
-        if (chunk.byteLength > this.#credits) {
-          this.#buffered = chunk.subarray(this.#credits)
-          chunk = chunk.subarray(0, this.#credits)
-        }
-
-        this.#credits -= chunk.byteLength
-        this.#sink.chunk(chunk)
+        const frame = chunk.subarray(0, sendSize)
+        this.#credits.spend(frame.byteLength)
+        this.#sink.chunk(frame)
       }
     } finally {
       this.#pumping = false

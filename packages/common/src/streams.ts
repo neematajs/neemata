@@ -4,6 +4,7 @@ export interface DuplexStreamOptions<O = unknown, I = O> {
   start?: (controller: globalThis.ReadableStreamDefaultController<O>) => void
   pull?: (
     controller: globalThis.ReadableStreamDefaultController<O>,
+    consumed?: O,
   ) => MaybePromise<void>
   cancel?: (reason: unknown) => MaybePromise<void>
   transform?: (chunk: I) => O
@@ -18,6 +19,7 @@ export class DuplexStream<O = unknown, I = O> {
 
   // writes parked on readable backpressure, released in FIFO order by pull()
   #parkedWrites: (() => void)[] = []
+  #queuedChunks: O[] = []
   // once draining, writes stop parking so close()/abort() can settle even
   // when the consumer never reads again (a parked in-flight sink.write would
   // otherwise block them forever per the streams spec)
@@ -52,6 +54,7 @@ export class DuplexStream<O = unknown, I = O> {
                   chunk = _chunk as unknown as O
                 }
                 controller.enqueue(chunk)
+                this.#queuedChunks.push(chunk)
                 if (!this.#draining && (controller.desiredSize ?? 1) <= 0) {
                   return new Promise<void>((resolve) => {
                     this.#parkedWrites.push(resolve)
@@ -73,8 +76,9 @@ export class DuplexStream<O = unknown, I = O> {
           options.start?.(controller)
         },
         pull: (controller) => {
+          const consumed = this.#queuedChunks.shift()
           this.#parkedWrites.shift()?.()
-          return options.pull?.(controller)
+          return options.pull?.(controller, consumed)
         },
       },
       options.readableStrategy,

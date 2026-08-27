@@ -145,6 +145,51 @@ for await (const chunk of stream) {
 }
 ```
 
+## Flow Control
+
+Native WebSocket RPC streams use receiver-issued chunk credits. Configure the
+default client window with `backpressure.rpc.window`:
+
+```ts
+const client = new StaticClient<typeof appContract>(
+  {
+    contract: appContract,
+    protocol: ProtocolVersion.v1,
+    codec: new JsonCodec(),
+    backpressure: {
+      rpc: { window: 16 },
+    },
+  },
+  WsTransportFactory,
+  { url: 'ws://localhost:4000' },
+)
+```
+
+Override that default for one streaming call when its chunk size or consumer
+behavior warrants a different bound:
+
+```ts
+const stream = await client.stream.liveData(
+  {},
+  { backpressure: { rpc: { window: 32 } } },
+)
+```
+
+- The default RPC window is 16 and must be a positive uint32 integer.
+- RPC credits count chunks, not bytes. The window bounds how far a WebSocket
+  producer may advance ahead of its consumer, including side effects performed
+  while producing chunks.
+- Larger windows may hide more network latency, but proportionally allow more
+  queued data and speculative producer progress. Unidirectional transports use
+  their native stream backpressure instead.
+- Native WebSocket blob uploads and downloads use automatic byte-credit flow
+  control: a 1 MiB window, refilled after 512 KiB is consumed, with frames
+  capped at 64 KiB. These values are currently protocol defaults, not public
+  client or per-call options; do not invent `backpressure.blob`.
+- The receiver grants credit before the sender transmits, and both peers abort
+  a stream that exceeds its outstanding credit. Application code normally only
+  creates or consumes the stream and does not send credit messages itself.
+
 ## Abort / Cancel
 
 ```ts

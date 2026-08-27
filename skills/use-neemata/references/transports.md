@@ -85,8 +85,13 @@ Behavior notes:
   server-initiated protocol Ping/Pong, a missed Pong closes the socket.
 - `streamIdleTimeout` - per-stream peer-inactivity bound (default 30s).
 
-WebSocket is the only transport with full duplex features: RPC streams with
-chunk credits and blob up/download streams with byte credits.
+WebSocket is the only transport with full duplex features. RPC response streams
+use client-configurable chunk-credit windows; blob uploads and downloads use an
+automatic 1 MiB byte-credit window with 512 KiB refills and frames capped at
+64 KiB. The receiver grants credit before data is sent, and each peer rejects
+data beyond the outstanding grant. Blob window/refill values are protocol
+defaults and are not `neemataWebSocket` options. See
+[Client Usage](client-usage.md#flow-control) for the public RPC configuration.
 
 ## JSON-RPC 2.0
 
