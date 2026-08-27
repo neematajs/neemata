@@ -24,6 +24,9 @@ void test('passes stable paired benchmark results', async () => {
 
   assert.equal(result.failed, false)
   assert.equal(result.comparison.results[0].status, 'pass')
+  assert.match(result.summary, /✓ GOOD/)
+  assert.match(result.summary, /Runtime \(1 cases\)/)
+  assert.match(result.summary, /informational only/)
 })
 
 void test('fails a consistent regression above the enforced threshold', async () => {
@@ -34,6 +37,18 @@ void test('fails a consistent regression above the enforced threshold', async ()
 
   assert.equal(result.failed, true)
   assert.equal(result.comparison.results[0].status, 'fail')
+})
+
+void test('renders regressions without enforcing the comparison', async () => {
+  const result = await compareScenario({
+    base: [100, 100, 100],
+    enforce: false,
+    head: [120, 121, 119],
+  })
+
+  assert.equal(result.comparison.enforced, false)
+  assert.match(result.summary, /✗ FAILED/)
+  assert.match(result.summary, /informational only/)
 })
 
 void test('warns instead of failing when paired-round spread is too wide', async () => {
@@ -147,7 +162,7 @@ async function compareScenario(options) {
 
   return await compareReports({
     base,
-    enforce: true,
+    enforce: options.enforce ?? true,
     head,
     thresholds,
   })

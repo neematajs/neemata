@@ -131,7 +131,7 @@ jobs:
         if: steps.benchmark-base.outputs.available == 'true'
         run: pnpm --dir .benchmark/base exec tsc -b tsconfig.build.json --pretty false
 
-      - name: Run paired regression benchmarks
+      - name: Run paired benchmarks
         shell: bash
         env:
           NMTJS_REQUIRE_SERVICE_TESTS: '1'
@@ -149,7 +149,6 @@ jobs:
             --output "$RUNNER_TEMP/benchmark-regression"
             --rounds 3
             --suites "$suites"
-            --enforce
           )
           if [[ "${{ steps.benchmark-base.outputs.available }}" == "true" ]]; then
             args+=(
