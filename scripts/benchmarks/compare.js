@@ -27,7 +27,7 @@ export async function compareReports(options) {
   }
   results.sort((left, right) => left.id.localeCompare(right.id))
 
-  const summary = renderSummary(results, headReports, options.enforce)
+  const summary = renderSummary(results, headReports)
   const comparison = {
     schemaVersion: 1,
     generatedAt: new Date().toISOString(),
@@ -258,7 +258,7 @@ function countStatuses(results) {
   }, {})
 }
 
-function renderSummary(results, headReports, enforce) {
+function renderSummary(results, headReports) {
   const counts = countStatuses(results)
   const baselineInitialization =
     results.length > 0 &&
@@ -267,20 +267,15 @@ function renderSummary(results, headReports, enforce) {
         result.status === 'pending' &&
         result.reason === 'No base benchmark suite is available yet',
     )
-  const outcome = baselineInitialization
-    ? 'recorded candidate measurements; no base revision is available for comparison'
-    : counts.fail
-      ? `failed with ${counts.fail} regression${counts.fail === 1 ? '' : 's'}`
-      : 'completed without a confirmed regression'
   const environment = headReports[0]?.environment
   const lines = [
     baselineInitialization
       ? '# Benchmark candidate baseline'
-      : '# Benchmark regression report',
+      : '# Benchmark results',
     '',
     baselineInitialization
-      ? `Benchmark run ${outcome}.`
-      : `Benchmark comparison ${outcome}${enforce ? '.' : ' (shadow mode).'}`,
+      ? 'No base revision is available for comparison.'
+      : 'This report is informational only and does not gate pull requests.',
     '',
     environment
       ? `Environment: ${environment.platform}/${environment.architecture}, Node ${environment.node}, ${environment.cpu}.`
@@ -306,30 +301,33 @@ function renderSummary(results, headReports, enforce) {
     return `${lines.join('\n')}\n`
   }
 
-  const notable = results.filter((result) => result.status !== 'pass')
-  if (notable.length === 0) {
-    lines.push('All comparable benchmark cases passed.', '')
-    return `${lines.join('\n')}\n`
-  }
-
-  lines.push(
-    '| Status | Benchmark | Base | Head | Change | Spread | Notes |',
-    '| --- | --- | ---: | ---: | ---: | ---: | --- |',
-  )
-  for (const result of notable.slice(0, 50)) {
-    const referenceValues = [result.baseMedian, result.headMedian]
-    lines.push(
-      `| ${statusLabel(result.status)} | ${escapeCell(result.id)} | ${formatBenchmarkValue(result.baseMedian, result.unit, referenceValues)} | ${formatBenchmarkValue(result.headMedian, result.unit, referenceValues)} | ${formatPercent(result.deltaPercent)} | ${formatPercent(result.deviationPercent)} | ${escapeCell(result.reason ?? '')} |`,
-    )
-  }
-  if (notable.length > 50) {
-    lines.push(
-      '',
-      `${notable.length - 50} additional non-passing cases are in comparison.json.`,
-    )
-  }
-  lines.push('')
+  appendComparisonSuites(lines, results)
   return `${lines.join('\n')}\n`
+}
+
+function appendComparisonSuites(lines, results) {
+  const suiteOrder = ['runtime', 'integration']
+  const grouped = Map.groupBy(results, (result) => result.suite)
+  const suites = [...grouped.keys()].sort(
+    (left, right) => suiteOrder.indexOf(left) - suiteOrder.indexOf(right),
+  )
+
+  for (const suite of suites) {
+    const suiteResults = grouped.get(suite)
+    lines.push(
+      `## ${suiteLabel(suite)} (${suiteResults.length} cases)`,
+      '',
+      '| Status | Benchmark | Base | Head | Change | Spread | Notes |',
+      '| --- | --- | ---: | ---: | ---: | ---: | --- |',
+    )
+    for (const result of suiteResults) {
+      const referenceValues = [result.baseMedian, result.headMedian]
+      lines.push(
+        `| ${statusLabel(result.status)} | ${escapeCell(result.name)} | ${formatBenchmarkValue(result.baseMedian, result.unit, referenceValues)} | ${formatBenchmarkValue(result.headMedian, result.unit, referenceValues)} | ${formatPercent(result.deltaPercent)} | ${formatPercent(result.deviationPercent)} | ${escapeCell(result.reason ?? '')} |`,
+      )
+    }
+    lines.push('')
+  }
 }
 
 function appendCandidateSuites(lines, results) {
@@ -366,11 +364,11 @@ function suiteLabel(suite) {
 
 function statusLabel(status) {
   return {
-    fail: 'FAIL',
-    pass: 'PASS',
-    pending: 'PENDING',
-    unstable: 'UNSTABLE',
-    warn: 'WARN',
+    fail: '✗ FAILED',
+    pass: '✓ GOOD',
+    pending: '… PENDING',
+    unstable: '⚠ UNSTABLE',
+    warn: '⚠ WARNING',
   }[status]
 }
 
