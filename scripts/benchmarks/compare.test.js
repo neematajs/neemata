@@ -77,6 +77,16 @@ void test('shows candidate medians when no base suite exists', async () => {
   assert.doesNotMatch(result.summary, /without a confirmed regression/)
 })
 
+void test('uses readable time units for sub-millisecond results', async () => {
+  const result = await compareScenario({
+    base: [0.01234, 0.01234, 0.01234],
+    head: [0.01345, 0.01345, 0.01345],
+  })
+
+  assert.match(result.summary, /\| 12\.34 µs\/op \| 13\.45 µs\/op \|/)
+  assert.doesNotMatch(result.summary, /0\.01234 ms\/op/)
+})
+
 void test('marks imprecise runtime measurements as unstable', async () => {
   const result = await compareScenario({
     base: [100, 100, 100],
