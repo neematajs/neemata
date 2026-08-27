@@ -601,7 +601,7 @@ export function createInMemoryWorkflowRuntime(
       mark(attemptCommands)
     },
     async requeueDeadCommand(commandId) {
-      if (requeueDead(continueRunCommands, commandId)) return
+      if (requeueDeadContinue(commandId)) return
       requeueDead(attemptCommands, commandId)
     },
     async acquireRunLease({ runId, leaseMs }) {
@@ -1512,6 +1512,22 @@ export function createInMemoryWorkflowRuntime(
     if (left === undefined || right === undefined) return undefined
     return left <= right ? left : right
   }
+  const mergeContinueQueueItem = (
+    pending: QueueItem<ContinueRunCommand>,
+    released: QueueItem<ContinueRunCommand>,
+  ): QueueItem<ContinueRunCommand> => {
+    const lastError =
+      released.deliveryCount > pending.deliveryCount
+        ? released.lastError
+        : pending.lastError
+    const { lastError: _lastError, ...pendingWithoutError } = pending
+    return {
+      ...pendingWithoutError,
+      runAt: earliestRunAt(pending.runAt, released.runAt),
+      deliveryCount: Math.max(pending.deliveryCount, released.deliveryCount),
+      ...(lastError === undefined ? {} : { lastError }),
+    }
+  }
   const enqueueContinue = (command: ContinueRunCommand, runAt?: Date) => {
     // Dead items must not absorb fresh enqueues — a dead-lettered continue
     // command would otherwise silently swallow every later wake-up for its
@@ -1657,6 +1673,38 @@ export function createInMemoryWorkflowRuntime(
     }
     return true
   }
+  const requeueDeadContinue = (commandId: string) => {
+    const deadIndex = continueRunCommands.findIndex(
+      (item) => item.id === commandId && item.deadAt !== undefined,
+    )
+    if (deadIndex === -1) return false
+    const dead = continueRunCommands[deadIndex]!
+    const requeued: QueueItem<ContinueRunCommand> = {
+      id: dead.id,
+      payload: dead.payload,
+      deliveryCount: 0,
+      createdAt: dead.createdAt,
+    }
+    const pendingIndex = continueRunCommands.findIndex(
+      (item, index) =>
+        index !== deadIndex &&
+        item.deadAt === undefined &&
+        item.payload.runId === dead.payload.runId,
+    )
+    if (pendingIndex === -1) {
+      continueRunCommands[deadIndex] = requeued
+      return true
+    }
+
+    // Requeue is another wake-up for the run, so an existing live command
+    // absorbs it without reviving a duplicate stale payload.
+    continueRunCommands[pendingIndex] = mergeContinueQueueItem(
+      continueRunCommands[pendingIndex]!,
+      requeued,
+    )
+    continueRunCommands.splice(deadIndex, 1)
+    return true
+  }
   const inspectQueueItem = <T>(item: QueueItem<T>): InspectQueueItem<T> => ({
     id: item.id,
     payload: item.payload,
@@ -1717,7 +1765,26 @@ export function createInMemoryWorkflowRuntime(
       }
 
       claimedContinueRunCommands.delete(command.id)
-      continueRunCommands.push(releaseQueueItem(claimed, options))
+      const released = releaseQueueItem(claimed, options)
+      if (released.deadAt !== undefined) {
+        continueRunCommands.push(released)
+        return
+      }
+
+      const pendingIndex = continueRunCommands.findIndex(
+        (item) =>
+          item.deadAt === undefined &&
+          item.payload.runId === released.payload.runId,
+      )
+      if (pendingIndex === -1) {
+        continueRunCommands.push(released)
+        return
+      }
+
+      continueRunCommands[pendingIndex] = mergeContinueQueueItem(
+        continueRunCommands[pendingIndex]!,
+        released,
+      )
     },
   }
 

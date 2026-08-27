@@ -24,6 +24,13 @@ export type PostgresWorkflowCommandContext = {
   readonly maxDeliveries: number
 }
 
+type ReleasedCommandRow = {
+  readonly dead_at: Date | null
+  readonly delivery_count: number
+  readonly last_error: unknown
+  readonly run_at: Date
+}
+
 // One source for the dead-letter threshold so the release path and the
 // claim-time takeover cannot drift apart.
 const atDeadLetterThreshold = (maxDeliveriesParam: string) =>
@@ -38,6 +45,73 @@ export const createPostgresWorkflowCommandHelpers = (
   ctx: PostgresWorkflowCommandContext,
 ) => {
   const { db, maxDeliveries } = ctx
+
+  const releaseCommandRow = async (
+    connection: WorkflowPostgresConnection,
+    commandId: string,
+    leaseToken: string,
+    options: CommandReleaseOptions | undefined,
+    clearLease: boolean,
+  ) => {
+    const leaseAssignments = clearLease
+      ? `lease_owner = NULL,
+         lease_token = NULL,
+         lease_expires_at = NULL,`
+      : ''
+
+    if (options?.error === undefined && options?.reason === undefined) {
+      return one<ReleasedCommandRow>(
+        connection,
+        `
+        UPDATE workflow_commands
+        SET ${leaseAssignments}
+            run_at = now() + ($3::int * interval '1 millisecond')
+        WHERE id = $1 AND lease_token = $2
+        RETURNING delivery_count, last_error, dead_at, run_at
+      `,
+        [commandId, leaseToken, RELEASE_BACKOFF_MS],
+      )
+    }
+
+    // Unroutable commands back off slower than transient errors: nothing can
+    // execute them until a deploy changes the registry, but they must still
+    // count toward dead-lettering instead of looping forever.
+    const backoffBaseMs =
+      options.reason === 'unroutable'
+        ? UNROUTABLE_BACKOFF_MS
+        : RELEASE_BACKOFF_MS
+    const error =
+      options.error ??
+      new Error('No implementation can execute this workflow command')
+
+    return one<ReleasedCommandRow>(
+      connection,
+      `
+      UPDATE workflow_commands
+      SET ${leaseAssignments}
+          delivery_count = delivery_count + 1,
+          last_error = $3::jsonb,
+          dead_at = CASE
+            WHEN ${atDeadLetterThreshold('$4')} THEN now()
+            ELSE dead_at
+          END,
+          run_at = now() + (
+            LEAST(power(2, delivery_count + 1) * $5, $6)::int
+            * interval '1 millisecond'
+          )
+      WHERE id = $1 AND lease_token = $2
+      RETURNING delivery_count, last_error, dead_at, run_at
+    `,
+      [
+        commandId,
+        leaseToken,
+        json(toStoredError(error)),
+        maxDeliveries,
+        backoffBaseMs,
+        MAX_ERROR_BACKOFF_MS,
+      ],
+    )
+  }
 
   const insertContinueCommand = async (
     command: ContinueRunCommand,
@@ -73,59 +147,99 @@ export const createPostgresWorkflowCommandHelpers = (
     leaseToken: string,
     options?: CommandReleaseOptions,
   ) => {
-    if (options?.error === undefined && options?.reason === undefined) {
-      await db.query(
-        `
-        UPDATE workflow_commands
-        SET lease_owner = NULL,
-            lease_token = NULL,
-            lease_expires_at = NULL,
-            run_at = now() + ($3::int * interval '1 millisecond')
-        WHERE id = $1 AND lease_token = $2
-      `,
-        [commandId, leaseToken, RELEASE_BACKOFF_MS],
-      )
-      return
-    }
+    await releaseCommandRow(db, commandId, leaseToken, options, true)
+  }
 
-    // Unroutable commands back off slower than transient errors: nothing can
-    // execute them until a deploy changes the registry, but they must still
-    // count toward dead-lettering instead of looping forever.
-    const backoffBaseMs =
-      options.reason === 'unroutable'
-        ? UNROUTABLE_BACKOFF_MS
-        : RELEASE_BACKOFF_MS
-    const error =
-      options.error ??
-      new Error('No implementation can execute this workflow command')
-
-    await db.query(
-      `
-      UPDATE workflow_commands
-      SET lease_owner = NULL,
-          lease_token = NULL,
-          lease_expires_at = NULL,
-          delivery_count = delivery_count + 1,
-          last_error = $3::jsonb,
-          dead_at = CASE
-            WHEN ${atDeadLetterThreshold('$4')} THEN now()
-            ELSE dead_at
-          END,
-          run_at = now() + (
-            LEAST(power(2, delivery_count + 1) * $5, $6)::int
-            * interval '1 millisecond'
-          )
-      WHERE id = $1 AND lease_token = $2
-    `,
-      [
+  const releaseContinueCommand = async (
+    commandId: string,
+    leaseToken: string,
+    options?: CommandReleaseOptions,
+  ) => {
+    await db.transaction(async (tx) => {
+      const released = await releaseCommandRow(
+        tx,
         commandId,
         leaseToken,
-        json(toStoredError(error)),
-        maxDeliveries,
-        backoffBaseMs,
-        MAX_ERROR_BACKOFF_MS,
-      ],
-    )
+        options,
+        false,
+      )
+      if (!released || released.dead_at !== null) return
+
+      // Older releases could leave dead continuations inside the dedup index.
+      // Keep their history but move them outside the live-command predicate so
+      // they cannot absorb the wake-up being released here.
+      await tx.query(
+        `
+        UPDATE workflow_commands AS dead
+        SET lease_token = 'dead:' || dead.id::text
+        WHERE dead.id <> $1
+          AND kind = 'continue'
+          AND dead_at IS NOT NULL
+          AND lease_token IS NULL
+          AND run_id = (
+            SELECT run_id
+            FROM workflow_commands
+            WHERE id = $1 AND lease_token = $2
+          )
+      `,
+        [commandId, leaseToken],
+      )
+
+      // Copy while the released row is still leased, so it never enters the
+      // partial unique index itself. ON CONFLICT keeps a newer pending payload
+      // and only carries forward earlier scheduling or newer retry metadata;
+      // the claimed row is deleted only after one live wake-up is guaranteed.
+      await tx.query(
+        `
+        WITH coalesced AS (
+          INSERT INTO workflow_commands (
+            id,
+            kind,
+            run_id,
+            workflow_name,
+            payload,
+            run_at,
+            priority,
+            delivery_count,
+            last_error,
+            created_at
+          )
+          SELECT
+            $3,
+            kind,
+            run_id,
+            workflow_name,
+            payload,
+            run_at,
+            priority,
+            delivery_count,
+            last_error,
+            created_at
+          FROM workflow_commands
+          WHERE id = $1 AND lease_token = $2
+          ON CONFLICT (run_id)
+            WHERE kind = 'continue' AND lease_token IS NULL
+          DO UPDATE
+          SET run_at = LEAST(workflow_commands.run_at, EXCLUDED.run_at),
+              delivery_count = GREATEST(
+                workflow_commands.delivery_count,
+                EXCLUDED.delivery_count
+              ),
+              last_error = CASE
+                WHEN EXCLUDED.delivery_count > workflow_commands.delivery_count
+                  THEN EXCLUDED.last_error
+                ELSE workflow_commands.last_error
+              END
+          RETURNING id
+        )
+        DELETE FROM workflow_commands
+        WHERE id = $1
+          AND lease_token = $2
+          AND EXISTS (SELECT 1 FROM coalesced)
+      `,
+        [commandId, leaseToken, id()],
+      )
+    })
   }
 
   const claimCommand = async (
@@ -235,6 +349,7 @@ export const createPostgresWorkflowCommandHelpers = (
   return {
     insertContinueCommand,
     releaseCommand,
+    releaseContinueCommand,
     claimCommand,
     ackCommand,
   }
@@ -244,8 +359,12 @@ export const createRunCoordinationExecutor = (
   ctx: PostgresWorkflowCommandContext,
 ): RunCoordinationExecutor => {
   const { ready } = ctx
-  const { insertContinueCommand, releaseCommand, claimCommand, ackCommand } =
-    createPostgresWorkflowCommandHelpers(ctx)
+  const {
+    insertContinueCommand,
+    releaseContinueCommand,
+    claimCommand,
+    ackCommand,
+  } = createPostgresWorkflowCommandHelpers(ctx)
 
   return {
     async enqueue(command) {
@@ -281,7 +400,7 @@ export const createRunCoordinationExecutor = (
     },
     async release(command, options) {
       await ready
-      await releaseCommand(command.id, command.leaseToken, options)
+      await releaseContinueCommand(command.id, command.leaseToken, options)
     },
   }
 }

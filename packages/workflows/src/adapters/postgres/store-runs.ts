@@ -588,22 +588,100 @@ export const createPostgresWorkflowRunStore = (
     },
     async requeueDeadCommand(commandId) {
       await ready
-      await db.query(
-        `
-        UPDATE workflow_commands
-        SET delivery_count = 0,
-            last_error = NULL,
-            dead_at = NULL,
-            reaped_at = NULL,
-            lease_owner = NULL,
-            lease_token = NULL,
-            lease_expires_at = NULL,
-            run_at = now()
-        WHERE id = $1
-          AND dead_at IS NOT NULL
-      `,
-        [commandId],
-      )
+      await db.transaction(async (tx) => {
+        const command = await one<{ kind: string }>(
+          tx,
+          `
+          SELECT kind
+          FROM workflow_commands
+          WHERE id = $1 AND dead_at IS NOT NULL
+          FOR UPDATE
+        `,
+          [commandId],
+        )
+        if (!command) return
+
+        if (command.kind !== 'continue') {
+          await tx.query(
+            `
+            UPDATE workflow_commands
+            SET delivery_count = 0,
+                last_error = NULL,
+                dead_at = NULL,
+                reaped_at = NULL,
+                lease_owner = NULL,
+                lease_token = NULL,
+                lease_expires_at = NULL,
+                run_at = now()
+            WHERE id = $1 AND dead_at IS NOT NULL
+          `,
+            [commandId],
+          )
+          return
+        }
+
+        // A dead continuation may share its run with a newer live wake-up.
+        // Keep the dead source outside the partial unique index until its
+        // requeued copy has inserted or coalesced, then consume the source.
+        await tx.query(
+          `
+          UPDATE workflow_commands
+          SET lease_token = COALESCE(lease_token, 'dead:' || id::text)
+          WHERE id = $1 AND dead_at IS NOT NULL
+        `,
+          [commandId],
+        )
+        await tx.query(
+          `
+          WITH coalesced AS (
+            INSERT INTO workflow_commands (
+              id,
+              kind,
+              run_id,
+              workflow_name,
+              payload,
+              run_at,
+              priority,
+              delivery_count,
+              last_error,
+              created_at
+            )
+            SELECT
+              $2,
+              kind,
+              run_id,
+              workflow_name,
+              payload,
+              now(),
+              priority,
+              0,
+              NULL,
+              created_at
+            FROM workflow_commands
+            WHERE id = $1 AND dead_at IS NOT NULL
+            ON CONFLICT (run_id)
+              WHERE kind = 'continue' AND lease_token IS NULL
+            DO UPDATE
+            SET run_at = LEAST(workflow_commands.run_at, EXCLUDED.run_at),
+                delivery_count = GREATEST(
+                  workflow_commands.delivery_count,
+                  EXCLUDED.delivery_count
+                ),
+                last_error = CASE
+                  WHEN EXCLUDED.delivery_count > workflow_commands.delivery_count
+                    THEN EXCLUDED.last_error
+                  ELSE workflow_commands.last_error
+                END
+            RETURNING id
+          )
+          DELETE FROM workflow_commands
+          WHERE id = $1
+            AND dead_at IS NOT NULL
+            AND EXISTS (SELECT 1 FROM coalesced)
+        `,
+          [commandId, id()],
+        )
+      })
     },
     async acquireRunLease({ runId, leaseMs }) {
       await ready
