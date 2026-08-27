@@ -5,6 +5,10 @@ on:
   pull_request:
   workflow_dispatch:
 
+concurrency:
+  group: test-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   lint:
     runs-on: ubuntu-24.04
@@ -33,6 +37,7 @@ jobs:
             ${{ runner.os }}-pnpm-store-
       - run: pnpm install
       - run: pnpm check
+      - run: pnpm run test:benchmark-tools
 
   tests:
     needs: [lint]

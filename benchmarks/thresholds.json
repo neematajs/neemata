@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "minimumRounds": 3,
+  "categories": {
+    "runtime": {
+      "warnPercent": 8,
+      "failPercent": 15,
+      "maximumRelativeMarginOfError": 5,
+      "enforce": true
+    },
+    "integration": {
+      "warnPercent": 15,
+      "failPercent": 25,
+      "maximumRelativeMarginOfError": 15,
+      "enforce": false
+    }
+  }
+}

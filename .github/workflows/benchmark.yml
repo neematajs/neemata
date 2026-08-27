@@ -1,0 +1,228 @@
+name: Benchmark
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      run_integration:
+        description: 'Run the service-backed integration benchmark suite'
+        type: boolean
+        required: true
+        default: true
+
+concurrency:
+  group: benchmark-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  regression:
+    permissions:
+      contents: read
+      pull-requests: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      redis:
+        image: redis:8-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      valkey:
+        image: valkey/valkey:9-alpine
+        ports:
+          - 6380:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      postgres:
+        image: postgres:17-alpine
+        ports:
+          - 5432:5432
+        env:
+          POSTGRES_USER: neemata
+          POSTGRES_PASSWORD: neemata
+          POSTGRES_DB: neemata
+        options: >-
+          --health-cmd "pg_isready -U neemata"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Checkout candidate
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+
+      - name: Resolve comparison base
+        id: comparison-base
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if [[ -n "$BASE_SHA" && ! "$BASE_SHA" =~ ^0+$ ]]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+            echo "sha=$BASE_SHA" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout comparison base
+        if: steps.comparison-base.outputs.available == 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.comparison-base.outputs.sha }}
+          path: .benchmark/base
+
+      - name: Detect benchmark baseline
+        id: benchmark-base
+        shell: bash
+        run: |
+          if [[ -f .benchmark/base/scripts/benchmarks/run.js && -f .benchmark/base/benchmarks/thresholds.json ]]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Use canonical Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: Get pnpm store directory
+        shell: bash
+        run: echo "STORE_PATH=$(pnpm store path --silent)" >> "$GITHUB_ENV"
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: benchmark-${{ runner.os }}-${{ runner.arch }}-node-${{ hashFiles('.node-version') }}-pnpm-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            benchmark-${{ runner.os }}-${{ runner.arch }}-node-
+
+      - name: Install candidate dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install base dependencies
+        if: steps.benchmark-base.outputs.available == 'true'
+        run: pnpm --dir .benchmark/base install --frozen-lockfile
+
+      - name: Build candidate
+        run: pnpm exec tsc -b tsconfig.build.json --pretty false
+
+      - name: Build base
+        if: steps.benchmark-base.outputs.available == 'true'
+        run: pnpm --dir .benchmark/base exec tsc -b tsconfig.build.json --pretty false
+
+      - name: Run paired regression benchmarks
+        shell: bash
+        env:
+          NMTJS_REQUIRE_SERVICE_TESTS: '1'
+          POSTGRES_URL: postgres://neemata:neemata@localhost:5432/neemata
+          REDIS_URL: redis://localhost:6379
+          RUN_INTEGRATION: ${{ github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.run_integration) }}
+          VALKEY_URL: redis://localhost:6380
+        run: |
+          suites="runtime"
+          if [[ "$RUN_INTEGRATION" == "true" ]]; then
+            suites="runtime,integration"
+          fi
+          args=(
+            --head "$GITHUB_WORKSPACE"
+            --output "$RUNNER_TEMP/benchmark-regression"
+            --rounds 3
+            --suites "$suites"
+            --enforce
+          )
+          if [[ "${{ steps.benchmark-base.outputs.available }}" == "true" ]]; then
+            args+=(
+              --base "$GITHUB_WORKSPACE/.benchmark/base"
+              --thresholds "$GITHUB_WORKSPACE/.benchmark/base/benchmarks/thresholds.json"
+            )
+          fi
+          node scripts/benchmarks/paired.js "${args[@]}"
+
+      - name: Publish job summary
+        if: always()
+        shell: bash
+        run: |
+          if [[ -f "$RUNNER_TEMP/benchmark-regression/summary.md" ]]; then
+            cat "$RUNNER_TEMP/benchmark-regression/summary.md" >> "$GITHUB_STEP_SUMMARY"
+            artifact_name="benchmark-regression-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+            printf '\nRaw per-round JSON reports: [`%s`](https://github.com/%s/actions/runs/%s#artifacts).\n' \
+              "$artifact_name" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Benchmark execution ended before a comparison summary was produced." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload benchmark evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-regression-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/benchmark-regression
+          if-no-files-found: warn
+          retention-days: 90
+
+      - name: Publish pull request comment
+        if: >-
+          always() &&
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository
+        continue-on-error: true
+        uses: actions/github-script@v7
+        env:
+          SUMMARY_PATH: ${{ runner.temp }}/benchmark-regression/summary.md
+          ARTIFACT_NAME: benchmark-regression-${{ github.run_id }}-${{ github.run_attempt }}
+        with:
+          script: |
+            const fs = require('node:fs')
+            const marker = '<!-- benchmark-regression-report -->'
+            const summary = fs.existsSync(process.env.SUMMARY_PATH)
+              ? fs.readFileSync(process.env.SUMMARY_PATH, 'utf8').trim()
+              : 'Benchmark execution ended before a comparison summary was produced.'
+            const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`
+            const body = [
+              marker,
+              summary,
+              '',
+              `[Workflow run](${runUrl}) · [Raw per-round JSON reports](${runUrl}#artifacts) (\`${process.env.ARTIFACT_NAME}\`)`,
+            ].join('\n')
+            const issue = {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+            }
+            const comments = await github.paginate(github.rest.issues.listComments, issue)
+            const existing = comments.find(
+              (comment) =>
+                comment.user?.login === 'github-actions[bot]' && comment.body?.includes(marker),
+            )
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: issue.owner,
+                repo: issue.repo,
+                comment_id: existing.id,
+                body,
+              })
+            } else {
+              await github.rest.issues.createComment({ ...issue, body })
+            }
