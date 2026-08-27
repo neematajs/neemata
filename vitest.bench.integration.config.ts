@@ -4,9 +4,11 @@ export default defineConfig({
   test: {
     environment: 'node',
     fileParallelism: false,
+    hookTimeout: 30 * 60 * 1_000,
     isolate: true,
     maxWorkers: 1,
-    testTimeout: 180_000,
+    pool: 'forks',
+    testTimeout: 30 * 60 * 1_000,
     benchmark: {
       enabled: true,
       include: ['packages/*/bench/**/*.integration.bench.ts'],

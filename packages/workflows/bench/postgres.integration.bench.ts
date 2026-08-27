@@ -19,9 +19,9 @@ const inputs = Array.from({ length: startsPerSample }, (_, index) => ({
   text: 'postgres-benchmark',
 }))
 const benchmarkOptions = {
-  iterations: 60,
+  iterations: 600,
   time: 0,
-  warmupIterations: 5,
+  warmupIterations: 50,
   warmupTime: 0,
 }
 const workflow = defineWorkflow({

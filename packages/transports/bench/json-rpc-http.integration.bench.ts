@@ -8,9 +8,9 @@ import { bench, describe } from 'vitest'
 
 const requestsPerSample = 50
 const benchmarkOptions = {
-  iterations: 60,
+  iterations: 600,
   time: 0,
-  warmupIterations: 10,
+  warmupIterations: 100,
   warmupTime: 0,
 }
 const requestBody = JSON.stringify({

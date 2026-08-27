@@ -26,6 +26,10 @@ outputs conventionally belong under the ignored `benchmark-results/` directory.
 Paired local comparisons likewise use temporary reports unless an output directory is
 requested explicitly.
 
+Benchmark files run sequentially in isolated fork processes. This prevents heap and JIT
+state from one benchmark file from affecting another while keeping CPU contention from
+parallel benchmark workers out of the measurements.
+
 ```sh
 node scripts/benchmarks/run.js runtime --output benchmark-results/runtime.json
 ```

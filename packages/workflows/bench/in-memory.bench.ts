@@ -6,11 +6,11 @@ import {
   itemChildKey,
 } from '../src/runtime/index.ts'
 
-const CREATE_ITERATIONS = 1_000
-const WARMUP_ITERATIONS = 100
+const CREATE_ITERATIONS = 10_000
+const WARMUP_ITERATIONS = 1_000
 const FANOUTS_PER_SAMPLE = 200
-const FANOUT_ITERATIONS = 300
-const FANOUT_WARMUP_ITERATIONS = 30
+const FANOUT_ITERATIONS = 3_000
+const FANOUT_WARMUP_ITERATIONS = 300
 
 const runInput = Object.freeze({
   workflowName: 'benchmark-workflow',
@@ -103,7 +103,8 @@ describe('deterministic in-memory workflow runtime', () => {
       iterations: CREATE_ITERATIONS,
       warmupIterations: WARMUP_ITERATIONS,
       setup: async (_task, mode) => {
-        const iterations = mode === 'warmup' ? 100 : 1_000
+        const iterations =
+          mode === 'warmup' ? WARMUP_ITERATIONS : CREATE_ITERATIONS
         transitionRuntime = createInMemoryWorkflowRuntime()
         transitionRunIds = await prepareRuns(transitionRuntime, iterations)
         transitionIndex = 0

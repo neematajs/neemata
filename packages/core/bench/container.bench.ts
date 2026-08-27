@@ -10,8 +10,8 @@ import {
 const BENCHMARK_OPTIONS = {
   time: 200,
   warmupTime: 50,
-  iterations: 20,
-  warmupIterations: 5,
+  iterations: 200,
+  warmupIterations: 50,
 } as const
 const CACHED_RESOLUTIONS_PER_SAMPLE = 1_000
 
@@ -67,10 +67,10 @@ describe('dependency injection resolution', () => {
     {
       time: 0,
       warmupTime: 0,
-      iterations: 1_000,
-      warmupIterations: 100,
+      iterations: 10_000,
+      warmupIterations: 1_000,
       setup: (_task, mode) => {
-        const count = mode === 'warmup' ? 100 : 1_000
+        const count = mode === 'warmup' ? 1_000 : 10_000
         coldContainers = Array.from(
           { length: count },
           () => new Container({ logger }),

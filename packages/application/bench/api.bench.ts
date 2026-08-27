@@ -11,8 +11,8 @@ import {
 const BENCHMARK_OPTIONS = {
   time: 200,
   warmupTime: 50,
-  iterations: 20,
-  warmupIterations: 5,
+  iterations: 200,
+  warmupIterations: 50,
 } as const
 
 const payload = Object.freeze({ caseId: 'case-0001', revision: 17 })
