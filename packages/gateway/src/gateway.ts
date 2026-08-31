@@ -130,26 +130,6 @@ export class Gateway<
     }
   }
 
-  async reload(
-    options?: Pick<
-      GatewayOptions<ResolvedProcedure>,
-      'api' | 'container' | 'hooks' | 'identity'
-    >,
-  ) {
-    // Own the hot-swap of these options internally so callers don't reach into
-    // `this.options` directly; identity falls back to the current one.
-    if (options) {
-      this.options.api = options.api
-      this.options.container = options.container
-      this.options.hooks = options.hooks
-      this.options.identity = options.identity ?? this.options.identity
-    }
-
-    for (const connections of this.connections.connections.values()) {
-      await connections.container.dispose()
-    }
-  }
-
   protected onConnect(transport: string): TransportWorkerParams['onConnect'] {
     const logger = forkLogger(this.logger, undefined, undefined, { transport })
     return async (options, ...injections) => {

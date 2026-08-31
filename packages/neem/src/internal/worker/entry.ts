@@ -2,7 +2,11 @@ import { parentPort, workerData as rawWorkerData } from 'node:worker_threads'
 
 import type { Logger } from '@nmtjs/core'
 
-import type { NeemRuntime, NeemRuntimeWorker } from '../../shared/types.ts'
+import type {
+  NeemRuntime,
+  NeemRuntimeWorker,
+  NeemRuntimeWorkerContext,
+} from '../../shared/types.ts'
 import type {
   ParentMessage,
   RuntimeWorkerData,
@@ -21,10 +25,17 @@ if (!parentPort) {
 const port = parentPort
 const workerData = rawWorkerData as RuntimeWorkerData
 
+type RuntimeWorker = NeemRuntimeWorker<unknown, unknown>
+
 let runtime: NeemRuntime | undefined
 let logger: Logger | undefined
 let started = false
 let stopRequested = false
+
+if ((import.meta as ImportMeta & { readonly hot?: unknown }).hot) {
+  const { initializeWorkerHmr } = await import('./hmr.ts')
+  initializeWorkerHmr({ port, workerData })
+}
 
 function postMessage(message: WorkerMessage): void {
   port.postMessage(message)
@@ -53,23 +64,26 @@ async function createRuntime(data: RuntimeWorkerData): Promise<NeemRuntime> {
     { artifactId: data.artifact.id, file: data.artifact.file },
     'Neem runtime worker initializing',
   )
-  const worker = await importDefault<NeemRuntimeWorker<unknown, unknown>>(
-    data.artifact.file,
-  )
+  const worker = await importDefault<RuntimeWorker>(data.artifact.file)
   if (!isNeemRuntimeWorker(worker)) {
     throw new Error(
       `Runtime worker file [${data.artifact.file}] default export must be a marked runtime worker produced by defineRuntimeWorker`,
     )
   }
 
-  const created = worker.createRuntime({
+  const context: NeemRuntimeWorkerContext<unknown, unknown> = {
     mode: data.mode,
     name: data.name,
     data: data.data,
     logger,
     definition: worker.definition,
     port: data.port,
-  })
+  }
+  if ((import.meta as ImportMeta & { readonly hot?: unknown }).hot) {
+    const { createHmrRuntime } = await import('./hmr.ts')
+    return createHmrRuntime(worker, context)
+  }
+  const created = worker.createRuntime(context)
   logger.trace('Neem runtime worker initialized')
   return created
 }

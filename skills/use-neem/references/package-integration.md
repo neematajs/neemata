@@ -64,18 +64,35 @@ export default defineRuntime({
 Planner and worker use helpers from the same package:
 
 ```ts
+// workflow-workers.ts
+import type { WorkflowsWorkersConfig } from '@nmtjs/workflows/neem'
+
+export default {
+  coordinator: { threads: 1 },
+  execution: { threads: 2 },
+} satisfies WorkflowsWorkersConfig
+```
+
+```ts
 // neem.planner.ts
 import { defineWorkflowsPlanner } from '@nmtjs/workflows/neem'
+import workers from './workflow-workers.ts'
 
-export default defineWorkflowsPlanner(() => workflowsConfig)
+export default defineWorkflowsPlanner(() => workers)
 ```
 
 ```ts
 // neem.worker.ts
 import { defineWorkflowsWorker } from '@nmtjs/workflows/neem'
+import workflowsConfig from './workflows.config.ts'
 
 export default defineWorkflowsWorker(workflowsConfig)
 ```
+
+Keep the planner graph limited to topology. The executable config can reuse
+`workflow-workers.ts`, but the planner must not import the executable config;
+otherwise an implementation edit is also a planner change and requires a full
+runtime reload.
 
 ## Custom Runtime
 

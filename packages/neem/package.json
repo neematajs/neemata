@@ -49,7 +49,7 @@
     "defu": "^6.1.7",
     "hookable": "^6.1.1",
     "oxc-resolver": "^11.21.3",
-    "rolldown": "^1.2.4",
+    "rolldown": "^1.2.6",
     "zod": "catalog:"
   },
   "peerDependencies": {

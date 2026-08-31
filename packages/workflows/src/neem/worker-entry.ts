@@ -140,6 +140,14 @@ export function defineWorkflowsWorker<
         },
       }
     },
+    ...((import.meta as ImportMeta & { readonly hot?: unknown }).hot
+      ? {
+          async hmr() {
+            const { workflowsHmrAdapter } = await import('./hmr.ts')
+            return workflowsHmrAdapter
+          },
+        }
+      : {}),
   })
 }
 

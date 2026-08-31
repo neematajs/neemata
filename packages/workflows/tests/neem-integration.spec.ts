@@ -24,6 +24,7 @@ import {
   implementTask,
   implementWorkflow,
 } from '../src/index.ts'
+import { workflowsHmrAdapter } from '../src/neem/hmr.ts'
 import workflowsHost from '../src/neem/host.ts'
 import {
   createWorkflowsRuntime,
@@ -31,6 +32,7 @@ import {
   defineWorkflowsPlanner,
   defineWorkflowsWorker,
   type WorkflowsNamedExecutionWorkerPoolConfig,
+  type WorkflowsWorkersConfig,
 } from '../src/neem/index.ts'
 import { resolveWorkflowsConfig } from '../src/neem/runtime.ts'
 import {
@@ -87,6 +89,31 @@ describe('workflows Neem integration', () => {
         { role: 'execution', pool: 'execution' },
         { role: 'execution', pool: 'execution' },
         { role: 'execution', pool: 'execution' },
+      ],
+    })
+  })
+
+  it('plans isolated worker topology without loading implementations', async () => {
+    const workers = {
+      coordinator: { threads: 2 },
+      execution: [
+        { name: 'interactive', threads: 2, activityNames: ['handle'] },
+        { name: 'remaining', threads: 1 },
+      ],
+    } satisfies WorkflowsWorkersConfig
+    const planner = defineWorkflowsPlanner(() => workers)
+    const plan = await planner({
+      mode: 'development',
+      name: 'workflows',
+      logger,
+    })
+
+    expect(plan.workers).toStrictEqual({
+      coordinator: [{ role: 'coordinator' }, { role: 'coordinator' }],
+      execution: [
+        { role: 'execution', pool: 'interactive' },
+        { role: 'execution', pool: 'interactive' },
+        { role: 'execution', pool: 'remaining' },
       ],
     })
   })
@@ -511,6 +538,74 @@ describe('workflows Neem integration', () => {
     expect(dispose).toHaveBeenCalledOnce()
     channel.port1.close()
     channel.port2.close()
+  })
+
+  it('reloads workflow implementations without finishing the Neem worker', async () => {
+    const task = defineTask({
+      name: 'neem.integration.hmr-task',
+      input: t.object({ text: t.string() }),
+      output: t.object({ text: t.string() }),
+    })
+    const runtimeAdapter = createInMemoryWorkflowRuntime()
+    const createConfig = (version: string) =>
+      defineWorkflows({
+        runtime: () => runtimeAdapter,
+        workflows: () => [],
+        tasks: () => [
+          implementTask(task, {
+            handler: async (_ctx, input) => ({
+              text: `${version}:${input.text}`,
+            }),
+          }),
+        ],
+        workers: { execution: { pollIntervalMs: 1 } },
+      })
+    const initial = createConfig('v1')
+    const worker = defineWorkflowsWorker(initial)
+    const channel = new MessageChannel()
+    const runtime = await workflowsHmrAdapter.createRuntime(worker, {
+      mode: 'development',
+      name: 'workflows:execution:hmr',
+      data: { role: 'execution', pool: 'execution' },
+      logger,
+      definition: worker.definition,
+      port: channel.port1,
+    })
+    const client = createWorkflowRuntimeClient(runtimeAdapter)
+    let finished = false
+    void Promise.resolve(runtime.finished).finally(() => {
+      finished = true
+    })
+
+    try {
+      await runtime.start()
+      const first = await client.start(task, { text: 'first' })
+      const firstSnapshot = await waitFor(async () => {
+        const snapshot = await runtimeAdapter.store.loadRunSnapshot(first.id)
+        return snapshot?.run.status === 'completed' ? snapshot : undefined
+      })
+      expect(firstSnapshot.run.output).toStrictEqual({ text: 'v1:first' })
+
+      const next = defineWorkflowsWorker(createConfig('v2'))
+      await expect(
+        workflowsHmrAdapter.apply(runtime, worker, next),
+      ).resolves.toStrictEqual({ accepted: true })
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      expect(finished).toBe(false)
+
+      const second = await client.start(task, { text: 'second' })
+      const secondSnapshot = await waitFor(async () => {
+        const snapshot = await runtimeAdapter.store.loadRunSnapshot(second.id)
+        return snapshot?.run.status === 'completed' ? snapshot : undefined
+      })
+      expect(secondSnapshot.run.output).toStrictEqual({ text: 'v2:second' })
+    } finally {
+      await runtime.stop()
+      channel.port1.close()
+      channel.port2.close()
+    }
+
+    expect(finished).toBe(true)
   })
 
   it('stops promptly by delivering shutdown to an in-flight task handler', async () => {

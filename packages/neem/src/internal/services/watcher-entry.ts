@@ -29,6 +29,21 @@ async function handle(request: WatcherRequest): Promise<void> {
         post({ id: request.id, type: 'result', data: result })
         return
       }
+      case 'sync-hmr-clients':
+        await service?.syncHmrClients(request.runtimeName, request.clientIds)
+        post({ id: request.id, type: 'result' })
+        return
+      case 'hmr-delivered':
+        await service?.notifyHmrDelivered(
+          request.runtimeName,
+          request.filenames,
+        )
+        post({ id: request.id, type: 'result' })
+        return
+      case 'prepare-hmr-fallback':
+        await service?.prepareHmrFallback(request.runtimeName)
+        post({ id: request.id, type: 'result' })
+        return
       case 'stop':
         await service?.stop()
         service = undefined

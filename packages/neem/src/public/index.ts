@@ -47,6 +47,8 @@ export type {
   NeemRuntimeHostDeclaration,
   NeemRuntimeHostFactory,
   NeemRuntimeHostFactoryParams,
+  NeemRuntimeHmrAdapter,
+  NeemRuntimeHmrResult,
   NeemRuntimePlan,
   NeemRuntimePlanner,
   NeemRuntimePlannerContext,

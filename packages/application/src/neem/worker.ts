@@ -58,6 +58,15 @@ export function defineNeemataWorker<
     createRuntime(ctx) {
       return new NeemataApplicationRuntime(ctx)
     },
+    ...((import.meta as ImportMeta & { readonly hot?: unknown }).hot
+      ? {
+          async hmr() {
+            const { createNeemataHmrAdapter } =
+              await import('../internal/neem-hmr.ts')
+            return createNeemataHmrAdapter<THost>()
+          },
+        }
+      : {}),
   })
 }
 

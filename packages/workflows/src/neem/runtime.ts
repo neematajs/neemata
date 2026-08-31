@@ -105,6 +105,18 @@ export type ResolvedExecutionWorkerPool =
     readonly taskNames: readonly string[]
   }
 
+export type ResolvedWorkflowsWorkerTopology = {
+  readonly coordinator: Required<WorkflowsWorkerPoolConfig>
+  readonly execution: readonly ResolvedExecutionWorkerPoolTopology[]
+}
+
+type ResolvedExecutionWorkerPoolTopology =
+  Required<WorkflowsWorkerPoolConfig> & {
+    readonly name: string
+    readonly activityNames?: readonly string[]
+    readonly taskNames?: readonly string[]
+  }
+
 export type WorkflowsWorkerData = {
   readonly role: WorkflowWorkerRole
   /** Which resolved execution pool this worker serves; execution role only. */
@@ -161,14 +173,7 @@ export async function resolveWorkflowsConfig<
 > {
   const workflows = await config.workflows()
   const tasks = (await config.tasks?.()) ?? []
-  const workerConfig = config.workers as
-    | (WorkflowsWorkersConfig & Record<string, unknown>)
-    | undefined
-  if (workerConfig && ('activity' in workerConfig || 'task' in workerConfig)) {
-    throw new Error(
-      'Workflows workers.activity and workers.task were replaced by workers.execution',
-    )
-  }
+  const workerTopology = resolveWorkflowsWorkerTopology(config.workers)
   return {
     runtime: config.runtime,
     workflows,
@@ -176,13 +181,31 @@ export async function resolveWorkflowsConfig<
     schedules: (await config.schedules?.()) ?? [],
     plugins: config.plugins ?? [],
     workers: {
-      coordinator: normalizeWorkerPool(config.workers?.coordinator),
-      execution: normalizeExecutionWorkerPools(
-        config.workers?.execution,
+      coordinator: workerTopology.coordinator,
+      execution: resolveExecutionWorkerPools(
+        workerTopology.execution,
         workflows,
         tasks,
       ),
     },
+  }
+}
+
+export function resolveWorkflowsWorkerTopology(
+  config: WorkflowsWorkersConfig | undefined,
+): ResolvedWorkflowsWorkerTopology {
+  const workerConfig = config as
+    | (WorkflowsWorkersConfig & Record<string, unknown>)
+    | undefined
+  if (workerConfig && ('activity' in workerConfig || 'task' in workerConfig)) {
+    throw new Error(
+      'Workflows workers.activity and workers.task were replaced by workers.execution',
+    )
+  }
+
+  return {
+    coordinator: normalizeWorkerPool(config?.coordinator),
+    execution: normalizeExecutionWorkerTopology(config?.execution),
   }
 }
 
@@ -195,14 +218,12 @@ function normalizeWorkerPool<TConfig extends WorkflowsWorkerPoolConfig>(
   }) as Required<TConfig & WorkflowsWorkerPoolConfig>
 }
 
-function normalizeExecutionWorkerPools(
+function normalizeExecutionWorkerTopology(
   config:
     | WorkflowsExecutionWorkerPoolConfig
     | readonly WorkflowsNamedExecutionWorkerPoolConfig[]
     | undefined,
-  workflows: readonly AnyWorkflowImplementation[],
-  tasks: readonly AnyTaskImplementation[],
-): readonly ResolvedExecutionWorkerPool[] {
+): readonly ResolvedExecutionWorkerPoolTopology[] {
   const pools: readonly WorkflowsNamedExecutionWorkerPoolConfig[] =
     config === undefined || !Array.isArray(config)
       ? [
@@ -258,6 +279,34 @@ function normalizeExecutionWorkerPools(
           `Task [${taskName}] is claimed by both workflows execution pools [${owner}] and [${pool.name}]`,
         )
       }
+      claimedTasks.set(taskName, pool.name)
+    }
+  }
+
+  return pools.map((pool) =>
+    Object.freeze({
+      ...normalizeWorkerPool(pool),
+      name: pool.name,
+    }),
+  )
+}
+
+function resolveExecutionWorkerPools(
+  pools: readonly ResolvedExecutionWorkerPoolTopology[],
+  workflows: readonly AnyWorkflowImplementation[],
+  tasks: readonly AnyTaskImplementation[],
+): readonly ResolvedExecutionWorkerPool[] {
+  const claimedActivities = new Map<string, string>()
+  const claimedTasks = new Map<string, string>()
+  let catchAll: string | undefined
+  for (const pool of pools) {
+    if (pool.activityNames === undefined && pool.taskNames === undefined) {
+      catchAll = pool.name
+    }
+    for (const activityName of pool.activityNames ?? []) {
+      claimedActivities.set(activityName, pool.name)
+    }
+    for (const taskName of pool.taskNames ?? []) {
       claimedTasks.set(taskName, pool.name)
     }
   }

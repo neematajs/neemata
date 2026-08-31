@@ -239,7 +239,8 @@ workflow name; there is no per-run definition snapshot yet.
 
 ## Neem runtime integration
 
-A workflows runtime is three files plus a shared config module:
+A workflows runtime keeps planner topology separate from executable worker
+config so implementation edits can use worker HMR:
 
 ```ts
 // neem.runtime.ts
@@ -253,9 +254,9 @@ export default createWorkflowsRuntime()({
 
 // neem.planner.ts
 import { defineWorkflowsPlanner } from '@nmtjs/workflows/neem'
-import workflowsConfig from './config.ts'
+import workers from './workflow-workers.ts'
 
-export default defineWorkflowsPlanner(() => workflowsConfig)
+export default defineWorkflowsPlanner(() => workers)
 
 // neem.worker.ts
 import { defineWorkflowsWorker } from '@nmtjs/workflows/neem'
@@ -265,19 +266,30 @@ export default defineWorkflowsWorker(workflowsConfig)
 ```
 
 ```ts
+// workflow-workers.ts
+import type { WorkflowsWorkersConfig } from '@nmtjs/workflows/neem'
+
+export default {
+  coordinator: { threads: 2, concurrency: 2 },
+  execution: { threads: 2, concurrency: 4 },
+} satisfies WorkflowsWorkersConfig
+
 // config.ts
 import { defineWorkflows } from '@nmtjs/workflows/neem'
+import workers from './workflow-workers.ts'
 
 export default defineWorkflows({
   runtime: createRuntimeAdapter, // async factory returning the runtime
   workflows: () => workflowImplementations,
   tasks: () => taskImplementations,
-  workers: {
-    coordinator: { threads: 2, concurrency: 2 },
-    execution: { threads: 2, concurrency: 4 },
-  },
+  workers,
 })
 ```
+
+Do not import `config.ts` from the planner. That pulls implementations into the
+planner watch graph, where their edits intentionally require a full runtime
+reload instead of worker HMR. Pool names and thread counts remain planner
+topology changes and still restart the runtime.
 
 Worker pool options are `threads`, `concurrency`, `leaseMs`, and
 `pollIntervalMs`. The execution pool runs both workflow activities and

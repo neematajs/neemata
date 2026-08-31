@@ -1,5 +1,6 @@
 import type { MaybePromise } from '@nmtjs/common'
 import type { Logger } from '@nmtjs/core'
+import type { BindingClientHmrUpdate } from 'rolldown/experimental'
 
 import type {
   NeemResolvedArtifact,
@@ -52,6 +53,51 @@ export class RuntimeController {
 
   getUpstreams(): readonly NeemRuntimeUpstream[] {
     return this.threads.flatMap((thread) => thread.getUpstreams())
+  }
+
+  async applyHmr(updates: readonly BindingClientHmrUpdate[]): Promise<{
+    accepted: boolean
+    deliveredFiles: readonly string[]
+    reason?: string
+  }> {
+    const threads = new Map(this.threads.map((thread) => [thread.id, thread]))
+    const results = await Promise.all(
+      updates.map(async ({ clientId, update }) => {
+        const thread = threads.get(clientId)
+        if (!thread) {
+          return {
+            update,
+            result: {
+              accepted: false,
+              delivered: false,
+              reason: `HMR client [${clientId}] is no longer running`,
+            },
+          }
+        }
+
+        try {
+          return { update, result: await thread.applyHmr(update) }
+        } catch (error) {
+          return {
+            update,
+            result: {
+              accepted: false,
+              delivered: false,
+              reason: normalizeError(error).message,
+            },
+          }
+        }
+      }),
+    )
+    const rejected = results.find(({ result }) => !result.accepted)
+    const deliveredFiles = results.flatMap(({ update, result }) =>
+      result.delivered && update.type === 'Patch' ? [update.filename] : [],
+    )
+    return {
+      accepted: !rejected,
+      deliveredFiles: [...new Set(deliveredFiles)],
+      ...(rejected?.result.reason ? { reason: rejected.result.reason } : {}),
+    }
   }
 
   getHealth(): NeemRuntimeServerRuntimeHealth {
