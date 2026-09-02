@@ -1,0 +1,300 @@
+import type { WorkflowRuntimeAdapter } from '../../runtime/client.ts'
+import type { TaskAttemptCommand } from '../../runtime/commands.ts'
+import type { WorkflowRuntimeAtomicStart } from '../../runtime/coordinator.ts'
+import type { DispatchTaskRunAttemptInput } from '../../runtime/coordinator/attempt.ts'
+import type { AttemptDispatchOptions } from '../../runtime/executors.ts'
+import type {
+  CreateRunInput,
+  DeadWorkflowCommand,
+} from '../../runtime/store.ts'
+import type { WorkflowRedisClient } from './client.ts'
+import { dispatchTaskRunAttempt } from '../../runtime/coordinator/attempt.ts'
+import { DEFAULT_LEASE_MS } from '../../runtime/executors.ts'
+import { isTerminalRunStatus } from '../../runtime/status.ts'
+import { RedisWorkflowKeys } from './keys.ts'
+import {
+  RedisWorkflowQueue,
+  type RedisAttemptQueue,
+  type RedisContinueQueue,
+} from './queue.ts'
+import { RedisWorkflowStoreRuntime } from './store.ts'
+import { RedisWorkflowWakeEvents } from './wake-events.ts'
+
+const DEFAULT_KEY_PREFIX = 'nmtjs:workflows:'
+const DEFAULT_TERMINAL_RETENTION_MS = 15 * 60 * 1_000
+const DEFAULT_MAX_DELIVERIES = 20
+
+type Mutable<T> = { -readonly [Key in keyof T]: T[Key] }
+
+export type CreateRedisWorkflowRuntimeParams = {
+  /**
+   * A caller-owned ioredis or iovalkey client. The runtime duplicates it for
+   * Pub/Sub, but dispose() deliberately leaves this command client open.
+   * Configure finite commandTimeout and maxRetriesPerRequest values; unlimited
+   * request retries can leave a workflow operation pending across reconnects.
+   */
+  readonly client: WorkflowRedisClient
+  /** Isolates independent runtimes that share one Redis database. */
+  readonly keyPrefix?: string
+  /**
+   * Retention begins only after every run in the root run's family is
+   * terminal. Active families never receive a TTL.
+   */
+  readonly terminalRetentionMs?: number
+  readonly maxDeliveries?: number
+}
+
+export type RedisWorkflowRuntime = WorkflowRuntimeAdapter & {
+  readonly client: WorkflowRedisClient
+  readonly keyPrefix: string
+}
+
+export function createRedisWorkflowRuntime(
+  params: CreateRedisWorkflowRuntimeParams,
+): RedisWorkflowRuntime {
+  const keyPrefix = params.keyPrefix ?? DEFAULT_KEY_PREFIX
+  const terminalRetentionMs =
+    params.terminalRetentionMs ?? DEFAULT_TERMINAL_RETENTION_MS
+  const maxDeliveries = params.maxDeliveries ?? DEFAULT_MAX_DELIVERIES
+  assertPositiveInteger('terminalRetentionMs', terminalRetentionMs)
+  assertPositiveInteger('maxDeliveries', maxDeliveries)
+
+  const keys = new RedisWorkflowKeys(keyPrefix)
+  const wakeEvents = new RedisWorkflowWakeEvents(params.client, keys)
+  const continueQueue: RedisContinueQueue = new RedisWorkflowQueue({
+    client: params.client,
+    keys,
+    kind: 'continue',
+    maxDeliveries,
+    wakeKind: () => 'continue',
+    dedupKey: (command) => command.runId,
+    deadKind: () => 'continue',
+  })
+  const attemptQueue: RedisAttemptQueue = new RedisWorkflowQueue({
+    client: params.client,
+    keys,
+    kind: 'attempt',
+    maxDeliveries,
+    wakeKind: (command) => {
+      if (command.kind === 'activityAttempt') return 'activity'
+      return 'task'
+    },
+    dedupKey: (command) => command.attemptId,
+    deadKind: (command) => {
+      if (command.kind === 'activityAttempt') return 'activity'
+      return 'task'
+    },
+  })
+
+  const storeRuntime = new RedisWorkflowStoreRuntime({
+    client: params.client,
+    keys,
+    terminalRetentionMs,
+    delegates: {
+      async listDeadCommands(runId) {
+        const groups = await Promise.all([
+          continueQueue.listDead(runId),
+          attemptQueue.listDead(runId),
+        ])
+        const commands: DeadWorkflowCommand[] = []
+        for (const group of groups) {
+          for (const command of group) commands.push(command)
+        }
+        commands.sort(compareDeadNewest)
+        return commands
+      },
+      async listUnreapedDeadCommands(limit) {
+        const groups = await Promise.all([
+          continueQueue.listUnreaped(),
+          attemptQueue.listUnreaped(),
+        ])
+        const commands: DeadWorkflowCommand[] = []
+        for (const group of groups) {
+          for (const command of group) commands.push(command)
+        }
+        commands.sort(compareDeadOldest)
+        if (limit !== undefined && commands.length > limit) {
+          commands.length = limit
+        }
+        return commands
+      },
+      async markDeadCommandReaped(id) {
+        const marked = await continueQueue.markReaped(id)
+        if (marked) return
+        await attemptQueue.markReaped(id)
+      },
+      async requeueDeadCommand(id) {
+        const requeued = await continueQueue.requeueDead(id)
+        if (requeued) return
+        await attemptQueue.requeueDead(id)
+      },
+      async deleteCommands(runIds) {
+        await Promise.all([
+          continueQueue.deleteForRuns(runIds),
+          attemptQueue.deleteForRuns(runIds),
+        ])
+      },
+      async pruneDeadCommands(olderThan) {
+        await Promise.all([
+          continueQueue.pruneDead(olderThan),
+          attemptQueue.pruneDead(olderThan),
+        ])
+      },
+    },
+  })
+
+  const store = storeRuntime.store
+  const runCoordinationExecutor: RedisWorkflowRuntime['runCoordinationExecutor'] =
+    {
+      enqueue: (command) => continueQueue.enqueue(command),
+      enqueueDelayed: (command, runAt) => continueQueue.enqueue(command, runAt),
+      claim: async (worker) => {
+        const claim = await continueQueue.claim(worker, worker.leaseMs)
+        if (!claim) return null
+        return continueQueue.asContinueClaim(claim)
+      },
+      ack: (command) => continueQueue.ack(command),
+      release: (command, options) => continueQueue.release(command, options),
+    }
+  const attemptExecutor: RedisWorkflowRuntime['attemptExecutor'] = {
+    dispatchActivity: (command, options) =>
+      attemptQueue.enqueue(command, options?.runAt),
+    dispatchTask: (command, options) =>
+      attemptQueue.enqueue(command, options?.runAt),
+    claim: async (worker) => {
+      const claim = await attemptQueue.claim(worker, worker.leaseMs)
+      if (!claim) return null
+      return attemptQueue.asAttemptClaim(claim)
+    },
+    heartbeat: async (attempt, leaseMs = DEFAULT_LEASE_MS) => {
+      const renewed = await attemptQueue.heartbeat(attempt, leaseMs)
+      if (!renewed) {
+        throw new Error('Workflow attempt heartbeat lease lost')
+      }
+      const run = await storeRuntime.loadRun(attempt.command.runId)
+      const runStatus = run?.status ?? 'queued'
+      return { runStatus }
+    },
+    ack: (attempt) => attemptQueue.ack(attempt),
+    release: (attempt, options) => attemptQueue.release(attempt, options),
+    deleteUnclaimed: ({ runId }) =>
+      attemptQueue.deleteUnclaimed(new Set([runId])),
+  }
+
+  // The start marker commits in the same Redis transaction as the initial
+  // queue item. An idempotent retry can therefore distinguish "already
+  // dispatched" from the narrow create-before-dispatch failure window and
+  // repair only the latter.
+  const atomicStart: WorkflowRuntimeAtomicStart = {
+    startWorkflowRun: ({ run, startAt }) => startRun(run, startAt),
+    startTaskRun: ({ run, taskName, taskInput, idempotencyKey, startAt }) => {
+      const taskRun: Mutable<CreateRunInput> = {
+        ...run,
+        kind: 'task',
+        taskName,
+        input: taskInput,
+      }
+      if (idempotencyKey !== undefined) taskRun.idempotencyKey = idempotencyKey
+      return startRun(taskRun, startAt)
+    },
+  }
+
+  async function startRun(run: CreateRunInput, startAt?: Date) {
+    const started = await storeRuntime.createRunWithState(run, startAt)
+    const stored = started.run
+    if (isTerminalRunStatus(stored.status)) return stored
+    const markerKey = keys.startDispatch(stored.id)
+    if (!started.created && (await params.client.exists(markerKey))) {
+      return stored
+    }
+    try {
+      if (stored.kind === 'workflow') {
+        await continueQueue.enqueueWithMarker(
+          {
+            kind: 'continueRun',
+            runId: stored.id,
+            workflowName: stored.workflowName,
+          },
+          markerKey,
+          started.startAt,
+        )
+      } else {
+        const startAttemptExecutor = {
+          ...attemptExecutor,
+          dispatchTask: (
+            command: TaskAttemptCommand,
+            options?: AttemptDispatchOptions,
+          ) =>
+            attemptQueue.enqueueWithMarker(command, markerKey, options?.runAt),
+        }
+        // A join can repair another caller's interrupted start. Its payload,
+        // identity and schedule must come from that persisted run.
+        const dispatchInput: Mutable<DispatchTaskRunAttemptInput> = {
+          store,
+          runCoordinationExecutor,
+          attemptExecutor: startAttemptExecutor,
+          taskName: stored.taskName ?? stored.name,
+          taskRunId: stored.id,
+          taskInput: stored.input,
+          startAt: started.startAt,
+          // A timeout may follow a committed dispatch; leave terminalization
+          // to execution and allow the same start identity to repair a retry.
+          throwOnDispatchFailure: false,
+        }
+        if (stored.idempotencyKey !== undefined) {
+          dispatchInput.idempotencyKey = stored.idempotencyKey
+        }
+        await dispatchTaskRunAttempt(dispatchInput)
+      }
+    } catch (error) {
+      if (await startMarkerExists(params.client, markerKey)) return stored
+      throw error
+    }
+    return stored
+  }
+
+  return {
+    store,
+    runCoordinationExecutor,
+    attemptExecutor,
+    retentionPruner: store,
+    wakeEvents,
+    atomicStart,
+    client: params.client,
+    keyPrefix,
+    dispose: () => wakeEvents.dispose(),
+  }
+}
+
+const compareDeadNewest = (
+  left: DeadWorkflowCommand,
+  right: DeadWorkflowCommand,
+) =>
+  right.deadAt.getTime() - left.deadAt.getTime() ||
+  right.id.localeCompare(left.id)
+
+const compareDeadOldest = (
+  left: DeadWorkflowCommand,
+  right: DeadWorkflowCommand,
+) =>
+  left.deadAt.getTime() - right.deadAt.getTime() ||
+  left.id.localeCompare(right.id)
+
+const assertPositiveInteger = (name: string, value: number) => {
+  if (!Number.isSafeInteger(value) || value < 1) {
+    throw new Error(`Redis workflow ${name} must be a positive integer`)
+  }
+}
+
+async function startMarkerExists(
+  client: WorkflowRedisClient,
+  markerKey: string,
+) {
+  try {
+    return (await client.exists(markerKey)) === 1
+  } catch {
+    // The original dispatch error is more useful; an idempotent retry can
+    // safely repair a start whose marker could not be inspected.
+    return false
+  }
+}

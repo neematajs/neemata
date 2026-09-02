@@ -27,4 +27,5 @@ runtime workers, runtime planners, or host/worker `MessagePort` protocols, use
 - [Metrics](references/metrics.md) - metrics plugin, `/metrics` server,
   default metrics injection, Pushgateway, and lifecycle/health observations.
 - [Package Integration](references/package-integration.md) - package-owned
-  runtime helpers and generic runtime project layout for end users.
+  runtime helpers, workflow backend resource placement, and generic runtime
+  project layout for end users.
