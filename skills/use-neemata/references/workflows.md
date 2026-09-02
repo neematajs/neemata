@@ -2,9 +2,11 @@
 
 Use `@nmtjs/workflows` for durable, contract-first orchestration: multi-step
 processes that must survive crashes, retry safely, fan out to child runs, and
-be observable/cancellable by id. Runs are persisted (Postgres in production),
-executed by coordinator and execution workers with at-least-once command
-delivery and exactly-once state transitions.
+be observable/cancellable by id. Use Postgres for durable background work,
+schedules, long retention, and SQL inspection. Use Redis/Valkey as a separate
+hot-path runtime when dispatch latency and queue throughput matter more than
+long-term retention. Both are executed by coordinator and execution workers
+with at-least-once command delivery and exactly-once state transitions.
 
 Import rules (no `nmtjs` umbrella exports; always package subpaths):
 
@@ -18,6 +20,8 @@ Import rules (no `nmtjs` umbrella exports; always package subpaths):
 - `@nmtjs/workflows/postgres/drizzle` - `createSchema()` so the application
   owns the tables and migrations.
 - `@nmtjs/workflows/postgres/testing` - schema bootstrap helpers for tests.
+- `@nmtjs/workflows/redis` - `createRedisWorkflowRuntime` and
+  `WorkflowRedisClient` for the Redis/Valkey hot-path runtime.
 - `@nmtjs/workflows/inspector` - UI-facing serialization: workflow graph/
   catalog JSON, wire-safe DTOs, node unit grouping.
 - `@nmtjs/workflows/neem` - Neem runtime integration (`defineWorkflows`,
@@ -170,6 +174,66 @@ await client.get(run.id) // full run snapshot (nodes, attempts, children)
 await client.cancel(run.id)
 await client.list({ tags: { draftId: 'd1' } })
 ```
+
+### Redis / Valkey runtime
+
+The Redis runtime has the same workflow client and worker interfaces, but a
+different operational contract. The caller owns an `ioredis` or `iovalkey`
+command client and must configure individual commands to fail in bounded time:
+
+```ts
+import { Redis } from 'ioredis'
+import { createRedisWorkflowRuntime } from '@nmtjs/workflows/redis'
+
+const redis = new Redis(redisUrl, {
+  maxRetriesPerRequest: 1,
+  commandTimeout: 2_000,
+})
+
+const runtime = createRedisWorkflowRuntime({
+  client: redis,
+  keyPrefix: 'chat-workflows:',
+  terminalRetentionMs: 15 * 60 * 1_000,
+})
+```
+
+These limits do not disable reconnecting. The client may continue reconnecting
+for future work, while the promise for one workflow operation rejects after its
+bounded retry/timeout policy. Without a command timeout, an unresponsive socket
+can leave the operation pending for the transport's much longer failure window.
+With `maxRetriesPerRequest: null`, queued commands may wait across an unlimited
+reconnect cycle. Do not use that setting for this runtime.
+
+Treat a timeout or connection error as ambiguous: Redis may have committed the
+atomic script before the response was lost. Retry the same high-level workflow
+operation with the same idempotency identity; the runtime's deduplication,
+start markers, leases, and fencing resolve the replay. Do not retry individual
+raw Redis commands outside the runtime.
+
+The example values are safe starting points, not universal latency targets.
+Choose finite values that cover the deployment's normal network latency and
+failover window. A longer failover budget should increase the finite timeout,
+not replace it with unlimited request retries.
+
+Redis-specific constraints:
+
+- Pub/Sub is only a wake hint; polling durable hashes and sorted sets remains
+  the correctness fallback.
+- Active run families have no TTL. `terminalRetentionMs` starts only after the
+  whole root family is terminal and bounds historical memory.
+- Shared APIs retain `Date` objects; Redis stores runtime timestamps as Unix
+  milliseconds and uses server time for leases and retention. Application
+  payloads remain opaque JSON through Lua transitions.
+- Queue scans and maintenance reclaim commands after their family expires;
+  keep workers or maintenance running to clean up shared queue records.
+- Recurring/cron schedules are intentionally unsupported; use Postgres for
+  scheduled and ordinary background work.
+- Use a unique `keyPrefix`, a `noeviction` memory policy, and deployment-level
+  AOF/RDB persistence appropriate to the required restart durability.
+- Redis Cluster is unsupported because atomic scripts span the runtime
+  namespace. Standalone and Sentinel-managed Redis/Valkey are supported.
+- `runtime.dispose()` closes only its duplicated Pub/Sub client. The caller
+  must close the command client.
 
 Read models (payload-free, built for UI lists/graphs — `get`/`list` return
 full payloads, these don't):

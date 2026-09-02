@@ -15,7 +15,7 @@ import {
 } from '@nmtjs/workflows'
 ```
 
-Postgres runtime code lives behind explicit subpaths:
+Runtime adapters live behind explicit subpaths:
 
 ```ts
 import { createWorkflowRuntimeClient } from '@nmtjs/workflows/runtime'
@@ -25,7 +25,90 @@ import {
   verifyPostgresWorkflowSchema,
 } from '@nmtjs/workflows/postgres'
 import { createSchema } from '@nmtjs/workflows/postgres/drizzle'
+import { createRedisWorkflowRuntime } from '@nmtjs/workflows/redis'
 ```
+
+## Redis / Valkey Runtime
+
+Use the Redis runtime as a separate hot-path runtime when dispatch latency and
+queue throughput matter more than long-term retention or SQL inspection. It
+implements the same workflow client and worker APIs as the Postgres and
+in-memory runtimes:
+
+```ts
+import { Redis } from 'ioredis'
+import { createRedisWorkflowRuntime } from '@nmtjs/workflows/redis'
+import { createWorkflowRuntimeClient } from '@nmtjs/workflows/runtime'
+
+const redis = new Redis(redisUrl, {
+  maxRetriesPerRequest: 1,
+  commandTimeout: 2_000,
+})
+const runtime = createRedisWorkflowRuntime({
+  client: redis,
+  keyPrefix: 'chat-workflows:',
+  terminalRetentionMs: 15 * 60 * 1000,
+})
+const workflows = createWorkflowRuntimeClient(runtime)
+```
+
+The runtime also accepts an `iovalkey` client. Queue transitions use SHA-loaded
+Lua scripts for atomic deduplication, claiming, lease fencing, acknowledgement,
+retry/dead-letter movement, and stalled-claim recovery. Pub/Sub is only a wake
+hint; sorted sets and hashes remain the durable execution state, so a missed
+notification falls back to polling.
+
+Workflow families are partitioned into small per-family hashes for runs, nodes,
+children, attempts, leases, and indexes. Each state transition validates and
+updates only the affected hash fields in one atomic Lua operation; the runtime
+does not hold distributed locks or perform client-side compare-and-swap retry
+loops.
+
+Redis stores runtime timestamps as Unix milliseconds; the shared client and
+worker APIs still return `Date` objects. Application payloads are stored as
+opaque JSON so Lua transitions preserve empty arrays, numeric precision, and
+payload fields that happen to have timestamp names. Lease deadlines and
+retention use Redis server time to avoid disagreement between worker clocks.
+This storage format is incompatible with earlier experimental adapter data;
+finish existing work with that version before switching to a fresh `keyPrefix`.
+
+Active run families never receive a TTL. Retention starts only when every run
+in the root family is terminal, then the complete family and its lookup keys
+expire together. This prevents a live child from losing its parent state while
+keeping historical runs from filling Redis memory.
+Lookup keys reused by a newer run retain that run's ownership. Queue scans and
+maintenance remove leftover commands whose run family has expired; keep workers
+or maintenance running to reclaim those shared queue records. The terminal-run
+index expires after its latest retained entry.
+
+Delayed starts and retry backoff are supported. Recurring/cron schedules are
+intentionally not part of the Redis runtime; use a Postgres runtime for durable
+scheduled and background work. A single application can register separate
+named Redis and Postgres runtimes and choose between them per workload.
+
+The caller owns the command client and must close it. `runtime.dispose()` closes
+only the duplicated Pub/Sub connection. Redis Cluster is not supported in this
+version because atomic operations span the runtime namespace; use a standalone
+or Sentinel-managed Redis/Valkey deployment with an isolated `keyPrefix`.
+Keep command retries and timeouts finite. Reconnecting and completing one
+command are separate concerns: the client may continue reconnecting for future
+work, while `maxRetriesPerRequest` and `commandTimeout` bound the promise for an
+individual workflow operation. Never use `maxRetriesPerRequest: null` here; it
+allows a command to remain queued across an unlimited reconnect cycle. A
+timeout is ambiguous because Redis may have committed before its response was
+lost, so retry the same high-level workflow operation with the same idempotency
+identity. Transitions are idempotent or fenced; do not retry raw Redis commands
+outside the runtime. The values above are starting points and may be increased
+to cover normal deployment latency and failover, but they must remain finite.
+
+Queue durability survives worker and client failures, but recovery after a
+Redis/Valkey service restart depends on the deployment's own persistence and
+replication configuration. Enable an appropriate AOF or RDB policy for the
+workload; the runtime cannot reconstruct data that the service did not persist.
+Use a `noeviction` max-memory policy so memory exhaustion fails an operation
+explicitly instead of silently evicting one part of a workflow family. Terminal
+retention bounds historical state, but capacity must still cover the maximum
+concurrent active state and ready/claimed queue backlog.
 
 ## Runtime Connection
 

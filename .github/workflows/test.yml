@@ -134,6 +134,7 @@ jobs:
         ports:
           - 6379:6379
         options: >-
+          --restart always
           --health-cmd "redis-cli ping"
           --health-interval 10s
           --health-timeout 5s
@@ -143,10 +144,17 @@ jobs:
         ports:
           - 6380:6379
         options: >-
+          --restart always
           --health-cmd "redis-cli ping"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+      toxiproxy:
+        image: ghcr.io/shopify/toxiproxy:2.12.0
+        ports:
+          - 8474:8474
+          - 6382:6382
+          - 6383:6383
       postgres:
         image: postgres:17-alpine
         ports:
@@ -184,9 +192,29 @@ jobs:
             ${{ runner.os }}-pnpm-store-
       - run: pnpm install
       - run: pnpm build
-      - run: pnpm run test:integration:services
+      - name: Run service integration tests
+        # Workflow resilience tests restart shared services and change memory limits.
+        run: >-
+          pnpm --workspace-concurrency=1 --filter @nmtjs/pubsub --filter @nmtjs/workflows
+          run test:integration --reporter=agent --reporter=github-actions
         env:
           NMTJS_REQUIRE_SERVICE_TESTS: '1'
+          NMTJS_REQUIRE_REDIS_RESILIENCE_TESTS: '1'
+          NMTJS_ALLOW_REDIS_SERVICE_RESTARTS: '1'
+          NMTJS_ALLOW_REDIS_MEMORY_PRESSURE_TESTS: '1'
+          REDIS_URL: redis://localhost:6379
+          REDIS_PROXY_URL: redis://localhost:6382
+          REDIS_PROXY_UPSTREAM: redis:6379
+          VALKEY_URL: redis://localhost:6380
+          VALKEY_PROXY_URL: redis://localhost:6383
+          VALKEY_PROXY_UPSTREAM: valkey:6379
+          TOXIPROXY_URL: http://localhost:8474
+          POSTGRES_URL: postgres://neemata:neemata@localhost:5432/neemata
+      - name: Run workflow adapter contracts against Redis and Valkey
+        run: >-
+          pnpm --filter @nmtjs/workflows exec vitest run
+          --config vitest.config.ts tests/runtime-adapter-contract.spec.ts
+          --reporter=agent --reporter=github-actions
+        env:
           REDIS_URL: redis://localhost:6379
           VALKEY_URL: redis://localhost:6380
-          POSTGRES_URL: postgres://neemata:neemata@localhost:5432/neemata

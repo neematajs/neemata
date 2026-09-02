@@ -35,6 +35,10 @@ export type AttemptHeartbeatResult = {
   readonly runStatus: RuntimeRunStatus
 }
 
+export type AttemptDispatchOptions = {
+  readonly runAt?: Date
+}
+
 export type RunCoordinationExecutor = {
   enqueue(command: ContinueRunCommand): Promise<void>
   enqueueDelayed(command: ContinueRunCommand, runAt: Date): Promise<void>
@@ -57,11 +61,11 @@ export type RunCoordinationExecutor = {
 export type AttemptExecutor = {
   dispatchActivity(
     command: ActivityAttemptCommand,
-    options?: { readonly runAt?: Date },
+    options?: AttemptDispatchOptions,
   ): Promise<void>
   dispatchTask(
     command: TaskAttemptCommand,
-    options?: { readonly runAt?: Date },
+    options?: AttemptDispatchOptions,
   ): Promise<void>
   claim(worker: ExecutionWorkerClaim): Promise<ClaimedAttempt | null>
   heartbeat(
