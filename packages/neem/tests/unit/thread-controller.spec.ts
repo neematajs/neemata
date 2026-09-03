@@ -10,6 +10,7 @@ import { ThreadController } from '../../src/internal/host/thread.ts'
 import { createRuntimeSnapshot } from '../../src/internal/manifest/snapshot.ts'
 import { createHostHooks } from '../../src/internal/plugins/hooks.ts'
 import { raceWithTimeout } from '../../src/internal/utils.ts'
+import { NeemWorkerError } from '../../src/shared/errors.ts'
 
 const tempDirs: string[] = []
 
@@ -154,16 +155,87 @@ describe('ThreadController', () => {
 
     await thread.stop().catch(() => undefined)
   })
+
+  it('preserves structured non-Error rejections in worker crash reports', async () => {
+    const rejection = {
+      type: 'provider-error',
+      code: 'rate_limit',
+      retryable: true,
+    }
+    // The real worker entry, so the report travels the production path:
+    // unhandledRejection → reportError → parent deserialization.
+    const fixture = await createThreadFixture(
+      `import ${JSON.stringify(REAL_WORKER_ENTRY)}`,
+      `
+      export default Object.freeze({
+        definition: {},
+        [Symbol.for('neem:runtime-worker')]: true,
+        createRuntime() {
+          return {
+            async start() {
+              setTimeout(() => {
+                void Promise.reject(${JSON.stringify(rejection)})
+              }, 20)
+              return []
+            },
+            async stop() {},
+          }
+        },
+      })
+      `,
+    )
+    const hooks = createHostHooks()
+    const failHookObserved = createFuture<Error>()
+    hooks.hook('worker:fail', (event) => {
+      if (event.error) failHookObserved.resolve(event.error)
+    })
+    const thread = new ThreadController({
+      snapshot: fixture.snapshot,
+      runtimeName: 'api',
+      plan: { name: 'api:0', artifact: fixture.artifact },
+      index: 0,
+      hooks,
+      onFailure: () => {},
+    })
+
+    await thread.start().catch(() => undefined)
+    const observed = await raceWithTimeout(failHookObserved.promise, 5_000)
+
+    try {
+      expect(observed.timedOut).toBe(false)
+      if (!observed.timedOut) {
+        const error = observed.value
+        expect(error).toBeInstanceOf(NeemWorkerError)
+        expect(error).toMatchObject({ worker: 'api:0', origin: 'runtime' })
+        expect(error.message).toBe(
+          "Worker [api:0] runtime error: { type: 'provider-error', code: 'rate_limit', retryable: true }",
+        )
+        expect((error.cause as Error).message).toBe(
+          "{ type: 'provider-error', code: 'rate_limit', retryable: true }",
+        )
+      }
+    } finally {
+      await thread.stop().catch(() => undefined)
+    }
+  })
 })
 
-async function createThreadFixture(workerSource: string) {
+const REAL_WORKER_ENTRY = new URL(
+  '../../src/internal/worker/entry.ts',
+  import.meta.url,
+).href
+
+async function createThreadFixture(
+  workerSource: string,
+  runtimeWorkerSource = 'export default {}\n',
+) {
   const outDir = await mkdtemp(resolve(tmpdir(), 'neem-thread-controller-'))
   tempDirs.push(outDir)
 
   const workerEntry = resolve(outDir, 'worker-entry.mjs')
   const runtimeWorker = resolve(outDir, 'runtime-worker.mjs')
   await writeFile(workerEntry, workerSource)
-  await writeFile(runtimeWorker, 'export default {}\n')
+  await writeFile(runtimeWorker, runtimeWorkerSource)
 
   const artifact = {
     id: 'api-worker',
