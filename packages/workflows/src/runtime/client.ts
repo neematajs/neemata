@@ -36,6 +36,7 @@ import type {
   WorkflowRuntimeAtomicContinuation,
 } from './worker.ts'
 import { startTaskRun, startWorkflowRun } from './coordinator.ts'
+import { cancelRunAndWakeParent } from './coordinator/sinks.ts'
 import {
   createWorkflowRuntimeRegistry,
   type RegisteredTaskImplementation,
@@ -246,6 +247,18 @@ export function createWorkflowRuntimeClient<Connection = never>(
       const run = await input.store.requestRunCancellation({ runId })
       if (!run) return undefined
       if (isTerminalRunStatus(run.status)) return run
+      if (run.kind === 'task') {
+        // No coordinator owns task runs: a continuation carries the task
+        // name, which no workflow worker claims, so the run would park in
+        // `cancelling` forever. Settle it here; a worker still holding the
+        // attempt observes the terminal status on its next heartbeat.
+        return await cancelRunAndWakeParent({
+          store: input.store,
+          attemptExecutor: input.attemptExecutor,
+          runCoordinationExecutor: input.runCoordinationExecutor,
+          runId: run.id,
+        })
+      }
       await input.runCoordinationExecutor.enqueue({
         kind: 'continueRun',
         runId: run.id,

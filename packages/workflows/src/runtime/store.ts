@@ -366,7 +366,10 @@ export type WorkflowStore = {
   cancelRun(params: { runId: string }): Promise<StoredRun | undefined>
   cancelNode(params: CancelNodeParams): Promise<StoredNode | undefined>
   /**
-   * Cancels every non-terminal node AND child record of the run in one sweep.
+   * Cancels every non-terminal node, child record AND started attempt of the
+   * run in one sweep. A worker still executing a swept attempt observes the
+   * run status on its next heartbeat and drops its outcome; the attempt row
+   * records `cancelled` rather than lingering as `started`.
    */
   cancelNonTerminalRunNodes(
     params: CancelNonTerminalRunNodesParams,

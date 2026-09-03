@@ -621,7 +621,9 @@ describe('workflow runtime coordinator', () => {
     expect(taskCalls).toBe(0)
     expect(parent?.run.status).toBe('cancelled')
     expect(child?.run.status).toBe('cancelled')
-    expect(child?.attempts[0]?.status).toBe('started')
+    // The cancellation sweep settles the claimed attempt; the worker only
+    // drops its command.
+    expect(child?.attempts[0]?.status).toBe('cancelled')
     expect(runtime.inspect().taskCommands).toStrictEqual([])
   })
 

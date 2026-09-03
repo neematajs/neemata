@@ -1037,6 +1037,16 @@ export function createInMemoryWorkflowRuntime(
         )
         emitChildStatusEvent(child, cancelled)
       }
+      for (const attempt of Array.from(attempts.values())) {
+        if (attempt.runId !== runId || attempt.status !== 'started') continue
+        const cancelled: StoredAttempt = {
+          ...attempt,
+          status: 'cancelled',
+          completedAt: now(),
+        }
+        attempts.set(attempt.id, cancelled)
+        emitAttemptStatusEvent(attempt, cancelled)
+      }
       return updated
     },
     async ensureNodeChildren(params) {

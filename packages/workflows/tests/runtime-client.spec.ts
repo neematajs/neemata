@@ -761,6 +761,31 @@ describe('workflow runtime client', () => {
     ])
   })
 
+  it('settles standalone task runs on cancel instead of enqueueing a continuation', async () => {
+    const task = defineTask({
+      name: 'client-cancelled-task',
+      input: t.object({ text: t.string() }),
+      output: t.object({ id: t.string() }),
+    })
+    const runtime = createInMemoryWorkflowRuntime()
+    const client = createWorkflowRuntimeClient(runtime)
+    const run = await client.start(task, { text: 'alpha' })
+
+    const cancelled = await client.cancel(run.id)
+    const cancelledAgain = await client.cancel(run.id)
+    const snapshot = await client.get(run.id)
+
+    expect(cancelled?.status).toBe('cancelled')
+    expect(cancelledAgain?.status).toBe('cancelled')
+    expect(snapshot?.run.status).toBe('cancelled')
+    expect(snapshot?.nodes.map((node) => node.status)).toEqual(['cancelled'])
+    expect(snapshot?.attempts.map((attempt) => attempt.status)).toEqual([
+      'cancelled',
+    ])
+    expect(runtime.inspect().continueRunCommands).toStrictEqual([])
+    expect(runtime.inspect().taskCommands).toStrictEqual([])
+  })
+
   it('returns terminal runs unchanged when cancellation is requested', async () => {
     const workflow = defineWorkflow({
       name: 'client-terminal-cancel-workflow',

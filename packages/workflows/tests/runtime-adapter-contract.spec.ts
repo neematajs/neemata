@@ -1774,6 +1774,7 @@ function workflowRuntimeAdapterContract(
       const runtime = await createRuntime({ maxDeliveries: 1 })
       const client = createWorkflowRuntimeClient(runtime)
       const run = await client.start(workflow, { scenario: 'alpha' })
+      const errors: unknown[] = []
 
       await expect(
         runWorkflowWorker({
@@ -1788,8 +1789,10 @@ function workflowRuntimeAdapterContract(
           container: testContainer,
           workflows: [implementation],
           workerId: 'poison-worker-1',
+          onError: (error) => errors.push(error),
         }),
-      ).rejects.toThrow('poison worker continue')
+      ).resolves.toStrictEqual({ processed: 0 })
+      expect(errors).toMatchObject([{ message: 'poison worker continue' }])
 
       await expect(runtime.store.listDeadCommands()).resolves.toMatchObject([
         {
@@ -2445,6 +2448,14 @@ function workflowRuntimeAdapterContract(
         output: { ok: true },
       })
 
+      const { attempt: startedAttempt } =
+        await runtime.store.ensureChildAttempt({
+          runId: run.id,
+          nodeName: 'second',
+          childKey: '$self',
+          input: {},
+        })
+
       const requested = await runtime.store.requestRunCancellation({
         runId: run.id,
       })
@@ -2459,6 +2470,12 @@ function workflowRuntimeAdapterContract(
       expect(requested?.status).toBe('cancelling')
       expect(cancelledNode?.status).toBe('cancelled')
       expect(final?.status).toBe('cancelled')
+      // The sweep settles in-flight attempts too, so a cancelled run never
+      // reports an attempt as still started.
+      expect(
+        snapshot?.attempts.map((attempt) => [attempt.id, attempt.status]),
+      ).toEqual([[startedAttempt.id, 'cancelled']])
+      expect(snapshot?.attempts[0]?.completedAt).toBeInstanceOf(Date)
       expect(snapshot?.nodes.map((node) => [node.name, node.status])).toEqual([
         ['first', 'completed'],
         ['second', 'cancelled'],

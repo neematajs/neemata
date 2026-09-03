@@ -108,14 +108,17 @@ test('rolls back empty workflow completion when command ack fails', async () => 
 
   const run = await client.start(workflow, { value: 'alpha' })
 
+  const errors: unknown[] = []
   await expect(
     runWorkflowWorker({
       ...failingRuntime,
       workflows: [workflowImpl],
       container: createTestContainer(),
       workerId: 'workflow-worker',
+      onError: (error) => errors.push(error),
     }),
-  ).rejects.toThrow('forced command ack failure')
+  ).resolves.toStrictEqual({ processed: 0 })
+  expect(errors).toMatchObject([{ message: 'forced command ack failure' }])
 
   const snapshot = await runtime.store.loadRunSnapshot(run.id)
   expect(snapshot?.run.status).toBe('queued')
@@ -181,14 +184,17 @@ test('rolls back activity dispatch when command ack fails', async () => {
 
   const run = await client.start(workflow, { value: 'alpha' })
 
+  const errors: unknown[] = []
   await expect(
     runWorkflowWorker({
       ...failingRuntime,
       workflows: [workflowImpl],
       container: createTestContainer(),
       workerId: 'workflow-worker',
+      onError: (error) => errors.push(error),
     }),
-  ).rejects.toThrow('forced command ack failure')
+  ).resolves.toStrictEqual({ processed: 0 })
+  expect(errors).toMatchObject([{ message: 'forced command ack failure' }])
 
   const snapshot = await runtime.store.loadRunSnapshot(run.id)
   expect(snapshot?.run.status).toBe('queued')
@@ -221,6 +227,7 @@ test('rolls back standalone task completion when command ack fails', async () =>
 
   const run = await client.start(task, { text: 'alpha' })
 
+  const errors: unknown[] = []
   await expect(
     runExecutionWorker({
       workflows: [],
@@ -228,8 +235,10 @@ test('rolls back standalone task completion when command ack fails', async () =>
       tasks: [taskImpl],
       container: createTestContainer(),
       workerId: 'task-worker',
+      onError: (error) => errors.push(error),
     }),
-  ).rejects.toThrow('forced command ack failure')
+  ).resolves.toStrictEqual({ processed: 0 })
+  expect(errors).toMatchObject([{ message: 'forced command ack failure' }])
 
   const snapshot = await runtime.store.loadRunSnapshot(run.id)
   expect(snapshot?.run.status).toBe('running')
@@ -259,6 +268,7 @@ test('rolls back standalone task failure when command ack fails', async () => {
 
   const run = await client.start(task, { text: 'alpha' })
 
+  const errors: unknown[] = []
   await expect(
     runExecutionWorker({
       workflows: [],
@@ -266,8 +276,10 @@ test('rolls back standalone task failure when command ack fails', async () => {
       tasks: [taskImpl],
       container: createTestContainer(),
       workerId: 'task-worker',
+      onError: (error) => errors.push(error),
     }),
-  ).rejects.toThrow('forced command ack failure')
+  ).resolves.toStrictEqual({ processed: 0 })
+  expect(errors).toMatchObject([{ message: 'forced command ack failure' }])
 
   const snapshot = await runtime.store.loadRunSnapshot(run.id)
   expect(snapshot?.run.status).toBe('running')
@@ -315,6 +327,7 @@ test('rolls back activity completion when command ack fails', async () => {
     await countRows(connection, 'workflow_commands', "kind = 'activity'"),
   ).toBe(1)
 
+  const errors: unknown[] = []
   await expect(
     runExecutionWorker({
       tasks: [],
@@ -322,8 +335,10 @@ test('rolls back activity completion when command ack fails', async () => {
       workflows: [workflowImpl],
       container,
       workerId: 'activity-worker',
+      onError: (error) => errors.push(error),
     }),
-  ).rejects.toThrow('forced command ack failure')
+  ).resolves.toStrictEqual({ processed: 0 })
+  expect(errors).toMatchObject([{ message: 'forced command ack failure' }])
 
   const snapshot = await runtime.store.loadRunSnapshot(run.id)
   expect(snapshot?.run.status).toBe('running')

@@ -87,7 +87,8 @@ import { implementTask, implementWorkflow } from '@nmtjs/workflows'
 export const embedTaskImpl = implementTask(embedTask, {
   idempotency: (_, input) => ['content.embed', input.entityId],
   async handler(_ctx, input, lifecycle) {
-    // lifecycle?.signal aborts on timeout/leaseLost/cancelled/shutdown
+    // lifecycle?.signal aborts with a WorkflowAttemptAbortError whose
+    // .type is timeout/leaseLost/cancelled/shutdown
     return { embeddingId: await embed(input.text, lifecycle?.signal) }
   },
 })
@@ -118,7 +119,8 @@ Rules:
 - The optional third handler argument is `AttemptLifecycle`
   (`{ signal: AbortSignal }`); cancellation is cooperative - handlers that
   ignore the signal simply run to completion. Two-argument handlers remain
-  valid.
+  valid. `signal.reason` is a `WorkflowAttemptAbortError` (exported from the
+  root) with `.type`, so libraries given the signal reject with a real Error.
 - Timed-out attempts record status `timedOut` and follow the retry policy;
   `WorkflowAttemptTimeoutError` is exported from the root.
 

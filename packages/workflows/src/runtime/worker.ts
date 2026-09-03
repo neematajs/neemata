@@ -15,8 +15,14 @@ export {
   type WorkerReapingOptions,
   type WorkerRunTimeoutsOptions,
 } from './worker/entry.ts'
-export { WorkflowAttemptTimeoutError } from './worker/heartbeat.ts'
-export type { AttemptAbortReason } from './worker/heartbeat.ts'
+export {
+  WorkflowAttemptAbortError,
+  WorkflowAttemptTimeoutError,
+} from './worker/heartbeat.ts'
+export type {
+  AttemptAbortReason,
+  AttemptAbortReasonType,
+} from './worker/heartbeat.ts'
 export {
   type WorkerLoopOptions,
   type WorkerLoopResult,
