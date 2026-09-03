@@ -4,11 +4,42 @@ import type { WorkflowWakeEvents } from '../wake-events.ts'
 import { isTerminalRunStatus } from '../status.ts'
 import { DEFAULT_LEASE_MS, isAttemptHeartbeatLeaseLost } from './loop.ts'
 
-export type AttemptAbortReason =
-  | { readonly type: 'timeout' }
-  | { readonly type: 'leaseLost' }
-  | { readonly type: 'cancelled' }
-  | { readonly type: 'shutdown' }
+export type AttemptAbortReasonType =
+  | 'timeout'
+  | 'leaseLost'
+  | 'cancelled'
+  | 'shutdown'
+
+/**
+ * `lifecycle.signal.reason` handed to handlers. An Error rather than a bare
+ * `{ type }` object: libraries that receive the signal reject with its
+ * reason, and a plain object there surfaces in logs and crash reports as
+ * `[object Object]` with no stack to trace it back.
+ */
+export class WorkflowAttemptAbortError extends Error {
+  readonly type: AttemptAbortReasonType
+  readonly runId: string
+  readonly nodeName: string
+  readonly attemptId: string
+
+  constructor(input: {
+    readonly type: AttemptAbortReasonType
+    readonly runId: string
+    readonly nodeName: string
+    readonly attemptId: string
+  }) {
+    super(
+      `Workflow attempt [${input.attemptId}] for [${input.runId}.${input.nodeName}] aborted: ${input.type}`,
+    )
+    this.name = 'WorkflowAttemptAbortError'
+    this.type = input.type
+    this.runId = input.runId
+    this.nodeName = input.nodeName
+    this.attemptId = input.attemptId
+  }
+}
+
+export type AttemptAbortReason = WorkflowAttemptAbortError
 
 export class WorkflowAttemptTimeoutError extends Error {
   readonly runId: string
@@ -84,8 +115,16 @@ export async function runWithAttemptHeartbeat<T>(
   const leaseMs = input.leaseMs ?? DEFAULT_LEASE_MS
   const intervalMs = Math.max(1, Math.floor(leaseMs / 3))
   const attemptAbort = new AbortController()
-  const abortAttempt = (reason: AttemptAbortReason) => {
-    if (!attemptAbort.signal.aborted) attemptAbort.abort(reason)
+  const abortAttempt = (type: AttemptAbortReasonType) => {
+    if (attemptAbort.signal.aborted) return
+    attemptAbort.abort(
+      new WorkflowAttemptAbortError({
+        type,
+        runId: input.claimed.command.runId,
+        nodeName: input.claimed.command.nodeName,
+        attemptId: input.claimed.command.attemptId,
+      }),
+    )
   }
   let heartbeatRunning = false
   let heartbeatFailed = false
@@ -103,7 +142,7 @@ export async function runWithAttemptHeartbeat<T>(
         if (runStatus !== 'cancelling' && !isTerminalRunStatus(runStatus))
           return
         heartbeatFailed = true
-        abortAttempt({ type: 'cancelled' })
+        abortAttempt('cancelled')
         rejectHeartbeat(
           new WorkflowAttemptCancellationObservedError({
             runId: input.claimed.command.runId,
@@ -115,7 +154,7 @@ export async function runWithAttemptHeartbeat<T>(
       .catch((error: unknown) => {
         if (!isAttemptHeartbeatLeaseLost(error)) return
         heartbeatFailed = true
-        abortAttempt({ type: 'leaseLost' })
+        abortAttempt('leaseLost')
         rejectHeartbeat(error)
       })
       .finally(() => {
@@ -149,7 +188,7 @@ export async function runWithAttemptHeartbeat<T>(
       : new Promise<never>((_resolve, reject) => {
           timeoutHandle = setTimeout(() => {
             const error = timeout.createError()
-            abortAttempt({ type: 'timeout' })
+            abortAttempt('timeout')
             reject(error)
           }, timeout.timeoutMs)
         })
@@ -160,7 +199,7 @@ export async function runWithAttemptHeartbeat<T>(
       ? undefined
       : new Promise<never>((_resolve, reject) => {
           const shutdown = () => {
-            abortAttempt({ type: 'shutdown' })
+            abortAttempt('shutdown')
             reject(
               new WorkflowAttemptShutdownError({
                 runId: input.claimed.command.runId,

@@ -660,7 +660,7 @@ describe.skipIf(!postgresTarget.url)(
         `,
         [run.id],
       )
-      expect(abortReason).toStrictEqual({ type: 'cancelled' })
+      expect(abortReason).toMatchObject({ type: 'cancelled' })
       expect(abortAfterMs).toBeLessThanOrEqual(Math.floor(leaseMs / 3) + 100)
       expect(calls).toBe(1)
       expect(snapshot?.run.status).toBe('cancelled')

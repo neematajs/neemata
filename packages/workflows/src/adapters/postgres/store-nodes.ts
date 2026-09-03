@@ -893,6 +893,27 @@ export const createPostgresWorkflowNodeStore = (
         `,
           [runId],
         )
+        await tx.query(
+          `
+          WITH candidate AS (
+            SELECT a.id, a.status::text AS old_status, r.root_run_id
+            FROM workflow_attempts a
+            JOIN workflow_runs r ON r.id = a.run_id
+            WHERE a.run_id = $1 AND a.status = 'started'
+          ),
+          updated AS (
+          UPDATE workflow_attempts
+          SET status = 'cancelled', completed_at = now()
+          FROM candidate
+          WHERE workflow_attempts.id = candidate.id
+          RETURNING workflow_attempts.*, candidate.old_status, candidate.root_run_id
+          ),
+          ${emitStatusChangeNotifySql('updated', 'attempts_cancelled')}
+          SELECT count(*)${notifyRunStatusEventColumnsSql('attempts_cancelled')}
+          FROM updated
+        `,
+          [runId],
+        )
         return rows.map(mapNode)
       })
     },

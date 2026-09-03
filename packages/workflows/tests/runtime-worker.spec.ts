@@ -19,6 +19,7 @@ import {
   runWorkflowWorker,
   runTaskAttempt,
   startTaskRun,
+  WorkflowAttemptAbortError,
   WorkflowAttemptTimeoutError,
 } from '../src/runtime/index.ts'
 
@@ -515,22 +516,27 @@ describe('workflow worker runtime', () => {
       workflowName: workflow.name,
     })
 
-    await expect(
-      runWorkflowWorker({
-        store: runtime.store,
-        runCoordinationExecutor: runtime.runCoordinationExecutor,
-        attemptExecutor: {
-          ...runtime.attemptExecutor,
-          dispatchActivity: async () => {
-            throw new Error('activity queue down')
-          },
+    const errors: unknown[] = []
+    // An execution failure is reported and the command released for
+    // redelivery; it must not take the worker pool down.
+    const result = await runWorkflowWorker({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: {
+        ...runtime.attemptExecutor,
+        dispatchActivity: async () => {
+          throw new Error('activity queue down')
         },
-        container: createTestContainer(),
-        workflows: [implementation],
-        workerId: 'workflow-worker-1',
-      }),
-    ).rejects.toThrow('activity queue down')
+      },
+      container: createTestContainer(),
+      workflows: [implementation],
+      workerId: 'workflow-worker-1',
+      onError: (error) => errors.push(error),
+    })
 
+    expect(result.processed).toBe(0)
+    expect(errors).toHaveLength(1)
+    expect(errors[0]).toMatchObject({ message: 'activity queue down' })
     const snapshot = await runtime.store.loadRunSnapshot(run.id)
     expect(snapshot?.run.status).toBe('running')
     expect(snapshot?.nodes[0]?.status).toBe('running')
@@ -968,7 +974,7 @@ describe('workflow worker runtime', () => {
     })
 
     const failed = await runtime.store.loadRunSnapshot(run.id)
-    expect(timeoutReason).toStrictEqual({ type: 'timeout' })
+    expect(timeoutReason).toMatchObject({ type: 'timeout' })
     expect(failed?.attempts[0]?.status).toBe('timedOut')
     expect(failed?.attempts[0]?.error).toMatchObject({
       name: 'WorkflowAttemptTimeoutError',
@@ -1240,7 +1246,7 @@ describe('workflow worker runtime', () => {
     })
     expect(exportedError.timeoutMs).toBe(5)
     expect(calls).toBe(2)
-    expect(timeoutReason).toStrictEqual({ type: 'timeout' })
+    expect(timeoutReason).toMatchObject({ type: 'timeout' })
     expect(completed?.attempts.map((attempt) => attempt.status)).toStrictEqual([
       'timedOut',
       'completed',
@@ -1487,7 +1493,7 @@ describe('workflow worker runtime', () => {
       expect(snapshot?.run.status).toBe('running')
       expect(snapshot?.attempts[0]?.status).toBe('started')
       expect(runtime.inspect().taskCommands).toHaveLength(1)
-      expect(leaseLostReason).toStrictEqual({ type: 'leaseLost' })
+      expect(leaseLostReason).toMatchObject({ type: 'leaseLost' })
       expect(acked).toBe(false)
       expect(released).toBe(true)
     } finally {
@@ -1495,7 +1501,7 @@ describe('workflow worker runtime', () => {
     }
   })
 
-  it('ack-drops task attempts when heartbeat observes cancellation', async () => {
+  it('settles a standalone task run cancelled while its handler is active', async () => {
     vi.useFakeTimers()
     const task = defineTask({
       name: 'worker.cancel-observed-task',
@@ -1521,7 +1527,6 @@ describe('workflow worker runtime', () => {
     try {
       const client = createWorkflowRuntimeClient(runtime)
       const run = await client.start(task, { text: 'alpha' })
-      await client.cancel(run.id)
       let acked = false
       let released = false
       let retried = false
@@ -1550,22 +1555,128 @@ describe('workflow worker runtime', () => {
         workerId: 'task-worker-1',
         leaseMs: 3,
       })
+      // Let the worker claim the attempt and enter the handler before
+      // cancelling, so the heartbeat is what observes the cancellation.
+      await vi.advanceTimersByTimeAsync(1)
+      expect((await runtime.store.loadRunSnapshot(run.id))?.run.status).toBe(
+        'running',
+      )
+      const cancelled = await client.cancel(run.id)
       await vi.advanceTimersByTimeAsync(30)
       const result = await worker
 
       const snapshot = await runtime.store.loadRunSnapshot(run.id)
       expect(result.processed).toBe(1)
-      expect(cancelReason).toStrictEqual({ type: 'cancelled' })
-      expect(snapshot?.run.status).toBe('cancelling')
-      expect(snapshot?.attempts[0]?.status).toBe('started')
+      expect(cancelReason).toBeInstanceOf(WorkflowAttemptAbortError)
+      expect(cancelReason).toMatchObject({ type: 'cancelled' })
+      expect(cancelled?.status).toBe('cancelled')
+      expect(snapshot?.run.status).toBe('cancelled')
+      expect(snapshot?.nodes.map((node) => node.status)).toEqual(['cancelled'])
+      expect(snapshot?.attempts[0]?.status).toBe('cancelled')
       expect(snapshot?.attempts[0]?.output).toBeUndefined()
       expect(runtime.inspect().taskCommands).toStrictEqual([])
+      expect(runtime.inspect().continueRunCommands).toStrictEqual([])
       expect(acked).toBe(true)
       expect(released).toBe(false)
       expect(retried).toBe(false)
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('settles a standalone task run cancelled before any worker claims it', async () => {
+    const task = defineTask({
+      name: 'worker.cancel-unclaimed-task',
+      input: t.object({ text: t.string() }),
+      output: t.object({ id: t.string() }),
+    })
+    let handlerCalls = 0
+    const implementation = implementTask(task, {
+      handler: async (_ctx, input) => {
+        handlerCalls += 1
+        return { id: `embedding:${input.text}` }
+      },
+    })
+    const runtime = createInMemoryWorkflowRuntime()
+    const client = createWorkflowRuntimeClient(runtime)
+    const run = await client.start(task, { text: 'alpha' })
+
+    const cancelled = await client.cancel(run.id)
+    const execution = await runExecutionWorker({
+      workflows: [],
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container: createTestContainer(),
+      tasks: [implementation],
+      workerId: 'task-worker-1',
+      leaseMs: 3,
+    })
+    const coordination = await runWorkflowWorker({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container: createTestContainer(),
+      workflows: [],
+      workerId: 'coordinator',
+      leaseMs: 3,
+    })
+
+    const snapshot = await runtime.store.loadRunSnapshot(run.id)
+    expect(cancelled?.status).toBe('cancelled')
+    expect(handlerCalls).toBe(0)
+    expect(execution.processed).toBe(0)
+    expect(coordination.processed).toBe(0)
+    expect(snapshot?.run.status).toBe('cancelled')
+    expect(snapshot?.nodes.map((node) => node.status)).toEqual(['cancelled'])
+    expect(snapshot?.attempts.map((attempt) => attempt.status)).toEqual([
+      'cancelled',
+    ])
+    expect(runtime.inspect().taskCommands).toStrictEqual([])
+    expect(runtime.inspect().continueRunCommands).toStrictEqual([])
+  })
+
+  it('settles a standalone task run left in cancelling when the worker claims it', async () => {
+    const task = defineTask({
+      name: 'worker.cancel-requested-task',
+      input: t.object({ text: t.string() }),
+      output: t.object({ id: t.string() }),
+    })
+    let handlerCalls = 0
+    const implementation = implementTask(task, {
+      handler: async (_ctx, input) => {
+        handlerCalls += 1
+        return { id: `embedding:${input.text}` }
+      },
+    })
+    const runtime = createInMemoryWorkflowRuntime()
+    const client = createWorkflowRuntimeClient(runtime)
+    const run = await client.start(task, { text: 'alpha' })
+    // A cancellation request that never got settled (e.g. the requester
+    // crashed mid-cancel) must not start the handler, nor park the run.
+    await runtime.store.requestRunCancellation({ runId: run.id })
+
+    const execution = await runExecutionWorker({
+      workflows: [],
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      attemptExecutor: runtime.attemptExecutor,
+      container: createTestContainer(),
+      tasks: [implementation],
+      workerId: 'task-worker-1',
+      leaseMs: 3,
+    })
+
+    const snapshot = await runtime.store.loadRunSnapshot(run.id)
+    expect(handlerCalls).toBe(0)
+    expect(execution.processed).toBe(1)
+    expect(snapshot?.run.status).toBe('cancelled')
+    expect(snapshot?.nodes.map((node) => node.status)).toEqual(['cancelled'])
+    expect(snapshot?.attempts.map((attempt) => attempt.status)).toEqual([
+      'cancelled',
+    ])
+    expect(runtime.inspect().taskCommands).toStrictEqual([])
+    expect(runtime.inspect().continueRunCommands).toStrictEqual([])
   })
 
   it('releases task attempts when the worker shutdown signal aborts', async () => {
@@ -1635,7 +1746,7 @@ describe('workflow worker runtime', () => {
 
       const snapshot = await runtime.store.loadRunSnapshot(run.id)
       expect(result.processed).toBe(0)
-      expect(shutdownReason).toStrictEqual({ type: 'shutdown' })
+      expect(shutdownReason).toMatchObject({ type: 'shutdown' })
       expect(snapshot?.run.status).toBe('running')
       expect(snapshot?.attempts[0]?.status).toBe('started')
       expect(runtime.inspect().taskCommands).toHaveLength(1)

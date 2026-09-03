@@ -284,9 +284,14 @@ describe('workflow wake events', () => {
     })
     let slowFinished = false
     let slowWasAborted = false
+    const errors: unknown[] = []
 
     const running = drainWorkerPool(
-      { workerId: 'execution-failure', concurrency: 2 },
+      {
+        workerId: 'execution-failure',
+        concurrency: 2,
+        onError: (error) => errors.push(error),
+      },
       {
         abandon: ignoreAbandonedClaim,
         async claim() {
@@ -306,7 +311,9 @@ describe('workflow wake events', () => {
       },
     )
 
-    await expect(running).rejects.toThrow('execution failed')
+    // One failed execution is reported, not fatal: the pool drains the rest.
+    await expect(running).resolves.toStrictEqual({ processed: 1 })
+    expect(errors).toMatchObject([{ message: 'execution failed' }])
     expect(slowFinished).toBe(true)
     expect(slowWasAborted).toBe(false)
   })
@@ -434,16 +441,21 @@ describe('workflow wake events', () => {
     expect(settled).toBe(true)
   })
 
-  it('surfaces unexpected execution failures during shutdown', async () => {
+  it('reports execution failures during shutdown without failing the pool', async () => {
     const abort = new AbortController()
     let claimed = false
     let markExecutionStarted!: () => void
     const executionStarted = new Promise<void>((resolve) => {
       markExecutionStarted = resolve
     })
+    const errors: unknown[] = []
 
     const running = serveWorkerPool(
-      { workerId: 'shutdown-failure', signal: abort.signal },
+      {
+        workerId: 'shutdown-failure',
+        signal: abort.signal,
+        onError: (error) => errors.push(error),
+      },
       {
         abandon: ignoreAbandonedClaim,
         async claim() {
@@ -463,7 +475,8 @@ describe('workflow wake events', () => {
 
     await executionStarted
     abort.abort()
-    await expect(running).rejects.toThrow('shutdown write failed')
+    await expect(running).resolves.toStrictEqual({ processed: 0 })
+    expect(errors).toMatchObject([{ message: 'shutdown write failed' }])
   })
 
   it('rejects invalid concurrency before subscribing to wakes', async () => {

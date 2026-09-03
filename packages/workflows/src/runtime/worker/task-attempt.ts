@@ -6,6 +6,7 @@ import type { ClaimedAttempt } from '../commands.ts'
 import type { AttemptExecutor, RunCoordinationExecutor } from '../executors.ts'
 import type { WorkflowStore } from '../store.ts'
 import type { WorkflowWakeEvents } from '../wake-events.ts'
+import { cancelRunAndWakeParent } from '../coordinator/sinks.ts'
 import { parseDurationMs } from '../duration.ts'
 import { createWorkflowRuntimeRegistry } from '../registry.ts'
 import { isTerminalRunStatus } from '../status.ts'
@@ -65,6 +66,9 @@ export async function runTaskAttempt(
   const storedAttempt = snapshot?.attempts.find(
     (attempt) => attempt.id === command.attemptId,
   )
+  if (snapshot?.run.kind === 'task' && snapshot.run.status === 'cancelling') {
+    return await settleCancelledTaskRun(input)
+  }
   if (snapshot && isTerminalRunStatus(snapshot.run.status)) {
     return await ackTerminalAttempt(input)
   }
@@ -141,7 +145,9 @@ export async function runTaskAttempt(
       throw error
     }
     if (isAttemptCancellationObserved(error)) {
-      return await ackTerminalAttempt(input)
+      return snapshot.run.kind === 'task'
+        ? await settleCancelledTaskRun(input)
+        : await ackTerminalAttempt(input)
     }
     return await runAtomicCompletion(input, async (scoped) => {
       const attempt =
@@ -240,6 +246,31 @@ export async function runTaskAttempt(
       })
     }
     await enqueueContinueRun(scoped.runCoordinationExecutor, command)
+    await scoped.attemptExecutor.ack(scoped.claimed)
+    return { status: 'processed' }
+  })
+}
+
+/**
+ * Task runs have no coordinator to finish a requested cancellation, so the
+ * worker that observes `cancelling` settles the run itself before dropping
+ * the attempt. Idempotent against the client having already settled it: an
+ * already-terminal run is left untouched.
+ */
+async function settleCancelledTaskRun(
+  input: RunTaskAttemptInput,
+): Promise<WorkerCommandResult> {
+  const runId = input.claimed.command.runId
+  return await runAtomicCompletion(input, async (scoped) => {
+    const [run] = await scoped.store.loadRuns([runId])
+    if (run?.status === 'cancelling') {
+      await cancelRunAndWakeParent({
+        store: scoped.store,
+        attemptExecutor: scoped.attemptExecutor,
+        runCoordinationExecutor: scoped.runCoordinationExecutor,
+        runId,
+      })
+    }
     await scoped.attemptExecutor.ack(scoped.claimed)
     return { status: 'processed' }
   })

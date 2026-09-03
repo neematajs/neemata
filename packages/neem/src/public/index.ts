@@ -86,3 +86,5 @@ export {
   isNeemRuntimePlanner,
 } from './runtime.ts'
 export { defineRuntimeWorker, isNeemRuntimeWorker } from './worker.ts'
+export { NeemWorkerError } from '../shared/errors.ts'
+export type { NeemWorkerErrorOrigin } from '../shared/errors.ts'

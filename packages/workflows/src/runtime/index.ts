@@ -124,10 +124,12 @@ export {
   runWorkflowWorker,
   serveExecutionWorker,
   serveWorkflowWorker,
+  WorkflowAttemptAbortError,
   WorkflowAttemptTimeoutError,
 } from './worker.ts'
 export type {
   AttemptAbortReason,
+  AttemptAbortReasonType,
   RunActivityAttemptInput,
   RunExecutionWorkerInput,
   RunTaskAttemptInput,

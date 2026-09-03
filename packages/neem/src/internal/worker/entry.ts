@@ -12,7 +12,7 @@ import type {
 import { isNeemRuntimeWorker } from '../../public/worker.ts'
 import { childLogger, resolveManifestLogger, runtimeLabel } from '../logger.ts'
 import { parseRuntimeStartResult } from '../schemas/runtime.ts'
-import { importDefault, normalizeError } from '../utils.ts'
+import { importDefault, normalizeError, serializeError } from '../utils.ts'
 
 if (!parentPort) {
   throw new Error('Neem runtime worker entry requires a parent port')
@@ -31,17 +31,14 @@ function postMessage(message: WorkerMessage): void {
 }
 
 function reportError(value: unknown, origin: WorkerErrorOrigin): void {
-  const error = normalizeError(value)
-  logger?.error(new Error(`Neem runtime ${origin} error`, { cause: error }))
-  postMessage({
-    type: 'error',
-    data: {
-      message: error.message,
-      name: error.name,
-      stack: error.stack,
-      origin,
-    },
-  })
+  // This thread is the only place the real value still exists, so it is
+  // logged here in full; the parent only receives a rendered summary.
+  if (value instanceof Error) {
+    logger?.error(new Error(`Neem runtime ${origin} error`, { cause: value }))
+  } else {
+    logger?.error({ thrown: value }, `Neem runtime ${origin} error`)
+  }
+  postMessage({ type: 'error', data: { ...serializeError(value), origin } })
 }
 
 async function createRuntime(data: RuntimeWorkerData): Promise<NeemRuntime> {

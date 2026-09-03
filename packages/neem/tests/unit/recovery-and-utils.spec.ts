@@ -95,6 +95,23 @@ describe('shared utilities', () => {
     })
   })
 
+  it('renders non-Error throws instead of flattening them to [object Object]', () => {
+    expect(
+      serializeError({ type: 'provider-error', code: 'rate_limit' }),
+    ).toStrictEqual({
+      name: 'Error',
+      message: "{ type: 'provider-error', code: 'rate_limit' }",
+    })
+    expect(serializeError('boom')).toStrictEqual({
+      name: 'Error',
+      message: "'boom'",
+    })
+    expect(
+      serializeError(new Error('outer', { cause: { code: 'ECONNRESET' } }))
+        .cause,
+    ).toMatchObject({ message: "{ code: 'ECONNRESET' }" })
+  })
+
   it('resolves paths, URL paths, and file URL strings', () => {
     expect(toFilePath('./config.ts', '/workspace/app')).toBe(
       '/workspace/app/config.ts',
