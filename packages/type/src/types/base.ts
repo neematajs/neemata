@@ -1,3 +1,4 @@
+import type { WireSchema } from '@nmtjs/common/schema'
 import type {
   ZodMiniAny,
   ZodMiniArray,
@@ -20,7 +21,7 @@ import type {
 import { core, nullable, optional, prefault } from 'zod/mini'
 
 import type { TypeMetadata } from './_metadata.ts'
-import { standard } from '../standart-schema.ts'
+import { standard } from '../standard-schema.ts'
 import { typesRegistry } from './_metadata.ts'
 
 export type PrimitiveValueType = string | number | boolean | null
@@ -70,16 +71,16 @@ export abstract class BaseType<
   EncodeZodType extends SimpleZodType = SimpleZodType,
   DecodeZodType extends ZodType = EncodeZodType,
   Props extends TypeProps = TypeProps,
-> implements standard.Schema<DecodeZodType> {
+> implements WireSchema.Codec<
+  standard.Schema<DecodeZodType>,
+  standard.Schema<EncodeZodType>
+> {
   readonly encodeZodType: EncodeZodType
   readonly decodeZodType: DecodeZodType
   readonly props: Props
   readonly params: TypeParams
-  readonly standard: {
-    encode: standard.Schema<EncodeZodType>
-    decode: standard.Schema<DecodeZodType>
-  }
-  readonly '~standard': standard.Props<DecodeZodType>
+  readonly encode: standard.Schema<EncodeZodType>
+  readonly decode: standard.Schema<DecodeZodType>
 
   constructor({
     encodeZodType,
@@ -97,11 +98,8 @@ export abstract class BaseType<
 
     this.props = props
     this.params = Object.assign({ checks: [] }, params)
-    this.standard = {
-      encode: standard.encode(this, typesRegistry),
-      decode: standard.decode(this, typesRegistry),
-    }
-    this['~standard'] = this.standard.decode['~standard']
+    this.encode = standard.create(this.encodeZodType, typesRegistry)
+    this.decode = standard.create(this.decodeZodType, typesRegistry)
   }
 
   optional(): OptionalType<this> {
@@ -132,7 +130,7 @@ export abstract class BaseType<
 
   examples(...examples: this['encodeZodType']['_zod']['input'][]): this {
     return this.meta({
-      examples: examples.map((example) => this.encode(example)),
+      examples: examples.map((example) => this.encodeZodType.parse(example)),
     })
   }
 
@@ -141,20 +139,6 @@ export abstract class BaseType<
     Object.assign(metadata, newMetadata)
     typesRegistry.add(this.encodeZodType, metadata)
     return this
-  }
-
-  encode(
-    data: this['encodeZodType']['_zod']['input'],
-    context: core.ParseContext<core.$ZodIssue> = {},
-  ): this['encodeZodType']['_zod']['output'] {
-    return this.encodeZodType.parse(data, context)
-  }
-
-  decode(
-    data: this['decodeZodType']['_zod']['input'],
-    context: core.ParseContext<core.$ZodIssue> = {},
-  ): this['decodeZodType']['_zod']['output'] {
-    return this.decodeZodType.parse(data, context)
   }
 }
 
@@ -201,7 +185,7 @@ export class DefaultType<
     type: T,
     defaultValue: core.util.NoUndefined<T['encodeZodType']['_zod']['input']>,
   ) {
-    const encodedDefault = type.encode(defaultValue)
+    const encodedDefault = type.encodeZodType.parse(defaultValue)
 
     return new DefaultType<T>({
       encodeZodType: prefault(type.encodeZodType, defaultValue),

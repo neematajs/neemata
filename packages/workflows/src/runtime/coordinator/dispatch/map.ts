@@ -8,8 +8,9 @@ import { isTerminalNodeStatus, isTerminalRunStatus } from '../../status.ts'
 import { dispatchTaskRunAttempt } from '../attempt.ts'
 import { cancelNodeChildRunsAndCommands } from '../cancel.ts'
 import {
-  decodeMapItems,
-  decodeWorkflowUserSchemaValue,
+  canonicalizeMapItems,
+  canonicalizeWorkflowUserSchemaInput,
+  decodeSchemaValue,
   getWorkflowNodeDeclaration,
   hasStoredNodeInput,
   mapConcurrencyLimit,
@@ -70,7 +71,7 @@ export async function dispatchMapTaskNode(
         runCoordinationExecutor: input.runCoordinationExecutor,
         taskName: input.node.target.name,
         taskRunId: childRun.id,
-        taskInput: childRun.input ?? input.run.input,
+        taskInput: childRun.input ?? input.encodedRunInput,
         idempotencyKey: childRun.idempotencyKey,
         timeout: declaration.timeout ?? declaration.task.timeout,
       })
@@ -174,7 +175,7 @@ async function dispatchMapRunNode<Declaration extends MapRunNodeDeclaration>(
       })
     ).children
   } else {
-    const items = decodeMapItems(
+    const items = await canonicalizeMapItems(
       typedDeclaration.item,
       runWorkflowUserCallback(() =>
         input.node.items(input.workflowCtx, input.outputs, input.run.input),
@@ -189,7 +190,7 @@ async function dispatchMapRunNode<Declaration extends MapRunNodeDeclaration>(
           childKey: itemChildKey(index),
           kind: callbacks.childKind,
           ordinal: index,
-          item,
+          item: item.encoded,
         })),
       })
     ).children
@@ -199,7 +200,7 @@ async function dispatchMapRunNode<Declaration extends MapRunNodeDeclaration>(
     await input.store.setNodeInput({
       runId: input.run.id,
       nodeName: input.node.name,
-      input: items,
+      input: items.map((item) => item.encoded),
     })
   }
 
@@ -340,24 +341,31 @@ async function dispatchMapRunNode<Declaration extends MapRunNodeDeclaration>(
       continue
     }
 
-    const nodeInput = decodeWorkflowUserSchemaValue(
-      input.node.target.input,
-      runWorkflowUserCallback(() =>
-        input.node.input(
-          input.workflowCtx,
-          input.outputs,
-          child.item,
-          input.run.input,
-          child.ordinal,
-        ),
-      ),
-      `${callbacks.inputLabel} input [${input.workflow.workflow.name}.${input.node.name}.${child.ordinal}]`,
+    const decodedItem = await decodeSchemaValue(
+      typedDeclaration.item,
+      child.item,
+      `map item [${input.workflow.workflow.name}.${input.node.name}.${child.ordinal}]`,
     )
+    const nodeInput = (
+      await canonicalizeWorkflowUserSchemaInput(
+        input.node.target.input,
+        runWorkflowUserCallback(() =>
+          input.node.input(
+            input.workflowCtx,
+            input.outputs,
+            decodedItem,
+            input.run.input,
+            child.ordinal,
+          ),
+        ),
+        `${callbacks.inputLabel} input [${input.workflow.workflow.name}.${input.node.name}.${child.ordinal}]`,
+      )
+    ).encoded
     const idempotencyKey = resolveIdempotency(
       input.node.idempotency,
       input.workflowCtx,
       input.outputs,
-      child.item,
+      decodedItem,
       input.run.input,
       child.ordinal,
     )
@@ -388,9 +396,15 @@ async function dispatchMapRunNode<Declaration extends MapRunNodeDeclaration>(
       nodeName: input.node.name,
       output,
     })
+    const decodedOutput = await decodeMapNodeOutput(
+      typedDeclaration,
+      completedItems,
+      input.workflow.workflow.name,
+      input.node.name,
+    )
     return await input.advance({
       ...input,
-      outputs: { ...input.outputs, [input.node.name]: output },
+      outputs: { ...input.outputs, [input.node.name]: decodedOutput },
     })
   }
 
@@ -414,4 +428,44 @@ async function dispatchMapRunNode<Declaration extends MapRunNodeDeclaration>(
     nodeName: input.node.name,
   })
   return 'parked'
+}
+
+async function decodeMapNodeOutput(
+  declaration: MapRunNodeDeclaration,
+  items: readonly {
+    readonly item: unknown
+    readonly index: number
+    readonly runId: string
+    readonly status?: string
+    readonly output?: unknown
+    readonly error?: unknown
+  }[],
+  workflowName: string,
+  nodeName: string,
+): Promise<{ readonly items: readonly Record<string, unknown>[] }> {
+  const outputSchema =
+    declaration.kind === 'mapTask'
+      ? declaration.task.output
+      : declaration.workflow.output
+  return {
+    items: await Promise.all(
+      items.map(async (item) => ({
+        ...item,
+        item: await decodeSchemaValue(
+          declaration.item,
+          item.item,
+          `map item [${workflowName}.${nodeName}.${item.index}]`,
+        ),
+        ...(item.output === undefined || outputSchema === undefined
+          ? {}
+          : {
+              output: await decodeSchemaValue(
+                outputSchema,
+                item.output,
+                `map output [${workflowName}.${nodeName}.${item.index}]`,
+              ),
+            }),
+      })),
+    ),
+  }
 }

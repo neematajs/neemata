@@ -1,14 +1,13 @@
-import type { BaseType } from '@nmtjs/type'
-import type { NeverType } from '@nmtjs/type/never'
-import { t } from '@nmtjs/type'
+import type { WireSchema } from '@nmtjs/common/schema'
+import { isSchema, isWireSchemaCodec } from '@nmtjs/common/schema'
 
 import type { ContractSchemaOptions } from '../utils.ts'
 import { Kind } from '../constants.ts'
 import { createSchema } from '../utils.ts'
 
 export type TAnyProcedureContract = TProcedureContract<
-  BaseType,
-  BaseType,
+  WireSchema.Decode | WireSchema.Codec | undefined,
+  WireSchema.Encode | WireSchema.Codec | undefined,
   true | undefined,
   string | undefined
 >
@@ -16,8 +15,8 @@ export type TAnyProcedureContract = TProcedureContract<
 export const ProcedureKind = Symbol('NeemataProcedure')
 
 export interface TProcedureContract<
-  Input extends BaseType,
-  Output extends BaseType,
+  Input extends WireSchema.Decode | WireSchema.Codec | undefined,
+  Output extends WireSchema.Encode | WireSchema.Codec | undefined,
   Stream extends true | undefined = undefined,
   Name extends string | undefined = undefined,
 > {
@@ -32,8 +31,8 @@ export interface TProcedureContract<
 
 export const ProcedureContract = <
   const Options extends {
-    input?: BaseType
-    output?: BaseType
+    input?: WireSchema.Decode | WireSchema.Codec
+    output?: WireSchema.Encode | WireSchema.Codec
     stream?: true | undefined
     timeout?: number
     schemaOptions?: ContractSchemaOptions
@@ -42,19 +41,31 @@ export const ProcedureContract = <
 >(
   options: Options,
 ): TProcedureContract<
-  Options['input'] extends BaseType ? Options['input'] : NeverType,
-  Options['output'] extends BaseType ? Options['output'] : NeverType,
+  Options['input'] extends WireSchema.Decode | WireSchema.Codec
+    ? Options['input']
+    : undefined,
+  Options['output'] extends WireSchema.Encode | WireSchema.Codec
+    ? Options['output']
+    : undefined,
   Options['stream'] extends true ? true : undefined,
   Options['name'] extends string ? Options['name'] : undefined
 > => {
   const {
-    input = t.never() as any,
-    output = t.never() as any,
+    input = undefined as any,
+    output = undefined as any,
     stream = undefined as any,
     name = undefined as any,
     timeout,
     schemaOptions = {},
   } = options
+  if (input !== undefined && !isSchema(input) && !isWireSchemaCodec(input)) {
+    throw new TypeError('Procedure input must be a decode schema or wire codec')
+  }
+  if (output !== undefined && !isSchema(output) && !isWireSchemaCodec(output)) {
+    throw new TypeError(
+      'Procedure output must be an encode schema or wire codec',
+    )
+  }
   return createSchema({
     ...schemaOptions,
     [Kind]: ProcedureKind,

@@ -36,7 +36,7 @@ export {
   implement as implementRouter,
 } from '@nmtjs/application'
 export { createEnvConfig as envConfig, EnvConfigError } from '@nmtjs/config'
-export { blobType, c } from '@nmtjs/contract'
+export { c } from '@nmtjs/contract'
 export {
   CoreInjectables,
   createPlugin as plugin,
@@ -61,7 +61,7 @@ export {
   createPubSubPlugin as pubsubPlugin,
   PubSubInjectables,
 } from '@nmtjs/pubsub'
-export { t } from '@nmtjs/type'
+export { blobType, t } from '@nmtjs/type'
 export {
   defineSchedule as schedule,
   defineTask as task,

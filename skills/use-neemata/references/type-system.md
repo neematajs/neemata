@@ -6,12 +6,16 @@ Use `t` from `nmtjs` in end-user Neemata examples.
 import { t } from 'nmtjs'
 ```
 
-Schemas are runtime validators and bidirectional protocol transformers:
+Each `t.*` value is a wire-schema codec with two explicit Standard Schema
+directions:
 
 - `schema.decode(value)` parses wire format into app values.
 - `schema.encode(value)` converts app values into wire format.
-- `schema['~standard']` is Standard Schema decode mode.
-- `schema.standard.encode` and `schema.standard.decode` expose explicit modes.
+- `schema.decode` is a `WireSchema.Decode` Standard Schema.
+- `schema.encode` is a `WireSchema.Encode` Standard Schema.
+
+The codec itself deliberately has no default `~standard` direction. Pick
+`.decode` or `.encode` whenever an API accepts a one-way schema.
 
 ```ts
 const user = t.object({
@@ -149,8 +153,15 @@ the transform needs low-level validation or class behavior.
 
 ## Procedure Boundary
 
-- Input schemas decode inbound payload before guards and handlers.
-- Output schemas encode and validate handler returns and stream chunks.
+- Procedure inputs accept a decode schema or a full codec. Full codecs use
+  their `.decode` direction.
+- Procedure outputs accept an encode schema or a full codec. Full codecs use
+  their `.encode` direction.
+- Runtime clients require full codecs because they execute both directions;
+  static clients can use directional schemas for type inference alone.
+- `createProcedure(...)` without an explicit output uses an encode-only
+  passthrough schema. Its handler must already return a transport-ready value;
+  provide a full output codec when the contract will be used by RuntimeClient.
 - `t.date()` and `t.bigInt()` are app values in handlers, encoded wire values
   across the protocol.
 - `t.object(...)` strips unknown keys; `t.looseObject(...)` preserves them.
@@ -159,8 +170,7 @@ the transform needs low-level validation or class behavior.
 
 ## Inference
 
-Use decode output for handler input and encode input for handler output when
-writing helper types:
+`t.infer` remains a provider-specific convenience:
 
 ```ts
 type UserDecodeInput = t.infer.decode.input<typeof user>
@@ -171,11 +181,11 @@ type UserWire = t.infer.encode.output<typeof user>
 
 ## Standard Schema And JSON Schema
 
-Default Standard Schema mode is decode:
+Use either codec direction as a Standard Schema:
 
 ```ts
-const standard = user['~standard']
-const result = standard.validate({
+const standard = user.decode['~standard']
+const result = await standard.validate({
   id: '123',
   createdAt: '2021-01-01T00:00:00.000Z',
   name: 'Ada',
@@ -186,11 +196,12 @@ if ('value' in result) {
 }
 ```
 
-Use explicit encode/decode modes when integrating with tools:
+Standard JSON Schema is an optional capability of a directional schema. The
+`t.*` provider supports it on both directions:
 
 ```ts
-const decodeStandard = user.standard.decode['~standard']
-const encodeStandard = user.standard.encode['~standard']
+const decodeStandard = user.decode['~standard']
+const encodeStandard = user.encode['~standard']
 
 const decodeInputSchema = decodeStandard.jsonSchema.input({
   target: 'draft-07',
@@ -201,13 +212,27 @@ const encodeOutputSchema = encodeStandard.jsonSchema.output({
 ```
 
 JSON Schema helpers also accept `libraryOptions.json` for Zod JSON Schema
-settings such as `cycles` and `reused`.
+settings such as `cycles` and `reused`. Conversion is strict by default and
+throws when a boundary cannot be represented faithfully. Neemata runtime
+validation does not require JSON Schema support.
+
+Framework-neutral helpers and contracts are available from
+`@nmtjs/common/schema`:
+
+```ts
+import type { Schema, WireSchema } from '@nmtjs/common/schema'
+
+type RuntimeValue<S extends Schema> = Schema.Output<S>
+type IncomingWire<C extends WireSchema.Codec> = WireSchema.DecodeInput<C>
+type OutgoingWire<C extends WireSchema.Codec> = WireSchema.EncodeOutput<C>
+```
 
 ## Errors
 
-`schema.encode(...)`, `schema.decode(...)`, and Standard Schema validation use
-Zod validation under the hood. Direct encode/decode calls throw
-`t.NeemataTypeError` on invalid data; Standard Schema returns `{ issues }`.
+The `t.*` provider's callable `schema.encode(...)` and `schema.decode(...)`
+helpers use Zod validation under the hood and throw `t.NeemataTypeError` on
+invalid data. Standard Schema validation returns `{ issues }` and may be
+asynchronous.
 
 ```ts
 try {

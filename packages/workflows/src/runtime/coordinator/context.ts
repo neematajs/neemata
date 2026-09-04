@@ -24,6 +24,8 @@ export type AdvanceCtx = RuntimeDeps & {
   readonly workflow: WorkflowImplementation
   readonly workflowCtx: DependencyContext<any>
   readonly run: StoredRun
+  /** Canonical wire input retained for default node-input forwarding. */
+  readonly encodedRunInput: unknown
   readonly outputs: Record<string, unknown>
   readonly advance: (ctx: AdvanceCtx) => Promise<AdvanceOutcome>
 }
@@ -47,6 +49,16 @@ export const unwrapWorkflowUserCallbackError = (
 export function runWorkflowUserCallback<T>(callback: () => T): T {
   try {
     return callback()
+  } catch (error) {
+    throw new WorkflowUserCallbackError(error)
+  }
+}
+
+export async function runWorkflowUserCallbackAsync<T>(
+  callback: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await callback()
   } catch (error) {
     throw new WorkflowUserCallbackError(error)
   }

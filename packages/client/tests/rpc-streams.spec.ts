@@ -65,6 +65,47 @@ class MockCore extends EventEmitter<{
 }
 
 describe('RPC streams', () => {
+  it('awaits Promise-compatible transformer results before sending', async () => {
+    const core = new MockCore()
+    const transformer = new BaseClientTransformer()
+    transformer.encode = vi.fn(
+      () =>
+        ({
+          // oxlint-disable-next-line unicorn/no-thenable -- Emulates a Promise created in another JavaScript realm.
+          then(resolve: (value: unknown) => void) {
+            queueMicrotask(() => resolve({ encoded: true }))
+          },
+        }) as any,
+    )
+    const rpcLayer = createRpcLayer(
+      core as any,
+      { addServerBlobStream: vi.fn() } as any,
+      transformer,
+    )
+
+    const streamPromise = rpcLayer.call(
+      'users/profile',
+      { userId: '1' },
+      { _stream_response: true },
+    )
+
+    await vi.waitFor(() => {
+      expect(core.protocol.encodeMessage).toHaveBeenCalledWith(
+        expect.anything(),
+        ClientMessageType.Rpc,
+        { callId: 0, procedure: 'users/profile', payload: { encoded: true } },
+      )
+    })
+
+    core.emit(
+      'message',
+      { type: ServerMessageType.RpcStreamResponse, callId: 0 },
+      new Uint8Array([1]),
+    )
+    const iterable = await streamPromise
+    await iterable[Symbol.asyncIterator]().return?.()
+  })
+
   it('rejects invalid RPC backpressure windows', async () => {
     const core = new MockCore()
     const rpcLayer = createRpcLayer(

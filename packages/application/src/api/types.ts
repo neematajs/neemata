@@ -1,7 +1,7 @@
+import type { WireSchema } from '@nmtjs/common/schema'
 import type { TProcedureContract } from '@nmtjs/contract'
 import type { Container } from '@nmtjs/core'
 import type { GatewayConnection } from '@nmtjs/gateway'
-import type { AnyCompatibleType, BaseTypeAny } from '@nmtjs/type'
 
 import type { Procedure } from './procedure.ts'
 import type { AnyRouter } from './router.ts'
@@ -13,8 +13,8 @@ export type ApiCallContext<Payload = unknown> = Readonly<{
   path: AnyRouter[]
   procedure: Procedure<
     TProcedureContract<
-      AnyCompatibleType<any, Payload>,
-      BaseTypeAny,
+      WireSchema.Decode<any, Payload> | WireSchema.Codec | undefined,
+      WireSchema.Encode | WireSchema.Codec | undefined,
       true | undefined,
       string | undefined
     >,

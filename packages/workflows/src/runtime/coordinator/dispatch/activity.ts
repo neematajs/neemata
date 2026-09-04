@@ -4,7 +4,8 @@ import { SELF_CHILD_KEY } from '../../child-key.ts'
 import { isTerminalNodeStatus } from '../../status.ts'
 import { dispatchActivityAttempt } from '../attempt.ts'
 import {
-  decodeWorkflowUserSchemaValue,
+  canonicalizeWorkflowUserSchemaInput,
+  encodeWorkflowUserSchemaValue,
   getWorkflowNodeDeclaration,
   hasStoredNodeInput,
   resolveIdempotency,
@@ -30,21 +31,28 @@ export async function dispatchActivityNode(
   if (declaration.kind !== 'activity') {
     throw new Error(`Workflow node [${input.node.name}] is not an activity`)
   }
+  const inputLabel = `activity input [${input.workflow.workflow.name}.${input.node.name}]`
   const nodeInput = hasStoredNodeInput(existing)
     ? existing.input
-    : decodeWorkflowUserSchemaValue(
-        declaration.input,
-        input.node.input
-          ? runWorkflowUserCallback(() =>
+    : input.node.input
+      ? (
+          await canonicalizeWorkflowUserSchemaInput(
+            declaration.input,
+            runWorkflowUserCallback(() =>
               input.node.input!(
                 input.workflowCtx,
                 input.outputs,
                 input.run.input,
               ),
-            )
-          : input.run.input,
-        `activity input [${input.workflow.workflow.name}.${input.node.name}]`,
-      )
+            ),
+            inputLabel,
+          )
+        ).encoded
+      : await encodeWorkflowUserSchemaValue(
+          declaration.input,
+          input.run.input,
+          inputLabel,
+        )
 
   if (!hasStoredNodeInput(existing)) {
     await input.store.setNodeInput({

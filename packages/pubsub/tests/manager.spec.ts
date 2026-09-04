@@ -1,6 +1,7 @@
 import type { Readable } from 'node:stream'
 import { setImmediate as tick } from 'node:timers/promises'
 
+import type { Schema, WireSchema } from '@nmtjs/common/schema'
 import { EventContract, SubscriptionContract } from '@nmtjs/contract'
 import { createLogger } from '@nmtjs/core'
 import { t } from '@nmtjs/type'
@@ -11,7 +12,7 @@ import { PubSubManager } from '../src/manager.ts'
 
 const channel = SubscriptionContract({
   namespace: 'chat',
-  params: t.object({ roomId: t.string() }),
+  params: t.object({ roomId: t.string() }).decode,
   key: ({ roomId }) => roomId,
   events: {
     message: EventContract({ payload: t.object({ text: t.string() }) }),
@@ -234,5 +235,63 @@ describe('PubSubManager subscription stream', () => {
     const pulledAtDestroy = pulled
     await tick()
     expect(pulled).toBe(pulledAtDestroy)
+  })
+})
+
+describe('PubSubManager schemas', () => {
+  it('awaits async channel params and event codecs', async () => {
+    const schema = <Input, Output>(
+      transform: (value: Input) => Promise<Output>,
+    ): Schema<Input, Output> => ({
+      '~standard': {
+        version: 1,
+        vendor: 'test',
+        async validate(value) {
+          return { value: await transform(value as Input) }
+        },
+      },
+    })
+    const payload: WireSchema.Codec<
+      WireSchema.Decode<string>,
+      WireSchema.Encode<string>
+    > = {
+      decode: schema(async (value: string) => value.toLowerCase()),
+      encode: schema(async (value: string) => value.toUpperCase()),
+    }
+    const asyncChannel = SubscriptionContract({
+      namespace: 'async',
+      params: schema(async (value: string) => ({ roomId: value.trim() })),
+      key: ({ roomId }) => roomId,
+      events: { message: EventContract({ payload }) },
+    })
+    const published: Array<{ channel: string; data: unknown }> = []
+    const manager = new PubSubManager({
+      logger: createLogger({ pinoOptions: { enabled: false } }, 'test'),
+      adapter: {
+        publish: async (channel, data) => {
+          published.push({ channel, data })
+          return true
+        },
+        subscribe: async function* (channel) {
+          yield {
+            channel,
+            data: { event: 'message', payload: 'WIRE' },
+          }
+        },
+      },
+    })
+
+    await manager.publish(asyncChannel.events.message, ' general ', 'runtime')
+    expect(published).toEqual([
+      {
+        channel: 'async:general',
+        data: { event: 'message', payload: 'RUNTIME' },
+      },
+    ])
+
+    const stream = await manager.subscribe(asyncChannel, ' general ')
+    const received: unknown[] = []
+    for await (const item of stream) received.push(item)
+    expect(received).toEqual([{ event: 'message', payload: 'wire' }])
   })
 })

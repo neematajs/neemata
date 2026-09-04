@@ -1,7 +1,7 @@
 import type { CallTypeProvider, OneOf, TypeProvider } from '@nmtjs/common'
+import type { WireSchema } from '@nmtjs/common/schema'
 import type { TAnyProcedureContract, TAnyRouterContract } from '@nmtjs/contract'
 import type { ProtocolError } from '@nmtjs/protocol/client'
-import type { BaseTypeAny, t } from '@nmtjs/type'
 
 export const ResolvedType: unique symbol = Symbol('ResolvedType')
 export type ResolvedType = typeof ResolvedType
@@ -54,27 +54,27 @@ export type BlobSubscriptionOptions = { signal?: AbortSignal }
 export type StreamSubscriptionOptions = Partial<StreamCallOptions>
 
 export interface StaticInputContractTypeProvider extends TypeProvider {
-  output: this['input'] extends BaseTypeAny
-    ? t.infer.decode.input<this['input']>
-    : never
+  output: this['input'] extends WireSchema.Decode | WireSchema.Codec
+    ? WireSchema.DecodeInput<this['input']>
+    : undefined
 }
 
 export interface RuntimeInputContractTypeProvider extends TypeProvider {
-  output: this['input'] extends BaseTypeAny
-    ? t.infer.encode.input<this['input']>
-    : never
+  output: this['input'] extends WireSchema.Codec
+    ? WireSchema.EncodeInput<this['input']>
+    : undefined
 }
 
 export interface StaticOutputContractTypeProvider extends TypeProvider {
-  output: this['input'] extends BaseTypeAny
-    ? t.infer.encode.output<this['input']>
-    : never
+  output: this['input'] extends WireSchema.Encode | WireSchema.Codec
+    ? WireSchema.EncodeOutput<this['input']>
+    : undefined
 }
 
 export interface RuntimeOutputContractTypeProvider extends TypeProvider {
-  output: this['input'] extends BaseTypeAny
-    ? t.infer.decode.output<this['input']>
-    : never
+  output: this['input'] extends WireSchema.Codec
+    ? WireSchema.DecodeOutput<this['input']>
+    : undefined
 }
 
 export type AnyResolvedContractProcedure = {
@@ -126,14 +126,14 @@ export type ClientCaller<
   Procedure extends AnyResolvedContractProcedure,
   SafeCall extends boolean,
 > = (
-  ...args: Procedure['input'] extends t.NeverType
+  ...args: Procedure['contract']['input'] extends undefined
     ? [
         data?: undefined,
         options?: Partial<
           Procedure['stream'] extends true ? StreamCallOptions : RpcCallOptions
         >,
       ]
-    : undefined extends t.infer.encode.input<Procedure['contract']['input']>
+    : undefined extends Procedure['input']
       ? [
           data?: Procedure['input'],
           options?: Partial<

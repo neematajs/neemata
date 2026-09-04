@@ -20,6 +20,13 @@ import type {
   GatewayStaticMetaView,
 } from '@nmtjs/gateway'
 import { withTimeout } from '@nmtjs/common'
+import {
+  formatSchemaIssues,
+  getDecodeSchema,
+  getEncodeSchema,
+  SchemaValidationError,
+  validateSchema,
+} from '@nmtjs/common/schema'
 import { IsStreamProcedureContract } from '@nmtjs/contract'
 import {
   getMetaBindingMeta,
@@ -35,8 +42,6 @@ import {
 } from '@nmtjs/gateway'
 import { ErrorCode } from '@nmtjs/protocol'
 import { ProtocolError } from '@nmtjs/protocol/server'
-import { NeemataTypeError, registerDefaultLocale, type } from '@nmtjs/type'
-import { prettifyError } from 'zod/mini'
 
 import type { RuntimeConfig } from './config.ts'
 import type { AnyFilter } from './filters.ts'
@@ -47,8 +52,6 @@ import type { AnyProcedure } from './procedure.ts'
 import type { AnyRouter } from './router.ts'
 import type { ApiCallContext } from './types.ts'
 import { config, defaultRuntimeConfig } from './config.ts'
-
-registerDefaultLocale()
 
 export type ApiCallOptions<T extends AnyProcedure = AnyProcedure> = Readonly<{
   callId: string
@@ -240,7 +243,7 @@ export class ApplicationApi implements GatewayApi<ApplicationResolvedProcedure> 
           callCtx,
           payload,
         )
-        const input = this.handleInput(procedure, payload)
+        const input = await this.handleInput(procedure, payload)
         await this.applyFactoryMetaBindings(
           container,
           metaBindings.afterDecode,
@@ -258,7 +261,7 @@ export class ApplicationApi implements GatewayApi<ApplicationResolvedProcedure> 
             metaBindings.config,
           )
         } else {
-          return this.handleOutput(procedure, result, metaBindings.config)
+          return await this.handleOutput(procedure, result, metaBindings.config)
         }
       }
     }
@@ -390,16 +393,16 @@ export class ApplicationApi implements GatewayApi<ApplicationResolvedProcedure> 
     return error
   }
 
-  private handleInput(procedure: AnyProcedure, payload: any) {
-    if (procedure.contract.input instanceof type.NeverType === false) {
-      const type = procedure.contract.input
+  private async handleInput(procedure: AnyProcedure, payload: any) {
+    const input = procedure.contract.input
+    if (input) {
       try {
-        return type.decode(payload)
+        return await validateSchema(getDecodeSchema(input), payload)
       } catch (error) {
-        if (error instanceof NeemataTypeError)
+        if (error instanceof SchemaValidationError)
           throw new ApiError(
             ErrorCode.ValidationError,
-            `Input validation error: \n${prettifyError(error)}`,
+            `Input validation error: \n${formatSchemaIssues(error.issues)}`,
             error.issues,
           )
         throw error
@@ -414,20 +417,19 @@ export class ApplicationApi implements GatewayApi<ApplicationResolvedProcedure> 
   ) {
     if (!isAsyncIterable(response))
       throw new Error('Response is not an async iterable')
-    const chunkType = procedure.contract.output
-    if (chunkType instanceof type.NeverType)
-      throw new Error('Stream procedure must have a defined output type')
+    const output = procedure.contract.output
+    if (!output)
+      throw new Error('Stream procedure must have a defined output schema')
 
     return async function* (onDone?: () => void) {
       try {
         if (runtimeConfig.serializeOutput === false) {
           yield* response
-        } else if (chunkType instanceof type.AnyType === false) {
-          for await (const chunk of response) {
-            yield chunkType.encode(chunk)
-          }
         } else {
-          yield* response
+          const schema = getEncodeSchema(output)
+          for await (const chunk of response) {
+            yield await validateSchema(schema, chunk)
+          }
         }
       } finally {
         onDone?.()
@@ -435,15 +437,17 @@ export class ApplicationApi implements GatewayApi<ApplicationResolvedProcedure> 
     }
   }
 
-  private handleOutput(
+  private async handleOutput(
     procedure: AnyProcedure,
     response: any,
     runtimeConfig: Required<RuntimeConfig>,
   ) {
-    if (procedure.contract.output instanceof type.NeverType === false) {
+    if (procedure.contract.output) {
       if (runtimeConfig.serializeOutput === false) return response
-      const type = procedure.contract.output
-      return type.encode(response)
+      return await validateSchema(
+        getEncodeSchema(procedure.contract.output),
+        response,
+      )
     }
     return undefined
   }

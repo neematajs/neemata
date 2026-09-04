@@ -11,7 +11,7 @@ import type {
 import type { ConnectionType } from '@nmtjs/protocol'
 import type { ServerWebSocketRuntimeOptions } from '@nmtjs/server-host'
 import { RuntimeClient } from '@nmtjs/client'
-import { blobType, c } from '@nmtjs/contract'
+import { c } from '@nmtjs/contract'
 import { Container, createLogger, Hooks } from '@nmtjs/core'
 import {
   Gateway,
@@ -26,7 +26,7 @@ import {
   ProtocolVersion,
 } from '@nmtjs/protocol'
 import { ProtocolFormats } from '@nmtjs/protocol/server'
-import { t } from '@nmtjs/type'
+import { blobType, t } from '@nmtjs/type'
 import { WsTransportFactory } from '@nmtjs/ws-client'
 import { afterEach, describe, expect, it } from 'vitest'
 

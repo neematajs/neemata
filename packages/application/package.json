@@ -36,10 +36,10 @@
     "@nmtjs/json-format": "workspace:*",
     "@nmtjs/msgpack-format": "workspace:*",
     "@nmtjs/protocol": "workspace:*",
-    "@nmtjs/type": "workspace:*",
     "@nmtjs/neem": "workspace:*"
   },
   "devDependencies": {
+    "@nmtjs/type": "workspace:*",
     "zod": "catalog:"
   },
   "peerDependencies": {
@@ -50,9 +50,7 @@
     "@nmtjs/json-format": "workspace:*",
     "@nmtjs/msgpack-format": "workspace:*",
     "@nmtjs/protocol": "workspace:*",
-    "@nmtjs/type": "workspace:*",
-    "@nmtjs/neem": "workspace:*",
-    "zod": "catalog:"
+    "@nmtjs/neem": "workspace:*"
   },
   "files": [
     "dist",

@@ -1,3 +1,4 @@
+import type { WireSchema } from '@nmtjs/common/schema'
 import type {
   StandardJSONSchemaV1,
   StandardSchemaV1,
@@ -14,7 +15,7 @@ describe('Standard schema', () => {
   })
 
   it('supports decode validation', async () => {
-    const standard = schema.standard.decode['~standard']
+    const standard = schema.decode['~standard']
     const result = await standard.validate({
       id: '123',
       createdAt: '2021-01-01T00:00:00.000Z',
@@ -41,7 +42,7 @@ describe('Standard schema', () => {
   })
 
   it('supports encode validation', async () => {
-    const standard = schema.standard.encode['~standard']
+    const standard = schema.encode['~standard']
     const result = await standard.validate({
       id: 123n,
       createdAt: new Date('2021-01-01T00:00:00.000Z'),
@@ -64,26 +65,48 @@ describe('Standard schema', () => {
     expect('issues' in invalid).toBe(true)
   })
 
+  it('awaits asynchronous provider validation through Standard Schema', async () => {
+    const asyncSchema = t.custom<string>({
+      decode: (value) => String(value),
+      encode: (value) => value,
+      validation: {
+        decode: async (value, context) => {
+          await Promise.resolve()
+          if (value !== 'valid') context.addIssue('expected valid')
+        },
+      },
+    }).decode
+
+    await expect(asyncSchema['~standard'].validate('valid')).resolves.toEqual({
+      value: 'valid',
+    })
+    await expect(asyncSchema['~standard'].validate('invalid')).resolves.toEqual(
+      {
+        issues: [{ message: 'expected valid' }],
+      },
+    )
+  })
+
   it('exposes JSON schema helpers', () => {
-    const standard = schema.standard.decode['~standard']
+    const standard = schema.decode['~standard']
 
     const inputSchema = standard.jsonSchema.input({ target: 'draft-07' })
-    const outputSchema = standard.jsonSchema.output({ target: 'draft-07' })
 
     expect(typeof inputSchema).toBe('object')
-    expect(typeof outputSchema).toBe('object')
     expect(inputSchema).toHaveProperty('type')
-    expect(outputSchema).toHaveProperty('type')
+    expect(() => standard.jsonSchema.output({ target: 'draft-07' })).toThrow(
+      'BigInt cannot be represented in JSON Schema',
+    )
   })
 
   it('infers JSON schema for custom types', () => {
-    const bigIntStandard = t.bigInt().standard.decode['~standard']
+    const bigIntStandard = t.bigInt().decode['~standard']
     const bigIntSchema = bigIntStandard.jsonSchema.input({ target: 'draft-07' })
 
     expect(bigIntSchema).toHaveProperty('type', 'string')
     expect(bigIntSchema).toHaveProperty('pattern')
 
-    const dateStandard = t.date().standard.decode['~standard']
+    const dateStandard = t.date().decode['~standard']
     const dateSchema = dateStandard.jsonSchema.input({ target: 'draft-07' })
 
     expect(dateSchema).toHaveProperty('anyOf')
@@ -94,24 +117,15 @@ describe('Standard schema', () => {
     }
   })
 
-  it('exposes base standard schema alias', async () => {
+  it('does not choose a default Standard Schema direction', () => {
     const baseSchema = t.string()
 
-    expect(baseSchema['~standard']).toBe(
-      baseSchema.standard.decode['~standard'],
-    )
-
-    const result = await baseSchema['~standard'].validate('ok')
-
-    if ('value' in result === false) {
-      throw new Error('Expected base standard validation to succeed')
-    }
-
-    expect(result.value).toBe('ok')
+    expect('~standard' in baseSchema).toBe(false)
+    expect(baseSchema.decode).not.toBe(baseSchema.encode)
   })
 
   it('has correct typings', async () => {
-    const standard = schema.standard.decode
+    const standard = schema.decode
 
     expectTypeOf(standard['~standard'].vendor).toEqualTypeOf<string>()
     expectTypeOf(standard['~standard'].version).toEqualTypeOf<1>()
@@ -147,31 +161,40 @@ describe('Standard schema', () => {
     >()
   })
 
-  it('marks base types as StandardSchemaV1', () => {
+  it('marks codec directions as StandardSchemaV1', () => {
     type IsStandard<T> = T extends StandardSchemaV1<any, any> ? true : false
 
     expectTypeOf<
-      IsStandard<ReturnType<typeof t.string>>
+      IsStandard<ReturnType<typeof t.string>['decode']>
     >().toEqualTypeOf<true>()
-    expectTypeOf<IsStandard<ReturnType<typeof t.date>>>().toEqualTypeOf<true>()
+    expectTypeOf<
+      IsStandard<ReturnType<typeof t.date>['encode']>
+    >().toEqualTypeOf<true>()
     expectTypeOf<
       IsStandard<ReturnType<typeof t.bigInt>>
-    >().toEqualTypeOf<true>()
+    >().toEqualTypeOf<false>()
   })
 
-  it('marks base types as StandardJSONSchemaV1', () => {
+  it('marks codec directions as StandardJSONSchemaV1', () => {
     type IsStandardJSON<T> =
       T extends StandardJSONSchemaV1<any, any> ? true : false
 
     expectTypeOf<
-      IsStandardJSON<ReturnType<typeof t.string>>
+      IsStandardJSON<ReturnType<typeof t.string>['decode']>
     >().toEqualTypeOf<true>()
     expectTypeOf<
-      IsStandardJSON<ReturnType<typeof t.date>>
+      IsStandardJSON<ReturnType<typeof t.date>['encode']>
     >().toEqualTypeOf<true>()
     expectTypeOf<
       IsStandardJSON<ReturnType<typeof t.bigInt>>
-    >().toEqualTypeOf<true>()
+    >().toEqualTypeOf<false>()
+  })
+
+  it('marks base types as wire schema codecs', () => {
+    type IsCodec<T> = T extends WireSchema.Codec ? true : false
+
+    expectTypeOf<IsCodec<ReturnType<typeof t.string>>>().toEqualTypeOf<true>()
+    expectTypeOf<IsCodec<ReturnType<typeof t.date>>>().toEqualTypeOf<true>()
   })
 
   it('preserves output inference through StandardSchemaV1 generics', () => {
@@ -186,7 +209,7 @@ describe('Standard schema', () => {
         id: t.bigInt(),
         createdAt: t.date(),
         name: t.string(),
-      }),
+      }).decode,
     )
 
     expectTypeOf<StandardSchemaV1.InferOutput<typeof schema>>().toEqualTypeOf<{

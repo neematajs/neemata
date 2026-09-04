@@ -29,7 +29,7 @@ it('provides publish before global application dependencies initialize', async (
   const adapterInjectable = createFactoryInjectable(() => adapter)
   const channel = SubscriptionContract({
     namespace: 'chat',
-    params: t.object({ roomId: t.string() }),
+    params: t.object({ roomId: t.string() }).decode,
     key: ({ roomId }) => roomId,
     events: {
       message: EventContract({ payload: t.object({ text: t.string() }) }),

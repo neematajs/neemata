@@ -15,8 +15,6 @@ export namespace contract {
   export const router = RouterContract
 }
 
-export { BlobType as blobType } from './types/blob.ts'
-
 export { contract as c }
 
 export default contract

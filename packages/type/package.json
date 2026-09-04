@@ -65,7 +65,7 @@
     }
   },
   "dependencies": {
-    "@standard-schema/spec": "^1.1.0"
+    "@nmtjs/protocol": "workspace:*"
   },
   "peerDependencies": {
     "@nmtjs/common": "workspace:*",
@@ -74,6 +74,7 @@
   },
   "devDependencies": {
     "@nmtjs/common": "workspace:*",
+    "@standard-schema/spec": "^1.1.0",
     "temporal-polyfill": "^1.0.1",
     "zod": "catalog:"
   },

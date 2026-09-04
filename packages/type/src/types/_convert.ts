@@ -49,8 +49,12 @@ export function typeToString(type: BaseType): string {
     }
     case type instanceof AnyType:
       return 'any'
-    case type instanceof CustomType:
-      return typeToJsonSchema(type, 'decode').type || 'custom'
+    case type instanceof CustomType: {
+      const schemaType = typeToJsonSchema(type, 'decode').type
+      return Array.isArray(schemaType)
+        ? schemaType.join(' | ')
+        : (schemaType ?? 'custom')
+    }
     default:
       return 'unknown'
   }

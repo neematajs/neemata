@@ -1878,7 +1878,10 @@ export function createInMemoryWorkflowRuntime(
   const scheduler: WorkflowScheduler = {
     async reconcile(entries) {
       const date = now()
-      const normalizedEntries = normalizeScheduleDefinitions(entries, date)
+      const normalizedEntries = await normalizeScheduleDefinitions(
+        entries,
+        date,
+      )
       const names = new Set(normalizedEntries.map((entry) => entry.name))
       for (const scheduleName of schedules.keys()) {
         if (!names.has(scheduleName)) schedules.delete(scheduleName)

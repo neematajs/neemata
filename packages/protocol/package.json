@@ -40,8 +40,6 @@
   },
   "dependencies": {
     "@nmtjs/common": "workspace:*",
-    "@nmtjs/contract": "workspace:*",
-    "@nmtjs/type": "workspace:*",
     "hookable": "6.1.1"
   },
   "devDependencies": {
@@ -49,10 +47,7 @@
     "@nmtjs/core": "workspace:*"
   },
   "peerDependencies": {
-    "@nmtjs/common": "workspace:*",
-    "@nmtjs/contract": "workspace:*",
-    "@nmtjs/core": "workspace:*",
-    "@nmtjs/type": "workspace:*"
+    "@nmtjs/common": "workspace:*"
   },
   "files": [
     "dist",

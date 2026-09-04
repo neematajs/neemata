@@ -102,8 +102,8 @@ import {
 
 - `envConfig(variables, { source? }?)` - global injectable resolving and
   validating environment variables on first injection. Each record key is the
-  env variable name and maps to a Standard Schema validator (`t.*` schemas
-  qualify); the `{ name, schema }` value form decouples config key from env
+  env variable name and maps to a Standard Schema validator (`t.*.decode`
+  schemas qualify); the `{ name, schema }` value form decouples config key from env
   variable name.
 - `EnvConfigError` - thrown with validation failures aggregated across all
   variables, keyed by env variable name in `error.issues`.

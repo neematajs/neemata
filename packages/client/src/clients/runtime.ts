@@ -3,6 +3,12 @@ import type {
   TAnyRouterContract,
   TRouteContract,
 } from '@nmtjs/contract'
+import {
+  getDecodeSchema,
+  getEncodeSchema,
+  isWireSchemaCodec,
+  validateSchema,
+} from '@nmtjs/common/schema'
 import { IsProcedureContract, IsRouterContract } from '@nmtjs/contract'
 
 import type { BaseClientOptions } from '../client.ts'
@@ -28,6 +34,16 @@ export class RuntimeContractTransformer {
       }
 
       if (IsProcedureContract(route)) {
+        if (route.input && !isWireSchemaCodec(route.input)) {
+          throw new Error(
+            `Runtime client procedure input must be a codec: ${path.join('/')}`,
+          )
+        }
+        if (route.output && !isWireSchemaCodec(route.output)) {
+          throw new Error(
+            `Runtime client procedure output must be a codec: ${path.join('/')}`,
+          )
+        }
         this.#procedures.set(path.join('/'), route)
       }
     }
@@ -35,16 +51,18 @@ export class RuntimeContractTransformer {
     registerProcedures(router)
   }
 
-  encode(procedure: string, payload: any) {
+  async encode(procedure: string, payload: any) {
     const contract = this.#procedures.get(procedure)
     if (!contract) throw new Error(`Procedure not found: ${procedure}`)
-    return contract.input.encode(payload)
+    if (!contract.input) return undefined
+    return await validateSchema(getEncodeSchema(contract.input), payload)
   }
 
-  decode(procedure: string, payload: any) {
+  async decode(procedure: string, payload: any) {
     const contract = this.#procedures.get(procedure)
     if (!contract) throw new Error(`Procedure not found: ${procedure}`)
-    return contract.output.decode(payload)
+    if (!contract.output) return undefined
+    return await validateSchema(getDecodeSchema(contract.output), payload)
   }
 }
 

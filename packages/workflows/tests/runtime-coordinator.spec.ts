@@ -27,6 +27,43 @@ describe('workflow runtime coordinator', () => {
     return new Container({ logger })
   }
 
+  it('decodes persisted workflow input and encodes finish output', async () => {
+    const workflow = defineWorkflow({
+      name: 'coded-workflow',
+      input: t.date(),
+      output: t.date(),
+    }).build()
+    let finishInput: Date | undefined
+    const implementation = implementWorkflow(workflow).finish(
+      (_ctx, _outputs, input) => {
+        finishInput = input
+        return new Date(input.getTime() + 1_000)
+      },
+    )
+    const runtime = createInMemoryWorkflowRuntime()
+    const run = await runtime.store.createRun({
+      workflowName: workflow.name,
+      input: '2026-09-01T00:00:00.000Z',
+    })
+
+    await continueWorkflowRun({
+      ...runtime,
+      container: createTestContainer(),
+      workflows: [implementation],
+      workerId: 'coded-coordinator',
+      command: {
+        kind: 'continueRun',
+        runId: run.id,
+        workflowName: workflow.name,
+      },
+    })
+
+    const completed = await runtime.store.loadRunSnapshot(run.id)
+    expect(finishInput).toStrictEqual(new Date('2026-09-01T00:00:00.000Z'))
+    expect(completed?.run.input).toBe('2026-09-01T00:00:00.000Z')
+    expect(completed?.run.output).toBe('2026-09-01T00:00:01.000Z')
+  })
+
   it('starts a workflow run and enqueues continuation', async () => {
     const workflow = defineWorkflow({
       name: 'started-workflow',
@@ -1597,6 +1634,84 @@ describe('workflow runtime coordinator', () => {
         },
       },
     ])
+  })
+
+  it('decodes activity command input and stores encoded output', async () => {
+    const workflow = defineWorkflow({
+      name: 'coded-activity-worker',
+      input: t.date(),
+      output: t.date(),
+    })
+      .activity('shift', {
+        input: t.date(),
+        output: t.date(),
+      })
+      .build()
+    let handlerInput: Date | undefined
+    let finishOutput: Date | undefined
+    const implementation = implementWorkflow(workflow)
+      .shift(async (_ctx, input) => {
+        handlerInput = input
+        return new Date(input.getTime() + 1_000)
+      })
+      .finish((_ctx, { shift }) => {
+        finishOutput = shift
+        return shift
+      })
+    const runtime = createInMemoryWorkflowRuntime()
+    const run = await runtime.store.createRun({
+      workflowName: workflow.name,
+      input: '2026-09-01T00:00:00.000Z',
+    })
+    const container = createTestContainer()
+
+    await continueWorkflowRun({
+      ...runtime,
+      container,
+      workflows: [implementation],
+      workerId: 'coded-coordinator',
+      command: {
+        kind: 'continueRun',
+        runId: run.id,
+        workflowName: workflow.name,
+      },
+    })
+    const claimed = await runtime.attemptExecutor.claim({
+      taskNames: [],
+      workerId: 'coded-activity-worker',
+      workflowNames: [workflow.name],
+      leaseMs: 30_000,
+    })
+
+    await runActivityAttempt({
+      ...runtime,
+      container,
+      workflows: [implementation],
+      workerId: 'coded-activity-worker',
+      claimed: claimed!,
+    })
+
+    const snapshot = await runtime.store.loadRunSnapshot(run.id)
+    expect(handlerInput).toStrictEqual(new Date('2026-09-01T00:00:00.000Z'))
+    expect(snapshot?.nodes[0]?.input).toBe('2026-09-01T00:00:00.000Z')
+    expect(snapshot?.nodes[0]?.output).toBe('2026-09-01T00:00:01.000Z')
+    expect(snapshot?.attempts[0]?.input).toBe('2026-09-01T00:00:00.000Z')
+    expect(snapshot?.attempts[0]?.output).toBe('2026-09-01T00:00:01.000Z')
+
+    await continueWorkflowRun({
+      ...runtime,
+      container,
+      workflows: [implementation],
+      workerId: 'coded-coordinator',
+      command: {
+        kind: 'continueRun',
+        runId: run.id,
+        workflowName: workflow.name,
+      },
+    })
+    const completed = await runtime.store.loadRunSnapshot(run.id)
+    expect(finishOutput).toStrictEqual(new Date('2026-09-01T00:00:01.000Z'))
+    expect(completed?.run.output).toBe('2026-09-01T00:00:01.000Z')
   })
 
   it('runs a branch activity case and completes from selected output', async () => {

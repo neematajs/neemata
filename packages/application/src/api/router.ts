@@ -1,4 +1,5 @@
 import type { Callback } from '@nmtjs/common'
+import type { WireSchema } from '@nmtjs/common/schema'
 import type {
   TAnyProcedureContract,
   TAnyRouterContract,
@@ -6,7 +7,6 @@ import type {
   TRouteContract,
   TRouterContract,
 } from '@nmtjs/contract'
-import type { BaseTypeAny, t } from '@nmtjs/type'
 import { c, IsRouterContract } from '@nmtjs/contract'
 import { assertUniqueMetaBindings } from '@nmtjs/core'
 
@@ -147,9 +147,11 @@ export type FlattenRouterContractInput<Routes extends AnyRouterContractRoutes> =
   }[keyof Routes]
 
 export type FlattenRouterDecodedInput<Routes extends AnyRouterContractRoutes> =
-  t.infer.decode.output<
-    Extract<FlattenRouterContractInput<Routes>, BaseTypeAny>
-  >
+  FlattenRouterContractInput<Routes> extends infer Input
+    ? Input extends WireSchema.Decode | WireSchema.Codec
+      ? WireSchema.DecodeOutput<Input>
+      : never
+    : never
 
 export type RouterDecodedInput<Routes extends AnyRouterRoutes> =
   FlattenRouterDecodedInput<RouterContractsFromRoutes<Routes>>

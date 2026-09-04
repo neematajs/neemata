@@ -1,9 +1,11 @@
+import type { Schema, WireSchema } from '@nmtjs/common/schema'
 import { onceAborted } from '@nmtjs/common'
+import { isSchema, isWireSchemaCodec } from '@nmtjs/common/schema'
 import { Container, createLogger, Scope } from '@nmtjs/core'
 import { GatewayInjectables } from '@nmtjs/gateway'
 import { ErrorCode } from '@nmtjs/protocol'
 import { ProtocolError } from '@nmtjs/protocol/server'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, expectTypeOf, it, vi } from 'vitest'
 
 import type { AnyFilter, AnyProcedure } from '../src/index.ts'
 import {
@@ -12,6 +14,18 @@ import {
   createFilter,
   createProcedure,
 } from '../src/index.ts'
+
+const asyncSchema = <Input, Output>(
+  transform: (value: Input) => Promise<Output>,
+): Schema<Input, Output> => ({
+  '~standard': {
+    version: 1,
+    vendor: 'test',
+    async validate(value) {
+      return { value: await transform(value as Input) }
+    },
+  },
+})
 
 class DomainError extends Error {}
 
@@ -170,5 +184,36 @@ describe('ApplicationApi timeout', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+describe('ApplicationApi schemas', () => {
+  it('represents inferred outputs as an encode-only passthrough schema', async () => {
+    const procedure = createProcedure({ handler: () => ({ ok: true }) })
+    const { call } = createTestApi({ procedure })
+
+    expect(isSchema(procedure.contract.output)).toBe(true)
+    expect(isWireSchemaCodec(procedure.contract.output)).toBe(false)
+    expectTypeOf<
+      WireSchema.EncodeInput<typeof procedure.contract.output>
+    >().toEqualTypeOf<{ ok: boolean }>()
+    await expect(call()).resolves.toEqual({ ok: true })
+  })
+
+  it('awaits provider-independent input and output transforms', async () => {
+    const input: WireSchema.Decode<string, number> = asyncSchema(
+      async (value) => Number(value),
+    )
+    const output: WireSchema.Encode<number, string> = asyncSchema(
+      async (value) => String(value),
+    )
+    const procedure = createProcedure({
+      input,
+      output,
+      handler: (_ctx, value) => value + 1,
+    })
+    const { call } = createTestApi({ procedure })
+
+    await expect(call('41')).resolves.toBe('42')
   })
 })

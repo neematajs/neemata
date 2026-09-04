@@ -1,17 +1,22 @@
-import type { MaybePromise } from '@nmtjs/common'
+import type { Schema, WireSchema } from '@nmtjs/common/schema'
 import type { TAnyProcedureContract, TProcedureContract } from '@nmtjs/contract'
 import type { Dependant, Dependencies, HandlerFn } from '@nmtjs/core'
-import type { BaseType } from '@nmtjs/type'
-import type * as zod from 'zod/mini'
 import { c } from '@nmtjs/contract'
 import { assertUniqueMetaBindings } from '@nmtjs/core'
-import { t } from '@nmtjs/type'
 
 import type { AnyGuard } from './guards.ts'
 import type { AnyCompatibleMetaBinding, CompatibleMetaBinding } from './meta.ts'
 import type { AnyMiddleware } from './middlewares.ts'
-import type { JsonPrimitive } from './types.ts'
 import { kProcedure } from './constants.ts'
+
+// Inferred outputs are already wire values; transformations require an explicit schema.
+const passthroughOutputSchema: Schema = Object.freeze({
+  '~standard': Object.freeze({
+    version: 1,
+    vendor: 'neemata-passthrough',
+    validate: (value) => ({ value }),
+  }),
+})
 
 export type {
   AnyCompatibleMetaBinding,
@@ -21,12 +26,21 @@ export type {
 export type ProcedureMetaBinding<Input> = CompatibleMetaBinding<Input>
 export type AnyProcedureMetaBinding = AnyCompatibleMetaBinding
 
-export type ProcedureDecodedInput<Input extends BaseType | undefined> =
-  Input extends BaseType ? t.infer.decode.output<Input> : never
+export type ProcedureDecodedInput<
+  Input extends WireSchema.Decode | WireSchema.Codec | undefined,
+> = Input extends WireSchema.Decode | WireSchema.Codec
+  ? WireSchema.DecodeOutput<Input>
+  : undefined
 
 export type ProcedureContractDecodedInput<
   ProcedureContract extends TAnyProcedureContract,
-> = t.infer.decode.output<ProcedureContract['input']>
+> = ProcedureDecodedInput<ProcedureContract['input']>
+
+export type ProcedureEncodedOutput<
+  Output extends WireSchema.Encode | WireSchema.Codec | undefined,
+> = Output extends WireSchema.Encode | WireSchema.Codec
+  ? WireSchema.EncodeInput<Output>
+  : undefined
 
 export interface BaseProcedure<
   ProcedureContract extends TAnyProcedureContract,
@@ -55,8 +69,8 @@ export interface Procedure<
   handler: ProcedureHandlerType<
     ProcedureContractDecodedInput<ProcedureContract>,
     ProcedureContract['stream'] extends true
-      ? AsyncIterable<t.infer.encode.input<ProcedureContract['output']>>
-      : t.infer.encode.input<ProcedureContract['output']>,
+      ? AsyncIterable<ProcedureEncodedOutput<ProcedureContract['output']>>
+      : ProcedureEncodedOutput<ProcedureContract['output']>,
     ProcedureDeps
   >
 }
@@ -80,20 +94,16 @@ export type CreateProcedureParams<
       handler: ProcedureHandlerType<
         ProcedureContractDecodedInput<ProcedureContract>,
         ProcedureContract['stream'] extends undefined
-          ? t.infer.encode.input<ProcedureContract['output']>
-          : AsyncIterable<
-              Exclude<ProcedureContract['stream'], undefined | boolean>
-            >,
+          ? ProcedureEncodedOutput<ProcedureContract['output']>
+          : AsyncIterable<ProcedureEncodedOutput<ProcedureContract['output']>>,
         ProcedureDeps
       >
     }
   | ProcedureHandlerType<
       ProcedureContractDecodedInput<ProcedureContract>,
       ProcedureContract['stream'] extends undefined
-        ? t.infer.decode.input<ProcedureContract['output']>
-        : AsyncIterable<
-            Exclude<ProcedureContract['stream'], undefined | boolean>
-          >,
+        ? ProcedureEncodedOutput<ProcedureContract['output']>
+        : AsyncIterable<ProcedureEncodedOutput<ProcedureContract['output']>>,
       ProcedureDeps
     >
 
@@ -145,8 +155,8 @@ export function createContractProcedure<
 
 export function createProcedure<
   Return,
-  TInput extends BaseType | undefined = undefined,
-  TOutput extends BaseType | undefined = undefined,
+  TInput extends WireSchema.Decode | WireSchema.Codec | undefined = undefined,
+  TOutput extends WireSchema.Encode | WireSchema.Codec | undefined = undefined,
   TStream extends true | number | undefined = undefined,
   Deps extends Dependencies = {},
 >(
@@ -169,12 +179,12 @@ export function createProcedure<
           ProcedureDecodedInput<TInput>,
           TStream extends true | number
             ? AsyncIterable<
-                TOutput extends BaseType
-                  ? t.infer.encode.input<TOutput>
+                TOutput extends WireSchema.Encode | WireSchema.Codec
+                  ? WireSchema.EncodeInput<TOutput>
                   : Return
               >
-            : TOutput extends BaseType
-              ? t.infer.encode.input<TOutput>
+            : TOutput extends WireSchema.Encode | WireSchema.Codec
+              ? WireSchema.EncodeInput<TOutput>
               : Return,
           Deps
         >
@@ -182,20 +192,15 @@ export function createProcedure<
     | ProcedureHandlerType<ProcedureDecodedInput<TInput>, Return, Deps>,
 ): Procedure<
   TProcedureContract<
-    TInput extends undefined ? t.NeverType : TInput,
-    TOutput extends undefined
-      ? t.CustomType<
-          JsonPrimitive<Return>,
-          zod.ZodMiniCustom<JsonPrimitive<Return>, JsonPrimitive<Return>>
-        >
-      : TOutput,
+    TInput,
+    TOutput extends undefined ? WireSchema.Encode<Return> : TOutput,
     TStream extends true | number ? true : undefined
   >,
   Deps
 > {
   const {
-    input = t.never() as any,
-    output = t.any() as any,
+    input = undefined as any,
+    output = passthroughOutputSchema as WireSchema.Encode<Return>,
     stream = undefined as any,
     dependencies = {} as Deps,
     guards = [],

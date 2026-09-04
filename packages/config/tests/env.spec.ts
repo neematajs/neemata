@@ -1,4 +1,4 @@
-import type { StandardSchemaV1 } from '@standard-schema/spec'
+import type { Schema } from '@nmtjs/common/schema'
 import { isFactoryInjectable } from '@nmtjs/core'
 import { t } from '@nmtjs/type'
 import { describe, expect, expectTypeOf, it } from 'vitest'
@@ -10,12 +10,8 @@ import {
 } from '../src/index.ts'
 
 const schema = <Output>(
-  validate: (
-    value: unknown,
-  ) =>
-    | StandardSchemaV1.Result<Output>
-    | Promise<StandardSchemaV1.Result<Output>>,
-): StandardSchemaV1<unknown, Output> => ({
+  validate: Schema<unknown, Output>['~standard']['validate'],
+): Schema<unknown, Output> => ({
   '~standard': { version: 1, vendor: 'test', validate },
 })
 
@@ -29,7 +25,7 @@ const intFromString = schema<number>((value) => {
 describe('resolveEnvConfig', () => {
   it('resolves variables using record keys as names', async () => {
     const config = await resolveEnvConfig(
-      { HOST: t.string(), PORT: intFromString },
+      { HOST: t.string().decode, PORT: intFromString },
       { HOST: 'localhost', PORT: '3000' },
     )
     expect(config).toEqual({ HOST: 'localhost', PORT: 3000 })
@@ -38,7 +34,7 @@ describe('resolveEnvConfig', () => {
 
   it('resolves renamed variables via the object form', async () => {
     const config = await resolveEnvConfig(
-      { dbUrl: { name: 'DATABASE_URL', schema: t.string() } },
+      { dbUrl: { name: 'DATABASE_URL', schema: t.string().decode } },
       { DATABASE_URL: 'postgres://localhost' },
     )
     expect(config).toEqual({ dbUrl: 'postgres://localhost' })
@@ -55,7 +51,7 @@ describe('resolveEnvConfig', () => {
 
   it('accepts any standard schema alongside @nmtjs/type', async () => {
     const config = await resolveEnvConfig(
-      { NAME: t.string(), COUNT: intFromString },
+      { NAME: t.string().decode, COUNT: intFromString },
       { NAME: 'neemata', COUNT: '42' },
     )
     expect(config).toEqual({ NAME: 'neemata', COUNT: 42 })
@@ -64,7 +60,9 @@ describe('resolveEnvConfig', () => {
   it('reads from process.env by default', async () => {
     process.env.NMTJS_CONFIG_TEST = 'value'
     try {
-      const config = await resolveEnvConfig({ NMTJS_CONFIG_TEST: t.string() })
+      const config = await resolveEnvConfig({
+        NMTJS_CONFIG_TEST: t.string().decode,
+      })
       expect(config).toEqual({ NMTJS_CONFIG_TEST: 'value' })
     } finally {
       delete process.env.NMTJS_CONFIG_TEST
@@ -74,7 +72,7 @@ describe('resolveEnvConfig', () => {
   it('aggregates issues across all variables into a single error', async () => {
     const error = await resolveEnvConfig(
       {
-        HOST: t.string(),
+        HOST: t.string().decode,
         PORT: intFromString,
         retries: { name: 'RETRIES', schema: intFromString },
       },

@@ -48,6 +48,12 @@ describe('Contract — Event', { sequential: true }, () => {
       expect(event).toHaveProperty('type', 'neemata:event')
       expect(event).toHaveProperty('payload', eventType)
     })
+
+    it('rejects a directional payload without a full wire codec', () => {
+      expect(() => c.event({ payload: t.string().decode as any })).toThrow(
+        'Event payload must be a WireSchema.Codec',
+      )
+    })
   })
 
   describe('Typings', () => {
@@ -66,7 +72,7 @@ describe('Contract — Subscription', { sequential: true }, () => {
 
       const subscription = c.subscription({
         namespace: 'testSubscription',
-        params: t.object({ id: t.string() }),
+        params: t.object({ id: t.string() }).decode,
         key: (params) => params.id,
         events: { testEvent },
       })
@@ -88,13 +94,24 @@ describe('Contract — Subscription', { sequential: true }, () => {
       expect(IsSubscriptionContract(subscription)).toBe(true)
       expect(IsEventContract(subscription.events.testEvent)).toBe(true)
     })
+
+    it('rejects a codec when a directional params schema is required', () => {
+      expect(() =>
+        c.subscription({
+          namespace: 'invalid',
+          params: t.object({ id: t.string() }) as any,
+          key: ({ id }: any) => id,
+          events: {},
+        }),
+      ).toThrow('Subscription params must be a Standard Schema')
+    })
   })
 
   describe('Typings', () => {
     it('should correctly resolve Subscription contract types', () => {
       const subscription1 = c.subscription({
         namespace: 'testSubscription',
-        params: t.object({ id: t.string() }),
+        params: t.object({ id: t.string() }).decode,
         key: (params) => params.id,
         events: {
           event1: c.event({ payload: t.string() }),
@@ -105,7 +122,7 @@ describe('Contract — Subscription', { sequential: true }, () => {
       })
 
       expectTypeOf(subscription1.params).toEqualTypeOf<
-        t.ObjectType<{ id: t.StringType }>
+        t.ObjectType<{ id: t.StringType }>['decode']
       >()
       expectTypeOf(subscription1.namespace).toEqualTypeOf<'testSubscription'>()
       expectTypeOf(subscription1.key).toEqualTypeOf<
@@ -169,6 +186,15 @@ describe('Contract — Procedure', { sequential: true }, () => {
       expect(IsProcedureContract(namedProcedure)).toBe(true)
       expect(IsStreamProcedureContract(namedProcedure)).toBe(true)
     })
+
+    it('rejects values that are neither directional schemas nor codecs', () => {
+      expect(() => c.procedure({ input: {} as any })).toThrow(
+        'Procedure input must be a decode schema or wire codec',
+      )
+      expect(() => c.procedure({ output: {} as any })).toThrow(
+        'Procedure output must be an encode schema or wire codec',
+      )
+    })
   })
 
   describe('Typings', () => {
@@ -201,8 +227,8 @@ describe('Contract — Procedure', { sequential: true }, () => {
       expectTypeOf(streamProcedure.stream).toEqualTypeOf<true>()
 
       expectTypeOf(namedProcedure.name).toEqualTypeOf<'testProcedure'>()
-      expectTypeOf(namedProcedure.input).toEqualTypeOf<t.NeverType>()
-      expectTypeOf(namedProcedure.output).toEqualTypeOf<t.NeverType>()
+      expectTypeOf(namedProcedure.input).toEqualTypeOf<undefined>()
+      expectTypeOf(namedProcedure.output).toEqualTypeOf<undefined>()
       expectTypeOf(namedProcedure.stream).toEqualTypeOf<undefined>()
     })
   })

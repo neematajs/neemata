@@ -36,6 +36,7 @@ import type {
   WorkflowRuntimeAtomicContinuation,
 } from './worker.ts'
 import { startTaskRun, startWorkflowRun } from './coordinator.ts'
+import { decodeSchemaValue } from './coordinator/codec.ts'
 import {
   createWorkflowRuntimeRegistry,
   type RegisteredTaskImplementation,
@@ -199,8 +200,8 @@ export function createWorkflowRuntimeClient<Connection = never>(
     options?: WorkflowRuntimeStartOptions<Connection>,
   ) => {
     switch (runnable.kind) {
-      case 'workflow':
-        return (await startWorkflowRun({
+      case 'workflow': {
+        const run = await startWorkflowRun({
           store: input.store,
           runCoordinationExecutor: input.runCoordinationExecutor,
           atomicStart: input.atomicStart,
@@ -212,9 +213,18 @@ export function createWorkflowRuntimeClient<Connection = never>(
           unique: options?.unique,
           startAt: options?.startAt,
           connection: options?.connection,
-        })) as WorkflowRun<typeof runnable>
-      case 'task':
-        return (await startTaskRun({
+        })
+        return {
+          ...run,
+          input: await decodeSchemaValue(
+            runnable.input,
+            run.input,
+            `workflow input [${runnable.name}]`,
+          ),
+        } as WorkflowRun<typeof runnable>
+      }
+      case 'task': {
+        const run = await startTaskRun({
           store: input.store,
           runCoordinationExecutor: input.runCoordinationExecutor,
           attemptExecutor: input.attemptExecutor,
@@ -227,7 +237,16 @@ export function createWorkflowRuntimeClient<Connection = never>(
           unique: options?.unique,
           startAt: options?.startAt,
           connection: options?.connection,
-        })) as TaskRun<typeof runnable>
+        })
+        return {
+          ...run,
+          input: await decodeSchemaValue(
+            runnable.input,
+            run.input,
+            `task input [${runnable.name}]`,
+          ),
+        } as TaskRun<typeof runnable>
+      }
     }
   }) as WorkflowRuntimeClient<Connection>['start']
   const requireScheduler = () => {

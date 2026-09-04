@@ -10,8 +10,8 @@ catalogs:
       specifier: 8.0.11
       version: 8.0.11
     zod:
-      specifier: ^4.4.3
-      version: 4.4.3
+      specifier: ^4.5.4
+      version: 4.5.4
 
 importers:
 
@@ -77,13 +77,13 @@ importers:
       '@nmtjs/protocol':
         specifier: workspace:*
         version: link:../protocol
+    devDependencies:
       '@nmtjs/type':
         specifier: workspace:*
         version: link:../type
-    devDependencies:
       zod:
         specifier: 'catalog:'
-        version: 4.4.3
+        version: 4.5.4
 
   packages/client:
     devDependencies:
@@ -100,20 +100,21 @@ importers:
         specifier: workspace:*
         version: link:../type
 
-  packages/common: {}
-
-  packages/config:
+  packages/common:
     dependencies:
-      '@nmtjs/core':
-        specifier: workspace:*
-        version: link:../core
       '@standard-schema/spec':
         specifier: ^1.1.0
         version: 1.1.0
-    devDependencies:
+
+  packages/config:
+    dependencies:
       '@nmtjs/common':
         specifier: workspace:*
         version: link:../common
+      '@nmtjs/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
       '@nmtjs/type':
         specifier: workspace:*
         version: link:../type
@@ -123,16 +124,16 @@ importers:
 
   packages/contract:
     dependencies:
-      '@nmtjs/protocol':
+      '@nmtjs/common':
         specifier: workspace:*
-        version: link:../protocol
+        version: link:../common
+    devDependencies:
       '@nmtjs/type':
         specifier: workspace:*
         version: link:../type
-    devDependencies:
       zod:
         specifier: 'catalog:'
-        version: 4.4.3
+        version: 4.5.4
 
   packages/core:
     dependencies:
@@ -143,9 +144,6 @@ importers:
       '@nmtjs/common':
         specifier: workspace:*
         version: link:../common
-      '@nmtjs/type':
-        specifier: workspace:*
-        version: link:../type
       '@types/node':
         specifier: ^24.13.2
         version: 24.13.2
@@ -170,9 +168,6 @@ importers:
       '@nmtjs/protocol':
         specifier: workspace:*
         version: link:../protocol
-      '@nmtjs/type':
-        specifier: workspace:*
-        version: link:../type
       hookable:
         specifier: 6.1.1
         version: 6.1.1
@@ -297,7 +292,7 @@ importers:
         version: 1.2.2
       zod:
         specifier: 'catalog:'
-        version: 4.4.3
+        version: 4.5.4
     devDependencies:
       '@nmtjs/gateway':
         specifier: workspace:*
@@ -381,12 +376,6 @@ importers:
       '@nmtjs/common':
         specifier: workspace:*
         version: link:../common
-      '@nmtjs/contract':
-        specifier: workspace:*
-        version: link:../contract
-      '@nmtjs/type':
-        specifier: workspace:*
-        version: link:../type
       hookable:
         specifier: 6.1.1
         version: 6.1.1
@@ -447,19 +436,22 @@ importers:
 
   packages/type:
     dependencies:
-      '@standard-schema/spec':
-        specifier: ^1.1.0
-        version: 1.1.0
+      '@nmtjs/protocol':
+        specifier: workspace:*
+        version: link:../protocol
     devDependencies:
       '@nmtjs/common':
         specifier: workspace:*
         version: link:../common
+      '@standard-schema/spec':
+        specifier: ^1.1.0
+        version: 1.1.0
       temporal-polyfill:
         specifier: ^1.0.1
         version: 1.0.1
       zod:
         specifier: 'catalog:'
-        version: 4.4.3
+        version: 4.5.4
 
   packages/unplugin-labels:
     dependencies:
@@ -506,9 +498,6 @@ importers:
       '@nmtjs/neem':
         specifier: workspace:*
         version: link:../neem
-      '@nmtjs/type':
-        specifier: workspace:*
-        version: link:../type
       cron-parser:
         specifier: ^5.6.1
         version: 5.6.1
@@ -516,6 +505,9 @@ importers:
       '@electric-sql/pglite':
         specifier: ^0.5.3
         version: 0.5.3
+      '@nmtjs/type':
+        specifier: workspace:*
+        version: link:../type
       '@types/pg':
         specifier: ^8.20.0
         version: 8.20.0
@@ -524,7 +516,7 @@ importers:
         version: 1.0.0-rc.4
       drizzle-orm:
         specifier: 1.0.0-rc.4
-        version: 1.0.0-rc.4(@electric-sql/pglite@0.5.3)(@opentelemetry/api@1.9.0)(@types/pg@8.20.0)(bun-types@1.3.2(@types/react@19.1.9))(pg@8.22.0)(valibot@1.4.2(typescript@7.0.1-rc))(zod@4.4.3)
+        version: 1.0.0-rc.4(@electric-sql/pglite@0.5.3)(@opentelemetry/api@1.9.0)(@types/pg@8.20.0)(bun-types@1.3.2(@types/react@19.1.9))(pg@8.22.0)(valibot@1.4.2(typescript@7.0.1-rc))(zod@4.5.4)
       pg:
         specifier: ^8.22.0
         version: 8.22.0
@@ -5735,6 +5727,9 @@ packages:
   zod@4.4.3:
     resolution: {integrity: sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==}
 
+  zod@4.5.4:
+    resolution: {integrity: sha512-sC95tT5iHHH9gtpj6A81kh+NEaRAUFN+qlUPDUbRfOMvNf5QCBqsb3WgvnpVtK5Y+4UfA6KqufotuTvMGiTlsA==}
+
 snapshots:
 
   '@babel/code-frame@7.29.7':
@@ -8252,7 +8247,7 @@ snapshots:
       get-tsconfig: 4.14.0
       jiti: 2.7.0
 
-  drizzle-orm@1.0.0-rc.4(@electric-sql/pglite@0.5.3)(@opentelemetry/api@1.9.0)(@types/pg@8.20.0)(bun-types@1.3.2(@types/react@19.1.9))(pg@8.22.0)(valibot@1.4.2(typescript@7.0.1-rc))(zod@4.4.3):
+  drizzle-orm@1.0.0-rc.4(@electric-sql/pglite@0.5.3)(@opentelemetry/api@1.9.0)(@types/pg@8.20.0)(bun-types@1.3.2(@types/react@19.1.9))(pg@8.22.0)(valibot@1.4.2(typescript@7.0.1-rc))(zod@4.5.4):
     optionalDependencies:
       '@electric-sql/pglite': 0.5.3
       '@opentelemetry/api': 1.9.0
@@ -8260,7 +8255,7 @@ snapshots:
       bun-types: 1.3.2(@types/react@19.1.9)
       pg: 8.22.0
       valibot: 1.4.2(typescript@7.0.1-rc)
-      zod: 4.4.3
+      zod: 4.5.4
 
   duplexer@0.1.2: {}
 
@@ -10670,3 +10665,5 @@ snapshots:
       readable-stream: 4.7.0
 
   zod@4.4.3: {}
+
+  zod@4.5.4: {}

@@ -19,7 +19,7 @@ import type { StoredRun } from '../state.ts'
 import type { CreateRunInput, WorkflowStore } from '../store.ts'
 import { dispatchTaskRunAttempt } from './attempt.ts'
 import {
-  decodeSchemaValue,
+  canonicalizeSchemaInput,
   normalizeRunUnique,
   resolveIdempotency,
   resolveTags,
@@ -98,23 +98,25 @@ export async function startWorkflowRun<
     input.workflow,
     'Workflow start implementation',
   )
-  const workflowInput = decodeSchemaValue(
+  const workflowInput = await canonicalizeSchemaInput(
     input.workflow.input,
     input.input,
     `workflow input [${input.workflow.name}]`,
-  ) as WorkflowDecodedInput<Workflow>
+  )
+  const decodedWorkflowInput =
+    workflowInput.decoded as WorkflowDecodedInput<Workflow>
   const metadata = resolveWorkflowStartMetadata({
     ...input,
-    input: workflowInput,
+    input: decodedWorkflowInput,
   })
   const unique = normalizeRunUnique(
-    input.unique ?? resolveUnique(input.workflow.unique, workflowInput),
+    input.unique ?? resolveUnique(input.workflow.unique, decodedWorkflowInput),
   )
   const runInput: CreateRunInput = {
     kind: 'workflow',
     name: input.workflow.name,
     workflowName: input.workflow.name,
-    input: workflowInput,
+    input: workflowInput.encoded,
     tags: metadata.tags,
     idempotencyKey: metadata.idempotencyKey,
     ...(unique === undefined ? {} : { unique }),
@@ -165,16 +167,17 @@ export async function startTaskRun<
     input.task,
     'Task start implementation',
   )
-  const taskInput = decodeSchemaValue(
+  const taskInput = await canonicalizeSchemaInput(
     input.task.input,
     input.input,
     `task input [${input.task.name}]`,
-  ) as TaskDecodedInput<Task>
+  )
+  const decodedTaskInput = taskInput.decoded as TaskDecodedInput<Task>
   const idempotencyKey =
     input.idempotencyKey ??
-    resolveIdempotency(input.task.idempotency, taskInput)
+    resolveIdempotency(input.task.idempotency, decodedTaskInput)
   const unique = normalizeRunUnique(
-    input.unique ?? resolveUnique(input.task.unique, taskInput),
+    input.unique ?? resolveUnique(input.task.unique, decodedTaskInput),
   )
 
   const runInput: CreateRunInput = {
@@ -182,8 +185,8 @@ export async function startTaskRun<
     name: input.task.name,
     workflowName: input.task.name,
     taskName: input.task.name,
-    input: taskInput,
-    tags: input.tags ?? resolveTags(input.task.tags, taskInput),
+    input: taskInput.encoded,
+    tags: input.tags ?? resolveTags(input.task.tags, decodedTaskInput),
     idempotencyKey,
     ...(unique === undefined ? {} : { unique }),
   }
@@ -192,7 +195,7 @@ export async function startTaskRun<
     return await input.atomicStart.startTaskRun({
       run: runInput,
       taskName: input.task.name,
-      taskInput,
+      taskInput: taskInput.encoded,
       ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
       startAt: input.startAt,
       ...(input.connection === undefined
@@ -210,7 +213,7 @@ export async function startTaskRun<
     runCoordinationExecutor: input.runCoordinationExecutor,
     taskName: input.task.name,
     taskRunId: run.id,
-    taskInput,
+    taskInput: taskInput.encoded,
     idempotencyKey,
     timeout: input.task.timeout,
     startAt: input.startAt,

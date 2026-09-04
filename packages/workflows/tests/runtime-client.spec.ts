@@ -14,6 +14,19 @@ import {
 } from '../src/runtime/index.ts'
 
 describe('workflow runtime client', () => {
+  it('rejects directional schemas at durable boundaries', async () => {
+    const workflow = defineWorkflow({
+      name: 'directional-schema-workflow',
+      input: t.string().decode as any,
+      output: t.string(),
+    }).build()
+    const client = createWorkflowRuntimeClient(createInMemoryWorkflowRuntime())
+
+    await expect(client.start(workflow, 'input')).rejects.toThrow(
+      'schema must be a WireSchema.Codec',
+    )
+  })
+
   it('starts workflows and reads their snapshots', async () => {
     const workflow = defineWorkflow({
       name: 'client-started-workflow',
@@ -54,6 +67,24 @@ describe('workflow runtime client', () => {
         },
       },
     ])
+  })
+
+  it('stores canonical workflow input while returning the decoded value', async () => {
+    const workflow = defineWorkflow({
+      name: 'client-coded-workflow',
+      input: t.date(),
+      output: t.date(),
+      tags: (input) => ({ year: String(input.getUTCFullYear()) }),
+    }).build()
+    const runtime = createInMemoryWorkflowRuntime()
+    const client = createWorkflowRuntimeClient(runtime)
+
+    const run = await client.start(workflow, '2026-09-01T00:00:00.000Z')
+    const snapshot = await client.get(run.id)
+
+    expect(run.input).toStrictEqual(new Date('2026-09-01T00:00:00.000Z'))
+    expect(run.tags).toStrictEqual({ year: '2026' })
+    expect(snapshot?.run.input).toBe('2026-09-01T00:00:00.000Z')
   })
 
   it('starts workflows at a delayed time while exposing the run immediately', async () => {
@@ -193,6 +224,25 @@ describe('workflow runtime client', () => {
         },
       },
     ])
+  })
+
+  it('stores and dispatches canonical task input while returning the decoded value', async () => {
+    const task = defineTask({
+      name: 'client-coded-task',
+      input: t.date(),
+      output: t.date(),
+    })
+    const runtime = createInMemoryWorkflowRuntime()
+    const client = createWorkflowRuntimeClient(runtime)
+
+    const run = await client.start(task, '2026-09-01T00:00:00.000Z')
+    const snapshot = await client.get(run.id)
+
+    expect(run.input).toStrictEqual(new Date('2026-09-01T00:00:00.000Z'))
+    expect(snapshot?.run.input).toBe('2026-09-01T00:00:00.000Z')
+    expect(runtime.inspect().taskCommands[0]?.payload.input).toBe(
+      '2026-09-01T00:00:00.000Z',
+    )
   })
 
   it('starts tasks at a delayed time while exposing the run immediately', async () => {

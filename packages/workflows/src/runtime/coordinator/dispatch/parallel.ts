@@ -5,6 +5,7 @@ import type {
 import type {
   AnyTaskDefinition,
   BranchCaseDefinition,
+  Schema,
 } from '../../../types/index.ts'
 import type { StoredNodeChild, StoredRun } from '../../state.ts'
 import type { AdvanceCtx, AdvanceOutcome } from '../context.ts'
@@ -13,7 +14,9 @@ import { isTerminalNodeStatus, isTerminalRunStatus } from '../../status.ts'
 import { dispatchTaskRunAttempt, dispatchActivityAttempt } from '../attempt.ts'
 import { cancelNodeChildRunsAndCommands } from '../cancel.ts'
 import {
-  decodeWorkflowUserSchemaValue,
+  canonicalizeWorkflowUserSchemaInput,
+  decodeSchemaValue,
+  encodeWorkflowUserSchemaValue,
   getWorkflowNodeDeclaration,
   resolveIdempotency,
 } from '../codec.ts'
@@ -75,6 +78,7 @@ export async function dispatchParallelNode(
   )
 
   const outputs: Record<string, unknown> = {}
+  const decodedOutputs: Record<string, unknown> = {}
   let hasLocalWork = false
 
   const failMember = async (error: unknown, child: StoredNodeChild) => {
@@ -111,6 +115,11 @@ export async function dispatchParallelNode(
 
     if (child.status === 'completed') {
       outputs[memberKey] = child.output
+      decodedOutputs[memberKey] = await decodeParallelMemberOutput(
+        declaration.cases[memberKey]!,
+        child.output,
+        `${input.workflow.workflow.name}.${input.node.name}.${memberKey}`,
+      )
       continue
     }
     if (child.status === 'failed') {
@@ -171,6 +180,11 @@ export async function dispatchParallelNode(
             output: childRun.output,
           })
           outputs[memberKey] = childRun.output
+          decodedOutputs[memberKey] = await decodeParallelMemberOutput(
+            declaration.cases[memberKey]!,
+            childRun.output,
+            `${input.workflow.workflow.name}.${input.node.name}.${memberKey}`,
+          )
           continue
         }
         if (childRun.status === 'cancelled') {
@@ -194,15 +208,26 @@ export async function dispatchParallelNode(
       }
 
       const memberDeclaration = declaration.cases[memberKey]!
-      const nodeInput = decodeWorkflowUserSchemaValue(
-        member.target.input,
-        member.input
-          ? runWorkflowUserCallback(() =>
-              member.input!(input.workflowCtx, input.outputs, input.run.input),
+      const inputLabel = `${member.kind} input [${input.workflow.workflow.name}.${input.node.name}.${memberKey}]`
+      const nodeInput = member.input
+        ? (
+            await canonicalizeWorkflowUserSchemaInput(
+              member.target.input,
+              runWorkflowUserCallback(() =>
+                member.input!(
+                  input.workflowCtx,
+                  input.outputs,
+                  input.run.input,
+                ),
+              ),
+              inputLabel,
             )
-          : input.run.input,
-        `${member.kind} input [${input.workflow.workflow.name}.${input.node.name}.${memberKey}]`,
-      )
+          ).encoded
+        : await encodeWorkflowUserSchemaValue(
+            member.target.input,
+            input.run.input,
+            inputLabel,
+          )
       const idempotencyKey = resolveIdempotency(
         member.idempotency,
         input.workflowCtx,
@@ -263,21 +288,28 @@ export async function dispatchParallelNode(
     // Once the member has an attempt, its input is authoritative — never
     // re-run the user's input callback on re-entry.
     const hasAttempt = child.attemptCount > 0
+    const inputLabel = `activity input [${input.workflow.workflow.name}.${input.node.name}.${memberKey}]`
     const nodeInput = hasAttempt
       ? undefined
-      : decodeWorkflowUserSchemaValue(
-          activityMemberDeclaration.input,
-          member.input
-            ? runWorkflowUserCallback(() =>
+      : member.input
+        ? (
+            await canonicalizeWorkflowUserSchemaInput(
+              activityMemberDeclaration.input,
+              runWorkflowUserCallback(() =>
                 member.input!(
                   input.workflowCtx,
                   input.outputs,
                   input.run.input,
                 ),
-              )
-            : input.run.input,
-          `activity input [${input.workflow.workflow.name}.${input.node.name}.${memberKey}]`,
-        )
+              ),
+              inputLabel,
+            )
+          ).encoded
+        : await encodeWorkflowUserSchemaValue(
+            activityMemberDeclaration.input,
+            input.run.input,
+            inputLabel,
+          )
     const idempotencyKey = hasAttempt
       ? undefined
       : resolveIdempotency(
@@ -323,7 +355,7 @@ export async function dispatchParallelNode(
     })
     return await input.advance({
       ...input,
-      outputs: { ...input.outputs, [input.node.name]: outputs },
+      outputs: { ...input.outputs, [input.node.name]: decodedOutputs },
     })
   }
 
@@ -332,6 +364,31 @@ export async function dispatchParallelNode(
     nodeName: input.node.name,
   })
   return hasLocalWork ? 'local' : 'parked'
+}
+
+async function decodeParallelMemberOutput(
+  declaration: BranchCaseDefinition,
+  value: unknown,
+  label: string,
+): Promise<unknown> {
+  if (declaration.kind === 'activity') {
+    const activity = declaration as { readonly output: Schema }
+    return await decodeSchemaValue(
+      activity.output,
+      value,
+      `parallel output [${label}]`,
+    )
+  }
+  const target = (declaration as { readonly target: unknown }).target as
+    | AnyTaskDefinition
+    | { readonly output?: Schema }
+  return target.output
+    ? await decodeSchemaValue(
+        target.output,
+        value,
+        `parallel output [${label}]`,
+      )
+    : value
 }
 
 async function redispatchParallelChildRun(
@@ -365,7 +422,7 @@ async function redispatchParallelChildRun(
     runCoordinationExecutor: input.runCoordinationExecutor,
     taskName: taskTarget.name,
     taskRunId: childRun.id,
-    taskInput: childRun.input ?? input.run.input,
+    taskInput: childRun.input ?? input.encodedRunInput,
     idempotencyKey: childRun.idempotencyKey,
     timeout: taskDeclaration?.timeout ?? taskTarget.timeout,
   })

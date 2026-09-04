@@ -39,7 +39,6 @@
     }
   },
   "peerDependencies": {
-    "@nmtjs/type": "workspace:*",
     "@nmtjs/contract": "workspace:*",
     "@nmtjs/common": "workspace:*",
     "@nmtjs/protocol": "workspace:*"

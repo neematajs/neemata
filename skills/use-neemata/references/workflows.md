@@ -110,6 +110,11 @@ export const publishWorkflowImpl = implementWorkflow(publishWorkflow, {
 
 Rules:
 
+- Workflow, task, activity, branch, and map schemas must be full
+  `WireSchema.Codec` values: durable state executes both directions.
+- Starts, schedules, and input mappers accept decode-input values. Handlers and
+  callbacks receive decoded runtime values; outputs accept encode-input values;
+  the store keeps canonical encode-output values.
 - Handlers run at-least-once; make side effects idempotent and use the
   `idempotency` key builders to deduplicate task/child runs.
 - Branch nodes take `{ select, cases }`; map nodes take

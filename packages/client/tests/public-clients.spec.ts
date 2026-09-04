@@ -1,10 +1,14 @@
+import type { Schema, WireSchema } from '@nmtjs/common/schema'
 import type { ProtocolBlobInterface } from '@nmtjs/protocol'
-import { blobType, c } from '@nmtjs/contract'
+import { c } from '@nmtjs/contract'
 import { ServerMessageType } from '@nmtjs/protocol'
-import { t } from '@nmtjs/type'
+import { blobType, t } from '@nmtjs/type'
 import { describe, expect, expectTypeOf, it, vi } from 'vitest'
 
-import { RuntimeClient } from '../src/clients/runtime.ts'
+import {
+  RuntimeClient,
+  RuntimeContractTransformer,
+} from '../src/clients/runtime.ts'
 import { StaticClient } from '../src/clients/static.ts'
 import {
   createBaseOptions,
@@ -75,7 +79,53 @@ const runtimeContract = c.router({
 })
 
 describe('public clients', () => {
-  it('preserves nested blob outputs in public client types', () => {
+  it('awaits async runtime codecs and rejects directional-only schemas', async () => {
+    const schema = <Input, Output>(
+      transform: (value: Input) => Promise<Output>,
+    ): Schema<Input, Output> => ({
+      '~standard': {
+        version: 1,
+        vendor: 'test',
+        async validate(value) {
+          return { value: await transform(value as Input) }
+        },
+      },
+    })
+    const codec: WireSchema.Codec<
+      WireSchema.Decode<string, number>,
+      WireSchema.Encode<number, string>
+    > = {
+      decode: schema(async (value: string) => Number(value)),
+      encode: schema(async (value: number) => String(value)),
+    }
+    const contract = c.router({
+      routes: { transform: c.procedure({ input: codec, output: codec }) },
+    })
+    const transformer = new RuntimeContractTransformer(contract)
+
+    await expect(transformer.encode('transform', 42)).resolves.toBe('42')
+    await expect(transformer.decode('transform', '42')).resolves.toBe(42)
+
+    const directionalContract = c.router({
+      routes: {
+        invalid: c.procedure({ input: codec.decode, output: codec.encode }),
+      },
+    })
+    expect(() => new RuntimeContractTransformer(directionalContract)).toThrow(
+      'Runtime client procedure input must be a codec: invalid',
+    )
+
+    const directionalOutputContract = c.router({
+      routes: {
+        invalid: c.procedure({ input: codec, output: codec.encode }),
+      },
+    })
+    expect(
+      () => new RuntimeContractTransformer(directionalOutputContract),
+    ).toThrow('Runtime client procedure output must be a codec: invalid')
+  })
+
+  it('preserves blob outputs in public client types', () => {
     type StaticPublicClient = StaticClient<any, typeof staticContract>
     type RuntimePublicClient = RuntimeClient<any, typeof runtimeContract>
     type StaticNestedBlobResponse = Awaited<
@@ -306,10 +356,11 @@ describe('public clients', () => {
 
     const since = new Date('2024-03-01T00:00:00.000Z')
     const streamPromise = client.stream.events.feed({ since })
-
-    expect(encodedMessages.at(-1)).toMatchObject({
-      procedure: 'events/feed',
-      payload: { since: since.toISOString() },
+    await vi.waitFor(() => {
+      expect(encodedMessages.at(-1)).toMatchObject({
+        procedure: 'events/feed',
+        payload: { since: since.toISOString() },
+      })
     })
 
     transport.emitMessage(new Uint8Array([1]))

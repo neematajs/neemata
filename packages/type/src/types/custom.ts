@@ -113,7 +113,7 @@ export class CustomType<
         : validation
       : undefined
 
-    const decodeZodType = codec(type, decodedType, {
+    const baseDecodeZodType = codec(type, decodedType, {
       decode: (value, payload) => {
         try {
           return decode(value)
@@ -138,11 +138,10 @@ export class CustomType<
         return result instanceof Promise ? result.then(transform) : transform()
       },
     })
-    const encodeZodType = invertCodec(decodeZodType)
-
-    if (_validation?.decode) {
-      decodeZodType.check(superRefine(_validation.decode))
-    }
+    const encodeZodType = invertCodec(baseDecodeZodType)
+    const decodeZodType = _validation?.decode
+      ? baseDecodeZodType.check(superRefine(_validation.decode))
+      : baseDecodeZodType
 
     const instance = new CustomType<Type, EncodeType, DecodeType>({
       encodeZodType,

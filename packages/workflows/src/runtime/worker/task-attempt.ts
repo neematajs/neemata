@@ -6,11 +6,11 @@ import type { ClaimedAttempt } from '../commands.ts'
 import type { AttemptExecutor, RunCoordinationExecutor } from '../executors.ts'
 import type { WorkflowStore } from '../store.ts'
 import type { WorkflowWakeEvents } from '../wake-events.ts'
+import { decodeSchemaValue, encodeSchemaValue } from '../coordinator/codec.ts'
 import { parseDurationMs } from '../duration.ts'
 import { createWorkflowRuntimeRegistry } from '../registry.ts'
 import { isTerminalRunStatus } from '../status.ts'
 import { wakeParentRun } from '../wake.ts'
-import { decodeSchemaValue } from './activity-attempt.ts'
 import {
   runAtomicCompletion,
   type WorkflowRuntimeAtomicCompletion,
@@ -108,13 +108,18 @@ export async function runTaskAttempt(
   let output: unknown
   try {
     const timeoutMs = parseDurationMs(command.timeout ?? task.task.timeout)
+    const commandInput = await decodeSchemaValue(
+      task.task.input,
+      command.input,
+      `task input [${task.task.name}]`,
+    )
     output = await runWithAttemptHeartbeat(
       input,
       async (lifecycle) => {
         const ctx = await input.container.createContext(task.dependencies)
         return await task.handler(
           ctx as DependencyContext<any>,
-          command.input,
+          commandInput,
           lifecycle,
         )
       },
@@ -131,7 +136,7 @@ export async function runTaskAttempt(
               }),
           },
     )
-    output = decodeSchemaValue(
+    output = await encodeSchemaValue(
       task.task.output,
       output,
       `task output [${task.task.name}]`,
